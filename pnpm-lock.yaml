@@ -11,12 +11,6 @@ importers:
       '@aws-sdk/client-s3':
         specifier: 3.370.0
         version: 3.370.0
-      '@types/jsdom':
-        specifier: ^21.1.2
-        version: 21.1.7
-      '@types/json-merge-patch':
-        specifier: ^0.0.8
-        version: 0.0.8
       '@types/node':
         specifier: ^22.9.0
         version: 22.19.18
@@ -925,20 +919,11 @@ packages:
   '@types/estree@1.0.9':
     resolution: {integrity: sha512-GhdPgy1el4/ImP05X05Uw4cw2/M93BCUmnEvWZNStlCzEKME4Fkk+YpoA5OiHNQmoS7Cafb8Xa3Pya8m1Qrzeg==}
 
-  '@types/jsdom@21.1.7':
-    resolution: {integrity: sha512-yOriVnggzrnQ3a9OKOCxaVuSug3w3/SbOj5i7VwXWZEyUNl3bLF9V3MfxGbZKuwqJOQyRfqXyROBB1CoZLFWzA==}
-
   '@types/jsesc@2.5.1':
     resolution: {integrity: sha512-9VN+6yxLOPLOav+7PwjZbxiID2bVaeq0ED4qSQmdQTdjnXJSaCVKTR58t15oqH1H5t8Ng2ZX1SabJVoN9Q34bw==}
 
-  '@types/json-merge-patch@0.0.8':
-    resolution: {integrity: sha512-GjTa2VDOzvWKFlFYZTkeOQ4HPDc3UmKiQ3j+cz4C/jzSPjxfZ3K4TI9dkC0PLhxrroNvklP/jRkLlK29c+ZoFw==}
-
   '@types/node@22.19.18':
     resolution: {integrity: sha512-9v00a+dn2yWVsYDEunWC4g/TcRKVq3r8N5FuZp7u0SGrPvdN9c2yXI9bBuf5Fl0hNCb+QTIePTn5pJs2pwBOQQ==}
-
-  '@types/tough-cookie@4.0.5':
-    resolution: {integrity: sha512-/Ad8+nIOV7Rl++6f1BdKxFSMgmoqEoYbHRpPcx3JEfv8VRsQe9Z4mCXeJBzxs7mbHY/XOZZuXlRNfhpVPbs6ZA==}
 
   '@typescript/native-preview-darwin-arm64@7.0.0-dev.20260508.1':
     resolution: {integrity: sha512-/JxBvBLSUK0RR5c+baWcdyI1U5VuVrpXScG0IBm8oxstJ0HuFdj6LjRGqe2YbypKBz2VD2EjifLzEwXMWx6VtQ==}
@@ -1064,10 +1049,6 @@ packages:
     peerDependenciesMeta:
       oxc-resolver:
         optional: true
-
-  entities@6.0.1:
-    resolution: {integrity: sha512-aN97NXWF6AWBTahfVOIrB/NShkzi5H7F9r1s9mD3cDj4Ko5f2qhhVoYMibXF7GlLveb/D2ioWay8lxI97Ven3g==}
-    engines: {node: '>=0.12'}
 
   es-module-lexer@2.1.0:
     resolution: {integrity: sha512-n27zTYMjYu1aj4MjCWzSP7G9r75utsaoc8m61weK+W8JMBGGQybd43GstCXZ3WNmSFtGT9wi59qQTW6mhTR5LQ==}
@@ -1214,9 +1195,6 @@ packages:
     peerDependenciesMeta:
       oxlint-tsgolint:
         optional: true
-
-  parse5@7.3.0:
-    resolution: {integrity: sha512-IInvU7fabl34qmi9gY8XOVxhYyMyuH2xUNpb2q8/Y+7552KlejkRvqvD19nMoUW/uQGGbqNpA6Tufu5FL5BZgw==}
 
   pathe@2.0.3:
     resolution: {integrity: sha512-WUjGcAqP1gQacoQe+OBJsFA7Ld4DyXuUIjZ5cc75cLHvJ7dtNsTugphxIADwspS+AraAUePCKrSVtPLFj/F88w==}
@@ -2479,21 +2457,11 @@ snapshots:
 
   '@types/estree@1.0.9': {}
 
-  '@types/jsdom@21.1.7':
-    dependencies:
-      '@types/node': 22.19.18
-      '@types/tough-cookie': 4.0.5
-      parse5: 7.3.0
-
   '@types/jsesc@2.5.1': {}
-
-  '@types/json-merge-patch@0.0.8': {}
 
   '@types/node@22.19.18':
     dependencies:
       undici-types: 6.21.0
-
-  '@types/tough-cookie@4.0.5': {}
 
   '@typescript/native-preview-darwin-arm64@7.0.0-dev.20260508.1':
     optional: true
@@ -2596,8 +2564,6 @@ snapshots:
       webidl-conversions: 4.0.2
 
   dts-resolver@3.0.0: {}
-
-  entities@6.0.1: {}
 
   es-module-lexer@2.1.0: {}
 
@@ -2734,10 +2700,6 @@ snapshots:
       '@oxlint/binding-win32-arm64-msvc': 1.63.0
       '@oxlint/binding-win32-ia32-msvc': 1.63.0
       '@oxlint/binding-win32-x64-msvc': 1.63.0
-
-  parse5@7.3.0:
-    dependencies:
-      entities: 6.0.1
 
   pathe@2.0.3: {}
 
