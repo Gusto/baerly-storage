@@ -121,6 +121,7 @@ describe("mps3", () => {
         });
       test(
         "causal consistency all-to-all, single key",
+        { timeout: 60 * 1000 },
         () =>
           new Promise<void>((done) => {
             void (async () => {
@@ -189,9 +190,6 @@ describe("mps3", () => {
               });
             })();
           }),
-        {
-          timeout: 60 * 1000,
-        },
       );
     }),
   );

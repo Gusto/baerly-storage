@@ -41,7 +41,8 @@
         "oxlint": "^1.63.0",
         "rolldown": "^1.0.0-beta.20",
         "rolldown-plugin-dts": "^0.25.0",
-        "vitest": "^2.1.8"
+        "vite": "^8.0.11",
+        "vitest": "^4.1.5"
     },
     "files": [
         "dist"
