@@ -1,4 +1,3 @@
-import { S3 } from "@aws-sdk/client-s3";
 import { expect, test, describe, beforeAll, afterEach } from "vitest";
 import { MPS3, MPS3Config } from "../mps3";
 import { DOMParser } from "@xmldom/xmldom";
@@ -6,6 +5,7 @@ import cloudflareCredentials from "../../credentials/cloudflare.json";
 import awsCredentials from "../../credentials/aws.json";
 import "fake-indexeddb/auto";
 import { uuid } from "../types";
+import { createBucket, getObject, makeFixtureClient, putBucketVersioningEnabled } from "./s3Fixtures";
 
 describe("mps3", () => {
   let session = uuid().substring(0, 8);
@@ -121,20 +121,14 @@ describe("mps3", () => {
       const clients: MPS3[] = [];
       beforeAll(async () => {
         try {
-          const s3 = new S3(variant.config.s3Config);
-          if (variant.createBucket !== false) {
-            await s3.createBucket({
-              Bucket: variant.config.defaultBucket,
-            });
+          const s3 = makeFixtureClient(variant.config.s3Config);
+          const endpoint = variant.config.s3Config.endpoint;
+          if (s3 && endpoint && variant.createBucket !== false) {
+            await createBucket(s3, endpoint, variant.config.defaultBucket);
           }
 
-          if (variant.config.useVersioning) {
-            await s3.putBucketVersioning({
-              Bucket: variant.config.defaultBucket,
-              VersioningConfiguration: {
-                Status: "Enabled",
-              },
-            });
+          if (s3 && endpoint && variant.config.useVersioning) {
+            await putBucketVersioningEnabled(s3, endpoint, variant.config.defaultBucket);
           }
         } catch (e) {
           console.error(e);
@@ -261,21 +255,26 @@ describe("mps3", () => {
       });
 
       test("Storage key representation", async () => {
-        const s3 = new S3(variant.config.s3Config);
+        const s3 = makeFixtureClient(variant.config.s3Config);
+        const endpoint = variant.config.s3Config.endpoint;
         const client = await getClient();
         await client.put("storage_key", "foo");
         if (variant.config.useVersioning) {
-          const storage = await s3.getObject({
-            Bucket: variant.config.defaultBucket,
-            Key: "storage_key",
-          });
+          const storage = await getObject(
+            s3!,
+            endpoint!,
+            variant.config.defaultBucket,
+            "storage_key",
+          );
           expect(storage.VersionId).toBeDefined();
         } else {
+          // Original behavior: SDK was instantiated even for credential-less
+          // variants (localfirst, proxy) and the getObject was expected to
+          // throw. Preserve that — credential-less variants short-circuit
+          // through the missing client, signed variants throw on raw key.
           try {
-            await s3.getObject({
-              Bucket: variant.config.defaultBucket,
-              Key: "storage_key",
-            });
+            if (!s3 || !endpoint) throw new Error("no client");
+            await getObject(s3, endpoint, variant.config.defaultBucket, "storage_key");
             expect(false).toBe(true);
           } catch {}
         }

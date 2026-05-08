@@ -1,12 +1,13 @@
-import { S3 } from "@aws-sdk/client-s3";
+import { AwsClient } from "aws4fetch";
 import { expect, test, describe, beforeAll, beforeEach, afterEach } from "vitest";
 import { MPS3, type MPS3Config } from "../mps3";
 import { DOMParser } from "@xmldom/xmldom";
 import { uuid } from "../types";
+import { createBucket, makeFixtureClient, putBucketVersioningEnabled } from "./s3Fixtures";
 import "fake-indexeddb/auto";
 
 describe("offlinefirst", () => {
-  let s3: S3;
+  let s3: AwsClient;
   let session = uuid().substring(31);
   const stableConfig = {
     endpoint: "http://127.0.0.1:9102",
@@ -63,19 +64,12 @@ describe("offlinefirst", () => {
   configs.map((variant) =>
     describe(variant.label, () => {
       beforeAll(async () => {
-        s3 = new S3(stableConfig);
+        s3 = makeFixtureClient(stableConfig)!;
 
-        await s3.createBucket({
-          Bucket: variant.config.defaultBucket,
-        });
+        await createBucket(s3, stableConfig.endpoint, variant.config.defaultBucket);
 
         if (variant.config.useVersioning) {
-          await s3.putBucketVersioning({
-            Bucket: variant.config.defaultBucket,
-            VersioningConfiguration: {
-              Status: "Enabled",
-            },
-          });
+          await putBucketVersioningEnabled(s3, stableConfig.endpoint, variant.config.defaultBucket);
         }
       });
 

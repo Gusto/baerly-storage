@@ -3,7 +3,7 @@ import { MPS3 } from "../mps3";
 import { dateToSecs } from "../time";
 import { uuid } from "../types";
 import { DOMParser } from "@xmldom/xmldom";
-import { S3 } from "@aws-sdk/client-s3";
+import { createBucket, makeFixtureClient } from "./s3Fixtures";
 
 describe("timestampToSecs", () => {
   test("Mon, 3 Oct 2016 22:32:00 GMT", () => {
@@ -35,18 +35,17 @@ describe("clock behavior", () => {
     });
 
   beforeAll(async () => {
-    const s3 = new S3({
-      endpoint: "http://127.0.0.1:9102",
+    const endpoint = "http://127.0.0.1:9102";
+    const client = makeFixtureClient({
+      endpoint,
       region: "eu-central-1",
       credentials: {
         accessKeyId: "mps3",
         secretAccessKey: "ZOAmumEzdsUUcVlQ",
       },
-    });
+    })!;
     try {
-      await s3.createBucket({
-        Bucket: "clock",
-      });
+      await createBucket(client, endpoint, "clock");
     } catch {}
   });
 
