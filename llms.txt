@@ -1,0 +1,30 @@
+# MPS3
+
+Vendorless, causally consistent multiplayer document database that runs
+entirely client-side over any S3-compatible storage (S3, R2, Backblaze,
+Minio). No server. The client polls a time-ordered manifest log to sync
+state across writers.
+
+## Toolchain
+
+pnpm · vitest · TypeScript 7 (tsgo) · oxfmt · oxlint · rolldown
+
+## Verification
+
+Run `pnpm verify` (typecheck + lint). It is the only check guaranteed
+green on `main` — see CLAUDE.md for the full verification ritual and
+known-baseline test failures.
+
+## Where to start
+
+- [CLAUDE.md](./CLAUDE.md) — agent guidance, module map, conventions
+- [docs/features.md](./docs/features.md) — feature → code map
+- [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) — lifecycle and module graph
+- [docs/sync_protocol.md](./docs/sync_protocol.md) — protocol theory
+- [docs/adr/](./docs/adr/) — architecture decisions
+- [docs/troubleshooting.md](./docs/troubleshooting.md) — known issues
+- [.claude/rules/](./.claude/rules/) — path-scoped rules for src/, tests/, docs/
+
+The public API entry point is `src/mps3.ts` (the `MPS3` class). Every
+public method has JSDoc with `@example`. Read those before any markdown
+reference.

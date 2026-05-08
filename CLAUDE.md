@@ -21,19 +21,20 @@ to sync state across writers. Theoretical foundations live in [docs/](docs/).
 
 Don't introduce alternate tooling without justification.
 
-## Verification ritual
+## Verification
 
-```sh
-pnpm verify          # typecheck + lint (the two checks that are reliably clean)
-pnpm test            # vitest run — read "Known baseline test failures" below
-pnpm format:check    # oxfmt --check src — currently red on ~20 pre-existing files
-pnpm build           # rolldown bundle to dist/
-```
+| Command | What it catches | Runtime | Clean on `main`? |
+|---|---|---|---|
+| `pnpm verify` | typecheck (`tsgo --noEmit`) + lint (`oxlint`) | ~seconds | ✅ — non-zero exit *is* your regression |
+| `pnpm test` | vitest unit + integration | ~30s | ⚠️ 6 known baseline failures (see below) |
+| `pnpm format:check` | oxfmt formatting | ~seconds | ❌ red on ~20 pre-existing files; diff vs. `main` |
+| `pnpm build` | rolldown bundle to `dist/` | ~seconds | ✅ |
+| `pnpm test:randomize` | property-based fuzzer (loops `pnpm test` until failure) | run for minutes | use when changing protocol code |
+| `pnpm dev:storage` | brings up Minio `:9102` + Toxiproxy `:9104` | n/a | required for some integration tests |
 
-`pnpm verify` is intentionally narrow: typecheck and lint are guaranteed
-green on `main`, so a non-zero exit *is* a regression you introduced. Tests
-and format:check are run separately because their baseline isn't clean
-(see below) — diff your output against `main` to spot real regressions.
+`pnpm verify` is also enforced as a [lefthook](https://lefthook.dev/)
+pre-commit hook (`lefthook.yml`); `pnpm install` wires it up via the
+`prepare` script. Bypass with `git commit --no-verify` when needed.
 
 ### Known baseline test failures
 
@@ -135,10 +136,13 @@ The full lifecycle of `put()` and `subscribe()` is documented in
 
 ## Pointers
 
+- Feature → code map: [docs/features.md](docs/features.md)
 - Architecture overview: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - Local dev setup: [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)
 - How to add a feature / module / test: [docs/EXTENDING.md](docs/EXTENDING.md)
 - Protocol theory: [docs/sync_protocol.md](docs/sync_protocol.md),
   [docs/causal_consistency_checking.md](docs/causal_consistency_checking.md),
   [docs/JSON_merge_patch.md](docs/JSON_merge_patch.md)
+- Architecture decisions ("why"): [docs/adr/](docs/adr/)
+- Troubleshooting: [docs/troubleshooting.md](docs/troubleshooting.md)
 - Path-scoped rules: `.claude/rules/{src,tests,docs}.md`
