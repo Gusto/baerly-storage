@@ -4,7 +4,7 @@ export type JSONArrayless = string | number | boolean | JSONArraylessObject;
 export type JSONObject = { [x: string]: JSONValue };
 export type JSONValue = string | number | boolean | null | JSONObject | Array<JSONValue>;
 
-export const clone = <T extends JSONValue>(state: T): T => JSON.parse(JSON.stringify(state));
+export const clone = <T extends JSONValue>(state: T): T => structuredClone(state);
 
 /**
  * JSON Merge Patch (RFC 7386)

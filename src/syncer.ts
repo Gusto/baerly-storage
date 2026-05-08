@@ -12,6 +12,7 @@ import {
 } from "./constants";
 import {
   type DeleteValue,
+  type ManifestKey,
   type ResolvedRef,
   type VersionId,
   countKey,
@@ -58,6 +59,36 @@ interface HttpCacheEntry<T> {
   etag: string;
   data: T;
 }
+
+/**
+ * Compose a manifest log key from a manifest ref and an epoch-millis
+ * timestamp. The `<key>@<base32-time>` shape is load-bearing — see
+ * `docs/sync_protocol.md` (manifest log section).
+ */
+export const manifestKey = (ref: ResolvedRef, epochMs: number): ManifestKey =>
+  <ManifestKey>`${ref.key}@${time.timestamp(epochMs)}`;
+
+/**
+ * Compose a manifest log key from a pre-computed version-id suffix
+ * (output of {@link Syncer.generate_manifest_key}, shape
+ * `<base32-time>_<session>_<seq>`). Distinct from {@link manifestKey}
+ * because the suffix is already fully formatted — we don't re-derive
+ * it from an epoch.
+ */
+export const manifestKeyFromVersion = (
+  ref: ResolvedRef,
+  version: VersionId | string,
+): ManifestKey => <ManifestKey>`${ref.key}@${version}`;
+
+/**
+ * Extract the suffix following the final `@` of a manifest key, or
+ * `undefined` if the key has no `@`. Inverse of {@link manifestKey} /
+ * {@link manifestKeyFromVersion}.
+ */
+export const manifestKeySuffix = (key: ManifestKey | string): VersionId | undefined => {
+  const i = key.lastIndexOf("@");
+  return i === -1 ? undefined : <VersionId>key.substring(i + 1);
+};
 
 /**
  * Reads and writes the manifest log — the time-ordered append-only S3
@@ -163,9 +194,10 @@ export class Syncer {
         }
       }
 
-      const start_at = `${this.manifest.ref.key}@${time.timestamp(
+      const start_at = manifestKey(
+        this.manifest.ref,
         Date.now() + this.manifest.service.config.clockOffset + MANIFEST_LIST_LOOKAHEAD_MILLIS,
-      )}`;
+      );
       const [objects, dt] = await time.measure(
         this.manifest.service.s3ClientLite.listObjectV2({
           Bucket: this.manifest.ref.bucket,
@@ -221,9 +253,10 @@ export class Syncer {
       }
 
       // Go back a little before the latest key to accommodate writes in flight
-      const gcPoint = `${this.manifest.ref.key}@${time.timestamp(
+      const gcPoint = manifestKey(
+        this.manifest.ref,
         Math.max(Syncer.manifestTimestamp(this.latest_key) - LAG_WINDOW_MILLIS, 0),
-      )}`;
+      );
 
       // Play operations forward on latest state, oldest first
       for (let index = manifests.length - 1; index >= 0; index--) {
@@ -250,7 +283,7 @@ export class Syncer {
             key,
           },
         });
-        const stepVersionId = <VersionId>key.substring(key.lastIndexOf("@") + 1);
+        const stepVersionId = manifestKeySuffix(key)!;
         this.latest_state = merge<ManifestFile>(this.latest_state, step.data?.update)!;
         this.manifest.observeVersionId(stepVersionId);
       }
@@ -321,7 +354,7 @@ export class Syncer {
             }
           }
           // put versioned write
-          manifest_key = this.manifest.ref.key + "@" + manifest_version;
+          manifest_key = manifestKeyFromVersion(this.manifest.ref, manifest_version);
           this.manifest.operationQueue.label(write, manifest_version, options.isLoad);
 
           const putResponse = await this.manifest.service._putObject({

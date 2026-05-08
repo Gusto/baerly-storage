@@ -17,6 +17,8 @@ import {
   type ResolvedRef,
   type VersionId,
   type XmlParser,
+  resolveContentRef,
+  resolveManifestRef,
   url,
   uuid,
   versionFromUuid,
@@ -121,7 +123,7 @@ export interface MPS3Config {
   /**
    * Bring your own logger
    */
-  log?: ((...args: any) => void) | boolean;
+  log?: ((...args: unknown[]) => void) | boolean;
 }
 
 /** @internal */
@@ -138,7 +140,7 @@ export interface ResolvedMPS3Config extends MPS3Config {
   adaptiveClock: boolean;
   minimizeListObjectsCalls: boolean;
   parser: XmlParser;
-  log: (...args: any) => void;
+  log: (...args: unknown[]) => void;
 }
 
 interface GetResponse<T> {
@@ -215,26 +217,27 @@ export class MPS3 {
   endpoint: string;
 
   constructor(config: MPS3Config) {
+    const defaultManifest: ResolvedRef =
+      typeof config.defaultManifest === "string"
+        ? { bucket: config.defaultBucket, key: config.defaultManifest }
+        : {
+            bucket: config.defaultManifest?.bucket ?? config.defaultBucket,
+            key: config.defaultManifest?.key ?? "manifest.json",
+          };
     this.config = {
       ...config,
       label: config.label || "default",
-      useChecksum: config.useChecksum === false ? false : true,
-      autoclean: config.autoclean === false ? false : true,
-      online: config.online === false ? false : true,
-      offlineStorage: config.offlineStorage === false ? false : true,
+      useChecksum: config.useChecksum ?? true,
+      autoclean: config.autoclean ?? true,
+      online: config.online ?? true,
+      offlineStorage: config.offlineStorage ?? true,
       useVersioning: config.useVersioning || false,
       pollFrequency: config.pollFrequency || MANIFEST_POLL_INTERVAL_MILLIS,
       clockOffset: Math.floor(config.clockOffset ?? 0),
-      adaptiveClock: config.adaptiveClock === false ? false : true,
-      minimizeListObjectsCalls: config.minimizeListObjectsCalls === false ? false : true,
+      adaptiveClock: config.adaptiveClock ?? true,
+      minimizeListObjectsCalls: config.minimizeListObjectsCalls ?? true,
       parser: config.parser || new DOMParser(),
-      defaultManifest: {
-        bucket: (<Ref>config.defaultManifest)?.bucket || config.defaultBucket,
-        key:
-          typeof config.defaultManifest === "string"
-            ? config.defaultManifest
-            : config.defaultManifest?.key || "manifest.json",
-      },
+      defaultManifest,
       log: (...args) =>
         (config.log === true ? console.log : config.log || (() => {}))(this.config.label, ...args),
     };
@@ -271,7 +274,7 @@ export class MPS3 {
     } else if (this.endpoint === MPS3.LOCAL_ENDPOINT) {
       fetchFn = offlineFetch.fetchFn;
     } else {
-      fetchFn = (global || window).fetch.bind(global || window);
+      fetchFn = globalThis.fetch.bind(globalThis);
     }
 
     if (this.config.offlineStorage) {
@@ -330,15 +333,9 @@ export class MPS3 {
       manifest?: Ref;
     } = {},
   ): Promise<JSONValue | DeleteValue> {
-    const manifestRef: ResolvedRef = {
-      ...this.config.defaultManifest,
-      ...options.manifest,
-    };
+    const manifestRef = resolveManifestRef(options.manifest, this.config.defaultManifest);
     const manifest = this.getOrCreateManifest(manifestRef);
-    const contentRef: ResolvedRef = {
-      bucket: (<Ref>ref).bucket || this.config.defaultBucket || this.config.defaultManifest.bucket,
-      key: typeof ref === "string" ? ref : ref.key,
-    };
+    const contentRef = resolveContentRef(ref, this.config);
 
     const inflight = await manifest.operationQueue.flatten();
     if (inflight.has(contentRef)) {
@@ -552,36 +549,17 @@ export class MPS3 {
     } = {},
   ) {
     const resolvedValues = new Map<ResolvedRef, JSONValue | DeleteValue>(
-      [...values].map(([ref, value]) => [
-        {
-          bucket:
-            (<Ref>ref).bucket || this.config.defaultBucket || this.config.defaultManifest.bucket,
-          key: typeof ref === "string" ? ref : ref.key,
-        },
-        value,
-      ]),
+      [...values].map(([ref, value]) => [resolveContentRef(ref, this.config), value]),
     );
 
     const manifests: ResolvedRef[] = (options?.manifests || [this.config.defaultManifest]).map(
-      (ref) => ({
-        ...this.config.defaultManifest,
-        ...ref,
-      }),
+      (ref) => resolveManifestRef(ref, this.config.defaultManifest),
     );
 
     const keys = options.keys
       ? new OMap(
           url,
-          [...options.keys].map(([ref, key]) => [
-            {
-              bucket:
-                (<Ref>ref).bucket ||
-                this.config.defaultBucket ||
-                this.config.defaultManifest.bucket,
-              key: typeof ref === "string" ? ref : ref.key,
-            },
-            key,
-          ]),
+          [...options.keys].map(([ref, key]) => [resolveContentRef(ref, this.config), key]),
         )
       : new OMap<
           ResolvedRef,
@@ -675,7 +653,7 @@ export class MPS3 {
     value: JSONValue;
     version?: string;
   }): Promise<PutObjectCommandOutput & { Date: Date; latency: number }> {
-    const content: string = JSON.stringify(args.value, null, 2);
+    const content: string = JSON.stringify(args.value);
     let command: PutObjectCommandInput = {
       Bucket: args.ref.bucket,
       Key: this.config.useVersioning
@@ -762,14 +740,8 @@ export class MPS3 {
       manifest?: Ref;
     },
   ): () => void {
-    const manifestRef: ResolvedRef = {
-      ...this.config.defaultManifest,
-      ...options?.manifest,
-    };
-    const keyRef: ResolvedRef = {
-      key: typeof key === "string" ? key : key.key,
-      bucket: (<Ref>key).bucket || this.config.defaultBucket || manifestRef.bucket,
-    };
+    const manifestRef = resolveManifestRef(options?.manifest, this.config.defaultManifest);
+    const keyRef = resolveContentRef(key, this.config);
     const manifest = this.getOrCreateManifest(manifestRef);
     const unsubscribe = manifest.subscribe(keyRef, handler);
     this.get(keyRef, {

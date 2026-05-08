@@ -1,20 +1,21 @@
 import { expect, test, describe } from "vitest";
 
-import { type b64, b642uint, uint2b64, toB64, or, inside } from "../hashing";
+import { fromB64, toB64, or, inside } from "../hashing";
 import { uuid } from "../types";
 
 describe("b64/uint", () => {
   test("round trip", () => {
-    const start = <b64>"cool";
-    expect(uint2b64(b642uint(start))).toBe(start);
+    const start = toB64(new TextEncoder().encode("cool"));
+    expect(toB64(fromB64(start))).toBe(start);
   });
 });
 
 describe("or and inside", () => {
   test("forall a, b: a inside (a or b) ", () => {
+    const enc = new TextEncoder();
     for (let tries = 0; tries < 10; tries++) {
-      const a = toB64(uuid());
-      const b = toB64(uuid());
+      const a = toB64(enc.encode(uuid()));
+      const b = toB64(enc.encode(uuid()));
 
       const a_or_b = or(a, b);
 

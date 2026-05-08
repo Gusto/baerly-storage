@@ -1,10 +1,9 @@
 // Mirroring copes writes from one S3 API to another and records progress in a sync log
 import { MPS3 } from "./mps3";
 import { type DeleteValue, type ManifestKey, parseUrl } from "./types";
-import { timestamp } from "./time";
 import { LAG_WINDOW_MILLIS } from "./constants";
 import { Manifest } from "./manifest";
-import { type ManifestFile, Syncer } from "./syncer";
+import { type ManifestFile, Syncer, manifestKey } from "./syncer";
 import { type JSONArraylessObject, type JSONValue, merge } from "./json";
 import { type b64, sha256b64, or, inside } from "./hashing";
 
@@ -33,10 +32,9 @@ export async function replicate(
   const target_replication = await sha256b64(
     target.config.defaultManifest.bucket + target.config.defaultManifest.key,
   );
-  const newMark = <ManifestKey>(
-    `${sourceManifest.ref.key}@${timestamp(
-      Date.now() + source.config.clockOffset - LAG_WINDOW_MILLIS,
-    )}`
+  const newMark = manifestKey(
+    sourceManifest.ref,
+    Date.now() + source.config.clockOffset - LAG_WINDOW_MILLIS,
   );
 
   // Read all mutations from source, after previous mark
@@ -44,9 +42,10 @@ export async function replicate(
     .listObjectV2({
       Bucket: sourceManifest.ref.bucket,
       Prefix: sourceManifest.ref.key + "@",
-      StartAfter: `${sourceManifest.ref.key}@${timestamp(
+      StartAfter: manifestKey(
+        sourceManifest.ref,
         Date.now() + source.config.clockOffset + LAG_WINDOW_MILLIS,
-      )}`,
+      ),
     })
     .then((response) => {
       for (let i = response.Contents!.length - 1; i >= 0; i--) {

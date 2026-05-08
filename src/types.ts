@@ -85,6 +85,31 @@ export const uuid = (): UUID => <UUID>crypto.randomUUID();
  * `<VersionId><unknown>` workarounds throughout the codebase.
  */
 export const versionFromUuid = (u: UUID): VersionId => u as unknown as VersionId;
+/**
+ * Resolve a user-supplied content reference (`string` shorthand or
+ * partial {@link Ref}) into a fully-qualified {@link ResolvedRef}.
+ * Bucket falls back to `defaultBucket`. Replaces the duplicated
+ * `(<Ref>ref).bucket || ...` pattern that used to live at every
+ * call site.
+ */
+export const resolveContentRef = (
+  ref: string | Ref,
+  config: { defaultBucket: string }
+): ResolvedRef =>
+  typeof ref === "string"
+    ? { bucket: config.defaultBucket, key: ref }
+    : { bucket: ref.bucket ?? config.defaultBucket, key: ref.key };
+
+/**
+ * Resolve a (possibly absent) manifest override against the
+ * configured default manifest. Field-level merge: the override's
+ * `bucket` and/or `key` win when set.
+ */
+export const resolveManifestRef = (
+  ref: Ref | undefined,
+  defaultManifest: ResolvedRef
+): ResolvedRef => ({ ...defaultManifest, ...ref });
+
 export const countKey = (number: number): string => uint2strDesc(number, 10);
 export const eq = (a: Ref, b: Ref) => a.bucket === b.bucket && a.key === b.key;
 export const url = (ref: Ref): string => `${ref.bucket}/${ref.key}`;
