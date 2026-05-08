@@ -1,0 +1,13 @@
+# Pre-commit hooks for MPS3.
+#
+# Runs the same gate as `pnpm verify` (typecheck + lint), which is the
+# only check guaranteed to be green on `main` per CLAUDE.md. Tests and
+# format:check are intentionally excluded — their baselines aren't
+# clean. See CLAUDE.md "Verification" section.
+#
+# Bypass with `git commit --no-verify` when needed.
+
+pre-commit:
+  commands:
+    verify:
+      run: pnpm verify
