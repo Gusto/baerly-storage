@@ -1,0 +1,36 @@
+version: '3'
+services:
+  minio:
+    image: 'minio/minio:latest'
+    platform: linux/amd64
+    ports:
+      - '9102:9000'
+      - '9103:9090'
+    environment:
+      MINIO_ROOT_USER: 'mps3'
+      MINIO_ROOT_PASSWORD: 'ZOAmumEzdsUUcVlQ'
+    command: minio server /data/minio --console-address ":9090"
+
+  toxiproxy:
+    image: "ghcr.io/shopify/toxiproxy"
+    platform: linux/amd64
+    ports:
+      - '9104:9104'
+      - '8474:8474' # toxiproxy admin
+    environment:
+      LOG_LEVEL: "DEBUG"
+  
+  toxiproxy-config-0:
+    image: "ghcr.io/shopify/toxiproxy"
+    entrypoint: >
+      /toxiproxy-cli -h toxiproxy:8474 create -l 0.0.0.0:9104 -u minio:9000 minio 
+    depends_on: 
+      - toxiproxy
+
+  # toxiproxy-config-1:
+  #   image: "ghcr.io/shopify/toxiproxy"
+  #   entrypoint: >
+  #     /toxiproxy-cli -h toxiproxy:8474 toxic add --type reset_peer --attribute timeout=1 --toxicity 0.1 minio
+  #   depends_on: 
+  #     - toxiproxy-config-0
+    

@@ -1,0 +1,39 @@
+{
+    "name": "mps3",
+    "description": "Provide clientside multiplayer and optimistic updates over any s3-compatible storage API",
+    "version": "0.0.81",
+    "license": "MIT",
+    "author": {
+        "name": "Tom Larkworthy"
+    },
+    "main": "dist/mps3.js",
+    "type": "module",
+    "scripts": {
+        "test": "bun test",
+        "doc": " npx typedoc --plugin typedoc-plugin-markdown",
+        "build": "npm run doc; bun build src/mps3.ts --minify --outdir ./dist",
+        "prepare": "npm run build",
+        "format": "rome format src --write --indent-style space",
+        "test:randomize": "while bun test; [ $? -ne 1 ] ; do :; done"
+    },
+    "devDependencies": {
+        "@aws-sdk/client-s3": "3.370.0",
+        "@types/jsdom": "^21.1.2",
+        "@types/json-merge-patch": "^0.0.8",
+        "@xmldom/xmldom": "^0.8.10",
+        "aws4fetch": "1.0.17",
+        "bun": "^1.0.34",
+        "bun-types": "0.8.1",
+        "fake-indexeddb": "^4.0.2",
+        "idb-keyval": "^6.2.1",
+        "rome": "^12.1.3",
+        "typedoc": "^0.25.0",
+        "typedoc-plugin-markdown": "^3.16.0"
+    },
+    "files": [
+        "dist"
+    ],
+    "prettier": {
+        "tabWidth": 4
+    }
+}
