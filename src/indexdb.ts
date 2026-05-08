@@ -1,4 +1,5 @@
 import { createStore, get, set, del, keys } from "idb-keyval";
+import { MPS3Error } from "./errors";
 export const fetchFn = async (
   url_: string,
   init?: RequestInit
@@ -8,7 +9,7 @@ export const fetchFn = async (
   const segments = url.pathname.split("/");
   const bucket = segments[1];
   const key = segments.slice(2).join("/");
-  if (!bucket) throw new Error(`Invalid bucket in URL: ${url_}`);
+  if (!bucket) throw new MPS3Error("InvalidConfig", `Invalid bucket in URL: ${url_}`);
   const db = createStore(bucket, "v0");
   let body;
   let status = 200;
@@ -30,7 +31,7 @@ export const fetchFn = async (
   } else if (init?.method === "DELETE") {
     await del(key, db);
   } else {
-    throw new Error();
+    throw new MPS3Error("Internal", `Unsupported method: ${init?.method ?? "(none)"}`);
   }
   return new Response(body, { status });
 };

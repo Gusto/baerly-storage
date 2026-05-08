@@ -1,13 +1,14 @@
 /// <reference lib="dom" />
 
 import type { ListObjectsV2CommandOutput } from "@aws-sdk/client-s3";
+import { MPS3Error } from "./errors";
 
 export const parseListObjectsV2CommandOutput = (
   xml: string,
   domParser: DOMParser,
 ): ListObjectsV2CommandOutput => {
   const doc = domParser.parseFromString(xml, "text/xml");
-  if (!doc) throw new Error(`Invalid XML: ${xml}`);
+  if (!doc) throw new MPS3Error("InvalidResponse", `Invalid XML: ${xml}`);
   // const results = doc.getElementsByTagName("ListBucketResult")[0];
   const contents = doc.getElementsByTagName("Contents");
   //if (!contents) throw new Error(`Invalid XML: ${xml}`);

@@ -2,6 +2,7 @@ import { OMap } from "./OMap";
 import { type DeleteValue, uuid, type ResolvedRef, url } from "./types";
 import type { JSONValue } from "./json";
 import { type UseStore, getMany, get, set, delMany, keys } from "idb-keyval";
+import { MPS3Error } from "./errors";
 
 export type Operation = Promise<unknown>;
 
@@ -58,7 +59,7 @@ export class OperationQueue<L extends string> {
       const index = (<any>write)[this.session];
 
       if (index === undefined)
-        throw new Error("Cannot label an unproposed operation");
+        throw new MPS3Error("Internal", "Cannot label an unproposed operation");
       const key = `label-${index}`;
       await set(key, label, this.db);
       console.log(`STORE ${key} ${label}`);

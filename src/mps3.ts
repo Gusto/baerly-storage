@@ -17,6 +17,7 @@ import { type UseStore, createStore, get, set } from "idb-keyval";
 import * as time from "./time";
 import * as offlineFetch from "./indexdb";
 import { type b64, sha256b64 } from "./hashing";
+import { MPS3Error } from "./errors";
 export interface MPS3Config {
     /** @internal */
     label?: string;
@@ -187,7 +188,7 @@ export class MPS3 {
         };
 
         if (this.config.s3Config?.credentials instanceof Function)
-            throw Error("We can't do that yet");
+            throw new MPS3Error("InvalidConfig", "Function-based s3Config.credentials are not supported yet");
 
         this.endpoint =
             <string>config.s3Config.endpoint ||
@@ -321,7 +322,8 @@ export class MPS3 {
         }
 
         if (!this.config.online) {
-            throw new Error(
+            throw new MPS3Error(
+                "OfflineNoCache",
                 `${this.config.label} Offline and value not cached for ${key}`
             );
         }
@@ -490,7 +492,8 @@ export class MPS3 {
                             if (this.config.useVersioning) {
                                 if (fileUpdate.VersionId === undefined) {
                                     console.error(fileUpdate);
-                                    throw Error(
+                                    throw new MPS3Error(
+                                        "InvalidConfig",
                                         `Bucket ${contentRef.bucket} is not version enabled!`
                                     );
                                 } else {

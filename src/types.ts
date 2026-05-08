@@ -1,3 +1,5 @@
+import { MPS3Error } from "./errors";
+
 declare const __brand: unique symbol
 type Brand<B> = { [__brand]: B }
 export type Branded<T, B> = T & Brand<B>
@@ -24,7 +26,7 @@ export const eq = (a: Ref, b: Ref) => a.bucket === b.bucket && a.key === b.key;
 export const url = (ref: Ref): string => `${ref.bucket}/${ref.key}`;
 export const parseUrl = (url: string): ResolvedRef => {
   const [bucket, ...key] = url.split("/");
-  if (bucket === undefined) throw new Error(`Invalid url: ${url}`);
+  if (bucket === undefined) throw new MPS3Error("InvalidConfig", `Invalid url: ${url}`);
   return {
     bucket,
     key: key.join("/"),

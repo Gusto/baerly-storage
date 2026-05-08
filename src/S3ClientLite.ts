@@ -11,6 +11,7 @@ import type {
 import * as time from "./time";
 import { MPS3 } from "./mps3";
 import { parseListObjectsV2CommandOutput } from "./xml";
+import { MPS3Error } from "./errors";
 
 export type FetchFn = (url: string, options?: object) => Promise<Response>;
 
@@ -66,12 +67,13 @@ export class S3ClientLite {
         console.warn("listObjectV2: 429, retrying");
         await new Promise((resolve) => setTimeout(resolve, 1000));
       } else {
-        throw new Error(
+        throw new MPS3Error(
+          "NetworkError",
           `Unexpected response: ${response.status} ${await response.text()}`
         );
       }
     }
-    throw new Error("Cannot contact server");
+    throw new MPS3Error("NetworkError", "Cannot contact server");
   }
 
   async putObject({
@@ -94,7 +96,7 @@ export class S3ClientLite {
       )
     );
     if (response.status !== 200)
-      throw new Error(`Failed to PUT: ${await response.text()}`);
+      throw new MPS3Error("NetworkError", `Failed to PUT: ${await response.text()}`);
 
     return {
       $metadata: { httpStatusCode: response.status },
@@ -141,7 +143,7 @@ export class S3ClientLite {
       case 404:
         return { $metadata: { httpStatusCode: 404 } };
       case 403:
-        throw new Error("Access denied");
+        throw new MPS3Error("AccessDenied", "Access denied");
       default: {
         let content;
         const type = response.headers.get("content-type");
@@ -151,7 +153,7 @@ export class S3ClientLite {
           try {
             content = JSON.parse(text);
           } catch (e) {
-            throw new Error(`Failed to parse response as JSON ${url}`);
+            throw new MPS3Error("InvalidResponse", `Failed to parse response as JSON ${url}`, e);
           }
         }
         return {
