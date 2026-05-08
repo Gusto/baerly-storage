@@ -19,6 +19,7 @@ import {
   type XmlParser,
   url,
   uuid,
+  versionFromUuid,
 } from "./types";
 import type { JSONValue } from "./json";
 import { type UseStore, createStore, get, set } from "idb-keyval";
@@ -223,14 +224,14 @@ export class MPS3 {
       offlineStorage: config.offlineStorage === false ? false : true,
       useVersioning: config.useVersioning || false,
       pollFrequency: config.pollFrequency || MANIFEST_POLL_INTERVAL_MILLIS,
-      clockOffset: Math.floor(config.clockOffset!) || 0,
+      clockOffset: Math.floor(config.clockOffset ?? 0),
       adaptiveClock: config.adaptiveClock === false ? false : true,
       minimizeListObjectsCalls: config.minimizeListObjectsCalls === false ? false : true,
       parser: config.parser || new DOMParser(),
       defaultManifest: {
         bucket: (<Ref>config.defaultManifest)?.bucket || config.defaultBucket,
         key:
-          typeof config.defaultManifest == "string"
+          typeof config.defaultManifest === "string"
             ? config.defaultManifest
             : config.defaultManifest?.key || "manifest.json",
       },
@@ -244,22 +245,30 @@ export class MPS3 {
         "Function-based s3Config.credentials are not supported yet",
       );
 
+    if (config.s3Config.endpoint && typeof config.s3Config.endpoint !== "string") {
+      throw new MPS3Error("InvalidConfig", "Only string s3Config.endpoint is supported");
+    }
+    if (config.s3Config.region && typeof config.s3Config.region !== "string") {
+      throw new MPS3Error("InvalidConfig", "Only string s3Config.region is supported");
+    }
+
     this.endpoint =
-      <string>config.s3Config.endpoint || `https://s3.${config.s3Config.region}.amazonaws.com`;
+      config.s3Config.endpoint || `https://s3.${config.s3Config.region}.amazonaws.com`;
 
     let fetchFn: FetchFn;
 
     if (this.config.s3Config?.credentials) {
+      const creds = this.config.s3Config.credentials;
       const client = new AwsClient({
-        accessKeyId: this.config.s3Config.credentials.accessKeyId!, // required, akin to AWS_ACCESS_KEY_ID
-        secretAccessKey: this.config.s3Config.credentials.secretAccessKey!, // required, akin to AWS_SECRET_ACCESS_KEY
-        sessionToken: this.config.s3Config.credentials.sessionToken!, // akin to AWS_SESSION_TOKEN if using temp credentials
-        region: <string>this.config.s3Config.region || "us-east-1",
+        accessKeyId: creds.accessKeyId, // required, akin to AWS_ACCESS_KEY_ID
+        secretAccessKey: creds.secretAccessKey, // required, akin to AWS_SECRET_ACCESS_KEY
+        ...(creds.sessionToken && { sessionToken: creds.sessionToken }), // akin to AWS_SESSION_TOKEN if using temp credentials
+        region: this.config.s3Config.region || "us-east-1",
         service: "s3",
         retries: 0,
       });
       fetchFn = (url, init) => client.fetch(url, init);
-    } else if (this.endpoint == MPS3.LOCAL_ENDPOINT) {
+    } else if (this.endpoint === MPS3.LOCAL_ENDPOINT) {
       fetchFn = offlineFetch.fetchFn;
     } else {
       fetchFn = (global || window).fetch.bind(global || window);
@@ -584,7 +593,7 @@ export class MPS3 {
     return this._putAll(resolvedValues, {
       manifests,
       keys,
-      await: options.await || this.config.online ? "remote" : "local",
+      await: options.await ?? (this.config.online ? "remote" : "local"),
     });
   }
   /** @internal */
@@ -610,7 +619,7 @@ export class MPS3 {
         if (value !== undefined) {
           let version: VersionId | undefined = this.config.useVersioning
             ? undefined
-            : <VersionId>(<unknown>uuid()); // TODO timestamped versions
+            : versionFromUuid(uuid()); // TODO timestamped versions
           webValues.set(contentRef, value);
 
           contentOperations.push(

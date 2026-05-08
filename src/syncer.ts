@@ -28,14 +28,25 @@ export interface FileState extends JSONArraylessObject {
   replication: b64;
 }
 
-type Merge = any;
+/**
+ * JSON Merge Patch (RFC 7386) over a {@link ManifestFile}.
+ *
+ * Mirrors the assignable subset of `Partial<ManifestFile>` (no recursive
+ * `update` — an update-of-an-update is meaningless). RFC 7386 also permits
+ * `null` inside `files` to signal deletion on apply; that case is written
+ * at runtime via a single boundary cast (see `updateContent`) because
+ * `JSONArrayless` — the constraint `merge<T>` enforces — disallows `null`.
+ */
+type ManifestPatch = {
+  files?: { [url: string]: FileState };
+};
 
 export interface ManifestFile extends JSONArraylessObject {
   files: {
     [url: string]: FileState;
   };
   // JSON-merge-patch update that *this* operation was, the files do not include this
-  update: Merge;
+  update: ManifestPatch;
 }
 const MANIFEST_KEY = "manifest";
 const INITIAL_STATE: ManifestFile & JSONValue = {
@@ -234,7 +245,7 @@ export class Syncer {
       return this.latest_state;
     } catch (err: any) {
       if (err.name === "NoSuchKey") {
-        this.latest_state = INITIAL_STATE;
+        this.latest_state = clone(INITIAL_STATE);
         return this.latest_state;
       } else {
         throw err;
@@ -267,20 +278,25 @@ export class Syncer {
           retry = false;
         do {
           const state = await this.getLatest();
-          state.update = {
-            files: {},
-          };
+          const updateFiles: { [url: string]: FileState } = {};
+          state.update = { files: updateFiles };
 
           for (let [ref, version] of update) {
             const fileUrl = url(ref);
             if (version) {
-              const fileState = {
+              const fileState: FileState = {
                 version: version,
-                replication: options.keys.get(ref)?.replication || "",
+                replication: options.keys.get(ref)?.replication ?? <b64>"",
               };
-              state.update.files[fileUrl] = fileState;
+              updateFiles[fileUrl] = fileState;
             } else {
-              state.update.files[fileUrl] = null;
+              // RFC 7386: `null` inside an inner object signals "delete this
+              // key on apply". `merge()` strips it from the result, so the
+              // settled `ManifestFile.files` never holds `null` — but the
+              // wire-format `update` payload must carry it for replays.
+              // The cast crosses the gap between `JSONArrayless` (no null)
+              // and the protocol's actual permissive shape.
+              updateFiles[fileUrl] = null as unknown as FileState;
             }
           }
           // put versioned write

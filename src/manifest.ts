@@ -118,7 +118,7 @@ export class Manifest {
             fileState.version,
             content.then((res) => res.data),
           );
-        } else if (fileState === null) {
+        } else if (fileState === undefined) {
           subscriber.notify(this.service, undefined, Promise.resolve(undefined));
         }
       }

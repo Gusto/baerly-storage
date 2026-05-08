@@ -35,6 +35,14 @@ export interface XmlParser {
 }
 
 export const uuid = (): UUID => <UUID>crypto.randomUUID();
+
+/**
+ * Re-brand a {@link UUID} as a {@link VersionId}. Used in non-versioned
+ * mode where the synthetic content version is a fresh UUID — the cast
+ * is intentional and centralized here so callers don't sprinkle
+ * `<VersionId><unknown>` workarounds throughout the codebase.
+ */
+export const versionFromUuid = (u: UUID): VersionId => u as unknown as VersionId;
 export const countKey = (number: number): string => uint2strDesc(number, 10);
 export const eq = (a: Ref, b: Ref) => a.bucket === b.bucket && a.key === b.key;
 export const url = (ref: Ref): string => `${ref.bucket}/${ref.key}`;

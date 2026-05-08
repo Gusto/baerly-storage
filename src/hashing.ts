@@ -1,6 +1,6 @@
 import type { Branded } from "./types";
 
-export type b64 = Branded<string, "VersionId">;
+export type b64 = Branded<string, "b64">;
 
 /** @internal */
 export async function sha256b64(message: string): Promise<b64> {

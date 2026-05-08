@@ -1,5 +1,5 @@
 import { OMap } from "./OMap";
-import { type DeleteValue, uuid, type ResolvedRef, url } from "./types";
+import { type DeleteValue, type ResolvedRef, url } from "./types";
 import type { JSONValue } from "./json";
 import { type UseStore, getMany, get, set, delMany, keys } from "idb-keyval";
 import { MPS3Error } from "./errors";
@@ -11,7 +11,7 @@ const PADDING = 6;
 const entryKey = (index: number): string => `write-${index.toString().padStart(PADDING, "0")}`;
 
 export class OperationQueue<L extends string> {
-  private session = uuid();
+  private indexFor: WeakMap<Operation, number> = new WeakMap();
   proposedOperations: Map<Operation, [Map<ResolvedRef, JSONValue | DeleteValue>, number]> =
     new Map();
   operationLabels: Map<string, Operation> = new Map();
@@ -38,7 +38,7 @@ export class OperationQueue<L extends string> {
       }
       this.lastIndex++;
       const key = entryKey(this.lastIndex);
-      (<any>write)[this.session] = this.lastIndex;
+      this.indexFor.set(write, this.lastIndex);
       await set(
         key,
         [...values.entries()].map(([ref, val]) => [JSON.stringify(ref), val]),
@@ -53,7 +53,7 @@ export class OperationQueue<L extends string> {
 
     if (this.db) {
       if (this.load && !isLoad) await this.load;
-      const index = (<any>write)[this.session];
+      const index = this.indexFor.get(write);
 
       if (index === undefined)
         throw new MPS3Error("Internal", "Cannot label an unproposed operation");
@@ -70,7 +70,9 @@ export class OperationQueue<L extends string> {
       this.operationLabels.delete(label);
       if (this.db) {
         if (this.load && !isLoad) await this.load;
-        const index = (<any>operation)[this.session];
+        const index = this.indexFor.get(operation);
+        if (index === undefined)
+          throw new MPS3Error("Internal", "Cannot confirm an unproposed operation");
         const keys = [entryKey(index), `label-${index}`];
         await delMany(keys, this.db);
         console.log(`DEL ${keys}`);
@@ -87,7 +89,8 @@ export class OperationQueue<L extends string> {
     this.proposedOperations.delete(operation);
     if (this.db) {
       if (this.load && !isLoad) await this.load;
-      const index = (<any>operation)[this.session];
+      const index = this.indexFor.get(operation);
+      if (index === undefined) return;
       await delMany([`write-${index}`, `label-${index}`], this.db);
     }
   }
