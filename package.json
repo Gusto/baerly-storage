@@ -1,11 +1,8 @@
 {
     "name": "mps3",
     "description": "Provide clientside multiplayer and optimistic updates over any s3-compatible storage API",
-    "version": "0.0.81",
+    "version": "1.0.0",
     "license": "MIT",
-    "author": {
-        "name": "Tom Larkworthy"
-    },
     "type": "module",
     "main": "./dist/mps3.js",
     "module": "./dist/mps3.js",
