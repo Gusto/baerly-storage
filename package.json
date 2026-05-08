@@ -30,7 +30,7 @@
     "devDependencies": {
         "@types/node": "^22.9.0",
         "@typescript/native-preview": "^7.0.0-dev.20260508.1",
-        "@xmldom/xmldom": "^0.8.10",
+        "@xmldom/xmldom": "^0.9.0",
         "aws4fetch": "1.0.20",
         "fake-indexeddb": "^6.2.5",
         "idb-keyval": "^6.2.1",

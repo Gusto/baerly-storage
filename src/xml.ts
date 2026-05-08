@@ -1,11 +1,10 @@
-/// <reference lib="dom" />
-
 import type { ListObjectsV2CommandOutput } from "./s3-types";
+import type { XmlNode, XmlParser } from "./types";
 import { MPS3Error } from "./errors";
 
 export const parseListObjectsV2CommandOutput = (
   xml: string,
-  domParser: DOMParser,
+  domParser: XmlParser,
 ): ListObjectsV2CommandOutput => {
   const doc = domParser.parseFromString(xml, "text/xml");
   if (!doc) throw new MPS3Error("InvalidResponse", `Invalid XML: ${xml}`);
@@ -13,7 +12,7 @@ export const parseListObjectsV2CommandOutput = (
   const contents = doc.getElementsByTagName("Contents");
   //if (!contents) throw new Error(`Invalid XML: ${xml}`);
 
-  const val = (el: Element | Document, name: string) => {
+  const val = (el: XmlNode, name: string) => {
     const c = el.getElementsByTagName(name)[0]?.textContent;
     return c ? decodeURIComponent(c.replace(/\+/g, " ")) : undefined;
   };

@@ -11,7 +11,15 @@ import { AwsClient } from "aws4fetch";
 import { type FetchFn, S3ClientLite } from "./S3ClientLite";
 import { OMap } from "./OMap";
 import { Manifest } from "./manifest";
-import { type DeleteValue, type Ref, type ResolvedRef, type VersionId, url, uuid } from "./types";
+import {
+  type DeleteValue,
+  type Ref,
+  type ResolvedRef,
+  type VersionId,
+  type XmlParser,
+  url,
+  uuid,
+} from "./types";
 import type { JSONValue } from "./json";
 import { type UseStore, createStore, get, set } from "idb-keyval";
 import * as time from "./time";
@@ -56,11 +64,22 @@ export interface MPS3Config {
   s3Config: S3ClientConfig;
 
   /**
-   * DOMParser to use to parse XML responses from S3. The browser has one
-   * but in other Javascript environments you may need to provide one.
-   * @defaultValue new window.DOMParser()
+   * DOMParser used to parse S3 list-object XML responses.
+   *
+   * The parser MUST NOT expand external entities or DTDs — S3 responses
+   * never contain a DOCTYPE in normal operation, and a permissive parser
+   * exposes the client to XXE / billion-laughs attacks if a response is
+   * tampered with in transit or returned by a malicious endpoint.
+   *
+   * Browsers: the default `new window.DOMParser()` is safe.
+   *
+   * Node / non-browser runtimes: use `@xmldom/xmldom@^0.9` (0.9.x and
+   * later no longer interpret DTD entity definitions by default).
+   * Earlier 0.8.x releases are deprecated and not recommended.
+   *
+   * @defaultValue `new window.DOMParser()`
    */
-  parser?: DOMParser;
+  parser?: XmlParser;
 
   /**
    * Should the client attempt to upstreams?
@@ -117,7 +136,7 @@ export interface ResolvedMPS3Config extends MPS3Config {
   clockOffset: number;
   adaptiveClock: boolean;
   minimizeListObjectsCalls: boolean;
-  parser: DOMParser;
+  parser: XmlParser;
   log: (...args: any) => void;
 }
 

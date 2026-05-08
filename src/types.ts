@@ -20,6 +20,20 @@ export type ManifestKey = Branded<string, "Manifest">;
 export type UUID = Branded<string, "UUID">;
 export type VersionId = Branded<string, "VersionId">;
 
+/**
+ * Structural minimum of the XML parser surface used by `parseListObjectsV2CommandOutput`.
+ * Defined here (instead of relying on `lib.dom` `DOMParser`) so consumers can plug in
+ * `@xmldom/xmldom` (whose types decoupled from `lib.dom` in 0.9.x) or any other
+ * conforming parser without TypeScript rejecting the substitution.
+ */
+export interface XmlNode {
+  readonly textContent: string | null;
+  getElementsByTagName(name: string): ArrayLike<XmlNode>;
+}
+export interface XmlParser {
+  parseFromString(source: string, mimeType: string): XmlNode | null | undefined;
+}
+
 export const uuid = (): UUID => <UUID>crypto.randomUUID();
 export const countKey = (number: number): string => uint2strDesc(number, 10);
 export const eq = (a: Ref, b: Ref) => a.bucket === b.bucket && a.key === b.key;
