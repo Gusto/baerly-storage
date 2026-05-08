@@ -1,4 +1,4 @@
-import { expect, test, describe } from "bun:test";
+import { expect, test, describe } from "vitest";
 import { OperationQueue } from "../operationQueue";
 import { DeleteValue, ResolvedRef, uuid } from "types";
 import { JSONValue } from "json";

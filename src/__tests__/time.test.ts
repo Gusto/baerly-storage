@@ -1,4 +1,4 @@
-import { expect, test, describe, beforeAll } from "bun:test";
+import { expect, test, describe, beforeAll } from "vitest";
 import { MPS3 } from "mps3";
 import { dateToSecs } from "time";
 import { uuid } from "types";

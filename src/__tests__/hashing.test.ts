@@ -1,4 +1,4 @@
-import { expect, test, describe } from "bun:test";
+import { expect, test, describe } from "vitest";
 
 import {
     b64,
@@ -26,15 +26,15 @@ describe("or and inside", () => {
 
             const a_or_b = or(a, b);
 
-            expect(inside(a, b)).toBeFalse();
-            expect(inside(b, a)).toBeFalse();
-            expect(inside(a_or_b, a)).toBeFalse();
-            expect(inside(a_or_b, b)).toBeFalse();
-            expect(inside(a, a_or_b)).toBeTrue();
-            expect(inside(b, a_or_b)).toBeTrue();
-            expect(inside(a, a)).toBeTrue();
-            expect(inside(b, b)).toBeTrue();
-            expect(inside(a_or_b, a_or_b)).toBeTrue();
+            expect(inside(a, b)).toBe(false);
+            expect(inside(b, a)).toBe(false);
+            expect(inside(a_or_b, a)).toBe(false);
+            expect(inside(a_or_b, b)).toBe(false);
+            expect(inside(a, a_or_b)).toBe(true);
+            expect(inside(b, a_or_b)).toBe(true);
+            expect(inside(a, a)).toBe(true);
+            expect(inside(b, b)).toBe(true);
+            expect(inside(a_or_b, a_or_b)).toBe(true);
         }
     });
 });

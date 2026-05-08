@@ -1,4 +1,4 @@
-import { expect, test, describe } from "bun:test";
+import { expect, test, describe } from "vitest";
 import { parseListObjectsV2CommandOutput } from "../xml";
 import { DOMParser } from "@xmldom/xmldom";
 const parser = new DOMParser();

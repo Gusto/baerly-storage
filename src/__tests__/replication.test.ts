@@ -1,4 +1,4 @@
-import { expect, test, it, describe } from "bun:test";
+import { expect, test, it, describe } from "vitest";
 import { MPS3 } from "mps3";
 import { DOMParser } from "@xmldom/xmldom";
 import { ManifestKey, uuid } from "types";
@@ -45,13 +45,13 @@ describe("replicate", () => {
         expect(
             mirrorResult.mark <=
                 `${source.config.defaultManifest.key}@${before}`
-        ).toBeTrue();
+        ).toBe(true);
         expect(
             mirrorResult.mark >= `${source.config.defaultManifest.key}@${after}`
-        ).toBeTrue();
+        ).toBe(true);
 
         // Check that the new object is mirrored
-        expect(await target.get("a")).toBeTrue();
+        expect(await target.get("a")).toBe(true);
     });
 
     describe("ordering", () => {

@@ -1,5 +1,5 @@
 import { uint2str, str2uint, uint2strDesc, str2uintDesc } from "../types";
-import { expect, describe, it } from "bun:test";
+import { expect, describe, it } from "vitest";
 
 describe("datatypes", () => {
   describe("uint2str", () => {

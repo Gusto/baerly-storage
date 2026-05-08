@@ -6,7 +6,7 @@ import {
   beforeAll,
   beforeEach,
   afterEach,
-} from "bun:test";
+} from "vitest";
 import { MPS3, MPS3Config } from "mps3";
 import { DOMParser } from "@xmldom/xmldom";
 import { uuid } from "types";
