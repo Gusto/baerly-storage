@@ -2,16 +2,9 @@ export type JSONArraylessObject = { [x: string]: JSONArrayless };
 export type JSONArrayless = string | number | boolean | JSONArraylessObject;
 
 export type JSONObject = { [x: string]: JSONValue };
-export type JSONValue =
-  | string
-  | number
-  | boolean
-  | null
-  | JSONObject
-  | Array<JSONValue>;
+export type JSONValue = string | number | boolean | null | JSONObject | Array<JSONValue>;
 
-export const clone = <T extends JSONValue>(state: T): T =>
-  JSON.parse(JSON.stringify(state));
+export const clone = <T extends JSONValue>(state: T): T => JSON.parse(JSON.stringify(state));
 
 /**
  * JSON Merge Patch (RFC 7386)
@@ -20,7 +13,7 @@ export const clone = <T extends JSONValue>(state: T): T =>
  */
 export function merge<T extends JSONArrayless>(
   target: T | undefined,
-  patch: Partial<T> | null | undefined
+  patch: Partial<T> | null | undefined,
 ): T | undefined {
   // If patch is an array or a primitive, just return it
 
@@ -46,7 +39,7 @@ export function fold<T extends JSONArrayless>(
 ): Partial<T> | undefined {
   return patches.reduce<Partial<T> | undefined>(
     (acc, patch) => merge<T>(<T>acc, patch),
-    <Partial<T>>{}
+    <Partial<T>>{},
   );
 }
 
@@ -56,7 +49,7 @@ export function fold<T extends JSONArrayless>(
  */
 export function diff<T extends JSONArrayless>(
   target: T | undefined,
-  source: T | undefined
+  source: T | undefined,
 ): Partial<T> | undefined | null {
   if (source === target) return undefined;
   if (source !== undefined && target === undefined) return null;

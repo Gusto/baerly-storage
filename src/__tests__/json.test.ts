@@ -44,7 +44,7 @@ const rndStructuredDoc = (): JSONArrayless => {
 const testCase = (
   label: string,
   expr: (...args: any[]) => any,
-  expected: (...args: any[]) => any
+  expected: (...args: any[]) => any,
 ) =>
   test(`${label}: ${expr.toString()} == ${expected}`, () => {
     if (expr.length > 0) {
@@ -71,43 +71,43 @@ describe("JSON Merge Patch (RFC 7386)", () => {
   testCase(
     "identity",
     (a) => merge(a, undefined),
-    (a) => a
+    (a) => a,
   );
 
   testCase(
     "case",
     () => merge<JSONArrayless>(0, {}),
-    () => ({})
+    () => ({}),
   );
 
   testCase(
     "case",
     () => merge({ a: "" }, {}),
-    () => ({ a: "" })
+    () => ({ a: "" }),
   );
 
   testCase(
     "deletion",
     (a) => merge(a, null),
-    (_a) => undefined
+    (_a) => undefined,
   );
 
   testCase(
     "case",
     () => merge<JSONArrayless>(true, { a: {} }),
-    () => ({ a: {} })
+    () => ({ a: {} }),
   );
 
   testCase(
     "case",
     () => merge({}, { a: {} }),
-    () => ({ a: {} })
+    () => ({ a: {} }),
   );
 
   testCase(
     "case",
     () => merge<JSONArrayless>({ a: false }, true),
-    () => true
+    () => true,
   );
 
   test(
@@ -117,26 +117,26 @@ describe("JSON Merge Patch (RFC 7386)", () => {
       const b = rndStructuredDoc();
       const c = rndStructuredDoc();
       expect(merge(a, merge(b, c))).toEqual(merge(merge(a, b), c));
-    })
+    }),
   );
 
   testCase(
     "idempotent",
     (a) => merge(a, a),
-    (a) => a
+    (a) => a,
   );
 
   describe("fold", () => {
     testCase(
       "idempotent",
       (a, b, c) => fold(a, b, c),
-      (a, b, c) => fold<JSONArrayless>(fold(a, b, c), a, b, c)
+      (a, b, c) => fold<JSONArrayless>(fold(a, b, c), a, b, c),
     );
 
     testCase(
       "log repair",
       (a, b, c) => fold<JSONArrayless>(fold(a, c), b, c),
-      (a, b, c) => fold(a, b, c)
+      (a, b, c) => fold(a, b, c),
     );
   });
 });
@@ -146,49 +146,49 @@ describe("JSON-merge-diff", () => {
   testCase(
     "identity",
     (a) => diff(a, undefined),
-    (a) => a
+    (a) => a,
   );
 
   testCase(
     "identity",
     (a) => diff(a, a),
-    (_a) => undefined
+    (_a) => undefined,
   );
 
   testCase(
     "case",
     () => diff<JSONArrayless>({}, 0),
-    () => ({})
+    () => ({}),
   );
 
   testCase(
     "case",
     () => diff({ a: {} }, {}),
-    () => ({ a: {} })
+    () => ({ a: {} }),
   );
 
   testCase(
     "case",
     () => diff({}, { a: {} }),
-    () => ({ a: null })
+    () => ({ a: null }),
   );
 
   testCase(
     "case",
     () => diff({ a: false }, { a: 0 }),
-    () => ({ a: false })
+    () => ({ a: false }),
   );
 
   testCase(
     "case",
     () => diff({ a: {} }, { a: true }),
-    () => ({ a: {} })
+    () => ({ a: {} }),
   );
 
   testCase(
     "inverse",
     (a, b) => merge(a, diff(b, a)),
-    (_a, b) => b
+    (_a, b) => b,
   );
 
   test(
@@ -198,6 +198,6 @@ describe("JSON-merge-diff", () => {
       const b = rndDoc();
       const c = diff(a, b);
       expect(merge(b, c)).toEqual(a);
-    })
+    }),
   );
 });

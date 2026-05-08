@@ -2,8 +2,7 @@ import type { ResolvedMPS3Config } from "./mps3";
 import { uint2strDesc } from "./types";
 import { TIMESTAMP_BIT_WIDTH } from "./constants";
 
-export const timestamp = (epoch: number = 0) =>
-  uint2strDesc(epoch, TIMESTAMP_BIT_WIDTH);
+export const timestamp = (epoch: number = 0) => uint2strDesc(epoch, TIMESTAMP_BIT_WIDTH);
 
 /**
  * Converts timestamps like LastModified to their seconds since UTC epoch
@@ -12,16 +11,14 @@ export const dateToSecs = (dateTimestamp: string): number => {
   return Math.floor(new Date(dateTimestamp).getTime() / 1000);
 };
 
-export const measure = async <Result>(
-  work: Promise<Result>
-): Promise<[Result, number]> => {
+export const measure = async <Result>(work: Promise<Result>): Promise<[Result, number]> => {
   const start = Date.now();
   return [await work, Date.now() - start];
 };
 
 export const adjustClock = (
   response: Promise<Response>,
-  config: ResolvedMPS3Config
+  config: ResolvedMPS3Config,
 ): Promise<Response> => {
   if (config.adaptiveClock) {
     return measure(response).then(([response, latency]) => {
@@ -53,7 +50,7 @@ export const adjustClock = (
             "server_time",
             server_time,
             "config.clockOffset",
-            config.clockOffset
+            config.clockOffset,
           );
         }
       }

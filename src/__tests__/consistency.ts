@@ -19,8 +19,7 @@ export const check = (grounding: Grounding, kb: Knowledge): boolean => {
   }
 };
 
-export const union = (a: Knowledge, b: Knowledge): Knowledge =>
-  Object.assign({}, a, b);
+export const union = (a: Knowledge, b: Knowledge): Knowledge => Object.assign({}, a, b);
 
 export abstract class CausalSystem {
   global_time = 0;
@@ -65,23 +64,15 @@ export class CentralisedCausalSystem extends CausalSystem {
 
     Object.assign(this.knowledge_base, {
       // Indicate the progression of time on the client clock
-      [`/*P1*/ ${this.symbol(client, client_clock - 1)} < ${this.symbol(
-        client,
-        client_clock,
-      )}`]: null,
+      [`/*P1*/ ${this.symbol(client, client_clock - 1)} < ${this.symbol(client, client_clock)}`]:
+        null,
       // The source tick happened-before the client clock
-      [`/*P2*/ ${this.symbol(source, source_time)} < ${this.symbol(
-        client,
-        client_clock,
-      )}`]: null,
+      [`/*P2*/ ${this.symbol(source, source_time)} < ${this.symbol(client, client_clock)}`]: null,
     });
     if (this.previous_seen[client]) {
       Object.assign(this.knowledge_base, {
         // The previously seen message happens before
-        [`/*P3*/ ${this.previous_seen[client]} < ${this.symbol(
-          source,
-          source_time,
-        )}`]: null,
+        [`/*P3*/ ${this.previous_seen[client]} < ${this.symbol(source, source_time)}`]: null,
       });
     }
     if (source !== client) {
@@ -124,25 +115,17 @@ export class CentralisedOfflineFirstCausalSystem extends CausalSystem {
 
     Object.assign(this.knowledge_base, {
       // Indicate the progression of time on the client clock
-      [`/*P1*/ ${this.symbol(client, client_clock - 1)} < ${this.symbol(
-        client,
-        client_clock,
-      )}`]: null,
+      [`/*P1*/ ${this.symbol(client, client_clock - 1)} < ${this.symbol(client, client_clock)}`]:
+        null,
       // The source tick happened-before the client clock
-      [`/*P2*/ ${this.symbol(source, source_time)} < ${this.symbol(
-        client,
-        client_clock,
-      )}`]: null,
+      [`/*P2*/ ${this.symbol(source, source_time)} < ${this.symbol(client, client_clock)}`]: null,
     });
 
     const seenForClient = this.previous_seen[client]!;
     if (seenForClient[source]) {
       Object.assign(this.knowledge_base, {
         // The previously seen message happens before
-        [`/*P3*/ ${seenForClient[source]} < ${this.symbol(
-          source,
-          source_time,
-        )}`]: null,
+        [`/*P3*/ ${seenForClient[source]} < ${this.symbol(source, source_time)}`]: null,
       });
     }
     if (source !== client) {

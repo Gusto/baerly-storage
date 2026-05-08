@@ -12,16 +12,13 @@ import * as time from "./time";
 import { MPS3 } from "./mps3";
 import { parseListObjectsV2CommandOutput } from "./xml";
 import { MPS3Error } from "./errors";
-import {
-  LIST_OBJECT_MAX_RETRIES,
-  RATE_LIMIT_BACKOFF_MILLIS,
-} from "./constants";
+import { LIST_OBJECT_MAX_RETRIES, RATE_LIMIT_BACKOFF_MILLIS } from "./constants";
 
 export type FetchFn = (url: string, options?: object) => Promise<Response>;
 
 const retry = async <T>(
   fn: () => Promise<T>,
-  { retries = Number.MAX_VALUE, delay = 100, max_delay = 10000 } = {}
+  { retries = Number.MAX_VALUE, delay = 100, max_delay = 10000 } = {},
 ): Promise<T> => {
   try {
     return await fn();
@@ -42,7 +39,7 @@ export class S3ClientLite {
   constructor(
     private fetch: FetchFn,
     private endpoint: string,
-    private mps3: MPS3
+    private mps3: MPS3,
   ) {}
 
   private getUrl(bucket: string, key?: string, additional?: string) {
@@ -51,31 +48,24 @@ export class S3ClientLite {
     }${additional || ""}`;
   }
 
-  async listObjectV2(
-    command: ListObjectsV2CommandInput
-  ): Promise<ListObjectsV2CommandOutput> {
+  async listObjectV2(command: ListObjectsV2CommandInput): Promise<ListObjectsV2CommandOutput> {
     for (let i = 0; i < LIST_OBJECT_MAX_RETRIES; i++) {
       const url = this.getUrl(
         command.Bucket!,
         undefined,
-        `/?list-type=2&prefix=${command.Prefix}&start-after=${command.StartAfter}`
+        `/?list-type=2&prefix=${command.Prefix}&start-after=${command.StartAfter}`,
       );
       const response = await retry(() => this.fetch(url, {}));
 
       if (response.status === 200) {
-        return parseListObjectsV2CommandOutput(
-          await response.text(),
-          this.mps3.config.parser
-        );
+        return parseListObjectsV2CommandOutput(await response.text(), this.mps3.config.parser);
       } else if (response.status === 429) {
         console.warn("listObjectV2: 429, retrying");
-        await new Promise((resolve) =>
-          setTimeout(resolve, RATE_LIMIT_BACKOFF_MILLIS)
-        );
+        await new Promise((resolve) => setTimeout(resolve, RATE_LIMIT_BACKOFF_MILLIS));
       } else {
         throw new MPS3Error(
           "NetworkError",
-          `Unexpected response: ${response.status} ${await response.text()}`
+          `Unexpected response: ${response.status} ${await response.text()}`,
         );
       }
     }
@@ -98,8 +88,8 @@ export class S3ClientLite {
             //...(ChecksumSHA256 && { "x-amz-content-sha256": ChecksumSHA256 }),
           },
         }),
-        this.mps3.config
-      )
+        this.mps3.config,
+      ),
     );
     if (response.status !== 200)
       throw new MPS3Error("NetworkError", `Failed to PUT: ${await response.text()}`);
@@ -118,9 +108,7 @@ export class S3ClientLite {
     Bucket,
     Key,
   }: DeleteObjectCommandInput): Promise<DeleteObjectCommandOutput> {
-    const response = await retry(() =>
-      this.fetch(this.getUrl(Bucket!, Key), { method: "DELETE" })
-    );
+    const response = await retry(() => this.fetch(this.getUrl(Bucket!, Key), { method: "DELETE" }));
     return { $metadata: { httpStatusCode: response.status } };
   }
 
@@ -130,19 +118,15 @@ export class S3ClientLite {
     VersionId,
     IfNoneMatch,
   }: GetObjectCommandInput): Promise<GetObjectCommandOutput> {
-    const url = this.getUrl(
-      Bucket!,
-      Key,
-      VersionId ? `?versionId=${VersionId}` : ""
-    );
+    const url = this.getUrl(Bucket!, Key, VersionId ? `?versionId=${VersionId}` : "");
     const response = await retry(() =>
       time.adjustClock(
         this.fetch(url, {
           method: "GET",
           headers: { "If-None-Match": IfNoneMatch! },
         }),
-        this.mps3.config
-      )
+        this.mps3.config,
+      ),
     );
 
     switch (response.status) {

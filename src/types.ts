@@ -1,8 +1,8 @@
 import { MPS3Error } from "./errors";
 
-declare const __brand: unique symbol
-type Brand<B> = { [__brand]: B }
-export type Branded<T, B> = T & Brand<B>
+declare const __brand: unique symbol;
+type Brand<B> = { [__brand]: B };
+export type Branded<T, B> = T & Brand<B>;
 
 export type DeleteValue = undefined;
 
@@ -53,4 +53,3 @@ export const str2uintDesc = (str: string, bits: number): number => {
   const num = parseInt(str, 32); // Convert base32 string to number
   return maxValue - num;
 };
-

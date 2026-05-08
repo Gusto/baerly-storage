@@ -1,9 +1,6 @@
 import { createStore, get, set, del, keys } from "idb-keyval";
 import { MPS3Error } from "./errors";
-export const fetchFn = async (
-  url_: string,
-  init?: RequestInit
-): Promise<Response> => {
+export const fetchFn = async (url_: string, init?: RequestInit): Promise<Response> => {
   const url = new URL(url_);
   const params = new URLSearchParams(url.search);
   const segments = url.pathname.split("/");
@@ -16,11 +13,9 @@ export const fetchFn = async (
   if (params.get("list-type")) {
     const prefix = encodeURIComponent(params.get("prefix") || "");
     const start_at = encodeURIComponent(params.get("start-after") || "");
-    const list = (await keys(db)).filter(
-      (k) => `${k}`.startsWith(prefix) && `${k}` > start_at
-    );
+    const list = (await keys(db)).filter((k) => `${k}`.startsWith(prefix) && `${k}` > start_at);
     body = `<ListBucketResult>${list.map(
-      (key) => `<Contents><Key>${key}</Key></Contents>`
+      (key) => `<Contents><Key>${key}</Key></Contents>`,
     )}</ListBucketResult>`;
   } else if (init?.method === "GET") {
     body = await get(key, db);

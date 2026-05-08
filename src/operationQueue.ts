@@ -8,15 +8,12 @@ export type Operation = Promise<unknown>;
 
 const PADDING = 6;
 
-const entryKey = (index: number): string =>
-  `write-${index.toString().padStart(PADDING, "0")}`;
+const entryKey = (index: number): string => `write-${index.toString().padStart(PADDING, "0")}`;
 
 export class OperationQueue<L extends string> {
   private session = uuid();
-  proposedOperations: Map<
-    Operation,
-    [Map<ResolvedRef, JSONValue | DeleteValue>, number]
-  > = new Map();
+  proposedOperations: Map<Operation, [Map<ResolvedRef, JSONValue | DeleteValue>, number]> =
+    new Map();
   operationLabels: Map<string, Operation> = new Map();
   private db?: UseStore;
   private lastIndex: number = 0;
@@ -29,7 +26,7 @@ export class OperationQueue<L extends string> {
   async propose(
     write: Operation,
     values: Map<ResolvedRef, JSONValue | DeleteValue>,
-    isLoad: boolean = false
+    isLoad: boolean = false,
   ) {
     this.proposedOperations.set(write, [values, this.op++]);
     if (this.db) {
@@ -45,7 +42,7 @@ export class OperationQueue<L extends string> {
       await set(
         key,
         [...values.entries()].map(([ref, val]) => [JSON.stringify(ref), val]),
-        this.db
+        this.db,
       );
       console.log(`STORE ${key} ${JSON.stringify([...values.entries()])}`);
     }
@@ -108,10 +105,7 @@ export class OperationQueue<L extends string> {
 
   async restore(
     store: UseStore,
-    schedule: (
-      write: Map<ResolvedRef, JSONValue | DeleteValue>,
-      label?: L
-    ) => Promise<unknown>
+    schedule: (write: Map<ResolvedRef, JSONValue | DeleteValue>, label?: L) => Promise<unknown>,
   ) {
     this.db = store;
     this.proposedOperations.clear();
@@ -119,9 +113,7 @@ export class OperationQueue<L extends string> {
     this.lastIndex = 0;
     this.load = new Promise(async (resolve) => {
       const allKeys: string[] = await keys(this.db);
-      const entryKeys = allKeys
-        .filter((key: any) => key.startsWith("write-"))
-        .sort();
+      const entryKeys = allKeys.filter((key: any) => key.startsWith("write-")).sort();
       console.log("RESTORE", entryKeys);
       const entryValues = await getMany(entryKeys, this.db);
 
@@ -133,10 +125,7 @@ export class OperationQueue<L extends string> {
       for (let i = 0; i < entryKeys.length; i++) {
         const key = entryKeys[i]!;
         const index = parseInt(key.split("-")[1]!);
-        const entry = entryValues[i].map(([ref, val]: [string, any]) => [
-          JSON.parse(ref),
-          val,
-        ]);
+        const entry = entryValues[i].map(([ref, val]: [string, any]) => [JSON.parse(ref), val]);
         const label = await get<L>(`label-${index}`, this.db);
         if (!entry) continue;
         const values = new Map<ResolvedRef, JSONValue | DeleteValue>(entry);
