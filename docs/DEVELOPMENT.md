@@ -98,16 +98,17 @@ ref). Don't hand-edit; the next `pnpm doc` will overwrite.
 
 ## The verification ritual
 
-Before declaring any change done:
-
 ```sh
-pnpm verify       # typecheck + test + format:check + lint
-pnpm build        # additionally exercise the build path
+pnpm verify       # typecheck + lint — guaranteed green on main
+pnpm test         # vitest run — has known baseline failures (see above)
+pnpm format:check # currently red on ~20 pre-existing files; run pnpm format to fix
+pnpm build        # exercise the build path (rolldown bundle)
 ```
 
-`pnpm verify` is the single command an agent should run before claiming
-work complete. Expect the pre-existing failures listed above; what you
-care about is that *your* changes don't introduce new ones.
+`pnpm verify` is intentionally narrow — it covers only the checks that are
+reliably green so a non-zero exit means *you* broke something. For tests
+and formatting, compare your output against the `main` baseline to
+distinguish your regressions from the pre-existing state.
 
 ## Common pitfalls
 

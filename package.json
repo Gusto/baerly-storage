@@ -24,8 +24,12 @@
         "build": "rolldown -c",
         "prepare": "pnpm run build",
         "format": "oxfmt src",
+        "format:check": "oxfmt --check src",
         "lint": "oxlint src",
-        "test:randomize": "while pnpm test; [ $? -ne 1 ] ; do :; done"
+        "test:randomize": "while pnpm test; [ $? -ne 1 ] ; do :; done",
+        "verify": "pnpm run typecheck && pnpm run lint",
+        "dev:storage": "docker-compose up -d",
+        "dev:storage:stop": "docker-compose down"
     },
     "devDependencies": {
         "@aws-sdk/client-s3": "3.370.0",

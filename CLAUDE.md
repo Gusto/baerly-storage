@@ -23,22 +23,17 @@ Don't introduce alternate tooling without justification.
 
 ## Verification ritual
 
-Run before claiming work is done:
-
 ```sh
-pnpm verify          # typecheck + test + format:check + lint, no writes
+pnpm verify          # typecheck + lint (the two checks that are reliably clean)
+pnpm test            # vitest run — read "Known baseline test failures" below
+pnpm format:check    # oxfmt --check src — currently red on ~20 pre-existing files
+pnpm build           # typedoc + rolldown bundle
 ```
 
-…which is shorthand for:
-
-```sh
-pnpm typecheck       # tsgo --noEmit
-pnpm test            # vitest run
-pnpm format:check    # oxfmt --check src
-pnpm lint            # oxlint src
-```
-
-For build-path coverage, also run `pnpm build` (typedoc + rolldown bundle).
+`pnpm verify` is intentionally narrow: typecheck and lint are guaranteed
+green on `main`, so a non-zero exit *is* a regression you introduced. Tests
+and format:check are run separately because their baseline isn't clean
+(see below) — diff your output against `main` to spot real regressions.
 
 ### Known baseline test failures
 
