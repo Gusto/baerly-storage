@@ -30,10 +30,11 @@ appliesNotTo: src/__tests__/**
 
 ## Public API surface
 - The `MPS3` class in `src/mps3.ts` is the public API. Internal methods
-  must be prefixed `_` and tagged `/** @internal */` so typedoc skips
-  them.
+  must be prefixed `_` and tagged `/** @internal */` to mark them as
+  not part of the public API.
 - New public methods need JSDoc with `@param`, `@returns`, `@throws`,
-  and an `@example` block. Typedoc consumes these into `docs/api/`.
+  and an `@example` block. IDE hover and `tsgo` surface these from
+  source — there's no rendered markdown reference.
 
 ## Protocol code (`syncer.ts`, `manifest.ts`)
 - Read `docs/sync_protocol.md` and `docs/causal_consistency_checking.md`

@@ -16,7 +16,8 @@ We'll work through `keys()` — list every key in the default manifest.
 ### Where to add the method
 
 Public methods live on the `MPS3` class in `src/mps3.ts`. Internal methods
-are prefixed with `_` and tagged `/** @internal */` so typedoc skips them.
+are prefixed with `_` and tagged `/** @internal */` to mark them as not
+part of the public API.
 
 ```ts
 // src/mps3.ts (inside class MPS3)
@@ -66,7 +67,8 @@ public async keys(
 
 ### Conventions to follow
 
-- **JSDoc with `@example`.** Typedoc renders these into `docs/api/`.
+- **JSDoc with `@example`.** IDE hover and `tsgo` surface these
+  directly from source — they are the public-API reference.
 - **`Ref` resolution.** Always merge the user's `options.manifest` over
   `this.config.defaultManifest` to fill in defaults. See `mps3.get` for
   the canonical pattern.
@@ -113,7 +115,6 @@ so the behavior is exercised under random write interleavings.
 
 ```sh
 pnpm verify        # typecheck + test + format:check + lint
-pnpm doc           # regenerate docs/api/
 ```
 
 ---

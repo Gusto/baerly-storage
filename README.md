@@ -33,7 +33,7 @@ MPS3 is built on strong theoretical foundations. Technical articles are written 
 To use this library you construct an MP3S class.
 
 
-[mps3 class](docs/api/classes/MPS3.md)
+[mps3 class](src/mps3.ts)
 
 ### Quick start ([Codepen](https://codepen.io/tomlarkworthy/pen/QWzybxd))
 ```js
@@ -84,6 +84,6 @@ There is no in-built authorization. Every use-case needs different authorization
 ### Advanced Usage
 
 Consult the [API Documentation
-](docs/api/classes/MPS3.md) for advanced usage.
+](src/mps3.ts) for advanced usage.
 - atomic batch operations
 - multiple manifests

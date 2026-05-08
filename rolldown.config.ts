@@ -8,5 +8,5 @@ export default defineConfig({
         format: "esm",
         minify: true,
     },
-    plugins: [dts()],
+    plugins: [dts({ tsgo: true })],
 });
