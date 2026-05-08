@@ -1,3 +1,6 @@
+# Claude Things
+.claude/reviews/
+
 # Dependencies
 node_modules/
 .pnpm-store/
