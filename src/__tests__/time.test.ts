@@ -47,7 +47,7 @@ describe("clock behavior", () => {
       await s3.createBucket({
         Bucket: "clock",
       });
-    } catch (e) {}
+    } catch {}
   });
 
   test("Stale writes are dropped", async () => {

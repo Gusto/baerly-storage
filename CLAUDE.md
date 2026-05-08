@@ -83,7 +83,6 @@ Read in this order to build a mental model:
 | `src/errors.ts` | `MPS3Error` class. All thrown errors should be instances. |
 | `src/hashing.ts`, `src/time.ts`, `src/xml.ts`, `src/OMap.ts`, `src/indexdb.ts` | Utilities. |
 | `src/aws4fetch.d.ts` | Local typings for the `aws4fetch` import. |
-| `src/datatypes.ts` | Currently empty placeholder. Don't import. |
 
 The full lifecycle of `put()` and `subscribe()` is documented in
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — read it before changing

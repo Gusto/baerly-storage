@@ -111,7 +111,7 @@ export class OperationQueue<L extends string> {
     this.proposedOperations.clear();
     this.operationLabels.clear();
     this.lastIndex = 0;
-    this.load = new Promise(async (resolve) => {
+    this.load = (async () => {
       const allKeys: string[] = await keys(this.db);
       const entryKeys = allKeys.filter((key: any) => key.startsWith("write-")).sort();
       console.log("RESTORE", entryKeys);
@@ -133,8 +133,7 @@ export class OperationQueue<L extends string> {
         // delete entries after confirmation
         await delMany([`write-${index}`, `label-${index}`], this.db);
       }
-      resolve(undefined);
-    });
+    })();
     return this.load;
   }
 }

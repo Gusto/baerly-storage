@@ -3,7 +3,6 @@ import { expect, test, describe, beforeAll, afterEach } from "vitest";
 import { MPS3, MPS3Config } from "../mps3";
 import { DOMParser } from "@xmldom/xmldom";
 import cloudflareCredentials from "../../credentials/cloudflare.json";
-import gcsCredentials from "../../credentials/gcs.json";
 import awsCredentials from "../../credentials/aws.json";
 import "fake-indexeddb/auto";
 import { uuid } from "../types";
@@ -245,7 +244,7 @@ describe("mps3", () => {
 
       test("Key encoding", async () => {
         const rnd = uuid();
-        const key = `&$@=;[~|^  :+,"?\\\{^}%\]>#\x01\x1F\x80\xFF`;
+        const key = `&$@=;[~|^  :+,"?\\{^}%]>#\x01\x1F\x80\xFF`;
         await getClient().put(key, rnd);
         const read = await getClient().get(key);
         expect(read).toEqual(rnd);
@@ -273,12 +272,12 @@ describe("mps3", () => {
           expect(storage.VersionId).toBeDefined();
         } else {
           try {
-            const storage = await s3.getObject({
+            await s3.getObject({
               Bucket: variant.config.defaultBucket,
               Key: "storage_key",
             });
             expect(false).toBe(true);
-          } catch (e) {}
+          } catch {}
         }
       });
 

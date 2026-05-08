@@ -159,7 +159,6 @@ src/
   OMap.ts            # ordered map keyed by Ref
   indexdb.ts         # IDB persistence helpers
   aws4fetch.d.ts     # ambient typings for aws4fetch
-  datatypes.ts       # currently empty placeholder
   __tests__/         # all tests live here (vitest)
 
 docs/

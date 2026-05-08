@@ -122,70 +122,72 @@ describe("mps3", () => {
       test(
         "causal consistency all-to-all, single key",
         () =>
-          new Promise<void>(async (done) => {
-            let testFailed = false;
-            const key = `causal-${uuid()}`;
-            await getClient().delete(key);
+          new Promise<void>((done) => {
+            void (async () => {
+              let testFailed = false;
+              const key = `causal-${uuid()}`;
+              await getClient().delete(key);
 
-            const system = new CentralisedOfflineFirstCausalSystem();
-            const max_steps = 100;
+              const system = new CentralisedOfflineFirstCausalSystem();
+              const max_steps = 100;
 
-            type Message = {
-              sender: number;
-              send_time: number;
-            };
-            // Setup all clients to forward messages to the observer
-            const clients = [...Array(3)].map((_, client_id) => {
-              const label = system.client_labels[client_id];
-              const client = getClient({ label });
-              client.subscribe(key, (val) => {
-                if (val) {
-                  const message: Message = <Message>val;
-                  console.log(
-                    `${system.global_time}: ${label}@${system.client_clocks[
-                      client_id
-                    ]!} rcvd ${system.client_labels[message.sender]}@${message.send_time}`,
-                  );
-                  system.observe({
-                    ...message,
-                    receiver: client_id,
-                  });
-                }
-
-                if (system.global_time < max_steps && !testFailed) {
-                  // Check facts are causally consistent so far
-                  testFailed = !system.causallyConsistent();
-                  if (testFailed) {
-                    console.error(system.grounding);
-                    console.error(system.knowledge_base);
+              type Message = {
+                sender: number;
+                send_time: number;
+              };
+              // Setup all clients to forward messages to the observer
+              const clients = [...Array(3)].map((_, client_id) => {
+                const label = system.client_labels[client_id];
+                const client = getClient({ label });
+                client.subscribe(key, (val) => {
+                  if (val) {
+                    const message: Message = <Message>val;
+                    console.log(
+                      `${system.global_time}: ${label}@${system.client_clocks[
+                        client_id
+                      ]!} rcvd ${system.client_labels[message.sender]}@${message.send_time}`,
+                    );
+                    system.observe({
+                      ...message,
+                      receiver: client_id,
+                    });
                   }
-                  expect(testFailed).toBe(false);
 
-                  // Write a new message
-                  system.observe({
-                    receiver: client_id,
-                    sender: client_id,
-                    send_time: system.client_clocks[client_id]! - 1,
-                  });
-                  testFailed = !system.causallyConsistent();
-                  expect(testFailed).toBe(false);
+                  if (system.global_time < max_steps && !testFailed) {
+                    // Check facts are causally consistent so far
+                    testFailed = !system.causallyConsistent();
+                    if (testFailed) {
+                      console.error(system.grounding);
+                      console.error(system.knowledge_base);
+                    }
+                    expect(testFailed).toBe(false);
 
-                  console.log(
-                    `${system.global_time}: ${label}@${
-                      system.client_clocks[client_id]! - 1
-                    } broadcast`,
-                  );
-                  client.put(key, {
-                    sender: client_id,
-                    send_time: system.client_clocks[client_id]! - 1,
-                  });
-                } else if (system.global_time === max_steps) {
-                  clients.forEach((c) => c.manifests.forEach((m) => m.subscribers.clear()));
-                  done();
-                }
+                    // Write a new message
+                    system.observe({
+                      receiver: client_id,
+                      sender: client_id,
+                      send_time: system.client_clocks[client_id]! - 1,
+                    });
+                    testFailed = !system.causallyConsistent();
+                    expect(testFailed).toBe(false);
+
+                    console.log(
+                      `${system.global_time}: ${label}@${
+                        system.client_clocks[client_id]! - 1
+                      } broadcast`,
+                    );
+                    client.put(key, {
+                      sender: client_id,
+                      send_time: system.client_clocks[client_id]! - 1,
+                    });
+                  } else if (system.global_time === max_steps) {
+                    clients.forEach((c) => c.manifests.forEach((m) => m.subscribers.clear()));
+                    done();
+                  }
+                });
+                return client;
               });
-              return client;
-            });
+            })();
           }),
         {
           timeout: 60 * 1000,

@@ -585,52 +585,50 @@ export class MPS3 {
     },
   ) {
     const webValues: Map<ResolvedRef, JSONValue | DeleteValue> = new Map();
-    const contentVersions: Promise<Map<ResolvedRef, VersionId | DeleteValue>> = new Promise(
-      async (resolve, reject) => {
-        const results = new Map<ResolvedRef, VersionId | DeleteValue>();
-        const contentOperations: Promise<any>[] = [];
-        values.forEach((value, contentRef) => {
-          if (value !== undefined) {
-            let version: VersionId | undefined = this.config.useVersioning
-              ? undefined
-              : <VersionId>(<unknown>uuid()); // TODO timestamped versions
-            webValues.set(contentRef, value);
+    const contentVersions: Promise<Map<ResolvedRef, VersionId | DeleteValue>> = (async () => {
+      const results = new Map<ResolvedRef, VersionId | DeleteValue>();
+      const contentOperations: Promise<any>[] = [];
+      values.forEach((value, contentRef) => {
+        if (value !== undefined) {
+          let version: VersionId | undefined = this.config.useVersioning
+            ? undefined
+            : <VersionId>(<unknown>uuid()); // TODO timestamped versions
+          webValues.set(contentRef, value);
 
-            contentOperations.push(
-              this._putObject({
-                operation: "PUT_CONTENT",
-                ref: contentRef,
-                value,
-                version,
-              }).then((fileUpdate) => {
-                if (this.config.useVersioning) {
-                  if (fileUpdate.VersionId === undefined) {
-                    console.error(fileUpdate);
-                    throw new MPS3Error(
-                      "InvalidConfig",
-                      `Bucket ${contentRef.bucket} is not version enabled!`,
-                    );
-                  } else {
-                    version = <VersionId>fileUpdate.VersionId;
-                  }
+          contentOperations.push(
+            this._putObject({
+              operation: "PUT_CONTENT",
+              ref: contentRef,
+              value,
+              version,
+            }).then((fileUpdate) => {
+              if (this.config.useVersioning) {
+                if (fileUpdate.VersionId === undefined) {
+                  console.error(fileUpdate);
+                  throw new MPS3Error(
+                    "InvalidConfig",
+                    `Bucket ${contentRef.bucket} is not version enabled!`,
+                  );
+                } else {
+                  version = <VersionId>fileUpdate.VersionId;
                 }
-                results.set(contentRef, version);
-              }),
-            );
-          } else {
-            contentOperations.push(
-              this._deleteObject({
-                ref: contentRef,
-              }).then((_) => {
-                results.set(contentRef, undefined);
-              }),
-            );
-          }
-        });
-        await Promise.all(contentOperations).catch(reject);
-        resolve(results);
-      },
-    );
+              }
+              results.set(contentRef, version);
+            }),
+          );
+        } else {
+          contentOperations.push(
+            this._deleteObject({
+              ref: contentRef,
+            }).then((_) => {
+              results.set(contentRef, undefined);
+            }),
+          );
+        }
+      });
+      await Promise.all(contentOperations);
+      return results;
+    })();
 
     return Promise.all(
       options.manifests.map((ref) => {

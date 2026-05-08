@@ -184,14 +184,16 @@ describe("offlinefirst", () => {
       });
 
       test("Subscribe to non-cached key is undefined", () =>
-        new Promise<void>(async (done) => {
-          await getClient({
-            label: "hang-1",
-            online: false,
-          }).subscribe("hang-1", (val) => {
-            expect(val).toBeUndefined();
-            done();
-          });
+        new Promise<void>((done) => {
+          void (async () => {
+            await getClient({
+              label: "hang-1",
+              online: false,
+            }).subscribe("hang-1", (val) => {
+              expect(val).toBeUndefined();
+              done();
+            });
+          })();
         }));
 
       test("Restored client remembers subscribed keys", async () => {
@@ -200,12 +202,14 @@ describe("offlinefirst", () => {
           label: `setup-4`,
         }).put(ID, "1");
 
-        const read = await new Promise(async (resolve) => {
-          await getClient({
-            label: ID,
-          }).subscribe(ID, (val) => {
-            resolve(val);
-          });
+        const read = await new Promise((resolve) => {
+          void (async () => {
+            await getClient({
+              label: ID,
+            }).subscribe(ID, (val) => {
+              resolve(val);
+            });
+          })();
         });
 
         // confirm we have subscribed to the value
