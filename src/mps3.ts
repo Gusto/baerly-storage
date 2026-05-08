@@ -131,6 +131,48 @@ interface GetResponse<T> {
     data: T | undefined;
 }
 
+/**
+ * Vendorless, causally consistent multiplayer document database client
+ * over any S3-compatible storage API.
+ *
+ * Construct one per logical "session" (typically per page in a browser
+ * app). Same `defaultBucket`/`defaultManifest` across clients = same
+ * shared state.
+ *
+ * Public surface:
+ *
+ * - {@link get} / {@link put} / {@link delete} — single-key operations.
+ * - {@link putAll} — atomic multi-key write.
+ * - {@link subscribe} — watch a key for changes.
+ * - {@link shutdown} — release polling timers.
+ *
+ * Errors thrown by any method are instances of `MPS3Error` (see
+ * `src/errors.ts`); discriminate on the `code` field.
+ *
+ * @example
+ * ```ts
+ * import { MPS3 } from "mps3";
+ *
+ * const mps3 = new MPS3({
+ *   defaultBucket: "my-bucket",
+ *   s3Config: {
+ *     region: "us-east-1",
+ *     credentials: {
+ *       accessKeyId: "...",
+ *       secretAccessKey: "...",
+ *     },
+ *   },
+ * });
+ *
+ * await mps3.put("user/42", { name: "Ada" });
+ * const user = await mps3.get("user/42");
+ *
+ * const stop = mps3.subscribe("user/42", (u) => console.log("changed:", u));
+ * // ... later
+ * stop();
+ * mps3.shutdown();
+ * ```
+ */
 export class MPS3 {
     /**
      * Virtual endpoint for local-first operation
@@ -240,6 +282,30 @@ export class MPS3 {
         return this.manifests.get(ref)!;
     }
 
+    /**
+     * Read the value for a key. Layers local optimistic writes over the
+     * latest synced manifest state — what you'd see if you started a
+     * subscriber right now.
+     *
+     * @param ref - Either a string `"key"` or a `Ref` object. String form
+     *   uses the configured `defaultBucket`.
+     * @param options.manifest - Manifest to read from; defaults to
+     *   {@link MPS3Config.defaultManifest}.
+     * @returns The decoded JSON value, or `undefined` if the key is
+     *   absent (never written, or deleted).
+     * @throws {MPS3Error} `code = "OfflineNoCache"` if `online: false`
+     *   and the key isn't in the local cache.
+     * @throws {MPS3Error} `code = "AccessDenied"` if the bucket policy
+     *   blocks the GET.
+     * @throws {MPS3Error} `code = "NetworkError"` for transport failures.
+     *
+     * @example
+     * ```ts
+     * await mps3.put("user/42", { name: "Ada" });
+     * const user = await mps3.get("user/42");
+     * // → { name: "Ada" }
+     * ```
+     */
     public async get(
         ref: string | Ref,
         options: {
@@ -372,6 +438,20 @@ export class MPS3 {
         return work;
     }
 
+    /**
+     * Delete a key. Equivalent to `put(ref, undefined)`. The key vanishes
+     * from subsequent `get()` and `keys()` results; subscribers receive
+     * `undefined`.
+     *
+     * @param ref - Either a string `"key"` or a `Ref` object.
+     * @param options.manifests - Apply the delete to these manifests
+     *   atomically (defaults to `[defaultManifest]`).
+     *
+     * @example
+     * ```ts
+     * await mps3.delete("user/42");
+     * ```
+     */
     public async delete(
         ref: string | Ref,
         options: {
@@ -381,6 +461,37 @@ export class MPS3 {
         return this.putAll(new Map([[ref, undefined]]), options);
     }
 
+    /**
+     * Write a single key. The returned Promise settles when the write is
+     * durable at the level requested by `options.await`:
+     * `"local"` (IndexedDB only — the offline-first ack) or
+     * `"remote"` (manifest patch confirmed by S3).
+     *
+     * Default await level is `"remote"` when the client is online,
+     * `"local"` otherwise.
+     *
+     * @param ref - Either `"key"` or `{ bucket, key }`.
+     * @param value - Any JSON value, or `undefined` to delete.
+     * @param options.await - `"local"` for offline-first ack, `"remote"`
+     *   to wait for S3 confirmation.
+     * @param options.manifests - Write to multiple manifests atomically
+     *   (defaults to `[defaultManifest]`).
+     * @param options.replication - Replication marker for downstream
+     *   replicators; see {@link replication}.
+     * @returns A Promise that settles when the write reaches the
+     *   requested durability level.
+     * @throws {MPS3Error} `code = "InvalidConfig"` if `useVersioning`
+     *   is on but the bucket isn't versioned.
+     * @throws {MPS3Error} `code = "NetworkError"` for transport failures.
+     *
+     * @example
+     * ```ts
+     * await mps3.put("user/42", { name: "Ada", email: "ada@example.com" });
+     *
+     * // Optimistic ack only:
+     * await mps3.put("draft", { body: "..." }, { await: "local" });
+     * ```
+     */
     public async put(
         ref: string | Ref,
         value: JSONValue | DeleteValue,
@@ -393,6 +504,27 @@ export class MPS3 {
         return this.putAll(new Map([[ref, value]]), options);
     }
 
+    /**
+     * Write multiple keys in a single atomic manifest update. All keys
+     * either land together or not at all — useful for transactional
+     * writes that span keys.
+     *
+     * @param values - Map of `ref → value`. `undefined` value deletes.
+     * @param options.await - See {@link put}.
+     * @param options.manifests - Write to multiple manifests atomically.
+     * @param options.keys - Per-key replication markers.
+     *
+     * @example
+     * ```ts
+     * await mps3.putAll(
+     *   new Map<string, JSONValue | undefined>([
+     *     ["user/42", { name: "Ada" }],
+     *     ["user/43", { name: "Babbage" }],
+     *     ["user/old", undefined], // delete
+     *   ])
+     * );
+     * ```
+     */
     public async putAll(
         values: Map<string | Ref, JSONValue | DeleteValue>,
         options: {
@@ -597,10 +729,30 @@ export class MPS3 {
     }
 
     /**
-     * Listen to a key for changes
-     * @param key
-     * @param handler callback to be notified of changes
-     * @returns unsubscribe function
+     * Watch a key for changes. The handler fires once with the initial
+     * value (or `undefined` if absent), then again every time the value
+     * changes — locally or remotely. Polling backs off automatically
+     * when there are no subscribers.
+     *
+     * @param key - Either `"key"` or `{ bucket, key }`.
+     * @param handler - Called with `(value, error?)`. `error` is set
+     *   only when the initial read fails; subsequent calls during the
+     *   subscription pass `undefined` for `error`. A `value` of
+     *   `undefined` means the key was deleted.
+     * @param options.manifest - Manifest to subscribe to; defaults to
+     *   {@link MPS3Config.defaultManifest}.
+     * @returns Unsubscribe function. Calling it stops further
+     *   notifications. Idempotent.
+     *
+     * @example
+     * ```ts
+     * const unsubscribe = mps3.subscribe("user/42", (user, err) => {
+     *   if (err) console.error(err);
+     *   else console.log("user changed:", user);
+     * });
+     * // ... later
+     * unsubscribe();
+     * ```
      */
     public subscribe(
         key: string | Ref,
@@ -655,6 +807,12 @@ export class MPS3 {
         );
     }
 
+    /**
+     * Cancel every subscription on every manifest, releasing the
+     * polling timers. Use this before tearing down the client (e.g.
+     * page unload, hot-reload). In-flight writes are unaffected — they
+     * still settle.
+     */
     shutdown(): void {
         this.manifests.forEach((manifest) => {
             manifest.subscribers.forEach((subscriber) => {

@@ -27,8 +27,14 @@ Don't introduce alternate tooling without justification.
 pnpm verify          # typecheck + lint (the two checks that are reliably clean)
 pnpm test            # vitest run — read "Known baseline test failures" below
 pnpm format:check    # oxfmt --check src — currently red on ~20 pre-existing files
-pnpm build           # typedoc + rolldown bundle
+pnpm build           # rolldown bundle to dist/
 ```
+
+Note: `pnpm doc` (typedoc → `docs/api/`) is currently broken because
+typedoc's bundled TypeScript doesn't recognize the `ES2024` `lib` value
+in `tsconfig.json`. JSDoc on the source is still useful — IDEs and
+tsgo consume it directly — but the rendered markdown won't regenerate
+without fixing the typedoc/tsconfig version mismatch.
 
 `pnpm verify` is intentionally narrow: typecheck and lint are guaranteed
 green on `main`, so a non-zero exit *is* a regression you introduced. Tests

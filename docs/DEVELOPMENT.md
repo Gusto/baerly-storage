@@ -89,12 +89,19 @@ pnpm lint             # oxlint src
 ## Building
 
 ```sh
-pnpm build       # generates docs/api/ via typedoc, then bundles to dist/
-pnpm doc         # typedoc only — regenerates docs/api/
+pnpm build       # rolldown bundle to dist/ (mps3.js + mps3.d.ts)
+pnpm doc         # typedoc — regenerates docs/api/ (currently broken; see below)
 ```
 
 `docs/api/` is **generated** and committed (so GitHub renders the API
 ref). Don't hand-edit; the next `pnpm doc` will overwrite.
+
+**Known issue:** `pnpm doc` currently fails because typedoc's bundled
+TypeScript doesn't recognize the `ES2024` `lib` value in `tsconfig.json`.
+JSDoc on the source is still picked up by IDEs and `tsgo`; only the
+markdown regeneration is affected. Fix path: either downgrade
+`tsconfig.json#lib` to `ES2023` (loses some lib types) or upgrade
+typedoc to a version whose TS knows about ES2024.
 
 ## The verification ritual
 
