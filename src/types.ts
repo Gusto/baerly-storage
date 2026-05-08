@@ -2,22 +2,60 @@ import { MPS3Error } from "./errors";
 
 declare const __brand: unique symbol;
 type Brand<B> = { [__brand]: B };
+
+/**
+ * Nominal-typing helper. `Branded<string, "Manifest">` is a `string` at
+ * runtime but the type system rejects mixing it with a plain `string` or
+ * a string branded as something else. Used to prevent confusion bugs at
+ * protocol boundaries (manifest keys vs. UUIDs vs. S3 version IDs are all
+ * strings, but using the wrong one corrupts the manifest log).
+ *
+ * Construct branded values via the helpers in this file (e.g. {@link uuid})
+ * or with a tagged cast at a single, deliberate boundary — never `as string`
+ * to widen one back. See `.claude/rules/src.md`.
+ */
 export type Branded<T, B> = T & Brand<B>;
 
 export type DeleteValue = undefined;
 
+/**
+ * Document reference (bucket optional, defaults to the MPS3 instance's
+ * default bucket). The {@link MPS3} public API accepts `Ref`; internal
+ * code that needs a fully-qualified address uses {@link ResolvedRef}.
+ */
 export interface Ref {
   bucket?: string;
   key: string;
 }
 
+/** A {@link Ref} after the default bucket has been applied. */
 export interface ResolvedRef extends Ref {
   bucket: string;
   key: string;
 }
 
+/**
+ * S3 object key for a manifest log entry. Shape is
+ * `<base32-time>_<session>_<seq>` — order is load-bearing because the
+ * sync protocol relies on lexicographic time ordering.
+ *
+ * @see `docs/sync_protocol.md` (manifest log section)
+ */
 export type ManifestKey = Branded<string, "Manifest">;
+
+/**
+ * A v4 UUID minted by this client. Used as session IDs and content
+ * identifiers in non-versioned mode. Distinct from {@link VersionId},
+ * which is assigned by the S3 backend, and {@link Ref}, which addresses
+ * a logical document.
+ */
 export type UUID = Branded<string, "UUID">;
+
+/**
+ * S3 object version identifier. When versioning is enabled on the bucket
+ * S3 returns this in the `x-amz-version-id` header; in non-versioned mode
+ * we synthesize one from a fresh {@link UUID} via {@link versionFromUuid}.
+ */
 export type VersionId = Branded<string, "VersionId">;
 
 /**
@@ -34,6 +72,10 @@ export interface XmlParser {
   parseFromString(source: string, mimeType: string): XmlNode | null | undefined;
 }
 
+/**
+ * Mint a fresh {@link UUID}. The cast lives here so callers don't sprinkle
+ * `<UUID>crypto.randomUUID()` throughout the codebase.
+ */
 export const uuid = (): UUID => <UUID>crypto.randomUUID();
 
 /**

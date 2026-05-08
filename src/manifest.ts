@@ -29,6 +29,20 @@ class Subscriber {
   }
 }
 
+/**
+ * Per-manifest poller and subscriber registry. One `Manifest` per
+ * configured manifest reference; each owns a {@link Syncer} (which reads
+ * and writes the log) and an {@link OperationQueue} (which buffers
+ * outgoing writes for offline-first delivery).
+ *
+ * The poll loop is what propagates remote writes into local subscribers.
+ * Don't change the polling cadence or the manifest-key shape without
+ * reading `docs/sync_protocol.md` first — the `<base32-time>_<session>_<seq>`
+ * format is load-bearing for causal ordering.
+ *
+ * @see `docs/sync_protocol.md`
+ * @see `docs/ARCHITECTURE.md` (lifecycle)
+ */
 export class Manifest {
   subscribers = new Set<Subscriber>();
   poller?: ReturnType<typeof setInterval>;

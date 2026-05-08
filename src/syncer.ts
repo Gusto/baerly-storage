@@ -59,6 +59,19 @@ interface HttpCacheEntry<T> {
   data: T;
 }
 
+/**
+ * Reads and writes the manifest log — the time-ordered append-only S3
+ * key sequence that defines the protocol. Manifest keys have the shape
+ * `<base32-time>_<session>_<seq>`; lexicographic order *is* causal order.
+ *
+ * Read `docs/sync_protocol.md` and `docs/causal_consistency_checking.md`
+ * before changing anything in this file. The invariants checked by
+ * `src/__tests__/consistency.test.ts` and
+ * `src/__tests__/randomized.test.ts` depend on the structure here.
+ *
+ * @see `docs/sync_protocol.md`
+ * @see `docs/causal_consistency_checking.md`
+ */
 export class Syncer {
   session_id = uuid().substring(0, SESSION_ID_LENGTH);
   latest_key: string = ".";
@@ -81,6 +94,14 @@ export class Syncer {
     return str2uintDesc(match[1], TIMESTAMP_BIT_WIDTH);
   };
 
+  /**
+   * True iff the manifest key's embedded timestamp agrees with the S3
+   * `Last-Modified` header within {@link LAG_WINDOW_MILLIS}. Manifests
+   * outside the window are dropped — they may be from a clock-skewed
+   * writer or replayed adversarially.
+   *
+   * @see `docs/sync_protocol.md` (clock-skew tolerance)
+   */
   static isValid(key: string, modified: Date): boolean {
     const match = key.match(Syncer.manifestRegex);
     if (!match) {
