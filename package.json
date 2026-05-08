@@ -33,7 +33,7 @@
         "@typescript/native-preview": "^7.0.0-dev.20260508.1",
         "@xmldom/xmldom": "^0.8.10",
         "aws4fetch": "1.0.17",
-        "fake-indexeddb": "^4.0.2",
+        "fake-indexeddb": "^6.2.5",
         "idb-keyval": "^6.2.1",
         "oxfmt": "^0.48.0",
         "oxlint": "^1.63.0",
