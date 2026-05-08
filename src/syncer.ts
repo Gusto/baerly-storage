@@ -1,21 +1,21 @@
-import { JSONArrayless, JSONArraylessObject, merge } from "json";
-import { Manifest } from "manifest";
-import { clone } from "json";
-import { JSONValue } from "json";
-import * as time from "time";
-import { UseStore, get, set } from "idb-keyval";
+import { type JSONArraylessObject, merge } from "./json";
+import type { Manifest } from "./manifest";
+import { clone } from "./json";
+import type { JSONValue } from "./json";
+import * as time from "./time";
+import { type UseStore, get, set } from "idb-keyval";
 import { LAG_WINDOW_MILLIS } from "./constants";
 import {
-    DeleteValue,
-    ResolvedRef,
-    VersionId,
+    type DeleteValue,
+    type ResolvedRef,
+    type VersionId,
     countKey,
     url,
     uuid,
     str2uintDesc,
-} from "types";
-import { b64 } from "hashing";
-import { OMap } from "OMap";
+} from "./types";
+import type { b64 } from "./hashing";
+import type { OMap } from "./OMap";
 
 export interface FileState extends JSONArraylessObject {
     version: VersionId;
@@ -61,7 +61,7 @@ export class Syncer {
 
     static manifestTimestamp = (key: string): number => {
         const match = key.match(Syncer.manifestRegex);
-        if (!match) return 0;
+        if (!match || match[1] === undefined) return 0;
         return str2uintDesc(match[1], 42);
     };
 
@@ -121,7 +121,6 @@ export class Syncer {
             return this.latest_state;
         }
         try {
-            let pollEtag: string | undefined = undefined;
             if (this.manifest.service.config.minimizeListObjectsCalls) {
                 const poll = await this.manifest.service._getObject<string>({
                     operation: "POLL_LATEST_CHANGE",
@@ -132,7 +131,6 @@ export class Syncer {
                 if (poll.$metadata.httpStatusCode === 304) {
                     return this.latest_state;
                 }
-                pollEtag = poll.ETag;
             }
 
             const start_at = `${this.manifest.ref.key}@${time.timestamp(
@@ -181,7 +179,7 @@ export class Syncer {
 
             // Find the most recent patch, whose base state is settled, and that we have a record for
             if (manifests.length > 0) {
-                this.latest_key = manifests[0].Key!;
+                this.latest_key = manifests[0]!.Key!;
                 const latest =
                     await this.manifest.service._getObject<ManifestFile>({
                         operation: "GET_LATEST",
@@ -204,7 +202,7 @@ export class Syncer {
 
             // Play operations forward on latest state, oldest first
             for (let index = manifests.length - 1; index >= 0; index--) {
-                const key = manifests[index].Key!;
+                const key = manifests[index]!.Key!;
                 if (key > this.latest_key && key > gcPoint) {
                     // Its old we can skip and GC asyncronously
                     if (this.manifest.service.config.autoclean) {

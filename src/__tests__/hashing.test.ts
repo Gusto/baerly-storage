@@ -1,15 +1,14 @@
 import { expect, test, describe } from "vitest";
 
 import {
-    b64,
-    sha256b64,
+    type b64,
     b642uint,
     uint2b64,
     toB64,
     or,
     inside,
 } from "../hashing";
-import { uuid } from "types";
+import { uuid } from "../types";
 
 describe("b64/uint", () => {
     test("round trip", () => {

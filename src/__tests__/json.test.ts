@@ -1,15 +1,6 @@
 import { expect, test, describe } from "vitest";
-import { JSONArrayless, diff, fold, merge } from "json";
-import { uuid } from "types";
-
-const doc = {
-  boolean: true,
-  number: 0,
-  string: "",
-  object: {
-    nested: {},
-  },
-};
+import { type JSONArrayless, diff, fold, merge } from "../json";
+import { uuid } from "../types";
 
 const rndDoc = (): JSONArrayless => {
   const choice = Math.floor(Math.random() * 4);
@@ -98,7 +89,7 @@ describe("JSON Merge Patch (RFC 7386)", () => {
   testCase(
     "deletion",
     (a) => merge(a, null),
-    (a) => undefined
+    (_a) => undefined
   );
 
   testCase(
@@ -161,7 +152,7 @@ describe("JSON-merge-diff", () => {
   testCase(
     "identity",
     (a) => diff(a, a),
-    (a) => undefined
+    (_a) => undefined
   );
 
   testCase(
@@ -197,7 +188,7 @@ describe("JSON-merge-diff", () => {
   testCase(
     "inverse",
     (a, b) => merge(a, diff(b, a)),
-    (a, b) => b
+    (_a, b) => b
   );
 
   test(

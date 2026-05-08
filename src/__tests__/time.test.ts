@@ -1,7 +1,7 @@
 import { expect, test, describe, beforeAll } from "vitest";
-import { MPS3 } from "mps3";
-import { dateToSecs } from "time";
-import { uuid } from "types";
+import { MPS3 } from "../mps3";
+import { dateToSecs } from "../time";
+import { uuid } from "../types";
 import { DOMParser } from "@xmldom/xmldom";
 import { S3 } from "@aws-sdk/client-s3";
 

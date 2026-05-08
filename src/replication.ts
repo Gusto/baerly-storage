@@ -1,12 +1,12 @@
 // Mirroring copes writes from one S3 API to another and records progress in a sync log
-import { MPS3 } from "mps3";
-import { DeleteValue, ManifestKey, parseUrl } from "types";
-import { timestamp } from "time";
+import { MPS3 } from "./mps3";
+import { type DeleteValue, type ManifestKey, parseUrl } from "./types";
+import { timestamp } from "./time";
 import { LAG_WINDOW_MILLIS } from "./constants";
-import { Manifest } from "manifest";
-import { FileState, ManifestFile, Syncer } from "syncer";
-import { JSONArraylessObject, JSONValue, merge } from "json";
-import { b64, sha256b64, toB64, or, inside } from "hashing";
+import { Manifest } from "./manifest";
+import { type ManifestFile, Syncer } from "./syncer";
+import { type JSONArraylessObject, type JSONValue, merge } from "./json";
+import { type b64, sha256b64, or, inside } from "./hashing";
 
 interface ReplicationCheckpoint extends JSONArraylessObject {
     /**
@@ -52,7 +52,7 @@ export async function replicate(
         })
         .then((response) => {
             for (let i = response.Contents!.length - 1; i >= 0; i--) {
-                const obj = response.Contents![i];
+                const obj = response.Contents![i]!;
                 if (
                     Syncer.isValid(obj.Key!, obj.LastModified!) &&
                     !(obj.Key! in currentState.operations) &&
@@ -84,7 +84,7 @@ export async function replicate(
         update: {},
     });
 
-    for (const { key, manifest } of toSync) {
+    for (const { manifest } of toSync) {
         manifestUpdate = manifestUpdate.then((delta) => {
             return manifest.then((manifest) => {
                 return merge(<ManifestFile>delta, manifest.update)!;

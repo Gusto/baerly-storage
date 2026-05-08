@@ -7,9 +7,9 @@ import {
   beforeEach,
   afterEach,
 } from "vitest";
-import { MPS3, MPS3Config } from "mps3";
+import { MPS3, type MPS3Config } from "../mps3";
 import { DOMParser } from "@xmldom/xmldom";
-import { uuid } from "types";
+import { uuid } from "../types";
 import "fake-indexeddb/auto";
 
 describe("offlinefirst", () => {
@@ -190,15 +190,16 @@ describe("offlinefirst", () => {
                 expect(await client.get("key")).toBe("value");
             });
 
-            test("Subscribe to non-cached key is undefined", async (done) => {
-                await getClient({
-                    label: "hang-1",
-                    online: false,
-                }).subscribe("hang-1", (val) => {
-                    expect(val).toBeUndefined();
-                    done();
-                });
-            });
+            test("Subscribe to non-cached key is undefined", () =>
+                new Promise<void>(async (done) => {
+                    await getClient({
+                        label: "hang-1",
+                        online: false,
+                    }).subscribe("hang-1", (val) => {
+                        expect(val).toBeUndefined();
+                        done();
+                    });
+                }));
 
             test("Restored client remembers subscribed keys", async () => {
                 const ID = "restore-4";

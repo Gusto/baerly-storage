@@ -8,6 +8,7 @@ export const fetchFn = async (
   const segments = url.pathname.split("/");
   const bucket = segments[1];
   const key = segments.slice(2).join("/");
+  if (!bucket) throw new Error(`Invalid bucket in URL: ${url_}`);
   const db = createStore(bucket, "v0");
   let body;
   let status = 200;

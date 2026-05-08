@@ -1,5 +1,5 @@
-import { ResolvedMPS3Config } from "mps3";
-import { uint2strDesc } from "types";
+import type { ResolvedMPS3Config } from "./mps3";
+import { uint2strDesc } from "./types";
 
 export const timestamp = (epoch: number = 0) => uint2strDesc(epoch, 42);
 

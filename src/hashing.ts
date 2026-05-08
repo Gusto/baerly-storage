@@ -1,4 +1,4 @@
-import { Branded } from "types";
+import type { Branded } from "./types";
 
 export type b64 = Branded<string, "VersionId">;
 
@@ -27,7 +27,7 @@ export const uint2b64 = (a: Uint8Array) => toB64(String.fromCharCode(...a));
 
 export const or = (a: b64, b: b64): b64 => {
     const bi = b642uint(b);
-    return uint2b64(b642uint(a).map((a, i) => a | bi[i]));
+    return uint2b64(b642uint(a).map((a, i) => a | bi[i]!));
 };
 
 /**
@@ -42,7 +42,7 @@ export const inside = (a: b64, b: b64): boolean => {
      */
     const bi = b642uint(b);
     return b642uint(a).reduce(
-        (acc, ai, i) => acc && (~ai | (ai & bi[i])) === -1,
+        (acc, ai, i) => acc && (~ai | (ai & bi[i]!)) === -1,
         true
     );
 };

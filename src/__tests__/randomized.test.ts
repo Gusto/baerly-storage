@@ -7,10 +7,10 @@ import {
   beforeEach,
   afterEach,
 } from "vitest";
-import { MPS3, MPS3Config } from "mps3";
+import { MPS3, type MPS3Config } from "../mps3";
 import { CentralisedOfflineFirstCausalSystem } from "./consistency";
 import { DOMParser } from "@xmldom/xmldom";
-import { uuid } from "types";
+import { uuid } from "../types";
 import "fake-indexeddb/auto";
 
 describe("mps3", () => {
@@ -128,7 +128,7 @@ describe("mps3", () => {
         });
       test(
         "causal consistency all-to-all, single key",
-        async (done) => {
+        () => new Promise<void>(async (done) => {
           let testFailed = false;
           const key = `causal-${uuid()}`;
           await getClient().delete(key);
@@ -149,7 +149,7 @@ describe("mps3", () => {
                 const message: Message = <Message>val;
                 console.log(
                   `${system.global_time}: ${label}@${
-                    system.client_clocks[client_id]
+                    system.client_clocks[client_id]!
                   } rcvd ${system.client_labels[message.sender]}@${
                     message.send_time
                   }`
@@ -173,19 +173,19 @@ describe("mps3", () => {
                 system.observe({
                   receiver: client_id,
                   sender: client_id,
-                  send_time: system.client_clocks[client_id] - 1,
+                  send_time: system.client_clocks[client_id]! - 1,
                 });
                 testFailed = !system.causallyConsistent();
                 expect(testFailed).toBe(false);
 
                 console.log(
                   `${system.global_time}: ${label}@${
-                    system.client_clocks[client_id] - 1
+                    system.client_clocks[client_id]! - 1
                   } broadcast`
                 );
                 client.put(key, {
                   sender: client_id,
-                  send_time: system.client_clocks[client_id] - 1,
+                  send_time: system.client_clocks[client_id]! - 1,
                 });
               } else if (system.global_time === max_steps) {
                 clients.forEach((c) =>
@@ -196,7 +196,7 @@ describe("mps3", () => {
             });
             return client;
           });
-        },
+        }),
         {
           timeout: 60 * 1000,
         }

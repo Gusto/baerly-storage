@@ -24,6 +24,7 @@ export const eq = (a: Ref, b: Ref) => a.bucket === b.bucket && a.key === b.key;
 export const url = (ref: Ref): string => `${ref.bucket}/${ref.key}`;
 export const parseUrl = (url: string): ResolvedRef => {
   const [bucket, ...key] = url.split("/");
+  if (bucket === undefined) throw new Error(`Invalid url: ${url}`);
   return {
     bucket,
     key: key.join("/"),

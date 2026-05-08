@@ -1,4 +1,4 @@
-import {
+import type {
   DeleteObjectCommandInput,
   DeleteObjectCommandOutput,
   GetObjectCommandInput,
@@ -8,9 +8,9 @@ import {
   PutObjectCommandInput,
   PutObjectCommandOutput,
 } from "@aws-sdk/client-s3";
-import * as time from "time";
-import { MPS3 } from "mps3";
-import { parseListObjectsV2CommandOutput } from "xml";
+import * as time from "./time";
+import { MPS3 } from "./mps3";
+import { parseListObjectsV2CommandOutput } from "./xml";
 
 export type FetchFn = (url: string, options?: object) => Promise<Response>;
 
@@ -78,7 +78,6 @@ export class S3ClientLite {
     Bucket,
     Key,
     Body,
-    ChecksumSHA256,
   }: PutObjectCommandInput): Promise<PutObjectCommandOutput & { Date: Date }> {
     const url = this.getUrl(Bucket!, Key);
     const response = await retry(() =>

@@ -1,7 +1,7 @@
 import { expect, test, describe } from "vitest";
 import { OperationQueue } from "../operationQueue";
-import { DeleteValue, ResolvedRef, uuid } from "types";
-import { JSONValue } from "json";
+import { type DeleteValue, type ResolvedRef, uuid } from "../types";
+import type { JSONValue } from "../json";
 import { createStore } from "idb-keyval";
 import "fake-indexeddb/auto";
 

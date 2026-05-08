@@ -67,6 +67,7 @@ export function diff<T extends JSONArrayless>(
   const sourceKeys = Object.keys(source);
   for (let i = 0; i < Math.max(targeKeys.length, sourceKeys.length); i++) {
     const key = targeKeys[i] || sourceKeys[i];
+    if (key === undefined) continue;
     const val = diff(target[key], source[key]);
     if (val !== undefined) (<any>patch)[key] = val;
   }

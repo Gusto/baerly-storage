@@ -1,7 +1,7 @@
-import { OMap } from "OMap";
-import { DeleteValue, uuid, ResolvedRef, url } from "./types";
-import { JSONValue } from "json";
-import { UseStore, getMany, get, set, delMany, keys } from "idb-keyval";
+import { OMap } from "./OMap";
+import { type DeleteValue, uuid, type ResolvedRef, url } from "./types";
+import type { JSONValue } from "./json";
+import { type UseStore, getMany, get, set, delMany, keys } from "idb-keyval";
 
 export type Operation = Promise<unknown>;
 
@@ -125,13 +125,13 @@ export class OperationQueue<L extends string> {
       const entryValues = await getMany(entryKeys, this.db);
 
       for (let i = 0; i < entryKeys.length; i++) {
-        const index = parseInt(entryKeys[i].split("-")[1]);
+        const index = parseInt(entryKeys[i]!.split("-")[1]!);
         this.lastIndex = Math.max(this.lastIndex, index);
       }
 
       for (let i = 0; i < entryKeys.length; i++) {
-        const key = entryKeys[i];
-        const index = parseInt(key.split("-")[1]);
+        const key = entryKeys[i]!;
+        const index = parseInt(key.split("-")[1]!);
         const entry = entryValues[i].map(([ref, val]: [string, any]) => [
           JSON.parse(ref),
           val,

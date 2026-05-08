@@ -6,13 +6,22 @@
     "author": {
         "name": "Tom Larkworthy"
     },
-    "main": "dist/mps3.js",
     "type": "module",
+    "main": "./dist/mps3.js",
+    "module": "./dist/mps3.js",
+    "types": "./dist/mps3.d.ts",
+    "exports": {
+        ".": {
+            "types": "./dist/mps3.d.ts",
+            "import": "./dist/mps3.js"
+        }
+    },
     "packageManager": "pnpm@10.31.0",
     "scripts": {
+        "typecheck": "tsgo --noEmit",
         "test": "vitest run",
         "doc": "typedoc --plugin typedoc-plugin-markdown",
-        "build": "pnpm run doc; rolldown -c",
+        "build": "rolldown -c",
         "prepare": "pnpm run build",
         "format": "oxfmt src",
         "lint": "oxlint src",
@@ -23,6 +32,7 @@
         "@types/jsdom": "^21.1.2",
         "@types/json-merge-patch": "^0.0.8",
         "@types/node": "^22.9.0",
+        "@typescript/native-preview": "^7.0.0-dev.20260508.1",
         "@xmldom/xmldom": "^0.8.10",
         "aws4fetch": "1.0.17",
         "fake-indexeddb": "^4.0.2",
@@ -30,15 +40,12 @@
         "oxfmt": "^0.48.0",
         "oxlint": "^1.63.0",
         "rolldown": "^1.0.0-beta.20",
-        "typedoc": "^0.25.0",
-        "typedoc-plugin-markdown": "^3.16.0",
-        "vite-tsconfig-paths": "^5.1.4",
+        "rolldown-plugin-dts": "^0.25.0",
+        "typedoc": "^0.28.19",
+        "typedoc-plugin-markdown": "^4.11.0",
         "vitest": "^2.1.8"
     },
     "files": [
         "dist"
-    ],
-    "prettier": {
-        "tabWidth": 4
-    }
+    ]
 }

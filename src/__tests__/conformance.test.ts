@@ -1,12 +1,12 @@
 import { S3 } from "@aws-sdk/client-s3";
 import { expect, test, describe, beforeAll, afterEach } from "vitest";
-import { MPS3, MPS3Config } from "mps3";
+import { MPS3, MPS3Config } from "../mps3";
 import { DOMParser } from "@xmldom/xmldom";
 import cloudflareCredentials from "../../credentials/cloudflare.json";
 import gcsCredentials from "../../credentials/gcs.json";
 import awsCredentials from "../../credentials/aws.json";
 import "fake-indexeddb/auto";
-import { uuid } from "types";
+import { uuid } from "../types";
 
 describe("mps3", () => {
     let session = uuid().substring(0, 8);

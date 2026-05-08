@@ -1,4 +1,4 @@
-import {
+import type {
   DeleteObjectCommandInput,
   DeleteObjectCommandOutput,
   GetObjectCommandInput,
@@ -8,15 +8,15 @@ import {
   S3ClientConfig,
 } from "@aws-sdk/client-s3";
 import { AwsClient } from "aws4fetch";
-import { FetchFn, S3ClientLite } from "S3ClientLite";
-import { OMap } from "OMap";
-import { Manifest } from "manifest";
-import { DeleteValue, Ref, ResolvedRef, VersionId, url, uuid } from "types";
-import { JSONValue } from "json";
-import { UseStore, createStore, get, set } from "idb-keyval";
-import * as time from "time";
-import * as offlineFetch from "indexdb";
-import { b64, sha256b64 } from "hashing";
+import { type FetchFn, S3ClientLite } from "./S3ClientLite";
+import { OMap } from "./OMap";
+import { Manifest } from "./manifest";
+import { type DeleteValue, type Ref, type ResolvedRef, type VersionId, url, uuid } from "./types";
+import type { JSONValue } from "./json";
+import { type UseStore, createStore, get, set } from "idb-keyval";
+import * as time from "./time";
+import * as offlineFetch from "./indexdb";
+import { type b64, sha256b64 } from "./hashing";
 export interface MPS3Config {
     /** @internal */
     label?: string;

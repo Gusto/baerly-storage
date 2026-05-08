@@ -1,11 +1,11 @@
-import { OMap } from "OMap";
-import { MPS3 } from "mps3";
-import { OperationQueue } from "operationQueue";
-import { DeleteValue, ResolvedRef, VersionId, url } from "types";
-import { JSONValue } from "json";
-import { UseStore } from "idb-keyval";
-import { Syncer } from "syncer";
-import { b64 } from "hashing";
+import { OMap } from "./OMap";
+import { MPS3 } from "./mps3";
+import { OperationQueue } from "./operationQueue";
+import { type DeleteValue, type ResolvedRef, type VersionId, url } from "./types";
+import type { JSONValue } from "./json";
+import type { UseStore } from "idb-keyval";
+import { Syncer } from "./syncer";
+import type { b64 } from "./hashing";
 
 class Subscriber {
     queue = Promise.resolve();
@@ -39,7 +39,7 @@ class Subscriber {
 
 export class Manifest {
     subscribers = new Set<Subscriber>();
-    poller?: Timer;
+    poller?: ReturnType<typeof setInterval>;
     pollInProgress: boolean = false;
 
     syncer: Syncer = new Syncer(this);
@@ -61,6 +61,7 @@ export class Manifest {
                     // we do a write from scratch
                     await this.service._putAll(values, {
                         manifests: [this.ref],
+                        keys: new OMap<ResolvedRef, { replication?: b64 }>(url),
                         await: "local",
                         isLoad: true,
                     });
@@ -73,6 +74,7 @@ export class Manifest {
                             new Map<ResolvedRef, VersionId>([[this.ref, label]])
                         ),
                         {
+                            keys: new OMap<ResolvedRef, { replication?: b64 }>(url),
                             await: "local",
                             isLoad: true,
                         }

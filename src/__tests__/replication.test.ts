@@ -1,13 +1,12 @@
 import { expect, test, it, describe } from "vitest";
-import { MPS3 } from "mps3";
+import { MPS3 } from "../mps3";
 import { DOMParser } from "@xmldom/xmldom";
-import { ManifestKey, uuid } from "types";
+import { type ManifestKey, uuid } from "../types";
 import "fake-indexeddb/auto";
 
-import { replicate } from "replication";
-import { timestamp } from "time";
+import { replicate } from "../replication";
+import { timestamp } from "../time";
 import { LAG_WINDOW_MILLIS } from "../constants";
-import { ManifestFile } from "syncer";
 
 describe("replicate", () => {
     const client = () =>
@@ -104,7 +103,7 @@ describe("replicate", () => {
             "Write values %p mirror to %p and back again",
             async (
                 ops: (string | undefined)[],
-                expected: string | undefined
+                _expected: string | undefined
             ) => {
                 const target = client();
                 const source = client();

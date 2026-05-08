@@ -1,6 +1,6 @@
 /// <reference lib="dom" />
 
-import { ListObjectsV2CommandOutput } from "@aws-sdk/client-s3";
+import type { ListObjectsV2CommandOutput } from "@aws-sdk/client-s3";
 
 export const parseListObjectsV2CommandOutput = (
   xml: string,

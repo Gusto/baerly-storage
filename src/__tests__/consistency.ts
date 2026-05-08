@@ -56,7 +56,7 @@ export class CentralisedCausalSystem extends CausalSystem {
     send_time: number;
   }) {
     this.global_time++;
-    const client_clock = this.client_clocks[client]++;
+    const client_clock = this.client_clocks[client]!++;
 
     // Record the client's timestep in the global time
     Object.assign(this.grounding, {
@@ -115,7 +115,7 @@ export class CentralisedOfflineFirstCausalSystem extends CausalSystem {
     send_time: number;
   }) {
     this.global_time++;
-    const client_clock = this.client_clocks[client]++;
+    const client_clock = this.client_clocks[client]!++;
 
     // Record the client's timestep in the global time
     Object.assign(this.grounding, {
@@ -135,10 +135,11 @@ export class CentralisedOfflineFirstCausalSystem extends CausalSystem {
       )}`]: null,
     });
 
-    if (this.previous_seen[client][source]) {
+    const seenForClient = this.previous_seen[client]!;
+    if (seenForClient[source]) {
       Object.assign(this.knowledge_base, {
         // The previously seen message happens before
-        [`/*P3*/ ${this.previous_seen[client][source]} < ${this.symbol(
+        [`/*P3*/ ${seenForClient[source]} < ${this.symbol(
           source,
           source_time,
         )}`]: null,
@@ -147,10 +148,7 @@ export class CentralisedOfflineFirstCausalSystem extends CausalSystem {
     if (source !== client) {
       // only force causal ordering on events that went through the remote
       // this is to support local caching.
-      this.previous_seen[client][source] = `${this.symbol(
-        source,
-        source_time,
-      )}`;
+      seenForClient[source] = `${this.symbol(source, source_time)}`;
     }
   }
 }

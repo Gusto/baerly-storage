@@ -40,6 +40,6 @@ export class OMap<K, V> {
     return this._keys.values();
   }
   forEach(callback: (value: V, key: K) => void) {
-    return this._vals.forEach((v, k, map) => callback(v, this._keys.get(k)!));
+    return this._vals.forEach((v, k) => callback(v, this._keys.get(k)!));
   }
 }
