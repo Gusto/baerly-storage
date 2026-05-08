@@ -12,6 +12,10 @@ import * as time from "./time";
 import { MPS3 } from "./mps3";
 import { parseListObjectsV2CommandOutput } from "./xml";
 import { MPS3Error } from "./errors";
+import {
+  LIST_OBJECT_MAX_RETRIES,
+  RATE_LIMIT_BACKOFF_MILLIS,
+} from "./constants";
 
 export type FetchFn = (url: string, options?: object) => Promise<Response>;
 
@@ -50,7 +54,7 @@ export class S3ClientLite {
   async listObjectV2(
     command: ListObjectsV2CommandInput
   ): Promise<ListObjectsV2CommandOutput> {
-    for (let i = 0; i < 10; i++) {
+    for (let i = 0; i < LIST_OBJECT_MAX_RETRIES; i++) {
       const url = this.getUrl(
         command.Bucket!,
         undefined,
@@ -65,7 +69,9 @@ export class S3ClientLite {
         );
       } else if (response.status === 429) {
         console.warn("listObjectV2: 429, retrying");
-        await new Promise((resolve) => setTimeout(resolve, 1000));
+        await new Promise((resolve) =>
+          setTimeout(resolve, RATE_LIMIT_BACKOFF_MILLIS)
+        );
       } else {
         throw new MPS3Error(
           "NetworkError",

@@ -4,7 +4,12 @@ import { clone } from "./json";
 import type { JSONValue } from "./json";
 import * as time from "./time";
 import { type UseStore, get, set } from "idb-keyval";
-import { LAG_WINDOW_MILLIS } from "./constants";
+import {
+    LAG_WINDOW_MILLIS,
+    MANIFEST_LIST_LOOKAHEAD_MILLIS,
+    SESSION_ID_LENGTH,
+    TIMESTAMP_BIT_WIDTH,
+} from "./constants";
 import {
     type DeleteValue,
     type ResolvedRef,
@@ -44,7 +49,7 @@ interface HttpCacheEntry<T> {
 }
 
 export class Syncer {
-    session_id = uuid().substring(0, 3);
+    session_id = uuid().substring(0, SESSION_ID_LENGTH);
     latest_key: string = ".";
     latest_state: ManifestFile = clone(INITIAL_STATE);
 
@@ -62,7 +67,7 @@ export class Syncer {
     static manifestTimestamp = (key: string): number => {
         const match = key.match(Syncer.manifestRegex);
         if (!match || match[1] === undefined) return 0;
-        return str2uintDesc(match[1], 42);
+        return str2uintDesc(match[1], TIMESTAMP_BIT_WIDTH);
     };
 
     static isValid(key: string, modified: Date): boolean {
@@ -134,7 +139,9 @@ export class Syncer {
             }
 
             const start_at = `${this.manifest.ref.key}@${time.timestamp(
-                Date.now() + this.manifest.service.config.clockOffset + 10000
+                Date.now() +
+                    this.manifest.service.config.clockOffset +
+                    MANIFEST_LIST_LOOKAHEAD_MILLIS
             )}`;
             const [objects, dt] = await time.measure(
                 this.manifest.service.s3ClientLite.listObjectV2({

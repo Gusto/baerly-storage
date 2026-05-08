@@ -1,7 +1,9 @@
 import type { ResolvedMPS3Config } from "./mps3";
 import { uint2strDesc } from "./types";
+import { TIMESTAMP_BIT_WIDTH } from "./constants";
 
-export const timestamp = (epoch: number = 0) => uint2strDesc(epoch, 42);
+export const timestamp = (epoch: number = 0) =>
+  uint2strDesc(epoch, TIMESTAMP_BIT_WIDTH);
 
 /**
  * Converts timestamps like LastModified to their seconds since UTC epoch

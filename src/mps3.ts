@@ -18,6 +18,7 @@ import * as time from "./time";
 import * as offlineFetch from "./indexdb";
 import { type b64, sha256b64 } from "./hashing";
 import { MPS3Error } from "./errors";
+import { MANIFEST_POLL_INTERVAL_MILLIS } from "./constants";
 export interface MPS3Config {
     /** @internal */
     label?: string;
@@ -165,7 +166,7 @@ export class MPS3 {
             online: config.online === false ? false : true,
             offlineStorage: config.offlineStorage === false ? false : true,
             useVersioning: config.useVersioning || false,
-            pollFrequency: config.pollFrequency || 1000,
+            pollFrequency: config.pollFrequency || MANIFEST_POLL_INTERVAL_MILLIS,
             clockOffset: Math.floor(config.clockOffset!) || 0,
             adaptiveClock: config.adaptiveClock === false ? false : true,
             minimizeListObjectsCalls:
