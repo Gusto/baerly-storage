@@ -6,7 +6,7 @@ import type {
   PutObjectCommandInput,
   PutObjectCommandOutput,
   S3ClientConfig,
-} from "@aws-sdk/client-s3";
+} from "./s3-types";
 import { AwsClient } from "aws4fetch";
 import { type FetchFn, S3ClientLite } from "./S3ClientLite";
 import { OMap } from "./OMap";
@@ -50,9 +50,8 @@ export interface MPS3Config {
    */
   pollFrequency?: number;
   /**
-   * S3ClientConfig, only some features are supported. Please report feature requests.
-   * @see https://docs.aws.amazon.com/AWSJavaScriptSDK/v3/latest/clients/client-s3/interfaces/s3clientconfig.html
-   * @defaultValue 1000
+   * S3 endpoint, region, and credentials. See `S3ClientConfig` in
+   * `src/s3-types.ts` for the supported field surface.
    */
   s3Config: S3ClientConfig;
 

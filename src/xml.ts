@@ -1,6 +1,6 @@
 /// <reference lib="dom" />
 
-import type { ListObjectsV2CommandOutput } from "@aws-sdk/client-s3";
+import type { ListObjectsV2CommandOutput } from "./s3-types";
 import { MPS3Error } from "./errors";
 
 export const parseListObjectsV2CommandOutput = (

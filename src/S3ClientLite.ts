@@ -7,7 +7,7 @@ import type {
   ListObjectsV2CommandOutput,
   PutObjectCommandInput,
   PutObjectCommandOutput,
-} from "@aws-sdk/client-s3";
+} from "./s3-types";
 import * as time from "./time";
 import { MPS3 } from "./mps3";
 import { parseListObjectsV2CommandOutput } from "./xml";
