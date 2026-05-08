@@ -14,7 +14,7 @@ import { parseListObjectsV2CommandOutput } from "./xml";
 import { MPS3Error } from "./errors";
 import { LIST_OBJECT_MAX_RETRIES, RATE_LIMIT_BACKOFF_MILLIS } from "./constants";
 
-export type FetchFn = (url: string, options?: object) => Promise<Response>;
+export type FetchFn = (url: string, init?: RequestInit) => Promise<Response>;
 
 const retry = async <T>(
   fn: () => Promise<T>,

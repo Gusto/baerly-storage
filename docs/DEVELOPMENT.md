@@ -158,7 +158,7 @@ src/
   xml.ts             # parse S3 XML responses
   OMap.ts            # ordered map keyed by Ref
   indexdb.ts         # IDB persistence helpers
-  aws4fetch.d.ts     # ambient typings for aws4fetch
+  s3-types.ts        # minimal S3 wire-protocol types
   __tests__/         # all tests live here (vitest)
 
 docs/

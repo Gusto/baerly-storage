@@ -81,8 +81,8 @@ Read in this order to build a mental model:
 | `src/types.ts` | Branded types (`Ref`, `ManifestKey`, `UUID`, `VersionId`). |
 | `src/constants.ts` | Protocol constants. New magic values go here. |
 | `src/errors.ts` | `MPS3Error` class. All thrown errors should be instances. |
+| `src/s3-types.ts` | Minimal S3 wire-protocol types (replaces `@aws-sdk/client-s3` for type surface only). |
 | `src/hashing.ts`, `src/time.ts`, `src/xml.ts`, `src/OMap.ts`, `src/indexdb.ts` | Utilities. |
-| `src/aws4fetch.d.ts` | Local typings for the `aws4fetch` import. |
 
 The full lifecycle of `put()` and `subscribe()` is documented in
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — read it before changing

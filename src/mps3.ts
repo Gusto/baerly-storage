@@ -258,7 +258,7 @@ export class MPS3 {
         service: "s3",
         retries: 0,
       });
-      fetchFn = (...args) => client.fetch(...args);
+      fetchFn = (url, init) => client.fetch(url, init);
     } else if (this.endpoint == MPS3.LOCAL_ENDPOINT) {
       fetchFn = offlineFetch.fetchFn;
     } else {
