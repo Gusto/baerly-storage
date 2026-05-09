@@ -4,13 +4,13 @@
     "version": "1.0.0",
     "license": "MIT",
     "type": "module",
-    "main": "./dist/mps3.js",
-    "module": "./dist/mps3.js",
-    "types": "./dist/mps3.d.ts",
+    "main": "./dist/index.js",
+    "module": "./dist/index.js",
+    "types": "./dist/index.d.ts",
     "exports": {
         ".": {
-            "types": "./dist/mps3.d.ts",
-            "import": "./dist/mps3.js"
+            "types": "./dist/index.d.ts",
+            "import": "./dist/index.js"
         }
     },
     "packageManager": "pnpm@10.31.0",
