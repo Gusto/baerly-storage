@@ -1,9 +1,9 @@
 import { expect, test, describe, beforeAll } from "vitest";
-import { MPS3 } from "../mps3";
-import { dateToSecs } from "../time";
-import { uuid } from "../types";
+import { MPS3 } from "../../src/mps3";
+import { dateToSecs } from "../../src/time";
+import { uuid } from "../../src/types";
 import { DOMParser } from "@xmldom/xmldom";
-import { createBucket, makeFixtureClient } from "./s3Fixtures";
+import { createBucket, makeFixtureClient } from "../fixtures/s3-fixtures";
 
 describe("timestampToSecs", () => {
   test("Mon, 3 Oct 2016 22:32:00 GMT", () => {

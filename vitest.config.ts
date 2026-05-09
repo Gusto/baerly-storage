@@ -8,7 +8,7 @@ const conformanceExclude =
 
 export default defineConfig({
     test: {
-        include: ["src/**/*.test.ts"],
+        include: ["src/**/*.test.ts", "tests/**/*.test.ts"],
         exclude: [...configDefaults.exclude, ...conformanceExclude],
         // Uint8Array.{toBase64,fromBase64} are TC39 Stage 4 but still gated
         // behind --js-base-64 in current V8 (Node 24 / V8 13.6). Drop this

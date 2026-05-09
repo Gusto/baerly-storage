@@ -1,6 +1,6 @@
 import { expect, test, describe } from "vitest";
-import { type JSONArrayless, diff, fold, merge } from "../json";
-import { uuid } from "../types";
+import { type JSONArrayless, diff, fold, merge } from "./json";
+import { uuid } from "./types";
 
 const rndDoc = (): JSONArrayless => {
   const choice = Math.floor(Math.random() * 4);

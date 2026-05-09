@@ -33,7 +33,7 @@ re-using for everything S3 returns).
 - Type safety for S3 operations is whatever `src/s3-types.ts` covers.
   Missing fields are added on demand.
 - Implementation:
-  [`src/S3ClientLite.ts`](../../src/S3ClientLite.ts),
+  [`src/s3-client-lite.ts`](../../src/s3-client-lite.ts),
   [`src/s3-types.ts`](../../src/s3-types.ts),
   [`src/xml.ts`](../../src/xml.ts).
 

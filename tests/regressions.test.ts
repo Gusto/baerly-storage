@@ -1,9 +1,9 @@
 import { describe, expect, test, vi } from "vitest";
-import { type FetchFn, S3ClientLite } from "../s3-client-lite";
-import type { ResolvedMPS3Config } from "../mps3";
-import { MPS3Error } from "../errors";
-import { S3_REQUEST_MAX_RETRIES, SESSION_ID_LENGTH } from "../constants";
-import { uuid } from "../types";
+import { type FetchFn, S3ClientLite } from "../src/s3-client-lite";
+import type { ResolvedMPS3Config } from "../src/mps3";
+import { MPS3Error } from "../src/errors";
+import { S3_REQUEST_MAX_RETRIES, SESSION_ID_LENGTH } from "../src/constants";
+import { uuid } from "../src/types";
 
 // Minimal stub. Only fields touched by S3ClientLite + time.adjustClock
 // when `adaptiveClock: false` are populated; the rest are unused for
@@ -45,7 +45,7 @@ describe("regressions (§9 bug-fix list)", () => {
     describe("useChecksum flag", () => {
         // Today: `useChecksum` is computed in mps3.ts (~line 727) but the
         // resulting `x-amz-content-sha256` header is COMMENTED OUT on the
-        // wire (S3ClientLite.ts:106). Half-dead. Phase 1 picks one:
+        // wire (s3-client-lite.ts:106). Half-dead. Phase 1 picks one:
         //   (a) honor the flag on the wire, or
         //   (b) remove `useChecksum` from the public type.
         // This `.todo` keeps the disposition on the agenda.

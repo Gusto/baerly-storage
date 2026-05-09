@@ -1,7 +1,7 @@
 ---
 description: Conventions for source code under src/ (excluding tests)
 appliesTo: src/**/*.ts
-appliesNotTo: src/__tests__/**
+appliesNotTo: src/**/*.test.ts
 ---
 
 # src/ rules

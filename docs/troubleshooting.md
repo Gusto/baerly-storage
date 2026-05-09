@@ -13,7 +13,7 @@ or expected.
 
 ### Need cloud credentials in `credentials/{aws,gcs,cloudflare}.json` (gitignored)
 
-- `src/__tests__/conformance.test.ts` — multi-backend conformance suite.
+- `tests/integration/conformance.test.ts` — multi-backend conformance suite.
 
 Drop credential JSON files into `credentials/` to enable. The directory
 is gitignored.
@@ -23,13 +23,13 @@ is gitignored.
 Bring up the local stack with `pnpm dev:storage`. These tests will then
 pass:
 
-- `src/__tests__/randomized.test.ts` — property-based fuzzer.
-- `src/__tests__/offlinefirst.test.ts` — offline-write replay.
-- `src/__tests__/time.test.ts` — clock-skew tolerance.
+- `tests/integration/randomized.test.ts` — property-based fuzzer.
+- `tests/integration/offline-first.test.ts` — offline-write replay.
+- `tests/integration/time.test.ts` — clock-skew tolerance.
 
 ### Stale-API mismatch (known, not your bug)
 
-- `src/__tests__/operationQueue.test.ts` — assertions expect a scalar
+- `src/operation-queue.test.ts` — assertions expect a scalar
   where `flatten()` now returns a `[value, seq]` tuple. Until someone
   rewrites the tests, ignore the failure. *Do not* "fix" it by reverting
   `flatten`.
@@ -51,7 +51,7 @@ If these fail in your work-in-progress, *that* is a regression.
 |---|---|---|
 | Minio API | `:9102` | Stable S3-compatible endpoint. Most tests target this. |
 | Minio console | `:9103` | Web UI at <http://127.0.0.1:9103> (login `mps3` / see compose file). |
-| Toxiproxy | `:9104` | Proxies `:9102` with chaos injection. Used by `randomized.test.ts` and `offlinefirst.test.ts` to simulate network failure. |
+| Toxiproxy | `:9104` | Proxies `:9102` with chaos injection. Used by `randomized.test.ts` and `offline-first.test.ts` to simulate network failure. |
 | Toxiproxy admin | `:8474` | For configuring toxics manually. |
 
 The split matters: tests that want a *reliable* S3 use `:9102`; tests
@@ -82,7 +82,7 @@ you a real IDB API backed by an in-memory store — required whenever
 `offlineStorage` is `true` (i.e. the default).
 
 Implementation: see [`src/mps3.ts`](../src/mps3.ts) (config resolution),
-[`src/operationQueue.ts`](../src/operationQueue.ts), and
+[`src/operation-queue.ts`](../src/operation-queue.ts), and
 [`src/indexdb.ts`](../src/indexdb.ts).
 
 ## What `pnpm test:randomize` actually does
@@ -94,7 +94,7 @@ that catches races and protocol violations missed by a single run of
 `randomized.test.ts`. Run it for several minutes when:
 
 - You touched `src/syncer.ts`, `src/manifest.ts`, or
-  `src/operationQueue.ts`.
+  `src/operation-queue.ts`.
 - You changed timing constants in `src/constants.ts`
   (`LAG_WINDOW_MILLIS`, `MANIFEST_LIST_LOOKAHEAD_MILLIS`, etc.).
 - You're investigating a flaky test that reproduces "sometimes".

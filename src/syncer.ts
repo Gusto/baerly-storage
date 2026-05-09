@@ -98,8 +98,8 @@ export const manifestKeySuffix = (key: ManifestKey | string): VersionId | undefi
  *
  * Read `docs/sync_protocol.md` and `docs/causal_consistency_checking.md`
  * before changing anything in this file. The invariants checked by
- * `src/__tests__/consistency.test.ts` and
- * `src/__tests__/randomized.test.ts` depend on the structure here.
+ * `tests/unit/consistency.test.ts` and
+ * `tests/integration/randomized.test.ts` depend on the structure here.
  *
  * @see `docs/sync_protocol.md`
  * @see `docs/causal_consistency_checking.md`

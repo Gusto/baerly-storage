@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, test } from "vitest";
 import { DOMParser } from "@xmldom/xmldom";
-import { MPS3, type MPS3Config } from "../mps3";
-import { reset } from "../memory-fetch";
-import { MPS3Error } from "../errors";
-import type { FetchFn } from "../s3-client-lite";
+import { MPS3, type MPS3Config } from "../../src/mps3";
+import { reset } from "../../src/memory-fetch";
+import { MPS3Error } from "../../src/errors";
+import type { FetchFn } from "../../src/s3-client-lite";
 
 const baseConfig = (label: string, bucket: string): MPS3Config => ({
     label,

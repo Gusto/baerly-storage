@@ -1,6 +1,7 @@
 # Test conventions
 
-Conventions for tests under `src/__tests__/`.
+Conventions for tests across `src/` (colocated unit tests) and `tests/`
+(everything else).
 
 ## Test runner
 - vitest. Import from `"vitest"`:
@@ -10,11 +11,19 @@ Conventions for tests under `src/__tests__/`.
 - Don't import from `"bun:test"`, `"jest"`, or `"mocha"`.
 
 ## File layout
-- Tests go in `src/__tests__/<topic>.test.ts`. The `.test.ts` suffix is
-  what `vitest.config.ts` discovers (`include: ["src/**/*.test.ts"]`).
-- Helper modules without test calls (e.g. `consistency.ts`) drop the
-  `.test.ts` suffix.
-- One topic per file. Don't pile unrelated suites into one file.
+
+vitest discovers via `include: ["src/**/*.test.ts", "tests/**/*.test.ts"]`.
+Filenames are kebab-case throughout (e.g. `operation-queue.test.ts`).
+
+| Where | What goes there |
+|---|---|
+| `src/<module>.test.ts` (next to source) | Unit tests with a 1:1 source mapping. The test for `src/json.ts` is `src/json.test.ts`. |
+| `tests/unit/<topic>.test.ts` | Cross-cutting unit tests with no single source counterpart (e.g. `consistency`, `datatypes`). |
+| `tests/<topic>.test.ts` | Cross-cutting suites that don't fit unit/integration cleanly (e.g. `regressions`). |
+| `tests/integration/<topic>.test.ts` | Tests that need infrastructure or build artifacts (Minio, credentials, `dist/`). |
+| `tests/fixtures/<name>.ts` | Shared helpers without `.test.ts` suffix (won't be picked up as tests). |
+
+One topic per file. Don't pile unrelated suites together.
 
 ## IndexedDB
 - `import "fake-indexeddb/auto";` at the top of any test that exercises
@@ -22,10 +31,10 @@ Conventions for tests under `src/__tests__/`.
   `offlineStorage`).
 
 ## Property-based tests
-- See `src/__tests__/randomized.test.ts` and `consistency.test.ts` for
-  the patterns. Write one when behavior depends on operation *ordering*
-  (interleaved writes, replay, partial failures) — not for pure
-  functions.
+- See `tests/integration/randomized.test.ts` and
+  `tests/unit/consistency.test.ts` for the patterns. Write one when
+  behavior depends on operation *ordering* (interleaved writes, replay,
+  partial failures) — not for pure functions.
 
 ## Asserting on errors
 - Check the `code`, not the message:
@@ -42,10 +51,12 @@ Conventions for tests under `src/__tests__/`.
 - Rationale: [ADR 0003 — Error code discriminant over `instanceof`](../adr/0003-error-code-discriminant.md).
 
 ## Network-dependent tests
-- Tests that hit the network expect Minio at `http://127.0.0.1:9102`.
-  Bring it up with `pnpm dev:storage` before running them.
-- `conformance.test.ts` needs cloud credentials in `credentials/`
-  (gitignored). It'll fail to load without those files — that's expected.
+- Tests that hit the network live in `tests/integration/` and expect
+  Minio at `http://127.0.0.1:9102`. Bring it up with `pnpm dev:storage`
+  before running them.
+- `tests/integration/conformance.test.ts` needs cloud credentials in
+  `credentials/` (gitignored). It's excluded from the default test
+  glob; opt in with `pnpm test:conformance`.
 
 ## Performance
 - `pnpm test` should stay under ~30s on a developer laptop. Prefer

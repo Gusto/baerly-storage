@@ -1,9 +1,9 @@
 ---
-description: Conventions for tests under src/__tests__/
-appliesTo: src/__tests__/**
+description: Conventions for tests (colocated *.test.ts in src/ and the tests/ tree)
+appliesTo: ["src/**/*.test.ts", "tests/**"]
 ---
 
 # Test rules
 
 Canonical content lives at [`docs/conventions/tests.md`](../../docs/conventions/tests.md).
-Read that file before editing anything under `src/__tests__/`.
+Read that file before adding or moving tests.

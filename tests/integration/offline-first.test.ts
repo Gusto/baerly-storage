@@ -1,14 +1,14 @@
 import { AwsClient } from "aws4fetch";
 import { expect, test, describe, beforeAll, beforeEach, afterEach } from "vitest";
-import { MPS3, type MPS3Config } from "../mps3";
+import { MPS3, type MPS3Config } from "../../src/mps3";
 import { DOMParser } from "@xmldom/xmldom";
-import { uuid } from "../types";
-import { createBucket, makeFixtureClient, putBucketVersioningEnabled } from "./s3Fixtures";
+import { uuid } from "../../src/types";
+import { createBucket, makeFixtureClient, putBucketVersioningEnabled } from "../fixtures/s3-fixtures";
 import "fake-indexeddb/auto";
 
 const minioEnabled = process.env.MINIO === "1";
 
-describe.runIf(minioEnabled)("offlinefirst", () => {
+describe.runIf(minioEnabled)("offline-first", () => {
   let s3: AwsClient;
   let session = uuid().substring(31);
   const stableConfig = {

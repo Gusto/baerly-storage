@@ -1,11 +1,11 @@
 import { expect, test, describe, beforeAll, afterEach } from "vitest";
-import { MPS3, MPS3Config } from "../mps3";
+import { MPS3, MPS3Config } from "../../src/mps3";
 import { DOMParser } from "@xmldom/xmldom";
 import cloudflareCredentials from "../../credentials/cloudflare.json";
 import awsCredentials from "../../credentials/aws.json";
 import "fake-indexeddb/auto";
-import { uuid } from "../types";
-import { createBucket, getObject, makeFixtureClient, putBucketVersioningEnabled } from "./s3Fixtures";
+import { uuid } from "../../src/types";
+import { createBucket, getObject, makeFixtureClient, putBucketVersioningEnabled } from "../fixtures/s3-fixtures";
 
 describe("mps3", () => {
   let session = uuid().substring(0, 8);

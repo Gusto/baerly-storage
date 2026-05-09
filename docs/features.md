@@ -27,9 +27,9 @@ to others in an order consistent with happened-before.
 - Constants: [`src/constants.ts`](../src/constants.ts)
   (`LAG_WINDOW_MILLIS` clock-skew tolerance)
 - Tests:
-  [`src/__tests__/consistency.test.ts`](../src/__tests__/consistency.test.ts)
+  [`tests/unit/consistency.test.ts`](../tests/unit/consistency.test.ts)
   (state-machine model),
-  [`src/__tests__/randomized.test.ts`](../src/__tests__/randomized.test.ts)
+  [`tests/integration/randomized.test.ts`](../tests/integration/randomized.test.ts)
   (property-based, runs against Toxiproxy)
 - Theory: [`docs/sync_protocol.md`](./sync_protocol.md),
   [`docs/causal_consistency_checking.md`](./causal_consistency_checking.md)
@@ -39,11 +39,11 @@ to others in an order consistent with happened-before.
 Local writes survive a tab close / network drop and replay on reconnect.
 
 - Implementation:
-  [`src/operationQueue.ts`](../src/operationQueue.ts) (in-memory + IDB
+  [`src/operation-queue.ts`](../src/operation-queue.ts) (in-memory + IDB
   buffer), [`src/indexdb.ts`](../src/indexdb.ts) (IDB wrapper)
 - Tests:
-  [`src/__tests__/offlinefirst.test.ts`](../src/__tests__/offlinefirst.test.ts),
-  [`src/__tests__/operationQueue.test.ts`](../src/__tests__/operationQueue.test.ts)
+  [`tests/integration/offline-first.test.ts`](../tests/integration/offline-first.test.ts),
+  [`src/operation-queue.test.ts`](../src/operation-queue.test.ts)
   (note: stale-API mismatch — see
   [troubleshooting.md](./troubleshooting.md))
 
@@ -52,7 +52,7 @@ Local writes survive a tab close / network drop and replay on reconnect.
 How partial updates merge into existing documents.
 
 - Implementation: [`src/json.ts`](../src/json.ts)
-- Tests: [`src/__tests__/json.test.ts`](../src/__tests__/json.test.ts)
+- Tests: [`src/json.test.ts`](../src/json.test.ts)
   (always green — pure unit test)
 - Docs: [`docs/JSON_merge_patch.md`](./JSON_merge_patch.md)
 
@@ -61,11 +61,11 @@ How partial updates merge into existing documents.
 Direct HTTP to S3-compatible APIs via `aws4fetch`. We don't ship
 `@aws-sdk/client-s3`.
 
-- Implementation: [`src/S3ClientLite.ts`](../src/S3ClientLite.ts),
+- Implementation: [`src/s3-client-lite.ts`](../src/s3-client-lite.ts),
   [`src/xml.ts`](../src/xml.ts) (XML parsing for ListObjectsV2),
   [`src/s3-types.ts`](../src/s3-types.ts) (minimal wire-protocol types)
-- Tests: [`src/__tests__/xml.test.ts`](../src/__tests__/xml.test.ts),
-  [`src/__tests__/conformance.test.ts`](../src/__tests__/conformance.test.ts)
+- Tests: [`src/xml.test.ts`](../src/xml.test.ts),
+  [`tests/integration/conformance.test.ts`](../tests/integration/conformance.test.ts)
   (multi-backend, needs credentials)
 - Docs: [`docs/s3_features_used.md`](./s3_features_used.md),
   [`docs/s3-xml-escaping-cases.md`](./s3-xml-escaping-cases.md)
@@ -78,7 +78,7 @@ outside `LAG_WINDOW_MILLIS` are rejected.
 
 - Implementation: [`src/time.ts`](../src/time.ts),
   [`src/constants.ts`](../src/constants.ts)
-- Tests: [`src/__tests__/time.test.ts`](../src/__tests__/time.test.ts)
+- Tests: [`tests/integration/time.test.ts`](../tests/integration/time.test.ts)
   (needs Minio)
 
 ## Error model
@@ -104,5 +104,5 @@ version IDs from being confused at protocol boundaries.
 
 - Implementation: [`src/hashing.ts`](../src/hashing.ts)
 - Tests:
-  [`src/__tests__/hashing.test.ts`](../src/__tests__/hashing.test.ts)
+  [`src/hashing.test.ts`](../src/hashing.test.ts)
   (always green)

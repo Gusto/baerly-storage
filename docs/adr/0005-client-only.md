@@ -42,9 +42,9 @@ Rationale and theory live in
 - **No auth layer of our own.** Auth is whatever the bucket provides
   (signed URLs, IAM, anonymous public-read for demos).
 - The randomized property tests in
-  [`src/__tests__/randomized.test.ts`](../../src/__tests__/randomized.test.ts)
+  [`tests/integration/randomized.test.ts`](../../tests/integration/randomized.test.ts)
   and the consistency checker in
-  [`src/__tests__/consistency.test.ts`](../../src/__tests__/consistency.test.ts)
+  [`tests/unit/consistency.test.ts`](../../tests/unit/consistency.test.ts)
   exist precisely because the protocol can't be enforced server-side.
 
 If we ever need server-side enforcement (e.g. for write authorization

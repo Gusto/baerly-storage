@@ -20,7 +20,7 @@ The full suite is run with vitest:
 
 ```sh
 pnpm test                                   # entire suite
-pnpm exec vitest run src/__tests__/json.test.ts   # one file
+pnpm exec vitest run src/json.test.ts   # one file
 pnpm exec vitest run -t "subscribe"               # tests whose name matches
 pnpm test:randomize                         # loop until a failure (soak)
 ```
@@ -41,7 +41,7 @@ Pure-unit:
 
 ### Tests that need a running Minio
 
-`randomized.test.ts`, `offlinefirst.test.ts`, `time.test.ts` connect
+`randomized.test.ts`, `offline-first.test.ts`, `time.test.ts` connect
 to `http://127.0.0.1:9102` (Minio). Bring it up:
 
 ```sh
@@ -71,11 +71,11 @@ only contributors with cloud accounts run it.
 
 ### Known stale tests
 
-`operationQueue.test.ts` has a known mismatch: its assertions expect a
-scalar where `flatten()` now returns a `[value, sequence]` tuple. These
-failures are pre-existing — don't be fooled into thinking your change
-broke them. (If you fix them, ensure the fix doesn't change runtime
-behavior of `OperationQueue.flatten()`.)
+`operation-queue.test.ts` has historically had a known mismatch (its
+assertions expected a scalar where `flatten()` now returns a `[value,
+sequence]` tuple). If you see related failures, verify they are
+pre-existing — don't change runtime behavior of
+`OperationQueue.flatten()` to "fix" the test.
 
 ## Type checking, formatting, linting
 
@@ -89,7 +89,7 @@ pnpm lint             # oxlint src
 ## Building
 
 ```sh
-pnpm build       # rolldown bundle to dist/ (mps3.js + mps3.d.ts)
+pnpm build       # rolldown bundle to dist/ (index.js + index.d.ts)
 ```
 
 Public-API documentation lives as JSDoc on `src/mps3.ts`. IDE hover
@@ -143,22 +143,43 @@ distinguish your regressions from the pre-existing state.
 
 ```
 src/
-  mps3.ts            # public class
-  manifest.ts        # poll loop + subscribers
-  syncer.ts          # manifest log read/write
-  operationQueue.ts  # local write buffer (IDB-backed)
-  S3ClientLite.ts    # HTTP S3 client
-  json.ts            # RFC 7386 JSON Merge Patch
-  types.ts           # branded types + Ref helpers
-  constants.ts       # protocol constants
-  errors.ts          # MPS3Error + code enum
-  hashing.ts         # SHA-256 / base64
-  time.ts            # base32 timestamp encoding
-  xml.ts             # parse S3 XML responses
-  OMap.ts            # ordered map keyed by Ref
-  indexdb.ts         # IDB persistence helpers
-  s3-types.ts        # minimal S3 wire-protocol types
-  __tests__/         # all tests live here (vitest)
+  index.ts             # public barrel (rolldown entry)
+  mps3.ts              # public class
+  manifest.ts          # poll loop + subscribers
+  syncer.ts            # manifest log read/write
+  operation-queue.ts   # local write buffer (IDB-backed)
+  s3-client-lite.ts    # HTTP S3 client
+  json.ts              # RFC 7386 JSON Merge Patch
+  types.ts             # branded types + Ref helpers
+  constants.ts         # protocol constants
+  errors.ts            # MPS3Error + code enum
+  hashing.ts           # SHA-256 / base64
+  time.ts              # base32 timestamp encoding
+  xml.ts               # parse S3 XML responses
+  o-map.ts             # ordered map keyed by Ref
+  indexdb.ts           # IDB persistence helpers
+  memory-fetch.ts      # in-memory FetchFn adapter (no network)
+  s3-types.ts          # minimal S3 wire-protocol types
+  hashing.test.ts      # colocated unit tests
+  json.test.ts
+  xml.test.ts
+  operation-queue.test.ts
+
+tests/
+  regressions.test.ts        # cross-cutting suites
+  unit/                      # cross-cutting unit tests
+    consistency.test.ts
+    datatypes.test.ts
+  integration/               # tests that need infra or build artifacts
+    randomized.test.ts
+    offline-first.test.ts
+    time.test.ts
+    conformance.test.ts
+    bundle-size.test.ts
+    put-all-partial-failure.test.ts
+  fixtures/                  # shared helpers (no .test.ts suffix)
+    consistency.ts
+    s3-fixtures.ts
 
 docs/
   ARCHITECTURE.md            # module map + lifecycles

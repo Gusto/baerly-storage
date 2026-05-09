@@ -1,6 +1,6 @@
 # src/ conventions
 
-Conventions for source code under `src/` (excluding `src/__tests__/`).
+Conventions for source code under `src/` (excluding `*.test.ts` files).
 
 ## Imports
 - Relative paths only (`./types`, `./constants`). No `baseUrl` aliases —

@@ -18,10 +18,10 @@ consistent in [causal_consistency_checking.md](causal_consistency_checking.md).
 ```mermaid
 graph TD
     mps3[mps3.ts<br/>public API]
-    operationQueue[operationQueue.ts<br/>local write buffer]
+    operationQueue[operation-queue.ts<br/>local write buffer]
     manifest[manifest.ts<br/>poll loop + subscribers]
     syncer[syncer.ts<br/>manifest log read/write]
-    s3client[S3ClientLite.ts<br/>HTTP S3 client]
+    s3client[s3-client-lite.ts<br/>HTTP S3 client]
     json[json.ts<br/>RFC 7386 merge patch]
     indexdb[indexdb.ts<br/>IDB persistence]
 
@@ -105,7 +105,7 @@ is called with the initial value, then on every change, then once with
 - **Optimistic concurrency / clock skew**: `Syncer.isValid` and the retry
   loop in `updateContent`. A write whose server-side timestamp falls
   outside `LAG_WINDOW_MILLIS` is retried with an adjusted `clockOffset`.
-- **Local durability**: `operationQueue.ts` — every proposed write is
+- **Local durability**: `operation-queue.ts` — every proposed write is
   written to IndexedDB *before* the network call, then deleted on
   confirmation. On reload, `restore()` replays unconfirmed writes.
 - **Offline-first reads**: `mps3.ts:_getObject` checks `memCache` then

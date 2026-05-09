@@ -28,6 +28,6 @@
 
         "types": ["node"]
     },
-    "include": ["src/**/*"],
-    "exclude": ["src/__tests__/conformance.test.ts"]
+    "include": ["src/**/*", "tests/**/*"],
+    "exclude": ["tests/integration/conformance.test.ts"]
 }

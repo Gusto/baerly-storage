@@ -81,16 +81,16 @@ public async keys(
 
 ### Add a test
 
-Conformance tests live in `src/__tests__/conformance.test.ts`. They need
+Conformance tests live in `tests/integration/conformance.test.ts`. They need
 cloud credentials. For a behavior that doesn't require a network round
 trip, prefer a focused test in a topic-specific file (e.g.
-`src/__tests__/keys.test.ts`).
+`tests/unit/keys.test.ts`).
 
 ```ts
-// src/__tests__/keys.test.ts
+// tests/unit/keys.test.ts
 import "fake-indexeddb/auto";
 import { test, expect, describe } from "vitest";
-import { MPS3 } from "../mps3";
+import { MPS3 } from "../../src/mps3";
 
 describe("keys()", () => {
   test("reflects local writes", async () => {
@@ -108,7 +108,7 @@ describe("keys()", () => {
 ```
 
 For protocol-shape changes (anything in `syncer.ts` or `manifest.ts`),
-also add a property-based variant in `src/__tests__/randomized.test.ts`
+also add a property-based variant in `tests/integration/randomized.test.ts`
 so the behavior is exercised under random write interleavings.
 
 ### Verify
@@ -153,7 +153,9 @@ export class MyThing {
 
 ### Don't
 
-- ❌ Create files outside `src/`. Tests go in `src/__tests__/`.
+- ❌ Create files outside `src/` or `tests/`. Source modules live in
+  `src/`; unit tests colocate as `src/<module>.test.ts`; cross-cutting
+  and integration tests live under `tests/`.
 - ❌ Use baseUrl-style imports — there's no `baseUrl` configured. Use
   relative paths.
 - ❌ Add a config knob unless it's user-facing. Internal toggles bloat
@@ -165,19 +167,24 @@ export class MyThing {
 
 ### File naming and location
 
-- Tests live in `src/__tests__/`.
-- Filename: `<topic>.test.ts`. The `.test.ts` suffix is what
-  `vitest.config.ts` picks up (`include: ["src/**/*.test.ts"]`).
-- Helper modules (no test calls) go in `src/__tests__/` *without* the
-  `.test.ts` suffix — see `src/__tests__/consistency.ts`.
+Filenames are kebab-case. The `.test.ts` suffix is what `vitest.config.ts`
+picks up (`include: ["src/**/*.test.ts", "tests/**/*.test.ts"]`).
+
+- **Unit test of a single module** → colocate as `src/<module>.test.ts`.
+  Example: tests for `src/json.ts` go in `src/json.test.ts`.
+- **Cross-cutting unit test** with no 1:1 source → `tests/unit/<topic>.test.ts`.
+- **Integration test** that needs Minio, credentials, or a built bundle
+  → `tests/integration/<topic>.test.ts`.
+- **Shared helpers** (no test calls) → `tests/fixtures/<name>.ts`. See
+  `tests/fixtures/consistency.ts` for an example.
 
 ### Test template
 
 ```ts
-// src/__tests__/myFeature.test.ts
+// tests/unit/my-feature.test.ts
 import { test, expect, describe } from "vitest";
 import "fake-indexeddb/auto";          // only if the test exercises IndexedDB
-import { MPS3 } from "../mps3";
+import { MPS3 } from "../../src/mps3";
 
 describe("my feature", () => {
   test("does the thing", async () => {
@@ -206,8 +213,8 @@ A property test in this codebase typically:
    consistent with some serialization of the writes" or "no client
    observes a state that contradicts a happened-before relation".
 
-Look at `src/__tests__/randomized.test.ts` and
-`src/__tests__/consistency.test.ts` for the patterns in use.
+Look at `tests/integration/randomized.test.ts` and
+`tests/unit/consistency.test.ts` for the patterns in use.
 
 ### When to assert on errors
 

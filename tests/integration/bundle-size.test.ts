@@ -9,11 +9,11 @@ import { describe, expect, test } from "vitest";
 const BUNDLE_BUDGET_BYTES = 36 * 1024;
 
 describe("bundle size", () => {
-    test("dist/mps3.js stays under bundle budget", () => {
-        const distPath = resolve(__dirname, "../../dist/mps3.js");
+    test("dist/index.js stays under bundle budget", () => {
+        const distPath = resolve(__dirname, "../../dist/index.js");
         if (!existsSync(distPath)) {
             throw new Error(
-                `dist/mps3.js missing — run \`pnpm build\` before \`pnpm test\``,
+                `dist/index.js missing — run \`pnpm build\` before \`pnpm test\``,
             );
         }
         const size = statSync(distPath).size;
