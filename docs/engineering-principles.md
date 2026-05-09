@@ -6,6 +6,7 @@ This repo is a robust, enterprise quality product. This has not launched and has
 
 - Ship the smallest coherent slice that solves the user problem.
 - Prefer changing the product contract over preserving old behavior.
+- Prefer modern syntax and idioms. This project uses TypeScript 7 and Node 24+
 
 ## Backwards Compatibility
 
