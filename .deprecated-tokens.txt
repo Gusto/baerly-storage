@@ -23,3 +23,4 @@ LOCAL_ENDPOINT          # 2026-05-09: indexdb:// shim deleted
 src/replication.ts      # already removed; pin
 useChecksum             # already removed (commit 21f4c90); pin
 offline-first.test.ts   # 2026-05-09: offline tier deleted
+src/memory-fetch.ts     # 2026-05-09: moved/reshaped to MemoryStorage in @baerly/protocol

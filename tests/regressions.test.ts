@@ -4,12 +4,12 @@ import { type FetchFn, S3ClientLite } from "../src/s3-client-lite";
 import { MPS3, type ResolvedMPS3Config } from "../src/mps3";
 import {
     MPS3Error,
+    resetMemoryStorage as reset,
     S3_REQUEST_MAX_RETRIES,
     SESSION_ID_LENGTH,
     SYNCER_CLOCK_SKEW_MAX_RETRIES,
     uuid,
 } from "@baerly/protocol";
-import { reset } from "../src/memory-fetch";
 
 // Minimal stub. Only fields touched by S3ClientLite + time.adjustClock
 // when `adaptiveClock: false` are populated; the rest are unused for

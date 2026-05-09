@@ -30,7 +30,7 @@ import {
 } from "@baerly/protocol";
 import { Manifest } from "./manifest";
 import { type UseStore, createStore, get, set } from "idb-keyval";
-import * as memoryFetch from "./memory-fetch";
+import { memoryFetchFn } from "@baerly/protocol";
 
 /**
  * Bounded LRU keyed by a string derived from `K`. Mirrors the subset of
@@ -238,7 +238,8 @@ export class MPS3 {
    * Virtual endpoint for in-memory operation. Test-friendly: zero infra
    * deps, isolated per-process, no IDB shim required. Storage is shared
    * across all `MPS3` instances in the same process by bucket name —
-   * use `memoryFetch.reset()` between tests when isolation matters.
+   * use `resetMemoryStorage()` from `@baerly/protocol` between tests
+   * when isolation matters.
    */
   static MEMORY_ENDPOINT = "memory:";
   /** @internal */
@@ -336,7 +337,7 @@ export class MPS3 {
       });
       fetchFn = (url, init) => client.fetch(url, init);
     } else if (this.endpoint === MPS3.MEMORY_ENDPOINT) {
-      fetchFn = memoryFetch.fetchFn;
+      fetchFn = memoryFetchFn;
     } else {
       fetchFn = globalThis.fetch.bind(globalThis);
     }

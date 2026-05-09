@@ -1,3 +1,7 @@
+// TODO: refactor as Storage impl when this file moves to
+// @baerly/server (see .claude/research/00-plan.md Phase 1).
+// Today's S3ClientLite shape is method-similar to Storage but
+// typed differently; the refactor is mechanical but not no-regrets.
 import type {
   DeleteObjectCommandInput,
   DeleteObjectCommandOutput,

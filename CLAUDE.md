@@ -59,8 +59,9 @@ deps. Tests requiring Minio or credentials are gated by env:
   credentials in `credentials/{aws,gcs,cloudflare}.json` (gitignored).
   Excluded from the default test glob. Run with `pnpm test:conformance`.
 
-`randomized.test.ts` runs by default against an in-memory `fetchFn`
-adapter (`src/memory-fetch.ts`) — the property-based causal-consistency
+`randomized.test.ts` runs by default against an in-memory `Storage`
+impl (`MemoryStorage` in `@baerly/protocol`, served as a `fetchFn`
+via `fetchFnFromStorage`) — the property-based causal-consistency
 checker is the highest-leverage test asset and now runs in <1s on
 every PR.
 
@@ -98,9 +99,11 @@ Read in this order to build a mental model:
    `packages/protocol/src/hashing.ts`,
    `packages/protocol/src/o-map.ts`,
    `packages/protocol/src/time.ts`,
-   `packages/protocol/src/xml.ts`.
+   `packages/protocol/src/xml.ts`,
+   `packages/protocol/src/storage/` (`Storage` interface +
+   `MemoryStorage` impl + `fetchFnFromStorage` adapter).
 6. **`src/`** (impure utilities still being carved):
-   `src/memory-fetch.ts`, `src/s3-types.ts`.
+   `src/s3-types.ts`.
 
 The full lifecycle of `put()` and `subscribe()` is in
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — read it before
