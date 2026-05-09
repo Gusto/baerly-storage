@@ -15,13 +15,14 @@ import {
   TIMESTAMP_BIT_WIDTH,
   clone,
   countKey,
+  measure,
   merge,
   str2uintDesc,
+  timestamp,
   url,
   uuid,
 } from "@baerly/protocol";
 import type { Manifest } from "./manifest";
-import * as time from "./time";
 import { type UseStore, get, set } from "idb-keyval";
 
 export interface FileState extends JSONArraylessObject {
@@ -67,7 +68,7 @@ interface HttpCacheEntry<T> {
  * `docs/sync_protocol.md` (manifest log section).
  */
 export const manifestKey = (ref: ResolvedRef, epochMs: number): ManifestKey =>
-  <ManifestKey>`${ref.key}@${time.timestamp(epochMs)}`;
+  <ManifestKey>`${ref.key}@${timestamp(epochMs)}`;
 
 /**
  * Compose a manifest log key from a pre-computed version-id suffix
@@ -150,7 +151,7 @@ export class Syncer {
   // (An exception is made for adjusting for clock skew)
   generate_manifest_key(): VersionId {
     return <VersionId>(
-      (time.timestamp(
+      (timestamp(
         Math.max(Date.now() + this.manifest.service.config.clockOffset, this.latest_timestamp),
       ) +
         "_" +
@@ -200,7 +201,7 @@ export class Syncer {
       this.manifest.ref,
       Date.now() + this.manifest.service.config.clockOffset + MANIFEST_LIST_LOOKAHEAD_MILLIS,
     );
-    const [objects, dt] = await time.measure(
+    const [objects, dt] = await measure(
       this.manifest.service.s3ClientLite.listObjectV2({
         Bucket: this.manifest.ref.bucket,
         Prefix: this.manifest.ref.key + "@",

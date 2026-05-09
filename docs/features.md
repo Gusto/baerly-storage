@@ -34,19 +34,6 @@ to others in an order consistent with happened-before.
 - Theory: [`docs/sync_protocol.md`](./sync_protocol.md),
   [`docs/causal_consistency_checking.md`](./causal_consistency_checking.md)
 
-## Offline-first writes
-
-Local writes survive a tab close / network drop and replay on reconnect.
-
-- Implementation:
-  [`src/operation-queue.ts`](../src/operation-queue.ts) (in-memory + IDB
-  buffer), [`src/indexdb.ts`](../src/indexdb.ts) (IDB wrapper)
-- Tests:
-  [`tests/integration/offline-first.test.ts`](../tests/integration/offline-first.test.ts),
-  [`src/operation-queue.test.ts`](../src/operation-queue.test.ts)
-  (note: stale-API mismatch — see
-  [troubleshooting.md](./troubleshooting.md))
-
 ## JSON Merge Patch (RFC 7386)
 
 How partial updates merge into existing documents.
@@ -62,9 +49,10 @@ Direct HTTP to S3-compatible APIs via `aws4fetch`. We don't ship
 `@aws-sdk/client-s3`.
 
 - Implementation: [`src/s3-client-lite.ts`](../src/s3-client-lite.ts),
-  [`src/xml.ts`](../src/xml.ts) (XML parsing for ListObjectsV2),
+  [`packages/protocol/src/xml.ts`](../packages/protocol/src/xml.ts)
+  (XML parsing for ListObjectsV2),
   [`src/s3-types.ts`](../src/s3-types.ts) (minimal wire-protocol types)
-- Tests: [`src/xml.test.ts`](../src/xml.test.ts),
+- Tests: [`packages/protocol/src/xml.test.ts`](../packages/protocol/src/xml.test.ts),
   [`tests/integration/conformance.test.ts`](../tests/integration/conformance.test.ts)
   (multi-backend, needs credentials)
 - Docs: [`docs/s3_features_used.md`](./s3_features_used.md),
@@ -76,7 +64,7 @@ Direct HTTP to S3-compatible APIs via `aws4fetch`. We don't ship
 The protocol assumes loosely-synchronized clocks. Manifest entries
 outside `LAG_WINDOW_MILLIS` are rejected.
 
-- Implementation: [`src/time.ts`](../src/time.ts),
+- Implementation: [`packages/protocol/src/time.ts`](../packages/protocol/src/time.ts),
   [`packages/protocol/src/constants.ts`](../packages/protocol/src/constants.ts)
 - Tests: [`tests/integration/time.test.ts`](../tests/integration/time.test.ts)
   (needs Minio)

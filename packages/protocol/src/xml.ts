@@ -1,10 +1,26 @@
-import type { ListObjectsV2CommandOutput } from "./s3-types";
-import { MPS3Error, type XmlNode, type XmlParser } from "@baerly/protocol";
+import { MPS3Error } from "./errors";
+import type { XmlNode, XmlParser } from "./types";
+
+/**
+ * Subset of S3's `ListObjectsV2CommandOutput` produced by
+ * {@link parseListObjectsV2CommandOutput}. Mirrors the shape in
+ * `src/s3-types.ts` (kept structurally compatible) without
+ * introducing a `protocol → src` import. The host's
+ * `ListObjectsV2CommandOutput` is structurally compatible.
+ */
+export interface ParsedListObjectsV2Output {
+  $metadata: { httpStatusCode?: number };
+  Contents?: Array<{ ETag?: string; Key?: string; LastModified?: Date }>;
+  KeyCount?: number;
+  ContinuationToken?: string;
+  NextContinuationToken?: string;
+  StartAfter?: string;
+}
 
 export const parseListObjectsV2CommandOutput = (
   xml: string,
   domParser: XmlParser,
-): ListObjectsV2CommandOutput => {
+): ParsedListObjectsV2Output => {
   // reject DTDs (XXE/billion-laughs) — DOCTYPE must precede the root element
   if (/<!DOCTYPE\b/i.test(xml)) {
     throw new MPS3Error("InvalidResponse", "DTD not allowed in S3 XML responses");

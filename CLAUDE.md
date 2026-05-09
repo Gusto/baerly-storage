@@ -34,7 +34,7 @@ Don't introduce alternate tooling without justification.
 |---|---|---|---|
 | `pnpm verify` | typecheck (`tsgo --noEmit`) + lint (`oxlint`) | ~seconds | ✅ — non-zero exit *is* your regression |
 | `pnpm test` | vitest unit + integration (zero infra) | ~1s | ✅ — Minio + credentials tests are gated, see below |
-| `pnpm test:minio` | adds the Minio-gated suites (`randomized`, `offline-first`, `time` + Minio variants) | ~30s | ✅ when `pnpm dev:storage` is up |
+| `pnpm test:minio` | adds the Minio-gated suites (`randomized`, `time` + Minio variants) | ~30s | ✅ when `pnpm dev:storage` is up |
 | `pnpm test:conformance` | adds `conformance.test.ts` (needs Minio + credentials files) | ~30s | requires credentials in `credentials/{aws,gcs,cloudflare}.json` |
 | `pnpm format:check` | oxfmt formatting | ~seconds | ❌ red on ~20 pre-existing files; diff vs. `main` |
 | `pnpm build` | rolldown bundle to `dist/` | ~seconds | ✅ |
@@ -50,11 +50,10 @@ pre-commit hook (`lefthook.yml`); `pnpm install` wires it up via the
 `pnpm test` runs green on a fresh checkout with zero infrastructure
 deps. Tests requiring Minio or credentials are gated by env:
 
-- **Minio-required tests** (`tests/integration/offline-first.test.ts`,
-  the `clock behavior` block of `tests/integration/time.test.ts`, and
-  the `useVersioning` / `minio` variants of
-  `tests/integration/randomized.test.ts`) skip by default. Run them
-  with `MINIO=1 pnpm test` (alias: `pnpm test:minio`) after
+- **Minio-required tests** (the `clock behavior` block of
+  `tests/integration/time.test.ts`, and the `useVersioning` / `minio`
+  variants of `tests/integration/randomized.test.ts`) skip by default.
+  Run them with `MINIO=1 pnpm test` (alias: `pnpm test:minio`) after
   `pnpm dev:storage`.
 - **`tests/integration/conformance.test.ts`** needs both Minio and
   credentials in `credentials/{aws,gcs,cloudflare}.json` (gitignored).
@@ -66,16 +65,12 @@ checker is the highest-leverage test asset and now runs in <1s on
 every PR.
 
 Pure-unit tests that always pass: `packages/protocol/src/hashing.test.ts`,
-`tests/unit/consistency.test.ts`, `src/xml.test.ts`, `packages/protocol/src/json.test.ts`,
+`tests/unit/consistency.test.ts`, `packages/protocol/src/xml.test.ts`,
+`packages/protocol/src/json.test.ts`,
 `tests/unit/datatypes.test.ts`, `src/operation-queue.test.ts`,
 `tests/integration/bundle-size.test.ts`,
 `tests/integration/put-all-partial-failure.test.ts`,
 `tests/regressions.test.ts`.
-
-The `regressions.test.ts` suite includes one `test.fails` (session-ID
-collision rate is too high — Phase 3 will fix) and one `test.todo`
-(`useChecksum` flag disposition — Phase 1 picks). Both are
-intentional and don't represent broken builds.
 
 ## Local dev
 
@@ -101,10 +96,11 @@ Read in this order to build a mental model:
    `packages/protocol/src/constants.ts`,
    `packages/protocol/src/errors.ts`,
    `packages/protocol/src/hashing.ts`,
-   `packages/protocol/src/o-map.ts`.
+   `packages/protocol/src/o-map.ts`,
+   `packages/protocol/src/time.ts`,
+   `packages/protocol/src/xml.ts`.
 6. **`src/`** (impure utilities still being carved):
-   `src/time.ts`, `src/xml.ts`, `src/memory-fetch.ts`,
-   `src/indexdb.ts`, `src/s3-types.ts`.
+   `src/memory-fetch.ts`, `src/s3-types.ts`.
 
 The full lifecycle of `put()` and `subscribe()` is in
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — read it before

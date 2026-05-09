@@ -11,11 +11,15 @@
 #   __tests__/                  # 2026-05-09: tests moved to colocated + tests/
 #   src/operationQueue.ts       # 2026-05-09: kebab-cased to operation-queue.ts
 #
-# NOTE: the protocol-package move (2026-05-09) intentionally adds NO
-# entries here — the OLD paths (`src/types.ts` etc.) are substrings of
-# the NEW paths (`packages/protocol/src/types.ts` etc.), so a banlist
-# entry would trip on the moved files themselves. typecheck catches
-# the relevant regression: any new `from "./types"` (etc.) in `src/`
-# fails to resolve since the file no longer exists there.
+# NOTE: file-move tokens whose OLD path is a substring of the NEW path
+# (e.g. `src/types.ts` is a substring of `packages/protocol/src/types.ts`)
+# would false-positive on the moved files themselves. Skip those —
+# typecheck catches the relevant regression: any new `from "./types"`
+# (etc.) in `src/` fails to resolve since the file no longer exists
+# there. The entries below are deletion-only or renamed-with-no-substring.
 
-# Empty for now — the most recent rename is clean.
+src/indexdb.ts          # 2026-05-09: browser-direct tier deleted
+LOCAL_ENDPOINT          # 2026-05-09: indexdb:// shim deleted
+src/replication.ts      # already removed; pin
+useChecksum             # already removed (commit 21f4c90); pin
+offline-first.test.ts   # 2026-05-09: offline tier deleted

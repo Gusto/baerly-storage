@@ -1,3 +1,7 @@
+// Slated for deletion when the manifest poller is replaced (see
+// .claude/research/00-plan.md Phase 2). The browser-direct offline
+// tier this buffers for is being dropped; the file survives only
+// because src/manifest.ts:33 still imports it. Do not extend.
 import {
   type DeleteValue,
   type JSONValue,

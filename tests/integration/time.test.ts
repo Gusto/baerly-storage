@@ -1,7 +1,6 @@
 import { expect, test, describe, beforeAll } from "vitest";
 import { MPS3 } from "../../src/mps3";
-import { dateToSecs } from "../../src/time";
-import { uuid } from "@baerly/protocol";
+import { dateToSecs, uuid } from "@baerly/protocol";
 import { DOMParser } from "@xmldom/xmldom";
 import { createBucket, makeFixtureClient } from "../fixtures/s3-fixtures";
 

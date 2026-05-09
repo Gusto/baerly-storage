@@ -8,14 +8,14 @@ import type {
   PutObjectCommandInput,
   PutObjectCommandOutput,
 } from "./s3-types";
-import * as time from "./time";
 import type { ResolvedMPS3Config } from "./mps3";
-import { parseListObjectsV2CommandOutput } from "./xml";
 import {
   LIST_OBJECT_MAX_RETRIES,
   MPS3Error,
   RATE_LIMIT_BACKOFF_MILLIS,
   S3_REQUEST_MAX_RETRIES,
+  adjustClock,
+  parseListObjectsV2CommandOutput,
 } from "@baerly/protocol";
 
 export type FetchFn = (url: string, init?: RequestInit) => Promise<Response>;
@@ -97,7 +97,7 @@ export class S3ClientLite {
   }: PutObjectCommandInput): Promise<PutObjectCommandOutput & { Date: Date }> {
     const url = this.getUrl(Bucket!, Key);
     const response = await retry(() =>
-      time.adjustClock(
+      adjustClock(
         this.fetch(url, {
           method: "PUT",
           body: Body as string,
@@ -141,7 +141,7 @@ export class S3ClientLite {
       VersionId ? `?versionId=${encodeURIComponent(VersionId)}` : "",
     );
     const response = await retry(() =>
-      time.adjustClock(
+      adjustClock(
         this.fetch(url, {
           method: "GET",
           headers: { "If-None-Match": IfNoneMatch! },

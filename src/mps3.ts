@@ -21,6 +21,7 @@ import {
   MEM_CACHE_CAPACITY,
   MPS3Error,
   OMap,
+  measure,
   resolveContentRef,
   resolveManifestRef,
   url,
@@ -29,8 +30,6 @@ import {
 } from "@baerly/protocol";
 import { Manifest } from "./manifest";
 import { type UseStore, createStore, get, set } from "idb-keyval";
-import * as time from "./time";
-import * as offlineFetch from "./indexdb";
 import * as memoryFetch from "./memory-fetch";
 
 /**
@@ -236,10 +235,6 @@ interface GetResponse<T> {
  */
 export class MPS3 {
   /**
-   * Virtual endpoint for local-first operation
-   */
-  static LOCAL_ENDPOINT = "indexdb:"; // (!) browser compatibility
-  /**
    * Virtual endpoint for in-memory operation. Test-friendly: zero infra
    * deps, isolated per-process, no IDB shim required. Storage is shared
    * across all `MPS3` instances in the same process by bucket name —
@@ -309,10 +304,10 @@ export class MPS3 {
       config.s3Config.endpoint || `https://s3.${config.s3Config.region}.amazonaws.com`;
 
     // Reject endpoints that aren't http(s) — e.g. a stray `file:`, `ftp:`,
-    // or a typo'd path. The `LOCAL_ENDPOINT` (`indexdb:`) and
-    // `MEMORY_ENDPOINT` (`memory:`) sentinels are the only non-http(s)
-    // values the rest of the constructor knows how to handle.
-    if (this.endpoint !== MPS3.LOCAL_ENDPOINT && this.endpoint !== MPS3.MEMORY_ENDPOINT) {
+    // or a typo'd path. The `MEMORY_ENDPOINT` (`memory:`) sentinel is
+    // the only non-http(s) value the rest of the constructor knows how
+    // to handle.
+    if (this.endpoint !== MPS3.MEMORY_ENDPOINT) {
       let scheme: string;
       try {
         scheme = new URL(this.endpoint).protocol;
@@ -340,8 +335,6 @@ export class MPS3 {
         retries: 0,
       });
       fetchFn = (url, init) => client.fetch(url, init);
-    } else if (this.endpoint === MPS3.LOCAL_ENDPOINT) {
-      fetchFn = offlineFetch.fetchFn;
     } else if (this.endpoint === MPS3.MEMORY_ENDPOINT) {
       fetchFn = memoryFetch.fetchFn;
     } else {
@@ -477,16 +470,15 @@ export class MPS3 {
       );
     }
 
-    const work = time
-      .measure(this.s3ClientLite.getObject(command))
-      .then(async ([apiResponse, time]) => {
+    const work = measure(this.s3ClientLite.getObject(command))
+      .then(async ([apiResponse, dt]) => {
         const response: GetResponse<T> = {
           $metadata: apiResponse.$metadata,
           ETag: apiResponse.ETag,
           data: <T | undefined>apiResponse.Body,
         };
         this.config.log(
-          `${time}ms ${args.operation} ${args.ref.bucket}/${args.ref.key}@${args.version} => ${response.VersionId}`,
+          `${dt}ms ${args.operation} ${args.ref.bucket}/${args.ref.key}@${args.version} => ${response.VersionId}`,
         );
         return response;
       })
@@ -734,7 +726,7 @@ export class MPS3 {
       Body: content,
     };
 
-    const [response, dt] = await time.measure(this.s3ClientLite.putObject(command));
+    const [response, dt] = await measure(this.s3ClientLite.putObject(command));
     this.config.log(
       `${dt}ms ${args.operation} ${command.Bucket}/${command.Key} => ${response.VersionId}`,
     );
@@ -765,7 +757,7 @@ export class MPS3 {
       Bucket: args.ref.bucket,
       Key: args.ref.key,
     };
-    const [response, dt] = await time.measure(this.s3ClientLite.deleteObject(command));
+    const [response, dt] = await measure(this.s3ClientLite.deleteObject(command));
     this.config.log(
       `${dt}ms ${args.operation || "DELETE"} ${args.ref.bucket}/${
         args.ref.key

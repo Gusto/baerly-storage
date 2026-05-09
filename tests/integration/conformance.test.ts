@@ -44,21 +44,6 @@ describe("mps3", () => {
         parser: new DOMParser(),
       },
     },
-    {
-      label: "localfirst",
-      createBucket: false,
-      config: {
-        pollFrequency: 1,
-        parser: new DOMParser(),
-        defaultBucket: "l1",
-        offlineStorage: false,
-        adaptiveClock: false,
-        minimizeListObjectsCalls: false,
-        s3Config: {
-          endpoint: MPS3.LOCAL_ENDPOINT,
-        },
-      },
-    },
     /*
     {
       label: "google",

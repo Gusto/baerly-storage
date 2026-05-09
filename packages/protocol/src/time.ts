@@ -1,5 +1,17 @@
-import type { ResolvedMPS3Config } from "./mps3";
-import { TIMESTAMP_BIT_WIDTH, uint2strDesc } from "@baerly/protocol";
+import { TIMESTAMP_BIT_WIDTH } from "./constants";
+import { uint2strDesc } from "./types";
+
+/**
+ * Minimal subset of the host config that {@link adjustClock} needs.
+ * Kept local to avoid a layering violation: the protocol package must
+ * not depend on the higher-level `MPS3` config shape. The host's
+ * `ResolvedMPS3Config` is structurally compatible.
+ */
+interface AdaptiveClockConfig {
+  adaptiveClock: boolean;
+  clockOffset: number;
+  log: (...args: unknown[]) => void;
+}
 
 export const timestamp = (epoch: number = 0) => uint2strDesc(epoch, TIMESTAMP_BIT_WIDTH);
 
@@ -17,7 +29,7 @@ export const measure = async <Result>(work: Promise<Result>): Promise<[Result, n
 
 export const adjustClock = (
   response: Promise<Response>,
-  config: ResolvedMPS3Config,
+  config: AdaptiveClockConfig,
 ): Promise<Response> => {
   if (config.adaptiveClock) {
     return measure(response).then(([response, latency]) => {

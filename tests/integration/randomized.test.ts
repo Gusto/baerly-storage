@@ -69,21 +69,6 @@ describe("mps3", () => {
       },
     },
     {
-      label: "localfirst",
-      createBucket: false,
-      config: {
-        pollFrequency: 10,
-        minimizeListObjectsCalls: false,
-        parser: new DOMParser(),
-        defaultBucket: "l1",
-        offlineStorage: false,
-        adaptiveClock: false,
-        s3Config: {
-          endpoint: MPS3.LOCAL_ENDPOINT,
-        },
-      },
-    },
-    {
       label: "memory",
       createBucket: false,
       config: {

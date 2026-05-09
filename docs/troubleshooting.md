@@ -19,7 +19,7 @@ which are always green is documented in
 |---|---|---|
 | Minio API | `:9102` | Stable S3-compatible endpoint. Most tests target this. |
 | Minio console | `:9103` | Web UI at <http://127.0.0.1:9103> (login `mps3` / see compose file). |
-| Toxiproxy | `:9104` | Proxies `:9102` with chaos injection. Used by `randomized.test.ts` and `offline-first.test.ts` to simulate network failure. |
+| Toxiproxy | `:9104` | Proxies `:9102` with chaos injection. Used by `randomized.test.ts` to simulate network failure. |
 | Toxiproxy admin | `:8474` | For configuring toxics manually. |
 
 The split matters: tests that want a *reliable* S3 use `:9102`; tests
@@ -29,29 +29,6 @@ about reachability. See `randomized.test.ts`'s `unstableConfig`.
 
 Toxiproxy's default config (in compose) creates a single `minio` proxy
 with no toxics — tests add toxics at runtime via the admin port.
-
-## Offline storage behavior (`MPS3Config.offlineStorage`)
-
-`MPS3Config.offlineStorage` (boolean, default `true`) toggles whether
-the operation queue persists to IndexedDB.
-
-- **`true`** — pending writes are persisted via `idb-keyval`. After a
-  reload, `Manifest.load()` restores them and resumes the upload via
-  `_putAll` or `updateContent`. This is the offline-first behavior
-  described in the docs. Requires IndexedDB to be available (or
-  mocked).
-- **`false`** — pending writes live only in `OperationQueue`'s
-  in-memory map. A reload loses them. Used by integration tests that
-  don't want IDB state to leak between runs (`conformance.test.ts`,
-  `randomized.test.ts`, `time.test.ts`).
-
-In tests, `import "fake-indexeddb/auto"` at the top of the file gives
-you a real IDB API backed by an in-memory store — required whenever
-`offlineStorage` is `true` (i.e. the default).
-
-Implementation: see [`src/mps3.ts`](../src/mps3.ts) (config resolution),
-[`src/operation-queue.ts`](../src/operation-queue.ts), and
-[`src/indexdb.ts`](../src/indexdb.ts).
 
 ## What `pnpm test:randomize` actually does
 
