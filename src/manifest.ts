@@ -1,6 +1,6 @@
-import { OMap } from "./OMap";
+import { OMap } from "./o-map";
 import { MPS3 } from "./mps3";
-import { OperationQueue } from "./operationQueue";
+import { OperationQueue } from "./operation-queue";
 import { type DeleteValue, type ResolvedRef, type VersionId, url } from "./types";
 import type { JSONValue } from "./json";
 import type { UseStore } from "idb-keyval";

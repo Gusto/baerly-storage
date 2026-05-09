@@ -1,5 +1,5 @@
 import { describe, expect, test, vi } from "vitest";
-import { type FetchFn, S3ClientLite } from "../S3ClientLite";
+import { type FetchFn, S3ClientLite } from "../s3-client-lite";
 import type { ResolvedMPS3Config } from "../mps3";
 import { MPS3Error } from "../errors";
 import { S3_REQUEST_MAX_RETRIES, SESSION_ID_LENGTH } from "../constants";

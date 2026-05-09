@@ -21,7 +21,7 @@ import {
   str2uintDesc,
 } from "./types";
 import type { b64 } from "./hashing";
-import type { OMap } from "./OMap";
+import type { OMap } from "./o-map";
 import { MPS3Error } from "./errors";
 
 export interface FileState extends JSONArraylessObject {

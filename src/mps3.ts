@@ -8,8 +8,8 @@ import type {
   S3ClientConfig,
 } from "./s3-types";
 import { AwsClient } from "aws4fetch";
-import { type FetchFn, S3ClientLite } from "./S3ClientLite";
-import { OMap } from "./OMap";
+import { type FetchFn, S3ClientLite } from "./s3-client-lite";
+import { OMap } from "./o-map";
 import { Manifest } from "./manifest";
 import {
   type DeleteValue,
@@ -27,7 +27,7 @@ import type { JSONValue } from "./json";
 import { type UseStore, createStore, get, set } from "idb-keyval";
 import * as time from "./time";
 import * as offlineFetch from "./indexdb";
-import * as memoryFetch from "./memoryFetch";
+import * as memoryFetch from "./memory-fetch";
 import { type b64, sha256b64 } from "./hashing";
 import { MPS3Error } from "./errors";
 import { MANIFEST_POLL_INTERVAL_MILLIS, MEM_CACHE_CAPACITY } from "./constants";

@@ -1,4 +1,4 @@
-import { OMap } from "./OMap";
+import { OMap } from "./o-map";
 import { type DeleteValue, type ResolvedRef, url } from "./types";
 import type { JSONValue } from "./json";
 import { type UseStore, getMany, get, set, delMany, keys } from "idb-keyval";
