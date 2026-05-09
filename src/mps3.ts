@@ -107,22 +107,22 @@ export interface MPS3Config {
   s3Config: S3ClientConfig;
 
   /**
-   * DOMParser used to parse S3 list-object XML responses.
+   * DOMParser used to parse S3 list-object XML responses. Must be
+   * supplied explicitly — there is no fallback, since `globalThis.DOMParser`
+   * does not exist in Node and reaching for it silently is fragile.
    *
    * The parser MUST NOT expand external entities or DTDs — S3 responses
    * never contain a DOCTYPE in normal operation, and a permissive parser
    * exposes the client to XXE / billion-laughs attacks if a response is
    * tampered with in transit or returned by a malicious endpoint.
    *
-   * Browsers: the default `new window.DOMParser()` is safe.
+   * Browsers: pass `new window.DOMParser()`.
    *
    * Node / non-browser runtimes: use `@xmldom/xmldom@^0.9` (0.9.x and
    * later no longer interpret DTD entity definitions by default).
    * Earlier 0.8.x releases are deprecated and not recommended.
-   *
-   * @defaultValue `new window.DOMParser()`
    */
-  parser?: XmlParser;
+  parser: XmlParser;
 
   /**
    * Should the client attempt to upstreams?
@@ -285,7 +285,7 @@ export class MPS3 {
       clockOffset: Math.floor(config.clockOffset ?? 0),
       adaptiveClock: config.adaptiveClock ?? true,
       minimizeListObjectsCalls: config.minimizeListObjectsCalls ?? true,
-      parser: config.parser || new DOMParser(),
+      parser: config.parser,
       defaultManifest,
       log: (...args) =>
         (config.log === true ? console.log : config.log || (() => {}))(this.config.label, ...args),
