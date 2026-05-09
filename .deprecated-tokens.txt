@@ -1,0 +1,14 @@
+# Deprecated path tokens — audit trail for renames.
+#
+# When you rename a file or change a layout convention, add the OLD
+# path/token here in the same commit. `pnpm check:references` (run by
+# lefthook pre-commit) then fails any later commit that reintroduces it.
+#
+# Format: one token per line. Inline `#` starts a comment. Tokens are
+# matched as fixed substrings (regex metachars escaped).
+#
+# Example:
+#   __tests__/                  # 2026-05-09: tests moved to colocated + tests/
+#   src/operationQueue.ts       # 2026-05-09: kebab-cased to operation-queue.ts
+#
+# Empty for now — the most recent rename is clean.

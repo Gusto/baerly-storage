@@ -29,6 +29,7 @@
         "lint": "oxlint src tests",
         "test:randomize": "while pnpm test; [ $? -ne 1 ] ; do :; done",
         "verify": "pnpm run typecheck && pnpm run lint",
+        "check:references": "bash scripts/check-references.sh",
         "dev:storage": "docker-compose up -d",
         "dev:storage:stop": "docker-compose down"
     },
