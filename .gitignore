@@ -1,5 +1,6 @@
 # Claude Things
 .claude/reviews/
+.claude/research/
 
 # Dependencies
 node_modules/
