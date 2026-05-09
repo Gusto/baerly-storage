@@ -119,14 +119,7 @@ describe("regressions (§9 bug-fix list)", () => {
     });
 
     describe("session-ID collisions", () => {
-        // Today: SESSION_ID_LENGTH=3, generator is uuid().substring(0,3).
-        // crypto.randomUUID() returns a hex (base-16) string, so the keyspace
-        // is 16^3 = 4096 — NOT 32^3 = 32 768 as the constants.ts doc claims.
-        // Phase 3 either bumps SESSION_ID_LENGTH or moves to a Worker
-        // request-id. Marked `.fails` so the test correctly tracks the bug:
-        // when Phase 3 fixes it, this line becomes red and the marker is
-        // removed.
-        test.fails("collision rate below 1% at N=100", () => {
+        test("collision rate below 1% at N=100", () => {
             const N = 100;
             const ids = new Set<string>();
             let collisions = 0;

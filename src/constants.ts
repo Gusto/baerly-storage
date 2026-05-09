@@ -52,13 +52,15 @@ export const TIMESTAMP_BIT_WIDTH: number = 42;
 
 /**
  * Length of the random-prefix `session_id` embedded in manifest keys.
- * 3 chars of base-32 gives 32^3 = 32 768 distinct sessions; collisions
- * within a single manifest's writer set are tolerated because writes are
- * disambiguated by the trailing `<seq>` counter.
+ * 6 hex chars from `crypto.randomUUID()` give 16⁶ ≈ 1.7 × 10⁷ distinct
+ * sessions; birthday-collision rate at N=100 is ~3 × 10⁻⁴, comfortably
+ * below the 1 % bound asserted in `tests/regressions.test.ts`. Collisions
+ * within a single manifest's writer set are also disambiguated by the
+ * trailing `<seq>` counter.
  *
  * @see syncer.ts (`Syncer.session_id`)
  */
-export const SESSION_ID_LENGTH: number = 3;
+export const SESSION_ID_LENGTH: number = 6;
 
 /**
  * Maximum attempts `S3ClientLite.listObjectV2` will make to LIST a
