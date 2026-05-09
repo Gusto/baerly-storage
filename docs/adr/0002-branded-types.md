@@ -34,8 +34,8 @@ be confusable with another.
 - Casting (`as ManifestKey`) is allowed but should appear *only at the
   one boundary where a string becomes a branded value*, with a comment
   if the source isn't obvious.
-- The `.claude/rules/src.md` "Branded types" section enforces the rule
-  for agents: don't widen with `as string`.
+- The [`docs/conventions/src.md`](../conventions/src.md) "Branded types"
+  section enforces the rule for agents: don't widen with `as string`.
 - IDE hover on a branded type shows the brand label, which doubles as
   documentation.
 - Cost: serializing/deserializing across worker boundaries needs the

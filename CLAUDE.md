@@ -88,6 +88,22 @@ The full lifecycle of `put()` and `subscribe()` is documented in
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — read it before changing
 `syncer.ts` or `manifest.ts`.
 
+## When editing X, read Y
+
+Path-scoped conventions. **Read the matching file before editing.**
+
+| When you're editing… | Read first |
+|---|---|
+| `src/**/*.ts` (excluding tests) | [docs/conventions/src.md](docs/conventions/src.md) |
+| `src/__tests__/**` | [docs/conventions/tests.md](docs/conventions/tests.md) |
+| `docs/**` | [docs/conventions/docs.md](docs/conventions/docs.md) |
+| `src/syncer.ts`, `src/manifest.ts` | [docs/sync_protocol.md](docs/sync_protocol.md) + [docs/causal_consistency_checking.md](docs/causal_consistency_checking.md) |
+| `src/json.ts` | [docs/JSON_merge_patch.md](docs/JSON_merge_patch.md) |
+| Public API on `MPS3` | [docs/EXTENDING.md](docs/EXTENDING.md) |
+
+Claude users: `.claude/rules/{src,tests,docs}.md` auto-load on matching
+edits and point at the same files.
+
 ## Conventions
 
 - **Imports are relative.** `tsconfig.json` uses `moduleResolution: "bundler"`
@@ -144,4 +160,4 @@ The full lifecycle of `put()` and `subscribe()` is documented in
   [docs/JSON_merge_patch.md](docs/JSON_merge_patch.md)
 - Architecture decisions ("why"): [docs/adr/](docs/adr/)
 - Troubleshooting: [docs/troubleshooting.md](docs/troubleshooting.md)
-- Path-scoped rules: `.claude/rules/{src,tests,docs}.md`
+- Path-scoped conventions: [docs/conventions/](docs/conventions/) (table at top)

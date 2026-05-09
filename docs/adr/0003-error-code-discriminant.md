@@ -31,6 +31,6 @@ Definition in [`src/errors.ts`](../../src/errors.ts).
   `switch` that doesn't handle it.
 - Cost: a slightly less natural API for callers used to
   `try { ... } catch (e: NetworkError)` patterns. The
-  [`tests.md`](../../.claude/rules/tests.md) rule documents the
-  expected assertion style: `expect(...).rejects.toMatchObject({ code:
-  "NetworkError" })`.
+  [`docs/conventions/tests.md`](../conventions/tests.md) rule
+  documents the expected assertion style:
+  `expect(...).rejects.toMatchObject({ code: "NetworkError" })`.

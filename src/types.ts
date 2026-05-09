@@ -12,7 +12,7 @@ type Brand<B> = { [__brand]: B };
  *
  * Construct branded values via the helpers in this file (e.g. {@link uuid})
  * or with a tagged cast at a single, deliberate boundary — never `as string`
- * to widen one back. See `.claude/rules/src.md`.
+ * to widen one back. See `docs/conventions/src.md`.
  */
 export type Branded<T, B> = T & Brand<B>;
 

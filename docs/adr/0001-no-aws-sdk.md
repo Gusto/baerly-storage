@@ -29,7 +29,7 @@ re-using for everything S3 returns).
   list flags adding any new dependency.
 - We carry a small but real maintenance cost: when S3-compatible
   vendors return non-standard XML, we write the workaround
-  (see [`docs/S3 XML Escaping Cases.md`](../S3%20XML%20Escaping%20Cases.md)).
+  (see [`docs/s3-xml-escaping-cases.md`](../s3-xml-escaping-cases.md)).
 - Type safety for S3 operations is whatever `src/s3-types.ts` covers.
   Missing fields are added on demand.
 - Implementation:

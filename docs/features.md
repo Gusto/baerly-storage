@@ -68,7 +68,7 @@ Direct HTTP to S3-compatible APIs via `aws4fetch`. We don't ship
   [`src/__tests__/conformance.test.ts`](../src/__tests__/conformance.test.ts)
   (multi-backend, needs credentials)
 - Docs: [`docs/s3_features_used.md`](./s3_features_used.md),
-  [`docs/S3 XML Escaping Cases.md`](./S3%20XML%20Escaping%20Cases.md)
+  [`docs/s3-xml-escaping-cases.md`](./s3-xml-escaping-cases.md)
 - ADR: [`docs/adr/0001-no-aws-sdk.md`](./adr/0001-no-aws-sdk.md)
 
 ## Time / clock-skew tolerance
@@ -86,7 +86,7 @@ outside `LAG_WINDOW_MILLIS` are rejected.
 Discriminated-union errors. Match on `error.code`, never `instanceof`.
 
 - Implementation: [`src/errors.ts`](../src/errors.ts)
-- Conventions: [`.claude/rules/src.md`](../.claude/rules/src.md)
+- Conventions: [`docs/conventions/src.md`](./conventions/src.md)
 - ADR:
   [`docs/adr/0003-error-code-discriminant.md`](./adr/0003-error-code-discriminant.md)
 
