@@ -19,8 +19,10 @@ export class OperationQueue<L extends string> {
   private lastIndex: number = 0;
   private load?: Promise<unknown> = undefined;
   private op: number = 0;
-  constructor(store?: UseStore) {
+  private log: (...args: unknown[]) => void;
+  constructor(store?: UseStore, log: (...args: unknown[]) => void = () => {}) {
     this.db = store;
+    this.log = log;
   }
 
   async propose(
@@ -44,7 +46,6 @@ export class OperationQueue<L extends string> {
         [...values.entries()].map(([ref, val]) => [JSON.stringify(ref), val]),
         this.db,
       );
-      console.log(`STORE ${key} ${JSON.stringify([...values.entries()])}`);
     }
   }
 
@@ -59,7 +60,6 @@ export class OperationQueue<L extends string> {
         throw new MPS3Error("Internal", "Cannot label an unproposed operation");
       const key = `label-${index}`;
       await set(key, label, this.db);
-      console.log(`STORE ${key} ${label}`);
     }
   }
 
@@ -75,7 +75,6 @@ export class OperationQueue<L extends string> {
           throw new MPS3Error("Internal", "Cannot confirm an unproposed operation");
         const keys = [entryKey(index), `label-${index}`];
         await delMany(keys, this.db);
-        console.log(`DEL ${keys}`);
       }
     }
   }
@@ -91,7 +90,7 @@ export class OperationQueue<L extends string> {
       if (this.load && !isLoad) await this.load;
       const index = this.indexFor.get(operation);
       if (index === undefined) return;
-      await delMany([`write-${index}`, `label-${index}`], this.db);
+      await delMany([entryKey(index), `label-${index}`], this.db);
     }
   }
 
@@ -117,7 +116,6 @@ export class OperationQueue<L extends string> {
     this.load = (async () => {
       const allKeys: string[] = await keys(this.db);
       const entryKeys = allKeys.filter((key: any) => key.startsWith("write-")).sort();
-      console.log("RESTORE", entryKeys);
       const entryValues = await getMany(entryKeys, this.db);
 
       for (let i = 0; i < entryKeys.length; i++) {
@@ -128,13 +126,17 @@ export class OperationQueue<L extends string> {
       for (let i = 0; i < entryKeys.length; i++) {
         const key = entryKeys[i]!;
         const index = parseInt(key.split("-")[1]!);
-        const entry = entryValues[i].map(([ref, val]: [string, any]) => [JSON.parse(ref), val]);
-        const label = await get<L>(`label-${index}`, this.db);
-        if (!entry) continue;
-        const values = new Map<ResolvedRef, JSONValue | DeleteValue>(entry);
-        await schedule(values, label);
-        // delete entries after confirmation
-        await delMany([`write-${index}`, `label-${index}`], this.db);
+        try {
+          const entry = entryValues[i].map(([ref, val]: [string, any]) => [JSON.parse(ref), val]);
+          const label = await get<L>(`label-${index}`, this.db);
+          if (!entry) continue;
+          const values = new Map<ResolvedRef, JSONValue | DeleteValue>(entry);
+          await schedule(values, label);
+          // delete entries after confirmation
+          await delMany([entryKey(index), `label-${index}`], this.db);
+        } catch (err) {
+          this.log(`RESTORE_FAILED ${key}`, err);
+        }
       }
     })();
     return this.load;

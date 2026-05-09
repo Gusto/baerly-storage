@@ -72,3 +72,16 @@ export const LIST_OBJECT_MAX_RETRIES: number = 10;
  * returns 429 (rate-limited).
  */
 export const RATE_LIMIT_BACKOFF_MILLIS: number = 1000;
+
+/**
+ * Default retry budget for `S3ClientLite.retry` (the wrapper around
+ * `getObject`/`putObject`/`listObjectV2`/`deleteObject`). Bounded so that
+ * permanent failures (CORS misconfig, NXDOMAIN, persistent 5xx) surface
+ * to callers as rejected promises instead of retrying forever and
+ * leaving `mps3.put()` permanently pending.
+ *
+ * 8 attempts at the existing 100ms→×1.5→10s schedule covers ~30s of
+ * transient turbulence, which is enough to ride out a leader election
+ * or a brief network blip without papering over a real outage.
+ */
+export const S3_REQUEST_MAX_RETRIES: number = 8;

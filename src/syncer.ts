@@ -22,6 +22,7 @@ import {
 } from "./types";
 import type { b64 } from "./hashing";
 import type { OMap } from "./OMap";
+import { MPS3Error } from "./errors";
 
 export interface FileState extends JSONArraylessObject {
   version: VersionId;
@@ -136,18 +137,13 @@ export class Syncer {
   static isValid(key: string, modified: Date): boolean {
     const match = key.match(Syncer.manifestRegex);
     if (!match) {
-      console.warn(`Rejecting manifest key ${key}`);
       return false;
     }
     if (modified === undefined) return true;
     const manifestTimestamp = this.manifestTimestamp(key);
     const s3Timestamp = modified;
     // if the difference is greater than 5 seconds, ignore this update
-    const withinRange = Math.abs(manifestTimestamp - s3Timestamp.getTime()) < LAG_WINDOW_MILLIS;
-    if (!withinRange) {
-      console.warn(`Clock skew detected ${key} vs ${s3Timestamp.getTime()}`);
-    }
-    return withinRange;
+    return Math.abs(manifestTimestamp - s3Timestamp.getTime()) < LAG_WINDOW_MILLIS;
   }
 
   // Manifest must be ordered by client operation time
@@ -181,130 +177,128 @@ export class Syncer {
     if (!this.manifest.service.config.online) {
       return this.latest_state;
     }
-    try {
-      if (this.manifest.service.config.minimizeListObjectsCalls) {
-        const poll = await this.manifest.service._getObject<string>({
-          operation: "POLL_LATEST_CHANGE",
-          ref: this.manifest.ref,
-          ifNoneMatch: this.cache?.etag,
-          useCache: false,
-        });
-        if (poll.$metadata.httpStatusCode === 304) {
-          return this.latest_state;
-        }
-      }
 
-      const start_at = manifestKey(
-        this.manifest.ref,
-        Date.now() + this.manifest.service.config.clockOffset + MANIFEST_LIST_LOOKAHEAD_MILLIS,
-      );
-      const [objects, dt] = await time.measure(
-        this.manifest.service.s3ClientLite.listObjectV2({
-          Bucket: this.manifest.ref.bucket,
-          Prefix: this.manifest.ref.key + "@",
-          StartAfter: start_at,
-        }),
-      );
-
-      // prune invalid objects
-      const manifests = objects.Contents?.filter((obj) => {
-        if (!Syncer.isValid(obj.Key!, obj.LastModified!)) {
-          if (this.manifest.service.config.autoclean) {
-            this.manifest.service._deleteObject({
-              operation: "CLEANUP",
-              ref: {
-                bucket: this.manifest.ref.bucket,
-                key: obj.Key!,
-              },
-            });
-          }
-          return false;
-        }
-        return true;
+    // Errors from `_getObject` / `listObjectV2` (`AccessDenied`,
+    // `InvalidResponse`, `NetworkError`) are real faults — let them
+    // propagate. The previous `catch` branch dispatched on
+    // `err.name === "NoSuchKey"` from `@aws-sdk/client-s3`; that path
+    // is dead today (`S3ClientLite.getObject` returns 404 instead of
+    // throwing, and a fresh bucket lists empty).
+    if (this.manifest.service.config.minimizeListObjectsCalls) {
+      const poll = await this.manifest.service._getObject<string>({
+        operation: "POLL_LATEST_CHANGE",
+        ref: this.manifest.ref,
+        ifNoneMatch: this.cache?.etag,
+        useCache: false,
       });
-
-      this.manifest.service.config.log(
-        `${dt}ms LIST ${this.manifest.ref.bucket}/${this.manifest.ref.key} from ${start_at}`,
-      );
-
-      // Play the missing patches over the base state, oldest first
-      if (manifests === undefined) {
-        this.latest_state = clone(INITIAL_STATE);
+      if (poll.$metadata.httpStatusCode === 304) {
         return this.latest_state;
-      }
-
-      // Keep a record of the high water mark so we can ensure latest writes increment it.
-      this.latest_timestamp = Math.max(
-        this.latest_timestamp,
-        Syncer.manifestTimestamp(this.latest_key),
-      );
-
-      // Find the most recent patch, whose base state is settled, and that we have a record for
-      if (manifests.length > 0) {
-        this.latest_key = manifests[0]!.Key!;
-        const latest = await this.manifest.service._getObject<ManifestFile>({
-          operation: "GET_LATEST",
-          ref: {
-            bucket: this.manifest.ref.bucket,
-            key: this.latest_key,
-          },
-        });
-        this.latest_state = latest.data!;
-      }
-
-      // Go back a little before the latest key to accommodate writes in flight
-      const gcPoint = manifestKey(
-        this.manifest.ref,
-        Math.max(Syncer.manifestTimestamp(this.latest_key) - LAG_WINDOW_MILLIS, 0),
-      );
-
-      // Play operations forward on latest state, oldest first
-      for (let index = manifests.length - 1; index >= 0; index--) {
-        const key = manifests[index]!.Key!;
-        if (key > this.latest_key && key > gcPoint) {
-          // Its old we can skip and GC asyncronously
-          if (this.manifest.service.config.autoclean) {
-            this.manifest.service._deleteObject({
-              operation: "CLEANUP",
-              ref: {
-                bucket: this.manifest.ref.bucket,
-                key,
-              },
-            });
-          }
-          continue;
-        }
-
-        // this.manifest.service.config(`step ${key} from ${this.authoritative_key}`);
-        const step = await this.manifest.service._getObject<ManifestFile>({
-          operation: "REPLAY",
-          ref: {
-            bucket: this.manifest.ref.bucket,
-            key,
-          },
-        });
-        const stepVersionId = manifestKeySuffix(key)!;
-        this.latest_state = merge<ManifestFile>(this.latest_state, step.data?.update)!;
-        this.manifest.observeVersionId(stepVersionId);
-      }
-
-      if (this.db) set(MANIFEST_KEY, this.latest_state, this.db);
-      /*
-      if (pollEtag) {
-        this.cache = {
-          etag: pollEtag,
-          data: this.latest_state,
-        };
-      }*/
-      return this.latest_state;
-    } catch (err: any) {
-      if (err.name === "NoSuchKey") {
-        this.latest_state = clone(INITIAL_STATE);
-        return this.latest_state;
-      } else {
-        throw err;
       }
     }
+
+    const start_at = manifestKey(
+      this.manifest.ref,
+      Date.now() + this.manifest.service.config.clockOffset + MANIFEST_LIST_LOOKAHEAD_MILLIS,
+    );
+    const [objects, dt] = await time.measure(
+      this.manifest.service.s3ClientLite.listObjectV2({
+        Bucket: this.manifest.ref.bucket,
+        Prefix: this.manifest.ref.key + "@",
+        StartAfter: start_at,
+      }),
+    );
+
+    // prune invalid objects
+    const manifests = objects.Contents?.filter((obj) => {
+      if (!Syncer.isValid(obj.Key!, obj.LastModified!)) {
+        if (this.manifest.service.config.autoclean) {
+          this.manifest.service._deleteObject({
+            operation: "CLEANUP",
+            ref: {
+              bucket: this.manifest.ref.bucket,
+              key: obj.Key!,
+            },
+          });
+        }
+        return false;
+      }
+      return true;
+    });
+
+    this.manifest.service.config.log(
+      `${dt}ms LIST ${this.manifest.ref.bucket}/${this.manifest.ref.key} from ${start_at}`,
+    );
+
+    // Play the missing patches over the base state, oldest first
+    if (manifests === undefined) {
+      this.latest_state = clone(INITIAL_STATE);
+      return this.latest_state;
+    }
+
+    // Keep a record of the high water mark so we can ensure latest writes increment it.
+    this.latest_timestamp = Math.max(
+      this.latest_timestamp,
+      Syncer.manifestTimestamp(this.latest_key),
+    );
+
+    // Find the most recent patch, whose base state is settled, and that we have a record for
+    if (manifests.length > 0) {
+      this.latest_key = manifests[0]!.Key!;
+      const latest = await this.manifest.service._getObject<ManifestFile>({
+        operation: "GET_LATEST",
+        ref: {
+          bucket: this.manifest.ref.bucket,
+          key: this.latest_key,
+        },
+      });
+      this.latest_state = latest.data!;
+    }
+
+    // Go back a little before the latest key to accommodate writes in flight
+    const gcPoint = manifestKey(
+      this.manifest.ref,
+      Math.max(Syncer.manifestTimestamp(this.latest_key) - LAG_WINDOW_MILLIS, 0),
+    );
+
+    // Play operations forward on latest state, oldest first
+    for (let index = manifests.length - 1; index >= 0; index--) {
+      const key = manifests[index]!.Key!;
+      if (key > this.latest_key && key > gcPoint) {
+        // Its old we can skip and GC asyncronously
+        if (this.manifest.service.config.autoclean) {
+          this.manifest.service._deleteObject({
+            operation: "CLEANUP",
+            ref: {
+              bucket: this.manifest.ref.bucket,
+              key,
+            },
+          });
+        }
+        continue;
+      }
+
+      // this.manifest.service.config(`step ${key} from ${this.authoritative_key}`);
+      const step = await this.manifest.service._getObject<ManifestFile>({
+        operation: "REPLAY",
+        ref: {
+          bucket: this.manifest.ref.bucket,
+          key,
+        },
+      });
+      const stepVersionId = manifestKeySuffix(key)!;
+      this.latest_state = merge<ManifestFile>(this.latest_state, step.data?.update)!;
+      this.manifest.observeVersionId(stepVersionId);
+    }
+
+    if (this.db) set(MANIFEST_KEY, this.latest_state, this.db);
+    /*
+    if (pollEtag) {
+      this.cache = {
+        etag: pollEtag,
+        data: this.latest_state,
+      };
+    }*/
+    return this.latest_state;
   }
 
   updateContent(
@@ -373,7 +367,6 @@ export class Syncer {
           ) {
             this.manifest.service.config.clockOffset =
               putResponse.Date.getTime() - Date.now() + putResponse.latency;
-            console.log(this.manifest.service.config.clockOffset);
             manifest_version = this.generate_manifest_key();
             retry = true;
           } else {
@@ -396,9 +389,10 @@ export class Syncer {
         this.manifest.poll();
         return response;
       } catch (err) {
-        console.error(err);
-        this.manifest.operationQueue.cancel(write, options.isLoad);
-        throw err;
+        this.manifest.service.config.log("manifest update failed", err);
+        await this.manifest.operationQueue.cancel(write, options.isLoad);
+        if (err instanceof MPS3Error) throw err;
+        throw new MPS3Error("NetworkError", "Manifest update failed", err);
       }
     });
     if (options.await === "local") {

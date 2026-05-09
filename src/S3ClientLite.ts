@@ -12,17 +12,34 @@ import * as time from "./time";
 import { MPS3 } from "./mps3";
 import { parseListObjectsV2CommandOutput } from "./xml";
 import { MPS3Error } from "./errors";
-import { LIST_OBJECT_MAX_RETRIES, RATE_LIMIT_BACKOFF_MILLIS } from "./constants";
+import {
+  LIST_OBJECT_MAX_RETRIES,
+  RATE_LIMIT_BACKOFF_MILLIS,
+  S3_REQUEST_MAX_RETRIES,
+} from "./constants";
 
 export type FetchFn = (url: string, init?: RequestInit) => Promise<Response>;
 
+/**
+ * Permanent {@link MPS3Error} codes that must short-circuit `retry`.
+ * These represent caller- or environment-level faults where retrying
+ * cannot succeed: `AccessDenied` (403 — credentials/policy), `InvalidConfig`
+ * (bad bucket / unsupported credential type), and `InvalidResponse`
+ * (server returned unparseable data). `NetworkError` is intentionally
+ * absent — it covers transient transport faults and stays retryable.
+ */
+const PERMANENT_ERROR_CODES = new Set(["AccessDenied", "InvalidConfig", "InvalidResponse"]);
+
 const retry = async <T>(
   fn: () => Promise<T>,
-  { retries = Number.MAX_VALUE, delay = 100, max_delay = 10000 } = {},
+  { retries = S3_REQUEST_MAX_RETRIES, delay = 100, max_delay = 10000 } = {},
 ): Promise<T> => {
   try {
     return await fn();
   } catch (e) {
+    if (e instanceof MPS3Error && PERMANENT_ERROR_CODES.has(e.code)) {
+      throw e;
+    }
     if (retries > 0) {
       await new Promise((resolve) => setTimeout(resolve, delay));
       return retry(fn, {
@@ -60,7 +77,7 @@ export class S3ClientLite {
       if (response.status === 200) {
         return parseListObjectsV2CommandOutput(await response.text(), this.mps3.config.parser);
       } else if (response.status === 429) {
-        console.warn("listObjectV2: 429, retrying");
+        this.mps3.config.log("listObjectV2: 429, retrying");
         await new Promise((resolve) => setTimeout(resolve, RATE_LIMIT_BACKOFF_MILLIS));
       } else {
         throw new MPS3Error(

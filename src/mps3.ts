@@ -609,7 +609,7 @@ export class MPS3 {
             }).then((fileUpdate) => {
               if (this.config.useVersioning) {
                 if (fileUpdate.VersionId === undefined) {
-                  console.error(fileUpdate);
+                  this.config.log("PUT_CONTENT missing VersionId", fileUpdate);
                   throw new MPS3Error(
                     "InvalidConfig",
                     `Bucket ${contentRef.bucket} is not version enabled!`,
@@ -715,9 +715,12 @@ export class MPS3 {
    *
    * @param key - Either `"key"` or `{ bucket, key }`.
    * @param handler - Called with `(value, error?)`. `error` is set
-   *   only when the initial read fails; subsequent calls during the
-   *   subscription pass `undefined` for `error`. A `value` of
-   *   `undefined` means the key was deleted.
+   *   on the initial read failure AND on subsequent poll failures
+   *   during the subscription. Handlers should treat
+   *   `error !== undefined` as a signal that the most recent poll
+   *   failed; the next successful poll will deliver
+   *   `(value, undefined)`. A `value` of `undefined` means the key
+   *   was deleted.
    * @param options.manifest - Manifest to subscribe to; defaults to
    *   {@link MPS3Config.defaultManifest}.
    * @returns Unsubscribe function. Calling it stops further

@@ -12,7 +12,7 @@ class Subscriber {
 
   constructor(
     public ref: ResolvedRef,
-    public handler: (value: JSONValue | DeleteValue) => void,
+    public handler: (value: JSONValue | DeleteValue, error?: Error) => void,
     public lastVersion?: VersionId,
   ) {}
 
@@ -49,13 +49,13 @@ export class Manifest {
   pollInProgress: boolean = false;
 
   syncer: Syncer = new Syncer(this);
-  operationQueue = new OperationQueue<VersionId>();
+  operationQueue: OperationQueue<VersionId>;
 
   constructor(
     public service: MPS3,
     public ref: ResolvedRef,
   ) {
-    console.log("Create manifest", url(ref));
+    this.operationQueue = new OperationQueue<VersionId>(undefined, service.config.log);
   }
   load(db: UseStore) {
     this.syncer.restore(db);
@@ -95,49 +95,48 @@ export class Manifest {
     if (this.pollInProgress) return;
     this.pollInProgress = true;
 
-    if (this.subscriberCount === 0 && this.poller) {
-      clearInterval(this.poller);
-      this.poller = undefined;
-    }
-    if (this.subscriberCount > 0 && !this.poller) {
-      this.poller = setInterval(() => this.poll(), this.service.config.pollFrequency);
-    }
-
-    const state = await this.syncer.getLatest();
-
-    if (state === undefined) {
-      this.pollInProgress = false;
-      return; // no changes
-    }
-
-    // calculate which values are set by optimistic updates
-    const mask: OMap<ResolvedRef, [JSONValue | DeleteValue, number]> =
-      await this.operationQueue.flatten();
-
-    this.subscribers.forEach(async (subscriber) => {
-      if (mask.has(subscriber.ref)) {
-        // console.log("mask", url(subscriber.ref));
-        const [value, op] = mask.get(subscriber.ref)!;
-        subscriber.notify(this.service, <VersionId>`local-${op}`, Promise.resolve(value));
-      } else {
-        const fileState = state.files[url(subscriber.ref)];
-        if (fileState) {
-          const content = this.service._getObject<any>({
-            operation: "GET_CONTENT",
-            ref: subscriber.ref,
-            version: fileState.version,
-          });
-          subscriber.notify(
-            this.service,
-            fileState.version,
-            content.then((res) => res.data),
-          );
-        } else if (fileState === undefined) {
-          subscriber.notify(this.service, undefined, Promise.resolve(undefined));
-        }
+    try {
+      if (this.subscriberCount === 0 && this.poller) {
+        clearInterval(this.poller);
+        this.poller = undefined;
       }
-    });
-    this.pollInProgress = false;
+      if (this.subscriberCount > 0 && !this.poller) {
+        this.poller = setInterval(() => this.poll(), this.service.config.pollFrequency);
+      }
+
+      const state = await this.syncer.getLatest();
+
+      // calculate which values are set by optimistic updates
+      const mask: OMap<ResolvedRef, [JSONValue | DeleteValue, number]> =
+        await this.operationQueue.flatten();
+
+      this.subscribers.forEach(async (subscriber) => {
+        if (mask.has(subscriber.ref)) {
+          const [value, op] = mask.get(subscriber.ref)!;
+          subscriber.notify(this.service, <VersionId>`local-${op}`, Promise.resolve(value));
+        } else {
+          const fileState = state.files[url(subscriber.ref)];
+          if (fileState) {
+            const content = this.service._getObject<any>({
+              operation: "GET_CONTENT",
+              ref: subscriber.ref,
+              version: fileState.version,
+            });
+            subscriber.notify(
+              this.service,
+              fileState.version,
+              content.then((res) => res.data),
+            );
+          } else if (fileState === undefined) {
+            subscriber.notify(this.service, undefined, Promise.resolve(undefined));
+          }
+        }
+      });
+    } catch (err) {
+      this.subscribers.forEach((sub) => sub.handler(undefined, err as Error));
+    } finally {
+      this.pollInProgress = false;
+    }
   }
 
   updateContent(
@@ -161,7 +160,10 @@ export class Manifest {
     return (await this.syncer.getLatest()).files[url(ref)]?.version;
   }
 
-  subscribe(keyRef: ResolvedRef, handler: (value: JSONValue | undefined) => void): () => void {
+  subscribe(
+    keyRef: ResolvedRef,
+    handler: (value: JSONValue | DeleteValue, error?: Error) => void,
+  ): () => void {
     this.service.config.log(`SUBSCRIBE ${url(keyRef)} ${this.subscriberCount + 1}`);
     const sub = new Subscriber(keyRef, handler);
     this.subscribers.add(sub);

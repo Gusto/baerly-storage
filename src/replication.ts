@@ -118,7 +118,6 @@ export async function replicate(
 
         contentReads.push(
           content.then((read) => {
-            console.log("READ", sourceRef.key, read.data);
             return values.set(sourceRef.key, read.data);
           }),
         );

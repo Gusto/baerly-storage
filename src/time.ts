@@ -40,7 +40,7 @@ export const adjustClock = (
           config.clockOffset = config.clockOffset + error;
 
         if (error > 0) {
-          console.log(
+          config.log(
             "latency",
             latency,
             "error",
