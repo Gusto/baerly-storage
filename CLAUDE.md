@@ -5,10 +5,17 @@ only content that **cannot be inferred from the code** belongs here.
 
 ## What this is
 
-**MPS3** is a vendorless, causally consistent multiplayer document database
-that runs entirely client-side over any S3-compatible storage API (S3, R2,
-Backblaze, Minio). No server. The client polls a time-ordered manifest log
-to sync state across writers. Theoretical foundations live in [docs/](docs/).
+**baerly-storage** is a vendorless document database that runs over
+any S3-compatible storage API. The data lives in your bucket; the
+protocol kernel is small enough that an LLM can use the public API
+zero-shot from the `.d.ts` files alone. Theoretical foundations live
+in [docs/](docs/).
+
+Status: under heavy redesign — see
+[`.claude/research/00-plan.md`](.claude/research/00-plan.md). The
+project was MPS3 (browser-direct multiplayer); it is becoming Baerly
+(Worker-fronted server). The protocol kernel survives both; the
+deployment shape is changing.
 
 ## Toolchain
 
@@ -87,17 +94,23 @@ Read in this order to build a mental model:
 
 1. `src/index.ts` — public barrel; bundler entry point.
 2. `src/mps3.ts` — public `MPS3` class.
-3. `src/manifest.ts`, `src/syncer.ts` — protocol core.
+3. `src/manifest.ts`, `src/syncer.ts` — protocol core wiring.
 4. `src/operation-queue.ts`, `src/s3-client-lite.ts` — storage layer.
-5. Utilities: `packages/protocol/src/json.ts`, `packages/protocol/src/types.ts`, `packages/protocol/src/constants.ts`,
-   `packages/protocol/src/errors.ts`, `packages/protocol/src/hashing.ts`, `src/time.ts`, `src/xml.ts`,
-   `packages/protocol/src/o-map.ts`, `src/indexdb.ts`, `src/memory-fetch.ts`,
-   `src/s3-types.ts`.
+5. **`@baerly/protocol`** (pure modules; no I/O):
+   `packages/protocol/src/json.ts`, `packages/protocol/src/types.ts`,
+   `packages/protocol/src/constants.ts`,
+   `packages/protocol/src/errors.ts`,
+   `packages/protocol/src/hashing.ts`,
+   `packages/protocol/src/o-map.ts`.
+6. **`src/`** (impure utilities still being carved):
+   `src/time.ts`, `src/xml.ts`, `src/memory-fetch.ts`,
+   `src/indexdb.ts`, `src/s3-types.ts`.
 
 The full lifecycle of `put()` and `subscribe()` is in
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — read it before changing
-`syncer.ts` or `manifest.ts`. ARCHITECTURE.md also has a Mermaid
-dependency graph if you need finer-grained roles than the groups above.
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — read it before
+changing `syncer.ts` or `manifest.ts`. ARCHITECTURE.md also has a
+Mermaid dependency graph if you need finer-grained roles than the
+groups above.
 
 ## When editing X, read Y
 

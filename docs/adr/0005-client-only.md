@@ -1,5 +1,9 @@
 # 0005 — Client-only architecture (no server)
 
+## Status
+
+Superseded by [ADR-0006: Server component](0006-server-component.md).
+
 ## Context
 
 The natural design for a "multiplayer document database" is a
