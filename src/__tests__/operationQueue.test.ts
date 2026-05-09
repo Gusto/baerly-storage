@@ -28,7 +28,7 @@ describe("operation_queue", () => {
     const key = DEFAULT_KEY;
     values.set(key, "b");
     q.propose(op, values);
-    expect((await q.flatten()).get(key)).toBe("b");
+    expect((await q.flatten()).get(key)?.[0]).toBe("b");
   });
 
   test("Proposed ops can be labelled and confirmed", async () => {
@@ -38,10 +38,10 @@ describe("operation_queue", () => {
     const key = DEFAULT_KEY;
     values.set(key, "b");
     q.propose(op, values);
-    expect((await q.flatten()).get(key)).toBe("b");
+    expect((await q.flatten()).get(key)?.[0]).toBe("b");
     q.label(op, "a");
     q.confirm("a");
-    expect((await q.flatten()).get(key)).toBe(undefined);
+    expect((await q.flatten()).get(key)?.[0]).toBe(undefined);
   });
 
   test("Proposed ops can be labelled and cancelled", async () => {
@@ -51,9 +51,9 @@ describe("operation_queue", () => {
     const key = DEFAULT_KEY;
     values.set(key, "b");
     q.propose(op, values);
-    expect((await q.flatten()).get(key)).toBe("b");
+    expect((await q.flatten()).get(key)?.[0]).toBe("b");
     q.cancel(op);
-    expect((await q.flatten()).get(key)).toBe(undefined);
+    expect((await q.flatten()).get(key)?.[0]).toBe(undefined);
   });
 
   test("Order of operations is preserved after confirmations", async () => {
@@ -70,11 +70,11 @@ describe("operation_queue", () => {
       q.label(op, i.toString());
     }
 
-    expect((await q.flatten()).get(key)).toBe(totalOps - 1);
+    expect((await q.flatten()).get(key)?.[0]).toBe(totalOps - 1);
     // Confirm operations and check the decrement in flatten output
     for (let i = totalOps - 1; i > 0; i--) {
       q.confirm(i.toString());
-      expect((await q.flatten()).get(key)).toBe(i - 1);
+      expect((await q.flatten()).get(key)?.[0]).toBe(i - 1);
     }
   });
 
@@ -86,11 +86,11 @@ describe("operation_queue", () => {
     const key = DEFAULT_KEY;
     values.set(key, "b");
     q.propose(op, values);
-    expect((await q.flatten()).get(key)).toBe("b");
+    expect((await q.flatten()).get(key)?.[0]).toBe("b");
     const restored = new OperationQueue();
     await restored.restore(store, requeue(restored));
 
-    expect((await restored.flatten()).get(key)).toBe("b");
+    expect((await restored.flatten()).get(key)?.[0]).toBe("b");
   });
 
   test("Labelled operations can be stored to disk, restored and confirmed", async () => {
@@ -106,9 +106,9 @@ describe("operation_queue", () => {
     const restored = new OperationQueue();
     await restored.restore(store, requeue(restored));
 
-    expect((await restored.flatten()).get(key)).toBe("b");
+    expect((await restored.flatten()).get(key)?.[0]).toBe("b");
     restored.confirm("a");
-    expect((await restored.flatten()).get(key)).toBe(undefined);
+    expect((await restored.flatten()).get(key)?.[0]).toBe(undefined);
   });
 
   test("Order of operations is preserved after restore", async () => {
@@ -129,11 +129,11 @@ describe("operation_queue", () => {
     const restored = new OperationQueue();
     await restored.restore(store, requeue(restored));
 
-    expect((await restored.flatten()).get(key)).toBe(totalOps - 1);
+    expect((await restored.flatten()).get(key)?.[0]).toBe(totalOps - 1);
     // Confirm operations and check the decrement in flatten output
     for (let i = totalOps - 1; i > 0; i--) {
       restored.confirm(i.toString());
-      expect((await restored.flatten()).get(key)).toBe(i - 1);
+      expect((await restored.flatten()).get(key)?.[0]).toBe(i - 1);
     }
   });
 });
