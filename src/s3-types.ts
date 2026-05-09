@@ -4,7 +4,7 @@
  * S3 REST API exactly (PascalCase) so consumers don't need to change.
  *
  * The dependency was eliminated because production code already speaks
- * raw HTTP via `aws4fetch` (see `src/s3-client-lite.ts`); the SDK was only
+ * raw HTTP via `aws4fetch` (see {@link S3ClientLite}); the SDK was only
  * contributing types and a handful of test-fixture calls.
  */
 

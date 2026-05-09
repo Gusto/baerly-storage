@@ -97,9 +97,9 @@ export const manifestKeySuffix = (key: ManifestKey | string): VersionId | undefi
  * `<base32-time>_<session>_<seq>`; lexicographic order *is* causal order.
  *
  * Read `docs/sync_protocol.md` and `docs/causal_consistency_checking.md`
- * before changing anything in this file. The invariants checked by
- * `tests/unit/consistency.test.ts` and
- * `tests/integration/randomized.test.ts` depend on the structure here.
+ * before changing anything in this file. Property-based and
+ * state-machine tests cover the invariants — grep for `Syncer` in
+ * `tests/` to find them.
  *
  * @see `docs/sync_protocol.md`
  * @see `docs/causal_consistency_checking.md`
