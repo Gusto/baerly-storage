@@ -70,7 +70,8 @@ export class S3ClientLite {
       const url = this.getUrl(
         command.Bucket!,
         undefined,
-        `/?list-type=2&prefix=${command.Prefix}&start-after=${command.StartAfter}`,
+        `/?list-type=2&prefix=${encodeURIComponent(command.Prefix ?? "")}` +
+          `&start-after=${encodeURIComponent(command.StartAfter ?? "")}`,
       );
       const response = await retry(() => this.fetch(url, {}));
 
@@ -135,7 +136,11 @@ export class S3ClientLite {
     VersionId,
     IfNoneMatch,
   }: GetObjectCommandInput): Promise<GetObjectCommandOutput> {
-    const url = this.getUrl(Bucket!, Key, VersionId ? `?versionId=${VersionId}` : "");
+    const url = this.getUrl(
+      Bucket!,
+      Key,
+      VersionId ? `?versionId=${encodeURIComponent(VersionId)}` : "",
+    );
     const response = await retry(() =>
       time.adjustClock(
         this.fetch(url, {

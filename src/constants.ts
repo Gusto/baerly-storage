@@ -85,3 +85,16 @@ export const RATE_LIMIT_BACKOFF_MILLIS: number = 1000;
  * or a brief network blip without papering over a real outage.
  */
 export const S3_REQUEST_MAX_RETRIES: number = 8;
+
+/**
+ * Maximum number of `_getObject` responses retained in MPS3's in-memory
+ * cache (keyed by `(Bucket, Key, VersionId, IfNoneMatch)`).
+ *
+ * The cache exists to coalesce repeat reads of the same content version
+ * during a single tab session. With `useVersioning: true` every write
+ * mints a new `VersionId`, so an unbounded cache pins every historical
+ * version forever and grows linearly with write volume. 100 entries is
+ * generous for the typical "current value plus a few in-flight reads"
+ * working set while keeping memory bounded.
+ */
+export const MEM_CACHE_CAPACITY: number = 100;

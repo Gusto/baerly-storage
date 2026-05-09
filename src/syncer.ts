@@ -260,7 +260,12 @@ export class Syncer {
       Math.max(Syncer.manifestTimestamp(this.latest_key) - LAG_WINDOW_MILLIS, 0),
     );
 
-    // Play operations forward on latest state, oldest first
+    // Play operations forward on latest state, oldest first.
+    // Issue all GETs in parallel; merge sequentially to preserve causal order.
+    const replays: Array<{
+      key: string;
+      promise: Promise<{ data?: ManifestFile }>;
+    }> = [];
     for (let index = manifests.length - 1; index >= 0; index--) {
       const key = manifests[index]!.Key!;
       if (key > this.latest_key && key > gcPoint) {
@@ -277,14 +282,20 @@ export class Syncer {
         continue;
       }
 
-      // this.manifest.service.config(`step ${key} from ${this.authoritative_key}`);
-      const step = await this.manifest.service._getObject<ManifestFile>({
-        operation: "REPLAY",
-        ref: {
-          bucket: this.manifest.ref.bucket,
-          key,
-        },
+      replays.push({
+        key,
+        promise: this.manifest.service._getObject<ManifestFile>({
+          operation: "REPLAY",
+          ref: {
+            bucket: this.manifest.ref.bucket,
+            key,
+          },
+        }),
       });
+    }
+
+    for (const { key, promise } of replays) {
+      const step = await promise;
       const stepVersionId = manifestKeySuffix(key)!;
       this.latest_state = merge<ManifestFile>(this.latest_state, step.data?.update)!;
       this.manifest.observeVersionId(stepVersionId);

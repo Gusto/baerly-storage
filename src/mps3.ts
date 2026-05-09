@@ -29,7 +29,48 @@ import * as time from "./time";
 import * as offlineFetch from "./indexdb";
 import { type b64, sha256b64 } from "./hashing";
 import { MPS3Error } from "./errors";
-import { MANIFEST_POLL_INTERVAL_MILLIS } from "./constants";
+import { MANIFEST_POLL_INTERVAL_MILLIS, MEM_CACHE_CAPACITY } from "./constants";
+
+/**
+ * Bounded LRU keyed by a string derived from `K`. Mirrors the subset of
+ * `OMap` used by `MPS3.memCache` (`has`/`get`/`set`) but evicts the
+ * oldest entry when capacity is reached. On `get`, the entry is
+ * re-inserted to mark it most-recently-used; insertion order in
+ * `Map` *is* recency order.
+ *
+ * Capacity comes from `MEM_CACHE_CAPACITY` in `src/constants.ts`.
+ */
+class BoundedLRU<K, V> {
+  private readonly _vals = new Map<string, V>();
+
+  constructor(
+    private readonly key: (k: K) => string,
+    private readonly capacity: number,
+  ) {}
+
+  has(k: K): boolean {
+    return this._vals.has(this.key(k));
+  }
+
+  get(k: K): V | undefined {
+    const id = this.key(k);
+    const v = this._vals.get(id);
+    if (v !== undefined && this._vals.delete(id)) {
+      this._vals.set(id, v);
+    }
+    return v;
+  }
+
+  set(k: K, v: V): this {
+    const id = this.key(k);
+    if (this._vals.delete(id) === false && this._vals.size >= this.capacity) {
+      const oldest = this._vals.keys().next().value;
+      if (oldest !== undefined) this._vals.delete(oldest);
+    }
+    this._vals.set(id, v);
+    return this;
+  }
+}
 export interface MPS3Config {
   /** @internal */
   label?: string;
@@ -206,8 +247,12 @@ export class MPS3 {
   /** @internal */
   manifests = new OMap<ResolvedRef, Manifest>(url);
   /** @internal */
-  memCache = new OMap<GetObjectCommandInput, Promise<GetObjectCommandOutput & { data: any }>>(
+  memCache = new BoundedLRU<
+    GetObjectCommandInput,
+    Promise<GetObjectCommandOutput & { data: any }>
+  >(
     (input) => `${input.Bucket}${input.Key}${input.VersionId}${input.IfNoneMatch}`,
+    MEM_CACHE_CAPACITY,
   );
 
   /** @internal */
@@ -257,6 +302,24 @@ export class MPS3 {
 
     this.endpoint =
       config.s3Config.endpoint || `https://s3.${config.s3Config.region}.amazonaws.com`;
+
+    // Reject endpoints that aren't http(s) — e.g. a stray `file:`, `ftp:`,
+    // or a typo'd path. The `LOCAL_ENDPOINT` sentinel (`indexdb:`) is the
+    // one non-http(s) value the rest of the constructor knows how to handle.
+    if (this.endpoint !== MPS3.LOCAL_ENDPOINT) {
+      let scheme: string;
+      try {
+        scheme = new URL(this.endpoint).protocol;
+      } catch {
+        throw new MPS3Error("InvalidConfig", `Invalid endpoint URL: ${this.endpoint}`);
+      }
+      if (scheme !== "http:" && scheme !== "https:") {
+        throw new MPS3Error(
+          "InvalidConfig",
+          `Unsupported endpoint scheme: ${scheme} (expected http: or https:)`,
+        );
+      }
+    }
 
     let fetchFn: FetchFn;
 
@@ -745,24 +808,35 @@ export class MPS3 {
     const manifestRef = resolveManifestRef(options?.manifest, this.config.defaultManifest);
     const keyRef = resolveContentRef(key, this.config);
     const manifest = this.getOrCreateManifest(manifestRef);
-    const unsubscribe = manifest.subscribe(keyRef, handler);
+    const innerUnsubscribe = manifest.subscribe(keyRef, handler);
+    // The initial `get(...)` is async, so the caller may invoke
+    // `unsubscribe()` before the `.then` / `.catch` fires. Without this
+    // flag we'd emit a "ghost" notification after unsubscribe — common
+    // in React effect cleanup where the same effect re-runs immediately.
+    let unsubscribed = false;
     this.get(keyRef, {
       manifest: manifestRef,
     })
       .then((initial) => {
+        if (unsubscribed) return;
         this.config.log(`NOTIFY (initial) ${url(keyRef)}`);
         // if the data is cached we don't want the subscriber called in the same tick as
         // the unsubscribe return value will not be initialized
         queueMicrotask(() => {
+          if (unsubscribed) return;
           handler(initial, undefined);
           manifest.poll();
         });
       })
       .catch((error) => {
+        if (unsubscribed) return;
         handler(undefined, error);
       });
 
-    return unsubscribe;
+    return () => {
+      unsubscribed = true;
+      innerUnsubscribe();
+    };
   }
 
   /** @internal */

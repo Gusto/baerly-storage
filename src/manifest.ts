@@ -113,28 +113,30 @@ export class Manifest {
       const mask: OMap<ResolvedRef, [JSONValue | DeleteValue, number]> =
         await this.operationQueue.flatten();
 
-      this.subscribers.forEach(async (subscriber) => {
-        if (mask.has(subscriber.ref)) {
-          const [value, op] = mask.get(subscriber.ref)!;
-          subscriber.notify(this.service, <VersionId>`local-${op}`, Promise.resolve(value));
-        } else {
-          const fileState = state.files[url(subscriber.ref)];
-          if (fileState) {
-            const content = this.service._getObject<JSONValue>({
-              operation: "GET_CONTENT",
-              ref: subscriber.ref,
-              version: fileState.version,
-            });
-            subscriber.notify(
-              this.service,
-              fileState.version,
-              content.then((res) => res.data),
-            );
-          } else if (fileState === undefined) {
-            subscriber.notify(this.service, undefined, Promise.resolve(undefined));
+      await Promise.all(
+        [...this.subscribers].map(async (subscriber) => {
+          if (mask.has(subscriber.ref)) {
+            const [value, op] = mask.get(subscriber.ref)!;
+            subscriber.notify(this.service, <VersionId>`local-${op}`, Promise.resolve(value));
+          } else {
+            const fileState = state.files[url(subscriber.ref)];
+            if (fileState) {
+              const content = this.service._getObject<JSONValue>({
+                operation: "GET_CONTENT",
+                ref: subscriber.ref,
+                version: fileState.version,
+              });
+              subscriber.notify(
+                this.service,
+                fileState.version,
+                content.then((res) => res.data),
+              );
+            } else if (fileState === undefined) {
+              subscriber.notify(this.service, undefined, Promise.resolve(undefined));
+            }
           }
-        }
-      });
+        }),
+      );
     } catch (err) {
       this.subscribers.forEach((sub) => sub.handler(undefined, err as Error));
     } finally {

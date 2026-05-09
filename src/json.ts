@@ -25,6 +25,8 @@ export function merge<T extends JSONArrayless>(
   }
   const combined = typeof target === "object" ? { ...target } : <T>{};
   for (let key in patch) {
+    // reject prototype pollution
+    if (key === "__proto__" || key === "constructor" || key === "prototype") continue;
     if (patch[key] === null) {
       delete combined[key];
     } else {
