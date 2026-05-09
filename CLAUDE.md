@@ -26,34 +26,45 @@ Don't introduce alternate tooling without justification.
 | Command | What it catches | Runtime | Clean on `main`? |
 |---|---|---|---|
 | `pnpm verify` | typecheck (`tsgo --noEmit`) + lint (`oxlint`) | ~seconds | ✅ — non-zero exit *is* your regression |
-| `pnpm test` | vitest unit + integration | ~30s | ⚠️ 6 known baseline failures (see below) |
+| `pnpm test` | vitest unit + integration (zero infra) | ~1s | ✅ — Minio + credentials tests are gated, see below |
+| `pnpm test:minio` | adds the Minio-gated suites (`randomized`, `offlinefirst`, `time` + Minio variants) | ~30s | ✅ when `pnpm dev:storage` is up |
+| `pnpm test:conformance` | adds `conformance.test.ts` (needs Minio + credentials files) | ~30s | requires credentials in `credentials/{aws,gcs,cloudflare}.json` |
 | `pnpm format:check` | oxfmt formatting | ~seconds | ❌ red on ~20 pre-existing files; diff vs. `main` |
 | `pnpm build` | rolldown bundle to `dist/` | ~seconds | ✅ |
 | `pnpm test:randomize` | property-based fuzzer (loops `pnpm test` until failure) | run for minutes | use when changing protocol code |
-| `pnpm dev:storage` | brings up Minio `:9102` + Toxiproxy `:9104` | n/a | required for some integration tests |
+| `pnpm dev:storage` | brings up Minio `:9102` + Toxiproxy `:9104` | n/a | required for `test:minio` / `test:conformance` |
 
 `pnpm verify` is also enforced as a [lefthook](https://lefthook.dev/)
 pre-commit hook (`lefthook.yml`); `pnpm install` wires it up via the
 `prepare` script. Bypass with `git commit --no-verify` when needed.
 
-### Known baseline test failures
+### Test gating
 
-Four test files require infrastructure that may be absent in a fresh checkout:
+`pnpm test` runs green on a fresh checkout with zero infrastructure
+deps. Tests requiring Minio or credentials are gated by env:
 
-- `conformance.test.ts` needs **credentials** in
-  `credentials/{aws,gcs,cloudflare}.json` (gitignored).
-- `randomized.test.ts`, `offlinefirst.test.ts`, `time.test.ts` need a
-  running **Minio** (`pnpm dev:storage`).
-- `operationQueue.test.ts` has a known stale-API mismatch — its assertions
-  expect a scalar where `flatten()` now returns a `[value, seq]` tuple.
-  Don't be fooled into thinking your change broke it.
+- **Minio-required tests** (`offlinefirst.test.ts`, the `clock behavior`
+  block of `time.test.ts`, and the `useVersioning` / `minio` variants
+  of `randomized.test.ts`) skip by default. Run them with
+  `MINIO=1 pnpm test` (alias: `pnpm test:minio`) after `pnpm dev:storage`.
+- **`conformance.test.ts`** needs both Minio and credentials in
+  `credentials/{aws,gcs,cloudflare}.json` (gitignored). Excluded from
+  the default test glob. Run with `pnpm test:conformance`.
+
+`randomized.test.ts` runs by default against an in-memory `fetchFn`
+adapter (`src/memoryFetch.ts`) — the property-based causal-consistency
+checker is the highest-leverage test asset and now runs in <1s on
+every PR.
 
 Pure-unit tests that always pass: `hashing.test.ts`, `consistency.test.ts`,
-`xml.test.ts`, `json.test.ts`, `datatypes.test.ts`.
+`xml.test.ts`, `json.test.ts`, `datatypes.test.ts`,
+`operationQueue.test.ts`, `bundleSize.test.ts`,
+`putAllPartialFailure.test.ts`, `regressions.test.ts`.
 
-If you're running the suite, compare against this baseline — *new*
-failures in your work-in-progress are the signal; the existing failures
-are environmental.
+The `regressions.test.ts` suite includes one `test.fails` (session-ID
+collision rate is too high — Phase 3 will fix) and one `test.todo`
+(`useChecksum` flag disposition — Phase 1 picks). Both are
+intentional and don't represent broken builds.
 
 ## Local dev
 

@@ -17,7 +17,9 @@ describe("timestampToSecs", () => {
   });
 });
 
-describe("clock behavior", () => {
+const minioEnabled = process.env.MINIO === "1";
+
+describe.runIf(minioEnabled)("clock behavior", () => {
   const getClient = (args: any = {}) =>
     new MPS3({
       parser: new DOMParser(),

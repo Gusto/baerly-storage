@@ -20,6 +20,8 @@
     "scripts": {
         "typecheck": "tsgo --noEmit",
         "test": "vitest run",
+        "test:minio": "MINIO=1 vitest run",
+        "test:conformance": "CONFORMANCE=1 MINIO=1 vitest run src/__tests__/conformance.test.ts",
         "build": "rolldown -c",
         "prepare": "lefthook install && pnpm run build",
         "format": "oxfmt src",

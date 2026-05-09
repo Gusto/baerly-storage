@@ -28,7 +28,10 @@ describe("mps3", () => {
     },
   };
 
+  const minioEnabled = process.env.MINIO === "1";
+
   const setOnline = async (state: boolean) => {
+    if (!minioEnabled) return;
     fetch("localhost:8474/proxies/minio", {
       method: "POST",
       body: JSON.stringify({
@@ -37,13 +40,15 @@ describe("mps3", () => {
     });
   };
 
-  const configs: {
+  const allConfigs: {
     createBucket?: boolean;
     label: string;
+    requiresMinio?: boolean;
     config: MPS3Config;
   }[] = [
     {
       label: "useVersioning",
+      requiresMinio: true,
       config: {
         pollFrequency: 100,
         useVersioning: true,
@@ -54,6 +59,7 @@ describe("mps3", () => {
     },
     {
       label: "minio",
+      requiresMinio: true,
       config: {
         pollFrequency: 100,
         minimizeListObjectsCalls: false,
@@ -78,7 +84,24 @@ describe("mps3", () => {
         },
       },
     },
+    {
+      label: "memory",
+      createBucket: false,
+      config: {
+        pollFrequency: 10,
+        minimizeListObjectsCalls: false,
+        parser: new DOMParser(),
+        defaultBucket: `mem${session}`,
+        offlineStorage: false,
+        adaptiveClock: false,
+        s3Config: {
+          endpoint: MPS3.MEMORY_ENDPOINT,
+        },
+      },
+    },
   ];
+
+  const configs = allConfigs.filter((v) => !v.requiresMinio || minioEnabled);
 
   configs.map((variant) =>
     describe(variant.label, () => {

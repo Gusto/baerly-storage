@@ -6,7 +6,9 @@ import { uuid } from "../types";
 import { createBucket, makeFixtureClient, putBucketVersioningEnabled } from "./s3Fixtures";
 import "fake-indexeddb/auto";
 
-describe("offlinefirst", () => {
+const minioEnabled = process.env.MINIO === "1";
+
+describe.runIf(minioEnabled)("offlinefirst", () => {
   let s3: AwsClient;
   let session = uuid().substring(31);
   const stableConfig = {
