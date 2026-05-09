@@ -38,12 +38,12 @@ pre-commit hook (`lefthook.yml`); `pnpm install` wires it up via the
 
 ### Known baseline test failures
 
-Six test files require infrastructure that may be absent in a fresh checkout:
+Four test files require infrastructure that may be absent in a fresh checkout:
 
-- `conformance.test.ts` and `replication.test.ts` need **credentials** in
+- `conformance.test.ts` needs **credentials** in
   `credentials/{aws,gcs,cloudflare}.json` (gitignored).
-- `randomized.test.ts`, `offlinefirst.test.ts`, `replication.test.ts`,
-  `time.test.ts` need a running **Minio** (`pnpm dev:storage`).
+- `randomized.test.ts`, `offlinefirst.test.ts`, `time.test.ts` need a
+  running **Minio** (`pnpm dev:storage`).
 - `operationQueue.test.ts` has a known stale-API mismatch — its assertions
   expect a scalar where `flatten()` now returns a `[value, seq]` tuple.
   Don't be fooled into thinking your change broke it.
@@ -76,7 +76,6 @@ Read in this order to build a mental model:
 | `src/manifest.ts` | Per-manifest poller + subscriber registry. |
 | `src/syncer.ts` | Reads + writes the manifest log. The protocol lives here. |
 | `src/operationQueue.ts` | Buffers local writes; persists to IndexedDB for offline-first. |
-| `src/replication.ts` | Multi-manifest coordination. |
 | `src/S3ClientLite.ts` | Minimal HTTP S3 client (avoids AWS SDK weight). |
 | `src/json.ts` | RFC 7386 JSON Merge Patch. |
 | `src/types.ts` | Branded types (`Ref`, `ManifestKey`, `UUID`, `VersionId`). |

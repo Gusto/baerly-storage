@@ -9,7 +9,7 @@ import type {
   PutObjectCommandOutput,
 } from "./s3-types";
 import * as time from "./time";
-import { MPS3 } from "./mps3";
+import type { ResolvedMPS3Config } from "./mps3";
 import { parseListObjectsV2CommandOutput } from "./xml";
 import { MPS3Error } from "./errors";
 import {
@@ -56,7 +56,7 @@ export class S3ClientLite {
   constructor(
     private fetch: FetchFn,
     private endpoint: string,
-    private mps3: MPS3,
+    private config: ResolvedMPS3Config,
   ) {}
 
   private getUrl(bucket: string, key?: string, additional?: string) {
@@ -75,9 +75,9 @@ export class S3ClientLite {
       const response = await retry(() => this.fetch(url, {}));
 
       if (response.status === 200) {
-        return parseListObjectsV2CommandOutput(await response.text(), this.mps3.config.parser);
+        return parseListObjectsV2CommandOutput(await response.text(), this.config.parser);
       } else if (response.status === 429) {
-        this.mps3.config.log("listObjectV2: 429, retrying");
+        this.config.log("listObjectV2: 429, retrying");
         await new Promise((resolve) => setTimeout(resolve, RATE_LIMIT_BACKOFF_MILLIS));
       } else {
         throw new MPS3Error(
@@ -105,7 +105,7 @@ export class S3ClientLite {
             //...(ChecksumSHA256 && { "x-amz-content-sha256": ChecksumSHA256 }),
           },
         }),
-        this.mps3.config,
+        this.config,
       ),
     );
     if (response.status !== 200)
@@ -142,7 +142,7 @@ export class S3ClientLite {
           method: "GET",
           headers: { "If-None-Match": IfNoneMatch! },
         }),
-        this.mps3.config,
+        this.config,
       ),
     );
 

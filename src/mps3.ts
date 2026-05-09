@@ -285,7 +285,7 @@ export class MPS3 {
     this.s3ClientLite = new S3ClientLite(
       this.config.online ? fetchFn : () => new Promise(() => {}),
       this.endpoint,
-      this,
+      this.config,
     );
   }
   /** @internal */
@@ -346,7 +346,7 @@ export class MPS3 {
     if (version === undefined) return undefined;
 
     return (
-      await this._getObject<any>({
+      await this._getObject<JSONValue>({
         operation: "GET",
         ref: contentRef,
         version: version,
@@ -671,9 +671,8 @@ export class MPS3 {
       `${dt}ms ${args.operation} ${command.Bucket}/${command.Key} => ${response.VersionId}`,
     );
 
-    if (this.diskCache) {
+    if (this.diskCache && args.operation === "PUT_CONTENT") {
       const diskKey = `${command.Bucket}${command.Key}${args.version || response.VersionId}`;
-      const data = JSON.parse(content);
       await set(
         diskKey,
         {
@@ -681,7 +680,7 @@ export class MPS3 {
             httpStatusCode: 200,
           },
           etag: response.ETag,
-          data,
+          data: args.value,
         },
         this.diskCache,
       ).then(() => this.config.log(`STORE ${diskKey}`));
@@ -786,9 +785,11 @@ export class MPS3 {
    */
   shutdown(): void {
     this.manifests.forEach((manifest) => {
-      manifest.subscribers.forEach((subscriber) => {
-        manifest.subscribers.delete(subscriber);
-      });
+      manifest.subscribers.clear();
+      if (manifest.poller) {
+        clearInterval(manifest.poller);
+        manifest.poller = undefined;
+      }
     });
   }
 }

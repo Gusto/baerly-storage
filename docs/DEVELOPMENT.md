@@ -41,8 +41,8 @@ Pure-unit:
 
 ### Tests that need a running Minio
 
-`randomized.test.ts`, `offlinefirst.test.ts`, `replication.test.ts`,
-`time.test.ts` connect to `http://127.0.0.1:9102` (Minio). Bring it up:
+`randomized.test.ts`, `offlinefirst.test.ts`, `time.test.ts` connect
+to `http://127.0.0.1:9102` (Minio). Bring it up:
 
 ```sh
 pnpm dev:storage      # docker-compose up -d
@@ -64,10 +64,10 @@ pnpm dev:storage:stop
 
 ### Tests that need real cloud credentials
 
-`conformance.test.ts` and parts of `replication.test.ts` import JSON
-credentials from `credentials/{aws,gcs,cloudflare}.json` (gitignored).
-Without those files the test files will fail to load. That's expected for
-a fresh checkout — only contributors with cloud accounts run them.
+`conformance.test.ts` imports JSON credentials from
+`credentials/{aws,gcs,cloudflare}.json` (gitignored). Without those files
+the test file will fail to load. That's expected for a fresh checkout —
+only contributors with cloud accounts run it.
 
 ### Known stale tests
 
@@ -147,7 +147,6 @@ src/
   manifest.ts        # poll loop + subscribers
   syncer.ts          # manifest log read/write
   operationQueue.ts  # local write buffer (IDB-backed)
-  replication.ts     # multi-manifest writes
   S3ClientLite.ts    # HTTP S3 client
   json.ts            # RFC 7386 JSON Merge Patch
   types.ts           # branded types + Ref helpers
@@ -168,7 +167,6 @@ docs/
   sync_protocol.md           # protocol spec
   causal_consistency_checking.md
   JSON_merge_patch.md
-  replication.md
 
 .claude/
   rules/                     # path-scoped rules (src, tests, docs)

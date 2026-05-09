@@ -14,8 +14,6 @@ or expected.
 ### Need cloud credentials in `credentials/{aws,gcs,cloudflare}.json` (gitignored)
 
 - `src/__tests__/conformance.test.ts` — multi-backend conformance suite.
-- `src/__tests__/replication.test.ts` — multi-manifest coordination
-  (also needs Minio).
 
 Drop credential JSON files into `credentials/` to enable. The directory
 is gitignored.
@@ -27,7 +25,6 @@ pass:
 
 - `src/__tests__/randomized.test.ts` — property-based fuzzer.
 - `src/__tests__/offlinefirst.test.ts` — offline-write replay.
-- `src/__tests__/replication.test.ts` — also needs credentials (above).
 - `src/__tests__/time.test.ts` — clock-skew tolerance.
 
 ### Stale-API mismatch (known, not your bug)

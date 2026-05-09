@@ -25,6 +25,9 @@ class Subscriber {
           this.lastVersion = version;
           this.handler(response);
         }
+      })
+      .catch((err) => {
+        service.config.log("subscriber handler threw", err);
       });
   }
 }
@@ -117,7 +120,7 @@ export class Manifest {
         } else {
           const fileState = state.files[url(subscriber.ref)];
           if (fileState) {
-            const content = this.service._getObject<any>({
+            const content = this.service._getObject<JSONValue>({
               operation: "GET_CONTENT",
               ref: subscriber.ref,
               version: fileState.version,

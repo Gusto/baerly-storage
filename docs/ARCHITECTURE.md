@@ -21,7 +21,6 @@ graph TD
     operationQueue[operationQueue.ts<br/>local write buffer]
     manifest[manifest.ts<br/>poll loop + subscribers]
     syncer[syncer.ts<br/>manifest log read/write]
-    replication[replication.ts<br/>multi-manifest fan-out]
     s3client[S3ClientLite.ts<br/>HTTP S3 client]
     json[json.ts<br/>RFC 7386 merge patch]
     indexdb[indexdb.ts<br/>IDB persistence]
@@ -34,7 +33,6 @@ graph TD
     syncer --> s3client
     syncer --> json
     operationQueue --> indexdb
-    replication --> manifest
 ```
 
 ## Lifecycle of a `put()`

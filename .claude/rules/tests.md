@@ -46,9 +46,8 @@ appliesTo: src/__tests__/**
 ## Network-dependent tests
 - Tests that hit the network expect Minio at `http://127.0.0.1:9102`.
   Bring it up with `pnpm dev:storage` before running them.
-- `conformance.test.ts` and parts of `replication.test.ts` need cloud
-  credentials in `credentials/` (gitignored). They'll fail to load
-  without those files — that's expected.
+- `conformance.test.ts` needs cloud credentials in `credentials/`
+  (gitignored). It'll fail to load without those files — that's expected.
 
 ## Performance
 - `pnpm test` should stay under ~30s on a developer laptop. Prefer

@@ -47,17 +47,6 @@ Local writes survive a tab close / network drop and replay on reconnect.
   (note: stale-API mismatch — see
   [troubleshooting.md](./troubleshooting.md))
 
-## Multi-manifest replication
-
-Coordinating reads/writes across multiple manifest logs (e.g. for
-sharding or migration).
-
-- Implementation: [`src/replication.ts`](../src/replication.ts)
-- Tests:
-  [`src/__tests__/replication.test.ts`](../src/__tests__/replication.test.ts)
-  (needs cloud credentials in `credentials/`)
-- Docs: [`docs/replication.md`](./replication.md)
-
 ## JSON Merge Patch (RFC 7386)
 
 How partial updates merge into existing documents.
