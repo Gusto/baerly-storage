@@ -8,6 +8,7 @@ import {
   LAG_WINDOW_MILLIS,
   MANIFEST_LIST_LOOKAHEAD_MILLIS,
   SESSION_ID_LENGTH,
+  SYNCER_CLOCK_SKEW_MAX_RETRIES,
   TIMESTAMP_BIT_WIDTH,
 } from "./constants";
 import {
@@ -335,6 +336,7 @@ export class Syncer {
         let response,
           manifest_key,
           retry = false;
+        let attempts = 0;
         do {
           const state = await this.getLatest();
           const updateFiles: { [url: string]: FileState } = {};
@@ -376,6 +378,12 @@ export class Syncer {
             this.manifest.service.config.adaptiveClock &&
             !Syncer.isValid(manifest_key, putResponse.Date)
           ) {
+            if (++attempts >= SYNCER_CLOCK_SKEW_MAX_RETRIES) {
+              throw new MPS3Error(
+                "NetworkError",
+                `Clock-skew retries exceeded (${SYNCER_CLOCK_SKEW_MAX_RETRIES}); server clock unreachable`,
+              );
+            }
             this.manifest.service.config.clockOffset =
               putResponse.Date.getTime() - Date.now() + putResponse.latency;
             manifest_version = this.generate_manifest_key();

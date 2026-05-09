@@ -87,6 +87,18 @@ export const RATE_LIMIT_BACKOFF_MILLIS: number = 1000;
 export const S3_REQUEST_MAX_RETRIES: number = 8;
 
 /**
+ * Maximum number of times {@link Syncer.updateContent} will regenerate a
+ * manifest key after the server's `LastModified` disagreed with the
+ * embedded timestamp. After this many adjustments, `updateContent`
+ * gives up with a `NetworkError` so callers see a real fault instead
+ * of an infinite loop. Two adjustments suffices in practice — first to
+ * learn the server clock, second to converge.
+ *
+ * @see syncer.ts updateContent retry loop
+ */
+export const SYNCER_CLOCK_SKEW_MAX_RETRIES: number = 4;
+
+/**
  * Maximum number of `_getObject` responses retained in MPS3's in-memory
  * cache (keyed by `(Bucket, Key, VersionId, IfNoneMatch)`).
  *
