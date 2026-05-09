@@ -33,49 +33,21 @@ import { test, expect, describe, beforeAll, afterEach } from "vitest";
 
 IndexedDB is mocked via `import "fake-indexeddb/auto"` in tests that need it.
 
-### Tests that pass without infrastructure
+### Which tests need infra
 
-Pure-unit:
-`hashing.test.ts`, `consistency.test.ts`, `xml.test.ts`, `json.test.ts`,
-`datatypes.test.ts`.
+Which tests skip without Minio or credentials, and which are always
+green, is documented in [CLAUDE.md → Test gating](../CLAUDE.md#test-gating).
 
-### Tests that need a running Minio
-
-`randomized.test.ts`, `offline-first.test.ts`, `time.test.ts` connect
-to `http://127.0.0.1:9102` (Minio). Bring it up:
+To bring up the local Minio + Toxiproxy stack:
 
 ```sh
 pnpm dev:storage      # docker-compose up -d
+pnpm dev:storage:stop # tear down
 ```
 
-This starts:
-
-- **Minio** on `http://127.0.0.1:9102` (S3 API), console on `:9103`.
-  Credentials: `mps3` / `ZOAmumEzdsUUcVlQ` (dev only — see
-  `docker-compose.yml`).
-- **Toxiproxy** on `:9104` proxying to Minio. Used to inject latency,
-  partial failures, and resets in resilience tests.
-
-Stop everything with:
-
-```sh
-pnpm dev:storage:stop
-```
-
-### Tests that need real cloud credentials
-
-`conformance.test.ts` imports JSON credentials from
-`credentials/{aws,gcs,cloudflare}.json` (gitignored). Without those files
-the test file will fail to load. That's expected for a fresh checkout —
-only contributors with cloud accounts run it.
-
-### Known stale tests
-
-`operation-queue.test.ts` has historically had a known mismatch (its
-assertions expected a scalar where `flatten()` now returns a `[value,
-sequence]` tuple). If you see related failures, verify they are
-pre-existing — don't change runtime behavior of
-`OperationQueue.flatten()` to "fix" the test.
+Minio runs on `http://127.0.0.1:9102` (S3 API), console on `:9103`
+(login `mps3` / see `docker-compose.yml`); Toxiproxy on `:9104` proxies
+Minio for latency/failure injection.
 
 ## Type checking, formatting, linting
 
@@ -100,7 +72,7 @@ regenerate.
 
 ```sh
 pnpm verify       # typecheck + lint — guaranteed green on main
-pnpm test         # vitest run — has known baseline failures (see above)
+pnpm test         # vitest run — see CLAUDE.md "Test gating" for which tests are gated
 pnpm format:check # currently red on ~20 pre-existing files; run pnpm format to fix
 pnpm build        # exercise the build path (rolldown bundle)
 ```

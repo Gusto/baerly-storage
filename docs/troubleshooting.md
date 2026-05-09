@@ -4,44 +4,12 @@ Operational and "I-just-checked-out-the-repo" knowledge that doesn't fit
 in code or `CLAUDE.md`. If you hit something not in here, consider
 adding it.
 
-## Known baseline test failures
+## Test gating
 
-`pnpm test` is **not** clean on a fresh checkout. Six test files require
-infrastructure that may be absent. New failures in *other* files are the
-signal worth investigating; failures in the ones below are environmental
-or expected.
-
-### Need cloud credentials in `credentials/{aws,gcs,cloudflare}.json` (gitignored)
-
-- `tests/integration/conformance.test.ts` — multi-backend conformance suite.
-
-Drop credential JSON files into `credentials/` to enable. The directory
-is gitignored.
-
-### Need Minio running locally
-
-Bring up the local stack with `pnpm dev:storage`. These tests will then
-pass:
-
-- `tests/integration/randomized.test.ts` — property-based fuzzer.
-- `tests/integration/offline-first.test.ts` — offline-write replay.
-- `tests/integration/time.test.ts` — clock-skew tolerance.
-
-### Stale-API mismatch (known, not your bug)
-
-- `src/operation-queue.test.ts` — assertions expect a scalar
-  where `flatten()` now returns a `[value, seq]` tuple. Until someone
-  rewrites the tests, ignore the failure. *Do not* "fix" it by reverting
-  `flatten`.
-
-### Always green (use as a sanity baseline)
-
-Pure-unit tests with no infrastructure:
-
-- `hashing.test.ts`, `consistency.test.ts`, `xml.test.ts`, `json.test.ts`,
-  `datatypes.test.ts`.
-
-If these fail in your work-in-progress, *that* is a regression.
+Which tests need infra (Minio, credentials), which skip by default, and
+which are always green is documented in
+[CLAUDE.md → Test gating](../CLAUDE.md#test-gating). New failures in
+*other* files are the signal worth investigating.
 
 ## Local stack ports
 
