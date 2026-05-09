@@ -1,14 +1,35 @@
 import { MPS3Error } from "./errors";
 
-const stores = new Map<string, Map<string, BodyInit | null | undefined>>();
+interface StoredObject {
+  body: BodyInit | null | undefined;
+  contentType?: string;
+}
 
-const storeFor = (bucket: string): Map<string, BodyInit | null | undefined> => {
+const stores = new Map<string, Map<string, StoredObject>>();
+
+const storeFor = (bucket: string): Map<string, StoredObject> => {
   let store = stores.get(bucket);
   if (!store) {
     store = new Map();
     stores.set(bucket, store);
   }
   return store;
+};
+
+const headerOf = (init: RequestInit | undefined, name: string): string | undefined => {
+  const headers = init?.headers;
+  if (!headers) return undefined;
+  if (headers instanceof Headers) return headers.get(name) ?? undefined;
+  if (Array.isArray(headers)) {
+    const lower = name.toLowerCase();
+    for (const [k, v] of headers) if (k.toLowerCase() === lower) return v;
+    return undefined;
+  }
+  const lower = name.toLowerCase();
+  for (const k of Object.keys(headers as Record<string, string>)) {
+    if (k.toLowerCase() === lower) return (headers as Record<string, string>)[k];
+  }
+  return undefined;
 };
 
 export const fetchFn = async (url_: string, init?: RequestInit): Promise<Response> => {
@@ -21,6 +42,7 @@ export const fetchFn = async (url_: string, init?: RequestInit): Promise<Respons
   const store = storeFor(bucket);
   let body: BodyInit | null | undefined;
   let status = 200;
+  let responseContentType: string | undefined;
   if (params.get("list-type")) {
     const prefix = encodeURIComponent(params.get("prefix") || "");
     const start_at = encodeURIComponent(params.get("start-after") || "");
@@ -28,18 +50,26 @@ export const fetchFn = async (url_: string, init?: RequestInit): Promise<Respons
     body = `<ListBucketResult>${list
       .map((key) => `<Contents><Key>${key}</Key></Contents>`)
       .join("")}</ListBucketResult>`;
+    responseContentType = "application/xml";
   } else if (init?.method === "GET") {
-    body = store.get(key);
-    status = body === undefined ? 404 : 200;
+    const stored = store.get(key);
+    if (stored === undefined) {
+      status = 404;
+    } else {
+      body = stored.body;
+      responseContentType = stored.contentType;
+    }
   } else if (init?.method === "PUT") {
     body = await init.body;
-    store.set(key, body);
+    store.set(key, { body, contentType: headerOf(init, "Content-Type") });
   } else if (init?.method === "DELETE") {
     store.delete(key);
   } else {
     throw new MPS3Error("Internal", `Unsupported method: ${init?.method ?? "(none)"}`);
   }
-  return new Response(body, { status });
+  const headers: Record<string, string> = {};
+  if (responseContentType) headers["content-type"] = responseContentType;
+  return new Response(body, { status, headers });
 };
 
 export const reset = (): void => {

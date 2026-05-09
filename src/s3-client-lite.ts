@@ -157,11 +157,17 @@ export class S3ClientLite {
       case 403:
         throw new MPS3Error("AccessDenied", "Access denied");
       default: {
+        if (!response.ok) {
+          throw new MPS3Error(
+            "InvalidResponse",
+            `Unexpected status ${response.status}: ${await response.text()}`,
+          );
+        }
         let content;
-        const type = response.headers.get("content-type");
-        const text = await response.text();
-
-        if (type === "application/json" || (text && text !== "")) {
+        const rawType = response.headers.get("content-type") ?? "";
+        const type = rawType.toLowerCase().split(";")[0]!.trim();
+        if (type === "application/json") {
+          const text = await response.text();
           try {
             content = JSON.parse(text);
           } catch (e) {
