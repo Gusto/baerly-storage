@@ -112,3 +112,26 @@ export const SYNCER_CLOCK_SKEW_MAX_RETRIES: number = 4;
  * working set while keeping memory bounded.
  */
 export const MEM_CACHE_CAPACITY: number = 100;
+
+/**
+ * Grace window during which a content 404 (against a key the manifest
+ * references) is treated as an in-flight write rather than an orphan
+ * manifest entry. The manifest-first ordering in `mps3._putAll` PUTs
+ * the manifest entry before the content, so a reader polling between
+ * the two sees a manifest that points at content that does not yet
+ * exist.
+ *
+ * Within this window, readers return `undefined` to callers and skip
+ * subscriber notification — the next poll likely sees the content.
+ * Outside the window, readers still return `undefined` but warn
+ * because the manifest entry is most likely orphaned by a writer that
+ * died mid-batch (see `_putAll` JSDoc; the future Phase-6 sweeper will
+ * GC these).
+ *
+ * Sized at 6× {@link LAG_WINDOW_MILLIS} (30s) to comfortably cover S3
+ * write propagation plus a few poll cycles while still surfacing
+ * genuinely orphaned entries reasonably quickly.
+ *
+ * @see docs/sync_protocol.md
+ */
+export const ORPHAN_MANIFEST_GRACE_MILLIS: number = 6 * LAG_WINDOW_MILLIS;

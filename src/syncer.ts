@@ -10,6 +10,7 @@ import {
   LAG_WINDOW_MILLIS,
   MANIFEST_LIST_LOOKAHEAD_MILLIS,
   MPS3Error,
+  ORPHAN_MANIFEST_GRACE_MILLIS,
   SESSION_ID_LENGTH,
   SYNCER_CLOCK_SKEW_MAX_RETRIES,
   TIMESTAMP_BIT_WIDTH,
@@ -117,6 +118,22 @@ export class Syncer {
   latest_timestamp = 0;
   writes = 0;
 
+  /**
+   * Per-(refUrl@version) wall-clock time at which this reader first
+   * observed the manifest entry. Used to classify a 404 on the
+   * referenced content key as either "in-flight" (within
+   * {@link ORPHAN_MANIFEST_GRACE_MILLIS}) or "orphan" (older). The
+   * manifest-first ordering in `MPS3._putAll` deliberately permits
+   * an interval where the manifest references content that has not
+   * yet been PUT.
+   *
+   * @see docs/sync_protocol.md
+   */
+  private entryFirstObserved = new Map<string, number>();
+  /** Set of `(refUrl@version)` we've already warned about, to keep
+   *  the orphan-warning at one log line per entry. */
+  private warnedOrphans = new Set<string>();
+
   static manifestRegex = /@([0-9a-z]+)_[0-9a-z]+_[0-9a-z]{2}$/;
 
   constructor(private manifest: Manifest) {}
@@ -145,6 +162,42 @@ export class Syncer {
     const s3Timestamp = modified;
     // if the difference is greater than 5 seconds, ignore this update
     return Math.abs(manifestTimestamp - s3Timestamp.getTime()) < LAG_WINDOW_MILLIS;
+  }
+
+  /**
+   * Record that we've observed the manifest entry `(ref, version)` if
+   * we hadn't already. Returns the wall-clock time at which we first
+   * saw it.
+   */
+  observeEntry(ref: ResolvedRef, version: VersionId): number {
+    const key = `${url(ref)}@${version}`;
+    const existing = this.entryFirstObserved.get(key);
+    if (existing !== undefined) return existing;
+    const now = Date.now();
+    this.entryFirstObserved.set(key, now);
+    return now;
+  }
+
+  /**
+   * Classify a 404 on content for `(ref, version)` as either
+   * "in-flight" (manifest-first ordering: content PUT hasn't happened
+   * yet, well within {@link ORPHAN_MANIFEST_GRACE_MILLIS}) or
+   * "orphan" (the writer most likely died between manifest-PUT and
+   * content-PUT). On the first orphan classification per entry, log
+   * a warning via the configured `log` function.
+   */
+  classifyMissingContent(ref: ResolvedRef, version: VersionId): "in-flight" | "orphan" {
+    const observedAt = this.observeEntry(ref, version);
+    const age = Date.now() - observedAt;
+    if (age < ORPHAN_MANIFEST_GRACE_MILLIS) return "in-flight";
+    const key = `${url(ref)}@${version}`;
+    if (!this.warnedOrphans.has(key)) {
+      this.warnedOrphans.add(key);
+      this.manifest.service.config.log(
+        `WARN orphan manifest entry: ${url(ref)} → version ${version} missing after ${age}ms`,
+      );
+    }
+    return "orphan";
   }
 
   // Manifest must be ordered by client operation time

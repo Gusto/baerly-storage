@@ -25,8 +25,7 @@ import {
   resolveContentRef,
   resolveManifestRef,
   url,
-  uuid,
-  versionFromUuid,
+  versionFromContent,
 } from "@baerly/protocol";
 import { Manifest } from "./manifest";
 import { type UseStore, createStore, get, set } from "idb-keyval";
@@ -410,13 +409,22 @@ export class MPS3 {
     const version = await manifest.getVersion(contentRef);
     if (version === undefined) return undefined;
 
-    return (
-      await this._getObject<JSONValue>({
-        operation: "GET",
-        ref: contentRef,
-        version: version,
-      })
-    ).data;
+    manifest.syncer.observeEntry(contentRef, version as VersionId);
+    const response = await this._getObject<JSONValue>({
+      operation: "GET",
+      ref: contentRef,
+      version: version,
+    });
+    if (response.$metadata.httpStatusCode === 404) {
+      // Manifest-first ordering: a 404 here means the manifest
+      // references content that's either in-flight or orphaned by a
+      // writer that died mid-batch. Both surface as `undefined` to
+      // callers; the warning (if outside the grace window) is logged
+      // by `classifyMissingContent`.
+      manifest.syncer.classifyMissingContent(contentRef, version as VersionId);
+      return undefined;
+    }
+    return response.data;
   }
 
   /** @internal */
@@ -638,7 +646,29 @@ export class MPS3 {
       await: options.await ?? (this.config.online ? "remote" : "local"),
     });
   }
-  /** @internal */
+  /**
+   * Manifest-first ordering: writes the manifest entry before any
+   * content. A crash between manifest-PUT and content-PUT leaves the
+   * bucket with an orphan manifest entry referencing missing content.
+   * Readers tolerate this as in-flight (within a grace window) and
+   * skip the row.
+   *
+   * Today there is no sweeper; orphan manifest entries persist until
+   * the next manual cleanup. The eventual sweeper lives in
+   * .claude/research/00-plan.md Phase 6 (cron compactor + two-phase
+   * GC).
+   *
+   * Net trade vs the prior content-first ordering: previously, partial
+   * failure leaked unreferenced content nothing could later identify;
+   * now it leaks identifiable orphan entries the future sweeper will
+   * GC.
+   *
+   * `useVersioning: true` keeps the legacy content-first ordering
+   * because S3 only assigns the `x-amz-version-id` after PUT — the
+   * manifest can't reference a version that doesn't exist yet.
+   *
+   * @internal
+   */
   async _putAll(
     values: Map<ResolvedRef, JSONValue | DeleteValue>,
     options: {
@@ -653,15 +683,114 @@ export class MPS3 {
       isLoad?: boolean;
     },
   ) {
+    if (this.config.useVersioning) {
+      return this._putAllVersioned(values, options);
+    }
+    return this._putAllManifestFirst(values, options);
+  }
+
+  /** Manifest-first ordering for non-versioned mode. @internal */
+  private async _putAllManifestFirst(
+    values: Map<ResolvedRef, JSONValue | DeleteValue>,
+    options: {
+      keys: OMap<ResolvedRef, { replication?: b64 }>;
+      manifests: ResolvedRef[];
+      await: "local" | "remote";
+      isLoad?: boolean;
+    },
+  ) {
+    const webValues = new Map<ResolvedRef, JSONValue | DeleteValue>();
+    const bodies = new Map<ResolvedRef, string>();
+
+    // Step 1: hash all content bodies to compute versions WITHOUT PUTting.
+    // Same JSON body ⇒ same VersionId, so a crash-recovery rewrite
+    // produces an identical content key — manifest references stay valid.
+    const versionEntries = await Promise.all(
+      [...values].map(async ([contentRef, value]) => {
+        if (value === undefined) {
+          return [contentRef, undefined] as const;
+        }
+        webValues.set(contentRef, value);
+        const body = JSON.stringify(value);
+        bodies.set(contentRef, body);
+        const version = await versionFromContent(new TextEncoder().encode(body));
+        return [contentRef, version] as const;
+      }),
+    );
+    const contentVersions = new Map<ResolvedRef, VersionId | DeleteValue>(versionEntries);
+
+    // Step 2 + 3: build manifest entries with computed versions and
+    // PUT each manifest. The manifest PUT is the commit point.
+    const manifestSettled = Promise.all(
+      options.manifests.map((ref) => {
+        const manifest = this.getOrCreateManifest(ref);
+        return manifest.updateContent(webValues, Promise.resolve(contentVersions), {
+          keys: options.keys,
+          await: options.await,
+          isLoad: options.isLoad === true,
+        });
+      }),
+    );
+
+    // Step 4: after the manifest commits, PUT (or DELETE) content.
+    // Failures here leave orphan manifest entries; readers tolerate
+    // 404-on-content as in-flight within ORPHAN_MANIFEST_GRACE_MILLIS.
+    //
+    // The `.then(undefined, () => undefined)` on `manifestSettled` is
+    // load-bearing: if the manifest PUT rejects we don't want to also
+    // surface the chained content rejection as unhandled. We let the
+    // caller see only the manifest error and silently abort the
+    // content step.
+    const contentSettled = manifestSettled.then(
+      () =>
+        Promise.all(
+          [...values].map(([contentRef, value]) => {
+            if (value === undefined) {
+              return this._deleteObject({ ref: contentRef });
+            }
+            const version = contentVersions.get(contentRef) as VersionId;
+            return this._putObject({
+              operation: "PUT_CONTENT",
+              ref: contentRef,
+              value,
+              version,
+              body: bodies.get(contentRef),
+            });
+          }),
+        ),
+      () => undefined,
+    );
+
+    if (options.await === "local") {
+      // Local-ack already happened inside `Syncer.updateContent` via
+      // the operation queue. Don't block on content; still surface
+      // content-PUT failures via the manifest's log.
+      contentSettled.catch((err) =>
+        this.config.log("content PUT failed after manifest commit", err),
+      );
+      return manifestSettled;
+    }
+    await manifestSettled;
+    await contentSettled;
+    return manifestSettled;
+  }
+
+  /** Legacy content-first ordering for `useVersioning: true`. @internal */
+  private async _putAllVersioned(
+    values: Map<ResolvedRef, JSONValue | DeleteValue>,
+    options: {
+      keys: OMap<ResolvedRef, { replication?: b64 }>;
+      manifests: ResolvedRef[];
+      await: "local" | "remote";
+      isLoad?: boolean;
+    },
+  ) {
     const webValues: Map<ResolvedRef, JSONValue | DeleteValue> = new Map();
     const contentVersions: Promise<Map<ResolvedRef, VersionId | DeleteValue>> = (async () => {
       const results = new Map<ResolvedRef, VersionId | DeleteValue>();
       const contentOperations: Promise<any>[] = [];
       values.forEach((value, contentRef) => {
         if (value !== undefined) {
-          let version: VersionId | undefined = this.config.useVersioning
-            ? undefined
-            : versionFromUuid(uuid()); // TODO timestamped versions
           webValues.set(contentRef, value);
 
           contentOperations.push(
@@ -669,20 +798,15 @@ export class MPS3 {
               operation: "PUT_CONTENT",
               ref: contentRef,
               value,
-              version,
             }).then((fileUpdate) => {
-              if (this.config.useVersioning) {
-                if (fileUpdate.VersionId === undefined) {
-                  this.config.log("PUT_CONTENT missing VersionId", fileUpdate);
-                  throw new MPS3Error(
-                    "InvalidConfig",
-                    `Bucket ${contentRef.bucket} is not version enabled!`,
-                  );
-                } else {
-                  version = <VersionId>fileUpdate.VersionId;
-                }
+              if (fileUpdate.VersionId === undefined) {
+                this.config.log("PUT_CONTENT missing VersionId", fileUpdate);
+                throw new MPS3Error(
+                  "InvalidConfig",
+                  `Bucket ${contentRef.bucket} is not version enabled!`,
+                );
               }
-              results.set(contentRef, version);
+              results.set(contentRef, <VersionId>fileUpdate.VersionId);
             }),
           );
         } else {
@@ -716,8 +840,15 @@ export class MPS3 {
     ref: ResolvedRef;
     value: JSONValue;
     version?: string;
+    /**
+     * Pre-stringified body, supplied by `_putAllManifestFirst` so the
+     * version hash and the PUT body are guaranteed to be the same byte
+     * sequence (any drift would put content under a key the manifest
+     * doesn't reference).
+     */
+    body?: string;
   }): Promise<PutObjectCommandOutput & { Date: Date; latency: number }> {
-    const content: string = JSON.stringify(args.value);
+    const content: string = args.body ?? JSON.stringify(args.value);
     let command: PutObjectCommandInput = {
       Bucket: args.ref.bucket,
       Key: this.config.useVersioning

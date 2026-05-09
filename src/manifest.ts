@@ -126,16 +126,24 @@ export class Manifest {
           } else {
             const fileState = state.files[url(subscriber.ref)];
             if (fileState) {
-              const content = this.service._getObject<JSONValue>({
+              this.syncer.observeEntry(subscriber.ref, fileState.version);
+              const response = await this.service._getObject<JSONValue>({
                 operation: "GET_CONTENT",
                 ref: subscriber.ref,
                 version: fileState.version,
               });
-              subscriber.notify(
-                this.service,
-                fileState.version,
-                content.then((res) => res.data),
-              );
+              if (response.$metadata.httpStatusCode === 404) {
+                // Manifest-first ordering: the manifest references a
+                // content key that hasn't been PUT yet (in-flight) or
+                // never will be (orphan from a writer that died
+                // between manifest-PUT and content-PUT). Either way,
+                // skip the subscriber notification — false-positive
+                // "deleted" notifications would corrupt the
+                // application's view.
+                this.syncer.classifyMissingContent(subscriber.ref, fileState.version);
+              } else {
+                subscriber.notify(this.service, fileState.version, Promise.resolve(response.data));
+              }
             } else if (fileState === undefined) {
               subscriber.notify(this.service, undefined, Promise.resolve(undefined));
             }

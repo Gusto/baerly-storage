@@ -15,12 +15,25 @@ const baseConfig = (label: string, bucket: string): MPS3Config => ({
     s3Config: { endpoint: MPS3.MEMORY_ENDPOINT },
 });
 
-describe("_putAll partial failure", () => {
+describe("_putAll partial failure (manifest-first ordering)", () => {
     afterEach(() => {
         reset();
     });
 
-    test("manifest is not advanced when a content PUT fails mid-batch", async () => {
+    test("reader sees committed content; missing content shows in-flight", async () => {
+        // Manifest-first ordering invariants under partial content-PUT failure:
+        // 1. The manifest commits before any content PUT.
+        // 2. Content that succeeded is visible through the reader.
+        // 3. Content that failed leaves an orphan manifest entry; the reader
+        //    classifies it as in-flight and returns `undefined` rather than
+        //    a stale or fabricated value.
+        // 4. The pre-existing seed value is unaffected.
+        //
+        // Compare against the legacy content-first ordering, where partial
+        // failure left unreferenced content and the manifest never advanced —
+        // the failure mode swapped from "leak content nothing references"
+        // to "leak identifiable orphan manifest entries the future Phase-6
+        // sweeper will GC".
         const bucket = `pa-${Math.random().toString(36).slice(2, 8)}`;
         const writer = new MPS3(baseConfig("writer", bucket));
 
@@ -28,10 +41,10 @@ describe("_putAll partial failure", () => {
         // failed putAll has a "before" state to compare against.
         await writer.put("seed", "before");
 
-        // Wrap the writer's fetch to fail the SECOND PUT seen during the
-        // multi-key putAll. The first content PUT succeeds; the second
-        // rejects mid-batch. Manifest entries are also written via PUT so
-        // we restrict the failure to PUTs against the content prefix only.
+        // Wrap the writer's fetch to fail the SECOND content PUT seen
+        // during the multi-key putAll. Manifest entries are also written
+        // via PUT so we restrict the failure to PUTs against the content
+        // prefix only.
         const original = (writer.s3ClientLite as unknown as { fetch: FetchFn })
             .fetch;
         let contentPutCount = 0;
@@ -66,14 +79,24 @@ describe("_putAll partial failure", () => {
             ),
         ).rejects.toThrow();
 
-        // A sibling reader against the same bucket must see neither
-        // {doc/a, doc/b, doc/c} (none of the partial batch should be
-        // visible through the manifest), and the seed value must be intact.
+        // A sibling reader against the same bucket reads through the
+        // manifest. Under manifest-first ordering, the manifest committed
+        // before any content PUT, so all three refs are referenced even
+        // though the second content PUT failed.
         const reader = new MPS3(baseConfig("reader", bucket));
+
+        // Seed value untouched by the failed batch.
         expect(await reader.get("seed")).toBe("before");
-        expect(await reader.get("doc/a")).toBeUndefined();
+
+        // Successfully PUT content is visible.
+        expect(await reader.get("doc/a")).toBe("alpha");
+        expect(await reader.get("doc/c")).toBe("gamma");
+
+        // The failed PUT (doc/b) leaves an orphan manifest entry pointing
+        // at content that never landed. The reader returns `undefined`
+        // (in-flight tolerance), not a fabricated value — and crucially
+        // not the "deleted" semantic, which would be wrong here.
         expect(await reader.get("doc/b")).toBeUndefined();
-        expect(await reader.get("doc/c")).toBeUndefined();
 
         writer.shutdown();
         reader.shutdown();
