@@ -85,24 +85,19 @@ See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for full setup.
 
 Read in this order to build a mental model:
 
-| File | Role |
-|---|---|
-| `src/index.ts` | Public barrel; re-exports from `mps3.ts`. The bundler entry point. |
-| `src/mps3.ts` | Public `MPS3` class. **Start here for behavior.** |
-| `src/manifest.ts` | Per-manifest poller + subscriber registry. |
-| `src/syncer.ts` | Reads + writes the manifest log. The protocol lives here. |
-| `src/operation-queue.ts` | Buffers local writes; persists to IndexedDB for offline-first. |
-| `src/s3-client-lite.ts` | Minimal HTTP S3 client (avoids AWS SDK weight). |
-| `src/json.ts` | RFC 7386 JSON Merge Patch. |
-| `src/types.ts` | Branded types (`Ref`, `ManifestKey`, `UUID`, `VersionId`). |
-| `src/constants.ts` | Protocol constants. New magic values go here. |
-| `src/errors.ts` | `MPS3Error` class. All thrown errors should be instances. |
-| `src/s3-types.ts` | Minimal S3 wire-protocol types (replaces `@aws-sdk/client-s3` for type surface only). |
-| `src/hashing.ts`, `src/time.ts`, `src/xml.ts`, `src/o-map.ts`, `src/indexdb.ts`, `src/memory-fetch.ts` | Utilities. |
+1. `src/index.ts` — public barrel; bundler entry point.
+2. `src/mps3.ts` — public `MPS3` class.
+3. `src/manifest.ts`, `src/syncer.ts` — protocol core.
+4. `src/operation-queue.ts`, `src/s3-client-lite.ts` — storage layer.
+5. Utilities: `src/json.ts`, `src/types.ts`, `src/constants.ts`,
+   `src/errors.ts`, `src/hashing.ts`, `src/time.ts`, `src/xml.ts`,
+   `src/o-map.ts`, `src/indexdb.ts`, `src/memory-fetch.ts`,
+   `src/s3-types.ts`.
 
-The full lifecycle of `put()` and `subscribe()` is documented in
+The full lifecycle of `put()` and `subscribe()` is in
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — read it before changing
-`syncer.ts` or `manifest.ts`.
+`syncer.ts` or `manifest.ts`. ARCHITECTURE.md also has a Mermaid
+dependency graph if you need finer-grained roles than the groups above.
 
 ## When editing X, read Y
 
