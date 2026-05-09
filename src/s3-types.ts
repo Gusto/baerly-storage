@@ -41,7 +41,6 @@ export interface PutObjectCommandInput {
   Key?: string;
   Body?: string;
   ContentType?: string;
-  ChecksumSHA256?: string;
 }
 
 export interface PutObjectCommandOutput {

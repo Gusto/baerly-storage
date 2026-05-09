@@ -2,17 +2,6 @@ import type { Branded } from "./types";
 
 export type b64 = Branded<string, "b64">;
 
-/** @internal */
-export async function sha256b64(message: string): Promise<b64> {
-  const msgBuffer = new TextEncoder().encode(message);
-
-  // hash the message
-  const arrayBuffer = await crypto.subtle.digest("SHA-256", msgBuffer);
-
-  // convert ArrayBuffer to base64-encoded string
-  return toB64(new Uint8Array(arrayBuffer));
-}
-
 export const toB64 = (a: Uint8Array): b64 => <b64>a.toBase64();
 
 export const fromB64 = (a: b64): Uint8Array => Uint8Array.fromBase64(a);

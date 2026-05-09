@@ -39,7 +39,6 @@ describe("mps3", () => {
       config: {
         minimizeListObjectsCalls: false,
         pollFrequency: 100,
-        useChecksum: false,
         defaultBucket: `nov${session}`,
         s3Config: minioConfig,
         parser: new DOMParser(),
@@ -65,7 +64,6 @@ describe("mps3", () => {
       label: "google",
       createBucket: false,
       config: {
-        useChecksum: true,
         pollFrequency: 100,
         defaultBucket: `mps3-demo`,
         s3Config: {

@@ -63,7 +63,6 @@ describe("mps3", () => {
       config: {
         pollFrequency: 100,
         minimizeListObjectsCalls: false,
-        useChecksum: false,
         defaultBucket: `nov${session}`,
         s3Config: unstableConfig,
         parser: new DOMParser(),

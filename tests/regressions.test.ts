@@ -42,18 +42,6 @@ describe("regressions (§9 bug-fix list)", () => {
         });
     });
 
-    describe("useChecksum flag", () => {
-        // Today: `useChecksum` is computed in mps3.ts (~line 727) but the
-        // resulting `x-amz-content-sha256` header is COMMENTED OUT on the
-        // wire (s3-client-lite.ts:106). Half-dead. Phase 1 picks one:
-        //   (a) honor the flag on the wire, or
-        //   (b) remove `useChecksum` from the public type.
-        // This `.todo` keeps the disposition on the agenda.
-        test.todo(
-            "useChecksum: either honored on the wire or removed from public type",
-        );
-    });
-
     describe("non-JSON 5xx error body", () => {
         test("returns InvalidResponse, not a SyntaxError", async () => {
             const fetchFn: FetchFn = async () =>

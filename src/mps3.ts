@@ -28,7 +28,7 @@ import { type UseStore, createStore, get, set } from "idb-keyval";
 import * as time from "./time";
 import * as offlineFetch from "./indexdb";
 import * as memoryFetch from "./memory-fetch";
-import { type b64, sha256b64 } from "./hashing";
+import type { b64 } from "./hashing";
 import { MPS3Error } from "./errors";
 import { MANIFEST_POLL_INTERVAL_MILLIS, MEM_CACHE_CAPACITY } from "./constants";
 
@@ -92,8 +92,6 @@ export interface MPS3Config {
    * @defaultValue false
    */
   useVersioning?: boolean;
-  /** @internal TODO we broke this */
-  useChecksum?: boolean;
 
   /**
    * Frequency in milliseconds subscribers poll for changes.
@@ -173,7 +171,6 @@ export interface ResolvedMPS3Config extends MPS3Config {
   label: string;
   defaultManifest: ResolvedRef;
   useVersioning: boolean;
-  useChecksum: boolean;
   pollFrequency: number;
   online: boolean;
   offlineStorage: boolean;
@@ -280,7 +277,6 @@ export class MPS3 {
     this.config = {
       ...config,
       label: config.label || "default",
-      useChecksum: config.useChecksum ?? true,
       autoclean: config.autoclean ?? true,
       online: config.online ?? true,
       offlineStorage: config.offlineStorage ?? true,
@@ -735,9 +731,6 @@ export class MPS3 {
         : `${args.ref.key}${args.version ? `@${args.version}` : ""}`,
       ContentType: "application/json",
       Body: content,
-      ...(this.config.useChecksum && {
-        ChecksumSHA256: await sha256b64(content),
-      }),
     };
 
     const [response, dt] = await time.measure(this.s3ClientLite.putObject(command));
