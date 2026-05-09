@@ -81,13 +81,12 @@ public async keys(
 
 ### Add a test
 
-Conformance tests live in `tests/integration/conformance.test.ts`. They need
-cloud credentials. For a behavior that doesn't require a network round
-trip, prefer a focused test in a topic-specific file (e.g.
-`tests/unit/keys.test.ts`).
+Conformance tests need cloud credentials. For a behavior that doesn't
+require a network round trip, prefer a focused test in a topic-specific
+file. See [docs/conventions/tests.md](conventions/tests.md) for where
+the file lives.
 
 ```ts
-// tests/unit/keys.test.ts
 import "fake-indexeddb/auto";
 import { test, expect, describe } from "vitest";
 import { MPS3 } from "../../src/mps3";
@@ -167,21 +166,13 @@ export class MyThing {
 
 ### File naming and location
 
-Filenames are kebab-case. The `.test.ts` suffix is what `vitest.config.ts`
-picks up (`include: ["src/**/*.test.ts", "tests/**/*.test.ts"]`).
-
-- **Unit test of a single module** → colocate as `src/<module>.test.ts`.
-  Example: tests for `src/json.ts` go in `src/json.test.ts`.
-- **Cross-cutting unit test** with no 1:1 source → `tests/unit/<topic>.test.ts`.
-- **Integration test** that needs Minio, credentials, or a built bundle
-  → `tests/integration/<topic>.test.ts`.
-- **Shared helpers** (no test calls) → `tests/fixtures/<name>.ts`. See
-  `tests/fixtures/consistency.ts` for an example.
+See [docs/conventions/tests.md](conventions/tests.md) for where to put
+the file (colocated unit, `tests/unit/`, `tests/integration/`, or
+`tests/fixtures/`) and how to name it.
 
 ### Test template
 
 ```ts
-// tests/unit/my-feature.test.ts
 import { test, expect, describe } from "vitest";
 import "fake-indexeddb/auto";          // only if the test exercises IndexedDB
 import { MPS3 } from "../../src/mps3";

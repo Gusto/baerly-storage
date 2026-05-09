@@ -111,60 +111,9 @@ distinguish your regressions from the pre-existing state.
    resilience gap. The `toxiproxy-config-*` services in `docker-compose.yml`
    show how to inject faults.
 
-## Project layout cheatsheet
+## Project layout
 
-```
-src/
-  index.ts             # public barrel (rolldown entry)
-  mps3.ts              # public class
-  manifest.ts          # poll loop + subscribers
-  syncer.ts            # manifest log read/write
-  operation-queue.ts   # local write buffer (IDB-backed)
-  s3-client-lite.ts    # HTTP S3 client
-  json.ts              # RFC 7386 JSON Merge Patch
-  types.ts             # branded types + Ref helpers
-  constants.ts         # protocol constants
-  errors.ts            # MPS3Error + code enum
-  hashing.ts           # SHA-256 / base64
-  time.ts              # base32 timestamp encoding
-  xml.ts               # parse S3 XML responses
-  o-map.ts             # ordered map keyed by Ref
-  indexdb.ts           # IDB persistence helpers
-  memory-fetch.ts      # in-memory FetchFn adapter (no network)
-  s3-types.ts          # minimal S3 wire-protocol types
-  hashing.test.ts      # colocated unit tests
-  json.test.ts
-  xml.test.ts
-  operation-queue.test.ts
-
-tests/
-  regressions.test.ts        # cross-cutting suites
-  unit/                      # cross-cutting unit tests
-    consistency.test.ts
-    datatypes.test.ts
-  integration/               # tests that need infra or build artifacts
-    randomized.test.ts
-    offline-first.test.ts
-    time.test.ts
-    conformance.test.ts
-    bundle-size.test.ts
-    put-all-partial-failure.test.ts
-  fixtures/                  # shared helpers (no .test.ts suffix)
-    consistency.ts
-    s3-fixtures.ts
-
-docs/
-  ARCHITECTURE.md            # module map + lifecycles
-  DEVELOPMENT.md             # this file
-  EXTENDING.md               # how to add features / modules / tests
-  sync_protocol.md           # protocol spec
-  causal_consistency_checking.md
-  JSON_merge_patch.md
-
-.claude/
-  rules/                     # path-scoped rules (src, tests, docs)
-
-docker-compose.yml           # Minio + Toxiproxy for local integration tests
-rolldown.config.ts           # bundler config
-vitest.config.ts             # test runner config
-```
+The module map lives in [CLAUDE.md → Module map](../CLAUDE.md#module-map);
+the deeper dependency graph + lifecycles live in
+[ARCHITECTURE.md](ARCHITECTURE.md). For a flat enumeration, just `ls
+src/ tests/`.
