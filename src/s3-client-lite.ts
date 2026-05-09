@@ -11,12 +11,12 @@ import type {
 import * as time from "./time";
 import type { ResolvedMPS3Config } from "./mps3";
 import { parseListObjectsV2CommandOutput } from "./xml";
-import { MPS3Error } from "./errors";
 import {
   LIST_OBJECT_MAX_RETRIES,
+  MPS3Error,
   RATE_LIMIT_BACKOFF_MILLIS,
   S3_REQUEST_MAX_RETRIES,
-} from "./constants";
+} from "@baerly/protocol";
 
 export type FetchFn = (url: string, init?: RequestInit) => Promise<Response>;
 

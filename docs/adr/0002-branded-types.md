@@ -24,7 +24,7 @@ TypeScript rejects implicit widening between branded strings.
 
 The `Branded<T, B>` helper and the boundary constructors (`uuid()`,
 `versionFromUuid()`, etc.) all live in
-[`src/types.ts`](../../src/types.ts). New strings introduced at
+[`packages/protocol/src/types.ts`](../../packages/protocol/src/types.ts). New strings introduced at
 protocol boundaries should pick up a brand if the kind of string would
 be confusable with another.
 

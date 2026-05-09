@@ -58,8 +58,8 @@ adapter (`src/memory-fetch.ts`) — the property-based causal-consistency
 checker is the highest-leverage test asset and now runs in <1s on
 every PR.
 
-Pure-unit tests that always pass: `src/hashing.test.ts`,
-`tests/unit/consistency.test.ts`, `src/xml.test.ts`, `src/json.test.ts`,
+Pure-unit tests that always pass: `packages/protocol/src/hashing.test.ts`,
+`tests/unit/consistency.test.ts`, `src/xml.test.ts`, `packages/protocol/src/json.test.ts`,
 `tests/unit/datatypes.test.ts`, `src/operation-queue.test.ts`,
 `tests/integration/bundle-size.test.ts`,
 `tests/integration/put-all-partial-failure.test.ts`,
@@ -89,9 +89,9 @@ Read in this order to build a mental model:
 2. `src/mps3.ts` — public `MPS3` class.
 3. `src/manifest.ts`, `src/syncer.ts` — protocol core.
 4. `src/operation-queue.ts`, `src/s3-client-lite.ts` — storage layer.
-5. Utilities: `src/json.ts`, `src/types.ts`, `src/constants.ts`,
-   `src/errors.ts`, `src/hashing.ts`, `src/time.ts`, `src/xml.ts`,
-   `src/o-map.ts`, `src/indexdb.ts`, `src/memory-fetch.ts`,
+5. Utilities: `packages/protocol/src/json.ts`, `packages/protocol/src/types.ts`, `packages/protocol/src/constants.ts`,
+   `packages/protocol/src/errors.ts`, `packages/protocol/src/hashing.ts`, `src/time.ts`, `src/xml.ts`,
+   `packages/protocol/src/o-map.ts`, `src/indexdb.ts`, `src/memory-fetch.ts`,
    `src/s3-types.ts`.
 
 The full lifecycle of `put()` and `subscribe()` is in
@@ -109,7 +109,7 @@ Path-scoped conventions. **Read the matching file before editing.**
 | `src/**/*.test.ts`, `tests/**` | [docs/conventions/tests.md](docs/conventions/tests.md) |
 | `docs/**` | [docs/conventions/docs.md](docs/conventions/docs.md) |
 | `src/syncer.ts`, `src/manifest.ts` | [docs/sync_protocol.md](docs/sync_protocol.md) + [docs/causal_consistency_checking.md](docs/causal_consistency_checking.md) |
-| `src/json.ts` | [docs/JSON_merge_patch.md](docs/JSON_merge_patch.md) |
+| `packages/protocol/src/json.ts` | [docs/JSON_merge_patch.md](docs/JSON_merge_patch.md) |
 | Public API on `MPS3` | [docs/EXTENDING.md](docs/EXTENDING.md) |
 
 Claude users: `.claude/rules/{src,tests,docs}.md` auto-load on matching
@@ -122,11 +122,11 @@ edits and point at the same files.
 - **Branded types are load-bearing.** `Ref`, `ManifestKey`, `UUID`,
   `VersionId` exist to prevent confusion bugs. Don't paper over a type
   mismatch with `as string`; widen only if you understand why.
-- **Magic values live in `src/constants.ts`** with a JSDoc citing where the
+- **Magic values live in `packages/protocol/src/constants.ts`** with a JSDoc citing where the
   value comes from (often `docs/sync_protocol.md`).
 - **Errors must be `MPS3Error` instances.** Use the `code` discriminant
   (`error.code === "NetworkError"`), not `instanceof` chains. Hierarchy
-  lives in `src/errors.ts`.
+  lives in `packages/protocol/src/errors.ts`.
 - **Tests use vitest.** `import { describe, test, it, expect } from "vitest"`.
   Don't add jest, mocha, or `bun:test`. IndexedDB is mocked via
   `import "fake-indexeddb/auto"`.
@@ -144,7 +144,7 @@ edits and point at the same files.
 - ❌ Widening a branded type to its base (`as string`, `as number`).
 - ❌ Skipping or `.skip()`'ing a test to ship. If a test is wrong, fix it;
   if the code is wrong, fix the code.
-- ❌ Hard-coding new magic numbers. Add to `src/constants.ts`.
+- ❌ Hard-coding new magic numbers. Add to `packages/protocol/src/constants.ts`.
 - ❌ Reintroducing `bun:test`, Rome, or baseUrl imports — all replaced.
 
 ## Scope guidance

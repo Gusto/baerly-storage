@@ -1,4 +1,4 @@
-import { MPS3Error } from "./errors";
+import { MPS3Error } from "@baerly/protocol";
 
 interface StoredObject {
   body: BodyInit | null | undefined;

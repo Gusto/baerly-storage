@@ -116,9 +116,9 @@ is called with the initial value, then on every change, then once with
 
 ## Key types (where the contracts live)
 
-- `Ref` / `ResolvedRef` (`src/types.ts`): `{ bucket?, key }` and resolved
+- `Ref` / `ResolvedRef` (`packages/protocol/src/types.ts`): `{ bucket?, key }` and resolved
   variant. The string form `"key"` is implicitly `{ key: "key" }`.
-- `Branded<T, B>` (`src/types.ts`): nominal-type pattern. `UUID` and
+- `Branded<T, B>` (`packages/protocol/src/types.ts`): nominal-type pattern. `UUID` and
   `VersionId` are both `string`s but not assignable to each other.
 - `ManifestFile` (`src/syncer.ts`): the object PUT to each manifest key.
   Contains `files: { [url]: FileState }` and an `update` (the merge patch).

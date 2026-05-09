@@ -1,6 +1,5 @@
 import type { ResolvedMPS3Config } from "./mps3";
-import { uint2strDesc } from "./types";
-import { TIMESTAMP_BIT_WIDTH } from "./constants";
+import { TIMESTAMP_BIT_WIDTH, uint2strDesc } from "@baerly/protocol";
 
 export const timestamp = (epoch: number = 0) => uint2strDesc(epoch, TIMESTAMP_BIT_WIDTH);
 

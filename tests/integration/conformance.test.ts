@@ -4,7 +4,7 @@ import { DOMParser } from "@xmldom/xmldom";
 import cloudflareCredentials from "../../credentials/cloudflare.json";
 import awsCredentials from "../../credentials/aws.json";
 import "fake-indexeddb/auto";
-import { uuid } from "../../src/types";
+import { uuid } from "@baerly/protocol";
 import { createBucket, getObject, makeFixtureClient, putBucketVersioningEnabled } from "../fixtures/s3-fixtures";
 
 describe("mps3", () => {

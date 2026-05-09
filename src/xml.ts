@@ -1,6 +1,5 @@
 import type { ListObjectsV2CommandOutput } from "./s3-types";
-import type { XmlNode, XmlParser } from "./types";
-import { MPS3Error } from "./errors";
+import { MPS3Error, type XmlNode, type XmlParser } from "@baerly/protocol";
 
 export const parseListObjectsV2CommandOutput = (
   xml: string,

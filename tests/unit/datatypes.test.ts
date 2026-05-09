@@ -1,4 +1,4 @@
-import { uint2str, str2uint, uint2strDesc, str2uintDesc } from "../../src/types";
+import { uint2str, str2uint, uint2strDesc, str2uintDesc } from "@baerly/protocol";
 import { expect, describe, it } from "vitest";
 
 describe("datatypes", () => {

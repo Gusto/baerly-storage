@@ -1,0 +1,11 @@
+{
+    "name": "@baerly/mcp",
+    "version": "0.0.0",
+    "description": "mcp-server-baerly — MCP surface over the Worker HTTP API. Phase 2. Stub.",
+    "license": "MIT",
+    "type": "module",
+    "private": true,
+    "dependencies": {
+        "@baerly/protocol": "workspace:*"
+    }
+}

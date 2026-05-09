@@ -63,7 +63,7 @@ that catches races and protocol violations missed by a single run of
 
 - You touched `src/syncer.ts`, `src/manifest.ts`, or
   `src/operation-queue.ts`.
-- You changed timing constants in `src/constants.ts`
+- You changed timing constants in `packages/protocol/src/constants.ts`
   (`LAG_WINDOW_MILLIS`, `MANIFEST_LIST_LOOKAHEAD_MILLIS`, etc.).
 - You're investigating a flaky test that reproduces "sometimes".
 

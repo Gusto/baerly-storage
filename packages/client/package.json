@@ -1,0 +1,12 @@
+{
+    "name": "@baerly/client",
+    "version": "0.0.0",
+    "description": "Baerly browser client — React-friendly HTTP client over fetch. Stub.",
+    "license": "MIT",
+    "type": "module",
+    "private": true,
+    "sideEffects": false,
+    "dependencies": {
+        "@baerly/protocol": "workspace:*"
+    }
+}

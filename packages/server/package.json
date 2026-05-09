@@ -1,0 +1,12 @@
+{
+    "name": "@baerly/server",
+    "version": "0.0.0",
+    "description": "Baerly server — Cloudflare Worker (or Node) HTTP surface over a Storage adapter. Stub.",
+    "license": "MIT",
+    "type": "module",
+    "private": true,
+    "sideEffects": false,
+    "dependencies": {
+        "@baerly/protocol": "workspace:*"
+    }
+}

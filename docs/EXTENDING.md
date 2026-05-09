@@ -75,7 +75,7 @@ public async keys(
 - **Optimistic state.** When reading, layer `operationQueue.flatten()`
   over the synced state — that's how `get` and `subscribe` already work.
 - **No new throw without `MPS3Error`.** If the method can fail, throw
-  `new MPS3Error("Code", "context")` from `src/errors.ts`.
+  `new MPS3Error("Code", "context")` from `packages/protocol/src/errors.ts`.
 - **Internal helpers go on `MPS3` with `_` prefix and `/** @internal */`,**
   not in a separate file.
 
@@ -158,7 +158,7 @@ export class MyThing {
 - ❌ Use baseUrl-style imports — there's no `baseUrl` configured. Use
   relative paths.
 - ❌ Add a config knob unless it's user-facing. Internal toggles bloat
-  `MPS3Config`; prefer a constant in `src/constants.ts`.
+  `MPS3Config`; prefer a constant in `packages/protocol/src/constants.ts`.
 
 ---
 

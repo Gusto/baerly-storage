@@ -9,18 +9,18 @@ Conventions for source code under `src/` (excluding `*.test.ts` files).
   because `verbatimModuleSyntax: true` is on.
 
 ## Branded types
-- `Ref`, `ManifestKey`, `UUID`, `VersionId` exist in `src/types.ts` to
+- `Ref`, `ManifestKey`, `UUID`, `VersionId` exist in `packages/protocol/src/types.ts` to
   prevent confusion bugs. Don't widen with `as string`. Use the
   constructor helpers (`uuid()`, `<VersionId>x`) at the boundary only.
 - Rationale: [ADR 0002 — Branded types over plain strings](../adr/0002-branded-types.md).
 
 ## Constants
-- New magic numbers / strings go in `src/constants.ts` with a JSDoc
+- New magic numbers / strings go in `packages/protocol/src/constants.ts` with a JSDoc
   citing the source (often `docs/sync_protocol.md`). Inline constants
   inside protocol code are a smell.
 
 ## Errors
-- All thrown errors must be `MPS3Error` instances (`src/errors.ts`).
+- All thrown errors must be `MPS3Error` instances (`packages/protocol/src/errors.ts`).
 - Use the `code` discriminant — `error.code === "NetworkError"` —
   not `instanceof` chains. Codes are strings so they're grep-friendly.
 - Re-throws (`throw err` after a `catch`) are fine; don't wrap them.

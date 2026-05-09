@@ -20,7 +20,7 @@ The full suite is run with vitest:
 
 ```sh
 pnpm test                                   # entire suite
-pnpm exec vitest run src/json.test.ts   # one file
+pnpm exec vitest run packages/protocol/src/json.test.ts   # one file
 pnpm exec vitest run -t "subscribe"               # tests whose name matches
 pnpm test:randomize                         # loop until a failure (soak)
 ```

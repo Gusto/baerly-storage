@@ -17,7 +17,7 @@ Filenames are kebab-case throughout (e.g. `operation-queue.test.ts`).
 
 | Where | What goes there |
 |---|---|
-| `src/<module>.test.ts` (next to source) | Unit tests with a 1:1 source mapping. The test for `src/json.ts` is `src/json.test.ts`. |
+| `src/<module>.test.ts` (next to source) | Unit tests with a 1:1 source mapping. The test for `packages/protocol/src/json.ts` is `packages/protocol/src/json.test.ts`. |
 | `tests/unit/<topic>.test.ts` | Cross-cutting unit tests with no single source counterpart (e.g. `consistency`, `datatypes`). |
 | `tests/<topic>.test.ts` | Cross-cutting suites that don't fit unit/integration cleanly (e.g. `regressions`). |
 | `tests/integration/<topic>.test.ts` | Tests that need infrastructure or build artifacts (Minio, credentials, `dist/`). |

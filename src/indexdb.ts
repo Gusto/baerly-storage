@@ -1,5 +1,5 @@
 import { createStore, get, set, del, keys } from "idb-keyval";
-import { MPS3Error } from "./errors";
+import { MPS3Error } from "@baerly/protocol";
 
 interface StoredObject {
   body: BodyInit | null | undefined;

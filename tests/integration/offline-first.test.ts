@@ -2,7 +2,7 @@ import { AwsClient } from "aws4fetch";
 import { expect, test, describe, beforeAll, beforeEach, afterEach } from "vitest";
 import { MPS3, type MPS3Config } from "../../src/mps3";
 import { DOMParser } from "@xmldom/xmldom";
-import { uuid } from "../../src/types";
+import { uuid } from "@baerly/protocol";
 import { createBucket, makeFixtureClient, putBucketVersioningEnabled } from "../fixtures/s3-fixtures";
 import "fake-indexeddb/auto";
 

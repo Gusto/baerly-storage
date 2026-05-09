@@ -37,7 +37,7 @@ To use this library you construct an MP3S class.
 
 ### Quick start ([Codepen](https://codepen.io/tomlarkworthy/pen/QWzybxd))
 ```js
-import {MPS3} from 'https://cdn.skypack.dev/mps3@0.0.58?min';
+import {MPS3} from 'https://cdn.skypack.dev/baerly-storage?min';
 
 const mps3 = new MPS3({
   defaultBucket: "<BUCKET>",

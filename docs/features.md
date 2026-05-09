@@ -24,7 +24,7 @@ to others in an order consistent with happened-before.
 
 - Implementation: [`src/syncer.ts`](../src/syncer.ts),
   [`src/manifest.ts`](../src/manifest.ts)
-- Constants: [`src/constants.ts`](../src/constants.ts)
+- Constants: [`packages/protocol/src/constants.ts`](../packages/protocol/src/constants.ts)
   (`LAG_WINDOW_MILLIS` clock-skew tolerance)
 - Tests:
   [`tests/unit/consistency.test.ts`](../tests/unit/consistency.test.ts)
@@ -51,8 +51,8 @@ Local writes survive a tab close / network drop and replay on reconnect.
 
 How partial updates merge into existing documents.
 
-- Implementation: [`src/json.ts`](../src/json.ts)
-- Tests: [`src/json.test.ts`](../src/json.test.ts)
+- Implementation: [`packages/protocol/src/json.ts`](../packages/protocol/src/json.ts)
+- Tests: [`packages/protocol/src/json.test.ts`](../packages/protocol/src/json.test.ts)
   (always green — pure unit test)
 - Docs: [`docs/JSON_merge_patch.md`](./JSON_merge_patch.md)
 
@@ -77,7 +77,7 @@ The protocol assumes loosely-synchronized clocks. Manifest entries
 outside `LAG_WINDOW_MILLIS` are rejected.
 
 - Implementation: [`src/time.ts`](../src/time.ts),
-  [`src/constants.ts`](../src/constants.ts)
+  [`packages/protocol/src/constants.ts`](../packages/protocol/src/constants.ts)
 - Tests: [`tests/integration/time.test.ts`](../tests/integration/time.test.ts)
   (needs Minio)
 
@@ -85,7 +85,7 @@ outside `LAG_WINDOW_MILLIS` are rejected.
 
 Discriminated-union errors. Match on `error.code`, never `instanceof`.
 
-- Implementation: [`src/errors.ts`](../src/errors.ts)
+- Implementation: [`packages/protocol/src/errors.ts`](../packages/protocol/src/errors.ts)
 - Conventions: [`docs/conventions/src.md`](./conventions/src.md)
 - ADR:
   [`docs/adr/0003-error-code-discriminant.md`](./adr/0003-error-code-discriminant.md)
@@ -95,14 +95,14 @@ Discriminated-union errors. Match on `error.code`, never `instanceof`.
 Nominal typing on top of `string` to keep manifest keys, UUIDs, and S3
 version IDs from being confused at protocol boundaries.
 
-- Implementation: [`src/types.ts`](../src/types.ts) (definitions and
+- Implementation: [`packages/protocol/src/types.ts`](../packages/protocol/src/types.ts) (definitions and
   boundary helpers `uuid()`, `versionFromUuid()`)
 - ADR:
   [`docs/adr/0002-branded-types.md`](./adr/0002-branded-types.md)
 
 ## Hashing / content addressing
 
-- Implementation: [`src/hashing.ts`](../src/hashing.ts)
+- Implementation: [`packages/protocol/src/hashing.ts`](../packages/protocol/src/hashing.ts)
 - Tests:
-  [`src/hashing.test.ts`](../src/hashing.test.ts)
+  [`packages/protocol/src/hashing.test.ts`](../packages/protocol/src/hashing.test.ts)
   (always green)

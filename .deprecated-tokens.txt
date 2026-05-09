@@ -11,4 +11,11 @@
 #   __tests__/                  # 2026-05-09: tests moved to colocated + tests/
 #   src/operationQueue.ts       # 2026-05-09: kebab-cased to operation-queue.ts
 #
+# NOTE: the protocol-package move (2026-05-09) intentionally adds NO
+# entries here — the OLD paths (`src/types.ts` etc.) are substrings of
+# the NEW paths (`packages/protocol/src/types.ts` etc.), so a banlist
+# entry would trip on the moved files themselves. typecheck catches
+# the relevant regression: any new `from "./types"` (etc.) in `src/`
+# fails to resolve since the file no longer exists there.
+
 # Empty for now — the most recent rename is clean.

@@ -1,5 +1,5 @@
 {
-    "name": "mps3",
+    "name": "baerly-storage",
     "description": "Provide clientside multiplayer and optimistic updates over any s3-compatible storage API",
     "version": "1.0.0",
     "license": "MIT",
@@ -24,9 +24,9 @@
         "test:conformance": "CONFORMANCE=1 MINIO=1 vitest run tests/integration/conformance.test.ts",
         "build": "rolldown -c",
         "prepare": "lefthook install && pnpm run build",
-        "format": "oxfmt src tests",
-        "format:check": "oxfmt --check src tests",
-        "lint": "oxlint src tests",
+        "format": "oxfmt src tests packages",
+        "format:check": "oxfmt --check src tests packages",
+        "lint": "oxlint src tests packages",
         "test:randomize": "while pnpm test; [ $? -ne 1 ] ; do :; done",
         "verify": "pnpm run typecheck && pnpm run lint",
         "check:references": "bash scripts/check-references.sh",
@@ -34,6 +34,7 @@
         "dev:storage:stop": "docker-compose down"
     },
     "devDependencies": {
+        "@baerly/protocol": "workspace:*",
         "@types/node": "^25.6.2",
         "@typescript/native-preview": "7.0.0-dev.20260508.1",
         "@xmldom/xmldom": "^0.9.10",

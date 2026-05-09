@@ -14,7 +14,7 @@ The two common patterns in TypeScript are:
 ## Decision
 
 Use one `MPS3Error` class with a `code: MPS3ErrorCode` discriminant.
-Definition in [`src/errors.ts`](../../src/errors.ts).
+Definition in [`packages/protocol/src/errors.ts`](../../packages/protocol/src/errors.ts).
 
 ## Consequences
 

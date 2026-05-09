@@ -1,29 +1,28 @@
-import { type JSONArraylessObject, merge } from "./json";
-import type { Manifest } from "./manifest";
-import { clone } from "./json";
-import type { JSONValue } from "./json";
-import * as time from "./time";
-import { type UseStore, get, set } from "idb-keyval";
 import {
+  type DeleteValue,
+  type JSONArraylessObject,
+  type JSONValue,
+  type ManifestKey,
+  type OMap,
+  type ResolvedRef,
+  type VersionId,
+  type b64,
   LAG_WINDOW_MILLIS,
   MANIFEST_LIST_LOOKAHEAD_MILLIS,
+  MPS3Error,
   SESSION_ID_LENGTH,
   SYNCER_CLOCK_SKEW_MAX_RETRIES,
   TIMESTAMP_BIT_WIDTH,
-} from "./constants";
-import {
-  type DeleteValue,
-  type ManifestKey,
-  type ResolvedRef,
-  type VersionId,
+  clone,
   countKey,
+  merge,
+  str2uintDesc,
   url,
   uuid,
-  str2uintDesc,
-} from "./types";
-import type { b64 } from "./hashing";
-import type { OMap } from "./o-map";
-import { MPS3Error } from "./errors";
+} from "@baerly/protocol";
+import type { Manifest } from "./manifest";
+import * as time from "./time";
+import { type UseStore, get, set } from "idb-keyval";
 
 export interface FileState extends JSONArraylessObject {
   version: VersionId;

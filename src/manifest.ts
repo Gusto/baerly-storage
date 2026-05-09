@@ -1,11 +1,16 @@
-import { OMap } from "./o-map";
+import {
+  type DeleteValue,
+  type JSONValue,
+  type ResolvedRef,
+  type VersionId,
+  type b64,
+  OMap,
+  url,
+} from "@baerly/protocol";
 import { MPS3 } from "./mps3";
 import { OperationQueue } from "./operation-queue";
-import { type DeleteValue, type ResolvedRef, type VersionId, url } from "./types";
-import type { JSONValue } from "./json";
 import type { UseStore } from "idb-keyval";
 import { Syncer } from "./syncer";
-import type { b64 } from "./hashing";
 
 class Subscriber {
   queue = Promise.resolve();

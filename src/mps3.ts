@@ -9,28 +9,29 @@ import type {
 } from "./s3-types";
 import { AwsClient } from "aws4fetch";
 import { type FetchFn, S3ClientLite } from "./s3-client-lite";
-import { OMap } from "./o-map";
-import { Manifest } from "./manifest";
 import {
   type DeleteValue,
+  type JSONValue,
   type Ref,
   type ResolvedRef,
   type VersionId,
   type XmlParser,
+  type b64,
+  MANIFEST_POLL_INTERVAL_MILLIS,
+  MEM_CACHE_CAPACITY,
+  MPS3Error,
+  OMap,
   resolveContentRef,
   resolveManifestRef,
   url,
   uuid,
   versionFromUuid,
-} from "./types";
-import type { JSONValue } from "./json";
+} from "@baerly/protocol";
+import { Manifest } from "./manifest";
 import { type UseStore, createStore, get, set } from "idb-keyval";
 import * as time from "./time";
 import * as offlineFetch from "./indexdb";
 import * as memoryFetch from "./memory-fetch";
-import type { b64 } from "./hashing";
-import { MPS3Error } from "./errors";
-import { MANIFEST_POLL_INTERVAL_MILLIS, MEM_CACHE_CAPACITY } from "./constants";
 
 /**
  * Bounded LRU keyed by a string derived from `K`. Mirrors the subset of
@@ -39,7 +40,7 @@ import { MANIFEST_POLL_INTERVAL_MILLIS, MEM_CACHE_CAPACITY } from "./constants";
  * re-inserted to mark it most-recently-used; insertion order in
  * `Map` *is* recency order.
  *
- * Capacity comes from `MEM_CACHE_CAPACITY` in `src/constants.ts`.
+ * Capacity comes from `MEM_CACHE_CAPACITY` in `packages/protocol/src/constants.ts`.
  */
 class BoundedLRU<K, V> {
   private readonly _vals = new Map<string, V>();
@@ -207,11 +208,11 @@ interface GetResponse<T> {
  * - {@link shutdown} — release polling timers.
  *
  * Errors thrown by any method are instances of `MPS3Error` (see
- * `src/errors.ts`); discriminate on the `code` field.
+ * `packages/protocol/src/errors.ts`); discriminate on the `code` field.
  *
  * @example
  * ```ts
- * import { MPS3 } from "mps3";
+ * import { MPS3 } from "baerly-storage";
  *
  * const mps3 = new MPS3({
  *   defaultBucket: "my-bucket",
