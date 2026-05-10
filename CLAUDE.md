@@ -38,7 +38,7 @@ Don't introduce alternate tooling without justification.
 | `pnpm test:conformance` | adds `conformance.test.ts` (needs Minio + credentials files) | ~30s | requires credentials in `credentials/{aws,gcs,cloudflare}.json` |
 | `pnpm format:check` | oxfmt formatting | ~seconds | ❌ red on ~20 pre-existing files; diff vs. `main` |
 | `pnpm build` | rolldown bundle to `dist/` | ~seconds | ✅ |
-| `pnpm test:randomize` | property-based fuzzer (loops `pnpm test` until failure) | run for minutes | use when changing protocol code |
+| `pnpm test:randomize` | property-based fuzzer (cranks `FC_NUM_RUNS` for fast-check arbitraries) | run for minutes | use when changing protocol code |
 | `pnpm dev:storage` | brings up Minio `:9102` + Toxiproxy `:9104` | n/a | required for `test:minio` / `test:conformance` |
 
 `pnpm verify` is also enforced as a [lefthook](https://lefthook.dev/)

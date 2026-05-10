@@ -31,10 +31,35 @@ One topic per file. Don't pile unrelated suites together.
   `offlineStorage`).
 
 ## Property-based tests
-- See `tests/integration/randomized.test.ts` and
-  `tests/unit/consistency.test.ts` for the patterns. Write one when
-  behavior depends on operation *ordering* (interleaved writes, replay,
-  partial failures) — not for pure functions.
+
+Use `fast-check` via `@fast-check/vitest`. Import `fc` and `test` from
+`@fast-check/vitest`; pull `expect`/`describe` from `vitest`. Prefer the
+object-form `test.prop({ a, b })` so failure messages name the shrunk
+values.
+
+- Pure modules: drive arbitraries through `test.prop`. Example:
+  ```ts
+  import { fc, test } from "@fast-check/vitest";
+  import { describe, expect } from "vitest";
+
+  test.prop({ n: fc.integer() })("abs is non-negative", ({ n }) => {
+    expect(Math.abs(n)).toBeGreaterThanOrEqual(0);
+  });
+  ```
+- Stateful classes: model the invariants with `fc.commands` and run the
+  sequence via `fc.modelRun` (sync) or `fc.asyncModelRun` (async). See
+  `packages/protocol/src/o-map.test.ts` for the pattern — `OMap`
+  checked against a plain `Map` reference under arbitrary command
+  interleavings.
+- Failing-seed replay: failure output prints a `seed` and `path`. Paste
+  them into `fc.assert(prop, { seed, path })` to reproduce, or just
+  rerun the test by name — `@fast-check/vitest` re-seeds automatically
+  on a single-test rerun.
+- Protocol-level ordering tests (interleaved writes, replay, partial
+  failures) still live in `tests/integration/randomized.test.ts`.
+- Per-property iteration count comes from `FC_NUM_RUNS` (default 100).
+  `pnpm test:randomize` cranks it to 10000 for a single deterministic
+  pass.
 
 ## Asserting on errors
 - Check the `code`, not the message:

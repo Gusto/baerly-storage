@@ -1,7 +1,7 @@
-import { expect, test, describe } from "vitest";
+import { fc, test } from "@fast-check/vitest";
+import { describe, expect } from "vitest";
 
 import { fromB64, toB64, or, inside, versionFromContent } from "./hashing";
-import { uuid } from "./types";
 
 describe("b64/uint", () => {
   test("round trip", () => {
@@ -33,23 +33,32 @@ describe("versionFromContent", () => {
 });
 
 describe("or and inside", () => {
-  test("forall a, b: a inside (a or b) ", () => {
-    const enc = new TextEncoder();
-    for (let tries = 0; tries < 10; tries++) {
-      const a = toB64(enc.encode(uuid()));
-      const b = toB64(enc.encode(uuid()));
+  // `or` / `inside` are defined byte-wise over equal-length operands
+  // (the protocol uses them on fixed-width hashes); generate `a` and `b`
+  // at a shared length so the property is well-formed.
+  const equalLengthPair = fc
+    .integer({ min: 1, max: 32 })
+    .chain((n) =>
+      fc.tuple(
+        fc.uint8Array({ minLength: n, maxLength: n }),
+        fc.uint8Array({ minLength: n, maxLength: n }),
+      ),
+    );
 
-      const a_or_b = or(a, b);
+  test.prop({ pair: equalLengthPair })(
+    "forall a, b: a inside (a or b)",
+    ({ pair: [a, b] }) => {
+      const aB64 = toB64(a);
+      const bB64 = toB64(b);
+      const a_or_b = or(aB64, bB64);
 
-      expect(inside(a, b)).toBe(false);
-      expect(inside(b, a)).toBe(false);
-      expect(inside(a_or_b, a)).toBe(false);
-      expect(inside(a_or_b, b)).toBe(false);
-      expect(inside(a, a_or_b)).toBe(true);
-      expect(inside(b, a_or_b)).toBe(true);
-      expect(inside(a, a)).toBe(true);
-      expect(inside(b, b)).toBe(true);
+      // monotonicity under or
+      expect(inside(aB64, a_or_b)).toBe(true);
+      expect(inside(bB64, a_or_b)).toBe(true);
+      // reflexivity
+      expect(inside(aB64, aB64)).toBe(true);
+      expect(inside(bB64, bB64)).toBe(true);
       expect(inside(a_or_b, a_or_b)).toBe(true);
-    }
-  });
+    },
+  );
 });
