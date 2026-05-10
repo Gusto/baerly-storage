@@ -11,6 +11,9 @@ importers:
       '@baerly/protocol':
         specifier: workspace:*
         version: link:packages/protocol
+      '@fast-check/vitest':
+        specifier: 0.4.1
+        version: 0.4.1(vitest@4.1.5)
       '@types/node':
         specifier: ^25.6.2
         version: 25.6.2
@@ -29,6 +32,9 @@ importers:
       fake-indexeddb:
         specifier: ^6.2.5
         version: 6.2.5
+      fast-check:
+        specifier: 4.7.0
+        version: 4.7.0
       idb-keyval:
         specifier: ^6.2.2
         version: 6.2.2
@@ -150,6 +156,11 @@ packages:
 
   '@emnapi/wasi-threads@1.2.1':
     resolution: {integrity: sha512-uTII7OYF+/Mes/MrcIOYp5yOtSMLBWSIoLPpcgwipoiKbli6k322tcoFsxoIIxPDqW01SQGAgko4EzZi2BNv2w==}
+
+  '@fast-check/vitest@0.4.1':
+    resolution: {integrity: sha512-OX6TecB+ZzRfPc49jcPChcV1cf5aDu77CdDU8liecWVam7eD7mPvJNP50b9bBSTxVoGN5wzxrX9PIcCnqgC8bg==}
+    peerDependencies:
+      vitest: ^4.1.0
 
   '@jridgewell/gen-mapping@0.3.13':
     resolution: {integrity: sha512-2kkt/7niJ6MgEPxF0bYdQ6etZaA+fQvDcLKckhy1yIQOzaoKjBBjSj63/aLVjYE3qhRt5dvM+uUyfCg6UKCBbA==}
@@ -777,6 +788,10 @@ packages:
     resolution: {integrity: sha512-CGnyrvbhPlWYMngksqrSSUT1BAVP49dZocrHuK0SvtR0D5TMs5wP0o3j7jexDJW01KSadjBp1M/71o/KR3nD1w==}
     engines: {node: '>=18'}
 
+  fast-check@4.7.0:
+    resolution: {integrity: sha512-NsZRtqvSSoCP0HbNjUD+r1JH8zqZalyp6gLY9e7OYs7NK9b6AHOs2baBFeBG7bVNsuoukh89x2Yg3rPsul8ziQ==}
+    engines: {node: '>=12.17.0'}
+
   fdir@6.5.0:
     resolution: {integrity: sha512-tIbYtZbucOs0BRGqPJkshJUYdL+SDH7dVM8gjy+ERp3WAUjLEFJE+02kanyHtwjWOnwrKYBiwAmM0p4kLJAnXg==}
     engines: {node: '>=12.0.0'}
@@ -1000,6 +1015,9 @@ packages:
     resolution: {integrity: sha512-SoSL4+OSEtR99LHFZQiJLkT59C5B1amGO1NzTwj7TT1qCUgUO6hxOvzkOYxD+vMrXBM3XJIKzokoERdqQq/Zmg==}
     engines: {node: ^10 || ^12 || >=14}
 
+  pure-rand@8.4.0:
+    resolution: {integrity: sha512-IoM8YF/jY0hiugFo/wOWqfmarlE6J0wc6fDK1PhftMk7MGhVZl88sZimmqBBFomLOCSmcCCpsfj7wXASCpvK9A==}
+
   resolve-pkg-maps@1.0.0:
     resolution: {integrity: sha512-seS2Tj26TBVOC2NIc2rOe2y2ZO7efxITtLZcGSOnHHNOQ7CkiUBfw0Iw2ck6xkIhPwLhKNLS8BO+hEpngQlqzw==}
 
@@ -1222,6 +1240,11 @@ snapshots:
     dependencies:
       tslib: 2.8.1
     optional: true
+
+  '@fast-check/vitest@0.4.1(vitest@4.1.5)':
+    dependencies:
+      fast-check: 4.7.0
+      vitest: 4.1.5(@types/node@25.6.2)(@vitest/coverage-v8@4.1.5)(vite@8.0.11(@types/node@25.6.2))
 
   '@jridgewell/gen-mapping@0.3.13':
     dependencies:
@@ -1610,6 +1633,10 @@ snapshots:
 
   fake-indexeddb@6.2.5: {}
 
+  fast-check@4.7.0:
+    dependencies:
+      pure-rand: 8.4.0
+
   fdir@6.5.0(picomatch@4.0.4):
     optionalDependencies:
       picomatch: 4.0.4
@@ -1811,6 +1838,8 @@ snapshots:
       nanoid: 3.3.12
       picocolors: 1.1.1
       source-map-js: 1.2.1
+
+  pure-rand@8.4.0: {}
 
   resolve-pkg-maps@1.0.0: {}
 

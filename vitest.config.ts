@@ -14,6 +14,7 @@ export default defineConfig({
             "packages/*/src/**/*.test.ts",
         ],
         exclude: [...configDefaults.exclude, ...conformanceExclude],
+        setupFiles: ["tests/setup/fast-check.ts"],
         // Uint8Array.{toBase64,fromBase64} are TC39 Stage 4 but still gated
         // behind --js-base-64 in current V8 (Node 24 / V8 13.6). Drop this
         // once Node ships the methods unflagged.

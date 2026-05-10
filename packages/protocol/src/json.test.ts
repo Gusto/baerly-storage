@@ -1,209 +1,165 @@
-import { expect, test, describe } from "vitest";
+import { fc, test } from "@fast-check/vitest";
+import { describe, expect } from "vitest";
 import { type JSONArrayless, diff, fold, merge } from "./json";
-import { uuid } from "./types";
 
-const rndDoc = (): JSONArrayless => {
-  const choice = Math.floor(Math.random() * 4);
-  if (choice === 0) {
-    return Math.random() - 0.5;
-  } else if (choice === 1) {
-    return Math.random() > 0.5;
-  } else if (choice === 2) {
-    return uuid().substring(0, 8);
-  } else {
-    const fields = Math.floor(Math.random() * 3);
-    return {
-      ...(fields > 0 && { a: rndDoc() }),
-      ...(fields > 1 && { b: rndDoc() }),
-    };
-  }
-};
+const jsonArrayless = fc.letrec((tie) => ({
+  doc: fc.oneof(
+    { depthSize: "small", withCrossShrink: true },
+    fc.double({ noNaN: true, noDefaultInfinity: true }),
+    fc.boolean(),
+    fc.string({ minLength: 0, maxLength: 8 }),
+    fc.record({ a: tie("doc") }, { requiredKeys: [] }),
+    fc.record({ a: tie("doc"), b: tie("doc") }, { requiredKeys: [] }),
+  ),
+})).doc as fc.Arbitrary<JSONArrayless>;
 
-const rndStructuredDoc = (): JSONArrayless => {
-  const doc: JSONArrayless = {};
-  if (Math.random() > 0.5) {
-    // add a scalar
-    const key = "scalar-" + Math.floor(Math.random() * 2);
-    const choice = Math.floor(Math.random() * 3);
-    if (choice === 0) {
-      doc[key] = Math.random() - 0.5;
-    } else if (choice === 1) {
-      doc[key] = Math.random() > 0.5;
-    } else {
-      doc[key] = uuid().substring(0, 8);
-    }
-  }
-  if (Math.random() > 0.5) {
-    // add a nested doc
-    const key = "subdoc-" + Math.floor(Math.random() * 2);
-    doc[key] = rndStructuredDoc();
-  }
-  return doc;
-};
-
-const testCase = (
-  label: string,
-  expr: (...args: any[]) => any,
-  expected: (...args: any[]) => any,
-) =>
-  test(`${label}: ${expr.toString()} == ${expected}`, () => {
-    if (expr.length > 0) {
-      repeat(() => {
-        const args = Array.from({ length: expr.length }).map(rndDoc);
-        expect(expr(...args)).toEqual(expected(...args));
-      })();
-    } else {
-      expect(expr()).toEqual(expected());
-    }
-  });
-
-const TRIALS = 10000;
-
-const repeat = (fn: () => void) => {
-  return () => {
-    for (let i = 0; i < TRIALS; i++) {
-      fn();
-    }
-  };
-};
+// Mirrors the original `rndStructuredDoc`: objects whose keys are
+// type-partitioned — `scalar-N` always holds a primitive, `subdoc-N`
+// always holds another object. `merge` is not associative when a key
+// in one operand holds a scalar but the same key in another operand
+// holds an object (the merge of patch into a scalar target replaces
+// the target wholesale, losing structure). The original test avoided
+// that case by construction; preserve that intent here.
+const jsonStructuredDoc = fc.letrec((tie) => ({
+  doc: fc.record(
+    {
+      "scalar-0": tie("scalar"),
+      "scalar-1": tie("scalar"),
+      "subdoc-0": tie("doc"),
+      "subdoc-1": tie("doc"),
+    },
+    { requiredKeys: [] },
+  ),
+  scalar: fc.oneof(
+    fc.double({ noNaN: true, noDefaultInfinity: true }),
+    fc.boolean(),
+    fc.string({ minLength: 0, maxLength: 8 }),
+  ),
+})).doc as fc.Arbitrary<JSONArrayless>;
 
 describe("JSON Merge Patch (RFC 7386)", () => {
-  testCase(
-    "identity",
-    (a) => merge(a, undefined),
-    (a) => a,
+  test.prop({ a: jsonArrayless })(
+    "identity: merge(a, undefined) === a",
+    ({ a }) => {
+      expect(merge(a, undefined)).toEqual(a);
+    },
   );
 
-  testCase(
-    "case",
-    () => merge<JSONArrayless>(0, {}),
-    () => ({}),
+  test("case: merge(0, {}) === {}", () => {
+    expect(merge<JSONArrayless>(0, {})).toEqual({});
+  });
+
+  test('case: merge({a: ""}, {}) === {a: ""}', () => {
+    expect(merge({ a: "" }, {})).toEqual({ a: "" });
+  });
+
+  test.prop({ a: jsonArrayless })(
+    "deletion: merge(a, null) === undefined",
+    ({ a }) => {
+      expect(merge(a, null)).toBeUndefined();
+    },
   );
 
-  testCase(
-    "case",
-    () => merge({ a: "" }, {}),
-    () => ({ a: "" }),
-  );
+  test("case: merge(true, {a: {}}) === {a: {}}", () => {
+    expect(merge<JSONArrayless>(true, { a: {} })).toEqual({ a: {} });
+  });
 
-  testCase(
-    "deletion",
-    (a) => merge(a, null),
-    (_a) => undefined,
-  );
+  test("case: merge({}, {a: {}}) === {a: {}}", () => {
+    expect(merge({}, { a: {} })).toEqual({ a: {} });
+  });
 
-  testCase(
-    "case",
-    () => merge<JSONArrayless>(true, { a: {} }),
-    () => ({ a: {} }),
-  );
+  test("case: merge({a: false}, true) === true", () => {
+    expect(merge<JSONArrayless>({ a: false }, true)).toEqual(true);
+  });
 
-  testCase(
-    "case",
-    () => merge({}, { a: {} }),
-    () => ({ a: {} }),
-  );
-
-  testCase(
-    "case",
-    () => merge<JSONArrayless>({ a: false }, true),
-    () => true,
-  );
-
-  test(
-    "associative: merge(a, merge(b, c)) == merge(merge(a, b), c) for structured docs",
-    repeat(() => {
-      const a = rndStructuredDoc();
-      const b = rndStructuredDoc();
-      const c = rndStructuredDoc();
+  test.prop({
+    a: jsonStructuredDoc,
+    b: jsonStructuredDoc,
+    c: jsonStructuredDoc,
+  })(
+    "associative: merge(a, merge(b, c)) === merge(merge(a, b), c) for structured docs",
+    ({ a, b, c }) => {
       expect(merge(a, merge(b, c))).toEqual(merge(merge(a, b), c));
-    }),
+    },
   );
 
-  testCase(
-    "idempotent",
-    (a) => merge(a, a),
-    (a) => a,
+  test.prop({ a: jsonArrayless })(
+    "idempotent: merge(a, a) === a",
+    ({ a }) => {
+      expect(merge(a, a)).toEqual(a);
+    },
   );
 
   describe("fold", () => {
-    testCase(
-      "idempotent",
-      (a, b, c) => fold(a, b, c),
-      (a, b, c) => fold<JSONArrayless>(fold(a, b, c), a, b, c),
+    test.prop({ a: jsonArrayless, b: jsonArrayless, c: jsonArrayless })(
+      "idempotent: fold(fold(a, b, c), a, b, c) === fold(a, b, c)",
+      ({ a, b, c }) => {
+        expect(fold<JSONArrayless>(fold(a, b, c), a, b, c)).toEqual(
+          fold(a, b, c),
+        );
+      },
     );
 
-    testCase(
-      "log repair",
-      (a, b, c) => fold<JSONArrayless>(fold(a, c), b, c),
-      (a, b, c) => fold(a, b, c),
+    test.prop({ a: jsonArrayless, b: jsonArrayless, c: jsonArrayless })(
+      "log repair: fold(fold(a, c), b, c) === fold(a, b, c)",
+      ({ a, b, c }) => {
+        expect(fold<JSONArrayless>(fold(a, c), b, c)).toEqual(fold(a, b, c));
+      },
     );
   });
 });
 
-// describe diff
 describe("JSON-merge-diff", () => {
-  testCase(
-    "identity",
-    (a) => diff(a, undefined),
-    (a) => a,
+  test.prop({ a: jsonArrayless })(
+    "identity: diff(a, undefined) === a",
+    ({ a }) => {
+      expect(diff(a, undefined)).toEqual(a);
+    },
   );
 
-  testCase(
-    "identity",
-    (a) => diff(a, a),
-    (_a) => undefined,
+  test.prop({ a: jsonArrayless })(
+    "identity: diff(a, a) === undefined",
+    ({ a }) => {
+      expect(diff(a, a)).toBeUndefined();
+    },
   );
 
-  testCase(
-    "case",
-    () => diff<JSONArrayless>({}, 0),
-    () => ({}),
+  test("case: diff({}, 0) === {}", () => {
+    expect(diff<JSONArrayless>({}, 0)).toEqual({});
+  });
+
+  test("case: diff({a: {}}, {}) === {a: {}}", () => {
+    expect(diff({ a: {} }, {})).toEqual({ a: {} });
+  });
+
+  test("case: diff({}, {a: {}}) === {a: null}", () => {
+    expect(diff({}, { a: {} })).toEqual({ a: null });
+  });
+
+  test("case: diff({a: false}, {a: 0}) === {a: false}", () => {
+    expect(diff({ a: false }, { a: 0 })).toEqual({ a: false });
+  });
+
+  test("case: diff({a: 0}, {b: 0}) === {a: 0, b: null}", () => {
+    expect(diff({ a: 0 }, { b: 0 })).toEqual({ a: 0, b: null });
+  });
+
+  test("case: diff({a: {}}, {a: true}) === {a: {}}", () => {
+    expect(diff({ a: {} }, { a: true })).toEqual({ a: {} });
+  });
+
+  test.prop({ a: jsonArrayless, b: jsonArrayless })(
+    "inverse: merge(a, diff(b, a)) === b",
+    ({ a, b }) => {
+      expect(merge(a, diff(b, a))).toEqual(b);
+    },
   );
 
-  testCase(
-    "case",
-    () => diff({ a: {} }, {}),
-    () => ({ a: {} }),
-  );
-
-  testCase(
-    "case",
-    () => diff({}, { a: {} }),
-    () => ({ a: null }),
-  );
-
-  testCase(
-    "case",
-    () => diff({ a: false }, { a: 0 }),
-    () => ({ a: false }),
-  );
-
-  testCase(
-    "case",
-    () => diff({ a: 0 }, { b: 0 }),
-    () => ({ a: 0, b: null }),
-  );
-
-  testCase(
-    "case",
-    () => diff({ a: {} }, { a: true }),
-    () => ({ a: {} }),
-  );
-
-  testCase(
-    "inverse",
-    (a, b) => merge(a, diff(b, a)),
-    (_a, b) => b,
-  );
-
-  test(
+  test.prop({ a: jsonArrayless, b: jsonArrayless })(
     "inverse: diff(a, b) = c <=> merge(b, c) = a",
-    repeat(() => {
-      const a = rndDoc();
-      const b = rndDoc();
+    ({ a, b }) => {
       const c = diff(a, b);
       expect(merge(b, c)).toEqual(a);
-    }),
+    },
   );
 });
