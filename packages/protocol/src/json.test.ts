@@ -181,6 +181,12 @@ describe("JSON-merge-diff", () => {
 
   testCase(
     "case",
+    () => diff({ a: 0 }, { b: 0 }),
+    () => ({ a: 0, b: null }),
+  );
+
+  testCase(
+    "case",
     () => diff({ a: {} }, { a: true }),
     () => ({ a: {} }),
   );

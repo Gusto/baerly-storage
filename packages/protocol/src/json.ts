@@ -56,14 +56,12 @@ export function diff<T extends JSONArrayless>(
   if (source === target) return undefined;
   if (source !== undefined && target === undefined) return null;
   if (typeof target !== "object" || typeof source !== "object") return target;
-  // recursive diff against two objects
+  // recursive diff against two objects: walk the union of keys so that
+  // keys present only in `source` produce a deletion (`null`) in the patch.
   const patch: Partial<T> = {};
-  const targeKeys = Object.keys(target);
-  const sourceKeys = Object.keys(source);
-  for (let i = 0; i < Math.max(targeKeys.length, sourceKeys.length); i++) {
-    const key = targeKeys[i] || sourceKeys[i];
-    if (key === undefined) continue;
-    const val = diff(target[key], source[key]);
+  const allKeys = new Set([...Object.keys(target), ...Object.keys(source)]);
+  for (const key of allKeys) {
+    const val = diff((target as any)[key], (source as any)[key]);
     if (val !== undefined) (<any>patch)[key] = val;
   }
   return patch;
