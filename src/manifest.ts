@@ -1,5 +1,6 @@
 import {
   type DeleteValue,
+  type JSONValue,
   type OMap,
   type ResolvedRef,
   type VersionId,
@@ -39,6 +40,7 @@ export class Manifest {
           replication?: b64;
         }
       >;
+      bodies?: Map<ResolvedRef, JSONValue | DeleteValue>;
     },
   ): Promise<unknown> {
     return this.syncer.updateContent(write, options);

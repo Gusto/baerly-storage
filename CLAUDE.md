@@ -68,8 +68,10 @@ every PR.
 Pure-unit tests that always pass: `packages/protocol/src/hashing.test.ts`,
 `tests/unit/consistency.test.ts`, `packages/protocol/src/xml.test.ts`,
 `packages/protocol/src/json.test.ts`,
+`packages/protocol/src/log.test.ts`,
 `tests/unit/datatypes.test.ts`,
 `tests/integration/bundle-size.test.ts`,
+`tests/integration/log-emit.test.ts`,
 `tests/integration/put-all-partial-failure.test.ts`,
 `tests/regressions.test.ts`.
 
@@ -122,6 +124,7 @@ Path-scoped conventions. **Read the matching file before editing.**
 | `docs/**` | [docs/conventions/docs.md](docs/conventions/docs.md) |
 | `src/syncer.ts`, `src/manifest.ts` | [docs/sync_protocol.md](docs/sync_protocol.md) + [docs/causal_consistency_checking.md](docs/causal_consistency_checking.md) |
 | `packages/protocol/src/json.ts` | [docs/JSON_merge_patch.md](docs/JSON_merge_patch.md) |
+| `packages/protocol/src/log.ts`, syncer log-emit path | [docs/log-entry-shape.md](docs/log-entry-shape.md) |
 | Public API on `MPS3` | [docs/EXTENDING.md](docs/EXTENDING.md) |
 
 Claude users: `.claude/rules/{src,tests,docs}.md` auto-load on matching

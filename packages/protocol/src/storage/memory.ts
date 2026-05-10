@@ -307,3 +307,15 @@ export const memoryFetchFn: typeof fetch = (async (
 export const resetMemoryStorage = (): void => {
   sharedPerBucket.clear();
 };
+
+/**
+ * Test-only escape hatch: read the {@link MemoryStorage} backing
+ * the named bucket in the {@link memoryFetchFn} singleton. Returns
+ * `undefined` if no PUT has touched that bucket yet. Lets tests
+ * `list(prefix)` directly instead of round-tripping through
+ * URL-encoded fetch adapters.
+ * @internal
+ */
+export const getMemoryStorageForBucket = (
+  bucket: string,
+): MemoryStorage | undefined => sharedPerBucket.get(bucket);

@@ -668,6 +668,7 @@ export class MPS3 {
         const manifest = this.getOrCreateManifest(ref);
         return manifest.updateContent(Promise.resolve(contentVersions), {
           keys: options.keys,
+          bodies: values,
         });
       }),
     );
@@ -754,6 +755,7 @@ export class MPS3 {
         const manifest = this.getOrCreateManifest(ref);
         return manifest.updateContent(contentVersions, {
           keys: options.keys,
+          bodies: values,
         });
       }),
     );

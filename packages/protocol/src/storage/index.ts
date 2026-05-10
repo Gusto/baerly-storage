@@ -7,6 +7,7 @@ export type {
 export {
   MemoryStorage,
   fetchFnFromStorage,
+  getMemoryStorageForBucket,
   memoryFetchFn,
   resetMemoryStorage,
 } from "./memory";

@@ -114,6 +114,26 @@ const uint2str = (num: number, bits: number) => {
 };
 ```
 
+### Log entry shape
+
+Every successful manifest write also emits one JSON object per
+mutated ref under `<manifest-prefix>/log/<lsn>.json`. The shape
+is `LogEntry` (see
+[`packages/protocol/src/log.ts`](../packages/protocol/src/log.ts)).
+Per-LSN entries (rather than one batched object per manifest)
+keep each entry independently fetchable and let Phase 5
+compaction sweep them without touching the manifest log.
+
+Within a single `updateContent` that mutates N refs, N+1 lsns
+are minted: 1 for the manifest version, N for the log entries.
+Manifest-version lsns and log-entry lsns never alias.
+
+The full contract — fields, what we borrowed from Postgres
+logical replication, what we didn't, and the stability rules —
+is in [`log-entry-shape.md`](log-entry-shape.md). The shape is
+fixed at merge; consumers ack on `lsn` and the JSON keys are
+public.
+
 ### Minimising list-object-v2 calls
 
 List API calls are costly on S3, they are charged at the same rate as PUTs which are 10x more expensive than GETs. Readers refresh explicitly (via a `get` or a write), and callers that want change-detection drive their own polling, so we want to avoid having the list-object-v2 API call on the hot path of every refresh.

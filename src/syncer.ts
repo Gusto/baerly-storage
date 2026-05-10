@@ -2,6 +2,7 @@ import {
   type DeleteValue,
   type JSONArraylessObject,
   type JSONValue,
+  type LogEntry,
   type ManifestKey,
   type OMap,
   type ResolvedRef,
@@ -16,6 +17,8 @@ import {
   TIMESTAMP_BIT_WIDTH,
   clone,
   countKey,
+  logKey,
+  lsnParts,
   measure,
   merge,
   str2uintDesc,
@@ -95,6 +98,7 @@ export const manifestKeyFromVersion = (
  *
  * @see `docs/sync_protocol.md`
  * @see `docs/causal_consistency_checking.md`
+ * @see `docs/log-entry-shape.md` (per-mutation LogEntry emit path)
  */
 export class Syncer {
   session_id = uuid().substring(0, SESSION_ID_LENGTH);
@@ -363,6 +367,15 @@ export class Syncer {
           replication?: b64;
         }
       >;
+      /**
+       * Document bodies keyed by ref. Threaded from `mps3.ts` so the
+       * syncer can emit per-mutation {@link LogEntry} objects with the
+       * post-image. `undefined` value signals a delete (matches the
+       * representation in `write`). Optional because in-progress
+       * tickets that do not need log-emit can omit it; the emit block
+       * is a no-op when missing.
+       */
+      bodies?: Map<ResolvedRef, JSONValue | DeleteValue>;
     },
   ): Promise<unknown> {
     let manifest_version = this.generate_manifest_key();
@@ -373,8 +386,11 @@ export class Syncer {
         manifest_key,
         retry = false;
       let attempts = 0;
+      // Hoisted so the log-emit block below the loop can read
+      // `state.files[url(ref)]?.version` as the pre-image.
+      let state!: ManifestFile;
       do {
-        const state = await this.getLatest();
+        state = await this.getLatest();
         const updateFiles: { [url: string]: FileState } = {};
         state.update = { files: updateFiles };
 
@@ -427,6 +443,72 @@ export class Syncer {
           retry = false;
         }
       } while (retry);
+
+      // Log-entry emission — one LogEntry per mutated ref under
+      // `<manifest-prefix>/log/<lsn>.json`. Sits AFTER the CAS retry
+      // loop (so we never emit for clock-skew-retried manifests that
+      // get GC'd) and BEFORE the optional TOUCH_LATEST_CHANGE marker
+      // (so subscribers polling on the marker see consistent state).
+      // Failures are warned-and-continued: the manifest is the
+      // source of truth, and orphan log entries are GC'd by Phase 5
+      // compaction (mirrors `classifyMissingContent`'s tolerance for
+      // orphan content).
+      if (update.size > 0) {
+        const commit_ts = new Date(
+          Date.now() + this.manifest.service.config.clockOffset,
+        ).toISOString();
+        const logPuts: Promise<unknown>[] = [];
+        for (const [ref, version] of update) {
+          const entryLsn = this.generate_manifest_key();
+          const { session, seq } = lsnParts(entryLsn);
+          const priorVersion = state.files[url(ref)]?.version;
+          const op: "I" | "U" | "D" =
+            version === undefined ? "D" : priorVersion === undefined ? "I" : "U";
+          // Collection mapping: first segment of `ref.key`, falling
+          // back to `ref.bucket` for flat keys. Phase 4 (table API)
+          // makes collections first-class. See docs/log-entry-shape.md.
+          const slash = ref.key.indexOf("/");
+          const collection = slash >= 0 ? ref.key.slice(0, slash) : ref.bucket;
+          const body = options.bodies?.get(ref);
+          const entry: LogEntry = {
+            lsn: entryLsn,
+            commit_ts,
+            op,
+            collection,
+            doc_id: ref.key,
+            schema_version: 0,
+            session,
+            seq,
+            ...(op !== "D" && body !== undefined
+              ? {
+                  new: body as JSONArraylessObject,
+                  patch: body as JSONArraylessObject,
+                }
+              : {}),
+            // TODO(replica_identity FULL): emit `old` / `key_old`
+            // when a collection opts in. See docs/log-entry-shape.md.
+          };
+          logPuts.push(
+            this.manifest.service.putObject({
+              operation: "PUT_LOG",
+              ref: {
+                bucket: this.manifest.ref.bucket,
+                key: logKey(this.manifest.ref.key, entryLsn),
+              },
+              value: entry as unknown as JSONValue,
+            }),
+          );
+        }
+        const settled = await Promise.allSettled(logPuts);
+        for (const r of settled) {
+          if (r.status === "rejected") {
+            this.manifest.service.config.log(
+              "WARN log entry emit failed; manifest already committed",
+              r.reason,
+            );
+          }
+        }
+      }
 
       if (this.manifest.service.config.minimizeListObjectsCalls) {
         response = await this.manifest.service.putObject({
