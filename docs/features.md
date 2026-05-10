@@ -48,13 +48,15 @@ How partial updates merge into existing documents.
 ## Vendorless S3 client
 
 Direct HTTP to S3-compatible APIs via `aws4fetch`. We don't ship
-`@aws-sdk/client-s3`.
+`@aws-sdk/client-s3`. Lives inside `@baerly/protocol` as one impl of
+the `Storage` interface; consumers can substitute their own.
 
-- Implementation: [`src/s3-client-lite.ts`](../src/s3-client-lite.ts),
-  [`packages/protocol/src/xml.ts`](../packages/protocol/src/xml.ts)
-  (XML parsing for ListObjectsV2),
-  [`src/s3-types.ts`](../src/s3-types.ts) (minimal wire-protocol types)
-- Tests: [`packages/protocol/src/xml.test.ts`](../packages/protocol/src/xml.test.ts),
+- Implementation: [`packages/protocol/src/storage/s3-http.ts`](../packages/protocol/src/storage/s3-http.ts)
+  (`S3HttpStorage`), [`packages/protocol/src/xml.ts`](../packages/protocol/src/xml.ts)
+  (XML parsing for ListObjectsV2)
+- Tests: [`packages/protocol/src/storage/s3-http.test.ts`](../packages/protocol/src/storage/s3-http.test.ts)
+  (pure-unit, vi.fn-stubbed fetch),
+  [`packages/protocol/src/xml.test.ts`](../packages/protocol/src/xml.test.ts),
   [`tests/integration/conformance.test.ts`](../tests/integration/conformance.test.ts)
   (multi-backend, needs credentials)
 - Docs: [`docs/s3_features_used.md`](./s3_features_used.md),

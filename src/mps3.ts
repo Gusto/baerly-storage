@@ -1,11 +1,3 @@
-import type {
-  DeleteObjectCommandOutput,
-  GetObjectCommandInput,
-  GetObjectCommandOutput,
-  PutObjectCommandInput,
-  PutObjectCommandOutput,
-  S3ClientConfig,
-} from "./s3-types";
 import { AwsClient } from "aws4fetch";
 import {
   type DeleteValue,
@@ -33,6 +25,63 @@ import { type UseStore, createStore, get, set } from "idb-keyval";
 import { OfflineStorage } from "./offline-storage";
 
 /**
+ * Public S3-credential shape consumers pass via {@link MPS3Config.s3Config}.
+ * Mirrors the AWS SDK's `S3ClientConfig` field-for-field so existing
+ * callers don't have to change. The kernel itself never stores the
+ * credentials past constructor time — the {@link S3HttpStorage} `sign`
+ * callback closes over them.
+ */
+export interface S3ClientConfig {
+  endpoint?: string;
+  region?: string;
+  credentials?: {
+    accessKeyId: string;
+    secretAccessKey: string;
+    sessionToken?: string;
+  };
+}
+
+/**
+ * Internal command shape used by `MPS3.getObject` for cache keys and
+ * argument unification. PascalCase field names mirror the S3 wire
+ * vocabulary; not part of the public API.
+ */
+interface GetObjectCommandInput {
+  Bucket?: string;
+  Key?: string;
+  VersionId?: S3VersionId;
+  IfNoneMatch?: string;
+}
+
+interface CommandMetadata {
+  httpStatusCode?: number;
+}
+
+interface GetObjectCommandOutput {
+  $metadata: CommandMetadata;
+  Body?: unknown;
+  ETag?: string;
+  VersionId?: S3VersionId;
+}
+
+interface PutObjectCommandInput {
+  Bucket?: string;
+  Key?: string;
+  Body?: string;
+  ContentType?: string;
+}
+
+interface PutObjectCommandOutput {
+  $metadata: CommandMetadata;
+  ETag?: string;
+  VersionId?: S3VersionId;
+}
+
+interface DeleteObjectCommandOutput {
+  $metadata: CommandMetadata;
+}
+
+/**
  * Bounded LRU keyed by a string derived from `K`. Mirrors the subset of
  * `OMap` used by `MPS3.memCache` (`has`/`get`/`set`) but evicts the
  * oldest entry when capacity is reached. On `get`, the entry is
@@ -51,11 +100,11 @@ const cacheKey = (i: GetObjectCommandInput): string =>
 
 /**
  * Decode a `Uint8Array` body to JSON for the `MPS3.getObject`
- * wrapper. The legacy `S3ClientLite` path parsed JSON internally
- * based on `Content-Type`; the `Storage` seam returns bytes and
- * the kernel parses here. Empty bodies return `undefined`. Parse
- * failures throw `MPS3Error("InvalidResponse")` so callers see a
- * clean error instead of a silent `undefined`.
+ * wrapper. The `Storage` seam returns bytes and the kernel parses
+ * here (the JSON-vs-binary decision is the caller's, not storage's).
+ * Empty bodies return `undefined`. Parse failures throw
+ * `MPS3Error("InvalidResponse")` so callers see a clean error
+ * instead of a silent `undefined`.
  */
 const parseJsonBody = <T>(body: Uint8Array, bucket: string, key: string): T | undefined => {
   if (body.byteLength === 0) return undefined;
@@ -120,8 +169,7 @@ export interface MPS3Config {
   useVersioning?: boolean;
 
   /**
-   * S3 endpoint, region, and credentials. See `S3ClientConfig` in
-   * `src/s3-types.ts` for the supported field surface.
+   * S3 endpoint, region, and credentials. See {@link S3ClientConfig}.
    */
   s3Config: S3ClientConfig;
 

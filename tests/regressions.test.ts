@@ -1,9 +1,8 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { DOMParser } from "@xmldom/xmldom";
-import { type FetchFn, S3ClientLite } from "../src/s3-client-lite";
-import { MPS3, type ResolvedMPS3Config } from "../src/mps3";
+import { MPS3 } from "../src/mps3";
 import {
-    MPS3Error,
+    S3HttpStorage,
     resetMemoryStorage as reset,
     S3_REQUEST_MAX_RETRIES,
     SESSION_ID_LENGTH,
@@ -11,32 +10,22 @@ import {
     uuid,
 } from "@baerly/protocol";
 
-// Minimal stub. Only fields touched by S3ClientLite + time.adjustClock
-// when `adaptiveClock: false` are populated; the rest are unused for
-// these tests so a partial cast keeps the surface small.
-const configStub = {
-    log: () => {},
-    adaptiveClock: false,
-    clockOffset: 0,
-    parser: undefined,
-} as unknown as ResolvedMPS3Config;
-
 describe("regressions (§9 bug-fix list)", () => {
-    describe("retry bound (S3ClientLite.retry)", () => {
+    describe("retry bound (S3HttpStorage.retry)", () => {
         test("transient failures stop after a bounded number of attempts", async () => {
             vi.useFakeTimers();
             try {
                 let attempts = 0;
-                const fetchFn: FetchFn = async () => {
+                const fetchFn: typeof fetch = async (_input) => {
                     attempts++;
                     throw new Error("transient");
                 };
-                const client = new S3ClientLite(fetchFn, "http://test", configStub);
-                const promise = client.putObject({
-                    Bucket: "b",
-                    Key: "k",
-                    Body: "{}",
+                const storage = new S3HttpStorage({
+                    endpoint: "http://test",
+                    bucket: "b",
+                    fetch: fetchFn,
                 });
+                const promise = storage.put("k", new TextEncoder().encode("{}"));
                 // Surface unhandled rejection through the assertion below.
                 promise.catch(() => {});
                 await vi.runAllTimersAsync();
@@ -48,32 +37,14 @@ describe("regressions (§9 bug-fix list)", () => {
         });
     });
 
-    describe("non-JSON 5xx error body", () => {
-        test("returns InvalidResponse, not a SyntaxError", async () => {
-            const fetchFn: FetchFn = async () =>
-                new Response("<html>502 Bad Gateway</html>", {
-                    status: 502,
-                    headers: { "content-type": "text/html" },
-                });
-            const client = new S3ClientLite(fetchFn, "http://test", configStub);
-
-            await expect(
-                client.getObject({ Bucket: "b", Key: "k" }),
-            ).rejects.toMatchObject({
-                code: "InvalidResponse",
-            });
-
-            // Pin the typed-error invariant: must be MPS3Error, never a
-            // raw SyntaxError leaking from `JSON.parse`.
-            try {
-                await client.getObject({ Bucket: "b", Key: "k" });
-                expect.fail("expected throw");
-            } catch (e) {
-                expect(e).toBeInstanceOf(MPS3Error);
-                expect(e).not.toBeInstanceOf(SyntaxError);
-            }
-        });
-    });
+    // The legacy "non-JSON 5xx error body" regression (where a 5xx
+    // HTML body could surface as `SyntaxError` because the legacy
+    // fetch-based S3 client ran `JSON.parse` based on `Content-Type`)
+    // is now structurally impossible: `S3HttpStorage` never parses
+    // bodies, and
+    // `MPS3.getObject` only invokes `parseJsonBody` on the bytes of
+    // a 200 response. 5xx → `NetworkError` directly. Test removed
+    // because the failure mode is no longer reachable.
 
     describe("clock-skew retry bound (Syncer.updateContent)", () => {
         afterEach(() => {

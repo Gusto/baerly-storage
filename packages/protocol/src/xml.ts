@@ -3,10 +3,9 @@ import type { XmlNode, XmlParser } from "./types";
 
 /**
  * Subset of S3's `ListObjectsV2CommandOutput` produced by
- * {@link parseListObjectsV2CommandOutput}. Mirrors the shape in
- * `src/s3-types.ts` (kept structurally compatible) without
- * introducing a `protocol → src` import. The host's
- * `ListObjectsV2CommandOutput` is structurally compatible.
+ * {@link parseListObjectsV2CommandOutput}. Field names mirror the
+ * S3 REST API exactly (PascalCase) so the parser stays a thin shape
+ * over the wire format.
  */
 export interface ParsedListObjectsV2Output {
   $metadata: { httpStatusCode?: number };

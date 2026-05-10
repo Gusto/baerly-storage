@@ -173,9 +173,10 @@ const dispatch = async (
   const key = segments.slice(2).join("/");
 
   if (params.get("list-type")) {
-    // Match legacy semantics: prefix and start-after are taken as
-    // already URL-encoded (the existing keys in storage are stored
-    // URL-encoded by `S3ClientLite.getUrl`).
+    // Legacy semantics: prefix and start-after were URL-encoded by
+    // the historical fetch-based S3 client's URL builder, so re-encode
+    // here to match. Direct `Storage` consumers store raw keys and
+    // don't go through this adapter.
     const prefix = encodeURIComponent(params.get("prefix") || "");
     const startAfter = encodeURIComponent(params.get("start-after") || "");
     const entries: StorageListEntry[] = [];
@@ -202,7 +203,7 @@ const dispatch = async (
     // TS 7's lib.dom narrows `BodyInit` to ArrayBuffer-backed views —
     // a generic `Uint8Array<ArrayBufferLike>` (which the protocol uses
     // because it permits SharedArrayBuffer) is not assignable. Decode
-    // to a string for the Response; downstream `s3-client-lite` calls
+    // to a string for the Response; legacy `fetchFn` consumers called
     // `response.text()`/`.json()` anyway, so the round-trip is lossless
     // for the JSON payloads MPS3 stores.
     return new Response(new TextDecoder().decode(result.body), {
@@ -232,18 +233,23 @@ const dispatch = async (
  * legacy callers that inject `fetchFn` into `MPS3Config`. Parses
  * S3-style URLs (e.g. `memory:/bucket/key`) and dispatches to the
  * `Storage` methods. The returned `Response` mirrors S3's wire
- * format closely enough for `src/s3-client-lite.ts` to consume.
+ * format closely enough for AWS-SDK-shaped HTTP consumers.
  *
- * This is a transitional shim: when `MPS3` accepts a `Storage`
- * directly (00-plan.md Phase 2), the adapter goes away.
+ * The kernel itself no longer uses this adapter — it constructs a
+ * `Storage` directly. Kept as a transitional shim for downstream
+ * consumers that still hand-roll a `fetchFn`; scheduled for
+ * removal in a future release.
  *
  * Two modes:
  *  - `fetchFnFromStorage(storage)` — single backing storage; bucket
  *    is parsed from the URL but not used to namespace (the storage
  *    itself is the namespace).
  *  - `fetchFnFromStorage()` — partitions by bucket, lazily creating
- *    a fresh `MemoryStorage` per bucket. Matches the legacy
- *    `memory-fetch.ts` semantics.
+ *    a fresh `MemoryStorage` per bucket.
+ *
+ * @deprecated Use a {@link Storage} directly. This adapter survives
+ * for one release while in-flight downstream callers migrate; the
+ * planned removal happens in the multi-runtime phase.
  */
 export function fetchFnFromStorage(storage: Storage): typeof fetch;
 export function fetchFnFromStorage(): typeof fetch;
@@ -271,19 +277,25 @@ export function fetchFnFromStorage(storage?: Storage): typeof fetch {
   }) as typeof fetch;
 }
 
-// Process-singleton fetchFn for the `memory:` endpoint. `MPS3` uses
-// this when the caller picks `MEMORY_ENDPOINT` and provides no
-// explicit `Storage`. Tests share the singleton across instances the
-// same way the legacy `memory-fetch` module did.
+// Process-singleton MemoryStorage map keyed by bucket. The `MPS3`
+// kernel reads through this via {@link getOrCreateMemoryStorageForBucket}
+// when the caller picks `MEMORY_ENDPOINT`, so multiple `MPS3` instances
+// in the same process see each other's writes for the same bucket.
 const sharedPerBucket = new Map<string, MemoryStorage>();
 
 /**
  * Process-singleton `fetch`-compatible function backed by an
- * in-memory `Storage`, partitioned per bucket. This is what `MPS3`
- * uses when the caller picks `MEMORY_ENDPOINT`, mirroring the legacy
- * `memory-fetch.ts` behavior.
+ * in-memory `Storage`, partitioned per bucket. The kernel no longer
+ * uses this — the {@link Storage} seam replaced the `fetchFn`
+ * injection — but downstream consumers that still hand-roll a
+ * `fetchFn` can use it as a compatibility shim.
  *
  * Use {@link resetMemoryStorage} between tests for isolation.
+ *
+ * @deprecated Construct a {@link MemoryStorage} (or call
+ * {@link getOrCreateMemoryStorageForBucket}) and pass it directly.
+ * This adapter survives for one release while in-flight downstream
+ * callers migrate.
  */
 export const memoryFetchFn: typeof fetch = (async (
   input: RequestInfo | URL,

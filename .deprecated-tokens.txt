@@ -31,3 +31,8 @@ OperationQueue                  # 2026-05-10: class deleted with operation-queue
 manifest.poll                   # 2026-05-10: setInterval poller dropped
 manifest.subscribe              # 2026-05-10: subscribe() public API dropped (Phase 10 reintroduces)
 pollFrequency                   # 2026-05-10: MPS3Config field dropped with poller
+src/s3-client-lite.ts           # 2026-05-10: replaced by S3HttpStorage in @baerly/protocol
+src/s3-types.ts                 # 2026-05-10: deleted with s3-client-lite.ts; types inlined into mps3.ts
+S3ClientLite                    # 2026-05-10: class replaced by S3HttpStorage
+s3ClientLite                    # 2026-05-10: MPS3 field replaced by storageFor()
+ListObjectsV2CommandInput       # 2026-05-10: dead with s3-client-lite.ts

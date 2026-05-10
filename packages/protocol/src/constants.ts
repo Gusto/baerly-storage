@@ -52,9 +52,11 @@ export const TIMESTAMP_BIT_WIDTH: number = 42;
 export const SESSION_ID_LENGTH: number = 6;
 
 /**
- * Maximum attempts `S3ClientLite.listObjectV2` will make to LIST a
- * manifest prefix. After this many 429s in a row, it gives up with
- * a `NetworkError`.
+ * Maximum attempts `S3HttpStorage.list` will make per page when the
+ * server replies 429 (rate-limited). After this many in a row, it
+ * gives up with `NetworkError`. Separate from the inner transient-
+ * failure budget so a single hot page can't burn the whole retry
+ * allowance.
  */
 export const LIST_OBJECT_MAX_RETRIES: number = 10;
 
@@ -65,10 +67,10 @@ export const LIST_OBJECT_MAX_RETRIES: number = 10;
 export const RATE_LIMIT_BACKOFF_MILLIS: number = 1000;
 
 /**
- * Default retry budget for `S3ClientLite.retry` (the wrapper around
- * `getObject`/`putObject`/`listObjectV2`/`deleteObject`). Bounded so that
- * permanent failures (CORS misconfig, NXDOMAIN, persistent 5xx) surface
- * to callers as rejected promises instead of retrying forever and
+ * Default retry budget for `S3HttpStorage.retry` (the wrapper around
+ * each of the four `Storage` methods). Bounded so that permanent
+ * failures (CORS misconfig, NXDOMAIN, persistent 5xx) surface to
+ * callers as rejected promises instead of retrying forever and
  * leaving `mps3.put()` permanently pending.
  *
  * 8 attempts at the existing 100ms→×1.5→10s schedule covers ~30s of

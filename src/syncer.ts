@@ -226,12 +226,11 @@ export class Syncer {
       return this.latest_state;
     }
 
-    // Errors from `getObject` / `listObjectV2` (`AccessDenied`,
+    // Errors from `Storage.get` / `Storage.list` (`AccessDenied`,
     // `InvalidResponse`, `NetworkError`) are real faults — let them
-    // propagate. The previous `catch` branch dispatched on
-    // `err.name === "NoSuchKey"` from `@aws-sdk/client-s3`; that path
-    // is dead today (`S3ClientLite.getObject` returns 404 instead of
-    // throwing, and a fresh bucket lists empty).
+    // propagate. Not-found is signalled via `null` from `Storage.get`,
+    // never via exception, so callers don't need a `NoSuchKey`
+    // discriminator.
     if (this.manifest.service.config.minimizeListObjectsCalls) {
       const poll = await this.manifest.service.getObject<string>({
         operation: "POLL_LATEST_CHANGE",

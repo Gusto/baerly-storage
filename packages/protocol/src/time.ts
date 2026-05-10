@@ -74,9 +74,9 @@ export const adjustClock = (
 /**
  * Delay for `ms` milliseconds, with optional cancellation. If
  * `signal` aborts before the delay elapses, the returned promise
- * rejects with `signal.reason`. Used by the retry loop in
- * `s3-client-lite.ts` so shutdown can interrupt an in-flight backoff
- * instead of waiting for it to complete.
+ * rejects with `signal.reason`. Used by `S3HttpStorage`'s retry
+ * loop so shutdown can interrupt an in-flight backoff instead of
+ * waiting for it to complete.
  */
 export const delay = (ms: number, signal?: AbortSignal): Promise<void> =>
   new Promise<void>((resolve, reject) => {
