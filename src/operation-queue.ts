@@ -5,6 +5,7 @@
 import {
   type DeleteValue,
   type JSONValue,
+  type Ref,
   type ResolvedRef,
   MPS3Error,
   OMap,
@@ -81,8 +82,8 @@ export class OperationQueue<L extends string> {
         const index = this.indexFor.get(operation);
         if (index === undefined)
           throw new MPS3Error("Internal", "Cannot confirm an unproposed operation");
-        const keys = [entryKey(index), `label-${index}`];
-        await delMany(keys, this.db);
+        const keysToDelete = [entryKey(index), `label-${index}`];
+        await delMany(keysToDelete, this.db);
       }
     }
   }
@@ -102,11 +103,11 @@ export class OperationQueue<L extends string> {
     }
   }
 
-  async flatten(): Promise<OMap<ResolvedRef, [JSONValue | undefined, number]>> {
+  async flatten(): Promise<OMap<ResolvedRef, [JSONValue | DeleteValue, number]>> {
     if (this.load) await this.load;
-    const mask = new OMap<ResolvedRef, [JSONValue | undefined, number]>(url);
+    const mask = new OMap<ResolvedRef, [JSONValue | DeleteValue, number]>(url);
     this.proposedOperations.forEach(([values, op]) => {
-      values.forEach((value: any, ref: ResolvedRef) => {
+      values.forEach((value, ref) => {
         mask.set(ref, [value, op]);
       });
     });
@@ -135,7 +136,18 @@ export class OperationQueue<L extends string> {
         const key = entryKeys[i]!;
         const index = parseInt(key.split("-")[1]!);
         try {
-          const entry = entryValues[i].map(([ref, val]: [string, any]) => [JSON.parse(ref), val]);
+          const entry = entryValues[i].map(([ref, val]: [string, JSONValue | DeleteValue]) => {
+            const parsed: unknown = JSON.parse(ref);
+            if (
+              typeof parsed !== "object" ||
+              parsed === null ||
+              typeof (parsed as Ref).bucket !== "string" ||
+              typeof (parsed as Ref).key !== "string"
+            ) {
+              throw new MPS3Error("Internal", `corrupt operation-queue ref: ${ref}`);
+            }
+            return [parsed as ResolvedRef, val];
+          });
           const label = await get<L>(`label-${index}`, this.db);
           if (!entry) continue;
           const values = new Map<ResolvedRef, JSONValue | DeleteValue>(entry);

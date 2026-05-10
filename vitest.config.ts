@@ -18,5 +18,11 @@ export default defineConfig({
         // behind --js-base-64 in current V8 (Node 24 / V8 13.6). Drop this
         // once Node ships the methods unflagged.
         execArgv: ["--js-base-64"],
+        coverage: {
+            provider: "v8",
+            include: ["src/**", "packages/*/src/**"],
+            exclude: ["**/*.test.ts", "**/dist/**"],
+            reporter: ["text", "html"],
+        },
     },
 });

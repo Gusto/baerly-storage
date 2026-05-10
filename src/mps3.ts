@@ -14,6 +14,7 @@ import {
   type JSONValue,
   type Ref,
   type ResolvedRef,
+  type S3VersionId,
   type VersionId,
   type XmlParser,
   type b64,
@@ -40,8 +41,16 @@ import { memoryFetchFn } from "@baerly/protocol";
  *
  * Capacity comes from `MEM_CACHE_CAPACITY` in `packages/protocol/src/constants.ts`.
  */
+/**
+ * Canonical cache key for the in-memory and IDB-backed `getObject`
+ * caches. Both layers must agree byte-for-byte or a disk hit can
+ * silently overwrite a fresh memCache entry under a different key.
+ */
+const cacheKey = (i: GetObjectCommandInput): string =>
+  JSON.stringify([i.Bucket, i.Key, i.VersionId, i.IfNoneMatch]);
+
 class BoundedLRU<K, V> {
-  private readonly _vals = new Map<string, V>();
+  readonly #vals = new Map<string, V>();
 
   constructor(
     private readonly key: (k: K) => string,
@@ -49,25 +58,25 @@ class BoundedLRU<K, V> {
   ) {}
 
   has(k: K): boolean {
-    return this._vals.has(this.key(k));
+    return this.#vals.has(this.key(k));
   }
 
   get(k: K): V | undefined {
     const id = this.key(k);
-    const v = this._vals.get(id);
-    if (v !== undefined && this._vals.delete(id)) {
-      this._vals.set(id, v);
+    const v = this.#vals.get(id);
+    if (v !== undefined && this.#vals.delete(id)) {
+      this.#vals.set(id, v);
     }
     return v;
   }
 
   set(k: K, v: V): this {
     const id = this.key(k);
-    if (this._vals.delete(id) === false && this._vals.size >= this.capacity) {
-      const oldest = this._vals.keys().next().value;
-      if (oldest !== undefined) this._vals.delete(oldest);
+    if (this.#vals.delete(id) === false && this.#vals.size >= this.capacity) {
+      const oldest = this.#vals.keys().next().value;
+      if (oldest !== undefined) this.#vals.delete(oldest);
     }
-    this._vals.set(id, v);
+    this.#vals.set(id, v);
     return this;
   }
 }
@@ -186,7 +195,7 @@ interface GetResponse<T> {
     httpStatusCode?: number;
   };
   ETag?: string;
-  VersionId?: string;
+  VersionId?: S3VersionId;
   data: T | undefined;
 }
 
@@ -250,11 +259,8 @@ export class MPS3 {
   /** @internal */
   memCache = new BoundedLRU<
     GetObjectCommandInput,
-    Promise<GetObjectCommandOutput & { data: any }>
-  >(
-    (input) => `${input.Bucket}${input.Key}${input.VersionId}${input.IfNoneMatch}`,
-    MEM_CACHE_CAPACITY,
-  );
+    Promise<GetObjectCommandOutput & { data: unknown }>
+  >(cacheKey, MEM_CACHE_CAPACITY);
 
   /** @internal */
   diskCache?: UseStore;
@@ -334,7 +340,7 @@ export class MPS3 {
         service: "s3",
         retries: 0,
       });
-      fetchFn = (url, init) => client.fetch(url, init);
+      fetchFn = (input, init) => client.fetch(input, init);
     } else if (this.endpoint === MPS3.MEMORY_ENDPOINT) {
       fetchFn = memoryFetchFn;
     } else {
@@ -410,7 +416,7 @@ export class MPS3 {
     if (version === undefined) return undefined;
 
     manifest.syncer.observeEntry(contentRef, version as VersionId);
-    const response = await this._getObject<JSONValue>({
+    const response = await this.getObject<JSONValue>({
       operation: "GET",
       ref: contentRef,
       version: version,
@@ -428,7 +434,7 @@ export class MPS3 {
   }
 
   /** @internal */
-  async _getObject<T>(args: {
+  async getObject<T>(args: {
     operation: string;
     ref: ResolvedRef;
     version?: string;
@@ -441,7 +447,7 @@ export class MPS3 {
         Bucket: args.ref.bucket,
         Key: args.ref.key,
         IfNoneMatch: args.ifNoneMatch,
-        ...(args.version && { VersionId: args.version }),
+        ...(args.version && { VersionId: args.version as S3VersionId }),
       };
     } else {
       command = {
@@ -450,14 +456,14 @@ export class MPS3 {
         IfNoneMatch: args.ifNoneMatch,
       };
     }
-    const key = `${command.Bucket}${command.Key}${command.VersionId}`;
+    const key = cacheKey(command);
     if (args.useCache !== false) {
       if (this.memCache.has(command)) {
         /*
         this.config.log(
           `${this.config.label} ${args.operation} (mem cached) ${command.Bucket}/${command.Key}`,
         );*/
-        return this.memCache.get(command)!;
+        return this.memCache.get(command)! as Promise<GetResponse<T>>;
       }
       if (this.diskCache) {
         const cached = await get<GetObjectCommandOutput & { data: T | undefined }>(
@@ -479,40 +485,25 @@ export class MPS3 {
       );
     }
 
-    const work = measure(this.s3ClientLite.getObject(command))
-      .then(async ([apiResponse, dt]) => {
-        const response: GetResponse<T> = {
-          $metadata: apiResponse.$metadata,
-          ETag: apiResponse.ETag,
-          data: <T | undefined>apiResponse.Body,
-        };
-        this.config.log(
-          `${dt}ms ${args.operation} ${args.ref.bucket}/${args.ref.key}@${args.version} => ${response.VersionId}`,
-        );
-        return response;
-      })
-      .catch((err: any) => {
-        if (err?.name === "304") {
-          return {
-            $metadata: {
-              httpStatusCode: 304,
-            },
-            data: undefined,
-          };
-        } else {
-          throw err;
-        }
-      });
+    const work = measure(this.s3ClientLite.getObject(command)).then(async ([apiResponse, dt]) => {
+      const response: GetResponse<T> = {
+        $metadata: apiResponse.$metadata,
+        ETag: apiResponse.ETag,
+        data: <T | undefined>apiResponse.Body,
+      };
+      this.config.log(
+        `${dt}ms ${args.operation} ${args.ref.bucket}/${args.ref.key}@${args.version} => ${response.VersionId}`,
+      );
+      return response;
+    });
 
     if (args.useCache !== false) {
       this.memCache.set(command, work);
       if (this.diskCache) {
         work.then((response) => {
-          set(
-            `${command.Bucket}${command.Key}${command.VersionId}`,
-            response,
-            this.diskCache!,
-          ).then(() => this.config.log(`STORE ${command.Bucket}${command.Key}`));
+          set(key, response, this.diskCache!).then(() =>
+            this.config.log(`STORE ${command.Bucket}${command.Key}`),
+          );
         });
       }
     }
@@ -640,7 +631,7 @@ export class MPS3 {
           }
         >(url);
 
-    return this._putAll(resolvedValues, {
+    return this.putAllResolved(resolvedValues, {
       manifests,
       keys,
       await: options.await ?? (this.config.online ? "remote" : "local"),
@@ -669,7 +660,7 @@ export class MPS3 {
    *
    * @internal
    */
-  async _putAll(
+  async putAllResolved(
     values: Map<ResolvedRef, JSONValue | DeleteValue>,
     options: {
       keys: OMap<
@@ -684,13 +675,13 @@ export class MPS3 {
     },
   ) {
     if (this.config.useVersioning) {
-      return this._putAllVersioned(values, options);
+      return this.putAllVersioned(values, options);
     }
-    return this._putAllManifestFirst(values, options);
+    return this.putAllManifestFirst(values, options);
   }
 
   /** Manifest-first ordering for non-versioned mode. @internal */
-  private async _putAllManifestFirst(
+  private async putAllManifestFirst(
     values: Map<ResolvedRef, JSONValue | DeleteValue>,
     options: {
       keys: OMap<ResolvedRef, { replication?: b64 }>;
@@ -746,10 +737,10 @@ export class MPS3 {
         Promise.all(
           [...values].map(([contentRef, value]) => {
             if (value === undefined) {
-              return this._deleteObject({ ref: contentRef });
+              return this.deleteObject({ ref: contentRef });
             }
             const version = contentVersions.get(contentRef) as VersionId;
-            return this._putObject({
+            return this.putObject({
               operation: "PUT_CONTENT",
               ref: contentRef,
               value,
@@ -776,7 +767,7 @@ export class MPS3 {
   }
 
   /** Legacy content-first ordering for `useVersioning: true`. @internal */
-  private async _putAllVersioned(
+  private async putAllVersioned(
     values: Map<ResolvedRef, JSONValue | DeleteValue>,
     options: {
       keys: OMap<ResolvedRef, { replication?: b64 }>;
@@ -794,7 +785,7 @@ export class MPS3 {
           webValues.set(contentRef, value);
 
           contentOperations.push(
-            this._putObject({
+            this.putObject({
               operation: "PUT_CONTENT",
               ref: contentRef,
               value,
@@ -806,12 +797,12 @@ export class MPS3 {
                   `Bucket ${contentRef.bucket} is not version enabled!`,
                 );
               }
-              results.set(contentRef, <VersionId>fileUpdate.VersionId);
+              results.set(contentRef, fileUpdate.VersionId);
             }),
           );
         } else {
           contentOperations.push(
-            this._deleteObject({
+            this.deleteObject({
               ref: contentRef,
             }).then((_) => {
               results.set(contentRef, undefined);
@@ -835,13 +826,13 @@ export class MPS3 {
     );
   }
   /** @internal */
-  async _putObject(args: {
+  async putObject(args: {
     operation: string;
     ref: ResolvedRef;
     value: JSONValue;
     version?: string;
     /**
-     * Pre-stringified body, supplied by `_putAllManifestFirst` so the
+     * Pre-stringified body, supplied by `putAllManifestFirst` so the
      * version hash and the PUT body are guaranteed to be the same byte
      * sequence (any drift would put content under a key the manifest
      * doesn't reference).
@@ -864,7 +855,11 @@ export class MPS3 {
     );
 
     if (this.diskCache && args.operation === "PUT_CONTENT") {
-      const diskKey = `${command.Bucket}${command.Key}${args.version || response.VersionId}`;
+      const diskKey = cacheKey({
+        Bucket: command.Bucket,
+        Key: command.Key,
+        VersionId: this.config.useVersioning ? response.VersionId : undefined,
+      });
       await set(
         diskKey,
         {
@@ -881,7 +876,7 @@ export class MPS3 {
     return { ...response, latency: dt };
   }
   /** @internal */
-  async _deleteObject(args: {
+  async deleteObject(args: {
     operation?: string;
     ref: ResolvedRef;
   }): Promise<DeleteObjectCommandOutput> {

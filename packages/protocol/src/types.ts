@@ -1,7 +1,7 @@
 import { MPS3Error } from "./errors";
 
-declare const __brand: unique symbol;
-type Brand<B> = { [__brand]: B };
+declare const brand: unique symbol;
+type Brand<B> = { [brand]: B };
 
 /**
  * Nominal-typing helper. `Branded<string, "Manifest">` is a `string` at
@@ -52,11 +52,30 @@ export type ManifestKey = Branded<string, "Manifest">;
 export type UUID = Branded<string, "UUID">;
 
 /**
- * S3 object version identifier. When versioning is enabled on the bucket
- * S3 returns this in the `x-amz-version-id` header; in non-versioned mode
- * we synthesize one from a fresh {@link UUID} via {@link versionFromUuid}.
+ * SHA-256 content digest, lowercase hex truncated to
+ * `VERSION_HEX_LENGTH` (32 chars). Minted by
+ * `versionFromContent` in `useVersioning=false` mode and used as
+ * the `<key>@<version>` suffix in content keys.
+ *
+ * The synthetic `local-${op}` placeholder used for in-flight
+ * optimistic updates also wears this brand — it never round-trips
+ * to S3, only flows through the local manifest poll loop.
  */
-export type VersionId = Branded<string, "VersionId">;
+export type ContentVersionId = Branded<string, "ContentVersionId">;
+
+/**
+ * Opaque object-version identifier assigned by S3 when bucket
+ * versioning is enabled. Surfaces in the `x-amz-version-id`
+ * response header. Format is implementation-defined.
+ */
+export type S3VersionId = Branded<string, "S3VersionId">;
+
+/**
+ * Either a content-addressed or S3-assigned version. Stored
+ * opaquely in `FileState.version`; consumers (manifest poll loop,
+ * `getObject`) treat it as a string identifier.
+ */
+export type VersionId = ContentVersionId | S3VersionId;
 
 /**
  * Structural minimum of the XML parser surface used by `parseListObjectsV2CommandOutput`.
@@ -79,12 +98,13 @@ export interface XmlParser {
 export const uuid = (): UUID => <UUID>crypto.randomUUID();
 
 /**
- * Re-brand a {@link UUID} as a {@link VersionId}. Used in non-versioned
- * mode where the synthetic content version is a fresh UUID — the cast
- * is intentional and centralized here so callers don't sprinkle
- * `<VersionId><unknown>` workarounds throughout the codebase.
+ * Re-brand a {@link UUID} as a {@link ContentVersionId}. Used in
+ * non-versioned mode where the synthetic content version is a fresh
+ * UUID — the cast is intentional and centralized here so callers
+ * don't sprinkle `<ContentVersionId><unknown>` workarounds throughout
+ * the codebase.
  */
-export const versionFromUuid = (u: UUID): VersionId => u as unknown as VersionId;
+export const versionFromUuid = (u: UUID): ContentVersionId => u as unknown as ContentVersionId;
 /**
  * Resolve a user-supplied content reference (`string` shorthand or
  * partial {@link Ref}) into a fully-qualified {@link ResolvedRef}.
@@ -113,9 +133,9 @@ export const resolveManifestRef = (
 export const countKey = (number: number): string => uint2strDesc(number, 10);
 export const eq = (a: Ref, b: Ref) => a.bucket === b.bucket && a.key === b.key;
 export const url = (ref: Ref): string => `${ref.bucket}/${ref.key}`;
-export const parseUrl = (url: string): ResolvedRef => {
-  const [bucket, ...key] = url.split("/");
-  if (bucket === undefined) throw new MPS3Error("InvalidConfig", `Invalid url: ${url}`);
+export const parseUrl = (input: string): ResolvedRef => {
+  const [bucket, ...key] = input.split("/");
+  if (bucket === undefined) throw new MPS3Error("InvalidConfig", `Invalid url: ${input}`);
   return {
     bucket,
     key: key.join("/"),

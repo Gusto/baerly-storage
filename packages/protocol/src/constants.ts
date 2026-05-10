@@ -101,7 +101,7 @@ export const S3_REQUEST_MAX_RETRIES: number = 8;
 export const SYNCER_CLOCK_SKEW_MAX_RETRIES: number = 4;
 
 /**
- * Maximum number of `_getObject` responses retained in MPS3's in-memory
+ * Maximum number of `getObject` responses retained in MPS3's in-memory
  * cache (keyed by `(Bucket, Key, VersionId, IfNoneMatch)`).
  *
  * The cache exists to coalesce repeat reads of the same content version
@@ -116,7 +116,7 @@ export const MEM_CACHE_CAPACITY: number = 100;
 /**
  * Grace window during which a content 404 (against a key the manifest
  * references) is treated as an in-flight write rather than an orphan
- * manifest entry. The manifest-first ordering in `mps3._putAll` PUTs
+ * manifest entry. The manifest-first ordering in `mps3.putAllResolved` PUTs
  * the manifest entry before the content, so a reader polling between
  * the two sees a manifest that points at content that does not yet
  * exist.
@@ -125,7 +125,7 @@ export const MEM_CACHE_CAPACITY: number = 100;
  * subscriber notification — the next poll likely sees the content.
  * Outside the window, readers still return `undefined` but warn
  * because the manifest entry is most likely orphaned by a writer that
- * died mid-batch (see `_putAll` JSDoc; the future Phase-6 sweeper will
+ * died mid-batch (see `putAllResolved` JSDoc; the future Phase-6 sweeper will
  * GC these).
  *
  * Sized at 6× {@link LAG_WINDOW_MILLIS} (30s) to comfortably cover S3

@@ -19,8 +19,10 @@ import {
   RATE_LIMIT_BACKOFF_MILLIS,
   S3_REQUEST_MAX_RETRIES,
   adjustClock,
+  delay,
   parseListObjectsV2CommandOutput,
 } from "@baerly/protocol";
+import type { S3VersionId } from "@baerly/protocol";
 
 export type FetchFn = (url: string, init?: RequestInit) => Promise<Response>;
 
@@ -36,7 +38,7 @@ const PERMANENT_ERROR_CODES = new Set(["AccessDenied", "InvalidConfig", "Invalid
 
 const retry = async <T>(
   fn: () => Promise<T>,
-  { retries = S3_REQUEST_MAX_RETRIES, delay = 100, max_delay = 10000 } = {},
+  { retries = S3_REQUEST_MAX_RETRIES, backoffMs = 100, max_delay = 10000 } = {},
 ): Promise<T> => {
   try {
     return await fn();
@@ -45,11 +47,11 @@ const retry = async <T>(
       throw e;
     }
     if (retries > 0) {
-      await new Promise((resolve) => setTimeout(resolve, delay));
+      await delay(backoffMs);
       return retry(fn, {
         retries: retries - 1,
         max_delay,
-        delay: Math.min(delay * 1.5, max_delay),
+        backoffMs: Math.min(backoffMs * 1.5, max_delay),
       });
     }
     throw e;
@@ -83,7 +85,7 @@ export class S3ClientLite {
         return parseListObjectsV2CommandOutput(await response.text(), this.config.parser);
       } else if (response.status === 429) {
         this.config.log("listObjectV2: 429, retrying");
-        await new Promise((resolve) => setTimeout(resolve, RATE_LIMIT_BACKOFF_MILLIS));
+        await delay(RATE_LIMIT_BACKOFF_MILLIS);
       } else {
         throw new MPS3Error(
           "NetworkError",
@@ -115,13 +117,12 @@ export class S3ClientLite {
     if (response.status !== 200)
       throw new MPS3Error("NetworkError", `Failed to PUT: ${await response.text()}`);
 
+    const versionId = response.headers.get("x-amz-version-id");
     return {
       $metadata: { httpStatusCode: response.status },
       Date: new Date(response.headers.get("date")!),
       ETag: response.headers.get("ETag")!,
-      ...(response.headers.get("x-amz-version-id") && {
-        VersionId: response.headers.get("x-amz-version-id")!,
-      }),
+      ...(versionId && { VersionId: versionId as S3VersionId }),
     };
   }
 
@@ -157,6 +158,8 @@ export class S3ClientLite {
     switch (response.status) {
       case 404:
         return { $metadata: { httpStatusCode: 404 } };
+      case 304:
+        return { $metadata: { httpStatusCode: 304 } };
       case 403:
         throw new MPS3Error("AccessDenied", "Access denied");
       default: {
@@ -177,13 +180,12 @@ export class S3ClientLite {
             throw new MPS3Error("InvalidResponse", `Failed to parse response as JSON ${url}`, e);
           }
         }
+        const versionId = response.headers.get("x-amz-version-id");
         return {
           $metadata: { httpStatusCode: response.status },
           Body: content,
           ETag: response.headers.get("ETag")!,
-          ...(response.headers.get("x-amz-version-id") && {
-            VersionId: response.headers.get("x-amz-version-id")!,
-          }),
+          ...(versionId && { VersionId: versionId as S3VersionId }),
         };
       }
     }

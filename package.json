@@ -20,6 +20,7 @@
     "scripts": {
         "typecheck": "tsgo --noEmit",
         "test": "vitest run",
+        "test:coverage": "vitest run --coverage",
         "test:minio": "MINIO=1 vitest run",
         "test:conformance": "CONFORMANCE=1 MINIO=1 vitest run tests/integration/conformance.test.ts",
         "build": "rolldown -c",
@@ -37,6 +38,7 @@
         "@baerly/protocol": "workspace:*",
         "@types/node": "^25.6.2",
         "@typescript/native-preview": "7.0.0-dev.20260508.1",
+        "@vitest/coverage-v8": "^4.1.5",
         "@xmldom/xmldom": "^0.9.10",
         "aws4fetch": "1.0.20",
         "fake-indexeddb": "^6.2.5",

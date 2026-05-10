@@ -8,6 +8,8 @@
  * contributing types and a handful of test-fixture calls.
  */
 
+import type { S3VersionId } from "@baerly/protocol";
+
 export interface S3ClientConfig {
   endpoint?: string;
   region?: string;
@@ -25,7 +27,7 @@ export interface CommandMetadata {
 export interface GetObjectCommandInput {
   Bucket?: string;
   Key?: string;
-  VersionId?: string;
+  VersionId?: S3VersionId;
   IfNoneMatch?: string;
 }
 
@@ -33,7 +35,7 @@ export interface GetObjectCommandOutput {
   $metadata: CommandMetadata;
   Body?: unknown;
   ETag?: string;
-  VersionId?: string;
+  VersionId?: S3VersionId;
 }
 
 export interface PutObjectCommandInput {
@@ -46,7 +48,7 @@ export interface PutObjectCommandInput {
 export interface PutObjectCommandOutput {
   $metadata: CommandMetadata;
   ETag?: string;
-  VersionId?: string;
+  VersionId?: S3VersionId;
 }
 
 export interface DeleteObjectCommandInput {

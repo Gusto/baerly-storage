@@ -125,7 +125,7 @@ export class MemoryStorage implements Storage {
    * headers; the protocol kernel does not use it.
    * @internal
    */
-  _contentTypeOf(key: string): string | undefined {
+  contentTypeOf(key: string): string | undefined {
     return this.#objects.get(key)?.contentType;
   }
 }
@@ -192,7 +192,7 @@ const dispatch = async (
     if (result === null) return new Response(null, { status: 404 });
     const headers: Record<string, string> = { etag: result.etag };
     const ct =
-      storage instanceof MemoryStorage ? storage._contentTypeOf(key) : undefined;
+      storage instanceof MemoryStorage ? storage.contentTypeOf(key) : undefined;
     if (ct !== undefined) headers["content-type"] = ct;
     // TS 7's lib.dom narrows `BodyInit` to ArrayBuffer-backed views —
     // a generic `Uint8Array<ArrayBufferLike>` (which the protocol uses

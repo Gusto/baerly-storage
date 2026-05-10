@@ -1,4 +1,5 @@
 import {
+  type ContentVersionId,
   type DeleteValue,
   type JSONValue,
   type ResolvedRef,
@@ -69,29 +70,17 @@ export class Manifest {
     this.syncer.restore(db);
     this.operationQueue.restore(
       db,
-      async (values: Map<ResolvedRef, JSONValue | DeleteValue>, label?: VersionId) => {
-        if (!label) {
-          // this write has not been attempted at all
-          // we do a write from scratch
-          await this.service._putAll(values, {
-            manifests: [this.ref],
-            keys: new OMap<ResolvedRef, { replication?: b64 }>(url),
-            await: "local",
-            isLoad: true,
-          });
-        } else {
-          // the content was uploaded, but we don't know if the manifest was
-          // so we do a manifest write
-          await this.updateContent(
-            values,
-            Promise.resolve(new Map<ResolvedRef, VersionId>([[this.ref, label]])),
-            {
-              keys: new OMap<ResolvedRef, { replication?: b64 }>(url),
-              await: "local",
-              isLoad: true,
-            },
-          );
-        }
+      // Content-hash versions (adcd7ae) make replay idempotent: a
+      // labeled restore that re-PUTs the same body lands at the same
+      // content key, so we always go through `putAllResolved` regardless of
+      // whether the original attempt was labeled. `label` is ignored.
+      async (values: Map<ResolvedRef, JSONValue | DeleteValue>) => {
+        await this.service.putAllResolved(values, {
+          manifests: [this.ref],
+          keys: new OMap<ResolvedRef, { replication?: b64 }>(url),
+          await: "local",
+          isLoad: true,
+        });
       },
     );
   }
@@ -115,19 +104,22 @@ export class Manifest {
       const state = await this.syncer.getLatest();
 
       // calculate which values are set by optimistic updates
-      const mask: OMap<ResolvedRef, [JSONValue | DeleteValue, number]> =
-        await this.operationQueue.flatten();
+      const mask = await this.operationQueue.flatten();
 
       await Promise.all(
         [...this.subscribers].map(async (subscriber) => {
           if (mask.has(subscriber.ref)) {
             const [value, op] = mask.get(subscriber.ref)!;
-            subscriber.notify(this.service, <VersionId>`local-${op}`, Promise.resolve(value));
+            subscriber.notify(
+              this.service,
+              <ContentVersionId>`local-${op}`,
+              Promise.resolve(value),
+            );
           } else {
             const fileState = state.files[url(subscriber.ref)];
             if (fileState) {
               this.syncer.observeEntry(subscriber.ref, fileState.version);
-              const response = await this.service._getObject<JSONValue>({
+              const response = await this.service.getObject<JSONValue>({
                 operation: "GET_CONTENT",
                 ref: subscriber.ref,
                 version: fileState.version,

@@ -396,11 +396,11 @@ describe("mps3", () => {
       test("Parallel puts commute - warm manifest - single read", async () => {
         await getClient().put("warm", null);
         const n = 3;
-        const clients = [...Array(n)].map((_) => getClient());
+        const writers = [...Array(n)].map((_) => getClient());
         const rand_keys = [...Array(n)].map((_, i) => `parallel_put/${i}_${uuid()}`);
 
         // put in parallel
-        await Promise.all(rand_keys.map((key, i) => clients[i].put(key, i)));
+        await Promise.all(rand_keys.map((key, i) => writers[i].put(key, i)));
 
         // read in parallel
         expect(await getClient().get(rand_keys[1])).toEqual(1);
@@ -409,14 +409,14 @@ describe("mps3", () => {
       test("Parallel puts commute - warm manifest", async () => {
         await getClient().put("warm", null);
         const n = 3;
-        const clients = [...Array(n)].map((_) => getClient());
+        const writers = [...Array(n)].map((_) => getClient());
         const rand_keys = [...Array(n)].map((_, i) => `parallel_put/${i}_${uuid()}`);
 
         // put in parallel
-        await Promise.all(rand_keys.map((key, i) => clients[i].put(key, i)));
+        await Promise.all(rand_keys.map((key, i) => writers[i].put(key, i)));
 
         // read in parallel
-        const reads = await Promise.all(rand_keys.map((key, i) => clients[n - i - 1].get(key)));
+        const reads = await Promise.all(rand_keys.map((key, i) => writers[n - i - 1].get(key)));
 
         expect(reads).toEqual([...Array(n)].map((_, i) => i));
       });
@@ -428,13 +428,13 @@ describe("mps3", () => {
           },
         ];
         const n = 3;
-        const clients = [...Array(n)].map((_) => getClient());
+        const writers = [...Array(n)].map((_) => getClient());
         const rand_keys = [...Array(n)].map((_, i) => `parallel_put/${i}_${uuid()}`);
 
         // put in parallel
         await Promise.all(
           rand_keys.map((key, i) =>
-            clients[i].put(key, i, {
+            writers[i].put(key, i, {
               manifests,
             }),
           ),
@@ -443,7 +443,7 @@ describe("mps3", () => {
         // read in parallel
         const reads = await Promise.all(
           rand_keys.map((key, i) =>
-            clients[n - i - 1].get(key, {
+            writers[n - i - 1].get(key, {
               manifest: manifests[0],
             }),
           ),
@@ -454,7 +454,7 @@ describe("mps3", () => {
 
       test("Parallel puts notify other clients", async () => {
         const n = 3;
-        const clients = [...Array(n)].map((_) => getClient());
+        const writers = [...Array(n)].map((_) => getClient());
         const rand_keys = [...Array(n)].map((_, i) => `parallel_put/${i}_${uuid()}`);
 
         // collect results
@@ -470,7 +470,7 @@ describe("mps3", () => {
         );
 
         // put in parallel
-        rand_keys.map((key, i) => clients[i].put(key, i));
+        rand_keys.map((key, i) => writers[i].put(key, i));
 
         expect(await results).toEqual([0, 1, 2]);
       });

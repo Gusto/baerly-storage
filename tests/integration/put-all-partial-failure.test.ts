@@ -15,7 +15,7 @@ const baseConfig = (label: string, bucket: string): MPS3Config => ({
     s3Config: { endpoint: MPS3.MEMORY_ENDPOINT },
 });
 
-describe("_putAll partial failure (manifest-first ordering)", () => {
+describe("putAllResolved partial failure (manifest-first ordering)", () => {
     afterEach(() => {
         reset();
     });

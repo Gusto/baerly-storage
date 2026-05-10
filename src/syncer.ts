@@ -123,7 +123,7 @@ export class Syncer {
    * observed the manifest entry. Used to classify a 404 on the
    * referenced content key as either "in-flight" (within
    * {@link ORPHAN_MANIFEST_GRACE_MILLIS}) or "orphan" (older). The
-   * manifest-first ordering in `MPS3._putAll` deliberately permits
+   * manifest-first ordering in `MPS3.putAllResolved` deliberately permits
    * an interval where the manifest references content that has not
    * yet been PUT.
    *
@@ -232,14 +232,14 @@ export class Syncer {
       return this.latest_state;
     }
 
-    // Errors from `_getObject` / `listObjectV2` (`AccessDenied`,
+    // Errors from `getObject` / `listObjectV2` (`AccessDenied`,
     // `InvalidResponse`, `NetworkError`) are real faults — let them
     // propagate. The previous `catch` branch dispatched on
     // `err.name === "NoSuchKey"` from `@aws-sdk/client-s3`; that path
     // is dead today (`S3ClientLite.getObject` returns 404 instead of
     // throwing, and a fresh bucket lists empty).
     if (this.manifest.service.config.minimizeListObjectsCalls) {
-      const poll = await this.manifest.service._getObject<string>({
+      const poll = await this.manifest.service.getObject<string>({
         operation: "POLL_LATEST_CHANGE",
         ref: this.manifest.ref,
         ifNoneMatch: this.cache?.etag,
@@ -266,7 +266,7 @@ export class Syncer {
     const manifests = objects.Contents?.filter((obj) => {
       if (!Syncer.isValid(obj.Key!, obj.LastModified!)) {
         if (this.manifest.service.config.autoclean) {
-          this.manifest.service._deleteObject({
+          this.manifest.service.deleteObject({
             operation: "CLEANUP",
             ref: {
               bucket: this.manifest.ref.bucket,
@@ -298,7 +298,7 @@ export class Syncer {
     // Find the most recent patch, whose base state is settled, and that we have a record for
     if (manifests.length > 0) {
       this.latest_key = manifests[0]!.Key!;
-      const latest = await this.manifest.service._getObject<ManifestFile>({
+      const latest = await this.manifest.service.getObject<ManifestFile>({
         operation: "GET_LATEST",
         ref: {
           bucket: this.manifest.ref.bucket,
@@ -325,7 +325,7 @@ export class Syncer {
       if (key > this.latest_key && key > gcPoint) {
         // Its old we can skip and GC asyncronously
         if (this.manifest.service.config.autoclean) {
-          this.manifest.service._deleteObject({
+          this.manifest.service.deleteObject({
             operation: "CLEANUP",
             ref: {
               bucket: this.manifest.ref.bucket,
@@ -338,7 +338,7 @@ export class Syncer {
 
       replays.push({
         key,
-        promise: this.manifest.service._getObject<ManifestFile>({
+        promise: this.manifest.service.getObject<ManifestFile>({
           operation: "REPLAY",
           ref: {
             bucket: this.manifest.ref.bucket,
@@ -417,7 +417,7 @@ export class Syncer {
           manifest_key = manifestKeyFromVersion(this.manifest.ref, manifest_version);
           this.manifest.operationQueue.label(write, manifest_version, options.isLoad);
 
-          const putResponse = await this.manifest.service._putObject({
+          const putResponse = await this.manifest.service.putObject({
             operation: "PUT_MANIFEST",
             ref: {
               key: manifest_key,
@@ -448,7 +448,7 @@ export class Syncer {
 
         // update poller with write to known location
         if (this.manifest.service.config.minimizeListObjectsCalls) {
-          response = await this.manifest.service._putObject({
+          response = await this.manifest.service.putObject({
             operation: "TOUCH_LATEST_CHANGE",
             ref: {
               key: this.manifest.ref.key,

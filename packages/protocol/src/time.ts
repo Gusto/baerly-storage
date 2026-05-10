@@ -28,11 +28,11 @@ export const measure = async <Result>(work: Promise<Result>): Promise<[Result, n
 };
 
 export const adjustClock = (
-  response: Promise<Response>,
+  responsePromise: Promise<Response>,
   config: AdaptiveClockConfig,
 ): Promise<Response> => {
   if (config.adaptiveClock) {
-    return measure(response).then(([response, latency]) => {
+    return measure(responsePromise).then(([response, latency]) => {
       if (response.status !== 200) return response;
       const date_str = response.headers.get("date");
       if (date_str) {
@@ -68,5 +68,29 @@ export const adjustClock = (
       return response;
     });
   }
-  return response;
+  return responsePromise;
 };
+
+/**
+ * Delay for `ms` milliseconds, with optional cancellation. If
+ * `signal` aborts before the delay elapses, the returned promise
+ * rejects with `signal.reason`. Used by the retry loop in
+ * `s3-client-lite.ts` so shutdown can interrupt an in-flight backoff
+ * instead of waiting for it to complete.
+ */
+export const delay = (ms: number, signal?: AbortSignal): Promise<void> =>
+  new Promise<void>((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(signal.reason);
+      return;
+    }
+    const timer = setTimeout(resolve, ms);
+    signal?.addEventListener(
+      "abort",
+      () => {
+        clearTimeout(timer);
+        reject(signal.reason);
+      },
+      { once: true },
+    );
+  });

@@ -1,4 +1,4 @@
-import type { Branded, VersionId } from "./types";
+import type { Branded, ContentVersionId } from "./types";
 
 export type b64 = Branded<string, "b64">;
 
@@ -8,7 +8,7 @@ export const fromB64 = (a: b64): Uint8Array => Uint8Array.fromBase64(a);
 
 export const or = (a: b64, b: b64): b64 => {
   const bi = fromB64(b);
-  return toB64(fromB64(a).map((a, i) => a | bi[i]!));
+  return toB64(fromB64(a).map((byte, i) => byte | bi[i]!));
 };
 
 /**
@@ -21,7 +21,7 @@ export const inside = (a: b64, b: b64): boolean => {
 };
 
 /**
- * Width of the {@link VersionId} hex strings produced by
+ * Width of the {@link ContentVersionId} hex strings produced by
  * {@link versionFromContent}. 32 hex chars = 128 bits, matching the
  * information content of the v4 UUID that previously seeded
  * `versionFromUuid`. Collision probability with N=10⁹ writes is
@@ -30,11 +30,11 @@ export const inside = (a: b64, b: b64): boolean => {
 const VERSION_HEX_LENGTH = 32;
 
 /**
- * Content-addressed {@link VersionId}: SHA-256 of `body`, lowercase
- * hex, truncated to {@link VERSION_HEX_LENGTH}. Same body bytes ⇒
- * same VersionId — the property `mps3._putAll` relies on for
- * idempotent replay (a crash-recovery rewrite of the same logical
- * value produces the same content key the manifest already
+ * Content-addressed {@link ContentVersionId}: SHA-256 of `body`,
+ * lowercase hex, truncated to {@link VERSION_HEX_LENGTH}. Same body
+ * bytes ⇒ same ContentVersionId — the property `mps3.putAllResolved` relies
+ * on for idempotent replay (a crash-recovery rewrite of the same
+ * logical value produces the same content key the manifest already
  * referenced).
  *
  * Async because {@link crypto.subtle.digest} returns an `ArrayBuffer`
@@ -42,10 +42,10 @@ const VERSION_HEX_LENGTH = 32;
  * synchronously enough that the await fits naturally in the write
  * pipeline.
  */
-export const versionFromContent = async (body: Uint8Array): Promise<VersionId> => {
-  // `crypto.subtle.digest` expects `BufferSource`, which TS narrows to
-  // `Uint8Array<ArrayBuffer>` (not `ArrayBufferLike`). Copying through
-  // a fresh `ArrayBuffer` satisfies the constraint without a cast.
+export const versionFromContent = async (body: Uint8Array): Promise<ContentVersionId> => {
+  // Copy via fresh ArrayBuffer: tsgo narrows `Uint8Array` to
+  // `Uint8Array<ArrayBufferLike>`, which `crypto.subtle.digest` rejects
+  // (wants `ArrayBufferView<ArrayBuffer>`). See microsoft/TypeScript#61375.
   const view = new Uint8Array(body.byteLength);
   view.set(body);
   const digest = await crypto.subtle.digest("SHA-256", view);
@@ -54,5 +54,5 @@ export const versionFromContent = async (body: Uint8Array): Promise<VersionId> =
   for (let i = 0; i < bytes.length; i++) {
     hex += bytes[i]!.toString(16).padStart(2, "0");
   }
-  return hex.slice(0, VERSION_HEX_LENGTH) as VersionId;
+  return hex.slice(0, VERSION_HEX_LENGTH) as ContentVersionId;
 };
