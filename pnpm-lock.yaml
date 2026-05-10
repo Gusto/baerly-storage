@@ -12,7 +12,7 @@ importers:
         specifier: workspace:*
         version: link:packages/protocol
       '@fast-check/vitest':
-        specifier: 0.4.1
+        specifier: ^0.4.1
         version: 0.4.1(vitest@4.1.5)
       '@types/node':
         specifier: ^25.6.2
@@ -33,7 +33,7 @@ importers:
         specifier: ^6.2.5
         version: 6.2.5
       fast-check:
-        specifier: 4.7.0
+        specifier: ^4.7.0
         version: 4.7.0
       idb-keyval:
         specifier: ^6.2.2
