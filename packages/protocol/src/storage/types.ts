@@ -28,7 +28,11 @@ export interface Storage {
   ): Promise<StorageGetResult | null>;
 
   /**
-   * Write a single object. Returns the new ETag. Use `ifMatch` for
+   * Write a single object. Returns the new ETag and, when the
+   * underlying transport surfaces it, the server's response time
+   * as `serverDate` (S3's `Date` header). The kernel uses
+   * `serverDate` to track adaptive clock-skew; impls may return
+   * `undefined` if no server clock is available. Use `ifMatch` for
    * compare-and-swap (write only if the current ETag matches), or
    * `ifNoneMatch: "*"` for create-only (write only if no object
    * exists). Conflicts throw `MPS3Error` with HTTP 412 semantics.
@@ -37,7 +41,7 @@ export interface Storage {
     key: string,
     body: Uint8Array,
     opts?: StoragePutOptions,
-  ): Promise<{ etag: string }>;
+  ): Promise<StoragePutResult>;
 
   /**
    * Delete a single object. Idempotent: deleting a missing key is
@@ -59,6 +63,17 @@ export interface Storage {
 export interface StorageGetResult {
   readonly body: Uint8Array;
   readonly etag: string;
+}
+
+export interface StoragePutResult {
+  readonly etag: string;
+  /**
+   * Server-reported response time, used by the kernel's adaptive
+   * clock-skew loop. Set by HTTP-backed impls from the response
+   * `Date` header; in-memory impls fill in the local wall clock.
+   * `undefined` if no clock signal is available.
+   */
+  readonly serverDate?: Date;
 }
 
 export interface StoragePutOptions {

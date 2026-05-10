@@ -4,6 +4,7 @@ import type {
   StorageGetResult,
   StorageListEntry,
   StoragePutOptions,
+  StoragePutResult,
 } from "./types";
 
 interface StoredObject {
@@ -50,7 +51,7 @@ export class MemoryStorage implements Storage {
     key: string,
     body: Uint8Array,
     opts?: StoragePutOptions,
-  ): Promise<{ etag: string }> {
+  ): Promise<StoragePutResult> {
     opts?.signal?.throwIfAborted();
     const existing = this.#objects.get(key);
 
@@ -81,7 +82,7 @@ export class MemoryStorage implements Storage {
       etag,
       ...(opts?.contentType !== undefined && { contentType: opts.contentType }),
     });
-    return { etag };
+    return { etag, serverDate: new Date() };
   }
 
   async delete(key: string, opts?: { signal?: AbortSignal }): Promise<void> {

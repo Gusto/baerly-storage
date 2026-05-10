@@ -156,6 +156,25 @@ describe("S3HttpStorage.put", () => {
       code: "InvalidResponse",
     });
   });
+
+  test("parses Date response header into serverDate", async () => {
+    const date = new Date("2026-05-10T12:00:00Z");
+    const fetchFn = vi.fn(async (_req: Request) =>
+      noBody(200, { ETag: '"e1"', Date: date.toUTCString() }),
+    );
+    const s = mkStorage(fetchFn as unknown as typeof fetch);
+    const result = await s.put("k", new Uint8Array(0));
+    expect(result.etag).toBe('"e1"');
+    expect(result.serverDate).toBeInstanceOf(Date);
+    expect(result.serverDate?.getTime()).toBe(date.getTime());
+  });
+
+  test("missing Date header → no serverDate", async () => {
+    const fetchFn = vi.fn(async (_req: Request) => noBody(200, { ETag: '"e1"' }));
+    const s = mkStorage(fetchFn as unknown as typeof fetch);
+    const result = await s.put("k", new Uint8Array(0));
+    expect(result.serverDate).toBeUndefined();
+  });
 });
 
 describe("S3HttpStorage.delete", () => {

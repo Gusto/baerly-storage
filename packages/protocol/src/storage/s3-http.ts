@@ -3,7 +3,13 @@ import { MPS3Error } from "../errors";
 import { delay } from "../time";
 import type { XmlParser } from "../types";
 import { parseListObjectsV2CommandOutput } from "../xml";
-import type { Storage, StorageGetResult, StorageListEntry, StoragePutOptions } from "./types";
+import type {
+  Storage,
+  StorageGetResult,
+  StorageListEntry,
+  StoragePutOptions,
+  StoragePutResult,
+} from "./types";
 
 /**
  * Permanent {@link MPS3Error} codes that must short-circuit `retry`.
@@ -166,7 +172,7 @@ export class S3HttpStorage implements Storage {
     key: string,
     body: Uint8Array,
     opts?: StoragePutOptions,
-  ): Promise<{ etag: string }> {
+  ): Promise<StoragePutResult> {
     opts?.signal?.throwIfAborted();
     const url = this.#objectUrl(key);
     const headers = new Headers();
@@ -206,7 +212,9 @@ export class S3HttpStorage implements Storage {
       if (etag === null) {
         throw new MPS3Error("InvalidResponse", `PUT ${key}: missing ETag`);
       }
-      return { etag };
+      const dateStr = res.headers.get("Date");
+      const serverDate = dateStr !== null ? new Date(dateStr) : undefined;
+      return serverDate !== undefined ? { etag, serverDate } : { etag };
     });
   }
 
