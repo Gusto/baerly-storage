@@ -60,10 +60,10 @@ deps. Tests requiring Minio or credentials are gated by env:
   Excluded from the default test glob. Run with `pnpm test:conformance`.
 
 `randomized.test.ts` runs by default against an in-memory `Storage`
-impl (`MemoryStorage` in `@baerly/protocol`, served as a `fetchFn`
-via `fetchFnFromStorage`) — the property-based causal-consistency
-checker is the highest-leverage test asset and now runs in <1s on
-every PR.
+impl (`MemoryStorage` in `@baerly/protocol`, shared per-bucket
+across `MPS3` instances via `getOrCreateMemoryStorageForBucket`) —
+the property-based causal-consistency checker is the highest-
+leverage test asset and now runs in <1s on every PR.
 
 Pure-unit tests that always pass: `packages/protocol/src/hashing.test.ts`,
 `tests/unit/consistency.test.ts`, `packages/protocol/src/xml.test.ts`,

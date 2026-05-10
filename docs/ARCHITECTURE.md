@@ -21,14 +21,20 @@ graph TD
     mps3[mps3.ts<br/>public API]
     manifest[manifest.ts<br/>thin wrapper: getVersion / updateContent]
     syncer[syncer.ts<br/>manifest log read/write]
-    s3client[s3-client-lite.ts<br/>HTTP S3 client]
+    storage[Storage interface<br/>get/put/delete/list]
+    s3http[storage/s3-http.ts<br/>S3HttpStorage]
+    memstore[storage/memory.ts<br/>MemoryStorage]
+    offline[offline-storage.ts<br/>OfflineStorage stub]
     json[json.ts<br/>RFC 7386 merge patch]
 
     mps3 --> manifest
-    mps3 --> s3client
+    mps3 --> storage
     manifest --> syncer
-    syncer --> s3client
+    syncer --> storage
     syncer --> json
+    storage --> s3http
+    storage --> memstore
+    storage --> offline
 ```
 
 ## Lifecycle of a `put()`
@@ -39,21 +45,40 @@ durable on S3.
 1. **`mps3.put` → `mps3.putAll`** (`src/mps3.ts`): wraps the single ref in
    a `Map`, resolves default bucket/manifest, calls `_putAll`.
 2. **`_putAll`** (`src/mps3.ts`): for each ref it kicks off a content
-   upload via `_putObject` (PUT to S3 at `key@<version>` if `useVersioning`
-   is off, else just `key`). The set of `(ref → contentVersion)` results
-   is exposed as a Promise.
+   upload via `_putObject` (`Storage.put` to `key@<version>` if
+   `useVersioning` is off, else just `key`). The set of
+   `(ref → contentVersion)` results is exposed as a Promise.
 3. **`manifest.updateContent` → `syncer.updateContent`** (`src/syncer.ts`):
    - Generates a monotonic manifest-key suffix:
      `<base32-timestamp>_<sessionId>_<seq>`. The timestamp is clamped to
      `latest_timestamp + 1` so writes are ordered even when clocks jitter.
-   - Awaits the content upload, then PUTs the manifest patch to
+   - Awaits the content upload, then `Storage.put`s the manifest patch to
      `<manifestKey>@<suffix>`. The patch is a JSON Merge Patch over the
      prior manifest state. (Manifest-first ordering: content body lands
      before the manifest entry that references it.)
-   - Validates the server's response timestamp; if outside `LAG_WINDOW_MILLIS`
+   - Validates the server's response timestamp (`putResult.serverDate`,
+     surfaced from S3's `Date` header); if outside `LAG_WINDOW_MILLIS`
      of expected, adapts `clockOffset` and retries with a new suffix.
    - Optionally PUTs a sentinel `<manifestKey>` (no `@suffix`) so future
      readers can short-circuit with a 304 (`If-None-Match`).
+
+## Storage seam
+
+The kernel reads and writes through the four `Storage` methods only
+(`get`/`put`/`delete`/`list`). `MPS3.storageFor(bucket)` lazily
+returns the right impl based on construction config:
+
+- `S3HttpStorage` (`packages/protocol/src/storage/s3-http.ts`) for any
+  HTTP endpoint. Authentication plugs in via a `sign(req)` callback —
+  the protocol package itself never imports `aws4fetch` or any other
+  signer; consumers choose.
+- `MemoryStorage` (`packages/protocol/src/storage/memory.ts`) for the
+  `memory:` endpoint, partitioned per bucket via a process-singleton
+  map so multiple `MPS3` instances share state by bucket name.
+- `OfflineStorage` (`src/offline-storage.ts`) when `online: false`.
+  Every method throws `MPS3Error("OfflineNoCache", …)`; callers that
+  miss the in-memory / IDB cache layer surface a clean error instead
+  of a hung promise.
 
 ## Reads and change notifications
 

@@ -13,7 +13,7 @@ Conventions for tests across `src/` (colocated unit tests) and `tests/`
 ## File layout
 
 vitest discovers via `include: ["src/**/*.test.ts", "tests/**/*.test.ts"]`.
-Filenames are kebab-case throughout (e.g. `s3-client-lite.test.ts`).
+Filenames are kebab-case throughout (e.g. `s3-http.test.ts`).
 
 | Where | What goes there |
 |---|---|
