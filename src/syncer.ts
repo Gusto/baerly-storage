@@ -139,23 +139,23 @@ export class Syncer {
   };
 
   /**
-   * True iff the manifest key's embedded timestamp agrees with the S3
-   * `Last-Modified` header within {@link LAG_WINDOW_MILLIS}. Manifests
-   * outside the window are dropped — they may be from a clock-skewed
-   * writer or replayed adversarially.
+   * True iff the manifest key's embedded timestamp agrees with the
+   * server's `Last-Modified` within {@link LAG_WINDOW_MILLIS}.
+   * Manifests outside the window are dropped — they may be from a
+   * clock-skewed writer or replayed adversarially. When `modified`
+   * is `undefined` (e.g. an in-memory storage with no server clock),
+   * the cross-check degenerates to a key-shape check.
    *
    * @see `docs/sync_protocol.md` (clock-skew tolerance)
    */
-  static isValid(key: string, modified: Date): boolean {
+  static isValid(key: string, modified?: Date): boolean {
     const match = key.match(Syncer.manifestRegex);
     if (!match) {
       return false;
     }
     if (modified === undefined) return true;
     const manifestTimestamp = this.manifestTimestamp(key);
-    const s3Timestamp = modified;
-    // if the difference is greater than 5 seconds, ignore this update
-    return Math.abs(manifestTimestamp - s3Timestamp.getTime()) < LAG_WINDOW_MILLIS;
+    return Math.abs(manifestTimestamp - modified.getTime()) < LAG_WINDOW_MILLIS;
   }
 
   /**
@@ -248,23 +248,29 @@ export class Syncer {
       this.manifest.ref,
       Date.now() + this.manifest.service.config.clockOffset + MANIFEST_LIST_LOOKAHEAD_MILLIS,
     );
-    const [objects, dt] = await measure(
-      this.manifest.service.s3ClientLite.listObjectV2({
-        Bucket: this.manifest.ref.bucket,
-        Prefix: this.manifest.ref.key + "@",
-        StartAfter: start_at,
-      }),
+    const collected: { Key: string; LastModified?: Date }[] = [];
+    const [, dt] = await measure(
+      (async () => {
+        for await (const entry of this.manifest.service
+          .storageFor(this.manifest.ref.bucket)
+          .list(this.manifest.ref.key + "@", { startAfter: start_at })) {
+          collected.push({
+            Key: entry.key,
+            ...(entry.lastModified !== undefined && { LastModified: entry.lastModified }),
+          });
+        }
+      })(),
     );
 
     // prune invalid objects
-    const manifests = objects.Contents?.filter((obj) => {
-      if (!Syncer.isValid(obj.Key!, obj.LastModified!)) {
+    const manifests = collected.filter((obj) => {
+      if (!Syncer.isValid(obj.Key, obj.LastModified)) {
         if (this.manifest.service.config.autoclean) {
           this.manifest.service.deleteObject({
             operation: "CLEANUP",
             ref: {
               bucket: this.manifest.ref.bucket,
-              key: obj.Key!,
+              key: obj.Key,
             },
           });
         }

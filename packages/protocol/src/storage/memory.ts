@@ -1,6 +1,7 @@
 import { MPS3Error } from "../errors";
 import type {
   Storage,
+  StorageGetOptions,
   StorageGetResult,
   StorageListEntry,
   StoragePutOptions,
@@ -33,10 +34,7 @@ export class MemoryStorage implements Storage {
     return `"${this.#etagCounter.toString(16)}"`;
   }
 
-  async get(
-    key: string,
-    opts?: { ifNoneMatch?: string; signal?: AbortSignal },
-  ): Promise<StorageGetResult | null> {
+  async get(key: string, opts?: StorageGetOptions): Promise<StorageGetResult | null> {
     opts?.signal?.throwIfAborted();
     const stored = this.#objects.get(key);
     if (stored === undefined) return null;
@@ -82,6 +80,12 @@ export class MemoryStorage implements Storage {
       etag,
       ...(opts?.contentType !== undefined && { contentType: opts.contentType }),
     });
+    // `serverDate` is intentionally returned (callers like the kernel's
+    // adaptive-clock loop need a value); `lastModified` is intentionally
+    // *not* surfaced on `list()` — the in-memory impl has no
+    // independent server clock, and pretending it does would force the
+    // kernel's wall-clock cross-check against an artificially injected
+    // `clockOffset`, breaking the property-based randomized tests.
     return { etag, serverDate: new Date() };
   }
 
@@ -320,3 +324,23 @@ export const resetMemoryStorage = (): void => {
 export const getMemoryStorageForBucket = (
   bucket: string,
 ): MemoryStorage | undefined => sharedPerBucket.get(bucket);
+
+/**
+ * Get the process-singleton {@link MemoryStorage} for the named
+ * bucket, creating one on first access. Mirrors the lazy
+ * per-bucket creation that {@link memoryFetchFn} does internally —
+ * use this when constructing a `Storage` directly (the
+ * `MEMORY_ENDPOINT` path on `MPS3`) so multiple `MPS3` instances
+ * in the same process see each other's writes for the same
+ * bucket name.
+ */
+export const getOrCreateMemoryStorageForBucket = (
+  bucket: string,
+): MemoryStorage => {
+  let s = sharedPerBucket.get(bucket);
+  if (s === undefined) {
+    s = new MemoryStorage();
+    sharedPerBucket.set(bucket, s);
+  }
+  return s;
+};

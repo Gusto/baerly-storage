@@ -20,12 +20,11 @@ export interface Storage {
    * Fetch a single object. Returns `null` on not-found (404
    * semantics). With `ifNoneMatch`, returns `null` if the current
    * ETag matches (304 semantics — caller's cached copy is current).
-   * Other failure modes throw `MPS3Error`.
+   * With `versionId`, fetches a specific historical version (only
+   * meaningful on a versioned S3 bucket; non-versioning impls may
+   * ignore). Other failure modes throw `MPS3Error`.
    */
-  get(
-    key: string,
-    opts?: { ifNoneMatch?: string; signal?: AbortSignal },
-  ): Promise<StorageGetResult | null>;
+  get(key: string, opts?: StorageGetOptions): Promise<StorageGetResult | null>;
 
   /**
    * Write a single object. Returns the new ETag and, when the
@@ -60,9 +59,26 @@ export interface Storage {
   ): AsyncIterable<StorageListEntry>;
 }
 
+export interface StorageGetOptions {
+  readonly ifNoneMatch?: string;
+  /**
+   * Pin to a specific historical version. Maps to S3's
+   * `?versionId=…` query parameter on versioned buckets. Impls that
+   * don't model versions may ignore.
+   */
+  readonly versionId?: string;
+  readonly signal?: AbortSignal;
+}
+
 export interface StorageGetResult {
   readonly body: Uint8Array;
   readonly etag: string;
+  /**
+   * S3 `x-amz-version-id` of the returned object on versioned
+   * buckets; `undefined` for unversioned reads or impls without
+   * native versioning.
+   */
+  readonly versionId?: string;
 }
 
 export interface StoragePutResult {
@@ -74,6 +90,12 @@ export interface StoragePutResult {
    * `undefined` if no clock signal is available.
    */
   readonly serverDate?: Date;
+  /**
+   * S3 `x-amz-version-id` of the new object version on versioned
+   * buckets; `undefined` for unversioned writes or impls without
+   * native versioning.
+   */
+  readonly versionId?: string;
 }
 
 export interface StoragePutOptions {
@@ -89,4 +111,13 @@ export interface StoragePutOptions {
 export interface StorageListEntry {
   readonly key: string;
   readonly etag: string;
+  /**
+   * Server's `Last-Modified` for the listed object. The kernel's
+   * manifest validity check uses this to reject writes whose
+   * embedded base32 timestamp disagrees with the server's clock by
+   * more than `LAG_WINDOW_MILLIS` (defends against clock-skewed or
+   * adversarial writers). Impls without a server clock may return
+   * `undefined` and the kernel skips the cross-check.
+   */
+  readonly lastModified?: Date;
 }

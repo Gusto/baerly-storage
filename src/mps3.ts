@@ -1,5 +1,4 @@
 import type {
-  DeleteObjectCommandInput,
   DeleteObjectCommandOutput,
   GetObjectCommandInput,
   GetObjectCommandOutput,
@@ -8,19 +7,21 @@ import type {
   S3ClientConfig,
 } from "./s3-types";
 import { AwsClient } from "aws4fetch";
-import { type FetchFn, S3ClientLite } from "./s3-client-lite";
 import {
   type DeleteValue,
   type JSONValue,
   type Ref,
   type ResolvedRef,
   type S3VersionId,
+  type Storage,
   type VersionId,
   type XmlParser,
   type b64,
   MEM_CACHE_CAPACITY,
   MPS3Error,
   OMap,
+  S3HttpStorage,
+  getOrCreateMemoryStorageForBucket,
   measure,
   resolveContentRef,
   resolveManifestRef,
@@ -29,7 +30,7 @@ import {
 } from "@baerly/protocol";
 import { Manifest } from "./manifest";
 import { type UseStore, createStore, get, set } from "idb-keyval";
-import { memoryFetchFn } from "@baerly/protocol";
+import { OfflineStorage } from "./offline-storage";
 
 /**
  * Bounded LRU keyed by a string derived from `K`. Mirrors the subset of
@@ -47,6 +48,24 @@ import { memoryFetchFn } from "@baerly/protocol";
  */
 const cacheKey = (i: GetObjectCommandInput): string =>
   JSON.stringify([i.Bucket, i.Key, i.VersionId, i.IfNoneMatch]);
+
+/**
+ * Decode a `Uint8Array` body to JSON for the `MPS3.getObject`
+ * wrapper. The legacy `S3ClientLite` path parsed JSON internally
+ * based on `Content-Type`; the `Storage` seam returns bytes and
+ * the kernel parses here. Empty bodies return `undefined`. Parse
+ * failures throw `MPS3Error("InvalidResponse")` so callers see a
+ * clean error instead of a silent `undefined`.
+ */
+const parseJsonBody = <T>(body: Uint8Array, bucket: string, key: string): T | undefined => {
+  if (body.byteLength === 0) return undefined;
+  const text = new TextDecoder().decode(body);
+  try {
+    return JSON.parse(text) as T;
+  } catch (e) {
+    throw new MPS3Error("InvalidResponse", `Failed to parse JSON for ${bucket}/${key}`, e);
+  }
+};
 
 class BoundedLRU<K, V> {
   readonly #vals = new Map<string, V>();
@@ -240,8 +259,44 @@ export class MPS3 {
   static MEMORY_ENDPOINT = "memory:";
   /** @internal */
   config: ResolvedMPS3Config;
-  /** @internal */
-  s3ClientLite: S3ClientLite;
+  /**
+   * Per-bucket `Storage` instances. `MPS3` operates on multiple
+   * buckets (a `Ref` carries one); each bucket gets its own backing
+   * store the first time it's referenced. The legacy
+   * `MemoryStorage`/`fetchFnFromStorage` factory pattern is mirrored:
+   * memory mode uses the process-singleton; S3 mode constructs an
+   * `S3HttpStorage` per bucket; offline mode shares a single
+   * always-throwing stub.
+   * @internal
+   */
+  #storages = new Map<string, Storage>();
+  /**
+   * Lazily constructs the {@link Storage} for `bucket`. Uniform
+   * entry point for `getObject`/`putObject`/`deleteObject` and for
+   * `Syncer` LIST/GET against a manifest's bucket.
+   * @internal
+   */
+  storageFor(bucket: string): Storage {
+    let s = this.#storages.get(bucket);
+    if (s !== undefined) return s;
+    if (!this.config.online) {
+      s = this.#offlineStorage;
+    } else if (this.endpoint === MPS3.MEMORY_ENDPOINT) {
+      s = getOrCreateMemoryStorageForBucket(bucket);
+    } else {
+      s = new S3HttpStorage({
+        endpoint: this.endpoint,
+        bucket,
+        fetch: globalThis.fetch.bind(globalThis),
+        ...(this.#sign !== undefined && { sign: this.#sign }),
+        xmlParser: this.config.parser,
+      });
+    }
+    this.#storages.set(bucket, s);
+    return s;
+  }
+  readonly #offlineStorage: Storage = new OfflineStorage();
+  #sign?: (req: Request) => Promise<Request>;
   /** @internal */
   manifests = new OMap<ResolvedRef, Manifest>(url);
   /** @internal */
@@ -315,8 +370,6 @@ export class MPS3 {
       }
     }
 
-    let fetchFn: FetchFn;
-
     if (this.config.s3Config?.credentials) {
       const creds = this.config.s3Config.credentials;
       const client = new AwsClient({
@@ -327,23 +380,13 @@ export class MPS3 {
         service: "s3",
         retries: 0,
       });
-      fetchFn = (input, init) => client.fetch(input, init);
-    } else if (this.endpoint === MPS3.MEMORY_ENDPOINT) {
-      fetchFn = memoryFetchFn;
-    } else {
-      fetchFn = globalThis.fetch.bind(globalThis);
+      this.#sign = (req) => client.sign(req);
     }
 
     if (this.config.offlineStorage) {
       const dbName = `mps3-${this.config.label}`;
       this.diskCache = createStore(dbName, "v0");
     }
-
-    this.s3ClientLite = new S3ClientLite(
-      this.config.online ? fetchFn : () => new Promise(() => {}),
-      this.endpoint,
-      this.config,
-    );
   }
   /** @internal */
   getOrCreateManifest(ref: ResolvedRef): Manifest {
@@ -459,12 +502,23 @@ export class MPS3 {
       );
     }
 
-    const work = measure(this.s3ClientLite.getObject(command)).then(async ([apiResponse, dt]) => {
-      const response: GetResponse<T> = {
-        $metadata: apiResponse.$metadata,
-        ETag: apiResponse.ETag,
-        data: <T | undefined>apiResponse.Body,
-      };
+    const work = measure(
+      this.storageFor(args.ref.bucket).get(command.Key!, {
+        ...(command.IfNoneMatch !== undefined && { ifNoneMatch: command.IfNoneMatch }),
+        ...(command.VersionId !== undefined && { versionId: command.VersionId }),
+      }),
+    ).then(([raw, dt]) => {
+      const response: GetResponse<T> = raw === null
+        ? {
+            $metadata: { httpStatusCode: command.IfNoneMatch !== undefined ? 304 : 404 },
+            data: undefined,
+          }
+        : {
+            $metadata: { httpStatusCode: 200 },
+            ETag: raw.etag,
+            ...(raw.versionId !== undefined && { VersionId: raw.versionId as S3VersionId }),
+            data: parseJsonBody<T>(raw.body, args.ref.bucket, command.Key!),
+          };
       this.config.log(
         `${dt}ms ${args.operation} ${args.ref.bucket}/${args.ref.key}@${args.version} => ${response.VersionId}`,
       );
@@ -784,7 +838,19 @@ export class MPS3 {
       Body: content,
     };
 
-    const [response, dt] = await measure(this.s3ClientLite.putObject(command));
+    const [putResult, dt] = await measure(
+      this.storageFor(args.ref.bucket).put(command.Key!, new TextEncoder().encode(content), {
+        contentType: "application/json",
+      }),
+    );
+    const response: PutObjectCommandOutput & { Date: Date } = {
+      $metadata: { httpStatusCode: 200 },
+      ETag: putResult.etag,
+      Date: putResult.serverDate ?? new Date(),
+      ...(putResult.versionId !== undefined && {
+        VersionId: putResult.versionId as S3VersionId,
+      }),
+    };
     this.config.log(
       `${dt}ms ${args.operation} ${command.Bucket}/${command.Key} => ${response.VersionId}`,
     );
@@ -815,17 +881,11 @@ export class MPS3 {
     operation?: string;
     ref: ResolvedRef;
   }): Promise<DeleteObjectCommandOutput> {
-    const command: DeleteObjectCommandInput = {
-      Bucket: args.ref.bucket,
-      Key: args.ref.key,
-    };
-    const [response, dt] = await measure(this.s3ClientLite.deleteObject(command));
+    const [, dt] = await measure(this.storageFor(args.ref.bucket).delete(args.ref.key));
     this.config.log(
-      `${dt}ms ${args.operation || "DELETE"} ${args.ref.bucket}/${
-        args.ref.key
-      } (${response.$metadata.httpStatusCode})}`,
+      `${dt}ms ${args.operation || "DELETE"} ${args.ref.bucket}/${args.ref.key}`,
     );
-    return response;
+    return { $metadata: { httpStatusCode: 204 } };
   }
 
 }

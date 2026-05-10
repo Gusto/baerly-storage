@@ -5,6 +5,7 @@ import type { XmlParser } from "../types";
 import { parseListObjectsV2CommandOutput } from "../xml";
 import type {
   Storage,
+  StorageGetOptions,
   StorageGetResult,
   StorageListEntry,
   StoragePutOptions,
@@ -114,8 +115,11 @@ export class S3HttpStorage implements Storage {
     this.#backoffMs = options.backoffMs ?? 100;
   }
 
-  #objectUrl(key: string): string {
-    return `${this.#endpoint}/${this.#bucket}/${encodeURIComponent(key)}`;
+  #objectUrl(key: string, versionId?: string): string {
+    const base = `${this.#endpoint}/${this.#bucket}/${encodeURIComponent(key)}`;
+    return versionId !== undefined
+      ? `${base}?versionId=${encodeURIComponent(versionId)}`
+      : base;
   }
 
   async #dispatch(req: Request): Promise<Response> {
@@ -127,12 +131,9 @@ export class S3HttpStorage implements Storage {
     return retry(fn, { retries: this.#retries, backoffMs: this.#backoffMs });
   }
 
-  async get(
-    key: string,
-    opts?: { ifNoneMatch?: string; signal?: AbortSignal },
-  ): Promise<StorageGetResult | null> {
+  async get(key: string, opts?: StorageGetOptions): Promise<StorageGetResult | null> {
     opts?.signal?.throwIfAborted();
-    const url = this.#objectUrl(key);
+    const url = this.#objectUrl(key, opts?.versionId);
     const headers = new Headers();
     if (opts?.ifNoneMatch !== undefined) headers.set("If-None-Match", opts.ifNoneMatch);
     return this.#retry(async () => {
@@ -146,7 +147,8 @@ export class S3HttpStorage implements Storage {
             throw new MPS3Error("InvalidResponse", `GET ${key}: missing ETag`);
           }
           const body = new Uint8Array(await res.arrayBuffer());
-          return { body, etag };
+          const versionId = res.headers.get("x-amz-version-id") ?? undefined;
+          return versionId !== undefined ? { body, etag, versionId } : { body, etag };
         }
         case 304:
         case 404:
@@ -213,8 +215,11 @@ export class S3HttpStorage implements Storage {
         throw new MPS3Error("InvalidResponse", `PUT ${key}: missing ETag`);
       }
       const dateStr = res.headers.get("Date");
-      const serverDate = dateStr !== null ? new Date(dateStr) : undefined;
-      return serverDate !== undefined ? { etag, serverDate } : { etag };
+      const versionId = res.headers.get("x-amz-version-id") ?? undefined;
+      const result: { etag: string; serverDate?: Date; versionId?: string } = { etag };
+      if (dateStr !== null) result.serverDate = new Date(dateStr);
+      if (versionId !== undefined) result.versionId = versionId;
+      return result;
     });
   }
 
@@ -307,7 +312,11 @@ export class S3HttpStorage implements Storage {
 
       for (const entry of parsed.Contents ?? []) {
         if (entry.Key === undefined) continue;
-        yield { key: entry.Key, etag: entry.ETag ?? "" };
+        yield {
+          key: entry.Key,
+          etag: entry.ETag ?? "",
+          ...(entry.LastModified !== undefined && { lastModified: entry.LastModified }),
+        };
         yielded += 1;
         if (opts?.maxKeys !== undefined && yielded >= opts.maxKeys) return;
       }

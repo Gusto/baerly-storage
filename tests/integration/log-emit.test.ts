@@ -19,10 +19,11 @@ const baseConfig = (label: string, bucket: string): MPS3Config => ({
 });
 
 // The default manifest key is "manifest.json" (see src/mps3.ts:265),
-// so log entries land under "manifest.json/log/<lsn>.json". Storage
-// keys are URL-encoded by `S3ClientLite.getUrl`, hence the `%2F` in
-// the listing prefix.
-const LOG_PREFIX = `manifest.json%2F${LOG_KEY_PREFIX}%2F`;
+// so log entries land under "manifest.json/log/<lsn>.json". `MPS3`
+// passes raw (unencoded) keys to `Storage.put`, so we list with the
+// raw shape; URL-encoding happens at the HTTP boundary in
+// `S3HttpStorage`.
+const LOG_PREFIX = `manifest.json/${LOG_KEY_PREFIX}/`;
 
 /**
  * List log entries for `bucket` and return them in **causal order**

@@ -91,21 +91,17 @@ describe("regressions (§9 bug-fix list)", () => {
                 s3Config: { endpoint: MPS3.MEMORY_ENDPOINT },
             });
 
-            // Each PUT response carries an ever-growing date offset, so the
+            // Each PUT result carries an ever-growing serverDate, so the
             // syncer's clockOffset adjustment never converges and every
             // retry sees a fresh out-of-window manifest. After
             // SYNCER_CLOCK_SKEW_MAX_RETRIES the loop must bail.
             let skewBoost = 60_000;
-            const original = (mps3.s3ClientLite as unknown as {
-                putObject: (cmd: unknown) => Promise<{ Date: Date } & Record<string, unknown>>;
-            }).putObject.bind(mps3.s3ClientLite);
-            (mps3.s3ClientLite as unknown as {
-                putObject: (cmd: unknown) => Promise<{ Date: Date } & Record<string, unknown>>;
-            }).putObject = async (cmd) => {
-                const result = await original(cmd);
-                result.Date = new Date(Date.now() + skewBoost);
+            const storage = mps3.storageFor(mps3.config.defaultBucket);
+            const originalPut = storage.put.bind(storage);
+            storage.put = async (key, body, opts) => {
+                const result = await originalPut(key, body, opts);
                 skewBoost += 60_000;
-                return result;
+                return { ...result, serverDate: new Date(Date.now() + skewBoost) };
             };
 
             await expect(mps3.put("skew-key", "value")).rejects.toMatchObject({

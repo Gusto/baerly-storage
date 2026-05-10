@@ -2,7 +2,6 @@ import { afterEach, describe, expect, test } from "vitest";
 import { DOMParser } from "@xmldom/xmldom";
 import { MPS3, type MPS3Config } from "../../src/mps3";
 import { MPS3Error, resetMemoryStorage as reset } from "@baerly/protocol";
-import type { FetchFn } from "../../src/s3-client-lite";
 
 const baseConfig = (label: string, bucket: string): MPS3Config => ({
     label,
@@ -40,23 +39,22 @@ describe("putAllResolved partial failure (manifest-first ordering)", () => {
         // failed putAll has a "before" state to compare against.
         await writer.put("seed", "before");
 
-        // Wrap the writer's fetch to fail the SECOND content PUT seen
-        // during the multi-key putAll. Manifest entries are also written
-        // via PUT so we restrict the failure to PUTs against the content
-        // prefix only.
-        const original = (writer.s3ClientLite as unknown as { fetch: FetchFn })
-            .fetch;
+        // Wrap the writer's per-bucket Storage.put to fail the SECOND
+        // CONTENT put during the multi-key putAll. Manifest entries
+        // also flow through Storage.put — under manifest-first
+        // ordering they hit a manifest-prefixed key (e.g.
+        // `manifest.json@…`), so excluding `manifest.json` from the
+        // counter selects content-only puts.
+        const storage = writer.storageFor(bucket);
+        const originalPut = storage.put.bind(storage);
         let contentPutCount = 0;
-        (writer.s3ClientLite as unknown as { fetch: FetchFn }).fetch = async (
-            url,
-            init,
-        ) => {
-            if (init?.method === "PUT" && !url.includes("manifest.json")) {
+        storage.put = async (key, body, opts) => {
+            if (!key.includes("manifest.json")) {
                 contentPutCount++;
                 if (contentPutCount === 2) {
-                    // `InvalidConfig` is a permanent code — `S3ClientLite.retry`
+                    // `InvalidConfig` is a permanent code — `S3HttpStorage.retry`
                     // short-circuits on it. A generic `Error` would be retried
-                    // up to S3_REQUEST_MAX_RETRIES times and likely "self-heal"
+                    // up to `S3_REQUEST_MAX_RETRIES` times and likely "self-heal"
                     // (the Nth-call counter would let later attempts through),
                     // hiding the bug we're trying to pin.
                     throw new MPS3Error(
@@ -65,7 +63,7 @@ describe("putAllResolved partial failure (manifest-first ordering)", () => {
                     );
                 }
             }
-            return original(url, init);
+            return originalPut(key, body, opts);
         };
 
         await expect(

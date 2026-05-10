@@ -1,13 +1,16 @@
 export type {
   Storage,
+  StorageGetOptions,
   StorageGetResult,
   StorageListEntry,
   StoragePutOptions,
+  StoragePutResult,
 } from "./types";
 export {
   MemoryStorage,
   fetchFnFromStorage,
   getMemoryStorageForBucket,
+  getOrCreateMemoryStorageForBucket,
   memoryFetchFn,
   resetMemoryStorage,
 } from "./memory";
