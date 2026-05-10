@@ -11,9 +11,11 @@ in [CLAUDE.md](../CLAUDE.md) and [ARCHITECTURE.md](./ARCHITECTURE.md).
 ## Public API surface
 
 The `MPS3` class is the only intended entry point. Its public methods
-(`get`, `put`, `delete`, `subscribe`) and the `MPS3Config` interface
-carry full JSDoc with `@example` blocks — your IDE or `tsgo` is the
-canonical reference.
+(`get`, `put`, `delete`) and the `MPS3Config` interface carry full
+JSDoc with `@example` blocks — your IDE or `tsgo` is the canonical
+reference. Realtime change notifications are deferred to a Phase 10
+opt-in `NotificationBus` package; today callers drive their own
+polling by re-calling `get(key)`.
 
 - [`src/mps3.ts`](../src/mps3.ts) — class + config
 

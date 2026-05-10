@@ -3,7 +3,7 @@ import { expect, test, describe, beforeAll, beforeEach, afterEach } from "vitest
 import { MPS3, type MPS3Config } from "../../src/mps3";
 import { CentralisedOfflineFirstCausalSystem } from "../fixtures/consistency";
 import { DOMParser } from "@xmldom/xmldom";
-import { uuid } from "@baerly/protocol";
+import { type DeleteValue, type JSONValue, uuid } from "@baerly/protocol";
 import { createBucket, makeFixtureClient, putBucketVersioningEnabled } from "../fixtures/s3-fixtures";
 import "fake-indexeddb/auto";
 
@@ -50,7 +50,6 @@ describe("mps3", () => {
       label: "useVersioning",
       requiresMinio: true,
       config: {
-        pollFrequency: 100,
         useVersioning: true,
         defaultBucket: `ver${session}`,
         s3Config: unstableConfig,
@@ -61,7 +60,6 @@ describe("mps3", () => {
       label: "minio",
       requiresMinio: true,
       config: {
-        pollFrequency: 100,
         minimizeListObjectsCalls: false,
         defaultBucket: `nov${session}`,
         s3Config: unstableConfig,
@@ -72,7 +70,6 @@ describe("mps3", () => {
       label: "memory",
       createBucket: false,
       config: {
-        pollFrequency: 10,
         minimizeListObjectsCalls: false,
         parser: new DOMParser(),
         defaultBucket: `mem${session}`,
@@ -128,9 +125,10 @@ describe("mps3", () => {
         "causal consistency all-to-all, single key",
         { timeout: 60 * 1000 },
         () =>
-          new Promise<void>((done) => {
+          new Promise<void>((done, reject) => {
             void (async () => {
               let testFailed = false;
+              let finished = false;
               const key = `causal-${uuid()}`;
               await getClient().delete(key);
 
@@ -141,57 +139,93 @@ describe("mps3", () => {
                 sender: number;
                 send_time: number;
               };
-              // Setup all clients to forward messages to the observer
-              const clients = [...Array(3)].map((_, client_id) => {
+
+              const clients = [...Array(3)].map((_, client_id) =>
+                getClient({ label: system.client_labels[client_id] }),
+              );
+
+              // Drives the cascade: observe a value, check invariants, write
+              // a fresh message. Reads come from the per-client polling
+              // loop below.
+              const handle = (client_id: number, val: JSONValue | DeleteValue) => {
                 const label = system.client_labels[client_id];
-                const client = getClient({ label });
-                client.subscribe(key, (val) => {
-                  if (val) {
-                    const message: Message = <Message>val;
-                    console.log(
-                      `${system.global_time}: ${label}@${system.client_clocks[
-                        client_id
-                      ]!} rcvd ${system.client_labels[message.sender]}@${message.send_time}`,
-                    );
-                    system.observe({
-                      ...message,
-                      receiver: client_id,
-                    });
-                  }
+                if (val) {
+                  const message = <Message>val;
+                  console.log(
+                    `${system.global_time}: ${label}@${system.client_clocks[
+                      client_id
+                    ]!} rcvd ${system.client_labels[message.sender]}@${message.send_time}`,
+                  );
+                  system.observe({
+                    ...message,
+                    receiver: client_id,
+                  });
+                }
 
-                  if (system.global_time < max_steps && !testFailed) {
-                    // Check facts are causally consistent so far
-                    testFailed = !system.causallyConsistent();
-                    if (testFailed) {
-                      console.error(system.grounding);
-                      console.error(system.knowledge_base);
+                if (system.global_time < max_steps && !testFailed) {
+                  testFailed = !system.causallyConsistent();
+                  if (testFailed) {
+                    console.error(system.grounding);
+                    console.error(system.knowledge_base);
+                  }
+                  expect(testFailed).toBe(false);
+
+                  system.observe({
+                    receiver: client_id,
+                    sender: client_id,
+                    send_time: system.client_clocks[client_id]! - 1,
+                  });
+                  testFailed = !system.causallyConsistent();
+                  expect(testFailed).toBe(false);
+
+                  console.log(
+                    `${system.global_time}: ${label}@${
+                      system.client_clocks[client_id]! - 1
+                    } broadcast`,
+                  );
+                  void clients[client_id]!.put(key, {
+                    sender: client_id,
+                    send_time: system.client_clocks[client_id]! - 1,
+                  });
+                } else if (system.global_time >= max_steps && !finished) {
+                  finished = true;
+                  done();
+                }
+              };
+
+              // Kick the cascade: each client observes the seed (undefined,
+              // since we deleted above) once before the polling loop
+              // catches up to remote writes.
+              clients.forEach((_, client_id) => handle(client_id, undefined));
+
+              const POLL_TICK_MS = variant.label === "memory" ? 5 : 50;
+              clients.forEach((client, client_id) => {
+                void (async () => {
+                  let prev: string | undefined = undefined;
+                  while (!finished) {
+                    await new Promise((r) => setTimeout(r, POLL_TICK_MS));
+                    if (finished) return;
+                    try {
+                      const val = await client.get(key);
+                      const serialized = JSON.stringify(val);
+                      if (serialized !== prev) {
+                        prev = serialized;
+                        try {
+                          handle(client_id, val);
+                        } catch (err) {
+                          finished = true;
+                          reject(err);
+                          return;
+                        }
+                      }
+                    } catch (err) {
+                      // Swallow transient read failures (Toxiproxy is
+                      // flipping the network on/off every 100ms during
+                      // beforeEach). The next tick retries.
+                      void err;
                     }
-                    expect(testFailed).toBe(false);
-
-                    // Write a new message
-                    system.observe({
-                      receiver: client_id,
-                      sender: client_id,
-                      send_time: system.client_clocks[client_id]! - 1,
-                    });
-                    testFailed = !system.causallyConsistent();
-                    expect(testFailed).toBe(false);
-
-                    console.log(
-                      `${system.global_time}: ${label}@${
-                        system.client_clocks[client_id]! - 1
-                      } broadcast`,
-                    );
-                    client.put(key, {
-                      sender: client_id,
-                      send_time: system.client_clocks[client_id]! - 1,
-                    });
-                  } else if (system.global_time === max_steps) {
-                    clients.forEach((c) => c.manifests.forEach((m) => m.subscribers.clear()));
-                    done();
                   }
-                });
-                return client;
+                })();
               });
             })();
           }),

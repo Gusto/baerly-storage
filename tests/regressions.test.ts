@@ -84,7 +84,6 @@ describe("regressions (§9 bug-fix list)", () => {
             const mps3 = new MPS3({
                 label: "skew",
                 defaultBucket: `skew-${Math.random().toString(36).slice(2, 8)}`,
-                pollFrequency: 60_000,
                 minimizeListObjectsCalls: false,
                 offlineStorage: false,
                 adaptiveClock: true,
@@ -113,8 +112,6 @@ describe("regressions (§9 bug-fix list)", () => {
                 code: "NetworkError",
                 message: expect.stringContaining(`${SYNCER_CLOCK_SKEW_MAX_RETRIES}`),
             });
-
-            mps3.shutdown();
         });
     });
 

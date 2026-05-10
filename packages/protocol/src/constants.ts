@@ -15,17 +15,6 @@
 export const LAG_WINDOW_MILLIS: number = 5000;
 
 /**
- * Default value for {@link MPS3Config.pollFrequency}. The manifest poller
- * fires at this cadence whenever there's at least one subscriber. Each
- * tick costs at most one S3 GET (cached via `If-None-Match` when
- * `minimizeListObjectsCalls` is on).
- *
- * Lowering this reduces visibility lag for remote writes; raising it
- * reduces request volume.
- */
-export const MANIFEST_POLL_INTERVAL_MILLIS: number = 1000;
-
-/**
  * How far into the future (relative to `Date.now() + clockOffset`) the
  * manifest list-objects-v2 `StartAfter` cursor is positioned. Generous
  * lookahead so a write whose suffix landed slightly ahead of local time
@@ -121,8 +110,8 @@ export const MEM_CACHE_CAPACITY: number = 100;
  * the two sees a manifest that points at content that does not yet
  * exist.
  *
- * Within this window, readers return `undefined` to callers and skip
- * subscriber notification — the next poll likely sees the content.
+ * Within this window, readers return `undefined` to callers — a
+ * subsequent read likely sees the content once the writer finishes.
  * Outside the window, readers still return `undefined` but warn
  * because the manifest entry is most likely orphaned by a writer that
  * died mid-batch (see `putAllResolved` JSDoc; the future Phase-6 sweeper will

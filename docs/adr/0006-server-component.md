@@ -52,8 +52,9 @@ The plan that drives this is in
   when it lands.
 - The browser side becomes simpler: a typed RPC client over fetch,
   no offline queue, no IndexedDB. The old browser-direct modules
-  (`operation-queue.ts`, `indexdb.ts`) retire over the next two
-  phases.
+  (the optimistic-write buffer and `indexdb.ts`) have been retired
+  on `feature/delete-optimistic-write-and-poller`; realtime change
+  notifications are deferred to a Phase 10 opt-in `NotificationBus`.
 - The protocol kernel's location moves from `src/` to
   `packages/protocol/`. Already partially complete (commit
   `8efbe96`); the remaining moves land with the carve.

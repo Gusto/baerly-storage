@@ -116,15 +116,19 @@ const uint2str = (num: number, bits: number) => {
 
 ### Minimising list-object-v2 calls
 
-List API calls are costly on S3, they are charged at the same rate as PUTs which are 10x more expensive than GETs. As the subscription features of MPS3 rely on polling, we want to avoid having the list-object-v2 API calls being the hot end of a poll loop. 
+List API calls are costly on S3, they are charged at the same rate as PUTs which are 10x more expensive than GETs. Readers refresh explicitly (via a `get` or a write), and callers that want change-detection drive their own polling, so we want to avoid having the list-object-v2 API call on the hot path of every refresh.
 
-So after writing a new manifest entry, the client then touches a `last_change` file. Clients with active subscriptions poll this file, and only if the content changes (efficiently detected with `If-None-Match` header), does the algorithm proceed to syncing the latest state via the `list-object-v2` API call.
+So after writing a new manifest entry, the client then touches a `last_change` file. A reader can check this file first, and only if the content changes (efficiently detected with `If-None-Match` header) does the algorithm proceed to syncing the latest state via the `list-object-v2` API call.
 
 For APIs where listing is cheap (e.g. local-first/IndexDB), this optimization can be disabled by the `minimizeListObjectsCalls` flag to `false`. 
 
 ## The Sync Algorithm
 
-1. Poll the `last_change` file using `If-None-Match` headers, if it hasn't changed go no further
+The algorithm runs once per refresh — initiated by a read
+(`getVersion`) or a write (`updateContent`). There is no background
+poller in the kernel.
+
+1. Check the `last_change` file using `If-None-Match` headers; if it hasn't changed, return the cached state.
 	- [syncer.ts#L101](https://github.com/endpointservices/mps3/blob/fb052d712ed12e89a37cce0113b89d07c706c502/src/syncer.ts#L101)
 2. List objects backward in time from the `now + lag` timestamp
 	-  [syncer.ts#L116](https://github.com/endpointservices/mps3/blob/fb052d712ed12e89a37cce0113b89d07c706c502/src/syncer.ts#L116)
@@ -136,8 +140,7 @@ For APIs where listing is cheap (e.g. local-first/IndexDB), this optimization ca
 	- [syncer.ts#L200](https://github.com/endpointservices/mps3/blob/fb052d712ed12e89a37cce0113b89d07c706c502/src/syncer.ts#L200)
 6. garbage collect entries with `timestamp - lag < latest_state`
 	- [syncer.ts#L177](https://github.com/endpointservices/mps3/blob/fb052d712ed12e89a37cce0113b89d07c706c502/src/)
-7. notify subscribers of changes
-	-  [manifest.ts#L111](https://github.com/endpointservices/mps3/blob/fb052d712ed12e89a37cce0113b89d07c706c502/src/manifest.ts#L111)
+7. return `latest_state` to the caller (the read or write that triggered the refresh)
 
 ### Summary
 

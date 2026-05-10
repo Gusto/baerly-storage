@@ -68,7 +68,7 @@ every PR.
 Pure-unit tests that always pass: `packages/protocol/src/hashing.test.ts`,
 `tests/unit/consistency.test.ts`, `packages/protocol/src/xml.test.ts`,
 `packages/protocol/src/json.test.ts`,
-`tests/unit/datatypes.test.ts`, `src/operation-queue.test.ts`,
+`tests/unit/datatypes.test.ts`,
 `tests/integration/bundle-size.test.ts`,
 `tests/integration/put-all-partial-failure.test.ts`,
 `tests/regressions.test.ts`.
@@ -91,7 +91,7 @@ Read in this order to build a mental model:
 1. `src/index.ts` — public barrel; bundler entry point.
 2. `src/mps3.ts` — public `MPS3` class.
 3. `src/manifest.ts`, `src/syncer.ts` — protocol core wiring.
-4. `src/operation-queue.ts`, `src/s3-client-lite.ts` — storage layer.
+4. `src/s3-client-lite.ts` — storage layer.
 5. **`@baerly/protocol`** (pure modules; no I/O):
    `packages/protocol/src/json.ts`, `packages/protocol/src/types.ts`,
    `packages/protocol/src/constants.ts`,

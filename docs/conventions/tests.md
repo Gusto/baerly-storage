@@ -13,7 +13,7 @@ Conventions for tests across `src/` (colocated unit tests) and `tests/`
 ## File layout
 
 vitest discovers via `include: ["src/**/*.test.ts", "tests/**/*.test.ts"]`.
-Filenames are kebab-case throughout (e.g. `operation-queue.test.ts`).
+Filenames are kebab-case throughout (e.g. `s3-client-lite.test.ts`).
 
 | Where | What goes there |
 |---|---|
@@ -27,7 +27,7 @@ One topic per file. Don't pile unrelated suites together.
 
 ## IndexedDB
 - `import "fake-indexeddb/auto";` at the top of any test that exercises
-  IndexedDB-backed behavior (operationQueue, manifest restore, mps3 with
+  IndexedDB-backed behavior (e.g. the `mps3` read cache via
   `offlineStorage`).
 
 ## Property-based tests

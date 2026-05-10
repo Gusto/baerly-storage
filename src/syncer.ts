@@ -84,16 +84,6 @@ export const manifestKeyFromVersion = (
 ): ManifestKey => <ManifestKey>`${ref.key}@${version}`;
 
 /**
- * Extract the suffix following the final `@` of a manifest key, or
- * `undefined` if the key has no `@`. Inverse of {@link manifestKey} /
- * {@link manifestKeyFromVersion}.
- */
-export const manifestKeySuffix = (key: ManifestKey | string): VersionId | undefined => {
-  const i = key.lastIndexOf("@");
-  return i === -1 ? undefined : <VersionId>key.substring(i + 1);
-};
-
-/**
  * Reads and writes the manifest log — the time-ordered append-only S3
  * key sequence that defines the protocol. Manifest keys have the shape
  * `<base32-time>_<session>_<seq>`; lexicographic order *is* causal order.
@@ -348,11 +338,9 @@ export class Syncer {
       });
     }
 
-    for (const { key, promise } of replays) {
+    for (const { promise } of replays) {
       const step = await promise;
-      const stepVersionId = manifestKeySuffix(key)!;
       this.latest_state = merge<ManifestFile>(this.latest_state, step.data?.update)!;
-      this.manifest.observeVersionId(stepVersionId);
     }
 
     if (this.db) set(MANIFEST_KEY, this.latest_state, this.db);
@@ -366,8 +354,7 @@ export class Syncer {
     return this.latest_state;
   }
 
-  updateContent(
-    values: Map<ResolvedRef, JSONValue | DeleteValue>,
+  async updateContent(
     write: Promise<Map<ResolvedRef, VersionId | DeleteValue>>,
     options: {
       keys: OMap<
@@ -376,101 +363,87 @@ export class Syncer {
           replication?: b64;
         }
       >;
-      await: "local" | "remote";
-      isLoad: boolean;
     },
   ): Promise<unknown> {
     let manifest_version = this.generate_manifest_key();
 
-    const localPersistence = this.manifest.operationQueue.propose(write, values, options.isLoad);
-    const remotePersistency = localPersistence.then(async () => {
-      try {
-        const update = await write;
-        let response,
-          manifest_key,
-          retry = false;
-        let attempts = 0;
-        do {
-          const state = await this.getLatest();
-          const updateFiles: { [url: string]: FileState } = {};
-          state.update = { files: updateFiles };
+    try {
+      const update = await write;
+      let response,
+        manifest_key,
+        retry = false;
+      let attempts = 0;
+      do {
+        const state = await this.getLatest();
+        const updateFiles: { [url: string]: FileState } = {};
+        state.update = { files: updateFiles };
 
-          for (let [ref, version] of update) {
-            const fileUrl = url(ref);
-            if (version) {
-              const fileState: FileState = {
-                version: version,
-                replication: options.keys.get(ref)?.replication ?? <b64>"",
-              };
-              updateFiles[fileUrl] = fileState;
-            } else {
-              // RFC 7386: `null` inside an inner object signals "delete this
-              // key on apply". `merge()` strips it from the result, so the
-              // settled `ManifestFile.files` never holds `null` — but the
-              // wire-format `update` payload must carry it for replays.
-              // The cast crosses the gap between `JSONArrayless` (no null)
-              // and the protocol's actual permissive shape.
-              updateFiles[fileUrl] = null as unknown as FileState;
-            }
-          }
-          // put versioned write
-          manifest_key = manifestKeyFromVersion(this.manifest.ref, manifest_version);
-          this.manifest.operationQueue.label(write, manifest_version, options.isLoad);
-
-          const putResponse = await this.manifest.service.putObject({
-            operation: "PUT_MANIFEST",
-            ref: {
-              key: manifest_key,
-              bucket: this.manifest.ref.bucket,
-            },
-            value: state,
-          });
-
-          // Check the response leads to a valid write.
-          if (
-            this.manifest.service.config.adaptiveClock &&
-            !Syncer.isValid(manifest_key, putResponse.Date)
-          ) {
-            if (++attempts >= SYNCER_CLOCK_SKEW_MAX_RETRIES) {
-              throw new MPS3Error(
-                "NetworkError",
-                `Clock-skew retries exceeded (${SYNCER_CLOCK_SKEW_MAX_RETRIES}); server clock unreachable`,
-              );
-            }
-            this.manifest.service.config.clockOffset =
-              putResponse.Date.getTime() - Date.now() + putResponse.latency;
-            manifest_version = this.generate_manifest_key();
-            retry = true;
+        for (let [ref, version] of update) {
+          const fileUrl = url(ref);
+          if (version) {
+            const fileState: FileState = {
+              version: version,
+              replication: options.keys.get(ref)?.replication ?? <b64>"",
+            };
+            updateFiles[fileUrl] = fileState;
           } else {
-            retry = false;
+            // RFC 7386: `null` inside an inner object signals "delete this
+            // key on apply". `merge()` strips it from the result, so the
+            // settled `ManifestFile.files` never holds `null` — but the
+            // wire-format `update` payload must carry it for replays.
+            // The cast crosses the gap between `JSONArrayless` (no null)
+            // and the protocol's actual permissive shape.
+            updateFiles[fileUrl] = null as unknown as FileState;
           }
-        } while (retry);
-
-        // update poller with write to known location
-        if (this.manifest.service.config.minimizeListObjectsCalls) {
-          response = await this.manifest.service.putObject({
-            operation: "TOUCH_LATEST_CHANGE",
-            ref: {
-              key: this.manifest.ref.key,
-              bucket: this.manifest.ref.bucket,
-            },
-            value: "",
-          });
         }
+        // put versioned write
+        manifest_key = manifestKeyFromVersion(this.manifest.ref, manifest_version);
 
-        this.manifest.poll();
-        return response;
-      } catch (err) {
-        this.manifest.service.config.log("manifest update failed", err);
-        await this.manifest.operationQueue.cancel(write, options.isLoad);
-        if (err instanceof MPS3Error) throw err;
-        throw new MPS3Error("NetworkError", "Manifest update failed", err);
+        const putResponse = await this.manifest.service.putObject({
+          operation: "PUT_MANIFEST",
+          ref: {
+            key: manifest_key,
+            bucket: this.manifest.ref.bucket,
+          },
+          value: state,
+        });
+
+        // Check the response leads to a valid write.
+        if (
+          this.manifest.service.config.adaptiveClock &&
+          !Syncer.isValid(manifest_key, putResponse.Date)
+        ) {
+          if (++attempts >= SYNCER_CLOCK_SKEW_MAX_RETRIES) {
+            throw new MPS3Error(
+              "NetworkError",
+              `Clock-skew retries exceeded (${SYNCER_CLOCK_SKEW_MAX_RETRIES}); server clock unreachable`,
+            );
+          }
+          this.manifest.service.config.clockOffset =
+            putResponse.Date.getTime() - Date.now() + putResponse.latency;
+          manifest_version = this.generate_manifest_key();
+          retry = true;
+        } else {
+          retry = false;
+        }
+      } while (retry);
+
+      if (this.manifest.service.config.minimizeListObjectsCalls) {
+        response = await this.manifest.service.putObject({
+          operation: "TOUCH_LATEST_CHANGE",
+          ref: {
+            key: this.manifest.ref.key,
+            bucket: this.manifest.ref.bucket,
+          },
+          value: "",
+        });
       }
-    });
-    if (options.await === "local") {
-      return localPersistence;
-    } else {
-      return remotePersistency;
+
+      return response;
+    } catch (err) {
+      this.manifest.service.config.log("manifest update failed", err);
+      if (err instanceof MPS3Error) throw err;
+      throw new MPS3Error("NetworkError", "Manifest update failed", err);
     }
   }
 }

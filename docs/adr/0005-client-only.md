@@ -34,11 +34,11 @@ Rationale and theory live in
   operate. This is the thesis.
 - **Operational footprint = the bucket.** No control plane, no
   scheduler, no health checks. Outages are S3 outages.
-- **Polling, not push.** No server means no fan-out push channel.
-  Subscribers poll the manifest log, paying read cost in proportion to
-  poll frequency. The cost/latency trade-off is captured in
-  `LAG_WINDOW_MILLIS` and the polling cadence in
-  [`src/manifest.ts`](../../src/manifest.ts).
+- **Polling, not push.** No server meant no fan-out push channel.
+  Readers paid read cost in proportion to poll frequency, and the
+  cost/latency trade-off was captured in `LAG_WINDOW_MILLIS`. Under
+  ADR-0006 the kernel is read-on-demand and realtime is deferred to a
+  Phase 10 opt-in `NotificationBus`.
 - **Causal consistency is enforced by clients.** Each client implements
   the full validation logic (timestamp window, manifest-key parsing,
   conflict resolution). A misbehaving client can write garbage

@@ -18,7 +18,6 @@ import {
   type VersionId,
   type XmlParser,
   type b64,
-  MANIFEST_POLL_INTERVAL_MILLIS,
   MEM_CACHE_CAPACITY,
   MPS3Error,
   OMap,
@@ -102,13 +101,6 @@ export interface MPS3Config {
   useVersioning?: boolean;
 
   /**
-   * Frequency in milliseconds subscribers poll for changes.
-   * Each poll consumes a GET API request, but minimal egress
-   * due to If-None-Match request optimizations.
-   * @defaultValue 1000
-   */
-  pollFrequency?: number;
-  /**
    * S3 endpoint, region, and credentials. See `S3ClientConfig` in
    * `src/s3-types.ts` for the supported field surface.
    */
@@ -179,7 +171,6 @@ export interface ResolvedMPS3Config extends MPS3Config {
   label: string;
   defaultManifest: ResolvedRef;
   useVersioning: boolean;
-  pollFrequency: number;
   online: boolean;
   offlineStorage: boolean;
   autoclean: boolean;
@@ -211,8 +202,10 @@ interface GetResponse<T> {
  *
  * - {@link get} / {@link put} / {@link delete} — single-key operations.
  * - {@link putAll} — atomic multi-key write.
- * - {@link subscribe} — watch a key for changes.
- * - {@link shutdown} — release polling timers.
+ *
+ * Realtime change notifications are deferred to a Phase 10 opt-in
+ * `NotificationBus`; until then, callers refresh on demand by issuing
+ * a fresh {@link get}.
  *
  * Errors thrown by any method are instances of `MPS3Error` (see
  * `packages/protocol/src/errors.ts`); discriminate on the `code` field.
@@ -234,11 +227,6 @@ interface GetResponse<T> {
  *
  * await mps3.put("user/42", { name: "Ada" });
  * const user = await mps3.get("user/42");
- *
- * const stop = mps3.subscribe("user/42", (u) => console.log("changed:", u));
- * // ... later
- * stop();
- * mps3.shutdown();
  * ```
  */
 export class MPS3 {
@@ -283,7 +271,6 @@ export class MPS3 {
       online: config.online ?? true,
       offlineStorage: config.offlineStorage ?? true,
       useVersioning: config.useVersioning || false,
-      pollFrequency: config.pollFrequency || MANIFEST_POLL_INTERVAL_MILLIS,
       clockOffset: Math.floor(config.clockOffset ?? 0),
       adaptiveClock: config.adaptiveClock ?? true,
       minimizeListObjectsCalls: config.minimizeListObjectsCalls ?? true,
@@ -363,20 +350,12 @@ export class MPS3 {
     if (!this.manifests.has(ref)) {
       const manifest = new Manifest(this, ref);
       this.manifests.set(ref, manifest);
-      if (this.config.offlineStorage) {
-        const dbName = `mps3-${this.config.label}-${ref.bucket}-${ref.key}`;
-        const db = createStore(dbName, "v0");
-        this.config.log(`Restoring manifest from ${dbName}`);
-        manifest.load(db);
-      }
     }
     return this.manifests.get(ref)!;
   }
 
   /**
-   * Read the value for a key. Layers local optimistic writes over the
-   * latest synced manifest state — what you'd see if you started a
-   * subscriber right now.
+   * Read the value for a key from the latest synced manifest state.
    *
    * @param ref - Either a string `"key"` or a `Ref` object. String form
    *   uses the configured `defaultBucket`.
@@ -407,11 +386,6 @@ export class MPS3 {
     const manifest = this.getOrCreateManifest(manifestRef);
     const contentRef = resolveContentRef(ref, this.config);
 
-    const inflight = await manifest.operationQueue.flatten();
-    if (inflight.has(contentRef)) {
-      this.config.log(`GET (cached) ${contentRef} ${inflight.get(contentRef)}`);
-      return inflight.get(contentRef)![0];
-    }
     const version = await manifest.getVersion(contentRef);
     if (version === undefined) return undefined;
 
@@ -512,8 +486,7 @@ export class MPS3 {
 
   /**
    * Delete a key. Equivalent to `put(ref, undefined)`. The key vanishes
-   * from subsequent `get()` and `keys()` results; subscribers receive
-   * `undefined`.
+   * from subsequent `get()` and `keys()` results.
    *
    * @param ref - Either a string `"key"` or a `Ref` object.
    * @param options.manifests - Apply the delete to these manifests
@@ -534,24 +507,16 @@ export class MPS3 {
   }
 
   /**
-   * Write a single key. The returned Promise settles when the write is
-   * durable at the level requested by `options.await`:
-   * `"local"` (IndexedDB only — the offline-first ack) or
-   * `"remote"` (manifest patch confirmed by S3).
-   *
-   * Default await level is `"remote"` when the client is online,
-   * `"local"` otherwise.
+   * Write a single key. The returned Promise settles when the manifest
+   * patch is confirmed by S3 (and the content body has been persisted).
    *
    * @param ref - Either `"key"` or `{ bucket, key }`.
    * @param value - Any JSON value, or `undefined` to delete.
-   * @param options.await - `"local"` for offline-first ack, `"remote"`
-   *   to wait for S3 confirmation.
    * @param options.manifests - Write to multiple manifests atomically
    *   (defaults to `[defaultManifest]`).
    * @param options.replication - Replication marker for downstream
    *   replicators; see {@link replication}.
-   * @returns A Promise that settles when the write reaches the
-   *   requested durability level.
+   * @returns A Promise that settles when the write is durable on S3.
    * @throws {MPS3Error} `code = "InvalidConfig"` if `useVersioning`
    *   is on but the bucket isn't versioned.
    * @throws {MPS3Error} `code = "NetworkError"` for transport failures.
@@ -559,9 +524,6 @@ export class MPS3 {
    * @example
    * ```ts
    * await mps3.put("user/42", { name: "Ada", email: "ada@example.com" });
-   *
-   * // Optimistic ack only:
-   * await mps3.put("draft", { body: "..." }, { await: "local" });
    * ```
    */
   public async put(
@@ -570,7 +532,6 @@ export class MPS3 {
     options: {
       replication?: b64;
       manifests?: Ref[];
-      await?: "local" | "remote";
     } = {},
   ) {
     return this.putAll(new Map([[ref, value]]), options);
@@ -582,7 +543,6 @@ export class MPS3 {
    * writes that span keys.
    *
    * @param values - Map of `ref → value`. `undefined` value deletes.
-   * @param options.await - See {@link put}.
    * @param options.manifests - Write to multiple manifests atomically.
    * @param options.keys - Per-key replication markers.
    *
@@ -607,8 +567,6 @@ export class MPS3 {
         }
       >;
       manifests?: Ref[];
-      await?: "local" | "remote";
-      isLoad?: boolean;
     } = {},
   ) {
     const resolvedValues = new Map<ResolvedRef, JSONValue | DeleteValue>(
@@ -634,7 +592,6 @@ export class MPS3 {
     return this.putAllResolved(resolvedValues, {
       manifests,
       keys,
-      await: options.await ?? (this.config.online ? "remote" : "local"),
     });
   }
   /**
@@ -670,8 +627,6 @@ export class MPS3 {
         }
       >;
       manifests: ResolvedRef[];
-      await: "local" | "remote";
-      isLoad?: boolean;
     },
   ) {
     if (this.config.useVersioning) {
@@ -686,11 +641,8 @@ export class MPS3 {
     options: {
       keys: OMap<ResolvedRef, { replication?: b64 }>;
       manifests: ResolvedRef[];
-      await: "local" | "remote";
-      isLoad?: boolean;
     },
   ) {
-    const webValues = new Map<ResolvedRef, JSONValue | DeleteValue>();
     const bodies = new Map<ResolvedRef, string>();
 
     // Step 1: hash all content bodies to compute versions WITHOUT PUTting.
@@ -701,7 +653,6 @@ export class MPS3 {
         if (value === undefined) {
           return [contentRef, undefined] as const;
         }
-        webValues.set(contentRef, value);
         const body = JSON.stringify(value);
         bodies.set(contentRef, body);
         const version = await versionFromContent(new TextEncoder().encode(body));
@@ -715,10 +666,8 @@ export class MPS3 {
     const manifestSettled = Promise.all(
       options.manifests.map((ref) => {
         const manifest = this.getOrCreateManifest(ref);
-        return manifest.updateContent(webValues, Promise.resolve(contentVersions), {
+        return manifest.updateContent(Promise.resolve(contentVersions), {
           keys: options.keys,
-          await: options.await,
-          isLoad: options.isLoad === true,
         });
       }),
     );
@@ -752,15 +701,6 @@ export class MPS3 {
       () => undefined,
     );
 
-    if (options.await === "local") {
-      // Local-ack already happened inside `Syncer.updateContent` via
-      // the operation queue. Don't block on content; still surface
-      // content-PUT failures via the manifest's log.
-      contentSettled.catch((err) =>
-        this.config.log("content PUT failed after manifest commit", err),
-      );
-      return manifestSettled;
-    }
     await manifestSettled;
     await contentSettled;
     return manifestSettled;
@@ -772,18 +712,13 @@ export class MPS3 {
     options: {
       keys: OMap<ResolvedRef, { replication?: b64 }>;
       manifests: ResolvedRef[];
-      await: "local" | "remote";
-      isLoad?: boolean;
     },
   ) {
-    const webValues: Map<ResolvedRef, JSONValue | DeleteValue> = new Map();
     const contentVersions: Promise<Map<ResolvedRef, VersionId | DeleteValue>> = (async () => {
       const results = new Map<ResolvedRef, VersionId | DeleteValue>();
       const contentOperations: Promise<any>[] = [];
       values.forEach((value, contentRef) => {
         if (value !== undefined) {
-          webValues.set(contentRef, value);
-
           contentOperations.push(
             this.putObject({
               operation: "PUT_CONTENT",
@@ -817,10 +752,8 @@ export class MPS3 {
     return Promise.all(
       options.manifests.map((ref) => {
         const manifest = this.getOrCreateManifest(ref);
-        return manifest.updateContent(webValues, contentVersions, {
+        return manifest.updateContent(contentVersions, {
           keys: options.keys,
-          await: options.await,
-          isLoad: options.isLoad === true,
         });
       }),
     );
@@ -893,101 +826,4 @@ export class MPS3 {
     return response;
   }
 
-  /**
-   * Watch a key for changes. The handler fires once with the initial
-   * value (or `undefined` if absent), then again every time the value
-   * changes — locally or remotely. Polling backs off automatically
-   * when there are no subscribers.
-   *
-   * @param key - Either `"key"` or `{ bucket, key }`.
-   * @param handler - Called with `(value, error?)`. `error` is set
-   *   on the initial read failure AND on subsequent poll failures
-   *   during the subscription. Handlers should treat
-   *   `error !== undefined` as a signal that the most recent poll
-   *   failed; the next successful poll will deliver
-   *   `(value, undefined)`. A `value` of `undefined` means the key
-   *   was deleted.
-   * @param options.manifest - Manifest to subscribe to; defaults to
-   *   {@link MPS3Config.defaultManifest}.
-   * @returns Unsubscribe function. Calling it stops further
-   *   notifications. Idempotent.
-   *
-   * @example
-   * ```ts
-   * const unsubscribe = mps3.subscribe("user/42", (user, err) => {
-   *   if (err) console.error(err);
-   *   else console.log("user changed:", user);
-   * });
-   * // ... later
-   * unsubscribe();
-   * ```
-   */
-  public subscribe(
-    key: string | Ref,
-    handler: (value: JSONValue | DeleteValue, error?: Error) => void,
-    options?: {
-      manifest?: Ref;
-    },
-  ): () => void {
-    const manifestRef = resolveManifestRef(options?.manifest, this.config.defaultManifest);
-    const keyRef = resolveContentRef(key, this.config);
-    const manifest = this.getOrCreateManifest(manifestRef);
-    const innerUnsubscribe = manifest.subscribe(keyRef, handler);
-    // The initial `get(...)` is async, so the caller may invoke
-    // `unsubscribe()` before the `.then` / `.catch` fires. Without this
-    // flag we'd emit a "ghost" notification after unsubscribe — common
-    // in React effect cleanup where the same effect re-runs immediately.
-    let unsubscribed = false;
-    this.get(keyRef, {
-      manifest: manifestRef,
-    })
-      .then((initial) => {
-        if (unsubscribed) return;
-        this.config.log(`NOTIFY (initial) ${url(keyRef)}`);
-        // if the data is cached we don't want the subscriber called in the same tick as
-        // the unsubscribe return value will not be initialized
-        queueMicrotask(() => {
-          if (unsubscribed) return;
-          handler(initial, undefined);
-          manifest.poll();
-        });
-      })
-      .catch((error) => {
-        if (unsubscribed) return;
-        handler(undefined, error);
-      });
-
-    return () => {
-      unsubscribed = true;
-      innerUnsubscribe();
-    };
-  }
-
-  /** @internal */
-  refresh(): Promise<unknown> {
-    return Promise.all([...this.manifests.values()].map((manifest) => manifest.poll()));
-  }
-  /** @internal */
-  get subscriberCount(): number {
-    return [...this.manifests.values()].reduce(
-      (count, manifest) => count + manifest.subscriberCount,
-      0,
-    );
-  }
-
-  /**
-   * Cancel every subscription on every manifest, releasing the
-   * polling timers. Use this before tearing down the client (e.g.
-   * page unload, hot-reload). In-flight writes are unaffected — they
-   * still settle.
-   */
-  shutdown(): void {
-    this.manifests.forEach((manifest) => {
-      manifest.subscribers.clear();
-      if (manifest.poller) {
-        clearInterval(manifest.poller);
-        manifest.poller = undefined;
-      }
-    });
-  }
 }

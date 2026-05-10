@@ -24,3 +24,10 @@ src/replication.ts      # already removed; pin
 useChecksum             # already removed (commit 21f4c90); pin
 offline-first.test.ts   # 2026-05-09: offline tier deleted
 src/memory-fetch.ts     # 2026-05-09: moved/reshaped to MemoryStorage in @baerly/protocol
+src/operation-queue.ts          # 2026-05-10: optimistic-write buffer dropped (Baerly carve)
+src/operation-queue.test.ts     # 2026-05-10: with operation-queue.ts
+src/operation-queue             # 2026-05-10: import-token guard
+OperationQueue                  # 2026-05-10: class deleted with operation-queue.ts
+manifest.poll                   # 2026-05-10: setInterval poller dropped
+manifest.subscribe              # 2026-05-10: subscribe() public API dropped (Phase 10 reintroduces)
+pollFrequency                   # 2026-05-10: MPS3Config field dropped with poller

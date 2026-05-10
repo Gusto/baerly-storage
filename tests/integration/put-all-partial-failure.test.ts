@@ -6,7 +6,6 @@ import type { FetchFn } from "../../src/s3-client-lite";
 
 const baseConfig = (label: string, bucket: string): MPS3Config => ({
     label,
-    pollFrequency: 60_000,
     minimizeListObjectsCalls: false,
     parser: new DOMParser(),
     defaultBucket: bucket,
@@ -97,8 +96,5 @@ describe("putAllResolved partial failure (manifest-first ordering)", () => {
         // (in-flight tolerance), not a fabricated value — and crucially
         // not the "deleted" semantic, which would be wrong here.
         expect(await reader.get("doc/b")).toBeUndefined();
-
-        writer.shutdown();
-        reader.shutdown();
     });
 });

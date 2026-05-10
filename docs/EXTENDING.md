@@ -25,8 +25,9 @@ part of the public API.
 /**
  * List all keys present in the manifest.
  *
- * Reflects local optimistic writes that haven't been confirmed by the
- * server yet — what you'd see if you called `get()` on each key right now.
+ * Reads the latest manifest state from S3 and returns the keys it
+ * references. There is no inflight buffer to layer on top — a write
+ * is visible to `keys()` once `put()` has resolved.
  *
  * @param options.manifest - manifest to read; defaults to the configured one
  * @returns array of key strings (no bucket prefix), in unspecified order
@@ -47,7 +48,6 @@ public async keys(
   };
   const manifest = this.getOrCreateManifest(manifestRef);
   const state = await manifest.syncer.getLatest();
-  const inflight = await manifest.operationQueue.flatten();
 
   const result = new Set<string>();
   for (const fileUrl of Object.keys(state.files)) {
@@ -56,11 +56,6 @@ public async keys(
       result.add(fileUrl.split("/").slice(1).join("/"));
     }
   }
-  // flatten() returns OMap<Ref, [value, sequence]> — value === undefined means delete
-  inflight.forEach(([value], ref) => {
-    if (value !== undefined) result.add(ref.key);
-    else result.delete(ref.key);
-  });
   return [...result];
 }
 ```
@@ -72,8 +67,9 @@ public async keys(
 - **`Ref` resolution.** Always merge the user's `options.manifest` over
   `this.config.defaultManifest` to fill in defaults. See `mps3.get` for
   the canonical pattern.
-- **Optimistic state.** When reading, layer `operationQueue.flatten()`
-  over the synced state — that's how `get` and `subscribe` already work.
+- **Reads are on-demand.** Call `manifest.getVersion(ref)` (or
+  `manifest.syncer.getLatest()` if you need the full state). There is
+  no local inflight buffer to layer on top.
 - **No new throw without `MPS3Error`.** If the method can fail, throw
   `new MPS3Error("Code", "context")` from `packages/protocol/src/errors.ts`.
 - **Internal helpers go on `MPS3` with `_` prefix and `/** @internal */`,**
@@ -126,8 +122,8 @@ Use this pattern when a piece of logic outgrows its current home.
 
 ```ts
 // src/myModule.ts
-import type { Ref } from "./types";
-import { MANIFEST_POLL_INTERVAL_MILLIS } from "./constants";
+import type { Ref } from "../packages/protocol/src/types";
+import { LAG_WINDOW_MILLIS } from "../packages/protocol/src/constants";
 
 /**
  * One-line summary of what this module does.
