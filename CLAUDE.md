@@ -92,6 +92,14 @@ deps. Tests requiring Minio or credentials are gated by env:
   under the `cloudflare-pool` vitest project (via
   `pnpm test:adapter-cloudflare`). All variants share the
   backend-agnostic driver in `tests/fixtures/table-api-cascade.ts`.
+- **`tests/integration/phase5-end-to-end.test.ts`** is the Phase-5
+  end-to-end gate: seeds 5000 entries, runs
+  `runScheduledMaintenance` to quiescence, then asserts find()
+  parity, bucket-object-count drop, `log_seq_start` advance, and the
+  "< 1 Class A op / writer / hour" idle-reader cost-model bound via
+  a hand-rolled counting `Storage` proxy. Runs `memory` + `local-fs`
+  variants in the default project; `node-minio` and `cloudflare-r2`
+  are deferred.
 
 `randomized.test.ts` drives the all-to-all single-key causal-
 consistency cascade through `Db` + `ServerWriter` (from
