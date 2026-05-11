@@ -154,6 +154,52 @@ describe("ServerWriter", () => {
     expect(persisted.next_seq).toBe(0);
   });
 
+  test("commit() walks [log_seq_start, next_seq) — entries below the bound are NOT GET-required", async () => {
+    // Bootstrap with next_seq=3 and log_seq_start=2, then plant ONLY
+    // log/2.json on the bucket. The writer must not GET log/0.json or
+    // log/1.json (which don't exist); if it did, `#walkLog` would throw
+    // `Internal` for "missing log entry, protocol invariant violation".
+    const storage = new MemoryStorage();
+    await createCurrentJson(storage, CURRENT_KEY, {
+      schema_version: CURRENT_JSON_SCHEMA_VERSION,
+      snapshot: null,
+      next_seq: 3,
+      writer_fence: { epoch: 0, owner: "test", claimed_at: "" },
+      log_seq_start: 2,
+    });
+    const logPrefix = `app/test/tenant/t/manifests/${COLL}/log`;
+    const planted = {
+      lsn: "fake-lsn",
+      commit_ts: new Date().toISOString(),
+      op: "I" as const,
+      collection: COLL,
+      doc_id: "live",
+      schema_version: 0,
+      session: "abcdef",
+      seq: 2,
+      new: { _id: "live" },
+      patch: { _id: "live" },
+    };
+    await storage.put(`${logPrefix}/2.json`, new TextEncoder().encode(JSON.stringify(planted)));
+
+    const writer = new ServerWriter({ storage, currentJsonKey: CURRENT_KEY });
+    const result = await writer.commit({
+      op: "I",
+      collection: COLL,
+      docId: "new-doc",
+      body: { _id: "new-doc" },
+    });
+
+    expect(result.attempts).toBe(1);
+    expect(result.entry.seq).toBe(3);
+
+    // log_seq_start MUST be preserved across the CAS-advance.
+    const stored = await storage.get(CURRENT_KEY);
+    const persisted = decodeJson<CurrentJson>(stored!.body);
+    expect(persisted.next_seq).toBe(4);
+    expect(persisted.log_seq_start).toBe(2);
+  });
+
   test("two concurrent writers: both succeed and next_seq advances by 2", async () => {
     const storage = getOrCreateMemoryStorageForBucket(BUCKET);
     await createCurrentJson(storage, CURRENT_KEY, seedCurrent());

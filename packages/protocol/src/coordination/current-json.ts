@@ -78,6 +78,23 @@ export interface CurrentJson {
   next_seq: number;
 
   /**
+   * Lowest live log sequence number. Entries with `seq < log_seq_start`
+   * have been folded into the snapshot at {@link snapshot} (or, if
+   * `snapshot === null`, have been dropped because the collection was
+   * truncated). Readers walk `[log_seq_start, next_seq)`. Defaults to
+   * `0` when missing (old records pre-Phase-5) — backward-compatible
+   * with collections provisioned before this field landed. Always read
+   * through {@link logSeqStartOf} rather than destructuring inline.
+   *
+   * Invariants the compactor maintains:
+   *   - `0 <= log_seq_start <= next_seq`
+   *   - `log_seq_start` advances monotonically (never decreases)
+   *   - `log_seq_start > 0` implies `snapshot !== null` (the snapshot
+   *     covers `[0, log_seq_start)`)
+   */
+  log_seq_start?: number;
+
+  /**
    * Embedded write-fence epoch. See {@link WriterFence}.
    */
   writer_fence: WriterFence;
@@ -350,6 +367,16 @@ export async function claimWriter(
   return { json: stamped, etag: stampResult.etag };
 }
 
+/**
+ * Read `current.json.log_seq_start`, treating the missing-field case
+ * as `0`. Callers should always go through this helper rather than
+ * destructuring `c.log_seq_start ?? 0` inline — the helper centralises
+ * the "no snapshot yet" / "old record" contract in one place, and is
+ * the single read-side seam ticket 14 (compactor write) and ticket 15
+ * (log GC sweep) will share with the reader and writer paths.
+ */
+export const logSeqStartOf = (c: CurrentJson): number => c.log_seq_start ?? 0;
+
 // ---------------------------------------------------------------------
 // Internals
 // ---------------------------------------------------------------------
@@ -380,6 +407,27 @@ const assertCurrentJson = (parsed: unknown, key: string): CurrentJson => {
     throw new MPS3Error(
       "InvalidResponse",
       `current.json at ${key}: next_seq must be a non-negative integer`,
+    );
+  }
+  if (
+    r.log_seq_start !== undefined &&
+    (typeof r.log_seq_start !== "number" ||
+      !Number.isInteger(r.log_seq_start) ||
+      r.log_seq_start < 0)
+  ) {
+    throw new MPS3Error(
+      "InvalidResponse",
+      `current.json at ${key}: log_seq_start must be a non-negative integer if present`,
+    );
+  }
+  if (
+    typeof r.log_seq_start === "number" &&
+    typeof r.next_seq === "number" &&
+    r.log_seq_start > r.next_seq
+  ) {
+    throw new MPS3Error(
+      "InvalidResponse",
+      `current.json at ${key}: log_seq_start ${String(r.log_seq_start)} > next_seq ${String(r.next_seq)}`,
     );
   }
   const fence = r.writer_fence;

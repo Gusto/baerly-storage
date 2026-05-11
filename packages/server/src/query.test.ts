@@ -284,4 +284,69 @@ describe("Db.table read terminals", () => {
       expect((err as MPS3Error).code).toBe("InvalidResponse");
     }
   });
+
+  test("case 13: read skips log entries below log_seq_start", async () => {
+    // Bootstrap a collection with one I entry at seq=0, then manually
+    // CAS-write current.json with log_seq_start=1. The reader's bound
+    // becomes [1, 1) so the read returns empty even though log/0.json
+    // still exists on the bucket. Tests the reader's bound — the
+    // compactor lands in ticket 14, where a populated read across this
+    // boundary will use snapshot consumption.
+    await provision(storage);
+    const w = commit(storage);
+    await w.commit({
+      op: "I",
+      collection: COLL,
+      docId: "doc-1",
+      body: { _id: "doc-1", title: "hello" },
+    });
+
+    // Sanity: the row is visible before we advance log_seq_start.
+    expect(await db.table(COLL).where({}).all()).toHaveLength(1);
+
+    // Manually advance log_seq_start to 1 (simulates a compactor run
+    // that folded log/0.json into a snapshot).
+    const { casUpdateCurrentJson } = await import("@baerly/protocol");
+    await casUpdateCurrentJson(storage, currentJsonKey(COLL), (c) => ({
+      ...c,
+      log_seq_start: 1,
+    }));
+
+    // Reader now walks [1, 1) → empty.
+    expect(await db.table(COLL).where({}).all()).toEqual([]);
+    expect(await db.table(COLL).count()).toBe(0);
+    expect(await db.table(COLL).where({}).first()).toBeUndefined();
+  });
+
+  test("case 14: read walks [log_seq_start, next_seq) and skips dropped entries", async () => {
+    // Bootstrap with log_seq_start=2 and next_seq=3, where log/0.json
+    // and log/1.json are absent (simulating a post-truncation bucket).
+    // The reader MUST NOT GET them — only log/2.json — and surface that
+    // single row.
+    await createCurrentJson(storage, currentJsonKey(COLL), {
+      schema_version: CURRENT_JSON_SCHEMA_VERSION,
+      snapshot: null,
+      next_seq: 3,
+      writer_fence: { epoch: 0, owner: "test", claimed_at: "" },
+      log_seq_start: 2,
+    });
+    // Plant only the live log entry.
+    const entry = {
+      lsn: "fake-lsn",
+      commit_ts: new Date().toISOString(),
+      op: "I" as const,
+      collection: COLL,
+      doc_id: "live",
+      schema_version: 0,
+      session: "fakesess1",
+      seq: 2,
+      new: { _id: "live", v: 1 },
+      patch: { _id: "live", v: 1 },
+    };
+    await storage.put(logKey(COLL, 2), new TextEncoder().encode(JSON.stringify(entry)));
+
+    const rows = await db.table(COLL).where({}).all();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toEqual({ _id: "live", v: 1 });
+  });
 });

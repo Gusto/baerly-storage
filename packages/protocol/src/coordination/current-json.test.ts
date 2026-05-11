@@ -6,6 +6,7 @@ import {
   casUpdateCurrentJson,
   claimWriter,
   createCurrentJson,
+  logSeqStartOf,
   MemoryStorage,
   readCurrentJson,
 } from "../index";
@@ -210,4 +211,99 @@ describe("CurrentJson schema (PBT)", () => {
       expect(got!.json).toEqual(initial);
     },
   );
+});
+
+describe("CurrentJson log_seq_start", () => {
+  plainTest("normalises missing field to 0 via logSeqStartOf()", () => {
+    const c: CurrentJson = seedJson();
+    expect(logSeqStartOf(c)).toBe(0);
+  });
+
+  plainTest("returns the explicit log_seq_start when present", () => {
+    const c: CurrentJson = seedJson({ next_seq: 5, log_seq_start: 3 });
+    expect(logSeqStartOf(c)).toBe(3);
+  });
+
+  plainTest("preserves the field across a CAS-advance via object spread", async () => {
+    const s = new MemoryStorage();
+    await createCurrentJson(s, "k", seedJson({ next_seq: 5, log_seq_start: 2 }));
+    const updated = await casUpdateCurrentJson(s, "k", (c) => ({ ...c, next_seq: c.next_seq + 1 }));
+    expect(updated.json.log_seq_start).toBe(2);
+    expect(updated.json.next_seq).toBe(6);
+    // And the field round-trips through a fresh read too.
+    const reread = await readCurrentJson(s, "k");
+    expect(reread!.json.log_seq_start).toBe(2);
+  });
+
+  plainTest("accepts records with the field absent (backward compat)", async () => {
+    // Manually write a record without log_seq_start, then re-read.
+    const s = new MemoryStorage();
+    const body = JSON.stringify({
+      schema_version: CURRENT_JSON_SCHEMA_VERSION,
+      snapshot: null,
+      next_seq: 0,
+      writer_fence: { epoch: 0, owner: "", claimed_at: "" },
+    });
+    await s.put("k", new TextEncoder().encode(body));
+    const read = await readCurrentJson(s, "k");
+    expect(read).not.toBeNull();
+    expect(read!.json.log_seq_start).toBeUndefined();
+    expect(logSeqStartOf(read!.json)).toBe(0);
+  });
+
+  plainTest("accepts an explicit log_seq_start equal to next_seq (fully compacted)", async () => {
+    const s = new MemoryStorage();
+    await createCurrentJson(s, "k", seedJson({ next_seq: 7, log_seq_start: 7 }));
+    const got = await readCurrentJson(s, "k");
+    expect(got!.json.log_seq_start).toBe(7);
+    expect(got!.json.next_seq).toBe(7);
+  });
+
+  plainTest("rejects negative log_seq_start with InvalidResponse", async () => {
+    const s = new MemoryStorage();
+    const body = JSON.stringify({
+      schema_version: CURRENT_JSON_SCHEMA_VERSION,
+      snapshot: null,
+      next_seq: 0,
+      writer_fence: { epoch: 0, owner: "", claimed_at: "" },
+      log_seq_start: -1,
+    });
+    await s.put("k", new TextEncoder().encode(body));
+    await expect(readCurrentJson(s, "k")).rejects.toMatchObject({
+      code: "InvalidResponse",
+      message: expect.stringMatching(/log_seq_start/),
+    });
+  });
+
+  plainTest("rejects non-integer log_seq_start with InvalidResponse", async () => {
+    const s = new MemoryStorage();
+    const body = JSON.stringify({
+      schema_version: CURRENT_JSON_SCHEMA_VERSION,
+      snapshot: null,
+      next_seq: 5,
+      writer_fence: { epoch: 0, owner: "", claimed_at: "" },
+      log_seq_start: 1.5,
+    });
+    await s.put("k", new TextEncoder().encode(body));
+    await expect(readCurrentJson(s, "k")).rejects.toMatchObject({
+      code: "InvalidResponse",
+      message: expect.stringMatching(/log_seq_start/),
+    });
+  });
+
+  plainTest("rejects log_seq_start > next_seq with InvalidResponse", async () => {
+    const s = new MemoryStorage();
+    const body = JSON.stringify({
+      schema_version: CURRENT_JSON_SCHEMA_VERSION,
+      snapshot: null,
+      next_seq: 1,
+      writer_fence: { epoch: 0, owner: "", claimed_at: "" },
+      log_seq_start: 2,
+    });
+    await s.put("k", new TextEncoder().encode(body));
+    await expect(readCurrentJson(s, "k")).rejects.toMatchObject({
+      code: "InvalidResponse",
+      message: expect.stringMatching(/log_seq_start.*next_seq/),
+    });
+  });
 });

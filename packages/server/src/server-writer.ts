@@ -37,6 +37,7 @@ import {
   type CurrentJson,
   type JSONArraylessObject,
   type LogEntry,
+  logSeqStartOf,
   MPS3Error,
   type Storage,
   type StoragePutOptions,
@@ -228,14 +229,18 @@ export class ServerWriter {
       const baseEtag = read.etag;
 
       // ── Step 2. Walk the log to validate integrity. ───────────────
-      // Phase 5 will surface `log_seq_start` on `current.json`; until
-      // then walk from 0. The fold (per-doc reducer) is deferred to
-      // Phase 4 — today every `U` arrives with a full post-image, so
-      // we don't need to materialise it. We still issue the GETs so
-      // the I/O profile matches what adapters in tickets 04/05 will
-      // see in real workloads, and so a missing entry trips the
-      // Internal invariant check.
-      await this.#walkLog(logPrefix, current.next_seq);
+      // Walk `[log_seq_start, next_seq)` — entries below the bound
+      // have been folded into the snapshot (ticket 14) and may already
+      // have been swept off the bucket (ticket 15), so GET-requiring
+      // them would trip the `Internal` invariant check. Pre-Phase-5
+      // collections have `log_seq_start` undefined → `logSeqStartOf`
+      // normalises to 0, so this is a no-op rewrite for the legacy
+      // path. The fold (per-doc reducer) is deferred to Phase 4 —
+      // today every `U` arrives with a full post-image, so we don't
+      // need to materialise it. We still issue the GETs so the I/O
+      // profile matches what adapters in tickets 04/05 will see, and
+      // so a missing entry trips the `Internal` invariant.
+      await this.#walkLog(logPrefix, logSeqStartOf(current), current.next_seq);
 
       // ── Step 3. Mint the new LogEntry. ────────────────────────────
       const nextSeq = current.next_seq;
@@ -395,9 +400,11 @@ export class ServerWriter {
 
     // ── Step 2. Walk the log to validate integrity. ─────────────────
     // Same as single-mutation commit; observational today (Phase 5
-    // will fold). Keep the GETs so adapters see the real I/O
-    // profile, and so a missing entry trips the Internal invariant.
-    await this.#walkLog(logPrefix, current.next_seq);
+    // will fold). Walks `[log_seq_start, next_seq)` so entries already
+    // folded into a snapshot (and possibly swept off the bucket by
+    // ticket 15) don't trip the `Internal` invariant. Pre-Phase-5
+    // collections normalise to start=0 — legacy behaviour is preserved.
+    await this.#walkLog(logPrefix, logSeqStartOf(current), current.next_seq);
 
     // ── Step 3. Mint N LogEntries with contiguous seqs. ─────────────
     // All entries share `session` (one session per transaction).
@@ -494,16 +501,21 @@ export class ServerWriter {
   }
 
   /**
-   * Walk `log/0.json` … `log/<nextSeq - 1>.json` in parallel. Any
-   * missing entry is a protocol-invariant violation
+   * Walk `log/<logSeqStart>.json` … `log/<nextSeq - 1>.json` in
+   * parallel. Any missing entry is a protocol-invariant violation
    * (`MPS3Error{code:"Internal"}`). A malformed body surfaces as
    * `InvalidResponse`. The materialised entries are discarded in
    * Phase 3 — Phase 4 will fold them into a per-doc reducer.
+   *
+   * `logSeqStart` is the boundary set by the Phase-5 compactor
+   * (ticket 14) on `current.json.log_seq_start`. Entries below it
+   * have been folded into the snapshot and may have been swept off
+   * the bucket (ticket 15), so the walk MUST NOT GET-require them.
    */
-  async #walkLog(logPrefix: string, nextSeq: number): Promise<void> {
-    if (nextSeq === 0) return;
+  async #walkLog(logPrefix: string, logSeqStart: number, nextSeq: number): Promise<void> {
+    if (logSeqStart >= nextSeq) return;
     const reads: Array<Promise<LogEntry>> = [];
-    for (let s = 0; s < nextSeq; s++) {
+    for (let s = logSeqStart; s < nextSeq; s++) {
       reads.push(this.#readLogEntry(`${logPrefix}/log/${s}.json`));
     }
     await Promise.all(reads);

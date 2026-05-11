@@ -35,6 +35,7 @@
 import {
   type JSONArraylessObject,
   type LogEntry,
+  logSeqStartOf,
   matches,
   merge,
   mergePredicates,
@@ -427,17 +428,26 @@ const runRead = async <T extends JSONArraylessObject>(
   // than throw. Mirrors `Storage.get` returning null on miss.
   if (head === null) return [];
 
-  // Phase-5 `head.json.snapshot` pointer is ignored here; the reader
-  // walks the log from 0. Once snapshots land, the loop will start
-  // from the snapshot's per-doc map and skip entries with
-  // `seq < snapshot.seq_end` — no shape change.
+  // `head.json.snapshot` and the snapshot-load path are consumed in
+  // ticket 14. Today this reader walks `[log_seq_start, next_seq)`
+  // directly — when ticket 14 lands, it will start from the snapshot's
+  // per-doc map and the loop bounds stay identical. Entries with
+  // `seq < log_seq_start` have been folded into the snapshot (or
+  // dropped on truncation) and MUST NOT be GET-required here — the
+  // bucket may have already swept them.
 
   const nextSeq = head.json.next_seq;
-  if (nextSeq === 0) return [];
+  const logSeqStart = logSeqStartOf(head.json);
+  if (logSeqStart >= nextSeq) {
+    // Either the table is empty (both 0) or every log entry has been
+    // folded into the snapshot. Snapshot consumption lands in ticket
+    // 14 — until then this branch returns empty.
+    return [];
+  }
 
-  // ── Step 2. Parallel-fetch every log entry [0, next_seq). ─────────
+  // ── Step 2. Parallel-fetch every log entry [log_seq_start, next_seq).
   const logKeys: string[] = [];
-  for (let s = 0; s < nextSeq; s++) {
+  for (let s = logSeqStart; s < nextSeq; s++) {
     logKeys.push(`${ctx.tablePrefix}/log/${s}.json`);
   }
   const entries = await Promise.all(logKeys.map(async (k) => readLogEntry(ctx.storage, k)));
