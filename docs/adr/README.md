@@ -15,6 +15,13 @@ These are decisions, not principles. Cross-cutting philosophy lives in
 - [0003 — Error code discriminant over `instanceof`](./0003-error-code-discriminant.md)
 - [0004 — oxlint / oxfmt / tsgo over the JS-native trio](./0004-oxlint-oxfmt-tsgo.md)
 - [0005 — Client-only architecture (no server)](./0005-client-only.md)
+- [0006 — Server component (`@baerly/server`)](./0006-server-component.md)
+- [0011 — CAS scope is per-collection](./0011-cas-scope.md)
+- [0012 — Transaction scope is single-table](./0012-transaction-scope.md)
+- [0013 — Export contract is Postgres-logical-replication-shaped](./0013-export-contract.md)
+- [0015 — Cost ceiling is a published bound](./0015-cost-ceiling.md)
+- [0016 — Forward-only schema migration via `schema_version`](./0016-schema-migration.md)
+- [0017 — Chunked level-based snapshot layout](./0017-snapshot-levels.md)
 
 ## Template
 
