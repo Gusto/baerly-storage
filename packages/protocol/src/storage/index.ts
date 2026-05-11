@@ -16,3 +16,9 @@ export {
 } from "./memory";
 export type { S3HttpStorageOptions } from "./s3-http";
 export { S3HttpStorage } from "./s3-http";
+export type {
+  ConformanceFactory,
+  ConformanceFactoryResult,
+  ConformanceOptions,
+} from "./conformance";
+export { defineStorageConformanceSuite } from "./conformance";
