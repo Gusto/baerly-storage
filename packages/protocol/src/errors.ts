@@ -15,7 +15,26 @@ export type MPS3ErrorCode =
   /** Server returned data that didn't parse (malformed XML, non-JSON body where JSON expected). */
   | "InvalidResponse"
   /** Internal invariant violation — should not be reachable. File a bug. */
-  | "Internal";
+  | "Internal"
+  /**
+   * Document body failed schema validation. Today (Phase 2):
+   * emitted by `Db._raw.put` and the table-API write verbs when
+   * the body isn't valid JSON or contains an array where
+   * `JSONArrayless` is required. Phase 9 wires this to a real
+   * validator without changing the wire shape.
+   */
+  | "SchemaError"
+  /**
+   * CAS lost on `current.json` (or, for `Query.replace`, the
+   * row-cardinality precondition failed). Caller decides whether
+   * to retry. Surfaces in Phase 4 / Phase 6.
+   */
+  | "Conflict"
+  /**
+   * `Verifier` (Phase 6) returned no identity. HTTP server maps
+   * to 401. Code is reserved here so the union locks in Phase 2.
+   */
+  | "Unauthorized";
 
 /**
  * The single error class thrown by MPS3. Discriminate by `code`, not

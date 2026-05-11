@@ -1,12 +1,26 @@
 {
     "name": "@baerly/server",
     "version": "0.0.0",
-    "description": "Baerly server — Cloudflare Worker (or Node) HTTP surface over a Storage adapter. Stub.",
+    "description": "Baerly server — portable HTTP/RPC surface over a Storage adapter. Phase 2 ships types only; runtime lands in Phase 6.",
     "license": "MIT",
     "type": "module",
     "private": true,
     "sideEffects": false,
     "dependencies": {
         "@baerly/protocol": "workspace:*"
+    },
+    "exports": {
+        ".": {
+            "types": "./src/index.ts",
+            "import": "./src/index.ts"
+        }
+    },
+    "publishConfig": {
+        "exports": {
+            ".": {
+                "types": "./dist/index.d.ts",
+                "import": "./dist/index.js"
+            }
+        }
     }
 }
