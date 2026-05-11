@@ -34,8 +34,7 @@ export interface ConformanceFactoryResult {
 
 export type ConformanceFactory = () => Promise<ConformanceFactoryResult>;
 
-const KEY_CHARS =
-  "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.";
+const KEY_CHARS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.";
 
 const DEFAULT_KEY_ARB = fc.string({
   minLength: 1,
@@ -73,9 +72,9 @@ const PNG_FIXTURE = new Uint8Array([
   // 8-byte PNG signature + tiny IHDR chunk. Enough bytes to catch a
   // truncation / re-encoding bug without bringing a real image into
   // the test fixtures.
-  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49,
-  0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06,
-  0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4, 0x89,
+  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+  0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4,
+  0x89,
 ]);
 
 /**
@@ -252,9 +251,7 @@ export function defineStorageConformanceSuite(
         await s.put("a/1", new TextEncoder().encode("a1"));
         await s.put("a/2", new TextEncoder().encode("a2"));
         await s.put("a/3", new TextEncoder().encode("a3"));
-        const after = (await collect(s.list("a/", { startAfter: "a/1" }))).map(
-          (e) => e.key,
-        );
+        const after = (await collect(s.list("a/", { startAfter: "a/1" }))).map((e) => e.key);
         expect(after).toEqual(["a/2", "a/3"]);
       });
 
@@ -262,9 +259,7 @@ export function defineStorageConformanceSuite(
         await s.put("a/1", new TextEncoder().encode("a1"));
         await s.put("a/2", new TextEncoder().encode("a2"));
         await s.put("a/3", new TextEncoder().encode("a3"));
-        const capped = (await collect(s.list("a/", { maxKeys: 2 }))).map(
-          (e) => e.key,
-        );
+        const capped = (await collect(s.list("a/", { maxKeys: 2 }))).map((e) => e.key);
         expect(capped).toEqual(["a/1", "a/2"]);
       });
 
@@ -284,55 +279,39 @@ export function defineStorageConformanceSuite(
       // `fc.uniqueArray`; gated on `caseSensitiveKeys` because some
       // stores collapse keys that differ only in case.
       fcTest.prop({
-        entries: fc.uniqueArray(
-          fc.tuple(opts.keyArb, opts.bodyArb),
-          {
-            minLength: 0,
-            maxLength: 16,
-            selector: ([k]) =>
-              opts.caseSensitiveKeys ? k : k.toLowerCase(),
-          },
-        ),
+        entries: fc.uniqueArray(fc.tuple(opts.keyArb, opts.bodyArb), {
+          minLength: 0,
+          maxLength: 16,
+          selector: ([k]) => (opts.caseSensitiveKeys ? k : k.toLowerCase()),
+        }),
         prefixChar: fc.constantFrom(...KEY_CHARS.split("")),
-      })(
-        "list(prefix) returns sorted keys-with-prefix",
-        async ({ entries, prefixChar }) => {
-          await drain(s);
-          for (const [k, body] of entries) await s.put(k, body);
-          const listed = (await collect(s.list(prefixChar))).map((e) => e.key);
-          const expected = entries
-            .map(([k]) => k)
-            .filter((k) => k.startsWith(prefixChar))
-            .toSorted();
-          expect(listed).toEqual(expected);
-        },
-      );
+      })("list(prefix) returns sorted keys-with-prefix", async ({ entries, prefixChar }) => {
+        await drain(s);
+        for (const [k, body] of entries) await s.put(k, body);
+        const listed = (await collect(s.list(prefixChar))).map((e) => e.key);
+        const expected = entries
+          .map(([k]) => k)
+          .filter((k) => k.startsWith(prefixChar))
+          .toSorted();
+        expect(listed).toEqual(expected);
+      });
 
       fcTest.prop({
-        entries: fc.uniqueArray(
-          fc.tuple(opts.keyArb, opts.bodyArb),
-          {
-            minLength: 1,
-            maxLength: 16,
-            selector: ([k]) =>
-              opts.caseSensitiveKeys ? k : k.toLowerCase(),
-          },
-        ),
-      })(
-        "startAfter:k yields strict suffix of lex-sorted keys",
-        async ({ entries }) => {
-          await drain(s);
-          for (const [k, body] of entries) await s.put(k, body);
-          const sorted = entries.map(([k]) => k).toSorted();
-          // Use the first key as the cursor — should yield everything
-          // strictly greater than it.
-          const cursor = sorted[0]!;
-          const listed = (
-            await collect(s.list("", { startAfter: cursor }))
-          ).map((e) => e.key);
-          expect(listed).toEqual(sorted.filter((k) => k > cursor));
-        },
-      );
+        entries: fc.uniqueArray(fc.tuple(opts.keyArb, opts.bodyArb), {
+          minLength: 1,
+          maxLength: 16,
+          selector: ([k]) => (opts.caseSensitiveKeys ? k : k.toLowerCase()),
+        }),
+      })("startAfter:k yields strict suffix of lex-sorted keys", async ({ entries }) => {
+        await drain(s);
+        for (const [k, body] of entries) await s.put(k, body);
+        const sorted = entries.map(([k]) => k).toSorted();
+        // Use the first key as the cursor — should yield everything
+        // strictly greater than it.
+        const cursor = sorted[0]!;
+        const listed = (await collect(s.list("", { startAfter: cursor }))).map((e) => e.key);
+        expect(listed).toEqual(sorted.filter((k) => k > cursor));
+      });
     });
 
     describe("binary fidelity", () => {
@@ -361,9 +340,7 @@ export function defineStorageConformanceSuite(
         await expect(
           s.put("k", new TextEncoder().encode("v"), { signal: ac.signal }),
         ).rejects.toBeDefined();
-        await expect(
-          s.delete("k", { signal: ac.signal }),
-        ).rejects.toBeDefined();
+        await expect(s.delete("k", { signal: ac.signal })).rejects.toBeDefined();
       });
 
       test("pre-aborted signal rejects list", async () => {

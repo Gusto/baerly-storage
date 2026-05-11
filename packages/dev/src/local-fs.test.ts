@@ -32,9 +32,7 @@ const LOCALFS_KEY_ARB = fc
   .string({
     minLength: 1,
     maxLength: 32,
-    unit: fc.constantFrom(
-      ..."abcdefghijklmnopqrstuvwxyz0123456789-_".split(""),
-    ),
+    unit: fc.constantFrom(..."abcdefghijklmnopqrstuvwxyz0123456789-_".split("")),
   })
   .filter((k) => k !== "." && k !== "..");
 

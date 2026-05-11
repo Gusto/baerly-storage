@@ -45,11 +45,7 @@ export class MemoryStorage implements Storage {
     return { body: stored.body, etag: stored.etag };
   }
 
-  async put(
-    key: string,
-    body: Uint8Array,
-    opts?: StoragePutOptions,
-  ): Promise<StoragePutResult> {
+  async put(key: string, body: Uint8Array, opts?: StoragePutOptions): Promise<StoragePutResult> {
     opts?.signal?.throwIfAborted();
     const existing = this.#objects.get(key);
 
@@ -197,8 +193,7 @@ const dispatch = async (
     const result = await storage.get(key);
     if (result === null) return new Response(null, { status: 404 });
     const headers: Record<string, string> = { etag: result.etag };
-    const ct =
-      storage instanceof MemoryStorage ? storage.contentTypeOf(key) : undefined;
+    const ct = storage instanceof MemoryStorage ? storage.contentTypeOf(key) : undefined;
     if (ct !== undefined) headers["content-type"] = ct;
     // TS 7's lib.dom narrows `BodyInit` to ArrayBuffer-backed views —
     // a generic `Uint8Array<ArrayBufferLike>` (which the protocol uses
@@ -333,9 +328,8 @@ export const resetMemoryStorage = (): void => {
  * URL-encoded fetch adapters.
  * @internal
  */
-export const getMemoryStorageForBucket = (
-  bucket: string,
-): MemoryStorage | undefined => sharedPerBucket.get(bucket);
+export const getMemoryStorageForBucket = (bucket: string): MemoryStorage | undefined =>
+  sharedPerBucket.get(bucket);
 
 /**
  * Get the process-singleton {@link MemoryStorage} for the named
@@ -346,9 +340,7 @@ export const getMemoryStorageForBucket = (
  * in the same process see each other's writes for the same
  * bucket name.
  */
-export const getOrCreateMemoryStorageForBucket = (
-  bucket: string,
-): MemoryStorage => {
+export const getOrCreateMemoryStorageForBucket = (bucket: string): MemoryStorage => {
   let s = sharedPerBucket.get(bucket);
   if (s === undefined) {
     s = new MemoryStorage();

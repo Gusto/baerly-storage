@@ -20,11 +20,7 @@ export class OfflineStorage implements Storage {
     throw new MPS3Error("OfflineNoCache", `Offline; cannot GET ${key}`);
   }
 
-  async put(
-    key: string,
-    _body: Uint8Array,
-    _opts?: StoragePutOptions,
-  ): Promise<StoragePutResult> {
+  async put(key: string, _body: Uint8Array, _opts?: StoragePutOptions): Promise<StoragePutResult> {
     throw new MPS3Error("OfflineNoCache", `Offline; cannot PUT ${key}`);
   }
 

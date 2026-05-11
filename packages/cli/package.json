@@ -1,11 +1,11 @@
 {
-    "name": "@baerly/cli",
-    "version": "0.0.0",
-    "description": "Baerly CLI — init, inspect, compact, fsck, export, migrate, dump, restore. Stub.",
-    "license": "MIT",
-    "type": "module",
-    "private": true,
-    "dependencies": {
-        "@baerly/protocol": "workspace:*"
-    }
+  "name": "@baerly/cli",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Baerly CLI — init, inspect, compact, fsck, export, migrate, dump, restore. Stub.",
+  "license": "MIT",
+  "type": "module",
+  "dependencies": {
+    "@baerly/protocol": "workspace:*"
+  }
 }

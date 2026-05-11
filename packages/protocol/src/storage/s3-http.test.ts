@@ -93,9 +93,7 @@ describe("S3HttpStorage.get", () => {
   });
 
   test("URL-encodes the key segment", async () => {
-    const fetchFn = vi.fn(async (_req: Request) =>
-      okResponse(new ArrayBuffer(0), { ETag: '"x"' }),
-    );
+    const fetchFn = vi.fn(async (_req: Request) => okResponse(new ArrayBuffer(0), { ETag: '"x"' }));
     const s = mkStorage(fetchFn as unknown as typeof fetch);
     await s.get("a/b c");
     const req = fetchFn.mock.calls[0]![0] as Request;
@@ -125,9 +123,7 @@ describe("S3HttpStorage.put", () => {
   test("412 with ifMatch → InvalidResponse(PreconditionFailed)", async () => {
     const fetchFn = vi.fn(async (_req: Request) => noBody(412));
     const s = mkStorage(fetchFn as unknown as typeof fetch);
-    await expect(
-      s.put("k", new Uint8Array(0), { ifMatch: '"old"' }),
-    ).rejects.toMatchObject({
+    await expect(s.put("k", new Uint8Array(0), { ifMatch: '"old"' })).rejects.toMatchObject({
       code: "InvalidResponse",
       message: expect.stringContaining("PreconditionFailed"),
     });
@@ -207,21 +203,19 @@ describe("S3HttpStorage.delete", () => {
 });
 
 describe("S3HttpStorage.list", () => {
-  const xmlPage = (
-    keys: string[],
-    nextToken?: string,
-  ): string =>
+  const xmlPage = (keys: string[], nextToken?: string): string =>
     `<?xml version="1.0"?><ListBucketResult>` +
     keys.map((k) => `<Contents><Key>${k}</Key><ETag>"e_${k}"</ETag></Contents>`).join("") +
     (nextToken !== undefined ? `<NextContinuationToken>${nextToken}</NextContinuationToken>` : "") +
     `</ListBucketResult>`;
 
   test("single page — yields entries and stops", async () => {
-    const fetchFn = vi.fn(async (_req: Request) =>
-      new Response(xmlPage(["a", "b", "c"]), {
-        status: 200,
-        headers: { "Content-Type": "application/xml" },
-      }),
+    const fetchFn = vi.fn(
+      async (_req: Request) =>
+        new Response(xmlPage(["a", "b", "c"]), {
+          status: 200,
+          headers: { "Content-Type": "application/xml" },
+        }),
     );
     const s = mkStorage(fetchFn as unknown as typeof fetch);
     const out: { key: string; etag: string }[] = [];
@@ -250,8 +244,8 @@ describe("S3HttpStorage.list", () => {
   });
 
   test("maxKeys stops iteration", async () => {
-    const fetchFn = vi.fn(async (_req: Request) =>
-      new Response(xmlPage(["a", "b", "c", "d"]), { status: 200 }),
+    const fetchFn = vi.fn(
+      async (_req: Request) => new Response(xmlPage(["a", "b", "c", "d"]), { status: 200 }),
     );
     const s = mkStorage(fetchFn as unknown as typeof fetch);
     const out: string[] = [];
@@ -260,9 +254,7 @@ describe("S3HttpStorage.list", () => {
   });
 
   test("startAfter sets the cursor", async () => {
-    const fetchFn = vi.fn(async (_req: Request) =>
-      new Response(xmlPage([]), { status: 200 }),
-    );
+    const fetchFn = vi.fn(async (_req: Request) => new Response(xmlPage([]), { status: 200 }));
     const s = mkStorage(fetchFn as unknown as typeof fetch);
     const out: string[] = [];
     for await (const e of s.list("p/", { startAfter: "p/x" })) out.push(e.key);
@@ -275,9 +267,11 @@ describe("S3HttpStorage.list", () => {
     const fetchFn = vi.fn(async (_req: Request) => noBody(403));
     const s = mkStorage(fetchFn as unknown as typeof fetch);
     const iter = s.list("p/");
-    await expect((async () => {
-      for await (const _ of iter) void _;
-    })()).rejects.toMatchObject({ code: "AccessDenied" });
+    await expect(
+      (async () => {
+        for await (const _ of iter) void _;
+      })(),
+    ).rejects.toMatchObject({ code: "AccessDenied" });
   });
 
   test("aborted signal → throws", async () => {
@@ -329,7 +323,9 @@ describe("sign callback", () => {
   test("sign() runs before fetch and its return value is what fetch sees", async () => {
     const upstreamFetch = vi.fn(async (_req: Request) => noBody(200, { ETag: '"x"' }));
     const sign = vi.fn(async (req: Request) => {
-      const next = new Request(req, { headers: { ...Object.fromEntries(req.headers), "X-Signed": "1" } });
+      const next = new Request(req, {
+        headers: { ...Object.fromEntries(req.headers), "X-Signed": "1" },
+      });
       return next;
     });
     const s = new S3HttpStorage({

@@ -5,7 +5,12 @@ import cloudflareCredentials from "../../credentials/cloudflare.json";
 import awsCredentials from "../../credentials/aws.json";
 import "fake-indexeddb/auto";
 import { uuid } from "@baerly/protocol";
-import { createBucket, getObject, makeFixtureClient, putBucketVersioningEnabled } from "../fixtures/s3-fixtures";
+import {
+  createBucket,
+  getObject,
+  makeFixtureClient,
+  putBucketVersioningEnabled,
+} from "../fixtures/s3-fixtures";
 
 describe("mps3", () => {
   let session = uuid().substring(0, 8);
@@ -277,7 +282,6 @@ describe("mps3", () => {
 
         expect(reads).toEqual([...Array(n)].map((_, i) => i));
       });
-
     }),
   );
 });

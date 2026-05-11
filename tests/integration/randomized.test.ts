@@ -4,7 +4,11 @@ import { MPS3, type MPS3Config } from "../../src/mps3";
 import { CentralisedOfflineFirstCausalSystem } from "../fixtures/consistency";
 import { DOMParser } from "@xmldom/xmldom";
 import { type DeleteValue, type JSONValue, uuid } from "@baerly/protocol";
-import { createBucket, makeFixtureClient, putBucketVersioningEnabled } from "../fixtures/s3-fixtures";
+import {
+  createBucket,
+  makeFixtureClient,
+  putBucketVersioningEnabled,
+} from "../fixtures/s3-fixtures";
 import "fake-indexeddb/auto";
 
 describe("mps3", () => {

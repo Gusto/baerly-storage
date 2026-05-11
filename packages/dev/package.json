@@ -1,12 +1,12 @@
 {
-    "name": "@baerly/dev",
-    "version": "0.0.0",
-    "description": "Dev harness — local-fs Storage adapter + miniflare runner. Stub.",
-    "license": "MIT",
-    "type": "module",
-    "private": true,
-    "dependencies": {
-        "@baerly/protocol": "workspace:*",
-        "@baerly/server": "workspace:*"
-    }
+  "name": "@baerly/dev",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Dev harness — local-fs Storage adapter + miniflare runner. Stub.",
+  "license": "MIT",
+  "type": "module",
+  "dependencies": {
+    "@baerly/protocol": "workspace:*",
+    "@baerly/server": "workspace:*"
+  }
 }

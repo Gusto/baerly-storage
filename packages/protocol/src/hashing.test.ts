@@ -45,20 +45,17 @@ describe("or and inside", () => {
       ),
     );
 
-  test.prop({ pair: equalLengthPair })(
-    "forall a, b: a inside (a or b)",
-    ({ pair: [a, b] }) => {
-      const aB64 = toB64(a);
-      const bB64 = toB64(b);
-      const a_or_b = or(aB64, bB64);
+  test.prop({ pair: equalLengthPair })("forall a, b: a inside (a or b)", ({ pair: [a, b] }) => {
+    const aB64 = toB64(a);
+    const bB64 = toB64(b);
+    const a_or_b = or(aB64, bB64);
 
-      // monotonicity under or
-      expect(inside(aB64, a_or_b)).toBe(true);
-      expect(inside(bB64, a_or_b)).toBe(true);
-      // reflexivity
-      expect(inside(aB64, aB64)).toBe(true);
-      expect(inside(bB64, bB64)).toBe(true);
-      expect(inside(a_or_b, a_or_b)).toBe(true);
-    },
-  );
+    // monotonicity under or
+    expect(inside(aB64, a_or_b)).toBe(true);
+    expect(inside(bB64, a_or_b)).toBe(true);
+    // reflexivity
+    expect(inside(aB64, aB64)).toBe(true);
+    expect(inside(bB64, bB64)).toBe(true);
+    expect(inside(a_or_b, a_or_b)).toBe(true);
+  });
 });

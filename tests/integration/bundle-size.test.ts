@@ -13,14 +13,12 @@ import { describe, expect, test } from "vitest";
 const BUNDLE_BUDGET_BYTES = 80 * 1024;
 
 describe("bundle size", () => {
-    test("dist/index.js stays under bundle budget", () => {
-        const distPath = resolve(__dirname, "../../dist/index.js");
-        if (!existsSync(distPath)) {
-            throw new Error(
-                `dist/index.js missing — run \`pnpm build\` before \`pnpm test\``,
-            );
-        }
-        const size = statSync(distPath).size;
-        expect(size).toBeLessThan(BUNDLE_BUDGET_BYTES);
-    });
+  test("dist/index.js stays under bundle budget", () => {
+    const distPath = resolve(__dirname, "../../dist/index.js");
+    if (!existsSync(distPath)) {
+      throw new Error(`dist/index.js missing — run \`pnpm build\` before \`pnpm test\``);
+    }
+    const size = statSync(distPath).size;
+    expect(size).toBeLessThan(BUNDLE_BUDGET_BYTES);
+  });
 });

@@ -45,9 +45,7 @@ export declare class Db<S extends SchemaMap = SchemaMap> {
    * necessarily the same object identity — compare by name, not
    * `===`.
    */
-  table<T extends JSONArraylessObject = JSONArraylessObject>(
-    name: string,
-  ): Table<T>;
+  table<T extends JSONArraylessObject = JSONArraylessObject>(name: string): Table<T>;
 
   /**
    * Atomic mutation over a **single** table. The callback receives

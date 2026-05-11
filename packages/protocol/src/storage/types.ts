@@ -36,11 +36,7 @@ export interface Storage {
    * `ifNoneMatch: "*"` for create-only (write only if no object
    * exists). Conflicts throw `MPS3Error` with HTTP 412 semantics.
    */
-  put(
-    key: string,
-    body: Uint8Array,
-    opts?: StoragePutOptions,
-  ): Promise<StoragePutResult>;
+  put(key: string, body: Uint8Array, opts?: StoragePutOptions): Promise<StoragePutResult>;
 
   /**
    * Delete a single object. Idempotent: deleting a missing key is

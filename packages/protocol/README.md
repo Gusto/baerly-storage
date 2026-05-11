@@ -4,7 +4,7 @@ Pure protocol primitives — types, errors, JSON merge-patch, constants,
 hashing, ordered maps.
 
 This package is pure by construction: no `fetch`, no IndexedDB, no DOM
-parsers, no S3 wire formats. Everything that *touches the world* lives in
+parsers, no S3 wire formats. Everything that _touches the world_ lives in
 sibling packages (`@baerly/server`, `@baerly/client`, …) and depends on
 this one.
 

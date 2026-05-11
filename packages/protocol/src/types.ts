@@ -114,7 +114,7 @@ export const versionFromUuid = (u: UUID): ContentVersionId => u as unknown as Co
  */
 export const resolveContentRef = (
   ref: string | Ref,
-  config: { defaultBucket: string }
+  config: { defaultBucket: string },
 ): ResolvedRef =>
   typeof ref === "string"
     ? { bucket: config.defaultBucket, key: ref }
@@ -127,7 +127,7 @@ export const resolveContentRef = (
  */
 export const resolveManifestRef = (
   ref: Ref | undefined,
-  defaultManifest: ResolvedRef
+  defaultManifest: ResolvedRef,
 ): ResolvedRef => ({ ...defaultManifest, ...ref });
 
 export const countKey = (number: number): string => uint2strDesc(number, 10);

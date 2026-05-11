@@ -38,12 +38,9 @@ const jsonStructuredDoc = fc.letrec((tie) => ({
 })).doc as fc.Arbitrary<JSONArrayless>;
 
 describe("JSON Merge Patch (RFC 7386)", () => {
-  test.prop({ a: jsonArrayless })(
-    "identity: merge(a, undefined) === a",
-    ({ a }) => {
-      expect(merge(a, undefined)).toEqual(a);
-    },
-  );
+  test.prop({ a: jsonArrayless })("identity: merge(a, undefined) === a", ({ a }) => {
+    expect(merge(a, undefined)).toEqual(a);
+  });
 
   test("case: merge(0, {}) === {}", () => {
     expect(merge<JSONArrayless>(0, {})).toEqual({});
@@ -53,12 +50,9 @@ describe("JSON Merge Patch (RFC 7386)", () => {
     expect(merge({ a: "" }, {})).toEqual({ a: "" });
   });
 
-  test.prop({ a: jsonArrayless })(
-    "deletion: merge(a, null) === undefined",
-    ({ a }) => {
-      expect(merge(a, null)).toBeUndefined();
-    },
-  );
+  test.prop({ a: jsonArrayless })("deletion: merge(a, null) === undefined", ({ a }) => {
+    expect(merge(a, null)).toBeUndefined();
+  });
 
   test("case: merge(true, {a: {}}) === {a: {}}", () => {
     expect(merge<JSONArrayless>(true, { a: {} })).toEqual({ a: {} });
@@ -83,20 +77,15 @@ describe("JSON Merge Patch (RFC 7386)", () => {
     },
   );
 
-  test.prop({ a: jsonArrayless })(
-    "idempotent: merge(a, a) === a",
-    ({ a }) => {
-      expect(merge(a, a)).toEqual(a);
-    },
-  );
+  test.prop({ a: jsonArrayless })("idempotent: merge(a, a) === a", ({ a }) => {
+    expect(merge(a, a)).toEqual(a);
+  });
 
   describe("fold", () => {
     test.prop({ a: jsonArrayless, b: jsonArrayless, c: jsonArrayless })(
       "idempotent: fold(fold(a, b, c), a, b, c) === fold(a, b, c)",
       ({ a, b, c }) => {
-        expect(fold<JSONArrayless>(fold(a, b, c), a, b, c)).toEqual(
-          fold(a, b, c),
-        );
+        expect(fold<JSONArrayless>(fold(a, b, c), a, b, c)).toEqual(fold(a, b, c));
       },
     );
 
@@ -110,19 +99,13 @@ describe("JSON Merge Patch (RFC 7386)", () => {
 });
 
 describe("JSON-merge-diff", () => {
-  test.prop({ a: jsonArrayless })(
-    "identity: diff(a, undefined) === a",
-    ({ a }) => {
-      expect(diff(a, undefined)).toEqual(a);
-    },
-  );
+  test.prop({ a: jsonArrayless })("identity: diff(a, undefined) === a", ({ a }) => {
+    expect(diff(a, undefined)).toEqual(a);
+  });
 
-  test.prop({ a: jsonArrayless })(
-    "identity: diff(a, a) === undefined",
-    ({ a }) => {
-      expect(diff(a, a)).toBeUndefined();
-    },
-  );
+  test.prop({ a: jsonArrayless })("identity: diff(a, a) === undefined", ({ a }) => {
+    expect(diff(a, a)).toBeUndefined();
+  });
 
   test("case: diff({}, 0) === {}", () => {
     expect(diff<JSONArrayless>({}, 0)).toEqual({});

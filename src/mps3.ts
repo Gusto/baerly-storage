@@ -558,17 +558,18 @@ export class MPS3 {
         ...(command.VersionId !== undefined && { versionId: command.VersionId }),
       }),
     ).then(([raw, dt]) => {
-      const response: GetResponse<T> = raw === null
-        ? {
-            $metadata: { httpStatusCode: command.IfNoneMatch !== undefined ? 304 : 404 },
-            data: undefined,
-          }
-        : {
-            $metadata: { httpStatusCode: 200 },
-            ETag: raw.etag,
-            ...(raw.versionId !== undefined && { VersionId: raw.versionId as S3VersionId }),
-            data: parseJsonBody<T>(raw.body, args.ref.bucket, command.Key!),
-          };
+      const response: GetResponse<T> =
+        raw === null
+          ? {
+              $metadata: { httpStatusCode: command.IfNoneMatch !== undefined ? 304 : 404 },
+              data: undefined,
+            }
+          : {
+              $metadata: { httpStatusCode: 200 },
+              ETag: raw.etag,
+              ...(raw.versionId !== undefined && { VersionId: raw.versionId as S3VersionId }),
+              data: parseJsonBody<T>(raw.body, args.ref.bucket, command.Key!),
+            };
       this.config.log(
         `${dt}ms ${args.operation} ${args.ref.bucket}/${args.ref.key}@${args.version} => ${response.VersionId}`,
       );
@@ -932,10 +933,7 @@ export class MPS3 {
     ref: ResolvedRef;
   }): Promise<DeleteObjectCommandOutput> {
     const [, dt] = await measure(this.storageFor(args.ref.bucket).delete(args.ref.key));
-    this.config.log(
-      `${dt}ms ${args.operation || "DELETE"} ${args.ref.bucket}/${args.ref.key}`,
-    );
+    this.config.log(`${dt}ms ${args.operation || "DELETE"} ${args.ref.bucket}/${args.ref.key}`);
     return { $metadata: { httpStatusCode: 204 } };
   }
-
 }

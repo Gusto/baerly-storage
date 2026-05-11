@@ -1,4 +1,8 @@
-import { LIST_OBJECT_MAX_RETRIES, RATE_LIMIT_BACKOFF_MILLIS, S3_REQUEST_MAX_RETRIES } from "../constants";
+import {
+  LIST_OBJECT_MAX_RETRIES,
+  RATE_LIMIT_BACKOFF_MILLIS,
+  S3_REQUEST_MAX_RETRIES,
+} from "../constants";
 import { MPS3Error } from "../errors";
 import { delay } from "../time";
 import type { XmlParser } from "../types";
@@ -117,9 +121,7 @@ export class S3HttpStorage implements Storage {
 
   #objectUrl(key: string, versionId?: string): string {
     const base = `${this.#endpoint}/${this.#bucket}/${encodeURIComponent(key)}`;
-    return versionId !== undefined
-      ? `${base}?versionId=${encodeURIComponent(versionId)}`
-      : base;
+    return versionId !== undefined ? `${base}?versionId=${encodeURIComponent(versionId)}` : base;
   }
 
   async #dispatch(req: Request): Promise<Response> {
@@ -157,24 +159,14 @@ export class S3HttpStorage implements Storage {
           throw new MPS3Error("AccessDenied", `GET ${key}: 403`);
         default:
           if (res.status >= 500) {
-            throw new MPS3Error(
-              "NetworkError",
-              `GET ${key}: ${res.status} ${await res.text()}`,
-            );
+            throw new MPS3Error("NetworkError", `GET ${key}: ${res.status} ${await res.text()}`);
           }
-          throw new MPS3Error(
-            "InvalidResponse",
-            `GET ${key}: ${res.status} ${await res.text()}`,
-          );
+          throw new MPS3Error("InvalidResponse", `GET ${key}: ${res.status} ${await res.text()}`);
       }
     });
   }
 
-  async put(
-    key: string,
-    body: Uint8Array,
-    opts?: StoragePutOptions,
-  ): Promise<StoragePutResult> {
+  async put(key: string, body: Uint8Array, opts?: StoragePutOptions): Promise<StoragePutResult> {
     opts?.signal?.throwIfAborted();
     const url = this.#objectUrl(key);
     const headers = new Headers();
@@ -199,16 +191,10 @@ export class S3HttpStorage implements Storage {
         throw new MPS3Error("AccessDenied", `PUT ${key}: 403`);
       }
       if (res.status >= 500) {
-        throw new MPS3Error(
-          "NetworkError",
-          `PUT ${key}: ${res.status} ${await res.text()}`,
-        );
+        throw new MPS3Error("NetworkError", `PUT ${key}: ${res.status} ${await res.text()}`);
       }
       if (res.status !== 200 && res.status !== 204) {
-        throw new MPS3Error(
-          "InvalidResponse",
-          `PUT ${key}: ${res.status} ${await res.text()}`,
-        );
+        throw new MPS3Error("InvalidResponse", `PUT ${key}: ${res.status} ${await res.text()}`);
       }
       const etag = res.headers.get("ETag");
       if (etag === null) {
@@ -234,10 +220,7 @@ export class S3HttpStorage implements Storage {
         throw new MPS3Error("AccessDenied", `DELETE ${key}: 403`);
       }
       if (res.status >= 500) {
-        throw new MPS3Error(
-          "NetworkError",
-          `DELETE ${key}: ${res.status} ${await res.text()}`,
-        );
+        throw new MPS3Error("NetworkError", `DELETE ${key}: ${res.status} ${await res.text()}`);
       }
       // 200 / 204 / 404 → success (idempotent).
     });
