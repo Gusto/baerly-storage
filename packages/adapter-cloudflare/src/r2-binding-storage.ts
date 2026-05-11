@@ -114,6 +114,10 @@ class R2BindingStorageImpl implements Storage {
     const cap = opts?.maxKeys ?? Infinity;
     while (true) {
       opts?.signal?.throwIfAborted();
+      // Break BEFORE the next list() call when the cap is already hit
+      // — R2 rejects `limit: 0` with `MaxKeys params must be positive
+      // integer <= 1000. (10022)`, so we can't just clamp.
+      if (yielded >= cap) return;
       // R2.list: `limit` capped at 1000 per request. Page via
       // `cursor` until `truncated === false`. `startAfter` honored
       // only on the first page (one-shot cursor).
