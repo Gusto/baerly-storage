@@ -118,18 +118,20 @@ const parseJsonBody = <T>(body: Uint8Array, bucket: string, key: string): T | un
 
 class BoundedLRU<K, V> {
   readonly #vals = new Map<string, V>();
+  readonly #key: (k: K) => string;
+  readonly #capacity: number;
 
-  constructor(
-    private readonly key: (k: K) => string,
-    private readonly capacity: number,
-  ) {}
+  constructor(key: (k: K) => string, capacity: number) {
+    this.#key = key;
+    this.#capacity = capacity;
+  }
 
   has(k: K): boolean {
-    return this.#vals.has(this.key(k));
+    return this.#vals.has(this.#key(k));
   }
 
   get(k: K): V | undefined {
-    const id = this.key(k);
+    const id = this.#key(k);
     const v = this.#vals.get(id);
     if (v !== undefined && this.#vals.delete(id)) {
       this.#vals.set(id, v);
@@ -138,8 +140,8 @@ class BoundedLRU<K, V> {
   }
 
   set(k: K, v: V): this {
-    const id = this.key(k);
-    if (this.#vals.delete(id) === false && this.#vals.size >= this.capacity) {
+    const id = this.#key(k);
+    if (this.#vals.delete(id) === false && this.#vals.size >= this.#capacity) {
       const oldest = this.#vals.keys().next().value;
       if (oldest !== undefined) this.#vals.delete(oldest);
     }
@@ -383,7 +385,7 @@ export class MPS3 {
         (config.log === true ? console.log : config.log || (() => {}))(this.config.label, ...args),
     };
 
-    if (this.config.s3Config?.credentials instanceof Function)
+    if (typeof this.config.s3Config?.credentials === "function")
       throw new MPS3Error(
         "InvalidConfig",
         "Function-based s3Config.credentials are not supported yet",

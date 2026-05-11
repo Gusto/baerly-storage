@@ -21,9 +21,9 @@ export function merge<T extends JSONArrayless>(
   if (patch === null) return undefined;
 
   if (typeof patch !== "object" || typeof target !== "object") {
-    return <T>patch;
+    return patch as T;
   }
-  const combined = typeof target === "object" ? { ...target } : <T>{};
+  const combined = typeof target === "object" ? { ...target } : ({} as T);
   for (let key in patch) {
     // reject prototype pollution
     if (key === "__proto__" || key === "constructor" || key === "prototype") continue;
@@ -33,15 +33,15 @@ export function merge<T extends JSONArrayless>(
       combined[key] = merge<any>(target![key], patch[key]!);
     }
   }
-  return <T>combined;
+  return combined as T;
 }
 
 export function fold<T extends JSONArrayless>(
   ...patches: (Partial<T> | undefined)[]
 ): Partial<T> | undefined {
   return patches.reduce<Partial<T> | undefined>(
-    (acc, patch) => merge<T>(<T>acc, patch),
-    <Partial<T>>{},
+    (acc, patch) => merge<T>(acc as T, patch),
+    {} as Partial<T>,
   );
 }
 
@@ -62,7 +62,7 @@ export function diff<T extends JSONArrayless>(
   const allKeys = new Set([...Object.keys(target), ...Object.keys(source)]);
   for (const key of allKeys) {
     const val = diff((target as any)[key], (source as any)[key]);
-    if (val !== undefined) (<any>patch)[key] = val;
+    if (val !== undefined) (patch as any)[key] = val;
   }
   return patch;
 }

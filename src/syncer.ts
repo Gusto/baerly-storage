@@ -72,7 +72,7 @@ interface HttpCacheEntry<T> {
  * `docs/sync_protocol.md` (manifest log section).
  */
 export const manifestKey = (ref: ResolvedRef, epochMs: number): ManifestKey =>
-  <ManifestKey>`${ref.key}@${timestamp(epochMs)}`;
+  `${ref.key}@${timestamp(epochMs)}` as ManifestKey;
 
 /**
  * Compose a manifest log key from a pre-computed version-id suffix
@@ -84,7 +84,7 @@ export const manifestKey = (ref: ResolvedRef, epochMs: number): ManifestKey =>
 export const manifestKeyFromVersion = (
   ref: ResolvedRef,
   version: VersionId | string,
-): ManifestKey => <ManifestKey>`${ref.key}@${version}`;
+): ManifestKey => `${ref.key}@${version}` as ManifestKey;
 
 /**
  * Reads and writes the manifest log — the time-ordered append-only S3
@@ -130,7 +130,11 @@ export class Syncer {
 
   static manifestRegex = /@([0-9a-z]+)_[0-9a-z]+_[0-9a-z]{2}$/;
 
-  constructor(private manifest: Manifest) {}
+  private manifest: Manifest;
+
+  constructor(manifest: Manifest) {
+    this.manifest = manifest;
+  }
 
   static manifestTimestamp = (key: string): number => {
     const match = key.match(Syncer.manifestRegex);
@@ -197,15 +201,13 @@ export class Syncer {
   // Manifest must be ordered by client operation time
   // (An exception is made for adjusting for clock skew)
   generate_manifest_key(): VersionId {
-    return <VersionId>(
-      (timestamp(
-        Math.max(Date.now() + this.manifest.service.config.clockOffset, this.latest_timestamp),
-      ) +
-        "_" +
-        this.session_id +
-        "_" +
-        countKey(this.writes++))
-    );
+    return (timestamp(
+      Math.max(Date.now() + this.manifest.service.config.clockOffset, this.latest_timestamp),
+    ) +
+      "_" +
+      this.session_id +
+      "_" +
+      countKey(this.writes++)) as VersionId;
   }
 
   async restore(db: UseStore) {
@@ -404,7 +406,7 @@ export class Syncer {
           if (version) {
             const fileState: FileState = {
               version: version,
-              replication: options.keys.get(ref)?.replication ?? <b64>"",
+              replication: options.keys.get(ref)?.replication ?? ("" as b64),
             };
             updateFiles[fileUrl] = fileState;
           } else {

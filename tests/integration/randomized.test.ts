@@ -150,7 +150,7 @@ describe("mps3", () => {
               const handle = (client_id: number, val: JSONValue | DeleteValue) => {
                 const label = system.client_labels[client_id];
                 if (val) {
-                  const message = <Message>val;
+                  const message = val as Message;
                   console.log(
                     `${system.global_time}: ${label}@${system.client_clocks[
                       client_id

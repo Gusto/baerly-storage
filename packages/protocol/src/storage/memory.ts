@@ -103,7 +103,7 @@ export class MemoryStorage implements Storage {
     const maxKeys = opts?.maxKeys ?? Infinity;
     const sorted = [...this.#objects.keys()]
       .filter((k) => k.startsWith(prefix) && k > startAfter)
-      .sort();
+      .toSorted();
     let yielded = 0;
     for (const key of sorted) {
       if (yielded >= maxKeys) return;

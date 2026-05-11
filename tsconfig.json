@@ -1,16 +1,14 @@
 {
     "compilerOptions": {
-        "target": "ESNext",
-        "lib": ["ESNext", "DOM", "DOM.Iterable"],
-        "module": "ESNext",
-        "moduleResolution": "bundler",
-        "useDefineForClassFields": true,
+        "target": "ES2025",
+        "lib": ["ES2025", "ESNext.TypedArrays", "DOM", "DOM.Iterable"],
+        "module": "preserve",
 
         "verbatimModuleSyntax": true,
         "isolatedModules": true,
-        "esModuleInterop": true,
+        "moduleDetection": "force",
         "resolveJsonModule": true,
-        "allowImportingTsExtensions": true,
+        "erasableSyntaxOnly": true,
 
         "strict": true,
         "noUncheckedIndexedAccess": true,
@@ -18,16 +16,20 @@
         "noFallthroughCasesInSwitch": true,
         "noUnusedLocals": true,
         "noUnusedParameters": true,
-        "forceConsistentCasingInFileNames": true,
 
         "noEmit": true,
         "declaration": true,
         "sourceMap": true,
 
         "skipLibCheck": true,
-
         "types": ["node"]
     },
-    "include": ["src/**/*", "tests/**/*", "packages/*/src/**/*"],
+    "include": [
+        "src",
+        "tests",
+        "packages/*/src",
+        "*.config.ts",
+        "scripts/**/*.ts"
+    ],
     "exclude": ["tests/integration/conformance.test.ts"]
 }

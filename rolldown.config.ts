@@ -6,7 +6,7 @@ export default defineConfig({
     output: {
         dir: "dist",
         format: "esm",
-        minify: true,
+        sourcemap: true,
     },
     plugins: [dts({ tsgo: true })],
 });

@@ -25,11 +25,13 @@ import { Syncer } from "./syncer";
  */
 export class Manifest {
   syncer: Syncer = new Syncer(this);
+  service: MPS3;
+  ref: ResolvedRef;
 
-  constructor(
-    public service: MPS3,
-    public ref: ResolvedRef,
-  ) {}
+  constructor(service: MPS3, ref: ResolvedRef) {
+    this.service = service;
+    this.ref = ref;
+  }
 
   updateContent(
     write: Promise<Map<ResolvedRef, VersionId | DeleteValue>>,

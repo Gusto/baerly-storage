@@ -95,7 +95,7 @@ export interface XmlParser {
  * Mint a fresh {@link UUID}. The cast lives here so callers don't sprinkle
  * `<UUID>crypto.randomUUID()` throughout the codebase.
  */
-export const uuid = (): UUID => <UUID>crypto.randomUUID();
+export const uuid = (): UUID => crypto.randomUUID() as UUID;
 
 /**
  * Re-brand a {@link UUID} as a {@link ContentVersionId}. Used in

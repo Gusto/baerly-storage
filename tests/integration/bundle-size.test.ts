@@ -6,7 +6,11 @@ import { describe, expect, test } from "vitest";
 // pins the size so a regression shows up immediately. Phase 1 relocates
 // Tier 3 / IDB code out of the server bundle and should DROP this
 // number; tighten the budget then.
-const BUNDLE_BUDGET_BYTES = 36 * 1024;
+//
+// Budget is for the **unminified** ESM bundle (rolldown `minify: false`).
+// Consumer bundlers run their own minify pass with the rest of the app;
+// readable stacks in consumer error reports are worth the wire size here.
+const BUNDLE_BUDGET_BYTES = 80 * 1024;
 
 describe("bundle size", () => {
     test("dist/index.js stays under bundle budget", () => {

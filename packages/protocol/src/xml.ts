@@ -16,6 +16,11 @@ export interface ParsedListObjectsV2Output {
   StartAfter?: string;
 }
 
+const xmlVal = (el: XmlNode, name: string): string | undefined => {
+  const c = el.getElementsByTagName(name)[0]?.textContent;
+  return c ? decodeURIComponent(c.replace(/\+/g, " ")) : undefined;
+};
+
 export const parseListObjectsV2CommandOutput = (
   xml: string,
   domParser: XmlParser,
@@ -30,20 +35,15 @@ export const parseListObjectsV2CommandOutput = (
   const contents = doc.getElementsByTagName("Contents");
   //if (!contents) throw new Error(`Invalid XML: ${xml}`);
 
-  const val = (el: XmlNode, name: string) => {
-    const c = el.getElementsByTagName(name)[0]?.textContent;
-    return c ? decodeURIComponent(c.replace(/\+/g, " ")) : undefined;
-  };
-
   return {
     $metadata: {},
     //IsTruncated: val(results, "IsTruncated") === "true",
     Contents: Array.from(contents).map((content) => {
-      const lm = val(content, "LastModified");
+      const lm = xmlVal(content, "LastModified");
       return {
         //ChecksumAlgorithm: [val(content, "ChecksumAlgorithm")!],
-        ETag: val(content, "ETag")!,
-        Key: val(content, "Key")!,
+        ETag: xmlVal(content, "ETag")!,
+        Key: xmlVal(content, "Key")!,
         LastModified: lm ? new Date(lm) : undefined,
         /*
         Owner: {
@@ -66,9 +66,9 @@ export const parseListObjectsV2CommandOutput = (
     ).map((prefix) => ({ Prefix: prefix.textContent! })),
     */
     //EncodingType: val(doc, "EncodingType")!,
-    KeyCount: parseInt(val(doc, "KeyCount")!),
-    ContinuationToken: val(doc, "ContinuationToken")!,
-    NextContinuationToken: val(doc, "NextContinuationToken")!,
-    StartAfter: val(doc, "StartAfter")!,
+    KeyCount: parseInt(xmlVal(doc, "KeyCount")!),
+    ContinuationToken: xmlVal(doc, "ContinuationToken")!,
+    NextContinuationToken: xmlVal(doc, "NextContinuationToken")!,
+    StartAfter: xmlVal(doc, "StartAfter")!,
   };
 };

@@ -34,12 +34,13 @@ export type MPS3ErrorCode =
  * ```
  */
 export class MPS3Error extends Error {
-  constructor(
-    public readonly code: MPS3ErrorCode,
-    message: string,
-    public override readonly cause?: unknown,
-  ) {
+  readonly code: MPS3ErrorCode;
+  override readonly cause?: unknown;
+
+  constructor(code: MPS3ErrorCode, message: string, cause?: unknown) {
     super(message);
     this.name = "MPS3Error";
+    this.code = code;
+    this.cause = cause;
   }
 }

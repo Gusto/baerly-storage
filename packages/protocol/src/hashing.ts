@@ -2,7 +2,7 @@ import type { Branded, ContentVersionId } from "./types";
 
 export type b64 = Branded<string, "b64">;
 
-export const toB64 = (a: Uint8Array): b64 => <b64>a.toBase64();
+export const toB64 = (a: Uint8Array): b64 => a.toBase64() as b64;
 
 export const fromB64 = (a: b64): Uint8Array => Uint8Array.fromBase64(a);
 

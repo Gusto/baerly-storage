@@ -27,6 +27,10 @@ export default defineConfig({
         // behind --js-base-64 in current V8 (Node 24 / V8 13.6). Drop this
         // once Node ships the methods unflagged.
         execArgv: ["--js-base-64"],
+        // Default truncates assertion diffs at ~40 chars — useless for
+        // fast-check shrinking failures on document trees. Full diffs only
+        // print on failure, so log size is bounded.
+        chaiConfig: { truncateThreshold: 0 },
         coverage: {
             provider: "v8",
             include: ["src/**", "packages/*/src/**"],

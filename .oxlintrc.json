@@ -1,8 +1,37 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["eslint", "typescript", "oxc"],
+  "plugins": [
+    "typescript",
+    "unicorn",
+    "import",
+    "promise",
+    "vitest",
+    "node",
+    "oxc"
+  ],
   "categories": {
     "correctness": "deny",
-    "suspicious": "deny"
-  }
+    "suspicious": "deny",
+    "perf": "deny"
+  },
+  "rules": {
+    "eslint/no-await-in-loop": "off",
+    "promise/always-return": "off"
+  },
+  "overrides": [
+    {
+      "files": ["**/*.test.ts", "tests/**/*.ts", "scripts/**/*.ts"],
+      "rules": {
+        "no-console": "off",
+        "vitest/no-standalone-expect": "off",
+        "vitest/require-mock-type-parameters": "off",
+        "vitest/require-to-throw-message": "off",
+        "vitest/no-conditional-expect": "off",
+        "vitest/expect-expect": "off",
+        "vitest/valid-title": "off",
+        "unicorn/consistent-function-scoping": "off",
+        "import/no-unassigned-import": "off"
+      }
+    }
+  ]
 }
