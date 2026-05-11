@@ -33,16 +33,16 @@ Don't introduce alternate tooling without justification.
 | Command | What it catches | Runtime | Clean on `main`? |
 |---|---|---|---|
 | `pnpm verify` | typecheck (`tsgo --noEmit`) + lint (`oxlint`) | ~seconds | ✅ — non-zero exit *is* your regression |
-| `pnpm test` | vitest unit + integration (zero infra) | ~1s | ✅ — Minio + credentials tests are gated, see below |
-| `pnpm test:minio` | adds the Minio-gated suites (`randomized`, `time` + Minio variants) | ~30s | ✅ when `pnpm dev:storage` is up |
+| `pnpm test` | vitest unit + integration (zero infra) — includes the `memory` + `local-fs` variants of `randomized.test.ts` | ~3s | ✅ — Minio + credentials tests are gated, see below |
+| `pnpm test:minio` | adds the Minio-gated suites: the `clock behavior` block of `time.test.ts`, the `node-minio` variant of `randomized.test.ts`, and `adapter-node` Minio conformance | ~10s | ✅ when `pnpm dev:storage` is up |
 | `pnpm test:conformance` | adds `conformance.test.ts` (needs Minio + credentials files) | ~30s | requires credentials in `credentials/{aws,gcs,cloudflare}.json` |
 | `pnpm test:export-smoke` | adds `export-smoke.test.ts` (Phase-1 `LogEntry` round-trip into Postgres; needs local Postgres on `:5433`) | ~5s | ✅ when `pnpm dev:storage` is up |
-| `pnpm test:adapter-cloudflare` | runs `r2BindingStorage` conformance under miniflare (`@cloudflare/vitest-pool-workers`, project `cloudflare-pool`) | ~10s | ✅ — first run downloads the `workerd` binary |
+| `pnpm test:adapter-cloudflare` | runs `r2BindingStorage` conformance **and** the `cloudflare-r2` variant of `randomized.test.ts` under miniflare (`@cloudflare/vitest-pool-workers`, project `cloudflare-pool`) | ~3s | ✅ — first run downloads the `workerd` binary |
 | `pnpm test:adapter-node` | runs `s3HttpStorage` conformance against local Minio | ~10s | ✅ when `pnpm dev:storage` is up |
-| `pnpm test:adapters` | sequential wrapper: `test:adapter-cloudflare` then `test:adapter-node` | ~20s | ✅ when `pnpm dev:storage` is up |
+| `pnpm test:adapters` | sequential wrapper: `test:adapter-cloudflare` then `test:adapter-node` | ~10s | ✅ when `pnpm dev:storage` is up |
 | `pnpm format:check` | oxfmt formatting | ~seconds | ❌ red on ~20 pre-existing files; diff vs. `main` |
 | `pnpm build` | rolldown bundle to `dist/` | ~seconds | ✅ |
-| `pnpm test:randomize` | property-based fuzzer (cranks `FC_NUM_RUNS` for fast-check arbitraries) | run for minutes | use when changing protocol code |
+| `pnpm test:randomize` | property-based fuzzer (cranks `FC_NUM_RUNS` for fast-check arbitraries). The randomized cascade itself is fault-injection-driven so `FC_NUM_RUNS` is a no-op for `randomized.test.ts` — all four variants (`memory` / `local-fs` / `cloudflare-r2` / `node-minio`) still run, but only the property tests in the rest of the suite scale up | run for minutes | use when changing protocol code |
 | `pnpm dev:storage` | brings up Minio `:9102` + Toxiproxy `:9104` + Postgres `:5433` | n/a | required for `test:minio` / `test:conformance` / `test:export-smoke` / `test:adapter-node` / `test:adapters` |
 
 `pnpm verify` is also enforced as a [lefthook](https://lefthook.dev/)
@@ -55,9 +55,9 @@ pre-commit hook (`lefthook.yml`); `pnpm install` wires it up via the
 deps. Tests requiring Minio or credentials are gated by env:
 
 - **Minio-required tests** (the `clock behavior` block of
-  `tests/integration/time.test.ts`, and the `useVersioning` / `minio`
-  variants of `tests/integration/randomized.test.ts`) skip by default.
-  Run them with `MINIO=1 pnpm test` (alias: `pnpm test:minio`) after
+  `tests/integration/time.test.ts`, and the `node-minio` variant of
+  `tests/integration/randomized.test.ts`) skip by default. Run them
+  with `MINIO=1 pnpm test` (alias: `pnpm test:minio`) after
   `pnpm dev:storage`.
 - **`tests/integration/conformance.test.ts`** needs both Minio and
   credentials in `credentials/{aws,gcs,cloudflare}.json` (gitignored).
@@ -82,11 +82,32 @@ deps. Tests requiring Minio or credentials are gated by env:
   `pnpm test:adapter-node`, or both adapter suites in sequence
   with `pnpm test:adapters`.
 
-`randomized.test.ts` runs by default against an in-memory `Storage`
-impl (`MemoryStorage` in `@baerly/protocol`, shared per-bucket
-across `MPS3` instances via `getOrCreateMemoryStorageForBucket`) —
-the property-based causal-consistency checker is the highest-
-leverage test asset and now runs in <1s on every PR.
+`randomized.test.ts` drives the all-to-all single-key causal-
+consistency cascade through `Db` + `ServerWriter` (from
+`@baerly/server`) over four storage adapters:
+
+  - `memory` — `MemoryStorage`, shared per-bucket via
+    `getOrCreateMemoryStorageForBucket`. Default project, no infra,
+    runs in <1s on every PR.
+  - `local-fs` — `LocalFsStorage` over a fresh `mkdtemp` root.
+    Default project, no infra, runs in ~1s on every PR.
+  - `cloudflare-r2` — `r2BindingStorage` over the miniflare R2 binding
+    wired by `tests/setup/r2-binding.ts`. Lives at
+    `packages/adapter-cloudflare/src/randomized.test.ts` and runs
+    under the `cloudflare-pool` vitest project (Workerd). Excluded
+    from the default glob; run with `pnpm test:adapter-cloudflare`.
+  - `node-minio` — `S3HttpStorage` against Toxiproxy → Minio with a
+    fault-injection twiddler flipping the proxy every 100 ms. Default
+    project, gated on `MINIO=1`; run with `pnpm test:minio`.
+
+The cascade body is shared across projects via
+`tests/fixtures/randomized-cascade.ts` (Node-import-free, so it loads
+inside Workerd). The Node-side variant table is in
+`tests/integration/randomized.test.ts`; the Workerd-side entry is in
+`packages/adapter-cloudflare/src/randomized.test.ts`. Each variant
+constructs N `Storage` handles sharing the same backing store, then
+spins up N `Db` + `ServerWriter` writers all contending on a single
+`current.json`.
 
 Pure-unit tests that always pass: `packages/protocol/src/hashing.test.ts`,
 `tests/unit/consistency.test.ts`, `packages/protocol/src/xml.test.ts`,

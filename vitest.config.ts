@@ -47,6 +47,14 @@ const exportSmokeExclude = process.env.EXPORT_SMOKE === "1" ? [] : ["**/export-s
 const r2BindingConformanceGlob =
   "packages/adapter-cloudflare/src/r2-binding-storage.conformance.test.ts";
 
+// Companion randomized cascade entry — same project membership rules
+// as the conformance glob above. Drives the shared
+// `tests/fixtures/randomized-cascade.ts` driver against the miniflare
+// R2 binding so the four-adapter randomized matrix is closed (memory
+// / local-fs / node-minio live in the default project, cloudflare-r2
+// lives here).
+const r2BindingRandomizedGlob = "packages/adapter-cloudflare/src/randomized.test.ts";
+
 export default defineConfig({
   test: {
     projects: [
@@ -60,6 +68,7 @@ export default defineConfig({
             ...exportSmokeExclude,
             // CF adapter has its own project; don't double-run.
             r2BindingConformanceGlob,
+            r2BindingRandomizedGlob,
           ],
           setupFiles: ["tests/setup/fast-check.ts"],
           // Process isolation. Vitest 4's default `pool: 'threads'` with
@@ -101,7 +110,7 @@ export default defineConfig({
         ],
         test: {
           name: "cloudflare-pool",
-          include: [r2BindingConformanceGlob],
+          include: [r2BindingConformanceGlob, r2BindingRandomizedGlob],
           // `tests/setup/r2-binding.ts` runs inside Workerd, imports
           // from `cloudflare:test`, and re-publishes `env.BUCKET` on
           // `globalThis.__BAERLY_R2_BINDING__` for the conformance

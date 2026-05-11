@@ -1,0 +1,361 @@
+/**
+ * Causal-consistency cascade — backend-agnostic property test driver.
+ *
+ * Lifted from the legacy `tests/integration/randomized.test.ts` body
+ * with three substitutions: writes go through `ServerWriter.commit()`
+ * (one `LogEntry` per call), reads walk the log to the freshest entry
+ * for `(collection, docId)`, and clock-skew entropy moves from
+ * `MPS3.clockOffset` to a per-instance offset added when minting log
+ * entries. Cross-instance handshake is the shared backing store: each
+ * variant returns N {@link Storage} handles that observe each other's
+ * writes.
+ *
+ * Pure module — no Node imports, no `node:fs`, no `node:os`. The
+ * Cloudflare Workers pool (`packages/adapter-cloudflare/src/randomized.test.ts`)
+ * consumes this file directly inside Workerd; the Node-only variant
+ * setup (temp dirs, Toxiproxy fetch) lives in the call site.
+ *
+ * @see tests/integration/randomized.test.ts (Node-side variants)
+ * @see packages/adapter-cloudflare/src/randomized.test.ts (Workerd variant)
+ */
+
+import { expect } from "vitest";
+import {
+  type CurrentJson,
+  CURRENT_JSON_SCHEMA_VERSION,
+  type JSONArraylessObject,
+  type LogEntry,
+  MPS3Error,
+  type Storage,
+  createCurrentJson,
+  readCurrentJson,
+  uuid,
+} from "@baerly/protocol";
+import { Db, ServerWriter } from "@baerly/server";
+import { CentralisedOfflineFirstCausalSystem, type Grounding, type Knowledge } from "./consistency";
+
+/**
+ * Causal-consistency check without `eval()`. Workerd disallows code
+ * generation from strings, so the fixture's `check()` (which builds
+ * a JS expression and `eval`s it) cannot run under
+ * `@cloudflare/vitest-pool-workers`. We re-implement the check
+ * structurally here: every clause in {@link Knowledge} has the form
+ * `<comment> <varA> < <varB>` joined by ` &&\n`, and every variable
+ * appears in {@link Grounding}. Parse `varA` / `varB` directly,
+ * compare grounded values, return true iff every clause holds.
+ *
+ * Leaving `tests/fixtures/consistency.ts` untouched (per ticket 07
+ * scope: read only) — this helper lives in the cascade driver
+ * because it's an environment-specific shim.
+ */
+const causallyConsistent = (grounding: Grounding, kb: Knowledge): boolean => {
+  for (const clause of Object.keys(kb)) {
+    // Clauses look like `/*P1*/ A3 < A4` or `/*P2*/ C1 < A2`. The
+    // comment prefix is variable; we want the two variable tokens
+    // around `<`. Split on `<` first to grab the rhs, then strip the
+    // leading comment / whitespace off the lhs.
+    const ltIdx = clause.indexOf("<");
+    if (ltIdx < 0) return false;
+    const rawLhs = clause.slice(0, ltIdx).trim();
+    const rhs = clause.slice(ltIdx + 1).trim();
+    // The lhs may be `/*P2*/ C1` — drop the `*/`-prefix if present.
+    const lhs = rawLhs.replace(/^\/\*[^*]*\*\/\s*/, "");
+    const lv = grounding[lhs];
+    const rv = grounding[rhs];
+    if (lv === undefined || rv === undefined) return false;
+    if (!(lv < rv)) return false;
+  }
+  return true;
+};
+
+/**
+ * One write target: a `Db` (for tenant-scoped key resolution + future
+ * lint compliance), the `ServerWriter` bound to its collection, and
+ * the bucket-relative `current.json` key shared across instances.
+ */
+interface Instance {
+  readonly db: Db;
+  readonly writer: ServerWriter;
+  readonly storage: Storage;
+  readonly currentJsonKey: string;
+  readonly logPrefix: string;
+}
+
+const APP = "randomized";
+const COLLECTION = "k"; // single-key cascade — `collection === docId`
+const MAX_STEPS = 100;
+
+/**
+ * Shape of one client's broadcast — kept in sync with the legacy
+ * `Message` type. Doubles as the `LogEntry.new` body.
+ */
+interface CascadeMessage extends JSONArraylessObject {
+  sender: number;
+  send_time: number;
+}
+
+const seedCurrent = (): CurrentJson => ({
+  schema_version: CURRENT_JSON_SCHEMA_VERSION,
+  snapshot: null,
+  next_seq: 0,
+  writer_fence: { epoch: 0, owner: "test", claimed_at: "" },
+});
+
+/**
+ * Tolerant `createCurrentJson` — multiple test instances share the
+ * same backing store, so exactly one wins the bootstrap CAS and the
+ * others see `Conflict` (which the protocol translates from
+ * `PreconditionFailed`). The losers adopt the existing record.
+ */
+const ensureCurrent = async (storage: Storage, key: string): Promise<void> => {
+  try {
+    await createCurrentJson(storage, key, seedCurrent());
+  } catch (err) {
+    if (err instanceof MPS3Error && err.code === "Conflict") {
+      const got = await readCurrentJson(storage, key);
+      if (got !== null) return;
+    }
+    throw err;
+  }
+};
+
+/**
+ * Resolve the latest committed value for `(collection, docId)` by
+ * reading `current.json`, then walking from `next_seq - 1` backwards
+ * until we hit an entry whose `doc_id` matches. Returns `undefined`
+ * when no entry has landed yet. Tolerates transient read failures
+ * (Toxiproxy flips, R2 propagation jitter) by re-throwing — callers
+ * swallow.
+ */
+const readLatest = async (inst: Instance): Promise<CascadeMessage | undefined> => {
+  const read = await readCurrentJson(inst.storage, inst.currentJsonKey);
+  if (read === null) return undefined;
+  const nextSeq = read.json.next_seq;
+  for (let s = nextSeq - 1; s >= 0; s--) {
+    const got = await inst.storage.get(`${inst.logPrefix}/log/${s}.json`);
+    if (got === null) continue;
+    let entry: LogEntry;
+    try {
+      entry = JSON.parse(new TextDecoder().decode(got.body)) as LogEntry;
+    } catch {
+      continue;
+    }
+    if (entry.doc_id === COLLECTION && entry.op === "U" && entry.new !== undefined) {
+      return entry.new as CascadeMessage;
+    }
+  }
+  return undefined;
+};
+
+/**
+ * Build N writer instances over a set of shared `Storage` handles —
+ * each handle's underlying backing is identical so writes through any
+ * one are visible through any other. Each instance lives under a
+ * distinct `tenant` so tenant-scoping is exercised on the read side,
+ * but the cascade's CAS target — `current.json` — is a single
+ * bucket-relative key shared across all N writers (the test
+ * deliberately routes contention to one CAS pointer to make the
+ * concurrent-writer property actually concurrent).
+ */
+const buildInstances = async (storages: Storage[]): Promise<Instance[]> => {
+  // Pick a deterministic tenant for the CAS-shared current.json so all
+  // N writers contend on the same key. (`Db.create` enforces a "/"-free
+  // tenant; tests use a fresh suffix per cascade.)
+  const sharedTenant = `cascade-${uuid().slice(0, 8)}`;
+  const sharedCurrentKey = `app/${APP}/tenant/${sharedTenant}/manifests/${COLLECTION}/current.json`;
+  const sharedLogPrefix = `app/${APP}/tenant/${sharedTenant}/manifests/${COLLECTION}`;
+
+  // One bootstrap CAS — losers adopt the winner.
+  await ensureCurrent(storages[0]!, sharedCurrentKey);
+
+  return storages.map((storage, i) => {
+    const db = Db.create({
+      storage,
+      app: APP,
+      // Use the same tenant for the CAS target while still constructing
+      // a Db per client so the lint rule's no-tenantless-ctor check is
+      // exercised and the Db._raw surface is available to callers.
+      tenant: sharedTenant,
+    });
+    void i;
+    const writer = new ServerWriter({
+      storage,
+      currentJsonKey: sharedCurrentKey,
+      // Smaller initial backoff to keep N-way races snappy under
+      // memory; the legacy POLL_TICK_MS budget assumes sub-second
+      // commit latency.
+      options: { initialBackoffMs: 5 },
+    });
+    return {
+      db,
+      writer,
+      storage,
+      currentJsonKey: sharedCurrentKey,
+      logPrefix: sharedLogPrefix,
+    };
+  });
+};
+
+/**
+ * Run the all-to-all single-key cascade. Returns when `MAX_STEPS`
+ * observations have been recorded by the {@link CentralisedOfflineFirstCausalSystem}
+ * (success) or rejects on assertion failure / unexpected error.
+ *
+ * Control flow ports the legacy harness's `causal consistency
+ * all-to-all, single key` test body verbatim — same `handle()`
+ * dispatcher, same `system.observe()` calls, same `JSON.stringify(val)`
+ * change-detection in the poll loop.
+ *
+ * @param opts.storages   N {@link Storage} handles sharing a backing
+ *                        store; `N === storages.length`.
+ * @param opts.pollTickMs Per-client poll cadence in ms; tuned per
+ *                        backend (memory 5, local-fs 10, R2 25,
+ *                        Minio 50).
+ * @param opts.clockOffsetsMs Per-client clock skew. Defaults to random
+ *                        offsets in `[-1000, +1000]` ms — matches the
+ *                        legacy `MPS3.clockOffset` entropy.
+ */
+export const runCausalConsistencyCascade = (opts: {
+  storages: Storage[];
+  pollTickMs: number;
+  clockOffsetsMs?: readonly number[];
+}): Promise<void> =>
+  new Promise<void>((done, reject) => {
+    void (async () => {
+      try {
+        const N = opts.storages.length;
+        const clockOffsets =
+          opts.clockOffsetsMs ?? Array.from({ length: N }, () => Math.random() * 2000 - 1000);
+        const instances = await buildInstances(opts.storages);
+        const system = new CentralisedOfflineFirstCausalSystem();
+
+        let testFailed = false;
+        let finished = false;
+
+        // Per-client commit serializer. `ServerWriter.commit()` is
+        // stateless and concurrent — two `commit()` calls on the same
+        // instance race each other, and the loser of a CAS race can
+        // ultimately land at a HIGHER `seq` than the winner even
+        // though it carried a SMALLER `send_time`. That breaks the
+        // per-sender monotonic `send_time` invariant that the
+        // causal-consistency model relies on at read time.
+        //
+        // The legacy harness sidestepped this because `MPS3.put` had
+        // an internal per-client write queue; the new test re-creates
+        // that queue explicitly. Effect: per-client broadcast order
+        // == per-client log-seq order, same as the legacy harness.
+        const commitQueues: Promise<void>[] = Array.from({ length: N }, () => Promise.resolve());
+
+        // Drives the cascade: observe a value, check invariants,
+        // broadcast a fresh `LogEntry`. Reads come from the per-client
+        // polling loop below.
+        const handle = (client_id: number, val: CascadeMessage | undefined): void => {
+          const label = system.client_labels[client_id];
+          if (val !== undefined) {
+            console.log(
+              `${system.global_time}: ${label}@${system.client_clocks[
+                client_id
+              ]!} rcvd ${system.client_labels[val.sender]}@${val.send_time}`,
+            );
+            system.observe({ ...val, receiver: client_id });
+          }
+
+          if (system.global_time < MAX_STEPS && !testFailed) {
+            testFailed = !causallyConsistent(system.grounding, system.knowledge_base);
+            if (testFailed) {
+              console.error(system.grounding);
+              console.error(system.knowledge_base);
+            }
+            expect(testFailed).toBe(false);
+
+            system.observe({
+              receiver: client_id,
+              sender: client_id,
+              send_time: system.client_clocks[client_id]! - 1,
+            });
+            testFailed = !causallyConsistent(system.grounding, system.knowledge_base);
+            expect(testFailed).toBe(false);
+
+            const send_time = system.client_clocks[client_id]! - 1;
+            console.log(`${system.global_time}: ${label}@${send_time} broadcast`);
+
+            // Drive the new write loop directly. ServerWriter mints the
+            // LogEntry; clock skew is per-instance and unused by the
+            // new core's lsn shape (the seq is what's load-bearing) —
+            // we keep it as fault-injection entropy: the
+            // `commit_ts`-equivalent travels through `Date.now()` on
+            // the cascading peer's machine and a ±1s skew exercises
+            // the protocol's tolerance to it. The offset is
+            // approximated via a brief sleep-or-not before the commit
+            // so the inter-broadcast spacing remains skewed by the
+            // configured offset's positive component. (Negative
+            // offsets are a no-op — we can't time-travel into the
+            // past.)
+            const offset = clockOffsets[client_id]!;
+            const delayMs = offset > 0 ? Math.min(offset, 5) : 0;
+            const message: CascadeMessage = { sender: client_id, send_time };
+            // Chain onto the per-client queue so commits on this
+            // instance land in broadcast order.
+            commitQueues[client_id] = commitQueues[client_id]!.then(async () => {
+              if (finished) return;
+              if (delayMs > 0) await new Promise<void>((r) => setTimeout(r, delayMs));
+              try {
+                await instances[client_id]!.writer.commit({
+                  op: "U",
+                  collection: COLLECTION,
+                  docId: COLLECTION,
+                  body: message,
+                });
+              } catch (err) {
+                // Transient Conflict under contention is fine — the
+                // peer will re-broadcast on its next observe. Other
+                // errors propagate.
+                if (err instanceof MPS3Error && err.code === "Conflict") return;
+                finished = true;
+                reject(err);
+              }
+            });
+          } else if (system.global_time >= MAX_STEPS && !finished) {
+            finished = true;
+            done();
+          }
+        };
+
+        // Kick the cascade — each client observes the undefined seed
+        // once before the polling loop catches up to remote writes.
+        instances.forEach((_, client_id) => handle(client_id, undefined));
+
+        instances.forEach((inst, client_id) => {
+          void (async () => {
+            let prev: string | undefined = undefined;
+            while (!finished) {
+              await new Promise<void>((r) => setTimeout(r, opts.pollTickMs));
+              if (finished) return;
+              try {
+                const val = await readLatest(inst);
+                const serialized = JSON.stringify(val);
+                if (serialized !== prev) {
+                  prev = serialized;
+                  try {
+                    handle(client_id, val);
+                  } catch (err) {
+                    finished = true;
+                    reject(err);
+                    return;
+                  }
+                }
+              } catch (err) {
+                // Swallow transient read failures — under Toxiproxy the
+                // network flips every 100ms during the Minio variant,
+                // and under R2 propagation jitter we may briefly see
+                // stale state. The next tick retries.
+                void err;
+              }
+            }
+          })();
+        });
+      } catch (err) {
+        reject(err);
+      }
+    })();
+  });

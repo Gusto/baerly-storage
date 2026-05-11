@@ -1,248 +1,169 @@
+/**
+ * Randomized causal-consistency cascade — Node-side variant runner.
+ *
+ * Replaces the legacy `MPS3`-class harness. Now drives
+ * `ServerWriter.commit()` through three Node-runnable backends:
+ *   - `memory`    — `MemoryStorage` shared per bucket; zero infra.
+ *   - `local-fs`  — `LocalFsStorage` over a fresh tmp dir; zero infra.
+ *   - `node-minio`— `S3HttpStorage` against Toxiproxy → Minio; gated on
+ *                   `MINIO=1`.
+ *
+ * The fourth adapter (`cloudflare-r2`) runs under the `cloudflare-pool`
+ * vitest project — see `packages/adapter-cloudflare/src/randomized.test.ts`.
+ * Splitting by project keeps `node:fs/promises` + `aws4fetch` out of
+ * Workerd and the R2 binding out of plain Node forks.
+ *
+ * The cascade body itself is backend-agnostic and lives in
+ * `tests/fixtures/randomized-cascade.ts`; only variant setup (temp
+ * dirs, Toxiproxy fault injection, Minio bucket bootstrap) lives here.
+ */
+
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { AwsClient } from "aws4fetch";
-import { expect, test, describe, beforeAll, beforeEach, afterEach } from "vitest";
-import { MPS3, type MPS3Config } from "../../src/mps3";
-import { CentralisedOfflineFirstCausalSystem } from "../fixtures/consistency";
 import { DOMParser } from "@xmldom/xmldom";
-import { type DeleteValue, type JSONValue, uuid } from "@baerly/protocol";
+import { afterEach, beforeEach, describe, test } from "vitest";
 import {
-  createBucket,
-  makeFixtureClient,
-  putBucketVersioningEnabled,
-} from "../fixtures/s3-fixtures";
-import "fake-indexeddb/auto";
+  getOrCreateMemoryStorageForBucket,
+  S3HttpStorage,
+  type Storage,
+  uuid,
+} from "@baerly/protocol";
+import { LocalFsStorage } from "@baerly/dev";
+import { createBucket } from "../fixtures/s3-fixtures";
+import { runCausalConsistencyCascade } from "../fixtures/randomized-cascade";
 
-describe("mps3", () => {
-  let s3: AwsClient;
-  let session = uuid().substring(32);
-  const stableConfig = {
-    endpoint: "http://127.0.0.1:9102",
-    region: "eu-central-1",
-    credentials: {
-      accessKeyId: "mps3",
-      secretAccessKey: "ZOAmumEzdsUUcVlQ",
+const stableConfig = {
+  endpoint: "http://127.0.0.1:9102",
+  region: "eu-central-1",
+  credentials: { accessKeyId: "mps3", secretAccessKey: "ZOAmumEzdsUUcVlQ" },
+};
+const unstableConfig = { ...stableConfig, endpoint: "http://127.0.0.1:9104" };
+
+const minioEnabled = process.env.MINIO === "1";
+
+// Toxiproxy toggle — the new core has no `setOnline()` knob; we flip
+// the Minio proxy directly through Toxiproxy's HTTP admin API. No-op
+// when MINIO is off so memory / local-fs variants don't try to reach
+// `:8474`.
+const setOnline = async (state: boolean): Promise<void> => {
+  if (!minioEnabled) return;
+  await fetch("http://localhost:8474/proxies/minio", {
+    method: "POST",
+    body: JSON.stringify({ enabled: state }),
+  }).catch(() => {
+    // Toxiproxy unreachable — let the test surface the real Minio
+    // error rather than masking it here.
+  });
+};
+
+interface Variant {
+  readonly label: "memory" | "local-fs" | "node-minio";
+  readonly requiresMinio?: boolean;
+  /** Per-tick poll cadence; tuned per backend. */
+  readonly pollTickMs: number;
+  /** Build N {@link Storage} handles sharing one backing store. */
+  readonly makeStorages: (bucket: string, n: number) => Promise<Storage[]>;
+  /** Best-effort cleanup for ephemeral resources. */
+  readonly cleanup?: () => Promise<void>;
+}
+
+const tmpRoots: string[] = [];
+
+const allVariants: Variant[] = [
+  {
+    label: "memory",
+    pollTickMs: 5,
+    // Process-singleton: same bucket → same underlying MemoryStorage.
+    // Same mechanism the legacy `memory` variant used.
+    makeStorages: async (bucket, n): Promise<Storage[]> =>
+      Array.from({ length: n }, () => getOrCreateMemoryStorageForBucket(bucket)),
+  },
+  {
+    label: "local-fs",
+    pollTickMs: 10,
+    // Atomic `writeFile(temp)+rename` keeps concurrent writes safe;
+    // cross-instance visibility is the file system.
+    makeStorages: async (_bucket, n): Promise<Storage[]> => {
+      const root = await mkdtemp(join(tmpdir(), "baerly-rnd-"));
+      tmpRoots.push(root);
+      return Array.from({ length: n }, () => new LocalFsStorage({ root }));
     },
-  };
-
-  const unstableConfig = {
-    endpoint: "http://127.0.0.1:9104",
-    region: "eu-central-1",
-    credentials: {
-      accessKeyId: "mps3",
-      secretAccessKey: "ZOAmumEzdsUUcVlQ",
+    cleanup: async (): Promise<void> => {
+      const drained = tmpRoots.splice(0);
+      for (const r of drained) {
+        await rm(r, { recursive: true, force: true }).catch(() => {
+          // Cleanup is best-effort; a stale lock under a crashed
+          // worker doesn't fail the test.
+        });
+      }
     },
-  };
-
-  const minioEnabled = process.env.MINIO === "1";
-
-  const setOnline = async (state: boolean) => {
-    if (!minioEnabled) return;
-    fetch("localhost:8474/proxies/minio", {
-      method: "POST",
-      body: JSON.stringify({
-        enabled: state,
-      }),
-    });
-  };
-
-  const allConfigs: {
-    createBucket?: boolean;
-    label: string;
-    requiresMinio?: boolean;
-    config: MPS3Config;
-  }[] = [
-    {
-      label: "useVersioning",
-      requiresMinio: true,
-      config: {
-        useVersioning: true,
-        defaultBucket: `ver${session}`,
-        s3Config: unstableConfig,
-        parser: new DOMParser(),
-      },
-    },
-    {
-      label: "minio",
-      requiresMinio: true,
-      config: {
-        minimizeListObjectsCalls: false,
-        defaultBucket: `nov${session}`,
-        s3Config: unstableConfig,
-        parser: new DOMParser(),
-      },
-    },
-    {
-      label: "memory",
-      createBucket: false,
-      config: {
-        minimizeListObjectsCalls: false,
-        parser: new DOMParser(),
-        defaultBucket: `mem${session}`,
-        offlineStorage: false,
-        adaptiveClock: false,
-        s3Config: {
-          endpoint: MPS3.MEMORY_ENDPOINT,
-        },
-      },
-    },
-  ];
-
-  const configs = allConfigs.filter((v) => !v.requiresMinio || minioEnabled);
-
-  configs.map((variant) =>
-    describe(variant.label, () => {
-      let networkTwiddler: NodeJS.Timeout;
-      beforeAll(async () => {
-        s3 = makeFixtureClient(stableConfig)!;
-
-        if (variant.createBucket !== false) {
-          await createBucket(s3, stableConfig.endpoint, variant.config.defaultBucket);
-
-          if (variant.config.useVersioning) {
-            await putBucketVersioningEnabled(
-              s3,
-              stableConfig.endpoint,
-              variant.config.defaultBucket,
-            );
-          }
-        }
+  },
+  {
+    label: "node-minio",
+    requiresMinio: true,
+    pollTickMs: 50,
+    makeStorages: async (bucket, n): Promise<Storage[]> => {
+      const signer = new AwsClient({
+        accessKeyId: stableConfig.credentials.accessKeyId,
+        secretAccessKey: stableConfig.credentials.secretAccessKey,
+        region: "us-east-1",
+        service: "s3",
       });
+      await createBucket(signer, stableConfig.endpoint, bucket);
+      const xmlParser = new DOMParser();
+      return Array.from(
+        { length: n },
+        () =>
+          new S3HttpStorage({
+            endpoint: unstableConfig.endpoint, // Toxiproxy — fault injection
+            bucket,
+            sign: (req) => signer.sign(req),
+            xmlParser,
+          }),
+      );
+    },
+  },
+];
+
+const variants = allVariants.filter((v) => !v.requiresMinio || minioEnabled);
+
+describe("randomized (Db + ServerWriter)", () => {
+  for (const variant of variants) {
+    describe(variant.label, () => {
+      let networkTwiddler: ReturnType<typeof setInterval> | undefined;
 
       beforeEach(async () => {
         await setOnline(true);
-        networkTwiddler = setInterval(() => {
-          setOnline(Math.random() > 0.5);
-        }, 100);
+        // Only Minio has a Toxiproxy seam; the other variants have no
+        // injectable network shim, so the twiddler is a no-op for them.
+        if (variant.label === "node-minio") {
+          networkTwiddler = setInterval(() => {
+            void setOnline(Math.random() > 0.5);
+          }, 100);
+        }
       });
 
       afterEach(async () => {
-        clearInterval(networkTwiddler);
+        if (networkTwiddler) clearInterval(networkTwiddler);
         await setOnline(true);
+        if (variant.cleanup) await variant.cleanup();
       });
 
-      const getClient = (args?: { label?: string }) =>
-        new MPS3({
-          label: args?.label,
-          ...variant.config,
-          clockOffset: Math.random() * 2000 - 1000,
-        });
       test(
-        "causal consistency all-to-all, single key",
+        "causal consistency all-to-all, single key (multi-instance)",
         { timeout: 60 * 1000 },
-        () =>
-          new Promise<void>((done, reject) => {
-            void (async () => {
-              let testFailed = false;
-              let finished = false;
-              const key = `causal-${uuid()}`;
-              // No pre-delete: the UUID-suffixed key is unique per test
-              // invocation, and each variant's bucket is unique per test
-              // file (session UUID). A pre-delete with an independent
-              // random `clockOffset` could land with an *embedded*
-              // timestamp that's newer than the seed broadcasts'
-              // (clockOffsets are ±1s, but wall-clock ordering between
-              // the ephemeral delete and the seeds is <1ms). The
-              // syncer's replay then applies the delete last in causal
-              // order, undoing every seed write and stalling the
-              // cascade.
-
-              const system = new CentralisedOfflineFirstCausalSystem();
-              const max_steps = 100;
-
-              type Message = {
-                sender: number;
-                send_time: number;
-              };
-
-              const clients = [...Array(3)].map((_, client_id) =>
-                getClient({ label: system.client_labels[client_id] }),
-              );
-
-              // Drives the cascade: observe a value, check invariants, write
-              // a fresh message. Reads come from the per-client polling
-              // loop below.
-              const handle = (client_id: number, val: JSONValue | DeleteValue) => {
-                const label = system.client_labels[client_id];
-                if (val) {
-                  const message = val as Message;
-                  console.log(
-                    `${system.global_time}: ${label}@${system.client_clocks[
-                      client_id
-                    ]!} rcvd ${system.client_labels[message.sender]}@${message.send_time}`,
-                  );
-                  system.observe({
-                    ...message,
-                    receiver: client_id,
-                  });
-                }
-
-                if (system.global_time < max_steps && !testFailed) {
-                  testFailed = !system.causallyConsistent();
-                  if (testFailed) {
-                    console.error(system.grounding);
-                    console.error(system.knowledge_base);
-                  }
-                  expect(testFailed).toBe(false);
-
-                  system.observe({
-                    receiver: client_id,
-                    sender: client_id,
-                    send_time: system.client_clocks[client_id]! - 1,
-                  });
-                  testFailed = !system.causallyConsistent();
-                  expect(testFailed).toBe(false);
-
-                  console.log(
-                    `${system.global_time}: ${label}@${
-                      system.client_clocks[client_id]! - 1
-                    } broadcast`,
-                  );
-                  void clients[client_id]!.put(key, {
-                    sender: client_id,
-                    send_time: system.client_clocks[client_id]! - 1,
-                  });
-                } else if (system.global_time >= max_steps && !finished) {
-                  finished = true;
-                  done();
-                }
-              };
-
-              // Kick the cascade: each client observes the seed (undefined,
-              // since we deleted above) once before the polling loop
-              // catches up to remote writes.
-              clients.forEach((_, client_id) => handle(client_id, undefined));
-
-              const POLL_TICK_MS = variant.label === "memory" ? 5 : 50;
-              clients.forEach((client, client_id) => {
-                void (async () => {
-                  let prev: string | undefined = undefined;
-                  while (!finished) {
-                    await new Promise((r) => setTimeout(r, POLL_TICK_MS));
-                    if (finished) return;
-                    try {
-                      const val = await client.get(key);
-                      const serialized = JSON.stringify(val);
-                      if (serialized !== prev) {
-                        prev = serialized;
-                        try {
-                          handle(client_id, val);
-                        } catch (err) {
-                          finished = true;
-                          reject(err);
-                          return;
-                        }
-                      }
-                    } catch (err) {
-                      // Swallow transient read failures (Toxiproxy is
-                      // flipping the network on/off every 100ms during
-                      // beforeEach). The next tick retries.
-                      void err;
-                    }
-                  }
-                })();
-              });
-            })();
-          }),
+        async () => {
+          const N = 3;
+          const bucket = `rnd-${variant.label}-${uuid().slice(0, 8)}`;
+          const storages = await variant.makeStorages(bucket, N);
+          await runCausalConsistencyCascade({
+            storages,
+            pollTickMs: variant.pollTickMs,
+          });
+        },
       );
-    }),
-  );
+    });
+  }
 });
