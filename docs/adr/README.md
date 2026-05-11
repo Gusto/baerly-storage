@@ -19,6 +19,7 @@ These are decisions, not principles. Cross-cutting philosophy lives in
 - [0011 — CAS scope is per-collection](./0011-cas-scope.md)
 - [0012 — Transaction scope is single-table](./0012-transaction-scope.md)
 - [0013 — Export contract is Postgres-logical-replication-shaped](./0013-export-contract.md)
+- [0014 — Auth as a `Verifier` interface](./0014-auth-verifier-interface.md)
 - [0015 — Cost ceiling is a published bound](./0015-cost-ceiling.md)
 - [0016 — Forward-only schema migration via `schema_version`](./0016-schema-migration.md)
 - [0017 — Chunked level-based snapshot layout](./0017-snapshot-levels.md)

@@ -9,6 +9,7 @@ export * from "./query";
 export * from "./storage";
 export * from "./time";
 export * from "./types";
+export * from "./verifier";
 export * from "./hashing";
 export * from "./log";
 export * from "./metrics";
