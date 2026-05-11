@@ -79,6 +79,14 @@ returns the right impl based on construction config:
   Every method throws `MPS3Error("OfflineNoCache", …)`; callers that
   miss the in-memory / IDB cache layer surface a clean error instead
   of a hung promise.
+- `LocalFsStorage` (`packages/dev/src/local-fs.ts`, ships in the
+  Node-only `@baerly/dev` package — not part of the runtime bundle
+  and not selected by `MPS3.storageFor(bucket)`, since the kernel
+  can't depend on `node:fs`) backs `baerly dev` against a fixture
+  directory. Content-addressed `"<sha-256-hex>"` ETags so identical
+  bodies match across runs; atomic writes via `write-temp + rename`.
+  Callers construct it directly and inject it where a `Storage` is
+  required.
 
 ## Reads and change notifications
 

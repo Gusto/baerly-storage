@@ -71,6 +71,7 @@ Pure-unit tests that always pass: `packages/protocol/src/hashing.test.ts`,
 `packages/protocol/src/log.test.ts`,
 `packages/protocol/src/storage/memory.test.ts`,
 `packages/protocol/src/storage/s3-http.test.ts`,
+`packages/dev/src/local-fs.test.ts`,
 `tests/unit/datatypes.test.ts`,
 `tests/integration/bundle-size.test.ts`,
 `tests/integration/log-emit.test.ts`,
@@ -106,7 +107,12 @@ Read in this order to build a mental model:
    `packages/protocol/src/storage/` (`Storage` interface +
    `MemoryStorage`, `S3HttpStorage` impls + the legacy
    `fetchFnFromStorage` adapter, `@deprecated`).
-5. **`src/`** (impure utilities):
+5. **`@baerly/dev`** (Node-only `Storage` impls + dev harness):
+   `packages/dev/src/local-fs.ts` (`LocalFsStorage` — directory-tree
+   `Storage` with content-addressed ETags and atomic writes; used by
+   future `baerly dev` and by tests that need cross-`MPS3`-instance
+   visibility without Minio).
+6. **`src/`** (impure utilities):
    `src/offline-storage.ts` (`OfflineStorage` stub thrown when
    `online: false`).
 
