@@ -126,3 +126,25 @@ export const MEM_CACHE_CAPACITY: number = 100;
  * @see docs/sync_protocol.md
  */
 export const ORPHAN_MANIFEST_GRACE_MILLIS: number = 6 * LAG_WINDOW_MILLIS;
+
+/**
+ * Current major version of the `current.json` control-object schema.
+ * Readers MUST reject unknown versions with
+ * `MPS3Error{code:"InvalidResponse"}` rather than try to coerce.
+ *
+ * Bump only on a breaking change to `CurrentJson` field semantics.
+ * Adding a new optional field is NOT breaking; renaming or removing
+ * a field IS breaking.
+ *
+ * @see packages/protocol/src/coordination/current-json.ts
+ */
+export const CURRENT_JSON_SCHEMA_VERSION = 1 as const;
+
+/**
+ * MIME type written for `current.json` PUTs. S3 round-trips this on
+ * subsequent GETs; useful for diagnostics when staring at a bucket
+ * via the AWS console.
+ *
+ * @see packages/protocol/src/coordination/current-json.ts
+ */
+export const CURRENT_JSON_CONTENT_TYPE: string = "application/json";
