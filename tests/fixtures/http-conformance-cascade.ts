@@ -269,6 +269,11 @@ export const runHttpConformanceCascade = (opts: {
           void _stripped;
           expect(rest).toEqual(body);
         },
+        // Each iteration does a fresh table provisioning + POST + GET.
+        // Over Minio HTTP that's ~30-50 ms; 100 iterations × 3 round
+        // trips comfortably exceeds the vitest default 5s timeout.
+        // 30s leaves headroom for slow CI Minio.
+        30_000,
       );
 
       test("GET of missing _id returns 404 with an error envelope", async () => {
