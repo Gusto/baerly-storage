@@ -3,6 +3,12 @@ export * from "./contract";
 export * from "./db";
 export * from "./gc";
 export * from "./http/router";
+export {
+  longPollSince,
+  listEventsSince,
+  type LongPollSinceOptions,
+  type ListEventsSinceOptions,
+} from "./http/since";
 export * from "./maintenance";
 export * from "./query";
 export * from "./server-writer";

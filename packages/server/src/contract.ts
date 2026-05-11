@@ -59,7 +59,7 @@ export type Routes =
  * | 200    | Success — `HttpOkEnvelope<T>` or `SinceResponse`.                |
  * | 201    | `POST` insert success — body `{ _id }`.                          |
  * | 204    | `DELETE` success — no body.                                      |
- * | 304    | Long-poll: nothing changed; `next_cursor` unchanged.             |
+ * | 304    | Reserved. Long-poll idleness ships as 200 + empty events.        |
  * | 400    | Body parse failed → `HttpErrorEnvelope` `code:"SchemaError"`.    |
  * | 401    | `Verifier` returned null → `code:"Unauthorized"`.                |
  * | 403    | Auth ok but tenant prefix denied → `code:"AccessDenied"`.        |

@@ -8,9 +8,11 @@
  * `Response` whose body follows the `HttpOkEnvelope` /
  * `HttpErrorEnvelope` shapes.
  *
- * Ticket 26 will append `GET /v1/since` to the same factory; ticket
- * 27 wraps the Worker-side GETs with `caches.default` *outside*
- * `createRouter` so the router stays platform-agnostic.
+ * Ticket 26 appends `GET /v1/since` to the same factory (see
+ * `./since.ts` for the long-poll core). Ticket 27 wraps the
+ * Worker-side GETs with `caches.default` *outside* `createRouter` so
+ * the router stays platform-agnostic; ticket 27 also EXCLUDES
+ * `/v1/since` — long-poll idleness is not a cache hit.
  */
 
 import { Hono, type Context } from "hono";
@@ -23,7 +25,8 @@ import {
   type Verifier,
 } from "@baerly/protocol";
 import type { Db } from "../db";
-import type { HttpErrorEnvelope, HttpStatus } from "../contract";
+import type { HttpErrorEnvelope, HttpStatus, SinceResponse } from "../contract";
+import { longPollSince } from "./since";
 
 /**
  * Options for {@link createRouter}.
@@ -61,8 +64,7 @@ export interface CreateRouterOptions {
  *  - `PATCH  /v1/t/:table/:id` → merge-patch. Body: `{ patch }`.
  *  - `DELETE /v1/t/:table/:id` → delete row by id. → `204`.
  *  - `GET    /v1/healthz` (when `healthCheck !== false`) → liveness probe.
- *
- * `GET /v1/since` is added by ticket 26 (long-poll log).
+ *  - `GET    /v1/since?table=<name>&cursor=<opaque>` → long-poll log.
  *
  * @example
  * ```ts
@@ -192,6 +194,42 @@ export function createRouter(options: CreateRouterOptions): Hono {
         .delete();
       if (deleted === 0) return jsonError(c, 404, "Internal", `No such row: ${id}`);
       return new Response(null, { status: 204 });
+    } catch (e) {
+      return mapToResponse(c, e);
+    }
+  });
+
+  // Long-poll — GET /v1/since?table=<name>&cursor=<opaque>
+  //
+  // Cache-API note (ticket 27 will wire `caches.default` for read
+  // paths): `/v1/since` is explicitly EXCLUDED — long-poll idleness
+  // is not a cache hit. Ticket 27's middleware MUST check the path
+  // before consulting the cache. Do NOT add cache reads here.
+  app.get("/v1/since", async (c) => {
+    // Ticket 25 does NOT set `c.var.db`; the adapter resolves the
+    // Verifier BEFORE `createRouter` is called and the resulting `db`
+    // is captured in this closure. The handler reads it from the
+    // outer scope, not from `c.var`.
+    const table = c.req.query("table");
+    if (typeof table !== "string" || table.length === 0 || table.includes("/")) {
+      return jsonError(
+        c,
+        400,
+        "SchemaError",
+        "GET /v1/since requires a non-empty `table` query parameter without `/`",
+      );
+    }
+    const cursor = c.req.query("cursor") ?? "";
+    try {
+      const result = await longPollSince({
+        db,
+        table,
+        cursor,
+        signal: c.req.raw.signal,
+      });
+      // 200 covers both "new events present" and "timeout idle" —
+      // see ticket 26 §4.5 for why we don't use 304.
+      return c.json(result satisfies SinceResponse, 200);
     } catch (e) {
       return mapToResponse(c, e);
     }
