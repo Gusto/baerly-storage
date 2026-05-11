@@ -7,5 +7,4 @@ packages:
 # allowlist enumerated here.
 onlyBuiltDependencies:
   - esbuild
-  - sharp
   - workerd
