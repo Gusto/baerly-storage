@@ -25,3 +25,6 @@ export type { S3HttpStorageOptions } from "@baerly/protocol";
 // Worker module-default + Cron Trigger surface.
 export { baerlyWorker } from "./worker";
 export type { BaerlyWorkerOptions, Env, WorkerHandler, WorkerScheduledHandler } from "./worker";
+
+// Read-path cache integration (Workers-only).
+export { cacheKeyFor, invalidateOnWrite, withReadCache } from "./cache";

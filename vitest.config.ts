@@ -71,6 +71,11 @@ const r2BindingTableApiGlob = "packages/adapter-cloudflare/src/table-api.test.ts
 // picked up by the `cloudflare-pool` project.
 const cfWorkerTestGlob = "packages/adapter-cloudflare/src/worker*.test.ts";
 
+// Read-path Cache API integration tests — runs `caches.default`
+// inside Workerd / miniflare. Same project membership rules as the
+// globs above.
+const cfCacheTestGlob = "packages/adapter-cloudflare/src/cache.test.ts";
+
 export default defineConfig({
   test: {
     projects: [
@@ -87,6 +92,7 @@ export default defineConfig({
             r2BindingRandomizedGlob,
             r2BindingTableApiGlob,
             cfWorkerTestGlob,
+            cfCacheTestGlob,
           ],
           setupFiles: ["tests/setup/fast-check.ts"],
           // Process isolation. Vitest 4's default `pool: 'threads'` with
@@ -133,6 +139,7 @@ export default defineConfig({
             r2BindingRandomizedGlob,
             r2BindingTableApiGlob,
             cfWorkerTestGlob,
+            cfCacheTestGlob,
           ],
           // `tests/setup/r2-binding.ts` runs inside Workerd, imports
           // from `cloudflare:test`, and re-publishes `env.BUCKET` on

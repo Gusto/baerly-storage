@@ -6,6 +6,7 @@ import {
   createRouter,
   runScheduledMaintenance,
 } from "@baerly/server";
+import { invalidateOnWrite, withReadCache } from "./cache";
 import { r2BindingStorage } from "./r2-binding-storage";
 
 /**
@@ -179,7 +180,16 @@ export function baerlyWorker(options: BaerlyWorkerOptions = {}): ExportedHandler
       // `healthCheck: false` — already served above; keeps the probe
       // hot path off Db.create.
       const app = createRouter({ db, healthCheck: false });
-      return app.fetch(req, env, ctx);
+      // Hono's `fetch` returns `Response | Promise<Response>`;
+      // `withReadCache` wants a `Promise<Response>`. Normalize via
+      // `Promise.resolve` so the sync-return branch is wrapped.
+      const response = await withReadCache(req, tenantPrefix, () =>
+        Promise.resolve(app.fetch(req, env, ctx)),
+      );
+      // Best-effort invalidate after writes. `ctx.waitUntil` keeps the
+      // Worker alive for the cache.delete without blocking the response.
+      ctx.waitUntil(invalidateOnWrite(req, tenantPrefix, response.status));
+      return response;
     },
 
     async scheduled(event, env, ctx): Promise<void> {
