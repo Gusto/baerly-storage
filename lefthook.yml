@@ -1,15 +1,24 @@
 # Pre-commit hooks for MPS3.
 #
-# Runs `pnpm verify` (typecheck + lint) and `pnpm check:references`
-# (banlist scan from .deprecated-tokens.txt). Tests and format:check
-# are intentionally excluded — their baselines aren't clean. See
-# CLAUDE.md "Verification" section.
+# Auto-formats and lint-fixes staged files (re-staging the fixes),
+# then typechecks and runs the banlist scan from
+# `.deprecated-tokens.txt`. Tests are intentionally excluded — they
+# belong in CI. See CLAUDE.md "Verification" section.
 #
 # Bypass with `git commit --no-verify` when needed.
 
 pre-commit:
+  piped: true
   commands:
-    verify:
-      run: pnpm verify
+    format:
+      glob: "*.{ts,tsx,mjs,cjs,json}"
+      run: pnpm exec oxfmt {staged_files}
+      stage_fixed: true
+    lint:
+      glob: "*.{ts,tsx,mjs,cjs}"
+      run: pnpm exec oxlint --fix {staged_files}
+      stage_fixed: true
+    typecheck:
+      run: pnpm typecheck
     check-references:
       run: pnpm check:references
