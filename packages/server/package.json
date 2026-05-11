@@ -2,7 +2,7 @@
   "name": "@baerly/server",
   "version": "0.0.0",
   "private": true,
-  "description": "Baerly server — portable HTTP/RPC surface over a Storage adapter. Phase 2 ships types only; runtime lands in Phase 6.",
+  "description": "Baerly server — portable HTTP/RPC surface over a Storage adapter. Phase 3 ships `Db` + `_raw` Storage escape hatch; HTTP routing lands in Phase 6.",
   "license": "MIT",
   "type": "module",
   "sideEffects": false,
