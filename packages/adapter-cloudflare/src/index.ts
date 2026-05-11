@@ -17,3 +17,7 @@ export type { R2BindingStorageOptions } from "./r2-binding-storage";
 // time without pulling in @baerly/protocol directly.
 export { S3HttpStorage } from "@baerly/protocol";
 export type { S3HttpStorageOptions } from "@baerly/protocol";
+
+// Worker module-default + Cron Trigger surface.
+export { baerlyWorker } from "./worker";
+export type { BaerlyWorkerOptions, Env, WorkerHandler, WorkerScheduledHandler } from "./worker";

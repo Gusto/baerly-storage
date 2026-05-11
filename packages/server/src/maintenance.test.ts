@@ -1,0 +1,107 @@
+/* eslint-disable no-underscore-dangle -- `_id` is the locked primary-key
+   field on document shapes; the maintenance test seeds doc bodies with it. */
+
+/**
+ * Phase-5 maintenance — `runScheduledMaintenance()` composition of
+ * `compact()` + `runGc()` under `MemoryStorage`. The Cloudflare-side
+ * worker test and the Node-side `runMaintenanceTick` test cover the
+ * adapter wrappers.
+ */
+
+import { CURRENT_JSON_SCHEMA_VERSION, createCurrentJson, MemoryStorage } from "@baerly/protocol";
+import { describe, expect, it } from "vitest";
+import {
+  CLOUDFLARE_FREE_TIER,
+  CLOUDFLARE_PAID_TIER,
+  NODE_PROFILE,
+  runScheduledMaintenance,
+} from "./maintenance";
+import { ServerWriter } from "./server-writer";
+
+const KEY = "app/t/tenant/x/manifests/c/current.json";
+const COLL = "c";
+
+const bootstrap = async (storage: MemoryStorage, key: string): Promise<void> => {
+  await createCurrentJson(storage, key, {
+    schema_version: CURRENT_JSON_SCHEMA_VERSION,
+    snapshot: null,
+    next_seq: 0,
+    writer_fence: { epoch: 0, owner: "maintenance-test", claimed_at: "" },
+  });
+};
+
+describe("runScheduledMaintenance", () => {
+  it("runs both compact and gc by default", async () => {
+    const s = new MemoryStorage();
+    await bootstrap(s, KEY);
+    const writer = new ServerWriter({ storage: s, currentJsonKey: KEY });
+    for (let i = 0; i < 150; i++) {
+      await writer.commit({
+        op: "I",
+        collection: COLL,
+        docId: `d${i}`,
+        body: { _id: `d${i}`, n: i },
+      });
+    }
+    const r = await runScheduledMaintenance(
+      { storage: s, currentJsonKey: KEY },
+      // Bypass GC's 7-day grace so the sweep path actually runs in
+      // one tick. Compact's bounds come from NODE_PROFILE.
+      { ...NODE_PROFILE, gc: { ...NODE_PROFILE.gc, graceMillis: 0 } },
+    );
+    expect(r.compact?.written).toBe(true);
+    expect(r.compact?.entriesFolded).toBe(150);
+    // After compact, [0, 150) become stale-log; GC marks them and the
+    // zero-grace lets the same pass sweep them.
+    expect(r.gc).not.toBeNull();
+    expect(r.gc?.marked.stale_log).toBeGreaterThan(0);
+  });
+
+  it("skipCompact runs gc only", async () => {
+    const s = new MemoryStorage();
+    await bootstrap(s, KEY);
+    const r = await runScheduledMaintenance(
+      { storage: s, currentJsonKey: KEY },
+      { skipCompact: true },
+    );
+    expect(r.compact).toBeNull();
+    expect(r.gc).not.toBeNull();
+  });
+
+  it("skipGc runs compact only", async () => {
+    const s = new MemoryStorage();
+    await bootstrap(s, KEY);
+    const writer = new ServerWriter({ storage: s, currentJsonKey: KEY });
+    for (let i = 0; i < 150; i++) {
+      await writer.commit({
+        op: "I",
+        collection: COLL,
+        docId: `d${i}`,
+        body: { _id: `d${i}`, n: i },
+      });
+    }
+    const r = await runScheduledMaintenance(
+      { storage: s, currentJsonKey: KEY },
+      { ...NODE_PROFILE, skipGc: true },
+    );
+    expect(r.compact?.written).toBe(true);
+    expect(r.gc).toBeNull();
+  });
+
+  it("profile constants carry the documented bounds", async () => {
+    // A regression in these constants means the budget audits and
+    // the per-tier docstring lie about the worst-case I/O profile.
+    expect(CLOUDFLARE_FREE_TIER.compact?.maxEntriesPerRun).toBe(20);
+    expect(CLOUDFLARE_FREE_TIER.compact?.minEntriesToCompact).toBe(50);
+    expect(CLOUDFLARE_FREE_TIER.gc?.maxMarksPerRun).toBe(20);
+    expect(CLOUDFLARE_FREE_TIER.gc?.maxSweepsPerRun).toBe(10);
+
+    expect(CLOUDFLARE_PAID_TIER.compact?.maxEntriesPerRun).toBe(2000);
+    expect(CLOUDFLARE_PAID_TIER.gc?.maxMarksPerRun).toBe(1000);
+    expect(CLOUDFLARE_PAID_TIER.gc?.maxSweepsPerRun).toBe(500);
+
+    expect(NODE_PROFILE.compact?.maxEntriesPerRun).toBe(100_000);
+    expect(NODE_PROFILE.gc?.maxMarksPerRun).toBe(100_000);
+    expect(NODE_PROFILE.gc?.maxSweepsPerRun).toBe(1000);
+  });
+});

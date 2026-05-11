@@ -63,6 +63,11 @@ const r2BindingRandomizedGlob = "packages/adapter-cloudflare/src/randomized.test
 // cloudflare-r2 lives here).
 const r2BindingTableApiGlob = "packages/adapter-cloudflare/src/table-api.test.ts";
 
+// `baerlyWorker()`'s scheduled-handler test — exercises the Cron
+// Trigger plumbing against the miniflare R2 binding. Same project
+// membership rules as the three globs above.
+const cfWorkerTestGlob = "packages/adapter-cloudflare/src/worker.test.ts";
+
 export default defineConfig({
   test: {
     projects: [
@@ -78,6 +83,7 @@ export default defineConfig({
             r2BindingConformanceGlob,
             r2BindingRandomizedGlob,
             r2BindingTableApiGlob,
+            cfWorkerTestGlob,
           ],
           setupFiles: ["tests/setup/fast-check.ts"],
           // Process isolation. Vitest 4's default `pool: 'threads'` with
@@ -119,7 +125,12 @@ export default defineConfig({
         ],
         test: {
           name: "cloudflare-pool",
-          include: [r2BindingConformanceGlob, r2BindingRandomizedGlob, r2BindingTableApiGlob],
+          include: [
+            r2BindingConformanceGlob,
+            r2BindingRandomizedGlob,
+            r2BindingTableApiGlob,
+            cfWorkerTestGlob,
+          ],
           // `tests/setup/r2-binding.ts` runs inside Workerd, imports
           // from `cloudflare:test`, and re-publishes `env.BUCKET` on
           // `globalThis.__BAERLY_R2_BINDING__` for the conformance

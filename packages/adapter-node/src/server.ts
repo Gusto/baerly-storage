@@ -1,5 +1,6 @@
 import type { IncomingMessage, RequestListener, ServerResponse } from "node:http";
 import type { Storage } from "@baerly/protocol";
+import { NODE_PROFILE, runScheduledMaintenance } from "@baerly/server";
 
 /**
  * Options for {@link createListener}. The triple
@@ -104,3 +105,48 @@ function writeError(res: ServerResponse, status: number, code: string, message: 
   // server package ships a runtime builder, swap to it.
   writeJson(res, status, { error: { code, message } });
 }
+
+/**
+ * Options for {@link runMaintenanceTick}.
+ */
+export interface NodeMaintenanceOptions {
+  /** Any {@link Storage} impl — `S3HttpStorage`, `LocalFsStorage`, etc. */
+  readonly storage: Storage;
+  /** Full bucket-relative key of the CAS pointer for the target collection. */
+  readonly currentJsonKey: string;
+  /** Forwarded to both `compact()` and `runGc()` underneath. */
+  readonly signal?: AbortSignal;
+}
+
+/**
+ * Run one pass of compaction + GC for one collection. Node hosts have
+ * no subrequest cap, so the {@link NODE_PROFILE} lets a single pass
+ * fold the entire live tail and sweep up to 1000 candidates per run.
+ *
+ * Pair with `node-cron`, systemd timers, or k8s CronJobs — this
+ * function is a single-shot callable that does not loop. Errors
+ * propagate; the caller decides retry semantics.
+ *
+ * `compact()` and `runGc()` are each CAS-protected single-attempts:
+ * a crash or restart between phases is safe because the next tick
+ * picks up where the previous one left off.
+ *
+ * @example
+ * ```ts
+ * import cron from "node-cron";
+ * import { runMaintenanceTick } from "@baerly/adapter-node";
+ *
+ * cron.schedule("0 * * * *", async () => {  // hourly
+ *   await runMaintenanceTick({ storage, currentJsonKey: "..." });
+ * });
+ * ```
+ */
+export const runMaintenanceTick = async (opts: NodeMaintenanceOptions): Promise<void> => {
+  await runScheduledMaintenance(
+    { storage: opts.storage, currentJsonKey: opts.currentJsonKey },
+    {
+      ...NODE_PROFILE,
+      ...(opts.signal !== undefined && { signal: opts.signal }),
+    },
+  );
+};
