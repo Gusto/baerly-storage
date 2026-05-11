@@ -37,7 +37,7 @@ Don't introduce alternate tooling without justification.
 | `pnpm test:minio` | adds the Minio-gated suites: the `clock behavior` block of `time.test.ts`, the `node-minio` variant of `randomized.test.ts`, and `adapter-node` Minio conformance | ~10s | ✅ when `pnpm dev:storage` is up |
 | `pnpm test:conformance` | adds `conformance.test.ts` (needs Minio + credentials files) | ~30s | requires credentials in `credentials/{aws,gcs,cloudflare}.json` |
 | `pnpm test:export-smoke` | adds `export-smoke.test.ts` (Phase-1 `LogEntry` round-trip into Postgres; needs local Postgres on `:5433`) | ~5s | ✅ when `pnpm dev:storage` is up |
-| `pnpm test:adapter-cloudflare` | runs `r2BindingStorage` conformance **and** the `cloudflare-r2` variant of `randomized.test.ts` under miniflare (`@cloudflare/vitest-pool-workers`, project `cloudflare-pool`) | ~3s | ✅ — first run downloads the `workerd` binary |
+| `pnpm test:adapter-cloudflare` | runs `r2BindingStorage` conformance, the `cloudflare-r2` variant of `randomized.test.ts`, **and** the `cloudflare-r2` variant of `table-api.test.ts` under miniflare (`@cloudflare/vitest-pool-workers`, project `cloudflare-pool`) | ~3s | ✅ — first run downloads the `workerd` binary |
 | `pnpm test:adapter-node` | runs `s3HttpStorage` conformance against local Minio | ~10s | ✅ when `pnpm dev:storage` is up |
 | `pnpm test:adapters` | sequential wrapper: `test:adapter-cloudflare` then `test:adapter-node` | ~10s | ✅ when `pnpm dev:storage` is up |
 | `pnpm format:check` | oxfmt formatting | ~seconds | ❌ red on ~20 pre-existing files; diff vs. `main` |
@@ -81,6 +81,16 @@ deps. Tests requiring Minio or credentials are gated by env:
   `beforeAll` (409 BucketAlreadyOwnedByYou is tolerated). Run with
   `pnpm test:adapter-node`, or both adapter suites in sequence
   with `pnpm test:adapters`.
+- **`tests/integration/table-api.test.ts`** drives the locked
+  `db.table(...).{first,all,count,insert,update,replace,delete}` and
+  `db.transaction(...)` surface across three Node-side adapters
+  (`memory`, `local-fs`, `node-minio`). `memory` + `local-fs` run by
+  default; `node-minio` is gated on `MINIO=1` (via
+  `pnpm test:minio`). The Workerd-side `cloudflare-r2` variant lives
+  at `packages/adapter-cloudflare/src/table-api.test.ts` and runs
+  under the `cloudflare-pool` vitest project (via
+  `pnpm test:adapter-cloudflare`). All variants share the
+  backend-agnostic driver in `tests/fixtures/table-api-cascade.ts`.
 
 `randomized.test.ts` drives the all-to-all single-key causal-
 consistency cascade through `Db` + `ServerWriter` (from

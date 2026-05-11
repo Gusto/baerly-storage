@@ -55,6 +55,14 @@ const r2BindingConformanceGlob =
 // lives here).
 const r2BindingRandomizedGlob = "packages/adapter-cloudflare/src/randomized.test.ts";
 
+// Companion table-API cascade entry — same project membership rules
+// as the two globs above. Drives the shared
+// `tests/fixtures/table-api-cascade.ts` driver against the miniflare
+// R2 binding so the four-adapter table-API matrix is closed (memory
+// / local-fs / node-minio live in `tests/integration/table-api.test.ts`,
+// cloudflare-r2 lives here).
+const r2BindingTableApiGlob = "packages/adapter-cloudflare/src/table-api.test.ts";
+
 export default defineConfig({
   test: {
     projects: [
@@ -69,6 +77,7 @@ export default defineConfig({
             // CF adapter has its own project; don't double-run.
             r2BindingConformanceGlob,
             r2BindingRandomizedGlob,
+            r2BindingTableApiGlob,
           ],
           setupFiles: ["tests/setup/fast-check.ts"],
           // Process isolation. Vitest 4's default `pool: 'threads'` with
@@ -110,7 +119,7 @@ export default defineConfig({
         ],
         test: {
           name: "cloudflare-pool",
-          include: [r2BindingConformanceGlob, r2BindingRandomizedGlob],
+          include: [r2BindingConformanceGlob, r2BindingRandomizedGlob, r2BindingTableApiGlob],
           // `tests/setup/r2-binding.ts` runs inside Workerd, imports
           // from `cloudflare:test`, and re-publishes `env.BUCKET` on
           // `globalThis.__BAERLY_R2_BINDING__` for the conformance
