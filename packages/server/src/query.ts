@@ -48,6 +48,7 @@ import {
   type Storage,
   uuidv7,
 } from "@baerly/protocol";
+import { loadSnapshotAsMap } from "./compactor";
 import type { TxContext } from "./db";
 import { ServerWriter } from "./server-writer";
 
@@ -428,31 +429,31 @@ const runRead = async <T extends JSONArraylessObject>(
   // than throw. Mirrors `Storage.get` returning null on miss.
   if (head === null) return [];
 
-  // `head.json.snapshot` and the snapshot-load path are consumed in
-  // ticket 14. Today this reader walks `[log_seq_start, next_seq)`
-  // directly — when ticket 14 lands, it will start from the snapshot's
-  // per-doc map and the loop bounds stay identical. Entries with
+  // Load the snapshot, if any. The compactor (ticket 14) guarantees:
+  // `snapshot !== null` iff `log_seq_start > 0`. The snapshot is
+  // sealed by its filename hash; `loadSnapshotAsMap` recomputes on
+  // load and throws `Internal` on mismatch. Entries with
   // `seq < log_seq_start` have been folded into the snapshot (or
   // dropped on truncation) and MUST NOT be GET-required here — the
-  // bucket may have already swept them.
-
+  // bucket may have already swept them (ticket 15).
   const nextSeq = head.json.next_seq;
   const logSeqStart = logSeqStartOf(head.json);
-  if (logSeqStart >= nextSeq) {
-    // Either the table is empty (both 0) or every log entry has been
-    // folded into the snapshot. Snapshot consumption lands in ticket
-    // 14 — until then this branch returns empty.
-    return [];
-  }
+  const baseDocs: Map<string, JSONArraylessObject> =
+    head.json.snapshot === null
+      ? new Map()
+      : await loadSnapshotAsMap(ctx.storage, head.json.snapshot, ctx.tableName);
 
   // ── Step 2. Parallel-fetch every log entry [log_seq_start, next_seq).
   const logKeys: string[] = [];
   for (let s = logSeqStart; s < nextSeq; s++) {
     logKeys.push(`${ctx.tablePrefix}/log/${s}.json`);
   }
-  const entries = await Promise.all(logKeys.map(async (k) => readLogEntry(ctx.storage, k)));
+  const entries =
+    logKeys.length === 0
+      ? []
+      : await Promise.all(logKeys.map(async (k) => readLogEntry(ctx.storage, k)));
 
-  // ── Step 3. Fold per doc_id. ──────────────────────────────────────
+  // ── Step 3. Fold per doc_id, seeded from the snapshot. ────────────
   // I / U: post-image overwrite (today's per-doc-replace model). The
   //        writer emits `entry.new` as the FULL post-image
   //        (`packages/protocol/src/log.ts:67–72`: `new === patch`),
@@ -467,7 +468,7 @@ const runRead = async <T extends JSONArraylessObject>(
   //        the deletion land.
   // D: tombstone — remove from the map.
   // T / M: ignored (T not yet wired; M is a marker).
-  const docs = new Map<string, T>();
+  const docs = new Map<string, T>(baseDocs as Map<string, T>);
   for (const entry of entries) {
     if (entry.collection !== ctx.tableName) continue;
     if (entry.doc_id === undefined) continue;

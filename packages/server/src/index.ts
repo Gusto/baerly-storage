@@ -1,3 +1,4 @@
+export * from "./compactor";
 export * from "./contract";
 export * from "./db";
 export * from "./query";

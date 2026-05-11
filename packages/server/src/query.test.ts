@@ -15,6 +15,7 @@ import {
   MPS3Error,
 } from "@baerly/protocol";
 import { beforeEach, describe, expect, test } from "vitest";
+import { compact } from "./compactor";
 import { Db } from "./db";
 import { ServerWriter } from "./server-writer";
 
@@ -348,5 +349,72 @@ describe("Db.table read terminals", () => {
     const rows = await db.table(COLL).where({}).all();
     expect(rows).toHaveLength(1);
     expect(rows[0]).toEqual({ _id: "live", v: 1 });
+  });
+
+  test("case 15: read consumes the snapshot — rows unchanged across a compaction", async () => {
+    // Insert N rows, snapshot them all, then read: every row must
+    // still surface. Validates the snapshot-load + overlay path in
+    // `runRead`.
+    await provision(storage);
+    const w = commit(storage);
+    for (let i = 0; i < 50; i++) {
+      await w.commit({
+        op: "I",
+        collection: COLL,
+        docId: `d${i}`,
+        body: { _id: `d${i}`, n: i },
+      });
+    }
+
+    // Pre-compaction snapshot of the row set, for an apples-to-apples
+    // comparison after the snapshot lands.
+    const before = await db.table<{ _id: string; n: number }>(COLL).order({ _id: "asc" }).all();
+    expect(before).toHaveLength(50);
+
+    const res = await compact(
+      { storage, currentJsonKey: currentJsonKey(COLL) },
+      { minEntriesToCompact: 10, maxEntriesPerRun: 100 },
+    );
+    expect(res.written).toBe(true);
+    expect(res.logSeqStartAfter).toBe(50);
+
+    const after = await db.table<{ _id: string; n: number }>(COLL).order({ _id: "asc" }).all();
+    expect(after).toEqual(before);
+  });
+
+  test("case 16: read overlays post-snapshot inserts on top of the snapshot", async () => {
+    // Snapshot covers N rows; another M arrive after; the read fold
+    // returns N+M rows (snapshot base + live tail).
+    await provision(storage);
+    const w = commit(storage);
+    for (let i = 0; i < 40; i++) {
+      await w.commit({
+        op: "I",
+        collection: COLL,
+        docId: `pre${i}`,
+        body: { _id: `pre${i}`, phase: "pre" },
+      });
+    }
+    const res = await compact(
+      { storage, currentJsonKey: currentJsonKey(COLL) },
+      { minEntriesToCompact: 10, maxEntriesPerRun: 100 },
+    );
+    expect(res.written).toBe(true);
+    expect(res.logSeqStartAfter).toBe(40);
+
+    // 10 more inserts AFTER the snapshot.
+    for (let i = 0; i < 10; i++) {
+      await w.commit({
+        op: "I",
+        collection: COLL,
+        docId: `post${i}`,
+        body: { _id: `post${i}`, phase: "post" },
+      });
+    }
+
+    const rows = await db.table<{ _id: string; phase: string }>(COLL).where({}).all();
+    expect(rows).toHaveLength(50);
+    expect(rows.filter((r) => r.phase === "pre")).toHaveLength(40);
+    expect(rows.filter((r) => r.phase === "post")).toHaveLength(10);
   });
 });

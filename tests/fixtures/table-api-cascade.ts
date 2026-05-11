@@ -33,7 +33,7 @@ import {
   createCurrentJson,
   uuid,
 } from "@baerly/protocol";
-import { Db } from "@baerly/server";
+import { Db, compact } from "@baerly/server";
 
 const APP = "table-api-test";
 
@@ -406,6 +406,62 @@ const runTransactionConflict = async (
 };
 
 /**
+ * [compaction] Find results unchanged across a compaction run. The
+ * compactor (`@baerly/server`'s {@link compact}) folds the live log
+ * prefix into a hashed snapshot and CAS-advances `current.json`. The
+ * reader then loads the snapshot + overlays any post-snapshot tail.
+ * The locked invariant: the row set the reader returns is unchanged
+ * across the snapshot boundary.
+ *
+ * Runs across all four storage adapters via the variant table — this
+ * is the cross-adapter regression check that the compactor's snapshot
+ * encode/decode + the reader's snapshot-aware fold work uniformly.
+ */
+const runCompactionCascade = async (
+  db: Db,
+  storage: Storage,
+  app: string,
+  tenant: string,
+): Promise<void> => {
+  const t = freshTableName("compact");
+  await provision(storage, app, tenant, t);
+
+  // Insert N rows to feed the snapshot fold.
+  for (let i = 0; i < 30; i++) {
+    await db.table<Doc>(t).insert({ _id: `pre-${i}`, k: "pre", n: i });
+  }
+
+  const before = await db.table<Doc>(t).order({ _id: "asc" }).all();
+  expect(before).toHaveLength(30);
+
+  // Compact: minEntriesToCompact below our N so the run lands.
+  const res = await compact(
+    {
+      storage,
+      currentJsonKey: `app/${app}/tenant/${tenant}/manifests/${t}/current.json`,
+    },
+    { minEntriesToCompact: 10, maxEntriesPerRun: 100 },
+  );
+  expect(res.written).toBe(true);
+  expect(res.previousSnapshotKey).toBeNull();
+  expect(res.newSnapshotKey).toBeDefined();
+  expect(res.logSeqStartAfter).toBe(30);
+
+  // Reader returns the same set after the snapshot landed.
+  const after = await db.table<Doc>(t).order({ _id: "asc" }).all();
+  expect(after).toEqual(before);
+
+  // Post-snapshot inserts overlay correctly on top of the snapshot.
+  for (let i = 0; i < 5; i++) {
+    await db.table<Doc>(t).insert({ _id: `post-${i}`, k: "post", n: i });
+  }
+  const overlay = await db.table<Doc>(t).order({ _id: "asc" }).all();
+  expect(overlay).toHaveLength(35);
+  expect(overlay.filter((r) => r.k === "pre")).toHaveLength(30);
+  expect(overlay.filter((r) => r.k === "post")).toHaveLength(5);
+};
+
+/**
  * LogEntry shape — frozen assertion. After an I+I+U+D sequence,
  * walk `<tablePrefix>/log/<seq>.json` directly via `Storage` and
  * assert the per-op shape from `packages/protocol/src/log.ts:22–100`.
@@ -551,6 +607,10 @@ export const runTableApiCascade = async (opts: {
     await runTransactionConflict(db, rival, opts.storage, APP, tenant);
   }
 
-  // 5. LogEntry shape — frozen.
+  // 5. Compaction — fold the log prefix into a snapshot and read
+  //    through it. Runs across every adapter via the variant table.
+  await runCompactionCascade(db, opts.storage, APP, tenant);
+
+  // 6. LogEntry shape — frozen.
   await runLogEntryShape(db, opts.storage, APP, tenant);
 };

@@ -10,4 +10,5 @@ export * from "./time";
 export * from "./types";
 export * from "./hashing";
 export * from "./log";
+export * from "./snapshot-hash";
 export * from "./xml";
