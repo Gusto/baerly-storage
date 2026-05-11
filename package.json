@@ -31,6 +31,7 @@
     "format:check": "oxfmt --check src tests packages",
     "lint": "oxlint src tests packages",
     "test:randomize": "FC_NUM_RUNS=10000 vitest run --project=default",
+    "test:fuzz-phase5": "FC_NUM_RUNS=10000 vitest run --project=default tests/integration/phase5-crash-fuzz.test.ts",
     "test:adapter-cloudflare": "ADAPTER_CLOUDFLARE=1 vitest run --project=cloudflare-pool",
     "test:adapter-node": "MINIO=1 vitest run --project=default packages/adapter-node",
     "test:adapters": "pnpm test:adapter-cloudflare && pnpm test:adapter-node",
