@@ -46,6 +46,7 @@ Don't introduce alternate tooling without justification.
 | `pnpm test:randomize` | property-based fuzzer (cranks `FC_NUM_RUNS` for fast-check arbitraries). The randomized cascade itself is fault-injection-driven so `FC_NUM_RUNS` is a no-op for `randomized.test.ts` — all four variants (`memory` / `local-fs` / `cloudflare-r2` / `node-minio`) still run, but only the property tests in the rest of the suite scale up | run for minutes | use when changing protocol code |
 | `pnpm test:fuzz-phase5` | crash-injection fuzzer for Phase 5 paths (`phase5-crash-fuzz.test.ts`) — aborts the K-th storage op inside `ServerWriter` / `compact()` / `runGc()` and asserts the reader still sees a consistent row set | minutes-hours at `FC_NUM_RUNS=10000` | use after touching `compactor.ts` / `gc.ts` / `server-writer.ts` |
 | `pnpm dev:storage` | brings up Minio `:9102` + Toxiproxy `:9104` + Postgres `:5433` | n/a | required for `test:minio` / `test:conformance` / `test:export-smoke` / `test:adapter-node` / `test:adapters` |
+| `pnpm gate:real-deploy` | runs `real-deploy-cloudflare.test.ts` + `real-deploy-node.test.ts` against deployed URLs (HTTP conformance cascade + latency probe + long-poll wall-clock + 401 sniff) | minutes per run | requires `CF_DEPLOY_URL` + `NODE_DEPLOY_URL` + `SHARED_SECRET` (+ `CF_R2_*` / `AWS_*` for the conformance cascade); manual deploy lifecycle in `deploy/README.md` |
 
 `pnpm verify` is also enforced as a [lefthook](https://lefthook.dev/)
 pre-commit hook (`lefthook.yml`); `pnpm install` wires it up via the
@@ -179,6 +180,11 @@ Read in this order to build a mental model:
 6. **`src/`** (impure utilities):
    `src/offline-storage.ts` (`OfflineStorage` stub thrown when
    `online: false`).
+7. **`deploy/`** — hand-rolled Phase 6 real-deploy gate artifacts
+   (`deploy/cloudflare/wrangler.toml` + `worker-entry.ts`;
+   `deploy/node/Dockerfile` + `server-entry.ts`). Manual lifecycle
+   in `deploy/README.md`; driven by `pnpm gate:real-deploy`. **Not**
+   a Phase 8 production template.
 
 The full lifecycle of `put()` and `subscribe()` is in
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — read it before

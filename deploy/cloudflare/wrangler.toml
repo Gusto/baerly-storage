@@ -1,0 +1,40 @@
+# Hand-rolled Wrangler config for the Phase 6 real-deploy gate.
+# NOT a Phase 8 production template — see deploy/README.md for the
+# expected lifecycle (deploy → run gate → tear down).
+
+name = "baerly-gate-cf"
+main = "worker-entry.ts"
+compatibility_date = "2025-06-01"
+compatibility_flags = ["nodejs_compat"]
+
+# R2 binding. Bucket must exist before `wrangler deploy`; create it
+# with `wrangler r2 bucket create baerly-gate-cf`.
+[[r2_buckets]]
+binding = "BUCKET"
+bucket_name = "baerly-gate-cf"
+
+# Single-tenant gate deploy. The inline sharedSecret Verifier pins
+# tenantPrefix to "default"; TENANT is ignored when a Verifier is
+# wired (baerlyWorker reads tenantPrefix off the Verifier result).
+[vars]
+APP = "gate"
+TENANT = "default"
+
+# SHARED_SECRET is injected via `wrangler secret put SHARED_SECRET`
+# at deploy time, NOT committed to this file. See deploy/README.md.
+
+# Optional: Cron Trigger for the Phase 5 maintenance loop. Enabled
+# for the gate so we exercise the scheduled-handler path on the real
+# Worker too.
+[triggers]
+crons = ["* * * * *"]
+
+# Standard plan — required for the 25s long-poll budget. Free tier
+# (10ms CPU) cannot complete the long-poll cascade.
+[limits]
+cpu_ms = 50
+
+# Observability — enable Workers Logpush during the gate run if you
+# have the entitlement; otherwise `wrangler tail` is sufficient.
+# [observability]
+# enabled = true

@@ -25,6 +25,14 @@
     "skipLibCheck": true,
     "types": ["node", "@cloudflare/workers-types"]
   },
-  "include": ["src", "tests", "packages/*/src", "*.config.ts", "scripts/**/*.ts", "bench/**/*"],
+  "include": [
+    "src",
+    "tests",
+    "packages/*/src",
+    "deploy/**/*.ts",
+    "*.config.ts",
+    "scripts/**/*.ts",
+    "bench/**/*"
+  ],
   "exclude": ["tests/integration/conformance.test.ts"]
 }

@@ -37,6 +37,20 @@ const conformanceExclude = process.env.CONFORMANCE === "1" ? [] : ["**/conforman
 // resolving at all on the default path.
 const exportSmokeExclude = process.env.EXPORT_SMOKE === "1" ? [] : ["**/export-smoke.test.ts"];
 
+// Real-deploy gate (`tests/integration/real-deploy-*.test.ts`) hits
+// live Cloudflare Worker / Node-host deploys driven by
+// `CF_DEPLOY_URL` / `NODE_DEPLOY_URL` / `SHARED_SECRET`. Excluded
+// from the default project's glob so `pnpm test` stays green on a
+// fresh checkout with no env vars; opt in via `pnpm gate:real-deploy`
+// (which sets the env up out-of-band per `deploy/README.md`). Each
+// file also uses `describe.runIf(...)` — double-gating is
+// intentional: the exclude prevents the imports (`aws4fetch`,
+// `@xmldom/xmldom`) from even resolving on the default path.
+const realDeployExclude =
+  process.env.CF_DEPLOY_URL !== undefined || process.env.NODE_DEPLOY_URL !== undefined
+    ? []
+    : ["**/real-deploy-cloudflare.test.ts", "**/real-deploy-node.test.ts"];
+
 // The R2 binding conformance entry lives at
 // `packages/adapter-cloudflare/src/r2-binding-storage.conformance.test.ts`
 // and reads `globalThis.__BAERLY_R2_BINDING__`. Only the
@@ -95,6 +109,7 @@ export default defineConfig({
             ...configDefaults.exclude,
             ...conformanceExclude,
             ...exportSmokeExclude,
+            ...realDeployExclude,
             // CF adapter has its own project; don't double-run.
             r2BindingConformanceGlob,
             r2BindingRandomizedGlob,
