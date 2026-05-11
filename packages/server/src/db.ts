@@ -4,13 +4,16 @@
 
 import { MPS3Error } from "@baerly/protocol";
 import type {
+  JSONArraylessObject,
   Storage,
   StorageGetOptions,
   StorageGetResult,
   StorageListEntry,
   StoragePutOptions,
   StoragePutResult,
+  Table,
 } from "@baerly/protocol";
+import { makeTable } from "./table";
 
 /**
  * Physical-key prefix for a `(app, tenant)` pair. Trailing slash is
@@ -73,10 +76,20 @@ export class Db {
   readonly tenant: string;
   /** @internal — Storage-shaped escape hatch; prefer the table API. */
   readonly _raw: RawStorageApi;
+  /**
+   * Underlying `Storage`, captured so the table API can issue reads
+   * using physical keys directly. The reader must NOT route through
+   * `_raw` — `_raw` re-applies the `app/<app>/tenant/<tenant>/`
+   * prefix, and the table-API code already composes the full
+   * physical prefix. Two prefix-rewriters on one key would be a
+   * latent bug class.
+   */
+  readonly #storage: Storage;
 
   private constructor(app: string, tenant: string, storage: Storage) {
     this.app = app;
     this.tenant = tenant;
+    this.#storage = storage;
     this._raw = makeRawStorageApi(app, tenant, storage);
   }
 
@@ -108,6 +121,37 @@ export class Db {
       );
     }
     return new Db(app, tenant, storage);
+  }
+
+  /**
+   * Typed handle for a single table. Cheap; creates no I/O. Same
+   * `name` returns a FRESH `Table<T>` object on each call (chain
+   * identity is intentional — modifiers return new objects).
+   *
+   * @throws MPS3Error code="InvalidConfig" when `name` is empty or
+   *   contains `/`.
+   *
+   * @example
+   * ```ts
+   * const open = await db.table<Ticket>("tickets")
+   *   .where({ status: "open" })
+   *   .order({ commit_ts: "desc" })
+   *   .limit(50)
+   *   .all();
+   * ```
+   */
+  table<T extends JSONArraylessObject = JSONArraylessObject>(name: string): Table<T> {
+    if (name.length === 0 || name.includes("/")) {
+      throw new MPS3Error(
+        "InvalidConfig",
+        `Db.table: name must be non-empty and must not contain "/" (got ${JSON.stringify(name)})`,
+      );
+    }
+    return makeTable<T>({
+      storage: this.#storage,
+      tablePrefix: `${physicalPrefixFor(this.app, this.tenant)}manifests/${name}`,
+      tableName: name,
+    });
   }
 }
 
