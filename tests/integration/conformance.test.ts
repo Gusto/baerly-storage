@@ -1,287 +1,149 @@
-import { expect, test, describe, beforeAll } from "vitest";
-import { MPS3, MPS3Config } from "../../src/mps3";
+/**
+ * Multi-endpoint `Storage` conformance gate.
+ *
+ * Drives {@link defineStorageConformanceSuite} against
+ * {@link S3HttpStorage} once per supported S3-compatible endpoint:
+ * AWS, GCS, Cloudflare R2 (HTTP), and the local Minio dev stack. The
+ * credentials-required endpoints load their config from
+ * `credentials/{aws,gcs,cloudflare}.json` (gitignored) under
+ * `CONFORMANCE=1`; the Minio variant is gated on `MINIO=1` and points
+ * at `pnpm dev:storage`'s `127.0.0.1:9102`. Endpoints with no
+ * available credentials are skipped via `describe.runIf` — the file
+ * tolerates a fresh checkout with no credentials on disk.
+ *
+ * MPS3-shaped invariants (versioning mode, parallel-writer-on-single-
+ * key) are dropped — those are manifest-coordination assertions, not
+ * `Storage` assertions, and live in
+ * `tests/integration/randomized.test.ts` per the Phase 5 cascade.
+ */
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+
+import { AwsClient } from "aws4fetch";
+import { fc } from "@fast-check/vitest";
 import { DOMParser } from "@xmldom/xmldom";
-import cloudflareCredentials from "../../credentials/cloudflare.json";
-import awsCredentials from "../../credentials/aws.json";
-import "fake-indexeddb/auto";
-import { uuid } from "@baerly/protocol";
-import {
-  createBucket,
-  getObject,
-  makeFixtureClient,
-  putBucketVersioningEnabled,
-} from "../fixtures/s3-fixtures";
+import { describe } from "vitest";
 
-describe("mps3", () => {
-  let session = uuid().substring(0, 8);
-  const minioConfig = {
-    endpoint: "http://127.0.0.1:9102",
-    region: "eu-central-1",
-    autoclean: false,
-    credentials: {
-      accessKeyId: "mps3",
-      secretAccessKey: "ZOAmumEzdsUUcVlQ",
-    },
-  };
+import { S3HttpStorage } from "@baerly/adapter-node";
+import { defineStorageConformanceSuite } from "@baerly/protocol/conformance";
 
-  const configs: {
-    label: string;
-    createBucket?: boolean;
-    config: MPS3Config;
-  }[] = [
-    {
-      label: "useVersioning",
-      config: {
-        useVersioning: true,
-        defaultBucket: `ver${session}`,
-        s3Config: minioConfig,
-        parser: new DOMParser(),
-      },
-    },
-    {
-      label: "minio",
-      config: {
-        minimizeListObjectsCalls: false,
-        defaultBucket: `nov${session}`,
-        s3Config: minioConfig,
-        parser: new DOMParser(),
-      },
-    },
-    /*
-    {
-      label: "google",
-      createBucket: false,
-      config: {
-        defaultBucket: `mps3-demo`,
-        s3Config: {
-          region: "europe-west10",
-          endpoint: "https://storage.googleapis.com",
-          credentials: gcsCredentials,
-        },
-        parser: new DOMParser(),
-      },
-    },*/ {
-      label: "cloudflare",
-      createBucket: false,
-      config: {
-        defaultBucket: `mps3-demo`,
-        s3Config: {
-          region: "auto",
-          endpoint: "https://a3e2af584fbdedd172bede5ca0018aae.r2.cloudflarestorage.com",
-          credentials: cloudflareCredentials,
-        },
-        parser: new DOMParser(),
-      },
-    },
-    {
-      label: "aws",
-      createBucket: false,
-      config: {
-        defaultBucket: `mps3-demo`,
-        s3Config: {
-          region: "eu-central-1",
-          credentials: awsCredentials,
-        },
-        parser: new DOMParser(),
-      },
-    },
-    {
-      label: "proxy",
-      createBucket: false,
-      config: {
-        defaultBucket: `s3-demo`,
-        defaultManifest: `proxy`,
-        s3Config: {
-          region: "eu-central-1",
-          endpoint: "https://mps3-proxy.endpointservices.workers.dev",
-        },
-        parser: new DOMParser(),
-      },
-    },
-  ];
+import { createBucket } from "../fixtures/s3-fixtures";
 
-  configs.map((variant) =>
-    describe(variant.label, () => {
-      beforeAll(async () => {
-        try {
-          const s3 = makeFixtureClient(variant.config.s3Config);
-          const endpoint = variant.config.s3Config.endpoint;
-          if (s3 && endpoint && variant.createBucket !== false) {
-            await createBucket(s3, endpoint, variant.config.defaultBucket);
-          }
+// Minio's REST gateway rejects request paths whose resource component
+// is `.` or `..` (it validates URL paths as POSIX paths on the backing
+// filesystem). AWS S3 and R2 have no such restriction. Pin a `.`-free
+// key + prefix arbitrary for the Minio variant only; everything else
+// stays default. Mirror the pattern in
+// `packages/adapter-node/src/s3-http.conformance.test.ts`.
+const MINIO_KEY_CHARS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_";
+const MINIO_KEY_ARB = fc.string({
+  minLength: 1,
+  maxLength: 32,
+  unit: fc.constantFrom(...MINIO_KEY_CHARS.split("")),
+});
+const MINIO_PREFIX_CHAR_ARB = fc.constantFrom(...MINIO_KEY_CHARS.split(""));
 
-          if (s3 && endpoint && variant.config.useVersioning) {
-            await putBucketVersioningEnabled(s3, endpoint, variant.config.defaultBucket);
-          }
-        } catch (e) {
-          console.error(e);
-        }
-      });
-      const getClient = (args?: { label?: string; clockOffset?: number }) => {
-        return new MPS3({
-          label: args?.label || uuid().substring(32),
-          ...variant.config,
-          clockOffset: args?.clockOffset ?? Math.random() * 2000 - 1000,
-        });
-      };
+interface EndpointCreds {
+  endpoint: string;
+  region: string;
+  bucket: string;
+  credentials: { accessKeyId: string; secretAccessKey: string };
+}
 
-      test("Can see other's mutations after populating cache", async () => {
-        const mps3 = getClient({ clockOffset: 0 });
-        const rnd = uuid();
-        await mps3.put("rw1", rnd);
-        await getClient({ clockOffset: 0 }).delete("rw1");
+async function loadCreds(file: string): Promise<EndpointCreds | null> {
+  try {
+    const raw = await readFile(join("credentials", file), "utf8");
+    return JSON.parse(raw) as EndpointCreds;
+  } catch {
+    return null;
+  }
+}
 
-        // pending cache masks server until committed
-        while ((await mps3.get("rw1")) !== undefined) {
-          await new Promise((resolve) => setTimeout(resolve, 200));
-        }
-        const read = await mps3.get("rw1");
-        expect(read).toEqual(undefined);
-      });
+const MINIO = process.env.MINIO === "1";
+const CONFORMANCE = process.env.CONFORMANCE === "1";
 
-      test("Read no manifest", async () => {
-        const mps3 = getClient();
-        const read = await mps3.get("unused_key", {
-          manifest: {
-            key: uuid(),
+const xmlParser = new DOMParser();
+
+interface Endpoint {
+  name: string;
+  file?: string;
+  builtIn?: EndpointCreds;
+}
+
+const endpoints: Endpoint[] = [
+  { name: "aws", file: "aws.json" },
+  { name: "gcs", file: "gcs.json" },
+  { name: "cloudflare", file: "cloudflare.json" },
+  // Minio under `pnpm dev:storage`. Endpoint + creds match every other
+  // Minio-touching test in this repo (`randomized.test.ts`,
+  // `s3-http.conformance.test.ts`, `docker-compose.yml`).
+  {
+    name: "node-minio",
+    builtIn: MINIO
+      ? {
+          endpoint: "http://127.0.0.1:9102",
+          region: "us-east-1",
+          bucket: "baerly-conformance-multi",
+          credentials: {
+            accessKeyId: "mps3",
+            secretAccessKey: "ZOAmumEzdsUUcVlQ",
           },
-        });
-        expect(read).toEqual(undefined);
-      });
-
-      test("Read unknown key resolves to undefined", async () => {
-        const mps3 = getClient();
-        const read = await mps3.get("unused_key");
-        expect(read).toEqual(undefined);
-      });
-
-      test("Delete key by setting to undefined", async () => {
-        const mps3 = getClient();
-        await mps3.put("delete", "");
-        await mps3.put("delete", undefined);
-        const read = await mps3.get("delete");
-        expect(read).toEqual(undefined);
-      });
-
-      test("Can read a write only", async () => {
-        const rnd = uuid();
-        await getClient().put("rw", rnd);
-        const read = await getClient().get("rw");
-        expect(read).toEqual(rnd);
-      });
-
-      test("Key encoding", async () => {
-        const rnd = uuid();
-        const key = `&$@=;[~|^  :+,"?\\{^}%]>#\x01\x1F\x80\xFF`;
-        await getClient().put(key, rnd);
-        const read = await getClient().get(key);
-        expect(read).toEqual(rnd);
-      });
-
-      test("Storage key representation", async () => {
-        const s3 = makeFixtureClient(variant.config.s3Config);
-        const endpoint = variant.config.s3Config.endpoint;
-        const client = await getClient();
-        await client.put("storage_key", "foo");
-        if (variant.config.useVersioning) {
-          const storage = await getObject(
-            s3!,
-            endpoint!,
-            variant.config.defaultBucket,
-            "storage_key",
-          );
-          expect(storage.VersionId).toBeDefined();
-        } else {
-          // Original behavior: SDK was instantiated even for credential-less
-          // variants (localfirst, proxy) and the getObject was expected to
-          // throw. Preserve that — credential-less variants short-circuit
-          // through the missing client, signed variants throw on raw key.
-          try {
-            if (!s3 || !endpoint) throw new Error("no client");
-            await getObject(s3, endpoint, variant.config.defaultBucket, "storage_key");
-            expect(false).toBe(true);
-          } catch {}
         }
+      : undefined,
+  },
+];
+
+// Resolve credentials at module top level — vitest collects suites
+// synchronously, so `describe` callbacks must not be `async`. The
+// `await loadCreds(...)` calls happen here, before any `describe`.
+const resolvedEndpoints: { name: string; creds: EndpointCreds | null }[] = [];
+for (const ep of endpoints) {
+  let creds: EndpointCreds | null = null;
+  if (ep.builtIn) creds = ep.builtIn;
+  else if (ep.file && CONFORMANCE) creds = await loadCreds(ep.file);
+  resolvedEndpoints.push({ name: ep.name, creds });
+}
+
+// Outer suite so vitest doesn't error with "No test suite found" on
+// fresh checkouts where neither `CONFORMANCE=1` nor `MINIO=1` resolves
+// any endpoint creds. Inner `describe.runIf` then per-endpoint skips.
+describe("conformance", () => {
+  for (const ep of resolvedEndpoints) {
+    describe.runIf(ep.creds !== null)(ep.name, () => {
+      if (ep.creds === null) return; // unreachable; satisfies the type checker
+      const c = ep.creds;
+      const signer = new AwsClient({
+        accessKeyId: c.credentials.accessKeyId,
+        secretAccessKey: c.credentials.secretAccessKey,
+        region: c.region,
+        service: "s3",
       });
+      const sign = (req: Request): Promise<Request> => signer.sign(req);
 
-      test("Can read a write (cold manifest)", async () => {
-        const manifest = {
-          key: `manifest_${uuid()}`,
-        };
-        const rnd = uuid();
-        await getClient().put("rw", rnd, {
-          manifests: [manifest],
-        });
-        const read = await getClient().get("rw", {
-          manifest: manifest,
-        });
-        expect(read).toEqual(rnd);
-      });
-
-      test("Consecutive gets use manifest cache", async () => {
-        const mps3 = getClient();
-        await mps3.get("cache_get");
-        await mps3.get("cache_get");
-      });
-
-      test("Parallel puts commute - warm manifest - single read", async () => {
-        await getClient().put("warm", null);
-        const n = 3;
-        const writers = [...Array(n)].map((_) => getClient());
-        const rand_keys = [...Array(n)].map((_, i) => `parallel_put/${i}_${uuid()}`);
-
-        // put in parallel
-        await Promise.all(rand_keys.map((key, i) => writers[i].put(key, i)));
-
-        // read in parallel
-        expect(await getClient().get(rand_keys[1])).toEqual(1);
-      });
-
-      test("Parallel puts commute - warm manifest", async () => {
-        await getClient().put("warm", null);
-        const n = 3;
-        const writers = [...Array(n)].map((_) => getClient());
-        const rand_keys = [...Array(n)].map((_, i) => `parallel_put/${i}_${uuid()}`);
-
-        // put in parallel
-        await Promise.all(rand_keys.map((key, i) => writers[i].put(key, i)));
-
-        // read in parallel
-        const reads = await Promise.all(rand_keys.map((key, i) => writers[n - i - 1].get(key)));
-
-        expect(reads).toEqual([...Array(n)].map((_, i) => i));
-      });
-
-      test("Parallel puts commute - cold manifest", async () => {
-        const manifests = [
-          {
-            key: uuid(),
-          },
-        ];
-        const n = 3;
-        const writers = [...Array(n)].map((_) => getClient());
-        const rand_keys = [...Array(n)].map((_, i) => `parallel_put/${i}_${uuid()}`);
-
-        // put in parallel
-        await Promise.all(
-          rand_keys.map((key, i) =>
-            writers[i].put(key, i, {
-              manifests,
+      const isMinio = ep.name === "node-minio";
+      defineStorageConformanceSuite(
+        `S3HttpStorage @ ${ep.name}`,
+        async () => {
+          // `createBucket` tolerates 409 BucketAlreadyOwnedByYou, so
+          // re-runs against persistent buckets (Minio dev stack, real
+          // cloud buckets) don't fail the per-test factory. Skip for
+          // remote endpoints where the bucket is provisioned out-of-
+          // band (AWS / GCS / R2 buckets in `credentials/*.json` are
+          // expected to exist already).
+          if (isMinio) {
+            await createBucket(signer, c.endpoint, c.bucket);
+          }
+          return {
+            storage: new S3HttpStorage({
+              endpoint: c.endpoint,
+              bucket: c.bucket,
+              sign,
+              xmlParser,
             }),
-          ),
-        );
-
-        // read in parallel
-        const reads = await Promise.all(
-          rand_keys.map((key, i) =>
-            writers[n - i - 1].get(key, {
-              manifest: manifests[0],
-            }),
-          ),
-        );
-
-        expect(reads).toEqual([...Array(n)].map((_, i) => i));
-      });
-    }),
-  );
+          };
+        },
+        isMinio ? { keyArb: MINIO_KEY_ARB, prefixCharArb: MINIO_PREFIX_CHAR_ARB } : undefined,
+      );
+    });
+  }
 });
