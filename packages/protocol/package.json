@@ -10,6 +10,10 @@
         ".": {
             "types": "./src/index.ts",
             "import": "./src/index.ts"
+        },
+        "./conformance": {
+            "types": "./src/storage/conformance.ts",
+            "import": "./src/storage/conformance.ts"
         }
     },
     "publishConfig": {
@@ -17,6 +21,10 @@
             ".": {
                 "types": "./dist/index.d.ts",
                 "import": "./dist/index.js"
+            },
+            "./conformance": {
+                "types": "./dist/conformance.d.ts",
+                "import": "./dist/conformance.js"
             }
         }
     }
