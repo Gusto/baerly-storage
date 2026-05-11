@@ -33,6 +33,7 @@
     "test:randomize": "FC_NUM_RUNS=10000 vitest run --project=default",
     "test:fuzz-phase5": "FC_NUM_RUNS=10000 vitest run --project=default tests/integration/phase5-crash-fuzz.test.ts",
     "test:adapter-cloudflare": "ADAPTER_CLOUDFLARE=1 vitest run --project=cloudflare-pool",
+    "test:http-conformance": "vitest run --project=default tests/integration/http-conformance.test.ts",
     "test:adapter-node": "MINIO=1 vitest run --project=default packages/adapter-node",
     "test:adapters": "pnpm test:adapter-cloudflare && pnpm test:adapter-node",
     "verify": "pnpm run typecheck && pnpm run lint",
@@ -43,6 +44,7 @@
   },
   "devDependencies": {
     "@baerly/adapter-cloudflare": "workspace:*",
+    "@baerly/adapter-node": "workspace:*",
     "@baerly/dev": "workspace:*",
     "@baerly/protocol": "workspace:*",
     "@baerly/server": "workspace:*",

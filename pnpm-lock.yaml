@@ -11,6 +11,9 @@ importers:
       '@baerly/adapter-cloudflare':
         specifier: workspace:*
         version: link:packages/adapter-cloudflare
+      '@baerly/adapter-node':
+        specifier: workspace:*
+        version: link:packages/adapter-node
       '@baerly/dev':
         specifier: workspace:*
         version: link:packages/dev

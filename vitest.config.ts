@@ -76,6 +76,14 @@ const cfWorkerTestGlob = "packages/adapter-cloudflare/src/worker*.test.ts";
 // globs above.
 const cfCacheTestGlob = "packages/adapter-cloudflare/src/cache.test.ts";
 
+// HTTP conformance cascade (Workerd variant). Hits `SELF.fetch`,
+// which invokes the worker module pointed at by `cloudflareTest({
+// main: ... })` below — `tests/setup/http-conformance-worker.ts`.
+// The Node-side variants live at
+// `tests/integration/http-conformance.test.ts` and run under the
+// default project. Membership rules match the four globs above.
+const cfHttpConformanceGlob = "packages/adapter-cloudflare/src/http-conformance.test.ts";
+
 export default defineConfig({
   test: {
     projects: [
@@ -93,6 +101,7 @@ export default defineConfig({
             r2BindingTableApiGlob,
             cfWorkerTestGlob,
             cfCacheTestGlob,
+            cfHttpConformanceGlob,
           ],
           setupFiles: ["tests/setup/fast-check.ts"],
           // Process isolation. Vitest 4's default `pool: 'threads'` with
@@ -120,13 +129,26 @@ export default defineConfig({
         // anyway.
         plugins: [
           cloudflareTest({
+            // `main` points at the worker module wired into miniflare
+            // as the `SELF` binding — the HTTP-conformance Workerd
+            // variant (`packages/adapter-cloudflare/src/http-conformance.test.ts`)
+            // calls `SELF.fetch(req)` to drive the full Phase-6 CRUD
+            // surface through `baerlyWorker({ verifier: testVerifier() })`.
+            // The other cloudflare-pool tests don't reference `SELF`,
+            // so wiring a `main` for them is a no-op.
+            main: "tests/setup/http-conformance-worker.ts",
             // Inline miniflare config — no separate `wrangler.toml`.
             // The binding name `BUCKET` matches what
             // `packages/adapter-cloudflare/src/r2-binding-storage.ts`
             // documents and what `tests/setup/r2-binding.ts` reads
-            // back via `env.BUCKET`.
+            // back via `env.BUCKET`. `APP` + `TENANT` env vars are
+            // consumed by `baerlyWorker.fetch`; `TENANT` is ignored
+            // when a `verifier` is supplied (which the conformance
+            // worker does), but miniflare requires the bound name to
+            // exist on the env shape.
             miniflare: {
               r2Buckets: ["BUCKET"],
+              bindings: { APP: "http-conf", TENANT: "" },
               compatibilityDate: "2025-01-01",
               compatibilityFlags: ["nodejs_compat"],
             },
@@ -140,6 +162,7 @@ export default defineConfig({
             r2BindingTableApiGlob,
             cfWorkerTestGlob,
             cfCacheTestGlob,
+            cfHttpConformanceGlob,
           ],
           // `tests/setup/r2-binding.ts` runs inside Workerd, imports
           // from `cloudflare:test`, and re-publishes `env.BUCKET` on
