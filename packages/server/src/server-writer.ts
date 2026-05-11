@@ -109,6 +109,23 @@ export interface CommitResult {
   readonly attempts: number;
 }
 
+/** Return shape of {@link ServerWriter.commitBatch}. */
+export interface CommitBatchResult {
+  /**
+   * One emitted `LogEntry` per input, in input order.
+   * `entries[i]` corresponds to `inputs[i]`. `entries.length ===
+   * inputs.length`. On an empty input array `entries` is empty and
+   * no I/O happened.
+   */
+  readonly entries: readonly LogEntry[];
+
+  /**
+   * New ETag of `current.json` after the CAS-advance landed.
+   * `undefined` on an empty input array (the CAS step is skipped).
+   */
+  readonly currentEtag: string | undefined;
+}
+
 const DEFAULT_INITIAL_BACKOFF_MS = 25;
 const MAX_BACKOFF_MS = 1500;
 const APPLICATION_JSON = "application/json";
@@ -327,6 +344,153 @@ export class ServerWriter {
       "Conflict",
       `ServerWriter: CAS conflict on ${this.#currentJsonKey} after ${this.#maxRetries} attempts`,
     );
+  }
+
+  /**
+   * Single-attempt batched commit. Reads `current.json` ONCE, mints
+   * `inputs.length` log entries with contiguous `seq` numbers
+   * starting at the current `next_seq`, PUTs each content body and
+   * each log entry, then CAS-advances `current.json` from
+   * `next_seq = N` to `next_seq = N + inputs.length` with
+   * `If-Match`.
+   *
+   * NO retry on CAS loss. On `current.json` 412, throws
+   * `MPS3Error{code:"Conflict"}` immediately — the caller (here:
+   * `Db.transaction`) decides whether to retry by re-running the
+   * body, or to surface to the app. Likewise on a log-entry 412
+   * (a peer wrote our seq).
+   *
+   * Empty `inputs`: returns `{ entries: [], currentEtag: undefined }`
+   * after zero storage operations.
+   *
+   * @throws MPS3Error code="Conflict" — CAS lost on `current.json`,
+   *   or a log entry already exists at our seq (peer wrote ahead).
+   * @throws MPS3Error code="Internal" — protocol-invariant violation
+   *   (missing log entry inside `[0, next_seq)`).
+   * @throws MPS3Error code="InvalidResponse" — `current.json` does
+   *   not exist (caller must bootstrap first), or malformed log
+   *   body.
+   * @throws MPS3Error code="SchemaError" — an input failed the
+   *   `op === "D"` ↔ `body === undefined` invariant.
+   */
+  async commitBatch(inputs: readonly CommitInput[]): Promise<CommitBatchResult> {
+    if (inputs.length === 0) {
+      return { entries: [], currentEtag: undefined };
+    }
+    for (const input of inputs) validateInput(input);
+
+    const session = uuid().slice(0, SESSION_ID_LENGTH);
+    const logPrefix = this.#currentJsonKey.slice(0, this.#currentJsonKey.lastIndexOf("/"));
+
+    // ── Step 1. Read current.json fresh and capture the ETag. ───────
+    const read = await readCurrentJson(this.#storage, this.#currentJsonKey);
+    if (read === null) {
+      throw new MPS3Error(
+        "InvalidResponse",
+        `ServerWriter.commitBatch: current.json missing at ${this.#currentJsonKey}; bootstrap via createCurrentJson first`,
+      );
+    }
+    const current = read.json;
+    const baseEtag = read.etag;
+
+    // ── Step 2. Walk the log to validate integrity. ─────────────────
+    // Same as single-mutation commit; observational today (Phase 5
+    // will fold). Keep the GETs so adapters see the real I/O
+    // profile, and so a missing entry trips the Internal invariant.
+    await this.#walkLog(logPrefix, current.next_seq);
+
+    // ── Step 3. Mint N LogEntries with contiguous seqs. ─────────────
+    // All entries share `session` (one session per transaction).
+    const entries: LogEntry[] = [];
+    for (let i = 0; i < inputs.length; i++) {
+      const input = inputs[i]!;
+      const seq = current.next_seq + i;
+      const lsn = `${timestamp(Date.now())}_${session}_${countKey(seq)}`;
+      const entry: LogEntry = {
+        lsn,
+        commit_ts: new Date().toISOString(),
+        op: input.op,
+        collection: input.collection,
+        doc_id: input.docId,
+        schema_version: 0,
+        session,
+        seq,
+        ...(input.op !== "D" && input.body !== undefined
+          ? { new: input.body, patch: input.body }
+          : {}),
+        ...(input.origin !== undefined ? { origin: input.origin } : {}),
+      };
+      entries.push(entry);
+    }
+
+    // ── Step 4. PUT each content body in parallel. ──────────────────
+    // `ifNoneMatch: "*"` makes a same-hash re-write a no-op (caught
+    // and swallowed via `isPreconditionFailed`).
+    const contentPuts: Array<Promise<unknown>> = [];
+    for (const input of inputs) {
+      if (input.op === "D" || input.body === undefined) continue;
+      const bytes = new TextEncoder().encode(JSON.stringify(input.body));
+      const version = await versionFromContent(bytes);
+      const contentKey = `${logPrefix}/content/${version}.json`;
+      contentPuts.push(
+        this.#storage
+          .put(contentKey, bytes, { ifNoneMatch: "*", contentType: APPLICATION_JSON })
+          .catch((err: unknown) => {
+            if (isPreconditionFailed(err)) return;
+            throw err;
+          }),
+      );
+    }
+    await Promise.all(contentPuts);
+
+    // ── Step 5. PUT each log entry. ─────────────────────────────────
+    // `ifNoneMatch: "*"` per entry. Single-attempt: on 412 throw
+    // `Conflict` immediately — no own-session-adopt path (that's a
+    // multi-attempt-retry feature of `commit()` and intentionally
+    // out of scope here).
+    const logPuts: Array<Promise<unknown>> = [];
+    for (const entry of entries) {
+      const logEntryKey = `${logPrefix}/log/${entry.seq}.json`;
+      const logBytes = new TextEncoder().encode(JSON.stringify(entry));
+      logPuts.push(
+        this.#storage
+          .put(logEntryKey, logBytes, { ifNoneMatch: "*", contentType: APPLICATION_JSON })
+          .catch((err: unknown) => {
+            if (isPreconditionFailed(err)) {
+              throw new MPS3Error(
+                "Conflict",
+                `ServerWriter.commitBatch: log entry already exists at ${logEntryKey}; peer wrote our seq`,
+                err,
+              );
+            }
+            throw err;
+          }),
+      );
+    }
+    await Promise.all(logPuts);
+
+    // ── Step 6. CAS-advance current.json with If-Match. ─────────────
+    // Bound to `baseEtag` from step 1. On 412, throw Conflict —
+    // single-attempt is the contract.
+    const next: CurrentJson = { ...current, next_seq: current.next_seq + inputs.length };
+    const nextBody = new TextEncoder().encode(JSON.stringify(next));
+    const putOpts: StoragePutOptions = {
+      ifMatch: baseEtag,
+      contentType: APPLICATION_JSON,
+    };
+    try {
+      const result = await this.#storage.put(this.#currentJsonKey, nextBody, putOpts);
+      return { entries, currentEtag: result.etag };
+    } catch (err) {
+      if (isCasConflict(err)) {
+        throw new MPS3Error(
+          "Conflict",
+          `ServerWriter.commitBatch: CAS conflict on ${this.#currentJsonKey}`,
+          err,
+        );
+      }
+      throw err;
+    }
   }
 
   /**

@@ -46,6 +46,7 @@ import {
   type Storage,
   uuidv7,
 } from "@baerly/protocol";
+import type { TxContext } from "./db";
 import { ServerWriter } from "./server-writer";
 
 /**
@@ -65,6 +66,17 @@ export interface TableReadContext {
   /** Physical key prefix — already includes `app/<app>/tenant/<tenant>/manifests/<name>`. */
   readonly tablePrefix: string;
   readonly tableName: string;
+  /**
+   * When defined, mutation verbs (`Table.insert`, `Query.update`,
+   * `Query.replace`, `Query.delete`) buffer a {@link BufferedMutation}
+   * onto `txCtx.mutations` instead of calling `ServerWriter.commit`
+   * directly. Reads ignore `txCtx` entirely — they go through
+   * `Storage` live, by design (ticket 11 §1, no MVCC). Threaded in
+   * by `Db.transaction(...)`; `undefined` outside a transaction.
+   *
+   * @internal
+   */
+  readonly txCtx?: TxContext;
 }
 
 /**
@@ -178,6 +190,11 @@ export const runInsert = async <T extends JSONArraylessObject>(
   // read fold collapses silently — a contract violation. The CAS
   // retry budget in `ServerWriter` does not surface this case
   // (no `current.json` conflict; both writes succeed at different seqs).
+  //
+  // Inside a transaction the read sees LIVE state (no MVCC, no read-
+  // your-writes); a buffered insert in the same transaction is NOT
+  // visible here. The collision check still defends against a doc
+  // ALREADY committed to the bucket.
   const existing = await runRead<JSONArraylessObject>(ctx, {
     predicate: { _id } as Predicate<JSONArraylessObject>,
     order: undefined,
@@ -188,6 +205,12 @@ export const runInsert = async <T extends JSONArraylessObject>(
       "Conflict",
       `Query.insert: _id ${JSON.stringify(_id)} already exists in collection ${JSON.stringify(ctx.tableName)}`,
     );
+  }
+
+  if (ctx.txCtx !== undefined) {
+    assertTxBindMatches(ctx);
+    ctx.txCtx.mutations.push({ op: "I", docId: _id, body });
+    return { _id };
   }
 
   // Single-attempt at the verb level; CAS retries are internal to
@@ -233,6 +256,8 @@ const runUpdate = async <T extends JSONArraylessObject>(
   patch: Partial<T>,
 ): Promise<{ modified: number }> => {
   const rows = await runRead<T>(ctx, state);
+  const tx = ctx.txCtx;
+  if (tx !== undefined) assertTxBindMatches(ctx);
   let modified = 0;
   for (const doc of rows) {
     const merged = merge(doc as JSONArraylessObject, patch as Partial<JSONArraylessObject>);
@@ -245,12 +270,16 @@ const runUpdate = async <T extends JSONArraylessObject>(
         `Query.update: merge produced undefined for doc ${JSON.stringify(doc._id)}`,
       );
     }
-    await writerFor(ctx).commit({
-      op: "U",
-      collection: ctx.tableName,
-      docId: String(doc._id),
-      body: merged,
-    });
+    if (tx !== undefined) {
+      tx.mutations.push({ op: "U", docId: String(doc._id), body: merged });
+    } else {
+      await writerFor(ctx).commit({
+        op: "U",
+        collection: ctx.tableName,
+        docId: String(doc._id),
+        body: merged,
+      });
+    }
     modified++;
   }
   return { modified };
@@ -286,6 +315,11 @@ const runReplace = async <T extends JSONArraylessObject>(
   // Force the matched row's `_id` onto the post-image so the doc_id
   // on the emitted entry matches the row we resolved against.
   const body: JSONArraylessObject = { ...(doc as JSONArraylessObject), _id: existingId };
+  if (ctx.txCtx !== undefined) {
+    assertTxBindMatches(ctx);
+    ctx.txCtx.mutations.push({ op: "U", docId: existingId, body });
+    return;
+  }
   await writerFor(ctx).commit({
     op: "U",
     collection: ctx.tableName,
@@ -316,16 +350,41 @@ const runDelete = async <T extends JSONArraylessObject>(
   state: QueryState<T>,
 ): Promise<{ deleted: number }> => {
   const rows = await runRead<T>(ctx, state);
+  const tx = ctx.txCtx;
+  if (tx !== undefined) assertTxBindMatches(ctx);
   let deleted = 0;
   for (const doc of rows) {
-    await writerFor(ctx).commit({
-      op: "D",
-      collection: ctx.tableName,
-      docId: String(doc._id),
-    });
+    if (tx !== undefined) {
+      tx.mutations.push({ op: "D", docId: String(doc._id) });
+    } else {
+      await writerFor(ctx).commit({
+        op: "D",
+        collection: ctx.tableName,
+        docId: String(doc._id),
+      });
+    }
     deleted++;
   }
   return { deleted };
+};
+
+/**
+ * Runtime guard for the txCtx-Table-name binding. The type system
+ * already prevents the legitimate path (the body callback gets one
+ * `Table<T>`, no `Db`), so this only catches a bug where a stale
+ * `Query<T>` outlives its `Table<T>` and is somehow re-attached to a
+ * transaction over a different table. Documented in ticket 11 §6.1.
+ *
+ * @throws MPS3Error code="Internal" — txCtx ↔ Table name mismatch.
+ */
+const assertTxBindMatches = (ctx: TableReadContext): void => {
+  if (ctx.txCtx === undefined) return;
+  if (ctx.txCtx.table !== ctx.tableName) {
+    throw new MPS3Error(
+      "Internal",
+      `Transaction context bound to ${JSON.stringify(ctx.txCtx.table)} but mutation issued on table ${JSON.stringify(ctx.tableName)}`,
+    );
+  }
 };
 
 /**
