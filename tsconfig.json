@@ -1,35 +1,29 @@
 {
-    "compilerOptions": {
-        "target": "ES2025",
-        "lib": ["ES2025", "ESNext.TypedArrays", "DOM", "DOM.Iterable"],
-        "module": "preserve",
+  "compilerOptions": {
+    "target": "ES2025",
+    "lib": ["ES2025", "ESNext.TypedArrays", "DOM", "DOM.Iterable"],
+    "module": "preserve",
 
-        "verbatimModuleSyntax": true,
-        "isolatedModules": true,
-        "moduleDetection": "force",
-        "resolveJsonModule": true,
-        "erasableSyntaxOnly": true,
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "moduleDetection": "force",
+    "resolveJsonModule": true,
+    "erasableSyntaxOnly": true,
 
-        "strict": true,
-        "noUncheckedIndexedAccess": true,
-        "noImplicitOverride": true,
-        "noFallthroughCasesInSwitch": true,
-        "noUnusedLocals": true,
-        "noUnusedParameters": true,
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
 
-        "noEmit": true,
-        "declaration": true,
-        "sourceMap": true,
+    "noEmit": true,
+    "declaration": true,
+    "sourceMap": true,
 
-        "skipLibCheck": true,
-        "types": ["node"]
-    },
-    "include": [
-        "src",
-        "tests",
-        "packages/*/src",
-        "*.config.ts",
-        "scripts/**/*.ts"
-    ],
-    "exclude": ["tests/integration/conformance.test.ts"]
+    "skipLibCheck": true,
+    "types": ["node", "@cloudflare/workers-types"]
+  },
+  "include": ["src", "tests", "packages/*/src", "*.config.ts", "scripts/**/*.ts"],
+  "exclude": ["tests/integration/conformance.test.ts"]
 }

@@ -1,64 +1,65 @@
 {
-    "name": "baerly-storage",
-    "description": "Provide clientside multiplayer and optimistic updates over any s3-compatible storage API",
-    "version": "1.0.0",
-    "license": "MIT",
-    "type": "module",
-    "sideEffects": false,
-    "exports": {
-        ".": {
-            "types": "./dist/index.d.ts",
-            "import": "./dist/index.js"
-        }
-    },
-    "publishConfig": {
-        "access": "public",
-        "provenance": true
-    },
-    "packageManager": "pnpm@10.31.0",
-    "engines": {
-        "node": ">=24"
-    },
-    "scripts": {
-        "typecheck": "tsgo --noEmit",
-        "test": "vitest run",
-        "test:coverage": "vitest run --coverage",
-        "test:minio": "MINIO=1 vitest run",
-        "test:conformance": "CONFORMANCE=1 MINIO=1 vitest run tests/integration/conformance.test.ts",
-        "test:export-smoke": "EXPORT_SMOKE=1 vitest run tests/integration/export-smoke.test.ts",
-        "build": "rolldown -c",
-        "prepare": "lefthook install && pnpm run build",
-        "format": "oxfmt src tests packages",
-        "format:check": "oxfmt --check src tests packages",
-        "lint": "oxlint src tests packages",
-        "test:randomize": "FC_NUM_RUNS=10000 vitest run",
-        "verify": "pnpm run typecheck && pnpm run lint",
-        "check:references": "bash scripts/check-references.sh",
-        "dev:storage": "docker-compose up -d",
-        "dev:storage:stop": "docker-compose down"
-    },
-    "devDependencies": {
-        "@baerly/protocol": "workspace:*",
-        "@fast-check/vitest": "^0.4.1",
-        "@types/node": "^25.6.2",
-        "@types/pg": "^8.20.0",
-        "@typescript/native-preview": "7.0.0-dev.20260508.1",
-        "@vitest/coverage-v8": "^4.1.5",
-        "@xmldom/xmldom": "^0.9.10",
-        "aws4fetch": "1.0.20",
-        "fake-indexeddb": "^6.2.5",
-        "fast-check": "^4.7.0",
-        "idb-keyval": "^6.2.2",
-        "lefthook": "^2.1.6",
-        "oxfmt": "^0.48.0",
-        "oxlint": "^1.63.0",
-        "pg": "^8.20.0",
-        "rolldown": "^1.0.0",
-        "rolldown-plugin-dts": "^0.25.0",
-        "vite": "^8.0.11",
-        "vitest": "^4.1.5"
-    },
-    "files": [
-        "dist"
-    ]
+  "name": "baerly-storage",
+  "version": "1.0.0",
+  "description": "Provide clientside multiplayer and optimistic updates over any s3-compatible storage API",
+  "license": "MIT",
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "scripts": {
+    "typecheck": "tsgo --noEmit",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "test:minio": "MINIO=1 vitest run",
+    "test:conformance": "CONFORMANCE=1 MINIO=1 vitest run tests/integration/conformance.test.ts",
+    "test:export-smoke": "EXPORT_SMOKE=1 vitest run tests/integration/export-smoke.test.ts",
+    "build": "rolldown -c",
+    "prepare": "lefthook install && pnpm run build",
+    "format": "oxfmt src tests packages",
+    "format:check": "oxfmt --check src tests packages",
+    "lint": "oxlint src tests packages",
+    "test:randomize": "FC_NUM_RUNS=10000 vitest run",
+    "verify": "pnpm run typecheck && pnpm run lint",
+    "check:references": "bash scripts/check-references.sh",
+    "dev:storage": "docker-compose up -d",
+    "dev:storage:stop": "docker-compose down"
+  },
+  "devDependencies": {
+    "@baerly/protocol": "workspace:*",
+    "@cloudflare/workers-types": "^4",
+    "@fast-check/vitest": "^0.4.1",
+    "@types/node": "^25.6.2",
+    "@types/pg": "^8.20.0",
+    "@typescript/native-preview": "7.0.0-dev.20260508.1",
+    "@vitest/coverage-v8": "^4.1.5",
+    "@xmldom/xmldom": "^0.9.10",
+    "aws4fetch": "1.0.20",
+    "fake-indexeddb": "^6.2.5",
+    "fast-check": "^4.7.0",
+    "idb-keyval": "^6.2.2",
+    "lefthook": "^2.1.6",
+    "oxfmt": "^0.48.0",
+    "oxlint": "^1.63.0",
+    "pg": "^8.20.0",
+    "rolldown": "^1.0.0",
+    "rolldown-plugin-dts": "^0.25.0",
+    "vite": "^8.0.11",
+    "vitest": "^4.1.5"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "packageManager": "pnpm@10.31.0"
 }

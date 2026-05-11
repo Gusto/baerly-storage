@@ -11,6 +11,9 @@ importers:
       '@baerly/protocol':
         specifier: workspace:*
         version: link:packages/protocol
+      '@cloudflare/workers-types':
+        specifier: ^4
+        version: 4.20260511.1
       '@fast-check/vitest':
         specifier: ^0.4.1
         version: 0.4.1(vitest@4.1.5)
@@ -65,6 +68,31 @@ importers:
       vitest:
         specifier: ^4.1.5
         version: 4.1.5(@types/node@25.6.2)(@vitest/coverage-v8@4.1.5)(vite@8.0.11(@types/node@25.6.2))
+
+  packages/adapter-cloudflare:
+    dependencies:
+      '@baerly/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+      '@baerly/server':
+        specifier: workspace:*
+        version: link:../server
+    devDependencies:
+      '@cloudflare/workers-types':
+        specifier: ^4
+        version: 4.20260511.1
+
+  packages/adapter-node:
+    dependencies:
+      '@baerly/dev':
+        specifier: workspace:*
+        version: link:../dev
+      '@baerly/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+      '@baerly/server':
+        specifier: workspace:*
+        version: link:../server
 
   packages/cli:
     dependencies:
@@ -153,6 +181,9 @@ packages:
   '@bcoe/v8-coverage@1.0.2':
     resolution: {integrity: sha512-6zABk/ECA/QYSCQ1NGiVwwbQerUCZ+TQbp64Q3AgmfNvurHH0j8TtXa1qbShXA6qqkpAj4V5W8pP6mLe1mcMqA==}
     engines: {node: '>=18'}
+
+  '@cloudflare/workers-types@4.20260511.1':
+    resolution: {integrity: sha512-FA+si7cOq9i/gtCHhIc0XJL0l1F/ApF+m00752Aj7WZFJrj3ZulT2T8/+rT3BabMT0QEnqFEGIqCgrmqhgEfMg==}
 
   '@emnapi/core@1.10.0':
     resolution: {integrity: sha512-yq6OkJ4p82CAfPl0u9mQebQHKPJkY7WrIuk205cTYnYe+k2Z8YBh11FrbRG/H6ihirqcacOgl2BIO8oyMQLeXw==}
@@ -1291,6 +1322,8 @@ snapshots:
       '@babel/helper-validator-identifier': 8.0.0-rc.4
 
   '@bcoe/v8-coverage@1.0.2': {}
+
+  '@cloudflare/workers-types@4.20260511.1': {}
 
   '@emnapi/core@1.10.0':
     dependencies:
