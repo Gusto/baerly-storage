@@ -22,6 +22,11 @@ These are decisions, not principles. Cross-cutting philosophy lives in
 - [0015 — Cost ceiling is a published bound](./0015-cost-ceiling.md)
 - [0016 — Forward-only schema migration via `schema_version`](./0016-schema-migration.md)
 - [0017 — Chunked level-based snapshot layout](./0017-snapshot-levels.md)
+- [0018 — Tenant CAS isolation](./0018-tenant-cas-isolation.md)
+- [0019 — Phase-4 API lock](./0019-phase-4-api-lock.md)
+- [0020 — GC lag window](./0020-gc-lag-window.md)
+- [0021 — Sync bounds across adapters](./0021-sync-bounds-across-adapters.md)
+- [0022 — Observability tag naming](./0022-observability-tag-naming.md)
 
 ## Template
 
