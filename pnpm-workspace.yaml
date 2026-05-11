@@ -1,2 +1,11 @@
 packages:
   - packages/*
+
+# `workerd` ships a native binary postinstalled by
+# `@cloudflare/vitest-pool-workers`. The other entries are already
+# allowed elsewhere in the workspace but pnpm 10 wants the full
+# allowlist enumerated here.
+onlyBuiltDependencies:
+  - esbuild
+  - sharp
+  - workerd

@@ -37,10 +37,13 @@ Don't introduce alternate tooling without justification.
 | `pnpm test:minio` | adds the Minio-gated suites (`randomized`, `time` + Minio variants) | ~30s | ✅ when `pnpm dev:storage` is up |
 | `pnpm test:conformance` | adds `conformance.test.ts` (needs Minio + credentials files) | ~30s | requires credentials in `credentials/{aws,gcs,cloudflare}.json` |
 | `pnpm test:export-smoke` | adds `export-smoke.test.ts` (Phase-1 `LogEntry` round-trip into Postgres; needs local Postgres on `:5433`) | ~5s | ✅ when `pnpm dev:storage` is up |
+| `pnpm test:adapter-cloudflare` | runs `r2BindingStorage` conformance under miniflare (`@cloudflare/vitest-pool-workers`, project `cloudflare-pool`) | ~10s | ✅ — first run downloads the `workerd` binary |
+| `pnpm test:adapter-node` | runs `s3HttpStorage` conformance against local Minio | ~10s | ✅ when `pnpm dev:storage` is up |
+| `pnpm test:adapters` | sequential wrapper: `test:adapter-cloudflare` then `test:adapter-node` | ~20s | ✅ when `pnpm dev:storage` is up |
 | `pnpm format:check` | oxfmt formatting | ~seconds | ❌ red on ~20 pre-existing files; diff vs. `main` |
 | `pnpm build` | rolldown bundle to `dist/` | ~seconds | ✅ |
 | `pnpm test:randomize` | property-based fuzzer (cranks `FC_NUM_RUNS` for fast-check arbitraries) | run for minutes | use when changing protocol code |
-| `pnpm dev:storage` | brings up Minio `:9102` + Toxiproxy `:9104` + Postgres `:5433` | n/a | required for `test:minio` / `test:conformance` / `test:export-smoke` |
+| `pnpm dev:storage` | brings up Minio `:9102` + Toxiproxy `:9104` + Postgres `:5433` | n/a | required for `test:minio` / `test:conformance` / `test:export-smoke` / `test:adapter-node` / `test:adapters` |
 
 `pnpm verify` is also enforced as a [lefthook](https://lefthook.dev/)
 pre-commit hook (`lefthook.yml`); `pnpm install` wires it up via the
@@ -62,6 +65,22 @@ deps. Tests requiring Minio or credentials are gated by env:
 - **`tests/integration/export-smoke.test.ts`** needs a local Postgres
   on `127.0.0.1:5433` (provisioned by `pnpm dev:storage`). Excluded
   from the default test glob. Run with `pnpm test:export-smoke`.
+- **`packages/adapter-cloudflare/src/r2-binding-storage.conformance.test.ts`**
+  runs inside Workerd via the `cloudflare-pool` vitest project
+  (`@cloudflare/vitest-pool-workers`, miniflare-backed). The R2
+  binding `BUCKET` is wired in `vitest.config.ts` and re-published
+  on `globalThis.__BAERLY_R2_BINDING__` by `tests/setup/r2-binding.ts`
+  so the conformance factory can consume it. Excluded from the
+  default project's glob; run with `pnpm test:adapter-cloudflare`
+  (the script also sets `ADAPTER_CLOUDFLARE=1` for any future
+  in-test conditionals). No external network, no credentials.
+- **`packages/adapter-node/src/s3-http.conformance.test.ts`** runs
+  against the same local Minio that `pnpm dev:storage` provisions.
+  Gated by `MINIO=1` via `describe.runIf`; the bucket
+  `baerly-conformance-adapter-node` is auto-created in the suite's
+  `beforeAll` (409 BucketAlreadyOwnedByYou is tolerated). Run with
+  `pnpm test:adapter-node`, or both adapter suites in sequence
+  with `pnpm test:adapters`.
 
 `randomized.test.ts` runs by default against an in-memory `Storage`
 impl (`MemoryStorage` in `@baerly/protocol`, shared per-bucket
