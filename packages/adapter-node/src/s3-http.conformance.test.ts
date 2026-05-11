@@ -1,5 +1,6 @@
 import { AwsClient } from "aws4fetch";
 import { DOMParser } from "@xmldom/xmldom";
+import { fc } from "@fast-check/vitest";
 import { beforeAll, describe } from "vitest";
 import { defineStorageConformanceSuite } from "@baerly/protocol/conformance";
 import { S3HttpStorage } from "@baerly/protocol";
@@ -27,6 +28,20 @@ const signer = new AwsClient({
 const sign = (req: Request): Promise<Request> => signer.sign(req);
 const xmlParser = new DOMParser();
 
+// Minio's REST gateway rejects request paths whose resource component
+// is `.` or `..` (it validates URL paths as POSIX paths on the backing
+// filesystem) — both `?prefix=.` listing and `PUT /bucket/.` (key=".")
+// surface as `XMinioInvalidResourceName` / `BucketAlreadyOwnedByYou`.
+// AWS S3 and R2 have no such restriction. Pin a `.`-free key + prefix
+// arbitrary for the Minio run only; everything else stays default.
+const MINIO_KEY_CHARS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_";
+const MINIO_KEY_ARB = fc.string({
+  minLength: 1,
+  maxLength: 32,
+  unit: fc.constantFrom(...MINIO_KEY_CHARS.split("")),
+});
+const MINIO_PREFIX_CHAR_ARB = fc.constantFrom(...MINIO_KEY_CHARS.split(""));
+
 // Mirror `tests/integration/time.test.ts`'s `describe.runIf(minioEnabled)`
 // pattern: the entire block is no-op'd on a fresh checkout, then runs
 // end-to-end under `MINIO=1 pnpm test`.
@@ -53,6 +68,8 @@ describe.runIf(minioEnabled)("S3HttpStorage @ Minio :9102", () => {
       caseSensitiveKeys: true,
       supportsCAS: true,
       supportsAbort: true,
+      keyArb: MINIO_KEY_ARB,
+      prefixCharArb: MINIO_PREFIX_CHAR_ARB,
     },
   );
 });
