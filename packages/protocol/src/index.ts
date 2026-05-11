@@ -4,6 +4,7 @@ export * from "./db";
 export * from "./errors";
 export * from "./json";
 export * from "./o-map";
+export * from "./query";
 export * from "./storage";
 export * from "./time";
 export * from "./types";
