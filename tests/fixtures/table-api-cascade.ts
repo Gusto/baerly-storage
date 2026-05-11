@@ -33,7 +33,7 @@ import {
   createCurrentJson,
   uuid,
 } from "@baerly/protocol";
-import { Db, compact } from "@baerly/server";
+import { Db, compact, runGc } from "@baerly/server";
 
 const APP = "table-api-test";
 
@@ -462,6 +462,64 @@ const runCompactionCascade = async (
 };
 
 /**
+ * [gc] After 30 writes + a compaction that folds them all into a
+ * snapshot, `runGc()` with `graceMillis: 0` MUST mark and sweep
+ * every stale log entry in one pass. Asserts: post-sweep the log
+ * keys are gone, and the reader still returns the same row set
+ * (snapshot is the live source).
+ *
+ * Runs across all four storage adapters via the variant table — this
+ * is the cross-adapter regression that the GC mark + sweep + DELETE
+ * + CAS-on-`gc/pending.json` work uniformly under every {@link Storage}.
+ */
+const runGcCascade = async (
+  db: Db,
+  storage: Storage,
+  app: string,
+  tenant: string,
+): Promise<void> => {
+  const t = freshTableName("gc");
+  await provision(storage, app, tenant, t);
+  const currentJsonKey = `app/${app}/tenant/${tenant}/manifests/${t}/current.json`;
+  const pendingKey = `app/${app}/tenant/${tenant}/manifests/${t}/gc/pending.json`;
+  const tablePrefix = `app/${app}/tenant/${tenant}/manifests/${t}`;
+
+  for (let i = 0; i < 30; i++) {
+    await db.table<Doc>(t).insert({ _id: `r-${i}`, k: "row", n: i });
+  }
+
+  const before = await db.table<Doc>(t).order({ _id: "asc" }).all();
+  expect(before).toHaveLength(30);
+
+  const compactRes = await compact(
+    { storage, currentJsonKey },
+    { minEntriesToCompact: 10, maxEntriesPerRun: 50 },
+  );
+  expect(compactRes.written).toBe(true);
+  expect(compactRes.logSeqStartAfter).toBe(30);
+
+  // grace=0 ⇒ same pass marks AND sweeps the 30 stale log entries.
+  const gcRes = await runGc(
+    { storage, currentJsonKey },
+    { graceMillis: 0, maxSweepsPerRun: 50, maxMarksPerRun: 50 },
+  );
+  expect(gcRes.marked.stale_log).toBe(30);
+  expect(gcRes.swept).toBe(30);
+
+  // log/0..log/29 are gone.
+  for (let i = 0; i < 30; i++) {
+    expect(await storage.get(`${tablePrefix}/log/${String(i)}.json`)).toBeNull();
+  }
+  // Reads still return the same row set — snapshot is the live truth.
+  const after = await db.table<Doc>(t).order({ _id: "asc" }).all();
+  expect(after).toEqual(before);
+
+  // pending.json exists and was created by runGc.
+  const got = await storage.get(pendingKey);
+  expect(got).not.toBeNull();
+};
+
+/**
  * LogEntry shape — frozen assertion. After an I+I+U+D sequence,
  * walk `<tablePrefix>/log/<seq>.json` directly via `Storage` and
  * assert the per-op shape from `packages/protocol/src/log.ts:22–100`.
@@ -611,6 +669,10 @@ export const runTableApiCascade = async (opts: {
   //    through it. Runs across every adapter via the variant table.
   await runCompactionCascade(db, opts.storage, APP, tenant);
 
-  // 6. LogEntry shape — frozen.
+  // 6. GC — mark + sweep stale log entries with grace bypassed.
+  //    Runs across every adapter via the variant table.
+  await runGcCascade(db, opts.storage, APP, tenant);
+
+  // 7. LogEntry shape — frozen.
   await runLogEntryShape(db, opts.storage, APP, tenant);
 };

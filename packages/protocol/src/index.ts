@@ -1,5 +1,6 @@
 export * from "./constants";
 export * from "./coordination/current-json";
+export * from "./coordination/gc-pending";
 export * from "./db";
 export * from "./errors";
 export * from "./json";

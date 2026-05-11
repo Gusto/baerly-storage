@@ -148,3 +148,51 @@ export const CURRENT_JSON_SCHEMA_VERSION = 1 as const;
  * @see packages/protocol/src/coordination/current-json.ts
  */
 export const CURRENT_JSON_CONTENT_TYPE: string = "application/json";
+
+/**
+ * Current major version of the `gc/pending.json` control-object
+ * schema. Readers MUST reject unknown versions with
+ * `MPS3Error{code:"InvalidResponse"}` rather than try to coerce.
+ *
+ * Bump only on a breaking change to `GcPending` field semantics.
+ * Adding a new optional field is NOT breaking; renaming or removing
+ * a field IS breaking.
+ *
+ * @see packages/protocol/src/coordination/gc-pending.ts
+ */
+export const GC_PENDING_SCHEMA_VERSION = 1 as const;
+
+/**
+ * MIME type written for `gc/pending.json` PUTs.
+ *
+ * @see packages/protocol/src/coordination/gc-pending.ts
+ */
+export const GC_PENDING_CONTENT_TYPE: string = "application/json";
+
+/**
+ * Default grace period between "marking" a key for GC and "sweeping"
+ * (deleting) it. 7 days, chosen to span the worst plausible writer-
+ * retry window (a paused-process writer that resumes hours later
+ * should still find its idempotency anchor on the bucket). The Phase 5
+ * `runGc()` function accepts an override for tests.
+ *
+ * Distinct from {@link ORPHAN_MANIFEST_GRACE_MILLIS} (30s) — that
+ * constant is the in-process window during which the legacy
+ * `Syncer.classifyMissingContent` treats a missing content blob as
+ * "in-flight"; this constant is the on-bucket dwell time for a
+ * candidate before the GC sweep deletes it.
+ *
+ * @see packages/server/src/gc.ts
+ */
+export const GC_GRACE_PERIOD_MILLIS: number = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * Cap on candidates kept in `gc/pending.json` to bound the size of
+ * the file. The compactor marks at most this many candidates per
+ * pass; subsequent passes pick up the rest. Larger collections will
+ * lag GC by one pass per `GC_MAX_PENDING_CANDIDATES` orphans, which
+ * is acceptable.
+ *
+ * @see packages/server/src/gc.ts
+ */
+export const GC_MAX_PENDING_CANDIDATES: number = 1000;
