@@ -148,6 +148,20 @@ class BoundedLRU<K, V> {
     this.#vals.set(id, v);
     return this;
   }
+
+  /**
+   * Drop the entry for `k` only if its current value is still `expected`.
+   * Used by `getObject` to evict its own in-flight Promise after it
+   * resolves to a non-200 status — without clobbering a fresher entry
+   * that some other caller may have installed in the meantime.
+   */
+  deleteIf(k: K, expected: V): boolean {
+    const id = this.#key(k);
+    if (this.#vals.get(id) === expected) {
+      return this.#vals.delete(id);
+    }
+    return false;
+  }
 }
 export interface MPS3Config {
   /** @internal */
@@ -578,13 +592,27 @@ export class MPS3 {
 
     if (args.useCache !== false) {
       this.memCache.set(command, work);
-      if (this.diskCache) {
-        work.then((response) => {
-          set(key, response, this.diskCache!).then(() =>
-            this.config.log(`STORE ${command.Bucket}${command.Key}`),
-          );
-        });
-      }
+      // Only retain the cache entry for successful (200) responses.
+      // The manifest-first write ordering in `putAllManifestFirst`
+      // deliberately permits a window where the manifest references
+      // content that has not yet been PUT — so a 404 here is
+      // transient by design (see `ORPHAN_MANIFEST_GRACE_MILLIS`).
+      // Caching it would trap subsequent reads of the same
+      // (Bucket, Key, Version) in `undefined` forever. 304 is
+      // similarly not a stable cached value: it only resolves
+      // relative to the caller's supplied IfNoneMatch and the caller
+      // already owns the corresponding fresh body.
+      void work.then((response) => {
+        if (response.$metadata.httpStatusCode === 200) {
+          if (this.diskCache) {
+            set(key, response, this.diskCache).then(() =>
+              this.config.log(`STORE ${command.Bucket}${command.Key}`),
+            );
+          }
+        } else {
+          this.memCache.deleteIf(command, work);
+        }
+      });
     }
     return work;
   }

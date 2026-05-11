@@ -82,6 +82,54 @@ describe("regressions (§9 bug-fix list)", () => {
     });
   });
 
+  describe("manifest-first cache (MPS3.getObject)", () => {
+    afterEach(() => {
+      reset();
+    });
+
+    test("a transient 404 on a content key is not cached", async () => {
+      const bucket = `mfcache-${Math.random().toString(36).slice(2, 8)}`;
+      const config = {
+        defaultBucket: bucket,
+        minimizeListObjectsCalls: false,
+        offlineStorage: false,
+        adaptiveClock: false,
+        parser: new DOMParser(),
+        s3Config: { endpoint: MPS3.MEMORY_ENDPOINT },
+      };
+      const writer = new MPS3({ ...config, label: "writer" });
+      const reader = new MPS3({ ...config, label: "reader" });
+
+      await writer.put("k", "hello");
+
+      // Simulate the manifest-first race: the reader's first GET of the
+      // content key sees the manifest entry but the content key still
+      // 404s (writer's content PUT hasn't landed yet). Subsequent GETs
+      // succeed once "the writer's content PUT lands" — i.e., once we
+      // stop suppressing.
+      const storage = reader.storageFor(bucket);
+      const originalGet = storage.get.bind(storage);
+      let suppressNext = true;
+      storage.get = async (key, opts) => {
+        if (suppressNext && key.startsWith("k@")) {
+          suppressNext = false;
+          return null;
+        }
+        return originalGet(key, opts);
+      };
+
+      // First read sees the transient 404 and returns undefined.
+      expect(await reader.get("k")).toBeUndefined();
+
+      // Second read must re-hit storage and return the real value.
+      // Before this fix `MPS3.getObject` cached the 404 promise under
+      // the same (Bucket, Key, Version) tuple, so this returned
+      // `undefined` forever — blocking the orphan-grace recovery in
+      // `Syncer.classifyMissingContent`.
+      expect(await reader.get("k")).toBe("hello");
+    });
+  });
+
   describe("session-ID collisions", () => {
     test("collision rate below 1% at N=100", () => {
       const N = 100;
