@@ -134,7 +134,16 @@ describe("mps3", () => {
               let testFailed = false;
               let finished = false;
               const key = `causal-${uuid()}`;
-              await getClient().delete(key);
+              // No pre-delete: the UUID-suffixed key is unique per test
+              // invocation, and each variant's bucket is unique per test
+              // file (session UUID). A pre-delete with an independent
+              // random `clockOffset` could land with an *embedded*
+              // timestamp that's newer than the seed broadcasts'
+              // (clockOffsets are ±1s, but wall-clock ordering between
+              // the ephemeral delete and the seeds is <1ms). The
+              // syncer's replay then applies the delete last in causal
+              // order, undoing every seed write and stalling the
+              // cascade.
 
               const system = new CentralisedOfflineFirstCausalSystem();
               const max_steps = 100;
