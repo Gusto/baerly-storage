@@ -31,6 +31,21 @@ services:
   #   image: "ghcr.io/shopify/toxiproxy"
   #   entrypoint: >
   #     /toxiproxy-cli -h toxiproxy:8474 toxic add --type reset_peer --attribute timeout=1 --toxicity 0.1 minio
-  #   depends_on: 
+  #   depends_on:
   #     - toxiproxy-config-0
-    
+
+  postgres:
+    image: 'postgres:16-alpine'
+    platform: linux/amd64
+    ports:
+      # Host port 5433 to avoid clashing with a local dev Postgres on 5432.
+      - '5433:5432'
+    environment:
+      POSTGRES_USER: 'baerly'
+      POSTGRES_PASSWORD: 'baerly-local'
+      POSTGRES_DB: 'baerly_export_smoke'
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U baerly -d baerly_export_smoke"]
+      interval: 2s
+      timeout: 2s
+      retries: 20

@@ -6,6 +6,16 @@ import { configDefaults, defineConfig } from "vitest/config";
 const conformanceExclude =
     process.env.CONFORMANCE === "1" ? [] : ["**/conformance.test.ts"];
 
+// `export-smoke.test.ts` translates frozen Phase-1 `LogEntry` shapes
+// into a real Postgres on `:5433` (provisioned by `pnpm dev:storage`).
+// Excluded by default; opt in with `EXPORT_SMOKE=1 pnpm test` (or
+// `pnpm test:export-smoke`). The test file itself also uses
+// `describe.runIf(EXPORT_SMOKE === "1")` — double-gating is
+// intentional: the glob exclusion keeps the import (`pg`) from
+// resolving at all on the default path.
+const exportSmokeExclude =
+    process.env.EXPORT_SMOKE === "1" ? [] : ["**/export-smoke.test.ts"];
+
 export default defineConfig({
     test: {
         include: [
@@ -13,7 +23,11 @@ export default defineConfig({
             "tests/**/*.test.ts",
             "packages/*/src/**/*.test.ts",
         ],
-        exclude: [...configDefaults.exclude, ...conformanceExclude],
+        exclude: [
+            ...configDefaults.exclude,
+            ...conformanceExclude,
+            ...exportSmokeExclude,
+        ],
         setupFiles: ["tests/setup/fast-check.ts"],
         // Process isolation. Vitest 4's default `pool: 'threads'` with
         // `isolate: true` rebuilds the module graph for every test file

@@ -36,10 +36,11 @@ Don't introduce alternate tooling without justification.
 | `pnpm test` | vitest unit + integration (zero infra) | ~1s | ✅ — Minio + credentials tests are gated, see below |
 | `pnpm test:minio` | adds the Minio-gated suites (`randomized`, `time` + Minio variants) | ~30s | ✅ when `pnpm dev:storage` is up |
 | `pnpm test:conformance` | adds `conformance.test.ts` (needs Minio + credentials files) | ~30s | requires credentials in `credentials/{aws,gcs,cloudflare}.json` |
+| `pnpm test:export-smoke` | adds `export-smoke.test.ts` (Phase-1 `LogEntry` round-trip into Postgres; needs local Postgres on `:5433`) | ~5s | ✅ when `pnpm dev:storage` is up |
 | `pnpm format:check` | oxfmt formatting | ~seconds | ❌ red on ~20 pre-existing files; diff vs. `main` |
 | `pnpm build` | rolldown bundle to `dist/` | ~seconds | ✅ |
 | `pnpm test:randomize` | property-based fuzzer (cranks `FC_NUM_RUNS` for fast-check arbitraries) | run for minutes | use when changing protocol code |
-| `pnpm dev:storage` | brings up Minio `:9102` + Toxiproxy `:9104` | n/a | required for `test:minio` / `test:conformance` |
+| `pnpm dev:storage` | brings up Minio `:9102` + Toxiproxy `:9104` + Postgres `:5433` | n/a | required for `test:minio` / `test:conformance` / `test:export-smoke` |
 
 `pnpm verify` is also enforced as a [lefthook](https://lefthook.dev/)
 pre-commit hook (`lefthook.yml`); `pnpm install` wires it up via the
@@ -58,6 +59,9 @@ deps. Tests requiring Minio or credentials are gated by env:
 - **`tests/integration/conformance.test.ts`** needs both Minio and
   credentials in `credentials/{aws,gcs,cloudflare}.json` (gitignored).
   Excluded from the default test glob. Run with `pnpm test:conformance`.
+- **`tests/integration/export-smoke.test.ts`** needs a local Postgres
+  on `127.0.0.1:5433` (provisioned by `pnpm dev:storage`). Excluded
+  from the default test glob. Run with `pnpm test:export-smoke`.
 
 `randomized.test.ts` runs by default against an in-memory `Storage`
 impl (`MemoryStorage` in `@baerly/protocol`, shared per-bucket
@@ -83,7 +87,7 @@ Pure-unit tests that always pass: `packages/protocol/src/hashing.test.ts`,
 Integration tests can run against a local Minio + Toxiproxy stack:
 
 ```sh
-pnpm dev:storage         # docker-compose up -d (Minio :9102, Toxiproxy :9104)
+pnpm dev:storage         # docker-compose up -d (Minio :9102, Toxiproxy :9104, Postgres :5433)
 pnpm dev:storage:stop    # docker-compose down
 ```
 
