@@ -18,6 +18,10 @@ coverage/
 *.lcov
 .nyc_output/
 
+# Bench harness outputs (per-run JSON + CSV)
+bench/results/*
+!bench/results/.gitkeep
+
 # Vite / Vitest / Rolldown caches
 .vite/
 .vitest/

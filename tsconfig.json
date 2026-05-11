@@ -9,6 +9,7 @@
     "moduleDetection": "force",
     "resolveJsonModule": true,
     "erasableSyntaxOnly": true,
+    "allowImportingTsExtensions": true,
 
     "strict": true,
     "noUncheckedIndexedAccess": true,
@@ -24,6 +25,6 @@
     "skipLibCheck": true,
     "types": ["node", "@cloudflare/workers-types"]
   },
-  "include": ["src", "tests", "packages/*/src", "*.config.ts", "scripts/**/*.ts"],
+  "include": ["src", "tests", "packages/*/src", "*.config.ts", "scripts/**/*.ts", "bench/**/*"],
   "exclude": ["tests/integration/conformance.test.ts"]
 }
