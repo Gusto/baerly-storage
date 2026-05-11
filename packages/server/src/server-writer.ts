@@ -43,6 +43,7 @@ import {
   noopMetricsRecorder,
   type Storage,
   type StoragePutOptions,
+  type StoragePutResult,
   S3_REQUEST_MAX_RETRIES,
   SESSION_ID_LENGTH,
   countKey,
@@ -89,6 +90,10 @@ export interface ServerWriterOptions {
    *   - `db.tenant.put_rate` gauge per commit (each commit emits
    *     `1` at observation time; downstream aggregation
    *     rate-converts).
+   *   - `db.writer.fence_bump_observed_total` counter on a
+   *     concurrent fence-epoch bump observed during commit
+   *     (split-brain detection; commit fails fast with
+   *     `Conflict`).
    */
   readonly metrics?: MetricsRecorder;
 
@@ -235,6 +240,13 @@ export class ServerWriter {
    * @throws MPS3Error code="Conflict" when the retry budget is
    *   exhausted (genuine high-contention case), or when the underlying
    *   `current.json` CAS PUT lost.
+   * @throws MPS3Error code="Conflict" — the writer fence
+   *   (`current.json.writer_fence.epoch`) was bumped by a concurrent
+   *   `claimWriter` call between this commit's read of
+   *   `current.json` and its CAS-advance. The stale writer aborts
+   *   to honour the new authority — the kernel does NOT retry under
+   *   the old epoch. See {@link claimWriter} for the rotation
+   *   recipe.
    * @throws MPS3Error code="Internal" when a log entry expected in
    *   `[0, next_seq)` is missing — a protocol-invariant violation
    *   (compactor bug or stale `current.json`).
@@ -260,6 +272,7 @@ export class ServerWriter {
       }
       const current = read.json;
       const baseEtag = read.etag;
+      const expectedEpoch = current.writer_fence.epoch;
 
       // ── Step 2. Walk the log to validate integrity. ───────────────
       // Walk `[log_seq_start, next_seq)` — entries below the bound
@@ -372,24 +385,9 @@ export class ServerWriter {
         ifMatch: baseEtag,
         contentType: APPLICATION_JSON,
       };
+      let result: StoragePutResult;
       try {
-        const result = await this.#storage.put(this.#currentJsonKey, nextBody, putOpts);
-        // Emit class-A op count for this logical write. Content PUT
-        // is skipped on `op:"D"`; one extra PUT is incurred per
-        // backoff retry (the prior attempt's failed CAS still counts
-        // as one billed PUT).
-        const classAOps =
-          (input.op !== "D" ? 1 : 0) /* content PUT */ +
-          1 /* log PUT */ +
-          1 /* current.json CAS PUT */ +
-          (attempt - 1); /* +1 per backoff retry */
-        const histLabels: Record<string, string> = { collection: input.collection };
-        if (this.#tenant !== "") histLabels.tenant = this.#tenant;
-        this.#metrics.histogram("db.write.class_a_ops_per_logical_write", classAOps, histLabels);
-        const rateLabels: Record<string, string> =
-          this.#tenant !== "" ? { tenant: this.#tenant } : {};
-        this.#metrics.gauge("db.tenant.put_rate", 1, rateLabels);
-        return { entry: committedEntry, currentEtag: result.etag, attempts: attempt };
+        result = await this.#storage.put(this.#currentJsonKey, nextBody, putOpts);
       } catch (err) {
         this.#observe429(err, input.collection);
         if (isCasConflict(err)) {
@@ -402,6 +400,41 @@ export class ServerWriter {
         }
         throw err;
       }
+      // CAS landed. Re-read current.json to verify the fence wasn't
+      // bumped concurrently with our CAS. The CAS step only mutated
+      // next_seq (the fence is preserved from `current`), so a post-
+      // write epoch ≠ expectedEpoch can only mean another writer
+      // claimed the fence between our step-1 read and step-6 PUT —
+      // which is the exact split-brain WriterFence prevents. Surface
+      // as Conflict, do NOT retry: retry would re-race the new
+      // authority indefinitely. Note: the fence-verify GET is Class
+      // B, NOT counted in class_a_ops_per_logical_write.
+      const postRead = await readCurrentJson(this.#storage, this.#currentJsonKey);
+      if (postRead !== null && postRead.json.writer_fence.epoch !== expectedEpoch) {
+        const bumpLabels: Record<string, string> = { collection: input.collection };
+        if (this.#tenant !== "") bumpLabels.tenant = this.#tenant;
+        this.#metrics.counter("db.writer.fence_bump_observed_total", 1, bumpLabels);
+        throw new MPS3Error(
+          "Conflict",
+          `ServerWriter: writer fence bumped from epoch ${expectedEpoch} to ${postRead.json.writer_fence.epoch} during commit on ${this.#currentJsonKey}; stale writer aborting`,
+        );
+      }
+      // Emit class-A op count for this logical write. Content PUT
+      // is skipped on `op:"D"`; one extra PUT is incurred per
+      // backoff retry (the prior attempt's failed CAS still counts
+      // as one billed PUT).
+      const classAOps =
+        (input.op !== "D" ? 1 : 0) /* content PUT */ +
+        1 /* log PUT */ +
+        1 /* current.json CAS PUT */ +
+        (attempt - 1); /* +1 per backoff retry */
+      const histLabels: Record<string, string> = { collection: input.collection };
+      if (this.#tenant !== "") histLabels.tenant = this.#tenant;
+      this.#metrics.histogram("db.write.class_a_ops_per_logical_write", classAOps, histLabels);
+      const rateLabels: Record<string, string> =
+        this.#tenant !== "" ? { tenant: this.#tenant } : {};
+      this.#metrics.gauge("db.tenant.put_rate", 1, rateLabels);
+      return { entry: committedEntry, currentEtag: result.etag, attempts: attempt };
     }
 
     // Retry budget exhausted.
@@ -430,6 +463,13 @@ export class ServerWriter {
    *
    * @throws MPS3Error code="Conflict" — CAS lost on `current.json`,
    *   or a log entry already exists at our seq (peer wrote ahead).
+   * @throws MPS3Error code="Conflict" — the writer fence
+   *   (`current.json.writer_fence.epoch`) was bumped by a concurrent
+   *   `claimWriter` call between this batch's read of
+   *   `current.json` and its CAS-advance. The stale writer aborts
+   *   to honour the new authority — the kernel does NOT retry under
+   *   the old epoch. See {@link claimWriter} for the rotation
+   *   recipe.
    * @throws MPS3Error code="Internal" — protocol-invariant violation
    *   (missing log entry inside `[0, next_seq)`).
    * @throws MPS3Error code="InvalidResponse" — `current.json` does
@@ -457,6 +497,7 @@ export class ServerWriter {
     }
     const current = read.json;
     const baseEtag = read.etag;
+    const expectedEpoch = current.writer_fence.epoch;
 
     // ── Step 2. Walk the log to validate integrity. ─────────────────
     // Same as single-mutation commit; observational today (Phase 5
@@ -553,24 +594,9 @@ export class ServerWriter {
       ifMatch: baseEtag,
       contentType: APPLICATION_JSON,
     };
+    let result: StoragePutResult;
     try {
-      const result = await this.#storage.put(this.#currentJsonKey, nextBody, putOpts);
-      // One histogram observation per landed batch. Class-A op count
-      // = content PUTs (skipping op:"D") + log PUTs (= inputs.length)
-      // + 1 current.json CAS.
-      const classAOps = contentPutCount + inputs.length + 1;
-      // Pick the first input's collection as the batch label; in the
-      // current Db.transaction model every input shares one
-      // collection, so this is exact. If future tickets relax that
-      // we'll need a per-collection split here.
-      const collection = inputs[0]!.collection;
-      const histLabels: Record<string, string> = { collection };
-      if (this.#tenant !== "") histLabels.tenant = this.#tenant;
-      this.#metrics.histogram("db.write.class_a_ops_per_logical_write", classAOps, histLabels);
-      const rateLabels: Record<string, string> =
-        this.#tenant !== "" ? { tenant: this.#tenant } : {};
-      this.#metrics.gauge("db.tenant.put_rate", 1, rateLabels);
-      return { entries, currentEtag: result.etag };
+      result = await this.#storage.put(this.#currentJsonKey, nextBody, putOpts);
     } catch (err) {
       this.#observe429(err, inputs[0]!.collection);
       if (isCasConflict(err)) {
@@ -586,6 +612,40 @@ export class ServerWriter {
       }
       throw err;
     }
+    // CAS landed. Re-read current.json to verify the fence wasn't
+    // bumped concurrently with our CAS. The CAS step only mutated
+    // next_seq (the fence is preserved from `current`), so a post-
+    // write epoch ≠ expectedEpoch can only mean another writer
+    // claimed the fence between our step-1 read and step-6 PUT —
+    // which is the exact split-brain WriterFence prevents. Surface
+    // as Conflict; single-attempt — no retry. Note: the fence-verify
+    // GET is Class B, NOT counted in class_a_ops_per_logical_write.
+    const collection = inputs[0]!.collection;
+    const postRead = await readCurrentJson(this.#storage, this.#currentJsonKey);
+    if (postRead !== null && postRead.json.writer_fence.epoch !== expectedEpoch) {
+      const bumpLabels: Record<string, string> = { collection };
+      if (this.#tenant !== "") bumpLabels.tenant = this.#tenant;
+      this.#metrics.counter("db.writer.fence_bump_observed_total", 1, bumpLabels);
+      throw new MPS3Error(
+        "Conflict",
+        `ServerWriter.commitBatch: writer fence bumped from epoch ${expectedEpoch} to ${postRead.json.writer_fence.epoch} during commit on ${this.#currentJsonKey}; stale writer aborting`,
+      );
+    }
+    // One histogram observation per landed batch. Class-A op count
+    // = content PUTs (skipping op:"D") + log PUTs (= inputs.length)
+    // + 1 current.json CAS. The fence-verify GET above is Class B
+    // and intentionally excluded from this histogram.
+    const classAOps = contentPutCount + inputs.length + 1;
+    // Pick the first input's collection as the batch label; in the
+    // current Db.transaction model every input shares one
+    // collection, so this is exact. If future tickets relax that
+    // we'll need a per-collection split here.
+    const histLabels: Record<string, string> = { collection };
+    if (this.#tenant !== "") histLabels.tenant = this.#tenant;
+    this.#metrics.histogram("db.write.class_a_ops_per_logical_write", classAOps, histLabels);
+    const rateLabels: Record<string, string> = this.#tenant !== "" ? { tenant: this.#tenant } : {};
+    this.#metrics.gauge("db.tenant.put_rate", 1, rateLabels);
+    return { entries, currentEtag: result.etag };
   }
 
   /**

@@ -396,3 +396,138 @@ describe("ServerWriter", () => {
     expect(r.attempts).toBe(1);
   });
 });
+
+describe("ServerWriter — writer fence", () => {
+  beforeEach(() => {
+    resetMemoryStorage();
+  });
+
+  /**
+   * Bumps `writer_fence.epoch` on `current.json` exactly once, on
+   * the K-th `get` of the CAS key (after the writer's step-1 read
+   * but before/at its post-CAS verify read). Local to this test
+   * file.
+   */
+  class FenceBumpingStorage extends MemoryStorage {
+    bumpAfterReadsCount = -1; // -1 = never
+    private currentReads = 0;
+    override async get(
+      key: string,
+      opts?: { signal?: AbortSignal },
+    ): Promise<{ body: Uint8Array; etag: string } | null> {
+      const result = await super.get(key, opts);
+      if (key === CURRENT_KEY && result !== null) {
+        this.currentReads++;
+        if (this.currentReads === this.bumpAfterReadsCount) {
+          const decoded = JSON.parse(new TextDecoder().decode(result.body)) as CurrentJson;
+          decoded.writer_fence = {
+            ...decoded.writer_fence,
+            epoch: decoded.writer_fence.epoch + 1,
+            owner: "intruder",
+          };
+          // Sneak the bump under our own existing etag — simulates
+          // a peer's claimWriter() that landed between our step-1
+          // read and our step-6 post-read. The bumped body is also
+          // returned to the caller so the verify-read sees the new
+          // epoch on the very GET that triggered the bump.
+          const bumpedBytes = new TextEncoder().encode(JSON.stringify(decoded));
+          await super.put(key, bumpedBytes);
+          const fresh = await super.get(key, opts);
+          if (fresh !== null) return fresh;
+        }
+      }
+      return result;
+    }
+  }
+
+  test("happy path: epoch unchanged across a commit → commit succeeds, no bump metric", async () => {
+    const storage = new MemoryStorage();
+    await createCurrentJson(storage, CURRENT_KEY, seedCurrent());
+    const metrics = new InMemoryMetricsRecorder();
+    const writer = new ServerWriter({
+      storage,
+      currentJsonKey: CURRENT_KEY,
+      options: { metrics },
+    });
+
+    const r = await writer.commit({
+      op: "I",
+      collection: COLL,
+      docId: "doc-fence-ok",
+      body: { _id: "doc-fence-ok" },
+    });
+    expect(r.attempts).toBe(1);
+    expect(metrics.sumCounter("db.writer.fence_bump_observed_total")).toBe(0);
+
+    const persisted = decodeJson<CurrentJson>((await storage.get(CURRENT_KEY))!.body);
+    expect(persisted.writer_fence.epoch).toBe(0);
+  });
+
+  test("fence bump observed mid-flight: commit() fails fast with Conflict + metric", async () => {
+    const storage = new FenceBumpingStorage();
+    await createCurrentJson(storage, CURRENT_KEY, seedCurrent());
+    // The writer's step-1 read of current.json is the first GET on
+    // CURRENT_KEY; the post-CAS read is the second. Bump on the
+    // second — simulates "peer claimed the fence after our CAS
+    // landed but before we verified."
+    storage.bumpAfterReadsCount = 2;
+    const metrics = new InMemoryMetricsRecorder();
+    const writer = new ServerWriter({
+      storage,
+      currentJsonKey: CURRENT_KEY,
+      options: { metrics, tenant: "acme" },
+    });
+
+    let thrown: unknown;
+    try {
+      await writer.commit({
+        op: "I",
+        collection: COLL,
+        docId: "doc-staled",
+        body: { _id: "doc-staled" },
+      });
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(MPS3Error);
+    expect((thrown as MPS3Error).code).toBe("Conflict");
+    expect((thrown as MPS3Error).message).toMatch(/writer fence bumped from epoch 0 to 1/);
+    expect(metrics.sumCounter("db.writer.fence_bump_observed_total")).toBe(1);
+    // Tenant + collection labels travel.
+    const bumpEvent = metrics.counters.find(
+      (c) => c.name === "db.writer.fence_bump_observed_total",
+    );
+    expect(bumpEvent?.labels).toEqual({ collection: COLL, tenant: "acme" });
+  });
+
+  test("commitBatch() under fence bump: throws Conflict, increments metric exactly once", async () => {
+    const storage = new FenceBumpingStorage();
+    await createCurrentJson(storage, CURRENT_KEY, seedCurrent());
+    storage.bumpAfterReadsCount = 2;
+    const metrics = new InMemoryMetricsRecorder();
+    const writer = new ServerWriter({
+      storage,
+      currentJsonKey: CURRENT_KEY,
+      options: { metrics },
+    });
+
+    let thrown: unknown;
+    try {
+      await writer.commitBatch([
+        { op: "I", collection: COLL, docId: "tx-1", body: { _id: "tx-1" } },
+        { op: "I", collection: COLL, docId: "tx-2", body: { _id: "tx-2" } },
+      ]);
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(MPS3Error);
+    expect((thrown as MPS3Error).code).toBe("Conflict");
+    expect(metrics.sumCounter("db.writer.fence_bump_observed_total")).toBe(1);
+  });
+
+  test("claimWriter is re-exported from @baerly/server", async () => {
+    // Pure module-level smoke: the re-export resolves at runtime.
+    const mod = await import("./index");
+    expect(typeof (mod as { claimWriter?: unknown }).claimWriter).toBe("function");
+  });
+});
