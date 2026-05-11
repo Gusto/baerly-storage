@@ -1,7 +1,7 @@
 import { fc, test as fcTest } from "@fast-check/vitest";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { MPS3Error } from "../errors";
-import type { Storage, StorageListEntry } from "./types";
+import type { Storage } from "./types";
 
 /**
  * Capability flags + arbitrary overrides for the conformance suite.
@@ -23,6 +23,16 @@ export interface ConformanceOptions {
   readonly keyArb?: fc.Arbitrary<string>;
   /** Override the default body arbitrary. Default: Uint8Array, len 0..4096. */
   readonly bodyArb?: fc.Arbitrary<Uint8Array>;
+  /**
+   * Override the arbitrary used as the single-character `prefix`
+   * passed to `list(prefix)`. Default: any char from the canonical
+   * `KEY_CHARS` set. Minio's REST gateway rejects URL paths whose
+   * resource component is `.` or `..` (those segments are reserved
+   * by POSIX path semantics on the backing filesystem); Minio-backed
+   * conformance runs pin this to a `.`-free set. AWS S3 and R2 have
+   * no such restriction.
+   */
+  readonly prefixCharArb?: fc.Arbitrary<string>;
   /** Pinned size-boundary cap. Default: 1 MiB. */
   readonly maxBodyBytes?: number;
 }
@@ -99,6 +109,7 @@ export function defineStorageConformanceSuite(
     caseSensitiveKeys: options.caseSensitiveKeys ?? true,
     keyArb: options.keyArb ?? DEFAULT_KEY_ARB,
     bodyArb: options.bodyArb ?? DEFAULT_BODY_ARB,
+    prefixCharArb: options.prefixCharArb ?? fc.constantFrom(...KEY_CHARS.split("")),
     maxBodyBytes: options.maxBodyBytes ?? 1 << 20,
   };
 
@@ -110,6 +121,12 @@ export function defineStorageConformanceSuite(
       const r = await factory();
       s = r.storage;
       teardown = r.teardown;
+      // Shared-backend adapters (real S3 / R2 against a persistent
+      // bucket) cannot rely on `factory()` for isolation — every test
+      // sees the residue of every prior test. Drain on entry so each
+      // case starts from an empty namespace. No-op for fresh in-memory
+      // / temp-dir factories.
+      await drain(s);
     });
     afterEach(async () => {
       if (teardown) await teardown();
@@ -267,7 +284,10 @@ export function defineStorageConformanceSuite(
         const a = await s.put("a", new TextEncoder().encode("alpha"));
         const b = await s.put("b", new TextEncoder().encode("beta"));
         const entries = await collect(s.list(""));
-        expect(entries).toEqual<StorageListEntry[]>([
+        // `StorageListEntry.lastModified` is optional per the type;
+        // some adapters (R2 binding, S3) populate it from server-side
+        // headers. Project to the load-bearing fields only.
+        expect(entries.map(({ key, etag }) => ({ key, etag }))).toEqual([
           { key: "a", etag: a.etag },
           { key: "b", etag: b.etag },
         ]);
@@ -284,7 +304,7 @@ export function defineStorageConformanceSuite(
           maxLength: 16,
           selector: ([k]) => (opts.caseSensitiveKeys ? k : k.toLowerCase()),
         }),
-        prefixChar: fc.constantFrom(...KEY_CHARS.split("")),
+        prefixChar: opts.prefixCharArb,
       })("list(prefix) returns sorted keys-with-prefix", async ({ entries, prefixChar }) => {
         await drain(s);
         for (const [k, body] of entries) await s.put(k, body);
