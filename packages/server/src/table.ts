@@ -1,25 +1,25 @@
 /**
- * Phase-4 read-side entrypoint: `Table<T>` factory. `Db.table(name)`
- * returns the result of `makeTable(ctx)` — a cheap, no-I/O handle
- * that delegates every modifier to `makeQuery` with a fresh empty
- * seed state.
+ * Phase-4 entrypoint: `Table<T>` factory. `Db.table(name)` returns
+ * the result of `makeTable(ctx)` — a cheap, no-I/O handle that
+ * delegates every modifier to `makeQuery` with a fresh empty seed
+ * state, and routes `insert` through the shared `runInsert` runtime
+ * that `Query.update` / `replace` / `delete` reuse pieces of.
  *
- * The `Table.insert` mutator is on the locked `Table<T>` interface
- * (`@baerly/protocol/src/db.ts`) so we can't omit it from the
- * returned object without breaking the type contract. It throws
- * `MPS3Error{code:"Internal"}` with a message naming ticket 10 —
- * narrow enough that tests can discriminate by `code` without
- * string-matching, and ticket 10 will overwrite this method.
+ * `Table.insert(doc)` is the public insert path. The locked
+ * `Query<T>` interface (`@baerly/protocol/src/db.ts`) intentionally
+ * does NOT declare `insert` — chainable inserts are out of scope for
+ * Phase 4 (ticket 10 §7). For an inserted doc whose predicate-bound
+ * shape matters, `db.table(...).insert(...)` is the path; predicates
+ * are a read-side concern.
  */
 
 import {
   type JSONArraylessObject,
-  MPS3Error,
   type OrderSpec,
   type Predicate,
   type Table,
 } from "@baerly/protocol";
-import { makeQuery, type TableReadContext } from "./query";
+import { makeQuery, runInsert, type TableReadContext } from "./query";
 
 /**
  * Build a `Table<T>` bound to one `(tenant, table)` read context.
@@ -54,14 +54,24 @@ export const makeTable = <T extends JSONArraylessObject>(ctx: TableReadContext):
     where: (p) => makeQuery<T>(ctx, { ...seed, predicate: p }),
     order: (s) => makeQuery<T>(ctx, { ...seed, order: s }),
     limit: (n) => makeQuery<T>(ctx, { ...seed, limit: n }),
-    insert: () => {
-      // Deferred to ticket 10. Keep the throw narrow so tests can
-      // discriminate by `code` without string-matching.
-      throw new MPS3Error(
-        "Internal",
-        "Table.insert is not implemented in ticket 09 (read-only). Mutations land in ticket 10.",
-      );
-    },
+    /**
+     * Insert one document. UUIDv7 auto-id when `_id` is absent or
+     * empty; otherwise the caller-supplied `_id` is honoured. A
+     * pre-commit existence check against the materialised collection
+     * surfaces `Conflict` on duplicate `_id` without round-tripping
+     * to the writer — matches the locked `Table.insert` throws
+     * contract (`@baerly/protocol/src/db.ts:123–125`).
+     *
+     * Single-attempt per call: CAS retries (up to 8 attempts) live
+     * inside `ServerWriter.commit()`. On retry-budget exhaustion the
+     * writer throws `Conflict` and we surface unchanged.
+     *
+     * @throws MPS3Error code="Conflict" — `_id` collision (pre-commit
+     *   check) or CAS retry budget exhausted.
+     * @throws MPS3Error code="SchemaError" — inherited from
+     *   `ServerWriter.validateInput`.
+     */
+    insert: (doc) => runInsert<T>(ctx, doc),
     count: () => makeQuery<T>(ctx, seed).count(),
   };
 };

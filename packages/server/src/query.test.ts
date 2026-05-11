@@ -253,7 +253,7 @@ describe("Db.table read terminals", () => {
     expect(bRows.map((r) => r._id)).toEqual(["bob-doc"]);
   });
 
-  test("case 11: error surface — invalid name + deferred mutators", async () => {
+  test("case 11: invalid table name throws InvalidConfig", async () => {
     // Empty name → InvalidConfig (constructed at .table() call).
     expect(() => db.table("")).toThrow(MPS3Error);
     try {
@@ -266,35 +266,6 @@ describe("Db.table read terminals", () => {
       db.table("a/b");
     } catch (err) {
       expect((err as MPS3Error).code).toBe("InvalidConfig");
-    }
-
-    // Table.insert is deferred to ticket 10 — throws Internal with
-    // a message that names ticket 10 so the consistency check
-    // discriminates.
-    const t = db.table(COLL);
-    try {
-      await t.insert({ _id: "x" });
-      throw new Error("expected insert to throw");
-    } catch (err) {
-      expect(err).toBeInstanceOf(MPS3Error);
-      expect((err as MPS3Error).code).toBe("Internal");
-      expect((err as MPS3Error).message).toContain("ticket 10");
-    }
-
-    // Query.update / .replace / .delete also deferred.
-    const q = t.where({});
-    for (const verb of ["update", "replace", "delete"] as const) {
-      try {
-        // Each mutator is an arity-0 or arity-1 method; pass a no-op
-        // argument where the type requires one.
-        if (verb === "update") await q.update({});
-        else if (verb === "replace") await q.replace({ _id: "x" });
-        else await q.delete();
-        throw new Error(`expected ${verb} to throw`);
-      } catch (err) {
-        expect(err).toBeInstanceOf(MPS3Error);
-        expect((err as MPS3Error).code).toBe("Internal");
-      }
     }
   });
 

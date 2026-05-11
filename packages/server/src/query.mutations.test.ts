@@ -1,0 +1,460 @@
+/* eslint-disable no-underscore-dangle -- `_id` is the locked primary-key
+   field on document shapes (see `@baerly/protocol/src/db.ts`'s `Table<T>` /
+   `Query<T>` declarations); tests surface and assert on it by name. */
+
+/**
+ * Phase-4 mutation terminals — `Table.insert`, `Query.update`,
+ * `Query.replace`, `Query.delete`. MemoryStorage-only, pure-unit; no
+ * infra required.
+ *
+ * The matrix this file covers (from ticket 10 §4.8):
+ *  - Insert auto-id, caller-supplied id, duplicate-id Conflict,
+ *    LogEntry shape parity.
+ *  - Update single/multi-match, RFC 7386 null-delete, return shape,
+ *    zero-match no-op.
+ *  - Replace exact-one success, zero/many Conflict with cardinality
+ *    in message, matched-row _id preservation.
+ *  - Delete tombstone shape (no new/patch/old/key_old), return shape,
+ *    post-delete visibility.
+ *  - Per-row CAS retry semantics: forced contention succeeds within
+ *    budget; exhausted budget surfaces Conflict.
+ *
+ * Fast-check property tests are explicitly OUT OF SCOPE — ticket 12
+ * owns cross-adapter coverage.
+ */
+
+import {
+  CURRENT_JSON_SCHEMA_VERSION,
+  type CurrentJson,
+  createCurrentJson,
+  type JSONArraylessObject,
+  type LogEntry,
+  MemoryStorage,
+  MPS3Error,
+  type StoragePutOptions,
+  type StoragePutResult,
+} from "@baerly/protocol";
+import { beforeEach, describe, expect, test } from "vitest";
+import { Db } from "./db";
+
+const APP = "test";
+const TENANT = "t";
+const COLL = "tickets";
+
+const currentJsonKey = (coll: string = COLL): string =>
+  `app/${APP}/tenant/${TENANT}/manifests/${coll}/current.json`;
+const logKey = (seq: number, coll: string = COLL): string =>
+  `app/${APP}/tenant/${TENANT}/manifests/${coll}/log/${seq}.json`;
+
+const seedCurrent = (next_seq = 0): CurrentJson => ({
+  schema_version: CURRENT_JSON_SCHEMA_VERSION,
+  snapshot: null,
+  next_seq,
+  writer_fence: { epoch: 0, owner: "test", claimed_at: "" },
+});
+
+const provision = async (storage: MemoryStorage, coll: string = COLL): Promise<void> => {
+  await createCurrentJson(storage, currentJsonKey(coll), seedCurrent());
+};
+
+const readLogEntry = async (storage: MemoryStorage, seq: number): Promise<LogEntry> => {
+  const got = await storage.get(logKey(seq));
+  if (got === null) throw new Error(`expected log entry at seq ${seq}`);
+  return JSON.parse(new TextDecoder().decode(got.body)) as LogEntry;
+};
+
+interface TicketDoc extends JSONArraylessObject {
+  _id: string;
+  title: string;
+  status: string;
+}
+
+describe("Table.insert", () => {
+  let storage: MemoryStorage;
+  let db: Db;
+
+  beforeEach(async () => {
+    storage = new MemoryStorage();
+    db = Db.create({ storage, app: APP, tenant: TENANT });
+    await provision(storage);
+  });
+
+  test("auto-id mints UUIDv7 _id; doc visible via Table.where({_id}).first()", async () => {
+    const t = db.table<TicketDoc>(COLL);
+    const { _id } = await t.insert({ title: "hello", status: "open" });
+    expect(typeof _id).toBe("string");
+    // UUIDv7 wire format: 8-4-4-4-12 hex groups.
+    expect(_id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+    const found = await t.where({ _id }).first();
+    expect(found).toEqual({ _id, title: "hello", status: "open" });
+  });
+
+  test("caller-supplied _id is honoured verbatim", async () => {
+    const t = db.table<TicketDoc>(COLL);
+    const { _id } = await t.insert({ _id: "custom-id-42", title: "x", status: "open" });
+    expect(_id).toBe("custom-id-42");
+    const found = await t.where({ _id: "custom-id-42" }).first();
+    expect(found).toBeDefined();
+    expect(found!._id).toBe("custom-id-42");
+  });
+
+  test("duplicate _id on insert throws Conflict", async () => {
+    const t = db.table<TicketDoc>(COLL);
+    await t.insert({ _id: "dup", title: "first", status: "open" });
+    let thrown: unknown;
+    try {
+      await t.insert({ _id: "dup", title: "second", status: "open" });
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(MPS3Error);
+    expect((thrown as MPS3Error).code).toBe("Conflict");
+    // Cardinality / id should appear in the message so callers can
+    // distinguish "duplicate id" from a generic CAS conflict.
+    expect((thrown as MPS3Error).message).toContain("dup");
+  });
+
+  test("predicates do not gate insert: chain-bound Table.insert still runs", async () => {
+    // The locked `Query<T>` surface does not declare `insert`; the
+    // public insert path is on `Table<T>`. Confirm a chain that
+    // restricts reads via `.where(...)` does not affect the insert
+    // path — every insert goes through the table-level handle.
+    const table = db.table<TicketDoc>(COLL);
+    // Build a narrowing chain (we never consume it for the insert),
+    // then insert through the table directly. The doc lands and is
+    // visible regardless of the chain.
+    const narrowed = table.where({ status: "closed" });
+    expect(narrowed).toBeDefined();
+    const { _id } = await table.insert({ title: "x", status: "open" });
+    const rows = await table.where({}).all();
+    expect(rows.map((r) => r._id)).toContain(_id);
+  });
+
+  test("LogEntry shape: I op carries new === patch === {...doc, _id}", async () => {
+    const t = db.table<TicketDoc>(COLL);
+    await t.insert({ _id: "L1", title: "logged", status: "open" });
+    const entry = await readLogEntry(storage, 0);
+    expect(entry.op).toBe("I");
+    expect(entry.collection).toBe(COLL);
+    expect(entry.doc_id).toBe("L1");
+    expect(entry.schema_version).toBe(0);
+    expect(entry.new).toEqual({ _id: "L1", title: "logged", status: "open" });
+    expect(entry.patch).toEqual({ _id: "L1", title: "logged", status: "open" });
+    // The per-doc-replace model pins `new === patch` (deep equal) — the
+    // Phase-9 partial-merge writer is what relaxes that invariant.
+    expect(entry.new).toEqual(entry.patch);
+    // `PATCH_ONLY` replica_identity (today's default) carries no
+    // pre-image fields on any op.
+    expect(entry.old).toBeUndefined();
+    expect(entry.key_old).toBeUndefined();
+  });
+});
+
+describe("Query.update", () => {
+  let storage: MemoryStorage;
+  let db: Db;
+
+  beforeEach(async () => {
+    storage = new MemoryStorage();
+    db = Db.create({ storage, app: APP, tenant: TENANT });
+    await provision(storage);
+  });
+
+  test("applies merge patch on a single match; returns { modified: 1 }", async () => {
+    const t = db.table<TicketDoc>(COLL);
+    await t.insert({ _id: "u1", title: "old", status: "open" });
+    const result = await t.where({ _id: "u1" }).update({ title: "new" });
+    expect(result).toEqual({ modified: 1 });
+    const after = await t.where({ _id: "u1" }).first();
+    expect(after).toEqual({ _id: "u1", title: "new", status: "open" });
+  });
+
+  test("applies merge patch on multiple matches; returns { modified: N }", async () => {
+    const t = db.table<TicketDoc>(COLL);
+    await t.insert({ _id: "a", title: "1", status: "open" });
+    await t.insert({ _id: "b", title: "2", status: "open" });
+    await t.insert({ _id: "c", title: "3", status: "closed" });
+    const result = await t.where({ status: "open" }).update({ status: "in-progress" });
+    expect(result).toEqual({ modified: 2 });
+    const open = await t.where({ status: "open" }).all();
+    expect(open).toHaveLength(0);
+    const progress = await t.where({ status: "in-progress" }).all();
+    expect(progress.map((r) => r._id).toSorted()).toEqual(["a", "b"]);
+    // c is untouched.
+    const closed = await t.where({ status: "closed" }).all();
+    expect(closed).toHaveLength(1);
+    expect(closed[0]!._id).toBe("c");
+  });
+
+  test("RFC 7386 null deletes a field from the post-image", async () => {
+    // Use the bare `JSONArraylessObject` shape rather than an
+    // `interface ... extends` with an optional `flag` — the locked
+    // `JSONArrayless` value type does not include `undefined`, so an
+    // optional-key extension doesn't satisfy the index signature.
+    const t = db.table(COLL);
+    await t.insert({ _id: "n1", title: "x", flag: true });
+    // `null` per RFC 7386 deletes the key. The locked patch type is
+    // `Partial<T>` (no `null` at the type level); test the runtime
+    // contract via cast.
+    await t.where({ _id: "n1" }).update({ flag: null as unknown as JSONArraylessObject });
+    const after = await t.where({ _id: "n1" }).first();
+    expect(after).toBeDefined();
+    expect(after!._id).toBe("n1");
+    expect(after!.title).toBe("x");
+    expect("flag" in after!).toBe(false);
+  });
+
+  test("zero matches: returns { modified: 0 } and emits no LogEntry", async () => {
+    const t = db.table<TicketDoc>(COLL);
+    await t.insert({ _id: "only", title: "x", status: "open" });
+    const beforeNextSeq = (await storage.get(currentJsonKey()))!;
+    const beforeCurrent: CurrentJson = JSON.parse(
+      new TextDecoder().decode(beforeNextSeq.body),
+    ) as CurrentJson;
+    const result = await t.where({ _id: "nope" }).update({ title: "y" });
+    expect(result).toEqual({ modified: 0 });
+    const afterRaw = (await storage.get(currentJsonKey()))!;
+    const afterCurrent: CurrentJson = JSON.parse(
+      new TextDecoder().decode(afterRaw.body),
+    ) as CurrentJson;
+    // next_seq is unchanged when no rows match — no commit was issued.
+    expect(afterCurrent.next_seq).toBe(beforeCurrent.next_seq);
+  });
+
+  test("emits one op:'U' LogEntry per affected doc with new === patch", async () => {
+    const t = db.table<TicketDoc>(COLL);
+    await t.insert({ _id: "e1", title: "t1", status: "open" });
+    await t.insert({ _id: "e2", title: "t2", status: "open" });
+    // current next_seq is 2 after the two inserts; updates start at seq 2.
+    await t.where({ status: "open" }).update({ status: "done" });
+    const e2 = await readLogEntry(storage, 2);
+    const e3 = await readLogEntry(storage, 3);
+    for (const entry of [e2, e3]) {
+      expect(entry.op).toBe("U");
+      expect(entry.collection).toBe(COLL);
+      expect(entry.schema_version).toBe(0);
+      expect(entry.new).toBeDefined();
+      expect(entry.patch).toBeDefined();
+      // `new === patch` (deep equal) invariant under per-doc-replace.
+      expect(entry.new).toEqual(entry.patch);
+      // PATCH_ONLY → no pre-image.
+      expect(entry.old).toBeUndefined();
+      expect(entry.key_old).toBeUndefined();
+    }
+  });
+});
+
+describe("Query.replace", () => {
+  let storage: MemoryStorage;
+  let db: Db;
+
+  beforeEach(async () => {
+    storage = new MemoryStorage();
+    db = Db.create({ storage, app: APP, tenant: TENANT });
+    await provision(storage);
+  });
+
+  test("exactly one match: replaces the doc", async () => {
+    const t = db.table<TicketDoc>(COLL);
+    await t.insert({ _id: "r1", title: "old", status: "open" });
+    await t.where({ _id: "r1" }).replace({
+      _id: "r1",
+      title: "completely-new",
+      status: "archived",
+    });
+    const after = await t.where({ _id: "r1" }).first();
+    expect(after).toEqual({ _id: "r1", title: "completely-new", status: "archived" });
+  });
+
+  test("zero matches: throws Conflict with cardinality (0) in message", async () => {
+    const t = db.table<TicketDoc>(COLL);
+    let thrown: unknown;
+    try {
+      await t.where({ _id: "missing" }).replace({
+        _id: "missing",
+        title: "x",
+        status: "open",
+      });
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(MPS3Error);
+    expect((thrown as MPS3Error).code).toBe("Conflict");
+    expect((thrown as MPS3Error).message).toMatch(/\b0\b/);
+  });
+
+  test("multiple matches: throws Conflict with cardinality (>1) in message", async () => {
+    const t = db.table<TicketDoc>(COLL);
+    await t.insert({ _id: "m1", title: "x", status: "open" });
+    await t.insert({ _id: "m2", title: "y", status: "open" });
+    let thrown: unknown;
+    try {
+      await t.where({ status: "open" }).replace({
+        _id: "ignored",
+        title: "x",
+        status: "open",
+      });
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(MPS3Error);
+    expect((thrown as MPS3Error).code).toBe("Conflict");
+    expect((thrown as MPS3Error).message).toMatch(/\b2\b/);
+  });
+
+  test("replace preserves the matched row's _id even when doc carries a different one", async () => {
+    const t = db.table<TicketDoc>(COLL);
+    await t.insert({ _id: "keep-me", title: "v1", status: "open" });
+    await t.where({ _id: "keep-me" }).replace({
+      _id: "different-id",
+      title: "v2",
+      status: "open",
+    });
+    // The matched row's id wins; the replaced doc lives under "keep-me".
+    const after = await t.where({ _id: "keep-me" }).first();
+    expect(after).toBeDefined();
+    expect(after!._id).toBe("keep-me");
+    expect(after!.title).toBe("v2");
+    // No row landed at "different-id".
+    const ghost = await t.where({ _id: "different-id" }).first();
+    expect(ghost).toBeUndefined();
+  });
+});
+
+describe("Query.delete", () => {
+  let storage: MemoryStorage;
+  let db: Db;
+
+  beforeEach(async () => {
+    storage = new MemoryStorage();
+    db = Db.create({ storage, app: APP, tenant: TENANT });
+    await provision(storage);
+  });
+
+  test("tombstones N matches; returns { deleted: N }; rows no longer visible", async () => {
+    const t = db.table<TicketDoc>(COLL);
+    await t.insert({ _id: "d1", title: "x", status: "open" });
+    await t.insert({ _id: "d2", title: "y", status: "open" });
+    await t.insert({ _id: "d3", title: "z", status: "closed" });
+    const result = await t.where({ status: "open" }).delete();
+    expect(result).toEqual({ deleted: 2 });
+    const remaining = await t.where({}).all();
+    expect(remaining.map((r) => r._id)).toEqual(["d3"]);
+  });
+
+  test("LogEntry shape: D op has no new / patch / old / key_old", async () => {
+    const t = db.table<TicketDoc>(COLL);
+    await t.insert({ _id: "tomb", title: "soon-gone", status: "open" });
+    await t.where({ _id: "tomb" }).delete();
+    // seq 0 is the insert; seq 1 is the delete.
+    const entry = await readLogEntry(storage, 1);
+    expect(entry.op).toBe("D");
+    expect(entry.doc_id).toBe("tomb");
+    expect(entry.collection).toBe(COLL);
+    expect(entry.schema_version).toBe(0);
+    // PATCH_ONLY replica_identity + D op → none of these fields land.
+    expect(entry.new).toBeUndefined();
+    expect(entry.patch).toBeUndefined();
+    expect(entry.old).toBeUndefined();
+    expect(entry.key_old).toBeUndefined();
+  });
+
+  test("zero matches: returns { deleted: 0 } and emits no LogEntry", async () => {
+    const t = db.table<TicketDoc>(COLL);
+    await t.insert({ _id: "k", title: "stays", status: "open" });
+    const beforeRaw = (await storage.get(currentJsonKey()))!;
+    const beforeNextSeq = (JSON.parse(new TextDecoder().decode(beforeRaw.body)) as CurrentJson)
+      .next_seq;
+    const result = await t.where({ _id: "absent" }).delete();
+    expect(result).toEqual({ deleted: 0 });
+    const afterRaw = (await storage.get(currentJsonKey()))!;
+    const afterNextSeq = (JSON.parse(new TextDecoder().decode(afterRaw.body)) as CurrentJson)
+      .next_seq;
+    expect(afterNextSeq).toBe(beforeNextSeq);
+  });
+});
+
+// ---------------------------------------------------------------------
+// Single-attempt CAS semantics (forced contention via InstrumentedStorage)
+// ---------------------------------------------------------------------
+
+/**
+ * `MemoryStorage` subclass that injects CAS failures on the
+ * collection's `current.json` to exercise the writer's internal
+ * retry loop from the verb-call surface. Mirrors the pattern in
+ * `server-writer.test.ts`. Kept local to this file — not exported.
+ */
+class InstrumentedStorage extends MemoryStorage {
+  failNextNCas = 0;
+  failEveryCas = false;
+  casAttempts = 0;
+  /** The `current.json` key this instance is configured to police. */
+  watchedKey = currentJsonKey();
+
+  override async put(
+    key: string,
+    body: Uint8Array,
+    opts?: StoragePutOptions,
+  ): Promise<StoragePutResult> {
+    if (key === this.watchedKey && opts?.ifMatch !== undefined) {
+      this.casAttempts += 1;
+      if (this.failEveryCas) {
+        throw new MPS3Error("InvalidResponse", `PreconditionFailed: simulated CAS 412 on ${key}`);
+      }
+      if (this.failNextNCas > 0) {
+        this.failNextNCas -= 1;
+        throw new MPS3Error("InvalidResponse", `PreconditionFailed: simulated CAS 412 on ${key}`);
+      }
+    }
+    return super.put(key, body, opts);
+  }
+}
+
+describe("Per-row CAS semantics (internal retries inside ServerWriter)", () => {
+  test("forced CAS contention within budget: mutation eventually lands", async () => {
+    const storage = new InstrumentedStorage();
+    await provision(storage);
+    const db = Db.create({ storage, app: APP, tenant: TENANT });
+    const t = db.table<TicketDoc>(COLL);
+
+    // First commit (`I` op) has no CAS pressure injected so the
+    // seed doc is set up cleanly. Then arm two failures so the
+    // next `commit()` (the update) must retry twice and succeed
+    // on attempt 3 — well under the 8-attempt budget. The verb
+    // itself does NOT loop; ServerWriter does internally.
+    await t.insert({ _id: "x", title: "v0", status: "open" });
+    const insertAttempts = storage.casAttempts;
+    storage.failNextNCas = 2;
+    const result = await t.where({ _id: "x" }).update({ title: "v1" });
+    expect(result).toEqual({ modified: 1 });
+    expect(storage.casAttempts).toBe(insertAttempts + 3); // 2 fails + 1 win
+    const after = await t.where({ _id: "x" }).first();
+    expect(after).toEqual({ _id: "x", title: "v1", status: "open" });
+  });
+
+  test("budget-exhausted CAS contention: verb surfaces Conflict without double-looping", async () => {
+    const storage = new InstrumentedStorage();
+    await provision(storage);
+    const db = Db.create({ storage, app: APP, tenant: TENANT });
+    const t = db.table<TicketDoc>(COLL);
+    // Seed cleanly (no CAS pressure on the I).
+    await t.insert({ _id: "loser", title: "v0", status: "open" });
+    const baseAttempts = storage.casAttempts;
+    // Every subsequent CAS fails — the writer's 8-attempt budget will
+    // be exhausted on the update and the verb must surface Conflict.
+    // CRITICAL: the verb must NOT loop again; total CAS attempts on
+    // the update equals exactly the writer's budget (8).
+    storage.failEveryCas = true;
+    let thrown: unknown;
+    try {
+      await t.where({ _id: "loser" }).update({ title: "v1" });
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(MPS3Error);
+    expect((thrown as MPS3Error).code).toBe("Conflict");
+    // The writer's default retry budget is 8 attempts; the verb
+    // itself does NOT add another layer.
+    expect(storage.casAttempts - baseAttempts).toBe(8);
+  });
+});
