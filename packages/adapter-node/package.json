@@ -1,8 +1,8 @@
 {
-  "name": "@baerly/dev",
+  "name": "@baerly/adapter-node",
   "version": "0.0.0",
   "private": true,
-  "description": "Dev harness — local-fs Storage adapter + miniflare runner. Stub.",
+  "description": "Node adapter — re-exports S3HttpStorage + LocalFsStorage and exposes a node:http RequestListener that wraps Db + ServerWriter.",
   "license": "MIT",
   "type": "module",
   "sideEffects": false,
@@ -21,6 +21,7 @@
     }
   },
   "dependencies": {
+    "@baerly/dev": "workspace:*",
     "@baerly/protocol": "workspace:*",
     "@baerly/server": "workspace:*"
   }
