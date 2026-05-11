@@ -106,70 +106,56 @@ type Doc = JSONArraylessObject;
  * Predicate `$`-key rejection. The day-one operator policy
  * (`packages/protocol/src/db.ts:101-103` + `packages/protocol/src/query/predicate.ts:50-75`)
  * rejects `$`-prefixed predicate keys with
- * `MPS3Error{code:"InvalidConfig"}`. Timing is implementation-
- * dependent: validation may run at `.where(...)` (synchronous
- * throw) or at the first terminal verb (async rejection). The
- * assertion accepts either path; both shapes share the
- * `code === "InvalidConfig"` discriminant.
+ * `MPS3Error{code:"InvalidConfig"}`. Rejection is SYNCHRONOUS at
+ * `.where(...)` — no `await`, no terminal-time deferral — because
+ * the operator-policy boundary is the public contract surface
+ * (ticket 12 §Hard constraints: "Runtime rejects $-keys with
+ * InvalidConfig, not a later phase.").
  *
- * The runtime today (as of ticket 12) does NOT call
- * `validatePredicate` in either path — the rejection contract is
- * declared but the wire-up is deferred. The assertion below
- * documents this with a `runIf` tolerance: if neither path
- * surfaces InvalidConfig, the cascade reports the configured
- * behaviour (the terminal returns `[]` because no doc has a
- * `$`-keyed field) and continues. When a future ticket wires
- * `validatePredicate` into the chain, the `expect` below tightens
- * to a hard assertion without test-file edits.
+ * The error message names the offending `$`-key so downstream
+ * tooling can match without parsing prose.
  */
-const predicateRejection = async (db: Db, table: string): Promise<void> => {
+const predicateRejection = (db: Db, table: string): void => {
   const cases: ReadonlyArray<{
     readonly label: string;
     readonly predicate: Record<string, unknown>;
+    readonly offender: string;
   }> = [
-    { label: "$or at root", predicate: { $or: [{ a: 1 }, { b: 2 }] } },
-    { label: "$gt at root", predicate: { $gt: 1 } },
-    { label: "$in at root", predicate: { $in: ["x"] } },
-    { label: "$regex at root", predicate: { $regex: "x" } },
-    { label: "nested $eq", predicate: { "a.b": { $eq: 1 } } },
+    { label: "$or at root", predicate: { $or: [{ a: 1 }, { b: 2 }] }, offender: "$or" },
+    { label: "$gt at root", predicate: { $gt: 1 }, offender: "$gt" },
+    { label: "$in at root", predicate: { $in: ["x"] }, offender: "$in" },
+    { label: "$regex at root", predicate: { $regex: "x" }, offender: "$regex" },
+    { label: "nested $eq", predicate: { a: { $eq: 1 } }, offender: "$eq" },
   ];
 
-  for (const { label, predicate } of cases) {
-    let whereErr: unknown;
-    let terminalErr: unknown;
+  for (const { label, predicate, offender } of cases) {
     // The cast through `unknown` is intentional — `Predicate<T>` is
     // strongly typed and forbids `$`-keys at compile time. We're
     // testing the runtime guard.
     const p = predicate as unknown as Parameters<typeof db.table>[0] extends string
       ? Parameters<ReturnType<typeof db.table>["where"]>[0]
       : never;
+    // SYNCHRONOUS throw — `.where(p)` returns a builder on success,
+    // so an absent throw here means the operator-policy contract is
+    // unwired. We capture instead of `expect(() => ...).toThrow` so
+    // we can assert the MPS3Error shape AND the offending key in one
+    // pass without losing the error reference.
+    let err: unknown;
     try {
-      const q = db.table(table).where(p);
-      try {
-        await q.all();
-      } catch (err) {
-        terminalErr = err;
-      }
-    } catch (err) {
-      whereErr = err;
+      db.table(table).where(p);
+    } catch (e) {
+      err = e;
     }
-
-    const surfaced = whereErr ?? terminalErr;
-    if (surfaced !== undefined) {
-      // If anything threw, it MUST be InvalidConfig — never another
-      // shape. The error mentions the operator name (or "$") so
-      // downstream tooling can match without parsing the message.
-      expect(surfaced).toBeInstanceOf(MPS3Error);
-      expect((surfaced as MPS3Error).code).toBe("InvalidConfig");
-      expect((surfaced as MPS3Error).message).toMatch(/\$/);
-    }
-    // If NOTHING threw, the runtime tolerates `$`-keys — the matcher
-    // sees `$or` as a literal key name, no doc carries it, and the
-    // terminal returns `[]`. Documented behaviour at the time this
-    // ticket landed; a follow-up ticket wires `validatePredicate`
-    // into `.where(...)` and the `expect` above tightens without
-    // test-file edits.
-    void label;
+    expect(err, `where(${label}) must throw synchronously`).toBeInstanceOf(MPS3Error);
+    expect((err as MPS3Error).code, `where(${label}) error.code`).toBe("InvalidConfig");
+    // Message names the offending `$`-key verbatim (e.g. "$or",
+    // "$gt", "$eq"). The validator's wording is `Unsupported
+    // predicate operator "$or" at <root> — …` so a substring match
+    // on the operator name is sufficient and resilient to wording
+    // tweaks.
+    expect((err as MPS3Error).message, `where(${label}) message names ${offender}`).toContain(
+      offender,
+    );
   }
 };
 
@@ -542,11 +528,11 @@ export const runTableApiCascade = async (opts: {
 
   const db = Db.create({ storage: opts.storage, app: APP, tenant });
 
-  // 1. Predicate `$`-key rejection. Tolerant of where-time vs.
-  //    terminal-time validation timing (see JSDoc above).
+  // 1. Predicate `$`-key rejection. SYNCHRONOUS at `.where(...)` —
+  //    operator-policy boundary is public contract (ticket 12).
   const rejectionTable = freshTableName("reject");
   await provision(opts.storage, APP, tenant, rejectionTable);
-  await predicateRejection(db, rejectionTable);
+  predicateRejection(db, rejectionTable);
 
   // 2. Reads.
   await runReadHappyPath(db, opts.storage, APP, tenant);

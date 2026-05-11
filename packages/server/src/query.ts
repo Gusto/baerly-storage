@@ -38,6 +38,7 @@ import {
   matches,
   merge,
   mergePredicates,
+  validatePredicate,
   MPS3Error,
   type OrderSpec,
   type Predicate,
@@ -110,13 +111,27 @@ export const makeQuery = <T extends JSONArraylessObject>(
   ctx: TableReadContext,
   state: QueryState<T>,
 ): Query<T> => {
+  // Operator-policy boundary is public contract: reject `$`-keys
+  // synchronously, here, before any `Query<T>` carries an invalid
+  // predicate forward. Covers both entry points — `Table.where(p)`
+  // routes through `makeQuery({ predicate: p, ... })`, and
+  // `Query.where(p)` routes through the merged result below. Empty
+  // / undefined predicates short-circuit inside `validatePredicate`
+  // (an `{}` predicate has no keys to walk).
+  if (state.predicate !== undefined) validatePredicate<T>(state.predicate);
   const frozen: QueryState<T> = Object.freeze({ ...state });
   return {
-    where: (p) =>
-      makeQuery<T>(ctx, {
+    where: (p) => {
+      // Validate the incoming fragment before merge so error messages
+      // pin the offender to `p`, not the merged whole. `makeQuery`
+      // re-validates the result on the next hop — the operator-policy
+      // boundary is the public contract surface (ticket 12).
+      validatePredicate<T>(p);
+      return makeQuery<T>(ctx, {
         ...frozen,
         predicate: frozen.predicate === undefined ? p : mergePredicates<T>(frozen.predicate, p),
-      }),
+      });
+    },
     order: (s) => makeQuery<T>(ctx, { ...frozen, order: s }),
     limit: (n) => makeQuery<T>(ctx, { ...frozen, limit: n }),
     first: async () => {
