@@ -2,6 +2,7 @@ export * from "./compactor";
 export * from "./contract";
 export * from "./db";
 export * from "./gc";
+export * from "./http/router";
 export * from "./maintenance";
 export * from "./query";
 export * from "./server-writer";

@@ -1,7 +1,9 @@
+import type { Verifier } from "@baerly/protocol";
 import {
   CLOUDFLARE_FREE_TIER,
   CLOUDFLARE_PAID_TIER,
   Db,
+  createRouter,
   runScheduledMaintenance,
 } from "@baerly/server";
 import { r2BindingStorage } from "./r2-binding-storage";
@@ -18,8 +20,10 @@ import { r2BindingStorage } from "./r2-binding-storage";
  *   APP    = "tickets"
  *   TENANT = "acme-co"
  *
- * `TENANT` is a single-tenant deployment shortcut. Multi-tenant
- * Workers will derive `tenant` from the Phase 6 `Verifier` instead.
+ * `TENANT` is the single-tenant dev fallback used when
+ * {@link BaerlyWorkerOptions.verifier} is not supplied. Multi-tenant
+ * Workers pass a `Verifier` and `env.TENANT` is ignored (the
+ * `Verifier` resolves the tenant from the request's credentials).
  *
  * Optional `CURRENT_JSON_KEY` + `CF_TIER` enable the default Cron
  * Trigger handler — see `scheduled` on {@link baerlyWorker}.
@@ -46,9 +50,10 @@ export interface Env {
 }
 
 /**
- * Custom handler hook. Phase 3 ships only `GET /v1/healthz`; callers
- * who want to ship before Phase 6 wire their own routes here.
- * Returns `undefined` to fall through to the default handler.
+ * Custom handler hook. Phase 6 ships the full CRUD surface via
+ * {@link createRouter}; callers who want to insert a route ahead of
+ * the router (e.g. `/v1/admin/*`) wire it here. Returns `undefined`
+ * to fall through to the default router.
  */
 export type WorkerHandler = (
   req: Request,
@@ -80,15 +85,26 @@ export interface BaerlyWorkerOptions {
    * `ctx.waitUntil()`. Multi-tenant deployments override here.
    */
   readonly scheduled?: WorkerScheduledHandler;
+  /**
+   * Per-request `Verifier`. When set, replaces the `env.TENANT`
+   * single-tenant binding: every request runs the verifier first
+   * and the resolved `tenantPrefix` pins the per-request `Db`. On
+   * `null`, the request short-circuits with 401.
+   *
+   * `GET /v1/healthz` bypasses the verifier so deploy readiness
+   * probes don't need an auth token.
+   */
+  readonly verifier?: Verifier;
 }
 
 /**
  * Build a Workers module-default export.
  *
- * Phase 6 will ship a router that fills `options.handler`. Phase 3
- * callers who want their own routes pass `handler` directly; their
- * return value precedes the default `/v1/healthz` route so they can
- * override it. Returning `undefined` falls through.
+ * Order on `fetch`: **healthz → verifier → handler hook → router**.
+ * Health probes don't pay for a Db construction; an auth challenge
+ * stops a bad request before any Storage I/O; the custom handler
+ * hook still gets first crack at the request after auth; the router
+ * catches everything else.
  *
  * The `scheduled` handler wires Cron Triggers to the Phase-5
  * compactor + GC. To enable it, add to `wrangler.toml`:
@@ -109,22 +125,23 @@ export interface BaerlyWorkerOptions {
  * @example
  * ```ts
  * import { baerlyWorker } from "@baerly/adapter-cloudflare/worker";
- * export default baerlyWorker();
+ * import type { Verifier } from "@baerly/protocol";
+ *
+ * // Production: parse a bearer token and pin the tenant from a JWT
+ * // claim. Phase 8 preset factories handle JWKS / Cloudflare-Access.
+ * const verifier: Verifier = async (req) => {
+ *   const auth = req.headers.get("authorization");
+ *   if (auth !== "Bearer dev-token") return null;
+ *   return { tenantPrefix: "acme", identity: { sub: "dev" } };
+ * };
+ * export default baerlyWorker({ verifier });
  * ```
  */
 export function baerlyWorker(options: BaerlyWorkerOptions = {}): ExportedHandler<Env> {
   return {
     async fetch(req, env, ctx): Promise<Response> {
-      // Per-request Db construction. The protocol kernel does no I/O
-      // at boot; pooling matters only if a flamegraph says so.
-      const storage = r2BindingStorage(env.BUCKET);
-      const db = Db.create({ storage, app: env.APP, tenant: env.TENANT });
-
-      if (options.handler !== undefined) {
-        const out = await options.handler(req, ctx, db);
-        if (out !== undefined) return out;
-      }
-
+      // Healthz is always anonymous — Cloudflare's load balancer
+      // probes it. Keep it ahead of the verifier check.
       const url = new URL(req.url);
       if (req.method === "GET" && url.pathname === "/v1/healthz") {
         return new Response(JSON.stringify({ ok: true }), {
@@ -132,7 +149,37 @@ export function baerlyWorker(options: BaerlyWorkerOptions = {}): ExportedHandler
           headers: { "content-type": "application/json" },
         });
       }
-      return new Response("Not Found", { status: 404 });
+
+      // Tenant resolution: Verifier when set, else env.TENANT (dev).
+      let tenantPrefix: string;
+      if (options.verifier !== undefined) {
+        const result = await options.verifier(req);
+        if (result === null) {
+          return new Response(
+            JSON.stringify({
+              error: { code: "Unauthorized", message: "Verifier returned null" },
+            }),
+            { status: 401, headers: { "content-type": "application/json" } },
+          );
+        }
+        tenantPrefix = result.tenantPrefix;
+      } else {
+        tenantPrefix = env.TENANT;
+      }
+
+      const storage = r2BindingStorage(env.BUCKET);
+      const db = Db.create({ storage, app: env.APP, tenant: tenantPrefix });
+
+      // Caller hook can short-circuit the router. Returns undefined → fall through.
+      if (options.handler !== undefined) {
+        const out = await options.handler(req, ctx, db);
+        if (out !== undefined) return out;
+      }
+
+      // `healthCheck: false` — already served above; keeps the probe
+      // hot path off Db.create.
+      const app = createRouter({ db, healthCheck: false });
+      return app.fetch(req, env, ctx);
     },
 
     async scheduled(event, env, ctx): Promise<void> {

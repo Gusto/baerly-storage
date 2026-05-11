@@ -9,6 +9,10 @@
  *
  * The `fetch(req, env, ctx)` Worker mount lives at the `/worker`
  * subpath: `import { baerlyWorker } from "@baerly/adapter-cloudflare/worker"`.
+ * Phase 6 ships the full CRUD surface via the shared
+ * `createRouter` factory in `@baerly/server`; callers thread a
+ * `Verifier` through `baerlyWorker({ verifier })` to resolve the
+ * tenant per request.
  */
 export { r2BindingStorage } from "./r2-binding-storage";
 export type { R2BindingStorageOptions } from "./r2-binding-storage";

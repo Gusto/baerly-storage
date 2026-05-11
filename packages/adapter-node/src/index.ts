@@ -5,16 +5,24 @@
  * `node:http` mount factory. Pairs with `@baerly/adapter-cloudflare`,
  * which provides the same surface for Workers + R2 bindings.
  *
- * Phase 3: `createListener` serves `GET /v1/healthz` only; all other
- * `/v1/*` paths return `501 Not Implemented`. The full `Routes`
- * contract lands in a later phase; the `(app, tenant, storage)`
+ * Phase 6: `createListener` serves the full CRUD surface
+ * (`/v1/t/:table[/:id]`) plus an anonymous `/v1/healthz` probe via
+ * the shared `createRouter` factory from `@baerly/server`. The
+ * caller threads a `Verifier` through `createListener({ verifier })`
+ * to resolve the per-request tenant; the `(app, storage, verifier)`
  * boundary is stable.
  *
  * @example
  * ```ts
  * import { createServer } from "node:http";
  * import { createListener, S3HttpStorage } from "@baerly/adapter-node";
+ * import type { Verifier } from "@baerly/protocol";
  * import { DOMParser } from "@xmldom/xmldom"; // app's own dep
+ *
+ * const verifier: Verifier = async (req) => {
+ *   if (req.headers.get("authorization") !== "Bearer dev-token") return null;
+ *   return { tenantPrefix: "acme", identity: { sub: "dev" } };
+ * };
  *
  * const storage = new S3HttpStorage({
  *   endpoint: process.env.S3_ENDPOINT!,
@@ -22,7 +30,7 @@
  *   xmlParser: new DOMParser(),
  *   // sign: awsSigner.sign,  // omit for anonymous Minio
  * });
- * const listener = createListener({ app: "tickets", tenant: "acme", storage });
+ * const listener = createListener({ app: "tickets", storage, verifier });
  * createServer(listener).listen(3000);
  * ```
  */

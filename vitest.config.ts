@@ -63,10 +63,13 @@ const r2BindingRandomizedGlob = "packages/adapter-cloudflare/src/randomized.test
 // cloudflare-r2 lives here).
 const r2BindingTableApiGlob = "packages/adapter-cloudflare/src/table-api.test.ts";
 
-// `baerlyWorker()`'s scheduled-handler test — exercises the Cron
-// Trigger plumbing against the miniflare R2 binding. Same project
-// membership rules as the three globs above.
-const cfWorkerTestGlob = "packages/adapter-cloudflare/src/worker.test.ts";
+// `baerlyWorker()`'s fetch + scheduled tests — exercises the Cron
+// Trigger plumbing and the Phase-6 CRUD route fan-out against the
+// miniflare R2 binding. Same project membership rules as the three
+// globs above. Glob is `worker*.test.ts` so both `worker.test.ts`
+// (scheduled handler) and `worker-routes.test.ts` (CRUD routes) are
+// picked up by the `cloudflare-pool` project.
+const cfWorkerTestGlob = "packages/adapter-cloudflare/src/worker*.test.ts";
 
 export default defineConfig({
   test: {

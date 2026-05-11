@@ -21,6 +21,7 @@
     }
   },
   "dependencies": {
-    "@baerly/protocol": "workspace:*"
+    "@baerly/protocol": "workspace:*",
+    "hono": "^4.12.18"
   }
 }
