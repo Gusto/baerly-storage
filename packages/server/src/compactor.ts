@@ -27,8 +27,10 @@ import {
   type CurrentJson,
   type JSONArraylessObject,
   type LogEntry,
+  type MetricsRecorder,
   logSeqStartOf,
   MPS3Error,
+  noopMetricsRecorder,
   readCurrentJson,
   snapshotHash,
   type Storage,
@@ -132,6 +134,16 @@ export interface CompactOptions {
 
   /** Optional AbortSignal forwarded to every storage call. */
   readonly signal?: AbortSignal;
+
+  /**
+   * Optional metrics sink. Defaults to {@link noopMetricsRecorder}.
+   * On a landed compaction (i.e. `result.written === true`) emits:
+   *   - `db.compact.entries_folded` histogram (the count of log
+   *     entries folded into the new snapshot).
+   *   - `db.manifest.lag_window_depth` gauge (post-compaction live
+   *     tail length: `next_seq - foldEnd`).
+   */
+  readonly metrics?: MetricsRecorder;
 }
 
 export interface CompactResult {
@@ -196,6 +208,7 @@ export const compact = async (
   const { storage, currentJsonKey } = args;
   const maxPerRun = options.maxEntriesPerRun ?? DEFAULT_MAX_PER_RUN;
   const minToCompact = options.minEntriesToCompact ?? DEFAULT_MIN_TO_COMPACT;
+  const metrics = options.metrics ?? noopMetricsRecorder;
   const tablePrefix = currentJsonKey.slice(0, currentJsonKey.lastIndexOf("/"));
   const tableName = tablePrefix.slice(tablePrefix.lastIndexOf("/") + 1);
 
@@ -329,13 +342,24 @@ export const compact = async (
     throw err;
   }
 
+  // ── Step 8. Emit metrics on a successful run. ───────────────────
+  // `lag_window_depth` is the post-compaction live tail length —
+  // entries still pending fold after this run. `entries_folded` is
+  // the per-run histogram sample. Metrics are in-memory only; they
+  // add zero storage ops.
+  const entriesFolded = foldEnd - logSeqStartBefore;
+  metrics.histogram("db.compact.entries_folded", entriesFolded, { collection: tableName });
+  metrics.gauge("db.manifest.lag_window_depth", current.next_seq - foldEnd, {
+    collection: tableName,
+  });
+
   return {
     written: true,
     previousSnapshotKey: current.snapshot,
     newSnapshotKey: newKey,
     logSeqStartBefore,
     logSeqStartAfter: foldEnd,
-    entriesFolded: foldEnd - logSeqStartBefore,
+    entriesFolded,
   };
 };
 

@@ -45,6 +45,7 @@ import {
   type CurrentJson,
   type GcCandidate,
   type GcPending,
+  type MetricsRecorder,
   type Storage,
   type StorageListEntry,
   GC_GRACE_PERIOD_MILLIS,
@@ -54,6 +55,7 @@ import {
   casUpdateGcPending,
   createGcPending,
   logSeqStartOf,
+  noopMetricsRecorder,
   readCurrentJson,
   readGcPending,
   versionFromContent,
@@ -93,6 +95,17 @@ export interface RunGcOptions {
   readonly now?: () => Date;
 
   readonly signal?: AbortSignal;
+
+  /**
+   * Optional metrics sink. Defaults to {@link noopMetricsRecorder}.
+   * After every pass (including the CAS-lost arm) emits:
+   *   - `db.orphan.candidate_count` gauge (post-pass `pendingDepth`).
+   *   - `db.gc.entries_swept_per_second` gauge (sweep count this
+   *     pass; downstream aggregation rate-converts).
+   *   - `db.gc.swept_total` counter, labelled by `reason` (one
+   *     emission per non-zero reason group).
+   */
+  readonly metrics?: MetricsRecorder;
 }
 
 /**
@@ -142,6 +155,7 @@ export const runGc = async (
   const maxMarks = options.maxMarksPerRun ?? DEFAULT_MAX_MARKS;
   const maxSweeps = options.maxSweepsPerRun ?? DEFAULT_MAX_SWEEPS;
   const now = options.now ?? ((): Date => new Date());
+  const metrics = options.metrics ?? noopMetricsRecorder;
   const tablePrefix = currentJsonKey.slice(0, currentJsonKey.lastIndexOf("/"));
   const tableName = tablePrefix.slice(tablePrefix.lastIndexOf("/") + 1);
   const gcPendingKey = `${tablePrefix}/gc/pending.json`;
@@ -278,6 +292,7 @@ export const runGc = async (
     orphan_snapshot: markedOrphanSnapshot,
     orphan_content: markedOrphanContent,
   };
+  let pendingDepth: number;
   try {
     const updated = await casUpdateGcPending(
       storage,
@@ -289,27 +304,42 @@ export const runGc = async (
       }),
       signalOpts,
     );
-    return {
-      marked: markedSummary,
-      swept: toSweep.length,
-      pendingDepth: updated.json.candidates.length,
-    };
+    pendingDepth = updated.json.candidates.length;
   } catch (err) {
     // CAS-lost on pending.json: another GC pass landed concurrently.
     // The DELETEs we issued are durable; the next pass picks up any
     // marks we couldn't persist. Surface success — re-throwing here
     // would mask the work we DID complete.
     if (err instanceof MPS3Error && err.code === "Conflict") {
-      return {
-        marked: markedSummary,
-        swept: toSweep.length,
-        // Best-effort: we know `remaining.length` is at least the
-        // post-sweep depth; concurrent passes may have moved it.
-        pendingDepth: remaining.length,
-      };
+      // Best-effort: we know `remaining.length` is at least the
+      // post-sweep depth; concurrent passes may have moved it.
+      pendingDepth = remaining.length;
+    } else {
+      throw err;
     }
-    throw err;
   }
+
+  // ── Step 8. Emit metrics. ───────────────────────────────────────
+  // In-memory only — zero storage ops. Emit regardless of CAS-lost
+  // (the operator wants visibility into best-effort runs too).
+  const labels = { collection: tableName };
+  metrics.gauge("db.orphan.candidate_count", pendingDepth, labels);
+  metrics.gauge("db.gc.entries_swept_per_second", toSweep.length, labels);
+  if (toSweep.length > 0) {
+    const byReason = new Map<GcCandidate["reason"], number>();
+    for (const c of toSweep) {
+      byReason.set(c.reason, (byReason.get(c.reason) ?? 0) + 1);
+    }
+    for (const [reason, count] of byReason) {
+      metrics.counter("db.gc.swept_total", count, { collection: tableName, reason });
+    }
+  }
+
+  return {
+    marked: markedSummary,
+    swept: toSweep.length,
+    pendingDepth,
+  };
 };
 
 // ---------------------------------------------------------------------

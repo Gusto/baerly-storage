@@ -37,8 +37,10 @@ import {
   type CurrentJson,
   type JSONArraylessObject,
   type LogEntry,
+  type MetricsRecorder,
   logSeqStartOf,
   MPS3Error,
+  noopMetricsRecorder,
   type Storage,
   type StoragePutOptions,
   S3_REQUEST_MAX_RETRIES,
@@ -69,6 +71,33 @@ export interface ServerWriterOptions {
    * inject a deterministic generator. Defaults to `Math.random`.
    */
   readonly random?: () => number;
+
+  /**
+   * Optional metrics sink. Defaults to {@link noopMetricsRecorder} so
+   * non-instrumented callers see zero behavioural change. The writer
+   * emits:
+   *   - `db.write.class_a_ops_per_logical_write` histogram per
+   *     successful commit (PUT count: content + log + current.json,
+   *     minus the content PUT on `op:"D"`, plus one per backoff
+   *     retry).
+   *   - `db.r2.put.412_total` counter on `PreconditionFailed` (CAS
+   *     loss on `current.json` or `If-None-Match: "*"` loss on the
+   *     log PUT).
+   *   - `db.r2.put.429_total` counter on rate-limit (best effort —
+   *     detected via `MPS3Error{code:"NetworkError"}` with a `429`
+   *     token in the message).
+   *   - `db.tenant.put_rate` gauge per commit (each commit emits
+   *     `1` at observation time; downstream aggregation
+   *     rate-converts).
+   */
+  readonly metrics?: MetricsRecorder;
+
+  /**
+   * Tenant label used on emitted metrics. The full `currentJsonKey`
+   * already encodes the tenant; this is a denormalised convenience
+   * for the metrics sink. Defaults to `""` (no label emitted).
+   */
+  readonly tenant?: string;
 }
 
 /**
@@ -163,6 +192,8 @@ export class ServerWriter {
   readonly #maxRetries: number;
   readonly #initialBackoffMs: number;
   readonly #random: () => number;
+  readonly #metrics: MetricsRecorder;
+  readonly #tenant: string;
 
   constructor(opts: {
     storage: Storage;
@@ -181,6 +212,8 @@ export class ServerWriter {
     this.#maxRetries = opts.options?.maxRetries ?? S3_REQUEST_MAX_RETRIES;
     this.#initialBackoffMs = opts.options?.initialBackoffMs ?? DEFAULT_INITIAL_BACKOFF_MS;
     this.#random = opts.options?.random ?? Math.random;
+    this.#metrics = opts.options?.metrics ?? noopMetricsRecorder;
+    this.#tenant = opts.options?.tenant ?? "";
   }
 
   /**
@@ -277,6 +310,7 @@ export class ServerWriter {
             contentType: APPLICATION_JSON,
           });
         } catch (err) {
+          this.#observe429(err, input.collection);
           // 412 = same content already present (idempotent same-hash
           // re-write); swallow. Other failures propagate.
           if (!isPreconditionFailed(err)) throw err;
@@ -308,7 +342,13 @@ export class ServerWriter {
           contentType: APPLICATION_JSON,
         });
       } catch (err) {
+        this.#observe429(err, input.collection);
         if (!isPreconditionFailed(err)) throw err;
+        // 412 on the log PUT — bump the counter at the "log-put" step.
+        this.#metrics.counter("db.r2.put.412_total", 1, {
+          collection: input.collection,
+          step: "log-put",
+        });
         const existing = await this.#readLogEntry(logEntryKey);
         if (existing.session !== session) {
           // Real peer race; their CAS will / did win step 6.
@@ -334,9 +374,29 @@ export class ServerWriter {
       };
       try {
         const result = await this.#storage.put(this.#currentJsonKey, nextBody, putOpts);
+        // Emit class-A op count for this logical write. Content PUT
+        // is skipped on `op:"D"`; one extra PUT is incurred per
+        // backoff retry (the prior attempt's failed CAS still counts
+        // as one billed PUT).
+        const classAOps =
+          (input.op !== "D" ? 1 : 0) /* content PUT */ +
+          1 /* log PUT */ +
+          1 /* current.json CAS PUT */ +
+          (attempt - 1); /* +1 per backoff retry */
+        const histLabels: Record<string, string> = { collection: input.collection };
+        if (this.#tenant !== "") histLabels.tenant = this.#tenant;
+        this.#metrics.histogram("db.write.class_a_ops_per_logical_write", classAOps, histLabels);
+        const rateLabels: Record<string, string> =
+          this.#tenant !== "" ? { tenant: this.#tenant } : {};
+        this.#metrics.gauge("db.tenant.put_rate", 1, rateLabels);
         return { entry: committedEntry, currentEtag: result.etag, attempts: attempt };
       } catch (err) {
+        this.#observe429(err, input.collection);
         if (isCasConflict(err)) {
+          this.#metrics.counter("db.r2.put.412_total", 1, {
+            collection: input.collection,
+            step: "current-json-cas",
+          });
           await this.#backoff(attempt);
           continue;
         }
@@ -433,9 +493,11 @@ export class ServerWriter {
     // ── Step 4. PUT each content body in parallel. ──────────────────
     // `ifNoneMatch: "*"` makes a same-hash re-write a no-op (caught
     // and swallowed via `isPreconditionFailed`).
+    let contentPutCount = 0;
     const contentPuts: Array<Promise<unknown>> = [];
     for (const input of inputs) {
       if (input.op === "D" || input.body === undefined) continue;
+      contentPutCount++;
       const bytes = new TextEncoder().encode(JSON.stringify(input.body));
       const version = await versionFromContent(bytes);
       const contentKey = `${logPrefix}/content/${version}.json`;
@@ -443,6 +505,7 @@ export class ServerWriter {
         this.#storage
           .put(contentKey, bytes, { ifNoneMatch: "*", contentType: APPLICATION_JSON })
           .catch((err: unknown) => {
+            this.#observe429(err, input.collection);
             if (isPreconditionFailed(err)) return;
             throw err;
           }),
@@ -463,7 +526,12 @@ export class ServerWriter {
         this.#storage
           .put(logEntryKey, logBytes, { ifNoneMatch: "*", contentType: APPLICATION_JSON })
           .catch((err: unknown) => {
+            this.#observe429(err, entry.collection);
             if (isPreconditionFailed(err)) {
+              this.#metrics.counter("db.r2.put.412_total", 1, {
+                collection: entry.collection,
+                step: "log-put",
+              });
               throw new MPS3Error(
                 "Conflict",
                 `ServerWriter.commitBatch: log entry already exists at ${logEntryKey}; peer wrote our seq`,
@@ -487,9 +555,29 @@ export class ServerWriter {
     };
     try {
       const result = await this.#storage.put(this.#currentJsonKey, nextBody, putOpts);
+      // One histogram observation per landed batch. Class-A op count
+      // = content PUTs (skipping op:"D") + log PUTs (= inputs.length)
+      // + 1 current.json CAS.
+      const classAOps = contentPutCount + inputs.length + 1;
+      // Pick the first input's collection as the batch label; in the
+      // current Db.transaction model every input shares one
+      // collection, so this is exact. If future tickets relax that
+      // we'll need a per-collection split here.
+      const collection = inputs[0]!.collection;
+      const histLabels: Record<string, string> = { collection };
+      if (this.#tenant !== "") histLabels.tenant = this.#tenant;
+      this.#metrics.histogram("db.write.class_a_ops_per_logical_write", classAOps, histLabels);
+      const rateLabels: Record<string, string> =
+        this.#tenant !== "" ? { tenant: this.#tenant } : {};
+      this.#metrics.gauge("db.tenant.put_rate", 1, rateLabels);
       return { entries, currentEtag: result.etag };
     } catch (err) {
+      this.#observe429(err, inputs[0]!.collection);
       if (isCasConflict(err)) {
+        this.#metrics.counter("db.r2.put.412_total", 1, {
+          collection: inputs[0]!.collection,
+          step: "current-json-cas",
+        });
         throw new MPS3Error(
           "Conflict",
           `ServerWriter.commitBatch: CAS conflict on ${this.#currentJsonKey}`,
@@ -533,6 +621,19 @@ export class ServerWriter {
       return JSON.parse(new TextDecoder().decode(got.body)) as LogEntry;
     } catch (err) {
       throw new MPS3Error("InvalidResponse", `ServerWriter: malformed log entry at ${key}`, err);
+    }
+  }
+
+  /**
+   * Bump the `db.r2.put.429_total` counter when `err` looks like an
+   * R2 prefix-partition rate-limit. Best-effort: detected via
+   * `MPS3Error{code:"NetworkError"}` with a `429` token in the
+   * message. Called from every PUT call site's catch arm; mutually
+   * exclusive in practice with `isPreconditionFailed` (412 ≠ 429).
+   */
+  #observe429(err: unknown, collection: string): void {
+    if (is429(err)) {
+      this.#metrics.counter("db.r2.put.429_total", 1, { collection });
     }
   }
 
@@ -590,3 +691,16 @@ const isPreconditionFailed = (err: unknown): boolean => {
  * call-site clarity (step 6 reads better as "CAS conflict").
  */
 const isCasConflict = (err: unknown): boolean => isPreconditionFailed(err);
+
+/**
+ * `true` when the underlying storage surfaced an R2 prefix-partition
+ * rate-limit. Best-effort detection: every in-tree {@link Storage}
+ * impl wraps transport-layer errors in
+ * `MPS3Error{code:"NetworkError"}` and includes the upstream status
+ * code in the message. A `429` token in that message is the canonical
+ * "throttled" signal.
+ */
+const is429 = (err: unknown): boolean => {
+  if (!(err instanceof MPS3Error)) return false;
+  return err.code === "NetworkError" && /\b429\b/.test(err.message);
+};

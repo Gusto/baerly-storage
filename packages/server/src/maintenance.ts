@@ -15,7 +15,7 @@
  * @see ../../../../.claude/research/planning/tickets/16-compactor-runtime-adapters.md
  */
 
-import type { Storage } from "@baerly/protocol";
+import type { MetricsRecorder, Storage } from "@baerly/protocol";
 import { compact, type CompactOptions, type CompactResult } from "./compactor";
 import { runGc, type RunGcOptions, type RunGcResult } from "./gc";
 
@@ -41,6 +41,13 @@ export interface MaintenanceOptions {
   readonly skipGc?: boolean;
   /** Forwarded to both primitives. */
   readonly signal?: AbortSignal;
+  /**
+   * Optional metrics sink. Forwarded to BOTH `compact()` and `runGc()`
+   * (overriding any `metrics` field on `options.compact` /
+   * `options.gc`). Defaults to the primitives' own defaults
+   * (`noopMetricsRecorder`).
+   */
+  readonly metrics?: MetricsRecorder;
 }
 
 export interface MaintenanceResult {
@@ -82,6 +89,7 @@ export const runScheduledMaintenance = async (
       : await compact(args, {
           ...options.compact,
           ...(options.signal !== undefined && { signal: options.signal }),
+          ...(options.metrics !== undefined && { metrics: options.metrics }),
         });
   const gcRes =
     options.skipGc === true
@@ -89,6 +97,7 @@ export const runScheduledMaintenance = async (
       : await runGc(args, {
           ...options.gc,
           ...(options.signal !== undefined && { signal: options.signal }),
+          ...(options.metrics !== undefined && { metrics: options.metrics }),
         });
   return { compact: compactRes, gc: gcRes };
 };

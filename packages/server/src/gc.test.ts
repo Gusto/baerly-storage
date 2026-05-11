@@ -12,6 +12,7 @@ import {
   CURRENT_JSON_SCHEMA_VERSION,
   type GcPending,
   GC_PENDING_SCHEMA_VERSION,
+  InMemoryMetricsRecorder,
   MemoryStorage,
   casUpdateGcPending,
   createCurrentJson,
@@ -313,6 +314,52 @@ describe("runGc", () => {
     expect(r2.swept).toBe(0);
     const pending = await readGcPending(s, PENDING_KEY);
     expect(pending?.json.candidates).toHaveLength(20);
+  });
+
+  it("emits db.orphan.candidate_count, db.gc.entries_swept_per_second, and db.gc.swept_total", async () => {
+    const s = new MemoryStorage();
+    await bootstrap(s, KEY);
+    const writer = new ServerWriter({ storage: s, currentJsonKey: KEY });
+    for (let i = 0; i < 50; i++) {
+      await writer.commit({
+        op: "I",
+        collection: COLL,
+        docId: `d${i}`,
+        body: { _id: `d${i}`, n: i },
+      });
+    }
+    await compact(
+      { storage: s, currentJsonKey: KEY },
+      { minEntriesToCompact: 10, maxEntriesPerRun: 40 },
+    );
+    const metrics = new InMemoryMetricsRecorder();
+    const r = await runGc(
+      { storage: s, currentJsonKey: KEY },
+      { graceMillis: 0, maxSweepsPerRun: 40, metrics },
+    );
+    expect(r.marked.stale_log).toBe(40);
+    expect(r.swept).toBe(40);
+    // Post-sweep, pendingDepth = 0 (everything swept).
+    expect(metrics.lastGauge("db.orphan.candidate_count")).toBe(0);
+    // Sweep count is the swept-per-pass observation.
+    expect(metrics.lastGauge("db.gc.entries_swept_per_second")).toBe(40);
+    // Counter labelled by reason; one bucket since all were stale-log.
+    expect(metrics.sumCounter("db.gc.swept_total")).toBe(40);
+    const swept = metrics.counters.find((c) => c.name === "db.gc.swept_total");
+    expect(swept?.labels.reason).toBe("stale-log");
+  });
+
+  it("emits zero-sweep observations when nothing swept this pass", async () => {
+    const s = new MemoryStorage();
+    await bootstrap(s, KEY);
+    const metrics = new InMemoryMetricsRecorder();
+    const r = await runGc({ storage: s, currentJsonKey: KEY }, { metrics });
+    expect(r.swept).toBe(0);
+    // Sweep gauge still emitted (operator wants 0-state visibility).
+    expect(metrics.lastGauge("db.gc.entries_swept_per_second")).toBe(0);
+    expect(metrics.lastGauge("db.orphan.candidate_count")).toBe(0);
+    // No swept_total counter emitted on zero-sweep runs (avoid noise).
+    expect(metrics.sumCounter("db.gc.swept_total")).toBe(0);
   });
 
   it("returns success on CAS-lost on pending.json (best-effort pendingDepth)", async () => {

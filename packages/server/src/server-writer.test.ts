@@ -1,6 +1,7 @@
 import {
   CURRENT_JSON_SCHEMA_VERSION,
   type CurrentJson,
+  InMemoryMetricsRecorder,
   createCurrentJson,
   getOrCreateMemoryStorageForBucket,
   MemoryStorage,
@@ -246,5 +247,152 @@ describe("ServerWriter", () => {
     const log1 = await storage.get(`${logPrefix}/1.json`);
     expect(log0).not.toBeNull();
     expect(log1).not.toBeNull();
+  });
+
+  test("emits db.write.class_a_ops_per_logical_write histogram per commit", async () => {
+    const storage = new MemoryStorage();
+    await createCurrentJson(storage, CURRENT_KEY, seedCurrent());
+    const metrics = new InMemoryMetricsRecorder();
+    const writer = new ServerWriter({
+      storage,
+      currentJsonKey: CURRENT_KEY,
+      options: { metrics, tenant: "acme" },
+    });
+
+    await writer.commit({
+      op: "I",
+      collection: COLL,
+      docId: "doc-1",
+      body: { _id: "doc-1" },
+    });
+
+    const samples = metrics.histogramValues("db.write.class_a_ops_per_logical_write");
+    expect(samples).toHaveLength(1);
+    // content + log + current.json = 3 PUTs on first-try success.
+    expect(samples[0]).toBe(3);
+    // Tenant label travels.
+    const hist = metrics.histograms.find(
+      (h) => h.name === "db.write.class_a_ops_per_logical_write",
+    );
+    expect(hist?.labels).toEqual({ collection: COLL, tenant: "acme" });
+    // Put-rate gauge emitted once per commit.
+    expect(metrics.lastGauge("db.tenant.put_rate")).toBe(1);
+  });
+
+  test('op:"D" commit emits class_a = 2 (no content PUT)', async () => {
+    const storage = new MemoryStorage();
+    await createCurrentJson(storage, CURRENT_KEY, seedCurrent());
+    const metrics = new InMemoryMetricsRecorder();
+    const writer = new ServerWriter({
+      storage,
+      currentJsonKey: CURRENT_KEY,
+      options: { metrics },
+    });
+
+    await writer.commit({
+      op: "I",
+      collection: COLL,
+      docId: "doc-d",
+      body: { _id: "doc-d" },
+    });
+    await writer.commit({ op: "D", collection: COLL, docId: "doc-d" });
+
+    const samples = metrics.histogramValues("db.write.class_a_ops_per_logical_write");
+    expect(samples).toEqual([3, 2]);
+  });
+
+  test("emits db.r2.put.412_total on CAS conflict + retry", async () => {
+    const storage = new InstrumentedStorage();
+    await createCurrentJson(storage, CURRENT_KEY, seedCurrent());
+    storage.failNextCasOnce = true;
+
+    const metrics = new InMemoryMetricsRecorder();
+    const writer = new ServerWriter({
+      storage,
+      currentJsonKey: CURRENT_KEY,
+      options: { initialBackoffMs: 1, random: () => 0, metrics },
+    });
+
+    await writer.commit({
+      op: "I",
+      collection: COLL,
+      docId: "doc-cas",
+      body: { _id: "doc-cas" },
+    });
+
+    // Two 412s: one on the current-json CAS (the simulated 412) and
+    // one on the log-PUT during the retry (the prior attempt's log
+    // entry is now present at our seq — the own-session adoption
+    // path). Both are real `PreconditionFailed` responses from the
+    // bucket, both are counted.
+    expect(metrics.sumCounter("db.r2.put.412_total")).toBe(2);
+    const cas412 = metrics.counters.find(
+      (c) => c.name === "db.r2.put.412_total" && c.labels.step === "current-json-cas",
+    );
+    expect(cas412).toBeDefined();
+    expect(cas412?.labels.collection).toBe(COLL);
+    const logPut412 = metrics.counters.find(
+      (c) => c.name === "db.r2.put.412_total" && c.labels.step === "log-put",
+    );
+    expect(logPut412).toBeDefined();
+    // After one retry the class-A op count is 3 + 1 retry = 4.
+    expect(metrics.histogramValues("db.write.class_a_ops_per_logical_write")).toEqual([4]);
+  });
+
+  test("emits db.r2.put.429_total when storage surfaces a 429 NetworkError", async () => {
+    class ThrottlingStorage extends MemoryStorage {
+      thrown = false;
+      override async put(
+        key: string,
+        body: Uint8Array,
+        opts?: StoragePutOptions,
+      ): Promise<StoragePutResult> {
+        // Throttle the first content PUT only.
+        if (!this.thrown && /\/content\//.test(key)) {
+          this.thrown = true;
+          throw new MPS3Error("NetworkError", `S3: HTTP 429 throttled on ${key}`);
+        }
+        return super.put(key, body, opts);
+      }
+    }
+    const storage = new ThrottlingStorage();
+    await createCurrentJson(storage, CURRENT_KEY, seedCurrent());
+    const metrics = new InMemoryMetricsRecorder();
+    const writer = new ServerWriter({
+      storage,
+      currentJsonKey: CURRENT_KEY,
+      options: { metrics },
+    });
+
+    let thrown: unknown;
+    try {
+      await writer.commit({
+        op: "I",
+        collection: COLL,
+        docId: "doc-429",
+        body: { _id: "doc-429" },
+      });
+    } catch (err) {
+      thrown = err;
+    }
+    // Commit propagates the NetworkError — but the 429 counter
+    // bumped on the way through the catch arm.
+    expect(thrown).toBeInstanceOf(MPS3Error);
+    expect((thrown as MPS3Error).code).toBe("NetworkError");
+    expect(metrics.sumCounter("db.r2.put.429_total")).toBe(1);
+  });
+
+  test("default metrics is no-op (no observable side effect)", async () => {
+    const storage = new MemoryStorage();
+    await createCurrentJson(storage, CURRENT_KEY, seedCurrent());
+    const writer = new ServerWriter({ storage, currentJsonKey: CURRENT_KEY });
+    // Pure smoke: commit succeeds without an explicit recorder.
+    const r = await writer.commit({
+      op: "I",
+      collection: COLL,
+      docId: "doc-noop",
+      body: { _id: "doc-noop" },
+    });
+    expect(r.attempts).toBe(1);
   });
 });

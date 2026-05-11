@@ -34,6 +34,17 @@ Conventions for source code under `src/` (excluding `*.test.ts` files).
   and an `@example` block. IDE hover and `tsgo` surface these from
   source — there's no rendered markdown reference.
 
+## Metrics
+- The pluggable `MetricsRecorder` interface lives in
+  `packages/protocol/src/metrics.ts`. Names follow
+  `db.<subsystem>.<metric>` — dot-separated, all-lowercase snake_case
+  segments (e.g. `db.write.class_a_ops_per_logical_write`,
+  `db.gc.swept_total`). Labels are flat
+  `Readonly<Record<string, string>>` — no numbers, no nested objects.
+- Every options object that takes a recorder defaults to
+  `noopMetricsRecorder` so non-instrumented callers see zero behaviour
+  change. Metric emissions must NOT throw on hot paths.
+
 ## Protocol code (`syncer.ts`, `manifest.ts`)
 - Read `docs/sync_protocol.md` and `docs/causal_consistency_checking.md`
   before changing these files. They encode invariants proven elsewhere.

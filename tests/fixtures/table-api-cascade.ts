@@ -26,6 +26,7 @@ import { expect } from "vitest";
 import {
   CURRENT_JSON_SCHEMA_VERSION,
   type CurrentJson,
+  InMemoryMetricsRecorder,
   type JSONArraylessObject,
   type LogEntry,
   MPS3Error,
@@ -33,7 +34,7 @@ import {
   createCurrentJson,
   uuid,
 } from "@baerly/protocol";
-import { Db, compact, runGc } from "@baerly/server";
+import { Db, ServerWriter, compact, runGc } from "@baerly/server";
 
 const APP = "table-api-test";
 
@@ -520,6 +521,57 @@ const runGcCascade = async (
 };
 
 /**
+ * [metrics] Full Phase-5 cycle (writes + compact + runGc) wired
+ * through an {@link InMemoryMetricsRecorder} — the six load-bearing
+ * Phase-5 metric names MUST appear in the recorder. This runs across
+ * every adapter via the variant table — the assertion is "the
+ * emission sites fire correctly on every {@link Storage} backend."
+ *
+ * Uses {@link ServerWriter} directly (instead of `db.table().insert()`)
+ * so we can pass the recorder through `ServerWriterOptions.metrics`
+ * — the public `Db` API doesn't yet thread the recorder, by design
+ * (Phase 6's HTTP server wires it at the request adapter).
+ */
+const runMetricsCascade = async (storage: Storage, app: string, tenant: string): Promise<void> => {
+  const t = freshTableName("metrics");
+  await provision(storage, app, tenant, t);
+  const currentJsonKey = `app/${app}/tenant/${tenant}/manifests/${t}/current.json`;
+  const metrics = new InMemoryMetricsRecorder();
+
+  // 100 writes through ServerWriter with the recorder wired.
+  const writer = new ServerWriter({
+    storage,
+    currentJsonKey,
+    options: { metrics, tenant },
+  });
+  for (let i = 0; i < 100; i++) {
+    await writer.commit({
+      op: "I",
+      collection: t,
+      docId: `m${i}`,
+      body: { _id: `m${i}`, n: i },
+    });
+  }
+
+  await compact(
+    { storage, currentJsonKey },
+    { minEntriesToCompact: 10, maxEntriesPerRun: 100, metrics },
+  );
+  await runGc(
+    { storage, currentJsonKey },
+    { graceMillis: 0, maxSweepsPerRun: 100, maxMarksPerRun: 100, metrics },
+  );
+
+  // The six load-bearing metric names per the ticket.
+  expect(metrics.histogramValues("db.write.class_a_ops_per_logical_write").length).toBe(100);
+  expect(metrics.histogramValues("db.compact.entries_folded").length).toBeGreaterThan(0);
+  expect(metrics.lastGauge("db.manifest.lag_window_depth")).toBeDefined();
+  expect(metrics.lastGauge("db.orphan.candidate_count")).toBeDefined();
+  expect(metrics.lastGauge("db.gc.entries_swept_per_second")).toBeDefined();
+  expect(metrics.sumCounter("db.gc.swept_total")).toBeGreaterThan(0);
+};
+
+/**
  * LogEntry shape — frozen assertion. After an I+I+U+D sequence,
  * walk `<tablePrefix>/log/<seq>.json` directly via `Storage` and
  * assert the per-op shape from `packages/protocol/src/log.ts:22–100`.
@@ -673,6 +725,11 @@ export const runTableApiCascade = async (opts: {
   //    Runs across every adapter via the variant table.
   await runGcCascade(db, opts.storage, APP, tenant);
 
-  // 7. LogEntry shape — frozen.
+  // 7. [metrics] Six load-bearing metric names emitted across the
+  //    full Phase-5 cycle. Runs on every adapter via the variant
+  //    table.
+  await runMetricsCascade(opts.storage, APP, tenant);
+
+  // 8. LogEntry shape — frozen.
   await runLogEntryShape(db, opts.storage, APP, tenant);
 };

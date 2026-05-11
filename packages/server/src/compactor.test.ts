@@ -11,6 +11,7 @@
 
 import {
   CURRENT_JSON_SCHEMA_VERSION,
+  InMemoryMetricsRecorder,
   createCurrentJson,
   MemoryStorage,
   MPS3Error,
@@ -256,6 +257,43 @@ describe("compact", () => {
     await expect(
       loadSnapshotAsMap(s, res.newSnapshotKey!, "other-collection"),
     ).rejects.toMatchObject({ code: "InvalidResponse" });
+  });
+
+  it("emits db.compact.entries_folded and db.manifest.lag_window_depth on success", async () => {
+    const s = new MemoryStorage();
+    await bootstrap(s, KEY);
+    const writer = new ServerWriter({ storage: s, currentJsonKey: KEY });
+    for (let i = 0; i < 50; i++) {
+      await writer.commit({
+        op: "I",
+        collection: COLL,
+        docId: `d${i}`,
+        body: { _id: `d${i}`, n: i },
+      });
+    }
+    const metrics = new InMemoryMetricsRecorder();
+    const res = await compact(
+      { storage: s, currentJsonKey: KEY },
+      { minEntriesToCompact: 10, maxEntriesPerRun: 40, metrics },
+    );
+    expect(res.written).toBe(true);
+    // Folded 40 of the 50 available.
+    expect(metrics.histogramValues("db.compact.entries_folded")).toEqual([40]);
+    // Live tail after fold = 50 (next_seq) - 40 (foldEnd) = 10.
+    expect(metrics.lastGauge("db.manifest.lag_window_depth")).toBe(10);
+  });
+
+  it("emits no metrics when run is skipped (below-min-threshold)", async () => {
+    const s = new MemoryStorage();
+    await bootstrap(s, KEY);
+    const metrics = new InMemoryMetricsRecorder();
+    const res = await compact(
+      { storage: s, currentJsonKey: KEY },
+      { minEntriesToCompact: 10, metrics },
+    );
+    expect(res.written).toBe(false);
+    expect(metrics.histogramValues("db.compact.entries_folded")).toEqual([]);
+    expect(metrics.lastGauge("db.manifest.lag_window_depth")).toBeUndefined();
   });
 
   it("surfaces a missing log entry inside the fold window as Internal", async () => {
