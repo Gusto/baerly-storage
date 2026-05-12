@@ -5,6 +5,7 @@ export * from "./db";
 export * from "./gc";
 export * from "./http/router";
 export * from "./indexes";
+export * from "./rebuild-index";
 export {
   longPollSince,
   listEventsSince,
