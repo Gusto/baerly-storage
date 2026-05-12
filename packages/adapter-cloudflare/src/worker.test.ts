@@ -15,11 +15,27 @@
  *     bucket).
  */
 
-import { CURRENT_JSON_SCHEMA_VERSION, createCurrentJson, type Storage } from "@baerly/protocol";
+import {
+  CURRENT_JSON_SCHEMA_VERSION,
+  createCurrentJson,
+  type Storage,
+  type Verifier,
+} from "@baerly/protocol";
 import { ServerWriter } from "@baerly/server";
 import { describe, expect, it } from "vitest";
 import { r2BindingStorage } from "./r2-binding-storage";
 import { baerlyWorker, type Env } from "./worker";
+
+/**
+ * Stand-in `Verifier` for the scheduled-only tests in this file. The
+ * Cron Trigger handler doesn't invoke the verifier, but `baerlyWorker`
+ * still requires one at construction time (Task A). Any non-null
+ * resolver works.
+ */
+const scheduledOnlyVerifier: Verifier = async () => ({
+  tenantPrefix: "x",
+  identity: { kind: "scheduled-test" },
+});
 
 const getBinding = (): R2Bucket => {
   const bucket = (globalThis as { __BAERLY_R2_BINDING__?: R2Bucket }).__BAERLY_R2_BINDING__;
@@ -83,7 +99,7 @@ describe("baerlyWorker scheduled", () => {
       CURRENT_JSON_KEY: key,
       CF_TIER: "free",
     };
-    const handler = baerlyWorker();
+    const handler = baerlyWorker({ verifier: scheduledOnlyVerifier });
     expect(handler.scheduled).toBeDefined();
     const { ctx, settled } = makeCtx();
 
@@ -123,7 +139,7 @@ describe("baerlyWorker scheduled", () => {
       CURRENT_JSON_KEY: key,
       CF_TIER: "free",
     };
-    const handler = baerlyWorker();
+    const handler = baerlyWorker({ verifier: scheduledOnlyVerifier });
     const { ctx, settled } = makeCtx();
     // Odd minute (1) → GC branch on free tier.
     const event: ScheduledController = {
@@ -153,7 +169,7 @@ describe("baerlyWorker scheduled", () => {
       TENANT: "x",
       // CURRENT_JSON_KEY intentionally omitted.
     };
-    const handler = baerlyWorker();
+    const handler = baerlyWorker({ verifier: scheduledOnlyVerifier });
     const { ctx, settled } = makeCtx();
     const event: ScheduledController = {
       scheduledTime: Date.UTC(2026, 0, 1, 0, 0, 0),

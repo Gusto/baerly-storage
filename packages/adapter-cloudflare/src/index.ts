@@ -26,5 +26,9 @@ export type { S3HttpStorageOptions } from "@baerly/protocol";
 export { baerlyWorker } from "./worker";
 export type { BaerlyWorkerOptions, Env, WorkerHandler, WorkerScheduledHandler } from "./worker";
 
+// Dev-only convenience verifier. **Not** for production use — see
+// the JSDoc on the helper itself.
+export { singleTenantDevVerifier } from "./single-tenant-dev-verifier";
+
 // Read-path cache integration (Workers-only).
 export { cacheKeyFor, invalidateOnWrite, withReadCache } from "./cache";
