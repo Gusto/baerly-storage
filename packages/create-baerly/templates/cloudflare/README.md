@@ -18,7 +18,7 @@ out of the box.
 ├── apps/
 │   ├── server/               # Cloudflare Worker — baerly host
 │   │   ├── package.json
-│   │   ├── wrangler.toml     # name, R2 binding, vars, [triggers]
+│   │   ├── wrangler.jsonc    # name, R2 binding, vars, triggers, limits, observability
 │   │   └── src/worker.ts     # baerlyWorker({ verifier })
 │   └── web/                  # optional SPA shell — delete if unused
 │       ├── package.json
@@ -41,12 +41,25 @@ binary.
 
 ## Deploy
 
-1. Create the R2 bucket: `wrangler r2 bucket create {{appName}}`.
-2. Set the shared secret: `wrangler secret put SHARED_SECRET`.
-3. Deploy: `pnpm -F server deploy` (which runs `wrangler deploy`).
+```sh
+# Set the shared secret (only needed for the sharedSecret() Verifier
+# branch; skip when you're going straight to Cloudflare Access).
+wrangler secret put SHARED_SECRET
 
-A future `baerly deploy --target=cloudflare` will package these
-three steps; for now they're manual.
+# One-command deploy. baerly reads `baerly.config.ts:target`, finds
+# `apps/server/wrangler.jsonc`, and runs:
+#   wrangler deploy --x-provision --x-auto-create
+# which auto-creates the declared R2 bucket(s) before the deploy.
+# When the experimental flag is unavailable, baerly falls back to
+# `wrangler r2 bucket create` + `wrangler deploy`.
+baerly deploy
+
+# Verify the deployed config — bindings, secrets, cron triggers.
+baerly doctor --target=cloudflare
+```
+
+If you'd rather run the steps by hand: `wrangler r2 bucket create
+{{appName}}` → `wrangler deploy` from `apps/server/`.
 
 ## Production auth
 
@@ -61,5 +74,5 @@ and derives `tenantPrefix` from the email claim.
 
 - `baerly.config.ts` — app config (`app`, `tenant`, `target`, `domain`).
 - `apps/server/src/worker.ts` — Worker fetch + scheduled handler.
-- `apps/server/wrangler.toml` — Cloudflare Worker manifest.
+- `apps/server/wrangler.jsonc` — Cloudflare Worker manifest.
 - `AGENTS.md` — agent-facing guide for the next contributor.

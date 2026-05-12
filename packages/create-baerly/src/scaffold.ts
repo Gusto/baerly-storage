@@ -27,6 +27,7 @@ const TEXT_EXTS = new Set([
   ".tsx",
   ".js",
   ".json",
+  ".jsonc",
   ".md",
   ".toml",
   ".yaml",

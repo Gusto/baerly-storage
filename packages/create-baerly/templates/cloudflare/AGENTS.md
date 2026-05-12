@@ -42,7 +42,7 @@ read it via your editor's TS LS or via the published types).
 | Path | What it is |
 |---|---|
 | `apps/server/src/worker.ts` | Server entry — `baerlyWorker({ verifier })` |
-| `apps/server/wrangler.toml` | Cloudflare Worker manifest — name, R2 binding, vars |
+| `apps/server/wrangler.jsonc` | Cloudflare Worker manifest — name, R2 binding, vars, triggers, limits, observability |
 | `apps/web/` | Optional client; SPA shell. Remove if not needed. |
 | `baerly.config.ts` | App config — `app`, `tenant`, `target`, `domain` |
 | `.baerly/schema.lock.json` | Reserved for collection schemas (future feature) |
@@ -56,9 +56,12 @@ read it via your editor's TS LS or via the published types).
 - **Schema / query** — read the JSDoc on `Db.table(...)` from
   `@baerly/server`. The shape is `db.table<Doc>(name).where({
   predicate }).all()`.
-- **Deploy** — `baerly deploy --target=cloudflare` runs the right
-  command (`wrangler deploy --x-provision`). Today it's manual:
-  `pnpm -F server deploy`.
+- **Deploy** — `baerly deploy --target=cloudflare` runs
+  `wrangler deploy --x-provision --x-auto-create` (Wrangler 4.10+)
+  to auto-create the declared R2 buckets and ship the Worker. When
+  the experimental flag is unavailable it falls back to
+  `wrangler r2 bucket create` + `wrangler deploy`. The fallback is
+  also what `baerly doctor --target=cloudflare --fix` exercises.
 
 ## Anti-patterns
 
@@ -74,5 +77,5 @@ read it via your editor's TS LS or via the published types).
 
 - `baerly.config.ts` — app config.
 - `apps/server/src/worker.ts` — server entry.
-- `apps/server/wrangler.toml` — Cloudflare Worker manifest.
+- `apps/server/wrangler.jsonc` — Cloudflare Worker manifest.
 - `package.json` — root scripts + pnpm workspace.

@@ -28,7 +28,7 @@ describe("scaffold", () => {
       outRoot,
     });
     expect(result.filesWritten).toContain("package.json");
-    expect(result.filesWritten).toContain(join("apps", "server", "wrangler.toml"));
+    expect(result.filesWritten).toContain(join("apps", "server", "wrangler.jsonc"));
     expect(result.filesWritten).toContain("AGENTS.md");
 
     const pkg = JSON.parse(await readFile(join(result.outDir, "package.json"), "utf8")) as {
@@ -41,10 +41,13 @@ describe("scaffold", () => {
     expect(config).toContain('tenant: "acme"');
     expect(config).toContain('target: "cloudflare"');
 
-    const wrangler = await readFile(join(result.outDir, "apps", "server", "wrangler.toml"), "utf8");
-    expect(wrangler).toContain('name = "my-app"');
-    expect(wrangler).toContain('bucket_name = "my-app"');
-    expect(wrangler).toContain('TENANT = "acme"');
+    const wrangler = await readFile(
+      join(result.outDir, "apps", "server", "wrangler.jsonc"),
+      "utf8",
+    );
+    expect(wrangler).toContain('"name": "my-app"');
+    expect(wrangler).toContain('"bucket_name": "my-app"');
+    expect(wrangler).toContain('"TENANT": "acme"');
 
     const worker = await readFile(
       join(result.outDir, "apps", "server", "src", "worker.ts"),
@@ -52,6 +55,25 @@ describe("scaffold", () => {
     );
     expect(worker).toContain("sharedSecret");
     expect(worker).toContain('tenantPrefix: "acme"');
+  });
+
+  it("emits a production-shape wrangler.jsonc for cloudflare", async () => {
+    const result = await scaffold({
+      projectName: "prod-app",
+      target: "cloudflare",
+      pm: "pnpm",
+      templatesRoot: TEMPLATES_ROOT,
+      outRoot,
+    });
+    const wrangler = await readFile(
+      join(result.outDir, "apps", "server", "wrangler.jsonc"),
+      "utf8",
+    );
+    expect(wrangler).toContain('"r2_buckets":');
+    expect(wrangler).toContain('"triggers":');
+    expect(wrangler).toContain('"limits":');
+    expect(wrangler).toContain('"observability":');
+    expect(wrangler).toContain('"name": "prod-app"');
   });
 
   it("emits a node scaffold with the bearerJwt fallback verifier", async () => {
@@ -64,7 +86,7 @@ describe("scaffold", () => {
     });
     expect(result.filesWritten).toContain(join("apps", "server", "src", "server.ts"));
     expect(result.filesWritten).toContain(join("apps", "server", "Dockerfile"));
-    expect(result.filesWritten).not.toContain(join("apps", "server", "wrangler.toml"));
+    expect(result.filesWritten).not.toContain(join("apps", "server", "wrangler.jsonc"));
 
     const server = await readFile(
       join(result.outDir, "apps", "server", "src", "server.ts"),

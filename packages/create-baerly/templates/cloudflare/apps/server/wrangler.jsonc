@@ -1,0 +1,54 @@
+{
+  // Baerly-generated production Worker manifest. JSONC: trailing
+  // commas tolerated, in-line comments supported. Wrangler 4+
+  // reads this directly.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "{{appName}}",
+  "main": "src/worker.ts",
+  "compatibility_date": "2025-06-01",
+  "compatibility_flags": ["nodejs_compat"],
+
+  // R2 binding. `baerly deploy --target=cloudflare` auto-creates
+  // this bucket via `wrangler deploy --x-provision --x-auto-create`
+  // (Wrangler 4.10+). Fallback: `baerly doctor --target=cloudflare`
+  // creates it via `wrangler r2 bucket create <bucket_name>`.
+  "r2_buckets": [
+    {
+      "binding": "BUCKET",
+      "bucket_name": "{{appName}}"
+    }
+  ],
+
+  // Plain-text bindings. `APP` pins this Worker's app-prefix;
+  // `TENANT` is the single-tenant fallback when no Verifier
+  // resolves a tenant from the request.
+  "vars": {
+    "APP": "{{appName}}",
+    "TENANT": "{{tenant}}"
+  },
+
+  // Cron trigger for the Phase-5 maintenance loop. Every minute —
+  // the worker module's `scheduled` handler alternates compact/GC
+  // on free tier; runs both on paid. Adjust `crons` to control
+  // frequency.
+  "triggers": {
+    "crons": ["* * * * *"]
+  },
+
+  // 50ms CPU cap matches Workers Standard plan. Long-poll routes
+  // burn wall-clock (await), not CPU.
+  "limits": {
+    "cpu_ms": 50
+  },
+
+  // Built-in observability. Worker logs land in CF dashboard +
+  // `wrangler tail`; Logpush still ships separately when wired.
+  "observability": {
+    "enabled": true
+  }
+
+  // `routes` is omitted by default. When `baerly.config.ts` sets a
+  // `domain`, `baerly deploy` patches the wrangler config to add:
+  //   "routes": [{ "pattern": "<domain>/*", "custom_domain": true }]
+  // For now the Worker is reachable at <name>.<sub>.workers.dev.
+}
