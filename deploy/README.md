@@ -13,6 +13,43 @@ Hand-rolled deploy artifacts that prove `baerlyWorker()` and
 `createListener()` work against real R2 and real S3. **Not** a
 production template — see the inline warnings throughout.
 
+## Production lifecycle (preferred)
+
+For real apps, do not copy the artifacts in this directory.
+Scaffold with `create-baerly` and use the `baerly` CLI:
+
+```sh
+# Scaffold (writes apps/server/wrangler.jsonc, baerly.config.ts, ...).
+npm create baerly@latest my-app -- --target=cloudflare
+cd my-app
+pnpm install
+
+# Set the SHARED_SECRET (or wire Cloudflare Access).
+wrangler secret put SHARED_SECRET
+
+# One-command deploy. Auto-provisions R2 buckets via
+# `wrangler deploy --x-provision --x-auto-create` (Wrangler 4.10+);
+# falls back to `wrangler r2 bucket create` + `wrangler deploy`
+# when the experimental flag is unavailable.
+pnpm exec baerly deploy
+
+# Walk the deploy invariants and report findings. --fix auto-creates
+# missing R2 buckets; secret prompts stay manual.
+pnpm exec baerly doctor --target=cloudflare
+```
+
+The production template lives at
+`packages/create-baerly/templates/cloudflare/`. It ships a
+`wrangler.jsonc` with R2 bindings, vars, cron triggers, CPU
+limits, and observability; the worker entry wires a verifier
+selector that prefers `cloudflareAccess()` when configured and
+falls back to `sharedSecret()` for `wrangler dev` parity.
+
+The artifacts under `deploy/cloudflare/` and `deploy/node/` below
+are the **manual real-deploy gate** — they exist so PRs touching
+the adapters can validate against real R2 / real S3 before
+merging. Production users never copy them.
+
 ## Lifecycle
 
 1. Provision resources (one-time): R2 bucket, S3 bucket, IAM /
