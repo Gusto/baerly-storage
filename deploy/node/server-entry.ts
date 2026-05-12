@@ -9,7 +9,7 @@ import { createServer } from "node:http";
 import { DOMParser } from "@xmldom/xmldom";
 import { AwsClient } from "aws4fetch";
 import { createListener, S3HttpStorage } from "@baerly/adapter-node";
-import type { Verifier } from "@baerly/protocol";
+import { sharedSecret } from "@baerly/server";
 
 const reqEnv = (name: string): string => {
   const v = process.env[name];
@@ -28,7 +28,7 @@ const secretAccessKey = reqEnv("AWS_SECRET_ACCESS_KEY");
 const region = process.env.AWS_REGION ?? "us-east-1";
 const bucket = reqEnv("BUCKET");
 const endpoint = process.env.S3_ENDPOINT ?? `https://s3.${region}.amazonaws.com`;
-const sharedSecret = reqEnv("SHARED_SECRET");
+const sharedSecretValue = reqEnv("SHARED_SECRET");
 
 const aws = new AwsClient({
   accessKeyId,
@@ -44,30 +44,14 @@ const storage = new S3HttpStorage({
   sign: (req) => aws.sign(req),
 });
 
-/**
- * Inline gate-only `Verifier`. Accepts `Authorization: Bearer
- * <SHARED_SECRET>`; returns `null` for everything else so
- * `createListener` translates the result to a 401 + `BaerlyError{code:
- * "Unauthorized"}` envelope. A future version productizes via a preset factory.
- *
- * `createListener` constructs a WHATWG `Request` from the inbound
- * `IncomingMessage` before invoking the verifier — see
- * `packages/adapter-node/src/server.ts:89-92`. So the verifier here
- * takes `Request`, matching the Cloudflare side; there is no Node-
- * specific `IncomingMessage` branch.
- */
-const sharedSecretVerifier = (secret: string): Verifier => {
-  return async (req: Request) => {
-    const auth = req.headers.get("Authorization") ?? "";
-    if (auth !== `Bearer ${secret}`) return null;
-    return { tenantPrefix: TENANT, identity: { kind: "shared-secret" } };
-  };
-};
-
+// Productized `Verifier` from `@baerly/server` — same accept/reject
+// shape as the prior inline gate-only verifier, plus constant-time
+// secret compare and config-error throws for empty inputs. See
+// `packages/server/src/auth/presets/shared-secret.ts`.
 const listener = createListener({
   app: APP,
   storage,
-  verifier: sharedSecretVerifier(sharedSecret),
+  verifier: sharedSecret({ secret: sharedSecretValue, tenantPrefix: TENANT }),
 });
 
 const server = createServer(listener);
