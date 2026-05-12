@@ -26,7 +26,13 @@ import {
   type Verifier,
 } from "@baerly/protocol";
 import type { Db } from "../db";
-import type { HttpErrorEnvelope, HttpOkEnvelope, HttpStatus, SinceResponse } from "../contract";
+import {
+  errorEnvelope,
+  type HttpErrorEnvelope,
+  type HttpOkEnvelope,
+  type HttpStatus,
+  type SinceResponse,
+} from "../contract";
 import { runAllWithMeta, runFirstWithMeta } from "../query";
 import { longPollSince } from "./since";
 
@@ -323,16 +329,10 @@ const ERROR_TO_STATUS: ReadonlyMap<BaerlyErrorCode, HttpStatus> = new Map<
 export function mapError(err: unknown): { status: HttpStatus; envelope: HttpErrorEnvelope } {
   if (err instanceof BaerlyError) {
     const status = ERROR_TO_STATUS.get(err.code) ?? 500;
-    return {
-      status,
-      envelope: { error: { code: err.code, message: err.message } },
-    };
+    return { status, envelope: errorEnvelope(err.code, err.message) };
   }
   const message = err instanceof Error ? err.message : String(err);
-  return {
-    status: 500,
-    envelope: { error: { code: "Internal", message } },
-  };
+  return { status: 500, envelope: errorEnvelope("Internal", message) };
 }
 
 // Hono-context shortcut used by every handler's catch block.
@@ -357,10 +357,7 @@ function jsonError(
   // Every `jsonError` call site passes a 4xx status (errors carry a
   // body). Cast bridges `HttpStatus` → `ContentfulStatusCode` for
   // Hono's `c.json` overload.
-  return c.json(
-    { error: { code, message } } satisfies HttpErrorEnvelope,
-    status as ContentfulStatusCode,
-  );
+  return c.json(errorEnvelope(code, message), status as ContentfulStatusCode);
 }
 
 /**

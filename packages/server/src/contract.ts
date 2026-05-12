@@ -14,6 +14,15 @@ export interface HttpErrorEnvelope {
 }
 
 /**
+ * Single drift surface for the {@link HttpErrorEnvelope} shape. The
+ * router and both adapters call this — adding or renaming a field on
+ * the wire is a one-edit change here.
+ */
+export const errorEnvelope = (code: BaerlyErrorCode, message: string): HttpErrorEnvelope => ({
+  error: { code, message },
+});
+
+/**
  * Metadata embedded in every successful read response.
  *
  * - `manifest_pointer` is an opaque-to-the-consumer string cursor

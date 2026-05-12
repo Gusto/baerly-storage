@@ -1,10 +1,11 @@
 import type { IncomingMessage, RequestListener, ServerResponse } from "node:http";
-import { BaerlyError, type Storage, type Verifier } from "@baerly/protocol";
+import { BaerlyError, type BaerlyErrorCode, type Storage, type Verifier } from "@baerly/protocol";
 import {
   Db,
   MAX_BODY_BYTES,
   NODE_PROFILE,
   createRouter,
+  errorEnvelope,
   runScheduledMaintenance,
 } from "@baerly/server";
 
@@ -214,11 +215,13 @@ function writeJson(res: ServerResponse, status: number, body: unknown): void {
   res.end(payload);
 }
 
-function writeError(res: ServerResponse, status: number, code: string, message: string): void {
-  // `HttpErrorEnvelope` is constructed inline rather than imported
-  // from `@baerly/server` — it's two JSON-literal fields. When the
-  // server package ships a runtime builder, swap to it.
-  writeJson(res, status, { error: { code, message } });
+function writeError(
+  res: ServerResponse,
+  status: number,
+  code: BaerlyErrorCode,
+  message: string,
+): void {
+  writeJson(res, status, errorEnvelope(code, message));
 }
 
 /**
