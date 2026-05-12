@@ -139,6 +139,15 @@ importers:
         specifier: workspace:*
         version: link:../protocol
 
+  packages/create-baerly:
+    dependencies:
+      citty:
+        specifier: ^0.1.6
+        version: 0.1.6
+      picocolors:
+        specifier: ^1.1.1
+        version: 1.1.1
+
   packages/dev:
     dependencies:
       '@baerly/protocol':
