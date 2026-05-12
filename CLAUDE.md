@@ -173,12 +173,19 @@ Read in this order to build a mental model:
 3. `packages/server/src/table.ts`, `packages/server/src/query.ts` —
    `Table<T>` / `Query<T>` SQL-shape API + predicate AST.
 4. `packages/server/src/server-writer.ts` — `ServerWriter` stateless
-   commit path: PUT content → PUT log entry → CAS-advance
-   `current.json`.
-5. `packages/server/src/compactor.ts`,
+   commit path: PUT content → PUT log entry → (Phase-8) PUT/DELETE
+   index entries → CAS-advance `current.json`.
+5. `packages/server/src/indexes.ts` — `IndexDefinition`, key
+   encoding (lex-order-preserving base-32), and per-doc projection
+   helpers. Consumed by the writer's fence-time emission and by
+   `rebuildIndex`.
+6. `packages/server/src/rebuild-index.ts` — `rebuildIndex(storage,
+   currentJsonKey, def)` idempotent reconciliation; what `baerly
+   admin rebuild-index` calls.
+7. `packages/server/src/compactor.ts`,
    `packages/server/src/gc.ts`,
    `packages/server/src/maintenance.ts` — durability sweep loops.
-6. **`@baerly/protocol`** (pure modules; no I/O):
+8. **`@baerly/protocol`** (pure modules; no I/O):
    `packages/protocol/src/json.ts`, `packages/protocol/src/types.ts`,
    `packages/protocol/src/constants.ts`,
    `packages/protocol/src/errors.ts`,
@@ -189,12 +196,12 @@ Read in this order to build a mental model:
    `packages/protocol/src/storage/` (`Storage` interface +
    `MemoryStorage`, `S3HttpStorage` impls + the legacy
    `fetchFnFromStorage` adapter, `@deprecated`).
-7. **`@baerly/dev`** (Node-only `Storage` impls + dev harness):
+9. **`@baerly/dev`** (Node-only `Storage` impls + dev harness):
    `packages/dev/src/local-fs.ts` (`LocalFsStorage` — directory-tree
    `Storage` with content-addressed ETags and atomic writes; used by
    future `baerly dev` and by tests that need cross-`Db`-instance
    visibility without Minio).
-8. **`deploy/`** — hand-rolled real-deploy gate artifacts
+10. **`deploy/`** — hand-rolled real-deploy gate artifacts
    (`deploy/cloudflare/wrangler.toml` + `worker-entry.ts`;
    `deploy/node/Dockerfile` + `server-entry.ts`). Manual lifecycle
    in `deploy/README.md`; driven by `pnpm gate:real-deploy`. **Not**

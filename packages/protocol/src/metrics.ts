@@ -10,10 +10,18 @@
  * to use when no operator is present (CI, tests that don't care about
  * metrics).
  *
- * **Naming convention** matches the six load-bearing metrics:
- *   - `db.write.class_a_ops_per_logical_write` — histogram (p99 alert at 5)
+ * **Naming convention** matches the load-bearing metrics:
+ *   - `db.write.class_a_ops_per_logical_write` — histogram (p99 alert at 5).
+ *     Phase-8 update: now includes one Class A op per index PUT + index
+ *     DELETE emitted in the commit's fence. Idle-reader cost is unchanged.
  *   - `db.r2.put.412_total` — counter (CAS conflict / If-Match-or-None-Match loss)
  *   - `db.r2.put.429_total` — counter (R2 prefix-partition rate-limit)
+ *   - `db.r2.preimage_get_total` — counter (Phase-8). One per U/D for
+ *     an indexed collection — the writer back-walks the log to read the
+ *     pre-image body so it can DELETE stale index keys. Per-collection
+ *     label; ZERO when no indexes are declared.
+ *   - `db.write.index_ops_per_logical_write` — histogram (Phase-8).
+ *     `K (PUT) + L (DELETE)` per commit. Per-collection label.
  *   - `db.manifest.lag_window_depth` — gauge (alert at >100)
  *   - `db.gc.entries_swept_per_second` — gauge (livelock indicator when <writes/s)
  *   - `db.orphan.candidate_count` — gauge (`gc/pending.json` depth)
