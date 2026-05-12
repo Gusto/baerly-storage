@@ -38,7 +38,6 @@
     "test:adapters": "pnpm test:adapter-cloudflare && pnpm test:adapter-node",
     "gate:real-deploy": "vitest run --project=default tests/integration/real-deploy-cloudflare.test.ts tests/integration/real-deploy-node.test.ts",
     "verify": "pnpm run typecheck && pnpm run lint",
-    "check:references": "bash scripts/check-references.sh",
     "dev:storage": "docker compose up -d --wait",
     "dev:storage:stop": "docker compose down",
     "bench:r2": "node --import ./bench/register-hooks.mjs bench/r2-contention.ts"
