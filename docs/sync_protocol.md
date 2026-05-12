@@ -165,3 +165,25 @@ poller in the kernel.
 ### Summary
 
 The algorithm is deceptively simple in implementation but leans heavily on the algebraic property of JSON-merge-patch and wiggle room in causal consistency to accommodate client-side clock_skew. The same algorithm is used also to synchronize state transfer between tabs in the local-first setting. By designing for a relatively small set of underlying S3 semantics, it is easy to apply the sync protocol to other, more expressive storage systems.
+
+## Prior art
+
+Two coordination primitives sit under Baerly's kernel: a
+**bounded-clock-skew assumption** (`LAG_WINDOW_MILLIS = 5000`) and
+a **fence-token + CAS-on-control-object** pattern
+(`current.json.writer_fence`, modelled after IsleDB, which itself
+borrows from FoundationDB). Spanner's TrueTime, FoundationDB's
+fence epochs, and the broader "lease + fence" literature inform
+both choices; the long-form survey of the canonical
+implementations and how Baerly's borrow differs under
+trusted-multi-instance contention lives at
+[`.claude/research/techniques/coordination-primitives.md`](../.claude/research/techniques/coordination-primitives.md).
+
+The specific failure modes the protocol defends against —
+thundering-herd CAS livelock on a single shared object, GCS's
+"one mutation per object per second" 429, Iceberg
+`CommitFailedException` storms with N concurrent writers — are
+catalogued from primary-source postmortems at
+[`.claude/research/techniques/s3-as-db-postmortems.md`](../.claude/research/techniques/s3-as-db-postmortems.md).
+The ~30 writes/min/collection ceiling baked into the product
+thesis comes directly from that survey.

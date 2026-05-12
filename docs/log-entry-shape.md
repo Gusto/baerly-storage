@@ -115,7 +115,15 @@ are minted — one per `LogEntry`. The single-mutation
 ## What we borrowed from `pgoutput`
 
 Postgres's logical-replication output plugin (`pgoutput`) is the
-shape Debezium and Postgres-native consumers already understand.
+shape Debezium and Postgres-native consumers already understand —
+it is the de-facto CDC lingua franca, and it is the shape
+`baerly export --target=postgres` mechanically translates into.
+The full wire-protocol survey (`BEGIN` / `RELATION` / `INSERT` /
+`UPDATE` / `DELETE` / `TRUNCATE` / `COMMIT` framing, LSN
+semantics, `REPLICA IDENTITY`, slot acknowledgement) and the
+case-by-case decisions for what Baerly takes and what it omits
+are at
+[`.claude/research/techniques/postgres-logical-replication.md`](../.claude/research/techniques/postgres-logical-replication.md).
 We borrowed:
 
 - **`I` / `U` / `D` / `T` / `M`** — the message tags. Map to
