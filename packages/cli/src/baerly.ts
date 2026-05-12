@@ -13,6 +13,7 @@
  * subcommand in each module's docstring.
  */
 import { defineCommand, runMain } from "citty";
+import { rebuildIndexCmd } from "./admin/rebuild-index";
 import { copy } from "./copy";
 import { setJsonMode } from "./output";
 
@@ -22,6 +23,21 @@ import { setJsonMode } from "./output";
 // if the user / agent asked for one.
 setJsonMode(process.argv.includes("--json"));
 
+/**
+ * `baerly admin <command>` — operator-side reconciliation +
+ * inspection tools. Today: `rebuild-index`. Future: `inspect`,
+ * `fsck`, `compact`.
+ */
+const admin = defineCommand({
+  meta: {
+    name: "admin",
+    description: "Operator commands — reconciliation and inspection.",
+  },
+  subCommands: {
+    "rebuild-index": rebuildIndexCmd,
+  },
+});
+
 const main = defineCommand({
   meta: {
     name: "baerly",
@@ -30,6 +46,7 @@ const main = defineCommand({
   },
   subCommands: {
     copy,
+    admin,
     // Future subcommands (each a ~10-line defineCommand block):
     //   init, inspect, compact, fsck, export, migrate, dump, restore
     // See packages/cli/package.json description and the docs in
