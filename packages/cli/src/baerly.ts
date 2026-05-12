@@ -15,6 +15,8 @@
 import { defineCommand, runMain } from "citty";
 import { rebuildIndexCmd } from "./admin/rebuild-index";
 import { copy } from "./copy";
+import { deploy } from "./deploy";
+import { doctor } from "./doctor";
 import { setJsonMode } from "./output";
 
 // citty has no global-flag concept, so sniff --json off process.argv
@@ -46,6 +48,8 @@ const main = defineCommand({
   },
   subCommands: {
     copy,
+    deploy,
+    doctor,
     admin,
     // Future subcommands (each a ~10-line defineCommand block):
     //   init, inspect, compact, fsck, export, migrate, dump, restore
