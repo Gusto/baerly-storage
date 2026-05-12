@@ -33,6 +33,18 @@
 
 import { fc, test } from "@fast-check/vitest";
 import { describe, expect } from "vitest";
+
+/**
+ * Per-property timeout, in ms. At `FC_NUM_RUNS=100` (default
+ * `pnpm test`) each run finishes in well under a second; at
+ * `FC_NUM_RUNS=10000` (`pnpm test:randomize`) the property
+ * exercises ~10k commits × ~4 PUTs each over `MemoryStorage`
+ * and lands in a few seconds even on a busy CI box. The default
+ * vitest timeout (5000ms) is far too tight when other heavy
+ * property tests are co-resident; mirror `phase5-crash-fuzz`'s
+ * pattern with a comfortable upper bound.
+ */
+const PROP_TIMEOUT_MS = 600_000;
 import {
   CURRENT_JSON_SCHEMA_VERSION,
   createCurrentJson,
@@ -155,5 +167,6 @@ describe("ServerWriter + indexes: live index keys reflect live doc set", () => {
       }
       expect([...actual].toSorted()).toEqual([...expected].toSorted());
     },
+    PROP_TIMEOUT_MS,
   );
 });
