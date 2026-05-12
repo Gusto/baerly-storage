@@ -55,9 +55,9 @@ loaded at container start.
 
 ```sh
 pnpm typecheck        # tsgo --noEmit (TypeScript 7 in strict mode)
-pnpm format           # oxfmt src (writes in place)
-pnpm format:check     # oxfmt --check src (no writes; CI mode)
-pnpm lint             # oxlint src
+pnpm format           # oxfmt (writes in place)
+pnpm format:check     # oxfmt --check (no writes; CI mode)
+pnpm lint             # oxlint
 ```
 
 ## Building
@@ -66,9 +66,10 @@ pnpm lint             # oxlint src
 pnpm build       # rolldown bundle to dist/ (index.js + index.d.ts)
 ```
 
-Public-API documentation lives as JSDoc on `src/mps3.ts`. IDE hover
-and `tsgo` consume it directly — there is no rendered markdown ref to
-regenerate.
+Public-API documentation lives as JSDoc on
+`packages/server/src/db.ts` and `packages/server/src/table.ts`. IDE
+hover and `tsgo` consume it directly — there is no rendered markdown
+ref to regenerate.
 
 ## The verification ritual
 
@@ -90,7 +91,9 @@ distinguish your regressions from the pre-existing state.
   silently mismatch and produce confusing errors. Always import from
   `"vitest"`.
 - **No `baseUrl`.** `tsconfig.json` uses `moduleResolution: "bundler"` and
-  no `baseUrl`. Imports inside `src/` are relative: `import { Ref } from "./types"`.
+  no `baseUrl`. Cross-package imports use the `@baerly/<pkg>`
+  workspace name; sibling imports are relative
+  (`import { makeTable } from "./table"`).
 - **`oxfmt --write` modifies files.** Use `format:check` if you only want
   to verify.
 - **`tsgo` is the TS 7 native preview.** Errors look slightly different
@@ -104,8 +107,11 @@ distinguish your regressions from the pre-existing state.
 1. Reproduce: `pnpm test:randomize` runs the suite in a loop until
    something fails.
 2. Narrow: copy the failing test name and run that file alone.
-3. Logs: pass `log: true` (or `log: console.log`) into the `MPS3` config in
-   the test to see internal events. Logger format: `<label> <event> <context>`.
+3. Logs: pass a `MetricsRecorder` (or wrap one) into the
+   `ServerWriter` under test to observe internal events. The
+   `db.write.*` metric names enumerated in
+   `packages/server/src/server-writer.ts`'s JSDoc are the
+   canonical event taxonomy.
 4. Inspect Minio: when running against `dev:storage`, the Minio console at
    `http://localhost:9103` shows current bucket contents — useful for
    eyeballing manifest objects.
@@ -119,4 +125,4 @@ distinguish your regressions from the pre-existing state.
 The module map lives in [CLAUDE.md → Module map](../CLAUDE.md#module-map);
 the deeper dependency graph + lifecycles live in
 [ARCHITECTURE.md](ARCHITECTURE.md). For a flat enumeration, just `ls
-src/ tests/`.
+packages/*/src/ tests/`.

@@ -101,17 +101,16 @@ log/<lsn>.json" works for SSE long-poll on a single cursor.
 **Lex order is reverse-causal**, inherited from Baerly's manifest
 log encoding. Consumers walking the log via `ListObjectsV2 +
 StartAfter` get newer entries lex-FIRST and must walk the response
-in REVERSE for causal order — the same trick `Syncer.getLatest`
-uses for the manifest log
-([`src/syncer.ts`](../src/syncer.ts), the replay loop near
-"Play operations forward on latest state, oldest first"). Within a
-single session, `seq` ascends in causal order; consumers can sort
-by `seq` to recover ordering without reaching for list semantics.
+in REVERSE for causal order — the same trick the read path uses
+when folding `[log_seq_start, next_seq)` into a live row set
+([`packages/server/src/query.ts`](../packages/server/src/query.ts),
+the replay loop). Within a single session, `seq` ascends in causal
+order; consumers can sort by `seq` to recover ordering without
+reaching for list semantics.
 
-Within a single `updateContent` that mutates N refs, N+1 lsns are
-minted: 1 for the manifest version (unchanged), N for the log
-entries (one per ref). Manifest-version lsns and log-entry lsns
-never alias.
+Within a single `ServerWriter.commitBatch` over N inputs, N lsns
+are minted — one per `LogEntry`. The single-mutation
+`ServerWriter.commit` is the N=1 case.
 
 ## What we borrowed from `pgoutput`
 
@@ -201,13 +200,11 @@ Mapping at the SSE adapter:
 
 ## Failure semantics
 
-Log entries are emitted **after** the manifest CAS succeeds (after
-the clock-skew retry loop) and **before** the optional
-`TOUCH_LATEST_CHANGE` marker. Log-entry PUT failures are
-**warned-and-continued**: the manifest is the source of truth, and
-orphan log entries are GC'd by Phase 5 compaction. This mirrors
-the existing tolerance for orphan content
-(`Syncer.classifyMissingContent`).
+Log entries are PUT **before** the CAS-advance of `current.json`
+(with `If-None-Match: *` so a colliding `lsn` fails fast). If the
+post-CAS `writer_fence.epoch` check bumps, the commit fails with
+`MPS3Error{code:"Conflict"}` and the orphan log entries are
+swept by GC (`packages/server/src/gc.ts`).
 
 A consumer that's mid-`/cdc/v1/stream` may briefly observe a
 manifest entry without a matching log entry. The endpoint should

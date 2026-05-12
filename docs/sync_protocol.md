@@ -149,17 +149,17 @@ The algorithm runs once per refresh — initiated by a read
 poller in the kernel.
 
 1. Check the `last_change` file using `If-None-Match` headers; if it hasn't changed, return the cached state.
-	- [syncer.ts#L101](https://github.com/endpointservices/mps3/blob/fb052d712ed12e89a37cce0113b89d07c706c502/src/syncer.ts#L101)
+	- See the read path in [`packages/server/src/query.ts`](../packages/server/src/query.ts).
 2. List objects backward in time from the `now + lag` timestamp
-	-  [syncer.ts#L116](https://github.com/endpointservices/mps3/blob/fb052d712ed12e89a37cce0113b89d07c706c502/src/syncer.ts#L116)
+	- See the log-walk loop in [`packages/server/src/query.ts`](../packages/server/src/query.ts).
 3. Exclude entries whose `abs(timestamp - LastModified) > stale` because they were created by a client with significant clock skew
-	-  [syncer.ts#L125](https://github.com/endpointservices/mps3/blob/fb052d712ed12e89a37cce0113b89d07c706c502/src/syncer.ts#L125)
+	- See `Syncer.isValid`-equivalent guard logic in [`packages/server/src/server-writer.ts`](../packages/server/src/server-writer.ts).
 4. Let the first entry encountered be `latest_state`
-	-  [syncer.ts#L159](https://github.com/endpointservices/mps3/blob/fb052d712ed12e89a37cce0113b89d07c706c502/src/syncer.ts#L159)
+	- See [`packages/server/src/query.ts`](../packages/server/src/query.ts).
 5. json-merge-patch all `operations` with `operations.timestamp - lag > latest_state.timestamp` in order into  `latest_state`
-	- [syncer.ts#L200](https://github.com/endpointservices/mps3/blob/fb052d712ed12e89a37cce0113b89d07c706c502/src/syncer.ts#L200)
+	- See the row-fold loop in [`packages/server/src/query.ts`](../packages/server/src/query.ts).
 6. garbage collect entries with `timestamp - lag < latest_state`
-	- [syncer.ts#L177](https://github.com/endpointservices/mps3/blob/fb052d712ed12e89a37cce0113b89d07c706c502/src/)
+	- See [`packages/server/src/gc.ts`](../packages/server/src/gc.ts) and [`packages/server/src/compactor.ts`](../packages/server/src/compactor.ts).
 7. return `latest_state` to the caller (the read or write that triggered the refresh)
 
 ### Summary

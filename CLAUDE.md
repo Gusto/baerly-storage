@@ -12,10 +12,11 @@ zero-shot from the `.d.ts` files alone. Theoretical foundations live
 in [docs/](docs/).
 
 Status: under heavy redesign — see
-[`.claude/research/00-plan.md`](.claude/research/00-plan.md). The
-project was MPS3 (browser-direct multiplayer); it is becoming Baerly
-(Worker-fronted server). The protocol kernel survives both; the
-deployment shape is changing.
+[`.claude/research/plan.md`](.claude/research/plan.md). The protocol
+kernel and HTTP server are landed; delivery wrappers (MCP, deploy
+scaffold, React client) are in progress. Day-1 templates ship for
+Cloudflare Workers and self-hosted Node; both are first-class. AWS
+Lambda / Bun / Deno / Fly are an adapter package away.
 
 ## Toolchain
 
@@ -158,10 +159,19 @@ See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for full setup.
 
 Read in this order to build a mental model:
 
-1. `src/index.ts` — public barrel; bundler entry point.
-2. `src/mps3.ts` — public `MPS3` class.
-3. `src/manifest.ts`, `src/syncer.ts` — protocol core wiring.
-4. **`@baerly/protocol`** (pure modules; no I/O):
+1. `packages/server/src/index.ts` — public barrel; bundler entry
+   point. The `baerly-storage` npm package is bundled from here.
+2. `packages/server/src/db.ts` — the `Db` class. Public read/write
+   surface for application code.
+3. `packages/server/src/table.ts`, `packages/server/src/query.ts` —
+   `Table<T>` / `Query<T>` SQL-shape API + predicate AST.
+4. `packages/server/src/server-writer.ts` — `ServerWriter` stateless
+   commit path: PUT content → PUT log entry → CAS-advance
+   `current.json`.
+5. `packages/server/src/compactor.ts`,
+   `packages/server/src/gc.ts`,
+   `packages/server/src/maintenance.ts` — durability sweep loops.
+6. **`@baerly/protocol`** (pure modules; no I/O):
    `packages/protocol/src/json.ts`, `packages/protocol/src/types.ts`,
    `packages/protocol/src/constants.ts`,
    `packages/protocol/src/errors.ts`,
@@ -172,25 +182,22 @@ Read in this order to build a mental model:
    `packages/protocol/src/storage/` (`Storage` interface +
    `MemoryStorage`, `S3HttpStorage` impls + the legacy
    `fetchFnFromStorage` adapter, `@deprecated`).
-5. **`@baerly/dev`** (Node-only `Storage` impls + dev harness):
+7. **`@baerly/dev`** (Node-only `Storage` impls + dev harness):
    `packages/dev/src/local-fs.ts` (`LocalFsStorage` — directory-tree
    `Storage` with content-addressed ETags and atomic writes; used by
-   future `baerly dev` and by tests that need cross-`MPS3`-instance
+   future `baerly dev` and by tests that need cross-`Db`-instance
    visibility without Minio).
-6. **`src/`** (impure utilities):
-   `src/offline-storage.ts` (`OfflineStorage` stub thrown when
-   `online: false`).
-7. **`deploy/`** — hand-rolled Phase 6 real-deploy gate artifacts
+8. **`deploy/`** — hand-rolled Phase 6 real-deploy gate artifacts
    (`deploy/cloudflare/wrangler.toml` + `worker-entry.ts`;
    `deploy/node/Dockerfile` + `server-entry.ts`). Manual lifecycle
    in `deploy/README.md`; driven by `pnpm gate:real-deploy`. **Not**
    a Phase 8 production template.
 
-The full lifecycle of `put()` and `subscribe()` is in
+The full lifecycle of `db.table().insert()` is in
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — read it before
-changing `syncer.ts` or `manifest.ts`. ARCHITECTURE.md also has a
-Mermaid dependency graph if you need finer-grained roles than the
-groups above.
+changing `packages/server/src/server-writer.ts` or the query
+evaluation path. ARCHITECTURE.md also has a Mermaid dependency
+graph if you need finer-grained roles than the groups above.
 
 ## When editing X, read Y
 
@@ -198,38 +205,40 @@ Path-scoped conventions. **Read the matching file before editing.**
 
 | When you're editing… | Read first |
 |---|---|
-| `src/**/*.ts` (excluding tests) | [docs/conventions/src.md](docs/conventions/src.md) |
-| `src/**/*.test.ts`, `tests/**` | [docs/conventions/tests.md](docs/conventions/tests.md) |
+| `tests/**` | [docs/conventions/tests.md](docs/conventions/tests.md) |
 | `docs/**` | [docs/conventions/docs.md](docs/conventions/docs.md) |
-| `src/syncer.ts`, `src/manifest.ts` | [docs/sync_protocol.md](docs/sync_protocol.md) + [docs/causal_consistency_checking.md](docs/causal_consistency_checking.md) |
+| `packages/server/src/server-writer.ts` | [docs/sync_protocol.md](docs/sync_protocol.md) + [docs/causal_consistency_checking.md](docs/causal_consistency_checking.md) |
 | `packages/protocol/src/json.ts` | [docs/JSON_merge_patch.md](docs/JSON_merge_patch.md) |
-| `packages/protocol/src/log.ts`, syncer log-emit path | [docs/log-entry-shape.md](docs/log-entry-shape.md) |
-| Public API on `MPS3` | [docs/EXTENDING.md](docs/EXTENDING.md) |
+| `packages/protocol/src/log.ts`, the log-emit path in `server-writer.ts` | [docs/log-entry-shape.md](docs/log-entry-shape.md) |
+| Public API on `Db` / `Table` | [docs/EXTENDING.md](docs/EXTENDING.md) |
 
-Claude users: `.claude/rules/{src,tests,docs}.md` auto-load on matching
+Claude users: `.claude/rules/{tests,docs}.md` auto-load on matching
 edits and point at the same files.
 
 ## Conventions
 
 - **Imports are relative.** `tsconfig.json` uses `moduleResolution: "bundler"`
-  and no `baseUrl`. Inside `src/` write `import { Ref } from "./types"`.
+  and no `baseUrl`. Inside `packages/server/src/` write `import { Ref } from "@baerly/protocol"`
+  for cross-package types and `import { makeTable } from "./table"` for siblings.
 - **Branded types are load-bearing.** `Ref`, `ManifestKey`, `UUID`,
   `VersionId` exist to prevent confusion bugs. Don't paper over a type
   mismatch with `as string`; widen only if you understand why.
 - **Magic values live in `packages/protocol/src/constants.ts`** with a JSDoc citing where the
   value comes from (often `docs/sync_protocol.md`).
-- **Errors must be `MPS3Error` instances.** Use the `code` discriminant
+- **Errors must be `MPS3Error` instances** (re-exported from
+  `@baerly/protocol`). Use the `code` discriminant
   (`error.code === "NetworkError"`), not `instanceof` chains. Hierarchy
   lives in `packages/protocol/src/errors.ts`.
 - **Tests use vitest.** `import { describe, test, it, expect } from "vitest"`.
   Don't add jest, mocha, or `bun:test`. IndexedDB is mocked via
   `import "fake-indexeddb/auto"`.
-- **Public API docs live as JSDoc on `src/mps3.ts`.** IDE hover and
-  tsgo consume them directly — no rendered markdown ref to maintain.
+- **Public API docs live as JSDoc on `packages/server/src/db.ts` and
+  `packages/server/src/table.ts`.** IDE hover and tsgo consume them
+  directly — no rendered markdown ref to maintain.
 - **Causal consistency is a hard invariant.** [docs/sync_protocol.md](docs/sync_protocol.md)
   and [docs/causal_consistency_checking.md](docs/causal_consistency_checking.md)
-  describe how it works. Read those before touching `syncer.ts` or
-  `manifest.ts`.
+  describe how it works. Read those before touching
+  `packages/server/src/server-writer.ts`.
 
 ## Anti-patterns
 
@@ -245,7 +254,7 @@ edits and point at the same files.
 
 - **Bugfix?** Reproduce with a failing test first. Pick the right test file
   by topic (`json.test.ts`, `time.test.ts`, etc.).
-- **New public API method on `MPS3`?** See [docs/EXTENDING.md](docs/EXTENDING.md).
+- **New public API method on `Db` / `Table`?** See [docs/EXTENDING.md](docs/EXTENDING.md).
   Add JSDoc with `@example` — IDEs and tsgo consume it directly.
 - **Touching the sync protocol?** Read `docs/sync_protocol.md` and
   `docs/causal_consistency_checking.md`. Add a property-based test in

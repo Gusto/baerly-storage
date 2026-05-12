@@ -10,22 +10,25 @@ in [CLAUDE.md](../CLAUDE.md) and [ARCHITECTURE.md](./ARCHITECTURE.md).
 
 ## Public API surface
 
-The `MPS3` class is the only intended entry point. Its public methods
-(`get`, `put`, `delete`) and the `MPS3Config` interface carry full
-JSDoc with `@example` blocks — your IDE or `tsgo` is the canonical
-reference. Realtime change notifications are deferred to a Phase 10
-opt-in `NotificationBus` package; today callers drive their own
-polling by re-calling `get(key)`.
+The `Db` class is the entry point. `db.table<T>(name)` returns a
+typed `Table<T>` carrying the locked SQL-shape API
+(`first` / `all` / `count` / `insert` / `update` / `replace` /
+`delete`) and the predicate AST (`where` / `order` / `limit`).
+All public methods carry JSDoc with `@example` blocks — your IDE or
+`tsgo` is the canonical reference. Change notifications are
+delivered out-of-band by the HTTP `/v1/since` long-poll route.
 
-- [`src/mps3.ts`](../src/mps3.ts) — class + config
+- [`packages/server/src/db.ts`](../packages/server/src/db.ts) — `Db` class
+- [`packages/server/src/table.ts`](../packages/server/src/table.ts) — `Table<T>` verbs
+- [`packages/server/src/query.ts`](../packages/server/src/query.ts) — `Query<T>` predicate AST + reader
 
 ## Causal consistency
 
 The hard invariant of the system. Writes from one client become visible
 to others in an order consistent with happened-before.
 
-- Implementation: [`src/syncer.ts`](../src/syncer.ts),
-  [`src/manifest.ts`](../src/manifest.ts)
+- Implementation: [`packages/server/src/server-writer.ts`](../packages/server/src/server-writer.ts),
+  [`packages/server/src/query.ts`](../packages/server/src/query.ts)
 - Constants: [`packages/protocol/src/constants.ts`](../packages/protocol/src/constants.ts)
   (`LAG_WINDOW_MILLIS` clock-skew tolerance)
 - Tests:
@@ -78,7 +81,6 @@ outside `LAG_WINDOW_MILLIS` are rejected.
 Discriminated-union errors. Match on `error.code`, never `instanceof`.
 
 - Implementation: [`packages/protocol/src/errors.ts`](../packages/protocol/src/errors.ts)
-- Conventions: [`docs/conventions/src.md`](./conventions/src.md)
 - ADR:
   [`docs/adr/0003-error-code-discriminant.md`](./adr/0003-error-code-discriminant.md)
 

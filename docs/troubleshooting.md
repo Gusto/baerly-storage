@@ -38,7 +38,8 @@ It loops `pnpm test` until a run exits non-zero — i.e. it's a *fuzzer*
 that catches races and protocol violations missed by a single run of
 `randomized.test.ts`. Run it for several minutes when:
 
-- You touched `src/syncer.ts` or `src/manifest.ts`.
+- You touched `packages/server/src/server-writer.ts` or
+  `packages/server/src/query.ts`.
 - You changed timing constants in `packages/protocol/src/constants.ts`
   (`LAG_WINDOW_MILLIS`, `MANIFEST_LIST_LOOKAHEAD_MILLIS`, etc.).
 - You're investigating a flaky test that reproduces "sometimes".

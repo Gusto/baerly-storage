@@ -1,62 +1,57 @@
-# Extending MPS3
+# Extending Baerly
 
 Three worked examples for the most common extension shapes. Follow these
 patterns and your changes will fit the codebase's conventions.
 
 > Before adding a feature, read [ARCHITECTURE.md](ARCHITECTURE.md) so you
-> know which module owns what. Most additions touch `mps3.ts` or
-> `manifest.ts`, but the *invariants* live in `syncer.ts`.
+> know which module owns what. Most additions touch
+> `packages/server/src/db.ts` or `packages/server/src/table.ts`, but the
+> *invariants* live in `packages/server/src/server-writer.ts`.
 
 ---
 
-## 1. Add a new public method on `MPS3`
+## 1. Add a new public method on `Db`
 
-We'll work through `keys()` — list every key in the default manifest.
+We'll work through `tables()` — list every table that has at least
+one mutation logged against it.
 
 ### Where to add the method
 
-Public methods live on the `MPS3` class in `src/mps3.ts`. Internal methods
-are prefixed with `_` and tagged `/** @internal */` to mark them as not
-part of the public API.
+Public methods live on the `Db` class in
+`packages/server/src/db.ts`. The typical surface is `Table<T>` (in
+`packages/server/src/table.ts`), reached via
+`db.table<T>(name)` — so most additions are actually new verbs on
+`Table<T>` / `Query<T>`. The `Table<T>` / `Query<T>` interfaces
+themselves are locked in `@baerly/protocol`; adding a new verb is
+a coordinated change.
 
 ```ts
-// src/mps3.ts (inside class MPS3)
+// packages/server/src/db.ts (inside class Db)
 
 /**
- * List all keys present in the manifest.
+ * List every table name present under this tenant's manifest
+ * prefix. Reads object storage; no caching layer.
  *
- * Reads the latest manifest state from S3 and returns the keys it
- * references. There is no inflight buffer to layer on top — a write
- * is visible to `keys()` once `put()` has resolved.
- *
- * @param options.manifest - manifest to read; defaults to the configured one
- * @returns array of key strings (no bucket prefix), in unspecified order
+ * @returns array of table names, in unspecified order
  *
  * @example
  * ```ts
- * await mps3.put("user/42", { name: "Ada" });
- * const keys = await mps3.keys();
- * // → ["user/42"]
+ * await db.table("tickets").insert({ title: "hello" });
+ * const tables = await db.tables();
+ * // → ["tickets"]
  * ```
  */
-public async keys(
-  options: { manifest?: Ref } = {}
-): Promise<string[]> {
-  const manifestRef: ResolvedRef = {
-    ...this.config.defaultManifest,
-    ...options.manifest,
-  };
-  const manifest = this.getOrCreateManifest(manifestRef);
-  const state = await manifest.syncer.getLatest();
-
-  const result = new Set<string>();
-  for (const fileUrl of Object.keys(state.files)) {
-    if (state.files[fileUrl] !== null) {
-      // fileUrl is "<bucket>/<key>" — strip the bucket
-      result.add(fileUrl.split("/").slice(1).join("/"));
-    }
+public async tables(): Promise<string[]> {
+  const prefix = physicalPrefixFor(this.app, this.tenant) +
+    "manifests/";
+  const out = new Set<string>();
+  for await (const entry of this.#storage.list({ prefix })) {
+    // entry.key === "<prefix><table>/current.json"
+    const tail = entry.key.slice(prefix.length);
+    const name = tail.split("/")[0];
+    if (name) out.add(name);
   }
-  return [...result];
+  return [...out];
 }
 ```
 
@@ -64,120 +59,182 @@ public async keys(
 
 - **JSDoc with `@example`.** IDE hover and `tsgo` surface these
   directly from source — they are the public-API reference.
-- **`Ref` resolution.** Always merge the user's `options.manifest` over
-  `this.config.defaultManifest` to fill in defaults. See `mps3.get` for
-  the canonical pattern.
-- **Reads are on-demand.** Call `manifest.getVersion(ref)` (or
-  `manifest.syncer.getLatest()` if you need the full state). There is
-  no local inflight buffer to layer on top.
-- **No new throw without `MPS3Error`.** If the method can fail, throw
-  `new MPS3Error("Code", "context")` from `packages/protocol/src/errors.ts`.
-- **Internal helpers go on `MPS3` with `_` prefix and `/** @internal */`,**
-  not in a separate file.
+- **No state on `Db`.** `Db` carries the `Storage` handle and the
+  `app` / `tenant` pair only. Per-request state belongs in the
+  caller; per-write state belongs in a fresh `ServerWriter`.
+- **Reads are on-demand.** Use the injected `#storage` directly for
+  `list` / `get` reads; use `Table<T>.where(...).all()` for log-fold
+  reads. Don't build a parallel cache layer.
+- **No new throw without `MPS3Error`.** If the method can fail,
+  throw `new MPS3Error("Code", "context")` from
+  `packages/protocol/src/errors.ts`.
+- **Internal helpers stay co-located.** Either a module-private
+  function in `packages/server/src/db.ts` or a fresh sibling file
+  exported as `@internal`.
 
 ### Add a test
 
-Conformance tests need cloud credentials. For a behavior that doesn't
-require a network round trip, prefer a focused test in a topic-specific
-file. See [docs/conventions/tests.md](conventions/tests.md) for where
-the file lives.
+For a behavior that doesn't require a network round trip, prefer a
+focused test in a topic-specific file. See
+[docs/conventions/tests.md](conventions/tests.md) for where the file
+lives.
 
 ```ts
-import "fake-indexeddb/auto";
 import { test, expect, describe } from "vitest";
-import { MPS3 } from "../../src/mps3";
+import { Db } from "@baerly/server";
+import { MemoryStorage } from "@baerly/protocol";
 
-describe("keys()", () => {
-  test("reflects local writes", async () => {
-    const mps3 = new MPS3({
-      defaultBucket: "test",
-      online: false,                          // skip the network
-      s3Config: { region: "us-east-1" },
+describe("Db.tables()", () => {
+  test("reflects writes", async () => {
+    const db = Db.create({
+      storage: new MemoryStorage(),
+      app: "test",
+      tenant: "acme",
     });
-    await mps3.put("a", 1);
-    await mps3.put("b", 2);
-    const keys = await mps3.keys();
-    expect(keys.sort()).toEqual(["a", "b"]);
+    await db.table("tickets").insert({ title: "x" });
+    await db.table("users").insert({ name: "Ada" });
+    const tables = await db.tables();
+    expect(tables.sort()).toEqual(["tickets", "users"]);
   });
 });
 ```
 
-For protocol-shape changes (anything in `syncer.ts` or `manifest.ts`),
-also add a property-based variant in `tests/integration/randomized.test.ts`
-so the behavior is exercised under random write interleavings.
+For protocol-shape changes (anything in
+`packages/server/src/server-writer.ts`), also add a property-based
+variant in `tests/integration/randomized.test.ts` so the behavior is
+exercised under random write interleavings.
 
 ### Verify
 
 ```sh
-pnpm verify        # typecheck + test + format:check + lint
+pnpm verify        # typecheck + lint
+pnpm test          # vitest run
 ```
 
 ---
 
-## 2. Add a new internal module
+## 2. Add a new write primitive
 
-Use this pattern when a piece of logic outgrows its current home.
+Use this pattern when you're adding a new `op` (e.g. a TRUNCATE
+analogue) or a new shape of `CommitInput` that the existing
+`ServerWriter.commit` path can't express.
+
+The write primitive lives in two places:
+
+1. **The wire shape** — `LogEntry` in
+   `packages/protocol/src/log.ts`. Adding a new `op` letter is a
+   stability change (see [log-entry-shape.md](log-entry-shape.md)).
+2. **The commit path** — `ServerWriter` in
+   `packages/server/src/server-writer.ts`. Extend `CommitInput`
+   with the new shape and update `commit` / `commitBatch` to emit
+   the new `LogEntry`.
 
 ### File template
 
 ```ts
-// src/myModule.ts
-import type { Ref } from "../packages/protocol/src/types";
-import { LAG_WINDOW_MILLIS } from "../packages/protocol/src/constants";
+// packages/server/src/server-writer.ts (extending CommitInput)
 
-/**
- * One-line summary of what this module does.
- *
- * Longer explanation including any invariants the rest of the codebase
- * relies on. Cite docs/sync_protocol.md if you're touching the protocol.
- */
-export class MyThing {
+export interface CommitInput {
+  readonly op: "I" | "U" | "D" | "T";        // new: T
+  readonly collection: string;
+  readonly docId?: string;                    // undefined on op:"T"
+  readonly body?: JSONArraylessObject;
   // ...
 }
 ```
 
 ### Wire it in
 
-- Import from the module that owns the responsibility (usually `mps3.ts`
-  or `manifest.ts`).
-- Add it to the dependency graph in [ARCHITECTURE.md](ARCHITECTURE.md). A
-  module that isn't in the graph is invisible to future agents.
-- If it adds protocol-visible state (e.g. a new manifest field or S3 key
-  shape), document it in `docs/sync_protocol.md` and consider whether it
-  needs a coverage entry in `causal_consistency_checking.md`.
+- Update the table API (`packages/server/src/table.ts`) so callers
+  can reach the new primitive. If the new primitive doesn't fit
+  the `Table<T>` shape, extend `Db` directly.
+- Add the new `op` discriminant to the field-requirement matrix in
+  [log-entry-shape.md](log-entry-shape.md).
+- Update `packages/server/src/query.ts` if the reader needs to fold
+  the new entry shape into the row set.
+- If this changes protocol-visible state (a new field on
+  `current.json`, a new `op`, a new storage layout), document it in
+  [sync_protocol.md](sync_protocol.md) and add a coverage entry in
+  [causal_consistency_checking.md](causal_consistency_checking.md).
 
 ### Don't
 
-- ❌ Create files outside `src/` or `tests/`. Source modules live in
-  `src/`; unit tests colocate as `src/<module>.test.ts`; cross-cutting
-  and integration tests live under `tests/`.
-- ❌ Use baseUrl-style imports — there's no `baseUrl` configured. Use
-  relative paths.
 - ❌ Add a config knob unless it's user-facing. Internal toggles bloat
-  `MPS3Config`; prefer a constant in `packages/protocol/src/constants.ts`.
+  `ServerWriterOptions`; prefer a constant in
+  `packages/protocol/src/constants.ts`.
+- ❌ Reach for `Math.random`, `Date.now`, or `node:fs` directly inside
+  `ServerWriter`. The class accepts injected `random` /
+  `randomMillis` callbacks and reads time off the `Storage`
+  response (`X-Baerly-Server-Time`) for clock correction.
+- ❌ Use baseUrl-style imports — there's no `baseUrl` configured.
 
 ---
 
-## 3. Add a new test
+## 3. Add a new `Storage` impl
+
+The `Storage` interface lives in
+`packages/protocol/src/storage/index.ts`. New impls land in their
+own package under `packages/` (`adapter-node`, `adapter-cloudflare`,
+`adapter-lambda`, …) or as direct exports of `@baerly/dev` for the
+local-dev case.
+
+### File template
+
+```ts
+// packages/adapter-fly/src/fly-storage.ts
+import type { Storage, StorageGetResult, StorageListEntry, StoragePutResult }
+  from "@baerly/protocol";
+import { MPS3Error } from "@baerly/protocol";
+
+export class FlyStorage implements Storage {
+  // ... implement get / put / delete / list per the interface JSDoc
+}
+```
+
+### Conformance
+
+Every `Storage` impl is exercised by
+`defineStorageConformanceSuite` in
+`packages/protocol/src/storage/conformance.ts`. The suite is
+factory-driven — pass a function that mints a fresh `Storage`
+handle pointed at an empty bucket; the suite handles the rest.
+
+Live examples:
+
+- `packages/adapter-node/src/s3-http.conformance.test.ts` — Minio
+  variant, gated on `MINIO=1`.
+- `packages/adapter-cloudflare/src/r2-binding-storage.conformance.test.ts`
+  — Workerd variant, runs under the `cloudflare-pool` vitest
+  project.
+
+Wire your new impl in the same shape. The conformance suite is
+authoritative — passing it is the gate that says "this is a real
+`Storage` impl."
+
+---
+
+## 4. Add a new test
 
 ### File naming and location
 
 See [docs/conventions/tests.md](conventions/tests.md) for where to put
-the file (colocated unit, `tests/unit/`, `tests/integration/`, or
-`tests/fixtures/`) and how to name it.
+the file (colocated unit under `packages/<pkg>/src/`,
+`tests/unit/`, `tests/integration/`, or `tests/fixtures/`) and how
+to name it.
 
 ### Test template
 
 ```ts
 import { test, expect, describe } from "vitest";
-import "fake-indexeddb/auto";          // only if the test exercises IndexedDB
-import { MPS3 } from "../../src/mps3";
+import { Db } from "@baerly/server";
+import { MemoryStorage } from "@baerly/protocol";
 
 describe("my feature", () => {
   test("does the thing", async () => {
-    const mps3 = new MPS3({
-      defaultBucket: "test",
-      s3Config: { region: "us-east-1" },
+    const db = Db.create({
+      storage: new MemoryStorage(),
+      app: "test",
+      tenant: "acme",
     });
     // ...
     expect(thing).toBe(expectedThing);
@@ -193,12 +250,14 @@ Property-based tests catch races that example tests can't.
 
 A property test in this codebase typically:
 
-1. Generates a random sequence of `put`/`delete` operations.
-2. Runs them through MPS3 (often with multiple clients on the same
-   manifest).
-3. Asserts a property like "every observer eventually sees a sequence
-   consistent with some serialization of the writes" or "no client
-   observes a state that contradicts a happened-before relation".
+1. Generates a random sequence of `insert` / `update` / `delete`
+   operations across multiple writers.
+2. Runs them through `Db` + `ServerWriter` (often with multiple
+   writers contending on the same `current.json`).
+3. Asserts a property like "every observer eventually sees a
+   sequence consistent with some serialization of the writes" or
+   "no client observes a state that contradicts a happened-before
+   relation".
 
 Look at `tests/integration/randomized.test.ts` and
 `tests/unit/consistency.test.ts` for the patterns in use.
@@ -210,7 +269,7 @@ Check the `code`, not the message:
 ```ts
 expect.assertions(1);
 try {
-  await mps3.put(/* something invalid */);
+  await db.table("users").insert(/* something invalid */);
 } catch (err) {
   expect((err as MPS3Error).code).toBe("InvalidConfig");
 }

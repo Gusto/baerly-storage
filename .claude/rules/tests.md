@@ -1,6 +1,6 @@
 ---
-description: Conventions for tests (colocated *.test.ts in src/ and the tests/ tree)
-appliesTo: ["src/**/*.test.ts", "tests/**"]
+description: Conventions for tests (colocated *.test.ts in packages/*/src/ and the tests/ tree)
+appliesTo: ["packages/*/src/**/*.test.ts", "tests/**"]
 ---
 
 # Test rules

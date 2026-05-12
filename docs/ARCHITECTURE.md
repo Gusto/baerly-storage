@@ -1,16 +1,19 @@
 # Architecture
 
-A top-down map of MPS3 for someone who has never opened the codebase.
+A top-down map of Baerly for someone who has never opened the codebase.
 
 ## One-paragraph summary
 
-A client writes by uploading content to S3, then appending a JSON Merge
-Patch to a time-ordered manifest log (also stored in S3, one object per
-write, sorted by a base-32 timestamp suffix). Reads explicitly fetch the
-latest manifest state on demand, replay patches in order, and resolve a
-causally consistent view of the key→version map. Realtime change
-notifications are deferred to a Phase 10 opt-in `NotificationBus`
-(separate package, not yet shipped). The protocol is specified in
+A client writes by uploading content to S3-compatible storage, then
+appending a per-doc `LogEntry` to a time-ordered log (also stored in
+the bucket, one object per mutation, sorted by an `lsn` cursor). The
+write completes with a CAS-advance of `current.json`, which records
+the high-water `next_seq` and the `log_seq_start` invariant used by
+readers. Reads explicitly fetch `current.json`, walk
+`[log_seq_start, next_seq)`, fold `LogEntry` rows into a live row
+set, and evaluate the query predicate. Change notifications are
+delivered out-of-band by the HTTP `/v1/since` long-poll route. The
+protocol is specified in
 [sync_protocol.md](sync_protocol.md) and proven causally consistent in
 [causal_consistency_checking.md](causal_consistency_checking.md).
 
@@ -18,119 +21,159 @@ notifications are deferred to a Phase 10 opt-in `NotificationBus`
 
 ```mermaid
 graph TD
-    mps3[mps3.ts<br/>public API]
-    manifest[manifest.ts<br/>thin wrapper: getVersion / updateContent]
-    syncer[syncer.ts<br/>manifest log read/write]
+    db[db.ts<br/>Db: public API]
+    table[table.ts<br/>Table&lt;T&gt; verbs]
+    query[query.ts<br/>Query&lt;T&gt; predicate AST + reader]
+    writer[server-writer.ts<br/>ServerWriter.commit / commitBatch]
+    compactor[compactor.ts<br/>compact()]
+    gc[gc.ts<br/>runGc()]
+    maint[maintenance.ts<br/>runScheduledMaintenance]
     storage[Storage interface<br/>get/put/delete/list]
     s3http[storage/s3-http.ts<br/>S3HttpStorage]
     memstore[storage/memory.ts<br/>MemoryStorage]
-    offline[offline-storage.ts<br/>OfflineStorage stub]
+    localfs[dev/local-fs.ts<br/>LocalFsStorage]
     json[json.ts<br/>RFC 7386 merge patch]
+    log[log.ts<br/>LogEntry shape]
 
-    mps3 --> manifest
-    mps3 --> storage
-    manifest --> syncer
-    syncer --> storage
-    syncer --> json
+    db --> table
+    db --> writer
+    table --> query
+    table --> writer
+    query --> storage
+    writer --> storage
+    writer --> log
+    compactor --> storage
+    gc --> storage
+    maint --> compactor
+    maint --> gc
     storage --> s3http
     storage --> memstore
-    storage --> offline
+    storage --> localfs
+    writer --> json
 ```
 
-## Lifecycle of a `put()`
+## Lifecycle of `db.table("X").insert(doc)`
 
-`mps3.put(ref, value)` resolves to a Promise that settles when the write is
-durable on S3.
+1. **`Table.insert(doc)`** (`packages/server/src/table.ts`):
+   normalises the document, generates a UUIDv7 `_id` if absent,
+   constructs a `CommitInput{ op: "I", collection, docId, body }`,
+   and calls `ServerWriter.commit(...)`.
 
-1. **`mps3.put` → `mps3.putAll`** (`src/mps3.ts`): wraps the single ref in
-   a `Map`, resolves default bucket/manifest, calls `_putAll`.
-2. **`_putAll`** (`src/mps3.ts`): for each ref it kicks off a content
-   upload via `_putObject` (`Storage.put` to `key@<version>` if
-   `useVersioning` is off, else just `key`). The set of
-   `(ref → contentVersion)` results is exposed as a Promise.
-3. **`manifest.updateContent` → `syncer.updateContent`** (`src/syncer.ts`):
-   - Generates a monotonic manifest-key suffix:
-     `<base32-timestamp>_<sessionId>_<seq>`. The timestamp is clamped to
-     `latest_timestamp + 1` so writes are ordered even when clocks jitter.
-   - Awaits the content upload, then `Storage.put`s the manifest patch to
-     `<manifestKey>@<suffix>`. The patch is a JSON Merge Patch over the
-     prior manifest state. (Manifest-first ordering: content body lands
-     before the manifest entry that references it.)
-   - Validates the server's response timestamp (`putResult.serverDate`,
-     surfaced from S3's `Date` header); if outside `LAG_WINDOW_MILLIS`
-     of expected, adapts `clockOffset` and retries with a new suffix.
-   - Optionally PUTs a sentinel `<manifestKey>` (no `@suffix`) so future
-     readers can short-circuit with a 304 (`If-None-Match`).
+2. **`ServerWriter.commit(req)`**
+   (`packages/server/src/server-writer.ts`): reads `current.json`
+   for the current `next_seq` and the `writer_fence.epoch` it
+   operates under, mints a `LogEntry` at `next_seq`, PUTs the
+   content body under `tenants/<t>/c/<collection>/<doc_id>`,
+   PUTs the log entry under `tenants/<t>/log/<lsn>.json` with
+   `If-None-Match: *`, and CAS-advances `current.json` to the
+   new `next_seq` (preserving the `log_seq_start` invariant).
+   Retries up to `S3_REQUEST_MAX_RETRIES` (default 8) on transient
+   CAS conflict; fails fast with `MPS3Error{code:"Conflict"}` on a
+   `writer_fence.epoch` bump.
+
+3. **Read path: `Table.where(p).all()`**
+   (`packages/server/src/query.ts`): reads `current.json`, walks
+   `[log_seq_start, next_seq)` from object storage, folds the
+   `LogEntry` stream into the live row set (`I` / `U` apply the
+   doc body; `D` removes the doc), evaluates the predicate AST
+   from `where()` / `order()` / `limit()`, and returns the
+   filtered rows.
+
+The HTTP `/v1/since?cursor=<lsn>` long-poll route in
+`packages/server/src/http/since.ts` is the change-notification
+channel: it walks the log from a caller-supplied `lsn` and
+either returns the new entries immediately or holds the request
+until new entries arrive (or the long-poll deadline elapses).
+The protocol-level theory lives in
+[sync_protocol.md](sync_protocol.md).
 
 ## Storage seam
 
 The kernel reads and writes through the four `Storage` methods only
-(`get`/`put`/`delete`/`list`). `MPS3.storageFor(bucket)` lazily
-returns the right impl based on construction config:
+(`get`/`put`/`delete`/`list`). `Storage` is injected at
+`Db.create({ storage, app, tenant })` time; the kernel never
+picks an impl itself.
 
-- `S3HttpStorage` (`packages/protocol/src/storage/s3-http.ts`) for any
-  HTTP endpoint. Authentication plugs in via a `sign(req)` callback —
-  the protocol package itself never imports `aws4fetch` or any other
-  signer; consumers choose.
-- `MemoryStorage` (`packages/protocol/src/storage/memory.ts`) for the
-  `memory:` endpoint, partitioned per bucket via a process-singleton
-  map so multiple `MPS3` instances share state by bucket name.
-- `OfflineStorage` (`src/offline-storage.ts`) when `online: false`.
-  Every method throws `MPS3Error("OfflineNoCache", …)`; callers that
-  miss the in-memory / IDB cache layer surface a clean error instead
-  of a hung promise.
+- `S3HttpStorage` (`packages/protocol/src/storage/s3-http.ts`) for
+  any HTTP endpoint. Authentication plugs in via a `sign(req)`
+  callback — the protocol package itself never imports `aws4fetch`
+  or any other signer; consumers choose.
+- `MemoryStorage` (`packages/protocol/src/storage/memory.ts`) for
+  the `memory:` endpoint, partitioned per bucket via a
+  process-singleton map so multiple `Db` instances share state by
+  bucket name.
 - `LocalFsStorage` (`packages/dev/src/local-fs.ts`, ships in the
   Node-only `@baerly/dev` package — not part of the runtime bundle
-  and not selected by `MPS3.storageFor(bucket)`, since the kernel
-  can't depend on `node:fs`) backs `baerly dev` against a fixture
-  directory. Content-addressed `"<sha-256-hex>"` ETags so identical
-  bodies match across runs; atomic writes via `write-temp + rename`.
-  Callers construct it directly and inject it where a `Storage` is
-  required.
+  since the kernel can't depend on `node:fs`) backs `baerly dev`
+  against a fixture directory. Content-addressed `"<sha-256-hex>"`
+  ETags so identical bodies match across runs; atomic writes via
+  `write-temp + rename`. Callers construct it directly and inject
+  it where a `Storage` is required.
+- `r2BindingStorage` (`packages/adapter-cloudflare/src/r2-binding-storage.ts`)
+  for Cloudflare Workers. Wraps an R2 bucket binding, no HTTP hop.
 
-## Reads and change notifications
-
-The kernel is read-on-demand: `mps3.get(ref)` calls
-`manifest.getVersion(ref)`, which resolves the latest state from the
-manifest log via `syncer.getLatest()` and then fetches the referenced
-content. There is no background poller and no push channel inside the
-kernel. Realtime change notifications are deferred to a Phase 10 opt-in
-`NotificationBus` package; callers that need change events today drive
-their own polling by re-calling `mps3.get(ref)`.
+The protocol kernel landing at three independent runtimes
+(Cloudflare Workers, Node, AWS Lambda) is a load-bearing design
+constraint; the rationale is in
+[.claude/research/techniques/runtime-context.md](../.claude/research/techniques/runtime-context.md).
 
 ## Where invariants live
 
-- **Causal consistency**: `syncer.ts` — replay is strictly oldest-to-newest;
-  a reader's observed sequence is a prefix of the global manifest log.
-  Proof: [causal_consistency_checking.md](causal_consistency_checking.md).
-- **Optimistic concurrency / clock skew**: `Syncer.isValid` and the retry
-  loop in `updateContent`. A write whose server-side timestamp falls
-  outside `LAG_WINDOW_MILLIS` is retried with an adjusted `clockOffset`.
-- **JSON Merge Patch semantics**: `json.ts` — RFC 7386 with the
-  array-replacement convention; see [JSON_merge_patch.md](JSON_merge_patch.md).
+- **Causal consistency:** `packages/server/src/server-writer.ts` and
+  `packages/server/src/query.ts` — the writer mints LSNs against the
+  current `next_seq` and CAS-advances `current.json` atomically; the
+  reader walks `[log_seq_start, next_seq)` from a single read of
+  `current.json`. A reader's observed sequence is a prefix of the
+  global log. Proof:
+  [causal_consistency_checking.md](causal_consistency_checking.md).
+- **Split-brain fencing:** `writer_fence.epoch` inside `current.json`.
+  `claimWriter()` (re-exported from `@baerly/protocol`) bumps the
+  epoch; an in-flight commit holding the prior epoch fails fast on
+  the post-CAS fence check with `MPS3Error{code:"Conflict"}`.
+- **JSON Merge Patch semantics:** `packages/protocol/src/json.ts` —
+  RFC 7386 with the array-replacement convention; see
+  [JSON_merge_patch.md](JSON_merge_patch.md).
+- **Log entry shape:** `packages/protocol/src/log.ts` — the on-the-wire
+  `LogEntry` interface, stable at major versions. See
+  [log-entry-shape.md](log-entry-shape.md).
 
 ## Key types (where the contracts live)
 
-- `Ref` / `ResolvedRef` (`packages/protocol/src/types.ts`): `{ bucket?, key }` and resolved
-  variant. The string form `"key"` is implicitly `{ key: "key" }`.
-- `Branded<T, B>` (`packages/protocol/src/types.ts`): nominal-type pattern. `UUID` and
-  `VersionId` are both `string`s but not assignable to each other.
-- `ManifestFile` (`src/syncer.ts`): the object PUT to each manifest key.
-  Contains `files: { [url]: FileState }` and an `update` (the merge patch).
-- `FileState` (`src/syncer.ts`): `{ version, replication }` per content ref.
-- `MPS3Config` / `ResolvedMPS3Config` (`src/mps3.ts`): user-facing and
-  internal config. `Resolved*` is what the runtime sees (defaults filled in).
+- `Db` (`packages/server/src/db.ts`): public read/write surface.
+  `Db.create({ storage, app, tenant })` returns a tenant-scoped
+  handle; `db.table<T>(name)` returns a `Table<T>`.
+- `Table<T>` / `Query<T>` (`@baerly/protocol`,
+  consumed by `packages/server/src/table.ts` and
+  `packages/server/src/query.ts`): the locked SQL-shape API.
+  Mutations (`insert` / `update` / `replace` / `delete`) plus the
+  predicate AST (`where` / `order` / `limit` /
+  `first` / `all` / `count`).
+- `CommitInput` / `CommitResult` / `CommitBatchResult`
+  (`packages/server/src/server-writer.ts`): the
+  `ServerWriter.commit` and `commitBatch` request/response shapes.
+- `LogEntry` (`packages/protocol/src/log.ts`): the per-mutation log
+  entry. Field set is fixed at major versions; consumers ack on
+  `lsn`. Full contract in [log-entry-shape.md](log-entry-shape.md).
+- `Branded<T, B>` (`packages/protocol/src/types.ts`): nominal-type
+  pattern. `UUID` and `VersionId` are both `string`s but not
+  assignable to each other.
+- `MPS3Error` / `MPS3ErrorCode` (`packages/protocol/src/errors.ts`):
+  discriminated-union error type. Branch on `error.code`.
 
-## Storage layout in S3
+## Storage layout in the bucket
 
-For a manifest at `bucket/path/manifest.json`, the bucket contains:
+For a `Db` constructed with `app="tickets"` and `tenant="acme"`:
 
-- `path/manifest.json` — sentinel for fast polling (only its ETag matters).
-- `path/manifest.json@<base32-time>_<session>_<seq>` — one object per write,
-  with the JSON Merge Patch as its body.
-- `path/<contentKey>` (versioned bucket) or `path/<contentKey>@<uuid>`
-  (unversioned) — actual content.
+- `app/tickets/tenant/acme/manifests/<table>/current.json` — the CAS
+  cursor. Holds `next_seq`, `log_seq_start`, and `writer_fence.epoch`.
+- `app/tickets/tenant/acme/manifests/<table>/log/<lsn>.json` — one
+  object per `LogEntry`. Walked by readers in `[log_seq_start,
+  next_seq)`.
+- `tenants/acme/c/<collection>/<doc_id>` — content body for `I` / `U`.
 
-Listing `Prefix: path/manifest.json@` in descending order yields the most
-recent writes first. The `LAG_WINDOW_MILLIS` guard filters out entries with
-clock skew beyond the protocol's tolerance.
+Compaction (`packages/server/src/compactor.ts`) folds adjacent log
+entries into checkpoints and advances `log_seq_start`. GC
+(`packages/server/src/gc.ts`) deletes content bodies and log entries
+that are no longer reachable from any live row set or fence epoch.
+Both are driven by `runScheduledMaintenance`
+(`packages/server/src/maintenance.ts`).
