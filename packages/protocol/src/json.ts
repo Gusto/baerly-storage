@@ -24,8 +24,11 @@ export function merge<T extends JSONArrayless>(
     return patch as T;
   }
   const combined = typeof target === "object" ? { ...target } : ({} as T);
-  for (let key in patch) {
-    // reject prototype pollution
+  for (const key of Object.keys(patch) as Array<Extract<keyof T, string>>) {
+    // Object.keys returns own enumerable string keys — but `__proto__`
+    // is an own property when patches arrive via JSON.parse (HTTP PATCH
+    // bodies hit this path through query.ts:runUpdate). Guard remains
+    // load-bearing. See predicate.test.ts for the same vector.
     if (key === "__proto__" || key === "constructor" || key === "prototype") continue;
     if (patch[key] === null) {
       delete combined[key];

@@ -81,6 +81,22 @@ describe("JSON Merge Patch (RFC 7386)", () => {
     expect(merge(a, a)).toEqual(a);
   });
 
+  test("rejects __proto__ / constructor / prototype keys (prototype pollution)", () => {
+    // Object literal `{ __proto__: ... }` is a prototype-setter, not an
+    // own key — use JSON.parse so the key becomes an actual own property
+    // of the patch, mirroring how a malicious HTTP PATCH body would arrive.
+    const target = { safe: 1 } as JSONArrayless;
+    const polluted = merge(target, JSON.parse('{"__proto__":{"polluted":true}}'));
+    expect((polluted as Record<string, unknown>).polluted).toBeUndefined();
+    expect(Object.getPrototypeOf(polluted)).toBe(Object.prototype);
+
+    const ctor = merge(target, { constructor: "x" } as unknown as Partial<JSONArrayless>);
+    expect((ctor as Record<string, unknown>).constructor).toBe(Object);
+
+    const proto = merge(target, { prototype: "x" } as unknown as Partial<JSONArrayless>);
+    expect((proto as Record<string, unknown>).prototype).toBeUndefined();
+  });
+
   describe("fold", () => {
     test.prop({ a: jsonArrayless, b: jsonArrayless, c: jsonArrayless })(
       "idempotent: fold(fold(a, b, c), a, b, c) === fold(a, b, c)",
