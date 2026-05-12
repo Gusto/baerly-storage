@@ -12,12 +12,15 @@
  *   - 200 OK (read / list / patch)
  *   - 201 Created (insert)
  *   - 204 No Content (delete)
- *   - 400 SchemaError (bad `?where=`, oversized body, bad JSON body)
+ *   - 400 SchemaError (bad `?where=`, bad JSON body)
  *   - 401 Unauthorized (verifier returned null)
- *   - 404 Not Found (no such row)
+ *   - 404 NotFound (no such row)
+ *   - 413 PayloadTooLarge (oversized body, enforced during the
+ *     `node:http` stream pump so the Node process never materializes
+ *     a multi-MiB body for the router to reject after the fact)
  */
 
-import { createServer } from "node:http";
+import { createServer, request as httpRequest } from "node:http";
 import type { AddressInfo } from "node:net";
 import {
   CURRENT_JSON_SCHEMA_VERSION,
@@ -166,20 +169,66 @@ describe("createListener routes", () => {
     });
   });
 
-  it("POST with body over 1 MiB returns 400 SchemaError", async () => {
+  it("POST with body over 1 MiB returns 413 PayloadTooLarge", async () => {
     await withServer(trivialVerifier, async (baseUrl) => {
       // 1.5 MiB filler — comfortably over the 1-MiB cap. No table
       // provisioning needed: the body-size guard short-circuits
-      // before any Storage I/O.
+      // before any Storage I/O. `fetch()` here sets `Content-Length`,
+      // so the router's pre-check fires before the stream pump runs;
+      // the chunked-transfer test below exercises the pump path.
       const filler = "x".repeat(1.5 * 1024 * 1024);
       const res = await fetch(`${baseUrl}/v1/t/tickets`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ doc: { title: "huge", filler } }),
       });
-      expect(res.status).toBe(400);
+      expect(res.status).toBe(413);
       const body = (await res.json()) as BaseEnvelope;
-      expect(body.error?.code).toBe("SchemaError");
+      expect(body.error?.code).toBe("PayloadTooLarge");
+    });
+  });
+
+  it("chunked POST over 1 MiB returns 413 PayloadTooLarge from the stream pump", async () => {
+    await withServer(trivialVerifier, async (baseUrl) => {
+      // `fetch()` would auto-set `Content-Length` and trigger the
+      // router's pre-materialization check at `router.ts:readJsonBody`
+      // header path. To exercise `readNodeStream`'s in-pump cap (the
+      // load-bearing OOM guard) we use `node:http` directly with
+      // `Transfer-Encoding: chunked` and no `Content-Length`.
+      const url = new URL(baseUrl);
+      const status = await new Promise<{ code: number; envCode: string }>((resolve, reject) => {
+        const req = httpRequest(
+          {
+            hostname: url.hostname,
+            port: url.port,
+            method: "POST",
+            path: "/v1/t/tickets",
+            headers: {
+              "content-type": "application/json",
+              "transfer-encoding": "chunked",
+            },
+          },
+          (res) => {
+            const chunks: Buffer[] = [];
+            res.on("data", (c: Buffer) => chunks.push(c));
+            res.on("end", () => {
+              const parsed = JSON.parse(Buffer.concat(chunks).toString("utf8")) as BaseEnvelope;
+              resolve({ code: res.statusCode ?? 0, envCode: parsed.error?.code ?? "" });
+            });
+            res.on("error", reject);
+          },
+        );
+        req.on("error", reject);
+        // Write 1.5 MiB across many small chunks so the cap trips
+        // mid-pump (not on the first chunk). 96 KiB × 16 = 1.5 MiB.
+        const chunk = "x".repeat(96 * 1024);
+        req.write(`{"doc":{"filler":"`);
+        for (let i = 0; i < 16; i += 1) req.write(chunk);
+        req.write(`"}}`);
+        req.end();
+      });
+      expect(status.code).toBe(413);
+      expect(status.envCode).toBe("PayloadTooLarge");
     });
   });
 

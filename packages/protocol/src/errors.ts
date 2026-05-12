@@ -34,7 +34,27 @@ export type BaerlyErrorCode =
    * `Verifier` (Phase 6) returned no identity. HTTP server maps
    * to 401. Code is reserved here so the union locks in Phase 2.
    */
-  | "Unauthorized";
+  | "Unauthorized"
+  /**
+   * The addressed resource does not exist. HTTP server maps to 404.
+   * Emitted by the row-by-id read / update / delete handlers in
+   * `packages/server/src/http/router.ts` when the predicate
+   * `{ _id }` matches zero rows. Not a protocol invariant —
+   * callers may retry after creating the resource or treat as a
+   * miss depending on intent. The CLI maps this to the generic
+   * exit-2 "storage error" bucket, not the exit-3 "protocol
+   * invariant" bucket.
+   */
+  | "NotFound"
+  /**
+   * Request body exceeded the server's size cap. HTTP server maps
+   * to 413. Cap is `MAX_BODY_BYTES` (1 MiB today; exported from
+   * `packages/server/src/http/router.ts`). The Node adapter
+   * enforces during the `node:http` stream pump so the process
+   * never materializes a multi-MiB body; Workers also rely on
+   * platform-side caps (16 MB free / 100 MB paid).
+   */
+  | "PayloadTooLarge";
 
 /**
  * The single error class thrown by Baerly. Discriminate by `code`, not

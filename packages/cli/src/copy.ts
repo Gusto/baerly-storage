@@ -237,10 +237,14 @@ const errorToExitCode = (code: string): number => {
  *
  *   - `0` — success
  *   - `1` — user error (`InvalidConfig`, missing/unknown flag)
- *   - `2` — storage error (`NetworkError`, `AccessDenied`, anything
- *     non-`BaerlyError`)
+ *   - `2` — storage / other (`NetworkError`, `AccessDenied`,
+ *     `NotFound`, `PayloadTooLarge`, anything non-`BaerlyError`)
  *   - `3` — protocol invariant (`Conflict`, `Internal`,
  *     `InvalidResponse`)
+ *
+ * `NotFound` lands in the exit-2 bucket — a routine "no such row"
+ * over HTTP is not a protocol invariant; the CLI's `doCopy` path
+ * surfaces it as a normal storage miss.
  *
  * Errors flow through `emitError`; success is silent in text mode
  * and a one-line JSON envelope in `--json` mode.
