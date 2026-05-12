@@ -13,17 +13,17 @@
  *   3. AND-merges two predicates via {@link mergePredicates} so callers
  *      can implement cumulative `.where({a:1}).where({b:2})` chaining.
  *
- * All validator rejections throw `MPS3Error{code:"InvalidConfig"}`
+ * All validator rejections throw `BaerlyError{code:"InvalidConfig"}`
  * with a message that names the offending operator or key.
  */
 
 import type { Predicate } from "../db";
-import { MPS3Error } from "../errors";
+import { BaerlyError } from "../errors";
 import type { JSONArrayless, JSONArraylessObject, JSONObject, JSONValue } from "../json";
 
 /**
  * Validate a predicate object's shape. Throws
- * `MPS3Error{code:"InvalidConfig"}` on the first offending key.
+ * `BaerlyError{code:"InvalidConfig"}` on the first offending key.
  *
  * Recursive: a nested object value is validated as a sub-predicate,
  * which means `$`-prefixed keys are banned at any depth (not just at
@@ -36,7 +36,7 @@ import type { JSONArrayless, JSONArraylessObject, JSONObject, JSONValue } from "
  * ```ts
  * validatePredicate({ status: "open" }); // ok
  * validatePredicate({ "assignee.team": "platform" }); // ok
- * validatePredicate({ $or: "x" }); // throws MPS3Error{InvalidConfig}
+ * validatePredicate({ $or: "x" }); // throws BaerlyError{InvalidConfig}
  * ```
  */
 export const validatePredicate = <T extends JSONArraylessObject = JSONArraylessObject>(
@@ -49,26 +49,26 @@ export const validatePredicate = <T extends JSONArraylessObject = JSONArraylessO
 const validateNode = (node: JSONArraylessObject, path: ReadonlyArray<string>): void => {
   for (const key of Object.keys(node)) {
     if (key.startsWith("$")) {
-      throw new MPS3Error(
+      throw new BaerlyError(
         "InvalidConfig",
         `Unsupported predicate operator ${JSON.stringify(key)} at ${formatPath(path)} — day-one policy is equality + dotted-path only (no $or / $gt / $in / $regex).`,
       );
     }
     if (key === "__proto__" || key === "constructor" || key === "prototype") {
-      throw new MPS3Error(
+      throw new BaerlyError(
         "InvalidConfig",
         `Reserved key ${JSON.stringify(key)} not allowed in a predicate at ${formatPath(path)}.`,
       );
     }
     const value: unknown = (node as Record<string, unknown>)[key];
     if (value === null || value === undefined) {
-      throw new MPS3Error(
+      throw new BaerlyError(
         "InvalidConfig",
         `Predicate value at ${formatPath([...path, key])} is ${value === null ? "null" : "undefined"} — terminal values must be string / number / boolean / nested object.`,
       );
     }
     if (Array.isArray(value)) {
-      throw new MPS3Error(
+      throw new BaerlyError(
         "InvalidConfig",
         `Predicate value at ${formatPath([...path, key])} is an array — day-one policy bans array values (no $in: [...]). Match nested objects with a sub-predicate instead.`,
       );
@@ -79,7 +79,7 @@ const validateNode = (node: JSONArraylessObject, path: ReadonlyArray<string>): v
       continue;
     }
     if (t !== "string" && t !== "number" && t !== "boolean") {
-      throw new MPS3Error(
+      throw new BaerlyError(
         "InvalidConfig",
         `Predicate value at ${formatPath([...path, key])} has unsupported type ${JSON.stringify(t)} — must be string / number / boolean / nested object.`,
       );
@@ -88,7 +88,7 @@ const validateNode = (node: JSONArraylessObject, path: ReadonlyArray<string>): v
       // NaN / Infinity round-trip through JSON.parse as null, so they
       // can never match a document; reject at validation time rather
       // than silently produce an always-false predicate.
-      throw new MPS3Error(
+      throw new BaerlyError(
         "InvalidConfig",
         `Predicate value at ${formatPath([...path, key])} is ${String(value)} — finite numbers only (NaN / Infinity do not round-trip through JSON).`,
       );
@@ -191,7 +191,7 @@ const matchesValue = (expected: JSONArrayless, actual: JSONValue | undefined): b
  * `JSONArrayless` level. A genuine conflict (e.g. `a = {x: 1}` and
  * `b = {x: 2}`) is unsatisfiable; rather than silently produce an
  * always-false predicate we throw
- * `MPS3Error{code:"InvalidConfig"}` with a message that names the
+ * `BaerlyError{code:"InvalidConfig"}` with a message that names the
  * key and both values.
  *
  * @example
@@ -203,7 +203,7 @@ const matchesValue = (expected: JSONArrayless, actual: JSONValue | undefined): b
  * //   → { status: "open" } (shared key, same value — fine)
  *
  * mergePredicates({ status: "open" }, { status: "closed" });
- * //   throws MPS3Error{InvalidConfig}: conflicting values for "status"
+ * //   throws BaerlyError{InvalidConfig}: conflicting values for "status"
  * ```
  */
 export const mergePredicates = <T extends JSONArraylessObject = JSONArraylessObject>(
@@ -217,7 +217,7 @@ export const mergePredicates = <T extends JSONArraylessObject = JSONArraylessObj
     if (key in out) {
       const aVal = out[key];
       if (aVal === undefined || !deepEqualJSONArrayless(aVal, bVal)) {
-        throw new MPS3Error(
+        throw new BaerlyError(
           "InvalidConfig",
           `mergePredicates: conflicting values for key ${JSON.stringify(key)} (a=${JSON.stringify(aVal)}, b=${JSON.stringify(bVal)}). Cumulative .where() chains must agree on shared keys.`,
         );

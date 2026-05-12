@@ -28,7 +28,7 @@
  *
  * Why CAS errors are translated to `Conflict`: every in-tree
  * {@link Storage} impl surfaces a lost CAS as
- * `MPS3Error{code:"InvalidResponse", message:"PreconditionFailed: …"}`.
+ * `BaerlyError{code:"InvalidResponse", message:"PreconditionFailed: …"}`.
  * Downstream callers — the Phase 3 ServerWriter, the Phase 5
  * compactor, the Phase 6 sweeper — discriminate by `code` to decide
  * whether to retry, so we translate at this module's boundary rather
@@ -36,7 +36,7 @@
  */
 
 import { CURRENT_JSON_CONTENT_TYPE, CURRENT_JSON_SCHEMA_VERSION } from "../constants";
-import { MPS3Error } from "../errors";
+import { BaerlyError } from "../errors";
 import type { Storage, StoragePutOptions, StoragePutResult } from "../storage/types";
 
 /**
@@ -51,13 +51,13 @@ import type { Storage, StoragePutOptions, StoragePutResult } from "../storage/ty
  * The schema is forward-compatible: adding a new optional field is
  * non-breaking. Renaming or removing a field requires bumping
  * {@link CURRENT_JSON_SCHEMA_VERSION} to `2`; readers MUST reject
- * unknown major versions with `MPS3Error{code:"InvalidResponse"}`.
+ * unknown major versions with `BaerlyError{code:"InvalidResponse"}`.
  */
 export interface CurrentJson {
   /**
    * Schema version. Today: `1`. Bump on any breaking change to
    * field semantics; readers must reject unknown major versions
-   * with `MPS3Error{code:"InvalidResponse"}`.
+   * with `BaerlyError{code:"InvalidResponse"}`.
    */
   schema_version: 1;
 
@@ -166,7 +166,7 @@ export interface CurrentJsonRead {
 /**
  * Read + parse `current.json` at `key`. Returns `null` on not-found.
  *
- * @throws MPS3Error{code:"InvalidResponse"} — body is not valid
+ * @throws BaerlyError{code:"InvalidResponse"} — body is not valid
  *         JSON, or `schema_version` is unknown, or the shape fails
  *         the runtime guard.
  */
@@ -182,7 +182,7 @@ export async function readCurrentJson(
   try {
     parsed = JSON.parse(text);
   } catch (e) {
-    throw new MPS3Error("InvalidResponse", `current.json at ${key}: body is not valid JSON`, e);
+    throw new BaerlyError("InvalidResponse", `current.json at ${key}: body is not valid JSON`, e);
   }
   return { json: assertCurrentJson(parsed, key), etag: got.etag };
 }
@@ -192,9 +192,9 @@ export async function readCurrentJson(
  * `If-None-Match: "*"`). Use this once per collection at provisioning
  * time; subsequent updates go through {@link casUpdateCurrentJson}.
  *
- * @throws MPS3Error{code:"Conflict"} — the key already exists.
+ * @throws BaerlyError{code:"Conflict"} — the key already exists.
  *         Caller decides whether to read + reconcile or surface.
- * @throws MPS3Error{code:"InvalidResponse"} — `initial` fails the
+ * @throws BaerlyError{code:"InvalidResponse"} — `initial` fails the
  *         runtime shape guard.
  */
 export async function createCurrentJson(
@@ -230,10 +230,10 @@ export async function createCurrentJson(
  * multiple times if the caller wraps this in a retry loop, so it
  * must not have side effects.
  *
- * @throws MPS3Error{code:"Conflict"} — another writer landed a write
+ * @throws BaerlyError{code:"Conflict"} — another writer landed a write
  *         between this function's read and write. Caller decides
  *         whether to retry (read + remutate + rewrite).
- * @throws MPS3Error{code:"InvalidResponse"} — `key` does not exist
+ * @throws BaerlyError{code:"InvalidResponse"} — `key` does not exist
  *         (use {@link createCurrentJson} instead) or body doesn't
  *         parse / fails the shape guard.
  */
@@ -245,7 +245,7 @@ export async function casUpdateCurrentJson(
 ): Promise<CurrentJsonRead> {
   const existing = await readCurrentJson(storage, key, opts);
   if (existing === null) {
-    throw new MPS3Error(
+    throw new BaerlyError(
       "InvalidResponse",
       `current.json at ${key} does not exist; use createCurrentJson first`,
     );
@@ -293,10 +293,10 @@ export async function casUpdateCurrentJson(
  * readers MUST treat the empty string as "unknown claim time"
  * rather than parsing it.
  *
- * @throws MPS3Error{code:"Conflict"} — another writer claimed the
+ * @throws BaerlyError{code:"Conflict"} — another writer claimed the
  *         fence between this call's read and write. Caller decides
  *         whether to retry.
- * @throws MPS3Error{code:"InvalidResponse"} — `key` does not exist.
+ * @throws BaerlyError{code:"InvalidResponse"} — `key` does not exist.
  */
 export async function claimWriter(
   storage: Storage,
@@ -306,7 +306,7 @@ export async function claimWriter(
 ): Promise<CurrentJsonRead> {
   const existing = await readCurrentJson(storage, key, opts);
   if (existing === null) {
-    throw new MPS3Error(
+    throw new BaerlyError(
       "InvalidResponse",
       `current.json at ${key} does not exist; use createCurrentJson first`,
     );
@@ -386,25 +386,31 @@ const encodeJson = (json: CurrentJson): Uint8Array =>
 
 /**
  * Runtime guard for `parsed` to be a {@link CurrentJson}. Throws
- * `MPS3Error{code:"InvalidResponse"}` rather than coercing — readers
+ * `BaerlyError{code:"InvalidResponse"}` rather than coercing — readers
  * never silently accept an unknown shape.
  */
 const assertCurrentJson = (parsed: unknown, key: string): CurrentJson => {
   if (parsed === null || typeof parsed !== "object") {
-    throw new MPS3Error("InvalidResponse", `current.json at ${key}: parsed body is not an object`);
+    throw new BaerlyError(
+      "InvalidResponse",
+      `current.json at ${key}: parsed body is not an object`,
+    );
   }
   const r = parsed as Record<string, unknown>;
   if (r.schema_version !== CURRENT_JSON_SCHEMA_VERSION) {
-    throw new MPS3Error(
+    throw new BaerlyError(
       "InvalidResponse",
       `current.json at ${key}: unsupported schema_version ${String(r.schema_version)}; expected ${CURRENT_JSON_SCHEMA_VERSION}`,
     );
   }
   if (!(typeof r.snapshot === "string" || r.snapshot === null)) {
-    throw new MPS3Error("InvalidResponse", `current.json at ${key}: snapshot must be string|null`);
+    throw new BaerlyError(
+      "InvalidResponse",
+      `current.json at ${key}: snapshot must be string|null`,
+    );
   }
   if (typeof r.next_seq !== "number" || !Number.isInteger(r.next_seq) || r.next_seq < 0) {
-    throw new MPS3Error(
+    throw new BaerlyError(
       "InvalidResponse",
       `current.json at ${key}: next_seq must be a non-negative integer`,
     );
@@ -415,7 +421,7 @@ const assertCurrentJson = (parsed: unknown, key: string): CurrentJson => {
       !Number.isInteger(r.log_seq_start) ||
       r.log_seq_start < 0)
   ) {
-    throw new MPS3Error(
+    throw new BaerlyError(
       "InvalidResponse",
       `current.json at ${key}: log_seq_start must be a non-negative integer if present`,
     );
@@ -425,36 +431,36 @@ const assertCurrentJson = (parsed: unknown, key: string): CurrentJson => {
     typeof r.next_seq === "number" &&
     r.log_seq_start > r.next_seq
   ) {
-    throw new MPS3Error(
+    throw new BaerlyError(
       "InvalidResponse",
       `current.json at ${key}: log_seq_start ${String(r.log_seq_start)} > next_seq ${String(r.next_seq)}`,
     );
   }
   const fence = r.writer_fence;
   if (fence === null || typeof fence !== "object") {
-    throw new MPS3Error("InvalidResponse", `current.json at ${key}: writer_fence missing`);
+    throw new BaerlyError("InvalidResponse", `current.json at ${key}: writer_fence missing`);
   }
   const f = fence as Record<string, unknown>;
   if (typeof f.epoch !== "number" || !Number.isInteger(f.epoch) || f.epoch < 0) {
-    throw new MPS3Error(
+    throw new BaerlyError(
       "InvalidResponse",
       `current.json at ${key}: writer_fence.epoch must be a non-negative integer`,
     );
   }
   if (typeof f.owner !== "string") {
-    throw new MPS3Error(
+    throw new BaerlyError(
       "InvalidResponse",
       `current.json at ${key}: writer_fence.owner must be a string`,
     );
   }
   if (typeof f.claimed_at !== "string") {
-    throw new MPS3Error(
+    throw new BaerlyError(
       "InvalidResponse",
       `current.json at ${key}: writer_fence.claimed_at must be a string`,
     );
   }
   if (f.lease_until !== undefined && typeof f.lease_until !== "string") {
-    throw new MPS3Error(
+    throw new BaerlyError(
       "InvalidResponse",
       `current.json at ${key}: writer_fence.lease_until must be string if present`,
     );
@@ -468,14 +474,14 @@ const assertCurrentJson = (parsed: unknown, key: string): CurrentJson => {
  * downstream callers can discriminate by `code` without string-
  * matching. Other errors pass through unchanged.
  */
-const translateCasError = (e: unknown, key: string): MPS3Error => {
+const translateCasError = (e: unknown, key: string): BaerlyError => {
   if (
-    e instanceof MPS3Error &&
+    e instanceof BaerlyError &&
     e.code === "InvalidResponse" &&
     e.message.startsWith("PreconditionFailed:")
   ) {
-    return new MPS3Error("Conflict", `current.json CAS lost at ${key}: ${e.message}`, e);
+    return new BaerlyError("Conflict", `current.json CAS lost at ${key}: ${e.message}`, e);
   }
-  if (e instanceof MPS3Error) return e;
-  return new MPS3Error("InvalidResponse", `current.json write at ${key} failed: ${String(e)}`, e);
+  if (e instanceof BaerlyError) return e;
+  return new BaerlyError("InvalidResponse", `current.json write at ${key} failed: ${String(e)}`, e);
 };

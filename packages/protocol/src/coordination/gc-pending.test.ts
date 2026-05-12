@@ -5,7 +5,7 @@
 
 import { describe, expect, it } from "vitest";
 import { MemoryStorage } from "../storage/memory";
-import { MPS3Error } from "../errors";
+import { BaerlyError } from "../errors";
 import { GC_PENDING_SCHEMA_VERSION } from "../constants";
 import { type GcPending, casUpdateGcPending, createGcPending, readGcPending } from "./gc-pending";
 
@@ -123,7 +123,7 @@ describe("gc-pending", () => {
       }),
     );
     await s.put(KEY, bad, { contentType: "application/json" });
-    await expect(readGcPending(s, KEY)).rejects.toThrow(MPS3Error);
+    await expect(readGcPending(s, KEY)).rejects.toThrow(BaerlyError);
   });
 
   it("rejects malformed shape on create", async () => {

@@ -35,7 +35,7 @@
  * §4.3-§4.4 for the full design rationale.
  */
 
-import { MPS3Error } from "@baerly/protocol";
+import { BaerlyError } from "@baerly/protocol";
 import type { LogEntry, Storage, StorageGetOptions, StorageGetResult } from "@baerly/protocol";
 import { LOG_KEY_PREFIX, readCurrentJson, logSeqStartOf } from "@baerly/protocol";
 import type { Db } from "../db";
@@ -111,7 +111,7 @@ export interface ListEventsSinceOptions {
  * `{ events: [], next_cursor: <same> }` — see ticket 26 §4.5 for why
  * we ship that as `200`, not `304`.
  *
- * @throws MPS3Error{code:"SchemaError"} — invalid cursor shape, or
+ * @throws BaerlyError{code:"SchemaError"} — invalid cursor shape, or
  *   the cursor references a log entry that has been folded into a
  *   snapshot and GC'd.
  */
@@ -124,7 +124,7 @@ export async function longPollSince(opts: LongPollSinceOptions): Promise<SinceRe
   // Up-front cursor-shape validation. `listEventsSince` also checks,
   // but doing it here short-circuits the fast-path read on bad input.
   if (cursor.length > 0 && !LSN_RE.test(cursor)) {
-    throw new MPS3Error(
+    throw new BaerlyError(
       "SchemaError",
       `cursor: invalid shape (expected an lsn returned by a prior SinceResponse); got ${JSON.stringify(cursor)}`,
     );
@@ -225,14 +225,14 @@ export async function longPollSince(opts: LongPollSinceOptions): Promise<SinceRe
  *
  * No `current.json` yet → `[]` (clients can poll a not-yet-existing
  * table without erroring). Cursor inside `[0, log_seq_start)` →
- * `MPS3Error{code:"SchemaError"}`.
+ * `BaerlyError{code:"SchemaError"}`.
  */
 export async function listEventsSince(opts: ListEventsSinceOptions): Promise<LogEntry[]> {
   const { db, table, cursor, signal } = opts;
   const maxEvents = opts.maxEvents ?? DEFAULT_MAX_EVENTS;
 
   if (cursor.length > 0 && !LSN_RE.test(cursor)) {
-    throw new MPS3Error(
+    throw new BaerlyError(
       "SchemaError",
       `cursor: invalid shape (expected an lsn returned by a prior SinceResponse); got ${JSON.stringify(cursor)}`,
     );
@@ -264,7 +264,7 @@ export async function listEventsSince(opts: ListEventsSinceOptions): Promise<Log
     const probeKey = `${logPrefix}${cursor}.json`;
     const probed = await db._raw.get(probeKey, signalOpt(signal));
     if (probed === null && logSeqStart > 0) {
-      throw new MPS3Error(
+      throw new BaerlyError(
         "SchemaError",
         `cursor ${JSON.stringify(cursor)} points to a log entry that has been folded into a snapshot (log_seq_start=${logSeqStart}); re-bootstrap from a snapshot read before resuming`,
       );
@@ -304,7 +304,7 @@ export async function listEventsSince(opts: ListEventsSinceOptions): Promise<Log
     try {
       parsed = JSON.parse(text);
     } catch (e) {
-      throw new MPS3Error("InvalidResponse", `log entry at ${key}: body is not valid JSON`, e);
+      throw new BaerlyError("InvalidResponse", `log entry at ${key}: body is not valid JSON`, e);
     }
     entries.push(parsed as LogEntry);
   }
@@ -349,13 +349,13 @@ function rawAsStorage(db: Db): Storage {
       return db._raw.get(key, passOpts);
     },
     put: () => {
-      throw new MPS3Error("Internal", "rawAsStorage: put() is not implemented");
+      throw new BaerlyError("Internal", "rawAsStorage: put() is not implemented");
     },
     delete: () => {
-      throw new MPS3Error("Internal", "rawAsStorage: delete() is not implemented");
+      throw new BaerlyError("Internal", "rawAsStorage: delete() is not implemented");
     },
     list: () => {
-      throw new MPS3Error("Internal", "rawAsStorage: list() is not implemented");
+      throw new BaerlyError("Internal", "rawAsStorage: list() is not implemented");
     },
   };
 }

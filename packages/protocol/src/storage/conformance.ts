@@ -1,6 +1,6 @@
 import { fc, test as fcTest } from "@fast-check/vitest";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { MPS3Error } from "../errors";
+import { BaerlyError } from "../errors";
 import type { Storage } from "./types";
 
 /**
@@ -180,16 +180,16 @@ export function defineStorageConformanceSuite(
         expect(got!.etag).toBe(second.etag);
       });
 
-      test("fails with MPS3Error InvalidResponse when key is absent", async () => {
+      test("fails with BaerlyError InvalidResponse when key is absent", async () => {
         await expect(
           s.put("k", new TextEncoder().encode("v"), { ifMatch: '"deadbeef"' }),
-        ).rejects.toBeInstanceOf(MPS3Error);
+        ).rejects.toBeInstanceOf(BaerlyError);
         await expect(
           s.put("k", new TextEncoder().encode("v"), { ifMatch: '"deadbeef"' }),
         ).rejects.toMatchObject({ code: "InvalidResponse" });
       });
 
-      test("fails with MPS3Error InvalidResponse on stale etag", async () => {
+      test("fails with BaerlyError InvalidResponse on stale etag", async () => {
         await s.put("k", new TextEncoder().encode("v1"));
         await expect(
           s.put("k", new TextEncoder().encode("v2"), { ifMatch: '"deadbeef"' }),
@@ -205,11 +205,11 @@ export function defineStorageConformanceSuite(
         expect(etag).toBeTruthy();
       });
 
-      test("fails with MPS3Error InvalidResponse when key exists", async () => {
+      test("fails with BaerlyError InvalidResponse when key exists", async () => {
         await s.put("k", new TextEncoder().encode("v"));
         await expect(
           s.put("k", new TextEncoder().encode("v2"), { ifNoneMatch: "*" }),
-        ).rejects.toBeInstanceOf(MPS3Error);
+        ).rejects.toBeInstanceOf(BaerlyError);
         await expect(
           s.put("k", new TextEncoder().encode("v3"), { ifNoneMatch: "*" }),
         ).rejects.toMatchObject({ code: "InvalidResponse" });
@@ -220,7 +220,7 @@ export function defineStorageConformanceSuite(
         await s.put("k", original);
         await expect(
           s.put("k", new TextEncoder().encode("overwrite"), { ifNoneMatch: "*" }),
-        ).rejects.toBeInstanceOf(MPS3Error);
+        ).rejects.toBeInstanceOf(BaerlyError);
         const got = await s.get("k");
         expect(got).not.toBeNull();
         expect(bytesEqual(got!.body, original)).toBe(true);

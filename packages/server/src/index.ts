@@ -18,7 +18,7 @@ export * from "./table";
  * Re-export of {@link claimWriter} from `@baerly/protocol`. Bumping
  * the fence causes any in-flight {@link ServerWriter} commit
  * holding the prior epoch to fail-fast with
- * `MPS3Error{code:"Conflict"}` after its CAS PUT lands (the
+ * `BaerlyError{code:"Conflict"}` after its CAS PUT lands (the
  * stale writer's CAS itself may succeed — the fence check is
  * post-write — but the commit return is aborted before the
  * caller observes success). Reserved for admin rotation
@@ -29,12 +29,12 @@ export * from "./table";
 export { claimWriter } from "@baerly/protocol";
 
 /**
- * Re-export of {@link MPS3Error} and its discriminator type from
+ * Re-export of {@link BaerlyError} and its discriminator type from
  * `@baerly/protocol`. Every failure thrown through this surface is
- * an `MPS3Error`; consumers branch on `error.code` (a
- * {@link MPS3ErrorCode}) rather than `instanceof` chains.
+ * an `BaerlyError`; consumers branch on `error.code` (a
+ * {@link BaerlyErrorCode}) rather than `instanceof` chains.
  */
-export { MPS3Error, type MPS3ErrorCode } from "@baerly/protocol";
+export { BaerlyError, type BaerlyErrorCode } from "@baerly/protocol";
 
 /**
  * Re-export of the locked predicate-AST `Table<T>` and `Query<T>`

@@ -1,4 +1,4 @@
-import { MPS3Error } from "./errors";
+import { BaerlyError } from "./errors";
 
 declare const brand: unique symbol;
 type Brand<B> = { [brand]: B };
@@ -19,8 +19,8 @@ export type Branded<T, B> = T & Brand<B>;
 export type DeleteValue = undefined;
 
 /**
- * Document reference (bucket optional, defaults to the MPS3 instance's
- * default bucket). The {@link MPS3} public API accepts `Ref`; internal
+ * Document reference (bucket optional, defaults to the `Db` instance's
+ * default bucket). The {@link Db} public API accepts `Ref`; internal
  * code that needs a fully-qualified address uses {@link ResolvedRef}.
  */
 export interface Ref {
@@ -165,7 +165,7 @@ export const eq = (a: Ref, b: Ref) => a.bucket === b.bucket && a.key === b.key;
 export const url = (ref: Ref): string => `${ref.bucket}/${ref.key}`;
 export const parseUrl = (input: string): ResolvedRef => {
   const [bucket, ...key] = input.split("/");
-  if (bucket === undefined) throw new MPS3Error("InvalidConfig", `Invalid url: ${input}`);
+  if (bucket === undefined) throw new BaerlyError("InvalidConfig", `Invalid url: ${input}`);
   return {
     bucket,
     key: key.join("/"),

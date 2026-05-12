@@ -1,7 +1,7 @@
 /* eslint-disable no-underscore-dangle -- `_raw` is the locked public symbol
    name on `Db` (mirrors the Phase-4 declaration in `@baerly/protocol`). */
 
-import { MemoryStorage, MPS3Error } from "@baerly/protocol";
+import { MemoryStorage, BaerlyError } from "@baerly/protocol";
 import { describe, expect, test } from "vitest";
 import { Db } from "./db";
 
@@ -26,35 +26,35 @@ describe("Db.create", () => {
     expect(typeof db._raw.list).toBe("function");
   });
 
-  test("rejects empty app with MPS3Error{InvalidConfig}", () => {
+  test("rejects empty app with BaerlyError{InvalidConfig}", () => {
     const storage = new MemoryStorage();
-    expect(() => Db.create({ storage, app: "", tenant: "acme" })).toThrow(MPS3Error);
+    expect(() => Db.create({ storage, app: "", tenant: "acme" })).toThrow(BaerlyError);
     try {
       Db.create({ storage, app: "", tenant: "acme" });
     } catch (err) {
-      expect(err).toBeInstanceOf(MPS3Error);
-      expect((err as MPS3Error).code).toBe("InvalidConfig");
+      expect(err).toBeInstanceOf(BaerlyError);
+      expect((err as BaerlyError).code).toBe("InvalidConfig");
     }
   });
 
-  test("rejects empty tenant with MPS3Error{InvalidConfig}", () => {
+  test("rejects empty tenant with BaerlyError{InvalidConfig}", () => {
     const storage = new MemoryStorage();
-    expect(() => Db.create({ storage, app: "x", tenant: "" })).toThrow(MPS3Error);
+    expect(() => Db.create({ storage, app: "x", tenant: "" })).toThrow(BaerlyError);
     try {
       Db.create({ storage, app: "x", tenant: "" });
     } catch (err) {
-      expect((err as MPS3Error).code).toBe("InvalidConfig");
+      expect((err as BaerlyError).code).toBe("InvalidConfig");
     }
   });
 
-  test('rejects "/" in app or tenant with MPS3Error{InvalidConfig}', () => {
+  test('rejects "/" in app or tenant with BaerlyError{InvalidConfig}', () => {
     const storage = new MemoryStorage();
-    expect(() => Db.create({ storage, app: "a/b", tenant: "t" })).toThrow(MPS3Error);
-    expect(() => Db.create({ storage, app: "a", tenant: "t/u" })).toThrow(MPS3Error);
+    expect(() => Db.create({ storage, app: "a/b", tenant: "t" })).toThrow(BaerlyError);
+    expect(() => Db.create({ storage, app: "a", tenant: "t/u" })).toThrow(BaerlyError);
     try {
       Db.create({ storage, app: "a/b", tenant: "t" });
     } catch (err) {
-      expect((err as MPS3Error).code).toBe("InvalidConfig");
+      expect((err as BaerlyError).code).toBe("InvalidConfig");
     }
   });
 });

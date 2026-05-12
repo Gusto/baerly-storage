@@ -46,7 +46,7 @@ pnpm dev:storage:stop # tear down
 ```
 
 Minio runs on `http://127.0.0.1:9102` (S3 API), console on `:9103`
-(login `mps3` / see `docker-compose.yml`); Toxiproxy on `:9104` proxies
+(login `baerly` / see `docker-compose.yml`); Toxiproxy on `:9104` proxies
 Minio for latency/failure injection. The `minio` proxy is declared
 statically in [`docker/toxiproxy.json`](../docker/toxiproxy.json) and
 loaded at container start.

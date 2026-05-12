@@ -12,7 +12,7 @@ import { createBucket } from "../../../tests/fixtures/s3-fixtures";
 //  `tests/integration/conformance.test.ts`,
 //  `docker-compose.yml`). Re-use; do not invent.
 const MINIO_ENDPOINT = "http://127.0.0.1:9102";
-const MINIO_ACCESS_KEY = "mps3";
+const MINIO_ACCESS_KEY = "baerly";
 const MINIO_SECRET_KEY = "ZOAmumEzdsUUcVlQ";
 const MINIO_REGION = "us-east-1";
 const BUCKET = "baerly-conformance-adapter-node";

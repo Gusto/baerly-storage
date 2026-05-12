@@ -20,7 +20,7 @@ interface GateEnv extends BaerlyEnv {
 /**
  * Inline gate-only Verifier. Accepts `Authorization: Bearer
  * <SHARED_SECRET>`; rejects everything else with `null` so
- * `baerlyWorker` translates the result to a 401 + `MPS3Error{code:
+ * `baerlyWorker` translates the result to a 401 + `BaerlyError{code:
  * "Unauthorized"}` envelope. Phase 8 productizes via `@baerly/adapter-
  * cloudflare/presets/sharedSecret`.
  */

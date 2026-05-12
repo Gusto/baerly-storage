@@ -47,7 +47,7 @@ const storage = new S3HttpStorage({
 /**
  * Inline gate-only `Verifier`. Accepts `Authorization: Bearer
  * <SHARED_SECRET>`; returns `null` for everything else so
- * `createListener` translates the result to a 401 + `MPS3Error{code:
+ * `createListener` translates the result to a 401 + `BaerlyError{code:
  * "Unauthorized"}` envelope. Phase 8 productizes via a preset factory.
  *
  * `createListener` constructs a WHATWG `Request` from the inbound

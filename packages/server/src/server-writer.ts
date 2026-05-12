@@ -7,7 +7,7 @@
  * {@link LogEntry}, PUTs the content body and the log entry, and
  * CAS-advances `current.json` with `If-Match`. Up to
  * {@link S3_REQUEST_MAX_RETRIES} attempts on contention before
- * surfacing `MPS3Error{code:"Conflict"}`.
+ * surfacing `BaerlyError{code:"Conflict"}`.
  *
  * The instance carries no per-write cache: every commit re-reads
  * `current.json`, so N stateless server instances writing the same
@@ -39,7 +39,7 @@ import {
   type LogEntry,
   type MetricsRecorder,
   logSeqStartOf,
-  MPS3Error,
+  BaerlyError,
   noopMetricsRecorder,
   type Storage,
   type StoragePutOptions,
@@ -85,7 +85,7 @@ export interface ServerWriterOptions {
    *     loss on `current.json` or `If-None-Match: "*"` loss on the
    *     log PUT).
    *   - `db.r2.put.429_total` counter on rate-limit (best effort —
-   *     detected via `MPS3Error{code:"NetworkError"}` with a `429`
+   *     detected via `BaerlyError{code:"NetworkError"}` with a `429`
    *     token in the message).
    *   - `db.tenant.put_rate` gauge per commit (each commit emits
    *     `1` at observation time; downstream aggregation
@@ -237,23 +237,23 @@ export class ServerWriter {
    * so two writers racing the same `next_seq` cause exactly one PUT
    * to land — the loser falls into the CAS retry path.
    *
-   * @throws MPS3Error code="Conflict" when the retry budget is
+   * @throws BaerlyError code="Conflict" when the retry budget is
    *   exhausted (genuine high-contention case), or when the underlying
    *   `current.json` CAS PUT lost.
-   * @throws MPS3Error code="Conflict" — the writer fence
+   * @throws BaerlyError code="Conflict" — the writer fence
    *   (`current.json.writer_fence.epoch`) was bumped by a concurrent
    *   `claimWriter` call between this commit's read of
    *   `current.json` and its CAS-advance. The stale writer aborts
    *   to honour the new authority — the kernel does NOT retry under
    *   the old epoch. See {@link claimWriter} for the rotation
    *   recipe.
-   * @throws MPS3Error code="Internal" when a log entry expected in
+   * @throws BaerlyError code="Internal" when a log entry expected in
    *   `[0, next_seq)` is missing — a protocol-invariant violation
    *   (compactor bug or stale `current.json`).
-   * @throws MPS3Error code="InvalidResponse" when `current.json` does
+   * @throws BaerlyError code="InvalidResponse" when `current.json` does
    *   not exist (caller must bootstrap it first), or a log-entry body
    *   isn't valid JSON.
-   * @throws MPS3Error code="SchemaError" when `op !== "D"` and `body`
+   * @throws BaerlyError code="SchemaError" when `op !== "D"` and `body`
    *   is missing, or `op === "D"` and `body` is provided.
    */
   async commit(input: CommitInput): Promise<CommitResult> {
@@ -265,7 +265,7 @@ export class ServerWriter {
       // ── Step 1. Read current.json (fresh; carries the ETag). ──────
       const read = await readCurrentJson(this.#storage, this.#currentJsonKey);
       if (read === null) {
-        throw new MPS3Error(
+        throw new BaerlyError(
           "InvalidResponse",
           `ServerWriter: current.json missing at ${this.#currentJsonKey}; bootstrap via createCurrentJson first`,
         );
@@ -414,7 +414,7 @@ export class ServerWriter {
         const bumpLabels: Record<string, string> = { collection: input.collection };
         if (this.#tenant !== "") bumpLabels.tenant = this.#tenant;
         this.#metrics.counter("db.writer.fence_bump_observed_total", 1, bumpLabels);
-        throw new MPS3Error(
+        throw new BaerlyError(
           "Conflict",
           `ServerWriter: writer fence bumped from epoch ${expectedEpoch} to ${postRead.json.writer_fence.epoch} during commit on ${this.#currentJsonKey}; stale writer aborting`,
         );
@@ -438,7 +438,7 @@ export class ServerWriter {
     }
 
     // Retry budget exhausted.
-    throw new MPS3Error(
+    throw new BaerlyError(
       "Conflict",
       `ServerWriter: CAS conflict on ${this.#currentJsonKey} after ${this.#maxRetries} attempts`,
     );
@@ -453,7 +453,7 @@ export class ServerWriter {
    * `If-Match`.
    *
    * NO retry on CAS loss. On `current.json` 412, throws
-   * `MPS3Error{code:"Conflict"}` immediately — the caller (here:
+   * `BaerlyError{code:"Conflict"}` immediately — the caller (here:
    * `Db.transaction`) decides whether to retry by re-running the
    * body, or to surface to the app. Likewise on a log-entry 412
    * (a peer wrote our seq).
@@ -461,21 +461,21 @@ export class ServerWriter {
    * Empty `inputs`: returns `{ entries: [], currentEtag: undefined }`
    * after zero storage operations.
    *
-   * @throws MPS3Error code="Conflict" — CAS lost on `current.json`,
+   * @throws BaerlyError code="Conflict" — CAS lost on `current.json`,
    *   or a log entry already exists at our seq (peer wrote ahead).
-   * @throws MPS3Error code="Conflict" — the writer fence
+   * @throws BaerlyError code="Conflict" — the writer fence
    *   (`current.json.writer_fence.epoch`) was bumped by a concurrent
    *   `claimWriter` call between this batch's read of
    *   `current.json` and its CAS-advance. The stale writer aborts
    *   to honour the new authority — the kernel does NOT retry under
    *   the old epoch. See {@link claimWriter} for the rotation
    *   recipe.
-   * @throws MPS3Error code="Internal" — protocol-invariant violation
+   * @throws BaerlyError code="Internal" — protocol-invariant violation
    *   (missing log entry inside `[0, next_seq)`).
-   * @throws MPS3Error code="InvalidResponse" — `current.json` does
+   * @throws BaerlyError code="InvalidResponse" — `current.json` does
    *   not exist (caller must bootstrap first), or malformed log
    *   body.
-   * @throws MPS3Error code="SchemaError" — an input failed the
+   * @throws BaerlyError code="SchemaError" — an input failed the
    *   `op === "D"` ↔ `body === undefined` invariant.
    */
   async commitBatch(inputs: readonly CommitInput[]): Promise<CommitBatchResult> {
@@ -490,7 +490,7 @@ export class ServerWriter {
     // ── Step 1. Read current.json fresh and capture the ETag. ───────
     const read = await readCurrentJson(this.#storage, this.#currentJsonKey);
     if (read === null) {
-      throw new MPS3Error(
+      throw new BaerlyError(
         "InvalidResponse",
         `ServerWriter.commitBatch: current.json missing at ${this.#currentJsonKey}; bootstrap via createCurrentJson first`,
       );
@@ -573,7 +573,7 @@ export class ServerWriter {
                 collection: entry.collection,
                 step: "log-put",
               });
-              throw new MPS3Error(
+              throw new BaerlyError(
                 "Conflict",
                 `ServerWriter.commitBatch: log entry already exists at ${logEntryKey}; peer wrote our seq`,
                 err,
@@ -604,7 +604,7 @@ export class ServerWriter {
           collection: inputs[0]!.collection,
           step: "current-json-cas",
         });
-        throw new MPS3Error(
+        throw new BaerlyError(
           "Conflict",
           `ServerWriter.commitBatch: CAS conflict on ${this.#currentJsonKey}`,
           err,
@@ -626,7 +626,7 @@ export class ServerWriter {
       const bumpLabels: Record<string, string> = { collection };
       if (this.#tenant !== "") bumpLabels.tenant = this.#tenant;
       this.#metrics.counter("db.writer.fence_bump_observed_total", 1, bumpLabels);
-      throw new MPS3Error(
+      throw new BaerlyError(
         "Conflict",
         `ServerWriter.commitBatch: writer fence bumped from epoch ${expectedEpoch} to ${postRead.json.writer_fence.epoch} during commit on ${this.#currentJsonKey}; stale writer aborting`,
       );
@@ -651,7 +651,7 @@ export class ServerWriter {
   /**
    * Walk `log/<logSeqStart>.json` … `log/<nextSeq - 1>.json` in
    * parallel. Any missing entry is a protocol-invariant violation
-   * (`MPS3Error{code:"Internal"}`). A malformed body surfaces as
+   * (`BaerlyError{code:"Internal"}`). A malformed body surfaces as
    * `InvalidResponse`. The materialised entries are discarded in
    * Phase 3 — Phase 4 will fold them into a per-doc reducer.
    *
@@ -672,7 +672,7 @@ export class ServerWriter {
   async #readLogEntry(key: string): Promise<LogEntry> {
     const got = await this.#storage.get(key);
     if (got === null) {
-      throw new MPS3Error(
+      throw new BaerlyError(
         "Internal",
         `ServerWriter: missing log entry at ${key}; protocol invariant violation`,
       );
@@ -680,14 +680,14 @@ export class ServerWriter {
     try {
       return JSON.parse(new TextDecoder().decode(got.body)) as LogEntry;
     } catch (err) {
-      throw new MPS3Error("InvalidResponse", `ServerWriter: malformed log entry at ${key}`, err);
+      throw new BaerlyError("InvalidResponse", `ServerWriter: malformed log entry at ${key}`, err);
     }
   }
 
   /**
    * Bump the `db.r2.put.429_total` counter when `err` looks like an
    * R2 prefix-partition rate-limit. Best-effort: detected via
-   * `MPS3Error{code:"NetworkError"}` with a `429` token in the
+   * `BaerlyError{code:"NetworkError"}` with a `429` token in the
    * message. Called from every PUT call site's catch arm; mutually
    * exclusive in practice with `isPreconditionFailed` (412 ≠ 429).
    */
@@ -722,10 +722,10 @@ export class ServerWriter {
  */
 const validateInput = (input: CommitInput): void => {
   if (input.op === "D" && input.body !== undefined) {
-    throw new MPS3Error("SchemaError", `ServerWriter: op "D" must not carry a body`);
+    throw new BaerlyError("SchemaError", `ServerWriter: op "D" must not carry a body`);
   }
   if (input.op !== "D" && input.body === undefined) {
-    throw new MPS3Error(
+    throw new BaerlyError(
       "SchemaError",
       `ServerWriter: op "${input.op}" requires a body (post-image)`,
     );
@@ -740,7 +740,7 @@ const validateInput = (input: CommitInput): void => {
  * `Conflict` before re-throwing. Match both shapes.
  */
 const isPreconditionFailed = (err: unknown): boolean => {
-  if (!(err instanceof MPS3Error)) return false;
+  if (!(err instanceof BaerlyError)) return false;
   if (err.code === "Conflict") return true;
   return err.code === "InvalidResponse" && err.message.startsWith("PreconditionFailed:");
 };
@@ -756,11 +756,11 @@ const isCasConflict = (err: unknown): boolean => isPreconditionFailed(err);
  * `true` when the underlying storage surfaced an R2 prefix-partition
  * rate-limit. Best-effort detection: every in-tree {@link Storage}
  * impl wraps transport-layer errors in
- * `MPS3Error{code:"NetworkError"}` and includes the upstream status
+ * `BaerlyError{code:"NetworkError"}` and includes the upstream status
  * code in the message. A `429` token in that message is the canonical
  * "throttled" signal.
  */
 const is429 = (err: unknown): boolean => {
-  if (!(err instanceof MPS3Error)) return false;
+  if (!(err instanceof BaerlyError)) return false;
   return err.code === "NetworkError" && /\b429\b/.test(err.message);
 };

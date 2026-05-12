@@ -50,7 +50,7 @@ the type level.
 A second, separate version stamp lives on the coordination object at
 [`packages/protocol/src/coordination/current-json.ts:56-62`](../../packages/protocol/src/coordination/current-json.ts):
 `CurrentJson.schema_version: 1`, with JSDoc instructing readers to
-reject unknown major versions with `MPS3Error{code:"InvalidResponse"}`.
+reject unknown major versions with `BaerlyError{code:"InvalidResponse"}`.
 That stamp tracks the `current.json` schema, not the document
 schema; both use the same forward-only pattern.
 

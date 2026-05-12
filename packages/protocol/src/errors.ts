@@ -1,9 +1,9 @@
 /**
- * Discriminator for {@link MPS3Error}. Strings (not subclasses) so they
+ * Discriminator for {@link BaerlyError}. Strings (not subclasses) so they
  * survive cross-realm boundaries (e.g. a Web Worker) and so callers can
  * pattern-match with grep-friendly equality.
  */
-export type MPS3ErrorCode =
+export type BaerlyErrorCode =
   /** Caller-provided config or input is invalid (bad bucket, unsupported credential type, malformed URL, bucket not version-enabled when versioning was requested). */
   | "InvalidConfig"
   /** Read attempted while `online: false` and the value isn't in any cache. */
@@ -37,28 +37,28 @@ export type MPS3ErrorCode =
   | "Unauthorized";
 
 /**
- * The single error class thrown by MPS3. Discriminate by `code`, not
+ * The single error class thrown by Baerly. Discriminate by `code`, not
  * `instanceof`:
  *
  * @example
  * ```ts
  * try {
- *   await mps3.get("k");
+ *   await db._raw.get("k");
  * } catch (err) {
- *   if (err instanceof MPS3Error && err.code === "OfflineNoCache") {
+ *   if (err instanceof BaerlyError && err.code === "OfflineNoCache") {
  *     // ... handle offline
  *   }
  *   throw err;
  * }
  * ```
  */
-export class MPS3Error extends Error {
-  readonly code: MPS3ErrorCode;
+export class BaerlyError extends Error {
+  readonly code: BaerlyErrorCode;
   override readonly cause?: unknown;
 
-  constructor(code: MPS3ErrorCode, message: string, cause?: unknown) {
+  constructor(code: BaerlyErrorCode, message: string, cause?: unknown) {
     super(message);
-    this.name = "MPS3Error";
+    this.name = "BaerlyError";
     this.code = code;
     this.cause = cause;
   }

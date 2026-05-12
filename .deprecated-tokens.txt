@@ -36,3 +36,7 @@ src/s3-types.ts                 # 2026-05-10: deleted with s3-client-lite.ts; ty
 S3ClientLite                    # 2026-05-10: class replaced by S3HttpStorage
 s3ClientLite                    # 2026-05-10: MPS3 field replaced by storageFor()
 ListObjectsV2CommandInput       # 2026-05-10: dead with s3-client-lite.ts
+MPS3Error                       # 2026-05-12: renamed to BaerlyError (project renamed mps3 → baerly)
+MPS3ErrorCode                   # 2026-05-12: renamed to BaerlyErrorCode
+MPS3Config                      # 2026-05-12: renamed to BaerlyConfig (config type itself dropped earlier; pin guards reintroduction)
+ResolvedMPS3Config              # 2026-05-12: renamed to ResolvedBaerlyConfig

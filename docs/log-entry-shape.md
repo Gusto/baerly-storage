@@ -211,7 +211,7 @@ Mapping at the SSE adapter:
 Log entries are PUT **before** the CAS-advance of `current.json`
 (with `If-None-Match: *` so a colliding `lsn` fails fast). If the
 post-CAS `writer_fence.epoch` check bumps, the commit fails with
-`MPS3Error{code:"Conflict"}` and the orphan log entries are
+`BaerlyError{code:"Conflict"}` and the orphan log entries are
 swept by GC (`packages/server/src/gc.ts`).
 
 A consumer that's mid-`/cdc/v1/stream` may briefly observe a

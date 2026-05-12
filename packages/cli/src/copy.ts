@@ -11,7 +11,7 @@
  *
  * Surface:
  *   - {@link runCopy} — top-level CLI entry; turns thrown
- *     `MPS3Error`s into integer exit codes.
+ *     `BaerlyError`s into integer exit codes.
  *   - {@link doCopy} — programmatic walker; throws on every failure
  *     path. Tests import this when they want explicit error
  *     assertions.
@@ -24,7 +24,7 @@
 import { LocalFsStorage } from "@baerly/dev";
 import {
   CURRENT_JSON_SCHEMA_VERSION,
-  MPS3Error,
+  BaerlyError,
   MemoryStorage,
   S3HttpStorage,
   createCurrentJson,
@@ -91,7 +91,7 @@ export interface ParsedCursor {
  *   `getOrCreateMemoryStorageForBucket`, so source/target URIs in the
  *   same process share a backing store. Test-only.
  *
- * @throws MPS3Error code="InvalidConfig" — unsupported scheme, or an
+ * @throws BaerlyError code="InvalidConfig" — unsupported scheme, or an
  *   `s3://` URI with a missing env var.
  */
 export const parseBucketUri = async (uri: string): Promise<ParsedBucketUri> => {
@@ -101,7 +101,7 @@ export const parseBucketUri = async (uri: string): Promise<ParsedBucketUri> => {
     const bucket = slash === -1 ? rest : rest.slice(0, slash);
     const prefix = slash === -1 ? "" : rest.slice(slash + 1);
     if (bucket.length === 0) {
-      throw new MPS3Error(
+      throw new BaerlyError(
         "InvalidConfig",
         `baerly copy: s3:// URI requires a bucket name (got ${JSON.stringify(uri)})`,
       );
@@ -130,20 +130,20 @@ export const parseBucketUri = async (uri: string): Promise<ParsedBucketUri> => {
   if (uri.startsWith("memory://")) {
     const bucket = uri.slice(9);
     if (bucket.length === 0) {
-      throw new MPS3Error(
+      throw new BaerlyError(
         "InvalidConfig",
         `baerly copy: memory:// URI requires a bucket name (got ${JSON.stringify(uri)})`,
       );
     }
     return { storage: getOrCreateMemoryStorageForBucket(bucket), keyPrefix: "" };
   }
-  throw new MPS3Error("InvalidConfig", `baerly copy: unsupported URI ${JSON.stringify(uri)}`);
+  throw new BaerlyError("InvalidConfig", `baerly copy: unsupported URI ${JSON.stringify(uri)}`);
 };
 
 const requireEnv = (name: string): string => {
   const v = process.env[name];
   if (v === undefined || v === "") {
-    throw new MPS3Error("InvalidConfig", `baerly copy: env var ${name} unset`);
+    throw new BaerlyError("InvalidConfig", `baerly copy: env var ${name} unset`);
   }
   return v;
 };
@@ -168,13 +168,13 @@ const requireEnv = (name: string): string => {
  * (e.g. `"abc..."`) and `@` does not appear in the Baerly key
  * alphabet, so `lastIndexOf("@")` cleanly splits the two halves.
  *
- * @throws MPS3Error code="InvalidConfig" — missing `@`, empty
+ * @throws BaerlyError code="InvalidConfig" — missing `@`, empty
  *   `currentJsonKey`, or empty `etag`.
  */
 export const parseCursor = (cursor: string): ParsedCursor => {
   const at = cursor.lastIndexOf("@");
   if (at < 1 || at === cursor.length - 1) {
-    throw new MPS3Error(
+    throw new BaerlyError(
       "InvalidConfig",
       `baerly copy: cursor must be "<currentJsonKey>@<etag>", got ${JSON.stringify(cursor)}`,
     );
@@ -193,7 +193,7 @@ const parseArgs = (argv: readonly string[]): CopyArgs => {
   for (const a of argv) {
     const eq = a.indexOf("=");
     if (!a.startsWith("--") || eq < 3) {
-      throw new MPS3Error(
+      throw new BaerlyError(
         "InvalidConfig",
         `baerly copy: expected --key=value, got ${JSON.stringify(a)}`,
       );
@@ -203,10 +203,10 @@ const parseArgs = (argv: readonly string[]): CopyArgs => {
     if (k === "from") out.from = v;
     else if (k === "from-snapshot") out.fromSnapshot = v;
     else if (k === "to") out.to = v;
-    else throw new MPS3Error("InvalidConfig", `baerly copy: unknown flag --${k}`);
+    else throw new BaerlyError("InvalidConfig", `baerly copy: unknown flag --${k}`);
   }
   if (out.from === undefined || out.fromSnapshot === undefined || out.to === undefined) {
-    throw new MPS3Error(
+    throw new BaerlyError(
       "InvalidConfig",
       "baerly copy: required flags --from, --from-snapshot, --to",
     );
@@ -216,13 +216,13 @@ const parseArgs = (argv: readonly string[]): CopyArgs => {
 
 /**
  * CLI entry. Parses args, dispatches to `doCopy`, and translates
- * `MPS3Error.code` into the exit-code contract documented in
+ * `BaerlyError.code` into the exit-code contract documented in
  * `baerly --help`:
  *
  *   - `0` — success
  *   - `1` — user error (`InvalidConfig`)
  *   - `2` — storage error (`NetworkError`, `AccessDenied`, anything
- *     non-`MPS3Error`)
+ *     non-`BaerlyError`)
  *   - `3` — protocol invariant (`Conflict`, `Internal`,
  *     `InvalidResponse`)
  *
@@ -240,7 +240,7 @@ export const runCopy = async (argv: readonly string[]): Promise<number> => {
     await doCopy(src, dst, cursor);
     return 0;
   } catch (err) {
-    if (err instanceof MPS3Error) {
+    if (err instanceof BaerlyError) {
       process.stderr.write(`baerly copy: ${err.code}: ${err.message}\n`);
       if (err.code === "InvalidConfig") return 1;
       if (err.code === "Conflict" || err.code === "Internal" || err.code === "InvalidResponse") {
@@ -266,12 +266,12 @@ export const runCopy = async (argv: readonly string[]): Promise<number> => {
  * the snapshot dominates — roughly a 100× reduction over a naive
  * log-replay.
  *
- * @throws MPS3Error code="InvalidConfig" — source `current.json`
+ * @throws BaerlyError code="InvalidConfig" — source `current.json`
  *   missing at the cursor's key.
- * @throws MPS3Error code="Conflict" — source advanced past the
+ * @throws BaerlyError code="Conflict" — source advanced past the
  *   cursor (live ETag ≠ expected ETag), OR the target is already
  *   populated (`createCurrentJson` lost its `If-None-Match: "*"`).
- * @throws MPS3Error code="Internal" — a log entry expected in
+ * @throws BaerlyError code="Internal" — a log entry expected in
  *   `[log_seq_start, next_seq)` is missing on the source — protocol
  *   invariant violation.
  */
@@ -283,13 +283,13 @@ export const doCopy = async (
   // 1. Read source current.json; refuse if ETag moved past cursor.
   const srcCur = await readCurrentJson(src.storage, cursor.currentJsonKey);
   if (srcCur === null) {
-    throw new MPS3Error(
+    throw new BaerlyError(
       "InvalidConfig",
       `baerly copy: source current.json not found at ${cursor.currentJsonKey}`,
     );
   }
   if (srcCur.etag !== cursor.expectedEtag) {
-    throw new MPS3Error(
+    throw new BaerlyError(
       "Conflict",
       `baerly copy: source advanced (cursor ${cursor.expectedEtag}, live ${srcCur.etag})`,
     );
@@ -301,7 +301,7 @@ export const doCopy = async (
   //    `physicalPrefixFor` in `packages/server/src/db.ts`).
   const lastSlash = cursor.currentJsonKey.lastIndexOf("/");
   if (lastSlash < 0) {
-    throw new MPS3Error(
+    throw new BaerlyError(
       "InvalidConfig",
       `baerly copy: cursor currentJsonKey ${JSON.stringify(cursor.currentJsonKey)} must contain "/"`,
     );
@@ -325,13 +325,13 @@ export const doCopy = async (
     const logEntryKey = `${tablePrefix}/log/${s}.json`;
     const got = await src.storage.get(logEntryKey);
     if (got === null) {
-      throw new MPS3Error("Internal", `baerly copy: missing log entry at ${logEntryKey}`);
+      throw new BaerlyError("Internal", `baerly copy: missing log entry at ${logEntryKey}`);
     }
     let entry: LogEntry;
     try {
       entry = JSON.parse(textDecoder.decode(got.body)) as LogEntry;
     } catch (e) {
-      throw new MPS3Error(
+      throw new BaerlyError(
         "InvalidResponse",
         `baerly copy: log entry at ${logEntryKey} is not valid JSON`,
         e,

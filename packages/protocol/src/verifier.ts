@@ -11,13 +11,13 @@
  *    URL-derived target (e.g. `/v1/t/<table>/<id>`) against the
  *    physical prefix `app/<app>/tenant/<tenantPrefix>/...`. Anything
  *    that would escape the prefix is rejected with
- *    `MPS3Error{code:"AccessDenied"}` and HTTP 403.
+ *    `BaerlyError{code:"AccessDenied"}` and HTTP 403.
  * 2. **`Db` construction.** After the scope check passes, the
  *    dispatcher invokes
  *    `Db.create({ storage, app, tenant: tenantPrefix })`. `Db.create`
  *    enforces that `tenantPrefix` is non-empty and contains no `/`
  *    (the key-segment separator). A `Verifier` that violates either
- *    constraint surfaces as `MPS3Error{code:"InvalidConfig"}` from
+ *    constraint surfaces as `BaerlyError{code:"InvalidConfig"}` from
  *    `Db.create`; the dispatcher maps that to 500 +
  *    `code:"Internal"` because it indicates a Verifier bug, not a
  *    client error.
@@ -56,7 +56,7 @@ export interface VerifierResult {
  * middleware chain. The Phase 6 HTTP dispatcher invokes the
  * configured `Verifier` exactly once per request, before any
  * `Storage` I/O, and either constructs a tenant-scoped `Db` or
- * returns 401 `MPS3Error{code:"Unauthorized"}`.
+ * returns 401 `BaerlyError{code:"Unauthorized"}`.
  *
  * `Request` is the standard `globalThis.Request` — the same shape
  * used by Cloudflare Workers, Node 24+, Bun, Deno, and browsers.
@@ -68,7 +68,7 @@ export interface VerifierResult {
  *
  * **Errors.** A `Verifier` SHOULD return `null` for any
  * unauthenticated outcome — missing header, bad signature, expired
- * token, IP outside allowlist. It MAY throw an `MPS3Error` for
+ * token, IP outside allowlist. It MAY throw an `BaerlyError` for
  * configuration problems (the IdP's JWKS endpoint is unreachable,
  * the shared-secret env var is missing). Throws propagate to the
  * dispatcher, which maps them to 500 + `code:"Internal"`. The

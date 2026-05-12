@@ -96,7 +96,7 @@ Background on adjacent "small DB on a small runtime" products
   respects documented constraints.
 - **Browser-direct multi-writer is OUT.** Trusted multi-instance is
   the design center; browser-direct is a different protocol problem
-  and the audience does not need it. (MPS3, the predecessor
+  and the audience does not need it. (Baerly, the predecessor
   project, was browser-direct multiplayer; Baerly is not.)
 - **Realtime is opt-in, not the default.** Polling is always
   correct, even when realtime is on.

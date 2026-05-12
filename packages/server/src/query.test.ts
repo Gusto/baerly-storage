@@ -13,7 +13,7 @@ import {
   createCurrentJson,
   type JSONArraylessObject,
   MemoryStorage,
-  MPS3Error,
+  BaerlyError,
 } from "@baerly/protocol";
 import { beforeEach, describe, expect, test } from "vitest";
 import { compact } from "./compactor";
@@ -258,17 +258,17 @@ describe("Db.table read terminals", () => {
 
   test("case 11: invalid table name throws InvalidConfig", async () => {
     // Empty name → InvalidConfig (constructed at .table() call).
-    expect(() => db.table("")).toThrow(MPS3Error);
+    expect(() => db.table("")).toThrow(BaerlyError);
     try {
       db.table("");
     } catch (err) {
-      expect((err as MPS3Error).code).toBe("InvalidConfig");
+      expect((err as BaerlyError).code).toBe("InvalidConfig");
     }
     // Slash in name → InvalidConfig.
     try {
       db.table("a/b");
     } catch (err) {
-      expect((err as MPS3Error).code).toBe("InvalidConfig");
+      expect((err as BaerlyError).code).toBe("InvalidConfig");
     }
   });
 
@@ -283,8 +283,8 @@ describe("Db.table read terminals", () => {
       await db.table(COLL).where({}).all();
       throw new Error("expected malformed log entry to throw");
     } catch (err) {
-      expect(err).toBeInstanceOf(MPS3Error);
-      expect((err as MPS3Error).code).toBe("InvalidResponse");
+      expect(err).toBeInstanceOf(BaerlyError);
+      expect((err as BaerlyError).code).toBe("InvalidResponse");
     }
   });
 

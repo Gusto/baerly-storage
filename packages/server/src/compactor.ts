@@ -29,7 +29,7 @@ import {
   type LogEntry,
   type MetricsRecorder,
   logSeqStartOf,
-  MPS3Error,
+  BaerlyError,
   noopMetricsRecorder,
   readCurrentJson,
   snapshotHash,
@@ -178,10 +178,10 @@ const APPLICATION_JSON = "application/json";
  * another run. The orphan snapshot file just written will be swept by
  * ticket 15.
  *
- * @throws MPS3Error code="InvalidResponse" — `current.json` is
+ * @throws BaerlyError code="InvalidResponse" — `current.json` is
  *   present but malformed, or a snapshot body fails its schema /
  *   collection cross-check.
- * @throws MPS3Error code="Internal" — protocol-invariant violation:
+ * @throws BaerlyError code="Internal" — protocol-invariant violation:
  *   a log entry missing inside `[log_seq_start, foldEnd)`, or the
  *   prior-snapshot pointer resolves to no body / a body whose hash
  *   doesn't match its filename.
@@ -369,11 +369,11 @@ export const compact = async (
  * `Map<_id, body>`. Used by both the compactor (loading the prior
  * snapshot as a fold base) and the reader (`Query.runRead`).
  *
- * @throws MPS3Error code="Internal" — the pointer resolves to no
+ * @throws BaerlyError code="Internal" — the pointer resolves to no
  *   body, or the body's hash doesn't match the filename. A crashed
  *   mid-PUT compactor produces the latter; readers treat it as
  *   "missing."
- * @throws MPS3Error code="InvalidResponse" — body isn't valid JSON,
+ * @throws BaerlyError code="InvalidResponse" — body isn't valid JSON,
  *   carries an unknown schema_version, or names a different
  *   collection than expected.
  */
@@ -385,7 +385,7 @@ export const loadSnapshotAsMap = async (
 ): Promise<Map<string, JSONArraylessObject>> => {
   const got = await storage.get(key, signal !== undefined ? { signal } : undefined);
   if (got === null) {
-    throw new MPS3Error(
+    throw new BaerlyError(
       "Internal",
       `compact: snapshot pointer ${key} resolves to no body; protocol violation`,
     );
@@ -399,7 +399,7 @@ export const loadSnapshotAsMap = async (
   const expectedHash = filename.slice(lastDash + 1);
   const actualHash = await snapshotHash(got.body);
   if (actualHash !== expectedHash) {
-    throw new MPS3Error(
+    throw new BaerlyError(
       "Internal",
       `compact: snapshot ${key} body hash mismatch (got ${actualHash}); protocol violation`,
     );
@@ -408,20 +408,20 @@ export const loadSnapshotAsMap = async (
   try {
     parsed = JSON.parse(new TextDecoder().decode(got.body));
   } catch (e) {
-    throw new MPS3Error("InvalidResponse", `compact: snapshot ${key} body is not valid JSON`, e);
+    throw new BaerlyError("InvalidResponse", `compact: snapshot ${key} body is not valid JSON`, e);
   }
   if (parsed === null || typeof parsed !== "object") {
-    throw new MPS3Error("InvalidResponse", `compact: snapshot ${key} body is not an object`);
+    throw new BaerlyError("InvalidResponse", `compact: snapshot ${key} body is not an object`);
   }
   const body = parsed as SnapshotBody;
   if (body.schema_version !== 1) {
-    throw new MPS3Error(
+    throw new BaerlyError(
       "InvalidResponse",
       `compact: snapshot ${key} has unsupported schema_version ${String(body.schema_version)}`,
     );
   }
   if (body.collection !== expectedCollection) {
-    throw new MPS3Error(
+    throw new BaerlyError(
       "InvalidResponse",
       `compact: snapshot ${key} carries collection ${body.collection}, expected ${expectedCollection}`,
     );
@@ -442,7 +442,7 @@ const readLogEntry = async (
 ): Promise<LogEntry> => {
   const got = await storage.get(key, signal !== undefined ? { signal } : undefined);
   if (got === null) {
-    throw new MPS3Error(
+    throw new BaerlyError(
       "Internal",
       `compact: missing log entry at ${key}; protocol invariant violation`,
     );
@@ -450,7 +450,7 @@ const readLogEntry = async (
   try {
     return JSON.parse(new TextDecoder().decode(got.body)) as LogEntry;
   } catch (e) {
-    throw new MPS3Error("InvalidResponse", `compact: malformed log entry at ${key}`, e);
+    throw new BaerlyError("InvalidResponse", `compact: malformed log entry at ${key}`, e);
   }
 };
 
@@ -462,7 +462,7 @@ const readLogEntry = async (
  * translation). Match both shapes.
  */
 const isCasConflict = (err: unknown): boolean => {
-  if (!(err instanceof MPS3Error)) return false;
+  if (!(err instanceof BaerlyError)) return false;
   if (err.code === "Conflict") return true;
   return err.code === "InvalidResponse" && err.message.startsWith("PreconditionFailed:");
 };

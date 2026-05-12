@@ -52,7 +52,7 @@ export declare class Db<S extends SchemaMap = SchemaMap> {
    * a `Table<T>` (not a `Db`), so cross-table writes inside a
    * transaction are a TypeScript error at compile time — not a
    * runtime trap. Single-attempt: on CAS conflict the body throws
-   * `MPS3Error{code: "Conflict"}`; wrap in a retry loop *you wrote*
+   * `BaerlyError{code: "Conflict"}`; wrap in a retry loop *you wrote*
    * if you want one. ADR-0019 records the scope decision.
    *
    * @example
@@ -63,7 +63,7 @@ export declare class Db<S extends SchemaMap = SchemaMap> {
    * });
    * ```
    *
-   * @throws MPS3Error{code: "Conflict"} — CAS lost on the table's
+   * @throws BaerlyError{code: "Conflict"} — CAS lost on the table's
    *         `current.json`. The body ran but the commit didn't win.
    */
   transaction<T extends JSONArraylessObject = JSONArraylessObject>(
@@ -128,9 +128,9 @@ export interface Table<T extends JSONArraylessObject = JSONArraylessObject> {
    * Insert a new document. UUIDv7 auto-id on `_id`; caller can
    * supply `_id` and the server honours it. Returns the new id.
    *
-   * @throws MPS3Error{code: "Conflict"} — `_id` collision on
+   * @throws BaerlyError{code: "Conflict"} — `_id` collision on
    *         caller-supplied id.
-   * @throws MPS3Error{code: "SchemaError"} — malformed JSON, or
+   * @throws BaerlyError{code: "SchemaError"} — malformed JSON, or
    *         (Phase 9) schema-validation failure.
    */
   insert(doc: Partial<T> & JSONArraylessObject): Promise<{ _id: string }>;
@@ -191,7 +191,7 @@ export interface Query<T extends JSONArraylessObject = JSONArraylessObject> {
    * `.limit()`). Mutations are always strong — no `eventual`
    * mutation path. HTTP mirror: `?consistency=eventual` on the two
    * read routes; any other value →
-   * `MPS3Error{code:"InvalidConfig"}`.
+   * `BaerlyError{code:"InvalidConfig"}`.
    *
    * @example
    * ```ts
@@ -220,16 +220,16 @@ export interface Query<T extends JSONArraylessObject = JSONArraylessObject> {
    * JSON-merge-patch (RFC 7386) applied to every matching doc.
    * Atomic per row. `null` at any field deletes it.
    *
-   * @throws MPS3Error{code: "Conflict"} — concurrent write lost
+   * @throws BaerlyError{code: "Conflict"} — concurrent write lost
    *         the CAS race. Caller's choice whether to retry.
-   * @throws MPS3Error{code: "SchemaError"} — patch produced an
+   * @throws BaerlyError{code: "SchemaError"} — patch produced an
    *         invalid doc.
    */
   update(patch: Partial<T>): Promise<{ modified: number }>;
 
   /**
    * Whole-document replace on the first matching row. Throws
-   * `MPS3Error{code: "Conflict"}` if zero or more than one row
+   * `BaerlyError{code: "Conflict"}` if zero or more than one row
    * matches — `replace` is intentionally narrow.
    */
   replace(doc: T): Promise<void>;
@@ -246,7 +246,7 @@ export interface RawApi {
   /**
    * Append one `LogEntry`. CAS on `current.json` runs underneath.
    *
-   * @throws MPS3Error{code: "SchemaError"} — body is not valid
+   * @throws BaerlyError{code: "SchemaError"} — body is not valid
    *         JSON or contains an array where `JSONArrayless` is
    *         required.
    */

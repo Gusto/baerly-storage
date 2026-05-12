@@ -44,7 +44,7 @@ by the writer at
 [`packages/server/src/server-writer.ts:1-25`](../../packages/server/src/server-writer.ts),
 which reads `current.json` fresh on every commit, CAS-advances with
 `If-Match`, and loses cleanly with a 412 surfaced as
-`MPS3Error{code:"Conflict"}`.
+`BaerlyError{code:"Conflict"}`.
 
 ## Consequences
 

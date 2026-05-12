@@ -68,7 +68,7 @@ graph TD
    `If-None-Match: *`, and CAS-advances `current.json` to the
    new `next_seq` (preserving the `log_seq_start` invariant).
    Retries up to `S3_REQUEST_MAX_RETRIES` (default 8) on transient
-   CAS conflict; fails fast with `MPS3Error{code:"Conflict"}` on a
+   CAS conflict; fails fast with `BaerlyError{code:"Conflict"}` on a
    `writer_fence.epoch` bump.
 
 3. **Read path: `Table.where(p).all()`**
@@ -129,7 +129,7 @@ constraint; the rationale is in
 - **Split-brain fencing:** `writer_fence.epoch` inside `current.json`.
   `claimWriter()` (re-exported from `@baerly/protocol`) bumps the
   epoch; an in-flight commit holding the prior epoch fails fast on
-  the post-CAS fence check with `MPS3Error{code:"Conflict"}`.
+  the post-CAS fence check with `BaerlyError{code:"Conflict"}`.
 - **JSON Merge Patch semantics:** `packages/protocol/src/json.ts` —
   RFC 7386 with the array-replacement convention; see
   [JSON_merge_patch.md](JSON_merge_patch.md).
@@ -157,7 +157,7 @@ constraint; the rationale is in
 - `Branded<T, B>` (`packages/protocol/src/types.ts`): nominal-type
   pattern. `UUID` and `VersionId` are both `string`s but not
   assignable to each other.
-- `MPS3Error` / `MPS3ErrorCode` (`packages/protocol/src/errors.ts`):
+- `BaerlyError` / `BaerlyErrorCode` (`packages/protocol/src/errors.ts`):
   discriminated-union error type. Branch on `error.code`.
 
 ## Storage layout in the bucket

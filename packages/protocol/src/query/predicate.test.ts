@@ -2,7 +2,7 @@ import { fc, test as fcTest } from "@fast-check/vitest";
 import { describe, expect, test } from "vitest";
 
 import type { Predicate } from "../db";
-import { MPS3Error } from "../errors";
+import { BaerlyError } from "../errors";
 import type { JSONArrayless, JSONObject } from "../json";
 
 import { matches, mergePredicates, validatePredicate } from "./predicate";
@@ -11,12 +11,12 @@ const expectInvalidConfig = (fn: () => unknown, snippet: string): void => {
   try {
     fn();
   } catch (err) {
-    expect(err).toBeInstanceOf(MPS3Error);
-    expect((err as MPS3Error).code).toBe("InvalidConfig");
-    expect((err as MPS3Error).message).toContain(snippet);
+    expect(err).toBeInstanceOf(BaerlyError);
+    expect((err as BaerlyError).code).toBe("InvalidConfig");
+    expect((err as BaerlyError).message).toContain(snippet);
     return;
   }
-  throw new Error(`Expected MPS3Error{InvalidConfig}, none thrown`);
+  throw new Error(`Expected BaerlyError{InvalidConfig}, none thrown`);
 };
 
 describe("validatePredicate — happy paths", () => {
@@ -259,8 +259,8 @@ fcTest.prop({ a: flatPredArb, b: flatPredArb, doc: docArb })(
     try {
       merged = mergePredicates(a, b);
     } catch (err) {
-      expect(err).toBeInstanceOf(MPS3Error);
-      expect((err as MPS3Error).code).toBe("InvalidConfig");
+      expect(err).toBeInstanceOf(BaerlyError);
+      expect((err as BaerlyError).code).toBe("InvalidConfig");
       return;
     }
     expect(matches(merged, doc)).toBe(matches(a, doc) && matches(b, doc));

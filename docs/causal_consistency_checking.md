@@ -180,12 +180,12 @@ The clauses that conflict are
 
 ## Conclusion
 
-We use this framework for randomized testing of the MPS3 client so we can test for causal consistency. Causal consistency is the true contract we want to offer over multiple concurrent clients. Layering causal consistency semantics over vanilla S3 is not easy, so we need to go the extra mile to check the complexity is achieving what we hoped for. 
+We use this framework for randomized testing of the Baerly client so we can test for causal consistency. Causal consistency is the true contract we want to offer over multiple concurrent clients. Layering causal consistency semantics over vanilla S3 is not easy, so we need to go the extra mile to check the complexity is achieving what we hoped for. 
 
 In fact, the checker immediately found a bug with one of the possible configurations of the clients (the no versioning setting). I am very pleased this could be implemented with no additional dependencies in pure Javascript with very little code.
 
 The next obvious step is to generalize the system to handle clients joining and leaving multiple independent ordered topics. This article was
-written as a basic introduction to the technique that we will build upon during future development of MPS3.
+written as a basic introduction to the technique that we will build upon during future development of Baerly.
 
 
 ### Links

@@ -1,4 +1,4 @@
-# S3 features used by MPS3
+# S3 features used by Baerly
 
 ### `PUT and GET /<bucket>/<key>
 

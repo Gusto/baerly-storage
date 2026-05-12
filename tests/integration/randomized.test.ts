@@ -1,7 +1,7 @@
 /**
  * Randomized causal-consistency cascade — Node-side variant runner.
  *
- * Replaces the legacy `MPS3`-class harness. Now drives
+ * Replaces the legacy `Baerly`-class harness. Now drives
  * `ServerWriter.commit()` through three Node-runnable backends:
  *   - `memory`    — `MemoryStorage` shared per bucket; zero infra.
  *   - `local-fs`  — `LocalFsStorage` over a fresh tmp dir; zero infra.
@@ -37,7 +37,7 @@ import { runCausalConsistencyCascade } from "../fixtures/randomized-cascade";
 const stableConfig = {
   endpoint: "http://127.0.0.1:9102",
   region: "eu-central-1",
-  credentials: { accessKeyId: "mps3", secretAccessKey: "ZOAmumEzdsUUcVlQ" },
+  credentials: { accessKeyId: "baerly", secretAccessKey: "ZOAmumEzdsUUcVlQ" },
 };
 const unstableConfig = { ...stableConfig, endpoint: "http://127.0.0.1:9104" };
 

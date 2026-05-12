@@ -48,7 +48,7 @@ Three options for what "locked" should mean:
 ## Decision
 
 The Phase-4 surface is *additive-only* locked. New methods, new
-optional config fields, and new `MPS3ErrorCode` values are allowed
+optional config fields, and new `BaerlyErrorCode` values are allowed
 without an ADR; renames and behavioural shifts are prohibited and
 require a supersession ADR.
 
@@ -56,12 +56,12 @@ Locked surface, by file:
 
 - `Db` ([`packages/server/src/db.ts`](../../packages/server/src/db.ts)):
   - `Db.create({ storage, app, tenant }) -> Db` — fails
-    `MPS3Error{code:"InvalidConfig"}` if `app` or `tenant` is empty.
+    `BaerlyError{code:"InvalidConfig"}` if `app` or `tenant` is empty.
   - `db.table<T>(name) -> Table<T>` — name must be non-empty and must
     not contain `/`.
   - `db.transaction<T>(table, body) -> Promise<void>` — body receives
     `Table<T>`, NOT `Db`; cross-table writes are a compile error;
-    single-attempt, CAS conflict throws `MPS3Error{code:"Conflict"}`.
+    single-attempt, CAS conflict throws `BaerlyError{code:"Conflict"}`.
   - `db._raw: RawStorageApi` — escape hatch; re-applies the
     `app/<app>/tenant/<tenant>/` prefix internally.
   - Readonly properties: `db.app`, `db.tenant`.
@@ -85,7 +85,7 @@ Allowed additive changes (no ADR required):
 - New methods on `Db` / `Table` / `Query` that do not shadow existing
   names.
 - New optional config fields on `Db.create` (e.g. `metrics`, `signal`).
-- New `MPS3ErrorCode` values appended to the union in
+- New `BaerlyErrorCode` values appended to the union in
   [`packages/protocol/src/errors.ts`](../../packages/protocol/src/errors.ts).
 
 Prohibited without a supersession ADR:

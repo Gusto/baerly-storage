@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, posix, relative, resolve, sep } from "node:path";
-import { MPS3Error } from "@baerly/protocol";
+import { BaerlyError } from "@baerly/protocol";
 import type {
   Storage,
   StorageGetOptions,
@@ -52,7 +52,7 @@ export class LocalFsStorage implements Storage {
       body = await readFile(path);
     } catch (e) {
       if (isErrnoException(e) && e.code === "ENOENT") return null;
-      throw new MPS3Error(
+      throw new BaerlyError(
         "InvalidResponse",
         `LocalFsStorage.get(${key}): ${(e as Error).message}`,
         e,
@@ -76,21 +76,21 @@ export class LocalFsStorage implements Storage {
       // not rely on these guards (see class JSDoc).
       const existing = await readExisting(path);
       if (opts?.ifNoneMatch === "*" && existing !== null) {
-        throw new MPS3Error(
+        throw new BaerlyError(
           "InvalidResponse",
           `PreconditionFailed: ifNoneMatch="*" but key ${key} already exists`,
         );
       }
       if (opts?.ifMatch !== undefined) {
         if (existing === null) {
-          throw new MPS3Error(
+          throw new BaerlyError(
             "InvalidResponse",
             `PreconditionFailed: ifMatch=${opts.ifMatch} but key ${key} does not exist`,
           );
         }
         const currentEtag = etagOf(existing);
         if (currentEtag !== opts.ifMatch) {
-          throw new MPS3Error(
+          throw new BaerlyError(
             "InvalidResponse",
             `PreconditionFailed: ifMatch=${opts.ifMatch} but current ETag is ${currentEtag}`,
           );
@@ -115,7 +115,7 @@ export class LocalFsStorage implements Storage {
       // Best-effort cleanup of the temp file; swallow any error there
       // so the original failure surfaces unchanged.
       await rm(tmp, { force: true }).catch(() => {});
-      throw new MPS3Error(
+      throw new BaerlyError(
         "InvalidResponse",
         `LocalFsStorage.put(${key}): ${(e as Error).message}`,
         e,
@@ -131,7 +131,7 @@ export class LocalFsStorage implements Storage {
       await rm(path);
     } catch (e) {
       if (isErrnoException(e) && e.code === "ENOENT") return; // idempotent
-      throw new MPS3Error(
+      throw new BaerlyError(
         "InvalidResponse",
         `LocalFsStorage.delete(${key}): ${(e as Error).message}`,
         e,
@@ -169,25 +169,25 @@ export class LocalFsStorage implements Storage {
    * Map an S3-style key to a filesystem path under `#root`, rejecting
    * anything that could escape the root (path traversal, absolute
    * paths, empty segments, backslashes). All rejections throw
-   * `MPS3Error("InvalidConfig", …)`.
+   * `BaerlyError("InvalidConfig", …)`.
    */
   #pathFor(key: string): string {
     if (key.length === 0) {
-      throw new MPS3Error("InvalidConfig", "LocalFsStorage: empty key");
+      throw new BaerlyError("InvalidConfig", "LocalFsStorage: empty key");
     }
     if (key.startsWith("/")) {
-      throw new MPS3Error("InvalidConfig", `LocalFsStorage: leading "/" in key: ${key}`);
+      throw new BaerlyError("InvalidConfig", `LocalFsStorage: leading "/" in key: ${key}`);
     }
     if (key.includes("\\")) {
-      throw new MPS3Error("InvalidConfig", `LocalFsStorage: backslash in key: ${key}`);
+      throw new BaerlyError("InvalidConfig", `LocalFsStorage: backslash in key: ${key}`);
     }
     const segments = key.split("/");
     if (segments.some((s) => s === "" || s === "." || s === "..")) {
-      throw new MPS3Error("InvalidConfig", `LocalFsStorage: illegal segment in key: ${key}`);
+      throw new BaerlyError("InvalidConfig", `LocalFsStorage: illegal segment in key: ${key}`);
     }
     const path = join(this.#root, ...segments);
     if (path !== this.#root && !path.startsWith(this.#root + sep)) {
-      throw new MPS3Error("InvalidConfig", `LocalFsStorage: resolved path escapes root: ${key}`);
+      throw new BaerlyError("InvalidConfig", `LocalFsStorage: resolved path escapes root: ${key}`);
     }
     return path;
   }

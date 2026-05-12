@@ -51,7 +51,7 @@ import {
   GC_GRACE_PERIOD_MILLIS,
   GC_MAX_PENDING_CANDIDATES,
   GC_PENDING_SCHEMA_VERSION,
-  MPS3Error,
+  BaerlyError,
   casUpdateGcPending,
   createGcPending,
   logSeqStartOf,
@@ -187,7 +187,7 @@ export const runGc = async (
     try {
       pending = await createGcPending(storage, gcPendingKey, initial, signalOpts);
     } catch (err) {
-      if (err instanceof MPS3Error && err.code === "Conflict") {
+      if (err instanceof BaerlyError && err.code === "Conflict") {
         pending = await readGcPending(storage, gcPendingKey, signalOpts);
         if (pending === null) throw err;
       } else {
@@ -310,7 +310,7 @@ export const runGc = async (
     // The DELETEs we issued are durable; the next pass picks up any
     // marks we couldn't persist. Surface success — re-throwing here
     // would mask the work we DID complete.
-    if (err instanceof MPS3Error && err.code === "Conflict") {
+    if (err instanceof BaerlyError && err.code === "Conflict") {
       // Best-effort: we know `remaining.length` is at least the
       // post-sweep depth; concurrent passes may have moved it.
       pendingDepth = remaining.length;

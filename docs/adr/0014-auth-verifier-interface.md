@@ -26,7 +26,7 @@ is small on purpose; the auth surface has to be smaller still.
 
 Forward-references in
 [`packages/protocol/src/errors.ts`](../../packages/protocol/src/errors.ts)
-(reserved `MPS3ErrorCode.Unauthorized`),
+(reserved `BaerlyErrorCode.Unauthorized`),
 [`packages/server/src/contract.ts`](../../packages/server/src/contract.ts)
 (both the `Routes` JSDoc — "the `tenant` derives from the
 `Verifier`'s output, not the URL" — and the `HttpStatus` table
@@ -76,7 +76,7 @@ interface VerifierResult {
 A `Verifier` is a function from a `Request` to either a success
 result or `null`. `null` is the canonical unauthenticated signal; the
 Phase 6 HTTP dispatcher maps `null` to HTTP 401 +
-`MPS3Error{code:"Unauthorized"}`. A truthy `VerifierResult` carries
+`BaerlyError{code:"Unauthorized"}`. A truthy `VerifierResult` carries
 the `tenantPrefix` the request is authorized to touch and an opaque
 `identity` payload.
 
@@ -87,7 +87,7 @@ verified before any `Storage` I/O. On a successful result, the
 dispatcher performs a **scope check**: the URL-derived target must
 fall within the physical prefix
 `app/<app>/tenant/<tenantPrefix>/...`. Anything outside that prefix
-is rejected with HTTP 403 + `MPS3Error{code:"AccessDenied"}`. Once
+is rejected with HTTP 403 + `BaerlyError{code:"AccessDenied"}`. Once
 the scope check passes, the dispatcher constructs
 `Db.create({ storage, app, tenant: tenantPrefix })` and dispatches
 the route. Per [ADR-0011](./0011-cas-scope.md) and
@@ -132,7 +132,7 @@ they land.
   Test fixtures return raw `VerifierResult | null` without needing
   an HTTP layer. The discriminant convention per
   [ADR-0003](./0003-error-code-discriminant.md) means dispatcher
-  catches `MPS3Error` and switches on `.code` to pick the status:
+  catches `BaerlyError` and switches on `.code` to pick the status:
   `Unauthorized` → 401, `AccessDenied` → 403, `InvalidConfig` from
   `Db.create` (a Verifier bug producing a `/`-containing prefix) →
   500 + `Internal`.
@@ -144,7 +144,7 @@ they land.
   guarantees. The auth layer is the source of truth for tenancy;
   routing only ever consumes it.
 - The null-vs-throw split is deliberate. `null` is "auth said no"
-  (client problem → 401); a thrown `MPS3Error` is "auth is broken"
+  (client problem → 401); a thrown `BaerlyError` is "auth is broken"
   (operator problem — missing env var, unreachable JWKS endpoint →
   500). The dispatcher distinguishes these so that on-call
   paging-policy can target the second class without false positives
@@ -267,4 +267,4 @@ about them.
 - Branding: [ADR-0002](./0002-branded-types.md) — the convention
   against which the `TenantPrefix` rejection is argued.
 - Error model: [ADR-0003](./0003-error-code-discriminant.md) — the
-  401/403/500 mapping is by `MPS3Error.code`, not class hierarchy.
+  401/403/500 mapping is by `BaerlyError.code`, not class hierarchy.

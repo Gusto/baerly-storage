@@ -63,7 +63,7 @@ spells this out and pins it as the compile-time guarantee.
   asserted in the table-API integration tests.
 - Empty transaction bodies are free. A transaction that buffers no
   mutations writes nothing and does not advance `current.json`.
-- CAS loss surfaces as `MPS3Error{code:"Conflict"}` exactly once per
+- CAS loss surfaces as `BaerlyError{code:"Conflict"}` exactly once per
   failed commit. Retry policy is the caller's responsibility — the
   protocol does not silently re-run the transaction body.
 - Adding cross-table transactions later is a strictly additive

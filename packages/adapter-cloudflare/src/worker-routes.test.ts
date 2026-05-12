@@ -16,7 +16,7 @@ import { describe, expect, it } from "vitest";
 import {
   CURRENT_JSON_SCHEMA_VERSION,
   createCurrentJson,
-  MPS3Error,
+  BaerlyError,
   type Verifier,
 } from "@baerly/protocol";
 import { r2BindingStorage } from "./r2-binding-storage";
@@ -84,7 +84,7 @@ const provisionTable = async (bucket: R2Bucket, table: string): Promise<void> =>
       writer_fence: { epoch: 0, owner: "worker-routes-test", claimed_at: "" },
     });
   } catch (e) {
-    if (e instanceof MPS3Error && e.code === "Conflict") return;
+    if (e instanceof BaerlyError && e.code === "Conflict") return;
     throw e;
   }
 };

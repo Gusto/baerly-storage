@@ -14,9 +14,9 @@ adapter code.
 
 The three alternatives considered were:
 
-- **Ad-hoc JSON tailored to MPS3's internals.** Cheap to design but
+- **Ad-hoc JSON tailored to Baerly's internals.** Cheap to design but
   traps the export tooling inside Baerly: anyone wanting to read the
-  log has to learn an MPS3-specific schema with no analog in the
+  log has to learn an Baerly-specific schema with no analog in the
   ecosystem.
 - **`pgoutput` shape verbatim.** The Postgres logical-replication
   wire format is the obvious reference. Adopting it byte-for-byte

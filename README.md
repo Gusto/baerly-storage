@@ -4,18 +4,19 @@ A vendorless document database that runs over any S3-compatible
 storage API. The data lives in *your* bucket; mechanical export to
 SQL is a first-class feature, not an afterthought.
 
-> Status: under heavy redesign. The project staarted as a fork of [MPS3](https://github.com/endpointservices/mps3), a browser-
-> direct multiplayer DB; it is becoming baerly-storage, a FaaS-fronted
-> server. The protocol kernel will roughly remain, but the deployment shape is
-> changing.
+> Status: under heavy redesign. The project began as a fork of
+> [MPS3](https://github.com/endpointservices/mps3), a browser-direct
+> multiplayer DB, and has been rewritten as baerly-storage, a
+> FaaS-fronted server. The protocol kernel roughly remains, but the
+> deployment shape has changed.
 
 Tested with S3, Backblaze, R2 and self-hosted solutions like Minio.
 
 ## API
 
-To use this library you construct an MP3S class.
+To use this library you construct a `Db` class.
 
-[mps3 class](src/mps3.ts)
+[Db class](packages/server/src/db.ts)
 
 ### Authorization
 
@@ -28,6 +29,6 @@ There is no in-built authorization. Every use-case needs different authorization
 
 ### Advanced Usage
 
-Consult the [API Documentation](src/mps3.ts) for advanced usage.
+Consult the [API Documentation](packages/server/src/db.ts) for advanced usage.
 - atomic batch operations
 - multiple manifests

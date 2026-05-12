@@ -71,7 +71,7 @@ export const RATE_LIMIT_BACKOFF_MILLIS: number = 1000;
  * each of the four `Storage` methods). Bounded so that permanent
  * failures (CORS misconfig, NXDOMAIN, persistent 5xx) surface to
  * callers as rejected promises instead of retrying forever and
- * leaving `mps3.put()` permanently pending.
+ * leaving `ServerWriter.commit()` permanently pending.
  *
  * 8 attempts at the existing 100ms→×1.5→10s schedule covers ~30s of
  * transient turbulence, which is enough to ride out a leader election
@@ -92,7 +92,7 @@ export const S3_REQUEST_MAX_RETRIES: number = 8;
 export const SYNCER_CLOCK_SKEW_MAX_RETRIES: number = 4;
 
 /**
- * Maximum number of `getObject` responses retained in MPS3's in-memory
+ * Maximum number of `getObject` responses retained in Baerly's in-memory
  * cache (keyed by `(Bucket, Key, VersionId, IfNoneMatch)`).
  *
  * The cache exists to coalesce repeat reads of the same content version
@@ -107,17 +107,16 @@ export const MEM_CACHE_CAPACITY: number = 100;
 /**
  * Grace window during which a content 404 (against a key the manifest
  * references) is treated as an in-flight write rather than an orphan
- * manifest entry. The manifest-first ordering in `mps3.putAllResolved` PUTs
- * the manifest entry before the content, so a reader polling between
- * the two sees a manifest that points at content that does not yet
- * exist.
+ * manifest entry. The manifest-first ordering in `ServerWriter.commit`
+ * PUTs the manifest entry before the content, so a reader polling
+ * between the two sees a manifest that points at content that does
+ * not yet exist.
  *
  * Within this window, readers return `undefined` to callers — a
  * subsequent read likely sees the content once the writer finishes.
  * Outside the window, readers still return `undefined` but warn
  * because the manifest entry is most likely orphaned by a writer that
- * died mid-batch (see `putAllResolved` JSDoc; the future Phase-6 sweeper will
- * GC these).
+ * died mid-batch (the Phase-6 sweeper GCs these).
  *
  * Sized at 6× {@link LAG_WINDOW_MILLIS} (30s) to comfortably cover S3
  * write propagation plus a few poll cycles while still surfacing
@@ -130,7 +129,7 @@ export const ORPHAN_MANIFEST_GRACE_MILLIS: number = 6 * LAG_WINDOW_MILLIS;
 /**
  * Current major version of the `current.json` control-object schema.
  * Readers MUST reject unknown versions with
- * `MPS3Error{code:"InvalidResponse"}` rather than try to coerce.
+ * `BaerlyError{code:"InvalidResponse"}` rather than try to coerce.
  *
  * Bump only on a breaking change to `CurrentJson` field semantics.
  * Adding a new optional field is NOT breaking; renaming or removing
@@ -152,7 +151,7 @@ export const CURRENT_JSON_CONTENT_TYPE: string = "application/json";
 /**
  * Current major version of the `gc/pending.json` control-object
  * schema. Readers MUST reject unknown versions with
- * `MPS3Error{code:"InvalidResponse"}` rather than try to coerce.
+ * `BaerlyError{code:"InvalidResponse"}` rather than try to coerce.
  *
  * Bump only on a breaking change to `GcPending` field semantics.
  * Adding a new optional field is NOT breaking; renaming or removing

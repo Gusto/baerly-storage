@@ -3,7 +3,7 @@ import {
   RATE_LIMIT_BACKOFF_MILLIS,
   S3_REQUEST_MAX_RETRIES,
 } from "../constants";
-import { MPS3Error } from "../errors";
+import { BaerlyError } from "../errors";
 import { delay } from "../time";
 import type { XmlParser } from "../types";
 import { parseListObjectsV2CommandOutput } from "../xml";
@@ -17,7 +17,7 @@ import type {
 } from "./types";
 
 /**
- * Permanent {@link MPS3Error} codes that must short-circuit `retry`.
+ * Permanent {@link BaerlyError} codes that must short-circuit `retry`.
  * These represent caller- or environment-level faults where retrying
  * cannot succeed: `AccessDenied` (403 — credentials/policy),
  * `InvalidConfig` (bad bucket / unsupported credential type), and
@@ -38,7 +38,7 @@ const retry = async <T>(
   try {
     return await fn();
   } catch (e) {
-    if (e instanceof MPS3Error && PERMANENT_ERROR_CODES.has(e.code)) {
+    if (e instanceof BaerlyError && PERMANENT_ERROR_CODES.has(e.code)) {
       throw e;
     }
     if (retries > 0) {
@@ -146,7 +146,7 @@ export class S3HttpStorage implements Storage {
         case 200: {
           const etag = res.headers.get("ETag");
           if (etag === null) {
-            throw new MPS3Error("InvalidResponse", `GET ${key}: missing ETag`);
+            throw new BaerlyError("InvalidResponse", `GET ${key}: missing ETag`);
           }
           const body = new Uint8Array(await res.arrayBuffer());
           const versionId = res.headers.get("x-amz-version-id") ?? undefined;
@@ -156,12 +156,12 @@ export class S3HttpStorage implements Storage {
         case 404:
           return null;
         case 403:
-          throw new MPS3Error("AccessDenied", `GET ${key}: 403`);
+          throw new BaerlyError("AccessDenied", `GET ${key}: 403`);
         default:
           if (res.status >= 500) {
-            throw new MPS3Error("NetworkError", `GET ${key}: ${res.status} ${await res.text()}`);
+            throw new BaerlyError("NetworkError", `GET ${key}: ${res.status} ${await res.text()}`);
           }
-          throw new MPS3Error("InvalidResponse", `GET ${key}: ${res.status} ${await res.text()}`);
+          throw new BaerlyError("InvalidResponse", `GET ${key}: ${res.status} ${await res.text()}`);
       }
     });
   }
@@ -185,20 +185,20 @@ export class S3HttpStorage implements Storage {
         }),
       );
       if (res.status === 412) {
-        throw new MPS3Error("InvalidResponse", `PreconditionFailed: PUT ${key}`);
+        throw new BaerlyError("InvalidResponse", `PreconditionFailed: PUT ${key}`);
       }
       if (res.status === 403) {
-        throw new MPS3Error("AccessDenied", `PUT ${key}: 403`);
+        throw new BaerlyError("AccessDenied", `PUT ${key}: 403`);
       }
       if (res.status >= 500) {
-        throw new MPS3Error("NetworkError", `PUT ${key}: ${res.status} ${await res.text()}`);
+        throw new BaerlyError("NetworkError", `PUT ${key}: ${res.status} ${await res.text()}`);
       }
       if (res.status !== 200 && res.status !== 204) {
-        throw new MPS3Error("InvalidResponse", `PUT ${key}: ${res.status} ${await res.text()}`);
+        throw new BaerlyError("InvalidResponse", `PUT ${key}: ${res.status} ${await res.text()}`);
       }
       const etag = res.headers.get("ETag");
       if (etag === null) {
-        throw new MPS3Error("InvalidResponse", `PUT ${key}: missing ETag`);
+        throw new BaerlyError("InvalidResponse", `PUT ${key}: missing ETag`);
       }
       const dateStr = res.headers.get("Date");
       const versionId = res.headers.get("x-amz-version-id") ?? undefined;
@@ -217,10 +217,10 @@ export class S3HttpStorage implements Storage {
         new Request(url, { method: "DELETE", signal: opts?.signal ?? null }),
       );
       if (res.status === 403) {
-        throw new MPS3Error("AccessDenied", `DELETE ${key}: 403`);
+        throw new BaerlyError("AccessDenied", `DELETE ${key}: 403`);
       }
       if (res.status >= 500) {
-        throw new MPS3Error("NetworkError", `DELETE ${key}: ${res.status} ${await res.text()}`);
+        throw new BaerlyError("NetworkError", `DELETE ${key}: ${res.status} ${await res.text()}`);
       }
       // 200 / 204 / 404 → success (idempotent).
     });
@@ -233,7 +233,7 @@ export class S3HttpStorage implements Storage {
     opts?.signal?.throwIfAborted();
     const xmlParser = this.#xmlParser;
     if (!xmlParser) {
-      throw new MPS3Error(
+      throw new BaerlyError(
         "InvalidConfig",
         "S3HttpStorage.list requires an XML parser; pass `xmlParser` in options or provide globalThis.DOMParser",
       );
@@ -270,15 +270,15 @@ export class S3HttpStorage implements Storage {
           if (res.status === 200) return { kind: "ok" as const, body: await res.text() };
           if (res.status === 429) return { kind: "ratelimited" as const };
           if (res.status === 403) {
-            throw new MPS3Error("AccessDenied", `LIST ${prefix}: 403`);
+            throw new BaerlyError("AccessDenied", `LIST ${prefix}: 403`);
           }
           if (res.status >= 500) {
-            throw new MPS3Error(
+            throw new BaerlyError(
               "NetworkError",
               `LIST ${prefix}: ${res.status} ${await res.text()}`,
             );
           }
-          throw new MPS3Error(
+          throw new BaerlyError(
             "InvalidResponse",
             `LIST ${prefix}: ${res.status} ${await res.text()}`,
           );
@@ -290,7 +290,7 @@ export class S3HttpStorage implements Storage {
         await delay(RATE_LIMIT_BACKOFF_MILLIS);
       }
       if (parsed === undefined) {
-        throw new MPS3Error("NetworkError", `LIST ${prefix}: rate-limited`);
+        throw new BaerlyError("NetworkError", `LIST ${prefix}: rate-limited`);
       }
 
       for (const entry of parsed.Contents ?? []) {

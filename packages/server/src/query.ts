@@ -24,7 +24,7 @@
  * Mutation terminals are SINGLE-ATTEMPT per call site. CAS contention
  * retries (up to 8 attempts) live inside `ServerWriter.commit()`; the
  * verbs do NOT add their own retry loop. On retry-budget exhaustion
- * `commit()` throws `MPS3Error{code:"Conflict"}` and the verb
+ * `commit()` throws `BaerlyError{code:"Conflict"}` and the verb
  * surfaces it unchanged — the caller's option is to wrap in
  * `db.transaction(...)` (ticket 11).
  *
@@ -44,7 +44,7 @@ import {
   merge,
   mergePredicates,
   validatePredicate,
-  MPS3Error,
+  BaerlyError,
   type OrderSpec,
   type Predicate,
   type Query,
@@ -284,16 +284,16 @@ const writerFor = (ctx: TableReadContext): ServerWriter =>
  * when the caller omits it (or supplies an empty string); honours a
  * caller-supplied non-empty `_id`. On collision (the materialised
  * collection already carries that `_id`) throws
- * `MPS3Error{code:"Conflict"}` BEFORE issuing the writer round-trip
+ * `BaerlyError{code:"Conflict"}` BEFORE issuing the writer round-trip
  * — matches the locked `Table.insert` contract
  * (`packages/protocol/src/db.ts:123–125`).
  *
  * The emitted `LogEntry` has `op:"I"` and `new === patch === {...doc, _id}`
  * (today's per-doc-replace model — `packages/protocol/src/log.ts:67–72`).
  *
- * @throws MPS3Error code="Conflict" — `_id` collision (pre-commit check) or
+ * @throws BaerlyError code="Conflict" — `_id` collision (pre-commit check) or
  *   CAS retry budget exhausted inside `ServerWriter.commit()`.
- * @throws MPS3Error code="SchemaError" — inherited from
+ * @throws BaerlyError code="SchemaError" — inherited from
  *   `ServerWriter.validateInput`.
  *
  * @internal — exported for `Table.insert` in `./table.ts` to delegate
@@ -339,7 +339,7 @@ export const runInsert = async <T extends JSONArraylessObject>(
     consistency: "strong",
   });
   if (existing.rows.length > 0) {
-    throw new MPS3Error(
+    throw new BaerlyError(
       "Conflict",
       `Query.insert: _id ${JSON.stringify(_id)} already exists in collection ${JSON.stringify(ctx.tableName)}`,
     );
@@ -381,10 +381,10 @@ export const runInsert = async <T extends JSONArraylessObject>(
  * under `PATCH_ONLY` need to maintain a shadow table — see
  * `packages/protocol/src/log.ts:102–118`.
  *
- * @throws MPS3Error code="Conflict" — any one row's CAS retry budget
+ * @throws BaerlyError code="Conflict" — any one row's CAS retry budget
  *   exhausted inside `ServerWriter.commit()`. The partial-progress
  *   `modified` count is NOT returned in that case.
- * @throws MPS3Error code="SchemaError" — `merge(prev, patch)` produced
+ * @throws BaerlyError code="SchemaError" — `merge(prev, patch)` produced
  *   `undefined` (defensive — `Partial<T>` cannot be `null` at the
  *   root in the type system).
  */
@@ -407,7 +407,7 @@ const runUpdate = async <T extends JSONArraylessObject>(
       // `merge(target, patch)` returns undefined only when patch is
       // null at the root. `Partial<T>` cannot be `null` at the type
       // level; defensive check for runtime caller misuse via cast.
-      throw new MPS3Error(
+      throw new BaerlyError(
         "SchemaError",
         `Query.update: merge produced undefined for doc ${JSON.stringify(doc._id)}`,
       );
@@ -440,7 +440,7 @@ const runUpdate = async <T extends JSONArraylessObject>(
  * (`packages/protocol/src/db.ts:187–192`) does not pin this either
  * way; preserving identity is the safe default.
  *
- * @throws MPS3Error code="Conflict" — zero or more than one row
+ * @throws BaerlyError code="Conflict" — zero or more than one row
  *   matched (cardinality is named in the message), OR the writer's
  *   CAS retry budget exhausted.
  */
@@ -455,7 +455,10 @@ const runReplace = async <T extends JSONArraylessObject>(
   // chain's setting.
   const { rows: found } = await runRead<T>(ctx, { ...state, consistency: "strong" });
   if (found.length !== 1) {
-    throw new MPS3Error("Conflict", `Query.replace: expected exactly 1 match, got ${found.length}`);
+    throw new BaerlyError(
+      "Conflict",
+      `Query.replace: expected exactly 1 match, got ${found.length}`,
+    );
   }
   const existingId = String(found[0]!._id);
   // Force the matched row's `_id` onto the post-image so the doc_id
@@ -487,7 +490,7 @@ const runReplace = async <T extends JSONArraylessObject>(
  * `Query.update`. `db.transaction(...)` (ticket 11) is where
  * all-or-nothing semantics will live.
  *
- * @throws MPS3Error code="Conflict" — any one row's CAS retry budget
+ * @throws BaerlyError code="Conflict" — any one row's CAS retry budget
  *   exhausted. The partial-progress `deleted` count is NOT returned
  *   in that case.
  */
@@ -525,12 +528,12 @@ const runDelete = async <T extends JSONArraylessObject>(
  * `Query<T>` outlives its `Table<T>` and is somehow re-attached to a
  * transaction over a different table. Documented in ticket 11 §6.1.
  *
- * @throws MPS3Error code="Internal" — txCtx ↔ Table name mismatch.
+ * @throws BaerlyError code="Internal" — txCtx ↔ Table name mismatch.
  */
 const assertTxBindMatches = (ctx: TableReadContext): void => {
   if (ctx.txCtx === undefined) return;
   if (ctx.txCtx.table !== ctx.tableName) {
-    throw new MPS3Error(
+    throw new BaerlyError(
       "Internal",
       `Transaction context bound to ${JSON.stringify(ctx.txCtx.table)} but mutation issued on table ${JSON.stringify(ctx.tableName)}`,
     );
@@ -669,7 +672,7 @@ const readLogEntry = async (storage: Storage, key: string): Promise<LogEntry> =>
   if (got === null) {
     // A missing seq inside `[0, next_seq)` is a protocol invariant
     // violation — mirrors `ServerWriter.#readLogEntry`.
-    throw new MPS3Error(
+    throw new BaerlyError(
       "Internal",
       `Query.read: missing log entry at ${key}; protocol invariant violation`,
     );
@@ -677,7 +680,7 @@ const readLogEntry = async (storage: Storage, key: string): Promise<LogEntry> =>
   try {
     return JSON.parse(new TextDecoder().decode(got.body)) as LogEntry;
   } catch (e) {
-    throw new MPS3Error("InvalidResponse", `Query.read: malformed log entry at ${key}`, e);
+    throw new BaerlyError("InvalidResponse", `Query.read: malformed log entry at ${key}`, e);
   }
 };
 

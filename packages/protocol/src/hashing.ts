@@ -32,10 +32,10 @@ const VERSION_HEX_LENGTH = 32;
 /**
  * Content-addressed {@link ContentVersionId}: SHA-256 of `body`,
  * lowercase hex, truncated to {@link VERSION_HEX_LENGTH}. Same body
- * bytes ⇒ same ContentVersionId — the property `mps3.putAllResolved` relies
- * on for idempotent replay (a crash-recovery rewrite of the same
- * logical value produces the same content key the manifest already
- * referenced).
+ * bytes ⇒ same ContentVersionId — the property `ServerWriter.commit`
+ * relies on for idempotent replay (a crash-recovery rewrite of the
+ * same logical value produces the same content key the manifest
+ * already referenced).
  *
  * Async because {@link crypto.subtle.digest} returns an `ArrayBuffer`
  * via Promise. Workers and browsers both expose `crypto.subtle`

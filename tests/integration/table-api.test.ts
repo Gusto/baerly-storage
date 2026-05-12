@@ -42,7 +42,7 @@ import { runTableApiCascade } from "../fixtures/table-api-cascade";
 const stableConfig = {
   endpoint: "http://127.0.0.1:9102",
   region: "eu-central-1",
-  credentials: { accessKeyId: "mps3", secretAccessKey: "ZOAmumEzdsUUcVlQ" },
+  credentials: { accessKeyId: "baerly", secretAccessKey: "ZOAmumEzdsUUcVlQ" },
 };
 
 const minioEnabled = process.env.MINIO === "1";

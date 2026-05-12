@@ -10,7 +10,7 @@ Currently:
   a directory tree. Content-addressed `"<sha-256-hex>"` ETags, atomic
   `write-temp + rename` writes, idempotent deletes. Useful for
   `baerly dev` against a fixture directory and for tests that need
-  cross-`MPS3`-instance visibility without standing up Minio. Single-
+  cross-`Baerly`-instance visibility without standing up Minio. Single-
   process design center; multi-process scenarios should use Minio.
 
 Planned (stubs):

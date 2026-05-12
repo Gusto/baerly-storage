@@ -64,9 +64,9 @@ export class CountingStorage implements Storage {
       return await this.inner.put(key, body, opts);
     } catch (e: unknown) {
       // S3HttpStorage surfaces 412 as
-      // MPS3Error{code:"InvalidResponse", message:"PreconditionFailed: …"}
+      // BaerlyError{code:"InvalidResponse", message:"PreconditionFailed: …"}
       // and 429 / 503-SlowDown as
-      // MPS3Error{code:"NetworkError", message: "…429…"} after the
+      // BaerlyError{code:"NetworkError", message: "…429…"} after the
       // retry budget is exhausted (bench passes retries=0, so it
       // surfaces on the first wire response).
       const msg = (e as { message?: string }).message ?? "";
@@ -98,7 +98,7 @@ function makeSigner(): AwsClient {
   // Credentials match `docker-compose.yml`'s Minio service. Local
   // only; never published.
   return new AwsClient({
-    accessKeyId: "mps3",
+    accessKeyId: "baerly",
     secretAccessKey: "ZOAmumEzdsUUcVlQ",
     region: "us-east-1",
     service: "s3",

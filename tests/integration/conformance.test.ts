@@ -11,7 +11,7 @@
  * available credentials are skipped via `describe.runIf` — the file
  * tolerates a fresh checkout with no credentials on disk.
  *
- * MPS3-shaped invariants (versioning mode, parallel-writer-on-single-
+ * Baerly-shaped invariants (versioning mode, parallel-writer-on-single-
  * key) are dropped — those are manifest-coordination assertions, not
  * `Storage` assertions, and live in
  * `tests/integration/randomized.test.ts` per the Phase 5 cascade.
@@ -85,7 +85,7 @@ const endpoints: Endpoint[] = [
           region: "us-east-1",
           bucket: "baerly-conformance-multi",
           credentials: {
-            accessKeyId: "mps3",
+            accessKeyId: "baerly",
             secretAccessKey: "ZOAmumEzdsUUcVlQ",
           },
         }

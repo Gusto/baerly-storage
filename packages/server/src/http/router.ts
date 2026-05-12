@@ -19,9 +19,9 @@ import { Hono, type Context } from "hono";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import {
   type ConsistencyLevel,
-  MPS3Error,
+  BaerlyError,
   type JSONArraylessObject,
-  type MPS3ErrorCode,
+  type BaerlyErrorCode,
   type Predicate,
   type Verifier,
 } from "@baerly/protocol";
@@ -273,7 +273,7 @@ export const MAX_BODY_BYTES = 1 << 20; // 1 MiB; see Q5 of ticket 25.
 /**
  * Parse the `?consistency=...` query-string param. Absent →
  * `"strong"`. Known values → that value. Anything else →
- * `MPS3Error{code:"InvalidConfig"}` (mapped to 400 by
+ * `BaerlyError{code:"InvalidConfig"}` (mapped to 400 by
  * {@link mapToResponse}).
  *
  * Mutation routes silently ignore `?consistency` per the locked
@@ -285,13 +285,16 @@ export const MAX_BODY_BYTES = 1 << 20; // 1 MiB; see Q5 of ticket 25.
 function parseConsistency(raw: string | undefined): ConsistencyLevel {
   if (raw === undefined) return "strong";
   if (raw === "strong" || raw === "eventual") return raw;
-  throw new MPS3Error(
+  throw new BaerlyError(
     "InvalidConfig",
     `?consistency must be "strong" or "eventual"; got ${JSON.stringify(raw)}`,
   );
 }
 
-const ERROR_TO_STATUS: ReadonlyMap<MPS3ErrorCode, HttpStatus> = new Map<MPS3ErrorCode, HttpStatus>([
+const ERROR_TO_STATUS: ReadonlyMap<BaerlyErrorCode, HttpStatus> = new Map<
+  BaerlyErrorCode,
+  HttpStatus
+>([
   ["Unauthorized", 401],
   ["AccessDenied", 403],
   ["Conflict", 409],
@@ -302,7 +305,7 @@ const ERROR_TO_STATUS: ReadonlyMap<MPS3ErrorCode, HttpStatus> = new Map<MPS3Erro
 
 /**
  * Map an unknown thrown value onto the wire envelope plus an HTTP
- * status code. The mapping is keyed by `MPS3Error.code` so any future
+ * status code. The mapping is keyed by `BaerlyError.code` so any future
  * code addition forces a re-check here (currently unmapped codes fall
  * through to 500 by design — see the `OfflineNoCache` / `NetworkError`
  * / `InvalidResponse` / `Internal` comment in `ERROR_TO_STATUS`).
@@ -312,7 +315,7 @@ const ERROR_TO_STATUS: ReadonlyMap<MPS3ErrorCode, HttpStatus> = new Map<MPS3Erro
  *   not mutate it.
  */
 export function mapError(err: unknown): { status: HttpStatus; envelope: HttpErrorEnvelope } {
-  if (err instanceof MPS3Error) {
+  if (err instanceof BaerlyError) {
     const status = ERROR_TO_STATUS.get(err.code) ?? 500;
     return {
       status,
@@ -337,9 +340,14 @@ function mapToResponse(c: Context, err: unknown): Response {
 }
 
 // Inline-error shortcut. The router never has to allocate an
-// MPS3Error just to short-circuit a 400 — callers pass a code +
+// BaerlyError just to short-circuit a 400 — callers pass a code +
 // message string and we build the envelope here.
-function jsonError(c: Context, status: HttpStatus, code: MPS3ErrorCode, message: string): Response {
+function jsonError(
+  c: Context,
+  status: HttpStatus,
+  code: BaerlyErrorCode,
+  message: string,
+): Response {
   // Every `jsonError` call site passes a 4xx status (errors carry a
   // body). Cast bridges `HttpStatus` → `ContentfulStatusCode` for
   // Hono's `c.json` overload.

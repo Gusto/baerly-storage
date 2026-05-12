@@ -65,8 +65,8 @@ public async tables(): Promise<string[]> {
 - **Reads are on-demand.** Use the injected `#storage` directly for
   `list` / `get` reads; use `Table<T>.where(...).all()` for log-fold
   reads. Don't build a parallel cache layer.
-- **No new throw without `MPS3Error`.** If the method can fail,
-  throw `new MPS3Error("Code", "context")` from
+- **No new throw without `BaerlyError`.** If the method can fail,
+  throw `new BaerlyError("Code", "context")` from
   `packages/protocol/src/errors.ts`.
 - **Internal helpers stay co-located.** Either a module-private
   function in `packages/server/src/db.ts` or a fresh sibling file
@@ -184,7 +184,7 @@ local-dev case.
 // packages/adapter-fly/src/fly-storage.ts
 import type { Storage, StorageGetResult, StorageListEntry, StoragePutResult }
   from "@baerly/protocol";
-import { MPS3Error } from "@baerly/protocol";
+import { BaerlyError } from "@baerly/protocol";
 
 export class FlyStorage implements Storage {
   // ... implement get / put / delete / list per the interface JSDoc
@@ -271,7 +271,7 @@ expect.assertions(1);
 try {
   await db.table("users").insert(/* something invalid */);
 } catch (err) {
-  expect((err as MPS3Error).code).toBe("InvalidConfig");
+  expect((err as BaerlyError).code).toBe("InvalidConfig");
 }
 ```
 

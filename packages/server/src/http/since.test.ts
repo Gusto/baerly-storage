@@ -55,7 +55,7 @@ const provision = async (storage: MemoryStorage, table = TABLE): Promise<void> =
 };
 
 describe("longPollSince — cursor validation", () => {
-  test("invalid cursor shape rejects with MPS3Error{SchemaError}", async () => {
+  test("invalid cursor shape rejects with BaerlyError{SchemaError}", async () => {
     const { db } = makeDb();
     await expect(
       longPollSince({
@@ -66,7 +66,7 @@ describe("longPollSince — cursor validation", () => {
         pollIntervalMs: 25,
       }),
     ).rejects.toMatchObject({
-      name: "MPS3Error",
+      name: "BaerlyError",
       code: "SchemaError",
     });
   });
@@ -250,7 +250,7 @@ describe("listEventsSince — pre-snapshot cursor → SchemaError", () => {
     await db._raw.put(cjKey, new TextEncoder().encode(JSON.stringify(mutated)));
 
     await expect(listEventsSince({ db, table: TABLE, cursor })).rejects.toMatchObject({
-      name: "MPS3Error",
+      name: "BaerlyError",
       code: "SchemaError",
     });
   });

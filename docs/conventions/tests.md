@@ -27,8 +27,7 @@ One topic per file. Don't pile unrelated suites together.
 
 ## IndexedDB
 - `import "fake-indexeddb/auto";` at the top of any test that exercises
-  IndexedDB-backed behavior (e.g. the `mps3` read cache via
-  `offlineStorage`).
+  IndexedDB-backed behavior.
 
 ## Property-based tests
 
@@ -69,7 +68,7 @@ values.
   or
   ```ts
   try { ... } catch (err) {
-    expect((err as MPS3Error).code).toBe("InvalidConfig");
+    expect((err as BaerlyError).code).toBe("InvalidConfig");
   }
   ```
 - Don't string-match on `error.message` — the wording isn't stable.

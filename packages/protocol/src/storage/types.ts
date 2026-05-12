@@ -13,7 +13,7 @@
  * mutate what storage returns.
  *
  * Not-found is signalled by `null` (single discriminator), not by
- * throwing. Other failure modes throw `MPS3Error`.
+ * throwing. Other failure modes throw `BaerlyError`.
  */
 export interface Storage {
   /**
@@ -22,7 +22,7 @@ export interface Storage {
    * ETag matches (304 semantics — caller's cached copy is current).
    * With `versionId`, fetches a specific historical version (only
    * meaningful on a versioned S3 bucket; non-versioning impls may
-   * ignore). Other failure modes throw `MPS3Error`.
+   * ignore). Other failure modes throw `BaerlyError`.
    */
   get(key: string, opts?: StorageGetOptions): Promise<StorageGetResult | null>;
 
@@ -34,7 +34,7 @@ export interface Storage {
    * `undefined` if no server clock is available. Use `ifMatch` for
    * compare-and-swap (write only if the current ETag matches), or
    * `ifNoneMatch: "*"` for create-only (write only if no object
-   * exists). Conflicts throw `MPS3Error` with HTTP 412 semantics.
+   * exists). Conflicts throw `BaerlyError` with HTTP 412 semantics.
    */
   put(key: string, body: Uint8Array, opts?: StoragePutOptions): Promise<StoragePutResult>;
 

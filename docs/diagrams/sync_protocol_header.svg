@@ -1984,7 +1984,7 @@ Z" dur="0.3s" repeatCount="indefinite"></animate>
   <use clip-path="url(#cells)" href="#surface"></use>
 
   <text y="-0.23" stroke="url(#chromeFill)" stroke-width="0.005" fill="url(#chromeFill)" text-anchor="middle" style="font: italic bold 0.15px sans-serif; font-family: helvetica; letter-spacing: 0px;">
-    MPS3
+    Baerly
   </text>
 
 

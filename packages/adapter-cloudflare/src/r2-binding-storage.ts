@@ -1,4 +1,4 @@
-import { MPS3Error } from "@baerly/protocol";
+import { BaerlyError } from "@baerly/protocol";
 import type {
   Storage,
   StorageGetOptions,
@@ -41,7 +41,7 @@ class R2BindingStorageImpl implements Storage {
 
   constructor(bucket: R2Bucket) {
     if (bucket === null || bucket === undefined) {
-      throw new MPS3Error(
+      throw new BaerlyError(
         "InvalidConfig",
         "r2BindingStorage: bucket binding is null/undefined — check wrangler.toml [[r2_buckets]] and the env var name",
       );
@@ -86,7 +86,7 @@ class R2BindingStorageImpl implements Storage {
     if (result === null) {
       // Binding signals precondition failure as `null`. Match
       // `S3HttpStorage`'s 412 → InvalidResponse mapping.
-      throw new MPS3Error("InvalidResponse", `PreconditionFailed: PUT ${key}`);
+      throw new BaerlyError("InvalidResponse", `PreconditionFailed: PUT ${key}`);
     }
     // `R2Object.uploaded` is the server-side write clock — surface it
     // verbatim. The kernel's adaptive-clock-skew loop consumes it
@@ -147,7 +147,7 @@ class R2BindingStorageImpl implements Storage {
   }
 
   /**
-   * Map binding-layer errors to `MPS3Error` codes. The R2 binding
+   * Map binding-layer errors to `BaerlyError` codes. The R2 binding
    * surfaces failures as plain `Error` with messages; sniff the
    * common ones. If the binding ever adds typed errors, tighten the
    * sniff and keep the message fallback for older runtimes.
@@ -156,15 +156,15 @@ class R2BindingStorageImpl implements Storage {
     try {
       return await fn();
     } catch (e) {
-      if (e instanceof MPS3Error) throw e;
+      if (e instanceof BaerlyError) throw e;
       const msg = e instanceof Error ? e.message : String(e);
       if (/auth|permission|forbidden/i.test(msg)) {
-        throw new MPS3Error("AccessDenied", `${op}: ${msg}`, e);
+        throw new BaerlyError("AccessDenied", `${op}: ${msg}`, e);
       }
       if (/not.*found|no.*such.*bucket/i.test(msg)) {
-        throw new MPS3Error("InvalidConfig", `${op}: ${msg}`, e);
+        throw new BaerlyError("InvalidConfig", `${op}: ${msg}`, e);
       }
-      throw new MPS3Error("NetworkError", `${op}: ${msg}`, e);
+      throw new BaerlyError("NetworkError", `${op}: ${msg}`, e);
     }
   }
 }
@@ -188,7 +188,7 @@ class R2BindingStorageImpl implements Storage {
  *    suitable for the kernel's adaptive-clock-skew loop.
  *  - `StorageListEntry.lastModified` from the same clock.
  *
- * Errors map to `MPS3Error` via the same convention as
+ * Errors map to `BaerlyError` via the same convention as
  * `S3HttpStorage`: `AccessDenied` for binding-level permission
  * failures, `NetworkError` for transient R2 platform failures,
  * `InvalidResponse` for precondition (CAS) failures, `InvalidConfig`

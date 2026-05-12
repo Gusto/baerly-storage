@@ -5,13 +5,14 @@ import { describe, expect, test } from "vitest";
 // ADR-0001 motivates the vendorless choice on bundle weight; this test
 // pins the size so a regression shows up immediately.
 //
-// Ticket 31 swung the root publish entry from the (defunct) `src/mps3.ts`
-// to `packages/server/src/index.ts`, replacing the ~62 KiB MPS3 kernel
-// with the full Baerly surface (Db + Table + Query + ServerWriter +
-// compactor + gc + maintenance + Hono-backed HTTP router). Bundle
-// settles at ~160 KiB; budget set ~7% above with no adapter packages
-// pulled in — adapter code (`S3HttpStorage`, `r2BindingStorage`) remains
-// tree-shaken out per docstring-only references.
+// Ticket 31 swung the root publish entry from the (defunct) legacy
+// kernel to `packages/server/src/index.ts`, replacing the ~62 KiB
+// client-only kernel with the full Baerly surface (Db + Table + Query
+// + ServerWriter + compactor + gc + maintenance + Hono-backed HTTP
+// router). Bundle settles at ~160 KiB; budget set ~7% above with no
+// adapter packages pulled in — adapter code (`S3HttpStorage`,
+// `r2BindingStorage`) remains tree-shaken out per docstring-only
+// references.
 //
 // Budget is for the **unminified** ESM bundle (rolldown `minify: false`).
 // Consumer bundlers run their own minify pass with the rest of the app;

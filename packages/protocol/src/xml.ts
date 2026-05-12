@@ -1,4 +1,4 @@
-import { MPS3Error } from "./errors";
+import { BaerlyError } from "./errors";
 import type { XmlNode, XmlParser } from "./types";
 
 /**
@@ -27,10 +27,10 @@ export const parseListObjectsV2CommandOutput = (
 ): ParsedListObjectsV2Output => {
   // reject DTDs (XXE/billion-laughs) — DOCTYPE must precede the root element
   if (/<!DOCTYPE\b/i.test(xml)) {
-    throw new MPS3Error("InvalidResponse", "DTD not allowed in S3 XML responses");
+    throw new BaerlyError("InvalidResponse", "DTD not allowed in S3 XML responses");
   }
   const doc = domParser.parseFromString(xml, "text/xml");
-  if (!doc) throw new MPS3Error("InvalidResponse", `Invalid XML: ${xml}`);
+  if (!doc) throw new BaerlyError("InvalidResponse", `Invalid XML: ${xml}`);
   // const results = doc.getElementsByTagName("ListBucketResult")[0];
   const contents = doc.getElementsByTagName("Contents");
   //if (!contents) throw new Error(`Invalid XML: ${xml}`);

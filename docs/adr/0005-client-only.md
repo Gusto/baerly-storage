@@ -11,7 +11,7 @@ client-server one: clients connect to a sync server, the server
 arbitrates writes, and the persistence layer (S3 or otherwise) is an
 implementation detail.
 
-That's not what MPS3 is. MPS3 is a clientside-only library: clients
+That's not what Baerly is. Baerly is a clientside-only library: clients
 connect *directly* to S3-compatible storage and use the storage itself
 as the coordination substrate.
 
@@ -30,7 +30,7 @@ Rationale and theory live in
 ## Consequences
 
 - **Vendorless.** Anyone with S3-compatible storage (own bucket,
-  Backblaze, R2, Minio, etc.) can run MPS3 — no separate service to
+  Backblaze, R2, Minio, etc.) can run Baerly — no separate service to
   operate. This is the thesis.
 - **Operational footprint = the bucket.** No control plane, no
   scheduler, no health checks. Outages are S3 outages.

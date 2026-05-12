@@ -2,11 +2,11 @@
 
 ## Context
 
-MPS3 talks directly to S3-compatible HTTP endpoints (S3, R2, Backblaze,
+Baerly talks directly to S3-compatible HTTP endpoints (S3, R2, Backblaze,
 Minio). The obvious dependency would be `@aws-sdk/client-s3` (the modular
 v3 SDK). It's well-maintained, fully typed, and battle-tested.
 
-But MPS3 is intentionally a *clientside* library — it ships into a user's
+But Baerly is intentionally a *clientside* library — it ships into a user's
 web app bundle. `@aws-sdk/client-s3` plus its required peers
 (`@aws-sdk/credential-providers`, `@aws-sdk/s3-request-presigner`,
 `@smithy/*`) lands at hundreds of KB even after tree-shaking, and brings

@@ -2,18 +2,18 @@
 
 ## Context
 
-Errors thrown by MPS3 need to be machine-pattern-matchable by callers
+Errors thrown by Baerly need to be machine-pattern-matchable by callers
 (retry on `NetworkError`, surface `InvalidConfig` to the user, etc.).
 The two common patterns in TypeScript are:
 
-1. A class hierarchy: `NetworkError extends MPS3Error extends Error`,
+1. A class hierarchy: `NetworkError extends BaerlyError extends Error`,
    matched with `instanceof`.
 2. A single class with a `code` discriminant: `error.code === "NetworkError"`,
    typed as a discriminated union.
 
 ## Decision
 
-Use one `MPS3Error` class with a `code: MPS3ErrorCode` discriminant.
+Use one `BaerlyError` class with a `code: BaerlyErrorCode` discriminant.
 Definition in [`packages/protocol/src/errors.ts`](../../packages/protocol/src/errors.ts).
 
 ## Consequences

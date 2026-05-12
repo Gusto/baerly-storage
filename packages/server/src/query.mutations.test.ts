@@ -30,7 +30,7 @@ import {
   type JSONArraylessObject,
   type LogEntry,
   MemoryStorage,
-  MPS3Error,
+  BaerlyError,
   type StoragePutOptions,
   type StoragePutResult,
 } from "@baerly/protocol";
@@ -107,11 +107,11 @@ describe("Table.insert", () => {
     } catch (err) {
       thrown = err;
     }
-    expect(thrown).toBeInstanceOf(MPS3Error);
-    expect((thrown as MPS3Error).code).toBe("Conflict");
+    expect(thrown).toBeInstanceOf(BaerlyError);
+    expect((thrown as BaerlyError).code).toBe("Conflict");
     // Cardinality / id should appear in the message so callers can
     // distinguish "duplicate id" from a generic CAS conflict.
-    expect((thrown as MPS3Error).message).toContain("dup");
+    expect((thrown as BaerlyError).message).toContain("dup");
   });
 
   test("predicates do not gate insert: chain-bound Table.insert still runs", async () => {
@@ -278,9 +278,9 @@ describe("Query.replace", () => {
     } catch (err) {
       thrown = err;
     }
-    expect(thrown).toBeInstanceOf(MPS3Error);
-    expect((thrown as MPS3Error).code).toBe("Conflict");
-    expect((thrown as MPS3Error).message).toMatch(/\b0\b/);
+    expect(thrown).toBeInstanceOf(BaerlyError);
+    expect((thrown as BaerlyError).code).toBe("Conflict");
+    expect((thrown as BaerlyError).message).toMatch(/\b0\b/);
   });
 
   test("multiple matches: throws Conflict with cardinality (>1) in message", async () => {
@@ -297,9 +297,9 @@ describe("Query.replace", () => {
     } catch (err) {
       thrown = err;
     }
-    expect(thrown).toBeInstanceOf(MPS3Error);
-    expect((thrown as MPS3Error).code).toBe("Conflict");
-    expect((thrown as MPS3Error).message).toMatch(/\b2\b/);
+    expect(thrown).toBeInstanceOf(BaerlyError);
+    expect((thrown as BaerlyError).code).toBe("Conflict");
+    expect((thrown as BaerlyError).message).toMatch(/\b2\b/);
   });
 
   test("replace preserves the matched row's _id even when doc carries a different one", async () => {
@@ -399,11 +399,11 @@ class InstrumentedStorage extends MemoryStorage {
     if (key === this.watchedKey && opts?.ifMatch !== undefined) {
       this.casAttempts += 1;
       if (this.failEveryCas) {
-        throw new MPS3Error("InvalidResponse", `PreconditionFailed: simulated CAS 412 on ${key}`);
+        throw new BaerlyError("InvalidResponse", `PreconditionFailed: simulated CAS 412 on ${key}`);
       }
       if (this.failNextNCas > 0) {
         this.failNextNCas -= 1;
-        throw new MPS3Error("InvalidResponse", `PreconditionFailed: simulated CAS 412 on ${key}`);
+        throw new BaerlyError("InvalidResponse", `PreconditionFailed: simulated CAS 412 on ${key}`);
       }
     }
     return super.put(key, body, opts);
@@ -451,8 +451,8 @@ describe("Per-row CAS semantics (internal retries inside ServerWriter)", () => {
     } catch (err) {
       thrown = err;
     }
-    expect(thrown).toBeInstanceOf(MPS3Error);
-    expect((thrown as MPS3Error).code).toBe("Conflict");
+    expect(thrown).toBeInstanceOf(BaerlyError);
+    expect((thrown as BaerlyError).code).toBe("Conflict");
     // The writer's default retry budget is 8 attempts; the verb
     // itself does NOT add another layer.
     expect(storage.casAttempts - baseAttempts).toBe(8);

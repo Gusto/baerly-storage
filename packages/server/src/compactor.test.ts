@@ -14,7 +14,7 @@ import {
   InMemoryMetricsRecorder,
   createCurrentJson,
   MemoryStorage,
-  MPS3Error,
+  BaerlyError,
 } from "@baerly/protocol";
 import { describe, expect, it } from "vitest";
 import { compact, loadSnapshotAsMap } from "./compactor";
@@ -314,7 +314,7 @@ describe("compact", () => {
     try {
       await compact({ storage: s, currentJsonKey: KEY }, { minEntriesToCompact: 5 });
     } catch (err) {
-      expect(err).toBeInstanceOf(MPS3Error);
+      expect(err).toBeInstanceOf(BaerlyError);
       expect((err as Error).message).toContain("/log/");
     }
   });

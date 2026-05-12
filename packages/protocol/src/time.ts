@@ -4,8 +4,8 @@ import { uint2strDesc } from "./types";
 /**
  * Minimal subset of the host config that {@link adjustClock} needs.
  * Kept local to avoid a layering violation: the protocol package must
- * not depend on the higher-level `MPS3` config shape. The host's
- * `ResolvedMPS3Config` is structurally compatible.
+ * not depend on the higher-level `Baerly` config shape. The host's
+ * `ResolvedBaerlyConfig` is structurally compatible.
  */
 interface AdaptiveClockConfig {
   adaptiveClock: boolean;

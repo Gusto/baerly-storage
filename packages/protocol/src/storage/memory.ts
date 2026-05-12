@@ -1,4 +1,4 @@
-import { MPS3Error } from "../errors";
+import { BaerlyError } from "../errors";
 import type {
   Storage,
   StorageGetOptions,
@@ -48,20 +48,20 @@ export class MemoryStorage implements Storage {
     const existing = this.#objects.get(key);
 
     if (opts?.ifNoneMatch === "*" && existing !== undefined) {
-      throw new MPS3Error(
+      throw new BaerlyError(
         "InvalidResponse",
         `PreconditionFailed: ifNoneMatch="*" but key ${key} already exists`,
       );
     }
     if (opts?.ifMatch !== undefined) {
       if (existing === undefined) {
-        throw new MPS3Error(
+        throw new BaerlyError(
           "InvalidResponse",
           `PreconditionFailed: ifMatch=${opts.ifMatch} but key ${key} does not exist`,
         );
       }
       if (existing.etag !== opts.ifMatch) {
-        throw new MPS3Error(
+        throw new BaerlyError(
           "InvalidResponse",
           `PreconditionFailed: ifMatch=${opts.ifMatch} but current ETag is ${existing.etag}`,
         );

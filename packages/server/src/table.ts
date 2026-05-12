@@ -69,9 +69,9 @@ export const makeTable = <T extends JSONArraylessObject>(ctx: TableReadContext):
      * inside `ServerWriter.commit()`. On retry-budget exhaustion the
      * writer throws `Conflict` and we surface unchanged.
      *
-     * @throws MPS3Error code="Conflict" — `_id` collision (pre-commit
+     * @throws BaerlyError code="Conflict" — `_id` collision (pre-commit
      *   check) or CAS retry budget exhausted.
-     * @throws MPS3Error code="SchemaError" — inherited from
+     * @throws BaerlyError code="SchemaError" — inherited from
      *   `ServerWriter.validateInput`.
      */
     insert: (doc) => runInsert<T>(ctx, doc),

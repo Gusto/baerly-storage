@@ -29,7 +29,7 @@ import {
   InMemoryMetricsRecorder,
   type JSONArraylessObject,
   type LogEntry,
-  MPS3Error,
+  BaerlyError,
   type Storage,
   createCurrentJson,
   uuid,
@@ -68,7 +68,7 @@ const ensureCurrent = async (storage: Storage, key: string): Promise<void> => {
   try {
     await createCurrentJson(storage, key, seedCurrent());
   } catch (err) {
-    if (err instanceof MPS3Error && err.code === "Conflict") return;
+    if (err instanceof BaerlyError && err.code === "Conflict") return;
     throw err;
   }
 };
@@ -107,7 +107,7 @@ type Doc = JSONArraylessObject;
  * Predicate `$`-key rejection. The day-one operator policy
  * (`packages/protocol/src/db.ts:101-103` + `packages/protocol/src/query/predicate.ts:50-75`)
  * rejects `$`-prefixed predicate keys with
- * `MPS3Error{code:"InvalidConfig"}`. Rejection is SYNCHRONOUS at
+ * `BaerlyError{code:"InvalidConfig"}`. Rejection is SYNCHRONOUS at
  * `.where(...)` — no `await`, no terminal-time deferral — because
  * the operator-policy boundary is the public contract surface
  * (ticket 12 §Hard constraints: "Runtime rejects $-keys with
@@ -139,7 +139,7 @@ const predicateRejection = (db: Db, table: string): void => {
     // SYNCHRONOUS throw — `.where(p)` returns a builder on success,
     // so an absent throw here means the operator-policy contract is
     // unwired. We capture instead of `expect(() => ...).toThrow` so
-    // we can assert the MPS3Error shape AND the offending key in one
+    // we can assert the BaerlyError shape AND the offending key in one
     // pass without losing the error reference.
     let err: unknown;
     try {
@@ -147,14 +147,14 @@ const predicateRejection = (db: Db, table: string): void => {
     } catch (e) {
       err = e;
     }
-    expect(err, `where(${label}) must throw synchronously`).toBeInstanceOf(MPS3Error);
-    expect((err as MPS3Error).code, `where(${label}) error.code`).toBe("InvalidConfig");
+    expect(err, `where(${label}) must throw synchronously`).toBeInstanceOf(BaerlyError);
+    expect((err as BaerlyError).code, `where(${label}) error.code`).toBe("InvalidConfig");
     // Message names the offending `$`-key verbatim (e.g. "$or",
     // "$gt", "$eq"). The validator's wording is `Unsupported
     // predicate operator "$or" at <root> — …` so a substring match
     // on the operator name is sufficient and resilient to wording
     // tweaks.
-    expect((err as MPS3Error).message, `where(${label}) message names ${offender}`).toContain(
+    expect((err as BaerlyError).message, `where(${label}) message names ${offender}`).toContain(
       offender,
     );
   }
@@ -362,7 +362,7 @@ const runTransactionBody = async (
  * Cross-writer Conflict: two concurrent transactions racing on the
  * same table's `current.json`. The locked contract
  * (`packages/protocol/src/db.ts:211-215`) says single-attempt — at
- * least one writer throws `MPS3Error{code:"Conflict"}` on CAS loss.
+ * least one writer throws `BaerlyError{code:"Conflict"}` on CAS loss.
  *
  * In-process variants (memory, local-fs) share state via the
  * backing-store singleton, so two transactions on the same `db`
@@ -400,8 +400,8 @@ const runTransactionConflict = async (
   // — strong enough to fail if a writer ever rejects with another
   // code, weak enough to avoid flake on serialising backends.
   for (const r of rejected) {
-    const err = (r as PromiseRejectedResult).reason as MPS3Error;
-    expect(err).toBeInstanceOf(MPS3Error);
+    const err = (r as PromiseRejectedResult).reason as BaerlyError;
+    expect(err).toBeInstanceOf(BaerlyError);
     expect(err.code).toBe("Conflict");
   }
 };

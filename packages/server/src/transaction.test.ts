@@ -13,7 +13,7 @@ import {
   createCurrentJson,
   type LogEntry,
   MemoryStorage,
-  MPS3Error,
+  BaerlyError,
   type StoragePutOptions,
   type StoragePutResult,
 } from "@baerly/protocol";
@@ -80,7 +80,7 @@ class InstrumentedStorage extends MemoryStorage {
       this.casAttempts += 1;
       if (this.failNextCasOnce) {
         this.failNextCasOnce = false;
-        throw new MPS3Error("InvalidResponse", `PreconditionFailed: simulated CAS 412 on ${key}`);
+        throw new BaerlyError("InvalidResponse", `PreconditionFailed: simulated CAS 412 on ${key}`);
       }
     }
     return super.put(key, body, opts);
@@ -246,8 +246,8 @@ describe("Db.transaction", () => {
       thrown = err;
     }
 
-    expect(thrown).toBeInstanceOf(MPS3Error);
-    expect((thrown as MPS3Error).code).toBe("Conflict");
+    expect(thrown).toBeInstanceOf(BaerlyError);
+    expect((thrown as BaerlyError).code).toBe("Conflict");
     // Single-attempt: exactly ONE CAS PUT was issued (no retry).
     expect(instrumented.casAttempts).toBe(1);
 

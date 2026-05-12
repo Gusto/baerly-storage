@@ -33,7 +33,7 @@ Graduation is a tool we ship, not a feature we promise.
 
 The API surface is small enough that an LLM can use it zero-shot
 from `.d.ts` alone. Five verbs, four modifiers, one transaction.
-Stable error codes (`MPS3Error.code`); stable error messages.
+Stable error codes (`BaerlyError.code`); stable error messages.
 Examples in JSDoc that are tested.
 
 Underneath, the protocol is a real distributed system: descending

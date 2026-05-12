@@ -225,7 +225,7 @@ edits and point at the same files.
   mismatch with `as string`; widen only if you understand why.
 - **Magic values live in `packages/protocol/src/constants.ts`** with a JSDoc citing where the
   value comes from (often `docs/sync_protocol.md`).
-- **Errors must be `MPS3Error` instances** (re-exported from
+- **Errors must be `BaerlyError` instances** (re-exported from
   `@baerly/protocol`). Use the `code` discriminant
   (`error.code === "NetworkError"`), not `instanceof` chains. Hierarchy
   lives in `packages/protocol/src/errors.ts`.

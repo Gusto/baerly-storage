@@ -3,7 +3,7 @@
     <img width="50%" src="diagrams/sync_protocol_header.svg">
 </p>
 
-This is a focused explanation of the core sync protocol of MPS3. The sync protocol upgrades an S3 API into a causally consistent, multiplayer datastore without the use of intermediate servers.
+This is a focused explanation of the core sync protocol of Baerly. The sync protocol upgrades an S3 API into a causally consistent, multiplayer datastore without the use of intermediate servers.
 
 ## Why build over S3?
 
@@ -13,9 +13,9 @@ This is a focused explanation of the core sync protocol of MPS3. The sync protoc
 
 3. Flexibility. Databases are one of the least portable parts of a stack. Decoupling storage from the database enables many more options like self-hosting with minio or using a specialist storage vendor that supports the S3 API.
 
-## MPS3
+## Baerly
 
-MPS3 is a Key-Value store. The values are stored in versioned storage locations on S3. There is a layer of indirection that maps DB logical keys to storage locations hosted in a *manifest*
+Baerly is a Key-Value store. The values are stored in versioned storage locations on S3. There is a layer of indirection that maps DB logical keys to storage locations hosted in a *manifest*
 
 ### Atomic Multi-key Operations
 
@@ -55,7 +55,7 @@ The manifest records several major pieces of imperfect information.
 }
 ```
 
-Much of the engineering of the MPS3 sync protocol is about transforming that imperfect information into a causally consistent, atomic, multiplayer safe representation client-side.
+Much of the engineering of the Baerly sync protocol is about transforming that imperfect information into a causally consistent, atomic, multiplayer safe representation client-side.
 
 ### Reconciling concurrent writes
 
@@ -71,7 +71,7 @@ state_t &=& state_{t-lag} + \sum_{i=lag}^{t} merge(patch_i) \\
 &=& est_t + \sum_{i=lag}^{t} merge(patch_i)
 \end{eqnarray}$$
 
-So this is the key insight encoded within MPS3 manifest representation. The state field provides a good guess, but clients need to around "a bit" and reapply nearby operations to correct for inflight writes.
+So this is the key insight encoded within Baerly manifest representation. The state field provides a good guess, but clients need to around "a bit" and reapply nearby operations to correct for inflight writes.
 
 ### Causal Consistency
 
@@ -85,7 +85,7 @@ See [Checking Causal Consistency the Easy Way](causal_consistency_checking.md) d
 
 Clock skew becomes a consistency-threatening problem if exceeding the *lag* window. Then the reconciliation algorithm will not be looking far enough back and will miss operations. Client clocks cannot be trusted. 
 
-Large clock skew is detected by MPS3 by comparing the manifest key timestamp against the server-provided `LastModified` time. If the skew is above a *stale* write threshold it is ignored. As long as the *stale* write threshold is sufficiently below the *lag* parameter, all clients will converge to the same state regardless of clock skew.
+Large clock skew is detected by Baerly by comparing the manifest key timestamp against the server-provided `LastModified` time. If the skew is above a *stale* write threshold it is ignored. As long as the *stale* write threshold is sufficiently below the *lag* parameter, all clients will converge to the same state regardless of clock skew.
 
 ### Automatic Clock Adjustment
 

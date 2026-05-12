@@ -24,7 +24,7 @@ import {
   casUpdateCurrentJson,
   createCurrentJson,
   readCurrentJson,
-  MPS3Error,
+  BaerlyError,
   type CurrentJson,
 } from "@baerly/protocol";
 import { buildBenchStorage, ensureBucket, type CountingStorage } from "./storage.ts";
@@ -71,7 +71,8 @@ async function preflight(network: Network): Promise<void> {
   } catch (e) {
     throw new Error(
       `bench: Minio not reachable at ${MINIO_HEALTH_URL} (${(e as Error).message}). ` +
-        `Did you run 'pnpm dev:storage'?`, { cause: e },
+        `Did you run 'pnpm dev:storage'?`,
+      { cause: e },
     );
   }
   if (res.status !== 200) {
@@ -94,7 +95,7 @@ async function seedCurrentJson(storage: CountingStorage): Promise<void> {
   try {
     await createCurrentJson(storage, CURRENT_KEY, SEED);
   } catch (e: unknown) {
-    if (e instanceof MPS3Error && e.code === "Conflict") return; // already there
+    if (e instanceof BaerlyError && e.code === "Conflict") return; // already there
     throw e;
   }
 }
@@ -118,7 +119,7 @@ async function s1Writer(
         metrics.recordCommit(performance.now() - t0, attempts);
         break;
       } catch (e: unknown) {
-        if (e instanceof MPS3Error && e.code === "Conflict") {
+        if (e instanceof BaerlyError && e.code === "Conflict") {
           metrics.recordConflict412();
           const sleepMs = jitter(retryPolicy, attempts, prevSleep);
           prevSleep = sleepMs;
@@ -126,7 +127,7 @@ async function s1Writer(
           attempts++;
           continue;
         }
-        if (e instanceof MPS3Error && e.code === "NetworkError") {
+        if (e instanceof BaerlyError && e.code === "NetworkError") {
           metrics.recordRateLimit429();
           const sleepMs = jitter(retryPolicy, attempts, prevSleep);
           prevSleep = sleepMs;

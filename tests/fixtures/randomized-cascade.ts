@@ -4,9 +4,9 @@
  * Lifted from the legacy `tests/integration/randomized.test.ts` body
  * with three substitutions: writes go through `ServerWriter.commit()`
  * (one `LogEntry` per call), reads walk the log to the freshest entry
- * for `(collection, docId)`, and clock-skew entropy moves from
- * `MPS3.clockOffset` to a per-instance offset added when minting log
- * entries. Cross-instance handshake is the shared backing store: each
+ * for `(collection, docId)`, and clock-skew entropy moves from a
+ * legacy `clockOffset` config field to a per-instance offset added
+ * when minting log entries. Cross-instance handshake is the shared backing store: each
  * variant returns N {@link Storage} handles that observe each other's
  * writes.
  *
@@ -25,7 +25,7 @@ import {
   CURRENT_JSON_SCHEMA_VERSION,
   type JSONArraylessObject,
   type LogEntry,
-  MPS3Error,
+  BaerlyError,
   type Storage,
   createCurrentJson,
   readCurrentJson,
@@ -111,7 +111,7 @@ const ensureCurrent = async (storage: Storage, key: string): Promise<void> => {
   try {
     await createCurrentJson(storage, key, seedCurrent());
   } catch (err) {
-    if (err instanceof MPS3Error && err.code === "Conflict") {
+    if (err instanceof BaerlyError && err.code === "Conflict") {
       const got = await readCurrentJson(storage, key);
       if (got !== null) return;
     }
@@ -213,7 +213,8 @@ const buildInstances = async (storages: Storage[]): Promise<Instance[]> => {
  *                        Minio 50).
  * @param opts.clockOffsetsMs Per-client clock skew. Defaults to random
  *                        offsets in `[-1000, +1000]` ms — matches the
- *                        legacy `MPS3.clockOffset` entropy.
+ *                        legacy harness's per-client `clockOffset`
+ *                        entropy.
  */
 export const runCausalConsistencyCascade = (opts: {
   storages: Storage[];
@@ -240,10 +241,11 @@ export const runCausalConsistencyCascade = (opts: {
         // per-sender monotonic `send_time` invariant that the
         // causal-consistency model relies on at read time.
         //
-        // The legacy harness sidestepped this because `MPS3.put` had
-        // an internal per-client write queue; the new test re-creates
-        // that queue explicitly. Effect: per-client broadcast order
-        // == per-client log-seq order, same as the legacy harness.
+        // The legacy harness sidestepped this because the old
+        // browser-side `put` had an internal per-client write queue;
+        // the new test re-creates that queue explicitly. Effect:
+        // per-client broadcast order == per-client log-seq order, same
+        // as the legacy harness.
         const commitQueues: Promise<void>[] = Array.from({ length: N }, () => Promise.resolve());
 
         // Drives the cascade: observe a value, check invariants,
@@ -310,7 +312,7 @@ export const runCausalConsistencyCascade = (opts: {
                 // Transient Conflict under contention is fine — the
                 // peer will re-broadcast on its next observe. Other
                 // errors propagate.
-                if (err instanceof MPS3Error && err.code === "Conflict") return;
+                if (err instanceof BaerlyError && err.code === "Conflict") return;
                 finished = true;
                 reject(err);
               }

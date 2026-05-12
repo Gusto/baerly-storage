@@ -18,12 +18,12 @@ which are always green is documented in
 | Service | Port | Purpose |
 |---|---|---|
 | Minio API | `:9102` | Stable S3-compatible endpoint. Most tests target this. |
-| Minio console | `:9103` | Web UI at <http://127.0.0.1:9103> (login `mps3` / see compose file). |
+| Minio console | `:9103` | Web UI at <http://127.0.0.1:9103> (login `baerly` / see compose file). |
 | Toxiproxy | `:9104` | Proxies `:9102` with chaos injection. Used by `randomized.test.ts` to simulate network failure. |
 | Toxiproxy admin | `:8474` | For configuring toxics manually. |
 
 The split matters: tests that want a *reliable* S3 use `:9102`; tests
-that want to exercise retry/replay paths point one MPS3 instance at
+that want to exercise retry/replay paths point one Baerly instance at
 `:9104` and another at `:9102` so they share a backend but disagree
 about reachability. See `randomized.test.ts`'s `unstableConfig`.
 

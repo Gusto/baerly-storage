@@ -1,14 +1,14 @@
-import type { LogEntry, MPS3ErrorCode } from "@baerly/protocol";
+import type { LogEntry, BaerlyErrorCode } from "@baerly/protocol";
 
 /**
- * Wire envelope for every error response. Mirrors `MPS3Error` so
+ * Wire envelope for every error response. Mirrors `BaerlyError` so
  * the Phase 8 client SDK reconstructs the same class shape it
  * would see in-process. `code` is the discriminant; `cause` is
  * never sent on the wire.
  */
 export interface HttpErrorEnvelope {
   readonly error: {
-    readonly code: MPS3ErrorCode;
+    readonly code: BaerlyErrorCode;
     readonly message: string;
   };
 }

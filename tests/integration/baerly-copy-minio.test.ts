@@ -33,7 +33,7 @@ import { doCopy } from "../../packages/cli/src/copy";
 import { createBucket } from "../fixtures/s3-fixtures";
 
 const MINIO_ENDPOINT = "http://127.0.0.1:9102";
-const MINIO_ACCESS_KEY = "mps3";
+const MINIO_ACCESS_KEY = "baerly";
 const MINIO_SECRET_KEY = "ZOAmumEzdsUUcVlQ";
 const MINIO_REGION = "us-east-1";
 const SRC_BUCKET = "baerly-copy-src";

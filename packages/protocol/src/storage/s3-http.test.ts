@@ -1,6 +1,6 @@
 import { DOMParser } from "@xmldom/xmldom";
 import { describe, expect, test, vi } from "vitest";
-import { MPS3Error } from "../errors";
+import { BaerlyError } from "../errors";
 import { S3HttpStorage } from "./s3-http";
 
 const xmlParser = new DOMParser();
@@ -68,7 +68,7 @@ describe("S3HttpStorage.get", () => {
   test("500 → retries then NetworkError when budget exhausted", async () => {
     const fetchFn = vi.fn(async (_req: Request) => new Response("boom", { status: 500 }));
     const s = mkStorage(fetchFn as unknown as typeof fetch, { retries: 2 });
-    await expect(s.get("k")).rejects.toBeInstanceOf(MPS3Error);
+    await expect(s.get("k")).rejects.toBeInstanceOf(BaerlyError);
     // 1 initial + 2 retries
     expect(fetchFn).toHaveBeenCalledTimes(3);
   });

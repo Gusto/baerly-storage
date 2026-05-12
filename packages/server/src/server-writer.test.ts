@@ -5,7 +5,7 @@ import {
   createCurrentJson,
   getOrCreateMemoryStorageForBucket,
   MemoryStorage,
-  MPS3Error,
+  BaerlyError,
   resetMemoryStorage,
   type StoragePutOptions,
   type StoragePutResult,
@@ -44,11 +44,11 @@ class InstrumentedStorage extends MemoryStorage {
     if (key === CURRENT_KEY && opts?.ifMatch !== undefined) {
       this.casAttempts += 1;
       if (this.failEveryCas) {
-        throw new MPS3Error("InvalidResponse", `PreconditionFailed: simulated CAS 412 on ${key}`);
+        throw new BaerlyError("InvalidResponse", `PreconditionFailed: simulated CAS 412 on ${key}`);
       }
       if (this.failNextCasOnce) {
         this.failNextCasOnce = false;
-        throw new MPS3Error("InvalidResponse", `PreconditionFailed: simulated CAS 412 on ${key}`);
+        throw new BaerlyError("InvalidResponse", `PreconditionFailed: simulated CAS 412 on ${key}`);
       }
     }
     return super.put(key, body, opts);
@@ -123,7 +123,7 @@ describe("ServerWriter", () => {
     expect(persisted.next_seq).toBe(1);
   });
 
-  test("retries exhausted: throws MPS3Error code='Conflict' after maxRetries", async () => {
+  test("retries exhausted: throws BaerlyError code='Conflict' after maxRetries", async () => {
     const storage = new InstrumentedStorage();
     await createCurrentJson(storage, CURRENT_KEY, seedCurrent());
     storage.failEveryCas = true;
@@ -146,8 +146,8 @@ describe("ServerWriter", () => {
       thrown = err;
     }
 
-    expect(thrown).toBeInstanceOf(MPS3Error);
-    expect((thrown as MPS3Error).code).toBe("Conflict");
+    expect(thrown).toBeInstanceOf(BaerlyError);
+    expect((thrown as BaerlyError).code).toBe("Conflict");
     expect(storage.casAttempts).toBe(3);
 
     const stored = await storage.get(CURRENT_KEY);
@@ -350,7 +350,7 @@ describe("ServerWriter", () => {
         // Throttle the first content PUT only.
         if (!this.thrown && /\/content\//.test(key)) {
           this.thrown = true;
-          throw new MPS3Error("NetworkError", `S3: HTTP 429 throttled on ${key}`);
+          throw new BaerlyError("NetworkError", `S3: HTTP 429 throttled on ${key}`);
         }
         return super.put(key, body, opts);
       }
@@ -377,8 +377,8 @@ describe("ServerWriter", () => {
     }
     // Commit propagates the NetworkError — but the 429 counter
     // bumped on the way through the catch arm.
-    expect(thrown).toBeInstanceOf(MPS3Error);
-    expect((thrown as MPS3Error).code).toBe("NetworkError");
+    expect(thrown).toBeInstanceOf(BaerlyError);
+    expect((thrown as BaerlyError).code).toBe("NetworkError");
     expect(metrics.sumCounter("db.r2.put.429_total")).toBe(1);
   });
 
@@ -489,9 +489,9 @@ describe("ServerWriter — writer fence", () => {
     } catch (err) {
       thrown = err;
     }
-    expect(thrown).toBeInstanceOf(MPS3Error);
-    expect((thrown as MPS3Error).code).toBe("Conflict");
-    expect((thrown as MPS3Error).message).toMatch(/writer fence bumped from epoch 0 to 1/);
+    expect(thrown).toBeInstanceOf(BaerlyError);
+    expect((thrown as BaerlyError).code).toBe("Conflict");
+    expect((thrown as BaerlyError).message).toMatch(/writer fence bumped from epoch 0 to 1/);
     expect(metrics.sumCounter("db.writer.fence_bump_observed_total")).toBe(1);
     // Tenant + collection labels travel.
     const bumpEvent = metrics.counters.find(
@@ -520,8 +520,8 @@ describe("ServerWriter — writer fence", () => {
     } catch (err) {
       thrown = err;
     }
-    expect(thrown).toBeInstanceOf(MPS3Error);
-    expect((thrown as MPS3Error).code).toBe("Conflict");
+    expect(thrown).toBeInstanceOf(BaerlyError);
+    expect((thrown as BaerlyError).code).toBe("Conflict");
     expect(metrics.sumCounter("db.writer.fence_bump_observed_total")).toBe(1);
   });
 

@@ -2,7 +2,7 @@
    name for the Phase-3 Storage escape hatch; mirrors the Phase-4 `Db._raw`
    declaration in `@baerly/protocol/src/db.ts` and is marked `@internal`. */
 
-import { MPS3Error } from "@baerly/protocol";
+import { BaerlyError } from "@baerly/protocol";
 import type {
   JSONArraylessObject,
   Storage,
@@ -151,10 +151,10 @@ export class Db {
 
   /**
    * Build a tenant-scoped `Db`. Throws
-   * `MPS3Error{code:"InvalidConfig"}` if either `app` or `tenant`
+   * `BaerlyError{code:"InvalidConfig"}` if either `app` or `tenant`
    * is empty or contains `/` (the segment separator).
    *
-   * @throws MPS3Error code="InvalidConfig" when `app` or `tenant` is
+   * @throws BaerlyError code="InvalidConfig" when `app` or `tenant` is
    *   empty or contains `/`.
    *
    * @example
@@ -165,13 +165,13 @@ export class Db {
   static create(config: { storage: Storage; app: string; tenant: string }): Db {
     const { storage, app, tenant } = config;
     if (app.length === 0 || tenant.length === 0) {
-      throw new MPS3Error(
+      throw new BaerlyError(
         "InvalidConfig",
         `Db.create requires non-empty app and tenant (got app=${JSON.stringify(app)}, tenant=${JSON.stringify(tenant)})`,
       );
     }
     if (app.includes("/") || tenant.includes("/")) {
-      throw new MPS3Error(
+      throw new BaerlyError(
         "InvalidConfig",
         `Db.create: "/" is reserved as the key-segment separator (got app=${JSON.stringify(app)}, tenant=${JSON.stringify(tenant)})`,
       );
@@ -184,7 +184,7 @@ export class Db {
    * `name` returns a FRESH `Table<T>` object on each call (chain
    * identity is intentional — modifiers return new objects).
    *
-   * @throws MPS3Error code="InvalidConfig" when `name` is empty or
+   * @throws BaerlyError code="InvalidConfig" when `name` is empty or
    *   contains `/`.
    *
    * @example
@@ -211,13 +211,13 @@ export class Db {
    *
    * Runs the same `name`-validation guard as {@link Db.table}.
    *
-   * @throws MPS3Error code="InvalidConfig" when `name` is empty or
+   * @throws BaerlyError code="InvalidConfig" when `name` is empty or
    *   contains `/`.
    * @internal
    */
   tableReadContext(name: string): TableReadContext {
     if (name.length === 0 || name.includes("/")) {
-      throw new MPS3Error(
+      throw new BaerlyError(
         "InvalidConfig",
         `Db.table: name must be non-empty and must not contain "/" (got ${JSON.stringify(name)})`,
       );
@@ -244,7 +244,7 @@ export class Db {
    * `Storage` live (no MVCC snapshot, no read-your-writes).
    *
    * Single-attempt: on CAS conflict throws
-   * `MPS3Error{code:"Conflict"}`. The body MAY have already run its
+   * `BaerlyError{code:"Conflict"}`. The body MAY have already run its
    * read side-effects (no rollback of in-memory state); the write
    * side-effects either all landed or none did. Wrap in a retry
    * loop you wrote if you want one.
@@ -252,11 +252,11 @@ export class Db {
    * Empty body (or a body that buffers nothing) resolves without
    * touching `current.json`.
    *
-   * @throws MPS3Error code="Conflict" — CAS lost on the table's
+   * @throws BaerlyError code="Conflict" — CAS lost on the table's
    *   `current.json`. Caller decides whether to re-run the body.
    * @throws Whatever the body throws — re-thrown as-is. The commit
    *   is skipped when the body throws.
-   * @throws MPS3Error code="InvalidConfig" — `table` is empty or
+   * @throws BaerlyError code="InvalidConfig" — `table` is empty or
    *   contains `/`.
    *
    * @example
@@ -272,7 +272,7 @@ export class Db {
     body: (tx: Table<T>) => Promise<void>,
   ): Promise<void> {
     if (table.length === 0 || table.includes("/")) {
-      throw new MPS3Error(
+      throw new BaerlyError(
         "InvalidConfig",
         `Db.transaction: name must be non-empty and must not contain "/" (got ${JSON.stringify(table)})`,
       );
@@ -341,7 +341,7 @@ const makeRawStorageApi = (app: string, tenant: string, storage: Storage): RawSt
       // prefix. Unreachable under a correct `Storage` impl (we
       // asked it to list our prefix), so an `Internal` invariant
       // violation is the right shape.
-      throw new MPS3Error(
+      throw new BaerlyError(
         "Internal",
         `Db._raw.list: storage yielded key ${JSON.stringify(physical)} outside expected prefix ${JSON.stringify(prefix)}`,
       );

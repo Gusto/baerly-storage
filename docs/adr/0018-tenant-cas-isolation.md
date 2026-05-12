@@ -9,7 +9,7 @@ Accepted (2026-05-11).
 Baerly's coordination object is `current.json`: every commit reads it,
 mutates it locally, and CAS-writes it back with `If-Match: <etag>`. CAS
 loss surfaces as a `412 Precondition Failed`, which the writer maps to
-`MPS3Error{code:"Conflict"}`
+`BaerlyError{code:"Conflict"}`
 ([`packages/protocol/src/coordination/current-json.ts:224`](../../packages/protocol/src/coordination/current-json.ts),
 [`packages/server/src/server-writer.ts:348`](../../packages/server/src/server-writer.ts)).
 A multi-tenant deployment shares one bucket across many tenants, so two
