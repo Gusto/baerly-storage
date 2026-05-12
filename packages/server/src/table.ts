@@ -14,6 +14,7 @@
  */
 
 import {
+  type ConsistencyLevel,
   type JSONArraylessObject,
   type OrderSpec,
   type Predicate,
@@ -48,12 +49,14 @@ export const makeTable = <T extends JSONArraylessObject>(ctx: TableReadContext):
     predicate: undefined as Predicate<T> | undefined,
     order: undefined as OrderSpec<T> | undefined,
     limit: undefined as number | undefined,
+    consistency: undefined as ConsistencyLevel | undefined,
   };
   return {
     name: ctx.tableName,
     where: (p) => makeQuery<T>(ctx, { ...seed, predicate: p }),
     order: (s) => makeQuery<T>(ctx, { ...seed, order: s }),
     limit: (n) => makeQuery<T>(ctx, { ...seed, limit: n }),
+    consistency: (level) => makeQuery<T>(ctx, { ...seed, consistency: level }),
     /**
      * Insert one document. UUIDv7 auto-id when `_id` is absent or
      * empty; otherwise the caller-supplied `_id` is honoured. A

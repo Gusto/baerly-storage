@@ -18,6 +18,7 @@
 import { Hono, type Context } from "hono";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import {
+  type ConsistencyLevel,
   MPS3Error,
   type JSONArraylessObject,
   type MPS3ErrorCode,
@@ -106,10 +107,12 @@ export function createRouter(options: CreateRouterOptions): Hono {
   app.get("/v1/t/:table/:id", async (c) => {
     const { table, id } = c.req.param();
     try {
+      const consistency = parseConsistency(c.req.query("consistency"));
       const { row, manifestPointer, fresh } = await runFirstWithMeta(db.tableReadContext(table), {
         predicate: { _id: id } as Predicate<JSONArraylessObject>,
         order: undefined,
         limit: 1,
+        consistency,
       });
       if (row === undefined) return jsonError(c, 404, "Internal", `No such row: ${id}`);
       return c.json(
@@ -137,10 +140,12 @@ export function createRouter(options: CreateRouterOptions): Hono {
       }
     }
     try {
+      const consistency = parseConsistency(c.req.query("consistency"));
       const { rows, manifestPointer, fresh } = await runAllWithMeta(db.tableReadContext(table), {
         predicate: predicate as Predicate<JSONArraylessObject>,
         order: undefined,
         limit: undefined,
+        consistency,
       });
       return c.json(
         {
@@ -264,6 +269,27 @@ export function createRouter(options: CreateRouterOptions): Hono {
  *   cross-package consumer.
  */
 export const MAX_BODY_BYTES = 1 << 20; // 1 MiB; see Q5 of ticket 25.
+
+/**
+ * Parse the `?consistency=...` query-string param. Absent →
+ * `"strong"`. Known values → that value. Anything else →
+ * `MPS3Error{code:"InvalidConfig"}` (mapped to 400 by
+ * {@link mapToResponse}).
+ *
+ * Mutation routes silently ignore `?consistency` per the locked
+ * contract (writes are always strong); only the two read routes
+ * call this. See ticket 34 §3.4.
+ *
+ * @internal
+ */
+function parseConsistency(raw: string | undefined): ConsistencyLevel {
+  if (raw === undefined) return "strong";
+  if (raw === "strong" || raw === "eventual") return raw;
+  throw new MPS3Error(
+    "InvalidConfig",
+    `?consistency must be "strong" or "eventual"; got ${JSON.stringify(raw)}`,
+  );
+}
 
 const ERROR_TO_STATUS: ReadonlyMap<MPS3ErrorCode, HttpStatus> = new Map<MPS3ErrorCode, HttpStatus>([
   ["Unauthorized", 401],

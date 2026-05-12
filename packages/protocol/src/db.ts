@@ -117,6 +117,14 @@ export interface Table<T extends JSONArraylessObject = JSONArraylessObject> {
   limit(n: number): Query<T>;
 
   /**
+   * Read consistency level for the terminal call. Default `strong`.
+   * See {@link Query.consistency} for the staleness contract — the
+   * level threaded here applies to the `Query<T>` returned and any
+   * terminal called on it (including `count()`).
+   */
+  consistency(level: ConsistencyLevel): Query<T>;
+
+  /**
    * Insert a new document. UUIDv7 auto-id on `_id`; caller can
    * supply `_id` and the server honours it. Returns the new id.
    *
@@ -151,6 +159,14 @@ export type OrderSpec<T extends JSONArraylessObject = JSONArraylessObject> = {
 };
 
 /**
+ * Read consistency knob. See {@link Query.consistency}. `strong` is
+ * the default and matches the historic Phase-4 semantics. `eventual`
+ * skips the per-call `current.json` GET and serves the view this
+ * isolate observed when it last advanced.
+ */
+export type ConsistencyLevel = "strong" | "eventual";
+
+/**
  * `Table<T>` after at least one modifier. Carries predicate /
  * order / limit state forward. Modifiers compose; verbs are
  * terminal.
@@ -159,6 +175,33 @@ export interface Query<T extends JSONArraylessObject = JSONArraylessObject> {
   where(predicate: Predicate<T>): Query<T>;
   order(spec: OrderSpec<T>): Query<T>;
   limit(n: number): Query<T>;
+
+  /**
+   * Read consistency level for the terminal call. Default `strong`.
+   *
+   * - `strong` (default): every terminal call reads `current.json`
+   *   afresh, then folds the log. View reflects every write that
+   *   landed before the call.
+   * - `eventual`: skips the per-call `current.json` GET. Returns
+   *   the view observed when this isolate last advanced
+   *   `current.json`; may be one pointer old. A follow-up
+   *   `consistency('strong')` re-anchors.
+   *
+   * Last-call-wins on repeat invocation (matches `.order()` /
+   * `.limit()`). Mutations are always strong — no `eventual`
+   * mutation path. HTTP mirror: `?consistency=eventual` on the two
+   * read routes; any other value →
+   * `MPS3Error{code:"InvalidConfig"}`.
+   *
+   * @example
+   * ```ts
+   * await db.table("tickets")
+   *   .where({ status: "open" })
+   *   .consistency("eventual")
+   *   .all();
+   * ```
+   */
+  consistency(level: ConsistencyLevel): Query<T>;
 
   /** First match or `undefined`. Equivalent to `.limit(1).all()[0]`. */
   first(): Promise<T | undefined>;

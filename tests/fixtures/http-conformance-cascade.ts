@@ -667,5 +667,54 @@ export const runHttpConformanceCascade = (opts: {
         expect(r2._meta.fresh).toBe(true);
       });
     });
+
+    // ── Block 12: read consistency knob (ticket 34) ─────────────────
+    //
+    // `?consistency=eventual` on the two read routes opts into the
+    // per-isolate cache served by `TableReadContext.currentJsonCache`.
+    // Mutation routes silently ignore the param. Bad values throw
+    // `InvalidConfig` → 400.
+    describe("consistency knob", () => {
+      test("?consistency=eventual is accepted on read routes", async () => {
+        const table = await mintTable("cons-ok");
+        const ins = await postDoc(table, { status: "open" });
+        const r1 = await doFetch(
+          authedRequest("GET", `/v1/t/${table}/${ins.id!}?consistency=eventual`),
+        );
+        expect(r1.status).toBe(200);
+        const r2 = await doFetch(authedRequest("GET", `/v1/t/${table}?consistency=eventual`));
+        expect(r2.status).toBe(200);
+      });
+
+      test("?consistency=foo returns 400 with InvalidConfig", async () => {
+        const table = await mintTable("cons-bad");
+        const res = await doFetch(authedRequest("GET", `/v1/t/${table}?consistency=foo`));
+        expect(res.status).toBe(400);
+        const body = (await res.json()) as ErrorEnvelope;
+        expect(body.error?.code).toBe("InvalidConfig");
+      });
+
+      test("?consistency=strong is the documented default", async () => {
+        const table = await mintTable("cons-strong");
+        const res = await doFetch(authedRequest("GET", `/v1/t/${table}?consistency=strong`));
+        expect(res.status).toBe(200);
+      });
+
+      test("eventual carries _meta.fresh:false (Ticket-33 invariant under Ticket-34 semantics)", async () => {
+        type EventualMetaBody = {
+          readonly _meta: { readonly manifest_pointer: string; readonly fresh: boolean };
+        };
+        const table = await mintTable("cons-fresh");
+        await postDoc(table, { status: "open" });
+        // Anchor the in-isolate cache via a strong read first; some
+        // adapters reuse `Db` across requests (Node listener does
+        // not, but the cache slot still survives in-isolate reads
+        // on Workerd's miniflare runner).
+        await doFetch(authedRequest("GET", `/v1/t/${table}?consistency=strong`));
+        const r = await doFetch(authedRequest("GET", `/v1/t/${table}?consistency=eventual`));
+        const body = (await r.json()) as EventualMetaBody;
+        expect(body._meta.fresh).toBe(false);
+      });
+    });
   });
 };

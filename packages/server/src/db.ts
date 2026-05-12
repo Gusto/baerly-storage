@@ -13,7 +13,7 @@ import type {
   StoragePutResult,
   Table,
 } from "@baerly/protocol";
-import type { TableReadContext } from "./query";
+import type { CurrentJsonCacheSlot, TableReadContext } from "./query";
 import { ServerWriter, type CommitInput } from "./server-writer";
 import { makeTable } from "./table";
 
@@ -132,6 +132,15 @@ export class Db {
    * latent bug class.
    */
   readonly #storage: Storage;
+  /**
+   * Per-table `current.json` cache slots for the `eventual` read
+   * path. Allocated lazily by {@link Db.tableReadContext}; two
+   * `Table` handles over the same name share one slot so a
+   * `consistency('strong')` call on one handle anchors the cache
+   * the other reuses. Per-`Db`, NOT per-process — two `Db` instances
+   * over the same bucket do NOT share cache.
+   */
+  readonly #currentJsonCaches: Map<string, CurrentJsonCacheSlot> = new Map();
 
   private constructor(app: string, tenant: string, storage: Storage) {
     this.app = app;
@@ -213,11 +222,16 @@ export class Db {
         `Db.table: name must be non-empty and must not contain "/" (got ${JSON.stringify(name)})`,
       );
     }
+    let cache = this.#currentJsonCaches.get(name);
+    if (cache === undefined) {
+      cache = { value: null };
+      this.#currentJsonCaches.set(name, cache);
+    }
     return {
       storage: this.#storage,
       tablePrefix: `${physicalPrefixFor(this.app, this.tenant)}manifests/${name}`,
       tableName: name,
-      pointerCache: { value: undefined },
+      currentJsonCache: cache,
     };
   }
 
@@ -270,12 +284,21 @@ export class Db {
     // Build a Table<T> whose mutation verbs buffer onto `txCtx`. The
     // read path ignores `txCtx` entirely (locked: no MVCC, no
     // read-your-writes — ticket 11 §1).
+    // Reuse the per-(Db, table) `currentJsonCache` slot so a
+    // transaction's reads share the same `eventual`-anchor seen by
+    // pre-transaction `Db.table(table)` calls. Allocate one lazily
+    // if no `Db.table(table)` ran first.
+    let cache = this.#currentJsonCaches.get(table);
+    if (cache === undefined) {
+      cache = { value: null };
+      this.#currentJsonCaches.set(table, cache);
+    }
     const tx = makeTable<T>({
       storage: this.#storage,
       tablePrefix,
       tableName: table,
       txCtx,
-      pointerCache: { value: undefined },
+      currentJsonCache: cache,
     });
 
     // Run the body. Reads go through Storage live; mutations append
