@@ -31,7 +31,11 @@
     "deploy/**/*.ts",
     "*.config.ts",
     "scripts/**/*.ts",
-    "bench/**/*"
+    "bench/**/*",
+    "examples/*/apps/*/src/**/*.ts",
+    "examples/*/apps/*/src/**/*.tsx",
+    "examples/*/apps/*/*.config.ts",
+    "examples/*/smoke.test.ts"
   ],
   "exclude": ["tests/integration/conformance.test.ts"]
 }

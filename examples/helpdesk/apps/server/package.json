@@ -1,0 +1,17 @@
+{
+  "name": "@helpdesk/server",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node --experimental-strip-types src/index.ts",
+    "start": "node --experimental-strip-types src/index.ts",
+    "seed": "node --experimental-strip-types src/seed.ts"
+  },
+  "dependencies": {
+    "@baerly/adapter-node": "workspace:*",
+    "@baerly/client": "workspace:*",
+    "@baerly/dev": "workspace:*",
+    "@baerly/protocol": "workspace:*"
+  }
+}
