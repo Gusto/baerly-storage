@@ -1,6 +1,12 @@
 import type { IncomingMessage, RequestListener, ServerResponse } from "node:http";
-import type { Storage, Verifier } from "@baerly/protocol";
-import { Db, NODE_PROFILE, createRouter, runScheduledMaintenance } from "@baerly/server";
+import { BaerlyError, type Storage, type Verifier } from "@baerly/protocol";
+import {
+  Db,
+  MAX_BODY_BYTES,
+  NODE_PROFILE,
+  createRouter,
+  runScheduledMaintenance,
+} from "@baerly/server";
 
 /**
  * Options for {@link createListener}.
@@ -135,7 +141,7 @@ function toFetchRequest(req: IncomingMessage): Request {
   }
   const init: RequestInit = { method: req.method, headers };
   if (req.method !== "GET" && req.method !== "HEAD") {
-    init.body = readNodeStream(req);
+    init.body = readNodeStream(req, MAX_BODY_BYTES);
     // `duplex: "half"` is mandatory in Node 24+ when `body` is a
     // ReadableStream; `RequestInit` doesn't yet type it.
     (init as RequestInit & { duplex?: "half" }).duplex = "half";
@@ -143,12 +149,55 @@ function toFetchRequest(req: IncomingMessage): Request {
   return new Request(url.toString(), init);
 }
 
-function readNodeStream(req: IncomingMessage): ReadableStream<Uint8Array> {
+/**
+ * Pump `IncomingMessage` bytes into a WHATWG `ReadableStream`,
+ * enforcing the `maxBytes` cap mid-stream. When the running total
+ * crosses the cap we fail the stream with a
+ * `BaerlyError{code:"PayloadTooLarge"}` so the router's
+ * `arrayBuffer()` call rejects; the router's `readJsonBody`
+ * recognises the `BaerlyError` and surfaces 413 PayloadTooLarge on
+ * the wire.
+ *
+ * After the cap trips we keep draining the socket — silently
+ * discarding subsequent chunks — rather than `req.destroy()`-ing it.
+ * Destroying tears down the shared `req`/`res` TCP socket before
+ * the 413 envelope can be flushed and surfaces as a client-side
+ * "socket hang up" instead of a clean 413 (verified against
+ * Node's `fetch()`, which won't read the response until its
+ * outbound body write completes). Draining preserves the OOM
+ * protection — we stop enqueueing past the cap, so memory is
+ * bounded by `maxBytes` regardless of how much the attacker sends
+ * — while letting the client finish its upload and then read the
+ * 413 we already queued.
+ *
+ * Without this cap a chunked / Content-Length-absent request could
+ * buffer arbitrarily many bytes before the router's post-
+ * materialise length check fires. Workers don't need this guard
+ * because the platform pre-caps the body (16 MB free / 100 MB paid).
+ */
+function readNodeStream(req: IncomingMessage, maxBytes: number): ReadableStream<Uint8Array> {
+  let total = 0;
+  let exceeded = false;
   return new ReadableStream<Uint8Array>({
     start(controller) {
-      req.on("data", (chunk: Buffer) => controller.enqueue(new Uint8Array(chunk)));
-      req.on("end", () => controller.close());
-      req.on("error", (err) => controller.error(err));
+      req.on("data", (chunk: Buffer) => {
+        if (exceeded) return;
+        total += chunk.byteLength;
+        if (total > maxBytes) {
+          exceeded = true;
+          controller.error(new BaerlyError("PayloadTooLarge", `Body exceeds ${maxBytes} bytes`));
+          // No destroy/pause: drain remaining bytes into the void
+          // so the client can finish writing and read our 413.
+          return;
+        }
+        controller.enqueue(new Uint8Array(chunk));
+      });
+      req.on("end", () => {
+        if (!exceeded) controller.close();
+      });
+      req.on("error", (err) => {
+        if (!exceeded) controller.error(err);
+      });
     },
   });
 }

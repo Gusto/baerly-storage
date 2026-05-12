@@ -24,13 +24,19 @@ export function merge<T extends JSONArrayless>(
     return patch as T;
   }
   const combined = typeof target === "object" ? { ...target } : ({} as T);
-  for (let key in patch) {
-    // reject prototype pollution
+  for (const key of Object.keys(patch) as Array<Extract<keyof T, string>>) {
+    // Object.keys returns own enumerable string keys — but `__proto__`
+    // is an own property when patches arrive via JSON.parse (HTTP PATCH
+    // bodies hit this path through query.ts:runUpdate). Guard remains
+    // load-bearing. See predicate.test.ts for the same vector.
     if (key === "__proto__" || key === "constructor" || key === "prototype") continue;
     if (patch[key] === null) {
       delete combined[key];
     } else {
-      combined[key] = merge<any>(target![key], patch[key]!);
+      combined[key] = merge(target[key] as JSONArrayless, patch[key] as JSONArrayless) as T[Extract<
+        keyof T,
+        string
+      >];
     }
   }
   return combined as T;
@@ -61,8 +67,10 @@ export function diff<T extends JSONArrayless>(
   const patch: Partial<T> = {};
   const allKeys = new Set([...Object.keys(target), ...Object.keys(source)]);
   for (const key of allKeys) {
-    const val = diff((target as any)[key], (source as any)[key]);
-    if (val !== undefined) (patch as any)[key] = val;
+    const tVal: JSONArrayless | undefined = (target as JSONArraylessObject | undefined)?.[key];
+    const sVal: JSONArrayless | undefined = (source as JSONArraylessObject | undefined)?.[key];
+    const val = diff(tVal, sVal);
+    if (val !== undefined) (patch as JSONArraylessObject)[key] = val as JSONArrayless;
   }
   return patch;
 }

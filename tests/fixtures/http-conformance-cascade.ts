@@ -276,7 +276,7 @@ export const runHttpConformanceCascade = (opts: {
         30_000,
       );
 
-      test("GET of missing _id returns 404 with an error envelope", async () => {
+      test("GET of missing _id returns 404 with NotFound", async () => {
         const table = await mintTable("rt-missing");
         // Insert one row so the read is unambiguously a "no such id"
         // rather than a "no such table" path (which also 404s, but
@@ -285,7 +285,34 @@ export const runHttpConformanceCascade = (opts: {
         const res = await doFetch(authedRequest("GET", `/v1/t/${table}/never-existed`));
         expect(res.status).toBe(404);
         const env = (await res.json()) as ErrorEnvelope;
-        expect(env.error?.code).toBeDefined();
+        expect(env.error?.code).toBe("NotFound");
+      });
+
+      test("PATCH of missing _id returns 404 with NotFound", async () => {
+        const table = await mintTable("rt-patch-missing");
+        // Seed one row so the manifest tree exists; the PATCH target
+        // is a different (never-written) id so the 404 path fires
+        // for "no such row" rather than "no such table".
+        await postDoc(table, { seed: 1 });
+        const res = await doFetch(
+          authedRequest("PATCH", `/v1/t/${table}/never-existed`, { patch: { status: "x" } }),
+        );
+        expect(res.status).toBe(404);
+        const env = (await res.json()) as ErrorEnvelope;
+        expect(env.error?.code).toBe("NotFound");
+      });
+
+      test("POST > 1 MiB body returns 413 PayloadTooLarge", async () => {
+        const table = await mintTable("rt-big");
+        // 1 MiB + 1 bytes — exactly one byte over the cap so we
+        // exercise the boundary, not a 5x-over sledgehammer.
+        const oversized = "x".repeat((1 << 20) + 1);
+        const res = await doFetch(
+          authedRequest("POST", `/v1/t/${table}`, { doc: { blob: oversized } }),
+        );
+        expect(res.status).toBe(413);
+        const env = (await res.json()) as ErrorEnvelope;
+        expect(env.error?.code).toBe("PayloadTooLarge");
       });
 
       for (const fieldCount of [0, 1, 16, 256]) {
@@ -401,7 +428,7 @@ export const runHttpConformanceCascade = (opts: {
         const res = await doFetch(authedRequest("DELETE", `/v1/t/${table}/never-existed`));
         expect(res.status).toBe(404);
         const env = (await res.json()) as ErrorEnvelope;
-        expect(env.error?.code).toBeDefined();
+        expect(env.error?.code).toBe("NotFound");
       });
     });
 

@@ -20,6 +20,7 @@ import {
   type Verifier,
 } from "@baerly/protocol";
 import { r2BindingStorage } from "./r2-binding-storage";
+import { singleTenantDevVerifier } from "./single-tenant-dev-verifier";
 import { baerlyWorker, type Env } from "./worker";
 
 const trivialVerifier: Verifier = async () => ({
@@ -73,9 +74,9 @@ interface BaseEnvelope {
  * R2 binding is shared across tests in this suite, so an already-
  * provisioned key surfaces as `Conflict` — adopt it.
  */
-const provisionTable = async (bucket: R2Bucket, table: string): Promise<void> => {
+const provisionTable = async (bucket: R2Bucket, table: string, tenant = "acme"): Promise<void> => {
   const storage = r2BindingStorage(bucket);
-  const key = `app/tickets/tenant/acme/manifests/${table}/current.json`;
+  const key = `app/tickets/tenant/${tenant}/manifests/${table}/current.json`;
   try {
     await createCurrentJson(storage, key, {
       schema_version: CURRENT_JSON_SCHEMA_VERSION,
@@ -99,6 +100,52 @@ const freshTable = (() => {
 })();
 
 describe("baerlyWorker routes", () => {
+  it("baerlyWorker without a verifier is a type error", () => {
+    // The `verifier` field is required on `BaerlyWorkerOptions` —
+    // omitting it must fail at type-check time so multi-tenant
+    // Workers can't silently fall back to `env.TENANT`.
+    // @ts-expect-error verifier is required
+    baerlyWorker({});
+  });
+
+  it("singleTenantDevVerifier resolves every request to the supplied tenant", async () => {
+    const bucket = getBinding();
+    const table = freshTable("tickets");
+    // Use a non-default tenant so the test fails if the helper ever
+    // stops threading its argument through (e.g. hardcodes "acme").
+    const tenant = `dev-${table}`;
+    await provisionTable(bucket, table, tenant);
+    const worker = baerlyWorker({ verifier: singleTenantDevVerifier(tenant) });
+    const env = makeEnv(bucket);
+
+    const insertRes = await worker.fetch!(
+      asWorkersRequest(
+        new Request(`https://x/v1/t/${table}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ doc: { title: "pinned-tenant" } }),
+        }),
+      ),
+      env,
+      makeCtx(),
+    );
+    expect(insertRes.status).toBe(201);
+    const inserted = (await insertRes.json()) as BaseEnvelope;
+    const id = inserted._id;
+    expect(typeof id).toBe("string");
+
+    // The round-trip only succeeds because the manifest lives under
+    // `tenant/${tenant}/` — proves the helper threaded the argument.
+    const readRes = await worker.fetch!(
+      asWorkersRequest(new Request(`https://x/v1/t/${table}/${id!}`)),
+      env,
+      makeCtx(),
+    );
+    expect(readRes.status).toBe(200);
+    const read = (await readRes.json()) as { data: { _id: string; title: string } };
+    expect(read.data.title).toBe("pinned-tenant");
+  });
+
   it("GET /v1/healthz returns { ok: true } without consulting the verifier", async () => {
     const worker = baerlyWorker({ verifier: denyVerifier });
     const res = await worker.fetch!(

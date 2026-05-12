@@ -21,10 +21,14 @@ import { r2BindingStorage } from "./r2-binding-storage";
  *   APP    = "tickets"
  *   TENANT = "acme-co"
  *
- * `TENANT` is the single-tenant dev fallback used when
- * {@link BaerlyWorkerOptions.verifier} is not supplied. Multi-tenant
- * Workers pass a `Verifier` and `env.TENANT` is ignored (the
- * `Verifier` resolves the tenant from the request's credentials).
+ * `TENANT` is **not** special-cased by `baerlyWorker` — the
+ * configured `Verifier` resolves the tenant from the request.
+ * Single-tenant deployments that want the old "every request pins
+ * to `env.TENANT`" behavior pass {@link singleTenantDevVerifier}
+ * explicitly: `verifier: singleTenantDevVerifier(env.TENANT)`. The
+ * binding is kept on `Env` so callers' existing `wrangler.toml`
+ * files stay valid and so app code that wants `env.TENANT` for
+ * its own composition (e.g. naming a `CURRENT_JSON_KEY`) can read it.
  *
  * Optional `CURRENT_JSON_KEY` + `CF_TIER` enable the default Cron
  * Trigger handler — see `scheduled` on {@link baerlyWorker}.
@@ -87,15 +91,18 @@ export interface BaerlyWorkerOptions {
    */
   readonly scheduled?: WorkerScheduledHandler;
   /**
-   * Per-request `Verifier`. When set, replaces the `env.TENANT`
-   * single-tenant binding: every request runs the verifier first
-   * and the resolved `tenantPrefix` pins the per-request `Db`. On
-   * `null`, the request short-circuits with 401.
+   * Per-request `Verifier`. **Required.** Every non-healthz request
+   * runs the verifier first; the resolved `tenantPrefix` pins the
+   * per-request `Db`. On `null`, the request short-circuits with 401.
    *
    * `GET /v1/healthz` bypasses the verifier so deploy readiness
    * probes don't need an auth token.
+   *
+   * For local single-tenant dev, use {@link singleTenantDevVerifier}.
+   * Multi-tenant deployments compose their own verifier on top of a
+   * real IdP — JWT, SigV4, Cloudflare Access, etc.
    */
-  readonly verifier?: Verifier;
+  readonly verifier: Verifier;
 }
 
 /**
@@ -138,7 +145,7 @@ export interface BaerlyWorkerOptions {
  * export default baerlyWorker({ verifier });
  * ```
  */
-export function baerlyWorker(options: BaerlyWorkerOptions = {}): ExportedHandler<Env> {
+export function baerlyWorker(options: BaerlyWorkerOptions): ExportedHandler<Env> {
   return {
     async fetch(req, env, ctx): Promise<Response> {
       // Healthz is always anonymous — Cloudflare's load balancer
@@ -151,22 +158,19 @@ export function baerlyWorker(options: BaerlyWorkerOptions = {}): ExportedHandler
         });
       }
 
-      // Tenant resolution: Verifier when set, else env.TENANT (dev).
-      let tenantPrefix: string;
-      if (options.verifier !== undefined) {
-        const result = await options.verifier(req);
-        if (result === null) {
-          return new Response(
-            JSON.stringify({
-              error: { code: "Unauthorized", message: "Verifier returned null" },
-            }),
-            { status: 401, headers: { "content-type": "application/json" } },
-          );
-        }
-        tenantPrefix = result.tenantPrefix;
-      } else {
-        tenantPrefix = env.TENANT;
+      // Tenant resolution: the Verifier owns it unconditionally.
+      // Single-tenant dev wires `singleTenantDevVerifier(env.TENANT)`
+      // explicitly — `env.TENANT` is no longer a silent fallback.
+      const result = await options.verifier(req);
+      if (result === null) {
+        return new Response(
+          JSON.stringify({
+            error: { code: "Unauthorized", message: "Verifier returned null" },
+          }),
+          { status: 401, headers: { "content-type": "application/json" } },
+        );
       }
+      const tenantPrefix = result.tenantPrefix;
 
       const storage = r2BindingStorage(env.BUCKET);
       const db = Db.create({ storage, app: env.APP, tenant: tenantPrefix });

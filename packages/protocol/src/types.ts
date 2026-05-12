@@ -1,5 +1,3 @@
-import { BaerlyError } from "./errors";
-
 declare const brand: unique symbol;
 type Brand<B> = { [brand]: B };
 
@@ -163,15 +161,6 @@ export const resolveManifestRef = (
 export const countKey = (number: number): string => uint2strDesc(number, 10);
 export const eq = (a: Ref, b: Ref) => a.bucket === b.bucket && a.key === b.key;
 export const url = (ref: Ref): string => `${ref.bucket}/${ref.key}`;
-export const parseUrl = (input: string): ResolvedRef => {
-  const [bucket, ...key] = input.split("/");
-  if (bucket === undefined) throw new BaerlyError("InvalidConfig", `Invalid url: ${input}`);
-  return {
-    bucket,
-    key: key.join("/"),
-  };
-};
-
 export const uint2str = (num: number, bits: number) => {
   const maxBase32Length = Math.ceil(bits / 5); // Change from 4 to 5 because log2(32) is roughly 5.
   const base32Representation = num.toString(32);

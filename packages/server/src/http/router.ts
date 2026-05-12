@@ -115,7 +115,7 @@ export function createRouter(options: CreateRouterOptions): Hono {
         consistency,
         useIndex: undefined,
       });
-      if (row === undefined) return jsonError(c, 404, "Internal", `No such row: ${id}`);
+      if (row === undefined) return jsonError(c, 404, "NotFound", `No such row: ${id}`);
       return c.json(
         {
           data: row,
@@ -165,7 +165,7 @@ export function createRouter(options: CreateRouterOptions): Hono {
   app.post("/v1/t/:table", async (c) => {
     const { table } = c.req.param();
     const body = await readJsonBody(c, MAX_BODY_BYTES);
-    if (body.kind === "err") return jsonError(c, 400, "SchemaError", body.message);
+    if (body.kind === "err") return jsonError(c, body.status, body.code, body.message);
     const { doc } = body.value as { doc?: unknown };
     if (doc === undefined || typeof doc !== "object" || doc === null || Array.isArray(doc)) {
       return jsonError(c, 400, "SchemaError", "Request body must be { doc: object }");
@@ -184,7 +184,7 @@ export function createRouter(options: CreateRouterOptions): Hono {
   app.patch("/v1/t/:table/:id", async (c) => {
     const { table, id } = c.req.param();
     const body = await readJsonBody(c, MAX_BODY_BYTES);
-    if (body.kind === "err") return jsonError(c, 400, "SchemaError", body.message);
+    if (body.kind === "err") return jsonError(c, body.status, body.code, body.message);
     const { patch } = body.value as { patch?: unknown };
     if (
       patch === undefined ||
@@ -199,7 +199,7 @@ export function createRouter(options: CreateRouterOptions): Hono {
         .table(table)
         .where({ _id: id } as Predicate<JSONArraylessObject>)
         .update(patch as Partial<JSONArraylessObject>);
-      if (modified === 0) return jsonError(c, 404, "Internal", `No such row: ${id}`);
+      if (modified === 0) return jsonError(c, 404, "NotFound", `No such row: ${id}`);
       return c.json({ data: { modified } }, 200);
     } catch (e) {
       return mapToResponse(c, e);
@@ -214,7 +214,7 @@ export function createRouter(options: CreateRouterOptions): Hono {
         .table(table)
         .where({ _id: id } as Predicate<JSONArraylessObject>)
         .delete();
-      if (deleted === 0) return jsonError(c, 404, "Internal", `No such row: ${id}`);
+      if (deleted === 0) return jsonError(c, 404, "NotFound", `No such row: ${id}`);
       return new Response(null, { status: 204 });
     } catch (e) {
       return mapToResponse(c, e);
@@ -262,13 +262,17 @@ export function createRouter(options: CreateRouterOptions): Hono {
 
 /**
  * Hard cap on request-body bytes. 1 MiB — matches `S3HttpStorage`'s
- * conformance-suite default. Over-cap → `400 SchemaError` (the
- * `HttpStatus` union has no 413; the contract.ts docstring is locked
- * at Phase 2).
+ * conformance-suite default. Over-cap → `413 PayloadTooLarge`.
  *
- * @internal — exported for tests; promote to
- *   `packages/protocol/src/constants.ts` only on a second
- *   cross-package consumer.
+ * The Node adapter (`@baerly/adapter-node`) imports this constant
+ * and enforces it during the `node:http` stream pump so the process
+ * never materializes a multi-MiB body. The router's `readJsonBody`
+ * keeps the cap as a defence-in-depth check for adapters whose
+ * platform doesn't pre-cap.
+ *
+ * @internal — exported for tests and for the Node adapter's stream
+ *   pump. Promote to `packages/protocol/src/constants.ts` only on a
+ *   third cross-package consumer.
  */
 export const MAX_BODY_BYTES = 1 << 20; // 1 MiB; see Q5 of ticket 25.
 
@@ -299,7 +303,9 @@ const ERROR_TO_STATUS: ReadonlyMap<BaerlyErrorCode, HttpStatus> = new Map<
 >([
   ["Unauthorized", 401],
   ["AccessDenied", 403],
+  ["NotFound", 404],
   ["Conflict", 409],
+  ["PayloadTooLarge", 413],
   ["SchemaError", 400],
   ["InvalidConfig", 400],
   // OfflineNoCache, NetworkError, InvalidResponse, Internal → 500
@@ -359,36 +365,81 @@ function jsonError(
   );
 }
 
+/**
+ * Result discriminant from {@link readJsonBody}. The `err` branch
+ * carries a structured `code` so callers can route to the right
+ * `HttpStatus` without switching on free-form `message` strings.
+ *
+ * Today only two codes are produced:
+ *   - `"PayloadTooLarge"` (413) when the body exceeds `maxBytes`,
+ *     detected via `Content-Length` pre-check, post-`arrayBuffer`
+ *     length check, or — if the host adapter pumps the body through
+ *     a `ReadableStream` (the Node adapter does) — a `BaerlyError`
+ *     surfaced via `controller.error(...)` on the upstream pump.
+ *   - `"SchemaError"` (400) for empty bodies, JSON parse failures,
+ *     and any other read failure.
+ */
 type ReadJsonResult =
   | { readonly kind: "ok"; readonly value: unknown }
-  | { readonly kind: "err"; readonly message: string };
+  | {
+      readonly kind: "err";
+      readonly code: "PayloadTooLarge" | "SchemaError";
+      readonly status: HttpStatus;
+      readonly message: string;
+    };
 
 async function readJsonBody(c: Context, maxBytes: number): Promise<ReadJsonResult> {
   const lenHeader = c.req.header("content-length");
   if (lenHeader !== undefined) {
     const parsed = Number.parseInt(lenHeader, 10);
     if (Number.isFinite(parsed) && parsed > maxBytes) {
-      return { kind: "err", message: `Body exceeds ${maxBytes} bytes` };
+      return {
+        kind: "err",
+        code: "PayloadTooLarge",
+        status: 413,
+        message: `Body exceeds ${maxBytes} bytes`,
+      };
     }
   }
-  // Read with an early-exit guard for chunked transfers.
+  // Read with an early-exit guard for chunked transfers. If the
+  // upstream adapter (e.g. `@baerly/adapter-node`) caps the body at
+  // the stream-pump layer, the rejected `arrayBuffer()` carries a
+  // `BaerlyError{code:"PayloadTooLarge"}` which we surface as 413
+  // here; any other read failure becomes a 400 SchemaError.
   let raw: string;
   try {
     const buffer = await c.req.arrayBuffer();
     if (buffer.byteLength > maxBytes) {
-      return { kind: "err", message: `Body exceeds ${maxBytes} bytes` };
+      return {
+        kind: "err",
+        code: "PayloadTooLarge",
+        status: 413,
+        message: `Body exceeds ${maxBytes} bytes`,
+      };
     }
     raw = new TextDecoder().decode(buffer);
   } catch (e) {
+    if (e instanceof BaerlyError && e.code === "PayloadTooLarge") {
+      return { kind: "err", code: "PayloadTooLarge", status: 413, message: e.message };
+    }
     return {
       kind: "err",
+      code: "SchemaError",
+      status: 400,
       message: `Failed to read request body: ${e instanceof Error ? e.message : String(e)}`,
     };
   }
-  if (raw.length === 0) return { kind: "err", message: "Empty request body" };
+  if (raw.length === 0) {
+    return { kind: "err", code: "SchemaError", status: 400, message: "Empty request body" };
+  }
   try {
     return { kind: "ok", value: JSON.parse(raw) };
   } catch {
-    return { kind: "err", message: "Invalid JSON in request body" };
+    return {
+      kind: "err",
+      code: "SchemaError",
+      status: 400,
+      message: "Invalid JSON in request body",
+    };
   }
 }

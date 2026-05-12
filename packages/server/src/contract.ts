@@ -82,8 +82,9 @@ export type Routes =
  * | 400    | Body parse failed → `HttpErrorEnvelope` `code:"SchemaError"`.    |
  * | 401    | `Verifier` returned null → `code:"Unauthorized"`.                |
  * | 403    | Auth ok but tenant prefix denied → `code:"AccessDenied"`.        |
- * | 404    | Doc not found. NOT used for "tenant unknown" (→ 401).            |
+ * | 404    | Doc not found → `code:"NotFound"`. NOT used for "tenant unknown" (→ 401). |
  * | 409    | CAS lost → `code:"Conflict"`.                                    |
+ * | 413    | Request body exceeded `MAX_BODY_BYTES` → `code:"PayloadTooLarge"`. |
  * | 500    | Anything else → `code:"Internal"`.                               |
  */
-export type HttpStatus = 200 | 201 | 204 | 304 | 400 | 401 | 403 | 404 | 409 | 500;
+export type HttpStatus = 200 | 201 | 204 | 304 | 400 | 401 | 403 | 404 | 409 | 413 | 500;
