@@ -2,10 +2,26 @@
   "name": "@baerly/cli",
   "version": "0.0.0",
   "private": true,
-  "description": "Baerly CLI — init, inspect, compact, fsck, export, migrate, dump, restore. Stub.",
+  "description": "Baerly CLI — copy, init, inspect, compact, fsck, export, migrate, dump, restore.",
   "license": "MIT",
+  "bin": {
+    "baerly": "./dist/baerly.js"
+  },
   "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "build": "rolldown -c"
+  },
   "dependencies": {
-    "@baerly/protocol": "workspace:*"
+    "@baerly/dev": "workspace:*",
+    "@baerly/protocol": "workspace:*",
+    "@baerly/server": "workspace:*",
+    "@xmldom/xmldom": "^0.9.10",
+    "aws4fetch": "1.0.20"
   }
 }

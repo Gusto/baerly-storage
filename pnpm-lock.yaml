@@ -111,9 +111,21 @@ importers:
 
   packages/cli:
     dependencies:
+      '@baerly/dev':
+        specifier: workspace:*
+        version: link:../dev
       '@baerly/protocol':
         specifier: workspace:*
         version: link:../protocol
+      '@baerly/server':
+        specifier: workspace:*
+        version: link:../server
+      '@xmldom/xmldom':
+        specifier: ^0.9.10
+        version: 0.9.10
+      aws4fetch:
+        specifier: 1.0.20
+        version: 1.0.20
 
   packages/client:
     dependencies:
