@@ -2,11 +2,33 @@
   "name": "@baerly/client",
   "version": "0.0.0",
   "private": true,
-  "description": "Baerly browser client — React-friendly HTTP client over fetch. Stub.",
+  "description": "Baerly typed HTTP client — fetchers + `useChanges` long-poll hook.",
   "license": "MIT",
   "type": "module",
   "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./src/index.ts"
+    },
+    "./react": {
+      "types": "./src/react/index.ts",
+      "import": "./src/react/index.ts"
+    },
+    "./testing": {
+      "types": "./src/testing/index.ts",
+      "import": "./src/testing/index.ts"
+    }
+  },
   "dependencies": {
     "@baerly/protocol": "workspace:*"
+  },
+  "peerDependencies": {
+    "react": ">=18"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    }
   }
 }
