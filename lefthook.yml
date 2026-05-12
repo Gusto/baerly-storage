@@ -1,12 +1,3 @@
-# Pre-commit hooks for MPS3.
-#
-# Auto-formats and lint-fixes staged files (re-staging the fixes),
-# then typechecks and runs the banlist scan from
-# `.deprecated-tokens.txt`. Tests are intentionally excluded — they
-# belong in CI. See CLAUDE.md "Verification" section.
-#
-# Bypass with `git commit --no-verify` when needed.
-
 pre-commit:
   piped: true
   commands:

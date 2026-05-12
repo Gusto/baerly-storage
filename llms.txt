@@ -1,4 +1,4 @@
-# MPS3
+# Baerly Storage
 
 Vendorless, causally consistent multiplayer document database that runs
 entirely client-side over any S3-compatible storage (S3, R2, Backblaze,
