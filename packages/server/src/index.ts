@@ -1,8 +1,10 @@
 export * from "./compactor";
+export * from "./config";
 export * from "./contract";
 export * from "./db";
 export * from "./gc";
 export * from "./http/router";
+export * from "./indexes";
 export {
   longPollSince,
   listEventsSince,
