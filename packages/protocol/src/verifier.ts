@@ -82,8 +82,9 @@ export interface VerifierResult {
  * material.
  *
  * Preset factories — `cloudflareAccess`, `bearerJwt`,
- * `awsIamSigV4`, `sharedSecret`, `allowlistIp` — ship in Phase 8
- * with the deploy scaffold. The kernel only owns the type.
+ * `awsIamSigV4`, `sharedSecret`, `allowlistIp` — live in
+ * `@baerly/server` (`packages/server/src/auth/presets/`). The
+ * kernel owns the type; the server owns the factories.
  *
  * @example
  * ```ts
