@@ -41,13 +41,15 @@ green, is documented in [CLAUDE.md → Test gating](../CLAUDE.md#test-gating).
 To bring up the local Minio + Toxiproxy stack:
 
 ```sh
-pnpm dev:storage      # docker-compose up -d
+pnpm dev:storage      # docker compose up -d --wait (blocks until healthy)
 pnpm dev:storage:stop # tear down
 ```
 
 Minio runs on `http://127.0.0.1:9102` (S3 API), console on `:9103`
 (login `mps3` / see `docker-compose.yml`); Toxiproxy on `:9104` proxies
-Minio for latency/failure injection.
+Minio for latency/failure injection. The `minio` proxy is declared
+statically in [`docker/toxiproxy.json`](../docker/toxiproxy.json) and
+loaded at container start.
 
 ## Type checking, formatting, linting
 
@@ -108,8 +110,9 @@ distinguish your regressions from the pre-existing state.
    `http://localhost:9103` shows current bucket contents — useful for
    eyeballing manifest objects.
 5. Toxiproxy: failures only with Toxiproxy in the loop usually mean a
-   resilience gap. The `toxiproxy-config-*` services in `docker-compose.yml`
-   show how to inject faults.
+   resilience gap. The static proxy lives in `docker/toxiproxy.json`;
+   add toxics at runtime with the admin API on `:8474`
+   (`POST /proxies/minio/toxics`) or via `toxiproxy-cli`.
 
 ## Project layout
 

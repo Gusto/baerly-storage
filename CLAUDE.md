@@ -148,8 +148,8 @@ Pure-unit tests that always pass: `packages/protocol/src/hashing.test.ts`,
 Integration tests can run against a local Minio + Toxiproxy stack:
 
 ```sh
-pnpm dev:storage         # docker-compose up -d (Minio :9102, Toxiproxy :9104, Postgres :5433)
-pnpm dev:storage:stop    # docker-compose down
+pnpm dev:storage         # docker compose up -d --wait (Minio :9102, Toxiproxy :9104, Postgres :5433)
+pnpm dev:storage:stop    # docker compose down
 ```
 
 See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for full setup.
