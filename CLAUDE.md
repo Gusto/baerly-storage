@@ -55,8 +55,8 @@ Don't introduce alternate tooling without justification.
 | `pnpm test:fuzz-phase5` | crash-injection fuzzer for the maintenance loop (`phase5-crash-fuzz.test.ts`) — aborts the K-th storage op inside `ServerWriter` / `compact()` / `runGc()` and asserts the reader still sees a consistent row set | minutes-hours at `FC_NUM_RUNS=10000` | use after touching `compactor.ts` / `gc.ts` / `server-writer.ts` |
 | `pnpm dev:storage` | brings up Minio `:9102` + Toxiproxy `:9104` + Postgres `:5433` | n/a | required for `test:minio` / `test:conformance` / `test:export-smoke` / `test:adapter-node` / `test:adapters` |
 | `pnpm gate:real-deploy` | runs `real-deploy-cloudflare.test.ts` + `real-deploy-node.test.ts` against deployed URLs (HTTP conformance cascade + latency probe + long-poll wall-clock + 401 sniff) | minutes per run | requires `CF_DEPLOY_URL` + `NODE_DEPLOY_URL` + `SHARED_SECRET` (+ `CF_R2_*` / `AWS_*` for the conformance cascade); manual deploy lifecycle in `deploy/README.md` |
-| `pnpm -F @baerly/cli build && pnpm exec baerly deploy` | runs `baerly deploy` for a scaffolded app; dispatches on `baerly.config.ts:target`; for CF, ships `wrangler deploy --x-provision --x-auto-create` with a `wrangler r2 bucket create` fallback | seconds to minutes | requires `wrangler login` + scaffolded `apps/server/wrangler.jsonc` |
-| `baerly doctor --target=cloudflare` | walks the CF deploy invariants (wrangler.jsonc, R2 bindings, required secrets, CF Access audience tag, cron triggers, domain/routes coherence) and reports findings | seconds | requires `wrangler login`; `--fix` auto-creates missing R2 buckets |
+| `pnpm -F @baerly/cli build && pnpm exec baerly deploy` | runs `baerly deploy` for a scaffolded app; dispatches on `baerly.config.ts:target`. CF: ships `wrangler deploy --x-provision --x-auto-create` with a `wrangler r2 bucket create` fallback. Node: emits `Dockerfile` + `pm2.config.cjs` + `systemd/baerly.service` + `.dockerignore` + `healthcheck.js` + `.env.example` under `apps/server/` and prints next-step commands; idempotent, `--force` overwrites hand-edits | seconds to minutes | CF: requires `wrangler login`. Node: idempotent file emit, no cloud creds, no deploy daemon |
+| `baerly doctor --target=cloudflare\|node` | walks the deploy invariants and reports findings. CF: wrangler.jsonc, R2 bindings, required secrets, CF Access audience tag, cron triggers, domain/routes coherence. Node: Dockerfile presence + distroless-base sniff, `.dockerignore`, `.env.example` secret + AWS/BUCKET coverage, JWKS URL reachability (best-effort 3s), systemd unit well-formedness | seconds | CF: requires `wrangler login`; `--fix` auto-creates missing R2 buckets. Node: read-only — remediate hand-edits via `baerly deploy --target=node --force` |
 
 `pnpm verify` is also enforced as a [lefthook](https://lefthook.dev/)
 pre-commit hook (`lefthook.yml`); `pnpm install` wires it up via the
@@ -208,13 +208,17 @@ Read in this order to build a mental model:
    `deploy/node/Dockerfile` + `server-entry.ts`). Manual lifecycle
    in `deploy/README.md`; driven by `pnpm gate:real-deploy`. **Not**
    a production template.
-11. **`packages/create-baerly/templates/cloudflare/`** — production
-   CF template. `wrangler.jsonc` declares R2 bindings, `[vars]`,
-   cron triggers, limits, and observability; `apps/server/src/worker.ts`
-   wires a verifier selector that prefers `cloudflareAccess()` and
-   falls back to `sharedSecret()`. Consumed by the scaffolder and
-   covered by `packages/create-baerly/src/scaffold.test.ts` +
-   `packages/cli/src/deploy/cloudflare.test.ts`.
+11. **`packages/create-baerly/templates/{cloudflare,node}/`** —
+   production deploy templates. CF: `wrangler.jsonc` declares R2
+   bindings, `[vars]`, cron triggers, limits, and observability;
+   `apps/server/src/worker.ts` wires a verifier selector that
+   prefers `cloudflareAccess()` and falls back to `sharedSecret()`.
+   Node: distroless `Dockerfile` + non-root user + Node-script
+   HEALTHCHECK; `pm2.config.cjs` for cluster-mode pm2; `systemd/
+   baerly.service` for systemd hosts; `.dockerignore` + `.env.example`
+   round out the tree. Both consumed by the scaffolder and covered
+   by `packages/create-baerly/src/scaffold.test.ts` +
+   `packages/cli/src/{deploy,doctor}/{cloudflare,node}.test.ts`.
 
 The full lifecycle of `db.table().insert()` is in
 [docs/architecture.md](docs/architecture.md) — read it before

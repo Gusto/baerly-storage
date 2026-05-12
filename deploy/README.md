@@ -16,7 +16,9 @@ production template — see the inline warnings throughout.
 ## Production lifecycle (preferred)
 
 For real apps, do not copy the artifacts in this directory.
-Scaffold with `create-baerly` and use the `baerly` CLI:
+Scaffold with `create-baerly` and use the `baerly` CLI.
+
+### Cloudflare production
 
 ```sh
 # Scaffold (writes apps/server/wrangler.jsonc, baerly.config.ts, ...).
@@ -44,6 +46,41 @@ The production template lives at
 limits, and observability; the worker entry wires a verifier
 selector that prefers `cloudflareAccess()` when configured and
 falls back to `sharedSecret()` for `wrangler dev` parity.
+
+### Node production
+
+```sh
+# Scaffold (writes apps/server/Dockerfile, apps/server/src/server.ts,
+# baerly.config.ts, ...).
+npm create baerly@latest my-svc -- --target=node
+cd my-svc
+pnpm install
+
+# Edit apps/server/.env and set AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY,
+# BUCKET, and either JWKS_URL (production) or SHARED_SECRET (dev).
+
+# Emit reference Docker / pm2 / systemd artifacts and print
+# next-step commands. Idempotent — re-running on an unchanged tree
+# is a no-op. `--force` overwrites hand-edits.
+pnpm exec baerly deploy --target=node
+
+# Walk the Node deploy invariants and report findings. Read-only:
+# remediate hand-edited artifacts with `baerly deploy --target=node
+# --force`.
+pnpm exec baerly doctor --target=node
+```
+
+The production template lives at
+`packages/create-baerly/templates/node/`. It ships a distroless
+`Dockerfile` with non-root user (UID 65532) and a Node-script
+HEALTHCHECK, a `pm2.config.cjs` for cluster-mode pm2 hosts, a
+`systemd/baerly.service` for systemd targets, and a `.env.example`
+documenting every env var the server reads. `baerly deploy
+--target=node` does NOT shell out to any deploy tool — the Node
+deploy surface is heterogeneous (Docker / k8s / pm2 / systemd /
+Cloud Run / Fly / Render / ECS / bare-metal), so the command emits
+the build inputs and prints the three first-class next-step
+recipes; the user picks the runtime.
 
 The artifacts under `deploy/cloudflare/` and `deploy/node/` below
 are the **manual real-deploy gate** — they exist so PRs touching
