@@ -27,13 +27,18 @@ const DEPLOY_ARGS = {
     description: 'Override `baerly.config.ts:target`. "cloudflare" or "node".',
     valueHint: "cloudflare|node",
   },
+  force: {
+    type: "boolean",
+    description:
+      "(target=node) Overwrite hand-edited Dockerfile / pm2 / systemd files with the emitted shape.",
+  },
   json: {
     type: "boolean",
     description: "Emit a structured JSON envelope to stdout (success) or stderr (error)",
   },
 } as const satisfies ArgsDef;
 
-const KNOWN_KEYS: ReadonlySet<string> = new Set(["target", "json", "_"]);
+const KNOWN_KEYS: ReadonlySet<string> = new Set(["target", "force", "json", "_"]);
 
 const errorToExitCode = (code: string): number => {
   if (code === "InvalidConfig") return 1;
@@ -57,15 +62,17 @@ const handleDeploy = async (args: ParsedArgs<typeof DEPLOY_ARGS>): Promise<numbe
       return exit;
     }
     if (target === "node") {
-      // Ticket 40 lands the body. The dispatcher's shape is locked
-      // here so ticket 40 only needs to add the file. The dynamic
-      // import path is constructed at runtime so the typechecker
-      // doesn't require the module to exist today.
+      // The dynamic import path is constructed at runtime so the
+      // typechecker doesn't require the module to be loaded at
+      // dispatcher build time.
       const nodeModuleSpecifier = "./deploy/node";
       const mod = (await import(nodeModuleSpecifier)) as {
-        deployNode: (config: AppConfig) => Promise<number>;
+        deployNode: (
+          config: AppConfig,
+          opts?: { force?: boolean; cwd?: string },
+        ) => Promise<number>;
       };
-      const exit = await mod.deployNode(config);
+      const exit = await mod.deployNode(config, args.force === true ? { force: true } : {});
       if (exit === 0) emitSuccess({ command: "deploy", status: "ok", target });
       return exit;
     }
