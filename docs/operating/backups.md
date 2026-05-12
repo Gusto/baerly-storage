@@ -6,9 +6,8 @@ L9 snapshot directly at the target — so cost is on the order of
 "snapshot + live tail", not "rows".
 
 This `copy` shape mirrors Turbopuffer's `copy_from_namespace` 75%
-write discount — the same physical insight (the source already paid
-for the fold). See `.claude/research/competitive/turbopuffer.md` for
-the long-form analysis.
+write discount — the same physical insight: the source already paid
+for the fold.
 
 ## Daily cron with 7-day retention
 

@@ -39,7 +39,7 @@ The field is defined at
 with JSDoc spelling out the semantics: "Monotonic per collection.
 Schema for the doc body is announced out-of-band; this field lets
 the consumer match a log entry to the schema in effect at write
-time. Always `0` until Phase 4 lands the table API." The writer
+time. Always `0` until a future migration bumps it." The writer
 emits `schema_version: 0` on every log entry today (see
 [`packages/server/src/server-writer.ts:287`](../../packages/server/src/server-writer.ts)
 and line 482). The smoke test's local copy of `LogEntry` at

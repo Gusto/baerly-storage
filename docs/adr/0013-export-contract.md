@@ -32,7 +32,7 @@ The three alternatives considered were:
 ## Decision
 
 Every successful mutation produces one Postgres-logical-replication-
-shaped `LogEntry` JSON object. The shape is frozen at Phase 1 and
+shaped `LogEntry` JSON object. The shape is frozen and
 documented as such on the `LogEntry` interface at
 [`packages/protocol/src/log.ts:1-80`](../../packages/protocol/src/log.ts)
 ("Shape is fixed at this point and never changes after"). A

@@ -6,7 +6,7 @@ Accepted (2026-05-11).
 
 ## Context
 
-Phase 5 wired six load-bearing metrics through the protocol and server
+The maintenance loop wires six load-bearing metrics through the protocol and server
 packages
 ([`packages/protocol/src/metrics.ts:13-22`](../../packages/protocol/src/metrics.ts)):
 

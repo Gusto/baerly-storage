@@ -11,12 +11,10 @@ protocol kernel is small enough that an LLM can use the public API
 zero-shot from the `.d.ts` files alone. Theoretical foundations live
 in [docs/](docs/).
 
-Status: under heavy redesign — see
-[`.claude/research/plan.md`](.claude/research/plan.md). The protocol
-kernel and HTTP server are landed; delivery wrappers (MCP, deploy
-scaffold, React client) are in progress. Day-1 templates ship for
-Cloudflare Workers and self-hosted Node; both are first-class. AWS
-Lambda / Bun / Deno / Fly are an adapter package away.
+The protocol kernel and HTTP server are landed. Day-1 templates ship
+for Cloudflare Workers and self-hosted Node; both are first-class.
+AWS Lambda / Bun / Deno / Fly are an adapter package away. Delivery
+wrappers (MCP, deploy scaffold, React client) are work-in-progress.
 
 ## Toolchain
 
@@ -37,7 +35,7 @@ Don't introduce alternate tooling without justification.
 | `pnpm test` | vitest unit + integration (zero infra) — includes the `memory` + `local-fs` variants of `randomized.test.ts` | ~3s | ✅ — Minio + credentials tests are gated, see below |
 | `pnpm test:minio` | adds the Minio-gated suites: the `clock behavior` block of `time.test.ts`, the `node-minio` variant of `randomized.test.ts`, and `adapter-node` Minio conformance | ~10s | ✅ when `pnpm dev:storage` is up |
 | `pnpm test:conformance` | adds `conformance.test.ts` (needs Minio + credentials files) | ~30s | requires credentials in `credentials/{aws,gcs,cloudflare}.json` |
-| `pnpm test:export-smoke` | adds `export-smoke.test.ts` (Phase-1 `LogEntry` round-trip into Postgres; needs local Postgres on `:5433`) | ~5s | ✅ when `pnpm dev:storage` is up |
+| `pnpm test:export-smoke` | adds `export-smoke.test.ts` (`LogEntry` round-trip into Postgres; needs local Postgres on `:5433`) | ~5s | ✅ when `pnpm dev:storage` is up |
 | `pnpm test:adapter-cloudflare` | runs `r2BindingStorage` conformance, the `cloudflare-r2` variant of `randomized.test.ts`, the `cloudflare-r2` variant of `table-api.test.ts`, **and** the `cloudflare-r2` variant of `http-conformance.test.ts` under miniflare (`@cloudflare/vitest-pool-workers`, project `cloudflare-pool`) | ~3s | ✅ — first run downloads the `workerd` binary |
 | `pnpm test:http-conformance` | runs the HTTP cascade on `memory` + `local-fs` (default project) | ~3s | ✅ |
 | `pnpm test:adapter-node` | runs `s3HttpStorage` conformance against local Minio | ~10s | ✅ when `pnpm dev:storage` is up |
@@ -45,7 +43,7 @@ Don't introduce alternate tooling without justification.
 | `pnpm format:check` | oxfmt formatting | ~seconds | ❌ red on ~20 pre-existing files; diff vs. `main` |
 | `pnpm build` | rolldown bundle to `dist/` | ~seconds | ✅ |
 | `pnpm test:randomize` | property-based fuzzer (cranks `FC_NUM_RUNS` for fast-check arbitraries). The randomized cascade itself is fault-injection-driven so `FC_NUM_RUNS` is a no-op for `randomized.test.ts` — all four variants (`memory` / `local-fs` / `cloudflare-r2` / `node-minio`) still run, but only the property tests in the rest of the suite scale up | run for minutes | use when changing protocol code |
-| `pnpm test:fuzz-phase5` | crash-injection fuzzer for Phase 5 paths (`phase5-crash-fuzz.test.ts`) — aborts the K-th storage op inside `ServerWriter` / `compact()` / `runGc()` and asserts the reader still sees a consistent row set | minutes-hours at `FC_NUM_RUNS=10000` | use after touching `compactor.ts` / `gc.ts` / `server-writer.ts` |
+| `pnpm test:fuzz-phase5` | crash-injection fuzzer for the maintenance loop (`phase5-crash-fuzz.test.ts`) — aborts the K-th storage op inside `ServerWriter` / `compact()` / `runGc()` and asserts the reader still sees a consistent row set | minutes-hours at `FC_NUM_RUNS=10000` | use after touching `compactor.ts` / `gc.ts` / `server-writer.ts` |
 | `pnpm dev:storage` | brings up Minio `:9102` + Toxiproxy `:9104` + Postgres `:5433` | n/a | required for `test:minio` / `test:conformance` / `test:export-smoke` / `test:adapter-node` / `test:adapters` |
 | `pnpm gate:real-deploy` | runs `real-deploy-cloudflare.test.ts` + `real-deploy-node.test.ts` against deployed URLs (HTTP conformance cascade + latency probe + long-poll wall-clock + 401 sniff) | minutes per run | requires `CF_DEPLOY_URL` + `NODE_DEPLOY_URL` + `SHARED_SECRET` (+ `CF_R2_*` / `AWS_*` for the conformance cascade); manual deploy lifecycle in `deploy/README.md` |
 
@@ -95,8 +93,8 @@ deps. Tests requiring Minio or credentials are gated by env:
   under the `cloudflare-pool` vitest project (via
   `pnpm test:adapter-cloudflare`). All variants share the
   backend-agnostic driver in `tests/fixtures/table-api-cascade.ts`.
-- **`tests/integration/phase5-end-to-end.test.ts`** is the Phase-5
-  end-to-end gate: seeds 5000 entries, runs
+- **`tests/integration/phase5-end-to-end.test.ts`** is the end-to-end
+  durability gate: seeds 5000 entries, runs
   `runScheduledMaintenance` to quiescence, then asserts find()
   parity, bucket-object-count drop, `log_seq_start` advance, and the
   "< 1 Class A op / writer / hour" idle-reader cost-model bound via
@@ -187,11 +185,11 @@ Read in this order to build a mental model:
    `Storage` with content-addressed ETags and atomic writes; used by
    future `baerly dev` and by tests that need cross-`Db`-instance
    visibility without Minio).
-8. **`deploy/`** — hand-rolled Phase 6 real-deploy gate artifacts
+8. **`deploy/`** — hand-rolled real-deploy gate artifacts
    (`deploy/cloudflare/wrangler.toml` + `worker-entry.ts`;
    `deploy/node/Dockerfile` + `server-entry.ts`). Manual lifecycle
    in `deploy/README.md`; driven by `pnpm gate:real-deploy`. **Not**
-   a Phase 8 production template.
+   a production template.
 
 The full lifecycle of `db.table().insert()` is in
 [docs/architecture.md](docs/architecture.md) — read it before
@@ -265,6 +263,8 @@ edits and point at the same files.
 
 ## Pointers
 
+- Doc topic map: [docs/README.md](docs/README.md) — start here if
+  unsure where to look.
 - Feature → code map: [docs/features.md](docs/features.md)
 - Architecture overview: [docs/architecture.md](docs/architecture.md)
 - Local dev setup: [docs/development.md](docs/development.md)

@@ -1,8 +1,8 @@
-# Baerly real-deploy gate (Phase 6)
+# Baerly real-deploy gate
 
 Hand-rolled deploy artifacts that prove `baerlyWorker()` and
 `createListener()` work against real R2 and real S3. **Not** a
-Phase 8 production template — see the inline warnings throughout.
+production template — see the inline warnings throughout.
 
 ## Lifecycle
 
@@ -11,13 +11,12 @@ Phase 8 production template — see the inline warnings throughout.
 2. Deploy both runtimes.
 3. `pnpm gate:real-deploy` — runs the two test files against the
    deployed URLs.
-4. Inspect the green-light checklist (§3 Q7 in
-   `.claude/research/planning/tickets/29-real-deploy-gate.md`).
+4. Inspect the green-light checklist below.
 5. Tear down: `wrangler delete`, `docker stop && docker rm`,
    delete buckets if desired.
 
 The gate is a **manual checklist**: deploy, run, tear down. CI
-plumbing lands in Phase 8.
+plumbing is a future addition.
 
 ## Section 1: Deploy the Cloudflare Worker
 
@@ -68,7 +67,7 @@ export CF_DEPLOY_URL="https://baerly-gate-cf.<your-subdomain>.workers.dev"
 
 `CF_R2_*` are the **provisioning seam**: the HTTP conformance cascade
 needs to write `current.json` for each fresh table before the first
-`POST` lands. Phase 6 has no "create table" HTTP route, so the test
+`POST` lands. The HTTP surface has no "create table" route, so the test
 process opens its own `S3HttpStorage` against the R2 S3-compat
 endpoint and calls `createCurrentJson` directly. Without these vars,
 the gate skips the conformance cascade and runs only the latency
@@ -241,15 +240,11 @@ quietly relax the constants.
 ## What this gate does NOT cover (deferred)
 
 - Production-ready CF / Node templates (no observability config,
-  secret rotation, multi-env, custom domains). Phase 8.
+  secret rotation, multi-env, custom domains).
 - Preset `Verifier` factories (`sharedSecret`, `jwks`, `hmac`,
-  Cloudflare Access). Phase 8.
-- Automated CI integration (GitHub Actions / Buildkite). Phase 8 or
-  follow-up.
-- Multi-region / failover. Phase 9.
-- Observability dashboards beyond stdout summaries. Phase 8.
-- Phase 7 MCP integration — MCP wraps the same wire contract but is
-  out of scope for the gate.
-
-See `.claude/research/planning/tickets/29-real-deploy-gate.md` §7
-for the full deferred list.
+  Cloudflare Access).
+- Automated CI integration (GitHub Actions / Buildkite).
+- Multi-region / failover.
+- Observability dashboards beyond stdout summaries.
+- MCP integration — MCP wraps the same wire contract but is out of
+  scope for this gate.

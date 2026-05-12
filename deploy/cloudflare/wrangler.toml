@@ -1,5 +1,5 @@
-# Hand-rolled Wrangler config for the Phase 6 real-deploy gate.
-# NOT a Phase 8 production template — see deploy/README.md for the
+# Hand-rolled Wrangler config for the real-deploy gate.
+# NOT a production template — see deploy/README.md for the
 # expected lifecycle (deploy → run gate → tear down).
 
 name = "baerly-gate-cf"
@@ -23,7 +23,7 @@ TENANT = "default"
 # SHARED_SECRET is injected via `wrangler secret put SHARED_SECRET`
 # at deploy time, NOT committed to this file. See deploy/README.md.
 
-# Optional: Cron Trigger for the Phase 5 maintenance loop. Enabled
+# Optional: Cron Trigger for the maintenance loop. Enabled
 # for the gate so we exercise the scheduled-handler path on the real
 # Worker too.
 [triggers]

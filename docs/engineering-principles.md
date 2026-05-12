@@ -44,8 +44,7 @@ the product.
 
 ## Strong path to production
 
-The log entry shape is fixed at Phase 1 of the plan and stable across
-all future versions. `baerly export --target=postgres` is a
+The log entry shape is frozen and stable across all future versions. `baerly export --target=postgres` is a
 mechanical translator, not a marketing line. When a prototype
 graduates, the user moves to D1 / Postgres without rewriting business
 logic; only the storage layer swaps. We design every feature to keep

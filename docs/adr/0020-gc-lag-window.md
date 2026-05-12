@@ -6,7 +6,7 @@ Accepted (2026-05-11).
 
 ## Context
 
-Phase-5 compaction folds old log entries into snapshots and retires the
+Compaction folds old log entries into snapshots and retires the
 original log files; the sweeper in
 [`packages/server/src/gc.ts`](../../packages/server/src/gc.ts) deletes
 anything no longer referenced by `current.json`. Three categories of
@@ -56,7 +56,7 @@ exposed as `GC_GRACE_PERIOD_MILLIS` at
 [`packages/protocol/src/constants.ts:187`](../../packages/protocol/src/constants.ts).
 Tests override via `RunGcOptions.graceMillis`; `0` is permitted to
 exercise the sweep path in one pass without dwell — used by the
-phase-5 end-to-end test and the crash-injection fuzzer. See
+end-to-end test and the crash-injection fuzzer. See
 [`packages/server/src/gc.ts:72-76`](../../packages/server/src/gc.ts)
 and
 [`packages/server/src/gc.ts:154`](../../packages/server/src/gc.ts).

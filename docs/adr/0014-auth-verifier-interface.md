@@ -9,7 +9,7 @@ discussion in [ADR-0011](./0011-cas-scope.md) and
 
 ## Context
 
-The Phase 6 server component (`@baerly/server`, established by
+The server component (`@baerly/server`, established by
 [ADR-0006](./0006-server-component.md)) is a portable
 `(Request) => Response` handler. To be deployable in any non-trivial
 production scenario it needs an auth seam: an answer to "given this
@@ -34,8 +34,8 @@ mapping 401 to `code:"Unauthorized"` and 403 to `code:"AccessDenied"`),
 and the JSDoc on both adapter entry points
 ([`adapter-node/src/server.ts`](../../packages/adapter-node/src/server.ts),
 [`adapter-cloudflare/src/worker.ts`](../../packages/adapter-cloudflare/src/worker.ts))
-have committed the codebase to a single auth shape since earlier
-phases. They all imply the same contract: one function, one answer
+commit the codebase to a single auth shape. They all imply the
+same contract: one function, one answer
 per request, tenant prefix flows out of auth and not the URL. This
 ADR is the receipt for those commitments.
 
@@ -75,13 +75,12 @@ interface VerifierResult {
 
 A `Verifier` is a function from a `Request` to either a success
 result or `null`. `null` is the canonical unauthenticated signal; the
-Phase 6 HTTP dispatcher maps `null` to HTTP 401 +
+HTTP dispatcher maps `null` to HTTP 401 +
 `BaerlyError{code:"Unauthorized"}`. A truthy `VerifierResult` carries
 the `tenantPrefix` the request is authorized to touch and an opaque
 `identity` payload.
 
-The Phase 6 HTTP dispatcher (ticket 25,
-`packages/server/src/dispatcher.ts` when it lands) accepts an
+The HTTP dispatcher (`packages/server/src/dispatcher.ts`) accepts an
 optional `options.verifier?: Verifier`. When set, every request is
 verified before any `Storage` I/O. On a successful result, the
 dispatcher performs a **scope check**: the URL-derived target must
@@ -96,8 +95,8 @@ load-bearing for CAS isolation, so producing it correctly is
 load-bearing for tenancy.
 
 Preset factories — `cloudflareAccess`, `bearerJwt`, `awsIamSigV4`,
-`sharedSecret`, `allowlistIp` — ship in Phase 8 with the deploy
-scaffold, not in the kernel. Each preset is tied to a specific IdP
+`sharedSecret`, `allowlistIp` — ship with the deploy scaffold,
+not in the kernel. Each preset is tied to a specific IdP
 and runtime idiom (e.g. `bearerJwt` pulls `jose`; CF Workers users
 should not pay that cost) and gets its own ADR when it lands. The
 protocol kernel only owns the contract.
@@ -105,8 +104,8 @@ protocol kernel only owns the contract.
 `identity` is `unknown` so each preset factory commits to its own
 shape; the dispatcher never reads the field. Application code that
 wants the identity narrows it at the use site, off a request context
-the dispatcher attaches (the attachment mechanism is ticket 25's
-call, not this ADR's).
+the dispatcher attaches (the attachment mechanism is the
+dispatcher's call, not this ADR's).
 
 `Verifier` is async because real preset factories need `await`:
 JWKS rotation, RPC-based IdPs, SigV4 body hashing, IP-block table
@@ -126,7 +125,7 @@ they land.
   without forcing a `Box<T>` discriminant on the kernel.
 - A `Verifier` is testable in one line: `const v: Verifier = async ()
   => ({ tenantPrefix: "t", identity: null });`. The HTTP conformance
-  suite (ticket 28) fixtures use exactly this pattern. No
+  suite fixtures use exactly this pattern. No
   constructor convention, no `new`, no class-shape boilerplate.
 - The 401-vs-403 split lives in the dispatcher, not in the Verifier.
   Test fixtures return raw `VerifierResult | null` without needing
@@ -153,10 +152,10 @@ they land.
   type-erased at compile time; the only runtime cost lands in
   whichever preset factory the deployment chooses.
 - Reversing this decision means changing the contract for every
-  Phase 8 preset factory simultaneously, plus the dispatcher
-  integration in ticket 25. The cost of revision climbs with each
-  preset; this ADR is one of the load-bearing reasons Phase 6 ticket
-  23 is first in the Phase 6 cluster.
+  preset factory simultaneously, plus the dispatcher integration.
+  The cost of revision climbs with each preset, so the verifier
+  contract was one of the first things to land in the server
+  component.
 
 ## Alternatives Considered
 
@@ -166,7 +165,7 @@ Define an abstract class with a `verify(req): Promise<VerifierResult
 | null>` method and require every preset factory to extend it.
 
 Rejected for three reasons. First, classes do not tree-shake as
-cleanly as functions: a preset factory shipped in a Phase 8 package
+cleanly as functions: a preset factory shipped in a future package
 would force its prototype chain into every bundle that imports the
 type, even if the bundle never instantiates the class. The Worker
 target is bundle-size-sensitive enough that this matters. Second, a
@@ -221,7 +220,7 @@ prevent passing a raw string into `Db.create({ tenant })`.
 Rejected for two reasons. First, the kernel already validates the
 prefix at the consumer boundary: `Db.create` enforces that `tenant`
 is non-empty and contains no `/` (the key-segment separator). The
-brand would force every Phase 8 preset factory to call an
+brand would force every preset factory to call an
 `asTenantPrefix(...)` constructor helper for zero real safety win —
 the validation runs either way. Second, the existing pattern in
 `@baerly/protocol` is "validate at the consumer, not the producer"
@@ -252,7 +251,7 @@ order. Rejected because the right composition policy depends on the
 deployment — some sites want "try CF Access first, fall back to
 shared-secret"; others want "require both an IP allowlist and a
 JWT." The kernel cannot pick one without picking against the other.
-A Phase 8 sugar package can ship `firstOf(...)`, `allOf(...)`, or
+A future sugar package can ship `firstOf(...)`, `allOf(...)`, or
 any other composition pattern without the kernel having to know
 about them.
 

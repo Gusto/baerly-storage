@@ -18,12 +18,12 @@ Every emitted entry conforms to that interface.
 
 ## Why we emit it
 
-`baerly export --target=postgres` (Phase 9) walks these entries in
-causal order and replays them as Postgres `INSERT` / `UPDATE` /
-`DELETE` statements. A future `/cdc/v1/stream?since=<lsn>` SSE
-endpoint (Phase 6 / 7) translates each entry into a Debezium-style
-envelope on the wire. Both consumers ack against `lsn`; both rely
-on the field set being stable.
+Future CDC consumers walk these entries in causal order and replay
+them mechanically: a `baerly export --target=postgres` path emits
+Postgres `INSERT` / `UPDATE` / `DELETE` statements; a
+`/cdc/v1/stream?since=<lsn>` SSE endpoint translates each entry into
+a Debezium-style envelope on the wire. Both consumers ack against
+`lsn`; both rely on the field set being stable.
 
 ## The shape
 
@@ -58,7 +58,7 @@ hover.
 | `op`             | ✓ | ✓ | ✓ | ✓ | ✓ | One ASCII char. |
 | `collection`     | ✓ | ✓ | ✓ | ✓ | ✓ | First segment of `ref.key`, fallback `ref.bucket`. |
 | `doc_id`         | ✓ | ✓ | ✓ |   |   | Equals `ref.key`. |
-| `schema_version` | ✓ | ✓ | ✓ | ✓ | ✓ | Always `0` until Phase 4. |
+| `schema_version` | ✓ | ✓ | ✓ | ✓ | ✓ | Currently always `0`; reserved for forward-compatible schema versions. |
 | `new`            | ✓ | ✓ |   |   |   | Post-image. |
 | `patch`          | ✓ | ✓ |   |   |   | RFC 7386 patch; equals `new` today. |
 | `old`            |   | ✓ | ✓ |   |   | Iff `replica_identity === "FULL"`. |
@@ -80,8 +80,8 @@ Every emitted entry lands at:
 ```
 
 Per-LSN entries (rather than a batched object per manifest) keep
-each entry independently fetchable and let Phase 5 compaction
-rewrite or sweep them without touching the manifest log itself.
+each entry independently fetchable so compaction can rewrite or
+sweep them without touching the manifest log itself.
 The cost is one extra PUT per mutated ref; the benefit is "GET
 log/<lsn>.json" works for SSE long-poll on a single cursor.
 
@@ -118,13 +118,7 @@ Postgres's logical-replication output plugin (`pgoutput`) is the
 shape Debezium and Postgres-native consumers already understand —
 it is the de-facto CDC lingua franca, and it is the shape
 `baerly export --target=postgres` mechanically translates into.
-The full wire-protocol survey (`BEGIN` / `RELATION` / `INSERT` /
-`UPDATE` / `DELETE` / `TRUNCATE` / `COMMIT` framing, LSN
-semantics, `REPLICA IDENTITY`, slot acknowledgement) and the
-case-by-case decisions for what Baerly takes and what it omits
-are at
-[`.claude/research/techniques/postgres-logical-replication.md`](../.claude/research/techniques/postgres-logical-replication.md).
-We borrowed:
+From the Postgres logical-replication wire protocol we borrowed:
 
 - **`I` / `U` / `D` / `T` / `M`** — the message tags. Map to
   Debezium's `op:c/u/d/t/m` envelope.
@@ -169,10 +163,9 @@ each `U` / `D` entry carries:
   size on update-heavy collections; buys 1:1 logical replication
   and "previous value" answerable from the log alone.
 
-The setting is plumbed in **Phase 4** (table API). Until that
-ticket lands, every collection is `PATCH_ONLY`. The
-`ReplicaIdentity` type and `old` / `key_old` fields exist now so
-the shape is future-compatible.
+The setting is wired through the table API. Every collection
+defaults to `PATCH_ONLY`. The `ReplicaIdentity` type and `old` /
+`key_old` fields exist now so the shape is future-compatible.
 
 ## Consumer envelope sketch
 

@@ -1,7 +1,7 @@
-// Hand-rolled Worker entry for the Phase 6 real-deploy gate.
+// Hand-rolled Worker entry for the real-deploy gate.
 //
-// NOT a Phase 8 production template — the sharedSecret Verifier
-// here is inline and untested in isolation. Phase 8 ships preset
+// NOT a production template — the sharedSecret Verifier
+// here is inline and untested in isolation. A future deploy template ships preset
 // Verifier factories (`sharedSecret`, `bearerJwt`, `cloudflareAccess`,
 // ...) with a proper module surface.
 
@@ -21,7 +21,7 @@ interface GateEnv extends BaerlyEnv {
  * Inline gate-only Verifier. Accepts `Authorization: Bearer
  * <SHARED_SECRET>`; rejects everything else with `null` so
  * `baerlyWorker` translates the result to a 401 + `BaerlyError{code:
- * "Unauthorized"}` envelope. Phase 8 productizes via `@baerly/adapter-
+ * "Unauthorized"}` envelope. A future version productizes via `@baerly/adapter-
  * cloudflare/presets/sharedSecret`.
  */
 const sharedSecretVerifier = (secret: string): Verifier => {

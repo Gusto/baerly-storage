@@ -1,4 +1,4 @@
-# 0019 — Phase-4 API lock
+# 0019 — API surface lock
 
 ## Status
 
@@ -6,7 +6,7 @@ Accepted (2026-05-11).
 
 ## Context
 
-Phase 4 landed the SQL-shape table API in
+The SQL-shape table API lives in
 [`packages/server/src/db.ts`](../../packages/server/src/db.ts),
 [`packages/server/src/table.ts`](../../packages/server/src/table.ts),
 and
@@ -47,7 +47,7 @@ Three options for what "locked" should mean:
 
 ## Decision
 
-The Phase-4 surface is *additive-only* locked. New methods, new
+The public surface is *additive-only* locked. New methods, new
 optional config fields, and new `BaerlyErrorCode` values are allowed
 without an ADR; renames and behavioural shifts are prohibited and
 require a supersession ADR.
@@ -100,8 +100,8 @@ Prohibited without a supersession ADR:
 - Changing the behavioural contract of an existing method (e.g.
   making `update` upsert instead of no-op-on-missing).
 
-The public surface is the load-bearing deliverable of Phase 4 and the
-contract every downstream consumer codes against. Renames and
+The public surface is the load-bearing deliverable of the kernel
+and the contract every downstream consumer codes against. Renames and
 behavioural shifts have a long blast radius; additions are cheap. The
 additive-only lock gives the runtime a forward-compatible evolution
 path without making the public API a moving target.

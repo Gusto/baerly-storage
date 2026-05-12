@@ -1,4 +1,4 @@
-// Hand-rolled Node entry for the Phase 6 real-deploy gate.
+// Hand-rolled Node entry for the real-deploy gate.
 //
 // Reads env vars, constructs `S3HttpStorage` against real AWS S3
 // (or R2 via the S3-compat endpoint — see deploy/README.md), wires
@@ -48,7 +48,7 @@ const storage = new S3HttpStorage({
  * Inline gate-only `Verifier`. Accepts `Authorization: Bearer
  * <SHARED_SECRET>`; returns `null` for everything else so
  * `createListener` translates the result to a 401 + `BaerlyError{code:
- * "Unauthorized"}` envelope. Phase 8 productizes via a preset factory.
+ * "Unauthorized"}` envelope. A future version productizes via a preset factory.
  *
  * `createListener` constructs a WHATWG `Request` from the inbound
  * `IncomingMessage` before invoking the verifier — see

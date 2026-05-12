@@ -1,5 +1,5 @@
-# Hand-rolled Dockerfile for the Phase 6 real-deploy gate.
-# NOT a Phase 8 production template — no health probes, no
+# Hand-rolled Dockerfile for the real-deploy gate.
+# NOT a production template — no health probes, no
 # graceful-shutdown polish beyond SIGTERM, no non-root user setup,
 # no distroless / alpine base.
 
@@ -58,6 +58,6 @@ EXPOSE 8080
 ENV PORT=8080
 
 # `tsx` resolves the .ts entry directly; no build step needed for
-# the gate entry. (Phase 8 will pre-compile.)
+# the gate entry. (A future version will pre-compile.)
 RUN pnpm add -D tsx
 ENTRYPOINT ["tini", "--", "pnpm", "exec", "tsx", "deploy/node/server-entry.ts"]

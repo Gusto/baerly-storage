@@ -114,8 +114,7 @@ picks an impl itself.
 
 The protocol kernel landing at three independent runtimes
 (Cloudflare Workers, Node, AWS Lambda) is a load-bearing design
-constraint; the rationale is in
-[.claude/research/techniques/runtime-context.md](../.claude/research/techniques/runtime-context.md).
+constraint: anything platform-specific has to live in an adapter.
 
 ## Where invariants live
 

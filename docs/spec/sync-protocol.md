@@ -121,8 +121,8 @@ mutated ref under `<manifest-prefix>/log/<lsn>.json`. The shape
 is `LogEntry` (see
 [`packages/protocol/src/log.ts`](../packages/protocol/src/log.ts)).
 Per-LSN entries (rather than one batched object per manifest)
-keep each entry independently fetchable and let Phase 5
-compaction sweep them without touching the manifest log.
+keep each entry independently fetchable so compaction can sweep
+them without touching the manifest log.
 
 Within a single `updateContent` that mutates N refs, N+1 lsns
 are minted: 1 for the manifest version, N for the log entries.
@@ -174,16 +174,12 @@ a **fence-token + CAS-on-control-object** pattern
 (`current.json.writer_fence`, modelled after IsleDB, which itself
 borrows from FoundationDB). Spanner's TrueTime, FoundationDB's
 fence epochs, and the broader "lease + fence" literature inform
-both choices; the long-form survey of the canonical
-implementations and how Baerly's borrow differs under
-trusted-multi-instance contention lives at
-[`.claude/research/techniques/coordination-primitives.md`](../.claude/research/techniques/coordination-primitives.md).
+both choices.
 
 The specific failure modes the protocol defends against —
 thundering-herd CAS livelock on a single shared object, GCS's
 "one mutation per object per second" 429, Iceberg
 `CommitFailedException` storms with N concurrent writers — are
-catalogued from primary-source postmortems at
-[`.claude/research/techniques/s3-as-db-postmortems.md`](../.claude/research/techniques/s3-as-db-postmortems.md).
-The ~30 writes/min/collection ceiling baked into the product
-thesis comes directly from that survey.
+the standard failure modes reported in the S3-as-database
+literature. The ~30 writes/min/collection ceiling baked into the
+product thesis is the conservative bound those reports converge on.

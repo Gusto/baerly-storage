@@ -1,11 +1,8 @@
 # Baerly — product thesis
 
-What Baerly is, who it's for, and what it deliberately is not. This
-is the part that doesn't move when phases shuffle. The
-implementation plan lives at
-[`.claude/research/plan.md`](../.claude/research/plan.md); the
-long-form competitive analyses live under
-[`.claude/research/competitive/`](../.claude/research/competitive/).
+What Baerly is, who it's for, and what it deliberately is not. The
+positioning is stable; the implementation detail lives in the rest
+of `docs/`.
 
 ## What Baerly is
 
@@ -27,9 +24,7 @@ bucket, your auth IdP). Both are first-class. AWS Lambda / Bun /
 Deno / Fly are a paper-thin adapter package away. The protocol
 kernel runs identically on every runtime; the platform glue lives
 in `@baerly/adapter-*` packages. See
-[architecture.md](architecture.md) for the runtime split and
-[`.claude/research/techniques/runtime-context.md`](../.claude/research/techniques/runtime-context.md)
-for the cross-runtime constraints that shape the kernel.
+[architecture.md](architecture.md) for the runtime split.
 
 ## Who this is for, in one sentence
 
@@ -66,23 +61,18 @@ protocol.
 ## Public API shape
 
 `db.table<T>(name).where(p).order(o).limit(n).all()` — SQL-shape,
-predicate-AST-driven, locked at Phase 4. ADR-0011 picked SQL-shape
-over Firestore-shape after a long competitive survey; the rationale
-and the list of *patterns* (composable query constraints, gRPC-
-derived error codes, JSDoc `@example` density, field-value
-sentinels) Baerly still borrows from Firestore is preserved at
-[`.claude/research/competitive/firestore-api.md`](../.claude/research/competitive/firestore-api.md).
-Background on adjacent "small DB on a small runtime" products
-(Replit DB, Val Town's per-user SQLite, etc.) lives under
-[`.claude/research/competitive/`](../.claude/research/competitive/).
+predicate-AST-driven, additive-only locked. ADR-0011 records why
+SQL-shape over Firestore-shape; Baerly still borrows specific
+patterns from Firestore (composable query constraints,
+gRPC-derived error codes, JSDoc `@example` density, field-value
+sentinels).
 
 ## Constraints we accept
 
 - App is small. Up to ~10 GB / tenant; ~30 logical writes/min /
   collection; ~100 collections / tenant. Above that: graduate. The
-  ceiling comes from S3-as-DB postmortems documenting CAS livelock
-  at sustained ~5 writes/sec/object; see
-  [`.claude/research/techniques/s3-as-db-postmortems.md`](../.claude/research/techniques/s3-as-db-postmortems.md).
+  ceiling reflects the CAS-livelock regime documented in the
+  S3-as-database literature at sustained ~5 writes/sec/object.
 - One bucket per app. Tenants are prefix-scoped within.
 - Strongly consistent point GETs and conditional writes (R2/S3).
   Eventually-consistent LIST is avoided on the hot path.

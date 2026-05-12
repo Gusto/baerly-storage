@@ -2,16 +2,15 @@
 
 ## Status
 
-Accepted. Supersedes [ADR-0005](0005-client-only.md).
+Accepted. Supersedes an earlier client-only architecture (since
+removed from the ADR set; the only artifact is this ADR).
 
 ## Context
 
-[ADR-0005](0005-client-only.md) committed the project to a client-
-only architecture: clients connect directly to S3-compatible storage
-and the manifest log is the protocol. No server.
-
-That constraint has become load-bearing in ways the original framing
-didn't anticipate:
+The project originally committed to a client-only architecture:
+clients connect directly to S3-compatible storage and the manifest
+log is the protocol. No server. That constraint has become
+load-bearing in ways the original framing didn't anticipate:
 
 - An MCP server (so Claude can pair-program against the database)
   requires server code by definition.
@@ -39,9 +38,6 @@ browser becomes a typed HTTP client over `@baerly/client`. Browser-
 direct multi-writer is dropped; trusted multi-Worker is the new
 design center.
 
-The plan that drives this is in
-[`.claude/research/00-plan.md`](../../.claude/research/00-plan.md).
-
 ## Consequences
 
 - The "vendorless" claim splits cleanly: **vendorless data** (your
@@ -51,13 +47,11 @@ The plan that drives this is in
 - Auth, MCP, and export all become tractable. Each gets its own ADR
   when it lands.
 - The browser side becomes simpler: a typed RPC client over fetch,
-  no offline queue, no IndexedDB. The old browser-direct modules
-  (the optimistic-write buffer and `indexdb.ts`) have been retired
-  on `feature/delete-optimistic-write-and-poller`; realtime change
-  notifications are deferred to a Phase 10 opt-in `NotificationBus`.
+  no offline queue, no IndexedDB. Realtime change notifications
+  are a future opt-in `NotificationBus`.
 - The protocol kernel's location moves from `src/` to
   `packages/protocol/`. Already partially complete (commit
   `8efbe96`); the remaining moves land with the carve.
-- ADR-0005's framing stays archived; the property tests it cited
-  still run, just against the multi-Worker runtime instead of peer
-  browsers.
+- The randomized causal-consistency property tests originally
+  designed for peer-browser writers still run, just against the
+  multi-Worker runtime.
