@@ -59,7 +59,11 @@ aws s3 ls s3://baerly-backups/ | awk '{print $2}' | tr -d '/' | \
 
 Exit-code contract: `baerly copy` exits non-zero on every failure.
 `set -e` fails the cron run loudly; cron's default mail behaviour
-routes stderr to the operator.
+routes stderr to the operator. Pass `--json` to switch output to
+structured envelopes (`{result:...}` on stdout for success,
+`{error:{code,message,command}}` on stderr for failure) — useful
+when the wrapper script consumes `baerly`'s output programmatically
+or when an agent drives the copy.
 
 ## Storage cost
 

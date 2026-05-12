@@ -21,6 +21,7 @@
  *   - {@link parseCursor} — `<currentJsonKey>@<etag>` cursor format.
  */
 
+import { defineCommand, parseArgs, type ArgsDef, type ParsedArgs } from "citty";
 import { LocalFsStorage } from "@baerly/dev";
 import {
   CURRENT_JSON_SCHEMA_VERSION,
@@ -43,6 +44,7 @@ import {
   snapshotKey,
   type SnapshotBody,
 } from "@baerly/server";
+import { emitError, emitSuccess, setJsonMode } from "./output";
 
 // MemoryStorage is imported above for parseBucketUri's discriminator;
 // the no-op reference here keeps it bundled into the type graph and
@@ -182,75 +184,133 @@ export const parseCursor = (cursor: string): ParsedCursor => {
   return { currentJsonKey: cursor.slice(0, at), expectedEtag: cursor.slice(at + 1) };
 };
 
-interface CopyArgs {
-  from: string;
-  fromSnapshot: string;
-  to: string;
-}
+/**
+ * citty arg shape for `baerly copy`. Keys stay in kebab-case
+ * (`from-snapshot`, not `fromSnapshot`) to keep the CLI surface and
+ * the parsed-object keys identical — agents reading `--help` see the
+ * same names that show up in error messages.
+ */
+const COPY_ARGS = {
+  from: {
+    type: "string",
+    required: true,
+    description: "Source bucket URI (s3://<bucket>[/<prefix>], file:///<abs>, memory://<bucket>)",
+    valueHint: "bucket-uri",
+  },
+  "from-snapshot": {
+    type: "string",
+    required: true,
+    description: "Cursor: <currentJsonKey>@<etag>",
+    valueHint: "cursor",
+  },
+  to: {
+    type: "string",
+    required: true,
+    description: "Target bucket URI",
+    valueHint: "bucket-uri",
+  },
+  json: {
+    type: "boolean",
+    description: "Emit a structured JSON envelope to stdout (success) or stderr (error)",
+  },
+} as const satisfies ArgsDef;
 
-const parseArgs = (argv: readonly string[]): CopyArgs => {
-  const out: Partial<CopyArgs> = {};
-  for (const a of argv) {
-    const eq = a.indexOf("=");
-    if (!a.startsWith("--") || eq < 3) {
-      throw new BaerlyError(
-        "InvalidConfig",
-        `baerly copy: expected --key=value, got ${JSON.stringify(a)}`,
-      );
-    }
-    const k = a.slice(2, eq);
-    const v = a.slice(eq + 1);
-    if (k === "from") out.from = v;
-    else if (k === "from-snapshot") out.fromSnapshot = v;
-    else if (k === "to") out.to = v;
-    else throw new BaerlyError("InvalidConfig", `baerly copy: unknown flag --${k}`);
-  }
-  if (out.from === undefined || out.fromSnapshot === undefined || out.to === undefined) {
-    throw new BaerlyError(
-      "InvalidConfig",
-      "baerly copy: required flags --from, --from-snapshot, --to",
-    );
-  }
-  return out as CopyArgs;
+/**
+ * Keys we expect `parseArgs` to produce. Citty is permissive by
+ * default — unknown flags pass through as extra keys rather than
+ * erroring — so we re-introduce the strict-mode behavior the
+ * hand-rolled parser had (rejects `--foo=bar` if `foo` is unknown).
+ * Required because `copy.test.ts:209` asserts unknown flags exit 1.
+ */
+const KNOWN_KEYS: ReadonlySet<string> = new Set(["from", "from-snapshot", "to", "json", "_"]);
+
+const errorToExitCode = (code: string): number => {
+  if (code === "InvalidConfig") return 1;
+  if (code === "Conflict" || code === "Internal" || code === "InvalidResponse") return 3;
+  return 2;
 };
 
 /**
- * CLI entry. Parses args, dispatches to `doCopy`, and translates
- * `BaerlyError.code` into the exit-code contract documented in
- * `baerly --help`:
+ * Pure handler — receives already-parsed args, dispatches to
+ * `doCopy`, and translates `BaerlyError.code` into the exit-code
+ * contract:
  *
  *   - `0` — success
- *   - `1` — user error (`InvalidConfig`)
+ *   - `1` — user error (`InvalidConfig`, missing/unknown flag)
  *   - `2` — storage error (`NetworkError`, `AccessDenied`, anything
  *     non-`BaerlyError`)
  *   - `3` — protocol invariant (`Conflict`, `Internal`,
  *     `InvalidResponse`)
  *
- * Errors are written to stderr; stdout stays silent on success.
- *
- * @param argv Args AFTER the `copy` subcommand (i.e. everything after
- *   `argv[0]` in `baerly.ts`).
+ * Errors flow through `emitError`; success is silent in text mode
+ * and a one-line JSON envelope in `--json` mode.
  */
-export const runCopy = async (argv: readonly string[]): Promise<number> => {
+const handleCopy = async (args: ParsedArgs<typeof COPY_ARGS>): Promise<number> => {
+  setJsonMode(args.json === true);
   try {
-    const args = parseArgs(argv);
+    for (const k of Object.keys(args)) {
+      if (!KNOWN_KEYS.has(k)) {
+        throw new BaerlyError("InvalidConfig", `baerly copy: unknown flag --${k}`);
+      }
+    }
     const src = await parseBucketUri(args.from);
     const dst = await parseBucketUri(args.to);
-    const cursor = parseCursor(args.fromSnapshot);
+    const cursor = parseCursor(args["from-snapshot"]);
     await doCopy(src, dst, cursor);
+    emitSuccess({ command: "copy", status: "ok" });
     return 0;
   } catch (err) {
     if (err instanceof BaerlyError) {
-      process.stderr.write(`baerly copy: ${err.code}: ${err.message}\n`);
-      if (err.code === "InvalidConfig") return 1;
-      if (err.code === "Conflict" || err.code === "Internal" || err.code === "InvalidResponse") {
-        return 3;
-      }
-      return 2;
+      emitError("copy", err.code, err.message);
+      return errorToExitCode(err.code);
     }
-    process.stderr.write(`baerly copy: ${(err as Error).message}\n`);
+    emitError("copy", "Unknown", (err as Error).message);
     return 2;
   }
+};
+
+/**
+ * citty `defineCommand` block for `baerly copy`. Used as the
+ * subcommand entry in `baerly.ts`. The `run` handler calls
+ * `process.exit(code)` because citty's `runMain` doesn't honor the
+ * return value as an exit code — only the test-facing `runCopy`
+ * shim below returns the integer directly.
+ */
+export const copy = defineCommand({
+  meta: {
+    name: "copy",
+    description:
+      "Copy a snapshot bucket-to-bucket. Bypasses write-path compaction; emits one L9 snapshot at the target.",
+  },
+  args: COPY_ARGS,
+  run: async ({ args }) => {
+    const code = await handleCopy(args);
+    if (code !== 0) process.exit(code);
+  },
+});
+
+/**
+ * Programmatic entry used by `copy.test.ts`. Bypasses citty's `run`
+ * wrapper (which would call `process.exit` and kill vitest) and
+ * instead returns the integer exit code directly.
+ *
+ * Citty's exported `parseArgs` is used here so production and tests
+ * share the exact same parsing rules. A missing required flag
+ * surfaces as a `CLIError` from `parseArgs` and is mapped to exit 1
+ * (matches the legacy hand-rolled parser's behavior).
+ *
+ * @param argv Args AFTER the `copy` subcommand.
+ */
+export const runCopy = async (argv: readonly string[]): Promise<number> => {
+  let parsed: ParsedArgs<typeof COPY_ARGS>;
+  try {
+    parsed = parseArgs<typeof COPY_ARGS>(argv as string[], COPY_ARGS);
+  } catch (err) {
+    setJsonMode(argv.includes("--json"));
+    emitError("copy", "InvalidConfig", (err as Error).message);
+    return 1;
+  }
+  return handleCopy(parsed);
 };
 
 /**

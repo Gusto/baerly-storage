@@ -12,7 +12,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   CURRENT_JSON_SCHEMA_VERSION,
   createCurrentJson,
@@ -212,6 +212,69 @@ describe("baerly copy", () => {
           `--unknown=x`,
         ]);
         expect(code).toBe(1);
+      });
+
+      it("--json emits structured envelopes on success and failure", async () => {
+        const ctx = await variant.setup();
+        cleanup = ctx.cleanup;
+        await seed(ctx.src);
+        await new ServerWriter({
+          storage: ctx.src,
+          currentJsonKey: CURRENT_JSON_KEY,
+        }).commit({
+          op: "I",
+          collection: COLL,
+          docId: "only",
+          body: { _id: "only", title: "x", status: "open" } as Doc,
+        });
+        const post = await readCurrentJson(ctx.src, CURRENT_JSON_KEY);
+
+        // Success: stdout receives one `{result:{command:"copy",status:"ok"}}` line.
+        const stdoutOk = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+        const stderrOk = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+        try {
+          const ok = await runCopy([
+            `--from=${ctx.srcUri}`,
+            `--from-snapshot=${CURRENT_JSON_KEY}@${post!.etag}`,
+            `--to=${ctx.dstUri}`,
+            `--json`,
+          ]);
+          expect(ok).toBe(0);
+          const okWrites = stdoutOk.mock.calls.map(([c]) => String(c)).join("");
+          expect(stderrOk).not.toHaveBeenCalled();
+          expect(JSON.parse(okWrites.trim())).toEqual({
+            result: { command: "copy", status: "ok" },
+          });
+        } finally {
+          stdoutOk.mockRestore();
+          stderrOk.mockRestore();
+        }
+
+        // Failure (malformed cursor → InvalidConfig → exit 1): stderr
+        // receives one `{error:{code,message,command}}` line; stdout stays
+        // silent.
+        const stdoutErr = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+        const stderrErr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+        try {
+          const bad = await runCopy([
+            `--from=${ctx.srcUri}`,
+            `--from-snapshot=missing-at-sign`,
+            `--to=${ctx.dstUri}`,
+            `--json`,
+          ]);
+          expect(bad).toBe(1);
+          const errWrites = stderrErr.mock.calls.map(([c]) => String(c)).join("");
+          expect(stdoutErr).not.toHaveBeenCalled();
+          const parsed = JSON.parse(errWrites.trim()) as {
+            error: { code: string; message: string; command: string };
+          };
+          expect(parsed.error.code).toBe("InvalidConfig");
+          expect(parsed.error.command).toBe("copy");
+          expect(parsed.error.message).toContain("cursor");
+        } finally {
+          stdoutErr.mockRestore();
+          stderrErr.mockRestore();
+        }
       });
     });
   }
