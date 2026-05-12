@@ -124,5 +124,5 @@ distinguish your regressions from the pre-existing state.
 
 The module map lives in [CLAUDE.md → Module map](../CLAUDE.md#module-map);
 the deeper dependency graph + lifecycles live in
-[ARCHITECTURE.md](ARCHITECTURE.md). For a flat enumeration, just `ls
+[architecture.md](architecture.md). For a flat enumeration, just `ls
 packages/*/src/ tests/`.

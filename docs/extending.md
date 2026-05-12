@@ -3,7 +3,7 @@
 Three worked examples for the most common extension shapes. Follow these
 patterns and your changes will fit the codebase's conventions.
 
-> Before adding a feature, read [ARCHITECTURE.md](ARCHITECTURE.md) so you
+> Before adding a feature, read [architecture.md](architecture.md) so you
 > know which module owns what. Most additions touch
 > `packages/server/src/db.ts` or `packages/server/src/table.ts`, but the
 > *invariants* live in `packages/server/src/server-writer.ts`.
@@ -123,7 +123,7 @@ The write primitive lives in two places:
 
 1. **The wire shape** — `LogEntry` in
    `packages/protocol/src/log.ts`. Adding a new `op` letter is a
-   stability change (see [log-entry-shape.md](log-entry-shape.md)).
+   stability change (see [spec/log-entry-shape.md](spec/log-entry-shape.md)).
 2. **The commit path** — `ServerWriter` in
    `packages/server/src/server-writer.ts`. Extend `CommitInput`
    with the new shape and update `commit` / `commitBatch` to emit
@@ -149,13 +149,13 @@ export interface CommitInput {
   can reach the new primitive. If the new primitive doesn't fit
   the `Table<T>` shape, extend `Db` directly.
 - Add the new `op` discriminant to the field-requirement matrix in
-  [log-entry-shape.md](log-entry-shape.md).
+  [spec/log-entry-shape.md](spec/log-entry-shape.md).
 - Update `packages/server/src/query.ts` if the reader needs to fold
   the new entry shape into the row set.
 - If this changes protocol-visible state (a new field on
   `current.json`, a new `op`, a new storage layout), document it in
-  [sync_protocol.md](sync_protocol.md) and add a coverage entry in
-  [causal_consistency_checking.md](causal_consistency_checking.md).
+  [spec/sync-protocol.md](spec/sync-protocol.md) and add a coverage entry in
+  [spec/causal-consistency-checking.md](spec/causal-consistency-checking.md).
 
 ### Don't
 

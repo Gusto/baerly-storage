@@ -10,7 +10,7 @@
  * loosening it widens the window during which causal ordering can be
  * disturbed by skew.
  *
- * @see docs/sync_protocol.md
+ * @see docs/spec/sync-protocol.md
  */
 export const LAG_WINDOW_MILLIS: number = 5000;
 
@@ -35,7 +35,7 @@ export const MANIFEST_LIST_LOOKAHEAD_MILLIS: number = 10000;
  *
  * Changing this is a protocol-breaking change.
  *
- * @see docs/sync_protocol.md
+ * @see docs/spec/sync-protocol.md
  */
 export const TIMESTAMP_BIT_WIDTH: number = 42;
 
@@ -122,7 +122,7 @@ export const MEM_CACHE_CAPACITY: number = 100;
  * write propagation plus a few poll cycles while still surfacing
  * genuinely orphaned entries reasonably quickly.
  *
- * @see docs/sync_protocol.md
+ * @see docs/spec/sync-protocol.md
  */
 export const ORPHAN_MANIFEST_GRACE_MILLIS: number = 6 * LAG_WINDOW_MILLIS;
 

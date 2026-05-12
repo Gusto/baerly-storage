@@ -22,7 +22,7 @@ type JSONArraylessObject = {
  * uses nulls to remove fields. Widen the local `patch` type to
  * allow nulls so fixture #4 ("null deletes nested field") is legal
  * TypeScript without `as any`. This widening is deliberate and
- * matches RFC 7386 — see `docs/JSON_merge_patch.md`.
+ * matches RFC 7386 — see `docs/spec/json-merge-patch.md`.
  */
 type JSONMergePatchObject = {
   [k: string]: string | number | boolean | null | JSONMergePatchObject;

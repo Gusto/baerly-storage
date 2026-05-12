@@ -6,7 +6,7 @@ user-facing capability and the source files, tests, and docs that
 implement or describe it.
 
 For a code-oriented view (read-this-first lifecycle), see the module map
-in [CLAUDE.md](../CLAUDE.md) and [ARCHITECTURE.md](./ARCHITECTURE.md).
+in [CLAUDE.md](../CLAUDE.md) and [architecture.md](./architecture.md).
 
 ## Public API surface
 
@@ -36,8 +36,8 @@ to others in an order consistent with happened-before.
   (state-machine model),
   [`tests/integration/randomized.test.ts`](../tests/integration/randomized.test.ts)
   (property-based, runs against Toxiproxy)
-- Theory: [`docs/sync_protocol.md`](./sync_protocol.md),
-  [`docs/causal_consistency_checking.md`](./causal_consistency_checking.md)
+- Theory: [`docs/spec/sync-protocol.md`](./spec/sync-protocol.md),
+  [`docs/spec/causal-consistency-checking.md`](./spec/causal-consistency-checking.md)
 
 ## JSON Merge Patch (RFC 7386)
 
@@ -46,7 +46,7 @@ How partial updates merge into existing documents.
 - Implementation: [`packages/protocol/src/json.ts`](../packages/protocol/src/json.ts)
 - Tests: [`packages/protocol/src/json.test.ts`](../packages/protocol/src/json.test.ts)
   (always green — pure unit test)
-- Docs: [`docs/JSON_merge_patch.md`](./JSON_merge_patch.md)
+- Docs: [`docs/spec/json-merge-patch.md`](./spec/json-merge-patch.md)
 
 ## Vendorless S3 client
 
@@ -62,8 +62,8 @@ the `Storage` interface; consumers can substitute their own.
   [`packages/protocol/src/xml.test.ts`](../packages/protocol/src/xml.test.ts),
   [`tests/integration/conformance.test.ts`](../tests/integration/conformance.test.ts)
   (multi-backend, needs credentials)
-- Docs: [`docs/s3_features_used.md`](./s3_features_used.md),
-  [`docs/s3-xml-escaping-cases.md`](./s3-xml-escaping-cases.md)
+- Docs: [`docs/spec/s3-features-used.md`](./spec/s3-features-used.md),
+  [`docs/spec/s3-xml-escaping-cases.md`](./spec/s3-xml-escaping-cases.md)
 - ADR: [`docs/adr/0001-no-aws-sdk.md`](./adr/0001-no-aws-sdk.md)
 
 ## Time / clock-skew tolerance

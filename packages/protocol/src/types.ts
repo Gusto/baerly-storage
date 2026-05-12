@@ -39,7 +39,7 @@ export interface ResolvedRef extends Ref {
  * `<base32-time>_<session>_<seq>` — order is load-bearing because the
  * sync protocol relies on lexicographic time ordering.
  *
- * @see `docs/sync_protocol.md` (manifest log section)
+ * @see `docs/spec/sync-protocol.md` (manifest log section)
  */
 export type ManifestKey = Branded<string, "Manifest">;
 

@@ -234,8 +234,8 @@ the entry truly orphan.
 See also:
 
 - The cursor format invariant (`<base32-time>_<session>_<seq>`)
-  lives in [`docs/sync_protocol.md`](sync_protocol.md)
+  lives in [`docs/sync-protocol.md`](sync-protocol.md)
   ("Subtleties of the manifest key").
 - The merge-patch math (RFC 7386, the `merge` / `fold` / `diff`
   triple) is in
-  [`docs/JSON_merge_patch.md`](JSON_merge_patch.md).
+  [`docs/json-merge-patch.md`](json-merge-patch.md).

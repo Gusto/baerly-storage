@@ -14,8 +14,8 @@ readers. Reads explicitly fetch `current.json`, walk
 set, and evaluate the query predicate. Change notifications are
 delivered out-of-band by the HTTP `/v1/since` long-poll route. The
 protocol is specified in
-[sync_protocol.md](sync_protocol.md) and proven causally consistent in
-[causal_consistency_checking.md](causal_consistency_checking.md).
+[spec/sync-protocol.md](spec/sync-protocol.md) and proven causally consistent in
+[spec/causal-consistency-checking.md](spec/causal-consistency-checking.md).
 
 ## Module dependency graph
 
@@ -85,7 +85,7 @@ channel: it walks the log from a caller-supplied `lsn` and
 either returns the new entries immediately or holds the request
 until new entries arrive (or the long-poll deadline elapses).
 The protocol-level theory lives in
-[sync_protocol.md](sync_protocol.md).
+[spec/sync-protocol.md](spec/sync-protocol.md).
 
 ## Storage seam
 
@@ -125,17 +125,17 @@ constraint; the rationale is in
   reader walks `[log_seq_start, next_seq)` from a single read of
   `current.json`. A reader's observed sequence is a prefix of the
   global log. Proof:
-  [causal_consistency_checking.md](causal_consistency_checking.md).
+  [spec/causal-consistency-checking.md](spec/causal-consistency-checking.md).
 - **Split-brain fencing:** `writer_fence.epoch` inside `current.json`.
   `claimWriter()` (re-exported from `@baerly/protocol`) bumps the
   epoch; an in-flight commit holding the prior epoch fails fast on
   the post-CAS fence check with `BaerlyError{code:"Conflict"}`.
 - **JSON Merge Patch semantics:** `packages/protocol/src/json.ts` —
   RFC 7386 with the array-replacement convention; see
-  [JSON_merge_patch.md](JSON_merge_patch.md).
+  [spec/json-merge-patch.md](spec/json-merge-patch.md).
 - **Log entry shape:** `packages/protocol/src/log.ts` — the on-the-wire
   `LogEntry` interface, stable at major versions. See
-  [log-entry-shape.md](log-entry-shape.md).
+  [spec/log-entry-shape.md](spec/log-entry-shape.md).
 
 ## Key types (where the contracts live)
 
@@ -153,7 +153,7 @@ constraint; the rationale is in
   `ServerWriter.commit` and `commitBatch` request/response shapes.
 - `LogEntry` (`packages/protocol/src/log.ts`): the per-mutation log
   entry. Field set is fixed at major versions; consumers ack on
-  `lsn`. Full contract in [log-entry-shape.md](log-entry-shape.md).
+  `lsn`. Full contract in [spec/log-entry-shape.md](spec/log-entry-shape.md).
 - `Branded<T, B>` (`packages/protocol/src/types.ts`): nominal-type
   pattern. `UUID` and `VersionId` are both `string`s but not
   assignable to each other.

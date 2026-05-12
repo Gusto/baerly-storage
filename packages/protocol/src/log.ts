@@ -17,7 +17,7 @@ import { str2uintDesc } from "./types";
  * - Optional: `old` (when `replica_identity === "FULL"`), `key_old`
  *   (U/D when `replica_identity !== "PATCH_ONLY"`), `origin`.
  *
- * @see docs/log-entry-shape.md
+ * @see docs/spec/log-entry-shape.md
  */
 export interface LogEntry {
   /**

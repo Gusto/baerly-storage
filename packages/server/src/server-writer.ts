@@ -29,7 +29,7 @@
  * `log/<seq>.json` (the integer `seq` is the load-bearing identifier;
  * the `lsn` string is schema-only).
  *
- * @see docs/sync_protocol.md for the legacy invariants this loop
+ * @see docs/spec/sync-protocol.md for the legacy invariants this loop
  *      preserves.
  */
 

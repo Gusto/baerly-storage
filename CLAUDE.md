@@ -153,7 +153,7 @@ pnpm dev:storage         # docker compose up -d --wait (Minio :9102, Toxiproxy :
 pnpm dev:storage:stop    # docker compose down
 ```
 
-See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for full setup.
+See [docs/development.md](docs/development.md) for full setup.
 
 ## Module map
 
@@ -194,9 +194,9 @@ Read in this order to build a mental model:
    a Phase 8 production template.
 
 The full lifecycle of `db.table().insert()` is in
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — read it before
+[docs/architecture.md](docs/architecture.md) — read it before
 changing `packages/server/src/server-writer.ts` or the query
-evaluation path. ARCHITECTURE.md also has a Mermaid dependency
+evaluation path. architecture.md also has a Mermaid dependency
 graph if you need finer-grained roles than the groups above.
 
 ## When editing X, read Y
@@ -207,10 +207,10 @@ Path-scoped conventions. **Read the matching file before editing.**
 |---|---|
 | `tests/**` | [docs/conventions/tests.md](docs/conventions/tests.md) |
 | `docs/**` | [docs/conventions/docs.md](docs/conventions/docs.md) |
-| `packages/server/src/server-writer.ts` | [docs/sync_protocol.md](docs/sync_protocol.md) + [docs/causal_consistency_checking.md](docs/causal_consistency_checking.md) |
-| `packages/protocol/src/json.ts` | [docs/JSON_merge_patch.md](docs/JSON_merge_patch.md) |
-| `packages/protocol/src/log.ts`, the log-emit path in `server-writer.ts` | [docs/log-entry-shape.md](docs/log-entry-shape.md) |
-| Public API on `Db` / `Table` | [docs/EXTENDING.md](docs/EXTENDING.md) |
+| `packages/server/src/server-writer.ts` | [docs/spec/sync-protocol.md](docs/spec/sync-protocol.md) + [docs/spec/causal-consistency-checking.md](docs/spec/causal-consistency-checking.md) |
+| `packages/protocol/src/json.ts` | [docs/spec/json-merge-patch.md](docs/spec/json-merge-patch.md) |
+| `packages/protocol/src/log.ts`, the log-emit path in `server-writer.ts` | [docs/spec/log-entry-shape.md](docs/spec/log-entry-shape.md) |
+| Public API on `Db` / `Table` | [docs/extending.md](docs/extending.md) |
 
 Claude users: `.claude/rules/{tests,docs}.md` auto-load on matching
 edits and point at the same files.
@@ -224,7 +224,7 @@ edits and point at the same files.
   `VersionId` exist to prevent confusion bugs. Don't paper over a type
   mismatch with `as string`; widen only if you understand why.
 - **Magic values live in `packages/protocol/src/constants.ts`** with a JSDoc citing where the
-  value comes from (often `docs/sync_protocol.md`).
+  value comes from (often `docs/spec/sync-protocol.md`).
 - **Errors must be `BaerlyError` instances** (re-exported from
   `@baerly/protocol`). Use the `code` discriminant
   (`error.code === "NetworkError"`), not `instanceof` chains. Hierarchy
@@ -235,8 +235,8 @@ edits and point at the same files.
 - **Public API docs live as JSDoc on `packages/server/src/db.ts` and
   `packages/server/src/table.ts`.** IDE hover and tsgo consume them
   directly — no rendered markdown ref to maintain.
-- **Causal consistency is a hard invariant.** [docs/sync_protocol.md](docs/sync_protocol.md)
-  and [docs/causal_consistency_checking.md](docs/causal_consistency_checking.md)
+- **Causal consistency is a hard invariant.** [docs/spec/sync-protocol.md](docs/spec/sync-protocol.md)
+  and [docs/spec/causal-consistency-checking.md](docs/spec/causal-consistency-checking.md)
   describe how it works. Read those before touching
   `packages/server/src/server-writer.ts`.
 
@@ -254,10 +254,10 @@ edits and point at the same files.
 
 - **Bugfix?** Reproduce with a failing test first. Pick the right test file
   by topic (`json.test.ts`, `time.test.ts`, etc.).
-- **New public API method on `Db` / `Table`?** See [docs/EXTENDING.md](docs/EXTENDING.md).
+- **New public API method on `Db` / `Table`?** See [docs/extending.md](docs/extending.md).
   Add JSDoc with `@example` — IDEs and tsgo consume it directly.
-- **Touching the sync protocol?** Read `docs/sync_protocol.md` and
-  `docs/causal_consistency_checking.md`. Add a property-based test in
+- **Touching the sync protocol?** Read `docs/spec/sync-protocol.md` and
+  `docs/spec/causal-consistency-checking.md`. Add a property-based test in
   `tests/integration/randomized.test.ts` or a check in
   `tests/unit/consistency.test.ts`.
 - **Performance change?** Run `pnpm test:randomize` for a few minutes.
@@ -266,12 +266,12 @@ edits and point at the same files.
 ## Pointers
 
 - Feature → code map: [docs/features.md](docs/features.md)
-- Architecture overview: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
-- Local dev setup: [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)
-- How to add a feature / module / test: [docs/EXTENDING.md](docs/EXTENDING.md)
-- Protocol theory: [docs/sync_protocol.md](docs/sync_protocol.md),
-  [docs/causal_consistency_checking.md](docs/causal_consistency_checking.md),
-  [docs/JSON_merge_patch.md](docs/JSON_merge_patch.md)
+- Architecture overview: [docs/architecture.md](docs/architecture.md)
+- Local dev setup: [docs/development.md](docs/development.md)
+- How to add a feature / module / test: [docs/extending.md](docs/extending.md)
+- Protocol theory: [docs/spec/sync-protocol.md](docs/spec/sync-protocol.md),
+  [docs/spec/causal-consistency-checking.md](docs/spec/causal-consistency-checking.md),
+  [docs/spec/json-merge-patch.md](docs/spec/json-merge-patch.md)
 - Architecture decisions ("why"): [docs/adr/](docs/adr/)
 - Troubleshooting: [docs/troubleshooting.md](docs/troubleshooting.md)
 - Path-scoped conventions: [docs/conventions/](docs/conventions/) (table at top)

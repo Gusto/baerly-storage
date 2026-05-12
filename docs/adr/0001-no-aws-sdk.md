@@ -29,7 +29,7 @@ for everything S3 returns).
   list flags adding any new dependency.
 - We carry a small but real maintenance cost: when S3-compatible
   vendors return non-standard XML, we write the workaround
-  (see [`docs/s3-xml-escaping-cases.md`](../s3-xml-escaping-cases.md)).
+  (see [`docs/spec/s3-xml-escaping-cases.md`](../spec/s3-xml-escaping-cases.md)).
 - Type safety for S3 operations is whatever the inlined wire types
   cover. Missing fields are added on demand.
 - Implementation:

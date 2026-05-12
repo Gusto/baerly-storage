@@ -10,8 +10,8 @@ Conventions for content under `docs/`.
   markdown ref.
 
 ## Style
-- Markdown line wrap ~80 chars (matches existing `sync_protocol.md` and
-  `causal_consistency_checking.md`).
+- Markdown line wrap ~80 chars (matches existing `spec/sync-protocol.md` and
+  `spec/causal-consistency-checking.md`).
 - Mermaid blocks render on GitHub — use them for diagrams.
 - Inline code paths are `packages/<pkg>/src/<file>.ts` (relative to
   repo root).
@@ -20,10 +20,10 @@ Conventions for content under `docs/`.
 
 | Change | File to update |
 |---|---|
-| New module / refactor | `docs/ARCHITECTURE.md` (graph + lifecycle) |
-| New developer setup step | `docs/DEVELOPMENT.md` |
-| New extension pattern | `docs/EXTENDING.md` |
-| Protocol change | `docs/sync_protocol.md` (and a coverage entry in `docs/causal_consistency_checking.md`) |
+| New module / refactor | `docs/architecture.md` (graph + lifecycle) |
+| New developer setup step | `docs/development.md` |
+| New extension pattern | `docs/extending.md` |
+| Protocol change | `docs/spec/sync-protocol.md` (and a coverage entry in `docs/spec/causal-consistency-checking.md`) |
 | New `Db.create` / `Table<T>` option | JSDoc on the param in `packages/server/src/db.ts` or `packages/server/src/table.ts` |
 
 ## Don't

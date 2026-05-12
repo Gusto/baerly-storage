@@ -27,7 +27,7 @@ bucket, your auth IdP). Both are first-class. AWS Lambda / Bun /
 Deno / Fly are a paper-thin adapter package away. The protocol
 kernel runs identically on every runtime; the platform glue lives
 in `@baerly/adapter-*` packages. See
-[ARCHITECTURE.md](ARCHITECTURE.md) for the runtime split and
+[architecture.md](architecture.md) for the runtime split and
 [`.claude/research/techniques/runtime-context.md`](../.claude/research/techniques/runtime-context.md)
 for the cross-runtime constraints that shape the kernel.
 

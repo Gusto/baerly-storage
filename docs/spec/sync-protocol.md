@@ -59,12 +59,12 @@ Much of the engineering of the Baerly sync protocol is about transforming that i
 
 ### Reconciling concurrent writes
 
-Note the client sends the operation as a [JSON_merge_patch](JSON_merge_patch.md). The database state at time *t* is the merge concatenation of all the operations up to *t* (see [a list of patches forms an ordered log](JSON_merge_patch.md#a-list-of-patches-forms-an-ordered-log))
+Note the client sends the operation as a [JSON_merge_patch](json-merge-patch.md). The database state at time *t* is the merge concatenation of all the operations up to *t* (see [a list of patches forms an ordered log](json-merge-patch.md#a-list-of-patches-forms-an-ordered-log))
 
 $$state_t = \sum_{i=0}^{t} merge(patch_i)$$
-Now it is inefficient for a client to replay the entire DB history. But we can use the [idempotency property of JSON-merge-patch](JSON_merge_patch.md#) to avoid it.
+Now it is inefficient for a client to replay the entire DB history. But we can use the [idempotency property of JSON-merge-patch](json-merge-patch.md#) to avoid it.
 
-A client only needs to read an imperfect guess of the latest state, then replay all patches within a *lag* window to correct an estimate of the final state (see [Ordered Logs with missing entries can be repaired with replay](JSON_merge_patch.md#ordered-logs-with-missing-entries-can-be-repaired-with-replay))
+A client only needs to read an imperfect guess of the latest state, then replay all patches within a *lag* window to correct an estimate of the final state (see [Ordered Logs with missing entries can be repaired with replay](json-merge-patch.md#ordered-logs-with-missing-entries-can-be-repaired-with-replay))
 
 $$\begin{eqnarray} 
 state_t &=& state_{t-lag} + \sum_{i=lag}^{t} merge(patch_i) \\
@@ -79,7 +79,7 @@ If client's clocks are skewed, their manifest keys will not order between them c
 
 The sync protocol is eager, exposing all operations as soon as they are visible, so clock skew does not affect end-to-end latency either. The only effect is on ordering within the log which can be observed when writing to the same key. Delayed clients will appear to be affecting the database in the past, which means their operations are more easily masked by other clients.
 
-See [Checking Causal Consistency the Easy Way](causal_consistency_checking.md) describing the randomized property checking used for validating causal consistency.
+See [Checking Causal Consistency the Easy Way](causal-consistency-checking.md) describing the randomized property checking used for validating causal consistency.
 
 ### Mitigating Large clock skew
 
