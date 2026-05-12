@@ -33,24 +33,20 @@ const PERMANENT_ERROR_CODES: ReadonlySet<string> = new Set([
 
 const retry = async <T>(
   fn: () => Promise<T>,
-  { retries = S3_REQUEST_MAX_RETRIES, backoffMs = 100, max_delay = 10000 } = {},
+  { retries = S3_REQUEST_MAX_RETRIES, backoffMs = 100, maxDelayMs = 10_000 } = {},
 ): Promise<T> => {
-  try {
-    return await fn();
-  } catch (e) {
-    if (e instanceof BaerlyError && PERMANENT_ERROR_CODES.has(e.code)) {
-      throw e;
+  let wait = backoffMs;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      return await fn();
+    } catch (e) {
+      if (e instanceof BaerlyError && PERMANENT_ERROR_CODES.has(e.code)) throw e;
+      if (attempt === retries) throw e;
+      await delay(wait);
+      wait = Math.min(wait * 1.5, maxDelayMs);
     }
-    if (retries > 0) {
-      await delay(backoffMs);
-      return retry(fn, {
-        retries: retries - 1,
-        max_delay,
-        backoffMs: Math.min(backoffMs * 1.5, max_delay),
-      });
-    }
-    throw e;
   }
+  throw new Error("unreachable");
 };
 
 /**
