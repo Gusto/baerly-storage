@@ -1,3 +1,12 @@
+---
+title: Real-deploy gate
+audience: operator
+summary: "Manual lifecycle for the hand-rolled CF + Node deploy artifacts. Run pnpm gate:real-deploy after provisioning."
+last-reviewed: 2026-05-12
+tags: [deploy, gate, operations]
+related: ["../CLAUDE.md"]
+---
+
 # Baerly real-deploy gate
 
 Hand-rolled deploy artifacts that prove `baerlyWorker()` and

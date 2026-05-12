@@ -1,3 +1,12 @@
+---
+title: Features → code map
+audience: coder
+summary: Feature-by-feature pointers into source, tests, and docs.
+last-reviewed: 2026-05-12
+tags: [index, features, code-map]
+related: [architecture.md, "spec/README.md", "adr/README.md"]
+---
+
 # Features → code map
 
 A feature-oriented index for agents and humans landing in the repo who

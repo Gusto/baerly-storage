@@ -1,3 +1,12 @@
+---
+title: Observability tag naming
+audience: adr
+summary: ADR 0022 — Observability tag naming.
+last-reviewed: 2026-05-12
+tags: [decision, adr]
+related: [README.md]
+---
+
 # 0022 — Observability tag naming
 
 ## Status

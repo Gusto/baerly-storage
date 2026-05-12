@@ -1,3 +1,12 @@
+---
+title: Causal-consistency property checking
+audience: spec
+summary: Low-complexity verification of causal consistency via a known global timeline.
+last-reviewed: 2026-05-12
+tags: [protocol, verification, property-testing]
+related: [sync-protocol.md]
+---
+
 # Checking Causal Consistency the Easy Way
 
 Message infrastructure has fairly clear semantics: "send the messages to the recipients in the order they were written".

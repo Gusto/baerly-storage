@@ -1,3 +1,12 @@
+---
+title: S3 XML escaping edge cases
+audience: spec
+summary: ListObjectsV2 XML response edge cases; companion to fixtures/s3-key-escaping/.
+last-reviewed: 2026-05-12
+tags: [protocol, s3, xml, edge-cases]
+related: [s3-features-used.md]
+---
+
 S3 is an XML-based API. When you do a list operation i.e. [GET /\<bucket>?list-type=2](https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListObjectsV2.html) you get a response of the following
 ```
 HTTP/1.1 200

@@ -1,3 +1,12 @@
+---
+title: Export contract is Postgres-logical-replication-shaped
+audience: adr
+summary: ADR 0013 — Export contract is Postgres-logical-replication-shaped.
+last-reviewed: 2026-05-12
+tags: [decision, adr]
+related: [README.md]
+---
+
 # 0013 — Export contract is Postgres-logical-replication-shaped
 
 ## Status

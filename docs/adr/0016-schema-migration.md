@@ -1,3 +1,12 @@
+---
+title: Forward-only schema migration via schema_version
+audience: adr
+summary: ADR 0016 — Forward-only schema migration via schema_version.
+last-reviewed: 2026-05-12
+tags: [decision, adr]
+related: [README.md]
+---
+
 # 0016 — Forward-only schema migration via `schema_version`
 
 ## Status

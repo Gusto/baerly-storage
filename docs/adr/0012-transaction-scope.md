@@ -1,3 +1,12 @@
+---
+title: Transaction scope is single-table
+audience: adr
+summary: ADR 0012 — Transaction scope is single-table.
+last-reviewed: 2026-05-12
+tags: [decision, adr]
+related: [README.md]
+---
+
 # 0012 — Transaction scope is single-table
 
 ## Status

@@ -1,3 +1,12 @@
+---
+title: Architecture Decision Records
+audience: meta
+summary: Index of ADRs. Each ADR captures one load-bearing technical decision.
+last-reviewed: 2026-05-12
+tags: [index, decisions]
+related: ["../engineering-principles.md"]
+---
+
 # Architecture Decision Records
 
 Each ADR captures one load-bearing technical decision: the context,

@@ -1,3 +1,12 @@
+---
+title: LogEntry wire shape
+audience: spec
+summary: Postgres-logical-replication-shaped LogEntry; frozen contract for future CDC consumers.
+last-reviewed: 2026-05-12
+tags: [protocol, log, cdc, contract]
+related: [sync-protocol.md, "../adr/0013-export-contract.md"]
+---
+
 # Log entry shape
 
 Every successful manifest write emits one JSON `LogEntry` per

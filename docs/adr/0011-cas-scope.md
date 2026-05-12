@@ -1,3 +1,12 @@
+---
+title: CAS scope is per-collection
+audience: adr
+summary: ADR 0011 — CAS scope is per-collection.
+last-reviewed: 2026-05-12
+tags: [decision, adr]
+related: [README.md]
+---
+
 # 0011 — CAS scope is per-collection
 
 ## Status

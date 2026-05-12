@@ -1,3 +1,12 @@
+---
+title: Conventions for docs/
+audience: coder
+summary: Source-of-truth rules, markdown style, Mermaid usage, when to update which doc.
+last-reviewed: 2026-05-12
+tags: [conventions, docs]
+related: [tests.md, "../README.md"]
+---
+
 # docs/ conventions
 
 Conventions for content under `docs/`.

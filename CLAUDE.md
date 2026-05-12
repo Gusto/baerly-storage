@@ -1,3 +1,12 @@
+---
+title: CLAUDE.md — agent guidance for baerly-storage
+audience: agent
+summary: Toolchain, verification matrix, module map, conventions, anti-patterns. The main agent entry point.
+last-reviewed: 2026-05-12
+tags: [agent-entry, conventions, verification]
+related: ["docs/README.md", "docs/architecture.md", "docs/development.md"]
+---
+
 # CLAUDE.md
 
 Guidance for AI coding agents working in this repo. Keep this file lean —

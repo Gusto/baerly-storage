@@ -1,3 +1,12 @@
+---
+title: Pricing log
+audience: operator
+summary: Append-only audit of price and cap changes.
+last-reviewed: 2026-05-12
+tags: [audit, pricing]
+related: [cost-model.md]
+---
+
 # Pricing log
 
 One line per price-or-cap change that affects Baerly users. Append-

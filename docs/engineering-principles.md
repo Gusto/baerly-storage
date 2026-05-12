@@ -1,3 +1,12 @@
+---
+title: Engineering principles
+audience: product
+summary: "Default bias set: ship smallest slice, prefer changing contract over compat, vendorless by default."
+last-reviewed: 2026-05-12
+tags: [principles, philosophy]
+related: [product-thesis.md, "adr/README.md"]
+---
+
 # Engineering Principles
 
 This repo is a robust, enterprise quality product. This has not launched and has no users, so all things can be changed.

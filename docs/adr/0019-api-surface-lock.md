@@ -1,3 +1,12 @@
+---
+title: API surface lock
+audience: adr
+summary: ADR 0019 — API surface lock.
+last-reviewed: 2026-05-12
+tags: [decision, adr]
+related: [README.md]
+---
+
 # 0019 — API surface lock
 
 ## Status

@@ -1,3 +1,12 @@
+---
+title: Auth as a Verifier interface
+audience: adr
+summary: ADR 0014 — Auth as a Verifier interface.
+last-reviewed: 2026-05-12
+tags: [decision, adr]
+related: [README.md]
+---
+
 # 0014 — Auth as a `Verifier` interface
 
 ## Status

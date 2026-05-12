@@ -1,3 +1,12 @@
+---
+title: "Server component (@baerly/server)"
+audience: adr
+summary: "ADR 0006 — Server component (@baerly/server)."
+last-reviewed: 2026-05-12
+tags: [decision, adr]
+related: [README.md]
+---
+
 # 0006 — Server component (`@baerly/server`)
 
 ## Status

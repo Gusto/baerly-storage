@@ -1,3 +1,12 @@
+---
+title: No AWS SDK
+audience: adr
+summary: ADR 0001 — No AWS SDK.
+last-reviewed: 2026-05-12
+tags: [decision, adr]
+related: [README.md]
+---
+
 # 0001 — No AWS SDK
 
 ## Context

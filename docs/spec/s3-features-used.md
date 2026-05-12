@@ -1,3 +1,12 @@
+---
+title: S3 API surface used
+audience: spec
+summary: The minimal S3 features the protocol depends on.
+last-reviewed: 2026-05-12
+tags: [protocol, s3]
+related: [s3-xml-escaping-cases.md]
+---
+
 # S3 features used by Baerly
 
 ### `PUT and GET /<bucket>/<key>

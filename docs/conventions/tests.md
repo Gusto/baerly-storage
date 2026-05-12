@@ -1,3 +1,12 @@
+---
+title: Conventions for tests
+audience: coder
+summary: Test file layout, vitest imports, colocation rules, property-based testing patterns.
+last-reviewed: 2026-05-12
+tags: [conventions, tests, vitest]
+related: [docs.md, "../development.md"]
+---
+
 # Test conventions
 
 Conventions for tests across `src/` (colocated unit tests) and `tests/`

@@ -1,3 +1,12 @@
+---
+title: Error code discriminant over instanceof
+audience: adr
+summary: ADR 0003 — Error code discriminant over instanceof.
+last-reviewed: 2026-05-12
+tags: [decision, adr]
+related: [README.md]
+---
+
 # 0003 — Error code discriminant over `instanceof`
 
 ## Context

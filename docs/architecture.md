@@ -1,3 +1,12 @@
+---
+title: Architecture overview
+audience: coder
+summary: Module dependency graph and lifecycle of db.table(...).insert().
+last-reviewed: 2026-05-12
+tags: [architecture, lifecycle, module-map]
+related: ["spec/sync-protocol.md", extending.md, features.md]
+---
+
 # Architecture
 
 A top-down map of Baerly for someone who has never opened the codebase.

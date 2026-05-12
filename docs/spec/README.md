@@ -1,3 +1,12 @@
+---
+title: Protocol & contracts index
+audience: meta
+summary: "Six stable specs: sync protocol, causal-consistency checking, merge patch, log shape, S3 surface."
+last-reviewed: 2026-05-12
+tags: [index, protocol, spec]
+related: [sync-protocol.md, log-entry-shape.md]
+---
+
 # `docs/spec/` — protocol & contracts
 
 Stable specs. The "what" — implementation lives in `packages/`.

@@ -1,3 +1,12 @@
+---
+title: Sync protocol
+audience: spec
+summary: Atomic multi-key writes over S3 via manifest indirection; time-ordered log; reconciliation algorithm.
+last-reviewed: 2026-05-12
+tags: [protocol, sync, manifest, causal-consistency]
+related: [causal-consistency-checking.md, log-entry-shape.md, json-merge-patch.md]
+---
+
 
 <p align="center" width="100%">
     <img width="50%" src="diagrams/sync_protocol_header.svg">

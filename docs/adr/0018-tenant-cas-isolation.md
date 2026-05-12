@@ -1,3 +1,12 @@
+---
+title: Tenant CAS isolation
+audience: adr
+summary: ADR 0018 — Tenant CAS isolation.
+last-reviewed: 2026-05-12
+tags: [decision, adr]
+related: [README.md]
+---
+
 # 0018 — Tenant CAS isolation
 
 ## Status

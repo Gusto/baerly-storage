@@ -1,3 +1,12 @@
+---
+title: Developer setup
+audience: coder
+summary: "Local dev: pnpm, Minio + Toxiproxy + Postgres stack, test commands."
+last-reviewed: 2026-05-12
+tags: [development, setup, tests]
+related: [troubleshooting.md, "../CLAUDE.md"]
+---
+
 # Development
 
 ## Prerequisites

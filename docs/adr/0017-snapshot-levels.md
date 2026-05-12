@@ -1,3 +1,12 @@
+---
+title: Chunked level-based snapshot layout
+audience: adr
+summary: ADR 0017 — Chunked level-based snapshot layout.
+last-reviewed: 2026-05-12
+tags: [decision, adr]
+related: [README.md]
+---
+
 # 0017 — Chunked level-based snapshot layout
 
 ## Status

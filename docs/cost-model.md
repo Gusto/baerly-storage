@@ -1,3 +1,12 @@
+---
+title: Cost model
+audience: product
+summary: Per-line-item rates, write-amp meter, compression posture.
+last-reviewed: 2026-05-12
+tags: [cost, pricing, operations]
+related: [pricing-log.md, product-thesis.md, "adr/0015-cost-ceiling.md"]
+---
+
 # Cost model
 
 Baerly's pricing posture in one page. The protocol kernel emits

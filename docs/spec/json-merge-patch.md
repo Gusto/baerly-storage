@@ -1,3 +1,12 @@
+---
+title: JSON merge patch (RFC 7386)
+audience: spec
+summary: Sparse JSON updates plus the algebraic properties baerly relies on for log coalescing.
+last-reviewed: 2026-05-12
+tags: [protocol, json, rfc-7386, merge-patch]
+related: [sync-protocol.md]
+---
+
 # JSON Merge Patch: Algebra and Applications
 
 JSON Merge patch is a [standardized](https://datatracker.ietf.org/doc/html/rfc7386) way to encode *sparse* updates to a JSON document. It has some nice properties that make it useful in collaborative applications.

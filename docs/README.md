@@ -1,3 +1,12 @@
+---
+title: docs/ — topic map
+audience: meta
+summary: Index of everything under docs/, grouped by audience.
+last-reviewed: 2026-05-12
+tags: [index, navigation]
+related: ["../CLAUDE.md", "adr/README.md", "spec/README.md"]
+---
+
 # `docs/` — topic map
 
 Everything that doesn't live in `CLAUDE.md` (the agent entry point)

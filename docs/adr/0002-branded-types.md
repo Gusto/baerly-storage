@@ -1,3 +1,12 @@
+---
+title: Branded types over plain strings
+audience: adr
+summary: ADR 0002 — Branded types over plain strings.
+last-reviewed: 2026-05-12
+tags: [decision, adr]
+related: [README.md]
+---
+
 # 0002 — Branded types over plain strings
 
 ## Context

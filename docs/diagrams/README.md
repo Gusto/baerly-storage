@@ -1,3 +1,12 @@
+---
+title: Diagrams
+audience: meta
+summary: Rendered SVGs live here; editable sources live under sources/.
+last-reviewed: 2026-05-12
+tags: [diagrams, convention]
+related: []
+---
+
 # `docs/diagrams/`
 
 Rendered SVGs live here. Editable sources live under [`sources/`](sources/).

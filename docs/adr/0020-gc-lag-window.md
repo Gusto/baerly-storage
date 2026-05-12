@@ -1,3 +1,12 @@
+---
+title: GC lag window
+audience: adr
+summary: ADR 0020 — GC lag window.
+last-reviewed: 2026-05-12
+tags: [decision, adr]
+related: [README.md]
+---
+
 # 0020 — GC lag window
 
 ## Status

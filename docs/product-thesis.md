@@ -1,3 +1,12 @@
+---
+title: Product thesis
+audience: product
+summary: What Baerly is, who it's for, and what it deliberately is not.
+last-reviewed: 2026-05-12
+tags: [positioning, product]
+related: [engineering-principles.md, cost-model.md]
+---
+
 # Baerly — product thesis
 
 What Baerly is, who it's for, and what it deliberately is not. The
