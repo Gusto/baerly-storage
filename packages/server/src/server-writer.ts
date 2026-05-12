@@ -52,6 +52,7 @@ import {
   uuid,
   versionFromContent,
 } from "@baerly/protocol";
+import { allIndexKeysFor, type IndexDefinition, validateIndexDefinition } from "./indexes";
 
 /**
  * Tunables for {@link ServerWriter}. All optional; defaults match the
@@ -103,6 +104,37 @@ export interface ServerWriterOptions {
    * for the metrics sink. Defaults to `""` (no label emitted).
    */
   readonly tenant?: string;
+
+  /**
+   * Optional. Indexes declared for the collection this writer
+   * commits to. Each commit emits one zero-byte PUT per declared
+   * index (when the indexed field is set on the doc) inside the
+   * same fence as the log entry and content body. On U/D, the
+   * writer reads the pre-image content body from the log (one
+   * back-walk per indexed collection, NOT per index) to compute
+   * the stale-key set; stale keys are DELETE'd inside the same
+   * fence.
+   *
+   * Validated at construction via {@link validateIndexDefinition} —
+   * an invalid def throws `BaerlyError{code:"SchemaError"}`
+   * synchronously, before the first commit. Empty / undefined is
+   * a no-op (writer behaves exactly as pre-Phase-8 — no extra
+   * GET, no extra PUTs).
+   *
+   * Note: `ServerWriter` is per-collection (the `currentJsonKey`
+   * is per-collection), so this array applies to one collection
+   * only — adapters that serve multiple collections instantiate
+   * one writer per collection.
+   *
+   * Emits two new metrics when at least one index is declared:
+   *   - `db.r2.preimage_get_total` (counter, labelled by
+   *     `collection`) — bumped on every U/D log-walk that finds
+   *     a pre-image entry.
+   *   - `db.write.index_ops_per_logical_write` (histogram,
+   *     labelled by `collection`) — `K (PUT) + L (DELETE)` per
+   *     successful commit.
+   */
+  readonly indexes?: ReadonlyArray<IndexDefinition>;
 }
 
 /**
@@ -166,6 +198,15 @@ const MAX_BACKOFF_MS = 1500;
 const APPLICATION_JSON = "application/json";
 
 /**
+ * Empty body for index entries. Each index entry is a fact ("doc
+ * `<docId>` has `<field> = <value>`"), not data — readers list the
+ * prefix, extract the doc id, then GET the content body separately.
+ * Pre-allocated module-level constant so every index PUT shares one
+ * zero-length buffer.
+ */
+const EMPTY_BODY = new Uint8Array(0);
+
+/**
  * Stateless write engine for the multi-instance core.
  *
  * Construction is cheap and performs zero I/O — Phase 3 adapters
@@ -199,6 +240,7 @@ export class ServerWriter {
   readonly #random: () => number;
   readonly #metrics: MetricsRecorder;
   readonly #tenant: string;
+  readonly #indexes: ReadonlyArray<IndexDefinition>;
 
   constructor(opts: {
     storage: Storage;
@@ -219,6 +261,9 @@ export class ServerWriter {
     this.#random = opts.options?.random ?? Math.random;
     this.#metrics = opts.options?.metrics ?? noopMetricsRecorder;
     this.#tenant = opts.options?.tenant ?? "";
+    const indexes = opts.options?.indexes ?? [];
+    for (const def of indexes) validateIndexDefinition(def);
+    this.#indexes = indexes;
   }
 
   /**
@@ -373,6 +418,76 @@ export class ServerWriter {
         committedEntry = existing;
       }
 
+      // ── Step 5.5. Index updates (Phase-8). ────────────────────────
+      // For I:   PUT each new index key (zero-byte, ifNoneMatch:"*").
+      // For U:   PUT each new key + DELETE each stale key (the pre-
+      //          image's keys not in the new key set).
+      // For D:   DELETE every stale key from the pre-image.
+      //
+      // All PUTs / DELETEs run in parallel via Promise.all. A failure
+      // on any individual PUT propagates — the outer attempt loop
+      // catches it as a CAS-equivalent failure and retries from step
+      // 1; on retry same-bytes/same-key PUTs are 412-then-swallowed
+      // (the entries are content-addressed by composition — zero-byte
+      // body, deterministic key — so a re-PUT is structurally idempotent).
+      //
+      // Empty `#indexes` short-circuits the entire block including
+      // the pre-image GET, preserving zero behaviour change for
+      // collections without declared indexes.
+      let indexClassA = 0;
+      if (this.#indexes.length > 0) {
+        let newKeys: readonly string[] = [];
+        let staleKeys: readonly string[] = [];
+        if (input.op === "I") {
+          newKeys = allIndexKeysFor(logPrefix, this.#indexes, input.body, input.docId);
+        } else if (input.op === "U") {
+          const preImage = await this.#readPreImage(
+            logPrefix,
+            input.collection,
+            input.docId,
+            nextSeq,
+          );
+          const oldKeys = allIndexKeysFor(logPrefix, this.#indexes, preImage, input.docId);
+          newKeys = allIndexKeysFor(logPrefix, this.#indexes, input.body, input.docId);
+          const newSet = new Set(newKeys);
+          staleKeys = oldKeys.filter((k) => !newSet.has(k));
+        } else {
+          const preImage = await this.#readPreImage(
+            logPrefix,
+            input.collection,
+            input.docId,
+            nextSeq,
+          );
+          staleKeys = allIndexKeysFor(logPrefix, this.#indexes, preImage, input.docId);
+        }
+        const indexOps: Array<Promise<unknown>> = [];
+        for (const k of newKeys) {
+          indexOps.push(
+            this.#storage
+              .put(k, EMPTY_BODY, { ifNoneMatch: "*", contentType: APPLICATION_JSON })
+              .catch((err: unknown) => {
+                this.#observe429(err, input.collection);
+                // Same-key zero-byte re-PUT — entry already present
+                // from a prior attempt of this logical commit. Tolerate.
+                if (isPreconditionFailed(err)) return;
+                throw err;
+              }),
+          );
+        }
+        for (const k of staleKeys) {
+          // Storage.delete is contractually idempotent (404 → no-op)
+          // across every in-tree impl — no defensive catch needed.
+          indexOps.push(this.#storage.delete(k));
+        }
+        if (indexOps.length > 0) await Promise.all(indexOps);
+        indexClassA = newKeys.length + staleKeys.length;
+        if (indexClassA > 0) {
+          this.#metrics.histogram("db.write.index_ops_per_logical_write", indexClassA, {
+            collection: input.collection,
+          });
+        }
+      }
+
       // ── Step 6. CAS-advance current.json with If-Match. ───────────
       // Bind the CAS to the etag from step 1 — we must not let the
       // helper re-read `current.json` and write under a different
@@ -422,10 +537,12 @@ export class ServerWriter {
       // Emit class-A op count for this logical write. Content PUT
       // is skipped on `op:"D"`; one extra PUT is incurred per
       // backoff retry (the prior attempt's failed CAS still counts
-      // as one billed PUT).
+      // as one billed PUT). `indexClassA` adds one Class A op per
+      // index PUT and per index DELETE (DELETE is Class A on R2).
       const classAOps =
         (input.op !== "D" ? 1 : 0) /* content PUT */ +
         1 /* log PUT */ +
+        indexClassA /* index PUTs + DELETEs */ +
         1 /* current.json CAS PUT */ +
         (attempt - 1); /* +1 per backoff retry */
       const histLabels: Record<string, string> = { collection: input.collection };
@@ -534,25 +651,83 @@ export class ServerWriter {
     // ── Step 4. PUT each content body in parallel. ──────────────────
     // `ifNoneMatch: "*"` makes a same-hash re-write a no-op (caught
     // and swallowed via `isPreconditionFailed`).
+    //
+    // Phase-8: index PUTs / DELETEs land in the SAME parallel batch
+    // as content PUTs. For U/D the pre-image is sourced from an
+    // earlier same-`docId` input in this batch (if any) before
+    // falling back to a log back-walk — preserves correctness when
+    // a transaction does [I, U] or [U, D] on the same doc.
     let contentPutCount = 0;
-    const contentPuts: Array<Promise<unknown>> = [];
+    let indexClassA = 0;
+    const parallelPuts: Array<Promise<unknown>> = [];
+    // Per-docId in-batch image map: tracks the latest post-image
+    // each transactional input lays down so a later input on the
+    // same docId reads the in-batch pre-image, not the on-disk one.
+    const inBatchImage = new Map<string, JSONArraylessObject | undefined>();
     for (const input of inputs) {
-      if (input.op === "D" || input.body === undefined) continue;
-      contentPutCount++;
-      const bytes = new TextEncoder().encode(JSON.stringify(input.body));
-      const version = await versionFromContent(bytes);
-      const contentKey = `${logPrefix}/content/${version}.json`;
-      contentPuts.push(
-        this.#storage
-          .put(contentKey, bytes, { ifNoneMatch: "*", contentType: APPLICATION_JSON })
-          .catch((err: unknown) => {
-            this.#observe429(err, input.collection);
-            if (isPreconditionFailed(err)) return;
-            throw err;
-          }),
-      );
+      // Content PUT (skipped on D / when body is missing).
+      if (input.op !== "D" && input.body !== undefined) {
+        contentPutCount++;
+        const bytes = new TextEncoder().encode(JSON.stringify(input.body));
+        const version = await versionFromContent(bytes);
+        const contentKey = `${logPrefix}/content/${version}.json`;
+        parallelPuts.push(
+          this.#storage
+            .put(contentKey, bytes, { ifNoneMatch: "*", contentType: APPLICATION_JSON })
+            .catch((err: unknown) => {
+              this.#observe429(err, input.collection);
+              if (isPreconditionFailed(err)) return;
+              throw err;
+            }),
+        );
+      }
+      // Index PUTs / DELETEs (only when indexes are declared).
+      if (this.#indexes.length > 0) {
+        let newKeys: readonly string[] = [];
+        let staleKeys: readonly string[] = [];
+        if (input.op === "I") {
+          newKeys = allIndexKeysFor(logPrefix, this.#indexes, input.body, input.docId);
+        } else if (input.op === "U") {
+          const preImage = inBatchImage.has(input.docId)
+            ? inBatchImage.get(input.docId)
+            : await this.#readPreImage(logPrefix, input.collection, input.docId, current.next_seq);
+          const oldKeys = allIndexKeysFor(logPrefix, this.#indexes, preImage, input.docId);
+          newKeys = allIndexKeysFor(logPrefix, this.#indexes, input.body, input.docId);
+          const newSet = new Set(newKeys);
+          staleKeys = oldKeys.filter((k) => !newSet.has(k));
+        } else {
+          const preImage = inBatchImage.has(input.docId)
+            ? inBatchImage.get(input.docId)
+            : await this.#readPreImage(logPrefix, input.collection, input.docId, current.next_seq);
+          staleKeys = allIndexKeysFor(logPrefix, this.#indexes, preImage, input.docId);
+        }
+        for (const k of newKeys) {
+          parallelPuts.push(
+            this.#storage
+              .put(k, EMPTY_BODY, { ifNoneMatch: "*", contentType: APPLICATION_JSON })
+              .catch((err: unknown) => {
+                this.#observe429(err, input.collection);
+                if (isPreconditionFailed(err)) return;
+                throw err;
+              }),
+          );
+        }
+        for (const k of staleKeys) {
+          // Storage.delete is contractually idempotent — no defensive catch.
+          parallelPuts.push(this.#storage.delete(k));
+        }
+        indexClassA += newKeys.length + staleKeys.length;
+        if (newKeys.length + staleKeys.length > 0) {
+          this.#metrics.histogram(
+            "db.write.index_ops_per_logical_write",
+            newKeys.length + staleKeys.length,
+            { collection: input.collection },
+          );
+        }
+        inBatchImage.set(input.docId, input.op === "D" ? undefined : input.body);
+      }
     }
-    await Promise.all(contentPuts);
+    await Promise.all(parallelPuts);
 
     // ── Step 5. PUT each log entry. ─────────────────────────────────
     // `ifNoneMatch: "*"` per entry. Single-attempt: on 412 throw
@@ -633,9 +808,10 @@ export class ServerWriter {
     }
     // One histogram observation per landed batch. Class-A op count
     // = content PUTs (skipping op:"D") + log PUTs (= inputs.length)
-    // + 1 current.json CAS. The fence-verify GET above is Class B
-    // and intentionally excluded from this histogram.
-    const classAOps = contentPutCount + inputs.length + 1;
+    // + index PUTs + index DELETEs + 1 current.json CAS. The
+    // fence-verify GET above is Class B and intentionally excluded
+    // from this histogram.
+    const classAOps = contentPutCount + inputs.length + indexClassA + 1;
     // Pick the first input's collection as the batch label; in the
     // current Db.transaction model every input shares one
     // collection, so this is exact. If future tickets relax that
@@ -646,6 +822,72 @@ export class ServerWriter {
     const rateLabels: Record<string, string> = this.#tenant !== "" ? { tenant: this.#tenant } : {};
     this.#metrics.gauge("db.tenant.put_rate", 1, rateLabels);
     return { entries, currentEtag: result.etag };
+  }
+
+  /**
+   * Phase-8 — read the pre-image content body for a doc by walking
+   * the live log backwards from `currentNextSeq` looking for the
+   * most-recent I/U entry on this `(collection, docId)`. Returns
+   * `undefined` when:
+   *
+   *   - the doc's most-recent op was `D` (tombstone — no live body);
+   *   - no entry for this doc lives inside the visible log range
+   *     `[log_seq_start, currentNextSeq)` (a fresh-insert race or
+   *     the doc has been folded into the snapshot but is no longer
+   *     referenced).
+   *
+   * Used ONLY by the index-emission path on `U` / `D` to compute
+   * the stale-key set. Bounded by `log_seq_start`: entries below
+   * have been folded into the snapshot and may already be swept
+   * off the bucket — a snapshot fold is the rebuild command's job
+   * (see `./rebuild-index.ts`), not the writer's.
+   *
+   * **Cost note:** linear walk, O(snapshot lag). For day-one Phase
+   * 8 collections (helpdesk-shape: 100s of docs, <10k log entries)
+   * this is fine — the compactor folds the live tail every ~100
+   * entries (`packages/server/src/compactor.ts`). A follow-up ticket
+   * caches per-doc index head in `current.json` for O(1) lookup.
+   * The bound is documented; out of scope here.
+   *
+   * Emits `db.r2.preimage_get_total` (counter, labelled by
+   * `collection`) on every successful pre-image find.
+   */
+  async #readPreImage(
+    logPrefix: string,
+    collection: string,
+    docId: string,
+    currentNextSeq: number,
+  ): Promise<JSONArraylessObject | undefined> {
+    // Walk newest-to-oldest so we hit the most-recent op first.
+    // `s = -1` is the natural empty-bucket sentinel.
+    for (let s = currentNextSeq - 1; s >= 0; s--) {
+      const logKey = `${logPrefix}/log/${s}.json`;
+      const got = await this.#storage.get(logKey);
+      if (got === null) {
+        // A hole below the visible range — either we walked past
+        // `log_seq_start` (the entry was folded + swept) or a peer
+        // is mid-CAS on a write we don't see yet. Bail; the
+        // rebuild command (`rebuildIndex`) handles holes by
+        // re-projecting from the snapshot.
+        continue;
+      }
+      let entry: LogEntry;
+      try {
+        entry = JSON.parse(new TextDecoder().decode(got.body)) as LogEntry;
+      } catch {
+        // Malformed entry shouldn't propagate up the index-emission
+        // path — let the outer commit's `#walkLog` (step 2) flag it
+        // as the protocol violation. Skip.
+        continue;
+      }
+      if (entry.collection !== collection || entry.doc_id !== docId) continue;
+      if (entry.op === "D") return undefined; // last op was delete
+      if ((entry.op === "I" || entry.op === "U") && entry.new !== undefined) {
+        this.#metrics.counter("db.r2.preimage_get_total", 1, { collection });
+        return entry.new;
+      }
+    }
+    return undefined;
   }
 
   /**
