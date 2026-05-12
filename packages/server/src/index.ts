@@ -27,3 +27,20 @@ export * from "./table";
  * a retry primitive.
  */
 export { claimWriter } from "@baerly/protocol";
+
+/**
+ * Re-export of {@link MPS3Error} and its discriminator type from
+ * `@baerly/protocol`. Every failure thrown through this surface is
+ * an `MPS3Error`; consumers branch on `error.code` (a
+ * {@link MPS3ErrorCode}) rather than `instanceof` chains.
+ */
+export { MPS3Error, type MPS3ErrorCode } from "@baerly/protocol";
+
+/**
+ * Re-export of the locked predicate-AST `Table<T>` and `Query<T>`
+ * interfaces from `@baerly/protocol`. These name the read/write
+ * handles returned by `Db.table(...)`; consumers that destructure
+ * the chain (`type T = Awaited<ReturnType<...>>`) need the named
+ * types.
+ */
+export type { Table, Query } from "@baerly/protocol";

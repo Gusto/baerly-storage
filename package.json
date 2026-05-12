@@ -1,7 +1,7 @@
 {
   "name": "baerly-storage",
   "version": "1.0.0",
-  "description": "Provide clientside multiplayer and optimistic updates over any s3-compatible storage API",
+  "description": "Vendorless document database that runs over any S3-compatible storage API.",
   "license": "MIT",
   "files": [
     "dist"
@@ -27,9 +27,9 @@
     "test:export-smoke": "EXPORT_SMOKE=1 vitest run --project=default tests/integration/export-smoke.test.ts",
     "build": "rolldown -c",
     "prepare": "lefthook install && pnpm run build",
-    "format": "oxfmt src tests packages",
-    "format:check": "oxfmt --check src tests packages",
-    "lint": "oxlint src tests packages",
+    "format": "oxfmt tests packages",
+    "format:check": "oxfmt --check tests packages",
+    "lint": "oxlint tests packages",
     "test:randomize": "FC_NUM_RUNS=10000 vitest run --project=default",
     "test:fuzz-phase5": "FC_NUM_RUNS=10000 vitest run --project=default tests/integration/phase5-crash-fuzz.test.ts",
     "test:adapter-cloudflare": "ADAPTER_CLOUDFLARE=1 vitest run --project=cloudflare-pool",

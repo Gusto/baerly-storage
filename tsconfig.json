@@ -26,7 +26,6 @@
     "types": ["node", "@cloudflare/workers-types"]
   },
   "include": [
-    "src",
     "tests",
     "packages/*/src",
     "deploy/**/*.ts",
