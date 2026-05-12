@@ -134,20 +134,16 @@ const handleDoctor = async (args: ParsedArgs<typeof DOCTOR_ARGS>): Promise<numbe
       return report.status === "error" ? 2 : 0;
     }
     if (target === "node") {
-      // Ticket 40 lands the body. The dynamic import path is
-      // constructed at runtime so the typechecker doesn't require
-      // the module to exist today.
+      // The Node doctor is pure-read: no `runner` or `--fix` (the
+      // remediation path lives in `baerly deploy --target=node
+      // --force`). The dynamic import path is constructed at
+      // runtime so the typechecker doesn't require the module to
+      // be loaded at dispatcher build time.
       const nodeModuleSpecifier = "./doctor/node";
       const mod = (await import(nodeModuleSpecifier)) as {
-        doctorNode: (
-          config: AppConfig,
-          opts?: { runner?: ProcessRunner; fix?: boolean },
-        ) => Promise<DoctorReport>;
+        doctorNode: (config: AppConfig, opts?: { cwd?: string }) => Promise<DoctorReport>;
       };
-      const report = await mod.doctorNode(config, {
-        runner: defaultRunner,
-        ...(args.fix === true && { fix: true }),
-      });
+      const report = await mod.doctorNode(config);
       renderReport(target, report);
       return report.status === "error" ? 2 : 0;
     }
