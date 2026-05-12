@@ -39,6 +39,8 @@ Exit codes:
   2  storage error (network, auth, missing file)
   3  protocol invariant (corrupted snapshot, hash mismatch, source
      advanced past cursor)
+
+See docs/pricing-log.md for the running log of price and cap changes.
 `;
 
 const main = async (argv: readonly string[]): Promise<number> => {
