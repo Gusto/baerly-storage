@@ -54,6 +54,7 @@ import {
 } from "@baerly/protocol";
 import { loadSnapshotAsMap } from "./compactor";
 import type { TxContext } from "./db";
+import { encodeIndexValue } from "./indexes";
 import { ServerWriter } from "./server-writer";
 
 /**
@@ -168,6 +169,17 @@ export interface QueryState<T extends JSONArraylessObject> {
    * `strong` internally regardless of this field.
    */
   readonly consistency: ConsistencyLevel | undefined;
+  /**
+   * Phase-8 index hint. When defined and the predicate matches the
+   * shape `{ <indexedField>: <value> }`, the read path walks
+   * `<tablePrefix>/index/<useIndex>/<value-b32>/` and issues a
+   * content GET per matching key instead of folding the snapshot
+   * and log. Mismatched predicate shape falls back to the table
+   * scan (best-effort, ticket §3.6). Phase 9 adds an auto-picker.
+   *
+   * @internal
+   */
+  readonly useIndex: string | undefined;
 }
 
 /**
@@ -178,7 +190,7 @@ export interface QueryState<T extends JSONArraylessObject> {
  *
  * @example
  * ```ts
- * const q = makeQuery<Ticket>(ctx, { predicate: undefined, order: undefined, limit: undefined });
+ * const q = makeQuery<Ticket>(ctx, { predicate: undefined, order: undefined, limit: undefined, consistency: undefined, useIndex: undefined });
  * const open = await q.where({ status: "open" }).order({ created_at: "desc" }).limit(10).all();
  * ```
  *
@@ -212,6 +224,7 @@ export const makeQuery = <T extends JSONArraylessObject>(
     order: (s) => makeQuery<T>(ctx, { ...frozen, order: s }),
     limit: (n) => makeQuery<T>(ctx, { ...frozen, limit: n }),
     consistency: (level) => makeQuery<T>(ctx, { ...frozen, consistency: level }),
+    useIndex: (name) => makeQuery<T>(ctx, { ...frozen, useIndex: name }),
     first: async () => {
       const { rows } = await runRead<T>(ctx, { ...frozen, limit: 1 });
       return rows[0]; // undefined when rows.length === 0
@@ -337,6 +350,7 @@ export const runInsert = async <T extends JSONArraylessObject>(
     // it must always see the latest view. See `runUpdate` for the
     // shared rationale.
     consistency: "strong",
+    useIndex: undefined,
   });
   if (existing.rows.length > 0) {
     throw new BaerlyError(
@@ -587,6 +601,35 @@ const runRead = async <T extends JSONArraylessObject>(
   // than throw. Mirrors `Storage.get` returning null on miss.
   if (head === null) return { rows: [], manifestPointer, fresh };
 
+  // ── Phase-8: optional index-walk fast path. ─────────────────────
+  // When the caller opted in via `.useIndex(name)` and the predicate
+  // matches one of the shapes the encoder can satisfy on a single-
+  // field index (one top-level field = one literal value), walk the
+  // index prefix instead of folding the snapshot + log. The fast
+  // path:
+  //   1. List `<tablePrefix>/index/<name>/<value-b32>/`.
+  //   2. Extract `_id` from each key.
+  //   3. Resolve each id via a tail walk over `(snapshot, log)` —
+  //      cheap because we fetch only the matching rows.
+  //   4. Re-apply the predicate in memory (defends against a
+  //      logically-stale index entry).
+  //   5. Apply order / limit.
+  //
+  // Mismatched predicate shape (multi-field, no predicate, etc.)
+  // falls through to the table-scan path below. This is best-effort
+  // per ticket §3.6: stale entries are dropped silently.
+  if (state.useIndex !== undefined && state.predicate !== undefined) {
+    const fastRows = await tryIndexWalk<T>(ctx, head.json, state);
+    if (fastRows !== undefined) {
+      let rows = fastRows;
+      if (state.order !== undefined) rows = sortByOrderSpec(rows, state.order);
+      if (state.limit !== undefined && state.limit < rows.length) {
+        rows = rows.slice(0, state.limit);
+      }
+      return { rows, manifestPointer, fresh };
+    }
+  }
+
   // Load the snapshot, if any. The compactor (ticket 14) guarantees:
   // `snapshot !== null` iff `log_seq_start > 0`. The snapshot is
   // sealed by its filename hash; `loadSnapshotAsMap` recomputes on
@@ -665,6 +708,113 @@ const runRead = async <T extends JSONArraylessObject>(
   }
 
   return { rows, manifestPointer, fresh };
+};
+
+/**
+ * Phase-8 — index-walk fast path. Returns `undefined` when the
+ * caller's predicate shape doesn't match a single-field index lookup
+ * the encoder can satisfy; the outer `runRead` falls back to the
+ * table-scan path in that case.
+ *
+ * Matching shape today:
+ *
+ *   - The predicate has EXACTLY one top-level key (`Object.keys(p)
+ *     .length === 1`).
+ *   - That key's value is a JSON-stringifiable primitive — anything
+ *     `encodeIndexValue` accepts. A nested-object equality would be
+ *     accepted by the encoder but is unlikely to round-trip through
+ *     the writer's projection unless the doc was indexed on the
+ *     same nested shape; we accept and rely on the post-predicate
+ *     re-check to drop spurious rows.
+ *
+ * Stale-row defence:
+ *   - An index entry pointing at a `<docId>.json` whose content
+ *     body returns null (404) — peer GC race or a writer that
+ *     CAS-lost — is silently dropped.
+ *   - A row that is fetched but no longer matches the predicate
+ *     (the indexed field was updated since the index entry landed)
+ *     is dropped by the in-memory re-check.
+ *
+ * @internal
+ */
+const tryIndexWalk = async <T extends JSONArraylessObject>(
+  ctx: TableReadContext,
+  head: CurrentJson,
+  state: QueryState<T>,
+): Promise<T[] | undefined> => {
+  const name = state.useIndex;
+  const predicate = state.predicate;
+  if (name === undefined || predicate === undefined) return undefined;
+  // Capture the one-key shape. `Object.keys(predicate).length === 1`
+  // is the load-bearing check; multi-field predicates fall through
+  // until composite-index reads ship.
+  const keys = Object.keys(predicate);
+  if (keys.length !== 1) return undefined;
+  const field = keys[0]!;
+  const value = (predicate as Record<string, unknown>)[field];
+  // Strip undefined explicitly so the encoder's `null|undefined →
+  // "0"` collapse doesn't accidentally match every null-valued
+  // entry (which the writer's projector skipped on insert).
+  if (value === undefined) return undefined;
+  const prefix = `${ctx.tablePrefix}/index/${name}/${encodeIndexValue(value)}/`;
+
+  // 1. List index entries; extract docId from each key.
+  const docIds: string[] = [];
+  for await (const entry of ctx.storage.list(prefix)) {
+    // Key shape: `<prefix><docId>.json`.
+    const tail = entry.key.slice(prefix.length);
+    if (!tail.endsWith(".json")) continue;
+    docIds.push(tail.slice(0, -".json".length));
+  }
+  if (docIds.length === 0) {
+    // Empty index — return an empty result rather than falling back
+    // to a scan. A caller that opted in to `.useIndex` has accepted
+    // the best-effort contract; an empty walk is a legitimate "no
+    // matches" answer.
+    return [];
+  }
+
+  // 2. Resolve each docId by folding `(snapshot, log)` for ONLY the
+  //    matching rows. Same fold the table-scan path uses, scoped to
+  //    one Set<docId>.
+  const matched = new Set(docIds);
+  const baseDocs: Map<string, JSONArraylessObject> =
+    head.snapshot === null
+      ? new Map()
+      : await loadSnapshotAsMap(ctx.storage, head.snapshot, ctx.tableName);
+  const docs = new Map<string, T>();
+  for (const id of matched) {
+    const seeded = baseDocs.get(id);
+    if (seeded !== undefined) docs.set(id, seeded as T);
+  }
+  const logSeqStart = logSeqStartOf(head);
+  const nextSeq = head.next_seq;
+  const logKeys: string[] = [];
+  for (let s = logSeqStart; s < nextSeq; s++) {
+    logKeys.push(`${ctx.tablePrefix}/log/${s}.json`);
+  }
+  const entries =
+    logKeys.length === 0
+      ? []
+      : await Promise.all(logKeys.map(async (k) => readLogEntry(ctx.storage, k)));
+  for (const entry of entries) {
+    if (entry.collection !== ctx.tableName) continue;
+    if (entry.doc_id === undefined || !matched.has(entry.doc_id)) continue;
+    if ((entry.op === "I" || entry.op === "U") && entry.new !== undefined) {
+      docs.set(entry.doc_id, entry.new as T);
+    } else if (entry.op === "D") {
+      docs.delete(entry.doc_id);
+    }
+  }
+
+  // 3. Re-apply the predicate in memory to drop logically-stale rows
+  //    (e.g. the index entry's underlying doc has since been updated
+  //    to a different field value but the rebuild hasn't run).
+  const rows: T[] = [];
+  for (const doc of docs.values()) {
+    if (matches(predicate, doc)) rows.push(doc);
+  }
+  return rows;
 };
 
 const readLogEntry = async (storage: Storage, key: string): Promise<LogEntry> => {

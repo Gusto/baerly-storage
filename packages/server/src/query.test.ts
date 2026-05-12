@@ -441,6 +441,7 @@ describe("Db.table read terminals", () => {
       predicate: undefined,
       order: undefined,
       limit: undefined,
+      useIndex: undefined,
     } as const;
 
     // Strong anchors the cache.
@@ -481,6 +482,7 @@ describe("Db.table read terminals", () => {
       order: undefined,
       limit: undefined,
       consistency: "strong",
+      useIndex: undefined,
     } as const;
 
     const r1 = await runAllWithMeta<JSONArraylessObject>(ctx, strongState);
@@ -517,5 +519,124 @@ describe("Db.table read terminals", () => {
     await provision(storage);
     const q = db.table(COLL).consistency("eventual").consistency("strong");
     expect(await q.all()).toEqual([]);
+  });
+});
+
+describe("Db.table .useIndex() — Phase-8 index-walk fast path", () => {
+  let storage: MemoryStorage;
+  let db: Db;
+
+  beforeEach(() => {
+    storage = new MemoryStorage();
+    db = makeDb(storage);
+  });
+
+  test("returns the rows the index points at, filtered by predicate re-check", async () => {
+    // Provision + write three docs through a writer that emits
+    // by_status index entries. Then call .where({ status: "open" })
+    // .useIndex("by_status").all() and assert we see the two
+    // matching rows.
+    await provision(storage);
+    const writer = new ServerWriter({
+      storage,
+      currentJsonKey: currentJsonKey(COLL),
+      options: { indexes: [{ name: "by_status", on: "status" }] },
+    });
+    await writer.commit({
+      op: "I",
+      collection: COLL,
+      docId: "t-1",
+      body: { _id: "t-1", status: "open" },
+    });
+    await writer.commit({
+      op: "I",
+      collection: COLL,
+      docId: "t-2",
+      body: { _id: "t-2", status: "open" },
+    });
+    await writer.commit({
+      op: "I",
+      collection: COLL,
+      docId: "t-3",
+      body: { _id: "t-3", status: "closed" },
+    });
+    const rows = await db
+      .table<{ _id: string; status: string }>(COLL)
+      .where({ status: "open" })
+      .useIndex("by_status")
+      .all();
+    const ids = rows.map((r) => r._id).toSorted();
+    expect(ids).toEqual(["t-1", "t-2"]);
+  });
+
+  test("returns empty result when the index prefix is empty (no matches)", async () => {
+    // No docs declared with the indexed value → empty walk → empty
+    // result, no fallback to a table scan.
+    await provision(storage);
+    const writer = new ServerWriter({
+      storage,
+      currentJsonKey: currentJsonKey(COLL),
+      options: { indexes: [{ name: "by_status", on: "status" }] },
+    });
+    await writer.commit({
+      op: "I",
+      collection: COLL,
+      docId: "t-1",
+      body: { _id: "t-1", status: "open" },
+    });
+    const rows = await db
+      .table<{ _id: string; status: string }>(COLL)
+      .where({ status: "wip" })
+      .useIndex("by_status")
+      .all();
+    expect(rows).toEqual([]);
+  });
+
+  test("falls back to table scan when the predicate has multiple keys", async () => {
+    // Predicates with two top-level keys don't match a single-field
+    // index lookup; the read path falls through to the scan path
+    // and the row is found via the in-memory predicate match.
+    await provision(storage);
+    const writer = new ServerWriter({
+      storage,
+      currentJsonKey: currentJsonKey(COLL),
+      options: { indexes: [{ name: "by_status", on: "status" }] },
+    });
+    await writer.commit({
+      op: "I",
+      collection: COLL,
+      docId: "t-1",
+      body: { _id: "t-1", status: "open", assignee: "alice" },
+    });
+    const rows = await db
+      .table<{ _id: string; status: string; assignee: string }>(COLL)
+      .where({ status: "open", assignee: "alice" })
+      .useIndex("by_status")
+      .all();
+    expect(rows.map((r) => r._id)).toEqual(["t-1"]);
+  });
+
+  test("respects .limit() applied after the index walk", async () => {
+    await provision(storage);
+    const writer = new ServerWriter({
+      storage,
+      currentJsonKey: currentJsonKey(COLL),
+      options: { indexes: [{ name: "by_status", on: "status" }] },
+    });
+    for (let i = 0; i < 5; i++) {
+      await writer.commit({
+        op: "I",
+        collection: COLL,
+        docId: `t-${i}`,
+        body: { _id: `t-${i}`, status: "open" },
+      });
+    }
+    const rows = await db
+      .table<{ _id: string; status: string }>(COLL)
+      .where({ status: "open" })
+      .useIndex("by_status")
+      .limit(2)
+      .all();
+    expect(rows).toHaveLength(2);
   });
 });

@@ -113,6 +113,7 @@ export function createRouter(options: CreateRouterOptions): Hono {
         order: undefined,
         limit: 1,
         consistency,
+        useIndex: undefined,
       });
       if (row === undefined) return jsonError(c, 404, "Internal", `No such row: ${id}`);
       return c.json(
@@ -146,6 +147,7 @@ export function createRouter(options: CreateRouterOptions): Hono {
         order: undefined,
         limit: undefined,
         consistency,
+        useIndex: undefined,
       });
       return c.json(
         {

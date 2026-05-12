@@ -50,6 +50,7 @@ export const makeTable = <T extends JSONArraylessObject>(ctx: TableReadContext):
     order: undefined as OrderSpec<T> | undefined,
     limit: undefined as number | undefined,
     consistency: undefined as ConsistencyLevel | undefined,
+    useIndex: undefined as string | undefined,
   };
   return {
     name: ctx.tableName,

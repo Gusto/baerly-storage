@@ -203,6 +203,39 @@ export interface Query<T extends JSONArraylessObject = JSONArraylessObject> {
    */
   consistency(level: ConsistencyLevel): Query<T>;
 
+  /**
+   * Hint the read path to satisfy the predicate via a declared
+   * secondary index. When the matching index entries are walked
+   * the read path skips the snapshot-fold-and-table-scan and
+   * issues a content GET per index entry.
+   *
+   * Last-call-wins on repeat invocation. Today this is an opt-in:
+   * the predicate must be `{ <indexedField>: <value> }` shape and
+   * the index must be single-field. Mismatches fall back to the
+   * full table scan with a metric bump.
+   *
+   * Index reads are best-effort: if the index is stale (the
+   * rebuild hasn't run since a crashed commit) the index walk may
+   * return rows whose docs no longer exist or no longer match the
+   * predicate. The reader filters them via a final in-memory
+   * predicate re-check, so an out-of-sync index never produces
+   * wrong rows — only at worst surfaces a stale row that the
+   * predicate then drops.
+   *
+   * Phase 9 adds a query planner that auto-picks an index when
+   * one matches the predicate shape; until then callers opt in
+   * explicitly with `.useIndex(name)`.
+   *
+   * @example
+   * ```ts
+   * await db.table("tickets")
+   *   .where({ status: "open" })
+   *   .useIndex("by_status")
+   *   .all();
+   * ```
+   */
+  useIndex(name: string): Query<T>;
+
   /** First match or `undefined`. Equivalent to `.limit(1).all()[0]`. */
   first(): Promise<T | undefined>;
 
