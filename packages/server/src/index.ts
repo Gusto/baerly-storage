@@ -13,6 +13,7 @@ export * from "./maintenance";
 export * from "./query";
 export * from "./server-writer";
 export * from "./table";
+export * from "./auth";
 
 /**
  * Re-export of {@link claimWriter} from `@baerly/protocol`. Bumping
