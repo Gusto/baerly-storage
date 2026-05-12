@@ -1,0 +1,22 @@
+{
+  "name": "server",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "start": "tsx src/server.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@baerly/adapter-node": "^0.1.0",
+    "@baerly/protocol": "^0.1.0",
+    "@baerly/server": "^0.1.0",
+    "@xmldom/xmldom": "^0.9.10",
+    "aws4fetch": "1.0.20"
+  },
+  "devDependencies": {
+    "@types/node": "^25.6.2",
+    "tsx": "^4.0.0"
+  }
+}
