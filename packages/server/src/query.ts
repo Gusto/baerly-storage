@@ -33,9 +33,11 @@
  */
 
 import {
+  type CurrentJson,
   type JSONArraylessObject,
   type LogEntry,
   logSeqStartOf,
+  MANIFEST_POINTER_EMPTY_SNAPSHOT,
   matches,
   merge,
   mergePredicates,
@@ -80,7 +82,42 @@ export interface TableReadContext {
    * @internal
    */
   readonly txCtx?: TxContext;
+  /**
+   * Per-request manifest-pointer cache. Mutable holder so `runRead`
+   * can update it through the frozen `Query<T>` state. `runRead`
+   * compares the captured pointer against this slot to compute the
+   * `fresh` field on the returned {@link ReadResult}.
+   *
+   * @internal
+   */
+  readonly pointerCache: { value: string | undefined };
 }
+
+/**
+ * What `runRead` hands back: the materialised rows plus the cursor
+ * + freshness pair surfaced as `_meta` on read response envelopes
+ * (see `contract.ts:HttpOkMeta`). The public `Query<T>` terminals
+ * destructure and discard the cursor — only the in-router
+ * `*WithMeta` helpers consume it.
+ *
+ * @internal
+ */
+export interface ReadResult<T extends JSONArraylessObject> {
+  readonly rows: T[];
+  readonly manifestPointer: string;
+  readonly fresh: boolean;
+}
+
+/**
+ * Serialise a {@link CurrentJson} head into the wire cursor format
+ * `"<snapshot>@<next_seq>"`. `null` snapshots stringify as
+ * {@link MANIFEST_POINTER_EMPTY_SNAPSHOT} so the cursor is never the
+ * empty string.
+ *
+ * @internal — exported for `query.test.ts`.
+ */
+export const serializeManifestPointer = (json: CurrentJson): string =>
+  `${json.snapshot ?? MANIFEST_POINTER_EMPTY_SNAPSHOT}@${json.next_seq}`;
 
 /**
  * Frozen state carried along a `Query<T>` chain. Every modifier
@@ -137,15 +174,56 @@ export const makeQuery = <T extends JSONArraylessObject>(
     order: (s) => makeQuery<T>(ctx, { ...frozen, order: s }),
     limit: (n) => makeQuery<T>(ctx, { ...frozen, limit: n }),
     first: async () => {
-      const rows = await runRead<T>(ctx, { ...frozen, limit: 1 });
+      const { rows } = await runRead<T>(ctx, { ...frozen, limit: 1 });
       return rows[0]; // undefined when rows.length === 0
     },
-    all: () => runRead<T>(ctx, frozen),
-    count: async () => (await runRead<T>(ctx, frozen)).length,
+    all: async () => (await runRead<T>(ctx, frozen)).rows,
+    count: async () => (await runRead<T>(ctx, frozen)).rows.length,
     update: (patch) => runUpdate<T>(ctx, frozen, patch),
     replace: (doc) => runReplace<T>(ctx, frozen, doc),
     delete: () => runDelete<T>(ctx, frozen),
   };
+};
+
+/**
+ * Server-internal read entry surfacing the manifest-pointer cursor
+ * and freshness flag alongside the first matched row. The HTTP
+ * router calls this directly so the read-response handler can pack
+ * `_meta` onto the envelope; the public `Query<T>.first()` terminal
+ * destructures the row out and discards the cursor to keep the
+ * locked interface signature.
+ *
+ * @internal
+ */
+export const runFirstWithMeta = async <T extends JSONArraylessObject>(
+  ctx: TableReadContext,
+  state: QueryState<T>,
+): Promise<{ row: T | undefined; manifestPointer: string; fresh: boolean }> => {
+  // Mirror the operator-policy boundary check that `makeQuery` runs
+  // for chain-based reads: predicates with `$`-keys throw
+  // `InvalidConfig` before any I/O. Routes that bypass `Db.table` /
+  // `Query.where` must still surface the same error class.
+  if (state.predicate !== undefined) validatePredicate<T>(state.predicate);
+  const { rows, manifestPointer, fresh } = await runRead<T>(ctx, { ...state, limit: 1 });
+  return { row: rows[0], manifestPointer, fresh };
+};
+
+/**
+ * Server-internal read entry mirroring `runFirstWithMeta` for the
+ * list/predicate route. Returns the materialised rows + cursor +
+ * freshness so the HTTP router can pack `_meta` onto the envelope.
+ *
+ * @internal
+ */
+export const runAllWithMeta = <T extends JSONArraylessObject>(
+  ctx: TableReadContext,
+  state: QueryState<T>,
+): Promise<ReadResult<T>> => {
+  // See `runFirstWithMeta` — match `makeQuery`'s predicate validation
+  // so router calls that skip the chain still surface `InvalidConfig`
+  // on `$`-keys.
+  if (state.predicate !== undefined) validatePredicate<T>(state.predicate);
+  return runRead<T>(ctx, state);
 };
 
 // ---------------------------------------------------------------------
@@ -217,7 +295,7 @@ export const runInsert = async <T extends JSONArraylessObject>(
     order: undefined,
     limit: 1,
   });
-  if (existing.length > 0) {
+  if (existing.rows.length > 0) {
     throw new MPS3Error(
       "Conflict",
       `Query.insert: _id ${JSON.stringify(_id)} already exists in collection ${JSON.stringify(ctx.tableName)}`,
@@ -272,7 +350,7 @@ const runUpdate = async <T extends JSONArraylessObject>(
   state: QueryState<T>,
   patch: Partial<T>,
 ): Promise<{ modified: number }> => {
-  const rows = await runRead<T>(ctx, state);
+  const { rows } = await runRead<T>(ctx, state);
   const tx = ctx.txCtx;
   if (tx !== undefined) assertTxBindMatches(ctx);
   let modified = 0;
@@ -324,7 +402,7 @@ const runReplace = async <T extends JSONArraylessObject>(
   state: QueryState<T>,
   doc: T,
 ): Promise<void> => {
-  const found = await runRead<T>(ctx, state);
+  const { rows: found } = await runRead<T>(ctx, state);
   if (found.length !== 1) {
     throw new MPS3Error("Conflict", `Query.replace: expected exactly 1 match, got ${found.length}`);
   }
@@ -366,7 +444,7 @@ const runDelete = async <T extends JSONArraylessObject>(
   ctx: TableReadContext,
   state: QueryState<T>,
 ): Promise<{ deleted: number }> => {
-  const rows = await runRead<T>(ctx, state);
+  const { rows } = await runRead<T>(ctx, state);
   const tx = ctx.txCtx;
   if (tx !== undefined) assertTxBindMatches(ctx);
   let deleted = 0;
@@ -417,7 +495,7 @@ const assertTxBindMatches = (ctx: TableReadContext): void => {
 const runRead = async <T extends JSONArraylessObject>(
   ctx: TableReadContext,
   state: QueryState<T>,
-): Promise<T[]> => {
+): Promise<ReadResult<T>> => {
   // ── Step 1. Read current.json fresh. ──────────────────────────────
   // Skipping any cache is intentional: per Phase-3 multi-instance
   // rules, each read sees a fresh CAS snapshot. The writer reads
@@ -425,9 +503,17 @@ const runRead = async <T extends JSONArraylessObject>(
   const currentJsonKey = `${ctx.tablePrefix}/current.json`;
   const head = await readCurrentJson(ctx.storage, currentJsonKey);
 
+  // Capture the wire cursor before the rest of the fold runs. A
+  // not-found head ("table not yet provisioned") still emits a
+  // well-defined cursor so the wire shape never carries `""`.
+  const manifestPointer =
+    head === null ? `${MANIFEST_POINTER_EMPTY_SNAPSHOT}@0` : serializeManifestPointer(head.json);
+  const fresh = ctx.pointerCache.value !== manifestPointer;
+  ctx.pointerCache.value = manifestPointer;
+
   // Not-found is "table not yet provisioned" — return empty rather
   // than throw. Mirrors `Storage.get` returning null on miss.
-  if (head === null) return [];
+  if (head === null) return { rows: [], manifestPointer, fresh };
 
   // Load the snapshot, if any. The compactor (ticket 14) guarantees:
   // `snapshot !== null` iff `log_seq_start > 0`. The snapshot is
@@ -506,7 +592,7 @@ const runRead = async <T extends JSONArraylessObject>(
     rows = rows.slice(0, state.limit);
   }
 
-  return rows;
+  return { rows, manifestPointer, fresh };
 };
 
 const readLogEntry = async (storage: Storage, key: string): Promise<LogEntry> => {

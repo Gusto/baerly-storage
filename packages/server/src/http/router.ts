@@ -25,7 +25,8 @@ import {
   type Verifier,
 } from "@baerly/protocol";
 import type { Db } from "../db";
-import type { HttpErrorEnvelope, HttpStatus, SinceResponse } from "../contract";
+import type { HttpErrorEnvelope, HttpOkEnvelope, HttpStatus, SinceResponse } from "../contract";
+import { runAllWithMeta, runFirstWithMeta } from "../query";
 import { longPollSince } from "./since";
 
 /**
@@ -105,12 +106,19 @@ export function createRouter(options: CreateRouterOptions): Hono {
   app.get("/v1/t/:table/:id", async (c) => {
     const { table, id } = c.req.param();
     try {
-      const doc = await db
-        .table(table)
-        .where({ _id: id } as Predicate<JSONArraylessObject>)
-        .first();
-      if (doc === undefined) return jsonError(c, 404, "Internal", `No such row: ${id}`);
-      return c.json({ data: doc }, 200);
+      const { row, manifestPointer, fresh } = await runFirstWithMeta(db.tableReadContext(table), {
+        predicate: { _id: id } as Predicate<JSONArraylessObject>,
+        order: undefined,
+        limit: 1,
+      });
+      if (row === undefined) return jsonError(c, 404, "Internal", `No such row: ${id}`);
+      return c.json(
+        {
+          data: row,
+          _meta: { manifest_pointer: manifestPointer, fresh },
+        } satisfies HttpOkEnvelope<JSONArraylessObject>,
+        200,
+      );
     } catch (e) {
       return mapToResponse(c, e);
     }
@@ -129,11 +137,18 @@ export function createRouter(options: CreateRouterOptions): Hono {
       }
     }
     try {
-      const rows = await db
-        .table(table)
-        .where(predicate as Predicate<JSONArraylessObject>)
-        .all();
-      return c.json({ data: rows }, 200);
+      const { rows, manifestPointer, fresh } = await runAllWithMeta(db.tableReadContext(table), {
+        predicate: predicate as Predicate<JSONArraylessObject>,
+        order: undefined,
+        limit: undefined,
+      });
+      return c.json(
+        {
+          data: rows,
+          _meta: { manifest_pointer: manifestPointer, fresh },
+        } satisfies HttpOkEnvelope<ReadonlyArray<JSONArraylessObject>>,
+        200,
+      );
     } catch (e) {
       return mapToResponse(c, e);
     }

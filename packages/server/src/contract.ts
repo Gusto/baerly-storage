@@ -13,9 +13,28 @@ export interface HttpErrorEnvelope {
   };
 }
 
+/**
+ * Metadata embedded in every successful read response.
+ *
+ * - `manifest_pointer` is an opaque-to-the-consumer string cursor
+ *   identifying the `current.json` generation this read folded over.
+ *   Today's format is `"<snapshot>@<next_seq>"` where `<snapshot>` is
+ *   the literal `"none"` when `CurrentJson.snapshot` is `null`. Treat
+ *   as opaque on the wire — the shape may change in a future minor
+ *   without breaking destructuring consumers.
+ * - `fresh` is `true` iff this read advanced the locally-cached
+ *   pointer (cold path); `false` iff it served from the cached view
+ *   (cached pointer was unchanged).
+ */
+export interface HttpOkMeta {
+  readonly manifest_pointer: string;
+  readonly fresh: boolean;
+}
+
 /** Successful single-doc / single-result wrapper. */
 export interface HttpOkEnvelope<T> {
   readonly data: T;
+  readonly _meta: HttpOkMeta;
 }
 
 /**

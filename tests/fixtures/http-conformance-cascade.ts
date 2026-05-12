@@ -605,5 +605,67 @@ export const runHttpConformanceCascade = (opts: {
         expect(env.error?.code).toBe("SchemaError");
       });
     });
+
+    // ── Block 11: read response `_meta` (ticket 33) ─────────────────
+    //
+    // The Phase-6 router emits `_meta.{manifest_pointer, fresh}` on
+    // every successful read response (single-doc + list). Wire-level
+    // tests can't surface `fresh:false` because each HTTP request
+    // builds a fresh `Db` (the adapters mint one per request in
+    // `worker.ts` / `server.ts`); the unit-level fresh:false case
+    // lives in `packages/server/src/query.test.ts`. Here we verify
+    // the shape, cursor stability across two no-writer reads, and
+    // cursor advancement after a concurrent insert.
+    describe("read response _meta", () => {
+      type MetaBody = {
+        readonly _meta: { readonly manifest_pointer: string; readonly fresh: boolean };
+      };
+
+      test("(a) cold read: fresh:true with a non-empty manifest_pointer", async () => {
+        const table = await mintTable("meta-cold");
+        const ins = await postDoc(table, { value: "v1" });
+        const res = await doFetch(authedRequest("GET", `/v1/t/${table}/${ins.id!}`));
+        expect(res.status).toBe(200);
+        const body = (await res.json()) as MetaBody;
+        expect(typeof body._meta.manifest_pointer).toBe("string");
+        expect(body._meta.manifest_pointer.length).toBeGreaterThan(0);
+        expect(body._meta.fresh).toBe(true);
+      });
+
+      test("(b) manifest_pointer is byte-stable across two reads with no writer in between", async () => {
+        const table = await mintTable("meta-hot");
+        const ins = await postDoc(table, { value: "v1" });
+        const r1 = (await (
+          await doFetch(authedRequest("GET", `/v1/t/${table}/${ins.id!}`))
+        ).json()) as MetaBody;
+        const r2 = (await (
+          await doFetch(authedRequest("GET", `/v1/t/${table}/${ins.id!}`))
+        ).json()) as MetaBody;
+        expect(r2._meta.manifest_pointer).toBe(r1._meta.manifest_pointer);
+      });
+
+      test("(c) manifest_pointer advances + fresh:true after a concurrent writer commits", async () => {
+        const table = await mintTable("meta-advance");
+        await postDoc(table, { v: 1 });
+        // Read through the LIST endpoint: the Workerd adapter's
+        // Cache-API layer (`adapter-cloudflare/src/cache.ts`) busts
+        // the list URL on every POST/PATCH/DELETE, so a second POST
+        // forces the second read to re-anchor against the new
+        // `current.json`. Reading a per-doc URL whose specific
+        // `(table, id)` cache entry wasn't busted by the second POST
+        // would re-serve the cached r1 envelope and the cursor would
+        // not advance.
+        const r1 = (await (
+          await doFetch(authedRequest("GET", `/v1/t/${table}`))
+        ).json()) as MetaBody;
+        // Concurrent writer bumps next_seq → pointer changes.
+        await postDoc(table, { v: 2 });
+        const r2 = (await (
+          await doFetch(authedRequest("GET", `/v1/t/${table}`))
+        ).json()) as MetaBody;
+        expect(r2._meta.manifest_pointer).not.toBe(r1._meta.manifest_pointer);
+        expect(r2._meta.fresh).toBe(true);
+      });
+    });
   });
 };

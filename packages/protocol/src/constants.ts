@@ -196,3 +196,14 @@ export const GC_GRACE_PERIOD_MILLIS: number = 7 * 24 * 60 * 60 * 1000;
  * @see packages/server/src/gc.ts
  */
 export const GC_MAX_PENDING_CANDIDATES: number = 1000;
+
+/**
+ * Placeholder for `CurrentJson.snapshot === null` in the
+ * `_meta.manifest_pointer` cursor emitted on read responses. The
+ * wire format is `"<snapshot>@<next_seq>"`, and `null` snapshots
+ * serialise as this literal so the cursor is never empty and stays
+ * byte-stable when destructured by operators.
+ *
+ * @see packages/server/src/contract.ts (HttpOkMeta)
+ */
+export const MANIFEST_POINTER_EMPTY_SNAPSHOT: string = "none";

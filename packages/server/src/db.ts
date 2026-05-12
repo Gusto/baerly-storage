@@ -13,6 +13,7 @@ import type {
   StoragePutResult,
   Table,
 } from "@baerly/protocol";
+import type { TableReadContext } from "./query";
 import { ServerWriter, type CommitInput } from "./server-writer";
 import { makeTable } from "./table";
 
@@ -187,17 +188,37 @@ export class Db {
    * ```
    */
   table<T extends JSONArraylessObject = JSONArraylessObject>(name: string): Table<T> {
+    return makeTable<T>(this.tableReadContext(name));
+  }
+
+  /**
+   * Build a freshly-seeded {@link TableReadContext} for `name`. The
+   * HTTP router uses this so it can drive `runFirstWithMeta` /
+   * `runAllWithMeta` directly (whose return shapes carry the
+   * manifest-pointer cursor used to pack `_meta` onto the read
+   * response envelope). Application callers should keep using
+   * {@link Db.table}; the chainable terminals destructure the cursor
+   * out and discard it to keep the locked `Query<T>` signature.
+   *
+   * Runs the same `name`-validation guard as {@link Db.table}.
+   *
+   * @throws MPS3Error code="InvalidConfig" when `name` is empty or
+   *   contains `/`.
+   * @internal
+   */
+  tableReadContext(name: string): TableReadContext {
     if (name.length === 0 || name.includes("/")) {
       throw new MPS3Error(
         "InvalidConfig",
         `Db.table: name must be non-empty and must not contain "/" (got ${JSON.stringify(name)})`,
       );
     }
-    return makeTable<T>({
+    return {
       storage: this.#storage,
       tablePrefix: `${physicalPrefixFor(this.app, this.tenant)}manifests/${name}`,
       tableName: name,
-    });
+      pointerCache: { value: undefined },
+    };
   }
 
   /**
@@ -254,6 +275,7 @@ export class Db {
       tablePrefix,
       tableName: table,
       txCtx,
+      pointerCache: { value: undefined },
     });
 
     // Run the body. Reads go through Storage live; mutations append

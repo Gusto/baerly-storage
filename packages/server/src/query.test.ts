@@ -11,12 +11,14 @@ import {
   CURRENT_JSON_SCHEMA_VERSION,
   type CurrentJson,
   createCurrentJson,
+  type JSONArraylessObject,
   MemoryStorage,
   MPS3Error,
 } from "@baerly/protocol";
 import { beforeEach, describe, expect, test } from "vitest";
 import { compact } from "./compactor";
 import { Db } from "./db";
+import { runAllWithMeta } from "./query";
 import { ServerWriter } from "./server-writer";
 
 const APP = "test";
@@ -416,5 +418,72 @@ describe("Db.table read terminals", () => {
     expect(rows).toHaveLength(50);
     expect(rows.filter((r) => r.phase === "pre")).toHaveLength(40);
     expect(rows.filter((r) => r.phase === "post")).toHaveLength(10);
+  });
+
+  test("case 17: second read against unchanged current.json returns fresh:false", async () => {
+    // Ticket 33 invariant: the pointer cache on `TableReadContext`
+    // tracks the last-seen manifest pointer per request. Two reads
+    // against the same `current.json` generation return the same
+    // cursor; the second read carries `fresh:false`.
+    await provision(storage);
+    const w = commit(storage);
+    await w.commit({
+      op: "I",
+      collection: COLL,
+      docId: "doc-1",
+      body: { _id: "doc-1", title: "hello" },
+    });
+
+    const ctx = db.tableReadContext(COLL);
+    const emptyState = {
+      predicate: undefined,
+      order: undefined,
+      limit: undefined,
+    } as const;
+
+    const r1 = await runAllWithMeta<JSONArraylessObject>(ctx, emptyState);
+    const r2 = await runAllWithMeta<JSONArraylessObject>(ctx, emptyState);
+
+    expect(r1.fresh).toBe(true);
+    expect(r2.fresh).toBe(false);
+    expect(r2.manifestPointer).toBe(r1.manifestPointer);
+    expect(r1.rows.map((r) => r._id)).toEqual(["doc-1"]);
+    expect(r2.rows.map((r) => r._id)).toEqual(["doc-1"]);
+  });
+
+  test("case 18: second read sees fresh:true after a writer advances next_seq", async () => {
+    // Ticket 33 invariant: a concurrent commit between two reads
+    // advances `current.json`; the second read observes a new
+    // manifest pointer and reports `fresh:true`.
+    await provision(storage);
+    const w = commit(storage);
+    await w.commit({
+      op: "I",
+      collection: COLL,
+      docId: "doc-1",
+      body: { _id: "doc-1", title: "hello" },
+    });
+
+    const ctx = db.tableReadContext(COLL);
+    const emptyState = {
+      predicate: undefined,
+      order: undefined,
+      limit: undefined,
+    } as const;
+
+    const r1 = await runAllWithMeta<JSONArraylessObject>(ctx, emptyState);
+    await w.commit({
+      op: "I",
+      collection: COLL,
+      docId: "doc-2",
+      body: { _id: "doc-2", title: "world" },
+    });
+    const r2 = await runAllWithMeta<JSONArraylessObject>(ctx, emptyState);
+
+    expect(r1.fresh).toBe(true);
+    expect(r2.fresh).toBe(true);
+    expect(r2.manifestPointer).not.toBe(r1.manifestPointer);
+    expect(r1.rows.map((r) => r._id)).toEqual(["doc-1"]);
+    expect(r2.rows.map((r) => r._id).toSorted()).toEqual(["doc-1", "doc-2"]);
   });
 });
