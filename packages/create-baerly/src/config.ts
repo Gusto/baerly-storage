@@ -29,6 +29,28 @@ export interface BaerlyAppConfig {
    * Dockerfile's `EXPOSE` and the emitted readme.
    */
   readonly domain?: string | undefined;
+  /**
+   * Names of secrets the deployed runtime needs. `baerly deploy`
+   * and `baerly doctor` check each against the platform's secret
+   * store and warn (deploy) / report (doctor) when missing.
+   * Default treatment (when unset) is `["SHARED_SECRET"]` — matches
+   * the scaffolder's emitted Verifier wiring.
+   */
+  readonly requiredSecrets?: readonly string[];
+  /**
+   * Optional Cloudflare Access app config. When set, the production
+   * CF template prefers `cloudflareAccess()` as the `Verifier` and
+   * `baerly doctor --target=cloudflare` walks the CF Access app
+   * config to confirm the audience tag matches.
+   *
+   * - `teamDomain` — CF Access team domain, e.g. `"acme"`.
+   * - `audienceTag` — Application Audience (AUD) tag from the CF
+   *   Access app, 64 lowercase-hex characters.
+   */
+  readonly cloudflareAccess?: {
+    readonly teamDomain: string;
+    readonly audienceTag: string;
+  };
 }
 
 export const defineConfig = (config: BaerlyAppConfig): BaerlyAppConfig => config;
