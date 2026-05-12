@@ -1,5 +1,6 @@
 packages:
   - packages/*
+  - examples/*/apps/*
 
 # `workerd` ships a native binary postinstalled by
 # `@cloudflare/vitest-pool-workers`. The other entries are already
