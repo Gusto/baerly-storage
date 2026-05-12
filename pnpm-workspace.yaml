@@ -1,5 +1,6 @@
 packages:
   - packages/*
+  - examples/*
   - examples/*/apps/*
 
 # `workerd` ships a native binary postinstalled by
