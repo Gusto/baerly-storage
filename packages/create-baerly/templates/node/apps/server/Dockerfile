@@ -1,49 +1,53 @@
-# Hand-rolled Dockerfile for {{appName}}.
-# NOT a production template — no health probes, no graceful-shutdown
-# polish beyond SIGTERM, no non-root user setup, no distroless / alpine
-# base. Ticket 40 productizes a `baerly deploy --target=node` flow
-# that extends this Dockerfile with the production polish.
+# Production Dockerfile emitted by `create-baerly --target=node`.
+# Distroless final stage, non-root user, HEALTHCHECK via a Node
+# script (distroless ships no wget/curl).
 
 # ---- Build stage ----
 FROM node:24-bookworm-slim AS build
 WORKDIR /app
 
-# pnpm@10.31.0 matches package.json:packageManager.
 RUN corepack enable && corepack prepare pnpm@10.31.0 --activate
 
-# Workspace layout — copy manifests first for layer-cache hits on
-# pnpm install when source changes without dep changes.
+# Manifests first for layer-cache hits.
 COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
 COPY apps/server/package.json apps/server/
 COPY apps/web/package.json apps/web/
 
-# Frozen lockfile fails the build if pnpm-lock.yaml is stale.
 RUN pnpm install --frozen-lockfile
 
-# Copy source.
-COPY apps apps/
-COPY tsconfig.json baerly.config.ts ./
+# Source + compile.
+COPY . .
+RUN pnpm --filter server build
+
+# Prune to production-only deps in a separate stage for copy-in.
+RUN pnpm install --prod --frozen-lockfile --filter server
 
 # ---- Runtime stage ----
-FROM node:24-bookworm-slim AS runtime
+FROM gcr.io/distroless/nodejs24-debian12 AS runtime
 WORKDIR /app
+
+# Distroless's `nonroot` user is UID 65532. We run as that.
+USER nonroot:nonroot
+
+# Copy compiled output + production dependencies + healthcheck.
+COPY --from=build --chown=nonroot:nonroot /app/apps/server/dist apps/server/dist
+COPY --from=build --chown=nonroot:nonroot /app/apps/server/healthcheck.js apps/server/healthcheck.js
+COPY --from=build --chown=nonroot:nonroot /app/apps/server/package.json apps/server/package.json
+COPY --from=build --chown=nonroot:nonroot /app/node_modules node_modules
+
+# OCI image labels — registries surface these.
+LABEL org.opencontainers.image.title="{{appName}}"
+LABEL org.opencontainers.image.description="Baerly app — vendorless document database."
+LABEL org.opencontainers.image.source="https://github.com/your-org/{{appName}}"
+
 ENV NODE_ENV=production
-
-# `tini` for proper PID-1 signal handling.
-RUN apt-get update && apt-get install -y --no-install-recommends tini \
-  && rm -rf /var/lib/apt/lists/*
-
-RUN corepack enable && corepack prepare pnpm@10.31.0 --activate
-
-COPY --from=build /app /app
-
-# Production install — skip devDeps where possible.
-RUN pnpm install --frozen-lockfile --prod
-
-EXPOSE 8080
 ENV PORT=8080
+EXPOSE 8080
 
-# `tsx` resolves the .ts entry directly; no build step needed for
-# the entry. (A future version will pre-compile.)
-RUN pnpm add -D tsx
-ENTRYPOINT ["tini", "--", "pnpm", "-F", "server", "exec", "tsx", "src/server.ts"]
+# Node-script HEALTHCHECK — distroless ships no wget/curl.
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+  CMD ["node", "apps/server/healthcheck.js"]
+
+# Distroless's entrypoint IS node; we pass the compiled server as
+# the argument.
+ENTRYPOINT ["node", "apps/server/dist/server.js"]

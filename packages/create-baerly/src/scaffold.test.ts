@@ -100,6 +100,48 @@ describe("scaffold", () => {
     expect(config).toContain('target: "node"');
   });
 
+  it("emits a production-shape Dockerfile + pm2 + systemd unit for node", async () => {
+    const result = await scaffold({
+      projectName: "prod-node",
+      target: "node",
+      pm: "pnpm",
+      tenant: "acme",
+      templatesRoot: TEMPLATES_ROOT,
+      outRoot,
+    });
+    expect(result.filesWritten).toContain(join("apps", "server", "Dockerfile"));
+    expect(result.filesWritten).toContain(join("apps", "server", "healthcheck.js"));
+    expect(result.filesWritten).toContain(join("apps", "server", ".dockerignore"));
+    expect(result.filesWritten).toContain(join("apps", "server", "pm2.config.cjs"));
+    expect(result.filesWritten).toContain(join("apps", "server", "systemd", "baerly.service"));
+    expect(result.filesWritten).toContain(join("apps", "server", ".env.example"));
+
+    const dockerfile = await readFile(join(result.outDir, "apps", "server", "Dockerfile"), "utf8");
+    expect(dockerfile).toContain("FROM gcr.io/distroless/nodejs24-debian12");
+    expect(dockerfile).toContain("USER nonroot:nonroot");
+    expect(dockerfile).toContain("HEALTHCHECK");
+    expect(dockerfile).toContain('org.opencontainers.image.title="prod-node"');
+
+    const pm2Config = await readFile(
+      join(result.outDir, "apps", "server", "pm2.config.cjs"),
+      "utf8",
+    );
+    expect(pm2Config).toContain('name: "prod-node"');
+
+    const unit = await readFile(
+      join(result.outDir, "apps", "server", "systemd", "baerly.service"),
+      "utf8",
+    );
+    expect(unit).toContain("Description=Baerly app — prod-node");
+    expect(unit).toContain("EnvironmentFile=/etc/baerly/prod-node.env");
+
+    const envExample = await readFile(
+      join(result.outDir, "apps", "server", ".env.example"),
+      "utf8",
+    );
+    expect(envExample).toContain("TENANT=acme");
+  });
+
   it("rejects projectName with disallowed characters", async () => {
     await expect(
       scaffold({

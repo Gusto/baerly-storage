@@ -26,6 +26,7 @@ const TEXT_EXTS = new Set([
   ".ts",
   ".tsx",
   ".js",
+  ".cjs",
   ".json",
   ".jsonc",
   ".md",
@@ -35,6 +36,9 @@ const TEXT_EXTS = new Set([
   ".html",
   ".css",
   ".gitignore",
+  ".dockerignore",
+  ".example",
+  ".service",
 ]);
 
 /**

@@ -1,7 +1,17 @@
+/**
+ * Server entry for {{appName}}. Wires `@baerly/adapter-node` with
+ * production-shaped storage + verifier defaults.
+ *
+ * Storage: AWS S3 (override via `S3_ENDPOINT` for R2/Minio/GCS).
+ * Verifier: JWKS-backed JWT when `JWKS_URL` is set; falls back
+ * to shared secret for `pnpm dev` parity. Production deployments
+ * should set `JWKS_URL` and remove the shared-secret branch.
+ * Maintenance: hourly `runMaintenanceTick` on `setInterval`.
+ */
 import { createServer } from "node:http";
 import { DOMParser } from "@xmldom/xmldom";
 import { AwsClient } from "aws4fetch";
-import { createListener, S3HttpStorage } from "@baerly/adapter-node";
+import { createListener, runMaintenanceTick, S3HttpStorage } from "@baerly/adapter-node";
 import { bearerJwt, sharedSecret } from "@baerly/server";
 import type { Verifier } from "@baerly/protocol";
 
@@ -15,24 +25,21 @@ const APP = "{{appName}}";
 const TENANT = process.env.TENANT ?? "{{tenant}}";
 const PORT = Number(process.env.PORT ?? "8080");
 
+const aws = new AwsClient({
+  accessKeyId: reqEnv("AWS_ACCESS_KEY_ID"),
+  secretAccessKey: reqEnv("AWS_SECRET_ACCESS_KEY"),
+  region: process.env.AWS_REGION ?? "us-east-1",
+  service: "s3",
+});
+
 const storage = new S3HttpStorage({
   endpoint:
     process.env.S3_ENDPOINT ?? `https://s3.${process.env.AWS_REGION ?? "us-east-1"}.amazonaws.com`,
   bucket: reqEnv("BUCKET"),
   xmlParser: new DOMParser(),
-  sign: (req) =>
-    new AwsClient({
-      accessKeyId: reqEnv("AWS_ACCESS_KEY_ID"),
-      secretAccessKey: reqEnv("AWS_SECRET_ACCESS_KEY"),
-      region: process.env.AWS_REGION ?? "us-east-1",
-      service: "s3",
-    }).sign(req),
+  sign: (req) => aws.sign(req),
 });
 
-// Default: JWKS-backed JWT verifier when `JWKS_URL` is set; else
-// fall back to the shared-secret verifier for parity with `pnpm dev`.
-// Production setups should *always* set `JWKS_URL` and remove the
-// shared-secret fallback. See ticket 40's deploy template.
 const verifier: Verifier =
   process.env.JWKS_URL !== undefined
     ? bearerJwt({
@@ -44,4 +51,34 @@ const verifier: Verifier =
 
 const listener = createListener({ app: APP, storage, verifier });
 const server = createServer(listener);
+
 server.listen(PORT, () => console.log(`{{appName}} listening on :${PORT}`));
+
+// Maintenance loop — hourly. Per-collection currentJsonKey shape
+// matches `Db.create({ app, tenant })`'s manifest prefix.
+const MAINTENANCE_INTERVAL_MS = 60 * 60 * 1000;
+if (process.env.MAINTENANCE_KEY !== undefined) {
+  const maintenanceKey = process.env.MAINTENANCE_KEY;
+  setInterval(() => {
+    void runMaintenanceTick({
+      storage,
+      currentJsonKey: maintenanceKey,
+    }).catch((e: unknown) => {
+      console.error("maintenance tick failed", e);
+    });
+  }, MAINTENANCE_INTERVAL_MS).unref();
+}
+
+// Graceful shutdown — SIGTERM from docker stop / k8s preStop.
+const shutdown = (sig: NodeJS.Signals): void => {
+  console.log(`Received ${sig}; closing server`);
+  server.close((err) => {
+    if (err) {
+      console.error("server.close error", err);
+      process.exit(1);
+    }
+    process.exit(0);
+  });
+};
+process.on("SIGTERM", shutdown);
+process.on("SIGINT", shutdown);
