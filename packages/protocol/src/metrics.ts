@@ -70,6 +70,60 @@ export const noopMetricsRecorder: MetricsRecorder = {
 };
 
 /**
+ * Fan every emission to both `a` and `b`, in that order. Lets the
+ * Phase-9 observability layer tee a short-lived per-request recorder
+ * (e.g. {@link InMemoryMetricsRecorder} used to derive canonical-log
+ * fields) into the operator's long-term recorder without coupling the
+ * kernel to a specific aggregation backend.
+ *
+ * **No error swallowing.** The kernel guarantees its own recorders
+ * never throw (see the JSDoc on {@link MetricsRecorder}); if an
+ * operator wires a throwing recorder, the throw propagates and `b`'s
+ * call does not run. That is intentional — silently swallowing
+ * operator bugs would let a metric sink fail half-open.
+ *
+ * **No defensive label copy at the tee.** The labels object is passed
+ * to both sinks by reference, matching {@link InMemoryMetricsRecorder}'s
+ * own per-sink copy (the recorder is responsible for isolating its own
+ * storage). Callers passing a labels object they intend to mutate
+ * after emission should freeze it or pass a fresh literal.
+ *
+ * @example
+ * ```ts
+ * import {
+ *   InMemoryMetricsRecorder,
+ *   teeMetricsRecorders,
+ *   type MetricsRecorder,
+ * } from "@baerly/protocol";
+ *
+ * // Long-term sink the operator wired (Workers Analytics Engine,
+ * // OpenTelemetry, statsd, etc.).
+ * const operator: MetricsRecorder = wireOperatorSink();
+ * // Per-request scratch sink the request handler reads to derive
+ * // its canonical log line.
+ * const perRequest = new InMemoryMetricsRecorder();
+ *
+ * const metrics = teeMetricsRecorders(perRequest, operator);
+ * await db.transaction("tickets", async (tx) => { ... });
+ * // ... read perRequest.histogramValues(...) to populate the log line ...
+ * ```
+ */
+export const teeMetricsRecorders = (a: MetricsRecorder, b: MetricsRecorder): MetricsRecorder => ({
+  counter: (name, value, labels) => {
+    a.counter(name, value, labels);
+    b.counter(name, value, labels);
+  },
+  gauge: (name, value, labels) => {
+    a.gauge(name, value, labels);
+    b.gauge(name, value, labels);
+  },
+  histogram: (name, value, labels) => {
+    a.histogram(name, value, labels);
+    b.histogram(name, value, labels);
+  },
+});
+
+/**
  * In-memory recorder. Stores every observation; useful for tests and
  * for the synthetic-5000-entry verification (ticket 19). Memory grows
  * unbounded — not suitable for production.

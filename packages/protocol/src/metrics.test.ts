@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { InMemoryMetricsRecorder, noopMetricsRecorder } from "./metrics";
+import { InMemoryMetricsRecorder, noopMetricsRecorder, teeMetricsRecorders } from "./metrics";
 
 describe("MetricsRecorder", () => {
   it("noop swallows every emission", () => {
@@ -46,5 +46,59 @@ describe("MetricsRecorder", () => {
     r.counter("foo", 1, labels);
     labels.k = "mutated";
     expect(r.counters[0]?.labels).toEqual({ k: "v" });
+  });
+});
+
+describe("teeMetricsRecorders", () => {
+  it("fans counter() to both sinks with the same args", () => {
+    const a = new InMemoryMetricsRecorder();
+    const b = new InMemoryMetricsRecorder();
+    const tee = teeMetricsRecorders(a, b);
+    tee.counter("foo", 3, { k: "v" });
+    expect(a.counters).toHaveLength(1);
+    expect(b.counters).toHaveLength(1);
+    expect(a.counters[0]).toMatchObject({ name: "foo", value: 3, labels: { k: "v" } });
+    expect(b.counters[0]).toMatchObject({ name: "foo", value: 3, labels: { k: "v" } });
+  });
+
+  it("fans gauge() to both sinks with the same args", () => {
+    const a = new InMemoryMetricsRecorder();
+    const b = new InMemoryMetricsRecorder();
+    const tee = teeMetricsRecorders(a, b);
+    tee.gauge("g", 42, { tenant: "acme" });
+    expect(a.lastGauge("g")).toBe(42);
+    expect(b.lastGauge("g")).toBe(42);
+    expect(a.gauges[0]?.labels).toEqual({ tenant: "acme" });
+    expect(b.gauges[0]?.labels).toEqual({ tenant: "acme" });
+  });
+
+  it("fans histogram() to both sinks with the same args", () => {
+    const a = new InMemoryMetricsRecorder();
+    const b = new InMemoryMetricsRecorder();
+    const tee = teeMetricsRecorders(a, b);
+    tee.histogram("h", 1);
+    tee.histogram("h", 5, { coll: "tickets" });
+    expect(a.histogramValues("h")).toEqual([1, 5]);
+    expect(b.histogramValues("h")).toEqual([1, 5]);
+    expect(a.histograms[1]?.labels).toEqual({ coll: "tickets" });
+    expect(b.histograms[1]?.labels).toEqual({ coll: "tickets" });
+  });
+
+  it("shares the labels object by reference (no defensive copy at the tee)", () => {
+    // The tee MUST NOT defensively copy — InMemoryMetricsRecorder's
+    // own copy (metrics.ts:95) is what isolates downstream sinks.
+    // Sinks that don't copy will see mutation, by design.
+    const sink = {
+      counter: (_name: string, _value: number, labels?: Readonly<Record<string, string>>) => {
+        captured = labels;
+      },
+      gauge: () => {},
+      histogram: () => {},
+    };
+    let captured: Readonly<Record<string, string>> | undefined;
+    const tee = teeMetricsRecorders(sink, sink);
+    const labels = { k: "v" };
+    tee.counter("foo", 1, labels);
+    expect(captured).toBe(labels);
   });
 });
