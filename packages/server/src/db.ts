@@ -1,6 +1,5 @@
 /* eslint-disable no-underscore-dangle -- `_raw` is the locked public-symbol
-   name for the Phase-3 Storage escape hatch; mirrors the Phase-4 `Db._raw`
-   declaration in `@baerly/protocol/src/db.ts` and is marked `@internal`. */
+   name for the Phase-3 Storage escape hatch; marked `@internal`. */
 
 import { BaerlyError, noopMetricsRecorder } from "@baerly/protocol";
 import type {
