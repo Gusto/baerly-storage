@@ -3,7 +3,7 @@
    through the rebuild reconciler. */
 
 /**
- * Phase-8 — unit tests for `rebuildIndex`.
+ * Unit tests for `rebuildIndex`.
  *
  * Asserts the four invariants the command must honour:
  *

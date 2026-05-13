@@ -3,7 +3,7 @@
    server's `{ _id }` response and re-encodes it as JSON. */
 
 /**
- * Node listener — Phase-6 CRUD route tests over a real
+ * Node listener — CRUD route tests over a real
  * `http.Server`. The `withServer` helper boots
  * `createServer(listener).listen(0)` so each test gets an
  * isolated socket and an isolated `MemoryStorage`-backed `Db`.

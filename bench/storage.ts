@@ -42,7 +42,7 @@ export interface BenchStorageOpts {
  * 8 bytes/double = ~4 MB max memory per `CountingStorage`. Multi-
  * million-op runs hit this ceiling; nearest-rank p50/p95/p99 stay
  * stable under FIFO drop for the quasi-stationary workloads the
- * Phase 11 presets produce. If a future workload class needs full-
+ * load-harness presets produce. If a future workload class needs full-
  * run latency retention, switch this file to a reservoir sampler —
  * out of scope for ticket 50.
  */
@@ -101,7 +101,7 @@ function tailOrUndefined(samples: number[]): OpLatencyTail | undefined {
  * bound from `tests/integration/phase5-end-to-end.test.ts`.
  *
  * Extended with per-op counters, byte-volume tracking, per-op latency
- * samples, and per-prefix attribution for Phase 11 load-harness
+ * samples, and per-prefix attribution for load-harness
  * snapshots. All existing fields are preserved; new fields are additive.
  */
 export class CountingStorage implements Storage {
@@ -110,7 +110,7 @@ export class CountingStorage implements Storage {
   conflict412 = 0;
   rateLimit429 = 0;
 
-  // Per-verb counters. These are the source of truth for the Phase 11
+  // Per-verb counters. These are the source of truth for the
   // snapshot. The legacy `classAOps` / `classBOps` fields are derived
   // from these on every increment so old callers keep observing the
   // same totals.
@@ -227,7 +227,7 @@ export class CountingStorage implements Storage {
   }
 
   /**
-   * Phase 11 run-JSON shape, `object_store` + `latency_ms.by_op` +
+   * Run-JSON shape, `object_store` + `latency_ms.by_op` +
    * `ops_by_prefix` portion. Ticket 54 (load-harness CLI) wraps this
    * inside the run envelope. Nearest-rank percentiles match
    * `bench/metrics.ts`. Verbs with no samples are omitted from

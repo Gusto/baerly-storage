@@ -3,7 +3,7 @@
    declaration); tests read it from emitted log entries. */
 
 /**
- * Phase-4 `Db.transaction(table, body)` — single-attempt commitBatch.
+ * `Db.transaction(table, body)` — single-attempt commitBatch.
  * Cases mirror ticket 11 §6.5.
  */
 

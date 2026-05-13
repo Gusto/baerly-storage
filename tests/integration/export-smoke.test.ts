@@ -17,7 +17,7 @@ type JSONArraylessObject = {
 
 /**
  * RFC 7386 merge-patch bodies use `null` as a delete sentinel. The
- * Phase-1 `LogEntry.patch` is typed as `JSONArraylessObject` (no
+ * `LogEntry.patch` is typed as `JSONArraylessObject` (no
  * nulls allowed inside doc bodies), but a *patch* body legitimately
  * uses nulls to remove fields. Widen the local `patch` type to
  * allow nulls so fixture #4 ("null deletes nested field") is legal
@@ -65,11 +65,11 @@ const PG_CONFIG = {
 };
 
 /**
- * Translate a single Phase-1 `LogEntry` into SQL against a
- * hard-coded `users (id text PRIMARY KEY, doc jsonb)` table.
+ * Translate a single `LogEntry` into SQL against a hard-coded
+ * `users (id text PRIMARY KEY, doc jsonb)` table.
  *
  * Translation rules (kept inline — this is NOT the production
- * exporter; that ships in Phase 9):
+ * exporter, which lands later):
  *
  * - `I` → `INSERT … ON CONFLICT (id) DO UPDATE` (idempotent
  *   replay).

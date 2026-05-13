@@ -1,5 +1,5 @@
 /**
- * Phase-8 secondary indexes — declarative collection-config-driven
+ * Secondary indexes — declarative collection-config-driven
  * index entries that the writer emits inside the same CAS fence as
  * the log entry and content body.
  *
@@ -73,8 +73,8 @@ export interface IndexDefinition {
    * consults single-field index entries today.
    *
    * Top-level fields only — dotted-path `on` values throw
-   * `SchemaError` from {@link projectIndexValues}. Phase 9 widens
-   * the projector to dotted paths (mirroring what
+   * `SchemaError` from {@link projectIndexValues}. A future change
+   * widens the projector to dotted paths (mirroring what
    * `packages/server/src/query.ts` already does on the predicate
    * side).
    */
@@ -187,7 +187,7 @@ export const indexKeyFor = (
  * that index (SQL "NULL values don't enter the index" semantics).
  *
  * @throws BaerlyError code="SchemaError" — `on` contains a dotted
- *   path. Phase 9 lifts this restriction.
+ *   path. A future change lifts this restriction.
  */
 export const projectIndexValues = (
   def: IndexDefinition,

@@ -1,5 +1,5 @@
 /* eslint-disable no-underscore-dangle -- `_raw` is the locked public-symbol
-   name for the Phase-3 Storage escape hatch; marked `@internal`. */
+   name for the Storage escape hatch; marked `@internal`. */
 
 import { BaerlyError, noopMetricsRecorder } from "@baerly/protocol";
 import type {
@@ -71,7 +71,7 @@ export interface BufferedMutation {
 const physicalPrefixFor = (app: string, tenant: string): string => `app/${app}/tenant/${tenant}/`;
 
 /**
- * Phase-3 escape hatch: a Storage-shaped surface scoped to one
+ * Escape hatch: a Storage-shaped surface scoped to one
  * `(app, tenant)` pair. Keys callers see are **logical** (e.g.
  * `"docs/123"`); the wrapper composes
  * `app/<app>/tenant/<tenant>/<key>` before touching the underlying
@@ -79,12 +79,10 @@ const physicalPrefixFor = (app: string, tenant: string): string => `app/${app}/t
  * `list`.
  *
  * Bypasses every higher-level invariant: no `LogEntry` emit, no CAS
- * on `current.json`, no schema check. Phase 4 will add a
- * `LogEntry`-based escape hatch on top, likely as a separate `_log`
- * field on `Db`.
+ * on `current.json`, no schema check.
  *
- * @internal — public symbol, but the table API (Phase 4) is the
- *             recommended surface for app code.
+ * @internal — public symbol, but the table API is the recommended
+ *             surface for app code.
  */
 export interface RawStorageApi {
   get(key: string, opts?: StorageGetOptions): Promise<StorageGetResult | null>;
@@ -97,7 +95,7 @@ export interface RawStorageApi {
 }
 
 /**
- * Phase-3 runtime entry point. One `Db` per `(app, tenant)` request.
+ * Runtime entry point. One `Db` per `(app, tenant)` request.
  *
  * Construct via {@link Db.create} — the constructor is private so
  * callers don't accidentally bypass validation.
@@ -169,7 +167,7 @@ export class Db {
    * `Query.replace` / `Query.delete`) and the transaction path
    * ({@link Db.transaction}). Defaults to {@link noopMetricsRecorder}
    * so non-instrumented callers see zero behavioural change. The
-   * Phase-9 observability layer wires its per-request recorder here
+   * observability layer wires its per-request recorder here
    * so writer emissions (`db.write.class_a_ops_per_logical_write`,
    * `db.r2.put.412_total`, etc.) reach the operator's sink.
    *

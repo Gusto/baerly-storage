@@ -9,7 +9,7 @@
  *    and consumers branch on the string code, not `instanceof`.
  *
  * 2. **Any other error or non-error value** — collapse to
- *    `{ code: "Internal", message: <stringified> }`. The Phase-9
+ *    `{ code: "Internal", message: <stringified> }`. The
  *    operator-facing contract is that anything we didn't classify
  *    as a `BaerlyError` is a kernel-internal bug, hence the
  *    catch-all `Internal` code.

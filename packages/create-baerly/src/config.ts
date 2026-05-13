@@ -52,7 +52,7 @@ export interface BaerlyAppConfig {
     readonly audienceTag: string;
   };
   /**
-   * Optional Phase-9 observability overrides. The templates already
+   * Optional observability overrides. The templates already
    * read `LOG_LEVEL` and `LOG_SAMPLE` from the runtime env; this
    * field is a typed-config alternative for deployments that prefer
    * to pin defaults in source. See `docs/observability.md` for the

@@ -3,7 +3,7 @@
    `Query<T>` declarations); the snapshot body carries it through. */
 
 /**
- * Phase-5 compactor: fold a prefix of the live log into a content-
+ * Compactor: fold a prefix of the live log into a content-
  * hashed snapshot file and CAS-advance `current.json` to swap the
  * pointer.
  *

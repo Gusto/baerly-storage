@@ -3,7 +3,7 @@
    `Query<T>` declarations); tests surface and assert on it by name. */
 
 /**
- * Phase-4 mutation terminals — `Table.insert`, `Query.update`,
+ * Mutation terminals — `Table.insert`, `Query.update`,
  * `Query.replace`, `Query.delete`. MemoryStorage-only, pure-unit; no
  * infra required.
  *
@@ -140,8 +140,8 @@ describe("Table.insert", () => {
     expect(entry.schema_version).toBe(0);
     expect(entry.new).toEqual({ _id: "L1", title: "logged", status: "open" });
     expect(entry.patch).toEqual({ _id: "L1", title: "logged", status: "open" });
-    // The per-doc-replace model pins `new === patch` (deep equal) — the
-    // Phase-9 partial-merge writer is what relaxes that invariant.
+    // The per-doc-replace model pins `new === patch` (deep equal) — a
+    // future partial-merge writer would relax that invariant.
     expect(entry.new).toEqual(entry.patch);
     // `PATCH_ONLY` replica_identity (today's default) carries no
     // pre-image fields on any op.

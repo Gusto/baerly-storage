@@ -75,7 +75,7 @@ export function makeRng(seed: number): Rng {
     },
     zipfIndex(n, s) {
       // Inverse-CDF rejection. Cheap for s in [1.2, 2.5] range used
-      // by every Phase-11 preset.
+      // by every load-harness preset.
       const u = r();
       const idx = Math.floor(Math.pow(1 - u, -1 / (s - 1)));
       return Math.min(n - 1, Math.max(0, idx - 1));

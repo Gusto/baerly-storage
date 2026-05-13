@@ -2,7 +2,7 @@
    field on document shapes; the GC test seeds and asserts on it. */
 
 /**
- * Phase-5 GC — `runGc()` mark + sweep under `MemoryStorage`. The
+ * GC — `runGc()` mark + sweep under `MemoryStorage`. The
  * cross-adapter coverage (memory / local-fs / node-minio /
  * cloudflare-r2) is exercised by the `[gc]` variant inside
  * `tests/fixtures/table-api-cascade.ts`.

@@ -24,7 +24,7 @@
  *   - `CF_R2_SECRET_ACCESS_KEY` — R2 API token secret
  *   - `CF_R2_BUCKET`          — bucket name (defaults to `baerly-e2e-cf`)
  *
- * Phase 6 has no "create table" HTTP route, so the cascade needs a
+ * There is no "create table" HTTP route, so the cascade needs a
  * direct `Storage` handle to seed `current.json` per fresh table.
  * The test process opens its own `S3HttpStorage` against the R2
  * S3-compat endpoint to satisfy the seam; the deployed Worker
@@ -108,7 +108,7 @@ describe.runIf(CF_URL !== undefined && SECRET !== undefined)(
 
     test("100-GET latency budget", async () => {
       // Seed one ~1 KB doc through the public POST route, then GET
-      // its `_id` 100 times. Phase 6 has no raw `/v1/<key>` route
+      // its `_id` 100 times. There is no raw `/v1/<key>` route
       // (see `packages/server/src/contract.ts`); the latency probe
       // exercises the same code path real readers hit.
       const table = `${RUN_PREFIX}-latency`;
@@ -192,7 +192,7 @@ describe.runIf(CF_URL !== undefined && SECRET !== undefined)(
     //
     // Gated on the provisioning-seam env vars (`CF_R2_*`). The
     // cascade needs a `Storage` handle to seed `current.json` per
-    // fresh table — Phase 6 has no "create table" HTTP route — and
+    // fresh table — there is no "create table" HTTP route — and
     // the test process opens its own `S3HttpStorage` against the
     // R2 S3-compat endpoint for that purpose. Without the env vars,
     // this cascade is skipped; the latency / long-poll / 401 probes

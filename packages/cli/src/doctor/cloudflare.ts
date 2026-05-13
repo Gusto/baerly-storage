@@ -273,8 +273,7 @@ export const doctorCloudflare = async (
     findings.push({
       severity: "warning",
       check: "triggers.crons",
-      message:
-        "no cron triggers declared; the Phase-5 maintenance loop will not run automatically.",
+      message: "no cron triggers declared; the maintenance loop will not run automatically.",
       fix: `Add "triggers": { "crons": ["* * * * *"] } to ${wranglerPath}.`,
     });
   } else {

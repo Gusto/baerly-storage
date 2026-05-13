@@ -1,5 +1,5 @@
 /* eslint-disable no-underscore-dangle -- `_raw` is the locked public symbol
-   name on `Db` (mirrors the Phase-4 declaration in `@baerly/protocol`). */
+   name on `Db` (mirrors the declaration in `@baerly/protocol`). */
 
 import {
   CURRENT_JSON_SCHEMA_VERSION,

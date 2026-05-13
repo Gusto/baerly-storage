@@ -1,5 +1,5 @@
 /**
- * Load-harness CLI — Phase 11 entry point.
+ * Load-harness CLI entry point.
  *
  * Wires the ticket-50 CountingStorage + ticket-51 preset framework
  * + ticket-53 runner + manifest cache into one invocation. Writes
@@ -229,7 +229,7 @@ async function buildVariant(v: Variant): Promise<VariantBuild> {
     }
     case "cloudflare-r2": {
       throw new Error(
-        `bench:load: --variant=cloudflare-r2 is deferred. Run the miniflare-pool variant under a future Phase 11 ticket.`,
+        `bench:load: --variant=cloudflare-r2 is deferred. Run the miniflare-pool variant under a future ticket.`,
       );
     }
   }

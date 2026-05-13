@@ -136,7 +136,7 @@ export const MEM_CACHE_CAPACITY: number = 100;
  * subsequent read likely sees the content once the writer finishes.
  * Outside the window, readers still return `undefined` but warn
  * because the manifest entry is most likely orphaned by a writer that
- * died mid-batch (the Phase-6 sweeper GCs these).
+ * died mid-batch (the sweeper GCs these).
  *
  * Sized at 6× {@link LAG_WINDOW_MILLIS} (30s) to comfortably cover S3
  * write propagation plus a few poll cycles while still surfacing
@@ -192,7 +192,7 @@ export const GC_PENDING_CONTENT_TYPE: string = "application/json";
  * Default grace period between "marking" a key for GC and "sweeping"
  * (deleting) it. 7 days, chosen to span the worst plausible writer-
  * retry window (a paused-process writer that resumes hours later
- * should still find its idempotency anchor on the bucket). The Phase 5
+ * should still find its idempotency anchor on the bucket). The
  * `runGc()` function accepts an override for tests.
  *
  * Distinct from {@link ORPHAN_MANIFEST_GRACE_MILLIS} (30s) — that

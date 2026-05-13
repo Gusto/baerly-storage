@@ -40,8 +40,8 @@ export interface MetricsSnapshot {
  * Per-op counter block for a single bench cell. Names mirror the S3 /
  * R2 verb taxonomy (GET, PUT, HEAD, LIST, DELETE). HEAD is always 0
  * in code paths that flow through the current protocol `Storage`
- * interface — the field exists so the Phase 11 run-JSON shape stays
- * stable if a future adapter starts using HEAD.
+ * interface — the field exists so the run-JSON shape stays stable
+ * if a future adapter starts using HEAD.
  */
 export interface OpCounts {
   readonly get: number;
@@ -74,7 +74,7 @@ export interface OpLatencyByOp {
 
 /**
  * The `object_store` + `latency_ms` + `ops_by_prefix` portion of the
- * Phase 11 run-JSON shape. Ticket 54 (load-harness CLI) wraps this
+ * load-harness run-JSON shape. Ticket 54 (load-harness CLI) wraps this
  * inside a larger object with `run`, `derived`, `cache`, and
  * `compaction` blocks. This ticket only owns this inner portion.
  *

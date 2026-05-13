@@ -3,8 +3,8 @@
    `Table<T>`); this fuzz test threads it through the writer. */
 
 /**
- * Phase-8 — crash-injection property test for the secondary-index
- * emission path.
+ * Crash-injection property test for the secondary-index emission
+ * path.
  *
  * Wraps a `MemoryStorage` in `abortingStorage(inner)` (the same
  * shape `phase5-crash-fuzz.test.ts` uses), runs a fixed-shape commit

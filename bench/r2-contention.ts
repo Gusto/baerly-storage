@@ -6,7 +6,7 @@
  *     `current.json` for a configurable wall-clock window.
  *   - **S2-idle**: idle reader bound — M pollers issue
  *     `readCurrentJson` every 2 seconds with zero writers; the
- *     canonical Phase-5 cost-model gate (< 1 Class A op / writer /
+ *     canonical idle-reader cost-model gate (< 1 Class A op / writer /
  *     hour) is validated against the wire.
  *   - **S3-toxic**: same as S1 but with Toxiproxy toxics
  *     (`wan-50ms` or `loss-5`) installed first.

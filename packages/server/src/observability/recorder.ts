@@ -12,7 +12,7 @@
  * The shape mirrors {@link InMemoryMetricsRecorder} from
  * `@baerly/protocol` but adds the per-request product. We do NOT
  * extend that class — composition over inheritance, and the
- * Phase-9 layer wants `summarize()` to be the only side-channel.
+ * observability layer wants `summarize()` to be the only side-channel.
  */
 
 import type { MetricsRecorder } from "@baerly/protocol";

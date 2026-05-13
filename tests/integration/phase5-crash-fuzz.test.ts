@@ -3,7 +3,7 @@
    declaration); the reader helper threads it through. */
 
 /**
- * Phase 5 — crash-injection fuzzer.
+ * Crash-injection fuzzer.
  *
  * Property-based fault-injection that drives `ServerWriter`,
  * `compact()`, and `runGc()` against a `Storage` proxy that aborts the
@@ -79,7 +79,7 @@ const readAllRowIds = async (storage: Storage): Promise<string[]> => {
   return [...rows].map((r) => r._id).toSorted((a, b) => (a < b ? -1 : a > b ? 1 : 0));
 };
 
-describe("Phase 5 — abortingStorage harness sanity", () => {
+describe("abortingStorage harness sanity", () => {
   it("armAt(K) fires AbortError on the K-th underlying op", async () => {
     const inner = new MemoryStorage();
     const handle = abortingStorage(inner);
@@ -96,7 +96,7 @@ describe("Phase 5 — abortingStorage harness sanity", () => {
   });
 });
 
-describe("Phase 5 — writer crash never leaves readable phantom row", () => {
+describe("Writer crash never leaves readable phantom row", () => {
   propTest.prop({
     abortAfter: fc.integer({ min: 1, max: 8 }),
     numInsertsBefore: fc.integer({ min: 0, max: 30 }),
@@ -173,7 +173,7 @@ describe("Phase 5 — writer crash never leaves readable phantom row", () => {
   );
 });
 
-describe("Phase 5 — compactor crash never leaves readable corrupt snapshot", () => {
+describe("Compactor crash never leaves readable corrupt snapshot", () => {
   propTest.prop({
     abortAfter: fc.integer({ min: 1, max: 50 }),
     numInserts: fc.integer({ min: 20, max: 60 }),
@@ -215,7 +215,7 @@ describe("Phase 5 — compactor crash never leaves readable corrupt snapshot", (
   );
 });
 
-describe("Phase 5 — GC crash never deletes a still-referenced key", () => {
+describe("GC crash never deletes a still-referenced key", () => {
   propTest.prop({
     abortAfter: fc.integer({ min: 1, max: 30 }),
     numInserts: fc.integer({ min: 20, max: 60 }),
@@ -261,7 +261,7 @@ describe("Phase 5 — GC crash never deletes a still-referenced key", () => {
   );
 });
 
-describe("Phase 5 — long-running fuzzer (many tick + crash cycles)", () => {
+describe("Long-running fuzzer (many tick + crash cycles)", () => {
   it(
     "converges to a consistent reader view after up to 200 ops with random aborts",
     { timeout: PROP_TIMEOUT_MS },

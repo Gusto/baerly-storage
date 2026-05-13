@@ -25,8 +25,8 @@ export const CONFORMANCE_TENANT = "conformance-tenant";
 export const CONFORMANCE_BEARER = "test-token";
 
 /**
- * Build a fresh {@link Verifier} suitable for handing to the Phase-6
- * HTTP adapters (`createListener({ verifier })` / `baerlyWorker({
+ * Build a fresh {@link Verifier} suitable for handing to the HTTP
+ * adapters (`createListener({ verifier })` / `baerlyWorker({
  * verifier })`). The verifier inspects the `Authorization` header and
  * returns `{ tenantPrefix, identity: {} }` on a match, `null`
  * otherwise. Identity is intentionally empty — the HTTP conformance

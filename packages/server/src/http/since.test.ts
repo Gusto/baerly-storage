@@ -4,7 +4,7 @@
    `_id` is the locked primary-key field on inserted docs. */
 
 /**
- * Phase-6 long-poll handler tests — `longPollSince` + `listEventsSince`.
+ * Long-poll handler tests — `longPollSince` + `listEventsSince`.
  * Seven cases from ticket 26 §4.7:
  *
  *   1. cursor validation (invalid shape → SchemaError).

@@ -4,7 +4,7 @@
  * `@logtape/logtape` ships a tiny library-first API: a global
  * `configure({ sinks, loggers })` and a `getLogger(category)` that
  * routes to the configured sinks. We expose a small wrapper so the
- * Phase-9 boot path can hand LogTape a `"console-json"` /
+ * boot path can hand LogTape a `"console-json"` /
  * `"console-pretty"` shortcut and an env-driven level override.
  *
  * The wrapper is intentionally thin: anything LogTape can do
@@ -112,8 +112,8 @@ let effectiveSampleRate: number | null = null;
 /**
  * Wire LogTape's global config.
  *
- * Idempotent — call as many times as you like. The Phase-9 boot
- * path calls it once at adapter init; tests call it once per
+ * Idempotent — call as many times as you like. The adapter boot
+ * path calls it once at init; tests call it once per
  * `beforeEach`.
  */
 export const configureObservability = async (config: ObservabilityConfig = {}): Promise<void> => {

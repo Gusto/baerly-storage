@@ -3,7 +3,7 @@
    `Query<T>` declarations); mutation verbs surface and route it by name. */
 
 /**
- * Phase-4 read engine + mutation terminals: `Query<T>` builder, the
+ * Read engine + mutation terminals: `Query<T>` builder, the
  * three read terminals (`first`, `all`, `count`) that fold the log
  * under a fresh `current.json` snapshot, and the four mutation
  * terminals (`insert`, `update`, `replace`, `delete`) that each
@@ -18,7 +18,7 @@
  * `.order()` and `.limit()` are last-call-wins (state replace).
  *
  * Each terminal reads `current.json` FRESH and walks `[0, next_seq)`
- * directly — no cache, no `list()` round-trip. Per Phase-3 multi-
+ * directly — no cache, no `list()` round-trip. Per the multi-
  * instance rules, every read sees a fresh CAS snapshot.
  *
  * Mutation terminals are SINGLE-ATTEMPT per call site. CAS contention
@@ -183,12 +183,13 @@ export interface QueryState<T extends JSONArraylessObject> {
    */
   readonly consistency: ConsistencyLevel | undefined;
   /**
-   * Phase-8 index hint. When defined and the predicate matches the
+   * Index hint. When defined and the predicate matches the
    * shape `{ <indexedField>: <value> }`, the read path walks
    * `<tablePrefix>/index/<useIndex>/<value-b32>/` and issues a
    * content GET per matching key instead of folding the snapshot
    * and log. Mismatched predicate shape falls back to the table
-   * scan (best-effort, ticket §3.6). Phase 9 adds an auto-picker.
+   * scan (best-effort, ticket §3.6). A future change adds an
+   * auto-picker.
    *
    * @internal
    */
@@ -586,7 +587,7 @@ const runRead = async <T extends JSONArraylessObject>(
   state: QueryState<T>,
 ): Promise<ReadResult<T>> => {
   // ── Step 1. Read current.json (strong: fresh; eventual: cached). ──
-  // `strong` mirrors Phase-3 multi-instance rules: every read sees
+  // `strong` mirrors the multi-instance rules: every read sees
   // a fresh CAS snapshot, matching the writer's per-commit GET.
   // `eventual` skips the GET and serves the view this isolate
   // observed when it last advanced (the cache slot, anchored by
@@ -618,7 +619,7 @@ const runRead = async <T extends JSONArraylessObject>(
   // than throw. Mirrors `Storage.get` returning null on miss.
   if (head === null) return { rows: [], manifestPointer, fresh };
 
-  // ── Phase-8: optional index-walk fast path. ─────────────────────
+  // ── Optional index-walk fast path. ──────────────────────────────
   // When the caller opted in via `.useIndex(name)` and the predicate
   // matches one of the shapes the encoder can satisfy on a single-
   // field index (one top-level field = one literal value), walk the
@@ -668,7 +669,7 @@ const runRead = async <T extends JSONArraylessObject>(
   // I / U: post-image overwrite (today's per-doc-replace model). The
   //        writer emits `entry.new` as the FULL post-image
   //        (`packages/protocol/src/log.ts:67–72`: `new === patch`),
-  //        so the fold is a straight `set`, not a `merge`. Phase-9's
+  //        so the fold is a straight `set`, not a `merge`. A future
   //        partial-merge writer will introduce `entry.patch !== entry.new`
   //        — at that point the fold switches to `merge(prev, entry.patch)`
   //        for `patch` entries while keeping the straight `set` for
@@ -721,7 +722,7 @@ const runRead = async <T extends JSONArraylessObject>(
 };
 
 /**
- * Phase-8 — index-walk fast path. Returns `undefined` when the
+ * Index-walk fast path. Returns `undefined` when the
  * caller's predicate shape doesn't match a single-field index lookup
  * the encoder can satisfy; the outer `runRead` falls back to the
  * table-scan path in that case.

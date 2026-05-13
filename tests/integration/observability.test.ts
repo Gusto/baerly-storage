@@ -1,5 +1,5 @@
 /**
- * Phase-9 observability cross-check.
+ * Observability cross-check.
  *
  * The canonical log line's `db.storage.class_a_ops_total` and
  * `db.storage.class_b_ops_total` are the load-bearing fields for

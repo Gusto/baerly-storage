@@ -26,7 +26,7 @@ interface AppEnv extends BaerlyEnv {
   readonly CF_ACCESS_TEAM_DOMAIN?: string;
   readonly CF_ACCESS_AUDIENCE_TAG?: string;
   /**
-   * Phase-9 observability — `debug | info | warn | error`.
+   * Observability log level — `debug | info | warn | error`.
    * `info` (default) emits one canonical JSON line per request /
    * maintenance run on stdout (ingested by Workers Logs). `debug`
    * additionally emits per-storage-op events; high volume, leave
@@ -34,7 +34,7 @@ interface AppEnv extends BaerlyEnv {
    */
   readonly LOG_LEVEL?: FriendlyLogLevel;
   /**
-   * Phase-9 sample rate in `[0, 1]` for successful requests.
+   * Observability sample rate in `[0, 1]` for successful requests.
    * Errors are always kept; maintenance always emits. Default `0.1`.
    */
   readonly LOG_SAMPLE?: string;

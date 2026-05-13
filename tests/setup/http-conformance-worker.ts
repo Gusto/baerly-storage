@@ -14,7 +14,7 @@
  * R2 binding `BUCKET` (declared in `vitest.config.ts`'s
  * `miniflare.r2Buckets`) plus the shared `testVerifier()` from
  * `tests/fixtures/test-verifier.ts`. The factory expects an
- * `ExportedHandler<Env>` shape; the Phase-6 `Env` has `BUCKET` +
+ * `ExportedHandler<Env>` shape; the `Env` has `BUCKET` +
  * `APP` + `TENANT` (the latter ignored when `verifier` is supplied).
  *
  * One subtlety: `baerlyWorker.fetch` reads `env.BUCKET` per request,

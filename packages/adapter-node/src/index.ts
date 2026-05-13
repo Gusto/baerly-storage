@@ -5,7 +5,7 @@
  * `node:http` mount factory. Pairs with `@baerly/adapter-cloudflare`,
  * which provides the same surface for Workers + R2 bindings.
  *
- * Phase 6: `createListener` serves the full CRUD surface
+ * `createListener` serves the full CRUD surface
  * (`/v1/t/:table[/:id]`) plus an anonymous `/v1/healthz` probe via
  * the shared `createRouter` factory from `@baerly/server`. The
  * caller threads a `Verifier` through `createListener({ verifier })`

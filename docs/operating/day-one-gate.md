@@ -1,7 +1,7 @@
 ---
 title: Day-one handshake gate
 audience: operator
-summary: Pre-release manual gate that times scaffold → deploy → first record against the Phase-8 SLO.
+summary: Pre-release manual gate that times scaffold → deploy → first record against the day-one SLO.
 last-reviewed: 2026-05-12
 tags: [operations, gate, day-one, scaffold, deploy]
 related: ["backups.md"]
@@ -11,7 +11,7 @@ related: ["backups.md"]
 
 The day-one gate asserts that a non-engineer + Claude can go from
 `npm create baerly@latest` to a working `client.table().insert()`
-inside the Phase-8 SLO:
+inside the day-one SLO:
 
 - Cloudflare target: **< 5 min cold**
 - Node target: **< 3 min local**
@@ -20,7 +20,7 @@ Without any manual credential editing.
 
 ## When to run
 
-- Before a Phase-8 release.
+- Before a release.
 - After any change to `npm create baerly` (ticket 38), the deploy
   templates (tickets 39/40), or the auth presets (ticket 37).
 - After a `wrangler` major-version bump (the `--x-provision
@@ -141,7 +141,7 @@ DAY_ONE_BUDGET_NODE_MS=120000 DAY_ONE_TARGETS=node pnpm gate:day-one
 # 2 min instead of 3
 ```
 
-The default budgets are the Phase-8 SLO. Don't loosen them in CI;
+The default budgets are the day-one SLO. Don't loosen them in CI;
 loosen only for local-debug runs.
 
 ## Failure modes (with fixes)

@@ -9,7 +9,7 @@
  *
  * The `fetch(req, env, ctx)` Worker mount lives at the `/worker`
  * subpath: `import { baerlyWorker } from "@baerly/adapter-cloudflare/worker"`.
- * Phase 6 ships the full CRUD surface via the shared
+ * The adapter ships the full CRUD surface via the shared
  * `createRouter` factory in `@baerly/server`; callers thread a
  * `Verifier` through `baerlyWorker({ verifier })` to resolve the
  * tenant per request.

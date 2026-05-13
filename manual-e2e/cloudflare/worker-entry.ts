@@ -5,7 +5,7 @@
 // `create-baerly` instead.
 //
 // Uses the productized `sharedSecret` preset factory from
-// `@baerly/server` (Phase 8 — see
+// `@baerly/server` (see
 // `packages/server/src/auth/presets/shared-secret.ts`). The deploy
 // template emitted by `create-baerly` defaults to `cloudflareAccess()`
 // instead; this entry stays on `sharedSecret`

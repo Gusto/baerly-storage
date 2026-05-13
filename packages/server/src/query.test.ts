@@ -3,7 +3,7 @@
    declaration); reads expose it on rows. */
 
 /**
- * Phase-4 read terminals — examples per ticket 09 §5. All 12 cases
+ * Read terminals — examples per ticket 09 §5. All 12 cases
  * exercise the read path against `MemoryStorage`; no infra required.
  */
 
@@ -522,7 +522,7 @@ describe("Db.table read terminals", () => {
   });
 });
 
-describe("Db.table .useIndex() — Phase-8 index-walk fast path", () => {
+describe("Db.table .useIndex() — index-walk fast path", () => {
   let storage: MemoryStorage;
   let db: Db;
 

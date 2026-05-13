@@ -1,10 +1,10 @@
 /* eslint-disable no-underscore-dangle -- `_raw` is the locked public-symbol
-   name for the Phase-3 Storage escape hatch on `Db`; the long-poll handler
+   name for the Storage escape hatch on `Db`; the long-poll handler
    reaches through it to read `current.json` + log entries with the
    `app/<app>/tenant/<tenant>/` physical-prefix rewrite already applied. */
 
 /**
- * Phase-6 long-poll `GET /v1/since` handler core. Two exports:
+ * Long-poll `GET /v1/since` handler core. Two exports:
  *
  *  - {@link longPollSince} — the long-poll itself. Fast path first;
  *    if `listEventsSince` already sees events, return immediately.
@@ -316,8 +316,8 @@ export async function listEventsSince(opts: ListEventsSinceOptions): Promise<Log
   // ties by lsn-desc (newer-first) for the cross-session case. The
   // sort is REDUNDANT for a single-session writer — the list
   // returns keys in storage-defined order which mirrors lex. We
-  // sort anyway because Phase 6 admits multiple concurrent writer
-  // sessions sharing one `current.json`.
+  // sort anyway because the design admits multiple concurrent
+  // writer sessions sharing one `current.json`.
   entries.sort((a, b) => {
     if (a.session === b.session) return a.seq - b.seq;
     // Cross-session: tie-break on lsn lex-DESC (newer first under

@@ -3,9 +3,9 @@
    declaration); the synthetic seed populates it directly. */
 
 /**
- * Phase 5 — synthetic 5000-entry end-to-end verification gate.
+ * Synthetic 5000-entry end-to-end verification gate.
  *
- * The phase doc names this as the "verifies Phase 6 cost model" gate:
+ * The "verifies the cost model" gate:
  * write 5000 entries through `ServerWriter`, run `runScheduledMaintenance`
  * to quiescence, then assert
  *
@@ -107,7 +107,7 @@ const VARIANTS: readonly Variant[] = [
   },
 ];
 
-describe("Phase 5 — synthetic 5000-entry end-to-end gate", () => {
+describe("Synthetic 5000-entry end-to-end gate", () => {
   for (const variant of VARIANTS) {
     describe(variant.label, () => {
       let cleanup: (() => Promise<void>) | undefined;

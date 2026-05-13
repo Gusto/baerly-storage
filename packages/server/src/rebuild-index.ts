@@ -1,5 +1,5 @@
 /**
- * Phase-8 — idempotent reconciliation for one secondary index.
+ * Idempotent reconciliation for one secondary index.
  *
  * {@link rebuildIndex} folds the live `(snapshot, log_tail)` of a
  * collection into the doc set the writer's index emission would
@@ -62,15 +62,15 @@ export interface RebuildIndexResult {
 
 /**
  * Optional knobs accepted by {@link rebuildIndex}. Every field is
- * optional; the function behaves identically to the pre-Phase-9
+ * optional; the function behaves identically to the older
  * positional-arg shape when `opts` is omitted.
  *
  * @public — surfaced from `@baerly/server` so admin tooling and the
- *   Phase-9 observability layer can opt in.
+ *   observability layer can opt in.
  */
 export interface RebuildIndexOptions {
   /**
-   * Metrics sink. Reserved for the Phase-9 follow-up that wires
+   * Metrics sink. Reserved for a follow-up that wires
    * sweep counters (`db.gc.swept_total`-style emissions) on the
    * rebuild path. This commit only accepts the recorder; emission
    * lands in a later dispatch. Defaults to no sink.

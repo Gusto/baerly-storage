@@ -3,7 +3,7 @@
    through writer + rebuild-index CLI. */
 
 /**
- * Phase-8 — CLI smoke test for `baerly admin rebuild-index`.
+ * CLI smoke test for `baerly admin rebuild-index`.
  *
  * Mirrors ticket §6.6: bootstrap a `LocalFsStorage` collection
  * with one stale index key, run the CLI command, confirm

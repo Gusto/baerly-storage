@@ -73,6 +73,6 @@ registerPreset({
     notes:
       "Notes-app shape; recent-first reads dominate. Idle subworkload " +
       "(query-pre-compact / query-post-compact) must satisfy the " +
-      "Phase-5 < 1 Class A op / tenant / hour gate.",
+      "< 1 Class A op / tenant / hour gate.",
   },
 });

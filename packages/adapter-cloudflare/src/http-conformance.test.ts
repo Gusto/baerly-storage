@@ -20,13 +20,13 @@
  * cascade's table-per-test isolation holds. The same setup file
  * re-publishes the `BUCKET` binding on `__BAERLY_R2_BINDING__` so the
  * `provisionTable` callback can write `current.json` directly into R2
- * without going through `SELF.fetch` (Phase-6 has no "create table"
+ * without going through `SELF.fetch` (there is no "create table"
  * HTTP route).
  *
  * `supportsCacheApi: true` opts the conditional-GET block into the
  * Workerd-only assertion that `caches.default` doesn't corrupt the
  * doc shape on a second GET — but the cascade tolerates a 200
- * fall-through there too, because the Phase-6 router doesn't emit
+ * fall-through there too, because the router doesn't emit
  * `ETag` response headers and the cache layer has no etag to match.
  */
 

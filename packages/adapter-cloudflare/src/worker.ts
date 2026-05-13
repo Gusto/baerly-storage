@@ -62,7 +62,7 @@ export interface Env {
 }
 
 /**
- * Custom handler hook. Phase 6 ships the full CRUD surface via
+ * Custom handler hook. The router ships the full CRUD surface via
  * {@link createRouter}; callers who want to insert a route ahead of
  * the router (e.g. `/v1/admin/*`) wire it here. Returns `undefined`
  * to fall through to the default router.
@@ -118,13 +118,13 @@ export interface BaerlyWorkerOptions {
    * zero behavior change.
    *
    * Wire your aggregation backend here — Workers Analytics Engine,
-   * OpenTelemetry, statsd, in-memory rollup, etc. The Phase-9
+   * OpenTelemetry, statsd, in-memory rollup, etc. The
    * canonical-line bag is wired separately and reads through
    * {@link alsAwareRecorder} alongside this sink.
    */
   readonly metrics?: MetricsRecorder;
   /**
-   * Phase-9 observability config (LogTape sink + level + head sample
+   * Observability config (LogTape sink + level + head sample
    * rate). When supplied, the Worker calls
    * {@link configureObservability} lazily on first `fetch` /
    * `scheduled` invocation (CF Worker modules can't `await` at the
@@ -162,8 +162,8 @@ export interface BaerlyWorkerOptions {
  * hook still gets first crack at the request after auth; the router
  * catches everything else.
  *
- * The `scheduled` handler wires Cron Triggers to the Phase-5
- * compactor + GC. To enable it, add to `wrangler.toml`:
+ * The `scheduled` handler wires Cron Triggers to the compactor +
+ * GC. To enable it, add to `wrangler.toml`:
  *
  * ```toml
  * [triggers]
@@ -184,7 +184,7 @@ export interface BaerlyWorkerOptions {
  * import type { Verifier } from "@baerly/protocol";
  *
  * // Production: parse a bearer token and pin the tenant from a JWT
- * // claim. Phase 8 preset factories handle JWKS / Cloudflare-Access.
+ * // claim. Preset factories handle JWKS / Cloudflare-Access.
  * const verifier: Verifier = async (req) => {
  *   const auth = req.headers.get("authorization");
  *   if (auth !== "Bearer dev-token") return null;
@@ -238,8 +238,8 @@ export function baerlyWorker(options: BaerlyWorkerOptions): ExportedHandler<Env>
 
       // Healthz is always anonymous — Cloudflare's load balancer
       // probes it. Keep it ahead of the verifier check. The router's
-      // Phase-9 observability middleware also short-circuits on
-      // healthz, but doing it here too avoids a Db construction on
+      // observability middleware also short-circuits on healthz,
+      // but doing it here too avoids a Db construction on
       // every probe.
       if (req.method === "GET" && url.pathname === "/v1/healthz") {
         return new Response(JSON.stringify({ ok: true }), {
@@ -287,7 +287,7 @@ export function baerlyWorker(options: BaerlyWorkerOptions): ExportedHandler<Env>
       // `withReadCache` wants a `Promise<Response>`. Normalize via
       // `Promise.resolve` so the sync-return branch is wrapped.
       //
-      // Cache-status stamping: deferred. The router's Phase-9
+      // Cache-status stamping: deferred. The router's observability
       // middleware creates + flushes the canonical context entirely
       // inside its `runWithContext` block, so reaching into the
       // context from the cache wrapper would require relocating

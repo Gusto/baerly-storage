@@ -1,5 +1,5 @@
 /**
- * Phase-5 GC mark + sweep.
+ * GC mark + sweep.
  *
  * `runGc` is a single-pass garbage collector that:
  *   1. Reads `current.json` (and bootstraps `gc/pending.json` on first

@@ -2,7 +2,7 @@
  * `abortingStorage(inner)` — a `Storage` proxy that aborts the K-th
  * operation mid-call, *before* it touches the wrapped storage.
  *
- * The Phase 5 crash fuzzer
+ * The crash fuzzer
  * (`tests/integration/phase5-crash-fuzz.test.ts`) uses this to
  * simulate process death between any two consecutive I/Os in the
  * writer / compactor / GC pipelines. Counting every `get` / `put` /

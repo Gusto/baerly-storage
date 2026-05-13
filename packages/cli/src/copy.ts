@@ -320,7 +320,7 @@ export const runCopy = async (argv: readonly string[]): Promise<number> => {
  *
  * Cost shape: `1 GET (current.json) + 1 GET (snapshot, if any) + N
  * GETs (live tail) + 1 PUT (target snapshot) + 1 PUT (target
- * current.json)`. Under the Phase-5 idle live-tail cap (~100 entries)
+ * current.json)`. Under the idle live-tail cap (~100 entries)
  * the snapshot dominates — roughly a 100× reduction over a naive
  * log-replay.
  *

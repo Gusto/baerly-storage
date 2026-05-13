@@ -2,7 +2,7 @@
   "name": "@baerly/realtime",
   "version": "0.0.0",
   "private": true,
-  "description": "Cloudflare Durable Object notification bus. Optional binding, Phase 8. Stub.",
+  "description": "Cloudflare Durable Object notification bus. Optional binding. Stub.",
   "license": "MIT",
   "type": "module",
   "dependencies": {

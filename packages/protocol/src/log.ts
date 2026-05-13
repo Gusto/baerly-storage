@@ -46,8 +46,8 @@ export interface LogEntry {
    * Collection name — the pgoutput RELATION analogue. Today derived
    * from the path segment immediately under the manifest prefix
    * (the part of `ref.key` before the first `/`); falls back to
-   * `ref.bucket` for flat keys with no separator. Phase 4 (table
-   * API) makes collections first-class.
+   * `ref.bucket` for flat keys with no separator. The table API
+   * makes collections first-class.
    */
   collection: string;
 
@@ -57,8 +57,8 @@ export interface LogEntry {
   /**
    * Monotonic per collection. Schema for the doc body is announced
    * out-of-band; this field lets the consumer match a log entry to
-   * the schema in effect at write time. Always `0` until Phase 4
-   * lands the table API.
+   * the schema in effect at write time. Always `0` today; reserved
+   * for a future schema-versioning scheme.
    */
   schema_version: number;
 
@@ -75,7 +75,7 @@ export interface LogEntry {
   /**
    * The pre-image. Present iff the collection's `replica_identity`
    * is `FULL`. ~2× log size on update-heavy collections; off by
-   * default. Phase 4 introduces the per-collection opt-in.
+   * default.
    */
   old?: JSONArraylessObject;
 
@@ -113,8 +113,8 @@ export interface LogEntry {
  *   replication and "previous value" answerable from the log
  *   alone.
  *
- * Per-collection opt-in lands in Phase 4 (table API). Until then
- * every collection is `PATCH_ONLY`.
+ * Per-collection opt-in is not yet wired; every collection is
+ * currently `PATCH_ONLY`.
  */
 export type ReplicaIdentity = "PATCH_ONLY" | "FULL";
 

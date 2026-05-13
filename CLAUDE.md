@@ -55,7 +55,7 @@ Don't introduce alternate tooling without justification.
 | `pnpm test:fuzz-phase5` | crash-injection fuzzer for the maintenance loop (`phase5-crash-fuzz.test.ts`) — aborts the K-th storage op inside `ServerWriter` / `compact()` / `runGc()` and asserts the reader still sees a consistent row set | minutes-hours at `FC_NUM_RUNS=10000` | use after touching `compactor.ts` / `gc.ts` / `server-writer.ts` |
 | `pnpm dev:storage` | brings up Minio `:9102` + Toxiproxy `:9104` + Postgres `:5433` | n/a | required for `test:minio` / `test:conformance` / `test:export-smoke` / `test:adapter-node` / `test:adapters` |
 | `pnpm test:manual-e2e` | runs `manual-e2e/cloudflare/e2e.test.ts` + `manual-e2e/node/e2e.test.ts` against deployed URLs (HTTP conformance cascade + latency probe + long-poll wall-clock + 401 sniff) | minutes per run | requires `CF_DEPLOY_URL` + `NODE_DEPLOY_URL` + `SHARED_SECRET` (+ `CF_R2_*` / `AWS_*` for the conformance cascade); manual deploy lifecycle in `manual-e2e/README.md` |
-| `pnpm bench:r2` | one-shot R2-contention bench (S1 / S2-idle / S3-toxic); validates Phase 5 idle-reader bound on the wire — exit 0 when bound holds, 1 when violated | ~1–5 min per scenario | requires `pnpm dev:storage`; see `bench/README.md` |
+| `pnpm bench:r2` | one-shot R2-contention bench (S1 / S2-idle / S3-toxic); validates the idle-reader bound on the wire — exit 0 when bound holds, 1 when violated | ~1–5 min per scenario | requires `pnpm dev:storage`; see `bench/README.md` |
 | `pnpm bench:load` | one-shot load harness on memory backend (no infra); writes one JSON per run to `bench/results/load/` | ~seconds per preset | ✅ on `main` — no infra required; see `bench/README.md` |
 | `pnpm bench:load:minio` | same as `bench:load` but with `--variant=node-minio` against local Minio | ~30s–2 min per preset | requires `MINIO=1` + `pnpm dev:storage` |
 | `pnpm bench:load:matrix` | sequential sweep over presets × variants × cache modes; writes one timestamped subdirectory under `bench/results/load/` | minutes–tens of minutes | partial: `memory` + `local-fs` rows always; `node-minio` rows require `MINIO=1` + `pnpm dev:storage` |
@@ -179,7 +179,7 @@ Read in this order to build a mental model:
 3. `packages/server/src/table.ts`, `packages/server/src/query.ts` —
    `Table<T>` / `Query<T>` SQL-shape API + predicate AST.
 4. `packages/server/src/server-writer.ts` — `ServerWriter` stateless
-   commit path: PUT content → PUT log entry → (Phase-8) PUT/DELETE
+   commit path: PUT content → PUT log entry → PUT/DELETE
    index entries → CAS-advance `current.json`.
 5. `packages/server/src/indexes.ts` — `IndexDefinition`, key
    encoding (lex-order-preserving base-32), and per-doc projection

@@ -4,8 +4,8 @@
  *
  * A dedicated `coordination/` namespace (parallel to `storage/`) holds
  * primitives whose contract is "atomic agreement over a small JSON
- * object" rather than "byte I/O." Future siblings (Phase 5 compactor
- * manifest, Phase 6 sweeper checkpoint) join here, not at the top
+ * object" rather than "byte I/O." Future siblings (compactor
+ * manifest, sweeper checkpoint) join here, not at the top
  * level. The module lives inside `@baerly/protocol` because it is pure
  * (no Node imports, no `node:fs`, no `Buffer`, no `node:crypto`,
  * no implicit globals) and must remain Worker-bundleable — every byte
@@ -28,8 +28,8 @@
  *
  * Why CAS errors are wrapped: every in-tree {@link Storage} impl
  * surfaces a lost CAS as `BaerlyError{code:"Conflict"}`. Downstream
- * callers — the Phase 3 ServerWriter, the Phase 5 compactor, the
- * Phase 6 sweeper — discriminate by `code` to decide whether to retry.
+ * callers — the ServerWriter, the compactor, the sweeper —
+ * discriminate by `code` to decide whether to retry.
  * We re-wrap here only to add the `current.json at <key>` location
  * context to the message; the `code` is unchanged.
  */
@@ -41,11 +41,11 @@ import type { Storage, StoragePutOptions, StoragePutResult } from "../storage/ty
 /**
  * Per-collection control object. CAS-protected. One per
  * `(tenant, collection)` key — for example
- * `<tenant>/<collection>/current.json`. The Phase 5 compactor swaps
- * snapshot generations by CAS-writing this object; the Phase 3
+ * `<tenant>/<collection>/current.json`. The compactor swaps
+ * snapshot generations by CAS-writing this object; the
  * ServerWriter reads it on every commit to find the snapshot
- * pointer; the Phase 6 sweeper reads `writer_fence` to decide
- * which log entries are eligible for GC.
+ * pointer; the sweeper reads `writer_fence` to decide which log
+ * entries are eligible for GC.
  *
  * The schema is forward-compatible: adding a new optional field is
  * non-breaking. Renaming or removing a field requires bumping
@@ -81,7 +81,7 @@ export interface CurrentJson {
    * have been folded into the snapshot at {@link snapshot} (or, if
    * `snapshot === null`, have been dropped because the collection was
    * truncated). Readers walk `[log_seq_start, next_seq)`. Defaults to
-   * `0` when missing (old records pre-Phase-5) — backward-compatible
+   * `0` when missing (legacy records without this field) — backward-compatible
    * with collections provisioned before this field landed. Always read
    * through {@link logSeqStartOf} rather than destructuring inline.
    *
@@ -119,8 +119,8 @@ export interface WriterFence {
    * {@link claimWriter} call — do NOT bump on every cold start, do
    * NOT bump on every commit. Triggers per design: (a) detected
    * CAS conflict the writer wants to claim through, (b) admin
-   * rotation. The Phase 6 sweeper discards log entries whose
-   * stamped epoch is `< current.writer_fence.epoch`.
+   * rotation. The sweeper discards log entries whose stamped epoch
+   * is `< current.writer_fence.epoch`.
    */
   epoch: number;
 
@@ -146,9 +146,9 @@ export interface WriterFence {
 
   /**
    * Optional explicit lease horizon, also ISO-8601. Reserved for
-   * Phase 6+ manual rotation workflows; this ticket only writes
-   * the field through if a caller supplies it. No code in this
-   * batch reads it.
+   * future manual rotation workflows; current code only writes
+   * the field through if a caller supplies it and does not read
+   * it.
    */
   lease_until?: string;
 }

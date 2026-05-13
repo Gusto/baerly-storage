@@ -1,5 +1,5 @@
 /**
- * Phase-5 `gc/pending.json` control-object helpers. Mirrors
+ * `gc/pending.json` control-object helpers. Mirrors
  * `current-json.test.ts` — round-trip, CAS, shape guards.
  */
 

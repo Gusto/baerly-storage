@@ -8,7 +8,7 @@
  *
  * Mirrors `defineStorageConformanceSuite` from
  * `packages/protocol/src/storage/conformance.ts` but over the
- * Phase-6 HTTP wire instead of the in-process `Storage` interface.
+ * HTTP wire instead of the in-process `Storage` interface.
  * Same describe-block organisation, same capability-flag policy, same
  * `beforeEach` reset pattern (each `freshTable(...)` minted in a test
  * body is its own namespace — table provisioning happens server-side
@@ -34,7 +34,7 @@ import { CONFORMANCE_BEARER, CONFORMANCE_TENANT } from "./test-verifier.ts";
 
 /**
  * Capability flags + arbitrary overrides for the HTTP conformance
- * cascade. Defaults match what every Phase-6 adapter on this branch
+ * cascade. Defaults match what every adapter on this branch
  * supports; variants opt out of features they don't surface yet.
  */
 export interface HttpConformanceOptions {
@@ -64,7 +64,7 @@ export interface HttpConformanceOptions {
    * → 304. Workerd-only: the Node listener has no `caches.default`.
    *
    * Even when `true`, the cascade tolerates a 200 fall-through: the
-   * Phase-6 router does not emit `ETag` headers on the GET response
+   * router does not emit `ETag` headers on the GET response
    * today, so the Worker cache layer has no etag to compare against
    * and the 304-rewrite branch never fires. The assertion is "either
    * 304 or 200 with the body" — the load-bearing invariant is that
@@ -83,7 +83,7 @@ export type HttpFetch = (req: Request) => Promise<Response>;
 
 /**
  * Provision `current.json` for a (test-verifier tenant, app, table)
- * triple. The Phase-6 HTTP surface has no "create table" endpoint;
+ * triple. The HTTP surface has no "create table" endpoint;
  * the underlying `ServerWriter.commit()` throws `InvalidResponse`
  * when `current.json` is missing. Production deployments provision
  * via `createCurrentJson()` at deploy time; tests need the same
@@ -99,7 +99,7 @@ export type HttpFetch = (req: Request) => Promise<Response>;
 export type ProvisionTable = (table: string) => Promise<void>;
 
 /**
- * The route prefix is hard-coded in the locked Phase-6 contract
+ * The route prefix is hard-coded in the locked HTTP contract
  * (`packages/server/src/contract.ts:39-51`). Tests build URLs against
  * a synthetic `http://test.local` host — the listener ignores the
  * authority, only path + query matter.
@@ -340,7 +340,7 @@ export const runHttpConformanceCascade = (opts: {
 
     // ── Block 2: CAS via If-Match — gated on supportsCAS ────────────
     //
-    // The current Phase-6 router does NOT thread `If-Match` headers
+    // The current router does NOT thread `If-Match` headers
     // through to `Storage.put({ ifMatch })`; see
     // `packages/server/src/http/router.ts:162-185`. PATCH against a
     // known id always lands. We keep the describe block compiled so
@@ -381,7 +381,7 @@ export const runHttpConformanceCascade = (opts: {
     // So the only invariant we can assert here is: a GET with an
     // `If-None-Match` header that the server can't match returns 200
     // with the body — i.e. the conditional header doesn't accidentally
-    // short-circuit on the Phase-6 surface.
+    // short-circuit on the HTTP surface.
     describe("conditional GET — If-None-Match", () => {
       test("If-None-Match with a stale tag returns 200 + body", async () => {
         const table = await mintTable("cond");
@@ -640,7 +640,7 @@ export const runHttpConformanceCascade = (opts: {
 
     // ── Block 11: read response `_meta` (ticket 33) ─────────────────
     //
-    // The Phase-6 router emits `_meta.{manifest_pointer, fresh}` on
+    // The router emits `_meta.{manifest_pointer, fresh}` on
     // every successful read response (single-doc + list). Wire-level
     // tests can't surface `fresh:false` because each HTTP request
     // builds a fresh `Db` (the adapters mint one per request in

@@ -5,7 +5,7 @@ import { describe, expect, test } from "vitest";
 
 // ADR-0001 motivates the vendorless choice on bundle weight: this lib
 // ships into a user's app bundle, so every byte we add is a byte they
-// pay. Phase-8 ticket 37 added five auth-preset verifiers to the
+// pay. Ticket 37 added five auth-preset verifiers to the
 // kernel barrel, pushing the unminified bundle from ~168 KiB to
 // ~213 KiB. Rather than just bump the budget, we split the surface
 // into subpath entrypoints (`baerly-storage/auth`, `baerly-storage/http`)
@@ -42,8 +42,8 @@ interface Budget {
 const BUDGETS: readonly Budget[] = [
   // Full barrel: kernel + maintenance + http + auth + observability.
   // Subpath users skip what they don't need; barrel users get
-  // everything. Phase-9 ticket added the observability surface
-  // (LogTape + canonical-line plumbing) which lands in this closure
+  // everything. The observability surface
+  // (LogTape + canonical-line plumbing) lands in this closure
   // via the router and bumped the budget ~50% to ~350 KiB raw.
   { entry: "index.js", raw: 350 * 1024, gz: 100 * 1024 },
   // Just the five auth verifier factories. Adding a sixth grows
@@ -51,10 +51,10 @@ const BUDGETS: readonly Budget[] = [
   { entry: "auth.js", raw: 34 * 1024, gz: 12 * 1024 },
   // Hono-backed HTTP router + long-poll/since helpers + observability
   // middleware. Heavy because Hono itself is heavy (a follow-up may
-  // move to `hono/tiny`) plus the Phase-9 observability primitives
+  // move to `hono/tiny`) plus the observability primitives
   // the middleware needs at every request boundary. ~270 KiB raw.
   { entry: "http.js", raw: 270 * 1024, gz: 75 * 1024 },
-  // Phase-9 observability primitives — ObservabilityContext, the
+  // Observability primitives — ObservabilityContext, the
   // request-scoped MetricsRecorder, LogTape config + sinks, canonical
   // line flush, observableStorage decorator. LogTape itself accounts
   // for the bulk; a smaller direct-stdout sink could trim further.

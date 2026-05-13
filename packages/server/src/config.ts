@@ -1,5 +1,5 @@
 /**
- * Phase-8 collection-config schema. The `baerly.config.ts` file that
+ * Collection-config schema. The `baerly.config.ts` file that
  * ticket 38's `npm create baerly` scaffold ships at the app root has
  * this shape; adapters load it once per process and thread declared
  * fields (`indexes`, future: `schema`, `replica_identity`, lifecycle

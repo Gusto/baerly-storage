@@ -8,7 +8,7 @@
  * `ExecutionContext` / `R2Bucket` types resolve and the R2 binding
  * is real.
  *
- * Covers the Phase-6 CRUD surface end-to-end through the
+ * Covers the CRUD surface end-to-end through the
  * `r2BindingStorage` → `Db` → `createRouter` pipeline.
  */
 

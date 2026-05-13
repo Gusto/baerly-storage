@@ -38,7 +38,7 @@ import {
  *   Receives every kernel emission (ServerWriter histograms,
  *   CAS-conflict counters, storage per-call counts) verbatim.
  *   Defaults to {@link noopMetricsRecorder}.
- * - `observability` — Phase-9 LogTape config (level/sink/sampleRate)
+ * - `observability` — LogTape config (level/sink/sampleRate)
  *   with `LOG_LEVEL` / `LOG_SAMPLE` envvar fallbacks. When the field
  *   is unset, the default sink is auto-selected: `"console-pretty"`
  *   when `process.stdout.isTTY === true` (developer terminals),
@@ -67,7 +67,7 @@ export interface CreateListenerOptions {
 
 /**
  * Build a `node:http`-compatible {@link RequestListener} that serves
- * the Phase-6 CRUD surface.
+ * the CRUD surface.
  *
  * The factory returns a {@link RequestListener} (`(req, res) => void`),
  * not a pre-built `http.Server`. Callers own TLS termination, port
@@ -81,7 +81,7 @@ export interface CreateListenerOptions {
  * The shape mirrors the Cloudflare adapter's `fetch(req, env, ctx)`
  * — both are functions composed into the host's request lifecycle.
  *
- * Phase 6 surface:
+ * CRUD surface:
  * - `GET /v1/healthz` → `200 {"ok":true}` (anonymous; verifier
  *   bypassed).
  * - The five CRUD routes from `contract.ts` (`GET/POST/PATCH/DELETE
@@ -110,8 +110,8 @@ export interface CreateListenerOptions {
  * ```
  */
 export function createListener(opts: CreateListenerOptions): RequestListener {
-  // Phase-9 wiring. Three pieces, all idempotent + non-blocking on
-  // the request hot path:
+  // Observability wiring. Three pieces, all idempotent + non-blocking
+  // on the request hot path:
   //
   // 1. `configureObservability` is called once at factory time.
   //    Node supports top-level `await`, but the factory is sync, so
@@ -338,7 +338,7 @@ export interface NodeMaintenanceOptions {
   /**
    * Operator's long-term {@link MetricsRecorder}. Defaults to
    * {@link noopMetricsRecorder}. Receives every compactor + GC
-   * emission verbatim alongside the Phase-9 canonical-line bag
+   * emission verbatim alongside the canonical-line bag
    * created by `withObservability("maintenance", ...)` inside
    * `runScheduledMaintenance`.
    */

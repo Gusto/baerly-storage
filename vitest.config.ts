@@ -1,5 +1,5 @@
 // Vitest 4 `projects:` split. The default project runs the in-tree and
-// Node-only suites under `pool: "forks"` (same as pre-Phase-3). The
+// Node-only suites under `pool: "forks"` (same as before). The
 // `cloudflare-pool` project runs `r2BindingStorage` conformance under
 // `@cloudflare/vitest-pool-workers` so the test executes against a
 // real Workerd R2 binding. Both projects share
@@ -49,7 +49,7 @@ const vitestTestTimeoutMs = isRandomize ? 600_000 : isMinio ? 30_000 : 5_000;
 // opt in with `CONFORMANCE=1 pnpm test` (or `pnpm test:conformance`).
 const conformanceExclude = process.env.CONFORMANCE === "1" ? [] : ["**/conformance.test.ts"];
 
-// `export-smoke.test.ts` translates frozen Phase-1 `LogEntry` shapes
+// `export-smoke.test.ts` translates frozen `LogEntry` shapes
 // into a real Postgres on `:5433` (provisioned by `pnpm dev:storage`).
 // Excluded by default; opt in with `EXPORT_SMOKE=1 pnpm test` (or
 // `pnpm test:export-smoke`). The test file itself also uses
@@ -97,7 +97,7 @@ const r2BindingRandomizedGlob = "packages/adapter-cloudflare/src/randomized.test
 const r2BindingTableApiGlob = "packages/adapter-cloudflare/src/table-api.test.ts";
 
 // `baerlyWorker()`'s fetch + scheduled tests — exercises the Cron
-// Trigger plumbing and the Phase-6 CRUD route fan-out against the
+// Trigger plumbing and the CRUD route fan-out against the
 // miniflare R2 binding. Same project membership rules as the three
 // globs above. Glob is `worker*.test.ts` so both `worker.test.ts`
 // (scheduled handler) and `worker-routes.test.ts` (CRUD routes) are
@@ -187,7 +187,7 @@ export default defineConfig({
             // `main` points at the worker module wired into miniflare
             // as the `SELF` binding — the HTTP-conformance Workerd
             // variant (`packages/adapter-cloudflare/src/http-conformance.test.ts`)
-            // calls `SELF.fetch(req)` to drive the full Phase-6 CRUD
+            // calls `SELF.fetch(req)` to drive the full CRUD
             // surface through `baerlyWorker({ verifier: testVerifier() })`.
             // The other cloudflare-pool tests don't reference `SELF`,
             // so wiring a `main` for them is a no-op.

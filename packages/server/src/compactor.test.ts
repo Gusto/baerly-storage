@@ -3,7 +3,7 @@
    declaration); snapshot body docs carry it through. */
 
 /**
- * Phase-5 compactor — `compact()` happy paths and invariants under
+ * Compactor — `compact()` happy paths and invariants under
  * `MemoryStorage`. The cross-adapter coverage (memory / local-fs /
  * node-minio / cloudflare-r2) is exercised by the `[compaction]`
  * variant inside `tests/fixtures/table-api-cascade.ts`.

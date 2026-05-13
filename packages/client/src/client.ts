@@ -88,7 +88,7 @@ export interface ClientQuery<T extends JSONArraylessObject = JSONArraylessObject
   limit(n: number): ClientQuery<T>;
   consistency(level: ConsistencyLevel): ClientQuery<T>;
   /**
-   * Phase-8 secondary-index hint. Mirrors the server-side
+   * Secondary-index hint. Mirrors the server-side
    * `Query.useIndex` surface so an app can write the same chain
    * against the in-process `Db` and the HTTP client.
    *
@@ -107,7 +107,7 @@ export interface ClientQuery<T extends JSONArraylessObject = JSONArraylessObject
   first(): Promise<T | undefined>;
   /** Every matching document. Pair with `.limit(n)` on large tables. */
   all(): Promise<T[]>;
-  /** Count matching rows. Issues `GET /v1/t/:table?where=&limit=` then `.length` (Phase-8 simplification). */
+  /** Count matching rows. Issues `GET /v1/t/:table?where=&limit=` then `.length`. */
   count(): Promise<number>;
   /** JSON-merge-patch applied to the single matching row. Requires `.where({ _id })`. */
   update(patch: Partial<T>): Promise<{ readonly modified: number }>;
@@ -219,7 +219,7 @@ interface QueryState {
   readonly limit: number | undefined;
   readonly consistency: ConsistencyLevel | undefined;
   /**
-   * Phase-8 — opt-in secondary-index hint. Today the HTTP route
+   * Opt-in secondary-index hint. Today the HTTP route
    * ignores it; the field reserves the wire bit for a follow-up
    * `?useIndex=<name>` query parameter.
    */
@@ -304,8 +304,8 @@ const makeClientQuery = <T extends JSONArraylessObject>(
     limit: (n): ClientQuery<T> => makeClientQuery<T>(ctx, tableName, { ...state, limit: n }),
     consistency: (level): ClientQuery<T> =>
       makeClientQuery<T>(ctx, tableName, { ...state, consistency: level }),
-    // Phase-8: opt-in index hint. The HTTP route does NOT propagate
-    // the hint today; the client-side state retains it for future
+    // Opt-in index hint. The HTTP route does NOT propagate the hint
+    // today; the client-side state retains it for future
     // wire support. Last-call-wins per the protocol contract.
     useIndex: (name): ClientQuery<T> =>
       makeClientQuery<T>(ctx, tableName, { ...state, useIndex: name }),
@@ -328,8 +328,8 @@ const makeClientQuery = <T extends JSONArraylessObject>(
       return [...data];
     },
     async count(): Promise<number> {
-      // Phase-8 simplification: no dedicated `/v1/count` route exists
-      // (router.ts:130 lists only the six locked routes). We issue
+      // No dedicated `/v1/count` route exists (router.ts:130 lists
+      // only the six locked routes). We issue
       // the list and take `.length`. When/if a count route lands,
       // swap to it here without changing the public signature.
       const data = await request<ReadonlyArray<T>>(ctx, {

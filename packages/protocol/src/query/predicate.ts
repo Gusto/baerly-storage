@@ -1,7 +1,7 @@
 /**
  * Runtime predicate AST + evaluator for the table API.
  *
- * The `Predicate<T>` declared in `../db.ts` (Phase 2) is the on-the-wire
+ * The `Predicate<T>` declared in `../db.ts` is the on-the-wire
  * shape. It is **also** the AST — there is no separate compile step.
  * This module:
  *

@@ -1,5 +1,5 @@
 /**
- * `ServerWriter` — stateless multi-instance write engine for Phase 3+.
+ * `ServerWriter` — stateless multi-instance write engine.
  *
  * Each {@link ServerWriter.commit} call reads `current.json` FRESH from
  * the bucket, mints the next {@link LogEntry}, PUTs the content body
@@ -20,8 +20,8 @@
  * → CAS. New loop: PUT content → PUT log entry → CAS-advance
  * `current.json`. A crashed mid-loop writer leaves an unreferenced
  * content body (no log entry points at it), not an orphan log entry
- * with missing content. The Phase 5 compactor sweeps the orphan
- * content later.
+ * with missing content. The compactor sweeps the orphan content
+ * later.
  *
  * **`LogEntry` shape parity.** Emitted entries match the shape that
  * the legacy `Syncer.updateContent` log-emit produces
@@ -120,8 +120,8 @@ export interface ServerWriterOptions {
    * Validated at construction via {@link validateIndexDefinition} —
    * an invalid def throws `BaerlyError{code:"SchemaError"}`
    * synchronously, before the first commit. Empty / undefined is
-   * a no-op (writer behaves exactly as pre-Phase-8 — no extra
-   * GET, no extra PUTs).
+   * a no-op (writer behaves identically to the no-index path — no
+   * extra GET, no extra PUTs).
    *
    * Note: `ServerWriter` is per-collection (the `currentJsonKey`
    * is per-collection), so this array applies to one collection
@@ -164,7 +164,7 @@ export interface ServerWriterOptions {
 export interface CommitInput {
   /**
    * The mutation op. Maps directly to {@link LogEntry.op}. `T` and `M`
-   * (TRUNCATE / MESSAGE) are out of scope for Phase 3.
+   * (TRUNCATE / MESSAGE) are out of scope here.
    */
   readonly op: "I" | "U" | "D";
 
@@ -260,9 +260,9 @@ type SingleAttemptOutcome =
 /**
  * Stateless write engine for the multi-instance core.
  *
- * Construction is cheap and performs zero I/O — Phase 3 adapters
- * build a fresh `ServerWriter` per request and discard it. All real
- * work happens in {@link commit}.
+ * Construction is cheap and performs zero I/O — adapters build a
+ * fresh `ServerWriter` per request and discard it. All real work
+ * happens in {@link commit}.
  *
  * @example
  * ```ts
@@ -478,7 +478,7 @@ export class ServerWriter {
    * Crash safety invariant: content / index PUTs are awaited before
    * log PUTs, which are awaited before the CAS. A crashed mid-attempt
    * writer leaves orphan content / index entries (no log entry
-   * references them) — the Phase-5 compactor sweeps the orphans. The
+   * references them) — the compactor sweeps the orphans. The
    * inverse — orphan log entry with missing content — is never
    * produced.
    */
@@ -718,8 +718,8 @@ export class ServerWriter {
   }
 
   /**
-   * Phase-8 — read the pre-image content body for a doc by walking
-   * the live log backwards from `currentNextSeq` looking for the
+   * Read the pre-image content body for a doc by walking the live
+   * log backwards from `currentNextSeq` looking for the
    * most-recent I/U entry on this `(collection, docId)`. Returns
    * `undefined` when:
    *
@@ -794,7 +794,7 @@ export class ServerWriter {
    * because the per-doc fold already lives in the read path. See the
    * option's docstring for the rationale and the opt-in convention.
    *
-   * `logSeqStart` is the boundary set by the Phase-5 compactor on
+   * `logSeqStart` is the boundary set by the compactor on
    * `current.json.log_seq_start`. Entries below it have been folded
    * into the snapshot and may have been swept off the bucket, so the
    * walk MUST NOT GET-require them.

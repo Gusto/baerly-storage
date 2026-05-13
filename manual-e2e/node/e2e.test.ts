@@ -25,7 +25,7 @@
  *   - `BUCKET`                — same bucket the container writes to
  *   - `S3_ENDPOINT`           — optional override (R2 S3-compat etc.)
  *
- * Phase 6 has no "create table" HTTP route, so the cascade needs a
+ * There is no "create table" HTTP route, so the cascade needs a
  * direct `Storage` handle to seed `current.json` per fresh table.
  * The test process opens its own `S3HttpStorage` against the same
  * bucket the container talks to.

@@ -50,7 +50,7 @@ const verifier: Verifier =
       })
     : sharedSecret({ secret: reqEnv("SHARED_SECRET"), tenantPrefix: TENANT });
 
-// Phase-9 observability — one canonical JSON line per request /
+// Observability — one canonical JSON line per request /
 // maintenance run on stdout. `LOG_LEVEL` toggles between
 // `debug | info | warn | error` (default `info`); `LOG_SAMPLE` is
 // the head-based sample rate for successful requests in `[0, 1]`

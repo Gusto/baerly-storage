@@ -4,7 +4,7 @@
  * failure.
  *
  * `tenantPrefix` is the value passed to `Db.create({ tenant })`.
- * The HTTP dispatcher (Phase 6) uses it for **two** distinct
+ * The HTTP dispatcher uses it for **two** distinct
  * responsibilities:
  *
  * 1. **Scope check (403).** The dispatcher compares the request's
@@ -23,7 +23,7 @@
  *    client error.
  *
  * `identity` is opaque to the protocol kernel and to the
- * dispatcher. Preset Verifier factories (Phase 8) decide the shape:
+ * dispatcher. Preset Verifier factories decide the shape:
  * a JWT verifier returns the decoded claim set, a SigV4 verifier
  * returns the IAM principal ARN, a shared-secret verifier returns
  * a constant token. Application code that needs to read `identity`
@@ -40,7 +40,7 @@ export interface VerifierResult {
 
   /**
    * Per-Verifier identity payload. `unknown` because preset
-   * factories (Phase 8) choose their own shape; the dispatcher
+   * factories choose their own shape; the dispatcher
    * never reads this field. Application code that wants the
    * identity reads it off the request context the dispatcher
    * attaches.
@@ -53,7 +53,7 @@ export interface VerifierResult {
  * {@link VerifierResult} (authenticated) or `null` (rejected).
  *
  * One function, one responsibility — auth in baerly is not a
- * middleware chain. The Phase 6 HTTP dispatcher invokes the
+ * middleware chain. The HTTP dispatcher invokes the
  * configured `Verifier` exactly once per request, before any
  * `Storage` I/O, and either constructs a tenant-scoped `Db` or
  * returns 401 `BaerlyError{code:"Unauthorized"}`.
@@ -91,15 +91,15 @@ export interface VerifierResult {
  * import type { Verifier } from "@baerly/protocol";
  *
  * // A trivial Verifier that pins every request to one tenant.
- * // Useful for tests and single-tenant deployments before the
- * // Phase 8 preset factories ship.
+ * // Useful for tests and single-tenant deployments instead of the
+ * // preset factories.
  * const single: Verifier = async (_req) => ({
  *   tenantPrefix: "acme-co",
  *   identity: { kind: "static" },
  * });
  *
  * // A Verifier that reads an `X-Tenant` header and rejects when
- * // it's missing. The Phase 8 factories produce something like
+ * // it's missing. The preset factories produce something like
  * // this on top of a real IdP — never trust an `X-Tenant` header
  * // in production.
  * const headerOnly: Verifier = async (req) => {

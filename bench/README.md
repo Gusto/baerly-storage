@@ -1,9 +1,9 @@
 ---
 title: Bench harnesses
 audience: coder
-summary: Two bench harnesses under bench/ — r2-contention.ts and load-harness/. When to run each, how to read results, DuckDB analysis pattern, and Phase 11 green-light criteria.
+summary: Two bench harnesses under bench/ — r2-contention.ts and load-harness/. When to run each, how to read results, DuckDB analysis pattern, and green-light criteria.
 last-reviewed: 2026-05-12
-tags: [bench, performance, cost-model, phase-11]
+tags: [bench, performance, cost-model]
 related: ["../docs/cost-model.md", "../tests/integration/phase5-end-to-end.test.ts"]
 ---
 
@@ -13,12 +13,12 @@ Two harnesses live under `bench/`:
 
 | Harness | What it measures | When to run |
 |---|---|---|
-| `bench/r2-contention.ts` | CAS-storm 412/429 rates on one `current.json`; validates Phase 5's idle-reader bound on the wire | When changing `packages/server/src/server-writer.ts`, coordination primitives, or retry policy |
-| `bench/load-harness/` | S3 ops + bytes per logical `Db` operation across seven workload presets; validates Phase 11's workload cost model | When changing storage layout, manifest cache TTLs, or compaction profile — run before/after a perf-shaped PR |
+| `bench/r2-contention.ts` | CAS-storm 412/429 rates on one `current.json`; validates the idle-reader bound on the wire | When changing `packages/server/src/server-writer.ts`, coordination primitives, or retry policy |
+| `bench/load-harness/` | S3 ops + bytes per logical `Db` operation across seven workload presets; validates the workload cost model | When changing storage layout, manifest cache TTLs, or compaction profile — run before/after a perf-shaped PR |
 
 Both require `pnpm dev:storage` (Minio `:9102` + Toxiproxy `:9104`)
 for the Minio-backed variants. Neither is a per-PR CI gate. The
-Phase 5 in-process counting proxy in
+in-process counting proxy in
 `tests/integration/phase5-end-to-end.test.ts` and the randomized
 cascade in `tests/integration/randomized.test.ts` are the
 correctness gates that run on every PR.
@@ -31,7 +31,7 @@ Three scenarios (S1 / S2-idle / S3-toxic), each driven separately:
 pnpm bench:r2 --scenario=S2-idle --pollers=10 --duration-s=20
 ```
 
-The canonical Phase 5 gate is **S2-idle**: M pollers read
+The canonical idle-reader gate is **S2-idle**: M pollers read
 `current.json` every 2 seconds with no writers. The bound is
 **< 1 Class A op / poller / hour** — a healthy idle reader stays on
 the `get` path and never issues a `list`, `put`, or `delete`. A
@@ -113,7 +113,7 @@ DuckDB accepts glob patterns without braces; see
 
 | Preset | Primary table | Workload shape |
 |---|---|---|
-| `recent-first-crud` | `notes` | Notes-app shape; recent-first reads dominate. Idle subworkload must satisfy the Phase 5 < 1 Class A op / tenant / hour gate. Headline preset. |
+| `recent-first-crud` | `notes` | Notes-app shape; recent-first reads dominate. Idle subworkload must satisfy the < 1 Class A op / tenant / hour gate. Headline preset. |
 | `one-hot-tenant` | `notes` | 80/20 tenant skew: one hot tenant absorbs 80% of traffic. Stresses per-`current.json` contention and metadata-warm cache value. |
 | `update-heavy-messy-log` | `items` | 50% updates over a small record set; 30% of records absorb 80% of update ops. Stresses log-tail growth and write-amplification post-compact. |
 | `hot-tenant-compaction-debt` | `items` | One hot tenant seeded then flooded with inserts before queries run. Reveals query-pre-compact vs query-post-compact cost delta. |
@@ -161,21 +161,21 @@ The key derived fields:
 - `derived.put_per_op` — S3 PUTs per logical op (Class A cost driver).
 - `derived.class_a_per_tenant_per_hour` — Class A ops (PUT + LIST +
   DELETE) per tenant per hour, measured during the `query-post-compact`
-  phase only. The Phase 5 bound is **< 1**; the in-process gate
+  phase only. The bound is **< 1**; the in-process gate
   asserts exactly 0.
 - `compaction.write_amplification` — bytes written by compaction /
   bytes read by compaction.
 
-## Phase 11 green-light criteria
+## Green-light criteria
 
-Phase 11 is done when ALL of the following hold:
+The bench gate is met when ALL of the following hold:
 
 1. `pnpm bench:load:matrix` runs all seven presets on memory +
    local-fs + node-minio in under 10 minutes total wall-clock time.
 2. The headline number — GETs per `list-recent`, `recent-first-crud`
    preset, 100k records, hot tenant, node-minio, metadata-warm cache
    — is logged with a baseline run; subsequent runs are comparable.
-3. The Phase 5 idle bound (`< 1 Class A op / tenant / hour`) holds
+3. The idle bound (`< 1 Class A op / tenant / hour`) holds
    under `recent-first-crud`'s idle-reader subworkload, observable
    in the result JSON's `derived.class_a_per_tenant_per_hour` field.
 4. Result files are DuckDB-queryable via
@@ -185,7 +185,7 @@ Phase 11 is done when ALL of the following hold:
 
 Explicitly NOT a green-light criterion: a per-PR CI gate. The bench
 is run by humans hill-climbing storage layout, cache TTLs, and
-compaction profiles. The Phase 5 in-process counting proxy
+compaction profiles. The in-process counting proxy
 (`tests/integration/phase5-end-to-end.test.ts`) and the randomized
 cascade (`tests/integration/randomized.test.ts`) are the CI-level
 gates that already serve the per-PR role.

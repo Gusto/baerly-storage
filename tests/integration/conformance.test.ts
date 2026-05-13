@@ -14,7 +14,7 @@
  * Baerly-shaped invariants (versioning mode, parallel-writer-on-single-
  * key) are dropped — those are manifest-coordination assertions, not
  * `Storage` assertions, and live in
- * `tests/integration/randomized.test.ts` per the Phase 5 cascade.
+ * `tests/integration/randomized.test.ts` per the cascade.
  */
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";

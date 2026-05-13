@@ -6,7 +6,7 @@
  * `createListener` observability wiring tests. The cross-adapter
  * compactor + GC behaviour itself is covered by the `@baerly/server`
  * package's tests; this file confirms the Node-side helpers plumb
- * through the Phase-9 pipe (LogTape config + canonical-line bag).
+ * through the observability pipe (LogTape config + canonical-line bag).
  */
 
 import { createServer, type Server } from "node:http";

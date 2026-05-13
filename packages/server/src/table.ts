@@ -1,5 +1,5 @@
 /**
- * Phase-4 entrypoint: `Table<T>` factory. `Db.table(name)` returns
+ * `Table<T>` factory. `Db.table(name)` returns
  * the result of `makeTable(ctx)` — a cheap, no-I/O handle that
  * delegates every modifier to `makeQuery` with a fresh empty seed
  * state, and routes `insert` through the shared `runInsert` runtime
@@ -7,8 +7,8 @@
  *
  * `Table.insert(doc)` is the public insert path. The locked
  * `Query<T>` interface (`@baerly/protocol/src/db.ts`) intentionally
- * does NOT declare `insert` — chainable inserts are out of scope for
- * Phase 4 (ticket 10 §7). For an inserted doc whose predicate-bound
+ * does NOT declare `insert` — chainable inserts are out of scope
+ * (ticket 10 §7). For an inserted doc whose predicate-bound
  * shape matters, `db.table(...).insert(...)` is the path; predicates
  * are a read-side concern.
  */

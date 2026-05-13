@@ -1,7 +1,7 @@
 /**
  * Dev landing page for the API root (`GET /`).
  *
- * The Phase-6 HTTP surface is API-only: every path outside `/v1/*`
+ * The HTTP surface is API-only: every path outside `/v1/*`
  * returns the {@link HttpErrorEnvelope} 404 shape. That's correct for
  * production but confusing in local dev — a user who clicks the
  * `http://localhost:3000` link in their terminal sees a JSON 404 and

@@ -1,5 +1,5 @@
 /**
- * Phase-6 HTTP dispatcher. A small Hono `app` that implements the
+ * HTTP dispatcher. A small Hono `app` that implements the
  * five locked CRUD routes from `contract.ts` plus an anonymous
  * `/v1/healthz` liveness probe. Mounted into both adapters
  * (`@baerly/adapter-cloudflare` and `@baerly/adapter-node`); the
@@ -74,7 +74,7 @@ export interface CreateRouterOptions {
 }
 
 /**
- * Build a Hono `app` that serves the Phase-6 CRUD routes:
+ * Build a Hono `app` that serves the CRUD routes:
  *
  *  - `GET    /v1/t/:table/:id` → read one document.
  *  - `GET    /v1/t/:table?where=<json>` → list rows matching a predicate.
@@ -99,7 +99,7 @@ export function createRouter(options: CreateRouterOptions): Hono {
   const { db, verifier, healthCheck = true } = options;
   const app = new Hono();
 
-  // Phase-9 observability: per-request ObservabilityContext +
+  // Per-request ObservabilityContext +
   // canonical-line emission. Mounted BEFORE everything else so every
   // dispatched handler — including the verifier middleware below —
   // runs under `runWithContext`. The middleware itself early-returns
@@ -408,8 +408,8 @@ const ERROR_TO_STATUS: ReadonlyMap<BaerlyErrorCode, HttpStatus> = new Map<
  * / `InvalidResponse` / `Internal` comment in `ERROR_TO_STATUS`).
  *
  * @internal — exported for tests and for ticket 26's `/v1/since`
- *   handler. The `HttpErrorEnvelope` shape is locked at Phase 2; do
- *   not mutate it.
+ *   handler. The `HttpErrorEnvelope` shape is locked; do not
+ *   mutate it.
  */
 export function mapError(err: unknown): { status: HttpStatus; envelope: HttpErrorEnvelope } {
   if (err instanceof BaerlyError) {
@@ -420,8 +420,8 @@ export function mapError(err: unknown): { status: HttpStatus; envelope: HttpErro
   // (file paths, bucket names, upstream response bodies). Log on the
   // server side via the observability channel (replaces the legacy
   // bare `console.error`) and return a generic envelope to the
-  // client. The mapped-error wire shape itself is locked at Phase 2
-  // and does NOT change here.
+  // client. The mapped-error wire shape itself is locked and does
+  // NOT change here.
   getLogger(CATEGORY.http).error("unhandled_error", { error: serializeError(err) });
   return { status: 500, envelope: errorEnvelope("Internal", "internal error") };
 }

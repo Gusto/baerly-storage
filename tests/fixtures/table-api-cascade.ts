@@ -98,8 +98,8 @@ const freshTableName = (prefix: string): string => `${prefix}-${uuid().slice(0, 
  * fields under strict-object-mode tsgo — a named interface with
  * `readonly k?: string` is not assignable to
  * `{ [x: string]: JSONArrayless }`. Static doc-shape typing comes
- * back with Phase 9 schema validation; today the table read/write
- * path is dynamically typed.
+ * back with a future schema-validation pass; today the table
+ * read/write path is dynamically typed.
  */
 type Doc = JSONArraylessObject;
 
@@ -521,16 +521,16 @@ const runGcCascade = async (
 };
 
 /**
- * [metrics] Full Phase-5 cycle (writes + compact + runGc) wired
+ * [metrics] Full lifecycle cycle (writes + compact + runGc) wired
  * through an {@link InMemoryMetricsRecorder} — the six load-bearing
- * Phase-5 metric names MUST appear in the recorder. This runs across
+ * metric names MUST appear in the recorder. This runs across
  * every adapter via the variant table — the assertion is "the
  * emission sites fire correctly on every {@link Storage} backend."
  *
  * Uses {@link ServerWriter} directly (instead of `db.table().insert()`)
  * so we can pass the recorder through `ServerWriterOptions.metrics`
  * — the public `Db` API doesn't yet thread the recorder, by design
- * (Phase 6's HTTP server wires it at the request adapter).
+ * (the HTTP server wires it at the request adapter).
  */
 const runMetricsCascade = async (storage: Storage, app: string, tenant: string): Promise<void> => {
   const t = freshTableName("metrics");
@@ -726,7 +726,7 @@ export const runTableApiCascade = async (opts: {
   await runGcCascade(db, opts.storage, APP, tenant);
 
   // 7. [metrics] Six load-bearing metric names emitted across the
-  //    full Phase-5 cycle. Runs on every adapter via the variant
+  //    full lifecycle cycle. Runs on every adapter via the variant
   //    table.
   await runMetricsCascade(opts.storage, APP, tenant);
 

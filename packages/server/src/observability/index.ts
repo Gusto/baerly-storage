@@ -1,5 +1,5 @@
 /**
- * Phase-9 observability module — dormant.
+ * Observability module — dormant.
  *
  * Nothing in `@baerly/server`'s existing surface (`Db`,
  * `ServerWriter`, the HTTP router, the maintenance loops) imports

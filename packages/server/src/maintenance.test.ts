@@ -2,7 +2,7 @@
    field on document shapes; the maintenance test seeds doc bodies with it. */
 
 /**
- * Phase-5 maintenance — `runScheduledMaintenance()` composition of
+ * Maintenance — `runScheduledMaintenance()` composition of
  * `compact()` + `runGc()` under `MemoryStorage`. The Cloudflare-side
  * worker test and the Node-side `runMaintenanceTick` test cover the
  * adapter wrappers.

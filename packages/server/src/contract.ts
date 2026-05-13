@@ -2,9 +2,9 @@ import type { LogEntry, BaerlyErrorCode } from "@baerly/protocol";
 
 /**
  * Wire envelope for every error response. Mirrors `BaerlyError` so
- * the Phase 8 client SDK reconstructs the same class shape it
- * would see in-process. `code` is the discriminant; `cause` is
- * never sent on the wire.
+ * the client SDK reconstructs the same class shape it would see
+ * in-process. `code` is the discriminant; `cause` is never sent on
+ * the wire.
  */
 export interface HttpErrorEnvelope {
   readonly error: {
@@ -51,7 +51,7 @@ export interface HttpOkEnvelope<T> {
  * the request's `cursor` and `next_cursor`. Client passes
  * `next_cursor` back on the next call. Empty `events` + same
  * `next_cursor` means "nothing changed within the budget"
- * (Phase 6 default budget: ~25s).
+ * (default budget: ~25s).
  */
 export interface SinceResponse {
   readonly events: ReadonlyArray<LogEntry>;
@@ -60,7 +60,7 @@ export interface SinceResponse {
 
 /**
  * URL contract. Path segments are typed as template literals so
- * the Phase 6 router gets compile-time route-table checks. The
+ * the router gets compile-time route-table checks. The
  * `tenant` derives from the `Verifier`'s output, not the URL —
  * URLs carry `app` / `table` / `id` only.
  */

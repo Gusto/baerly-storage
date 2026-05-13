@@ -3,8 +3,7 @@
    `Table<T>`); this property test threads it through the writer. */
 
 /**
- * Phase-8 — property-based test for the writer + secondary-index
- * data plane.
+ * Property-based test for the writer + secondary-index data plane.
  *
  * Drives any fast-check sequence of I/U/D ops through a
  * `ServerWriter` configured with two indexes (`by_status`,

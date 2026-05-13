@@ -48,7 +48,7 @@ export interface Table<T extends JSONArraylessObject = JSONArraylessObject> {
    * @throws BaerlyError{code: "Conflict"} — `_id` collision on
    *         caller-supplied id.
    * @throws BaerlyError{code: "SchemaError"} — malformed JSON, or
-   *         (Phase 9) schema-validation failure.
+   *         schema-validation failure (not yet wired).
    */
   insert(doc: Partial<T> & JSONArraylessObject): Promise<{ _id: string }>;
 
@@ -61,8 +61,8 @@ export interface Table<T extends JSONArraylessObject = JSONArraylessObject> {
  * keys (`{ status: "open" }`) and dotted-path keys
  * (`{ "assignee.team": "platform" }`). Values are
  * `JSONArrayless` — string / number / boolean / nested object for
- * equality on a sub-tree. Phase 9 may widen the value type
- * (e.g. `{ $in: [...] }`); the shape change will be additive.
+ * equality on a sub-tree. A future change may widen the value
+ * type (e.g. `{ $in: [...] }`); the shape change will be additive.
  */
 export type Predicate<T extends JSONArraylessObject = JSONArraylessObject> = {
   readonly [K in keyof T]?: T[K];
@@ -77,8 +77,9 @@ export type OrderSpec<T extends JSONArraylessObject = JSONArraylessObject> = {
 
 /**
  * Read consistency knob. See {@link Query.consistency}. `strong` is
- * the default and matches the historic Phase-4 semantics. `eventual`
- * skips the per-call `current.json` GET and serves the view this
+ * the default and matches the historic table-API semantics.
+ * `eventual` skips the per-call `current.json` GET and serves the
+ * view this
  * isolate observed when it last advanced.
  */
 export type ConsistencyLevel = "strong" | "eventual";
@@ -139,9 +140,9 @@ export interface Query<T extends JSONArraylessObject = JSONArraylessObject> {
    * wrong rows — only at worst surfaces a stale row that the
    * predicate then drops.
    *
-   * Phase 9 adds a query planner that auto-picks an index when
-   * one matches the predicate shape; until then callers opt in
-   * explicitly with `.useIndex(name)`.
+   * A future change adds a query planner that auto-picks an index
+   * when one matches the predicate shape; until then callers opt
+   * in explicitly with `.useIndex(name)`.
    *
    * @example
    * ```ts
