@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "predev": "node -e \"console.log('\\n  helpdesk dev → open http://localhost:5173\\n  (api on :3000 — visit it for the landing page)\\n')\"",
+    "predev": "pnpm --filter @helpdesk/server run seed",
     "dev": "pnpm --parallel --filter \"@helpdesk/*\" run dev",
     "build": "pnpm --filter \"@helpdesk/*\" run build",
     "seed": "pnpm --filter @helpdesk/server run seed",
@@ -16,6 +16,7 @@
     "@baerly/client": "workspace:*",
     "@baerly/dev": "workspace:*",
     "@baerly/protocol": "workspace:*",
+    "@baerly/server": "workspace:*",
     "vitest": "^4.1.5"
   }
 }

@@ -1,7 +1,3 @@
-// The Ticket interface shared by every web component. Mirrors the
-// shape `seed.ts` writes; eventually generated from
-// `baerly.config.ts` by ticket 38, but inlined here so the example
-// is self-contained.
 import type { JSONArraylessObject } from "@baerly/protocol";
 
 export interface Ticket extends JSONArraylessObject {
@@ -12,3 +8,11 @@ export interface Ticket extends JSONArraylessObject {
   readonly priority: "low" | "med" | "high";
   readonly created_at: string;
 }
+
+export const STATUSES = ["open", "in_progress", "closed"] as const satisfies ReadonlyArray<
+  Ticket["status"]
+>;
+
+export const PRIORITIES = ["low", "med", "high"] as const satisfies ReadonlyArray<
+  Ticket["priority"]
+>;

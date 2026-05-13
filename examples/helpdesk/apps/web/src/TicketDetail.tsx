@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
+import { useChanges } from "@baerly/client/react";
 import { client } from "./client.ts";
-import type { Ticket } from "./tickets.ts";
+import type { Ticket } from "../../../types.ts";
 
 interface Props {
   id: string;
@@ -10,20 +11,14 @@ interface Props {
 
 export const TicketDetail = ({ id, onEdit, onBack }: Props): React.JSX.Element => {
   const [t, setT] = useState<Ticket | undefined>(undefined);
-  const [err, setErr] = useState<string | undefined>(undefined);
+  const { events } = useChanges(client, "tickets");
 
   useEffect(() => {
     void (async () => {
-      try {
-        const row = await client.table<Ticket>("tickets").where({ _id: id }).first();
-        setT(row);
-      } catch (e) {
-        setErr((e as Error).message);
-      }
+      setT(await client.table<Ticket>("tickets").where({ _id: id }).first());
     })();
-  }, [id]);
+  }, [id, events]);
 
-  if (err !== undefined) return <p style={{ color: "crimson" }}>Error: {err}</p>;
   if (t === undefined) return <p>Loading…</p>;
 
   return (

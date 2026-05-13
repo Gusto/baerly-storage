@@ -1,21 +1,22 @@
-import { createBaerlyClient } from "@baerly/client";
-import type { JSONArraylessObject } from "@baerly/protocol";
+import { resolve } from "node:path";
+import { Db } from "@baerly/server";
+import { LocalFsStorage, ensureTable } from "@baerly/dev";
+import type { Ticket } from "../../../types.ts";
 
-interface Ticket extends JSONArraylessObject {
-  readonly _id: string;
-  readonly title: string;
-  readonly status: "open" | "in_progress" | "closed";
-  readonly assignee: string;
-  readonly priority: "low" | "med" | "high";
-  readonly created_at: string;
-}
+const APP = "helpdesk";
+const TENANT = "helpdesk-demo";
 
-const PORT = Number(process.env.PORT ?? 3000);
-const SECRET = process.env.HELPDESK_SECRET ?? "dev-helpdesk-secret";
-const client = createBaerlyClient({
-  baseUrl: `http://localhost:${PORT}`,
-  headers: { Authorization: `Bearer ${SECRET}` },
+const storage = new LocalFsStorage({
+  root: resolve(import.meta.dirname, "../../../.baerly-data"),
 });
+await ensureTable(storage, { app: APP, tenant: TENANT, table: "tickets" });
+
+const tickets = Db.create({ storage, app: APP, tenant: TENANT }).table<Ticket>("tickets");
+
+if ((await tickets.count()) > 0) {
+  console.log("tickets table already populated; skipping seed");
+  process.exit(0);
+}
 
 const DEMO: ReadonlyArray<Omit<Ticket, "_id">> = [
   {
@@ -55,13 +56,7 @@ const DEMO: ReadonlyArray<Omit<Ticket, "_id">> = [
   },
 ];
 
-// Idempotent: only seed when the table is empty.
-const existing = await client.table<Ticket>("tickets").where({}).count();
-if (existing > 0) {
-  console.log(`tickets table already has ${existing} rows; skipping seed`);
-} else {
-  for (const t of DEMO) {
-    const { _id } = await client.table<Ticket>("tickets").insert(t);
-    console.log(`seeded ${_id}: ${t.title}`);
-  }
+for (const t of DEMO) {
+  const { _id } = await tickets.insert(t);
+  console.log(`seeded ${_id}: ${t.title}`);
 }

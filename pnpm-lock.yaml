@@ -126,6 +126,9 @@ importers:
       '@baerly/protocol':
         specifier: workspace:*
         version: link:../../packages/protocol
+      '@baerly/server':
+        specifier: workspace:*
+        version: link:../../packages/server
       vitest:
         specifier: ^4.1.5
         version: 4.1.5(@types/node@25.6.2)(@vitest/coverage-v8@4.1.5)(happy-dom@15.11.7)(vite@8.0.11(@types/node@25.6.2)(esbuild@0.27.3))
@@ -135,15 +138,12 @@ importers:
       '@baerly/adapter-node':
         specifier: workspace:*
         version: link:../../../../packages/adapter-node
-      '@baerly/client':
-        specifier: workspace:*
-        version: link:../../../../packages/client
       '@baerly/dev':
         specifier: workspace:*
         version: link:../../../../packages/dev
-      '@baerly/protocol':
+      '@baerly/server':
         specifier: workspace:*
-        version: link:../../../../packages/protocol
+        version: link:../../../../packages/server
 
   examples/helpdesk/apps/web:
     dependencies:

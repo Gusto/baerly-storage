@@ -1,14 +1,14 @@
 # Baerly Helpdesk — example app
 
-A minimal CRUD helpdesk. Two workspaces:
+A working CRUD helpdesk over baerly-storage. Two workspaces:
 
-- `apps/server` — Node HTTP server (`@baerly/adapter-node`) wrapping
-  a local-filesystem `Storage`.
-- `apps/web` — React UI (Vite dev server) talking to the server via
-  `@baerly/client`. Live ticket list updates via the `useChanges`
-  long-poll hook.
+- `apps/server` — Node HTTP listener over `LocalFsStorage`.
+- `apps/web` — React + Vite. Talks to the server via `@baerly/client`.
+  The ticket list and detail views are live: edits from one browser
+  tab appear in others over the `/v1/since` long-poll, surfaced
+  through the `useChanges` React hook.
 
-## Quick start (90 seconds)
+## Quick start (60 seconds)
 
 From the repo root:
 
@@ -17,88 +17,120 @@ pnpm install
 pnpm --filter helpdesk dev
 ```
 
-Then open <http://localhost:5173>. The first time you boot, click
-"+ New ticket" to add one — or run `pnpm --filter helpdesk seed` in a
-second terminal to pre-fill five demo tickets.
+Then open <http://localhost:5173>. Five demo tickets are seeded on
+first run — `pnpm --filter helpdesk reset` wipes the bucket so the
+next `dev` re-seeds.
 
-Open a second tab to <http://localhost:5173>. Add a ticket in the
-first tab; watch it appear in the second. That's `useChanges` talking
-to `/v1/since`.
+Open a second tab; edit a ticket in tab 1; watch tab 2 update.
 
-## What you just ran
+## The interesting parts
 
-| Process       | URL                                             | What it does                                                                  |
-| ------------- | ----------------------------------------------- | ----------------------------------------------------------------------------- |
-| `apps/server` | <http://localhost:3000>                         | Node HTTP server. Persists tickets to `.baerly-data/`. Visit for a small dev landing page that links here. |
-| `apps/web`    | <http://localhost:5173>                         | Vite dev server. Proxies `/v1/*` to `:3000`.                                  |
+The whole server boot is one file:
 
-The bucket layout under `.baerly-data/`:
+```ts
+// apps/server/src/index.ts
+import { createServer } from "node:http";
+import { resolve } from "node:path";
+import { createListener } from "@baerly/adapter-node";
+import { sharedSecret } from "@baerly/server/auth";
+import { LocalFsStorage, ensureTable } from "@baerly/dev";
+
+const storage = new LocalFsStorage({
+  root: resolve(import.meta.dirname, "../../../.baerly-data"),
+});
+await ensureTable(storage, { app: "helpdesk", tenant: "helpdesk-demo", table: "tickets" });
+
+createServer(
+  createListener({
+    app: "helpdesk",
+    storage,
+    verifier: sharedSecret({ secret: "dev-helpdesk-secret", tenantPrefix: "helpdesk-demo" }),
+  }),
+).listen(3000);
+```
+
+Reads and writes look the same on the client and the server — the
+client just sends them over HTTP:
+
+```ts
+// apps/web/src/TicketForm.tsx (etc.)
+await client.table<Ticket>("tickets").insert({ title, status, ... });
+await client.table<Ticket>("tickets").where({ _id }).update({ status: "closed" });
+await client.table<Ticket>("tickets").where({ status: "open" }).all();
+```
+
+Live updates are one hook — `useChanges` refetches whenever the
+table's `/v1/since` cursor advances:
+
+```tsx
+// apps/web/src/TicketList.tsx
+const { events } = useChanges(client, "tickets");
+useEffect(() => {
+  void (async () => setRows(await client.table<Ticket>("tickets").where({}).all()))();
+}, [events, filter]);
+```
+
+## Bucket layout
+
+Under `.baerly-data/` (`.gitignored`):
 
 ```
 app/helpdesk/tenant/helpdesk-demo/manifests/tickets/
-├── content/<sha256>.json     ← document bodies (content-addressed)
-├── current.json              ← the CAS pointer
-└── log/<seq>.json            ← per-mutation log entries
+├── content/<sha256>.json   ← document bodies (content-addressed)
+├── current.json            ← the CAS pointer
+└── log/<seq>.json          ← per-mutation log entries
 ```
 
-## Resetting the demo
-
-```sh
-pnpm --filter helpdesk reset
-pnpm --filter helpdesk dev
-```
-
-Wipes `.baerly-data/`. Server bootstraps a fresh `current.json` on
-next boot.
+The same layout is what `S3HttpStorage` / `r2BindingStorage` lay down
+in an S3 / R2 bucket. The data is yours; the format is mechanical.
 
 ## What's NOT here
 
-- **No auth UI.** The example uses a hard-coded bearer token
-  (`dev-helpdesk-secret`). Real apps wire a `Verifier` to a JWT / OIDC
-  IdP (Phase 8 ships `sharedSecret()`, `bearerJwt()`,
-  `cloudflareAccess()`).
-- **No user management.** The example has one tenant
-  (`helpdesk-demo`) and one bearer token. Multi-tenant apps resolve
-  `tenantPrefix` from the request's credentials.
-- **No routing library.** Three views; one `useState` discriminated
-  union. Bring your own router.
-- **No data lib.** `@baerly/client` returns plain promises. Use
-  `useEffect`, TanStack Query, SWR — your call.
+- **No auth UI.** The example uses a hard-coded bearer token via
+  `sharedSecret()`. Real apps swap it for `bearerJwt({ jwks })` or
+  `cloudflareAccess({ teamDomain, audienceTag })` — both ship from
+  `@baerly/server/auth`.
+- **No multi-tenancy.** One tenant (`helpdesk-demo`), one bearer
+  token. Production verifiers resolve `tenantPrefix` from the
+  request's credentials.
+- **No router.** Three views; one `useState` discriminated union.
+  Bring your own router.
+- **No data lib.** `@baerly/client` returns plain promises. Pair
+  with TanStack Query / SWR in production.
 
-## Cloudflare swap (one flag)
+## Cloudflare swap
 
-Phase 8 also ships a Cloudflare deploy target. Swap the local Node
-server for a `wrangler dev` Worker:
+Point the web app at a `wrangler dev` Worker instead of the Node
+server — no React code changes:
 
 ```sh
-# Terminal 1: in a CF-scaffolded Worker entry, run wrangler dev
-# on port 8787.
+# Terminal 1: a CF-scaffolded baerly Worker on :8787
 cd path/to/your/cf-worker && wrangler dev
 
-# Terminal 2: point the helpdesk web at the Worker.
-HELPDESK_SERVER_URL=http://localhost:8787 \
-  pnpm --filter @helpdesk/web run dev
+# Terminal 2: web only, server URL overridden via env
+HELPDESK_SERVER_URL=http://localhost:8787 pnpm --filter @helpdesk/web run dev
 ```
 
-The web app's Vite proxy reads `HELPDESK_SERVER_URL`; no React code
-changes. (Wiring an in-repo Cloudflare target for the helpdesk is
-deferred — a future `examples/helpdesk-cloudflare/` would land it.)
+Use `pnpm create baerly` to scaffold a production-shaped Worker
+(`@baerly/adapter-cloudflare` + R2 bindings + `cloudflareAccess` /
+`sharedSecret` verifier).
 
 ## Files to read
 
-- `apps/server/src/index.ts` — server boot. ~60 LOC; every line
-  matters.
-- `apps/web/src/TicketList.tsx` — `useChanges` consumption.
+- `types.ts` — shared `Ticket` interface.
+- `apps/server/src/index.ts` — server boot (~25 lines).
+- `apps/server/src/seed.ts` — idempotent demo data; in-process `Db`.
 - `apps/web/src/client.ts` — `createBaerlyClient` construction.
+- `apps/web/src/TicketList.tsx` — `useChanges` + status filter.
 - `smoke.test.ts` — round-trip test that runs in CI.
 
 ## Troubleshooting
 
-- **"current.json missing".** Server didn't bootstrap. Delete
-  `.baerly-data/` and re-run `pnpm --filter helpdesk dev`.
-- **"401 Unauthorized" from the web app.** Bearer token mismatch. The
-  web app reads `VITE_HELPDESK_SECRET`; the server reads
+- **"401 Unauthorized" from the web app.** Bearer token mismatch.
+  The web app reads `VITE_HELPDESK_SECRET`; the server reads
   `HELPDESK_SECRET`. Default both to `dev-helpdesk-secret`.
 - **Port 3000 / 5173 in use.** Override
   `PORT=3100 pnpm --filter @helpdesk/server dev` and update
   `vite.config.ts`'s proxy target.
+- **"current.json missing".** Stop everything, `pnpm --filter
+  helpdesk reset`, then re-run `dev`.

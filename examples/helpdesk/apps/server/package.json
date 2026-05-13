@@ -10,8 +10,7 @@
   },
   "dependencies": {
     "@baerly/adapter-node": "workspace:*",
-    "@baerly/client": "workspace:*",
     "@baerly/dev": "workspace:*",
-    "@baerly/protocol": "workspace:*"
+    "@baerly/server": "workspace:*"
   }
 }
