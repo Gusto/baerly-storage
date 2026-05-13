@@ -13,10 +13,14 @@
  * subcommand in each module's docstring.
  */
 import { defineCommand, runMain } from "citty";
+import { dumpCmd } from "./admin/dump.ts";
 import { rebuildIndexCmd } from "./admin/rebuild-index.ts";
+import { restoreCmd } from "./admin/restore.ts";
 import { copy } from "./copy.ts";
 import { deploy } from "./deploy.ts";
 import { doctor } from "./doctor.ts";
+import { init } from "./init.ts";
+import { inspect } from "./inspect.ts";
 import { setJsonMode } from "./output.ts";
 
 // citty has no global-flag concept, so sniff --json off process.argv
@@ -26,9 +30,9 @@ import { setJsonMode } from "./output.ts";
 setJsonMode(process.argv.includes("--json"));
 
 /**
- * `baerly admin <command>` — operator-side reconciliation +
- * inspection tools. Today: `rebuild-index`. Future: `inspect`,
- * `fsck`, `compact`.
+ * `baerly admin <command>` — operator-side reconciliation,
+ * inspection, and data-shovel tools. Today: `rebuild-index`,
+ * `dump`, `restore`. Future: `compact`, `fsck`, `migrate`.
  */
 const admin = defineCommand({
   meta: {
@@ -37,6 +41,8 @@ const admin = defineCommand({
   },
   subCommands: {
     "rebuild-index": rebuildIndexCmd,
+    dump: dumpCmd,
+    restore: restoreCmd,
   },
 });
 
@@ -51,11 +57,11 @@ const main = defineCommand({
     copy,
     deploy,
     doctor,
+    init,
+    inspect,
     admin,
-    // Future subcommands (each a ~10-line defineCommand block):
-    //   init, inspect, compact, fsck, export, migrate, dump, restore
-    // See packages/cli/package.json description and the docs in
-    // docs/operating/ for the planned surface.
+    // Remaining subcommands (each a ~10-line defineCommand block):
+    //   compact, fsck, export, migrate (ticket 75).
   },
 });
 

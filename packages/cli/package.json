@@ -19,6 +19,7 @@
   },
   "dependencies": {
     "@baerly/dev": "workspace:*",
+    "@baerly/export": "workspace:*",
     "@baerly/protocol": "workspace:*",
     "@baerly/server": "workspace:*",
     "@xmldom/xmldom": "^0.9.10",

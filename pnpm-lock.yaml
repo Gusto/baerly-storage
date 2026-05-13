@@ -203,6 +203,9 @@ importers:
       '@baerly/dev':
         specifier: workspace:*
         version: link:../dev
+      '@baerly/export':
+        specifier: workspace:*
+        version: link:../export
       '@baerly/protocol':
         specifier: workspace:*
         version: link:../protocol
