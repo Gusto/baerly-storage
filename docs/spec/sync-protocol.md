@@ -180,8 +180,7 @@ The algorithm is deceptively simple in implementation but leans heavily on the a
 Two coordination primitives sit under Baerly's kernel: a
 **bounded-clock-skew assumption** (`LAG_WINDOW_MILLIS = 5000`) and
 a **fence-token + CAS-on-control-object** pattern
-(`current.json.writer_fence`, modelled after IsleDB, which itself
-borrows from FoundationDB). Spanner's TrueTime, FoundationDB's
+(`current.json.writer_fence`, inspired by IsleDB and FoundationDB). Spanner's TrueTime, FoundationDB's
 fence epochs, and the broader "lease + fence" literature inform
 both choices.
 

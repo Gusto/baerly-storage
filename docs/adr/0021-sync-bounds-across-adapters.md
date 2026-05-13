@@ -52,10 +52,9 @@ The protocol relies on two clock-skew bounds:
 Two options for what guarantee to publish:
 
 - **Total order across the bucket.** Strong, but requires a
-  coordination service or 2PC; both ruled out by
-  [ADR-0006](./0006-server-component.md) (the server-component
-  decision) and [ADR-0018](./0018-tenant-cas-isolation.md)
-  (per-collection CAS).
+  coordination service or 2PC; both ruled out by the portable
+  `(Request) => Response` server contract and
+  [ADR-0018](./0018-tenant-cas-isolation.md) (per-collection CAS).
 - **Single-key causal consistency, bounded skew, no cross-collection
   ordering.** Matches the per-collection CAS scope
   ([ADR-0018](./0018-tenant-cas-isolation.md)), is verifiable by
@@ -135,6 +134,4 @@ writes through `Db._raw` or graduate to Postgres
 - Future adapters (AWS Lambda, Bun, Deno, Fly) inherit the bound by
   passing the cascade. Adapters that *cannot* pass — e.g., a
   hypothetical adapter over an eventually-consistent blob store with
-  no CAS support — are out of scope by definition. The multi-runtime
-  adapter pattern itself is established by
-  [ADR-0006](./0006-server-component.md).
+  no CAS support — are out of scope by definition.

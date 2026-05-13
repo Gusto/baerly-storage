@@ -179,8 +179,7 @@ defaults to `PATCH_ONLY`. The `ReplicaIdentity` type and `old` /
 ## Consumer envelope sketch
 
 A future `/cdc/v1/stream` SSE endpoint translates `LogEntry` into
-a Debezium-style envelope. **This is informational; the endpoint
-is not in this ticket.**
+a Debezium-style envelope.
 
 ```json
 {

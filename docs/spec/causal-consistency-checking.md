@@ -193,10 +193,6 @@ We use this framework for randomized testing of the Baerly client so we can test
 
 In fact, the checker immediately found a bug with one of the possible configurations of the clients (the no versioning setting). I am very pleased this could be implemented with no additional dependencies in pure Javascript with very little code.
 
-The next obvious step is to generalize the system to handle clients joining and leaving multiple independent ordered topics. This article was
-written as a basic introduction to the technique that we will build upon during future development of Baerly.
-
-
 ### Links
 
 - The self contained 86 LOC implementation of the causal model and checker ([source](https://github.com/endpointservices/mps3/blob/12969b06c6564ac9df6c450f3d15a7ca3a5a9a25/src/__tests__/consistency.ts#L25))

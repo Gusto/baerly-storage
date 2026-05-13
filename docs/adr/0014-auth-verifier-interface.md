@@ -11,15 +11,13 @@ related: [README.md]
 
 ## Status
 
-Accepted. Referenced as a forward dependency by
-[ADR-0006](./0006-server-component.md), and by the tenancy isolation
-discussion in [ADR-0011](./0011-cas-scope.md) and
+Accepted. Referenced by the tenancy isolation discussion in
+[ADR-0011](./0011-cas-scope.md) and
 [ADR-0018](./0018-tenant-cas-isolation.md).
 
 ## Context
 
-The server component (`@baerly/server`, established by
-[ADR-0006](./0006-server-component.md)) is a portable
+The server component (`@baerly/server`) is a portable
 `(Request) => Response` handler. To be deployable in any non-trivial
 production scenario it needs an auth seam: an answer to "given this
 `Request`, what tenant prefix may it touch, and who is it?"
@@ -266,8 +264,6 @@ about them.
 
 ## References
 
-- Parent: [ADR-0006](./0006-server-component.md) — establishes
-  `@baerly/server` and forward-references this ADR.
 - Tenancy: [ADR-0011](./0011-cas-scope.md) and
   [ADR-0018](./0018-tenant-cas-isolation.md) — the
   `tenantPrefix` returned by a Verifier is the key the tenant-CAS

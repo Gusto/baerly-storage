@@ -20,10 +20,8 @@ in [engineering-principles.md](../engineering-principles.md).
 
 ## Index
 
-- [0001 — No AWS SDK](./0001-no-aws-sdk.md)
 - [0002 — Branded types over plain strings](./0002-branded-types.md)
 - [0003 — Error code discriminant over `instanceof`](./0003-error-code-discriminant.md)
-- [0006 — Server component (`@baerly/server`)](./0006-server-component.md)
 - [0011 — CAS scope is per-collection](./0011-cas-scope.md)
 - [0012 — Transaction scope is single-table](./0012-transaction-scope.md)
 - [0013 — Export contract is Postgres-logical-replication-shaped](./0013-export-contract.md)

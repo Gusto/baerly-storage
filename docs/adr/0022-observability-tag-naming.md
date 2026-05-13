@@ -69,9 +69,8 @@ The kernel does not emit to any specific backend. Operators implement
 `MetricsRecorder` (counter / gauge / histogram) and pass it to
 `ServerWriter`, `compact`, `runGc`, and the scheduled handler. The
 default is `noopMetricsRecorder`. The multi-runtime adapter pattern
-([ADR-0006](./0006-server-component.md)) is what motivates the
-recorder abstraction: different runtimes use different backends, and
-the kernel must not pick one.
+is what motivates the recorder abstraction: different runtimes use
+different backends, and the kernel must not pick one.
 
 Allowed label keys are open-ended but conventionally include:
 

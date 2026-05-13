@@ -73,7 +73,6 @@ the `Storage` interface; consumers can substitute their own.
   (multi-backend, needs credentials)
 - Docs: [`docs/spec/s3-features-used.md`](./spec/s3-features-used.md),
   [`docs/spec/s3-xml-escaping-cases.md`](./spec/s3-xml-escaping-cases.md)
-- ADR: [`docs/adr/0001-no-aws-sdk.md`](./adr/0001-no-aws-sdk.md)
 
 ## Time / clock-skew tolerance
 
@@ -109,3 +108,35 @@ version IDs from being confused at protocol boundaries.
 - Tests:
   [`packages/protocol/src/hashing.test.ts`](../packages/protocol/src/hashing.test.ts)
   (always green)
+
+## Secondary indexes
+
+Query-driven, projection-scoped indexes on user-defined key
+expressions with lex-order-preserving base-32 encoding. Writers
+emit/retract index entries at fence time; `rebuildIndex` reconciles
+idempotently from a `current.json` snapshot.
+
+- Implementation:
+  [`packages/server/src/indexes.ts`](../packages/server/src/indexes.ts)
+  (`IndexDefinition`, key encoding, per-doc projection),
+  [`packages/server/src/rebuild-index.ts`](../packages/server/src/rebuild-index.ts)
+- Tests:
+  [`tests/integration/table-api.test.ts`](../tests/integration/table-api.test.ts)
+  (all four adapter variants)
+
+## Observability
+
+Canonical one-line-per-unit-of-work log plus a pluggable
+`MetricsRecorder` (counter / gauge / histogram). The canonical line's
+`class_a_ops_total` is asserted equal to the physical bucket op count
+by the cost-model gate test — the line is a faithful source of truth
+for per-request S3 spend.
+
+- Implementation:
+  [`packages/server/src/observability/`](../packages/server/src/observability/)
+- Tests:
+  [`tests/integration/observability.test.ts`](../tests/integration/observability.test.ts)
+- Docs: [`docs/observability.md`](./observability.md),
+  [`docs/conventions/observability.md`](./conventions/observability.md)
+- ADR:
+  [`docs/adr/0022-observability-tag-naming.md`](./adr/0022-observability-tag-naming.md)

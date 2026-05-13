@@ -52,7 +52,8 @@ succeeding in the interim. Mature S3-as-DB systems handle this with
 an epoch (FoundationDB `recoveryCount`, IsleDB `writer_fence`,
 TigerBeetle view number, Litestream generation). A true server-vended
 lease with peer revocation would require a coordination service or
-sticky routing; [ADR-0006](./0006-server-component.md) rules both out.
+sticky routing; the portable `(Request) => Response` server contract
+rules both out.
 
 ## Decision
 
