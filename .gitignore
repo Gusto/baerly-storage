@@ -64,3 +64,10 @@ examples/helpdesk/.baerly-data/
 
 # Day-one gate temp scaffolds
 .baerly-day-one/
+
+# Scaffolding-eval per-trial outputs (large + leaky; score.md and
+# metrics.json are intentionally NOT ignored).
+runs/**/transcript.jsonl
+runs/**/final-state.diff
+runs/**/stderr.log
+runs/**/env.txt

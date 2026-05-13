@@ -67,6 +67,7 @@ Don't introduce alternate tooling without justification.
 | `pnpm -F @baerly/cli build && pnpm exec baerly admin {compact,fsck,migrate} ...` | maintenance surface: `admin compact` manually triggers one `runScheduledMaintenance` pass (compact + GC, profile-selectable); `admin fsck` walks `current.json` → snapshot hash → log range → index prefixes read-only and exits 4 on any finding; `admin migrate` applies a `(row) => row \| null` transform across the materialised view and writes a fresh L9 snapshot with `migrated_to` stamped on `current.json` | seconds | ✅ no infra |
 | `pnpm eval:score -- --transcript ... --acceptance ...` | scoring script for a single agent run (zero infra) | ~seconds | ✅ when fixtures + Node 24 are present |
 | `node scripts/check-acceptance.mjs <app> [<root>]` | per-app acceptance checker for the scaffolding eval | ~seconds per app | ✅ when the scaffold root has a working `pnpm install` |
+| `pnpm eval:run -- --app <app> --tool <tool> --trials <N>` | scaffolding eval runner — scaffolds, drives the CLI, scores, reports | minutes per trial | requires `claude` and/or `codex` on `$PATH`; first pass: `--app todo --trials 3 --tool both` |
 
 `pnpm verify` is also enforced as a [lefthook](https://lefthook.dev/)
 pre-commit hook (`lefthook.yml`); `pnpm install` wires it up via the
@@ -162,6 +163,13 @@ Pure-unit tests that always pass: `packages/protocol/src/hashing.test.ts`,
 `tests/integration/log-emit.test.ts`,
 `tests/integration/put-all-partial-failure.test.ts`,
 `tests/regressions.test.ts`.
+
+### Scaffolding eval
+
+The scaffolding-eval harness lives in `scripts/{run-eval,score-run,check-acceptance}.mjs`
+and the prompts in `prompts/`. See `scripts/run-eval.mjs --help` for the
+full decision matrix. The first eval pass is `pnpm eval:run -- --app todo
+--tool both --trials 3`; results land under `runs/`.
 
 ## Local dev
 
