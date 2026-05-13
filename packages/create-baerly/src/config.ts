@@ -51,6 +51,25 @@ export interface BaerlyAppConfig {
     readonly teamDomain: string;
     readonly audienceTag: string;
   };
+  /**
+   * Optional Phase-9 observability overrides. The templates already
+   * read `LOG_LEVEL` and `LOG_SAMPLE` from the runtime env; this
+   * field is a typed-config alternative for deployments that prefer
+   * to pin defaults in source. See `docs/observability.md` for the
+   * canonical-line shape and `docs/conventions/observability.md` for
+   * the one-canonical-line-per-unit-of-work rule.
+   *
+   * - `level` — lowest record level reaching the sink. Falls back
+   *   to the `LOG_LEVEL` env var, then to `"info"`.
+   * - `sampleRate` — head-based sample rate for successful HTTP
+   *   requests in `[0, 1]`. Falls back to the `LOG_SAMPLE` env var,
+   *   then to `0.1`. Errors are always kept; maintenance always
+   *   emits.
+   */
+  readonly observability?: {
+    readonly level?: "debug" | "info" | "warn" | "error";
+    readonly sampleRate?: number;
+  };
 }
 
 export const defineConfig = (config: BaerlyAppConfig): BaerlyAppConfig => config;

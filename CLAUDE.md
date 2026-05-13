@@ -241,6 +241,7 @@ Path-scoped conventions. **Read the matching file before editing.**
 | `packages/server/src/server-writer.ts` | [docs/spec/sync-protocol.md](docs/spec/sync-protocol.md) + [docs/spec/causal-consistency-checking.md](docs/spec/causal-consistency-checking.md) |
 | `packages/protocol/src/json.ts` | [docs/spec/json-merge-patch.md](docs/spec/json-merge-patch.md) |
 | `packages/protocol/src/log.ts`, the log-emit path in `server-writer.ts` | [docs/spec/log-entry-shape.md](docs/spec/log-entry-shape.md) |
+| `packages/server/src/observability/**` | [docs/conventions/observability.md](docs/conventions/observability.md) |
 | Public API on `Db` / `Table` | [docs/extending.md](docs/extending.md) |
 
 Claude users: `.claude/rules/{tests,docs}.md` auto-load on matching

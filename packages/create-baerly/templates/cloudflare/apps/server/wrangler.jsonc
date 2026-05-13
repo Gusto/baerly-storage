@@ -22,9 +22,28 @@
   // Plain-text bindings. `APP` pins this Worker's app-prefix;
   // `TENANT` is the single-tenant fallback when no Verifier
   // resolves a tenant from the request.
+  //
+  // Phase-9 observability vars:
+  //
+  // - `LOG_LEVEL` — `debug | info | warn | error`. Default `info`
+  //   in code (the kernel applies the default when the var is
+  //   absent). `info` emits one canonical JSON line per request /
+  //   maintenance run on stdout (Workers Logs ingests it natively).
+  //   `debug` adds per-storage-op events — very high volume; leave
+  //   off in production.
+  // - `LOG_SAMPLE` — fraction of successful requests sampled, in
+  //   `[0, 1]`. Default `"0.1"`. Errors are always kept; maintenance
+  //   always emits. Set to `"1.0"` while diagnosing; set to `"0"`
+  //   to suppress success lines entirely.
+  //
+  // Trade-off: dropping the sample rate cuts log spend roughly
+  // linearly but loses canonical-line coverage on the happy path.
+  // Errors and maintenance runs are always-kept regardless.
   "vars": {
     "APP": "{{appName}}",
     "TENANT": "{{tenant}}",
+    "LOG_LEVEL": "info",
+    "LOG_SAMPLE": "0.1",
   },
 
   // Cron trigger for the Phase-5 maintenance loop. Every minute —

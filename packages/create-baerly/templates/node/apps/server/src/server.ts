@@ -13,6 +13,7 @@ import { DOMParser } from "@xmldom/xmldom";
 import { AwsClient } from "aws4fetch";
 import { createListener, runMaintenanceTick, S3HttpStorage } from "@baerly/adapter-node";
 import { bearerJwt, sharedSecret } from "@baerly/server/auth";
+import type { FriendlyLogLevel } from "@baerly/server";
 import type { Verifier } from "@baerly/protocol";
 
 const reqEnv = (name: string): string => {
@@ -49,7 +50,25 @@ const verifier: Verifier =
       })
     : sharedSecret({ secret: reqEnv("SHARED_SECRET"), tenantPrefix: TENANT });
 
-const listener = createListener({ app: APP, storage, verifier });
+// Phase-9 observability — one canonical JSON line per request /
+// maintenance run on stdout. `LOG_LEVEL` toggles between
+// `debug | info | warn | error` (default `info`); `LOG_SAMPLE` is
+// the head-based sample rate for successful requests in `[0, 1]`
+// (default `0.1` — errors are always kept; maintenance always emits).
+// Pass `observability: undefined` (or omit the field) to skip
+// LogTape configuration entirely; the kernel's recorder pipe still
+// runs and the `metrics` option remains the authoritative sink.
+// See `docs/observability.md` for sink wiring (OTel, Datadog,
+// Workers Analytics Engine) and the canonical-line field reference.
+const listener = createListener({
+  app: APP,
+  storage,
+  verifier,
+  observability: {
+    level: process.env.LOG_LEVEL as FriendlyLogLevel | undefined,
+    sampleRate: process.env.LOG_SAMPLE !== undefined ? Number(process.env.LOG_SAMPLE) : 0.1,
+  },
+});
 const server = createServer(listener);
 
 server.listen(PORT, () => console.log(`{{appName}} listening on :${PORT}`));

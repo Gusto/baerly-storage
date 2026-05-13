@@ -18,12 +18,26 @@
  */
 import { baerlyWorker, type Env as BaerlyEnv } from "@baerly/adapter-cloudflare";
 import { cloudflareAccess, sharedSecret } from "@baerly/server/auth";
+import type { FriendlyLogLevel } from "@baerly/server";
 import type { Verifier } from "@baerly/protocol";
 
 interface AppEnv extends BaerlyEnv {
   readonly SHARED_SECRET?: string;
   readonly CF_ACCESS_TEAM_DOMAIN?: string;
   readonly CF_ACCESS_AUDIENCE_TAG?: string;
+  /**
+   * Phase-9 observability — `debug | info | warn | error`.
+   * `info` (default) emits one canonical JSON line per request /
+   * maintenance run on stdout (ingested by Workers Logs). `debug`
+   * additionally emits per-storage-op events; high volume, leave
+   * off in production.
+   */
+  readonly LOG_LEVEL?: FriendlyLogLevel;
+  /**
+   * Phase-9 sample rate in `[0, 1]` for successful requests.
+   * Errors are always kept; maintenance always emits. Default `0.1`.
+   */
+  readonly LOG_SAMPLE?: string;
 }
 
 /**
@@ -49,11 +63,28 @@ const selectVerifier = (env: AppEnv): Verifier => {
   );
 };
 
+/**
+ * Build the `baerlyWorker` options bag. The observability config
+ * pulls level + sample rate from the bound vars (`LOG_LEVEL`,
+ * `LOG_SAMPLE`); leaving either unset falls through to the kernel
+ * defaults (`info` level, `0.1` sample rate). See `wrangler.jsonc`
+ * for the var declarations and `docs/observability.md` for the
+ * canonical-line shape, sink wiring recipes, and known gaps (CF
+ * cache-hit short-circuit emits no canonical line by design).
+ */
+const workerOptions = (env: AppEnv) => ({
+  verifier: selectVerifier(env),
+  observability: {
+    level: env.LOG_LEVEL,
+    sampleRate: env.LOG_SAMPLE !== undefined ? Number(env.LOG_SAMPLE) : 0.1,
+  },
+});
+
 export default {
   async fetch(req, env, ctx): Promise<Response> {
-    return baerlyWorker({ verifier: selectVerifier(env) }).fetch!(req, env, ctx);
+    return baerlyWorker(workerOptions(env)).fetch!(req, env, ctx);
   },
   async scheduled(event, env, ctx): Promise<void> {
-    return baerlyWorker({ verifier: selectVerifier(env) }).scheduled!(event, env, ctx);
+    return baerlyWorker(workerOptions(env)).scheduled!(event, env, ctx);
   },
 } satisfies ExportedHandler<AppEnv>;
