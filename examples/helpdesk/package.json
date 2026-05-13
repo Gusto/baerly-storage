@@ -11,6 +11,10 @@
     "test": "vitest run smoke.test.ts"
   },
   "devDependencies": {
+    "@baerly/adapter-node": "workspace:*",
+    "@baerly/client": "workspace:*",
+    "@baerly/dev": "workspace:*",
+    "@baerly/protocol": "workspace:*",
     "vitest": "^4.1.5"
   }
 }

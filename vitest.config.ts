@@ -104,7 +104,15 @@ export default defineConfig({
       {
         test: {
           name: "default",
-          include: ["src/**/*.test.ts", "tests/**/*.test.ts", "packages/*/src/**/*.test.ts"],
+          include: [
+            "src/**/*.test.ts",
+            "tests/**/*.test.ts",
+            "packages/*/src/**/*.test.ts",
+            // Example apps' top-level smoke tests (no infra deps).
+            // Their internal source globs stay out — examples are
+            // illustrative, not part of the protocol suite.
+            "examples/*/smoke.test.ts",
+          ],
           exclude: [
             ...configDefaults.exclude,
             ...conformanceExclude,
