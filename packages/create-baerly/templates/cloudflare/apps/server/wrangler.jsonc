@@ -19,9 +19,13 @@
     },
   ],
 
-  // Plain-text bindings. `APP` pins this Worker's app-prefix;
-  // `TENANT` is the single-tenant fallback when no Verifier
-  // resolves a tenant from the request.
+  // Plain-text bindings. `APP` pins this Worker's app-prefix.
+  // `TENANT` is **not** special-cased by `baerlyWorker` — the
+  // configured `Verifier` resolves the tenant from each request.
+  // Single-tenant Workers pass it through explicitly via
+  // `singleTenantDevVerifier(env.TENANT)`; app code can also
+  // reference `env.TENANT` for its own composition (e.g. naming
+  // a `CURRENT_JSON_KEY`).
   //
   // Phase-9 observability vars:
   //
