@@ -64,6 +64,7 @@
     "verify": "pnpm run typecheck && pnpm run lint",
     "dev:storage": "docker compose up -d --wait",
     "dev:storage:stop": "docker compose down",
+    "eval:score": "node scripts/score-run.mjs",
     "bench:r2": "node --import ./bench/register-hooks.mjs bench/r2-contention.ts",
     "bench:r2:matrix": "node --import ./bench/register-hooks.mjs bench/r2-contention-matrix.ts",
     "bench:r2:interpret": "node --import ./bench/register-hooks.mjs bench/r2-contention-interpret.ts",

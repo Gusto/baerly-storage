@@ -1,0 +1,10 @@
+{"type":"thread.started","thread_id":"th-1","timestamp":"2026-05-13T18:24:00Z"}
+{"type":"turn.started","timestamp":"2026-05-13T18:24:01Z"}
+{"type":"item.started","timestamp":"2026-05-13T18:24:02Z","item":{"id":"i1","type":"reasoning"}}
+{"type":"item.completed","timestamp":"2026-05-13T18:24:03Z","item":{"id":"i1","type":"reasoning","status":"completed"}}
+{"type":"item.started","timestamp":"2026-05-13T18:24:04Z","item":{"id":"i2","type":"command_execution","command":"ls"}}
+{"type":"item.completed","timestamp":"2026-05-13T18:24:05Z","item":{"id":"i2","type":"command_execution","status":"completed"}}
+{"type":"item.started","timestamp":"2026-05-13T18:24:06Z","item":{"id":"i3","type":"file_change","path":"apps/server/src/todo.ts"}}
+{"type":"item.completed","timestamp":"2026-05-13T18:24:07Z","item":{"id":"i3","type":"file_change","path":"apps/server/src/todo.ts","status":"completed"}}
+{"type":"item.completed","timestamp":"2026-05-13T18:24:08Z","item":{"id":"i4","type":"agent_message","text":"Done."}}
+{"type":"turn.completed","timestamp":"2026-05-13T18:24:10Z","usage":{"input_tokens":1500,"cached_input_tokens":600,"output_tokens":420,"reasoning_output_tokens":80}}
