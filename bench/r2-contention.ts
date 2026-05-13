@@ -47,6 +47,20 @@ const BASE_MS = 50;
 const CAP_MS = 5000;
 const MAX_RETRIES = 10;
 
+/**
+ * Compute the per-collection `current.json` key for the `S2-multi`
+ * scenario. The shape matches the protocol's `<tenant>/<collection>/current.json`
+ * default (per `packages/protocol/src/coordination/current-json.ts:43–45`);
+ * we nest under `bench/tenant-A/` so the keyspace is bench-owned
+ * and won't collide with `S1` / `S2-idle` / `S3-toxic` (which use
+ * `bench/tenant-A/collection-K/current.json`).
+ */
+function multiCollectionKey(idx: number): string {
+  // Zero-pad to 6 digits — enough for M=1_000_000 without changing
+  // lex-order. (M=1000 is the documented stress regime.)
+  return `bench/tenant-A/multi/collection-${idx.toString().padStart(6, "0")}/current.json`;
+}
+
 function viaFor(network: Network): "direct" | "toxiproxy" {
   return network === "direct" ? "direct" : "toxiproxy";
 }
@@ -240,6 +254,114 @@ async function runS2Idle(cell: SweepCell): Promise<RunResult> {
   };
 }
 
+async function runS2Multi(cell: SweepCell): Promise<RunResult> {
+  const via = viaFor(cell.network);
+  const storage = buildBenchStorage({ via, bucket: BUCKET });
+  await ensureBucket({ via, bucket: BUCKET });
+
+  // Seed M current.json keys. Idempotent (Conflict tolerated).
+  for (let i = 0; i < cell.collections; i++) {
+    const key = multiCollectionKey(i);
+    try {
+      await createCurrentJson(storage, key, SEED);
+    } catch (e: unknown) {
+      if (e instanceof BaerlyError && e.code === "Conflict") continue;
+      throw e;
+    }
+  }
+  // Reset counters; only the rotation loop counts.
+  storage.classAOps = 0;
+  storage.classBOps = 0;
+
+  const metrics = new Metrics();
+  const controller = new AbortController();
+  const started = new Date();
+  const t0 = performance.now();
+  let collectionIdx = 0;
+  const writerLoop = async (): Promise<void> => {
+    while (!controller.signal.aborted) {
+      const key = multiCollectionKey(collectionIdx);
+      collectionIdx = (collectionIdx + 1) % cell.collections;
+      const tCommit = performance.now();
+      let attempts = 0;
+      let prevSleep = BASE_MS;
+      while (attempts < MAX_RETRIES && !controller.signal.aborted) {
+        try {
+          await casUpdateCurrentJson(storage, key, (cur) => ({
+            ...cur,
+            next_seq: cur.next_seq + 1,
+          }));
+          metrics.recordCommit(performance.now() - tCommit, attempts);
+          break;
+        } catch (e: unknown) {
+          if (e instanceof BaerlyError && e.code === "Conflict") {
+            // Should be ~impossible (single writer per key) but
+            // count the same way so the metric is comparable.
+            metrics.recordConflict412();
+            const sleepMs = jitter(cell.retryPolicy, attempts, prevSleep);
+            prevSleep = sleepMs;
+            await new Promise((r) => setTimeout(r, sleepMs));
+            attempts++;
+            continue;
+          }
+          if (e instanceof BaerlyError && e.code === "NetworkError") {
+            metrics.recordRateLimit429();
+            const sleepMs = jitter(cell.retryPolicy, attempts, prevSleep);
+            prevSleep = sleepMs;
+            await new Promise((r) => setTimeout(r, sleepMs));
+            attempts++;
+            continue;
+          }
+          throw e;
+        }
+      }
+    }
+  };
+
+  const stop = setTimeout(() => controller.abort(), cell.durationMs);
+  try {
+    await writerLoop();
+  } finally {
+    clearTimeout(stop);
+  }
+  const wallclockMs = performance.now() - t0;
+  const snap = metrics.snapshot();
+  // For S2-multi there's only ONE writer, so per-writer-per-hour is
+  // the same as total-per-hour. We retain the field name for run-JSON
+  // shape consistency with `S1`.
+  const perWriterPerHour = storage.classAOps * (3_600_000 / wallclockMs);
+
+  // 429 onset is the load-bearing signal. If non-zero, the operator
+  // sees it via `notes` (and ticket 64's interpreter applies a
+  // threshold). 412s on this scenario are pathology.
+  const notes: string | undefined =
+    snap.rate_limit_429_count > 0
+      ? `429 onset at M=${cell.collections}: ${snap.rate_limit_429_count} over ${snap.commit_count} commits`
+      : undefined;
+
+  return {
+    cell,
+    started_iso: started.toISOString(),
+    wallclock_ms: wallclockMs,
+    effective_throughput_per_sec: snap.commit_count / (wallclockMs / 1000),
+    cas_412_rate: snap.conflict_412_count / Math.max(1, snap.commit_count),
+    rate_limit_429_rate:
+      snap.rate_limit_429_count / Math.max(1, snap.commit_count + snap.rate_limit_429_count),
+    class_a_op_count: storage.classAOps,
+    class_b_op_count: storage.classBOps,
+    class_a_per_writer_per_hour: perWriterPerHour,
+    latency_p50_ms: snap.latency_p50_ms,
+    latency_p99_ms: snap.latency_p99_ms,
+    latency_p999_ms: snap.latency_p999_ms,
+    retry_tail_max: snap.retry_tail_max,
+    // S2-multi is NOT an idle-reader scenario; the cost-model bound
+    // doesn't apply. Same convention as `runS1`: set true so the
+    // exit-code logic ignores it.
+    cost_model_bound_holds: true,
+    ...(notes !== undefined && { notes }),
+  };
+}
+
 async function runS3Toxic(cell: SweepCell): Promise<RunResult> {
   await installToxics(cell.network);
   try {
@@ -264,9 +386,12 @@ function parseArgs(argv: readonly string[]): SweepCell {
     scenario,
     concurrency: Number(arg("concurrency", "16")),
     pollerCount: Number(arg("pollers", "10")),
+    collections: Number(arg("collections", "10")),
     retryPolicy,
     network,
     durationMs: Number(arg("duration-s", "60")) * 1000,
+    outDir: arg("out-dir", "bench/results"),
+    cellId: arg("cell-id", `${scenario}-${new Date().toISOString().replace(/[:.]/g, "-")}`),
   };
 }
 
@@ -278,7 +403,9 @@ async function main(): Promise<number> {
       ? await runS1(cell)
       : cell.scenario === "S2-idle"
         ? await runS2Idle(cell)
-        : await runS3Toxic(cell);
+        : cell.scenario === "S2-multi"
+          ? await runS2Multi(cell)
+          : await runS3Toxic(cell);
 
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
   const out = path.join("bench/results", `${cell.scenario}-${stamp}.json`);
@@ -288,7 +415,8 @@ async function main(): Promise<number> {
   // One-line summary to stdout. Operator parses this for at-a-glance
   // sweep results.
   console.log(
-    `${cell.scenario} c=${cell.concurrency} pollers=${cell.pollerCount} retry=${cell.retryPolicy} net=${cell.network}: ` +
+    `${cell.scenario} c=${cell.concurrency} pollers=${cell.pollerCount} m=${cell.collections} ` +
+      `retry=${cell.retryPolicy} net=${cell.network}: ` +
       `class_a/writer/hr=${result.class_a_per_writer_per_hour.toFixed(3)} ` +
       `412_rate=${result.cas_412_rate.toFixed(3)} 429_rate=${result.rate_limit_429_rate.toFixed(3)} ` +
       `bound_holds=${result.cost_model_bound_holds}`,

@@ -8,7 +8,7 @@
  * concerns.
  */
 
-export type Scenario = "S1" | "S2-idle" | "S3-toxic";
+export type Scenario = "S1" | "S2-idle" | "S2-multi" | "S3-toxic";
 
 export type RetryPolicy = "no-jitter" | "full-jitter" | "decorrelated";
 
@@ -16,14 +16,24 @@ export type Network = "direct" | "wan-50ms" | "loss-5";
 
 export interface SweepCell {
   readonly scenario: Scenario;
-  /** S1, S3-toxic only. Ignored for S2-idle (which uses pollerCount). */
+  /** S1, S3-toxic only. Ignored for S2-idle / S2-multi. */
   readonly concurrency: number;
   /** S2-idle only. Ignored elsewhere. */
   readonly pollerCount: number;
+  /**
+   * S2-multi only. Count of independent `current.json` keys the
+   * single writer round-robins across. Ignored for every other
+   * scenario.
+   */
+  readonly collections: number;
   readonly retryPolicy: RetryPolicy;
   readonly network: Network;
   /** Wall-clock budget per scenario run, in milliseconds. */
   readonly durationMs: number;
+  /** From ticket 60. */
+  readonly outDir?: string;
+  /** From ticket 60. */
+  readonly cellId?: string;
 }
 
 export interface MetricsSnapshot {
