@@ -13,12 +13,16 @@
  * subcommand in each module's docstring.
  */
 import { defineCommand, runMain } from "citty";
+import { compactCmd } from "./admin/compact.ts";
 import { dumpCmd } from "./admin/dump.ts";
+import { fsckCmd } from "./admin/fsck.ts";
+import { migrateCmd } from "./admin/migrate.ts";
 import { rebuildIndexCmd } from "./admin/rebuild-index.ts";
 import { restoreCmd } from "./admin/restore.ts";
 import { copy } from "./copy.ts";
 import { deploy } from "./deploy.ts";
 import { doctor } from "./doctor.ts";
+import { exportCmd } from "./export.ts";
 import { init } from "./init.ts";
 import { inspect } from "./inspect.ts";
 import { setJsonMode } from "./output.ts";
@@ -30,9 +34,9 @@ import { setJsonMode } from "./output.ts";
 setJsonMode(process.argv.includes("--json"));
 
 /**
- * `baerly admin <command>` — operator-side reconciliation,
- * inspection, and data-shovel tools. Today: `rebuild-index`,
- * `dump`, `restore`. Future: `compact`, `fsck`, `migrate`.
+ * `baerly admin <command>` — operator-side reconciliation, inspection,
+ * data-shovel, and maintenance tools. Today: `rebuild-index`, `dump`,
+ * `restore`, `compact`, `fsck`, `migrate`.
  */
 const admin = defineCommand({
   meta: {
@@ -43,6 +47,9 @@ const admin = defineCommand({
     "rebuild-index": rebuildIndexCmd,
     dump: dumpCmd,
     restore: restoreCmd,
+    compact: compactCmd,
+    fsck: fsckCmd,
+    migrate: migrateCmd,
   },
 });
 
@@ -59,9 +66,8 @@ const main = defineCommand({
     doctor,
     init,
     inspect,
+    export: exportCmd,
     admin,
-    // Remaining subcommands (each a ~10-line defineCommand block):
-    //   compact, fsck, export, migrate (ticket 75).
   },
 });
 

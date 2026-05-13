@@ -5,3 +5,7 @@ export { init, runInit } from "./init.ts";
 export { inspect, runInspect } from "./inspect.ts";
 export { dumpCmd, runDump, canonicalStringify } from "./admin/dump.ts";
 export { restoreCmd, runRestore } from "./admin/restore.ts";
+export { compactCmd, runCompact } from "./admin/compact.ts";
+export { fsckCmd, runFsck } from "./admin/fsck.ts";
+export { migrateCmd, runMigrate } from "./admin/migrate.ts";
+export { exportCmd, runExport } from "./export.ts";

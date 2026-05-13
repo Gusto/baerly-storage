@@ -50,6 +50,11 @@ export {
   runScheduledMaintenance,
 } from "./maintenance.ts";
 export {
+  type MigrateCollectionArgs,
+  type MigrateCollectionResult,
+  migrateCollection,
+} from "./migrate.ts";
+export {
   type CategoryName,
   type FlushCanonicalLineOptions,
   type FriendlyLogLevel,
