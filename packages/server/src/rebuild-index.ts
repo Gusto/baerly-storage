@@ -226,7 +226,7 @@ const rebuildIndexInner = async (
       // 412 = a peer wrote the entry between our `list` and our
       // PUT. The entry exists; we couldn't have written different
       // bytes (zero-byte body); count it as kept and move on.
-      if (e instanceof BaerlyError && isPreconditionFailed(e)) {
+      if (e instanceof BaerlyError && e.code === "Conflict") {
         kept += 1;
       } else {
         throw e;
@@ -240,10 +240,4 @@ const rebuildIndexInner = async (
     removed += 1;
   }
   return { added, removed, kept };
-};
-
-/** Mirrors `server-writer.ts:isPreconditionFailed`. Local to avoid an import cycle. */
-const isPreconditionFailed = (err: BaerlyError): boolean => {
-  if (err.code === "Conflict") return true;
-  return err.code === "InvalidResponse" && err.message.startsWith("PreconditionFailed:");
 };

@@ -20,6 +20,7 @@ import {
   type StoragePutOptions,
   type StoragePutResult,
   type StorageListEntry,
+  BaerlyError,
   S3HttpStorage,
 } from "@baerly/protocol";
 import type { StorageSnapshot, OpLatencyTail } from "./types.ts";
@@ -179,15 +180,19 @@ export class CountingStorage implements Storage {
     try {
       return await this.inner.put(key, body, opts);
     } catch (e: unknown) {
-      // S3HttpStorage surfaces 412 as
-      // BaerlyError{code:"InvalidResponse", message:"PreconditionFailed: …"}
-      // and 429 / 503-SlowDown as
-      // BaerlyError{code:"NetworkError", message: "…429…"} after the
-      // retry budget is exhausted (bench passes retries=0, so it
-      // surfaces on the first wire response).
-      const msg = (e as { message?: string }).message ?? "";
-      if (msg.includes("PreconditionFailed")) this.conflict412++;
-      else if (msg.includes("429") || msg.includes("SlowDown")) this.rateLimit429++;
+      // 412 surfaces as BaerlyError{code:"Conflict"}; 429 / 503-SlowDown
+      // surface as BaerlyError{code:"NetworkError"} once the retry budget
+      // is exhausted (bench passes retries=0, so on the first wire reply).
+      // 429 has no dedicated code, so fall back to message sniffing for
+      // the rate-limit bucket only.
+      if (e instanceof BaerlyError) {
+        if (e.code === "Conflict") this.conflict412++;
+        else if (
+          e.code === "NetworkError" &&
+          (e.message.includes("429") || e.message.includes("SlowDown"))
+        )
+          this.rateLimit429++;
+      }
       throw e;
     } finally {
       this.recordLatency("put", performance.now() - t0);
