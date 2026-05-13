@@ -1,0 +1,25 @@
+{
+  "recent-first-crud": {
+    "tenantSize": [
+      { "cumulativeFraction": 0.7, "maxRecords": 100 },
+      { "cumulativeFraction": 0.9, "maxRecords": 1000 },
+      { "cumulativeFraction": 0.99, "maxRecords": 10000 },
+      { "cumulativeFraction": 1.0, "maxRecords": 100000 }
+    ],
+    "tenantTraffic": [
+      { "topFraction": 0.01, "trafficShare": 0.5 },
+      { "topFraction": 0.09, "trafficShare": 0.3 },
+      { "topFraction": 0.9, "trafficShare": 0.2 }
+    ],
+    "recordPopularity": [
+      { "topFraction": 0.1, "readShare": 0.7 },
+      { "topFraction": 0.1, "readShare": 0.2 },
+      { "topFraction": 0.8, "readShare": 0.1 }
+    ],
+    "recordSize": [
+      { "cumulativeFraction": 0.7, "maxBytes": 2000 },
+      { "cumulativeFraction": 0.95, "maxBytes": 10000 },
+      { "cumulativeFraction": 1.0, "maxBytes": 1000000 }
+    ]
+  }
+}
