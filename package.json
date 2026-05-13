@@ -60,6 +60,7 @@
     "@vitest/coverage-v8": "^4.1.5",
     "@xmldom/xmldom": "^0.9.10",
     "aws4fetch": "1.0.20",
+    "execa": "^9.5.2",
     "fake-indexeddb": "^6.2.5",
     "fast-check": "^4.7.0",
     "happy-dom": "^15.11.0",
