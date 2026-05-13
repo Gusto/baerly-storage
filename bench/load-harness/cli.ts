@@ -49,9 +49,21 @@ import { makeRng } from "./generators/rng.ts";
 import { buildDataset } from "./generators/dataset.ts";
 import { generateOpStream, type Op } from "./generators/ops.ts";
 
-// Side-effect import to register the preset before getPreset() works.
+// Side-effect imports to register presets before getPreset() works.
 // eslint-disable-next-line import/no-unassigned-import
 import "./presets/recent-first-crud.ts";
+// eslint-disable-next-line import/no-unassigned-import
+import "./presets/one-hot-tenant.ts";
+// eslint-disable-next-line import/no-unassigned-import
+import "./presets/update-heavy-messy-log.ts";
+// eslint-disable-next-line import/no-unassigned-import
+import "./presets/hot-tenant-compaction-debt.ts";
+// eslint-disable-next-line import/no-unassigned-import
+import "./presets/many-tiny-apps.ts";
+// eslint-disable-next-line import/no-unassigned-import
+import "./presets/rag-document-store.ts";
+// eslint-disable-next-line import/no-unassigned-import
+import "./presets/chat-conversation-store.ts";
 
 // ---------------------------------------------------------------------------
 // Types

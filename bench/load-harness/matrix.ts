@@ -14,7 +14,15 @@ import { spawn } from "node:child_process";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 
-const PRESETS = ["recent-first-crud"]; // ticket 55 adds the remaining six
+const PRESETS = [
+  "recent-first-crud",
+  "one-hot-tenant",
+  "update-heavy-messy-log",
+  "hot-tenant-compaction-debt",
+  "many-tiny-apps",
+  "rag-document-store",
+  "chat-conversation-store",
+];
 const VARIANTS =
   process.env.MINIO === "1" ? ["memory", "local-fs", "node-minio"] : ["memory", "local-fs"];
 const CACHE_MODES = ["cold", "metadata-warm", "data-warm", "tiny-cache"];
