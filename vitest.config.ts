@@ -124,6 +124,11 @@ export default defineConfig({
             // Their internal source globs stay out — examples are
             // illustrative, not part of the protocol suite.
             "examples/*/smoke.test.ts",
+            // Bench unit tests (bench/storage.test.ts and any future
+            // bench-colocated tests). Bench scripts are not bundled
+            // into the protocol output; this glob keeps them typechecked
+            // and tested without widening the main source include.
+            "bench/**/*.test.ts",
           ],
           exclude: [
             ...configDefaults.exclude,
