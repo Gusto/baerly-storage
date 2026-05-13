@@ -21,6 +21,9 @@ coverage/
 # Bench harness outputs (per-run JSON + CSV)
 bench/results/*
 !bench/results/.gitkeep
+!bench/results/load/
+bench/results/load/*
+!bench/results/load/.gitkeep
 
 # Bench load-harness fixtures (raw corpora; only calibration.json
 # under presets/ is checked in — see scripts/fetch-bench-fixtures.sh).
