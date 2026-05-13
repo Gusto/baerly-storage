@@ -147,6 +147,21 @@ Library lives in `@baerly/export`; the CLI wiring lands separately.
   [`packages/export/src/rows.test.ts`](../packages/export/src/rows.test.ts),
   [`packages/export/src/sql-escape.test.ts`](../packages/export/src/sql-escape.test.ts)
 
+## Export round-trip (`pnpm test:export-round-trip`)
+
+Phase 9 gate; ensures byte-equal preservation across `export →
+SQLite → restore`. Seeds a `LocalFsStorage`-backed Baerly bucket,
+runs the `@baerly/export` pipeline against the `sqlite3` CLI binary
+(auto-skips when absent), re-imports the SQL dump through `baerly
+admin restore`, and asserts byte-equal `baerly admin dump` between
+the source and restored buckets. Uses
+[`serializeExportPlan` / `deserializeExportPlan`](../packages/export/src/plan-sidecar.ts)
+to coerce SQLite values back to their original JS types.
+
+- Tests:
+  [`tests/integration/export-round-trip.test.ts`](../tests/integration/export-round-trip.test.ts),
+  [`packages/export/src/plan-sidecar.test.ts`](../packages/export/src/plan-sidecar.test.ts)
+
 ## Observability
 
 Canonical one-line-per-unit-of-work log plus a pluggable

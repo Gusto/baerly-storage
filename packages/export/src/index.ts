@@ -4,3 +4,4 @@ export { emitCreateTable } from "./ddl.ts";
 export { emitInsertStatements } from "./rows.ts";
 export { quoteIdentifier, quoteValue } from "./sql-escape.ts";
 export { translatePredicateToSql, type WhereTranslation } from "./where.ts";
+export { serializeExportPlan, deserializeExportPlan } from "./plan-sidecar.ts";

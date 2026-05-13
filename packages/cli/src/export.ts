@@ -56,6 +56,7 @@ import {
   emitInsertStatements,
   inferPlanForCollection,
   loadMaterialisedView,
+  serializeExportPlan,
   translatePredicateToSql,
 } from "@baerly/export";
 import { loadAppConfig } from "./config.ts";
@@ -289,7 +290,7 @@ const handleExport = async (args: Args): Promise<number> => {
     if (typeof outputPath === "string" && outputPath.length > 0) {
       await writeFile(outputPath, sql, "utf8");
       if (args.sidecar !== false) {
-        await writeFile(`${outputPath}.plan.json`, JSON.stringify(plan), "utf8");
+        await writeFile(`${outputPath}.plan.json`, serializeExportPlan(plan), "utf8");
       }
     } else {
       process.stdout.write(sql);
