@@ -226,3 +226,24 @@ export const GC_MAX_PENDING_CANDIDATES: number = 1000;
  * @see packages/server/src/contract.ts (HttpOkMeta)
  */
 export const MANIFEST_POINTER_EMPTY_SNAPSHOT: string = "none";
+
+/**
+ * Keys that must never propagate through {@link merge}: assigning to
+ * them on a plain object pollutes the prototype chain. The literal
+ * `{ __proto__: ... }` syntax is a prototype-setter (not an own key)
+ * and bypasses `Object.keys`, but `JSON.parse('{"__proto__":...}')`
+ * produces a real own property — which is exactly how a malicious
+ * HTTP PATCH body would arrive on the wire.
+ *
+ * Lifted to a constant so every iteration path that touches a
+ * caller-supplied object can re-use the same defence without
+ * duplicating the keyword list.
+ *
+ * @see packages/protocol/src/json.ts (merge)
+ * @see docs/spec/json-merge-patch.md
+ */
+export const FORBIDDEN_MERGE_KEYS: ReadonlySet<string> = new Set([
+  "__proto__",
+  "constructor",
+  "prototype",
+]);

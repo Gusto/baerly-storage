@@ -1,3 +1,5 @@
+import { FORBIDDEN_MERGE_KEYS } from "./constants.ts";
+
 export type JSONArraylessObject = { [x: string]: JSONArrayless };
 export type JSONArrayless = string | number | boolean | JSONArraylessObject;
 
@@ -29,7 +31,7 @@ export function merge<T extends JSONArrayless>(
     // is an own property when patches arrive via JSON.parse (HTTP PATCH
     // bodies hit this path through query.ts:runUpdate). Guard remains
     // load-bearing. See predicate.test.ts for the same vector.
-    if (key === "__proto__" || key === "constructor" || key === "prototype") continue;
+    if (FORBIDDEN_MERGE_KEYS.has(key)) continue;
     if (patch[key] === null) {
       delete combined[key];
     } else {
