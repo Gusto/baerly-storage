@@ -96,6 +96,18 @@ until new entries arrive (or the long-poll deadline elapses).
 The protocol-level theory lives in
 [spec/sync-protocol.md](spec/sync-protocol.md).
 
+### After the write — the maintenance loop
+
+Once the insert lands, durability + space reclamation happen out
+of band. `runScheduledMaintenance` in
+`packages/server/src/maintenance.ts` composes two passes over the
+collection: `compact()` (`packages/server/src/compactor.ts`) folds
+adjacent log entries into checkpoints and advances
+`log_seq_start`, and `runGc()` (`packages/server/src/gc.ts`)
+deletes content bodies and log entries no longer reachable from
+any live row set or fence epoch. See "Storage layout in the
+bucket" below for the on-disk shape these passes produce.
+
 ## Storage seam
 
 The kernel reads and writes through the four `Storage` methods only
