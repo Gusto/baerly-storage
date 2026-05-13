@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "predev": "node -e \"console.log('\\n  helpdesk dev → open http://localhost:5173\\n  (api on :3000 — visit it for the landing page)\\n')\"",
     "dev": "pnpm --parallel --filter \"@helpdesk/*\" run dev",
     "build": "pnpm --filter \"@helpdesk/*\" run build",
     "seed": "pnpm --filter @helpdesk/server run seed",

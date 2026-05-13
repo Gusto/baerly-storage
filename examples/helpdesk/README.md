@@ -27,10 +27,10 @@ to `/v1/since`.
 
 ## What you just ran
 
-| Process       | URL                                             | What it does                                              |
-| ------------- | ----------------------------------------------- | --------------------------------------------------------- |
-| `apps/server` | <http://localhost:3000>                         | Node HTTP server. Persists tickets to `.baerly-data/`.    |
-| `apps/web`    | <http://localhost:5173>                         | Vite dev server. Proxies `/v1/*` to `:3000`.              |
+| Process       | URL                                             | What it does                                                                  |
+| ------------- | ----------------------------------------------- | ----------------------------------------------------------------------------- |
+| `apps/server` | <http://localhost:3000>                         | Node HTTP server. Persists tickets to `.baerly-data/`. Visit for a small dev landing page that links here. |
+| `apps/web`    | <http://localhost:5173>                         | Vite dev server. Proxies `/v1/*` to `:3000`.                                  |
 
 The bucket layout under `.baerly-data/`:
 

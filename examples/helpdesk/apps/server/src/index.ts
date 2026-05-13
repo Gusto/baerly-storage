@@ -11,6 +11,7 @@ const PORT = Number(process.env.PORT ?? 3000);
 const SHARED_SECRET = process.env.HELPDESK_SECRET ?? "dev-helpdesk-secret";
 const TENANT = "helpdesk-demo";
 const APP = "helpdesk";
+const UI_URL = process.env.HELPDESK_UI_URL ?? "http://localhost:5173";
 
 // Local-fs storage rooted at examples/helpdesk/.baerly-data/.
 // gitignored; deleted on reset (`rm -rf .baerly-data && pnpm dev`).
@@ -48,11 +49,20 @@ const verifier: Verifier = async (req) => {
   return { tenantPrefix: TENANT, identity: { kind: "shared-secret" } };
 };
 
-const listener = createListener({ app: APP, storage, verifier });
+// `observability: {}` lets `createListener` auto-pick the
+// `console-pretty` LogTape sink on a TTY (production hosts piping
+// stdout get the JSON sink). One human-readable line per request
+// lands in the dev terminal so user actions are visible.
+// `dev:` mounts a small HTML landing page on `GET /` so a curious
+// user clicking the :3000 link sees an explanation instead of the
+// JSON 404 envelope.
+const listener = createListener({
+  app: APP,
+  storage,
+  verifier,
+  observability: {},
+  dev: { app: APP, uiUrl: UI_URL, appLabel: "Helpdesk demo" },
+});
 createServer(listener).listen(PORT, () => {
-  console.log(`helpdesk server listening on http://localhost:${PORT}`);
-  console.log(`  storage: ${STORAGE_ROOT}`);
-  console.log(`  tenant:  ${TENANT}`);
-  console.log(`  app:     ${APP}`);
-  console.log(`  bearer:  ${SHARED_SECRET}  (override with HELPDESK_SECRET)`);
+  console.log(`helpdesk api → http://localhost:${PORT}  (open the UI at ${UI_URL})`);
 });
