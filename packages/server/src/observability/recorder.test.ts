@@ -1,5 +1,7 @@
+import { InMemoryMetricsRecorder } from "@baerly/protocol";
 import { describe, expect, it } from "vitest";
-import { RequestScopedMetricsRecorder } from "./recorder";
+import { createObservabilityContext, runWithContext } from "./context";
+import { alsAwareRecorder, RequestScopedMetricsRecorder } from "./recorder";
 
 describe("RequestScopedMetricsRecorder.snapshot", () => {
   it("returns empty arrays before any emission", () => {
@@ -100,5 +102,105 @@ describe("RequestScopedMetricsRecorder.summarize", () => {
       h_count: 2,
       h_sum: 6,
     });
+  });
+});
+
+describe("alsAwareRecorder", () => {
+  it("emissions outside a context land only in the operator sink", () => {
+    const operator = new InMemoryMetricsRecorder();
+    const tee = alsAwareRecorder(operator);
+    tee.counter("c", 1);
+    tee.gauge("g", 5);
+    tee.histogram("h", 7);
+    expect(operator.counters).toHaveLength(1);
+    expect(operator.gauges).toHaveLength(1);
+    expect(operator.histograms).toHaveLength(1);
+    // Nothing further to assert: outside of `runWithContext` there's
+    // no per-request bag to populate.
+  });
+
+  it("emissions inside a context land in both operator and per-request bag", async () => {
+    const operator = new InMemoryMetricsRecorder();
+    const tee = alsAwareRecorder(operator);
+    const ctx = createObservabilityContext();
+
+    await runWithContext(ctx, async () => {
+      tee.counter("db.r2.put.412_total", 2, { collection: "tickets" });
+      tee.gauge("db.manifest.lag_window_depth", 12);
+      tee.histogram("db.write.class_a_ops_per_logical_write", 4);
+    });
+
+    // Operator saw everything.
+    expect(operator.sumCounter("db.r2.put.412_total")).toBe(2);
+    expect(operator.lastGauge("db.manifest.lag_window_depth")).toBe(12);
+    expect(operator.histogramValues("db.write.class_a_ops_per_logical_write")).toEqual([4]);
+
+    // Per-request bag captured the same emissions; summary reflects
+    // suffixes (counter_total, histogram_p50/_p99/_count/_sum).
+    const summary = ctx.recorder.summarize();
+    expect(summary["db.r2.put.412_total_total"]).toBe(2);
+    expect(summary["db.manifest.lag_window_depth"]).toBe(12);
+    expect(summary["db.write.class_a_ops_per_logical_write_count"]).toBe(1);
+    expect(summary["db.write.class_a_ops_per_logical_write_sum"]).toBe(4);
+  });
+
+  it("nested contexts: emissions land in the innermost ctx's recorder only", async () => {
+    const operator = new InMemoryMetricsRecorder();
+    const tee = alsAwareRecorder(operator);
+    const outer = createObservabilityContext();
+    const inner = createObservabilityContext();
+
+    await runWithContext(outer, async () => {
+      tee.counter("outer-before", 1);
+      await runWithContext(inner, async () => {
+        tee.counter("inner-only", 1);
+      });
+      tee.counter("outer-after", 1);
+    });
+
+    // Operator sees all three.
+    expect(operator.sumCounter("outer-before")).toBe(1);
+    expect(operator.sumCounter("inner-only")).toBe(1);
+    expect(operator.sumCounter("outer-after")).toBe(1);
+
+    // Outer bag captured the two outer emissions, not the inner one.
+    const outerSummary = outer.recorder.summarize();
+    expect(outerSummary["outer-before_total"]).toBe(1);
+    expect(outerSummary["outer-after_total"]).toBe(1);
+    expect(outerSummary["inner-only_total"]).toBeUndefined();
+
+    // Inner bag captured only the inner emission.
+    const innerSummary = inner.recorder.summarize();
+    expect(innerSummary["inner-only_total"]).toBe(1);
+    expect(innerSummary["outer-before_total"]).toBeUndefined();
+    expect(innerSummary["outer-after_total"]).toBeUndefined();
+  });
+
+  it("operator emissions happen before the per-request bag", () => {
+    const order: string[] = [];
+    const operator = {
+      counter: (name: string): void => {
+        order.push(`op:${name}`);
+      },
+      gauge: (name: string): void => {
+        order.push(`op:${name}`);
+      },
+      histogram: (name: string): void => {
+        order.push(`op:${name}`);
+      },
+    };
+    const ctx = createObservabilityContext();
+    // Stamp a marker by intercepting the bag's counter call.
+    const origCounter = ctx.recorder.counter.bind(ctx.recorder);
+    ctx.recorder.counter = (name, value, labels): void => {
+      order.push(`bag:${name}`);
+      origCounter(name, value, labels);
+    };
+
+    const tee = alsAwareRecorder(operator);
+    runWithContext(ctx, () => {
+      tee.counter("x", 1);
+    });
+    expect(order).toEqual(["op:x", "bag:x"]);
   });
 });

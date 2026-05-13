@@ -16,6 +16,7 @@
  */
 
 import type { MetricsRecorder } from "@baerly/protocol";
+import { getCurrentContext } from "./context";
 
 /** One observation row, kept in insertion order. */
 export interface ObservationRow {
@@ -139,3 +140,50 @@ const percentile = (values: readonly number[], p: number): number => {
   // clamped to `[0, length-1]` and `length >= 1` above.
   return values[idx]!;
 };
+
+/**
+ * Build a {@link MetricsRecorder} that always emits to `operator`
+ * AND, when called from inside a {@link runWithContext} scope, ALSO
+ * emits to the current request's per-request bag
+ * ({@link getCurrentContext}().recorder).
+ *
+ * Adapters construct this once per request (or once at module init —
+ * the ALS lookup is per-call, so call site doesn't matter) and pass
+ * the result as the `Db`'s `metrics` option. Net effect: every
+ * kernel emission (ServerWriter's class-A-op histogram, the
+ * compactor's `db.compact.entries_folded`, the GC's
+ * `db.gc.swept_total`, the storage decorator's per-call counters,
+ * etc.) lands in BOTH:
+ *
+ * 1. The operator's long-term {@link MetricsRecorder} (Workers
+ *    Analytics Engine, OpenTelemetry, statsd) — verbatim, every
+ *    emission, regardless of context.
+ * 2. The per-request {@link RequestScopedMetricsRecorder} bag — only
+ *    when the emission happens inside an `runWithContext` scope.
+ *    The canonical-line flusher reads `summarize()` off this bag at
+ *    end-of-request and spreads it onto the line.
+ *
+ * Calls outside any context (e.g. kernel emissions that escape ALS
+ * propagation through a setTimeout that the runtime doesn't bridge)
+ * still reach the operator's sink. The bag is best-effort, the
+ * operator's sink is authoritative.
+ *
+ * Emission order: operator first, then the bag. This matches
+ * {@link teeMetricsRecorders} from `@baerly/protocol` — operator
+ * sinks may throw (operator bug); the bag never throws and is fine
+ * to skip if the operator did.
+ */
+export const alsAwareRecorder = (operator: MetricsRecorder): MetricsRecorder => ({
+  counter: (name, value, labels) => {
+    operator.counter(name, value, labels);
+    getCurrentContext()?.recorder.counter(name, value, labels);
+  },
+  gauge: (name, value, labels) => {
+    operator.gauge(name, value, labels);
+    getCurrentContext()?.recorder.gauge(name, value, labels);
+  },
+  histogram: (name, value, labels) => {
+    operator.histogram(name, value, labels);
+    getCurrentContext()?.recorder.histogram(name, value, labels);
+  },
+});

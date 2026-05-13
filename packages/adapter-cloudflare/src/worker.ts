@@ -1,10 +1,14 @@
-import type { Verifier } from "@baerly/protocol";
+import { type MetricsRecorder, type Verifier, noopMetricsRecorder } from "@baerly/protocol";
 import {
   CLOUDFLARE_FREE_TIER,
   CLOUDFLARE_PAID_TIER,
   Db,
+  type ObservabilityConfig,
+  alsAwareRecorder,
+  configureObservability,
   createRouter,
   errorEnvelope,
+  observableStorage,
   runScheduledMaintenance,
 } from "@baerly/server";
 import { invalidateOnWrite, withReadCache } from "./cache";
@@ -104,6 +108,39 @@ export interface BaerlyWorkerOptions {
    * real IdP — JWT, SigV4, Cloudflare Access, etc.
    */
   readonly verifier: Verifier;
+  /**
+   * Operator's long-term {@link MetricsRecorder}. Receives every
+   * kernel emission (ServerWriter histograms, CAS-conflict counters,
+   * storage per-call counts) verbatim. Defaults to
+   * {@link noopMetricsRecorder} so non-instrumented deployments see
+   * zero behavior change.
+   *
+   * Wire your aggregation backend here — Workers Analytics Engine,
+   * OpenTelemetry, statsd, in-memory rollup, etc. The Phase-9
+   * canonical-line bag is wired separately and reads through
+   * {@link alsAwareRecorder} alongside this sink.
+   */
+  readonly metrics?: MetricsRecorder;
+  /**
+   * Phase-9 observability config (LogTape sink + level + head sample
+   * rate). When supplied, the Worker calls
+   * {@link configureObservability} lazily on first `fetch` /
+   * `scheduled` invocation (CF Worker modules can't `await` at the
+   * top level). `configureObservability` is idempotent — passing
+   * `{ reset: true }` to LogTape — so re-invocation is harmless.
+   *
+   * Each field falls through to an env-var:
+   * - `level` → `env.LOG_LEVEL` (when typed option is undefined).
+   * - `sampleRate` → `env.LOG_SAMPLE`.
+   * - `sink` defaults to `"console-json"` (Cloudflare's stdout is
+   *   ingested by Workers Logs as JSON-shaped records).
+   *
+   * Leave the field unset to skip configuration entirely — the
+   * default LogTape configuration is a no-op sink. Adapters that
+   * skip configuration still emit through the bag/operator pipe; only
+   * the LogTape `console.log` side becomes silent.
+   */
+  readonly observability?: ObservabilityConfig;
 }
 
 /**
@@ -147,10 +184,36 @@ export interface BaerlyWorkerOptions {
  * ```
  */
 export function baerlyWorker(options: BaerlyWorkerOptions): ExportedHandler<Env> {
+  // Lazy-init flag for `configureObservability`. CF Worker modules
+  // cannot `await` at the module top level, so the first fetch /
+  // scheduled invocation runs the configure. LogTape's `configure`
+  // is idempotent (we always pass `reset: true`); a thundering-herd
+  // race on the cold-start tick just re-runs the same config.
+  let observabilityConfigured = false;
+  const ensureObservability = async (): Promise<void> => {
+    if (observabilityConfigured) return;
+    if (options.observability !== undefined) {
+      await configureObservability(options.observability);
+    }
+    observabilityConfigured = true;
+  };
+
+  // Operator's long-term sink wrapped once with the ALS-aware tee.
+  // The ALS lookup is per-call, so a single shared instance is safe
+  // across all requests — each call resolves the bag from whichever
+  // `runWithContext` scope is active.
+  const operatorRecorder = options.metrics ?? noopMetricsRecorder;
+  const teeRecorder = alsAwareRecorder(operatorRecorder);
+
   return {
     async fetch(req, env, ctx): Promise<Response> {
+      await ensureObservability();
+
       // Healthz is always anonymous — Cloudflare's load balancer
-      // probes it. Keep it ahead of the verifier check.
+      // probes it. Keep it ahead of the verifier check. The router's
+      // Phase-9 observability middleware also short-circuits on
+      // healthz, but doing it here too avoids a Db construction on
+      // every probe.
       const url = new URL(req.url);
       if (req.method === "GET" && url.pathname === "/v1/healthz") {
         return new Response(JSON.stringify({ ok: true }), {
@@ -171,8 +234,19 @@ export function baerlyWorker(options: BaerlyWorkerOptions): ExportedHandler<Env>
       }
       const tenantPrefix = result.tenantPrefix;
 
-      const storage = r2BindingStorage(env.BUCKET);
-      const db = Db.create({ storage, app: env.APP, tenant: tenantPrefix });
+      // Storage is wrapped with `observableStorage(...)` so the
+      // per-call class A/B counts and per-op duration histograms
+      // land in BOTH the operator's long-term sink and (when an
+      // observability context is active) the per-request bag. The
+      // Db's `metrics: teeRecorder` carries the same tee through to
+      // ServerWriter / compactor / GC emissions.
+      const storage = observableStorage(r2BindingStorage(env.BUCKET), teeRecorder);
+      const db = Db.create({
+        storage,
+        app: env.APP,
+        tenant: tenantPrefix,
+        metrics: teeRecorder,
+      });
 
       // Caller hook can short-circuit the router. Returns undefined → fall through.
       if (options.handler !== undefined) {
@@ -186,6 +260,20 @@ export function baerlyWorker(options: BaerlyWorkerOptions): ExportedHandler<Env>
       // Hono's `fetch` returns `Response | Promise<Response>`;
       // `withReadCache` wants a `Promise<Response>`. Normalize via
       // `Promise.resolve` so the sync-return branch is wrapped.
+      //
+      // Cache-status stamping: deferred. The router's Phase-9
+      // middleware creates + flushes the canonical context entirely
+      // inside its `runWithContext` block, so reaching into the
+      // context from the cache wrapper would require relocating
+      // context creation up into the adapter and teaching the
+      // router to detect a pre-existing context — out of scope for
+      // this dispatch. Until that lands, the canonical line carries
+      // no `cache_status` field. A cache hit short-circuits before
+      // any context exists (no canonical line at all for hits); a
+      // miss flows through the router and emits a normal canonical
+      // line without the cache_status discriminator. Operators who
+      // need hit/miss telemetry today should aggregate cache stats
+      // from their CDN dashboard.
       const response = await withReadCache(req, tenantPrefix, () =>
         Promise.resolve(app.fetch(req, env, ctx)),
       );
@@ -196,6 +284,7 @@ export function baerlyWorker(options: BaerlyWorkerOptions): ExportedHandler<Env>
     },
 
     async scheduled(event, env, ctx): Promise<void> {
+      await ensureObservability();
       if (options.scheduled !== undefined) {
         await options.scheduled(event, env, ctx);
         return;
@@ -207,7 +296,11 @@ export function baerlyWorker(options: BaerlyWorkerOptions): ExportedHandler<Env>
       }
       const isPaid = env.CF_TIER === "paid";
       const profile = isPaid ? CLOUDFLARE_PAID_TIER : CLOUDFLARE_FREE_TIER;
-      const storage = r2BindingStorage(env.BUCKET);
+      // Storage wrapping mirrors the fetch path so the maintenance
+      // canonical line (emitted by `withObservability("maintenance")`
+      // inside `runScheduledMaintenance`) carries per-call storage
+      // counts too.
+      const storage = observableStorage(r2BindingStorage(env.BUCKET), teeRecorder);
       // Even-minute → compact, odd-minute → GC. Halves the per-tick
       // subrequest budget on free tier (each phase fits well under
       // 50 ops; combined can exceed when the live tail is long).
@@ -218,7 +311,7 @@ export function baerlyWorker(options: BaerlyWorkerOptions): ExportedHandler<Env>
       ctx.waitUntil(
         runScheduledMaintenance(
           { storage, currentJsonKey: env.CURRENT_JSON_KEY },
-          { ...profile, skipCompact, skipGc },
+          { ...profile, skipCompact, skipGc, metrics: teeRecorder },
         ).then(() => undefined),
       );
     },

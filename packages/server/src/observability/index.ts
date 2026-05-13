@@ -34,6 +34,7 @@ export {
   type MetricsSummary,
   type ObservationRow,
   RequestScopedMetricsRecorder,
+  alsAwareRecorder,
 } from "./recorder";
 export { decideSample } from "./sampling";
 export { type SerializedError, serializeError } from "./redact";
