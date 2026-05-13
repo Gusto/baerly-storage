@@ -9,6 +9,7 @@ import {
 } from "@baerly/protocol";
 import {
   Db,
+  type DevLandingOptions,
   MAX_BODY_BYTES,
   NODE_PROFILE,
   type ObservabilityConfig,
@@ -18,6 +19,7 @@ import {
   errorEnvelope,
   mapError,
   observableStorage,
+  renderDevLanding,
   runScheduledMaintenance,
 } from "@baerly/server";
 
@@ -52,6 +54,15 @@ export interface CreateListenerOptions {
   readonly verifier: Verifier;
   readonly metrics?: MetricsRecorder;
   readonly observability?: ObservabilityConfig;
+  /**
+   * Opt-in dev affordance. When set, the listener serves `GET /`
+   * with a human-readable HTML page that links to {@link DevLandingOptions.uiUrl}
+   * and `GET /favicon.ico` with 204 No Content. Leave unset in
+   * production — most operators don't want a landing page on the
+   * API root, and either path falls through to the existing 404
+   * envelope when the option is absent.
+   */
+  readonly dev?: DevLandingOptions;
 }
 
 /**
@@ -147,6 +158,20 @@ async function handle(
   try {
     // /v1/healthz is anonymous; preserves the deploy-probe contract.
     const path = (req.url ?? "/").split("?", 1)[0]!;
+    // Opt-in dev landing page. Off in production (opts.dev unset);
+    // when set, GET / serves HTML and GET /favicon.ico answers 204 so
+    // browsers don't pin a second JSON 404 next to the landing page.
+    if (opts.dev !== undefined && req.method === "GET") {
+      if (path === "/") {
+        writeHtml(res, 200, renderDevLanding(opts.dev));
+        return;
+      }
+      if (path === "/favicon.ico") {
+        res.writeHead(204);
+        res.end();
+        return;
+      }
+    }
     if (req.method === "GET" && path === "/v1/healthz") {
       writeJson(res, 200, { ok: true });
       return;
@@ -290,6 +315,14 @@ function writeError(
   message: string,
 ): void {
   writeJson(res, status, errorEnvelope(code, message));
+}
+
+function writeHtml(res: ServerResponse, status: number, body: string): void {
+  res.writeHead(status, {
+    "Content-Type": "text/html; charset=utf-8",
+    "Content-Length": String(Buffer.byteLength(body)),
+  });
+  res.end(body);
 }
 
 /**

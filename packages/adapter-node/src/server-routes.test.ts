@@ -252,6 +252,16 @@ describe("createListener routes", () => {
     });
   });
 
+  it("GET / without dev option returns 401 (Unauthorized — falls through to verifier path)", async () => {
+    // Without `dev`, the listener has no `GET /` handler. The
+    // request flows to the verifier; `denyVerifier` answers 401.
+    // (With `trivialVerifier` the router itself would 404.)
+    await withServer(denyVerifier, async (baseUrl) => {
+      const res = await fetch(`${baseUrl}/`);
+      expect(res.status).toBe(401);
+    });
+  });
+
   it("GET /v1/t/:table?where=<json> returns matching subset", async () => {
     await withServer(trivialVerifier, async (baseUrl, storage) => {
       await provisionTable(storage, "tickets");
@@ -275,6 +285,64 @@ describe("createListener routes", () => {
       const list = (await listRes.json()) as { data: Array<{ status: string }> };
       expect(list.data).toHaveLength(2);
       for (const row of list.data) expect(row.status).toBe("open");
+    });
+  });
+});
+
+describe("createListener dev landing", () => {
+  const withDevServer = async <T>(body: (baseUrl: string) => Promise<T>): Promise<T> => {
+    const storage = new MemoryStorage();
+    // `denyVerifier` proves the landing-page short-circuit runs
+    // ahead of the verifier — a 401 here would mean the dev path
+    // wasn't taken.
+    const listener = createListener({
+      app: "tickets",
+      storage,
+      verifier: denyVerifier,
+      dev: { app: "tickets", uiUrl: "http://localhost:5173", appLabel: "Helpdesk demo" },
+    });
+    const server = createServer(listener);
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    const address = server.address() as AddressInfo;
+    try {
+      return await body(`http://127.0.0.1:${address.port}`);
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((err) => {
+          if (err) {
+            reject(err);
+            return;
+          }
+          resolve();
+        });
+      });
+    }
+  };
+
+  it("GET / with dev option returns 200 HTML containing the UI link", async () => {
+    await withDevServer(async (baseUrl) => {
+      const res = await fetch(`${baseUrl}/`);
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-type")).toBe("text/html; charset=utf-8");
+      const html = await res.text();
+      expect(html).toContain("Helpdesk demo");
+      expect(html).toContain(`href="http://localhost:5173"`);
+    });
+  });
+
+  it("GET /favicon.ico with dev option returns 204 with empty body", async () => {
+    await withDevServer(async (baseUrl) => {
+      const res = await fetch(`${baseUrl}/favicon.ico`);
+      expect(res.status).toBe(204);
+      expect(await res.text()).toBe("");
+    });
+  });
+
+  it("POST / with dev option falls through to the verifier (no method-bypass)", async () => {
+    await withDevServer(async (baseUrl) => {
+      const res = await fetch(`${baseUrl}/`, { method: "POST", body: "" });
+      // denyVerifier answers 401 — the dev short-circuit is GET-only.
+      expect(res.status).toBe(401);
     });
   });
 });

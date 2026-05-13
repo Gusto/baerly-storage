@@ -310,3 +310,61 @@ describe("baerlyWorker routes", () => {
     expect(body.error?.code).toBe("SchemaError");
   });
 });
+
+describe("baerlyWorker dev landing", () => {
+  it("GET / with dev option returns 200 HTML containing the UI link", async () => {
+    // denyVerifier proves the dev short-circuit runs ahead of auth —
+    // a 401 here would mean the landing path wasn't taken.
+    const worker = baerlyWorker({
+      verifier: denyVerifier,
+      dev: { app: "tickets", uiUrl: "http://localhost:5173", appLabel: "Helpdesk demo" },
+    });
+    const res = await worker.fetch!(
+      asWorkersRequest(new Request("https://x/")),
+      makeEnv(getBinding()),
+      makeCtx(),
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("text/html; charset=utf-8");
+    const html = await res.text();
+    expect(html).toContain("Helpdesk demo");
+    expect(html).toContain(`href="http://localhost:5173"`);
+  });
+
+  it("GET /favicon.ico with dev option returns 204 with empty body", async () => {
+    const worker = baerlyWorker({
+      verifier: denyVerifier,
+      dev: { app: "tickets", uiUrl: "http://localhost:5173" },
+    });
+    const res = await worker.fetch!(
+      asWorkersRequest(new Request("https://x/favicon.ico")),
+      makeEnv(getBinding()),
+      makeCtx(),
+    );
+    expect(res.status).toBe(204);
+    expect(await res.text()).toBe("");
+  });
+
+  it("GET / without dev option falls through to the verifier (401)", async () => {
+    const worker = baerlyWorker({ verifier: denyVerifier });
+    const res = await worker.fetch!(
+      asWorkersRequest(new Request("https://x/")),
+      makeEnv(getBinding()),
+      makeCtx(),
+    );
+    expect(res.status).toBe(401);
+  });
+
+  it("POST / with dev option falls through to the verifier (no method-bypass)", async () => {
+    const worker = baerlyWorker({
+      verifier: denyVerifier,
+      dev: { app: "tickets", uiUrl: "http://localhost:5173" },
+    });
+    const res = await worker.fetch!(
+      asWorkersRequest(new Request("https://x/", { method: "POST", body: "" })),
+      makeEnv(getBinding()),
+      makeCtx(),
+    );
+    expect(res.status).toBe(401);
+  });
+});

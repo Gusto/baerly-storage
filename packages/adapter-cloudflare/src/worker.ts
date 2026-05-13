@@ -3,12 +3,14 @@ import {
   CLOUDFLARE_FREE_TIER,
   CLOUDFLARE_PAID_TIER,
   Db,
+  type DevLandingOptions,
   type ObservabilityConfig,
   alsAwareRecorder,
   configureObservability,
   createRouter,
   errorEnvelope,
   observableStorage,
+  renderDevLanding,
   runScheduledMaintenance,
 } from "@baerly/server";
 import { invalidateOnWrite, withReadCache } from "./cache.ts";
@@ -141,6 +143,14 @@ export interface BaerlyWorkerOptions {
    * the LogTape `console.log` side becomes silent.
    */
   readonly observability?: ObservabilityConfig;
+  /**
+   * Opt-in dev affordance. When set, `GET /` returns a small
+   * human-readable HTML page that links to {@link DevLandingOptions.uiUrl},
+   * and `GET /favicon.ico` returns 204 No Content. Leave unset on
+   * production Workers — `/` falls through to the existing 404
+   * envelope when this option is absent.
+   */
+  readonly dev?: DevLandingOptions;
 }
 
 /**
@@ -209,12 +219,28 @@ export function baerlyWorker(options: BaerlyWorkerOptions): ExportedHandler<Env>
     async fetch(req, env, ctx): Promise<Response> {
       await ensureObservability();
 
+      // Opt-in dev landing page. Off in production (options.dev
+      // unset); when set, GET / serves HTML and GET /favicon.ico
+      // returns 204 so browsers don't pin a second JSON 404 next
+      // to the landing page.
+      const url = new URL(req.url);
+      if (options.dev !== undefined && req.method === "GET") {
+        if (url.pathname === "/") {
+          return new Response(renderDevLanding(options.dev), {
+            status: 200,
+            headers: { "content-type": "text/html; charset=utf-8" },
+          });
+        }
+        if (url.pathname === "/favicon.ico") {
+          return new Response(null, { status: 204 });
+        }
+      }
+
       // Healthz is always anonymous — Cloudflare's load balancer
       // probes it. Keep it ahead of the verifier check. The router's
       // Phase-9 observability middleware also short-circuits on
       // healthz, but doing it here too avoids a Db construction on
       // every probe.
-      const url = new URL(req.url);
       if (req.method === "GET" && url.pathname === "/v1/healthz") {
         return new Response(JSON.stringify({ ok: true }), {
           status: 200,
