@@ -742,8 +742,17 @@ async function main(): Promise<number> {
               ? await runS5Compaction(cell)
               : await runS3Toxic(cell);
 
-  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const out = path.join("bench/results", `${cell.scenario}-${stamp}.json`);
+  // The matrix orchestrator (`bench/r2-contention-matrix.ts`) pins
+  // `--out-dir` to the sweep's timestamped subdirectory and
+  // `--cell-id` to a deterministic per-cell slug so it can read the
+  // per-cell JSON back without scanning the whole results/ tree. When
+  // invoked stand-alone, `parseArgs` falls back to `bench/results/`
+  // and a `<scenario>-<timestamp>` slug — preserving the single-cell
+  // behaviour the harness has shipped since ticket 50.
+  const outDir = cell.outDir ?? "bench/results";
+  const cellId =
+    cell.cellId ?? `${cell.scenario}-${new Date().toISOString().replace(/[:.]/g, "-")}`;
+  const out = path.join(outDir, `${cellId}.json`);
   await mkdir(path.dirname(out), { recursive: true });
   await writeFile(out, JSON.stringify(result, null, 2));
 
