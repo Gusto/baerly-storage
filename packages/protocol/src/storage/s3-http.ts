@@ -157,7 +157,9 @@ export class S3HttpStorage implements Storage {
           throw new BaerlyError("AccessDenied", `GET ${key}: 403`);
         default:
           if (res.status >= 500) {
-            throw new BaerlyError("NetworkError", `GET ${key}: ${res.status} ${await res.text()}`);
+            throw new BaerlyError("NetworkError", `GET ${key}: ${res.status} ${await res.text()}`, {
+              status: res.status,
+            });
           }
           throw new BaerlyError("InvalidResponse", `GET ${key}: ${res.status} ${await res.text()}`);
       }
@@ -199,7 +201,9 @@ export class S3HttpStorage implements Storage {
         throw new BaerlyError("AccessDenied", `PUT ${key}: 403`);
       }
       if (res.status >= 500) {
-        throw new BaerlyError("NetworkError", `PUT ${key}: ${res.status} ${await res.text()}`);
+        throw new BaerlyError("NetworkError", `PUT ${key}: ${res.status} ${await res.text()}`, {
+          status: res.status,
+        });
       }
       if (res.status !== 200 && res.status !== 204) {
         throw new BaerlyError("InvalidResponse", `PUT ${key}: ${res.status} ${await res.text()}`);
@@ -228,7 +232,9 @@ export class S3HttpStorage implements Storage {
         throw new BaerlyError("AccessDenied", `DELETE ${key}: 403`);
       }
       if (res.status >= 500) {
-        throw new BaerlyError("NetworkError", `DELETE ${key}: ${res.status} ${await res.text()}`);
+        throw new BaerlyError("NetworkError", `DELETE ${key}: ${res.status} ${await res.text()}`, {
+          status: res.status,
+        });
       }
       // 200 / 204 / 404 → success (idempotent).
     });
@@ -284,6 +290,7 @@ export class S3HttpStorage implements Storage {
             throw new BaerlyError(
               "NetworkError",
               `LIST ${prefix}: ${res.status} ${await res.text()}`,
+              { status: res.status },
             );
           }
           throw new BaerlyError(
@@ -298,7 +305,7 @@ export class S3HttpStorage implements Storage {
         await delay(RATE_LIMIT_BACKOFF_MILLIS);
       }
       if (parsed === undefined) {
-        throw new BaerlyError("NetworkError", `LIST ${prefix}: rate-limited`);
+        throw new BaerlyError("NetworkError", `LIST ${prefix}: rate-limited`, { status: 429 });
       }
 
       for (const entry of parsed.Contents ?? []) {

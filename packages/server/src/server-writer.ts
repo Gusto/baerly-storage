@@ -753,13 +753,12 @@ const isCasConflict = (err: unknown): boolean => isPreconditionFailed(err);
 
 /**
  * `true` when the underlying storage surfaced an R2 prefix-partition
- * rate-limit. Best-effort detection: every in-tree {@link Storage}
- * impl wraps transport-layer errors in
- * `BaerlyError{code:"NetworkError"}` and includes the upstream status
- * code in the message. A `429` token in that message is the canonical
- * "throttled" signal.
+ * rate-limit. {@link S3HttpStorage} stamps the upstream HTTP status
+ * onto `BaerlyError.cause` as `{ status }`; we discriminate on that
+ * structured field rather than regex-matching the message.
  */
 const is429 = (err: unknown): boolean => {
-  if (!(err instanceof BaerlyError)) return false;
-  return err.code === "NetworkError" && /\b429\b/.test(err.message);
+  if (!(err instanceof BaerlyError) || err.code !== "NetworkError") return false;
+  const cause = err.cause as { status?: number } | undefined;
+  return cause?.status === 429;
 };

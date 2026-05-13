@@ -350,7 +350,7 @@ describe("ServerWriter", () => {
         // Throttle the first content PUT only.
         if (!this.thrown && /\/content\//.test(key)) {
           this.thrown = true;
-          throw new BaerlyError("NetworkError", `S3: HTTP 429 throttled on ${key}`);
+          throw new BaerlyError("NetworkError", `S3: throttled on ${key}`, { status: 429 });
         }
         return super.put(key, body, opts);
       }
