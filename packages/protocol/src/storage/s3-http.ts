@@ -46,7 +46,7 @@ const retry = async <T>(
       wait = Math.min(wait * 1.5, maxDelayMs);
     }
   }
-  throw new Error("unreachable");
+  throw new BaerlyError("Internal", "s3-http retry loop exited without returning or throwing");
 };
 
 /**

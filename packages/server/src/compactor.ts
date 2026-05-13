@@ -70,10 +70,10 @@ export const snapshotKey = (
   sha256: string,
 ): string => {
   if (minSeq < 0 || maxSeq < 0 || minSeq > maxSeq || maxSeq > MAX_SEQ) {
-    throw new Error(`snapshotKey: invalid range [${minSeq}, ${maxSeq})`);
+    throw new BaerlyError("InvalidConfig", `snapshotKey: invalid range [${minSeq}, ${maxSeq})`);
   }
   if (!/^[0-9a-f]{64}$/.test(sha256)) {
-    throw new Error(`snapshotKey: sha256 must be 64 hex chars`);
+    throw new BaerlyError("InvalidConfig", "snapshotKey: sha256 must be 64 hex chars");
   }
   const pad = (n: number): string => n.toString().padStart(SEQ_DIGITS, "0");
   return `${tablePrefix}/snapshot/L${SNAPSHOT_LEVEL}/${pad(minSeq)}-${pad(maxSeq)}-${sha256}.json`;

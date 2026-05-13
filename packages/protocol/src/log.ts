@@ -1,3 +1,4 @@
+import { BaerlyError } from "./errors";
 import type { JSONArraylessObject, JSONValue } from "./json";
 import { str2uintDesc } from "./types";
 
@@ -137,7 +138,7 @@ const COUNT_BIT_WIDTH = 10;
 export const lsnParts = (lsn: string): { session: string; seq: number } => {
   const parts = lsn.split("_");
   if (parts.length !== 3) {
-    throw new Error(`invalid lsn shape: ${lsn}`);
+    throw new BaerlyError("InvalidResponse", `invalid lsn shape: ${lsn}`);
   }
   return {
     session: parts[1]!,
