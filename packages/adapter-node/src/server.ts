@@ -1,12 +1,23 @@
 import type { IncomingMessage, RequestListener, ServerResponse } from "node:http";
-import { BaerlyError, type BaerlyErrorCode, type Storage, type Verifier } from "@baerly/protocol";
+import {
+  BaerlyError,
+  type BaerlyErrorCode,
+  type MetricsRecorder,
+  type Storage,
+  type Verifier,
+  noopMetricsRecorder,
+} from "@baerly/protocol";
 import {
   Db,
   MAX_BODY_BYTES,
   NODE_PROFILE,
+  type ObservabilityConfig,
+  alsAwareRecorder,
+  configureObservability,
   createRouter,
   errorEnvelope,
   mapError,
+  observableStorage,
   runScheduledMaintenance,
 } from "@baerly/server";
 
@@ -21,11 +32,26 @@ import {
  *   returned `tenantPrefix` pins the per-request `Db`. On `null`,
  *   the listener short-circuits with 401. `GET /v1/healthz` bypasses
  *   the verifier so readiness probes don't need an auth token.
+ * - `metrics` — operator's long-term {@link MetricsRecorder}.
+ *   Receives every kernel emission (ServerWriter histograms,
+ *   CAS-conflict counters, storage per-call counts) verbatim.
+ *   Defaults to {@link noopMetricsRecorder}.
+ * - `observability` — Phase-9 LogTape config (level/sink/sampleRate)
+ *   with `LOG_LEVEL` / `LOG_SAMPLE` envvar fallbacks. When the field
+ *   is unset, the default sink is auto-selected: `"console-pretty"`
+ *   when `process.stdout.isTTY === true` (developer terminals),
+ *   `"console-json"` otherwise (production hosts where stdout is
+ *   piped to a log aggregator). The typed `sink` field always wins.
+ *   Pass `{}` to opt into TTY auto-detection at default level/rate.
+ *   Pass `undefined` (the field's absence) to skip
+ *   `configureObservability` entirely.
  */
 export interface CreateListenerOptions {
   readonly app: string;
   readonly storage: Storage;
   readonly verifier: Verifier;
+  readonly metrics?: MetricsRecorder;
+  readonly observability?: ObservabilityConfig;
 }
 
 /**
@@ -73,11 +99,41 @@ export interface CreateListenerOptions {
  * ```
  */
 export function createListener(opts: CreateListenerOptions): RequestListener {
+  // Phase-9 wiring. Three pieces, all idempotent + non-blocking on
+  // the request hot path:
+  //
+  // 1. `configureObservability` is called once at factory time.
+  //    Node supports top-level `await`, but the factory is sync, so
+  //    we kick off the configure asynchronously and let LogTape
+  //    queue records emitted before configure resolves. LogTape's
+  //    `configure` is idempotent (we always pass `reset: true`).
+  //    When the typed option is undefined we resolve the default
+  //    sink against `process.stdout.isTTY` so dev terminals get the
+  //    pretty sink and production hosts (where stdout is piped to a
+  //    log aggregator) get JSON.
+  //
+  // 2. `alsAwareRecorder` wraps the operator's MetricsRecorder
+  //    once. Every kernel emission lands in both the operator's
+  //    sink and (when called from inside a `runWithContext` scope)
+  //    the per-request bag. The wrapping is per-factory not
+  //    per-request — the ALS lookup happens at call time.
+  //
+  // 3. `observableStorage` wraps the storage once at factory time
+  //    (the storage handle is operator-owned and pinned per
+  //    deployment, so per-request wrapping would just allocate a
+  //    new closure for no behavior change).
+  if (opts.observability !== undefined) {
+    void configureObservability(resolveDefaultSink(opts.observability));
+  }
+  const operatorRecorder = opts.metrics ?? noopMetricsRecorder;
+  const teeRecorder = alsAwareRecorder(operatorRecorder);
+  const wrappedStorage = observableStorage(opts.storage, teeRecorder);
+
   return (req: IncomingMessage, res: ServerResponse) => {
     // Fire-and-forget from Node's perspective; `handle` awaits
     // internally and never re-throws. Standard pattern for an async
     // `node:http` listener.
-    void handle(req, res, opts);
+    void handle(req, res, opts, wrappedStorage, teeRecorder);
   };
 }
 
@@ -85,6 +141,8 @@ async function handle(
   req: IncomingMessage,
   res: ServerResponse,
   opts: CreateListenerOptions,
+  storage: Storage,
+  teeRecorder: MetricsRecorder,
 ): Promise<void> {
   try {
     // /v1/healthz is anonymous; preserves the deploy-probe contract.
@@ -101,10 +159,17 @@ async function handle(
       return;
     }
 
+    // Db's `metrics: teeRecorder` carries the tee through to
+    // ServerWriter / compactor / GC emissions so the canonical line
+    // sees kernel-level histograms (class_a_ops_per_logical_write,
+    // 412/429 counters) alongside the storage decorator's per-call
+    // counts. The Node adapter has no cache layer so there is no
+    // cache_status discriminator to stamp on the line.
     const db = Db.create({
-      storage: opts.storage,
+      storage,
       app: opts.app,
       tenant: result.tenantPrefix,
+      metrics: teeRecorder,
     });
     const app = createRouter({ db, healthCheck: false });
     const response = await app.fetch(request);
@@ -237,6 +302,14 @@ export interface NodeMaintenanceOptions {
   readonly currentJsonKey: string;
   /** Forwarded to both `compact()` and `runGc()` underneath. */
   readonly signal?: AbortSignal;
+  /**
+   * Operator's long-term {@link MetricsRecorder}. Defaults to
+   * {@link noopMetricsRecorder}. Receives every compactor + GC
+   * emission verbatim alongside the Phase-9 canonical-line bag
+   * created by `withObservability("maintenance", ...)` inside
+   * `runScheduledMaintenance`.
+   */
+  readonly metrics?: MetricsRecorder;
 }
 
 /**
@@ -263,11 +336,47 @@ export interface NodeMaintenanceOptions {
  * ```
  */
 export const runMaintenanceTick = async (opts: NodeMaintenanceOptions): Promise<void> => {
+  // Wrap the storage so the canonical line emitted by
+  // `withObservability("maintenance", ...)` inside
+  // `runScheduledMaintenance` sees per-call class A/B counts. The
+  // `metrics:` forwarded to maintenance is the ALS-aware tee — when
+  // a per-phase (compactor/gc) context is active, emissions land on
+  // that nested bag; when only the outer maintenance context is
+  // active, they land on the maintenance bag.
+  const teeRecorder = alsAwareRecorder(opts.metrics ?? noopMetricsRecorder);
   await runScheduledMaintenance(
-    { storage: opts.storage, currentJsonKey: opts.currentJsonKey },
+    {
+      storage: observableStorage(opts.storage, teeRecorder),
+      currentJsonKey: opts.currentJsonKey,
+    },
     {
       ...NODE_PROFILE,
       ...(opts.signal !== undefined && { signal: opts.signal }),
+      metrics: teeRecorder,
     },
   );
+};
+
+/**
+ * Auto-pick the default sink when the caller passed an
+ * {@link ObservabilityConfig} without a `sink` field. On a TTY
+ * (developer terminals) we prefer pretty output; otherwise JSON
+ * (production hosts pipe stdout to a log aggregator).
+ *
+ * Returns a new config with `sink` defaulted; if the caller already
+ * supplied a `sink` (function or shorthand string) we pass the
+ * config through verbatim. Either way the caller's `level` and
+ * `sampleRate` (when set) reach LogTape unchanged.
+ *
+ * Exported for the test suite — the TTY check is otherwise a pure
+ * read of `process.stdout.isTTY` and a default lookup, neither
+ * worth a black-box round-trip.
+ */
+export const resolveDefaultSink = (config: ObservabilityConfig): ObservabilityConfig => {
+  if (config.sink !== undefined) return config;
+  // `process.stdout.isTTY` is `true` only on real terminals. CI
+  // pipelines, docker logs, systemd, and pm2 cluster mode all
+  // pipe stdout — `isTTY` is `undefined` (falsy) there.
+  const isTty = Boolean(process.stdout.isTTY);
+  return { ...config, sink: isTty ? "console-pretty" : "console-json" };
 };
