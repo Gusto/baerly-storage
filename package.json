@@ -2,6 +2,20 @@
   "name": "baerly-storage",
   "version": "1.0.0",
   "description": "Vendorless document database that runs over any S3-compatible storage API.",
+  "keywords": [
+    "cloudflare-workers",
+    "database",
+    "document-database",
+    "edge",
+    "http-api",
+    "nosql",
+    "r2",
+    "s3",
+    "s3-compatible",
+    "self-hosted",
+    "serverless",
+    "typescript"
+  ],
   "license": "MIT",
   "files": [
     "dist"
