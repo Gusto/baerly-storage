@@ -124,6 +124,29 @@ idempotently from a `current.json` snapshot.
   [`tests/integration/table-api.test.ts`](../tests/integration/table-api.test.ts)
   (all four adapter variants)
 
+## SQL export (`baerly export --target=postgres|sqlite|d1`)
+
+One-shot snapshot dump of a Baerly collection into a SQL-native
+database. Per-column types are inferred from the materialised L9
+snapshot (string / number / boolean / nested-object → SQL type per
+target dialect); `_id` is always emitted as the primary key.
+Library lives in `@baerly/export`; the CLI wiring lands separately.
+
+- Implementation:
+  [`packages/export/src/plan.ts`](../packages/export/src/plan.ts)
+  (`inferPlanForCollection`, `loadMaterialisedView`),
+  [`packages/export/src/ddl.ts`](../packages/export/src/ddl.ts)
+  (`emitCreateTable`),
+  [`packages/export/src/rows.ts`](../packages/export/src/rows.ts)
+  (`emitInsertStatements`),
+  [`packages/export/src/sql-escape.ts`](../packages/export/src/sql-escape.ts)
+  (`quoteIdentifier`, `quoteValue`)
+- Tests:
+  [`packages/export/src/plan.test.ts`](../packages/export/src/plan.test.ts),
+  [`packages/export/src/ddl.test.ts`](../packages/export/src/ddl.test.ts),
+  [`packages/export/src/rows.test.ts`](../packages/export/src/rows.test.ts),
+  [`packages/export/src/sql-escape.test.ts`](../packages/export/src/sql-escape.test.ts)
+
 ## Observability
 
 Canonical one-line-per-unit-of-work log plus a pluggable

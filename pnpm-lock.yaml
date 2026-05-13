@@ -252,6 +252,15 @@ importers:
         specifier: workspace:*
         version: link:../server
 
+  packages/export:
+    dependencies:
+      '@baerly/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+      '@baerly/server':
+        specifier: workspace:*
+        version: link:../server
+
   packages/mcp:
     dependencies:
       '@baerly/protocol':
