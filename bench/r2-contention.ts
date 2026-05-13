@@ -18,6 +18,7 @@
  * violated, and throws (non-zero from Node) on infrastructure error.
  */
 
+import { spawn } from "node:child_process";
 import { writeFile, mkdir } from "node:fs/promises";
 import path from "node:path";
 import {
@@ -35,6 +36,8 @@ import type { Network, RetryPolicy, RunResult, Scenario, SweepCell } from "./typ
 const CURRENT_KEY = "bench/tenant-A/collection-K/current.json";
 const BUCKET = "baerly-bench";
 const MINIO_HEALTH_URL = "http://127.0.0.1:9102/minio/health/ready";
+const SIGKILL_LOG_PREFIX = "bench/tenant-A/collection-sigkill";
+const SIGKILL_CURRENT_KEY = `${SIGKILL_LOG_PREFIX}/current.json`;
 const SEED: CurrentJson = {
   schema_version: 1,
   snapshot: null,
@@ -362,6 +365,148 @@ async function runS2Multi(cell: SweepCell): Promise<RunResult> {
   };
 }
 
+interface TrialResult {
+  readonly trial_index: number;
+  readonly killed_after_step: 1 | 2;
+  readonly orphan_content_count: number;
+  readonly orphan_log_count: number;
+  readonly child_completed: boolean; // true iff child exited 0 before SIGKILL fired
+}
+
+async function s3SigkillTrial(cell: SweepCell, trialIndex: number): Promise<TrialResult> {
+  const via = viaFor(cell.network);
+  // Use a unique seq per trial so log/<seq>.json doesn't collide.
+  const seq = 10_000 + trialIndex;
+  const body = JSON.stringify({ trial: trialIndex, payload: `data-${trialIndex}` });
+  const child = spawn(
+    "node",
+    ["--import", "./bench/register-hooks.mjs", "bench/sigkill-child.ts"],
+    {
+      env: {
+        ...process.env,
+        BENCH_VIA: via,
+        BENCH_BUCKET: BUCKET,
+        BENCH_TRIAL_SEQ: String(seq),
+        BENCH_TRIAL_BODY: body,
+        BENCH_KILL_AFTER_STEP: String(cell.killAfterStep),
+      },
+      stdio: ["ignore", "pipe", "inherit"],
+    },
+  );
+
+  let stepsSeen = 0;
+  let killed = false;
+  let childCompleted = false;
+
+  const onReady = (line: string): void => {
+    if (line === `READY-${cell.killAfterStep}` && !killed) {
+      killed = true;
+      try {
+        child.kill("SIGKILL");
+      } catch {
+        // Child may have exited already; ignore.
+      }
+    }
+    if (line === "READY-3") childCompleted = true;
+  };
+
+  let buf = "";
+  child.stdout?.on("data", (chunk: Buffer) => {
+    buf += chunk.toString("utf8");
+    const lines = buf.split("\n");
+    buf = lines.pop() ?? "";
+    for (const line of lines) {
+      stepsSeen++;
+      onReady(line);
+    }
+  });
+
+  await new Promise<void>((resolve) => child.on("exit", () => resolve()));
+
+  // Enumerate orphans now that the bucket has quiesced.
+  const storage = buildBenchStorage({ via, bucket: BUCKET });
+  let orphanContent = 0;
+  let orphanLog = 0;
+  for await (const e of storage.list(`${SIGKILL_LOG_PREFIX}/content/`)) {
+    void e; // We just count.
+    orphanContent++;
+  }
+  for await (const e of storage.list(`${SIGKILL_LOG_PREFIX}/log/`)) {
+    void e;
+    orphanLog++;
+  }
+  void stepsSeen;
+
+  // Reset prefix for next trial: delete every content + log key under
+  // SIGKILL_LOG_PREFIX. (We do this here, not at trial start, so the
+  // enumeration above sees the full orphan footprint.)
+  for await (const e of storage.list(`${SIGKILL_LOG_PREFIX}/content/`)) {
+    await storage.delete(e.key);
+  }
+  for await (const e of storage.list(`${SIGKILL_LOG_PREFIX}/log/`)) {
+    await storage.delete(e.key);
+  }
+  // Re-create current.json so the next trial sees a clean seq.
+  await storage.delete(SIGKILL_CURRENT_KEY).catch(() => {
+    // delete is idempotent; ignore.
+  });
+
+  return {
+    trial_index: trialIndex,
+    killed_after_step: cell.killAfterStep,
+    orphan_content_count: orphanContent,
+    orphan_log_count: orphanLog,
+    child_completed: childCompleted,
+  };
+}
+
+async function runS3Sigkill(cell: SweepCell): Promise<RunResult> {
+  const started = new Date();
+  const t0 = performance.now();
+
+  const trials: TrialResult[] = [];
+  for (let i = 0; i < cell.trials; i++) {
+    trials.push(await s3SigkillTrial(cell, i));
+  }
+  const wallclockMs = performance.now() - t0;
+
+  // Aggregate: orphan_rate = trials with ≥1 orphan / total trials.
+  // (Methodology D3 uses this single number; the per-category split
+  // is in `notes` for the interpreter.)
+  const orphaned = trials.filter((t) => t.orphan_content_count + t.orphan_log_count > 0).length;
+  const orphanRate = orphaned / cell.trials;
+  const orphanContentTotal = trials.reduce((sum, t) => sum + t.orphan_content_count, 0);
+  const orphanLogTotal = trials.reduce((sum, t) => sum + t.orphan_log_count, 0);
+  const childCompletedCount = trials.filter((t) => t.child_completed).length;
+
+  const notes =
+    `orphan_rate=${orphanRate.toFixed(3)} ` +
+    `orphan_content_total=${orphanContentTotal} ` +
+    `orphan_log_total=${orphanLogTotal} ` +
+    `child_completed_uninteresting=${childCompletedCount}/${cell.trials} ` +
+    `killed_after_step=${cell.killAfterStep}`;
+
+  return {
+    cell,
+    started_iso: started.toISOString(),
+    wallclock_ms: wallclockMs,
+    effective_throughput_per_sec: 0,
+    cas_412_rate: 0,
+    rate_limit_429_rate: 0,
+    class_a_op_count: 0,
+    class_b_op_count: 0,
+    class_a_per_writer_per_hour: 0,
+    latency_p50_ms: 0,
+    latency_p99_ms: 0,
+    latency_p999_ms: 0,
+    retry_tail_max: 0,
+    // S3-sigkill does NOT validate the idle-reader cost-model bound;
+    // mark as held so the exit-code logic doesn't fire 1.
+    cost_model_bound_holds: true,
+    notes,
+  };
+}
+
 async function runS3Toxic(cell: SweepCell): Promise<RunResult> {
   await installToxics(cell.network);
   try {
@@ -382,6 +527,11 @@ function parseArgs(argv: readonly string[]): SweepCell {
   const scenario = arg("scenario", "S2-idle") as Scenario;
   const retryPolicy = arg("retry", "decorrelated") as RetryPolicy;
   const network = arg("network", "direct") as Network;
+  const trials = Number(arg("trials", "100"));
+  const killAfterStep = Number(arg("kill-after-step", "2"));
+  if (killAfterStep !== 1 && killAfterStep !== 2) {
+    throw new Error(`--kill-after-step must be 1 or 2; got ${killAfterStep}`);
+  }
   return {
     scenario,
     concurrency: Number(arg("concurrency", "16")),
@@ -392,6 +542,8 @@ function parseArgs(argv: readonly string[]): SweepCell {
     durationMs: Number(arg("duration-s", "60")) * 1000,
     outDir: arg("out-dir", "bench/results"),
     cellId: arg("cell-id", `${scenario}-${new Date().toISOString().replace(/[:.]/g, "-")}`),
+    trials,
+    killAfterStep: killAfterStep as 1 | 2,
   };
 }
 
@@ -405,7 +557,9 @@ async function main(): Promise<number> {
         ? await runS2Idle(cell)
         : cell.scenario === "S2-multi"
           ? await runS2Multi(cell)
-          : await runS3Toxic(cell);
+          : cell.scenario === "S3-sigkill"
+            ? await runS3Sigkill(cell)
+            : await runS3Toxic(cell);
 
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
   const out = path.join("bench/results", `${cell.scenario}-${stamp}.json`);

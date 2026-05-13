@@ -8,7 +8,7 @@
  * concerns.
  */
 
-export type Scenario = "S1" | "S2-idle" | "S2-multi" | "S3-toxic";
+export type Scenario = "S1" | "S2-idle" | "S2-multi" | "S3-toxic" | "S3-sigkill";
 
 export type RetryPolicy = "no-jitter" | "full-jitter" | "decorrelated";
 
@@ -34,6 +34,15 @@ export interface SweepCell {
   readonly outDir?: string;
   /** From ticket 60. */
   readonly cellId?: string;
+  /** S3-sigkill only. Number of kill-and-enumerate trials. Default 100. */
+  readonly trials: number;
+  /**
+   * S3-sigkill only. After which methodology step the SIGKILL is
+   * delivered:
+   *   - 1: kill after content PUT, before log PUT (orphan content only)
+   *   - 2: kill after log PUT, before CAS (orphan content + log) — methodology default
+   */
+  readonly killAfterStep: 1 | 2;
 }
 
 export interface MetricsSnapshot {
