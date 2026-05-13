@@ -22,6 +22,10 @@ coverage/
 bench/results/*
 !bench/results/.gitkeep
 
+# Bench load-harness fixtures (raw corpora; only calibration.json
+# under presets/ is checked in — see scripts/fetch-bench-fixtures.sh).
+bench/fixtures/
+
 # Vite / Vitest / Rolldown caches
 .vite/
 .vitest/
