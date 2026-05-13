@@ -272,8 +272,13 @@ export const runHttpConformanceCascade = (opts: {
         // Each iteration does a fresh table provisioning + POST + GET.
         // Over Minio HTTP that's ~30-50 ms; 100 iterations × 3 round
         // trips comfortably exceeds the vitest default 5s timeout.
-        // 30s leaves headroom for slow CI Minio.
-        30_000,
+        // 30s leaves headroom for slow CI Minio. `pnpm test:randomize`
+        // cranks `FC_NUM_RUNS` to 10000 — at that volume the same
+        // iteration cost stretches to ~5-8 minutes, so honor the
+        // project-wide timeout from `vitest.config.ts` when scaled up.
+        process.env.FC_NUM_RUNS !== undefined && Number(process.env.FC_NUM_RUNS) > 1_000
+          ? 600_000
+          : 30_000,
       );
 
       test("GET of missing _id returns 404 with NotFound", async () => {

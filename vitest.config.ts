@@ -23,6 +23,27 @@
 import { cloudflareTest } from "@cloudflare/vitest-pool-workers";
 import { configDefaults, defineConfig } from "vitest/config";
 
+// `pnpm test:randomize` sets `FC_NUM_RUNS=10000`. At that volume the
+// disk-bound property tests in `packages/dev/src/local-fs.test.ts`,
+// the Minio randomized variants, and the HTTP-conformance property
+// blocks run minutes of sequential I/O each — far past vitest's 5s
+// default `testTimeout`. `pnpm test:minio` (default `FC_NUM_RUNS=100`,
+// but `MINIO=1`) also exceeds 5s on the `S3HttpStorage` conformance
+// `list(prefix)` / `startAfter:k` property blocks because every
+// iteration round-trips through Minio's HTTP gateway. Without this
+// bump, the property test times out, `afterEach` runs, but fast-
+// check's iteration loop keeps running in microtasks; the orphan
+// iterations then `await drain(s)` etc. on the *next* test's storage
+// and wipe data mid-test — surfacing as cascading ENOENT / EEXIST /
+// "got null after put" failures or `startAfter` returning leaked
+// items. 10 minutes leaves headroom for HTTP-conformance at 10000
+// iterations against Minio (~50ms each ≈ 8 minutes). 30 seconds is
+// enough headroom for Minio at default `FC_NUM_RUNS=100`.
+const isRandomize =
+  process.env.FC_NUM_RUNS !== undefined && Number(process.env.FC_NUM_RUNS) > 1_000;
+const isMinio = process.env.MINIO === "1";
+const vitestTestTimeoutMs = isRandomize ? 600_000 : isMinio ? 30_000 : 5_000;
+
 // `conformance.test.ts` requires gitignored credentials files
 // (`credentials/*.json`) and a live Minio. Excluded by default;
 // opt in with `CONFORMANCE=1 pnpm test` (or `pnpm test:conformance`).
@@ -145,6 +166,8 @@ export default defineConfig({
             cfHttpConformanceGlob,
           ],
           setupFiles: ["tests/setup/fast-check.ts"],
+          testTimeout: vitestTestTimeoutMs,
+          hookTimeout: vitestTestTimeoutMs,
           // Process isolation. Vitest 4's default `pool: 'threads'` with
           // `isolate: true` rebuilds the module graph for every test file
           // inside a worker thread; the per-file setup overhead starves
@@ -213,6 +236,8 @@ export default defineConfig({
           // `tests/setup/fast-check.ts` is also loaded so
           // `FC_NUM_RUNS` keeps working inside the Workers pool.
           setupFiles: ["tests/setup/fast-check.ts", "tests/setup/r2-binding.ts"],
+          testTimeout: vitestTestTimeoutMs,
+          hookTimeout: vitestTestTimeoutMs,
           chaiConfig: { truncateThreshold: 0 },
         },
       },
