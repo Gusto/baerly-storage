@@ -6,6 +6,7 @@ import {
   NODE_PROFILE,
   createRouter,
   errorEnvelope,
+  mapError,
   runScheduledMaintenance,
 } from "@baerly/server";
 
@@ -123,8 +124,10 @@ async function handle(
     }
     res.end();
   } catch (e) {
-    const message = e instanceof Error ? e.message : String(e);
-    writeError(res, 500, "Internal", message);
+    // Route through `mapError` so the envelope shape and the 500-path
+    // sanitization stay in lockstep with the Hono router.
+    const { status, envelope } = mapError(e);
+    writeJson(res, status, envelope);
   }
 }
 

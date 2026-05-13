@@ -331,8 +331,11 @@ export function mapError(err: unknown): { status: HttpStatus; envelope: HttpErro
     const status = ERROR_TO_STATUS.get(err.code) ?? 500;
     return { status, envelope: errorEnvelope(err.code, err.message) };
   }
-  const message = err instanceof Error ? err.message : String(err);
-  return { status: 500, envelope: errorEnvelope("Internal", message) };
+  // Unknown thrown value: the message may carry internal detail
+  // (file paths, bucket names, upstream response bodies). Log on the
+  // server side and return a generic envelope to the client.
+  console.error("[baerly] unhandled error:", err);
+  return { status: 500, envelope: errorEnvelope("Internal", "internal error") };
 }
 
 // Hono-context shortcut used by every handler's catch block.
