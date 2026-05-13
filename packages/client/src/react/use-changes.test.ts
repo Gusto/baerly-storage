@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 
-import { act, renderHook } from "@testing-library/react";
+import { renderHook, waitFor } from "@testing-library/react";
 import { describe, expect, test } from "vitest";
 import { createBaerlyClient } from "../client";
 import { MockFetch } from "../testing";
@@ -11,10 +11,6 @@ const jsonResponse = (body: unknown, status = 200): Response =>
     status,
     headers: { "content-type": "application/json" },
   });
-
-const flush = async (ms = 50): Promise<void> => {
-  await new Promise((r) => setTimeout(r, ms));
-};
 
 describe("useChanges", () => {
   test("polls /v1/since and surfaces events", async () => {
@@ -55,11 +51,13 @@ describe("useChanges", () => {
     });
     const client = createBaerlyClient({ baseUrl: "http://x", fetch: mock.fetch });
     const { result, unmount } = renderHook(() => useChanges(client, "tickets"));
-    await act(async () => {
-      await flush();
+    // Poll for the hook's state to reflect the first batch. `waitFor`
+    // retries (default 1s budget) until the assertion passes — much
+    // less load-sensitive than a bare `setTimeout(50)` flush.
+    await waitFor(() => {
+      expect(result.current.events).toHaveLength(1);
+      expect(result.current.cursor).toBe("a_b_01");
     });
-    expect(result.current.events).toHaveLength(1);
-    expect(result.current.cursor).toBe("a_b_01");
     unmount();
     for (const r of pendingRejects) r(new Error("test teardown"));
   });
@@ -73,9 +71,10 @@ describe("useChanges", () => {
     });
     const client = createBaerlyClient({ baseUrl: "http://x", fetch: mock.fetch });
     const { result, unmount } = renderHook(() => useChanges(client, "tickets", { enabled: false }));
-    await act(async () => {
-      await flush();
-    });
+    // Give the hook's mount effect a fair chance to fire a poll. If
+    // it's disabled correctly, no poll is ever scheduled — a few
+    // animation frames of microtask drain is plenty.
+    for (let i = 0; i < 5; i += 1) await Promise.resolve();
     expect(polls).toBe(0);
     expect(result.current.events).toEqual([]);
     unmount();
@@ -103,14 +102,12 @@ describe("useChanges", () => {
     );
     const client = createBaerlyClient({ baseUrl: "http://x", fetch: mock.fetch });
     const { unmount } = renderHook(() => useChanges(client, "tickets"));
-    await act(async () => {
-      await flush(10);
-    });
+    // Wait for the hook to have actually fired its first fetch (i.e.
+    // the mock's handler registered a pending reject).
+    await waitFor(() => expect(pendingReject).toBeDefined());
     unmount();
-    await act(async () => {
-      await flush(10);
-    });
-    expect(abortedOnce).toBe(true);
+    // Wait for the abort listener to fire on the in-flight signal.
+    await waitFor(() => expect(abortedOnce).toBe(true));
     // Belt-and-braces: if some platform never wires fetch's signal
     // into the inner abort listener (it should, but worker pools
     // have surprised us before), reject the pending promise so the
