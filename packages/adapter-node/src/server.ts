@@ -8,6 +8,7 @@ import {
   noopMetricsRecorder,
 } from "@baerly/protocol";
 import {
+  CATEGORY,
   Db,
   type DevLandingOptions,
   MAX_BODY_BYTES,
@@ -17,6 +18,7 @@ import {
   configureObservability,
   createRouter,
   errorEnvelope,
+  getLogger,
   mapError,
   observableStorage,
   renderDevLanding,
@@ -180,7 +182,8 @@ async function handle(
     const request = toFetchRequest(req);
     const result = await opts.verifier(request);
     if (result === null) {
-      writeError(res, 401, "Unauthorized", "Verifier returned null");
+      getLogger(CATEGORY.http).warn("verifier_rejected", { reason: "null" });
+      writeError(res, 401, "Unauthorized", "Unauthorized");
       return;
     }
 

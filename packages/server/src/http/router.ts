@@ -185,7 +185,8 @@ export function createRouter(options: CreateRouterOptions): Hono {
     app.use("/v1/t/*", async (c, next) => {
       const result = await verifier(c.req.raw);
       if (result === null) {
-        return jsonError(c, 401, "Unauthorized", "Verifier returned null");
+        getLogger(CATEGORY.http).warn("verifier_rejected", { reason: "null" });
+        return jsonError(c, 401, "Unauthorized", "Unauthorized");
       }
       await next();
       return undefined;
