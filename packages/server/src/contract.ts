@@ -10,6 +10,17 @@ export interface HttpErrorEnvelope {
   readonly error: {
     readonly code: BaerlyErrorCode;
     readonly message: string;
+    /**
+     * Field-path issues, present only when `code === "SchemaError"`.
+     * Each entry is `{ path, message }` where `path` is the dotted
+     * key list from the validator. Older clients (pre-ticket-70)
+     * see this field as `unknown` and ignore it; new clients
+     * destructure it for form-side rendering.
+     */
+    readonly issues?: ReadonlyArray<{
+      readonly path: ReadonlyArray<string | number>;
+      readonly message: string;
+    }>;
   };
 }
 
@@ -18,8 +29,16 @@ export interface HttpErrorEnvelope {
  * router and both adapters call this — adding or renaming a field on
  * the wire is a one-edit change here.
  */
-export const errorEnvelope = (code: BaerlyErrorCode, message: string): HttpErrorEnvelope => ({
-  error: { code, message },
+export const errorEnvelope = (
+  code: BaerlyErrorCode,
+  message: string,
+  issues?: ReadonlyArray<{ path: ReadonlyArray<string | number>; message: string }>,
+): HttpErrorEnvelope => ({
+  error: {
+    code,
+    message,
+    ...(issues !== undefined && issues.length > 0 ? { issues } : {}),
+  },
 });
 
 /**

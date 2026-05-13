@@ -34,7 +34,7 @@ import {
   createCurrentJson,
   uuid,
 } from "@baerly/protocol";
-import { Db, ServerWriter, compact, runGc } from "@baerly/server";
+import { Db, ServerWriter, type SchemaValidator, compact, runGc } from "@baerly/server";
 
 const APP = "table-api-test";
 
@@ -572,6 +572,125 @@ const runMetricsCascade = async (storage: Storage, app: string, tenant: string):
 };
 
 /**
+ * Hand-rolled minimal StandardSchemaV1 implementation used by the
+ * schema-validation cascade block. Asserting on validator-emitted
+ * messages keeps the test independent of any third-party validator
+ * library — the repo policy is "no new runtime deps," which extends
+ * to "no new devDeps just for schema validation."
+ *
+ * The schema rejects:
+ *   - non-object roots → `[{ message: "expected object" }]`
+ *   - `_id` not a string → `[{ path: ["_id"], message: "expected string" }]`
+ *   - `status` not in `{"open","closed"}` → `[{ path: ["status"], message: "..." }]`
+ */
+const STATUS_SCHEMA: SchemaValidator = {
+  "~standard": {
+    version: 1,
+    vendor: "test",
+    validate: (v) => {
+      if (typeof v !== "object" || v === null) {
+        return { issues: [{ message: "expected object" }] };
+      }
+      const o = v as Record<string, unknown>;
+      if (typeof o["_id"] !== "string") {
+        return { issues: [{ path: ["_id"], message: "expected string" }] };
+      }
+      if (o["status"] !== "open" && o["status"] !== "closed") {
+        return {
+          issues: [{ path: ["status"], message: 'expected "open" or "closed"' }],
+        };
+      }
+      return { value: o };
+    },
+  },
+};
+
+/**
+ * Schema validation runs at the server boundary on `insert`,
+ * `update`, and `replace`. Asserts that:
+ *
+ *  1. `insert({status:"bogus"})` throws `SchemaError` with
+ *     `issues[0].path === ["status"]`.
+ *  2. `update({status:"bogus"})` applied to a successfully-inserted
+ *     valid row throws `SchemaError` on the MERGED post-image (not
+ *     the patch).
+ *  3. `replace({_id, status:"bogus"})` throws `SchemaError`.
+ *  4. `insert({status:"open"})` succeeds (zero overhead — the
+ *     post-image satisfies the schema).
+ *  5. Without a schema on the `Db`, every verb works as today
+ *     (regression guard).
+ */
+const runSchemaValidation = async (
+  storage: Storage,
+  app: string,
+  tenant: string,
+): Promise<void> => {
+  const t = freshTableName("schema");
+  await provision(storage, app, tenant, t);
+
+  // (5) Regression guard: Db built without schemas accepts the same
+  // doc the schema-bound Db rejects further down. Runs FIRST so the
+  // per-table fold is empty when the schema-bound Db starts work.
+  const noSchemaDb = Db.create({ storage, app, tenant });
+  const { _id: ok } = await noSchemaDb.table<Doc>(t).insert({ status: "bogus" });
+  expect(typeof ok).toBe("string");
+  // Tidy up so the schema-bound Db sees a clean slate.
+  await noSchemaDb.table<Doc>(t).where({ _id: ok }).delete();
+
+  const schemas = new Map<string, SchemaValidator>([[t, STATUS_SCHEMA]]);
+  const db = Db.create({ storage, app, tenant, schemas });
+
+  // (4) Happy path: post-image satisfies the schema → insert succeeds.
+  const { _id: validId } = await db.table<Doc>(t).insert({ status: "open" });
+  expect(typeof validId).toBe("string");
+
+  // (1) insert with invalid status fails with SchemaError on
+  // `status` path.
+  let insertErr: unknown;
+  try {
+    await db.table<Doc>(t).insert({ status: "bogus" });
+  } catch (e) {
+    insertErr = e;
+  }
+  expect(insertErr).toBeInstanceOf(BaerlyError);
+  expect((insertErr as BaerlyError).code).toBe("SchemaError");
+  expect((insertErr as BaerlyError).issues).toBeDefined();
+  expect((insertErr as BaerlyError).issues?.[0]?.path).toEqual(["status"]);
+
+  // (2) update against the valid row: the patch alone is partial
+  // (`{status:"bogus"}` doesn't carry `_id`), but the merge-then-
+  // validate path validates the merged post-image — so the failure
+  // is on `status`, not "missing _id".
+  let updateErr: unknown;
+  try {
+    await db.table<Doc>(t).where({ _id: validId }).update({ status: "bogus" });
+  } catch (e) {
+    updateErr = e;
+  }
+  expect(updateErr).toBeInstanceOf(BaerlyError);
+  expect((updateErr as BaerlyError).code).toBe("SchemaError");
+  expect((updateErr as BaerlyError).issues?.[0]?.path).toEqual(["status"]);
+
+  // (3) replace against the valid row: post-image still fails the
+  // schema → SchemaError on `status`.
+  let replaceErr: unknown;
+  try {
+    await db.table<Doc>(t).where({ _id: validId }).replace({ _id: validId, status: "bogus" });
+  } catch (e) {
+    replaceErr = e;
+  }
+  expect(replaceErr).toBeInstanceOf(BaerlyError);
+  expect((replaceErr as BaerlyError).code).toBe("SchemaError");
+  expect((replaceErr as BaerlyError).issues?.[0]?.path).toEqual(["status"]);
+
+  // The schema-bound Db's writes that DID succeed remain visible —
+  // the validity check fires synchronously inside the verb, before
+  // any wire I/O for invalid inputs.
+  const round = await db.table<Doc>(t).where({ _id: validId }).first();
+  expect(round?.status).toBe("open");
+};
+
+/**
  * LogEntry shape — frozen assertion. After an I+I+U+D sequence,
  * walk `<tablePrefix>/log/<seq>.json` directly via `Storage` and
  * assert the per-op shape from `packages/protocol/src/log.ts:22–100`.
@@ -730,6 +849,12 @@ export const runTableApiCascade = async (opts: {
   //    table.
   await runMetricsCascade(opts.storage, APP, tenant);
 
-  // 8. LogEntry shape — frozen.
+  // 8. Schema validation — `insert` / `update` / `replace` validate
+  //    the post-image against a per-collection
+  //    `SchemaValidator` (ticket 70). Runs on every adapter via the
+  //    variant table.
+  await runSchemaValidation(opts.storage, APP, tenant);
+
+  // 9. LogEntry shape — frozen.
   await runLogEntryShape(db, opts.storage, APP, tenant);
 };

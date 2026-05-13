@@ -415,7 +415,7 @@ const ERROR_TO_STATUS: ReadonlyMap<BaerlyErrorCode, HttpStatus> = new Map<
 export function mapError(err: unknown): { status: HttpStatus; envelope: HttpErrorEnvelope } {
   if (err instanceof BaerlyError) {
     const status = ERROR_TO_STATUS.get(err.code) ?? 500;
-    return { status, envelope: errorEnvelope(err.code, err.message) };
+    return { status, envelope: errorEnvelope(err.code, err.message, err.issues) };
   }
   // Unknown thrown value: the message may carry internal detail
   // (file paths, bucket names, upstream response bodies). Log on the

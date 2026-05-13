@@ -14,6 +14,7 @@ import type {
   Table,
 } from "@baerly/protocol";
 import type { CurrentJsonCacheSlot, TableReadContext } from "./query.ts";
+import type { SchemaValidator } from "./schema.ts";
 import { ServerWriter, type CommitInput } from "./server-writer.ts";
 import { makeTable } from "./table.ts";
 
@@ -69,6 +70,14 @@ export interface BufferedMutation {
  * tenant whose name shares a prefix.
  */
 const physicalPrefixFor = (app: string, tenant: string): string => `app/${app}/tenant/${tenant}/`;
+
+/**
+ * Shared sentinel map for {@link Db.create} callers that don't pass a
+ * `schemas` map. Frozen so an accidental `.set(...)` on the captured
+ * reference throws at runtime instead of silently mutating the
+ * fallback every `Db` shares.
+ */
+const EMPTY_SCHEMA_MAP: ReadonlyMap<string, SchemaValidator> = new Map();
 
 /**
  * Escape hatch: a Storage-shaped surface scoped to one
@@ -147,12 +156,31 @@ export class Db {
    * the table API hands out.
    */
   readonly #metrics: MetricsRecorder;
+  /**
+   * Per-collection {@link SchemaValidator}s threaded onto every
+   * {@link TableReadContext} this `Db` mints. Empty map means "no
+   * validation declared" — every write proceeds at zero overhead.
+   *
+   * Mirrors the shape callers build when flattening
+   * `BaerlyConfig.collections[*].schema` into a map keyed by name
+   * before constructing the `Db`; we keep the `Db` itself library-
+   * agnostic by accepting the pre-flattened map (not the full
+   * `BaerlyConfig`).
+   */
+  readonly #schemas: ReadonlyMap<string, SchemaValidator>;
 
-  private constructor(app: string, tenant: string, storage: Storage, metrics: MetricsRecorder) {
+  private constructor(
+    app: string,
+    tenant: string,
+    storage: Storage,
+    metrics: MetricsRecorder,
+    schemas: ReadonlyMap<string, SchemaValidator>,
+  ) {
     this.app = app;
     this.tenant = tenant;
     this.#storage = storage;
     this.#metrics = metrics;
+    this.#schemas = schemas;
     this._raw = makeRawStorageApi(app, tenant, storage);
   }
 
@@ -188,6 +216,14 @@ export class Db {
     app: string;
     tenant: string;
     metrics?: MetricsRecorder;
+    /**
+     * Optional per-collection {@link SchemaValidator} map. The adapter
+     * layer (or app code) flattens `BaerlyConfig.collections[*].schema`
+     * into this map before constructing the `Db`; the `Db` itself
+     * stays library-agnostic. `undefined` or an empty map means "no
+     * validation" — every write proceeds at zero overhead.
+     */
+    schemas?: ReadonlyMap<string, SchemaValidator>;
   }): Db {
     const { storage, app, tenant } = config;
     if (app.length === 0 || tenant.length === 0) {
@@ -202,7 +238,13 @@ export class Db {
         `Db.create: "/" is reserved as the key-segment separator (got app=${JSON.stringify(app)}, tenant=${JSON.stringify(tenant)})`,
       );
     }
-    return new Db(app, tenant, storage, config.metrics ?? noopMetricsRecorder);
+    return new Db(
+      app,
+      tenant,
+      storage,
+      config.metrics ?? noopMetricsRecorder,
+      config.schemas ?? EMPTY_SCHEMA_MAP,
+    );
   }
 
   /**
@@ -253,12 +295,14 @@ export class Db {
       cache = { value: null };
       this.#currentJsonCaches.set(name, cache);
     }
+    const schema = this.#schemas.get(name);
     return {
       storage: this.#storage,
       tablePrefix: `${physicalPrefixFor(this.app, this.tenant)}manifests/${name}`,
       tableName: name,
       currentJsonCache: cache,
       metrics: this.#metrics,
+      ...(schema !== undefined ? { schema } : {}),
     };
   }
 
@@ -320,6 +364,7 @@ export class Db {
       cache = { value: null };
       this.#currentJsonCaches.set(table, cache);
     }
+    const schema = this.#schemas.get(table);
     const tx = makeTable<T>({
       storage: this.#storage,
       tablePrefix,
@@ -327,6 +372,7 @@ export class Db {
       txCtx,
       currentJsonCache: cache,
       metrics: this.#metrics,
+      ...(schema !== undefined ? { schema } : {}),
     });
 
     // Run the body. Reads go through Storage live; mutations append

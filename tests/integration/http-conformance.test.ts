@@ -30,16 +30,18 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AwsClient } from "aws4fetch";
 import { DOMParser } from "@xmldom/xmldom";
-import { afterAll, beforeAll, describe } from "vitest";
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import {
   CURRENT_JSON_SCHEMA_VERSION,
   createCurrentJson,
   getOrCreateMemoryStorageForBucket,
+  MemoryStorage,
   S3HttpStorage,
   type Storage,
 } from "@baerly/protocol";
 import { LocalFsStorage } from "@baerly/dev";
 import { createListener } from "@baerly/adapter-node";
+import { Db, createRouter, type SchemaValidator } from "@baerly/server";
 import { createBucket } from "../fixtures/s3-fixtures.ts";
 import { runHttpConformanceCascade, type HttpFetch } from "../fixtures/http-conformance-cascade.ts";
 import { CONFORMANCE_TENANT, testVerifier } from "../fixtures/test-verifier.ts";
@@ -253,3 +255,89 @@ for (const variant of variants) {
     });
   });
 }
+
+/**
+ * Schema-bound HTTP boundary. The adapters (`@baerly/adapter-node` /
+ * `@baerly/adapter-cloudflare`) build a fresh `Db` per request and
+ * don't yet thread `schemas` through their factory options, so this
+ * block constructs the router directly over `MemoryStorage` + a
+ * pre-configured schema-bound `Db`. The assertion is on the WIRE
+ * shape: a `SchemaError` carries a 400 status and the
+ * `HttpErrorEnvelope` body's `issues[]` array reaches the client.
+ */
+describe("HTTP boundary — schema validation (ticket 70)", () => {
+  test("POST with schema-violating doc returns 400 + issues[]", async () => {
+    const STATUS_SCHEMA: SchemaValidator = {
+      "~standard": {
+        version: 1,
+        vendor: "test",
+        validate: (v) => {
+          if (typeof v !== "object" || v === null) {
+            return { issues: [{ message: "expected object" }] };
+          }
+          const o = v as Record<string, unknown>;
+          if (o["status"] !== "open" && o["status"] !== "closed") {
+            return {
+              issues: [{ path: ["status"], message: 'expected "open" or "closed"' }],
+            };
+          }
+          return { value: o };
+        },
+      },
+    };
+
+    const APP_NAME = "http-schema";
+    const TENANT = "schema-tenant";
+    const TABLE = "tickets";
+    const memStorage = new MemoryStorage();
+    await createCurrentJson(
+      memStorage,
+      `app/${APP_NAME}/tenant/${TENANT}/manifests/${TABLE}/current.json`,
+      {
+        schema_version: CURRENT_JSON_SCHEMA_VERSION,
+        snapshot: null,
+        next_seq: 0,
+        writer_fence: { epoch: 0, owner: "http-schema-test", claimed_at: "" },
+      },
+    );
+
+    const db = Db.create({
+      storage: memStorage,
+      app: APP_NAME,
+      tenant: TENANT,
+      schemas: new Map<string, SchemaValidator>([[TABLE, STATUS_SCHEMA]]),
+    });
+    const app = createRouter({ db, healthCheck: false });
+
+    // Invalid doc: `status` violates the schema.
+    const badRes = await app.fetch(
+      new Request(`http://test.local/v1/t/${TABLE}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ doc: { status: "bogus" } }),
+      }),
+    );
+    expect(badRes.status).toBe(400);
+    const badBody = (await badRes.json()) as {
+      readonly error: {
+        readonly code: string;
+        readonly message: string;
+        readonly issues?: ReadonlyArray<{ path: ReadonlyArray<string | number>; message: string }>;
+      };
+    };
+    expect(badBody.error.code).toBe("SchemaError");
+    expect(badBody.error.issues).toBeDefined();
+    expect(badBody.error.issues?.[0]?.path).toEqual(["status"]);
+    expect(badBody.error.issues?.[0]?.message).toContain("open");
+
+    // Valid doc: the same route accepts a schema-compliant body.
+    const okRes = await app.fetch(
+      new Request(`http://test.local/v1/t/${TABLE}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ doc: { status: "open" } }),
+      }),
+    );
+    expect(okRes.status).toBe(201);
+  });
+});

@@ -75,11 +75,34 @@ export type BaerlyErrorCode =
 export class BaerlyError extends Error {
   readonly code: BaerlyErrorCode;
   override readonly cause?: unknown;
+  /**
+   * Structured field-path issues, set only when `code === "SchemaError"`.
+   * Each entry's `path` is a dotted-key list (e.g. `["assignee", "team"]`
+   * or `["items", 3, "qty"]`) that targets the offending field on the
+   * input document. `message` is the validator-emitted human string.
+   *
+   * The HTTP layer's `mapError` renders these into the 400 body via
+   * the existing `HttpErrorEnvelope`; older callers that don't know
+   * about `issues` see a plain message-only error and stay correct.
+   */
+  readonly issues?: ReadonlyArray<{
+    readonly path: ReadonlyArray<string | number>;
+    readonly message: string;
+  }>;
 
-  constructor(code: BaerlyErrorCode, message: string, cause?: unknown) {
+  constructor(
+    code: BaerlyErrorCode,
+    message: string,
+    cause?: unknown,
+    issues?: ReadonlyArray<{
+      readonly path: ReadonlyArray<string | number>;
+      readonly message: string;
+    }>,
+  ) {
     super(message);
     this.name = "BaerlyError";
     this.code = code;
     this.cause = cause;
+    if (issues !== undefined) this.issues = issues;
   }
 }

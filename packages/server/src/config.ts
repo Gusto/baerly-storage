@@ -30,11 +30,12 @@
  */
 
 import type { IndexDefinition } from "./indexes.ts";
+import type { SchemaValidator } from "./schema.ts";
 
 /**
- * One collection's declarative config. Today only `indexes` is
- * consumed; future tickets add `schema`, `replica_identity`, and
- * lifecycle hooks.
+ * One collection's declarative config. Today `indexes` and `schema`
+ * are consumed; future tickets add `replica_identity` and lifecycle
+ * hooks.
  */
 export interface CollectionDefinition {
   /**
@@ -44,6 +45,21 @@ export interface CollectionDefinition {
    * entry and content body. See `./indexes.ts` for the key shape.
    */
   readonly indexes?: ReadonlyArray<IndexDefinition>;
+  /**
+   * Optional schema for this collection. When set, every server-side
+   * `insert` / `update` / `replace` validates the resulting post-image
+   * before committing — invalid input throws
+   * `BaerlyError{code:"SchemaError"}` carrying a `.issues` array of
+   * `{ path, message }` entries.
+   *
+   * Adapter: StandardSchemaV1 (see `./schema.ts`). Compatible with
+   * Zod 3.24+, Valibot 0.36+, ArkType 2.0+ today; any future library
+   * implementing the spec works without a code change here.
+   *
+   * `undefined` means no validation — every write proceeds as today
+   * (zero overhead, today's tests untouched).
+   */
+  readonly schema?: SchemaValidator;
 }
 
 /**

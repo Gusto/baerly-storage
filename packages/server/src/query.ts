@@ -56,6 +56,7 @@ import { loadSnapshotAsMap } from "./compactor.ts";
 import type { TxContext } from "./db.ts";
 import { encodeIndexValue } from "./indexes.ts";
 import { walkLogRange } from "./log-walk.ts";
+import { type SchemaValidator, validateOrThrow } from "./schema.ts";
 import { ServerWriter } from "./server-writer.ts";
 
 /**
@@ -118,6 +119,22 @@ export interface TableReadContext {
    * @internal
    */
   readonly metrics?: MetricsRecorder;
+  /**
+   * Optional StandardSchemaV1-shaped validator for this collection.
+   * When set, `runInsert`, `runUpdate`, and `runReplace` validate the
+   * post-image before committing or buffering — invalid input throws
+   * `BaerlyError{code:"SchemaError"}` carrying a `.issues` array of
+   * `{ path, message }` entries. `undefined` means no validation
+   * (today's behaviour — zero overhead).
+   *
+   * Threaded in by {@link Db.tableReadContext} from the per-collection
+   * map handed to {@link Db.create}; the boundary calls happen in
+   * `query.ts`, not `server-writer.ts`, so schemas plug in higher than
+   * `ServerWriter.validateInput`'s structural checks.
+   *
+   * @internal
+   */
+  readonly schema?: SchemaValidator;
 }
 
 /**
@@ -348,6 +365,19 @@ export const runInsert = async <T extends JSONArraylessObject>(
   // the runtime-authoritative half.
   const body: JSONArraylessObject = { ...(doc as JSONArraylessObject), _id };
 
+  // Schema validation against the post-image. Runs BEFORE the
+  // pre-commit collision check and before the writer round-trip so
+  // a malformed doc never reaches the wire. Inside a transaction it
+  // also runs before `txCtx.mutations.push` — a `SchemaError` thrown
+  // here aborts the body, dropping every buffered mutation, before
+  // the commit fires.
+  if (ctx.schema !== undefined) {
+    await validateOrThrow(ctx.schema, body, {
+      collection: ctx.tableName,
+      verb: "insert",
+    });
+  }
+
   // Pre-commit `_id`-collision check. Costs one log walk; matches the
   // locked `Table.insert` throws contract
   // (`packages/protocol/src/db.ts:123–125`). Without it a caller-
@@ -444,6 +474,18 @@ const runUpdate = async <T extends JSONArraylessObject>(
         `Query.update: merge produced undefined for doc ${JSON.stringify(doc._id)}`,
       );
     }
+    // Validate the merged post-image (option B in ticket 70 §4.6).
+    // Patches are partial by design — validating the patch itself
+    // would reject valid updates against schemas that require fields
+    // the patch doesn't touch. The post-image is what the schema
+    // actually models. Atomicity stays per-row: a violation on row
+    // N aborts the batch without rolling back rows 0..N-1.
+    if (ctx.schema !== undefined) {
+      await validateOrThrow(ctx.schema, merged, {
+        collection: ctx.tableName,
+        verb: "update",
+      });
+    }
     if (tx !== undefined) {
       tx.mutations.push({ op: "U", docId: String(doc._id), body: merged });
     } else {
@@ -496,6 +538,16 @@ const runReplace = async <T extends JSONArraylessObject>(
   // Force the matched row's `_id` onto the post-image so the doc_id
   // on the emitted entry matches the row we resolved against.
   const body: JSONArraylessObject = { ...(doc as JSONArraylessObject), _id: existingId };
+  // Schema validation runs against the post-image — same shape as
+  // `runInsert`. Buffers in a transaction only after validation
+  // passes; an invalid replace inside a tx aborts the body and
+  // drops every previously-buffered mutation.
+  if (ctx.schema !== undefined) {
+    await validateOrThrow(ctx.schema, body, {
+      collection: ctx.tableName,
+      verb: "replace",
+    });
+  }
   if (ctx.txCtx !== undefined) {
     assertTxBindMatches(ctx);
     ctx.txCtx.mutations.push({ op: "U", docId: existingId, body });

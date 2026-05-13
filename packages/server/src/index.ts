@@ -88,6 +88,7 @@ export {
   runInsert,
   serializeManifestPointer,
 } from "./query.ts";
+export { type SchemaIssue, type SchemaValidator, validateOrThrow } from "./schema.ts";
 export {
   type CommitBatchResult,
   type CommitInput,

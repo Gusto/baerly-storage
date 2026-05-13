@@ -122,6 +122,103 @@ pnpm test          # vitest run
 
 ---
 
+## 1b. Declare a schema for a collection
+
+Schemas in Baerly are caller-declared at the server boundary: every
+`insert` / `update` / `replace` validates the resulting *post-image*
+against a `SchemaValidator` you attach to a `CollectionDefinition`.
+Invalid input throws `BaerlyError{code:"SchemaError"}` carrying a
+machine-readable `.issues` array of `{path, message}` entries; the
+HTTP layer ships them on the 400 response body so a UI can render
+field-level errors directly.
+
+### Adapter shape
+
+`SchemaValidator` (from `@baerly/server`) is the
+[StandardSchemaV1](https://standardschema.dev/) interface — a
+pure-type contract implemented by Zod 3.24+, Valibot 0.36+, ArkType
+2.0+, and others. The interface lives in
+`packages/server/src/schema.ts`; the repo carries no runtime dep on
+any validator library — you bring whichever library you like.
+
+### Zod example
+
+```ts
+// baerly.config.ts
+import { defineConfig } from "@baerly/server";
+import { z } from "zod";
+
+const Ticket = z.object({
+  _id: z.string(),
+  status: z.enum(["open", "closed"]),
+  title: z.string().min(1),
+});
+
+export default defineConfig({
+  collections: {
+    tickets: { schema: Ticket },
+  },
+});
+```
+
+### Valibot example
+
+```ts
+// baerly.config.ts
+import { defineConfig } from "@baerly/server";
+import * as v from "valibot";
+
+const Ticket = v.object({
+  _id: v.string(),
+  status: v.picklist(["open", "closed"]),
+  title: v.pipe(v.string(), v.minLength(1)),
+});
+
+export default defineConfig({
+  collections: {
+    tickets: { schema: Ticket },
+  },
+});
+```
+
+Both forms compile to the same `SchemaValidator`-shaped object; the
+adapter `validateOrThrow` in `packages/server/src/schema.ts` doesn't
+know (or care) which library produced it.
+
+### What gets validated
+
+| Verb       | Validated value                                             |
+|------------|-------------------------------------------------------------|
+| `insert`   | `{ ...doc, _id }` — the post-image with the minted/honoured `_id` |
+| `update`   | `merge(prev, patch)` — the merged post-image, not the patch |
+| `replace`  | `{ ...doc, _id: existingId }` — the post-image              |
+| `delete`   | — (no body to validate)                                     |
+
+For `update` we validate the merged result, not the patch: a partial
+patch (`{ status: "closed" }`) wouldn't satisfy a schema requiring
+other fields, and the schema is the shape of the *final row*, not of
+a delta.
+
+### Wiring schemas into `Db.create`
+
+`Db.create` accepts a flat `schemas: ReadonlyMap<string, SchemaValidator>`
+keyed by collection name. The CLI and HTTP adapters flatten
+`BaerlyConfig.collections[*].schema` into that map before constructing
+the per-request `Db`:
+
+```ts
+const schemas = new Map<string, SchemaValidator>();
+for (const [name, def] of Object.entries(cfg.collections ?? {})) {
+  if (def.schema !== undefined) schemas.set(name, def.schema);
+}
+const db = Db.create({ storage, app, tenant, schemas });
+```
+
+When `schemas` is `undefined` or empty, validation is a no-op — today's
+tests stay green untouched.
+
+---
+
 ## 2. Add a new write primitive
 
 Use this pattern when you're adding a new `op` (e.g. a TRUNCATE
