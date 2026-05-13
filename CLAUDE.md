@@ -62,6 +62,9 @@ Don't introduce alternate tooling without justification.
 | `pnpm bench:load:matrix` | sequential sweep over presets × variants × cache modes; writes one timestamped subdirectory under `bench/results/load/` | minutes–tens of minutes | partial: `memory` + `local-fs` rows always; `node-minio` rows require `MINIO=1` + `pnpm dev:storage` |
 | `pnpm -F @baerly/cli build && pnpm exec baerly deploy` | runs `baerly deploy` for a scaffolded app; dispatches on `baerly.config.ts:target`. CF: ships `wrangler deploy --x-provision --x-auto-create` with a `wrangler r2 bucket create` fallback. Node: emits `Dockerfile` + `pm2.config.cjs` + `systemd/baerly.service` + `.dockerignore` + `healthcheck.js` + `.env.example` under `apps/server/` and prints next-step commands; idempotent, `--force` overwrites hand-edits | seconds to minutes | CF: requires `wrangler login`. Node: idempotent file emit, no cloud creds, no deploy daemon |
 | `baerly doctor --target=cloudflare\|node` | walks the deploy invariants and reports findings. CF: wrangler.jsonc, R2 bindings, required secrets, CF Access audience tag, cron triggers, domain/routes coherence. Node: Dockerfile presence + distroless-base sniff, `.dockerignore`, `.env.example` secret + AWS/BUCKET coverage, JWKS URL reachability (best-effort 3s), systemd unit well-formedness | seconds | CF: requires `wrangler login`; `--fix` auto-creates missing R2 buckets. Node: read-only — remediate hand-edits via `baerly deploy --target=node --force` |
+| `pnpm -F @baerly/cli build && pnpm exec baerly export --target=sqlite ...` | snapshot dump one collection to SQL | seconds | ✅ no infra |
+| `pnpm -F @baerly/cli build && pnpm exec baerly {init,inspect,admin dump,admin restore} ...` | operator surface: `init` drops `baerly.config.ts` into an existing repo; `inspect` prints a read-only summary of one collection's snapshot / log / index state; `admin dump` emits canonical NDJSON of the materialised view; `admin restore` re-imports that NDJSON into a fresh bucket | seconds | ✅ no infra |
+| `pnpm -F @baerly/cli build && pnpm exec baerly admin {compact,fsck,migrate} ...` | maintenance surface: `admin compact` manually triggers one `runScheduledMaintenance` pass (compact + GC, profile-selectable); `admin fsck` walks `current.json` → snapshot hash → log range → index prefixes read-only and exits 4 on any finding; `admin migrate` applies a `(row) => row \| null` transform across the materialised view and writes a fresh L9 snapshot with `migrated_to` stamped on `current.json` | seconds | ✅ no infra |
 
 `pnpm verify` is also enforced as a [lefthook](https://lefthook.dev/)
 pre-commit hook (`lefthook.yml`); `pnpm install` wires it up via the
@@ -248,6 +251,7 @@ Path-scoped conventions. **Read the matching file before editing.**
 | `packages/protocol/src/log.ts`, the log-emit path in `server-writer.ts` | [docs/spec/log-entry-shape.md](docs/spec/log-entry-shape.md) |
 | `packages/server/src/observability/**` | [docs/conventions/observability.md](docs/conventions/observability.md) |
 | Public API on `Db` / `Table` | [docs/extending.md](docs/extending.md) |
+| `packages/server/src/schema.ts` or `CollectionDefinition.schema` | [docs/extending.md](docs/extending.md) §"Declare a schema for a collection" |
 
 Claude users: `.claude/rules/{tests,docs}.md` auto-load on matching
 edits and point at the same files.

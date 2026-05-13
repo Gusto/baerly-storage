@@ -178,3 +178,108 @@ for per-request S3 spend.
   [`docs/conventions/observability.md`](./conventions/observability.md)
 - ADR:
   [`docs/adr/0022-observability-tag-naming.md`](./adr/0022-observability-tag-naming.md)
+
+## Optional collection schemas (`CollectionDefinition.schema`)
+
+Apps may attach a StandardSchemaV1-compatible validator (Zod 3.24+,
+Valibot 0.36+, ArkType 2.0+, or any future library implementing the
+spec) to each collection in `baerly.config.ts`. The server runs the
+validator on every `insert` / `update` / `replace` post-image and
+throws `BaerlyError{code:"SchemaError"}` carrying a structured
+`issues: [{path, message}]` array on failure. No schema declared =
+zero overhead.
+
+- Implementation:
+  [`packages/server/src/schema.ts`](../packages/server/src/schema.ts)
+  (`SchemaValidator`, `SchemaIssue`, `validateOrThrow`),
+  [`packages/server/src/config.ts`](../packages/server/src/config.ts)
+  (`CollectionDefinition.schema`),
+  [`packages/server/src/query.ts`](../packages/server/src/query.ts)
+  (validation hooks in `runInsert` / `runUpdate` / `runReplace`)
+- Tests:
+  [`packages/server/src/schema.test.ts`](../packages/server/src/schema.test.ts),
+  [`tests/integration/table-api.test.ts`](../tests/integration/table-api.test.ts)
+  (schema-validation block in the cascade)
+- Docs: [`docs/extending.md`](./extending.md) §"Declare a schema for a collection"
+
+## Operator CLI — `baerly init` / `baerly inspect`
+
+Two top-level operator commands that mirror `deploy` / `doctor`.
+`init` drops a `baerly.config.ts` into an existing repo (the
+add-to-existing-repo counterpart to `npm create baerly`).
+`inspect` reads `current.json` + snapshot + live log tail and
+prints a read-only summary of one collection (next_seq,
+log_seq_start, writer_fence, materialised row count, per-index
+key counts).
+
+- Implementation:
+  [`packages/cli/src/init.ts`](../packages/cli/src/init.ts),
+  [`packages/cli/src/inspect.ts`](../packages/cli/src/inspect.ts)
+- Tests:
+  [`packages/cli/src/init.test.ts`](../packages/cli/src/init.test.ts),
+  [`packages/cli/src/inspect.test.ts`](../packages/cli/src/inspect.test.ts)
+
+## Operator CLI — `baerly admin dump` / `baerly admin restore`
+
+Canonical NDJSON serialisation of one collection's materialised
+view (`dump`) and its inverse (`restore`). `dump` emits
+`{"_id":"...",...}` per line with recursively sorted keys, ASCII-
+lex row order, and no BOM — a byte-stable format the export
+round-trip test (`pnpm test:export-round-trip`) gates against.
+`restore` streams NDJSON from stdin and commits one `op:"I"` per
+row through `ServerWriter`; refuses an existing `current.json`
+unless `--force` truncates first.
+
+- Implementation:
+  [`packages/cli/src/admin/dump.ts`](../packages/cli/src/admin/dump.ts),
+  [`packages/cli/src/admin/restore.ts`](../packages/cli/src/admin/restore.ts)
+- Tests:
+  [`packages/cli/src/admin/dump.test.ts`](../packages/cli/src/admin/dump.test.ts),
+  [`packages/cli/src/admin/restore.test.ts`](../packages/cli/src/admin/restore.test.ts)
+
+## Operator CLI — `baerly admin compact`
+
+Manually triggers one `runScheduledMaintenance` pass against one
+collection. `--profile=cloudflare-free|cloudflare-paid|node`
+selects the maintenance budget; `--skip-gc` / `--skip-compact`
+narrow the work. Reports `compact.{written, entries_folded,
+log_seq_start_before, log_seq_start_after}` and `gc.{marked,
+swept}` in the JSON envelope.
+
+- Implementation:
+  [`packages/cli/src/admin/compact.ts`](../packages/cli/src/admin/compact.ts)
+- Tests:
+  [`packages/cli/src/admin/compact.test.ts`](../packages/cli/src/admin/compact.test.ts)
+
+## Operator CLI — `baerly admin fsck`
+
+Read-only consistency walk for one collection. Verifies
+`current.json` parses, the snapshot body's content hash matches
+its filename hash, the log range `[log_seq_start, next_seq)` has
+no holes, and (with `--rebuild-indexes` + `--config=`) reports
+orphan index keys without rebuilding. Exit 4 on any finding —
+distinguished from exit 2 ("command itself failed") so CI can
+wire `fsck` as a regression gate.
+
+- Implementation:
+  [`packages/cli/src/admin/fsck.ts`](../packages/cli/src/admin/fsck.ts)
+- Tests:
+  [`packages/cli/src/admin/fsck.test.ts`](../packages/cli/src/admin/fsck.test.ts)
+
+## Operator CLI — `baerly admin migrate`
+
+Applies a `(row) => row | null` transform across the materialised
+view of one collection and writes the result as a fresh L9
+snapshot, advancing `current.json` atomically and stamping a new
+`migrated_to: N` field on the manifest. Transform is loaded from
+a user-supplied `.js`/`.mjs`/`.cjs` file's default export.
+Idempotent re-runs short-circuit when `migrated_to ===
+targetVersion` already.
+
+- Implementation:
+  [`packages/server/src/migrate.ts`](../packages/server/src/migrate.ts)
+  (`migrateCollection` primitive),
+  [`packages/cli/src/admin/migrate.ts`](../packages/cli/src/admin/migrate.ts)
+- Tests:
+  [`packages/server/src/migrate.test.ts`](../packages/server/src/migrate.test.ts),
+  [`packages/cli/src/admin/migrate.test.ts`](../packages/cli/src/admin/migrate.test.ts)
