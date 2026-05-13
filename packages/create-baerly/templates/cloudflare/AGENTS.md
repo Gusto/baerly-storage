@@ -31,21 +31,21 @@ read it via your editor's TS LS or via the published types).
 
 ## Verification
 
-| Command | What it does | Runtime |
-|---|---|---|
-| `{{runTypecheck}}` | TS typecheck across both apps | seconds |
-| `{{runDev}}` | Run the server locally — `wrangler dev` against the local R2 emulator | seconds to start |
-| `pnpm test` | Run all tests across both apps | seconds |
+| Command            | What it does                                                          | Runtime          |
+| ------------------ | --------------------------------------------------------------------- | ---------------- |
+| `{{runTypecheck}}` | TS typecheck across both apps                                         | seconds          |
+| `{{runDev}}`       | Run the server locally — `wrangler dev` against the local R2 emulator | seconds to start |
+| `pnpm test`        | Run all tests across both apps                                        | seconds          |
 
 ## Where the code is
 
-| Path | What it is |
-|---|---|
-| `apps/server/src/worker.ts` | Server entry — `baerlyWorker({ verifier })` |
+| Path                         | What it is                                                                           |
+| ---------------------------- | ------------------------------------------------------------------------------------ |
+| `apps/server/src/worker.ts`  | Server entry — `baerlyWorker({ verifier })`                                          |
 | `apps/server/wrangler.jsonc` | Cloudflare Worker manifest — name, R2 binding, vars, triggers, limits, observability |
-| `apps/web/` | Optional client; SPA shell. Remove if not needed. |
-| `baerly.config.ts` | App config — `app`, `tenant`, `target`, `domain` |
-| `.baerly/schema.lock.json` | Reserved for collection schemas (future feature) |
+| `apps/web/`                  | Optional client; SPA shell. Remove if not needed.                                    |
+| `baerly.config.ts`           | App config — `app`, `tenant`, `target`, `domain`                                     |
+| `.baerly/schema.lock.json`   | Reserved for collection schemas (future feature)                                     |
 
 ## When editing X, read Y
 
@@ -55,7 +55,7 @@ read it via your editor's TS LS or via the published types).
   `@baerly/server`.
 - **Schema / query** — read the JSDoc on `Db.table(...)` from
   `@baerly/server`. The shape is `db.table<Doc>(name).where({
-  predicate }).all()`.
+predicate }).all()`.
 - **Deploy** — `baerly deploy --target=cloudflare` runs
   `wrangler deploy --x-provision --x-auto-create` (Wrangler 4.10+)
   to auto-create the declared R2 buckets and ship the Worker. When

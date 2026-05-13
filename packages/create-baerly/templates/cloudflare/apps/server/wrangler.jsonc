@@ -15,8 +15,8 @@
   "r2_buckets": [
     {
       "binding": "BUCKET",
-      "bucket_name": "{{appName}}"
-    }
+      "bucket_name": "{{appName}}",
+    },
   ],
 
   // Plain-text bindings. `APP` pins this Worker's app-prefix;
@@ -24,7 +24,7 @@
   // resolves a tenant from the request.
   "vars": {
     "APP": "{{appName}}",
-    "TENANT": "{{tenant}}"
+    "TENANT": "{{tenant}}",
   },
 
   // Cron trigger for the Phase-5 maintenance loop. Every minute —
@@ -32,20 +32,20 @@
   // on free tier; runs both on paid. Adjust `crons` to control
   // frequency.
   "triggers": {
-    "crons": ["* * * * *"]
+    "crons": ["* * * * *"],
   },
 
   // 50ms CPU cap matches Workers Standard plan. Long-poll routes
   // burn wall-clock (await), not CPU.
   "limits": {
-    "cpu_ms": 50
+    "cpu_ms": 50,
   },
 
   // Built-in observability. Worker logs land in CF dashboard +
   // `wrangler tail`; Logpush still ships separately when wired.
   "observability": {
-    "enabled": true
-  }
+    "enabled": true,
+  },
 
   // `routes` is omitted by default. When `baerly.config.ts` sets a
   // `domain`, `baerly deploy` patches the wrangler config to add:

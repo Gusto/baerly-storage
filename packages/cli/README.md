@@ -10,17 +10,17 @@ Subcommands are built on [citty](https://github.com/unjs/citty);
 
 ## Subcommands
 
-| Command   | Status      | Module                  |
-|-----------|-------------|-------------------------|
-| `copy`    | implemented | `src/copy.ts`           |
-| `init`    | planned     | —                       |
-| `inspect` | planned     | —                       |
-| `compact` | planned     | —                       |
-| `fsck`    | planned     | —                       |
-| `export`  | planned     | —                       |
-| `migrate` | planned     | —                       |
-| `dump`    | planned     | —                       |
-| `restore` | planned     | —                       |
+| Command   | Status      | Module        |
+| --------- | ----------- | ------------- |
+| `copy`    | implemented | `src/copy.ts` |
+| `init`    | planned     | —             |
+| `inspect` | planned     | —             |
+| `compact` | planned     | —             |
+| `fsck`    | planned     | —             |
+| `export`  | planned     | —             |
+| `migrate` | planned     | —             |
+| `dump`    | planned     | —             |
+| `restore` | planned     | —             |
 
 Each subcommand is one `defineCommand` block exported from its own
 module and registered in `src/baerly.ts`. Adding one: copy the shape
@@ -28,12 +28,12 @@ of `src/copy.ts`, register it in `subCommands` in `src/baerly.ts`.
 
 ## Exit codes
 
-| Code | Meaning            | Maps from                                              |
-|------|--------------------|--------------------------------------------------------|
-| `0`  | success            | handler returned normally                              |
-| `1`  | user error         | `BaerlyError.code = InvalidConfig`, missing/unknown flag |
+| Code | Meaning            | Maps from                                                                      |
+| ---- | ------------------ | ------------------------------------------------------------------------------ |
+| `0`  | success            | handler returned normally                                                      |
+| `1`  | user error         | `BaerlyError.code = InvalidConfig`, missing/unknown flag                       |
 | `2`  | storage error      | `BaerlyError.code = NetworkError` / `AccessDenied`, anything non-`BaerlyError` |
-| `3`  | protocol invariant | `BaerlyError.code = Conflict` / `Internal` / `InvalidResponse` |
+| `3`  | protocol invariant | `BaerlyError.code = Conflict` / `Internal` / `InvalidResponse`                 |
 
 ## `--json` mode
 
@@ -54,13 +54,13 @@ on success.
 
 `baerly copy` with an `s3://` URI requires:
 
-| Var                              | Notes                                  |
-|----------------------------------|----------------------------------------|
-| `BAERLY_S3_ENDPOINT`             | required, e.g. `https://s3.us-east-1.amazonaws.com` |
-| `BAERLY_S3_ACCESS_KEY_ID`        | required                               |
-| `BAERLY_S3_SECRET_ACCESS_KEY`    | required                               |
-| `BAERLY_S3_REGION`               | optional, defaults to `us-east-1`      |
-| `NO_COLOR`                       | optional, disables ANSI in human help  |
+| Var                           | Notes                                               |
+| ----------------------------- | --------------------------------------------------- |
+| `BAERLY_S3_ENDPOINT`          | required, e.g. `https://s3.us-east-1.amazonaws.com` |
+| `BAERLY_S3_ACCESS_KEY_ID`     | required                                            |
+| `BAERLY_S3_SECRET_ACCESS_KEY` | required                                            |
+| `BAERLY_S3_REGION`            | optional, defaults to `us-east-1`                   |
+| `NO_COLOR`                    | optional, disables ANSI in human help               |
 
 ## URI grammar
 

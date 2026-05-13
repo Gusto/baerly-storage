@@ -31,21 +31,21 @@ read it via your editor's TS LS or via the published types).
 
 ## Verification
 
-| Command | What it does | Runtime |
-|---|---|---|
-| `{{runTypecheck}}` | TS typecheck across both apps | seconds |
-| `{{runDev}}` | Run the server locally — `tsx watch src/server.ts` | seconds to start |
-| `pnpm test` | Run all tests across both apps | seconds |
+| Command            | What it does                                       | Runtime          |
+| ------------------ | -------------------------------------------------- | ---------------- |
+| `{{runTypecheck}}` | TS typecheck across both apps                      | seconds          |
+| `{{runDev}}`       | Run the server locally — `tsx watch src/server.ts` | seconds to start |
+| `pnpm test`        | Run all tests across both apps                     | seconds          |
 
 ## Where the code is
 
-| Path | What it is |
-|---|---|
-| `apps/server/src/server.ts` | Server entry — `createListener({ verifier })` |
-| `apps/server/Dockerfile` | Multi-stage container build (tini + tsx entrypoint) |
-| `apps/web/` | Optional client; SPA shell. Remove if not needed. |
-| `baerly.config.ts` | App config — `app`, `tenant`, `target`, `domain` |
-| `.baerly/schema.lock.json` | Reserved for collection schemas (future feature) |
+| Path                        | What it is                                          |
+| --------------------------- | --------------------------------------------------- |
+| `apps/server/src/server.ts` | Server entry — `createListener({ verifier })`       |
+| `apps/server/Dockerfile`    | Multi-stage container build (tini + tsx entrypoint) |
+| `apps/web/`                 | Optional client; SPA shell. Remove if not needed.   |
+| `baerly.config.ts`          | App config — `app`, `tenant`, `target`, `domain`    |
+| `.baerly/schema.lock.json`  | Reserved for collection schemas (future feature)    |
 
 ## When editing X, read Y
 
@@ -56,7 +56,7 @@ read it via your editor's TS LS or via the published types).
   `JWKS_URL` is set and falls back to `sharedSecret` otherwise.
 - **Schema / query** — read the JSDoc on `Db.table(...)` from
   `@baerly/server`. The shape is `db.table<Doc>(name).where({
-  predicate }).all()`.
+predicate }).all()`.
 - **Deploy** — `baerly deploy --target=node` runs the right command
   (`docker build` + `docker push` + your orchestrator). Today it's
   manual: build the image from `apps/server/Dockerfile` and run.
