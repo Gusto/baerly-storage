@@ -291,3 +291,29 @@ Don't string-match on `error.message` — those are not stable.
 The full `pnpm test` should stay under ~30s on a developer laptop. If your
 test sleeps or polls, prefer `await Promise.resolve()` ticks or short
 intervals (≤50ms) to keep the suite snappy.
+
+---
+
+## 5. Shared utilities on the public surface
+
+A handful of functions live below the `Db` / `Table<T>` API and are
+exported from `@baerly/server` for consumers — adapters, the CLI,
+admin tooling — that need to compose protocol primitives directly.
+They are `@public` and stable; the JSDoc on each is the canonical
+reference.
+
+- **`loadSnapshotAsMap(storage, key, expectedCollection, signal?)`**
+  (`packages/server/src/compactor.ts`) — load a content-addressed
+  snapshot, verify its SHA-256 against the filename, and return the
+  docs as a `Map<_id, body>`. Used internally by the compactor,
+  reader, GC, and rebuild-index paths. Cross-package consumer:
+  `baerly copy` (`packages/cli/src/copy.ts`) folds the source
+  snapshot as the merge base before walking the live tail. Prefer
+  this over hand-rolling a snapshot reader — the function bakes in
+  the hash check, schema-version gate, and collection-mismatch
+  guard.
+
+Other utilities (e.g. `compact`, `runGc`, `rebuildIndex`) are
+end-to-end orchestrators rather than helpers; their entry points are
+documented in [architecture.md](architecture.md) under "Where
+invariants live."

@@ -376,18 +376,71 @@ const compactInner = async (
 };
 
 /**
- * Load a snapshot at `key`, verify its body's SHA-256 against the
- * hash embedded in its filename, and return the docs as a
- * `Map<_id, body>`. Used by both the compactor (loading the prior
- * snapshot as a fold base) and the reader (`Query.runRead`).
+ * Load a content-addressed snapshot from object storage and return
+ * its docs as a `Map<_id, body>`. The function verifies the body's
+ * SHA-256 against the hash embedded in the snapshot filename (the
+ * segment after the last `-` in `<min>-<max>-<sha256>.json`), parses
+ * the JSON as a {@link SnapshotBody}, and checks the schema version
+ * and `collection` field — so callers consuming the returned map are
+ * guaranteed an integrity- and identity-validated view of the
+ * snapshot.
  *
- * @throws BaerlyError code="Internal" — the pointer resolves to no
- *   body, or the body's hash doesn't match the filename. A crashed
- *   mid-PUT compactor produces the latter; readers treat it as
- *   "missing."
+ * The function is consumed by every read or write path that needs to
+ * materialise a snapshot as its fold base: the compactor (loading
+ * the prior snapshot before merging the live tail), the reader
+ * (`Query.runRead`), `runGc`, `rebuildIndex`, and — across the
+ * package boundary — the CLI's `baerly copy` orchestrator.
+ *
+ * @public — stable utility, re-exported from `@baerly/server`. The
+ *   `SnapshotBody.schema_version` is the long-lived format contract;
+ *   new versions land additively (existing readers keep working).
+ *
+ * @param storage — the `Storage` handle to GET the snapshot body
+ *   from. Tenant-scoped; must already point at the same bucket the
+ *   snapshot `key` resolves under.
+ * @param key — fully-qualified snapshot key, typically the value of
+ *   `current.snapshot` on a `current.json` pointer.
+ *   The function reads the SHA-256 expected hash from the filename's
+ *   last `-`-delimited segment.
+ * @param expectedCollection — the collection name the snapshot must
+ *   carry inside its `SnapshotBody.collection` field. Mismatch
+ *   surfaces as `BaerlyError{code:"InvalidResponse"}` — the call
+ *   refuses to fold the wrong collection's docs into a caller's
+ *   merge state.
+ * @param signal — optional `AbortSignal`. Forwarded to the underlying
+ *   `Storage.get` call.
+ *
+ * @returns a `Map<_id, body>` of every doc in the snapshot. The map
+ *   is fresh on each call (no internal cache); mutating it does not
+ *   affect future reads.
+ *
+ * @throws BaerlyError code="Internal" — the snapshot pointer resolves
+ *   to no body, or the body's SHA-256 hash doesn't match the
+ *   filename. A crashed mid-PUT compactor produces the latter;
+ *   readers treat it as "missing."
  * @throws BaerlyError code="InvalidResponse" — body isn't valid JSON,
- *   carries an unknown schema_version, or names a different
- *   collection than expected.
+ *   isn't an object, carries an unknown `schema_version`, or names a
+ *   different collection than `expectedCollection`.
+ *
+ * @example
+ * ```ts
+ * // Cross-package: `baerly copy` folds the source snapshot as the
+ * // base map, then walks the live log tail [logSeqStart, nextSeq)
+ * // and applies each LogEntry on top before re-encoding as a new
+ * // snapshot on the destination bucket.
+ * import { loadSnapshotAsMap } from "@baerly/server";
+ *
+ * const base =
+ *   srcCurrent.snapshot === null
+ *     ? new Map<string, JSONArraylessObject>()
+ *     : await loadSnapshotAsMap(src.storage, srcCurrent.snapshot, "tickets");
+ *
+ * for (let s = srcCurrent.log_seq_start; s < srcCurrent.next_seq; s++) {
+ *   const entry = await readLogEntry(src.storage, `${tablePrefix}/log/${s}.json`);
+ *   if (entry.op === "D") base.delete(entry.doc_id);
+ *   else if (entry.new !== undefined) base.set(entry.doc_id, entry.new);
+ * }
+ * ```
  */
 export const loadSnapshotAsMap = async (
   storage: Storage,
