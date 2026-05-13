@@ -207,6 +207,36 @@ const APPLICATION_JSON = "application/json";
 const EMPTY_BODY = new Uint8Array(0);
 
 /**
+ * Discriminated outcome of one full {@link ServerWriter.#singleAttemptCommit}
+ * attempt. The helper is the shared body of {@link ServerWriter.commit} and
+ * {@link ServerWriter.commitBatch}; the caller decides what each retryable
+ * outcome means in context.
+ *
+ *   - `success` — log entries landed, CAS advanced, fence intact. The caller
+ *     emits `db.write.class_a_ops_per_logical_write` (with any retry-cost
+ *     adjustment) and returns the result.
+ *   - `log-peer-race` — at least one log entry already exists at our seq
+ *     under a foreign session. `commit` backs off and retries (the loser's
+ *     CAS would have failed anyway); `commitBatch` translates to a public
+ *     `BaerlyError{code:"Conflict"}` and surfaces.
+ *   - `cas-conflict` — the final `current.json` CAS PUT 412'd. Same caller
+ *     dispositions as `log-peer-race`.
+ *
+ * Fence-bump and protocol-invariant violations propagate as thrown
+ * `BaerlyError`s from inside the helper — they are NOT retryable and don't
+ * surface as outcome variants.
+ */
+type SingleAttemptOutcome =
+  | {
+      readonly kind: "success";
+      readonly entries: readonly LogEntry[];
+      readonly currentEtag: string;
+      readonly classAOps: number;
+    }
+  | { readonly kind: "log-peer-race"; readonly seq: number }
+  | { readonly kind: "cas-conflict" };
+
+/**
  * Stateless write engine for the multi-instance core.
  *
  * Construction is cheap and performs zero I/O — Phase 3 adapters
@@ -307,230 +337,29 @@ export class ServerWriter {
     const logPrefix = this.#currentJsonKey.slice(0, this.#currentJsonKey.lastIndexOf("/"));
 
     for (let attempt = 1; attempt <= this.#maxRetries; attempt++) {
-      // ── Step 1. Read current.json (fresh; carries the ETag). ──────
-      const read = await readCurrentJson(this.#storage, this.#currentJsonKey);
-      if (read === null) {
-        throw new BaerlyError(
-          "InvalidResponse",
-          `ServerWriter: current.json missing at ${this.#currentJsonKey}; bootstrap via createCurrentJson first`,
-        );
-      }
-      const current = read.json;
-      const baseEtag = read.etag;
-      const expectedEpoch = current.writer_fence.epoch;
-
-      // ── Step 2. Walk the log to validate integrity. ───────────────
-      // Walk `[log_seq_start, next_seq)` — entries below the bound
-      // have been folded into the snapshot (ticket 14) and may already
-      // have been swept off the bucket (ticket 15), so GET-requiring
-      // them would trip the `Internal` invariant check. Pre-Phase-5
-      // collections have `log_seq_start` undefined → `logSeqStartOf`
-      // normalises to 0, so this is a no-op rewrite for the legacy
-      // path. The fold (per-doc reducer) is deferred to Phase 4 —
-      // today every `U` arrives with a full post-image, so we don't
-      // need to materialise it. We still issue the GETs so the I/O
-      // profile matches what adapters in tickets 04/05 will see, and
-      // so a missing entry trips the `Internal` invariant.
-      await this.#walkLog(logPrefix, logSeqStartOf(current), current.next_seq);
-
-      // ── Step 3. Mint the new LogEntry. ────────────────────────────
-      const nextSeq = current.next_seq;
-      const lsn = `${timestamp(Date.now())}_${session}_${countKey(nextSeq)}`;
-      const entry: LogEntry = {
-        lsn,
-        commit_ts: new Date().toISOString(),
-        op: input.op,
-        collection: input.collection,
-        doc_id: input.docId,
-        schema_version: 0,
+      const outcome = await this.#singleAttemptCommit(
+        [input],
         session,
-        seq: nextSeq,
-        ...(input.op !== "D" && input.body !== undefined
-          ? { new: input.body, patch: input.body }
-          : {}),
-        ...(input.origin !== undefined ? { origin: input.origin } : {}),
-      };
-
-      // ── Step 4. PUT content body at content-hashed key. ───────────
-      // For `D` ops there is no body; skip the content PUT entirely.
-      // For `I`/`U`: the content key is SHA-256 over the serialised
-      // body. `ifNoneMatch: "*"` makes the PUT a no-op when the same
-      // hash already exists — that's the idempotency property of
-      // §3.5 of ticket 03, exercised by crash-recovery and same-body
-      // replay.
-      if (input.op !== "D" && input.body !== undefined) {
-        const contentBytes = new TextEncoder().encode(JSON.stringify(input.body));
-        const version = await versionFromContent(contentBytes);
-        const contentKey = `${logPrefix}/content/${version}.json`;
-        try {
-          await this.#storage.put(contentKey, contentBytes, {
-            ifNoneMatch: "*",
-            contentType: APPLICATION_JSON,
-          });
-        } catch (err) {
-          this.#observe429(err, input.collection);
-          // 412 = same content already present (idempotent same-hash
-          // re-write); swallow. Other failures propagate.
-          if (!isPreconditionFailed(err)) throw err;
-        }
+        logPrefix,
+        "ServerWriter",
+        /* adoptOwnSessionOnLogConflict */ true,
+      );
+      if (outcome.kind === "success") {
+        // `outcome.classAOps` is the per-attempt base; add `(attempt
+        // - 1)` to bill prior failed attempts as one PUT each (the
+        // simple-and-test-locked cost model — not a precise replay
+        // of every PUT in every dropped attempt).
+        this.#emitWriteMetrics(input.collection, outcome.classAOps + (attempt - 1));
+        return {
+          entry: outcome.entries[0]!,
+          currentEtag: outcome.currentEtag,
+          attempts: attempt,
+        };
       }
-
-      // ── Step 5. PUT the log entry at log/<next_seq>.json. ─────────
-      // The log key is deterministic given `next_seq`. `ifNoneMatch:
-      // "*"` ensures two writers racing the same seq produce exactly
-      // one landed PUT.
-      //
-      // On 412 there are two cases to discriminate:
-      //   (a) a peer wrote a DIFFERENT entry at the same seq — we
-      //       lost the race, our CAS in step 6 will also fail, so
-      //       back off and retry from step 1.
-      //   (b) our OWN previous attempt landed step 5 but lost step 6
-      //       (and we're now re-driving the same logical commit) —
-      //       the existing entry IS ours. Adopt it and proceed to
-      //       step 6 so the CAS-advance gets a chance to commit.
-      // We discriminate by `session`: the random per-`commit()` id
-      // is unique to this call, so a matching session uniquely
-      // identifies "our own previous attempt."
-      const logEntryKey = `${logPrefix}/log/${nextSeq}.json`;
-      const logBytes = new TextEncoder().encode(JSON.stringify(entry));
-      let committedEntry = entry;
-      try {
-        await this.#storage.put(logEntryKey, logBytes, {
-          ifNoneMatch: "*",
-          contentType: APPLICATION_JSON,
-        });
-      } catch (err) {
-        this.#observe429(err, input.collection);
-        if (!isPreconditionFailed(err)) throw err;
-        // 412 on the log PUT — bump the counter at the "log-put" step.
-        this.#metrics.counter("db.r2.put.412_total", 1, {
-          collection: input.collection,
-          step: "log-put",
-        });
-        const existing = await this.#readLogEntry(logEntryKey);
-        if (existing.session !== session) {
-          // Real peer race; their CAS will / did win step 6.
-          await this.#backoff(attempt);
-          continue;
-        }
-        // Our previous attempt's entry — adopt it so the returned
-        // `CommitResult.entry` matches what's actually stored.
-        committedEntry = existing;
-      }
-
-      // ── Step 5.5. Index updates (Phase-8). ────────────────────────
-      // For I:   PUT each new index key (zero-byte, ifNoneMatch:"*").
-      // For U:   PUT each new key + DELETE each stale key (the pre-
-      //          image's keys not in the new key set).
-      // For D:   DELETE every stale key from the pre-image.
-      //
-      // All PUTs / DELETEs run in parallel via Promise.all. A failure
-      // on any individual PUT propagates — the outer attempt loop
-      // catches it as a CAS-equivalent failure and retries from step
-      // 1; on retry same-bytes/same-key PUTs are 412-then-swallowed
-      // (the entries are content-addressed by composition — zero-byte
-      // body, deterministic key — so a re-PUT is structurally idempotent).
-      //
-      // Empty `#indexes` short-circuits the entire block including
-      // the pre-image GET, preserving zero behaviour change for
-      // collections without declared indexes.
-      let indexClassA = 0;
-      if (this.#indexes.length > 0) {
-        let newKeys: readonly string[] = [];
-        let staleKeys: readonly string[] = [];
-        if (input.op === "I") {
-          newKeys = allIndexKeysFor(logPrefix, this.#indexes, input.body, input.docId);
-        } else if (input.op === "U") {
-          const preImage = await this.#readPreImage(
-            logPrefix,
-            input.collection,
-            input.docId,
-            nextSeq,
-          );
-          const oldKeys = allIndexKeysFor(logPrefix, this.#indexes, preImage, input.docId);
-          newKeys = allIndexKeysFor(logPrefix, this.#indexes, input.body, input.docId);
-          const newSet = new Set(newKeys);
-          staleKeys = oldKeys.filter((k) => !newSet.has(k));
-        } else {
-          const preImage = await this.#readPreImage(
-            logPrefix,
-            input.collection,
-            input.docId,
-            nextSeq,
-          );
-          staleKeys = allIndexKeysFor(logPrefix, this.#indexes, preImage, input.docId);
-        }
-        const indexOps: Array<Promise<unknown>> = [];
-        for (const k of newKeys) {
-          indexOps.push(
-            this.#storage
-              .put(k, EMPTY_BODY, { ifNoneMatch: "*", contentType: APPLICATION_JSON })
-              .catch((err: unknown) => {
-                this.#observe429(err, input.collection);
-                // Same-key zero-byte re-PUT — entry already present
-                // from a prior attempt of this logical commit. Tolerate.
-                if (isPreconditionFailed(err)) return;
-                throw err;
-              }),
-          );
-        }
-        for (const k of staleKeys) {
-          // Storage.delete is contractually idempotent (404 → no-op)
-          // across every in-tree impl — no defensive catch needed.
-          indexOps.push(this.#storage.delete(k));
-        }
-        if (indexOps.length > 0) await Promise.all(indexOps);
-        indexClassA = newKeys.length + staleKeys.length;
-        if (indexClassA > 0) {
-          this.#metrics.histogram("db.write.index_ops_per_logical_write", indexClassA, {
-            collection: input.collection,
-          });
-        }
-      }
-
-      // ── Step 6. CAS-advance current.json with If-Match. ───────────
-      // Bind the CAS to the etag from step 1 — we must not let the
-      // helper re-read `current.json` and write under a different
-      // etag, because that would advance `next_seq` past a seq we
-      // never wrote a log entry for. Direct `storage.put` is the
-      // right level here.
-      const next: CurrentJson = { ...current, next_seq: nextSeq + 1 };
-      const nextBody = new TextEncoder().encode(JSON.stringify(next));
-      const putOpts: StoragePutOptions = {
-        ifMatch: baseEtag,
-        contentType: APPLICATION_JSON,
-      };
-      let result: StoragePutResult;
-      try {
-        result = await this.#storage.put(this.#currentJsonKey, nextBody, putOpts);
-      } catch (err) {
-        this.#observe429(err, input.collection);
-        if (isCasConflict(err)) {
-          this.#metrics.counter("db.r2.put.412_total", 1, {
-            collection: input.collection,
-            step: "current-json-cas",
-          });
-          await this.#backoff(attempt);
-          continue;
-        }
-        throw err;
-      }
-      // Retry would re-race the new authority indefinitely, so the
-      // stale writer aborts immediately on epoch drift.
-      await this.#verifyFenceUnchanged(expectedEpoch, input.collection, "ServerWriter");
-      // Emit class-A op count for this logical write. Content PUT
-      // is skipped on `op:"D"`; one extra PUT is incurred per
-      // backoff retry (the prior attempt's failed CAS still counts
-      // as one billed PUT). `indexClassA` adds one Class A op per
-      // index PUT and per index DELETE (DELETE is Class A on R2).
-      const classAOps =
-        (input.op !== "D" ? 1 : 0) /* content PUT */ +
-        1 /* log PUT */ +
-        indexClassA /* index PUTs + DELETEs */ +
-        1 /* current.json CAS PUT */ +
-        (attempt - 1); /* +1 per backoff retry */
-      this.#emitWriteMetrics(input.collection, classAOps);
-      return { entry: committedEntry, currentEtag: result.etag, attempts: attempt };
+      // `log-peer-race` or `cas-conflict` — back off and retry from
+      // step 1. Either way our work in this attempt is discarded; a
+      // peer's CAS will land at our seq.
+      await this.#backoff(attempt);
     }
 
     // Retry budget exhausted.
@@ -583,28 +412,85 @@ export class ServerWriter {
     const session = uuid().slice(0, SESSION_ID_LENGTH);
     const logPrefix = this.#currentJsonKey.slice(0, this.#currentJsonKey.lastIndexOf("/"));
 
-    // ── Step 1. Read current.json fresh and capture the ETag. ───────
+    const outcome = await this.#singleAttemptCommit(
+      inputs,
+      session,
+      logPrefix,
+      "ServerWriter.commitBatch",
+      /* adoptOwnSessionOnLogConflict */ false,
+    );
+    if (outcome.kind === "cas-conflict") {
+      throw new BaerlyError(
+        "Conflict",
+        `ServerWriter.commitBatch: CAS conflict on ${this.#currentJsonKey}`,
+      );
+    }
+    if (outcome.kind === "log-peer-race") {
+      throw new BaerlyError(
+        "Conflict",
+        `ServerWriter.commitBatch: log entry already exists at ${logPrefix}/log/${outcome.seq}.json; peer wrote our seq`,
+      );
+    }
+    // Pick the first input's collection as the batch label; in the
+    // current `Db.transaction` model every input shares one
+    // collection, so this is exact. If future tickets relax that
+    // we'll need a per-collection split here.
+    this.#emitWriteMetrics(inputs[0]!.collection, outcome.classAOps);
+    return { entries: outcome.entries, currentEtag: outcome.currentEtag };
+  }
+
+  /**
+   * One full commit attempt — the shared body of {@link commit} and
+   * {@link commitBatch}. Reads `current.json`, walks the log, mints N
+   * entries, PUTs content + indexes in parallel, PUTs log entries,
+   * CAS-advances `current.json`, verifies the fence-epoch is intact.
+   *
+   * Retryable failures surface as {@link SingleAttemptOutcome} variants
+   * (`log-peer-race`, `cas-conflict`); the caller decides whether to
+   * back off and retry (`commit`) or surface as `Conflict`
+   * (`commitBatch`). Non-retryable failures (fence bump, protocol-
+   * invariant violations, network errors) propagate as thrown
+   * `BaerlyError`s — `commit`'s retry loop must NOT catch them.
+   *
+   * Crash safety invariant: content / index PUTs are awaited before
+   * log PUTs, which are awaited before the CAS. A crashed mid-attempt
+   * writer leaves orphan content / index entries (no log entry
+   * references them) — the Phase-5 compactor sweeps the orphans. The
+   * inverse — orphan log entry with missing content — is never
+   * produced.
+   */
+  async #singleAttemptCommit(
+    inputs: readonly CommitInput[],
+    session: string,
+    logPrefix: string,
+    errorPrefix: string,
+    adoptOwnSessionOnLogConflict: boolean,
+  ): Promise<SingleAttemptOutcome> {
+    // ── Step 1. Read current.json (fresh; carries the ETag). ────────
     const read = await readCurrentJson(this.#storage, this.#currentJsonKey);
     if (read === null) {
       throw new BaerlyError(
         "InvalidResponse",
-        `ServerWriter.commitBatch: current.json missing at ${this.#currentJsonKey}; bootstrap via createCurrentJson first`,
+        `${errorPrefix}: current.json missing at ${this.#currentJsonKey}; bootstrap via createCurrentJson first`,
       );
     }
     const current = read.json;
     const baseEtag = read.etag;
     const expectedEpoch = current.writer_fence.epoch;
 
-    // ── Step 2. Walk the log to validate integrity. ─────────────────
-    // Same as single-mutation commit; observational today (Phase 5
-    // will fold). Walks `[log_seq_start, next_seq)` so entries already
-    // folded into a snapshot (and possibly swept off the bucket by
-    // ticket 15) don't trip the `Internal` invariant. Pre-Phase-5
-    // collections normalise to start=0 — legacy behaviour is preserved.
+    // ── Step 2. Walk [log_seq_start, next_seq) to validate integrity.
+    // Entries below `log_seq_start` have been folded into the snapshot
+    // (ticket 14) and may already have been swept off the bucket
+    // (ticket 15), so GET-requiring them would trip the `Internal`
+    // invariant. Pre-Phase-5 collections normalise to 0 — legacy
+    // behaviour preserved. The fold itself (per-doc reducer) is
+    // deferred; the walk is observational today, but its I/O matches
+    // what adapters will see and a hole inside the bound trips the
+    // `Internal` invariant check immediately.
     await this.#walkLog(logPrefix, logSeqStartOf(current), current.next_seq);
 
     // ── Step 3. Mint N LogEntries with contiguous seqs. ─────────────
-    // All entries share `session` (one session per transaction).
+    // All entries share `session` (one session per logical commit).
     const entries: LogEntry[] = [];
     for (let i = 0; i < inputs.length; i++) {
       const input = inputs[i]!;
@@ -627,24 +513,28 @@ export class ServerWriter {
       entries.push(entry);
     }
 
-    // ── Step 4. PUT each content body in parallel. ──────────────────
-    // `ifNoneMatch: "*"` makes a same-hash re-write a no-op (caught
-    // and swallowed via `isPreconditionFailed`).
+    // ── Step 4. PUT content bodies + index entries in parallel. ─────
+    // Content PUT: `ifNoneMatch: "*"` makes a same-hash re-write a
+    // no-op (412 swallowed). Crash-recovery and same-body replay
+    // both rely on this idempotency property.
     //
-    // Phase-8: index PUTs / DELETEs land in the SAME parallel batch
-    // as content PUTs. For U/D the pre-image is sourced from an
-    // earlier same-`docId` input in this batch (if any) before
-    // falling back to a log back-walk — preserves correctness when
-    // a transaction does [I, U] or [U, D] on the same doc.
+    // Index PUT: each declared index emits one zero-byte PUT per new
+    // key. On `U` / `D` the pre-image is sourced from an earlier
+    // same-`docId` input in this batch (if any) before falling back
+    // to a log back-walk — preserves correctness when a transaction
+    // does `[I, U]` or `[U, D]` on the same doc.
+    //
+    // Empty `#indexes` short-circuits the index block (including the
+    // pre-image GET), preserving zero behaviour change for
+    // collections without declared indexes.
     let contentPutCount = 0;
     let indexClassA = 0;
     const parallelPuts: Array<Promise<unknown>> = [];
     // Per-docId in-batch image map: tracks the latest post-image
-    // each transactional input lays down so a later input on the
-    // same docId reads the in-batch pre-image, not the on-disk one.
+    // each input lays down so a later input on the same docId reads
+    // the in-batch pre-image, not the on-disk one.
     const inBatchImage = new Map<string, JSONArraylessObject | undefined>();
     for (const input of inputs) {
-      // Content PUT (skipped on D / when body is missing).
       if (input.op !== "D" && input.body !== undefined) {
         contentPutCount++;
         const bytes = new TextEncoder().encode(JSON.stringify(input.body));
@@ -660,7 +550,6 @@ export class ServerWriter {
             }),
         );
       }
-      // Index PUTs / DELETEs (only when indexes are declared).
       if (this.#indexes.length > 0) {
         let newKeys: readonly string[] = [];
         let staleKeys: readonly string[] = [];
@@ -708,40 +597,65 @@ export class ServerWriter {
     }
     await Promise.all(parallelPuts);
 
-    // ── Step 5. PUT each log entry. ─────────────────────────────────
-    // `ifNoneMatch: "*"` per entry. Single-attempt: on 412 throw
-    // `Conflict` immediately — no own-session-adopt path (that's a
-    // multi-attempt-retry feature of `commit()` and intentionally
-    // out of scope here).
-    const logPuts: Array<Promise<unknown>> = [];
-    for (const entry of entries) {
+    // ── Step 5. PUT log entries. ────────────────────────────────────
+    // `ifNoneMatch: "*"` per entry. On 412 we bump the counter and
+    // record the rejection; the disposition (adopt vs surface) is
+    // computed below from the aggregated results.
+    //
+    // Two cases on 412:
+    //   (a) a peer wrote a DIFFERENT entry at the same seq — we lost
+    //       the race; the caller's CAS will also fail.
+    //   (b) (single-input commit only) our OWN previous attempt
+    //       landed step 5 but lost step 6, and we're now re-driving
+    //       the same logical commit. Adopt it and proceed to CAS so
+    //       the advance gets a chance to commit.
+    //
+    // We discriminate by `session`: the random per-call id uniquely
+    // identifies "our own previous attempt." Adoption is only safe
+    // when there's exactly one entry to compare (`commit`'s N=1 case);
+    // batch commits surface log-PUT 412s as `Conflict` immediately.
+    type LogPutOutcome = { readonly ok: true } | { readonly ok: false };
+    const logPutOne = async (entry: LogEntry): Promise<LogPutOutcome> => {
       const logEntryKey = `${logPrefix}/log/${entry.seq}.json`;
       const logBytes = new TextEncoder().encode(JSON.stringify(entry));
-      logPuts.push(
-        this.#storage
-          .put(logEntryKey, logBytes, { ifNoneMatch: "*", contentType: APPLICATION_JSON })
-          .catch((err: unknown) => {
-            this.#observe429(err, entry.collection);
-            if (isPreconditionFailed(err)) {
-              this.#metrics.counter("db.r2.put.412_total", 1, {
-                collection: entry.collection,
-                step: "log-put",
-              });
-              throw new BaerlyError(
-                "Conflict",
-                `ServerWriter.commitBatch: log entry already exists at ${logEntryKey}; peer wrote our seq`,
-                err,
-              );
-            }
-            throw err;
-          }),
-      );
+      try {
+        await this.#storage.put(logEntryKey, logBytes, {
+          ifNoneMatch: "*",
+          contentType: APPLICATION_JSON,
+        });
+        return { ok: true };
+      } catch (err) {
+        this.#observe429(err, entry.collection);
+        if (!isPreconditionFailed(err)) throw err;
+        this.#metrics.counter("db.r2.put.412_total", 1, {
+          collection: entry.collection,
+          step: "log-put",
+        });
+        return { ok: false };
+      }
+    };
+    const logPutResults = await Promise.all(entries.map(logPutOne));
+    let committedEntries: readonly LogEntry[] = entries;
+    const firstConflictIdx = logPutResults.findIndex((r) => !r.ok);
+    if (firstConflictIdx !== -1) {
+      if (adoptOwnSessionOnLogConflict && entries.length === 1) {
+        const entry = entries[0]!;
+        const logEntryKey = `${logPrefix}/log/${entry.seq}.json`;
+        const existing = await this.#readLogEntry(logEntryKey);
+        if (existing.session !== session) {
+          return { kind: "log-peer-race", seq: entry.seq };
+        }
+        // Our previous attempt's entry — adopt so the returned shape
+        // matches what's actually stored.
+        committedEntries = [existing];
+      } else {
+        return { kind: "log-peer-race", seq: entries[firstConflictIdx]!.seq };
+      }
     }
-    await Promise.all(logPuts);
 
     // ── Step 6. CAS-advance current.json with If-Match. ─────────────
-    // Bound to `baseEtag` from step 1. On 412, throw Conflict —
-    // single-attempt is the contract.
+    // Bind to `baseEtag` from step 1 — re-reading would risk advancing
+    // `next_seq` past a seq we never wrote a log entry for.
     const next: CurrentJson = { ...current, next_seq: current.next_seq + inputs.length };
     const nextBody = new TextEncoder().encode(JSON.stringify(next));
     const putOpts: StoragePutOptions = {
@@ -758,30 +672,25 @@ export class ServerWriter {
           collection: inputs[0]!.collection,
           step: "current-json-cas",
         });
-        throw new BaerlyError(
-          "Conflict",
-          `ServerWriter.commitBatch: CAS conflict on ${this.#currentJsonKey}`,
-          err,
-        );
+        return { kind: "cas-conflict" };
       }
       throw err;
     }
-    // Single-attempt — no retry on epoch drift.
-    //
-    // Pick the first input's collection as the batch label; in the
-    // current `Db.transaction` model every input shares one
-    // collection, so this is exact. If future tickets relax that
-    // we'll need a per-collection split here.
-    const collection = inputs[0]!.collection;
-    await this.#verifyFenceUnchanged(expectedEpoch, collection, "ServerWriter.commitBatch");
-    // One histogram observation per landed batch. Class-A op count
-    // = content PUTs (skipping op:"D") + log PUTs (= inputs.length)
-    // + index PUTs + index DELETEs + 1 current.json CAS. The
-    // fence-verify GET above is Class B and intentionally excluded
-    // from this histogram.
-    const classAOps = contentPutCount + inputs.length + indexClassA + 1;
-    this.#emitWriteMetrics(collection, classAOps);
-    return { entries, currentEtag: result.etag };
+
+    // ── Step 7. Verify the writer fence epoch is still ours. ────────
+    // Throws `BaerlyError{code:"Conflict"}` on a mid-flight bump.
+    // Retry would re-race the new authority indefinitely, so the
+    // stale writer aborts immediately on epoch drift — the throw
+    // bypasses the caller's retry loop by being a `throw`, not a
+    // {@link SingleAttemptOutcome} variant.
+    await this.#verifyFenceUnchanged(expectedEpoch, inputs[0]!.collection, errorPrefix);
+
+    // Base class-A op count for this attempt: content PUTs (skipping
+    // `op:"D"`) + log PUTs (= N) + index PUTs + index DELETEs + 1
+    // current.json CAS. The fence-verify GET is Class B and excluded.
+    // The caller of `commit()` adds `(attempt - 1)` for retry cost.
+    const classAOps = contentPutCount + entries.length + indexClassA + 1;
+    return { kind: "success", entries: committedEntries, currentEtag: result.etag, classAOps };
   }
 
   /**
