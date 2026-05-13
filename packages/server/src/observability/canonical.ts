@@ -123,7 +123,10 @@ export const withObservability = async <T>(
   const ctx = createObservabilityContext();
   ctx.sampled_by_head = decideSample(ctx.request_id, getEffectiveSampleRate());
 
-  const recorder = new RequestScopedMetricsRecorder();
+  // The recorder lives on the context so adapters (and any code
+  // reaching `getCurrentContext()`) can find it; the body callback
+  // also receives it positionally for ergonomic emission.
+  const recorder = ctx.recorder;
 
   try {
     const result = await runWithContext(ctx, () => fn(ctx, recorder));

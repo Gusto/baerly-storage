@@ -38,11 +38,14 @@ import {
   type LogEntry,
   logSeqStartOf,
   type MetricsRecorder,
+  noopMetricsRecorder,
   readCurrentJson,
   type Storage,
+  teeMetricsRecorders,
 } from "@baerly/protocol";
 import { loadSnapshotAsMap } from "./compactor";
 import { allIndexKeysFor, type IndexDefinition, indexKeyPrefix } from "./indexes";
+import { withObservability } from "./observability";
 
 const EMPTY_BODY = new Uint8Array(0);
 const APPLICATION_JSON = "application/json";
@@ -104,12 +107,30 @@ export interface RebuildIndexOptions {
  *   violation (snapshot hash mismatch, missing log entry inside
  *   `[log_seq_start, next_seq)`).
  */
-export const rebuildIndex = async (
+export const rebuildIndex = (
   storage: Storage,
   currentJsonKey: string,
   def: IndexDefinition,
   opts: RebuildIndexOptions = {},
+): Promise<RebuildIndexResult> =>
+  withObservability("rebuild", (_ctx, recorder) =>
+    rebuildIndexInner(storage, currentJsonKey, def, opts, recorder),
+  );
+
+const rebuildIndexInner = async (
+  storage: Storage,
+  currentJsonKey: string,
+  def: IndexDefinition,
+  opts: RebuildIndexOptions,
+  _obsRecorder: MetricsRecorder,
 ): Promise<RebuildIndexResult> => {
+  // `rebuildIndex` doesn't currently emit metrics through its
+  // options-bag recorder (Dispatch 1 reserved the field but the
+  // emission lands later). Tee anyway so future emissions flow into
+  // both the observability bag AND any operator-supplied recorder
+  // without further refactoring.
+  void teeMetricsRecorders(opts.metrics ?? noopMetricsRecorder, _obsRecorder);
+
   const read = await readCurrentJson(storage, currentJsonKey);
   if (read === null) {
     throw new BaerlyError(

@@ -33,6 +33,16 @@ import {
   type HttpStatus,
   type SinceResponse,
 } from "../contract";
+import {
+  CATEGORY,
+  createObservabilityContext,
+  decideSample,
+  flushCanonicalLine,
+  getEffectiveSampleRate,
+  getLogger,
+  runWithContext,
+  serializeError,
+} from "../observability";
 import { runAllWithMeta, runFirstWithMeta } from "../query";
 import { longPollSince } from "./since";
 
@@ -88,6 +98,79 @@ export interface CreateRouterOptions {
 export function createRouter(options: CreateRouterOptions): Hono {
   const { db, verifier, healthCheck = true } = options;
   const app = new Hono();
+
+  // Phase-9 observability: per-request ObservabilityContext +
+  // canonical-line emission. Mounted BEFORE everything else so every
+  // dispatched handler — including the verifier middleware below —
+  // runs under `runWithContext`. The middleware itself early-returns
+  // on healthz: load balancers fire that probe constantly and the
+  // canonical-line cost (sampler + LogTape sink dispatch) would drown
+  // real-traffic logs. Healthz also bypasses the verifier downstream,
+  // matching its "anonymous liveness probe" contract.
+  app.use("*", async (c, next) => {
+    if (c.req.path === "/v1/healthz") {
+      return next();
+    }
+
+    const requestId = c.req.header("x-request-id") ?? crypto.randomUUID();
+    const sampleRate = getEffectiveSampleRate();
+    const ctx = createObservabilityContext({
+      request_id: requestId,
+      sampled_by_head: decideSample(requestId, sampleRate),
+    });
+
+    let caughtError: unknown;
+    await runWithContext(ctx, async () => {
+      try {
+        await next();
+      } catch (err) {
+        // Hono's `compose` ordinarily catches handler throws and
+        // routes them through `app.onError`, so a synchronous
+        // route-handler throw doesn't reach this catch — `c.error`
+        // carries it instead. This branch covers the rare case
+        // where the throw escapes both `compose` and `onError`
+        // (e.g. a non-`Error` rejection that compose rethrows).
+        caughtError = err;
+        throw err;
+      } finally {
+        // Compose-caught throws surface here via `c.error`. The
+        // local catch wins if both are set (it ran later).
+        const errFromCtx: unknown = c.error;
+        const effectiveError = caughtError ?? errFromCtx;
+
+        // When the body threw, the route handler never set a
+        // response, so `c.res` falls back to a default 200. Derive
+        // the wire status from `mapError` to keep the canonical line
+        // honest about what the client actually sees.
+        const status = caughtError !== undefined ? mapError(caughtError).status : c.res.status;
+
+        // outcome: derived purely from status (errors classify by
+        // status too — a 409 Conflict thrown by the writer still
+        // looks like "conflict" on the line, not a generic "error").
+        // The error object is attached on either catch path so the
+        // line carries the diagnostic at error level via the
+        // canonical-line level picker.
+        const outcome =
+          status < 400
+            ? c.req.method === "GET"
+              ? "read"
+              : "committed"
+            : status === 409
+              ? "conflict"
+              : "error";
+        flushCanonicalLine(ctx, ctx.recorder, {
+          unit: "http",
+          status,
+          outcome,
+          ...(effectiveError !== undefined && { error: effectiveError }),
+          extra: {
+            method: c.req.method,
+            path: c.req.path,
+          },
+        });
+      }
+    });
+  });
 
   if (healthCheck) {
     app.get("/v1/healthz", (c) => c.json({ ok: true }, 200));
@@ -335,8 +418,11 @@ export function mapError(err: unknown): { status: HttpStatus; envelope: HttpErro
   }
   // Unknown thrown value: the message may carry internal detail
   // (file paths, bucket names, upstream response bodies). Log on the
-  // server side and return a generic envelope to the client.
-  console.error("[baerly] unhandled error:", err);
+  // server side via the observability channel (replaces the legacy
+  // bare `console.error`) and return a generic envelope to the
+  // client. The mapped-error wire shape itself is locked at Phase 2
+  // and does NOT change here.
+  getLogger(CATEGORY.http).error("unhandled_error", { error: serializeError(err) });
   return { status: 500, envelope: errorEnvelope("Internal", "internal error") };
 }
 

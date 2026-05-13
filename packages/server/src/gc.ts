@@ -58,9 +58,11 @@ import {
   noopMetricsRecorder,
   readCurrentJson,
   readGcPending,
+  teeMetricsRecorders,
   versionFromContent,
 } from "@baerly/protocol";
 import { loadSnapshotAsMap } from "./compactor";
+import { withObservability } from "./observability";
 
 /**
  * Tunables for {@link runGc}. All optional; defaults are tuned for
@@ -146,16 +148,25 @@ const DEFAULT_MAX_SWEEPS = 40;
  * console.log(`marked ${r.marked.stale_log} stale logs, swept ${r.swept}`);
  * ```
  */
-export const runGc = async (
+export const runGc = (
   args: { storage: Storage; currentJsonKey: string },
   options: RunGcOptions = {},
+): Promise<RunGcResult> =>
+  withObservability("gc", (_ctx, recorder) => runGcInner(args, options, recorder));
+
+const runGcInner = async (
+  args: { storage: Storage; currentJsonKey: string },
+  options: RunGcOptions,
+  obsRecorder: MetricsRecorder,
 ): Promise<RunGcResult> => {
   const { storage, currentJsonKey } = args;
   const grace = options.graceMillis ?? GC_GRACE_PERIOD_MILLIS;
   const maxMarks = options.maxMarksPerRun ?? DEFAULT_MAX_MARKS;
   const maxSweeps = options.maxSweepsPerRun ?? DEFAULT_MAX_SWEEPS;
   const now = options.now ?? ((): Date => new Date());
-  const metrics = options.metrics ?? noopMetricsRecorder;
+  // Tee per-run observability recorder onto the operator's sink (see
+  // `compactor.ts`'s identical pattern for rationale).
+  const metrics = teeMetricsRecorders(options.metrics ?? noopMetricsRecorder, obsRecorder);
   const tablePrefix = currentJsonKey.slice(0, currentJsonKey.lastIndexOf("/"));
   const tableName = tablePrefix.slice(tablePrefix.lastIndexOf("/") + 1);
   const gcPendingKey = `${tablePrefix}/gc/pending.json`;

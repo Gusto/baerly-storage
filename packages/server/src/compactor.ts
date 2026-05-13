@@ -35,7 +35,9 @@ import {
   snapshotHash,
   type Storage,
   type StoragePutOptions,
+  teeMetricsRecorders,
 } from "@baerly/protocol";
+import { withObservability } from "./observability";
 
 /**
  * Snapshot filenames are sealed by their body's SHA-256:
@@ -197,18 +199,28 @@ const APPLICATION_JSON = "application/json";
  * if (res.written) console.log("snapshot landed at", res.newSnapshotKey);
  * ```
  */
-export const compact = async (
+export const compact = (
   args: {
     storage: Storage;
     /** Full bucket-relative key of the CAS pointer. */
     currentJsonKey: string;
   },
   options: CompactOptions = {},
+): Promise<CompactResult> =>
+  withObservability("compactor", (_ctx, recorder) => compactInner(args, options, recorder));
+
+const compactInner = async (
+  args: { storage: Storage; currentJsonKey: string },
+  options: CompactOptions,
+  obsRecorder: MetricsRecorder,
 ): Promise<CompactResult> => {
   const { storage, currentJsonKey } = args;
   const maxPerRun = options.maxEntriesPerRun ?? DEFAULT_MAX_PER_RUN;
   const minToCompact = options.minEntriesToCompact ?? DEFAULT_MIN_TO_COMPACT;
-  const metrics = options.metrics ?? noopMetricsRecorder;
+  // Tee the per-run observability recorder onto the operator's sink
+  // so both the canonical line AND the operator's long-term recorder
+  // see this compactor pass's emissions.
+  const metrics = teeMetricsRecorders(options.metrics ?? noopMetricsRecorder, obsRecorder);
   const tablePrefix = currentJsonKey.slice(0, currentJsonKey.lastIndexOf("/"));
   const tableName = tablePrefix.slice(tablePrefix.lastIndexOf("/") + 1);
 

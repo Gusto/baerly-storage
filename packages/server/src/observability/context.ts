@@ -39,6 +39,7 @@
  */
 
 import { AsyncLocalStorage } from "node:async_hooks";
+import { RequestScopedMetricsRecorder } from "./recorder";
 
 /** Read-mostly per-request observability state. */
 export interface ObservabilityContext {
@@ -52,6 +53,14 @@ export interface ObservabilityContext {
    * end-of-request.
    */
   readonly fields: Map<string, unknown>;
+  /**
+   * Per-request metrics bag. Lives on the context so adapters can
+   * reach it from inside the `Db`'s `MetricsRecorder` callback via
+   * `getCurrentContext()?.recorder` — no parallel `AsyncLocalStorage`
+   * lookup. The canonical-line flusher reads its `summarize()` at
+   * end-of-request and spreads the result onto the emitted line.
+   */
+  readonly recorder: RequestScopedMetricsRecorder;
   /**
    * Result of the head-based sampling decision, made once at context
    * construction. The canonical-line flusher emits only when this is
@@ -76,10 +85,15 @@ export interface ObservabilityContext {
  * - `sampled_by_head`: `false`. The sampler decides at the same time
  *   the context is created, so the entry middleware passes the result
  *   of `decideSample(...)` directly.
+ * - `recorder`: a fresh {@link RequestScopedMetricsRecorder}. Tests can
+ *   pass an externally-constructed recorder to assert on its
+ *   `snapshot()` after the unit-of-work completes; production callers
+ *   should accept the default.
  */
 export interface ObservabilityContextInit {
   readonly request_id?: string;
   readonly sampled_by_head?: boolean;
+  readonly recorder?: RequestScopedMetricsRecorder;
 }
 
 /**
@@ -94,6 +108,7 @@ export const createObservabilityContext = (
   request_id: init.request_id ?? crypto.randomUUID(),
   started_at: performance.now(),
   fields: new Map(),
+  recorder: init.recorder ?? new RequestScopedMetricsRecorder(),
   sampled_by_head: init.sampled_by_head ?? false,
   force_kept_by_error: false,
 });

@@ -15,9 +15,15 @@
  * @see ../../../../.claude/research/planning/tickets/16-compactor-runtime-adapters.md
  */
 
-import type { MetricsRecorder, Storage } from "@baerly/protocol";
+import {
+  type MetricsRecorder,
+  noopMetricsRecorder,
+  type Storage,
+  teeMetricsRecorders,
+} from "@baerly/protocol";
 import { compact, type CompactOptions, type CompactResult } from "./compactor";
 import { runGc, type RunGcOptions, type RunGcResult } from "./gc";
+import { withObservability } from "./observability";
 
 export interface MaintenanceArgs {
   readonly storage: Storage;
@@ -79,28 +85,35 @@ export interface MaintenanceResult {
  * console.log("compacted:", res.compact?.written, "swept:", res.gc?.swept);
  * ```
  */
-export const runScheduledMaintenance = async (
+export const runScheduledMaintenance = (
   args: MaintenanceArgs,
   options: MaintenanceOptions = {},
-): Promise<MaintenanceResult> => {
-  const compactRes =
-    options.skipCompact === true
-      ? null
-      : await compact(args, {
-          ...options.compact,
-          ...(options.signal !== undefined && { signal: options.signal }),
-          ...(options.metrics !== undefined && { metrics: options.metrics }),
-        });
-  const gcRes =
-    options.skipGc === true
-      ? null
-      : await runGc(args, {
-          ...options.gc,
-          ...(options.signal !== undefined && { signal: options.signal }),
-          ...(options.metrics !== undefined && { metrics: options.metrics }),
-        });
-  return { compact: compactRes, gc: gcRes };
-};
+): Promise<MaintenanceResult> =>
+  withObservability("maintenance", async (_ctx, recorder) => {
+    // Tee the per-run recorder onto the operator's `MetricsRecorder`
+    // so every emission `compact()` / `runGc()` produces lands in
+    // both the per-run canonical-line bag AND the operator's
+    // long-term sink. The default tee is harmless when the operator
+    // didn't pass a recorder — the noop side is a no-op.
+    const teed = teeMetricsRecorders(options.metrics ?? noopMetricsRecorder, recorder);
+    const compactRes =
+      options.skipCompact === true
+        ? null
+        : await compact(args, {
+            ...options.compact,
+            ...(options.signal !== undefined && { signal: options.signal }),
+            metrics: teed,
+          });
+    const gcRes =
+      options.skipGc === true
+        ? null
+        : await runGc(args, {
+            ...options.gc,
+            ...(options.signal !== undefined && { signal: options.signal }),
+            metrics: teed,
+          });
+    return { compact: compactRes, gc: gcRes };
+  });
 
 /**
  * Tuning profile for the 50-subrequest Cloudflare free-tier budget.

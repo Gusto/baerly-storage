@@ -233,6 +233,16 @@ describe("withObservability", () => {
     });
   });
 
+  it("the body's recorder is the same instance attached to ctx.recorder", async () => {
+    await withObservability("maintenance", async (ctx, rec) => {
+      expect(rec).toBe(ctx.recorder);
+      rec.counter("via_body", 1);
+      // The same recorder is reachable from inside the body without
+      // closure capture (this is what adapters in Dispatch 4 rely on).
+      expect(ctx.recorder.snapshot().counters).toHaveLength(1);
+    });
+  });
+
   it("sample-rate=0 still emits on error path", async () => {
     await reset();
     await configureObservability({ level: "debug", sink, sampleRate: 0 });

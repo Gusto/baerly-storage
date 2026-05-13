@@ -5,6 +5,7 @@ import {
   runWithContext,
   type ObservabilityContext,
 } from "./context";
+import { RequestScopedMetricsRecorder } from "./recorder";
 
 describe("createObservabilityContext", () => {
   it("assigns a fresh request_id when none is supplied", () => {
@@ -40,6 +41,28 @@ describe("createObservabilityContext", () => {
   it("honours an externally-supplied sampled_by_head", () => {
     const ctx = createObservabilityContext({ sampled_by_head: true });
     expect(ctx.sampled_by_head).toBe(true);
+  });
+
+  it("constructs a fresh RequestScopedMetricsRecorder by default", () => {
+    const a = createObservabilityContext();
+    const b = createObservabilityContext();
+    expect(a.recorder).toBeInstanceOf(RequestScopedMetricsRecorder);
+    expect(b.recorder).toBeInstanceOf(RequestScopedMetricsRecorder);
+    // Two distinct contexts get two distinct recorders.
+    expect(a.recorder).not.toBe(b.recorder);
+    // The default recorder starts empty.
+    const snap = a.recorder.snapshot();
+    expect(snap.counters).toEqual([]);
+    expect(snap.gauges).toEqual([]);
+    expect(snap.histograms).toEqual([]);
+  });
+
+  it("honours an externally-supplied recorder", () => {
+    const r = new RequestScopedMetricsRecorder();
+    r.counter("seeded", 1);
+    const ctx = createObservabilityContext({ recorder: r });
+    expect(ctx.recorder).toBe(r);
+    expect(ctx.recorder.snapshot().counters).toHaveLength(1);
   });
 });
 

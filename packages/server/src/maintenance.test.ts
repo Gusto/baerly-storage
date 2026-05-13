@@ -9,13 +9,15 @@
  */
 
 import { CURRENT_JSON_SCHEMA_VERSION, createCurrentJson, MemoryStorage } from "@baerly/protocol";
-import { describe, expect, it } from "vitest";
+import { reset, type LogRecord, type Sink } from "@logtape/logtape";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   CLOUDFLARE_FREE_TIER,
   CLOUDFLARE_PAID_TIER,
   NODE_PROFILE,
   runScheduledMaintenance,
 } from "./maintenance";
+import { configureObservability } from "./observability";
 import { ServerWriter } from "./server-writer";
 
 const KEY = "app/t/tenant/x/manifests/c/current.json";
@@ -86,6 +88,34 @@ describe("runScheduledMaintenance", () => {
     );
     expect(r.compact?.written).toBe(true);
     expect(r.gc).toBeNull();
+  });
+
+  describe("observability", () => {
+    let records: LogRecord[];
+    let sink: Sink;
+
+    beforeEach(async () => {
+      records = [];
+      sink = (r) => records.push(r);
+      await configureObservability({ level: "debug", sink, sampleRate: 1 });
+    });
+
+    afterEach(async () => {
+      await reset();
+    });
+
+    it("emits one canonical line at info level on the baerly.maintenance category", async () => {
+      const s = new MemoryStorage();
+      await bootstrap(s, KEY);
+      await runScheduledMaintenance({ storage: s, currentJsonKey: KEY }, { skipCompact: true });
+      // The maintenance run also nests compact+gc — but skipCompact
+      // is set so only gc runs, which emits its own canonical line
+      // on baerly.gc.
+      const maintenanceLines = records.filter((r) => r.category.join(".") === "baerly.maintenance");
+      expect(maintenanceLines).toHaveLength(1);
+      expect(maintenanceLines[0]!.level).toBe("info");
+      expect(maintenanceLines[0]!.properties["outcome"]).toBe("ok");
+    });
   });
 
   it("profile constants carry the documented bounds", async () => {
