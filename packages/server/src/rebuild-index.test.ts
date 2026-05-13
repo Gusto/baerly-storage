@@ -17,6 +17,7 @@ import { describe, expect, test } from "vitest";
 import {
   CURRENT_JSON_SCHEMA_VERSION,
   createCurrentJson,
+  InMemoryMetricsRecorder,
   MemoryStorage,
   type Storage,
 } from "@baerly/protocol";
@@ -168,5 +169,48 @@ describe("rebuildIndex — error surface", () => {
     await expect(rebuildIndex(storage, CURRENT_JSON_KEY, BY_STATUS)).rejects.toMatchObject({
       code: "InvalidResponse",
     });
+  });
+});
+
+describe("rebuildIndex — options bag", () => {
+  test("accepts a MetricsRecorder without throwing (additive signature)", async () => {
+    const storage = new MemoryStorage();
+    await provision(storage);
+    const writer = new ServerWriter({
+      storage,
+      currentJsonKey: CURRENT_JSON_KEY,
+      options: { indexes: [BY_STATUS] },
+    });
+    await writer.commit({
+      op: "I",
+      collection: COLLECTION,
+      docId: "a",
+      body: { _id: "a", status: "open" },
+    });
+    const metrics = new InMemoryMetricsRecorder();
+    const result = await rebuildIndex(storage, CURRENT_JSON_KEY, BY_STATUS, { metrics });
+    // Signature compiles; no current metric emissions required from
+    // rebuildIndex in this dispatch (the sweep-counter wiring lands
+    // later). The call body MUST still produce a sane result.
+    expect(result.added).toBe(0);
+    expect(result.removed).toBe(0);
+    expect(result.kept).toBe(1);
+  });
+
+  test("accepts an AbortSignal in the options bag (additive signature)", async () => {
+    const storage = new MemoryStorage();
+    await provision(storage);
+    const result = await rebuildIndex(storage, CURRENT_JSON_KEY, BY_STATUS, {
+      signal: new AbortController().signal,
+    });
+    expect(result).toEqual({ added: 0, removed: 0, kept: 0 });
+  });
+
+  test("opts defaults to {} — every existing positional caller still compiles", async () => {
+    const storage = new MemoryStorage();
+    await provision(storage);
+    // No 4th argument — proves the prior call shape is preserved.
+    const result = await rebuildIndex(storage, CURRENT_JSON_KEY, BY_STATUS);
+    expect(result).toEqual({ added: 0, removed: 0, kept: 0 });
   });
 });

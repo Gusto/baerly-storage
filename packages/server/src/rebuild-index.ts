@@ -37,6 +37,7 @@ import {
   type JSONArraylessObject,
   type LogEntry,
   logSeqStartOf,
+  type MetricsRecorder,
   readCurrentJson,
   type Storage,
 } from "@baerly/protocol";
@@ -57,6 +58,34 @@ export interface RebuildIndexResult {
 }
 
 /**
+ * Optional knobs accepted by {@link rebuildIndex}. Every field is
+ * optional; the function behaves identically to the pre-Phase-9
+ * positional-arg shape when `opts` is omitted.
+ *
+ * @public — surfaced from `@baerly/server` so admin tooling and the
+ *   Phase-9 observability layer can opt in.
+ */
+export interface RebuildIndexOptions {
+  /**
+   * Metrics sink. Reserved for the Phase-9 follow-up that wires
+   * sweep counters (`db.gc.swept_total`-style emissions) on the
+   * rebuild path. This commit only accepts the recorder; emission
+   * lands in a later dispatch. Defaults to no sink.
+   */
+  readonly metrics?: MetricsRecorder;
+  /**
+   * Cancellation signal. Forwarded to every storage `list` call so
+   * long-running rebuilds over large collections can be cut short
+   * by admin tooling. Storage `get` / `put` / `delete` calls inside
+   * the reconciliation loop do not currently honour the signal
+   * (the per-call durations are short enough that cooperative
+   * cancellation between calls suffices); future tightening can
+   * forward it through without breaking callers.
+   */
+  readonly signal?: AbortSignal;
+}
+
+/**
  * Idempotently reconcile one secondary index for one collection.
  *
  * @param storage         Storage handle (any in-tree `Storage`).
@@ -65,6 +94,10 @@ export interface RebuildIndexResult {
  *                        composite definitions are accepted by the
  *                        key encoder but the read path only consults
  *                        single-field keys.
+ * @param opts            Optional knobs — see {@link RebuildIndexOptions}.
+ *                        Strictly additive: existing positional-arg
+ *                        callers compile and behave unchanged when
+ *                        omitted.
  *
  * @throws BaerlyError code="InvalidResponse" — `current.json` missing.
  * @throws BaerlyError code="Internal" — protocol-invariant
@@ -75,6 +108,7 @@ export const rebuildIndex = async (
   storage: Storage,
   currentJsonKey: string,
   def: IndexDefinition,
+  opts: RebuildIndexOptions = {},
 ): Promise<RebuildIndexResult> => {
   const read = await readCurrentJson(storage, currentJsonKey);
   if (read === null) {
@@ -138,9 +172,14 @@ export const rebuildIndex = async (
     }
   }
 
-  // 3. List actual keys under the index prefix.
+  // 3. List actual keys under the index prefix. Forward the abort
+  //    signal so admin tooling can cut short a rebuild over a huge
+  //    collection; the storage `list` contract is the only step
+  //    here that's unbounded in cost.
   const actual = new Set<string>();
-  for await (const entry of storage.list(indexKeyPrefix(tablePrefix, def.name))) {
+  const listOpts: { signal?: AbortSignal } = {};
+  if (opts.signal !== undefined) listOpts.signal = opts.signal;
+  for await (const entry of storage.list(indexKeyPrefix(tablePrefix, def.name), listOpts)) {
     actual.add(entry.key);
   }
 
