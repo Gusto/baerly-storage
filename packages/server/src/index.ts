@@ -10,6 +10,7 @@ export {
   snapshotKey,
 } from "./compactor.ts";
 export { type BaerlyConfig, type CollectionDefinition, defineConfig } from "./config.ts";
+export { type DevLandingOptions, renderDevLanding } from "./dev-landing.ts";
 export {
   type HttpErrorEnvelope,
   type HttpOkEnvelope,
