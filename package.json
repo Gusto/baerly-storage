@@ -37,6 +37,7 @@
     "test:adapter-node": "MINIO=1 vitest run --project=default packages/adapter-node",
     "test:adapters": "pnpm test:adapter-cloudflare && pnpm test:adapter-node",
     "gate:real-deploy": "vitest run --project=default tests/integration/real-deploy-cloudflare.test.ts tests/integration/real-deploy-node.test.ts",
+    "gate:day-one": "vitest run --project=default tests/integration/day-one-handshake.test.ts",
     "verify": "pnpm run typecheck && pnpm run lint",
     "dev:storage": "docker compose up -d --wait",
     "dev:storage:stop": "docker compose down",
