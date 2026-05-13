@@ -101,8 +101,8 @@ describe("casUpdateCurrentJson", () => {
     const s = new MemoryStorage();
     await createCurrentJson(s, "k", seedJson());
     // Both reads complete before either put fires (Promise.allSettled
-    // serializes neither). Both writes commit to the same etag; the
-    // second hits PreconditionFailed and surfaces as Conflict.
+    // serializes neither). Both writes commit at the same etag; the
+    // storage layer surfaces the second one as `Conflict`.
     let mutator1Calls = 0;
     let mutator2Calls = 0;
     const p1 = casUpdateCurrentJson(s, "k", (c) => {

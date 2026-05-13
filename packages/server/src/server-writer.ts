@@ -515,25 +515,9 @@ export class ServerWriter {
         }
         throw err;
       }
-      // CAS landed. Re-read current.json to verify the fence wasn't
-      // bumped concurrently with our CAS. The CAS step only mutated
-      // next_seq (the fence is preserved from `current`), so a post-
-      // write epoch ≠ expectedEpoch can only mean another writer
-      // claimed the fence between our step-1 read and step-6 PUT —
-      // which is the exact split-brain WriterFence prevents. Surface
-      // as Conflict, do NOT retry: retry would re-race the new
-      // authority indefinitely. Note: the fence-verify GET is Class
-      // B, NOT counted in class_a_ops_per_logical_write.
-      const postRead = await readCurrentJson(this.#storage, this.#currentJsonKey);
-      if (postRead !== null && postRead.json.writer_fence.epoch !== expectedEpoch) {
-        const bumpLabels: Record<string, string> = { collection: input.collection };
-        if (this.#tenant !== "") bumpLabels.tenant = this.#tenant;
-        this.#metrics.counter("db.writer.fence_bump_observed_total", 1, bumpLabels);
-        throw new BaerlyError(
-          "Conflict",
-          `ServerWriter: writer fence bumped from epoch ${expectedEpoch} to ${postRead.json.writer_fence.epoch} during commit on ${this.#currentJsonKey}; stale writer aborting`,
-        );
-      }
+      // Retry would re-race the new authority indefinitely, so the
+      // stale writer aborts immediately on epoch drift.
+      await this.#verifyFenceUnchanged(expectedEpoch, input.collection, "ServerWriter");
       // Emit class-A op count for this logical write. Content PUT
       // is skipped on `op:"D"`; one extra PUT is incurred per
       // backoff retry (the prior attempt's failed CAS still counts
@@ -545,12 +529,7 @@ export class ServerWriter {
         indexClassA /* index PUTs + DELETEs */ +
         1 /* current.json CAS PUT */ +
         (attempt - 1); /* +1 per backoff retry */
-      const histLabels: Record<string, string> = { collection: input.collection };
-      if (this.#tenant !== "") histLabels.tenant = this.#tenant;
-      this.#metrics.histogram("db.write.class_a_ops_per_logical_write", classAOps, histLabels);
-      const rateLabels: Record<string, string> =
-        this.#tenant !== "" ? { tenant: this.#tenant } : {};
-      this.#metrics.gauge("db.tenant.put_rate", 1, rateLabels);
+      this.#emitWriteMetrics(input.collection, classAOps);
       return { entry: committedEntry, currentEtag: result.etag, attempts: attempt };
     }
 
@@ -787,40 +766,21 @@ export class ServerWriter {
       }
       throw err;
     }
-    // CAS landed. Re-read current.json to verify the fence wasn't
-    // bumped concurrently with our CAS. The CAS step only mutated
-    // next_seq (the fence is preserved from `current`), so a post-
-    // write epoch ≠ expectedEpoch can only mean another writer
-    // claimed the fence between our step-1 read and step-6 PUT —
-    // which is the exact split-brain WriterFence prevents. Surface
-    // as Conflict; single-attempt — no retry. Note: the fence-verify
-    // GET is Class B, NOT counted in class_a_ops_per_logical_write.
+    // Single-attempt — no retry on epoch drift.
+    //
+    // Pick the first input's collection as the batch label; in the
+    // current `Db.transaction` model every input shares one
+    // collection, so this is exact. If future tickets relax that
+    // we'll need a per-collection split here.
     const collection = inputs[0]!.collection;
-    const postRead = await readCurrentJson(this.#storage, this.#currentJsonKey);
-    if (postRead !== null && postRead.json.writer_fence.epoch !== expectedEpoch) {
-      const bumpLabels: Record<string, string> = { collection };
-      if (this.#tenant !== "") bumpLabels.tenant = this.#tenant;
-      this.#metrics.counter("db.writer.fence_bump_observed_total", 1, bumpLabels);
-      throw new BaerlyError(
-        "Conflict",
-        `ServerWriter.commitBatch: writer fence bumped from epoch ${expectedEpoch} to ${postRead.json.writer_fence.epoch} during commit on ${this.#currentJsonKey}; stale writer aborting`,
-      );
-    }
+    await this.#verifyFenceUnchanged(expectedEpoch, collection, "ServerWriter.commitBatch");
     // One histogram observation per landed batch. Class-A op count
     // = content PUTs (skipping op:"D") + log PUTs (= inputs.length)
     // + index PUTs + index DELETEs + 1 current.json CAS. The
     // fence-verify GET above is Class B and intentionally excluded
     // from this histogram.
     const classAOps = contentPutCount + inputs.length + indexClassA + 1;
-    // Pick the first input's collection as the batch label; in the
-    // current Db.transaction model every input shares one
-    // collection, so this is exact. If future tickets relax that
-    // we'll need a per-collection split here.
-    const histLabels: Record<string, string> = { collection };
-    if (this.#tenant !== "") histLabels.tenant = this.#tenant;
-    this.#metrics.histogram("db.write.class_a_ops_per_logical_write", classAOps, histLabels);
-    const rateLabels: Record<string, string> = this.#tenant !== "" ? { tenant: this.#tenant } : {};
-    this.#metrics.gauge("db.tenant.put_rate", 1, rateLabels);
+    this.#emitWriteMetrics(collection, classAOps);
     return { entries, currentEtag: result.etag };
   }
 
@@ -940,6 +900,50 @@ export class ServerWriter {
   }
 
   /**
+   * Emit the per-logical-write metrics shared by `commit` and
+   * `commitBatch`: the `class_a_ops_per_logical_write` histogram and
+   * the `tenant.put_rate` gauge. `classAOps` differs between the two
+   * paths (retry-budget vs batch shape), so each caller computes it.
+   */
+  #emitWriteMetrics(collection: string, classAOps: number): void {
+    const histLabels: Record<string, string> = { collection };
+    if (this.#tenant !== "") histLabels.tenant = this.#tenant;
+    this.#metrics.histogram("db.write.class_a_ops_per_logical_write", classAOps, histLabels);
+    const rateLabels: Record<string, string> = this.#tenant !== "" ? { tenant: this.#tenant } : {};
+    this.#metrics.gauge("db.tenant.put_rate", 1, rateLabels);
+  }
+
+  /**
+   * Re-read `current.json` after a successful CAS and assert the
+   * writer-fence epoch is still ours. The CAS only mutated `next_seq`
+   * (the fence is preserved from `current`), so a post-write epoch
+   * mismatch can only mean another writer claimed the fence between
+   * our step-1 read and step-6 PUT — the exact split-brain
+   * `WriterFence` prevents. Bumps `db.writer.fence_bump_observed_total`
+   * and throws `Conflict`; no retry, since the stale writer must defer
+   * to the new authority.
+   *
+   * The fence-verify GET is Class B and intentionally NOT counted in
+   * `class_a_ops_per_logical_write`.
+   */
+  async #verifyFenceUnchanged(
+    expectedEpoch: number,
+    collection: string,
+    where: string,
+  ): Promise<void> {
+    const postRead = await readCurrentJson(this.#storage, this.#currentJsonKey);
+    if (postRead === null) return;
+    if (postRead.json.writer_fence.epoch === expectedEpoch) return;
+    const bumpLabels: Record<string, string> = { collection };
+    if (this.#tenant !== "") bumpLabels.tenant = this.#tenant;
+    this.#metrics.counter("db.writer.fence_bump_observed_total", 1, bumpLabels);
+    throw new BaerlyError(
+      "Conflict",
+      `${where}: writer fence bumped from epoch ${expectedEpoch} to ${postRead.json.writer_fence.epoch} during commit on ${this.#currentJsonKey}; stale writer aborting`,
+    );
+  }
+
+  /**
    * Exponential backoff with full jitter. `25 * 2^(attempt-1)` capped
    * at 1500ms; uniform jitter in `[0, base)` keeps colliding peers
    * from re-racing in lockstep. Worst-case total wait across the
@@ -976,19 +980,14 @@ const validateInput = (input: CommitInput): void => {
 
 /**
  * `true` when the underlying storage surfaced a `PreconditionFailed`
- * 412. Every in-tree {@link Storage} impl phrases the message as
- * `"PreconditionFailed: …"` on `InvalidResponse`; some upstream
- * helpers (e.g. {@link casUpdateCurrentJson}) translate that to
- * `Conflict` before re-throwing. Match both shapes.
+ * 412 (or its non-S3 equivalents). Every in-tree {@link Storage} impl
+ * surfaces a lost CAS as `BaerlyError{code:"Conflict"}`.
  */
-const isPreconditionFailed = (err: unknown): boolean => {
-  if (!(err instanceof BaerlyError)) return false;
-  if (err.code === "Conflict") return true;
-  return err.code === "InvalidResponse" && err.message.startsWith("PreconditionFailed:");
-};
+const isPreconditionFailed = (err: unknown): boolean =>
+  err instanceof BaerlyError && err.code === "Conflict";
 
 /**
- * `true` when an `If-Match` CAS guard lost. Same shape envelope as
+ * `true` when an `If-Match` CAS guard lost. Aliased to
  * {@link isPreconditionFailed} — kept as a separate predicate for
  * call-site clarity (step 6 reads better as "CAS conflict").
  */
@@ -996,13 +995,12 @@ const isCasConflict = (err: unknown): boolean => isPreconditionFailed(err);
 
 /**
  * `true` when the underlying storage surfaced an R2 prefix-partition
- * rate-limit. Best-effort detection: every in-tree {@link Storage}
- * impl wraps transport-layer errors in
- * `BaerlyError{code:"NetworkError"}` and includes the upstream status
- * code in the message. A `429` token in that message is the canonical
- * "throttled" signal.
+ * rate-limit. {@link S3HttpStorage} stamps the upstream HTTP status
+ * onto `BaerlyError.cause` as `{ status }`; we discriminate on that
+ * structured field rather than regex-matching the message.
  */
 const is429 = (err: unknown): boolean => {
-  if (!(err instanceof BaerlyError)) return false;
-  return err.code === "NetworkError" && /\b429\b/.test(err.message);
+  if (!(err instanceof BaerlyError) || err.code !== "NetworkError") return false;
+  const cause = err.cause as { status?: number } | undefined;
+  return cause?.status === 429;
 };

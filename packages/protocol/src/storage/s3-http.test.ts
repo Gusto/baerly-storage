@@ -120,12 +120,12 @@ describe("S3HttpStorage.put", () => {
     expect(req.headers.get("Content-Type")).toBe("application/json");
   });
 
-  test("412 with ifMatch → InvalidResponse(PreconditionFailed)", async () => {
+  test("412 with ifMatch → Conflict", async () => {
     const fetchFn = vi.fn(async (_req: Request) => noBody(412));
     const s = mkStorage(fetchFn as unknown as typeof fetch);
     await expect(s.put("k", new Uint8Array(0), { ifMatch: '"old"' })).rejects.toMatchObject({
-      code: "InvalidResponse",
-      message: expect.stringContaining("PreconditionFailed"),
+      code: "Conflict",
+      message: expect.stringContaining("precondition failed"),
     });
   });
 

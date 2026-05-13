@@ -44,11 +44,11 @@ class InstrumentedStorage extends MemoryStorage {
     if (key === CURRENT_KEY && opts?.ifMatch !== undefined) {
       this.casAttempts += 1;
       if (this.failEveryCas) {
-        throw new BaerlyError("InvalidResponse", `PreconditionFailed: simulated CAS 412 on ${key}`);
+        throw new BaerlyError("Conflict", `simulated CAS 412 on ${key}: precondition failed`);
       }
       if (this.failNextCasOnce) {
         this.failNextCasOnce = false;
-        throw new BaerlyError("InvalidResponse", `PreconditionFailed: simulated CAS 412 on ${key}`);
+        throw new BaerlyError("Conflict", `simulated CAS 412 on ${key}: precondition failed`);
       }
     }
     return super.put(key, body, opts);
@@ -350,7 +350,7 @@ describe("ServerWriter", () => {
         // Throttle the first content PUT only.
         if (!this.thrown && /\/content\//.test(key)) {
           this.thrown = true;
-          throw new BaerlyError("NetworkError", `S3: HTTP 429 throttled on ${key}`);
+          throw new BaerlyError("NetworkError", `S3: throttled on ${key}`, { status: 429 });
         }
         return super.put(key, body, opts);
       }

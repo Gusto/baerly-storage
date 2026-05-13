@@ -20,37 +20,35 @@ import type {
  * Permanent {@link BaerlyError} codes that must short-circuit `retry`.
  * These represent caller- or environment-level faults where retrying
  * cannot succeed: `AccessDenied` (403 — credentials/policy),
- * `InvalidConfig` (bad bucket / unsupported credential type), and
- * `InvalidResponse` (server returned unparseable data).
- * `NetworkError` is intentionally absent — it covers transient
- * transport faults and stays retryable.
+ * `InvalidConfig` (bad bucket / unsupported credential type),
+ * `InvalidResponse` (server returned unparseable data), and
+ * `Conflict` (CAS guard lost — retrying would just re-lose against
+ * the same state). `NetworkError` is intentionally absent — it covers
+ * transient transport faults and stays retryable.
  */
 const PERMANENT_ERROR_CODES: ReadonlySet<string> = new Set([
   "AccessDenied",
   "InvalidConfig",
   "InvalidResponse",
+  "Conflict",
 ]);
 
 const retry = async <T>(
   fn: () => Promise<T>,
-  { retries = S3_REQUEST_MAX_RETRIES, backoffMs = 100, max_delay = 10000 } = {},
+  { retries = S3_REQUEST_MAX_RETRIES, backoffMs = 100, maxDelayMs = 10_000 } = {},
 ): Promise<T> => {
-  try {
-    return await fn();
-  } catch (e) {
-    if (e instanceof BaerlyError && PERMANENT_ERROR_CODES.has(e.code)) {
-      throw e;
+  let wait = backoffMs;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      return await fn();
+    } catch (e) {
+      if (e instanceof BaerlyError && PERMANENT_ERROR_CODES.has(e.code)) throw e;
+      if (attempt === retries) throw e;
+      await delay(wait);
+      wait = Math.min(wait * 1.5, maxDelayMs);
     }
-    if (retries > 0) {
-      await delay(backoffMs);
-      return retry(fn, {
-        retries: retries - 1,
-        max_delay,
-        backoffMs: Math.min(backoffMs * 1.5, max_delay),
-      });
-    }
-    throw e;
   }
+  throw new BaerlyError("Internal", "s3-http retry loop exited without returning or throwing");
 };
 
 /**
@@ -159,7 +157,9 @@ export class S3HttpStorage implements Storage {
           throw new BaerlyError("AccessDenied", `GET ${key}: 403`);
         default:
           if (res.status >= 500) {
-            throw new BaerlyError("NetworkError", `GET ${key}: ${res.status} ${await res.text()}`);
+            throw new BaerlyError("NetworkError", `GET ${key}: ${res.status} ${await res.text()}`, {
+              status: res.status,
+            });
           }
           throw new BaerlyError("InvalidResponse", `GET ${key}: ${res.status} ${await res.text()}`);
       }
@@ -185,13 +185,25 @@ export class S3HttpStorage implements Storage {
         }),
       );
       if (res.status === 412) {
-        throw new BaerlyError("InvalidResponse", `PreconditionFailed: PUT ${key}`);
+        throw new BaerlyError("Conflict", `PUT ${key}: precondition failed`);
+      }
+      // S3-compatible servers diverge on `If-Match` against a missing
+      // key: AWS S3 returns 412, Minio returns 404 (NoSuchKey). Map
+      // 404-with-ifMatch to the same `Conflict` semantic so consumers
+      // don't have to special-case the wire reply.
+      if (res.status === 404 && opts?.ifMatch !== undefined) {
+        throw new BaerlyError(
+          "Conflict",
+          `PUT ${key}: precondition failed (ifMatch=${opts.ifMatch} but key does not exist)`,
+        );
       }
       if (res.status === 403) {
         throw new BaerlyError("AccessDenied", `PUT ${key}: 403`);
       }
       if (res.status >= 500) {
-        throw new BaerlyError("NetworkError", `PUT ${key}: ${res.status} ${await res.text()}`);
+        throw new BaerlyError("NetworkError", `PUT ${key}: ${res.status} ${await res.text()}`, {
+          status: res.status,
+        });
       }
       if (res.status !== 200 && res.status !== 204) {
         throw new BaerlyError("InvalidResponse", `PUT ${key}: ${res.status} ${await res.text()}`);
@@ -220,7 +232,9 @@ export class S3HttpStorage implements Storage {
         throw new BaerlyError("AccessDenied", `DELETE ${key}: 403`);
       }
       if (res.status >= 500) {
-        throw new BaerlyError("NetworkError", `DELETE ${key}: ${res.status} ${await res.text()}`);
+        throw new BaerlyError("NetworkError", `DELETE ${key}: ${res.status} ${await res.text()}`, {
+          status: res.status,
+        });
       }
       // 200 / 204 / 404 → success (idempotent).
     });
@@ -276,6 +290,7 @@ export class S3HttpStorage implements Storage {
             throw new BaerlyError(
               "NetworkError",
               `LIST ${prefix}: ${res.status} ${await res.text()}`,
+              { status: res.status },
             );
           }
           throw new BaerlyError(
@@ -290,7 +305,7 @@ export class S3HttpStorage implements Storage {
         await delay(RATE_LIMIT_BACKOFF_MILLIS);
       }
       if (parsed === undefined) {
-        throw new BaerlyError("NetworkError", `LIST ${prefix}: rate-limited`);
+        throw new BaerlyError("NetworkError", `LIST ${prefix}: rate-limited`, { status: 429 });
       }
 
       for (const entry of parsed.Contents ?? []) {

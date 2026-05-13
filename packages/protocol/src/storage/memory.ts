@@ -49,21 +49,21 @@ export class MemoryStorage implements Storage {
 
     if (opts?.ifNoneMatch === "*" && existing !== undefined) {
       throw new BaerlyError(
-        "InvalidResponse",
-        `PreconditionFailed: ifNoneMatch="*" but key ${key} already exists`,
+        "Conflict",
+        `PUT ${key}: precondition failed (ifNoneMatch="*" but key exists)`,
       );
     }
     if (opts?.ifMatch !== undefined) {
       if (existing === undefined) {
         throw new BaerlyError(
-          "InvalidResponse",
-          `PreconditionFailed: ifMatch=${opts.ifMatch} but key ${key} does not exist`,
+          "Conflict",
+          `PUT ${key}: precondition failed (ifMatch=${opts.ifMatch} but key does not exist)`,
         );
       }
       if (existing.etag !== opts.ifMatch) {
         throw new BaerlyError(
-          "InvalidResponse",
-          `PreconditionFailed: ifMatch=${opts.ifMatch} but current ETag is ${existing.etag}`,
+          "Conflict",
+          `PUT ${key}: precondition failed (ifMatch=${opts.ifMatch} but current ETag is ${existing.etag})`,
         );
       }
     }

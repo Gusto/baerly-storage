@@ -26,7 +26,6 @@ import { LocalFsStorage } from "@baerly/dev";
 import {
   CURRENT_JSON_SCHEMA_VERSION,
   BaerlyError,
-  MemoryStorage,
   S3HttpStorage,
   createCurrentJson,
   getOrCreateMemoryStorageForBucket,
@@ -45,11 +44,6 @@ import {
   type SnapshotBody,
 } from "@baerly/server";
 import { emitError, emitSuccess, setJsonMode } from "./output";
-
-// MemoryStorage is imported above for parseBucketUri's discriminator;
-// the no-op reference here keeps it bundled into the type graph and
-// silences the unused-import lint without weakening the public surface.
-void MemoryStorage;
 
 const COPY_OWNER = "baerly-copy";
 const APPLICATION_JSON = "application/json";

@@ -82,7 +82,7 @@ describe("gc-pending", () => {
     const stale = new TextEncoder().encode(JSON.stringify(initial()));
     await expect(
       s.put(KEY, stale, { ifMatch: created.etag, contentType: "application/json" }),
-    ).rejects.toMatchObject({ code: "InvalidResponse" });
+    ).rejects.toMatchObject({ code: "Conflict" });
   });
 
   it("cas-update on a missing key throws InvalidResponse", async () => {

@@ -77,22 +77,22 @@ export class LocalFsStorage implements Storage {
       const existing = await readExisting(path);
       if (opts?.ifNoneMatch === "*" && existing !== null) {
         throw new BaerlyError(
-          "InvalidResponse",
-          `PreconditionFailed: ifNoneMatch="*" but key ${key} already exists`,
+          "Conflict",
+          `PUT ${key}: precondition failed (ifNoneMatch="*" but key exists)`,
         );
       }
       if (opts?.ifMatch !== undefined) {
         if (existing === null) {
           throw new BaerlyError(
-            "InvalidResponse",
-            `PreconditionFailed: ifMatch=${opts.ifMatch} but key ${key} does not exist`,
+            "Conflict",
+            `PUT ${key}: precondition failed (ifMatch=${opts.ifMatch} but key does not exist)`,
           );
         }
         const currentEtag = etagOf(existing);
         if (currentEtag !== opts.ifMatch) {
           throw new BaerlyError(
-            "InvalidResponse",
-            `PreconditionFailed: ifMatch=${opts.ifMatch} but current ETag is ${currentEtag}`,
+            "Conflict",
+            `PUT ${key}: precondition failed (ifMatch=${opts.ifMatch} but current ETag is ${currentEtag})`,
           );
         }
       }

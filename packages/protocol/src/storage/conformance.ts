@@ -180,20 +180,20 @@ export function defineStorageConformanceSuite(
         expect(got!.etag).toBe(second.etag);
       });
 
-      test("fails with BaerlyError InvalidResponse when key is absent", async () => {
+      test("fails with BaerlyError Conflict when key is absent", async () => {
         await expect(
           s.put("k", new TextEncoder().encode("v"), { ifMatch: '"deadbeef"' }),
         ).rejects.toBeInstanceOf(BaerlyError);
         await expect(
           s.put("k", new TextEncoder().encode("v"), { ifMatch: '"deadbeef"' }),
-        ).rejects.toMatchObject({ code: "InvalidResponse" });
+        ).rejects.toMatchObject({ code: "Conflict" });
       });
 
-      test("fails with BaerlyError InvalidResponse on stale etag", async () => {
+      test("fails with BaerlyError Conflict on stale etag", async () => {
         await s.put("k", new TextEncoder().encode("v1"));
         await expect(
           s.put("k", new TextEncoder().encode("v2"), { ifMatch: '"deadbeef"' }),
-        ).rejects.toMatchObject({ code: "InvalidResponse" });
+        ).rejects.toMatchObject({ code: "Conflict" });
       });
     });
 
@@ -205,14 +205,14 @@ export function defineStorageConformanceSuite(
         expect(etag).toBeTruthy();
       });
 
-      test("fails with BaerlyError InvalidResponse when key exists", async () => {
+      test("fails with BaerlyError Conflict when key exists", async () => {
         await s.put("k", new TextEncoder().encode("v"));
         await expect(
           s.put("k", new TextEncoder().encode("v2"), { ifNoneMatch: "*" }),
         ).rejects.toBeInstanceOf(BaerlyError);
         await expect(
           s.put("k", new TextEncoder().encode("v3"), { ifNoneMatch: "*" }),
-        ).rejects.toMatchObject({ code: "InvalidResponse" });
+        ).rejects.toMatchObject({ code: "Conflict" });
       });
 
       test("body is not modified on conflict", async () => {

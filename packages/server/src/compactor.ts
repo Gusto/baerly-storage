@@ -70,10 +70,10 @@ export const snapshotKey = (
   sha256: string,
 ): string => {
   if (minSeq < 0 || maxSeq < 0 || minSeq > maxSeq || maxSeq > MAX_SEQ) {
-    throw new Error(`snapshotKey: invalid range [${minSeq}, ${maxSeq})`);
+    throw new BaerlyError("InvalidConfig", `snapshotKey: invalid range [${minSeq}, ${maxSeq})`);
   }
   if (!/^[0-9a-f]{64}$/.test(sha256)) {
-    throw new Error(`snapshotKey: sha256 must be 64 hex chars`);
+    throw new BaerlyError("InvalidConfig", "snapshotKey: sha256 must be 64 hex chars");
   }
   const pad = (n: number): string => n.toString().padStart(SEQ_DIGITS, "0");
   return `${tablePrefix}/snapshot/L${SNAPSHOT_LEVEL}/${pad(minSeq)}-${pad(maxSeq)}-${sha256}.json`;
@@ -456,13 +456,8 @@ const readLogEntry = async (
 
 /**
  * `true` when an `If-Match` CAS guard lost. Every in-tree
- * {@link Storage} impl surfaces a 412 as either
- * `InvalidResponse / "PreconditionFailed: …"` (S3 / memory / R2 /
- * local-fs) or `Conflict` (after `casUpdateCurrentJson`-style
- * translation). Match both shapes.
+ * {@link Storage} impl surfaces a lost CAS as
+ * `BaerlyError{code:"Conflict"}`.
  */
-const isCasConflict = (err: unknown): boolean => {
-  if (!(err instanceof BaerlyError)) return false;
-  if (err.code === "Conflict") return true;
-  return err.code === "InvalidResponse" && err.message.startsWith("PreconditionFailed:");
-};
+const isCasConflict = (err: unknown): boolean =>
+  err instanceof BaerlyError && err.code === "Conflict";

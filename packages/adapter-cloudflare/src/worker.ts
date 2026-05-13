@@ -4,6 +4,7 @@ import {
   CLOUDFLARE_PAID_TIER,
   Db,
   createRouter,
+  errorEnvelope,
   runScheduledMaintenance,
 } from "@baerly/server";
 import { invalidateOnWrite, withReadCache } from "./cache";
@@ -164,9 +165,7 @@ export function baerlyWorker(options: BaerlyWorkerOptions): ExportedHandler<Env>
       const result = await options.verifier(req);
       if (result === null) {
         return new Response(
-          JSON.stringify({
-            error: { code: "Unauthorized", message: "Verifier returned null" },
-          }),
+          JSON.stringify(errorEnvelope("Unauthorized", "Verifier returned null")),
           { status: 401, headers: { "content-type": "application/json" } },
         );
       }
