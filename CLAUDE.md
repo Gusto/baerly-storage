@@ -231,6 +231,8 @@ Read in this order to build a mental model:
    round out the tree. Both consumed by the scaffolder and covered
    by `packages/create-baerly/src/scaffold.test.ts` +
    `packages/cli/src/{deploy,doctor}/{cloudflare,node}.test.ts`.
+   Both templates emit `AGENTS.md` + a byte-identical `CLAUDE.md` at
+   scaffold time so Codex CLI and Claude Code see the same context.
 
 The full lifecycle of `db.table().insert()` is in
 [docs/architecture.md](docs/architecture.md) — read it before

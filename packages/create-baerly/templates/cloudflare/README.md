@@ -13,7 +13,9 @@ out of the box.
 ├── pnpm-workspace.yaml       # apps/*
 ├── tsconfig.json
 ├── baerly.config.ts          # app, tenant, target, domain
-├── AGENTS.md                 # agent-facing repo guide
+├── AGENTS.md                 # agent-facing repo guide (Codex CLI)
+├── CLAUDE.md                 # agent-facing repo guide (Claude Code)
+                              #   — byte-identical sibling of AGENTS.md
 ├── .baerly/schema.lock.json  # reserved for future schema feature
 ├── apps/
 │   ├── server/               # Cloudflare Worker — baerly host
@@ -75,4 +77,7 @@ and derives `tenantPrefix` from the email claim.
 - `baerly.config.ts` — app config (`app`, `tenant`, `target`, `domain`).
 - `apps/server/src/worker.ts` — Worker fetch + scheduled handler.
 - `apps/server/wrangler.jsonc` — Cloudflare Worker manifest.
-- `AGENTS.md` — agent-facing guide for the next contributor.
+- `AGENTS.md` / `CLAUDE.md` — agent-facing guide. Both files are
+  byte-identical and rewritten on every scaffold from the same
+  template; pick whichever your CLI prefers (Codex CLI reads
+  AGENTS.md, Claude Code reads CLAUDE.md).

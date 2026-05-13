@@ -30,6 +30,13 @@ describe("scaffold", () => {
     expect(result.filesWritten).toContain("package.json");
     expect(result.filesWritten).toContain(join("apps", "server", "wrangler.jsonc"));
     expect(result.filesWritten).toContain("AGENTS.md");
+    expect(result.filesWritten).toContain("CLAUDE.md");
+    const agentsMd = await readFile(join(result.outDir, "AGENTS.md"), "utf8");
+    const claudeMd = await readFile(join(result.outDir, "CLAUDE.md"), "utf8");
+    expect(claudeMd).toEqual(agentsMd);
+    // Sanity-check: both have placeholders substituted (no `{{appName}}` left).
+    expect(claudeMd).not.toContain("{{appName}}");
+    expect(claudeMd).toContain("my-app");
 
     const pkg = JSON.parse(await readFile(join(result.outDir, "package.json"), "utf8")) as {
       name: string;
@@ -87,6 +94,11 @@ describe("scaffold", () => {
     expect(result.filesWritten).toContain(join("apps", "server", "src", "server.ts"));
     expect(result.filesWritten).toContain(join("apps", "server", "Dockerfile"));
     expect(result.filesWritten).not.toContain(join("apps", "server", "wrangler.jsonc"));
+    expect(result.filesWritten).toContain("AGENTS.md");
+    expect(result.filesWritten).toContain("CLAUDE.md");
+    const agentsMd = await readFile(join(result.outDir, "AGENTS.md"), "utf8");
+    const claudeMd = await readFile(join(result.outDir, "CLAUDE.md"), "utf8");
+    expect(claudeMd).toEqual(agentsMd);
 
     const server = await readFile(
       join(result.outDir, "apps", "server", "src", "server.ts"),

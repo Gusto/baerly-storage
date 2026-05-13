@@ -106,6 +106,16 @@ export const scaffold = async (opts: ScaffoldOptions): Promise<ScaffoldResult> =
           writeFileSync(toEnt, readFileSync(fromEnt));
         }
         filesWritten.push(relEnt);
+        // AGENTS.md ↔ CLAUDE.md parity:
+        // Codex CLI reads AGENTS.md; Claude Code reads CLAUDE.md.
+        // Write both copies from the same substituted template so a
+        // freshly scaffolded app gives both tools identical context.
+        if (rel === "" && ent === "AGENTS.md") {
+          const claudeMdPath = join(outDir, "CLAUDE.md");
+          const content = substitute(readFileSync(fromEnt, "utf8"), vars);
+          writeFileSync(claudeMdPath, content);
+          filesWritten.push("CLAUDE.md");
+        }
       }
     }
   };

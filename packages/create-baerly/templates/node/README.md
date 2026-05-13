@@ -13,7 +13,9 @@ bucket (AWS S3, R2 via S3-compat, Minio, etc.) with a `bearerJwt` →
 ├── pnpm-workspace.yaml       # apps/*
 ├── tsconfig.json
 ├── baerly.config.ts          # app, tenant, target, domain
-├── AGENTS.md                 # agent-facing repo guide
+├── AGENTS.md                 # agent-facing repo guide (Codex CLI)
+├── CLAUDE.md                 # agent-facing repo guide (Claude Code)
+                              #   — byte-identical sibling of AGENTS.md
 ├── .baerly/schema.lock.json  # reserved for future schema feature
 ├── apps/
 │   ├── server/               # node:http listener — baerly host
