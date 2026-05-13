@@ -60,6 +60,11 @@ const verifier: Verifier =
 // runs and the `metrics` option remains the authoritative sink.
 // See `docs/observability.md` for sink wiring (OTel, Datadog,
 // Workers Analytics Engine) and the canonical-line field reference.
+// For a local dev landing page, pass:
+//   dev: { app: APP, uiUrl: "http://localhost:5173" }
+// — surfaces a small HTML page on `GET /` so a curious browser
+// hit on the API root sees an explanation instead of a JSON 404.
+// Leave unset in production.
 const listener = createListener({
   app: APP,
   storage,

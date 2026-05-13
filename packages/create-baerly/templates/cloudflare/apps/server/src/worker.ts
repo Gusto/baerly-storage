@@ -72,6 +72,11 @@ const selectVerifier = (env: AppEnv): Verifier => {
  * canonical-line shape, sink wiring recipes, and known gaps (CF
  * cache-hit short-circuit emits no canonical line by design).
  */
+// For a local `wrangler dev` landing page, add:
+//   dev: { app: env.APP, uiUrl: "http://localhost:5173" }
+// — surfaces a small HTML page on `GET /` instead of the JSON
+// 404 envelope. Gate on an env flag (e.g. `env.WORKER_ENV === "dev"`)
+// so production Workers don't expose a landing page on the root.
 const workerOptions = (env: AppEnv) => ({
   verifier: selectVerifier(env),
   observability: {
