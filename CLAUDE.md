@@ -331,3 +331,5 @@ edits and point at the same files.
 - Architecture decisions ("why"): [docs/adr/](docs/adr/)
 - Troubleshooting: [docs/troubleshooting.md](docs/troubleshooting.md)
 - Path-scoped conventions: [docs/conventions/](docs/conventions/) (table at top)
+- Scaffolding-eval prompts: prompts/ (one per corpus app — version-
+  pinned inputs to the agent harness).
