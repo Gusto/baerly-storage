@@ -54,3 +54,6 @@ docs/whisper/
 
 # Helpdesk example app — local-fs storage scratch dir
 examples/helpdesk/.baerly-data/
+
+# Day-one gate temp scaffolds
+.baerly-day-one/
