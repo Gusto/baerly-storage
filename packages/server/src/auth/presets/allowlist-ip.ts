@@ -35,7 +35,7 @@ const DEFAULT_HEADER = "CF-Connecting-IP";
  *
  * @example
  * ```ts
- * import { allowlistIp } from "@baerly/server";
+ * import { allowlistIp } from "@baerly/server/auth";
  * const verifier = allowlistIp({
  *   cidrs: ["10.0.0.0/8", "192.168.1.0/24"],
  *   tenantPrefix: "internal",

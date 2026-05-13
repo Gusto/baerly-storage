@@ -17,7 +17,7 @@
  *      doctor --target=cloudflare` reports this case before deploy.
  */
 import { baerlyWorker, type Env as BaerlyEnv } from "@baerly/adapter-cloudflare";
-import { cloudflareAccess, sharedSecret } from "@baerly/server";
+import { cloudflareAccess, sharedSecret } from "@baerly/server/auth";
 import type { Verifier } from "@baerly/protocol";
 
 interface AppEnv extends BaerlyEnv {

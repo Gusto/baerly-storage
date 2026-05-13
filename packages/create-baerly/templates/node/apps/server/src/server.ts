@@ -12,7 +12,7 @@ import { createServer } from "node:http";
 import { DOMParser } from "@xmldom/xmldom";
 import { AwsClient } from "aws4fetch";
 import { createListener, runMaintenanceTick, S3HttpStorage } from "@baerly/adapter-node";
-import { bearerJwt, sharedSecret } from "@baerly/server";
+import { bearerJwt, sharedSecret } from "@baerly/server/auth";
 import type { Verifier } from "@baerly/protocol";
 
 const reqEnv = (name: string): string => {

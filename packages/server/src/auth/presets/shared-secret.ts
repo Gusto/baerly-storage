@@ -32,7 +32,7 @@ export interface SharedSecretOptions {
  *
  * @example
  * ```ts
- * import { sharedSecret } from "@baerly/server";
+ * import { sharedSecret } from "@baerly/server/auth";
  * const verifier = sharedSecret({
  *   secret: env.SHARED_SECRET,
  *   tenantPrefix: "acme",

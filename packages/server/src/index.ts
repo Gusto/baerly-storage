@@ -1,22 +1,88 @@
-export * from "./compactor";
-export * from "./config";
-export * from "./contract";
-export * from "./db";
-export * from "./gc";
-export * from "./http/router";
-export * from "./indexes";
-export * from "./rebuild-index";
 export {
-  longPollSince,
-  listEventsSince,
-  type LongPollSinceOptions,
+  type CompactOptions,
+  type CompactResult,
+  type SnapshotBody,
+  SEQ_DIGITS,
+  SNAPSHOT_LEVEL,
+  compact,
+  encodeSnapshotBody,
+  loadSnapshotAsMap,
+  snapshotKey,
+} from "./compactor";
+export { type BaerlyConfig, type CollectionDefinition, defineConfig } from "./config";
+export {
+  type HttpErrorEnvelope,
+  type HttpOkEnvelope,
+  type HttpOkMeta,
+  type HttpStatus,
+  type Routes,
+  type SinceResponse,
+  errorEnvelope,
+} from "./contract";
+export { type BufferedMutation, type RawStorageApi, type TxContext, Db } from "./db";
+export { type RunGcOptions, type RunGcResult, runGc } from "./gc";
+export { type CreateRouterOptions, MAX_BODY_BYTES, createRouter, mapError } from "./http/router";
+export {
   type ListEventsSinceOptions,
+  type LongPollSinceOptions,
+  listEventsSince,
+  longPollSince,
 } from "./http/since";
-export * from "./maintenance";
-export * from "./query";
-export * from "./server-writer";
-export * from "./table";
-export * from "./auth";
+export {
+  type IndexDefinition,
+  allIndexKeysFor,
+  encodeIndexValue,
+  indexKeyFor,
+  indexKeyPrefix,
+  projectIndexValues,
+  validateIndexDefinition,
+} from "./indexes";
+export { type RebuildIndexResult, rebuildIndex } from "./rebuild-index";
+export {
+  type MaintenanceArgs,
+  type MaintenanceOptions,
+  type MaintenanceResult,
+  CLOUDFLARE_FREE_TIER,
+  CLOUDFLARE_PAID_TIER,
+  NODE_PROFILE,
+  runScheduledMaintenance,
+} from "./maintenance";
+export {
+  type CurrentJsonCacheSlot,
+  type QueryState,
+  type ReadResult,
+  type TableReadContext,
+  makeQuery,
+  runAllWithMeta,
+  runFirstWithMeta,
+  runInsert,
+  serializeManifestPointer,
+} from "./query";
+export {
+  type CommitBatchResult,
+  type CommitInput,
+  type CommitResult,
+  type ServerWriterOptions,
+  ServerWriter,
+} from "./server-writer";
+export { makeTable } from "./table";
+export {
+  type AllowlistIpOptions,
+  type AwsIamPrincipal,
+  type AwsIamSigV4Options,
+  type BearerJwtOptions,
+  type CloudflareAccessOptions,
+  type Jwk,
+  type JwksDocument,
+  type JwtAlgorithm,
+  type SharedSecretOptions,
+  allowlistIp,
+  andAll,
+  awsIamSigV4,
+  bearerJwt,
+  cloudflareAccess,
+  sharedSecret,
+} from "./auth";
 
 /**
  * Re-export of {@link claimWriter} from `@baerly/protocol`. Bumping
@@ -47,4 +113,4 @@ export { BaerlyError, type BaerlyErrorCode } from "@baerly/protocol";
  * the chain (`type T = Awaited<ReturnType<...>>`) need the named
  * types.
  */
-export type { Table, Query } from "@baerly/protocol";
+export type { Query, Table } from "@baerly/protocol";
