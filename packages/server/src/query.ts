@@ -43,6 +43,7 @@ import {
   matches,
   merge,
   mergePredicates,
+  type MetricsRecorder,
   validatePredicate,
   BaerlyError,
   type OrderSpec,
@@ -105,6 +106,18 @@ export interface TableReadContext {
    * @internal
    */
   readonly currentJsonCache: CurrentJsonCacheSlot;
+  /**
+   * Optional metrics sink threaded from {@link Db}. Forwarded to every
+   * {@link ServerWriter} the mutation terminals construct so the
+   * writer's existing emissions (`db.write.class_a_ops_per_logical_write`,
+   * `db.r2.put.412_total`, `db.r2.put.429_total`, etc.) reach the
+   * operator's recorder. `undefined` means "no metrics" — the
+   * {@link ServerWriter} defaults to {@link noopMetricsRecorder} on
+   * its own, so threading is strictly additive.
+   *
+   * @internal
+   */
+  readonly metrics?: MetricsRecorder;
 }
 
 /**
@@ -290,7 +303,11 @@ export const runAllWithMeta = <T extends JSONArraylessObject>(
  * fresh per call.
  */
 const writerFor = (ctx: TableReadContext): ServerWriter =>
-  new ServerWriter({ storage: ctx.storage, currentJsonKey: `${ctx.tablePrefix}/current.json` });
+  new ServerWriter({
+    storage: ctx.storage,
+    currentJsonKey: `${ctx.tablePrefix}/current.json`,
+    ...(ctx.metrics !== undefined ? { options: { metrics: ctx.metrics } } : {}),
+  });
 
 /**
  * `Table.insert` / `Query.insert` implementation. Mints a UUIDv7 `_id`

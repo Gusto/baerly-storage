@@ -2,9 +2,10 @@
    name for the Phase-3 Storage escape hatch; mirrors the Phase-4 `Db._raw`
    declaration in `@baerly/protocol/src/db.ts` and is marked `@internal`. */
 
-import { BaerlyError } from "@baerly/protocol";
+import { BaerlyError, noopMetricsRecorder } from "@baerly/protocol";
 import type {
   JSONArraylessObject,
+  MetricsRecorder,
   Storage,
   StorageGetOptions,
   StorageGetResult,
@@ -141,11 +142,21 @@ export class Db {
    * over the same bucket do NOT share cache.
    */
   readonly #currentJsonCaches: Map<string, CurrentJsonCacheSlot> = new Map();
+  /**
+   * Metrics sink forwarded to every {@link ServerWriter} this `Db`
+   * constructs (the single-mutation path in `query.ts:writerFor` and
+   * the transaction path below). Defaults to
+   * {@link noopMetricsRecorder} so non-instrumented callers see zero
+   * behavioural change. Threaded onto every {@link TableReadContext}
+   * the table API hands out.
+   */
+  readonly #metrics: MetricsRecorder;
 
-  private constructor(app: string, tenant: string, storage: Storage) {
+  private constructor(app: string, tenant: string, storage: Storage, metrics: MetricsRecorder) {
     this.app = app;
     this.tenant = tenant;
     this.#storage = storage;
+    this.#metrics = metrics;
     this._raw = makeRawStorageApi(app, tenant, storage);
   }
 
@@ -154,15 +165,34 @@ export class Db {
    * `BaerlyError{code:"InvalidConfig"}` if either `app` or `tenant`
    * is empty or contains `/` (the segment separator).
    *
+   * `config.metrics` is an optional {@link MetricsRecorder} forwarded
+   * to every {@link ServerWriter} the `Db` constructs — both the
+   * single-mutation path (`Table.insert` / `Query.update` /
+   * `Query.replace` / `Query.delete`) and the transaction path
+   * ({@link Db.transaction}). Defaults to {@link noopMetricsRecorder}
+   * so non-instrumented callers see zero behavioural change. The
+   * Phase-9 observability layer wires its per-request recorder here
+   * so writer emissions (`db.write.class_a_ops_per_logical_write`,
+   * `db.r2.put.412_total`, etc.) reach the operator's sink.
+   *
    * @throws BaerlyError code="InvalidConfig" when `app` or `tenant` is
    *   empty or contains `/`.
    *
    * @example
    * ```ts
-   * const db = Db.create({ storage, app: "tickets", tenant: "acme" });
+   * import { InMemoryMetricsRecorder } from "@baerly/protocol";
+   * const metrics = new InMemoryMetricsRecorder();
+   * const db = Db.create({ storage, app: "tickets", tenant: "acme", metrics });
+   * await db.table("tickets").insert({ title: "hi" });
+   * // metrics.histogramValues("db.write.class_a_ops_per_logical_write")
    * ```
    */
-  static create(config: { storage: Storage; app: string; tenant: string }): Db {
+  static create(config: {
+    storage: Storage;
+    app: string;
+    tenant: string;
+    metrics?: MetricsRecorder;
+  }): Db {
     const { storage, app, tenant } = config;
     if (app.length === 0 || tenant.length === 0) {
       throw new BaerlyError(
@@ -176,7 +206,7 @@ export class Db {
         `Db.create: "/" is reserved as the key-segment separator (got app=${JSON.stringify(app)}, tenant=${JSON.stringify(tenant)})`,
       );
     }
-    return new Db(app, tenant, storage);
+    return new Db(app, tenant, storage, config.metrics ?? noopMetricsRecorder);
   }
 
   /**
@@ -232,6 +262,7 @@ export class Db {
       tablePrefix: `${physicalPrefixFor(this.app, this.tenant)}manifests/${name}`,
       tableName: name,
       currentJsonCache: cache,
+      metrics: this.#metrics,
     };
   }
 
@@ -299,6 +330,7 @@ export class Db {
       tableName: table,
       txCtx,
       currentJsonCache: cache,
+      metrics: this.#metrics,
     });
 
     // Run the body. Reads go through Storage live; mutations append
@@ -327,6 +359,7 @@ export class Db {
     const writer = new ServerWriter({
       storage: this.#storage,
       currentJsonKey: `${tablePrefix}/current.json`,
+      options: { metrics: this.#metrics },
     });
     await writer.commitBatch(inputs);
   }

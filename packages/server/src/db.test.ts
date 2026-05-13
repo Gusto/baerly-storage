@@ -1,7 +1,14 @@
 /* eslint-disable no-underscore-dangle -- `_raw` is the locked public symbol
    name on `Db` (mirrors the Phase-4 declaration in `@baerly/protocol`). */
 
-import { MemoryStorage, BaerlyError } from "@baerly/protocol";
+import {
+  CURRENT_JSON_SCHEMA_VERSION,
+  createCurrentJson,
+  InMemoryMetricsRecorder,
+  MemoryStorage,
+  BaerlyError,
+  type Storage,
+} from "@baerly/protocol";
 import { describe, expect, test } from "vitest";
 import { Db } from "./db";
 
@@ -134,5 +141,55 @@ describe("Db._raw tenant isolation", () => {
     expect(fromBytes((await dbY._raw.get("k"))!.body)).toBe("billing-value");
     expect(await collect(dbX._raw.list(""))).toHaveLength(1);
     expect(await collect(dbY._raw.list(""))).toHaveLength(1);
+  });
+});
+
+describe("Db metrics threading", () => {
+  const APP = "tickets";
+  const TENANT = "acme";
+  const TABLE = "tickets";
+  const currentJsonKey = `app/${APP}/tenant/${TENANT}/manifests/${TABLE}/current.json`;
+
+  const provision = async (storage: Storage): Promise<void> => {
+    await createCurrentJson(storage, currentJsonKey, {
+      schema_version: CURRENT_JSON_SCHEMA_VERSION,
+      snapshot: null,
+      next_seq: 0,
+      writer_fence: { epoch: 0, owner: "test", claimed_at: "" },
+    });
+  };
+
+  test("single-mutation insert forwards metrics to the ServerWriter", async () => {
+    const storage = new MemoryStorage();
+    await provision(storage);
+    const metrics = new InMemoryMetricsRecorder();
+    const db = Db.create({ storage, app: APP, tenant: TENANT, metrics });
+    await db.table<{ _id: string; title: string }>(TABLE).insert({ title: "hi" });
+    // server-writer.ts emits one histogram observation per successful
+    // commit. Without metrics threading the recorder stays empty.
+    const observed = metrics.histogramValues("db.write.class_a_ops_per_logical_write");
+    expect(observed.length).toBeGreaterThan(0);
+  });
+
+  test("transaction commit forwards metrics to the ServerWriter", async () => {
+    const storage = new MemoryStorage();
+    await provision(storage);
+    const metrics = new InMemoryMetricsRecorder();
+    const db = Db.create({ storage, app: APP, tenant: TENANT, metrics });
+    await db.transaction<{ _id: string; title: string }>(TABLE, async (tx) => {
+      await tx.insert({ title: "one" });
+      await tx.insert({ title: "two" });
+    });
+    const observed = metrics.histogramValues("db.write.class_a_ops_per_logical_write");
+    expect(observed.length).toBeGreaterThan(0);
+  });
+
+  test("omitting metrics is a no-op (no throw)", async () => {
+    const storage = new MemoryStorage();
+    await provision(storage);
+    const db = Db.create({ storage, app: APP, tenant: TENANT });
+    await expect(
+      db.table<{ _id: string; title: string }>(TABLE).insert({ title: "hi" }),
+    ).resolves.toBeDefined();
   });
 });
