@@ -309,6 +309,9 @@ describe("Phase 5 — synthetic 5000-entry end-to-end gate", () => {
           // (the reader only walks `current.json` + the snapshot +
           // the live-tail log entries, all by deterministic key →
           // all `get`).
+          //
+          // For broader workload analysis, see bench/README.md — the load
+          // harness externalizes derived.class_a_per_tenant_per_hour.
           const db = Db.create({ storage: proxy, app: APP, tenant: TENANT });
           const tbl = db.table<Ticket>(COLLECTION);
           const T = 1800;

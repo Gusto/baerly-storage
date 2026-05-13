@@ -41,7 +41,10 @@
     "verify": "pnpm run typecheck && pnpm run lint",
     "dev:storage": "docker compose up -d --wait",
     "dev:storage:stop": "docker compose down",
-    "bench:r2": "node --import ./bench/register-hooks.mjs bench/r2-contention.ts"
+    "bench:r2": "node --import ./bench/register-hooks.mjs bench/r2-contention.ts",
+    "bench:load": "node --import ./bench/register-hooks.mjs bench/load-harness/cli.ts",
+    "bench:load:minio": "MINIO=1 node --import ./bench/register-hooks.mjs bench/load-harness/cli.ts --variant=node-minio",
+    "bench:load:matrix": "node --import ./bench/register-hooks.mjs bench/load-harness/matrix.ts"
   },
   "devDependencies": {
     "@baerly/adapter-cloudflare": "workspace:*",
