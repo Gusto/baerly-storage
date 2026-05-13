@@ -1,5 +1,5 @@
 {
   "schema_version": 1,
-  "comment": "Reserved for collection schemas; productized in a future ticket.",
+  "comment": "Declared collection schemas for this app. Consumed by Db.create({ schemas }) and validated on insert/update/replace via validateOrThrow. See @baerly/server JSDoc for examples.",
   "tables": {}
 }

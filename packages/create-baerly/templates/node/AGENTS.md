@@ -2,7 +2,6 @@
 title: AGENTS.md — agent guidance for {{appName}}
 audience: agent
 summary: How to develop and deploy {{appName}}, a baerly app.
-last-reviewed: <year>-<month>-<day>
 tags: [agent-entry, baerly]
 ---
 
@@ -27,7 +26,10 @@ read it via your editor's TS LS or via the published types).
 - **Package manager:** pnpm. The emitted repo pins
   `packageManager: pnpm@10.31.0`.
 - **Test runner:** vitest.
-- **Type checker:** TypeScript 5.6+.
+- **Type checker:** TypeScript 5.6+. (The baerly-storage monorepo
+  itself uses TypeScript 7 via `@typescript/native-preview`; this
+  template tracks the broadly-compatible TS major so scaffolded
+  apps work with the wider ecosystem.)
 
 ## Verification
 
