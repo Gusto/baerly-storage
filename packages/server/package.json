@@ -18,6 +18,10 @@
     "./http": {
       "types": "./src/http/index.ts",
       "import": "./src/http/index.ts"
+    },
+    "./observability": {
+      "types": "./src/observability/index.ts",
+      "import": "./src/observability/index.ts"
     }
   },
   "publishConfig": {
@@ -33,11 +37,16 @@
       "./http": {
         "types": "./dist/http.d.ts",
         "import": "./dist/http.js"
+      },
+      "./observability": {
+        "types": "./dist/observability.d.ts",
+        "import": "./dist/observability.js"
       }
     }
   },
   "dependencies": {
     "@baerly/protocol": "workspace:*",
+    "@logtape/logtape": "2.0.7",
     "hono": "^4.12.18"
   }
 }

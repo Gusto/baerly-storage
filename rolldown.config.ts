@@ -6,6 +6,7 @@ export default defineConfig({
     index: "packages/server/src/index.ts",
     auth: "packages/server/src/auth/index.ts",
     http: "packages/server/src/http/index.ts",
+    observability: "packages/server/src/observability/index.ts",
   },
   external: ["vitest", "@fast-check/vitest", "@vitest/expect"],
   output: {

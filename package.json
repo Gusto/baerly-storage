@@ -54,6 +54,9 @@
     "bench:load:minio": "MINIO=1 node --import ./bench/register-hooks.mjs bench/load-harness/cli.ts --variant=node-minio",
     "bench:load:matrix": "node --import ./bench/register-hooks.mjs bench/load-harness/matrix.ts"
   },
+  "dependencies": {
+    "@logtape/logtape": "2.0.7"
+  },
   "devDependencies": {
     "@baerly/adapter-cloudflare": "workspace:*",
     "@baerly/adapter-node": "workspace:*",
