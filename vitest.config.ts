@@ -51,6 +51,18 @@ const realDeployExclude =
     ? []
     : ["**/real-deploy-cloudflare.test.ts", "**/real-deploy-node.test.ts"];
 
+// Day-one handshake gate (`tests/integration/day-one-handshake.test.ts`)
+// orchestrates `npm create baerly@latest` → `baerly deploy` → first-
+// record on a per-target basis driven by `DAY_ONE_TARGETS=node|
+// cloudflare,node`. Excluded from the default project's glob when the
+// env var is unset so `pnpm test` stays green on a fresh checkout;
+// opt in via `pnpm gate:day-one` after exporting `DAY_ONE_TARGETS`
+// (plus `CF_API_TOKEN` / `CF_ACCOUNT_ID` for the CF target) per
+// `docs/operating/day-one-gate.md`. The file also uses
+// `describe.runIf(...)` — double-gating mirrors `realDeployExclude`.
+const dayOneExclude =
+  process.env.DAY_ONE_TARGETS !== undefined ? [] : ["**/day-one-handshake.test.ts"];
+
 // The R2 binding conformance entry lives at
 // `packages/adapter-cloudflare/src/r2-binding-storage.conformance.test.ts`
 // and reads `globalThis.__BAERLY_R2_BINDING__`. Only the
@@ -118,6 +130,7 @@ export default defineConfig({
             ...conformanceExclude,
             ...exportSmokeExclude,
             ...realDeployExclude,
+            ...dayOneExclude,
             // CF adapter has its own project; don't double-run.
             r2BindingConformanceGlob,
             r2BindingRandomizedGlob,
