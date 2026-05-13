@@ -1,7 +1,7 @@
 ---
 title: S3 XML escaping edge cases
 audience: spec
-summary: ListObjectsV2 XML response edge cases; companion to fixtures/s3-key-escaping/.
+summary: ListObjectsV2 XML response edge cases; companion to manual-e2e/fixtures/s3-key-escaping/.
 last-reviewed: 2026-05-12
 tags: [protocol, s3, xml, edge-cases]
 related: [s3-features-used.md]

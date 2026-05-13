@@ -26,4 +26,4 @@ Stable specs. The "what" — implementation lives in `packages/`.
   surface the protocol depends on.
 - [s3-xml-escaping-cases.md](s3-xml-escaping-cases.md) — edge cases
   for `ListObjectsV2` XML responses; companion to
-  `fixtures/s3-key-escaping/`.
+  `manual-e2e/fixtures/s3-key-escaping/`.
