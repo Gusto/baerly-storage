@@ -80,9 +80,8 @@ const physicalPrefixFor = (app: string, tenant: string): string => `app/${app}/t
  * `list`.
  *
  * Bypasses every higher-level invariant: no `LogEntry` emit, no CAS
- * on `current.json`, no schema check. Phase 4 adds the
- * LogEntry-based `RawApi` (declared in
- * `@baerly/protocol/src/db.ts`) on top, likely as a separate `_log`
+ * on `current.json`, no schema check. Phase 4 will add a
+ * `LogEntry`-based escape hatch on top, likely as a separate `_log`
  * field on `Db`.
  *
  * @internal — public symbol, but the table API (Phase 4) is the
