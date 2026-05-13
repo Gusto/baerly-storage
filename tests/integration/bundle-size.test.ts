@@ -49,11 +49,13 @@ const BUDGETS: readonly Budget[] = [
   // Just the five auth verifier factories. Adding a sixth grows
   // this budget, not the kernel's.
   { entry: "auth.js", raw: 34 * 1024, gz: 12 * 1024 },
-  // Hono-backed HTTP router + long-poll/since helpers + observability
-  // middleware. Heavy because Hono itself is heavy (a follow-up may
-  // move to `hono/tiny`) plus the observability primitives
-  // the middleware needs at every request boundary. ~270 KiB raw.
-  { entry: "http.js", raw: 270 * 1024, gz: 75 * 1024 },
+  // hono/tiny-backed HTTP router + long-poll/since helpers + observability
+  // middleware. The `hono/tiny` PatternRouter trims ~18 KB raw vs the
+  // default SmartRouter and is ~4x faster p50 in baerly's per-request
+  // router-construction topology — see ADR-0023. The observability
+  // primitives the middleware needs at every request boundary account
+  // for the bulk of what remains. ~230 KiB raw.
+  { entry: "http.js", raw: 250 * 1024, gz: 72 * 1024 },
   // Observability primitives — ObservabilityContext, the
   // request-scoped MetricsRecorder, LogTape config + sinks, canonical
   // line flush, observableStorage decorator. LogTape itself accounts

@@ -2,7 +2,7 @@
 title: Architecture Decision Records
 audience: meta
 summary: Index of ADRs. Each ADR captures one load-bearing technical decision.
-last-reviewed: 2026-05-12
+last-reviewed: 2026-05-13
 tags: [index, decisions]
 related: ["../engineering-principles.md"]
 ---
@@ -34,6 +34,7 @@ in [engineering-principles.md](../engineering-principles.md).
 - [0020 — GC lag window](./0020-gc-lag-window.md)
 - [0021 — Sync bounds across adapters](./0021-sync-bounds-across-adapters.md)
 - [0022 — Observability tag naming](./0022-observability-tag-naming.md)
+- [0023 — HTTP router uses `hono/tiny`](./0023-hono-tiny-router.md)
 
 ## Template
 

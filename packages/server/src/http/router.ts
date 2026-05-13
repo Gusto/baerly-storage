@@ -15,7 +15,8 @@
  * `/v1/since` — long-poll idleness is not a cache hit.
  */
 
-import { Hono, type Context } from "hono";
+import { Hono } from "hono/tiny";
+import type { Context } from "hono";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import {
   type ConsistencyLevel,
