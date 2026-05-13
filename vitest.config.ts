@@ -155,6 +155,11 @@ export default defineConfig({
             cfWorkerTestGlob,
             cfCacheTestGlob,
             cfHttpConformanceGlob,
+            // The check-acceptance fixtures vendor `*.test.ts` files
+            // that exist purely so the harness's co-occurrence grep
+            // can find `insert` + `<table>` heuristics — they aren't
+            // real test suites and would fail to even import.
+            "tests/fixtures/check-acceptance/**/*.test.ts",
           ],
           setupFiles: ["tests/setup/fast-check.ts"],
           testTimeout: vitestTestTimeoutMs,

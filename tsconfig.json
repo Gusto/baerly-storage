@@ -41,5 +41,5 @@
     "examples/*/types.ts",
     "examples/*/smoke.test.ts"
   ],
-  "exclude": ["tests/integration/conformance.test.ts"]
+  "exclude": ["tests/integration/conformance.test.ts", "tests/fixtures/check-acceptance"]
 }
