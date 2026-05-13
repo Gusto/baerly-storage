@@ -44,7 +44,7 @@
     "test:http-conformance": "vitest run --project=default tests/integration/http-conformance.test.ts",
     "test:adapter-node": "MINIO=1 vitest run --project=default packages/adapter-node",
     "test:adapters": "pnpm test:adapter-cloudflare && pnpm test:adapter-node",
-    "gate:real-deploy": "vitest run --project=default tests/integration/real-deploy-cloudflare.test.ts tests/integration/real-deploy-node.test.ts",
+    "test:manual-e2e": "vitest run --project=default manual-e2e/cloudflare/e2e.test.ts manual-e2e/node/e2e.test.ts",
     "gate:day-one": "vitest run --project=default tests/integration/day-one-handshake.test.ts",
     "verify": "pnpm run typecheck && pnpm run lint",
     "dev:storage": "docker compose up -d --wait",

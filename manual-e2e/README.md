@@ -1,17 +1,18 @@
 ---
-title: Real-deploy gate
-audience: operator
-summary: "Manual lifecycle for the hand-rolled CF + Node deploy artifacts. Run pnpm gate:real-deploy after provisioning."
+title: Manual end-to-end check
+audience: maintainer
+summary: "Manual lifecycle for the hand-rolled CF + Node skeleton apps. Run pnpm test:manual-e2e after provisioning."
 last-reviewed: 2026-05-12
-tags: [deploy, gate, operations]
+tags: [manual-e2e, operations]
 related: ["../CLAUDE.md"]
 ---
 
-# Baerly real-deploy gate
+# Baerly manual end-to-end check
 
-Hand-rolled deploy artifacts that prove `baerlyWorker()` and
-`createListener()` work against real R2 and real S3. **Not** a
-production template — see the inline warnings throughout.
+Hand-rolled skeleton apps that let a maintainer verify
+`baerlyWorker()` and `createListener()` against real R2 and real S3
+before merging adapter changes. Manual — not part of CI, not a
+production template. See the inline warnings throughout.
 
 ## Production lifecycle (preferred)
 
@@ -82,8 +83,8 @@ Cloud Run / Fly / Render / ECS / bare-metal), so the command emits
 the build inputs and prints the three first-class next-step
 recipes; the user picks the runtime.
 
-The artifacts under `deploy/cloudflare/` and `deploy/node/` below
-are the **manual real-deploy gate** — they exist so PRs touching
+The artifacts under `manual-e2e/cloudflare/` and `manual-e2e/node/` below
+are the **manual end-to-end check** — they exist so PRs touching
 the adapters can validate against real R2 / real S3 before
 merging. Production users never copy them.
 
@@ -92,13 +93,13 @@ merging. Production users never copy them.
 1. Provision resources (one-time): R2 bucket, S3 bucket, IAM /
    wrangler credentials, shared secret.
 2. Deploy both runtimes.
-3. `pnpm gate:real-deploy` — runs the two test files against the
+3. `pnpm test:manual-e2e` — runs the two test files against the
    deployed URLs.
-4. Inspect the green-light checklist below.
+4. Inspect the pass criteria below.
 5. Tear down: `wrangler delete`, `docker stop && docker rm`,
    delete buckets if desired.
 
-The gate is a **manual checklist**: deploy, run, tear down. CI
+The check is a **manual checklist**: deploy, run, tear down. CI
 plumbing is a future addition.
 
 ## Section 1: Deploy the Cloudflare Worker
@@ -111,21 +112,21 @@ plumbing is a future addition.
 - `wrangler` v3+ installed: `npm i -g wrangler` (or `pnpm dlx
   wrangler`).
 - An R2 bucket. Free tier (10 GB / 10 M Class A / 1 M Class B per
-  month) is more than enough for the gate run (~700 ops total).
+  month) is more than enough for the check run (~700 ops total).
 
 ### Step-by-step
 
 ```sh
-cd deploy/cloudflare
+cd manual-e2e/cloudflare
 
 # 1. Auth.
 wrangler login
 
 # 2. Create the R2 bucket (one-time).
-wrangler r2 bucket create baerly-gate-cf
+wrangler r2 bucket create baerly-e2e-cf
 
 # 3. Set the shared secret. Read a strong random secret into
-#    SHARED_SECRET; the same value goes into the gate runner's env.
+#    SHARED_SECRET; the same value goes into the check runner's env.
 export SHARED_SECRET="$(openssl rand -hex 32)"
 echo "$SHARED_SECRET" | wrangler secret put SHARED_SECRET
 
@@ -133,27 +134,27 @@ echo "$SHARED_SECRET" | wrangler secret put SHARED_SECRET
 wrangler deploy
 
 # 5. Note the deployed URL (e.g.
-#    https://baerly-gate-cf.<sub>.workers.dev).
-export CF_DEPLOY_URL="https://baerly-gate-cf.<your-subdomain>.workers.dev"
+#    https://baerly-e2e-cf.<sub>.workers.dev).
+export CF_DEPLOY_URL="https://baerly-e2e-cf.<your-subdomain>.workers.dev"
 ```
 
-### Env-var checklist (for the gate runner)
+### Env-var checklist (for the check runner)
 
 | Var | Source | Used by |
 | --- | --- | --- |
-| `CF_DEPLOY_URL` | output of `wrangler deploy` | gate test file |
-| `SHARED_SECRET` | the value put via `wrangler secret put` | gate test client |
+| `CF_DEPLOY_URL` | output of `wrangler deploy` | check test file |
+| `SHARED_SECRET` | the value put via `wrangler secret put` | check test client |
 | `CF_R2_S3_ENDPOINT` | `https://<accountid>.r2.cloudflarestorage.com` | provisioning seam |
 | `CF_R2_ACCESS_KEY_ID` | R2 API token (with object read/write) | provisioning seam |
 | `CF_R2_SECRET_ACCESS_KEY` | R2 API token secret | provisioning seam |
-| `CF_R2_BUCKET` | `baerly-gate-cf` (or your bucket name) | provisioning seam |
+| `CF_R2_BUCKET` | `baerly-e2e-cf` (or your bucket name) | provisioning seam |
 
 `CF_R2_*` are the **provisioning seam**: the HTTP conformance cascade
 needs to write `current.json` for each fresh table before the first
 `POST` lands. The HTTP surface has no "create table" route, so the test
 process opens its own `S3HttpStorage` against the R2 S3-compat
 endpoint and calls `createCurrentJson` directly. Without these vars,
-the gate skips the conformance cascade and runs only the latency
+the check skips the conformance cascade and runs only the latency
 probe / long-poll / 401 checks.
 
 ### Verification
@@ -180,28 +181,28 @@ curl -s "$CF_DEPLOY_URL/v1/t/some-table"
   section).
 - IAM credentials with `s3:GetObject`, `s3:PutObject`,
   `s3:DeleteObject`, `s3:ListBucket` on the bucket.
-- A host with TCP/8080 open. Local Docker is fine for the gate; do
+- A host with TCP/8080 open. Local Docker is fine for the check; do
   not use this image for production traffic — see the inline
-  warnings in `deploy/node/Dockerfile`.
+  warnings in `manual-e2e/node/Dockerfile`.
 
 ### Step-by-step
 
 ```sh
 # From repo root:
-docker build -f deploy/node/Dockerfile -t baerly-gate-node:dev .
+docker build -f manual-e2e/node/Dockerfile -t baerly-e2e-node:dev .
 
 # Generate a shared secret (same value will go to the runner).
 export SHARED_SECRET="$(openssl rand -hex 32)"
 
 docker run --rm -d \
-  --name baerly-gate-node \
+  --name baerly-e2e-node \
   -p 8080:8080 \
   -e AWS_ACCESS_KEY_ID=... \
   -e AWS_SECRET_ACCESS_KEY=... \
   -e AWS_REGION=us-east-1 \
-  -e BUCKET=baerly-gate-node \
+  -e BUCKET=baerly-e2e-node \
   -e SHARED_SECRET="$SHARED_SECRET" \
-  baerly-gate-node:dev
+  baerly-e2e-node:dev
 
 export NODE_DEPLOY_URL="http://localhost:8080"
 ```
@@ -214,12 +215,12 @@ export NODE_DEPLOY_URL="http://localhost:8080"
 | `AWS_SECRET_ACCESS_KEY` | IAM | container + provisioning seam |
 | `AWS_REGION` | optional, default `us-east-1` | container + provisioning seam |
 | `BUCKET` | bucket name | container + provisioning seam |
-| `SHARED_SECRET` | generated | container + gate test client |
-| `NODE_DEPLOY_URL` | container's external URL | gate test file |
+| `SHARED_SECRET` | generated | container + check test client |
+| `NODE_DEPLOY_URL` | container's external URL | check test file |
 | `S3_ENDPOINT` | optional, default `https://s3.<region>.amazonaws.com` | container + provisioning seam |
 
 The same AWS credentials and bucket the container uses double as the
-**provisioning seam** the gate test process opens its own
+**provisioning seam** the check test process opens its own
 `S3HttpStorage` against. No second R2-style indirection on this side.
 
 ### R2-via-S3-compat fallback
@@ -233,9 +234,9 @@ docker run ... \
   -e AWS_REGION=auto \
   -e AWS_ACCESS_KEY_ID=<r2-token-id> \
   -e AWS_SECRET_ACCESS_KEY=<r2-token-secret> \
-  -e BUCKET=baerly-gate-node \
+  -e BUCKET=baerly-e2e-node \
   -e SHARED_SECRET="$SHARED_SECRET" \
-  baerly-gate-node:dev
+  baerly-e2e-node:dev
 ```
 
 R2's S3-compat endpoint signs the same SigV4; `aws4fetch` handles
@@ -249,19 +250,19 @@ curl -s -H "Authorization: Bearer $SHARED_SECRET" \
 # Expect: {"ok":true}
 ```
 
-## Section 3: Run the gate
+## Section 3: Run the check
 
 ```sh
 # From repo root, with all env vars exported:
-pnpm gate:real-deploy
+pnpm test:manual-e2e
 ```
 
-The script invokes both `real-deploy-cloudflare.test.ts` and
-`real-deploy-node.test.ts`. Each silently skips when its primary
-deploy URL env var is unset, so it is safe to run the gate against
+The script invokes both `manual-e2e/cloudflare/e2e.test.ts` and
+`manual-e2e/node/e2e.test.ts`. Each silently skips when its primary
+deploy URL env var is unset, so it is safe to run the check against
 only one runtime at a time during development.
 
-Each test emits a green-light summary on stdout (latency
+Each test emits a pass summary on stdout (latency
 percentiles, long-poll wall-clock samples). On failure, the
 assertion + the env reproduction snippet print so a re-run is a
 one-liner.
@@ -270,18 +271,18 @@ one-liner.
 
 ```sh
 # Cloudflare
-wrangler delete baerly-gate-cf
-wrangler r2 bucket delete baerly-gate-cf   # optional
+wrangler delete baerly-e2e-cf
+wrangler r2 bucket delete baerly-e2e-cf   # optional
 
 # Node
-docker stop baerly-gate-node && docker rm baerly-gate-node
-aws s3 rb s3://baerly-gate-node --force    # optional
+docker stop baerly-e2e-node && docker rm baerly-e2e-node
+aws s3 rb s3://baerly-e2e-node --force    # optional
 ```
 
-Residual data: every gate run scopes writes under a fresh
-`gate-<unix-ms>/`-prefixed table namespace. If a run is interrupted,
+Residual data: every check run scopes writes under a fresh
+`e2e-<unix-ms>/`-prefixed table namespace. If a run is interrupted,
 leftover keys are under that prefix; a one-line `aws s3 rm
---recursive s3://<bucket>/app/gate/tenant/default/manifests/<gate-prefix>*`
+--recursive s3://<bucket>/app/e2e/tenant/default/manifests/<e2e-prefix>*`
 (or the matching `wrangler r2 object delete` script) cleans up.
 
 ## Cost summary (per run)
@@ -293,12 +294,12 @@ leftover keys are under that prefix; a one-line `aws s3 rm
 - **Cloudflare Workers Standard:** ~700 requests × $0.30/1M ≈
   **$0.0002**.
 
-A back-of-the-envelope upper bound for ten gate runs in a day:
+A back-of-the-envelope upper bound for ten check runs in a day:
 under one US cent total.
 
-## Green-light checklist
+## Pass criteria
 
-The gate is "green" when all of:
+The check passes when all of:
 
 1. Every assertion in `runHttpConformanceCascade(...)` passes against
    both deployed URLs (when the provisioning seam env vars are set).
@@ -320,7 +321,7 @@ If any single budget gets relaxed on a given run (e.g. CF P95 hits
 numbers in the PR description and on a follow-up ticket. Don't
 quietly relax the constants.
 
-## What this gate does NOT cover (deferred)
+## Out of scope (deferred)
 
 - Production-ready CF / Node templates (no observability config,
   secret rotation, multi-env, custom domains).
@@ -330,4 +331,4 @@ quietly relax the constants.
 - Multi-region / failover.
 - Observability dashboards beyond stdout summaries.
 - MCP integration — MCP wraps the same wire contract but is out of
-  scope for this gate.
+  scope for this check.

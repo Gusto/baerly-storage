@@ -4,7 +4,7 @@
    returned `_id`s by name. */
 
 /**
- * Real-deploy gate — Cloudflare Worker variant.
+ * Manual end-to-end check — Cloudflare Worker variant.
  *
  * Drives the HTTP conformance cascade + a latency probe + a long-
  * poll wall-clock check + a 401 sniff against a real deployed
@@ -13,7 +13,7 @@
  *
  * Required env:
  *
- *   - `CF_DEPLOY_URL`  — e.g.  `https://baerly-gate-cf.<sub>.workers.dev`
+ *   - `CF_DEPLOY_URL`  — e.g.  `https://baerly-e2e-cf.<sub>.workers.dev`
  *   - `SHARED_SECRET`  — same secret as `wrangler secret put SHARED_SECRET`
  *
  * Optional (provisioning seam — needed for the conformance cascade
@@ -22,7 +22,7 @@
  *   - `CF_R2_S3_ENDPOINT`     — `https://<accountid>.r2.cloudflarestorage.com`
  *   - `CF_R2_ACCESS_KEY_ID`   — R2 API token (object read/write)
  *   - `CF_R2_SECRET_ACCESS_KEY` — R2 API token secret
- *   - `CF_R2_BUCKET`          — bucket name (defaults to `baerly-gate-cf`)
+ *   - `CF_R2_BUCKET`          — bucket name (defaults to `baerly-e2e-cf`)
  *
  * Phase 6 has no "create table" HTTP route, so the cascade needs a
  * direct `Storage` handle to seed `current.json` per fresh table.
@@ -30,33 +30,36 @@
  * S3-compat endpoint to satisfy the seam; the deployed Worker
  * continues to read R2 via the in-cell binding fast-path.
  *
- * See `deploy/README.md` for the full lifecycle.
+ * See `manual-e2e/README.md` for the full lifecycle.
  */
 
 import { AwsClient } from "aws4fetch";
 import { DOMParser } from "@xmldom/xmldom";
-import { afterAll, describe, expect, test } from "vitest";
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import {
   CURRENT_JSON_SCHEMA_VERSION,
   S3HttpStorage,
   createCurrentJson,
   type Storage,
 } from "@baerly/protocol";
-import { runHttpConformanceCascade, type HttpFetch } from "../fixtures/http-conformance-cascade.ts";
+import {
+  runHttpConformanceCascade,
+  type HttpFetch,
+} from "../../tests/fixtures/http-conformance-cascade.ts";
 
 const CF_URL = process.env.CF_DEPLOY_URL;
 const SECRET = process.env.SHARED_SECRET;
-// Tenant the inline sharedSecret Verifier in `deploy/cloudflare/
+// Tenant the inline sharedSecret Verifier in `manual-e2e/cloudflare/
 // worker-entry.ts` maps every authorized request to. Hard-coded
-// (the gate is single-tenant); change in lockstep with the deploy
+// (the check is single-tenant); change in lockstep with the deploy
 // entry's verifier closure.
 const TENANT = "default";
-const APP = "gate";
+const APP = "e2e";
 
 // Per-run namespace so concurrent runs don't collide and so cleanup
 // can scope its sweep. The cascade itself mints fresh tables inside
 // its body; this prefix only scopes the latency / long-poll probes.
-const RUN_PREFIX = `gate-${Date.now()}`;
+const RUN_PREFIX = `e2e-${Date.now()}`;
 
 describe.runIf(CF_URL !== undefined && SECRET !== undefined)(
   "real-deploy: cloudflare worker",
@@ -68,7 +71,7 @@ describe.runIf(CF_URL !== undefined && SECRET !== undefined)(
     // The conformance cascade's fresh tables are not cleaned here —
     // they share the deploy bucket and are scoped under per-test UUID
     // suffixes, so they accumulate. A manual sweep with
-    // `wrangler r2 object delete` (see `deploy/README.md`) handles
+    // `wrangler r2 object delete` (see `manual-e2e/README.md`) handles
     // bulk cleanup between runs.
     const cleanupTables: string[] = [];
     afterAll(async () => {
@@ -197,31 +200,38 @@ describe.runIf(CF_URL !== undefined && SECRET !== undefined)(
     const R2_ENDPOINT = process.env.CF_R2_S3_ENDPOINT;
     const R2_ACCESS = process.env.CF_R2_ACCESS_KEY_ID;
     const R2_SECRET = process.env.CF_R2_SECRET_ACCESS_KEY;
-    const R2_BUCKET = process.env.CF_R2_BUCKET ?? "baerly-gate-cf";
+    const R2_BUCKET = process.env.CF_R2_BUCKET ?? "baerly-e2e-cf";
 
     const cascadeReady =
       R2_ENDPOINT !== undefined && R2_ACCESS !== undefined && R2_SECRET !== undefined;
 
     describe.runIf(cascadeReady)("conformance cascade (via R2 S3-compat)", () => {
-      const aws = new AwsClient({
-        accessKeyId: R2_ACCESS!,
-        secretAccessKey: R2_SECRET!,
-        region: "auto",
-        service: "s3",
-      });
-      const storage: Storage = new S3HttpStorage({
-        endpoint: R2_ENDPOINT!,
-        bucket: R2_BUCKET,
-        xmlParser: new DOMParser(),
-        sign: (req) => aws.sign(req),
+      // Deferred so `new AwsClient(...)` / `new S3HttpStorage(...)` are
+      // never called when `cascadeReady` is false — the describe callback
+      // is still invoked by vitest's collector even for skipped suites.
+      let aws: AwsClient;
+      let storage: Storage;
+      beforeAll(() => {
+        aws = new AwsClient({
+          accessKeyId: R2_ACCESS!,
+          secretAccessKey: R2_SECRET!,
+          region: "auto",
+          service: "s3",
+        });
+        storage = new S3HttpStorage({
+          endpoint: R2_ENDPOINT!,
+          bucket: R2_BUCKET,
+          xmlParser: new DOMParser(),
+          sign: (req) => aws.sign(req),
+        });
       });
 
       // The cascade builds requests against `http://test.local/v1/...`
       // and sends `Authorization: Bearer ${bearerToken}` (we pass
       // `SECRET` as `bearerToken` below, so the header is already
-      // gate-correct). Rewrite the URL host onto the deploy URL and
+      // e2e-correct). Rewrite the URL host onto the deploy URL and
       // forward verbatim.
-      const gateFetch: HttpFetch = async (req) => {
+      const e2eFetch: HttpFetch = async (req) => {
         const url = new URL(req.url);
         const rewritten = `${baseUrl}${url.pathname}${url.search}`;
         const headers = new Headers(req.headers);
@@ -240,7 +250,7 @@ describe.runIf(CF_URL !== undefined && SECRET !== undefined)(
 
       runHttpConformanceCascade({
         name: "cloudflare-real-deploy",
-        fetch: gateFetch,
+        fetch: e2eFetch,
         provisionTable: async (table) => {
           const key = `app/${APP}/tenant/${TENANT}/manifests/${table}/current.json`;
           await createCurrentJson(storage, key, {
@@ -249,7 +259,7 @@ describe.runIf(CF_URL !== undefined && SECRET !== undefined)(
             next_seq: 0,
             writer_fence: {
               epoch: 0,
-              owner: "real-deploy-cf-gate",
+              owner: "manual-e2e-cf",
               claimed_at: "",
             },
           });

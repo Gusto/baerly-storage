@@ -1,7 +1,12 @@
-// Hand-rolled Node entry for the real-deploy gate.
+// Node HTTP host entry for the manual end-to-end check (the S3 path,
+// or R2 via the S3-compat endpoint — see manual-e2e/README.md). This
+// is a skeleton — not a production template. It exists so a maintainer
+// can deploy `createListener()` against real S3 / R2 and run the check
+// at `manual-e2e/node/e2e.test.ts`. Production users scaffold via
+// `create-baerly` instead.
 //
 // Reads env vars, constructs `S3HttpStorage` against real AWS S3
-// (or R2 via the S3-compat endpoint — see deploy/README.md), wires
+// (or R2 via the S3-compat endpoint — see manual-e2e/README.md), wires
 // a sharedSecret `Verifier`, and binds the `node:http` listener to
 // PORT.
 
@@ -19,7 +24,7 @@ const reqEnv = (name: string): string => {
   return v;
 };
 
-const APP = process.env.APP ?? "gate";
+const APP = process.env.APP ?? "e2e";
 const TENANT = process.env.TENANT ?? "default";
 const PORT = Number(process.env.PORT ?? "8080");
 
@@ -45,7 +50,7 @@ const storage = new S3HttpStorage({
 });
 
 // Productized `Verifier` from `@baerly/server` — same accept/reject
-// shape as the prior inline gate-only verifier, plus constant-time
+// shape as the prior inline verifier, plus constant-time
 // secret compare and config-error throws for empty inputs. See
 // `packages/server/src/auth/presets/shared-secret.ts`.
 const listener = createListener({
@@ -57,13 +62,13 @@ const listener = createListener({
 const server = createServer(listener);
 server.listen(PORT, () => {
   // Single-line readiness log; container orchestrators key off it
-  // for "ready" detection in the gate run. No prom/otel here — Phase
+  // for "ready" detection in the manual check. No prom/otel here — Phase
   // 8 wires the production observability story.
-  console.log(`baerly-gate-node listening on :${PORT}`);
+  console.log(`baerly-e2e-node listening on :${PORT}`);
 });
 
 // Graceful shutdown — not production-ready, but enough that the
-// gate's `docker stop` doesn't drop in-flight long-polls.
+// the manual check's `docker stop` doesn't drop in-flight long-polls.
 const shutdown = (sig: NodeJS.Signals): void => {
   console.log(`Received ${sig}; closing server`);
   server.close((err) => {

@@ -1,11 +1,15 @@
-// Hand-rolled Worker entry for the real-deploy gate.
+// Cloudflare Worker entry for the manual end-to-end check. This is a
+// skeleton — not a production template. It exists so a maintainer can
+// deploy `baerlyWorker()` against real R2 and run the check at
+// `manual-e2e/cloudflare/e2e.test.ts`. Production users scaffold via
+// `create-baerly` instead.
 //
 // Uses the productized `sharedSecret` preset factory from
 // `@baerly/server` (Phase 8 — see
-// `packages/server/src/auth/presets/shared-secret.ts`). The future
-// Phase 8 deploy template emitted by `create-baerly` will default to
-// `cloudflareAccess()` instead; this entry stays on `sharedSecret`
-// because the gate runs without a CF Access tunnel.
+// `packages/server/src/auth/presets/shared-secret.ts`). The deploy
+// template emitted by `create-baerly` defaults to `cloudflareAccess()`
+// instead; this entry stays on `sharedSecret`
+// because the manual check runs without a CF Access tunnel.
 
 import { baerlyWorker, type Env as BaerlyEnv } from "@baerly/adapter-cloudflare";
 import { sharedSecret } from "@baerly/server";
@@ -15,7 +19,7 @@ import { sharedSecret } from "@baerly/server";
  * SHARED_SECRET`) on top of `baerlyWorker`'s baseline `BUCKET` / `APP`
  * / `TENANT` / `CURRENT_JSON_KEY` / `CF_TIER` shape.
  */
-interface GateEnv extends BaerlyEnv {
+interface E2eEnv extends BaerlyEnv {
   readonly SHARED_SECRET: string;
 }
 
@@ -40,4 +44,4 @@ export default {
     });
     return handler.scheduled!(event, env, ctx);
   },
-} satisfies ExportedHandler<GateEnv>;
+} satisfies ExportedHandler<E2eEnv>;

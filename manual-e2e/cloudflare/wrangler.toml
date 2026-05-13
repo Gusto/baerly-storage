@@ -1,30 +1,30 @@
-# Hand-rolled Wrangler config for the real-deploy gate.
-# NOT a production template — see deploy/README.md for the
-# expected lifecycle (deploy → run gate → tear down).
+# Hand-rolled Wrangler config for the manual end-to-end check.
+# NOT a production template — see manual-e2e/README.md for the
+# expected lifecycle (deploy → run check → tear down).
 
-name = "baerly-gate-cf"
+name = "baerly-e2e-cf"
 main = "worker-entry.ts"
 compatibility_date = "2025-06-01"
 compatibility_flags = ["nodejs_compat"]
 
 # R2 binding. Bucket must exist before `wrangler deploy`; create it
-# with `wrangler r2 bucket create baerly-gate-cf`.
+# with `wrangler r2 bucket create baerly-e2e-cf`.
 [[r2_buckets]]
 binding = "BUCKET"
-bucket_name = "baerly-gate-cf"
+bucket_name = "baerly-e2e-cf"
 
-# Single-tenant gate deploy. The inline sharedSecret Verifier pins
+# Single-tenant check deploy. The inline sharedSecret Verifier pins
 # tenantPrefix to "default"; TENANT is ignored when a Verifier is
 # wired (baerlyWorker reads tenantPrefix off the Verifier result).
 [vars]
-APP = "gate"
+APP = "e2e"
 TENANT = "default"
 
 # SHARED_SECRET is injected via `wrangler secret put SHARED_SECRET`
-# at deploy time, NOT committed to this file. See deploy/README.md.
+# at deploy time, NOT committed to this file. See manual-e2e/README.md.
 
 # Optional: Cron Trigger for the maintenance loop. Enabled
-# for the gate so we exercise the scheduled-handler path on the real
+# for the check so we exercise the scheduled-handler path on the real
 # Worker too.
 [triggers]
 crons = ["* * * * *"]
@@ -34,7 +34,7 @@ crons = ["* * * * *"]
 [limits]
 cpu_ms = 50
 
-# Observability — enable Workers Logpush during the gate run if you
+# Observability — enable Workers Logpush during the check run if you
 # have the entitlement; otherwise `wrangler tail` is sufficient.
 # [observability]
 # enabled = true

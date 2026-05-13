@@ -30,7 +30,7 @@
   "include": [
     "tests",
     "packages/*/src",
-    "deploy/**/*.ts",
+    "manual-e2e/**/*.ts",
     "*.config.ts",
     "scripts/**/*.ts",
     "bench/**/*",

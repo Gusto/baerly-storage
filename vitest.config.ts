@@ -58,20 +58,6 @@ const conformanceExclude = process.env.CONFORMANCE === "1" ? [] : ["**/conforman
 // resolving at all on the default path.
 const exportSmokeExclude = process.env.EXPORT_SMOKE === "1" ? [] : ["**/export-smoke.test.ts"];
 
-// Real-deploy gate (`tests/integration/real-deploy-*.test.ts`) hits
-// live Cloudflare Worker / Node-host deploys driven by
-// `CF_DEPLOY_URL` / `NODE_DEPLOY_URL` / `SHARED_SECRET`. Excluded
-// from the default project's glob so `pnpm test` stays green on a
-// fresh checkout with no env vars; opt in via `pnpm gate:real-deploy`
-// (which sets the env up out-of-band per `deploy/README.md`). Each
-// file also uses `describe.runIf(...)` — double-gating is
-// intentional: the exclude prevents the imports (`aws4fetch`,
-// `@xmldom/xmldom`) from even resolving on the default path.
-const realDeployExclude =
-  process.env.CF_DEPLOY_URL !== undefined || process.env.NODE_DEPLOY_URL !== undefined
-    ? []
-    : ["**/real-deploy-cloudflare.test.ts", "**/real-deploy-node.test.ts"];
-
 // Day-one handshake gate (`tests/integration/day-one-handshake.test.ts`)
 // orchestrates `npm create baerly@latest` → `baerly deploy` → first-
 // record on a per-target basis driven by `DAY_ONE_TARGETS=node|
@@ -80,7 +66,7 @@ const realDeployExclude =
 // opt in via `pnpm gate:day-one` after exporting `DAY_ONE_TARGETS`
 // (plus `CF_API_TOKEN` / `CF_ACCOUNT_ID` for the CF target) per
 // `docs/operating/day-one-gate.md`. The file also uses
-// `describe.runIf(...)` — double-gating mirrors `realDeployExclude`.
+// `describe.runIf(...)` — double-gating mirrors `exportSmokeExclude`.
 const dayOneExclude =
   process.env.DAY_ONE_TARGETS !== undefined ? [] : ["**/day-one-handshake.test.ts"];
 
@@ -150,12 +136,17 @@ export default defineConfig({
             // into the protocol output; this glob keeps them typechecked
             // and tested without widening the main source include.
             "bench/**/*.test.ts",
+            // Manual end-to-end checks — skeleton-app drivers under
+            // `manual-e2e/`. Each test file double-gates via
+            // `describe.runIf(...)` so they always skip on default `pnpm test`
+            // when the deploy URL env vars are unset. Opt in via `pnpm
+            // test:manual-e2e` after deploying per `manual-e2e/README.md`.
+            "manual-e2e/**/*.test.ts",
           ],
           exclude: [
             ...configDefaults.exclude,
             ...conformanceExclude,
             ...exportSmokeExclude,
-            ...realDeployExclude,
             ...dayOneExclude,
             // CF adapter has its own project; don't double-run.
             r2BindingConformanceGlob,

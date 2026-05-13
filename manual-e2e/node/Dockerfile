@@ -1,4 +1,4 @@
-# Hand-rolled Dockerfile for the real-deploy gate.
+# Hand-rolled Dockerfile for the manual end-to-end check.
 # NOT a production template — no health probes, no
 # graceful-shutdown polish beyond SIGTERM, no non-root user setup,
 # no distroless / alpine base.
@@ -22,11 +22,11 @@ COPY packages/adapter-cloudflare/package.json packages/adapter-cloudflare/
 # Frozen lockfile fails the build if pnpm-lock.yaml is stale.
 RUN pnpm install --frozen-lockfile
 
-# Now copy source and the gate entry.
+# Now copy source and the check entry.
 COPY packages packages/
 COPY src src/
 COPY rolldown.config.ts tsconfig.json ./
-COPY deploy/node/server-entry.ts deploy/node/
+COPY manual-e2e/node/server-entry.ts manual-e2e/node/
 
 # Build the root bundle so dist/index.js exists for any downstream
 # imports. The adapter packages are consumed via workspace symlinks
@@ -47,7 +47,7 @@ RUN corepack enable && corepack prepare pnpm@10.31.0 --activate
 COPY --from=build /app/pnpm-lock.yaml /app/pnpm-workspace.yaml /app/package.json ./
 COPY --from=build /app/packages packages/
 COPY --from=build /app/dist dist/
-COPY --from=build /app/deploy/node deploy/node/
+COPY --from=build /app/manual-e2e/node manual-e2e/node/
 
 # Production install — skip devDeps. The adapter packages declare
 # their runtime deps in their own package.json; pnpm wires the
@@ -58,6 +58,6 @@ EXPOSE 8080
 ENV PORT=8080
 
 # `tsx` resolves the .ts entry directly; no build step needed for
-# the gate entry. (A future version will pre-compile.)
+# the check entry. (A future version will pre-compile.)
 RUN pnpm add -D tsx
-ENTRYPOINT ["tini", "--", "pnpm", "exec", "tsx", "deploy/node/server-entry.ts"]
+ENTRYPOINT ["tini", "--", "pnpm", "exec", "tsx", "manual-e2e/node/server-entry.ts"]

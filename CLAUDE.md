@@ -54,7 +54,7 @@ Don't introduce alternate tooling without justification.
 | `pnpm test:randomize` | property-based fuzzer (cranks `FC_NUM_RUNS` for fast-check arbitraries). The randomized cascade itself is fault-injection-driven so `FC_NUM_RUNS` is a no-op for `randomized.test.ts` — all four variants (`memory` / `local-fs` / `cloudflare-r2` / `node-minio`) still run, but only the property tests in the rest of the suite scale up | run for minutes | use when changing protocol code |
 | `pnpm test:fuzz-phase5` | crash-injection fuzzer for the maintenance loop (`phase5-crash-fuzz.test.ts`) — aborts the K-th storage op inside `ServerWriter` / `compact()` / `runGc()` and asserts the reader still sees a consistent row set | minutes-hours at `FC_NUM_RUNS=10000` | use after touching `compactor.ts` / `gc.ts` / `server-writer.ts` |
 | `pnpm dev:storage` | brings up Minio `:9102` + Toxiproxy `:9104` + Postgres `:5433` | n/a | required for `test:minio` / `test:conformance` / `test:export-smoke` / `test:adapter-node` / `test:adapters` |
-| `pnpm gate:real-deploy` | runs `real-deploy-cloudflare.test.ts` + `real-deploy-node.test.ts` against deployed URLs (HTTP conformance cascade + latency probe + long-poll wall-clock + 401 sniff) | minutes per run | requires `CF_DEPLOY_URL` + `NODE_DEPLOY_URL` + `SHARED_SECRET` (+ `CF_R2_*` / `AWS_*` for the conformance cascade); manual deploy lifecycle in `deploy/README.md` |
+| `pnpm test:manual-e2e` | runs `manual-e2e/cloudflare/e2e.test.ts` + `manual-e2e/node/e2e.test.ts` against deployed URLs (HTTP conformance cascade + latency probe + long-poll wall-clock + 401 sniff) | minutes per run | requires `CF_DEPLOY_URL` + `NODE_DEPLOY_URL` + `SHARED_SECRET` (+ `CF_R2_*` / `AWS_*` for the conformance cascade); manual deploy lifecycle in `manual-e2e/README.md` |
 | `pnpm bench:r2` | one-shot R2-contention bench (S1 / S2-idle / S3-toxic); validates Phase 5 idle-reader bound on the wire — exit 0 when bound holds, 1 when violated | ~1–5 min per scenario | requires `pnpm dev:storage`; see `bench/README.md` |
 | `pnpm bench:load` | one-shot load harness on memory backend (no infra); writes one JSON per run to `bench/results/load/` | ~seconds per preset | ✅ on `main` — no infra required; see `bench/README.md` |
 | `pnpm bench:load:minio` | same as `bench:load` but with `--variant=node-minio` against local Minio | ~30s–2 min per preset | requires `MINIO=1` + `pnpm dev:storage` |
@@ -207,11 +207,15 @@ Read in this order to build a mental model:
    `Storage` with content-addressed ETags and atomic writes; used by
    future `baerly dev` and by tests that need cross-`Db`-instance
    visibility without Minio).
-10. **`deploy/`** — hand-rolled real-deploy gate artifacts
-   (`deploy/cloudflare/wrangler.toml` + `worker-entry.ts`;
-   `deploy/node/Dockerfile` + `server-entry.ts`). Manual lifecycle
-   in `deploy/README.md`; driven by `pnpm gate:real-deploy`. **Not**
-   a production template.
+10. **`manual-e2e/`** — hand-rolled skeleton apps used for manual
+   end-to-end validation against real R2 / real S3. Each subdir is
+   self-contained: `manual-e2e/cloudflare/` holds `wrangler.toml` +
+   `worker-entry.ts` + `e2e.test.ts`; `manual-e2e/node/` holds
+   `Dockerfile` + `server-entry.ts` + `e2e.test.ts`. Manual
+   lifecycle in `manual-e2e/README.md`; driven by `pnpm
+   test:manual-e2e`. **Not** a production template — sits at the
+   root alongside `bench/` because it's manual maintainer
+   infrastructure, not part of the automated test suite.
 11. **`packages/create-baerly/templates/{cloudflare,node}/`** —
    production deploy templates. CF: `wrangler.jsonc` declares R2
    bindings, `[vars]`, cron triggers, limits, and observability;
@@ -260,7 +264,7 @@ edits and point at the same files.
   paths directly — can resolve relative specifiers. Enforced by
   oxlint (`import/extensions: ["error", "always", { ignorePackages: true }]`);
   `scripts/add-ts-extensions.mjs --check` audits the full repo
-  including `bench/`, `deploy/`, `examples/`, and `*.config.ts`.
+  including `bench/`, `manual-e2e/`, `examples/`, and `*.config.ts`.
 - **Branded types are load-bearing.** `Ref`, `ManifestKey`, `UUID`,
   `VersionId` exist to prevent confusion bugs. Don't paper over a type
   mismatch with `as string`; widen only if you understand why.

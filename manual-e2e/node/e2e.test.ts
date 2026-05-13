@@ -4,7 +4,7 @@
    returned `_id`s by name. */
 
 /**
- * Real-deploy gate — Node host variant.
+ * Manual end-to-end check — Node host variant.
  *
  * Drives the HTTP conformance cascade + a latency probe + a long-
  * poll wall-clock check + a 401 sniff against a real deployed
@@ -30,29 +30,32 @@
  * The test process opens its own `S3HttpStorage` against the same
  * bucket the container talks to.
  *
- * See `deploy/README.md` for the full lifecycle.
+ * See `manual-e2e/README.md` for the full lifecycle.
  */
 
 import { AwsClient } from "aws4fetch";
 import { DOMParser } from "@xmldom/xmldom";
-import { afterAll, describe, expect, test } from "vitest";
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import {
   CURRENT_JSON_SCHEMA_VERSION,
   S3HttpStorage,
   createCurrentJson,
   type Storage,
 } from "@baerly/protocol";
-import { runHttpConformanceCascade, type HttpFetch } from "../fixtures/http-conformance-cascade.ts";
+import {
+  runHttpConformanceCascade,
+  type HttpFetch,
+} from "../../tests/fixtures/http-conformance-cascade.ts";
 
 const NODE_URL = process.env.NODE_DEPLOY_URL;
 const SECRET = process.env.SHARED_SECRET;
-// Tenant the inline sharedSecret Verifier in `deploy/node/server-
-// entry.ts` maps every authorized request to. Hard-coded (the gate
+// Tenant the inline sharedSecret Verifier in `manual-e2e/node/server-
+// entry.ts` maps every authorized request to. Hard-coded (the check
 // is single-tenant); change in lockstep with the deploy entry.
 const TENANT = process.env.TENANT ?? "default";
-const APP = process.env.APP ?? "gate";
+const APP = process.env.APP ?? "e2e";
 
-const RUN_PREFIX = `gate-${Date.now()}`;
+const RUN_PREFIX = `e2e-${Date.now()}`;
 
 describe.runIf(NODE_URL !== undefined && SECRET !== undefined)("real-deploy: node host", () => {
   const baseUrl = NODE_URL!;
@@ -76,7 +79,7 @@ describe.runIf(NODE_URL !== undefined && SECRET !== undefined)("real-deploy: nod
           }).catch(() => undefined);
         }
       } catch {
-        // Best-effort. See `deploy/README.md` for the manual
+        // Best-effort. See `manual-e2e/README.md` for the manual
         // residual-data sweep.
       }
     }
@@ -182,23 +185,30 @@ describe.runIf(NODE_URL !== undefined && SECRET !== undefined)("real-deploy: nod
     AWS_ACCESS !== undefined && AWS_SECRET_KEY !== undefined && BUCKET !== undefined;
 
   describe.runIf(cascadeReady)("conformance cascade (via S3)", () => {
-    const aws = new AwsClient({
-      accessKeyId: AWS_ACCESS!,
-      secretAccessKey: AWS_SECRET_KEY!,
-      region: AWS_REGION,
-      service: "s3",
-    });
-    const storage: Storage = new S3HttpStorage({
-      endpoint: S3_ENDPOINT,
-      bucket: BUCKET!,
-      xmlParser: new DOMParser(),
-      sign: (req) => aws.sign(req),
+    // Deferred so `new AwsClient(...)` / `new S3HttpStorage(...)` are
+    // never called when `cascadeReady` is false — the describe callback
+    // is still invoked by vitest's collector even for skipped suites.
+    let aws: AwsClient;
+    let storage: Storage;
+    beforeAll(() => {
+      aws = new AwsClient({
+        accessKeyId: AWS_ACCESS!,
+        secretAccessKey: AWS_SECRET_KEY!,
+        region: AWS_REGION,
+        service: "s3",
+      });
+      storage = new S3HttpStorage({
+        endpoint: S3_ENDPOINT,
+        bucket: BUCKET!,
+        xmlParser: new DOMParser(),
+        sign: (req) => aws.sign(req),
+      });
     });
 
     // Cascade builds requests against `http://test.local/v1/...`.
     // Rewrite the host onto the deploy URL; the bearer is already
-    // gate-correct via the `bearerToken` option below.
-    const gateFetch: HttpFetch = async (req) => {
+    // e2e-correct via the `bearerToken` option below.
+    const e2eFetch: HttpFetch = async (req) => {
       const url = new URL(req.url);
       const rewritten = `${baseUrl}${url.pathname}${url.search}`;
       const headers = new Headers(req.headers);
@@ -214,7 +224,7 @@ describe.runIf(NODE_URL !== undefined && SECRET !== undefined)("real-deploy: nod
 
     runHttpConformanceCascade({
       name: "node-real-deploy",
-      fetch: gateFetch,
+      fetch: e2eFetch,
       provisionTable: async (table) => {
         const key = `app/${APP}/tenant/${TENANT}/manifests/${table}/current.json`;
         await createCurrentJson(storage, key, {
@@ -223,7 +233,7 @@ describe.runIf(NODE_URL !== undefined && SECRET !== undefined)("real-deploy: nod
           next_seq: 0,
           writer_fence: {
             epoch: 0,
-            owner: "real-deploy-node-gate",
+            owner: "manual-e2e-node",
             claimed_at: "",
           },
         });
