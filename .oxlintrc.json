@@ -9,7 +9,8 @@
   "rules": {
     "eslint/no-await-in-loop": "off",
     "promise/always-return": "off",
-    "import/extensions": ["error", "always", { "ignorePackages": true }]
+    "import/extensions": ["error", "always", { "ignorePackages": true }],
+    "no-underscore-dangle": ["error", { "allow": ["_id", "_raw"] }]
   },
   "overrides": [
     {
