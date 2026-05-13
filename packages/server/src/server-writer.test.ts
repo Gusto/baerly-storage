@@ -183,7 +183,16 @@ describe("ServerWriter", () => {
     };
     await storage.put(`${logPrefix}/2.json`, new TextEncoder().encode(JSON.stringify(planted)));
 
-    const writer = new ServerWriter({ storage, currentJsonKey: CURRENT_KEY });
+    // Opt in to the integrity walk: this test's whole point is to assert the
+    // walk's range is `[log_seq_start, next_seq)`, not `[0, next_seq)`. The
+    // walk is gated off by default in production (it's purely observational
+    // — see `verifyLogIntegrityOnCommit` JSDoc); turning it on here keeps
+    // the test exercising the invariant it claims to test.
+    const writer = new ServerWriter({
+      storage,
+      currentJsonKey: CURRENT_KEY,
+      options: { verifyLogIntegrityOnCommit: true },
+    });
     const result = await writer.commit({
       op: "I",
       collection: COLL,

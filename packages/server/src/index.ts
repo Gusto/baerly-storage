@@ -37,6 +37,7 @@ export {
   projectIndexValues,
   validateIndexDefinition,
 } from "./indexes.ts";
+export { readLogEntry, walkLogRange } from "./log-walk.ts";
 export { type RebuildIndexResult, rebuildIndex } from "./rebuild-index.ts";
 export {
   type MaintenanceArgs,

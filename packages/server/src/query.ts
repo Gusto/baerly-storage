@@ -37,7 +37,6 @@ import {
   type CurrentJson,
   type CurrentJsonRead,
   type JSONArraylessObject,
-  type LogEntry,
   logSeqStartOf,
   MANIFEST_POINTER_EMPTY_SNAPSHOT,
   matches,
@@ -56,6 +55,7 @@ import {
 import { loadSnapshotAsMap } from "./compactor.ts";
 import type { TxContext } from "./db.ts";
 import { encodeIndexValue } from "./indexes.ts";
+import { walkLogRange } from "./log-walk.ts";
 import { ServerWriter } from "./server-writer.ts";
 
 /**
@@ -661,15 +661,8 @@ const runRead = async <T extends JSONArraylessObject>(
       ? new Map()
       : await loadSnapshotAsMap(ctx.storage, head.json.snapshot, ctx.tableName);
 
-  // ── Step 2. Parallel-fetch every log entry [log_seq_start, next_seq).
-  const logKeys: string[] = [];
-  for (let s = logSeqStart; s < nextSeq; s++) {
-    logKeys.push(`${ctx.tablePrefix}/log/${s}.json`);
-  }
-  const entries =
-    logKeys.length === 0
-      ? []
-      : await Promise.all(logKeys.map(async (k) => readLogEntry(ctx.storage, k)));
+  // ── Step 2. Bounded parallel-fetch of [log_seq_start, next_seq). ──
+  const entries = await walkLogRange(ctx.storage, ctx.tablePrefix, logSeqStart, nextSeq);
 
   // ── Step 3. Fold per doc_id, seeded from the snapshot. ────────────
   // I / U: post-image overwrite (today's per-doc-replace model). The
@@ -806,14 +799,7 @@ const tryIndexWalk = async <T extends JSONArraylessObject>(
   }
   const logSeqStart = logSeqStartOf(head);
   const nextSeq = head.next_seq;
-  const logKeys: string[] = [];
-  for (let s = logSeqStart; s < nextSeq; s++) {
-    logKeys.push(`${ctx.tablePrefix}/log/${s}.json`);
-  }
-  const entries =
-    logKeys.length === 0
-      ? []
-      : await Promise.all(logKeys.map(async (k) => readLogEntry(ctx.storage, k)));
+  const entries = await walkLogRange(ctx.storage, ctx.tablePrefix, logSeqStart, nextSeq);
   for (const entry of entries) {
     if (entry.collection !== ctx.tableName) continue;
     if (entry.doc_id === undefined || !matched.has(entry.doc_id)) continue;
@@ -832,23 +818,6 @@ const tryIndexWalk = async <T extends JSONArraylessObject>(
     if (matches(predicate, doc)) rows.push(doc);
   }
   return rows;
-};
-
-const readLogEntry = async (storage: Storage, key: string): Promise<LogEntry> => {
-  const got = await storage.get(key);
-  if (got === null) {
-    // A missing seq inside `[0, next_seq)` is a protocol invariant
-    // violation — mirrors `ServerWriter.#readLogEntry`.
-    throw new BaerlyError(
-      "Internal",
-      `Query.read: missing log entry at ${key}; protocol invariant violation`,
-    );
-  }
-  try {
-    return JSON.parse(new TextDecoder().decode(got.body)) as LogEntry;
-  } catch (e) {
-    throw new BaerlyError("InvalidResponse", `Query.read: malformed log entry at ${key}`, e);
-  }
 };
 
 /**

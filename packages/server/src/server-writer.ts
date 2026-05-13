@@ -2,12 +2,13 @@
  * `ServerWriter` — stateless multi-instance write engine for Phase 3+.
  *
  * Each {@link ServerWriter.commit} call reads `current.json` FRESH from
- * the bucket, walks the log from `0` to `next_seq` to validate
- * integrity (per-doc fold lands in Phase 4), mints the next
- * {@link LogEntry}, PUTs the content body and the log entry, and
- * CAS-advances `current.json` with `If-Match`. Up to
- * {@link S3_REQUEST_MAX_RETRIES} attempts on contention before
- * surfacing `BaerlyError{code:"Conflict"}`.
+ * the bucket, mints the next {@link LogEntry}, PUTs the content body
+ * and the log entry, and CAS-advances `current.json` with `If-Match`.
+ * Up to {@link S3_REQUEST_MAX_RETRIES} attempts on contention before
+ * surfacing `BaerlyError{code:"Conflict"}`. The optional integrity
+ * walk over the live log tail is gated by
+ * {@link ServerWriterOptions.verifyLogIntegrityOnCommit} (default off
+ * — see the option's docstring).
  *
  * The instance carries no per-write cache: every commit re-reads
  * `current.json`, so N stateless server instances writing the same
@@ -53,6 +54,7 @@ import {
   versionFromContent,
 } from "@baerly/protocol";
 import { allIndexKeysFor, type IndexDefinition, validateIndexDefinition } from "./indexes.ts";
+import { readLogEntry, walkLogRange } from "./log-walk.ts";
 
 /**
  * Tunables for {@link ServerWriter}. All optional; defaults match the
@@ -135,6 +137,25 @@ export interface ServerWriterOptions {
    *     successful commit.
    */
   readonly indexes?: ReadonlyArray<IndexDefinition>;
+
+  /**
+   * When `true`, every commit walks the live log range
+   * `[log_seq_start, next_seq)` before minting a new entry, surfacing
+   * a missing or malformed entry as `BaerlyError{code:"Internal"}`
+   * (or `"InvalidResponse"` for parse failures). The walk is purely
+   * observational — the per-doc fold lives in the read path
+   * (`./query.ts`) and any hole inside the visible range would also
+   * fire on the next read.
+   *
+   * Production callers default this OFF: under contention the walk
+   * issues `O(tail)` Class-B GETs per CAS attempt and the retry
+   * budget multiplies that by {@link S3_REQUEST_MAX_RETRIES}. Tests
+   * that intentionally puncture bucket state to exercise the
+   * invariant trigger opt in by passing `true`.
+   *
+   * Default `false`.
+   */
+  readonly verifyLogIntegrityOnCommit?: boolean;
 }
 
 /**
@@ -271,6 +292,7 @@ export class ServerWriter {
   readonly #metrics: MetricsRecorder;
   readonly #tenant: string;
   readonly #indexes: ReadonlyArray<IndexDefinition>;
+  readonly #verifyLogIntegrityOnCommit: boolean;
 
   constructor(opts: {
     storage: Storage;
@@ -294,6 +316,7 @@ export class ServerWriter {
     const indexes = opts.options?.indexes ?? [];
     for (const def of indexes) validateIndexDefinition(def);
     this.#indexes = indexes;
+    this.#verifyLogIntegrityOnCommit = opts.options?.verifyLogIntegrityOnCommit ?? false;
   }
 
   /**
@@ -478,16 +501,17 @@ export class ServerWriter {
     const baseEtag = read.etag;
     const expectedEpoch = current.writer_fence.epoch;
 
-    // ── Step 2. Walk [log_seq_start, next_seq) to validate integrity.
-    // Entries below `log_seq_start` have been folded into the snapshot
-    // (ticket 14) and may already have been swept off the bucket
-    // (ticket 15), so GET-requiring them would trip the `Internal`
-    // invariant. Pre-Phase-5 collections normalise to 0 — legacy
-    // behaviour preserved. The fold itself (per-doc reducer) is
-    // deferred; the walk is observational today, but its I/O matches
-    // what adapters will see and a hole inside the bound trips the
-    // `Internal` invariant check immediately.
-    await this.#walkLog(logPrefix, logSeqStartOf(current), current.next_seq);
+    // ── Step 2. Optional integrity walk (`verifyLogIntegrityOnCommit`,
+    // default off). Surfaces missing / malformed entries inside
+    // `[log_seq_start, next_seq)` as `Internal` / `InvalidResponse`;
+    // entries below `log_seq_start` are folded into the snapshot
+    // (ticket 14) and possibly swept (ticket 15), so the walk is
+    // bounded to the live tail. The read path catches the same
+    // conditions on the next consult — production callers leave the
+    // walk off to avoid `O(tail)` Class-B GETs per CAS attempt.
+    if (this.#verifyLogIntegrityOnCommit) {
+      await this.#walkLog(logPrefix, logSeqStartOf(current), current.next_seq);
+    }
 
     // ── Step 3. Mint N LogEntries with contiguous seqs. ─────────────
     // All entries share `session` (one session per logical commit).
@@ -641,7 +665,7 @@ export class ServerWriter {
       if (adoptOwnSessionOnLogConflict && entries.length === 1) {
         const entry = entries[0]!;
         const logEntryKey = `${logPrefix}/log/${entry.seq}.json`;
-        const existing = await this.#readLogEntry(logEntryKey);
+        const existing = await readLogEntry(this.#storage, logEntryKey);
         if (existing.session !== session) {
           return { kind: "log-peer-race", seq: entry.seq };
         }
@@ -760,39 +784,23 @@ export class ServerWriter {
   }
 
   /**
-   * Walk `log/<logSeqStart>.json` … `log/<nextSeq - 1>.json` in
-   * parallel. Any missing entry is a protocol-invariant violation
-   * (`BaerlyError{code:"Internal"}`). A malformed body surfaces as
-   * `InvalidResponse`. The materialised entries are discarded in
-   * Phase 3 — Phase 4 will fold them into a per-doc reducer.
+   * Walk `log/<logSeqStart>.json` … `log/<nextSeq - 1>.json` with
+   * bounded parallelism via `walkLogRange`. Materialised entries are
+   * discarded — the walk's only job is to surface a hole or a
+   * malformed body inside the visible range as
+   * `BaerlyError{code:"Internal"}` / `"InvalidResponse"`.
    *
-   * `logSeqStart` is the boundary set by the Phase-5 compactor
-   * (ticket 14) on `current.json.log_seq_start`. Entries below it
-   * have been folded into the snapshot and may have been swept off
-   * the bucket (ticket 15), so the walk MUST NOT GET-require them.
+   * Gated on `verifyLogIntegrityOnCommit`; default off in production
+   * because the per-doc fold already lives in the read path. See the
+   * option's docstring for the rationale and the opt-in convention.
+   *
+   * `logSeqStart` is the boundary set by the Phase-5 compactor on
+   * `current.json.log_seq_start`. Entries below it have been folded
+   * into the snapshot and may have been swept off the bucket, so the
+   * walk MUST NOT GET-require them.
    */
   async #walkLog(logPrefix: string, logSeqStart: number, nextSeq: number): Promise<void> {
-    if (logSeqStart >= nextSeq) return;
-    const reads: Array<Promise<LogEntry>> = [];
-    for (let s = logSeqStart; s < nextSeq; s++) {
-      reads.push(this.#readLogEntry(`${logPrefix}/log/${s}.json`));
-    }
-    await Promise.all(reads);
-  }
-
-  async #readLogEntry(key: string): Promise<LogEntry> {
-    const got = await this.#storage.get(key);
-    if (got === null) {
-      throw new BaerlyError(
-        "Internal",
-        `ServerWriter: missing log entry at ${key}; protocol invariant violation`,
-      );
-    }
-    try {
-      return JSON.parse(new TextDecoder().decode(got.body)) as LogEntry;
-    } catch (err) {
-      throw new BaerlyError("InvalidResponse", `ServerWriter: malformed log entry at ${key}`, err);
-    }
+    await walkLogRange(this.#storage, logPrefix, logSeqStart, nextSeq);
   }
 
   /**

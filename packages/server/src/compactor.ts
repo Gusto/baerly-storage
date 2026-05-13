@@ -26,7 +26,6 @@
 import {
   type CurrentJson,
   type JSONArraylessObject,
-  type LogEntry,
   type MetricsRecorder,
   logSeqStartOf,
   BaerlyError,
@@ -37,6 +36,7 @@ import {
   type StoragePutOptions,
   teeMetricsRecorders,
 } from "@baerly/protocol";
+import { walkLogRange } from "./log-walk.ts";
 import { withObservability } from "./observability/index.ts";
 
 /**
@@ -265,11 +265,9 @@ const compactInner = async (
       : await loadSnapshotAsMap(storage, current.snapshot, tableName, options.signal);
 
   // ── Step 3. Parallel-fetch [logSeqStartBefore, foldEnd) entries. ──
-  const reads: Array<Promise<LogEntry>> = [];
-  for (let s = logSeqStartBefore; s < foldEnd; s++) {
-    reads.push(readLogEntry(storage, `${tablePrefix}/log/${s}.json`, options.signal));
-  }
-  const entries = await Promise.all(reads);
+  const entries = await walkLogRange(storage, tablePrefix, logSeqStartBefore, foldEnd, {
+    signal: options.signal,
+  });
 
   // ── Step 4. Apply the fold onto `base`. ─────────────────────────
   // I / U overwrite with the post-image (today's per-doc-replace
@@ -429,14 +427,20 @@ const compactInner = async (
  * // and applies each LogEntry on top before re-encoding as a new
  * // snapshot on the destination bucket.
  * import { loadSnapshotAsMap } from "@baerly/server";
+ * import { walkLogRange } from "@baerly/server";
  *
  * const base =
  *   srcCurrent.snapshot === null
  *     ? new Map<string, JSONArraylessObject>()
  *     : await loadSnapshotAsMap(src.storage, srcCurrent.snapshot, "tickets");
  *
- * for (let s = srcCurrent.log_seq_start; s < srcCurrent.next_seq; s++) {
- *   const entry = await readLogEntry(src.storage, `${tablePrefix}/log/${s}.json`);
+ * const entries = await walkLogRange(
+ *   src.storage,
+ *   tablePrefix,
+ *   srcCurrent.log_seq_start,
+ *   srcCurrent.next_seq,
+ * );
+ * for (const entry of entries) {
  *   if (entry.op === "D") base.delete(entry.doc_id);
  *   else if (entry.new !== undefined) base.set(entry.doc_id, entry.new);
  * }
@@ -499,25 +503,6 @@ export const loadSnapshotAsMap = async (
 // ---------------------------------------------------------------------
 // Internals
 // ---------------------------------------------------------------------
-
-const readLogEntry = async (
-  storage: Storage,
-  key: string,
-  signal: AbortSignal | undefined,
-): Promise<LogEntry> => {
-  const got = await storage.get(key, signal !== undefined ? { signal } : undefined);
-  if (got === null) {
-    throw new BaerlyError(
-      "Internal",
-      `compact: missing log entry at ${key}; protocol invariant violation`,
-    );
-  }
-  try {
-    return JSON.parse(new TextDecoder().decode(got.body)) as LogEntry;
-  } catch (e) {
-    throw new BaerlyError("InvalidResponse", `compact: malformed log entry at ${key}`, e);
-  }
-};
 
 /**
  * `true` when an `If-Match` CAS guard lost. Every in-tree
