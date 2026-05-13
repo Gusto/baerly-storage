@@ -29,6 +29,7 @@ import {
   type CurrentJson,
 } from "@baerly/protocol";
 import { buildBenchStorage, ensureBucket, type CountingStorage } from "./storage.ts";
+import { runCompactorLoop, type CompactorLoopCounters } from "./compactor-loop.ts";
 import { Metrics } from "./metrics.ts";
 import { clearToxics, installToxics, isToxiproxyReady } from "./toxiproxy.ts";
 import type { Network, RetryPolicy, RunResult, Scenario, SweepCell } from "./types.ts";
@@ -38,6 +39,9 @@ const BUCKET = "baerly-bench";
 const MINIO_HEALTH_URL = "http://127.0.0.1:9102/minio/health/ready";
 const SIGKILL_LOG_PREFIX = "bench/tenant-A/collection-sigkill";
 const SIGKILL_CURRENT_KEY = `${SIGKILL_LOG_PREFIX}/current.json`;
+const S5_LOG_PREFIX = "bench/tenant-A/collection-compact";
+const S5_CURRENT_KEY = `${S5_LOG_PREFIX}/current.json`;
+const S5_TARGET_OPS_PER_SEC = 50;
 const SEED: CurrentJson = {
   schema_version: 1,
   snapshot: null,
@@ -507,6 +511,181 @@ async function runS3Sigkill(cell: SweepCell): Promise<RunResult> {
   };
 }
 
+async function sha256Hex(bytes: Uint8Array): Promise<string> {
+  // Copy via fresh ArrayBuffer: tsgo narrows `Uint8Array` to
+  // `Uint8Array<ArrayBufferLike>`, which `crypto.subtle.digest` rejects
+  // (wants `ArrayBufferView<ArrayBuffer>`). See microsoft/TypeScript#61375.
+  const view = new Uint8Array(bytes.byteLength);
+  view.set(bytes);
+  const hash = await crypto.subtle.digest("SHA-256", view);
+  return Array.from(new Uint8Array(hash), (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+interface S5WriterCounters {
+  writes_attempted: number;
+  writes_committed: number;
+  log_404_on_read: number; // safety violation
+  snapshot_hash_mismatch: number; // safety violation
+}
+
+async function s5Writer(storage: CountingStorage, signal: AbortSignal): Promise<S5WriterCounters> {
+  const counters: S5WriterCounters = {
+    writes_attempted: 0,
+    writes_committed: 0,
+    log_404_on_read: 0,
+    snapshot_hash_mismatch: 0,
+  };
+
+  // Bootstrap current.json. The compactor needs it to exist.
+  await createCurrentJson(storage, S5_CURRENT_KEY, SEED).catch((e: unknown) => {
+    if (e instanceof BaerlyError && e.code === "Conflict") return;
+    throw e;
+  });
+
+  while (!signal.aborted) {
+    const t0 = performance.now();
+    counters.writes_attempted++;
+    try {
+      // Read current.json to get next_seq.
+      const read = await readCurrentJson(storage, S5_CURRENT_KEY);
+      if (read === null) {
+        throw new BaerlyError("InvalidResponse", "current.json missing during S5 run");
+      }
+      const seqCursor = read.json.next_seq;
+
+      // Step 1. PUT content.
+      const body = new TextEncoder().encode(
+        JSON.stringify({ seq: seqCursor, payload: `data-${seqCursor}` }),
+      );
+      const sha = await sha256Hex(body);
+      const contentKey = `${S5_LOG_PREFIX}/content/${sha}.json`;
+      await storage
+        .put(contentKey, body, { ifNoneMatch: "*", contentType: "application/json" })
+        .catch((e: unknown) => {
+          if (e instanceof BaerlyError && e.code === "Conflict") return; // idempotent
+          throw e;
+        });
+
+      // Step 2. PUT log entry.
+      const logKey = `${S5_LOG_PREFIX}/log/${seqCursor}.json`;
+      const logEntry = {
+        seq: seqCursor,
+        collection: "compact",
+        doc_id: `doc-${seqCursor}`,
+        op: "I" as const,
+        session: "bench-s5",
+        new: { seq: seqCursor, payload: `data-${seqCursor}` },
+      };
+      await storage.put(logKey, new TextEncoder().encode(JSON.stringify(logEntry)), {
+        ifNoneMatch: "*",
+        contentType: "application/json",
+      });
+
+      // Step 3. CAS-advance current.json.
+      await casUpdateCurrentJson(storage, S5_CURRENT_KEY, (cur) => ({
+        ...cur,
+        next_seq: cur.next_seq + 1,
+      }));
+      counters.writes_committed++;
+
+      // Step 4 (the safety check): read back a log entry inside
+      // [log_seq_start, next_seq). If we get a 404, the compactor + GC
+      // raced us. seqCursor was the entry we just CAS'd; pick a seq
+      // halfway into the visible range so the check exercises live log
+      // tail, not the just-written entry.
+      const after = await readCurrentJson(storage, S5_CURRENT_KEY);
+      if (after !== null && after.json.next_seq - (after.json.log_seq_start ?? 0) >= 2) {
+        const start = after.json.log_seq_start ?? 0;
+        const checkSeq = start + Math.floor((after.json.next_seq - start) / 2);
+        const checkKey = `${S5_LOG_PREFIX}/log/${checkSeq}.json`;
+        const got = await storage.get(checkKey);
+        if (got === null) counters.log_404_on_read++;
+      }
+    } catch (e: unknown) {
+      // Conflict on CAS is expected — back off and re-read. Don't
+      // count as a violation. Other errors are surfaced.
+      if (e instanceof BaerlyError && e.code === "Conflict") continue;
+      if (e instanceof BaerlyError && e.code === "Internal" && e.message.includes("hash")) {
+        counters.snapshot_hash_mismatch++;
+        continue;
+      }
+      throw e;
+    }
+    // Pacing: target ~50 ops/sec means ~20ms between ops.
+    const elapsed = performance.now() - t0;
+    const delay = Math.max(0, 1000 / S5_TARGET_OPS_PER_SEC - elapsed);
+    if (delay > 0) await new Promise((r) => setTimeout(r, delay));
+  }
+  return counters;
+}
+
+async function runS5Compaction(cell: SweepCell): Promise<RunResult> {
+  const via = viaFor(cell.network);
+  const storage = buildBenchStorage({ via, bucket: BUCKET });
+  await ensureBucket({ via, bucket: BUCKET });
+  // Clean prefix — guarantee a deterministic start.
+  for await (const e of storage.list(`${S5_LOG_PREFIX}/`)) {
+    await storage.delete(e.key);
+  }
+  // Reset counters; only the writer + compactor loop count.
+  storage.classAOps = 0;
+  storage.classBOps = 0;
+
+  const controller = new AbortController();
+  const started = new Date();
+  const t0 = performance.now();
+  const stop = setTimeout(() => controller.abort(), cell.durationMs);
+
+  // Run writer + compactor loop in parallel, both honouring the same
+  // abort signal. The writer + compactor share ONE Storage handle so
+  // the CountingStorage's per-op counters add up for the cost report.
+  const writerP = s5Writer(storage, controller.signal);
+  const compactorP = runCompactorLoop(storage, S5_CURRENT_KEY, 1000, controller.signal);
+
+  let writerCounters: S5WriterCounters;
+  let compactorCounters: CompactorLoopCounters;
+  try {
+    [writerCounters, compactorCounters] = await Promise.all([writerP, compactorP]);
+  } finally {
+    clearTimeout(stop);
+  }
+  const wallclockMs = performance.now() - t0;
+
+  const safetyViolations = writerCounters.log_404_on_read + writerCounters.snapshot_hash_mismatch;
+  const baseNotes =
+    `writes_attempted=${writerCounters.writes_attempted} ` +
+    `writes_committed=${writerCounters.writes_committed} ` +
+    `compact_passes=${compactorCounters.passes} ` +
+    `compacts_landed=${compactorCounters.compactsLanded} ` +
+    `compacts_cas_lost=${compactorCounters.compactsCasLost} ` +
+    `gc_swept=${compactorCounters.gcSwept} ` +
+    `log_404_on_read=${writerCounters.log_404_on_read} ` +
+    `snapshot_hash_mismatch=${writerCounters.snapshot_hash_mismatch} ` +
+    `safety_violations=${safetyViolations}`;
+  const notes = safetyViolations > 0 ? `SAFETY VIOLATION: ${baseNotes}` : baseNotes;
+
+  return {
+    cell,
+    started_iso: started.toISOString(),
+    wallclock_ms: wallclockMs,
+    effective_throughput_per_sec: writerCounters.writes_committed / (wallclockMs / 1000),
+    cas_412_rate: 0, // covered in S1; not the load-bearing measurement here
+    rate_limit_429_rate: 0,
+    class_a_op_count: storage.classAOps,
+    class_b_op_count: storage.classBOps,
+    class_a_per_writer_per_hour: 0, // not applicable
+    latency_p50_ms: 0,
+    latency_p99_ms: 0,
+    latency_p999_ms: 0,
+    retry_tail_max: 0,
+    // The exit-code contract: `cost_model_bound_holds === false` ⇒
+    // harness exits 1. We co-opt that field for "no safety violations
+    // observed." See `notes` for the actual measurement.
+    cost_model_bound_holds: safetyViolations === 0,
+    notes,
+  };
+}
+
 async function runS3Toxic(cell: SweepCell): Promise<RunResult> {
   await installToxics(cell.network);
   try {
@@ -559,7 +738,9 @@ async function main(): Promise<number> {
           ? await runS2Multi(cell)
           : cell.scenario === "S3-sigkill"
             ? await runS3Sigkill(cell)
-            : await runS3Toxic(cell);
+            : cell.scenario === "S5-compaction"
+              ? await runS5Compaction(cell)
+              : await runS3Toxic(cell);
 
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
   const out = path.join("bench/results", `${cell.scenario}-${stamp}.json`);

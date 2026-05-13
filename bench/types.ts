@@ -8,7 +8,7 @@
  * concerns.
  */
 
-export type Scenario = "S1" | "S2-idle" | "S2-multi" | "S3-toxic" | "S3-sigkill";
+export type Scenario = "S1" | "S2-idle" | "S2-multi" | "S3-toxic" | "S3-sigkill" | "S5-compaction";
 
 export type RetryPolicy = "no-jitter" | "full-jitter" | "decorrelated";
 
