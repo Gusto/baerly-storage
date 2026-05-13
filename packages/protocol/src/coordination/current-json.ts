@@ -26,13 +26,12 @@
  * already durable from the first put either way; a peer landing
  * between the two writes loses cleanly with `Conflict`.
  *
- * Why CAS errors are translated to `Conflict`: every in-tree
- * {@link Storage} impl surfaces a lost CAS as
- * `BaerlyError{code:"InvalidResponse", message:"PreconditionFailed: …"}`.
- * Downstream callers — the Phase 3 ServerWriter, the Phase 5
- * compactor, the Phase 6 sweeper — discriminate by `code` to decide
- * whether to retry, so we translate at this module's boundary rather
- * than asking every caller to string-match `PreconditionFailed:`.
+ * Why CAS errors are wrapped: every in-tree {@link Storage} impl
+ * surfaces a lost CAS as `BaerlyError{code:"Conflict"}`. Downstream
+ * callers — the Phase 3 ServerWriter, the Phase 5 compactor, the
+ * Phase 6 sweeper — discriminate by `code` to decide whether to retry.
+ * We re-wrap here only to add the `current.json at <key>` location
+ * context to the message; the `code` is unchanged.
  */
 
 import { CURRENT_JSON_CONTENT_TYPE, CURRENT_JSON_SCHEMA_VERSION } from "../constants";
@@ -469,17 +468,14 @@ const assertCurrentJson = (parsed: unknown, key: string): CurrentJson => {
 };
 
 /**
- * Translate a storage-level CAS guard failure
- * (`InvalidResponse / "PreconditionFailed: …"`) into `Conflict` so
- * downstream callers can discriminate by `code` without string-
- * matching. Other errors pass through unchanged.
+ * Wrap a storage-level error with `current.json at <key>` location
+ * context. `Conflict` (the storage layer's CAS-lost signal) is
+ * re-thrown with an annotated message; other `BaerlyError`s pass
+ * through; non-`BaerlyError` falls through as `InvalidResponse` (in
+ * practice unreachable — every in-tree `Storage` impl wraps).
  */
 const translateCasError = (e: unknown, key: string): BaerlyError => {
-  if (
-    e instanceof BaerlyError &&
-    e.code === "InvalidResponse" &&
-    e.message.startsWith("PreconditionFailed:")
-  ) {
+  if (e instanceof BaerlyError && e.code === "Conflict") {
     return new BaerlyError("Conflict", `current.json CAS lost at ${key}: ${e.message}`, e);
   }
   if (e instanceof BaerlyError) return e;

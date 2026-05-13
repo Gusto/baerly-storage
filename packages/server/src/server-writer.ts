@@ -738,19 +738,14 @@ const validateInput = (input: CommitInput): void => {
 
 /**
  * `true` when the underlying storage surfaced a `PreconditionFailed`
- * 412. Every in-tree {@link Storage} impl phrases the message as
- * `"PreconditionFailed: …"` on `InvalidResponse`; some upstream
- * helpers (e.g. {@link casUpdateCurrentJson}) translate that to
- * `Conflict` before re-throwing. Match both shapes.
+ * 412 (or its non-S3 equivalents). Every in-tree {@link Storage} impl
+ * surfaces a lost CAS as `BaerlyError{code:"Conflict"}`.
  */
-const isPreconditionFailed = (err: unknown): boolean => {
-  if (!(err instanceof BaerlyError)) return false;
-  if (err.code === "Conflict") return true;
-  return err.code === "InvalidResponse" && err.message.startsWith("PreconditionFailed:");
-};
+const isPreconditionFailed = (err: unknown): boolean =>
+  err instanceof BaerlyError && err.code === "Conflict";
 
 /**
- * `true` when an `If-Match` CAS guard lost. Same shape envelope as
+ * `true` when an `If-Match` CAS guard lost. Aliased to
  * {@link isPreconditionFailed} — kept as a separate predicate for
  * call-site clarity (step 6 reads better as "CAS conflict").
  */

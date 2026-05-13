@@ -456,13 +456,8 @@ const readLogEntry = async (
 
 /**
  * `true` when an `If-Match` CAS guard lost. Every in-tree
- * {@link Storage} impl surfaces a 412 as either
- * `InvalidResponse / "PreconditionFailed: …"` (S3 / memory / R2 /
- * local-fs) or `Conflict` (after `casUpdateCurrentJson`-style
- * translation). Match both shapes.
+ * {@link Storage} impl surfaces a lost CAS as
+ * `BaerlyError{code:"Conflict"}`.
  */
-const isCasConflict = (err: unknown): boolean => {
-  if (!(err instanceof BaerlyError)) return false;
-  if (err.code === "Conflict") return true;
-  return err.code === "InvalidResponse" && err.message.startsWith("PreconditionFailed:");
-};
+const isCasConflict = (err: unknown): boolean =>
+  err instanceof BaerlyError && err.code === "Conflict";

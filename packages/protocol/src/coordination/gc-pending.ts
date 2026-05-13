@@ -248,17 +248,13 @@ const assertGcPending = (parsed: unknown, key: string): GcPending => {
 };
 
 /**
- * Translate a storage-level CAS guard failure
- * (`InvalidResponse / "PreconditionFailed: …"`) into `Conflict` so
- * downstream callers can discriminate by `code` without string-
- * matching. Other errors pass through unchanged.
+ * Wrap a storage-level error with `gc/pending.json at <key>`
+ * location context. `Conflict` (the storage layer's CAS-lost signal)
+ * is re-thrown with an annotated message; other `BaerlyError`s pass
+ * through; non-`BaerlyError` falls through as `InvalidResponse`.
  */
 const translateCasError = (e: unknown, key: string): BaerlyError => {
-  if (
-    e instanceof BaerlyError &&
-    e.code === "InvalidResponse" &&
-    e.message.startsWith("PreconditionFailed:")
-  ) {
+  if (e instanceof BaerlyError && e.code === "Conflict") {
     return new BaerlyError("Conflict", `gc/pending.json CAS lost at ${key}: ${e.message}`, e);
   }
   if (e instanceof BaerlyError) return e;

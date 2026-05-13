@@ -58,29 +58,26 @@ describe("current.json on LocalFsStorage", () => {
     });
   });
 
-  test("stale-etag update surfaces as Conflict (not InvalidResponse)", async () => {
+  test("stale-etag update surfaces as Conflict", async () => {
     // True multi-writer races on LocalFsStorage have a TOCTOU window
     // even within a single process — two `casUpdateCurrentJson`
     // calls that read the same etag can both pass the ifMatch guard
     // because the content-addressed etag depends only on the body
     // written. Cross-process CAS is delegated to S3/R2 (see
     // `local-fs.ts` class JSDoc). What we DO verify here is that
-    // when the helper does observe a stale etag, the storage-level
-    // `InvalidResponse / PreconditionFailed` is translated to
-    // `Conflict` at this module's boundary.
+    // when the storage layer observes a stale etag, it surfaces
+    // `Conflict` directly — no string-sentinel translation needed.
     await createCurrentJson(storage, "k", seed);
     // Stage a stale read by snapshotting etag, then landing a
     // separate update that bumps it.
     const stale = await readCurrentJson(storage, "k");
     expect(stale).not.toBeNull();
     await casUpdateCurrentJson(storage, "k", (c) => ({ ...c, next_seq: c.next_seq + 1 }));
-    // A direct put with the stale etag must fail with the
-    // storage-level error shape we translate from.
     await expect(
       storage.put("k", new TextEncoder().encode(JSON.stringify({ ...seed, next_seq: 999 })), {
         ifMatch: stale!.etag,
         contentType: "application/json",
       }),
-    ).rejects.toMatchObject({ code: "InvalidResponse" });
+    ).rejects.toMatchObject({ code: "Conflict" });
   });
 });

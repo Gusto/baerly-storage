@@ -80,7 +80,7 @@ class InstrumentedStorage extends MemoryStorage {
       this.casAttempts += 1;
       if (this.failNextCasOnce) {
         this.failNextCasOnce = false;
-        throw new BaerlyError("InvalidResponse", `PreconditionFailed: simulated CAS 412 on ${key}`);
+        throw new BaerlyError("Conflict", `simulated CAS 412 on ${key}: precondition failed`);
       }
     }
     return super.put(key, body, opts);

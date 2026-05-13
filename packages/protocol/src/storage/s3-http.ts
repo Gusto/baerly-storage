@@ -20,15 +20,17 @@ import type {
  * Permanent {@link BaerlyError} codes that must short-circuit `retry`.
  * These represent caller- or environment-level faults where retrying
  * cannot succeed: `AccessDenied` (403 — credentials/policy),
- * `InvalidConfig` (bad bucket / unsupported credential type), and
- * `InvalidResponse` (server returned unparseable data).
- * `NetworkError` is intentionally absent — it covers transient
- * transport faults and stays retryable.
+ * `InvalidConfig` (bad bucket / unsupported credential type),
+ * `InvalidResponse` (server returned unparseable data), and
+ * `Conflict` (CAS guard lost — retrying would just re-lose against
+ * the same state). `NetworkError` is intentionally absent — it covers
+ * transient transport faults and stays retryable.
  */
 const PERMANENT_ERROR_CODES: ReadonlySet<string> = new Set([
   "AccessDenied",
   "InvalidConfig",
   "InvalidResponse",
+  "Conflict",
 ]);
 
 const retry = async <T>(
@@ -181,7 +183,17 @@ export class S3HttpStorage implements Storage {
         }),
       );
       if (res.status === 412) {
-        throw new BaerlyError("InvalidResponse", `PreconditionFailed: PUT ${key}`);
+        throw new BaerlyError("Conflict", `PUT ${key}: precondition failed`);
+      }
+      // S3-compatible servers diverge on `If-Match` against a missing
+      // key: AWS S3 returns 412, Minio returns 404 (NoSuchKey). Map
+      // 404-with-ifMatch to the same `Conflict` semantic so consumers
+      // don't have to special-case the wire reply.
+      if (res.status === 404 && opts?.ifMatch !== undefined) {
+        throw new BaerlyError(
+          "Conflict",
+          `PUT ${key}: precondition failed (ifMatch=${opts.ifMatch} but key does not exist)`,
+        );
       }
       if (res.status === 403) {
         throw new BaerlyError("AccessDenied", `PUT ${key}: 403`);

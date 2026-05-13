@@ -399,11 +399,11 @@ class InstrumentedStorage extends MemoryStorage {
     if (key === this.watchedKey && opts?.ifMatch !== undefined) {
       this.casAttempts += 1;
       if (this.failEveryCas) {
-        throw new BaerlyError("InvalidResponse", `PreconditionFailed: simulated CAS 412 on ${key}`);
+        throw new BaerlyError("Conflict", `simulated CAS 412 on ${key}: precondition failed`);
       }
       if (this.failNextNCas > 0) {
         this.failNextNCas -= 1;
-        throw new BaerlyError("InvalidResponse", `PreconditionFailed: simulated CAS 412 on ${key}`);
+        throw new BaerlyError("Conflict", `simulated CAS 412 on ${key}: precondition failed`);
       }
     }
     return super.put(key, body, opts);
