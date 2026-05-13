@@ -25,7 +25,7 @@ import {
   createCurrentJson,
   MemoryStorage,
 } from "@baerly/protocol";
-import { describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { Db } from "../db";
 import { listEventsSince, longPollSince } from "./since";
 
@@ -72,36 +72,51 @@ describe("longPollSince — cursor validation", () => {
   });
 });
 
-describe("longPollSince — empty cursor + no current.json yet", () => {
-  test("returns { events: [], next_cursor: '' } within the timeout", async () => {
+// The next four describe blocks drive `longPollSince`'s polling loop
+// under `vi.useFakeTimers()`. Every wall-clock elapsed assertion was
+// load-sensitive — on a busy CI runner the actual elapsed time can
+// drift past the bound even when the production code behaves
+// correctly. Fake timers replace `setTimeout` / `Date.now` (the only
+// timing primitives `longPollSince` reaches for); storage reads still
+// go through real microtasks, so `await storage.put(...)` keeps
+// working. We advance time explicitly with
+// `vi.advanceTimersByTimeAsync` instead of asserting on `Date.now()`.
+describe("longPollSince — fake-timer cases", () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  test("empty cursor + no current.json: resolves with empty events at deadline", async () => {
     const { db } = makeDb();
-    // No provision() — current.json doesn't exist.
-    const start = Date.now();
-    const result = await longPollSince({
+    const promise = longPollSince({
       db,
       table: TABLE,
       cursor: "",
       timeoutMs: 100,
       pollIntervalMs: 25,
     });
-    const elapsed = Date.now() - start;
+    // Drive the poll loop past its deadline. `runAllTimersAsync` keeps
+    // firing scheduled timers until the queue empties, so the loop
+    // either resolves with new events or hits its own deadline check.
+    await vi.runAllTimersAsync();
+    const result = await promise;
     expect(result.events).toEqual([]);
     expect(result.next_cursor).toBe("");
-    // Polls until timeout; we don't constrain a lower bound here
-    // because the readCurrentJson() returns null instantly on every
-    // tick, so the loop exits at the deadline.
-    expect(elapsed).toBeLessThan(500);
   });
-});
 
-describe("longPollSince — fast path", () => {
-  test("two pre-existing entries return immediately", async () => {
+  test("fast path: two pre-existing entries return without polling", async () => {
     const { db, storage } = makeDb();
     await provision(storage);
     await db.table(TABLE).insert({ title: "a" });
     await db.table(TABLE).insert({ title: "b" });
 
-    const start = Date.now();
+    // Fast-path is checked synchronously before any setTimeout
+    // scheduling. No `advanceTimersByTime` needed; if the test ever
+    // depends on a tick, the unawaited timer would leak and surface
+    // in the afterEach `useRealTimers` cleanup.
     const result = await longPollSince({
       db,
       table: TABLE,
@@ -109,60 +124,44 @@ describe("longPollSince — fast path", () => {
       timeoutMs: 5_000,
       pollIntervalMs: 50,
     });
-    const elapsed = Date.now() - start;
 
     expect(result.events).toHaveLength(2);
     expect(result.next_cursor).toBe(result.events[result.events.length - 1]!.lsn);
-    expect(elapsed).toBeLessThan(500);
   });
-});
 
-describe("longPollSince — blocks then unblocks mid-poll", () => {
-  test("scheduled insert lands inside the poll window", async () => {
+  test("blocks then unblocks: insert lands on the next poll tick", async () => {
     const { db, storage } = makeDb();
     await provision(storage);
 
-    const start = Date.now();
-    // Fire an insert after a short delay. The long-poll's tick
-    // (every 50 ms) should pick it up.
-    const insertAt = 200;
-    const insertPromise = new Promise<void>((resolve) => {
-      setTimeout(() => {
-        void db
-          .table(TABLE)
-          .insert({ title: "inserted-mid-poll" })
-          .then(() => resolve());
-      }, insertAt);
-    });
-
-    const result = await longPollSince({
+    const pollPromise = longPollSince({
       db,
       table: TABLE,
       cursor: "",
       timeoutMs: 2_000,
       pollIntervalMs: 50,
     });
-    await insertPromise;
-    const elapsed = Date.now() - start;
 
+    // Advance past two empty ticks so the production loop has clearly
+    // entered its waiting state.
+    await vi.advanceTimersByTimeAsync(100);
+    // Inject the event. The insert is real I/O against MemoryStorage
+    // (no fake-timed delays inside it).
+    await db.table(TABLE).insert({ title: "inserted-mid-poll" });
+    // Let the next tick observe the new event.
+    await vi.advanceTimersByTimeAsync(100);
+
+    const result = await pollPromise;
     expect(result.events).toHaveLength(1);
     expect(result.events[0]!.op).toBe("I");
     expect(result.next_cursor).toBe(result.events[0]!.lsn);
-    // The insert fired at ~200 ms; the next tick after that lands
-    // by ~250 ms with margin. Upper bound is well under the 2 s
-    // timeout to prove the loop actually unblocked.
-    expect(elapsed).toBeGreaterThanOrEqual(150);
-    expect(elapsed).toBeLessThan(1_500);
   });
-});
 
-describe("longPollSince — idle timeout", () => {
-  test("returns empty events + same cursor after the budget", async () => {
+  test("idle timeout: returns empty events + same cursor at deadline", async () => {
     const { db, storage } = makeDb();
     await provision(storage);
     await db.table(TABLE).insert({ title: "seed" });
 
-    // First poll catches up to the seed entry.
+    // First poll: fast path catches the seed entry.
     const first = await longPollSince({
       db,
       table: TABLE,
@@ -173,33 +172,28 @@ describe("longPollSince — idle timeout", () => {
     expect(first.events).toHaveLength(1);
     const cursor = first.next_cursor;
 
-    const start = Date.now();
-    const second = await longPollSince({
+    const secondPromise = longPollSince({
       db,
       table: TABLE,
       cursor,
       timeoutMs: 300,
       pollIntervalMs: 25,
     });
-    const elapsed = Date.now() - start;
+    // Drive the loop to (and past) its deadline. No new entries → it
+    // resolves with `events: [], next_cursor: cursor`.
+    await vi.runAllTimersAsync();
+    const second = await secondPromise;
 
     expect(second.events).toEqual([]);
     expect(second.next_cursor).toBe(cursor);
-    expect(elapsed).toBeGreaterThanOrEqual(250);
-    expect(elapsed).toBeLessThan(1_000);
   });
-});
 
-describe("longPollSince — AbortSignal aborts promptly", () => {
-  test("controller.abort() at t=100 ms resolves before the timeout", async () => {
+  test("AbortSignal: controller.abort() resolves the poll with empty events", async () => {
     const { db, storage } = makeDb();
     await provision(storage);
 
     const controller = new AbortController();
-    setTimeout(() => controller.abort(), 100);
-
-    const start = Date.now();
-    const result = await longPollSince({
+    const pollPromise = longPollSince({
       db,
       table: TABLE,
       cursor: "",
@@ -207,10 +201,16 @@ describe("longPollSince — AbortSignal aborts promptly", () => {
       pollIntervalMs: 50,
       signal: controller.signal,
     });
-    const elapsed = Date.now() - start;
 
+    // Drive a couple of empty ticks so the loop is parked on a
+    // setTimeout, then abort.
+    await vi.advanceTimersByTimeAsync(100);
+    controller.abort();
+    // Flush microtasks so the abort listener resolves the promise.
+    await vi.advanceTimersByTimeAsync(0);
+
+    const result = await pollPromise;
     expect(result.events).toEqual([]);
-    expect(elapsed).toBeLessThan(500);
   });
 });
 
