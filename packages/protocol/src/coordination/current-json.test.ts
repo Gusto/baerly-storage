@@ -9,8 +9,8 @@ import {
   logSeqStartOf,
   MemoryStorage,
   readCurrentJson,
-} from "../index";
-import type { Storage, StoragePutOptions, StoragePutResult } from "../storage/types";
+} from "../index.ts";
+import type { Storage, StoragePutOptions, StoragePutResult } from "../storage/types.ts";
 
 const seedJson = (overrides: Partial<CurrentJson> = {}): CurrentJson => ({
   schema_version: CURRENT_JSON_SCHEMA_VERSION,

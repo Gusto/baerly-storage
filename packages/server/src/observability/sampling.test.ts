@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { decideSample } from "./sampling";
+import { decideSample } from "./sampling.ts";
 
 describe("decideSample", () => {
   it("rate >= 1.0 always samples", () => {

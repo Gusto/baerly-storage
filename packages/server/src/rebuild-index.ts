@@ -43,9 +43,9 @@ import {
   type Storage,
   teeMetricsRecorders,
 } from "@baerly/protocol";
-import { loadSnapshotAsMap } from "./compactor";
-import { allIndexKeysFor, type IndexDefinition, indexKeyPrefix } from "./indexes";
-import { withObservability } from "./observability";
+import { loadSnapshotAsMap } from "./compactor.ts";
+import { allIndexKeysFor, type IndexDefinition, indexKeyPrefix } from "./indexes.ts";
+import { withObservability } from "./observability/index.ts";
 
 const EMPTY_BODY = new Uint8Array(0);
 const APPLICATION_JSON = "application/json";

@@ -20,8 +20,8 @@
 
 import { describe, test } from "vitest";
 import { uuid, type Storage } from "@baerly/protocol";
-import { runCausalConsistencyCascade } from "../../../tests/fixtures/randomized-cascade";
-import { r2BindingStorage } from "./r2-binding-storage";
+import { runCausalConsistencyCascade } from "../../../tests/fixtures/randomized-cascade.ts";
+import { r2BindingStorage } from "./r2-binding-storage.ts";
 
 const getBinding = (): R2Bucket => {
   const bucket = (globalThis as { __BAERLY_R2_BINDING__?: R2Bucket }).__BAERLY_R2_BINDING__;

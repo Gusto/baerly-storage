@@ -27,7 +27,7 @@
 import type { Verifier } from "@baerly/protocol";
 import { baerlyWorker, type Env } from "@baerly/adapter-cloudflare";
 
-import { CONFORMANCE_BEARER, CONFORMANCE_TENANT } from "../fixtures/test-verifier";
+import { CONFORMANCE_BEARER, CONFORMANCE_TENANT } from "../fixtures/test-verifier.ts";
 
 // Reproduce `testVerifier()` inline so the worker module has no
 // dependency on a fixture file living above the package root.

@@ -51,8 +51,8 @@ import {
   type JSONArraylessObject,
   MemoryStorage,
 } from "@baerly/protocol";
-import { allIndexKeysFor, type IndexDefinition } from "./indexes";
-import { ServerWriter } from "./server-writer";
+import { allIndexKeysFor, type IndexDefinition } from "./indexes.ts";
+import { ServerWriter } from "./server-writer.ts";
 
 // `assignee` is intentionally absent from the declared shape — the
 // "missing field" case is one of the load-bearing arms of the

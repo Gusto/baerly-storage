@@ -24,7 +24,7 @@ import {
 } from "@baerly/protocol";
 import { LocalFsStorage } from "@baerly/dev";
 import { Db, ServerWriter } from "@baerly/server";
-import { runCopy } from "./copy";
+import { runCopy } from "./copy.ts";
 
 interface Doc extends JSONArraylessObject {
   _id: string;

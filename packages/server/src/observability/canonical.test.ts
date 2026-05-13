@@ -1,10 +1,10 @@
 import { BaerlyError } from "@baerly/protocol";
 import { reset, type LogRecord, type Sink } from "@logtape/logtape";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { flushCanonicalLine, withObservability } from "./canonical";
-import { createObservabilityContext, type ObservabilityContext } from "./context";
-import { configureObservability } from "./logger";
-import { RequestScopedMetricsRecorder } from "./recorder";
+import { flushCanonicalLine, withObservability } from "./canonical.ts";
+import { createObservabilityContext, type ObservabilityContext } from "./context.ts";
+import { configureObservability } from "./logger.ts";
+import { RequestScopedMetricsRecorder } from "./recorder.ts";
 
 const collectingSink = (): { records: LogRecord[]; sink: Sink } => {
   const records: LogRecord[] = [];

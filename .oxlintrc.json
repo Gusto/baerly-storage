@@ -1,14 +1,6 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": [
-    "typescript",
-    "unicorn",
-    "import",
-    "promise",
-    "vitest",
-    "node",
-    "oxc"
-  ],
+  "plugins": ["typescript", "unicorn", "import", "promise", "vitest", "node", "oxc"],
   "categories": {
     "correctness": "deny",
     "suspicious": "deny",
@@ -16,7 +8,8 @@
   },
   "rules": {
     "eslint/no-await-in-loop": "off",
-    "promise/always-return": "off"
+    "promise/always-return": "off",
+    "import/extensions": ["error", "always", { "ignorePackages": true }]
   },
   "overrides": [
     {

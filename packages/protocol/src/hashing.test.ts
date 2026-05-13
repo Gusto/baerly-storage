@@ -1,7 +1,7 @@
 import { fc, test } from "@fast-check/vitest";
 import { describe, expect } from "vitest";
 
-import { fromB64, toB64, or, inside, versionFromContent } from "./hashing";
+import { fromB64, toB64, or, inside, versionFromContent } from "./hashing.ts";
 
 describe("b64/uint", () => {
   test("round trip", () => {

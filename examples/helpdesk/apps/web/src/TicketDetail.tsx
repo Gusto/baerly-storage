@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import { client } from "./client";
-import type { Ticket } from "./tickets";
+import { client } from "./client.ts";
+import type { Ticket } from "./tickets.ts";
 
 interface Props {
   id: string;

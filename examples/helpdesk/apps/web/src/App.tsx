@@ -1,7 +1,7 @@
 import { useState } from "react";
-import { TicketList } from "./TicketList";
-import { TicketDetail } from "./TicketDetail";
-import { TicketForm } from "./TicketForm";
+import { TicketList } from "./TicketList.tsx";
+import { TicketDetail } from "./TicketDetail.tsx";
+import { TicketForm } from "./TicketForm.tsx";
 
 type View = { kind: "list" } | { kind: "detail"; id: string } | { kind: "edit"; id: string | null }; // null = new
 

@@ -11,7 +11,7 @@ import {
   type StoragePutResult,
 } from "@baerly/protocol";
 import { beforeEach, describe, expect, test } from "vitest";
-import { ServerWriter } from "./server-writer";
+import { ServerWriter } from "./server-writer.ts";
 
 const BUCKET = "server-writer-test-bucket";
 const COLL = "tickets";
@@ -527,7 +527,7 @@ describe("ServerWriter — writer fence", () => {
 
   test("claimWriter is re-exported from @baerly/server", async () => {
     // Pure module-level smoke: the re-export resolves at runtime.
-    const mod = await import("./index");
+    const mod = await import("./index.ts");
     expect(typeof (mod as { claimWriter?: unknown }).claimWriter).toBe("function");
   });
 });

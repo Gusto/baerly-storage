@@ -15,7 +15,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { cacheKeyFor, invalidateOnWrite, withReadCache } from "./cache";
+import { cacheKeyFor, invalidateOnWrite, withReadCache } from "./cache.ts";
 
 const json200 = (body: unknown, etag: string): Response =>
   new Response(JSON.stringify(body), {

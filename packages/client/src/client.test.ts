@@ -3,10 +3,10 @@
 
 import type { Table } from "@baerly/protocol";
 import { describe, expect, test } from "vitest";
-import { createBaerlyClient } from "./client";
-import type { ClientTable } from "./client";
-import type { HttpOkEnvelope, SinceResponse } from "./contract";
-import { MockFetch } from "./testing";
+import { createBaerlyClient } from "./client.ts";
+import type { ClientTable } from "./client.ts";
+import type { HttpOkEnvelope, SinceResponse } from "./contract.ts";
+import { MockFetch } from "./testing/index.ts";
 
 const okEnvelope = <T>(data: T): HttpOkEnvelope<T> => ({
   data,

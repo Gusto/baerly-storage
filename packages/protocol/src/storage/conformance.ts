@@ -1,7 +1,7 @@
 import { fc, test as fcTest } from "@fast-check/vitest";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { BaerlyError } from "../errors";
-import type { Storage } from "./types";
+import { BaerlyError } from "../errors.ts";
+import type { Storage } from "./types.ts";
 
 /**
  * Capability flags + arbitrary overrides for the conformance suite.

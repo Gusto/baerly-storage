@@ -4,8 +4,8 @@ import {
   getCurrentContext,
   runWithContext,
   type ObservabilityContext,
-} from "./context";
-import { RequestScopedMetricsRecorder } from "./recorder";
+} from "./context.ts";
+import { RequestScopedMetricsRecorder } from "./recorder.ts";
 
 describe("createObservabilityContext", () => {
   it("assigns a fresh request_id when none is supplied", () => {

@@ -1,6 +1,6 @@
 import type { BaerlyErrorCode } from "@baerly/protocol";
-import { BaerlyClientError } from "./errors";
-import type { HttpErrorEnvelope, HttpOkEnvelope } from "./contract";
+import { BaerlyClientError } from "./errors.ts";
+import type { HttpErrorEnvelope, HttpOkEnvelope } from "./contract.ts";
 
 /**
  * Pluggable fetch implementation. Defaults to `globalThis.fetch`;

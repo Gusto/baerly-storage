@@ -29,16 +29,16 @@
  * - otherwise → `info`
  */
 
-import { CATEGORY, getEffectiveSampleRate, getLogger, type CategoryName } from "./logger";
+import { CATEGORY, getEffectiveSampleRate, getLogger, type CategoryName } from "./logger.ts";
 import {
   createObservabilityContext,
   getCurrentContext,
   runWithContext,
   type ObservabilityContext,
-} from "./context";
-import { RequestScopedMetricsRecorder } from "./recorder";
-import { serializeError } from "./redact";
-import { decideSample } from "./sampling";
+} from "./context.ts";
+import { RequestScopedMetricsRecorder } from "./recorder.ts";
+import { serializeError } from "./redact.ts";
+import { decideSample } from "./sampling.ts";
 
 /** Discriminator for the canonical line's `category` derivation. */
 export type Unit = "http" | "writer" | "maintenance" | "compactor" | "gc" | "rebuild";

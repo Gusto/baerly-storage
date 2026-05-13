@@ -32,7 +32,11 @@ import {
   uuid,
 } from "@baerly/protocol";
 import { Db, ServerWriter } from "@baerly/server";
-import { CentralisedOfflineFirstCausalSystem, type Grounding, type Knowledge } from "./consistency";
+import {
+  CentralisedOfflineFirstCausalSystem,
+  type Grounding,
+  type Knowledge,
+} from "./consistency.ts";
 
 /**
  * Causal-consistency check without `eval()`. Workerd disallows code

@@ -36,7 +36,7 @@ import type {
   StoragePutOptions,
   StoragePutResult,
 } from "@baerly/protocol";
-import { CATEGORY, getLogger } from "./logger";
+import { CATEGORY, getLogger } from "./logger.ts";
 
 type Op = "get" | "put" | "delete" | "list";
 

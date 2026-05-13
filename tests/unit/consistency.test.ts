@@ -5,7 +5,7 @@ import {
   check,
   toJS,
   union,
-} from "../fixtures/consistency";
+} from "../fixtures/consistency.ts";
 describe("check", () => {
   test("check (true)", () => {
     const result = check(

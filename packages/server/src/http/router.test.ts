@@ -1,9 +1,9 @@
 import { BaerlyError, MemoryStorage } from "@baerly/protocol";
 import { reset, type LogRecord, type Sink } from "@logtape/logtape";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { Db } from "../db";
-import { configureObservability } from "../observability";
-import { createRouter, mapError } from "./router";
+import { Db } from "../db.ts";
+import { configureObservability } from "../observability/index.ts";
+import { createRouter, mapError } from "./router.ts";
 
 const collectingSink = (): { records: LogRecord[]; sink: Sink } => {
   const records: LogRecord[] = [];

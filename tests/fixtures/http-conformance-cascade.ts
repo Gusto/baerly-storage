@@ -30,7 +30,7 @@
 import { fc, test as fcTest } from "@fast-check/vitest";
 import { describe, expect, test } from "vitest";
 import type { JSONArraylessObject } from "@baerly/protocol";
-import { CONFORMANCE_BEARER, CONFORMANCE_TENANT } from "./test-verifier";
+import { CONFORMANCE_BEARER, CONFORMANCE_TENANT } from "./test-verifier.ts";
 
 /**
  * Capability flags + arbitrary overrides for the HTTP conformance

@@ -21,9 +21,9 @@ import {
   type Storage,
   teeMetricsRecorders,
 } from "@baerly/protocol";
-import { compact, type CompactOptions, type CompactResult } from "./compactor";
-import { runGc, type RunGcOptions, type RunGcResult } from "./gc";
-import { withObservability } from "./observability";
+import { compact, type CompactOptions, type CompactResult } from "./compactor.ts";
+import { runGc, type RunGcOptions, type RunGcResult } from "./gc.ts";
+import { withObservability } from "./observability/index.ts";
 
 export interface MaintenanceArgs {
   readonly storage: Storage;

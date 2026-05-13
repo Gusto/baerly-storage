@@ -40,9 +40,9 @@ import {
 } from "@baerly/protocol";
 import { LocalFsStorage } from "@baerly/dev";
 import { createListener } from "@baerly/adapter-node";
-import { createBucket } from "../fixtures/s3-fixtures";
-import { runHttpConformanceCascade, type HttpFetch } from "../fixtures/http-conformance-cascade";
-import { CONFORMANCE_TENANT, testVerifier } from "../fixtures/test-verifier";
+import { createBucket } from "../fixtures/s3-fixtures.ts";
+import { runHttpConformanceCascade, type HttpFetch } from "../fixtures/http-conformance-cascade.ts";
+import { CONFORMANCE_TENANT, testVerifier } from "../fixtures/test-verifier.ts";
 
 const APP = "http-conf";
 

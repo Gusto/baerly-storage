@@ -38,8 +38,8 @@
 import { BaerlyError } from "@baerly/protocol";
 import type { LogEntry, Storage, StorageGetOptions, StorageGetResult } from "@baerly/protocol";
 import { LOG_KEY_PREFIX, readCurrentJson, logSeqStartOf } from "@baerly/protocol";
-import type { Db } from "../db";
-import type { SinceResponse } from "../contract";
+import type { Db } from "../db.ts";
+import type { SinceResponse } from "../contract.ts";
 
 /**
  * Validation regex for an opaque LSN cursor. Matches the shape minted

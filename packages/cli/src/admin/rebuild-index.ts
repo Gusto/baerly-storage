@@ -41,8 +41,8 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { defineCommand, parseArgs, type ArgsDef, type ParsedArgs } from "citty";
 import { BaerlyError } from "@baerly/protocol";
 import { type IndexDefinition, rebuildIndex, type BaerlyConfig } from "@baerly/server";
-import { parseBucketUri } from "../copy";
-import { emitError, emitSuccess, setJsonMode } from "../output";
+import { parseBucketUri } from "../copy.ts";
+import { emitError, emitSuccess, setJsonMode } from "../output.ts";
 
 /** citty arg shape. Kebab-case so --help and parsed-object keys line up. */
 const REBUILD_INDEX_ARGS = {

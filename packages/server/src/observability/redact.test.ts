@@ -1,6 +1,6 @@
 import { BaerlyError } from "@baerly/protocol";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { serializeError } from "./redact";
+import { serializeError } from "./redact.ts";
 
 describe("serializeError", () => {
   describe("BaerlyError", () => {

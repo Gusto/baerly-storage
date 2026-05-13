@@ -18,9 +18,9 @@
  * @see packages/server/src/gc.ts
  */
 
-import { GC_PENDING_CONTENT_TYPE, GC_PENDING_SCHEMA_VERSION } from "../constants";
-import { BaerlyError } from "../errors";
-import type { Storage, StoragePutOptions, StoragePutResult } from "../storage/types";
+import { GC_PENDING_CONTENT_TYPE, GC_PENDING_SCHEMA_VERSION } from "../constants.ts";
+import { BaerlyError } from "../errors.ts";
+import type { Storage, StoragePutOptions, StoragePutResult } from "../storage/types.ts";
 
 /**
  * On-bucket body of `gc/pending.json`. Bounded by

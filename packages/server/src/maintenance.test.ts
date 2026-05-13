@@ -16,9 +16,9 @@ import {
   CLOUDFLARE_PAID_TIER,
   NODE_PROFILE,
   runScheduledMaintenance,
-} from "./maintenance";
-import { configureObservability } from "./observability";
-import { ServerWriter } from "./server-writer";
+} from "./maintenance.ts";
+import { configureObservability } from "./observability/index.ts";
+import { ServerWriter } from "./server-writer.ts";
 
 const KEY = "app/t/tenant/x/manifests/c/current.json";
 const COLL = "c";

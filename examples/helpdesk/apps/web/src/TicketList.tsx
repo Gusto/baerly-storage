@@ -3,8 +3,8 @@
    `packages/protocol/src/db.ts`). */
 import { useEffect, useState } from "react";
 import { useChanges } from "@baerly/client/react";
-import { client } from "./client";
-import type { Ticket } from "./tickets";
+import { client } from "./client.ts";
+import type { Ticket } from "./tickets.ts";
 
 export const TicketList = ({ onOpen }: { onOpen: (id: string) => void }): React.JSX.Element => {
   const [rows, setRows] = useState<readonly Ticket[]>([]);

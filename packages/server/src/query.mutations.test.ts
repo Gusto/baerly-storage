@@ -35,7 +35,7 @@ import {
   type StoragePutResult,
 } from "@baerly/protocol";
 import { beforeEach, describe, expect, test } from "vitest";
-import { Db } from "./db";
+import { Db } from "./db.ts";
 
 const APP = "test";
 const TENANT = "t";

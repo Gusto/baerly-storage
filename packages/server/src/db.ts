@@ -14,9 +14,9 @@ import type {
   StoragePutResult,
   Table,
 } from "@baerly/protocol";
-import type { CurrentJsonCacheSlot, TableReadContext } from "./query";
-import { ServerWriter, type CommitInput } from "./server-writer";
-import { makeTable } from "./table";
+import type { CurrentJsonCacheSlot, TableReadContext } from "./query.ts";
+import { ServerWriter, type CommitInput } from "./server-writer.ts";
+import { makeTable } from "./table.ts";
 
 /**
  * In-memory buffer for a single in-flight {@link Db.transaction}

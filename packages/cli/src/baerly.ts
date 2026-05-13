@@ -13,11 +13,11 @@
  * subcommand in each module's docstring.
  */
 import { defineCommand, runMain } from "citty";
-import { rebuildIndexCmd } from "./admin/rebuild-index";
-import { copy } from "./copy";
-import { deploy } from "./deploy";
-import { doctor } from "./doctor";
-import { setJsonMode } from "./output";
+import { rebuildIndexCmd } from "./admin/rebuild-index.ts";
+import { copy } from "./copy.ts";
+import { deploy } from "./deploy.ts";
+import { doctor } from "./doctor.ts";
+import { setJsonMode } from "./output.ts";
 
 // citty has no global-flag concept, so sniff --json off process.argv
 // before runMain. This way a citty parse-time error (missing required

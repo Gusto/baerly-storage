@@ -11,8 +11,8 @@ import {
   observableStorage,
   runScheduledMaintenance,
 } from "@baerly/server";
-import { invalidateOnWrite, withReadCache } from "./cache";
-import { r2BindingStorage } from "./r2-binding-storage";
+import { invalidateOnWrite, withReadCache } from "./cache.ts";
+import { r2BindingStorage } from "./r2-binding-storage.ts";
 
 /**
  * Required Worker bindings. The caller wires these in

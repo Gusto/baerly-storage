@@ -1,5 +1,5 @@
 import { BaerlyError, type Verifier } from "@baerly/protocol";
-import { timingSafeEqual } from "../internal/timing-safe-equal";
+import { timingSafeEqual } from "../internal/timing-safe-equal.ts";
 
 /**
  * Options for {@link awsIamSigV4}.

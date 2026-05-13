@@ -20,7 +20,7 @@ import {
 import { ServerWriter } from "@baerly/server";
 import { reset, type LogRecord, type Sink } from "@logtape/logtape";
 import { afterEach, describe, expect, it } from "vitest";
-import { createListener, resolveDefaultSink, runMaintenanceTick } from "./server";
+import { createListener, resolveDefaultSink, runMaintenanceTick } from "./server.ts";
 
 describe("runMaintenanceTick", () => {
   it("runs both compact and gc against the supplied storage", async () => {

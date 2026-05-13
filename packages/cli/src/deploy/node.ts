@@ -29,7 +29,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { BaerlyError } from "@baerly/protocol";
 import pc from "picocolors";
-import type { AppConfig } from "../config";
+import type { AppConfig } from "../config.ts";
 
 /**
  * Files this command writes (relative to `repoRoot/apps/server/`).

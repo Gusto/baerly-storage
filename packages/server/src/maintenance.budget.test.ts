@@ -34,9 +34,9 @@ import {
   type StoragePutResult,
 } from "@baerly/protocol";
 import { describe, expect, it } from "vitest";
-import { compact } from "./compactor";
-import { CLOUDFLARE_FREE_TIER, runScheduledMaintenance } from "./maintenance";
-import { ServerWriter } from "./server-writer";
+import { compact } from "./compactor.ts";
+import { CLOUDFLARE_FREE_TIER, runScheduledMaintenance } from "./maintenance.ts";
+import { ServerWriter } from "./server-writer.ts";
 
 const FREE_TIER_BUDGET = 50;
 

@@ -22,8 +22,8 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import type { AppConfig } from "../config";
-import type { DoctorFinding, DoctorReport } from "./cloudflare";
+import type { AppConfig } from "../config.ts";
+import type { DoctorFinding, DoctorReport } from "./cloudflare.ts";
 
 const rollupStatus = (findings: readonly DoctorFinding[]): DoctorReport["status"] => {
   let worst: DoctorReport["status"] = "ok";

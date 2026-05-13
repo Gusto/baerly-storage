@@ -1,6 +1,6 @@
 import { fc, test } from "@fast-check/vitest";
 import { describe, expect } from "vitest";
-import { type JSONArrayless, diff, fold, merge } from "./json";
+import { type JSONArrayless, diff, fold, merge } from "./json.ts";
 
 const jsonArrayless = fc.letrec((tie) => ({
   doc: fc.oneof(

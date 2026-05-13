@@ -21,9 +21,9 @@ import {
   MemoryStorage,
   type Storage,
 } from "@baerly/protocol";
-import { allIndexKeysFor, type IndexDefinition } from "./indexes";
-import { rebuildIndex } from "./rebuild-index";
-import { ServerWriter } from "./server-writer";
+import { allIndexKeysFor, type IndexDefinition } from "./indexes.ts";
+import { rebuildIndex } from "./rebuild-index.ts";
+import { ServerWriter } from "./server-writer.ts";
 
 const CURRENT_JSON_KEY = "app/x/tenant/t/manifests/tickets/current.json";
 const LOG_PREFIX = "app/x/tenant/t/manifests/tickets";

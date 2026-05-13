@@ -8,8 +8,8 @@ export {
   encodeSnapshotBody,
   loadSnapshotAsMap,
   snapshotKey,
-} from "./compactor";
-export { type BaerlyConfig, type CollectionDefinition, defineConfig } from "./config";
+} from "./compactor.ts";
+export { type BaerlyConfig, type CollectionDefinition, defineConfig } from "./config.ts";
 export {
   type HttpErrorEnvelope,
   type HttpOkEnvelope,
@@ -18,16 +18,16 @@ export {
   type Routes,
   type SinceResponse,
   errorEnvelope,
-} from "./contract";
-export { type BufferedMutation, type RawStorageApi, type TxContext, Db } from "./db";
-export { type RunGcOptions, type RunGcResult, runGc } from "./gc";
-export { type CreateRouterOptions, MAX_BODY_BYTES, createRouter, mapError } from "./http/router";
+} from "./contract.ts";
+export { type BufferedMutation, type RawStorageApi, type TxContext, Db } from "./db.ts";
+export { type RunGcOptions, type RunGcResult, runGc } from "./gc.ts";
+export { type CreateRouterOptions, MAX_BODY_BYTES, createRouter, mapError } from "./http/router.ts";
 export {
   type ListEventsSinceOptions,
   type LongPollSinceOptions,
   listEventsSince,
   longPollSince,
-} from "./http/since";
+} from "./http/since.ts";
 export {
   type IndexDefinition,
   allIndexKeysFor,
@@ -36,8 +36,8 @@ export {
   indexKeyPrefix,
   projectIndexValues,
   validateIndexDefinition,
-} from "./indexes";
-export { type RebuildIndexResult, rebuildIndex } from "./rebuild-index";
+} from "./indexes.ts";
+export { type RebuildIndexResult, rebuildIndex } from "./rebuild-index.ts";
 export {
   type MaintenanceArgs,
   type MaintenanceOptions,
@@ -46,7 +46,7 @@ export {
   CLOUDFLARE_PAID_TIER,
   NODE_PROFILE,
   runScheduledMaintenance,
-} from "./maintenance";
+} from "./maintenance.ts";
 export {
   type CategoryName,
   type FlushCanonicalLineOptions,
@@ -74,7 +74,7 @@ export {
   runWithContext,
   serializeError,
   withObservability,
-} from "./observability";
+} from "./observability/index.ts";
 export {
   type CurrentJsonCacheSlot,
   type QueryState,
@@ -85,15 +85,15 @@ export {
   runFirstWithMeta,
   runInsert,
   serializeManifestPointer,
-} from "./query";
+} from "./query.ts";
 export {
   type CommitBatchResult,
   type CommitInput,
   type CommitResult,
   type ServerWriterOptions,
   ServerWriter,
-} from "./server-writer";
-export { makeTable } from "./table";
+} from "./server-writer.ts";
+export { makeTable } from "./table.ts";
 export {
   type AllowlistIpOptions,
   type AwsIamPrincipal,
@@ -110,7 +110,7 @@ export {
   bearerJwt,
   cloudflareAccess,
   sharedSecret,
-} from "./auth";
+} from "./auth/index.ts";
 
 /**
  * Re-export of {@link claimWriter} from `@baerly/protocol`. Bumping

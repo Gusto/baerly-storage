@@ -61,8 +61,8 @@ import {
   teeMetricsRecorders,
   versionFromContent,
 } from "@baerly/protocol";
-import { loadSnapshotAsMap } from "./compactor";
-import { withObservability } from "./observability";
+import { loadSnapshotAsMap } from "./compactor.ts";
+import { withObservability } from "./observability/index.ts";
 
 /**
  * Tunables for {@link runGc}. All optional; defaults are tuned for

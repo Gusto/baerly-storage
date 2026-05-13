@@ -42,7 +42,7 @@ import {
   createCurrentJson,
   type Storage,
 } from "@baerly/protocol";
-import { runHttpConformanceCascade, type HttpFetch } from "../fixtures/http-conformance-cascade";
+import { runHttpConformanceCascade, type HttpFetch } from "../fixtures/http-conformance-cascade.ts";
 
 const NODE_URL = process.env.NODE_DEPLOY_URL;
 const SECRET = process.env.SHARED_SECRET;

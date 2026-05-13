@@ -1,1 +1,1 @@
-export * from "./local-fs";
+export * from "./local-fs.ts";

@@ -1,7 +1,7 @@
 import { DOMParser } from "@xmldom/xmldom";
 import { describe, expect, test, vi } from "vitest";
-import { BaerlyError } from "../errors";
-import { S3HttpStorage } from "./s3-http";
+import { BaerlyError } from "../errors.ts";
+import { S3HttpStorage } from "./s3-http.ts";
 
 const xmlParser = new DOMParser();
 

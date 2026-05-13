@@ -1,6 +1,6 @@
 import { BaerlyError } from "@baerly/protocol";
 import { beforeAll, describe, expect, test, vi } from "vitest";
-import { bearerJwt, type JwksDocument } from "./bearer-jwt";
+import { bearerJwt, type JwksDocument } from "./bearer-jwt.ts";
 
 const base64UrlEncode = (bytes: Uint8Array): string => {
   let bin = "";

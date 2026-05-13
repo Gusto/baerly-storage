@@ -1,3 +1,3 @@
-export { createBaerlyClient } from "./client";
-export type { BaerlyClient, BaerlyClientOptions, ClientQuery, ClientTable } from "./client";
-export { BaerlyClientError } from "./errors";
+export { createBaerlyClient } from "./client.ts";
+export type { BaerlyClient, BaerlyClientOptions, ClientQuery, ClientTable } from "./client.ts";
+export { BaerlyClientError } from "./errors.ts";

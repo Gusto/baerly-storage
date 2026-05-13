@@ -27,7 +27,7 @@ import { describe } from "vitest";
 import { S3HttpStorage } from "@baerly/adapter-node";
 import { defineStorageConformanceSuite } from "@baerly/protocol/conformance";
 
-import { createBucket } from "../fixtures/s3-fixtures";
+import { createBucket } from "../fixtures/s3-fixtures.ts";
 
 // Minio's REST gateway rejects request paths whose resource component
 // is `.` or `..` (it validates URL paths as POSIX paths on the backing

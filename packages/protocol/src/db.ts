@@ -1,10 +1,10 @@
 /* eslint-disable no-unused-vars -- `S` on `Db<S>` is reserved for the Phase 9
    schema registry; it parametrises only the public type, not any member yet. */
 
-import type { JSONArrayless, JSONArraylessObject } from "./json";
-import type { LogEntry } from "./log";
-import type { Storage } from "./storage";
-import type { ResolvedRef } from "./types";
+import type { JSONArrayless, JSONArraylessObject } from "./json.ts";
+import type { LogEntry } from "./log.ts";
+import type { Storage } from "./storage/index.ts";
+import type { ResolvedRef } from "./types.ts";
 
 /**
  * Schema map — `{ [tableName]: documentShape }`. Phase 2 default

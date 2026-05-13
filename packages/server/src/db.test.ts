@@ -10,7 +10,7 @@ import {
   type Storage,
 } from "@baerly/protocol";
 import { describe, expect, test } from "vitest";
-import { Db } from "./db";
+import { Db } from "./db.ts";
 
 const utf8 = (s: string): Uint8Array => new TextEncoder().encode(s);
 const fromBytes = (b: Uint8Array): string => new TextDecoder().decode(b);

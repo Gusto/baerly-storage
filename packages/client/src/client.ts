@@ -4,9 +4,9 @@
    so the typed client stays structurally compatible. */
 
 import type { ConsistencyLevel, JSONArraylessObject, OrderSpec, Predicate } from "@baerly/protocol";
-import type { SinceResponse } from "./contract";
-import { BaerlyClientError } from "./errors";
-import { type Fetcher, type RequestContext, request } from "./request";
+import type { SinceResponse } from "./contract.ts";
+import { BaerlyClientError } from "./errors.ts";
+import { type Fetcher, type RequestContext, request } from "./request.ts";
 
 /**
  * Public options for {@link createBaerlyClient}.

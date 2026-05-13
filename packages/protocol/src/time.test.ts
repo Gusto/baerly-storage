@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { dateToSecs, delay } from "./time";
+import { dateToSecs, delay } from "./time.ts";
 
 describe("dateToSecs", () => {
   test("Mon, 3 Oct 2016 22:32:00 GMT", () => {

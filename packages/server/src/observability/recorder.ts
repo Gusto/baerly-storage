@@ -16,7 +16,7 @@
  */
 
 import type { MetricsRecorder } from "@baerly/protocol";
-import { getCurrentContext } from "./context";
+import { getCurrentContext } from "./context.ts";
 
 /** One observation row, kept in insertion order. */
 export interface ObservationRow {

@@ -1,4 +1,4 @@
-import type { Branded, ContentVersionId } from "./types";
+import type { Branded, ContentVersionId } from "./types.ts";
 
 export type b64 = Branded<string, "b64">;
 

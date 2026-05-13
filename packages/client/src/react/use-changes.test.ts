@@ -2,9 +2,9 @@
 
 import { renderHook, waitFor } from "@testing-library/react";
 import { describe, expect, test } from "vitest";
-import { createBaerlyClient } from "../client";
-import { MockFetch } from "../testing";
-import { useChanges } from "./index";
+import { createBaerlyClient } from "../client.ts";
+import { MockFetch } from "../testing/index.ts";
+import { useChanges } from "./index.ts";
 
 const jsonResponse = (body: unknown, status = 200): Response =>
   new Response(JSON.stringify(body), {

@@ -3,13 +3,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BaerlyError } from "@baerly/protocol";
-import type { AppConfig } from "../config";
+import type { AppConfig } from "../config.ts";
 import {
   deployCloudflare,
   ensureBindings,
   parseR2Bindings,
   type ProcessRunner,
-} from "./cloudflare";
+} from "./cloudflare.ts";
 
 const WRANGLER_JSONC = `{
   // Production manifest comment.

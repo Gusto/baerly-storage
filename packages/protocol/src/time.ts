@@ -1,5 +1,5 @@
-import { TIMESTAMP_BIT_WIDTH } from "./constants";
-import { uint2strDesc } from "./types";
+import { TIMESTAMP_BIT_WIDTH } from "./constants.ts";
+import { uint2strDesc } from "./types.ts";
 
 /**
  * Minimal subset of the host config that {@link adjustClock} needs.

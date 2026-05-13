@@ -25,14 +25,14 @@ import {
   type Predicate,
   type Verifier,
 } from "@baerly/protocol";
-import type { Db } from "../db";
+import type { Db } from "../db.ts";
 import {
   errorEnvelope,
   type HttpErrorEnvelope,
   type HttpOkEnvelope,
   type HttpStatus,
   type SinceResponse,
-} from "../contract";
+} from "../contract.ts";
 import {
   CATEGORY,
   createObservabilityContext,
@@ -42,9 +42,9 @@ import {
   getLogger,
   runWithContext,
   serializeError,
-} from "../observability";
-import { runAllWithMeta, runFirstWithMeta } from "../query";
-import { longPollSince } from "./since";
+} from "../observability/index.ts";
+import { runAllWithMeta, runFirstWithMeta } from "../query.ts";
+import { longPollSince } from "./since.ts";
 
 /**
  * Options for {@link createRouter}.

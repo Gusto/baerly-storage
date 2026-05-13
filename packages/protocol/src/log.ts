@@ -1,6 +1,6 @@
-import { BaerlyError } from "./errors";
-import type { JSONArraylessObject, JSONValue } from "./json";
-import { str2uintDesc } from "./types";
+import { BaerlyError } from "./errors.ts";
+import type { JSONArraylessObject, JSONValue } from "./json.ts";
+import { str2uintDesc } from "./types.ts";
 
 /**
  * Postgres-logical-replication-shaped log entry. One per mutation.

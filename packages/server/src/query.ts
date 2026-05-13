@@ -53,10 +53,10 @@ import {
   type Storage,
   uuidv7,
 } from "@baerly/protocol";
-import { loadSnapshotAsMap } from "./compactor";
-import type { TxContext } from "./db";
-import { encodeIndexValue } from "./indexes";
-import { ServerWriter } from "./server-writer";
+import { loadSnapshotAsMap } from "./compactor.ts";
+import type { TxContext } from "./db.ts";
+import { encodeIndexValue } from "./indexes.ts";
+import { ServerWriter } from "./server-writer.ts";
 
 /**
  * What a `Query<T>` needs to issue a read against the bucket. The

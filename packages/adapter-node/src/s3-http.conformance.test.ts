@@ -4,7 +4,7 @@ import { fc } from "@fast-check/vitest";
 import { beforeAll, describe } from "vitest";
 import { defineStorageConformanceSuite } from "@baerly/protocol/conformance";
 import { S3HttpStorage } from "@baerly/protocol";
-import { createBucket } from "../../../tests/fixtures/s3-fixtures";
+import { createBucket } from "../../../tests/fixtures/s3-fixtures.ts";
 
 // Same Minio that `pnpm dev:storage` provisions. Endpoint and creds
 // are pinned across the existing Minio-touching tests

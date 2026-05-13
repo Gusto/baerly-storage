@@ -2,9 +2,9 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { AppConfig } from "../config";
-import type { ProcessRunner } from "../deploy/cloudflare";
-import { doctorCloudflare, type DoctorFinding } from "./cloudflare";
+import type { AppConfig } from "../config.ts";
+import type { ProcessRunner } from "../deploy/cloudflare.ts";
+import { doctorCloudflare, type DoctorFinding } from "./cloudflare.ts";
 
 const PROD_WRANGLER = `{
   "name": "x",

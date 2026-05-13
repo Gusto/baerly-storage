@@ -1,7 +1,7 @@
 import { AwsClient } from "aws4fetch";
 import { BaerlyError } from "@baerly/protocol";
 import { describe, expect, test } from "vitest";
-import { awsIamSigV4 } from "./aws-iam-sigv4";
+import { awsIamSigV4 } from "./aws-iam-sigv4.ts";
 
 const ACCESS_KEY_ID = "AKIDEXAMPLE";
 const SECRET_ACCESS_KEY = "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY";

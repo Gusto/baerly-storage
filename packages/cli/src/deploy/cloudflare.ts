@@ -28,7 +28,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { parse, type ParseError } from "jsonc-parser";
 import { BaerlyError } from "@baerly/protocol";
-import type { AppConfig } from "../config";
+import type { AppConfig } from "../config.ts";
 
 export interface ProcessRunner {
   /**

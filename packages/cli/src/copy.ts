@@ -43,7 +43,7 @@ import {
   snapshotKey,
   type SnapshotBody,
 } from "@baerly/server";
-import { emitError, emitSuccess, setJsonMode } from "./output";
+import { emitError, emitSuccess, setJsonMode } from "./output.ts";
 
 const COPY_OWNER = "baerly-copy";
 const APPLICATION_JSON = "application/json";

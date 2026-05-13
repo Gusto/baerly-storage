@@ -1,8 +1,8 @@
 import { fileURLToPath } from "node:url";
 import { dirname, join, resolve } from "node:path";
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { detectPm, installCommand, runCommand, type Pm } from "./pm-detect";
-import { substitute } from "./substitute";
+import { detectPm, installCommand, runCommand, type Pm } from "./pm-detect.ts";
+import { substitute } from "./substitute.ts";
 
 export interface ScaffoldOptions {
   readonly projectName: string;

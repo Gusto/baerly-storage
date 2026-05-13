@@ -17,8 +17,8 @@ import {
   BaerlyError,
 } from "@baerly/protocol";
 import { describe, expect, it } from "vitest";
-import { compact, loadSnapshotAsMap } from "./compactor";
-import { ServerWriter } from "./server-writer";
+import { compact, loadSnapshotAsMap } from "./compactor.ts";
+import { ServerWriter } from "./server-writer.ts";
 
 const bootstrap = async (storage: MemoryStorage, key: string): Promise<void> => {
   await createCurrentJson(storage, key, {

@@ -22,7 +22,7 @@ import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { CURRENT_JSON_SCHEMA_VERSION, createCurrentJson, type Storage } from "@baerly/protocol";
 import { LocalFsStorage } from "@baerly/dev";
 import { allIndexKeysFor, ServerWriter } from "@baerly/server";
-import { runRebuildIndex } from "./rebuild-index";
+import { runRebuildIndex } from "./rebuild-index.ts";
 
 const APP = "app";
 const TENANT = "tenant";

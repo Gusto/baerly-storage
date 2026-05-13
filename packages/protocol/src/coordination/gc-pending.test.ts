@@ -4,10 +4,15 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { MemoryStorage } from "../storage/memory";
-import { BaerlyError } from "../errors";
-import { GC_PENDING_SCHEMA_VERSION } from "../constants";
-import { type GcPending, casUpdateGcPending, createGcPending, readGcPending } from "./gc-pending";
+import { MemoryStorage } from "../storage/memory.ts";
+import { BaerlyError } from "../errors.ts";
+import { GC_PENDING_SCHEMA_VERSION } from "../constants.ts";
+import {
+  type GcPending,
+  casUpdateGcPending,
+  createGcPending,
+  readGcPending,
+} from "./gc-pending.ts";
 
 const KEY = "app/x/tenant/t/manifests/c/gc/pending.json";
 

@@ -14,4 +14,4 @@ export {
   bearerJwt,
   cloudflareAccess,
   sharedSecret,
-} from "./presets";
+} from "./presets/index.ts";

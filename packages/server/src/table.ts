@@ -20,7 +20,7 @@ import {
   type Predicate,
   type Table,
 } from "@baerly/protocol";
-import { makeQuery, runInsert, type TableReadContext } from "./query";
+import { makeQuery, runInsert, type TableReadContext } from "./query.ts";
 
 /**
  * Build a `Table<T>` bound to one `(tenant, table)` read context.

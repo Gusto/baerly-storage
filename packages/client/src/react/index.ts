@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { LogEntry } from "@baerly/protocol";
-import type { BaerlyClient } from "../client";
+import type { BaerlyClient } from "../client.ts";
 
 export interface UseChangesOptions {
   /**

@@ -1,6 +1,6 @@
 import { fc, test } from "@fast-check/vitest";
 import { describe, expect } from "vitest";
-import { OMap } from "./o-map";
+import { OMap } from "./o-map.ts";
 
 const idKey = (k: string) => k;
 

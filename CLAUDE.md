@@ -249,9 +249,18 @@ edits and point at the same files.
 
 ## Conventions
 
-- **Imports are relative.** `tsconfig.json` uses `moduleResolution: "bundler"`
-  and no `baseUrl`. Inside `packages/server/src/` write `import { Ref } from "@baerly/protocol"`
-  for cross-package types and `import { makeTable } from "./table"` for siblings.
+- **Imports are relative, with explicit `.ts`/`.tsx` extensions.**
+  `tsconfig.json` uses `moduleResolution: "bundler"` and no `baseUrl`.
+  Inside `packages/server/src/` write
+  `import { Ref } from "@baerly/protocol"` for cross-package types
+  and `import { makeTable } from "./table.ts"` for siblings. The
+  `.ts` extension is required so that Node's native
+  `--experimental-strip-types` runtime — used by the helpdesk
+  example, which consumes the workspace `exports."."` → `./src/*.ts`
+  paths directly — can resolve relative specifiers. Enforced by
+  oxlint (`import/extensions: ["error", "always", { ignorePackages: true }]`);
+  `scripts/add-ts-extensions.mjs --check` audits the full repo
+  including `bench/`, `deploy/`, `examples/`, and `*.config.ts`.
 - **Branded types are load-bearing.** `Ref`, `ManifestKey`, `UUID`,
   `VersionId` exist to prevent confusion bugs. Don't paper over a type
   mismatch with `as string`; widen only if you understand why.
@@ -281,6 +290,10 @@ edits and point at the same files.
   if the code is wrong, fix the code.
 - ❌ Hard-coding new magic numbers. Add to `packages/protocol/src/constants.ts`.
 - ❌ Reintroducing `bun:test`, Rome, or baseUrl imports — all replaced.
+- ❌ Extensionless relative imports (`from "./foo"`). Always write
+  `from "./foo.ts"` or `from "./foo/index.ts"`. Node's
+  strip-types runtime can't resolve them; oxlint's
+  `import/extensions` rule fails the lint.
 
 ## Scope guidance
 

@@ -1,7 +1,7 @@
 import { BaerlyError, MemoryStorage, type Storage } from "@baerly/protocol";
 import { describe, expect, it } from "vitest";
-import { RequestScopedMetricsRecorder } from "./recorder";
-import { observableStorage } from "./storage";
+import { RequestScopedMetricsRecorder } from "./recorder.ts";
+import { observableStorage } from "./storage.ts";
 
 const collectAll = async (iter: AsyncIterable<{ key: string }>): Promise<string[]> => {
   const keys: string[] = [];

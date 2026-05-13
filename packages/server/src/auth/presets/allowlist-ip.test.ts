@@ -1,7 +1,7 @@
 import { BaerlyError } from "@baerly/protocol";
 import { describe, expect, test } from "vitest";
-import { allowlistIp, andAll } from "./allowlist-ip";
-import { sharedSecret } from "./shared-secret";
+import { allowlistIp, andAll } from "./allowlist-ip.ts";
+import { sharedSecret } from "./shared-secret.ts";
 
 const mkReq = (headers: Record<string, string> = {}): Request =>
   new Request("https://api.example.com/v1/t/items", { headers });

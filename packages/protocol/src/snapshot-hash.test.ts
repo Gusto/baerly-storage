@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { snapshotHash } from "./snapshot-hash";
+import { snapshotHash } from "./snapshot-hash.ts";
 
 describe("snapshotHash", () => {
   it("returns a 64-char lowercase hex string", async () => {

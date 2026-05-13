@@ -1,4 +1,4 @@
-import { BaerlyError } from "../errors";
+import { BaerlyError } from "../errors.ts";
 import type {
   Storage,
   StorageGetOptions,
@@ -6,7 +6,7 @@ import type {
   StorageListEntry,
   StoragePutOptions,
   StoragePutResult,
-} from "./types";
+} from "./types.ts";
 
 interface StoredObject {
   body: Uint8Array;

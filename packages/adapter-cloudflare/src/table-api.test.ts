@@ -20,8 +20,8 @@
  */
 
 import { describe, test } from "vitest";
-import { runTableApiCascade } from "../../../tests/fixtures/table-api-cascade";
-import { r2BindingStorage } from "./r2-binding-storage";
+import { runTableApiCascade } from "../../../tests/fixtures/table-api-cascade.ts";
+import { r2BindingStorage } from "./r2-binding-storage.ts";
 
 const getBinding = (): R2Bucket => {
   const bucket = (globalThis as { __BAERLY_R2_BINDING__?: R2Bucket }).__BAERLY_R2_BINDING__;

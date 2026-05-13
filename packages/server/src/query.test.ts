@@ -16,10 +16,10 @@ import {
   BaerlyError,
 } from "@baerly/protocol";
 import { beforeEach, describe, expect, test } from "vitest";
-import { compact } from "./compactor";
-import { Db } from "./db";
-import { runAllWithMeta } from "./query";
-import { ServerWriter } from "./server-writer";
+import { compact } from "./compactor.ts";
+import { Db } from "./db.ts";
+import { runAllWithMeta } from "./query.ts";
+import { ServerWriter } from "./server-writer.ts";
 
 const APP = "test";
 const TENANT = "t";

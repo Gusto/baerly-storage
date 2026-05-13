@@ -1,7 +1,7 @@
 import { InMemoryMetricsRecorder } from "@baerly/protocol";
 import { describe, expect, it } from "vitest";
-import { createObservabilityContext, runWithContext } from "./context";
-import { alsAwareRecorder, RequestScopedMetricsRecorder } from "./recorder";
+import { createObservabilityContext, runWithContext } from "./context.ts";
+import { alsAwareRecorder, RequestScopedMetricsRecorder } from "./recorder.ts";
 
 describe("RequestScopedMetricsRecorder.snapshot", () => {
   it("returns empty arrays before any emission", () => {

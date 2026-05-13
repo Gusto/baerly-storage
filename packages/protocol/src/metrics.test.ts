@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { InMemoryMetricsRecorder, noopMetricsRecorder, teeMetricsRecorders } from "./metrics";
+import { InMemoryMetricsRecorder, noopMetricsRecorder, teeMetricsRecorders } from "./metrics.ts";
 
 describe("MetricsRecorder", () => {
   it("noop swallows every emission", () => {

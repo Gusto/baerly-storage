@@ -10,7 +10,7 @@ import {
   readCurrentJson,
 } from "@baerly/protocol";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { LocalFsStorage } from "./local-fs";
+import { LocalFsStorage } from "./local-fs.ts";
 
 /**
  * Single-process smoke for the current.json CAS protocol against the

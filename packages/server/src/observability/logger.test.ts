@@ -1,6 +1,6 @@
 import { reset, type LogRecord, type Sink } from "@logtape/logtape";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { CATEGORY, configureObservability, getEffectiveSampleRate, getLogger } from "./logger";
+import { CATEGORY, configureObservability, getEffectiveSampleRate, getLogger } from "./logger.ts";
 
 /**
  * In-memory sink for tests. LogTape doesn't ship a built-in

@@ -2,9 +2,9 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { AppConfig } from "../config";
-import { deployNode } from "../deploy/node";
-import { doctorNode } from "./node";
+import type { AppConfig } from "../config.ts";
+import { deployNode } from "../deploy/node.ts";
+import { doctorNode } from "./node.ts";
 
 const makeConfig = (repoRoot: string, extra: Partial<AppConfig> = {}): AppConfig => ({
   app: "svc",

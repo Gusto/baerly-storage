@@ -29,8 +29,8 @@ import {
   type JSONArraylessObject,
 } from "@baerly/protocol";
 import { Db, ServerWriter } from "@baerly/server";
-import { doCopy } from "../../packages/cli/src/copy";
-import { createBucket } from "../fixtures/s3-fixtures";
+import { doCopy } from "../../packages/cli/src/copy.ts";
+import { createBucket } from "../fixtures/s3-fixtures.ts";
 
 const MINIO_ENDPOINT = "http://127.0.0.1:9102";
 const MINIO_ACCESS_KEY = "baerly";

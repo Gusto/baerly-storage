@@ -2,11 +2,11 @@ import {
   LIST_OBJECT_MAX_RETRIES,
   RATE_LIMIT_BACKOFF_MILLIS,
   S3_REQUEST_MAX_RETRIES,
-} from "../constants";
-import { BaerlyError } from "../errors";
-import { delay } from "../time";
-import type { XmlParser } from "../types";
-import { parseListObjectsV2CommandOutput } from "../xml";
+} from "../constants.ts";
+import { BaerlyError } from "../errors.ts";
+import { delay } from "../time.ts";
+import type { XmlParser } from "../types.ts";
+import { parseListObjectsV2CommandOutput } from "../xml.ts";
 import type {
   Storage,
   StorageGetOptions,
@@ -14,7 +14,7 @@ import type {
   StorageListEntry,
   StoragePutOptions,
   StoragePutResult,
-} from "./types";
+} from "./types.ts";
 
 /**
  * Permanent {@link BaerlyError} codes that must short-circuit `retry`.

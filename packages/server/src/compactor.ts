@@ -37,7 +37,7 @@ import {
   type StoragePutOptions,
   teeMetricsRecorders,
 } from "@baerly/protocol";
-import { withObservability } from "./observability";
+import { withObservability } from "./observability/index.ts";
 
 /**
  * Snapshot filenames are sealed by their body's SHA-256:

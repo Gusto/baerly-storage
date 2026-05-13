@@ -1,6 +1,6 @@
 import { BaerlyError } from "@baerly/protocol";
 import { beforeAll, describe, expect, test, vi } from "vitest";
-import { cloudflareAccess } from "./cloudflare-access";
+import { cloudflareAccess } from "./cloudflare-access.ts";
 
 const TEAM_DOMAIN = "acme";
 const AUDIENCE_TAG = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";

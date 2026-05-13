@@ -3,7 +3,7 @@
    reads it. Underscores delimit the protocol-internal name. */
 
 import { defineStorageConformanceSuite } from "@baerly/protocol/conformance";
-import { r2BindingStorage } from "./r2-binding-storage";
+import { r2BindingStorage } from "./r2-binding-storage.ts";
 
 /**
  * Conformance entry for the R2 binding adapter.

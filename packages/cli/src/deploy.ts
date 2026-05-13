@@ -17,9 +17,9 @@
 
 import { defineCommand, type ArgsDef, type ParsedArgs } from "citty";
 import { BaerlyError } from "@baerly/protocol";
-import { loadAppConfig, type AppConfig } from "./config";
-import { deployCloudflare } from "./deploy/cloudflare";
-import { emitError, emitSuccess, setJsonMode } from "./output";
+import { loadAppConfig, type AppConfig } from "./config.ts";
+import { deployCloudflare } from "./deploy/cloudflare.ts";
+import { emitError, emitSuccess, setJsonMode } from "./output.ts";
 
 const DEPLOY_ARGS = {
   target: {

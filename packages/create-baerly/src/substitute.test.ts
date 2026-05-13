@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { substitute } from "./substitute";
+import { substitute } from "./substitute.ts";
 
 describe("substitute", () => {
   it("replaces a single placeholder", () => {

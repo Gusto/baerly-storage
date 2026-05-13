@@ -17,9 +17,9 @@
  * with a message that names the offending operator or key.
  */
 
-import type { Predicate } from "../db";
-import { BaerlyError } from "../errors";
-import type { JSONArrayless, JSONArraylessObject, JSONObject, JSONValue } from "../json";
+import type { Predicate } from "../db.ts";
+import { BaerlyError } from "../errors.ts";
+import type { JSONArrayless, JSONArraylessObject, JSONObject, JSONValue } from "../json.ts";
 
 /**
  * Validate a predicate object's shape. Throws

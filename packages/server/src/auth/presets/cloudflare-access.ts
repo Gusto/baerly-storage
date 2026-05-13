@@ -1,5 +1,5 @@
 import { BaerlyError, type Verifier } from "@baerly/protocol";
-import { bearerJwt } from "./bearer-jwt";
+import { bearerJwt } from "./bearer-jwt.ts";
 
 /**
  * Options for {@link cloudflareAccess}.

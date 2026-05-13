@@ -25,10 +25,10 @@
 import { spawn } from "node:child_process";
 import { defineCommand, type ArgsDef, type ParsedArgs } from "citty";
 import { BaerlyError } from "@baerly/protocol";
-import { loadAppConfig, type AppConfig } from "./config";
-import { doctorCloudflare, type DoctorReport } from "./doctor/cloudflare";
-import type { ProcessRunner } from "./deploy/cloudflare";
-import { color, emitError, isJsonMode, setJsonMode } from "./output";
+import { loadAppConfig, type AppConfig } from "./config.ts";
+import { doctorCloudflare, type DoctorReport } from "./doctor/cloudflare.ts";
+import type { ProcessRunner } from "./deploy/cloudflare.ts";
+import { color, emitError, isJsonMode, setJsonMode } from "./output.ts";
 
 const DOCTOR_ARGS = {
   target: {

@@ -30,7 +30,7 @@ import {
   type Verifier,
 } from "@baerly/protocol";
 import { describe, expect, it } from "vitest";
-import { createListener } from "./server";
+import { createListener } from "./server.ts";
 
 const trivialVerifier: Verifier = async () => ({
   tenantPrefix: "acme",

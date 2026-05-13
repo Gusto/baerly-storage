@@ -38,7 +38,7 @@ import {
   type Storage,
 } from "@baerly/protocol";
 import { compact, Db, runGc, ServerWriter } from "@baerly/server";
-import { abortingStorage } from "../fixtures/aborting-storage";
+import { abortingStorage } from "../fixtures/aborting-storage.ts";
 
 /**
  * Per-property timeout, in ms. At `FC_NUM_RUNS=100` (default

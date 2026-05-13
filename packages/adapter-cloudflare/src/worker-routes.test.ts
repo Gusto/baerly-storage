@@ -19,9 +19,9 @@ import {
   BaerlyError,
   type Verifier,
 } from "@baerly/protocol";
-import { r2BindingStorage } from "./r2-binding-storage";
-import { singleTenantDevVerifier } from "./single-tenant-dev-verifier";
-import { baerlyWorker, type Env } from "./worker";
+import { r2BindingStorage } from "./r2-binding-storage.ts";
+import { singleTenantDevVerifier } from "./single-tenant-dev-verifier.ts";
+import { baerlyWorker, type Env } from "./worker.ts";
 
 const trivialVerifier: Verifier = async () => ({
   tenantPrefix: "acme",

@@ -29,7 +29,7 @@
  * ```
  */
 
-import type { IndexDefinition } from "./indexes";
+import type { IndexDefinition } from "./indexes.ts";
 
 /**
  * One collection's declarative config. Today only `indexes` is

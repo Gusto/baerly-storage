@@ -52,7 +52,7 @@ import {
   uuid,
   versionFromContent,
 } from "@baerly/protocol";
-import { allIndexKeysFor, type IndexDefinition, validateIndexDefinition } from "./indexes";
+import { allIndexKeysFor, type IndexDefinition, validateIndexDefinition } from "./indexes.ts";
 
 /**
  * Tunables for {@link ServerWriter}. All optional; defaults match the

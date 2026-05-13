@@ -1,5 +1,5 @@
-import { BaerlyError } from "./errors";
-import type { XmlNode, XmlParser } from "./types";
+import { BaerlyError } from "./errors.ts";
+import type { XmlNode, XmlParser } from "./types.ts";
 
 /**
  * Subset of S3's `ListObjectsV2CommandOutput` produced by

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { detectPm, installCommand, runCommand } from "./pm-detect";
+import { detectPm, installCommand, runCommand } from "./pm-detect.ts";
 
 describe("detectPm", () => {
   // detectPm reads `process.env.npm_config_user_agent` when its arg

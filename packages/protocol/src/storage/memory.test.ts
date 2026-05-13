@@ -1,5 +1,5 @@
-import { defineStorageConformanceSuite } from "./conformance";
-import { MemoryStorage } from "./memory";
+import { defineStorageConformanceSuite } from "./conformance.ts";
+import { MemoryStorage } from "./memory.ts";
 
 // `caseSensitiveKeys: true` is the in-memory impl's behavior — keys
 // are stored verbatim in a `Map<string, …>`. The default in

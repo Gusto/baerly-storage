@@ -27,8 +27,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { parse, type ParseError } from "jsonc-parser";
 import { BaerlyError } from "@baerly/protocol";
-import type { AppConfig } from "../config";
-import { ensureBindings, parseR2Bindings, type ProcessRunner } from "../deploy/cloudflare";
+import type { AppConfig } from "../config.ts";
+import { ensureBindings, parseR2Bindings, type ProcessRunner } from "../deploy/cloudflare.ts";
 
 /** One finding from a `baerly doctor` walk. */
 export interface DoctorFinding {

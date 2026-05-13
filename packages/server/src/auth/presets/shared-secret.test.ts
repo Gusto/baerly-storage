@@ -1,6 +1,6 @@
 import { BaerlyError } from "@baerly/protocol";
 import { describe, expect, test } from "vitest";
-import { sharedSecret } from "./shared-secret";
+import { sharedSecret } from "./shared-secret.ts";
 
 const mkReq = (headers: Record<string, string> = {}): Request =>
   new Request("https://example.com/v1/t/items", { headers });

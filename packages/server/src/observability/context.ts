@@ -39,7 +39,7 @@
  */
 
 import { AsyncLocalStorage } from "node:async_hooks";
-import { RequestScopedMetricsRecorder } from "./recorder";
+import { RequestScopedMetricsRecorder } from "./recorder.ts";
 
 /** Read-mostly per-request observability state. */
 export interface ObservabilityContext {

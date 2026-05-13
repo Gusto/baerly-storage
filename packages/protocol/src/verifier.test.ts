@@ -1,5 +1,5 @@
 import { describe, expectTypeOf, it } from "vitest";
-import type { Verifier, VerifierResult } from "./verifier";
+import type { Verifier, VerifierResult } from "./verifier.ts";
 
 describe("Verifier interface", () => {
   it("accepts an async function returning a result", () => {

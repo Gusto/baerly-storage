@@ -10,7 +10,7 @@ import {
   indexKeyPrefix,
   projectIndexValues,
   validateIndexDefinition,
-} from "./indexes";
+} from "./indexes.ts";
 
 describe("encodeIndexValue", () => {
   test("distinct values produce distinct encodings", () => {

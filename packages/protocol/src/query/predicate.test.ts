@@ -1,11 +1,11 @@
 import { fc, test as fcTest } from "@fast-check/vitest";
 import { describe, expect, test } from "vitest";
 
-import type { Predicate } from "../db";
-import { BaerlyError } from "../errors";
-import type { JSONArrayless, JSONObject } from "../json";
+import type { Predicate } from "../db.ts";
+import { BaerlyError } from "../errors.ts";
+import type { JSONArrayless, JSONObject } from "../json.ts";
 
-import { matches, mergePredicates, validatePredicate } from "./predicate";
+import { matches, mergePredicates, validatePredicate } from "./predicate.ts";
 
 const expectInvalidConfig = (fn: () => unknown, snippet: string): void => {
   try {

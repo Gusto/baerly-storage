@@ -33,9 +33,9 @@
 import { describe } from "vitest";
 import { SELF } from "cloudflare:test";
 import { CURRENT_JSON_SCHEMA_VERSION, createCurrentJson } from "@baerly/protocol";
-import { runHttpConformanceCascade } from "../../../tests/fixtures/http-conformance-cascade";
-import { CONFORMANCE_TENANT } from "../../../tests/fixtures/test-verifier";
-import { r2BindingStorage } from "./r2-binding-storage";
+import { runHttpConformanceCascade } from "../../../tests/fixtures/http-conformance-cascade.ts";
+import { CONFORMANCE_TENANT } from "../../../tests/fixtures/test-verifier.ts";
+import { r2BindingStorage } from "./r2-binding-storage.ts";
 
 const APP = "http-conf";
 

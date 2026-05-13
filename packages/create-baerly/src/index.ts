@@ -7,7 +7,7 @@
  */
 import { defineCommand, runMain } from "citty";
 import pc from "picocolors";
-import { scaffold } from "./scaffold";
+import { scaffold } from "./scaffold.ts";
 
 const main = defineCommand({
   meta: {

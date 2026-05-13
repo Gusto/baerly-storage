@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { fc } from "@fast-check/vitest";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { defineStorageConformanceSuite } from "@baerly/protocol/conformance";
-import { LocalFsStorage } from "./local-fs";
+import { LocalFsStorage } from "./local-fs.ts";
 
 const utf8 = (s: string): Uint8Array => new TextEncoder().encode(s);
 const fromBytes = (b: Uint8Array): string => new TextDecoder().decode(b);

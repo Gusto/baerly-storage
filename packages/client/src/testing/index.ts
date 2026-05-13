@@ -1,4 +1,4 @@
-import type { Fetcher } from "../request";
+import type { Fetcher } from "../request.ts";
 
 /**
  * In-memory `fetch` impl for unit tests. Construct one, register

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
-import type { LogEntry, ReplicaIdentity } from "./log";
-import { LOG_KEY_PREFIX, logKey, lsnParts } from "./log";
-import { countKey } from "./types";
+import type { LogEntry, ReplicaIdentity } from "./log.ts";
+import { LOG_KEY_PREFIX, logKey, lsnParts } from "./log.ts";
+import { countKey } from "./types.ts";
 
 describe("LogEntry", () => {
   test("INSERT shape: new+patch present, no old", () => {

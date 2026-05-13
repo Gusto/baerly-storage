@@ -26,8 +26,8 @@ import {
   MemoryStorage,
 } from "@baerly/protocol";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { Db } from "../db";
-import { listEventsSince, longPollSince } from "./since";
+import { Db } from "../db.ts";
+import { listEventsSince, longPollSince } from "./since.ts";
 
 const APP = "test";
 const TENANT = "t";

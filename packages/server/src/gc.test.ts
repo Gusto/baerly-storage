@@ -20,9 +20,9 @@ import {
   readGcPending,
 } from "@baerly/protocol";
 import { describe, expect, it } from "vitest";
-import { compact } from "./compactor";
-import { runGc } from "./gc";
-import { ServerWriter } from "./server-writer";
+import { compact } from "./compactor.ts";
+import { runGc } from "./gc.ts";
+import { ServerWriter } from "./server-writer.ts";
 
 const bootstrap = async (storage: MemoryStorage, key: string): Promise<void> => {
   await createCurrentJson(storage, key, {

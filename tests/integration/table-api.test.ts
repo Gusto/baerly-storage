@@ -36,8 +36,8 @@ import {
   uuid,
 } from "@baerly/protocol";
 import { LocalFsStorage } from "@baerly/dev";
-import { createBucket } from "../fixtures/s3-fixtures";
-import { runTableApiCascade } from "../fixtures/table-api-cascade";
+import { createBucket } from "../fixtures/s3-fixtures.ts";
+import { runTableApiCascade } from "../fixtures/table-api-cascade.ts";
 
 const stableConfig = {
   endpoint: "http://127.0.0.1:9102",

@@ -28,16 +28,16 @@ export {
   createObservabilityContext,
   runWithContext,
   getCurrentContext,
-} from "./context";
+} from "./context.ts";
 export {
   type MetricsSnapshot,
   type MetricsSummary,
   type ObservationRow,
   RequestScopedMetricsRecorder,
   alsAwareRecorder,
-} from "./recorder";
-export { decideSample } from "./sampling";
-export { type SerializedError, serializeError } from "./redact";
+} from "./recorder.ts";
+export { decideSample } from "./sampling.ts";
+export { type SerializedError, serializeError } from "./redact.ts";
 export {
   type CategoryName,
   type FriendlyLogLevel,
@@ -46,12 +46,12 @@ export {
   configureObservability,
   getEffectiveSampleRate,
   getLogger,
-} from "./logger";
+} from "./logger.ts";
 export {
   type FlushCanonicalLineOptions,
   type Unit,
   flushCanonicalLine,
   peekContext,
   withObservability,
-} from "./canonical";
-export { observableStorage } from "./storage";
+} from "./canonical.ts";
+export { observableStorage } from "./storage.ts";

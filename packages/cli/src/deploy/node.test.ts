@@ -3,8 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { BaerlyError } from "@baerly/protocol";
-import type { AppConfig } from "../config";
-import { deployNode } from "./node";
+import type { AppConfig } from "../config.ts";
+import { deployNode } from "./node.ts";
 
 const makeConfig = (repoRoot: string): AppConfig => ({
   app: "svc",

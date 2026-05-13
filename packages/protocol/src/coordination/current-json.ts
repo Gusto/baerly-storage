@@ -34,9 +34,9 @@
  * context to the message; the `code` is unchanged.
  */
 
-import { CURRENT_JSON_CONTENT_TYPE, CURRENT_JSON_SCHEMA_VERSION } from "../constants";
-import { BaerlyError } from "../errors";
-import type { Storage, StoragePutOptions, StoragePutResult } from "../storage/types";
+import { CURRENT_JSON_CONTENT_TYPE, CURRENT_JSON_SCHEMA_VERSION } from "../constants.ts";
+import { BaerlyError } from "../errors.ts";
+import type { Storage, StoragePutOptions, StoragePutResult } from "../storage/types.ts";
 
 /**
  * Per-collection control object. CAS-protected. One per

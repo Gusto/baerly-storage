@@ -24,8 +24,8 @@ import {
 import { ServerWriter } from "@baerly/server";
 import { reset, type LogRecord, type Sink } from "@logtape/logtape";
 import { afterEach, describe, expect, it } from "vitest";
-import { r2BindingStorage } from "./r2-binding-storage";
-import { baerlyWorker, type Env } from "./worker";
+import { r2BindingStorage } from "./r2-binding-storage.ts";
+import { baerlyWorker, type Env } from "./worker.ts";
 
 /**
  * Stand-in `Verifier` for the scheduled-only tests in this file. The

@@ -1,5 +1,5 @@
 import { expect, test, describe } from "vitest";
-import { parseListObjectsV2CommandOutput } from "./xml";
+import { parseListObjectsV2CommandOutput } from "./xml.ts";
 import { DOMParser } from "@xmldom/xmldom";
 const parser = new DOMParser();
 describe("XML parser", () => {
