@@ -137,13 +137,6 @@ describe.runIf(sqliteAvailable)("Baerly → SQLite → Baerly round-trip", () =>
       tags: { primary: "bug", meta: { lang: "en" } },
     });
     await srcTable.insert({ _id: "u_c", status: "closed", priority: 3, deleted: true });
-    // u_d has neither `deleted` nor `tags` — the trailing row ensures
-    // the plan inferrer marks both columns nullable (the late-arrival
-    // back-fill in `plan.ts` triggers only on rows that follow the
-    // first-appearance row; with three rows where `deleted` lands on
-    // u_c, the inferrer would otherwise leave it NOT NULL and SQLite
-    // would reject u_a / u_b's row inserts).
-    await srcTable.insert({ _id: "u_d", status: "open", priority: 4 });
     await srcTable.where({ _id: "u_a" }).update({ status: "closed" });
 
     // ── 2. Export src → SQLite. ────────────────────────────────────
@@ -301,7 +294,6 @@ describe.runIf(sqliteAvailable)("Baerly → SQLite → Baerly round-trip", () =>
     expect(text).toContain('"_id":"u_a"');
     expect(text).toContain('"_id":"u_b"');
     expect(text).toContain('"_id":"u_c"');
-    expect(text).toContain('"_id":"u_d"');
     expect(text).toContain('"status":"closed"');
     expect(text).toContain('"primary":"bug"');
     expect(text).toContain('"deleted":true');

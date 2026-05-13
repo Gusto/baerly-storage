@@ -95,6 +95,10 @@ export const inferPlanForCollection = (params: {
   const obsByField = new Map<string, ColumnObservation>();
   // Track first-appearance order so the column list is stable.
   const orderedFields: string[] = [];
+  // Per-field count of rows that carried this field (non-undefined).
+  // Compared against `rows.size` in the second pass — any column
+  // observed on fewer than every row is nullable.
+  const rowsWithField = new Map<string, number>();
 
   // First pass — accumulate observations.
   for (const [id, body] of rows) {
@@ -104,7 +108,6 @@ export const inferPlanForCollection = (params: {
         `inferPlanForCollection: row ${JSON.stringify(id)} body is not an object`,
       );
     }
-    const seenInRow = new Set<string>();
     for (const [field, value] of Object.entries(body)) {
       if (value === undefined) continue;
       let obs = obsByField.get(field);
@@ -121,15 +124,18 @@ export const inferPlanForCollection = (params: {
         orderedFields.push(field);
       }
       observe(obs, value);
-      seenInRow.add(field);
+      rowsWithField.set(field, (rowsWithField.get(field) ?? 0) + 1);
     }
-    // Fields that exist on prior rows but not this row → nullable.
-    for (const field of orderedFields) {
-      if (!seenInRow.has(field)) {
-        const obs = obsByField.get(field);
-        if (obs !== undefined) obs.hasNull = true;
-      }
-    }
+  }
+
+  // Second pass — any column observed on fewer than every row is
+  // nullable. A single full sweep at the end captures both "field
+  // disappears after appearing" AND "field first appears on the last
+  // row" (the latter was a regression hole when the back-fill was
+  // inlined into the per-row loop).
+  const totalRows = rows.size;
+  for (const [field, obs] of obsByField) {
+    if ((rowsWithField.get(field) ?? 0) < totalRows) obs.hasNull = true;
   }
 
   // Build the column list. `_id` first (always — protocol-locked).

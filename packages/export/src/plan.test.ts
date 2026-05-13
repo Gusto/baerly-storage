@@ -156,6 +156,25 @@ describe("inferPlanForCollection — per-column type inference (§3 table)", () 
     expect(plan.columns.find((c) => c.source === "name")?.nullable).toBe(false);
   });
 
+  test("field first observed on the last row → still nullable when earlier rows lacked it", () => {
+    // Regression: the back-fill that marks a column nullable used to
+    // only fire when a row after the first-appearance row was missing
+    // the field. A column that debuted on the FINAL row of the map
+    // therefore never got its retroactive nullable upgrade, and the
+    // emitted DDL was `col TYPE NOT NULL`. Earlier rows then failed
+    // SQLite's NOT NULL check on INSERT. Fix is a post-pass that
+    // compares each column's observed-row count against the total
+    // row count.
+    const rows = rowsFromRecord({
+      a: { name: "alice" } as JSONArraylessObject,
+      b: { name: "bob" } as JSONArraylessObject,
+      c: { name: "carol", deleted: true } as JSONArraylessObject,
+    });
+    const plan = inferPlanForCollection({ rows, target: "sqlite", table: "t" });
+    expect(plan.columns.find((c) => c.source === "deleted")?.nullable).toBe(true);
+    expect(plan.columns.find((c) => c.source === "name")?.nullable).toBe(false);
+  });
+
   test("present on every row → nullable: false", () => {
     const rows = rowsFromRecord({
       a: { name: "alice" } as JSONArraylessObject,
