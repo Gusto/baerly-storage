@@ -136,6 +136,34 @@ importers:
         specifier: ^4.1.5
         version: 4.1.5(@types/node@25.6.2)(@vitest/coverage-v8@4.1.5)(happy-dom@15.11.7)(vite@8.0.11(@types/node@25.6.2)(esbuild@0.27.3)(tsx@4.21.0))
 
+  examples/helpdesk-cloudflare:
+    devDependencies:
+      create-baerly:
+        specifier: workspace:*
+        version: link:../../packages/create-baerly
+      typescript:
+        specifier: ^5.8.0
+        version: 5.9.3
+
+  examples/helpdesk-cloudflare/apps/server:
+    dependencies:
+      '@baerly/adapter-cloudflare':
+        specifier: workspace:*
+        version: link:../../../../packages/adapter-cloudflare
+      '@baerly/server':
+        specifier: workspace:*
+        version: link:../../../../packages/server
+    devDependencies:
+      '@cloudflare/workers-types':
+        specifier: ^4
+        version: 4.20260511.1
+      typescript:
+        specifier: ^5.8.0
+        version: 5.9.3
+      wrangler:
+        specifier: ^4.10.0
+        version: 4.90.0(@cloudflare/workers-types@4.20260511.1)
+
   examples/helpdesk/apps/server:
     dependencies:
       '@baerly/adapter-node':
@@ -182,8 +210,8 @@ importers:
         specifier: workspace:*
         version: link:../../packages/create-baerly
       typescript:
-        specifier: ^5.6.0
-        version: 5.7.2
+        specifier: ^5.8.0
+        version: 5.9.3
 
   examples/minimal-cloudflare/apps/server:
     dependencies:
@@ -198,8 +226,8 @@ importers:
         specifier: ^4
         version: 4.20260511.1
       typescript:
-        specifier: ^5.6.0
-        version: 5.7.2
+        specifier: ^5.8.0
+        version: 5.9.3
       wrangler:
         specifier: ^4.10.0
         version: 4.90.0(@cloudflare/workers-types@4.20260511.1)
@@ -207,8 +235,8 @@ importers:
   examples/minimal-cloudflare/apps/web:
     devDependencies:
       typescript:
-        specifier: ^5.6.0
-        version: 5.7.2
+        specifier: ^5.8.0
+        version: 5.9.3
       vite:
         specifier: ^6.0.0
         version: 6.4.2(@types/node@25.6.2)(lightningcss@1.32.0)(tsx@4.21.0)
@@ -219,8 +247,8 @@ importers:
         specifier: workspace:*
         version: link:../../packages/create-baerly
       typescript:
-        specifier: ^5.6.0
-        version: 5.7.2
+        specifier: ^5.8.0
+        version: 5.9.3
 
   examples/minimal-node/apps/server:
     dependencies:
@@ -247,14 +275,14 @@ importers:
         specifier: ^4.0.0
         version: 4.21.0
       typescript:
-        specifier: ^5.6.0
-        version: 5.7.2
+        specifier: ^5.8.0
+        version: 5.9.3
 
   examples/minimal-node/apps/web:
     devDependencies:
       typescript:
-        specifier: ^5.6.0
-        version: 5.7.2
+        specifier: ^5.8.0
+        version: 5.9.3
       vite:
         specifier: ^6.0.0
         version: 6.4.2(@types/node@25.6.2)(lightningcss@1.32.0)(tsx@4.21.0)
@@ -2373,6 +2401,11 @@ packages:
     engines: {node: '>=14.17'}
     hasBin: true
 
+  typescript@5.9.3:
+    resolution: {integrity: sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==}
+    engines: {node: '>=14.17'}
+    hasBin: true
+
   undici-types@7.19.2:
     resolution: {integrity: sha512-qYVnV5OEm2AW8cJMCpdV20CDyaN3g0AjDlOGf1OW4iaDEx8MwdtChUp4zu4H0VP3nDRF/8RKWH+IPp9uW0YGZg==}
 
@@ -4093,6 +4126,8 @@ snapshots:
       fsevents: 2.3.3
 
   typescript@5.7.2: {}
+
+  typescript@5.9.3: {}
 
   undici-types@7.19.2: {}
 

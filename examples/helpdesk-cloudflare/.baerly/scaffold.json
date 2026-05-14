@@ -1,0 +1,8 @@
+{
+  "renames": [
+    { "from": "helpdesk-cloudflare", "fromKey": "appName" },
+    { "from": "helpdesk-demo", "fromKey": "tenant" }
+  ],
+  "excludePaths": [".baerly/scaffold.json"],
+  "dropDevDeps": ["create-baerly"]
+}
