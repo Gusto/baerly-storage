@@ -44,7 +44,7 @@ read it via your editor's TS LS or via the published types).
 | Path                        | What it is                                          |
 | --------------------------- | --------------------------------------------------- |
 | `apps/server/src/server.ts` | Server entry — `createListener({ verifier })`       |
-| `apps/server/Dockerfile`    | Multi-stage container build (tini + tsx entrypoint) |
+| `apps/server/Dockerfile`    | Multi-stage container build (distroless runtime, non-root)        |
 | `apps/web/`                 | Optional client; SPA shell. Remove if not needed.   |
 | `baerly.config.ts`          | App config — `app`, `tenant`, `target`, `domain`    |
 | `.baerly/schema.lock.json`  | Declared collection schemas — see "Schemas (live feature)" below. |
@@ -183,9 +183,24 @@ read it via your editor's TS LS or via the published types).
   `MAINTENANCE_KEY` and invoke `runMaintenanceTick` from your
   systemd `OnCalendar=` unit or k8s `CronJob`.
 
-  Maintenance emits one canonical info line per run on stdout, with
-  compactor + GC counts merged via the per-run metrics bag. Look
-  for `"unit_of_work": "maintenance"` in your log stream.
+  Maintenance emits one canonical info line per run on stdout.
+  Filter your log stream on `"unit_of_work": "maintenance"` and
+  read these fields:
+
+  - `compact_written` — log entries folded into the new snapshot
+    this tick (`0` when compact was skipped or the live tail was
+    below `minEntriesToCompact`).
+  - `gc_swept` — keys deleted this tick (`0` when GC was skipped
+    or no candidates aged out).
+  - `compact_skipped` / `gc_skipped` — `true` when the caller
+    alternated this phase away (not used by the default Node
+    interval, but available for custom schedulers that toggle).
+  - The kernel also emits the recorder-bag fields alongside:
+    `db.compact.entries_folded_p50` / `_p99` / `_count` / `_sum`,
+    `db.manifest.lag_window_depth`, `db.orphan.candidate_count`,
+    `db.gc.entries_swept_per_second`, `db.gc.swept_total_total`.
+    Useful for dashboards; the four explicit fields above are
+    the at-a-glance summary.
 
 - **Deploy** — `baerly deploy --target=node` emits production
   artifacts into `apps/server/`: `Dockerfile`, `pm2.config.cjs`,

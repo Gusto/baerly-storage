@@ -41,7 +41,7 @@ Graduation is a tool we ship, not a feature we promise.
 ## Agent-friendly primitives, real engineering hidden
 
 The API surface is small enough that an LLM can use it zero-shot
-from `.d.ts` alone. Five verbs, four modifiers, one transaction.
+from `.d.ts` alone. Seven verbs, five modifiers, one transaction.
 Stable error codes (`BaerlyError.code`); stable error messages.
 Examples in JSDoc that are tested.
 

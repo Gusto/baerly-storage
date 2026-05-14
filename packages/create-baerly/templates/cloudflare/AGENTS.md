@@ -190,9 +190,23 @@ read it via your editor's TS LS or via the published types).
   `@baerly/adapter-cloudflare`.
 
   Maintenance emits one canonical info line per run on stdout
-  (Workers Logs ingestion), with compactor + GC counts merged via
-  the per-run metrics bag. Look for `"unit_of_work": "maintenance"`
-  in your log stream.
+  (Workers Logs ingestion). Filter your log stream on
+  `"unit_of_work": "maintenance"` and read these fields:
+
+  - `compact_written` — log entries folded into the new snapshot
+    this tick (`0` when compact was skipped or the live tail was
+    below `minEntriesToCompact`).
+  - `gc_swept` — keys deleted this tick (`0` when GC was skipped
+    or no candidates aged out).
+  - `compact_skipped` / `gc_skipped` — `true` when the cron
+    alternated this phase away (`CF_TIER=free` even/odd-minute
+    pattern).
+  - The kernel also emits the recorder-bag fields alongside:
+    `db.compact.entries_folded_p50` / `_p99` / `_count` / `_sum`,
+    `db.manifest.lag_window_depth`, `db.orphan.candidate_count`,
+    `db.gc.entries_swept_per_second`, `db.gc.swept_total_total`.
+    Useful for dashboards; the four explicit fields above are
+    the at-a-glance summary.
 
 - **Deploy** — `baerly deploy --target=cloudflare` runs
   `wrangler deploy --x-provision --x-auto-create` (Wrangler 4.10+)

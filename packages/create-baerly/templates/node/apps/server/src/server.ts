@@ -58,8 +58,10 @@ const verifier: Verifier =
 // Pass `observability: undefined` (or omit the field) to skip
 // LogTape configuration entirely; the kernel's recorder pipe still
 // runs and the `metrics` option remains the authoritative sink.
-// See `docs/observability.md` for sink wiring (OTel, Datadog,
-// Workers Analytics Engine) and the canonical-line field reference.
+// See `AGENTS.md` for the canonical-line field reference and the
+// `observability` JSDoc on `@baerly/server` for sink-wiring recipes
+// (OTel, Datadog, Workers Analytics Engine) — visible in your
+// editor's TS hover.
 // For a local dev landing page, pass:
 //   dev: { app: APP, uiUrl: "http://localhost:5173" }
 // — surfaces a small HTML page on `GET /` so a curious browser

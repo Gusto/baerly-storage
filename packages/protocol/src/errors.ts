@@ -17,11 +17,14 @@ export type BaerlyErrorCode =
   /** Internal invariant violation — should not be reachable. File a bug. */
   | "Internal"
   /**
-   * Document body failed schema validation. Today: emitted by
-   * `Db._raw.put` and the table-API write verbs when the body isn't
-   * valid JSON or contains an array where `JSONArrayless` is
-   * required. A future change wires this to a real validator
-   * without changing the wire shape.
+   * Document body failed schema validation. Emitted by `Db._raw.put`
+   * and the table-API write verbs (`Table.insert`, `Query.update`,
+   * `Query.replace`) when the body is not valid JSON or contains an
+   * array where `JSONArrayless` is required; also emitted when a
+   * collection has a declared `SchemaValidator` (via
+   * `Db.create({ collections })`) and the bound schema rejects the
+   * doc. In the schema-rejection case the error carries an `issues`
+   * array describing each failure. HTTP layer maps this to 422.
    */
   | "SchemaError"
   /**
