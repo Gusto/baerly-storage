@@ -4,11 +4,13 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "pnpm -F minimal-cloudflare-server dev",
+    "dev": "baerly dev",
+    "dev:wrangler": "baerly dev --wrangler",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test"
   },
   "devDependencies": {
+    "@baerly/cli": "workspace:*",
     "create-baerly": "workspace:*",
     "typescript": "^5.6.0"
   },

@@ -35,9 +35,11 @@ pnpm install
 pnpm dev
 ```
 
-`pnpm dev` (or your PM's equivalent) runs `wrangler dev` against the
-local R2 emulator. The first invocation downloads the `workerd`
-binary.
+`pnpm dev` (or your PM's equivalent) runs `baerly dev` — a Node HTTP
+listener on `:3000` backed by `LocalFsStorage`. No wrangler download
+required for first-touch. For CF parity (Workerd + the local R2
+emulator), run `pnpm dev:wrangler`; the first invocation downloads
+the `workerd` binary.
 
 `pnpm typecheck` runs `tsc --noEmit` across both apps.
 

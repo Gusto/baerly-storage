@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "tsx watch src/server.ts",
+    "dev": "baerly dev",
     "build": "tsc",
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit"
@@ -17,8 +17,8 @@
     "aws4fetch": "1.0.20"
   },
   "devDependencies": {
+    "@baerly/cli": "workspace:*",
     "@types/node": "^25.0.0",
-    "tsx": "^4.0.0",
     "typescript": "^5.6.0"
   }
 }

@@ -36,7 +36,8 @@ read it via your editor's TS LS or via the published types).
 | Command            | What it does                                                          | Runtime          |
 | ------------------ | --------------------------------------------------------------------- | ---------------- |
 | `pnpm typecheck` | TS typecheck across both apps                                         | seconds          |
-| `pnpm dev`       | Run the server locally — `wrangler dev` against the local R2 emulator | seconds to start |
+| `pnpm dev`       | Run the server locally via `baerly dev` — Node listener on :3000 over `LocalFsStorage` | seconds to start |
+| `pnpm dev:wrangler` | Run via `baerly dev --wrangler` for CF parity (requires `wrangler login`)            | seconds to start |
 | `pnpm test`        | Run all tests across both apps                                        | seconds          |
 
 ## Where the code is
