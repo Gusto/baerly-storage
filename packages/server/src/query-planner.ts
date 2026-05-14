@@ -120,7 +120,7 @@ export interface PlanQueryOptions {
  * number the planner falls back to `FullScanPlan` because N
  * parallel-fan-out-of-`IN_FANOUT_PARALLELISM` LIST round-trips cost
  * more than one snapshot+log fold on every backend we benchmark
- * (see `bench/load-harness/` and T5's bench evidence).
+ * (see `bench/load-harness/`).
  *
  * Override at the Db level via
  * `Db.create({ inFanoutThreshold })` when your backend's LIST

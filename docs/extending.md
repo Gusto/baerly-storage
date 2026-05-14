@@ -309,10 +309,12 @@ export default defineConfig({
   prefers a filtered index whenever the query's bounds (whether
   expressed as equality, `$in` members, or another range) fall
   inside the filter's bounds.
-- **Numeric ranges fall back to full-scan** — see
-  [`docs/features.md`](features.md) §"Numeric ranges fall back to
-  full-scan". Use string-encoded values (ISO 8601 timestamps,
-  zero-padded numerics) for fields that need range semantics.
+- **Numeric range and `$in` walks route through the index** — see
+  [`docs/features.md`](features.md) §"Numeric range and `$in` walks".
+  The value-order-preserving encoder keeps numeric and string ranges
+  in disjoint, sortable slots; string-encoded values (ISO 8601
+  timestamps, zero-padded numerics) remain a fine choice when you
+  want a single key space across heterogenous inputs.
 - When no predicate is given, no indexes are declared, or the
   predicate is operator-only on a non-indexed field, `planQuery`
   emits `FullScanPlan` and the read walks the log-fold unchanged.

@@ -307,7 +307,7 @@ describe("planQuery — range walks (T3)", () => {
     });
   });
 
-  test("string range is allowed (no numeric-range guard tripped)", () => {
+  test("string range routes through the index", () => {
     const indexes: IndexDefinition[] = [{ name: "by_priority", on: "priority" }];
     const plan = planQuery(
       { priority: { $gte: "p2" } } as unknown as Predicate<JSONArraylessObject>,

@@ -1082,7 +1082,11 @@ describe("auto-planner range and $in walks (T3)", () => {
 
   test("composite eq+range walk constrains to the matching slice", async () => {
     // Seed (tenant, age) where `age` is string-typed (zero-padded
-    // IDs) to dodge the numeric-range guard.
+    // values) so the composite eq+range walks over byte-order-stable
+    // strings that match what `encodeIndexValue` produces — keeps the
+    // assertion focused on the eq+range slicing rather than on the
+    // numeric encoder's lex/value-order behaviour, which has its own
+    // dedicated smoke test below.
     await provision(storage);
     const writer = new ServerWriter({
       storage,
@@ -1198,41 +1202,6 @@ describe("auto-planner range and $in walks (T3)", () => {
       }>)
       .all();
     expect(below).toEqual([]);
-  });
-
-  test("numeric range falls back to full-scan and returns the right rows", async () => {
-    // Seed 10 docs with age ∈ 1..10. Index on `age`. Query
-    // $gte:5, $lte:8 — the planner refuses to route this (numeric-
-    // range guard) and falls through to the full-scan path. Verify
-    // the full-scan path returns exactly 4 docs (age ∈ {5,6,7,8}).
-    await provision(storage);
-    const writer = new ServerWriter({
-      storage,
-      currentJsonKey: currentJsonKey(COLL),
-      options: { indexes: [{ name: "by_age", on: "age" }] },
-    });
-    for (let i = 1; i <= 10; i++) {
-      await writer.commit({
-        op: "I",
-        collection: COLL,
-        docId: `t-${i}`,
-        body: { _id: `t-${i}`, age: i },
-      });
-    }
-    const db = Db.create({
-      storage,
-      app: APP,
-      tenant: TENANT,
-      indexes: new Map([[COLL, [{ name: "by_age", on: "age" }]]]),
-    });
-    const rows = await db
-      .table<{ _id: string; age: number }>(COLL)
-      .where({ age: { $gte: 5, $lte: 8 } } as unknown as Predicate<{
-        _id: string;
-        age: number;
-      }>)
-      .all();
-    expect(rows.map((r) => r.age).toSorted((a, b) => a - b)).toEqual([5, 6, 7, 8]);
   });
 
   test("range on non-last indexed field still returns correct rows via postFilter", async () => {

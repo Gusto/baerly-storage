@@ -455,11 +455,11 @@ export const runCausalConsistencyCascade = (opts: {
 
 /**
  * Doc shape consumed by the range-walk parity cascade. `priority`
- * is a string-typed field so the byte-order-preserving encoder is
- * sound — the parity test deliberately skips numeric ranges per
- * the planner's NUMERIC-RANGE GUARD (a numeric range is refused at
- * the planner, so both the routed and full-scan paths route through
- * the same code; the property would be trivially true and redundant).
+ * is a string-typed field intentionally — `encodeIndexValue` is
+ * value-order-preserving across every supported type, so numeric
+ * ranges would also route through the index, but pinning priorities
+ * to short string tokens keeps the cascade's surface stable across
+ * tickets and makes the in-memory full-scan baseline easy to read.
  */
 interface ParityDoc extends JSONArraylessObject {
   readonly _id: string;
