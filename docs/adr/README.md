@@ -25,6 +25,7 @@ rules live in
 
 - [0018 — Tenant CAS isolation](./0018-tenant-cas-isolation.md)
 - [0019 — API surface lock](./0019-api-surface-lock.md)
+- [0020 — create-baerly and @baerly/cli split](./0020-create-baerly-and-cli-split.md)
 
 ## Template
 
