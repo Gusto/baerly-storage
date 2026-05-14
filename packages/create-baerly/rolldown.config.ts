@@ -4,12 +4,12 @@ import { defineConfig } from "rolldown";
 
 /**
  * Bundle the scaffolder entry; copy the runnable example trees from
- * `../../examples/{minimal-cloudflare,minimal-node}/` into
- * `dist/templates/{minimal-cloudflare,minimal-node}/` so the bundled
- * binary can find its templates at runtime.
+ * `../../examples/{minimal-cloudflare,minimal-node,helpdesk-cloudflare}/`
+ * into `dist/templates/{minimal-cloudflare,minimal-node,helpdesk-cloudflare}/`
+ * so the bundled binary can find its templates at runtime.
  *
  * The output subdirectory names mirror the source example directory
- * names because `scaffold.ts`'s `TARGET_TO_EXAMPLE` map joins the
+ * names because `scaffold.ts`'s `STARTER_TO_EXAMPLE` map joins the
  * resolved `templatesRoot` with the bare example name (e.g.
  * `minimal-cloudflare`). Renaming the output to `cloudflare`/`node`
  * would break the scaffolder.
@@ -27,7 +27,11 @@ import { defineConfig } from "rolldown";
 const copyTemplates = () => ({
   name: "copy-templates",
   closeBundle() {
-    const EXAMPLES: readonly string[] = ["minimal-cloudflare", "minimal-node"];
+    const EXAMPLES: readonly string[] = [
+      "minimal-cloudflare",
+      "minimal-node",
+      "helpdesk-cloudflare",
+    ];
     const SKIP_NAMES = new Set(["node_modules", "uint8array-base64.d.ts"]);
     for (const name of EXAMPLES) {
       const src = join("..", "..", "examples", name);
