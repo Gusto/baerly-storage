@@ -18,6 +18,7 @@
     "build": "rolldown -c"
   },
   "dependencies": {
+    "@baerly/adapter-node": "workspace:*",
     "@baerly/dev": "workspace:*",
     "@baerly/export": "workspace:*",
     "@baerly/protocol": "workspace:*",
