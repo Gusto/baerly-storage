@@ -25,6 +25,7 @@
     "build": "rolldown -c"
   },
   "dependencies": {
+    "@clack/prompts": "^0.7.0",
     "citty": "^0.1.6",
     "picocolors": "^1.1.1"
   }
