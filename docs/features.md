@@ -156,22 +156,20 @@ as `IndexDefinition`.
 - Otherwise `planQuery` emits `FullScanPlan` and the read walks the
   snapshot+log fold. Diagnostic `reason` values:
   `"no-predicate"`, `"no-indexes-declared"`,
-  `"no-matching-index"`, `"predicate-uses-operators-only"`,
-  `"numeric-range-on-byte-encoder"`.
+  `"no-matching-index"`, `"predicate-uses-operators-only"`.
 
-#### Numeric ranges fall back to full-scan
+#### Numeric range and `$in` walks
 
-`encodeIndexValue` is byte-order-preserving on
-`JSON.stringify(value)`. That is correct for strings —
-`"2026-05-13" < "2026-05-14"` matches semantic order — but wrong for
-numbers: `9` JSON-stringifies to `"9"` (0x39) and `10` stringifies
-to `"10"` (0x31 0x30), so `9` lex-sorts **above** `10`. Any
-`number` bound on a range or `$in` clause causes `planQuery` to
-emit `FullScanPlan{reason:"numeric-range-on-byte-encoder"}` —
-correct results, no optimisation. Use strings for range-indexed
-fields (ISO 8601 timestamps, zero-padded numerics, `"p1"/"p2"/"p3"`
-priorities). Value-order-preserving numeric encoding is a follow-up
-(see [`docs/followups/predicate-routing.md`](./followups/predicate-routing.md)).
+`encodeIndexValue` is value-order-preserving across types: numbers
+are encoded as sortable IEEE 754, strings as raw UTF-8, and a
+leading type tag keeps `"5"` and `5` in disjoint slots. Range walks
+and `$in` walks over numeric fields route normally — no full-scan
+fallback. The only routing-side guard that remains for `$in` is
+`IN_FANOUT_THRESHOLD` (50): an `$in` whose value list exceeds that
+threshold falls back to full-scan because N sequential LISTs cost
+more than one snapshot+log fold. String range walks remain safe
+under UTF-8 byte order (ISO 8601 timestamps, `"p1"/"p2"/"p3"`
+priorities, zero-padded numerics in string form, etc.).
 
 ### Pointers
 

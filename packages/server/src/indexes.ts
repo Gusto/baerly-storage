@@ -8,8 +8,10 @@
  *   - The {@link IndexDefinition} shape (`name`, `on`).
  *   - {@link validateIndexDefinition} — synchronous schema check
  *     for path-segment safety; thrown at `ServerWriter` construction.
- *   - {@link encodeIndexValue} — lex-order-preserving base-32 of the
- *     UTF-8 bytes of a value's canonical JSON form.
+ *   - {@link encodeIndexValue} — value-order-preserving base-32 of a
+ *     type-tagged byte stream (null/bool tag-only, numbers as sortable
+ *     IEEE 754, strings as raw UTF-8, objects as `JSON.stringify`
+ *     bytes for equality only).
  *   - {@link indexKeyFor} / {@link indexKeyPrefix} — the wire-key
  *     shape consumed by the writer's index PUTs and the rebuild
  *     command's idempotent reconciliation.
@@ -241,8 +243,8 @@ const TYPE_OBJECT = 0x50;
  *
  * `NaN` has no order-preserving slot and is rejected — see the
  * `encodeIndexValue` JSDoc for the wire-contract rationale.
- * `-0` and `+0` collapse to the same eight bytes (both serialise as
- * `0x00 00 00 00 00 00 00 00` after the sign-bit flip).
+ * `-0` and `+0` collapse because the `n === 0 ? 0 : n` coercion below
+ * forces both into the positive-zero branch before `setFloat64`.
  */
 const encodeNumberPayload = (n: number): Uint8Array => {
   if (Number.isNaN(n)) {
@@ -251,9 +253,10 @@ const encodeNumberPayload = (n: number): Uint8Array => {
       `encodeIndexValue: NaN is not indexable (the byte encoding has no order-preserving slot for it)`,
     );
   }
-  // `-0` and `+0` share a representation after the sign-bit flip below
-  // (DataView serialises both as 0x00...00); collapsing them here keeps
-  // the wire stable.
+  // Coerce `-0` to `+0` so both share the positive-zero serialisation
+  // (`setFloat64(-0)` would produce `0x80 00...00` and take the
+  // negative-branch all-bits-flip below, collapsing to a *different*
+  // byte string than `+0`). Coercing up front keeps the wire stable.
   const buf = new ArrayBuffer(8);
   new DataView(buf).setFloat64(0, n === 0 ? 0 : n, false); // big-endian
   const bytes = new Uint8Array(buf);
@@ -262,7 +265,7 @@ const encodeNumberPayload = (n: number): Uint8Array => {
     bytes[0] = bytes[0]! ^ 0x80;
   } else {
     // Negative: flip all bits so more-negative sorts lower.
-    for (let i = 0; i < 8; i++) bytes[i] = (bytes[i]! ^ 0xff) & 0xff;
+    for (let i = 0; i < 8; i++) bytes[i] = bytes[i]! ^ 0xff;
   }
   return bytes;
 };

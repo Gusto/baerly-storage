@@ -19,6 +19,7 @@ import {
 import { beforeEach, describe, expect, test } from "vitest";
 import { compact } from "./compactor.ts";
 import { Db } from "./db.ts";
+import { planQuery } from "./query-planner.ts";
 import { runAllWithMeta } from "./query.ts";
 import { ServerWriter } from "./server-writer.ts";
 
@@ -1278,6 +1279,11 @@ describe("auto-planner range and $in walks (T3)", () => {
     // ABOVE `age=10` (one byte 0x39 vs two bytes 0x31 0x30), so a
     // `$gte:10` walk could miss multi-digit rows or include `9`. With
     // the new encoder, `{$gte:10, $lt:30}` returns exactly [10,15,18,22].
+    //
+    // Pin the planner choice first so a regression that fell back to
+    // full-scan (e.g. by reintroducing a `containsNumber` guard) would
+    // trip this test instead of silently passing on the executor's
+    // correctness — the surrounding cascade already covers that.
     await provision(storage);
     const writer = new ServerWriter({
       storage,
@@ -1292,11 +1298,20 @@ describe("auto-planner range and $in walks (T3)", () => {
         body: { _id: `u-${age}`, age },
       });
     }
+    const indexes = [{ name: "by_age", on: "age" }] as const;
+    const plan = planQuery(
+      { age: { $gte: 10, $lt: 30 } } as unknown as Predicate<JSONArraylessObject>,
+      indexes,
+    );
+    expect(plan.kind).toBe("index-walk");
+    if (plan.kind === "index-walk") {
+      expect(plan.indexName).toBe("by_age");
+    }
     const db = Db.create({
       storage,
       app: APP,
       tenant: TENANT,
-      indexes: new Map([[COLL, [{ name: "by_age", on: "age" }]]]),
+      indexes: new Map([[COLL, [...indexes]]]),
     });
     const rows = await db
       .table<{ _id: string; age: number }>(COLL)
