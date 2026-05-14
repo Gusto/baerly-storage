@@ -24,10 +24,10 @@ import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { DOMParser } from "@xmldom/xmldom";
 import { AwsClient } from "aws4fetch";
-import { BaerlyError, S3HttpStorage, type Storage } from "@baerly/protocol";
+import { S3HttpStorage, type Storage } from "@baerly/protocol";
 import type { AppConfig } from "../config.ts";
 import type { DoctorFinding, DoctorReport } from "./cloudflare.ts";
-import { discoverCollections, estimateWritesPerMin } from "./usage.ts";
+import { runUsageScan } from "./usage.ts";
 
 const rollupStatus = (findings: readonly DoctorFinding[]): DoctorReport["status"] => {
   let worst: DoctorReport["status"] = "ok";
@@ -219,41 +219,5 @@ const runUsageCheck = async (config: AppConfig, findings: DoctorFinding[]): Prom
     sign: (req) => aws.sign(req),
   });
 
-  let collections: readonly string[];
-  try {
-    collections = await discoverCollections(storage, config.app, config.tenant);
-  } catch (e) {
-    findings.push({
-      severity: "warning",
-      check: "usage-discover",
-      message: `could not enumerate collections under app/${config.app}/tenant/${config.tenant}/manifests/: ${e instanceof BaerlyError ? e.message : (e as Error).message}`,
-    });
-    return;
-  }
-  if (collections.length === 0) {
-    findings.push({
-      severity: "info",
-      check: "usage-empty",
-      message: `no collections found under app/${config.app}/tenant/${config.tenant}/manifests/; nothing to scan.`,
-    });
-    return;
-  }
-
-  for (const c of collections) {
-    try {
-      const verdict = await estimateWritesPerMin(storage, config.app, config.tenant, c);
-      findings.push({
-        severity: verdict.severity,
-        check: `usage-${c}`,
-        message: verdict.message,
-        ...(verdict.fix !== "" && { fix: verdict.fix }),
-      });
-    } catch (e) {
-      findings.push({
-        severity: "warning",
-        check: `usage-${c}`,
-        message: `failed to estimate writes/min for ${c}: ${e instanceof BaerlyError ? e.message : (e as Error).message}`,
-      });
-    }
-  }
+  await runUsageScan({ app: config.app, tenant: config.tenant }, storage, findings);
 };

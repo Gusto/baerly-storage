@@ -30,6 +30,7 @@
  */
 
 import { BaerlyError, type LogEntry, type Storage } from "@baerly/protocol";
+import type { DoctorFinding } from "./cloudflare.ts";
 
 /**
  * M-size writes-per-minute-per-collection ceiling from
@@ -308,4 +309,61 @@ export const discoverCollections = async (
     );
   }
   return [...names].toSorted();
+};
+
+/**
+ * Orchestrate the `--usage` scan against a caller-supplied
+ * {@link Storage}. Each backend (Node / Cloudflare) handles its own
+ * env-var validation and storage construction; this helper runs the
+ * shared discover → per-collection-estimate → finding-push loop.
+ *
+ * Mutates `findings` in place. Returns when the scan completes
+ * (success or per-collection failure all surface as findings). The
+ * outer doctor exit code is driven by the rollup over all findings.
+ *
+ * Errors land as warnings (not errors) so one bad collection doesn't
+ * abort the whole scan and so the operator stays deployable while a
+ * single object is being investigated.
+ */
+export const runUsageScan = async (
+  context: { readonly app: string; readonly tenant: string },
+  storage: Storage,
+  findings: DoctorFinding[],
+): Promise<void> => {
+  let collections: readonly string[];
+  try {
+    collections = await discoverCollections(storage, context.app, context.tenant);
+  } catch (e) {
+    findings.push({
+      severity: "warning",
+      check: "usage-discover",
+      message: `could not enumerate collections under app/${context.app}/tenant/${context.tenant}/manifests/: ${e instanceof BaerlyError ? e.message : (e as Error).message}`,
+    });
+    return;
+  }
+  if (collections.length === 0) {
+    findings.push({
+      severity: "info",
+      check: "usage-empty",
+      message: `no collections found under app/${context.app}/tenant/${context.tenant}/manifests/; nothing to scan.`,
+    });
+    return;
+  }
+  for (const c of collections) {
+    try {
+      const verdict = await estimateWritesPerMin(storage, context.app, context.tenant, c);
+      findings.push({
+        severity: verdict.severity,
+        check: `usage-${c}`,
+        message: verdict.message,
+        ...(verdict.fix !== "" && { fix: verdict.fix }),
+      });
+    } catch (e) {
+      findings.push({
+        severity: "warning",
+        check: `usage-${c}`,
+        message: `failed to estimate writes/min for ${c}: ${e instanceof BaerlyError ? e.message : (e as Error).message}`,
+      });
+    }
+  }
 };
