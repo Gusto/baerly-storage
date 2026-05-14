@@ -839,8 +839,9 @@ const IN_FANOUT_PARALLELISM = 8;
  *     bound is enforced via `startAfter` (exclusive lower) or an
  *     in-loop skip (inclusive lower) — see
  *     {@link RANGE_EXCLUSIVE_LOWER_SENTINEL}.
- *   - `$in` walk (`plan.inOn !== undefined`): one sequential
- *     LIST per value, with the equality prefix prepended to each.
+ *   - `$in` walk (`plan.inOn !== undefined`): one LIST per value,
+ *     with the equality prefix prepended to each, dispatched in
+ *     batches of {@link IN_FANOUT_PARALLELISM} `Promise.all`-style.
  *     Doc-ids accumulate into a single Set (union semantics).
  *
  * Stale-row defence:
