@@ -4,5 +4,5 @@
     { "from": "minimal-demo", "fromKey": "tenant" }
   ],
   "excludePaths": ["uint8array-base64.d.ts", ".baerly/scaffold.json"],
-  "dropDevDeps": ["create-baerly"]
+  "dropDevDeps": []
 }

@@ -2,6 +2,12 @@
  * `create-baerly` entry. Invoked via `npm create baerly@latest --
  * my-app --target=cloudflare` (and the pnpm/yarn analogues).
  *
+ * That `npm create` invocation is the **post-publish** form; until
+ * the package ships to npm, stage locally from a clone via
+ * `pnpm pack` + `pnpm dlx file:.../create-baerly-0.1.0.tgz` — see
+ * the repo `README.md` Quick Start and ticket 04
+ * (`docs/planning/tickets/04-pnpm-pack-install-path-and-readme.md`).
+ *
  * Citty arg shape matches `@baerly/cli`'s `defineCommand` pattern
  * (see `packages/cli/src/copy.ts:193-216`).
  *
