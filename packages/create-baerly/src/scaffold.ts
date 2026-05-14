@@ -114,6 +114,7 @@ export const scaffold = async (opts: ScaffoldOptions): Promise<ScaffoldResult> =
   if (opts.projectName.length === 0) {
     throw new Error("create-baerly: projectName must be non-empty");
   }
+  // MUST mirror the regex in `prompts.ts:promptProjectName`. See ticket 02.
   if (!/^[a-z0-9][a-z0-9_-]*$/.test(opts.projectName)) {
     throw new Error(
       `create-baerly: projectName must be lowercase, alphanumeric + "_"/"-", starting with [a-z0-9] (got ${JSON.stringify(opts.projectName)})`,
