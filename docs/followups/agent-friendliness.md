@@ -194,3 +194,21 @@ status-lifecycle convention.
     The estimator itself is unchanged regardless of construction
     path; only the `Storage` factory changes. Found during T05
     execution on 2026-05-13. **Status:** open
+
+11. **`tini + tsx` Dockerfile caption still in scaffolded Node
+    `AGENTS.md`** — T02 caught and fixed the parallel stale
+    caption ("multi-stage; tini + tsx entrypoint") in the Node
+    scaffolded `README.md` (see entry 9 above). The Node template
+    `AGENTS.md` carries the same caption inside its
+    "Where the code is" table at line ~50:
+    `| apps/server/Dockerfile | Multi-stage container build (tini + tsx entrypoint) |`.
+    The live Dockerfile uses distroless `nodejs24-debian12` and
+    invokes `node apps/server/dist/server.js` directly — no
+    `tini`, no `tsx` (matches entry 9's analysis). T01 didn't
+    touch this caption (out of scope for the "What this is" /
+    "Where the code is" table rewrite); T02 only touched
+    `README.md`. **Suggested cleanup:** update the AGENTS.md
+    Node template's `apps/server/Dockerfile` row to mirror T02's
+    README fix ("multi-stage; distroless runtime"). Same one-line
+    edit as entry 9 but on the AGENTS.md path. Found during
+    end-of-branch verification on 2026-05-13. **Status:** open
