@@ -44,6 +44,8 @@ You are about to make a change.
 
 ## Operations
 
+- [auth.md](auth.md) — built-in `Verifier` presets and the
+  tenant-isolation / authorization caveat.
 - [troubleshooting.md](troubleshooting.md) — known pain points and
   fixes.
 - [operating/backups.md](operating/backups.md) — `baerly copy`
