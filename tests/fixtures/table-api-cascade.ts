@@ -126,7 +126,11 @@ const predicateRejection = (db: Db, table: string): void => {
     { label: "$gt at root", predicate: { $gt: 1 }, offender: "$gt" },
     { label: "$in at root", predicate: { $in: ["x"] }, offender: "$in" },
     { label: "$regex at root", predicate: { $regex: "x" }, offender: "$regex" },
-    { label: "nested $eq", predicate: { a: { $eq: 1 } }, offender: "$eq" },
+    // Nested unknown operator. `$eq`/`$gt`/`$gte`/`$lt`/`$lte`/`$in`
+    // are legal inside an operator-object value post the T1 AST
+    // extension; `$regex` is reserved-but-unsupported and still
+    // throws `Unsupported predicate operator` at validation time.
+    { label: "nested $regex", predicate: { a: { $regex: "x" } }, offender: "$regex" },
   ];
 
   for (const { label, predicate, offender } of cases) {
@@ -150,7 +154,7 @@ const predicateRejection = (db: Db, table: string): void => {
     expect(err, `where(${label}) must throw synchronously`).toBeInstanceOf(BaerlyError);
     expect((err as BaerlyError).code, `where(${label}) error.code`).toBe("InvalidConfig");
     // Message names the offending `$`-key verbatim (e.g. "$or",
-    // "$gt", "$eq"). The validator's wording is `Unsupported
+    // "$regex"). The validator's wording is `Unsupported
     // predicate operator "$or" at <root> — …` so a substring match
     // on the operator name is sufficient and resilient to wording
     // tweaks.
