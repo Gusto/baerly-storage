@@ -1,6 +1,6 @@
 {
   "name": "@baerly/protocol",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "description": "Pure protocol primitives — types, errors, JSON merge-patch, constants, hashing, ordered maps. No I/O.",
   "license": "MIT",

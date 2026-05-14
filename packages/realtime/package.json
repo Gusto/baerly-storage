@@ -1,6 +1,6 @@
 {
   "name": "@baerly/realtime",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "description": "Cloudflare Durable Object notification bus. Optional binding. Stub.",
   "license": "MIT",
