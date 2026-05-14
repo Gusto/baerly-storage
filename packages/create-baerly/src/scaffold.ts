@@ -12,6 +12,7 @@ import {
 export interface ScaffoldOptions {
   readonly projectName: string;
   readonly target: "cloudflare" | "node";
+  readonly starter?: "minimal" | "helpdesk";
   readonly pm?: Pm;
   readonly tenant?: string;
   readonly domain?: string;
@@ -46,10 +47,15 @@ const TEXT_EXTS = new Set([
   ".service",
 ]);
 
-/** target → example directory name (under `examples/`). */
-const TARGET_TO_EXAMPLE: Record<ScaffoldOptions["target"], string> = {
-  cloudflare: "minimal-cloudflare",
-  node: "minimal-node",
+/**
+ * `${target}:${starter}` → example directory name (under `examples/`).
+ * Default starter is `"minimal"`. The compound key lets us add richer
+ * starters per target without renaming or duplicating maps.
+ */
+const STARTER_TO_EXAMPLE: Record<string, string> = {
+  "cloudflare:minimal": "minimal-cloudflare",
+  "cloudflare:helpdesk": "helpdesk-cloudflare",
+  "node:minimal": "minimal-node",
 };
 
 /**
@@ -129,10 +135,14 @@ export const scaffold = async (opts: ScaffoldOptions): Promise<ScaffoldResult> =
     throw new Error(`create-baerly: ${outDir} exists and is non-empty`);
   }
 
-  const exampleName = TARGET_TO_EXAMPLE[opts.target];
+  const starter = opts.starter ?? "minimal";
+  const lookupKey = `${opts.target}:${starter}`;
+  const exampleName = STARTER_TO_EXAMPLE[lookupKey];
   const templateDir = exampleName === undefined ? "" : join(templatesRoot, exampleName);
   if (exampleName === undefined || !existsSync(templateDir)) {
-    throw new Error(`create-baerly: template not found for target=${opts.target}`);
+    throw new Error(
+      `create-baerly: template not found for target=${opts.target} starter=${starter}`,
+    );
   }
 
   const manifest = loadManifest(templateDir);

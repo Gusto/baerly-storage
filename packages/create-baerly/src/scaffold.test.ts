@@ -218,6 +218,43 @@ describe("scaffold", () => {
     expect(r.nextSteps).toEqual(["cd pm-test", "yarn install", "yarn dev"]);
   });
 
+  it("defaults starter to 'minimal' when omitted", async () => {
+    const result = await scaffold({
+      projectName: "default-starter",
+      target: "cloudflare",
+      pm: "pnpm",
+      templatesRoot: TEMPLATES_ROOT,
+      outRoot,
+    });
+    // Minimal scaffold ships wrangler.jsonc at apps/server/.
+    expect(result.filesWritten).toContain(join("apps", "server", "wrangler.jsonc"));
+  });
+
+  it("rejects an unknown starter", async () => {
+    await expect(
+      scaffold({
+        projectName: "ghost-starter",
+        target: "cloudflare",
+        // The cast bypasses the type guard so we exercise the runtime check.
+        starter: "ghost" as "minimal",
+        templatesRoot: TEMPLATES_ROOT,
+        outRoot,
+      }),
+    ).rejects.toThrow(/template not found for target=cloudflare starter=ghost/);
+  });
+
+  it("rejects helpdesk starter on the node target", async () => {
+    await expect(
+      scaffold({
+        projectName: "no-helpdesk-node",
+        target: "node",
+        starter: "helpdesk",
+        templatesRoot: TEMPLATES_ROOT,
+        outRoot,
+      }),
+    ).rejects.toThrow(/template not found for target=node starter=helpdesk/);
+  });
+
   it("rejects an unknown target template", async () => {
     await expect(
       scaffold({
@@ -229,7 +266,7 @@ describe("scaffold", () => {
         templatesRoot: TEMPLATES_ROOT,
         outRoot,
       }),
-    ).rejects.toThrow(/template not found for target=lambda/);
+    ).rejects.toThrow(/template not found for target=lambda starter=minimal/);
   });
 
   // Drift sentinel: both example trees were migrated off the old
