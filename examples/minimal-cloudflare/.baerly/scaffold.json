@@ -3,6 +3,6 @@
     { "from": "minimal-cloudflare", "fromKey": "appName" },
     { "from": "minimal-demo", "fromKey": "tenant" }
   ],
-  "excludePaths": [".baerly/scaffold.json"],
+  "excludePaths": ["uint8array-base64.d.ts", ".baerly/scaffold.json"],
   "dropDevDeps": ["create-baerly"]
 }

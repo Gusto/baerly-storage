@@ -17,6 +17,9 @@ import { defineConfig } from "rolldown";
  * Skips:
  *   - `node_modules/` — workspace-installed, huge, irrelevant to the
  *     published package.
+ *   - `uint8array-base64.d.ts` — in-repo-only shim. Already excluded
+ *     at scaffold time via the manifest; excluding here too keeps
+ *     `dist/templates/` clean.
  *
  * Includes `.baerly/scaffold.json` (the manifest the scaffolder reads
  * at runtime) — without it, dist mode breaks.
@@ -25,7 +28,7 @@ const copyTemplates = () => ({
   name: "copy-templates",
   closeBundle() {
     const EXAMPLES: readonly string[] = ["minimal-cloudflare", "minimal-node"];
-    const SKIP_NAMES = new Set(["node_modules"]);
+    const SKIP_NAMES = new Set(["node_modules", "uint8array-base64.d.ts"]);
     for (const name of EXAMPLES) {
       const src = join("..", "..", "examples", name);
       const dst = join("dist", "templates", name);
