@@ -10,9 +10,8 @@ related: ["backups.md"]
 # Day-one handshake gate (`pnpm gate:day-one`)
 
 The day-one gate asserts that a non-engineer + Claude can go from
-`npm create baerly@latest` (post-publish) — or its staged pre-npm
-equivalent, `pnpm dlx file:.../create-baerly-0.1.0.tgz` — to a
-working `client.table().insert()` inside the day-one SLO:
+`npm create baerly@latest` (post-publish) to a working
+`client.table().insert()` inside the day-one SLO:
 
 - Cloudflare target: **< 5 min cold**
 - Node target: **< 3 min local**
@@ -21,21 +20,26 @@ Without any manual credential editing.
 
 ## Local install (pre-npm)
 
-Until `create-baerly` + `@baerly/cli` ship to npm, contributors
-validating this gate against a feature branch should stage the
-tarballs from a clone:
+> 🚧 **Pre-publish.** `create-baerly` + `@baerly/cli` are not yet
+> on npm. The canonical `pnpm dlx file:...tgz` flow doesn't resolve
+> the scaffolded `@baerly/*` / `create-baerly` `^0.1.0` devDeps,
+> which the registry doesn't know about. Tarball-based staging
+> lands once the followup in
+> [`docs/followups/first-touch-dx.md`](../followups/first-touch-dx.md)
+> ships (`file:` URLs into the scaffolded `package.json`). Until
+> then, validate the gate from inside this clone:
 
 ```sh
 pnpm install && pnpm -r build
-pnpm -F create-baerly pack
-pnpm -F @baerly/cli pack
 
-# tarballs land at:
-#   packages/create-baerly/create-baerly-0.1.0.tgz
-#   packages/cli/baerly-cli-0.1.0.tgz
+# Scaffold inside the workspace so pnpm-workspace.yaml resolves
+# @baerly/* + create-baerly to the in-tree packages. The scaffolder
+# rejects slashes in the project name, so cd into examples/ first:
+cd examples
+node ../packages/create-baerly/dist/index.js gate-smoke \
+  --target=node --json
 
-pnpm dlx "file:$PWD/packages/create-baerly/create-baerly-0.1.0.tgz" my-app
-cd my-app && pnpm install && pnpm dev
+cd gate-smoke && pnpm install && pnpm dev
 ```
 
 Once published, the canonical first-touch path is `npm create

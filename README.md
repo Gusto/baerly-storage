@@ -8,26 +8,41 @@ Tested with S3, Backblaze, R2 and self-hosted Minio.
 
 ## Quick start
 
-```sh
-# Until baerly hits npm, stage locally from a clone:
-pnpm install && pnpm -r build
-pnpm -F create-baerly pack
-pnpm -F @baerly/cli pack
+> 🚧 **Pre-publish preview.** `create-baerly` and `@baerly/cli` are
+> not on npm yet, so the canonical `pnpm dlx create-baerly@latest`
+> flow doesn't resolve end-to-end. Until publish, scaffold inside
+> this clone's `examples/` directory — `pnpm-workspace.yaml`
+> resolves `@baerly/*` / `create-baerly` to the in-tree packages.
+> Tracking the npm-publish work in
+> [`docs/followups/first-touch-dx.md`](./docs/followups/first-touch-dx.md).
 
-# Then in the directory where you want your project to live:
-pnpm dlx file:/path/to/baerly-storage/packages/create-baerly/create-baerly-0.1.0.tgz my-app
+```sh
+git clone https://github.com/<you>/baerly-storage && cd baerly-storage
+pnpm install && pnpm -r build
+
+# Scaffold into the workspace so @baerly/* + create-baerly resolve:
+cd examples
+node ../packages/create-baerly/dist/index.js my-app --target=node --json
+
 cd my-app
 pnpm install
-pnpm dev
+pnpm dev          # → baerly dev → http://localhost:3000
 ```
 
 `pnpm dev` runs `baerly dev`: a local Node listener over
-`LocalFsStorage` on `http://localhost:3000`. The same verb works
-for both Cloudflare-Workers and self-hosted-Node targets — pick
-your deploy target at scaffold time and the appropriate
-`apps/server/` shell is written, but day-1 iteration is target-
-agnostic. (Cloudflare users can `pnpm dev:wrangler` for parity
-testing.)
+`LocalFsStorage`. The same verb works for both Cloudflare-Workers
+and self-hosted-Node targets — pick your deploy target at scaffold
+time and the appropriate `apps/server/` shell is written, but
+day-1 iteration is target-agnostic. (Cloudflare users can
+`pnpm dev:wrangler` for parity testing.)
+
+Once `create-baerly` + `@baerly/cli` ship to npm the flow shortens
+to `pnpm dlx create-baerly@latest my-app` (interactive wizard),
+followed by `pnpm install && pnpm dev` in any directory of your
+choice. The local tarballs from `pnpm -F create-baerly pack` /
+`pnpm -F @baerly/cli pack` will work end-to-end once the
+scaffolded `package.json` references them via `file:` URLs — see
+the followup.
 
 The `create-baerly` / `@baerly/cli` split is intentional — see
 [ADR 0020](./docs/adr/0020-create-baerly-and-cli-split.md).
