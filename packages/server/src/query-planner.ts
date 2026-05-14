@@ -118,9 +118,9 @@ export interface PlanQueryOptions {
  * Default `$in` fan-out threshold. `$in: [...]` with `values.length`
  * at or below this number emits an `inOn` walk plan; over this
  * number the planner falls back to `FullScanPlan` because N
- * sequential LIST round-trips cost more than one snapshot+log fold
- * on every backend we benchmark (see `bench/load-harness/` and T5's
- * bench evidence).
+ * parallel-fan-out-of-`IN_FANOUT_PARALLELISM` LIST round-trips cost
+ * more than one snapshot+log fold on every backend we benchmark
+ * (see `bench/load-harness/` and T5's bench evidence).
  *
  * Override at the Db level via
  * `Db.create({ inFanoutThreshold })` when your backend's LIST

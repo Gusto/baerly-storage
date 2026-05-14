@@ -1322,4 +1322,59 @@ describe("auto-planner range and $in walks (T3)", () => {
       .all();
     expect(rows.map((r) => r.age).toSorted((a, b) => a - b)).toEqual([10, 15, 18, 22]);
   });
+
+  test("$in multi-walk returns the union of all values' docs", async () => {
+    // Pin the union semantics of the parallel-batched $in walk. The
+    // batched fan-out replaced a sequential per-value loop; if a
+    // regression dropped a value or duplicated a doc this would trip.
+    //
+    // Writes go through `ServerWriter` with `options.indexes` directly
+    // because `Db.create({ indexes })` only threads to the planner,
+    // not to the writer's per-commit index emission (matches the
+    // numeric-range smoke test above).
+    await provision(storage);
+    const writer = new ServerWriter({
+      storage,
+      currentJsonKey: currentJsonKey(COLL),
+      options: { indexes: [{ name: "by_team", on: "team" }] },
+    });
+    for (const [id, team] of [
+      ["a", "platform"],
+      ["b", "infra"],
+      ["c", "platform"],
+      ["d", "data"],
+      ["e", "growth"],
+    ] as const) {
+      await writer.commit({
+        op: "I",
+        collection: COLL,
+        docId: id,
+        body: { _id: id, team },
+      });
+    }
+    const indexes = [{ name: "by_team", on: "team" }] as const;
+    const plan = planQuery(
+      { team: { $in: ["platform", "infra", "data"] } } as unknown as Predicate<JSONArraylessObject>,
+      indexes,
+    );
+    expect(plan.kind).toBe("index-walk");
+    if (plan.kind === "index-walk") {
+      expect(plan.indexName).toBe("by_team");
+      expect(plan.inOn?.values).toEqual(["platform", "infra", "data"]);
+    }
+    const db = Db.create({
+      storage,
+      app: APP,
+      tenant: TENANT,
+      indexes: new Map([[COLL, [...indexes]]]),
+    });
+    const rows = await db
+      .table<{ _id: string; team: string }>(COLL)
+      .where({ team: { $in: ["platform", "infra", "data"] } } as unknown as Predicate<{
+        _id: string;
+        team: string;
+      }>)
+      .all();
+    expect(rows.map((r) => r._id).toSorted()).toEqual(["a", "b", "c", "d"]);
+  });
 });

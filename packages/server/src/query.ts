@@ -36,6 +36,7 @@ import {
   type ConsistencyLevel,
   type CurrentJson,
   type CurrentJsonRead,
+  type JSONArrayless,
   type JSONArraylessObject,
   logSeqStartOf,
   MANIFEST_POINTER_EMPTY_SNAPSHOT,
@@ -799,6 +800,18 @@ const runRead = async <T extends JSONArraylessObject>(
 const RANGE_EXCLUSIVE_LOWER_SENTINEL = "~";
 
 /**
+ * Bounded parallelism for `$in` multi-walk LISTs. Each batch of this
+ * many `$in` values dispatches its `list()` calls concurrently; the
+ * loop waits on the batch before starting the next.
+ *
+ * Picked low (8) to stay well under any cloud-provider per-call concurrency
+ * ceiling while still amortising LIST round-trip latency on multi-value
+ * `$in` queries. The planner's `IN_FANOUT_THRESHOLD` (50) caps the total
+ * fan-out independently — see `packages/server/src/query-planner.ts`.
+ */
+const IN_FANOUT_PARALLELISM = 8;
+
+/**
  * Execute an {@link IndexWalkPlan} against the bucket. Returns the
  * post-filtered, fully-resolved row set. The full original
  * `state.predicate` is re-applied via `matches(...)` after fetching
@@ -905,13 +918,21 @@ const runIndexWalkPlan = async <T extends JSONArraylessObject>(
       docIdSet.add(docId);
     }
   } else if (plan.inOn !== undefined) {
-    // `$in` multi-walk: one sequential LIST per value, union of
-    // doc-ids. The planner has already vetted the fan-out (≤
-    // IN_FANOUT_THRESHOLD); the encoder is value-order-preserving
-    // across every supported type, so numeric members route the
-    // same as strings.
-    for (const value of plan.inOn.values) {
+    // `$in` multi-walk: dispatch up to IN_FANOUT_PARALLELISM `list()` calls
+    // in parallel per batch. Union of doc-ids across all values; per-value
+    // walks are independent so batching is sound. The planner has already
+    // vetted the total fan-out (≤ IN_FANOUT_THRESHOLD); the encoder is
+    // value-order-preserving across every supported type, so numeric
+    // members route the same as strings.
+    //
+    // Cancellation note: `Promise.all` rejects on the first rejection but
+    // does NOT cancel the other in-flight `list()` calls — the `Storage`
+    // contract doesn't promise mid-stream cancellation. Storage errors
+    // are rare; tightening this is out of scope.
+    const values = plan.inOn.values;
+    const walkOne = async (value: JSONArrayless): Promise<string[]> => {
       const valPrefix = `${eqPrefix}${encodeIndexValue(value)}/`;
+      const ids: string[] = [];
       for await (const entry of ctx.storage.list(valPrefix)) {
         const tail = entry.key.slice(valPrefix.length);
         if (!tail.endsWith(".json")) continue;
@@ -921,7 +942,15 @@ const runIndexWalkPlan = async <T extends JSONArraylessObject>(
             ? tail.slice(0, -".json".length)
             : tail.slice(lastSlash + 1, -".json".length);
         if (docId.length === 0) continue;
-        docIdSet.add(docId);
+        ids.push(docId);
+      }
+      return ids;
+    };
+    for (let i = 0; i < values.length; i += IN_FANOUT_PARALLELISM) {
+      const batch = values.slice(i, i + IN_FANOUT_PARALLELISM);
+      const results = await Promise.all(batch.map(walkOne));
+      for (const ids of results) {
+        for (const id of ids) docIdSet.add(id);
       }
     }
   } else {
