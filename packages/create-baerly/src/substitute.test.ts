@@ -64,6 +64,23 @@ describe("substitutePackageJson", () => {
     expect(out.dependencies["other"]).toBe("1.0.0");
   });
 
+  it("pins the literal `create-baerly` workspace dep to the cli version", () => {
+    // The emitted `baerly.config.ts` imports `create-baerly/config`,
+    // so the scaffolder keeps `create-baerly` as a devDep and pins
+    // it alongside the `@baerly/*` deps. See ticket 04.
+    const ctx = mkCtx({ renames: [], excludePaths: [], dropDevDeps: [] }, {});
+    const text = JSON.stringify(
+      { name: "x", devDependencies: { "create-baerly": "workspace:*", typescript: "^5" } },
+      null,
+      2,
+    );
+    const out = JSON.parse(substitutePackageJson(text, ctx)) as {
+      devDependencies: Record<string, string>;
+    };
+    expect(out.devDependencies["create-baerly"]).toBe("^1.2.3");
+    expect(out.devDependencies["typescript"]).toBe("^5");
+  });
+
   it("drops listed devDependencies", () => {
     const ctx = mkCtx({ renames: [], excludePaths: [], dropDevDeps: ["create-baerly"] }, {});
     const text = JSON.stringify(

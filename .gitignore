@@ -13,6 +13,9 @@ dist/
 build/
 *.tsbuildinfo
 
+# pnpm pack output (see ticket 04 / staged tarball install path)
+*.tgz
+
 # Test & coverage
 coverage/
 *.lcov

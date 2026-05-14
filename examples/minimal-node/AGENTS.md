@@ -36,7 +36,7 @@ read it via your editor's TS LS or via the published types).
 | Command            | What it does                                       | Runtime          |
 | ------------------ | -------------------------------------------------- | ---------------- |
 | `pnpm typecheck` | TS typecheck across both apps                      | seconds          |
-| `pnpm dev`       | Run the server locally — `tsx watch src/server.ts` | seconds to start |
+| `pnpm dev`       | Run the server locally via `baerly dev` — Node listener on :3000 | seconds to start |
 | `pnpm test`        | Run all tests across both apps                     | seconds          |
 
 ## Where the code is

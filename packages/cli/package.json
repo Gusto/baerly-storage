@@ -1,12 +1,15 @@
 {
   "name": "@baerly/cli",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "description": "Baerly CLI — copy, init, inspect, compact, fsck, export, migrate, dump, restore.",
   "license": "MIT",
   "bin": {
     "baerly": "./dist/baerly.js"
   },
+  "files": [
+    "dist"
+  ],
   "type": "module",
   "exports": {
     ".": {
@@ -15,9 +18,11 @@
     }
   },
   "scripts": {
-    "build": "rolldown -c"
+    "build": "rolldown -c",
+    "prepack": "rolldown -c"
   },
   "dependencies": {
+    "@baerly/adapter-node": "workspace:*",
     "@baerly/dev": "workspace:*",
     "@baerly/export": "workspace:*",
     "@baerly/protocol": "workspace:*",

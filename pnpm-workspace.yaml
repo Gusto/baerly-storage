@@ -3,6 +3,15 @@ packages:
   - examples/*
   - examples/*/apps/*
 
+# pnpm 10 flipped this default to `false`. Scaffolded apps (and the
+# T03 substitute pipeline) write `@baerly/*` deps as literal
+# `^0.1.0` semver ranges rather than `workspace:*` — when those land
+# inside `examples/` we want them resolved to the local workspace
+# member, not fetched from npm (the packages aren't published yet).
+# Restoring `true` matches the pnpm-9 behaviour the staged-tarball
+# install path in `README.md` relies on.
+linkWorkspacePackages: true
+
 # `workerd` ships a native binary postinstalled by
 # `@cloudflare/vitest-pool-workers`. The other entries are already
 # allowed elsewhere in the workspace but pnpm 10 wants the full

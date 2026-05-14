@@ -10,10 +10,12 @@
  *
  *   2. package.json normalisation. For files named `package.json`,
  *      any `workspace:*` value under a dep key matching `@baerly/*`
- *      is pinned to `^<cliVersion>`, and any dep in
- *      `manifest.dropDevDeps` is removed from `devDependencies`.
- *      Indentation is preserved by round-tripping through `JSON.parse`
- *      + `JSON.stringify(_, null, 2)`.
+ *      *or* the literal `create-baerly` is pinned to `^<cliVersion>`
+ *      (the scaffolder + CLI ship at the same version, and the
+ *      emitted `baerly.config.ts` imports `create-baerly/config`),
+ *      and any dep in `manifest.dropDevDeps` is removed from
+ *      `devDependencies`. Indentation is preserved by round-tripping
+ *      through `JSON.parse` + `JSON.stringify(_, null, 2)`.
  *
  * Literal substring substitution is deliberate: example sentinels are
  * unusual enough (`minimal-cloudflare`, `minimal-demo`, …) not to
@@ -58,7 +60,8 @@ export const substituteText = (text: string, ctx: SubstituteContext): string => 
 /**
  * Rewrite a package.json's text content. Applies sentinel renames
  * first (covers the `"name"` field and any other string), then pins
- * `@baerly/*` workspace deps and drops listed devDependencies.
+ * `@baerly/*` (and `create-baerly`) workspace deps to the CLI
+ * version, and drops listed devDependencies.
  */
 export const substitutePackageJson = (text: string, ctx: SubstituteContext): string => {
   const renamed = substituteText(text, ctx);
@@ -72,7 +75,8 @@ export const substitutePackageJson = (text: string, ctx: SubstituteContext): str
     const deps = pkg[block];
     if (deps === undefined) continue;
     for (const [name, value] of Object.entries(deps)) {
-      if (name.startsWith("@baerly/") && value === "workspace:*") deps[name] = pin;
+      if (value !== "workspace:*") continue;
+      if (name.startsWith("@baerly/") || name === "create-baerly") deps[name] = pin;
     }
   }
   if (pkg.devDependencies !== undefined) {

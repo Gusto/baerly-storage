@@ -58,7 +58,7 @@ const copyTemplates = () => ({
 
 export default defineConfig({
   input: "src/index.ts",
-  external: ["citty", "picocolors", /^node:/],
+  external: ["@clack/prompts", "citty", "picocolors", /^node:/],
   output: {
     file: "dist/index.js",
     format: "esm",

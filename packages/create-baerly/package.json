@@ -1,8 +1,8 @@
 {
   "name": "create-baerly",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
-  "description": "Scaffold a new baerly app. Run via `npm create baerly@latest -- my-app --target=cloudflare`.",
+  "description": "Scaffold a new baerly app. Run via `npm create baerly@latest -- my-app --target=cloudflare` (post-publish; today, stage via `pnpm pack` — see ticket 04).",
   "license": "MIT",
   "bin": {
     "create-baerly": "./dist/index.js"
@@ -22,9 +22,11 @@
     }
   },
   "scripts": {
-    "build": "rolldown -c"
+    "build": "rolldown -c",
+    "prepack": "rolldown -c"
   },
   "dependencies": {
+    "@clack/prompts": "^0.7.0",
     "citty": "^0.1.6",
     "picocolors": "^1.1.1"
   }

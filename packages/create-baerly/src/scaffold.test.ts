@@ -390,8 +390,14 @@ describe("scaffold", () => {
       expect(baerlyVersion).not.toBe("workspace:*");
       expect(baerlyVersion).toMatch(/^\^?\d+\.\d+\.\d+/);
 
-      // 4. `create-baerly` dropped from devDependencies per manifest.
-      expect(topPkg.devDependencies?.["create-baerly"]).toBeUndefined();
+      // 4. `create-baerly` kept in devDependencies (the emitted
+      //    `baerly.config.ts` imports `create-baerly/config`) and
+      //    pinned to a real semver alongside the `@baerly/*` deps —
+      //    see ticket 04.
+      const createBaerlyVersion = topPkg.devDependencies?.["create-baerly"];
+      expect(createBaerlyVersion).toBeDefined();
+      expect(createBaerlyVersion).not.toBe("workspace:*");
+      expect(createBaerlyVersion).toMatch(/^\^?\d+\.\d+\.\d+/);
 
       // 5. `uint8array-base64.d.ts` excluded per manifest.
       expect(result.filesWritten).not.toContain("uint8array-base64.d.ts");

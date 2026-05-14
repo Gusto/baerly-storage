@@ -1,6 +1,6 @@
 {
   "name": "@baerly/adapter-node",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "description": "Node adapter — re-exports S3HttpStorage + LocalFsStorage and exposes a node:http RequestListener that wraps Db + ServerWriter.",
   "license": "MIT",

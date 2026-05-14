@@ -234,6 +234,9 @@ importers:
 
   examples/minimal-cloudflare:
     devDependencies:
+      '@baerly/cli':
+        specifier: workspace:*
+        version: link:../../packages/cli
       create-baerly:
         specifier: workspace:*
         version: link:../../packages/create-baerly
@@ -250,6 +253,9 @@ importers:
         specifier: workspace:*
         version: link:../../../../packages/server
     devDependencies:
+      '@baerly/cli':
+        specifier: workspace:*
+        version: link:../../../../packages/cli
       '@cloudflare/workers-types':
         specifier: ^4
         version: 4.20260511.1
@@ -271,6 +277,9 @@ importers:
 
   examples/minimal-node:
     devDependencies:
+      '@baerly/cli':
+        specifier: workspace:*
+        version: link:../../packages/cli
       create-baerly:
         specifier: workspace:*
         version: link:../../packages/create-baerly
@@ -296,12 +305,12 @@ importers:
         specifier: 1.0.20
         version: 1.0.20
     devDependencies:
+      '@baerly/cli':
+        specifier: workspace:*
+        version: link:../../../../packages/cli
       '@types/node':
         specifier: ^25.0.0
         version: 25.6.2
-      tsx:
-        specifier: ^4.0.0
-        version: 4.21.0
       typescript:
         specifier: ^5.8.0
         version: 5.9.3
@@ -342,6 +351,9 @@ importers:
 
   packages/cli:
     dependencies:
+      '@baerly/adapter-node':
+        specifier: workspace:*
+        version: link:../adapter-node
       '@baerly/dev':
         specifier: workspace:*
         version: link:../dev
@@ -381,6 +393,9 @@ importers:
 
   packages/create-baerly:
     dependencies:
+      '@clack/prompts':
+        specifier: ^0.7.0
+        version: 0.7.0
       citty:
         specifier: ^0.1.6
         version: 0.1.6
@@ -486,6 +501,14 @@ packages:
   '@bcoe/v8-coverage@1.0.2':
     resolution: {integrity: sha512-6zABk/ECA/QYSCQ1NGiVwwbQerUCZ+TQbp64Q3AgmfNvurHH0j8TtXa1qbShXA6qqkpAj4V5W8pP6mLe1mcMqA==}
     engines: {node: '>=18'}
+
+  '@clack/core@0.3.5':
+    resolution: {integrity: sha512-5cfhQNH+1VQ2xLQlmzXMqUoiaH0lRBq9/CLW9lTyMbuKLC3+xEK01tHVvyut++mLOn5urSHmkm6I0Lg9MaJSTQ==}
+
+  '@clack/prompts@0.7.0':
+    resolution: {integrity: sha512-0MhX9/B4iL6Re04jPrttDm+BsP8y6mS7byuv0BvXgdXhbV5PdlsHt55dvNsuBCPZ7xq1oTAOOuotR9NFbQyMSA==}
+    bundledDependencies:
+      - is-unicode-supported
 
   '@cloudflare/kv-asset-handler@0.5.0':
     resolution: {integrity: sha512-jxQYkj8dSIzc0cD6cMMNdOc1UVjqSqu8BZdor5s8cGjW2I8BjODt/kWPVdY+u9zj3ms75Q5qaZgnxUad83+eAg==}
@@ -2371,6 +2394,9 @@ packages:
     resolution: {integrity: sha512-bzyZ1e88w9O1iNJbKnOlvYTrWPDl46O1bG0D3XInv+9tkPrxrN8jUUTiFlDkkmKWgn1M6CfIA13SuGqOa9Korw==}
     engines: {node: '>=14'}
 
+  sisteransi@1.0.5:
+    resolution: {integrity: sha512-bLGGlR1QxBcynn2d5YmDX4MGjlZvy2MRBDRNHLJ8VI6l6+9FUiyTFNJ0IveOSP0bcXgVDPRcfGqA0pjaqUpfVg==}
+
   source-map-js@1.2.1:
     resolution: {integrity: sha512-UXWMKhLOwVKb728IUtQPXxfYU+usdybtUrK/8uGE8CQMvrhOpwvzDBwj0QhSL7MQc7vIsISBG8VQ8+IDQxpfQA==}
     engines: {node: '>=0.10.0'}
@@ -2680,6 +2706,17 @@ snapshots:
       '@babel/helper-validator-identifier': 8.0.0-rc.4
 
   '@bcoe/v8-coverage@1.0.2': {}
+
+  '@clack/core@0.3.5':
+    dependencies:
+      picocolors: 1.1.1
+      sisteransi: 1.0.5
+
+  '@clack/prompts@0.7.0':
+    dependencies:
+      '@clack/core': 0.3.5
+      picocolors: 1.1.1
+      sisteransi: 1.0.5
 
   '@cloudflare/kv-asset-handler@0.5.0': {}
 
@@ -3665,6 +3702,7 @@ snapshots:
   get-tsconfig@4.14.0:
     dependencies:
       resolve-pkg-maps: 1.0.0
+    optional: true
 
   get-tsconfig@5.0.0-beta.5:
     dependencies:
@@ -4114,6 +4152,8 @@ snapshots:
 
   signal-exit@4.1.0: {}
 
+  sisteransi@1.0.5: {}
+
   source-map-js@1.2.1: {}
 
   split2@4.2.0: {}
@@ -4152,6 +4192,7 @@ snapshots:
       get-tsconfig: 4.14.0
     optionalDependencies:
       fsevents: 2.3.3
+    optional: true
 
   typescript@5.7.2: {}
 

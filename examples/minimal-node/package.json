@@ -4,11 +4,12 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "pnpm -F minimal-node-server dev",
+    "dev": "baerly dev",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test"
   },
   "devDependencies": {
+    "@baerly/cli": "workspace:*",
     "create-baerly": "workspace:*",
     "typescript": "^5.8.0"
   },

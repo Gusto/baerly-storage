@@ -2,7 +2,7 @@
 title: Day-one handshake gate
 audience: operator
 summary: Pre-release manual gate that times scaffold → deploy → first record against the day-one SLO.
-last-reviewed: 2026-05-12
+last-reviewed: 2026-05-14
 tags: [operations, gate, day-one, scaffold, deploy]
 related: ["backups.md"]
 ---
@@ -10,13 +10,41 @@ related: ["backups.md"]
 # Day-one handshake gate (`pnpm gate:day-one`)
 
 The day-one gate asserts that a non-engineer + Claude can go from
-`npm create baerly@latest` to a working `client.table().insert()`
-inside the day-one SLO:
+`npm create baerly@latest` (post-publish) to a working
+`client.table().insert()` inside the day-one SLO:
 
 - Cloudflare target: **< 5 min cold**
 - Node target: **< 3 min local**
 
 Without any manual credential editing.
+
+## Local install (pre-npm)
+
+> 🚧 **Pre-publish.** `create-baerly` + `@baerly/cli` are not yet
+> on npm. The canonical `pnpm dlx file:...tgz` flow doesn't resolve
+> the scaffolded `@baerly/*` / `create-baerly` `^0.1.0` devDeps,
+> which the registry doesn't know about. Tarball-based staging
+> lands once the followup in
+> [`docs/followups/first-touch-dx.md`](../followups/first-touch-dx.md)
+> ships (`file:` URLs into the scaffolded `package.json`). Until
+> then, validate the gate from inside this clone:
+
+```sh
+pnpm install && pnpm -r build
+
+# Scaffold inside the workspace so pnpm-workspace.yaml resolves
+# @baerly/* + create-baerly to the in-tree packages. The scaffolder
+# rejects slashes in the project name, so cd into examples/ first:
+cd examples
+node ../packages/create-baerly/dist/index.js gate-smoke \
+  --target=node --json
+
+cd gate-smoke && pnpm install && pnpm dev
+```
+
+Once published, the canonical first-touch path is `npm create
+baerly@latest my-app` — the gate's `SUMMARY` assertions and stage
+names below are unchanged either way.
 
 ## When to run
 
@@ -24,7 +52,7 @@ Without any manual credential editing.
 - After any change to `npm create baerly` (ticket 38), the deploy
   templates (tickets 39/40), or the auth presets (ticket 37).
 - After a `wrangler` major-version bump (the `--x-provision
-  --x-auto-create` flags are experimental; renames break the gate).
+--x-auto-create` flags are experimental; renames break the gate).
 
 The gate is **NOT** part of `pnpm verify` or `pnpm test`. It takes
 minutes per run and burns small amounts of cloud quota; run it
@@ -123,8 +151,7 @@ wrangler r2 bucket delete <name>
 - **`scaffold-complete`** — `npm create baerly@latest` returned.
 - **`install-complete`** — `pnpm install` inside the scaffold
   returned.
-- **`server-ready`** (Node) — `apps/server`'s `/v1/healthz` returned
-  200.
+- **`server-ready`** (Node) — `apps/server`'s `/v1/healthz` returned 200.
 - **`deploy-complete`** (CF) — `baerly deploy` returned.
 - **`deploy-url-resolved`** (CF) — `.baerly/deploy.json` exists +
   parses.
@@ -146,10 +173,10 @@ loosen only for local-debug runs.
 
 ## Failure modes (with fixes)
 
-| Symptom | Cause | Fix |
-|---|---|---|
-| `assertNoManualEnvEdit: ... older than the gate budget` | `.env` was on disk before the scaffold ran | `rm -rf` the temp dir; re-run. |
-| `wrangler: not found` | `wrangler` not installed | `pnpm i -g wrangler` or via `pnpm dlx`. |
-| CF gate: `Unauthorized` | API token missing R2:Edit | Recreate token with all three scopes. |
-| Node gate: `EADDRINUSE` | Port collision with another process | `pickFreePort` should prevent; if it fires, file a bug. |
-| `wrangler delete <name> failed` in afterAll | Worker already removed / billing scope | Manual sweep (see Tear down). |
+| Symptom                                                 | Cause                                      | Fix                                                     |
+| ------------------------------------------------------- | ------------------------------------------ | ------------------------------------------------------- |
+| `assertNoManualEnvEdit: ... older than the gate budget` | `.env` was on disk before the scaffold ran | `rm -rf` the temp dir; re-run.                          |
+| `wrangler: not found`                                   | `wrangler` not installed                   | `pnpm i -g wrangler` or via `pnpm dlx`.                 |
+| CF gate: `Unauthorized`                                 | API token missing R2:Edit                  | Recreate token with all three scopes.                   |
+| Node gate: `EADDRINUSE`                                 | Port collision with another process        | `pickFreePort` should prevent; if it fires, file a bug. |
+| `wrangler delete <name> failed` in afterAll             | Worker already removed / billing scope     | Manual sweep (see Tear down).                           |
