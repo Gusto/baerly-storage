@@ -178,6 +178,9 @@ importers:
 
   examples/minimal-cloudflare:
     devDependencies:
+      '@baerly/cli':
+        specifier: workspace:*
+        version: link:../../packages/cli
       create-baerly:
         specifier: workspace:*
         version: link:../../packages/create-baerly
@@ -194,6 +197,9 @@ importers:
         specifier: workspace:*
         version: link:../../../../packages/server
     devDependencies:
+      '@baerly/cli':
+        specifier: workspace:*
+        version: link:../../../../packages/cli
       '@cloudflare/workers-types':
         specifier: ^4
         version: 4.20260511.1
@@ -215,6 +221,9 @@ importers:
 
   examples/minimal-node:
     devDependencies:
+      '@baerly/cli':
+        specifier: workspace:*
+        version: link:../../packages/cli
       create-baerly:
         specifier: workspace:*
         version: link:../../packages/create-baerly
@@ -240,12 +249,12 @@ importers:
         specifier: 1.0.20
         version: 1.0.20
     devDependencies:
+      '@baerly/cli':
+        specifier: workspace:*
+        version: link:../../../../packages/cli
       '@types/node':
         specifier: ^25.0.0
         version: 25.6.2
-      tsx:
-        specifier: ^4.0.0
-        version: 4.21.0
       typescript:
         specifier: ^5.6.0
         version: 5.7.2
@@ -3632,6 +3641,7 @@ snapshots:
   get-tsconfig@4.14.0:
     dependencies:
       resolve-pkg-maps: 1.0.0
+    optional: true
 
   get-tsconfig@5.0.0-beta.5:
     dependencies:
@@ -4121,6 +4131,7 @@ snapshots:
       get-tsconfig: 4.14.0
     optionalDependencies:
       fsevents: 2.3.3
+    optional: true
 
   typescript@5.7.2: {}
 
