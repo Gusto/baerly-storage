@@ -17,10 +17,11 @@ S3-compatible storage API.
 The Worker-side server lives in `apps/server/`; the optional client
 lives in `apps/web/`. Configuration lives in `baerly.config.ts`.
 
-This starter is the ticket-CRUD variant — same wiring as `minimal-cloudflare`
-plus a working React+Vite frontend in `apps/web/` (served by the Worker via
-Workers Assets) and the `Ticket` schema in `types.ts`. The bare server-only
-version is `pnpm create baerly <app> --target=cloudflare`; this one is
+This starter is the ticket-CRUD variant — a Cloudflare Worker wired to
+R2 plus a working React+Vite frontend in `apps/web/` (served by the
+Worker via Workers Assets) with the `Ticket` schema declared in
+`types.ts`. The bare server-only version is `pnpm create baerly
+<app> --target=cloudflare`; this one is
 `--target=cloudflare --starter=helpdesk`.
 
 Public API docs: https://docs.baerly.dev/ (the JSDoc on

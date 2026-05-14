@@ -5,9 +5,7 @@
  *
  * Verifier selection: cloudflareAccess() when both CF_ACCESS_TEAM_DOMAIN
  * and CF_ACCESS_AUDIENCE_TAG are set as vars, else sharedSecret() when
- * SHARED_SECRET is set, else throw on first request. Same chain as
- * minimal-cloudflare; the tenantPrefix sentinel rename gives the
- * scaffolded user their tenant.
+ * SHARED_SECRET is set, else throw on first request.
  */
 import { baerlyWorker, type Env as BaerlyEnv } from "@baerly/adapter-cloudflare";
 import { cloudflareAccess, sharedSecret } from "@baerly/server/auth";
