@@ -2,7 +2,7 @@
 title: Developer setup
 audience: coder
 summary: "Local dev: pnpm, Minio + Toxiproxy + Postgres stack, test commands."
-last-reviewed: 2026-05-12
+last-reviewed: 2026-05-14
 tags: [development, setup, tests]
 related: [troubleshooting.md, "../CLAUDE.md"]
 ---
@@ -110,6 +110,13 @@ distinguish your regressions from the pre-existing state.
 - **Clock-skew tests are sensitive.** The protocol has a `LAG_WINDOW_MILLIS`
   (5s) tolerance — if your machine clock drifts > 5s from NTP, expect
   flakes in `time.test.ts` and `randomized.test.ts`.
+- **`pnpm install` errors with `lefthook install`.** If `git config core.hooksPath`
+  is set to something `lefthook install` doesn't expect (common when another tool
+  in your dotfiles owns the hooks path), the `prepare` script fails. Workarounds,
+  in order of preference: `lefthook install --reset-hooks-path`, or
+  `git config --unset core.hooksPath && pnpm install`, or as a last resort
+  `pnpm install --ignore-scripts` (skips the `prepare` step entirely; you'll need
+  to wire pre-commit hooks manually).
 
 ## Debugging a flaky test
 
