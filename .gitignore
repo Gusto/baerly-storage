@@ -67,7 +67,7 @@ examples/helpdesk/.baerly-data/
 
 # Scaffolding-eval per-trial outputs (large + leaky; score.md and
 # metrics.json are intentionally NOT ignored).
-runs/**/transcript.jsonl
-runs/**/final-state.diff
-runs/**/stderr.log
-runs/**/env.txt
+eval/runs/**/transcript.jsonl
+eval/runs/**/final-state.diff
+eval/runs/**/stderr.log
+eval/runs/**/env.txt

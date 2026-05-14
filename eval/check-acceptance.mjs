@@ -9,7 +9,7 @@
  * + `node:fs/promises` + `node:fs` + `node:path`).
  *
  * Usage:
- *   node scripts/check-acceptance.mjs <app> [<scaffold-root>]
+ *   node eval/check-acceptance.mjs <app> [<scaffold-root>]
  *
  * `<scaffold-root>` defaults to `process.cwd()`. Output goes to stdout
  * (`> acceptance.json` to capture).
@@ -734,7 +734,7 @@ const APPS = {
 
 function usage() {
   return [
-    "Usage: node scripts/check-acceptance.mjs <app> [<scaffold-root>]",
+    "Usage: node eval/check-acceptance.mjs <app> [<scaffold-root>]",
     `Valid apps: ${VALID_APPS.join(", ")}`,
   ].join("\n");
 }

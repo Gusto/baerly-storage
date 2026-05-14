@@ -1,5 +1,5 @@
 /**
- * Tests for `scripts/score-run.mjs`.
+ * Tests for `eval/score.mjs`.
  *
  * Shells out to the script (rather than importing it) because the
  * script is `.mjs` and exercises a CLI surface — the contract under
@@ -13,10 +13,10 @@ import { join } from "node:path";
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import { execa } from "execa";
 
-const SCRIPT = "scripts/score-run.mjs";
+const SCRIPT = "eval/score.mjs";
 const FIXTURE_DIR = "tests/fixtures/score-run";
 
-describe("scripts/score-run.mjs", () => {
+describe("eval/score.mjs", () => {
   let workDir: string;
 
   beforeEach(async () => {

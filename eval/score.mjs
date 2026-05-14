@@ -8,7 +8,7 @@
  * `metrics.json`. Zero runtime dependencies — pure Node 22+ APIs.
  *
  * Usage:
- *   node scripts/score-run.mjs \
+ *   node eval/score.mjs \
  *     --transcript <path.jsonl> \
  *     --acceptance <path.json> \
  *     [--env <path.txt>] \
@@ -104,7 +104,7 @@ function parseArgs(argv) {
 
 function usage() {
   return [
-    "node scripts/score-run.mjs --transcript <path> --acceptance <path>",
+    "node eval/score.mjs --transcript <path> --acceptance <path>",
     "  [--env <path>] [--diff <path>] [--out <path>] [--metrics <path>]",
     "  [--tool claude|codex|auto]",
   ].join("\n");

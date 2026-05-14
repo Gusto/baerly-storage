@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Fake `claude` shim for `scripts/run-eval.mjs` integration tests.
+ * Fake `claude` shim for `eval/run.mjs` integration tests.
  *
  * Two modes:
  *   1. `--version`        — emit a static version string + exit 0.

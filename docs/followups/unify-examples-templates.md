@@ -54,7 +54,7 @@ human-readable catalog and the CLI's template source.
    and recover. **Status:** open
 
 4. **Update scaffolding-eval prompts to the new example names.** Found
-   in `prompts/` and `scripts/run-eval.mjs` — the eval harness
+   in `eval/prompts/` and `eval/run.mjs` — the eval harness
    currently passes `--target=cloudflare` / `--target=node`. The
    scaffolder's `TARGET_TO_EXAMPLE` map handles this transparently, so
    no functional breakage today. Suggested cleanup: when the helpdesk

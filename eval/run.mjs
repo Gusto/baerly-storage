@@ -4,15 +4,15 @@
  *
  * Drives one or more (app, tool, trial) cells: scaffolds a fresh app,
  * spawns Claude Code or Codex CLI against the matching prompt, invokes
- * the acceptance checker (`scripts/check-acceptance.mjs`) and the
- * scorer (`scripts/score-run.mjs`), and emits a comparative report.
+ * the acceptance checker (`eval/check-acceptance.mjs`) and the
+ * scorer (`eval/score.mjs`), and emits a comparative report.
  *
  * Zero runtime deps — pure Node 24+ APIs (`node:child_process` +
  * `node:fs/promises` + `node:fs` + `node:path` + `node:events` +
  * `node:os`).
  *
  * Usage:
- *   node scripts/run-eval.mjs \
+ *   node eval/run.mjs \
  *     --app todo \
  *     --tool claude|codex|both \
  *     --trials 3 \
@@ -66,7 +66,7 @@ const DECISIONS_TEXT = [
   "  2. Model selection per tool — pin top-tier: claude-opus-4-7 for Claude",
   "     Code, gpt-5 for Codex. No cross-tier matching across CLIs.",
   "  3. Commit the scaffolded output to git — yes, on a local per-trial",
-  "     branch inside $WORKDIR/<app>. Eval-level `runs/` keeps score.md",
+  "     branch inside $WORKDIR/<app>. Eval-level `eval/runs/` keeps score.md",
   "     + metrics.json only.",
   "  4. Human-gold baseline — skipped for v1. Revisit when a blind",
   "     coworker run is available.",
@@ -84,7 +84,7 @@ const DECISIONS_TEXT = [
 function helpText() {
   return [
     "Usage:",
-    "  node scripts/run-eval.mjs \\",
+    "  node eval/run.mjs \\",
     "    --app <app> \\",
     "    --tool claude|codex|both \\",
     "    --trials <N> \\",
@@ -102,7 +102,7 @@ function helpText() {
     "  --trials  3",
     "  --target  cloudflare",
     "  --workdir mktemp -d under $TMPDIR (not auto-deleted)",
-    "  --runs-dir <repo-root>/runs/",
+    "  --runs-dir <repo-root>/eval/runs/",
     "  --report  <runs-dir>/<date>-<app>-report.md",
     "",
     "Environment overrides (test/CI):",
@@ -161,7 +161,7 @@ function validateArgs(args) {
 
 // ──────────────────────────────────────────────────────────────────────
 // Process helpers — inlined per the ticket (no shared module with
-// check-acceptance.mjs / score-run.mjs).
+// check-acceptance.mjs / score.mjs).
 // ──────────────────────────────────────────────────────────────────────
 
 async function run(cmd, args, options = {}) {
@@ -485,7 +485,7 @@ async function runOneTrial({
   const acceptancePath = join(runDir, "acceptance.json");
   const acceptanceResult = await run(
     process.execPath,
-    [join(REPO_ROOT, "scripts/check-acceptance.mjs"), app, scaffoldRoot],
+    [join(REPO_ROOT, "eval/check-acceptance.mjs"), app, scaffoldRoot],
     { stdoutPath: acceptancePath },
   );
   if (acceptanceResult.code !== 0) {
@@ -500,7 +500,7 @@ async function runOneTrial({
   const scorePath = join(runDir, "score.md");
   const metricsPath = join(runDir, "metrics.json");
   const scoreArgs = [
-    join(REPO_ROOT, "scripts/score-run.mjs"),
+    join(REPO_ROOT, "eval/score.mjs"),
     "--transcript",
     join(runDir, "transcript.jsonl"),
     "--acceptance",
@@ -603,8 +603,8 @@ async function emitReport({
   lines.push("");
   lines.push("## Configuration");
   lines.push("");
-  lines.push(`- Prompt: \`prompts/${app}.md\``);
-  lines.push("- Runner: `scripts/run-eval.mjs`");
+  lines.push(`- Prompt: \`eval/prompts/${app}.md\``);
+  lines.push("- Runner: `eval/run.mjs`");
   lines.push(`- Trials per tool: ${args.trials}`);
   const versionsCells = [];
   if (perTool.claude) versionsCells.push(`claude ${perTool.claude.version}`);
@@ -778,7 +778,7 @@ async function main(argv) {
   }
 
   // Locate prompt.
-  const promptPath = join(REPO_ROOT, "prompts", `${args.app}.md`);
+  const promptPath = join(REPO_ROOT, "eval/prompts", `${args.app}.md`);
   if (!existsSync(promptPath)) {
     process.stderr.write(`error: prompt not found at ${promptPath}\n`);
     return 2;
@@ -796,7 +796,7 @@ async function main(argv) {
     ? resolvePath(args.workdir)
     : await mkdtemp(join(tmpdir(), "baerly-eval-"));
   mkdirSync(workdirBase, { recursive: true });
-  const runsDir = resolvePath(args.runsDir ?? join(REPO_ROOT, "runs"));
+  const runsDir = resolvePath(args.runsDir ?? join(REPO_ROOT, "eval/runs"));
   mkdirSync(runsDir, { recursive: true });
   const reportPath = resolvePath(
     args.report ?? join(runsDir, `${dateSlug()}-${args.app}-report.md`),
@@ -805,8 +805,8 @@ async function main(argv) {
   // Capture prompt + runner SHAs (best-effort; the eval tree may be a
   // worktree without git rev-parse on these paths, so default to
   // "unknown" if it fails).
-  const promptSha = await gitRevParse(REPO_ROOT, `HEAD:prompts/${args.app}.md`);
-  const runnerSha = await gitRevParse(REPO_ROOT, "HEAD:scripts/run-eval.mjs");
+  const promptSha = await gitRevParse(REPO_ROOT, `HEAD:eval/prompts/${args.app}.md`);
+  const runnerSha = await gitRevParse(REPO_ROOT, "HEAD:eval/run.mjs");
 
   // Capture tool versions up-front.
   const perTool = {};

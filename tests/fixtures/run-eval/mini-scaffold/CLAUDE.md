@@ -1,6 +1,6 @@
 # Mini scaffold for run-eval integration test.
 
-This directory is copied verbatim by `scripts/run-eval.mjs` when
+This directory is copied verbatim by `eval/run.mjs` when
 `EVAL_SCAFFOLD_OVERRIDE` points at it. It deliberately ships **just**
 the post-scaffold prerequisites the runner checks: `CLAUDE.md` (for
 the AGENTS.md/CLAUDE.md parity invariant) plus a stub

@@ -1,5 +1,5 @@
 /**
- * Tests for `scripts/run-eval.mjs`.
+ * Tests for `eval/run.mjs`.
  *
  * Shells out to the script (rather than importing it) — the contract
  * under test is the CLI surface: exit codes, the help text including
@@ -20,7 +20,7 @@ import { join, resolve as resolvePath } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { execa } from "execa";
 
-const SCRIPT = "scripts/run-eval.mjs";
+const SCRIPT = "eval/run.mjs";
 const FIXTURE_DIR = "tests/fixtures/run-eval";
 
 // A PATH that contains node but not `claude` / `codex`. Falls back to
@@ -32,7 +32,7 @@ function nodeOnlyPath(): string {
   return `${nodeDir}:/usr/bin:/bin`;
 }
 
-describe("scripts/run-eval.mjs", () => {
+describe("eval/run.mjs", () => {
   let workDir: string;
 
   beforeEach(async () => {

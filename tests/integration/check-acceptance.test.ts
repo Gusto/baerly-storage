@@ -1,5 +1,5 @@
 /**
- * Tests for `scripts/check-acceptance.mjs`.
+ * Tests for `eval/check-acceptance.mjs`.
  *
  * Shells out to the script (rather than importing it) — the contract
  * under test is the CLI surface: exit code, the JSON written to stdout,
@@ -10,10 +10,10 @@
 import { describe, test, expect } from "vitest";
 import { execa } from "execa";
 
-const SCRIPT = "scripts/check-acceptance.mjs";
+const SCRIPT = "eval/check-acceptance.mjs";
 const FIXTURE_DIR = "tests/fixtures/check-acceptance";
 
-describe("scripts/check-acceptance.mjs", () => {
+describe("eval/check-acceptance.mjs", () => {
   test("happy-path todo fixture — all testable bullets pass, spa_renders is null", async () => {
     const result = await execa("node", [SCRIPT, "todo", `${FIXTURE_DIR}/todo-happy/`]);
     expect(result.exitCode).toBe(0);
