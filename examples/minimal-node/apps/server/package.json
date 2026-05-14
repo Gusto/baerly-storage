@@ -1,5 +1,5 @@
 {
-  "name": "server",
+  "name": "minimal-node-server",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -10,9 +10,9 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@baerly/adapter-node": "^0.1.0",
-    "@baerly/protocol": "^0.1.0",
-    "@baerly/server": "^0.1.0",
+    "@baerly/adapter-node": "workspace:*",
+    "@baerly/protocol": "workspace:*",
+    "@baerly/server": "workspace:*",
     "@xmldom/xmldom": "^0.9.10",
     "aws4fetch": "1.0.20"
   },

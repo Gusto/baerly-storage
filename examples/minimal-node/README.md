@@ -1,4 +1,4 @@
-# {{appName}}
+# minimal-node
 
 A baerly app scaffolded with `create-baerly` for the **self-hosted
 Node** target. Uses `@baerly/adapter-node` against an S3-compatible
@@ -8,7 +8,7 @@ bucket (AWS S3, R2 via S3-compat, Minio, etc.) with a `bearerJwt` →
 ## What you got
 
 ```
-{{appName}}/
+minimal-node/
 ├── package.json              # pnpm workspace root
 ├── pnpm-workspace.yaml       # apps/*
 ├── tsconfig.json
@@ -31,8 +31,8 @@ bucket (AWS S3, R2 via S3-compat, Minio, etc.) with a `bearerJwt` →
 ## Run locally
 
 ```sh
-{{installCmd}}
-BUCKET=... AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=... SHARED_SECRET=... {{runDev}}
+pnpm install
+BUCKET=... AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=... SHARED_SECRET=... pnpm dev
 ```
 
 The server reads `BUCKET`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`,
@@ -52,8 +52,8 @@ daemons — you stay in control of the rollout. Pick one path:
 
 ```sh
 # Docker
-docker build -t {{appName}}:latest -f apps/server/Dockerfile .
-docker run -p 8080:8080 --env-file apps/server/.env {{appName}}:latest
+docker build -t minimal-node:latest -f apps/server/Dockerfile .
+docker run -p 8080:8080 --env-file apps/server/.env minimal-node:latest
 
 # pm2
 pnpm -F server build
@@ -110,7 +110,7 @@ baerly's ~$19/month; the pitch was always portability, not cost.
 
 ```sh
 baerly export --target=postgres \
-  --bucket={{appName}} --app={{appName}} --tenant=<your-tenant> \
+  --bucket=minimal-node --app=minimal-node --tenant=<your-tenant> \
   --table=<collection-name> --output=./out.sql
 ```
 

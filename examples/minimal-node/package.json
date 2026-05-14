@@ -1,14 +1,15 @@
 {
-  "name": "{{appName}}",
+  "name": "minimal-node",
   "version": "0.0.0",
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "pnpm -F server dev",
+    "dev": "pnpm -F minimal-node-server dev",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test"
   },
   "devDependencies": {
+    "create-baerly": "workspace:*",
     "typescript": "^5.6.0"
   },
   "packageManager": "pnpm@10.31.0"

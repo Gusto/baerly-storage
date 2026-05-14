@@ -5,7 +5,7 @@
 module.exports = {
   apps: [
     {
-      name: "{{appName}}",
+      name: "minimal-node",
       script: "dist/server.js",
       cwd: __dirname,
       instances: "max", // one per CPU core

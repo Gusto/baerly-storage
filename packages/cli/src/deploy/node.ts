@@ -48,33 +48,74 @@ const EMITTED_FILES: readonly { readonly rel: string; readonly isDir?: boolean }
 
 /**
  * Resolve the on-disk source of each templated file. The
- * `create-baerly` package owns the canonical template tree; the
- * CLI reads from it directly so a template edit is picked up by
- * both the scaffolder and `baerly deploy --target=node`.
+ * `examples/minimal-node/` tree is the canonical Node-deploy
+ * reference shape; the CLI reads from it directly so a template
+ * edit is picked up by both the scaffolder and
+ * `baerly deploy --target=node`.
+ *
+ * We intentionally do NOT add a runtime dep on `create-baerly` for
+ * this resolver (see the parallel rationale in `../config.ts`).
+ * The relative walk works in workspace dev mode (running straight
+ * from `src/` via Node's strip-types runtime); a published-cli
+ * consumer is not in scope today.
  */
 const sourcePathFor = (rel: string): string => {
   const here = dirname(fileURLToPath(import.meta.url));
   // packages/cli/src/deploy → packages/cli/src → packages/cli →
-  // packages → create-baerly/templates/node/apps/server/<rel>.
-  return resolve(
+  // packages → repo-root → examples/minimal-node/apps/server/<rel>.
+  return resolve(here, "..", "..", "..", "..", "examples", "minimal-node", "apps", "server", rel);
+};
+
+/**
+ * Substitute the example's manifest sentinels (literal substrings
+ * like `minimal-node` / `minimal-demo`) with the user's resolved
+ * config values. Mirrors `@baerly/create-baerly`'s `substituteText`
+ * — longest-first to keep nested sentinels stable — but inlined
+ * here so the CLI does NOT take a runtime dep on `create-baerly`
+ * (see the rationale in `../config.ts`).
+ *
+ * Unknown `fromKey`s on the manifest are skipped (the sentinel is
+ * left in place) rather than erroring; the scaffolder uses the same
+ * policy.
+ */
+const substituteSentinels = (
+  text: string,
+  renames: readonly { readonly from: string; readonly to: string }[],
+): string => {
+  const sorted = renames.toSorted((a, b) => b.from.length - a.from.length);
+  let out = text;
+  for (const r of sorted) out = out.replaceAll(r.from, r.to);
+  return out;
+};
+
+/**
+ * Load the example's `.baerly/scaffold.json` manifest and resolve
+ * each rename's `fromKey` against `vars`. Renames whose `fromKey`
+ * is absent from `vars` are dropped.
+ */
+const loadRenames = (vars: Record<string, string>): { from: string; to: string }[] => {
+  const here = dirname(fileURLToPath(import.meta.url));
+  // packages/cli/src/deploy → packages/cli/src → packages/cli →
+  // packages → repo-root → examples/minimal-node/.baerly/scaffold.json.
+  const manifestPath = resolve(
     here,
     "..",
     "..",
     "..",
-    "create-baerly",
-    "templates",
-    "node",
-    "apps",
-    "server",
-    rel,
+    "..",
+    "examples",
+    "minimal-node",
+    ".baerly",
+    "scaffold.json",
+  );
+  const raw = JSON.parse(readFileSync(manifestPath, "utf8")) as {
+    renames?: { from: string; fromKey: string }[];
+  };
+  const renames = raw.renames ?? [];
+  return renames.flatMap((r) =>
+    Object.hasOwn(vars, r.fromKey) ? [{ from: r.from, to: vars[r.fromKey]! }] : [],
   );
 };
-
-/** Substitute `{{appName}}` / `{{tenant}}` placeholders. */
-const subst = (text: string, vars: Record<string, string>): string =>
-  text.replaceAll(/\{\{(\w+)\}\}/g, (full, key: string) =>
-    Object.hasOwn(vars, key) ? vars[key]! : full,
-  );
 
 /**
  * Emit reference Node-deploy artifacts to `repoRoot/apps/server/`.
@@ -102,6 +143,7 @@ export const deployNode = async (
     appName: config.app,
     tenant: config.tenant,
   };
+  const renames = loadRenames(vars);
 
   const conflicts: { rel: string }[] = [];
   for (const ent of EMITTED_FILES) {
@@ -110,7 +152,7 @@ export const deployNode = async (
       if (!existsSync(dst)) mkdirSync(dst, { recursive: true });
       continue;
     }
-    const expected = subst(readFileSync(sourcePathFor(ent.rel), "utf8"), vars);
+    const expected = substituteSentinels(readFileSync(sourcePathFor(ent.rel), "utf8"), renames);
     if (existsSync(dst)) {
       const actual = readFileSync(dst, "utf8");
       if (actual === expected) continue;

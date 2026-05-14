@@ -230,19 +230,21 @@ Read in this order to build a mental model:
    test:manual-e2e`. **Not** a production template — sits at the
    root alongside `bench/` because it's manual maintainer
    infrastructure, not part of the automated test suite.
-11. **`packages/create-baerly/templates/{cloudflare,node}/`** —
-   production deploy templates. CF: `wrangler.jsonc` declares R2
-   bindings, `[vars]`, cron triggers, limits, and observability;
-   `apps/server/src/worker.ts` wires a verifier selector that
-   prefers `cloudflareAccess()` and falls back to `sharedSecret()`.
-   Node: distroless `Dockerfile` + non-root user + Node-script
-   HEALTHCHECK; `pm2.config.cjs` for cluster-mode pm2; `systemd/
-   baerly.service` for systemd hosts; `.dockerignore` + `.env.example`
-   round out the tree. Both consumed by the scaffolder and covered
-   by `packages/create-baerly/src/scaffold.test.ts` +
-   `packages/cli/src/{deploy,doctor}/{cloudflare,node}.test.ts`.
-   Both templates emit `AGENTS.md` + a byte-identical `CLAUDE.md` at
-   scaffold time so Codex CLI and Claude Code see the same context.
+11. **`examples/`** — runnable example apps that double as the CLI
+   template source. `examples/minimal-cloudflare/` (R2 +
+   `cloudflareAccess`→`sharedSecret`) and `examples/minimal-node/`
+   (S3 + JWKS→`sharedSecret`, distroless `Dockerfile` +
+   `pm2.config.cjs` + `systemd/baerly.service`) are the
+   production-shaped scaffolds; `examples/helpdesk/` is a
+   dev-only teaching fixture (React+Vite ticket CRUD over
+   `LocalFsStorage`). Each `minimal-*` example carries a
+   `.baerly/scaffold.json` manifest declaring rename sentinels,
+   copy exclusions, and devDep drops. The CLI consumes them at
+   scaffold time via `TARGET_TO_EXAMPLE` in
+   `packages/create-baerly/src/scaffold.ts`; the rolldown build
+   copies them into `dist/templates/<name>/` so the published
+   `create-baerly` binary is self-contained. Catalog index in
+   `examples/README.md`.
 
 The full lifecycle of `db.table().insert()` is in
 [docs/architecture.md](docs/architecture.md) — read it before
@@ -265,8 +267,8 @@ Path-scoped conventions. **Read the matching file before editing.**
 | Public API on `Db` / `Table` | [docs/extending.md](docs/extending.md) |
 | `packages/server/src/schema.ts` or `CollectionDefinition.schema` | [docs/extending.md](docs/extending.md) §"Declare a schema for a collection" |
 
-Claude users: `.claude/rules/{tests,docs}.md` auto-load on matching
-edits and point at the same files.
+Claude users: `.claude/rules/{tests,docs,change-discipline}.md`
+auto-load on matching edits and point at the same files.
 
 ## Conventions
 

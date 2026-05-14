@@ -1,7 +1,7 @@
 ---
-title: AGENTS.md — agent guidance for {{appName}}
+title: AGENTS.md — agent guidance for minimal-cloudflare
 audience: agent
-summary: How to develop and deploy {{appName}}, a baerly app.
+summary: How to develop and deploy minimal-cloudflare, a baerly app.
 tags: [agent-entry, baerly]
 ---
 
@@ -13,7 +13,7 @@ S3-compatible storage API.
 
 ## What this is
 
-`{{appName}}` is a baerly app scaffolded with `create-baerly`.
+`minimal-cloudflare` is a baerly app scaffolded with `create-baerly`.
 The Worker-side server lives in `apps/server/`; the optional client
 lives in `apps/web/`. Configuration lives in `baerly.config.ts`.
 
@@ -35,8 +35,8 @@ read it via your editor's TS LS or via the published types).
 
 | Command            | What it does                                                          | Runtime          |
 | ------------------ | --------------------------------------------------------------------- | ---------------- |
-| `{{runTypecheck}}` | TS typecheck across both apps                                         | seconds          |
-| `{{runDev}}`       | Run the server locally — `wrangler dev` against the local R2 emulator | seconds to start |
+| `pnpm typecheck` | TS typecheck across both apps                                         | seconds          |
+| `pnpm dev`       | Run the server locally — `wrangler dev` against the local R2 emulator | seconds to start |
 | `pnpm test`        | Run all tests across both apps                                        | seconds          |
 
 ## Where the code is

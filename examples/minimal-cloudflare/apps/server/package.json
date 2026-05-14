@@ -1,5 +1,5 @@
 {
-  "name": "server",
+  "name": "minimal-cloudflare-server",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -9,11 +9,12 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@baerly/adapter-cloudflare": "^0.1.0",
-    "@baerly/server": "^0.1.0"
+    "@baerly/adapter-cloudflare": "workspace:*",
+    "@baerly/server": "workspace:*"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4",
+    "typescript": "^5.6.0",
     "wrangler": "^4.10.0"
   }
 }

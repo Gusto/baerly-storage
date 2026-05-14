@@ -1,0 +1,110 @@
+# examples/
+
+Catalog of runnable baerly-storage example apps. Each subdirectory
+is a self-contained pnpm workspace — `cd` in, `pnpm install`, and
+`pnpm dev` (or the example's own script) brings it up. The same
+tree doubles as the template source for `create-baerly`: the CLI
+reads `examples/<name>/`, applies the `.baerly/scaffold.json`
+manifest (rename sentinels, copy exclusions, devDep drops), and
+writes the result into the user's target directory.
+
+## minimal-cloudflare
+
+Bare Cloudflare Workers scaffold. R2-backed, schema-less, ships
+the `cloudflareAccess` → `sharedSecret` verifier chain in
+`apps/server/src/worker.ts`. The "what does a production CF
+Worker entry look like?" answer.
+
+**Audience:** anyone scaffolding a new CF Worker target, or
+reading the canonical wiring for `@baerly/adapter-cloudflare` +
+R2 bindings + CF Access.
+
+**Run it:**
+
+```sh
+cd examples/minimal-cloudflare
+pnpm install
+pnpm dev
+```
+
+**Read first:** `apps/server/src/worker.ts` (the verifier
+selector + `baerlyWorker`), then `apps/server/wrangler.jsonc`
+(R2 binding + cron + observability config).
+
+## minimal-node
+
+Bare self-hosted Node scaffold. S3-compatible bucket via
+`@baerly/adapter-node`, distroless `Dockerfile`, `pm2.config.cjs`,
+`systemd/baerly.service`, schema-less. JWKS verifier with
+`sharedSecret` fallback for `pnpm dev` parity. The "what does a
+production Node app look like?" answer.
+
+**Audience:** anyone deploying baerly outside Cloudflare —
+Docker, pm2, systemd, k8s, bare-metal.
+
+**Run it:**
+
+```sh
+cd examples/minimal-node
+pnpm install
+BUCKET=... AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=... SHARED_SECRET=... pnpm dev
+```
+
+**Read first:** `apps/server/src/server.ts` (the `node:http`
+listener + verifier selector), then `apps/server/Dockerfile` (the
+distroless multi-stage build).
+
+## helpdesk
+
+Fully-built ticket CRUD app — Node HTTP server over
+`LocalFsStorage` + React/Vite frontend. Live multi-tab updates
+via the `/v1/since` long-poll, surfaced through the `useChanges`
+hook. **Dev-only teaching fixture**, not a deployable production
+template: it pins a hard-coded `sharedSecret` and a single tenant.
+
+**Audience:** anyone learning how to build something with baerly
+— what an app looks like end-to-end, what the client API feels
+like, how live updates work.
+
+**Run it:**
+
+```sh
+cd examples/helpdesk
+pnpm install
+pnpm dev
+```
+
+Then open <http://localhost:5173>.
+
+**Read first:** `apps/server/src/index.ts` (the ~25-line server
+boot), then `apps/web/src/TicketList.tsx` (the `useChanges` live-
+update hook).
+
+## Make a new example
+
+If the example should be CLI-scaffoldable, drop a
+`.baerly/scaffold.json` manifest at its root and wire it into
+`TARGET_TO_EXAMPLE` in `packages/create-baerly/src/scaffold.ts`.
+The manifest shape:
+
+```jsonc
+{
+  // Each `from` string is search-and-replaced in file contents
+  // and path segments; `fromKey` names which scaffold input
+  // (e.g. "appName", "tenant") provides the replacement value.
+  "renames": [
+    { "from": "minimal-cloudflare", "fromKey": "appName" },
+    { "from": "minimal-demo", "fromKey": "tenant" }
+  ],
+  // Paths skipped at copy time (relative to the example root).
+  "excludePaths": ["uint8array-base64.d.ts", ".baerly/scaffold.json"],
+  // devDependencies stripped from the scaffolded `package.json`
+  // (e.g. workspace-internal tooling that doesn't ship).
+  "dropDevDeps": ["create-baerly"]
+}
+```
+
+Examples without a manifest (e.g. `helpdesk`) are runnable but
+not CLI-scaffoldable. The rolldown build copies every example
+into `dist/templates/<name>/` so the published `create-baerly`
+binary is self-contained.

@@ -1,5 +1,5 @@
 /**
- * Server entry for {{appName}}. Wires `@baerly/adapter-node` with
+ * Server entry for minimal-node. Wires `@baerly/adapter-node` with
  * production-shaped storage + verifier defaults.
  *
  * Storage: AWS S3 (override via `S3_ENDPOINT` for R2/Minio/GCS).
@@ -22,8 +22,8 @@ const reqEnv = (name: string): string => {
   return v;
 };
 
-const APP = "{{appName}}";
-const TENANT = process.env.TENANT ?? "{{tenant}}";
+const APP = "minimal-node";
+const TENANT = process.env.TENANT ?? "minimal-demo";
 const PORT = Number(process.env.PORT ?? "8080");
 
 const aws = new AwsClient({
@@ -78,7 +78,7 @@ const listener = createListener({
 });
 const server = createServer(listener);
 
-server.listen(PORT, () => console.log(`{{appName}} listening on :${PORT}`));
+server.listen(PORT, () => console.log(`minimal-node listening on :${PORT}`));
 
 // Maintenance loop — hourly. Per-collection currentJsonKey shape
 // matches `Db.create({ app, tenant })`'s manifest prefix.

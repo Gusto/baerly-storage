@@ -42,7 +42,7 @@ pnpm exec baerly doctor --target=cloudflare
 ```
 
 The production template lives at
-`packages/create-baerly/templates/cloudflare/`. It ships a
+`examples/minimal-cloudflare/`. It ships a
 `wrangler.jsonc` with R2 bindings, vars, cron triggers, CPU
 limits, and observability; the worker entry wires a verifier
 selector that prefers `cloudflareAccess()` when configured and
@@ -72,7 +72,7 @@ pnpm exec baerly doctor --target=node
 ```
 
 The production template lives at
-`packages/create-baerly/templates/node/`. It ships a distroless
+`examples/minimal-node/`. It ships a distroless
 `Dockerfile` with non-root user (UID 65532) and a Node-script
 HEALTHCHECK, a `pm2.config.cjs` for cluster-mode pm2 hosts, a
 `systemd/baerly.service` for systemd targets, and a `.env.example`

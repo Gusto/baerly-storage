@@ -1,4 +1,4 @@
-# systemd unit for {{appName}}.
+# systemd unit for minimal-node.
 # Install:
 #   sudo cp apps/server/systemd/baerly.service /etc/systemd/system/
 #   sudo systemctl daemon-reload
@@ -6,7 +6,7 @@
 # Edit `User`, `WorkingDirectory`, `EnvironmentFile` for your host.
 
 [Unit]
-Description=Baerly app — {{appName}}
+Description=Baerly app — minimal-node
 Documentation=https://docs.baerly.dev/
 After=network-online.target
 Wants=network-online.target
@@ -16,7 +16,7 @@ Type=simple
 User=baerly
 Group=baerly
 WorkingDirectory=/opt/baerly
-EnvironmentFile=/etc/baerly/{{appName}}.env
+EnvironmentFile=/etc/baerly/minimal-node.env
 ExecStart=/usr/bin/node dist/server.js
 Restart=on-failure
 RestartSec=5s

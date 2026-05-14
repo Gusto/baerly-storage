@@ -1,4 +1,4 @@
-# {{appName}}
+# minimal-cloudflare
 
 A baerly app scaffolded with `create-baerly` for the **Cloudflare
 Workers** target. Single-bucket R2-backed deployment with the
@@ -8,7 +8,7 @@ out of the box.
 ## What you got
 
 ```
-{{appName}}/
+minimal-cloudflare/
 ├── package.json              # pnpm workspace root
 ├── pnpm-workspace.yaml       # apps/*
 ├── tsconfig.json
@@ -31,8 +31,8 @@ out of the box.
 ## Run locally
 
 ```sh
-{{installCmd}}
-{{runDev}}
+pnpm install
+pnpm dev
 ```
 
 `pnpm dev` (or your PM's equivalent) runs `wrangler dev` against the
@@ -61,7 +61,7 @@ baerly doctor --target=cloudflare
 ```
 
 If you'd rather run the steps by hand: `wrangler r2 bucket create
-{{appName}}` → `wrangler deploy` from `apps/server/`.
+minimal-cloudflare` → `wrangler deploy` from `apps/server/`.
 
 ## Next steps
 
@@ -104,7 +104,7 @@ baerly's ~$19/month; the pitch was always portability, not cost.
 
 ```sh
 baerly export --target=postgres \
-  --bucket={{appName}} --app={{appName}} --tenant=<your-tenant> \
+  --bucket=minimal-cloudflare --app=minimal-cloudflare --tenant=<your-tenant> \
   --table=<collection-name> --output=./out.sql
 ```
 

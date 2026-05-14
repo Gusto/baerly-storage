@@ -1,7 +1,7 @@
 ---
-title: AGENTS.md — agent guidance for {{appName}}
+title: AGENTS.md — agent guidance for minimal-node
 audience: agent
-summary: How to develop and deploy {{appName}}, a baerly app.
+summary: How to develop and deploy minimal-node, a baerly app.
 tags: [agent-entry, baerly]
 ---
 
@@ -13,7 +13,7 @@ S3-compatible storage API.
 
 ## What this is
 
-`{{appName}}` is a baerly app scaffolded with `create-baerly`.
+`minimal-node` is a baerly app scaffolded with `create-baerly`.
 The Node-side server lives in `apps/server/`; the optional client
 lives in `apps/web/`. Configuration lives in `baerly.config.ts`.
 
@@ -35,8 +35,8 @@ read it via your editor's TS LS or via the published types).
 
 | Command            | What it does                                       | Runtime          |
 | ------------------ | -------------------------------------------------- | ---------------- |
-| `{{runTypecheck}}` | TS typecheck across both apps                      | seconds          |
-| `{{runDev}}`       | Run the server locally — `tsx watch src/server.ts` | seconds to start |
+| `pnpm typecheck` | TS typecheck across both apps                      | seconds          |
+| `pnpm dev`       | Run the server locally — `tsx watch src/server.ts` | seconds to start |
 | `pnpm test`        | Run all tests across both apps                     | seconds          |
 
 ## Where the code is

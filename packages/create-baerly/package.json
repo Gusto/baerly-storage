@@ -8,8 +8,7 @@
     "create-baerly": "./dist/index.js"
   },
   "files": [
-    "dist",
-    "templates"
+    "dist"
   ],
   "type": "module",
   "exports": {

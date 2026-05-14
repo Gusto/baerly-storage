@@ -3,7 +3,7 @@
   // commas tolerated, in-line comments supported. Wrangler 4+
   // reads this directly.
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "{{appName}}",
+  "name": "minimal-cloudflare",
   "main": "src/worker.ts",
   "compatibility_date": "2025-06-01",
   "compatibility_flags": ["nodejs_compat"],
@@ -15,7 +15,7 @@
   "r2_buckets": [
     {
       "binding": "BUCKET",
-      "bucket_name": "{{appName}}",
+      "bucket_name": "minimal-cloudflare",
     },
   ],
 
@@ -44,8 +44,8 @@
   // linearly but loses canonical-line coverage on the happy path.
   // Errors and maintenance runs are always-kept regardless.
   "vars": {
-    "APP": "{{appName}}",
-    "TENANT": "{{tenant}}",
+    "APP": "minimal-cloudflare",
+    "TENANT": "minimal-demo",
     "LOG_LEVEL": "info",
     "LOG_SAMPLE": "0.1",
   },

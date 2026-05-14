@@ -1,5 +1,5 @@
 /**
- * Worker entry for {{appName}}. Wires `@baerly/adapter-cloudflare`
+ * Worker entry for minimal-cloudflare. Wires `@baerly/adapter-cloudflare`
  * to the bound R2 bucket and a `Verifier` selected at request time
  * from the bound vars.
  *
@@ -55,7 +55,7 @@ const selectVerifier = (env: AppEnv): Verifier => {
     });
   }
   if (env.SHARED_SECRET !== undefined) {
-    return sharedSecret({ secret: env.SHARED_SECRET, tenantPrefix: "{{tenant}}" });
+    return sharedSecret({ secret: env.SHARED_SECRET, tenantPrefix: "minimal-demo" });
   }
   throw new Error(
     "No Verifier configured. Set SHARED_SECRET (wrangler secret put SHARED_SECRET) or " +

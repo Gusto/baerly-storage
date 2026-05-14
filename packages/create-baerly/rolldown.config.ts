@@ -3,31 +3,52 @@ import { dirname, join } from "node:path";
 import { defineConfig } from "rolldown";
 
 /**
- * Bundle the scaffolder entry; copy the literal `templates/` tree
- * verbatim into `dist/templates/` so the bundled binary can find
- * its templates at runtime.
+ * Bundle the scaffolder entry; copy the runnable example trees from
+ * `../../examples/{minimal-cloudflare,minimal-node}/` into
+ * `dist/templates/{minimal-cloudflare,minimal-node}/` so the bundled
+ * binary can find its templates at runtime.
+ *
+ * The output subdirectory names mirror the source example directory
+ * names because `scaffold.ts`'s `TARGET_TO_EXAMPLE` map joins the
+ * resolved `templatesRoot` with the bare example name (e.g.
+ * `minimal-cloudflare`). Renaming the output to `cloudflare`/`node`
+ * would break the scaffolder.
+ *
+ * Skips:
+ *   - `node_modules/` — workspace-installed, huge, irrelevant to the
+ *     published package.
+ *   - `uint8array-base64.d.ts` — in-repo-only shim. Already excluded
+ *     at scaffold time via the manifest; excluding here too keeps
+ *     `dist/templates/` clean.
+ *
+ * Includes `.baerly/scaffold.json` (the manifest the scaffolder reads
+ * at runtime) — without it, dist mode breaks.
  */
 const copyTemplates = () => ({
   name: "copy-templates",
   closeBundle() {
-    const src = "templates";
-    const dst = "dist/templates";
-    const walk = (rel: string): void => {
-      const from = join(src, rel);
-      const to = join(dst, rel);
-      for (const ent of readdirSync(from)) {
-        const fromEnt = join(from, ent);
-        const toEnt = join(to, ent);
-        if (statSync(fromEnt).isDirectory()) {
-          mkdirSync(toEnt, { recursive: true });
-          walk(join(rel, ent));
-        } else {
-          mkdirSync(dirname(toEnt), { recursive: true });
-          copyFileSync(fromEnt, toEnt);
+    const EXAMPLES: readonly string[] = ["minimal-cloudflare", "minimal-node"];
+    const SKIP_NAMES = new Set(["node_modules", "uint8array-base64.d.ts"]);
+    for (const name of EXAMPLES) {
+      const src = join("..", "..", "examples", name);
+      const dst = join("dist", "templates", name);
+      const walk = (rel: string): void => {
+        const from = join(src, rel);
+        for (const ent of readdirSync(from)) {
+          if (SKIP_NAMES.has(ent)) continue;
+          const fromEnt = join(from, ent);
+          const toEnt = join(dst, rel, ent);
+          if (statSync(fromEnt).isDirectory()) {
+            mkdirSync(toEnt, { recursive: true });
+            walk(join(rel, ent));
+          } else {
+            mkdirSync(dirname(toEnt), { recursive: true });
+            copyFileSync(fromEnt, toEnt);
+          }
         }
-      }
-    };
-    walk("");
+      };
+      walk("");
+    }
   },
 });
 

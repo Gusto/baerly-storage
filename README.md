@@ -25,7 +25,7 @@ const listener = createListener({
 createServer(listener).listen(3000);
 ```
 
-For a runnable, multi-tab demo see [`examples/helpdesk/`](./examples/helpdesk).
+For a runnable, multi-tab demo see [`examples/helpdesk/`](./examples/helpdesk); for production-shaped Cloudflare and Node scaffolds (also the source for `create-baerly`) see [`examples/`](./examples).
 
 ## Where things live
 

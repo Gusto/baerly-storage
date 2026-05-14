@@ -1,11 +1,25 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, test } from "vitest";
 import { scaffold } from "./scaffold.ts";
 
-const TEMPLATES_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "templates");
+// `examples/` (containing `minimal-cloudflare/` and `minimal-node/`)
+// is the new templates root after the Step-3 migration. The
+// scaffolder's `TARGET_TO_EXAMPLE` map resolves a target to the
+// matching example directory under this root.
+const TEMPLATES_ROOT = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "..",
+  "..",
+  "examples",
+);
+const EXAMPLE_DIRS = [
+  resolve(TEMPLATES_ROOT, "minimal-cloudflare"),
+  resolve(TEMPLATES_ROOT, "minimal-node"),
+];
 
 describe("scaffold", () => {
   let outRoot: string;
@@ -217,4 +231,115 @@ describe("scaffold", () => {
       }),
     ).rejects.toThrow(/template not found for target=lambda/);
   });
+
+  // Drift sentinel: both example trees were migrated off the old
+  // `\{\{...\}\}` placeholder convention to manifest-driven sentinel
+  // renames. If anyone reintroduces a `\{\{placeholder\}\}` to one of
+  // the examples — by hand or from a copy/paste — the scaffolder
+  // will quietly emit it into a fresh app, where it would crash at
+  // tsc / wrangler / pm2 startup. This test fails loudly on the
+  // source side so that regression never ships.
+  test("examples contain no {{placeholder}} substrings", async () => {
+    const PLACEHOLDER_RE = /\{\{\w+\}\}/;
+    const skipName = (name: string): boolean => name === "node_modules";
+    const skipRel = (rel: string): boolean => rel === join(".baerly", "scaffold.json");
+    const walk = async (root: string, rel: string, hits: string[]): Promise<void> => {
+      const abs = rel === "" ? root : join(root, rel);
+      const ents = await readdir(abs, { withFileTypes: true });
+      for (const ent of ents) {
+        if (skipName(ent.name)) continue;
+        const relEnt = rel === "" ? ent.name : join(rel, ent.name);
+        if (skipRel(relEnt)) continue;
+        if (ent.isDirectory()) {
+          await walk(root, relEnt, hits);
+          continue;
+        }
+        if (!ent.isFile()) continue;
+        const st = await stat(join(root, relEnt));
+        // Treat anything > 1 MiB as binary — examples don't ship
+        // large blobs but a guard keeps the walk fast under churn.
+        if (st.size > 1024 * 1024) continue;
+        let text: string;
+        try {
+          text = await readFile(join(root, relEnt), "utf8");
+        } catch {
+          continue;
+        }
+        if (PLACEHOLDER_RE.test(text)) {
+          hits.push(`${relative(TEMPLATES_ROOT, root)}/${relEnt}`);
+        }
+      }
+    };
+    const hits: string[] = [];
+    for (const dir of EXAMPLE_DIRS) await walk(dir, "", hits);
+    expect(hits, `unexpected {{placeholder}} substrings in examples: ${hits.join(", ")}`).toEqual(
+      [],
+    );
+  });
+
+  // End-to-end scaffold + rename. Drives the scaffolder for each
+  // target with concrete user inputs into a tmpdir and validates the
+  // post-substitute invariants the CLI relies on: package.json
+  // identity, baerly.config.ts content, @baerly/* version pinning,
+  // dropped devDeps, excluded paths, and AGENTS.md / CLAUDE.md
+  // parity. Subsumes the older single-target smoke checks above for
+  // the rewrite-correctness side of the contract.
+  for (const target of ["cloudflare", "node"] as const) {
+    test(`scaffold + rename end-to-end (${target})`, async () => {
+      // Per-target appName so the two parameterised runs don't collide
+      // inside the shared `outRoot` tmpdir.
+      const appName = `my-test-app-${target}`;
+      const tenant = "my-test-tenant";
+      const result = await scaffold({
+        projectName: appName,
+        target,
+        pm: "pnpm",
+        tenant,
+        templatesRoot: TEMPLATES_ROOT,
+        outRoot,
+      });
+
+      // 1. Top-level package.json:name matches the user input.
+      const topPkg = JSON.parse(await readFile(join(result.outDir, "package.json"), "utf8")) as {
+        name: string;
+        devDependencies?: Record<string, string>;
+      };
+      expect(topPkg.name).toBe(appName);
+
+      // 2. baerly.config.ts parses (read as text) and reflects the
+      //    user-supplied values — and contains NO sentinel residue.
+      const config = await readFile(join(result.outDir, "baerly.config.ts"), "utf8");
+      expect(config).toContain(`app: "${appName}"`);
+      expect(config).toContain(`tenant: "${tenant}"`);
+      expect(config).not.toContain("minimal-cloudflare");
+      expect(config).not.toContain("minimal-demo");
+
+      // 3. `@baerly/*` workspace deps pinned to a real semver in the
+      //    inner apps/server/package.json (top-level package.json
+      //    has no `@baerly/*` deps — they all live one level down).
+      const innerPkgPath = join(result.outDir, "apps", "server", "package.json");
+      const innerPkg = JSON.parse(await readFile(innerPkgPath, "utf8")) as {
+        dependencies?: Record<string, string>;
+      };
+      const baerlyDep = Object.entries(innerPkg.dependencies ?? {}).find(([k]) =>
+        k.startsWith("@baerly/"),
+      );
+      expect(baerlyDep, "expected at least one @baerly/* dependency").toBeDefined();
+      const [, baerlyVersion] = baerlyDep!;
+      expect(baerlyVersion).not.toBe("workspace:*");
+      expect(baerlyVersion).toMatch(/^\^?\d+\.\d+\.\d+/);
+
+      // 4. `create-baerly` dropped from devDependencies per manifest.
+      expect(topPkg.devDependencies?.["create-baerly"]).toBeUndefined();
+
+      // 5. `uint8array-base64.d.ts` excluded per manifest.
+      expect(result.filesWritten).not.toContain("uint8array-base64.d.ts");
+
+      // 6. AGENTS.md + CLAUDE.md parity (Codex CLI reads one, Claude
+      //    Code reads the other — they MUST be byte-identical).
+      const agents = await readFile(join(result.outDir, "AGENTS.md"), "utf8");
+      const claude = await readFile(join(result.outDir, "CLAUDE.md"), "utf8");
+      expect(claude).toEqual(agents);
+    });
+  }
 });
