@@ -57,7 +57,22 @@ export type BaerlyErrorCode =
    * never materializes a multi-MiB body; Workers also rely on
    * platform-side caps (16 MB free / 100 MB paid).
    */
-  | "PayloadTooLarge";
+  | "PayloadTooLarge"
+  /**
+   * A predicate is structurally well-formed but contradicts itself —
+   * no document can match. Emitted by {@link validatePredicate} and
+   * {@link mergePredicates}. Triggers:
+   *  - `$in: []`
+   *  - `$eq:X` together with a range op whose interval excludes `X`
+   *  - merging `{$gt:10}` with `{$lt:5}` (or `$eq` with two different
+   *    values)
+   *  - merging two `$in` sets with empty intersection
+   *
+   * The HTTP layer treats this as a 400 (caller error). The distinct
+   * code lets downstream code short-circuit empty-by-construction
+   * without re-running the validator or parsing messages.
+   */
+  | "UnsatisfiablePredicate";
 
 /**
  * The single error class thrown by Baerly. Discriminate by `code`, not

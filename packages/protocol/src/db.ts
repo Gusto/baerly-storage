@@ -1,4 +1,5 @@
 import type { JSONArrayless, JSONArraylessObject } from "./json.ts";
+import type { PredicateOp } from "./query/predicate.ts";
 
 /**
  * Handle on one table (collection). Chainable: `where`, `order`,
@@ -73,17 +74,26 @@ export interface Table<T extends JSONArraylessObject = JSONArraylessObject> {
 }
 
 /**
- * Predicate over a document shape. Today: equality only. Top-level
- * keys (`{ status: "open" }`) and dotted-path keys
- * (`{ "assignee.team": "platform" }`). Values are
- * `JSONArrayless` — string / number / boolean / nested object for
- * equality on a sub-tree. A future change may widen the value
- * type (e.g. `{ $in: [...] }`); the shape change will be additive.
+ * Predicate over a document shape. Today: equality, dotted-path
+ * traversal, and an operator vocabulary on field values
+ * (`$eq | $gt | $gte | $lt | $lte | $in`).
+ *
+ * Top-level equality: `{ status: "open" }`.
+ * Dotted-path: `{ "assignee.team": "platform" }`.
+ * Operator: `{ priority: { $in: ["p1", "p2"] } }` or
+ *           `{ created_at: { $gte: "2026-01-01" } }`.
+ * Multiple ops AND on one field: `{ count: { $gte: 1, $lt: 10 } }`.
+ *
+ * An operator object is one whose keys all start with `$`. Mixing
+ * operator and non-operator keys on the same object is rejected by
+ * `validatePredicate`. Range ops apply only when expected and
+ * actual are both `string` or both `number`; other type combos are
+ * always-miss (boolean, null, missing, type-mismatched).
  */
 export type Predicate<T extends JSONArraylessObject = JSONArraylessObject> = {
-  readonly [K in keyof T]?: T[K];
+  readonly [K in keyof T]?: T[K] | PredicateOp<T[K] extends JSONArrayless ? T[K] : never>;
 } & {
-  readonly [dottedPath: string]: JSONArrayless;
+  readonly [dottedPath: string]: JSONArrayless | PredicateOp<JSONArrayless>;
 };
 
 /** Order specifier. Top-level fields only on day one. */

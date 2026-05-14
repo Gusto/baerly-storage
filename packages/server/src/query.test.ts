@@ -14,6 +14,7 @@ import {
   type JSONArraylessObject,
   MemoryStorage,
   BaerlyError,
+  type Predicate,
 } from "@baerly/protocol";
 import { beforeEach, describe, expect, test } from "vitest";
 import { compact } from "./compactor.ts";
@@ -638,5 +639,142 @@ describe("Db.table .useIndex() — index-walk fast path", () => {
       .limit(2)
       .all();
     expect(rows).toHaveLength(2);
+  });
+});
+
+describe("operator predicates — full-scan path", () => {
+  let storage: MemoryStorage;
+  let db: Db;
+  beforeEach(() => {
+    storage = new MemoryStorage();
+    db = makeDb(storage);
+  });
+
+  test("$gte + $lt on number field returns the right slice", async () => {
+    await provision(storage);
+    const w = commit(storage);
+    for (let i = 0; i < 10; i++) {
+      await w.commit({
+        op: "I",
+        collection: COLL,
+        docId: `t-${i}`,
+        body: { _id: `t-${i}`, count: i },
+      });
+    }
+    const rows = await db
+      .table<{ _id: string; count: number }>(COLL)
+      .where({ count: { $gte: 3, $lt: 7 } } as unknown as Predicate<{
+        _id: string;
+        count: number;
+      }>)
+      .all();
+    expect(rows.map((r) => r.count).toSorted((a, b) => a - b)).toEqual([3, 4, 5, 6]);
+  });
+
+  test("$in returns the union", async () => {
+    await provision(storage);
+    const w = commit(storage);
+    for (const p of ["p1", "p2", "p3", "p4"]) {
+      await w.commit({
+        op: "I",
+        collection: COLL,
+        docId: `t-${p}`,
+        body: { _id: `t-${p}`, priority: p },
+      });
+    }
+    const rows = await db
+      .table<{ _id: string; priority: string }>(COLL)
+      .where({ priority: { $in: ["p1", "p2"] } } as unknown as Predicate<{
+        _id: string;
+        priority: string;
+      }>)
+      .all();
+    expect(rows.map((r) => r._id).toSorted()).toEqual(["t-p1", "t-p2"]);
+  });
+
+  test("range op on date-string field returns the right window", async () => {
+    await provision(storage);
+    const w = commit(storage);
+    for (const d of ["2025-12-31", "2026-01-01", "2026-01-15", "2026-02-01", "2026-02-15"]) {
+      await w.commit({
+        op: "I",
+        collection: COLL,
+        docId: d,
+        body: { _id: d, created_at: d },
+      });
+    }
+    const rows = await db
+      .table<{ _id: string; created_at: string }>(COLL)
+      .where({
+        created_at: { $gte: "2026-01-01", $lt: "2026-02-01" },
+      } as unknown as Predicate<{ _id: string; created_at: string }>)
+      .all();
+    expect(rows.map((r) => r._id).toSorted()).toEqual(["2026-01-01", "2026-01-15"]);
+  });
+
+  test("mixed operator + equality conjunction", async () => {
+    await provision(storage);
+    const w = commit(storage);
+    await w.commit({
+      op: "I",
+      collection: COLL,
+      docId: "t-1",
+      body: { _id: "t-1", status: "open", count: 5 },
+    });
+    await w.commit({
+      op: "I",
+      collection: COLL,
+      docId: "t-2",
+      body: { _id: "t-2", status: "open", count: 50 },
+    });
+    await w.commit({
+      op: "I",
+      collection: COLL,
+      docId: "t-3",
+      body: { _id: "t-3", status: "closed", count: 5 },
+    });
+    const rows = await db
+      .table<{ _id: string; status: string; count: number }>(COLL)
+      .where({ status: "open", count: { $lt: 10 } } as unknown as Predicate<{
+        _id: string;
+        status: string;
+        count: number;
+      }>)
+      .all();
+    expect(rows.map((r) => r._id)).toEqual(["t-1"]);
+  });
+
+  test(".count() honours operator predicates", async () => {
+    await provision(storage);
+    const w = commit(storage);
+    for (let i = 0; i < 5; i++) {
+      await w.commit({
+        op: "I",
+        collection: COLL,
+        docId: `t-${i}`,
+        body: { _id: `t-${i}`, count: i },
+      });
+    }
+    const n = await db
+      .table<{ _id: string; count: number }>(COLL)
+      .where({ count: { $gte: 2 } } as unknown as Predicate<{ _id: string; count: number }>)
+      .count();
+    expect(n).toBe(3);
+  });
+
+  test("type mismatch on a range op is always-miss, not a throw", async () => {
+    await provision(storage);
+    const w = commit(storage);
+    await w.commit({
+      op: "I",
+      collection: COLL,
+      docId: "t-1",
+      body: { _id: "t-1", count: "5" } as unknown as JSONArraylessObject,
+    });
+    const rows = await db
+      .table<{ _id: string; count: number }>(COLL)
+      .where({ count: { $gte: 1 } } as unknown as Predicate<{ _id: string; count: number }>)
+      .all();
+    expect(rows).toEqual([]);
   });
 });

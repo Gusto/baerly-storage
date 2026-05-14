@@ -75,7 +75,13 @@ export const translatePredicateToSql = (
       `caller-flagged dynamic predicate: ${options.dynamicHint}. Review the emitted SQL for completeness.`,
     );
   }
-  const clauses = walkPredicate(predicate, [], plan, hints);
+  // T1 widened `Predicate<T>` to allow operator-shaped values
+  // (`{$eq:…}`, `{$in:[…]}`, etc.). The export translator hasn't
+  // been taught operators yet; an operator-shaped leaf falls through
+  // the equality-walker and surfaces as a `1 = 0` clause + hint,
+  // which is at-worst noisy but never silently wrong. Operator-aware
+  // SQL translation is a separate follow-up.
+  const clauses = walkPredicate(predicate as JSONArraylessObject, [], plan, hints);
   return {
     sql: clauses.length === 0 ? "" : clauses.join(" AND "),
     hints,
