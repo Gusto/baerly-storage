@@ -1,0 +1,18 @@
+{
+  "name": "helpdesk-cloudflare",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "pnpm -F \"helpdesk-cloudflare-*\" --parallel dev",
+    "build": "pnpm -F helpdesk-cloudflare-web build",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "deploy": "pnpm -F helpdesk-cloudflare-web build && pnpm -F helpdesk-cloudflare-server deploy"
+  },
+  "devDependencies": {
+    "create-baerly": "workspace:*",
+    "typescript": "^5.8.0"
+  },
+  "packageManager": "pnpm@10.31.0"
+}

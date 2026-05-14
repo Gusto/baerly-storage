@@ -1,0 +1,89 @@
+{
+  // Baerly-generated production Worker manifest. JSONC: trailing
+  // commas tolerated, in-line comments supported. Wrangler 4+
+  // reads this directly.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "helpdesk-cloudflare",
+  "main": "src/worker.ts",
+  "compatibility_date": "2025-06-01",
+  "compatibility_flags": ["nodejs_compat"],
+
+  // R2 binding. `baerly deploy --target=cloudflare` auto-creates
+  // this bucket via `wrangler deploy --x-provision --x-auto-create`
+  // (Wrangler 4.10+). Fallback: `baerly doctor --target=cloudflare`
+  // creates it via `wrangler r2 bucket create <bucket_name>`.
+  "r2_buckets": [
+    {
+      "binding": "BUCKET",
+      "bucket_name": "helpdesk-cloudflare",
+    },
+  ],
+
+  // Plain-text bindings. `APP` pins this Worker's app-prefix.
+  // `TENANT` is **not** special-cased by `baerlyWorker` — the
+  // configured `Verifier` resolves the tenant from each request.
+  // Single-tenant Workers pass it through explicitly via
+  // `singleTenantDevVerifier(env.TENANT)`; app code can also
+  // reference `env.TENANT` for its own composition (e.g. naming
+  // a `CURRENT_JSON_KEY`).
+  //
+  // Phase-9 observability vars:
+  //
+  // - `LOG_LEVEL` — `debug | info | warn | error`. Default `info`
+  //   in code (the kernel applies the default when the var is
+  //   absent). `info` emits one canonical JSON line per request /
+  //   maintenance run on stdout (Workers Logs ingests it natively).
+  //   `debug` adds per-storage-op events — very high volume; leave
+  //   off in production.
+  // - `LOG_SAMPLE` — fraction of successful requests sampled, in
+  //   `[0, 1]`. Default `"0.1"`. Errors are always kept; maintenance
+  //   always emits. Set to `"1.0"` while diagnosing; set to `"0"`
+  //   to suppress success lines entirely.
+  //
+  // Trade-off: dropping the sample rate cuts log spend roughly
+  // linearly but loses canonical-line coverage on the happy path.
+  // Errors and maintenance runs are always-kept regardless.
+  "vars": {
+    "APP": "helpdesk-cloudflare",
+    "TENANT": "helpdesk-demo",
+    "LOG_LEVEL": "info",
+    "LOG_SAMPLE": "0.1",
+  },
+
+  // Workers Assets binding. `wrangler deploy` uploads everything in
+  // ../web/dist (the Vite build output) and serves it through the
+  // bound ASSETS Fetcher. The Worker dispatches /v1/* to baerlyWorker
+  // and falls through to env.ASSETS.fetch() for SPA navigation.
+  // `single-page-application` rewrites unknown paths to /index.html
+  // so client-side routing works without explicit server routes.
+  "assets": {
+    "directory": "../web/dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+  },
+
+  // Cron trigger for the Phase-5 maintenance loop. Every minute —
+  // the worker module's `scheduled` handler alternates compact/GC
+  // on free tier; runs both on paid. Adjust `crons` to control
+  // frequency.
+  "triggers": {
+    "crons": ["* * * * *"],
+  },
+
+  // 50ms CPU cap matches Workers Standard plan. Long-poll routes
+  // burn wall-clock (await), not CPU.
+  "limits": {
+    "cpu_ms": 50,
+  },
+
+  // Built-in observability. Worker logs land in CF dashboard +
+  // `wrangler tail`; Logpush still ships separately when wired.
+  "observability": {
+    "enabled": true,
+  },
+
+  // `routes` is omitted by default. When `baerly.config.ts` sets a
+  // `domain`, `baerly deploy` patches the wrangler config to add:
+  //   "routes": [{ "pattern": "<domain>/*", "custom_domain": true }]
+  // For now the Worker is reachable at <name>.<sub>.workers.dev.
+}

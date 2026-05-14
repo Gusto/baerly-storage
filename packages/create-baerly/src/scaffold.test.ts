@@ -19,6 +19,7 @@ const TEMPLATES_ROOT = resolve(
 const EXAMPLE_DIRS = [
   resolve(TEMPLATES_ROOT, "minimal-cloudflare"),
   resolve(TEMPLATES_ROOT, "minimal-node"),
+  resolve(TEMPLATES_ROOT, "helpdesk-cloudflare"),
 ];
 
 describe("scaffold", () => {
@@ -218,6 +219,43 @@ describe("scaffold", () => {
     expect(r.nextSteps).toEqual(["cd pm-test", "yarn install", "yarn dev"]);
   });
 
+  it("defaults starter to 'minimal' when omitted", async () => {
+    const result = await scaffold({
+      projectName: "default-starter",
+      target: "cloudflare",
+      pm: "pnpm",
+      templatesRoot: TEMPLATES_ROOT,
+      outRoot,
+    });
+    // Minimal scaffold ships wrangler.jsonc at apps/server/.
+    expect(result.filesWritten).toContain(join("apps", "server", "wrangler.jsonc"));
+  });
+
+  it("rejects an unknown starter", async () => {
+    await expect(
+      scaffold({
+        projectName: "ghost-starter",
+        target: "cloudflare",
+        // The cast bypasses the type guard so we exercise the runtime check.
+        starter: "ghost" as "minimal",
+        templatesRoot: TEMPLATES_ROOT,
+        outRoot,
+      }),
+    ).rejects.toThrow(/template not found for target=cloudflare starter=ghost/);
+  });
+
+  it("rejects helpdesk starter on the node target", async () => {
+    await expect(
+      scaffold({
+        projectName: "no-helpdesk-node",
+        target: "node",
+        starter: "helpdesk",
+        templatesRoot: TEMPLATES_ROOT,
+        outRoot,
+      }),
+    ).rejects.toThrow(/template not found for target=node starter=helpdesk/);
+  });
+
   it("rejects an unknown target template", async () => {
     await expect(
       scaffold({
@@ -229,7 +267,7 @@ describe("scaffold", () => {
         templatesRoot: TEMPLATES_ROOT,
         outRoot,
       }),
-    ).rejects.toThrow(/template not found for target=lambda/);
+    ).rejects.toThrow(/template not found for target=lambda starter=minimal/);
   });
 
   // Drift sentinel: both example trees were migrated off the old
@@ -278,21 +316,43 @@ describe("scaffold", () => {
   });
 
   // End-to-end scaffold + rename. Drives the scaffolder for each
-  // target with concrete user inputs into a tmpdir and validates the
-  // post-substitute invariants the CLI relies on: package.json
-  // identity, baerly.config.ts content, @baerly/* version pinning,
-  // dropped devDeps, excluded paths, and AGENTS.md / CLAUDE.md
-  // parity. Subsumes the older single-target smoke checks above for
-  // the rewrite-correctness side of the contract.
-  for (const target of ["cloudflare", "node"] as const) {
-    test(`scaffold + rename end-to-end (${target})`, async () => {
-      // Per-target appName so the two parameterised runs don't collide
+  // target + starter combination with concrete user inputs into a
+  // tmpdir and validates the post-substitute invariants the CLI relies
+  // on: package.json identity, baerly.config.ts content, @baerly/*
+  // version pinning, dropped devDeps, excluded paths, and AGENTS.md /
+  // CLAUDE.md parity. Subsumes the older single-target smoke checks
+  // above for the rewrite-correctness side of the contract.
+  const E2E_CASES = [
+    {
+      target: "cloudflare",
+      starter: undefined,
+      sentinels: ["minimal-cloudflare", "minimal-demo"],
+      shape: "minimal",
+    },
+    {
+      target: "node",
+      starter: undefined,
+      sentinels: ["minimal-node", "minimal-demo"],
+      shape: "minimal",
+    },
+    {
+      target: "cloudflare",
+      starter: "helpdesk",
+      sentinels: ["helpdesk-cloudflare", "helpdesk-demo"],
+      shape: "helpdesk",
+    },
+  ] as const;
+  for (const { target, starter, sentinels, shape } of E2E_CASES) {
+    const label = starter === undefined ? target : `${target}+${starter}`;
+    test(`scaffold + rename end-to-end (${label})`, async () => {
+      // Per-case appName so the parameterised runs don't collide
       // inside the shared `outRoot` tmpdir.
-      const appName = `my-test-app-${target}`;
+      const appName = `my-test-app-${label.replace("+", "-")}`;
       const tenant = "my-test-tenant";
       const result = await scaffold({
         projectName: appName,
         target,
+        ...(starter !== undefined && { starter }),
         pm: "pnpm",
         tenant,
         templatesRoot: TEMPLATES_ROOT,
@@ -311,8 +371,9 @@ describe("scaffold", () => {
       const config = await readFile(join(result.outDir, "baerly.config.ts"), "utf8");
       expect(config).toContain(`app: "${appName}"`);
       expect(config).toContain(`tenant: "${tenant}"`);
-      expect(config).not.toContain("minimal-cloudflare");
-      expect(config).not.toContain("minimal-demo");
+      for (const sentinel of sentinels) {
+        expect(config).not.toContain(sentinel);
+      }
 
       // 3. `@baerly/*` workspace deps pinned to a real semver in the
       //    inner apps/server/package.json (top-level package.json
@@ -340,6 +401,23 @@ describe("scaffold", () => {
       const agents = await readFile(join(result.outDir, "AGENTS.md"), "utf8");
       const claude = await readFile(join(result.outDir, "CLAUDE.md"), "utf8");
       expect(claude).toEqual(agents);
+
+      // 7. Helpdesk shape: real React UI shipped at apps/web/.
+      if (shape === "helpdesk") {
+        expect(result.filesWritten).toContain(join("apps", "web", "index.html"));
+        expect(result.filesWritten).toContain(join("apps", "web", "src", "TicketList.tsx"));
+        const html = await readFile(join(result.outDir, "apps", "web", "index.html"), "utf8");
+        // "Baerly Helpdesk" is deliberate prose, not a slug. The renames
+        // manifest only sentinelizes `helpdesk-cloudflare` and
+        // `helpdesk-demo`; bare `Helpdesk`/`helpdesk` must survive intact.
+        expect(html).toContain("Baerly Helpdesk");
+        // The workspace name `helpdesk-cloudflare-web` renames to
+        // `<appName>-web` via the longest-first sentinel rule.
+        const webPkg = JSON.parse(
+          await readFile(join(result.outDir, "apps", "web", "package.json"), "utf8"),
+        ) as { name: string };
+        expect(webPkg.name).toBe(`${appName}-web`);
+      }
     });
   }
 });

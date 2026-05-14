@@ -28,6 +28,11 @@ const main = defineCommand({
       required: true,
       valueHint: "cloudflare|node",
     },
+    starter: {
+      type: "string",
+      description: 'Starter template — "minimal" (default) or "helpdesk".',
+      valueHint: "minimal|helpdesk",
+    },
     tenant: {
       type: "string",
       description: 'Default tenant pin (default "default").',
@@ -59,9 +64,15 @@ const main = defineCommand({
           `--target must be "cloudflare" or "node", got ${JSON.stringify(args.target)}`,
         );
       }
+      if (args.starter !== undefined && args.starter !== "minimal" && args.starter !== "helpdesk") {
+        throw new Error(
+          `--starter must be "minimal" or "helpdesk", got ${JSON.stringify(args.starter)}`,
+        );
+      }
       const result = await scaffold({
         projectName: args.projectName,
         target: args.target,
+        ...(args.starter !== undefined && { starter: args.starter as "minimal" | "helpdesk" }),
         ...(args.tenant !== undefined && { tenant: args.tenant }),
         ...(args.domain !== undefined && { domain: args.domain }),
         ...(args.pm !== undefined && { pm: args.pm as "npm" | "pnpm" | "yarn" }),
