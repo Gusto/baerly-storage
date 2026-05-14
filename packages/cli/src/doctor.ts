@@ -1,10 +1,13 @@
 /**
  * `baerly doctor` — citty dispatcher.
  *
- * Reads `baerly.config.ts:target` and routes to the matching
- * doctor backend. Today: `cloudflare`. The `node` branch is
- * stubbed via dynamic import so ticket 40 can drop the module in
- * without touching the dispatcher.
+ * Reads `baerly.config.ts:target` and routes to either
+ * {@link doctorCloudflare} or `doctorNode` (loaded via dynamic
+ * import so the dispatcher's typecheck doesn't pull the Node
+ * backend in at build time). Both backends ship; the dispatcher
+ * also accepts two cross-target sub-checks — `--check=index-filter-drift`
+ * (read-only drift scan) and `--rebuild-drift` (drift scan + auto-rebuild)
+ * — whose findings splice into whichever backend report it dispatches to.
  *
  * Renders the returned {@link DoctorReport} into either a
  * stdout checklist (text mode) or a JSON envelope (`--json`
@@ -25,7 +28,7 @@
 import { spawn } from "node:child_process";
 import { defineCommand, type ArgsDef, type ParsedArgs } from "citty";
 import { BaerlyError } from "@baerly/protocol";
-import { loadAppConfigWithCollections, type AppConfig } from "./config.ts";
+import { loadAppConfig, loadAppConfigWithCollections, type AppConfig } from "./config.ts";
 import { doctorCloudflare, type DoctorFinding, type DoctorReport } from "./doctor/cloudflare.ts";
 import { checkIndexFilterDrift } from "./doctor/index-filter-drift.ts";
 import type { ProcessRunner } from "./deploy/cloudflare.ts";
@@ -157,13 +160,17 @@ const handleDoctor = async (args: ParsedArgs<typeof DOCTOR_ARGS>): Promise<numbe
         `baerly doctor: unknown --check value ${JSON.stringify(args.check)} (supported: "index-filter-drift")`,
       );
     }
-    const { config, collections } = await loadAppConfigWithCollections();
-    const target = args.target ?? config.target;
     // The drift check is dispatcher-level — it runs once and its
     // findings splice into whichever backend the target dispatches
     // to. `--rebuild-drift` implies the check, so either flag
-    // triggers the scan.
+    // triggers the scan. Only the drift path needs `collections[*]`
+    // reflection, so non-drift invocations skip the
+    // collections-aware re-parse and use the narrow loader.
     const runDrift = args.check === "index-filter-drift" || args["rebuild-drift"] === true;
+    const { config, collections } = runDrift
+      ? await loadAppConfigWithCollections()
+      : { config: await loadAppConfig(), collections: undefined };
+    const target = args.target ?? config.target;
     const extraFindings: DoctorFinding[] = runDrift
       ? await checkIndexFilterDrift(config, collections, {
           ...(args["rebuild-drift"] === true && { rebuild: true }),

@@ -22,6 +22,12 @@
  * a warning so the report no longer flags drift the operator just
  * fixed.
  *
+ * When `--rebuild-drift` is set, the rebuild fires BEFORE the
+ * backend's invariant checks (wrangler.jsonc shape, Dockerfile
+ * presence, etc.). Operators who aren't sure whether their config is
+ * healthy should run `--check=index-filter-drift` alone first to see
+ * the read-only delta.
+ *
  * @see ../../config.ts — `loadAppConfigWithCollections` provides the
  *      `LoadedCollection[]` this function consumes.
  * @see ../../../server/src/rebuild-index.ts — the `dryRun` option

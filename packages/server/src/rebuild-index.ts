@@ -56,8 +56,13 @@ const APPLICATION_JSON = "application/json";
  * In a normal (mutating) run, the counts describe what was actually
  * PUT / DELETEd. In `dryRun` mode ({@link RebuildIndexOptions.dryRun}),
  * `added` / `removed` report the counts that a real rebuild *would*
- * have produced — storage is unchanged. `kept` always reports the
- * number of keys that were already in place at function entry.
+ * have produced — storage is unchanged. `kept` counts pre-existing
+ * intersection keys (`expected ∩ actual`) at function entry. In a real
+ * run, `kept` may also include keys promoted from `added` via the
+ * Conflict-race fallback (a PUT with `ifNoneMatch:"*"` returned 412
+ * because a peer wrote the same key first, so the key was already
+ * in place by the time we observed it); dryRun mode never issues
+ * those PUTs and therefore does not observe that race.
  */
 export interface RebuildIndexResult {
   /**
@@ -107,8 +112,10 @@ export interface RebuildIndexOptions {
    * any PUT or DELETE. Used by `baerly doctor --check=index-filter-drift`
    * to report drift cheaply. Defaults to `false`.
    *
-   * `kept` is reported with the same semantics as a real run; only
-   * `added` and `removed` are predicted counts under `dryRun`.
+   * `kept` is reported as the pre-existing intersection
+   * (`expected ∩ actual`); a real run can additionally fold
+   * Conflict-race-demoted PUTs into `kept`, which dryRun does not
+   * observe. See {@link RebuildIndexResult}.
    */
   readonly dryRun?: boolean;
 }
