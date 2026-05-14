@@ -125,3 +125,18 @@ status-lifecycle convention.
    one-paragraph summary, point at the published doc URL, or move
    the observability sink-wiring recipe into the scaffolded
    `AGENTS.md` / `README.md`. **Status:** open
+
+9. **Stale `tini + tsx` Dockerfile comment in Node scaffolded README
+   (fixed in T02)** — The Node scaffolded README's `What you got`
+   tree captioned `apps/server/Dockerfile` as "multi-stage; tini +
+   tsx entrypoint". The actual
+   `packages/create-baerly/templates/node/apps/server/Dockerfile`
+   uses the distroless `nodejs24-debian12` base, runs as the
+   `nonroot` user (UID 65532), and invokes `node
+   apps/server/dist/server.js` directly — no `tini`, no `tsx`.
+   T02 replaced the comment with "multi-stage; distroless runtime"
+   while overhauling the README. **Suggested cleanup:** grep
+   `docs/` and `packages/` for any remaining `tini`/`tsx`
+   references that still imply the old container layout; align or
+   remove. Found during T02 execution on 2026-05-13.
+   **Status:** fixed-by-feature/agent-friendliness-T02
