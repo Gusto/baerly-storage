@@ -108,7 +108,8 @@ export interface PlanQueryOptions {
    * Per-call `$in` fan-out threshold override. Defaults to
    * {@link IN_FANOUT_THRESHOLD}. Values ≤ 0 throw at construction —
    * the planner does not validate here (the public `Db.create`
-   * surface already validates the input).
+   * surface already validates the input). Internal callers that
+   * construct `PlanQueryOptions` directly must pre-validate.
    */
   readonly inFanoutThreshold?: number;
 }
@@ -280,7 +281,7 @@ const tryExtractEq = (op: Record<string, unknown>): JSONArrayless | undefined =>
 export const planQuery = <T extends JSONArraylessObject = JSONArraylessObject>(
   predicate: Predicate<T> | undefined,
   indexes: ReadonlyArray<IndexDefinition>,
-  _options?: PlanQueryOptions,
+  options?: PlanQueryOptions,
 ): QueryPlan => {
   if (predicate === undefined) {
     return { kind: "full-scan", reason: "no-predicate" };
@@ -425,7 +426,7 @@ export const planQuery = <T extends JSONArraylessObject = JSONArraylessObject>(
   // refuse routing. Full-scan is correct. The threshold defaults to
   // {@link IN_FANOUT_THRESHOLD} but can be overridden per-Db via
   // `Db.create({ inFanoutThreshold })`.
-  const threshold = _options?.inFanoutThreshold ?? IN_FANOUT_THRESHOLD;
+  const threshold = options?.inFanoutThreshold ?? IN_FANOUT_THRESHOLD;
   if (best.tail !== undefined && best.tail.kind === "in") {
     if (best.tail.values.length > threshold) {
       return { kind: "full-scan", reason: "no-matching-index" };
