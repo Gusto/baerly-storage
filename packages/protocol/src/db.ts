@@ -48,11 +48,27 @@ export interface Table<T extends JSONArraylessObject = JSONArraylessObject> {
    * @throws BaerlyError{code: "Conflict"} — `_id` collision on
    *         caller-supplied id.
    * @throws BaerlyError{code: "SchemaError"} — malformed JSON, or
-   *         schema-validation failure (not yet wired).
+   *         schema-validation failure (when a schema is declared
+   *         for the collection via `Db.create({ collections })`).
+   *
+   * @example
+   * ```ts
+   * const { _id } = await db.table("tickets").insert({
+   *   status: "open",
+   *   title: "Ship the docs",
+   * });
+   * ```
    */
   insert(doc: Partial<T> & JSONArraylessObject): Promise<{ _id: string }>;
 
-  /** Count every row in the table (equivalent to `.where({}).count()`). */
+  /**
+   * Count every row in the table (equivalent to `.where({}).count()`).
+   *
+   * @example
+   * ```ts
+   * const total = await db.table("tickets").count();
+   * ```
+   */
   count(): Promise<number>;
 }
 
@@ -154,17 +170,45 @@ export interface Query<T extends JSONArraylessObject = JSONArraylessObject> {
    */
   useIndex(name: string): Query<T>;
 
-  /** First match or `undefined`. Equivalent to `.limit(1).all()[0]`. */
+  /**
+   * First match or `undefined`. Equivalent to `.limit(1).all()[0]`.
+   *
+   * @example
+   * ```ts
+   * const oldest = await db.table("tickets")
+   *   .where({ status: "open" })
+   *   .order({ commit_ts: "asc" })
+   *   .first();
+   * ```
+   */
   first(): Promise<T | undefined>;
 
   /**
    * Every matching document, respecting `order` and `limit`. No
    * implicit cap — callers should always pair `.all()` with
    * `.limit(n)` on large tables.
+   *
+   * @example
+   * ```ts
+   * const open = await db.table("tickets")
+   *   .where({ status: "open" })
+   *   .order({ commit_ts: "desc" })
+   *   .limit(50)
+   *   .all();
+   * ```
    */
   all(): Promise<T[]>;
 
-  /** Count matching rows. Cheaper than `(await all()).length`. */
+  /**
+   * Count matching rows. Cheaper than `(await all()).length`.
+   *
+   * @example
+   * ```ts
+   * const open = await db.table("tickets")
+   *   .where({ status: "open" })
+   *   .count();
+   * ```
+   */
   count(): Promise<number>;
 
   /**
@@ -175,6 +219,13 @@ export interface Query<T extends JSONArraylessObject = JSONArraylessObject> {
    *         the CAS race. Caller's choice whether to retry.
    * @throws BaerlyError{code: "SchemaError"} — patch produced an
    *         invalid doc.
+   *
+   * @example
+   * ```ts
+   * const { modified } = await db.table("tickets")
+   *   .where({ status: "open" })
+   *   .update({ status: "closed", closed_at: new Date().toISOString() });
+   * ```
    */
   update(patch: Partial<T>): Promise<{ modified: number }>;
 
@@ -182,9 +233,25 @@ export interface Query<T extends JSONArraylessObject = JSONArraylessObject> {
    * Whole-document replace on the first matching row. Throws
    * `BaerlyError{code: "Conflict"}` if zero or more than one row
    * matches — `replace` is intentionally narrow.
+   *
+   * @example
+   * ```ts
+   * await db.table("tickets")
+   *   .where({ _id: "01HQ..." })
+   *   .replace({ _id: "01HQ...", status: "open", title: "Rewrite" });
+   * ```
    */
   replace(doc: T): Promise<void>;
 
-  /** Delete every matching document. */
+  /**
+   * Delete every matching document.
+   *
+   * @example
+   * ```ts
+   * const { deleted } = await db.table("tickets")
+   *   .where({ status: "closed" })
+   *   .delete();
+   * ```
+   */
   delete(): Promise<{ deleted: number }>;
 }

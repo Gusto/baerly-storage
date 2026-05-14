@@ -25,10 +25,13 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { DOMParser } from "@xmldom/xmldom";
+import { AwsClient } from "aws4fetch";
 import { parse, type ParseError } from "jsonc-parser";
-import { BaerlyError } from "@baerly/protocol";
+import { BaerlyError, S3HttpStorage, type Storage } from "@baerly/protocol";
 import type { AppConfig } from "../config.ts";
 import { ensureBindings, parseR2Bindings, type ProcessRunner } from "../deploy/cloudflare.ts";
+import { runUsageScan } from "./usage.ts";
 
 /** One finding from a `baerly doctor` walk. */
 export interface DoctorFinding {
@@ -106,6 +109,16 @@ export const doctorCloudflare = async (
     readonly runner?: ProcessRunner;
     readonly fix?: boolean;
     readonly cwd?: string;
+    /**
+     * Opt-in usage-scan flag mirrored from the Node target. Wires
+     * `S3HttpStorage` against the R2 S3-compat endpoint
+     * (`https://<CF_ACCOUNT_ID>.r2.cloudflarestorage.com`) using an
+     * account-scoped R2 API token (`R2_ACCESS_KEY_ID` +
+     * `R2_SECRET_ACCESS_KEY`), then runs the same writes/min
+     * estimator the Node target uses. Bucket name is read from the
+     * parsed R2 bindings (the `BUCKET` binding by default).
+     */
+    readonly usage?: boolean;
   } = {},
 ): Promise<DoctorReport> => {
   const repoRoot = opts.cwd ?? config.repoRoot;
@@ -284,6 +297,15 @@ export const doctorCloudflare = async (
     });
   }
 
+  // 7. --usage scan (opt-in). Reads R2 credentials + account id from
+  //    process.env and lists recent log entries per collection
+  //    against the R2 S3-compat endpoint. Independent of the
+  //    invariant checks above — a missing wrangler binding doesn't
+  //    suppress usage findings provided one declared binding exists.
+  if (opts.usage === true) {
+    await runUsageCheck(config, declared, findings);
+  }
+
   // 6. domain ↔ routes coherence.
   if (config.domain !== undefined && config.domain.length > 0) {
     const patterns = readDeclaredRoutePatterns(wranglerPath);
@@ -308,4 +330,72 @@ export const doctorCloudflare = async (
   }
 
   return { findings, status: rollupStatus(findings) };
+};
+
+/**
+ * Append usage findings to `findings` for the Cloudflare target.
+ * Reads `CF_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`
+ * (and optionally `R2_ENDPOINT` for a custom S3-compat URL) from
+ * `process.env`, picks the R2 binding to scan (the `BUCKET` binding
+ * by convention, else the first declared), and runs the
+ * pure-storage estimator via `runUsageScan`.
+ *
+ * Missing env vars emit a single `usage-env-vars` error finding
+ * (exit 2 per the dispatcher contract) and short-circuit the scan.
+ * No declared R2 bindings emits a warning and skips. Per-collection
+ * failures degrade to warning-severity findings inside
+ * `runUsageScan` so one bad collection doesn't abort the whole
+ * scan.
+ */
+const runUsageCheck = async (
+  config: AppConfig,
+  declared: readonly { binding: string; bucket_name: string }[],
+  findings: DoctorFinding[],
+): Promise<void> => {
+  const missing: string[] = [];
+  for (const k of ["CF_ACCOUNT_ID", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY"]) {
+    const v = process.env[k];
+    if (v === undefined || v === "") missing.push(k);
+  }
+  if (missing.length > 0) {
+    findings.push({
+      severity: "error",
+      check: "usage-env-vars",
+      message: `--usage needs ${missing.join(", ")} on the environment; skipped bucket scan.`,
+      fix: "Mint an R2 API token in the Cloudflare dashboard (R2 → Manage R2 API Tokens) and export `CF_ACCOUNT_ID=<account id>`, `R2_ACCESS_KEY_ID=...`, `R2_SECRET_ACCESS_KEY=...` before running `baerly doctor --target=cloudflare --usage`.",
+    });
+    return;
+  }
+
+  // Pick a bucket. Prefer the `BUCKET` binding (the convention from
+  // `@baerly/adapter-cloudflare`'s `Env`); fall back to the first
+  // declared binding for unusual setups.
+  const bucketBinding = declared.find((d) => d.binding === "BUCKET") ?? declared[0];
+  if (bucketBinding === undefined) {
+    findings.push({
+      severity: "warning",
+      check: "usage-no-binding",
+      message: `--usage: no R2 bindings declared in wrangler.jsonc; nothing to scan.`,
+    });
+    return;
+  }
+
+  const endpoint =
+    process.env["R2_ENDPOINT"] ??
+    `https://${process.env["CF_ACCOUNT_ID"]!}.r2.cloudflarestorage.com`;
+  // R2's S3-compat layer accepts `region: "auto"` and ignores it.
+  const aws = new AwsClient({
+    accessKeyId: process.env["R2_ACCESS_KEY_ID"]!,
+    secretAccessKey: process.env["R2_SECRET_ACCESS_KEY"]!,
+    region: "auto",
+    service: "s3",
+  });
+  const storage: Storage = new S3HttpStorage({
+    endpoint,
+    bucket: bucketBinding.bucket_name,
+    xmlParser: new DOMParser(),
+    sign: (req) => aws.sign(req),
+  });
+
+  await runUsageScan({ app: config.app, tenant: config.tenant }, storage, findings);
 };

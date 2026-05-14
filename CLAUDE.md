@@ -328,6 +328,12 @@ edits and point at the same files.
   `tests/unit/consistency.test.ts`.
 - **Performance change?** Run `pnpm test:randomize` for a few minutes.
   Randomized tests catch races the conformance suite misses.
+- **Scoping from an inbound brief / gap report?** Verify each cited
+  file:line and each named feature with `grep` / `Read` before
+  drafting tickets. Inbound briefs can hallucinate file paths,
+  miscount the API surface, or claim missing features that already
+  exist. ~10 minutes of verification up front beats hours of work
+  stuck on phantom references.
 
 ## Pointers
 

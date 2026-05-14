@@ -68,9 +68,11 @@ const selectVerifier = (env: AppEnv): Verifier => {
  * pulls level + sample rate from the bound vars (`LOG_LEVEL`,
  * `LOG_SAMPLE`); leaving either unset falls through to the kernel
  * defaults (`info` level, `0.1` sample rate). See `wrangler.jsonc`
- * for the var declarations and `docs/observability.md` for the
- * canonical-line shape, sink wiring recipes, and known gaps (CF
- * cache-hit short-circuit emits no canonical line by design).
+ * for the var declarations and the `AGENTS.md` "Maintenance loop"
+ * section for the canonical-line field reference (or the
+ * `observability` JSDoc on `@baerly/server` via your editor's TS
+ * hover). Known gap: a CF cache-hit short-circuit emits no
+ * canonical line by design.
  */
 // For a local `wrangler dev` landing page, add:
 //   dev: { app: env.APP, uiUrl: "http://localhost:5173" }

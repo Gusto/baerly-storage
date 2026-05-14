@@ -194,4 +194,73 @@ describe("doctorCloudflare", () => {
     const report = await doctorCloudflare(cfg, { runner });
     expect(findingFor(report.findings, "routes.domain")?.severity).toBe("ok");
   });
+
+  describe("--usage", () => {
+    const R2_ENV_KEYS = ["CF_ACCOUNT_ID", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY"] as const;
+    let savedEnv: Record<string, string | undefined>;
+
+    beforeEach(() => {
+      savedEnv = {};
+      for (const k of R2_ENV_KEYS) {
+        savedEnv[k] = process.env[k];
+        delete process.env[k];
+      }
+    });
+    afterEach(() => {
+      for (const k of R2_ENV_KEYS) {
+        if (savedEnv[k] === undefined) delete process.env[k];
+        else process.env[k] = savedEnv[k];
+      }
+    });
+
+    it("emits error finding when R2 env vars are missing", async () => {
+      await writeScaffold(repoRoot);
+      const { runner } = makeRunner();
+      const report = await doctorCloudflare(makeConfig(repoRoot), { runner, usage: true });
+      const f = findingFor(report.findings, "usage-env-vars");
+      expect(f?.severity).toBe("error");
+      expect(f?.message).toContain("CF_ACCOUNT_ID");
+      expect(f?.message).toContain("R2_ACCESS_KEY_ID");
+      expect(f?.message).toContain("R2_SECRET_ACCESS_KEY");
+      expect(f?.fix).toContain("R2 API Token");
+    });
+
+    it("partial env vars still surface the missing-vars finding listing only the gaps", async () => {
+      process.env["CF_ACCOUNT_ID"] = "acct123";
+      await writeScaffold(repoRoot);
+      const { runner } = makeRunner();
+      const report = await doctorCloudflare(makeConfig(repoRoot), { runner, usage: true });
+      const f = findingFor(report.findings, "usage-env-vars");
+      expect(f?.severity).toBe("error");
+      expect(f?.message).not.toContain("CF_ACCOUNT_ID");
+      expect(f?.message).toContain("R2_ACCESS_KEY_ID");
+      expect(f?.message).toContain("R2_SECRET_ACCESS_KEY");
+    });
+
+    it("warns when no R2 bindings are declared in wrangler.jsonc", async () => {
+      // wrangler.jsonc with zero r2_buckets — the parse succeeds with
+      // an empty bindings list, so we fall through to the usage block
+      // and emit a usage-no-binding warning.
+      for (const k of R2_ENV_KEYS) process.env[k] = `set-${k.toLowerCase()}`;
+      await writeScaffold(
+        repoRoot,
+        `{ "name": "x", "r2_buckets": [], "triggers": { "crons": ["* * * * *"] } }`,
+      );
+      const { runner } = makeRunner();
+      const report = await doctorCloudflare(makeConfig(repoRoot), { runner, usage: true });
+      // The bindings-empty warning is the new usage-specific signal;
+      // earlier checks may also emit warnings for the empty list, so
+      // assert against our specific check name.
+      const f = findingFor(report.findings, "usage-no-binding");
+      expect(f?.severity).toBe("warning");
+    });
+
+    it("does not emit usage findings when --usage is omitted", async () => {
+      await writeScaffold(repoRoot);
+      const { runner } = makeRunner();
+      const report = await doctorCloudflare(makeConfig(repoRoot), { runner });
+      expect(findingFor(report.findings, "usage-env-vars")).toBeUndefined();
+      expect(findingFor(report.findings, "usage-no-binding")).toBeUndefined();
+    });
+  });
 });

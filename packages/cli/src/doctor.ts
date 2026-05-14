@@ -45,9 +45,14 @@ const DOCTOR_ARGS = {
     type: "boolean",
     description: "Emit a structured JSON envelope to stdout (success) or stderr (error)",
   },
+  usage: {
+    type: "boolean",
+    description:
+      "Scan recent log entries per collection and emit a graduation hint when writes/min approaches the M-size ceiling (Node target; CF target emits a follow-up breadcrumb).",
+  },
 } as const satisfies ArgsDef;
 
-const KNOWN_KEYS: ReadonlySet<string> = new Set(["target", "fix", "json", "_"]);
+const KNOWN_KEYS: ReadonlySet<string> = new Set(["target", "fix", "json", "usage", "_"]);
 
 const errorToExitCode = (code: string): number => {
   if (code === "InvalidConfig") return 1;
@@ -129,6 +134,7 @@ const handleDoctor = async (args: ParsedArgs<typeof DOCTOR_ARGS>): Promise<numbe
       const report = await doctorCloudflare(config, {
         runner: defaultRunner,
         ...(args.fix === true && { fix: true }),
+        ...(args.usage === true && { usage: true }),
       });
       renderReport(target, report);
       return report.status === "error" ? 2 : 0;
@@ -141,9 +147,12 @@ const handleDoctor = async (args: ParsedArgs<typeof DOCTOR_ARGS>): Promise<numbe
       // be loaded at dispatcher build time.
       const nodeModuleSpecifier = "./doctor/node";
       const mod = (await import(nodeModuleSpecifier)) as {
-        doctorNode: (config: AppConfig, opts?: { cwd?: string }) => Promise<DoctorReport>;
+        doctorNode: (
+          config: AppConfig,
+          opts?: { cwd?: string; usage?: boolean },
+        ) => Promise<DoctorReport>;
       };
-      const report = await mod.doctorNode(config);
+      const report = await mod.doctorNode(config, args.usage === true ? { usage: true } : {});
       renderReport(target, report);
       return report.status === "error" ? 2 : 0;
     }
