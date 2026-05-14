@@ -217,6 +217,19 @@ const db = Db.create({ storage, app, tenant, schemas });
 When `schemas` is `undefined` or empty, validation is a no-op — today's
 tests stay green untouched.
 
+### Forward-only migration
+
+Schema migrations are forward-only. Every `LogEntry` carries a
+`schema_version` field (currently always `0`); a future migration
+bumps it monotonically and announces the new schema out-of-band via
+the `M` (MESSAGE) opcode. Inline schemas on every entry were
+rejected as bloat; the version stamp plus out-of-band announcement
+is the lower-cost shape. Renaming or removing `schema_version` is a
+major-version migration; bumping the value is non-breaking.
+Document-level rewrite tooling is application-layer work — the
+protocol supplies the version stamp and the announcement opcode,
+not the rewrite logic.
+
 ---
 
 ## 1c. Declare an index on a collection

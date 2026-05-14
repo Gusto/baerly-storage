@@ -28,8 +28,7 @@ import {
 /**
  * Options for {@link createListener}.
  *
- * - `app` — bucket-prefix for this baerly app (one bucket per app;
- *   ADR-0006).
+ * - `app` — bucket-prefix for this baerly app (one bucket per app).
  * - `storage` — any `Storage` impl. Production uses `S3HttpStorage`;
  *   dev workflows use `LocalFsStorage`.
  * - `verifier` — auth seam. Called on every `/v1/t/*` request; the

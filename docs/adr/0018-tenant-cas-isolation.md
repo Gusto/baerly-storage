@@ -72,8 +72,9 @@ into a single isolation story:
    [`packages/protocol/src/coordination/current-json.ts:43-45`](../../packages/protocol/src/coordination/current-json.ts)
    and
    [`packages/server/src/db.ts:247`](../../packages/server/src/db.ts).
-   This refines [ADR-0011](./0011-cas-scope.md) by pinning the
-   physical-key layout the scope rides on.
+   This pins the physical-key layout the CAS scope rides on; the
+   cost-coupling rationale lives in
+   [`docs/spec/sync-protocol.md`](../spec/sync-protocol.md#cas-scope-is-per-collection).
 3. **Cooperative fence, not lease.** The `WriterFence` embedded in
    `current.json` carries `epoch: number` (monotonic, the only
    safety-critical field), `owner: string` (informational, may be
@@ -99,11 +100,13 @@ rolling-deploy hazard without introducing a leases-as-state dependency.
 
 - More `current.json` objects per tenant, bounded by collection count.
   Lifecycle on collection drop becomes a sweeper concern; the dwell
-  window is recorded in [ADR-0020](./0020-gc-lag-window.md) and
-  implemented in
+  window is `GC_GRACE_PERIOD_MILLIS` in
+  [`packages/protocol/src/constants.ts`](../../packages/protocol/src/constants.ts)
+  and implemented in
   [`packages/server/src/gc.ts`](../../packages/server/src/gc.ts).
-- Composes cleanly with the single-table transaction shape
-  ([ADR-0012](./0012-transaction-scope.md),
+- Composes cleanly with the single-table transaction shape (see the
+  JSDoc on `Db.transaction` in
+  [`packages/server/src/db.ts`](../../packages/server/src/db.ts) and
   [ADR-0019](./0019-api-surface-lock.md)): every transaction touches
   exactly one `current.json`, so no two-phase commit is required.
 - The `owner` field is debug-only. Operators MAY page on it (e.g.
@@ -115,7 +118,8 @@ rolling-deploy hazard without introducing a leases-as-state dependency.
   field is forward-compatible per the `CurrentJson` schema-version
   policy in
   [`packages/protocol/src/constants.ts`](../../packages/protocol/src/constants.ts)
-  and [ADR-0016](./0016-schema-migration.md).
+  and the `LogEntry.schema_version` rationale in
+  [`packages/protocol/src/log.ts`](../../packages/protocol/src/log.ts).
 - `claimed_at` carries the server's clock, not the local clock. Under
   multi-instance deployment the local clock may disagree with peers;
   the server's clock is the only one all instances share. See
@@ -125,10 +129,9 @@ rolling-deploy hazard without introducing a leases-as-state dependency.
   PUT either way
   ([`packages/protocol/src/coordination/current-json.ts:283-290`](../../packages/protocol/src/coordination/current-json.ts)).
 - The tenant prefix the CAS scope rides on derives from the auth
-  layer's `Verifier` output
-  ([ADR-0014](./0014-auth-verifier-interface.md)); a misconfigured
-  verifier returning the wrong prefix is the tenancy-leak vector this
-  scope choice does not paper over.
+  layer's `Verifier` output (see [`docs/auth.md`](../auth.md)); a
+  misconfigured verifier returning the wrong prefix is the
+  tenancy-leak vector this scope choice does not paper over.
 - Cross-tenant fan-out is unaffected by per-collection scope. If a
   future workload measurement (the deferred R2 contention bench) shows
   per-tenant is acceptable for some narrower workload class, a

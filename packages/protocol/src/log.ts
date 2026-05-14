@@ -36,9 +36,11 @@ export interface LogEntry {
   /**
    * Insert / Update / Delete / Truncate / Message. `M` is the
    * `pg_logical_emit_message` analogue — useful for app-defined
-   * markers like deploy boundaries or snapshots. `T` truncates a
-   * whole collection. Today the emitter only produces `I`/`U`/`D`;
-   * `T` and `M` are shape-only for forward compatibility.
+   * markers like deploy boundaries, snapshots, or out-of-band
+   * schema announcements consumed via `schema_version`. `T`
+   * truncates a whole collection. Today the emitter only produces
+   * `I`/`U`/`D`; `T` and `M` are shape-only for forward
+   * compatibility.
    */
   op: "I" | "U" | "D" | "T" | "M";
 
@@ -56,9 +58,13 @@ export interface LogEntry {
 
   /**
    * Monotonic per collection. Schema for the doc body is announced
-   * out-of-band; this field lets the consumer match a log entry to
-   * the schema in effect at write time. Always `0` today; reserved
-   * for a future schema-versioning scheme.
+   * out-of-band via `M` (MESSAGE) entries; this field lets the
+   * consumer match a log entry to the schema in effect at write
+   * time. Forward-only — renaming or removing the field is a
+   * major-version migration; bumping the value is non-breaking.
+   * Inlining the schema in every entry was rejected as bloat for a
+   * field that changes rarely. Always `0` today; reserved for a
+   * future schema-versioning scheme.
    */
   schema_version: number;
 

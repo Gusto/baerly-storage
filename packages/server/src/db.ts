@@ -407,6 +407,16 @@ export class Db {
    * @throws BaerlyError code="InvalidConfig" — `table` is empty or
    *   contains `/`.
    *
+   * @remarks
+   * Single-table by design. Cross-table 2PC was rejected on cost
+   * grounds — multiple round-trips per commit, no native fencing
+   * primitive on S3-compatible storage, no rollback to undo a
+   * successful PUT — and because in-doubt-transaction recovery state
+   * would contradict the stateless-writer model. Applications that
+   * need cross-table atomicity re-express it at the app layer: an
+   * idempotent move keyed off source-row state, or a single
+   * denormalized table with a `status` column.
+   *
    * @example
    * ```ts
    * await db.transaction("tickets", async (tx) => {

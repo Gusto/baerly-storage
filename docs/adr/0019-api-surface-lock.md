@@ -103,8 +103,8 @@ Prohibited without a supersession ADR:
 - Changing the callback signature of `Db.transaction` (e.g. passing
   `Db` instead of `Table<T>`).
 - Adding cross-table writes inside a transaction — this would break
-  the no-2PC invariant
-  ([ADR-0012](./0012-transaction-scope.md),
+  the no-2PC invariant (see the JSDoc on `Db.transaction` in
+  [`packages/server/src/db.ts`](../../packages/server/src/db.ts) and
   [ADR-0018](./0018-tenant-cas-isolation.md)).
 - Changing the behavioural contract of an existing method (e.g.
   making `update` upsert instead of no-op-on-missing).
@@ -140,13 +140,14 @@ path without making the public API a moving target.
   hand-maintained markdown ref.
 - `_raw` is intentionally undocumented in the README and excluded from
   the LLM-zero-shot claim. It exists for graduation paths (e.g.
-  `baerly export`, see [ADR-0013](./0013-export-contract.md)) and is
+  `baerly export`, see
+  [`docs/spec/log-entry-shape.md`](../spec/log-entry-shape.md)) and is
   not part of the locked surface — `_raw`'s shape is allowed to change
   with a minor version bump because no public-API tutorial mentions it.
 - TypeScript is the enforcement mechanism for the callback shape
-  (`transaction(callback: (tx: Table<T>) => …)`); branded types
-  ([ADR-0002](./0002-branded-types.md)) keep the verb signatures from
-  being papered over with `as string`.
+  (`transaction(callback: (tx: Table<T>) => …)`); branded types (see
+  the "Conventions" section of [`CLAUDE.md`](../../CLAUDE.md)) keep
+  the verb signatures from being papered over with `as string`.
 - The lock is reversible with cost. A future major version may revisit
   it; the supersession ADR records the new surface and consumers are
   notified via the semver major bump.

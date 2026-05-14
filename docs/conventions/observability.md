@@ -117,9 +117,13 @@ the sampling story.
 
 ## Metric-name conventions
 
-`db.<subsystem>.<metric>` — match the existing names in
+`db.<subsystem>.<metric>` — three dot-separated segments, lowercase,
+snake_case within each segment when a metric name has multiple
+words. Match the existing names in
 [`packages/protocol/src/metrics.ts`](../../packages/protocol/src/metrics.ts).
-Snake_case segments, dot separators.
+Labels are flat `Readonly<Record<string, string>>` — no numbers as
+label values, no nested objects — so any aggregation backend can
+consume them.
 
 Examples in tree today:
 
@@ -132,8 +136,44 @@ Examples in tree today:
 - `db.compact.entries_folded` — compactor counter.
 - `db.gc.swept_total` — GC counter.
 
-Don't invent new namespaces casually. New subsystem? File a small
-ADR in [`docs/adr/`](../adr/) before adding `db.newthing.*`.
+Don't invent new namespaces casually. New subsystem? Pick from the
+existing set (`write`, `r2`, `manifest`, `gc`, `orphan`, `compact`,
+`tenant`, `storage`) or discuss with maintainers before adding
+`db.newthing.*` — metric names are a contract.
+
+### Rejected naming alternatives
+
+- **Camel-case namespacing** (e.g. `dbWrite.classAOpsPerLogicalWrite`).
+  Does not survive every aggregation backend (statsd, Prometheus,
+  OpenTelemetry, Workers Analytics Engine); the dot is the
+  widely-supported namespace separator. Deeper trees
+  (`db.write.commit.412.total`) reduce aggregation ergonomics with
+  no offsetting benefit, so we cap at three segments.
+- **Backend-specific naming.** The recorder abstraction exists
+  precisely so the kernel does not have to know its sink. A future
+  preset could ship a Prometheus or OpenTelemetry adapter without
+  changing emit sites.
+
+### Prohibited patterns
+
+- **Numeric label values.** Prometheus and OpenTelemetry both
+  treat numeric labels as anti-patterns — they explode cardinality
+  and produce unaggregatable series.
+- **Nested objects as label values.** The type signature literally
+  forbids this (`Record<string, string>`), but reviewers should
+  reject any caller that string-encodes a JSON object into a label.
+- **New top-level prefixes other than `db.`**. Kernel metrics live
+  under one root; adapters or operators emitting their own metrics
+  use their own roots.
+- **`InMemoryMetricsRecorder` in production code.** It exists as a
+  test helper only; memory grows unbounded.
+- **Renaming a live metric without coordinating with the test
+  suite.** Test assertions match exact metric names, so a rename is
+  a multi-file change. The friction is deliberate; a name is a
+  contract.
+- **Mixed-case label values.** Labels are case-sensitive at the
+  aggregator — reviewers reject `tenant=ACME` vs `tenant=acme`
+  cardinality splits.
 
 ## Test patterns
 

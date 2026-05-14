@@ -206,6 +206,26 @@ export const GC_PENDING_CONTENT_TYPE: string = "application/json";
  * should still find its idempotency anchor on the bucket). The
  * `runGc()` function accepts an override for tests.
  *
+ * Why 7 days specifically:
+ *  - **1 day is too aggressive for batch workloads.** Worker isolate
+ *    scheduling pauses, cross-region replication lag, and
+ *    {@link RATE_LIMIT_BACKOFF_MILLIS} retry cascades can plausibly
+ *    exceed an hour under pathological conditions.
+ *  - **30 days is conservative beyond the worst plausible pause.**
+ *    Doubles `gc/pending.json` size at steady state and slows
+ *    visibility into "did GC actually run?" by 4×.
+ *  - **7 days spans the realistic upper bound** — long-running batch
+ *    jobs, multi-region propagation delays, queue backlogs, and
+ *    downstream outages the writer is retrying through. The protocol
+ *    is unaffected by the choice of value within the [hours, weeks]
+ *    range; this constant is the operator-tunable knob.
+ *
+ * Production code MUST NOT call `runGc` with `graceMillis` below the
+ * default outside maintenance windows — going below the longest
+ * plausible writer-retry latency risks deleting an anchor a writer
+ * is about to find on retry. Test code that sets `graceMillis: 0` is
+ * exercising the sweep path deliberately, not modelling production.
+ *
  * Distinct from {@link ORPHAN_MANIFEST_GRACE_MILLIS} (30s) — that
  * constant is the in-process window during which the legacy
  * `Syncer.classifyMissingContent` treats a missing content blob as

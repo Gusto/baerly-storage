@@ -4,7 +4,7 @@ audience: spec
 summary: Postgres-logical-replication-shaped LogEntry; frozen contract for future CDC consumers.
 last-reviewed: 2026-05-12
 tags: [protocol, log, cdc, contract]
-related: [sync-protocol.md, "../adr/0013-export-contract.md"]
+related: [sync-protocol.md]
 ---
 
 # Log entry shape
@@ -33,6 +33,30 @@ Postgres `INSERT` / `UPDATE` / `DELETE` statements; a
 `/cdc/v1/stream?since=<lsn>` SSE endpoint translates each entry into
 a Debezium-style envelope on the wire. Both consumers ack against
 `lsn`; both rely on the field set being stable.
+
+## Alternatives considered
+
+Three shapes were on the table:
+
+- **Ad-hoc JSON tailored to Baerly's internals.** Cheap to design,
+  but traps the export tooling inside Baerly — anyone reading the
+  log learns a Baerly-specific schema with no analog in the
+  ecosystem.
+- **`pgoutput` wire format verbatim.** The Postgres
+  logical-replication output plugin is the obvious reference, but
+  adopting it byte-for-byte would require BEGIN/COMMIT framing, LSN
+  byte structure, TYPE messages, streaming-in-progress variants,
+  and two-phase commit framing — overkill for a document store with
+  no statement-level decoding.
+- **`pgoutput`-shaped JSON, machinery dropped.** Keep the message
+  vocabulary (`I`/`U`/`D` for insert/update/delete, with relation,
+  key, before/after) and the per-entry opaque `lsn` cursor. Drop
+  the framing and protocol machinery that doesn't apply to an
+  append-only object-store log. **Chosen.**
+
+The export tool is a few hundred lines, not a feature team. CDC
+consumers can read the log directly and acknowledge progress on
+the opaque `lsn` string carried by each entry.
 
 ## The shape
 

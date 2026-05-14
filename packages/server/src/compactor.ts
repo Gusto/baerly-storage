@@ -20,6 +20,18 @@
  * A crash before the swap leaves an orphan snapshot file; the swap
  * succeeds iff our captured ETag still matches.
  *
+ * Why level-prefixed chunked snapshots over the alternatives: a
+ * single monolithic snapshot (every compaction rewrites one well-
+ * known key) makes partial writes catastrophic and serializes every
+ * writer on one key. WAL-checkpointing in the rqlite / Raft tradition
+ * requires a consensus layer Baerly doesn't have. The Litestream-
+ * style multi-level scheme — small fixed number of levels, chunked
+ * files keyed by sequence range — keeps random GETs cheap on
+ * S3-compatible storage and avoids LIST. Current ship is single-
+ * level at L9 (one snapshot replaces the prior; no multi-level merge
+ * yet); the key format is forward-compatible with future L0..L9
+ * rolling merges without a wire change.
+ *
  * @see ../../../../.claude/research/planning/tickets/14-snapshot-build-and-pointer-swap.md
  */
 

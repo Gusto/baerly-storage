@@ -200,3 +200,88 @@ thundering-herd CAS livelock on a single shared object, GCS's
 the standard failure modes reported in the S3-as-database
 literature. The ~30 writes/min/collection ceiling baked into the
 product thesis is the conservative bound those reports converge on.
+
+## CAS scope is per-collection
+
+Each table has its own `current.json` keyed by `(tenant, collection)`;
+every commit reads, mutates, and CAS-writes that single object.
+There is no per-tenant or per-bucket mutex.
+
+The alternative — per-tenant CAS, one `current.json` per tenant —
+would serialize every writer in the tenant on the same key. The
+published cost bound (`< 1 Class A op / writer / hour` for idle
+readers; see
+[cost-model.md](../cost-model.md#cost-ceiling)) is only tractable
+if the idle reader can poll one cheap key per collection;
+per-tenant CAS makes the bound unmeetable on workloads with more
+than one busy collection.
+
+Trade-offs:
+
+- Collections are independent — a write storm on one table does
+  not block writers on another in the same tenant.
+- More `current.json` objects per tenant (one per collection),
+  managed by the same compactor/GC pair.
+- Hot single-collection workloads above roughly 30 writes/min on
+  the same table see CAS contention.
+- Cross-collection atomicity is impossible by construction.
+  Applications that need it use `db._raw` or graduate to Postgres
+  via the export contract ([log-entry-shape.md](log-entry-shape.md));
+  transaction scope inherits the per-collection boundary — see the
+  JSDoc on `Db.transaction`.
+
+## Bound choices
+
+The protocol relies on two clock-skew bounds, both in
+[`packages/protocol/src/constants.ts`](../../packages/protocol/src/constants.ts):
+
+- `LAG_WINDOW_MILLIS = 5000` ms — half-window within which a manifest
+  write's embedded timestamp must agree with the server's
+  `LastModified` for the write to be accepted by replaying clients.
+- `MANIFEST_LIST_LOOKAHEAD_MILLIS = 10000` ms — how far into the
+  future the manifest LIST cursor is positioned; must be ≥
+  `LAG_WINDOW_MILLIS`, asserted at constants.ts:23–24.
+
+Two guarantees were on the table:
+
+- **Total order across the bucket.** Strong, but requires a
+  coordination service or 2PC; both ruled out by the portable
+  `(Request) => Response` server contract and the per-collection
+  CAS scope above.
+- **Single-key causal consistency under bounded skew, no
+  cross-collection ordering.** Matches the per-collection CAS
+  scope, verifiable by property test, and is the guarantee every
+  prior-art S3-as-DB system delivers.
+
+The chosen guarantee is single-key causal consistency under
+bounded clock skew: for any single `(collection, docId)` pair,
+every write is causally observed by every reader within roughly
+one polling cycle plus `LAG_WINDOW_MILLIS`. Across collections —
+or across `docId`s within a collection — the protocol provides no
+ordering beyond what the underlying `Storage` adapter provides on
+a single LIST. The bound is enforced by the property-based cascade
+in
+[`tests/fixtures/randomized-cascade.ts`](../../tests/fixtures/randomized-cascade.ts),
+parameterised over four `Storage` adapters (`memory`, `local-fs`,
+`node-minio`, `cloudflare-r2`).
+
+5 s is the smallest window that spans every plausible
+writer-retry latency observed in the target deployment patterns.
+Tightening `LAG_WINDOW_MILLIS` below 5000 ms can cause spurious
+rejections on machines that haven't synced NTP; loosening it
+widens the window during which causal ordering can be disturbed by
+skew. Changing it is a protocol-breaking change.
+
+Adding a new `Storage` adapter MUST add a variant to the cascade
+([`tests/integration/randomized.test.ts`](../../tests/integration/randomized.test.ts)
+for Node-side variants;
+[`packages/adapter-cloudflare/src/randomized.test.ts`](../../packages/adapter-cloudflare/src/randomized.test.ts)
+for the Workerd variant). Adapters MUST meet three contract
+bullets:
+
+1. Read-after-write on the same key.
+2. CAS via `If-Match` and `If-None-Match: "*"`.
+3. Eventual consistency on LIST — the cascade does NOT depend on
+   read-your-writes LIST consistency, which is why the Toxiproxy
+   variant can flip the network 10× per second during the test and
+   still pass.

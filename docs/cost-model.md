@@ -4,7 +4,7 @@ audience: product
 summary: Per-line-item rates, write-amp meter, compression posture.
 last-reviewed: 2026-05-12
 tags: [cost, pricing, operations]
-related: [pricing-log.md, product-thesis.md, "adr/0015-cost-ceiling.md"]
+related: [pricing-log.md, product-thesis.md]
 ---
 
 # Cost model
@@ -50,6 +50,49 @@ ops over a trailing 24 h, the derived effective write-amp
 (Class A ops / logical writes — protocol regression detector if it
 drifts above ~4), and Class B ops. Storage and Worker request
 counts are noise until you graduate.
+
+## Cost ceiling
+
+Baerly commits to a published, architecturally-enforced ceiling so
+the cost line is bounded, not best-effort. Two bounds, both
+verified in CI:
+
+- **3 storage ops per logical write.** PUT content, PUT log entry,
+  CAS-advance `current.json`. Snapshot writes amortize across many
+  log entries and are paid by the compactor, not the writer. The
+  `db.write.class_a_ops_per_logical_write` histogram alerts above
+  p99 > 5.
+- **`< 1 Class A op / writer / hour` for idle readers.** Real
+  expectation is exactly zero — readers walk `current.json` plus the
+  snapshot plus the live-tail log via deterministic GETs, never
+  LIST.
+
+Why a published ceiling? Two failure modes shape it:
+
+1. **The idle case.** A deployed app with one daily writer and a
+   handful of pollers should be free on R2 and effectively free on
+   S3. One Class A op per poll destroys that economics inside a day.
+2. **The small-workload case.** A ~100-MAU helpdesk app should cost
+   single-digit dollars per month. The per-write op count must be a
+   bounded small constant — not something that grows with table
+   size, snapshot depth, or history.
+
+Without architectural enforcement the protocol drifts: a new feature
+adds a poll here, a LIST there, and the cost line creeps upward with
+no single regression to point at. The ceiling is a gate, not a
+target — `tests/integration/phase5-end-to-end.test.ts` wraps
+`Storage` with a counting proxy and gates on
+`expect(classAOps).toBeLessThan(1)` after 1800 polls (one hour at
+2 s cadence). Tier profiles in `packages/server/src/maintenance.ts`
+(`CLOUDFLARE_FREE_TIER`, `CLOUDFLARE_PAID_TIER`, `NODE_PROFILE`)
+carry the budget arithmetic; `maintenance.budget.test.ts` proves a
+single maintenance pass under the Cloudflare free-tier profile sits
+under the 50-subrequest cap.
+
+Per-collection CAS scope (see
+[`docs/spec/sync-protocol.md`](spec/sync-protocol.md)) is what makes
+the idle-poll bound tractable: one cheap key per collection rather
+than contention on a global mutex.
 
 ## Compression off by default in `@baerly/client`
 

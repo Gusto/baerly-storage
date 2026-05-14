@@ -76,7 +76,11 @@ export type BaerlyErrorCode =
 
 /**
  * The single error class thrown by Baerly. Discriminate by `code`, not
- * `instanceof`:
+ * `instanceof`: the code string survives `JSON.stringify` round-trips
+ * across Worker / iframe / postMessage realm boundaries, where each
+ * realm has its own `BaerlyError` constructor identity. IDB-restored
+ * writes can replay across realms, so `instanceof` would spuriously
+ * fail on a structurally-identical error from another realm.
  *
  * @example
  * ```ts

@@ -87,20 +87,18 @@ outside `LAG_WINDOW_MILLIS` are rejected.
 ## Error model
 
 Discriminated-union errors. Match on `error.code`, never `instanceof`.
+Rationale lives in the JSDoc on `BaerlyError`.
 
 - Implementation: [`packages/protocol/src/errors.ts`](../packages/protocol/src/errors.ts)
-- ADR:
-  [`docs/adr/0003-error-code-discriminant.md`](./adr/0003-error-code-discriminant.md)
 
 ## Branded types
 
 Nominal typing on top of `string` to keep manifest keys, UUIDs, and S3
-version IDs from being confused at protocol boundaries.
+version IDs from being confused at protocol boundaries. See the
+"Conventions" section of [`CLAUDE.md`](../CLAUDE.md).
 
 - Implementation: [`packages/protocol/src/types.ts`](../packages/protocol/src/types.ts) (definitions and
   boundary helpers `uuid()`, `versionFromUuid()`)
-- ADR:
-  [`docs/adr/0002-branded-types.md`](./adr/0002-branded-types.md)
 
 ## Hashing / content addressing
 
@@ -250,8 +248,8 @@ for per-request S3 spend.
   [`tests/integration/observability.test.ts`](../tests/integration/observability.test.ts)
 - Docs: [`docs/observability.md`](./observability.md),
   [`docs/conventions/observability.md`](./conventions/observability.md)
-- ADR:
-  [`docs/adr/0022-observability-tag-naming.md`](./adr/0022-observability-tag-naming.md)
+  (includes metric-name conventions, rejected alternatives, and
+  prohibited patterns)
 
 ## Optional collection schemas (`CollectionDefinition.schema`)
 
