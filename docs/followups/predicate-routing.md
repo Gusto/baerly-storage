@@ -2,7 +2,7 @@
 title: Predicate-routing — open follow-ups
 audience: coder
 summary: Deferred items from the predicate-routing chapter (T1–T5).
-last-reviewed: 2026-05-13
+last-reviewed: 2026-05-14
 tags: [followups, indexes, query-planner]
 related: ["../features.md", "../architecture.md", "../extending.md"]
 ---
@@ -18,21 +18,7 @@ backlog the next iteration's planning consults — the ticket scratch
 under `.claude/research/planning/tickets/predicate-routing/` is
 deleted at chapter close.
 
-## 1. Value-order-preserving numeric encoder
-
-Range walks over numeric fields fall back to full-scan today because
-`encodeIndexValue` is byte-order-preserving on `JSON.stringify(v)`:
-`9` JSON-stringifies to `"9"` (0x39), `10` to `"10"` (0x31 0x30), so
-`9` lex-sorts above `10`. The T3 numeric-range guard catches this and
-emits `FullScanPlan{reason:"numeric-range-on-byte-encoder"}` — correct
-results, no optimisation. A value-order-preserving numeric encoder is
-its own ticket with its own conformance suite.
-
-- Decided in: T3 §6.a.iv (numeric-range guard).
-- Pointer: `packages/server/src/indexes.ts` (`encodeIndexValue`);
-  `packages/server/src/query-planner.ts` (planner emit site).
-
-## 2. Range / `$in` implication in `predicateImplies`
+## 1. Range / `$in` implication in `predicateImplies`
 
 `predicateImplies(indexFilter, queryPredicate)` returns `false`
 conservatively whenever `indexFilter` contains an operator-shaped
@@ -45,7 +31,7 @@ predicate `{age:{$gte:18}}` does not today imply an index filter
 - Pointer: `packages/protocol/src/query/predicate.ts`
   (`predicateImplies`).
 
-## 3. Configurable `IN_FANOUT_THRESHOLD`
+## 2. Configurable `IN_FANOUT_THRESHOLD`
 
 The `$in` multi-walk fan-out threshold is hard-coded to 50 inside
 `packages/server/src/query-planner.ts`. A `Db.create({ indexes,
@@ -55,7 +41,7 @@ inFanoutThreshold? })` knob lands later if real workloads benefit.
 - Pointer: `packages/server/src/query-planner.ts`
   (`IN_FANOUT_THRESHOLD` constant).
 
-## 4. Bounded parallelism for `$in` multi-walk LISTs
+## 3. Bounded parallelism for `$in` multi-walk LISTs
 
 Today `runIndexWalkPlan` issues one LIST per `$in` value
 sequentially. The Cloudflare 50-subrequest budget caps this
@@ -65,7 +51,7 @@ analogue) would cut wall-clock latency on multi-value `$in` walks.
 - Decided in: T3.
 - Pointer: `packages/server/src/query.ts` (`runIndexWalkPlan`).
 
-## 5. Auto-rebuild-on-config-change for filtered-index filter mutations
+## 4. Auto-rebuild-on-config-change for filtered-index filter mutations
 
 When an operator tightens a filtered index's `def.predicate`, they
 must run `pnpm exec baerly admin rebuild-index <collection> <name>`
@@ -77,14 +63,14 @@ the current filter, plus an opt-in auto-rebuild path.
 - Pointer: `packages/cli/src/admin/rebuild-index.ts`;
   `packages/server/src/rebuild-index.ts`.
 
-## 6. Operator-shaped `def.predicate` clauses on filtered indexes
+## 5. Operator-shaped `def.predicate` clauses on filtered indexes
 
 `IndexDefinition.predicate` is equality-only at validation today
 (`packages/server/src/indexes.ts:103-117` rejects operator-shaped
 values via the post-`validatePredicate` operator scan). Allowing
 `{ priority: { $in: ["p0", "p1"] } }` or `{ age: { $gte: 18 } }` in
 the filter requires extending `predicateImplies` to reason about
-range/`$in` implication (follow-up #2 above), so the two are
+range/`$in` implication (follow-up #1 above), so the two are
 naturally coupled.
 
 - Decided in: T4 (decoupling from T1's matcher work).

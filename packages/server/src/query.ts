@@ -848,9 +848,11 @@ const runIndexWalkPlan = async <T extends JSONArraylessObject>(
   if (plan.rangeOn !== undefined) {
     // Range-LIST under the equality prefix. The value-segment sits
     // immediately after `eqPrefix`; we lex-compare it against the
-    // encoded bounds. Lex comparison is sound because the encoder
-    // is byte-order-preserving on JSON.stringify (the planner has
-    // already refused numeric values via the NUMERIC-RANGE GUARD).
+    // encoded bounds. Lex comparison is sound because
+    // `encodeIndexValue` is value-order-preserving for every
+    // supported type — numbers via the sortable IEEE 754 payload,
+    // strings via UTF-8 byte order, all framed under the type-tag
+    // prefix that keeps types disjoint.
     const r = plan.rangeOn;
     const loEncoded = r.lo === undefined ? undefined : encodeIndexValue(r.lo);
     const hiEncoded = r.hi === undefined ? undefined : encodeIndexValue(r.hi);
@@ -892,8 +894,9 @@ const runIndexWalkPlan = async <T extends JSONArraylessObject>(
   } else if (plan.inOn !== undefined) {
     // `$in` multi-walk: one sequential LIST per value, union of
     // doc-ids. The planner has already vetted the fan-out (≤
-    // IN_FANOUT_THRESHOLD) and numeric-range guard (no number
-    // members).
+    // IN_FANOUT_THRESHOLD); the encoder is value-order-preserving
+    // across every supported type, so numeric members route the
+    // same as strings.
     for (const value of plan.inOn.values) {
       const valPrefix = `${eqPrefix}${encodeIndexValue(value)}/`;
       for await (const entry of ctx.storage.list(valPrefix)) {

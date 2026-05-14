@@ -14,17 +14,9 @@
  * on the LAST indexed field beyond the equality prefix get pushed
  * into the walk too. T4 adds the filtered-index cost bias.
  *
- * KNOWN LIMITATION — numeric ranges and numeric `$in` predicates are
- * refused at the planner via `FullScanPlan{reason:
- * "numeric-range-on-byte-encoder"}`. `encodeIndexValue`
- * (`./indexes.ts`) is byte-order-preserving on `JSON.stringify(v)`,
- * not value-order-preserving — `"9" > "10"` byte-wise. The
- * full-scan path is correct for these predicates; only the index
- * optimisation is refused. A value-order-preserving numeric encoder
- * is a follow-up.
- *
- * @see ../../../.claude/research/planning/tickets/predicate-routing/02-auto-planner-and-composite-reads.md
- * @see ../../../.claude/research/planning/tickets/predicate-routing/03-range-and-in-walks.md
+ * Numeric range / `$in` are routed normally; the encoder at
+ * `./indexes.ts:encodeIndexValue` is value-order-preserving for
+ * numbers.
  */
 
 import {
@@ -103,8 +95,7 @@ export interface FullScanPlan {
     | "no-predicate"
     | "no-indexes-declared"
     | "no-matching-index"
-    | "predicate-uses-operators-only"
-    | "numeric-range-on-byte-encoder"; // T3
+    | "predicate-uses-operators-only";
 }
 
 /**
@@ -228,33 +219,6 @@ const tryExtractEq = (op: Record<string, unknown>): JSONArrayless | undefined =>
 };
 
 /**
- * NUMERIC-RANGE GUARD.
- *
- * `encodeIndexValue` is byte-order-preserving on `JSON.stringify(v)`,
- * not value-order-preserving. JSON-stringified numbers don't sort
- * lexicographically by numeric value: `JSON.stringify(9) === "9"`
- * (one byte: 0x39) and `JSON.stringify(10) === "10"` (two bytes:
- * 0x31 0x30), so `"9" > "10"` byte-wise. A range walk that trusted
- * the encoder for numeric values would silently miss rows.
- *
- * Mitigation: refuse to optimise numeric ranges at the planner.
- * The full-scan path is correct — only the index optimisation is
- * refused. A value-order-preserving numeric encoder is a follow-up
- * ticket (see `docs/followups/predicate-routing.md`).
- *
- * Strings, booleans, and object equality (via `deepEqualJSONArrayless`)
- * remain safe because their JSON encoding IS byte-order-preserving
- * with respect to JS `<` (UTF-16 strings; booleans collapse to two
- * canonical encodings `"true"` / `"false"`).
- */
-const containsNumber = (values: ReadonlyArray<JSONArrayless | undefined>): boolean => {
-  for (const v of values) {
-    if (typeof v === "number") return true;
-  }
-  return false;
-};
-
-/**
  * Choose a query plan over the predicate + declared indexes. Pure
  * function. The executor enforces the I/O semantics; the planner's
  * only contract is "given these inputs, this is the routing
@@ -281,16 +245,11 @@ const containsNumber = (values: ReadonlyArray<JSONArrayless | undefined>): boole
  *     Longest prefix wins; tail-extension breaks ties. If no
  *     candidate consumed at least one field (equality OR
  *     range/$in): `no-matching-index`.
- *  7. NUMERIC-RANGE GUARD: if the chosen plan's range/$in slot
- *     contains any `typeof === "number"` value, emit
- *     `FullScanPlan{reason:"numeric-range-on-byte-encoder"}` — the
- *     full-scan path is correct for the predicate; only the
- *     optimisation is refused.
- *  8. `$in` FAN-OUT GUARD: if the chosen plan's `$in` slot has
+ *  7. `$in` FAN-OUT GUARD: if the chosen plan's `$in` slot has
  *     `values.length > IN_FANOUT_THRESHOLD`, fall back to
  *     `FullScanPlan{reason:"no-matching-index"}` — N sequential
  *     LISTs cost more than a snapshot+log fold.
- *  9. Build the `postFilter` residue: every predicate clause NOT
+ *  8. Build the `postFilter` residue: every predicate clause NOT
  *     consumed by the walk (operator residue on non-indexed
  *     fields, equality on non-indexed fields, operator residue on
  *     fields BEYOND the tail slot, etc.). Attach only when
@@ -452,26 +411,12 @@ export const planQuery = <T extends JSONArraylessObject = JSONArraylessObject>(
   });
   const best: Candidate = candidates[0]!;
 
-  // NUMERIC-RANGE GUARD (see `containsNumber` JSDoc above). Refuse
-  // to route any range or $in plan whose bounds/members include a
-  // JS number — the byte-order-preserving encoder would silently
-  // miss rows.
-  if (best.tail !== undefined) {
-    if (best.tail.kind === "range") {
-      const { lo, hi } = best.tail.info;
-      if (containsNumber([lo, hi])) {
-        return { kind: "full-scan", reason: "numeric-range-on-byte-encoder" };
-      }
-    } else {
-      if (containsNumber(best.tail.values)) {
-        return { kind: "full-scan", reason: "numeric-range-on-byte-encoder" };
-      }
-      // `$in` fan-out guard. Over the threshold, N sequential LISTs
-      // cost more than one snapshot+log fold on every backend we
-      // benchmark — refuse routing. Full-scan is correct.
-      if (best.tail.values.length > IN_FANOUT_THRESHOLD) {
-        return { kind: "full-scan", reason: "no-matching-index" };
-      }
+  // `$in` fan-out guard. Over the threshold, N sequential LISTs cost
+  // more than one snapshot+log fold on every backend we benchmark —
+  // refuse routing. Full-scan is correct.
+  if (best.tail !== undefined && best.tail.kind === "in") {
+    if (best.tail.values.length > IN_FANOUT_THRESHOLD) {
+      return { kind: "full-scan", reason: "no-matching-index" };
     }
   }
 

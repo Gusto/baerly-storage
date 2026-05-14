@@ -1271,4 +1271,40 @@ describe("auto-planner range and $in walks (T3)", () => {
     // All tenants are > "a" lexically. age must equal "012".
     expect(rows.map((r) => r._id).toSorted()).toEqual(["a1", "b1", "z1"]);
   });
+
+  test("numeric range walk returns the right rows", async () => {
+    // End-to-end smoke for the value-order-preserving numeric encoder.
+    // Under the old byte-order-preserving encoder, `age=9` lex-sorted
+    // ABOVE `age=10` (one byte 0x39 vs two bytes 0x31 0x30), so a
+    // `$gte:10` walk could miss multi-digit rows or include `9`. With
+    // the new encoder, `{$gte:10, $lt:30}` returns exactly [10,15,18,22].
+    await provision(storage);
+    const writer = new ServerWriter({
+      storage,
+      currentJsonKey: currentJsonKey(COLL),
+      options: { indexes: [{ name: "by_age", on: "age" }] },
+    });
+    for (const age of [9, 10, 15, 18, 22, 30, 100]) {
+      await writer.commit({
+        op: "I",
+        collection: COLL,
+        docId: `u-${age}`,
+        body: { _id: `u-${age}`, age },
+      });
+    }
+    const db = Db.create({
+      storage,
+      app: APP,
+      tenant: TENANT,
+      indexes: new Map([[COLL, [{ name: "by_age", on: "age" }]]]),
+    });
+    const rows = await db
+      .table<{ _id: string; age: number }>(COLL)
+      .where({ age: { $gte: 10, $lt: 30 } } as unknown as Predicate<{
+        _id: string;
+        age: number;
+      }>)
+      .all();
+    expect(rows.map((r) => r.age).toSorted((a, b) => a - b)).toEqual([10, 15, 18, 22]);
+  });
 });

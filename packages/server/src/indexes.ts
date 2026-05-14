@@ -31,14 +31,17 @@
  * the doc id from each key, then issue a content GET on each.
  *
  * Encoding is RFC-4648 base-32 (lowercase alphabet `[0-9a-v]`,
- * matching `packages/protocol/src/log.ts:str2uintDesc` style) on the
- * UTF-8 bytes of `JSON.stringify(value)` so that:
+ * matching `packages/protocol/src/log.ts:str2uintDesc` style) on a
+ * type-tagged byte stream (see {@link encodeIndexValue}) so that:
  *
  *   - String "5" and number 5 produce distinct encodings
- *     (their JSON forms differ).
+ *     (type-tag prefix keeps the slots disjoint).
  *   - Equal-by-value inputs produce byte-equal segments.
- *   - Lex order under storage `list(prefix)` matches lex order on
- *     the underlying JSON-stringified value bytes.
+ *   - Lex order under storage `list(prefix)` matches value order:
+ *     `null < false < true < number < string < object`, with
+ *     numeric values ordered by IEEE 754 magnitude (range walks
+ *     and `$in` walks over numeric fields are first-class — no
+ *     planner fall-back to full-scan).
  *
  * Locked: single-field indexes only on the read path. Composite
  * shape is documented and reserved (the path encoder accepts it).
@@ -200,43 +203,146 @@ const assertNoOperatorClause = (
 };
 
 /**
+ * Type-tag bytes for the value-order-preserving wire format. The
+ * tag is the LEADING byte of the encoded payload; the values are
+ * picked so the type order under byte-wise lex is
+ * `null < false < true < number < string < object`.
+ *
+ * |  Type   | Byte-prefix | Payload                                            |
+ * |---------|-------------|----------------------------------------------------|
+ * | null    | 0x10        | (none)                                             |
+ * | false   | 0x20        | (none)                                             |
+ * | true    | 0x21        | (none)                                             |
+ * | number  | 0x30        | 8-byte sortable big-endian IEEE 754                |
+ * | string  | 0x40        | UTF-8 bytes of the string (no quotes, no escapes)  |
+ * | object  | 0x50        | UTF-8 bytes of `JSON.stringify(v)`                 |
+ *
+ * Local to the encoder by design — these are wire shape, not
+ * cross-package protocol constants (see `CLAUDE.md` § "Magic
+ * values" / ticket 01 conventions).
+ */
+const TYPE_NULL = 0x10;
+const TYPE_FALSE = 0x20;
+const TYPE_TRUE = 0x21;
+const TYPE_NUMBER = 0x30;
+const TYPE_STRING = 0x40;
+const TYPE_OBJECT = 0x50;
+
+/**
+ * Encode a JS double as an 8-byte big-endian sortable IEEE 754
+ * payload. Byte-wise lex order on the result matches numeric order
+ * across all finite doubles plus `±Infinity`:
+ *
+ *   1. Get the 8-byte big-endian view of the double.
+ *   2. If the sign bit is `0` (zero or positive), flip the sign bit
+ *      (XOR `0x80` on byte 0) so positives sort above negatives.
+ *   3. If the sign bit is `1` (negative), flip every bit in all 8
+ *      bytes so more-negative sorts lower.
+ *
+ * `NaN` has no order-preserving slot and is rejected — see the
+ * `encodeIndexValue` JSDoc for the wire-contract rationale.
+ * `-0` and `+0` collapse to the same eight bytes (both serialise as
+ * `0x00 00 00 00 00 00 00 00` after the sign-bit flip).
+ */
+const encodeNumberPayload = (n: number): Uint8Array => {
+  if (Number.isNaN(n)) {
+    throw new BaerlyError(
+      "SchemaError",
+      `encodeIndexValue: NaN is not indexable (the byte encoding has no order-preserving slot for it)`,
+    );
+  }
+  // `-0` and `+0` share a representation after the sign-bit flip below
+  // (DataView serialises both as 0x00...00); collapsing them here keeps
+  // the wire stable.
+  const buf = new ArrayBuffer(8);
+  new DataView(buf).setFloat64(0, n === 0 ? 0 : n, false); // big-endian
+  const bytes = new Uint8Array(buf);
+  if ((bytes[0]! & 0x80) === 0) {
+    // Positive (or +0): flip sign bit so positives sort above negatives.
+    bytes[0] = bytes[0]! ^ 0x80;
+  } else {
+    // Negative: flip all bits so more-negative sorts lower.
+    for (let i = 0; i < 8; i++) bytes[i] = (bytes[i]! ^ 0xff) & 0xff;
+  }
+  return bytes;
+};
+
+/**
+ * Compose the typed byte stream for one value. The leading byte is
+ * the type tag (see {@link TYPE_NULL} et al.); the payload shape is
+ * type-dependent. Strings are emitted as their raw UTF-8 bytes (no
+ * JSON quoting / escaping) so byte-wise lex order on encoded strings
+ * matches byte-wise lex order on the source UTF-8. Objects fall back
+ * to `JSON.stringify` for equality only.
+ */
+const encodeBytes = (v: unknown): Uint8Array => {
+  if (v === null || v === undefined) return new Uint8Array([TYPE_NULL]);
+  if (v === false) return new Uint8Array([TYPE_FALSE]);
+  if (v === true) return new Uint8Array([TYPE_TRUE]);
+  if (typeof v === "number") {
+    const payload = encodeNumberPayload(v);
+    const out = new Uint8Array(1 + payload.length);
+    out[0] = TYPE_NUMBER;
+    out.set(payload, 1);
+    return out;
+  }
+  if (typeof v === "string") {
+    const utf8 = new TextEncoder().encode(v);
+    const out = new Uint8Array(1 + utf8.length);
+    out[0] = TYPE_STRING;
+    out.set(utf8, 1);
+    return out;
+  }
+  // Objects: equality only; insertion-order dependent (matches today's
+  // contract on `JSON.stringify`-based equality).
+  const utf8 = new TextEncoder().encode(JSON.stringify(v));
+  const out = new Uint8Array(1 + utf8.length);
+  out[0] = TYPE_OBJECT;
+  out.set(utf8, 1);
+  return out;
+};
+
+/**
  * Encode an arbitrary `JSONArrayless` value as a path-safe segment.
- * Canonical JSON.stringify ensures equal-by-value inputs (e.g.
- * `{a:1, b:2}` and `{a:1, b:2}`) produce byte-equal segments while
+ *
+ * Type-tagged byte stream, base-32-encoded for path safety. Lex
+ * order on encoded bytes matches:
+ *
+ *   - **Type order**: `null < false < true < number < string < object`.
+ *   - **Within numbers**: IEEE 754 numeric order (sortable
+ *     big-endian payload, sign-bit-flipped or all-bits-flipped).
+ *     `-Infinity` sorts lowest, `+Infinity` highest.
+ *   - **Within strings**: UTF-8 byte order.
+ *   - **Within objects**: byte-equality only (still
+ *     `JSON.stringify`-insertion-order dependent).
+ *
+ * Numbers ARE range-safe under this encoder — `9` sorts below `10`
+ * as expected. The query planner's old
+ * `numeric-range-on-byte-encoder` guard has been removed; range
+ * walks and `$in` walks over numeric fields are routed normally.
+ *
+ * `NaN` throws `BaerlyError{code:"SchemaError"}` at write time —
+ * the byte encoding has no order-preserving slot for it, and a
+ * silent collapse to the `null` key (as the prior
+ * `JSON.stringify`-based encoder did, since
+ * `JSON.stringify(NaN) === "null"`) is a worse failure mode than
+ * a loud reject.
+ *
+ * `-0` and `+0` collapse to the same encoding.
+ *
+ * Equal-by-value inputs (e.g. two `{a:1, b:2}` objects with the
+ * same key insertion order) produce byte-equal segments;
  * structurally-different but visually-similar inputs (`"5"` vs `5`)
- * produce distinct segments.
+ * are kept apart by the type-tag prefix.
  *
- * `null` / `undefined` collapse to the sentinel `"0"` so the
- * segment is never empty (an empty segment would collapse a key
- * into `...//docid.json` and break the storage `list(prefix)`
- * walk).
- *
- * **Numeric ranges are not supported by this encoder.** Output is
- * byte-order-preserving on `JSON.stringify(v)`. JSON-stringified
- * numbers don't sort lexicographically by numeric value
- * (`JSON.stringify(9) === "9"` is one byte 0x39 while
- * `JSON.stringify(10) === "10"` is two bytes 0x31 0x30, so
- * `"9" > "10"` byte-wise). The query planner
- * (`./query-planner.ts`) refuses numeric range and `$in` predicates
- * over indexed fields by emitting
- * `FullScanPlan{reason:"numeric-range-on-byte-encoder"}`; the
- * full-scan path is correct for those predicates. A value-order-
- * preserving numeric encoder is a follow-up — see
- * `docs/followups/predicate-routing.md`.
- *
- * String ranges are safe: `"2026-05-13" < "2026-05-14"` byte-wise
- * matches semantic order. ISO 8601 timestamps, alphabetical
- * priorities like `"p1"/"p2"/"p3"`, and any fixed-width string
- * encoding are usable as range-walked indexed fields.
+ * String ranges remain safe: `"2026-05-13" < "2026-05-14"`
+ * byte-wise matches semantic order. ISO 8601 timestamps,
+ * alphabetical priorities like `"p1"/"p2"/"p3"`, and any
+ * fixed-width string encoding are usable as range-walked indexed
+ * fields.
  */
 export const encodeIndexValue = (v: unknown): string => {
-  // Stringify in canonical form so equal values map to equal keys.
-  // null / undefined collapse to the empty string; the trailing
-  // sentinel below guarantees a non-empty segment.
-  const s = v === null || v === undefined ? "" : JSON.stringify(v);
-  const bytes = new TextEncoder().encode(s);
-  // Lowercase base-32 of the UTF-8 bytes. Lex-order-preserving
-  // under the storage's lex-sort guarantee.
+  const bytes = encodeBytes(v);
   let out = "";
   let bits = 0;
   let value = 0;
@@ -249,9 +355,10 @@ export const encodeIndexValue = (v: unknown): string => {
     }
   }
   if (bits > 0) out += B32_ALPHABET[(value << (5 - bits)) & 0x1f];
-  // Empty input → "0" so the segment is never empty (would collapse
-  // a key into a non-segment `...//docid.json`).
-  return out === "" ? "0" : out;
+  // The type-prefix guarantees the byte stream is non-empty for every
+  // input, so the "empty → '0'" fallback that the old encoder needed
+  // is dead. Encoder output is always non-empty under the new contract.
+  return out;
 };
 
 /**

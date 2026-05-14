@@ -27,9 +27,8 @@ describe("encodeIndexValue", () => {
     expect(encodeIndexValue(5)).not.toBe(encodeIndexValue("5"));
   });
 
-  test("null / undefined encode to '0' (the sentinel empty segment)", () => {
-    expect(encodeIndexValue(null)).toBe("0");
-    expect(encodeIndexValue(undefined)).toBe("0");
+  test("null / undefined encode to the same segment", () => {
+    expect(encodeIndexValue(null)).toBe(encodeIndexValue(undefined));
   });
 
   test("encoding uses only the lowercase base-32 alphabet", () => {
@@ -39,6 +38,55 @@ describe("encodeIndexValue", () => {
 
   test("encoded segment never empty (no '//' in composed key)", () => {
     expect(encodeIndexValue("").length).toBeGreaterThan(0);
+    expect(encodeIndexValue(null).length).toBeGreaterThan(0);
+    expect(encodeIndexValue(undefined).length).toBeGreaterThan(0);
+  });
+});
+
+describe("encodeIndexValue ordering", () => {
+  const lt = (a: unknown, b: unknown): boolean => encodeIndexValue(a) < encodeIndexValue(b);
+
+  test("numeric order on positive integers", () => {
+    expect(lt(9, 10)).toBe(true);
+    expect(lt(10, 100)).toBe(true);
+    expect(lt(1, Number.MAX_SAFE_INTEGER)).toBe(true);
+  });
+
+  test("numeric order across signs", () => {
+    expect(lt(-1, 0)).toBe(true);
+    expect(lt(-100, -1)).toBe(true);
+    expect(lt(-Number.MAX_VALUE, 0)).toBe(true);
+    expect(lt(0, Number.MIN_VALUE)).toBe(true);
+  });
+
+  test("infinities at the extremes", () => {
+    expect(lt(-Infinity, -1e308)).toBe(true);
+    expect(lt(1e308, Infinity)).toBe(true);
+  });
+
+  test("-0 and +0 collapse to the same encoding", () => {
+    expect(encodeIndexValue(-0)).toBe(encodeIndexValue(0));
+  });
+
+  test("NaN throws SchemaError", () => {
+    expect(() => encodeIndexValue(Number.NaN)).toThrow(/NaN/);
+  });
+
+  test("type slots are disjoint and ordered null < bool < number < string < object", () => {
+    const samples: ReadonlyArray<unknown> = [null, false, true, -1, 0, 1, "", "a", "z", { a: 1 }];
+    for (let i = 0; i < samples.length - 1; i++) {
+      expect(lt(samples[i], samples[i + 1])).toBe(true);
+    }
+  });
+
+  test("equality stable across runs", () => {
+    expect(encodeIndexValue(42)).toBe(encodeIndexValue(42));
+    expect(encodeIndexValue("hello")).toBe(encodeIndexValue("hello"));
+    expect(encodeIndexValue({ x: 1, y: 2 })).toBe(encodeIndexValue({ x: 1, y: 2 }));
+  });
+
+  test("number 5 and string '5' produce distinct encodings", () => {
+    expect(encodeIndexValue(5)).not.toBe(encodeIndexValue("5"));
   });
 });
 

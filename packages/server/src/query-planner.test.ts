@@ -380,56 +380,75 @@ describe("planQuery — $in multi-walk (T3)", () => {
   });
 });
 
-describe("planQuery — numeric-range guard (T3)", () => {
-  // CRITICAL: these tests are the orchestrator's correctness gate.
-  // The discriminant string "numeric-range-on-byte-encoder" is
-  // searched for explicitly — do not rename without coordinating
-  // with the predicate-routing chapter contracts.
-  test("numeric range refused on lower bound — full-scan with reason 'numeric-range-on-byte-encoder'", () => {
+describe("planQuery — numeric range / $in routing", () => {
+  // The encoder at `./indexes.ts:encodeIndexValue` is value-order-
+  // preserving for numbers — the old `numeric-range-on-byte-encoder`
+  // full-scan reason was deleted along with the `containsNumber`
+  // guard. These tests pin the routed plans.
+  test("routes numeric $gte/$lt range on indexed field", () => {
     const indexes: IndexDefinition[] = [{ name: "by_age", on: "age" }];
     const plan = planQuery(
       { age: { $gte: 18, $lt: 65 } } as unknown as Predicate<JSONArraylessObject>,
       indexes,
     );
     expect(plan).toEqual({
-      kind: "full-scan",
-      reason: "numeric-range-on-byte-encoder",
+      kind: "index-walk",
+      indexName: "by_age",
+      equalityKeys: [],
+      rangeOn: {
+        field: "age",
+        lo: 18,
+        hi: 65,
+        loInclusive: true,
+        hiInclusive: false,
+      },
     });
   });
 
-  test("numeric range refused on upper bound only", () => {
+  test("routes numeric upper-bound-only range on indexed field", () => {
     const indexes: IndexDefinition[] = [{ name: "by_age", on: "age" }];
     const plan = planQuery(
       { age: { $lt: 100 } } as unknown as Predicate<JSONArraylessObject>,
       indexes,
     );
     expect(plan).toEqual({
-      kind: "full-scan",
-      reason: "numeric-range-on-byte-encoder",
+      kind: "index-walk",
+      indexName: "by_age",
+      equalityKeys: [],
+      rangeOn: {
+        field: "age",
+        hi: 100,
+        loInclusive: false,
+        hiInclusive: false,
+      },
     });
   });
 
-  test("numeric $in refused", () => {
-    const indexes: IndexDefinition[] = [{ name: "by_age", on: "age" }];
+  test("routes numeric $in on indexed field under threshold", () => {
+    const indexes: IndexDefinition[] = [{ name: "by_priority", on: "priority" }];
     const plan = planQuery(
-      { age: { $in: [1, 2, 3] } } as unknown as Predicate<JSONArraylessObject>,
+      { priority: { $in: [1, 2, 3] } } as unknown as Predicate<JSONArraylessObject>,
       indexes,
     );
     expect(plan).toEqual({
-      kind: "full-scan",
-      reason: "numeric-range-on-byte-encoder",
+      kind: "index-walk",
+      indexName: "by_priority",
+      equalityKeys: [],
+      inOn: { field: "priority", values: [1, 2, 3] },
     });
   });
 
-  test("mixed numeric + string $in refused (any numeric element trips the guard)", () => {
+  test("routes mixed numeric + string $in on indexed field", () => {
     const indexes: IndexDefinition[] = [{ name: "by_x", on: "x" }];
     const plan = planQuery(
       { x: { $in: ["a", 1] } } as unknown as Predicate<JSONArraylessObject>,
       indexes,
     );
     expect(plan).toEqual({
-      kind: "full-scan",
-      reason: "numeric-range-on-byte-encoder",
+      kind: "index-walk",
+      indexName: "by_x",
+      equalityKeys: [],
+      inOn: { field: "x", values: ["a", 1] },
     });
   });
 });
