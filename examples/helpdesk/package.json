@@ -4,10 +4,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "predev": "pnpm --filter @helpdesk/server run seed",
-    "dev": "pnpm --parallel --filter \"@helpdesk/*\" run dev",
-    "build": "pnpm --filter \"@helpdesk/*\" run build",
-    "seed": "pnpm --filter @helpdesk/server run seed",
+    "predev": "pnpm -F @helpdesk/server seed",
+    "dev": "pnpm -F \"@helpdesk/*\" --parallel dev",
+    "build": "pnpm -F \"@helpdesk/*\" build",
+    "seed": "pnpm -F @helpdesk/server seed",
     "reset": "rm -rf .baerly-data",
     "test": "vitest run smoke.test.ts"
   },

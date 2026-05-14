@@ -39,7 +39,7 @@ export const TicketDetail = ({ id, onEdit, onBack }: Props): React.JSX.Element =
       <button
         style={{ marginLeft: 8, color: "crimson" }}
         onClick={async () => {
-          if (!confirm("Delete this ticket?")) return;
+          if (!window.confirm("Delete this ticket?")) return;
           await client.table<Ticket>("tickets").where({ _id: id }).delete();
           onBack();
         }}

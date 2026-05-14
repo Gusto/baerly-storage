@@ -5,6 +5,7 @@ import { PRIORITIES, STATUSES, type Ticket } from "../../../types.ts";
 type Draft = Pick<Ticket, "title" | "status" | "priority" | "assignee">;
 
 const EMPTY: Draft = { title: "", status: "open", priority: "med", assignee: "" };
+const ROW = { marginBottom: 12 };
 
 export const TicketForm = ({
   id,
@@ -45,46 +46,47 @@ export const TicketForm = ({
         onDone();
       }}
     >
-      <label>
-        Title
-        <input
-          name="title"
-          defaultValue={initial.title}
-          required
-          style={{ display: "block", width: "100%" }}
-        />
-      </label>
-      <p />
-      <label>
-        Status&nbsp;
-        <select name="status" defaultValue={initial.status}>
-          {STATUSES.map((s) => (
-            <option key={s} value={s}>
-              {s}
-            </option>
-          ))}
-        </select>
-      </label>
-      {"  "}
-      <label>
-        Priority&nbsp;
-        <select name="priority" defaultValue={initial.priority}>
-          {PRIORITIES.map((p) => (
-            <option key={p} value={p}>
-              {p}
-            </option>
-          ))}
-        </select>
-      </label>
-      <p />
-      <label>
-        Assignee
-        <input name="assignee" defaultValue={initial.assignee} style={{ display: "block" }} />
-      </label>
-      <p />
+      <div style={ROW}>
+        <label>
+          Title
+          <input
+            name="title"
+            defaultValue={initial.title}
+            required
+            style={{ display: "block", width: "100%" }}
+          />
+        </label>
+      </div>
+      <div style={ROW}>
+        <label>
+          Status&nbsp;
+          <select name="status" defaultValue={initial.status}>
+            {STATUSES.map((s) => (
+              <option key={s} value={s}>
+                {s}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label style={{ marginLeft: 12 }}>
+          Priority&nbsp;
+          <select name="priority" defaultValue={initial.priority}>
+            {PRIORITIES.map((p) => (
+              <option key={p} value={p}>
+                {p}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+      <div style={ROW}>
+        <label>
+          Assignee
+          <input name="assignee" defaultValue={initial.assignee} style={{ display: "block" }} />
+        </label>
+      </div>
       <button type="submit">{id === null ? "Create" : "Save"}</button>
-      {"  "}
-      <button type="button" onClick={onDone}>
+      <button type="button" style={{ marginLeft: 8 }} onClick={onDone}>
         Cancel
       </button>
     </form>

@@ -10,16 +10,14 @@ A working CRUD helpdesk over baerly-storage. Two workspaces:
 
 ## Quick start (60 seconds)
 
-From the repo root:
-
 ```sh
+cd examples/helpdesk
 pnpm install
-pnpm --filter helpdesk dev
+pnpm dev
 ```
 
 Then open <http://localhost:5173>. Five demo tickets are seeded on
-first run — `pnpm --filter helpdesk reset` wipes the bucket so the
-next `dev` re-seeds.
+first run — `pnpm reset` wipes the bucket so the next `dev` re-seeds.
 
 Open a second tab; edit a ticket in tab 1; watch tab 2 update.
 
@@ -72,7 +70,7 @@ useEffect(() => {
 
 ## Bucket layout
 
-Under `.baerly-data/` (`.gitignored`):
+Under `.baerly-data/`:
 
 ```
 app/helpdesk/tenant/helpdesk-demo/manifests/tickets/
@@ -108,7 +106,7 @@ server — no React code changes:
 cd path/to/your/cf-worker && wrangler dev
 
 # Terminal 2: web only, server URL overridden via env
-HELPDESK_SERVER_URL=http://localhost:8787 pnpm --filter @helpdesk/web run dev
+HELPDESK_SERVER_URL=http://localhost:8787 pnpm -F @helpdesk/web dev
 ```
 
 Use `pnpm create baerly` to scaffold a production-shaped Worker
@@ -117,20 +115,17 @@ Use `pnpm create baerly` to scaffold a production-shaped Worker
 
 ## Files to read
 
-- `types.ts` — shared `Ticket` interface.
-- `apps/server/src/index.ts` — server boot (~25 lines).
-- `apps/server/src/seed.ts` — idempotent demo data; in-process `Db`.
-- `apps/web/src/client.ts` — `createBaerlyClient` construction.
-- `apps/web/src/TicketList.tsx` — `useChanges` + status filter.
-- `smoke.test.ts` — round-trip test that runs in CI.
+Start with `apps/server/src/index.ts` (server boot, ~25 lines), then
+`apps/web/src/TicketList.tsx` (the `useChanges` live-updates hook).
+`types.ts`, `apps/server/src/seed.ts`, `apps/web/src/client.ts`, and
+`smoke.test.ts` fill in the rest.
 
 ## Troubleshooting
 
 - **"401 Unauthorized" from the web app.** Bearer token mismatch.
   The web app reads `VITE_HELPDESK_SECRET`; the server reads
   `HELPDESK_SECRET`. Default both to `dev-helpdesk-secret`.
-- **Port 3000 / 5173 in use.** Override
-  `PORT=3100 pnpm --filter @helpdesk/server dev` and update
-  `vite.config.ts`'s proxy target.
-- **"current.json missing".** Stop everything, `pnpm --filter
-  helpdesk reset`, then re-run `dev`.
+- **Port 3000 / 5173 in use.** Override `PORT=3100 pnpm -F
+  @helpdesk/server dev` and update `vite.config.ts`'s proxy target.
+- **"current.json missing".** Stop everything, `pnpm reset`, then
+  re-run `pnpm dev`.

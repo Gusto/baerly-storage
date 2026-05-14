@@ -43,10 +43,10 @@ export const TicketList = ({ onOpen }: { onOpen: (id: string) => void }): React.
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead>
             <tr>
-              <th align="left">Title</th>
-              <th align="left">Status</th>
-              <th align="left">Assignee</th>
-              <th align="left">Priority</th>
+              <th style={{ textAlign: "left" }}>Title</th>
+              <th style={{ textAlign: "left" }}>Status</th>
+              <th style={{ textAlign: "left" }}>Assignee</th>
+              <th style={{ textAlign: "left" }}>Priority</th>
             </tr>
           </thead>
           <tbody>
