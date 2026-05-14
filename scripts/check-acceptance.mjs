@@ -514,35 +514,34 @@ function declaresByTagIndexBullet() {
   };
 }
 
-// `by_domain_index` for bookmarks: baerly.config.ts has by_domain AND apps/**
-// uses .useIndex("by_domain").
+// `by_domain_index` for bookmarks: baerly.config.ts declares the
+// `by_domain` index on the bookmarks collection. The auto-planner
+// picks the index off the config — the rubric no longer asserts a
+// hand-written index-hint call.
 function byDomainIndexBullet() {
   return async ({ root }) => {
     const cfg = join(root, "baerly.config.ts");
-    let cfgHas = false;
-    if (existsSync(cfg)) {
-      try {
-        const content = await readFile(cfg, "utf8");
-        cfgHas = /by_domain/.test(content);
-      } catch {
-        cfgHas = false;
-      }
+    if (!existsSync(cfg)) {
+      return {
+        id: "by_domain_index",
+        pass: false,
+        stderr: "baerly.config.ts is missing",
+      };
     }
-    const useHits = await grepCount(
-      join(root, "apps"),
-      [".ts", ".tsx"],
-      /\.useIndex\(["']by_domain["']\)/,
-    );
-    if (cfgHas && useHits > 0) {
+    let cfgHas = false;
+    try {
+      const content = await readFile(cfg, "utf8");
+      cfgHas = /by_domain/.test(content);
+    } catch {
+      cfgHas = false;
+    }
+    if (cfgHas) {
       return { id: "by_domain_index", pass: true, stderr: "" };
     }
-    const reasons = [];
-    if (!cfgHas) reasons.push("baerly.config.ts does not declare by_domain");
-    if (useHits === 0) reasons.push('no .useIndex("by_domain") call under apps/');
     return {
       id: "by_domain_index",
       pass: false,
-      stderr: reasons.join("; "),
+      stderr: 'baerly.config.ts does not declare a "by_domain" index',
     };
   };
 }
@@ -610,7 +609,6 @@ const APPS = {
       grepZeroBullet("no_raw_access", [".ts", ".tsx"], /\bdb\._raw\b/, "apps"),
       grepAnyBullet("uses_table_api", [".ts", ".tsx"], /\bdb\.table\(/, "apps"),
       declaresByTagIndexBullet(),
-      grepAnyBullet("uses_index_in_read", [".ts", ".tsx"], /\.useIndex\(["']by_tag/, "apps"),
       grepProximityBullet({
         id: "updated_at_maintained",
         exts: [".ts"],

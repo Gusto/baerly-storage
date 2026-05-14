@@ -39,8 +39,9 @@ follow them literally.
 
 - Home page (20 most recently edited):
   `db.table<Note>("notes").order({ updated_at: "desc" }).limit(20).all()`
-- Filtered by tag (must use the secondary index):
-  `db.table<Note>("notes").where({ tag: "work" }).useIndex("by_tag").all()`
+- Filtered by tag (auto-routes through the secondary index declared
+  on the collection config):
+  `db.table<Note>("notes").where({ tag: "work" }).all()`
 - Insert:
   `db.table<Note>("notes").insert({ title, body, tag, created_at: now, updated_at: now })`
 - Update (bump `updated_at`):
@@ -55,7 +56,10 @@ not modify the checker script.** Each is binary pass/fail.
 - [ ] `pnpm test` exits 0.
 - [ ] `baerly.config.ts` declares an index named `by_tag` on the
       `notes` collection's `tag` field.
-- [ ] The tag-filter read path calls `.useIndex("by_tag")` explicitly.
+- [ ] The `notes` collection's `baerly.config.ts` entry declares
+      the `by_tag` index in `indexes`; the read path uses the
+      plain `.where({ tag })` chain (the planner picks the index
+      off the config).
 - [ ] `updated_at` is bumped on every update.
 - [ ] The home read orders by `updated_at desc` and limits 20.
 - [ ] No `db._raw` usage.

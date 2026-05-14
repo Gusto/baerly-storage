@@ -442,7 +442,6 @@ describe("Db.table read terminals", () => {
       predicate: undefined,
       order: undefined,
       limit: undefined,
-      useIndex: undefined,
     } as const;
 
     // Strong anchors the cache.
@@ -483,7 +482,6 @@ describe("Db.table read terminals", () => {
       order: undefined,
       limit: undefined,
       consistency: "strong",
-      useIndex: undefined,
     } as const;
 
     const r1 = await runAllWithMeta<JSONArraylessObject>(ctx, strongState);
@@ -523,20 +521,35 @@ describe("Db.table read terminals", () => {
   });
 });
 
-describe("Db.table .useIndex() — index-walk fast path", () => {
+describe("auto-planner index routing", () => {
   let storage: MemoryStorage;
-  let db: Db;
 
   beforeEach(() => {
     storage = new MemoryStorage();
-    db = makeDb(storage);
   });
 
-  test("returns the rows the index points at, filtered by predicate re-check", async () => {
-    // Provision + write three docs through a writer that emits
-    // by_status index entries. Then call .where({ status: "open" })
-    // .useIndex("by_status").all() and assert we see the two
-    // matching rows.
+  /**
+   * Build a Db with one declared single-field index `by_status` on
+   * the `tickets` collection. Mirrors the writer's `indexes` so the
+   * reader's planner picks the same entries on the wire.
+   */
+  const dbWithByStatus = (): Db =>
+    Db.create({
+      storage,
+      app: APP,
+      tenant: TENANT,
+      indexes: new Map([[COLL, [{ name: "by_status", on: "status" }]]]),
+    });
+
+  const dbWithComposite = (): Db =>
+    Db.create({
+      storage,
+      app: APP,
+      tenant: TENANT,
+      indexes: new Map([[COLL, [{ name: "by_status_priority", on: ["status", "priority"] }]]]),
+    });
+
+  test("auto-routes a single-field equality predicate to the declared index", async () => {
     await provision(storage);
     const writer = new ServerWriter({
       storage,
@@ -561,18 +574,16 @@ describe("Db.table .useIndex() — index-walk fast path", () => {
       docId: "t-3",
       body: { _id: "t-3", status: "closed" },
     });
+    const db = dbWithByStatus();
     const rows = await db
       .table<{ _id: string; status: string }>(COLL)
       .where({ status: "open" })
-      .useIndex("by_status")
       .all();
     const ids = rows.map((r) => r._id).toSorted();
     expect(ids).toEqual(["t-1", "t-2"]);
   });
 
   test("returns empty result when the index prefix is empty (no matches)", async () => {
-    // No docs declared with the indexed value → empty walk → empty
-    // result, no fallback to a table scan.
     await provision(storage);
     const writer = new ServerWriter({
       storage,
@@ -585,18 +596,17 @@ describe("Db.table .useIndex() — index-walk fast path", () => {
       docId: "t-1",
       body: { _id: "t-1", status: "open" },
     });
+    const db = dbWithByStatus();
     const rows = await db
       .table<{ _id: string; status: string }>(COLL)
       .where({ status: "wip" })
-      .useIndex("by_status")
       .all();
     expect(rows).toEqual([]);
   });
 
-  test("falls back to table scan when the predicate has multiple keys", async () => {
-    // Predicates with two top-level keys don't match a single-field
-    // index lookup; the read path falls through to the scan path
-    // and the row is found via the in-memory predicate match.
+  test("applies the predicate residue when the predicate has multiple keys", async () => {
+    // The planner routes through `by_status` at prefix-length 1; the
+    // post-fetch `matches(...)` re-check filters by `assignee`.
     await provision(storage);
     const writer = new ServerWriter({
       storage,
@@ -609,10 +619,16 @@ describe("Db.table .useIndex() — index-walk fast path", () => {
       docId: "t-1",
       body: { _id: "t-1", status: "open", assignee: "alice" },
     });
+    await writer.commit({
+      op: "I",
+      collection: COLL,
+      docId: "t-2",
+      body: { _id: "t-2", status: "open", assignee: "bob" },
+    });
+    const db = dbWithByStatus();
     const rows = await db
       .table<{ _id: string; status: string; assignee: string }>(COLL)
       .where({ status: "open", assignee: "alice" })
-      .useIndex("by_status")
       .all();
     expect(rows.map((r) => r._id)).toEqual(["t-1"]);
   });
@@ -632,13 +648,185 @@ describe("Db.table .useIndex() — index-walk fast path", () => {
         body: { _id: `t-${i}`, status: "open" },
       });
     }
+    const db = dbWithByStatus();
     const rows = await db
       .table<{ _id: string; status: string }>(COLL)
       .where({ status: "open" })
-      .useIndex("by_status")
       .limit(2)
       .all();
     expect(rows).toHaveLength(2);
+  });
+
+  test("composite index routes a two-field equality predicate through the walk path", async () => {
+    // [status, priority] index, full walk (length 2 of 2). Each
+    // yielded key has tail `<docId>.json` (single segment).
+    await provision(storage);
+    const writer = new ServerWriter({
+      storage,
+      currentJsonKey: currentJsonKey(COLL),
+      options: { indexes: [{ name: "by_status_priority", on: ["status", "priority"] }] },
+    });
+    await writer.commit({
+      op: "I",
+      collection: COLL,
+      docId: "t-1",
+      body: { _id: "t-1", status: "open", priority: "p2" },
+    });
+    await writer.commit({
+      op: "I",
+      collection: COLL,
+      docId: "t-2",
+      body: { _id: "t-2", status: "open", priority: "p1" },
+    });
+    await writer.commit({
+      op: "I",
+      collection: COLL,
+      docId: "t-3",
+      body: { _id: "t-3", status: "closed", priority: "p2" },
+    });
+    const db = dbWithComposite();
+    const rows = await db
+      .table<{ _id: string; status: string; priority: string }>(COLL)
+      .where({ status: "open", priority: "p2" })
+      .all();
+    expect(rows.map((r) => r._id)).toEqual(["t-1"]);
+  });
+
+  test("composite index walked at partial prefix returns the right docs", async () => {
+    // [status, priority] index, walked at partial-prefix length 1
+    // (`status` only). Each yielded key has tail
+    // `<priority-b32>/<docId>.json` — TWO segments. This exercises
+    // the multi-segment doc-id extraction in `runIndexWalkPlan`.
+    await provision(storage);
+    const writer = new ServerWriter({
+      storage,
+      currentJsonKey: currentJsonKey(COLL),
+      options: { indexes: [{ name: "by_status_priority", on: ["status", "priority"] }] },
+    });
+    await writer.commit({
+      op: "I",
+      collection: COLL,
+      docId: "t-1",
+      body: { _id: "t-1", status: "open", priority: "p1" },
+    });
+    await writer.commit({
+      op: "I",
+      collection: COLL,
+      docId: "t-2",
+      body: { _id: "t-2", status: "open", priority: "p2" },
+    });
+    await writer.commit({
+      op: "I",
+      collection: COLL,
+      docId: "t-3",
+      body: { _id: "t-3", status: "open", priority: "p3" },
+    });
+    await writer.commit({
+      op: "I",
+      collection: COLL,
+      docId: "t-4",
+      body: { _id: "t-4", status: "closed", priority: "p1" },
+    });
+    const db = dbWithComposite();
+    const rows = await db
+      .table<{ _id: string; status: string; priority: string }>(COLL)
+      .where({ status: "open" })
+      .all();
+    expect(rows.map((r) => r._id).toSorted()).toEqual(["t-1", "t-2", "t-3"]);
+  });
+
+  test("composite [a,b,c] index walked at prefix [a,b] returns the right docs", async () => {
+    // Three-field index walked at length 2 of 3. Each yielded key
+    // has tail `<c-b32>/<docId>.json` — TWO segments — exercising
+    // the same multi-segment extraction as the [status, priority]
+    // case but with a deeper tail. Fixture: 3 (a,b) groups × 3 c-
+    // values × ~1 doc/c = ~9 docs; assert just the 3 docs whose
+    // (a,b) = (1,2).
+    await provision(storage);
+    const writer = new ServerWriter({
+      storage,
+      currentJsonKey: currentJsonKey(COLL),
+      options: { indexes: [{ name: "by_a_b_c", on: ["a", "b", "c"] }] },
+    });
+    const docs: Array<{ id: string; a: number; b: number; c: number }> = [
+      // (a=1, b=2) group — three docs that share the walk's [1,2]
+      // prefix and differ only on `c`. These are the rows we want
+      // back.
+      { id: "x-1", a: 1, b: 2, c: 10 },
+      { id: "x-2", a: 1, b: 2, c: 20 },
+      { id: "x-3", a: 1, b: 2, c: 30 },
+      // Other (a,b) groups — must NOT appear in the result.
+      { id: "y-1", a: 1, b: 3, c: 10 },
+      { id: "y-2", a: 1, b: 3, c: 20 },
+      { id: "y-3", a: 1, b: 3, c: 30 },
+      { id: "z-1", a: 2, b: 2, c: 10 },
+      { id: "z-2", a: 2, b: 2, c: 20 },
+      { id: "z-3", a: 2, b: 2, c: 30 },
+    ];
+    for (const d of docs) {
+      await writer.commit({
+        op: "I",
+        collection: COLL,
+        docId: d.id,
+        body: { _id: d.id, a: d.a, b: d.b, c: d.c },
+      });
+    }
+    const db = Db.create({
+      storage,
+      app: APP,
+      tenant: TENANT,
+      indexes: new Map([[COLL, [{ name: "by_a_b_c", on: ["a", "b", "c"] }]]]),
+    });
+    const rows = await db
+      .table<{ _id: string; a: number; b: number; c: number }>(COLL)
+      .where({ a: 1, b: 2 })
+      .all();
+    expect(rows.map((r) => r._id).toSorted()).toEqual(["x-1", "x-2", "x-3"]);
+  });
+
+  test("mixed predicate with an operator clause walks the index and in-memory-filters the operator", async () => {
+    // The planner routes on the equality clause; the operator clause
+    // lands on the post-fetch matches() re-check.
+    await provision(storage);
+    const writer = new ServerWriter({
+      storage,
+      currentJsonKey: currentJsonKey(COLL),
+      options: { indexes: [{ name: "by_status", on: "status" }] },
+    });
+    await writer.commit({
+      op: "I",
+      collection: COLL,
+      docId: "t-1",
+      body: { _id: "t-1", status: "open", priority: "p1" },
+    });
+    await writer.commit({
+      op: "I",
+      collection: COLL,
+      docId: "t-2",
+      body: { _id: "t-2", status: "open", priority: "p2" },
+    });
+    await writer.commit({
+      op: "I",
+      collection: COLL,
+      docId: "t-3",
+      body: { _id: "t-3", status: "open", priority: "p3" },
+    });
+    await writer.commit({
+      op: "I",
+      collection: COLL,
+      docId: "t-4",
+      body: { _id: "t-4", status: "closed", priority: "p3" },
+    });
+    const db = dbWithByStatus();
+    const rows = await db
+      .table<{ _id: string; status: string; priority: string }>(COLL)
+      .where({ status: "open", priority: { $gt: "p2" } } as unknown as Predicate<{
+        _id: string;
+        status: string;
+        priority: string;
+      }>)
+      .all();
+    expect(rows.map((r) => r._id)).toEqual(["t-3"]);
   });
 });
 

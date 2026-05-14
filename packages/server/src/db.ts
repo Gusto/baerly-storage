@@ -13,6 +13,7 @@ import type {
   StoragePutResult,
   Table,
 } from "@baerly/protocol";
+import type { IndexDefinition } from "./indexes.ts";
 import type { CurrentJsonCacheSlot, TableReadContext } from "./query.ts";
 import type { SchemaValidator } from "./schema.ts";
 import { ServerWriter, type CommitInput } from "./server-writer.ts";
@@ -78,6 +79,17 @@ const physicalPrefixFor = (app: string, tenant: string): string => `app/${app}/t
  * fallback every `Db` shares.
  */
 const EMPTY_SCHEMA_MAP: ReadonlyMap<string, SchemaValidator> = new Map();
+
+/**
+ * Shared sentinel map for {@link Db.create} callers that don't pass
+ * an `indexes` map. Frozen so an accidental `.set(...)` on the
+ * captured reference throws at runtime instead of silently mutating
+ * the fallback every `Db` shares.
+ */
+const EMPTY_INDEX_MAP: ReadonlyMap<string, ReadonlyArray<IndexDefinition>> = new Map();
+
+/** Shared sentinel array used when no index is declared for a table. */
+const EMPTY_INDEX_ARRAY: ReadonlyArray<IndexDefinition> = [];
 
 /**
  * Escape hatch: a Storage-shaped surface scoped to one
@@ -168,6 +180,19 @@ export class Db {
    * `BaerlyConfig`).
    */
   readonly #schemas: ReadonlyMap<string, SchemaValidator>;
+  /**
+   * Per-collection {@link IndexDefinition}s threaded onto every
+   * {@link TableReadContext} this `Db` mints. Empty map means "no
+   * indexes declared" — every read falls through to the snapshot +
+   * log fold path.
+   *
+   * Mirrors the shape callers build when flattening
+   * `BaerlyConfig.collections[*].indexes` into a map keyed by name
+   * before constructing the `Db`; we keep the `Db` itself library-
+   * agnostic by accepting the pre-flattened map (not the full
+   * `BaerlyConfig`).
+   */
+  readonly #indexes: ReadonlyMap<string, ReadonlyArray<IndexDefinition>>;
 
   private constructor(
     app: string,
@@ -175,12 +200,14 @@ export class Db {
     storage: Storage,
     metrics: MetricsRecorder,
     schemas: ReadonlyMap<string, SchemaValidator>,
+    indexes: ReadonlyMap<string, ReadonlyArray<IndexDefinition>>,
   ) {
     this.app = app;
     this.tenant = tenant;
     this.#storage = storage;
     this.#metrics = metrics;
     this.#schemas = schemas;
+    this.#indexes = indexes;
     this._raw = makeRawStorageApi(app, tenant, storage);
   }
 
@@ -224,6 +251,19 @@ export class Db {
      * validation" — every write proceeds at zero overhead.
      */
     schemas?: ReadonlyMap<string, SchemaValidator>;
+    /**
+     * Optional per-collection {@link IndexDefinition}[] map. The
+     * adapter layer (or app code) flattens
+     * `BaerlyConfig.collections[*].indexes` into this map before
+     * constructing the `Db`; the `Db` itself stays library-agnostic.
+     * `undefined` or an empty map means "no indexes declared" —
+     * every read falls through to the snapshot + log fold path.
+     *
+     * Threaded onto every {@link TableReadContext} the `Db` mints so
+     * the planner can pick a walk plan when the predicate's equality
+     * fields cover a declared index's `on` tuple.
+     */
+    indexes?: ReadonlyMap<string, ReadonlyArray<IndexDefinition>>;
   }): Db {
     const { storage, app, tenant } = config;
     if (app.length === 0 || tenant.length === 0) {
@@ -244,6 +284,7 @@ export class Db {
       storage,
       config.metrics ?? noopMetricsRecorder,
       config.schemas ?? EMPTY_SCHEMA_MAP,
+      config.indexes ?? EMPTY_INDEX_MAP,
     );
   }
 
@@ -302,6 +343,7 @@ export class Db {
       tableName: name,
       currentJsonCache: cache,
       metrics: this.#metrics,
+      indexes: this.#indexes.get(name) ?? EMPTY_INDEX_ARRAY,
       ...(schema !== undefined ? { schema } : {}),
     };
   }
@@ -372,6 +414,7 @@ export class Db {
       txCtx,
       currentJsonCache: cache,
       metrics: this.#metrics,
+      indexes: this.#indexes.get(table) ?? EMPTY_INDEX_ARRAY,
       ...(schema !== undefined ? { schema } : {}),
     });
 

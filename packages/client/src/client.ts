@@ -87,22 +87,6 @@ export interface ClientQuery<T extends JSONArraylessObject = JSONArraylessObject
   order(spec: OrderSpec<T>): ClientQuery<T>;
   limit(n: number): ClientQuery<T>;
   consistency(level: ConsistencyLevel): ClientQuery<T>;
-  /**
-   * Secondary-index hint. Mirrors the server-side
-   * `Query.useIndex` surface so an app can write the same chain
-   * against the in-process `Db` and the HTTP client.
-   *
-   * **Today the HTTP route does NOT propagate the hint** — the
-   * server's /v1/t/:table list route ignores it and runs a table
-   * scan. The method exists to keep `ClientQuery<T>` a structural
-   * superset of the protocol `Query<T>` (so callers can swap
-   * implementations) and to reserve the wire bit; a follow-up
-   * ticket adds a `?useIndex=name` query parameter and threads it
-   * to `runAllWithMeta`.
-   *
-   * Last-call-wins on repeat invocation.
-   */
-  useIndex(name: string): ClientQuery<T>;
   /** First match or `undefined`. Issues `GET /v1/t/:table?...&limit=1`. */
   first(): Promise<T | undefined>;
   /** Every matching document. Pair with `.limit(n)` on large tables. */
@@ -218,12 +202,6 @@ interface QueryState {
   readonly order: OrderSpec<JSONArraylessObject> | undefined;
   readonly limit: number | undefined;
   readonly consistency: ConsistencyLevel | undefined;
-  /**
-   * Opt-in secondary-index hint. Today the HTTP route
-   * ignores it; the field reserves the wire bit for a follow-up
-   * `?useIndex=<name>` query parameter.
-   */
-  readonly useIndex: string | undefined;
 }
 
 const emptyState: QueryState = {
@@ -231,7 +209,6 @@ const emptyState: QueryState = {
   order: undefined,
   limit: undefined,
   consistency: undefined,
-  useIndex: undefined,
 };
 
 const makeClientTable = <T extends JSONArraylessObject>(
@@ -304,11 +281,6 @@ const makeClientQuery = <T extends JSONArraylessObject>(
     limit: (n): ClientQuery<T> => makeClientQuery<T>(ctx, tableName, { ...state, limit: n }),
     consistency: (level): ClientQuery<T> =>
       makeClientQuery<T>(ctx, tableName, { ...state, consistency: level }),
-    // Opt-in index hint. The HTTP route does NOT propagate the hint
-    // today; the client-side state retains it for future
-    // wire support. Last-call-wins per the protocol contract.
-    useIndex: (name): ClientQuery<T> =>
-      makeClientQuery<T>(ctx, tableName, { ...state, useIndex: name }),
 
     async first(): Promise<T | undefined> {
       // Mirrors `Db.first()` which sets `limit: 1` on its underlying

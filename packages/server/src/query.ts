@@ -54,8 +54,9 @@ import {
 } from "@baerly/protocol";
 import { loadSnapshotAsMap } from "./compactor.ts";
 import type { TxContext } from "./db.ts";
-import { encodeIndexValue } from "./indexes.ts";
+import { encodeIndexValue, type IndexDefinition } from "./indexes.ts";
 import { walkLogRange } from "./log-walk.ts";
+import { type IndexWalkPlan, planQuery, type QueryPlan } from "./query-planner.ts";
 import { type SchemaValidator, validateOrThrow } from "./schema.ts";
 import { ServerWriter } from "./server-writer.ts";
 
@@ -135,6 +136,23 @@ export interface TableReadContext {
    * @internal
    */
   readonly schema?: SchemaValidator;
+  /**
+   * Per-collection {@link IndexDefinition}s threaded onto every
+   * read. Consumed by `planQuery(...)` inside `runRead` to pick an
+   * index-walk plan when the predicate's equality fields cover a
+   * declared index's `on` tuple left-to-right. Empty array means
+   * "no indexes declared" — every read falls through to the
+   * snapshot + log fold path.
+   *
+   * Mirrors the shape callers build when flattening
+   * `BaerlyConfig.collections[*].indexes` into a map keyed by name
+   * before constructing the `Db`; we keep the `Db` itself library-
+   * agnostic by accepting the pre-flattened map (not the full
+   * `BaerlyConfig`).
+   *
+   * @internal
+   */
+  readonly indexes: ReadonlyArray<IndexDefinition>;
 }
 
 /**
@@ -199,18 +217,6 @@ export interface QueryState<T extends JSONArraylessObject> {
    * `strong` internally regardless of this field.
    */
   readonly consistency: ConsistencyLevel | undefined;
-  /**
-   * Index hint. When defined and the predicate matches the
-   * shape `{ <indexedField>: <value> }`, the read path walks
-   * `<tablePrefix>/index/<useIndex>/<value-b32>/` and issues a
-   * content GET per matching key instead of folding the snapshot
-   * and log. Mismatched predicate shape falls back to the table
-   * scan (best-effort, ticket §3.6). A future change adds an
-   * auto-picker.
-   *
-   * @internal
-   */
-  readonly useIndex: string | undefined;
 }
 
 /**
@@ -221,7 +227,7 @@ export interface QueryState<T extends JSONArraylessObject> {
  *
  * @example
  * ```ts
- * const q = makeQuery<Ticket>(ctx, { predicate: undefined, order: undefined, limit: undefined, consistency: undefined, useIndex: undefined });
+ * const q = makeQuery<Ticket>(ctx, { predicate: undefined, order: undefined, limit: undefined, consistency: undefined });
  * const open = await q.where({ status: "open" }).order({ created_at: "desc" }).limit(10).all();
  * ```
  *
@@ -255,7 +261,6 @@ export const makeQuery = <T extends JSONArraylessObject>(
     order: (s) => makeQuery<T>(ctx, { ...frozen, order: s }),
     limit: (n) => makeQuery<T>(ctx, { ...frozen, limit: n }),
     consistency: (level) => makeQuery<T>(ctx, { ...frozen, consistency: level }),
-    useIndex: (name) => makeQuery<T>(ctx, { ...frozen, useIndex: name }),
     first: async () => {
       const { rows } = await runRead<T>(ctx, { ...frozen, limit: 1 });
       return rows[0]; // undefined when rows.length === 0
@@ -398,7 +403,6 @@ export const runInsert = async <T extends JSONArraylessObject>(
     // it must always see the latest view. See `runUpdate` for the
     // shared rationale.
     consistency: "strong",
-    useIndex: undefined,
   });
   if (existing.rows.length > 0) {
     throw new BaerlyError(
@@ -672,33 +676,23 @@ const runRead = async <T extends JSONArraylessObject>(
   if (head === null) return { rows: [], manifestPointer, fresh };
 
   // ── Optional index-walk fast path. ──────────────────────────────
-  // When the caller opted in via `.useIndex(name)` and the predicate
-  // matches one of the shapes the encoder can satisfy on a single-
-  // field index (one top-level field = one literal value), walk the
-  // index prefix instead of folding the snapshot + log. The fast
-  // path:
-  //   1. List `<tablePrefix>/index/<name>/<value-b32>/`.
-  //   2. Extract `_id` from each key.
-  //   3. Resolve each id via a tail walk over `(snapshot, log)` —
-  //      cheap because we fetch only the matching rows.
-  //   4. Re-apply the predicate in memory (defends against a
-  //      logically-stale index entry).
-  //   5. Apply order / limit.
-  //
-  // Mismatched predicate shape (multi-field, no predicate, etc.)
-  // falls through to the table-scan path below. This is best-effort
-  // per ticket §3.6: stale entries are dropped silently.
-  if (state.useIndex !== undefined && state.predicate !== undefined) {
-    const fastRows = await tryIndexWalk<T>(ctx, head.json, state);
-    if (fastRows !== undefined) {
-      let rows = fastRows;
-      if (state.order !== undefined) rows = sortByOrderSpec(rows, state.order);
-      if (state.limit !== undefined && state.limit < rows.length) {
-        rows = rows.slice(0, state.limit);
-      }
-      return { rows, manifestPointer, fresh };
+  // `planQuery` is a pure function over `(predicate, indexes)`. It
+  // picks the longest-prefix-matching index from the collection's
+  // declared indexes and emits a `FullScanPlan` when nothing
+  // matches. We route on `plan.kind`; the in-memory `matches(...)`
+  // re-check on every fetched doc defends against stale index
+  // entries AND consumes the planner's residue (operator clauses,
+  // unrelated equality on non-indexed fields).
+  const plan: QueryPlan = planQuery(state.predicate, ctx.indexes);
+  if (plan.kind === "index-walk") {
+    let rows = await runIndexWalkPlan<T>(ctx, head.json, state, plan);
+    if (state.order !== undefined) rows = sortByOrderSpec(rows, state.order);
+    if (state.limit !== undefined && state.limit < rows.length) {
+      rows = rows.slice(0, state.limit);
     }
+    return { rows, manifestPointer, fresh };
   }
+  // plan.kind === "full-scan" — fall through to the snapshot+log fold.
 
   // Load the snapshot, if any. The compactor (ticket 14) guarantees:
   // `snapshot !== null` iff `log_seq_start > 0`. The snapshot is
@@ -774,71 +768,65 @@ const runRead = async <T extends JSONArraylessObject>(
 };
 
 /**
- * Index-walk fast path. Returns `undefined` when the
- * caller's predicate shape doesn't match a single-field index lookup
- * the encoder can satisfy; the outer `runRead` falls back to the
- * table-scan path in that case.
+ * Execute an {@link IndexWalkPlan} against the bucket. Returns the
+ * post-filtered, fully-resolved row set. The full original
+ * `state.predicate` is re-applied via `matches(...)` after fetching
+ * rows — this defends against stale index entries AND consumes the
+ * planner's residue (operator clauses, unrelated equality on
+ * non-indexed fields) in one place.
  *
- * Matching shape today:
- *
- *   - The predicate has EXACTLY one top-level key (`Object.keys(p)
- *     .length === 1`).
- *   - That key's value is a JSON-stringifiable primitive — anything
- *     `encodeIndexValue` accepts. A nested-object equality would be
- *     accepted by the encoder but is unlikely to round-trip through
- *     the writer's projection unless the doc was indexed on the
- *     same nested shape; we accept and rely on the post-predicate
- *     re-check to drop spurious rows.
+ * Storage shape:
+ *   - Single-field walk (`equalityKeys.length === 1`): list
+ *     `<tablePrefix>/index/<name>/<v0-b32>/`; each yielded key has
+ *     tail `<docId>.json` (single segment).
+ *   - Composite full walk (`equalityKeys.length === def.on.length`):
+ *     list `<tablePrefix>/index/<name>/<v0-b32>/<v1-b32>/.../<vN-b32>/`;
+ *     each yielded key has tail `<docId>.json` (single segment).
+ *   - Composite partial-prefix walk (`equalityKeys.length <
+ *     def.on.length`): list `<tablePrefix>/index/<name>/<v0-b32>/
+ *     .../<vM-b32>/`; each yielded key has tail
+ *     `<v{M+1}-b32>/.../<vN-b32>/<docId>.json` — MULTI-segment.
+ *     Split on `/` and take the last segment.
  *
  * Stale-row defence:
- *   - An index entry pointing at a `<docId>.json` whose content
- *     body returns null (404) — peer GC race or a writer that
- *     CAS-lost — is silently dropped.
- *   - A row that is fetched but no longer matches the predicate
- *     (the indexed field was updated since the index entry landed)
- *     is dropped by the in-memory re-check.
+ *   - An index entry pointing at a docId whose underlying doc has
+ *     since been updated to a different value (rebuild hasn't run)
+ *     is dropped by the in-memory `matches(...)` re-check.
+ *   - An index entry pointing at a docId whose underlying doc has
+ *     been deleted (tombstone in the log) is dropped during the
+ *     fold (the `D` op removes it from the materialised set).
  *
  * @internal
  */
-const tryIndexWalk = async <T extends JSONArraylessObject>(
+const runIndexWalkPlan = async <T extends JSONArraylessObject>(
   ctx: TableReadContext,
   head: CurrentJson,
   state: QueryState<T>,
-): Promise<T[] | undefined> => {
-  const name = state.useIndex;
-  const predicate = state.predicate;
-  if (name === undefined || predicate === undefined) return undefined;
-  // Capture the one-key shape. `Object.keys(predicate).length === 1`
-  // is the load-bearing check; multi-field predicates fall through
-  // until composite-index reads ship.
-  const keys = Object.keys(predicate);
-  if (keys.length !== 1) return undefined;
-  const field = keys[0]!;
-  const value = (predicate as Record<string, unknown>)[field];
-  // Strip undefined explicitly so the encoder's `null|undefined →
-  // "0"` collapse doesn't accidentally match every null-valued
-  // entry (which the writer's projector skipped on insert).
-  if (value === undefined) return undefined;
-  const prefix = `${ctx.tablePrefix}/index/${name}/${encodeIndexValue(value)}/`;
+  plan: IndexWalkPlan,
+): Promise<T[]> => {
+  const encodedSegments = plan.equalityKeys.map((v) => encodeIndexValue(v));
+  const prefix = `${ctx.tablePrefix}/index/${plan.indexName}/${encodedSegments.join("/")}/`;
 
-  // 1. List index entries; extract docId from each key.
+  // 1. List index entries; extract docId from the LAST segment of
+  //    each key's tail. Multi-segment tails appear under composite
+  //    partial-prefix walks; single-segment tails appear under
+  //    single-field walks and composite full walks.
   const docIds: string[] = [];
   for await (const entry of ctx.storage.list(prefix)) {
-    // Key shape: `<prefix><docId>.json`.
     const tail = entry.key.slice(prefix.length);
     if (!tail.endsWith(".json")) continue;
-    docIds.push(tail.slice(0, -".json".length));
+    const lastSlash = tail.lastIndexOf("/");
+    const docId =
+      lastSlash === -1
+        ? tail.slice(0, -".json".length)
+        : tail.slice(lastSlash + 1, -".json".length);
+    if (docId.length === 0) continue;
+    docIds.push(docId);
   }
-  if (docIds.length === 0) {
-    // Empty index — return an empty result rather than falling back
-    // to a scan. A caller that opted in to `.useIndex` has accepted
-    // the best-effort contract; an empty walk is a legitimate "no
-    // matches" answer.
-    return [];
-  }
+  if (docIds.length === 0) return [];
 
-  // 2. Resolve each docId by folding `(snapshot, log)` for ONLY the
-  //    matching rows. Same fold the table-scan path uses, scoped to
+  // 2. Resolve each docId by folding `(snapshot, log)` scoped to the
+  //    matched set. Same fold the table-scan path uses, scoped to
   //    one Set<docId>.
   const matched = new Set(docIds);
   const baseDocs: Map<string, JSONArraylessObject> =
@@ -863,12 +851,17 @@ const tryIndexWalk = async <T extends JSONArraylessObject>(
     }
   }
 
-  // 3. Re-apply the predicate in memory to drop logically-stale rows
-  //    (e.g. the index entry's underlying doc has since been updated
-  //    to a different field value but the rebuild hasn't run).
+  // 3. Apply the FULL original predicate as the stale-row defence,
+  //    then the planner's residue postFilter on top. `matches` is
+  //    open-world, so applying the full original predicate (which
+  //    the planner partly consumed) is the simpler invariant: if
+  //    the doc still passes the original predicate, it stays.
+  //    Operator clauses that landed in `plan.postFilter` are part
+  //    of `state.predicate` — they pass through here automatically.
   const rows: T[] = [];
+  const predicate = state.predicate;
   for (const doc of docs.values()) {
-    if (matches(predicate, doc)) rows.push(doc);
+    if (predicate === undefined || matches(predicate, doc)) rows.push(doc);
   }
   return rows;
 };

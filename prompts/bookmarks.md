@@ -43,8 +43,9 @@ follow them literally.
   `db.table<Bookmark>("bookmarks").order({ created_at: "desc" }).all()`
 - Insert (extract `domain` from `url` server-side):
   `db.table<Bookmark>("bookmarks").insert({ url, title, tags, domain: new URL(url).hostname, created_at: Date.now() })`
-- Filter by domain (uses the secondary index):
-  `db.table<Bookmark>("bookmarks").where({ domain: "twitter.com" }).useIndex("by_domain").all()`
+- Filter by domain (auto-routes through the secondary index declared
+  on the collection config):
+  `db.table<Bookmark>("bookmarks").where({ domain: "twitter.com" }).all()`
 
 ## Acceptance criteria
 
@@ -62,7 +63,10 @@ not modify the checker script.** Each is binary pass/fail.
       time.
 - [ ] `baerly.config.ts` declares an index named `by_domain` on
       the `bookmarks` collection's `domain` field.
-- [ ] The domain-filter read path calls `.useIndex("by_domain")`.
+- [ ] The `bookmarks` collection's `baerly.config.ts` entry declares
+      the `by_domain` index in `indexes`; the read path uses the
+      plain `.where({ domain })` chain (the planner picks the index
+      off the config).
 - [ ] Tags are stored as `string[]` on the bookmark doc.
 - [ ] No `db._raw` usage.
 - [ ] All reads go through `db.table(...)`.
