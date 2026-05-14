@@ -113,6 +113,30 @@ status-lifecycle convention.
    the doc"). Found while executing T03 on 2026-05-13.
    **Status:** open
 
+7. **AGENTS.md operator-visibility section should name the
+   maintenance canonical-line fields** — T04 (this branch) added
+   explicit operator-facing fields to the
+   `runScheduledMaintenance` canonical line:
+   `compact_written` (count of log entries folded into the new
+   snapshot — `0` when compact was skipped or below
+   `minEntriesToCompact`), `gc_swept` (count of keys deleted —
+   `0` when GC was skipped or no candidates aged out),
+   `compact_skipped` / `gc_skipped` (`true` when the caller
+   alternated this phase away; CF free-tier even/odd cron pattern).
+   The kernel still emits the recorder-bag fields alongside
+   (`db.compact.entries_folded_p50` / `_count` / `_sum`,
+   `db.manifest.lag_window_depth`, `db.orphan.candidate_count`,
+   `db.gc.entries_swept_per_second`, `db.gc.swept_total_total`) —
+   useful for dashboards, but the four explicit fields are the
+   at-a-glance summary. If T01's "Operator visibility" /
+   "Maintenance loop" section in the scaffolded `AGENTS.md` has
+   already landed without referencing these four fields by name,
+   edit the template to add them (CF + Node templates both, since
+   they ship a byte-identical `AGENTS.md` + `CLAUDE.md`).
+   `docs/observability.md` should likely pick this up too — add it
+   to the same follow-on sweep. Found while executing T04 on
+   2026-05-13. **Status:** open (T01 coordination)
+
 8. **Scaffolded `worker.ts` / `server.ts` reference monorepo-only
    `docs/observability.md`** — both template entry points contain
    inline comments pointing at `docs/observability.md` for sink

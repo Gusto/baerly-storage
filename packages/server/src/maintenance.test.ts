@@ -116,6 +116,65 @@ describe("runScheduledMaintenance", () => {
       expect(maintenanceLines[0]!.level).toBe("info");
       expect(maintenanceLines[0]!.properties["outcome"]).toBe("ok");
     });
+
+    it("enriches the canonical line with compact_written / gc_swept / skip flags + recorder-bag fields", async () => {
+      // Drive a real compact+GC pass so both phases emit their
+      // recorder-bag metrics (`db.compact.entries_folded`,
+      // `db.gc.swept_total`, etc.) and the new explicit operator-
+      // facing fields land alongside them.
+      const s = new MemoryStorage();
+      await bootstrap(s, KEY);
+      const writer = new ServerWriter({ storage: s, currentJsonKey: KEY });
+      for (let i = 0; i < 150; i++) {
+        await writer.commit({
+          op: "I",
+          collection: COLL,
+          docId: `d${i}`,
+          body: { _id: `d${i}`, n: i },
+        });
+      }
+      await runScheduledMaintenance(
+        { storage: s, currentJsonKey: KEY },
+        // Bypass GC's 7-day grace so the sweep path actually runs in
+        // one tick and `db.gc.swept_total` lands on the canonical
+        // line's recorder bag.
+        { ...NODE_PROFILE, gc: { ...NODE_PROFILE.gc, graceMillis: 0 } },
+      );
+
+      const maintenanceLines = records.filter((r) => r.category.join(".") === "baerly.maintenance");
+      expect(maintenanceLines).toHaveLength(1);
+      const props = maintenanceLines[0]!.properties;
+
+      // Explicit operator-facing fields (the new T04 enrichment).
+      expect(props["compact_written"]).toBe(150);
+      expect(props["gc_swept"]).toBeGreaterThan(0);
+      expect(props["compact_skipped"]).toBe(false);
+      expect(props["gc_skipped"]).toBe(false);
+
+      // Recorder-bag fields stay on the line. `db.compact.entries_folded`
+      // is a histogram so it expands into `_p50` / `_count` / `_sum`;
+      // `db.gc.swept_total` is a counter so it expands into `_total`.
+      expect(props["db.compact.entries_folded_count"]).toBe(1);
+      expect(props["db.compact.entries_folded_p50"]).toBe(150);
+      expect(typeof props["db.gc.swept_total_total"]).toBe("number");
+      expect(props["db.gc.swept_total_total"]).toBeGreaterThan(0);
+    });
+
+    it("flags skipped phases as compact_skipped / gc_skipped on the canonical line", async () => {
+      const s = new MemoryStorage();
+      await bootstrap(s, KEY);
+      await runScheduledMaintenance({ storage: s, currentJsonKey: KEY }, { skipCompact: true });
+
+      const maintenanceLines = records.filter((r) => r.category.join(".") === "baerly.maintenance");
+      expect(maintenanceLines).toHaveLength(1);
+      const props = maintenanceLines[0]!.properties;
+      expect(props["compact_skipped"]).toBe(true);
+      expect(props["gc_skipped"]).toBe(false);
+      expect(props["compact_written"]).toBe(0);
+      // No log writes seeded, so GC has nothing to sweep — the count
+      // is exactly 0, not "≥ 0", to lock the skipped-phase semantics.
+      expect(props["gc_swept"]).toBe(0);
+    });
   });
 
   it("profile constants carry the documented bounds", async () => {

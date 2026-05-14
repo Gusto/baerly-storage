@@ -23,7 +23,7 @@ import {
 } from "@baerly/protocol";
 import { compact, type CompactOptions, type CompactResult } from "./compactor.ts";
 import { runGc, type RunGcOptions, type RunGcResult } from "./gc.ts";
-import { withObservability } from "./observability/index.ts";
+import { getCurrentContext, withObservability } from "./observability/index.ts";
 
 export interface MaintenanceArgs {
   readonly storage: Storage;
@@ -112,6 +112,30 @@ export const runScheduledMaintenance = (
             ...(options.signal !== undefined && { signal: options.signal }),
             metrics: teed,
           });
+
+    // Enrich the canonical line with operator-facing summary fields.
+    // The recorder-bag fields (`db.compact.entries_folded_p50`,
+    // `db.gc.swept_total_total`, etc.) still land on the line via
+    // the per-run recorder's `summarize()`; these explicit numbers
+    // answer "did anything happen this tick?" without forcing the
+    // operator to decode `_p50` / `_count` / `_total` suffixes.
+    //
+    // - `compact_written`: count of log entries folded into the new
+    //   snapshot this pass (0 when compaction was skipped or the
+    //   live tail was below `minEntriesToCompact`).
+    // - `gc_swept`: count of keys deleted this pass (0 when GC was
+    //   skipped or no candidates had aged out).
+    // - `compact_skipped` / `gc_skipped`: `true` when the caller
+    //   alternated this phase away (CF free-tier even/odd-minute
+    //   cron pattern).
+    const fields = getCurrentContext()?.fields;
+    if (fields !== undefined) {
+      fields.set("compact_written", compactRes?.entriesFolded ?? 0);
+      fields.set("gc_swept", gcRes?.swept ?? 0);
+      fields.set("compact_skipped", options.skipCompact === true);
+      fields.set("gc_skipped", options.skipGc === true);
+    }
+
     return { compact: compactRes, gc: gcRes };
   });
 
