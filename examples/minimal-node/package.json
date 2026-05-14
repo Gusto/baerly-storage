@@ -10,7 +10,7 @@
   },
   "devDependencies": {
     "create-baerly": "workspace:*",
-    "typescript": "^5.6.0"
+    "typescript": "^5.8.0"
   },
   "packageManager": "pnpm@10.31.0"
 }
