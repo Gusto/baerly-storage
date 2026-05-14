@@ -573,6 +573,47 @@ describe("mergePredicates — operator-object", () => {
     );
   });
 
+  // Regression: primitive of a different type than the range bound
+  // is provably unsatisfiable (boolean $eq vs numeric range, string
+  // $eq vs numeric range, etc.). Without the type-compatibility
+  // check inside `assertOpObjectSatisfiable`, the satisfiability
+  // pass silently skipped the cross-type case and the collapse step
+  // dropped the range, leaving a predicate that incorrectly accepted
+  // the boolean/string value. Surfaced by the property test under
+  // FC_NUM_RUNS=10000 (counterexample: a={b:false}, b={b:{$gt:0}}).
+  test("boolean $eq vs numeric range → UnsatisfiablePredicate (T1 regression)", () => {
+    expectUnsatisfiable(
+      () =>
+        mergePredicates(
+          { b: false } as unknown as Predicate,
+          { b: { $gt: 0 } } as unknown as Predicate,
+        ),
+      "type-incompatible",
+    );
+  });
+
+  test("string $eq vs numeric upper bound → UnsatisfiablePredicate", () => {
+    expectUnsatisfiable(
+      () =>
+        mergePredicates(
+          { x: "p2" } as unknown as Predicate,
+          { x: { $lt: 10 } } as unknown as Predicate,
+        ),
+      "type-incompatible",
+    );
+  });
+
+  test("numeric $eq vs string range → UnsatisfiablePredicate", () => {
+    expectUnsatisfiable(
+      () =>
+        mergePredicates(
+          { x: 5 } as unknown as Predicate,
+          { x: { $gte: "a" } } as unknown as Predicate,
+        ),
+      "type-incompatible",
+    );
+  });
+
   test("PredicateOp<V> type is re-exported from the predicate module", () => {
     // Smoke test: the new type flows through the protocol barrel
     // and can be used to type-cast a predicate's value position.

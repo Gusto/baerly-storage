@@ -371,6 +371,25 @@ const assertOpObjectSatisfiable = (
   }
 
   if (eq !== undefined) {
+    // Type-incompatibility between $eq and any range bound is
+    // provably unsatisfiable: range ops always-miss against
+    // type-mismatched actuals, so the conjunction $eq:X ∧ $gt:Y
+    // (with `typeof X !== typeof Y`, or X non-comparable) admits no
+    // value. Detect this BEFORE the same-type comparison below;
+    // otherwise the collapse step drops the range and the predicate
+    // silently widens.
+    if (lo !== undefined && !sameComparableType(eq, lo.value)) {
+      throw new BaerlyError(
+        "UnsatisfiablePredicate",
+        `Predicate at ${formatPath(path)} $eq=${JSON.stringify(eq)} (${typeof eq}) is type-incompatible with lower bound ${JSON.stringify(lo.value)} (${typeof lo.value}); range ops require matching primitive types.`,
+      );
+    }
+    if (hi !== undefined && !sameComparableType(eq, hi.value)) {
+      throw new BaerlyError(
+        "UnsatisfiablePredicate",
+        `Predicate at ${formatPath(path)} $eq=${JSON.stringify(eq)} (${typeof eq}) is type-incompatible with upper bound ${JSON.stringify(hi.value)} (${typeof hi.value}); range ops require matching primitive types.`,
+      );
+    }
     if (lo !== undefined && sameComparableType(eq, lo.value)) {
       const c = compareScalar(eq, lo.value);
       if (c < 0 || (c === 0 && !lo.inclusive)) {
