@@ -67,6 +67,17 @@ export const LIST_OBJECT_MAX_RETRIES: number = 10;
 export const RATE_LIMIT_BACKOFF_MILLIS: number = 1000;
 
 /**
+ * Upper clamp on a server-provided `Retry-After` hint, in seconds.
+ * RFC 7231 §7.1.3 allows arbitrary delta-seconds or HTTP-dates, but a
+ * client that blindly honours a multi-hour hint hands a misbehaving
+ * proxy a denial-of-service primitive. 60s covers any plausible S3-
+ * compatible throttle while keeping the worst-case bounded.
+ *
+ * @see packages/protocol/src/storage/s3-http.ts (`parseRetryAfter`)
+ */
+export const RETRY_AFTER_MAX_SECONDS: number = 60;
+
+/**
  * Default retry budget for `S3HttpStorage.retry` (the wrapper around
  * each of the four `Storage` methods). Bounded so that permanent
  * failures (CORS misconfig, NXDOMAIN, persistent 5xx) surface to

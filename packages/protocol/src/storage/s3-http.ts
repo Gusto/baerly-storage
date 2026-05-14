@@ -1,6 +1,7 @@
 import {
   LIST_OBJECT_MAX_RETRIES,
   RATE_LIMIT_BACKOFF_MILLIS,
+  RETRY_AFTER_MAX_SECONDS,
   S3_REQUEST_MAX_RETRIES,
 } from "../constants.ts";
 import { BaerlyError } from "../errors.ts";
@@ -33,6 +34,44 @@ const PERMANENT_ERROR_CODES: ReadonlySet<string> = new Set([
   "Conflict",
 ]);
 
+/**
+ * Parse an HTTP `Retry-After` header into a non-negative seconds value,
+ * clamped to {@link RETRY_AFTER_MAX_SECONDS}. Returns `undefined` if
+ * the header is absent, malformed, or whitespace.
+ *
+ * RFC 7231 §7.1.3 admits two forms: delta-seconds (non-negative
+ * integer) and HTTP-date. Both are accepted; dates in the past return
+ * `0`. Fractional seconds, negatives, and arbitrary strings reject.
+ *
+ * The `now` injection point exists for the unit test; production
+ * callers should pass nothing.
+ */
+export function parseRetryAfter(
+  header: string | null,
+  now: () => number = Date.now,
+): number | undefined {
+  if (header === null) return undefined;
+  const trimmed = header.trim();
+  if (trimmed === "") return undefined;
+  if (/^\d+$/.test(trimmed)) {
+    const n = Number.parseInt(trimmed, 10);
+    return Number.isFinite(n) ? Math.min(n, RETRY_AFTER_MAX_SECONDS) : undefined;
+  }
+  // RFC 7231 §7.1.1.1 HTTP-date formats (IMF-fixdate, RFC 850, asctime)
+  // all contain alphabetic month/day-of-week tokens. Gating on a letter
+  // avoids V8's lenient `Date.parse` accepting things like "5.5".
+  if (!/[a-z]/i.test(trimmed)) return undefined;
+  const t = Date.parse(trimmed);
+  if (Number.isNaN(t)) return undefined;
+  const seconds = Math.max(0, Math.ceil((t - now()) / 1000));
+  return Math.min(seconds, RETRY_AFTER_MAX_SECONDS);
+}
+
+const retryAfterCause = (res: Response): { retryAfterSeconds?: number } => {
+  const hint = parseRetryAfter(res.headers.get("Retry-After"));
+  return hint !== undefined ? { retryAfterSeconds: hint } : {};
+};
+
 const retry = async <T>(
   fn: () => Promise<T>,
   { retries = S3_REQUEST_MAX_RETRIES, backoffMs = 100, maxDelayMs = 10_000 } = {},
@@ -44,11 +83,26 @@ const retry = async <T>(
     } catch (e) {
       if (e instanceof BaerlyError && PERMANENT_ERROR_CODES.has(e.code)) throw e;
       if (attempt === retries) throw e;
-      await delay(wait);
-      wait = Math.min(wait * 1.5, maxDelayMs);
+      const hintMs = retryAfterHintMs(e, maxDelayMs);
+      await delay(hintMs ?? wait);
+      if (hintMs === undefined) {
+        wait = Math.min(wait * 1.5, maxDelayMs);
+      } else {
+        // A server-driven pause is new information about server state;
+        // reset the exponential ladder so a subsequent non-hinted
+        // transient starts fresh from `backoffMs`.
+        wait = backoffMs;
+      }
     }
   }
   throw new BaerlyError("Internal", "s3-http retry loop exited without returning or throwing");
+};
+
+const retryAfterHintMs = (e: unknown, maxDelayMs: number): number | undefined => {
+  if (!(e instanceof BaerlyError)) return undefined;
+  const cause = e.cause as { retryAfterSeconds?: number } | undefined;
+  if (cause?.retryAfterSeconds === undefined) return undefined;
+  return Math.min(cause.retryAfterSeconds * 1000, maxDelayMs);
 };
 
 /**
@@ -156,9 +210,10 @@ export class S3HttpStorage implements Storage {
         case 403:
           throw new BaerlyError("AccessDenied", `GET ${key}: 403`);
         default:
-          if (res.status >= 500) {
+          if (res.status === 429 || res.status >= 500) {
             throw new BaerlyError("NetworkError", `GET ${key}: ${res.status} ${await res.text()}`, {
               status: res.status,
+              ...retryAfterCause(res),
             });
           }
           throw new BaerlyError("InvalidResponse", `GET ${key}: ${res.status} ${await res.text()}`);
@@ -200,9 +255,10 @@ export class S3HttpStorage implements Storage {
       if (res.status === 403) {
         throw new BaerlyError("AccessDenied", `PUT ${key}: 403`);
       }
-      if (res.status >= 500) {
+      if (res.status === 429 || res.status >= 500) {
         throw new BaerlyError("NetworkError", `PUT ${key}: ${res.status} ${await res.text()}`, {
           status: res.status,
+          ...retryAfterCause(res),
         });
       }
       if (res.status !== 200 && res.status !== 204) {
@@ -231,9 +287,10 @@ export class S3HttpStorage implements Storage {
       if (res.status === 403) {
         throw new BaerlyError("AccessDenied", `DELETE ${key}: 403`);
       }
-      if (res.status >= 500) {
+      if (res.status === 429 || res.status >= 500) {
         throw new BaerlyError("NetworkError", `DELETE ${key}: ${res.status} ${await res.text()}`, {
           status: res.status,
+          ...retryAfterCause(res),
         });
       }
       // 200 / 204 / 404 → success (idempotent).
@@ -276,13 +333,19 @@ export class S3HttpStorage implements Storage {
       // a single hot page shouldn't burn the overall transient-failure
       // budget.
       let parsed: Awaited<ReturnType<typeof parseListObjectsV2CommandOutput>> | undefined;
+      let lastHint: number | undefined;
       for (let attempt = 0; attempt < LIST_OBJECT_MAX_RETRIES; attempt++) {
         const outcome = await this.#retry(async () => {
           const res = await this.#dispatch(
             new Request(url, { method: "GET", signal: opts?.signal ?? null }),
           );
           if (res.status === 200) return { kind: "ok" as const, body: await res.text() };
-          if (res.status === 429) return { kind: "ratelimited" as const };
+          if (res.status === 429) {
+            return {
+              kind: "ratelimited" as const,
+              retryAfterSeconds: parseRetryAfter(res.headers.get("Retry-After")),
+            };
+          }
           if (res.status === 403) {
             throw new BaerlyError("AccessDenied", `LIST ${prefix}: 403`);
           }
@@ -290,7 +353,7 @@ export class S3HttpStorage implements Storage {
             throw new BaerlyError(
               "NetworkError",
               `LIST ${prefix}: ${res.status} ${await res.text()}`,
-              { status: res.status },
+              { status: res.status, ...retryAfterCause(res) },
             );
           }
           throw new BaerlyError(
@@ -302,10 +365,16 @@ export class S3HttpStorage implements Storage {
           parsed = parseListObjectsV2CommandOutput(outcome.body, xmlParser);
           break;
         }
-        await delay(RATE_LIMIT_BACKOFF_MILLIS);
+        lastHint = outcome.retryAfterSeconds;
+        const hintMs =
+          outcome.retryAfterSeconds !== undefined ? outcome.retryAfterSeconds * 1000 : 0;
+        await delay(Math.max(hintMs, RATE_LIMIT_BACKOFF_MILLIS));
       }
       if (parsed === undefined) {
-        throw new BaerlyError("NetworkError", `LIST ${prefix}: rate-limited`, { status: 429 });
+        throw new BaerlyError("NetworkError", `LIST ${prefix}: rate-limited`, {
+          status: 429,
+          ...(lastHint !== undefined ? { retryAfterSeconds: lastHint } : {}),
+        });
       }
 
       for (const entry of parsed.Contents ?? []) {

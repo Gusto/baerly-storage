@@ -1,7 +1,8 @@
 import { DOMParser } from "@xmldom/xmldom";
 import { describe, expect, test, vi } from "vitest";
+import { RETRY_AFTER_MAX_SECONDS } from "../constants.ts";
 import { BaerlyError } from "../errors.ts";
-import { S3HttpStorage } from "./s3-http.ts";
+import { parseRetryAfter, S3HttpStorage } from "./s3-http.ts";
 
 const xmlParser = new DOMParser();
 
@@ -99,6 +100,38 @@ describe("S3HttpStorage.get", () => {
     const req = fetchFn.mock.calls[0]![0] as Request;
     expect(req.url).toBe("https://example.invalid/b/a%2Fb%20c");
   });
+
+  test("429 → NetworkError with retryAfterSeconds when header present", async () => {
+    const fetchFn = vi.fn(async (_req: Request) => noBody(429, { "Retry-After": "5" }));
+    const s = mkStorage(fetchFn as unknown as typeof fetch);
+    await expect(s.get("k")).rejects.toMatchObject({
+      code: "NetworkError",
+      cause: { status: 429, retryAfterSeconds: 5 },
+    });
+  });
+
+  test("429 without Retry-After → NetworkError, cause has status only", async () => {
+    const fetchFn = vi.fn(async (_req: Request) => noBody(429));
+    const s = mkStorage(fetchFn as unknown as typeof fetch);
+    try {
+      await s.get("k");
+      expect.fail("expected throw");
+    } catch (err) {
+      expect((err as BaerlyError).code).toBe("NetworkError");
+      const cause = (err as BaerlyError).cause as { status: number; retryAfterSeconds?: number };
+      expect(cause.status).toBe(429);
+      expect(cause.retryAfterSeconds).toBeUndefined();
+    }
+  });
+
+  test("503 → NetworkError with retryAfterSeconds", async () => {
+    const fetchFn = vi.fn(async (_req: Request) => noBody(503, { "Retry-After": "2" }));
+    const s = mkStorage(fetchFn as unknown as typeof fetch);
+    await expect(s.get("k")).rejects.toMatchObject({
+      code: "NetworkError",
+      cause: { status: 503, retryAfterSeconds: 2 },
+    });
+  });
 });
 
 describe("S3HttpStorage.put", () => {
@@ -171,6 +204,24 @@ describe("S3HttpStorage.put", () => {
     const result = await s.put("k", new Uint8Array(0));
     expect(result.serverDate).toBeUndefined();
   });
+
+  test("429 → NetworkError with retryAfterSeconds when header present", async () => {
+    const fetchFn = vi.fn(async (_req: Request) => noBody(429, { "Retry-After": "3" }));
+    const s = mkStorage(fetchFn as unknown as typeof fetch);
+    await expect(s.put("k", new Uint8Array(0))).rejects.toMatchObject({
+      code: "NetworkError",
+      cause: { status: 429, retryAfterSeconds: 3 },
+    });
+  });
+
+  test("503 → NetworkError (retryable, not InvalidResponse)", async () => {
+    const fetchFn = vi.fn(async (_req: Request) => noBody(503));
+    const s = mkStorage(fetchFn as unknown as typeof fetch);
+    await expect(s.put("k", new Uint8Array(0))).rejects.toMatchObject({
+      code: "NetworkError",
+      cause: { status: 503 },
+    });
+  });
 });
 
 describe("S3HttpStorage.delete", () => {
@@ -199,6 +250,15 @@ describe("S3HttpStorage.delete", () => {
     const s = mkStorage(fetchFn as unknown as typeof fetch, { retries: 1 });
     await expect(s.delete("k")).rejects.toMatchObject({ code: "NetworkError" });
     expect(fetchFn).toHaveBeenCalledTimes(2);
+  });
+
+  test("429 → NetworkError with retryAfterSeconds", async () => {
+    const fetchFn = vi.fn(async (_req: Request) => noBody(429, { "Retry-After": "4" }));
+    const s = mkStorage(fetchFn as unknown as typeof fetch);
+    await expect(s.delete("k")).rejects.toMatchObject({
+      code: "NetworkError",
+      cause: { status: 429, retryAfterSeconds: 4 },
+    });
   });
 });
 
@@ -287,6 +347,54 @@ describe("S3HttpStorage.list", () => {
     expect(fetchFn).not.toHaveBeenCalled();
   });
 
+  test("429 with Retry-After → outer loop waits the hint, not the 1s default", async () => {
+    vi.useFakeTimers();
+    try {
+      let calls = 0;
+      const fetchFn = vi.fn(async (_req: Request) => {
+        calls++;
+        if (calls === 1) return noBody(429, { "Retry-After": "3" });
+        return new Response(xmlPage([]), { status: 200 });
+      });
+      const s = mkStorage(fetchFn as unknown as typeof fetch);
+      const iter = s.list("p/");
+      const drain = (async () => {
+        for await (const _ of iter) void _;
+      })();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(fetchFn).toHaveBeenCalledTimes(1);
+      // Without the hint the loop would retry at 1s. The hint pushes it to 3s.
+      await vi.advanceTimersByTimeAsync(2999);
+      expect(fetchFn).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(fetchFn).toHaveBeenCalledTimes(2);
+      await drain;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("retry budget exhausted → NetworkError carries last-seen retryAfterSeconds", async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchFn = vi.fn(async (_req: Request) => noBody(429, { "Retry-After": "2" }));
+      const s = mkStorage(fetchFn as unknown as typeof fetch);
+      const iter = s.list("p/");
+      const drain = (async () => {
+        for await (const _ of iter) void _;
+      })();
+      const caught = drain.catch((e: unknown) => e);
+      // 10 attempts × 2s = 20s of in-loop waits.
+      await vi.advanceTimersByTimeAsync(60_000);
+      const err = (await caught) as BaerlyError;
+      expect(err).toBeInstanceOf(BaerlyError);
+      expect(err.code).toBe("NetworkError");
+      expect(err.cause).toMatchObject({ status: 429, retryAfterSeconds: 2 });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   test("missing xmlParser → InvalidConfig on first list call", async () => {
     const s = new S3HttpStorage({
       endpoint: "https://example.invalid",
@@ -316,6 +424,106 @@ describe("S3HttpStorage.list", () => {
     }
     // sanity-check: the first instance still uses the injected parser
     expect(s).toBeDefined();
+  });
+});
+
+describe("retry honors Retry-After hint", () => {
+  test("waits the hinted seconds, not the exponential schedule", async () => {
+    vi.useFakeTimers();
+    try {
+      let calls = 0;
+      const fetchFn = vi.fn(async (_req: Request) => {
+        calls++;
+        if (calls === 1) return noBody(429, { "Retry-After": "5" });
+        return okResponse(new TextEncoder().encode("ok").buffer as ArrayBuffer, { ETag: '"e"' });
+      });
+      const s = mkStorage(fetchFn as unknown as typeof fetch, { retries: 3, backoffMs: 100 });
+      const p = s.get("k");
+      await vi.advanceTimersByTimeAsync(0);
+      expect(fetchFn).toHaveBeenCalledTimes(1);
+      // Default exponential would have retried at 100ms; the hint keeps us waiting.
+      await vi.advanceTimersByTimeAsync(4999);
+      expect(fetchFn).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(fetchFn).toHaveBeenCalledTimes(2);
+      const got = await p;
+      expect(got).not.toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("clamps hint to maxDelayMs", async () => {
+    vi.useFakeTimers();
+    try {
+      let calls = 0;
+      const fetchFn = vi.fn(async (_req: Request) => {
+        calls++;
+        // 60 seconds — clamped by parseRetryAfter to RETRY_AFTER_MAX_SECONDS,
+        // and then clamped again to retry()'s maxDelayMs of 10_000ms.
+        if (calls === 1) return noBody(429, { "Retry-After": "60" });
+        return okResponse(new TextEncoder().encode("ok").buffer as ArrayBuffer, { ETag: '"e"' });
+      });
+      const s = mkStorage(fetchFn as unknown as typeof fetch, { retries: 3, backoffMs: 100 });
+      const p = s.get("k");
+      await vi.advanceTimersByTimeAsync(0);
+      expect(fetchFn).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(9999);
+      expect(fetchFn).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(fetchFn).toHaveBeenCalledTimes(2);
+      await p;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("parseRetryAfter", () => {
+  test("null header → undefined", () => {
+    expect(parseRetryAfter(null)).toBeUndefined();
+  });
+
+  test("empty string → undefined", () => {
+    expect(parseRetryAfter("")).toBeUndefined();
+    expect(parseRetryAfter("   ")).toBeUndefined();
+  });
+
+  test("integer delta-seconds → that many seconds", () => {
+    expect(parseRetryAfter("5")).toBe(5);
+    expect(parseRetryAfter("0")).toBe(0);
+  });
+
+  test("integer above cap → clamped to RETRY_AFTER_MAX_SECONDS", () => {
+    expect(parseRetryAfter("999999")).toBe(RETRY_AFTER_MAX_SECONDS);
+  });
+
+  test("HTTP-date in the future → seconds-until-then", () => {
+    const now = Date.parse("2026-05-13T12:00:00Z");
+    const future = new Date(now + 10_000).toUTCString();
+    expect(parseRetryAfter(future, () => now)).toBe(10);
+  });
+
+  test("HTTP-date in the past → 0", () => {
+    const now = Date.parse("2026-05-13T12:00:00Z");
+    const past = new Date(now - 30_000).toUTCString();
+    expect(parseRetryAfter(past, () => now)).toBe(0);
+  });
+
+  test("HTTP-date far in the future → clamped", () => {
+    const now = Date.parse("2026-05-13T12:00:00Z");
+    const farFuture = new Date(now + 60 * 60 * 1000).toUTCString();
+    expect(parseRetryAfter(farFuture, () => now)).toBe(RETRY_AFTER_MAX_SECONDS);
+  });
+
+  test("malformed input → undefined", () => {
+    expect(parseRetryAfter("not-a-number")).toBeUndefined();
+    expect(parseRetryAfter("5.5")).toBeUndefined();
+    expect(parseRetryAfter("-3")).toBeUndefined();
+  });
+
+  test("whitespace around integer is tolerated", () => {
+    expect(parseRetryAfter(" 5 ")).toBe(5);
   });
 });
 
