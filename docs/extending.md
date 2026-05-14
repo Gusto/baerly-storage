@@ -248,7 +248,7 @@ set at read time; there is no manual-hint API on `Query<T>`.
 export interface IndexDefinition {
   readonly name: string;                       // /^[a-z_][a-z0-9_]*$/
   readonly on: string | readonly string[];     // top-level field(s)
-  readonly predicate?: Predicate<JSONArraylessObject>; // equality-only
+  readonly predicate?: Predicate<JSONArraylessObject>;
 }
 ```
 
@@ -303,12 +303,12 @@ export default defineConfig({
   `SchemaError` at projection time
   (`packages/server/src/indexes.ts:192-216`).
 - `name` must match `/^[a-z_][a-z0-9_]*$/`.
-- `predicate?` is equality-only at validation today (no
-  `$gt`/`$in`/etc. in the filter); the validator rejects
-  operator-shaped values via the post-`validatePredicate`
-  operator scan
-  (`packages/server/src/indexes.ts:103-117`). Operator-shaped
-  filter implication is a deferred follow-up.
+- `predicate?` accepts operator-shaped clauses (`$eq`, `$gt` /
+  `$gte`, `$lt` / `$lte`, `$in`) end-to-end. `predicateImplies`
+  reasons about range and `$in` containment, so the planner
+  prefers a filtered index whenever the query's bounds (whether
+  expressed as equality, `$in` members, or another range) fall
+  inside the filter's bounds.
 - **Numeric ranges fall back to full-scan** — see
   [`docs/features.md`](features.md) §"Numeric ranges fall back to
   full-scan". Use string-encoded values (ISO 8601 timestamps,

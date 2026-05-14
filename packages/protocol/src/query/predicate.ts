@@ -899,6 +899,7 @@ const lowerBoundImplies = (loF: RangeInfo, loQ: RangeInfo | undefined): boolean 
   return !loQ.inclusive; // strict filter needs strict query at equal bound
 };
 
+/** Mirror of lowerBoundImplies for upper bounds. */
 const upperBoundImplies = (hiF: RangeInfo, hiQ: RangeInfo | undefined): boolean => {
   if (hiQ === undefined) return false;
   if (typeof hiF.value !== typeof hiQ.value) return false;
@@ -1017,7 +1018,8 @@ export const predicateImplies = <T extends JSONArraylessObject = JSONArraylessOb
         return false; // range query against $in filter — not a subset
       }
       // $in filter clause forbids any extra range constraint on the
-      // filter side; nothing else to check.
+      // filter side (enforced upstream by `validatePredicate`);
+      // nothing else to check.
       continue;
     }
     // Range filter (lo / hi). Both bounds (if set) must be implied.

@@ -850,4 +850,22 @@ describe("predicateImplies — range and $in", () => {
   test("mixed types in range comparison: refuse implication", () => {
     expect(predicateImplies(P({ x: { $gte: 18 } }), P({ x: { $gte: "18" } }))).toBe(false);
   });
+
+  test("$gte filter implied by $in query whose min is ≥ the bound", () => {
+    expect(predicateImplies(P({ age: { $gte: 18 } }), P({ age: { $in: [21, 30, 22] } }))).toBe(
+      true,
+    );
+  });
+
+  test("$gte filter NOT implied by $in query with a member below the bound", () => {
+    expect(predicateImplies(P({ age: { $gte: 18 } }), P({ age: { $in: [17, 30] } }))).toBe(false);
+  });
+
+  test("$lt filter implied by $in query whose max is < the bound", () => {
+    expect(predicateImplies(P({ age: { $lt: 65 } }), P({ age: { $in: [21, 30, 50] } }))).toBe(true);
+  });
+
+  test("$lt filter NOT implied by $in query with a member at or above the bound", () => {
+    expect(predicateImplies(P({ age: { $lt: 65 } }), P({ age: { $in: [21, 65] } }))).toBe(false);
+  });
 });
