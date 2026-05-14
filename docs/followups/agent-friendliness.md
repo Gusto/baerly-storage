@@ -92,3 +92,23 @@ status-lifecycle convention.
      One numbered item per finding. Keep the running counter
      monotonic — peek at the highest number in this file before
      appending and continue from there. -->
+
+6. **`SchemaError` JSDoc in `packages/protocol/src/errors.ts` claims a
+   real validator is "future"** — Lines 19–25 of `errors.ts`
+   describe `SchemaError` as "emitted by `Db._raw.put` and the
+   table-API write verbs when the body isn't valid JSON or contains
+   an array where `JSONArrayless` is required. A future change
+   wires this to a real validator without changing the wire shape."
+   Schema validation IS already wired via
+   `packages/server/src/schema.ts:78` (`validateOrThrow`), invoked
+   from `packages/server/src/query.ts:375` (insert), `:484` (update),
+   `:546` (replace). T03 fixed the parallel claim on
+   `Table.insert`'s `@throws` in `db.ts:51`; the matching update on
+   `errors.ts:19-25` is out of T03's scope (modify-`errors.ts`-not-
+   `db.ts`) but should land in the same follow-up sweep.
+   **Suggested cleanup:** rewrite the second sentence of the
+   `SchemaError` JSDoc to describe the live behaviour ("emitted by
+   `Db._raw.put` on malformed JSON / array-in-`JSONArrayless`-slot,
+   and by the table-API write verbs when the bound schema rejects
+   the doc"). Found while executing T03 on 2026-05-13.
+   **Status:** open
