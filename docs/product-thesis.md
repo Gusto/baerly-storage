@@ -4,7 +4,7 @@ audience: product
 summary: What Baerly is, who it's for, and what it deliberately is not.
 last-reviewed: 2026-05-12
 tags: [positioning, product]
-related: [engineering-principles.md, cost-model.md]
+related: [cost-model.md, "conventions/change-discipline.md"]
 ---
 
 # Baerly — product thesis
@@ -65,7 +65,11 @@ protocol.
   note.
 - **The pitch is NOT a D1 replacement.** D1 is the graduation
   target. Baerly's job is to keep the experiment cheap and fast
-  until the user knows whether it's worth graduating.
+  until the user knows whether it's worth graduating. The log entry
+  shape is frozen and stable across all future versions; `baerly
+  export --target=postgres` is a mechanical translator, not a
+  marketing line. Graduation is a tool we ship, not a feature we
+  promise.
 
 ## Public API shape
 
@@ -75,6 +79,15 @@ predicate-AST-driven, additive-only locked
 specific patterns from Firestore (composable query constraints,
 gRPC-derived error codes, JSDoc `@example` density, field-value
 sentinels).
+
+Seven verbs, five modifiers, one transaction. Stable error codes
+(`BaerlyError.code`) with stable messages; JSDoc `@example` blocks
+that are tested. The surface is small enough that an LLM can use it
+zero-shot from the `.d.ts` alone. Underneath, the protocol is a real
+distributed system: descending base32-time keys, RFC 7386 merge
+patch, fence tokens, randomized property tests against multi-Worker
+fault injection. The user never sees any of it. Simple is a feature;
+the work to keep it simple is the product.
 
 ## Constraints we accept
 

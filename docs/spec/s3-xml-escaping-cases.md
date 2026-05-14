@@ -60,7 +60,7 @@ So this begs the question, what does the S3 API return when the keys contain spe
 
 Interestingly the CDATA block hit something strange which manifested as noise in UI of the type
 
-![](attachments/Pasted%20image%2020231014104750.png)
+![S3 console showing keys with `&lt`, `<![CDATA[...]]>`, and `foo<Contents>`; the CDATA row's Type column displays the stray `]]>` terminator.](attachments/s3-console-cdata-rendering.png)
 
 
 However, the underlying response in the XML response is escaped with URL encoding (`%26` not `&amp`, `%3C` not `&lt`). So these represents tricky cases that should be considered when testing vendor conformance or alternative parsing mechanisms.

@@ -4,7 +4,7 @@ audience: meta
 summary: Index of ADRs. Each ADR captures one load-bearing technical decision whose rationale doesn't fit naturally in any single code or doc file.
 last-reviewed: 2026-05-14
 tags: [index, decisions]
-related: ["../engineering-principles.md"]
+related: ["../product-thesis.md", "../conventions/change-discipline.md"]
 ---
 
 # Architecture Decision Records
@@ -17,7 +17,9 @@ they're already looking. Numbering has gaps from earlier ADRs that
 were merged into their natural homes.
 
 These are decisions, not principles. Cross-cutting philosophy lives
-in [engineering-principles.md](../engineering-principles.md).
+in [product-thesis.md](../product-thesis.md); change-discipline
+rules live in
+[conventions/change-discipline.md](../conventions/change-discipline.md).
 
 ## Index
 

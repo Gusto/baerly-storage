@@ -57,9 +57,6 @@ You are about to make a change.
 
 - [product-thesis.md](product-thesis.md) — what Baerly is, who it's
   for, what it's deliberately not.
-- [engineering-principles.md](engineering-principles.md) — the bias
-  set: ship the smallest slice, prefer changing the contract over
-  carrying compat, etc.
 - [cost-model.md](cost-model.md) — per-line-item rates, write-amp
   meter, compression posture.
 
