@@ -286,6 +286,9 @@ importers:
 
   packages/cli:
     dependencies:
+      '@baerly/adapter-node':
+        specifier: workspace:*
+        version: link:../adapter-node
       '@baerly/dev':
         specifier: workspace:*
         version: link:../dev
