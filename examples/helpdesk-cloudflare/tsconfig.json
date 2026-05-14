@@ -10,5 +10,6 @@
     "esModuleInterop": true,
     "skipLibCheck": true,
     "types": ["node", "@cloudflare/workers-types"]
-  }
+  },
+  "include": ["*.d.ts", "apps/server/src/**/*", "baerly.config.ts", "types.ts"]
 }
