@@ -237,6 +237,41 @@ export class Db {
    * await db.table("tickets").insert({ title: "hi" });
    * // metrics.histogramValues("db.write.class_a_ops_per_logical_write")
    * ```
+   *
+   * @example
+   * ```ts
+   * // Wire declared indexes through Db.create so the auto-planner
+   * // can route reads. The map key is the collection name; the
+   * // value is the IndexDefinition array. Mirrors the shape
+   * // callers build when flattening BaerlyConfig.collections[*].indexes.
+   * import { Db } from "@baerly/server";
+   * import { MemoryStorage } from "@baerly/protocol";
+   *
+   * const db = Db.create({
+   *   storage: new MemoryStorage(),
+   *   app: "tickets",
+   *   tenant: "acme",
+   *   indexes: new Map([
+   *     ["tickets", [
+   *       { name: "by_status", on: "status" },
+   *       { name: "by_status_priority", on: ["status", "priority"] },
+   *       { name: "by_open_assignee",
+   *         on: "assignee",
+   *         predicate: { status: "open" } },
+   *     ]],
+   *   ]),
+   * });
+   *
+   * // Single-field index routes equality predicates.
+   * await db.table("tickets").where({ status: "open" }).all();
+   * // Composite index routes left-anchored equality.
+   * await db.table("tickets")
+   *   .where({ status: "open", priority: "p1" }).all();
+   * // Filtered index implies `status: "open"` — preferred over
+   * // `by_status` when both match.
+   * await db.table("tickets")
+   *   .where({ status: "open", assignee: "alice" }).all();
+   * ```
    */
   static create(config: {
     storage: Storage;
@@ -252,16 +287,16 @@ export class Db {
      */
     schemas?: ReadonlyMap<string, SchemaValidator>;
     /**
-     * Optional per-collection {@link IndexDefinition}[] map. The
-     * adapter layer (or app code) flattens
+     * Per-collection {@link IndexDefinition} map. Each entry is one
+     * collection's declared indexes. The auto-planner
+     * ({@link planQuery} in `./query-planner.ts`) consults this map
+     * at read time; declaring an index here is the only way to bias
+     * the read path — there is no manual-hint API on `Query<T>`.
+     * The adapter layer (or app code) flattens
      * `BaerlyConfig.collections[*].indexes` into this map before
-     * constructing the `Db`; the `Db` itself stays library-agnostic.
-     * `undefined` or an empty map means "no indexes declared" —
-     * every read falls through to the snapshot + log fold path.
-     *
-     * Threaded onto every {@link TableReadContext} the `Db` mints so
-     * the planner can pick a walk plan when the predicate's equality
-     * fields cover a declared index's `on` tuple.
+     * constructing the `Db`. `undefined` or an empty map means "no
+     * indexes declared" — every read falls through to the
+     * snapshot+log fold at zero overhead.
      */
     indexes?: ReadonlyMap<string, ReadonlyArray<IndexDefinition>>;
   }): Db {

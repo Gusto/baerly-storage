@@ -111,18 +111,92 @@ version IDs from being confused at protocol boundaries.
 
 ## Secondary indexes
 
-Query-driven, projection-scoped indexes on user-defined key
-expressions with lex-order-preserving base-32 encoding. Writers
-emit/retract index entries at fence time; `rebuildIndex` reconciles
-idempotently from a `current.json` snapshot.
+Indexes are declared on the collection config; the planner picks one
+automatically from the query predicate. There is no manual-hint API
+on `Query<T>` — declaring an `IndexDefinition` under
+`BaerlyConfig.collections[*].indexes` is the only way to bias the
+read path.
+
+### Declaring an index
+
+```ts
+// baerly.config.ts
+import { defineConfig } from "@baerly/server";
+
+export default defineConfig({
+  collections: {
+    tickets: {
+      indexes: [
+        { name: "by_status", on: "status" },
+        { name: "by_status_priority", on: ["status", "priority"] },
+        { name: "by_open_assignee",
+          on: "assignee",
+          predicate: { status: "open" } },
+      ],
+    },
+  },
+});
+```
+
+`CollectionDefinition` is defined in
+[`packages/server/src/config.ts`](../packages/server/src/config.ts);
+the per-index shape lives at
+[`packages/server/src/indexes.ts`](../packages/server/src/indexes.ts)
+as `IndexDefinition`.
+
+### How the planner picks one
+
+- Equality on the leftmost indexed field is the cheapest plan; the
+  planner walks under the encoded equality prefix.
+- Range (`$gt`/`$gte`/`$lt`/`$lte`) and `$in` clauses are accepted
+  on the **last** indexed field after any equality prefix. Range on
+  a non-last field peels the equality and pushes the range clause
+  into the post-fetch `matches(...)` residue (`postFilter`).
+- When multiple indexes match, the planner prefers (in order):
+  filtered indexes whose `def.predicate` is implied by the query
+  predicate; longest equality prefix; definition order.
+- Otherwise `planQuery` emits `FullScanPlan` and the read walks the
+  snapshot+log fold. Diagnostic `reason` values:
+  `"no-predicate"`, `"no-indexes-declared"`,
+  `"no-matching-index"`, `"predicate-uses-operators-only"`,
+  `"numeric-range-on-byte-encoder"`.
+
+#### Numeric ranges fall back to full-scan
+
+`encodeIndexValue` is byte-order-preserving on
+`JSON.stringify(value)`. That is correct for strings —
+`"2026-05-13" < "2026-05-14"` matches semantic order — but wrong for
+numbers: `9` JSON-stringifies to `"9"` (0x39) and `10` stringifies
+to `"10"` (0x31 0x30), so `9` lex-sorts **above** `10`. Any
+`number` bound on a range or `$in` clause causes `planQuery` to
+emit `FullScanPlan{reason:"numeric-range-on-byte-encoder"}` —
+correct results, no optimisation. Use strings for range-indexed
+fields (ISO 8601 timestamps, zero-padded numerics, `"p1"/"p2"/"p3"`
+priorities). Value-order-preserving numeric encoding is a follow-up
+(see [`docs/followups/predicate-routing.md`](./followups/predicate-routing.md)).
+
+### Pointers
 
 - Implementation:
+  [`packages/server/src/query-planner.ts`](../packages/server/src/query-planner.ts)
+  (`planQuery`, `IndexWalkPlan`, `FullScanPlan`),
   [`packages/server/src/indexes.ts`](../packages/server/src/indexes.ts)
-  (`IndexDefinition`, key encoding, per-doc projection),
+  (`IndexDefinition`, key encoding, filter-aware projector),
+  [`packages/server/src/query.ts`](../packages/server/src/query.ts)
+  (`runIndexWalkPlan` at the I/O boundary),
   [`packages/server/src/rebuild-index.ts`](../packages/server/src/rebuild-index.ts)
+  (filter-aware reconciliation),
+  [`packages/protocol/src/query/predicate.ts`](../packages/protocol/src/query/predicate.ts)
+  (`PredicateOp<V>`, `predicateImplies`).
 - Tests:
-  [`tests/integration/table-api.test.ts`](../tests/integration/table-api.test.ts)
-  (all four adapter variants)
+  [`packages/server/src/query-planner.test.ts`](../packages/server/src/query-planner.test.ts),
+  [`packages/server/src/query.test.ts`](../packages/server/src/query.test.ts)
+  (the `describe("auto-planner index routing")` block),
+  [`tests/integration/table-api.test.ts`](../tests/integration/table-api.test.ts),
+  [`tests/integration/randomized.test.ts`](../tests/integration/randomized.test.ts).
+- Docs: this section, [`docs/architecture.md`](./architecture.md)
+  §"Lifecycle of `db.table(...).insert()`", [`docs/extending.md`](./extending.md)
+  §1c "Declare an index on a collection".
 
 ## SQL export (`baerly export --target=postgres|sqlite|d1`)
 

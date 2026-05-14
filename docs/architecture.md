@@ -33,6 +33,8 @@ graph TD
     db[db.ts<br/>Db: public API]
     table[table.ts<br/>Table&lt;T&gt; verbs]
     query[query.ts<br/>Query&lt;T&gt; predicate AST + reader]
+    planner[query-planner.ts<br/>planQuery]
+    indexes[indexes.ts<br/>IndexDefinition + key encoding]
     writer[server-writer.ts<br/>ServerWriter.commit / commitBatch]
     compactor[compactor.ts<br/>compact()]
     gc[gc.ts<br/>runGc()]
@@ -48,7 +50,10 @@ graph TD
     db --> writer
     table --> query
     table --> writer
+    query --> planner
     query --> storage
+    planner --> indexes
+    writer --> indexes
     writer --> storage
     writer --> log
     compactor --> storage
@@ -87,6 +92,22 @@ graph TD
    doc body; `D` removes the doc), evaluates the predicate AST
    from `where()` / `order()` / `limit()`, and returns the
    filtered rows.
+
+#### Planner step (between the predicate and the log fold)
+
+When `Table.where(p).all()` has a predicate AND the collection has
+declared `indexes`, the reader calls `planQuery(predicate, indexes)`
+(in `packages/server/src/query-planner.ts`) after the `current.json`
+read and before the log fold. The planner returns either
+`IndexWalkPlan{indexName, equalityKeys, rangeOn?, inOn?, postFilter?}`
+— which routes the reader through `runIndexWalkPlan(plan, ctx, head)`
+to LIST under the encoded index prefix and resolve only the matching
+doc ids — or `FullScanPlan{reason}` — which falls through to the
+snapshot+log fold. Every fetched row passes through
+`matches(predicate, doc)` post-fetch; the re-check is load-bearing
+(it defends against stale index entries AND consumes the planner's
+residue `postFilter`). The plan shape and diagnostic `reason` values
+are documented in [features.md](features.md) §"Secondary indexes".
 
 The HTTP `/v1/since?cursor=<lsn>` long-poll route in
 `packages/server/src/http/since.ts` is the change-notification

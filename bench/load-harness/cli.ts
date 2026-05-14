@@ -37,6 +37,7 @@ import {
   CURRENT_JSON_SCHEMA_VERSION,
   type Storage,
 } from "@baerly/protocol";
+import type { IndexDefinition } from "@baerly/server";
 import { LocalFsStorage } from "@baerly/dev";
 import { CountingStorage } from "../storage.ts";
 import type { StorageSnapshot } from "../types.ts";
@@ -155,6 +156,10 @@ const compactProfile = arg("profile", "NODE_PROFILE") as CompactProfileName;
 const outputDir = arg("output-dir", "bench/results/load");
 const tenants = argNumber("tenants", 1);
 const app = arg("app", "bench");
+const indexesMode = arg("indexes", "none") as "auto" | "none";
+if (indexesMode !== "auto" && indexesMode !== "none") {
+  throw new Error(`bench:load: --indexes must be "auto" or "none" (got ${String(indexesMode)})`);
+}
 
 // ---------------------------------------------------------------------------
 // Variant-to-Storage factory
@@ -424,6 +429,19 @@ async function main(): Promise<void> {
     const startedIso = new Date().toISOString();
     const collection = preset.schema.collection;
 
+    // Optional auto-planner indexes map. When `--indexes=auto`, declare a
+    // single-field index on `popularityRank` — the field the
+    // `filtered-list` op kind targets in `replay.ts` — so the planner
+    // can route the read through `runIndexWalkPlan` instead of the
+    // snapshot+log fold. When `--indexes=none`, leave the map undefined
+    // so `Db.create` falls back to its `EMPTY_INDEX_MAP` sentinel.
+    const indexesMap: ReadonlyMap<string, ReadonlyArray<IndexDefinition>> | undefined =
+      indexesMode === "auto"
+        ? new Map<string, ReadonlyArray<IndexDefinition>>([
+            [collection, [{ name: "by_popularity_rank", on: "popularityRank" }]],
+          ])
+        : undefined;
+
     // Bootstrap current.json for every tenant in the dataset before
     // seeding. `ServerWriter` requires current.json to exist; `Db.create`
     // alone does NOT create it (same pattern as the integration tests).
@@ -446,6 +464,7 @@ async function main(): Promise<void> {
       defaultTenant: "hot",
       collection,
       dataset,
+      ...(indexesMap !== undefined && { indexes: indexesMap }),
     });
 
     // Phase 2: Ingest — write-heavy replay.
@@ -457,6 +476,7 @@ async function main(): Promise<void> {
       ops: writeOps,
       phase: "ingest",
       recordLatency,
+      ...(indexesMap !== undefined && { indexes: indexesMap }),
     });
 
     // Phase 3: Query pre-compact — read-only on uncompacted log.
@@ -468,6 +488,7 @@ async function main(): Promise<void> {
       ops: readOps,
       phase: "query-pre",
       recordLatency,
+      ...(indexesMap !== undefined && { indexes: indexesMap }),
     });
 
     // Phase 4: Compact.
@@ -487,6 +508,7 @@ async function main(): Promise<void> {
       ops: readOps,
       phase: "query-post",
       recordLatency,
+      ...(indexesMap !== undefined && { indexes: indexesMap }),
     });
 
     const result = assembleResult({
@@ -497,7 +519,7 @@ async function main(): Promise<void> {
       totalOps,
       seed,
       startedIso,
-      backendDetails: built.backendDetails,
+      backendDetails: { ...built.backendDetails, indexes_mode: indexesMode },
       seedRes,
       ingestRes,
       queryPreRes,

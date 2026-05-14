@@ -143,6 +143,15 @@ is in [`log-entry-shape.md`](log-entry-shape.md). The shape is
 fixed at merge; consumers ack on `lsn` and the JSON keys are
 public.
 
+The query planner — `planQuery` in
+[`packages/server/src/query-planner.ts`](../../packages/server/src/query-planner.ts)
+— sits between the predicate AST and the log fold on the read path.
+It does **not** change the wire format: filtered indexes emit fewer
+zero-byte entries under the same `<logPrefix>/index/<name>/...` key
+shape. See [`docs/features.md`](../features.md) §"Secondary indexes"
+and [`docs/architecture.md`](../architecture.md) §"Planner step
+(between the predicate and the log fold)".
+
 ### Minimising list-object-v2 calls
 
 List API calls are costly on S3, they are charged at the same rate as PUTs which are 10x more expensive than GETs. Readers refresh explicitly (via a `get` or a write), and callers that want change-detection drive their own polling, so we want to avoid having the list-object-v2 API call on the hot path of every refresh.

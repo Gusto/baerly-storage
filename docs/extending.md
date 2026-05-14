@@ -219,6 +219,112 @@ tests stay green untouched.
 
 ---
 
+## 1c. Declare an index on a collection
+
+Indexes are declared on the collection config under
+`BaerlyConfig.collections[*].indexes`. Each `IndexDefinition` has a
+`name`, an `on` (single field or composite), and an optional
+`predicate?` (filtered index — only docs matching the predicate
+project keys). The auto-planner picks a walk plan from the declared
+set at read time; there is no manual-hint API on `Query<T>`.
+
+### `IndexDefinition` shape
+
+```ts
+// packages/server/src/indexes.ts
+export interface IndexDefinition {
+  readonly name: string;                       // /^[a-z_][a-z0-9_]*$/
+  readonly on: string | readonly string[];     // top-level field(s)
+  readonly predicate?: Predicate<JSONArraylessObject>; // equality-only
+}
+```
+
+### Worked example — single-field
+
+```ts
+// baerly.config.ts
+import { defineConfig } from "@baerly/server";
+
+export default defineConfig({
+  collections: {
+    tickets: {
+      indexes: [{ name: "by_status", on: "status" }],
+    },
+  },
+});
+```
+
+### Worked example — composite
+
+```ts
+// Composite on [status, priority]. A query like
+//   db.table("tickets").where({ status: "open", priority: "p1" }).all()
+// walks under <prefix>/index/by_status_priority/<status-b32>/<priority-b32>/.
+// When only `priority` is present, the planner emits FullScanPlan
+// (no left anchor on `status`).
+{ name: "by_status_priority", on: ["status", "priority"] },
+```
+
+### Worked example — filtered
+
+```ts
+// Only `status = "open"` docs project keys. Smaller LIST footprint
+// than a dense `by_assignee` when most tickets are closed.
+{ name: "by_open_assignee",
+  on: "assignee",
+  predicate: { status: "open" } },
+```
+
+### What the planner does at read time
+
+- See [architecture.md](architecture.md) §"Planner step (between
+  the predicate and the log fold)" for the lifecycle. The summary:
+  if the predicate covers a declared index's `on` tuple, the
+  planner emits `IndexWalkPlan` and the reader walks the encoded
+  index prefix; otherwise it emits `FullScanPlan` and the read
+  falls through to the snapshot+log fold.
+
+### Conventions to follow
+
+- Top-level fields only on `on` — dotted-path values throw
+  `SchemaError` at projection time
+  (`packages/server/src/indexes.ts:192-216`).
+- `name` must match `/^[a-z_][a-z0-9_]*$/`.
+- `predicate?` is equality-only at validation today (no
+  `$gt`/`$in`/etc. in the filter); the validator rejects
+  operator-shaped values via the post-`validatePredicate`
+  operator scan
+  (`packages/server/src/indexes.ts:103-117`). Operator-shaped
+  filter implication is a deferred follow-up.
+- **Numeric ranges fall back to full-scan** — see
+  [`docs/features.md`](features.md) §"Numeric ranges fall back to
+  full-scan". Use string-encoded values (ISO 8601 timestamps,
+  zero-padded numerics) for fields that need range semantics.
+- When no predicate is given, no indexes are declared, or the
+  predicate is operator-only on a non-indexed field, `planQuery`
+  emits `FullScanPlan` and the read walks the log-fold unchanged.
+
+### Adding an index to an existing deployment
+
+Run
+
+```sh
+pnpm -F @baerly/cli build && \
+  pnpm exec baerly admin rebuild-index <collection> <name>
+```
+
+to backfill. The writer emits forward entries on every commit;
+pre-existing rows are not back-projected until rebuild runs.
+
+### Verify
+
+```sh
+pnpm verify        # typecheck + lint
+pnpm test          # vitest run
+```
+
+---
+
 ## 2. Add a new write primitive
 
 Use this pattern when you're adding a new `op` (e.g. a TRUNCATE
