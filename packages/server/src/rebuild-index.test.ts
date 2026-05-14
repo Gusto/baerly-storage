@@ -215,6 +215,122 @@ describe("rebuildIndex — options bag", () => {
   });
 });
 
+describe("rebuildIndex — dry-run", () => {
+  const ADMINS_ONLY: IndexDefinition = {
+    name: "admins",
+    on: "role",
+    predicate: { role: "admin" },
+  };
+
+  test("dryRun reports drift counts without modifying storage", async () => {
+    const storage = new MemoryStorage();
+    await provision(storage);
+    // Seed two docs through a writer that has NO indexes declared
+    // — the on-storage state lands the same way a pre-existing
+    // collection would look BEFORE the operator declared the
+    // (now-tightened) `adminsOnly` index.
+    const writer = new ServerWriter({
+      storage,
+      currentJsonKey: CURRENT_JSON_KEY,
+      options: {},
+    });
+    await writer.commit({
+      op: "I",
+      collection: COLLECTION,
+      docId: "u1",
+      body: { _id: "u1", role: "admin" },
+    });
+    await writer.commit({
+      op: "I",
+      collection: COLLECTION,
+      docId: "u2",
+      body: { _id: "u2", role: "member" },
+    });
+
+    const adminsListPrefix = `${LOG_PREFIX}/index/${ADMINS_ONLY.name}/`;
+    const listAdmins = async (): Promise<string[]> => {
+      const out: string[] = [];
+      for await (const entry of storage.list(adminsListPrefix)) out.push(entry.key);
+      return out.toSorted();
+    };
+    expect(await listAdmins()).toEqual([]);
+
+    // First dryRun reports what a real rebuild WOULD add — exactly
+    // one filter-matching doc lives in the snapshot+log fold.
+    const drift = await rebuildIndex(storage, CURRENT_JSON_KEY, ADMINS_ONLY, {
+      dryRun: true,
+    });
+    expect(drift.added).toBe(1);
+    expect(drift.removed).toBe(0);
+    expect(drift.kept).toBe(0);
+
+    // Storage was not modified — a second dryRun returns the same counts.
+    expect(await listAdmins()).toEqual([]);
+    const drift2 = await rebuildIndex(storage, CURRENT_JSON_KEY, ADMINS_ONLY, {
+      dryRun: true,
+    });
+    expect(drift2).toEqual(drift);
+    expect(await listAdmins()).toEqual([]);
+
+    // A real run reconciles; a follow-up dryRun reports zero drift.
+    const realRun = await rebuildIndex(storage, CURRENT_JSON_KEY, ADMINS_ONLY);
+    expect(realRun.added).toBe(drift.added);
+    expect(realRun.removed).toBe(drift.removed);
+    expect((await listAdmins()).length).toBe(drift.added);
+    const drift3 = await rebuildIndex(storage, CURRENT_JSON_KEY, ADMINS_ONLY, {
+      dryRun: true,
+    });
+    expect(drift3).toEqual({ added: 0, removed: 0, kept: drift.added });
+  });
+
+  test("dryRun reports orphan-removal counts without deleting", async () => {
+    const storage = new MemoryStorage();
+    await provision(storage);
+    const writer = new ServerWriter({
+      storage,
+      currentJsonKey: CURRENT_JSON_KEY,
+      options: { indexes: [ADMINS_ONLY] },
+    });
+    await writer.commit({
+      op: "I",
+      collection: COLLECTION,
+      docId: "u1",
+      body: { _id: "u1", role: "admin" },
+    });
+    // Inject an orphan: a key for a doc that never existed in the log.
+    const [orphanKey] = allIndexKeysFor(
+      LOG_PREFIX,
+      [ADMINS_ONLY],
+      { _id: "ghost", role: "admin" },
+      "ghost",
+    );
+    if (orphanKey === undefined) throw new Error("test bug: failed to construct orphan key");
+    await storage.put(orphanKey, new Uint8Array(0), {
+      ifNoneMatch: "*",
+      contentType: "application/json",
+    });
+
+    const listAdmins = async (): Promise<string[]> => {
+      const out: string[] = [];
+      for await (const entry of storage.list(`${LOG_PREFIX}/index/${ADMINS_ONLY.name}/`)) {
+        out.push(entry.key);
+      }
+      return out.toSorted();
+    };
+    const before = await listAdmins();
+    expect(before).toHaveLength(2);
+
+    const drift = await rebuildIndex(storage, CURRENT_JSON_KEY, ADMINS_ONLY, {
+      dryRun: true,
+    });
+    expect(drift.added).toBe(0);
+    expect(drift.removed).toBe(1);
+    expect(drift.kept).toBe(1);
+    // Storage is unchanged after the dry-run.
+    expect(await listAdmins()).toEqual(before);
+  });
+});
+
 describe("rebuildIndex — filtered index", () => {
   const FILTERED: IndexDefinition = {
     name: "open_only",

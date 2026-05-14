@@ -263,4 +263,42 @@ describe("doctorCloudflare", () => {
       expect(findingFor(report.findings, "usage-no-binding")).toBeUndefined();
     });
   });
+
+  describe("extraFindings", () => {
+    it("threads drift-check warnings through to the rollup", async () => {
+      await writeScaffold(repoRoot);
+      const { runner } = makeRunner();
+      const report = await doctorCloudflare(makeConfig(repoRoot), {
+        runner,
+        extraFindings: [
+          {
+            severity: "warning",
+            check: "index-filter-drift.users.admins",
+            message: "users.admins: drift detected — 1 missing, 0 orphaned (3 in sync).",
+            fix: "pnpm exec baerly admin rebuild-index --table=users --index=admins ...",
+          },
+        ],
+      });
+      expect(report.status).toBe("warning");
+      const drift = findingFor(report.findings, "index-filter-drift.users.admins");
+      expect(drift?.severity).toBe("warning");
+      expect(drift?.fix).toContain("rebuild-index");
+    });
+
+    it("threads drift-check errors and bumps overall status to error", async () => {
+      await writeScaffold(repoRoot);
+      const { runner } = makeRunner();
+      const report = await doctorCloudflare(makeConfig(repoRoot), {
+        runner,
+        extraFindings: [
+          {
+            severity: "error",
+            check: "index-filter-drift.env",
+            message: "missing env vars",
+          },
+        ],
+      });
+      expect(report.status).toBe("error");
+    });
+  });
 });

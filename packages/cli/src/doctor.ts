@@ -25,8 +25,9 @@
 import { spawn } from "node:child_process";
 import { defineCommand, type ArgsDef, type ParsedArgs } from "citty";
 import { BaerlyError } from "@baerly/protocol";
-import { loadAppConfig, type AppConfig } from "./config.ts";
-import { doctorCloudflare, type DoctorReport } from "./doctor/cloudflare.ts";
+import { loadAppConfigWithCollections, type AppConfig } from "./config.ts";
+import { doctorCloudflare, type DoctorFinding, type DoctorReport } from "./doctor/cloudflare.ts";
+import { checkIndexFilterDrift } from "./doctor/index-filter-drift.ts";
 import type { ProcessRunner } from "./deploy/cloudflare.ts";
 import { color, emitError, isJsonMode, setJsonMode } from "./output.ts";
 
@@ -50,9 +51,27 @@ const DOCTOR_ARGS = {
     description:
       "Scan recent log entries per collection and emit a graduation hint when writes/min approaches the M-size ceiling (Node target; CF target emits a follow-up breadcrumb).",
   },
+  check: {
+    type: "string",
+    description: "Run a single named check (today: 'index-filter-drift').",
+    valueHint: "name",
+  },
+  "rebuild-drift": {
+    type: "boolean",
+    description:
+      "When index-filter-drift detects orphans / missing keys, call rebuildIndex to fix them. Implies --check=index-filter-drift.",
+  },
 } as const satisfies ArgsDef;
 
-const KNOWN_KEYS: ReadonlySet<string> = new Set(["target", "fix", "json", "usage", "_"]);
+const KNOWN_KEYS: ReadonlySet<string> = new Set([
+  "target",
+  "fix",
+  "json",
+  "usage",
+  "check",
+  "rebuild-drift",
+  "_",
+]);
 
 const errorToExitCode = (code: string): number => {
   if (code === "InvalidConfig") return 1;
@@ -128,13 +147,34 @@ const handleDoctor = async (args: ParsedArgs<typeof DOCTOR_ARGS>): Promise<numbe
         throw new BaerlyError("InvalidConfig", `baerly doctor: unknown flag --${k}`);
       }
     }
-    const config = await loadAppConfig();
+    // `--check` is the named-check dispatcher; today the only known
+    // value is `index-filter-drift`. Reject unknown values early so
+    // the operator gets an actionable error rather than a silent
+    // skip.
+    if (args.check !== undefined && args.check !== "index-filter-drift") {
+      throw new BaerlyError(
+        "InvalidConfig",
+        `baerly doctor: unknown --check value ${JSON.stringify(args.check)} (supported: "index-filter-drift")`,
+      );
+    }
+    const { config, collections } = await loadAppConfigWithCollections();
     const target = args.target ?? config.target;
+    // The drift check is dispatcher-level — it runs once and its
+    // findings splice into whichever backend the target dispatches
+    // to. `--rebuild-drift` implies the check, so either flag
+    // triggers the scan.
+    const runDrift = args.check === "index-filter-drift" || args["rebuild-drift"] === true;
+    const extraFindings: DoctorFinding[] = runDrift
+      ? await checkIndexFilterDrift(config, collections, {
+          ...(args["rebuild-drift"] === true && { rebuild: true }),
+        })
+      : [];
     if (target === "cloudflare") {
       const report = await doctorCloudflare(config, {
         runner: defaultRunner,
         ...(args.fix === true && { fix: true }),
         ...(args.usage === true && { usage: true }),
+        ...(extraFindings.length > 0 && { extraFindings }),
       });
       renderReport(target, report);
       return report.status === "error" ? 2 : 0;
@@ -149,10 +189,17 @@ const handleDoctor = async (args: ParsedArgs<typeof DOCTOR_ARGS>): Promise<numbe
       const mod = (await import(nodeModuleSpecifier)) as {
         doctorNode: (
           config: AppConfig,
-          opts?: { cwd?: string; usage?: boolean },
+          opts?: {
+            cwd?: string;
+            usage?: boolean;
+            extraFindings?: readonly DoctorFinding[];
+          },
         ) => Promise<DoctorReport>;
       };
-      const report = await mod.doctorNode(config, args.usage === true ? { usage: true } : {});
+      const report = await mod.doctorNode(config, {
+        ...(args.usage === true && { usage: true }),
+        ...(extraFindings.length > 0 && { extraFindings }),
+      });
       renderReport(target, report);
       return report.status === "error" ? 2 : 0;
     }

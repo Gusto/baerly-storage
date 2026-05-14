@@ -119,12 +119,25 @@ export const doctorCloudflare = async (
      * parsed R2 bindings (the `BUCKET` binding by default).
      */
     readonly usage?: boolean;
+    /**
+     * Findings produced by dispatcher-level checks (today:
+     * `--check=index-filter-drift`). Spliced into the local
+     * findings list before rollup so the named check's findings
+     * influence the report's overall status without forcing every
+     * dispatcher-level check to live inside this backend.
+     */
+    readonly extraFindings?: readonly DoctorFinding[];
   } = {},
 ): Promise<DoctorReport> => {
   const repoRoot = opts.cwd ?? config.repoRoot;
   const serverDir = resolve(repoRoot, "apps", "server");
   const wranglerPath = resolve(serverDir, "wrangler.jsonc");
-  const findings: DoctorFinding[] = [];
+  // Seed the findings list with any dispatcher-level results
+  // (today: `--check=index-filter-drift`). These influence rollup
+  // status the same way local findings do, and they appear at the
+  // top of the rendered output so the operator sees them before
+  // the wrangler / R2 / secret checks.
+  const findings: DoctorFinding[] = opts.extraFindings ? [...opts.extraFindings] : [];
 
   // 1. wrangler.jsonc presence.
   if (!existsSync(wranglerPath)) {

@@ -52,11 +52,24 @@ const rollupStatus = (findings: readonly DoctorFinding[]): DoctorReport["status"
  */
 export const doctorNode = async (
   config: AppConfig,
-  opts: { readonly cwd?: string; readonly usage?: boolean } = {},
+  opts: {
+    readonly cwd?: string;
+    readonly usage?: boolean;
+    /**
+     * Findings produced by dispatcher-level checks (today:
+     * `--check=index-filter-drift`). Spliced into the local
+     * findings list before rollup so the named check's findings
+     * influence the report's overall status.
+     */
+    readonly extraFindings?: readonly DoctorFinding[];
+  } = {},
 ): Promise<DoctorReport> => {
   const repoRoot = opts.cwd ?? config.repoRoot;
   const serverDir = resolve(repoRoot, "apps", "server");
-  const findings: DoctorFinding[] = [];
+  // Seed the findings list with any dispatcher-level results so
+  // they participate in `rollupStatus`. Top placement mirrors the
+  // Cloudflare backend.
+  const findings: DoctorFinding[] = opts.extraFindings ? [...opts.extraFindings] : [];
   const ok = (check: string, message: string): void => {
     findings.push({ severity: "ok", check, message });
   };

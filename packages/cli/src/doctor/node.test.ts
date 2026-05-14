@@ -75,4 +75,37 @@ describe("doctorNode", () => {
     expect(jwksFinding).toBeDefined();
     expect(jwksFinding?.severity).toBe("warning");
   }, 10_000);
+
+  describe("extraFindings", () => {
+    it("threads drift warnings through to the rollup", async () => {
+      await deployNode(makeConfig(outRoot));
+      const r = await doctorNode(makeConfig(outRoot), {
+        extraFindings: [
+          {
+            severity: "warning",
+            check: "index-filter-drift.tickets.open_only",
+            message: "tickets.open_only: drift detected — 0 missing, 4 orphaned (12 in sync).",
+            fix: "baerly admin rebuild-index ...",
+          },
+        ],
+      });
+      expect(r.status).toBe("warning");
+      const drift = r.findings.find((f) => f.check === "index-filter-drift.tickets.open_only");
+      expect(drift?.severity).toBe("warning");
+    });
+
+    it("threads drift errors and bumps the overall status", async () => {
+      await deployNode(makeConfig(outRoot));
+      const r = await doctorNode(makeConfig(outRoot), {
+        extraFindings: [
+          {
+            severity: "error",
+            check: "index-filter-drift.env",
+            message: "missing storage env vars",
+          },
+        ],
+      });
+      expect(r.status).toBe("error");
+    });
+  });
 });

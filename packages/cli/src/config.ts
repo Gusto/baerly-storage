@@ -26,6 +26,7 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { BaerlyError } from "@baerly/protocol";
+import type { IndexDefinition } from "@baerly/server";
 
 export interface AppConfig {
   readonly app: string;
@@ -51,8 +52,11 @@ const CONFIG_BASENAMES: readonly string[] = [
 /**
  * Locate the first `baerly.config.*` file under `cwd`. Returns the
  * absolute path or `null` if none exists.
+ *
+ * Exported so the collection-aware loader (and future consumers) can
+ * reuse the same resolution order without re-implementing it.
  */
-const locateConfig = (cwd: string): string | null => {
+export const locateConfig = (cwd: string): string | null => {
   for (const base of CONFIG_BASENAMES) {
     const abs = resolve(cwd, base);
     if (existsSync(abs)) return abs;
@@ -202,4 +206,92 @@ export const loadAppConfig = async (cwd: string = process.cwd()): Promise<AppCon
     ...(cloudflareAccess !== undefined && { cloudflareAccess }),
     repoRoot: cwd,
   };
+};
+
+/**
+ * Lightweight per-collection index reflection. Mirrors the shape the
+ * runtime `BaerlyConfig` carries, but only the fields the doctor needs.
+ *
+ * `indexes` is an empty array when the collection declared none.
+ */
+export interface LoadedCollection {
+  readonly name: string;
+  readonly indexes: readonly IndexDefinition[];
+}
+
+/**
+ * Load `baerly.config.{ts,js,mjs,json}` AND return the parsed
+ * `collections[*]` shape alongside the narrow {@link AppConfig}. Lets
+ * the doctor reflect on declared indexes without forcing every consumer
+ * to widen `AppConfig`. Returns `undefined` for `collections` when the
+ * config doesn't declare any (the doctor downgrades the drift check to
+ * a no-op `info` finding in that case).
+ *
+ * Re-uses {@link loadAppConfig}'s parse/validate path, so the
+ * `AppConfig` invariants are still enforced.
+ */
+export const loadAppConfigWithCollections = async (
+  cwd: string = process.cwd(),
+): Promise<{
+  readonly config: AppConfig;
+  readonly collections: readonly LoadedCollection[] | undefined;
+}> => {
+  const config = await loadAppConfig(cwd);
+  const cfgPath = locateConfig(cwd);
+  if (cfgPath === null) return { config, collections: undefined };
+
+  // Re-parse the raw default-export to pluck `collections[*]`. We
+  // don't validate the inner shape here — at the doctor surface,
+  // anything that isn't an object is reported as "no filtered
+  // indexes" rather than throwing, so a partially-typed config
+  // doesn't fail the whole check.
+  let raw: unknown;
+  if (cfgPath.endsWith(".json")) {
+    let text: string;
+    try {
+      text = await readFile(cfgPath, "utf8");
+    } catch {
+      return { config, collections: undefined };
+    }
+    try {
+      raw = JSON.parse(text);
+    } catch {
+      return { config, collections: undefined };
+    }
+  } else {
+    try {
+      const mod = (await import(pathToFileURL(cfgPath).href)) as { default?: unknown };
+      raw = mod.default;
+    } catch {
+      // Node can't `import` a .ts file without a TS loader. The
+      // narrow `loadAppConfig` already surfaced the InvalidConfig if
+      // that path was unreadable; here we silently downgrade to
+      // "no collections" rather than re-throw.
+      return { config, collections: undefined };
+    }
+  }
+
+  if (raw === undefined || raw === null || typeof raw !== "object") {
+    return { config, collections: undefined };
+  }
+  const colsRaw = (raw as { collections?: unknown }).collections;
+  if (colsRaw === undefined || colsRaw === null || typeof colsRaw !== "object") {
+    return { config, collections: undefined };
+  }
+
+  const out: LoadedCollection[] = [];
+  for (const [name, decl] of Object.entries(colsRaw as Record<string, unknown>)) {
+    if (decl === null || typeof decl !== "object") continue;
+    const indexes = (decl as { indexes?: unknown }).indexes;
+    if (!Array.isArray(indexes)) {
+      out.push({ name, indexes: [] });
+      continue;
+    }
+    // Pass-through cast: the runtime IndexDefinition validation
+    // lives in `@baerly/server`; the doctor only reads `name`, `on`,
+    // and `predicate`, so a partial shape still gives an actionable
+    // finding rather than a SchemaError throw at config-load time.
+    out.push({ name, indexes: indexes as readonly IndexDefinition[] });
+  }
+  return { config, collections: out };
 };

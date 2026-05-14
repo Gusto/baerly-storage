@@ -50,11 +50,26 @@ import { withObservability } from "./observability/index.ts";
 const EMPTY_BODY = new Uint8Array(0);
 const APPLICATION_JSON = "application/json";
 
-/** Reconciliation summary. */
+/**
+ * Reconciliation summary.
+ *
+ * In a normal (mutating) run, the counts describe what was actually
+ * PUT / DELETEd. In `dryRun` mode ({@link RebuildIndexOptions.dryRun}),
+ * `added` / `removed` report the counts that a real rebuild *would*
+ * have produced — storage is unchanged. `kept` always reports the
+ * number of keys that were already in place at function entry.
+ */
 export interface RebuildIndexResult {
-  /** Keys PUT because they were missing on storage. */
+  /**
+   * Keys PUT because they were missing on storage. In `dryRun` mode,
+   * the predicted PUT count — no writes were issued.
+   */
   readonly added: number;
-  /** Keys DELETEd because the doc no longer exists / no longer projects them. */
+  /**
+   * Keys DELETEd because the doc no longer exists / no longer projects
+   * them. In `dryRun` mode, the predicted DELETE count — no deletes
+   * were issued.
+   */
   readonly removed: number;
   /** Keys already in place. The healthy-index re-run reports this as the full expected count. */
   readonly kept: number;
@@ -86,6 +101,16 @@ export interface RebuildIndexOptions {
    * forward it through without breaking callers.
    */
   readonly signal?: AbortSignal;
+  /**
+   * When `true`, walk the expected-vs-actual diff and return the
+   * counts that a real rebuild would have produced WITHOUT issuing
+   * any PUT or DELETE. Used by `baerly doctor --check=index-filter-drift`
+   * to report drift cheaply. Defaults to `false`.
+   *
+   * `kept` is reported with the same semantics as a real run; only
+   * `added` and `removed` are predicted counts under `dryRun`.
+   */
+  readonly dryRun?: boolean;
 }
 
 /**
@@ -208,12 +233,23 @@ const rebuildIndexInner = async (
   //    `ifNoneMatch:"*"` makes a same-key re-issue no-op; on the
   //    rare race where the entry already exists, swallow the 412 and
   //    count it as `kept` rather than `added`.
+  //
+  //    Under `opts.dryRun`, we walk the same diff but skip every
+  //    mutating storage call — `added` / `removed` then report the
+  //    counts a real rebuild WOULD have produced, leaving storage
+  //    untouched. This is what `baerly doctor --check=index-filter-drift`
+  //    consumes to surface drift without paying the rebuild cost.
+  const dryRun = opts.dryRun === true;
   let added = 0;
   let removed = 0;
   let kept = 0;
   for (const k of expected) {
     if (actual.has(k)) {
       kept += 1;
+      continue;
+    }
+    if (dryRun) {
+      added += 1;
       continue;
     }
     try {
@@ -235,6 +271,10 @@ const rebuildIndexInner = async (
   }
   for (const k of actual) {
     if (expected.has(k)) continue;
+    if (dryRun) {
+      removed += 1;
+      continue;
+    }
     // Storage.delete is contractually idempotent — no defensive catch.
     await storage.delete(k);
     removed += 1;
