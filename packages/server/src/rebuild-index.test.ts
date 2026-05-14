@@ -214,3 +214,100 @@ describe("rebuildIndex — options bag", () => {
     expect(result).toEqual({ added: 0, removed: 0, kept: 0 });
   });
 });
+
+describe("rebuildIndex — filtered index", () => {
+  const FILTERED: IndexDefinition = {
+    name: "open_only",
+    on: "assignee",
+    predicate: { status: "open" },
+  };
+
+  const listFilteredKeys = async (storage: Storage): Promise<string[]> => {
+    const out: string[] = [];
+    for await (const entry of storage.list(`${LOG_PREFIX}/index/${FILTERED.name}/`)) {
+      out.push(entry.key);
+    }
+    return out.toSorted();
+  };
+
+  test("rebuild over a filtered index emits only filter-matching keys", async () => {
+    const storage = new MemoryStorage();
+    await provision(storage);
+    // Writer with NO indexes commits two docs — one open, one closed.
+    const writer = new ServerWriter({
+      storage,
+      currentJsonKey: CURRENT_JSON_KEY,
+      options: {},
+    });
+    await writer.commit({
+      op: "I",
+      collection: COLLECTION,
+      docId: "a",
+      body: { _id: "a", status: "open", assignee: "alice" },
+    });
+    await writer.commit({
+      op: "I",
+      collection: COLLECTION,
+      docId: "b",
+      body: { _id: "b", status: "closed", assignee: "alice" },
+    });
+    expect(await listFilteredKeys(storage)).toEqual([]);
+
+    const result = await rebuildIndex(storage, CURRENT_JSON_KEY, FILTERED);
+    expect(result.added).toBe(1);
+    expect(result.removed).toBe(0);
+    expect(result.kept).toBe(0);
+    const after = await listFilteredKeys(storage);
+    expect(after).toHaveLength(1);
+    expect(after[0]!.endsWith("/a.json")).toBe(true);
+  });
+
+  test("rebuild over a filtered index removes orphans from docs that fell out of the filter", async () => {
+    const storage = new MemoryStorage();
+    await provision(storage);
+    const writer = new ServerWriter({
+      storage,
+      currentJsonKey: CURRENT_JSON_KEY,
+      options: { indexes: [FILTERED] },
+    });
+    await writer.commit({
+      op: "I",
+      collection: COLLECTION,
+      docId: "a",
+      body: { _id: "a", status: "open", assignee: "alice" },
+    });
+    // Inject an orphan: a key for the pre-image of an "open" doc
+    // that has since transitioned out of the filter. Simulates a
+    // writer that crashed before its U-quadrant DELETE flushed.
+    const [orphanKey] = allIndexKeysFor(
+      LOG_PREFIX,
+      [FILTERED],
+      { _id: "a", status: "open", assignee: "ghost" },
+      "a",
+    );
+    if (orphanKey === undefined) throw new Error("test bug: failed to construct orphan key");
+    await storage.put(orphanKey, new Uint8Array(0), {
+      ifNoneMatch: "*",
+      contentType: "application/json",
+    });
+    // The writer's U DELETEs the live `alice` key in the
+    // match→miss quadrant; rebuild must reconcile to `[]` once the
+    // doc has transitioned out of the filter.
+    await writer.commit({
+      op: "U",
+      collection: COLLECTION,
+      docId: "a",
+      body: { _id: "a", status: "closed", assignee: "alice" },
+    });
+    // After the U, the live `alice` key is DELETEd but the
+    // hand-injected `ghost` orphan survives.
+    const beforeRebuild = await listFilteredKeys(storage);
+    expect(beforeRebuild).toContain(orphanKey);
+
+    const result = await rebuildIndex(storage, CURRENT_JSON_KEY, FILTERED);
+    expect(result.added).toBe(0);
+    // The orphan is removed (it points at a doc that no longer
+    // satisfies the filter).
+    expect(await listFilteredKeys(storage)).toEqual([]);
+  });
+});

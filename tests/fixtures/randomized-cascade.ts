@@ -33,7 +33,13 @@ import {
   readCurrentJson,
   uuid,
 } from "@baerly/protocol";
-import { Db, type IndexDefinition, ServerWriter } from "@baerly/server";
+import {
+  allIndexKeysFor,
+  Db,
+  type IndexDefinition,
+  rebuildIndex,
+  ServerWriter,
+} from "@baerly/server";
 import {
   CentralisedOfflineFirstCausalSystem,
   type Grounding,
@@ -154,6 +160,40 @@ const readLatest = async (inst: Instance): Promise<CascadeMessage | undefined> =
 };
 
 /**
+ * T4 invariant — when the filtered index is declared, the live key
+ * set under its prefix MUST equal `allIndexKeysFor(FILTERED_INDEX,
+ * liveBody)` after a {@link rebuildIndex} reconciliation pass.
+ *
+ * Multi-writer cascade contention can leave orphan index entries in
+ * the bucket — CAS retries throw the prior attempt's PUT/DELETE
+ * work away from `current.json` but the storage-level keys persist
+ * until the next writer's diff path cleans them up or a rebuild
+ * runs. The chapter's correctness invariant lives at the rebuild
+ * boundary: after rebuild, the on-storage key set MUST equal the
+ * filter-aware projection of the live doc set.
+ *
+ * The cascade is single-key (`COLLECTION === docId`) so the live
+ * set is at most one row; the expectation collapses to "zero keys
+ * iff the live doc doesn't satisfy the filter, else one key for
+ * that doc".
+ */
+const assertFilteredIndexConsistent = async (inst: Instance): Promise<void> => {
+  // Quiesce the cascade with a rebuild pass before asserting. The
+  // rebuild reconciles the live doc set against the on-storage
+  // index keys (CONTRACTS §4 — `rebuildIndex` consumes
+  // `allIndexKeysFor` and is filter-aware via T4's projector
+  // change).
+  await rebuildIndex(inst.storage, inst.currentJsonKey, FILTERED_INDEX);
+  const live = await readLatest(inst);
+  const expected = new Set(allIndexKeysFor(inst.logPrefix, [FILTERED_INDEX], live, COLLECTION));
+  const actual = new Set<string>();
+  for await (const entry of inst.storage.list(`${inst.logPrefix}/index/${FILTERED_INDEX.name}/`)) {
+    actual.add(entry.key);
+  }
+  expect(actual, "filtered-index live key set != allIndexKeysFor(liveBody)").toEqual(expected);
+};
+
+/**
  * Build N writer instances over a set of shared `Storage` handles —
  * each handle's underlying backing is identical so writes through any
  * one are visible through any other. Each instance lives under a
@@ -163,7 +203,23 @@ const readLatest = async (inst: Instance): Promise<CascadeMessage | undefined> =
  * deliberately routes contention to one CAS pointer to make the
  * concurrent-writer property actually concurrent).
  */
-const buildInstances = async (storages: Storage[]): Promise<Instance[]> => {
+/**
+ * Filtered-index injected by `runCausalConsistencyCascade` when
+ * `opts.injectFilteredIndex === true` (T4). Filters on `sender === 0`
+ * so ~1/N of writes match the predicate; the assertion at the end
+ * of the cascade walks the storage and checks the live key set
+ * equals `allIndexKeysFor(FILTERED_INDEX)(liveBody)`.
+ */
+const FILTERED_INDEX: IndexDefinition = {
+  name: "cascade_filter",
+  on: "send_time",
+  predicate: { sender: 0 },
+};
+
+const buildInstances = async (
+  storages: Storage[],
+  indexes: ReadonlyArray<IndexDefinition>,
+): Promise<Instance[]> => {
   // Pick a deterministic tenant for the CAS-shared current.json so all
   // N writers contend on the same key. (`Db.create` enforces a "/"-free
   // tenant; tests use a fresh suffix per cascade.)
@@ -190,7 +246,7 @@ const buildInstances = async (storages: Storage[]): Promise<Instance[]> => {
       // Smaller initial backoff to keep N-way races snappy under
       // memory; the legacy POLL_TICK_MS budget assumes sub-second
       // commit latency.
-      options: { initialBackoffMs: 5 },
+      options: indexes.length > 0 ? { initialBackoffMs: 5, indexes } : { initialBackoffMs: 5 },
     });
     return {
       db,
@@ -226,6 +282,15 @@ export const runCausalConsistencyCascade = (opts: {
   storages: Storage[];
   pollTickMs: number;
   clockOffsetsMs?: readonly number[];
+  /**
+   * T4: when `true`, the cascade declares a sparse filtered index
+   * over the single shared doc and, after the cascade completes,
+   * asserts the on-storage key set under the index's prefix equals
+   * `allIndexKeysFor(FILTERED_INDEX, liveDoc)`. The filter matches
+   * roughly 1/N of broadcasts (`sender === 0`), exercising both the
+   * miss→match and match→miss U-quadrants under live contention.
+   */
+  injectFilteredIndex?: boolean;
 }): Promise<void> =>
   new Promise<void>((done, reject) => {
     void (async () => {
@@ -233,7 +298,10 @@ export const runCausalConsistencyCascade = (opts: {
         const N = opts.storages.length;
         const clockOffsets =
           opts.clockOffsetsMs ?? Array.from({ length: N }, () => Math.random() * 2000 - 1000);
-        const instances = await buildInstances(opts.storages);
+        const declaredIndexes: ReadonlyArray<IndexDefinition> = opts.injectFilteredIndex
+          ? [FILTERED_INDEX]
+          : [];
+        const instances = await buildInstances(opts.storages, declaredIndexes);
         const system = new CentralisedOfflineFirstCausalSystem();
 
         let testFailed = false;
@@ -325,7 +393,20 @@ export const runCausalConsistencyCascade = (opts: {
             });
           } else if (system.global_time >= MAX_STEPS && !finished) {
             finished = true;
-            done();
+            // Drain any in-flight commits before running the
+            // filtered-index invariant — otherwise the on-storage
+            // key set is racing the last broadcast.
+            void (async () => {
+              try {
+                await Promise.allSettled(commitQueues);
+                if (opts.injectFilteredIndex) {
+                  await assertFilteredIndexConsistent(instances[0]!);
+                }
+                done();
+              } catch (err) {
+                reject(err);
+              }
+            })();
           }
         };
 

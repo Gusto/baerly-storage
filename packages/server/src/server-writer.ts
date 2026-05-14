@@ -551,6 +551,22 @@ export class ServerWriter {
     // Empty `#indexes` short-circuits the index block (including the
     // pre-image GET), preserving zero behaviour change for
     // collections without declared indexes.
+    //
+    // Filter-aware projection (T4): `allIndexKeysFor` short-circuits
+    // on `def.predicate` miss. The writer's diff `oldKeys` vs
+    // `newKeys` transparently covers all four U-quadrants without any
+    // structural change here:
+    //
+    //   match → match : both non-empty; diff PUTs/DELETEs as today.
+    //   match → miss  : oldKeys non-empty, newKeys empty → DELETE all.
+    //   miss  → match : oldKeys empty, newKeys non-empty → PUT all.
+    //   miss  → miss  : both empty → no-op for this def.
+    //
+    // All four quadrants are pinned by named tests in
+    // `server-writer.test.ts` ("ServerWriter — filtered index"). Do
+    // not collapse them into one combined case — a regression in one
+    // quadrant should fail exactly one named test so the bug is
+    // localisable.
     let contentPutCount = 0;
     let indexClassA = 0;
     const parallelPuts: Array<Promise<unknown>> = [];

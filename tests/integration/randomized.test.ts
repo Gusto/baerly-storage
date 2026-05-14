@@ -164,6 +164,12 @@ describe("randomized (Db + ServerWriter)", () => {
           await runCausalConsistencyCascade({
             storages,
             pollTickMs: variant.pollTickMs,
+            // T4: assert the filtered-index invariant at the end of
+            // the cascade. The CAS path is unaffected by filtered
+            // projection, so causal-consistency stays green; the
+            // additional check verifies the on-storage key set
+            // tracks the live doc set under the filter.
+            injectFilteredIndex: true,
           });
         },
       );

@@ -27,7 +27,12 @@
  * @see ../../../.claude/research/planning/tickets/predicate-routing/03-range-and-in-walks.md
  */
 
-import type { Predicate, JSONArrayless, JSONArraylessObject } from "@baerly/protocol";
+import {
+  type JSONArrayless,
+  type JSONArraylessObject,
+  type Predicate,
+  predicateImplies,
+} from "@baerly/protocol";
 import type { IndexDefinition } from "./indexes.ts";
 
 /**
@@ -358,10 +363,20 @@ export const planQuery = <T extends JSONArraylessObject = JSONArraylessObject>(
     return { kind: "full-scan", reason: "predicate-uses-operators-only" };
   }
 
-  // Find the best candidate over all declared indexes. Iteration
-  // order is the array order — the only tie-break source.
+  // Enumerate every viable candidate over the declared indexes,
+  // then sort with the T4 tie-break:
+  //
+  //  (1) Implied filter — a filtered index whose
+  //      `predicateImplies(def.predicate, queryPredicate)` is `true`
+  //      outranks an unfiltered alternative (sparser key range →
+  //      smaller LIST). An unfiltered index outranks a filtered one
+  //      whose `predicateImplies` is `false` — walking the smaller
+  //      set would miss matching docs.
+  //  (2) Longest total consumed length wins among ties on (1).
+  //  (3) Definition order among ties on (1) and (2).
   interface Candidate {
     readonly def: IndexDefinition;
+    readonly defIndex: number;
     readonly prefixLen: number;
     readonly equalityKeys: JSONArrayless[];
     readonly consumed: ReadonlyArray<string>;
@@ -369,8 +384,9 @@ export const planQuery = <T extends JSONArraylessObject = JSONArraylessObject>(
       | { kind: "range"; field: string; info: RangeOpInfo }
       | { kind: "in"; field: string; values: ReadonlyArray<JSONArrayless> };
   }
-  let best: Candidate | undefined;
-  for (const def of indexes) {
+  const candidates: Candidate[] = [];
+  for (let defIndex = 0; defIndex < indexes.length; defIndex++) {
+    const def = indexes[defIndex]!;
     const tuple: readonly string[] = typeof def.on === "string" ? [def.on] : def.on;
     const equalityKeys: JSONArrayless[] = [];
     const consumed: string[] = [];
@@ -402,21 +418,39 @@ export const planQuery = <T extends JSONArraylessObject = JSONArraylessObject>(
     }
     const candidateLen = equalityKeys.length + (tail !== undefined ? 1 : 0);
     if (candidateLen === 0) continue;
-    // Score: prefer longer total consumed length; tie-break by
-    // declaration order (first wins).
-    if (best === undefined || candidateLen > best.prefixLen) {
-      best = {
-        def,
-        prefixLen: candidateLen,
-        equalityKeys,
-        consumed,
-        ...(tail !== undefined ? { tail } : {}),
-      };
-    }
+    candidates.push({
+      def,
+      defIndex,
+      prefixLen: candidateLen,
+      equalityKeys,
+      consumed,
+      ...(tail !== undefined ? { tail } : {}),
+    });
   }
-  if (best === undefined) {
+  if (candidates.length === 0) {
     return { kind: "full-scan", reason: "no-matching-index" };
   }
+
+  // T4 cost-bias rank: 0 = filtered + implied (best), 1 = unfiltered
+  // (mid), 2 = filtered + NOT implied (worst). A filtered candidate
+  // whose filter is NOT implied is STILL eligible — but only as a
+  // last resort. The post-fetch `matches(predicate, ...)` re-check
+  // would still drop the rows that fall outside the filter, so the
+  // index walk is unsound for the query (it would silently miss
+  // matching rows that fell outside the filter), and only the
+  // sort order keeps it last.
+  const rank = (c: Candidate): number => {
+    if (c.def.predicate === undefined) return 1;
+    return predicateImplies(c.def.predicate, predicate as Predicate<JSONArraylessObject>) ? 0 : 2;
+  };
+  candidates.sort((a, b) => {
+    const aRank = rank(a);
+    const bRank = rank(b);
+    if (aRank !== bRank) return aRank - bRank;
+    if (b.prefixLen !== a.prefixLen) return b.prefixLen - a.prefixLen;
+    return a.defIndex - b.defIndex;
+  });
+  const best: Candidate = candidates[0]!;
 
   // NUMERIC-RANGE GUARD (see `containsNumber` JSDoc above). Refuse
   // to route any range or $in plan whose bounds/members include a

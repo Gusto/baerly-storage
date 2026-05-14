@@ -11,6 +11,7 @@ import {
   type StoragePutResult,
 } from "@baerly/protocol";
 import { beforeEach, describe, expect, test } from "vitest";
+import type { IndexDefinition } from "./indexes.ts";
 import { ServerWriter } from "./server-writer.ts";
 
 const BUCKET = "server-writer-test-bucket";
@@ -538,5 +539,219 @@ describe("ServerWriter — writer fence", () => {
     // Pure module-level smoke: the re-export resolves at runtime.
     const mod = await import("./index.ts");
     expect(typeof (mod as { claimWriter?: unknown }).claimWriter).toBe("function");
+  });
+});
+
+describe("ServerWriter — filtered index", () => {
+  /**
+   * The four U-quadrants are the load-bearing correctness gate of
+   * T4. Each named test exercises ONE quadrant; collapsing them
+   * would localise a regression to "filtered index broken" instead
+   * of "filtered index broken in the miss→match arm." The
+   * `allIndexKeysFor` short-circuit handles all four arms via the
+   * writer's existing diff path (`oldKeys` vs `newKeys`) — see the
+   * JSDoc above the index-emission block in `server-writer.ts`.
+   */
+  const FILTERED_CURRENT_KEY = `app/test/tenant/t/manifests/${COLL}/current.json`;
+  const FILTERED_LOG_PREFIX = `app/test/tenant/t/manifests/${COLL}`;
+  const open_only: IndexDefinition = {
+    name: "open_only",
+    on: "assignee",
+    predicate: { status: "open" },
+  };
+
+  beforeEach(() => {
+    resetMemoryStorage();
+  });
+
+  const listFilteredKeys = async (storage: MemoryStorage): Promise<string[]> => {
+    const out: string[] = [];
+    for await (const entry of storage.list(`${FILTERED_LOG_PREFIX}/index/${open_only.name}/`)) {
+      out.push(entry.key);
+    }
+    return out.toSorted();
+  };
+
+  const newFilteredWriter = async (
+    metrics?: InMemoryMetricsRecorder,
+  ): Promise<{ storage: MemoryStorage; writer: ServerWriter }> => {
+    const storage = new MemoryStorage();
+    await createCurrentJson(storage, FILTERED_CURRENT_KEY, seedCurrent());
+    const writer = new ServerWriter({
+      storage,
+      currentJsonKey: FILTERED_CURRENT_KEY,
+      options: metrics !== undefined ? { indexes: [open_only], metrics } : { indexes: [open_only] },
+    });
+    return { storage, writer };
+  };
+
+  test("I: filter-match emits one key", async () => {
+    const { storage, writer } = await newFilteredWriter();
+    await writer.commit({
+      op: "I",
+      collection: COLL,
+      docId: "t-1",
+      body: { _id: "t-1", status: "open", assignee: "alice" },
+    });
+    const keys = await listFilteredKeys(storage);
+    expect(keys).toHaveLength(1);
+    expect(keys[0]).toContain(`/${open_only.name}/`);
+    expect(keys[0]!.endsWith("/t-1.json")).toBe(true);
+  });
+
+  test("I: filter-miss emits zero keys", async () => {
+    const { storage, writer } = await newFilteredWriter();
+    await writer.commit({
+      op: "I",
+      collection: COLL,
+      docId: "t-1",
+      body: { _id: "t-1", status: "closed", assignee: "alice" },
+    });
+    expect(await listFilteredKeys(storage)).toEqual([]);
+  });
+
+  test("U: filter-match → filter-match diffs keys as today", async () => {
+    const { storage, writer } = await newFilteredWriter();
+    await writer.commit({
+      op: "I",
+      collection: COLL,
+      docId: "t-1",
+      body: { _id: "t-1", status: "open", assignee: "alice" },
+    });
+    const before = await listFilteredKeys(storage);
+    expect(before).toHaveLength(1);
+
+    // Both pre-image and post-image match the filter; the diff path
+    // DELETEs the old `alice` key and PUTs the new `bob` key.
+    await writer.commit({
+      op: "U",
+      collection: COLL,
+      docId: "t-1",
+      body: { _id: "t-1", status: "open", assignee: "bob" },
+    });
+    const after = await listFilteredKeys(storage);
+    expect(after).toHaveLength(1);
+    expect(after[0]).not.toBe(before[0]); // assignee changed
+    expect(after[0]!.endsWith("/t-1.json")).toBe(true);
+  });
+
+  test("U: filter-match → filter-miss DELETEs all old keys, emits no PUTs", async () => {
+    const { storage, writer } = await newFilteredWriter();
+    await writer.commit({
+      op: "I",
+      collection: COLL,
+      docId: "t-1",
+      body: { _id: "t-1", status: "open", assignee: "alice" },
+    });
+    expect(await listFilteredKeys(storage)).toHaveLength(1);
+
+    // Post-image transitions OUT of the filter — all old keys gone,
+    // zero new keys land.
+    await writer.commit({
+      op: "U",
+      collection: COLL,
+      docId: "t-1",
+      body: { _id: "t-1", status: "closed", assignee: "alice" },
+    });
+    expect(await listFilteredKeys(storage)).toEqual([]);
+  });
+
+  test("U: filter-miss → filter-match emits all PUTs, no DELETEs", async () => {
+    const { storage, writer } = await newFilteredWriter();
+    // I doc with status:"closed" → outside the filter, no keys.
+    await writer.commit({
+      op: "I",
+      collection: COLL,
+      docId: "t-1",
+      body: { _id: "t-1", status: "closed", assignee: "alice" },
+    });
+    expect(await listFilteredKeys(storage)).toEqual([]);
+
+    // U that transitions INTO the filter → one PUT, zero DELETEs.
+    await writer.commit({
+      op: "U",
+      collection: COLL,
+      docId: "t-1",
+      body: { _id: "t-1", status: "open", assignee: "alice" },
+    });
+    const keys = await listFilteredKeys(storage);
+    expect(keys).toHaveLength(1);
+    expect(keys[0]).toContain(`/${open_only.name}/`);
+    expect(keys[0]!.endsWith("/t-1.json")).toBe(true);
+  });
+
+  test("U: filter-miss → filter-miss is a no-op for the filtered index", async () => {
+    const metrics = new InMemoryMetricsRecorder();
+    const { storage, writer } = await newFilteredWriter(metrics);
+    // I doc with status:"closed" → outside the filter, no keys, no
+    // histogram emission for the filtered index.
+    await writer.commit({
+      op: "I",
+      collection: COLL,
+      docId: "t-1",
+      body: { _id: "t-1", status: "closed", assignee: "alice" },
+    });
+    const indexHistogramsAfterI = metrics.histograms.filter(
+      (h) => h.name === "db.write.index_ops_per_logical_write",
+    );
+    expect(indexHistogramsAfterI).toEqual([]);
+
+    // U keeps the doc outside the filter — still no keys, still no
+    // histogram. The writer's guard
+    // `newKeys.length + staleKeys.length > 0` must fire.
+    await writer.commit({
+      op: "U",
+      collection: COLL,
+      docId: "t-1",
+      body: { _id: "t-1", status: "wip", assignee: "bob" },
+    });
+    expect(await listFilteredKeys(storage)).toEqual([]);
+    const indexHistograms = metrics.histograms.filter(
+      (h) => h.name === "db.write.index_ops_per_logical_write",
+    );
+    expect(indexHistograms).toEqual([]);
+  });
+
+  test("D: filter-match pre-image DELETEs the keys", async () => {
+    const { storage, writer } = await newFilteredWriter();
+    await writer.commit({
+      op: "I",
+      collection: COLL,
+      docId: "t-1",
+      body: { _id: "t-1", status: "open", assignee: "alice" },
+    });
+    expect(await listFilteredKeys(storage)).toHaveLength(1);
+
+    await writer.commit({
+      op: "D",
+      collection: COLL,
+      docId: "t-1",
+    });
+    expect(await listFilteredKeys(storage)).toEqual([]);
+  });
+
+  test("D: filter-miss pre-image is a no-op", async () => {
+    const metrics = new InMemoryMetricsRecorder();
+    const { storage, writer } = await newFilteredWriter(metrics);
+    await writer.commit({
+      op: "I",
+      collection: COLL,
+      docId: "t-1",
+      body: { _id: "t-1", status: "closed", assignee: "alice" },
+    });
+    expect(await listFilteredKeys(storage)).toEqual([]);
+    // Reset the histogram so we ONLY observe the D-quadrant's behaviour.
+    metrics.histograms.length = 0;
+
+    await writer.commit({
+      op: "D",
+      collection: COLL,
+      docId: "t-1",
+    });
+    expect(await listFilteredKeys(storage)).toEqual([]);
+    const indexHistograms = metrics.histograms.filter(
+      (h) => h.name === "db.write.index_ops_per_logical_write",
+    );
+    expect(indexHistograms).toEqual([]);
   });
 });

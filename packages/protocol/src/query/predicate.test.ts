@@ -5,7 +5,13 @@ import type { Predicate } from "../db.ts";
 import { BaerlyError } from "../errors.ts";
 import type { JSONArrayless, JSONObject } from "../json.ts";
 
-import { matches, mergePredicates, type PredicateOp, validatePredicate } from "./predicate.ts";
+import {
+  matches,
+  mergePredicates,
+  predicateImplies,
+  type PredicateOp,
+  validatePredicate,
+} from "./predicate.ts";
 
 const expectInvalidConfig = (fn: () => unknown, snippet: string): void => {
   try {
@@ -713,3 +719,72 @@ fcTest.prop({ a: opPredArb, b: opPredArb, doc: docArb })(
     expect(matches(merged, doc)).toBe(matches(a, doc) && matches(b, doc));
   },
 );
+
+describe("predicateImplies", () => {
+  // Helper to construct predicates without TypeScript's literal-type
+  // narrowing. The runtime predicate type is far more permissive
+  // than the declared `Predicate<T>` (which keys off the doc shape);
+  // tests over arbitrary fixtures use the open-world JSONArrayless
+  // shape directly.
+  const P = (p: Record<string, JSONArrayless>): Predicate => p as unknown as Predicate;
+
+  test("identical equality predicates → true", () => {
+    expect(predicateImplies(P({ status: "open" }), P({ status: "open" }))).toBe(true);
+  });
+
+  test("query is a strict superset of filter → true", () => {
+    expect(predicateImplies(P({ status: "open" }), P({ status: "open", assignee: "alice" }))).toBe(
+      true,
+    );
+  });
+
+  test("mismatched primitive value → false", () => {
+    expect(predicateImplies(P({ status: "open" }), P({ status: "closed" }))).toBe(false);
+  });
+
+  test("missing key in queryPredicate → false", () => {
+    expect(predicateImplies(P({ status: "open" }), P({ assignee: "a" }))).toBe(false);
+  });
+
+  test("nested object equality → true", () => {
+    expect(
+      predicateImplies(
+        P({ assignee: { team: "platform" } }),
+        P({ assignee: { team: "platform" } }),
+      ),
+    ).toBe(true);
+  });
+
+  test("nested object — primitive on query side → false", () => {
+    expect(predicateImplies(P({ assignee: { team: "p" } }), P({ assignee: "literal" }))).toBe(
+      false,
+    );
+  });
+
+  test("nested object — mismatched leaf → false", () => {
+    expect(
+      predicateImplies(P({ assignee: { team: "p" } }), P({ assignee: { team: "infra" } })),
+    ).toBe(false);
+  });
+
+  test("operator-shaped indexFilter → false (conservative deferred)", () => {
+    expect(predicateImplies(P({ age: { $gte: 18 } }), P({ age: 21 }))).toBe(false);
+  });
+
+  test("empty indexFilter → true (vacuously implied)", () => {
+    expect(predicateImplies({}, P({ status: "open" }))).toBe(true);
+    expect(predicateImplies({}, {})).toBe(true);
+  });
+
+  test("soundness — when implied, matches(query, doc) ⇒ matches(filter, doc)", () => {
+    // Pin the load-bearing soundness property: when
+    // predicateImplies(filter, query) is `true`,
+    // matches(query, doc) ⇒ matches(filter, doc) for any doc.
+    const filter = P({ status: "open" });
+    const query = P({ status: "open", priority: "p1" });
+    expect(predicateImplies(filter, query)).toBe(true);
+    const matchingDoc: JSONObject = { status: "open", priority: "p1", assignee: "alice" };
+    expect(matches(query, matchingDoc)).toBe(true);
+    expect(matches(filter, matchingDoc)).toBe(true);
+  });
+});

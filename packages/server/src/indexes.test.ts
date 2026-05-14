@@ -183,3 +183,92 @@ describe("validateIndexDefinition", () => {
     expect(() => validateIndexDefinition({ name: "ok_name", on: [] })).toThrow(/non-empty/);
   });
 });
+
+describe("allIndexKeysFor — filtered index", () => {
+  const filtered = {
+    name: "open_only",
+    on: "assignee",
+    predicate: { status: "open" },
+  } as const;
+
+  test("doc not matching def.predicate produces no keys for that index", () => {
+    const keys = allIndexKeysFor(
+      "manifests/tickets",
+      [filtered],
+      { _id: "t-1", status: "closed", assignee: "alice" },
+      "t-1",
+    );
+    expect(keys).toEqual([]);
+  });
+
+  test("doc matching def.predicate produces the projected key", () => {
+    const keys = allIndexKeysFor(
+      "manifests/tickets",
+      [filtered],
+      { _id: "t-1", status: "open", assignee: "alice" },
+      "t-1",
+    );
+    expect(keys).toHaveLength(1);
+    expect(keys[0]).toContain(`/${filtered.name}/`);
+    expect(keys[0]!.endsWith("/t-1.json")).toBe(true);
+  });
+
+  test("undefined body produces no keys (filter is bypassed by the body-undefined gate)", () => {
+    // The pre-existing "undefined body → no keys" semantics is
+    // preserved — the filter short-circuit doesn't change it.
+    const keys = allIndexKeysFor("manifests/tickets", [filtered], undefined, "t-1");
+    expect(keys).toEqual([]);
+  });
+});
+
+describe("validateIndexDefinition — predicate field", () => {
+  test("accepts an equality-only predicate", () => {
+    expect(() =>
+      validateIndexDefinition({
+        name: "open_only",
+        on: "assignee",
+        predicate: { status: "open" },
+      }),
+    ).not.toThrow();
+  });
+
+  test("accepts a nested-object equality predicate", () => {
+    expect(() =>
+      validateIndexDefinition({
+        name: "open_ui_only",
+        on: "assignee",
+        predicate: { status: "open", meta: { source: "ui" } },
+      }),
+    ).not.toThrow();
+  });
+
+  test("rejects an operator-shaped predicate clause", () => {
+    expect(() =>
+      validateIndexDefinition({
+        name: "adult_only",
+        on: "assignee",
+        predicate: { age: { $gte: 18 } } as unknown as never,
+      }),
+    ).toThrow(/operator-shaped|equality-only/);
+  });
+
+  test("rejects a predicate with $-prefixed top-level key", () => {
+    expect(() =>
+      validateIndexDefinition({
+        name: "bad_op",
+        on: "assignee",
+        predicate: { $or: "x" } as unknown as never,
+      }),
+    ).toThrow(/predicate is invalid/);
+  });
+
+  test("rejects a predicate containing null", () => {
+    expect(() =>
+      validateIndexDefinition({
+        name: "null_val",
+        on: "assignee",
+        predicate: { status: null } as unknown as never,
+      }),
+    ).toThrow(/predicate is invalid/);
+  });
+});

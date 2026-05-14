@@ -433,3 +433,103 @@ describe("planQuery — numeric-range guard (T3)", () => {
     });
   });
 });
+
+describe("planQuery — filtered index cost bias (T4)", () => {
+  test("filtered index whose filter is implied wins over unfiltered alternative", () => {
+    const unfiltered: IndexDefinition = { name: "by_assignee", on: "assignee" };
+    const filtered: IndexDefinition = {
+      name: "open_by_assignee",
+      on: "assignee",
+      predicate: { status: "open" },
+    };
+    // Order the unfiltered FIRST in the array so the cost bias is
+    // the only path to picking `filtered` — proves the bias overrides
+    // definition order.
+    const plan = planQuery(
+      { status: "open", assignee: "alice" } as unknown as Predicate<JSONArraylessObject>,
+      [unfiltered, filtered],
+    );
+    expect(plan.kind).toBe("index-walk");
+    if (plan.kind === "index-walk") {
+      expect(plan.indexName).toBe("open_by_assignee");
+      expect(plan.equalityKeys).toEqual(["alice"]);
+      // The full original predicate stays in `postFilter` — the
+      // stale-row defence requires it, even when the filter is
+      // implied. (See T4 step e — filter-elimination from postFilter
+      // is explicitly out of scope.)
+      expect(plan.postFilter).toEqual({ status: "open" });
+    }
+  });
+
+  test("filtered index whose filter is NOT implied is skipped in favour of unfiltered", () => {
+    const unfiltered: IndexDefinition = { name: "by_assignee", on: "assignee" };
+    const filtered: IndexDefinition = {
+      name: "open_by_assignee",
+      on: "assignee",
+      predicate: { status: "open" },
+    };
+    // Query has no `status` clause → filter is NOT implied. The
+    // unfiltered index must win even though `filtered` walks at the
+    // same equality prefix length.
+    const plan = planQuery({ assignee: "alice" } as unknown as Predicate<JSONArraylessObject>, [
+      filtered,
+      unfiltered,
+    ]);
+    expect(plan.kind).toBe("index-walk");
+    if (plan.kind === "index-walk") {
+      expect(plan.indexName).toBe("by_assignee");
+      expect(plan.equalityKeys).toEqual(["alice"]);
+    }
+  });
+
+  test("longest equality prefix breaks ties among implied filters", () => {
+    const filtered_short: IndexDefinition = {
+      name: "open_by_assignee",
+      on: "assignee",
+      predicate: { status: "open" },
+    };
+    const filtered_long: IndexDefinition = {
+      name: "open_by_assignee_priority",
+      on: ["assignee", "priority"],
+      predicate: { status: "open" },
+    };
+    const plan = planQuery(
+      {
+        status: "open",
+        assignee: "alice",
+        priority: "p1",
+      } as unknown as Predicate<JSONArraylessObject>,
+      [filtered_short, filtered_long],
+    );
+    expect(plan.kind).toBe("index-walk");
+    if (plan.kind === "index-walk") {
+      expect(plan.indexName).toBe("open_by_assignee_priority");
+      expect(plan.equalityKeys).toEqual(["alice", "p1"]);
+    }
+  });
+
+  test("filtered composite index beats unfiltered single-field for the same query", () => {
+    // Critical regression pin: planner must prefer an implied
+    // filtered composite over an unfiltered single-field at the
+    // same equality prefix length (the composite's larger key set
+    // doesn't matter — the filtered prefix is sparse and correct).
+    const unfiltered_single: IndexDefinition = { name: "by_assignee", on: "assignee" };
+    const filtered_composite: IndexDefinition = {
+      name: "open_by_assignee_priority",
+      on: ["assignee", "priority"],
+      predicate: { status: "open" },
+    };
+    const plan = planQuery(
+      {
+        status: "open",
+        assignee: "alice",
+        priority: "p1",
+      } as unknown as Predicate<JSONArraylessObject>,
+      [unfiltered_single, filtered_composite],
+    );
+    expect(plan.kind).toBe("index-walk");
+    if (plan.kind === "index-walk") {
+      expect(plan.indexName).toBe("open_by_assignee_priority");
+    }
+  });
+});

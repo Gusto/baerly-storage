@@ -47,7 +47,13 @@
  *      inside (between log PUT and `current.json` CAS-advance).
  */
 
-import { BaerlyError, type JSONArraylessObject } from "@baerly/protocol";
+import {
+  BaerlyError,
+  type JSONArraylessObject,
+  matches,
+  type Predicate,
+  validatePredicate,
+} from "@baerly/protocol";
 
 /**
  * A secondary index declaration. Lives in `baerly.config.ts` under
@@ -79,6 +85,28 @@ export interface IndexDefinition {
    * side).
    */
   readonly on: string | readonly string[];
+
+  /**
+   * Optional sparse-projection filter. When present, the writer
+   * emits index keys ONLY for docs that satisfy `predicate` under
+   * `matches(predicate, body)`. Sparse indexes shrink the on-storage
+   * key set proportionally to filter selectivity — an index that
+   * matches ~1% of writes pays ~1% of the dense Class-A PUT cost.
+   *
+   * **Equality-only** (T4): no `$eq`/`$gt`/`$gte`/`$lt`/`$lte`/`$in`
+   * operator objects are allowed in this predicate. The restriction
+   * keeps the planner's implication checker
+   * ({@link "@baerly/protocol".predicateImplies}) simple and
+   * sound; range / `$in` filter implication is a deferred follow-up
+   * (see `docs/followups/predicate-routing.md`). Operator-shaped
+   * filter values throw `SchemaError` at writer construction.
+   *
+   * Planner cost-bias: a filtered index whose predicate is implied
+   * by the query predicate outranks an unfiltered alternative; an
+   * unfiltered index outranks a filtered one whose predicate is NOT
+   * implied (walking the smaller key set would miss matching docs).
+   */
+  readonly predicate?: Predicate<JSONArraylessObject>;
 }
 
 /** Path-safe segment name. */
@@ -113,6 +141,61 @@ export const validateIndexDefinition = (def: IndexDefinition): void => {
     }
   } else if (def.on.length === 0) {
     throw new BaerlyError("SchemaError", `index ${def.name}.on must be non-empty array`);
+  }
+  if (def.predicate !== undefined) {
+    try {
+      validatePredicate(def.predicate);
+    } catch (err) {
+      // Surface as SchemaError so the failure mode matches the rest
+      // of validateIndexDefinition (writer-construction-time bail-out,
+      // not query-time).
+      if (err instanceof BaerlyError) {
+        throw new BaerlyError(
+          "SchemaError",
+          `index ${def.name}.predicate is invalid: ${err.message}`,
+          err,
+        );
+      }
+      throw err;
+    }
+    // Belt-and-braces equality-only check. T1 widened
+    // `validatePredicate` to accept operator-shaped clauses
+    // (`{$eq, $gt, $gte, $lt, $lte, $in}`); T4 restricts filtered
+    // indexes to equality-only so the implication checker stays
+    // sound. Operator-detection rule mirrors T1's `mergePredicates`:
+    // a node is an "operator object" iff EVERY key at that level
+    // starts with `$` (CONTRACTS.md §10).
+    assertNoOperatorClause(def.predicate, def.name, []);
+  }
+};
+
+/**
+ * Recursive walk that rejects any operator-shaped sub-object inside
+ * a filtered-index `predicate`. Throws `SchemaError` on the first
+ * violation. Open-world: we only check sub-object nodes whose keys
+ * all start with `$`; primitives and non-operator sub-predicates pass
+ * through unchanged.
+ *
+ * Note: `validatePredicate` has already accepted the structural
+ * shape, so we don't repeat null / array / reserved-key checks here.
+ */
+const assertNoOperatorClause = (
+  node: Predicate<JSONArraylessObject>,
+  defName: string,
+  path: ReadonlyArray<string>,
+): void => {
+  for (const key of Object.keys(node)) {
+    const value = (node as Record<string, unknown>)[key];
+    if (value === null || value === undefined) continue;
+    if (typeof value !== "object" || Array.isArray(value)) continue;
+    const subKeys = Object.keys(value as Record<string, unknown>);
+    if (subKeys.length > 0 && subKeys.every((k) => k.startsWith("$"))) {
+      throw new BaerlyError(
+        "SchemaError",
+        `index ${defName}.predicate at ${[...path, key].join(".") || "<root>"} is operator-shaped (keys: ${subKeys.join(", ")}); filtered-index predicates are equality-only.`,
+      );
+    }
+    assertNoOperatorClause(value as Predicate<JSONArraylessObject>, defName, [...path, key]);
   }
 };
 
@@ -239,6 +322,15 @@ export const projectIndexValues = (
  * yields `undefined` (null/missing indexed field). Used by both
  * the writer (to PUT new keys) and the rebuild command (to compute
  * the expected key set across the live doc map).
+ *
+ * Filter-aware (T4): when `def.predicate !== undefined`, the doc
+ * must satisfy `matches(def.predicate, body)` or the def contributes
+ * zero keys. The writer's diff `oldKeys` vs `newKeys` then covers
+ * all four U-quadrants automatically — see the JSDoc on
+ * `server-writer.ts` above the index-emission block. `body ===
+ * undefined` short-circuits ahead of the filter check (no keys for
+ * an unknown pre-image, regardless of filter), preserving the prior
+ * D-quadrant behaviour.
  */
 export const allIndexKeysFor = (
   logPrefix: string,
@@ -248,6 +340,9 @@ export const allIndexKeysFor = (
 ): string[] => {
   const keys: string[] = [];
   for (const def of defs) {
+    if (def.predicate !== undefined && body !== undefined) {
+      if (!matches(def.predicate, body)) continue;
+    }
     const values = projectIndexValues(def, body);
     if (values !== undefined) {
       keys.push(indexKeyFor(logPrefix, def, values, docId));

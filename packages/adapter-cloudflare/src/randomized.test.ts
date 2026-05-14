@@ -56,6 +56,9 @@ describe("randomized (Db + ServerWriter)", () => {
           // than memory; 25ms keeps the poll loop responsive without
           // burning CPU.
           pollTickMs: 25,
+          // T4: assert the filtered-index invariant at the end of
+          // the cascade.
+          injectFilteredIndex: true,
         });
       },
     );

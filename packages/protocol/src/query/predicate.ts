@@ -813,7 +813,101 @@ const pickStricter = (
   return best;
 };
 
-const deepEqualJSONArrayless = (a: JSONArrayless, b: JSONArrayless): boolean => {
+/**
+ * Filtered-index implication checker — decides whether every document
+ * accepted by `queryPredicate` is also accepted by `indexFilter`. When
+ * `true`, a walk over an index declared with `predicate: indexFilter`
+ * is **complete** for `queryPredicate`: no matching doc is missing
+ * from the smaller key set, so the planner can prefer it.
+ *
+ * Equality-only semantics (T4): operator-shaped clauses in
+ * `indexFilter` return `false` conservatively. Range / `$in`
+ * implication is a deferred follow-up — see
+ * `docs/followups/predicate-routing.md`.
+ *
+ * Algorithm — for every top-level key `k` in `indexFilter`:
+ *
+ *  1. `indexFilter[k]` is operator-shaped (every key starts with
+ *     `$`) → return `false`. Conservative deferred case.
+ *  2. `indexFilter[k]` is a JSON primitive → require
+ *     `deepEqualJSONArrayless(queryPredicate[k], indexFilter[k])`.
+ *  3. `indexFilter[k]` is a non-operator nested object → require
+ *     `queryPredicate[k]` to be an object (not primitive / missing /
+ *     array) and recurse with the sub-predicates.
+ *
+ * Returns `true` iff every clause was satisfied. An empty
+ * `indexFilter` is vacuously implied by any `queryPredicate`.
+ *
+ * Soundness contract — when this function returns `true`,
+ * `matches(queryPredicate, doc) ⇒ matches(indexFilter, doc)` for any
+ * document `doc`. Tests pin this property; see the
+ * `describe("predicateImplies", …)` block in `./predicate.test.ts`.
+ *
+ * @example
+ * ```ts
+ * predicateImplies({ status: "open" }, { status: "open" }); // true
+ * predicateImplies({ status: "open" }, { status: "open", assignee: "alice" }); // true
+ * predicateImplies({ status: "open" }, { status: "closed" }); // false
+ * predicateImplies({ assignee: { team: "platform" } }, { assignee: { team: "platform" } }); // true
+ * predicateImplies({ age: { $gte: 18 } }, { age: 21 }); // false (conservative deferred)
+ * ```
+ */
+export const predicateImplies = <T extends JSONArraylessObject = JSONArraylessObject>(
+  indexFilter: Predicate<T>,
+  queryPredicate: Predicate<T>,
+): boolean => {
+  for (const key of Object.keys(indexFilter)) {
+    const filterVal = (indexFilter as Record<string, JSONArrayless | undefined>)[key];
+    if (filterVal === undefined) continue; // validator forbids undefined
+    if (typeof filterVal === "object" && filterVal !== null && !Array.isArray(filterVal)) {
+      const subKeys = Object.keys(filterVal);
+      const allOps = subKeys.length > 0 && subKeys.every((k) => k.startsWith("$"));
+      if (allOps) return false; // (1) operator-shaped — conservative deferred
+      const queryVal = (queryPredicate as Record<string, JSONArrayless | undefined>)[key];
+      if (
+        queryVal === undefined ||
+        typeof queryVal !== "object" ||
+        queryVal === null ||
+        Array.isArray(queryVal)
+      ) {
+        return false;
+      }
+      if (
+        !predicateImplies(
+          filterVal as Predicate<JSONArraylessObject>,
+          queryVal as Predicate<JSONArraylessObject>,
+        )
+      ) {
+        return false;
+      }
+      continue;
+    }
+    // (2) primitive equality clause.
+    const queryVal = (queryPredicate as Record<string, JSONArrayless | undefined>)[key];
+    if (queryVal === undefined) return false;
+    if (!deepEqualJSONArrayless(filterVal, queryVal)) return false;
+  }
+  return true;
+};
+
+/**
+ * Recursive structural equality for `JSONArrayless` values. Lifted to
+ * `export` so the filtered-index implication checker
+ * ({@link predicateImplies}) and other callers can reuse the same
+ * comparison rule the validator + merger already trust. Two values
+ * `a` and `b` are equal iff:
+ *
+ *  - they are reference-equal (covers primitives and object identity);
+ *  - or they are both non-`null` objects with the same key set, and
+ *    every value pair is recursively equal.
+ *
+ * Arrays are out-of-band for `JSONArrayless`; this function rejects
+ * them implicitly via the same key-set walk (an array reads as an
+ * object with numeric-string keys plus a `length` exposure that
+ * `Object.keys` happens to skip — defensive callers should still gate
+ * with `Array.isArray` first).
+ */
+export const deepEqualJSONArrayless = (a: JSONArrayless, b: JSONArrayless): boolean => {
   if (a === b) return true; // primitives + object identity
   if (typeof a !== "object" || typeof b !== "object") return false;
   const aKeys = Object.keys(a);
