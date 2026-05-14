@@ -768,6 +768,24 @@ const runRead = async <T extends JSONArraylessObject>(
 };
 
 /**
+ * Range-walk exclusive-lower sentinel. `Storage.list({startAfter})`
+ * is strict-greater; to position the cursor PAST every entry whose
+ * value-segment equals `ENCODE(lo)`, append a character that
+ * lex-sorts strictly greater than every base-32 character (the
+ * encoder alphabet is `[0-9a-v]`, topping out at `v` = 0x76) AND
+ * strictly greater than the path separator `/` (0x2F).
+ *
+ * `~` (0x7E) satisfies both. The cursor `${eqPrefix}${ENCODE(lo)}/~`
+ * lex-sorts strictly greater than the LARGEST possible key under
+ * the `lo` value bucket but strictly less than the smallest key
+ * under any bucket with a larger value-segment. The next LIST
+ * result is the first entry with value-segment strictly greater
+ * than `ENCODE(lo)` — exactly the exclusive-lower semantics we
+ * want.
+ */
+const RANGE_EXCLUSIVE_LOWER_SENTINEL = "~";
+
+/**
  * Execute an {@link IndexWalkPlan} against the bucket. Returns the
  * post-filtered, fully-resolved row set. The full original
  * `state.predicate` is re-applied via `matches(...)` after fetching
@@ -775,7 +793,7 @@ const runRead = async <T extends JSONArraylessObject>(
  * planner's residue (operator clauses, unrelated equality on
  * non-indexed fields) in one place.
  *
- * Storage shape:
+ * Storage shape (equality-only walks):
  *   - Single-field walk (`equalityKeys.length === 1`): list
  *     `<tablePrefix>/index/<name>/<v0-b32>/`; each yielded key has
  *     tail `<docId>.json` (single segment).
@@ -787,6 +805,17 @@ const runRead = async <T extends JSONArraylessObject>(
  *     .../<vM-b32>/`; each yielded key has tail
  *     `<v{M+1}-b32>/.../<vN-b32>/<docId>.json` — MULTI-segment.
  *     Split on `/` and take the last segment.
+ *
+ * Storage shape (T3, range / `$in` walks):
+ *   - Range walk (`plan.rangeOn !== undefined`): list
+ *     `<tablePrefix>/index/<name>/<eq-segs>/` and break on the
+ *     first decoded value-segment past the upper bound. Lower
+ *     bound is enforced via `startAfter` (exclusive lower) or an
+ *     in-loop skip (inclusive lower) — see
+ *     {@link RANGE_EXCLUSIVE_LOWER_SENTINEL}.
+ *   - `$in` walk (`plan.inOn !== undefined`): one sequential
+ *     LIST per value, with the equality prefix prepended to each.
+ *     Doc-ids accumulate into a single Set (union semantics).
  *
  * Stale-row defence:
  *   - An index entry pointing at a docId whose underlying doc has
@@ -805,24 +834,95 @@ const runIndexWalkPlan = async <T extends JSONArraylessObject>(
   plan: IndexWalkPlan,
 ): Promise<T[]> => {
   const encodedSegments = plan.equalityKeys.map((v) => encodeIndexValue(v));
-  const prefix = `${ctx.tablePrefix}/index/${plan.indexName}/${encodedSegments.join("/")}/`;
+  const eqPrefix =
+    encodedSegments.length === 0
+      ? `${ctx.tablePrefix}/index/${plan.indexName}/`
+      : `${ctx.tablePrefix}/index/${plan.indexName}/${encodedSegments.join("/")}/`;
 
   // 1. List index entries; extract docId from the LAST segment of
   //    each key's tail. Multi-segment tails appear under composite
   //    partial-prefix walks; single-segment tails appear under
   //    single-field walks and composite full walks.
-  const docIds: string[] = [];
-  for await (const entry of ctx.storage.list(prefix)) {
-    const tail = entry.key.slice(prefix.length);
-    if (!tail.endsWith(".json")) continue;
-    const lastSlash = tail.lastIndexOf("/");
-    const docId =
-      lastSlash === -1
-        ? tail.slice(0, -".json".length)
-        : tail.slice(lastSlash + 1, -".json".length);
-    if (docId.length === 0) continue;
-    docIds.push(docId);
+  const docIdSet = new Set<string>();
+
+  if (plan.rangeOn !== undefined) {
+    // Range-LIST under the equality prefix. The value-segment sits
+    // immediately after `eqPrefix`; we lex-compare it against the
+    // encoded bounds. Lex comparison is sound because the encoder
+    // is byte-order-preserving on JSON.stringify (the planner has
+    // already refused numeric values via the NUMERIC-RANGE GUARD).
+    const r = plan.rangeOn;
+    const loEncoded = r.lo === undefined ? undefined : encodeIndexValue(r.lo);
+    const hiEncoded = r.hi === undefined ? undefined : encodeIndexValue(r.hi);
+    // Exclusive lower → position the cursor past all entries
+    // whose value-segment equals `ENCODE(r.lo)` via the sentinel.
+    // Inclusive lower → no startAfter; in-loop skip filters values
+    // strictly less than `ENCODE(r.lo)` (no-op for the bucket
+    // matching `ENCODE(r.lo)` itself).
+    const startAfter =
+      r.lo !== undefined && !r.loInclusive
+        ? `${eqPrefix}${loEncoded}/${RANGE_EXCLUSIVE_LOWER_SENTINEL}`
+        : undefined;
+    const listOpts = startAfter === undefined ? {} : { startAfter };
+    for await (const entry of ctx.storage.list(eqPrefix, listOpts)) {
+      const tail = entry.key.slice(eqPrefix.length);
+      const firstSlash = tail.indexOf("/");
+      if (firstSlash < 0) continue; // defensive: malformed key
+      const valueSeg = tail.slice(0, firstSlash);
+      // Inclusive-lower in-loop skip (couldn't push to startAfter).
+      if (loEncoded !== undefined && valueSeg < loEncoded) continue;
+      // Upper-bound break — lex-ascending enumeration, so once we
+      // pass the upper bound we're done.
+      if (hiEncoded !== undefined) {
+        if (r.hiInclusive ? valueSeg > hiEncoded : valueSeg >= hiEncoded) break;
+      }
+      // Decode the doc-id from the LAST `/`-separated segment of
+      // the tail. Single-field walk → tail is `<valueSeg>/<docId>.json`
+      // and the LAST segment is `<docId>.json`. Composite walk with
+      // tail extension → tail is `<valueSeg>/...moreSegs/<docId>.json`
+      // and the LAST segment is still `<docId>.json`.
+      const lastSlash = tail.lastIndexOf("/");
+      const last =
+        lastSlash === firstSlash ? tail.slice(firstSlash + 1) : tail.slice(lastSlash + 1);
+      if (!last.endsWith(".json")) continue;
+      const docId = last.slice(0, -".json".length);
+      if (docId.length === 0) continue;
+      docIdSet.add(docId);
+    }
+  } else if (plan.inOn !== undefined) {
+    // `$in` multi-walk: one sequential LIST per value, union of
+    // doc-ids. The planner has already vetted the fan-out (≤
+    // IN_FANOUT_THRESHOLD) and numeric-range guard (no number
+    // members).
+    for (const value of plan.inOn.values) {
+      const valPrefix = `${eqPrefix}${encodeIndexValue(value)}/`;
+      for await (const entry of ctx.storage.list(valPrefix)) {
+        const tail = entry.key.slice(valPrefix.length);
+        if (!tail.endsWith(".json")) continue;
+        const lastSlash = tail.lastIndexOf("/");
+        const docId =
+          lastSlash === -1
+            ? tail.slice(0, -".json".length)
+            : tail.slice(lastSlash + 1, -".json".length);
+        if (docId.length === 0) continue;
+        docIdSet.add(docId);
+      }
+    }
+  } else {
+    // Equality-only walk (T2 path).
+    for await (const entry of ctx.storage.list(eqPrefix)) {
+      const tail = entry.key.slice(eqPrefix.length);
+      if (!tail.endsWith(".json")) continue;
+      const lastSlash = tail.lastIndexOf("/");
+      const docId =
+        lastSlash === -1
+          ? tail.slice(0, -".json".length)
+          : tail.slice(lastSlash + 1, -".json".length);
+      if (docId.length === 0) continue;
+      docIdSet.add(docId);
+    }
   }
+  const docIds = Array.from(docIdSet);
   if (docIds.length === 0) return [];
 
   // 2. Resolve each docId by folding `(snapshot, log)` scoped to the

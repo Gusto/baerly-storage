@@ -32,7 +32,10 @@ import {
 } from "@baerly/protocol";
 import { LocalFsStorage } from "@baerly/dev";
 import { createBucket } from "../fixtures/s3-fixtures.ts";
-import { runCausalConsistencyCascade } from "../fixtures/randomized-cascade.ts";
+import {
+  runCausalConsistencyCascade,
+  runRangeWalkParityCascade,
+} from "../fixtures/randomized-cascade.ts";
 
 const stableConfig = {
   endpoint: "http://127.0.0.1:9102",
@@ -162,6 +165,19 @@ describe("randomized (Db + ServerWriter)", () => {
             storages,
             pollTickMs: variant.pollTickMs,
           });
+        },
+      );
+
+      test(
+        "range/$in walk parity vs. in-memory full-scan (string-typed bounds only)",
+        { timeout: 60 * 1000 },
+        async () => {
+          // Parity cascade only needs one Storage handle — there is
+          // no cross-instance interleaving to test, just that the
+          // planner-routed result matches the in-memory full-scan.
+          const bucket = `rwp-${variant.label}-${uuid().slice(0, 8)}`;
+          const [storage] = await variant.makeStorages(bucket, 1);
+          await runRangeWalkParityCascade({ storage: storage! });
         },
       );
     });

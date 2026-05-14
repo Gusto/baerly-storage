@@ -26,12 +26,14 @@ import {
   type JSONArraylessObject,
   type LogEntry,
   BaerlyError,
+  matches,
+  type Predicate,
   type Storage,
   createCurrentJson,
   readCurrentJson,
   uuid,
 } from "@baerly/protocol";
-import { Db, ServerWriter } from "@baerly/server";
+import { Db, type IndexDefinition, ServerWriter } from "@baerly/server";
 import {
   CentralisedOfflineFirstCausalSystem,
   type Grounding,
@@ -365,3 +367,175 @@ export const runCausalConsistencyCascade = (opts: {
       }
     })();
   });
+
+// ---------------------------------------------------------------------
+// Range-walk parity cascade (T3)
+// ---------------------------------------------------------------------
+
+/**
+ * Doc shape consumed by the range-walk parity cascade. `priority`
+ * is a string-typed field so the byte-order-preserving encoder is
+ * sound — the parity test deliberately skips numeric ranges per
+ * the planner's NUMERIC-RANGE GUARD (a numeric range is refused at
+ * the planner, so both the routed and full-scan paths route through
+ * the same code; the property would be trivially true and redundant).
+ */
+interface ParityDoc extends JSONArraylessObject {
+  readonly _id: string;
+  readonly priority: string;
+}
+
+/**
+ * Seed N random docs into the collection via a single ServerWriter
+ * with the `by_priority` index declared. Returns the seeded docs
+ * so the caller can compute the expected (full-scan) result in
+ * memory.
+ */
+const seedParityDocs = async (
+  storage: Storage,
+  app: string,
+  tenant: string,
+  collection: string,
+  indexes: ReadonlyArray<IndexDefinition>,
+  count: number,
+  priorityAlphabet: ReadonlyArray<string>,
+): Promise<ParityDoc[]> => {
+  const currentJsonKey = `app/${app}/tenant/${tenant}/manifests/${collection}/current.json`;
+  await ensureCurrent(storage, currentJsonKey);
+  const writer = new ServerWriter({
+    storage,
+    currentJsonKey,
+    options: { indexes },
+  });
+  const docs: ParityDoc[] = [];
+  for (let i = 0; i < count; i++) {
+    const priority = priorityAlphabet[i % priorityAlphabet.length]!;
+    const doc: ParityDoc = { _id: `d-${i}`, priority };
+    docs.push(doc);
+    await writer.commit({
+      op: "I",
+      collection,
+      docId: doc._id,
+      body: doc,
+    });
+  }
+  return docs;
+};
+
+/**
+ * Range-walk parity cascade: for a set of random string-typed range
+ * predicates over a seeded doc set, assert that the
+ * `db.table().where(p).all()` result (routed through the planner
+ * when the predicate matches the declared index) matches the
+ * in-memory full-scan result `docs.filter(d => matches(p, d))`.
+ *
+ * Deliberately scoped to STRING-typed bounds: the planner's
+ * NUMERIC-RANGE GUARD refuses numeric ranges, so the property
+ * trivially holds for them (both paths route through full-scan).
+ * Composite + $in parity is folded in the same loop so the cascade
+ * exercises all three T3 walk shapes.
+ *
+ * @param opts.storages         One Storage handle (the cascade
+ *                              doesn't need cross-instance writes).
+ * @param opts.app              app name; tenant is randomised per
+ *                              call so test runs don't collide.
+ * @param opts.iterations       Number of random predicates to
+ *                              evaluate. Each iteration runs the
+ *                              routed read + the in-memory full-
+ *                              scan + the equality check.
+ */
+export const runRangeWalkParityCascade = async (opts: {
+  storage: Storage;
+  app?: string;
+  tenant?: string;
+  collection?: string;
+  iterations?: number;
+}): Promise<void> => {
+  const app = opts.app ?? "rwparity";
+  const tenant = opts.tenant ?? `t-${uuid().slice(0, 8)}`;
+  const collection = opts.collection ?? "items";
+  const iterations = opts.iterations ?? 16;
+  const indexes: ReadonlyArray<IndexDefinition> = [{ name: "by_priority", on: "priority" }];
+  // 9 string-typed buckets — wide enough to make range slicing
+  // meaningful, narrow enough that the cascade stays under a
+  // second on memory.
+  const priorityAlphabet = ["p1", "p2", "p3", "p4", "p5", "p6", "p7", "p8", "p9"];
+  const seeded = await seedParityDocs(
+    opts.storage,
+    app,
+    tenant,
+    collection,
+    indexes,
+    72,
+    priorityAlphabet,
+  );
+
+  const db = Db.create({
+    storage: opts.storage,
+    app,
+    tenant,
+    indexes: new Map([[collection, indexes]]),
+  });
+  const table = db.table<ParityDoc>(collection);
+
+  // Deterministic pseudo-random for reproducibility (LCG seeded
+  // off tenant). Spec doesn't require cryptographic randomness;
+  // we just want decent coverage of bound combinations.
+  let rngState = 0;
+  for (let i = 0; i < tenant.length; i++) rngState = (rngState * 31 + tenant.charCodeAt(i)) | 0;
+  const rand = (): number => {
+    rngState = (rngState * 1664525 + 1013904223) | 0;
+    return ((rngState >>> 0) % 1_000_000) / 1_000_000;
+  };
+  const pick = <U>(arr: ReadonlyArray<U>): U => arr[Math.floor(rand() * arr.length)]!;
+
+  for (let iter = 0; iter < iterations; iter++) {
+    // Random predicate shape — mix of one-sided / two-sided range
+    // and small $in. All bounds are string-typed.
+    const shape = Math.floor(rand() * 5);
+    let predicate: Predicate<ParityDoc>;
+    if (shape === 0) {
+      // One-sided $gte
+      predicate = { priority: { $gte: pick(priorityAlphabet) } } as unknown as Predicate<ParityDoc>;
+    } else if (shape === 1) {
+      // One-sided $lt
+      predicate = { priority: { $lt: pick(priorityAlphabet) } } as unknown as Predicate<ParityDoc>;
+    } else if (shape === 2) {
+      // Two-sided, varying inclusivity. Pick distinct values so
+      // the interval is never empty (lo < hi strictly); T1
+      // validation throws UnsatisfiablePredicate on lo == hi with
+      // strict comparison or lo > hi.
+      const a = Math.floor(rand() * priorityAlphabet.length);
+      let b = Math.floor(rand() * priorityAlphabet.length);
+      if (a === b) b = (b + 1) % priorityAlphabet.length;
+      const aVal = priorityAlphabet[a]!;
+      const bVal = priorityAlphabet[b]!;
+      const lo = aVal < bVal ? aVal : bVal;
+      const hi = aVal < bVal ? bVal : aVal;
+      const loInclusive = rand() > 0.5;
+      const hiInclusive = rand() > 0.5;
+      const op: Record<string, string> = {};
+      op[loInclusive ? "$gte" : "$gt"] = lo;
+      op[hiInclusive ? "$lte" : "$lt"] = hi;
+      predicate = { priority: op } as unknown as Predicate<ParityDoc>;
+    } else if (shape === 3) {
+      // $in with 1-3 values
+      const size = 1 + Math.floor(rand() * 3);
+      const values: string[] = [];
+      for (let v = 0; v < size; v++) values.push(pick(priorityAlphabet));
+      predicate = {
+        priority: { $in: values },
+      } as unknown as Predicate<ParityDoc>;
+    } else {
+      // Plain equality (still exercises the planner's routing).
+      predicate = { priority: pick(priorityAlphabet) } as unknown as Predicate<ParityDoc>;
+    }
+
+    const expected = seeded.filter((d) => matches(predicate, d));
+    const actual = await table.where(predicate).all();
+    expect(
+      actual.map((r) => r._id).toSorted(),
+      `range-walk parity mismatch for predicate ${JSON.stringify(predicate)}`,
+    ).toEqual(expected.map((d) => d._id).toSorted());
+  }
+};

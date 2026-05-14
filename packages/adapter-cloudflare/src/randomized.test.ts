@@ -20,7 +20,10 @@
 
 import { describe, test } from "vitest";
 import { uuid, type Storage } from "@baerly/protocol";
-import { runCausalConsistencyCascade } from "../../../tests/fixtures/randomized-cascade.ts";
+import {
+  runCausalConsistencyCascade,
+  runRangeWalkParityCascade,
+} from "../../../tests/fixtures/randomized-cascade.ts";
 import { r2BindingStorage } from "./r2-binding-storage.ts";
 
 const getBinding = (): R2Bucket => {
@@ -54,6 +57,16 @@ describe("randomized (Db + ServerWriter)", () => {
           // burning CPU.
           pollTickMs: 25,
         });
+      },
+    );
+
+    test(
+      "range/$in walk parity vs. in-memory full-scan (string-typed bounds only)",
+      { timeout: 60 * 1000 },
+      async () => {
+        const binding = getBinding();
+        const storage: Storage = r2BindingStorage(binding);
+        await runRangeWalkParityCascade({ storage });
       },
     );
   });

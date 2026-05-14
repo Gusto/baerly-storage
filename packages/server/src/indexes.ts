@@ -127,6 +127,24 @@ export const validateIndexDefinition = (def: IndexDefinition): void => {
  * segment is never empty (an empty segment would collapse a key
  * into `...//docid.json` and break the storage `list(prefix)`
  * walk).
+ *
+ * **Numeric ranges are not supported by this encoder.** Output is
+ * byte-order-preserving on `JSON.stringify(v)`. JSON-stringified
+ * numbers don't sort lexicographically by numeric value
+ * (`JSON.stringify(9) === "9"` is one byte 0x39 while
+ * `JSON.stringify(10) === "10"` is two bytes 0x31 0x30, so
+ * `"9" > "10"` byte-wise). The query planner
+ * (`./query-planner.ts`) refuses numeric range and `$in` predicates
+ * over indexed fields by emitting
+ * `FullScanPlan{reason:"numeric-range-on-byte-encoder"}`; the
+ * full-scan path is correct for those predicates. A value-order-
+ * preserving numeric encoder is a follow-up — see
+ * `docs/followups/predicate-routing.md`.
+ *
+ * String ranges are safe: `"2026-05-13" < "2026-05-14"` byte-wise
+ * matches semantic order. ISO 8601 timestamps, alphabetical
+ * priorities like `"p1"/"p2"/"p3"`, and any fixed-width string
+ * encoding are usable as range-walked indexed fields.
  */
 export const encodeIndexValue = (v: unknown): string => {
   // Stringify in canonical form so equal values map to equal keys.

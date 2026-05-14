@@ -966,3 +966,309 @@ describe("operator predicates — full-scan path", () => {
     expect(rows).toEqual([]);
   });
 });
+
+describe("auto-planner range and $in walks (T3)", () => {
+  let storage: MemoryStorage;
+
+  beforeEach(() => {
+    storage = new MemoryStorage();
+  });
+
+  const dbWithByPriority = (): Db =>
+    Db.create({
+      storage,
+      app: APP,
+      tenant: TENANT,
+      indexes: new Map([[COLL, [{ name: "by_priority", on: "priority" }]]]),
+    });
+
+  const dbWithByStatus = (): Db =>
+    Db.create({
+      storage,
+      app: APP,
+      tenant: TENANT,
+      indexes: new Map([[COLL, [{ name: "by_status", on: "status" }]]]),
+    });
+
+  const dbWithComposite = (): Db =>
+    Db.create({
+      storage,
+      app: APP,
+      tenant: TENANT,
+      indexes: new Map([[COLL, [{ name: "by_tenant_age", on: ["tenant", "age"] }]]]),
+    });
+
+  test("single-field range walk over string-typed field returns the slice", async () => {
+    // Seed docs with `priority` ∈ {p1..p9}. Index on `priority`.
+    // Walk inclusive lower / exclusive upper [p3, p7).
+    await provision(storage);
+    const writer = new ServerWriter({
+      storage,
+      currentJsonKey: currentJsonKey(COLL),
+      options: { indexes: [{ name: "by_priority", on: "priority" }] },
+    });
+    for (let i = 1; i <= 9; i++) {
+      await writer.commit({
+        op: "I",
+        collection: COLL,
+        docId: `t-${i}`,
+        body: { _id: `t-${i}`, priority: `p${i}` },
+      });
+    }
+    const db = dbWithByPriority();
+    const rows = await db
+      .table<{ _id: string; priority: string }>(COLL)
+      .where({ priority: { $gte: "p3", $lt: "p7" } } as unknown as Predicate<{
+        _id: string;
+        priority: string;
+      }>)
+      .all();
+    expect(rows.map((r) => r.priority).toSorted()).toEqual(["p3", "p4", "p5", "p6"]);
+  });
+
+  test("exclusive lower bound walk skips the lower-bound bucket via sentinel", async () => {
+    await provision(storage);
+    const writer = new ServerWriter({
+      storage,
+      currentJsonKey: currentJsonKey(COLL),
+      options: { indexes: [{ name: "by_priority", on: "priority" }] },
+    });
+    for (let i = 1; i <= 5; i++) {
+      await writer.commit({
+        op: "I",
+        collection: COLL,
+        docId: `t-${i}`,
+        body: { _id: `t-${i}`, priority: `p${i}` },
+      });
+    }
+    const db = dbWithByPriority();
+    // $gt:p2 is exclusive — should NOT include p2.
+    const rows = await db
+      .table<{ _id: string; priority: string }>(COLL)
+      .where({ priority: { $gt: "p2" } } as unknown as Predicate<{
+        _id: string;
+        priority: string;
+      }>)
+      .all();
+    expect(rows.map((r) => r.priority).toSorted()).toEqual(["p3", "p4", "p5"]);
+  });
+
+  test("inclusive upper bound walk includes the upper-bound bucket", async () => {
+    await provision(storage);
+    const writer = new ServerWriter({
+      storage,
+      currentJsonKey: currentJsonKey(COLL),
+      options: { indexes: [{ name: "by_priority", on: "priority" }] },
+    });
+    for (let i = 1; i <= 5; i++) {
+      await writer.commit({
+        op: "I",
+        collection: COLL,
+        docId: `t-${i}`,
+        body: { _id: `t-${i}`, priority: `p${i}` },
+      });
+    }
+    const db = dbWithByPriority();
+    const rows = await db
+      .table<{ _id: string; priority: string }>(COLL)
+      .where({ priority: { $lte: "p3" } } as unknown as Predicate<{
+        _id: string;
+        priority: string;
+      }>)
+      .all();
+    expect(rows.map((r) => r.priority).toSorted()).toEqual(["p1", "p2", "p3"]);
+  });
+
+  test("composite eq+range walk constrains to the matching slice", async () => {
+    // Seed (tenant, age) where `age` is string-typed (zero-padded
+    // IDs) to dodge the numeric-range guard.
+    await provision(storage);
+    const writer = new ServerWriter({
+      storage,
+      currentJsonKey: currentJsonKey(COLL),
+      options: { indexes: [{ name: "by_tenant_age", on: ["tenant", "age"] }] },
+    });
+    const seedDocs = [
+      { id: "a1", tenant: "acme", age: "012" },
+      { id: "a2", tenant: "acme", age: "025" },
+      { id: "a3", tenant: "acme", age: "050" },
+      { id: "a4", tenant: "acme", age: "099" },
+      { id: "a5", tenant: "acme", age: "100" },
+      { id: "b1", tenant: "beta", age: "025" },
+      { id: "b2", tenant: "beta", age: "050" },
+    ];
+    for (const d of seedDocs) {
+      await writer.commit({
+        op: "I",
+        collection: COLL,
+        docId: d.id,
+        body: { _id: d.id, tenant: d.tenant, age: d.age },
+      });
+    }
+    const db = dbWithComposite();
+    // [012, 099) within tenant=acme — should include a1, a2, a3 but
+    // NOT a4 (099 is excluded by $lt) or a5 (out of range) or b1/b2
+    // (wrong tenant).
+    const rows = await db
+      .table<{ _id: string; tenant: string; age: string }>(COLL)
+      .where({ tenant: "acme", age: { $gte: "012", $lt: "099" } } as unknown as Predicate<{
+        _id: string;
+        tenant: string;
+        age: string;
+      }>)
+      .all();
+    expect(rows.map((r) => r._id).toSorted()).toEqual(["a1", "a2", "a3"]);
+  });
+
+  test("$in multi-walk returns the union of matching docs", async () => {
+    await provision(storage);
+    const writer = new ServerWriter({
+      storage,
+      currentJsonKey: currentJsonKey(COLL),
+      options: { indexes: [{ name: "by_status", on: "status" }] },
+    });
+    const seed = [
+      { id: "t-1", status: "open" },
+      { id: "t-2", status: "pending" },
+      { id: "t-3", status: "done" },
+      { id: "t-4", status: "open" },
+      { id: "t-5", status: "blocked" },
+    ];
+    for (const d of seed) {
+      await writer.commit({
+        op: "I",
+        collection: COLL,
+        docId: d.id,
+        body: { _id: d.id, status: d.status },
+      });
+    }
+    const db = dbWithByStatus();
+    const rows = await db
+      .table<{ _id: string; status: string }>(COLL)
+      .where({ status: { $in: ["open", "done"] } } as unknown as Predicate<{
+        _id: string;
+        status: string;
+      }>)
+      .all();
+    expect(rows.map((r) => r._id).toSorted()).toEqual(["t-1", "t-3", "t-4"]);
+  });
+
+  test("stale-entry post-filter defence: range walk drops obsolete index entries", async () => {
+    // Insert a doc at priority="p2", then update to priority="p5".
+    // Both entries land on disk via the writer's diff-old-new emit,
+    // so the by_priority/<p2-b32>/<doc>.json key is deleted and the
+    // by_priority/<p5-b32>/<doc>.json key is added. Quick verify:
+    // querying $gte:p4 returns the doc once (under its new p5); a
+    // query $lte:p3 returns nothing (the p2 entry has been deleted
+    // by the writer's diff, AND the matches() re-check would catch
+    // any leftover anyway).
+    await provision(storage);
+    const writer = new ServerWriter({
+      storage,
+      currentJsonKey: currentJsonKey(COLL),
+      options: { indexes: [{ name: "by_priority", on: "priority" }] },
+    });
+    await writer.commit({
+      op: "I",
+      collection: COLL,
+      docId: "t-1",
+      body: { _id: "t-1", priority: "p2" },
+    });
+    await writer.commit({
+      op: "U",
+      collection: COLL,
+      docId: "t-1",
+      body: { _id: "t-1", priority: "p5" },
+    });
+    const db = dbWithByPriority();
+    const above = await db
+      .table<{ _id: string; priority: string }>(COLL)
+      .where({ priority: { $gte: "p4" } } as unknown as Predicate<{
+        _id: string;
+        priority: string;
+      }>)
+      .all();
+    expect(above.map((r) => r._id)).toEqual(["t-1"]);
+    const below = await db
+      .table<{ _id: string; priority: string }>(COLL)
+      .where({ priority: { $lte: "p3" } } as unknown as Predicate<{
+        _id: string;
+        priority: string;
+      }>)
+      .all();
+    expect(below).toEqual([]);
+  });
+
+  test("numeric range falls back to full-scan and returns the right rows", async () => {
+    // Seed 10 docs with age ∈ 1..10. Index on `age`. Query
+    // $gte:5, $lte:8 — the planner refuses to route this (numeric-
+    // range guard) and falls through to the full-scan path. Verify
+    // the full-scan path returns exactly 4 docs (age ∈ {5,6,7,8}).
+    await provision(storage);
+    const writer = new ServerWriter({
+      storage,
+      currentJsonKey: currentJsonKey(COLL),
+      options: { indexes: [{ name: "by_age", on: "age" }] },
+    });
+    for (let i = 1; i <= 10; i++) {
+      await writer.commit({
+        op: "I",
+        collection: COLL,
+        docId: `t-${i}`,
+        body: { _id: `t-${i}`, age: i },
+      });
+    }
+    const db = Db.create({
+      storage,
+      app: APP,
+      tenant: TENANT,
+      indexes: new Map([[COLL, [{ name: "by_age", on: "age" }]]]),
+    });
+    const rows = await db
+      .table<{ _id: string; age: number }>(COLL)
+      .where({ age: { $gte: 5, $lte: 8 } } as unknown as Predicate<{
+        _id: string;
+        age: number;
+      }>)
+      .all();
+    expect(rows.map((r) => r.age).toSorted((a, b) => a - b)).toEqual([5, 6, 7, 8]);
+  });
+
+  test("range on non-last indexed field still returns correct rows via postFilter", async () => {
+    // Composite [tenant, age]. Predicate {tenant:{$gt:"a"}, age:"012"}
+    // — the planner treats `tenant` itself as the tail range slot
+    // (no equality consumes it), pushes the age=012 into postFilter.
+    // Verify result matches the in-memory full-scan.
+    await provision(storage);
+    const writer = new ServerWriter({
+      storage,
+      currentJsonKey: currentJsonKey(COLL),
+      options: { indexes: [{ name: "by_tenant_age", on: ["tenant", "age"] }] },
+    });
+    const seed = [
+      { id: "a1", tenant: "acme", age: "012" },
+      { id: "a2", tenant: "acme", age: "099" },
+      { id: "b1", tenant: "beta", age: "012" },
+      { id: "z1", tenant: "zeta", age: "012" },
+    ];
+    for (const d of seed) {
+      await writer.commit({
+        op: "I",
+        collection: COLL,
+        docId: d.id,
+        body: { _id: d.id, tenant: d.tenant, age: d.age },
+      });
+    }
+    const db = dbWithComposite();
+    const rows = await db
+      .table<{ _id: string; tenant: string; age: string }>(COLL)
+      .where({ tenant: { $gt: "a" }, age: "012" } as unknown as Predicate<{
+        _id: string;
+        tenant: string;
+        age: string;
+      }>)
+      .all();
+    // All tenants are > "a" lexically. age must equal "012".
+    expect(rows.map((r) => r._id).toSorted()).toEqual(["a1", "b1", "z1"]);
+  });
+});

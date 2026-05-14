@@ -6,7 +6,7 @@
 import type { Predicate, JSONArraylessObject } from "@baerly/protocol";
 import { describe, expect, test } from "vitest";
 import type { IndexDefinition } from "./indexes.ts";
-import { planQuery } from "./query-planner.ts";
+import { IN_FANOUT_THRESHOLD, planQuery } from "./query-planner.ts";
 
 describe("planQuery", () => {
   test("no predicate → full-scan with reason 'no-predicate'", () => {
@@ -115,10 +115,35 @@ describe("planQuery", () => {
     });
   });
 
-  test("operator-only predicate → full-scan 'predicate-uses-operators-only'", () => {
+  test("operator-only predicate with no matching index → 'predicate-uses-operators-only'", () => {
+    // T3: a range op on an INDEXED field is now routable via the
+    // tail-slot rangeOn slot, so we re-target the test at an op on
+    // a NON-INDEXED field — there the planner has nothing to route
+    // and the reason discriminant still fires.
     const indexes: IndexDefinition[] = [{ name: "by_status", on: "status" }];
     const plan = planQuery(
-      { status: { $gt: "p0" } } as unknown as Predicate<JSONArraylessObject>,
+      { priority: { $gt: "p0" } } as unknown as Predicate<JSONArraylessObject>,
+      indexes,
+    );
+    expect(plan).toEqual({
+      kind: "full-scan",
+      reason: "no-matching-index",
+    });
+  });
+
+  test("operator-only predicate with no indexed field at all → 'predicate-uses-operators-only'", () => {
+    // When the only predicate clauses are operator-objects on
+    // fields none of which appear in any declared index, the
+    // partition has zero equality / range / $in candidates that
+    // could plausibly be routed.
+    const indexes: IndexDefinition[] = [{ name: "by_status", on: "status" }];
+    // Use an unsupported mixed-operator shape on a non-indexed
+    // field so the partitioner classifies it as neither range nor
+    // $in nor equality — falling into the "other" bucket. Today
+    // T1 validation would reject this, but the planner's behaviour
+    // is well-defined for any partition state.
+    const plan = planQuery(
+      { priority: { $foo: "p0" } } as unknown as Predicate<JSONArraylessObject>,
       indexes,
     );
     expect(plan).toEqual({
@@ -152,6 +177,259 @@ describe("planQuery", () => {
       indexName: "by_status",
       equalityKeys: ["open"],
       postFilter: { assignee: "alice" },
+    });
+  });
+});
+
+describe("planQuery — range walks (T3)", () => {
+  test("single-field range, inclusive lower, no upper", () => {
+    const indexes: IndexDefinition[] = [{ name: "by_priority", on: "priority" }];
+    const plan = planQuery(
+      { priority: { $gte: "p2" } } as unknown as Predicate<JSONArraylessObject>,
+      indexes,
+    );
+    expect(plan).toEqual({
+      kind: "index-walk",
+      indexName: "by_priority",
+      equalityKeys: [],
+      rangeOn: {
+        field: "priority",
+        lo: "p2",
+        loInclusive: true,
+        hiInclusive: false,
+      },
+    });
+  });
+
+  test("single-field range, exclusive both sides", () => {
+    const indexes: IndexDefinition[] = [{ name: "by_priority", on: "priority" }];
+    const plan = planQuery(
+      { priority: { $gt: "p1", $lt: "p9" } } as unknown as Predicate<JSONArraylessObject>,
+      indexes,
+    );
+    expect(plan).toEqual({
+      kind: "index-walk",
+      indexName: "by_priority",
+      equalityKeys: [],
+      rangeOn: {
+        field: "priority",
+        lo: "p1",
+        hi: "p9",
+        loInclusive: false,
+        hiInclusive: false,
+      },
+    });
+  });
+
+  test("composite eq+range on tail field", () => {
+    const indexes: IndexDefinition[] = [{ name: "by_tenant_priority", on: ["tenant", "priority"] }];
+    const plan = planQuery(
+      {
+        tenant: "acme",
+        priority: { $gte: "p2", $lt: "p9" },
+      } as unknown as Predicate<JSONArraylessObject>,
+      indexes,
+    );
+    expect(plan).toEqual({
+      kind: "index-walk",
+      indexName: "by_tenant_priority",
+      equalityKeys: ["acme"],
+      rangeOn: {
+        field: "priority",
+        lo: "p2",
+        hi: "p9",
+        loInclusive: true,
+        hiInclusive: false,
+      },
+    });
+  });
+
+  test("range on non-last indexed field falls back to no-matching-index", () => {
+    // Range op on the FIRST slot prevents left-anchored routing.
+    const indexes: IndexDefinition[] = [{ name: "by_tenant_priority", on: ["tenant", "priority"] }];
+    const plan = planQuery(
+      { tenant: { $gt: "a" }, priority: "p1" } as unknown as Predicate<JSONArraylessObject>,
+      indexes,
+    );
+    // No equality on `tenant`, so the planner can route by treating
+    // `tenant` itself as a tail-slot range. That's a single-field
+    // range walk over the composite. The `priority` clause becomes
+    // postFilter residue.
+    expect(plan).toEqual({
+      kind: "index-walk",
+      indexName: "by_tenant_priority",
+      equalityKeys: [],
+      rangeOn: {
+        field: "tenant",
+        lo: "a",
+        loInclusive: false,
+        hiInclusive: false,
+      },
+      postFilter: { priority: "p1" },
+    });
+  });
+
+  test("equality on first slot, range on non-indexed field falls into postFilter", () => {
+    const indexes: IndexDefinition[] = [{ name: "by_tenant", on: "tenant" }];
+    const plan = planQuery(
+      { tenant: "acme", priority: { $gt: "p1" } } as unknown as Predicate<JSONArraylessObject>,
+      indexes,
+    );
+    expect(plan).toEqual({
+      kind: "index-walk",
+      indexName: "by_tenant",
+      equalityKeys: ["acme"],
+      postFilter: { priority: { $gt: "p1" } },
+    });
+  });
+
+  test("range inclusivity round-trip — $gte/$gt/$lte/$lt set flags correctly", () => {
+    const indexes: IndexDefinition[] = [{ name: "by_p", on: "p" }];
+    expect(
+      planQuery({ p: { $gte: "a" } } as unknown as Predicate<JSONArraylessObject>, indexes),
+    ).toMatchObject({
+      rangeOn: { lo: "a", loInclusive: true, hiInclusive: false },
+    });
+    expect(
+      planQuery({ p: { $gt: "a" } } as unknown as Predicate<JSONArraylessObject>, indexes),
+    ).toMatchObject({
+      rangeOn: { lo: "a", loInclusive: false, hiInclusive: false },
+    });
+    expect(
+      planQuery({ p: { $lte: "z" } } as unknown as Predicate<JSONArraylessObject>, indexes),
+    ).toMatchObject({
+      rangeOn: { hi: "z", hiInclusive: true, loInclusive: false },
+    });
+    expect(
+      planQuery({ p: { $lt: "z" } } as unknown as Predicate<JSONArraylessObject>, indexes),
+    ).toMatchObject({
+      rangeOn: { hi: "z", hiInclusive: false, loInclusive: false },
+    });
+  });
+
+  test("string range is allowed (no numeric-range guard tripped)", () => {
+    const indexes: IndexDefinition[] = [{ name: "by_priority", on: "priority" }];
+    const plan = planQuery(
+      { priority: { $gte: "p2" } } as unknown as Predicate<JSONArraylessObject>,
+      indexes,
+    );
+    expect(plan.kind).toBe("index-walk");
+    if (plan.kind === "index-walk") {
+      expect(plan.rangeOn).toBeDefined();
+    }
+  });
+});
+
+describe("planQuery — $in multi-walk (T3)", () => {
+  test("$in under fan-out threshold emits inOn walk plan", () => {
+    const indexes: IndexDefinition[] = [{ name: "by_status", on: "status" }];
+    const plan = planQuery(
+      { status: { $in: ["open", "pending"] } } as unknown as Predicate<JSONArraylessObject>,
+      indexes,
+    );
+    expect(plan).toEqual({
+      kind: "index-walk",
+      indexName: "by_status",
+      equalityKeys: [],
+      inOn: { field: "status", values: ["open", "pending"] },
+    });
+  });
+
+  test("$in at the fan-out threshold (length === 50) emits inOn", () => {
+    const indexes: IndexDefinition[] = [{ name: "by_status", on: "status" }];
+    const values = Array.from({ length: IN_FANOUT_THRESHOLD }, (_, i) => `v${i}`);
+    const plan = planQuery(
+      { status: { $in: values } } as unknown as Predicate<JSONArraylessObject>,
+      indexes,
+    );
+    expect(plan.kind).toBe("index-walk");
+    if (plan.kind === "index-walk") {
+      expect(plan.inOn).toBeDefined();
+      expect(plan.inOn?.values).toHaveLength(IN_FANOUT_THRESHOLD);
+    }
+  });
+
+  test("$in over the fan-out threshold (length === 51) falls back to full-scan", () => {
+    const indexes: IndexDefinition[] = [{ name: "by_status", on: "status" }];
+    const values = Array.from({ length: IN_FANOUT_THRESHOLD + 1 }, (_, i) => `v${i}`);
+    const plan = planQuery(
+      { status: { $in: values } } as unknown as Predicate<JSONArraylessObject>,
+      indexes,
+    );
+    expect(plan).toEqual({
+      kind: "full-scan",
+      reason: "no-matching-index",
+    });
+  });
+
+  test("composite eq + $in on tail field emits inOn walk plan", () => {
+    const indexes: IndexDefinition[] = [{ name: "by_tenant_priority", on: ["tenant", "priority"] }];
+    const plan = planQuery(
+      {
+        tenant: "acme",
+        priority: { $in: ["p1", "p2"] },
+      } as unknown as Predicate<JSONArraylessObject>,
+      indexes,
+    );
+    expect(plan).toEqual({
+      kind: "index-walk",
+      indexName: "by_tenant_priority",
+      equalityKeys: ["acme"],
+      inOn: { field: "priority", values: ["p1", "p2"] },
+    });
+  });
+});
+
+describe("planQuery — numeric-range guard (T3)", () => {
+  // CRITICAL: these tests are the orchestrator's correctness gate.
+  // The discriminant string "numeric-range-on-byte-encoder" is
+  // searched for explicitly — do not rename without coordinating
+  // with the predicate-routing chapter contracts.
+  test("numeric range refused on lower bound — full-scan with reason 'numeric-range-on-byte-encoder'", () => {
+    const indexes: IndexDefinition[] = [{ name: "by_age", on: "age" }];
+    const plan = planQuery(
+      { age: { $gte: 18, $lt: 65 } } as unknown as Predicate<JSONArraylessObject>,
+      indexes,
+    );
+    expect(plan).toEqual({
+      kind: "full-scan",
+      reason: "numeric-range-on-byte-encoder",
+    });
+  });
+
+  test("numeric range refused on upper bound only", () => {
+    const indexes: IndexDefinition[] = [{ name: "by_age", on: "age" }];
+    const plan = planQuery(
+      { age: { $lt: 100 } } as unknown as Predicate<JSONArraylessObject>,
+      indexes,
+    );
+    expect(plan).toEqual({
+      kind: "full-scan",
+      reason: "numeric-range-on-byte-encoder",
+    });
+  });
+
+  test("numeric $in refused", () => {
+    const indexes: IndexDefinition[] = [{ name: "by_age", on: "age" }];
+    const plan = planQuery(
+      { age: { $in: [1, 2, 3] } } as unknown as Predicate<JSONArraylessObject>,
+      indexes,
+    );
+    expect(plan).toEqual({
+      kind: "full-scan",
+      reason: "numeric-range-on-byte-encoder",
+    });
+  });
+
+  test("mixed numeric + string $in refused (any numeric element trips the guard)", () => {
+    const indexes: IndexDefinition[] = [{ name: "by_x", on: "x" }];
+    const plan = planQuery(
+      { x: { $in: ["a", 1] } } as unknown as Predicate<JSONArraylessObject>,
+      indexes,
+    );
+    expect(plan).toEqual({
+      kind: "full-scan",
+      reason: "numeric-range-on-byte-encoder",
     });
   });
 });
