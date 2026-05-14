@@ -22,8 +22,12 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { DOMParser } from "@xmldom/xmldom";
+import { AwsClient } from "aws4fetch";
+import { BaerlyError, S3HttpStorage, type Storage } from "@baerly/protocol";
 import type { AppConfig } from "../config.ts";
 import type { DoctorFinding, DoctorReport } from "./cloudflare.ts";
+import { discoverCollections, estimateWritesPerMin } from "./usage.ts";
 
 const rollupStatus = (findings: readonly DoctorFinding[]): DoctorReport["status"] => {
   let worst: DoctorReport["status"] = "ok";
@@ -37,10 +41,18 @@ const rollupStatus = (findings: readonly DoctorFinding[]): DoctorReport["status"
 /**
  * Walk the Node deploy invariants. Returns a structured
  * {@link DoctorReport} the dispatcher renders as text or JSON.
+ *
+ * With `opts.usage === true`, additionally scans recent log entries
+ * per collection from the configured bucket (via env vars: `BUCKET`,
+ * `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, optionally
+ * `S3_ENDPOINT` + `AWS_REGION`) and appends one
+ * graduation-hint finding per collection. Missing env vars produce
+ * a single `usage-env-vars` error finding and skip the scan. See
+ * `./usage.ts` for the rate model.
  */
 export const doctorNode = async (
   config: AppConfig,
-  opts: { readonly cwd?: string } = {},
+  opts: { readonly cwd?: string; readonly usage?: boolean } = {},
 ): Promise<DoctorReport> => {
   const repoRoot = opts.cwd ?? config.repoRoot;
   const serverDir = resolve(repoRoot, "apps", "server");
@@ -151,5 +163,97 @@ export const doctorNode = async (
     }
   }
 
+  // 8. --usage scan (opt-in). Reads BUCKET / AWS_* from process.env
+  //    and lists recent log entries per collection from the live
+  //    bucket. Independent of all the file-presence checks above so
+  //    a missing Dockerfile doesn't suppress the usage findings.
+  if (opts.usage === true) {
+    await runUsageCheck(config, findings);
+  }
+
   return { findings, status: rollupStatus(findings) };
+};
+
+/**
+ * Append usage findings to `findings` for the configured app /
+ * tenant. Reads `BUCKET`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`,
+ * and optionally `S3_ENDPOINT`, `AWS_REGION` from `process.env`. Any
+ * missing required var emits one error-severity `usage-env-vars`
+ * finding and short-circuits the scan.
+ *
+ * Per-collection failures (storage / parse errors) emit a single
+ * warning-severity finding scoped to that collection so one bad
+ * key doesn't abort the whole scan. The overall doctor exit code
+ * never bumps above 0 on warnings; missing env vars do bump the
+ * exit code to 2 (storage/external error per the dispatcher
+ * contract).
+ */
+const runUsageCheck = async (config: AppConfig, findings: DoctorFinding[]): Promise<void> => {
+  const missing: string[] = [];
+  for (const k of ["BUCKET", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"]) {
+    const v = process.env[k];
+    if (v === undefined || v === "") missing.push(k);
+  }
+  if (missing.length > 0) {
+    findings.push({
+      severity: "error",
+      check: "usage-env-vars",
+      message: `--usage needs ${missing.join(", ")} on the environment; skipped bucket scan.`,
+      fix: "Source apps/server/.env or set the vars inline: `BUCKET=... AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=... baerly doctor --target=node --usage`.",
+    });
+    return;
+  }
+
+  const region = process.env["AWS_REGION"] ?? "us-east-1";
+  const endpoint = process.env["S3_ENDPOINT"] ?? `https://s3.${region}.amazonaws.com`;
+  const aws = new AwsClient({
+    accessKeyId: process.env["AWS_ACCESS_KEY_ID"]!,
+    secretAccessKey: process.env["AWS_SECRET_ACCESS_KEY"]!,
+    region,
+    service: "s3",
+  });
+  const storage: Storage = new S3HttpStorage({
+    endpoint,
+    bucket: process.env["BUCKET"]!,
+    xmlParser: new DOMParser(),
+    sign: (req) => aws.sign(req),
+  });
+
+  let collections: readonly string[];
+  try {
+    collections = await discoverCollections(storage, config.app, config.tenant);
+  } catch (e) {
+    findings.push({
+      severity: "warning",
+      check: "usage-discover",
+      message: `could not enumerate collections under app/${config.app}/tenant/${config.tenant}/manifests/: ${e instanceof BaerlyError ? e.message : (e as Error).message}`,
+    });
+    return;
+  }
+  if (collections.length === 0) {
+    findings.push({
+      severity: "info",
+      check: "usage-empty",
+      message: `no collections found under app/${config.app}/tenant/${config.tenant}/manifests/; nothing to scan.`,
+    });
+    return;
+  }
+
+  for (const c of collections) {
+    try {
+      const verdict = await estimateWritesPerMin(storage, config.app, config.tenant, c);
+      findings.push({
+        severity: verdict.severity,
+        check: `usage-${c}`,
+        message: verdict.message,
+        ...(verdict.fix !== "" && { fix: verdict.fix }),
+      });
+    } catch (e) {
+      findings.push({
+        severity: "warning",
+        check: `usage-${c}`,
+        message: `failed to estimate writes/min for ${c}: ${e instanceof BaerlyError ? e.message : (e as Error).message}`,
+      });
+    }
+  }
 };

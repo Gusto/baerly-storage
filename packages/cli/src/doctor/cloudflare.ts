@@ -106,6 +106,14 @@ export const doctorCloudflare = async (
     readonly runner?: ProcessRunner;
     readonly fix?: boolean;
     readonly cwd?: string;
+    /**
+     * Opt-in usage-scan flag mirrored from the Node target. v1 emits
+     * a single info-severity "not yet wired for cloudflare" finding;
+     * the full scan needs an R2 binding from inside Workerd (the
+     * CLI runs in Node), which is tracked as a follow-up in
+     * `docs/followups/agent-friendliness.md` entry 10.
+     */
+    readonly usage?: boolean;
   } = {},
 ): Promise<DoctorReport> => {
   const repoRoot = opts.cwd ?? config.repoRoot;
@@ -281,6 +289,20 @@ export const doctorCloudflare = async (
       severity: "ok",
       check: "triggers.crons",
       message: `cron trigger${crons.length === 1 ? "" : "s"} ${crons.map((c) => JSON.stringify(c)).join(", ")} declared.`,
+    });
+  }
+
+  // 7. --usage scan (opt-in). v1 only wires the Node target; on CF
+  //    we surface an info finding so the flag stays uniform across
+  //    targets and operators have a visible breadcrumb pointing at
+  //    `baerly inspect` and the tracked follow-up.
+  if (opts.usage === true) {
+    findings.push({
+      severity: "info",
+      check: "usage-cf-unimplemented",
+      message:
+        "--usage scan is not yet wired for the Cloudflare target. Run `baerly inspect --target=cloudflare` for a per-collection snapshot, or temporarily target a Node-side replica of this bucket for a writes/min estimate.",
+      fix: "Track progress at docs/followups/agent-friendliness.md (entry 10).",
     });
   }
 

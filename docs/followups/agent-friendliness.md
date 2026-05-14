@@ -164,3 +164,33 @@ status-lifecycle convention.
    references that still imply the old container layout; align or
    remove. Found during T02 execution on 2026-05-13.
    **Status:** fixed-by-feature/agent-friendliness-T02
+
+10. **`baerly doctor --usage` not yet wired for the Cloudflare
+    target** — T05 (this branch) shipped the Node-target writes/min
+    estimator. The Cloudflare backend currently emits a single
+    info-severity finding (`usage-cf-unimplemented`) pointing
+    operators at `baerly inspect` because the CLI runs in Node and
+    can't reach a Workerd-side `R2BindingStorage`. The pure-storage
+    estimator in `packages/cli/src/doctor/usage.ts` is backend-
+    agnostic — it only needs a `Storage` handle; the gap is
+    construction. Three implementation paths to evaluate in the
+    follow-up:
+    1. **R2 over S3-compat HTTP from the CLI** (simplest) — wire
+       `S3HttpStorage` against the bucket's R2 S3 endpoint
+       (`https://<accountId>.r2.cloudflarestorage.com`) using an
+       account-scoped R2 API token. Requires the operator to mint
+       and provide `CF_ACCOUNT_ID` + `R2_ACCESS_KEY_ID` +
+       `R2_SECRET_ACCESS_KEY`; no different in shape from the Node
+       target's `AWS_*` env vars. Smallest code delta.
+    2. **`wrangler r2 object list/get` shell-out** — drive
+       `wrangler` via the `ProcessRunner` seam already used in
+       `doctor/cloudflare.ts`. Reuses operator's `wrangler login`
+       creds; no new env vars needed. Slow (one process per object)
+       and limited by `wrangler`'s output formats; useful as a
+       fallback when path 1 isn't acceptable.
+    3. **CF API token + workers-script remote eval** — invoke a
+       short-lived ephemeral Worker via the CF API that returns
+       per-collection sample stats. Most complex; deferred.
+    The estimator itself is unchanged regardless of construction
+    path; only the `Storage` factory changes. Found during T05
+    execution on 2026-05-13. **Status:** open
