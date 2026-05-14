@@ -112,3 +112,16 @@ status-lifecycle convention.
    and by the table-API write verbs when the bound schema rejects
    the doc"). Found while executing T03 on 2026-05-13.
    **Status:** open
+
+8. **Scaffolded `worker.ts` / `server.ts` reference monorepo-only
+   `docs/observability.md`** — both template entry points contain
+   inline comments pointing at `docs/observability.md` for sink
+   wiring guidance (`packages/create-baerly/templates/cloudflare/
+   apps/server/src/worker.ts:71` and `.../node/apps/server/src/
+   server.ts:61`). The `docs/` directory does not exist inside the
+   scaffolded app, so the link is dead from the user's perspective.
+   Found while executing T01 (no fix landed — T01 only edits the
+   scaffolded `AGENTS.md`). **Suggested cleanup:** either inline a
+   one-paragraph summary, point at the published doc URL, or move
+   the observability sink-wiring recipe into the scaffolded
+   `AGENTS.md` / `README.md`. **Status:** open
