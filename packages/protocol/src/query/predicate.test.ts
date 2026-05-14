@@ -767,8 +767,8 @@ describe("predicateImplies", () => {
     ).toBe(false);
   });
 
-  test("operator-shaped indexFilter → false (conservative deferred)", () => {
-    expect(predicateImplies(P({ age: { $gte: 18 } }), P({ age: 21 }))).toBe(false);
+  test("operator-shaped indexFilter implied by equality at or above the bound", () => {
+    expect(predicateImplies(P({ age: { $gte: 18 } }), P({ age: 21 }))).toBe(true);
   });
 
   test("empty indexFilter → true (vacuously implied)", () => {
@@ -786,5 +786,68 @@ describe("predicateImplies", () => {
     const matchingDoc: JSONObject = { status: "open", priority: "p1", assignee: "alice" };
     expect(matches(query, matchingDoc)).toBe(true);
     expect(matches(filter, matchingDoc)).toBe(true);
+  });
+});
+
+describe("predicateImplies — range and $in", () => {
+  // Test predicates use `$in: [...]` clauses whose array members don't
+  // fit `Record<string, JSONArrayless>`; the open-world Predicate type
+  // accepts them at runtime, so we cast each fixture via `unknown`.
+  const P = (p: Record<string, unknown>): Predicate => p as unknown as Predicate;
+
+  test("$gte filter implied by larger $gte query", () => {
+    expect(predicateImplies(P({ age: { $gte: 18 } }), P({ age: { $gte: 21 } }))).toBe(true);
+  });
+  test("$gte filter implied by larger $gt query", () => {
+    expect(predicateImplies(P({ age: { $gte: 18 } }), P({ age: { $gt: 20 } }))).toBe(true);
+  });
+  test("$gte filter implied by equality at or above the bound", () => {
+    expect(predicateImplies(P({ age: { $gte: 18 } }), P({ age: 21 }))).toBe(true);
+    expect(predicateImplies(P({ age: { $gte: 18 } }), P({ age: 18 }))).toBe(true);
+  });
+  test("$gte filter NOT implied by equality below the bound", () => {
+    expect(predicateImplies(P({ age: { $gte: 18 } }), P({ age: 17 }))).toBe(false);
+  });
+  test("$gt vs $gte at the same value", () => {
+    // strict filter, inclusive query → not implied
+    expect(predicateImplies(P({ age: { $gt: 18 } }), P({ age: { $gte: 18 } }))).toBe(false);
+    // inclusive filter, strict query → implied
+    expect(predicateImplies(P({ age: { $gte: 18 } }), P({ age: { $gt: 18 } }))).toBe(true);
+  });
+  test("combined $gte/$lte filter implied by combined query bounds", () => {
+    expect(
+      predicateImplies(P({ age: { $gte: 18, $lte: 65 } }), P({ age: { $gte: 21, $lte: 60 } })),
+    ).toBe(true);
+  });
+  test("combined filter NOT implied when one side of the query is missing", () => {
+    expect(predicateImplies(P({ age: { $gte: 18, $lte: 65 } }), P({ age: { $gte: 21 } }))).toBe(
+      false,
+    );
+  });
+  test("$in filter implied by $in query that is a subset", () => {
+    expect(
+      predicateImplies(
+        P({ priority: { $in: ["p0", "p1", "p2"] } }),
+        P({ priority: { $in: ["p0", "p1"] } }),
+      ),
+    ).toBe(true);
+  });
+  test("$in filter implied by equality on a member", () => {
+    expect(
+      predicateImplies(P({ priority: { $in: ["p0", "p1", "p2"] } }), P({ priority: "p1" })),
+    ).toBe(true);
+  });
+  test("$in filter NOT implied by equality outside the set", () => {
+    expect(predicateImplies(P({ priority: { $in: ["p0", "p1"] } }), P({ priority: "p2" }))).toBe(
+      false,
+    );
+  });
+  test("$in filter NOT implied by a range query", () => {
+    expect(
+      predicateImplies(P({ priority: { $in: ["p0", "p1"] } }), P({ priority: { $gte: "p0" } })),
+    ).toBe(false);
+  });
+  test("mixed types in range comparison: refuse implication", () => {
+    expect(predicateImplies(P({ x: { $gte: 18 } }), P({ x: { $gte: "18" } }))).toBe(false);
   });
 });

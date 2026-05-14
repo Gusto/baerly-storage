@@ -551,4 +551,42 @@ describe("planQuery — filtered index cost bias (T4)", () => {
       expect(plan.indexName).toBe("open_by_assignee_priority");
     }
   });
+
+  test("range-filtered index preferred when query range is contained", () => {
+    const indexes: IndexDefinition[] = [
+      { name: "any_age", on: "age" },
+      { name: "adults_by_age", on: "age", predicate: { age: { $gte: 18 } } },
+    ];
+    const plan = planQuery(
+      { age: { $gte: 21, $lte: 30 } } as unknown as Predicate<JSONArraylessObject>,
+      indexes,
+    );
+    expect(plan).toMatchObject({ kind: "index-walk", indexName: "adults_by_age" });
+  });
+
+  test("$in-filtered index preferred when query value is in the filter set", () => {
+    const indexes: IndexDefinition[] = [
+      { name: "any_priority", on: "priority" },
+      { name: "p0_p1", on: "priority", predicate: { priority: { $in: ["p0", "p1"] } } },
+    ];
+    const plan = planQuery(
+      { priority: "p1" } as unknown as Predicate<JSONArraylessObject>,
+      indexes,
+    );
+    expect(plan).toMatchObject({ kind: "index-walk", indexName: "p0_p1" });
+  });
+
+  test("range-filtered index NOT preferred when query exits the filter", () => {
+    const indexes: IndexDefinition[] = [
+      { name: "any_age", on: "age" },
+      { name: "adults_by_age", on: "age", predicate: { age: { $gte: 18 } } },
+    ];
+    const plan = planQuery(
+      { age: { $gte: 17, $lte: 30 } } as unknown as Predicate<JSONArraylessObject>,
+      indexes,
+    );
+    // Falls back to the unfiltered index — walking adults_by_age would
+    // miss age=17.
+    expect(plan).toMatchObject({ kind: "index-walk", indexName: "any_age" });
+  });
 });

@@ -98,13 +98,14 @@ export interface IndexDefinition {
    * key set proportionally to filter selectivity — an index that
    * matches ~1% of writes pays ~1% of the dense Class-A PUT cost.
    *
-   * **Equality-only** (T4): no `$eq`/`$gt`/`$gte`/`$lt`/`$lte`/`$in`
-   * operator objects are allowed in this predicate. The restriction
-   * keeps the planner's implication checker
-   * ({@link "@baerly/protocol".predicateImplies}) simple and
-   * sound; range / `$in` filter implication is a deferred follow-up
-   * (see `docs/followups/predicate-routing.md`). Operator-shaped
-   * filter values throw `SchemaError` at writer construction.
+   * Operators allowed: `$eq`, `$gt`, `$gte`, `$lt`, `$lte`, `$in`.
+   * Range-shaped and `$in`-shaped filters compose with the planner's
+   * cost-bias step via
+   * ({@link "@baerly/protocol".predicateImplies}), which proves
+   * whether a query predicate is contained in the filter's value
+   * range. A query that the filter's range / set strictly contains
+   * will route through the filtered index in preference to an
+   * unfiltered alternative.
    *
    * Planner cost-bias: a filtered index whose predicate is implied
    * by the query predicate outranks an unfiltered alternative; an
@@ -163,44 +164,6 @@ export const validateIndexDefinition = (def: IndexDefinition): void => {
       }
       throw err;
     }
-    // Belt-and-braces equality-only check. T1 widened
-    // `validatePredicate` to accept operator-shaped clauses
-    // (`{$eq, $gt, $gte, $lt, $lte, $in}`); T4 restricts filtered
-    // indexes to equality-only so the implication checker stays
-    // sound. Operator-detection rule mirrors T1's `mergePredicates`:
-    // a node is an "operator object" iff EVERY key at that level
-    // starts with `$` (CONTRACTS.md §10).
-    assertNoOperatorClause(def.predicate, def.name, []);
-  }
-};
-
-/**
- * Recursive walk that rejects any operator-shaped sub-object inside
- * a filtered-index `predicate`. Throws `SchemaError` on the first
- * violation. Open-world: we only check sub-object nodes whose keys
- * all start with `$`; primitives and non-operator sub-predicates pass
- * through unchanged.
- *
- * Note: `validatePredicate` has already accepted the structural
- * shape, so we don't repeat null / array / reserved-key checks here.
- */
-const assertNoOperatorClause = (
-  node: Predicate<JSONArraylessObject>,
-  defName: string,
-  path: ReadonlyArray<string>,
-): void => {
-  for (const key of Object.keys(node)) {
-    const value = (node as Record<string, unknown>)[key];
-    if (value === null || value === undefined) continue;
-    if (typeof value !== "object" || Array.isArray(value)) continue;
-    const subKeys = Object.keys(value as Record<string, unknown>);
-    if (subKeys.length > 0 && subKeys.every((k) => k.startsWith("$"))) {
-      throw new BaerlyError(
-        "SchemaError",
-        `index ${defName}.predicate at ${[...path, key].join(".") || "<root>"} is operator-shaped (keys: ${subKeys.join(", ")}); filtered-index predicates are equality-only.`,
-      );
-    }
-    assertNoOperatorClause(value as Predicate<JSONArraylessObject>, defName, [...path, key]);
   }
 };
 

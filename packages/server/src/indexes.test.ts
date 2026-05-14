@@ -290,14 +290,21 @@ describe("validateIndexDefinition — predicate field", () => {
     ).not.toThrow();
   });
 
-  test("rejects an operator-shaped predicate clause", () => {
+  test("accepts an operator-shaped predicate clause", () => {
     expect(() =>
       validateIndexDefinition({
         name: "adult_only",
-        on: "assignee",
-        predicate: { age: { $gte: 18 } } as unknown as never,
+        on: "name",
+        predicate: { age: { $gte: 18 } },
       }),
-    ).toThrow(/operator-shaped|equality-only/);
+    ).not.toThrow();
+    expect(() =>
+      validateIndexDefinition({
+        name: "p0_p1",
+        on: "assignee",
+        predicate: { priority: { $in: ["p0", "p1"] } },
+      }),
+    ).not.toThrow();
   });
 
   test("rejects a predicate with $-prefixed top-level key", () => {
