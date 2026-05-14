@@ -153,6 +153,15 @@ export interface TableReadContext {
    * @internal
    */
   readonly indexes: ReadonlyArray<IndexDefinition>;
+  /**
+   * Per-call `$in` fan-out threshold, threaded from {@link Db.create}.
+   * `undefined` means "use the planner default"
+   * ({@link IN_FANOUT_THRESHOLD}). Consumed by `planQuery(...)` inside
+   * `runRead` — see {@link PlanQueryOptions.inFanoutThreshold}.
+   *
+   * @internal
+   */
+  readonly inFanoutThreshold?: number;
 }
 
 /**
@@ -683,7 +692,11 @@ const runRead = async <T extends JSONArraylessObject>(
   // re-check on every fetched doc defends against stale index
   // entries AND consumes the planner's residue (operator clauses,
   // unrelated equality on non-indexed fields).
-  const plan: QueryPlan = planQuery(state.predicate, ctx.indexes);
+  const plan: QueryPlan = planQuery(
+    state.predicate,
+    ctx.indexes,
+    ctx.inFanoutThreshold !== undefined ? { inFanoutThreshold: ctx.inFanoutThreshold } : undefined,
+  );
   if (plan.kind === "index-walk") {
     let rows = await runIndexWalkPlan<T>(ctx, head.json, state, plan);
     if (state.order !== undefined) rows = sortByOrderSpec(rows, state.order);

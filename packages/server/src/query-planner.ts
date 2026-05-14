@@ -99,23 +99,32 @@ export interface FullScanPlan {
 }
 
 /**
- * Optional configuration for {@link planQuery}. Reserved for future
- * diagnostic toggles; ignored by the current implementation.
+ * Optional configuration for {@link planQuery}.
  */
 export interface PlanQueryOptions {
   /** Diagnostic toggle; attaches `consideredIndexes` when true. */
   readonly trace?: boolean;
+  /**
+   * Per-call `$in` fan-out threshold override. Defaults to
+   * {@link IN_FANOUT_THRESHOLD}. Values ≤ 0 throw at construction —
+   * the planner does not validate here (the public `Db.create`
+   * surface already validates the input).
+   */
+  readonly inFanoutThreshold?: number;
 }
 
 /**
- * `$in` fan-out threshold. `$in: [...]` with `values.length` at or
- * below this number emits an `inOn` walk plan; over this number the
- * planner falls back to `FullScanPlan` because N sequential LIST
- * round-trips cost more than one snapshot+log fold on every backend
- * we benchmark (see `bench/load-harness/` and T5's bench evidence).
+ * Default `$in` fan-out threshold. `$in: [...]` with `values.length`
+ * at or below this number emits an `inOn` walk plan; over this
+ * number the planner falls back to `FullScanPlan` because N
+ * sequential LIST round-trips cost more than one snapshot+log fold
+ * on every backend we benchmark (see `bench/load-harness/` and T5's
+ * bench evidence).
  *
- * Hard-coded for T3; a `Db.create({ inFanoutThreshold })` option is
- * a follow-up captured in `docs/followups/predicate-routing.md`.
+ * Override at the Db level via
+ * `Db.create({ inFanoutThreshold })` when your backend's LIST
+ * round-trip is cheaper than ours (Minio / S3 / GCS have no
+ * 50-subrequest budget like Cloudflare does).
  */
 export const IN_FANOUT_THRESHOLD = 50;
 
@@ -413,9 +422,12 @@ export const planQuery = <T extends JSONArraylessObject = JSONArraylessObject>(
 
   // `$in` fan-out guard. Over the threshold, N sequential LISTs cost
   // more than one snapshot+log fold on every backend we benchmark —
-  // refuse routing. Full-scan is correct.
+  // refuse routing. Full-scan is correct. The threshold defaults to
+  // {@link IN_FANOUT_THRESHOLD} but can be overridden per-Db via
+  // `Db.create({ inFanoutThreshold })`.
+  const threshold = _options?.inFanoutThreshold ?? IN_FANOUT_THRESHOLD;
   if (best.tail !== undefined && best.tail.kind === "in") {
-    if (best.tail.values.length > IN_FANOUT_THRESHOLD) {
+    if (best.tail.values.length > threshold) {
       return { kind: "full-scan", reason: "no-matching-index" };
     }
   }

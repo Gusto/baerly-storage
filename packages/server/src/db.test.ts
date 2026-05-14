@@ -64,6 +64,41 @@ describe("Db.create", () => {
       expect((err as BaerlyError).code).toBe("InvalidConfig");
     }
   });
+
+  test("rejects non-integer inFanoutThreshold", () => {
+    const storage = new MemoryStorage();
+    expect(() => Db.create({ storage, app: "a", tenant: "t", inFanoutThreshold: 1.5 })).toThrow(
+      /positive integer/,
+    );
+    try {
+      Db.create({ storage, app: "a", tenant: "t", inFanoutThreshold: 1.5 });
+    } catch (err) {
+      expect(err).toBeInstanceOf(BaerlyError);
+      expect((err as BaerlyError).code).toBe("InvalidConfig");
+    }
+  });
+
+  test("rejects non-positive inFanoutThreshold", () => {
+    const storage = new MemoryStorage();
+    expect(() => Db.create({ storage, app: "a", tenant: "t", inFanoutThreshold: 0 })).toThrow(
+      /positive integer/,
+    );
+    expect(() => Db.create({ storage, app: "a", tenant: "t", inFanoutThreshold: -1 })).toThrow(
+      /positive integer/,
+    );
+    try {
+      Db.create({ storage, app: "a", tenant: "t", inFanoutThreshold: 0 });
+    } catch (err) {
+      expect((err as BaerlyError).code).toBe("InvalidConfig");
+    }
+  });
+
+  test("accepts positive integer inFanoutThreshold", () => {
+    const storage = new MemoryStorage();
+    expect(() =>
+      Db.create({ storage, app: "a", tenant: "t", inFanoutThreshold: 200 }),
+    ).not.toThrow();
+  });
 });
 
 describe("Db._raw round-trip", () => {

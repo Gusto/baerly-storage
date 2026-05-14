@@ -18,17 +18,7 @@ backlog the next iteration's planning consults — the ticket scratch
 under `.claude/research/planning/tickets/predicate-routing/` is
 deleted at chapter close.
 
-## 1. Configurable `IN_FANOUT_THRESHOLD`
-
-The `$in` multi-walk fan-out threshold is hard-coded to 50 inside
-`packages/server/src/query-planner.ts`. A `Db.create({ indexes,
-inFanoutThreshold? })` knob lands later if real workloads benefit.
-
-- Decided in: T3.
-- Pointer: `packages/server/src/query-planner.ts`
-  (`IN_FANOUT_THRESHOLD` constant).
-
-## 2. Bounded parallelism for `$in` multi-walk LISTs
+## 1. Bounded parallelism for `$in` multi-walk LISTs
 
 Today `runIndexWalkPlan` issues one LIST per `$in` value
 sequentially. The Cloudflare 50-subrequest budget caps this
@@ -38,7 +28,7 @@ analogue) would cut wall-clock latency on multi-value `$in` walks.
 - Decided in: T3.
 - Pointer: `packages/server/src/query.ts` (`runIndexWalkPlan`).
 
-## 3. Auto-rebuild-on-config-change for filtered-index filter mutations
+## 2. Auto-rebuild-on-config-change for filtered-index filter mutations
 
 When an operator tightens a filtered index's `def.predicate`, they
 must run `pnpm exec baerly admin rebuild-index <collection> <name>`

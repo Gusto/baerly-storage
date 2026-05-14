@@ -380,6 +380,50 @@ describe("planQuery — $in multi-walk (T3)", () => {
   });
 });
 
+describe("planQuery — inFanoutThreshold override", () => {
+  test("$in fan-out under default threshold routes", () => {
+    const indexes: IndexDefinition[] = [{ name: "by_priority", on: "priority" }];
+    const values = Array.from({ length: 50 }, (_, i) => `p${i}`);
+    const plan = planQuery(
+      { priority: { $in: values } } as unknown as Predicate<JSONArraylessObject>,
+      indexes,
+    );
+    expect(plan).toMatchObject({ kind: "index-walk", indexName: "by_priority" });
+  });
+
+  test("$in fan-out over default threshold falls back to full-scan", () => {
+    const indexes: IndexDefinition[] = [{ name: "by_priority", on: "priority" }];
+    const values = Array.from({ length: 51 }, (_, i) => `p${i}`);
+    const plan = planQuery(
+      { priority: { $in: values } } as unknown as Predicate<JSONArraylessObject>,
+      indexes,
+    );
+    expect(plan).toEqual({ kind: "full-scan", reason: "no-matching-index" });
+  });
+
+  test("$in fan-out respects inFanoutThreshold override (raise)", () => {
+    const indexes: IndexDefinition[] = [{ name: "by_priority", on: "priority" }];
+    const values = Array.from({ length: 100 }, (_, i) => `p${i}`);
+    const plan = planQuery(
+      { priority: { $in: values } } as unknown as Predicate<JSONArraylessObject>,
+      indexes,
+      { inFanoutThreshold: 200 },
+    );
+    expect(plan).toMatchObject({ kind: "index-walk", indexName: "by_priority" });
+  });
+
+  test("$in fan-out respects inFanoutThreshold override (lower)", () => {
+    const indexes: IndexDefinition[] = [{ name: "by_priority", on: "priority" }];
+    const values = Array.from({ length: 5 }, (_, i) => `p${i}`);
+    const plan = planQuery(
+      { priority: { $in: values } } as unknown as Predicate<JSONArraylessObject>,
+      indexes,
+      { inFanoutThreshold: 2 },
+    );
+    expect(plan).toEqual({ kind: "full-scan", reason: "no-matching-index" });
+  });
+});
+
 describe("planQuery — numeric range / $in routing", () => {
   // The encoder at `./indexes.ts:encodeIndexValue` is value-order-
   // preserving for numbers — the old `numeric-range-on-byte-encoder`

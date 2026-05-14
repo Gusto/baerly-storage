@@ -193,6 +193,13 @@ export class Db {
    * `BaerlyConfig`).
    */
   readonly #indexes: ReadonlyMap<string, ReadonlyArray<IndexDefinition>>;
+  /**
+   * Per-Db override for the planner's `$in` fan-out threshold,
+   * threaded onto every {@link TableReadContext} this `Db` mints.
+   * `undefined` means "use the planner default"
+   * ({@link IN_FANOUT_THRESHOLD}); validated at {@link Db.create}.
+   */
+  readonly #inFanoutThreshold: number | undefined;
 
   private constructor(
     app: string,
@@ -201,6 +208,7 @@ export class Db {
     metrics: MetricsRecorder,
     schemas: ReadonlyMap<string, SchemaValidator>,
     indexes: ReadonlyMap<string, ReadonlyArray<IndexDefinition>>,
+    inFanoutThreshold: number | undefined,
   ) {
     this.app = app;
     this.tenant = tenant;
@@ -208,6 +216,7 @@ export class Db {
     this.#metrics = metrics;
     this.#schemas = schemas;
     this.#indexes = indexes;
+    this.#inFanoutThreshold = inFanoutThreshold;
     this._raw = makeRawStorageApi(app, tenant, storage);
   }
 
@@ -299,6 +308,18 @@ export class Db {
      * snapshot+log fold at zero overhead.
      */
     indexes?: ReadonlyMap<string, ReadonlyArray<IndexDefinition>>;
+    /**
+     * Override the planner's default `$in` fan-out threshold. The
+     * planner refuses to route `$in: [...]` walks with more members
+     * than this count; the default (50) was picked against
+     * Cloudflare's 50-subrequest budget. Raise this on backends with
+     * cheap LIST round-trips (Minio / S3 / GCS) when your workload
+     * benefits.
+     *
+     * Must be a positive integer. Non-integer or non-positive values
+     * throw `BaerlyError{code:"InvalidConfig"}` at construction.
+     */
+    inFanoutThreshold?: number;
   }): Db {
     const { storage, app, tenant } = config;
     if (app.length === 0 || tenant.length === 0) {
@@ -313,6 +334,14 @@ export class Db {
         `Db.create: "/" is reserved as the key-segment separator (got app=${JSON.stringify(app)}, tenant=${JSON.stringify(tenant)})`,
       );
     }
+    if (config.inFanoutThreshold !== undefined) {
+      if (!Number.isInteger(config.inFanoutThreshold) || config.inFanoutThreshold <= 0) {
+        throw new BaerlyError(
+          "InvalidConfig",
+          `Db.create: inFanoutThreshold must be a positive integer (got ${JSON.stringify(config.inFanoutThreshold)})`,
+        );
+      }
+    }
     return new Db(
       app,
       tenant,
@@ -320,6 +349,7 @@ export class Db {
       config.metrics ?? noopMetricsRecorder,
       config.schemas ?? EMPTY_SCHEMA_MAP,
       config.indexes ?? EMPTY_INDEX_MAP,
+      config.inFanoutThreshold,
     );
   }
 
@@ -380,6 +410,9 @@ export class Db {
       metrics: this.#metrics,
       indexes: this.#indexes.get(name) ?? EMPTY_INDEX_ARRAY,
       ...(schema !== undefined ? { schema } : {}),
+      ...(this.#inFanoutThreshold !== undefined
+        ? { inFanoutThreshold: this.#inFanoutThreshold }
+        : {}),
     };
   }
 
@@ -461,6 +494,9 @@ export class Db {
       metrics: this.#metrics,
       indexes: this.#indexes.get(table) ?? EMPTY_INDEX_ARRAY,
       ...(schema !== undefined ? { schema } : {}),
+      ...(this.#inFanoutThreshold !== undefined
+        ? { inFanoutThreshold: this.#inFanoutThreshold }
+        : {}),
     });
 
     // Run the body. Reads go through Storage live; mutations append
