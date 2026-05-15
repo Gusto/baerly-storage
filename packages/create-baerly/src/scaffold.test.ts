@@ -5,10 +5,10 @@ import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it, test } from "vitest";
 import { scaffold } from "./scaffold.ts";
 
-// `examples/` (containing `minimal-cloudflare/` and `minimal-node/`)
-// is the new templates root after the Step-3 migration. The
-// scaffolder's `TARGET_TO_EXAMPLE` map resolves a target to the
-// matching example directory under this root.
+// `examples/` (containing `minimal-cloudflare/`, `node-railway/`,
+// `node-docker/`, and `helpdesk-cloudflare/`) is the templates
+// root. The scaffolder's `TARGET_TO_EXAMPLE` map resolves a target
+// to the matching example directory under this root.
 const TEMPLATES_ROOT = resolve(
   dirname(fileURLToPath(import.meta.url)),
   "..",
@@ -18,7 +18,8 @@ const TEMPLATES_ROOT = resolve(
 );
 const EXAMPLE_DIRS = [
   resolve(TEMPLATES_ROOT, "minimal-cloudflare"),
-  resolve(TEMPLATES_ROOT, "minimal-node"),
+  resolve(TEMPLATES_ROOT, "node-railway"),
+  resolve(TEMPLATES_ROOT, "node-docker"),
   resolve(TEMPLATES_ROOT, "helpdesk-cloudflare"),
 ];
 
@@ -98,39 +99,44 @@ describe("scaffold", () => {
     expect(wrangler).toContain('"name": "prod-app"');
   });
 
-  it("emits a node scaffold with the bearerJwt fallback verifier", async () => {
+  test.each(["node-railway", "node-docker"] as const)(
+    "emits a %s scaffold with the bearerJwt fallback verifier",
+    async (target) => {
+      // Per-target projectName so the parameterised runs don't
+      // collide inside the shared `outRoot` tmpdir.
+      const projectName = `svc-a-${target}`;
+      const result = await scaffold({
+        projectName,
+        target,
+        pm: "npm",
+        templatesRoot: TEMPLATES_ROOT,
+        outRoot,
+      });
+      expect(result.filesWritten).toContain(join("apps", "server", "src", "server.ts"));
+      expect(result.filesWritten).not.toContain(join("apps", "server", "wrangler.jsonc"));
+      expect(result.filesWritten).toContain("AGENTS.md");
+      expect(result.filesWritten).toContain("CLAUDE.md");
+      const agentsMd = await readFile(join(result.outDir, "AGENTS.md"), "utf8");
+      const claudeMd = await readFile(join(result.outDir, "CLAUDE.md"), "utf8");
+      expect(claudeMd).toEqual(agentsMd);
+
+      const server = await readFile(
+        join(result.outDir, "apps", "server", "src", "server.ts"),
+        "utf8",
+      );
+      expect(server).toContain("bearerJwt");
+      expect(server).toContain("sharedSecret");
+      expect(server).toContain(`const APP = "${projectName}"`);
+
+      const config = await readFile(join(result.outDir, "baerly.config.ts"), "utf8");
+      expect(config).toContain(`target: "${target}"`);
+    },
+  );
+
+  it("emits a distroless Dockerfile + healthcheck for node-docker", async () => {
     const result = await scaffold({
-      projectName: "svc-a",
-      target: "node",
-      pm: "npm",
-      templatesRoot: TEMPLATES_ROOT,
-      outRoot,
-    });
-    expect(result.filesWritten).toContain(join("apps", "server", "src", "server.ts"));
-    expect(result.filesWritten).toContain(join("apps", "server", "Dockerfile"));
-    expect(result.filesWritten).not.toContain(join("apps", "server", "wrangler.jsonc"));
-    expect(result.filesWritten).toContain("AGENTS.md");
-    expect(result.filesWritten).toContain("CLAUDE.md");
-    const agentsMd = await readFile(join(result.outDir, "AGENTS.md"), "utf8");
-    const claudeMd = await readFile(join(result.outDir, "CLAUDE.md"), "utf8");
-    expect(claudeMd).toEqual(agentsMd);
-
-    const server = await readFile(
-      join(result.outDir, "apps", "server", "src", "server.ts"),
-      "utf8",
-    );
-    expect(server).toContain("bearerJwt");
-    expect(server).toContain("sharedSecret");
-    expect(server).toContain('const APP = "svc-a"');
-
-    const config = await readFile(join(result.outDir, "baerly.config.ts"), "utf8");
-    expect(config).toContain('target: "node"');
-  });
-
-  it("emits a production-shape Dockerfile + pm2 + systemd unit for node", async () => {
-    const result = await scaffold({
-      projectName: "prod-node",
-      target: "node",
+      projectName: "prod-docker",
+      target: "node-docker",
       pm: "pnpm",
       tenant: "acme",
       templatesRoot: TEMPLATES_ROOT,
@@ -139,28 +145,39 @@ describe("scaffold", () => {
     expect(result.filesWritten).toContain(join("apps", "server", "Dockerfile"));
     expect(result.filesWritten).toContain(join("apps", "server", "healthcheck.js"));
     expect(result.filesWritten).toContain(join("apps", "server", ".dockerignore"));
-    expect(result.filesWritten).toContain(join("apps", "server", "pm2.config.cjs"));
-    expect(result.filesWritten).toContain(join("apps", "server", "systemd", "baerly.service"));
     expect(result.filesWritten).toContain(join("apps", "server", ".env.example"));
+    expect(result.filesWritten).not.toContain(join("apps", "server", "pm2.config.cjs"));
+    expect(result.filesWritten).not.toContain(join("apps", "server", "systemd", "baerly.service"));
 
     const dockerfile = await readFile(join(result.outDir, "apps", "server", "Dockerfile"), "utf8");
     expect(dockerfile).toContain("FROM gcr.io/distroless/nodejs24-debian12");
     expect(dockerfile).toContain("USER nonroot:nonroot");
     expect(dockerfile).toContain("HEALTHCHECK");
-    expect(dockerfile).toContain('org.opencontainers.image.title="prod-node"');
+    expect(dockerfile).toContain('org.opencontainers.image.title="prod-docker"');
 
-    const pm2Config = await readFile(
-      join(result.outDir, "apps", "server", "pm2.config.cjs"),
+    const envExample = await readFile(
+      join(result.outDir, "apps", "server", ".env.example"),
       "utf8",
     );
-    expect(pm2Config).toContain('name: "prod-node"');
+    expect(envExample).toContain("TENANT=acme");
+  });
 
-    const unit = await readFile(
-      join(result.outDir, "apps", "server", "systemd", "baerly.service"),
-      "utf8",
-    );
-    expect(unit).toContain("Description=Baerly app — prod-node");
-    expect(unit).toContain("EnvironmentFile=/etc/baerly/prod-node.env");
+  it("emits a lean PaaS shape (no Docker) for node-railway", async () => {
+    const result = await scaffold({
+      projectName: "prod-railway",
+      target: "node-railway",
+      pm: "pnpm",
+      tenant: "acme",
+      templatesRoot: TEMPLATES_ROOT,
+      outRoot,
+    });
+    expect(result.filesWritten).toContain(join("apps", "server", "src", "server.ts"));
+    expect(result.filesWritten).toContain(join("apps", "server", ".env.example"));
+    expect(result.filesWritten).not.toContain(join("apps", "server", "Dockerfile"));
+    expect(result.filesWritten).not.toContain(join("apps", "server", ".dockerignore"));
+    expect(result.filesWritten).not.toContain(join("apps", "server", "healthcheck.js"));
+    expect(result.filesWritten).not.toContain(join("apps", "server", "pm2.config.cjs"));
+    expect(result.filesWritten).not.toContain(join("apps", "server", "systemd", "baerly.service"));
 
     const envExample = await readFile(
       join(result.outDir, "apps", "server", ".env.example"),
@@ -194,14 +211,14 @@ describe("scaffold", () => {
   it("refuses to overwrite a non-empty directory", async () => {
     await scaffold({
       projectName: "exists",
-      target: "node",
+      target: "node-docker",
       templatesRoot: TEMPLATES_ROOT,
       outRoot,
     });
     await expect(
       scaffold({
         projectName: "exists",
-        target: "node",
+        target: "node-docker",
         templatesRoot: TEMPLATES_ROOT,
         outRoot,
       }),
@@ -244,17 +261,20 @@ describe("scaffold", () => {
     ).rejects.toThrow(/template not found for target=cloudflare starter=ghost/);
   });
 
-  it("rejects helpdesk starter on the node target", async () => {
-    await expect(
-      scaffold({
-        projectName: "no-helpdesk-node",
-        target: "node",
-        starter: "helpdesk",
-        templatesRoot: TEMPLATES_ROOT,
-        outRoot,
-      }),
-    ).rejects.toThrow(/template not found for target=node starter=helpdesk/);
-  });
+  test.each(["node-railway", "node-docker"] as const)(
+    "rejects helpdesk starter on %s",
+    async (target) => {
+      await expect(
+        scaffold({
+          projectName: `no-helpdesk-${target}`,
+          target,
+          starter: "helpdesk",
+          templatesRoot: TEMPLATES_ROOT,
+          outRoot,
+        }),
+      ).rejects.toThrow(new RegExp(`template not found for target=${target} starter=helpdesk`));
+    },
+  );
 
   it("rejects an unknown target template", async () => {
     await expect(
@@ -330,9 +350,15 @@ describe("scaffold", () => {
       shape: "minimal",
     },
     {
-      target: "node",
+      target: "node-railway",
       starter: undefined,
-      sentinels: ["minimal-node", "minimal-demo"],
+      sentinels: ["minimal-railway", "minimal-demo"],
+      shape: "minimal",
+    },
+    {
+      target: "node-docker",
+      starter: undefined,
+      sentinels: ["minimal-docker", "minimal-demo"],
       shape: "minimal",
     },
     {
