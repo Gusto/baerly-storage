@@ -19,10 +19,10 @@ export interface BaerlyAppConfig {
    */
   readonly tenant: string;
   /**
-   * Deploy target — `"cloudflare"` or `"node"`. Read by `baerly
-   * deploy` to dispatch the correct deploy command.
+   * Deploy target — `"cloudflare"`, `"node-railway"`, or `"node-docker"`.
+   * Read by `baerly deploy` to dispatch the correct deploy command.
    */
-  readonly target: "cloudflare" | "node";
+  readonly target: "cloudflare" | "node-railway" | "node-docker";
   /**
    * Optional. Custom domain for the deployed service. Cloudflare:
    * wired to the Worker as a route. Node: rendered into the

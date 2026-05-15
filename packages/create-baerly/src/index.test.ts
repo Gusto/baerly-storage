@@ -60,7 +60,9 @@ describe.runIf(shouldRun)("create-baerly CLI (non-TTY)", () => {
     }
     expect(exitCode).toBe(1);
     expect(stdout).toBe("");
-    expect(stderr).toContain(`--target must be "cloudflare" or "node", got "lambda"`);
+    expect(stderr).toContain(
+      `--target must be "cloudflare", "node-railway", or "node-docker", got "lambda"`,
+    );
     expect(stderr).toContain("create-baerly:");
   });
 

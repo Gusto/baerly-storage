@@ -20,9 +20,14 @@ const TARGETS = [
     hint: "R2 + Workers, deploy via wrangler",
   },
   {
-    value: "node",
-    label: "Self-hosted Node",
-    hint: "S3-compatible bucket, Docker/pm2/systemd",
+    value: "node-railway",
+    label: "Node (Railway / Render / DO App Platform)",
+    hint: "Managed PaaS, auto-build, no Dockerfile",
+  },
+  {
+    value: "node-docker",
+    label: "Node (Docker / k8s / VPS)",
+    hint: "Distroless Dockerfile, container registries",
   },
 ] as const;
 
@@ -30,14 +35,14 @@ export interface WizardInput {
   /** When non-undefined, skip the projectName prompt and use this. */
   readonly projectName?: string;
   /** When non-undefined, skip the target prompt and use this. */
-  readonly target?: "cloudflare" | "node";
+  readonly target?: "cloudflare" | "node-railway" | "node-docker";
   /** When non-undefined, skip the install confirm and use this. */
   readonly install?: boolean;
 }
 
 export interface WizardOutput {
   readonly projectName: string;
-  readonly target: "cloudflare" | "node";
+  readonly target: "cloudflare" | "node-railway" | "node-docker";
   readonly install: boolean;
 }
 
@@ -69,7 +74,7 @@ const promptProjectName = async (): Promise<string> => {
   return v as string;
 };
 
-const promptTarget = async (): Promise<"cloudflare" | "node"> => {
+const promptTarget = async (): Promise<"cloudflare" | "node-railway" | "node-docker"> => {
   const v = await select({
     message: "Deploy target",
     options: [...TARGETS],
@@ -79,7 +84,7 @@ const promptTarget = async (): Promise<"cloudflare" | "node"> => {
     cancel("Cancelled.");
     process.exit(1);
   }
-  return v as "cloudflare" | "node";
+  return v as "cloudflare" | "node-railway" | "node-docker";
 };
 
 const promptInstall = async (): Promise<boolean> => {
