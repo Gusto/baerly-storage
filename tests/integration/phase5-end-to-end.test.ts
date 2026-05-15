@@ -48,7 +48,8 @@ import {
   type StoragePutResult,
 } from "@baerly/protocol";
 import { LocalFsStorage } from "@baerly/dev";
-import { Db, NODE_PROFILE, runScheduledMaintenance, ServerWriter } from "@baerly/server";
+import { Db, ServerWriter } from "@baerly/server";
+import { NODE_PROFILE, runScheduledMaintenance } from "@baerly/server/maintenance";
 
 const APP = "app";
 const TENANT = "tenant";
