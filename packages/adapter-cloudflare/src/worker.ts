@@ -1,15 +1,9 @@
 import { type MetricsRecorder, type Verifier, noopMetricsRecorder } from "@baerly/protocol";
 import {
-  CATEGORY,
   Db,
   type DevLandingOptions,
-  type ObservabilityConfig,
-  alsAwareRecorder,
-  configureObservability,
   createRouter,
   errorEnvelope,
-  getLogger,
-  observableStorage,
   renderDevLanding,
 } from "@baerly/server";
 import {
@@ -17,6 +11,14 @@ import {
   CLOUDFLARE_PAID_TIER,
   runScheduledMaintenance,
 } from "@baerly/server/maintenance";
+import {
+  CATEGORY,
+  type ObservabilityConfig,
+  alsAwareRecorder,
+  configureObservability,
+  getLogger,
+  observableStorage,
+} from "@baerly/server/observability";
 import { invalidateOnWrite, withReadCache } from "./cache.ts";
 import { r2BindingStorage } from "./r2-binding-storage.ts";
 

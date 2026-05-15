@@ -8,21 +8,23 @@ import {
   noopMetricsRecorder,
 } from "@baerly/protocol";
 import {
-  CATEGORY,
   Db,
   type DevLandingOptions,
   MAX_BODY_BYTES,
-  type ObservabilityConfig,
-  alsAwareRecorder,
-  configureObservability,
   createRouter,
   errorEnvelope,
-  getLogger,
   mapError,
-  observableStorage,
   renderDevLanding,
 } from "@baerly/server";
 import { NODE_PROFILE, runScheduledMaintenance } from "@baerly/server/maintenance";
+import {
+  CATEGORY,
+  type ObservabilityConfig,
+  alsAwareRecorder,
+  configureObservability,
+  getLogger,
+  observableStorage,
+} from "@baerly/server/observability";
 
 /**
  * Options for {@link createListener}.
