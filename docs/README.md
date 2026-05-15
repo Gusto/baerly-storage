@@ -26,7 +26,7 @@ For integrators and operators running Baerly against a real bucket.
   ports, fuzzer, CI formatting.
 - `guide/backups.md` — `baerly copy` bucket-to-bucket procedure.
 - Runnable scaffolds: `../examples/` (`minimal-cloudflare`,
-  `minimal-node`, `helpdesk`).
+  `node-railway`, `node-docker`, `helpdesk-cloudflare`, `helpdesk`).
 
 ## About Baerly
 

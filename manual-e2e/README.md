@@ -53,35 +53,28 @@ falls back to `sharedSecret()` for `wrangler dev` parity.
 ```sh
 # Scaffold (writes apps/server/Dockerfile, apps/server/src/server.ts,
 # baerly.config.ts, ...).
-npm create baerly@latest my-svc -- --target=node
+npm create baerly@latest my-svc -- --target=node-docker
 cd my-svc
 pnpm install
 
 # Edit apps/server/.env and set AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY,
 # BUCKET, and either JWKS_URL (production) or SHARED_SECRET (dev).
 
-# Emit reference Docker / pm2 / systemd artifacts and print
-# next-step commands. Idempotent — re-running on an unchanged tree
-# is a no-op. `--force` overwrites hand-edits.
-pnpm exec baerly deploy --target=node
+# Build the image (Docker shape ships with the scaffold).
+docker build -t my-svc:latest -f apps/server/Dockerfile .
 
-# Walk the Node deploy invariants and report findings. Read-only:
-# remediate hand-edited artifacts with `baerly deploy --target=node
-# --force`.
-pnpm exec baerly doctor --target=node
+# Run with the env file you populated from .env.example.
+docker run -p 8080:8080 --env-file apps/server/.env my-svc:latest
 ```
 
 The production template lives at
-`examples/minimal-node/`. It ships a distroless
+`examples/node-docker/`. It ships a distroless
 `Dockerfile` with non-root user (UID 65532) and a Node-script
-HEALTHCHECK, a `pm2.config.cjs` for cluster-mode pm2 hosts, a
-`systemd/baerly.service` for systemd targets, and a `.env.example`
-documenting every env var the server reads. `baerly deploy
---target=node` does NOT shell out to any deploy tool — the Node
-deploy surface is heterogeneous (Docker / k8s / pm2 / systemd /
-Cloud Run / Fly / Render / ECS / bare-metal), so the command emits
-the build inputs and prints the three first-class next-step
-recipes; the user picks the runtime.
+HEALTHCHECK, plus a `healthcheck.js` script and a `.env.example`
+documenting every env var the server reads. The Node variants are
+self-deploy via their PaaS or via `docker build` — `baerly deploy`
+only handles the Cloudflare target. For a PaaS-shaped Node scaffold
+(no Dockerfile, push-to-build), use `--target=node-railway` instead.
 
 The artifacts under `manual-e2e/cloudflare/` and `manual-e2e/node/` below
 are the **manual end-to-end check** — they exist so PRs touching

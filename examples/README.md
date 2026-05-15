@@ -31,28 +31,55 @@ pnpm dev
 selector + `baerlyWorker`), then `apps/server/wrangler.jsonc`
 (R2 binding + cron + observability config).
 
-## minimal-node
+## node-railway
 
-Bare self-hosted Node scaffold. S3-compatible bucket via
-`@baerly/adapter-node`, distroless `Dockerfile`, `pm2.config.cjs`,
-`systemd/baerly.service`, schema-less. JWKS verifier with
-`sharedSecret` fallback for `pnpm dev` parity. The "what does a
-production Node app look like?" answer.
+Bare self-hosted Node scaffold, PaaS-shaped. S3-compatible bucket via
+`@baerly/adapter-node`, JWKS verifier with `sharedSecret` fallback for
+`pnpm dev` parity. **No Dockerfile** — designed for Railway, Render,
+DO App Platform, Fly Machines, and anything else that auto-builds
+from `package.json` `start`.
 
-**Audience:** anyone deploying baerly outside Cloudflare —
-Docker, pm2, systemd, k8s, bare-metal.
+**Audience:** anyone deploying to a managed PaaS — the modal "I just
+want to push a Node app" path.
 
 **Run it:**
 
 ```sh
-cd examples/minimal-node
+cd examples/node-railway
 pnpm install
 BUCKET=... AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=... SHARED_SECRET=... pnpm dev
 ```
 
-**Read first:** `apps/server/src/server.ts` (the `node:http`
-listener + verifier selector), then `apps/server/Dockerfile` (the
-distroless multi-stage build).
+**Read first:** `apps/server/src/server.ts` (the `node:http` listener
++ verifier selector).
+
+## node-docker
+
+Bare self-hosted Node scaffold, distroless-Docker-shaped. Same S3 +
+JWKS wiring as `node-railway`, but ships a multi-stage `Dockerfile`,
+`.dockerignore`, and a `healthcheck.js` script for image-internal
+liveness. For raw Docker, Fly Machines, DO Container Registry, k8s,
+ECS — anywhere you push images.
+
+**Audience:** anyone deploying baerly as a container image.
+
+**Run it (no Docker required for `pnpm dev`):**
+
+```sh
+cd examples/node-docker
+pnpm install
+BUCKET=... AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=... SHARED_SECRET=... pnpm dev
+```
+
+**Build the image:**
+
+```sh
+docker build -t node-docker:latest -f apps/server/Dockerfile .
+docker run -p 8080:8080 --env-file apps/server/.env node-docker:latest
+```
+
+**Read first:** `apps/server/src/server.ts` (the listener), then
+`apps/server/Dockerfile` (the distroless multi-stage build).
 
 ## helpdesk-cloudflare
 
