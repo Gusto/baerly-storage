@@ -1,7 +1,7 @@
 ---
-title: AGENTS.md — agent guidance for node-railway
+title: AGENTS.md — agent guidance for minimal-railway
 audience: agent
-summary: How to develop and deploy node-railway, a baerly app.
+summary: How to develop and deploy minimal-railway, a baerly app.
 tags: [agent-entry, baerly]
 ---
 
@@ -13,7 +13,7 @@ S3-compatible storage API.
 
 ## What this is
 
-`node-railway` is a baerly app scaffolded with `create-baerly` for
+`minimal-railway` is a baerly app scaffolded with `create-baerly` for
 the managed PaaS persona (Railway, Render, DO App Platform, Fly
 Machines). The Node-side server lives in `apps/server/`; the
 optional client lives in `apps/web/`. Configuration lives in
@@ -186,7 +186,7 @@ read it via your editor's TS LS or via the published types).
   environment to that path. Example:
 
   ```sh
-  MAINTENANCE_KEY=app/node-railway/tenant/minimal-demo/manifests/tickets/current.json
+  MAINTENANCE_KEY=app/minimal-railway/tenant/minimal-demo/manifests/tickets/current.json
   ```
 
   **Multi-collection apps:** because the loop only services one

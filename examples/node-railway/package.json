@@ -1,12 +1,12 @@
 {
-  "name": "node-railway",
+  "name": "minimal-railway",
   "version": "0.0.0",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "baerly dev",
-    "build": "pnpm -F node-railway-server build",
-    "start": "pnpm -F node-railway-server start",
+    "build": "pnpm -F minimal-railway-server build",
+    "start": "pnpm -F minimal-railway-server start",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test"
   },

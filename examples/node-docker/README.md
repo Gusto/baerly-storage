@@ -1,4 +1,4 @@
-# node-docker
+# minimal-docker
 
 A baerly app scaffolded with `create-baerly` for the **self-hosted
 Node** target. Uses `@baerly/adapter-node` against an S3-compatible
@@ -8,7 +8,7 @@ bucket (AWS S3, R2 via S3-compat, Minio, etc.) with a `bearerJwt` →
 ## What you got
 
 ```
-node-docker/
+minimal-docker/
 ├── package.json              # pnpm workspace root
 ├── tsconfig.json
 ├── baerly.config.ts          # app, tenant, target, domain
@@ -50,8 +50,8 @@ shaped for raw container deploys: **Docker on a VPS**, **Fly Machines**,
 **DO Container Registry**, **k8s**, **ECS**. Build, push, run:
 
 ```sh
-docker build -t node-docker:latest -f apps/server/Dockerfile .
-docker run -p 8080:8080 --env-file apps/server/.env node-docker:latest
+docker build -t minimal-docker:latest -f apps/server/Dockerfile .
+docker run -p 8080:8080 --env-file apps/server/.env minimal-docker:latest
 ```
 
 The Dockerfile uses `gcr.io/distroless/nodejs24-debian12` (no shell,
@@ -106,7 +106,7 @@ baerly's ~$19/month; the pitch was always portability, not cost.
 
 ```sh
 baerly export --target=postgres \
-  --bucket=node-docker --app=node-docker --tenant=<your-tenant> \
+  --bucket=minimal-docker --app=minimal-docker --tenant=<your-tenant> \
   --table=<collection-name> --output=./out.sql
 ```
 

@@ -1,6 +1,6 @@
 {
   "renames": [
-    { "from": "node-railway", "fromKey": "appName" },
+    { "from": "minimal-railway", "fromKey": "appName" },
     { "from": "minimal-demo", "fromKey": "tenant" }
   ],
   "excludePaths": ["uint8array-base64.d.ts", ".baerly/scaffold.json"],

@@ -23,7 +23,7 @@ const reqEnv = (name: string): string => {
   return v;
 };
 
-const APP = "node-railway";
+const APP = "minimal-railway";
 const TENANT = process.env.TENANT ?? "minimal-demo";
 const PORT = Number(process.env.PORT ?? "8080");
 
@@ -79,7 +79,7 @@ const listener = createListener({
 });
 const server = createServer(listener);
 
-server.listen(PORT, () => console.log(`node-railway listening on :${PORT}`));
+server.listen(PORT, () => console.log(`minimal-railway listening on :${PORT}`));
 
 // Maintenance loop — hourly, opt-in via MAINTENANCE_KEY. `runMaintenanceTick`
 // compacts and GCs **one collection** (`packages/adapter-node/src/server.ts`),

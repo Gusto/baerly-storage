@@ -1,4 +1,4 @@
-# node-railway
+# minimal-railway
 
 A baerly app scaffolded with `create-baerly` for the **managed PaaS**
 Node target — shaped for Railway, Render, DO App Platform, and Fly
@@ -9,7 +9,7 @@ Machines. Uses `@baerly/adapter-node` against an S3-compatible bucket
 ## What you got
 
 ```
-node-railway/
+minimal-railway/
 ├── package.json              # pnpm workspace root
 ├── tsconfig.json
 ├── baerly.config.ts          # app, tenant, target, domain
@@ -97,7 +97,7 @@ baerly's ~$19/month; the pitch was always portability, not cost.
 
 ```sh
 baerly export --target=postgres \
-  --bucket=node-railway --app=node-railway --tenant=<your-tenant> \
+  --bucket=minimal-railway --app=minimal-railway --tenant=<your-tenant> \
   --table=<collection-name> --output=./out.sql
 ```
 

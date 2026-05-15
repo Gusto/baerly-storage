@@ -1,7 +1,7 @@
 ---
-title: AGENTS.md — agent guidance for node-docker
+title: AGENTS.md — agent guidance for minimal-docker
 audience: agent
-summary: How to develop and deploy node-docker, a baerly app.
+summary: How to develop and deploy minimal-docker, a baerly app.
 tags: [agent-entry, baerly]
 ---
 
@@ -17,7 +17,7 @@ carries `AGENTS.md`.
 
 ## What this is
 
-`node-docker` is a baerly app scaffolded with `create-baerly`.
+`minimal-docker` is a baerly app scaffolded with `create-baerly`.
 The Node-side server lives in `apps/server/`; the optional client
 lives in `apps/web/`. Configuration lives in `baerly.config.ts`.
 
@@ -211,8 +211,8 @@ read it via your editor's TS LS or via the published types).
   your orchestrator:
 
   ```sh
-  docker build -t node-docker:latest -f apps/server/Dockerfile .
-  docker run -p 8080:8080 --env-file apps/server/.env node-docker:latest
+  docker build -t minimal-docker:latest -f apps/server/Dockerfile .
+  docker run -p 8080:8080 --env-file apps/server/.env minimal-docker:latest
   ```
 
   The runtime is `gcr.io/distroless/nodejs24-debian12` (no shell,

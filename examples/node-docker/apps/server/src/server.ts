@@ -22,7 +22,7 @@ const reqEnv = (name: string): string => {
   return v;
 };
 
-const APP = "node-docker";
+const APP = "minimal-docker";
 const TENANT = process.env.TENANT ?? "minimal-demo";
 const PORT = Number(process.env.PORT ?? "8080");
 
@@ -78,7 +78,7 @@ const listener = createListener({
 });
 const server = createServer(listener);
 
-server.listen(PORT, () => console.log(`node-docker listening on :${PORT}`));
+server.listen(PORT, () => console.log(`minimal-docker listening on :${PORT}`));
 
 // Maintenance loop — hourly. Per-collection currentJsonKey shape
 // matches `Db.create({ app, tenant })`'s manifest prefix.
