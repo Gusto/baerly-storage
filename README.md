@@ -22,7 +22,7 @@ pnpm install && pnpm -r build
 
 # Scaffold into the workspace so @baerly/* + create-baerly resolve:
 cd examples
-node ../packages/create-baerly/dist/index.js my-app --target=node --json
+node ../packages/create-baerly/dist/index.js my-app --target=node-railway --json
 
 cd my-app
 pnpm install

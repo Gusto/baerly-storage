@@ -4,9 +4,9 @@ You are an autonomous coding agent. Your task is to scaffold a
 working rsvp app inside this baerly-storage workspace
 without asking the user any questions. The workspace was
 created by `pnpm create baerly -- rsvp --target=cloudflare`
-(or `--target=node` — agent's choice, but pick one and stick
-with it) and contains the standard layout described in
-`AGENTS.md` in the repo root.
+(or `--target=node-railway` / `--target=node-docker` — agent's
+choice, but pick one and stick with it) and contains the standard
+layout described in `AGENTS.md` in the repo root.
 
 ## What this app is
 

@@ -102,14 +102,14 @@ describe.runIf(RUN_NODE)("day-one handshake — node target", () => {
     async () => {
       stamp("start");
 
-      // 1. SCAFFOLD: `npm create baerly@latest -- my-app --target=node`.
+      // 1. SCAFFOLD: `npm create baerly@latest -- my-app --target=node-railway`.
       //    Driven non-interactively. The scaffold's auto-prompt logic
       //    (ticket 38) must accept all defaults under
       //    `BAERLY_NONINTERACTIVE=1`.
       const appDir = join(workdir, "my-app");
       await execa(
         "npm",
-        ["create", "baerly@latest", "--", "my-app", "--target=node", "--non-interactive"],
+        ["create", "baerly@latest", "--", "my-app", "--target=node-railway", "--non-interactive"],
         {
           cwd: workdir,
           env: {
@@ -126,11 +126,10 @@ describe.runIf(RUN_NODE)("day-one handshake — node target", () => {
       stamp("install-complete");
 
       // 3. DEPLOY (local): boot the helpdesk-shape `apps/server` on
-      //    a free port. `baerly deploy --target=node` (ticket 40)
-      //    emits a Dockerfile + start instructions for production;
-      //    the gate uses the local dev boot path because the test is
-      //    on-host. Production docker is exercised manually per
-      //    `docs/contributing/day-one-gate.md`.
+      //    a free port. Node-target variants self-deploy via their PaaS
+      //    or `docker build`; the gate uses the local dev boot path
+      //    because the test is on-host. Production paths are exercised
+      //    manually per `docs/contributing/day-one-gate.md`.
       const port = await pickFreePort();
       serverHandle = await spawnServer(appDir, port);
       await serverHandle.waitForReady();
