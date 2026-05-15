@@ -20,7 +20,7 @@ import {
   NODE_PROFILE,
   CLOUDFLARE_FREE_TIER,
   CLOUDFLARE_PAID_TIER,
-} from "@baerly/server";
+} from "@baerly/server/maintenance";
 import type { StorageSnapshot } from "../../types.ts";
 import type { CountingStorage } from "../../storage.ts";
 

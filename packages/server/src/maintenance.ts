@@ -76,7 +76,7 @@ export interface MaintenanceResult {
  *
  * @example
  * ```ts
- * import { runScheduledMaintenance, NODE_PROFILE } from "@baerly/server";
+ * import { runScheduledMaintenance, NODE_PROFILE } from "@baerly/server/maintenance";
  *
  * const res = await runScheduledMaintenance(
  *   { storage, currentJsonKey: "app/x/tenant/t/manifests/tickets/current.json" },

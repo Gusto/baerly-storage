@@ -12,7 +12,6 @@ import {
   Db,
   type DevLandingOptions,
   MAX_BODY_BYTES,
-  NODE_PROFILE,
   type ObservabilityConfig,
   alsAwareRecorder,
   configureObservability,
@@ -22,8 +21,8 @@ import {
   mapError,
   observableStorage,
   renderDevLanding,
-  runScheduledMaintenance,
 } from "@baerly/server";
+import { NODE_PROFILE, runScheduledMaintenance } from "@baerly/server/maintenance";
 
 /**
  * Options for {@link createListener}.

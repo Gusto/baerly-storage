@@ -19,6 +19,10 @@
       "types": "./src/http/index.ts",
       "import": "./src/http/index.ts"
     },
+    "./maintenance": {
+      "types": "./src/maintenance.ts",
+      "import": "./src/maintenance.ts"
+    },
     "./observability": {
       "types": "./src/observability/index.ts",
       "import": "./src/observability/index.ts"
@@ -37,6 +41,10 @@
       "./http": {
         "types": "./dist/http.d.ts",
         "import": "./dist/http.js"
+      },
+      "./maintenance": {
+        "types": "./dist/maintenance.d.ts",
+        "import": "./dist/maintenance.js"
       },
       "./observability": {
         "types": "./dist/observability.d.ts",

@@ -45,15 +45,6 @@ export {
   rebuildIndex,
 } from "./rebuild-index.ts";
 export {
-  type MaintenanceArgs,
-  type MaintenanceOptions,
-  type MaintenanceResult,
-  CLOUDFLARE_FREE_TIER,
-  CLOUDFLARE_PAID_TIER,
-  NODE_PROFILE,
-  runScheduledMaintenance,
-} from "./maintenance.ts";
-export {
   type MigrateCollectionArgs,
   type MigrateCollectionResult,
   migrateCollection,
