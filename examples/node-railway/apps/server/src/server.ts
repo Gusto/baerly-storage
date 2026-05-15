@@ -6,7 +6,8 @@
  * Verifier: JWKS-backed JWT when `JWKS_URL` is set; falls back
  * to shared secret for `pnpm dev` parity. Production deployments
  * should set `JWKS_URL` and remove the shared-secret branch.
- * Maintenance: hourly `runMaintenanceTick` on `setInterval`.
+ * Maintenance: opt-in hourly `runMaintenanceTick` when `MAINTENANCE_KEY`
+ * is set (single collection per process).
  */
 import { createServer } from "node:http";
 import { DOMParser } from "@xmldom/xmldom";
@@ -80,19 +81,26 @@ const server = createServer(listener);
 
 server.listen(PORT, () => console.log(`node-railway listening on :${PORT}`));
 
-// Maintenance loop — hourly. Derives the same currentJsonKey
-// shape that `Db.create({ app, tenant })` uses for its manifest
-// prefix, so a Railway/Render/DO-App-Platform user doesn't have
-// to remember to wire MAINTENANCE_KEY by hand.
+// Maintenance loop — hourly, opt-in via MAINTENANCE_KEY. `runMaintenanceTick`
+// compacts and GCs **one collection** (`packages/adapter-node/src/server.ts`),
+// so the operator names which collection by setting the full
+// `app/<app>/tenant/<tenant>/manifests/<collection>/current.json` key. For
+// multi-collection apps, run multiple processes or wire a separate cron per
+// collection (Railway cron, Render cron, etc.).
 const MAINTENANCE_INTERVAL_MS = 60 * 60 * 1000;
-const maintenanceKey = `app/${APP}/tenant/${TENANT}/manifests/${APP}/current.json`;
-setInterval(() => {
-  void runMaintenanceTick({ storage, currentJsonKey: maintenanceKey }).catch((e: unknown) => {
-    console.error("maintenance tick failed", e);
-  });
-}, MAINTENANCE_INTERVAL_MS).unref();
+if (process.env.MAINTENANCE_KEY !== undefined) {
+  const maintenanceKey = process.env.MAINTENANCE_KEY;
+  setInterval(() => {
+    void runMaintenanceTick({
+      storage,
+      currentJsonKey: maintenanceKey,
+    }).catch((e: unknown) => {
+      console.error("maintenance tick failed", e);
+    });
+  }, MAINTENANCE_INTERVAL_MS).unref();
+}
 
-// Graceful shutdown — SIGTERM from docker stop / k8s preStop.
+// Graceful shutdown — SIGTERM is what Railway/Render/Fly Machines/DO App Platform send on redeploy.
 const shutdown = (sig: NodeJS.Signals): void => {
   console.log(`Received ${sig}; closing server`);
   server.close((err) => {

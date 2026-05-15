@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "baerly dev",
+    "build": "pnpm -F node-railway-server build",
+    "start": "pnpm -F node-railway-server start",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test"
   },

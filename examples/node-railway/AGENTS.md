@@ -175,11 +175,27 @@ read it via your editor's TS LS or via the published types).
 
 - **Maintenance loop (Node)** — `apps/server/src/server.ts` calls
   `runMaintenanceTick({ storage, currentJsonKey })` on a 1-hour
-  `setInterval` unconditionally. The tick is unbounded
-  (`NODE_PROFILE`): one pass folds the entire live tail and sweeps
-  up to 1000 candidates. The `currentJsonKey` is derived from the
-  same `app` / `tenant` pair `Db.create` uses, so there are no
-  env knobs to wire — the loop just runs.
+  `setInterval`, **opt-in via `MAINTENANCE_KEY`**. The tick is
+  unbounded (`NODE_PROFILE`): one pass folds the entire live tail
+  and sweeps up to 1000 candidates.
+
+  `runMaintenanceTick` targets **one collection per call**, not
+  one app — `currentJsonKey` is the full
+  `app/<app>/tenant/<tenant>/manifests/<collection>/current.json`
+  path. To enable the loop, set `MAINTENANCE_KEY` in your
+  environment to that path. Example:
+
+  ```sh
+  MAINTENANCE_KEY=app/node-railway/tenant/minimal-demo/manifests/tickets/current.json
+  ```
+
+  **Multi-collection apps:** because the loop only services one
+  collection, repeat-instancing the server with a different
+  `MAINTENANCE_KEY` per process is one option; the cleaner pattern
+  is to wire a separate Railway / Render / Fly / DO App Platform
+  cron trigger per collection instead of relying on this in-process
+  loop at all. Leave `MAINTENANCE_KEY` unset in that case and the
+  server starts with no maintenance scheduling.
 
   Maintenance emits one canonical info line per run on stdout.
   Filter your log stream on `"unit_of_work": "maintenance"` and
