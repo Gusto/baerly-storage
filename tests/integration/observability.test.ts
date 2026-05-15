@@ -48,8 +48,8 @@ import {
   type StoragePutOptions,
   type StoragePutResult,
 } from "@baerly/protocol";
+import { Db } from "@baerly/server";
 import {
-  Db,
   alsAwareRecorder,
   configureObservability,
   createObservabilityContext,
@@ -57,7 +57,7 @@ import {
   observableStorage,
   runWithContext,
   type ObservabilityContext,
-} from "@baerly/server";
+} from "@baerly/server/observability";
 
 const APP = "app";
 const TENANT = "tenant";
