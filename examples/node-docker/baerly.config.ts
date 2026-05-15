@@ -1,8 +1,8 @@
 import { defineConfig } from "create-baerly/config";
 
 export default defineConfig({
-  app: "minimal-node",
+  app: "node-docker",
   tenant: "minimal-demo",
-  target: "node",
+  target: "node-docker",
   domain: undefined,
 });

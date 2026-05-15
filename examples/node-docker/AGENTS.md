@@ -1,7 +1,7 @@
 ---
-title: AGENTS.md — agent guidance for minimal-node
+title: AGENTS.md — agent guidance for node-docker
 audience: agent
-summary: How to develop and deploy minimal-node, a baerly app.
+summary: How to develop and deploy node-docker, a baerly app.
 tags: [agent-entry, baerly]
 ---
 
@@ -11,9 +11,13 @@ Guidance for AI coding agents working in this repo. This is a
 baerly app — a vendorless document database that runs over any
 S3-compatible storage API.
 
+`create-baerly` mirrors this file to `CLAUDE.md` at scaffold time
+so Claude Code reads identical content; the example tree only
+carries `AGENTS.md`.
+
 ## What this is
 
-`minimal-node` is a baerly app scaffolded with `create-baerly`.
+`node-docker` is a baerly app scaffolded with `create-baerly`.
 The Node-side server lives in `apps/server/`; the optional client
 lives in `apps/web/`. Configuration lives in `baerly.config.ts`.
 
@@ -166,8 +170,8 @@ read it via your editor's TS LS or via the published types).
      JWT_AUDIENCE=baerly-prod
      ```
 
-  4. Restart the server. `baerly doctor --target=node` runs a 3s
-     JWKS reachability probe; non-200 → warning.
+  4. Restart the server. `baerly doctor --target=node-docker` runs
+     a 3s JWKS reachability probe; non-200 → warning.
   5. Remove the `SHARED_SECRET` branch from `server.ts` before going
      to prod (or set `SHARED_SECRET` to an unguessable value behind
      a feature flag).
@@ -179,9 +183,8 @@ read it via your editor's TS LS or via the published types).
   up to 1000 candidates.
 
   No external scheduler required for the in-process loop. For
-  systemd/k8s setups that prefer external timers, omit
-  `MAINTENANCE_KEY` and invoke `runMaintenanceTick` from your
-  systemd `OnCalendar=` unit or k8s `CronJob`.
+  k8s setups that prefer external timers, omit `MAINTENANCE_KEY`
+  and invoke `runMaintenanceTick` from a k8s `CronJob`.
 
   Maintenance emits one canonical info line per run on stdout.
   Filter your log stream on `"unit_of_work": "maintenance"` and
@@ -202,14 +205,22 @@ read it via your editor's TS LS or via the published types).
     Useful for dashboards; the four explicit fields above are
     the at-a-glance summary.
 
-- **Deploy** — `baerly deploy --target=node` emits production
-  artifacts into `apps/server/`: `Dockerfile`, `pm2.config.cjs`,
-  `systemd/baerly.service`, `.dockerignore`, `healthcheck.js`, and
-  `.env.example`. It does not push containers — build the image and
-  hand it to your orchestrator (`docker build`, `pm2 start`,
-  `systemctl enable`). `baerly deploy --target=node --force`
-  overwrites hand-edits; `baerly doctor --target=node` is read-only
-  and reports drift.
+- **Deploy** — this scaffold ships a multi-stage distroless
+  `Dockerfile` at `apps/server/Dockerfile`, plus `.dockerignore`,
+  `healthcheck.js`, and `.env.example`. Build and hand the image to
+  your orchestrator:
+
+  ```sh
+  docker build -t node-docker:latest -f apps/server/Dockerfile .
+  docker run -p 8080:8080 --env-file apps/server/.env node-docker:latest
+  ```
+
+  The runtime is `gcr.io/distroless/nodejs24-debian12` (no shell,
+  non-root UID 65532); the `HEALTHCHECK` invokes the bundled
+  `healthcheck.js` rather than `curl`/`wget`. Suitable for Docker
+  on a VPS, Fly Machines, DO Container Registry, k8s, and ECS. For
+  managed PaaS (Railway, Render, DO App Platform) see the
+  `node-railway` sibling — no Dockerfile required.
 
 ## Anti-patterns
 

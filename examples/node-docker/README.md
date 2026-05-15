@@ -1,4 +1,4 @@
-# minimal-node
+# node-docker
 
 A baerly app scaffolded with `create-baerly` for the **self-hosted
 Node** target. Uses `@baerly/adapter-node` against an S3-compatible
@@ -8,19 +8,20 @@ bucket (AWS S3, R2 via S3-compat, Minio, etc.) with a `bearerJwt` →
 ## What you got
 
 ```
-minimal-node/
+node-docker/
 ├── package.json              # pnpm workspace root
-├── pnpm-workspace.yaml       # apps/*
 ├── tsconfig.json
 ├── baerly.config.ts          # app, tenant, target, domain
 ├── AGENTS.md                 # deeper guide: predicates, schemas,
-│                             #   auth recipes, graduation (Codex CLI)
-├── CLAUDE.md                 # same content (Claude Code reads this)
+│                             #   auth recipes, graduation
 ├── .baerly/schema.lock.json  # declared collection schemas
 ├── apps/
 │   ├── server/               # node:http listener — baerly host
 │   │   ├── package.json
 │   │   ├── Dockerfile        # multi-stage; distroless runtime
+│   │   ├── .dockerignore
+│   │   ├── healthcheck.js    # used by Dockerfile HEALTHCHECK
+│   │   ├── .env.example
 │   │   └── src/server.ts     # createListener({ verifier })
 │   └── web/                  # optional SPA shell — delete if unused
 │       ├── package.json
@@ -44,37 +45,32 @@ and either `JWKS_URL` (production) or `SHARED_SECRET` (parity with
 
 ## Deploy
 
-Run `baerly deploy --target=node` from the project root. The command
-is **idempotent**: it emits a Dockerfile, `pm2.config.cjs`,
-`systemd/baerly.service`, `.dockerignore`, `healthcheck.js`, and
-`.env.example` to `apps/server/`. It does NOT push images or start
-daemons — you stay in control of the rollout. Pick one path:
+This scaffold ships a multi-stage distroless `Dockerfile` and is
+shaped for raw container deploys: **Docker on a VPS**, **Fly Machines**,
+**DO Container Registry**, **k8s**, **ECS**. Build, push, run:
 
 ```sh
-# Docker
-docker build -t minimal-node:latest -f apps/server/Dockerfile .
-docker run -p 8080:8080 --env-file apps/server/.env minimal-node:latest
-
-# pm2
-pnpm -F server build
-pm2 start apps/server/pm2.config.cjs
-
-# systemd
-sudo cp apps/server/systemd/baerly.service /etc/systemd/system/
-sudo systemctl daemon-reload && sudo systemctl enable --now baerly
+docker build -t node-docker:latest -f apps/server/Dockerfile .
+docker run -p 8080:8080 --env-file apps/server/.env node-docker:latest
 ```
 
-Then verify: `curl http://localhost:8080/v1/healthz`. Re-emit with
-`baerly deploy --target=node --force` after customizing; check
-invariants with `baerly doctor --target=node`.
+The Dockerfile uses `gcr.io/distroless/nodejs24-debian12` (no shell,
+non-root user UID 65532), so the `HEALTHCHECK` shells out to the
+bundled `apps/server/healthcheck.js` rather than `curl`/`wget`.
+
+Then verify: `curl http://localhost:8080/v1/healthz`.
+
+For managed PaaS platforms (Railway, Render, DO App Platform), see
+the `node-railway` example — no Dockerfile needed; auto-build will
+detect Node from `package.json`.
 
 ## Next steps
 
 1. **Read `AGENTS.md`** for the agent-facing guide — predicates,
    indexes, schemas, auth recipes (JWKS setup), the in-process
-   maintenance loop, and the graduation criteria. Codex CLI reads
-   `AGENTS.md`; Claude Code reads `CLAUDE.md`; both files are
-   byte-identical.
+   maintenance loop, and the graduation criteria. (Claude Code
+   users: `create-baerly` mirrors `AGENTS.md` to `CLAUDE.md` at
+   scaffold time.)
 2. **Declare your first collection schema** in `baerly.config.ts`
    via `defineConfig({ collections: { ... } })` and pass it to
    `Db.create({ ..., collections })`. Schema validation is live;
@@ -82,9 +78,9 @@ invariants with `baerly doctor --target=node`.
 3. **Set up production auth** — point `JWKS_URL` at your IdP's
    JWKS endpoint (`https://<issuer>/.well-known/jwks.json`) and
    set `JWT_ISSUER` + `JWT_AUDIENCE`. Remove the `sharedSecret`
-   fallback before production. `baerly doctor --target=node`
+   fallback before production. `baerly doctor --target=node-docker`
    runs a 3-second JWKS reachability check.
-4. **Check usage trends** — run `baerly doctor --target=node
+4. **Check usage trends** — run `baerly doctor --target=node-docker
    --usage` periodically. It estimates your current writes/minute
    per collection from recent log entries and warns when you're
    approaching the graduation ceiling described in the "When to
@@ -110,7 +106,7 @@ baerly's ~$19/month; the pitch was always portability, not cost.
 
 ```sh
 baerly export --target=postgres \
-  --bucket=minimal-node --app=minimal-node --tenant=<your-tenant> \
+  --bucket=node-docker --app=node-docker --tenant=<your-tenant> \
   --table=<collection-name> --output=./out.sql
 ```
 
@@ -130,4 +126,4 @@ else falls back to `sharedSecret()` for parity with `pnpm dev`. Set
 - `baerly.config.ts` — app config (`app`, `tenant`, `target`, `domain`).
 - `apps/server/src/server.ts` — node:http listener entry.
 - `apps/server/Dockerfile` — container build (multi-stage).
-- `AGENTS.md` / `CLAUDE.md` — agent-facing guide (byte-identical).
+- `AGENTS.md` — agent-facing guide (mirrored to `CLAUDE.md` at scaffold time).

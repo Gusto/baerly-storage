@@ -36,9 +36,9 @@ COPY --from=build --chown=nonroot:nonroot /app/apps/server/package.json apps/ser
 COPY --from=build --chown=nonroot:nonroot /app/node_modules node_modules
 
 # OCI image labels — registries surface these.
-LABEL org.opencontainers.image.title="minimal-node"
+LABEL org.opencontainers.image.title="node-docker"
 LABEL org.opencontainers.image.description="Baerly app — vendorless document database."
-LABEL org.opencontainers.image.source="https://github.com/your-org/minimal-node"
+LABEL org.opencontainers.image.source="https://github.com/your-org/node-docker"
 
 ENV NODE_ENV=production
 ENV PORT=8080

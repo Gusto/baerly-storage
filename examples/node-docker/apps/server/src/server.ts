@@ -1,5 +1,5 @@
 /**
- * Server entry for minimal-node. Wires `@baerly/adapter-node` with
+ * Server entry for node-docker. Wires `@baerly/adapter-node` with
  * production-shaped storage + verifier defaults.
  *
  * Storage: AWS S3 (override via `S3_ENDPOINT` for R2/Minio/GCS).
@@ -22,7 +22,7 @@ const reqEnv = (name: string): string => {
   return v;
 };
 
-const APP = "minimal-node";
+const APP = "node-docker";
 const TENANT = process.env.TENANT ?? "minimal-demo";
 const PORT = Number(process.env.PORT ?? "8080");
 
@@ -78,7 +78,7 @@ const listener = createListener({
 });
 const server = createServer(listener);
 
-server.listen(PORT, () => console.log(`minimal-node listening on :${PORT}`));
+server.listen(PORT, () => console.log(`node-docker listening on :${PORT}`));
 
 // Maintenance loop — hourly. Per-collection currentJsonKey shape
 // matches `Db.create({ app, tenant })`'s manifest prefix.

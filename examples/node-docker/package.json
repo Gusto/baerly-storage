@@ -1,10 +1,12 @@
 {
-  "name": "minimal-node",
+  "name": "node-docker",
   "version": "0.0.0",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "baerly dev",
+    "build": "pnpm -F node-docker-server build",
+    "start": "pnpm -F node-docker-server start",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test"
   },
