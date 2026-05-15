@@ -45,47 +45,10 @@ export {
   rebuildIndex,
 } from "./rebuild-index.ts";
 export {
-  type MaintenanceArgs,
-  type MaintenanceOptions,
-  type MaintenanceResult,
-  CLOUDFLARE_FREE_TIER,
-  CLOUDFLARE_PAID_TIER,
-  NODE_PROFILE,
-  runScheduledMaintenance,
-} from "./maintenance.ts";
-export {
   type MigrateCollectionArgs,
   type MigrateCollectionResult,
   migrateCollection,
 } from "./migrate.ts";
-export {
-  type CategoryName,
-  type FlushCanonicalLineOptions,
-  type FriendlyLogLevel,
-  type MetricsSnapshot,
-  type MetricsSummary,
-  type ObservabilityConfig,
-  type ObservabilityContext,
-  type ObservabilityContextInit,
-  type ObservationRow,
-  type SerializedError,
-  type Unit,
-  CATEGORY,
-  RequestScopedMetricsRecorder,
-  alsAwareRecorder,
-  configureObservability,
-  createObservabilityContext,
-  decideSample,
-  flushCanonicalLine,
-  getCurrentContext,
-  getEffectiveSampleRate,
-  getLogger,
-  observableStorage,
-  peekContext,
-  runWithContext,
-  serializeError,
-  withObservability,
-} from "./observability/index.ts";
 export {
   type CurrentJsonCacheSlot,
   type QueryState,

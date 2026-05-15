@@ -18,7 +18,7 @@
  */
 import { baerlyWorker, type Env as BaerlyEnv } from "@baerly/adapter-cloudflare";
 import { cloudflareAccess, sharedSecret } from "@baerly/server/auth";
-import type { FriendlyLogLevel } from "@baerly/server";
+import type { FriendlyLogLevel } from "@baerly/server/observability";
 import type { Verifier } from "@baerly/protocol";
 
 interface AppEnv extends BaerlyEnv {

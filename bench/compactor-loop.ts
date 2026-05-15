@@ -11,7 +11,11 @@
  * a writer-vs-compactor race in the bench window.
  */
 
-import { NODE_PROFILE, runScheduledMaintenance, type MaintenanceResult } from "@baerly/server";
+import {
+  NODE_PROFILE,
+  runScheduledMaintenance,
+  type MaintenanceResult,
+} from "@baerly/server/maintenance";
 import type { Storage } from "@baerly/protocol";
 
 export interface CompactorLoopCounters {
