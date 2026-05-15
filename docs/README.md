@@ -2,65 +2,72 @@
 title: docs/ — topic map
 audience: meta
 summary: Index of everything under docs/, grouped by audience.
-last-reviewed: 2026-05-12
+last-reviewed: 2026-05-14
 tags: [index, navigation]
-related: ["../CLAUDE.md", "adr/README.md", "spec/README.md"]
+related: ["../CLAUDE.md", "spec/README.md", "adr/README.md"]
 ---
 
 # `docs/` — topic map
 
-Everything that doesn't live in `CLAUDE.md` (the agent entry point)
-or as JSDoc on the public API. Grouped by audience.
+Baerly is a vendorless document database that runs over any
+S3-compatible bucket. The data lives in your bucket; the protocol
+kernel is small enough that an LLM can use the public API zero-shot
+from the `.d.ts` files alone.
 
-## Start here
+## Using Baerly
 
-You are about to make a change.
+For integrators and operators running Baerly against a real bucket.
 
-- [architecture.md](architecture.md) — module dependency graph and
-  the lifecycle of `db.table(...).insert()`.
-- [development.md](development.md) — local setup, test commands,
+- `guide/auth.md` — Verifier presets (shared secret, JWT, CF Access,
+  AWS SigV4, IP allowlist) and the tenant-isolation caveat.
+- `guide/observability.md` — canonical log line, sinks (OTel,
+  Datadog, Workers Analytics), cost-aware sampling.
+- `guide/troubleshooting.md` — known pain points: test gating,
+  ports, fuzzer, CI formatting.
+- `guide/backups.md` — `baerly copy` bucket-to-bucket procedure.
+- Runnable scaffolds: `../examples/` (`minimal-cloudflare`,
+  `minimal-node`, `helpdesk`).
+
+## About Baerly
+
+Product and business context.
+
+- `about/thesis.md` — what Baerly is, who it's for, what it
+  deliberately isn't.
+- `about/cost-model.md` — per-line-item rates, write-amp meter,
+  compression posture.
+- `about/pricing-log.md` — append-only audit of cost commitments.
+
+## Contributing
+
+For people changing the code in this repo.
+
+- `contributing/architecture.md` — module graph and the lifecycle
+  of `db.table(...).insert()`.
+- `contributing/development.md` — local setup, test commands,
   Minio / Toxiproxy / Postgres stack.
-- [extending.md](extending.md) — worked examples of adding a method
-  to `Db`, a verb to `Table`, or a new `Query` constraint.
+- `contributing/extending.md` — worked examples for adding a `Db`
+  method, `Query` constraint, etc.
+- `contributing/features.md` — feature → code map.
+- `contributing/day-one-gate.md` — pre-release manual gate.
+- `contributing/conventions/` — path-scoped conventions auto-loaded
+  by Claude via `.claude/rules/`:
+  - `contributing/conventions/tests.md`
+  - `contributing/conventions/docs.md`
+  - `contributing/conventions/observability.md`
+  - `contributing/conventions/change-discipline.md`
+- `contributing/diagrams/` — rendered SVGs and editable Excalidraw
+  sources.
 
-## Code map
+## Protocol & decisions
 
-- [features.md](features.md) — feature → code map: which test, which
-  source file, which doc covers each feature.
-- [conventions/](conventions/) — path-scoped conventions
-  (`tests.md`, `docs.md`) — auto-loaded by Claude via
-  `.claude/rules/`.
+For theory and spec readers.
 
-## Decisions
+- `spec/` — protocol theory and stable contracts (sync protocol,
+  causal consistency, JSON merge patch, log-entry shape, S3
+  features used).
+- `adr/` — Architecture Decision Records.
 
-- [adr/](adr/) — Architecture Decision Records. Each ADR captures
-  one load-bearing choice and the reasoning behind it.
+---
 
-## Protocol & contracts
-
-- [spec/](spec/) — protocol theory and stable contracts. Pure
-  "what" — no implementation detail. Sync protocol, causal
-  consistency, JSON merge patch, log-entry shape, S3 features used.
-
-## Operations
-
-- [auth.md](auth.md) — built-in `Verifier` presets and the
-  tenant-isolation / authorization caveat.
-- [troubleshooting.md](troubleshooting.md) — known pain points and
-  fixes.
-- [operating/backups.md](operating/backups.md) — `baerly copy`
-  cost-aware bucket-to-bucket procedure.
-- [pricing-log.md](pricing-log.md) — append-only audit of cost
-  commitments.
-
-## Product context
-
-- [product-thesis.md](product-thesis.md) — what Baerly is, who it's
-  for, what it's deliberately not.
-- [cost-model.md](cost-model.md) — per-line-item rates, write-amp
-  meter, compression posture.
-
-## Diagrams
-
-- [diagrams/](diagrams/) — rendered SVGs at the top level, editable
-  sources under `sources/`.
+AI agents start at `../CLAUDE.md` in the repo root.

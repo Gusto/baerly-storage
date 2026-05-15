@@ -18,12 +18,12 @@ known-baseline test failures.
 ## Where to start
 
 - [CLAUDE.md](./CLAUDE.md) — agent guidance, module map, conventions
-- [docs/features.md](./docs/features.md) — feature → code map
+- [docs/contributing/features.md](./docs/contributing/features.md) — feature → code map
 - [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) — lifecycle and module graph
 - [docs/sync_protocol.md](./docs/sync_protocol.md) — protocol theory
 - [docs/adr/](./docs/adr/) — architecture decisions
-- [docs/troubleshooting.md](./docs/troubleshooting.md) — known issues
-- [docs/conventions/](./docs/conventions/) — path-scoped conventions for src/, tests/, docs/
+- [docs/guide/troubleshooting.md](./docs/guide/troubleshooting.md) — known issues
+- [docs/contributing/conventions/](./docs/contributing/conventions/) — path-scoped conventions for src/, tests/, docs/
 
 The public API entry point is `packages/server/src/db.ts` (the `Db`
 class). Every public method has JSDoc with `@example`. Read those

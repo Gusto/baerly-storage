@@ -4,7 +4,7 @@ audience: operator
 summary: "Canonical log lines, sampling, sinks (OTel / Workers Analytics Engine / Datadog), and known gaps."
 last-reviewed: 2026-05-12
 tags: [observability, operations, logging]
-related: ["conventions/observability.md", "cost-model.md", "development.md"]
+related: ["../contributing/conventions/observability.md", "../about/cost-model.md", "../contributing/development.md"]
 ---
 
 # Observability
@@ -18,7 +18,7 @@ change required to opt in.
 
 This doc is for the operator deploying baerly. For the contributor
 adding a new code path, see
-[`docs/conventions/observability.md`](conventions/observability.md).
+[`docs/conventions/observability.md`](../contributing/conventions/observability.md).
 
 ## What lands by default
 
@@ -91,7 +91,7 @@ One event per unit of work. The kernel emits one line for each:
 | `error.stack` | string | Stack trace (`error`-level lines only). |
 
 Class A / Class B totals are the **load-bearing fields** —
-[`docs/cost-model.md`](cost-model.md) lays out the per-request
+[`docs/cost-model.md`](../about/cost-model.md) lays out the per-request
 cost ceiling, and the canonical line is how you verify a deployed
 service stays under it.
 
@@ -313,9 +313,9 @@ const datadogSink: Sink = (record) => {
 
 ## Cross-references
 
-- [`docs/conventions/observability.md`](conventions/observability.md)
+- [`docs/conventions/observability.md`](../contributing/conventions/observability.md)
   — contributor-facing rules for adding new emit sites.
-- [`docs/cost-model.md`](cost-model.md) — how class-A counts map to
+- [`docs/cost-model.md`](../about/cost-model.md) — how class-A counts map to
   S3 / R2 spend.
 - Public API: JSDoc on `createListener` (Node) and `baerlyWorker`
   (Cloudflare). Both expose `observability?: ObservabilityConfig`.

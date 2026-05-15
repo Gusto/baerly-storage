@@ -4,13 +4,13 @@ audience: coder
 summary: One canonical line per unit-of-work, field attachment, DEBUG vs INFO, test patterns.
 last-reviewed: 2026-05-12
 tags: [conventions, observability]
-related: ["../observability.md", "tests.md"]
+related: ["../../guide/observability.md", "tests.md"]
 ---
 
 # Observability conventions
 
 Rules for code that emits observability. The operator-facing
-counterpart is [`docs/observability.md`](../observability.md).
+counterpart is [`docs/observability.md`](../../guide/observability.md).
 
 ## The one rule
 
@@ -120,7 +120,7 @@ the sampling story.
 `db.<subsystem>.<metric>` — three dot-separated segments, lowercase,
 snake_case within each segment when a metric name has multiple
 words. Match the existing names in
-[`packages/protocol/src/metrics.ts`](../../packages/protocol/src/metrics.ts).
+[`packages/protocol/src/metrics.ts`](../../../packages/protocol/src/metrics.ts).
 Labels are flat `Readonly<Record<string, string>>` — no numbers as
 label values, no nested objects — so any aggregation backend can
 consume them.
@@ -178,7 +178,7 @@ existing set (`write`, `r2`, `manifest`, `gc`, `orphan`, `compact`,
 ## Test patterns
 
 Use the `collectingSink` pattern from
-[`packages/server/src/observability/canonical.test.ts`](../../packages/server/src/observability/canonical.test.ts):
+[`packages/server/src/observability/canonical.test.ts`](../../../packages/server/src/observability/canonical.test.ts):
 
 ```ts
 import { reset, type LogRecord, type Sink } from "@logtape/logtape";

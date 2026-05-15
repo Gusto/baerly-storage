@@ -129,7 +129,7 @@ rolling-deploy hazard without introducing a leases-as-state dependency.
   PUT either way
   ([`packages/protocol/src/coordination/current-json.ts:283-290`](../../packages/protocol/src/coordination/current-json.ts)).
 - The tenant prefix the CAS scope rides on derives from the auth
-  layer's `Verifier` output (see [`docs/auth.md`](../auth.md)); a
+  layer's `Verifier` output (see [`docs/guide/auth.md`](../guide/auth.md)); a
   misconfigured verifier returning the wrong prefix is the
   tenancy-leak vector this scope choice does not paper over.
 - Cross-tenant fan-out is unaffected by per-collection scope. If a

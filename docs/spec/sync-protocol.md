@@ -9,7 +9,7 @@ related: [causal-consistency-checking.md, log-entry-shape.md, json-merge-patch.m
 
 
 <p align="center" width="100%">
-    <img width="50%" src="diagrams/sync_protocol_header.svg">
+    <img width="50%" src="../contributing/diagrams/sync_protocol_header.svg">
 </p>
 
 This is a focused explanation of the core sync protocol of Baerly. The sync protocol upgrades an S3 API into a causally consistent, multiplayer datastore without the use of intermediate servers.
@@ -36,7 +36,7 @@ The manifest is a layer of *indirection* enabling bulk atomic operation (and mor
 
 Concurrent writes would conflict if all clients wrote to the *same* manifest location. There are no conditional writes in S3 so some updates would just be lost. To support multiplayer each client updates a *different* manifest entry ordered by time.
 
-![manifests over time](diagrams/manifest.excalidraw.png)
+![manifests over time](../contributing/diagrams/manifest.excalidraw.png)
 
 The manifest records several major pieces of imperfect information.
 - The time of the write, encoded in the key, as measured by the client. Client clocks are subject to clock skew so it might be a bit off.
@@ -148,8 +148,8 @@ The query planner — `planQuery` in
 — sits between the predicate AST and the log fold on the read path.
 It does **not** change the wire format: filtered indexes emit fewer
 zero-byte entries under the same `<logPrefix>/index/<name>/...` key
-shape. See [`docs/features.md`](../features.md) §"Secondary indexes"
-and [`docs/architecture.md`](../architecture.md) §"Planner step
+shape. See [`docs/contributing/features.md`](../contributing/features.md) §"Secondary indexes"
+and [`docs/contributing/architecture.md`](../contributing/architecture.md) §"Planner step
 (between the predicate and the log fold)".
 
 ### Minimising list-object-v2 calls
@@ -211,7 +211,7 @@ The alternative — per-tenant CAS, one `current.json` per tenant —
 would serialize every writer in the tenant on the same key. The
 published cost bound (`< 1 Class A op / writer / hour` for idle
 readers; see
-[cost-model.md](../cost-model.md#cost-ceiling)) is only tractable
+[cost-model.md](../about/cost-model.md#cost-ceiling)) is only tractable
 if the idle reader can poll one cheap key per collection;
 per-tenant CAS makes the bound unmeetable on workloads with more
 than one busy collection.

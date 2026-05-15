@@ -36,7 +36,7 @@
  *   - `DAY_ONE_BUDGET_CF_MS=300000`   — 5 min default
  *   - `DAY_ONE_BUDGET_NODE_MS=180000` — 3 min default
  *
- * See `docs/operating/day-one-gate.md` for the full lifecycle.
+ * See `docs/contributing/day-one-gate.md` for the full lifecycle.
  */
 
 import { execa, type ResultPromise } from "execa";
@@ -130,7 +130,7 @@ describe.runIf(RUN_NODE)("day-one handshake — node target", () => {
       //    emits a Dockerfile + start instructions for production;
       //    the gate uses the local dev boot path because the test is
       //    on-host. Production docker is exercised manually per
-      //    `docs/operating/day-one-gate.md`.
+      //    `docs/contributing/day-one-gate.md`.
       const port = await pickFreePort();
       serverHandle = await spawnServer(appDir, port);
       await serverHandle.waitForReady();

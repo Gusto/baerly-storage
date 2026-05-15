@@ -4,7 +4,7 @@ audience: operator
 summary: Pre-release manual gate that times scaffold → deploy → first record against the day-one SLO.
 last-reviewed: 2026-05-14
 tags: [operations, gate, day-one, scaffold, deploy]
-related: ["backups.md"]
+related: ["../guide/backups.md"]
 ---
 
 # Day-one handshake gate (`pnpm gate:day-one`)
@@ -24,10 +24,8 @@ Without any manual credential editing.
 > on npm. The canonical `pnpm dlx file:...tgz` flow doesn't resolve
 > the scaffolded `@baerly/*` / `create-baerly` `^0.1.0` devDeps,
 > which the registry doesn't know about. Tarball-based staging
-> lands once the followup in
-> [`docs/followups/first-touch-dx.md`](../followups/first-touch-dx.md)
-> ships (`file:` URLs into the scaffolded `package.json`). Until
-> then, validate the gate from inside this clone:
+> lands separately; until then, validate the gate from inside this
+> clone:
 
 ```sh
 pnpm install && pnpm -r build

@@ -4,7 +4,7 @@ audience: agent
 summary: Toolchain, verification matrix, module map, conventions, anti-patterns. The main agent entry point.
 last-reviewed: 2026-05-12
 tags: [agent-entry, conventions, verification]
-related: ["docs/README.md", "docs/architecture.md", "docs/development.md"]
+related: ["docs/README.md", "docs/contributing/architecture.md", "docs/contributing/development.md"]
 ---
 
 # CLAUDE.md
@@ -180,7 +180,7 @@ pnpm dev:storage         # docker compose up -d --wait (Minio :9102, Toxiproxy :
 pnpm dev:storage:stop    # docker compose down
 ```
 
-See [docs/development.md](docs/development.md) for full setup.
+See [docs/contributing/development.md](docs/contributing/development.md) for full setup.
 
 ## Module map
 
@@ -247,7 +247,7 @@ Read in this order to build a mental model:
    `examples/README.md`.
 
 The full lifecycle of `db.table().insert()` is in
-[docs/architecture.md](docs/architecture.md) — read it before
+[docs/contributing/architecture.md](docs/contributing/architecture.md) — read it before
 changing `packages/server/src/server-writer.ts` or the query
 evaluation path. architecture.md also has a Mermaid dependency
 graph if you need finer-grained roles than the groups above.
@@ -258,14 +258,14 @@ Path-scoped conventions. **Read the matching file before editing.**
 
 | When you're editing… | Read first |
 |---|---|
-| `tests/**` | [docs/conventions/tests.md](docs/conventions/tests.md) |
-| `docs/**` | [docs/conventions/docs.md](docs/conventions/docs.md) |
+| `tests/**` | [docs/contributing/conventions/tests.md](docs/contributing/conventions/tests.md) |
+| `docs/**` | [docs/contributing/conventions/docs.md](docs/contributing/conventions/docs.md) |
 | `packages/server/src/server-writer.ts` | [docs/spec/sync-protocol.md](docs/spec/sync-protocol.md) + [docs/spec/causal-consistency-checking.md](docs/spec/causal-consistency-checking.md) |
 | `packages/protocol/src/json.ts` | [docs/spec/json-merge-patch.md](docs/spec/json-merge-patch.md) |
 | `packages/protocol/src/log.ts`, the log-emit path in `server-writer.ts` | [docs/spec/log-entry-shape.md](docs/spec/log-entry-shape.md) |
-| `packages/server/src/observability/**` | [docs/conventions/observability.md](docs/conventions/observability.md) |
-| Public API on `Db` / `Table` | [docs/extending.md](docs/extending.md) |
-| `packages/server/src/schema.ts` or `CollectionDefinition.schema` | [docs/extending.md](docs/extending.md) §"Declare a schema for a collection" |
+| `packages/server/src/observability/**` | [docs/contributing/conventions/observability.md](docs/contributing/conventions/observability.md) |
+| Public API on `Db` / `Table` | [docs/contributing/extending.md](docs/contributing/extending.md) |
+| `packages/server/src/schema.ts` or `CollectionDefinition.schema` | [docs/contributing/extending.md](docs/contributing/extending.md) §"Declare a schema for a collection" |
 
 Claude users: `.claude/rules/{tests,docs,change-discipline}.md`
 auto-load on matching edits and point at the same files.
@@ -322,7 +322,7 @@ auto-load on matching edits and point at the same files.
 
 - **Bugfix?** Reproduce with a failing test first. Pick the right test file
   by topic (`json.test.ts`, `time.test.ts`, etc.).
-- **New public API method on `Db` / `Table`?** See [docs/extending.md](docs/extending.md).
+- **New public API method on `Db` / `Table`?** See [docs/contributing/extending.md](docs/contributing/extending.md).
   Add JSDoc with `@example` — IDEs and tsgo consume it directly.
 - **Touching the sync protocol?** Read `docs/spec/sync-protocol.md` and
   `docs/spec/causal-consistency-checking.md`. Add a property-based test in
@@ -341,16 +341,16 @@ auto-load on matching edits and point at the same files.
 
 - Doc topic map: [docs/README.md](docs/README.md) — start here if
   unsure where to look.
-- Feature → code map: [docs/features.md](docs/features.md)
-- Architecture overview: [docs/architecture.md](docs/architecture.md)
-- Local dev setup: [docs/development.md](docs/development.md)
-- How to add a feature / module / test: [docs/extending.md](docs/extending.md)
+- Feature → code map: [docs/contributing/features.md](docs/contributing/features.md)
+- Architecture overview: [docs/contributing/architecture.md](docs/contributing/architecture.md)
+- Local dev setup: [docs/contributing/development.md](docs/contributing/development.md)
+- How to add a feature / module / test: [docs/contributing/extending.md](docs/contributing/extending.md)
 - Protocol theory: [docs/spec/sync-protocol.md](docs/spec/sync-protocol.md),
   [docs/spec/causal-consistency-checking.md](docs/spec/causal-consistency-checking.md),
   [docs/spec/json-merge-patch.md](docs/spec/json-merge-patch.md)
 - Architecture decisions ("why"): [docs/adr/](docs/adr/)
-- Troubleshooting: [docs/troubleshooting.md](docs/troubleshooting.md)
-- Path-scoped conventions: [docs/conventions/](docs/conventions/) (table at top)
+- Troubleshooting: [docs/guide/troubleshooting.md](docs/guide/troubleshooting.md)
+- Path-scoped conventions: [docs/contributing/conventions/](docs/contributing/conventions/) (table at top)
 - Scaffolding-eval harness + corpus: eval/ (runner, scorer, acceptance
   checker, and `eval/prompts/` — one prompt per corpus app, version-
   pinned).

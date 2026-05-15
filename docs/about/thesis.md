@@ -4,7 +4,7 @@ audience: product
 summary: What Baerly is, who it's for, and what it deliberately is not.
 last-reviewed: 2026-05-12
 tags: [positioning, product]
-related: [cost-model.md, "conventions/change-discipline.md"]
+related: [cost-model.md, "../contributing/conventions/change-discipline.md"]
 ---
 
 # Baerly — product thesis
@@ -33,7 +33,7 @@ bucket, your auth IdP). Both are first-class. AWS Lambda / Bun /
 Deno / Fly are a paper-thin adapter package away. The protocol
 kernel runs identically on every runtime; the platform glue lives
 in `@baerly/adapter-*` packages. See
-[architecture.md](architecture.md) for the runtime split.
+[architecture.md](../contributing/architecture.md) for the runtime split.
 
 ## Who this is for, in one sentence
 
@@ -55,6 +55,7 @@ protocol.
   different host needs no vendor cooperation.* See
   [cost-model.md](cost-model.md) for the per-line-item rates and
   the M-size operating-point comparison.
+
 - **The pitch is NOT cost.** D1 is ~$5/mo at the M-size workload vs
   Baerly's ~$19. Baerly is cheaper for hello-world (free tier) and
   on par or more-expensive past M-size. That's fine — cost is not
@@ -75,7 +76,7 @@ protocol.
 
 `db.table<T>(name).where(p).order(o).limit(n).all()` — SQL-shape,
 predicate-AST-driven, additive-only locked
-([ADR-0019](adr/0019-api-surface-lock.md)). Baerly still borrows
+([ADR-0019](../adr/0019-api-surface-lock.md)). Baerly still borrows
 specific patterns from Firestore (composable query constraints,
 gRPC-derived error codes, JSDoc `@example` density, field-value
 sentinels).

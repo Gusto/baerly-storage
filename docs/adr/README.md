@@ -4,7 +4,7 @@ audience: meta
 summary: Index of ADRs. Each ADR captures one load-bearing technical decision whose rationale doesn't fit naturally in any single code or doc file.
 last-reviewed: 2026-05-14
 tags: [index, decisions]
-related: ["../product-thesis.md", "../conventions/change-discipline.md"]
+related: ["../about/thesis.md", "../contributing/conventions/change-discipline.md"]
 ---
 
 # Architecture Decision Records
@@ -12,14 +12,14 @@ related: ["../product-thesis.md", "../conventions/change-discipline.md"]
 ADRs are reserved for cross-cutting decisions whose rationale spans
 multiple files and doesn't fit naturally in any one place. Most
 load-bearing rationale lives next to the code it constrains (JSDoc,
-`docs/spec/`, `docs/conventions/`) — readers encounter it where
+`docs/spec/`, `docs/contributing/conventions/`) — readers encounter it where
 they're already looking. Numbering has gaps from earlier ADRs that
 were merged into their natural homes.
 
 These are decisions, not principles. Cross-cutting philosophy lives
-in [product-thesis.md](../product-thesis.md); change-discipline
+in [about/thesis.md](../about/thesis.md); change-discipline
 rules live in
-[conventions/change-discipline.md](../conventions/change-discipline.md).
+[contributing/conventions/change-discipline.md](../contributing/conventions/change-discipline.md).
 
 ## Index
 

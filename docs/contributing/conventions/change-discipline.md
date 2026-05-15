@@ -4,7 +4,7 @@ audience: coder
 summary: Default bias for changes in a pre-launch prototype — ship the smallest slice, prefer changing the contract over preserving old behavior, no compat aliases without asking.
 last-reviewed: 2026-05-14
 tags: [conventions, discipline]
-related: [docs.md, tests.md, "../product-thesis.md"]
+related: [docs.md, tests.md, "../../about/thesis.md"]
 ---
 
 # Change discipline

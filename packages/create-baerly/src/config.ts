@@ -55,8 +55,8 @@ export interface BaerlyAppConfig {
    * Optional observability overrides. The templates already
    * read `LOG_LEVEL` and `LOG_SAMPLE` from the runtime env; this
    * field is a typed-config alternative for deployments that prefer
-   * to pin defaults in source. See `docs/observability.md` for the
-   * canonical-line shape and `docs/conventions/observability.md` for
+   * to pin defaults in source. See `docs/guide/observability.md` for the
+   * canonical-line shape and `docs/contributing/conventions/observability.md` for
    * the one-canonical-line-per-unit-of-work rule.
    *
    * - `level` — lowest record level reaching the sink. Falls back

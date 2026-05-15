@@ -4,7 +4,7 @@ audience: operator
 summary: "Common pain points: test gating, local stack ports, fuzzer, formatting CI."
 last-reviewed: 2026-05-12
 tags: [troubleshooting, operations]
-related: [development.md]
+related: [../contributing/development.md]
 ---
 
 # Troubleshooting
@@ -17,7 +17,7 @@ adding it.
 
 Which tests need infra (Minio, credentials), which skip by default, and
 which are always green is documented in
-[CLAUDE.md → Test gating](../CLAUDE.md#test-gating). New failures in
+[CLAUDE.md → Test gating](../../CLAUDE.md#test-gating). New failures in
 *other* files are the signal worth investigating.
 
 ## Local stack ports

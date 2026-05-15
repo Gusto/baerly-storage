@@ -3,8 +3,8 @@
  *
  * The canonical log line's `db.storage.class_a_ops_total` and
  * `db.storage.class_b_ops_total` are the load-bearing fields for
- * the cost-model story (see `docs/observability.md` and
- * `docs/cost-model.md`). This test proves they match physical
+ * the cost-model story (see `docs/guide/observability.md` and
+ * `docs/about/cost-model.md`). This test proves they match physical
  * reality: a workload that performs N PUTs + M DELETEs + L LISTs
  * against the underlying `Storage` must emit a canonical line
  * with `class_a_ops_total = N + M + L`, and likewise for class B

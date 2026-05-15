@@ -4,7 +4,7 @@ audience: coder
 summary: Two bench harnesses under bench/ — r2-contention.ts and load-harness/. When to run each, how to read results, DuckDB analysis pattern, and green-light criteria.
 last-reviewed: 2026-05-12
 tags: [bench, performance, cost-model]
-related: ["../docs/cost-model.md", "../tests/integration/phase5-end-to-end.test.ts"]
+related: ["../docs/about/cost-model.md", "../tests/integration/phase5-end-to-end.test.ts"]
 ---
 
 # Bench harnesses
@@ -152,7 +152,7 @@ Raw counts in the JSON feed the cost model offline. The bench
 deliberately does not bake pricing into output — region and provider
 pricing change faster than the harness does. For per-line-item rates,
 write-amplification meter, and compression posture, see
-[docs/cost-model.md](../docs/cost-model.md).
+[docs/about/cost-model.md](../docs/about/cost-model.md).
 
 The key derived fields:
 

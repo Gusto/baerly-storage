@@ -4,7 +4,7 @@ audience: coder
 summary: Source-of-truth rules, markdown style, Mermaid usage, when to update which doc.
 last-reviewed: 2026-05-12
 tags: [conventions, docs]
-related: [tests.md, "../README.md"]
+related: [tests.md, "../../README.md"]
 ---
 
 # docs/ conventions
@@ -29,9 +29,9 @@ Conventions for content under `docs/`.
 
 | Change | File to update |
 |---|---|
-| New module / refactor | `docs/architecture.md` (graph + lifecycle) |
-| New developer setup step | `docs/development.md` |
-| New extension pattern | `docs/extending.md` |
+| New module / refactor | `docs/contributing/architecture.md` (graph + lifecycle) |
+| New developer setup step | `docs/contributing/development.md` |
+| New extension pattern | `docs/contributing/extending.md` |
 | Protocol change | `docs/spec/sync-protocol.md` (and a coverage entry in `docs/spec/causal-consistency-checking.md`) |
 | New `Db.create` / `Table<T>` option | JSDoc on the param in `packages/server/src/db.ts` or `packages/server/src/table.ts` |
 

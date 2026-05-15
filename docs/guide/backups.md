@@ -4,7 +4,7 @@ audience: operator
 summary: Cost-aware bucket-to-bucket point-in-time copy procedure with retention example.
 last-reviewed: 2026-05-12
 tags: [operations, backups, copy]
-related: ["../cost-model.md"]
+related: ["../about/cost-model.md"]
 ---
 
 # Backups (`baerly copy`)

@@ -4,7 +4,7 @@ audience: product
 summary: Per-line-item rates, write-amp meter, compression posture.
 last-reviewed: 2026-05-12
 tags: [cost, pricing, operations]
-related: [pricing-log.md, product-thesis.md]
+related: [pricing-log.md, thesis.md]
 ---
 
 # Cost model
@@ -90,7 +90,7 @@ single maintenance pass under the Cloudflare free-tier profile sits
 under the 50-subrequest cap.
 
 Per-collection CAS scope (see
-[`docs/spec/sync-protocol.md`](spec/sync-protocol.md)) is what makes
+[`docs/spec/sync-protocol.md`](../spec/sync-protocol.md)) is what makes
 the idle-poll bound tractable: one cheap key per collection rather
 than contention on a global mutex.
 
@@ -149,7 +149,7 @@ Read this as positioning, not a cost claim:
   causal consistency, not for ops." A user willing to give those
   up for a SQL schema should **switch to D1** — it's strictly
   cheaper. The product thesis is explicit that
-  [cost is not the moat](product-thesis.md#positioning).
+  [cost is not the moat](thesis.md#positioning).
 - **L workload:** Baerly's R2 Class B alone (~$1 500) costs more
   than a Postgres Pro plan. That's the graduation cliff —
   read-heavy traffic on a per-doc fan-out protocol is

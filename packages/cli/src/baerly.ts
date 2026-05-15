@@ -59,7 +59,7 @@ const main = defineCommand({
     name: "baerly",
     version: "0.0.0",
     description:
-      "Vendorless document database CLI\n\nSee docs/pricing-log.md for the running cost-ceiling history.",
+      "Vendorless document database CLI\n\nSee docs/about/pricing-log.md for the running cost-ceiling history.",
   },
   subCommands: {
     copy,

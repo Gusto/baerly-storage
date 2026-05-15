@@ -81,7 +81,7 @@ values.
   }
   ```
 - Don't string-match on `error.message` — the wording isn't stable.
-- Rationale: JSDoc on `BaerlyError` in [`packages/protocol/src/errors.ts`](../../packages/protocol/src/errors.ts).
+- Rationale: JSDoc on `BaerlyError` in [`packages/protocol/src/errors.ts`](../../../packages/protocol/src/errors.ts).
 
 ## Network-dependent tests
 - Tests that hit the network live in `tests/integration/` and expect

@@ -135,7 +135,7 @@ path without making the public API a moving target.
 - JSDoc on `Db.create`, `db.table`, and `db.transaction` is the source
   of truth for parameter semantics; this ADR pins the surface-level
   shape but the JSDoc owns the behavioural contract. Per
-  [`docs/conventions/docs.md`](../conventions/docs.md), the public-API
+  [`docs/contributing/conventions/docs.md`](../contributing/conventions/docs.md), the public-API
   reference lives as JSDoc on the implementation, not as a
   hand-maintained markdown ref.
 - `_raw` is intentionally undocumented in the README and excluded from

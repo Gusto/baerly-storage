@@ -4,7 +4,7 @@
  * Reads the most recent `SAMPLE_SIZE` log entries for one collection
  * from `Storage`, compares the spread of their embedded `commit_ts`
  * timestamps against the M-size operating ceiling
- * (~30 writes/min/collection — see `docs/product-thesis.md:50-68`)
+ * (~30 writes/min/collection — see `docs/about/thesis.md:50-68`)
  * and returns a structured {@link UsageVerdict} the doctor backends
  * fold into their report.
  *
@@ -23,7 +23,7 @@
  * GETs per collection), so the cost is acceptable for an opt-in
  * operator command.
  *
- * @see docs/product-thesis.md — M-size ceiling rationale.
+ * @see docs/about/thesis.md — M-size ceiling rationale.
  * @see docs/spec/log-entry-shape.md — `LogEntry.commit_ts` contract.
  * @see packages/server/src/compactor.ts:224-225 — `tablePrefix` /
  *      `tableName` derivation pattern reused here.
@@ -34,7 +34,7 @@ import type { DoctorFinding } from "./cloudflare.ts";
 
 /**
  * M-size writes-per-minute-per-collection ceiling from
- * `docs/product-thesis.md`. Crossing this with sustained traffic
+ * `docs/about/thesis.md`. Crossing this with sustained traffic
  * means operators should consider graduating the workload to a
  * graduated store via `baerly export --target=postgres|sqlite|d1`.
  */

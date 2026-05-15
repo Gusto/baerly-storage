@@ -65,7 +65,7 @@ const exportSmokeExclude = process.env.EXPORT_SMOKE === "1" ? [] : ["**/export-s
 // env var is unset so `pnpm test` stays green on a fresh checkout;
 // opt in via `pnpm gate:day-one` after exporting `DAY_ONE_TARGETS`
 // (plus `CF_API_TOKEN` / `CF_ACCOUNT_ID` for the CF target) per
-// `docs/operating/day-one-gate.md`. The file also uses
+// `docs/contributing/day-one-gate.md`. The file also uses
 // `describe.runIf(...)` — double-gating mirrors `exportSmokeExclude`.
 const dayOneExclude =
   process.env.DAY_ONE_TARGETS !== undefined ? [] : ["**/day-one-handshake.test.ts"];

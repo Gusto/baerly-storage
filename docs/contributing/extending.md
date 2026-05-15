@@ -4,7 +4,7 @@ audience: coder
 summary: Worked patterns for adding methods to Db, Query verbs, and Table verbs.
 last-reviewed: 2026-05-12
 tags: [extending, api-design, patterns]
-related: [architecture.md, "adr/0019-api-surface-lock.md", "conventions/tests.md"]
+related: [architecture.md, "../adr/0019-api-surface-lock.md", "conventions/tests.md"]
 ---
 
 # Extending Baerly
@@ -350,7 +350,7 @@ The write primitive lives in two places:
 
 1. **The wire shape** — `LogEntry` in
    `packages/protocol/src/log.ts`. Adding a new `op` letter is a
-   stability change (see [spec/log-entry-shape.md](spec/log-entry-shape.md)).
+   stability change (see [spec/log-entry-shape.md](../spec/log-entry-shape.md)).
 2. **The commit path** — `ServerWriter` in
    `packages/server/src/server-writer.ts`. Extend `CommitInput`
    with the new shape and update `commit` / `commitBatch` to emit
@@ -376,13 +376,13 @@ export interface CommitInput {
   can reach the new primitive. If the new primitive doesn't fit
   the `Table<T>` shape, extend `Db` directly.
 - Add the new `op` discriminant to the field-requirement matrix in
-  [spec/log-entry-shape.md](spec/log-entry-shape.md).
+  [spec/log-entry-shape.md](../spec/log-entry-shape.md).
 - Update `packages/server/src/query.ts` if the reader needs to fold
   the new entry shape into the row set.
 - If this changes protocol-visible state (a new field on
   `current.json`, a new `op`, a new storage layout), document it in
-  [spec/sync-protocol.md](spec/sync-protocol.md) and add a coverage entry in
-  [spec/causal-consistency-checking.md](spec/causal-consistency-checking.md).
+  [spec/sync-protocol.md](../spec/sync-protocol.md) and add a coverage entry in
+  [spec/causal-consistency-checking.md](../spec/causal-consistency-checking.md).
 
 ### Don't
 

@@ -4,7 +4,7 @@ audience: coder
 summary: "Local dev: pnpm, Minio + Toxiproxy + Postgres stack, test commands."
 last-reviewed: 2026-05-14
 tags: [development, setup, tests]
-related: [troubleshooting.md, "../CLAUDE.md"]
+related: ["../guide/troubleshooting.md", "../../CLAUDE.md"]
 ---
 
 # Development
@@ -45,7 +45,7 @@ IndexedDB is mocked via `import "fake-indexeddb/auto"` in tests that need it.
 ### Which tests need infra
 
 Which tests skip without Minio or credentials, and which are always
-green, is documented in [CLAUDE.md → Test gating](../CLAUDE.md#test-gating).
+green, is documented in [CLAUDE.md → Test gating](../../CLAUDE.md#test-gating).
 
 To bring up the local Minio + Toxiproxy stack:
 
@@ -57,7 +57,7 @@ pnpm dev:storage:stop # tear down
 Minio runs on `http://127.0.0.1:9102` (S3 API), console on `:9103`
 (login `baerly` / see `docker-compose.yml`); Toxiproxy on `:9104` proxies
 Minio for latency/failure injection. The `minio` proxy is declared
-statically in [`docker/toxiproxy.json`](../docker/toxiproxy.json) and
+statically in [`docker/toxiproxy.json`](../../docker/toxiproxy.json) and
 loaded at container start.
 
 ## Type checking, formatting, linting
@@ -138,7 +138,7 @@ distinguish your regressions from the pre-existing state.
 
 ## Project layout
 
-The module map lives in [CLAUDE.md → Module map](../CLAUDE.md#module-map);
+The module map lives in [CLAUDE.md → Module map](../../CLAUDE.md#module-map);
 the deeper dependency graph + lifecycles live in
 [architecture.md](architecture.md). For a flat enumeration, just `ls
 packages/*/src/ tests/`.
