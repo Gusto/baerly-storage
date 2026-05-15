@@ -11,16 +11,15 @@ Machines. Uses `@baerly/adapter-node` against an S3-compatible bucket
 ```
 node-railway/
 ├── package.json              # pnpm workspace root
-├── pnpm-workspace.yaml       # apps/*
 ├── tsconfig.json
 ├── baerly.config.ts          # app, tenant, target, domain
 ├── AGENTS.md                 # deeper guide: predicates, schemas,
-│                             #   auth recipes, graduation (Codex CLI)
-├── CLAUDE.md                 # same content (Claude Code reads this)
+│                             #   auth recipes, graduation
 ├── .baerly/schema.lock.json  # declared collection schemas
 ├── apps/
 │   ├── server/               # node:http listener — baerly host
 │   │   ├── package.json
+│   │   ├── .env.example
 │   │   └── src/server.ts     # createListener({ verifier })
 │   └── web/                  # optional SPA shell — delete if unused
 │       ├── package.json
@@ -66,9 +65,9 @@ ships a distroless Dockerfile and is shaped for container registries.
 
 1. **Read `AGENTS.md`** for the agent-facing guide — predicates,
    indexes, schemas, auth recipes (JWKS setup), the in-process
-   maintenance loop, and the graduation criteria. Codex CLI reads
-   `AGENTS.md`; Claude Code reads `CLAUDE.md`; both files are
-   byte-identical.
+   maintenance loop, and the graduation criteria. (Claude Code
+   users: `create-baerly` mirrors `AGENTS.md` to `CLAUDE.md` at
+   scaffold time.)
 2. **Declare your first collection schema** in `baerly.config.ts`
    via `defineConfig({ collections: { ... } })` and pass it to
    `Db.create({ ..., collections })`. Schema validation is live;
@@ -117,4 +116,4 @@ else falls back to `sharedSecret()` for parity with `pnpm dev`. Set
 
 - `baerly.config.ts` — app config (`app`, `tenant`, `target`, `domain`).
 - `apps/server/src/server.ts` — node:http listener entry.
-- `AGENTS.md` / `CLAUDE.md` — agent-facing guide (byte-identical).
+- `AGENTS.md` — agent-facing guide (mirrored to `CLAUDE.md` at scaffold time).
