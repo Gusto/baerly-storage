@@ -1,0 +1,17 @@
+{
+  "name": "node-railway",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "baerly dev",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test"
+  },
+  "devDependencies": {
+    "@baerly/cli": "workspace:*",
+    "create-baerly": "workspace:*",
+    "typescript": "^5.8.0"
+  },
+  "packageManager": "pnpm@10.31.0"
+}
