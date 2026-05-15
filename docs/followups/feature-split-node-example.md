@@ -9,7 +9,6 @@ Branch: `worktree-split-node-example`. Replaces `examples/minimal-node/` with `n
 
 ## Discovered during this work
 
-- **`baerly init` still emits `target: "node"` configs.** `packages/cli/src/init.ts` was not in this plan's scope; the implementer flagged that init can mint a `baerly.config.ts` whose `target: "node"` value is now rejected by `loadAppConfig`. Pick: extend init to ask `node-railway | node-docker`, or update init to emit `node-railway` by default. Either way, the init test suite passes because init bypasses `loadAppConfig`, so the bug is latent until a user runs any other baerly subcommand.
 - **`scaffold-eval` and `manual-e2e/node/` skeletons** still work against the renamed `node-docker` shape (no internal references to `minimal-node` in their source). No action needed.
 - **`apps/web/` shell in both new examples** is dead weight (11-line static HTML, no JS, vite devDep). Acceptable for now; consider whether `node-railway` and `node-docker` should ship an SPA shell at all, or just be API-only scaffolds.
 
