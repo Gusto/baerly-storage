@@ -82,4 +82,8 @@ local server) across five tickets (T00–T04 in
    LogTape footprint in `observability-*.js`; consider lazy-loading
    the maintenance loop out of the kernel barrel) or bump the
    budgets to match the new floor with an ADR-0001 update. Once the
-   number lands, remove the `skip: true` flags. **Status:** open
+   number lands, remove the `skip: true` flags. **Status:**
+   resolved 2026-05-14 via tickets `bundle-trim/01-03` —
+   maintenance moved to its own subpath, observability
+   re-exports dropped from the barrel, and the remaining
+   delta re-baselined.

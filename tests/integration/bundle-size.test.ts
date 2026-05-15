@@ -3,15 +3,27 @@ import { dirname, resolve } from "node:path";
 import { gzipSync } from "node:zlib";
 import { describe, expect, test } from "vitest";
 
-// ADR-0001 motivates the vendorless choice on bundle weight: this lib
-// ships into a user's app bundle, so every byte we add is a byte they
-// pay. Ticket 37 added five auth-preset verifiers to the
-// kernel barrel, pushing the unminified bundle from ~168 KiB to
-// ~213 KiB. Rather than just bump the budget, we split the surface
-// into subpath entrypoints (`baerly-storage/auth`, `baerly-storage/http`)
-// so consumers who don't need them don't pay for them — and we budget
-// each entrypoint independently. See ADR-0001 and the plan in
-// `~/.claude/plans/foamy-strolling-wirth.md` for the rationale.
+// Bundle weight matters because this lib ships into a user's app
+// bundle — every byte we add is a byte they pay. To keep barrel
+// consumers from paying for code they don't reach, we split the
+// surface across subpath entrypoints (`baerly-storage/auth`,
+// `baerly-storage/http`, `baerly-storage/maintenance`,
+// `baerly-storage/observability`) and budget each entrypoint's
+// transitive closure independently.
+//
+// The barrel (`baerly-storage`) carries the kernel surface (`Db`,
+// `ServerWriter`, query/table helpers, schema, indexes) plus the
+// auth presets. Maintenance (`runScheduledMaintenance`, profile
+// constants) and observability primitives are NOT on the barrel
+// as of 2026-05 — operator-side code reaches them via their
+// subpath entries.
+//
+// `http.js` and (transitively) `index.js` carry a baseline
+// observability cost that can't be shifted to a subpath:
+// `packages/server/src/http/router.ts` directly calls
+// `getLogger`/`CATEGORY` at the request boundary for structured
+// logging, and the maintenance work units use `withObservability`.
+// The thresholds below reflect that floor.
 //
 // Each entry is a static-import closure: rolldown code-splits shared
 // modules into chunks, so importing `baerly-storage/auth` actually
@@ -45,27 +57,34 @@ interface Budget {
 }
 
 const BUDGETS: readonly Budget[] = [
-  // Full barrel: kernel + maintenance + http + auth + observability.
-  // Subpath users skip what they don't need; barrel users get
-  // everything. The observability surface
-  // (LogTape + canonical-line plumbing) lands in this closure
-  // via the router and bumped the budget ~50% to ~350 KiB raw.
-  { entry: "index.js", raw: 350 * 1024, gz: 100 * 1024, skip: true },
+  // Full barrel: kernel + http + auth. After T01 (maintenance
+  // moved to /maintenance subpath) and T02 (observability
+  // re-exports dropped from the barrel), the barrel no longer
+  // statically pulls maintenance or observability for app code
+  // that only wants `Db`. ~345 KiB raw.
+  { entry: "index.js", raw: 350 * 1024, gz: 100 * 1024 },
   // Just the five auth verifier factories. Adding a sixth grows
   // this budget, not the kernel's.
   { entry: "auth.js", raw: 34 * 1024, gz: 12 * 1024 },
-  // hono/tiny-backed HTTP router + long-poll/since helpers + observability
-  // middleware. The `hono/tiny` PatternRouter trims ~18 KB raw vs the
-  // default SmartRouter and is ~4x faster p50 in baerly's per-request
-  // router-construction topology — see ADR-0023. The observability
-  // primitives the middleware needs at every request boundary account
-  // for the bulk of what remains. ~230 KiB raw.
-  { entry: "http.js", raw: 250 * 1024, gz: 72 * 1024, skip: true },
+  // hono/tiny-backed HTTP router + long-poll/since helpers +
+  // observability middleware. Observability is load-bearing at
+  // every request boundary (canonical-line emission,
+  // structured logging, per-request metrics), so the request
+  // path carries an observability baseline cost that can't be
+  // shifted to a subpath. ~270 KiB raw.
+  { entry: "http.js", raw: 285 * 1024, gz: 82 * 1024 },
   // Observability primitives — ObservabilityContext, the
-  // request-scoped MetricsRecorder, LogTape config + sinks, canonical
-  // line flush, observableStorage decorator. LogTape itself accounts
-  // for the bulk; a smaller direct-stdout sink could trim further.
+  // request-scoped MetricsRecorder, LogTape config + sinks,
+  // canonical line flush, observableStorage decorator. LogTape
+  // itself accounts for the bulk; a smaller direct-stdout sink
+  // could trim further but is deferred.
   { entry: "observability.js", raw: 100 * 1024, gz: 36 * 1024 },
+  // Maintenance loop — compactor + GC + sweep driver. Pulls
+  // compactor.ts + gc.ts + the observability subgraph
+  // transitively (every work unit runs under withObservability).
+  // Operator-side; not part of the kernel barrel as of T01.
+  // ~141 KiB raw.
+  { entry: "maintenance.js", raw: 155 * 1024, gz: 43 * 1024 },
 ];
 
 // Static-import specifiers only. Dynamic `import(...)` is intentionally
