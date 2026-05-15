@@ -86,7 +86,7 @@ export interface DevResult {
   readonly mode: "node" | "wrangler";
   readonly port: number | null;
   readonly dataDir: string | null;
-  readonly target: "cloudflare" | "node";
+  readonly target: "cloudflare" | "node-railway" | "node-docker";
   readonly tenant: string | null;
   readonly app: string | null;
   /** Set in the default path so test harnesses can shut the server down deterministically. */
@@ -182,7 +182,7 @@ export const runDev = async (opts: {
  */
 const runWranglerDev = async (args: {
   readonly cwd: string;
-  readonly target: "cloudflare" | "node";
+  readonly target: "cloudflare" | "node-railway" | "node-docker";
 }): Promise<DevResult> => {
   const appsServer = resolve(args.cwd, "apps/server");
   const child = spawn("wrangler", ["dev"], { cwd: appsServer, stdio: "inherit" });
@@ -213,7 +213,7 @@ const printBanner = (b: {
   readonly dataDir: string;
   readonly tenant: string;
   readonly app: string;
-  readonly target: "cloudflare" | "node";
+  readonly target: "cloudflare" | "node-railway" | "node-docker";
   readonly json: boolean;
   readonly secretSource: "env" | "fallback";
 }): void => {

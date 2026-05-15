@@ -2,9 +2,11 @@
  * `baerly deploy` — citty dispatcher.
  *
  * Reads `baerly.config.ts:target` and routes to the matching
- * deploy backend. Today: `cloudflare`. The `node` branch is
- * stubbed via dynamic import so ticket 40 can drop the module in
- * without touching the dispatcher.
+ * deploy backend. Today: `cloudflare` only — the node-railway /
+ * node-docker examples embody their deployment shape directly, so
+ * `baerly deploy` rejects them with an actionable InvalidConfig
+ * pointing at the platform-native command (e.g. `railway up`,
+ * `docker build` / `docker push`).
  *
  * Exit-code contract (mirrors `baerly copy`):
  *   - 0 success.
@@ -17,20 +19,16 @@
 
 import { defineCommand, type ArgsDef, type ParsedArgs } from "citty";
 import { BaerlyError } from "@baerly/protocol";
-import { loadAppConfig, type AppConfig } from "./config.ts";
+import { loadAppConfig } from "./config.ts";
 import { deployCloudflare } from "./deploy/cloudflare.ts";
 import { emitError, emitSuccess, setJsonMode } from "./output.ts";
 
 const DEPLOY_ARGS = {
   target: {
     type: "string",
-    description: 'Override `baerly.config.ts:target`. "cloudflare" or "node".',
-    valueHint: "cloudflare|node",
-  },
-  force: {
-    type: "boolean",
     description:
-      "(target=node) Overwrite hand-edited Dockerfile / pm2 / systemd files with the emitted shape.",
+      'Override `baerly.config.ts:target`. Only "cloudflare" supported (Node variants self-deploy via their PaaS or container build).',
+    valueHint: "cloudflare",
   },
   json: {
     type: "boolean",
@@ -38,7 +36,7 @@ const DEPLOY_ARGS = {
   },
 } as const satisfies ArgsDef;
 
-const KNOWN_KEYS: ReadonlySet<string> = new Set(["target", "force", "json", "_"]);
+const KNOWN_KEYS: ReadonlySet<string> = new Set(["target", "json", "_"]);
 
 const errorToExitCode = (code: string): number => {
   if (code === "InvalidConfig") return 1;
@@ -61,24 +59,11 @@ const handleDeploy = async (args: ParsedArgs<typeof DEPLOY_ARGS>): Promise<numbe
       if (exit === 0) emitSuccess({ command: "deploy", status: "ok", target });
       return exit;
     }
-    if (target === "node") {
-      // The dynamic import path is constructed at runtime so the
-      // typechecker doesn't require the module to be loaded at
-      // dispatcher build time.
-      const nodeModuleSpecifier = "./deploy/node";
-      const mod = (await import(nodeModuleSpecifier)) as {
-        deployNode: (
-          config: AppConfig,
-          opts?: { force?: boolean; cwd?: string },
-        ) => Promise<number>;
-      };
-      const exit = await mod.deployNode(config, args.force === true ? { force: true } : {});
-      if (exit === 0) emitSuccess({ command: "deploy", status: "ok", target });
-      return exit;
-    }
     throw new BaerlyError(
       "InvalidConfig",
-      `baerly deploy: unknown target ${JSON.stringify(target)}`,
+      `baerly deploy: target ${JSON.stringify(target)} has no deploy backend. ` +
+        `Use your platform's deploy mechanism (e.g. \`railway up\` for node-railway, ` +
+        `\`docker build\` + \`docker push\` for node-docker).`,
     );
   } catch (err) {
     if (err instanceof BaerlyError) {

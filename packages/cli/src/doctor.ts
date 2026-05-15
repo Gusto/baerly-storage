@@ -1,10 +1,10 @@
 /**
  * `baerly doctor` — citty dispatcher.
  *
- * Reads `baerly.config.ts:target` and routes to either
- * {@link doctorCloudflare} or `doctorNode` (loaded via dynamic
- * import so the dispatcher's typecheck doesn't pull the Node
- * backend in at build time). Both backends ship; the dispatcher
+ * Reads `baerly.config.ts:target` and routes to
+ * {@link doctorCloudflare}. The Node variants (`node-railway`,
+ * `node-docker`) self-validate at scaffold time — the example IS
+ * the contract — so they have no doctor backend. The dispatcher
  * also accepts two cross-target sub-checks — `--check=index-filter-drift`
  * (read-only drift scan) and `--rebuild-drift` (drift scan + auto-rebuild)
  * — whose findings splice into whichever backend report it dispatches to.
@@ -28,7 +28,7 @@
 import { spawn } from "node:child_process";
 import { defineCommand, type ArgsDef, type ParsedArgs } from "citty";
 import { BaerlyError } from "@baerly/protocol";
-import { loadAppConfig, loadAppConfigWithCollections, type AppConfig } from "./config.ts";
+import { loadAppConfig, loadAppConfigWithCollections } from "./config.ts";
 import { doctorCloudflare, type DoctorFinding, type DoctorReport } from "./doctor/cloudflare.ts";
 import { checkIndexFilterDrift } from "./doctor/index-filter-drift.ts";
 import type { ProcessRunner } from "./deploy/cloudflare.ts";
@@ -37,8 +37,9 @@ import { color, emitError, isJsonMode, setJsonMode } from "./output.ts";
 const DOCTOR_ARGS = {
   target: {
     type: "string",
-    description: 'Override `baerly.config.ts:target`. "cloudflare" or "node".',
-    valueHint: "cloudflare|node",
+    description:
+      'Override `baerly.config.ts:target`. Only "cloudflare" supported (Node variants self-validate at scaffold time).',
+    valueHint: "cloudflare",
   },
   fix: {
     type: "boolean",
@@ -52,7 +53,7 @@ const DOCTOR_ARGS = {
   usage: {
     type: "boolean",
     description:
-      "Scan recent log entries per collection and emit a graduation hint when writes/min approaches the M-size ceiling (Node target; CF target emits a follow-up breadcrumb).",
+      "Scan recent log entries per collection and emit a graduation hint when writes/min approaches the M-size ceiling (CF target emits a follow-up breadcrumb).",
   },
   check: {
     type: "string",
@@ -186,33 +187,10 @@ const handleDoctor = async (args: ParsedArgs<typeof DOCTOR_ARGS>): Promise<numbe
       renderReport(target, report);
       return report.status === "error" ? 2 : 0;
     }
-    if (target === "node") {
-      // The Node doctor is pure-read: no `runner` or `--fix` (the
-      // remediation path lives in `baerly deploy --target=node
-      // --force`). The dynamic import path is constructed at
-      // runtime so the typechecker doesn't require the module to
-      // be loaded at dispatcher build time.
-      const nodeModuleSpecifier = "./doctor/node";
-      const mod = (await import(nodeModuleSpecifier)) as {
-        doctorNode: (
-          config: AppConfig,
-          opts?: {
-            cwd?: string;
-            usage?: boolean;
-            extraFindings?: readonly DoctorFinding[];
-          },
-        ) => Promise<DoctorReport>;
-      };
-      const report = await mod.doctorNode(config, {
-        ...(args.usage === true && { usage: true }),
-        ...(extraFindings.length > 0 && { extraFindings }),
-      });
-      renderReport(target, report);
-      return report.status === "error" ? 2 : 0;
-    }
     throw new BaerlyError(
       "InvalidConfig",
-      `baerly doctor: unknown target ${JSON.stringify(target)}`,
+      `baerly doctor: target ${JSON.stringify(target)} has no doctor backend. ` +
+        `(Node variants self-validate at scaffold time; the example IS the contract.)`,
     );
   } catch (err) {
     if (err instanceof BaerlyError) {

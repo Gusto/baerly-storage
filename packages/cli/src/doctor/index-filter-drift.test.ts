@@ -19,7 +19,7 @@ import { checkIndexFilterDrift } from "./index-filter-drift.ts";
 const APP: AppConfig = {
   app: "test",
   tenant: "t",
-  target: "node",
+  target: "node-docker",
   repoRoot: "/tmp/index-filter-drift-test",
 };
 
