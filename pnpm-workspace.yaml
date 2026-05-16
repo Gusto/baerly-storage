@@ -18,4 +18,6 @@ linkWorkspacePackages: true
 # allowlist enumerated here.
 onlyBuiltDependencies:
   - esbuild
+  - lefthook
+  - sharp
   - workerd
