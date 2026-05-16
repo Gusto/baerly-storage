@@ -2,7 +2,7 @@
   "name": "@baerly/dev",
   "version": "0.1.0",
   "private": true,
-  "description": "Dev harness — local-fs Storage adapter + miniflare runner. Stub.",
+  "description": "Dev harness — LocalFsStorage adapter, ensureTable helper, and terminal-UX utilities for dev servers.",
   "license": "MIT",
   "type": "module",
   "sideEffects": false,

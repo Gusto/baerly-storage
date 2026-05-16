@@ -156,7 +156,7 @@ export const runDev = async (opts: {
 
   if (!opts.json) {
     printDevBanner({
-      name: `baerly · ${config.app}`,
+      name: config.app,
       apiUrl: { label: "api", url: `http://localhost:${boundPort}` },
       hints: [
         { key: "data-dir", value: dataDir },
