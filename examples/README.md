@@ -112,9 +112,10 @@ R2 + Assets bindings).
 
 Fully-built ticket CRUD app — Node HTTP server over
 `LocalFsStorage` + React/Vite frontend. Live multi-tab updates
-via the `/v1/since` long-poll, surfaced through the `useChanges`
-hook. **Dev-only teaching fixture**, not a deployable production
-template: it pins a hard-coded `sharedSecret` and a single tenant.
+via the `/v1/since` long-poll, surfaced through the `useLiveQuery` /
+`useLiveDocument` hooks. **Dev-only teaching fixture**, not a
+deployable production template: it pins a hard-coded `sharedSecret`
+and a single tenant.
 
 **Audience:** anyone learning how to build something with baerly
 — what an app looks like end-to-end, what the client API feels
@@ -131,7 +132,7 @@ pnpm dev
 Then open <http://localhost:5173>.
 
 **Read first:** `apps/server/src/index.ts` (the ~25-line server
-boot), then `apps/web/src/TicketList.tsx` (the `useChanges` live-
+boot), then `apps/web/src/TicketList.tsx` (the `useLiveQuery` live-
 update hook).
 
 For a deployable production version of this same app — R2, Cloudflare

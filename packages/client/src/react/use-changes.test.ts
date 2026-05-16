@@ -80,6 +80,59 @@ describe("useChanges", () => {
     unmount();
   });
 
+  test("idle response (empty events, same cursor) does not change events reference", async () => {
+    const pendingRejects: Array<(e: unknown) => void> = [];
+    let polls = 0;
+    const mock = new MockFetch();
+    mock.on("GET", "/v1/since", (req) => {
+      polls += 1;
+      // First poll: deliver a real batch so `events` has a known
+      // non-empty reference.
+      if (polls === 1) {
+        return jsonResponse({
+          events: [
+            {
+              lsn: "a_b_01",
+              op: "I",
+              collection: "tickets",
+              doc_id: "x",
+              schema_version: 0,
+              session: "s",
+              seq: 0,
+              commit_ts: "",
+            },
+          ],
+          next_cursor: "a_b_01",
+        });
+      }
+      // Second poll: idle (empty batch, cursor unchanged). The hook
+      // must drop this — `events` reference and `cursor` must NOT
+      // change. Hang the third poll so we can compare after polls=2.
+      if (polls === 2) {
+        return jsonResponse({ events: [], next_cursor: "a_b_01" });
+      }
+      return new Promise<Response>((_resolve, reject) => {
+        pendingRejects.push(reject);
+        req.signal.addEventListener(
+          "abort",
+          () => reject(new DOMException("aborted", "AbortError")),
+          { once: true },
+        );
+      });
+    });
+    const client = createBaerlyClient({ baseUrl: "http://x", fetch: mock.fetch });
+    const { result, unmount } = renderHook(() => useChanges(client, "tickets"));
+    await waitFor(() => expect(result.current.events).toHaveLength(1));
+    const firstEventsRef = result.current.events;
+    const firstCursor = result.current.cursor;
+    // Wait until the second poll has run and the third is in flight.
+    await waitFor(() => expect(polls).toBeGreaterThanOrEqual(3));
+    expect(result.current.events).toBe(firstEventsRef);
+    expect(result.current.cursor).toBe(firstCursor);
+    unmount();
+    for (const r of pendingRejects) r(new Error("test teardown"));
+  });
+
   test("aborts in-flight request on unmount", async () => {
     let abortedOnce = false;
     let pendingReject: ((e: unknown) => void) | undefined;

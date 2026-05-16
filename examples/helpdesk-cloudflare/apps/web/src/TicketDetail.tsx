@@ -1,5 +1,4 @@
-import { useEffect, useState } from "react";
-import { useChanges } from "@baerly/client/react";
+import { useLiveDocument } from "@baerly/client/react";
 import { client } from "./client.ts";
 import type { Ticket } from "../../../types.ts";
 
@@ -10,16 +9,11 @@ interface Props {
 }
 
 export const TicketDetail = ({ id, onEdit, onBack }: Props): React.JSX.Element => {
-  const [t, setT] = useState<Ticket | undefined>(undefined);
-  const { events } = useChanges(client, "tickets");
+  const { row: t, loading, error } = useLiveDocument<Ticket>(client, "tickets", id);
 
-  useEffect(() => {
-    void (async () => {
-      setT(await client.table<Ticket>("tickets").where({ _id: id }).first());
-    })();
-  }, [id, events]);
-
-  if (t === undefined) return <p>Loading…</p>;
+  if (error !== undefined) return <p style={{ color: "crimson" }}>Error: {error.message}</p>;
+  if (loading) return <p>Loading…</p>;
+  if (t === undefined) return <p>Not found.</p>;
 
   return (
     <div>

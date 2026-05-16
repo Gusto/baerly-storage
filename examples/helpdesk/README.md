@@ -6,7 +6,7 @@ A working CRUD helpdesk over baerly-storage. Two workspaces:
 - `apps/web` — React + Vite. Talks to the server via `@baerly/client`.
   The ticket list and detail views are live: edits from one browser
   tab appear in others over the `/v1/since` long-poll, surfaced
-  through the `useChanges` React hook.
+  through the `useLiveQuery` / `useLiveDocument` React hooks.
 
 ## Quick start (60 seconds)
 
@@ -71,15 +71,25 @@ await client.table<Ticket>("tickets").where({ _id }).update({ status: "closed" }
 await client.table<Ticket>("tickets").where({ status: "open" }).all();
 ```
 
-Live updates are one hook — `useChanges` refetches whenever the
-table's `/v1/since` cursor advances:
+Live updates are one hook — `useLiveQuery` re-runs `.where(...).all()`
+whenever the server emits log events for the table, and is a no-op
+on idle long-poll cycles:
 
 ```tsx
 // apps/web/src/TicketList.tsx
-const { events } = useChanges(client, "tickets");
-useEffect(() => {
-  void (async () => setRows(await client.table<Ticket>("tickets").where({}).all()))();
-}, [events, filter]);
+const { rows, loading, error } = useLiveQuery<Ticket>(
+  client,
+  "tickets",
+  filter === "all" ? {} : { status: filter },
+);
+```
+
+For a single document, `useLiveDocument` does the same with `.first()`
+and only refetches when an event touches *that* row:
+
+```tsx
+// apps/web/src/TicketDetail.tsx
+const { row, loading, error } = useLiveDocument<Ticket>(client, "tickets", id);
 ```
 
 ## Bucket layout
@@ -130,7 +140,7 @@ Use `pnpm create baerly` to scaffold a production-shaped Worker
 ## Files to read
 
 Start with `apps/server/src/index.ts` (server boot, ~25 lines), then
-`apps/web/src/TicketList.tsx` (the `useChanges` live-updates hook).
+`apps/web/src/TicketList.tsx` (the `useLiveQuery` live-updates hook).
 `types.ts`, `apps/server/src/seed.ts`, `apps/web/src/client.ts`, and
 `smoke.test.ts` fill in the rest.
 

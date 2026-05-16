@@ -1,24 +1,17 @@
-import { useEffect, useState } from "react";
-import { useChanges } from "@baerly/client/react";
+import { useState } from "react";
+import { useLiveQuery } from "@baerly/client/react";
 import { client } from "./client.ts";
 import { STATUSES, type Ticket } from "../../../types.ts";
 
 type Filter = "all" | Ticket["status"];
 
 export const TicketList = ({ onOpen }: { onOpen: (id: string) => void }): React.JSX.Element => {
-  const [rows, setRows] = useState<readonly Ticket[]>([]);
   const [filter, setFilter] = useState<Filter>("all");
-  const { events, error } = useChanges(client, "tickets");
-
-  useEffect(() => {
-    void (async () => {
-      const tickets = client.table<Ticket>("tickets");
-      const next = await (filter === "all"
-        ? tickets.where({}).all()
-        : tickets.where({ status: filter }).all());
-      setRows(next);
-    })();
-  }, [events, filter]);
+  const { rows, loading, error } = useLiveQuery<Ticket>(
+    client,
+    "tickets",
+    filter === "all" ? {} : { status: filter },
+  );
 
   if (error !== undefined) return <p style={{ color: "crimson" }}>Error: {error.message}</p>;
 
@@ -37,7 +30,9 @@ export const TicketList = ({ onOpen }: { onOpen: (id: string) => void }): React.
           </select>
         </label>
       </div>
-      {rows.length === 0 ? (
+      {loading ? (
+        <p>Loading…</p>
+      ) : rows.length === 0 ? (
         <p>No tickets. Click "+ New ticket".</p>
       ) : (
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
