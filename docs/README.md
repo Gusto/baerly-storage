@@ -2,17 +2,20 @@
 title: docs/ — topic map
 audience: meta
 summary: Index of everything under docs/, grouped by audience.
-last-reviewed: 2026-05-14
+last-reviewed: 2026-05-15
 tags: [index, navigation]
 related: ["../CLAUDE.md", "spec/README.md", "adr/README.md"]
 ---
 
 # `docs/` — topic map
 
-Baerly is a vendorless document database that runs over any
-S3-compatible bucket. The data lives in your bucket; the protocol
-kernel is small enough that an LLM can use the public API zero-shot
-from the `.d.ts` files alone.
+Baerly is a vendorless document database for the new middle —
+software that's real enough to need state but not real enough to
+deserve a Postgres + Docker + on-call stack. It runs over any
+S3-compatible bucket; your data lives in your bucket, and the
+protocol kernel is small enough that an LLM can use the public API
+zero-shot from the `.d.ts` files alone. The positioning story is in
+[`about/thesis.md`](about/thesis.md).
 
 ## Using Baerly
 

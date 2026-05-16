@@ -2,7 +2,7 @@
 title: S3 API surface used
 audience: spec
 summary: The minimal S3 features the protocol depends on.
-last-reviewed: 2026-05-12
+last-reviewed: 2026-05-15
 tags: [protocol, s3]
 related: [s3-xml-escaping-cases.md]
 ---
@@ -26,6 +26,8 @@ To list the objects you `GET <endpoint>/<bucket>` which returns XML and is order
 S3 states strong consistency between its GET, PUT and list operations.
 
 *After a successful write of a new object, or an overwrite or delete of an existing object, any subsequent read request immediately receives the latest version of the object. S3 also provides strong consistency for list operations, so after a write, you can immediately perform a listing of the objects in a bucket with any changes reflected.* -- [S3 docs](https://aws.amazon.com/s3/consistency/)
+
+This is recent. Until **December 2020**, S3 was only eventually consistent for overwrites and list-after-write. Building a database on S3 meant putting a linearizable metadata service (ZooKeeper, etcd, DynamoDB, FoundationDB) in front of the eventually-consistent blob store to hold the authoritative pointer to "what exists" — which is what Iceberg, Delta Lake, and Snowflake all do. AWS then shipped strong read-after-write for every operation as a changelog entry; Werner Vogels' engineering retrospective on `allthingsdistributed.com` is the readable long-form on what changed. After that, the recipe this protocol uses — immutable log entries plus a single CAS'd pointer object, no external catalog — became viable. Iceberg, Delta Lake, Turbopuffer, Litestream, and SlateDB all converged on variants of this shape in the years since.
 
 ### S3 is an Immutable Key-Value store with a single index
 

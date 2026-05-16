@@ -1,8 +1,13 @@
 # baerly-storage
 
-A vendorless document database that runs over any S3-compatible
-storage API. The data lives in _your_ bucket; mechanical export to
-SQL is a first-class feature, not an afterthought.
+A vendorless document database for the new middle — software that's
+real enough to need state but not real enough to deserve a Postgres
++ Docker + on-call stack. It runs over any S3-compatible storage
+API; your data lives in _your_ bucket, the protocol kernel is small
+enough that an LLM can use the public API zero-shot from the
+`.d.ts` files alone, and mechanical export to SQL is a first-class
+feature, not an afterthought. The positioning story is in
+[`docs/about/thesis.md`](./docs/about/thesis.md).
 
 Tested with S3, Backblaze, R2 and self-hosted Minio.
 
@@ -43,9 +48,6 @@ choice. The local tarballs from `pnpm -F create-baerly pack` /
 `pnpm -F @baerly/cli pack` will work end-to-end once the
 scaffolded `package.json` references them via `file:` URLs — see
 the followup.
-
-The `create-baerly` / `@baerly/cli` split is intentional — see
-[ADR 0020](./docs/adr/0020-create-baerly-and-cli-split.md).
 
 For a runnable, multi-tab demo see [`examples/helpdesk/`](./examples/helpdesk); for production-shaped Cloudflare and Node scaffolds (also the source for `create-baerly`) see [`examples/`](./examples).
 

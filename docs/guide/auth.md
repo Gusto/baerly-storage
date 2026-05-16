@@ -67,7 +67,7 @@ on a workaround.
 The `tenantPrefix` derives from auth, not from the URL. A
 URL-encoded tenant is a forgery surface; tenant-CAS isolation
 guarantees rest on the verifier producing the right prefix — see
-[ADR-0018](../adr/001-tenant-cas-isolation.md).
+[ADR-001](../adr/001-tenant-cas-isolation.md).
 
 ### Rejected alternatives
 

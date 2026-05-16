@@ -1,13 +1,13 @@
 ---
 title: API surface lock
 audience: adr
-summary: ADR 0019 — API surface lock.
+summary: ADR 002 — API surface lock.
 last-reviewed: 2026-05-12
 tags: [decision, adr]
 related: [README.md]
 ---
 
-# 0019 — API surface lock
+# 002 — API surface lock
 
 ## Status
 
@@ -105,7 +105,7 @@ Prohibited without a supersession ADR:
 - Adding cross-table writes inside a transaction — this would break
   the no-2PC invariant (see the JSDoc on `Db.transaction` in
   [`packages/server/src/db.ts`](../../packages/server/src/db.ts) and
-  [ADR-0018](./001-tenant-cas-isolation.md)).
+  [ADR-001](./001-tenant-cas-isolation.md)).
 - Changing the behavioural contract of an existing method (e.g.
   making `update` upsert instead of no-op-on-missing).
 
@@ -129,7 +129,7 @@ path without making the public API a moving target.
   implicitly track surface drift via byte-count changes.
 - `db.transaction`'s single-table scope is the load-bearing composition
   with the per-collection CAS scope
-  ([ADR-0018](./001-tenant-cas-isolation.md)). Reversing this lock
+  ([ADR-001](./001-tenant-cas-isolation.md)). Reversing this lock
   would require either 2PC or per-tenant CAS; both were explicitly
   rejected.
 - JSDoc on `Db.create`, `db.table`, and `db.transaction` is the source
