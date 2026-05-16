@@ -100,7 +100,7 @@
     "execa": "^9.5.2",
     "fake-indexeddb": "^6.2.5",
     "fast-check": "^4.7.0",
-    "happy-dom": "^15.11.0",
+    "happy-dom": "^20.9.0",
     "idb-keyval": "^6.2.2",
     "lefthook": "^2.1.6",
     "oxfmt": "^0.48.0",
