@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite --logLevel=warn --clearScreen=false",
+    "dev": "vite --clearScreen=false",
     "build": "vite build",
     "preview": "vite preview"
   },

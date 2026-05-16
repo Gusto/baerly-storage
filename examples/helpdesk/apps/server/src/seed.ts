@@ -57,6 +57,6 @@ const DEMO: ReadonlyArray<Omit<Ticket, "_id">> = [
 ];
 
 for (const t of DEMO) {
-  const { _id } = await tickets.insert(t);
-  console.log(`seeded ${_id}: ${t.title}`);
+  await tickets.insert(t);
 }
+console.log(`seeded ${DEMO.length} demo tickets`);
