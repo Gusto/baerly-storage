@@ -22,6 +22,7 @@
   },
   "dependencies": {
     "@baerly/protocol": "workspace:*",
-    "@baerly/server": "workspace:*"
+    "@baerly/server": "workspace:*",
+    "picocolors": "^1.1.1"
   }
 }
