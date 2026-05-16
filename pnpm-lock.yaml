@@ -275,7 +275,7 @@ importers:
         specifier: ^6.0.0
         version: 6.4.2(@types/node@25.6.2)(lightningcss@1.32.0)(tsx@4.21.0)
 
-  examples/minimal-node:
+  examples/node-docker:
     devDependencies:
       '@baerly/cli':
         specifier: workspace:*
@@ -287,7 +287,7 @@ importers:
         specifier: ^5.8.0
         version: 5.9.3
 
-  examples/minimal-node/apps/server:
+  examples/node-docker/apps/server:
     dependencies:
       '@baerly/adapter-node':
         specifier: workspace:*
@@ -315,7 +315,56 @@ importers:
         specifier: ^5.8.0
         version: 5.9.3
 
-  examples/minimal-node/apps/web:
+  examples/node-docker/apps/web:
+    devDependencies:
+      typescript:
+        specifier: ^5.8.0
+        version: 5.9.3
+      vite:
+        specifier: ^6.0.0
+        version: 6.4.2(@types/node@25.6.2)(lightningcss@1.32.0)(tsx@4.21.0)
+
+  examples/node-railway:
+    devDependencies:
+      '@baerly/cli':
+        specifier: workspace:*
+        version: link:../../packages/cli
+      create-baerly:
+        specifier: workspace:*
+        version: link:../../packages/create-baerly
+      typescript:
+        specifier: ^5.8.0
+        version: 5.9.3
+
+  examples/node-railway/apps/server:
+    dependencies:
+      '@baerly/adapter-node':
+        specifier: workspace:*
+        version: link:../../../../packages/adapter-node
+      '@baerly/protocol':
+        specifier: workspace:*
+        version: link:../../../../packages/protocol
+      '@baerly/server':
+        specifier: workspace:*
+        version: link:../../../../packages/server
+      '@xmldom/xmldom':
+        specifier: ^0.9.10
+        version: 0.9.10
+      aws4fetch:
+        specifier: 1.0.20
+        version: 1.0.20
+    devDependencies:
+      '@baerly/cli':
+        specifier: workspace:*
+        version: link:../../../../packages/cli
+      '@types/node':
+        specifier: ^25.0.0
+        version: 25.6.2
+      typescript:
+        specifier: ^5.8.0
+        version: 5.9.3
+
+  examples/node-railway/apps/web:
     devDependencies:
       typescript:
         specifier: ^5.8.0
