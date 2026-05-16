@@ -15,5 +15,5 @@
     "create-baerly": "workspace:*",
     "typescript": "^5.8.0"
   },
-  "packageManager": "pnpm@10.31.0"
+  "packageManager": "pnpm@11.1.2"
 }
