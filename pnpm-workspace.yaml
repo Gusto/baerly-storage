@@ -3,6 +3,22 @@ packages:
   - examples/*
   - examples/*/apps/*
 
+# pnpm 11 renamed the postinstall allowlist to `allowBuilds`. Each
+# entry is `<pkg>: true|false`: `true` runs the install script,
+# `false` skips it without emitting `ERR_PNPM_IGNORED_BUILDS`.
+#
+# `esbuild`, `lefthook`, and `workerd` ship working install scripts
+# we want to run. `sharp` is a transitive dep of `miniflare` whose
+# install script falls back to a node-gyp build on Node 24 (no
+# prebuilt for our platform/runtime combo), so we suppress it —
+# sharp still loads from its prebuilt binary at require time, and
+# nothing in this repo exercises its code path directly.
+allowBuilds:
+  esbuild: true
+  lefthook: true
+  workerd: true
+  sharp: false
+
 # pnpm 10 flipped this default to `false`. Scaffolded apps (and the
 # T03 substitute pipeline) write `@baerly/*` deps as literal
 # `^0.1.0` semver ranges rather than `workspace:*` — when those land
@@ -11,13 +27,3 @@ packages:
 # Restoring `true` matches the pnpm-9 behaviour the staged-tarball
 # install path in `README.md` relies on.
 linkWorkspacePackages: true
-
-# `workerd` ships a native binary postinstalled by
-# `@cloudflare/vitest-pool-workers`. The other entries are already
-# allowed elsewhere in the workspace but pnpm 10 wants the full
-# allowlist enumerated here.
-onlyBuiltDependencies:
-  - esbuild
-  - lefthook
-  - sharp
-  - workerd
