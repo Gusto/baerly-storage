@@ -35,9 +35,8 @@ import { spawn } from "node:child_process";
 import { createServer, type Server } from "node:http";
 import { resolve } from "node:path";
 import { defineCommand, parseArgs, type ArgsDef, type ParsedArgs } from "citty";
-import pc from "picocolors";
 import { LocalFsStorage, createListener } from "@baerly/adapter-node";
-import { ensureTable } from "@baerly/dev";
+import { ensureTable, printDevBanner, withRequestLogging } from "@baerly/dev";
 import { BaerlyError } from "@baerly/protocol";
 import { sharedSecret } from "@baerly/server";
 import { loadAppConfigWithCollections } from "./config.ts";
@@ -141,7 +140,9 @@ export const runDev = async (opts: {
     }
   }
 
-  const listener = createListener({ app: config.app, storage, verifier });
+  const listener = withRequestLogging(createListener({ app: config.app, storage, verifier }), {
+    quiet: opts.json,
+  });
   const server = createServer(listener);
   await new Promise<void>((res, rej) => {
     server.once("error", rej);
@@ -218,17 +219,22 @@ const printBanner = (b: {
   readonly secretSource: "env" | "fallback";
 }): void => {
   if (b.json) return;
-  const lines = [
-    pc.bold(pc.cyan("baerly dev")),
-    `  url:       http://localhost:${b.port}`,
-    `  data-dir:  ${b.dataDir}`,
-    `  app:       ${b.app}`,
-    `  tenant:    ${b.tenant}`,
-    `  target:    ${b.target}`,
-    `  verifier:  sharedSecret (${b.secretSource === "env" ? "BAERLY_DEV_SECRET" : "fallback dev-only-secret"})`,
-    "",
-  ];
-  process.stderr.write(`${lines.join("\n")}\n`);
+  printDevBanner({
+    name: `baerly · ${b.app}`,
+    apiUrl: { label: "api", url: `http://localhost:${b.port}` },
+    hints: [
+      { key: "data-dir", value: b.dataDir },
+      { key: "tenant", value: b.tenant },
+      { key: "target", value: b.target },
+      {
+        key: "verifier",
+        value:
+          b.secretSource === "env"
+            ? "sharedSecret (BAERLY_DEV_SECRET)"
+            : "sharedSecret (fallback dev-only-secret)",
+      },
+    ],
+  });
 };
 
 /**
