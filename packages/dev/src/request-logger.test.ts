@@ -153,7 +153,7 @@ describe("withRequestLogging", () => {
     }
     await new Promise((r) => setTimeout(r, 50));
 
-    expect(collected.length).toBeLessThanOrEqual(1);
+    expect(collected).toHaveLength(1);
   });
 
   test("multiple sequential requests — one line each", async () => {
