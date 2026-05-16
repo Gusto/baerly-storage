@@ -2,6 +2,7 @@
 .claude/reviews/
 .claude/research/
 .claude/worktrees/
+.claude/settings.local.json
 
 # Dependencies
 node_modules/
