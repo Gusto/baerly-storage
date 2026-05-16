@@ -278,3 +278,51 @@ export const FORBIDDEN_MERGE_KEYS: ReadonlySet<string> = new Set([
   "constructor",
   "prototype",
 ]);
+
+/**
+ * Cloudflare R2 free-tier Class A ops per month.
+ *
+ * Class A ops (writes, lists) are the expensive tier. This cap is the
+ * primary graduation signal for the dev banner's budget hint and for
+ * future `baerly stats` graduation triggers.
+ *
+ * @see docs/about/cost-model.md (rate-checked 2026-05-09)
+ */
+export const R2_FREE_TIER_CLASS_A_OPS_PER_MONTH: number = 1_000_000;
+
+/**
+ * Cloudflare R2 free-tier Class B ops per month.
+ *
+ * Class B ops (reads) are the cheap tier. Ten times the Class A cap;
+ * rarely the binding constraint at free-tier write volumes.
+ *
+ * @see docs/about/cost-model.md (rate-checked 2026-05-09)
+ */
+export const R2_FREE_TIER_CLASS_B_OPS_PER_MONTH: number = 10_000_000;
+
+/**
+ * Cloudflare R2 free-tier storage cap, measured in GB-months.
+ *
+ * One GB-month means one gigabyte stored for one full calendar month;
+ * storing 500 MB for two months consumes the same allowance. At typical
+ * Baerly workloads — small JSON documents, compacted aggressively — most
+ * collections stay well under this cap, so storage is rarely the binding
+ * constraint. Class A ops ({@link R2_FREE_TIER_CLASS_A_OPS_PER_MONTH})
+ * start to bite long before a dataset grows past 10 GB.
+ *
+ * @see docs/about/cost-model.md (rate-checked 2026-05-09)
+ */
+export const R2_FREE_TIER_STORAGE_GB_PER_MONTH: number = 10;
+
+/**
+ * Architecturally-enforced ceiling: storage ops per logical write.
+ *
+ * Three Class A ops: PUT content, PUT log entry, CAS-advance
+ * `current.json`. The cost-model page derives the free-tier write
+ * budget from this multiplier; the phase-5 end-to-end test asserts it
+ * at CI time. Changing this constant is a cost-model-breaking change.
+ *
+ * @see docs/about/cost-model.md §"Cost ceiling"
+ * @see tests/integration/phase5-end-to-end.test.ts
+ */
+export const STORAGE_OPS_PER_LOGICAL_WRITE: number = 3;
