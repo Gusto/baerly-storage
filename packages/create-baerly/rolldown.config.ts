@@ -4,8 +4,8 @@ import { defineConfig } from "rolldown";
 
 /**
  * Bundle the scaffolder entry; copy the runnable example trees from
- * `../../examples/{minimal-cloudflare,node-railway,node-docker,helpdesk-cloudflare}/`
- * into `dist/templates/{minimal-cloudflare,node-railway,node-docker,helpdesk-cloudflare}/`
+ * `../../examples/{minimal-cloudflare,minimal-node-railway,minimal-node-docker,helpdesk-cloudflare}/`
+ * into `dist/templates/{minimal-cloudflare,minimal-node-railway,minimal-node-docker,helpdesk-cloudflare}/`
  * so the bundled binary can find its templates at runtime.
  *
  * The output subdirectory names mirror the source example directory
@@ -29,8 +29,8 @@ const copyTemplates = () => ({
   closeBundle() {
     const EXAMPLES: readonly string[] = [
       "minimal-cloudflare",
-      "node-railway",
-      "node-docker",
+      "minimal-node-railway",
+      "minimal-node-docker",
       "helpdesk-cloudflare",
     ];
     const SKIP_NAMES = new Set(["node_modules", "uint8array-base64.d.ts"]);

@@ -232,9 +232,9 @@ Read in this order to build a mental model:
    infrastructure, not part of the automated test suite.
 11. **`examples/`** — runnable example apps that double as the CLI
    template source. `examples/minimal-cloudflare/` (R2 +
-   `cloudflareAccess`→`sharedSecret`), `examples/node-railway/`
+   `cloudflareAccess`→`sharedSecret`), `examples/minimal-node-railway/`
    (S3 + JWKS→`sharedSecret`, PaaS-shaped — no Dockerfile),
-   `examples/node-docker/` (S3 + JWKS→`sharedSecret`, distroless
+   `examples/minimal-node-docker/` (S3 + JWKS→`sharedSecret`, distroless
    `Dockerfile` + `healthcheck.js`), and `examples/helpdesk-cloudflare/`
    are the production-shaped scaffolds; `examples/helpdesk/` is a
    dev-only teaching fixture (React+Vite ticket CRUD over

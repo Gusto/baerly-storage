@@ -55,8 +55,8 @@ const TEXT_EXTS = new Set([
 const STARTER_TO_EXAMPLE: Record<string, string> = {
   "cloudflare:minimal": "minimal-cloudflare",
   "cloudflare:helpdesk": "helpdesk-cloudflare",
-  "node-railway:minimal": "node-railway",
-  "node-docker:minimal": "node-docker",
+  "node-railway:minimal": "minimal-node-railway",
+  "node-docker:minimal": "minimal-node-docker",
 };
 
 /**

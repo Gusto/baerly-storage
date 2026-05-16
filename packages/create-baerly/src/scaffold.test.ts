@@ -5,8 +5,8 @@ import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it, test } from "vitest";
 import { scaffold } from "./scaffold.ts";
 
-// `examples/` (containing `minimal-cloudflare/`, `node-railway/`,
-// `node-docker/`, and `helpdesk-cloudflare/`) is the templates
+// `examples/` (containing `minimal-cloudflare/`, `minimal-node-railway/`,
+// `minimal-node-docker/`, and `helpdesk-cloudflare/`) is the templates
 // root. The scaffolder's `TARGET_TO_EXAMPLE` map resolves a target
 // to the matching example directory under this root.
 const TEMPLATES_ROOT = resolve(
@@ -18,8 +18,8 @@ const TEMPLATES_ROOT = resolve(
 );
 const EXAMPLE_DIRS = [
   resolve(TEMPLATES_ROOT, "minimal-cloudflare"),
-  resolve(TEMPLATES_ROOT, "node-railway"),
-  resolve(TEMPLATES_ROOT, "node-docker"),
+  resolve(TEMPLATES_ROOT, "minimal-node-railway"),
+  resolve(TEMPLATES_ROOT, "minimal-node-docker"),
   resolve(TEMPLATES_ROOT, "helpdesk-cloudflare"),
 ];
 

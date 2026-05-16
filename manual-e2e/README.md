@@ -68,7 +68,7 @@ docker run -p 8080:8080 --env-file apps/server/.env my-svc:latest
 ```
 
 The production template lives at
-`examples/node-docker/`. It ships a distroless
+`examples/minimal-node-docker/`. It ships a distroless
 `Dockerfile` with non-root user (UID 65532) and a Node-script
 HEALTHCHECK, plus a `healthcheck.js` script and a `.env.example`
 documenting every env var the server reads. The Node variants are

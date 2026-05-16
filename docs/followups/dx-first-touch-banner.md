@@ -7,8 +7,8 @@ and the `baerly dev` CLI adopted them.
 ## 1. `baerly dev` does not orchestrate `apps/web/`
 
 `baerly dev` (`packages/cli/src/dev.ts`) only boots the Node API
-listener over `LocalFsStorage`. For `examples/node-railway/` and
-`examples/node-docker/` the root `package.json` has `"dev": "baerly dev"`,
+listener over `LocalFsStorage`. For `examples/minimal-node-railway/` and
+`examples/minimal-node-docker/` the root `package.json` has `"dev": "baerly dev"`,
 so the React `apps/web/` workspace is **not** started by `pnpm dev`.
 A user opens the banner's `http://localhost:3000` URL, hits a 401
 JSON page, then either reads the example's README or gives up. The

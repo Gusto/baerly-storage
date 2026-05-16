@@ -1,0 +1,24 @@
+{
+  "name": "minimal-node-railway-server",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "baerly dev",
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@baerly/adapter-node": "workspace:*",
+    "@baerly/protocol": "workspace:*",
+    "@baerly/server": "workspace:*",
+    "@xmldom/xmldom": "^0.9.10",
+    "aws4fetch": "1.0.20"
+  },
+  "devDependencies": {
+    "@baerly/cli": "workspace:*",
+    "@types/node": "^25.0.0",
+    "typescript": "^5.8.0"
+  }
+}

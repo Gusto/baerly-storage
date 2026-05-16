@@ -275,7 +275,7 @@ importers:
         specifier: ^6.0.0
         version: 6.4.2(@types/node@25.6.2)(lightningcss@1.32.0)
 
-  examples/node-docker:
+  examples/minimal-node-docker:
     devDependencies:
       '@baerly/cli':
         specifier: workspace:*
@@ -287,7 +287,7 @@ importers:
         specifier: ^5.8.0
         version: 5.9.3
 
-  examples/node-docker/apps/server:
+  examples/minimal-node-docker/apps/server:
     dependencies:
       '@baerly/adapter-node':
         specifier: workspace:*
@@ -315,7 +315,7 @@ importers:
         specifier: ^5.8.0
         version: 5.9.3
 
-  examples/node-docker/apps/web:
+  examples/minimal-node-docker/apps/web:
     devDependencies:
       typescript:
         specifier: ^5.8.0
@@ -324,7 +324,7 @@ importers:
         specifier: ^6.0.0
         version: 6.4.2(@types/node@25.6.2)(lightningcss@1.32.0)
 
-  examples/node-railway:
+  examples/minimal-node-railway:
     devDependencies:
       '@baerly/cli':
         specifier: workspace:*
@@ -336,7 +336,7 @@ importers:
         specifier: ^5.8.0
         version: 5.9.3
 
-  examples/node-railway/apps/server:
+  examples/minimal-node-railway/apps/server:
     dependencies:
       '@baerly/adapter-node':
         specifier: workspace:*
@@ -364,7 +364,7 @@ importers:
         specifier: ^5.8.0
         version: 5.9.3
 
-  examples/node-railway/apps/web:
+  examples/minimal-node-railway/apps/web:
     devDependencies:
       typescript:
         specifier: ^5.8.0
