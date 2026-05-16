@@ -120,10 +120,12 @@ export function createListener(opts: CreateListenerOptions): RequestListener {
   //    we kick off the configure asynchronously and let LogTape
   //    queue records emitted before configure resolves. LogTape's
   //    `configure` is idempotent (we always pass `reset: true`).
-  //    When the typed option is undefined we resolve the default
-  //    sink against `process.stdout.isTTY` so dev terminals get the
-  //    pretty sink and production hosts (where stdout is piped to a
-  //    log aggregator) get JSON.
+  //    Observability is always on: `resolveDefaultSink` picks the
+  //    pretty sink on a TTY and JSON off-TTY so dev terminals and
+  //    production log aggregators each get the right format without
+  //    any caller-side configuration. To silence non-error lines,
+  //    pass `observability: { sampleRate: 0 }` (head-sampling at 0
+  //    drops all non-error lines; errors are still force-kept).
   //
   // 2. `alsAwareRecorder` wraps the operator's MetricsRecorder
   //    once. Every kernel emission lands in both the operator's
@@ -135,9 +137,10 @@ export function createListener(opts: CreateListenerOptions): RequestListener {
   //    (the storage handle is operator-owned and pinned per
   //    deployment, so per-request wrapping would just allocate a
   //    new closure for no behavior change).
-  if (opts.observability !== undefined) {
-    void configureObservability(resolveDefaultSink(opts.observability));
-  }
+  // Observability is always on. resolveDefaultSink picks console-pretty
+  // on a TTY and console-json off-TTY; callers override either field
+  // (level / sink / sampleRate) by passing opts.observability.
+  void configureObservability(resolveDefaultSink(opts.observability ?? {}));
   const operatorRecorder = opts.metrics ?? noopMetricsRecorder;
   const teeRecorder = alsAwareRecorder(operatorRecorder);
   const wrappedStorage = observableStorage(opts.storage, teeRecorder);
