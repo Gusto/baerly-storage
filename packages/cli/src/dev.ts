@@ -154,15 +154,24 @@ export const runDev = async (opts: {
   const addr = server.address();
   const boundPort = typeof addr === "object" && addr !== null ? addr.port : opts.port;
 
-  printBanner({
-    port: boundPort,
-    dataDir,
-    tenant,
-    app: config.app,
-    target: config.target,
-    json: opts.json,
-    secretSource: process.env["BAERLY_DEV_SECRET"] !== undefined ? "env" : "fallback",
-  });
+  if (!opts.json) {
+    printDevBanner({
+      name: `baerly · ${config.app}`,
+      apiUrl: { label: "api", url: `http://localhost:${boundPort}` },
+      hints: [
+        { key: "data-dir", value: dataDir },
+        { key: "tenant", value: tenant },
+        { key: "target", value: config.target },
+        {
+          key: "verifier",
+          value:
+            process.env["BAERLY_DEV_SECRET"] !== undefined
+              ? "sharedSecret (BAERLY_DEV_SECRET)"
+              : "sharedSecret (fallback dev-only-secret)",
+        },
+      ],
+    });
+  }
 
   return {
     mode: "node",
@@ -200,40 +209,6 @@ const runWranglerDev = async (args: {
     tenant: null,
     app: null,
     wranglerExit,
-  });
-};
-
-/**
- * Print the startup banner. Text mode emits a colored block; JSON
- * mode stays silent here — the JSON envelope is emitted from the
- * command body once `runDev` returns. Goes to stderr so stdout in
- * `--json` mode stays a single envelope line.
- */
-const printBanner = (b: {
-  readonly port: number;
-  readonly dataDir: string;
-  readonly tenant: string;
-  readonly app: string;
-  readonly target: "cloudflare" | "node-railway" | "node-docker";
-  readonly json: boolean;
-  readonly secretSource: "env" | "fallback";
-}): void => {
-  if (b.json) return;
-  printDevBanner({
-    name: `baerly · ${b.app}`,
-    apiUrl: { label: "api", url: `http://localhost:${b.port}` },
-    hints: [
-      { key: "data-dir", value: b.dataDir },
-      { key: "tenant", value: b.tenant },
-      { key: "target", value: b.target },
-      {
-        key: "verifier",
-        value:
-          b.secretSource === "env"
-            ? "sharedSecret (BAERLY_DEV_SECRET)"
-            : "sharedSecret (fallback dev-only-secret)",
-      },
-    ],
   });
 };
 
