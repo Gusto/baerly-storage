@@ -232,13 +232,12 @@ describe("listEventsSince — pre-snapshot cursor → SchemaError", () => {
     expect(seed.events).toHaveLength(1);
     const cursor = seed.events[0]!.lsn;
 
-    // Delete the underlying log file via _raw.
-    const logFileKey = `manifests/${TABLE}/log/${cursor}.json`;
-    await db._raw.delete(logFileKey);
-
     // Bump current.json.log_seq_start to current.next_seq to mark
     // the entry as "folded" (the test takes the shortcut; the
-    // production compactor goes through casUpdateCurrentJson).
+    // production compactor goes through casUpdateCurrentJson). The
+    // physical `log/<seq>.json` file is left in place — the handler
+    // decides "folded" by comparing the cursor's seq against
+    // `log_seq_start`, not by probing for the file.
     const cjKey = "manifests/" + TABLE + "/current.json";
     const cj = await db._raw.get(cjKey);
     expect(cj).not.toBeNull();
@@ -253,5 +252,59 @@ describe("listEventsSince — pre-snapshot cursor → SchemaError", () => {
       name: "BaerlyError",
       code: "SchemaError",
     });
+  });
+});
+
+describe("longPollSince — cursor advances past the digit boundary", () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  // Regression: log files are named `log/<seq>.json`. With 12 entries
+  // (`0.json` … `11.json`) the lex order is `0, 1, 10, 11, 2, …, 9`
+  // — list-with-startAfter on integer filenames silently drops half
+  // the tail, and lsn-shaped cursor keys leak some-but-not-all real
+  // keys back into every poll. Either bug puts the long-poll's fast
+  // path into a tight loop on the second poll; both are caught by
+  // asserting that a second poll with the first poll's cursor lands
+  // on the idle-timeout path.
+  test("12 entries: second poll with returned cursor idles to deadline", async () => {
+    const { db, storage } = makeDb();
+    await provision(storage);
+    for (let i = 0; i < 12; i++) {
+      await db.table(TABLE).insert({ title: `row-${i}` });
+    }
+
+    // First poll: fast path picks up all 12 entries.
+    const first = await longPollSince({
+      db,
+      table: TABLE,
+      cursor: "",
+      timeoutMs: 500,
+      pollIntervalMs: 25,
+    });
+    expect(first.events).toHaveLength(12);
+    const cursor = first.next_cursor;
+    expect(cursor).toBe(first.events[11]!.lsn);
+
+    // Second poll: nothing new committed, so the handler must hit
+    // its deadline with an empty batch and the SAME cursor. Today's
+    // broken handler fast-paths a non-empty batch and the assertion
+    // below trips.
+    const secondPromise = longPollSince({
+      db,
+      table: TABLE,
+      cursor,
+      timeoutMs: 300,
+      pollIntervalMs: 25,
+    });
+    await vi.runAllTimersAsync();
+    const second = await secondPromise;
+
+    expect(second.events).toEqual([]);
+    expect(second.next_cursor).toBe(cursor);
   });
 });

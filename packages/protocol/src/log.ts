@@ -124,12 +124,14 @@ export interface LogEntry {
  */
 export type ReplicaIdentity = "PATCH_ONLY" | "FULL";
 
-/** S3 path segment for log entries (under the manifest prefix). */
+/**
+ * S3 path segment for log entries (under the manifest prefix). The
+ * full key shape is `<manifestPrefix>/log/<seq>.json` — composed
+ * inline by callers (`server-writer`, `gc`, `rebuild-index`,
+ * `http/since`) since the `<seq>` integer is the load-bearing
+ * identifier and a one-arg helper would just hide the join.
+ */
 export const LOG_KEY_PREFIX = "log";
-
-/** Compose the S3 key for a log entry under a manifest prefix. */
-export const logKey = (manifestPrefix: string, lsn: string): string =>
-  `${manifestPrefix}/${LOG_KEY_PREFIX}/${lsn}.json`;
 
 const COUNT_BIT_WIDTH = 10;
 

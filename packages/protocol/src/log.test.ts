@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import type { LogEntry, ReplicaIdentity } from "./log.ts";
-import { LOG_KEY_PREFIX, logKey, lsnParts } from "./log.ts";
+import { LOG_KEY_PREFIX, lsnParts } from "./log.ts";
 import { countKey } from "./types.ts";
 
 describe("LogEntry", () => {
@@ -49,14 +49,8 @@ describe("LogEntry", () => {
   });
 });
 
-describe("logKey", () => {
-  test("composes <prefix>/log/<lsn>.json", () => {
-    expect(logKey("manifest", "0fffff_abc_zz")).toBe(
-      `manifest/${LOG_KEY_PREFIX}/0fffff_abc_zz.json`,
-    );
-  });
-
-  test("LOG_KEY_PREFIX is 'log'", () => {
+describe("LOG_KEY_PREFIX", () => {
+  test("is 'log'", () => {
     expect(LOG_KEY_PREFIX).toBe("log");
   });
 });

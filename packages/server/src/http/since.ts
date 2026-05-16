@@ -21,15 +21,15 @@
  * 26; the router itself owns request parsing and error → HTTP mapping.
  * This module owns the I/O + cursor semantics.
  *
- * Cost model. While a long-poll connection is active the cost is
- * `ceil(timeoutMs / pollIntervalMs)` Class A ops per connection
- * (one `Storage.list` per inner poll, plus zero-or-more GETs when
- * events arrive). With the production defaults (25 s / 1 s) that is
- * 25 ops per active connection. The cost-model bound ticket 22
- * established (`< 1 Class A op / writer / hour`) is for an *idle*
- * reader — i.e. a client that is *not* currently holding a long-poll
- * open. Subscribers paying for real-time-ish delivery are by
- * definition non-idle.
+ * Cost model. While a long-poll connection is active the per-poll
+ * cost is one `Storage.get` of `current.json` plus one `Storage.get`
+ * per log entry yielded. An idle reader (no new entries) pays one
+ * Class A op per inner poll; with the production defaults
+ * (25 s / 1 s) that is 25 ops per active connection. The cost-model
+ * bound ticket 22 established (`< 1 Class A op / writer / hour`) is
+ * for an *idle* reader — i.e. a client that is *not* currently
+ * holding a long-poll open. Subscribers paying for real-time-ish
+ * delivery are by definition non-idle.
  *
  * See `.claude/research/planning/tickets/26-long-poll-since-route.md`
  * §4.3-§4.4 for the full design rationale.
@@ -37,7 +37,7 @@
 
 import { BaerlyError } from "@baerly/protocol";
 import type { LogEntry, Storage, StorageGetOptions, StorageGetResult } from "@baerly/protocol";
-import { LOG_KEY_PREFIX, readCurrentJson, logSeqStartOf } from "@baerly/protocol";
+import { LOG_KEY_PREFIX, logSeqStartOf, lsnParts, readCurrentJson } from "@baerly/protocol";
 import type { Db } from "../db.ts";
 import type { SinceResponse } from "../contract.ts";
 
@@ -219,9 +219,16 @@ export async function longPollSince(opts: LongPollSinceOptions): Promise<SinceRe
 }
 
 /**
- * One poll cycle: read `current.json`, validate the cursor against
- * `log_seq_start`, list strictly-greater log keys, GET each body,
+ * One poll cycle: read `current.json`, derive the `seq` range to
+ * scan from the cursor's embedded seq, GET each log entry by `seq`,
  * return the parsed `LogEntry`s in causal order.
+ *
+ * On-bucket log keys are `log/<seq>.json` — the same shape
+ * `compactor` / `gc` / `rebuild-index` walk. Iterating
+ * `[startSeq, endSeq)` and GET-ing each key directly avoids the
+ * lex-`startAfter` hazard on integer filenames (`10.json` sorts
+ * before `2.json` lex) and gives us the global causal ordering for
+ * free — `seq` is monotonic across writer sessions.
  *
  * No `current.json` yet → `[]` (clients can poll a not-yet-existing
  * table without erroring). Cursor inside `[0, log_seq_start)` →
@@ -255,75 +262,53 @@ export async function listEventsSince(opts: ListEventsSinceOptions): Promise<Log
     return [];
   }
   const logSeqStart = logSeqStartOf(read.json);
+  const nextSeq = read.json.next_seq;
 
-  // Cursor probe (the only non-obvious step). A cursor inside
-  // `[0, log_seq_start)` references a log entry that the compactor
-  // has folded into the snapshot and the GC sweep has deleted. The
-  // client must re-bootstrap from a snapshot read before resuming.
-  if (cursor.length > 0) {
-    const probeKey = `${logPrefix}${cursor}.json`;
-    const probed = await db._raw.get(probeKey, signalOpt(signal));
-    if (probed === null && logSeqStart > 0) {
+  // Derive the seq range to scan. Empty cursor → start at
+  // `log_seq_start` (the first un-snapshotted entry). Non-empty
+  // cursor → start at `cursorSeq + 1`. A cursor whose seq is below
+  // `log_seq_start` references an entry the compactor has folded
+  // into the snapshot and the GC sweep has deleted; the client must
+  // re-bootstrap from a snapshot read before resuming.
+  let startSeq: number;
+  if (cursor.length === 0) {
+    startSeq = logSeqStart;
+  } else {
+    const cursorSeq = lsnParts(cursor).seq;
+    if (cursorSeq < logSeqStart) {
       throw new BaerlyError(
         "SchemaError",
         `cursor ${JSON.stringify(cursor)} points to a log entry that has been folded into a snapshot (log_seq_start=${logSeqStart}); re-bootstrap from a snapshot read before resuming`,
       );
     }
-    // If `logSeqStart === 0` and the probe missed, the cursor is
-    // either a future lsn the client invented or a transient race
-    // — fall through and let the list surface zero events.
+    startSeq = cursorSeq + 1;
   }
 
-  // Collect log keys strictly greater than the cursor.
-  const startAfter = cursor.length > 0 ? `${logPrefix}${cursor}.json` : undefined;
-  const listOpts: { startAfter?: string; maxKeys: number; signal?: AbortSignal } = {
-    maxKeys: maxEvents,
-  };
-  if (startAfter !== undefined) listOpts.startAfter = startAfter;
-  if (signal !== undefined) listOpts.signal = signal;
-
-  const keys: string[] = [];
-  for await (const entry of db._raw.list(logPrefix, listOpts)) {
-    keys.push(entry.key);
-    if (keys.length >= maxEvents) break;
-  }
+  // Cap the range at `next_seq` (no entries past the tail exist) and
+  // at `maxEvents` (hard ceiling per the module docstring).
+  const endSeq = Math.min(nextSeq, startSeq + maxEvents);
 
   // Sequential GETs (NOT Promise.all). Long-poll is latency-bound,
   // per-poll batch is typically 0-10 entries, sequential keeps
   // memory bounded under pathological workloads.
   const entries: LogEntry[] = [];
-  for (const key of keys) {
+  const textDecoder = new TextDecoder();
+  for (let s = startSeq; s < endSeq; s++) {
+    const key = `${logPrefix}${s}.json`;
     const got = await db._raw.get(key, signalOpt(signal));
     if (got === null) {
-      // Race: the GC sweeper deleted this entry between the list
-      // and the GET. Skip; don't error.
+      // Race: the GC sweeper deleted this entry between
+      // `readCurrentJson` and the GET. Skip; don't error.
       continue;
     }
-    const text = new TextDecoder().decode(got.body);
     let parsed: unknown;
     try {
-      parsed = JSON.parse(text);
+      parsed = JSON.parse(textDecoder.decode(got.body));
     } catch (e) {
       throw new BaerlyError("InvalidResponse", `log entry at ${key}: body is not valid JSON`, e);
     }
     entries.push(parsed as LogEntry);
   }
-
-  // Sort defensively. Within a single session, ascending `seq`;
-  // across sessions, the lsn lex order is the descending-base-32
-  // encoding of the time component (newer sorts EARLIER lex), so we
-  // sort by `seq` ascending for the within-session case and break
-  // ties by lsn-desc (newer-first) for the cross-session case. The
-  // sort is REDUNDANT for a single-session writer — the list
-  // returns keys in storage-defined order which mirrors lex. We
-  // sort anyway because the design admits multiple concurrent
-  // writer sessions sharing one `current.json`.
-  entries.sort((a, b) => {
-    if (a.session === b.session) return a.seq - b.seq;
-    // Cross-session: tie-break on lsn lex-DESC (newer first under
-    // descending-base-32 encoding).
-    return a.lsn < b.lsn ? 1 : a.lsn > b.lsn ? -1 : 0;
-  });
 
   return entries;
 }
