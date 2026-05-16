@@ -122,9 +122,6 @@ Start with `apps/server/src/index.ts` (server boot, ~25 lines), then
 
 ## Troubleshooting
 
-- **"401 Unauthorized" from the web app.** Bearer token mismatch.
-  The web app reads `VITE_HELPDESK_SECRET`; the server reads
-  `HELPDESK_SECRET`. Default both to `dev-helpdesk-secret`.
 - **Port 3000 / 5173 in use.** Override `PORT=3100 pnpm -F
   @helpdesk/server dev` and update `vite.config.ts`'s proxy target.
 - **"current.json missing".** Stop everything, `pnpm reset`, then
