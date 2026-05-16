@@ -23,6 +23,16 @@ import { invalidateOnWrite, withReadCache } from "./cache.ts";
 import { r2BindingStorage } from "./r2-binding-storage.ts";
 
 /**
+ * Cloudflare Workers have no TTY, so the default sink is always
+ * the JSON console sink — log-aggregator-shaped out of the box.
+ * Callers can pass `options.observability.sink` to override.
+ */
+const resolveCfSink = (config: ObservabilityConfig | undefined): ObservabilityConfig => {
+  const merged = config ?? {};
+  return merged.sink !== undefined ? merged : { ...merged, sink: "console-json" };
+};
+
+/**
  * Required Worker bindings. The caller wires these in
  * `wrangler.toml`:
  *
@@ -208,9 +218,7 @@ export function baerlyWorker(options: BaerlyWorkerOptions): ExportedHandler<Env>
   let observabilityConfigured = false;
   const ensureObservability = async (): Promise<void> => {
     if (observabilityConfigured) return;
-    if (options.observability !== undefined) {
-      await configureObservability(options.observability);
-    }
+    await configureObservability(resolveCfSink(options.observability));
     observabilityConfigured = true;
   };
 
