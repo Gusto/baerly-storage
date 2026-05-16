@@ -11,6 +11,8 @@ export interface RequestLoggerOpts {
 }
 
 const DEFAULT_IGNORE = [/\/since/];
+const METHOD_COL_WIDTH = 6;
+const PATH_COL_WIDTH = 50;
 
 const truncatePath = (path: string, width: number): string => {
   if (path.length <= width) return path.padEnd(width);
@@ -33,19 +35,19 @@ export function withRequestLogging<
   const pc = createColors(!plain);
 
   const methodColor = (method: string): string => {
-    if (plain) return method.padEnd(6);
+    if (plain) return method.padEnd(METHOD_COL_WIDTH);
     switch (method) {
       case "POST":
       case "PATCH":
-        return pc.magenta(method.padEnd(6));
+        return pc.magenta(method.padEnd(METHOD_COL_WIDTH));
       case "DELETE":
-        return pc.red(method.padEnd(6));
+        return pc.red(method.padEnd(METHOD_COL_WIDTH));
       case "GET":
       case "HEAD":
       case "OPTIONS":
-        return pc.dim(method.padEnd(6));
+        return pc.dim(method.padEnd(METHOD_COL_WIDTH));
       default:
-        return method.padEnd(6);
+        return method.padEnd(METHOD_COL_WIDTH);
     }
   };
 
@@ -77,7 +79,7 @@ export function withRequestLogging<
       const status = res.statusCode;
 
       const methodStr = methodColor(method);
-      const pathStr = truncatePath(url, 50);
+      const pathStr = truncatePath(url, PATH_COL_WIDTH);
       const statusStr = statusColor(status);
       const msVal = String(elapsed).padStart(4);
       const msSuffix = plain ? "ms" : pc.dim("ms");

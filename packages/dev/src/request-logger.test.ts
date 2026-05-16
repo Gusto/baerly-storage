@@ -1,5 +1,5 @@
 import { createServer } from "node:http";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { withRequestLogging } from "./request-logger.ts";
 
 // ANSI CSI prefix: ESC (0x1b) followed by "[".
@@ -54,9 +54,8 @@ describe("withRequestLogging", () => {
     close = c;
 
     await fetch(`${url}/v1/x`, { method: "POST", body: "{}" });
-    await new Promise((r) => setTimeout(r, 10));
+    await vi.waitFor(() => expect(collected).toHaveLength(1));
 
-    expect(collected).toHaveLength(1);
     const line = collected[0]!;
     expect(line).toContain("POST");
     expect(line).toContain("/v1/x");
@@ -76,9 +75,8 @@ describe("withRequestLogging", () => {
     close = c;
 
     await fetch(`${url}/v1/x`, { method: "POST" });
-    await new Promise((r) => setTimeout(r, 10));
+    await vi.waitFor(() => expect(collected).toHaveLength(1));
 
-    expect(collected).toHaveLength(1);
     expect(hasAnsi(collected[0]!)).toBe(true);
   });
 
@@ -93,8 +91,8 @@ describe("withRequestLogging", () => {
     );
     close = c;
 
-    await fetch(`${url}/v1/since/abc123`);
-    await new Promise((r) => setTimeout(r, 10));
+    const response = await fetch(`${url}/v1/since/abc123`);
+    await response.text();
 
     expect(collected).toHaveLength(0);
   });
@@ -111,9 +109,8 @@ describe("withRequestLogging", () => {
     close = c;
 
     await fetch(`${url}/v1/since/abc123`);
-    await new Promise((r) => setTimeout(r, 10));
+    await vi.waitFor(() => expect(collected).toHaveLength(1));
 
-    expect(collected).toHaveLength(1);
     expect(collected[0]).toContain("/v1/since/abc123");
   });
 
@@ -128,9 +125,8 @@ describe("withRequestLogging", () => {
     );
     close = c;
 
-    await fetch(`${url}/v1/x`);
-    await fetch(`${url}/v1/y`, { method: "POST" });
-    await new Promise((r) => setTimeout(r, 10));
+    await (await fetch(`${url}/v1/x`)).text();
+    await (await fetch(`${url}/v1/y`, { method: "POST" })).text();
 
     expect(collected).toHaveLength(0);
   });
@@ -151,9 +147,7 @@ describe("withRequestLogging", () => {
     } catch {
       // Expected — socket was destroyed
     }
-    await new Promise((r) => setTimeout(r, 50));
-
-    expect(collected).toHaveLength(1);
+    await vi.waitFor(() => expect(collected).toHaveLength(1));
   });
 
   test("multiple sequential requests — one line each", async () => {
@@ -170,9 +164,8 @@ describe("withRequestLogging", () => {
     await fetch(`${url}/v1/a`);
     await fetch(`${url}/v1/b`, { method: "POST" });
     await fetch(`${url}/v1/c`);
-    await new Promise((r) => setTimeout(r, 20));
+    await vi.waitFor(() => expect(collected).toHaveLength(3));
 
-    expect(collected).toHaveLength(3);
     expect(collected[0]).toContain("/v1/a");
     expect(collected[1]).toContain("POST");
     expect(collected[2]).toContain("/v1/c");
