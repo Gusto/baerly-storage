@@ -2,7 +2,7 @@ import { createServer } from "node:http";
 import { resolve } from "node:path";
 import { createListener } from "@baerly/adapter-node";
 import { sharedSecret } from "@baerly/server/auth";
-import { LocalFsStorage, ensureTable, printDevBanner, withRequestLogging } from "@baerly/dev";
+import { LocalFsStorage, ensureTable, printDevBanner } from "@baerly/dev";
 
 const PORT = Number(process.env.PORT ?? 3000);
 const SECRET = process.env.HELPDESK_SECRET ?? "dev-helpdesk-secret";
@@ -14,13 +14,11 @@ const storage = new LocalFsStorage({
 });
 await ensureTable(storage, { app: APP, tenant: TENANT, table: "tickets" });
 
-const listener = withRequestLogging(
-  createListener({
-    app: APP,
-    storage,
-    verifier: sharedSecret({ secret: SECRET, tenantPrefix: TENANT }),
-  }),
-);
+const listener = createListener({
+  app: APP,
+  storage,
+  verifier: sharedSecret({ secret: SECRET, tenantPrefix: TENANT }),
+});
 
 createServer(listener).listen(PORT, () => {
   printDevBanner({

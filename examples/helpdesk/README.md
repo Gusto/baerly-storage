@@ -31,20 +31,18 @@ import { createServer } from "node:http";
 import { resolve } from "node:path";
 import { createListener } from "@baerly/adapter-node";
 import { sharedSecret } from "@baerly/server/auth";
-import { LocalFsStorage, ensureTable, printDevBanner, withRequestLogging } from "@baerly/dev";
+import { LocalFsStorage, ensureTable, printDevBanner } from "@baerly/dev";
 
 const storage = new LocalFsStorage({
   root: resolve(import.meta.dirname, "../../../.baerly-data"),
 });
 await ensureTable(storage, { app: "helpdesk", tenant: "helpdesk-demo", table: "tickets" });
 
-const listener = withRequestLogging(
-  createListener({
-    app: "helpdesk",
-    storage,
-    verifier: sharedSecret({ secret: "dev-helpdesk-secret", tenantPrefix: "helpdesk-demo" }),
-  }),
-);
+const listener = createListener({
+  app: "helpdesk",
+  storage,
+  verifier: sharedSecret({ secret: "dev-helpdesk-secret", tenantPrefix: "helpdesk-demo" }),
+});
 
 createServer(listener).listen(3000, () => {
   printDevBanner({
@@ -55,11 +53,10 @@ createServer(listener).listen(3000, () => {
 });
 ```
 
-`withRequestLogging` is a thin Node-`http` decorator that prints one
-line per request to stderr (skipping noisy long-poll paths).
 `printDevBanner` writes a short startup block that points the user
 at the Vite URL — not the API URL — because the API returns 401 to
-unauthenticated browsers.
+unauthenticated browsers. Request logging is emitted by the kernel's
+built-in observability layer.
 
 Reads and writes look the same on the client and the server — the
 client just sends them over HTTP:

@@ -1,8 +1,9 @@
 # Followups: dx/first-touch-banner
 
 Loose ends from the first-touch DX work — `@baerly/dev` gained the
-`printDevBanner` + `withRequestLogging` helpers; the helpdesk example
-and the `baerly dev` CLI adopted them.
+`printDevBanner` helper; the helpdesk example and the `baerly dev` CLI
+adopted it. The standalone access-logger wrapper was later retired in
+favour of the kernel's built-in observability layer.
 
 ## 1. `baerly dev` does not orchestrate `apps/web/`
 
@@ -31,10 +32,9 @@ shape itself.
 ## 2. `helpdesk-cloudflare` could adopt the helpers
 
 `examples/helpdesk-cloudflare/` runs under wrangler, not a Node
-`http.Server` — so `withRequestLogging` does not apply directly.
-But `printDevBanner` (or a thin wrapper that takes the wrangler URL
-plus the vite URL) would still improve its first-touch UX. Worth
-revisiting next time that example is touched.
+`http.Server`. `printDevBanner` (or a thin wrapper that takes the
+wrangler URL plus the vite URL) would improve its first-touch UX.
+Worth revisiting next time that example is touched.
 
 ## 3. Vite/server log interleaving in `examples/helpdesk/`
 
