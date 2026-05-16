@@ -176,7 +176,7 @@ function applyD1(rows: readonly Row[]): GateResult {
       `### D1 — CAS scope (regression guard)\n\n` +
       `**Status: ADR-closed; tracking only.** Per-collection CAS scope is ` +
       `the locked-in default (\`packages/protocol/src/coordination/current-json.ts:43\`, ` +
-      `\`docs/adr/0018-tenant-cas-isolation.md\`). The bench is no longer in the ` +
+      `\`docs/adr/001-tenant-cas-isolation.md\`). The bench is no longer in the ` +
       `loop for that decision.\n\n` +
       `Observed S1 c=16 throughput (decorrelated, direct):\n` +
       `- effective_throughput: **${target.effective_throughput_per_sec.toFixed(1)} writes/sec**\n` +

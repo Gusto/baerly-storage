@@ -4,7 +4,7 @@ audience: operator
 summary: "Built-in Verifier presets (shared secret, bearer JWT, CF Access, AWS SigV4, IP allowlist), tenant pinning, and the authorization caveat."
 last-reviewed: 2026-05-13
 tags: [auth, operations]
-related: ["../adr/0018-tenant-cas-isolation.md", "../contributing/extending.md"]
+related: ["../adr/001-tenant-cas-isolation.md", "../contributing/extending.md"]
 ---
 
 # Authentication
@@ -67,7 +67,7 @@ on a workaround.
 The `tenantPrefix` derives from auth, not from the URL. A
 URL-encoded tenant is a forgery surface; tenant-CAS isolation
 guarantees rest on the verifier producing the right prefix — see
-[ADR-0018](../adr/0018-tenant-cas-isolation.md).
+[ADR-0018](../adr/001-tenant-cas-isolation.md).
 
 ### Rejected alternatives
 

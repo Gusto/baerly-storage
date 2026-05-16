@@ -76,7 +76,7 @@ protocol.
 
 `db.table<T>(name).where(p).order(o).limit(n).all()` — SQL-shape,
 predicate-AST-driven, additive-only locked
-([ADR-0019](../adr/0019-api-surface-lock.md)). Baerly still borrows
+([ADR-0019](../adr/002-api-surface-lock.md)). Baerly still borrows
 specific patterns from Firestore (composable query constraints,
 gRPC-derived error codes, JSDoc `@example` density, field-value
 sentinels).

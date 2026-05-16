@@ -107,7 +107,7 @@ rolling-deploy hazard without introducing a leases-as-state dependency.
 - Composes cleanly with the single-table transaction shape (see the
   JSDoc on `Db.transaction` in
   [`packages/server/src/db.ts`](../../packages/server/src/db.ts) and
-  [ADR-0019](./0019-api-surface-lock.md)): every transaction touches
+  [ADR-0019](./002-api-surface-lock.md)): every transaction touches
   exactly one `current.json`, so no two-phase commit is required.
 - The `owner` field is debug-only. Operators MAY page on it (e.g.
   writer churn) but readers MUST NOT branch on it for safety. Safety

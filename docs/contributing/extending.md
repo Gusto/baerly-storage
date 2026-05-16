@@ -4,7 +4,7 @@ audience: coder
 summary: Worked patterns for adding methods to Db, Query verbs, and Table verbs.
 last-reviewed: 2026-05-12
 tags: [extending, api-design, patterns]
-related: [architecture.md, "../adr/0019-api-surface-lock.md", "conventions/tests.md"]
+related: [architecture.md, "../adr/002-api-surface-lock.md", "conventions/tests.md"]
 ---
 
 # Extending Baerly
