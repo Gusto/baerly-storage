@@ -1,4 +1,13 @@
+import { createReadStream } from "node:fs";
+import { stat } from "node:fs/promises";
 import type { IncomingMessage, RequestListener, ServerResponse } from "node:http";
+import {
+  extname,
+  relative as relativePath,
+  resolve as resolvePath,
+  sep as pathSep,
+} from "node:path";
+import { pipeline } from "node:stream/promises";
 import {
   BaerlyError,
   type BaerlyErrorCode,
@@ -55,6 +64,11 @@ import {
  *   Pass `{}` to opt into TTY auto-detection at default level/rate.
  *   Pass `undefined` (the field's absence) to skip
  *   `configureObservability` entirely.
+ * - `webRoot` — optional static-asset directory. When set, requests
+ *   that miss `/v1/*` and the dev landing-page short-circuits are
+ *   served from disk, with `index.html` as the SPA fallback for HTML
+ *   navigation. Absent → behaviour is identical to today (non-`/v1/*`
+ *   requests fall through to the kernel's 404 envelope).
  */
 export interface CreateListenerOptions {
   readonly app: string;
@@ -75,6 +89,22 @@ export interface CreateListenerOptions {
   readonly sinceTimeoutMs?: number;
   /** Override the long-poll inner-poll cadence. Forwarded to `createRouter`. */
   readonly sincePollIntervalMs?: number;
+  /**
+   * Optional static-asset root. When set, the listener serves files
+   * from this directory for any request that:
+   *   - is not `/v1/*` (API surface),
+   *   - is not `GET /v1/healthz` (anonymous probe),
+   *   - is not handled by the opt-in dev landing-page short-circuit.
+   *
+   * HTML navigation (`Accept: text/html`) that misses an on-disk file
+   * falls back to `<webRoot>/index.html` to support SPA client-side
+   * routing. Non-HTML misses return the standard 404 envelope.
+   *
+   * Path resolution rejects `..` segments and absolute paths so the
+   * handler can't escape `webRoot`. Implementation uses `node:fs` +
+   * `node:path` builtins; no new dependency lands.
+   */
+  readonly webRoot?: string;
 }
 
 /**
@@ -191,6 +221,24 @@ async function handle(
   if (req.method === "GET" && path === "/v1/healthz") {
     writeJson(res, 200, { ok: true });
     return;
+  }
+
+  // Static-asset branch. Runs only when the caller opted into a
+  // `webRoot`, for GET/HEAD requests that don't target the API
+  // surface. The handler bypasses the verifier (assets are public —
+  // Vite's hashed bundle names act as cache busters, and the SPA
+  // shell is served before auth anyway) and bypasses the canonical
+  // line (static serves are noisy and not part of the observability
+  // contract). If the handler returns `false`, the request falls
+  // through to the verifier-mounted router below, which renders the
+  // kernel's 404 envelope for non-`/v1/*` paths unchanged.
+  if (
+    opts.webRoot !== undefined &&
+    (req.method === "GET" || req.method === "HEAD") &&
+    !path.startsWith("/v1/")
+  ) {
+    const served = await serveStaticAsset(req, res, path, opts.webRoot);
+    if (served) return;
   }
 
   // Construct the per-request observability context up front so
@@ -401,6 +449,164 @@ function writeHtml(res: ServerResponse, status: number, body: string): void {
     "Content-Length": String(Buffer.byteLength(body)),
   });
   res.end(body);
+}
+
+/**
+ * Map a file extension to its `Content-Type`. The set is deliberately
+ * small — every entry corresponds to something Vite or a typical SPA
+ * pipeline actually emits. Unknown extensions fall back to
+ * `application/octet-stream`, which keeps the browser from sniffing
+ * untrusted bytes as HTML.
+ */
+const MIME_TYPES: Readonly<Record<string, string>> = {
+  ".html": "text/html; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
+  ".mjs": "text/javascript; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".svg": "image/svg+xml",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+  ".ico": "image/x-icon",
+  ".woff": "font/woff",
+  ".woff2": "font/woff2",
+  ".ttf": "font/ttf",
+  ".txt": "text/plain; charset=utf-8",
+  ".map": "application/json; charset=utf-8",
+};
+
+/**
+ * Resolve a request path under `webRoot` without allowing `..` escape
+ * or absolute-segment hijacking. Returns the resolved absolute path on
+ * success, or `null` when the request should fall through (traversal
+ * attempt, NUL byte, malformed URL encoding).
+ */
+function resolveUnderWebRoot(reqPath: string, webRoot: string): string | null {
+  // The healthz / dev short-circuits already ran above, so `reqPath`
+  // is always a `/`-rooted path; we work in POSIX form regardless of
+  // host OS.
+  let relative = reqPath;
+  if (relative === "" || relative === "/") relative = "/index.html";
+  else if (relative.endsWith("/")) relative = `${relative}index.html`;
+
+  // Reject NUL bytes immediately — no filesystem call should ever see
+  // one.
+  if (relative.includes("\0")) return null;
+
+  // Walk the segments, URL-decoding each one in isolation. Decoding
+  // the whole path string would let `%2F` (`/`) sneak through as a
+  // segment separator that bypasses the per-segment `..` check.
+  const segments: string[] = [];
+  for (const raw of relative.split("/")) {
+    if (raw === "") continue;
+    let decoded: string;
+    try {
+      decoded = decodeURIComponent(raw);
+    } catch {
+      return null;
+    }
+    if (decoded === "" || decoded === ".") continue;
+    if (decoded === "..") return null;
+    if (decoded.includes("\0")) return null;
+    if (decoded.includes("/") || decoded.includes("\\")) return null;
+    segments.push(decoded);
+  }
+
+  const resolved = resolvePath(webRoot, ...segments);
+  const rel = relativePath(webRoot, resolved);
+  // `path.relative` returns `""` when `resolved === webRoot` (the
+  // directory itself) and a `..`-prefixed path when `resolved` escapes
+  // `webRoot`. Both are rejected.
+  if (rel === "" || rel.startsWith("..") || rel.startsWith(`..${pathSep}`)) return null;
+  return resolved;
+}
+
+/**
+ * Determine whether the request should fall back to `index.html` on a
+ * filesystem miss. Browsers send `Accept: text/html,...` for SPA
+ * navigations; programmatic `fetch()` calls for missing JSON / image
+ * assets do not, and they get the kernel's 404 envelope instead.
+ */
+function wantsHtmlFallback(req: IncomingMessage): boolean {
+  const accept = req.headers.accept;
+  if (typeof accept !== "string") return false;
+  return accept.includes("text/html");
+}
+
+/**
+ * `fs.stat` that returns `null` for the missing-file cases that this
+ * handler treats as a fall-through (ENOENT / ENOTDIR / non-file).
+ * Other errors (EACCES, EIO, ...) propagate.
+ */
+async function statFile(target: string): Promise<Awaited<ReturnType<typeof stat>> | null> {
+  try {
+    const stats = await stat(target);
+    return stats.isFile() ? stats : null;
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === "ENOENT" || code === "ENOTDIR") return null;
+    throw err;
+  }
+}
+
+/**
+ * Serve a single file under `webRoot` for a GET/HEAD request.
+ *
+ * Returns `true` once the response has been written. Returns `false`
+ * when the caller should fall through to the verifier-mounted router
+ * (path traversal rejected, file not found and no SPA fallback, etc.).
+ */
+async function serveStaticAsset(
+  req: IncomingMessage,
+  res: ServerResponse,
+  reqPath: string,
+  webRoot: string,
+): Promise<boolean> {
+  const resolved = resolveUnderWebRoot(reqPath, webRoot);
+  if (resolved === null) return false;
+
+  // Try the resolved path first. A miss (ENOENT/ENOTDIR or non-file)
+  // can fall through to `<webRoot>/index.html` for HTML navigation so
+  // SPAs can own client-side routing.
+  const primary = await statFile(resolved);
+  let target = resolved;
+  let stats = primary;
+  if (stats === null) {
+    if (!wantsHtmlFallback(req)) return false;
+    const indexPath = resolvePath(webRoot, "index.html");
+    const fallback = await statFile(indexPath);
+    if (fallback === null) return false;
+    target = indexPath;
+    stats = fallback;
+  }
+
+  const ext = extname(target).toLowerCase();
+  const contentType = MIME_TYPES[ext] ?? "application/octet-stream";
+  // Vite emits long-lived hashed bundles under `assets/`; everything
+  // else (including `index.html`, which is fetched on every nav) wants
+  // a fresh copy.
+  const relForCache = relativePath(webRoot, target).split(pathSep).join("/");
+  const cacheControl =
+    relForCache.startsWith("assets/") && target !== resolvePath(webRoot, "index.html")
+      ? "public, max-age=3600"
+      : "no-cache";
+
+  res.writeHead(200, {
+    "Content-Type": contentType,
+    "Content-Length": String(stats.size),
+    "Cache-Control": cacheControl,
+  });
+
+  if (req.method === "HEAD") {
+    res.end();
+    return true;
+  }
+
+  await pipeline(createReadStream(target), res);
+  return true;
 }
 
 /**
