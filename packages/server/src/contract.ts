@@ -108,7 +108,7 @@ export type Routes =
  * | 204    | `DELETE` success — no body.                                      |
  * | 304    | Reserved. Long-poll idleness ships as 200 + empty events.        |
  * | 400    | Body parse failed → `HttpErrorEnvelope` `code:"SchemaError"`.    |
- * | 401    | `Verifier` returned null → `code:"Unauthorized"`.                |
+ * | 401    | `Verifier` returned null → `code:"Unauthorized"`, `message: "Missing or invalid Authorization header"`. |
  * | 403    | Auth ok but tenant prefix denied → `code:"AccessDenied"`.        |
  * | 404    | Doc not found → `code:"NotFound"`. NOT used for "tenant unknown" (→ 401). |
  * | 409    | CAS lost → `code:"Conflict"`.                                    |

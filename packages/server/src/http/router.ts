@@ -219,7 +219,7 @@ export function createRouter(options: CreateRouterOptions): Hono {
       const result = await verifier(c.req.raw);
       if (result === null) {
         getLogger(CATEGORY.http).warn("verifier_rejected", { reason: "null" });
-        return jsonError(c, 401, "Unauthorized", "Unauthorized");
+        return jsonError(c, 401, "Unauthorized", "Missing or invalid Authorization header");
       }
       await next();
       return undefined;

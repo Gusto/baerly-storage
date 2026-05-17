@@ -287,10 +287,13 @@ export function baerlyWorker(options: BaerlyWorkerOptions): ExportedHandler<Env>
       const result = await options.verifier(req);
       if (result === null) {
         getLogger(CATEGORY.http).warn("verifier_rejected", { reason: "null" });
-        return new Response(JSON.stringify(errorEnvelope("Unauthorized", "Unauthorized")), {
-          status: 401,
-          headers: { "content-type": "application/json" },
-        });
+        return new Response(
+          JSON.stringify(errorEnvelope("Unauthorized", "Missing or invalid Authorization header")),
+          {
+            status: 401,
+            headers: { "content-type": "application/json" },
+          },
+        );
       }
       const tenantPrefix = result.tenantPrefix;
 

@@ -223,7 +223,7 @@ async function handle(
     // line still emits for 401 responses.
     await runWithContext(obsCtx, async () => {
       getLogger(CATEGORY.http).warn("verifier_rejected", { reason: "null" });
-      writeError(res, 401, "Unauthorized", "Unauthorized");
+      writeError(res, 401, "Unauthorized", "Missing or invalid Authorization header");
       flushCanonicalLine(obsCtx, obsCtx.recorder, {
         unit: "http",
         status: 401,

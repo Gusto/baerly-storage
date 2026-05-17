@@ -167,6 +167,7 @@ describe("baerlyWorker routes", () => {
     expect(res.status).toBe(401);
     const body = (await res.json()) as BaseEnvelope;
     expect(body.error?.code).toBe("Unauthorized");
+    expect(body.error?.message).toBe("Missing or invalid Authorization header");
   });
 
   it("POST → GET round-trips a document", async () => {
