@@ -216,7 +216,7 @@ const formatOps = (n: number): string => {
 const renderTrajectory = (t: Trajectory): string => {
   const wpm = t.writesPerMin.toFixed(t.writesPerMin < 10 ? 1 : 0);
   const classA = formatOps(t.classAPerMonth);
-  if (Number.isNaN(t.projectedUsdPerMonth)) {
+  if (t.projectedUsdPerMonth === null) {
     return [
       `  trajectory:          ~${wpm} writes/min  →  ~${classA} Class A/mo`,
       `                       ${t.percentOfGraduation.toFixed(2)}% of 50M/mo graduation trigger. Self-hosted — bill model not modelled.`,
@@ -226,7 +226,7 @@ const renderTrajectory = (t: Trajectory): string => {
     ? `~$0 (${t.provider === "r2" ? "R2" : "AWS S3"} free tier)`
     : `~$${t.projectedUsdPerMonth.toFixed(2)}/mo`;
   const tail = t.withinFreeTier
-    ? `${t.percentOfFreeTier.toFixed(0)}% of free-tier Class A budget. ${t.percentOfFreeTier < 50 ? "Well inside the promise." : "Approaching free-tier ceiling."}`
+    ? `${(t.percentOfFreeTier ?? 0).toFixed(0)}% of free-tier Class A budget. ${(t.percentOfFreeTier ?? 0) < 50 ? "Well inside the promise." : "Approaching free-tier ceiling."}`
     : `${t.percentOfGraduation.toFixed(2)}% of 50M/mo graduation trigger.`;
   return [
     `  trajectory:          ~${wpm} writes/min  →  ~${classA} Class A/mo  →  ${usd}`,

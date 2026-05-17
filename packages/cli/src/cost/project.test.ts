@@ -64,11 +64,11 @@ describe("project", () => {
     expect(t!.projectedUsdPerMonth).toBeCloseTo(0.324, 3);
   });
 
-  test("self-hosted: projectedUsdPerMonth and percentOfFreeTier are NaN; percentages still computed", () => {
+  test("self-hosted: projectedUsdPerMonth and percentOfFreeTier are null; percentages still computed", () => {
     const t = project(10, 0, SELF_HOSTED);
     expect(t).not.toBeNull();
-    expect(Number.isNaN(t!.projectedUsdPerMonth)).toBe(true);
-    expect(Number.isNaN(t!.percentOfFreeTier)).toBe(true);
+    expect(t!.projectedUsdPerMonth).toBeNull();
+    expect(t!.percentOfFreeTier).toBeNull();
     expect(t!.classAPerMonth).toBe(1_296_000);
     expect(t!.percentOfGraduation).toBeCloseTo((1_296_000 / GRADUATION_CLASS_A_PER_MONTH) * 100, 3);
   });

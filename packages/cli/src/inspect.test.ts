@@ -277,7 +277,7 @@ describe("baerly inspect", () => {
     expect(typeof envelope.result.trajectory!.withinFreeTier).toBe("boolean");
   });
 
-  test("--provider=self-hosted produces a Trajectory with NaN usd", async () => {
+  test("--provider=self-hosted produces a Trajectory with null usd", async () => {
     await provision(storage);
     const writer = new ServerWriter({ storage, currentJsonKey: CURRENT_JSON_KEY });
     for (let i = 0; i < 3; i++) {
@@ -310,11 +310,7 @@ describe("baerly inspect", () => {
     };
     expect(envelope.result.trajectory).not.toBeNull();
     expect(envelope.result.trajectory!.provider).toBe("self-hosted");
-    // NaN serialises to null in JSON; both mean "cost not modelled".
-    expect(
-      Number.isNaN(envelope.result.trajectory!.projectedUsdPerMonth) ||
-        envelope.result.trajectory!.projectedUsdPerMonth === null,
-    ).toBe(true);
+    expect(envelope.result.trajectory!.projectedUsdPerMonth).toBeNull();
     expect(envelope.result.trajectory!.percentOfGraduation).toBeGreaterThanOrEqual(0);
   });
 

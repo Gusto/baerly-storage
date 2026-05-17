@@ -10,7 +10,8 @@
  *      amortize and are excluded from the headline.
  *   2. `projectedUsdPerMonth = 0` exactly when both `classAPerMonth
  *      ≤ pricing.freeClassAPerMonth` AND `storedBytes ≤
- *      pricing.freeStorageGb × 1GB`. Say `$0`, not `$0.00`.
+ *      pricing.freeStorageGb × 1GB`. Say `$0`, not `$0.00`. `null`
+ *      for self-hosted/dev (no $ model).
  *   3. Returns `null` when `writesPerMin` is non-finite (no-data case
  *      from `estimateWritesPerMin`); inspect renders no footer.
  */
@@ -42,9 +43,12 @@ export const GRADUATION_STORED_BYTES = 5 * 1024 * 1024 * 1024;
 export interface Trajectory {
   readonly writesPerMin: number;
   readonly classAPerMonth: number;
-  readonly percentOfFreeTier: number; // NaN when freeClassAPerMonth === 0
+  /** Percent of provider's free-tier Class A budget. `null` when the provider has no free tier (aws-s3) or no $ model (self-hosted/dev). */
+  readonly percentOfFreeTier: number | null;
+  /** Percent of the 50M/mo graduation trigger. Always a finite number. */
   readonly percentOfGraduation: number;
-  readonly projectedUsdPerMonth: number; // 0 inside free tier; NaN for self-hosted/dev
+  /** Projected USD/month. `0` when fully inside the free tier. `null` when the provider has no $ model (self-hosted/dev). */
+  readonly projectedUsdPerMonth: number | null;
   readonly withinFreeTier: boolean;
   readonly provider: ProviderPricing["provider"];
 }
@@ -78,9 +82,7 @@ export const project = (
   const percentOfGraduation = (classAPerMonth / GRADUATION_CLASS_A_PER_MONTH) * 100;
 
   const percentOfFreeTier =
-    pricing.freeClassAPerMonth > 0
-      ? (classAPerMonth / pricing.freeClassAPerMonth) * 100
-      : Number.NaN;
+    pricing.freeClassAPerMonth > 0 ? (classAPerMonth / pricing.freeClassAPerMonth) * 100 : null;
 
   const storedGb = storedBytes / (1024 * 1024 * 1024);
   const withinFreeTier =
@@ -88,9 +90,9 @@ export const project = (
     classAPerMonth <= pricing.freeClassAPerMonth &&
     storedGb <= pricing.freeStorageGb;
 
-  let projectedUsdPerMonth: number;
+  let projectedUsdPerMonth: number | null;
   if (Number.isNaN(pricing.usdPerMillionClassA)) {
-    projectedUsdPerMonth = Number.NaN;
+    projectedUsdPerMonth = null;
   } else if (withinFreeTier) {
     projectedUsdPerMonth = 0;
   } else {
