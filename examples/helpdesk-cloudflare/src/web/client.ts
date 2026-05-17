@@ -1,7 +1,8 @@
 import { createBaerlyClient } from "@baerly/client";
 
 // Same-origin baseUrl works in both dev and production:
-//  - Dev: Vite proxies /v1/* to wrangler dev (see vite.config.ts).
+//  - Dev: `@cloudflare/vite-plugin` runs the Worker inside `workerd`
+//    in the same Vite process; /v1/* resolves in-process on :5173.
 //  - Prod: the Worker serves both /v1/* and the static bundle via
 //    Workers Assets on the same hostname.
 //

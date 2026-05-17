@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { client } from "./client.ts";
-import { PRIORITIES, STATUSES, type Ticket } from "../../../types.ts";
+import { PRIORITIES, STATUSES, type Ticket } from "../../types.ts";
 
 type Draft = Pick<Ticket, "title" | "status" | "priority" | "assignee">;
 

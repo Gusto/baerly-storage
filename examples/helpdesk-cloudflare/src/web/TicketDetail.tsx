@@ -1,6 +1,6 @@
 import { useLiveDocument } from "@baerly/client/react";
 import { client } from "./client.ts";
-import type { Ticket } from "../../../types.ts";
+import type { Ticket } from "../../types.ts";
 
 interface Props {
   id: string;

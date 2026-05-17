@@ -1,11 +1,16 @@
 /**
  * Worker entry for helpdesk-cloudflare. Routes /v1/* to baerlyWorker
- * (R2-backed) and falls through to env.ASSETS.fetch() for SPA navigation
- * (the built Vite bundle in ../web/dist).
+ * (R2-backed) and falls through to env.ASSETS.fetch() for SPA
+ * navigation (the built Vite bundle in `dist/client/`, uploaded by
+ * `wrangler deploy` via the `assets:` binding).
  *
  * Verifier selection: cloudflareAccess() when both CF_ACCESS_TEAM_DOMAIN
  * and CF_ACCESS_AUDIENCE_TAG are set as vars, else sharedSecret() when
  * SHARED_SECRET is set, else throw on first request.
+ *
+ * File path: `src/server/index.ts` (single-package layout; the
+ * `@cloudflare/vite-plugin` reads `wrangler.jsonc:main` to find this
+ * entry).
  */
 import { baerlyWorker, type Env as BaerlyEnv } from "@baerly/adapter-cloudflare";
 import { cloudflareAccess, sharedSecret } from "@baerly/server/auth";

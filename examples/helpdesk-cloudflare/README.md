@@ -12,26 +12,33 @@ Worker via Workers Assets. The production-shaped sibling of
 cd helpdesk-cloudflare
 pnpm install
 wrangler secret put SHARED_SECRET    # any string for dev
-pnpm dev                              # vite (:5173) + wrangler dev (:8787) in parallel
+pnpm dev                              # vite (:5173) — `@cloudflare/vite-plugin` runs the Worker inside workerd in the same process
 ```
 
-Open <http://localhost:5173>. The Vite dev server proxies `/v1/*` to
-wrangler on `:8787`; in production the Worker serves both the API and the
-static bundle on the same origin.
+Open <http://localhost:5173>. The Vite dev server and the Worker run
+in the same Vite process via `@cloudflare/vite-plugin` — `/v1/*` is
+served by the Worker inside `workerd`, the SPA is served from
+`src/web/`, both on the same origin. In production the deployed
+Worker serves both the API and the static bundle on the same origin
+via Workers Assets.
 
 ## How it's wired
 
-- `apps/server/src/worker.ts` — verifier selector + `/v1/*` routing +
+- `src/server/index.ts` — verifier selector + `/v1/*` routing +
   SPA fallback through `env.ASSETS`.
-- `apps/server/wrangler.jsonc` — R2 binding (`BUCKET`), Assets binding
-  (`ASSETS`), maintenance cron, observability vars.
-- `apps/web/` — Vite SPA. The client calls the Worker same-origin in
-  production; in dev it proxies `/v1/*` to `:8787`.
+- `wrangler.jsonc` — R2 binding (`BUCKET`), Assets binding
+  (`ASSETS`) pointing at `dist/client/`, maintenance cron,
+  observability vars.
+- `src/web/` — React SPA. The client calls the Worker same-origin
+  (`baseUrl: ""`) in both dev and prod.
+- `vite.config.ts` — `@vitejs/plugin-react` + `@cloudflare/vite-plugin`.
+- `types.ts` — shared `Ticket` interface + status/priority constants.
 
 ## Deploy
 
 ```sh
-pnpm deploy            # vite build, then wrangler deploy (R2 auto-provisioned)
+pnpm build              # tsc -b && vite build  → emits dist/client/
+pnpm deploy             # wrangler deploy (R2 auto-provisioned)
 ```
 
 For Cloudflare Access:

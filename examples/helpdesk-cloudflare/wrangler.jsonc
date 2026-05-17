@@ -4,7 +4,7 @@
   // reads this directly.
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "helpdesk-cloudflare",
-  "main": "src/worker.ts",
+  "main": "./src/server/index.ts",
   "compatibility_date": "2025-06-01",
   "compatibility_flags": ["nodejs_compat"],
 
@@ -18,6 +18,21 @@
       "bucket_name": "helpdesk-cloudflare",
     },
   ],
+
+  // Workers Assets — uploads everything in `dist/client/` as the
+  // SPA bundle and serves it from the same Worker. The explicit
+  // `binding: "ASSETS"` exposes the assets Fetcher to the Worker
+  // module, which dispatches `/v1/*` to `baerlyWorker` and falls
+  // through to `env.ASSETS.fetch(req)` for everything else (see
+  // `src/server/index.ts`). `not_found_handling:
+  // "single-page-application"` rewrites unknown asset paths to
+  // `/index.html` so client-side routing works. `vite build` (via
+  // the Vite plugin) populates `dist/client/` from `src/web/`.
+  "assets": {
+    "directory": "./dist/client",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+  },
 
   // Plain-text bindings. `APP` pins this Worker's app-prefix.
   // `TENANT` is **not** special-cased by `baerlyWorker` — the
@@ -48,18 +63,6 @@
     "TENANT": "helpdesk-demo",
     "LOG_LEVEL": "info",
     "LOG_SAMPLE": "0.1",
-  },
-
-  // Workers Assets binding. `wrangler deploy` uploads everything in
-  // ../web/dist (the Vite build output) and serves it through the
-  // bound ASSETS Fetcher. The Worker dispatches /v1/* to baerlyWorker
-  // and falls through to env.ASSETS.fetch() for SPA navigation.
-  // `single-page-application` rewrites unknown paths to /index.html
-  // so client-side routing works without explicit server routes.
-  "assets": {
-    "directory": "../web/dist",
-    "binding": "ASSETS",
-    "not_found_handling": "single-page-application",
   },
 
   // Cron trigger for the Phase-5 maintenance loop. Every minute —
