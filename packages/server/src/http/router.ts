@@ -72,6 +72,10 @@ export interface CreateRouterOptions {
   readonly db: Db;
   readonly verifier?: Verifier;
   readonly healthCheck?: boolean;
+  /** Override the long-poll budget. Forwarded to `longPollSince`. */
+  readonly sinceTimeoutMs?: number;
+  /** Override the long-poll inner-poll cadence. Forwarded to `longPollSince`. */
+  readonly sincePollIntervalMs?: number;
 }
 
 /**
@@ -97,7 +101,7 @@ export interface CreateRouterOptions {
  * ```
  */
 export function createRouter(options: CreateRouterOptions): Hono {
-  const { db, verifier, healthCheck = true } = options;
+  const { db, verifier, healthCheck = true, sinceTimeoutMs, sincePollIntervalMs } = options;
   const app = new Hono();
 
   // Per-request ObservabilityContext +
@@ -337,6 +341,8 @@ export function createRouter(options: CreateRouterOptions): Hono {
         table,
         cursor,
         signal: c.req.raw.signal,
+        timeoutMs: sinceTimeoutMs,
+        pollIntervalMs: sincePollIntervalMs,
       });
       // 200 covers both "new events present" and "timeout idle" —
       // see ticket 26 §4.5 for why we don't use 304.

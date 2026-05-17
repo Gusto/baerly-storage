@@ -65,6 +65,10 @@ export interface CreateListenerOptions {
    * envelope when the option is absent.
    */
   readonly dev?: DevLandingOptions;
+  /** Override the long-poll budget. Forwarded to `createRouter`. */
+  readonly sinceTimeoutMs?: number;
+  /** Override the long-poll inner-poll cadence. Forwarded to `createRouter`. */
+  readonly sincePollIntervalMs?: number;
 }
 
 /**
@@ -202,7 +206,12 @@ async function handle(
       tenant: result.tenantPrefix,
       metrics: teeRecorder,
     });
-    const app = createRouter({ db, healthCheck: false });
+    const app = createRouter({
+      db,
+      healthCheck: false,
+      sinceTimeoutMs: opts.sinceTimeoutMs,
+      sincePollIntervalMs: opts.sincePollIntervalMs,
+    });
     const response = await app.fetch(request);
 
     // Stream the Response body back through `res`.
