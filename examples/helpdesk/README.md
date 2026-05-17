@@ -1,12 +1,14 @@
 # Baerly Helpdesk — example app
 
-A working CRUD helpdesk over baerly-storage. Two workspaces:
+A working CRUD helpdesk over baerly-storage. Single Vite process:
 
-- `apps/server` — Node HTTP listener over `LocalFsStorage`.
-- `apps/web` — React + Vite. Talks to the server via `@baerly/client`.
-  The ticket list and detail views are live: edits from one browser
-  tab appear in others over the `/v1/since` long-poll, surfaced
-  through the `useLiveQuery` / `useLiveDocument` React hooks.
+- The React app (under `src/`) renders the ticket list and detail
+  views. Edits from one browser tab appear in others over the
+  `/v1/since` long-poll, surfaced through the `useLiveQuery` /
+  `useLiveDocument` React hooks.
+- The Baerly HTTP listener is mounted as Vite middleware via
+  `baerlyDev()` from `@baerly/dev/vite`, so the app and `/v1/*` API
+  share an origin (`:5173`) and a single process.
 
 ## Quick start (60 seconds)
 
@@ -17,52 +19,49 @@ pnpm dev
 ```
 
 Then open <http://localhost:5173>. Five demo tickets are seeded on
-first run — `pnpm reset` wipes the bucket so the next `dev` re-seeds.
+first run — `pnpm seed` re-runs the seed against the existing
+`.baerly-data/` (the plugin also seeds on every dev start), and
+`pnpm reset` wipes the data dir so the next `dev` re-seeds from
+scratch.
 
 Open a second tab; edit a ticket in tab 1; watch tab 2 update.
 
 ## The interesting parts
 
-The whole server boot is one file:
+Open `vite.config.ts` — the whole dev backend is one plugin call:
 
 ```ts
-// apps/server/src/index.ts
-import { createServer } from "node:http";
-import { resolve } from "node:path";
-import { createListener } from "@baerly/adapter-node";
-import { sharedSecret } from "@baerly/server/auth";
-import { LocalFsStorage, ensureTable, printDevBanner } from "@baerly/dev";
+// vite.config.ts
+import { baerlyDev } from "@baerly/dev/vite";
+import { seedTickets } from "./src/server/seed.ts";
 
-const storage = new LocalFsStorage({
-  root: resolve(import.meta.dirname, "../../../.baerly-data"),
-});
-await ensureTable(storage, { app: "helpdesk", tenant: "helpdesk-demo", table: "tickets" });
-
-const listener = createListener({
-  app: "helpdesk",
-  storage,
-  verifier: sharedSecret({ secret: "dev-helpdesk-secret", tenantPrefix: "helpdesk-demo" }),
-});
-
-createServer(listener).listen(3000, () => {
-  printDevBanner({
-    name: "helpdesk",
-    primaryUrl: { label: "app", url: "http://localhost:5173" },
-    apiUrl: { label: "api", url: "http://localhost:3000", note: "proxied via /v1" },
-  });
+export default defineConfig({
+  plugins: [
+    react(),
+    baerlyDev({
+      app: "helpdesk",
+      tenant: "helpdesk-demo",
+      secret: process.env.HELPDESK_SECRET ?? "dev-helpdesk-secret",
+      dataDir: resolve(import.meta.dirname, ".baerly-data"),
+      tables: ["tickets"],
+      seed: seedTickets,
+    }),
+  ],
+  server: { port: 5173 },
 });
 ```
 
-`printDevBanner` writes a short startup block that points the user
-at the Vite URL — not the API URL — because the API returns 401 to
-unauthenticated browsers. Request logging is emitted by the kernel's
-built-in observability layer.
+`baerlyDev` (from `@baerly/dev`) constructs `LocalFsStorage`, runs
+`ensureTable` for each declared table, optionally seeds, and mounts
+`createListener` as Vite middleware ahead of the SPA fallback. App
+plus `/v1/*` API share one origin, one process — no proxy, no
+separate server boot.
 
 Reads and writes look the same on the client and the server — the
 client just sends them over HTTP:
 
 ```ts
-// apps/web/src/TicketForm.tsx (etc.)
+// src/TicketForm.tsx (etc.)
 await client.table<Ticket>("tickets").insert({ title, status, ... });
 await client.table<Ticket>("tickets").where({ _id }).update({ status: "closed" });
 await client.table<Ticket>("tickets").where({ status: "open" }).all();
@@ -73,7 +72,7 @@ whenever the server emits log events for the table, and is a no-op
 on idle long-poll cycles:
 
 ```tsx
-// apps/web/src/TicketList.tsx
+// src/TicketList.tsx
 const { rows, loading, error } = useLiveQuery<Ticket>(
   client,
   "tickets",
@@ -85,7 +84,7 @@ For a single document, `useLiveDocument` does the same with `.first()`
 and only refetches when an event touches *that* row:
 
 ```tsx
-// apps/web/src/TicketDetail.tsx
+// src/TicketDetail.tsx
 const { row, loading, error } = useLiveDocument<Ticket>(client, "tickets", id);
 ```
 
@@ -119,31 +118,25 @@ in an S3 / R2 bucket. The data is yours; the format is mechanical.
 
 ## Cloudflare swap
 
-Point the web app at a `wrangler dev` Worker instead of the Node
-server — no React code changes:
-
-```sh
-# Terminal 1: a CF-scaffolded baerly Worker on :8787
-cd path/to/your/cf-worker && wrangler dev
-
-# Terminal 2: web only, server URL overridden via env
-HELPDESK_SERVER_URL=http://localhost:8787 pnpm -F @helpdesk/web dev
-```
-
+For a deployable, R2-backed version of this same app — same React
+UI, same `Ticket` schema, same long-poll live updates — see
+`examples/helpdesk-cloudflare/` (a single Cloudflare Worker that
+hosts both `/v1/*` and the built Vite bundle via Workers Assets).
 Use `pnpm create baerly` to scaffold a production-shaped Worker
 (`@baerly/adapter-cloudflare` + R2 bindings + `cloudflareAccess` /
 `sharedSecret` verifier).
 
 ## Files to read
 
-Start with `apps/server/src/index.ts` (server boot, ~25 lines), then
-`apps/web/src/TicketList.tsx` (the `useLiveQuery` live-updates hook).
-`types.ts`, `apps/server/src/seed.ts`, `apps/web/src/client.ts`, and
-`smoke.test.ts` fill in the rest.
+Start with `vite.config.ts` (the `baerlyDev()` middleware mount —
+the entire dev backend in one plugin call), then `src/TicketList.tsx`
+(the `useLiveQuery` live-updates hook). `types.ts`,
+`src/server/seed.ts`, `src/client.ts`, and `smoke.test.ts` fill in
+the rest.
 
 ## Troubleshooting
 
-- **Port 3000 / 5173 in use.** Override `PORT=3100 pnpm -F
-  @helpdesk/server dev` and update `vite.config.ts`'s proxy target.
-- **"current.json missing".** Stop everything, `pnpm reset`, then
+- **Port 5173 in use.** Override `server.port` in `vite.config.ts`,
+  or run `PORT=5174 pnpm dev` if you've wired the env through.
+- **"current.json missing".** Stop `pnpm dev`, `pnpm reset`, then
   re-run `pnpm dev`.

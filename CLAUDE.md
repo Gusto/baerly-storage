@@ -237,8 +237,10 @@ Read in this order to build a mental model:
    `examples/minimal-node-docker/` (S3 + JWKS→`sharedSecret`, distroless
    `Dockerfile` + `healthcheck.js`), and `examples/helpdesk-cloudflare/`
    are the production-shaped scaffolds; `examples/helpdesk/` is a
-   dev-only teaching fixture (React+Vite ticket CRUD over
-   `LocalFsStorage`). Each scaffoldable example carries a
+   dev-only teaching fixture: single Vite process; the Baerly HTTP
+   listener is mounted as middleware via `baerlyDev()` from
+   `@baerly/dev/vite`; ticket CRUD over `LocalFsStorage`. Each
+   scaffoldable example carries a
    `.baerly/scaffold.json` manifest declaring rename sentinels,
    copy exclusions, and devDep drops. The CLI consumes them at
    scaffold time via `STARTER_TO_EXAMPLE` in

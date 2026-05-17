@@ -110,12 +110,15 @@ R2 + Assets bindings).
 
 ## helpdesk
 
-Fully-built ticket CRUD app — Node HTTP server over
-`LocalFsStorage` + React/Vite frontend. Live multi-tab updates
-via the `/v1/since` long-poll, surfaced through the `useLiveQuery` /
-`useLiveDocument` hooks. **Dev-only teaching fixture**, not a
-deployable production template: it pins a hard-coded `sharedSecret`
-and a single tenant.
+Fully-built ticket CRUD app — React + Vite over `LocalFsStorage`.
+Single Vite process: the Baerly HTTP listener is mounted as Vite
+middleware via `baerlyDev()` from `@baerly/dev/vite`, so the React
+app and `/v1/*` API share an origin (`:5173`) and a process. This is
+the canonical dev pattern for Node-side Baerly apps. Live multi-tab
+updates via the `/v1/since` long-poll, surfaced through the
+`useLiveQuery` / `useLiveDocument` hooks. **Dev-only teaching
+fixture**, not a deployable production template: it pins a hard-coded
+`sharedSecret` and a single tenant.
 
 **Audience:** anyone learning how to build something with baerly
 — what an app looks like end-to-end, what the client API feels
@@ -131,9 +134,9 @@ pnpm dev
 
 Then open <http://localhost:5173>.
 
-**Read first:** `apps/server/src/index.ts` (the ~25-line server
-boot), then `apps/web/src/TicketList.tsx` (the `useLiveQuery` live-
-update hook).
+**Read first:** `vite.config.ts` (the `baerlyDev()` middleware mount
+— the entire dev backend in one plugin call), then
+`src/TicketList.tsx` (the `useLiveQuery` live-update hook).
 
 For a deployable production version of this same app — R2, Cloudflare
 Access, Workers Assets — see `helpdesk-cloudflare` above.

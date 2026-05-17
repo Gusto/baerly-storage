@@ -36,13 +36,23 @@ shape itself.
 wrangler URL plus the vite URL) would improve its first-touch UX.
 Worth revisiting next time that example is touched.
 
-## 3. Vite/server log interleaving in `examples/helpdesk/`
+## 3. Vite/server log interleaving in `examples/helpdesk/` — **resolved**
 
-`pnpm dev` runs `@helpdesk/server` and `@helpdesk/web` in parallel
-under pnpm `--parallel`. pnpm prefixes lines by workspace name,
-which is enough to make the output scannable, but during heavy
-request bursts the interleaving can still be noisy. If this becomes
-a real friction point, the fix is either a thin dev orchestrator
-(`concurrently --raw` with explicit colors) or holding Vite's start
-until the server's `listen` callback fires. Re-open on user signal,
-not pre-emptively.
+Resolved on the `helpdesk-single-vite` branch: `examples/helpdesk/`
+now boots a single Vite process. The Baerly HTTP listener is mounted
+as Vite middleware via `baerlyDev()` from `@baerly/dev/vite`, so the
+React app and `/v1/*` API share an origin (`:5173`) and a process —
+no `--parallel`, no proxy, no interleaved logs, and Ctrl-C exits
+cleanly with no `[ELIFECYCLE]` noise.
+
+## 4. Cloudflare-side equivalents have the same Ctrl-C noise
+
+`examples/helpdesk-cloudflare/` and `examples/minimal-cloudflare/`
+still run `pnpm --parallel vite + wrangler`, so they exhibit the
+same `[ELIFECYCLE]` / `ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL` noise on
+Ctrl-C that the Node-side helpdesk had before this branch. The fix
+shape is **different** there — the right tool is `@cloudflare/vite-plugin`,
+which runs the Worker inside workerd inside Vite (genuine single
+process). The Node-side `baerlyDev()` plugin from `@baerly/dev/vite`
+isn't a fit (different runtime, no `http.Server`). Deliberately left
+untouched on this branch.
