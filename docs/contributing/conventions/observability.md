@@ -2,7 +2,7 @@
 title: Conventions for observability code
 audience: coder
 summary: One canonical line per unit-of-work, field attachment, DEBUG vs INFO, test patterns.
-last-reviewed: 2026-05-12
+last-reviewed: 2026-05-17
 tags: [conventions, observability]
 related: ["../../guide/observability.md", "tests.md"]
 ---
@@ -17,6 +17,17 @@ counterpart is [`docs/observability.md`](../../guide/observability.md).
 **Every unit of work emits one canonical line.** A unit is an HTTP
 request, a maintenance run, a GC sweep, a compactor run, or a
 `rebuildIndex` call. The kernel emits the line; you don't.
+
+Direct `Db` calls outside an HTTP request or `withObservability`
+scope — e.g. a `baerlyDev()` seed callback that calls
+`db.table().insert()` from inside the Vite plugin — don't emit a
+canonical line on their own. The unit boundary lives on the wrapping
+HTTP request (or `withObservability` scope), not on the `Db` method.
+Field-setters like `getCurrentContext()?.fields.set(...)` are no-ops
+in that mode, and metrics that attach to the canonical line (e.g.
+`db.write.class_a_ops_per_logical_write`) won't surface — so don't
+use server-side `Db` calls as a verification or calibration proxy
+for HTTP-path behaviour; drive a real `/v1/*` request instead.
 
 Don't log-and-rethrow:
 
