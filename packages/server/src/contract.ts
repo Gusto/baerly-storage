@@ -90,7 +90,7 @@ export type Routes =
   | { method: "GET"; path: `/v1/t/${string}` }
   /** Insert. Body: `{ doc: JSONArraylessObject }`. */
   | { method: "POST"; path: `/v1/t/${string}` }
-  /** JSON-merge-patch. Body: `{ patch: JSONArraylessObject }`. */
+  /** JSON-merge-patch. Body: `{ patch: JSONArraylessObject }`. Response: `{ modified: number }`. */
   | { method: "PATCH"; path: `/v1/t/${string}/${string}` }
   /** Delete row by id. */
   | { method: "DELETE"; path: `/v1/t/${string}/${string}` }
@@ -103,7 +103,7 @@ export type Routes =
  *
  * | Status | Meaning                                                          |
  * |--------|------------------------------------------------------------------|
- * | 200    | Success — `HttpOkEnvelope<T>` or `SinceResponse`.                |
+ * | 200    | `GET` read → `HttpOkEnvelope<T>`. `GET /v1/since` → `SinceResponse`. `PATCH` → `{ modified: number }`. |
  * | 201    | `POST` insert success — body `{ _id }`.                          |
  * | 204    | `DELETE` success — no body.                                      |
  * | 304    | Reserved. Long-poll idleness ships as 200 + empty events.        |

@@ -85,7 +85,7 @@ export interface CreateRouterOptions {
  *  - `GET    /v1/t/:table/:id` → read one document.
  *  - `GET    /v1/t/:table?where=<json>` → list rows matching a predicate.
  *  - `POST   /v1/t/:table` → insert. Body: `{ doc }`. → `201 { _id }`.
- *  - `PATCH  /v1/t/:table/:id` → merge-patch. Body: `{ patch }`.
+ *  - `PATCH  /v1/t/:table/:id` → merge-patch. Body: `{ patch }`. → `200 { modified }`.
  *  - `DELETE /v1/t/:table/:id` → delete row by id. → `204`.
  *  - `GET    /v1/healthz` (when `healthCheck !== false`) → liveness probe.
  *  - `GET    /v1/since?table=<name>&cursor=<opaque>` → long-poll log.
@@ -321,7 +321,7 @@ export function createRouter(options: CreateRouterOptions): Hono {
         .where({ _id: id } as Predicate<JSONArraylessObject>)
         .update(patch as Partial<JSONArraylessObject>);
       if (modified === 0) return jsonError(c, 404, "NotFound", `No such row: ${id}`);
-      return c.json({ data: { modified } }, 200);
+      return c.json({ modified }, 200);
     } catch (e) {
       return mapToResponse(c, e);
     }

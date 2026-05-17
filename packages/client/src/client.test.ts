@@ -58,12 +58,12 @@ describe("createBaerlyClient", () => {
     expect(row).toBeUndefined();
   });
 
-  test("update() PATCHes /v1/t/<name>/<id> with { patch } and unwraps { modified }", async () => {
+  test("update() PATCHes /v1/t/<name>/<id> with { patch } and returns thin { modified }", async () => {
     const mock = new MockFetch();
     mock.on("PATCH", "/v1/t/tickets/:id", async (req) => {
       const body = (await req.json()) as { patch: unknown };
       expect(body).toEqual({ patch: { status: "closed" } });
-      return jsonResponse(okEnvelope({ modified: 1 }));
+      return jsonResponse({ modified: 1 });
     });
     const client = createBaerlyClient({ baseUrl: "http://x", fetch: mock.fetch });
     const res = await client.table("tickets").where({ _id: "x" }).update({ status: "closed" });

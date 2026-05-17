@@ -124,7 +124,7 @@ describe("createListener routes", () => {
     });
   });
 
-  it("PATCH on unknown id returns 404; PATCH on known id returns 200 { data: { modified: 1 } }", async () => {
+  it("PATCH on unknown id returns 404; PATCH on known id returns 200 { modified: 1 }", async () => {
     await withServer(trivialVerifier, async (baseUrl, storage) => {
       await provisionTable(storage, "tickets");
       const missingRes = await fetch(`${baseUrl}/v1/t/tickets/does-not-exist`, {
@@ -146,8 +146,8 @@ describe("createListener routes", () => {
         body: JSON.stringify({ patch: { status: "closed" } }),
       });
       expect(patchRes.status).toBe(200);
-      const patched = (await patchRes.json()) as { data: { modified: number } };
-      expect(patched.data.modified).toBe(1);
+      const patched = (await patchRes.json()) as { modified: number };
+      expect(patched.modified).toBe(1);
     });
   });
 

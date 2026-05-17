@@ -35,8 +35,10 @@ export interface RequestContext {
  * - 4xx / 5xx → parse `HttpErrorEnvelope` and throw
  *   {@link BaerlyClientError}. Non-JSON error bodies synthesize an
  *   `Internal` code so consumers still get a structured throw.
- * - 200 on `/v1/since` → raw `SinceResponse` as T (no `data` unwrap).
- * - 200 on every other path → `HttpOkEnvelope<T>.data`.
+ * - 200 on non-`GET` (PATCH, future mutations) → raw parsed body
+ *   as T (e.g. `{ modified }`).
+ * - 200 on `GET /v1/since` → raw `SinceResponse` as T (no `data` unwrap).
+ * - 200 on any other `GET` → `HttpOkEnvelope<T>.data`.
  */
 export const request = async <T>(ctx: RequestContext, opts: RequestOptions): Promise<T> => {
   const headers = await ctx.headers();
@@ -75,9 +77,13 @@ export const request = async <T>(ctx: RequestContext, opts: RequestOptions): Pro
     throw new BaerlyClientError(code, message, res.status);
   }
 
-  // 200 — for /v1/since the body is `SinceResponse` (no `data`
-  // unwrap); for everything else the body is `HttpOkEnvelope<T>`.
+  // 200 — only GET reads ship `HttpOkEnvelope<T>`. PATCH (and any
+  // future non-GET mutation that hits 200) ships its body raw. GET
+  // /v1/since also ships raw (`SinceResponse`).
   const body = (await res.json()) as unknown;
+  if (opts.method !== "GET") {
+    return body as T;
+  }
   if (opts.path.startsWith("/v1/since")) {
     return body as T;
   }
