@@ -17,6 +17,7 @@ describe("ensureTable", () => {
       schema_version: 1,
       snapshot: null,
       next_seq: 0,
+      log_seq_start: 0,
       writer_fence: { epoch: 0 },
     });
   });

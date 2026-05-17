@@ -263,6 +263,7 @@ for (const variant of variants) {
           schema_version: CURRENT_JSON_SCHEMA_VERSION,
           snapshot: null,
           next_seq: 0,
+          log_seq_start: 0,
           writer_fence: { epoch: 0, owner: "http-conformance-test", claimed_at: "" },
         });
       },
@@ -318,6 +319,7 @@ describe("HTTP boundary — schema validation (ticket 70)", () => {
         schema_version: CURRENT_JSON_SCHEMA_VERSION,
         snapshot: null,
         next_seq: 0,
+        log_seq_start: 0,
         writer_fence: { epoch: 0, owner: "http-schema-test", claimed_at: "" },
       },
     );

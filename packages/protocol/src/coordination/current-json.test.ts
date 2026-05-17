@@ -16,6 +16,7 @@ const seedJson = (overrides: Partial<CurrentJson> = {}): CurrentJson => ({
   schema_version: CURRENT_JSON_SCHEMA_VERSION,
   snapshot: null,
   next_seq: 0,
+  log_seq_start: 0,
   writer_fence: { epoch: 0, owner: "test", claimed_at: "" },
   ...overrides,
 });
@@ -177,16 +178,24 @@ describe("claimWriter", () => {
 });
 
 describe("CurrentJson schema (PBT)", () => {
-  const validCurrentJson = fc.record({
-    schema_version: fc.constant(CURRENT_JSON_SCHEMA_VERSION),
-    snapshot: fc.oneof(fc.constant(null), fc.string()),
-    next_seq: fc.integer({ min: 0, max: 1_000_000 }),
-    writer_fence: fc.record({
-      epoch: fc.integer({ min: 0, max: 1_000_000 }),
-      owner: fc.string(),
-      claimed_at: fc.string(),
-    }),
-  });
+  // Enforces the invariant `0 <= log_seq_start <= next_seq` at draw
+  // time by chaining a dependent integer arbitrary off `next_seq` so
+  // the runtime guard always accepts the produced record.
+  const validCurrentJson = fc
+    .integer({ min: 0, max: 1_000_000 })
+    .chain((next_seq) =>
+      fc.record({
+        schema_version: fc.constant(CURRENT_JSON_SCHEMA_VERSION),
+        snapshot: fc.oneof(fc.constant(null), fc.string()),
+        next_seq: fc.constant(next_seq),
+        log_seq_start: fc.integer({ min: 0, max: next_seq }),
+        writer_fence: fc.record({
+          epoch: fc.integer({ min: 0, max: 1_000_000 }),
+          owner: fc.string(),
+          claimed_at: fc.string(),
+        }),
+      }),
+    );
 
   test.prop({
     initial: validCurrentJson,
@@ -214,7 +223,7 @@ describe("CurrentJson schema (PBT)", () => {
 });
 
 describe("CurrentJson log_seq_start", () => {
-  plainTest("normalises missing field to 0 via logSeqStartOf()", () => {
+  plainTest("logSeqStartOf() returns the seeded 0", () => {
     const c: CurrentJson = seedJson();
     expect(logSeqStartOf(c)).toBe(0);
   });
@@ -235,8 +244,10 @@ describe("CurrentJson log_seq_start", () => {
     expect(reread!.json.log_seq_start).toBe(2);
   });
 
-  plainTest("accepts records with the field absent (backward compat)", async () => {
+  plainTest("rejects records with the field absent (always-present invariant)", async () => {
     // Manually write a record without log_seq_start, then re-read.
+    // The runtime guard now requires the field; readers refuse the
+    // record rather than defaulting to 0.
     const s = new MemoryStorage();
     const body = JSON.stringify({
       schema_version: CURRENT_JSON_SCHEMA_VERSION,
@@ -245,10 +256,10 @@ describe("CurrentJson log_seq_start", () => {
       writer_fence: { epoch: 0, owner: "", claimed_at: "" },
     });
     await s.put("k", new TextEncoder().encode(body));
-    const read = await readCurrentJson(s, "k");
-    expect(read).not.toBeNull();
-    expect(read!.json.log_seq_start).toBeUndefined();
-    expect(logSeqStartOf(read!.json)).toBe(0);
+    await expect(readCurrentJson(s, "k")).rejects.toMatchObject({
+      code: "InvalidResponse",
+      message: expect.stringMatching(/log_seq_start/),
+    });
   });
 
   plainTest("accepts an explicit log_seq_start equal to next_seq (fully compacted)", async () => {

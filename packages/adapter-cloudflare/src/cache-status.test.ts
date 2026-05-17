@@ -81,6 +81,7 @@ describe("baerlyWorker cache_status", () => {
       schema_version: CURRENT_JSON_SCHEMA_VERSION,
       snapshot: null,
       next_seq: 0,
+      log_seq_start: 0,
       writer_fence: { epoch: 0, owner: "cs-hit-test", claimed_at: "" },
     });
 
@@ -149,6 +150,7 @@ describe("baerlyWorker cache_status", () => {
       schema_version: CURRENT_JSON_SCHEMA_VERSION,
       snapshot: null,
       next_seq: 0,
+      log_seq_start: 0,
       writer_fence: { epoch: 0, owner: "cs-bypass-test", claimed_at: "" },
     });
 
@@ -201,6 +203,7 @@ describe("baerlyWorker cache_status", () => {
       schema_version: CURRENT_JSON_SCHEMA_VERSION,
       snapshot: null,
       next_seq: 0,
+      log_seq_start: 0,
       writer_fence: { epoch: 0, owner: "cs-inv-test", claimed_at: "" },
     });
 

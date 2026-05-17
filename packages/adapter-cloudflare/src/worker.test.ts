@@ -73,6 +73,7 @@ const seed = async (
     schema_version: CURRENT_JSON_SCHEMA_VERSION,
     snapshot: null,
     next_seq: 0,
+    log_seq_start: 0,
     writer_fence: { epoch: 0, owner: "worker-test", claimed_at: "" },
   });
   const writer = new ServerWriter({ storage, currentJsonKey: key });
@@ -233,6 +234,7 @@ describe("baerlyWorker observability", () => {
       schema_version: CURRENT_JSON_SCHEMA_VERSION,
       snapshot: null,
       next_seq: 0,
+      log_seq_start: 0,
       writer_fence: { epoch: 0, owner: "obs-write-test", claimed_at: "" },
     });
 
@@ -282,6 +284,7 @@ describe("baerlyWorker observability", () => {
       schema_version: CURRENT_JSON_SCHEMA_VERSION,
       snapshot: null,
       next_seq: 0,
+      log_seq_start: 0,
       writer_fence: { epoch: 0, owner: "obs-miss-test", claimed_at: "" },
     });
 
@@ -336,6 +339,7 @@ describe("baerlyWorker observability", () => {
       schema_version: CURRENT_JSON_SCHEMA_VERSION,
       snapshot: null,
       next_seq: 0,
+      log_seq_start: 0,
       writer_fence: { epoch: 0, owner: "obs-hit-test", claimed_at: "" },
     });
     // First request (miss) configured WITHOUT a collecting sink so

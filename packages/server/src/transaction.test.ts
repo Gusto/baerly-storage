@@ -32,6 +32,7 @@ const seedCurrent = (): CurrentJson => ({
   schema_version: CURRENT_JSON_SCHEMA_VERSION,
   snapshot: null,
   next_seq: 0,
+  log_seq_start: 0,
   writer_fence: { epoch: 0, owner: "test", claimed_at: "" },
 });
 

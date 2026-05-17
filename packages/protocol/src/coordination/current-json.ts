@@ -80,10 +80,10 @@ export interface CurrentJson {
    * Lowest live log sequence number. Entries with `seq < log_seq_start`
    * have been folded into the snapshot at {@link snapshot} (or, if
    * `snapshot === null`, have been dropped because the collection was
-   * truncated). Readers walk `[log_seq_start, next_seq)`. Defaults to
-   * `0` when missing (legacy records without this field) — backward-compatible
-   * with collections provisioned before this field landed. Always read
-   * through {@link logSeqStartOf} rather than destructuring inline.
+   * truncated). Readers walk `[log_seq_start, next_seq)`. Always
+   * present on disk — fresh `current.json` writes via
+   * {@link createCurrentJson} set this to `0`; the compactor advances
+   * it on every fold.
    *
    * Invariants the compactor maintains:
    *   - `0 <= log_seq_start <= next_seq`
@@ -91,7 +91,7 @@ export interface CurrentJson {
    *   - `log_seq_start > 0` implies `snapshot !== null` (the snapshot
    *     covers `[0, log_seq_start)`)
    */
-  log_seq_start?: number;
+  log_seq_start: number;
 
   /**
    * Embedded write-fence epoch. See {@link WriterFence}.
@@ -382,14 +382,14 @@ export async function claimWriter(
 }
 
 /**
- * Read `current.json.log_seq_start`, treating the missing-field case
- * as `0`. Callers should always go through this helper rather than
- * destructuring `c.log_seq_start ?? 0` inline — the helper centralises
- * the "no snapshot yet" / "old record" contract in one place, and is
- * the single read-side seam ticket 14 (compactor write) and ticket 15
- * (log GC sweep) will share with the reader and writer paths.
+ * Read `current.json.log_seq_start` — the low-water mark of the live
+ * log range `[log_seq_start, next_seq)`. The field is always present
+ * on disk (every `createCurrentJson` write seeds it; the compactor
+ * advances it on every fold); this helper exists to document intent
+ * at call sites that walk the log range or assert the snapshot
+ * invariants.
  */
-export const logSeqStartOf = (c: CurrentJson): number => c.log_seq_start ?? 0;
+export const logSeqStartOf = (c: CurrentJson): number => c.log_seq_start;
 
 // ---------------------------------------------------------------------
 // Internals
@@ -430,21 +430,16 @@ const assertCurrentJson = (parsed: unknown, key: string): CurrentJson => {
     );
   }
   if (
-    r.log_seq_start !== undefined &&
-    (typeof r.log_seq_start !== "number" ||
-      !Number.isInteger(r.log_seq_start) ||
-      r.log_seq_start < 0)
+    typeof r.log_seq_start !== "number" ||
+    !Number.isInteger(r.log_seq_start) ||
+    r.log_seq_start < 0
   ) {
     throw new BaerlyError(
       "InvalidResponse",
-      `current.json at ${key}: log_seq_start must be a non-negative integer if present`,
+      `current.json at ${key}: log_seq_start must be a non-negative integer`,
     );
   }
-  if (
-    typeof r.log_seq_start === "number" &&
-    typeof r.next_seq === "number" &&
-    r.log_seq_start > r.next_seq
-  ) {
+  if (r.log_seq_start > r.next_seq) {
     throw new BaerlyError(
       "InvalidResponse",
       `current.json at ${key}: log_seq_start ${String(r.log_seq_start)} > next_seq ${String(r.next_seq)}`,
