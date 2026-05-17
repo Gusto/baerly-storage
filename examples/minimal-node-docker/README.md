@@ -1,31 +1,34 @@
 # minimal-node-docker
 
-A baerly app scaffolded with `create-baerly` for the **self-hosted
-Node** target. Uses `@baerly/adapter-node` against an S3-compatible
-bucket (AWS S3, R2 via S3-compat, Minio, etc.) with a `bearerJwt` →
-`sharedSecret` fallback `Verifier` chain.
+A baerly app scaffolded with `create-baerly` for the **container /
+Docker** Node target — shaped for raw Docker on a VPS, Fly Machines,
+DO Container Registry, k8s, and ECS. Uses `@baerly/adapter-node`
+against an S3-compatible bucket (AWS S3, R2 via S3-compat, Minio,
+etc.) with a `bearerJwt` → `sharedSecret` fallback `Verifier` chain.
 
 ## What you got
 
 ```
 minimal-node-docker/
-├── package.json              # pnpm workspace root
-├── tsconfig.json
+├── package.json              # one package, all deps
+├── tsconfig.json             # project-references stub
+├── tsconfig.app.json         # client TS project (src/web)
+├── tsconfig.server.json      # Node server TS project (src/server)
+├── vite.config.ts            # Vite SPA build → dist/client/
+├── index.html                # SPA shell — Vite's entry point
+├── Dockerfile                # multi-stage; distroless runtime
+├── .dockerignore
+├── healthcheck.js            # used by Dockerfile HEALTHCHECK
+├── .env.example              # storage creds, verifier, observability
 ├── baerly.config.ts          # app, tenant, target, domain
 ├── AGENTS.md                 # deeper guide: predicates, schemas,
 │                             #   auth recipes, graduation
 ├── .baerly/schema.lock.json  # declared collection schemas
-├── apps/
-│   ├── server/               # node:http listener — baerly host
-│   │   ├── package.json
-│   │   ├── Dockerfile        # multi-stage; distroless runtime
-│   │   ├── .dockerignore
-│   │   ├── healthcheck.js    # used by Dockerfile HEALTHCHECK
-│   │   ├── .env.example
-│   │   └── src/server.ts     # createListener({ verifier })
-│   └── web/                  # optional SPA shell — delete if unused
-│       ├── package.json
-│       └── index.html
+├── src/
+│   ├── server/
+│   │   └── index.ts          # createListener({ verifier, webRoot })
+│   └── web/
+│       └── main.ts           # SPA client entry — bundled into dist/client/
 └── README.md
 ```
 
@@ -33,15 +36,32 @@ minimal-node-docker/
 
 ```sh
 pnpm install
-BUCKET=... AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=... SHARED_SECRET=... pnpm dev
+pnpm dev
+```
+
+`pnpm dev` runs `baerly dev`, which boots a Node listener on
+`http://localhost:3000` backed by local filesystem storage — no
+S3 creds needed. Use it for first-touch exploration.
+
+For production-shaped local runs (S3, the verifier of your choice,
+and the bundled SPA served from `dist/client/`):
+
+```sh
+pnpm build
+BUCKET=... AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=... SHARED_SECRET=... pnpm start
 ```
 
 The server reads `BUCKET`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`,
 and either `JWKS_URL` (production) or `SHARED_SECRET` (parity with
 `wrangler dev`) at startup. Optional: `S3_ENDPOINT`, `AWS_REGION`,
-`PORT`, `TENANT`.
+`PORT`, `TENANT`, `WEB_ROOT`.
 
-`pnpm typecheck` runs `tsc --noEmit` across both apps.
+After `pnpm build`, `http://localhost:8080/` serves the built SPA
+out of `dist/client/` and `http://localhost:8080/v1/*` is the
+baerly HTTP surface — single origin, no CORS.
+
+`pnpm typecheck` runs `tsc -b --noEmit` across both project
+references.
 
 ## Deploy
 
@@ -50,13 +70,19 @@ shaped for raw container deploys: **Docker on a VPS**, **Fly Machines**,
 **DO Container Registry**, **k8s**, **ECS**. Build, push, run:
 
 ```sh
-docker build -t minimal-node-docker:latest -f apps/server/Dockerfile .
-docker run -p 8080:8080 --env-file apps/server/.env minimal-node-docker:latest
+docker build -t minimal-node-docker:latest -f Dockerfile .
+docker run -p 8080:8080 --env-file .env minimal-node-docker:latest
 ```
 
-The Dockerfile uses `gcr.io/distroless/nodejs24-debian12` (no shell,
-non-root user UID 65532), so the `HEALTHCHECK` shells out to the
-bundled `apps/server/healthcheck.js` rather than `curl`/`wget`.
+The build stage runs `pnpm install && pnpm build` (which expands to
+`tsc -b && vite build` — both server typecheck and client SPA emit
+under `dist/client/`). The runtime is
+`gcr.io/distroless/nodejs24-debian12` (no shell, non-root user UID
+65532); the `HEALTHCHECK` shells out to the bundled
+`healthcheck.js` rather than `curl`/`wget`. The container entrypoint
+is `node --experimental-strip-types src/server/index.ts` — no `tsc`
+emit step; the TS source ships into the image and is stripped on
+load.
 
 Then verify: `curl http://localhost:8080/v1/healthz`.
 
@@ -124,6 +150,9 @@ else falls back to `sharedSecret()` for parity with `pnpm dev`. Set
 ## Pointers
 
 - `baerly.config.ts` — app config (`app`, `tenant`, `target`, `domain`).
-- `apps/server/src/server.ts` — node:http listener entry.
-- `apps/server/Dockerfile` — container build (multi-stage).
+- `src/server/index.ts` — node:http listener entry.
+- `src/web/main.ts`, `index.html` — SPA client entry built into `dist/client/`.
+- `vite.config.ts` — Vite client build.
+- `Dockerfile` — multi-stage container build (distroless runtime).
+- `healthcheck.js` — pure-Node liveness probe used by `HEALTHCHECK`.
 - `AGENTS.md` — agent-facing guide (mirrored to `CLAUDE.md` at scaffold time).

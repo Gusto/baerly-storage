@@ -17,9 +17,15 @@ carries `AGENTS.md`.
 
 ## What this is
 
-`minimal-node-docker` is a baerly app scaffolded with `create-baerly`.
-The Node-side server lives in `apps/server/`; the optional client
-lives in `apps/web/`. Configuration lives in `baerly.config.ts`.
+`minimal-node-docker` is a baerly app scaffolded with `create-baerly`
+for the **container / Docker** Node target — shaped for raw Docker on a
+VPS, Fly Machines, DO Container Registry, k8s, and ECS. One flat
+package: the Node-side server lives in `src/server/index.ts`; the
+optional client lives in `src/web/`. The listener serves the built
+SPA from `dist/client/` via the `createListener({ webRoot })` option,
+so dev and prod run on a single origin. Configuration lives in
+`baerly.config.ts`; the production image is built from `Dockerfile`
+(multi-stage, distroless runtime, non-root).
 
 Public API docs: https://docs.baerly.dev/ (the JSDoc on
 `@baerly/server`'s `Db` and `Table` is the canonical reference;
@@ -39,17 +45,24 @@ read it via your editor's TS LS or via the published types).
 
 | Command            | What it does                                       | Runtime          |
 | ------------------ | -------------------------------------------------- | ---------------- |
-| `pnpm typecheck` | TS typecheck across both apps                      | seconds          |
-| `pnpm dev`       | Run the server locally via `baerly dev` — Node listener on :3000 | seconds to start |
-| `pnpm test`        | Run all tests across both apps                     | seconds          |
+| `pnpm typecheck`   | TS typecheck across the `app` + `server` project references | seconds   |
+| `pnpm dev`         | Run the server locally via `baerly dev` — Node listener on :3000 | seconds to start |
+| `pnpm build`       | `tsc -b && vite build` — emits the SPA into `dist/client/` | seconds  |
+| `pnpm start`       | `node --experimental-strip-types src/server/index.ts` — production entry; serves the SPA from `dist/client/` via `webRoot` | seconds to start |
+| `pnpm test`        | Run vitest                                          | seconds          |
 
 ## Where the code is
 
 | Path                        | What it is                                          |
 | --------------------------- | --------------------------------------------------- |
-| `apps/server/src/server.ts` | Server entry — `createListener({ verifier })`       |
-| `apps/server/Dockerfile`    | Multi-stage container build (distroless runtime, non-root)        |
-| `apps/web/`                 | Optional client; SPA shell. Remove if not needed.   |
+| `src/server/index.ts`       | Server entry — `createListener({ verifier, webRoot })` |
+| `src/web/`, `index.html`    | Optional SPA shell built by Vite into `dist/client/`. Remove if not needed. |
+| `vite.config.ts`            | Vite client build — `outDir: dist/client`; dev proxy `/v1` → `:8080` |
+| `tsconfig.{app,server}.json` | TS project references for the client and server projects |
+| `Dockerfile`                | Multi-stage container build (distroless runtime, non-root) |
+| `healthcheck.js`            | Pure-Node script used by the Dockerfile `HEALTHCHECK` (distroless ships no `curl`/`wget`) |
+| `.dockerignore`             | Excludes from the build context — `node_modules`, `.env*`, tests, etc. |
+| `.env.example`              | Storage creds, verifier, observability — copy to `.env` for local runs |
 | `baerly.config.ts`          | App config — `app`, `tenant`, `target`, `domain`    |
 | `.baerly/schema.lock.json`  | Declared collection schemas — see "Schemas (live feature)" below. |
 
@@ -146,7 +159,7 @@ read it via your editor's TS LS or via the published types).
   schemas; an empty `{ "tables": {} }` is fine when you supply the
   schemas in code.
 
-- **Auth setup (Node)** — `apps/server/src/server.ts` selects:
+- **Auth setup (Node)** — `src/server/index.ts` selects:
 
   1. `bearerJwt({ jwks, issuer, audience })` when `JWKS_URL` is set.
      The verifier fetches the JWKS, validates `iss` / `aud` /
@@ -172,19 +185,32 @@ read it via your editor's TS LS or via the published types).
 
   4. Restart the server. `baerly doctor --target=node-docker` runs
      a 3s JWKS reachability probe; non-200 → warning.
-  5. Remove the `SHARED_SECRET` branch from `server.ts` before going
-     to prod (or set `SHARED_SECRET` to an unguessable value behind
-     a feature flag).
+  5. Remove the `SHARED_SECRET` branch from `src/server/index.ts`
+     before going to prod (or set `SHARED_SECRET` to an unguessable
+     value behind a feature flag).
 
-- **Maintenance loop (Node)** — `apps/server/src/server.ts` calls
+- **Maintenance loop (Node)** — `src/server/index.ts` calls
   `runMaintenanceTick({ storage, currentJsonKey })` on a 1-hour
-  `setInterval` when `MAINTENANCE_KEY` is set. The tick is unbounded
-  (`NODE_PROFILE`): one pass folds the entire live tail and sweeps
-  up to 1000 candidates.
+  `setInterval`, **opt-in via `MAINTENANCE_KEY`**. The tick is
+  unbounded (`NODE_PROFILE`): one pass folds the entire live tail
+  and sweeps up to 1000 candidates.
 
-  No external scheduler required for the in-process loop. For
-  k8s setups that prefer external timers, omit `MAINTENANCE_KEY`
-  and invoke `runMaintenanceTick` from a k8s `CronJob`.
+  `runMaintenanceTick` targets **one collection per call**, not
+  one app — `currentJsonKey` is the full
+  `app/<app>/tenant/<tenant>/manifests/<collection>/current.json`
+  path. To enable the loop, set `MAINTENANCE_KEY` in your
+  environment to that path. Example:
+
+  ```sh
+  MAINTENANCE_KEY=app/minimal-node-docker/tenant/minimal-demo/manifests/tickets/current.json
+  ```
+
+  **Multi-collection apps:** because the loop only services one
+  collection, repeat-instancing the container with a different
+  `MAINTENANCE_KEY` per process is one option; the cleaner pattern
+  for k8s is a separate `CronJob` per collection that invokes
+  `runMaintenanceTick` directly (omit `MAINTENANCE_KEY` from the
+  main server container so it boots with no in-process scheduling).
 
   Maintenance emits one canonical info line per run on stdout.
   Filter your log stream on `"unit_of_work": "maintenance"` and
@@ -206,21 +232,26 @@ read it via your editor's TS LS or via the published types).
     the at-a-glance summary.
 
 - **Deploy** — this scaffold ships a multi-stage distroless
-  `Dockerfile` at `apps/server/Dockerfile`, plus `.dockerignore`,
+  `Dockerfile` at the package root, plus `.dockerignore`,
   `healthcheck.js`, and `.env.example`. Build and hand the image to
   your orchestrator:
 
   ```sh
-  docker build -t minimal-node-docker:latest -f apps/server/Dockerfile .
-  docker run -p 8080:8080 --env-file apps/server/.env minimal-node-docker:latest
+  docker build -t minimal-node-docker:latest -f Dockerfile .
+  docker run -p 8080:8080 --env-file .env minimal-node-docker:latest
   ```
 
-  The runtime is `gcr.io/distroless/nodejs24-debian12` (no shell,
-  non-root UID 65532); the `HEALTHCHECK` invokes the bundled
-  `healthcheck.js` rather than `curl`/`wget`. Suitable for Docker
-  on a VPS, Fly Machines, DO Container Registry, k8s, and ECS. For
-  managed PaaS (Railway, Render, DO App Platform) see the
-  `node-railway` sibling — no Dockerfile required.
+  The build stage runs `pnpm install && pnpm build`, where `pnpm
+  build` does `tsc -b && vite build` and emits the SPA into
+  `dist/client/`. The runtime is `gcr.io/distroless/nodejs24-debian12`
+  (no shell, non-root UID 65532); the `HEALTHCHECK` invokes the
+  bundled `healthcheck.js` rather than `curl`/`wget`. The container
+  entrypoint is `node --experimental-strip-types src/server/index.ts`
+  — no `tsc` emit step at runtime; the TS source is shipped into the
+  image and stripped on load. Suitable for Docker on a VPS, Fly
+  Machines, DO Container Registry, k8s, and ECS. For managed PaaS
+  (Railway, Render, DO App Platform) see the `node-railway` sibling
+  — no Dockerfile required.
 
 ## Anti-patterns
 
@@ -265,6 +296,9 @@ The export is point-in-time and honours the active schema. Flags:
 ## Pointers
 
 - `baerly.config.ts` — app config.
-- `apps/server/src/server.ts` — server entry.
-- `apps/server/Dockerfile` — container build.
-- `package.json` — root scripts + pnpm workspace.
+- `src/server/index.ts` — node:http listener entry.
+- `src/web/main.ts`, `index.html` — SPA client entry.
+- `vite.config.ts` — Vite client build (output `dist/client/`).
+- `Dockerfile` — multi-stage container build (distroless runtime).
+- `healthcheck.js` — pure-Node liveness probe used by `HEALTHCHECK`.
+- `package.json` — single-package root scripts.
