@@ -168,6 +168,79 @@ describe("baerly admin compact — CLI smoke", () => {
     expect(envelope.result.gc).toBeNull();
   });
 
+  test("--min-entries=N overrides the profile threshold (forces compaction)", async () => {
+    await provision(storage);
+    // 30 rows; below NODE_PROFILE's minEntriesToCompact (100), so a
+    // default-profile compact would be a no-op.
+    await seedRows(storage, 30);
+
+    const stdout = captureStream(process.stdout);
+    let exitCode: number;
+    try {
+      exitCode = await runCompact([
+        `--bucket=file://${root}`,
+        `--app=${APP}`,
+        `--tenant=${TENANT}`,
+        `--table=${COLL}`,
+        "--profile=node",
+        "--min-entries=10",
+        "--json",
+      ]);
+    } finally {
+      stdout.restore();
+    }
+    expect(exitCode).toBe(0);
+    const envelope = JSON.parse(stdout.captured.join("").trim()) as {
+      result: {
+        compact: { written: boolean; entries_folded: number } | null;
+      };
+    };
+    expect(envelope.result.compact).not.toBeNull();
+    if (envelope.result.compact === null) throw new Error("unreachable");
+    expect(envelope.result.compact.written).toBe(true);
+    expect(envelope.result.compact.entries_folded).toBe(30);
+  });
+
+  test("--min-entries=abc is rejected with InvalidConfig (exit 1)", async () => {
+    await provision(storage);
+    const stderr = captureStream(process.stderr);
+    let exitCode: number;
+    try {
+      exitCode = await runCompact([
+        `--bucket=file://${root}`,
+        `--app=${APP}`,
+        `--tenant=${TENANT}`,
+        `--table=${COLL}`,
+        "--profile=node",
+        "--min-entries=abc",
+      ]);
+    } finally {
+      stderr.restore();
+    }
+    expect(exitCode).toBe(1);
+    expect(stderr.captured.join("")).toContain("InvalidConfig");
+  });
+
+  test("--min-entries=-5 is rejected with InvalidConfig (exit 1)", async () => {
+    await provision(storage);
+    const stderr = captureStream(process.stderr);
+    let exitCode: number;
+    try {
+      exitCode = await runCompact([
+        `--bucket=file://${root}`,
+        `--app=${APP}`,
+        `--tenant=${TENANT}`,
+        `--table=${COLL}`,
+        "--profile=node",
+        "--min-entries=-5",
+      ]);
+    } finally {
+      stderr.restore();
+    }
+    expect(exitCode).toBe(1);
+    expect(stderr.captured.join("")).toContain("InvalidConfig");
+  });
+
   test("bad --profile is rejected with InvalidConfig (exit 1)", async () => {
     await provision(storage);
     const stderr = captureStream(process.stderr);

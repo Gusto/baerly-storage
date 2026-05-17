@@ -19,6 +19,10 @@
  *                       Default "node".
  *   --skip-gc           Run compact only.
  *   --skip-compact      Run GC only.
+ *   --min-entries       Override the active profile's
+ *                       `minEntriesToCompact` threshold (non-negative
+ *                       integer). Useful on brand-new buckets that
+ *                       haven't yet accumulated the profile default.
  *   --json              JSON envelope.
  *
  * Exit codes:
@@ -81,6 +85,13 @@ const COMPACT_ARGS = {
     type: "boolean",
     description: "Run GC only (skip compact).",
   },
+  "min-entries": {
+    type: "string",
+    required: false,
+    description:
+      "Override the active profile's minEntriesToCompact (compact regardless of live-tail length).",
+    valueHint: "int",
+  },
   json: {
     type: "boolean",
     description: "Emit a structured JSON envelope to stdout (success) or stderr (error)",
@@ -97,6 +108,7 @@ const KNOWN_KEYS: ReadonlySet<string> = new Set([
   "profile",
   "skip-gc",
   "skip-compact",
+  "min-entries",
   "json",
   "_",
 ]);
@@ -157,6 +169,23 @@ const handleCompact = async (args: Args): Promise<number> => {
         "baerly admin compact: --skip-gc and --skip-compact are mutually exclusive (the pass would be a no-op)",
       );
     }
+    let minEntriesOverride: number | undefined;
+    if (typeof args["min-entries"] === "string") {
+      const raw = args["min-entries"];
+      const parsed = Number.parseInt(raw, 10);
+      if (
+        !Number.isFinite(parsed) ||
+        !Number.isInteger(parsed) ||
+        parsed < 0 ||
+        String(parsed) !== raw.trim()
+      ) {
+        throw new BaerlyError(
+          "InvalidConfig",
+          `baerly admin compact: --min-entries must be a non-negative integer (got ${JSON.stringify(raw)})`,
+        );
+      }
+      minEntriesOverride = parsed;
+    }
     const { app, tenant } = await resolveAppTenant(args);
     const bucket = await parseBucketUri(args.bucket);
     const currentJsonKey = `${bucket.keyPrefix}app/${app}/tenant/${tenant}/manifests/${args.table}/current.json`;
@@ -164,6 +193,9 @@ const handleCompact = async (args: Args): Promise<number> => {
       ...profile,
       ...(args["skip-gc"] === true && { skipGc: true }),
       ...(args["skip-compact"] === true && { skipCompact: true }),
+      ...(minEntriesOverride !== undefined && {
+        compact: { ...profile.compact, minEntriesToCompact: minEntriesOverride },
+      }),
     };
     const result = await runScheduledMaintenance(
       { storage: bucket.storage, currentJsonKey },
