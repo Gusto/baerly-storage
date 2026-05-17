@@ -219,7 +219,21 @@ for (const variant of variants) {
       storage = made.storage;
       cleanup = made.cleanup;
       server = createServer(
-        createListener({ app: APP, storage: made.storage, verifier: testVerifier() }),
+        createListener({
+          app: APP,
+          storage: made.storage,
+          verifier: testVerifier(),
+          // Drive the long-poll idle budget down from the 25s default
+          // so the cascade's idle-poll wire-shape test (two back-to-
+          // back idle polls + cursor-stability assertion) finishes
+          // in ~1.2s per variant instead of timing out the suite.
+          // The existing race-write test (~50ms write latency vs.
+          // the previous 25s budget) still fits comfortably under
+          // 500ms; the fast-path test returns immediately and is
+          // unaffected.
+          sinceTimeoutMs: 500,
+          sincePollIntervalMs: 50,
+        }),
       );
       await new Promise<void>((resolve) => server!.listen(0, resolve));
       port = (server!.address() as AddressInfo).port;
@@ -251,6 +265,13 @@ for (const variant of variants) {
           next_seq: 0,
           writer_fence: { epoch: 0, owner: "http-conformance-test", claimed_at: "" },
         });
+      },
+      options: {
+        // `createListener` above passes `sinceTimeoutMs: 500`, so the
+        // cascade's idle-poll test fits inside the vitest default
+        // timeout. The Workerd-side variant pins this `false` because
+        // `baerlyWorker` does not thread the override through.
+        supportsSinceTimeoutOverride: true,
       },
     });
   });

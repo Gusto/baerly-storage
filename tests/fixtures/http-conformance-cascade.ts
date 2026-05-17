@@ -58,6 +58,20 @@ export interface HttpConformanceOptions {
    */
   readonly supportsLongPoll?: boolean;
   /**
+   * When true, the cascade assumes the call site has plumbed a short
+   * `sinceTimeoutMs` (≤ ~500ms) into the listener so the idle-poll
+   * wire-shape test (two back-to-back idle polls + cursor-stability)
+   * completes inside the vitest default timeout instead of sitting on
+   * the 25s `longPollSince` default.
+   *
+   * Default: **false**. The Node-side variants pass `true` because
+   * `createListener` exposes `sinceTimeoutMs`. The Workerd-side
+   * variant pins `false` — `baerlyWorker` does not yet thread the
+   * override through to `createRouter`, so an unbounded idle poll
+   * would time out the test runner.
+   */
+  readonly supportsSinceTimeoutOverride?: boolean;
+  /**
    * When true, the conditional-GET block additionally exercises the
    * Cache API path (ticket 27): a second GET issued within the same
    * test run hits `caches.default` and still respects `If-None-Match`
@@ -193,6 +207,7 @@ export const runHttpConformanceCascade = (opts: {
   const supportsAbort = o.supportsAbort ?? true;
   const supportsCAS = o.supportsCAS ?? false;
   const supportsLongPoll = o.supportsLongPoll ?? true;
+  const supportsSinceTimeoutOverride = o.supportsSinceTimeoutOverride ?? false;
   const supportsCacheApi = o.supportsCacheApi ?? false;
   const tenantPrefix = o.tenantPrefix ?? CONFORMANCE_TENANT;
   const bearerToken = o.bearerToken ?? CONFORMANCE_BEARER;
@@ -636,6 +651,44 @@ export const runHttpConformanceCascade = (opts: {
         const env = (await res.json()) as ErrorEnvelope;
         expect(env.error?.code).toBe("SchemaError");
       });
+
+      // Idle-poll wire shape: with no writes between two back-to-back
+      // polls, the second poll MUST return `{events: [], next_cursor:
+      // <same as first>}`. Gated on `supportsSinceTimeoutOverride`
+      // because the default 25s budget would time the test out;
+      // call sites that plumb a short `sinceTimeoutMs` opt in.
+      test.skipIf(!supportsSinceTimeoutOverride)(
+        "idle long-poll returns {events: [], next_cursor: <stable>} after the timeout",
+        async () => {
+          const table = await mintTable("lp-idle");
+          // Drain the log first. An empty cursor means "from
+          // log_seq_start"; with no writes since provisioning, the
+          // first poll already times out idle. Capture its cursor —
+          // that's our stable reference.
+          const first = await doFetch(authedRequest("GET", `/v1/since?table=${table}&cursor=`));
+          expect(first.status).toBe(200);
+          const firstBody = (await first.json()) as {
+            readonly events: ReadonlyArray<unknown>;
+            readonly next_cursor: string;
+          };
+          expect(firstBody.events).toEqual([]);
+          // Second poll feeds the first cursor back. No writes in
+          // between, so the cursor MUST NOT move.
+          const second = await doFetch(
+            authedRequest(
+              "GET",
+              `/v1/since?table=${table}&cursor=${encodeURIComponent(firstBody.next_cursor)}`,
+            ),
+          );
+          expect(second.status).toBe(200);
+          const secondBody = (await second.json()) as {
+            readonly events: ReadonlyArray<unknown>;
+            readonly next_cursor: string;
+          };
+          expect(secondBody.events).toEqual([]);
+          expect(secondBody.next_cursor).toBe(firstBody.next_cursor);
+        },
+      );
     });
 
     // ── Block 11: read response `_meta` (ticket 33) ─────────────────
