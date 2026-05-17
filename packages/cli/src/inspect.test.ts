@@ -369,4 +369,80 @@ describe("baerly inspect", () => {
     expect(text).toContain("writes/min");
     expect(text).toContain("Class A/mo");
   });
+
+  test("estimator failure surfaces in errors[] with status: error", async () => {
+    await provision(storage);
+    // Write garbage "log entry" bodies that will make estimateWritesPerMin
+    // throw InvalidResponse on JSON.parse. Need ≥2 entries because the
+    // estimator returns NaN (no throw) when the sample is < 2.
+    const logKey0 = `${TABLE_PREFIX}/log/0.json`;
+    const logKey1 = `${TABLE_PREFIX}/log/1.json`;
+    await storage.put(logKey0, new TextEncoder().encode("not valid json {"), {
+      ifNoneMatch: "*",
+      contentType: "application/json",
+    });
+    await storage.put(logKey1, new TextEncoder().encode("also garbage"), {
+      ifNoneMatch: "*",
+      contentType: "application/json",
+    });
+
+    const stdout = captureStream(process.stdout);
+    let exitCode: number;
+    try {
+      exitCode = await runInspect([
+        `--bucket=file://${root}`,
+        `--app=${APP}`,
+        `--tenant=${TENANT}`,
+        `--table=${COLL}`,
+        "--provider=r2",
+        "--json",
+      ]);
+    } finally {
+      stdout.restore();
+    }
+    expect(exitCode).toBe(0);
+    const envelope = JSON.parse(stdout.captured.join("").trim()) as {
+      result: { trajectory: Trajectory | null; status: string; errors: string[] };
+    };
+    expect(envelope.result.trajectory).toBeNull();
+    expect(envelope.result.status).toBe("error");
+    expect(envelope.result.errors.some((e) => e.includes("InvalidResponse"))).toBe(true);
+  });
+
+  test("--provider=aws-s3 produces a paid Trajectory (no free tier)", async () => {
+    await provision(storage);
+    const writer = new ServerWriter({ storage, currentJsonKey: CURRENT_JSON_KEY });
+    for (let i = 0; i < 3; i++) {
+      await writer.commit({
+        op: "I",
+        collection: COLL,
+        docId: `t-${i}`,
+        body: { _id: `t-${i}`, title: `row ${i}` },
+      });
+      await new Promise((r) => setTimeout(r, 10));
+    }
+
+    const stdout = captureStream(process.stdout);
+    let exitCode: number;
+    try {
+      exitCode = await runInspect([
+        `--bucket=file://${root}`,
+        `--app=${APP}`,
+        `--tenant=${TENANT}`,
+        `--table=${COLL}`,
+        "--provider=aws-s3",
+        "--json",
+      ]);
+    } finally {
+      stdout.restore();
+    }
+    expect(exitCode).toBe(0);
+    const envelope = JSON.parse(stdout.captured.join("").trim()) as {
+      result: { trajectory: Trajectory | null };
+    };
+    expect(envelope.result.trajectory).not.toBeNull();
+    expect(envelope.result.trajectory!.provider).toBe("aws-s3");
+    expect(envelope.result.trajectory!.withinFreeTier).toBe(false);
+    expect(envelope.result.trajectory!.projectedUsdPerMonth).toBeGreaterThan(0);
+  });
 });

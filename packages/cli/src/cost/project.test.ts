@@ -110,4 +110,16 @@ describe("project", () => {
     expect(t).not.toBeNull();
     expect(t!.projectedUsdPerMonth).toBeCloseTo(1.332 + 5 * 0.015, 3);
   });
+
+  test("R2 between 50% and 100% of free tier: still withinFreeTier=true, percentOfFreeTier in [50, 100]", () => {
+    // classAPerMonth = 750_000 → 75% of free tier (1M).
+    // writesPerMin = 750_000 / (60 × 24 × 30 × 3) ≈ 5.79.
+    const wpm = 750_000 / (60 * 24 * 30 * 3);
+    const t = project(wpm, 0, R2);
+    expect(t).not.toBeNull();
+    expect(t!.withinFreeTier).toBe(true);
+    expect(t!.percentOfFreeTier).not.toBeNull();
+    expect(t!.percentOfFreeTier!).toBeGreaterThanOrEqual(50);
+    expect(t!.percentOfFreeTier!).toBeLessThan(100);
+  });
 });

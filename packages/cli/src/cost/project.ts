@@ -36,8 +36,11 @@ export interface ProviderPricing {
  * Source: `docs/about/cost-model.md:159-163`.
  */
 export const GRADUATION_CLASS_A_PER_MONTH = 50_000_000;
-export const GRADUATION_WRITE_AMP = 6;
-export const GRADUATION_STORED_BYTES = 5 * 1024 * 1024 * 1024;
+// GRADUATION_WRITE_AMP = 6 — sustained write-amp at this level
+// suggests the workload is too bursty for the M-size positioning.
+// Not yet wired into project(); kept for the storedBytes follow-up.
+// GRADUATION_STORED_BYTES = 5 * 1024 * 1024 * 1024 — storage graduation
+// trigger (~5 GB). Not yet wired; deferred alongside write-amp gating.
 
 /** What the inspect footer renders from. */
 export interface Trajectory {

@@ -225,9 +225,11 @@ const renderTrajectory = (t: Trajectory): string => {
       `                       ${t.percentOfGraduation.toFixed(2)}% of 50M/mo graduation trigger. Self-hosted — bill model not modelled.`,
     ].join("\n");
   }
+  // Only "r2" can reach withinFreeTier===true (aws-s3 has freeClassAPerMonth: 0).
+  // self-hosted/dev are filtered upstream.
   const usd = t.withinFreeTier
-    ? `~$0 (${t.provider === "r2" ? "R2" : "AWS S3"} free tier)`
-    : `~$${t.projectedUsdPerMonth.toFixed(2)}/mo`;
+    ? `~$0 (R2 free tier)`
+    : `~$${t.projectedUsdPerMonth!.toFixed(2)}/mo`;
   // Invariant: withinFreeTier===true implies pricing.freeClassAPerMonth>0,
   // which in turn implies percentOfFreeTier!==null (see project.ts).
   const tail = t.withinFreeTier
