@@ -41,15 +41,11 @@ import {
   type JSONArraylessObject,
   MemoryStorage,
   type Storage,
-  type StorageGetOptions,
-  type StorageGetResult,
-  type StorageListEntry,
-  type StoragePutOptions,
-  type StoragePutResult,
 } from "@baerly/protocol";
 import { LocalFsStorage } from "@baerly/dev";
 import { Db, ServerWriter } from "@baerly/server";
 import { NODE_PROFILE, runScheduledMaintenance } from "@baerly/server/maintenance";
+import { wrapCountingStorage } from "../fixtures/counting-storage.ts";
 
 const APP = "app";
 const TENANT = "tenant";
@@ -279,30 +275,7 @@ describe("Synthetic 5000-entry end-to-end gate", () => {
           // taxonomy: anything that mutates or enumerates). Class B
           // (GET, HEAD) is not counted — the idle reader's snapshot +
           // log-tail path should be GET-only.
-          let classAOps = 0;
-          const proxy: Storage = {
-            get: (key: string, opts?: StorageGetOptions): Promise<StorageGetResult | null> =>
-              storage.get(key, opts),
-            put: (
-              key: string,
-              body: Uint8Array,
-              opts?: StoragePutOptions,
-            ): Promise<StoragePutResult> => {
-              classAOps++;
-              return storage.put(key, body, opts);
-            },
-            delete: (key: string, opts?: { signal?: AbortSignal }): Promise<void> => {
-              classAOps++;
-              return storage.delete(key, opts);
-            },
-            list: async function* (
-              prefix: string,
-              opts?: { startAfter?: string; maxKeys?: number; signal?: AbortSignal },
-            ): AsyncIterable<StorageListEntry> {
-              classAOps++;
-              for await (const entry of storage.list(prefix, opts)) yield entry;
-            },
-          };
+          const counting = wrapCountingStorage(storage);
 
           // 1 hour at a 2-second poll cadence = 1800 reads. The
           // published cost model is "< 1 Class A op / writer / hour"
@@ -313,17 +286,17 @@ describe("Synthetic 5000-entry end-to-end gate", () => {
           //
           // For broader workload analysis, see bench/README.md — the load
           // harness externalizes derived.class_a_per_tenant_per_hour.
-          const db = Db.create({ storage: proxy, app: APP, tenant: TENANT });
+          const db = Db.create({ storage: counting.storage, app: APP, tenant: TENANT });
           const tbl = db.table<Ticket>(COLLECTION);
           const T = 1800;
           for (let i = 0; i < T; i++) {
             await tbl.where({}).all();
           }
-          expect(classAOps).toBeLessThan(1);
+          expect(counting.classAOps).toBeLessThan(1);
           // Strengthen: the documented expectation is exactly 0. If
           // this ever flips to 1 we want to know immediately — a LIST
           // or PUT crept into the read path.
-          expect(classAOps).toBe(0);
+          expect(counting.classAOps).toBe(0);
         },
       );
     });
