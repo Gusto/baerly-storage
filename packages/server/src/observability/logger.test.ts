@@ -169,10 +169,10 @@ describe("prettyConsoleSink", () => {
       path: "/v1/t/tickets",
       "db.storage.class_a_ops_total": 3,
       "db.storage.class_b_ops_total": 0,
-      "db.write.class_a_ops_per_logical_write_p99": 3,
+      "db.write.class_a_ops_per_logical_write_p99": 7,
     });
     const line = spy.mock.calls[0]![0] as string;
-    expect(line).toContain("wamp=3");
+    expect(line).toContain("wamp=7");
   });
 
   it("renders outcome on >= 400 and 412 counter when > 0", async () => {
@@ -208,6 +208,59 @@ describe("prettyConsoleSink", () => {
     expect(line).toMatch(/maintenance/);
     expect(line).toContain("142ms");
     expect(line).toContain("class_a=4");
+  });
+
+  it("cache_status: 'hit' → cache=hit in tail", async () => {
+    await configureObservability({ sink: "console-pretty", level: "info", sampleRate: 1 });
+
+    getLogger(CATEGORY.http).info("canonical", {
+      request_id: "ab12cd34-ef56-7890-abcd-ef1234567890",
+      duration_ms: 5,
+      status: 200,
+      outcome: "read",
+      method: "GET",
+      path: "/v1/t/tickets",
+      "db.storage.class_a_ops_total": 1,
+      "db.storage.class_b_ops_total": 0,
+      cache_status: "hit",
+    });
+    const line = spy.mock.calls[0]![0] as string;
+    expect(line).toContain("cache=hit");
+  });
+
+  it("cache_status: 'miss' → cache=miss in tail", async () => {
+    await configureObservability({ sink: "console-pretty", level: "info", sampleRate: 1 });
+
+    getLogger(CATEGORY.http).info("canonical", {
+      request_id: "ab12cd34-ef56-7890-abcd-ef1234567890",
+      duration_ms: 12,
+      status: 200,
+      outcome: "read",
+      method: "GET",
+      path: "/v1/t/tickets",
+      "db.storage.class_a_ops_total": 2,
+      "db.storage.class_b_ops_total": 0,
+      cache_status: "miss",
+    });
+    const line = spy.mock.calls[0]![0] as string;
+    expect(line).toContain("cache=miss");
+  });
+
+  it("absent cache_status → no cache= in tail", async () => {
+    await configureObservability({ sink: "console-pretty", level: "info", sampleRate: 1 });
+
+    getLogger(CATEGORY.http).info("canonical", {
+      request_id: "ab12cd34-ef56-7890-abcd-ef1234567890",
+      duration_ms: 5,
+      status: 200,
+      outcome: "read",
+      method: "GET",
+      path: "/v1/t/tickets",
+      "db.storage.class_a_ops_total": 1,
+      "db.storage.class_b_ops_total": 0,
+    });
+    const line = spy.mock.calls[0]![0] as string;
+    expect(line).not.toContain("cache=");
   });
 
   it("falls back to JSON-style for non-canonical records", async () => {

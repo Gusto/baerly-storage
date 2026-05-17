@@ -213,6 +213,7 @@ const CANONICAL_KEYS = {
   wamp: "db.write.class_a_ops_per_logical_write_p99",
   put412: "db.r2.put.412_total",
   put429: "db.r2.put.429_total",
+  cacheStatus: "cache_status",
 } as const;
 
 /**
@@ -293,6 +294,8 @@ const renderCanonical = (record: LogRecord, pc: PicoColors, plain: boolean): str
   if (c412 !== undefined && c412 > 0) tail.push(`412=${c412}`);
   const c429 = numProp(props, CANONICAL_KEYS.put429);
   if (c429 !== undefined && c429 > 0) tail.push(`429=${c429}`);
+  const cacheStatus = pickProp(props, CANONICAL_KEYS.cacheStatus);
+  if (typeof cacheStatus === "string") tail.push(`cache=${cacheStatus}`);
   if (status !== undefined && status >= 400) {
     const outcome = pickProp(props, "outcome");
     if (typeof outcome === "string") tail.push(`outcome=${outcome}`);
