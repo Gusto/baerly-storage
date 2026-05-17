@@ -27,19 +27,24 @@ pnpm install && pnpm -r build
 
 # Scaffold into the workspace so @baerly/* + create-baerly resolve:
 cd examples
-node ../packages/create-baerly/dist/index.js my-app --target=node-railway --json
+node ../packages/create-baerly/dist/index.js my-app --target=cloudflare --json
 
 cd my-app
 pnpm install
-pnpm dev          # → baerly dev → http://localhost:3000
+pnpm dev          # → vite (with @cloudflare/vite-plugin) on :5173
 ```
 
-`pnpm dev` runs `baerly dev`: a local Node listener over
-`LocalFsStorage`. The same verb works for both Cloudflare-Workers
-and self-hosted-Node targets — pick your deploy target at scaffold
-time and the appropriate `apps/server/` shell is written, but
-day-1 iteration is target-agnostic. (Cloudflare users can
-`pnpm dev:wrangler` for parity testing.)
+`create-baerly` emits a flat single-package scaffold — one
+`package.json`, `src/server/` + `src/web/`, dev/build/deploy verbs
+that match the target. For the Cloudflare target, `pnpm dev` runs
+`vite`; `@cloudflare/vite-plugin` runs the Worker inside `workerd`
+next to the SPA dev server, so `/v1/*` and the React UI share
+`http://localhost:5173`. For the Node-Railway / Node-Docker targets,
+`pnpm dev` runs `baerly dev` — a Node listener on
+`http://localhost:3000` over `LocalFsStorage` with no S3 creds
+needed; `pnpm build && pnpm start` produces the production-shaped
+run that serves the built SPA from `dist/client/` via
+`createListener({ webRoot })`.
 
 Once `create-baerly` + `@baerly/cli` ship to npm the flow shortens
 to `pnpm dlx create-baerly@latest my-app` (interactive wizard),

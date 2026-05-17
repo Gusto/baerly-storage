@@ -68,8 +68,8 @@ export SHARED_SECRET="$(openssl rand -hex 32)"
 
 #### Node target (default)
 
-No extra credentials. The gate spawns `apps/server` locally and
-talks to it on a free port.
+No extra credentials. The gate spawns the scaffold's Node server
+locally (`src/server/index.ts`) and talks to it on a free port.
 
 #### Cloudflare target
 
@@ -149,7 +149,7 @@ wrangler r2 bucket delete <name>
 - **`scaffold-complete`** — `npm create baerly@latest` returned.
 - **`install-complete`** — `pnpm install` inside the scaffold
   returned.
-- **`server-ready`** (Node) — `apps/server`'s `/v1/healthz` returned 200.
+- **`server-ready`** (Node) — the scaffold's `/v1/healthz` returned 200.
 - **`deploy-complete`** (CF) — `baerly deploy` returned.
 - **`deploy-url-resolved`** (CF) — `.baerly/deploy.json` exists +
   parses.

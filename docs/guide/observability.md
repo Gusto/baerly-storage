@@ -26,9 +26,9 @@ Run a scaffolded `baerly create` app under either target:
 
 ```sh
 # Cloudflare
-pnpm exec wrangler dev
+pnpm dev          # vite + @cloudflare/vite-plugin (Worker in workerd)
 # Node
-pnpm --filter ./apps/server dev
+pnpm dev          # baerly dev — Node listener on :3000 over LocalFsStorage
 ```
 
 Hit any route. One JSON line per request appears on stdout:

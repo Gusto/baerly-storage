@@ -12,7 +12,7 @@ writes the result into the user's target directory.
 
 Bare Cloudflare Workers scaffold. R2-backed, schema-less, ships
 the `cloudflareAccess` → `sharedSecret` verifier chain in
-`apps/server/src/worker.ts`. The "what does a production CF
+`src/server/index.ts`. The "what does a production CF
 Worker entry look like?" answer.
 
 **Audience:** anyone scaffolding a new CF Worker target, or
@@ -27,8 +27,8 @@ pnpm install
 pnpm dev
 ```
 
-**Read first:** `apps/server/src/worker.ts` (the verifier
-selector + `baerlyWorker`), then `apps/server/wrangler.jsonc`
+**Read first:** `src/server/index.ts` (the verifier
+selector + `baerlyWorker`), then `wrangler.jsonc`
 (R2 binding + cron + observability config).
 
 ## minimal-node-railway
@@ -50,7 +50,7 @@ pnpm install
 BUCKET=... AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=... SHARED_SECRET=... pnpm dev
 ```
 
-**Read first:** `apps/server/src/server.ts` (the `node:http` listener
+**Read first:** `src/server/index.ts` (the `node:http` listener
 + verifier selector).
 
 ## minimal-node-docker
@@ -74,12 +74,12 @@ BUCKET=... AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=... SHARED_SECRET=... pnp
 **Build the image:**
 
 ```sh
-docker build -t minimal-node-docker:latest -f apps/server/Dockerfile .
-docker run -p 8080:8080 --env-file apps/server/.env minimal-node-docker:latest
+docker build -t minimal-node-docker:latest -f Dockerfile .
+docker run -p 8080:8080 --env-file .env minimal-node-docker:latest
 ```
 
-**Read first:** `apps/server/src/server.ts` (the listener), then
-`apps/server/Dockerfile` (the distroless multi-stage build).
+**Read first:** `src/server/index.ts` (the listener), then
+`Dockerfile` (the distroless multi-stage build).
 
 ## helpdesk-cloudflare
 
@@ -104,8 +104,8 @@ pnpm dev
 
 Then open <http://localhost:5173>.
 
-**Read first:** `apps/server/src/worker.ts` (the verifier selector +
-the `/v1/*` ↔ Assets split), then `apps/server/wrangler.jsonc` (the
+**Read first:** `src/server/index.ts` (the verifier selector +
+the `/v1/*` ↔ Assets split), then `wrangler.jsonc` (the
 R2 + Assets bindings).
 
 ## helpdesk
