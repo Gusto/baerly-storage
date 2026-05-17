@@ -55,6 +55,7 @@
   "dependencies": {
     "@baerly/protocol": "workspace:*",
     "@logtape/logtape": "2.0.7",
-    "hono": "^4.12.18"
+    "hono": "^4.12.18",
+    "picocolors": "^1.1.1"
   }
 }
