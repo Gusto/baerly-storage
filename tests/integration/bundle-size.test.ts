@@ -57,11 +57,10 @@ interface Budget {
 }
 
 const BUDGETS: readonly Budget[] = [
-  // Full barrel: kernel + http + auth. After T01 (maintenance
-  // moved to /maintenance subpath) and T02 (observability
-  // re-exports dropped from the barrel), the barrel no longer
-  // statically pulls maintenance or observability for app code
-  // that only wants `Db`. ~345 KiB raw.
+  // Full barrel: kernel + http + auth. Maintenance entry points
+  // (runGc, rebuildIndex, migrateCollection) are exported from
+  // index.js and carry the observability subgraph with them, so
+  // picocolors lands here. ~345 KiB raw.
   // Budget bumped from 350 KiB raw / 100 KiB gz → 351 KiB raw / 103680 B gz
   // by the canonical-line renderer upgrade (picocolors + renderCanonical
   // helpers in prettyConsoleSink). Small, expected — one-time bump.

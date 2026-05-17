@@ -310,12 +310,12 @@ const isPlainEnv = (): boolean => {
   const proc = (
     globalThis as {
       process?: {
-        stderr?: { isTTY?: boolean };
+        stdout?: { isTTY?: boolean };
         env?: Record<string, string | undefined>;
       };
     }
   ).process;
-  return proc?.stderr?.isTTY !== true || proc?.env?.["CI"] !== undefined;
+  return proc?.stdout?.isTTY !== true || proc?.env?.["CI"] !== undefined;
 };
 
 const prettyConsoleSink = (): Sink => {
