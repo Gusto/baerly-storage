@@ -121,6 +121,11 @@ export interface RawStorageApi {
  * Construct via {@link Db.create} — the constructor is private so
  * callers don't accidentally bypass validation.
  *
+ * **Table provisioning.** `Db` provisions tables implicitly on first
+ * write — there is no `ensureTable` method on this class. For
+ * dev-time eager provisioning (e.g. seed scripts), use
+ * {@link "@baerly/dev".ensureTable}.
+ *
  * @example
  * ```ts
  * import { Db } from "@baerly/server";

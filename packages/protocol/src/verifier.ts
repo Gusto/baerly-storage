@@ -35,6 +35,11 @@ export interface VerifierResult {
    * Non-empty, `/`-free tenant identifier. Spent as `tenant` in
    * `Db.create({ tenant })`. See {@link VerifierResult} for the
    * scope-check / `Db.create` split.
+   *
+   * Named `tenantPrefix` (not `tenant`) to surface responsibility 1
+   * — this is a load-bearing path-scope token that the dispatcher
+   * compares against the request URL, not just a free-form tenant
+   * id.
    */
   readonly tenantPrefix: string;
 
