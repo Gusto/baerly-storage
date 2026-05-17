@@ -92,4 +92,22 @@ describe("project", () => {
     expect(t!.percentOfFreeTier).toBeCloseTo(100, 3);
     expect(t!.withinFreeTier).toBe(true); // boundary is inclusive
   });
+
+  test("R2 over storage free tier alone: storage overage billed at $0.015/GB-mo", () => {
+    // 15 GB stored, tiny rate keeps Class A inside free tier
+    // → storage overage 5 GB × $0.015 = $0.075
+    const t = project(0.001, 15 * 1024 * 1024 * 1024, R2);
+    expect(t).not.toBeNull();
+    expect(t!.withinFreeTier).toBe(false); // storage exceeds free tier
+    expect(t!.projectedUsdPerMonth).toBeCloseTo(5 * 0.015, 4);
+  });
+
+  test("R2 with both Class A AND storage overages: bill sums both terms", () => {
+    // 10 writes/min → 1,296,000 Class A (overage 296,000 → $1.332)
+    // 15 GB stored → storage overage 5 GB → $0.075
+    // Expected total: $1.407
+    const t = project(10, 15 * 1024 * 1024 * 1024, R2);
+    expect(t).not.toBeNull();
+    expect(t!.projectedUsdPerMonth).toBeCloseTo(1.332 + 5 * 0.015, 3);
+  });
 });

@@ -6,15 +6,13 @@
  * Three rules:
  *   1. `classAPerMonth = writesPerMin × 60 × 24 × 30 × 3`. The `× 3`
  *      is the protocol's enforced write-amp ceiling
- *      (`docs/about/cost-model.md:43-46`); snapshot writes
+ *      (`docs/about/cost-model.md:43-44`); snapshot writes
  *      amortize and are excluded from the headline.
  *   2. `projectedUsdPerMonth = 0` exactly when both `classAPerMonth
  *      ≤ pricing.freeClassAPerMonth` AND `storedBytes ≤
  *      pricing.freeStorageGb × 1GB`. Say `$0`, not `$0.00`.
- *   3. Returns `null` when `writesPerMin` is `NaN` (no-data case
+ *   3. Returns `null` when `writesPerMin` is non-finite (no-data case
  *      from `estimateWritesPerMin`); inspect renders no footer.
- *
- * @see docs/superpowers/specs/2026-05-17-inspect-cost-trajectory-design.md
  */
 
 /** R2 / AWS S3 / self-hosted / dev price table. */
@@ -34,7 +32,7 @@ export interface ProviderPricing {
  * Graduation triggers — sustained for 7 days, any one of these
  * means the workload has outgrown Baerly's positioning.
  *
- * Source: `docs/about/cost-model.md:159-161`.
+ * Source: `docs/about/cost-model.md:159-163`.
  */
 export const GRADUATION_CLASS_A_PER_MONTH = 50_000_000;
 export const GRADUATION_WRITE_AMP = 6;
@@ -51,15 +49,22 @@ export interface Trajectory {
   readonly provider: ProviderPricing["provider"];
 }
 
-/** Minutes per month × write-amp = ops/month per write/min. */
-const OPS_PER_WPM_PER_MONTH = 60 * 24 * 30 * 3;
+/**
+ * Protocol write-amp ceiling: every logical write produces exactly
+ * 3 Class A ops (PUT content + PUT log entry + CAS-advance
+ * current.json). Source: `docs/about/cost-model.md:43-44`.
+ */
+const PROTOCOL_WRITE_AMP = 3;
+
+/** Minutes per month × write-amp = Class A ops/month per write/min. */
+const OPS_PER_WPM_PER_MONTH = 60 * 24 * 30 * PROTOCOL_WRITE_AMP;
 
 /**
  * Project a `writesPerMin` rate (typically from
  * `estimateWritesPerMin`) into a monthly cost trajectory.
  *
- * Returns `null` when `writesPerMin` is `NaN`. The caller (inspect)
- * renders no footer in that case.
+ * Returns `null` when `writesPerMin` is non-finite. The caller
+ * (inspect) renders no footer in that case.
  */
 export const project = (
   writesPerMin: number,
