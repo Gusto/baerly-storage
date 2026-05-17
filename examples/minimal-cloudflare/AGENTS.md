@@ -205,7 +205,7 @@ read it via your editor's TS LS or via the published types).
   - The kernel also emits the recorder-bag fields alongside:
     `db.compact.entries_folded_p50` / `_p99` / `_count` / `_sum`,
     `db.manifest.lag_window_depth`, `db.orphan.candidate_count`,
-    `db.gc.entries_swept_per_second`, `db.gc.swept_total_total`.
+    `db.gc.entries_swept_per_second`, `db.gc.swept_total`.
     Useful for dashboards; the four explicit fields above are
     the at-a-glance summary.
 

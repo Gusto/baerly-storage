@@ -2,7 +2,7 @@
 title: Observability
 audience: operator
 summary: "Canonical log lines, sampling, sinks (OTel / Workers Analytics Engine / Datadog), and known gaps."
-last-reviewed: 2026-05-12
+last-reviewed: 2026-05-16
 tags: [observability, operations, logging]
 related: ["../contributing/conventions/observability.md", "../about/cost-model.md", "../contributing/development.md"]
 ---
@@ -54,6 +54,26 @@ Hit any route. One JSON line per request appears on stdout:
 }
 ```
 
+### TTY pretty output
+
+The Node adapter auto-selects a human-readable single-line shape when
+`process.stdout.isTTY === true` (developer terminals). Same fields,
+column-aligned, one line per unit-of-work. Sample lines:
+
+```text
+12:34:56 GET   /v1/t/tickets                200   1ms  req=ab12cd34 class_a=0 class_b=1
+12:34:57 POST  /v1/t/tickets                201  20ms  req=cd34ef56 class_a=3 class_b=0 wamp=7
+12:34:58 POST  /v1/t/tickets                409   8ms  req=ef56gh78 class_a=1 class_b=0 412=1 outcome=conflict
+12:34:59 GET   /v1/t/tickets                200   0ms  req=gh78ij90 cache=hit
+12:35:00 ⚙ maintenance                                 142ms  class_a=4
+```
+
+The TTY shape is presentation only — the underlying fields are the
+same ones the JSON shape carries. Non-TTY stdout (`pnpm dev` piped
+through a process supervisor, CI, container logs, Workers Logs) gets
+the JSON shape above. The Cloudflare adapter is JSON-only — Workers
+have no TTY.
+
 Cloudflare Workers Logs and AWS CloudWatch ingest this format
 natively. Datadog's Agent picks it up via its `json` source. Any
 log aggregator that parses JSON-per-line works without further
@@ -77,6 +97,7 @@ One event per unit of work. The kernel emits one line for each:
 | `method` | string | HTTP method (HTTP unit only). |
 | `path` | string | Request path (HTTP unit only). |
 | `status` | number | HTTP status code (HTTP unit only). |
+| `cache_status` | `"hit" \| "miss" \| "bypass"` | Cloudflare adapter only. Set per HTTP request via the Cache API wrapper. `"hit"` skips the router; `"miss"` populates the cache; `"bypass"` covers non-GET, `/v1/since`, `/v1/healthz`, and anything outside `/v1/t/`. The Node adapter has no cache layer and never emits this field. |
 | `duration_ms` | number | Monotonic wall-clock duration, `performance.now()` delta. |
 | `outcome` | string | One of `"ok"`, `"conflict"`, `"not_found"`, `"client_error"`, `"internal_error"`, or a unit-specific tag. |
 | `db.storage.class_a_ops_total` | number | Sum of PUT + DELETE + LIST calls. These are the physical operations S3-pricing classifies as Class A — the cost-dominant ones. |
@@ -139,7 +160,11 @@ once at request entry and held until flush.
 - Maintenance / GC / compactor / `rebuildIndex` always emit. They
   aren't HTTP units and don't go through the head sampler.
 - Set `LOG_SAMPLE=1.0` while diagnosing; set `LOG_SAMPLE=0` to
-  suppress success lines entirely (errors still emit).
+  suppress success lines entirely (errors still emit). The typed-
+  option equivalent — platform-portable, no env var required — is
+  `observability: { sampleRate: 0 }` passed to `baerlyWorker` /
+  `createListener`. Either form works; the typed option wins when
+  both are set.
 
 Sampling is hash-based on `request_id`, so retries (which carry the
 same `X-Request-Id`) are kept-or-dropped consistently — you won't
@@ -294,12 +319,6 @@ const datadogSink: Sink = (record) => {
 
 ## Known gaps
 
-- **Cloudflare cache hits are unobserved by design.** The CF
-  adapter's read-path cache short-circuits before the observability
-  middleware constructs a context — a cache hit costs zero CPU and
-  emits no log. The absence of a log on a healthy hot path is
-  itself a signal: a sudden spike in canonical-line volume for a
-  read-heavy collection means the cache is missing.
 - **`invalidateOnWrite` is unobserved per-request.** The CF
   adapter runs cache invalidation inside `ctx.waitUntil` after the
   response is sent. Its work doesn't contribute to the canonical
