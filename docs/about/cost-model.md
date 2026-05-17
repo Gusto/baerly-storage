@@ -2,7 +2,7 @@
 title: Cost model
 audience: product
 summary: Per-line-item rates, write-amp meter, compression posture.
-last-reviewed: 2026-05-12
+last-reviewed: 2026-05-16
 tags: [cost, pricing, operations]
 related: [pricing-log.md, thesis.md]
 ---
@@ -45,7 +45,8 @@ Class A is the meter that matters. Three reasons:
 3. **Compaction storms hit it** — a runaway compaction job is a
    Class A spike, not a Class B spike.
 
-A `baerly stats` view should surface, in priority order, Class A
+A `baerly stats` view (planned — not yet shipped) should surface,
+in priority order, Class A
 ops over a trailing 24 h, the derived effective write-amp
 (Class A ops / logical writes — protocol regression detector if it
 drifts above ~4), and Class B ops. Storage and Worker request
@@ -155,7 +156,8 @@ Read this as positioning, not a cost claim:
   read-heavy traffic on a per-doc fan-out protocol is
   disproportionately expensive vs. a B-tree lookup in a real DB.
 
-The graduation triggers for `baerly stats` follow directly: any one
+The graduation triggers (planned to surface via `baerly stats`)
+follow directly: any one
 of (sustained over 7 days) R2 Class A ops > 50M/month, effective
 write-amp > 6, or stored data > 5 GB is the system telling the user
 they have outgrown the ceiling.
