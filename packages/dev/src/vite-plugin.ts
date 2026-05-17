@@ -34,55 +34,65 @@ export function baerlyDev(opts: BaerlyDevOptions): Plugin {
     name: "baerly-dev",
     apply: "serve",
     configureServer(server) {
-      // Return a post-hook so the middleware mounts after Vite's own
-      // internal middleware stack is installed.
-      return async () => {
+      // Mount in the configureServer body (not a post-hook) so the
+      // middleware runs BEFORE Vite's internal SPA history fallback.
+      // Otherwise /v1/* requests get caught by the SPA fallback and
+      // served the index.html shell.
+      const ready = (async () => {
         const storage = new LocalFsStorage({ root: opts.dataDir });
-
         for (const table of opts.tables) {
           await ensureTable(storage, { app: opts.app, tenant: opts.tenant, table });
         }
-
         if (opts.seed !== undefined) {
           const db = Db.create({ storage, app: opts.app, tenant: opts.tenant });
           await opts.seed(db);
         }
-
-        const listener = createListener({
+        return createListener({
           app: opts.app,
           storage,
           verifier: sharedSecret({ secret: opts.secret, tenantPrefix: opts.tenant }),
         });
+      })();
 
-        server.middlewares.use((req, res, next) => {
-          const url = req.url;
-          if (url === undefined) {
-            next();
-            return;
-          }
-          if (isV1Path(url)) {
-            listener(req as never, res as never);
-          } else {
-            next();
-          }
-        });
+      // Surface setup failures eagerly; without this an unhandled
+      // rejection would silently kill the dev server.
+      ready.catch((err: unknown) => {
+        console.error("[baerly-dev] setup failed:", err);
+      });
 
-        if (opts.banner !== false) {
-          server.httpServer?.once("listening", () => {
-            const address = server.httpServer?.address();
-            const port =
-              typeof address === "object" && address !== null
-                ? (address as AddressInfo).port
-                : undefined;
-            const url = port !== undefined ? `http://localhost:${port}/` : "http://localhost/";
-            printDevBanner({
-              name: opts.app,
-              primaryUrl: { label: "App", url },
-              ...(opts.hints !== undefined && { hints: opts.hints }),
-            });
-          });
+      server.middlewares.use((req, res, next) => {
+        const url = req.url;
+        if (url === undefined || !isV1Path(url)) {
+          next();
+          return;
         }
-      };
+        ready.then(
+          (listener) => {
+            listener(req as never, res as never);
+          },
+          (err: unknown) => {
+            res.statusCode = 503;
+            res.setHeader("content-type", "application/json");
+            res.end(JSON.stringify({ error: "baerly-dev setup failed", message: String(err) }));
+          },
+        );
+      });
+
+      if (opts.banner !== false) {
+        server.httpServer?.once("listening", () => {
+          const address = server.httpServer?.address();
+          const port =
+            typeof address === "object" && address !== null
+              ? (address as AddressInfo).port
+              : undefined;
+          const url = port !== undefined ? `http://localhost:${port}/` : "http://localhost/";
+          printDevBanner({
+            name: opts.app,
+            primaryUrl: { label: "App", url },
+            ...(opts.hints !== undefined && { hints: opts.hints }),
+          });
+        });
+      }
     },
   };
 }

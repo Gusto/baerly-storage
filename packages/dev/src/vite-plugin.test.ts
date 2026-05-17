@@ -120,15 +120,7 @@ beforeAll(async () => {
   if (typeof configureServer !== "function") {
     throw new Error("configureServer must be a function");
   }
-  const post = configureServer.call(null as never, fakeServer as never);
-  if (typeof post === "function") {
-    await post();
-  } else if (post && typeof (post as Promise<unknown>).then === "function") {
-    const resolved = await post;
-    if (typeof resolved === "function") {
-      await (resolved as () => void | Promise<void>)();
-    }
-  }
+  configureServer.call(null as never, fakeServer as never);
 });
 
 afterAll(async () => {
