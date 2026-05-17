@@ -61,10 +61,14 @@ const BUDGETS: readonly Budget[] = [
   // (runGc, rebuildIndex, migrateCollection) are exported from
   // index.js and carry the observability subgraph with them, so
   // picocolors lands here. ~345 KiB raw.
-  // Budget bumped from 350 KiB raw / 100 KiB gz → 351 KiB raw / 103680 B gz
-  // by the canonical-line renderer upgrade (picocolors + renderCanonical
-  // helpers in prettyConsoleSink). Small, expected — one-time bump.
-  { entry: "index.js", raw: 351 * 1024, gz: 103680 },
+  // Budget history:
+  //   100 KiB gz (initial)
+  //   → 103680 B gz: canonical-line renderer upgrade (picocolors +
+  //     renderCanonical helpers in prettyConsoleSink).
+  //   → 103 KiB gz: observability `summarize()` `_total` dedup
+  //     (`fe4aa18`) — the namespace-aware suffix gate added ~24 bytes
+  //     to the bundled path.
+  { entry: "index.js", raw: 351 * 1024, gz: 103 * 1024 },
   // Just the five auth verifier factories. Adding a sixth grows
   // this budget, not the kernel's.
   { entry: "auth.js", raw: 34 * 1024, gz: 12 * 1024 },
