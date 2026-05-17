@@ -62,7 +62,10 @@ const BUDGETS: readonly Budget[] = [
   // re-exports dropped from the barrel), the barrel no longer
   // statically pulls maintenance or observability for app code
   // that only wants `Db`. ~345 KiB raw.
-  { entry: "index.js", raw: 350 * 1024, gz: 100 * 1024 },
+  // Budget bumped from 350 KiB raw / 100 KiB gz → 351 KiB raw / 103680 B gz
+  // by the canonical-line renderer upgrade (picocolors + renderCanonical
+  // helpers in prettyConsoleSink). Small, expected — one-time bump.
+  { entry: "index.js", raw: 351 * 1024, gz: 103680 },
   // Just the five auth verifier factories. Adding a sixth grows
   // this budget, not the kernel's.
   { entry: "auth.js", raw: 34 * 1024, gz: 12 * 1024 },
