@@ -38,6 +38,7 @@ import {
   CATEGORY,
   createObservabilityContext,
   decideSample,
+  deriveOutcome,
   flushCanonicalLine,
   getCurrentContext,
   getEffectiveSampleRate,
@@ -177,20 +178,8 @@ export function createRouter(options: CreateRouterOptions): Hono {
         // honest about what the client actually sees.
         const status = caughtError !== undefined ? mapError(caughtError).status : c.res.status;
 
-        // outcome: derived purely from status (errors classify by
-        // status too — a 409 Conflict thrown by the writer still
-        // looks like "conflict" on the line, not a generic "error").
-        // The error object is attached on either catch path so the
-        // line carries the diagnostic at error level via the
-        // canonical-line level picker.
-        const outcome =
-          status < 400
-            ? c.req.method === "GET"
-              ? "read"
-              : "committed"
-            : status === 409
-              ? "conflict"
-              : "error";
+        // outcome derivation is in `deriveOutcome` (shared with both adapters).
+        const outcome = deriveOutcome(c.req.method, status, effectiveError);
         flushCanonicalLine(ctx, ctx.recorder, {
           unit: "http",
           status,

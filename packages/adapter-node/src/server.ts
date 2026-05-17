@@ -24,6 +24,7 @@ import {
   configureObservability,
   createObservabilityContext,
   decideSample,
+  deriveOutcome,
   flushCanonicalLine,
   getEffectiveSampleRate,
   getLogger,
@@ -297,24 +298,6 @@ async function handle(
     }
   });
 }
-
-/**
- * Canonical-line outcome derivation for HTTP requests. Mirrors the
- * Cloudflare adapter's copy (see `packages/adapter-cloudflare/src/worker.ts`)
- * — duplicated here until a future ticket consolidates the helpers.
- * Both copies have the same shape:
- *
- *  - `status < 400`  → `"read"` for GETs, `"committed"` otherwise.
- *  - `status === 409` → `"conflict"` (writer CAS loss).
- *  - error path with `status >= 500` → `"error"`.
- *  - other 4xx/5xx → `"error"`.
- */
-const deriveOutcome = (method: string, status: number, error?: unknown): string => {
-  if (error !== undefined && status >= 500) return "error";
-  if (status < 400) return method === "GET" ? "read" : "committed";
-  if (status === 409) return "conflict";
-  return "error";
-};
 
 /**
  * Convert an `IncomingMessage` into a WHATWG `Request`. Node 24+

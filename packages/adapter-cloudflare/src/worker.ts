@@ -18,6 +18,7 @@ import {
   configureObservability,
   createObservabilityContext,
   decideSample,
+  deriveOutcome,
   flushCanonicalLine,
   getEffectiveSampleRate,
   getLogger,
@@ -431,20 +432,3 @@ export function baerlyWorker(options: BaerlyWorkerOptions): ExportedHandler<Env>
   };
 }
 
-/**
- * Canonical-line outcome derivation for HTTP requests. Mirrors the
- * router's inline copy (see `packages/server/src/http/router.ts`'s
- * Mode B branch) — duplicated here until a future ticket consolidates
- * the helpers. Both copies have the same shape:
- *
- *  - `status < 400`  → `"read"` for GETs, `"committed"` otherwise.
- *  - `status === 409` → `"conflict"` (writer CAS loss).
- *  - error path with `status >= 500` → `"error"`.
- *  - other 4xx/5xx → `"error"`.
- */
-const deriveOutcome = (method: string, status: number, error?: unknown): string => {
-  if (error !== undefined && status >= 500) return "error";
-  if (status < 400) return method === "GET" ? "read" : "committed";
-  if (status === 409) return "conflict";
-  return "error";
-};
