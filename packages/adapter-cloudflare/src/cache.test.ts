@@ -46,13 +46,15 @@ describe("withReadCache", () => {
       return Promise.resolve(json200({ id: "abc", body: "second" }, '"v2"'));
     };
 
-    const res1 = await withReadCache(req1, "tnt-A", handlerA);
+    const { response: res1, cache_status: cs1 } = await withReadCache(req1, "tnt-A", handlerA);
+    expect(cs1).toBe("miss");
     expect(res1.status).toBe(200);
     const body1 = (await res1.json()) as { body: string };
     expect(body1.body).toBe("first");
 
     // Second read should hit the cache and NOT invoke handlerB.
-    const res2 = await withReadCache(req2, "tnt-A", handlerB);
+    const { response: res2, cache_status: cs2 } = await withReadCache(req2, "tnt-A", handlerB);
+    expect(cs2).toBe("hit");
     expect(res2.status).toBe(200);
     const body2 = (await res2.json()) as { body: string };
     expect(body2.body).toBe("first");
@@ -62,17 +64,19 @@ describe("withReadCache", () => {
   it("cache hit + matching If-None-Match → 304", async () => {
     const url = freshUrl("tickets/inm-match");
     // Prime.
-    await withReadCache(new Request(url, { method: "GET" }), "tnt-A", () =>
+    const primed = await withReadCache(new Request(url, { method: "GET" }), "tnt-A", () =>
       Promise.resolve(json200({ ok: true }, '"v3"')),
     );
+    expect(primed.cache_status).toBe("miss");
 
     const cond = new Request(url, {
       method: "GET",
       headers: { "if-none-match": '"v3"' },
     });
-    const res = await withReadCache(cond, "tnt-A", () => {
+    const { response: res, cache_status } = await withReadCache(cond, "tnt-A", () => {
       throw new Error("handler must not be called on 304 path");
     });
+    expect(cache_status).toBe("hit");
     expect(res.status).toBe(304);
     expect(res.headers.get("etag")).toBe('"v3"');
     expect(await res.text()).toBe("");
@@ -81,17 +85,19 @@ describe("withReadCache", () => {
   it("cache hit + mismatched If-None-Match → 200 cached body", async () => {
     const url = freshUrl("tickets/inm-mismatch");
     // Prime with ETag "v3".
-    await withReadCache(new Request(url, { method: "GET" }), "tnt-A", () =>
+    const primed = await withReadCache(new Request(url, { method: "GET" }), "tnt-A", () =>
       Promise.resolve(json200({ id: "x", v: 3 }, '"v3"')),
     );
+    expect(primed.cache_status).toBe("miss");
 
     const cond = new Request(url, {
       method: "GET",
       headers: { "if-none-match": '"stale"' },
     });
-    const res = await withReadCache(cond, "tnt-A", () => {
+    const { response: res, cache_status } = await withReadCache(cond, "tnt-A", () => {
       throw new Error("handler must not be called on cached-body path");
     });
+    expect(cache_status).toBe("hit");
     expect(res.status).toBe(200);
     expect(res.headers.get("etag")).toBe('"v3"');
     const body = (await res.json()) as { v: number };
@@ -106,26 +112,38 @@ describe("withReadCache", () => {
     // Prime the list and the per-doc entries.
     let listCalls = 0;
     let docCalls = 0;
-    await withReadCache(new Request(tableUrl, { method: "GET" }), "tnt-A", () => {
-      listCalls++;
-      return Promise.resolve(json200({ rows: [] }, '"L1"'));
-    });
-    await withReadCache(new Request(docUrl, { method: "GET" }), "tnt-A", () => {
+    const primeList = await withReadCache(
+      new Request(tableUrl, { method: "GET" }),
+      "tnt-A",
+      () => {
+        listCalls++;
+        return Promise.resolve(json200({ rows: [] }, '"L1"'));
+      },
+    );
+    expect(primeList.cache_status).toBe("miss");
+    const primeDoc = await withReadCache(new Request(docUrl, { method: "GET" }), "tnt-A", () => {
       docCalls++;
       return Promise.resolve(json200({ id: "abc-4" }, '"D1"'));
     });
+    expect(primeDoc.cache_status).toBe("miss");
     expect(listCalls).toBe(1);
     expect(docCalls).toBe(1);
 
     // Confirm warm cache: re-reads do not increment counters.
-    await withReadCache(new Request(tableUrl, { method: "GET" }), "tnt-A", () => {
-      listCalls++;
-      return Promise.resolve(json200({}, '"X"'));
-    });
-    await withReadCache(new Request(docUrl, { method: "GET" }), "tnt-A", () => {
+    const warmList = await withReadCache(
+      new Request(tableUrl, { method: "GET" }),
+      "tnt-A",
+      () => {
+        listCalls++;
+        return Promise.resolve(json200({}, '"X"'));
+      },
+    );
+    expect(warmList.cache_status).toBe("hit");
+    const warmDoc = await withReadCache(new Request(docUrl, { method: "GET" }), "tnt-A", () => {
       docCalls++;
       return Promise.resolve(json200({}, '"X"'));
     });
+    expect(warmDoc.cache_status).toBe("hit");
     expect(listCalls).toBe(1);
     expect(docCalls).toBe(1);
 
@@ -133,14 +151,20 @@ describe("withReadCache", () => {
     await invalidateOnWrite(new Request(docUrl, { method: "PATCH" }), "tnt-A", 200);
 
     // Both re-reads should now miss and call the handler.
-    await withReadCache(new Request(tableUrl, { method: "GET" }), "tnt-A", () => {
-      listCalls++;
-      return Promise.resolve(json200({ rows: ["abc-4"] }, '"L2"'));
-    });
-    await withReadCache(new Request(docUrl, { method: "GET" }), "tnt-A", () => {
+    const refillList = await withReadCache(
+      new Request(tableUrl, { method: "GET" }),
+      "tnt-A",
+      () => {
+        listCalls++;
+        return Promise.resolve(json200({ rows: ["abc-4"] }, '"L2"'));
+      },
+    );
+    expect(refillList.cache_status).toBe("miss");
+    const refillDoc = await withReadCache(new Request(docUrl, { method: "GET" }), "tnt-A", () => {
       docCalls++;
       return Promise.resolve(json200({ id: "abc-4", v: 2 }, '"D2"'));
     });
+    expect(refillDoc.cache_status).toBe("miss");
     expect(listCalls).toBe(2);
     expect(docCalls).toBe(2);
   });
@@ -148,26 +172,46 @@ describe("withReadCache", () => {
   it("bypasses /v1/since and /v1/healthz", async () => {
     const sinceUrl = `https://baerly-cache.test/v1/since?cursor=x-${++n}`;
     let sinceCalls = 0;
-    await withReadCache(new Request(sinceUrl, { method: "GET" }), "tnt-A", () => {
-      sinceCalls++;
-      return Promise.resolve(json200({ entries: [] }, '"s1"'));
-    });
-    await withReadCache(new Request(sinceUrl, { method: "GET" }), "tnt-A", () => {
-      sinceCalls++;
-      return Promise.resolve(json200({ entries: [] }, '"s2"'));
-    });
+    const since1 = await withReadCache(
+      new Request(sinceUrl, { method: "GET" }),
+      "tnt-A",
+      () => {
+        sinceCalls++;
+        return Promise.resolve(json200({ entries: [] }, '"s1"'));
+      },
+    );
+    expect(since1.cache_status).toBe("bypass");
+    const since2 = await withReadCache(
+      new Request(sinceUrl, { method: "GET" }),
+      "tnt-A",
+      () => {
+        sinceCalls++;
+        return Promise.resolve(json200({ entries: [] }, '"s2"'));
+      },
+    );
+    expect(since2.cache_status).toBe("bypass");
     expect(sinceCalls).toBe(2);
 
     const healthUrl = `https://baerly-cache.test/v1/healthz?probe=${++n}`;
     let healthCalls = 0;
-    await withReadCache(new Request(healthUrl, { method: "GET" }), "tnt-A", () => {
-      healthCalls++;
-      return Promise.resolve(json200({ ok: true }, '"h1"'));
-    });
-    await withReadCache(new Request(healthUrl, { method: "GET" }), "tnt-A", () => {
-      healthCalls++;
-      return Promise.resolve(json200({ ok: true }, '"h2"'));
-    });
+    const health1 = await withReadCache(
+      new Request(healthUrl, { method: "GET" }),
+      "tnt-A",
+      () => {
+        healthCalls++;
+        return Promise.resolve(json200({ ok: true }, '"h1"'));
+      },
+    );
+    expect(health1.cache_status).toBe("bypass");
+    const health2 = await withReadCache(
+      new Request(healthUrl, { method: "GET" }),
+      "tnt-A",
+      () => {
+        healthCalls++;
+        return Promise.resolve(json200({ ok: true }, '"h2"'));
+      },
+    );
+    expect(health2.cache_status).toBe("bypass");
     expect(healthCalls).toBe(2);
   });
 
@@ -178,20 +222,30 @@ describe("withReadCache", () => {
     let aCalls = 0;
     let bCalls = 0;
 
-    const resA = await withReadCache(new Request(url, { method: "GET" }), "tnt-A", () => {
-      aCalls++;
-      return Promise.resolve(json200({ tenant: "A", secret: "A-only" }, '"vA"'));
-    });
+    const { response: resA, cache_status: csA } = await withReadCache(
+      new Request(url, { method: "GET" }),
+      "tnt-A",
+      () => {
+        aCalls++;
+        return Promise.resolve(json200({ tenant: "A", secret: "A-only" }, '"vA"'));
+      },
+    );
+    expect(csA).toBe("miss");
     const bodyA = (await resA.json()) as { tenant: string; secret: string };
     expect(bodyA.tenant).toBe("A");
     expect(aCalls).toBe(1);
 
     // Read the same URL as tenant B. Must invoke the B handler and
     // return B's body — NOT A's.
-    const resB = await withReadCache(new Request(url, { method: "GET" }), "tnt-B", () => {
-      bCalls++;
-      return Promise.resolve(json200({ tenant: "B", secret: "B-only" }, '"vB"'));
-    });
+    const { response: resB, cache_status: csB } = await withReadCache(
+      new Request(url, { method: "GET" }),
+      "tnt-B",
+      () => {
+        bCalls++;
+        return Promise.resolve(json200({ tenant: "B", secret: "B-only" }, '"vB"'));
+      },
+    );
+    expect(csB).toBe("miss");
     const bodyB = (await resB.json()) as { tenant: string; secret: string };
     expect(bCalls).toBe(1);
     expect(bodyB.tenant).toBe("B");
@@ -199,10 +253,15 @@ describe("withReadCache", () => {
 
     // And confirm A's cache entry is still there — reading again as
     // A must NOT call the handler.
-    const resA2 = await withReadCache(new Request(url, { method: "GET" }), "tnt-A", () => {
-      aCalls++;
-      return Promise.resolve(json200({ tenant: "OOPS" }, '"x"'));
-    });
+    const { response: resA2, cache_status: csA2 } = await withReadCache(
+      new Request(url, { method: "GET" }),
+      "tnt-A",
+      () => {
+        aCalls++;
+        return Promise.resolve(json200({ tenant: "OOPS" }, '"x"'));
+      },
+    );
+    expect(csA2).toBe("hit");
     const bodyA2 = (await resA2.json()) as { tenant: string; secret: string };
     expect(bodyA2.tenant).toBe("A");
     expect(bodyA2.secret).toBe("A-only");

@@ -272,7 +272,7 @@ describe("baerlyWorker observability", () => {
     expect(classA).toBeGreaterThanOrEqual(3);
   });
 
-  it("cache-miss read emits a canonical line with class_b_ops>0 and outcome=read", async () => {
+  it("cache-miss read emits a canonical line with class_b_ops>0, outcome=read, cache_status=miss", async () => {
     const bucket = getBinding();
     const { records, sink } = collectingSink();
     const tenant = `obs-miss-${Date.now().toString(36)}`;
@@ -313,17 +313,21 @@ describe("baerlyWorker observability", () => {
     expect(line).toBeDefined();
     const props = line!.properties as Record<string, unknown>;
     expect(props["outcome"]).toBe("read");
-    // Cache-status stamping is deferred (see worker.ts).
-    expect(props["cache_status"]).toBeUndefined();
+    // The adapter stamps `cache_status` on every HTTP canonical
+    // line — see `cache-status.test.ts` for the full hit/miss/bypass
+    // matrix.
+    expect(props["cache_status"]).toBe("miss");
     // class-B ops fire on the read path (GETs against current.json).
     expect(props["db.storage.class_b_ops_total_total"]).toBeGreaterThanOrEqual(1);
   });
 
-  it("cache-hit read short-circuits before context creation — no canonical line", async () => {
-    // Verifies the documented asymmetry: hits skip the router
-    // entirely (no observability cost), misses emit a canonical
-    // line. Operators distinguish hit vs miss via their CDN
-    // dashboard, not the canonical log.
+  it("cache-hit read still emits a canonical line with cache_status=hit", async () => {
+    // The adapter constructs the canonical-line context up front so
+    // hits flow through the same `flushCanonicalLine` path as
+    // misses, only stamped with `cache_status: "hit"`. Operators
+    // distinguish hit vs miss directly from the log stream — no CDN
+    // dashboard required. The full coverage matrix (miss-then-hit,
+    // bypass, write-invalidates-list) lives in `cache-status.test.ts`.
     const bucket = getBinding();
     const tenant = `obs-hit-${Date.now().toString(36)}`;
     const verifier: Verifier = async () => ({ tenantPrefix: tenant, identity: {} });
@@ -364,8 +368,12 @@ describe("baerlyWorker observability", () => {
       makeExec(),
     );
     expect(res.status).toBe(200);
-    // No canonical http line for a cache hit.
-    expect(findCanonical(records, "http")).toBeUndefined();
+    const line = findCanonical(records, "http");
+    expect(line).toBeDefined();
+    const props = line!.properties as Record<string, unknown>;
+    expect(props["cache_status"]).toBe("hit");
+    expect(props["outcome"]).toBe("read");
+    expect(props["status"]).toBe(200);
   });
 
   it("scheduled() emits a maintenance canonical line on baerly.maintenance", async () => {

@@ -106,8 +106,10 @@ const cfWorkerTestGlob = "packages/adapter-cloudflare/src/worker*.test.ts";
 
 // Read-path Cache API integration tests — runs `caches.default`
 // inside Workerd / miniflare. Same project membership rules as the
-// globs above.
-const cfCacheTestGlob = "packages/adapter-cloudflare/src/cache.test.ts";
+// globs above. Glob is `cache*.test.ts` so both `cache.test.ts`
+// (unit) and `cache-status.test.ts` (canonical-line stamping) are
+// picked up by the `cloudflare-pool` project.
+const cfCacheTestGlob = "packages/adapter-cloudflare/src/cache*.test.ts";
 
 // HTTP conformance cascade (Workerd variant). Hits `SELF.fetch`,
 // which invokes the worker module pointed at by `cloudflareTest({

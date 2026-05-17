@@ -65,19 +65,59 @@ function bypassesCache(url: URL): boolean {
 }
 
 /**
+ * Discriminator returned alongside the response so the adapter can
+ * stamp `cache_status` on the canonical line. The cache itself
+ * doesn't emit — the adapter owns the canonical line.
+ *
+ *  - `"hit"`    — the cache returned an entry (both the 304
+ *                 If-None-Match path and the body-bearing 200 path
+ *                 classify as hits; the cache served the request
+ *                 without invoking the handler).
+ *  - `"miss"`   — the request was cacheable but the cache had no
+ *                 entry; the handler ran and (when the response was
+ *                 cacheable) its output was stored.
+ *  - `"bypass"` — the request never consulted the cache (non-GET,
+ *                 or a path under {@link BYPASS_PREFIXES}, or a path
+ *                 outside `/v1/t/`).
+ */
+export type CacheStatus = "hit" | "miss" | "bypass";
+
+/**
+ * Discriminator-tagged return value of {@link withReadCache}. The
+ * adapter stamps `cache_status` onto the canonical-line `extra` bag
+ * before flushing — see `worker.ts`'s `fetch` handler.
+ */
+export interface ReadCacheResult {
+  readonly response: Response;
+  readonly cache_status: CacheStatus;
+}
+
+/**
  * Read-path wrapper. Call this in place of invoking the router
- * directly for `GET` requests. On a hit, returns the cached response
- * (rewriting to 304 when `If-None-Match` matches). On a miss, invokes
- * `handler`, stores the response if it's a cacheable 200, and returns
- * it unchanged.
+ * directly for `GET` requests. Returns `{ response, cache_status }`
+ * so the adapter can stamp `cache_status` on the canonical line:
+ *
+ *  - `cache_status: "bypass"` — non-GET method, or a path under
+ *    {@link BYPASS_PREFIXES} (`/v1/since`, `/v1/healthz`), or a path
+ *    outside `/v1/t/`. The handler runs verbatim and its response
+ *    is returned untouched.
+ *  - `cache_status: "hit"`    — the cache had an entry. Returns
+ *    either a synthesized 304 (when `If-None-Match` matches the
+ *    cached ETag) or the cached body (200). The handler does NOT
+ *    run.
+ *  - `cache_status: "miss"`   — the cache had no entry. The handler
+ *    runs and, if the response is a cacheable 200 with no
+ *    `Set-Cookie`, the response is stored before being returned.
  */
 export async function withReadCache(
   req: Request,
   tenantPrefix: string,
   handler: () => Promise<Response>,
-): Promise<Response> {
+): Promise<ReadCacheResult> {
   const url = new URL(req.url);
-  if (req.method !== "GET" || bypassesCache(url)) return handler();
+  if (req.method !== "GET" || bypassesCache(url)) {
+    return { response: await handler(), cache_status: "bypass" };
+  }
 
   // `caches.default` is Workers-only; DOM's `CacheStorage` lib type
   // doesn't expose it, so we cast through `unknown` to the shape we
@@ -91,10 +131,13 @@ export async function withReadCache(
     if (etag !== null && ifNoneMatch !== null && etag === ifNoneMatch) {
       // 304 has no body, but keeps the ETag so a CDN-aware client
       // can continue revalidating against it.
-      return new Response(null, {
-        status: 304,
-        headers: { etag },
-      });
+      return {
+        response: new Response(null, {
+          status: 304,
+          headers: { etag },
+        }),
+        cache_status: "hit",
+      };
     }
     // Body-bearing hit. Clone so the cache entry stays intact for
     // the next request in the same Worker isolate. Strip the
@@ -104,11 +147,14 @@ export async function withReadCache(
     const cloned = cached.clone();
     const outHeaders = new Headers(cloned.headers);
     outHeaders.delete("cache-control");
-    return new Response(cloned.body, {
-      status: cloned.status,
-      statusText: cloned.statusText,
-      headers: outHeaders,
-    });
+    return {
+      response: new Response(cloned.body, {
+        status: cloned.status,
+        statusText: cloned.statusText,
+        headers: outHeaders,
+      }),
+      cache_status: "hit",
+    };
   }
 
   const fresh = await handler();
@@ -131,7 +177,7 @@ export async function withReadCache(
     });
     await cache.put(key, cacheable);
   }
-  return fresh;
+  return { response: fresh, cache_status: "miss" };
 }
 
 /**

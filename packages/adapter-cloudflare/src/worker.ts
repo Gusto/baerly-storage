@@ -16,10 +16,15 @@ import {
   type ObservabilityConfig,
   alsAwareRecorder,
   configureObservability,
+  createObservabilityContext,
+  decideSample,
+  flushCanonicalLine,
+  getEffectiveSampleRate,
   getLogger,
   observableStorage,
+  runWithContext,
 } from "@baerly/server/observability";
-import { invalidateOnWrite, withReadCache } from "./cache.ts";
+import { type CacheStatus, invalidateOnWrite, withReadCache } from "./cache.ts";
 import { r2BindingStorage } from "./r2-binding-storage.ts";
 
 /**
@@ -178,6 +183,16 @@ export interface BaerlyWorkerOptions {
  * hook still gets first crack at the request after auth; the router
  * catches everything else.
  *
+ * Observability: every HTTP request that flows past the verifier
+ * runs inside a single `runWithContext` scope created up front in
+ * this adapter — including the optional `handler` hook and the
+ * read-cache wrapper. The canonical line emitted at end-of-request
+ * carries a top-level `cache_status: "hit" | "miss" | "bypass"`
+ * field so operators can split hit/miss/bypass directly from the
+ * log stream without consulting a CDN dashboard. The router's
+ * observability middleware detects the ambient context and passes
+ * through — the adapter owns the flush.
+ *
  * The `scheduled` handler wires Cron Triggers to the compactor +
  * GC. To enable it, add to `wrangler.toml`:
  *
@@ -275,53 +290,99 @@ export function baerlyWorker(options: BaerlyWorkerOptions): ExportedHandler<Env>
       }
       const tenantPrefix = result.tenantPrefix;
 
-      // Storage is wrapped with `observableStorage(...)` so the
-      // per-call class A/B counts and per-op duration histograms
-      // land in BOTH the operator's long-term sink and (when an
-      // observability context is active) the per-request bag. The
-      // Db's `metrics: teeRecorder` carries the same tee through to
-      // ServerWriter / compactor / GC emissions.
-      const storage = observableStorage(r2BindingStorage(env.BUCKET), teeRecorder);
-      const db = Db.create({
-        storage,
-        app: env.APP,
-        tenant: tenantPrefix,
-        metrics: teeRecorder,
+      // Construct the per-request observability context up front so
+      // EVERYTHING downstream — `Db.create`, the optional caller
+      // handler hook, and the read-cache wrapper — runs inside the
+      // same `runWithContext` scope. Without this lift, a cache hit
+      // would short-circuit the router and bypass canonical-line
+      // emission entirely; with it, the wrapper's `cache_status`
+      // discriminator can be stamped on the line we flush below.
+      //
+      // The router's observability middleware (see `router.ts`
+      // "Mode A") detects the ambient context and passes through —
+      // it never creates a competing context, and it never flushes
+      // its own line. The adapter owns the flush from here on.
+      const requestId = req.headers.get("x-request-id") ?? crypto.randomUUID();
+      const sampleRate = getEffectiveSampleRate();
+      const obsCtx = createObservabilityContext({
+        request_id: requestId,
+        sampled_by_head: decideSample(requestId, sampleRate),
       });
 
-      // Caller hook can short-circuit the router. Returns undefined → fall through.
-      if (options.handler !== undefined) {
-        const out = await options.handler(req, ctx, db);
-        if (out !== undefined) return out;
-      }
+      return runWithContext(obsCtx, async (): Promise<Response> => {
+        // Storage is wrapped with `observableStorage(...)` so the
+        // per-call class A/B counts and per-op duration histograms
+        // land in BOTH the operator's long-term sink and (via the
+        // ALS-aware tee) the per-request bag we just created. The
+        // Db's `metrics: teeRecorder` carries the same tee through to
+        // ServerWriter / compactor / GC emissions.
+        const storage = observableStorage(r2BindingStorage(env.BUCKET), teeRecorder);
+        const db = Db.create({
+          storage,
+          app: env.APP,
+          tenant: tenantPrefix,
+          metrics: teeRecorder,
+        });
 
-      // `healthCheck: false` — already served above; keeps the probe
-      // hot path off Db.create.
-      const app = createRouter({ db, healthCheck: false });
-      // Hono's `fetch` returns `Response | Promise<Response>`;
-      // `withReadCache` wants a `Promise<Response>`. Normalize via
-      // `Promise.resolve` so the sync-return branch is wrapped.
-      //
-      // Cache-status stamping: deferred. The router's observability
-      // middleware creates + flushes the canonical context entirely
-      // inside its `runWithContext` block, so reaching into the
-      // context from the cache wrapper would require relocating
-      // context creation up into the adapter and teaching the
-      // router to detect a pre-existing context — out of scope for
-      // this dispatch. Until that lands, the canonical line carries
-      // no `cache_status` field. A cache hit short-circuits before
-      // any context exists (no canonical line at all for hits); a
-      // miss flows through the router and emits a normal canonical
-      // line without the cache_status discriminator. Operators who
-      // need hit/miss telemetry today should aggregate cache stats
-      // from their CDN dashboard.
-      const response = await withReadCache(req, tenantPrefix, () =>
-        Promise.resolve(app.fetch(req, env, ctx)),
-      );
-      // Best-effort invalidate after writes. `ctx.waitUntil` keeps the
-      // Worker alive for the cache.delete without blocking the response.
-      ctx.waitUntil(invalidateOnWrite(req, tenantPrefix, response.status));
-      return response;
+        // Caller hook can short-circuit the router. Returns undefined → fall through.
+        // Runs inside `runWithContext` so any emissions it makes
+        // (e.g. via `getCurrentContext()?.fields.set(...)`) land on
+        // the same canonical line we flush below.
+        if (options.handler !== undefined) {
+          const out = await options.handler(req, ctx, db);
+          if (out !== undefined) {
+            flushCanonicalLine(obsCtx, obsCtx.recorder, {
+              unit: "http",
+              status: out.status,
+              outcome: deriveOutcome(req.method, out.status),
+              extra: { method: req.method, path: new URL(req.url).pathname },
+            });
+            return out;
+          }
+        }
+
+        // `healthCheck: false` — already served above; keeps the
+        // probe hot path off `Db.create`.
+        const app = createRouter({ db, healthCheck: false });
+
+        let cacheStatus: CacheStatus = "bypass";
+        let response: Response | undefined;
+        let caughtError: unknown;
+        try {
+          // Hono's `fetch` returns `Response | Promise<Response>`;
+          // `withReadCache` wants a `Promise<Response>`. Normalize
+          // via `Promise.resolve` so the sync-return branch is wrapped.
+          const cacheResult = await withReadCache(req, tenantPrefix, () =>
+            Promise.resolve(app.fetch(req, env, ctx)),
+          );
+          cacheStatus = cacheResult.cache_status;
+          response = cacheResult.response;
+        } catch (err) {
+          caughtError = err;
+          throw err;
+        } finally {
+          const status =
+            caughtError !== undefined ? 500 : (response?.status ?? 500);
+          flushCanonicalLine(obsCtx, obsCtx.recorder, {
+            unit: "http",
+            status,
+            outcome: deriveOutcome(req.method, status, caughtError),
+            ...(caughtError !== undefined && { error: caughtError }),
+            extra: {
+              method: req.method,
+              path: new URL(req.url).pathname,
+              cache_status: cacheStatus,
+            },
+          });
+        }
+        // `response` is defined here — the `catch` arm above rethrew,
+        // so reaching this line implies the try block completed.
+        // Best-effort invalidate after writes. `ctx.waitUntil` keeps
+        // the Worker alive for the cache.delete without blocking
+        // the response.
+        ctx.waitUntil(invalidateOnWrite(req, tenantPrefix, response!.status));
+        return response!;
+      });
     },
 
     async scheduled(event, env, ctx): Promise<void> {
@@ -358,3 +419,21 @@ export function baerlyWorker(options: BaerlyWorkerOptions): ExportedHandler<Env>
     },
   };
 }
+
+/**
+ * Canonical-line outcome derivation for HTTP requests. Mirrors the
+ * router's inline copy (see `packages/server/src/http/router.ts`'s
+ * Mode B branch) — duplicated here until a future ticket consolidates
+ * the helpers. Both copies have the same shape:
+ *
+ *  - `status < 400`  → `"read"` for GETs, `"committed"` otherwise.
+ *  - `status === 409` → `"conflict"` (writer CAS loss).
+ *  - error path with `status >= 500` → `"error"`.
+ *  - other 4xx/5xx → `"error"`.
+ */
+const deriveOutcome = (method: string, status: number, error?: unknown): string => {
+  if (error !== undefined && status >= 500) return "error";
+  if (status < 400) return method === "GET" ? "read" : "committed";
+  if (status === 409) return "conflict";
+  return "error";
+};
