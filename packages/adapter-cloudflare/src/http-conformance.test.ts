@@ -73,6 +73,7 @@ describe("HTTP conformance", () => {
       // inside the test succeeds. Skip the AbortSignal block here —
       // the Node-side variants already cover the invariant.
       supportsAbort: false,
+      supportsSinceTimeoutOverride: true,
     },
   });
 });

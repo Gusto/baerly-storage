@@ -40,7 +40,11 @@ const verifier: Verifier = async (req: Request) => {
   return { tenantPrefix: CONFORMANCE_TENANT, identity: {} };
 };
 
-const handler = baerlyWorker({ verifier });
+const handler = baerlyWorker({
+  verifier,
+  sinceTimeoutMs: 500,
+  sincePollIntervalMs: 50,
+});
 
 export default {
   fetch(req: Request, env: Env, ctx: ExecutionContext): Response | Promise<Response> {

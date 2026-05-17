@@ -172,6 +172,10 @@ export interface BaerlyWorkerOptions {
    * envelope when this option is absent.
    */
   readonly dev?: DevLandingOptions;
+  /** Override the long-poll budget. Forwarded to `longPollSince`. */
+  readonly sinceTimeoutMs?: number;
+  /** Override the long-poll inner-poll cadence. Forwarded to `longPollSince`. */
+  readonly sincePollIntervalMs?: number;
 }
 
 /**
@@ -343,7 +347,12 @@ export function baerlyWorker(options: BaerlyWorkerOptions): ExportedHandler<Env>
 
         // `healthCheck: false` — already served above; keeps the
         // probe hot path off `Db.create`.
-        const app = createRouter({ db, healthCheck: false });
+        const app = createRouter({
+          db,
+          healthCheck: false,
+          sinceTimeoutMs: options.sinceTimeoutMs,
+          sincePollIntervalMs: options.sincePollIntervalMs,
+        });
 
         let cacheStatus: CacheStatus = "bypass";
         let response: Response | undefined;
@@ -361,8 +370,7 @@ export function baerlyWorker(options: BaerlyWorkerOptions): ExportedHandler<Env>
           caughtError = err;
           throw err;
         } finally {
-          const status =
-            caughtError !== undefined ? 500 : (response?.status ?? 500);
+          const status = caughtError !== undefined ? 500 : (response?.status ?? 500);
           flushCanonicalLine(obsCtx, obsCtx.recorder, {
             unit: "http",
             status,
