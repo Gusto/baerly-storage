@@ -2,7 +2,11 @@ import { BaerlyError, MemoryStorage } from "@baerly/protocol";
 import { reset, type LogRecord, type Sink } from "@logtape/logtape";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { Db } from "../db.ts";
-import { configureObservability } from "../observability/index.ts";
+import {
+  configureObservability,
+  createObservabilityContext,
+  runWithContext,
+} from "../observability/index.ts";
 import { createRouter, mapError } from "./router.ts";
 
 const collectingSink = (): { records: LogRecord[]; sink: Sink } => {
@@ -192,5 +196,81 @@ describe("observability middleware", () => {
     const lines = canonical();
     expect(lines).toHaveLength(1);
     expect(lines[0]!.level).toBe("error");
+  });
+});
+
+describe("ambient-context pass-through", () => {
+  let records: LogRecord[];
+  let sink: Sink;
+
+  beforeEach(async () => {
+    ({ records, sink } = collectingSink());
+    await configureObservability({ level: "debug", sink, sampleRate: 1 });
+  });
+
+  afterEach(async () => {
+    await reset();
+  });
+
+  const canonical = (): LogRecord[] => records.filter((r) => r.message.join("") === "canonical");
+
+  const makeApp = (): ReturnType<typeof createRouter> => {
+    const db = Db.create({
+      storage: new MemoryStorage(),
+      app: "router-test",
+      tenant: "t1",
+    });
+    return createRouter({ db });
+  };
+
+  // Case A: an outer scope (simulating an adapter) has already called
+  // createObservabilityContext + runWithContext before the router sees
+  // the request. The router must NOT emit a second canonical line —
+  // the adapter owns the flush.
+  test("Case A: router emits NO canonical line when an ambient context is present", async () => {
+    const app = makeApp();
+    const outerCtx = createObservabilityContext({
+      request_id: "outer-id",
+      sampled_by_head: true,
+    });
+
+    let resStatus: number | undefined;
+    await runWithContext(outerCtx, async () => {
+      const res = await app.request("http://localhost/v1/t/things?where=%7B%7D");
+      resStatus = res.status;
+    });
+
+    expect(resStatus).toBe(200);
+    // The router must not have flushed a canonical line — the adapter owns it.
+    expect(canonical()).toHaveLength(0);
+  });
+
+  // Case A also verifies healthz is unaffected (it always bypasses).
+  test("Case A: /v1/healthz still emits zero canonical lines with ambient context", async () => {
+    const app = makeApp();
+    const outerCtx = createObservabilityContext({
+      request_id: "outer-id",
+      sampled_by_head: true,
+    });
+
+    await runWithContext(outerCtx, async () => {
+      await app.request("http://localhost/v1/healthz");
+    });
+
+    expect(canonical()).toHaveLength(0);
+  });
+
+  // Case B: no ambient context (standalone use — createRouter mounted
+  // directly). The existing create-and-flush flow runs unmodified.
+  test("Case B: router emits exactly one canonical line when there is no ambient context", async () => {
+    const app = makeApp();
+    const res = await app.request("http://localhost/v1/t/things?where=%7B%7D", {
+      headers: { "x-request-id": "standalone-id" },
+    });
+    expect(res.status).toBe(200);
+    const lines = canonical();
+    expect(lines).toHaveLength(1);
+    expect(lines[0]!.properties["request_id"]).toBe("standalone-id");
+    expect(lines[0]!.properties["outcome"]).toBe("read");
   });
 });

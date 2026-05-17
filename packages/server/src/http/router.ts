@@ -39,6 +39,7 @@ import {
   createObservabilityContext,
   decideSample,
   flushCanonicalLine,
+  getCurrentContext,
   getEffectiveSampleRate,
   getLogger,
   runWithContext,
@@ -104,19 +105,46 @@ export function createRouter(options: CreateRouterOptions): Hono {
   const { db, verifier, healthCheck = true, sinceTimeoutMs, sincePollIntervalMs } = options;
   const app = new Hono();
 
-  // Per-request ObservabilityContext +
-  // canonical-line emission. Mounted BEFORE everything else so every
-  // dispatched handler — including the verifier middleware below —
-  // runs under `runWithContext`. The middleware itself early-returns
-  // on healthz: load balancers fire that probe constantly and the
-  // canonical-line cost (sampler + LogTape sink dispatch) would drown
-  // real-traffic logs. Healthz also bypasses the verifier downstream,
-  // matching its "anonymous liveness probe" contract.
+  // Per-request ObservabilityContext + canonical-line emission.
+  // Mounted BEFORE everything else so every dispatched handler —
+  // including the verifier middleware below — runs under
+  // `runWithContext`. The middleware itself operates in two modes:
+  //
+  // Mode A (ambient context present): an outer scope (the CF or Node
+  // adapter) has already called `createObservabilityContext` +
+  // `runWithContext`, e.g. so it can stamp a `cache_status` field
+  // before the cache wrapper short-circuits. The router passes
+  // through verbatim — the adapter owns the context lifecycle and
+  // the flush. A second flush here would double-emit the canonical
+  // line.
+  //
+  // Mode B (no ambient context): standalone use — `createRouter`
+  // mounted directly without an enclosing adapter scope (e.g. a test
+  // harness or a future host that doesn't ship its own context
+  // creation). The router creates the context, runs `next()` under
+  // `runWithContext`, and flushes the canonical line in the `finally`
+  // arm exactly as before.
+  //
+  // Healthz always short-circuits first: load balancers fire that
+  // probe constantly and the canonical-line cost (sampler + LogTape
+  // sink dispatch) would drown real-traffic logs. Healthz also
+  // bypasses the verifier downstream, matching its "anonymous liveness
+  // probe" contract.
   app.use("*", async (c, next) => {
     if (c.req.path === "/v1/healthz") {
       return next();
     }
 
+    // Mode A: adapter-owned context. Pass through — the adapter owns
+    // the flush. The verifier middleware and every CRUD handler
+    // downstream still run inside the existing `runWithContext` scope
+    // provided by the adapter.
+    if (getCurrentContext() !== undefined) {
+      return next();
+    }
+
+    // Mode B: standalone use. Keep the create-and-flush flow exactly
+    // as before.
     const requestId = c.req.header("x-request-id") ?? crypto.randomUUID();
     const sampleRate = getEffectiveSampleRate();
     const ctx = createObservabilityContext({
