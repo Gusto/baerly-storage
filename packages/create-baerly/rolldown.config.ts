@@ -17,6 +17,11 @@ import { defineConfig } from "rolldown";
  * Skips:
  *   - `node_modules/` — workspace-installed, huge, irrelevant to the
  *     published package.
+ *   - `dist/`, `.wrangler/`, `.dev.vars`, `.DS_Store`, `*.tsbuildinfo`
+ *     — dev-time / build artifacts. Gitignored in every example tree
+ *     but live in any contributor working dir that ran `pnpm build`
+ *     / `wrangler deploy` before `pnpm -F create-baerly build`.
+ *     Mirrors the runtime walker skip list in `scaffold.ts`.
  *   - `uint8array-base64.d.ts` — in-repo-only shim. Already excluded
  *     at scaffold time via the manifest; excluding here too keeps
  *     `dist/templates/` clean.
@@ -33,14 +38,23 @@ const copyTemplates = () => ({
       "minimal-node-docker",
       "helpdesk-cloudflare",
     ];
-    const SKIP_NAMES = new Set(["node_modules", "uint8array-base64.d.ts"]);
+    const SKIP_NAMES = new Set([
+      "node_modules",
+      "dist",
+      ".wrangler",
+      ".dev.vars",
+      ".DS_Store",
+      "uint8array-base64.d.ts",
+    ]);
+    const shouldSkip = (name: string): boolean =>
+      SKIP_NAMES.has(name) || name.endsWith(".tsbuildinfo");
     for (const name of EXAMPLES) {
       const src = join("..", "..", "examples", name);
       const dst = join("dist", "templates", name);
       const walk = (rel: string): void => {
         const from = join(src, rel);
         for (const ent of readdirSync(from)) {
-          if (SKIP_NAMES.has(ent)) continue;
+          if (shouldSkip(ent)) continue;
           const fromEnt = join(from, ent);
           const toEnt = join(dst, rel, ent);
           if (statSync(fromEnt).isDirectory()) {

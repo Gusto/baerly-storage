@@ -169,9 +169,22 @@ export const scaffold = async (opts: ScaffoldOptions): Promise<ScaffoldResult> =
       const fromEnt = join(from, ent);
       const relEnt = rel === "" ? ent : join(rel, ent);
       if (isExcluded(relEnt)) continue;
-      // Always skip the in-repo workspace `node_modules` tree — it
-      // gets installed by the user after scaffolding.
-      if (ent === "node_modules") continue;
+      // Always skip dev-time / build artifacts. These are gitignored
+      // in every example tree but live inside the working dir of any
+      // contributor who ran `pnpm build` or `wrangler deploy` against
+      // an example before invoking the scaffolder. Hardcoding the
+      // list here keeps the per-example manifests focused on the
+      // semantic excludes (e.g. `uint8array-base64.d.ts`).
+      if (
+        ent === "node_modules" ||
+        ent === "dist" ||
+        ent === ".wrangler" ||
+        ent === ".dev.vars" ||
+        ent === ".DS_Store" ||
+        ent.endsWith(".tsbuildinfo")
+      ) {
+        continue;
+      }
       const toEnt = join(outDir, relEnt);
       if (statSync(fromEnt).isDirectory()) {
         mkdirSync(toEnt, { recursive: true });

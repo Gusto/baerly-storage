@@ -7,8 +7,9 @@ import { scaffold } from "./scaffold.ts";
 
 // `examples/` (containing `minimal-cloudflare/`, `minimal-node-railway/`,
 // `minimal-node-docker/`, and `helpdesk-cloudflare/`) is the templates
-// root. The scaffolder's `TARGET_TO_EXAMPLE` map resolves a target
-// to the matching example directory under this root.
+// root. The scaffolder's `STARTER_TO_EXAMPLE` map resolves a
+// `<target>:<starter>` compound key to the matching example
+// directory under this root.
 const TEMPLATES_ROOT = resolve(
   dirname(fileURLToPath(import.meta.url)),
   "..",
@@ -44,7 +45,7 @@ describe("scaffold", () => {
       outRoot,
     });
     expect(result.filesWritten).toContain("package.json");
-    expect(result.filesWritten).toContain(join("apps", "server", "wrangler.jsonc"));
+    expect(result.filesWritten).toContain("wrangler.jsonc");
     expect(result.filesWritten).toContain("AGENTS.md");
     expect(result.filesWritten).toContain("CLAUDE.md");
     const agentsMd = await readFile(join(result.outDir, "AGENTS.md"), "utf8");
@@ -64,18 +65,12 @@ describe("scaffold", () => {
     expect(config).toContain('tenant: "acme"');
     expect(config).toContain('target: "cloudflare"');
 
-    const wrangler = await readFile(
-      join(result.outDir, "apps", "server", "wrangler.jsonc"),
-      "utf8",
-    );
+    const wrangler = await readFile(join(result.outDir, "wrangler.jsonc"), "utf8");
     expect(wrangler).toContain('"name": "my-app"');
     expect(wrangler).toContain('"bucket_name": "my-app"');
     expect(wrangler).toContain('"TENANT": "acme"');
 
-    const worker = await readFile(
-      join(result.outDir, "apps", "server", "src", "worker.ts"),
-      "utf8",
-    );
+    const worker = await readFile(join(result.outDir, "src", "server", "index.ts"), "utf8");
     expect(worker).toContain("sharedSecret");
     expect(worker).toContain('tenantPrefix: "acme"');
   });
@@ -88,10 +83,7 @@ describe("scaffold", () => {
       templatesRoot: TEMPLATES_ROOT,
       outRoot,
     });
-    const wrangler = await readFile(
-      join(result.outDir, "apps", "server", "wrangler.jsonc"),
-      "utf8",
-    );
+    const wrangler = await readFile(join(result.outDir, "wrangler.jsonc"), "utf8");
     expect(wrangler).toContain('"r2_buckets":');
     expect(wrangler).toContain('"triggers":');
     expect(wrangler).toContain('"limits":');
@@ -112,18 +104,15 @@ describe("scaffold", () => {
         templatesRoot: TEMPLATES_ROOT,
         outRoot,
       });
-      expect(result.filesWritten).toContain(join("apps", "server", "src", "server.ts"));
-      expect(result.filesWritten).not.toContain(join("apps", "server", "wrangler.jsonc"));
+      expect(result.filesWritten).toContain(join("src", "server", "index.ts"));
+      expect(result.filesWritten).not.toContain("wrangler.jsonc");
       expect(result.filesWritten).toContain("AGENTS.md");
       expect(result.filesWritten).toContain("CLAUDE.md");
       const agentsMd = await readFile(join(result.outDir, "AGENTS.md"), "utf8");
       const claudeMd = await readFile(join(result.outDir, "CLAUDE.md"), "utf8");
       expect(claudeMd).toEqual(agentsMd);
 
-      const server = await readFile(
-        join(result.outDir, "apps", "server", "src", "server.ts"),
-        "utf8",
-      );
+      const server = await readFile(join(result.outDir, "src", "server", "index.ts"), "utf8");
       expect(server).toContain("bearerJwt");
       expect(server).toContain("sharedSecret");
       expect(server).toContain(`const APP = "${projectName}"`);
@@ -142,23 +131,20 @@ describe("scaffold", () => {
       templatesRoot: TEMPLATES_ROOT,
       outRoot,
     });
-    expect(result.filesWritten).toContain(join("apps", "server", "Dockerfile"));
-    expect(result.filesWritten).toContain(join("apps", "server", "healthcheck.js"));
-    expect(result.filesWritten).toContain(join("apps", "server", ".dockerignore"));
-    expect(result.filesWritten).toContain(join("apps", "server", ".env.example"));
-    expect(result.filesWritten).not.toContain(join("apps", "server", "pm2.config.cjs"));
-    expect(result.filesWritten).not.toContain(join("apps", "server", "systemd", "baerly.service"));
+    expect(result.filesWritten).toContain("Dockerfile");
+    expect(result.filesWritten).toContain("healthcheck.js");
+    expect(result.filesWritten).toContain(".dockerignore");
+    expect(result.filesWritten).toContain(".env.example");
+    expect(result.filesWritten).not.toContain("pm2.config.cjs");
+    expect(result.filesWritten).not.toContain(join("systemd", "baerly.service"));
 
-    const dockerfile = await readFile(join(result.outDir, "apps", "server", "Dockerfile"), "utf8");
+    const dockerfile = await readFile(join(result.outDir, "Dockerfile"), "utf8");
     expect(dockerfile).toContain("FROM gcr.io/distroless/nodejs24-debian12");
     expect(dockerfile).toContain("USER nonroot:nonroot");
     expect(dockerfile).toContain("HEALTHCHECK");
     expect(dockerfile).toContain('org.opencontainers.image.title="prod-docker"');
 
-    const envExample = await readFile(
-      join(result.outDir, "apps", "server", ".env.example"),
-      "utf8",
-    );
+    const envExample = await readFile(join(result.outDir, ".env.example"), "utf8");
     expect(envExample).toContain("TENANT=acme");
   });
 
@@ -171,18 +157,15 @@ describe("scaffold", () => {
       templatesRoot: TEMPLATES_ROOT,
       outRoot,
     });
-    expect(result.filesWritten).toContain(join("apps", "server", "src", "server.ts"));
-    expect(result.filesWritten).toContain(join("apps", "server", ".env.example"));
-    expect(result.filesWritten).not.toContain(join("apps", "server", "Dockerfile"));
-    expect(result.filesWritten).not.toContain(join("apps", "server", ".dockerignore"));
-    expect(result.filesWritten).not.toContain(join("apps", "server", "healthcheck.js"));
-    expect(result.filesWritten).not.toContain(join("apps", "server", "pm2.config.cjs"));
-    expect(result.filesWritten).not.toContain(join("apps", "server", "systemd", "baerly.service"));
+    expect(result.filesWritten).toContain(join("src", "server", "index.ts"));
+    expect(result.filesWritten).toContain(".env.example");
+    expect(result.filesWritten).not.toContain("Dockerfile");
+    expect(result.filesWritten).not.toContain(".dockerignore");
+    expect(result.filesWritten).not.toContain("healthcheck.js");
+    expect(result.filesWritten).not.toContain("pm2.config.cjs");
+    expect(result.filesWritten).not.toContain(join("systemd", "baerly.service"));
 
-    const envExample = await readFile(
-      join(result.outDir, "apps", "server", ".env.example"),
-      "utf8",
-    );
+    const envExample = await readFile(join(result.outDir, ".env.example"), "utf8");
     expect(envExample).toContain("TENANT=acme");
   });
 
@@ -244,8 +227,8 @@ describe("scaffold", () => {
       templatesRoot: TEMPLATES_ROOT,
       outRoot,
     });
-    // Minimal scaffold ships wrangler.jsonc at apps/server/.
-    expect(result.filesWritten).toContain(join("apps", "server", "wrangler.jsonc"));
+    // Minimal scaffold ships wrangler.jsonc at the package root.
+    expect(result.filesWritten).toContain("wrangler.jsonc");
   });
 
   it("rejects an unknown starter", async () => {
@@ -401,16 +384,18 @@ describe("scaffold", () => {
         expect(config).not.toContain(sentinel);
       }
 
-      // 3. `@baerly/*` workspace deps pinned to a real semver in the
-      //    inner apps/server/package.json (top-level package.json
-      //    has no `@baerly/*` deps — they all live one level down).
-      const innerPkgPath = join(result.outDir, "apps", "server", "package.json");
-      const innerPkg = JSON.parse(await readFile(innerPkgPath, "utf8")) as {
+      // 3. `@baerly/*` workspace deps pinned to a real semver. All deps
+      //    live at the package root in the flat layout, so we anchor
+      //    on `topPkg` directly.
+      const topPkgFull = JSON.parse(
+        await readFile(join(result.outDir, "package.json"), "utf8"),
+      ) as {
         dependencies?: Record<string, string>;
+        devDependencies?: Record<string, string>;
       };
-      const baerlyDep = Object.entries(innerPkg.dependencies ?? {}).find(([k]) =>
-        k.startsWith("@baerly/"),
-      );
+      const baerlyDep =
+        Object.entries(topPkgFull.dependencies ?? {}).find(([k]) => k.startsWith("@baerly/")) ??
+        Object.entries(topPkgFull.devDependencies ?? {}).find(([k]) => k.startsWith("@baerly/"));
       expect(baerlyDep, "expected at least one @baerly/* dependency").toBeDefined();
       const [, baerlyVersion] = baerlyDep!;
       expect(baerlyVersion).not.toBe("workspace:*");
@@ -434,22 +419,44 @@ describe("scaffold", () => {
       const claude = await readFile(join(result.outDir, "CLAUDE.md"), "utf8");
       expect(claude).toEqual(agents);
 
-      // 7. Helpdesk shape: real React UI shipped at apps/web/.
+      // 7. Helpdesk shape: real React UI shipped at src/web/, with
+      //    Vite's `index.html` at the package root.
       if (shape === "helpdesk") {
-        expect(result.filesWritten).toContain(join("apps", "web", "index.html"));
-        expect(result.filesWritten).toContain(join("apps", "web", "src", "TicketList.tsx"));
-        const html = await readFile(join(result.outDir, "apps", "web", "index.html"), "utf8");
+        expect(result.filesWritten).toContain("index.html");
+        expect(result.filesWritten).toContain(join("src", "web", "TicketList.tsx"));
+        const html = await readFile(join(result.outDir, "index.html"), "utf8");
         // "Baerly Helpdesk" is deliberate prose, not a slug. The renames
         // manifest only sentinelizes `helpdesk-cloudflare` and
         // `helpdesk-demo`; bare `Helpdesk`/`helpdesk` must survive intact.
         expect(html).toContain("Baerly Helpdesk");
-        // The workspace name `helpdesk-cloudflare-web` renames to
-        // `<appName>-web` via the longest-first sentinel rule.
-        const webPkg = JSON.parse(
-          await readFile(join(result.outDir, "apps", "web", "package.json"), "utf8"),
-        ) as { name: string };
-        expect(webPkg.name).toBe(`${appName}-web`);
+        // The root `package.json:name` already renamed to `appName`
+        // above (assertion #1). The flat layout has no separate web
+        // package, so there's no `${appName}-web` workspace name to
+        // assert here.
       }
     });
   }
+
+  // Flat-shape script-row sanity: the scaffolder doesn't manufacture
+  // `package.json:scripts`, it just copies what each example ships.
+  // This test pins the contract so any future drift on the example
+  // side surfaces here instead of at user-install time.
+  test.each([
+    { target: "cloudflare" as const, dev: "vite", build: "tsc -b && vite build" },
+    { target: "node-railway" as const, dev: "baerly dev", build: "tsc -b && vite build" },
+    { target: "node-docker" as const, dev: "baerly dev", build: "tsc -b && vite build" },
+  ])("emits flat-shape scripts for $target", async ({ target, dev, build }) => {
+    const result = await scaffold({
+      projectName: `scripts-${target}`,
+      target,
+      pm: "pnpm",
+      templatesRoot: TEMPLATES_ROOT,
+      outRoot,
+    });
+    const pkg = JSON.parse(await readFile(join(result.outDir, "package.json"), "utf8")) as {
+      scripts?: Record<string, string>;
+    };
+    expect(pkg.scripts?.dev).toBe(dev);
+    expect(pkg.scripts?.build).toBe(build);
+  });
 });
