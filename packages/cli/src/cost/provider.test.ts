@@ -78,13 +78,15 @@ describe("pricingFor", () => {
     expect(p.freeClassAPerMonth).toBe(1_000_000);
     expect(p.usdPerMillionClassA).toBe(4.5);
     expect(p.freeStorageGb).toBe(10);
+    expect(p.usdPerGbMonth).toBe(0.015);
   });
 
   test("aws-s3: no free tier (12-month new-account tier intentionally excluded)", () => {
     const p = pricingFor("aws-s3");
     expect(p.freeClassAPerMonth).toBe(0);
     expect(p.freeStorageGb).toBe(0);
-    expect(p.usdPerMillionClassA).toBeGreaterThan(0);
+    expect(p.usdPerMillionClassA).toBe(5.0);
+    expect(p.usdPerGbMonth).toBe(0.023);
   });
 
   test("self-hosted: NaN dollar fields, 0 free tiers", () => {
