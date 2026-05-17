@@ -8,7 +8,21 @@ alongside this file. The five items below are docs gaps, naming nits,
 and one DX nudge; none rise to the level of a self-contained
 implementation ticket.
 
+**Status (2026-05-16):** items 1–4 shipped via the
+`validated-followups-2026-05-16` worktree; item 5 remains
+working-as-designed (see its block below).
+
+| # | Finding | Shipped commit |
+|---|---|---|
+| 1 | 401 body uninformative | `2facc80` `fix(http): replace tautological 401 message …` |
+| 2 | 128-bit sha256 prefix undocumented | `6145fb1` `docs(spec): document 128-bit sha256 prefix …` (+ `bb35e8a` heading anchor) |
+| 3 | `log_seq_start` absent pre-snapshot | `a702521` `refactor(protocol): require log_seq_start …` |
+| 4 | `compaction.write_amplification` misnamed | `c686717` `refactor(bench): rename compaction.write_amplification …` (+ `d1347bf` disambiguation) |
+| 5 | Seed inserts bypass canonical line | working-as-designed; small doc nudge bundled into next obs-touching branch |
+
 ## 1. 401 body's `message` is uninformative
+
+**STATUS: resolved (`2facc80`).** Router + adapter-node + adapter-cloudflare all emit `"Missing or invalid Authorization header"` (slightly more general than the original suggestion to cover JWT and CF Access presets too). Tests at `packages/server/src/http/router.test.ts:278-298`, `packages/adapter-node/src/server-routes.test.ts:103`, `packages/adapter-cloudflare/src/worker-routes.test.ts:170`.
 
 `packages/server/src/http/router.ts:222` hardcodes the 401 response
 body as `{"error":{"code":"Unauthorized","message":"Unauthorized"}}`:
@@ -35,6 +49,8 @@ three presets.
 
 ## 2. Content-address filename uses 128-bit sha256 prefix; undocumented
 
+**STATUS: resolved (`6145fb1` + heading anchor `bb35e8a`).** `docs/spec/log-entry-shape.md` now has a `### Content body layout` section calling out the 32-hex-char / 128-bit truncation, with rationale (collision probability ~3×10⁻²⁰ at N=10⁹) and a CDC-consumer warning. JSDoc on `VERSION_HEX_LENGTH` + `versionFromContent` in `packages/protocol/src/hashing.ts` cross-links the section.
+
 Content files land at
 `<manifest>/content/<32-hex-char-name>.json`. The filename is the
 first **32 hex chars** (= 128 bits) of `sha256(body)`, not the full
@@ -57,6 +73,8 @@ landed only 2 new files because a prior content hash already
 existed).
 
 ## 3. `current.json::log_seq_start` is absent pre-snapshot
+
+**STATUS: resolved (`a702521`).** Took the systematic fix. The `CurrentJson` type at `packages/protocol/src/coordination/current-json.ts:94` is now `log_seq_start: number;` (required, not optional); the runtime guard rejects records missing the field; the dev seed in `packages/dev/src/ensure-table.ts:39` and ~40 test fixtures all emit `log_seq_start: 0`. Docs at `docs/contributing/architecture.md` no longer mislead.
 
 Several docs treat `log_seq_start` as a current.json field:
 
@@ -88,6 +106,8 @@ Two viable fixes (pre-launch posture allows either):
 The first is the systematic fix.
 
 ## 4. `compaction.write_amplification` is misnamed
+
+**STATUS: resolved (`c686717` + disambiguation `d1347bf`).** Renamed to `compaction.bytes_ratio` in `bench/load-harness/cli.ts` (declaration line 115, computation line 378) and `bench/README.md`. The README now distinguishes the bench field's within-compaction output/input ratio from the cost-model's storage-engine write-amplification meter.
 
 `bench/load-harness/cli.ts:115` declares the field in `RunResult`:
 
@@ -122,6 +142,8 @@ and any consumer queries (the DuckDB analysis pattern in
 rename is contained).
 
 ## 5. Seed inserts bypass canonical-line emission
+
+**STATUS: deferred (working-as-designed; bundle a `docs/contributing/conventions/observability.md` note into the next obs-touching branch).** No code change needed. Verifying methodology should use a curl POST against `/v1/t/:table` as the calibration point, not seed inserts.
 
 Working-as-designed, noted for future verification methodology.
 

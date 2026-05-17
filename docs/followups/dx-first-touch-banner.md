@@ -5,7 +5,17 @@ Loose ends from the first-touch DX work — `@baerly/dev` gained the
 adopted it. The standalone access-logger wrapper was later retired in
 favour of the kernel's built-in observability layer.
 
+**Status (2026-05-16):** item 3 was already resolved at the time of
+writing (annotated below). Items 1, 2, 4 are all design-level DX
+questions (workspace orchestration, second-touch examples, choice of
+Cloudflare dev plugin) that are larger than a fix-it ticket and were
+**not** picked up by the `validated-followups-2026-05-16` worktree.
+They remain open and need a dedicated brainstorming session before
+implementation.
+
 ## 1. `baerly dev` does not orchestrate `apps/web/`
+
+**STATUS: deferred (L-effort design question).** Not picked up by `validated-followups-2026-05-16` per scoping decision; the "should `baerly dev` be a workspace orchestrator" question is the load-bearing design choice and deserves its own brainstorming session.
 
 `baerly dev` (`packages/cli/src/dev.ts`) only boots the Node API
 listener over `LocalFsStorage`. For `examples/minimal-node-railway/` and
@@ -31,6 +41,8 @@ shape itself.
 
 ## 2. `helpdesk-cloudflare` could adopt the helpers
 
+**STATUS: deferred.** Worth revisiting next time `examples/helpdesk-cloudflare/` is touched, alongside item 4 (same workspace, related fix).
+
 `examples/helpdesk-cloudflare/` runs under wrangler, not a Node
 `http.Server`. `printDevBanner` (or a thin wrapper that takes the
 wrangler URL plus the vite URL) would improve its first-touch UX.
@@ -46,6 +58,8 @@ no `--parallel`, no proxy, no interleaved logs, and Ctrl-C exits
 cleanly with no `[ELIFECYCLE]` noise.
 
 ## 4. Cloudflare-side equivalents have the same Ctrl-C noise
+
+**STATUS: deferred (blocked on `@cloudflare/vite-plugin` adoption).** Different fix shape than the Node-side resolution captured in item 3.
 
 `examples/helpdesk-cloudflare/` and `examples/minimal-cloudflare/`
 still run `pnpm --parallel vite + wrangler`, so they exhibit the
