@@ -118,6 +118,8 @@ sweep them without touching the manifest log itself.
 The cost is one extra PUT per mutated ref; the benefit is "GET
 log/<lsn>.json" works for SSE long-poll on a single cursor.
 
+### Content body layout
+
 Document bodies land at:
 
 ```
