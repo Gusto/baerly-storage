@@ -29,11 +29,13 @@
  *                 any). Optional — pass `undefined` on the
  *                 happy path.
  */
+export type Outcome = "read" | "committed" | "conflict" | "error";
+
 export const deriveOutcome = (
   method: string,
   status: number,
   error?: unknown,
-): string => {
+): Outcome => {
   if (error !== undefined && status >= 500) return "error";
   if (status < 400) return method === "GET" ? "read" : "committed";
   if (status === 409) return "conflict";

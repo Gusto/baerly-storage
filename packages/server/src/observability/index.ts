@@ -55,4 +55,4 @@ export {
   withObservability,
 } from "./canonical.ts";
 export { observableStorage } from "./storage.ts";
-export { deriveOutcome } from "./derive-outcome.ts";
+export { type Outcome, deriveOutcome } from "./derive-outcome.ts";
