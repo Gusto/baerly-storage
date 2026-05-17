@@ -4,15 +4,24 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "baerly dev",
-    "dev:wrangler": "baerly dev --wrangler",
-    "typecheck": "pnpm -r typecheck",
-    "test": "pnpm -r test"
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc -b --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@baerly/adapter-cloudflare": "workspace:*",
+    "@baerly/server": "workspace:*"
   },
   "devDependencies": {
     "@baerly/cli": "workspace:*",
+    "@cloudflare/vite-plugin": "^1.0.0",
+    "@cloudflare/workers-types": "^4",
     "create-baerly": "workspace:*",
-    "typescript": "^5.8.0"
+    "typescript": "^5.8.0",
+    "vite": "^6.0.0",
+    "wrangler": "^4.92.0"
   },
   "packageManager": "pnpm@11.1.2"
 }

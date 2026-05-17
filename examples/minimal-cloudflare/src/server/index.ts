@@ -15,6 +15,10 @@
  *      wired yet.
  *   3. Otherwise the Worker throws on first request. `baerly
  *      doctor --target=cloudflare` reports this case before deploy.
+ *
+ * File path: `src/server/index.ts` (single-package layout; the
+ * `@cloudflare/vite-plugin` reads `wrangler.jsonc:main` to find this
+ * entry).
  */
 import { baerlyWorker, type Env as BaerlyEnv } from "@baerly/adapter-cloudflare";
 import { cloudflareAccess, sharedSecret } from "@baerly/server/auth";

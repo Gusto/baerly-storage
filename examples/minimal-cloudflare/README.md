@@ -9,22 +9,23 @@ out of the box.
 
 ```
 minimal-cloudflare/
-├── package.json              # pnpm workspace root
-├── pnpm-workspace.yaml       # apps/*
-├── tsconfig.json
+├── package.json              # one package, all deps
+├── tsconfig.json             # project-references stub
+├── tsconfig.app.json         # client TS project (src/web)
+├── tsconfig.worker.json      # Worker TS project (src/server)
+├── vite.config.ts            # Vite + @cloudflare/vite-plugin
+├── wrangler.jsonc            # Worker manifest — R2 binding, assets, vars, triggers, limits, observability
+├── index.html                # SPA shell — Vite's entry point
 ├── baerly.config.ts          # app, tenant, target, domain
 ├── AGENTS.md                 # deeper guide: predicates, schemas,
 │                             #   auth recipes, graduation (Codex CLI)
 ├── CLAUDE.md                 # same content (Claude Code reads this)
 ├── .baerly/schema.lock.json  # declared collection schemas
-├── apps/
-│   ├── server/               # Cloudflare Worker — baerly host
-│   │   ├── package.json
-│   │   ├── wrangler.jsonc    # name, R2 binding, vars, triggers, limits, observability
-│   │   └── src/worker.ts     # baerlyWorker({ verifier })
-│   └── web/                  # optional SPA shell — delete if unused
-│       ├── package.json
-│       └── index.html
+├── src/
+│   ├── server/
+│   │   └── index.ts          # baerlyWorker({ verifier })
+│   └── web/
+│       └── main.ts           # SPA client entry — Workers Assets serves the build
 └── README.md
 ```
 
@@ -35,13 +36,18 @@ pnpm install
 pnpm dev
 ```
 
-`pnpm dev` (or your PM's equivalent) runs `baerly dev` — a Node HTTP
-listener on `:3000` backed by `LocalFsStorage`. No wrangler download
-required for first-touch. For CF parity (Workerd + the local R2
-emulator), run `pnpm dev:wrangler`; the first invocation downloads
-the `workerd` binary.
+`pnpm dev` runs `vite`. The `@cloudflare/vite-plugin` runs your Worker
+inside `workerd` next to the SPA dev server, so `GET /` hits the SPA
+on `http://localhost:5173/` and anything the Worker handles
+(e.g. `GET /v1/healthz`) is served on the same origin. First run
+downloads the `workerd` binary.
 
-`pnpm typecheck` runs `tsc --noEmit` across both apps.
+`pnpm build` runs `tsc -b && vite build`; the SPA lands in
+`dist/client/` for the `assets:` binding in `wrangler.jsonc` to ingest
+on deploy.
+
+`pnpm typecheck` runs `tsc -b --noEmit` across both TS project
+references.
 
 ## Deploy
 
@@ -51,7 +57,7 @@ the `workerd` binary.
 wrangler secret put SHARED_SECRET
 
 # One-command deploy. baerly reads `baerly.config.ts:target`, finds
-# `apps/server/wrangler.jsonc`, and runs:
+# `wrangler.jsonc`, and runs:
 #   wrangler deploy --x-provision --x-auto-create
 # which auto-creates the declared R2 bucket(s) before the deploy.
 # When the experimental flag is unavailable, baerly falls back to
@@ -62,8 +68,10 @@ baerly deploy
 baerly doctor --target=cloudflare
 ```
 
-If you'd rather run the steps by hand: `wrangler r2 bucket create
-minimal-cloudflare` → `wrangler deploy` from `apps/server/`.
+If you'd rather run the steps by hand: `pnpm build` → `wrangler r2
+bucket create minimal-cloudflare` → `wrangler deploy` from this
+directory. The `assets:` binding in `wrangler.jsonc` picks up
+`dist/client/` automatically.
 
 ## Next steps
 
@@ -78,7 +86,7 @@ minimal-cloudflare` → `wrangler deploy` from `apps/server/`.
    bad inserts return 422.
 3. **Set up production auth** — wire CF Access in front of your
    Worker route, then add `CF_ACCESS_TEAM_DOMAIN` +
-   `CF_ACCESS_AUDIENCE_TAG` to `apps/server/wrangler.jsonc:vars`.
+   `CF_ACCESS_AUDIENCE_TAG` to `wrangler.jsonc:vars`.
    `baerly doctor --target=cloudflare` reports any gaps.
 4. **Check usage trends** — run `baerly doctor --target=cloudflare
    --usage` periodically. It estimates your current writes/minute
@@ -127,6 +135,7 @@ and derives `tenantPrefix` from the email claim.
 ## Pointers
 
 - `baerly.config.ts` — app config (`app`, `tenant`, `target`, `domain`).
-- `apps/server/src/worker.ts` — Worker fetch + scheduled handler.
-- `apps/server/wrangler.jsonc` — Cloudflare Worker manifest.
+- `src/server/index.ts` — Worker fetch + scheduled handler.
+- `wrangler.jsonc` — Cloudflare Worker manifest (R2 binding, `assets:`, vars, cron, observability).
+- `vite.config.ts` — Vite + `@cloudflare/vite-plugin`.
 - `AGENTS.md` / `CLAUDE.md` — agent-facing guide (byte-identical).

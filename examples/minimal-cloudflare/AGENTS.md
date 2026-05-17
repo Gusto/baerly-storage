@@ -14,8 +14,13 @@ S3-compatible storage API.
 ## What this is
 
 `minimal-cloudflare` is a baerly app scaffolded with `create-baerly`.
-The Worker-side server lives in `apps/server/`; the optional client
-lives in `apps/web/`. Configuration lives in `baerly.config.ts`.
+The Worker-side server lives in `src/server/`; the optional client
+lives in `src/web/`. Configuration lives in `baerly.config.ts`.
+
+Single package, single `vite` process: `@cloudflare/vite-plugin` runs
+the Worker inside `workerd` alongside the SPA dev server, and
+`wrangler.jsonc:assets` ships the built `dist/client/` bundle next to
+the Worker on deploy. Same origin in dev and prod, one deploy.
 
 Public API docs: https://docs.baerly.dev/ (the JSDoc on
 `@baerly/server`'s `Db` and `Table` is the canonical reference;
@@ -33,22 +38,28 @@ read it via your editor's TS LS or via the published types).
 
 ## Verification
 
-| Command            | What it does                                                          | Runtime          |
-| ------------------ | --------------------------------------------------------------------- | ---------------- |
-| `pnpm typecheck` | TS typecheck across both apps                                         | seconds          |
-| `pnpm dev`       | Run the server locally via `baerly dev` — Node listener on :3000 over `LocalFsStorage` | seconds to start |
-| `pnpm dev:wrangler` | Run via `baerly dev --wrangler` for CF parity (requires `wrangler login`)            | seconds to start |
-| `pnpm test`        | Run all tests across both apps                                        | seconds          |
+| Command          | What it does                                                                            | Runtime          |
+| ---------------- | --------------------------------------------------------------------------------------- | ---------------- |
+| `pnpm typecheck` | TS typecheck across the worker + web project references (`tsc -b --noEmit`)            | seconds          |
+| `pnpm dev`       | Run `vite` — the Cloudflare plugin runs the Worker inside `workerd` next to the SPA dev server; same origin on :5173 | seconds to start |
+| `pnpm build`     | `tsc -b && vite build` — emits `dist/client/` for the Workers Assets binding            | seconds          |
+| `pnpm deploy`    | `wrangler deploy` — ships Worker + assets in one shipment (auto-creates R2 on first run via `--x-provision`) | seconds          |
+| `pnpm test`      | Run vitest                                                                              | seconds          |
 
 ## Where the code is
 
-| Path                         | What it is                                                                           |
-| ---------------------------- | ------------------------------------------------------------------------------------ |
-| `apps/server/src/worker.ts`  | Server entry — `baerlyWorker({ verifier })`                                          |
-| `apps/server/wrangler.jsonc` | Cloudflare Worker manifest — name, R2 binding, vars, triggers, limits, observability |
-| `apps/web/`                  | Optional client; SPA shell. Remove if not needed.                                    |
-| `baerly.config.ts`           | App config — `app`, `tenant`, `target`, `domain`                                     |
-| `.baerly/schema.lock.json`   | Declared collection schemas — see "Schemas (live feature)" below.                    |
+| Path                       | What it is                                                                           |
+| -------------------------- | ------------------------------------------------------------------------------------ |
+| `src/server/index.ts`      | Worker entry — `baerlyWorker({ verifier })`                                          |
+| `wrangler.jsonc`           | Cloudflare Worker manifest — name, R2 binding, assets, vars, triggers, limits, observability |
+| `index.html`               | SPA shell — Vite's entry point at the project root; references `/src/web/main.ts`.  |
+| `src/web/main.ts`          | SPA client entry. Workers Assets serves the built bundle from `dist/client/`.        |
+| `vite.config.ts`           | Vite + `@cloudflare/vite-plugin` — runs the Worker inside `workerd` in dev          |
+| `tsconfig.json`            | Root project-references stub                                                         |
+| `tsconfig.app.json`        | Client TS project (`src/web/`, DOM lib)                                              |
+| `tsconfig.worker.json`     | Worker TS project (`src/server/`, workerd lib)                                       |
+| `baerly.config.ts`         | App config — `app`, `tenant`, `target`, `domain`                                     |
+| `.baerly/schema.lock.json` | Declared collection schemas — see "Schemas (live feature)" below.                    |
 
 ## When editing X, read Y
 
@@ -143,7 +154,7 @@ read it via your editor's TS LS or via the published types).
   schemas; an empty `{ "tables": {} }` is fine when you supply the
   schemas in code.
 
-- **Auth setup (Cloudflare)** — `apps/server/src/worker.ts` selects a
+- **Auth setup (Cloudflare)** — `src/server/index.ts` selects a
   `Verifier` per request:
 
   1. `cloudflareAccess()` when **both** `CF_ACCESS_TEAM_DOMAIN` and
@@ -164,7 +175,7 @@ read it via your editor's TS LS or via the published types).
   2. Note the **team domain** (e.g. `acme.cloudflareaccess.com`).
   3. Note the **audience tag** for the application (looks like
      `1c5e0...c20`).
-  4. Edit `apps/server/wrangler.jsonc:vars` to add
+  4. Edit `wrangler.jsonc:vars` to add
      `CF_ACCESS_TEAM_DOMAIN` and `CF_ACCESS_AUDIENCE_TAG`. Commit.
   5. Deploy: `baerly deploy --target=cloudflare`. Verify with
      `baerly doctor --target=cloudflare`.
@@ -173,7 +184,7 @@ read it via your editor's TS LS or via the published types).
   / `awsIamSigV4` / `allowlistIp` (re-exported from
   `@baerly/server/auth`) for the full constraint list.
 
-- **Maintenance loop (Cloudflare)** — `apps/server/wrangler.jsonc`
+- **Maintenance loop (Cloudflare)** — `wrangler.jsonc`
   declares `"crons": ["* * * * *"]` (every minute). The Worker's
   `scheduled` handler reads `env.CURRENT_JSON_KEY` and `env.CF_TIER`
   and calls `runScheduledMaintenance()` via `ctx.waitUntil()`. Both
@@ -259,6 +270,7 @@ The export is point-in-time and honours the active schema. Flags:
 ## Pointers
 
 - `baerly.config.ts` — app config.
-- `apps/server/src/worker.ts` — server entry.
-- `apps/server/wrangler.jsonc` — Cloudflare Worker manifest.
-- `package.json` — root scripts + pnpm workspace.
+- `src/server/index.ts` — Worker entry.
+- `wrangler.jsonc` — Cloudflare Worker manifest (R2 binding, `assets:`, vars, cron, observability).
+- `vite.config.ts` — Vite + `@cloudflare/vite-plugin`.
+- `package.json` — root scripts + dependencies.
