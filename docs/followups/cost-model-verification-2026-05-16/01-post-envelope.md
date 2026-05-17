@@ -1,5 +1,21 @@
 # 01 — Unify `POST /v1/t/:table` response envelope with the rest of the wire contract
 
+> **Status: SUPERSEDED (2026-05-16).** The asymmetry this ticket
+> diagnosed is resolved, but in the **opposite direction** of the
+> proposal below. After review, mutation responses go *thin*
+> (POST=`{_id}`@201, PATCH=`{modified}`@200, DELETE=204); only GET
+> reads carry the `{data, _meta}` envelope. PATCH was the actual
+> anomaly — it emitted a partial envelope without `_meta` — and was
+> normalized to thin in commit `90ee911 refactor(http): thin PATCH
+> response to { modified }; align contract`. POST stays bare at 201
+> by design: an insert ack does not need an `_meta.manifest_pointer`
+> cursor, and 201 is the unambiguous create signal. The
+> contract-table at `packages/server/src/contract.ts:100-118` and
+> the SDK's `request()` branch at `packages/client/src/request.ts`
+> now state the method-keyed rule explicitly: GET 200 → envelope;
+> every other 2xx → thin / empty. The body of this ticket is
+> retained as historical context — do not implement.
+
 **One-liner.** `POST /v1/t/:table` returns a bare `{"_id":"<id>"}` body
 while every other success response wraps payload in `{"data": ..., "_meta": ...}`;
 rewrite the wire shape to `{"data":{"_id":"<id>"}, "_meta": {...}}` and update
