@@ -34,8 +34,6 @@
  * createServer(listener).listen(3000);
  * ```
  */
-export { LocalFsStorage } from "@baerly/dev";
-export type { LocalFsStorageOptions } from "@baerly/dev";
 export { S3HttpStorage } from "@baerly/protocol";
 export type { S3HttpStorageOptions } from "@baerly/protocol";
 export { createListener, runMaintenanceTick } from "./server.ts";

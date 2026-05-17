@@ -12,7 +12,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { LocalFsStorage } from "@baerly/adapter-node";
+import { LocalFsStorage } from "@baerly/dev";
 import { runDev, runDevCli } from "./dev.ts";
 
 const DEV_SECRET = "dev-only-secret";

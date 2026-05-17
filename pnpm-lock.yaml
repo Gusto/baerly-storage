@@ -388,9 +388,6 @@ importers:
 
   packages/adapter-node:
     dependencies:
-      '@baerly/dev':
-        specifier: workspace:*
-        version: link:../dev
       '@baerly/protocol':
         specifier: workspace:*
         version: link:../protocol
