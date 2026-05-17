@@ -58,16 +58,22 @@ const LIST_KEY_INDEX: Map<string, Map<string, ReturnType<typeof setTimeout>>> = 
 /** Per-`(tenant, table)` cap on tracked list URLs. */
 const MAX_KEYS_PER_TABLE = 256;
 
-/** Cache TTL — MUST match the `max-age=3600` literal we set on `cache.put`. */
-const CACHE_TTL_MS = 3600 * 1000;
+/**
+ * Cache TTL — single source of truth for both the `Cache-Control:
+ * max-age=<n>` header we set on `cache.put` and the eviction-timer
+ * delay {@link trackListUrl} uses on the per-isolate index. Keeping
+ * one base constant means tuning one value can't silently desync the
+ * index from the cache's real expiry.
+ */
+const CACHE_TTL_SECONDS = 3600;
+const CACHE_TTL_MS = CACHE_TTL_SECONDS * 1000;
 
 /**
  * Compose the index key from tenantPrefix + table. Identical shape
  * means a write under tenant `t1` does NOT scan tenant `t2`'s tracked
  * URLs.
  */
-const indexKeyFor = (tenantPrefix: string, table: string): string =>
-  `${tenantPrefix}|${table}`;
+const indexKeyFor = (tenantPrefix: string, table: string): string => `${tenantPrefix}|${table}`;
 
 /**
  * Pull the table segment from a `/v1/t/<table>[/<id>]` pathname.
@@ -265,7 +271,7 @@ export async function withReadCache(
     // the wire). The TTL value is large because we rely on explicit
     // `invalidateOnWrite` busts, not expiry.
     const headers = new Headers(fresh.headers);
-    headers.set("cache-control", "max-age=3600");
+    headers.set("cache-control", `max-age=${CACHE_TTL_SECONDS}`);
     const cacheable = new Response(fresh.clone().body, {
       status: fresh.status,
       statusText: fresh.statusText,
