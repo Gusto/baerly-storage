@@ -59,8 +59,11 @@ interface Budget {
 const BUDGETS: readonly Budget[] = [
   // Full barrel: kernel + http + auth. Maintenance entry points
   // (runGc, rebuildIndex, migrateCollection) are exported from
-  // index.js and carry the observability subgraph with them, so
-  // picocolors lands here. ~345 KiB raw.
+  // index.js and carry the observability subgraph with them.
+  // `prettyConsoleSink` + picocolors are split off the static
+  // closure via `await import("./logger-pretty.ts")` in
+  // `logger.ts` so the dev-only canonical-line column renderer
+  // doesn't ship to production Workers.
   // Budget history:
   //   100 KiB gz (initial)
   //   → 103680 B gz: canonical-line renderer upgrade (picocolors +
@@ -68,7 +71,9 @@ const BUDGETS: readonly Budget[] = [
   //   → 103 KiB gz: observability `summarize()` `_total` dedup
   //     (`fe4aa18`) — the namespace-aware suffix gate added ~24 bytes
   //     to the bundled path.
-  { entry: "index.js", raw: 351 * 1024, gz: 103 * 1024 },
+  //   → 101 KiB gz: pretty sink + picocolors moved behind a dynamic
+  //     import (`logger-pretty.ts` chunk).
+  { entry: "index.js", raw: 347 * 1024, gz: 101 * 1024 },
   // Just the five auth verifier factories. Adding a sixth grows
   // this budget, not the kernel's.
   { entry: "auth.js", raw: 34 * 1024, gz: 12 * 1024 },
@@ -77,20 +82,21 @@ const BUDGETS: readonly Budget[] = [
   // every request boundary (canonical-line emission,
   // structured logging, per-request metrics), so the request
   // path carries an observability baseline cost that can't be
-  // shifted to a subpath. ~270 KiB raw.
-  { entry: "http.js", raw: 285 * 1024, gz: 82 * 1024 },
+  // shifted to a subpath. ~272 KiB raw.
+  { entry: "http.js", raw: 273 * 1024, gz: 79 * 1024 },
   // Observability primitives — ObservabilityContext, the
-  // request-scoped MetricsRecorder, LogTape config + sinks,
+  // request-scoped MetricsRecorder, LogTape config + sinks
+  // (JSON only — `prettyConsoleSink` and picocolors are split
+  // off behind a dynamic `import("./logger-pretty.ts")`),
   // canonical line flush, observableStorage decorator. LogTape
-  // itself accounts for the bulk; a smaller direct-stdout sink
-  // could trim further but is deferred.
-  { entry: "observability.js", raw: 100 * 1024, gz: 36 * 1024 },
+  // itself accounts for the bulk.
+  { entry: "observability.js", raw: 88 * 1024, gz: 24 * 1024 },
   // Maintenance loop — compactor + GC + sweep driver. Pulls
   // compactor.ts + gc.ts + the observability subgraph
   // transitively (every work unit runs under withObservability).
   // Operator-side; not part of the kernel barrel as of T01.
-  // ~141 KiB raw.
-  { entry: "maintenance.js", raw: 155 * 1024, gz: 43 * 1024 },
+  // ~142 KiB raw.
+  { entry: "maintenance.js", raw: 142 * 1024, gz: 40 * 1024 },
 ];
 
 // Static-import specifiers only. Dynamic `import(...)` is intentionally
