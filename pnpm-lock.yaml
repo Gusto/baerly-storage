@@ -116,13 +116,20 @@ importers:
         version: 4.1.5(@types/node@25.6.2)(@vitest/coverage-v8@4.1.5)(happy-dom@20.9.0)(vite@8.0.11(@types/node@25.6.2)(esbuild@0.27.3))
 
   examples/helpdesk:
+    dependencies:
+      '@baerly/client':
+        specifier: workspace:*
+        version: link:../../packages/client
+      react:
+        specifier: ^19.0.0
+        version: 19.2.6
+      react-dom:
+        specifier: ^19.0.0
+        version: 19.2.6(react@19.2.6)
     devDependencies:
       '@baerly/adapter-node':
         specifier: workspace:*
         version: link:../../packages/adapter-node
-      '@baerly/client':
-        specifier: workspace:*
-        version: link:../../packages/client
       '@baerly/dev':
         specifier: workspace:*
         version: link:../../packages/dev
@@ -132,6 +139,21 @@ importers:
       '@baerly/server':
         specifier: workspace:*
         version: link:../../packages/server
+      '@types/react':
+        specifier: ^19.0.0
+        version: 19.2.14
+      '@types/react-dom':
+        specifier: ^19.0.0
+        version: 19.2.3(@types/react@19.2.14)
+      '@vitejs/plugin-react':
+        specifier: ^6.0.0
+        version: 6.0.1(vite@8.0.11(@types/node@25.6.2)(esbuild@0.27.3))
+      typescript:
+        specifier: 5.7.2
+        version: 5.7.2
+      vite:
+        specifier: ^8.0.11
+        version: 8.0.11(@types/node@25.6.2)(esbuild@0.27.3)
       vitest:
         specifier: ^4.1.5
         version: 4.1.5(@types/node@25.6.2)(@vitest/coverage-v8@4.1.5)(happy-dom@20.9.0)(vite@8.0.11(@types/node@25.6.2)(esbuild@0.27.3))
@@ -188,46 +210,6 @@ importers:
       typescript:
         specifier: ^5.8.0
         version: 5.9.3
-      vite:
-        specifier: ^8.0.11
-        version: 8.0.11(@types/node@25.6.2)(esbuild@0.27.3)
-
-  examples/helpdesk/apps/server:
-    dependencies:
-      '@baerly/adapter-node':
-        specifier: workspace:*
-        version: link:../../../../packages/adapter-node
-      '@baerly/dev':
-        specifier: workspace:*
-        version: link:../../../../packages/dev
-      '@baerly/server':
-        specifier: workspace:*
-        version: link:../../../../packages/server
-
-  examples/helpdesk/apps/web:
-    dependencies:
-      '@baerly/client':
-        specifier: workspace:*
-        version: link:../../../../packages/client
-      react:
-        specifier: ^19.0.0
-        version: 19.2.6
-      react-dom:
-        specifier: ^19.0.0
-        version: 19.2.6(react@19.2.6)
-    devDependencies:
-      '@types/react':
-        specifier: ^19.0.0
-        version: 19.2.14
-      '@types/react-dom':
-        specifier: ^19.0.0
-        version: 19.2.3(@types/react@19.2.14)
-      '@vitejs/plugin-react':
-        specifier: ^6.0.0
-        version: 6.0.1(vite@8.0.11(@types/node@25.6.2)(esbuild@0.27.3))
-      typescript:
-        specifier: 5.7.2
-        version: 5.7.2
       vite:
         specifier: ^8.0.11
         version: 8.0.11(@types/node@25.6.2)(esbuild@0.27.3)

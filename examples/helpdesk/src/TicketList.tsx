@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useLiveQuery } from "@baerly/client/react";
 import { client } from "./client.ts";
-import { STATUSES, type Ticket } from "../../../types.ts";
+import { STATUSES, type Ticket } from "../types.ts";
 
 type Filter = "all" | Ticket["status"];
 
