@@ -42,6 +42,9 @@ import { type BaerlyConfig, type IndexDefinition } from "@baerly/server";
 import { loadAppConfig } from "./config.ts";
 import { parseBucketUri } from "./copy.ts";
 import { emitError, emitSuccess, isJsonMode, setJsonMode } from "./output.ts";
+import { detectProvider, pricingFor } from "./cost/provider.ts";
+import { project, type Trajectory } from "./cost/project.ts";
+import { estimateWritesPerMin } from "./doctor/usage.ts";
 
 const INSPECT_ARGS = {
   bucket: {
@@ -75,6 +78,13 @@ const INSPECT_ARGS = {
       "Path to baerly.config.{js,mjs,json}; pulls declared indexes for key-count probes.",
     valueHint: "path",
   },
+  provider: {
+    type: "string",
+    required: false,
+    description:
+      "Override pricing provider for the trajectory footer (r2|aws-s3|self-hosted|dev). Auto-detected from the bucket URI + BAERLY_S3_ENDPOINT.",
+    valueHint: "r2|aws-s3|self-hosted|dev",
+  },
   json: {
     type: "boolean",
     description: "Emit a structured JSON envelope to stdout (success) or stderr (error)",
@@ -89,6 +99,7 @@ const KNOWN_KEYS: ReadonlySet<string> = new Set([
   "tenant",
   "table",
   "config",
+  "provider",
   "json",
   "_",
 ]);
@@ -190,8 +201,38 @@ interface InspectResult {
   indexes: { name: string; count: number }[];
   status: "ok" | "error";
   errors: string[];
+  trajectory: Trajectory | null;
   warning?: string;
 }
+
+/** Compact "1.5M" / "22k" / "842" rendering for Class A op counts. */
+const formatOps = (n: number): string => {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(0)}k`;
+  return n.toFixed(0);
+};
+
+/** Two-line trajectory block. Three output states per design spec §4.2. */
+const renderTrajectory = (t: Trajectory): string => {
+  const wpm = t.writesPerMin.toFixed(t.writesPerMin < 10 ? 1 : 0);
+  const classA = formatOps(t.classAPerMonth);
+  if (Number.isNaN(t.projectedUsdPerMonth)) {
+    return [
+      `  trajectory:          ~${wpm} writes/min  →  ~${classA} Class A/mo`,
+      `                       ${t.percentOfGraduation.toFixed(2)}% of 50M/mo graduation trigger. Self-hosted — bill model not modelled.`,
+    ].join("\n");
+  }
+  const usd = t.withinFreeTier
+    ? `~$0 (${t.provider === "r2" ? "R2" : "AWS S3"} free tier)`
+    : `~$${t.projectedUsdPerMonth.toFixed(2)}/mo`;
+  const tail = t.withinFreeTier
+    ? `${t.percentOfFreeTier.toFixed(0)}% of free-tier Class A budget. ${t.percentOfFreeTier < 50 ? "Well inside the promise." : "Approaching free-tier ceiling."}`
+    : `${t.percentOfGraduation.toFixed(2)}% of 50M/mo graduation trigger.`;
+  return [
+    `  trajectory:          ~${wpm} writes/min  →  ~${classA} Class A/mo  →  ${usd}`,
+    `                       ${tail}`,
+  ].join("\n");
+};
 
 const renderText = (r: InspectResult, table: string): string => {
   const lines: string[] = [];
@@ -212,6 +253,9 @@ const renderText = (r: InspectResult, table: string): string => {
   } else {
     lines.push(`  indexes:             (none declared)`);
   }
+  if (r.trajectory !== null) {
+    lines.push(renderTrajectory(r.trajectory));
+  }
   lines.push(`  status:              ${r.status}`);
   if (r.errors.length > 0) {
     for (const e of r.errors) lines.push(`  error:               ${e}`);
@@ -226,6 +270,15 @@ const handleInspect = async (args: Args): Promise<number> => {
     for (const k of Object.keys(args)) {
       if (!KNOWN_KEYS.has(k)) {
         throw new BaerlyError("InvalidConfig", `baerly inspect: unknown flag --${k}`);
+      }
+    }
+    if (typeof args.provider === "string" && args.provider.length > 0) {
+      const allowed = new Set(["r2", "aws-s3", "self-hosted", "dev"]);
+      if (!allowed.has(args.provider)) {
+        throw new BaerlyError(
+          "InvalidConfig",
+          `baerly inspect: --provider must be one of r2|aws-s3|self-hosted|dev (got ${JSON.stringify(args.provider)})`,
+        );
       }
     }
     const bucket = await parseBucketUri(args.bucket);
@@ -286,6 +339,29 @@ const handleInspect = async (args: Args): Promise<number> => {
       }
     }
 
+    // Trajectory footer — see docs/superpowers/specs/2026-05-17-inspect-cost-trajectory-design.md
+    const providerOverride =
+      typeof args.provider === "string" && args.provider.length > 0
+        ? (args.provider as "r2" | "aws-s3" | "self-hosted" | "dev")
+        : undefined;
+    const provider = detectProvider({
+      bucketUri: args.bucket,
+      s3Endpoint: process.env["BAERLY_S3_ENDPOINT"],
+      override: providerOverride,
+    });
+    let trajectory: Trajectory | null = null;
+    if (provider !== "dev") {
+      try {
+        const verdict = await estimateWritesPerMin(bucket.storage, app, tenant, args.table, {
+          keyPrefix: bucket.keyPrefix,
+        });
+        trajectory = project(verdict.writesPerMin, 0, pricingFor(provider));
+      } catch (e) {
+        if (e instanceof BaerlyError) errors.push(`${e.code}: ${e.message}`);
+        else errors.push((e as Error).message);
+      }
+    }
+
     const result: InspectResult = {
       currentJsonKey,
       schema_version: cur.schema_version,
@@ -298,6 +374,7 @@ const handleInspect = async (args: Args): Promise<number> => {
       indexes,
       status: errors.length === 0 ? "ok" : "error",
       errors,
+      trajectory,
       ...(warning !== undefined && { warning }),
     };
 

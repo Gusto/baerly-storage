@@ -20,6 +20,7 @@ import { CURRENT_JSON_SCHEMA_VERSION, createCurrentJson, type Storage } from "@b
 import { LocalFsStorage } from "@baerly/dev";
 import { ServerWriter } from "@baerly/server";
 import { runInspect } from "./inspect.ts";
+import type { Trajectory } from "./cost/project.ts";
 
 const APP = "app";
 const TENANT = "tenant";
@@ -207,5 +208,169 @@ describe("baerly inspect", () => {
       "--unknown=oops",
     ]);
     expect(exitCode).toBe(1);
+  });
+
+  test("dev backend (file://) produces trajectory: null in JSON envelope", async () => {
+    await provision(storage);
+    const writer = new ServerWriter({ storage, currentJsonKey: CURRENT_JSON_KEY });
+    await writer.commit({
+      op: "I",
+      collection: COLL,
+      docId: "t-1",
+      body: { _id: "t-1", title: "first" },
+    });
+
+    const stdout = captureStream(process.stdout);
+    let exitCode: number;
+    try {
+      exitCode = await runInspect([
+        `--bucket=file://${root}`,
+        `--app=${APP}`,
+        `--tenant=${TENANT}`,
+        `--table=${COLL}`,
+        "--json",
+      ]);
+    } finally {
+      stdout.restore();
+    }
+    expect(exitCode).toBe(0);
+    const envelope = JSON.parse(stdout.captured.join("").trim()) as {
+      result: { trajectory: Trajectory | null };
+    };
+    expect(envelope.result.trajectory).toBeNull();
+  });
+
+  test("--provider=r2 with sufficient data produces a Trajectory in JSON envelope", async () => {
+    await provision(storage);
+    const writer = new ServerWriter({ storage, currentJsonKey: CURRENT_JSON_KEY });
+    for (let i = 0; i < 3; i++) {
+      await writer.commit({
+        op: "I",
+        collection: COLL,
+        docId: `t-${i}`,
+        body: { _id: `t-${i}`, title: `row ${i}` },
+      });
+      await new Promise((r) => setTimeout(r, 10));
+    }
+
+    const stdout = captureStream(process.stdout);
+    let exitCode: number;
+    try {
+      exitCode = await runInspect([
+        `--bucket=file://${root}`,
+        `--app=${APP}`,
+        `--tenant=${TENANT}`,
+        `--table=${COLL}`,
+        "--provider=r2",
+        "--json",
+      ]);
+    } finally {
+      stdout.restore();
+    }
+    expect(exitCode).toBe(0);
+    const envelope = JSON.parse(stdout.captured.join("").trim()) as {
+      result: { trajectory: Trajectory | null };
+    };
+    expect(envelope.result.trajectory).not.toBeNull();
+    expect(envelope.result.trajectory!.provider).toBe("r2");
+    expect(envelope.result.trajectory!.classAPerMonth).toBeGreaterThan(0);
+    expect(typeof envelope.result.trajectory!.withinFreeTier).toBe("boolean");
+  });
+
+  test("--provider=self-hosted produces a Trajectory with NaN usd", async () => {
+    await provision(storage);
+    const writer = new ServerWriter({ storage, currentJsonKey: CURRENT_JSON_KEY });
+    for (let i = 0; i < 3; i++) {
+      await writer.commit({
+        op: "I",
+        collection: COLL,
+        docId: `t-${i}`,
+        body: { _id: `t-${i}`, title: `row ${i}` },
+      });
+      await new Promise((r) => setTimeout(r, 10));
+    }
+
+    const stdout = captureStream(process.stdout);
+    let exitCode: number;
+    try {
+      exitCode = await runInspect([
+        `--bucket=file://${root}`,
+        `--app=${APP}`,
+        `--tenant=${TENANT}`,
+        `--table=${COLL}`,
+        "--provider=self-hosted",
+        "--json",
+      ]);
+    } finally {
+      stdout.restore();
+    }
+    expect(exitCode).toBe(0);
+    const envelope = JSON.parse(stdout.captured.join("").trim()) as {
+      result: { trajectory: Trajectory | null };
+    };
+    expect(envelope.result.trajectory).not.toBeNull();
+    expect(envelope.result.trajectory!.provider).toBe("self-hosted");
+    // NaN serialises to null in JSON; both mean "cost not modelled".
+    expect(
+      Number.isNaN(envelope.result.trajectory!.projectedUsdPerMonth) ||
+        envelope.result.trajectory!.projectedUsdPerMonth === null,
+    ).toBe(true);
+    expect(envelope.result.trajectory!.percentOfGraduation).toBeGreaterThanOrEqual(0);
+  });
+
+  test("--provider=r2 with <2 log entries produces trajectory: null", async () => {
+    await provision(storage);
+    const stdout = captureStream(process.stdout);
+    let exitCode: number;
+    try {
+      exitCode = await runInspect([
+        `--bucket=file://${root}`,
+        `--app=${APP}`,
+        `--tenant=${TENANT}`,
+        `--table=${COLL}`,
+        "--provider=r2",
+        "--json",
+      ]);
+    } finally {
+      stdout.restore();
+    }
+    expect(exitCode).toBe(0);
+    const envelope = JSON.parse(stdout.captured.join("").trim()) as {
+      result: { trajectory: Trajectory | null };
+    };
+    expect(envelope.result.trajectory).toBeNull();
+  });
+
+  test("--provider=r2 text mode renders a trajectory footer block", async () => {
+    await provision(storage);
+    const writer = new ServerWriter({ storage, currentJsonKey: CURRENT_JSON_KEY });
+    for (let i = 0; i < 3; i++) {
+      await writer.commit({
+        op: "I",
+        collection: COLL,
+        docId: `t-${i}`,
+        body: { _id: `t-${i}`, title: `row ${i}` },
+      });
+      await new Promise((r) => setTimeout(r, 10));
+    }
+
+    const stdout = captureStream(process.stdout);
+    let exitCode: number;
+    try {
+      exitCode = await runInspect([
+        `--bucket=file://${root}`,
+        `--app=${APP}`,
+        `--tenant=${TENANT}`,
+        `--table=${COLL}`,
+        "--provider=r2",
+      ]);
+    } finally {
+      stdout.restore();
+    }
+    expect(exitCode).toBe(0);
+    const text = stdout.captured.join("");
+    expect(text).toContain("trajectory:");
+    expect(text).toContain("writes/min");
+    expect(text).toContain("Class A/mo");
   });
 });
