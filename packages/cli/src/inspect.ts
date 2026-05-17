@@ -216,6 +216,9 @@ const formatOps = (n: number): string => {
 const renderTrajectory = (t: Trajectory): string => {
   const wpm = t.writesPerMin.toFixed(t.writesPerMin < 10 ? 1 : 0);
   const classA = formatOps(t.classAPerMonth);
+  // State 2: ops-only — provider known but no $ model. Today only
+  // self-hosted reaches this (dev is filtered out by the
+  // `provider !== "dev"` gate in inspect.ts before calling project()).
   if (t.projectedUsdPerMonth === null) {
     return [
       `  trajectory:          ~${wpm} writes/min  →  ~${classA} Class A/mo`,
@@ -225,8 +228,10 @@ const renderTrajectory = (t: Trajectory): string => {
   const usd = t.withinFreeTier
     ? `~$0 (${t.provider === "r2" ? "R2" : "AWS S3"} free tier)`
     : `~$${t.projectedUsdPerMonth.toFixed(2)}/mo`;
+  // Invariant: withinFreeTier===true implies pricing.freeClassAPerMonth>0,
+  // which in turn implies percentOfFreeTier!==null (see project.ts).
   const tail = t.withinFreeTier
-    ? `${(t.percentOfFreeTier ?? 0).toFixed(0)}% of free-tier Class A budget. ${(t.percentOfFreeTier ?? 0) < 50 ? "Well inside the promise." : "Approaching free-tier ceiling."}`
+    ? `${t.percentOfFreeTier!.toFixed(0)}% of free-tier Class A budget. ${t.percentOfFreeTier! < 50 ? "Well inside the promise." : "Approaching free-tier ceiling."}`
     : `${t.percentOfGraduation.toFixed(2)}% of 50M/mo graduation trigger.`;
   return [
     `  trajectory:          ~${wpm} writes/min  →  ~${classA} Class A/mo  →  ${usd}`,
@@ -339,7 +344,11 @@ const handleInspect = async (args: Args): Promise<number> => {
       }
     }
 
-    // Trajectory footer — see docs/superpowers/specs/2026-05-17-inspect-cost-trajectory-design.md
+    // Trajectory footer: derive a projected cost trajectory from a fresh
+    // estimate of writes/min. Skipped for dev backends (file://, memory://)
+    // because $ projection is meaningless there. Errors land in errors[]
+    // so the inspection still completes — consistent with how
+    // loadMaterialisedView failure is handled above.
     const providerOverride =
       typeof args.provider === "string" && args.provider.length > 0
         ? (args.provider as "r2" | "aws-s3" | "self-hosted" | "dev")
