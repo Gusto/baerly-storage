@@ -154,6 +154,38 @@ describe("estimateWritesPerMin", () => {
   test("M_SIZE_WRITES_PER_MIN_PER_COLLECTION matches the documented thesis", () => {
     expect(M_SIZE_WRITES_PER_MIN_PER_COLLECTION).toBe(30);
   });
+
+  test("honors opts.keyPrefix for prefixed buckets", async () => {
+    const storage = new MemoryStorage();
+    // Seed two log entries under a non-empty key prefix.
+    const prefix = "mybucket-prefix/";
+    const t0 = Date.now();
+    for (const [seq, ts] of [
+      [0, t0],
+      [1, t0 + 60_000],
+    ] as [number, number][]) {
+      const key = `${prefix}app/x/tenant/y/manifests/z/log/${seq}.json`;
+      const body: LogEntry = {
+        lsn: `dummy_${seq.toString(16).padStart(6, "0")}_00`,
+        commit_ts: new Date(ts).toISOString(),
+        op: "I",
+        collection: "z",
+        doc_id: `doc_${seq}`,
+        schema_version: 0,
+        session: "abcdef",
+        seq,
+        new: { value: seq },
+        patch: { value: seq },
+      };
+      await storage.put(key, new TextEncoder().encode(JSON.stringify(body)), {
+        contentType: "application/json",
+      });
+    }
+    const v = await estimateWritesPerMin(storage, "x", "y", "z", { keyPrefix: prefix });
+    // 1 minute between two entries → 1 wpm.
+    expect(v.writesPerMin).toBeCloseTo(1, 1);
+    expect(v.collection).toBe("z");
+  });
 });
 
 describe("discoverCollections", () => {

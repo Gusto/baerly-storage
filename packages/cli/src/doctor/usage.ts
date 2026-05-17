@@ -199,16 +199,22 @@ const readCommitTsBatched = async (
  *   doesn't fail the whole scan.
  * @throws BaerlyError code="InvalidResponse" — a sampled log entry
  *   body is malformed; same caller treatment.
+ * @param opts.keyPrefix - When the bucket has a non-empty key prefix
+ *   (e.g. `s3://my-bucket/some/prefix`), pass it here (ending in
+ *   `/`). Defaults to `""`. Necessary for prefixed-bucket
+ *   correctness; ignored by `runUsageScan` (Node doctor scans the
+ *   root). Threaded through by `baerly inspect`.
  */
 export const estimateWritesPerMin = async (
   storage: Storage,
   app: string,
   tenant: string,
   collection: string,
-  opts: { readonly sampleSize?: number } = {},
+  opts: { readonly sampleSize?: number; readonly keyPrefix?: string } = {},
 ): Promise<UsageVerdict> => {
   const sampleSize = opts.sampleSize ?? SAMPLE_SIZE;
-  const tablePrefix = tablePrefixOf(currentJsonKeyFor(app, tenant, collection));
+  const keyPrefix = opts.keyPrefix ?? "";
+  const tablePrefix = `${keyPrefix}${tablePrefixOf(currentJsonKeyFor(app, tenant, collection))}`;
   const logPrefix = `${tablePrefix}/log/`;
 
   let allKeys: readonly string[];
