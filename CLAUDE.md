@@ -22,8 +22,7 @@ in [docs/](docs/).
 
 The protocol kernel and HTTP server are landed. Day-1 templates ship
 for Cloudflare Workers and self-hosted Node; both are first-class.
-AWS Lambda / Bun / Deno / Fly are an adapter package away. Delivery
-wrappers (MCP, deploy scaffold) are work-in-progress.
+AWS Lambda / Bun / Deno / Fly are an adapter package away.
 
 ## Toolchain
 

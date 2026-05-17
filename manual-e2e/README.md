@@ -323,5 +323,3 @@ quietly relax the constants.
 - Automated CI integration (GitHub Actions / Buildkite).
 - Multi-region / failover.
 - Observability dashboards beyond stdout summaries.
-- MCP integration — MCP wraps the same wire contract but is out of
-  scope for this check.
