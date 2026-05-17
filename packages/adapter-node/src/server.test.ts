@@ -207,6 +207,39 @@ describe("createListener observability", () => {
     expect(props["request_id"]).toBe(correlation);
   });
 
+  it("canonical line for a successful GET has no cache_status property", async () => {
+    const storage = new MemoryStorage();
+    const tenant = "acme";
+    await provision(storage, tenant, "c");
+
+    const { records, sink } = collectingSink();
+    const verifier: Verifier = async () => ({ tenantPrefix: tenant, identity: {} });
+    const listener = createListener({
+      app: "t",
+      storage,
+      verifier,
+      observability: { level: "debug", sink, sampleRate: 1 },
+    });
+    const { url } = await startServer(listener);
+
+    const res = await fetch(`${url}/v1/t/c`);
+    expect(res.status).toBe(200);
+
+    const line = findCanonical(records, "http");
+    expect(line).toBeDefined();
+    const props = line!.properties as Record<string, unknown>;
+    // Node has no cache layer — cache_status must never appear on the
+    // canonical line. Confirm all expected fields are still present.
+    expect(props).not.toHaveProperty("cache_status");
+    expect(props).toHaveProperty("request_id");
+    expect(props["method"]).toBe("GET");
+    expect(props["path"]).toBe("/v1/t/c");
+    expect(props["status"]).toBe(200);
+    expect(props["outcome"]).toBe("read");
+    // A GET issues class B ops (reads); class A (writes) may be zero.
+    expect(props["db.storage.class_b_ops_total_total"]).toBeGreaterThanOrEqual(1);
+  });
+
   it("the operator's MetricsRecorder receives kernel emissions verbatim", async () => {
     // Asserts the tee semantic: same metrics that reach the
     // canonical-line bag also reach the operator's long-term sink.

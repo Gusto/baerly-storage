@@ -22,8 +22,13 @@ import {
   type ObservabilityConfig,
   alsAwareRecorder,
   configureObservability,
+  createObservabilityContext,
+  decideSample,
+  flushCanonicalLine,
+  getEffectiveSampleRate,
   getLogger,
   observableStorage,
+  runWithContext,
 } from "@baerly/server/observability";
 
 /**
@@ -164,77 +169,152 @@ async function handle(
   storage: Storage,
   teeRecorder: MetricsRecorder,
 ): Promise<void> {
-  try {
-    // /v1/healthz is anonymous; preserves the deploy-probe contract.
-    const path = (req.url ?? "/").split("?", 1)[0]!;
-    // Opt-in dev landing page. Off in production (opts.dev unset);
-    // when set, GET / serves HTML and GET /favicon.ico answers 204 so
-    // browsers don't pin a second JSON 404 next to the landing page.
-    if (opts.dev !== undefined && req.method === "GET") {
-      if (path === "/") {
-        writeHtml(res, 200, renderDevLanding(opts.dev));
-        return;
-      }
-      if (path === "/favicon.ico") {
-        res.writeHead(204);
-        res.end();
-        return;
-      }
-    }
-    if (req.method === "GET" && path === "/v1/healthz") {
-      writeJson(res, 200, { ok: true });
+  // /v1/healthz is anonymous; preserves the deploy-probe contract.
+  const path = (req.url ?? "/").split("?", 1)[0]!;
+  // Opt-in dev landing page. Off in production (opts.dev unset);
+  // when set, GET / serves HTML and GET /favicon.ico answers 204 so
+  // browsers don't pin a second JSON 404 next to the landing page.
+  // These short-circuit BEFORE context creation — they don't
+  // participate in observability.
+  if (opts.dev !== undefined && req.method === "GET") {
+    if (path === "/") {
+      writeHtml(res, 200, renderDevLanding(opts.dev));
       return;
     }
-
-    const request = toFetchRequest(req);
-    const result = await opts.verifier(request);
-    if (result === null) {
-      getLogger(CATEGORY.http).warn("verifier_rejected", { reason: "null" });
-      writeError(res, 401, "Unauthorized", "Unauthorized");
-      return;
-    }
-
-    // Db's `metrics: teeRecorder` carries the tee through to
-    // ServerWriter / compactor / GC emissions so the canonical line
-    // sees kernel-level histograms (class_a_ops_per_logical_write,
-    // 412/429 counters) alongside the storage decorator's per-call
-    // counts. The Node adapter has no cache layer so there is no
-    // cache_status discriminator to stamp on the line.
-    const db = Db.create({
-      storage,
-      app: opts.app,
-      tenant: result.tenantPrefix,
-      metrics: teeRecorder,
-    });
-    const app = createRouter({
-      db,
-      healthCheck: false,
-      sinceTimeoutMs: opts.sinceTimeoutMs,
-      sincePollIntervalMs: opts.sincePollIntervalMs,
-    });
-    const response = await app.fetch(request);
-
-    // Stream the Response body back through `res`.
-    res.statusCode = response.status;
-    response.headers.forEach((value, key) => res.setHeader(key, value));
-    if (response.body === null) {
+    if (path === "/favicon.ico") {
+      res.writeHead(204);
       res.end();
       return;
     }
-    const reader = response.body.getReader();
-    while (true) {
-      const chunk = await reader.read();
-      if (chunk.done) break;
-      res.write(chunk.value);
-    }
-    res.end();
-  } catch (e) {
-    // Route through `mapError` so the envelope shape and the 500-path
-    // sanitization stay in lockstep with the Hono router.
-    const { status, envelope } = mapError(e);
-    writeJson(res, status, envelope);
   }
+  if (req.method === "GET" && path === "/v1/healthz") {
+    writeJson(res, 200, { ok: true });
+    return;
+  }
+
+  // Construct the per-request observability context up front so
+  // EVERYTHING downstream — verifier rejection, `Db.create`, the
+  // router dispatch, and the response streaming — runs inside the
+  // same `runWithContext` scope.
+  //
+  // Context lifted into the adapter for cross-host symmetry with the
+  // Cloudflare worker (which also lifts so its cache wrapper can
+  // stamp `cache_status`). Node has no cache layer, so no
+  // `cache_status` field is stamped here.
+  //
+  // The router's observability middleware (T01) detects the ambient
+  // context and passes through — it never creates a competing context,
+  // and it never flushes its own line. The adapter owns the flush.
+  const requestUrl = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
+  const requestId =
+    (Array.isArray(req.headers["x-request-id"])
+      ? req.headers["x-request-id"][0]
+      : req.headers["x-request-id"]) ?? crypto.randomUUID();
+  const sampleRate = getEffectiveSampleRate();
+  const obsCtx = createObservabilityContext({
+    request_id: requestId,
+    sampled_by_head: decideSample(requestId, sampleRate),
+  });
+
+  const request = toFetchRequest(req);
+  const result = await opts.verifier(request);
+  if (result === null) {
+    // Verifier rejection: wrap in runWithContext so the canonical
+    // line still emits for 401 responses.
+    await runWithContext(obsCtx, async () => {
+      getLogger(CATEGORY.http).warn("verifier_rejected", { reason: "null" });
+      writeError(res, 401, "Unauthorized", "Unauthorized");
+      flushCanonicalLine(obsCtx, obsCtx.recorder, {
+        unit: "http",
+        status: 401,
+        outcome: "error",
+        extra: {
+          method: req.method ?? "GET",
+          path: requestUrl.pathname,
+        },
+      });
+    });
+    return;
+  }
+
+  // Db's `metrics: teeRecorder` carries the tee through to
+  // ServerWriter / compactor / GC emissions so the canonical line
+  // sees kernel-level histograms (class_a_ops_per_logical_write,
+  // 412/429 counters) alongside the storage decorator's per-call
+  // counts. Node has no cache layer so there is no cache_status
+  // discriminator to stamp on the line.
+  await runWithContext(obsCtx, async () => {
+    let outboundStatus = 500;
+    let caughtError: unknown;
+    try {
+      const db = Db.create({
+        storage,
+        app: opts.app,
+        tenant: result.tenantPrefix,
+        metrics: teeRecorder,
+      });
+      const app = createRouter({
+        db,
+        healthCheck: false,
+        sinceTimeoutMs: opts.sinceTimeoutMs,
+        sincePollIntervalMs: opts.sincePollIntervalMs,
+      });
+      const response = await app.fetch(request);
+      outboundStatus = response.status;
+
+      // Stream the Response body back through `res`.
+      res.statusCode = response.status;
+      response.headers.forEach((value, key) => res.setHeader(key, value));
+      if (response.body === null) {
+        res.end();
+      } else {
+        const reader = response.body.getReader();
+        while (true) {
+          const chunk = await reader.read();
+          if (chunk.done) break;
+          res.write(chunk.value);
+        }
+        res.end();
+      }
+    } catch (err) {
+      caughtError = err;
+      // Route through `mapError` so the envelope shape and the 500-path
+      // sanitization stay in lockstep with the Hono router.
+      const { status, envelope } = mapError(err);
+      outboundStatus = status;
+      writeJson(res, status, envelope);
+    } finally {
+      flushCanonicalLine(obsCtx, obsCtx.recorder, {
+        unit: "http",
+        status: outboundStatus,
+        outcome: deriveOutcome(req.method ?? "GET", outboundStatus, caughtError),
+        ...(caughtError !== undefined && { error: caughtError }),
+        extra: {
+          method: req.method ?? "GET",
+          path: requestUrl.pathname,
+        },
+      });
+    }
+  });
 }
+
+/**
+ * Canonical-line outcome derivation for HTTP requests. Mirrors the
+ * Cloudflare adapter's copy (see `packages/adapter-cloudflare/src/worker.ts`)
+ * — duplicated here until a future ticket consolidates the helpers.
+ * Both copies have the same shape:
+ *
+ *  - `status < 400`  → `"read"` for GETs, `"committed"` otherwise.
+ *  - `status === 409` → `"conflict"` (writer CAS loss).
+ *  - error path with `status >= 500` → `"error"`.
+ *  - other 4xx/5xx → `"error"`.
+ */
+const deriveOutcome = (method: string, status: number, error?: unknown): string => {
+  if (error !== undefined && status >= 500) return "error";
+  if (status < 400) return method === "GET" ? "read" : "committed";
+  if (status === 409) return "conflict";
+  return "error";
+};
 
 /**
  * Convert an `IncomingMessage` into a WHATWG `Request`. Node 24+
