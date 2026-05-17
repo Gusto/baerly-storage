@@ -10,6 +10,10 @@
     ".": {
       "types": "./src/index.ts",
       "import": "./src/index.ts"
+    },
+    "./vite": {
+      "types": "./src/vite-plugin.ts",
+      "import": "./src/vite-plugin.ts"
     }
   },
   "publishConfig": {
@@ -21,8 +25,17 @@
     }
   },
   "dependencies": {
+    "@baerly/adapter-node": "workspace:*",
     "@baerly/protocol": "workspace:*",
     "@baerly/server": "workspace:*",
     "picocolors": "^1.1.1"
+  },
+  "peerDependencies": {
+    "vite": "^8.0.0"
+  },
+  "peerDependenciesMeta": {
+    "vite": {
+      "optional": true
+    }
   }
 }
