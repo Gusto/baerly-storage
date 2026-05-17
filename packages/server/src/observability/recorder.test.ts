@@ -55,7 +55,7 @@ describe("RequestScopedMetricsRecorder.summarize", () => {
     r.counter("db.r2.put.412_total", 1);
     r.counter("db.r2.put.412_total", 2);
     r.counter("db.r2.put.412_total", 3);
-    expect(r.summarize()["db.r2.put.412_total_total"]).toBe(6);
+    expect(r.summarize()["db.r2.put.412_total"]).toBe(6);
   });
 
   it("keeps the last gauge value seen per name", () => {
@@ -103,6 +103,24 @@ describe("RequestScopedMetricsRecorder.summarize", () => {
       h_sum: 6,
     });
   });
+
+  it("does not double-append _total to counter names that already end in _total", () => {
+    const r = new RequestScopedMetricsRecorder();
+    r.counter("db.storage.class_a_ops_total", 3);
+    r.counter("db.r2.put.412_total", 1);
+    r.counter("db.write.requests_total", 5);
+    // A counter without the convention suffix still gets it appended.
+    r.counter("custom.events", 2);
+
+    const summary = r.summarize();
+    expect(summary["db.storage.class_a_ops_total"]).toBe(3);
+    expect(summary["db.r2.put.412_total"]).toBe(1);
+    expect(summary["db.write.requests_total"]).toBe(5);
+    expect(summary["custom.events_total"]).toBe(2);
+    // No double-suffix variants exist.
+    expect(summary["db.storage.class_a_ops_total_total"]).toBeUndefined();
+    expect(summary["db.r2.put.412_total_total"]).toBeUndefined();
+  });
 });
 
 describe("alsAwareRecorder", () => {
@@ -138,7 +156,7 @@ describe("alsAwareRecorder", () => {
     // Per-request bag captured the same emissions; summary reflects
     // suffixes (counter_total, histogram_p50/_p99/_count/_sum).
     const summary = ctx.recorder.summarize();
-    expect(summary["db.r2.put.412_total_total"]).toBe(2);
+    expect(summary["db.r2.put.412_total"]).toBe(2);
     expect(summary["db.manifest.lag_window_depth"]).toBe(12);
     expect(summary["db.write.class_a_ops_per_logical_write_count"]).toBe(1);
     expect(summary["db.write.class_a_ops_per_logical_write_sum"]).toBe(4);

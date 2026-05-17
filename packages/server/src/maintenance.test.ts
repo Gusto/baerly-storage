@@ -156,8 +156,8 @@ describe("runScheduledMaintenance", () => {
       // `db.gc.swept_total` is a counter so it expands into `_total`.
       expect(props["db.compact.entries_folded_count"]).toBe(1);
       expect(props["db.compact.entries_folded_p50"]).toBe(150);
-      expect(typeof props["db.gc.swept_total_total"]).toBe("number");
-      expect(props["db.gc.swept_total_total"]).toBeGreaterThan(0);
+      expect(typeof props["db.gc.swept_total"]).toBe("number");
+      expect(props["db.gc.swept_total"]).toBeGreaterThan(0);
     });
 
     it("flags skipped phases as compact_skipped / gc_skipped on the canonical line", async () => {

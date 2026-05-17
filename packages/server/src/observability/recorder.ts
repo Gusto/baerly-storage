@@ -94,7 +94,12 @@ export class RequestScopedMetricsRecorder implements MetricsRecorder {
 
     // Counters: sum.
     for (const row of this.#counters) {
-      const key = `${row.name}_total`;
+      // Counter convention: prefer the emitter's name verbatim. If the
+      // emitter already namespaced its counter with `_total` (Prometheus
+      // convention — see packages/server/src/observability/storage.ts),
+      // do not double-append. Otherwise append for canonical-line
+      // consumers that key off the `_total` suffix.
+      const key = row.name.endsWith("_total") ? row.name : `${row.name}_total`;
       out[key] = (out[key] ?? 0) + row.value;
     }
 

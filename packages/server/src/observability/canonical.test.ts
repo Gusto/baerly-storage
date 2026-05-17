@@ -47,7 +47,7 @@ describe("flushCanonicalLine", () => {
     r.histogram("db.write.class_a_ops_per_logical_write", 3);
     flushCanonicalLine(sampledCtx(), r, { unit: "http", outcome: "ok", status: 200 });
     expect(records).toHaveLength(1);
-    expect(records[0]!.properties["db.r2.put.412_total_total"]).toBe(2);
+    expect(records[0]!.properties["db.r2.put.412_total"]).toBe(2);
     expect(records[0]!.properties["db.write.class_a_ops_per_logical_write_count"]).toBe(1);
   });
 

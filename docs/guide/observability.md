@@ -110,7 +110,7 @@ by `runScheduledMaintenance`:
 
 The kernel still emits the recorder-bag fields (`db.compact.entries_folded_p50` / `_p99` / `_count` / `_sum`,
 `db.manifest.lag_window_depth`, `db.orphan.candidate_count`,
-`db.gc.entries_swept_per_second`, `db.gc.swept_total_total`)
+`db.gc.entries_swept_per_second`, `db.gc.swept_total`)
 alongside — useful for dashboards. The four explicit fields above
 are the at-a-glance summary so a log scan answers "did anything
 happen this tick?" without decoding `_p50` / `_count` / `_total`

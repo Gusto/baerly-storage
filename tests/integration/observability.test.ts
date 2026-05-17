@@ -188,10 +188,10 @@ describe("observability integration — canonical line vs physical reality", () 
     // The canonical line's reported totals are the load-bearing
     // assertion. Per-op breakdown checked separately for diagnostic
     // clarity when a regression flips one but not the others.
-    expect(props["db.storage.class_a_ops_total_total"]).toBe(physicalA);
-    expect(props["db.storage.class_b_ops_total_total"]).toBe(physicalB);
-    expect(props["db.storage.put.calls_total_total"]).toBe(proxy.counts.put);
-    expect(props["db.storage.get.calls_total_total"]).toBe(proxy.counts.get);
+    expect(props["db.storage.class_a_ops_total"]).toBe(physicalA);
+    expect(props["db.storage.class_b_ops_total"]).toBe(physicalB);
+    expect(props["db.storage.put.calls_total"]).toBe(proxy.counts.put);
+    expect(props["db.storage.get.calls_total"]).toBe(proxy.counts.get);
 
     // Sanity: a fresh-bucket single insert through Db.table().insert()
     // performs exactly 3 PUTs (content + log entry + current.json
@@ -234,9 +234,9 @@ describe("observability integration — canonical line vs physical reality", () 
     const physicalA = proxy.counts.put + proxy.counts.delete + proxy.counts.list;
     const physicalB = proxy.counts.get;
 
-    expect(props["db.storage.class_a_ops_total_total"]).toBe(physicalA);
-    expect(props["db.storage.class_b_ops_total_total"]).toBe(physicalB);
-    expect(props["db.storage.put.calls_total_total"]).toBe(proxy.counts.put);
+    expect(props["db.storage.class_a_ops_total"]).toBe(physicalA);
+    expect(props["db.storage.class_b_ops_total"]).toBe(physicalB);
+    expect(props["db.storage.put.calls_total"]).toBe(proxy.counts.put);
 
     // Transaction via commitBatch: 3 content PUTs + 3 log entry PUTs
     // + 1 current.json CAS-advance = 7 PUTs. Insert-time _id-collision
@@ -316,8 +316,8 @@ describe("observability integration — canonical line vs physical reality", () 
     const physicalB = proxy.counts.get;
 
     // The load-bearing assertion: canonical totals === physical totals.
-    expect(props["db.storage.class_a_ops_total_total"] ?? 0).toBe(physicalA);
-    expect(props["db.storage.class_b_ops_total_total"] ?? 0).toBe(physicalB);
+    expect(props["db.storage.class_a_ops_total"] ?? 0).toBe(physicalA);
+    expect(props["db.storage.class_b_ops_total"] ?? 0).toBe(physicalB);
 
     // The collision precondition is the only physical I/O before the
     // Conflict throw: zero PUTs, zero DELETEs. The class A total may

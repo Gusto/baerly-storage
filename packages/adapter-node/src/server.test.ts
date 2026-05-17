@@ -150,7 +150,7 @@ describe("createListener observability", () => {
     expect(props["outcome"]).toBe("committed");
     expect(props["status"]).toBe(201);
     expect(props["method"]).toBe("POST");
-    const classA = props["db.storage.class_a_ops_total_total"];
+    const classA = props["db.storage.class_a_ops_total"];
     expect(typeof classA).toBe("number");
     expect(classA).toBeGreaterThanOrEqual(3);
   });
@@ -177,7 +177,7 @@ describe("createListener observability", () => {
     expect(line).toBeDefined();
     const props = line!.properties as Record<string, unknown>;
     expect(props["outcome"]).toBe("read");
-    expect(props["db.storage.class_b_ops_total_total"]).toBeGreaterThanOrEqual(1);
+    expect(props["db.storage.class_b_ops_total"]).toBeGreaterThanOrEqual(1);
   });
 
   it("honors a caller-supplied x-request-id on the canonical line", async () => {
@@ -237,7 +237,7 @@ describe("createListener observability", () => {
     expect(props["status"]).toBe(200);
     expect(props["outcome"]).toBe("read");
     // A GET issues class B ops (reads); class A (writes) may be zero.
-    expect(props["db.storage.class_b_ops_total_total"]).toBeGreaterThanOrEqual(1);
+    expect(props["db.storage.class_b_ops_total"]).toBeGreaterThanOrEqual(1);
   });
 
   it("the operator's MetricsRecorder receives kernel emissions verbatim", async () => {

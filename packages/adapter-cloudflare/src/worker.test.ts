@@ -267,7 +267,7 @@ describe("baerlyWorker observability", () => {
     // Storage class-A counter is the load-bearing signal that the
     // tee wiring is in place. ServerWriter PUTs content + log +
     // current.json on every commit ⇒ at least 3 Class A ops.
-    const classA = props["db.storage.class_a_ops_total_total"];
+    const classA = props["db.storage.class_a_ops_total"];
     expect(typeof classA).toBe("number");
     expect(classA).toBeGreaterThanOrEqual(3);
   });
@@ -318,7 +318,7 @@ describe("baerlyWorker observability", () => {
     // matrix.
     expect(props["cache_status"]).toBe("miss");
     // class-B ops fire on the read path (GETs against current.json).
-    expect(props["db.storage.class_b_ops_total_total"]).toBeGreaterThanOrEqual(1);
+    expect(props["db.storage.class_b_ops_total"]).toBeGreaterThanOrEqual(1);
   });
 
   it("cache-hit read still emits a canonical line with cache_status=hit", async () => {
@@ -424,6 +424,6 @@ describe("baerlyWorker observability", () => {
     const compactorLine = findCanonical(records, "compactor");
     expect(compactorLine).toBeDefined();
     const compactorProps = compactorLine!.properties as Record<string, unknown>;
-    expect(compactorProps["db.storage.class_b_ops_total_total"]).toBeGreaterThanOrEqual(1);
+    expect(compactorProps["db.storage.class_b_ops_total"]).toBeGreaterThanOrEqual(1);
   });
 });
