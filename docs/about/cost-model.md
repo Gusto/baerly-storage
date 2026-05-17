@@ -45,12 +45,13 @@ Class A is the meter that matters. Three reasons:
 3. **Compaction storms hit it** — a runaway compaction job is a
    Class A spike, not a Class B spike.
 
-A `baerly stats` view (planned — not yet shipped) should surface,
-in priority order, Class A
-ops over a trailing 24 h, the derived effective write-amp
-(Class A ops / logical writes — protocol regression detector if it
-drifts above ~4), and Class B ops. Storage and Worker request
-counts are noise until you graduate.
+`baerly inspect <collection>` emits a trajectory footer with the
+projected Class A ops/mo, free-tier-aware dollar projection, and
+distance to the M-size ceiling + 50M/mo graduation trigger. That
+covers the day-1 cost-verification moment without wiring an
+external sink. For longer windows (7-day, 30-day) operators pipe
+the canonical log line to CloudWatch / Workers Analytics / Datadog
+— see [`docs/guide/observability.md`](../guide/observability.md).
 
 ## Cost ceiling
 
@@ -156,8 +157,8 @@ Read this as positioning, not a cost claim:
   read-heavy traffic on a per-doc fan-out protocol is
   disproportionately expensive vs. a B-tree lookup in a real DB.
 
-The graduation triggers (planned to surface via `baerly stats`)
-follow directly: any one
+The graduation triggers (surfaced via the `baerly inspect`
+trajectory footer's `percentOfGraduation`) follow directly: any one
 of (sustained over 7 days) R2 Class A ops > 50M/month, effective
 write-amp > 6, or stored data > 5 GB is the system telling the user
 they have outgrown the ceiling.
