@@ -163,8 +163,15 @@ The key derived fields:
   DELETE) per tenant per hour, measured during the `query-post-compact`
   phase only. The bound is **< 1**; the in-process gate
   asserts exactly 0.
-- `compaction.write_amplification` — bytes written by compaction /
-  bytes read by compaction.
+- `compaction.bytes_ratio` — bytes written by compaction divided
+  by bytes read by compaction. Typical values are `<= 1` because
+  compaction collapses many log-entry writes into a single
+  snapshot; values approaching `1` (or `> 1`) indicate compaction
+  isn't gaining ground and warrant investigation. Note this is
+  NOT write amplification in the storage-engine-literature sense
+  (which is total bytes written / logical bytes written and is
+  always `>= 1`); this is a within-compaction
+  output/input ratio.
 
 ## Green-light criteria
 

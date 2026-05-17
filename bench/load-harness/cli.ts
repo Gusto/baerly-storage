@@ -112,7 +112,7 @@ export type RunResult = {
     bytes_written: number;
     objects_read: number;
     objects_written: number;
-    write_amplification: number;
+    bytes_ratio: number;
   };
 };
 
@@ -375,7 +375,7 @@ function assembleResult(o: AssembleOpts): RunResult {
       bytes_written: compactBytesWritten,
       objects_read: compactObjectsRead,
       objects_written: compactObjectsWritten,
-      write_amplification: compactBytesWritten / Math.max(1, compactBytesRead),
+      bytes_ratio: compactBytesWritten / Math.max(1, compactBytesRead),
     },
   };
 }
