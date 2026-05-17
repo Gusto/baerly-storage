@@ -10,20 +10,22 @@ Machines. Uses `@baerly/adapter-node` against an S3-compatible bucket
 
 ```
 minimal-node-railway/
-├── package.json              # pnpm workspace root
-├── tsconfig.json
+├── package.json              # one package, all deps
+├── tsconfig.json             # project-references stub
+├── tsconfig.app.json         # client TS project (src/web)
+├── tsconfig.server.json      # Node server TS project (src/server)
+├── vite.config.ts            # Vite SPA build → dist/client/
+├── index.html                # SPA shell — Vite's entry point
+├── .env.example              # storage creds, verifier, observability
 ├── baerly.config.ts          # app, tenant, target, domain
 ├── AGENTS.md                 # deeper guide: predicates, schemas,
 │                             #   auth recipes, graduation
 ├── .baerly/schema.lock.json  # declared collection schemas
-├── apps/
-│   ├── server/               # node:http listener — baerly host
-│   │   ├── package.json
-│   │   ├── .env.example
-│   │   └── src/server.ts     # createListener({ verifier })
-│   └── web/                  # optional SPA shell — delete if unused
-│       ├── package.json
-│       └── index.html
+├── src/
+│   ├── server/
+│   │   └── index.ts          # createListener({ verifier, webRoot })
+│   └── web/
+│       └── main.ts           # SPA client entry — bundled into dist/client/
 └── README.md
 ```
 
@@ -31,30 +33,47 @@ minimal-node-railway/
 
 ```sh
 pnpm install
-BUCKET=... AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=... SHARED_SECRET=... pnpm dev
+pnpm dev
+```
+
+`pnpm dev` runs `baerly dev`, which boots a Node listener on
+`http://localhost:3000` backed by local filesystem storage — no
+S3 creds needed. Use it for first-touch exploration.
+
+For production-shaped local runs (S3, the verifier of your choice,
+and the bundled SPA served from `dist/client/`):
+
+```sh
+pnpm build
+BUCKET=... AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=... SHARED_SECRET=... pnpm start
 ```
 
 The server reads `BUCKET`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`,
 and either `JWKS_URL` (production) or `SHARED_SECRET` (parity with
 `wrangler dev`) at startup. Optional: `S3_ENDPOINT`, `AWS_REGION`,
-`PORT`, `TENANT`.
+`PORT`, `TENANT`, `WEB_ROOT`.
 
-`pnpm typecheck` runs `tsc --noEmit` across both apps.
+After `pnpm build`, `http://localhost:8080/` serves the built SPA
+out of `dist/client/` and `http://localhost:8080/v1/*` is the
+baerly HTTP surface — single origin, no CORS.
+
+`pnpm typecheck` runs `tsc -b --noEmit` across both project
+references.
 
 ## Deploy
 
 This scaffold is shaped for managed PaaS platforms that auto-build
 from a `package.json` `start` script — **Railway**, **Render**, **DO
 App Platform**, **Fly Machines**. No Dockerfile required; the
-platform's buildpack will detect Node and use `apps/server/package.json`'s
-`start` script.
+platform's buildpack will detect Node and use the root
+`package.json`'s `build` + `start` scripts.
 
 Steps (Railway, as a concrete example):
 
 1. `railway init` (or push the repo to a connected GitHub repo).
-2. Set env vars from `apps/server/.env.example` in the Railway dashboard.
-3. Set the service root directory to `apps/server`.
-4. Deploy.
+2. Set env vars from `.env.example` in the Railway dashboard.
+3. Deploy. The platform runs `pnpm install && pnpm build` and then
+   `pnpm start` from the repo root.
 
 Then verify: `curl https://<your-service>.up.railway.app/v1/healthz`.
 
@@ -115,5 +134,7 @@ else falls back to `sharedSecret()` for parity with `pnpm dev`. Set
 ## Pointers
 
 - `baerly.config.ts` — app config (`app`, `tenant`, `target`, `domain`).
-- `apps/server/src/server.ts` — node:http listener entry.
+- `src/server/index.ts` — node:http listener entry.
+- `src/web/main.ts`, `index.html` — SPA client entry built into `dist/client/`.
+- `vite.config.ts` — Vite client build.
 - `AGENTS.md` — agent-facing guide (mirrored to `CLAUDE.md` at scaffold time).

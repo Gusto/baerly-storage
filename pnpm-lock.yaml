@@ -288,28 +288,16 @@ importers:
         version: 6.4.2(@types/node@25.6.2)(lightningcss@1.32.0)
 
   examples/minimal-node-railway:
-    devDependencies:
-      '@baerly/cli':
-        specifier: workspace:*
-        version: link:../../packages/cli
-      create-baerly:
-        specifier: workspace:*
-        version: link:../../packages/create-baerly
-      typescript:
-        specifier: ^5.8.0
-        version: 5.9.3
-
-  examples/minimal-node-railway/apps/server:
     dependencies:
       '@baerly/adapter-node':
         specifier: workspace:*
-        version: link:../../../../packages/adapter-node
+        version: link:../../packages/adapter-node
       '@baerly/protocol':
         specifier: workspace:*
-        version: link:../../../../packages/protocol
+        version: link:../../packages/protocol
       '@baerly/server':
         specifier: workspace:*
-        version: link:../../../../packages/server
+        version: link:../../packages/server
       '@xmldom/xmldom':
         specifier: ^0.9.10
         version: 0.9.10
@@ -319,16 +307,13 @@ importers:
     devDependencies:
       '@baerly/cli':
         specifier: workspace:*
-        version: link:../../../../packages/cli
+        version: link:../../packages/cli
       '@types/node':
         specifier: ^25.0.0
         version: 25.6.2
-      typescript:
-        specifier: ^5.8.0
-        version: 5.9.3
-
-  examples/minimal-node-railway/apps/web:
-    devDependencies:
+      create-baerly:
+        specifier: workspace:*
+        version: link:../../packages/create-baerly
       typescript:
         specifier: ^5.8.0
         version: 5.9.3

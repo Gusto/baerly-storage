@@ -15,9 +15,11 @@ S3-compatible storage API.
 
 `minimal-node-railway` is a baerly app scaffolded with `create-baerly` for
 the managed PaaS persona (Railway, Render, DO App Platform, Fly
-Machines). The Node-side server lives in `apps/server/`; the
-optional client lives in `apps/web/`. Configuration lives in
-`baerly.config.ts`.
+Machines). One flat package: the Node-side server lives in
+`src/server/index.ts`; the optional client lives in `src/web/`. The
+listener serves the built SPA from `dist/client/` via the
+`createListener({ webRoot })` option, so dev and prod run on a single
+origin. Configuration lives in `baerly.config.ts`.
 
 Public API docs: https://docs.baerly.dev/ (the JSDoc on
 `@baerly/server`'s `Db` and `Table` is the canonical reference;
@@ -37,16 +39,20 @@ read it via your editor's TS LS or via the published types).
 
 | Command            | What it does                                       | Runtime          |
 | ------------------ | -------------------------------------------------- | ---------------- |
-| `pnpm typecheck` | TS typecheck across both apps                      | seconds          |
-| `pnpm dev`       | Run the server locally via `baerly dev` — Node listener on :3000 | seconds to start |
-| `pnpm test`        | Run all tests across both apps                     | seconds          |
+| `pnpm typecheck`   | TS typecheck across the `app` + `server` project references | seconds   |
+| `pnpm dev`         | Run the server locally via `baerly dev` — Node listener on :3000 | seconds to start |
+| `pnpm build`       | `tsc -b && vite build` — emits the SPA into `dist/client/` | seconds  |
+| `pnpm start`       | `node --experimental-strip-types src/server/index.ts` — production entry; serves the SPA from `dist/client/` via `webRoot` | seconds to start |
+| `pnpm test`        | Run vitest                                          | seconds          |
 
 ## Where the code is
 
 | Path                        | What it is                                          |
 | --------------------------- | --------------------------------------------------- |
-| `apps/server/src/server.ts` | Server entry — `createListener({ verifier })`       |
-| `apps/web/`                 | Optional client; SPA shell. Remove if not needed.   |
+| `src/server/index.ts`       | Server entry — `createListener({ verifier, webRoot })` |
+| `src/web/`, `index.html`    | Optional SPA shell built by Vite into `dist/client/`. Remove if not needed. |
+| `vite.config.ts`            | Vite client build — `outDir: dist/client`; dev proxy `/v1` → `:8080` |
+| `tsconfig.{app,server}.json` | TS project references for the client and server projects |
 | `baerly.config.ts`          | App config — `app`, `tenant`, `target`, `domain`    |
 | `.baerly/schema.lock.json`  | Declared collection schemas — see "Schemas (live feature)" below. |
 
@@ -143,7 +149,7 @@ read it via your editor's TS LS or via the published types).
   schemas; an empty `{ "tables": {} }` is fine when you supply the
   schemas in code.
 
-- **Auth setup (Node)** — `apps/server/src/server.ts` selects:
+- **Auth setup (Node)** — `src/server/index.ts` selects:
 
   1. `bearerJwt({ jwks, issuer, audience })` when `JWKS_URL` is set.
      The verifier fetches the JWKS, validates `iss` / `aud` /
@@ -169,11 +175,11 @@ read it via your editor's TS LS or via the published types).
 
   4. Restart the server. (Reachability of the JWKS endpoint will
      be checked by `baerly doctor` for the relevant PaaS target.)
-  5. Remove the `SHARED_SECRET` branch from `server.ts` before going
-     to prod (or set `SHARED_SECRET` to an unguessable value behind
-     a feature flag).
+  5. Remove the `SHARED_SECRET` branch from `src/server/index.ts`
+     before going to prod (or set `SHARED_SECRET` to an unguessable
+     value behind a feature flag).
 
-- **Maintenance loop (Node)** — `apps/server/src/server.ts` calls
+- **Maintenance loop (Node)** — `src/server/index.ts` calls
   `runMaintenanceTick({ storage, currentJsonKey })` on a 1-hour
   `setInterval`, **opt-in via `MAINTENANCE_KEY`**. The tick is
   unbounded (`NODE_PROFILE`): one pass folds the entire live tail
@@ -218,9 +224,12 @@ read it via your editor's TS LS or via the published types).
 
 - **Deploy** — push to a managed PaaS (Railway, Render, DO App
   Platform, Fly Machines). The platform's buildpack detects Node
-  and runs `apps/server/package.json`'s `start` script — no
-  Dockerfile in this scaffold. Set env vars from
-  `apps/server/.env.example` in the platform's dashboard.
+  and runs the root `package.json`'s `start` script
+  (`node --experimental-strip-types src/server/index.ts`) — no
+  Dockerfile in this scaffold. Set env vars from `.env.example` in
+  the platform's dashboard, and arrange for `pnpm build` to run
+  before `pnpm start` so `dist/client/` is populated for the
+  `webRoot` static-serve branch.
 
   For raw Docker / k8s, switch to the `node-docker` example
   instead.
@@ -268,5 +277,7 @@ The export is point-in-time and honours the active schema. Flags:
 ## Pointers
 
 - `baerly.config.ts` — app config.
-- `apps/server/src/server.ts` — server entry.
-- `package.json` — root scripts + pnpm workspace.
+- `src/server/index.ts` — node:http listener entry.
+- `src/web/main.ts`, `index.html` — SPA client entry.
+- `vite.config.ts` — Vite client build (output `dist/client/`).
+- `package.json` — single-package root scripts.

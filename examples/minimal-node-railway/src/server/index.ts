@@ -8,8 +8,13 @@
  * should set `JWKS_URL` and remove the shared-secret branch.
  * Maintenance: opt-in hourly `runMaintenanceTick` when `MAINTENANCE_KEY`
  * is set (single collection per process).
+ *
+ * The listener also serves the built SPA from `dist/client/` via the
+ * `createListener({ webRoot })` option; non-`/v1/*` GETs return the
+ * Vite build's assets on the same origin as the API.
  */
 import { createServer } from "node:http";
+import { resolve as resolvePath } from "node:path";
 import { DOMParser } from "@xmldom/xmldom";
 import { AwsClient } from "aws4fetch";
 import { createListener, runMaintenanceTick, S3HttpStorage } from "@baerly/adapter-node";
@@ -51,6 +56,14 @@ const verifier: Verifier =
       })
     : sharedSecret({ secret: reqEnv("SHARED_SECRET"), tenantPrefix: TENANT });
 
+// Static-asset directory. `vite build` emits the SPA into
+// `dist/client/` (see `vite.config.ts:build.outDir`). The listener
+// serves files from here for non-`/v1/*` GET/HEAD requests with the
+// `index.html` SPA fallback for HTML navigation. Operators can
+// override at deploy time via `WEB_ROOT=/path/to/built` if they're
+// shipping a pre-built bundle into a different directory.
+const WEB_ROOT = resolvePath(process.env.WEB_ROOT ?? "./dist/client");
+
 // Observability — one canonical JSON line per request /
 // maintenance run on stdout. `LOG_LEVEL` toggles between
 // `debug | info | warn | error` (default `info`); `LOG_SAMPLE` is
@@ -72,6 +85,7 @@ const listener = createListener({
   app: APP,
   storage,
   verifier,
+  webRoot: WEB_ROOT,
   observability: {
     level: process.env.LOG_LEVEL as FriendlyLogLevel | undefined,
     sampleRate: process.env.LOG_SAMPLE !== undefined ? Number(process.env.LOG_SAMPLE) : 0.1,
