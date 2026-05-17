@@ -24,6 +24,7 @@ import {
 } from "@baerly/protocol";
 import { reset, type LogRecord, type Sink } from "@logtape/logtape";
 import { afterEach, describe, expect, it } from "vitest";
+import { __resetListUrlIndexForTests } from "./cache.ts";
 import { r2BindingStorage } from "./r2-binding-storage.ts";
 import { baerlyWorker, type Env } from "./worker.ts";
 
@@ -67,6 +68,7 @@ const findCanonicalRecords = (
 
 describe("baerlyWorker cache_status", () => {
   afterEach(async () => {
+    __resetListUrlIndexForTests();
     await reset();
   });
 
@@ -209,15 +211,15 @@ describe("baerlyWorker cache_status", () => {
 
     const env: Env = { BUCKET: bucket, APP: "t", TENANT: tenant };
 
-    // Warm the list cache with a sink-less handler so its canonical
-    // line doesn't pollute the assertion below. Use the bare list
-    // URL (no `?where=`) so the cache key matches the URL that
-    // `invalidateOnWrite` will subsequently delete (it busts
-    // `cacheKeyFor(POST /v1/t/c)` which has no search component).
+    // Warm a FILTERED list URL with a sink-less handler. The new
+    // invalidate-on-write logic tracks every variant we PUT into the
+    // cache and busts them all on a subsequent write; without that
+    // tracking, this test would fail because `invalidateOnWrite`
+    // would only bust the bare URL (the bug T07 fixes).
     const warmer = baerlyWorker({ verifier });
-    const listUrl = `https://x/v1/t/c`;
+    const filteredListUrl = `https://x/v1/t/c?where=${encodeURIComponent('{"v":1}')}`;
     await warmer.fetch!(
-      new Request(listUrl, { method: "GET" }) as Request<unknown, IncomingRequestCfProperties>,
+      new Request(filteredListUrl, { method: "GET" }) as Request<unknown, IncomingRequestCfProperties>,
       env,
       makeExec(),
     );
@@ -262,7 +264,7 @@ describe("baerlyWorker cache_status", () => {
     await Promise.all(pendingTasks);
 
     const getRes = await handler.fetch!(
-      new Request(listUrl, { method: "GET" }) as Request<unknown, IncomingRequestCfProperties>,
+      new Request(filteredListUrl, { method: "GET" }) as Request<unknown, IncomingRequestCfProperties>,
       env,
       makeExec(),
     );
@@ -281,5 +283,89 @@ describe("baerlyWorker cache_status", () => {
     expect(propsGet["cache_status"]).toBe("miss");
     expect(propsGet["status"]).toBe(200);
     expect(propsGet["outcome"]).toBe("read");
+  });
+
+  it("a write busts BOTH bare and filtered list variants", async () => {
+    const bucket = getBinding();
+    const tenant = `cs-multi-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+    const verifier: Verifier = async () => ({ tenantPrefix: tenant, identity: {} });
+
+    const storage = r2BindingStorage(bucket);
+    await createCurrentJson(storage, `app/t/tenant/${tenant}/manifests/c/current.json`, {
+      schema_version: CURRENT_JSON_SCHEMA_VERSION,
+      snapshot: null,
+      next_seq: 0,
+      log_seq_start: 0,
+      writer_fence: { epoch: 0, owner: "cs-multi-test", claimed_at: "" },
+    });
+
+    const env: Env = { BUCKET: bucket, APP: "t", TENANT: tenant };
+    const warmer = baerlyWorker({ verifier });
+    const bareUrl = `https://x/v1/t/c`;
+    const filteredUrl = `https://x/v1/t/c?where=${encodeURIComponent('{"v":2}')}`;
+
+    // Warm both variants with a sink-less handler so their canonical
+    // lines don't pollute the assertions below.
+    await warmer.fetch!(
+      new Request(bareUrl, { method: "GET" }) as Request<unknown, IncomingRequestCfProperties>,
+      env,
+      makeExec(),
+    );
+    await warmer.fetch!(
+      new Request(filteredUrl, { method: "GET" }) as Request<unknown, IncomingRequestCfProperties>,
+      env,
+      makeExec(),
+    );
+
+    // Now wire the sink and fire POST then GETs.
+    const { records, sink } = collectingSink();
+    const handler = baerlyWorker({
+      verifier,
+      observability: { level: "debug", sink, sampleRate: 1 },
+    });
+
+    const pendingTasks: Array<Promise<unknown>> = [];
+    const awaitingCtx: ExecutionContext = {
+      waitUntil(p: Promise<unknown>): void {
+        pendingTasks.push(p);
+      },
+      passThroughOnException(): void {},
+      props: {},
+    };
+
+    await handler.fetch!(
+      new Request("https://x/v1/t/c", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ doc: { _id: "cs-multi-1", v: 1 } }),
+      }) as Request<unknown, IncomingRequestCfProperties>,
+      env,
+      awaitingCtx,
+    );
+    // Drain `waitUntil` so `invalidateOnWrite` runs before the follow-up GETs.
+    await Promise.all(pendingTasks);
+
+    // Both follow-up GETs should be misses (cache was busted on both
+    // variants — bare via the per-URL delete, filtered via the index walk).
+    const getBare = await handler.fetch!(
+      new Request(bareUrl, { method: "GET" }) as Request<unknown, IncomingRequestCfProperties>,
+      env,
+      makeExec(),
+    );
+    const getFiltered = await handler.fetch!(
+      new Request(filteredUrl, { method: "GET" }) as Request<unknown, IncomingRequestCfProperties>,
+      env,
+      makeExec(),
+    );
+    expect(getBare.status).toBe(200);
+    expect(getFiltered.status).toBe(200);
+
+    const lines = findCanonicalRecords(records, "http");
+    // Expect POST + GET (bare) + GET (filtered) = 3 lines.
+    expect(lines).toHaveLength(3);
+    const propsBare = lines[1]!.properties as Record<string, unknown>;
+    const propsFiltered = lines[2]!.properties as Record<string, unknown>;
+    expect(propsBare["cache_status"]).toBe("miss");
+    expect(propsFiltered["cache_status"]).toBe("miss");
   });
 });

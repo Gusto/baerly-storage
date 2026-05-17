@@ -34,6 +34,102 @@ const WRITE_METHODS = new Set<string>(["POST", "PATCH", "DELETE"]);
 const BYPASS_PREFIXES = ["/v1/since", "/v1/healthz"];
 
 /**
+ * Per-isolate index of LIST cache keys we have populated, keyed by
+ * `(tenantPrefix, table)`. Used by {@link invalidateOnWrite} to walk
+ * every filtered-URL variant the isolate has cached and `cache.delete`
+ * each on a write. Without this index, the Cloudflare Cache API gives
+ * us no way to enumerate keys, so a `POST /v1/t/orders` could not bust
+ * a cached `GET /v1/t/orders?where={...}` — that GET would serve stale
+ * results for up to `max-age=3600` (the TTL the cache was put under).
+ *
+ * Lifetime tracks the read cache: entries are added on `cache.put` and
+ * removed either on {@link invalidateOnWrite} (write-driven sweep) or
+ * via the per-entry timer started at put-time (matches the
+ * `max-age=3600` TTL so the index never points at a key the cache has
+ * already dropped).
+ *
+ * Bounded by {@link MAX_KEYS_PER_TABLE} per `(tenant, table)` pair via
+ * insertion-order eviction (oldest URL is dropped when the cap is
+ * reached, which matches the cache's own LRU-ish eviction on memory
+ * pressure).
+ */
+const LIST_KEY_INDEX: Map<string, Map<string, ReturnType<typeof setTimeout>>> = new Map();
+
+/** Per-`(tenant, table)` cap on tracked list URLs. */
+const MAX_KEYS_PER_TABLE = 256;
+
+/** Cache TTL — MUST match the `max-age=3600` literal we set on `cache.put`. */
+const CACHE_TTL_MS = 3600 * 1000;
+
+/**
+ * Compose the index key from tenantPrefix + table. Identical shape
+ * means a write under tenant `t1` does NOT scan tenant `t2`'s tracked
+ * URLs.
+ */
+const indexKeyFor = (tenantPrefix: string, table: string): string =>
+  `${tenantPrefix}|${table}`;
+
+/**
+ * Pull the table segment from a `/v1/t/<table>[/<id>]` pathname.
+ * Returns `null` for paths outside `/v1/t/`. Callers must pre-filter
+ * via the `pathname.startsWith("/v1/t/")` check before dispatching to
+ * cache logic.
+ */
+const tableFromPath = (pathname: string): string | null => {
+  const parts = pathname.split("/").filter(Boolean);
+  // parts[0] === "v1", parts[1] === "t", parts[2] === table, parts[3] === id (optional)
+  if (parts.length < 3 || parts[0] !== "v1" || parts[1] !== "t") return null;
+  return parts[2] ?? null;
+};
+
+/**
+ * Record that `keyUrl` (the canonical cache-key URL — already carries
+ * the synthetic `__t` param from {@link cacheKeyFor}) is a live LIST
+ * entry for `(tenantPrefix, table)`. Starts a TTL timer that drops the
+ * entry when the cached body expires.
+ *
+ * If the inner map exceeds {@link MAX_KEYS_PER_TABLE}, evict the
+ * oldest entry (insertion-order via Map iteration; matches the cache's
+ * own eventual eviction).
+ */
+function trackListUrl(tenantPrefix: string, table: string, keyUrl: string): void {
+  const indexKey = indexKeyFor(tenantPrefix, table);
+  let inner = LIST_KEY_INDEX.get(indexKey);
+  if (inner === undefined) {
+    inner = new Map();
+    LIST_KEY_INDEX.set(indexKey, inner);
+  }
+  // Refresh: clear any pending eviction timer on a repeat put. Drop +
+  // re-insert so insertion-order tracking sees this as a fresh entry,
+  // which keeps the LRU-ish eviction honest.
+  const existing = inner.get(keyUrl);
+  if (existing !== undefined) {
+    clearTimeout(existing);
+    inner.delete(keyUrl);
+  }
+  // Cap to MAX_KEYS_PER_TABLE — drop oldest if full.
+  if (inner.size >= MAX_KEYS_PER_TABLE) {
+    const oldest = inner.keys().next().value;
+    if (typeof oldest === "string") {
+      const t = inner.get(oldest);
+      if (t !== undefined) clearTimeout(t);
+      inner.delete(oldest);
+    }
+  }
+  const timer = setTimeout(() => {
+    const m = LIST_KEY_INDEX.get(indexKey);
+    if (m !== undefined) {
+      m.delete(keyUrl);
+      if (m.size === 0) LIST_KEY_INDEX.delete(indexKey);
+    }
+  }, CACHE_TTL_MS);
+  // workerd's setTimeout does not return a Node `Timer` with .unref();
+  // the return value is a numeric id. We don't need .unref() on
+  // workerd — the runtime tears down all isolate state on shutdown.
+  inner.set(keyUrl, timer);
+}
+
+/**
  * Build the canonical cache-key `Request` for a given `(req,
  * tenantPrefix)`. The synthetic `__t` query parameter scopes the
  * cache per-tenant; without it, two tenants with overlapping URLs
@@ -176,6 +272,18 @@ export async function withReadCache(
       headers,
     });
     await cache.put(key, cacheable);
+
+    // Track LIST-shape URLs (no `/<id>` segment) so a future write can
+    // enumerate-and-bust every filtered variant we've cached. Per-doc
+    // URLs (parts.length === 4) don't need indexing — they have a 1:1
+    // mapping the write side already knows how to bust by URL.
+    const table = tableFromPath(url.pathname);
+    if (table !== null) {
+      const parts = url.pathname.split("/").filter(Boolean);
+      if (parts.length === 3) {
+        trackListUrl(tenantPrefix, table, key.url);
+      }
+    }
   }
   return { response: fresh, cache_status: "miss" };
 }
@@ -210,21 +318,60 @@ export async function invalidateOnWrite(
   // need. miniflare provides the real binding at runtime.
   const cache = (caches as unknown as { default: Cache }).default;
   const reqsToDelete: Request[] = [];
-  // Always invalidate the URL we hit (covers /v1/t/:table/:id for
-  // PATCH/DELETE and /v1/t/:table for POST — the latter is also the
-  // list URL, so this single delete covers it).
+
+  // Always invalidate the URL the write itself hit (covers
+  // /v1/t/:table/:id for PATCH/DELETE and /v1/t/:table for POST).
   reqsToDelete.push(cacheKeyFor(req, tenantPrefix));
-  // For PATCH/DELETE on /v1/t/:table/:id, also bust the parent list.
-  // parts = ["v1", "t", "<table>", "<id>?"] — POST stops at length 3.
-  const parts = url.pathname.split("/").filter(Boolean);
-  if (parts.length >= 4) {
-    const listUrl = new URL(url.toString());
-    listUrl.pathname = "/" + parts.slice(0, 3).join("/");
-    listUrl.search = "";
-    const listReq = new Request(listUrl.toString(), { method: "GET" });
-    reqsToDelete.push(cacheKeyFor(listReq, tenantPrefix));
+
+  // Bust every tracked filtered-list variant for this table. Without
+  // this index walk, a POST `/v1/t/orders` would leave
+  // `GET /v1/t/orders?where={...}` cached and stale for up to
+  // `max-age=3600` — the Cloudflare Cache API has no wildcard or
+  // tag-based delete, so we have to remember each URL we put.
+  const table = tableFromPath(url.pathname);
+  if (table !== null) {
+    const indexKey = indexKeyFor(tenantPrefix, table);
+    const tracked = LIST_KEY_INDEX.get(indexKey);
+    if (tracked !== undefined) {
+      for (const [keyUrl, timer] of tracked) {
+        clearTimeout(timer);
+        // The stored `keyUrl` already includes the synthetic `__t`
+        // param (it was `cacheKeyFor(...).url` at put-time), so we
+        // reconstruct the GET Request without a second pass through
+        // `cacheKeyFor`.
+        reqsToDelete.push(new Request(keyUrl, { method: "GET" }));
+      }
+      LIST_KEY_INDEX.delete(indexKey);
+    }
+
+    // Belt-and-braces: also bust the bare list URL even if it was
+    // never tracked (a concurrent GET could have populated the cache
+    // between the index walk and now). Cheap; one extra delete.
+    const bareList = new URL(url.toString());
+    bareList.pathname = `/v1/t/${table}`;
+    bareList.search = "";
+    reqsToDelete.push(
+      cacheKeyFor(new Request(bareList.toString(), { method: "GET" }), tenantPrefix),
+    );
   }
+
   // Fire all deletes in parallel. Errors are swallowed; cache
   // invalidation failures are non-fatal.
   await Promise.allSettled(reqsToDelete.map((r) => cache.delete(r)));
+}
+
+/**
+ * Test-only — clears the per-isolate list-URL index. Call from
+ * `afterEach` in cache-status.test.ts so cross-test state doesn't
+ * leak. Not part of the package's public API; intentionally
+ * undocumented for callers.
+ *
+ * @internal
+ */
+// eslint-disable-next-line no-underscore-dangle -- `__`-prefix marks the test-only escape hatch
+export function __resetListUrlIndexForTests(): void {
+  for (const inner of LIST_KEY_INDEX.values()) {
+    for (const timer of inner.values()) clearTimeout(timer);
+  }
+  LIST_KEY_INDEX.clear();
 }
