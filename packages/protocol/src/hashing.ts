@@ -26,6 +26,8 @@ export const inside = (a: b64, b: b64): boolean => {
  * information content of the v4 UUID that previously seeded
  * `versionFromUuid`. Collision probability with N=10⁹ writes is
  * ~3 × 10⁻²⁰; ample for a content-addressed version id.
+ *
+ * @see docs/spec/log-entry-shape.md §"Content body layout"
  */
 const VERSION_HEX_LENGTH = 32;
 
@@ -41,6 +43,8 @@ const VERSION_HEX_LENGTH = 32;
  * via Promise. Workers and browsers both expose `crypto.subtle`
  * synchronously enough that the await fits naturally in the write
  * pipeline.
+ *
+ * @see docs/spec/log-entry-shape.md §"Content body layout"
  */
 export const versionFromContent = async (body: Uint8Array): Promise<ContentVersionId> => {
   // Copy via fresh ArrayBuffer: tsgo narrows `Uint8Array` to

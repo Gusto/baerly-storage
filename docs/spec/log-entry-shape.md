@@ -2,7 +2,7 @@
 title: LogEntry wire shape
 audience: spec
 summary: Postgres-logical-replication-shaped LogEntry; frozen contract for future CDC consumers.
-last-reviewed: 2026-05-12
+last-reviewed: 2026-05-16
 tags: [protocol, log, cdc, contract]
 related: [sync-protocol.md]
 ---
@@ -117,6 +117,26 @@ each entry independently fetchable so compaction can rewrite or
 sweep them without touching the manifest log itself.
 The cost is one extra PUT per mutated ref; the benefit is "GET
 log/<lsn>.json" works for SSE long-poll on a single cursor.
+
+Document bodies land at:
+
+```
+<bucket>/<manifest-prefix>/content/<hash>.json
+```
+
+where `<hash>` is the **first 32 hex chars (128 bits) of `sha256(body)`**,
+lowercase. The truncation is intentional: 128 bits matches the
+information content of a v4 UUID and gives a collision probability of
+~3 × 10⁻²⁰ at N=10⁹ writes — comfortably below any plausible per-bucket
+write volume. External consumers reproducing keys MUST truncate to 32
+hex chars; hashing to the full 64-char SHA-256 will not match the key
+on the bucket.
+
+Same body bytes ⇒ same content key — the property
+`ServerWriter.commit` relies on for idempotent replay (a crash-recovery
+rewrite of the same logical value produces the same content key the
+manifest already referenced). Constant lives at
+`VERSION_HEX_LENGTH` in `packages/protocol/src/hashing.ts`.
 
 ## Cursor format
 
