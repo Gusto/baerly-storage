@@ -151,7 +151,10 @@ are reading the wrong document.
 Raw counts in the JSON feed the cost model offline. The bench
 deliberately does not bake pricing into output — region and provider
 pricing change faster than the harness does. For per-line-item rates,
-write-amplification meter, and compression posture, see
+the cost-model's write-amplification meter (distinct from
+`compaction.bytes_ratio` below — that is a within-compaction
+output/input ratio, this meter is the storage-engine-literature
+definition), and compression posture, see
 [docs/about/cost-model.md](../docs/about/cost-model.md).
 
 The key derived fields:
