@@ -30,7 +30,8 @@ export interface CloudflareAccessOptions {
 /**
  * Build a `Verifier` that consumes the `Cf-Access-Jwt-Assertion`
  * header CF Access injects in front of a protected Worker. The
- * Cloudflare-side template (ticket 39) defaults to this factory.
+ * Cloudflare-side scaffold (`examples/minimal-cloudflare/`) defaults
+ * to this factory.
  *
  * Internally a thin shim over `bearerJwt` — pulls the JWT from the
  * CF-specific header, points at CF Access's JWKS, and pins

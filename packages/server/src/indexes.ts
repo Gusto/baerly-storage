@@ -184,7 +184,7 @@ export const validateIndexDefinition = (def: IndexDefinition): void => {
  *
  * Local to the encoder by design — these are wire shape, not
  * cross-package protocol constants (see `CLAUDE.md` § "Magic
- * values" / ticket 01 conventions).
+ * values").
  */
 const TYPE_NULL = 0x10;
 const TYPE_FALSE = 0x20;

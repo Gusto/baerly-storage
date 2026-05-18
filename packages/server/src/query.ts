@@ -14,7 +14,7 @@
  * mutated. Identity inequality between the original and the returned
  * builder is intentional: callers cannot share a chain.
  *
- * `.where()` AND-merges through `mergePredicates` (ticket 08).
+ * `.where()` AND-merges through `mergePredicates`.
  * `.order()` and `.limit()` are last-call-wins (state replace).
  *
  * Each terminal reads `current.json` FRESH and walks `[0, next_seq)`
@@ -26,10 +26,9 @@
  * verbs do NOT add their own retry loop. On retry-budget exhaustion
  * `commit()` throws `BaerlyError{code:"Conflict"}` and the verb
  * surfaces it unchanged — the caller's option is to wrap in
- * `db.transaction(...)` (ticket 11).
+ * `db.transaction(...)`.
  *
- * @see ../../../.claude/research/planning/tickets/09-table-and-query-reads.md
- * @see ../../../.claude/research/planning/tickets/10-query-mutations.md
+ * @see ../../../docs/spec/sync-protocol.md
  */
 
 import {
@@ -83,8 +82,9 @@ export interface TableReadContext {
    * `Query.replace`, `Query.delete`) buffer a {@link BufferedMutation}
    * onto `txCtx.mutations` instead of calling `ServerWriter.commit`
    * directly. Reads ignore `txCtx` entirely — they go through
-   * `Storage` live, by design (ticket 11 §1, no MVCC). Threaded in
-   * by `Db.transaction(...)`; `undefined` outside a transaction.
+   * `Storage` live, by design (no MVCC; see `Db.transaction`'s JSDoc
+   * in `./db.ts`). Threaded in by `Db.transaction(...)`; `undefined`
+   * outside a transaction.
    *
    * @internal
    */
@@ -261,7 +261,7 @@ export const makeQuery = <T extends JSONArraylessObject>(
       // Validate the incoming fragment before merge so error messages
       // pin the offender to `p`, not the merged whole. `makeQuery`
       // re-validates the result on the next hop — the operator-policy
-      // boundary is the public contract surface (ticket 12).
+      // boundary is the public contract surface.
       validatePredicate<T>(p);
       return makeQuery<T>(ctx, {
         ...frozen,
@@ -325,7 +325,7 @@ export const runAllWithMeta = <T extends JSONArraylessObject>(
 };
 
 // ---------------------------------------------------------------------
-// Mutation terminals (ticket 10)
+// Mutation terminals
 // ---------------------------------------------------------------------
 
 /**
@@ -449,7 +449,7 @@ export const runInsert = async <T extends JSONArraylessObject>(
  * Atomicity is per row, not across the N-row batch. The locked
  * contract (`packages/protocol/src/db.ts:178–184`) is explicit on
  * this: all-or-nothing across multiple rows is what
- * `db.transaction(...)` (ticket 11) exists to deliver.
+ * `db.transaction(...)` exists to deliver.
  *
  * `replica_identity` defaults to `PATCH_ONLY` for every collection
  * today — emitted `U` entries carry `{ new, patch }` (equal) and
@@ -488,7 +488,7 @@ const runUpdate = async <T extends JSONArraylessObject>(
         `Query.update: merge produced undefined for doc ${JSON.stringify(doc._id)}`,
       );
     }
-    // Validate the merged post-image (option B in ticket 70 §4.6).
+    // Validate the merged post-image, not the incoming patch.
     // Patches are partial by design — validating the patch itself
     // would reject valid updates against schemas that require fields
     // the patch doesn't touch. The post-image is what the schema
@@ -585,8 +585,8 @@ const runReplace = async <T extends JSONArraylessObject>(
  * maintain a shadow table — see `packages/protocol/src/log.ts:102–118`.
  *
  * Atomicity is per row, not across the N-row batch — same shape as
- * `Query.update`. `db.transaction(...)` (ticket 11) is where
- * all-or-nothing semantics will live.
+ * `Query.update`. `db.transaction(...)` is where all-or-nothing
+ * semantics live.
  *
  * @throws BaerlyError code="Conflict" — any one row's CAS retry budget
  *   exhausted. The partial-progress `deleted` count is NOT returned
@@ -624,7 +624,7 @@ const runDelete = async <T extends JSONArraylessObject>(
  * already prevents the legitimate path (the body callback gets one
  * `Table<T>`, no `Db`), so this only catches a bug where a stale
  * `Query<T>` outlives its `Table<T>` and is somehow re-attached to a
- * transaction over a different table. Documented in ticket 11 §6.1.
+ * transaction over a different table.
  *
  * @throws BaerlyError code="Internal" — txCtx ↔ Table name mismatch.
  */
@@ -708,13 +708,13 @@ const runRead = async <T extends JSONArraylessObject>(
   }
   // plan.kind === "full-scan" — fall through to the snapshot+log fold.
 
-  // Load the snapshot, if any. The compactor (ticket 14) guarantees:
+  // Load the snapshot, if any. `compact()` guarantees:
   // `snapshot !== null` iff `log_seq_start > 0`. The snapshot is
   // sealed by its filename hash; `loadSnapshotAsMap` recomputes on
   // load and throws `Internal` on mismatch. Entries with
   // `seq < log_seq_start` have been folded into the snapshot (or
   // dropped on truncation) and MUST NOT be GET-required here — the
-  // bucket may have already swept them (ticket 15).
+  // bucket may have already swept them via `runGc()`.
   const nextSeq = head.json.next_seq;
   const logSeqStart = logSeqStartOf(head.json);
   const baseDocs: Map<string, JSONArraylessObject> =

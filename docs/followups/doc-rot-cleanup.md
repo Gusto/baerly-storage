@@ -1,5 +1,9 @@
 # Doc-rot cleanup (pre-1.0)
 
+**Status: Closed 2026-05-18.** All 9 findings landed on `doc-rot-cleanup`
+(F9 was a no-op — `examples/helpdesk/apps/` was already absent in this
+worktree post-flatten).
+
 Branch-scoped follow-up: a coherent "fix everything that lies"
 sweep. All findings were verified against the codebase at
 `main@2b94047` (2026-05-18). Each section is independently
@@ -309,9 +313,10 @@ tip `538742e`); the `apps/` layout is vestigial.
 **Recommended action.**
 
 - `rm -rf examples/helpdesk/apps/`.
-- Coordinate with the *separate* `examples/helpdesk/.gitignore`
-  follow-up (H6 in `next-batch.md`) so `apps/` doesn't get
-  recreated by stray dev runs.
+- While here, add an `examples/helpdesk/.gitignore` with at
+  least `node_modules/`, `dist/`, `.baerly-data/`,
+  `*.tsbuildinfo` so the layout doesn't get recreated by stray
+  dev runs.
 
 **Effort:** XS (~2 min, plus the verification that no script
 still references the path).

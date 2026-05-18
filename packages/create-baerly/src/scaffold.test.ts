@@ -403,8 +403,7 @@ describe("scaffold", () => {
 
       // 4. `create-baerly` kept in devDependencies (the emitted
       //    `baerly.config.ts` imports `create-baerly/config`) and
-      //    pinned to a real semver alongside the `@baerly/*` deps —
-      //    see ticket 04.
+      //    pinned to a real semver alongside the `@baerly/*` deps.
       const createBaerlyVersion = topPkg.devDependencies?.["create-baerly"];
       expect(createBaerlyVersion).toBeDefined();
       expect(createBaerlyVersion).not.toBe("workspace:*");

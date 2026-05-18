@@ -18,7 +18,7 @@ convenient.
 
 ---
 
-## 1. Delete the router-level verifier middleware (C1)
+## 1. Delete the router-level verifier middleware
 
 `packages/server/src/http/router.ts`:
 
@@ -52,7 +52,7 @@ shape regression: `verifier: async () => null`.
 
 ---
 
-## 2. Delete the `healthCheck` flag (C2)
+## 2. Delete the `healthCheck` flag
 
 `packages/server/src/http/router.ts`:
 
@@ -89,7 +89,7 @@ Every production callsite passes `false`:
 
 ---
 
-## 3. Extract Mode B observability into a helper (C3)
+## 3. Extract Mode B observability into a helper
 
 This one is **not delete-clean**. The agent traced both adapters
 and confirmed:
@@ -129,7 +129,7 @@ the same workstream avoids leaving a half-trimmed router.
 
 ---
 
-## 4. Delete `peekContext` (C10)
+## 4. Delete `peekContext`
 
 `packages/server/src/observability/canonical.ts:142`:
 
@@ -164,10 +164,9 @@ After the workstream:
 
 ## Out of scope
 
-- The kid-miss / WeakMap memo cleanup in `bearer-jwt.ts` (C4).
-- `dev-landing.ts` HTML literal move (C5).
-- Maintenance / observability scope nesting in compactor / GC
-  (C6).
-- Maintenance-profile reduction (C7) and `skipCompact`/`skipGc`
-  flags (C8).
-- Observability subpath collapse (C9).
+This workstream is purely about `CreateRouterOptions` and the
+single observability export `peekContext`. Other server-periphery
+cleanups (JWKS over-engineering in `bearer-jwt.ts`, the
+`dev-landing.ts` HTML literal, maintenance / observability scope
+nesting, maintenance-profile reduction, observability subpath
+collapse) are independent and untouched here.

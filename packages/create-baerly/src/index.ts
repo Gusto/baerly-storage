@@ -5,8 +5,7 @@
  * That `npm create` invocation is the **post-publish** form; until
  * the package ships to npm, stage locally from a clone via
  * `pnpm pack` + `pnpm dlx file:.../create-baerly-0.1.0.tgz` — see
- * the repo `README.md` Quick Start and ticket 04
- * (`docs/planning/tickets/04-pnpm-pack-install-path-and-readme.md`).
+ * the repo `README.md` Quick Start.
  *
  * Citty arg shape matches `@baerly/cli`'s `defineCommand` pattern
  * (see `packages/cli/src/copy.ts:193-216`).
@@ -14,7 +13,7 @@
  * Two flows live here:
  *   - **Interactive wizard** — enters `runWizard` from `./prompts.ts`
  *     when stdin is a TTY *and* `--json` is not set *and* either
- *     `projectName` or `target` was omitted. See ticket 02.
+ *     `projectName` or `target` was omitted.
  *   - **Flag-driven** — unchanged: CI, agents, piped stdin, and any
  *     TTY invocation with `--json` keep the existing behavior and
  *     the existing JSON envelope shape (part of the agent contract).

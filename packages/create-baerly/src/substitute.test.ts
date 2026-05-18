@@ -67,7 +67,7 @@ describe("substitutePackageJson", () => {
   it("pins the literal `create-baerly` workspace dep to the cli version", () => {
     // The emitted `baerly.config.ts` imports `create-baerly/config`,
     // so the scaffolder keeps `create-baerly` as a devDep and pins
-    // it alongside the `@baerly/*` deps. See ticket 04.
+    // it alongside the `@baerly/*` deps.
     const ctx = mkCtx({ renames: [], excludePaths: [], dropDevDeps: [] }, {});
     const text = JSON.stringify(
       { name: "x", devDependencies: { "create-baerly": "workspace:*", typescript: "^5" } },

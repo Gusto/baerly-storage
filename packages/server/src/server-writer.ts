@@ -505,7 +505,7 @@ export class ServerWriter {
     // default off). Surfaces missing / malformed entries inside
     // `[log_seq_start, next_seq)` as `Internal` / `InvalidResponse`;
     // entries below `log_seq_start` are folded into the snapshot
-    // (ticket 14) and possibly swept (ticket 15), so the walk is
+    // by `compact()` and possibly swept by `runGc()`, so the walk is
     // bounded to the live tail. The read path catches the same
     // conditions on the next consult — production callers leave the
     // walk off to avoid `O(tail)` Class-B GETs per CAS attempt.

@@ -13,9 +13,9 @@ export interface HttpErrorEnvelope {
     /**
      * Field-path issues, present only when `code === "SchemaError"`.
      * Each entry is `{ path, message }` where `path` is the dotted
-     * key list from the validator. Older clients (pre-ticket-70)
-     * see this field as `unknown` and ignore it; new clients
-     * destructure it for form-side rendering.
+     * key list from the validator. Older clients see this field as
+     * `unknown` and ignore it; new clients destructure it for form-
+     * side rendering.
      */
     readonly issues?: ReadonlyArray<{
       readonly path: ReadonlyArray<string | number>;

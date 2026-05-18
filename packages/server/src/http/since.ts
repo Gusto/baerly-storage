@@ -17,22 +17,20 @@
  *    log keys strictly-greater than the cursor's key, GETs each body,
  *    and returns the parsed `LogEntry`s in causal order.
  *
- * The handler is wired into the Hono router (`router.ts`) by ticket
- * 26; the router itself owns request parsing and error → HTTP mapping.
- * This module owns the I/O + cursor semantics.
+ * The handler is wired into the Hono router (`router.ts`); the
+ * router itself owns request parsing and error → HTTP mapping. This
+ * module owns the I/O + cursor semantics.
  *
  * Cost model. While a long-poll connection is active the per-poll
  * cost is one `Storage.get` of `current.json` plus one `Storage.get`
  * per log entry yielded. An idle reader (no new entries) pays one
  * Class A op per inner poll; with the production defaults
- * (25 s / 1 s) that is 25 ops per active connection. The cost-model
- * bound ticket 22 established (`< 1 Class A op / writer / hour`) is
- * for an *idle* reader — i.e. a client that is *not* currently
- * holding a long-poll open. Subscribers paying for real-time-ish
- * delivery are by definition non-idle.
- *
- * See `.claude/research/planning/tickets/26-long-poll-since-route.md`
- * §4.3-§4.4 for the full design rationale.
+ * (25 s / 1 s) that is 25 ops per active connection. The
+ * `< 1 Class A op / writer / hour` cost-model bound (see
+ * `docs/spec/sync-protocol.md`) is for an *idle* reader — i.e. a
+ * client that is *not* currently holding a long-poll open.
+ * Subscribers paying for real-time-ish delivery are by definition
+ * non-idle.
  */
 
 import { BaerlyError } from "@baerly/protocol";
@@ -109,8 +107,9 @@ export interface ListEventsSinceOptions {
  * Long-poll wrapper around {@link listEventsSince}. Returns as soon
  * as the first non-empty poll lands, or when the wall-clock timeout
  * elapses (whichever comes first). On timeout the response is
- * `{ events: [], next_cursor: <same> }` — see ticket 26 §4.5 for why
- * we ship that as `200`, not `304`.
+ * `{ events: [], next_cursor: <same> }` — shipped as `200`, not `304`,
+ * because the response body carries the unchanged cursor the client
+ * needs for the next poll cycle.
  *
  * @throws BaerlyError{code:"SchemaError"} — invalid cursor shape, or
  *   the cursor references a log entry that has been folded into a

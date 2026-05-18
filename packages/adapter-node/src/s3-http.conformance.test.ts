@@ -76,8 +76,8 @@ describe.runIf(minioEnabled)("S3HttpStorage @ Minio :9102", () => {
 });
 
 // Re-run the same conformance suite through the `minioStorage` factory
-// — the public DX surface added in ticket 01. Reuses the same bucket
-// (createBucket tolerates 409) and the same Minio-safe arbitraries.
+// — the public DX surface. Reuses the same bucket (createBucket
+// tolerates 409) and the same Minio-safe arbitraries.
 describe.runIf(minioEnabled)("minioStorage factory @ Minio :9102", () => {
   beforeAll(async () => {
     await createBucket(signer, MINIO_ENDPOINT, BUCKET);

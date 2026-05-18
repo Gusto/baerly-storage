@@ -14,9 +14,9 @@ symbols. Two themes:
    of `time.ts` were live consumers; they were orphaned but never
    removed.
 2. **Speculative scaffolding.** Helpers added without a caller in
-   the visible git history. Bloom-filter b64 (D4), `OMap` (D5),
-   `json.ts:diff/fold/clone` (D7) all fit this pattern — built
-   ahead of a feature that didn't land.
+   the visible git history — bloom-filter b64 helpers, `OMap`,
+   the non-spec `json.ts` operators (`diff`, `fold`, `clone`).
+   Built ahead of features that didn't land.
 
 Total cleanup: ~200 LoC + 4 small test blocks.
 
@@ -177,8 +177,9 @@ found zero callers.
 
 ## Out of scope
 
-- **D6 `claimWriter` / `WriterFence.lease_until`** — documented
-  reserved-for-future in `@baerly/server`'s public barrel
-  (`packages/server/src/index.ts:101-104`). Deletion is a
+- `claimWriter` and `WriterFence.lease_until` in
+  `packages/protocol/src/coordination/current-json.ts` —
+  documented reserved-for-future on `@baerly/server`'s public
+  barrel (`packages/server/src/index.ts:101-104`). Deletion is a
   public-API change. Defer to a dedicated public-API-pruning
-  workstream (and revisit A1's package-publish question first).
+  workstream.

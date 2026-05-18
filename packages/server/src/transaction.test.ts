@@ -4,7 +4,6 @@
 
 /**
  * `Db.transaction(table, body)` — single-attempt commitBatch.
- * Cases mirror ticket 11 §6.5.
  */
 
 import {

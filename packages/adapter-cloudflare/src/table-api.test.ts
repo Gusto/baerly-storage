@@ -1,6 +1,7 @@
 /* eslint-disable no-underscore-dangle -- `__BAERLY_R2_BINDING__` is the
-   ticket-06 contract: miniflare's vitest pool sets the global, this file
-   reads it. Underscores delimit the protocol-internal name. */
+   miniflare-pool ↔ test contract: `tests/setup/r2-binding.ts` sets the
+   global, this file reads it. Underscores delimit the protocol-internal
+   name. */
 
 /**
  * Table-API integration cascade — Workerd variant.

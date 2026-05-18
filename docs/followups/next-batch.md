@@ -240,23 +240,6 @@ rebase --continue` after conflict resolution.
 
 ---
 
-## Simplification audit — 2026-05-18
-
-A ruthless pre-launch audit across every package and folder, run
-by nine parallel subagents on 2026-05-18. Goal: cut accretion,
-dead code, and DX-hostile complexity before publish. The user
-explicitly cares more about user DX + agent DX than contributor
-experience, and there's no backwards-compat burden.
-
-Findings grouped by area, each entry tagged **HIGH / MEDIUM /
-LOW** for DX impact. HIGH = directly harms a user or an LLM
-agent consuming the library zero-shot; MEDIUM = bloats the
-kernel or invites drift; LOW = micro-cleanup. Triage by reading
-HIGH entries first.
-
-Items 1–14 above are the prior pre-1.0 hardening batch — separate
-workstream, not duplicated here.
-
 ### A. Public surface — what users + agents see
 
 #### A1. Package-name schism: published `baerly-storage` vs. `@baerly/*` workspace imports — **HIGH**
@@ -287,8 +270,8 @@ inside the workspace. The "Or wire it by hand" snippet imports
 `createListener` from `@baerly/adapter-node`, `sharedSecret`
 from `@baerly/server/auth`, `LocalFsStorage` + `ensureTable`
 from `@baerly/dev` — three workspace packages a user can't
-install from npm. This is the user-facing face of **A1**
-(package-name schism); resolve them together.
+install from npm. This is the user-facing face of the
+package-name schism; resolve them together.
 
 **Fix:** Either land the publishes before the README ships, or
 mark the README as preview and replace the snippets with the
@@ -802,8 +785,7 @@ rejection is verbatim in both.
 
 **Fix:** Lift `runWithObservedRequest(req, verifier, handler)
 → Promise<Response>` into `@baerly/server`. Both adapters call
-it. Combines with C1-C3 to make router config genuinely
-trivial.
+it.
 
 #### C20. `db.storage.class_a_ops_total` double-`_total`-suffix guard — **LOW**
 
@@ -865,7 +847,7 @@ from `packages/server/src/index.ts:120` as documented public API
 (`server-writer.ts:502,869,875`) and must stay.
 
 **Fix:** Defer. Deletion is a public-API surface change; couple
-with the A1 package-publish question. If kept, leave the tests
+with the package-publish decision. If kept, leave the tests
 that pin the CAS round-trip contract.
 
 #### D8. Brand types `ManifestKey`, `S3VersionId`, `ContentVersionId`, `VersionId` leak with no enforcement — **MEDIUM**
@@ -2110,29 +2092,3 @@ harness. Calibration.json is already checked in; scripts only
 re-run on corpora refresh (which is fixed-date by design).
 
 **Fix:** Delete with I2.
-
----
-
-## Summary
-
-**Cuts available (rough order of magnitude):**
-
-- **Examples + templates (H section):** ~500 LOC of stale READMEs, dead `apps/`, committed seed data, drift hacks, duplicate AGENTS.md. The user's first impression — fix first.
-- **Public surface (A section):** ~50 internal symbols off the top-level barrel. The `JSONArraylessObject` → `BaerlyDocument` rename. `_raw` away from the class `@example`. README + `llms.txt` rewritten.
-- **Server kernel (B section):** ~600 LOC across duplicated log-fold loops, dead `IndexWalkPlan.postFilter`, redundant query validation, dead defensive checks. `migrate.ts` (255 LOC) out of the kernel.
-- **Server periphery (C section):** Mode-A/B router branching gone. Three maintenance profiles → one. Observability subpath collapsed. ~400 LOC.
-- **Protocol kernel (D section):** Five dead modules (`o-map`, `time.ts:adjustClock`, `hashing` b64 helpers, `json.ts:diff/fold/clone`, dead `coordination` claimWriter). Brand types pruned. `predicate.ts` split for legibility. ~800 LOC.
-- **Client + React (E section):** `order()` either fixed or deleted; `replace()` either fixed or deleted; `count()` either fixed or deleted. `BaerlyClientError` collapsed into `BaerlyError`. Hook surface tightened.
-- **Adapters + dev + export (F section):** `@baerly/export` collapsed into the CLI (~2000 LOC + a public package gone). LIST-URL cache index dropped (~150 LOC). Adapter observability ceremony lifted to a shared helper.
-- **CLI (G section):** `@baerly/cli` library exports deleted. `cost/` subtree deleted. `copy` moved to admin. Top-level help trimmed to 7 verbs. ~700 LOC.
-- **Contributor infra (I section):** ~8k LOC of bench + 3k LOC of eval + 500 LOC of redundant tests/configs. ~12k total LOC out without losing a single correctness gate.
-
-**Total realistic cut:** 15-25k LOC, plus a major DX cleanup of the public surface. Roughly halves the touchable codebase for the maintainer while making the library easier for users and agents to understand zero-shot.
-
-**Recommended order:**
-
-1. **Public surface (A1-A4, A10, A12)** — first impression for every user and agent. Days, not weeks.
-2. **Templates (H1, H2, H3)** — broken-on-day-1 bugs.
-3. **Contributor infra cuts (I1-I3)** — frees the most maintainer time per hour spent.
-4. **Server + client correctness gaps (B1, E1-E3)** — silent-lie bugs masquerading as features.
-5. **Everything else, by area, in any order.**

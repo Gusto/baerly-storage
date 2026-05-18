@@ -3,8 +3,8 @@
    declaration); reads expose it on rows. */
 
 /**
- * Read terminals — examples per ticket 09 §5. All 12 cases
- * exercise the read path against `MemoryStorage`; no infra required.
+ * Read terminals — `first`, `all`, `count` — against
+ * `MemoryStorage`. No infra required.
  */
 
 import {
@@ -295,9 +295,9 @@ describe("Db.table read terminals", () => {
     // Bootstrap a collection with one I entry at seq=0, then manually
     // CAS-write current.json with log_seq_start=1. The reader's bound
     // becomes [1, 1) so the read returns empty even though log/0.json
-    // still exists on the bucket. Tests the reader's bound — the
-    // compactor lands in ticket 14, where a populated read across this
-    // boundary will use snapshot consumption.
+    // still exists on the bucket. Tests the reader's bound; a populated
+    // read across this boundary would use snapshot consumption via
+    // `compact()` in `./compactor.ts`.
     await provision(storage);
     const w = commit(storage);
     await w.commit({
@@ -424,12 +424,11 @@ describe("Db.table read terminals", () => {
   });
 
   test("case 17: eventual read against unchanged current.json returns fresh:false and stable pointer", async () => {
-    // Ticket 33 + Ticket 34 invariant: under ticket 34's redefinition,
-    // `fresh` reflects the caller's requested level — `false` whenever
-    // `eventual` served the response. Two reads against the same
-    // `current.json` generation return the same cursor; the second
-    // (eventual) read carries `fresh:false` and skips the per-call
-    // `current.json` GET.
+    // Invariant: `fresh` reflects the caller's requested level —
+    // `false` whenever `eventual` served the response. Two reads
+    // against the same `current.json` generation return the same
+    // cursor; the second (eventual) read carries `fresh:false` and
+    // skips the per-call `current.json` GET.
     await provision(storage);
     const w = commit(storage);
     await w.commit({
@@ -465,10 +464,10 @@ describe("Db.table read terminals", () => {
   });
 
   test("case 18: strong read sees the new pointer after a writer advances next_seq", async () => {
-    // Ticket 33 invariant: a concurrent commit between two strong reads
+    // Invariant: a concurrent commit between two strong reads
     // advances `current.json`; the second read observes a new
-    // manifest pointer and reports `fresh:true`. Under ticket 34,
-    // every strong read carries `fresh:true` by definition.
+    // manifest pointer and reports `fresh:true`. Every strong read
+    // carries `fresh:true` by definition.
     await provision(storage);
     const w = commit(storage);
     await w.commit({
@@ -503,8 +502,8 @@ describe("Db.table read terminals", () => {
   });
 
   test("case 19: consistency('eventual') returns a new Query; chain is immutable", async () => {
-    // Ticket 34: `.consistency(level)` follows the same identity-
-    // inequality contract as `.where` / `.order` / `.limit`.
+    // `.consistency(level)` follows the same identity-inequality
+    // contract as `.where` / `.order` / `.limit`.
     await provision(storage);
     const t = db.table(COLL);
     const a = t.where({});
@@ -514,8 +513,8 @@ describe("Db.table read terminals", () => {
   });
 
   test("case 20: last-call-wins on .consistency()", async () => {
-    // Ticket 34: repeat `.consistency(level)` invocations replace
-    // the level (matching `.order()` / `.limit()` semantics).
+    // Repeat `.consistency(level)` invocations replace the level
+    // (matching `.order()` / `.limit()` semantics).
     // Empty table → both levels resolve to `[]`.
     await provision(storage);
     const q = db.table(COLL).consistency("eventual").consistency("strong");

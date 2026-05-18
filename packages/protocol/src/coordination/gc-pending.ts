@@ -1,10 +1,10 @@
 /**
  * `gc/pending.json` — the per-collection GC candidate ledger. CAS-
  * protected; one per `(tenant, collection)` key — for example
- * `<tenant>/<collection>/gc/pending.json`. The compactor's sweep
- * (ticket 15) is the single writer that adds and removes entries.
- * Stays small in steady state because every candidate is deleted
- * once `due_at` passes.
+ * `<tenant>/<collection>/gc/pending.json`. `runGc()` in
+ * `packages/server/src/gc.ts` is the single writer that adds and
+ * removes entries. Stays small in steady state because every
+ * candidate is deleted once `due_at` passes.
  *
  * "Mark" appends candidates with a future `due_at`; "sweep" deletes
  * candidates whose `due_at` is in the past. The two phases run in
@@ -40,8 +40,8 @@ export interface GcPending {
   candidates: ReadonlyArray<GcCandidate>;
   /**
    * Server-clock ISO-8601 timestamp of the last successful sweep
-   * completion. Drives the `db.gc.entries_swept_per_second` metric
-   * (ticket 17). Empty string `""` before the first sweep.
+   * completion. Drives the `db.gc.entries_swept_per_second` metric.
+   * Empty string `""` before the first sweep.
    */
   last_swept_at: string;
 }

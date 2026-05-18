@@ -60,7 +60,7 @@ const promptProjectName = async (): Promise<string> => {
     placeholder: "my-app",
     validate: (raw) => {
       if (raw.length === 0) return "name must be non-empty";
-      // MUST mirror the regex in `scaffold.ts:117`. See ticket 02.
+      // MUST mirror the validation regex in `scaffold.ts`'s `scaffold()`.
       if (!/^[a-z0-9][a-z0-9_-]*$/.test(raw)) {
         return "lowercase, alphanumeric + - / _, starting with [a-z0-9]";
       }

@@ -21,10 +21,6 @@
  * we see the materialised value, not the source expression. Callers
  * that know they constructed a predicate dynamically can pass
  * `options.dynamicHint` to surface an operator-supplied note.
- *
- * Translation rules live in
- * `.claude/research/planning/tickets/72-export-predicate-ast-translation.md`
- * §3; the rule numbers are referenced inline below.
  */
 
 import {
