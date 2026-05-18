@@ -91,7 +91,7 @@ lives.
 ```ts
 import { test, expect, describe } from "vitest";
 import { Db } from "@baerly/server";
-import { MemoryStorage } from "@baerly/protocol";
+import { MemoryStorage } from "@baerly/server";
 
 describe("Db.tables()", () => {
   test("reflects writes", async () => {
@@ -410,8 +410,8 @@ local-dev case.
 ```ts
 // packages/adapter-fly/src/fly-storage.ts
 import type { Storage, StorageGetResult, StorageListEntry, StoragePutResult }
-  from "@baerly/protocol";
-import { BaerlyError } from "@baerly/protocol";
+  from "@baerly/server";
+import { BaerlyError } from "@baerly/server";
 
 export class FlyStorage implements Storage {
   // ... implement get / put / delete / list per the interface JSDoc
@@ -454,7 +454,7 @@ to name it.
 ```ts
 import { test, expect, describe } from "vitest";
 import { Db } from "@baerly/server";
-import { MemoryStorage } from "@baerly/protocol";
+import { MemoryStorage } from "@baerly/server";
 
 describe("my feature", () => {
   test("does the thing", async () => {
