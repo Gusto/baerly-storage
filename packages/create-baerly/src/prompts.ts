@@ -35,14 +35,14 @@ export interface WizardInput {
   /** When non-undefined, skip the projectName prompt and use this. */
   readonly projectName?: string;
   /** When non-undefined, skip the target prompt and use this. */
-  readonly target?: "cloudflare" | "node-railway" | "node-docker";
+  readonly target?: "cloudflare" | "node";
   /** When non-undefined, skip the install confirm and use this. */
   readonly install?: boolean;
 }
 
 export interface WizardOutput {
   readonly projectName: string;
-  readonly target: "cloudflare" | "node-railway" | "node-docker";
+  readonly target: "cloudflare" | "node";
   readonly install: boolean;
 }
 
@@ -74,7 +74,7 @@ const promptProjectName = async (): Promise<string> => {
   return v as string;
 };
 
-const promptTarget = async (): Promise<"cloudflare" | "node-railway" | "node-docker"> => {
+const promptTarget = async (): Promise<"cloudflare" | "node"> => {
   const v = await select({
     message: "Deploy target",
     options: [...TARGETS],
@@ -84,7 +84,7 @@ const promptTarget = async (): Promise<"cloudflare" | "node-railway" | "node-doc
     cancel("Cancelled.");
     process.exit(1);
   }
-  return v as "cloudflare" | "node-railway" | "node-docker";
+  return v as "cloudflare" | "node";
 };
 
 const promptInstall = async (): Promise<boolean> => {

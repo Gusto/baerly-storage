@@ -42,12 +42,12 @@ const main = defineCommand({
     },
     target: {
       type: "string",
-      description: 'Deploy target — "cloudflare", "node-railway", or "node-docker".',
+      description: 'Deploy target — "cloudflare" or "node".',
       // Optional at the citty layer so a bare `create-baerly` on a
       // TTY can fall into the wizard. The flag-driven branch below
       // re-validates when wizard mode is suppressed (non-TTY / --json).
       required: false,
-      valueHint: "cloudflare|node-railway|node-docker",
+      valueHint: "cloudflare|node",
     },
     starter: {
       type: "string",
@@ -84,7 +84,7 @@ const main = defineCommand({
       const wantWizard =
         isInteractive && (args.projectName === undefined || args.target === undefined);
       let projectName: string;
-      let target: "cloudflare" | "node-railway" | "node-docker";
+      let target: "cloudflare" | "node";
       // The wizard returns `install` too; install handling itself is
       // unchanged from the prior code path (not yet implemented), so
       // the value is intentionally not threaded further.
@@ -92,11 +92,7 @@ const main = defineCommand({
         const w = await runWizard({
           projectName: args.projectName,
           target:
-            args.target === "cloudflare" ||
-            args.target === "node-railway" ||
-            args.target === "node-docker"
-              ? args.target
-              : undefined,
+            args.target === "cloudflare" || args.target === "node" ? args.target : undefined,
           install: args.install,
         });
         projectName = w.projectName;
@@ -106,13 +102,9 @@ const main = defineCommand({
         if (args.projectName === undefined) {
           throw new Error("projectName is required (positional)");
         }
-        if (
-          args.target !== "cloudflare" &&
-          args.target !== "node-railway" &&
-          args.target !== "node-docker"
-        ) {
+        if (args.target !== "cloudflare" && args.target !== "node") {
           throw new Error(
-            `--target must be "cloudflare", "node-railway", or "node-docker", got ${JSON.stringify(args.target)}`,
+            `--target must be "cloudflare" or "node", got ${JSON.stringify(args.target)}`,
           );
         }
         projectName = args.projectName;

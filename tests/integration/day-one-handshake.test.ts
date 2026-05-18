@@ -102,14 +102,14 @@ describe.runIf(RUN_NODE)("day-one handshake — node target", () => {
     async () => {
       stamp("start");
 
-      // 1. SCAFFOLD: `npm create baerly@latest -- my-app --target=node-railway`.
+      // 1. SCAFFOLD: `npm create baerly@latest -- my-app --target=node`.
       //    Driven non-interactively. The scaffold's auto-prompt logic
       //    (ticket 38) must accept all defaults under
       //    `BAERLY_NONINTERACTIVE=1`.
       const appDir = join(workdir, "my-app");
       await execa(
         "npm",
-        ["create", "baerly@latest", "--", "my-app", "--target=node-railway", "--non-interactive"],
+        ["create", "baerly@latest", "--", "my-app", "--target=node", "--non-interactive"],
         {
           cwd: workdir,
           env: {

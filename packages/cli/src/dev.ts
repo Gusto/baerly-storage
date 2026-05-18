@@ -78,7 +78,7 @@ export interface DevResult {
   readonly mode: "node";
   readonly port: number;
   readonly dataDir: string;
-  readonly target: "cloudflare" | "node-railway" | "node-docker";
+  readonly target: "cloudflare" | "node";
   readonly tenant: string;
   readonly app: string;
   /** Set so test harnesses can shut the server down deterministically. */

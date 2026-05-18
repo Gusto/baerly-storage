@@ -7,7 +7,7 @@
  * Args:
  *   --app=<name>       Required. The bucket-prefix segment.
  *   --tenant=<name>    Default "default".
- *   --target=<cloudflare|node-railway|node-docker> Default "cloudflare".
+ *   --target=<cloudflare|node> Default "cloudflare".
  *   --force            Overwrite an existing baerly.config.ts.
  *   --json             Emit JSON envelope on stdout/stderr.
  *
@@ -42,7 +42,7 @@ const INIT_ARGS = {
     type: "string",
     default: "cloudflare",
     description: "Deploy target.",
-    valueHint: "cloudflare|node-railway|node-docker",
+    valueHint: "cloudflare|node",
   },
   force: { type: "boolean", description: "Overwrite existing baerly.config.ts." },
   json: { type: "boolean", description: "Emit JSON envelope output." },
@@ -58,7 +58,7 @@ const errorToExitCode = (code: string): number => {
 const template = (
   app: string,
   tenant: string,
-  target: "cloudflare" | "node-railway" | "node-docker",
+  target: "cloudflare" | "node",
 ): string =>
   `import { defineConfig } from "create-baerly/config";
 
@@ -80,14 +80,10 @@ const handleInit = async (args: ParsedArgs<typeof INIT_ARGS>): Promise<number> =
     if (typeof args.app !== "string" || args.app.length === 0) {
       throw new BaerlyError("InvalidConfig", "baerly init: --app=<name> is required");
     }
-    if (
-      args.target !== "cloudflare" &&
-      args.target !== "node-railway" &&
-      args.target !== "node-docker"
-    ) {
+    if (args.target !== "cloudflare" && args.target !== "node") {
       throw new BaerlyError(
         "InvalidConfig",
-        `baerly init: --target must be "cloudflare", "node-railway", or "node-docker" (got ${JSON.stringify(args.target)})`,
+        `baerly init: --target must be "cloudflare" or "node" (got ${JSON.stringify(args.target)})`,
       );
     }
     const outPath = resolve(process.cwd(), "baerly.config.ts");

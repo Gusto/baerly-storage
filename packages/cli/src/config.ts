@@ -31,7 +31,7 @@ import type { IndexDefinition } from "@baerly/server";
 export interface AppConfig {
   readonly app: string;
   readonly tenant: string;
-  readonly target: "cloudflare" | "node-railway" | "node-docker";
+  readonly target: "cloudflare" | "node";
   readonly domain?: string;
   readonly requiredSecrets?: readonly string[];
   readonly cloudflareAccess?: {
@@ -143,10 +143,10 @@ export const loadAppConfig = async (cwd: string = process.cwd()): Promise<AppCon
       `baerly: ${cfgPath}: \`tenant\` must be a non-empty string`,
     );
   }
-  if (target !== "cloudflare" && target !== "node-railway" && target !== "node-docker") {
+  if (target !== "cloudflare" && target !== "node") {
     throw new BaerlyError(
       "InvalidConfig",
-      `baerly: ${cfgPath}: \`target\` must be "cloudflare", "node-railway", or "node-docker" (got ${JSON.stringify(target)})`,
+      `baerly: ${cfgPath}: \`target\` must be "cloudflare" or "node" (got ${JSON.stringify(target)})`,
     );
   }
 

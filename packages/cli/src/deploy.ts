@@ -2,11 +2,10 @@
  * `baerly deploy` — citty dispatcher.
  *
  * Reads `baerly.config.ts:target` and routes to the matching
- * deploy backend. Today: `cloudflare` only — the node-railway /
- * node-docker examples embody their deployment shape directly, so
- * `baerly deploy` rejects them with an actionable InvalidConfig
- * pointing at the platform-native command (e.g. `railway up`,
- * `docker build` / `docker push`).
+ * deploy backend. Today: `cloudflare` only — the `node` example
+ * embodies its deployment shape directly (self-host via `node
+ * server.js` after your PaaS or container build), so `baerly
+ * deploy` rejects `target: "node"` with an actionable InvalidConfig.
  *
  * Exit-code contract (mirrors `baerly copy`):
  *   - 0 success.
@@ -27,7 +26,7 @@ const DEPLOY_ARGS = {
   target: {
     type: "string",
     description:
-      'Override `baerly.config.ts:target`. Only "cloudflare" supported (Node variants self-deploy via their PaaS or container build).',
+      'Override `baerly.config.ts:target`. Only "cloudflare" supported ("node" self-deploys via your PaaS or container build).',
     valueHint: "cloudflare",
   },
   json: {
@@ -62,8 +61,8 @@ const handleDeploy = async (args: ParsedArgs<typeof DEPLOY_ARGS>): Promise<numbe
     throw new BaerlyError(
       "InvalidConfig",
       `baerly deploy: target ${JSON.stringify(target)} has no deploy backend. ` +
-        `Use your platform's deploy mechanism (e.g. \`railway up\` for node-railway, ` +
-        `\`docker build\` + \`docker push\` for node-docker).`,
+        `Self-host: \`node server.js\` after your PaaS or container build. ` +
+        `Cloudflare Workers is the only managed deploy backend today.`,
     );
   } catch (err) {
     if (err instanceof BaerlyError) {

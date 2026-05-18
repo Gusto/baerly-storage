@@ -30,7 +30,7 @@ const copyTemplates = () => ({
   closeBundle() {
     const EXAMPLES: readonly string[] = [
       "minimal-cloudflare",
-      "minimal-node-railway",
+      "minimal-node",
       "minimal-node-docker",
       "helpdesk-cloudflare",
     ];

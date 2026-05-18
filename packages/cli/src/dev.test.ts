@@ -61,7 +61,7 @@ describe("baerly dev", () => {
   });
 
   test("brings up a listener on an ephemeral port and serves /v1/since", async () => {
-    await writeConfig(root, { app: "demo", tenant: "acme", target: "node-docker" });
+    await writeConfig(root, { app: "demo", tenant: "acme", target: "node" });
     const stderr = captureStream(process.stderr);
     let result;
     try {
@@ -109,7 +109,7 @@ describe("baerly dev", () => {
   });
 
   test("--port=NaN is rejected via the CLI shim (exit 1)", async () => {
-    await writeConfig(root, { app: "demo", tenant: "acme", target: "node-docker" });
+    await writeConfig(root, { app: "demo", tenant: "acme", target: "node" });
     const stderr = captureStream(process.stderr);
     let outcome;
     try {
@@ -126,7 +126,7 @@ describe("baerly dev", () => {
     await writeConfig(root, {
       app: "demo",
       tenant: "acme",
-      target: "node-docker",
+      target: "node",
       collections: {
         widgets: { indexes: [] },
         gadgets: { indexes: [] },
@@ -161,7 +161,7 @@ describe("baerly dev", () => {
   });
 
   test("--json emits a structured envelope on success", async () => {
-    await writeConfig(root, { app: "demo", tenant: "acme", target: "node-docker" });
+    await writeConfig(root, { app: "demo", tenant: "acme", target: "node" });
     const stdout = captureStream(process.stdout);
     const stderr = captureStream(process.stderr);
     let outcome;
@@ -200,7 +200,7 @@ describe("baerly dev", () => {
     expect(envelope.result.command).toBe("dev");
     expect(envelope.result.status).toBe("ok");
     expect(envelope.result.mode).toBe("node");
-    expect(envelope.result.target).toBe("node-docker");
+    expect(envelope.result.target).toBe("node");
     expect(envelope.result.tenant).toBe("acme");
     expect(envelope.result.app).toBe("demo");
     expect(envelope.result.port).toBeGreaterThan(0);

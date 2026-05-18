@@ -2,9 +2,9 @@
  * `baerly doctor` — citty dispatcher.
  *
  * Reads `baerly.config.ts:target` and routes to
- * {@link doctorCloudflare}. The Node variants (`node-railway`,
- * `node-docker`) self-validate at scaffold time — the example IS
- * the contract — so they have no doctor backend. The dispatcher
+ * {@link doctorCloudflare}. The Node target self-validates at
+ * scaffold time — the example IS the contract — so it has no
+ * doctor backend. The dispatcher
  * also accepts two cross-target sub-checks — `--check=index-filter-drift`
  * (read-only drift scan) and `--rebuild-drift` (drift scan + auto-rebuild)
  * — whose findings splice into whichever backend report it dispatches to.

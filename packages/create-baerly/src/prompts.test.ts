@@ -148,7 +148,7 @@ describe("runWizard", () => {
   it("exits with code 1 when the user cancels at the confirm prompt", async () => {
     resetFixture();
     fixture.textValue = "my-app";
-    fixture.selectValue = "node-railway";
+    fixture.selectValue = "node";
     fixture.confirmValue = CANCEL_SENTINEL;
     const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
       throw new Error(`__exit:${code}`);

@@ -241,7 +241,7 @@ importers:
         specifier: ^4.92.0
         version: 4.92.0(@cloudflare/workers-types@4.20260511.1)
 
-  examples/minimal-node-docker:
+  examples/minimal-node:
     dependencies:
       '@baerly/adapter-node':
         specifier: workspace:*
@@ -269,7 +269,7 @@ importers:
         specifier: ^6.0.0
         version: 6.4.2(@types/node@25.6.2)(lightningcss@1.32.0)
 
-  examples/minimal-node-railway:
+  examples/minimal-node-docker:
     dependencies:
       '@baerly/adapter-node':
         specifier: workspace:*

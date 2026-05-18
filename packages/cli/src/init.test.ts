@@ -51,11 +51,11 @@ describe("baerly init", () => {
     await rm(root, { recursive: true, force: true });
   });
 
-  test("writes baerly.config.ts with the canonical template body (node-railway)", async () => {
+  test("writes baerly.config.ts with the canonical template body (node)", async () => {
     const stdout = captureStream(process.stdout);
     let exitCode: number;
     try {
-      exitCode = await runInit(["--app=demo", "--tenant=acme", "--target=node-railway"]);
+      exitCode = await runInit(["--app=demo", "--tenant=acme", "--target=node"]);
     } finally {
       stdout.restore();
     }
@@ -67,31 +67,7 @@ describe("baerly init", () => {
 export default defineConfig({
   app: "demo",
   tenant: "acme",
-  target: "node-railway",
-});
-`,
-    );
-    // Text mode emits nothing on stdout.
-    expect(stdout.captured.join("")).toBe("");
-  });
-
-  test("writes baerly.config.ts with the canonical template body (node-docker)", async () => {
-    const stdout = captureStream(process.stdout);
-    let exitCode: number;
-    try {
-      exitCode = await runInit(["--app=demo", "--tenant=acme", "--target=node-docker"]);
-    } finally {
-      stdout.restore();
-    }
-    expect(exitCode).toBe(0);
-    const written = await readFile(join(root, "baerly.config.ts"), "utf8");
-    expect(written).toBe(
-      `import { defineConfig } from "create-baerly/config";
-
-export default defineConfig({
-  app: "demo",
-  tenant: "acme",
-  target: "node-docker",
+  target: "node",
 });
 `,
     );
@@ -124,15 +100,13 @@ export default defineConfig({
     const stderr = captureStream(process.stderr);
     let exitCode: number;
     try {
-      exitCode = await runInit(["--app=demo", "--target=node"]);
+      exitCode = await runInit(["--app=demo", "--target=lambda"]);
     } finally {
       stderr.restore();
     }
     expect(exitCode).toBe(1);
     expect(existsSync(join(root, "baerly.config.ts"))).toBe(false);
-    expect(stderr.captured.join("")).toMatch(
-      /--target must be "cloudflare", "node-railway", or "node-docker"/,
-    );
+    expect(stderr.captured.join("")).toMatch(/--target must be "cloudflare" or "node"/);
   });
 
   test("refuses to overwrite without --force (InvalidConfig, exit 1)", async () => {
@@ -199,7 +173,7 @@ describe("emits configs that load through loadAppConfig", () => {
     await rm(root, { recursive: true, force: true });
   });
 
-  for (const target of ["cloudflare", "node-railway", "node-docker"] as const) {
+  for (const target of ["cloudflare", "node"] as const) {
     test(`round-trips --target=${target}`, async () => {
       const exitCode = await runInit(["--app=demo", `--target=${target}`]);
       expect(exitCode).toBe(0);
