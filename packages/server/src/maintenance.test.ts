@@ -106,15 +106,44 @@ describe("runScheduledMaintenance", () => {
     it("emits one canonical line at info level on the baerly.maintenance category", async () => {
       const s = new MemoryStorage();
       await bootstrap(s, KEY);
-      // GC alone (via the primitive) still emits its own canonical
-      // line on baerly.gc; this assertion is about the
-      // baerly.maintenance line specifically, which `runScheduledMaintenance`
-      // always emits at the top level.
       await runScheduledMaintenance({ storage: s, currentJsonKey: KEY }, {});
       const maintenanceLines = records.filter((r) => r.category.join(".") === "baerly.maintenance");
       expect(maintenanceLines).toHaveLength(1);
       expect(maintenanceLines[0]!.level).toBe("info");
       expect(maintenanceLines[0]!.properties["outcome"]).toBe("ok");
+    });
+
+    it("emits no nested baerly.compactor or baerly.gc lines under runScheduledMaintenance", async () => {
+      // `compact()` and `runGc()` are nesting-aware via
+      // `withObservability` — when called inside an outer scope, they
+      // inherit the outer ctx+recorder instead of opening their own.
+      // One unit-of-work (the maintenance tick) → exactly one
+      // canonical line, per canonical.ts's documented invariant.
+      const s = new MemoryStorage();
+      await bootstrap(s, KEY);
+      await runScheduledMaintenance({ storage: s, currentJsonKey: KEY }, {});
+      const compactorLines = records.filter((r) => r.category.join(".") === "baerly.compactor");
+      const gcLines = records.filter((r) => r.category.join(".") === "baerly.gc");
+      expect(compactorLines).toHaveLength(0);
+      expect(gcLines).toHaveLength(0);
+    });
+
+    it("standalone compact() still emits its own baerly.compactor canonical line", async () => {
+      const s = new MemoryStorage();
+      await bootstrap(s, KEY);
+      await compact({ storage: s, currentJsonKey: KEY });
+      const lines = records.filter((r) => r.category.join(".") === "baerly.compactor");
+      expect(lines).toHaveLength(1);
+      expect(lines[0]!.properties["outcome"]).toBe("ok");
+    });
+
+    it("standalone runGc() still emits its own baerly.gc canonical line", async () => {
+      const s = new MemoryStorage();
+      await bootstrap(s, KEY);
+      await runGc({ storage: s, currentJsonKey: KEY });
+      const lines = records.filter((r) => r.category.join(".") === "baerly.gc");
+      expect(lines).toHaveLength(1);
+      expect(lines[0]!.properties["outcome"]).toBe("ok");
     });
 
     it("enriches the canonical line with compact_written / gc_swept + recorder-bag fields", async () => {

@@ -18,12 +18,7 @@
  * pattern uses exactly that.
  */
 
-import {
-  type MetricsRecorder,
-  noopMetricsRecorder,
-  type Storage,
-  teeMetricsRecorders,
-} from "@baerly/protocol";
+import { type MetricsRecorder, type Storage } from "@baerly/protocol";
 import {
   compact,
   type CompactOptions,
@@ -108,22 +103,22 @@ export const runScheduledMaintenance = (
   args: MaintenanceArgs,
   options: MaintenanceOptions = {},
 ): Promise<MaintenanceResult> =>
-  withObservability("maintenance", async (_ctx, recorder) => {
-    // Tee the per-run recorder onto the operator's `MetricsRecorder`
-    // so every emission `compact()` / `runGc()` produces lands in
-    // both the per-run canonical-line bag AND the operator's
-    // long-term sink. The default tee is harmless when the operator
-    // didn't pass a recorder — the noop side is a no-op.
-    const teed = teeMetricsRecorders(options.metrics ?? noopMetricsRecorder, recorder);
+  withObservability("maintenance", async () => {
+    // `compact()` and `runGc()` are nesting-aware: they inherit this
+    // scope's context+recorder via `withObservability`, so the per-run
+    // canonical-line bag fills automatically via `compactInner` /
+    // `runGcInner`'s own tee with `obsRecorder`. We forward only
+    // `options.metrics` (operator's long-term sink) and the signal —
+    // no explicit teeing here would just double-write the bag.
     const compactRes = await compact(args, {
       ...options.compact,
       ...(options.signal !== undefined && { signal: options.signal }),
-      metrics: teed,
+      ...(options.metrics !== undefined && { metrics: options.metrics }),
     });
     const gcRes = await runGc(args, {
       ...options.gc,
       ...(options.signal !== undefined && { signal: options.signal }),
-      metrics: teed,
+      ...(options.metrics !== undefined && { metrics: options.metrics }),
     });
 
     // Enrich the canonical line with operator-facing summary fields.

@@ -383,7 +383,7 @@ describe("baerlyWorker observability", () => {
     expect(props["status"]).toBe(200);
   });
 
-  it("scheduled() emits a maintenance canonical line on baerly.maintenance", async () => {
+  it("scheduled() emits one maintenance canonical line carrying compactor + gc + storage metrics", async () => {
     const bucket = getBinding();
     const storage = r2BindingStorage(bucket);
     const tenant = `obs-sched-${Date.now().toString(36)}`;
@@ -411,26 +411,25 @@ describe("baerlyWorker observability", () => {
     await handler.scheduled!(event, env, ctx);
     await settled();
 
+    // `compact()` and `runGc()` are nesting-aware — they inherit the
+    // outer `withObservability("maintenance")` scope's ctx+recorder
+    // and emit NO separate canonical line. One unit-of-work → one
+    // line, per canonical.ts's invariant.
     const line = findCanonical(records, "maintenance");
     expect(line).toBeDefined();
     const props = line!.properties as Record<string, unknown>;
     expect(props["outcome"]).toBe("ok");
-    // compact() and runGc() each wrap their body in a nested
-    // withObservability call, so per-phase metrics (and the storage
-    // decorator's class A/B emissions) land on the compactor/gc
-    // canonical lines, not the outer maintenance line. The
-    // maintenance line still receives compactor/gc gauge emissions
-    // that the maintenance-level teeMetricsRecorders splits onto its
-    // own bag (e.g. db.orphan.candidate_count from runGc, set on
-    // `teed = (operatorTee, maintenanceRecorder)`).
-    expect(props).toHaveProperty("db.orphan.candidate_count");
 
-    // The compactor's nested canonical line carries the storage
-    // decorator's class A/B counts — verify the storage decorator
-    // wrapping reaches this nested context.
-    const compactorLine = findCanonical(records, "compactor");
-    expect(compactorLine).toBeDefined();
-    const compactorProps = compactorLine!.properties as Record<string, unknown>;
-    expect(compactorProps["db.storage.class_b_ops_total"]).toBeGreaterThanOrEqual(1);
+    // Per-phase gauges/counters land on the maintenance line via the
+    // inherited recorder.
+    expect(props).toHaveProperty("db.orphan.candidate_count");
+    // The storage observer wraps with the ALS-aware tee; under the
+    // maintenance scope it routes class A/B counts onto the
+    // maintenance recorder.
+    expect(props["db.storage.class_b_ops_total"]).toBeGreaterThanOrEqual(1);
+
+    // No nested compactor / gc canonical lines.
+    expect(findCanonical(records, "compactor")).toBeUndefined();
+    expect(findCanonical(records, "gc")).toBeUndefined();
   });
 });

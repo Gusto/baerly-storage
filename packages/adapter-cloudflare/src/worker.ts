@@ -423,18 +423,27 @@ export function baerlyWorker(options: BaerlyWorkerOptions): ExportedHandler<Env>
       const storage = observableStorage(r2BindingStorage(env.BUCKET), teeRecorder);
       const minute = new Date(event.scheduledTime).getUTCMinutes();
       const args = { storage, currentJsonKey: env.CURRENT_JSON_KEY };
+      // `metrics:` is the bare `operatorRecorder` here — the cron
+      // path opens its own `withObservability` scope inside
+      // `runScheduledMaintenance` / `compact` / `runGc`, and
+      // `compactInner`/`runGcInner` already tee operator with the
+      // scope's per-run recorder for canonical-line fill. Passing
+      // the ALS-aware `teeRecorder` would double-write the bag (the
+      // ALS lookup resolves to the same recorder the inner tee writes
+      // to). `teeRecorder` stays on `observableStorage` because the
+      // storage observer has no scope-managed bag of its own.
       if (isPaid) {
         // Paid tier has 10k subrequest budget — let engine defaults
         // (unbounded) fold the whole live tail in one tick.
         ctx.waitUntil(
-          runScheduledMaintenance(args, { metrics: teeRecorder }).then(() => undefined),
+          runScheduledMaintenance(args, { metrics: operatorRecorder }).then(() => undefined),
         );
       } else if (minute % 2 === 0) {
         // Free tier: even-minute compact-only. CLOUDFLARE_FREE_TIER's
         // compact bounds (maxEntriesPerRun: 20, minEntriesToCompact: 50)
         // ride along on the spread at runtime.
         ctx.waitUntil(
-          compact(args, { ...CLOUDFLARE_FREE_TIER.compact, metrics: teeRecorder }).then(
+          compact(args, { ...CLOUDFLARE_FREE_TIER.compact, metrics: operatorRecorder }).then(
             () => undefined,
           ),
         );
@@ -442,7 +451,9 @@ export function baerlyWorker(options: BaerlyWorkerOptions): ExportedHandler<Env>
         // Free tier: odd-minute gc-only. CLOUDFLARE_FREE_TIER's gc bounds
         // (maxMarksPerRun: 20, maxSweepsPerRun: 10) ride along.
         ctx.waitUntil(
-          runGc(args, { ...CLOUDFLARE_FREE_TIER.gc, metrics: teeRecorder }).then(() => undefined),
+          runGc(args, { ...CLOUDFLARE_FREE_TIER.gc, metrics: operatorRecorder }).then(
+            () => undefined,
+          ),
         );
       }
     },

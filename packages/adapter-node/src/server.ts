@@ -674,14 +674,15 @@ export interface NodeMaintenanceOptions {
  * ```
  */
 export const runMaintenanceTick = async (opts: NodeMaintenanceOptions): Promise<void> => {
-  // Wrap the storage so the canonical line emitted by
-  // `withObservability("maintenance", ...)` inside
-  // `runScheduledMaintenance` sees per-call class A/B counts. The
-  // `metrics:` forwarded to maintenance is the ALS-aware tee — when
-  // a per-phase (compactor/gc) context is active, emissions land on
-  // that nested bag; when only the outer maintenance context is
-  // active, they land on the maintenance bag.
-  const teeRecorder = alsAwareRecorder(opts.metrics ?? noopMetricsRecorder);
+  // `teeRecorder` (ALS-aware) wraps the storage observer so storage
+  // metrics land in the operator's sink AND the active per-scope bag
+  // via ALS. `metrics:` to maintenance is the bare `operatorRecorder`
+  // — `runScheduledMaintenance`'s own `withObservability` opens the
+  // scope, and `compactInner` / `runGcInner` already tee operator
+  // with the scope's per-run recorder for canonical-line fill.
+  // Passing the ALS-aware wrapper here would double-write the bag.
+  const operatorRecorder = opts.metrics ?? noopMetricsRecorder;
+  const teeRecorder = alsAwareRecorder(operatorRecorder);
   await runScheduledMaintenance(
     {
       storage: observableStorage(opts.storage, teeRecorder),
@@ -689,7 +690,7 @@ export const runMaintenanceTick = async (opts: NodeMaintenanceOptions): Promise<
     },
     {
       ...(opts.signal !== undefined && { signal: opts.signal }),
-      metrics: teeRecorder,
+      metrics: operatorRecorder,
     },
   );
 };

@@ -115,11 +115,25 @@ export const flushCanonicalLine = (
  * already-decided context and can read `ctx.sampled_by_head` if it
  * wants to skip expensive debug instrumentation. The error path
  * always emits regardless.
+ *
+ * Nesting-aware: when an outer context is already active (e.g.
+ * `runScheduledMaintenance` calling `compact()` / `runGc()`, or a
+ * caller wrapping a primitive inside their own scope), this just
+ * runs `fn` against the outer ctx+recorder and emits NO separate
+ * canonical line — the outer scope owns the line. The invariant is
+ * "one unit-of-work, one canonical line"; a nested primitive call
+ * is part of the outer unit-of-work, not a unit-of-work of its own.
  */
 export const withObservability = async <T>(
   unit: Exclude<Unit, "http">,
   fn: (ctx: ObservabilityContext, recorder: RequestScopedMetricsRecorder) => Promise<T>,
 ): Promise<T> => {
+  const outer = getCurrentContext();
+  if (outer !== undefined) {
+    // Nested call — inherit outer ctx+recorder, do not flush.
+    return fn(outer, outer.recorder);
+  }
+
   const ctx = createObservabilityContext();
   ctx.sampled_by_head = decideSample(ctx.request_id, getEffectiveSampleRate());
 
