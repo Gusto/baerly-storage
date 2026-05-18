@@ -51,29 +51,33 @@ falls back to `sharedSecret()` for `wrangler dev` parity.
 ### Node production
 
 ```sh
-# Scaffold (writes Dockerfile, src/server/index.ts, baerly.config.ts, ...).
-npm create baerly@latest my-svc -- --target=node-docker
+# Scaffold (writes src/server/index.ts, baerly.config.ts, ...).
+# Add --with=docker to ship a multi-stage distroless Dockerfile
+# alongside (distroless image, non-root user, Node-script HEALTHCHECK).
+npm create baerly@latest my-svc -- --target=node --with=docker
 cd my-svc
 pnpm install
 
 # Edit .env and set AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY,
 # BUCKET, and either JWKS_URL (production) or SHARED_SECRET (dev).
 
-# Build the image (Docker shape ships with the scaffold).
+# Build the image (the docker add-on ships the Dockerfile + .dockerignore
+# + healthcheck.js into the scaffolded project).
 docker build -t my-svc:latest -f Dockerfile .
 
 # Run with the env file you populated from .env.example.
 docker run -p 8080:8080 --env-file .env my-svc:latest
 ```
 
-The production template lives at
-`examples/minimal-node-docker/`. It ships a distroless
-`Dockerfile` with non-root user (UID 65532) and a Node-script
-HEALTHCHECK, plus a `healthcheck.js` script and a `.env.example`
-documenting every env var the server reads. The Node variants are
-self-deploy via their PaaS or via `docker build` — `baerly deploy`
-only handles the Cloudflare target. For a PaaS-shaped Node scaffold
-(no Dockerfile, push-to-build), use `--target=node-railway` instead.
+The production template lives at `examples/minimal-node/`; the
+`--with=docker` add-on at
+`packages/create-baerly/templates/addons/docker/` layers on top.
+The add-on Dockerfile is a multi-stage distroless build with
+non-root user (UID 65532), a `healthcheck.js` Node script, and a
+`.dockerignore`. The Node target self-deploys via your PaaS, VM,
+or container build — `baerly deploy` only handles the Cloudflare
+target. For a PaaS-shaped Node scaffold without a Dockerfile, drop
+the `--with=docker` flag.
 
 The artifacts under `manual-e2e/cloudflare/` and `manual-e2e/node/` below
 are the **manual end-to-end check** — they exist so PRs touching

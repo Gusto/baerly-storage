@@ -35,7 +35,7 @@ pnpm install && pnpm -r build
 # rejects slashes in the project name, so cd into examples/ first:
 cd examples
 node ../packages/create-baerly/dist/index.js gate-smoke \
-  --target=node-railway --json
+  --target=node --json
 
 cd gate-smoke && pnpm install && pnpm dev
 ```

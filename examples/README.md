@@ -31,63 +31,37 @@ pnpm dev
 selector + `baerlyWorker`), then `wrangler.jsonc`
 (R2 binding + cron + observability config).
 
-## minimal-node-railway
+## minimal-node
 
-Bare self-hosted Node scaffold, PaaS-shaped. S3-compatible bucket via
+Bare self-hosted Node scaffold. S3-compatible bucket via
 `@baerly/adapter-node`, JWKS verifier with `sharedSecret` fallback for
-`pnpm dev` parity. **No Dockerfile** — designed for Railway, Render,
-DO App Platform, Fly Machines, and anything else that auto-builds
-from `package.json` `start`. Scaffolded with `--target=node-railway`.
+`pnpm dev` parity. Runs anywhere `node server.js` runs — Railway,
+Render, Fly without Docker, Heroku, a VM, any process manager.
+Scaffolded with `--target=node`.
 
-**Audience:** anyone deploying to a managed PaaS — the modal "I just
-want to push a Node app" path.
+For a production Dockerfile alongside (distroless multi-stage build
++ `healthcheck.js` + `.dockerignore`), scaffold with
+`--target=node --with=docker`. The Docker add-on lives at
+`packages/create-baerly/templates/addons/docker/` and is layered on
+top of this same shape — no second template directory.
+
+**Audience:** anyone scaffolding a self-hosted Node baerly app —
+the modal "I just want a Node HTTP server with S3 storage" path.
 
 **Run it:**
 
 ```sh
-cd examples/minimal-node-railway
+cd examples/minimal-node
 pnpm install
 pnpm dev
 ```
 
 `pnpm dev` runs `baerly dev` over `LocalFsStorage` and needs no
 credentials; the `BUCKET` / `AWS_*` / `SHARED_SECRET` env vars are
-only required for `pnpm start` and the production PaaS deploy.
+only required for `pnpm start` and the production deploy.
 
 **Read first:** `src/server/index.ts` (the `node:http` listener
 + verifier selector).
-
-## minimal-node-docker
-
-Bare self-hosted Node scaffold, distroless-Docker-shaped. Same S3 +
-JWKS wiring as `minimal-node-railway`, but ships a multi-stage `Dockerfile`,
-`.dockerignore`, and a `healthcheck.js` script for image-internal
-liveness. For raw Docker, Fly Machines, DO Container Registry, k8s,
-ECS — anywhere you push images. Scaffolded with `--target=node-docker`.
-
-**Audience:** anyone deploying baerly as a container image.
-
-**Run it (no Docker required for `pnpm dev`):**
-
-```sh
-cd examples/minimal-node-docker
-pnpm install
-pnpm dev
-```
-
-`pnpm dev` runs `baerly dev` over `LocalFsStorage` and needs no
-credentials; the `BUCKET` / `AWS_*` / `SHARED_SECRET` env vars are
-only required for `pnpm start` and the container/production deploy.
-
-**Build the image:**
-
-```sh
-docker build -t minimal-node-docker:latest -f Dockerfile .
-docker run -p 8080:8080 --env-file .env minimal-node-docker:latest
-```
-
-**Read first:** `src/server/index.ts` (the listener), then
-`Dockerfile` (the distroless multi-stage build).
 
 ## helpdesk-cloudflare
 

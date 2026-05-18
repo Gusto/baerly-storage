@@ -59,7 +59,7 @@ Don't introduce alternate tooling without justification.
 | `pnpm bench:load` | one-shot load harness on memory backend (no infra); writes one JSON per run to `bench/results/load/` | ~seconds per preset | ✅ on `main` — no infra required; see `bench/README.md` |
 | `pnpm bench:load:minio` | same as `bench:load` but with `--variant=node-minio` against local Minio | ~30s–2 min per preset | requires `MINIO=1` + `pnpm dev:storage` |
 | `pnpm bench:load:matrix` | sequential sweep over presets × variants × cache modes; writes one timestamped subdirectory under `bench/results/load/` | minutes–tens of minutes | partial: `memory` + `local-fs` rows always; `node-minio` rows require `MINIO=1` + `pnpm dev:storage` |
-| `pnpm -F @baerly/cli build && pnpm exec baerly deploy` | runs `baerly deploy` for a scaffolded app; dispatches on `baerly.config.ts:target`. Deploys to Cloudflare via `wrangler deploy --x-provision --x-auto-create` with a `wrangler r2 bucket create` fallback. Node variants (`node-railway`, `node-docker`) self-deploy via their PaaS or `docker build`, so they are not accepted here | seconds to minutes | requires `wrangler login` |
+| `pnpm -F @baerly/cli build && pnpm exec baerly deploy` | runs `baerly deploy` for a scaffolded app; dispatches on `baerly.config.ts:target`. Deploys to Cloudflare via `wrangler deploy --x-provision --x-auto-create` with a `wrangler r2 bucket create` fallback. The `node` target self-deploys via your PaaS, VM, or container build (`docker build` with `--with=docker`), so it is not accepted here | seconds to minutes | requires `wrangler login` |
 | `baerly doctor --target=cloudflare` | walks the deploy invariants and reports findings: wrangler.jsonc, R2 bindings, required secrets, CF Access audience tag, cron triggers, domain/routes coherence | seconds | requires `wrangler login`; `--fix` auto-creates missing R2 buckets |
 | `pnpm -F @baerly/cli build && pnpm exec baerly export --target=sqlite ...` | snapshot dump one collection to SQL | seconds | ✅ no infra |
 | `pnpm -F @baerly/cli build && pnpm exec baerly {init,inspect,admin dump,admin restore} ...` | operator surface: `init` drops `baerly.config.ts` into an existing repo; `inspect` prints a read-only summary of one collection's snapshot / log / index state; `admin dump` emits canonical NDJSON of the materialised view; `admin restore` re-imports that NDJSON into a fresh bucket | seconds | ✅ no infra |
@@ -231,22 +231,27 @@ Read in this order to build a mental model:
    infrastructure, not part of the automated test suite.
 11. **`examples/`** — runnable example apps that double as the CLI
    template source. `examples/minimal-cloudflare/` (R2 +
-   `cloudflareAccess`→`sharedSecret`), `examples/minimal-node-railway/`
-   (S3 + JWKS→`sharedSecret`, PaaS-shaped — no Dockerfile),
-   `examples/minimal-node-docker/` (S3 + JWKS→`sharedSecret`, distroless
-   `Dockerfile` + `healthcheck.js`), and `examples/helpdesk-cloudflare/`
-   are the production-shaped scaffolds; `examples/helpdesk/` is a
-   dev-only teaching fixture: single Vite process; the Baerly HTTP
-   listener is mounted as middleware via `baerlyDev()` from
-   `@baerly/dev/vite`; ticket CRUD over `LocalFsStorage`. Each
-   scaffoldable example carries a
-   `.baerly/scaffold.json` manifest declaring rename sentinels,
+   `cloudflareAccess`→`sharedSecret`), `examples/minimal-node/`
+   (S3 + JWKS→`sharedSecret`, any host that runs `node server.js`),
+   and `examples/helpdesk-cloudflare/` are the production-shaped
+   scaffolds; `examples/helpdesk/` is a dev-only teaching fixture:
+   single Vite process; the Baerly HTTP listener is mounted as
+   middleware via `baerlyDev()` from `@baerly/dev/vite`; ticket
+   CRUD over `LocalFsStorage`. Each scaffoldable example carries
+   a `.baerly/scaffold.json` manifest declaring rename sentinels,
    copy exclusions, and devDep drops. The CLI consumes them at
    scaffold time via `STARTER_TO_EXAMPLE` in
    `packages/create-baerly/src/scaffold.ts`; the rolldown build
    copies them into `dist/templates/<name>/` so the published
-   `create-baerly` binary is self-contained. Catalog index in
-   `examples/README.md`.
+   `create-baerly` binary is self-contained.
+   Opt-in add-ons live alongside the examples at
+   `packages/create-baerly/templates/addons/<name>/` (today: just
+   `docker/` — Dockerfile + healthcheck.js + .dockerignore). The
+   scaffolder layers an add-on on top of the base template when
+   `--with=<name>` is passed (Docker requires `--target=node`).
+   `rolldown.config.ts` mirrors `templates/addons/` into
+   `dist/templates/addons/` so the published binary ships them too.
+   Catalog index in `examples/README.md`.
 
 The full lifecycle of `db.table().insert()` is in
 [docs/contributing/architecture.md](docs/contributing/architecture.md) — read it before

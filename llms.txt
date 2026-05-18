@@ -34,7 +34,7 @@ export default {
 } satisfies ExportedHandler;
 ```
 
-Server (Node — `examples/minimal-node-railway/src/server/index.ts`):
+Server (Node — `examples/minimal-node/src/server/index.ts`):
 
 ```ts
 import { baerlyNode, s3Storage } from "@baerly/adapter-node";

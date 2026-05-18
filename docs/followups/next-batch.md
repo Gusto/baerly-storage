@@ -48,8 +48,8 @@ install on Node 22.
 **Effort:** M (likely surfaces real type holes in the example
 source).
 
-All eight per-target tsconfigs under
-`examples/{minimal,helpdesk}-{cloudflare,node-docker,node-railway}/tsconfig.{app,worker,server}.json`
+All per-target tsconfigs under
+`examples/{minimal-cloudflare,minimal-node,helpdesk-cloudflare}/tsconfig.{app,worker,server}.json`
 declare `target`, `lib`, `module`, `moduleResolution`,
 `allowImportingTsExtensions`, `strict`, `esModuleInterop`,
 `skipLibCheck`, but they do **not** `extends:
@@ -85,7 +85,7 @@ lib (memory item: that shim is load-bearing — coordinate the bump
 with deleting the per-example `uint8array-base64.d.ts` shim once
 the lib lists it natively).
 
-### 9. `examples/minimal-node-docker/Dockerfile` has avoidable rough edges
+### 9. `packages/create-baerly/templates/addons/docker/Dockerfile` has avoidable rough edges
 
 **STATUS: deferred; pre-1.0 polish.**
 **Effort:** S (~1h).
@@ -152,8 +152,7 @@ with the public binary name (`baerly`) once that's settled.
 **Effort:** XS (drop the script, or add a vitest devDep + a
 one-line config).
 
-Each of `examples/minimal-{cloudflare,node-docker,node-railway}/package.json`
-and `examples/helpdesk-cloudflare/package.json` has
+Each of `examples/{minimal-cloudflare,minimal-node,helpdesk-cloudflare}/package.json` has
 `"test": "vitest run"` but no `vitest` in devDependencies. Running
 `pnpm test` in a freshly scaffolded project will fail with
 "command not found." Either drop the script (templates currently
@@ -1504,10 +1503,10 @@ see how small it can be.
 
 #### H13. `minimal-cloudflare/src/web/main.ts` is a 4-line placeholder — **LOW**
 
-(Plus identical placeholders in `minimal-node-railway` and
-`minimal-node-docker`.) User runs `pnpm dev`, sees "Edit
-src/web/main.ts to get started." No `createBaerlyClient`, no
-`fetch("/v1/healthz")`, no demonstration the API actually works.
+(Plus an identical placeholder in `minimal-node`.) User runs
+`pnpm dev`, sees "Edit src/web/main.ts to get started." No
+`createBaerlyClient`, no `fetch("/v1/healthz")`, no demonstration
+the API actually works.
 
 **Fix:** 15-line snippet: ping `/v1/healthz`, call
 `createBaerlyClient`, insert a row, render it. Something
@@ -1584,7 +1583,7 @@ Resolves today only via transitive deps from `@baerly/server` +
 `helpdesk-cloudflare/package.json:dependencies`. Audit same in
 `minimal-cloudflare/src/server/index.ts:26`.
 
-#### H22. `minimal-node-docker/.dockerignore` allow-lists wrong dist path — **LOW**
+#### H22. `templates/addons/docker/.dockerignore` allow-lists wrong dist path — **LOW**
 
 Excludes `dist/server` (doesn't exist); does NOT exclude
 `dist/client`. The Dockerfile relies on `dist/client/` being

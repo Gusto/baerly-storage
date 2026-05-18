@@ -32,7 +32,9 @@ For integrators and operators running Baerly against a real bucket.
   ports, fuzzer, CI formatting.
 - `guide/backups.md` — `baerly copy` bucket-to-bucket procedure.
 - Runnable scaffolds: `../examples/` (`minimal-cloudflare`,
-  `node-railway`, `node-docker`, `helpdesk-cloudflare`, `helpdesk`).
+  `minimal-node`, `helpdesk-cloudflare`, `helpdesk`). The Docker
+  add-on lives at `../packages/create-baerly/templates/addons/docker/`
+  and layers onto `minimal-node` via `--with=docker` at scaffold time.
 
 ## About Baerly
 
