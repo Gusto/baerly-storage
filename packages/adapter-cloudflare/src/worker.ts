@@ -1,11 +1,6 @@
+import { type DevLandingOptions, renderDevLanding } from "@baerly/dev";
 import { type MetricsRecorder, type Verifier, noopMetricsRecorder } from "@baerly/protocol";
-import {
-  Db,
-  type DevLandingOptions,
-  createRouter,
-  errorEnvelope,
-  renderDevLanding,
-} from "@baerly/server";
+import { Db, createRouter, errorEnvelope } from "@baerly/server";
 import {
   CLOUDFLARE_FREE_TIER,
   CLOUDFLARE_PAID_TIER,

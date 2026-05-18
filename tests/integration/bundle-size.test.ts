@@ -78,7 +78,14 @@ const BUDGETS: readonly Budget[] = [
   //     result types + Verifier (curated 11-symbol public surface
   //     on @baerly/server's barrel); MemoryStorage value export
   //     lands in the static closure.
-  { entry: "index.js", raw: 388 * 1024, gz: 112 * 1024 },
+  //   → 349 KiB raw / 101 KiB gz: `renderDevLanding` /
+  //     `DevLandingOptions` moved from the kernel barrel to
+  //     `@baerly/dev` (the dev-only HTML helper is now reached
+  //     from the adapters' `opts.dev` branches via @baerly/dev,
+  //     which is sideEffects:false so production consumers
+  //     tree-shake the LocalFsStorage + vite-plugin + picocolors
+  //     subgraph).
+  { entry: "index.js", raw: 349 * 1024, gz: 101 * 1024 },
   // Just the five auth verifier factories. Adding a sixth grows
   // this budget, not the kernel's.
   { entry: "auth.js", raw: 34 * 1024, gz: 12 * 1024 },

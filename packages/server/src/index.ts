@@ -17,7 +17,6 @@ export {
   type UnboundConfig,
   defineConfig,
 } from "./config.ts";
-export { type DevLandingOptions, renderDevLanding } from "./dev-landing.ts";
 export {
   type HttpErrorEnvelope,
   type HttpOkEnvelope,

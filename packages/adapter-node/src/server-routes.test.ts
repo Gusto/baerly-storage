@@ -301,7 +301,7 @@ describe("createListener dev landing", () => {
       app: "tickets",
       storage,
       verifier: denyVerifier,
-      dev: { app: "tickets", uiUrl: "http://localhost:5173", appLabel: "Helpdesk demo" },
+      dev: { app: "tickets", uiUrl: "http://localhost:5173" },
     });
     const server = createServer(listener);
     await new Promise<void>((resolve) => server.listen(0, resolve));
@@ -327,7 +327,7 @@ describe("createListener dev landing", () => {
       expect(res.status).toBe(200);
       expect(res.headers.get("content-type")).toBe("text/html; charset=utf-8");
       const html = await res.text();
-      expect(html).toContain("Helpdesk demo");
+      expect(html).toContain("<code>tickets</code>");
       expect(html).toContain(`href="http://localhost:5173"`);
     });
   });

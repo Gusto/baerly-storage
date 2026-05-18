@@ -23,17 +23,15 @@ export interface DevLandingOptions {
   readonly app: string;
   /** URL of the human-facing UI (e.g., `"http://localhost:5173"`). */
   readonly uiUrl: string;
-  /** Optional friendly label shown in the page header. Defaults to {@link app}. */
-  readonly appLabel?: string;
 }
 
 /**
  * Render the dev landing page HTML. Dependency-free; system fonts
  * only; no JS. All substitutions are HTML-escaped to keep the page
- * inert even when `app` / `uiUrl` / `appLabel` come from env vars.
+ * inert even when `app` / `uiUrl` come from env vars.
  */
 export const renderDevLanding = (opts: DevLandingOptions): string => {
-  const label = escapeHtml(opts.appLabel ?? opts.app);
+  const label = escapeHtml(opts.app);
   const app = escapeHtml(opts.app);
   const uiUrl = escapeHtml(opts.uiUrl);
   return `<!doctype html>

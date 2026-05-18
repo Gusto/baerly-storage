@@ -320,7 +320,7 @@ describe("baerlyWorker dev landing", () => {
     // a 401 here would mean the landing path wasn't taken.
     const worker = baerlyWorker({
       verifier: denyVerifier,
-      dev: { app: "tickets", uiUrl: "http://localhost:5173", appLabel: "Helpdesk demo" },
+      dev: { app: "tickets", uiUrl: "http://localhost:5173" },
     });
     const res = await worker.fetch!(
       asWorkersRequest(new Request("https://x/")),
@@ -330,7 +330,7 @@ describe("baerlyWorker dev landing", () => {
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toBe("text/html; charset=utf-8");
     const html = await res.text();
-    expect(html).toContain("Helpdesk demo");
+    expect(html).toContain("<code>tickets</code>");
     expect(html).toContain(`href="http://localhost:5173"`);
   });
 

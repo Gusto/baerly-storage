@@ -16,15 +16,8 @@ import {
   type Verifier,
   noopMetricsRecorder,
 } from "@baerly/protocol";
-import {
-  Db,
-  type DevLandingOptions,
-  MAX_BODY_BYTES,
-  createRouter,
-  errorEnvelope,
-  mapError,
-  renderDevLanding,
-} from "@baerly/server";
+import { type DevLandingOptions, renderDevLanding } from "@baerly/dev";
+import { Db, MAX_BODY_BYTES, createRouter, errorEnvelope, mapError } from "@baerly/server";
 import { NODE_PROFILE, runScheduledMaintenance } from "@baerly/server/maintenance";
 import {
   CATEGORY,

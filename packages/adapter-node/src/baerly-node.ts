@@ -1,6 +1,6 @@
 import { createServer, type Server } from "node:http";
+import type { DevLandingOptions } from "@baerly/dev";
 import type { MetricsRecorder, Storage, Verifier } from "@baerly/protocol";
-import type { DevLandingOptions } from "@baerly/server";
 import type { ObservabilityConfig } from "@baerly/server/observability";
 import { createListener, runMaintenanceTick } from "./server.ts";
 
