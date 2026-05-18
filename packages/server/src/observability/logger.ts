@@ -54,13 +54,11 @@ import {
  */
 export const CATEGORY = {
   http: ["baerly", "http"],
-  writer: ["baerly", "writer"],
   maintenance: ["baerly", "maintenance"],
   compactor: ["baerly", "compactor"],
   gc: ["baerly", "gc"],
   rebuild: ["baerly", "rebuild"],
   storage: ["baerly", "storage"],
-  auth: ["baerly", "auth"],
 } as const;
 
 /** Logical type of a `CATEGORY.*` value. */

@@ -278,13 +278,11 @@ describe("CATEGORY", () => {
   it('includes every documented category as a ["baerly", <unit>] tuple', () => {
     expect(CATEGORY).toEqual({
       http: ["baerly", "http"],
-      writer: ["baerly", "writer"],
       maintenance: ["baerly", "maintenance"],
       compactor: ["baerly", "compactor"],
       gc: ["baerly", "gc"],
       rebuild: ["baerly", "rebuild"],
       storage: ["baerly", "storage"],
-      auth: ["baerly", "auth"],
     });
   });
 });

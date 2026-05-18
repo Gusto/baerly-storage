@@ -41,7 +41,7 @@ import { serializeError } from "./redact.ts";
 import { decideSample } from "./sampling.ts";
 
 /** Discriminator for the canonical line's `category` derivation. */
-export type Unit = "http" | "writer" | "maintenance" | "compactor" | "gc" | "rebuild";
+export type Unit = "http" | "maintenance" | "compactor" | "gc" | "rebuild";
 
 /** Options accepted by {@link flushCanonicalLine}. */
 export interface FlushCanonicalLineOptions {
@@ -58,7 +58,6 @@ export interface FlushCanonicalLineOptions {
 
 const UNIT_TO_CATEGORY: Readonly<Record<Unit, CategoryName>> = {
   http: CATEGORY.http,
-  writer: CATEGORY.writer,
   maintenance: CATEGORY.maintenance,
   compactor: CATEGORY.compactor,
   gc: CATEGORY.gc,
