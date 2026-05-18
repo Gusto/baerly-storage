@@ -83,9 +83,15 @@ describe("runWizard", () => {
     const out = await runWizard({
       projectName: "my-app",
       target: "cloudflare",
+      withAddons: [],
       install: false,
     });
-    expect(out).toEqual({ projectName: "my-app", target: "cloudflare", install: false });
+    expect(out).toEqual({
+      projectName: "my-app",
+      target: "cloudflare",
+      withAddons: [],
+      install: false,
+    });
     // None of the prompt helpers were called.
     expect(fixture.textCalls).toHaveLength(0);
     expect(fixture.selectCalls).toHaveLength(0);
@@ -103,9 +109,57 @@ describe("runWizard", () => {
     const out = await runWizard({});
     expect(out.projectName).toBe("my-app");
     expect(out.target).toBe("cloudflare");
+    expect(out.withAddons).toEqual([]);
     expect(out.install).toBe(true);
     expect(fixture.textCalls).toHaveLength(1);
     expect(fixture.selectCalls).toHaveLength(1);
+    // Only the install confirm fires — the docker confirm is gated on
+    // `target === "node"`.
+    expect(fixture.confirmCalls).toHaveLength(1);
+  });
+
+  it("fires the docker confirm when target === node and returns withAddons", async () => {
+    resetFixture();
+    fixture.textValue = "my-app";
+    fixture.selectValue = "node";
+    // The mocked `confirm` returns the same value for every call;
+    // both the docker confirm and the install confirm see `true`.
+    fixture.confirmValue = true;
+    const runWizard = await importRunWizard();
+    const out = await runWizard({});
+    expect(out.target).toBe("node");
+    expect(out.withAddons).toEqual(["docker"]);
+    expect(out.install).toBe(true);
+    // Docker confirm + install confirm → two calls.
+    expect(fixture.confirmCalls).toHaveLength(2);
+  });
+
+  it("returns withAddons=[] when target === node and the docker confirm is declined", async () => {
+    resetFixture();
+    fixture.textValue = "my-app";
+    fixture.selectValue = "node";
+    fixture.confirmValue = false;
+    const runWizard = await importRunWizard();
+    const out = await runWizard({});
+    expect(out.target).toBe("node");
+    expect(out.withAddons).toEqual([]);
+    expect(out.install).toBe(false);
+    expect(fixture.confirmCalls).toHaveLength(2);
+  });
+
+  it("skips the docker confirm when withAddons is pre-filled", async () => {
+    resetFixture();
+    fixture.textValue = "my-app";
+    fixture.confirmValue = true;
+    const runWizard = await importRunWizard();
+    const out = await runWizard({
+      target: "node",
+      withAddons: ["docker"],
+    });
+    expect(out.withAddons).toEqual(["docker"]);
+    expect(out.install).toBe(true);
+    // Only the install confirm fires — the docker confirm is skipped
+    // because withAddons was pre-supplied.
     expect(fixture.confirmCalls).toHaveLength(1);
   });
 

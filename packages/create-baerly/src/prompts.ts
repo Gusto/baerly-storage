@@ -12,6 +12,7 @@
  */
 import { cancel, confirm, intro, isCancel, select, text } from "@clack/prompts";
 import pc from "picocolors";
+import type { Addon } from "./scaffold.ts";
 
 const TARGETS = [
   {
@@ -20,14 +21,9 @@ const TARGETS = [
     hint: "R2 + Workers, deploy via wrangler",
   },
   {
-    value: "node-railway",
-    label: "Node (Railway / Render / DO App Platform)",
-    hint: "Managed PaaS, auto-build, no Dockerfile",
-  },
-  {
-    value: "node-docker",
-    label: "Node (Docker / k8s / VPS)",
-    hint: "Distroless Dockerfile, container registries",
+    value: "node",
+    label: "Node",
+    hint: "Any host that runs `node server.js` (Railway, Render, Fly without Docker, Heroku, a VM)",
   },
 ] as const;
 
@@ -36,6 +32,12 @@ export interface WizardInput {
   readonly projectName?: string;
   /** When non-undefined, skip the target prompt and use this. */
   readonly target?: "cloudflare" | "node";
+  /**
+   * When non-undefined, skip the per-add-on confirms and use this set.
+   * Today only `"docker"` is a meaningful element (and only when
+   * `target === "node"`).
+   */
+  readonly withAddons?: readonly Addon[];
   /** When non-undefined, skip the install confirm and use this. */
   readonly install?: boolean;
 }
@@ -43,6 +45,7 @@ export interface WizardInput {
 export interface WizardOutput {
   readonly projectName: string;
   readonly target: "cloudflare" | "node";
+  readonly withAddons: readonly Addon[];
   readonly install: boolean;
 }
 
@@ -50,8 +53,19 @@ export const runWizard = async (input: WizardInput): Promise<WizardOutput> => {
   intro(pc.bold(pc.cyan("create-baerly")));
   const projectName = input.projectName ?? (await promptProjectName());
   const target = input.target ?? (await promptTarget());
+  // Add-on prompts are gated per-target. Today only `docker` exists
+  // and only applies when `target === "node"`; on `cloudflare` we
+  // skip the prompt and emit an empty addon list.
+  let withAddons: readonly Addon[];
+  if (input.withAddons !== undefined) {
+    withAddons = input.withAddons;
+  } else if (target === "node") {
+    withAddons = (await promptDocker()) ? ["docker"] : [];
+  } else {
+    withAddons = [];
+  }
   const install = input.install ?? (await promptInstall());
-  return { projectName, target, install };
+  return { projectName, target, withAddons, install };
 };
 
 const promptProjectName = async (): Promise<string> => {
@@ -85,6 +99,18 @@ const promptTarget = async (): Promise<"cloudflare" | "node"> => {
     process.exit(1);
   }
   return v as "cloudflare" | "node";
+};
+
+const promptDocker = async (): Promise<boolean> => {
+  const v = await confirm({
+    message: "Add a production Dockerfile?",
+    initialValue: false,
+  });
+  if (isCancel(v)) {
+    cancel("Cancelled.");
+    process.exit(1);
+  }
+  return v as boolean;
 };
 
 const promptInstall = async (): Promise<boolean> => {
