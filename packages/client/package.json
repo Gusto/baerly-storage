@@ -21,13 +21,16 @@
     }
   },
   "dependencies": {
-    "@baerly/protocol": "workspace:*",
-    "@baerly/server": "workspace:*"
+    "@baerly/protocol": "workspace:*"
   },
   "peerDependencies": {
+    "@baerly/server": "workspace:*",
     "react": ">=18"
   },
   "peerDependenciesMeta": {
+    "@baerly/server": {
+      "optional": true
+    },
     "react": {
       "optional": true
     }
