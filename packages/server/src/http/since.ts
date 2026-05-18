@@ -1,8 +1,3 @@
-/* eslint-disable no-underscore-dangle -- `_raw` is the locked public-symbol
-   name for the Storage escape hatch on `Db`; the long-poll handler
-   reaches through it to read `current.json` + log entries with the
-   `app/<app>/tenant/<tenant>/` physical-prefix rewrite already applied. */
-
 /**
  * Long-poll `GET /v1/since` handler core. Two exports:
  *
@@ -34,8 +29,8 @@
  */
 
 import { BaerlyError } from "@baerly/protocol";
-import type { LogEntry, Storage, StorageGetOptions, StorageGetResult } from "@baerly/protocol";
-import { LOG_KEY_PREFIX, logSeqStartOf, lsnParts, readCurrentJson } from "@baerly/protocol";
+import type { LogEntry } from "@baerly/protocol";
+import { logSeqStartOf, lsnParts } from "@baerly/protocol";
 import type { BaerlyConfig } from "../config.ts";
 import type { Db } from "../db.ts";
 import type { SinceResponse } from "../contract.ts";
@@ -59,28 +54,28 @@ const LSN_RE = /^[0-9a-v]+_[0-9a-v]+_[0-9a-v]{2}$/;
 const DEFAULT_MAX_EVENTS = 1024;
 
 /**
- * Env-read guarded against Workerd (no `process.env`). The two
- * `DEFAULT_*` constants below resolve once at module init, NOT
- * per-request. CF Worker env access has measurable per-call cost.
- */
-const env: Record<string, string | undefined> =
-  typeof process !== "undefined" && process.env ? process.env : {};
-
-/**
  * Default 25 s long-poll budget. CF Workers cap fetch CPU at 30 s on
  * the free plan; 25 s leaves slack for header serialization plus the
  * platform's bookkeeping. Node / Bun / Deno have no comparable cap,
  * but the budget is still useful as a connection-cycling hint for
  * upstream load balancers (most idle-connection timeouts are 30-60 s).
+ *
+ * Per-request override is via the `timeoutMs` field on
+ * {@link LongPollSinceOptions} (plumbed from `sinceTimeoutMs` on
+ * `CreateRouterOptions` and both Node + Cloudflare adapters).
  */
-const DEFAULT_TIMEOUT_MS = Number(env.BAERLY_SINCE_TIMEOUT_MS ?? 25_000);
+const DEFAULT_TIMEOUT_MS = 25_000;
 
 /**
  * Default 1 s inner-poll interval. 25 polls × 1 list = 25 Class A
  * ops per active long-poll connection. See module docstring for the
  * cost-model trade-off.
+ *
+ * Per-request override is via the `pollIntervalMs` field on
+ * {@link LongPollSinceOptions} (plumbed from `sincePollIntervalMs`
+ * on `CreateRouterOptions` and both Node + Cloudflare adapters).
  */
-const DEFAULT_POLL_INTERVAL_MS = Number(env.BAERLY_SINCE_POLL_INTERVAL_MS ?? 1_000);
+const DEFAULT_POLL_INTERVAL_MS = 1_000;
 
 export interface LongPollSinceOptions {
   readonly db: Db<BaerlyConfig>;
@@ -245,17 +240,7 @@ export async function listEventsSince(opts: ListEventsSinceOptions): Promise<Log
     );
   }
 
-  const tablePrefix = `manifests/${table}`;
-  const currentJsonKey = `${tablePrefix}/current.json`;
-  const logPrefix = `${tablePrefix}/${LOG_KEY_PREFIX}/`;
-
-  // `readCurrentJson` calls `Storage.get`. Build a 1-method adapter
-  // over `db._raw.get` so we get the tenant prefix rewrite for free.
-  // The other Storage methods throw `Internal` — `readCurrentJson`
-  // only ever calls `get`.
-  const storage = rawAsStorage(db);
-
-  const read = await readCurrentJson(storage, currentJsonKey, signalOpt(signal));
+  const read = await db.getCurrentJson(table, signalOpt(signal));
   if (read === null) {
     // No table provisioned yet. Clients polling for a table that
     // doesn't exist see an empty stream, NOT an error.
@@ -292,57 +277,17 @@ export async function listEventsSince(opts: ListEventsSinceOptions): Promise<Log
   // per-poll batch is typically 0-10 entries, sequential keeps
   // memory bounded under pathological workloads.
   const entries: LogEntry[] = [];
-  const textDecoder = new TextDecoder();
   for (let s = startSeq; s < endSeq; s++) {
-    const key = `${logPrefix}${s}.json`;
-    const got = await db._raw.get(key, signalOpt(signal));
-    if (got === null) {
+    const entry = await db.getLogEntry(table, s, signalOpt(signal));
+    if (entry === null) {
       // Race: the GC sweeper deleted this entry between
-      // `readCurrentJson` and the GET. Skip; don't error.
+      // `getCurrentJson` and the GET. Skip; don't error.
       continue;
     }
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(textDecoder.decode(got.body));
-    } catch (e) {
-      throw new BaerlyError("InvalidResponse", `log entry at ${key}: body is not valid JSON`, e);
-    }
-    entries.push(parsed as LogEntry);
+    entries.push(entry);
   }
 
   return entries;
-}
-
-/**
- * Adapter that exposes `Db._raw.get` under the `Storage` interface
- * so `readCurrentJson` (which is platform-agnostic and only takes a
- * `Storage`) can read through the tenant-prefix rewrite. The other
- * `Storage` methods throw `Internal` — they are unreachable inside
- * `readCurrentJson`.
- */
-function rawAsStorage(db: Db<BaerlyConfig>): Storage {
-  return {
-    get: (key: string, opts?: StorageGetOptions): Promise<StorageGetResult | null> => {
-      // Forward only the fields the underlying `Db._raw.get` honours.
-      // Reassemble the object via spread because `StorageGetOptions`
-      // is fully `readonly` (no field-wise reassignment).
-      const passOpts: StorageGetOptions = {
-        ...(opts?.ifNoneMatch !== undefined && { ifNoneMatch: opts.ifNoneMatch }),
-        ...(opts?.versionId !== undefined && { versionId: opts.versionId }),
-        ...(opts?.signal !== undefined && { signal: opts.signal }),
-      };
-      return db._raw.get(key, passOpts);
-    },
-    put: () => {
-      throw new BaerlyError("Internal", "rawAsStorage: put() is not implemented");
-    },
-    delete: () => {
-      throw new BaerlyError("Internal", "rawAsStorage: delete() is not implemented");
-    },
-    list: () => {
-      throw new BaerlyError("Internal", "rawAsStorage: list() is not implemented");
-    },
-  };
 }
 
 /** Pack an optional `signal` into the `{ signal? }` shape callers expect. */

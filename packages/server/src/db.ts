@@ -1,9 +1,16 @@
 /* eslint-disable no-underscore-dangle -- `_raw` is the locked public-symbol
    name for the Storage escape hatch; marked `@internal`. */
 
-import { BaerlyError, noopMetricsRecorder } from "@baerly/protocol";
+import {
+  BaerlyError,
+  LOG_KEY_PREFIX,
+  noopMetricsRecorder,
+  readCurrentJson,
+} from "@baerly/protocol";
 import type {
+  CurrentJsonRead,
   JSONArraylessObject,
+  LogEntry,
   MetricsRecorder,
   Storage,
   StorageGetOptions,
@@ -559,6 +566,60 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
       options: { metrics: this.#metrics, indexes },
     });
     await writer.commitBatch(inputs);
+  }
+
+  /**
+   * Read + parse this `Db`'s `manifests/<table>/current.json`. Returns
+   * `null` when the table has not been provisioned yet (no
+   * `current.json` exists). Throws `BaerlyError{code:"InvalidResponse"}`
+   * on a malformed body — same contract as the underlying
+   * {@link readCurrentJson} helper in `@baerly/protocol`.
+   *
+   * Backs the `/v1/since` long-poll handler in
+   * `packages/server/src/http/since.ts`; that handler needs the parsed
+   * `CurrentJson` plus an ETag for the follow-up reads.
+   *
+   * @internal — public symbol, but the table API is the recommended
+   *             surface for app code; this is here so the HTTP handler
+   *             doesn't have to reach through `_raw` under a
+   *             Storage-shaped half-stub.
+   */
+  async getCurrentJson(
+    table: string,
+    opts?: { signal?: AbortSignal },
+  ): Promise<CurrentJsonRead | null> {
+    const key = `${physicalPrefixFor(this.app, this.tenant)}manifests/${table}/current.json`;
+    return readCurrentJson(this.#storage, key, opts);
+  }
+
+  /**
+   * Read + parse one `LogEntry` by `seq` from
+   * `manifests/<table>/${LOG_KEY_PREFIX}/<seq>.json`. Returns `null`
+   * when the entry is missing — this typically means the GC sweeper
+   * deleted the entry between a `readCurrentJson` and this GET (the
+   * `/v1/since` handler treats the race as silent and skips the
+   * entry). Throws `BaerlyError{code:"InvalidResponse"}` on a body
+   * that isn't valid JSON.
+   *
+   * @internal — public symbol, but the table API is the recommended
+   *             surface for app code; this is here so the HTTP handler
+   *             doesn't have to reach through `_raw` directly.
+   */
+  async getLogEntry(
+    table: string,
+    seq: number,
+    opts?: { signal?: AbortSignal },
+  ): Promise<LogEntry | null> {
+    const key = `${physicalPrefixFor(this.app, this.tenant)}manifests/${table}/${LOG_KEY_PREFIX}/${seq}.json`;
+    const got = await this.#storage.get(key, opts);
+    if (got === null) return null;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(new TextDecoder().decode(got.body));
+    } catch (e) {
+      throw new BaerlyError("InvalidResponse", `log entry at ${key}: body is not valid JSON`, e);
+    }
+    return parsed as LogEntry;
   }
 }
 
