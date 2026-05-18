@@ -27,7 +27,6 @@
  *   2 — internal harness error (template missing, transcript not
  *       created, etc.).
  *
- * Spec: `.claude/research/planning/tickets/84-first-eval-pass-runner.md`.
  */
 import { spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
@@ -112,7 +111,6 @@ function helpText() {
     "",
     DECISIONS_TEXT,
     "",
-    "See `.claude/research/planning/tickets/84-first-eval-pass-runner.md`.",
   ].join("\n");
 }
 
