@@ -209,35 +209,30 @@ export function createRouter(options: CreateRouterOptions): Hono {
       const result = await verifier(c.req.raw);
       if (result === null) {
         getLogger(CATEGORY.http).warn("verifier_rejected", { reason: "null" });
-        return jsonError(c, 401, "Unauthorized", "Missing or invalid Authorization header");
+        throw new BaerlyError("Unauthorized", "Missing or invalid Authorization header");
       }
       await next();
-      return undefined;
     });
   }
 
   // Read one — GET /v1/t/:table/:id
   app.get("/v1/t/:table/:id", async (c) => {
     const { table, id } = c.req.param();
-    try {
-      const consistency = parseConsistency(c.req.query("consistency"));
-      const { row, manifestPointer, fresh } = await runFirstWithMeta(db.tableReadContext(table), {
-        predicate: { _id: id } as Predicate<JSONArraylessObject>,
-        order: undefined,
-        limit: 1,
-        consistency,
-      });
-      if (row === undefined) return jsonError(c, 404, "NotFound", `No such row: ${id}`);
-      return c.json(
-        {
-          data: row,
-          _meta: { manifest_pointer: manifestPointer, fresh },
-        } satisfies HttpOkEnvelope<JSONArraylessObject>,
-        200,
-      );
-    } catch (e) {
-      return mapToResponse(c, e);
-    }
+    const consistency = parseConsistency(c.req.query("consistency"));
+    const { row, manifestPointer, fresh } = await runFirstWithMeta(db.tableReadContext(table), {
+      predicate: { _id: id } as Predicate<JSONArraylessObject>,
+      order: undefined,
+      limit: 1,
+      consistency,
+    });
+    if (row === undefined) throw new BaerlyError("NotFound", `No such row: ${id}`);
+    return c.json(
+      {
+        data: row,
+        _meta: { manifest_pointer: manifestPointer, fresh },
+      } satisfies HttpOkEnvelope<JSONArraylessObject>,
+      200,
+    );
   });
 
   // List — GET /v1/t/:table?where=<urlencoded-json>
@@ -249,87 +244,69 @@ export function createRouter(options: CreateRouterOptions): Hono {
       try {
         predicate = JSON.parse(whereParam) as Record<string, unknown>;
       } catch {
-        return jsonError(c, 400, "SchemaError", "Invalid JSON in ?where=");
+        throw new BaerlyError("SchemaError", "Invalid JSON in ?where=");
       }
     }
-    try {
-      const consistency = parseConsistency(c.req.query("consistency"));
-      const { rows, manifestPointer, fresh } = await runAllWithMeta(db.tableReadContext(table), {
-        predicate: predicate as Predicate<JSONArraylessObject>,
-        order: undefined,
-        limit: undefined,
-        consistency,
-      });
-      return c.json(
-        {
-          data: rows,
-          _meta: { manifest_pointer: manifestPointer, fresh },
-        } satisfies HttpOkEnvelope<ReadonlyArray<JSONArraylessObject>>,
-        200,
-      );
-    } catch (e) {
-      return mapToResponse(c, e);
-    }
+    const consistency = parseConsistency(c.req.query("consistency"));
+    const { rows, manifestPointer, fresh } = await runAllWithMeta(db.tableReadContext(table), {
+      predicate: predicate as Predicate<JSONArraylessObject>,
+      order: undefined,
+      limit: undefined,
+      consistency,
+    });
+    return c.json(
+      {
+        data: rows,
+        _meta: { manifest_pointer: manifestPointer, fresh },
+      } satisfies HttpOkEnvelope<ReadonlyArray<JSONArraylessObject>>,
+      200,
+    );
   });
 
   // Insert — POST /v1/t/:table  Body: { doc }  → 201 { _id }
   app.post("/v1/t/:table", async (c) => {
     const { table } = c.req.param();
     const body = await readJsonBody(c, MAX_BODY_BYTES);
-    if (body.kind === "err") return jsonError(c, body.status, body.code, body.message);
-    const { doc } = body.value as { doc?: unknown };
+    const { doc } = body as { doc?: unknown };
     if (doc === undefined || typeof doc !== "object" || doc === null || Array.isArray(doc)) {
-      return jsonError(c, 400, "SchemaError", "Request body must be { doc: object }");
+      throw new BaerlyError("SchemaError", "Request body must be { doc: object }");
     }
-    try {
-      const { _id } = await db
-        .table(table)
-        .insert(doc as Partial<JSONArraylessObject> & JSONArraylessObject);
-      return c.json({ _id }, 201);
-    } catch (e) {
-      return mapToResponse(c, e);
-    }
+    const { _id } = await db
+      .table(table)
+      .insert(doc as Partial<JSONArraylessObject> & JSONArraylessObject);
+    return c.json({ _id }, 201);
   });
 
   // Patch — PATCH /v1/t/:table/:id  Body: { patch }
   app.patch("/v1/t/:table/:id", async (c) => {
     const { table, id } = c.req.param();
     const body = await readJsonBody(c, MAX_BODY_BYTES);
-    if (body.kind === "err") return jsonError(c, body.status, body.code, body.message);
-    const { patch } = body.value as { patch?: unknown };
+    const { patch } = body as { patch?: unknown };
     if (
       patch === undefined ||
       typeof patch !== "object" ||
       patch === null ||
       Array.isArray(patch)
     ) {
-      return jsonError(c, 400, "SchemaError", "Request body must be { patch: object }");
+      throw new BaerlyError("SchemaError", "Request body must be { patch: object }");
     }
-    try {
-      const { modified } = await db
-        .table(table)
-        .where({ _id: id } as Predicate<JSONArraylessObject>)
-        .update(patch as Partial<JSONArraylessObject>);
-      if (modified === 0) return jsonError(c, 404, "NotFound", `No such row: ${id}`);
-      return c.json({ modified }, 200);
-    } catch (e) {
-      return mapToResponse(c, e);
-    }
+    const { modified } = await db
+      .table(table)
+      .where({ _id: id } as Predicate<JSONArraylessObject>)
+      .update(patch as Partial<JSONArraylessObject>);
+    if (modified === 0) throw new BaerlyError("NotFound", `No such row: ${id}`);
+    return c.json({ modified }, 200);
   });
 
   // Delete — DELETE /v1/t/:table/:id  → 204
   app.delete("/v1/t/:table/:id", async (c) => {
     const { table, id } = c.req.param();
-    try {
-      const { deleted } = await db
-        .table(table)
-        .where({ _id: id } as Predicate<JSONArraylessObject>)
-        .delete();
-      if (deleted === 0) return jsonError(c, 404, "NotFound", `No such row: ${id}`);
-      return new Response(null, { status: 204 });
-    } catch (e) {
-      return mapToResponse(c, e);
-    }
+    const { deleted } = await db
+      .table(table)
+      .where({ _id: id } as Predicate<JSONArraylessObject>)
+      .delete();
+    if (deleted === 0) throw new BaerlyError("NotFound", `No such row: ${id}`);
+    return new Response(null, { status: 204 });
   });
 
   // Long-poll — GET /v1/since?table=<name>&cursor=<opaque>
@@ -345,30 +322,26 @@ export function createRouter(options: CreateRouterOptions): Hono {
     // outer scope, not from `c.var`.
     const table = c.req.query("table");
     if (typeof table !== "string" || table.length === 0 || table.includes("/")) {
-      return jsonError(
-        c,
-        400,
+      throw new BaerlyError(
         "SchemaError",
         "GET /v1/since requires a non-empty `table` query parameter without `/`",
       );
     }
     const cursor = c.req.query("cursor") ?? "";
-    try {
-      const result = await longPollSince({
-        db,
-        table,
-        cursor,
-        signal: c.req.raw.signal,
-        timeoutMs: sinceTimeoutMs,
-        pollIntervalMs: sincePollIntervalMs,
-      });
-      // 200 covers both "new events present" and "timeout idle" —
-      // see `./since.ts` module JSDoc for why we don't use 304.
-      return c.json(result satisfies SinceResponse, 200);
-    } catch (e) {
-      return mapToResponse(c, e);
-    }
+    const result = await longPollSince({
+      db,
+      table,
+      cursor,
+      signal: c.req.raw.signal,
+      timeoutMs: sinceTimeoutMs,
+      pollIntervalMs: sincePollIntervalMs,
+    });
+    // 200 covers both "new events present" and "timeout idle" —
+    // see `./since.ts` module JSDoc for why we don't use 304.
+    return c.json(result satisfies SinceResponse, 200);
   });
+
+  app.onError((err, c) => mapToResponse(c, err));
 
   return app;
 }
@@ -460,96 +433,53 @@ function mapToResponse(c: Context, err: unknown): Response {
   return c.json(envelope, status as ContentfulStatusCode);
 }
 
-// Inline-error shortcut. The router never has to allocate an
-// BaerlyError just to short-circuit a 400 — callers pass a code +
-// message string and we build the envelope here.
-function jsonError(
-  c: Context,
-  status: HttpStatus,
-  code: BaerlyErrorCode,
-  message: string,
-): Response {
-  // Every `jsonError` call site passes a 4xx status (errors carry a
-  // body). Cast bridges `HttpStatus` → `ContentfulStatusCode` for
-  // Hono's `c.json` overload.
-  return c.json(errorEnvelope(code, message), status as ContentfulStatusCode);
-}
-
 /**
- * Result discriminant from {@link readJsonBody}. The `err` branch
- * carries a structured `code` so callers can route to the right
- * `HttpStatus` without switching on free-form `message` strings.
+ * Read and parse the JSON request body. Returns the parsed value
+ * (an `unknown` — caller narrows). Throws `BaerlyError`:
  *
- * Today only two codes are produced:
- *   - `"PayloadTooLarge"` (413) when the body exceeds `maxBytes`,
+ *   - `"PayloadTooLarge"` (→ 413) when the body exceeds `maxBytes`,
  *     detected via `Content-Length` pre-check, post-`arrayBuffer`
  *     length check, or — if the host adapter pumps the body through
  *     a `ReadableStream` (the Node adapter does) — a `BaerlyError`
  *     surfaced via `controller.error(...)` on the upstream pump.
- *   - `"SchemaError"` (400) for empty bodies, JSON parse failures,
+ *   - `"SchemaError"` (→ 400) for empty bodies, JSON parse failures,
  *     and any other read failure.
+ *
+ * Hono's `app.onError` sink routes the throw through `mapToResponse`.
  */
-type ReadJsonResult =
-  | { readonly kind: "ok"; readonly value: unknown }
-  | {
-      readonly kind: "err";
-      readonly code: "PayloadTooLarge" | "SchemaError";
-      readonly status: HttpStatus;
-      readonly message: string;
-    };
-
-async function readJsonBody(c: Context, maxBytes: number): Promise<ReadJsonResult> {
+async function readJsonBody(c: Context, maxBytes: number): Promise<unknown> {
   const lenHeader = c.req.header("content-length");
   if (lenHeader !== undefined) {
     const parsed = Number.parseInt(lenHeader, 10);
     if (Number.isFinite(parsed) && parsed > maxBytes) {
-      return {
-        kind: "err",
-        code: "PayloadTooLarge",
-        status: 413,
-        message: `Body exceeds ${maxBytes} bytes`,
-      };
+      throw new BaerlyError("PayloadTooLarge", `Body exceeds ${maxBytes} bytes`);
     }
   }
   // Read with an early-exit guard for chunked transfers. If the
   // upstream adapter (e.g. `@baerly/adapter-node`) caps the body at
   // the stream-pump layer, the rejected `arrayBuffer()` carries a
-  // `BaerlyError{code:"PayloadTooLarge"}` which we surface as 413
-  // here; any other read failure becomes a 400 SchemaError.
+  // `BaerlyError{code:"PayloadTooLarge"}` which we re-throw verbatim;
+  // any other read failure becomes a 400 SchemaError.
   let raw: string;
   try {
     const buffer = await c.req.arrayBuffer();
     if (buffer.byteLength > maxBytes) {
-      return {
-        kind: "err",
-        code: "PayloadTooLarge",
-        status: 413,
-        message: `Body exceeds ${maxBytes} bytes`,
-      };
+      throw new BaerlyError("PayloadTooLarge", `Body exceeds ${maxBytes} bytes`);
     }
     raw = new TextDecoder().decode(buffer);
   } catch (e) {
-    if (e instanceof BaerlyError && e.code === "PayloadTooLarge") {
-      return { kind: "err", code: "PayloadTooLarge", status: 413, message: e.message };
-    }
-    return {
-      kind: "err",
-      code: "SchemaError",
-      status: 400,
-      message: `Failed to read request body: ${e instanceof Error ? e.message : String(e)}`,
-    };
+    if (e instanceof BaerlyError) throw e;
+    throw new BaerlyError(
+      "SchemaError",
+      `Failed to read request body: ${e instanceof Error ? e.message : String(e)}`,
+    );
   }
   if (raw.length === 0) {
-    return { kind: "err", code: "SchemaError", status: 400, message: "Empty request body" };
+    throw new BaerlyError("SchemaError", "Empty request body");
   }
   try {
-    return { kind: "ok", value: JSON.parse(raw) };
+    return JSON.parse(raw);
   } catch {
-    return {
-      kind: "err",
-      code: "SchemaError",
-      status: 400,
-      message: "Invalid JSON in request body",
-    };
+    throw new BaerlyError("SchemaError", "Invalid JSON in request body");
   }
 }
