@@ -1,6 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Writable } from "node:stream";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { baerlyDev } from "./vite-plugin.ts";
 
@@ -13,59 +14,46 @@ interface FakeServer {
   httpServer: null;
 }
 
-interface MockRes {
-  statusCode: number;
-  finished: boolean;
-  headers: Record<string, string>;
-  written: string[];
-  writeHead: (status: number, headers?: Record<string, string>) => MockRes;
-  setHeader: (k: string, v: string) => MockRes;
-  end: (chunk?: string | Uint8Array) => MockRes;
-  write: (chunk: string | Uint8Array) => boolean;
-  on: (event: string, cb: () => void) => MockRes;
-  emit: (event: string) => boolean;
+// Duck-typed `ServerResponse` stand-in. Extends `node:stream.Writable`
+// so `stream.pipeline()` (used by `createListener`'s response pump) gets
+// the full Writable contract — `.once`, `.removeListener`, `.destroy`,
+// drain semantics — without us hand-rolling each method. `writeHead` /
+// `setHeader` / `statusCode` / `headers` mirror the bits of
+// `http.ServerResponse` that Vite's connect-style middleware actually
+// touches.
+class MockRes extends Writable {
+  statusCode = 0;
+  finished = false;
+  headers: Record<string, string> = {};
+  written: string[] = [];
+
+  writeHead(status: number, headers?: Record<string, string>): this {
+    this.statusCode = status;
+    if (headers) Object.assign(this.headers, headers);
+    return this;
+  }
+
+  setHeader(k: string, v: string): this {
+    this.headers[k] = v;
+    return this;
+  }
+
+  override _write(
+    chunk: string | Uint8Array,
+    _enc: BufferEncoding,
+    cb: (err?: Error | null) => void,
+  ): void {
+    this.written.push(typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8"));
+    cb();
+  }
+
+  override _final(cb: (err?: Error | null) => void): void {
+    this.finished = true;
+    cb();
+  }
 }
 
-const makeRes = (): MockRes => {
-  const listeners: Record<string, Array<() => void>> = {};
-  const res: MockRes = {
-    statusCode: 0,
-    finished: false,
-    headers: {},
-    written: [],
-    writeHead(status, headers) {
-      res.statusCode = status;
-      if (headers) Object.assign(res.headers, headers);
-      return res;
-    },
-    setHeader(k, v) {
-      res.headers[k] = v;
-      return res;
-    },
-    end(chunk) {
-      if (chunk !== undefined) res.written.push(String(chunk));
-      res.finished = true;
-      const cbs = listeners["finish"];
-      if (cbs) for (const cb of cbs) cb();
-      return res;
-    },
-    write(chunk) {
-      res.written.push(String(chunk));
-      return true;
-    },
-    on(event, cb) {
-      (listeners[event] ??= []).push(cb);
-      return res;
-    },
-    emit(event) {
-      const cbs = listeners[event];
-      if (!cbs) return false;
-      for (const cb of cbs) cb();
-      return true;
-    },
-  };
-  return res;
-};
+const makeRes = (): MockRes => new MockRes();
 
 const makeReq = (
   url: string,
