@@ -177,6 +177,13 @@ export interface BaerlyClient<TConfig extends BaerlyConfig = UnboundConfig> {
    * of the declared collection names, the row type is inferred from
    * `TConfig["collections"][name]["schema"]`. Otherwise the legacy
    * per-call `<T>` form applies.
+   *
+   * A name that is not declared on `TConfig` — or a declared collection
+   * with no `schema` — falls through to the legacy overload and yields
+   * `ClientTable<JSONArraylessObject>` rather than a type error. This
+   * matches the in-process `Db.table` shape and preserves the
+   * untyped-call DX; pair with a per-call `<T>` when you want a
+   * narrower row type.
    */
   table<N extends CollectionNames<TConfig>>(
     name: N,

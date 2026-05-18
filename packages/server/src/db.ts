@@ -403,6 +403,14 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
    *   .all();
    * ```
    */
+  // Resolution order: narrowing overload first (matches declared
+  // collection names against bound `TConfig`), legacy generic second
+  // (caller picks T; defaults to `JSONArraylessObject` to mirror the
+  // impl's runtime return shape). The impl signature stays widest —
+  // `Table<JSONArraylessObject>` — so byte-identical to overload #2's
+  // default. The runtime never narrows; `makeTable<JSONArraylessObject>`
+  // builds a single row-agnostic handle and TypeScript handles the rest
+  // at the call site.
   table<N extends CollectionNames<TConfig>>(
     name: N,
   ): Table<RowOf<TConfig, N> & JSONArraylessObject>;
