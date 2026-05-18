@@ -23,10 +23,10 @@
 
 import { defineCommand, parseArgs, type ArgsDef, type ParsedArgs } from "citty";
 import { LocalFsStorage } from "@baerly/dev";
+import { minioStorage, r2Storage, s3Storage } from "@baerly/adapter-node";
 import {
   CURRENT_JSON_SCHEMA_VERSION,
   BaerlyError,
-  S3HttpStorage,
   createCurrentJson,
   getOrCreateMemoryStorageForBucket,
   logSeqStartOf,
@@ -102,21 +102,23 @@ export const parseBucketUri = async (uri: string): Promise<ParsedBucketUri> => {
         `baerly copy: s3:// URI requires a bucket name (got ${JSON.stringify(uri)})`,
       );
     }
-    const { AwsClient } = await import("aws4fetch");
-    const { DOMParser } = await import("@xmldom/xmldom");
-    const signer = new AwsClient({
-      accessKeyId: requireEnv("BAERLY_S3_ACCESS_KEY_ID"),
-      secretAccessKey: requireEnv("BAERLY_S3_SECRET_ACCESS_KEY"),
-      region: process.env["BAERLY_S3_REGION"] ?? "us-east-1",
-      service: "s3",
-    });
+    const accessKeyId = requireEnv("BAERLY_S3_ACCESS_KEY_ID");
+    const secretAccessKey = requireEnv("BAERLY_S3_SECRET_ACCESS_KEY");
+    const region = process.env["BAERLY_S3_REGION"] ?? "us-east-1";
+    const endpoint = requireEnv("BAERLY_S3_ENDPOINT");
+    // Endpoint-pattern dispatch. AWS-shaped → `s3Storage`; R2-shaped →
+    // `r2Storage`; anything else (user-supplied / Minio) → `minioStorage`
+    // so the full endpoint flows through verbatim.
+    const r2Host = endpoint.match(/^https?:\/\/([^./]+)\.r2\.cloudflarestorage\.com\b/i);
+    const isAws = /^https?:\/\/s3(\.[^.]+)?\.amazonaws\.com\b/i.test(endpoint);
+    const storage: Storage =
+      r2Host !== null
+        ? r2Storage({ accountId: r2Host[1]!, bucket, accessKeyId, secretAccessKey })
+        : isAws
+          ? s3Storage({ region, bucket, accessKeyId, secretAccessKey })
+          : minioStorage({ endpoint, bucket, accessKeyId, secretAccessKey });
     return {
-      storage: new S3HttpStorage({
-        endpoint: requireEnv("BAERLY_S3_ENDPOINT"),
-        bucket,
-        sign: (req) => signer.sign(req),
-        xmlParser: new DOMParser(),
-      }),
+      storage,
       keyPrefix: prefix === "" ? "" : prefix.endsWith("/") ? prefix : `${prefix}/`,
     };
   }

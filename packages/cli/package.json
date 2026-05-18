@@ -27,8 +27,6 @@
     "@baerly/export": "workspace:*",
     "@baerly/protocol": "workspace:*",
     "@baerly/server": "workspace:*",
-    "@xmldom/xmldom": "^0.9.10",
-    "aws4fetch": "1.0.20",
     "citty": "^0.1.6",
     "jsonc-parser": "^3.3.1",
     "picocolors": "^1.1.1"

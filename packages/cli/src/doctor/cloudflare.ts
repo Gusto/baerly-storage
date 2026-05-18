@@ -25,10 +25,9 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { DOMParser } from "@xmldom/xmldom";
-import { AwsClient } from "aws4fetch";
 import { parse, type ParseError } from "jsonc-parser";
-import { BaerlyError, S3HttpStorage, type Storage } from "@baerly/protocol";
+import { minioStorage, r2Storage } from "@baerly/adapter-node";
+import { BaerlyError, type Storage } from "@baerly/protocol";
 import type { AppConfig } from "../config.ts";
 import { ensureBindings, parseR2Bindings, type ProcessRunner } from "../deploy/cloudflare.ts";
 import { runUsageScan } from "./usage.ts";
@@ -111,12 +110,14 @@ export const doctorCloudflare = async (
     readonly cwd?: string;
     /**
      * Opt-in usage-scan flag mirrored from the Node target. Wires
-     * `S3HttpStorage` against the R2 S3-compat endpoint
-     * (`https://<CF_ACCOUNT_ID>.r2.cloudflarestorage.com`) using an
+     * the `r2Storage` factory from `@baerly/adapter-node` against the
+     * R2 S3-compat endpoint (derived from `CF_ACCOUNT_ID`) using an
      * account-scoped R2 API token (`R2_ACCESS_KEY_ID` +
      * `R2_SECRET_ACCESS_KEY`), then runs the same writes/min
      * estimator the Node target uses. Bucket name is read from the
-     * parsed R2 bindings (the `BUCKET` binding by default).
+     * parsed R2 bindings (the `BUCKET` binding by default). An
+     * explicit `R2_ENDPOINT` env var routes through `minioStorage`
+     * for callers fronting R2 with a custom proxy.
      */
     readonly usage?: boolean;
     /**
@@ -392,22 +393,22 @@ const runUsageCheck = async (
     return;
   }
 
-  const endpoint =
-    process.env["R2_ENDPOINT"] ??
-    `https://${process.env["CF_ACCOUNT_ID"]!}.r2.cloudflarestorage.com`;
-  // R2's S3-compat layer accepts `region: "auto"` and ignores it.
-  const aws = new AwsClient({
-    accessKeyId: process.env["R2_ACCESS_KEY_ID"]!,
-    secretAccessKey: process.env["R2_SECRET_ACCESS_KEY"]!,
-    region: "auto",
-    service: "s3",
-  });
-  const storage: Storage = new S3HttpStorage({
-    endpoint,
-    bucket: bucketBinding.bucket_name,
-    xmlParser: new DOMParser(),
-    sign: (req) => aws.sign(req),
-  });
+  // Prefer the R2 factory (derives the endpoint from `accountId`); fall
+  // back to `minioStorage` when the operator pins a custom `R2_ENDPOINT`
+  // (e.g. a private S3-compat proxy in front of R2).
+  const accessKeyId = process.env["R2_ACCESS_KEY_ID"]!;
+  const secretAccessKey = process.env["R2_SECRET_ACCESS_KEY"]!;
+  const bucket = bucketBinding.bucket_name;
+  const customEndpoint = process.env["R2_ENDPOINT"];
+  const storage: Storage =
+    customEndpoint !== undefined && customEndpoint !== ""
+      ? minioStorage({ endpoint: customEndpoint, bucket, accessKeyId, secretAccessKey })
+      : r2Storage({
+          accountId: process.env["CF_ACCOUNT_ID"]!,
+          bucket,
+          accessKeyId,
+          secretAccessKey,
+        });
 
   await runUsageScan({ app: config.app, tenant: config.tenant }, storage, findings);
 };

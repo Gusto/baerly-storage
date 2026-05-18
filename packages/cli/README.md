@@ -64,6 +64,8 @@ on success.
 
 ## URI grammar
 
-- `s3://<bucket>[/<prefix>]` — S3-compatible HTTP via `aws4fetch`.
+- `s3://<bucket>[/<prefix>]` — S3-compatible HTTP via the
+  `s3Storage` / `r2Storage` / `minioStorage` factories from
+  `@baerly/adapter-node` (endpoint-pattern dispatched).
 - `file:///<absolute-path>` — `LocalFsStorage` rooted at the path.
 - `memory://<bucket>` — `MemoryStorage` keyed by bucket; test-only.

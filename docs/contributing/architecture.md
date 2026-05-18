@@ -148,7 +148,10 @@ picks an impl itself.
 - `S3HttpStorage` (`packages/protocol/src/storage/s3-http.ts`) for
   any HTTP endpoint. Authentication plugs in via a `sign(req)`
   callback — the protocol package itself never imports `aws4fetch`
-  or any other signer; consumers choose.
+  or any other signer; consumers choose. Production callers rarely
+  construct this directly — the `s3Storage` / `r2Storage` /
+  `minioStorage` / `gcsStorage` factories in `@baerly/adapter-node`
+  wrap the common shapes.
 - `MemoryStorage` (`packages/protocol/src/storage/memory.ts`) for
   the `memory:` endpoint, partitioned per bucket via a
   process-singleton map so multiple `Db` instances share state by

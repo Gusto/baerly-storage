@@ -10,10 +10,12 @@
  *
  * The module is pure-storage: it takes a `Storage` handle from the
  * caller, never reads `process.env`, never constructs adapters. The
- * Node doctor backend wires `S3HttpStorage` against env-supplied
- * credentials; the Cloudflare doctor backend short-circuits with an
- * info-level "not yet wired" finding (full CF support is a
- * follow-up — see `docs/followups/agent-friendliness.md` entry 10).
+ * Node doctor backend uses the `s3Storage` / `r2Storage` /
+ * `minioStorage` factories from `@baerly/adapter-node` against
+ * env-supplied credentials; the Cloudflare doctor backend
+ * short-circuits with an info-level "not yet wired" finding (full CF
+ * support is a follow-up — see `docs/followups/agent-friendliness.md`
+ * entry 10).
  *
  * Why GET each entry instead of relying on list-time
  * `Last-Modified`: `MemoryStorage` (the test backend) intentionally

@@ -34,9 +34,8 @@
  *      this check rides on.
  */
 
-import { DOMParser } from "@xmldom/xmldom";
-import { AwsClient } from "aws4fetch";
-import { S3HttpStorage, type Storage } from "@baerly/protocol";
+import { minioStorage, r2Storage, s3Storage } from "@baerly/adapter-node";
+import type { Storage } from "@baerly/protocol";
 import { rebuildIndex, type IndexDefinition } from "@baerly/server";
 import type { AppConfig, LoadedCollection } from "../config.ts";
 import type { DoctorFinding } from "./cloudflare.ts";
@@ -53,10 +52,17 @@ const currentJsonKeyFor = (app: string, tenant: string, collection: string): str
   `app/${app}/tenant/${tenant}/manifests/${collection}/current.json`;
 
 /**
- * Construct an `S3HttpStorage` against the env-supplied credentials.
- * Returns `null` and pushes a single `index-filter-drift.env` error
- * finding when any required var is missing — the dispatcher maps
- * that to an exit-2 doctor report.
+ * Construct a `Storage` against env-supplied credentials using the
+ * `s3Storage` / `r2Storage` / `minioStorage` factories from
+ * `@baerly/adapter-node`. Returns `null` and pushes a single
+ * `index-filter-drift.env` error finding when any required var is
+ * missing — the dispatcher maps that to an exit-2 doctor report.
+ *
+ * Endpoint-pattern dispatch matches `baerly copy` (see
+ * `../copy.ts:parseBucketUri`): an explicit `S3_ENDPOINT` flows
+ * through `minioStorage` (full endpoint), R2-shaped hosts pick
+ * `r2Storage`, else `s3Storage` derives the AWS endpoint from
+ * `AWS_REGION`.
  *
  * Mirrors the Node `--usage` path's storage-builder contract (see
  * `./usage.ts` / `./node.ts:runUsageCheck`); we don't share the
@@ -80,19 +86,18 @@ const buildStorage = (findings: DoctorFinding[]): Storage | null => {
     return null;
   }
   const region = process.env["AWS_REGION"] ?? "us-east-1";
-  const endpoint = process.env["S3_ENDPOINT"] ?? `https://s3.${region}.amazonaws.com`;
-  const aws = new AwsClient({
-    accessKeyId: process.env["AWS_ACCESS_KEY_ID"]!,
-    secretAccessKey: process.env["AWS_SECRET_ACCESS_KEY"]!,
-    region,
-    service: "s3",
-  });
-  return new S3HttpStorage({
-    endpoint,
-    bucket: process.env["BUCKET"]!,
-    xmlParser: new DOMParser(),
-    sign: (req) => aws.sign(req),
-  });
+  const bucket = process.env["BUCKET"]!;
+  const accessKeyId = process.env["AWS_ACCESS_KEY_ID"]!;
+  const secretAccessKey = process.env["AWS_SECRET_ACCESS_KEY"]!;
+  const endpoint = process.env["S3_ENDPOINT"];
+  if (endpoint !== undefined && endpoint !== "") {
+    const r2Host = endpoint.match(/^https?:\/\/([^./]+)\.r2\.cloudflarestorage\.com\b/i);
+    if (r2Host !== null) {
+      return r2Storage({ accountId: r2Host[1]!, bucket, accessKeyId, secretAccessKey });
+    }
+    return minioStorage({ endpoint, bucket, accessKeyId, secretAccessKey });
+  }
+  return s3Storage({ region, bucket, accessKeyId, secretAccessKey });
 };
 
 /**
