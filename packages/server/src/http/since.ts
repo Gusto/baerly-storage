@@ -54,28 +54,28 @@ const LSN_RE = /^[0-9a-v]+_[0-9a-v]+_[0-9a-v]{2}$/;
 const DEFAULT_MAX_EVENTS = 1024;
 
 /**
- * Env-read guarded against Workerd (no `process.env`). The two
- * `DEFAULT_*` constants below resolve once at module init, NOT
- * per-request. CF Worker env access has measurable per-call cost.
- */
-const env: Record<string, string | undefined> =
-  typeof process !== "undefined" && process.env ? process.env : {};
-
-/**
  * Default 25 s long-poll budget. CF Workers cap fetch CPU at 30 s on
  * the free plan; 25 s leaves slack for header serialization plus the
  * platform's bookkeeping. Node / Bun / Deno have no comparable cap,
  * but the budget is still useful as a connection-cycling hint for
  * upstream load balancers (most idle-connection timeouts are 30-60 s).
+ *
+ * Per-request override is via the `timeoutMs` field on
+ * {@link LongPollSinceOptions} (plumbed from `sinceTimeoutMs` on
+ * `CreateRouterOptions` and both Node + Cloudflare adapters).
  */
-const DEFAULT_TIMEOUT_MS = Number(env.BAERLY_SINCE_TIMEOUT_MS ?? 25_000);
+const DEFAULT_TIMEOUT_MS = 25_000;
 
 /**
  * Default 1 s inner-poll interval. 25 polls × 1 list = 25 Class A
  * ops per active long-poll connection. See module docstring for the
  * cost-model trade-off.
+ *
+ * Per-request override is via the `pollIntervalMs` field on
+ * {@link LongPollSinceOptions} (plumbed from `sincePollIntervalMs`
+ * on `CreateRouterOptions` and both Node + Cloudflare adapters).
  */
-const DEFAULT_POLL_INTERVAL_MS = Number(env.BAERLY_SINCE_POLL_INTERVAL_MS ?? 1_000);
+const DEFAULT_POLL_INTERVAL_MS = 1_000;
 
 export interface LongPollSinceOptions {
   readonly db: Db<BaerlyConfig>;
