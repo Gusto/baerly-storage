@@ -515,6 +515,7 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
       this.#currentJsonCaches.set(table, cache);
     }
     const schema = this.#schemas.get(table);
+    const indexes = this.#indexes.get(table) ?? EMPTY_INDEX_ARRAY;
     const tx = makeTable<T>({
       storage: this.#storage,
       tablePrefix,
@@ -522,7 +523,7 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
       txCtx,
       currentJsonCache: cache,
       metrics: this.#metrics,
-      indexes: this.#indexes.get(table) ?? EMPTY_INDEX_ARRAY,
+      indexes,
       ...(schema !== undefined ? { schema } : {}),
       ...(this.#inFanoutThreshold !== undefined
         ? { inFanoutThreshold: this.#inFanoutThreshold }
@@ -555,7 +556,7 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
     const writer = new ServerWriter({
       storage: this.#storage,
       currentJsonKey: `${tablePrefix}/current.json`,
-      options: { metrics: this.#metrics },
+      options: { metrics: this.#metrics, indexes },
     });
     await writer.commitBatch(inputs);
   }
