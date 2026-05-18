@@ -20,7 +20,12 @@ import {
 import { ServerWriter } from "@baerly/server";
 import { reset, type LogRecord, type Sink } from "@logtape/logtape";
 import { afterEach, describe, expect, it } from "vitest";
-import { createListener, resolveDefaultSink, runMaintenanceTick } from "./server.ts";
+import {
+  createFetchHandler,
+  createListener,
+  resolveDefaultSink,
+  runMaintenanceTick,
+} from "./server.ts";
 
 describe("runMaintenanceTick", () => {
   it("runs both compact and gc against the supplied storage", async () => {
@@ -315,5 +320,98 @@ describe("resolveDefaultSink", () => {
     expect(out.level).toBe("warn");
     expect(out.sampleRate).toBe(0.1);
     expect(out.sink).toBe("console-json");
+  });
+});
+
+/**
+ * Direct unit coverage for `createFetchHandler` — the host-agnostic
+ * Fetch factory. These tests exercise the cascade without a real HTTP
+ * server, calling the handler directly with `new Request(...)`.
+ */
+describe("createFetchHandler", () => {
+  afterEach(async () => {
+    await reset();
+  });
+
+  const provisionTable = async (
+    storage: MemoryStorage,
+    tenant: string,
+    table: string,
+  ): Promise<void> => {
+    await createCurrentJson(storage, `app/t/tenant/${tenant}/manifests/${table}/current.json`, {
+      schema_version: CURRENT_JSON_SCHEMA_VERSION,
+      snapshot: null,
+      next_seq: 0,
+      log_seq_start: 0,
+      writer_fence: { epoch: 0, owner: "fetch-handler-test", claimed_at: "" },
+    });
+  };
+
+  const okVerifier: Verifier = async () => ({ tenantPrefix: "acme", identity: {} });
+  const denyingVerifier: Verifier = async () => null;
+
+  it("answers /v1/healthz with 200 {ok:true} anonymously (verifier bypassed)", async () => {
+    const handler = createFetchHandler({
+      app: "t",
+      storage: new MemoryStorage(),
+      verifier: denyingVerifier, // would 401 every other path — proves healthz bypasses
+    });
+    const res = await handler(new Request("http://x/v1/healthz", { method: "GET" }));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true });
+  });
+
+  it("returns 401 envelope when the verifier returns null on a /v1/t path", async () => {
+    const storage = new MemoryStorage();
+    await provisionTable(storage, "acme", "c");
+    const handler = createFetchHandler({
+      app: "t",
+      storage,
+      verifier: denyingVerifier,
+    });
+    const res = await handler(new Request("http://x/v1/t/c", { method: "GET" }));
+    expect(res.status).toBe(401);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("Unauthorized");
+  });
+
+  it("returns 200 for an authed GET when the verifier accepts", async () => {
+    const storage = new MemoryStorage();
+    await provisionTable(storage, "acme", "c");
+    const handler = createFetchHandler({
+      app: "t",
+      storage,
+      verifier: okVerifier,
+    });
+    const res = await handler(new Request("http://x/v1/t/c", { method: "GET" }));
+    expect(res.status).toBe(200);
+  });
+
+  it("commits a router POST and returns 201", async () => {
+    const storage = new MemoryStorage();
+    await provisionTable(storage, "acme", "c");
+    const handler = createFetchHandler({
+      app: "t",
+      storage,
+      verifier: okVerifier,
+    });
+    const res = await handler(
+      new Request("http://x/v1/t/c", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ doc: { _id: "fh-1", v: 1 } }),
+      }),
+    );
+    expect(res.status).toBe(201);
+  });
+
+  it("non-/v1/* paths fall through to the kernel 404 envelope", async () => {
+    const handler = createFetchHandler({
+      app: "t",
+      storage: new MemoryStorage(),
+      verifier: okVerifier,
+    });
+    const res = await handler(new Request("http://x/static/foo.css", { method: "GET" }));
+    expect(res.status).toBe(404);
   });
 });
