@@ -184,6 +184,14 @@ read it via your editor's TS LS or via the published types).
   / `awsIamSigV4` / `allowlistIp` (re-exported from
   `@baerly/server/auth`) for the full constraint list.
 
+- **Secrets vs. vars** — `wrangler.jsonc:vars` carries non-secret
+  config (`APP`, `TENANT`, `LOG_LEVEL`, `LOG_SAMPLE`). The verifier's
+  secrets (`SHARED_SECRET` and the optional `CF_ACCESS_*` for
+  Cloudflare Access) live in `.dev.vars` for local `wrangler dev`
+  and behind `wrangler secret put` in production. `.dev.vars.example`
+  is the source of truth for which secrets the Worker reads — keep
+  it in sync with the verifier choices in `src/server/index.ts`.
+
 - **Maintenance loop (Cloudflare)** — `wrangler.jsonc`
   declares `"crons": ["* * * * *"]` (every minute). The Worker's
   `scheduled` handler reads `env.CURRENT_JSON_KEY` and `env.CF_TIER`

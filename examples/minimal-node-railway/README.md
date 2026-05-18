@@ -23,7 +23,7 @@ minimal-node-railway/
 ├── .baerly/schema.lock.json  # declared collection schemas
 ├── src/
 │   ├── server/
-│   │   └── index.ts          # createListener({ verifier, webRoot })
+│   │   └── index.ts          # baerlyNode({ app, storage, verifier, webRoot, maintenance? }).listen(PORT)
 │   └── web/
 │       └── main.ts           # SPA client entry — bundled into dist/client/
 └── README.md
@@ -50,8 +50,13 @@ BUCKET=... AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=... SHARED_SECRET=... pnp
 
 The server reads `BUCKET`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`,
 and either `JWKS_URL` (production) or `SHARED_SECRET` (parity with
-`wrangler dev`) at startup. Optional: `S3_ENDPOINT`, `AWS_REGION`,
-`PORT`, `TENANT`, `WEB_ROOT`.
+`wrangler dev`) at startup. Optional: `R2_ACCOUNT_ID` (switches the
+storage factory from `s3Storage` to `r2Storage`), `AWS_REGION`,
+`PORT`, `TENANT`, `WEB_ROOT`, `MAINTENANCE_COLLECTIONS` (comma-
+separated collection slugs — when set, `baerlyNode` runs one
+compact+GC pass per `(tenant, collection)` pair on its
+hourly tick; leave unset to skip the in-process loop and schedule
+maintenance via your PaaS's cron instead).
 
 After `pnpm build`, `http://localhost:8080/` serves the built SPA
 out of `dist/client/` and `http://localhost:8080/v1/*` is the

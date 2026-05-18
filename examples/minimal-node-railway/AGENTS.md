@@ -49,7 +49,7 @@ read it via your editor's TS LS or via the published types).
 
 | Path                        | What it is                                          |
 | --------------------------- | --------------------------------------------------- |
-| `src/server/index.ts`       | Server entry — `createListener({ verifier, webRoot })` |
+| `src/server/index.ts`       | Server entry — composes `s3Storage` / `r2Storage` + a verifier and calls `baerlyNode({ ... }).listen(PORT)` |
 | `src/web/`, `index.html`    | Optional SPA shell built by Vite into `dist/client/`. Remove if not needed. |
 | `vite.config.ts`            | Vite client build — `outDir: dist/client`; dev proxy `/v1` → `:8080` |
 | `tsconfig.{app,server}.json` | TS project references for the client and server projects |
@@ -179,31 +179,47 @@ read it via your editor's TS LS or via the published types).
      before going to prod (or set `SHARED_SECRET` to an unguessable
      value behind a feature flag).
 
-- **Maintenance loop (Node)** — `src/server/index.ts` calls
-  `runMaintenanceTick({ storage, currentJsonKey })` on a 1-hour
-  `setInterval`, **opt-in via `MAINTENANCE_KEY`**. The tick is
-  unbounded (`NODE_PROFILE`): one pass folds the entire live tail
-  and sweeps up to 1000 candidates.
+- **Storage backend** — `src/server/index.ts` picks between
+  `s3Storage` (AWS) and `r2Storage` (Cloudflare R2) based on whether
+  `R2_ACCOUNT_ID` is set. To use **Minio** (self-hosted dev S3) or
+  **GCS** (HMAC keys), swap the import to `minioStorage` /
+  `gcsStorage` from `@baerly/adapter-node`. All four factories take
+  the same shape — a single bucket-name + credentials object — and
+  hide `aws4fetch` / `@xmldom/xmldom` behind the package boundary.
+  JSDoc `@example` blocks for each factory are visible in your
+  editor's TS hover.
 
-  `runMaintenanceTick` targets **one collection per call**, not
-  one app — `currentJsonKey` is the full
-  `app/<app>/tenant/<tenant>/manifests/<collection>/current.json`
-  path. To enable the loop, set `MAINTENANCE_KEY` in your
-  environment to that path. Example:
+- **Maintenance loop (Node)** — `src/server/index.ts` passes a
+  `maintenance: { collections, tenants }` option to `baerlyNode`.
+  Each tick (hourly by default; override via
+  `maintenance.intervalMs`) runs one compact+GC pass per
+  `(tenant, collection)` pair against the unbounded `NODE_PROFILE`
+  (folds the entire live tail; sweeps up to 1000 candidates per
+  run).
+
+  Opt-in via the `MAINTENANCE_COLLECTIONS` env var — a comma-
+  separated list of collection slugs:
 
   ```sh
-  MAINTENANCE_KEY=app/minimal-node-railway/tenant/minimal-demo/manifests/tickets/current.json
+  MAINTENANCE_COLLECTIONS=tickets,comments
   ```
 
-  **Multi-collection apps:** because the loop only services one
-  collection, repeat-instancing the server with a different
-  `MAINTENANCE_KEY` per process is one option; the cleaner pattern
-  is to wire a separate Railway / Render / Fly / DO App Platform
-  cron trigger per collection instead of relying on this in-process
-  loop at all. Leave `MAINTENANCE_KEY` unset in that case and the
-  server starts with no maintenance scheduling.
+  When unset, the entry passes `maintenance: undefined` to
+  `baerlyNode` and no in-process loop runs. Operators who prefer
+  external scheduling can wire a separate Railway / Render / Fly /
+  DO App Platform cron trigger per collection that invokes
+  `runMaintenanceTick` directly — that function stays exported
+  from `@baerly/adapter-node`.
 
-  Maintenance emits one canonical info line per run on stdout.
+  The template is single-tenant by default (`tenants: [TENANT]`).
+  Multi-tenant deployments override the `tenants` array in
+  `src/server/index.ts`; the cross-product `tenants × collections`
+  defines the work per tick. A separate `runMaintenanceTick` call
+  fires per pair, and a failure on one pair logs to stderr without
+  crashing the process or blocking the others.
+
+  Maintenance emits one canonical info line per `(tenant,
+  collection)` run on stdout.
   Filter your log stream on `"unit_of_work": "maintenance"` and
   read these fields:
 

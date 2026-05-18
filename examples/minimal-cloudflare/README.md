@@ -73,6 +73,21 @@ bucket create minimal-cloudflare` → `wrangler deploy` from this
 directory. The `assets:` binding in `wrangler.jsonc` picks up
 `dist/client/` automatically.
 
+## Secrets
+
+Public configuration (`APP`, `TENANT`, `LOG_LEVEL`, `LOG_SAMPLE`)
+lives in `wrangler.jsonc:vars`. Secrets — anything the verifier
+needs (`SHARED_SECRET`, `CF_ACCESS_*`) — live separately:
+
+- **Local dev:** `cp .dev.vars.example .dev.vars`, fill in the
+  values, and `wrangler dev` reads it. `.dev.vars` is gitignored.
+- **Production:** `wrangler secret put SHARED_SECRET` (one secret
+  per command — value piped or prompted). Each secret is encrypted
+  at rest and exposed on `env` at runtime.
+
+`.dev.vars.example` is the catalog of every secret the Worker
+expects. Update both files in lockstep when you add a new secret.
+
 ## Next steps
 
 1. **Read `AGENTS.md`** for the agent-facing guide — predicates,
