@@ -19,6 +19,7 @@ import {
 import { type DevLandingOptions, renderDevLanding } from "@baerly/dev";
 import { Db, MAX_BODY_BYTES, createRouter, mapError } from "@baerly/server";
 import { runScheduledMaintenance } from "@baerly/server/maintenance";
+import { prettyConsoleSink } from "./logger-pretty.ts";
 import {
   type ObservabilityConfig,
   alsAwareRecorder,
@@ -49,10 +50,11 @@ import {
  *   Defaults to {@link noopMetricsRecorder}.
  * - `observability` — LogTape config (level/sink/sampleRate)
  *   with `LOG_LEVEL` / `LOG_SAMPLE` envvar fallbacks. When the field
- *   is unset, the default sink is auto-selected: `"console-pretty"`
- *   when `process.stdout.isTTY === true` (developer terminals),
- *   `"console-json"` otherwise (production hosts where stdout is
- *   piped to a log aggregator). The typed `sink` field always wins.
+ *   is unset, the default sink is auto-selected: the local
+ *   `prettyConsoleSink()` when `process.stdout.isTTY === true`
+ *   (developer terminals), `"console-json"` otherwise (production
+ *   hosts where stdout is piped to a log aggregator). The typed
+ *   `sink` field always wins.
  *   Pass `{}` to opt into TTY auto-detection at default level/rate.
  *   Pass `undefined` (the field's absence) to skip
  *   `configureObservability` entirely.
@@ -703,7 +705,10 @@ export const resolveDefaultSink = (config: ObservabilityConfig): ObservabilityCo
   if (config.sink !== undefined) return config;
   // `process.stdout.isTTY` is `true` only on real terminals. CI
   // pipelines, docker logs, systemd, and pm2 cluster mode all
-  // pipe stdout — `isTTY` is `undefined` (falsy) there.
+  // pipe stdout — `isTTY` is `undefined` (falsy) there. The kernel
+  // only ships `"console-json"`; we construct the pretty sink
+  // locally and pass it as a function so picocolors stays off the
+  // kernel closure.
   const isTty = Boolean(process.stdout.isTTY);
-  return { ...config, sink: isTty ? "console-pretty" : "console-json" };
+  return { ...config, sink: isTty ? prettyConsoleSink() : "console-json" };
 };

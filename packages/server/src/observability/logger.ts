@@ -83,13 +83,15 @@ export interface ObservabilityConfig {
    * Sink shorthand or a custom LogTape {@link Sink}.
    *
    * - `"console-json"` — one JSON object per line via `console.log`.
-   * - `"console-pretty"` — human-readable text with the same
-   *   information; intended for `baerly dev`.
-   * - A {@link Sink} function — passed through verbatim.
+   * - A {@link Sink} function — passed through verbatim. Adapters
+   *   targeting TTY environments (e.g. `@baerly/adapter-node`'s
+   *   `baerly dev` path) construct a pretty sink locally and pass
+   *   it as a function; the kernel deliberately does not ship a
+   *   pretty-printer to keep `picocolors` off the runtime closure.
    *
    * Default: `"console-json"`.
    */
-  readonly sink?: "console-json" | "console-pretty" | Sink;
+  readonly sink?: "console-json" | Sink;
   /**
    * Head-based sample rate in `[0, 1]`. Cached for
    * {@link getEffectiveSampleRate}; the canonical-line flusher
@@ -116,7 +118,7 @@ let effectiveSampleRate: number | null = null;
  */
 export const configureObservability = async (config: ObservabilityConfig = {}): Promise<void> => {
   const level = resolveLevel(config.level);
-  const sink = await resolveSink(config.sink);
+  const sink = resolveSink(config.sink);
 
   await configure({
     reset: true,
@@ -158,20 +160,8 @@ const resolveLevel = (configLevel: FriendlyLogLevel | undefined): LogLevel => {
   return "info";
 };
 
-/**
- * `"console-pretty"` is dev-only and pulls picocolors + the
- * canonical-line column renderer. Lazy-load the implementation so
- * the default `"console-json"` path (production Workers, headless
- * Node) keeps both off the kernel barrel and the http /
- * observability / maintenance subpath entries.
- */
-const resolveSink = async (configSink: ObservabilityConfig["sink"]): Promise<Sink> => {
+const resolveSink = (configSink: ObservabilityConfig["sink"]): Sink => {
   if (typeof configSink === "function") return configSink;
-  const choice = configSink ?? "console-json";
-  if (choice === "console-pretty") {
-    const { prettyConsoleSink } = await import("./logger-pretty.ts");
-    return prettyConsoleSink();
-  }
   return jsonConsoleSink();
 };
 

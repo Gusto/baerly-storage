@@ -303,10 +303,13 @@ describe("resolveDefaultSink", () => {
     expect(out.sink).toBe(customSink);
   });
 
-  it("defaults to console-pretty when stdout is a TTY", () => {
+  it("constructs the pretty sink as a function when stdout is a TTY", () => {
     process.stdout.isTTY = true;
-    expect(resolveDefaultSink({}).sink).toBe("console-pretty");
-    expect(resolveDefaultSink({ level: "debug" }).sink).toBe("console-pretty");
+    // The kernel only accepts `"console-json"` or a `Sink` function;
+    // the adapter constructs the pretty sink locally so picocolors
+    // stays off the kernel closure.
+    expect(typeof resolveDefaultSink({}).sink).toBe("function");
+    expect(typeof resolveDefaultSink({ level: "debug" }).sink).toBe("function");
   });
 
   it("defaults to console-json when stdout is not a TTY", () => {

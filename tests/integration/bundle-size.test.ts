@@ -60,10 +60,10 @@ const BUDGETS: readonly Budget[] = [
   // Full barrel: kernel + http + auth. Maintenance entry points
   // (runGc, rebuildIndex, migrateCollection) are exported from
   // index.js and carry the observability subgraph with them.
-  // `prettyConsoleSink` + picocolors are split off the static
-  // closure via `await import("./logger-pretty.ts")` in
-  // `logger.ts` so the dev-only canonical-line column renderer
-  // doesn't ship to production Workers.
+  // `prettyConsoleSink` + picocolors no longer ship in
+  // `@baerly/server` — the kernel's `configureObservability` only
+  // accepts `"console-json"` or a `Sink` function; the pretty sink
+  // now lives in `@baerly/adapter-node`.
   // Budget history:
   //   100 KiB gz (initial)
   //   → 103680 B gz: canonical-line renderer upgrade (picocolors +
@@ -85,6 +85,9 @@ const BUDGETS: readonly Budget[] = [
   //     which is sideEffects:false so production consumers
   //     tree-shake the LocalFsStorage + vite-plugin + picocolors
   //     subgraph).
+  //   → 349 KiB raw / 101 KiB gz (current): pretty sink + picocolors
+  //     moved out of `@baerly/server` to `@baerly/adapter-node`
+  //     entirely (no dynamic-import chunk in the kernel either).
   { entry: "index.js", raw: 349 * 1024, gz: 101 * 1024 },
   // Just the five auth verifier factories. Adding a sixth grows
   // this budget, not the kernel's.
@@ -97,12 +100,15 @@ const BUDGETS: readonly Budget[] = [
   // shifted to a subpath. ~272 KiB raw.
   { entry: "http.js", raw: 273 * 1024, gz: 79 * 1024 },
   // Observability primitives — ObservabilityContext, the
-  // request-scoped MetricsRecorder, LogTape config + sinks
-  // (JSON only — `prettyConsoleSink` and picocolors are split
-  // off behind a dynamic `import("./logger-pretty.ts")`),
-  // canonical line flush, observableStorage decorator. LogTape
-  // itself accounts for the bulk.
-  { entry: "observability.js", raw: 88 * 1024, gz: 24 * 1024 },
+  // request-scoped MetricsRecorder, LogTape config + the
+  // JSON sink only (the pretty sink + picocolors now live in
+  // `@baerly/adapter-node`), canonical line flush, observableStorage
+  // decorator. LogTape itself accounts for the bulk.
+  // Budget history:
+  //   → 89 KiB raw / 24 KiB gz: `flushUnauthorizedAndRespond`
+  //     pulls `errorEnvelope` (+ its `HttpErrorEnvelope` type)
+  //     from contract.ts into the observability closure (~170 B raw).
+  { entry: "observability.js", raw: 89 * 1024, gz: 24 * 1024 },
   // Maintenance loop — compactor + GC + sweep driver. Pulls
   // compactor.ts + gc.ts + the observability subgraph
   // transitively (every work unit runs under withObservability).

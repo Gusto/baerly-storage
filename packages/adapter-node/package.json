@@ -25,6 +25,7 @@
     "@baerly/protocol": "workspace:*",
     "@baerly/server": "workspace:*",
     "@xmldom/xmldom": "^0.9.10",
-    "aws4fetch": "1.0.20"
+    "aws4fetch": "1.0.20",
+    "picocolors": "^1.1.1"
   }
 }

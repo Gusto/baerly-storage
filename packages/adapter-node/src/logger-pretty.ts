@@ -1,17 +1,12 @@
 /**
  * Pretty console sink for the `baerly dev` boot path.
  *
- * Lives in its own module so consumers that select the default
- * `"console-json"` sink (production Workers, headless Node) never
- * pull `picocolors` or the canonical-line column renderer into
- * their bundle. `logger.ts` reaches this module via
- * `await import("./logger-pretty.ts")` only when the chosen sink
- * is `"console-pretty"`.
- *
- * Bundle-size note: the static-import scanner in
- * `tests/integration/bundle-size.test.ts` skips `import("...")`,
- * so the chunk rolldown emits for this file is excluded from the
- * kernel / http / observability / maintenance entry budgets.
+ * Lives in `@baerly/adapter-node` so the `@baerly/server` kernel
+ * doesn't pull `picocolors` or the canonical-line column renderer
+ * into its bundle. The kernel's `configureObservability` accepts any
+ * `Sink` function directly; callers in TTY-friendly environments
+ * (the Node adapter's `createListener` / `createFetchHandler` /
+ * `baerlyNode`) construct this sink and pass it in.
  */
 
 import { type LogRecord, type Sink } from "@logtape/logtape";
@@ -126,16 +121,15 @@ const isPlainEnv = (): boolean => {
 /**
  * Built-in pretty sink. Renders canonical-line records (the
  * single-emit/unit-of-work records produced by `flushCanonicalLine`
- * in `./canonical.ts`) in a column-aligned cost-aware format
- * intended for `baerly dev`; falls back to a generic
+ * in `@baerly/server/observability`) in a column-aligned cost-aware
+ * format intended for `baerly dev`; falls back to a generic
  * `<ts> <LEVEL> <category> <msg> <jsonProps>` layout for every
  * other record (warn-line `verifier_rejected`, debug storage
  * emits, etc.).
  *
  * Color is enabled when stderr is a TTY and `CI` is unset. Under
  * vitest, stderr is non-TTY so color is off — tests can assert
- * substring matches without stripping ANSI escapes. Workers
- * Runtime is also non-TTY so the plain layout ships there too.
+ * substring matches without stripping ANSI escapes.
  */
 export const prettyConsoleSink = (): Sink => {
   const plain = isPlainEnv();
