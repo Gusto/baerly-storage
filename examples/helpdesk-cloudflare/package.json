@@ -17,7 +17,6 @@
     "zod": "^3.24.0"
   },
   "devDependencies": {
-    "@baerly/cli": "workspace:*",
     "@cloudflare/vite-plugin": "^1.0.0",
     "@cloudflare/workers-types": "^4",
     "@types/react": "^19.0.0",

@@ -164,9 +164,6 @@ importers:
         specifier: ^3.24.0
         version: 3.25.76
     devDependencies:
-      '@baerly/cli':
-        specifier: workspace:*
-        version: link:../../packages/cli
       '@cloudflare/vite-plugin':
         specifier: ^1.0.0
         version: 1.37.1(vite@6.4.2(@types/node@25.6.2)(lightningcss@1.32.0))(workerd@1.20260515.1)(wrangler@4.92.0(@cloudflare/workers-types@4.20260511.1))
@@ -201,9 +198,6 @@ importers:
         specifier: workspace:*
         version: link:../..
     devDependencies:
-      '@baerly/cli':
-        specifier: workspace:*
-        version: link:../../packages/cli
       '@cloudflare/vite-plugin':
         specifier: ^1.0.0
         version: 1.37.1(vite@6.4.2(@types/node@25.6.2)(lightningcss@1.32.0))(workerd@1.20260515.1)(wrangler@4.92.0(@cloudflare/workers-types@4.20260511.1))
@@ -235,9 +229,6 @@ importers:
         specifier: workspace:*
         version: link:../..
     devDependencies:
-      '@baerly/cli':
-        specifier: workspace:*
-        version: link:../../packages/cli
       '@types/node':
         specifier: ^25.0.0
         version: 25.6.2
@@ -263,9 +254,6 @@ importers:
         specifier: workspace:*
         version: link:../..
     devDependencies:
-      '@baerly/cli':
-        specifier: workspace:*
-        version: link:../../packages/cli
       '@types/node':
         specifier: ^25.0.0
         version: 25.6.2

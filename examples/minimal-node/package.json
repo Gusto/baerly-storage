@@ -16,7 +16,6 @@
     "baerly-storage": "workspace:*"
   },
   "devDependencies": {
-    "@baerly/cli": "workspace:*",
     "@types/node": "^25.0.0",
     "create-baerly": "workspace:*",
     "typescript": "^5.8.0",
