@@ -125,7 +125,7 @@ describe.runIf(RUN_NODE)("day-one handshake — node target", () => {
       await execa("pnpm", ["install"], { cwd: appDir });
       stamp("install-complete");
 
-      // 3. DEPLOY (local): boot the helpdesk-shape `apps/server` on
+      // 3. DEPLOY (local): boot the helpdesk-shape server on
       //    a free port. Node-target variants self-deploy via their PaaS
       //    or `docker build`; the gate uses the local dev boot path
       //    because the test is on-host. Production paths are exercised
@@ -332,7 +332,7 @@ async function spawnServer(appDir: string, port: number): Promise<ServerHandle> 
 }
 
 async function assertNoManualEnvEdit(appDir: string): Promise<void> {
-  // Ticket 38's scaffold writes a single .env (or apps/server/.env)
+  // Ticket 38's scaffold writes a single .env at the package root
   // with all required values pre-filled. The gate asserts:
   //   1. The file exists at one of the candidate paths.
   //   2. Its mtime is within the gate budget of the test start

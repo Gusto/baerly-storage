@@ -22,7 +22,7 @@ Scaffold with `create-baerly` and use the `baerly` CLI.
 ### Cloudflare production
 
 ```sh
-# Scaffold (writes apps/server/wrangler.jsonc, baerly.config.ts, ...).
+# Scaffold (writes wrangler.jsonc, baerly.config.ts, src/server/index.ts, ...).
 npm create baerly@latest my-app -- --target=cloudflare
 cd my-app
 pnpm install
@@ -51,20 +51,19 @@ falls back to `sharedSecret()` for `wrangler dev` parity.
 ### Node production
 
 ```sh
-# Scaffold (writes apps/server/Dockerfile, apps/server/src/server.ts,
-# baerly.config.ts, ...).
+# Scaffold (writes Dockerfile, src/server/index.ts, baerly.config.ts, ...).
 npm create baerly@latest my-svc -- --target=node-docker
 cd my-svc
 pnpm install
 
-# Edit apps/server/.env and set AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY,
+# Edit .env and set AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY,
 # BUCKET, and either JWKS_URL (production) or SHARED_SECRET (dev).
 
 # Build the image (Docker shape ships with the scaffold).
-docker build -t my-svc:latest -f apps/server/Dockerfile .
+docker build -t my-svc:latest -f Dockerfile .
 
 # Run with the env file you populated from .env.example.
-docker run -p 8080:8080 --env-file apps/server/.env my-svc:latest
+docker run -p 8080:8080 --env-file .env my-svc:latest
 ```
 
 The production template lives at
