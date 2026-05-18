@@ -105,8 +105,8 @@ const writer = new ServerWriter({
 });
 ```
 
-(Or inline if EMPTY_INDEX_ARRAY is removed per B6 — keep the
-default-empty-array semantic either way.)
+(Either spell `EMPTY_INDEX_ARRAY` or inline `[]` — keep the
+default-empty-array semantic.)
 
 ### 3. Delete or fix the acknowledged-gap comment
 
@@ -134,12 +134,10 @@ gap can reopen.
 
 ## Out of scope
 
-- The rebuild path (`baerly admin rebuild-index` and `rebuildIndex`)
-  is correct as-is. Don't touch.
-- Index-planner reads (B9, B10, B11) are separate concerns; this
+- The rebuild path (`baerly admin rebuild-index` and
+  `rebuildIndex`) is correct as-is. Don't touch.
+- Index-planner reads and `$in` fan-out are unrelated; this
   fix doesn't depend on them.
-- Whether `inFanoutThreshold` should be a public knob (B23) is
-  unrelated.
 
 ## Verification
 

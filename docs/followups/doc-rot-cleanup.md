@@ -309,9 +309,10 @@ tip `538742e`); the `apps/` layout is vestigial.
 **Recommended action.**
 
 - `rm -rf examples/helpdesk/apps/`.
-- Coordinate with the *separate* `examples/helpdesk/.gitignore`
-  follow-up (H6 in `next-batch.md`) so `apps/` doesn't get
-  recreated by stray dev runs.
+- While here, add an `examples/helpdesk/.gitignore` with at
+  least `node_modules/`, `dist/`, `.baerly-data/`,
+  `*.tsbuildinfo` so the layout doesn't get recreated by stray
+  dev runs.
 
 **Effort:** XS (~2 min, plus the verification that no script
 still references the path).
