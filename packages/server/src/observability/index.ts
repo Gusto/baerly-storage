@@ -1,25 +1,29 @@
 /**
- * Observability module — dormant.
+ * Observability — per-unit-of-work context, metrics recorder,
+ * canonical-line emission, and the logtape configuration entry point.
  *
- * Nothing in `@baerly/server`'s existing surface (`Db`,
- * `ServerWriter`, the HTTP router, the maintenance loops) imports
- * from here yet. Wiring lands in subsequent commits.
+ * Consumed by the HTTP router (`http/router.ts`), the maintenance
+ * loops (`maintenance.ts`, `compactor.ts`, `gc.ts`,
+ * `rebuild-index.ts`), and both adapters (`@baerly/adapter-cloudflare`,
+ * `@baerly/adapter-node`). The high-level flow:
  *
- * See the per-file docstrings for the local invariants of each
- * piece. The high-level flow once wired is:
+ * 1. The adapter calls {@link configureObservability} once at boot.
+ * 2. Each unit-of-work creates an {@link ObservabilityContext} (via
+ *    {@link createObservabilityContext} or `withObservability` for
+ *    non-HTTP units) and runs the work under {@link runWithContext}.
+ *    `withObservability` is nesting-aware: nested calls inherit the
+ *    outer context+recorder and emit no separate canonical line, so
+ *    one unit-of-work → exactly one line.
+ * 3. The unit-of-work calls {@link flushCanonicalLine} (or
+ *    `withObservability`'s own flush) at the end; verifier-rejected
+ *    requests call {@link flushUnauthorizedAndRespond} instead.
+ * 4. Adapters pass {@link alsAwareRecorder}(operator) as the storage
+ *    observer's metrics sink so storage-level emissions land in BOTH
+ *    the operator's long-term recorder AND the active scope's
+ *    per-request bag via the ALS lookup.
  *
- * 1. The HTTP/maintenance entry middleware calls
- *    {@link configureObservability} once at boot.
- * 2. Each unit-of-work creates an {@link ObservabilityContext} +
- *    {@link RequestScopedMetricsRecorder}, runs the work under
- *    {@link runWithContext}, and calls {@link flushCanonicalLine}
- *    (or {@link withObservability} for non-HTTP units) at the end.
- * 3. `Db.create({ metrics: teeMetricsRecorders(perRequest, operator) })`
- *    feeds writer/maintenance emissions into the per-request
- *    recorder while preserving the operator's long-term sink.
- * 4. Storage adapters are wrapped with {@link observableStorage}
- *    so storage-level metrics + per-call DEBUG events flow through
- *    the same channel.
+ * The `@baerly/server` package re-exports its own `errorEnvelope`
+ * separately; this barrel is the observability seam only.
  */
 
 export {
@@ -29,13 +33,7 @@ export {
   runWithContext,
   getCurrentContext,
 } from "./context.ts";
-export {
-  type MetricsSnapshot,
-  type MetricsSummary,
-  type ObservationRow,
-  RequestScopedMetricsRecorder,
-  alsAwareRecorder,
-} from "./recorder.ts";
+export { alsAwareRecorder } from "./recorder.ts";
 export { decideSample } from "./sampling.ts";
 export { type SerializedError, serializeError } from "./redact.ts";
 export {

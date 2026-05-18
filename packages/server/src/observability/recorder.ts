@@ -65,6 +65,9 @@ export class RequestScopedMetricsRecorder implements MetricsRecorder {
    * Read-only view of every observation seen so far. Intended for
    * tests + structured debugging; the canonical-line flusher uses
    * {@link summarize} instead.
+   *
+   * @internal Not part of the published observability surface; tests
+   * import via relative path. Production reads via {@link summarize}.
    */
   snapshot(): MetricsSnapshot {
     return {
