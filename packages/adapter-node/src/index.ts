@@ -16,7 +16,7 @@
  * ```ts
  * import { createServer } from "node:http";
  * import { createListener, S3HttpStorage } from "@baerly/adapter-node";
- * import type { Verifier } from "@baerly/protocol";
+ * import type { Verifier } from "@baerly/server";
  * import { DOMParser } from "@xmldom/xmldom"; // app's own dep
  *
  * const verifier: Verifier = async (req) => {

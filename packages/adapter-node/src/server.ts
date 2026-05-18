@@ -139,7 +139,7 @@ export interface CreateListenerOptions {
  * ```ts
  * import { createServer } from "node:http";
  * import { createListener, S3HttpStorage } from "@baerly/adapter-node";
- * import type { Verifier } from "@baerly/protocol";
+ * import type { Verifier } from "@baerly/server";
  *
  * const verifier: Verifier = async (req) => {
  *   if (req.headers.get("authorization") !== "Bearer dev-token") return null;
