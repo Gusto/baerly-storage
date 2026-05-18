@@ -254,8 +254,8 @@ describe("bearerJwt — idempotence", () => {
     const a = await verifier(req);
     const b = await verifier(req);
     expect(a).toEqual(b);
-    // Cache warms on first call; second call hits the WeakMap + the
-    // JWKS cache. Fetch fires at most once total.
+    // Cache warms on first call; second call's `ensureFresh`
+    // short-circuits on the warm TTL. Fetch fires at most once total.
     expect(fetchStub.mock.calls.length).toBeLessThanOrEqual(1);
   });
 });

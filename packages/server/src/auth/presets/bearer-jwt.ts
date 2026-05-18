@@ -113,10 +113,6 @@ interface JwtPayload {
  *    the IdP issued a JWT we can't honor).
  * 7. Return `{ tenantPrefix, identity: <full decoded payload> }`.
  *
- * **Idempotence.** The decoded payload is cached on the `Request`
- * via `WeakMap`. Two calls with the same `Request` decode + verify
- * exactly once.
- *
  * @throws BaerlyError code="InvalidConfig" — required option
  *   missing, `issuer`/`audience` empty, `algorithms` empty.
  * @throws BaerlyError code="NetworkError" — JWKS fetch failed AND
@@ -246,15 +242,7 @@ export const bearerJwt = (opts: BearerJwtOptions): Verifier => {
     }
   };
 
-  const cache = new WeakMap<Request, Promise<VerifierResult | null>>();
-
-  return (req: Request) => {
-    const hit = cache.get(req);
-    if (hit !== undefined) return hit;
-    const promise = verify(req);
-    cache.set(req, promise);
-    return promise;
-  };
+  return (req: Request) => verify(req);
 
   async function verify(req: Request): Promise<VerifierResult | null> {
     const header = req.headers.get("Authorization") ?? "";
