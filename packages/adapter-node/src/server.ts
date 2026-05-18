@@ -336,7 +336,19 @@ async function handle(
   // `toFetchRequest` / `readNodeStream` stays — it enforces the
   // MAX_BODY_BYTES cap with drain-after-exceed semantics that
   // Readable.toWeb() doesn't preserve.
-  const request = toFetchRequest(req);
+  //
+  // Propagate client-disconnect to the kernel so long-polls (/v1/since)
+  // and any other AbortSignal-aware handler short-circuit instead of
+  // burning storage ops on a dead socket. `res` emits 'close' for both
+  // clean and unclean teardown; `writableEnded` distinguishes them
+  // (true == we finished, false == client gave up first), so we only
+  // abort in the disconnect case.
+  const controller = new AbortController();
+  res.once("close", () => {
+    if (!res.writableEnded) controller.abort();
+  });
+
+  const request = toFetchRequest(req, controller.signal);
   let response: Response;
   try {
     response = await fetchHandler(request);
@@ -346,9 +358,13 @@ async function handle(
     // the envelope so node:http doesn't emit an 'error' event and
     // crash the server.
     const { status, envelope } = mapError(err);
-    writeJson(res, status, envelope);
+    if (!res.destroyed) writeJson(res, status, envelope);
     return;
   }
+
+  // Client disconnected before the handler resolved — `setHeader` on
+  // a destroyed `res` would throw, and pumping bytes is pointless.
+  if (res.destroyed) return;
 
   res.statusCode = response.status;
   response.headers.forEach((value, key) => res.setHeader(key, value));
@@ -359,11 +375,35 @@ async function handle(
   // Response.body is the global WHATWG ReadableStream; Readable.fromWeb
   // wants node:stream/web's ReadableStream. They're structurally
   // identical at runtime; the cast bridges the type-only difference.
-  await pipeline(
-    Readable.fromWeb(
-      response.body as unknown as import("node:stream/web").ReadableStream<Uint8Array>,
-    ),
-    res,
+  //
+  // `pipeline()` rejects with ERR_STREAM_UNABLE_TO_PIPE /
+  // ERR_STREAM_PREMATURE_CLOSE / ECONNRESET when the client closes the
+  // socket mid-stream (regression from commit 5dbe193 — the previous
+  // manual reader loop tolerated this; pipeline does not). Headers are
+  // already on the wire — there's no recovery — so swallow the
+  // disconnect codes. Genuine stream errors still propagate.
+  try {
+    await pipeline(
+      Readable.fromWeb(
+        response.body as unknown as import("node:stream/web").ReadableStream<Uint8Array>,
+      ),
+      res,
+    );
+  } catch (err) {
+    if (!isClientDisconnect(err)) throw err;
+  }
+}
+
+function isClientDisconnect(err: unknown): boolean {
+  if (err === null || typeof err !== "object") return false;
+  const code = (err as { code?: unknown }).code;
+  return (
+    code === "ERR_STREAM_UNABLE_TO_PIPE" ||
+    code === "ERR_STREAM_PREMATURE_CLOSE" ||
+    code === "ERR_STREAM_DESTROYED" ||
+    code === "ERR_STREAM_WRITE_AFTER_END" ||
+    code === "ECONNRESET" ||
+    code === "EPIPE"
   );
 }
 
@@ -371,15 +411,18 @@ async function handle(
  * Convert an `IncomingMessage` into a WHATWG `Request`. Node 24+
  * has `globalThis.Request` natively. The host portion is a
  * placeholder since Hono only inspects path + query.
+ *
+ * `signal` is attached to the synthesized `Request` so AbortSignal-aware
+ * handlers (notably `/v1/since` long-poll) see client disconnects.
  */
-function toFetchRequest(req: IncomingMessage): Request {
+function toFetchRequest(req: IncomingMessage, signal: AbortSignal): Request {
   const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
   const headers = new Headers();
   for (const [k, v] of Object.entries(req.headers)) {
     if (v === undefined) continue;
     headers.set(k, Array.isArray(v) ? v.join(", ") : v);
   }
-  const init: RequestInit = { method: req.method, headers };
+  const init: RequestInit = { method: req.method, headers, signal };
   if (req.method !== "GET" && req.method !== "HEAD") {
     init.body = readNodeStream(req, MAX_BODY_BYTES);
     // `duplex: "half"` is mandatory in Node 24+ when `body` is a

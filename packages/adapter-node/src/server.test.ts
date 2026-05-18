@@ -9,7 +9,7 @@
  * through the observability pipe (LogTape config + canonical-line bag).
  */
 
-import { createServer, type Server } from "node:http";
+import { createServer, request as httpRequest, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import {
   CURRENT_JSON_SCHEMA_VERSION,
@@ -20,7 +20,7 @@ import {
 import { ServerWriter } from "@baerly/server";
 import { configureObservability } from "@baerly/server/observability";
 import { reset, type LogRecord, type Sink } from "@logtape/logtape";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, test } from "vitest";
 import {
   createFetchHandler,
   createListener,
@@ -461,4 +461,204 @@ describe("createFetchHandler", () => {
     const res = await handler(new Request("http://x/static/foo.css", { method: "GET" }));
     expect(res.status).toBe(404);
   });
+});
+
+/**
+ * Regression coverage for the `/v1/since` long-poll client-abort
+ * crash (pre-fix: `pipeline(Readable.fromWeb(...), res)` rejected
+ * with `ERR_STREAM_UNABLE_TO_PIPE` and the rejection escaped as
+ * `unhandledRejection`, killing the Node process). The fix wires
+ * `res.once("close", ...)` → `AbortController` into the synthesized
+ * Request's signal and swallows the known disconnect-codes from
+ * `pipeline()`.
+ *
+ * Two tests:
+ *  - the server stays up after a mid-flight client abort
+ *    (no `unhandledRejection` fires AND `/v1/healthz` still answers).
+ *  - the AbortSignal attached to the synthesized Request actually
+ *    flips when the client socket closes.
+ */
+describe("createListener client-disconnect resilience", () => {
+  let server: Server | undefined;
+  afterEach(async () => {
+    if (server !== undefined) {
+      await new Promise<void>((resolve, reject) => {
+        server!.close((err) => {
+          if (err !== undefined && err !== null) reject(err);
+          else resolve();
+        });
+      });
+      server = undefined;
+    }
+    await reset();
+  });
+
+  const startServer = async (
+    listener: ReturnType<typeof createListener>,
+  ): Promise<{ host: string; port: number; url: string }> => {
+    server = createServer(listener);
+    await new Promise<void>((resolve) => server!.listen(0, "127.0.0.1", () => resolve()));
+    const addr = server.address() as AddressInfo;
+    return {
+      host: "127.0.0.1",
+      port: addr.port,
+      url: `http://127.0.0.1:${addr.port}`,
+    };
+  };
+
+  const provisionSinceTable = async (
+    storage: MemoryStorage,
+    tenant: string,
+    table: string,
+  ): Promise<void> => {
+    await createCurrentJson(storage, `app/t/tenant/${tenant}/manifests/${table}/current.json`, {
+      schema_version: CURRENT_JSON_SCHEMA_VERSION,
+      snapshot: null,
+      next_seq: 0,
+      log_seq_start: 0,
+      writer_fence: { epoch: 0, owner: "since-abort-test", claimed_at: "" },
+    });
+  };
+
+  const sleep = (ms: number): Promise<void> =>
+    new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+  test(
+    "client-abort of a long-poll /v1/since does not crash the server",
+    async () => {
+      const storage = new MemoryStorage();
+      const tenant = "acme";
+      await provisionSinceTable(storage, tenant, "c");
+
+      const verifier: Verifier = async () => ({ tenantPrefix: tenant, identity: {} });
+      const listener = createListener({
+        app: "t",
+        storage,
+        verifier,
+        // Short long-poll budget so the broken (pre-fix) path still
+        // completes within the test timeout — pipeline() rejects only
+        // after the long-poll resolves and the handler tries to write.
+        sinceTimeoutMs: 1500,
+        sincePollIntervalMs: 50,
+      });
+      const { host, port, url } = await startServer(listener);
+
+      // Capture any unhandledRejection during the abort window. The
+      // pre-fix bug surfaced as `ERR_STREAM_UNABLE_TO_PIPE` rejected
+      // from `pipeline()` without a catch — this listener catches it
+      // if the regression returns.
+      const rejections: unknown[] = [];
+      const onRejection = (err: unknown): void => {
+        rejections.push(err);
+      };
+      process.on("unhandledRejection", onRejection);
+
+      try {
+        // Open a low-level long-poll request. We must use http.request
+        // (not fetch) so we can destroy the underlying TCP socket
+        // before the response has been fully delivered.
+        const clientReq = httpRequest({
+          host,
+          port,
+          method: "GET",
+          path: "/v1/since?table=c&cursor=",
+          headers: { authorization: "Bearer dev" },
+        });
+        // Send the request without listening for a response — we never
+        // intend to read one. Swallow the `error` event that Node emits
+        // when we `.destroy()` mid-flight; otherwise it leaks as an
+        // `uncaughtException`.
+        clientReq.on("error", () => {});
+        clientReq.end();
+
+        // Give the server time to enter the long-poll loop, then yank
+        // the socket.
+        await sleep(100);
+        clientReq.destroy();
+
+        // Wait long enough for the broken pipeline()-rejection path to
+        // surface (sinceTimeoutMs + slack) so we'd catch a regression
+        // where the rejection only fires after the long-poll resolves.
+        await sleep(1800);
+
+        // Server must still be alive: a fresh GET /v1/healthz answers
+        // 200. fetch() throws ECONNREFUSED if the listener crashed.
+        const probe = await fetch(`${url}/v1/healthz`);
+        expect(probe.status).toBe(200);
+        expect(await probe.json()).toEqual({ ok: true });
+
+        expect(rejections).toEqual([]);
+      } finally {
+        process.off("unhandledRejection", onRejection);
+      }
+    },
+    10_000,
+  );
+
+  test(
+    "client disconnect aborts the synthesized Request.signal",
+    async () => {
+      // Capture the Request passed to the verifier so we can watch its
+      // signal flip when the client socket closes. The verifier runs
+      // inside `createFetchHandler` BEFORE the kernel touches the
+      // request, so the signal we see here is the one wired by
+      // `toFetchRequest(req, controller.signal)` in `handle()`.
+      let capturedRequest: Request | undefined;
+      let resolveCaptured: (() => void) | undefined;
+      const captured = new Promise<void>((resolve) => {
+        resolveCaptured = resolve;
+      });
+
+      const storage = new MemoryStorage();
+      const tenant = "acme";
+      await provisionSinceTable(storage, tenant, "c");
+
+      const verifier: Verifier = async (req) => {
+        capturedRequest = req;
+        resolveCaptured?.();
+        return { tenantPrefix: tenant, identity: {} };
+      };
+      const listener = createListener({
+        app: "t",
+        storage,
+        verifier,
+        sinceTimeoutMs: 1500,
+        sincePollIntervalMs: 50,
+      });
+      const { host, port } = await startServer(listener);
+
+      const clientReq = httpRequest({
+        host,
+        port,
+        method: "GET",
+        path: "/v1/since?table=c&cursor=",
+        headers: { authorization: "Bearer dev" },
+      });
+      clientReq.on("error", () => {});
+      clientReq.end();
+
+      // Wait for the verifier to capture the request.
+      await captured;
+      expect(capturedRequest).toBeDefined();
+      expect(capturedRequest!.signal.aborted).toBe(false);
+
+      // Watch for the abort event. The signal flips synchronously on
+      // the next event-loop turn after the socket closes; a 500ms
+      // budget is plenty.
+      const aborted = new Promise<void>((resolve) => {
+        capturedRequest!.signal.addEventListener("abort", () => resolve(), { once: true });
+      });
+
+      clientReq.destroy();
+      await Promise.race([
+        aborted,
+        sleep(500).then(() => {
+          throw new Error("Request.signal did not abort within 500ms of clientReq.destroy()");
+        }),
+      ]);
+
+      expect(capturedRequest!.signal.aborted).toBe(true);
+    },
+    5000,
+  );
 });
