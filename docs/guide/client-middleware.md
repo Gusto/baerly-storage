@@ -43,16 +43,18 @@ interface Hooks {
   readonly onError?: (req: Request, err: unknown) => void;
 }
 
-const withHooks = (next: Fetcher, hooks: Hooks): Fetcher => async (req) => {
-  try {
-    const res = await next(req);
-    hooks.onSuccess?.(req, res);
-    return res;
-  } catch (err) {
-    hooks.onError?.(req, err);
-    throw err;
-  }
-};
+const withHooks =
+  (next: Fetcher, hooks: Hooks): Fetcher =>
+  async (req) => {
+    try {
+      const res = await next(req);
+      hooks.onSuccess?.(req, res);
+      return res;
+    } catch (err) {
+      hooks.onError?.(req, err);
+      throw err;
+    }
+  };
 
 const client = createBaerlyClient({
   baseUrl: "https://api.example.com",
@@ -77,14 +79,16 @@ exhausts it on the first attempt.
 ```ts
 type Fetcher = (req: Request) => Promise<Response>;
 
-const withRetry = (next: Fetcher, max = 3, baseMs = 100): Fetcher => async (req) => {
-  for (let i = 0; i < max; i++) {
-    const res = await next(req.clone());
-    if (res.ok || res.status < 500 || req.method !== "GET") return res;
-    await new Promise((r) => setTimeout(r, baseMs * (i + 1)));
-  }
-  return next(req);
-};
+const withRetry =
+  (next: Fetcher, max = 3, baseMs = 100): Fetcher =>
+  async (req) => {
+    for (let i = 0; i < max - 1; i++) {
+      const res = await next(req.clone());
+      if (res.ok || res.status < 500 || req.method !== "GET") return res;
+      await new Promise((r) => setTimeout(r, baseMs * (i + 1)));
+    }
+    return next(req);
+  };
 ```
 
 Only retry idempotent reads. `POST` / `PATCH` / `DELETE` may have
@@ -105,10 +109,7 @@ with `401`.
 ```ts
 type Fetcher = (req: Request) => Promise<Response>;
 
-const withAuthRefresh = (
-  next: Fetcher,
-  refresh: () => Promise<string>,
-): Fetcher => {
+const withAuthRefresh = (next: Fetcher, refresh: () => Promise<string>): Fetcher => {
   return async (req) => {
     const res = await next(req.clone());
     if (res.status !== 401) return res;
@@ -145,10 +146,10 @@ network. Pick the order based on what you want to observe.
 
 ```ts
 // Logger sees every retry attempt (up to 3 lines per failed call):
-fetch: withRetry(withLogging(globalThis.fetch))
+fetch: withRetry(withLogging(globalThis.fetch));
 
 // Logger sees only the final outcome (1 line per call):
-fetch: withLogging(withRetry(globalThis.fetch))
+fetch: withLogging(withRetry(globalThis.fetch));
 ```
 
 The same rule applies to `withHooks` + `withAuthRefresh`: if you put
@@ -159,7 +160,7 @@ refresh).
 
 ## Long-poll and `since(...)` calls
 
-The long-poll path used by `client.collection("...").since(...)`
+The long-poll path used by `client.since({ table, cursor, signal })`
 routes through the same `Fetcher` — there is no separate transport.
 Retry, logging, and auth-refresh wrappers apply uniformly. If your
 wrapper needs to distinguish long-poll from one-shot reads (for
@@ -171,31 +172,37 @@ parameter. Most wrappers do not need to.
 
 Fetcher wrapping is **request-level** middleware. It sees `Request`
 and `Response` objects — not typed query results, not the
-`collection().first(...)` call shape. To intercept at the typed
-query level (e.g. "log every `db.table('issues').first(...)`
+`table().insert(...)` call shape. To intercept at the typed
+query level (e.g. "log every `client.table('issues').insert(...)`
 call"), wrap the client object instead:
 
 ```ts
-import { createBaerlyClient, type BaerlyClient } from "@baerly/client";
+import { createBaerlyClient, type BaerlyClient, type ClientTable } from "@baerly/client";
 
 const inner = createBaerlyClient({ baseUrl: "https://api.example.com" });
 
 const traced: BaerlyClient = {
   ...inner,
-  collection: (name) => {
-    const c = inner.collection(name);
-    return {
-      ...c,
-      first: async (...args) => {
-        console.log(`query: collection(${name}).first`, args);
-        return c.first(...args);
+  table: (name: string) => {
+    const t = inner.table(name);
+    const wrapped: ClientTable = {
+      ...t,
+      insert: async (doc) => {
+        console.log(`query: table(${name}).insert`, doc);
+        return t.insert(doc);
       },
     };
+    return wrapped;
   },
 };
 ```
 
+`first()` lives on `ClientQuery` (returned by `.where(...)`), not on
+`ClientTable` — to trace the read path you would intercept `where`
+and wrap the returned query. `insert` lives directly on
+`ClientTable`, which keeps the example short.
+
 Two different layers, two different mechanisms: fetcher wrapping for
 HTTP-level concerns (status codes, retries, headers); client-object
-wrapping for query-level concerns (which collection, which method,
+wrapping for query-level concerns (which table, which method,
 which arguments). Most apps need only the former.

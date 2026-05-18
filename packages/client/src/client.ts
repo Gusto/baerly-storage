@@ -38,14 +38,14 @@ export interface BaerlyClientOptions<TConfig extends BaerlyConfig = UnboundConfi
    * // Log every request + response.
    * const withLogging: Fetcher = async (req) => {
    *   const t0 = performance.now();
-   *   const res = await fetch(req);
+   *   const res = await globalThis.fetch(req);
    *   console.log(`${req.method} ${req.url} → ${res.status} (${Math.round(performance.now() - t0)}ms)`);
    *   return res;
    * };
    *
-   * // Retry idempotent reads on 5xx (max 3 tries, 100ms backoff).
+   * // Retry idempotent reads on 5xx (max 3 total attempts, 100ms backoff).
    * const withRetry = (next: Fetcher): Fetcher => async (req) => {
-   *   for (let i = 0; i < 3; i++) {
+   *   for (let i = 0; i < 2; i++) {
    *     const res = await next(req.clone());
    *     if (res.ok || res.status < 500 || req.method !== "GET") return res;
    *     await new Promise((r) => setTimeout(r, 100 * (i + 1)));
