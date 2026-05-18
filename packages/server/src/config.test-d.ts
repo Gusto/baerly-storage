@@ -1,5 +1,11 @@
 /**
- * Type-level assertions for the `RowOf` / `CollectionNames` helpers.
+ * Type-level assertions for the typed-config surface:
+ *
+ *   - `config.ts` — `RowOf` / `CollectionNames` helpers.
+ *   - `db.ts`     — `Db<TConfig>` overload resolution (bound narrow
+ *                   path vs legacy per-call generic), including the
+ *                   unknown-collection-name fallthrough that the
+ *                   public docs promise.
  *
  * Validated by `tsgo --noEmit` (via `pnpm verify`). Not picked up by
  * vitest — the `.test-d.ts` extension is outside the default
@@ -111,4 +117,17 @@ const legacyTable = dbLegacy.table<{ _id: string; n: number }>("any");
 const legacyRow = await legacyTable.where({ _id: "x" }).first();
 export type _LegacyDbCallSiteGenericStillWorks = Expect<
   Equal<typeof legacyRow, { _id: string; n: number } | undefined>
+>;
+
+// Fallthrough: a name that is NOT in `CollectionNames<typeof config>`
+// must not produce a type error — overload #1 fails to match, overload
+// #2 fires with its default `T = JSONArraylessObject`, and the call
+// returns `Table<JSONArraylessObject>`. Locks in the documented intent
+// in `Db.table` and mirrors `BaerlyClient.table`'s behavior. Regression
+// guard: if a future "narrow-only" single-overload pattern lands, this
+// assertion breaks and forces the change to be deliberate.
+const typoTable = db.table("notACollection");
+const typoRow = await typoTable.where({ _id: "x" }).first();
+export type _BoundDbUnknownNameFallsBackToJSONArraylessObject = Expect<
+  Equal<typeof typoRow, JSONArraylessObject | undefined>
 >;
