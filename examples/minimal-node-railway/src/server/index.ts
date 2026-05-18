@@ -1,26 +1,26 @@
 /**
- * Server entry for node-railway. Wires `@baerly/adapter-node` with
- * production-shaped storage + verifier defaults.
+ * Server entry for minimal-node-railway. One call composes
+ * `s3Storage` / `r2Storage`, an auth verifier, and a `node:http`
+ * server with SIGTERM/SIGINT handling and (optionally) a
+ * multi-collection maintenance loop.
  *
- * Storage: AWS S3 (override via `S3_ENDPOINT` for R2/Minio/GCS).
- * Verifier: JWKS-backed JWT when `JWKS_URL` is set; falls back
- * to shared secret for `pnpm dev` parity. Production deployments
- * should set `JWKS_URL` and remove the shared-secret branch.
- * Maintenance: opt-in hourly `runMaintenanceTick` when `MAINTENANCE_KEY`
- * is set (single collection per process).
+ * Storage: AWS S3 by default; set `R2_ACCOUNT_ID` to switch to
+ * Cloudflare R2 via the S3-compat endpoint. For Minio or GCS, see
+ * the `minioStorage` / `gcsStorage` factories in
+ * `@baerly/adapter-node`.
  *
- * The listener also serves the built SPA from `dist/client/` via the
- * `createListener({ webRoot })` option; non-`/v1/*` GETs return the
- * Vite build's assets on the same origin as the API.
+ * Verifier: JWKS-backed JWT when `JWKS_URL` is set (production);
+ * `sharedSecret` otherwise (dev/CI). Production should set
+ * `JWKS_URL` and remove the shared-secret branch.
+ *
+ * Maintenance: opt-in via `MAINTENANCE_COLLECTIONS` (comma-separated
+ * collection slugs). Each tick runs one compact+GC pass per
+ * (TENANT, collection) pair.
  */
-import { createServer } from "node:http";
-import { resolve as resolvePath } from "node:path";
-import { DOMParser } from "@xmldom/xmldom";
-import { AwsClient } from "aws4fetch";
-import { createListener, runMaintenanceTick, S3HttpStorage } from "@baerly/adapter-node";
+import { baerlyNode, r2Storage, s3Storage } from "@baerly/adapter-node";
 import { bearerJwt, sharedSecret } from "@baerly/server/auth";
 import type { FriendlyLogLevel } from "@baerly/server/observability";
-import type { Verifier } from "@baerly/protocol";
+import type { Storage, Verifier } from "@baerly/protocol";
 
 const reqEnv = (name: string): string => {
   const v = process.env[name];
@@ -30,22 +30,21 @@ const reqEnv = (name: string): string => {
 
 const APP = "minimal-node-railway";
 const TENANT = process.env.TENANT ?? "minimal-demo";
-const PORT = Number(process.env.PORT ?? "8080");
 
-const aws = new AwsClient({
-  accessKeyId: reqEnv("AWS_ACCESS_KEY_ID"),
-  secretAccessKey: reqEnv("AWS_SECRET_ACCESS_KEY"),
-  region: process.env.AWS_REGION ?? "us-east-1",
-  service: "s3",
-});
-
-const storage = new S3HttpStorage({
-  endpoint:
-    process.env.S3_ENDPOINT ?? `https://s3.${process.env.AWS_REGION ?? "us-east-1"}.amazonaws.com`,
-  bucket: reqEnv("BUCKET"),
-  xmlParser: new DOMParser(),
-  sign: (req) => aws.sign(req),
-});
+const storage: Storage =
+  process.env.R2_ACCOUNT_ID !== undefined
+    ? r2Storage({
+        accountId: reqEnv("R2_ACCOUNT_ID"),
+        bucket: reqEnv("BUCKET"),
+        accessKeyId: reqEnv("AWS_ACCESS_KEY_ID"),
+        secretAccessKey: reqEnv("AWS_SECRET_ACCESS_KEY"),
+      })
+    : s3Storage({
+        region: process.env.AWS_REGION ?? "us-east-1",
+        bucket: reqEnv("BUCKET"),
+        accessKeyId: reqEnv("AWS_ACCESS_KEY_ID"),
+        secretAccessKey: reqEnv("AWS_SECRET_ACCESS_KEY"),
+      });
 
 const verifier: Verifier =
   process.env.JWKS_URL !== undefined
@@ -56,74 +55,28 @@ const verifier: Verifier =
       })
     : sharedSecret({ secret: reqEnv("SHARED_SECRET"), tenantPrefix: TENANT });
 
-// Static-asset directory. `vite build` emits the SPA into
-// `dist/client/` (see `vite.config.ts:build.outDir`). The listener
-// serves files from here for non-`/v1/*` GET/HEAD requests with the
-// `index.html` SPA fallback for HTML navigation. Operators can
-// override at deploy time via `WEB_ROOT=/path/to/built` if they're
-// shipping a pre-built bundle into a different directory.
-const WEB_ROOT = resolvePath(process.env.WEB_ROOT ?? "./dist/client");
+const maintenance =
+  process.env.MAINTENANCE_COLLECTIONS !== undefined
+    ? {
+        collections: process.env.MAINTENANCE_COLLECTIONS.split(",")
+          .map((c) => c.trim())
+          .filter((c) => c.length > 0),
+        tenants: [TENANT],
+      }
+    : undefined;
 
-// Observability — one canonical JSON line per request /
-// maintenance run on stdout. `LOG_LEVEL` toggles between
-// `debug | info | warn | error` (default `info`); `LOG_SAMPLE` is
-// the head-based sample rate for successful requests in `[0, 1]`
-// (default `0.1` — errors are always kept; maintenance always emits).
-// Pass `observability: undefined` (or omit the field) to skip
-// LogTape configuration entirely; the kernel's recorder pipe still
-// runs and the `metrics` option remains the authoritative sink.
-// See `AGENTS.md` for the canonical-line field reference and the
-// `observability` JSDoc on `@baerly/server` for sink-wiring recipes
-// (OTel, Datadog, Workers Analytics Engine) — visible in your
-// editor's TS hover.
-// For a local dev landing page, pass:
-//   dev: { app: APP, uiUrl: "http://localhost:5173" }
-// — surfaces a small HTML page on `GET /` so a curious browser
-// hit on the API root sees an explanation instead of a JSON 404.
-// Leave unset in production.
-const listener = createListener({
+const PORT = Number(process.env.PORT ?? 8080);
+
+await baerlyNode({
   app: APP,
   storage,
   verifier,
-  webRoot: WEB_ROOT,
+  webRoot: process.env.WEB_ROOT ?? "./dist/client",
   observability: {
     level: process.env.LOG_LEVEL as FriendlyLogLevel | undefined,
     sampleRate: process.env.LOG_SAMPLE !== undefined ? Number(process.env.LOG_SAMPLE) : 0.1,
   },
-});
-const server = createServer(listener);
+  ...(maintenance !== undefined && { maintenance }),
+}).listen(PORT);
 
-server.listen(PORT, () => console.log(`minimal-node-railway listening on :${PORT}`));
-
-// Maintenance loop — hourly, opt-in via MAINTENANCE_KEY. `runMaintenanceTick`
-// compacts and GCs **one collection** (`packages/adapter-node/src/server.ts`),
-// so the operator names which collection by setting the full
-// `app/<app>/tenant/<tenant>/manifests/<collection>/current.json` key. For
-// multi-collection apps, run multiple processes or wire a separate cron per
-// collection (Railway cron, Render cron, etc.).
-const MAINTENANCE_INTERVAL_MS = 60 * 60 * 1000;
-if (process.env.MAINTENANCE_KEY !== undefined) {
-  const maintenanceKey = process.env.MAINTENANCE_KEY;
-  setInterval(() => {
-    void runMaintenanceTick({
-      storage,
-      currentJsonKey: maintenanceKey,
-    }).catch((e: unknown) => {
-      console.error("maintenance tick failed", e);
-    });
-  }, MAINTENANCE_INTERVAL_MS).unref();
-}
-
-// Graceful shutdown — SIGTERM is what Railway/Render/Fly Machines/DO App Platform send on redeploy.
-const shutdown = (sig: NodeJS.Signals): void => {
-  console.log(`Received ${sig}; closing server`);
-  server.close((err) => {
-    if (err) {
-      console.error("server.close error", err);
-      process.exit(1);
-    }
-    process.exit(0);
-  });
-};
-process.on("SIGTERM", shutdown);
-process.on("SIGINT", shutdown);
+console.log(`minimal-node-railway listening on :${PORT}`);

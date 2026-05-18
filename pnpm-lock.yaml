@@ -249,12 +249,6 @@ importers:
       '@baerly/server':
         specifier: workspace:*
         version: link:../../packages/server
-      '@xmldom/xmldom':
-        specifier: ^0.9.10
-        version: 0.9.10
-      aws4fetch:
-        specifier: 1.0.20
-        version: 1.0.20
     devDependencies:
       '@baerly/cli':
         specifier: workspace:*
@@ -283,12 +277,6 @@ importers:
       '@baerly/server':
         specifier: workspace:*
         version: link:../../packages/server
-      '@xmldom/xmldom':
-        specifier: ^0.9.10
-        version: 0.9.10
-      aws4fetch:
-        specifier: 1.0.20
-        version: 1.0.20
     devDependencies:
       '@baerly/cli':
         specifier: workspace:*
