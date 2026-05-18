@@ -410,8 +410,10 @@ describe("scaffold", () => {
       expect(createBaerlyVersion).not.toBe("workspace:*");
       expect(createBaerlyVersion).toMatch(/^\^?\d+\.\d+\.\d+/);
 
-      // 5. `uint8array-base64.d.ts` excluded per manifest.
-      expect(result.filesWritten).not.toContain("uint8array-base64.d.ts");
+      // 5. `uint8array-base64.d.ts` shim shipped — load-bearing for
+      //    `tsc -b --noEmit` against workspace-linked @baerly/protocol
+      //    until TS proper accepts esnext.typedarrays in --lib.
+      expect(result.filesWritten).toContain("uint8array-base64.d.ts");
 
       // 6. AGENTS.md + CLAUDE.md parity (Codex CLI reads one, Claude
       //    Code reads the other — they MUST be byte-identical).

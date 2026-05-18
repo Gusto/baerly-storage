@@ -3,6 +3,6 @@
     { "from": "minimal-node-railway", "fromKey": "appName" },
     { "from": "minimal-demo", "fromKey": "tenant" }
   ],
-  "excludePaths": ["uint8array-base64.d.ts", ".baerly/scaffold.json"],
+  "excludePaths": [".baerly/scaffold.json"],
   "dropDevDeps": []
 }

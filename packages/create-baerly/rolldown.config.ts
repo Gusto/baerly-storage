@@ -22,10 +22,6 @@ import { defineConfig } from "rolldown";
  *     but live in any contributor working dir that ran `pnpm build`
  *     / `wrangler deploy` before `pnpm -F create-baerly build`.
  *     Mirrors the runtime walker skip list in `scaffold.ts`.
- *   - `uint8array-base64.d.ts` — in-repo-only shim. Already excluded
- *     at scaffold time via the manifest; excluding here too keeps
- *     `dist/templates/` clean.
- *
  * Includes `.baerly/scaffold.json` (the manifest the scaffolder reads
  * at runtime) — without it, dist mode breaks.
  */
@@ -44,7 +40,6 @@ const copyTemplates = () => ({
       ".wrangler",
       ".dev.vars",
       ".DS_Store",
-      "uint8array-base64.d.ts",
     ]);
     const shouldSkip = (name: string): boolean =>
       SKIP_NAMES.has(name) || name.endsWith(".tsbuildinfo");

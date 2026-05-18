@@ -3,6 +3,6 @@
     { "from": "helpdesk-cloudflare", "fromKey": "appName" },
     { "from": "helpdesk-demo", "fromKey": "tenant" }
   ],
-  "excludePaths": ["uint8array-base64.d.ts", ".baerly/scaffold.json"],
+  "excludePaths": [".baerly/scaffold.json"],
   "dropDevDeps": []
 }
