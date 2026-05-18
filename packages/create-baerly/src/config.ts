@@ -6,9 +6,18 @@
  * `BaerlyAppConfig` without the user importing the type explicitly.
  * Pure identity function at runtime — the scaffolder never reads this
  * file at scaffold time.
+ *
+ * As of ticket 04, `BaerlyAppConfig` extends `BaerlyConfig` from
+ * `@baerly/server` so one `baerly.config.ts` carries both scaffold
+ * metadata (target, domain, auth) and the runtime schema
+ * (`collections`). The literal-pinned return type makes the
+ * `collections` map's structure flow through to
+ * `createBaerlyClient<TConfig>` and `Db.create<TConfig>`.
  */
 
-export interface BaerlyAppConfig {
+import type { BaerlyConfig } from "@baerly/server";
+
+export interface BaerlyAppConfig extends BaerlyConfig {
   /** Bucket-prefix for this baerly app. One bucket per app. */
   readonly app: string;
   /**
@@ -72,4 +81,4 @@ export interface BaerlyAppConfig {
   };
 }
 
-export const defineConfig = (config: BaerlyAppConfig): BaerlyAppConfig => config;
+export const defineConfig = <const C extends BaerlyAppConfig>(config: C): C => config;
