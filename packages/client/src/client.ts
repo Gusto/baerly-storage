@@ -27,9 +27,40 @@ export interface BaerlyClientOptions<TConfig extends BaerlyConfig = UnboundConfi
    */
   readonly baseUrl: string;
   /**
-   * Optional. Defaults to `globalThis.fetch`. Override for tests
-   * (see `@baerly/client/testing`) or to splice in a custom
-   * retry / tracing wrapper.
+   * Optional. Defaults to `globalThis.fetch`. Wrap your own to add
+   * logging, retries, tracing, or auth-refresh — the entire client
+   * routes every request through this one function. This is the
+   * `link` middleware story (tRPC) and the `interceptor` story
+   * (axios) without new API surface.
+   *
+   * @example
+   * ```ts
+   * // Log every request + response.
+   * const withLogging: Fetcher = async (req) => {
+   *   const t0 = performance.now();
+   *   const res = await fetch(req);
+   *   console.log(`${req.method} ${req.url} → ${res.status} (${Math.round(performance.now() - t0)}ms)`);
+   *   return res;
+   * };
+   *
+   * // Retry idempotent reads on 5xx (max 3 tries, 100ms backoff).
+   * const withRetry = (next: Fetcher): Fetcher => async (req) => {
+   *   for (let i = 0; i < 3; i++) {
+   *     const res = await next(req.clone());
+   *     if (res.ok || res.status < 500 || req.method !== "GET") return res;
+   *     await new Promise((r) => setTimeout(r, 100 * (i + 1)));
+   *   }
+   *   return next(req);
+   * };
+   *
+   * const client = createBaerlyClient({
+   *   baseUrl: "https://api.example.com",
+   *   fetch: withRetry(withLogging),
+   * });
+   * ```
+   *
+   * See `docs/guide/client-middleware.md` for `onSuccess` / `onError`
+   * helpers and a composition pattern.
    */
   readonly fetch?: Fetcher;
   /**

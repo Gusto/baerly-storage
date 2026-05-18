@@ -23,6 +23,9 @@ For integrators and operators running Baerly against a real bucket.
 
 - `guide/auth.md` — Verifier presets (shared secret, JWT, CF Access,
   AWS SigV4, IP allowlist) and the tenant-isolation caveat.
+- `guide/client-middleware.md` — wrap `BaerlyClientOptions.fetch` to
+  add logging, retry, auth-refresh, and `onSuccess` / `onError`
+  hooks without new API surface.
 - `guide/observability.md` — canonical log line, sinks (OTel,
   Datadog, Workers Analytics), cost-aware sampling.
 - `guide/troubleshooting.md` — known pain points: test gating,
