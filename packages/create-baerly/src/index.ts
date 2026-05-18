@@ -22,7 +22,7 @@ import { defineCommand, runMain } from "citty";
 import { outro } from "@clack/prompts";
 import pc from "picocolors";
 import { runWizard } from "./prompts.ts";
-import { scaffold } from "./scaffold.ts";
+import { type Addon, KNOWN_ADDONS, scaffold } from "./scaffold.ts";
 
 const main = defineCommand({
   meta: {
@@ -68,6 +68,12 @@ const main = defineCommand({
       type: "boolean",
       description: "Run <pm> install after writing files (default false).",
     },
+    with: {
+      type: "string",
+      description:
+        'Comma-separated add-ons to layer on the base template. Today: "docker" (requires --target=node).',
+      valueHint: "docker",
+    },
     pm: {
       type: "string",
       description: 'Override package manager — "npm", "pnpm", or "yarn".',
@@ -83,8 +89,29 @@ const main = defineCommand({
       const isInteractive = process.stdin.isTTY === true && args.json !== true;
       const wantWizard =
         isInteractive && (args.projectName === undefined || args.target === undefined);
+      // Parse `--with=docker,…` early so both the flag-driven and
+      // wizard-driven paths can use the same parsed value. Unknown
+      // add-on names reject here with a list of valid choices.
+      let withAddonsFromFlag: readonly Addon[] | undefined;
+      if (args.with !== undefined) {
+        const parts = args.with
+          .split(",")
+          .map((s) => s.trim())
+          .filter((s) => s.length > 0);
+        const seen = new Set<Addon>();
+        for (const p of parts) {
+          if (!(KNOWN_ADDONS as readonly string[]).includes(p)) {
+            throw new Error(
+              `Unknown add-on ${JSON.stringify(p)}. Available add-ons: ${KNOWN_ADDONS.join(", ")}.`,
+            );
+          }
+          seen.add(p as Addon);
+        }
+        withAddonsFromFlag = [...seen];
+      }
       let projectName: string;
       let target: "cloudflare" | "node";
+      let withAddons: readonly Addon[];
       // The wizard returns `install` too; install handling itself is
       // unchanged from the prior code path (not yet implemented), so
       // the value is intentionally not threaded further.
@@ -93,10 +120,12 @@ const main = defineCommand({
           projectName: args.projectName,
           target:
             args.target === "cloudflare" || args.target === "node" ? args.target : undefined,
+          ...(withAddonsFromFlag !== undefined && { withAddons: withAddonsFromFlag }),
           install: args.install,
         });
         projectName = w.projectName;
         target = w.target;
+        withAddons = w.withAddons;
       } else {
         // Flag-driven path. Errors thrown here match current behavior.
         if (args.projectName === undefined) {
@@ -109,6 +138,18 @@ const main = defineCommand({
         }
         projectName = args.projectName;
         target = args.target;
+        withAddons = withAddonsFromFlag ?? [];
+      }
+      // Cross-field validation: today the only add-on is `docker`,
+      // which only applies to `--target=node`. Catch the mismatch
+      // here (it's identical whether the value came from the flag
+      // or the wizard).
+      if (withAddons.includes("docker") && target !== "node") {
+        throw new Error(
+          `--with=docker only applies to --target=node. The Docker add-on adds a ` +
+            `Dockerfile to the Node template. Use --target=node --with=docker, or ` +
+            `drop --with=docker to scaffold for --target=${target}.`,
+        );
       }
       if (args.starter !== undefined && args.starter !== "minimal" && args.starter !== "helpdesk") {
         throw new Error(
@@ -122,6 +163,7 @@ const main = defineCommand({
         ...(args.tenant !== undefined && { tenant: args.tenant }),
         ...(args.domain !== undefined && { domain: args.domain }),
         ...(args.pm !== undefined && { pm: args.pm as "npm" | "pnpm" | "yarn" }),
+        ...(withAddons.length > 0 && { withAddons }),
       });
       if (args.json === true) {
         process.stdout.write(

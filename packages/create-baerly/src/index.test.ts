@@ -100,6 +100,62 @@ describe.runIf(shouldRun)("create-baerly CLI (non-TTY)", () => {
     ]);
   });
 
+  it("accepts --with=docker on --target=node and emits the Dockerfile", async () => {
+    const projectName = "with-docker";
+    const { stdout, stderr } = await execFileP(
+      process.execPath,
+      [CLI_PATH, projectName, "--target=node", "--with=docker", "--json"],
+      { cwd: outRoot, encoding: "utf8" },
+    );
+    expect(stderr).toBe("");
+    const parsed = JSON.parse(stdout.trim()) as {
+      result: { status: string; outDir: string; filesWritten: number };
+    };
+    expect(parsed.result.status).toBe("ok");
+    // The scaffolded project contains the three add-on files.
+    expect(existsSync(join(parsed.result.outDir, "Dockerfile"))).toBe(true);
+    expect(existsSync(join(parsed.result.outDir, "healthcheck.js"))).toBe(true);
+    expect(existsSync(join(parsed.result.outDir, ".dockerignore"))).toBe(true);
+  });
+
+  it("rejects --with=docker on --target=cloudflare with an actionable message", async () => {
+    let stderr = "";
+    let exitCode = 0;
+    try {
+      await execFileP(
+        process.execPath,
+        [CLI_PATH, "docker-on-cf", "--target=cloudflare", "--with=docker"],
+        { cwd: outRoot, encoding: "utf8" },
+      );
+    } catch (err) {
+      const e = err as { code?: number; stderr?: string };
+      exitCode = e.code ?? -1;
+      stderr = e.stderr ?? "";
+    }
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("--with=docker only applies to --target=node");
+    expect(stderr).toContain("--target=cloudflare");
+  });
+
+  it("rejects --with=junk with an actionable message", async () => {
+    let stderr = "";
+    let exitCode = 0;
+    try {
+      await execFileP(
+        process.execPath,
+        [CLI_PATH, "junk-addon", "--target=node", "--with=junk"],
+        { cwd: outRoot, encoding: "utf8" },
+      );
+    } catch (err) {
+      const e = err as { code?: number; stderr?: string };
+      exitCode = e.code ?? -1;
+      stderr = e.stderr ?? "";
+    }
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain(`Unknown add-on "junk"`);
+    expect(stderr).toContain("Available add-ons: docker");
+  });
+
   it("emits the plaintext lines unchanged on a non-TTY success", async () => {
     const projectName = "plain-app";
     const { stdout, stderr } = await execFileP(

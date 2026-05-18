@@ -31,7 +31,6 @@ const copyTemplates = () => ({
     const EXAMPLES: readonly string[] = [
       "minimal-cloudflare",
       "minimal-node",
-      "minimal-node-docker",
       "helpdesk-cloudflare",
     ];
     const SKIP_NAMES = new Set([
