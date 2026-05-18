@@ -69,6 +69,24 @@ describe("validateOrThrow", () => {
     }
   });
 
+  test("unwraps `{ key }` PathSegment entries (Zod 3.24+ / Valibot 0.36+ shape)", async () => {
+    const segSchema: SchemaValidator = {
+      "~standard": {
+        version: 1,
+        vendor: "test",
+        validate: () => ({
+          issues: [{ path: [{ key: "users" }, { key: 2 }, "name"], message: "x" }],
+        }),
+      },
+    };
+    try {
+      await validateOrThrow(segSchema, {}, { collection: "t", verb: "insert" });
+      throw new Error("unreachable");
+    } catch (e) {
+      expect((e as BaerlyError).issues?.[0]?.path).toEqual(["users", 2, "name"]);
+    }
+  });
+
   test("awaits a Promise-returning validator (async path)", async () => {
     const asyncSchema: SchemaValidator<{ x: number }, { x: number }> = {
       "~standard": {

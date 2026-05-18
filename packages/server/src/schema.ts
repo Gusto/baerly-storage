@@ -52,14 +52,20 @@ export interface SchemaValidator<TInput = unknown, TOutput = TInput> {
 
 /**
  * One per-field validation failure. `path` is the validator-native
- * `PropertyKey` shape; `validateOrThrow` normalises it to
+ * shape — entries are either a bare `PropertyKey` (string / number /
+ * symbol) or a `{ key: PropertyKey }` segment, mirroring the live
+ * StandardSchemaV1 spec. `validateOrThrow` normalises both forms to
  * `(string | number)[]` before raising the resulting
  * `BaerlyError{code:"SchemaError"}`.
  */
 export interface SchemaIssue {
   readonly message: string;
-  /** Field path. Each entry is a string key or an integer index. */
-  readonly path?: ReadonlyArray<PropertyKey> | undefined;
+  /**
+   * Field path. Each entry is a string key, integer index, symbol
+   * (rare), or a `{ key: PropertyKey }` segment object — Zod 3.24+,
+   * Valibot 0.36+, ArkType 2.0+ etc. all emit the latter shape.
+   */
+  readonly path?: ReadonlyArray<PropertyKey | { readonly key: PropertyKey }> | undefined;
 }
 
 /**
@@ -83,7 +89,12 @@ export const validateOrThrow = async <TIn, TOut>(
   const result = await schema["~standard"].validate(candidate);
   if (result.issues === undefined) return result.value;
   const issues = result.issues.map((i) => ({
-    path: (i.path ?? []).map((p) => (typeof p === "number" ? p : String(p))),
+    path: (i.path ?? []).map((p) => {
+      // StandardSchemaV1 permits `{ key: PropertyKey }` segments
+      // (Zod 3.24+, Valibot 0.36+) alongside bare PropertyKeys.
+      const raw = typeof p === "object" && p !== null && "key" in p ? p.key : p;
+      return typeof raw === "number" ? raw : String(raw);
+    }),
     message: i.message,
   }));
   const first = issues[0];
