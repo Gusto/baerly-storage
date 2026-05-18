@@ -61,6 +61,22 @@
  * createServer(listener).listen(3000);
  * ```
  *
+ * @example
+ * ```ts
+ * // Mount the baerly /v1/* cascade under any Fetch host (Hono shown;
+ * // Express, h3, and friends compose the same way).
+ * import { Hono } from "hono";
+ * import { createFetchHandler, s3Storage } from "@baerly/adapter-node";
+ *
+ * const baerly = createFetchHandler({
+ *   app: "tickets",
+ *   storage: s3Storage({ ... }),
+ *   verifier,
+ * });
+ * const app = new Hono();
+ * app.all("/v1/*", (c) => baerly(c.req.raw));
+ * ```
+ *
  * Advanced users who need to override the `fetch` / `xmlParser` /
  * retry knobs can construct `S3HttpStorage` directly — see the
  * `S3HttpStorageOptions` JSDoc. The four factories above wrap the
@@ -68,8 +84,12 @@
  */
 export { S3HttpStorage } from "@baerly/protocol";
 export type { S3HttpStorageOptions } from "@baerly/protocol";
-export { createListener, runMaintenanceTick } from "./server.ts";
-export type { CreateListenerOptions, NodeMaintenanceOptions } from "./server.ts";
+export { createFetchHandler, createListener, runMaintenanceTick } from "./server.ts";
+export type {
+  CreateFetchHandlerOptions,
+  CreateListenerOptions,
+  NodeMaintenanceOptions,
+} from "./server.ts";
 export { s3Storage, r2Storage, minioStorage, gcsStorage } from "./storage-factories.ts";
 export { baerlyNode } from "./baerly-node.ts";
 export type { BaerlyNodeHandle, BaerlyNodeMaintenance, BaerlyNodeOptions } from "./baerly-node.ts";
