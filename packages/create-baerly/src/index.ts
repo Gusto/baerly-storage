@@ -18,7 +18,7 @@
  *     TTY invocation with `--json` keep the existing behavior and
  *     the existing JSON envelope shape (part of the agent contract).
  */
-import { defineCommand, runMain, type ArgsDef, type ParsedArgs } from "citty";
+import { defineCommand, parseArgs, runMain, type ArgsDef, type ParsedArgs } from "citty";
 import { outro } from "@clack/prompts";
 import pc from "picocolors";
 import { runWizard } from "./prompts.ts";
@@ -214,5 +214,28 @@ const main = defineCommand({
     if (code !== 0) process.exit(code);
   },
 });
+
+/**
+ * Programmatic entry used by tests. Bypasses citty's `run` wrapper
+ * (which would call `process.exit` and kill vitest) and returns the
+ * integer exit code directly.
+ */
+export const runCreateBaerly = async (argv: readonly string[]): Promise<number> => {
+  let parsed: ParsedArgs<typeof CREATE_BAERLY_ARGS>;
+  try {
+    parsed = parseArgs<typeof CREATE_BAERLY_ARGS>(argv as string[], CREATE_BAERLY_ARGS);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (argv.includes("--json")) {
+      process.stderr.write(
+        `${JSON.stringify({ error: { code: "InvalidConfig", message: msg, command: "create-baerly" } })}\n`,
+      );
+    } else {
+      process.stderr.write(`${pc.red("create-baerly:")} ${msg}\n`);
+    }
+    return 1;
+  }
+  return handleCreateBaerly(parsed);
+};
 
 void runMain(main);
