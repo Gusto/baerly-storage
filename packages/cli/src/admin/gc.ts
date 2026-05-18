@@ -1,31 +1,28 @@
 /**
- * `baerly admin compact` — manually trigger one compact pass (fold
- * log entries into a new snapshot). Wraps `compact()` from
- * `@baerly/server/maintenance` and surfaces the per-phase result on
- * the JSON envelope.
+ * `baerly admin gc` — manually trigger one GC pass (mark + sweep
+ * orphan blobs). Wraps `runGc()` from `@baerly/server/maintenance`
+ * and surfaces the result on the JSON envelope.
  *
  * Production runs `runScheduledMaintenance` on a cron schedule (CF
  * Workers Cron Trigger, or pm2-driven `node-cron`). This subcommand
- * is the on-call escape hatch — fire a compact pass outside the
- * schedule after a known write storm, while iterating, or when
- * forcing compaction on a freshly-seeded bucket that hasn't yet
- * tripped the default `minEntriesToCompact` threshold.
+ * is the on-call escape hatch — fire a GC pass outside the schedule
+ * to drain the orphan-blob queue or to validate cap behavior.
+ *
+ * Note that newly-marked candidates are only swept after the
+ * GC_GRACE_PERIOD_MILLIS window has elapsed (7 days by default), so
+ * back-to-back invocations on a fresh bucket will mark but not sweep.
  *
  * Args:
  *   --bucket               Required. Bucket URI.
  *   --app                  Default "app" (or `baerly.config.ts`).
  *   --tenant               Default "tenant" (or `baerly.config.ts`).
  *   --table                Required. Collection name.
- *   --cloudflare-free-tier Apply the CF free-tier compact caps
- *                          (maxEntriesPerRun=20, minEntriesToCompact=50).
- *   --min-entries          Override the active profile's
- *                          `minEntriesToCompact` threshold (non-negative
- *                          integer). Useful on brand-new buckets that
- *                          haven't yet accumulated the profile default.
+ *   --cloudflare-free-tier Apply the CF free-tier GC caps
+ *                          (maxMarksPerRun=20, maxSweepsPerRun=10).
  *   --json                 JSON envelope.
  *
  * Exit codes:
- *   0 — compact pass completed.
+ *   0 — GC pass completed.
  *   1 — InvalidConfig (bad bucket URI, missing args, bad flag).
  *   2 — Storage / Network error.
  *   3 — Protocol invariant (Conflict / Internal / InvalidResponse).
@@ -33,13 +30,13 @@
 
 import { defineCommand, parseArgs, type ArgsDef, type ParsedArgs } from "citty";
 import { BaerlyError } from "@baerly/protocol";
-import { type CompactOptions } from "@baerly/server";
-import { CLOUDFLARE_FREE_TIER, compact } from "@baerly/server/maintenance";
+import { type RunGcOptions } from "@baerly/server";
+import { CLOUDFLARE_FREE_TIER, runGc as runGcEngine } from "@baerly/server/maintenance";
 import { loadAppConfig } from "../config.ts";
 import { parseBucketUri } from "../copy.ts";
 import { emitError, emitSuccess, setJsonMode } from "../output.ts";
 
-const COMPACT_ARGS = {
+const GC_ARGS = {
   bucket: {
     type: "string",
     required: true,
@@ -67,14 +64,7 @@ const COMPACT_ARGS = {
   "cloudflare-free-tier": {
     type: "boolean",
     description:
-      "Apply the Cloudflare free-tier compact caps (maxEntriesPerRun=20, minEntriesToCompact=50).",
-  },
-  "min-entries": {
-    type: "string",
-    required: false,
-    description:
-      "Override the active profile's minEntriesToCompact (compact regardless of live-tail length).",
-    valueHint: "int",
+      "Apply the Cloudflare free-tier GC caps (maxMarksPerRun=20, maxSweepsPerRun=10).",
   },
   json: {
     type: "boolean",
@@ -82,7 +72,7 @@ const COMPACT_ARGS = {
   },
 } as const satisfies ArgsDef;
 
-type Args = ParsedArgs<typeof COMPACT_ARGS>;
+type Args = ParsedArgs<typeof GC_ARGS>;
 
 const KNOWN_KEYS: ReadonlySet<string> = new Set([
   "bucket",
@@ -90,7 +80,6 @@ const KNOWN_KEYS: ReadonlySet<string> = new Set([
   "tenant",
   "table",
   "cloudflare-free-tier",
-  "min-entries",
   "json",
   "_",
 ]);
@@ -124,78 +113,58 @@ const resolveAppTenant = async (args: Args): Promise<{ app: string; tenant: stri
   }
 };
 
-const handleCompact = async (args: Args): Promise<number> => {
+const handleGc = async (args: Args): Promise<number> => {
   setJsonMode(args.json === true);
   try {
     for (const k of Object.keys(args)) {
       if (!KNOWN_KEYS.has(k)) {
-        throw new BaerlyError("InvalidConfig", `baerly admin compact: unknown flag --${k}`);
+        throw new BaerlyError("InvalidConfig", `baerly admin gc: unknown flag --${k}`);
       }
-    }
-    let minEntriesOverride: number | undefined;
-    if (typeof args["min-entries"] === "string") {
-      const raw = args["min-entries"];
-      const parsed = Number.parseInt(raw, 10);
-      if (
-        !Number.isFinite(parsed) ||
-        !Number.isInteger(parsed) ||
-        parsed < 0 ||
-        String(parsed) !== raw.trim()
-      ) {
-        throw new BaerlyError(
-          "InvalidConfig",
-          `baerly admin compact: --min-entries must be a non-negative integer (got ${JSON.stringify(raw)})`,
-        );
-      }
-      minEntriesOverride = parsed;
     }
     const { app, tenant } = await resolveAppTenant(args);
     const bucket = await parseBucketUri(args.bucket);
     const currentJsonKey = `${bucket.keyPrefix}app/${app}/tenant/${tenant}/manifests/${args.table}/current.json`;
     // `CLOUDFLARE_FREE_TIER` is typed as `MaintenanceOptions` but its
-    // `.compact` field carries the internal `maxEntriesPerRun` cap on
-    // the runtime object; spreading it forwards that cap to `compact()`.
-    const baseCompact: CompactOptions =
-      args["cloudflare-free-tier"] === true ? (CLOUDFLARE_FREE_TIER.compact ?? {}) : {};
-    const options: CompactOptions = {
-      ...baseCompact,
-      ...(minEntriesOverride !== undefined && { minEntriesToCompact: minEntriesOverride }),
-    };
-    const result = await compact({ storage: bucket.storage, currentJsonKey }, options);
+    // `.gc` field carries the internal `maxMarksPerRun` /
+    // `maxSweepsPerRun` caps on the runtime object; spreading it
+    // forwards those caps to `runGc()`.
+    const options: RunGcOptions =
+      args["cloudflare-free-tier"] === true ? (CLOUDFLARE_FREE_TIER.gc ?? {}) : {};
+    const result = await runGcEngine({ storage: bucket.storage, currentJsonKey }, options);
     emitSuccess({
-      command: "admin.compact",
+      command: "admin.gc",
       status: "ok",
       table: args.table,
-      compact: {
-        written: result.written,
-        skipped_reason: result.skippedReason ?? null,
-        entries_folded: result.entriesFolded,
-        log_seq_start_before: result.logSeqStartBefore,
-        log_seq_start_after: result.logSeqStartAfter,
-        previous_snapshot_key: result.previousSnapshotKey,
-        new_snapshot_key: result.newSnapshotKey ?? null,
+      gc: {
+        marked: {
+          stale_log: result.marked.stale_log,
+          orphan_snapshot: result.marked.orphan_snapshot,
+          orphan_content: result.marked.orphan_content,
+        },
+        swept: result.swept,
+        pendingDepth: result.pendingDepth,
       },
     });
     return 0;
   } catch (err) {
     if (err instanceof BaerlyError) {
-      emitError("admin.compact", err.code, err.message);
+      emitError("admin.gc", err.code, err.message);
       return errorToExitCode(err.code);
     }
-    emitError("admin.compact", "Unknown", (err as Error).message);
+    emitError("admin.gc", "Unknown", (err as Error).message);
     return 2;
   }
 };
 
-/** citty `defineCommand` block for `baerly admin compact`. */
-export const compactCmd = defineCommand({
+/** citty `defineCommand` block for `baerly admin gc`. */
+export const gcCmd = defineCommand({
   meta: {
-    name: "compact",
-    description: "Manually trigger one compact pass (fold log entries into a new snapshot).",
+    name: "gc",
+    description: "Manually trigger one GC pass (mark + sweep orphan blobs).",
   },
-  args: COMPACT_ARGS,
+  args: GC_ARGS,
   run: async ({ args }) => {
-    const code = await handleCompact(args);
+    const code = await handleGc(args);
     if (code !== 0) process.exit(code);
   },
 });
@@ -204,15 +173,19 @@ export const compactCmd = defineCommand({
  * Programmatic entry used by tests. Bypasses citty's `run` wrapper
  * (which would call `process.exit` and kill vitest) and returns the
  * integer exit code directly.
+ *
+ * Named `runGc` for symmetry with peer subcommands; the underlying
+ * `runGc` from `@baerly/server/maintenance` is imported as
+ * `runGcEngine` to avoid the shadow.
  */
-export const runCompact = async (argv: readonly string[]): Promise<number> => {
+export const runGc = async (argv: readonly string[]): Promise<number> => {
   let parsed: Args;
   try {
-    parsed = parseArgs<typeof COMPACT_ARGS>(argv as string[], COMPACT_ARGS);
+    parsed = parseArgs<typeof GC_ARGS>(argv as string[], GC_ARGS);
   } catch (err) {
     setJsonMode(argv.includes("--json"));
-    emitError("admin.compact", "InvalidConfig", (err as Error).message);
+    emitError("admin.gc", "InvalidConfig", (err as Error).message);
     return 1;
   }
-  return handleCompact(parsed);
+  return handleGc(parsed);
 };

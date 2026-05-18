@@ -16,6 +16,7 @@ import { defineCommand, runMain } from "citty";
 import { compactCmd } from "./admin/compact.ts";
 import { dumpCmd } from "./admin/dump.ts";
 import { fsckCmd } from "./admin/fsck.ts";
+import { gcCmd } from "./admin/gc.ts";
 import { migrateCmd } from "./admin/migrate.ts";
 import { rebuildIndexCmd } from "./admin/rebuild-index.ts";
 import { restoreCmd } from "./admin/restore.ts";
@@ -37,7 +38,7 @@ setJsonMode(process.argv.includes("--json"));
 /**
  * `baerly admin <command>` — operator-side reconciliation, inspection,
  * data-shovel, and maintenance tools. Today: `rebuild-index`, `dump`,
- * `restore`, `compact`, `fsck`, `migrate`.
+ * `restore`, `compact`, `gc`, `fsck`, `migrate`.
  */
 const admin = defineCommand({
   meta: {
@@ -49,6 +50,7 @@ const admin = defineCommand({
     dump: dumpCmd,
     restore: restoreCmd,
     compact: compactCmd,
+    gc: gcCmd,
     fsck: fsckCmd,
     migrate: migrateCmd,
   },
