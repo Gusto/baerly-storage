@@ -9,7 +9,7 @@ enough that an LLM can use the public API zero-shot from the
 feature, not an afterthought. The positioning story is in
 [`docs/about/thesis.md`](./docs/about/thesis.md).
 
-Tested with S3, Backblaze, R2 and self-hosted Minio.
+Tested with S3, GCS, R2, and self-hosted Minio.
 
 ## Quick start
 
