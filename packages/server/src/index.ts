@@ -9,7 +9,14 @@ export {
   loadSnapshotAsMap,
   snapshotKey,
 } from "./compactor.ts";
-export { type BaerlyConfig, type CollectionDefinition, defineConfig } from "./config.ts";
+export {
+  type BaerlyConfig,
+  type CollectionDefinition,
+  type CollectionNames,
+  type RowOf,
+  type UnboundConfig,
+  defineConfig,
+} from "./config.ts";
 export { type DevLandingOptions, renderDevLanding } from "./dev-landing.ts";
 export {
   type HttpErrorEnvelope,
