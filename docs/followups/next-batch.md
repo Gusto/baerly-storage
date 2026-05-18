@@ -28,56 +28,6 @@ Options:
 wrangler URL plus the vite URL) would improve first-touch UX.
 Related to item 10 — same workspace, related fix.
 
-### 3. `.oxlintrc.json` lint posture is "make it pass," not "lock it in"
-
-**STATUS: deferred; pre-1.0 hardening.**
-**Effort:** M (audit each disabled rule + fix the violations it surfaces).
-
-Two concerns:
-
-1. Only `correctness`, `suspicious`, `perf` are denied at the
-   `categories` level. `style` (and to some extent `pedantic`) is
-   left at default — for a pre-publish library aiming at strictest
-   posture, `style: "deny"` (or `"warn"`) would catch a layer of
-   consistency issues currently invisible. `restriction` /
-   `nursery` are correctly opt-in; leave those alone.
-2. The `**/*.test.ts` override turns off six vitest rules:
-   `no-standalone-expect`, `require-mock-type-parameters`,
-   `require-to-throw-message`, `no-conditional-expect`,
-   `expect-expect`, `valid-title`. At minimum `expect-expect` and
-   `valid-title` are very cheap wins — disabling them looks like a
-   "shut it up to land a PR" move rather than a deliberate posture
-   choice. Walk each one, decide if it really conflicts with the
-   property-test cascade style, and re-enable the rest.
-
-The top-level `eslint/no-await-in-loop: "off"` is plausibly
-correct (the writer loops are sequential by design), but worth a
-sanity check + a code comment if it stays off.
-
-### 4. Root `tsconfig.json` is missing strictest-tier flags
-
-**STATUS: deferred; pre-1.0 hardening.**
-**Effort:** M (each flag will surface latent unsoundness — budget
-half a day per flag for the cleanup pass).
-
-Already on: `strict`, `noUncheckedIndexedAccess`,
-`noImplicitOverride`, `noFallthroughCasesInSwitch`,
-`noUnusedLocals`, `noUnusedParameters`, `verbatimModuleSyntax`,
-`isolatedModules`, `erasableSyntaxOnly`. Not on:
-
-- `exactOptionalPropertyTypes` — separates `{ x?: T }` from
-  `{ x?: T | undefined }`. Pre-1.0 is the right time to commit to
-  one or the other across the public API.
-- `noImplicitReturns` — catches `if/else` branches that fall off
-  the end of a non-`void` function. Distinct from
-  `noFallthroughCasesInSwitch`.
-- `noPropertyAccessFromIndexSignature` — forces `m["k"]` for
-  index-signature lookups, leaving `m.k` for declared keys. Good
-  hygiene for protocol code that loads keys off `Record<string, …>`
-  blobs.
-
-Land them one at a time; each will surface real issues.
-
 ### 5. Root `package.json` is missing npm-registry publication fields
 
 **STATUS: deferred; required before `npm publish`.**
