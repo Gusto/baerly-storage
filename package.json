@@ -42,6 +42,38 @@
     "./node": {
       "types": "./dist/node.d.ts",
       "import": "./dist/node.js"
+    },
+    "./maintenance": {
+      "types": "./dist/maintenance.d.ts",
+      "import": "./dist/maintenance.js"
+    },
+    "./observability": {
+      "types": "./dist/observability.d.ts",
+      "import": "./dist/observability.js"
+    },
+    "./client": {
+      "types": "./dist/client.d.ts",
+      "import": "./dist/client.js"
+    },
+    "./client/react": {
+      "types": "./dist/client-react.d.ts",
+      "import": "./dist/client-react.js"
+    },
+    "./client/testing": {
+      "types": "./dist/client-testing.d.ts",
+      "import": "./dist/client-testing.js"
+    },
+    "./dev": {
+      "types": "./dist/dev.d.ts",
+      "import": "./dist/dev.js"
+    },
+    "./dev/vite": {
+      "types": "./dist/dev-vite.d.ts",
+      "import": "./dist/dev-vite.js"
+    },
+    "./export": {
+      "types": "./dist/export.d.ts",
+      "import": "./dist/export.js"
     }
   },
   "publishConfig": {
