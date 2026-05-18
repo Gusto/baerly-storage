@@ -1,8 +1,9 @@
 /**
- * Worker entry for helpdesk-cloudflare. Routes /v1/* to baerlyWorker
- * (R2-backed) and falls through to env.ASSETS.fetch() for SPA
- * navigation (the built Vite bundle in `dist/client/`, uploaded by
- * `wrangler deploy` via the `assets:` binding).
+ * Worker entry for helpdesk-cloudflare. Handles /v1/* via
+ * baerlyWorker (R2-backed); the Cloudflare platform routes every
+ * other request to the assets layer first (see `wrangler.jsonc:assets`)
+ * with `not_found_handling: "single-page-application"` rewriting
+ * unknown asset paths to `/index.html` for client-side routing.
  *
  * Verifier selection: cloudflareAccess() when both CF_ACCESS_TEAM_DOMAIN
  * and CF_ACCESS_AUDIENCE_TAG are set as vars, else sharedSecret() when
@@ -18,7 +19,6 @@ import type { FriendlyLogLevel } from "@baerly/server/observability";
 import type { Verifier } from "@baerly/protocol";
 
 interface AppEnv extends BaerlyEnv {
-  readonly ASSETS: Fetcher;
   readonly SHARED_SECRET?: string;
   readonly CF_ACCESS_TEAM_DOMAIN?: string;
   readonly CF_ACCESS_AUDIENCE_TAG?: string;
@@ -52,11 +52,7 @@ const workerOptions = (env: AppEnv) => ({
 
 export default {
   async fetch(req, env, ctx): Promise<Response> {
-    const url = new URL(req.url);
-    if (url.pathname.startsWith("/v1/")) {
-      return baerlyWorker(workerOptions(env)).fetch!(req, env, ctx);
-    }
-    return env.ASSETS.fetch(req);
+    return baerlyWorker(workerOptions(env)).fetch!(req, env, ctx);
   },
   async scheduled(event, env, ctx): Promise<void> {
     return baerlyWorker(workerOptions(env)).scheduled!(event, env, ctx);

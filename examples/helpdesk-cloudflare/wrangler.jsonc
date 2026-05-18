@@ -20,17 +20,16 @@
   ],
 
   // Workers Assets — uploads everything in `dist/client/` as the
-  // SPA bundle and serves it from the same Worker. The explicit
-  // `binding: "ASSETS"` exposes the assets Fetcher to the Worker
-  // module, which dispatches `/v1/*` to `baerlyWorker` and falls
-  // through to `env.ASSETS.fetch(req)` for everything else (see
-  // `src/server/index.ts`). `not_found_handling:
+  // SPA bundle and serves it from the same Worker. Cloudflare's
+  // platform routes each request to the assets handler first and
+  // falls back to the Worker's `fetch` only for paths the assets
+  // layer couldn't satisfy (i.e., `/v1/*` and anything else not
+  // matching a built static file). `not_found_handling:
   // "single-page-application"` rewrites unknown asset paths to
   // `/index.html` so client-side routing works. `vite build` (via
   // the Vite plugin) populates `dist/client/` from `src/web/`.
   "assets": {
     "directory": "./dist/client",
-    "binding": "ASSETS",
     "not_found_handling": "single-page-application",
   },
 
