@@ -170,15 +170,17 @@ see the first attempt sampled out and the retry sampled in.
 
 ## Sinks
 
-Three options ship in-box:
+The kernel ships one in-box sink shorthand; pretty rendering lives
+in the Node adapter:
 
 - `"console-json"` — one JSON object per line via `console.log`.
   Default for production. Cloudflare and CloudWatch ingest this
   natively.
-- `"console-pretty"` — human-readable text. The Node adapter
-  auto-selects this when `process.stdout.isTTY === true` (developer
-  terminals).
-- A custom `Sink` function — pass through verbatim.
+- A custom `Sink` function — pass through verbatim. The Node
+  adapter's `@baerly/adapter-node` exports `prettyConsoleSink()`,
+  a human-readable renderer auto-selected when
+  `process.stdout.isTTY === true` (developer terminals); pass it
+  as a `Sink` function to wire it manually in other Node hosts.
 
 ### Wiring a custom sink
 

@@ -46,7 +46,7 @@ If you want extra detail on a code path, use `debug`:
 ```ts
 import { CATEGORY, getLogger } from "../observability";
 
-getLogger(CATEGORY.writer).debug("step", { collection, attempt });
+getLogger(CATEGORY.maintenance).debug("step", { collection, attempt });
 ```
 
 DEBUG is below the `info` threshold in production; the formatting
@@ -95,6 +95,13 @@ await withObservability("rebuild", async (ctx, recorder) => {
 The body sees the context positionally for ergonomic field-setting,
 but `getCurrentContext()` works inside any descendant too — async
 propagation is via `AsyncLocalStorage`.
+
+**Nesting is a no-op.** If a `withObservability` call is made
+inside an outer scope (e.g. `runScheduledMaintenance` calling
+`compact()` and `runGc()`), the inner call inherits the outer
+ctx+recorder and emits no separate canonical line — the outer
+scope owns it. "One unit-of-work → exactly one canonical line"
+is a hard invariant.
 
 ## When to use DEBUG
 

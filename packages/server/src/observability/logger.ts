@@ -4,8 +4,10 @@
  * `@logtape/logtape` ships a tiny library-first API: a global
  * `configure({ sinks, loggers })` and a `getLogger(category)` that
  * routes to the configured sinks. We expose a small wrapper so the
- * boot path can hand LogTape a `"console-json"` /
- * `"console-pretty"` shortcut and an env-driven level override.
+ * boot path can hand LogTape the built-in `"console-json"` shortcut
+ * (or any custom `Sink` function — pretty rendering lives in
+ * `@baerly/adapter-node` so picocolors stays off the kernel) and
+ * an env-driven level override.
  *
  * The wrapper is intentionally thin: anything LogTape can do
  * (custom sinks, filters, child loggers via `getChild`) the caller
