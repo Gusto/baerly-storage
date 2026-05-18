@@ -11,9 +11,14 @@
     "erasableSyntaxOnly": true,
     "allowImportingTsExtensions": true,
 
+    // exactOptionalPropertyTypes is deliberately not enabled — it conflicts
+    // with the LLM-zero-shot option-bag ergonomics in docs/about/thesis.md
+    // (an LLM writing `{ inFanoutThreshold: undefined }` to mean "leave
+    // default" would type-error).
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "noImplicitOverride": true,
+    "noImplicitReturns": true,
     "noFallthroughCasesInSwitch": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
