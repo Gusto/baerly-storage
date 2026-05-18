@@ -14,6 +14,34 @@
  *
  * @example
  * ```ts
+ * // One-call host helper — the 90% default. Mirrors `baerlyWorker`
+ * // from `@baerly/adapter-cloudflare`. Composes `createListener` +
+ * // `node:http` + SIGTERM/SIGINT handlers + per-(tenant, collection)
+ * // maintenance.
+ * import { baerlyNode, s3Storage } from "@baerly/adapter-node";
+ * import { sharedSecret } from "@baerly/server/auth";
+ *
+ * const handle = baerlyNode({
+ *   app: "tickets",
+ *   storage: s3Storage({
+ *     region: "us-east-1",
+ *     bucket: process.env.BUCKET!,
+ *     accessKeyId: process.env.AWS_ACCESS_KEY_ID!,
+ *     secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY!,
+ *   }),
+ *   verifier: sharedSecret({
+ *     secret: process.env.SHARED_SECRET!,
+ *     tenantPrefix: "acme",
+ *   }),
+ *   maintenance: { tenants: ["acme"], collections: ["tickets"] },
+ * });
+ * await handle.listen(Number(process.env.PORT ?? 8080));
+ * ```
+ *
+ * @example
+ * ```ts
+ * // Low-level seam for callers who want manual control over the
+ * // server lifecycle (cluster mode, custom signal handling, etc.).
  * import { createServer } from "node:http";
  * import { createListener, s3Storage } from "@baerly/adapter-node";
  * import type { Verifier } from "@baerly/server";
@@ -43,3 +71,5 @@ export type { S3HttpStorageOptions } from "@baerly/protocol";
 export { createListener, runMaintenanceTick } from "./server.ts";
 export type { CreateListenerOptions, NodeMaintenanceOptions } from "./server.ts";
 export { s3Storage, r2Storage, minioStorage, gcsStorage } from "./storage-factories.ts";
+export { baerlyNode } from "./baerly-node.ts";
+export type { BaerlyNodeHandle, BaerlyNodeMaintenance, BaerlyNodeOptions } from "./baerly-node.ts";
