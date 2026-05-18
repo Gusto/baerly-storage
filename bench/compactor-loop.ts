@@ -12,7 +12,6 @@
  */
 
 import {
-  NODE_PROFILE,
   runScheduledMaintenance,
   type MaintenanceResult,
 } from "@baerly/server/maintenance";
@@ -42,7 +41,7 @@ export async function runCompactorLoop(
   while (!signal.aborted) {
     let result: MaintenanceResult;
     try {
-      result = await runScheduledMaintenance({ storage, currentJsonKey }, NODE_PROFILE);
+      result = await runScheduledMaintenance({ storage, currentJsonKey }, {});
       counters.passes++;
       if (result.compact?.written === true) counters.compactsLanded++;
       if (result.compact?.skippedReason === "cas-lost") counters.compactsCasLost++;

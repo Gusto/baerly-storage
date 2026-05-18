@@ -68,9 +68,9 @@ or when an agent drives the copy.
 ## Storage cost
 
 A backup's footprint is ~1× the source's snapshot plus the live
-tail at cursor time. Under
-`NODE_PROFILE.compactor.minEntriesToCompact = 100` the live tail is
-bounded at ~100 entries; the snapshot dominates.
+tail at cursor time. The engine's default
+`minEntriesToCompact` is 100, so the live tail is bounded at ~100
+entries; the snapshot dominates.
 
 ## Restoring
 

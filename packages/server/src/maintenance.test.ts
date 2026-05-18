@@ -11,12 +11,11 @@
 import { CURRENT_JSON_SCHEMA_VERSION, createCurrentJson, MemoryStorage } from "@baerly/protocol";
 import { reset, type LogRecord, type Sink } from "@logtape/logtape";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { InternalRunGcOptions } from "./gc.ts";
+import { compact } from "./compactor.ts";
+import { runGc, type InternalRunGcOptions } from "./gc.ts";
 import {
   CLOUDFLARE_FREE_TIER,
-  CLOUDFLARE_PAID_TIER,
   type InternalMaintenanceOptions,
-  NODE_PROFILE,
   runScheduledMaintenance,
 } from "./maintenance.ts";
 import { configureObservability } from "./observability/index.ts";
@@ -51,32 +50,30 @@ describe("runScheduledMaintenance", () => {
     const r = await runScheduledMaintenance(
       { storage: s, currentJsonKey: KEY },
       // Bypass GC's 7-day grace so the sweep path actually runs in
-      // one tick. Compact's bounds come from NODE_PROFILE.
-      {
-        ...NODE_PROFILE,
-        gc: { ...NODE_PROFILE.gc, graceMillis: 0 } as InternalRunGcOptions,
-      },
+      // one tick. Engine defaults are unbounded so a single pass folds
+      // the entire live tail.
+      { gc: { graceMillis: 0 } as InternalRunGcOptions },
     );
     expect(r.compact?.written).toBe(true);
     expect(r.compact?.entriesFolded).toBe(150);
     // After compact, [0, 150) become stale-log; GC marks them and the
     // zero-grace lets the same pass sweep them.
-    expect(r.gc).not.toBeNull();
     expect(r.gc?.marked.stale_log).toBeGreaterThan(0);
   });
 
-  it("skipCompact runs gc only", async () => {
+  it("runGc alone runs without compact", async () => {
+    // Single-phase ticks (e.g. the CF free-tier even/odd-minute cron
+    // pattern) invoke the primitive directly instead of
+    // `runScheduledMaintenance`.
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
-    const r = await runScheduledMaintenance(
-      { storage: s, currentJsonKey: KEY },
-      { skipCompact: true },
-    );
-    expect(r.compact).toBeNull();
-    expect(r.gc).not.toBeNull();
+    const r = await runGc({ storage: s, currentJsonKey: KEY });
+    expect(r).not.toBeNull();
   });
 
-  it("skipGc runs compact only", async () => {
+  it("compact alone runs without gc", async () => {
+    // Single-phase ticks invoke the primitive directly instead of
+    // `runScheduledMaintenance`.
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
     const writer = new ServerWriter({ storage: s, currentJsonKey: KEY });
@@ -88,12 +85,8 @@ describe("runScheduledMaintenance", () => {
         body: { _id: `d${i}`, n: i },
       });
     }
-    const r = await runScheduledMaintenance(
-      { storage: s, currentJsonKey: KEY },
-      { ...NODE_PROFILE, skipGc: true },
-    );
-    expect(r.compact?.written).toBe(true);
-    expect(r.gc).toBeNull();
+    const r = await compact({ storage: s, currentJsonKey: KEY });
+    expect(r.written).toBe(true);
   });
 
   describe("observability", () => {
@@ -113,20 +106,21 @@ describe("runScheduledMaintenance", () => {
     it("emits one canonical line at info level on the baerly.maintenance category", async () => {
       const s = new MemoryStorage();
       await bootstrap(s, KEY);
-      await runScheduledMaintenance({ storage: s, currentJsonKey: KEY }, { skipCompact: true });
-      // The maintenance run also nests compact+gc — but skipCompact
-      // is set so only gc runs, which emits its own canonical line
-      // on baerly.gc.
+      // GC alone (via the primitive) still emits its own canonical
+      // line on baerly.gc; this assertion is about the
+      // baerly.maintenance line specifically, which `runScheduledMaintenance`
+      // always emits at the top level.
+      await runScheduledMaintenance({ storage: s, currentJsonKey: KEY }, {});
       const maintenanceLines = records.filter((r) => r.category.join(".") === "baerly.maintenance");
       expect(maintenanceLines).toHaveLength(1);
       expect(maintenanceLines[0]!.level).toBe("info");
       expect(maintenanceLines[0]!.properties["outcome"]).toBe("ok");
     });
 
-    it("enriches the canonical line with compact_written / gc_swept / skip flags + recorder-bag fields", async () => {
+    it("enriches the canonical line with compact_written / gc_swept + recorder-bag fields", async () => {
       // Drive a real compact+GC pass so both phases emit their
       // recorder-bag metrics (`db.compact.entries_folded`,
-      // `db.gc.swept_total`, etc.) and the new explicit operator-
+      // `db.gc.swept_total`, etc.) and the explicit operator-
       // facing fields land alongside them.
       const s = new MemoryStorage();
       await bootstrap(s, KEY);
@@ -144,21 +138,16 @@ describe("runScheduledMaintenance", () => {
         // Bypass GC's 7-day grace so the sweep path actually runs in
         // one tick and `db.gc.swept_total` lands on the canonical
         // line's recorder bag.
-        {
-        ...NODE_PROFILE,
-        gc: { ...NODE_PROFILE.gc, graceMillis: 0 } as InternalRunGcOptions,
-      },
+        { gc: { graceMillis: 0 } as InternalRunGcOptions },
       );
 
       const maintenanceLines = records.filter((r) => r.category.join(".") === "baerly.maintenance");
       expect(maintenanceLines).toHaveLength(1);
       const props = maintenanceLines[0]!.properties;
 
-      // Explicit operator-facing fields (the new T04 enrichment).
+      // Explicit operator-facing fields (the T04 enrichment).
       expect(props["compact_written"]).toBe(150);
       expect(props["gc_swept"]).toBeGreaterThan(0);
-      expect(props["compact_skipped"]).toBe(false);
-      expect(props["gc_skipped"]).toBe(false);
 
       // Recorder-bag fields stay on the line. `db.compact.entries_folded`
       // is a histogram so it expands into `_p50` / `_count` / `_sum`;
@@ -168,44 +157,18 @@ describe("runScheduledMaintenance", () => {
       expect(typeof props["db.gc.swept_total"]).toBe("number");
       expect(props["db.gc.swept_total"]).toBeGreaterThan(0);
     });
-
-    it("flags skipped phases as compact_skipped / gc_skipped on the canonical line", async () => {
-      const s = new MemoryStorage();
-      await bootstrap(s, KEY);
-      await runScheduledMaintenance({ storage: s, currentJsonKey: KEY }, { skipCompact: true });
-
-      const maintenanceLines = records.filter((r) => r.category.join(".") === "baerly.maintenance");
-      expect(maintenanceLines).toHaveLength(1);
-      const props = maintenanceLines[0]!.properties;
-      expect(props["compact_skipped"]).toBe(true);
-      expect(props["gc_skipped"]).toBe(false);
-      expect(props["compact_written"]).toBe(0);
-      // No log writes seeded, so GC has nothing to sweep — the count
-      // is exactly 0, not "≥ 0", to lock the skipped-phase semantics.
-      expect(props["gc_swept"]).toBe(0);
-    });
   });
 
-  it("profile constants carry the documented bounds", async () => {
+  it("CLOUDFLARE_FREE_TIER carries the documented bounds", async () => {
     // A regression in these constants means the budget audits and
     // the per-tier docstring lie about the worst-case I/O profile.
     // The budget caps live on the InternalMaintenanceOptions surface
     // (they're not part of the public `MaintenanceOptions` shape).
     const cfFree = CLOUDFLARE_FREE_TIER as InternalMaintenanceOptions;
-    const cfPaid = CLOUDFLARE_PAID_TIER as InternalMaintenanceOptions;
-    const node = NODE_PROFILE as InternalMaintenanceOptions;
 
     expect(cfFree.compact?.maxEntriesPerRun).toBe(20);
     expect(cfFree.compact?.minEntriesToCompact).toBe(50);
     expect(cfFree.gc?.maxMarksPerRun).toBe(20);
     expect(cfFree.gc?.maxSweepsPerRun).toBe(10);
-
-    expect(cfPaid.compact?.maxEntriesPerRun).toBe(2000);
-    expect(cfPaid.gc?.maxMarksPerRun).toBe(1000);
-    expect(cfPaid.gc?.maxSweepsPerRun).toBe(500);
-
-    expect(node.compact?.maxEntriesPerRun).toBe(100_000);
-    expect(node.gc?.maxMarksPerRun).toBe(100_000);
-    expect(node.gc?.maxSweepsPerRun).toBe(1000);
   });
 });

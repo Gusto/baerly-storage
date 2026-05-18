@@ -85,9 +85,10 @@ no single regression to point at. The ceiling is a gate, not a
 target — `tests/integration/phase5-end-to-end.test.ts` wraps
 `Storage` with a counting proxy and gates on
 `expect(classAOps).toBeLessThan(1)` after 1800 polls (one hour at
-2 s cadence). Tier profiles in `packages/server/src/maintenance.ts`
-(`CLOUDFLARE_FREE_TIER`, `CLOUDFLARE_PAID_TIER`, `NODE_PROFILE`)
-carry the budget arithmetic; `maintenance.budget.test.ts` proves a
+2 s cadence). The `CLOUDFLARE_FREE_TIER` profile in
+`packages/server/src/maintenance.ts` carries the bounded-tick
+budget arithmetic (engine defaults are unbounded, so a Node
+caller just passes `{}`); `maintenance.budget.test.ts` proves a
 single maintenance pass under the Cloudflare free-tier profile sits
 under the 50-subrequest cap.
 

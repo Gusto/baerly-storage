@@ -193,9 +193,9 @@ read it via your editor's TS LS or via the published types).
   `maintenance: { collections, tenants }` option to `baerlyNode`.
   Each tick (hourly by default; override via
   `maintenance.intervalMs`) runs one compact+GC pass per
-  `(tenant, collection)` pair against the unbounded `NODE_PROFILE`
-  (folds the entire live tail; sweeps up to 1000 candidates per
-  run).
+  `(tenant, collection)` pair against the engine's default
+  unbounded maintenance profile (folds the entire live tail; sweeps
+  every aged-out candidate the GC marks).
 
   Opt-in via the `MAINTENANCE_COLLECTIONS` env var — a comma-
   separated list of collection slugs:

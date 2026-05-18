@@ -118,21 +118,19 @@ service stays under it.
 
 ### Maintenance-specific fields
 
-The `maintenance` unit-of-work emits the fields above plus four
+The `maintenance` unit-of-work emits the fields above plus two
 explicit summary fields read off the `MaintenanceResult` returned
 by `runScheduledMaintenance`:
 
 | Field | Type | Meaning |
 |---|---|---|
-| `compact_written` | number | Log entries folded into the new snapshot this tick. `0` when compact was skipped or the live tail was below `minEntriesToCompact`. |
-| `gc_swept` | number | Keys deleted this tick. `0` when GC was skipped or no candidates had aged out. |
-| `compact_skipped` | boolean | `true` when the caller passed `skipCompact: true` (CF free-tier even/odd-minute cron pattern). |
-| `gc_skipped` | boolean | `true` when the caller passed `skipGc: true`. |
+| `compact_written` | number | Log entries folded into the new snapshot this tick. `0` when the live tail was below `minEntriesToCompact`. |
+| `gc_swept` | number | Keys deleted this tick. `0` when no candidates had aged out. |
 
 The kernel still emits the recorder-bag fields (`db.compact.entries_folded_p50` / `_p99` / `_count` / `_sum`,
 `db.manifest.lag_window_depth`, `db.orphan.candidate_count`,
 `db.gc.entries_swept_per_second`, `db.gc.swept_total`)
-alongside — useful for dashboards. The four explicit fields above
+alongside — useful for dashboards. The two explicit fields above
 are the at-a-glance summary so a log scan answers "did anything
 happen this tick?" without decoding `_p50` / `_count` / `_total`
 suffixes.

@@ -35,7 +35,8 @@ import {
 } from "@baerly/protocol";
 import { describe, expect, it } from "vitest";
 import { compact } from "./compactor.ts";
-import { CLOUDFLARE_FREE_TIER, runScheduledMaintenance } from "./maintenance.ts";
+import { runGc } from "./gc.ts";
+import { CLOUDFLARE_FREE_TIER } from "./maintenance.ts";
 import { ServerWriter } from "./server-writer.ts";
 
 const FREE_TIER_BUDGET = 50;
@@ -114,12 +115,11 @@ describe("CLOUDFLARE_FREE_TIER budget", () => {
     await seed(inner, KEY, COLL, 200);
     const { storage, getOps, report } = countingStorage(inner);
 
-    const r = await runScheduledMaintenance(
+    const r = await compact(
       { storage, currentJsonKey: KEY },
-      { ...CLOUDFLARE_FREE_TIER, skipGc: true },
+      CLOUDFLARE_FREE_TIER.compact,
     );
-    expect(r.compact?.written).toBe(true);
-    expect(r.gc).toBeNull();
+    expect(r.written).toBe(true);
     const ops = getOps();
     expect(ops, `ops by category: ${JSON.stringify(report())}`).toBeLessThanOrEqual(
       FREE_TIER_BUDGET,
@@ -154,12 +154,11 @@ describe("CLOUDFLARE_FREE_TIER budget", () => {
     await compact({ storage: inner, currentJsonKey: KEY }, CLOUDFLARE_FREE_TIER.compact);
 
     const { storage, getOps, report } = countingStorage(inner);
-    const r = await runScheduledMaintenance(
+    const r = await runGc(
       { storage, currentJsonKey: KEY },
-      { ...CLOUDFLARE_FREE_TIER, skipCompact: true },
+      CLOUDFLARE_FREE_TIER.gc,
     );
-    expect(r.compact).toBeNull();
-    expect(r.gc).not.toBeNull();
+    expect(r).not.toBeNull();
     const ops = getOps();
     expect(ops, `ops by category: ${JSON.stringify(report())}`).toBeLessThanOrEqual(
       FREE_TIER_BUDGET,

@@ -44,7 +44,7 @@ import {
 } from "@baerly/protocol";
 import { LocalFsStorage } from "@baerly/dev";
 import { Db, ServerWriter } from "@baerly/server";
-import { NODE_PROFILE, runScheduledMaintenance } from "@baerly/server/maintenance";
+import { runScheduledMaintenance } from "@baerly/server/maintenance";
 import type {
   InternalMaintenanceOptions,
   InternalRunGcOptions,
@@ -175,21 +175,19 @@ describe("Synthetic 5000-entry end-to-end gate", () => {
           expect(objectsBefore).toBeGreaterThan(N);
 
           // ── (3) Run maintenance to quiescence. ───────────────────────
-          // NODE_PROFILE has maxEntriesPerRun = 100_000 so a single
-          // compact pass folds everything. GC marks 5000 stale_log +
-          // 5000 orphan_content = 10000 candidates. We bump
-          // maxSweepsPerRun for the test so the sweep finishes in one
-          // pass too — the production budget (1000/run on NODE_PROFILE,
-          // 500/run on Cloudflare paid) is already covered by the
+          // Engine defaults are unbounded (maxEntriesPerRun =
+          // Number.MAX_SAFE_INTEGER) so a single compact pass folds
+          // everything. GC marks 5000 stale_log + 5000 orphan_content
+          // = 10000 candidates. We pass an explicit maxSweepsPerRun
+          // override for the test so the sweep finishes in one pass
+          // too — the bounded-budget cases are already covered by the
           // unit tests in `gc.test.ts`.
           //
           // Pass 1 → compact folds + GC marks + sweeps a budget worth.
           // Pass 2 → quiescence (entriesFolded === 0, swept === 0).
           // Cap at 20 passes so a regression doesn't infinite-loop.
           const QUIESCE_PROFILE: InternalMaintenanceOptions = {
-            ...NODE_PROFILE,
             gc: {
-              ...NODE_PROFILE.gc,
               graceMillis: 0,
               maxSweepsPerRun: 100_000,
             } as InternalRunGcOptions,
@@ -216,7 +214,7 @@ describe("Synthetic 5000-entry end-to-end gate", () => {
           };
           expect(json.next_seq).toBe(N);
           expect(json.snapshot).not.toBeNull();
-          // The compactor folds the entire live tail in one NODE_PROFILE
+          // The compactor folds the entire live tail in one unbounded
           // pass; the writer minted nothing new in between, so
           // log_seq_start should equal next_seq. Allow a small slack so
           // a future change to the compactor's lag-window default
@@ -254,8 +252,8 @@ describe("Synthetic 5000-entry end-to-end gate", () => {
           const writer = new ServerWriter({ storage, currentJsonKey: CURRENT_JSON_KEY });
 
           // Seed enough writes to make compaction interesting; the
-          // minEntriesToCompact threshold under NODE_PROFILE is 100,
-          // so seed exactly that.
+          // engine's default minEntriesToCompact is 100, so seed
+          // exactly that.
           for (let i = 0; i < 100; i++) {
             const id = `t-${i.toString().padStart(3, "0")}`;
             await writer.commit({
@@ -273,17 +271,11 @@ describe("Synthetic 5000-entry end-to-end gate", () => {
           // pass 1 folds + marks, pass 2 sweeps under grace=0.
           await runScheduledMaintenance(
             { storage, currentJsonKey: CURRENT_JSON_KEY },
-            {
-              ...NODE_PROFILE,
-              gc: { ...NODE_PROFILE.gc, graceMillis: 0 } as InternalRunGcOptions,
-            },
+            { gc: { graceMillis: 0 } as InternalRunGcOptions },
           );
           await runScheduledMaintenance(
             { storage, currentJsonKey: CURRENT_JSON_KEY },
-            {
-              ...NODE_PROFILE,
-              gc: { ...NODE_PROFILE.gc, graceMillis: 0 } as InternalRunGcOptions,
-            },
+            { gc: { graceMillis: 0 } as InternalRunGcOptions },
           );
 
           // Counting proxy. Class A = PUT, DELETE, LIST (S3 / R2
