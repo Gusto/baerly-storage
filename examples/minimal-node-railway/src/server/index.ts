@@ -29,10 +29,10 @@ const reqEnv = (name: string): string => {
 };
 
 const APP = "minimal-node-railway";
-const TENANT = process.env.TENANT ?? "minimal-demo";
+const TENANT = process.env["TENANT"] ?? "minimal-demo";
 
 const storage: Storage =
-  process.env.R2_ACCOUNT_ID !== undefined
+  process.env["R2_ACCOUNT_ID"] !== undefined
     ? r2Storage({
         accountId: reqEnv("R2_ACCOUNT_ID"),
         bucket: reqEnv("BUCKET"),
@@ -40,41 +40,41 @@ const storage: Storage =
         secretAccessKey: reqEnv("AWS_SECRET_ACCESS_KEY"),
       })
     : s3Storage({
-        region: process.env.AWS_REGION ?? "us-east-1",
+        region: process.env["AWS_REGION"] ?? "us-east-1",
         bucket: reqEnv("BUCKET"),
         accessKeyId: reqEnv("AWS_ACCESS_KEY_ID"),
         secretAccessKey: reqEnv("AWS_SECRET_ACCESS_KEY"),
       });
 
 const verifier: Verifier =
-  process.env.JWKS_URL !== undefined
+  process.env["JWKS_URL"] !== undefined
     ? bearerJwt({
-        jwks: process.env.JWKS_URL,
+        jwks: process.env["JWKS_URL"],
         issuer: reqEnv("JWT_ISSUER"),
         audience: reqEnv("JWT_AUDIENCE"),
       })
     : sharedSecret({ secret: reqEnv("SHARED_SECRET"), tenantPrefix: TENANT });
 
 const maintenance =
-  process.env.MAINTENANCE_COLLECTIONS !== undefined
+  process.env["MAINTENANCE_COLLECTIONS"] !== undefined
     ? {
-        collections: process.env.MAINTENANCE_COLLECTIONS.split(",")
+        collections: process.env["MAINTENANCE_COLLECTIONS"].split(",")
           .map((c) => c.trim())
           .filter((c) => c.length > 0),
         tenants: [TENANT],
       }
     : undefined;
 
-const PORT = Number(process.env.PORT ?? 8080);
+const PORT = Number(process.env["PORT"] ?? 8080);
 
 await baerlyNode({
   app: APP,
   storage,
   verifier,
-  webRoot: process.env.WEB_ROOT ?? "./dist/client",
+  webRoot: process.env["WEB_ROOT"] ?? "./dist/client",
   observability: {
-    level: process.env.LOG_LEVEL as FriendlyLogLevel | undefined,
-    sampleRate: process.env.LOG_SAMPLE !== undefined ? Number(process.env.LOG_SAMPLE) : 0.1,
+    level: process.env["LOG_LEVEL"] as FriendlyLogLevel | undefined,
+    sampleRate: process.env["LOG_SAMPLE"] !== undefined ? Number(process.env["LOG_SAMPLE"]) : 0.1,
   },
   ...(maintenance !== undefined && { maintenance }),
 }).listen(PORT);

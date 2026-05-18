@@ -87,14 +87,14 @@ describe("JSON Merge Patch (RFC 7386)", () => {
     // of the patch, mirroring how a malicious HTTP PATCH body would arrive.
     const target = { safe: 1 } as JSONArrayless;
     const polluted = merge(target, JSON.parse('{"__proto__":{"polluted":true}}'));
-    expect((polluted as Record<string, unknown>).polluted).toBeUndefined();
+    expect((polluted as Record<string, unknown>)["polluted"]).toBeUndefined();
     expect(Object.getPrototypeOf(polluted)).toBe(Object.prototype);
 
     const ctor = merge(target, { constructor: "x" } as unknown as Partial<JSONArrayless>);
     expect((ctor as Record<string, unknown>).constructor).toBe(Object);
 
     const proto = merge(target, { prototype: "x" } as unknown as Partial<JSONArrayless>);
-    expect((proto as Record<string, unknown>).prototype).toBeUndefined();
+    expect((proto as Record<string, unknown>)["prototype"]).toBeUndefined();
   });
 
 });

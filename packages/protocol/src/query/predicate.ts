@@ -189,7 +189,7 @@ const validateOpNode = (node: JSONArraylessObject, path: ReadonlyArray<string>):
     }
   }
   if ("$in" in node) {
-    const arr: unknown = (node as Record<string, unknown>).$in;
+    const arr: unknown = (node as Record<string, unknown>)["$in"];
     if (!Array.isArray(arr)) {
       throw new BaerlyError(
         "InvalidConfig",
@@ -212,7 +212,7 @@ const validateOpNode = (node: JSONArraylessObject, path: ReadonlyArray<string>):
     }
   }
   if ("$eq" in node) {
-    validateOpMemberValue((node as Record<string, unknown>).$eq, [...path, "$eq"]);
+    validateOpMemberValue((node as Record<string, unknown>)["$eq"], [...path, "$eq"]);
   }
   assertOpObjectSatisfiable(node as JSONArraylessObject, path);
 };
@@ -321,19 +321,18 @@ const assertOpObjectSatisfiable = (
   path: ReadonlyArray<string>,
 ): void => {
   const eq =
-    "$eq" in node ? ((node as Record<string, JSONArrayless>).$eq as JSONArrayless) : undefined;
+    "$eq" in node ? ((node as Record<string, JSONArrayless>)["$eq"] as JSONArrayless) : undefined;
   const gt =
-    "$gt" in node ? ((node as Record<string, JSONArrayless>).$gt as JSONArrayless) : undefined;
+    "$gt" in node ? ((node as Record<string, JSONArrayless>)["$gt"] as JSONArrayless) : undefined;
   const gte =
-    "$gte" in node ? ((node as Record<string, JSONArrayless>).$gte as JSONArrayless) : undefined;
+    "$gte" in node ? ((node as Record<string, JSONArrayless>)["$gte"] as JSONArrayless) : undefined;
   const lt =
-    "$lt" in node ? ((node as Record<string, JSONArrayless>).$lt as JSONArrayless) : undefined;
+    "$lt" in node ? ((node as Record<string, JSONArrayless>)["$lt"] as JSONArrayless) : undefined;
   const lte =
-    "$lte" in node ? ((node as Record<string, JSONArrayless>).$lte as JSONArrayless) : undefined;
+    "$lte" in node ? ((node as Record<string, JSONArrayless>)["$lte"] as JSONArrayless) : undefined;
   const inArr =
     "$in" in node
-      ? ((node as unknown as Record<string, ReadonlyArray<JSONArrayless>>)
-          .$in as ReadonlyArray<JSONArrayless>)
+      ? ((node as unknown as Record<string, ReadonlyArray<JSONArrayless>>)["$in"] as ReadonlyArray<JSONArrayless>)
       : undefined;
 
   // Lower bound: pick the stricter of $gt/$gte. Strict ($gt) wins
@@ -706,11 +705,11 @@ const mergeOpObjects = (
         `mergePredicates: conflicting $eq values for key ${JSON.stringify(field)} (a=${JSON.stringify(a.$eq)}, b=${JSON.stringify(b.$eq)}).`,
       );
     }
-    candidate.$eq = a.$eq;
+    candidate["$eq"] = a.$eq;
   } else if (a.$eq !== undefined) {
-    candidate.$eq = a.$eq;
+    candidate["$eq"] = a.$eq;
   } else if (b.$eq !== undefined) {
-    candidate.$eq = b.$eq;
+    candidate["$eq"] = b.$eq;
   }
   // $in intersection.
   if (a.$in !== undefined && b.$in !== undefined) {
@@ -729,24 +728,24 @@ const mergeOpObjects = (
         `mergePredicates: $in intersection is empty for key ${JSON.stringify(field)}.`,
       );
     }
-    candidate.$in = isect as unknown as JSONArrayless;
+    candidate["$in"] = isect as unknown as JSONArrayless;
   } else if (a.$in !== undefined) {
-    candidate.$in = a.$in as unknown as JSONArrayless;
+    candidate["$in"] = a.$in as unknown as JSONArrayless;
   } else if (b.$in !== undefined) {
-    candidate.$in = b.$in as unknown as JSONArrayless;
+    candidate["$in"] = b.$in as unknown as JSONArrayless;
   }
   // Lower bound: stricter wins. Strict ($gt) beats inclusive
   // ($gte) on tie.
   const lo = pickStricter("lower", a, b);
   if (lo !== undefined) {
-    if (lo.strict) candidate.$gt = lo.value;
-    else candidate.$gte = lo.value;
+    if (lo.strict) candidate["$gt"] = lo.value;
+    else candidate["$gte"] = lo.value;
   }
   // Upper bound: stricter wins.
   const hi = pickStricter("upper", a, b);
   if (hi !== undefined) {
-    if (hi.strict) candidate.$lt = hi.value;
-    else candidate.$lte = hi.value;
+    if (hi.strict) candidate["$lt"] = hi.value;
+    else candidate["$lte"] = hi.value;
   }
 
   // Re-run satisfiability against the candidate. Reuses the
@@ -758,14 +757,14 @@ const mergeOpObjects = (
   // `{ $eq: v }` alone — the satisfiability check already proved
   // $eq lies inside the interval / set.
   if (
-    candidate.$eq !== undefined &&
+    candidate["$eq"] !== undefined &&
     ("$in" in candidate ||
       "$gt" in candidate ||
       "$gte" in candidate ||
       "$lt" in candidate ||
       "$lte" in candidate)
   ) {
-    return { $eq: candidate.$eq };
+    return { $eq: candidate["$eq"] };
   }
   return candidate;
 };

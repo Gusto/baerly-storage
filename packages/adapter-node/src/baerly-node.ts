@@ -97,18 +97,18 @@ const buildCurrentJsonKey = (app: string, tenant: string, collection: string): s
  *   app: "tickets",
  *   storage: s3Storage({
  *     region: "us-east-1",
- *     bucket: process.env.BUCKET!,
- *     accessKeyId: process.env.AWS_ACCESS_KEY_ID!,
- *     secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY!,
+ *     bucket: process.env["BUCKET"]!,
+ *     accessKeyId: process.env["AWS_ACCESS_KEY_ID"]!,
+ *     secretAccessKey: process.env["AWS_SECRET_ACCESS_KEY"]!,
  *   }),
  *   verifier: sharedSecret({
- *     secret: process.env.SHARED_SECRET!,
+ *     secret: process.env["SHARED_SECRET"]!,
  *     tenantPrefix: "acme",
  *   }),
  *   webRoot: "./dist/client",
  *   maintenance: { collections: ["tickets", "comments"], tenants: ["acme"] },
  * });
- * await handle.listen(Number(process.env.PORT ?? 8080));
+ * await handle.listen(Number(process.env["PORT"] ?? 8080));
  * ```
  */
 export function baerlyNode(opts: BaerlyNodeOptions): BaerlyNodeHandle {

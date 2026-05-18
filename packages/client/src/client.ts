@@ -444,6 +444,6 @@ const makeClientQuery = <T extends JSONArraylessObject>(
 const singleIdFromPredicate = (p: Predicate<JSONArraylessObject>): string | undefined => {
   const keys = Object.keys(p);
   if (keys.length !== 1 || keys[0] !== "_id") return undefined;
-  const v = (p as Record<string, unknown>)._id;
+  const v = (p as Record<string, unknown>)["_id"];
   return typeof v === "string" ? v : undefined;
 };

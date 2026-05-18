@@ -457,7 +457,7 @@ describe("scaffold", () => {
     const pkg = JSON.parse(await readFile(join(result.outDir, "package.json"), "utf8")) as {
       scripts?: Record<string, string>;
     };
-    expect(pkg.scripts?.dev).toBe(dev);
-    expect(pkg.scripts?.build).toBe(build);
+    expect(pkg.scripts?.["dev"]).toBe(dev);
+    expect(pkg.scripts?.["build"]).toBe(build);
   });
 });

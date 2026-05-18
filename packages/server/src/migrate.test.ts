@@ -118,7 +118,7 @@ describe("migrateCollection", () => {
       storage: s,
       currentJsonKey: KEY,
       collection: COLL,
-      transform: (row) => ((row.n as number) % 2 === 0 ? row : null),
+      transform: (row) => ((row["n"] as number) % 2 === 0 ? row : null),
       targetVersion: 1,
     });
     expect(result.inputRows).toBe(10);

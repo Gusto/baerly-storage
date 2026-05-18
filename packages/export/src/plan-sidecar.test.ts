@@ -44,7 +44,7 @@ describe("serializeExportPlan", () => {
     const plan = planFromRows(rows, "tickets", "sqlite");
     const parsed = JSON.parse(serializeExportPlan(plan)) as Record<string, unknown>;
     expect("tableIdentifier" in parsed).toBe(false);
-    const columns = parsed.columns as Array<Record<string, unknown>>;
+    const columns = parsed["columns"] as Array<Record<string, unknown>>;
     for (const col of columns) {
       expect("identifier" in col).toBe(false);
     }

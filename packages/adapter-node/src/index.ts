@@ -25,17 +25,17 @@
  *   app: "tickets",
  *   storage: s3Storage({
  *     region: "us-east-1",
- *     bucket: process.env.BUCKET!,
- *     accessKeyId: process.env.AWS_ACCESS_KEY_ID!,
- *     secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY!,
+ *     bucket: process.env["BUCKET"]!,
+ *     accessKeyId: process.env["AWS_ACCESS_KEY_ID"]!,
+ *     secretAccessKey: process.env["AWS_SECRET_ACCESS_KEY"]!,
  *   }),
  *   verifier: sharedSecret({
- *     secret: process.env.SHARED_SECRET!,
+ *     secret: process.env["SHARED_SECRET"]!,
  *     tenantPrefix: "acme",
  *   }),
  *   maintenance: { tenants: ["acme"], collections: ["tickets"] },
  * });
- * await handle.listen(Number(process.env.PORT ?? 8080));
+ * await handle.listen(Number(process.env["PORT"] ?? 8080));
  * ```
  *
  * @example
@@ -53,9 +53,9 @@
  *
  * const storage = s3Storage({
  *   region: "us-east-1",
- *   bucket: process.env.BUCKET!,
- *   accessKeyId: process.env.AWS_ACCESS_KEY_ID!,
- *   secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY!,
+ *   bucket: process.env["BUCKET"]!,
+ *   accessKeyId: process.env["AWS_ACCESS_KEY_ID"]!,
+ *   secretAccessKey: process.env["AWS_SECRET_ACCESS_KEY"]!,
  * });
  * const listener = createListener({ app: "tickets", storage, verifier });
  * createServer(listener).listen(3000);

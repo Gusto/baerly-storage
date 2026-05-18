@@ -840,7 +840,7 @@ export class ServerWriter {
    */
   #emitWriteMetrics(collection: string, classAOps: number): void {
     const histLabels: Record<string, string> = { collection };
-    if (this.#tenant !== "") histLabels.tenant = this.#tenant;
+    if (this.#tenant !== "") histLabels["tenant"] = this.#tenant;
     this.#metrics.histogram("db.write.class_a_ops_per_logical_write", classAOps, histLabels);
     const rateLabels: Record<string, string> = this.#tenant !== "" ? { tenant: this.#tenant } : {};
     this.#metrics.gauge("db.tenant.put_rate", 1, rateLabels);
@@ -868,7 +868,7 @@ export class ServerWriter {
     if (postRead === null) return;
     if (postRead.json.writer_fence.epoch === expectedEpoch) return;
     const bumpLabels: Record<string, string> = { collection };
-    if (this.#tenant !== "") bumpLabels.tenant = this.#tenant;
+    if (this.#tenant !== "") bumpLabels["tenant"] = this.#tenant;
     this.#metrics.counter("db.writer.fence_bump_observed_total", 1, bumpLabels);
     throw new BaerlyError(
       "Conflict",

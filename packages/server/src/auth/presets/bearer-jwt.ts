@@ -337,8 +337,8 @@ const resolveJwkAlgorithm = (jwk: Jwk): JwtAlgorithm | null => {
   // Derive from `kty` + curve when `alg` isn't present (some IdPs
   // omit it). RSA → RS256; EC P-256 → ES256; OKP Ed25519 → EdDSA.
   if (jwk.kty === "RSA") return "RS256";
-  if (jwk.kty === "EC" && (jwk as Record<string, unknown>).crv === "P-256") return "ES256";
-  if (jwk.kty === "OKP" && (jwk as Record<string, unknown>).crv === "Ed25519") return "EdDSA";
+  if (jwk.kty === "EC" && (jwk as Record<string, unknown>)["crv"] === "P-256") return "ES256";
+  if (jwk.kty === "OKP" && (jwk as Record<string, unknown>)["crv"] === "Ed25519") return "EdDSA";
   return null;
 };
 

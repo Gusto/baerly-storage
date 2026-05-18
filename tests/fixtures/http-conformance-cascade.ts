@@ -291,7 +291,7 @@ export const runHttpConformanceCascade = (opts: {
         // cranks `FC_NUM_RUNS` to 10000 — at that volume the same
         // iteration cost stretches to ~5-8 minutes, so honor the
         // project-wide timeout from `vitest.config.ts` when scaled up.
-        process.env.FC_NUM_RUNS !== undefined && Number(process.env.FC_NUM_RUNS) > 1_000
+        process.env["FC_NUM_RUNS"] !== undefined && Number(process.env["FC_NUM_RUNS"]) > 1_000
           ? 600_000
           : 30_000,
       );

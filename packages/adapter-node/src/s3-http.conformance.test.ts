@@ -18,7 +18,7 @@ const MINIO_SECRET_KEY = "ZOAmumEzdsUUcVlQ";
 const MINIO_REGION = "us-east-1";
 const BUCKET = "baerly-conformance-adapter-node";
 
-const minioEnabled = process.env.MINIO === "1";
+const minioEnabled = process.env["MINIO"] === "1";
 
 const signer = new AwsClient({
   accessKeyId: MINIO_ACCESS_KEY,

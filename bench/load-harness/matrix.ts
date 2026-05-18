@@ -24,16 +24,16 @@ const PRESETS = [
   "chat-conversation-store",
 ];
 const VARIANTS =
-  process.env.MINIO === "1" ? ["memory", "local-fs", "node-minio"] : ["memory", "local-fs"];
+  process.env["MINIO"] === "1" ? ["memory", "local-fs", "node-minio"] : ["memory", "local-fs"];
 const CACHE_MODES = ["cold", "metadata-warm", "data-warm", "tiny-cache"];
 
 const stamp = new Date().toISOString().replace(/[:.]/g, "-");
 const outBase = join("bench/results/load", `matrix-${stamp}`);
 await mkdir(outBase, { recursive: true });
 
-const seed = Number(process.env.SEED ?? "42");
-const records = Number(process.env.RECORDS ?? "1000");
-const ops = Number(process.env.OPS ?? "1000");
+const seed = Number(process.env["SEED"] ?? "42");
+const records = Number(process.env["RECORDS"] ?? "1000");
+const ops = Number(process.env["OPS"] ?? "1000");
 
 let failures = 0;
 for (const preset of PRESETS) {

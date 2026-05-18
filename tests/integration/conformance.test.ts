@@ -59,8 +59,8 @@ async function loadCreds(file: string): Promise<EndpointCreds | null> {
   }
 }
 
-const MINIO = process.env.MINIO === "1";
-const CONFORMANCE = process.env.CONFORMANCE === "1";
+const MINIO = process.env["MINIO"] === "1";
+const CONFORMANCE = process.env["CONFORMANCE"] === "1";
 
 const xmlParser = new DOMParser();
 

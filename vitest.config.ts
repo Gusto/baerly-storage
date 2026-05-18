@@ -40,14 +40,14 @@ import { configDefaults, defineConfig } from "vitest/config";
 // iterations against Minio (~50ms each ≈ 8 minutes). 30 seconds is
 // enough headroom for Minio at default `FC_NUM_RUNS=100`.
 const isRandomize =
-  process.env.FC_NUM_RUNS !== undefined && Number(process.env.FC_NUM_RUNS) > 1_000;
-const isMinio = process.env.MINIO === "1";
+  process.env["FC_NUM_RUNS"] !== undefined && Number(process.env["FC_NUM_RUNS"]) > 1_000;
+const isMinio = process.env["MINIO"] === "1";
 const vitestTestTimeoutMs = isRandomize ? 600_000 : isMinio ? 30_000 : 5_000;
 
 // `conformance.test.ts` requires gitignored credentials files
 // (`credentials/*.json`) and a live Minio. Excluded by default;
 // opt in with `CONFORMANCE=1 pnpm test` (or `pnpm test:conformance`).
-const conformanceExclude = process.env.CONFORMANCE === "1" ? [] : ["**/conformance.test.ts"];
+const conformanceExclude = process.env["CONFORMANCE"] === "1" ? [] : ["**/conformance.test.ts"];
 
 // `export-smoke.test.ts` translates frozen `LogEntry` shapes
 // into a real Postgres on `:5433` (provisioned by `pnpm dev:storage`).
@@ -56,7 +56,7 @@ const conformanceExclude = process.env.CONFORMANCE === "1" ? [] : ["**/conforman
 // `describe.runIf(EXPORT_SMOKE === "1")` — double-gating is
 // intentional: the glob exclusion keeps the import (`pg`) from
 // resolving at all on the default path.
-const exportSmokeExclude = process.env.EXPORT_SMOKE === "1" ? [] : ["**/export-smoke.test.ts"];
+const exportSmokeExclude = process.env["EXPORT_SMOKE"] === "1" ? [] : ["**/export-smoke.test.ts"];
 
 // Day-one handshake gate (`tests/integration/day-one-handshake.test.ts`)
 // orchestrates `npm create baerly@latest` → `baerly deploy` → first-
@@ -68,7 +68,7 @@ const exportSmokeExclude = process.env.EXPORT_SMOKE === "1" ? [] : ["**/export-s
 // `docs/contributing/day-one-gate.md`. The file also uses
 // `describe.runIf(...)` — double-gating mirrors `exportSmokeExclude`.
 const dayOneExclude =
-  process.env.DAY_ONE_TARGETS !== undefined ? [] : ["**/day-one-handshake.test.ts"];
+  process.env["DAY_ONE_TARGETS"] !== undefined ? [] : ["**/day-one-handshake.test.ts"];
 
 // The R2 binding conformance entry lives at
 // `packages/adapter-cloudflare/src/r2-binding-storage.conformance.test.ts`

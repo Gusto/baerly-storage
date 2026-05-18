@@ -37,9 +37,9 @@ beforeAll(async () => {
     string,
     unknown
   >;
-  publicJwk.kid = KID;
-  publicJwk.alg = "RS256";
-  publicJwk.use = "sig";
+  publicJwk["kid"] = KID;
+  publicJwk["alg"] = "RS256";
+  publicJwk["use"] = "sig";
   jwks = { keys: [publicJwk as { kty: string; kid: string }] };
 
   signJwt = async (payload, headerOverride) => {
@@ -151,7 +151,7 @@ describe("bearerJwt — reject paths return null", () => {
   test("missing tenant claim → null", async () => {
     const verifier = bearerJwt({ jwks, issuer: ISSUER, audience: AUDIENCE });
     const payload = validPayload();
-    delete (payload as Record<string, unknown>).tenant;
+    delete (payload as Record<string, unknown>)["tenant"];
     const token = await signJwt(payload);
     expect(await verifier(mkReq(token))).toBeNull();
   });

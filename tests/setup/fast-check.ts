@@ -1,6 +1,6 @@
 import { fc } from "@fast-check/vitest";
 
-const numRuns = process.env.FC_NUM_RUNS ? Number(process.env.FC_NUM_RUNS) : 100;
+const numRuns = process.env["FC_NUM_RUNS"] ? Number(process.env["FC_NUM_RUNS"]) : 100;
 
 // Note on the orphan-iteration bleed at high `FC_NUM_RUNS`: when a
 // property test exceeds vitest's `testTimeout`, vitest aborts and runs

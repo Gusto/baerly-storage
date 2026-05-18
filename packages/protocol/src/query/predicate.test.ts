@@ -684,10 +684,10 @@ const opObjArb: fc.Arbitrary<JSONArrayless> = fc
   .filter((r) => Object.values(r).some((v) => v !== undefined))
   .map((r) => {
     const out: Record<string, JSONArrayless> = {};
-    if (r.$eq !== undefined) out.$eq = r.$eq as JSONArrayless;
-    if (r.$gt !== undefined) out.$gt = r.$gt as JSONArrayless;
-    if (r.$lt !== undefined) out.$lt = r.$lt as JSONArrayless;
-    if (r.$in !== undefined) out.$in = r.$in as JSONArrayless[] as unknown as JSONArrayless;
+    if (r.$eq !== undefined) out["$eq"] = r.$eq as JSONArrayless;
+    if (r.$gt !== undefined) out["$gt"] = r.$gt as JSONArrayless;
+    if (r.$lt !== undefined) out["$lt"] = r.$lt as JSONArrayless;
+    if (r.$in !== undefined) out["$in"] = r.$in as JSONArrayless[] as unknown as JSONArrayless;
     return out as JSONArrayless;
   });
 

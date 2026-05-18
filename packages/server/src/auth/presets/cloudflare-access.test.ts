@@ -33,9 +33,9 @@ beforeAll(async () => {
     string,
     unknown
   >;
-  publicJwk.kid = KID;
-  publicJwk.alg = "RS256";
-  publicJwk.use = "sig";
+  publicJwk["kid"] = KID;
+  publicJwk["alg"] = "RS256";
+  publicJwk["use"] = "sig";
   jwksBody = JSON.stringify({ keys: [publicJwk] });
 
   signJwt = async (payload) => {

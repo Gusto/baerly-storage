@@ -374,7 +374,7 @@ export const runInsert = async <T extends JSONArraylessObject>(
   // mint a UUIDv7. The locked contract
   // (`packages/protocol/src/db.ts:120–122`) names UUIDv7 as the
   // auto-id source.
-  const supplied = doc._id;
+  const supplied = doc["_id"];
   const _id = typeof supplied === "string" && supplied.length > 0 ? supplied : uuidv7();
   // The locked input type `Partial<T> & JSONArraylessObject` is an
   // intersection of optional-keyed and required-keyed: at runtime the
@@ -488,7 +488,7 @@ const runUpdate = async <T extends JSONArraylessObject>(
       // level; defensive check for runtime caller misuse via cast.
       throw new BaerlyError(
         "SchemaError",
-        `Query.update: merge produced undefined for doc ${JSON.stringify(doc._id)}`,
+        `Query.update: merge produced undefined for doc ${JSON.stringify(doc["_id"])}`,
       );
     }
     // Validate the merged post-image, not the incoming patch.
@@ -504,12 +504,12 @@ const runUpdate = async <T extends JSONArraylessObject>(
       });
     }
     if (tx !== undefined) {
-      tx.mutations.push({ op: "U", docId: String(doc._id), body: merged });
+      tx.mutations.push({ op: "U", docId: String(doc["_id"]), body: merged });
     } else {
       await writerFor(ctx).commit({
         op: "U",
         collection: ctx.tableName,
-        docId: String(doc._id),
+        docId: String(doc["_id"]),
         body: merged,
       });
     }
@@ -551,7 +551,7 @@ const runReplace = async <T extends JSONArraylessObject>(
       `Query.replace: expected exactly 1 match, got ${found.length}`,
     );
   }
-  const existingId = String(found[0]!._id);
+  const existingId = String(found[0]!["_id"]);
   // Force the matched row's `_id` onto the post-image so the doc_id
   // on the emitted entry matches the row we resolved against.
   const body: JSONArraylessObject = { ...(doc as JSONArraylessObject), _id: existingId };
@@ -609,12 +609,12 @@ const runDelete = async <T extends JSONArraylessObject>(
   let deleted = 0;
   for (const doc of rows) {
     if (tx !== undefined) {
-      tx.mutations.push({ op: "D", docId: String(doc._id) });
+      tx.mutations.push({ op: "D", docId: String(doc["_id"]) });
     } else {
       await writerFor(ctx).commit({
         op: "D",
         collection: ctx.tableName,
-        docId: String(doc._id),
+        docId: String(doc["_id"]),
       });
     }
     deleted++;

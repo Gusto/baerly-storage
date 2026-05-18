@@ -11,7 +11,7 @@ export default defineConfig({
     baerlyDev({
       app: "helpdesk",
       tenant: "helpdesk-demo",
-      secret: process.env.HELPDESK_SECRET ?? "dev-helpdesk-secret",
+      secret: process.env["HELPDESK_SECRET"] ?? "dev-helpdesk-secret",
       dataDir: resolve(import.meta.dirname, ".baerly-data"),
       tables: ["tickets"],
       seed: seedTickets,

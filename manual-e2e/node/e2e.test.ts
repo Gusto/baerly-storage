@@ -47,13 +47,13 @@ import {
   type HttpFetch,
 } from "../../tests/fixtures/http-conformance-cascade.ts";
 
-const NODE_URL = process.env.NODE_DEPLOY_URL;
-const SECRET = process.env.SHARED_SECRET;
+const NODE_URL = process.env["NODE_DEPLOY_URL"];
+const SECRET = process.env["SHARED_SECRET"];
 // Tenant the inline sharedSecret Verifier in `manual-e2e/node/server-
 // entry.ts` maps every authorized request to. Hard-coded (the check
 // is single-tenant); change in lockstep with the deploy entry.
-const TENANT = process.env.TENANT ?? "default";
-const APP = process.env.APP ?? "e2e";
+const TENANT = process.env["TENANT"] ?? "default";
+const APP = process.env["APP"] ?? "e2e";
 
 const RUN_PREFIX = `e2e-${Date.now()}`;
 
@@ -175,11 +175,11 @@ describe.runIf(NODE_URL !== undefined && SECRET !== undefined)("real-deploy: nod
   // to so `provisionTable` can seed `current.json` per fresh
   // table. Without these vars, the cascade is skipped; the
   // latency / long-poll / 401 probes above still run.
-  const AWS_ACCESS = process.env.AWS_ACCESS_KEY_ID;
-  const AWS_SECRET_KEY = process.env.AWS_SECRET_ACCESS_KEY;
-  const AWS_REGION = process.env.AWS_REGION ?? "us-east-1";
-  const BUCKET = process.env.BUCKET;
-  const S3_ENDPOINT = process.env.S3_ENDPOINT ?? `https://s3.${AWS_REGION}.amazonaws.com`;
+  const AWS_ACCESS = process.env["AWS_ACCESS_KEY_ID"];
+  const AWS_SECRET_KEY = process.env["AWS_SECRET_ACCESS_KEY"];
+  const AWS_REGION = process.env["AWS_REGION"] ?? "us-east-1";
+  const BUCKET = process.env["BUCKET"];
+  const S3_ENDPOINT = process.env["S3_ENDPOINT"] ?? `https://s3.${AWS_REGION}.amazonaws.com`;
 
   const cascadeReady =
     AWS_ACCESS !== undefined && AWS_SECRET_KEY !== undefined && BUCKET !== undefined;

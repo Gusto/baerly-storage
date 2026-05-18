@@ -108,64 +108,64 @@ export const deserializeExportPlan = (text: string): ExportPlan => {
       "deserializeExportPlan: top-level value is not an object",
     );
   }
-  if (raw.schemaVersion !== SIDECAR_SCHEMA_VERSION) {
+  if (raw["schemaVersion"] !== SIDECAR_SCHEMA_VERSION) {
     throw new BaerlyError(
       "InvalidConfig",
-      `deserializeExportPlan: unsupported schemaVersion ${String(raw.schemaVersion)} (expected ${String(SIDECAR_SCHEMA_VERSION)})`,
+      `deserializeExportPlan: unsupported schemaVersion ${String(raw["schemaVersion"])} (expected ${String(SIDECAR_SCHEMA_VERSION)})`,
     );
   }
-  if (typeof raw.table !== "string" || raw.table.length === 0) {
+  if (typeof raw["table"] !== "string" || raw["table"].length === 0) {
     throw new BaerlyError("InvalidConfig", "deserializeExportPlan: missing or empty table");
   }
-  if (typeof raw.target !== "string" || !VALID_TARGETS.has(raw.target)) {
+  if (typeof raw["target"] !== "string" || !VALID_TARGETS.has(raw["target"])) {
     throw new BaerlyError(
       "InvalidConfig",
-      `deserializeExportPlan: unknown target ${JSON.stringify(raw.target)}`,
+      `deserializeExportPlan: unknown target ${JSON.stringify(raw["target"])}`,
     );
   }
-  if (!Array.isArray(raw.columns)) {
+  if (!Array.isArray(raw["columns"])) {
     throw new BaerlyError("InvalidConfig", "deserializeExportPlan: columns is not an array");
   }
-  const table = raw.table;
-  const target = raw.target as SqlTarget;
+  const table = raw["table"];
+  const target = raw["target"] as SqlTarget;
   const columns: ColumnPlan[] = [];
-  for (const [i, col] of raw.columns.entries()) {
+  for (const [i, col] of raw["columns"].entries()) {
     if (!isObject(col)) {
       throw new BaerlyError(
         "InvalidConfig",
         `deserializeExportPlan: columns[${i}] is not an object`,
       );
     }
-    if (typeof col.source !== "string" || col.source.length === 0) {
+    if (typeof col["source"] !== "string" || col["source"].length === 0) {
       throw new BaerlyError(
         "InvalidConfig",
         `deserializeExportPlan: columns[${i}].source is missing or empty`,
       );
     }
-    if (typeof col.sqlType !== "string" || !VALID_SQL_TYPES.has(col.sqlType)) {
+    if (typeof col["sqlType"] !== "string" || !VALID_SQL_TYPES.has(col["sqlType"])) {
       throw new BaerlyError(
         "InvalidConfig",
-        `deserializeExportPlan: columns[${i}].sqlType ${JSON.stringify(col.sqlType)} is not a recognised SqlType`,
+        `deserializeExportPlan: columns[${i}].sqlType ${JSON.stringify(col["sqlType"])} is not a recognised SqlType`,
       );
     }
-    if (typeof col.nullable !== "boolean") {
+    if (typeof col["nullable"] !== "boolean") {
       throw new BaerlyError(
         "InvalidConfig",
         `deserializeExportPlan: columns[${i}].nullable is not a boolean`,
       );
     }
-    if (typeof col.jsonEncoded !== "boolean") {
+    if (typeof col["jsonEncoded"] !== "boolean") {
       throw new BaerlyError(
         "InvalidConfig",
         `deserializeExportPlan: columns[${i}].jsonEncoded is not a boolean`,
       );
     }
     columns.push({
-      source: col.source,
-      identifier: quoteIdentifier(col.source, target),
-      sqlType: col.sqlType as SqlType,
-      nullable: col.nullable,
-      jsonEncoded: col.jsonEncoded,
+      source: col["source"],
+      identifier: quoteIdentifier(col["source"], target),
+      sqlType: col["sqlType"] as SqlType,
+      nullable: col["nullable"],
+      jsonEncoded: col["jsonEncoded"],
     });
   }
   return {

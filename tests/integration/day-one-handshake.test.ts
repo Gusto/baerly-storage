@@ -48,16 +48,16 @@ import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import type { JSONArraylessObject } from "@baerly/protocol";
 import { createBaerlyClient } from "@baerly/client";
 
-const TARGETS = new Set((process.env.DAY_ONE_TARGETS ?? "").split(",").filter((s) => s.length > 0));
+const TARGETS = new Set((process.env["DAY_ONE_TARGETS"] ?? "").split(",").filter((s) => s.length > 0));
 const RUN_CF = TARGETS.has("cloudflare");
 const RUN_NODE = TARGETS.has("node");
 
-const BUDGET_CF_MS = Number(process.env.DAY_ONE_BUDGET_CF_MS ?? 300_000);
-const BUDGET_NODE_MS = Number(process.env.DAY_ONE_BUDGET_NODE_MS ?? 180_000);
+const BUDGET_CF_MS = Number(process.env["DAY_ONE_BUDGET_CF_MS"] ?? 300_000);
+const BUDGET_NODE_MS = Number(process.env["DAY_ONE_BUDGET_NODE_MS"] ?? 180_000);
 
-const CF_API_TOKEN = process.env.CF_API_TOKEN;
-const CF_ACCOUNT_ID = process.env.CF_ACCOUNT_ID;
-const SHARED_SECRET = process.env.SHARED_SECRET ?? cryptoRandomSecret();
+const CF_API_TOKEN = process.env["CF_API_TOKEN"];
+const CF_ACCOUNT_ID = process.env["CF_ACCOUNT_ID"];
+const SHARED_SECRET = process.env["SHARED_SECRET"] ?? cryptoRandomSecret();
 
 interface Ticket extends JSONArraylessObject {
   readonly _id: string;

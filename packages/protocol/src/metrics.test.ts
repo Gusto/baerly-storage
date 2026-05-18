@@ -44,7 +44,7 @@ describe("MetricsRecorder", () => {
     const r = new InMemoryMetricsRecorder();
     const labels: Record<string, string> = { k: "v" };
     r.counter("foo", 1, labels);
-    labels.k = "mutated";
+    labels["k"] = "mutated";
     expect(r.counters[0]?.labels).toEqual({ k: "v" });
   });
 });

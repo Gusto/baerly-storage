@@ -319,7 +319,7 @@ const FIXTURES: LogEntry[] = [
   },
 ];
 
-const smokeEnabled = process.env.EXPORT_SMOKE === "1";
+const smokeEnabled = process.env["EXPORT_SMOKE"] === "1";
 
 describe.runIf(smokeEnabled)("LogEntry → Postgres round-trip", () => {
   let client: Client;

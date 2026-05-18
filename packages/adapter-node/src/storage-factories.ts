@@ -37,10 +37,10 @@ function buildS3Storage(opts: {
  * import { s3Storage } from "@baerly/adapter-node";
  *
  * const storage = s3Storage({
- *   region: process.env.AWS_REGION ?? "us-east-1",
- *   bucket: process.env.BUCKET!,
- *   accessKeyId: process.env.AWS_ACCESS_KEY_ID!,
- *   secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY!,
+ *   region: process.env["AWS_REGION"] ?? "us-east-1",
+ *   bucket: process.env["BUCKET"]!,
+ *   accessKeyId: process.env["AWS_ACCESS_KEY_ID"]!,
+ *   secretAccessKey: process.env["AWS_SECRET_ACCESS_KEY"]!,
  * });
  * ```
  */
@@ -75,10 +75,10 @@ export function s3Storage(opts: {
  * import { r2Storage } from "@baerly/adapter-node";
  *
  * const storage = r2Storage({
- *   accountId: process.env.R2_ACCOUNT_ID!,
- *   bucket: process.env.BUCKET!,
- *   accessKeyId: process.env.AWS_ACCESS_KEY_ID!,
- *   secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY!,
+ *   accountId: process.env["R2_ACCOUNT_ID"]!,
+ *   bucket: process.env["BUCKET"]!,
+ *   accessKeyId: process.env["AWS_ACCESS_KEY_ID"]!,
+ *   secretAccessKey: process.env["AWS_SECRET_ACCESS_KEY"]!,
  * });
  * ```
  */
@@ -109,10 +109,10 @@ export function r2Storage(opts: {
  * import { minioStorage } from "@baerly/adapter-node";
  *
  * const storage = minioStorage({
- *   endpoint: process.env.S3_ENDPOINT ?? "http://localhost:9102",
+ *   endpoint: process.env["S3_ENDPOINT"] ?? "http://localhost:9102",
  *   bucket: "baerly",
- *   accessKeyId: process.env.MINIO_ACCESS_KEY!,
- *   secretAccessKey: process.env.MINIO_SECRET_KEY!,
+ *   accessKeyId: process.env["MINIO_ACCESS_KEY"]!,
+ *   secretAccessKey: process.env["MINIO_SECRET_KEY"]!,
  * });
  * ```
  */
@@ -146,9 +146,9 @@ export function minioStorage(opts: {
  * import { gcsStorage } from "@baerly/adapter-node";
  *
  * const storage = gcsStorage({
- *   bucket: process.env.BUCKET!,
- *   hmacAccessKeyId: process.env.GCS_HMAC_ACCESS_KEY_ID!,
- *   hmacSecret: process.env.GCS_HMAC_SECRET!,
+ *   bucket: process.env["BUCKET"]!,
+ *   hmacAccessKeyId: process.env["GCS_HMAC_ACCESS_KEY_ID"]!,
+ *   hmacSecret: process.env["GCS_HMAC_SECRET"]!,
  * });
  * ```
  */

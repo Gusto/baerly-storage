@@ -411,72 +411,72 @@ const assertCurrentJson = (parsed: unknown, key: string): CurrentJson => {
     );
   }
   const r = parsed as Record<string, unknown>;
-  if (r.schema_version !== CURRENT_JSON_SCHEMA_VERSION) {
+  if (r["schema_version"] !== CURRENT_JSON_SCHEMA_VERSION) {
     throw new BaerlyError(
       "InvalidResponse",
-      `current.json at ${key}: unsupported schema_version ${String(r.schema_version)}; expected ${CURRENT_JSON_SCHEMA_VERSION}`,
+      `current.json at ${key}: unsupported schema_version ${String(r["schema_version"])}; expected ${CURRENT_JSON_SCHEMA_VERSION}`,
     );
   }
-  if (!(typeof r.snapshot === "string" || r.snapshot === null)) {
+  if (!(typeof r["snapshot"] === "string" || r["snapshot"] === null)) {
     throw new BaerlyError(
       "InvalidResponse",
       `current.json at ${key}: snapshot must be string|null`,
     );
   }
-  if (typeof r.next_seq !== "number" || !Number.isInteger(r.next_seq) || r.next_seq < 0) {
+  if (typeof r["next_seq"] !== "number" || !Number.isInteger(r["next_seq"]) || r["next_seq"] < 0) {
     throw new BaerlyError(
       "InvalidResponse",
       `current.json at ${key}: next_seq must be a non-negative integer`,
     );
   }
   if (
-    typeof r.log_seq_start !== "number" ||
-    !Number.isInteger(r.log_seq_start) ||
-    r.log_seq_start < 0
+    typeof r["log_seq_start"] !== "number" ||
+    !Number.isInteger(r["log_seq_start"]) ||
+    r["log_seq_start"] < 0
   ) {
     throw new BaerlyError(
       "InvalidResponse",
       `current.json at ${key}: log_seq_start must be a non-negative integer`,
     );
   }
-  if (r.log_seq_start > r.next_seq) {
+  if (r["log_seq_start"] > r["next_seq"]) {
     throw new BaerlyError(
       "InvalidResponse",
-      `current.json at ${key}: log_seq_start ${String(r.log_seq_start)} > next_seq ${String(r.next_seq)}`,
+      `current.json at ${key}: log_seq_start ${String(r["log_seq_start"])} > next_seq ${String(r["next_seq"])}`,
     );
   }
-  const fence = r.writer_fence;
+  const fence = r["writer_fence"];
   if (fence === null || typeof fence !== "object") {
     throw new BaerlyError("InvalidResponse", `current.json at ${key}: writer_fence missing`);
   }
   const f = fence as Record<string, unknown>;
-  if (typeof f.epoch !== "number" || !Number.isInteger(f.epoch) || f.epoch < 0) {
+  if (typeof f["epoch"] !== "number" || !Number.isInteger(f["epoch"]) || f["epoch"] < 0) {
     throw new BaerlyError(
       "InvalidResponse",
       `current.json at ${key}: writer_fence.epoch must be a non-negative integer`,
     );
   }
-  if (typeof f.owner !== "string") {
+  if (typeof f["owner"] !== "string") {
     throw new BaerlyError(
       "InvalidResponse",
       `current.json at ${key}: writer_fence.owner must be a string`,
     );
   }
-  if (typeof f.claimed_at !== "string") {
+  if (typeof f["claimed_at"] !== "string") {
     throw new BaerlyError(
       "InvalidResponse",
       `current.json at ${key}: writer_fence.claimed_at must be a string`,
     );
   }
-  if (f.lease_until !== undefined && typeof f.lease_until !== "string") {
+  if (f["lease_until"] !== undefined && typeof f["lease_until"] !== "string") {
     throw new BaerlyError(
       "InvalidResponse",
       `current.json at ${key}: writer_fence.lease_until must be string if present`,
     );
   }
   if (
-    r.migrated_to !== undefined &&
-    (typeof r.migrated_to !== "number" || !Number.isInteger(r.migrated_to) || r.migrated_to < 0)
+    r["migrated_to"] !== undefined &&
+    (typeof r["migrated_to"] !== "number" || !Number.isInteger(r["migrated_to"]) || r["migrated_to"] < 0)
   ) {
     throw new BaerlyError(
       "InvalidResponse",

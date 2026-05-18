@@ -169,28 +169,28 @@ const tryExtractRange = (op: Record<string, unknown>): RangeOpInfo | undefined =
   // `$eq` alone — caller should treat the field as equality, not range.
   if (keys.length === 1 && keys[0] === "$eq") return undefined;
   const hasRange =
-    op.$gt !== undefined || op.$gte !== undefined || op.$lt !== undefined || op.$lte !== undefined;
+    op["$gt"] !== undefined || op["$gte"] !== undefined || op["$lt"] !== undefined || op["$lte"] !== undefined;
   if (!hasRange) return undefined;
   // `$eq` mixed with a range — T1 validation collapses this to a
   // single $eq when satisfiable, but defensively refuse routing
   // anyway; the full-scan path is correct.
-  if (op.$eq !== undefined) return undefined;
+  if (op["$eq"] !== undefined) return undefined;
   let lo: JSONArrayless | undefined;
   let loInclusive = false;
-  if (op.$gte !== undefined) {
-    lo = op.$gte as JSONArrayless;
+  if (op["$gte"] !== undefined) {
+    lo = op["$gte"] as JSONArrayless;
     loInclusive = true;
-  } else if (op.$gt !== undefined) {
-    lo = op.$gt as JSONArrayless;
+  } else if (op["$gt"] !== undefined) {
+    lo = op["$gt"] as JSONArrayless;
     loInclusive = false;
   }
   let hi: JSONArrayless | undefined;
   let hiInclusive = false;
-  if (op.$lte !== undefined) {
-    hi = op.$lte as JSONArrayless;
+  if (op["$lte"] !== undefined) {
+    hi = op["$lte"] as JSONArrayless;
     hiInclusive = true;
-  } else if (op.$lt !== undefined) {
-    hi = op.$lt as JSONArrayless;
+  } else if (op["$lt"] !== undefined) {
+    hi = op["$lt"] as JSONArrayless;
     hiInclusive = false;
   }
   return {
@@ -210,7 +210,7 @@ const tryExtractRange = (op: Record<string, unknown>): RangeOpInfo | undefined =
 const tryExtractIn = (op: Record<string, unknown>): ReadonlyArray<JSONArrayless> | undefined => {
   const keys = Object.keys(op);
   if (keys.length !== 1 || keys[0] !== "$in") return undefined;
-  const values = op.$in as ReadonlyArray<JSONArrayless> | undefined;
+  const values = op["$in"] as ReadonlyArray<JSONArrayless> | undefined;
   if (!Array.isArray(values)) return undefined;
   return values;
 };
@@ -222,8 +222,8 @@ const tryExtractIn = (op: Record<string, unknown>): ReadonlyArray<JSONArrayless>
  */
 const tryExtractEq = (op: Record<string, unknown>): JSONArrayless | undefined => {
   const keys = Object.keys(op);
-  if (keys.length === 1 && keys[0] === "$eq" && op.$eq !== undefined) {
-    return op.$eq as JSONArrayless;
+  if (keys.length === 1 && keys[0] === "$eq" && op["$eq"] !== undefined) {
+    return op["$eq"] as JSONArrayless;
   }
   return undefined;
 };

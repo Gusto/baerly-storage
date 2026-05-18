@@ -113,7 +113,7 @@ describe("Db.table read terminals", () => {
     const q = db.table(COLL).where({ status: "open" });
     const rows = await q.all();
     expect(rows).toHaveLength(2);
-    expect(rows.map((r) => r._id).toSorted()).toEqual(["a", "c"]);
+    expect(rows.map((r) => r["_id"]).toSorted()).toEqual(["a", "c"]);
     expect(await q.count()).toBe(2);
     const head = await q.first();
     expect(head).toBeDefined();
@@ -129,7 +129,7 @@ describe("Db.table read terminals", () => {
 
     const rows = await db.table(COLL).where({ a: 1 }).where({ b: 2 }).all();
     expect(rows).toHaveLength(1);
-    expect(rows[0]!._id).toBe("1");
+    expect(rows[0]!["_id"]).toBe("1");
   });
 
   test("case 6: .order() asc/desc on a monotonically-varying field", async () => {
@@ -141,9 +141,9 @@ describe("Db.table read terminals", () => {
     await w.commit({ op: "I", collection: COLL, docId: "c", body: { _id: "c", n: 3 } });
 
     const asc = await db.table(COLL).order({ n: "asc" }).all();
-    expect(asc.map((r) => r._id)).toEqual(["a", "b", "c"]);
+    expect(asc.map((r) => r["_id"])).toEqual(["a", "b", "c"]);
     const desc = await db.table(COLL).order({ n: "desc" }).all();
-    expect(desc.map((r) => r._id)).toEqual(["c", "b", "a"]);
+    expect(desc.map((r) => r["_id"])).toEqual(["c", "b", "a"]);
   });
 
   test("case 7: .limit(n) truncates results", async () => {
@@ -153,7 +153,7 @@ describe("Db.table read terminals", () => {
       await w.commit({ op: "I", collection: COLL, docId: id, body: { _id: id, n: 1 } });
     }
     const rows = await db.table(COLL).order({ _id: "asc" }).limit(2).all();
-    expect(rows.map((r) => r._id)).toEqual(["a", "b"]);
+    expect(rows.map((r) => r["_id"])).toEqual(["a", "b"]);
   });
 
   test("case 8: fold reflects update (post-image overwrites) and delete (tombstone removes)", async () => {
@@ -213,7 +213,7 @@ describe("Db.table read terminals", () => {
     // And `q1` is still narrow.
     const open = await q1.all();
     expect(open).toHaveLength(1);
-    expect(open[0]!._id).toBe("1");
+    expect(open[0]!["_id"]).toBe("1");
     // Two consecutive `.where` calls produce distinct Query objects.
     const q2 = q1.where({ _id: "1" });
     expect(q2 as unknown).not.toBe(q1 as unknown);
@@ -255,8 +255,8 @@ describe("Db.table read terminals", () => {
 
     const aRows = await dbA.table(COLL).where({}).all();
     const bRows = await dbB.table(COLL).where({}).all();
-    expect(aRows.map((r) => r._id)).toEqual(["alice-doc"]);
-    expect(bRows.map((r) => r._id)).toEqual(["bob-doc"]);
+    expect(aRows.map((r) => r["_id"])).toEqual(["alice-doc"]);
+    expect(bRows.map((r) => r["_id"])).toEqual(["bob-doc"]);
   });
 
   test("case 11: invalid table name throws InvalidConfig", async () => {
@@ -459,8 +459,8 @@ describe("Db.table read terminals", () => {
     expect(r1.fresh).toBe(true);
     expect(r2.fresh).toBe(false);
     expect(r2.manifestPointer).toBe(r1.manifestPointer);
-    expect(r1.rows.map((r) => r._id)).toEqual(["doc-1"]);
-    expect(r2.rows.map((r) => r._id)).toEqual(["doc-1"]);
+    expect(r1.rows.map((r) => r["_id"])).toEqual(["doc-1"]);
+    expect(r2.rows.map((r) => r["_id"])).toEqual(["doc-1"]);
   });
 
   test("case 18: strong read sees the new pointer after a writer advances next_seq", async () => {
@@ -497,8 +497,8 @@ describe("Db.table read terminals", () => {
     expect(r1.fresh).toBe(true);
     expect(r2.fresh).toBe(true);
     expect(r2.manifestPointer).not.toBe(r1.manifestPointer);
-    expect(r1.rows.map((r) => r._id)).toEqual(["doc-1"]);
-    expect(r2.rows.map((r) => r._id).toSorted()).toEqual(["doc-1", "doc-2"]);
+    expect(r1.rows.map((r) => r["_id"])).toEqual(["doc-1"]);
+    expect(r2.rows.map((r) => r["_id"]).toSorted()).toEqual(["doc-1", "doc-2"]);
   });
 
   test("case 19: consistency('eventual') returns a new Query; chain is immutable", async () => {

@@ -23,7 +23,7 @@ export type ProviderTag = ProviderPricing["provider"];
 export interface DetectArgs {
   /** Raw bucket URI as passed on the CLI (s3://, file://, memory://). */
   readonly bucketUri: string;
-  /** Effective S3 endpoint at parse time (typically `process.env.BAERLY_S3_ENDPOINT`). */
+  /** Effective S3 endpoint at parse time (typically `process.env["BAERLY_S3_ENDPOINT"]`). */
   readonly s3Endpoint?: string;
   /** When set, skip detection and return this tag. */
   readonly override?: ProviderTag;

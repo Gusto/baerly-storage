@@ -44,7 +44,7 @@ const stableConfig = {
 };
 const unstableConfig = { ...stableConfig, endpoint: "http://127.0.0.1:9104" };
 
-const minioEnabled = process.env.MINIO === "1";
+const minioEnabled = process.env["MINIO"] === "1";
 
 // Toxiproxy toggle — the new core has no `setOnline()` knob; we flip
 // the Minio proxy directly through Toxiproxy's HTTP admin API. No-op

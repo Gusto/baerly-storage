@@ -200,8 +200,8 @@ describe("Query.update", () => {
     await t.where({ _id: "n1" }).update({ flag: null as unknown as JSONArraylessObject });
     const after = await t.where({ _id: "n1" }).first();
     expect(after).toBeDefined();
-    expect(after!._id).toBe("n1");
-    expect(after!.title).toBe("x");
+    expect(after!["_id"]).toBe("n1");
+    expect(after!["title"]).toBe("x");
     expect("flag" in after!).toBe(false);
   });
 

@@ -191,7 +191,7 @@ async function buildVariant(v: Variant): Promise<VariantBuild> {
       };
     }
     case "node-minio": {
-      if (process.env.MINIO !== "1") {
+      if (process.env["MINIO"] !== "1") {
         throw new Error(
           `bench:load: --variant=node-minio requires MINIO=1. Run 'pnpm dev:storage' first, then 'MINIO=1 pnpm bench:load …'.`,
         );

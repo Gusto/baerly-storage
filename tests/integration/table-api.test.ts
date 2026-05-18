@@ -45,7 +45,7 @@ const stableConfig = {
   credentials: { accessKeyId: "baerly", secretAccessKey: "ZOAmumEzdsUUcVlQ" },
 };
 
-const minioEnabled = process.env.MINIO === "1";
+const minioEnabled = process.env["MINIO"] === "1";
 
 interface Variant {
   readonly label: "memory" | "local-fs" | "node-minio";

@@ -47,8 +47,8 @@ import {
   type HttpFetch,
 } from "../../tests/fixtures/http-conformance-cascade.ts";
 
-const CF_URL = process.env.CF_DEPLOY_URL;
-const SECRET = process.env.SHARED_SECRET;
+const CF_URL = process.env["CF_DEPLOY_URL"];
+const SECRET = process.env["SHARED_SECRET"];
 // Tenant the inline sharedSecret Verifier in `manual-e2e/cloudflare/
 // worker-entry.ts` maps every authorized request to. Hard-coded
 // (the check is single-tenant); change in lockstep with the deploy
@@ -197,10 +197,10 @@ describe.runIf(CF_URL !== undefined && SECRET !== undefined)(
     // R2 S3-compat endpoint for that purpose. Without the env vars,
     // this cascade is skipped; the latency / long-poll / 401 probes
     // above still run.
-    const R2_ENDPOINT = process.env.CF_R2_S3_ENDPOINT;
-    const R2_ACCESS = process.env.CF_R2_ACCESS_KEY_ID;
-    const R2_SECRET = process.env.CF_R2_SECRET_ACCESS_KEY;
-    const R2_BUCKET = process.env.CF_R2_BUCKET ?? "baerly-e2e-cf";
+    const R2_ENDPOINT = process.env["CF_R2_S3_ENDPOINT"];
+    const R2_ACCESS = process.env["CF_R2_ACCESS_KEY_ID"];
+    const R2_SECRET = process.env["CF_R2_SECRET_ACCESS_KEY"];
+    const R2_BUCKET = process.env["CF_R2_BUCKET"] ?? "baerly-e2e-cf";
 
     const cascadeReady =
       R2_ENDPOINT !== undefined && R2_ACCESS !== undefined && R2_SECRET !== undefined;

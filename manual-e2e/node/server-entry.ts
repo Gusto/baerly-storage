@@ -24,15 +24,15 @@ const reqEnv = (name: string): string => {
   return v;
 };
 
-const APP = process.env.APP ?? "e2e";
-const TENANT = process.env.TENANT ?? "default";
-const PORT = Number(process.env.PORT ?? "8080");
+const APP = process.env["APP"] ?? "e2e";
+const TENANT = process.env["TENANT"] ?? "default";
+const PORT = Number(process.env["PORT"] ?? "8080");
 
 const accessKeyId = reqEnv("AWS_ACCESS_KEY_ID");
 const secretAccessKey = reqEnv("AWS_SECRET_ACCESS_KEY");
-const region = process.env.AWS_REGION ?? "us-east-1";
+const region = process.env["AWS_REGION"] ?? "us-east-1";
 const bucket = reqEnv("BUCKET");
-const endpoint = process.env.S3_ENDPOINT ?? `https://s3.${region}.amazonaws.com`;
+const endpoint = process.env["S3_ENDPOINT"] ?? `https://s3.${region}.amazonaws.com`;
 const sharedSecretValue = reqEnv("SHARED_SECRET");
 
 const aws = new AwsClient({

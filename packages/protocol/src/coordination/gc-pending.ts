@@ -198,20 +198,20 @@ const assertGcPending = (parsed: unknown, key: string): GcPending => {
     );
   }
   const r = parsed as Record<string, unknown>;
-  if (r.schema_version !== GC_PENDING_SCHEMA_VERSION) {
+  if (r["schema_version"] !== GC_PENDING_SCHEMA_VERSION) {
     throw new BaerlyError(
       "InvalidResponse",
-      `gc/pending.json at ${key}: unsupported schema_version ${String(r.schema_version)}; expected ${GC_PENDING_SCHEMA_VERSION}`,
+      `gc/pending.json at ${key}: unsupported schema_version ${String(r["schema_version"])}; expected ${GC_PENDING_SCHEMA_VERSION}`,
     );
   }
-  if (!Array.isArray(r.candidates)) {
+  if (!Array.isArray(r["candidates"])) {
     throw new BaerlyError(
       "InvalidResponse",
       `gc/pending.json at ${key}: candidates must be an array`,
     );
   }
-  for (let i = 0; i < r.candidates.length; i++) {
-    const c = r.candidates[i];
+  for (let i = 0; i < r["candidates"].length; i++) {
+    const c = r["candidates"][i];
     if (c === null || typeof c !== "object") {
       throw new BaerlyError(
         "InvalidResponse",
@@ -219,26 +219,26 @@ const assertGcPending = (parsed: unknown, key: string): GcPending => {
       );
     }
     const cr = c as Record<string, unknown>;
-    if (typeof cr.key !== "string" || cr.key.length === 0) {
+    if (typeof cr["key"] !== "string" || cr["key"].length === 0) {
       throw new BaerlyError(
         "InvalidResponse",
         `gc/pending.json at ${key}: candidates[${String(i)}].key must be a non-empty string`,
       );
     }
-    if (typeof cr.due_at !== "string") {
+    if (typeof cr["due_at"] !== "string") {
       throw new BaerlyError(
         "InvalidResponse",
         `gc/pending.json at ${key}: candidates[${String(i)}].due_at must be a string`,
       );
     }
-    if (typeof cr.reason !== "string" || !VALID_REASONS.has(cr.reason as GcCandidate["reason"])) {
+    if (typeof cr["reason"] !== "string" || !VALID_REASONS.has(cr["reason"] as GcCandidate["reason"])) {
       throw new BaerlyError(
         "InvalidResponse",
         `gc/pending.json at ${key}: candidates[${String(i)}].reason must be one of stale-log|orphan-snapshot|orphan-content`,
       );
     }
   }
-  if (typeof r.last_swept_at !== "string") {
+  if (typeof r["last_swept_at"] !== "string") {
     throw new BaerlyError(
       "InvalidResponse",
       `gc/pending.json at ${key}: last_swept_at must be a string`,

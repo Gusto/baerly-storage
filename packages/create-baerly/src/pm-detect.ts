@@ -6,7 +6,7 @@
  */
 export type Pm = "npm" | "pnpm" | "yarn";
 
-export const detectPm = (userAgent: string | undefined = process.env.npm_config_user_agent): Pm => {
+export const detectPm = (userAgent: string | undefined = process.env["npm_config_user_agent"]): Pm => {
   if (userAgent === undefined) return "npm";
   // user-agent format: "<pm>/<version> node/<v> <platform> <arch>"
   const m = /^(npm|pnpm|yarn)\//.exec(userAgent);

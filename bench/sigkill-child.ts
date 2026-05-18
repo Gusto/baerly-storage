@@ -19,10 +19,10 @@ import {
 } from "@baerly/protocol";
 import { buildBenchStorage, ensureBucket } from "./storage.ts";
 
-const via = (process.env.BENCH_VIA as "direct" | "toxiproxy") ?? "direct";
-const bucket = process.env.BENCH_BUCKET ?? "baerly-bench";
-const seq = Number(process.env.BENCH_TRIAL_SEQ ?? "0");
-const body = process.env.BENCH_TRIAL_BODY ?? "{}";
+const via = (process.env["BENCH_VIA"] as "direct" | "toxiproxy") ?? "direct";
+const bucket = process.env["BENCH_BUCKET"] ?? "baerly-bench";
+const seq = Number(process.env["BENCH_TRIAL_SEQ"] ?? "0");
+const body = process.env["BENCH_TRIAL_BODY"] ?? "{}";
 
 const SIGKILL_LOG_PREFIX = "bench/tenant-A/collection-sigkill";
 const SIGKILL_CURRENT_KEY = `${SIGKILL_LOG_PREFIX}/current.json`;

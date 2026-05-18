@@ -347,7 +347,7 @@ describe("runGc", () => {
     // Counter labelled by reason; one bucket since all were stale-log.
     expect(metrics.sumCounter("db.gc.swept_total")).toBe(40);
     const swept = metrics.counters.find((c) => c.name === "db.gc.swept_total");
-    expect(swept?.labels.reason).toBe("stale-log");
+    expect(swept?.labels["reason"]).toBe("stale-log");
   });
 
   it("emits zero-sweep observations when nothing swept this pass", async () => {

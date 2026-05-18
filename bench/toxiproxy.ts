@@ -77,7 +77,7 @@ export async function installToxics(network: Network): Promise<void> {
       body: JSON.stringify(cfg),
     });
     if (!res.ok) {
-      throw new Error(`bench: install toxic ${cfg.name as string} failed: ${res.status}`);
+      throw new Error(`bench: install toxic ${cfg["name"] as string} failed: ${res.status}`);
     }
   }
 }

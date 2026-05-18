@@ -183,17 +183,17 @@ const runReadHappyPath = async (
 
   const onlyB = await db.table<Doc>(t).where({ k: "b" }).first();
   expect(onlyB).toBeDefined();
-  expect(onlyB?.k).toBe("b");
-  expect(onlyB?.v).toBe(2);
+  expect(onlyB?.["k"]).toBe("b");
+  expect(onlyB?.["v"]).toBe(2);
 
   const all = await db.table<Doc>(t).where({}).all();
   expect(all).toHaveLength(3);
 
   const ordered = await db.table<Doc>(t).order({ v: "asc" }).limit(2).all();
-  expect(ordered.map((r) => r.k)).toEqual(["a", "b"]);
+  expect(ordered.map((r) => r["k"])).toEqual(["a", "b"]);
 
   const descendingOne = await db.table<Doc>(t).order({ v: "desc" }).limit(1).all();
-  expect(descendingOne.map((r) => r.k)).toEqual(["c"]);
+  expect(descendingOne.map((r) => r["k"])).toEqual(["c"]);
 };
 
 /** Read not-found: empty table returns undefined / [] / 0. */
@@ -234,8 +234,8 @@ const runInsertContract = async (
   // Round-trip via where() to confirm the doc is materialised.
   const got = await db.table<Doc>(t).where({ _id: customId }).first();
   expect(got).toBeDefined();
-  expect(got?._id).toBe(customId);
-  expect(got?.k).toBe("custom");
+  expect(got?.["_id"]).toBe(customId);
+  expect(got?.["k"]).toBe("custom");
 };
 
 /** Update contract: RFC 7386 — multiple matches, `null` strips key. */
@@ -256,7 +256,7 @@ const runUpdateContract = async (
 
   const afterMarker = await db.table<Doc>(t).where({ k: "a" }).all();
   expect(afterMarker).toHaveLength(2);
-  for (const row of afterMarker) expect(row.marker).toBe(true);
+  for (const row of afterMarker) expect(row["marker"]).toBe(true);
 
   // RFC 7386: null strips a key from the post-image. `Partial<T>`'s
   // type forbids `null` at the leaf (the locked predicate / patch
@@ -287,7 +287,7 @@ const runReplaceContract = async (
   // Exactly one match — success. Replace doesn't return a value.
   await db.table<Doc>(t).where({ k: "only" }).replace({ k: "only", v: 99 });
   const got = await db.table<Doc>(t).where({ k: "only" }).first();
-  expect(got?.v).toBe(99);
+  expect(got?.["v"]).toBe(99);
 
   // Zero matches — Conflict.
   await expect(
@@ -321,7 +321,7 @@ const runDeleteContract = async (
   // Subsequent reads no longer see the deleted docs.
   expect(await db.table<Doc>(t).where({ k: "x" }).count()).toBe(0);
   expect(await db.table<Doc>(t).count()).toBe(1);
-  expect((await db.table<Doc>(t).where({}).first())?.k).toBe("y");
+  expect((await db.table<Doc>(t).where({}).first())?.["k"]).toBe("y");
 };
 
 /** Transaction body buffering: empty body is a no-op; commit lands after body. */
@@ -463,8 +463,8 @@ const runCompactionCascade = async (
   }
   const overlay = await db.table<Doc>(t).order({ _id: "asc" }).all();
   expect(overlay).toHaveLength(35);
-  expect(overlay.filter((r) => r.k === "pre")).toHaveLength(30);
-  expect(overlay.filter((r) => r.k === "post")).toHaveLength(5);
+  expect(overlay.filter((r) => r["k"] === "pre")).toHaveLength(30);
+  expect(overlay.filter((r) => r["k"] === "post")).toHaveLength(5);
 };
 
 /**
@@ -692,7 +692,7 @@ const runSchemaValidation = async (
   // the validity check fires synchronously inside the verb, before
   // any wire I/O for invalid inputs.
   const round = await db.table<Doc>(t).where({ _id: validId }).first();
-  expect(round?.status).toBe("open");
+  expect(round?.["status"]).toBe("open");
 };
 
 /**
@@ -765,7 +765,7 @@ const runLogEntryShape = async (
   expect(e0.op).toBe("I");
   expect(e0.doc_id).toBe(id1);
   expect(e0.new).toEqual(e0.patch);
-  expect(e0.new?._id).toBe(id1);
+  expect(e0.new?.["_id"]).toBe(id1);
 
   expect(e1.op).toBe("I");
   expect(e1.doc_id).toBe(id2);
@@ -775,7 +775,7 @@ const runLogEntryShape = async (
   expect(e2.doc_id).toBe(id1);
   // Per-doc-replace model: `new === patch` for U entries today.
   expect(e2.new).toEqual(e2.patch);
-  expect(e2.new?.marker).toBe(true);
+  expect(e2.new?.["marker"]).toBe(true);
 
   expect(e3.op).toBe("D");
   expect(e3.doc_id).toBe(id2);

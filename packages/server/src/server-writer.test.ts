@@ -338,12 +338,12 @@ describe("ServerWriter", () => {
     // bucket, both are counted.
     expect(metrics.sumCounter("db.r2.put.412_total")).toBe(2);
     const cas412 = metrics.counters.find(
-      (c) => c.name === "db.r2.put.412_total" && c.labels.step === "current-json-cas",
+      (c) => c.name === "db.r2.put.412_total" && c.labels["step"] === "current-json-cas",
     );
     expect(cas412).toBeDefined();
-    expect(cas412?.labels.collection).toBe(COLL);
+    expect(cas412?.labels["collection"]).toBe(COLL);
     const logPut412 = metrics.counters.find(
-      (c) => c.name === "db.r2.put.412_total" && c.labels.step === "log-put",
+      (c) => c.name === "db.r2.put.412_total" && c.labels["step"] === "log-put",
     );
     expect(logPut412).toBeDefined();
     // After one retry the class-A op count is 3 + 1 retry = 4.
