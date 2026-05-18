@@ -9,7 +9,7 @@ import { doctorCloudflare, type DoctorFinding } from "./cloudflare.ts";
 const PROD_WRANGLER = `{
   "name": "x",
   "main": "src/worker.ts",
-  "compatibility_date": "2025-06-01",
+  "compatibility_date": "2026-05-01",
   "r2_buckets": [
     { "binding": "BUCKET", "bucket_name": "x" }
   ],

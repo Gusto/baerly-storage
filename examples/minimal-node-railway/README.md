@@ -132,7 +132,7 @@ require vendor cooperation.
 
 ## Production auth
 
-The emitted `server.ts` chooses `bearerJwt()` when `JWKS_URL` is set,
+The emitted `src/server/index.ts` chooses `bearerJwt()` when `JWKS_URL` is set,
 else falls back to `sharedSecret()` for parity with `pnpm dev`. Set
 `JWKS_URL` in production and remove the shared-secret branch.
 

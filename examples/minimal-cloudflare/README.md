@@ -140,7 +140,7 @@ require vendor cooperation.
 
 ## Production auth
 
-The emitted `worker.ts` uses `sharedSecret()` for parity with
+The emitted `src/server/index.ts` uses `sharedSecret()` for parity with
 `wrangler dev`. For production behind Cloudflare Access, swap to
 `cloudflareAccess()` (re-exported from `@baerly/server`) and wire
 Access in front of the Worker route. The preset reads the JWT off

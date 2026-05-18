@@ -211,7 +211,7 @@ export default defineConfig({
             miniflare: {
               r2Buckets: ["BUCKET"],
               bindings: { APP: "http-conf", TENANT: "" },
-              compatibilityDate: "2025-01-01",
+              compatibilityDate: "2026-05-01",
               compatibilityFlags: ["nodejs_compat"],
             },
           }),

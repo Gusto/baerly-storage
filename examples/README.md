@@ -47,8 +47,12 @@ want to push a Node app" path.
 ```sh
 cd examples/minimal-node-railway
 pnpm install
-BUCKET=... AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=... SHARED_SECRET=... pnpm dev
+pnpm dev
 ```
+
+`pnpm dev` runs `baerly dev` over `LocalFsStorage` and needs no
+credentials; the `BUCKET` / `AWS_*` / `SHARED_SECRET` env vars are
+only required for `pnpm start` and the production PaaS deploy.
 
 **Read first:** `src/server/index.ts` (the `node:http` listener
 + verifier selector).
@@ -68,8 +72,12 @@ ECS — anywhere you push images. Scaffolded with `--target=node-docker`.
 ```sh
 cd examples/minimal-node-docker
 pnpm install
-BUCKET=... AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=... SHARED_SECRET=... pnpm dev
+pnpm dev
 ```
+
+`pnpm dev` runs `baerly dev` over `LocalFsStorage` and needs no
+credentials; the `BUCKET` / `AWS_*` / `SHARED_SECRET` env vars are
+only required for `pnpm start` and the container/production deploy.
 
 **Build the image:**
 

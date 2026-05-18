@@ -1,9 +1,79 @@
 # Baerly Storage
 
-Vendorless, causally consistent multiplayer document database that runs
-entirely client-side over any S3-compatible storage (S3, R2, Backblaze,
-Minio). No server. The client polls a time-ordered manifest log to sync
-state across writers.
+Vendorless, causally consistent document database that runs as a
+server-side `Db` (from `@baerly/server`) behind a `Verifier`, with
+your data persisted in any S3-compatible bucket (S3, R2, GCS,
+Minio). Browsers and other clients talk to it over HTTP via the
+typed `@baerly/client`. The change-feed is a long-poll on
+`/v1/since?cursor=<lsn>` — there is no client-side polling of the
+storage layer.
+
+Day-1 deploy targets, both first-class:
+
+- **Cloudflare Worker** (R2 binding, `@baerly/adapter-cloudflare`).
+- **Self-hosted Node** (S3 / R2 / GCS / Minio over HTTP,
+  `@baerly/adapter-node`).
+
+`create-baerly` scaffolds either shape; see the module map in
+[CLAUDE.md](./CLAUDE.md) for the package layout.
+
+## Minimal shape
+
+Server (Cloudflare Worker — `examples/minimal-cloudflare/src/server/index.ts`):
+
+```ts
+import { baerlyWorker, type Env as BaerlyEnv } from "@baerly/adapter-cloudflare";
+import { sharedSecret } from "@baerly/server/auth";
+
+export default {
+  fetch(req, env: BaerlyEnv & { SHARED_SECRET: string }, ctx) {
+    return baerlyWorker({
+      verifier: sharedSecret({ secret: env.SHARED_SECRET, tenantPrefix: "demo" }),
+    }).fetch!(req, env, ctx);
+  },
+} satisfies ExportedHandler;
+```
+
+Server (Node — `examples/minimal-node-railway/src/server/index.ts`):
+
+```ts
+import { baerlyNode, s3Storage } from "@baerly/adapter-node";
+import { sharedSecret } from "@baerly/server/auth";
+
+await baerlyNode({
+  app: "demo",
+  storage: s3Storage({
+    region: "us-east-1",
+    bucket: process.env.BUCKET!,
+    accessKeyId: process.env.AWS_ACCESS_KEY_ID!,
+    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY!,
+  }),
+  verifier: sharedSecret({ secret: process.env.SHARED_SECRET!, tenantPrefix: "demo" }),
+}).listen(8080);
+```
+
+Client (browser / Node, hitting either server):
+
+```ts
+import { createBaerlyClient } from "@baerly/client";
+
+const client = createBaerlyClient({
+  baseUrl: "", // same-origin; otherwise "https://your-worker.example"
+  headers: { Authorization: `Bearer ${SHARED_SECRET}` },
+});
+
+type Ticket = { _id: string; title: string; status: "open" | "closed" };
+
+const { _id } = await client.table<Ticket>("tickets").insert({
+  title: "hi",
+  status: "open",
+});
+const open = await client.table<Ticket>("tickets").where({ status: "open" }).all();
+```
+
+`@baerly/client` requires `baseUrl`; it is a typed HTTP client, not
+a peer of the kernel. All causal-consistency / fence-time logic
+lives in the server-side `Db` + `ServerWriter`.
 
 ## Toolchain
 
@@ -19,8 +89,8 @@ known-baseline test failures.
 
 - [CLAUDE.md](./CLAUDE.md) — agent guidance, module map, conventions
 - [docs/contributing/features.md](./docs/contributing/features.md) — feature → code map
-- [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) — lifecycle and module graph
-- [docs/sync_protocol.md](./docs/sync_protocol.md) — protocol theory
+- [docs/contributing/architecture.md](./docs/contributing/architecture.md) — lifecycle and module graph
+- [docs/spec/sync-protocol.md](./docs/spec/sync-protocol.md) — protocol theory
 - [docs/adr/](./docs/adr/) — architecture decisions
 - [docs/guide/troubleshooting.md](./docs/guide/troubleshooting.md) — known issues
 - [docs/contributing/conventions/](./docs/contributing/conventions/) — path-scoped conventions for src/, tests/, docs/
