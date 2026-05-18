@@ -193,6 +193,141 @@ export function createListener(opts: CreateListenerOptions): RequestListener {
   };
 }
 
+/**
+ * Options for {@link createFetchHandler}.
+ *
+ * Identical to {@link CreateListenerOptions} minus the Node-fs-specific
+ * fields (`webRoot`, `dev`). Use this when mounting the baerly `/v1/*`
+ * cascade under a Fetch-style host (Hono, Express, h3); use
+ * {@link createListener} when binding directly to `node:http`, or
+ * {@link baerlyNode} for the one-call host helper.
+ */
+export interface CreateFetchHandlerOptions {
+  readonly app: string;
+  readonly storage: Storage;
+  readonly verifier: Verifier;
+  readonly metrics?: MetricsRecorder;
+  readonly observability?: ObservabilityConfig;
+  readonly sinceTimeoutMs?: number;
+  readonly sincePollIntervalMs?: number;
+}
+
+/**
+ * Build a `(req: Request) => Promise<Response>` handler that runs the
+ * baerly `/v1/*` cascade: healthz short-circuit → observability context
+ * → verifier → `Db.create` → `createRouter({db}).fetch(req)` →
+ * canonical-line flush. The handler is host-agnostic; mount it under
+ * `/v1/*` in your Fetch framework.
+ *
+ * Non-`/v1/*` paths fall through to the Hono router, which renders the
+ * kernel's 404 envelope. To compose static-asset or dev-landing
+ * handlers, dispatch those upstream of this factory.
+ *
+ * @example
+ * ```ts
+ * import { Hono } from "hono";
+ * import { createFetchHandler, s3Storage } from "@baerly/adapter-node";
+ *
+ * const baerly = createFetchHandler({
+ *   app: "tickets",
+ *   storage: s3Storage({ ... }),
+ *   verifier,
+ * });
+ * const app = new Hono();
+ * app.all("/v1/*", (c) => baerly(c.req.raw));
+ * ```
+ */
+export function createFetchHandler(
+  opts: CreateFetchHandlerOptions,
+): (req: Request) => Promise<Response> {
+  // Factory-time, idempotent. Mirrors the wiring previously inside
+  // createListener (which will delegate here in a follow-up commit).
+  void configureObservability(resolveDefaultSink(opts.observability ?? {}));
+  const operatorRecorder = opts.metrics ?? noopMetricsRecorder;
+  const teeRecorder = alsAwareRecorder(operatorRecorder);
+  const wrappedStorage = observableStorage(opts.storage, teeRecorder);
+
+  return async (request: Request): Promise<Response> => {
+    const url = new URL(request.url);
+    const path = url.pathname;
+
+    // /v1/healthz is anonymous; the deploy-probe contract bypasses
+    // verifier AND observability so probes don't flood logs. Matches
+    // adapter-cloudflare/src/worker.ts.
+    if (request.method === "GET" && path === "/v1/healthz") {
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+
+    const requestId = request.headers.get("x-request-id") ?? crypto.randomUUID();
+    const sampleRate = getEffectiveSampleRate();
+    const obsCtx = createObservabilityContext({
+      request_id: requestId,
+      sampled_by_head: decideSample(requestId, sampleRate),
+    });
+
+    const result = await opts.verifier(request);
+    if (result === null) {
+      return await runWithContext(obsCtx, async () => {
+        getLogger(CATEGORY.http).warn("verifier_rejected", { reason: "null" });
+        flushCanonicalLine(obsCtx, obsCtx.recorder, {
+          unit: "http",
+          status: 401,
+          outcome: "error",
+          extra: { method: request.method, path },
+        });
+        return new Response(
+          JSON.stringify(errorEnvelope("Unauthorized", "Missing or invalid Authorization header")),
+          { status: 401, headers: { "content-type": "application/json" } },
+        );
+      });
+    }
+
+    return await runWithContext(obsCtx, async () => {
+      let outboundStatus = 500;
+      let caughtError: unknown;
+      let response: Response;
+      try {
+        const db = Db.create({
+          storage: wrappedStorage,
+          app: opts.app,
+          tenant: result.tenantPrefix,
+          metrics: teeRecorder,
+        });
+        const router = createRouter({
+          db,
+          healthCheck: false,
+          ...(opts.sinceTimeoutMs !== undefined && { sinceTimeoutMs: opts.sinceTimeoutMs }),
+          ...(opts.sincePollIntervalMs !== undefined && {
+            sincePollIntervalMs: opts.sincePollIntervalMs,
+          }),
+        });
+        response = await router.fetch(request);
+        outboundStatus = response.status;
+      } catch (err) {
+        caughtError = err;
+        const { status, envelope } = mapError(err);
+        outboundStatus = status;
+        response = new Response(JSON.stringify(envelope), {
+          status,
+          headers: { "content-type": "application/json" },
+        });
+      } finally {
+        flushCanonicalLine(obsCtx, obsCtx.recorder, {
+          unit: "http",
+          status: outboundStatus,
+          outcome: deriveOutcome(request.method, outboundStatus, caughtError),
+          ...(caughtError !== undefined && { error: caughtError }),
+          extra: { method: request.method, path },
+        });
+      }
+      return response;
+    });
+  };
+}
+
 async function handle(
   req: IncomingMessage,
   res: ServerResponse,
