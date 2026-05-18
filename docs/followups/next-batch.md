@@ -1,11 +1,4 @@
-## DX / examples / dev orchestration
-
-Items 8–10 are design-level DX questions that need a brainstorming
-session before implementation, not a fix-it ticket. Listed together
-because items 8 and 10 touch the same `examples/*-cloudflare/`
-surface.
-
-### 8. Node `baerly dev` boots the API but not the SPA in dev
+### 1. Node `baerly dev` boots the API but not the SPA in dev
 
 **STATUS: deferred — design question, narrower scope after flatten.**
 **Effort:** M (vite child-process + banner URL threading).
@@ -25,7 +18,7 @@ Options:
 - Or document the two-process flow in each Node example's README
   and ship a `dev:web` script.
 
-### 9. `helpdesk-cloudflare` could adopt the banner / log helpers
+### 2. `helpdesk-cloudflare` could adopt the banner / log helpers
 
 **STATUS: deferred; revisit next time the example is touched.**
 **Effort:** S–M (~0.5d, depends on wrapper shape).
@@ -35,10 +28,3 @@ Options:
 wrangler URL plus the vite URL) would improve first-touch UX.
 Related to item 10 — same workspace, related fix.
 
-### 10. ~~Cloudflare-side examples have `[ELIFECYCLE]` noise on Ctrl-C~~
-
-**STATUS: RESOLVED by the scaffold-flatten branch.**
-
-`examples/minimal-cloudflare/` and `examples/helpdesk-cloudflare/`
-now run `@cloudflare/vite-plugin` (one Vite process; Worker runs
-inside workerd inside Vite). The two-process noise is gone.
