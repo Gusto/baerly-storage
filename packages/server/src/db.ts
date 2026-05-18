@@ -129,7 +129,7 @@ export interface RawStorageApi {
  * @example
  * ```ts
  * import { Db } from "@baerly/server";
- * import { MemoryStorage } from "@baerly/protocol";
+ * import { MemoryStorage } from "@baerly/server";
  *
  * const db = Db.create({
  *   storage: new MemoryStorage(),
@@ -245,7 +245,7 @@ export class Db {
    *
    * @example
    * ```ts
-   * import { InMemoryMetricsRecorder } from "@baerly/protocol";
+   * import { InMemoryMetricsRecorder } from "@baerly/server";
    * const metrics = new InMemoryMetricsRecorder();
    * const db = Db.create({ storage, app: "tickets", tenant: "acme", metrics });
    * await db.table("tickets").insert({ title: "hi" });
@@ -259,7 +259,7 @@ export class Db {
    * // value is the IndexDefinition array. Mirrors the shape
    * // callers build when flattening BaerlyConfig.collections[*].indexes.
    * import { Db } from "@baerly/server";
-   * import { MemoryStorage } from "@baerly/protocol";
+   * import { MemoryStorage } from "@baerly/server";
    *
    * const db = Db.create({
    *   storage: new MemoryStorage(),
