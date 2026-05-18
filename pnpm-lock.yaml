@@ -175,6 +175,9 @@ importers:
       react-dom:
         specifier: ^19.0.0
         version: 19.2.6(react@19.2.6)
+      zod:
+        specifier: ^3.24.0
+        version: 3.25.76
     devDependencies:
       '@baerly/cli':
         specifier: workspace:*
@@ -363,6 +366,9 @@ importers:
 
   packages/create-baerly:
     dependencies:
+      '@baerly/server':
+        specifier: workspace:*
+        version: link:../server
       '@clack/prompts':
         specifier: ^0.7.0
         version: 0.7.0

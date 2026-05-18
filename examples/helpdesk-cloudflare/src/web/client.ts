@@ -1,4 +1,5 @@
 import { createBaerlyClient } from "@baerly/client";
+import config from "../../baerly.config.ts";
 
 // Same-origin baseUrl works in both dev and production:
 //  - Dev: `@cloudflare/vite-plugin` runs the Worker inside `workerd`
@@ -14,4 +15,5 @@ const SECRET = import.meta.env.VITE_SHARED_SECRET ?? "dev-shared-secret";
 export const client = createBaerlyClient({
   baseUrl: "",
   headers: { Authorization: `Bearer ${SECRET}` },
+  config,
 });

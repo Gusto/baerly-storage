@@ -19,7 +19,7 @@ export const TicketForm = ({
   useEffect(() => {
     if (id === null) return;
     void (async () => {
-      const row = await client.table<Ticket>("tickets").where({ _id: id }).first();
+      const row = await client.table("tickets").where({ _id: id }).first();
       setInitial(row ?? EMPTY);
     })();
   }, [id]);
@@ -37,7 +37,7 @@ export const TicketForm = ({
           priority: fd.get("priority") as Ticket["priority"],
           assignee: String(fd.get("assignee")),
         };
-        const tickets = client.table<Ticket>("tickets");
+        const tickets = client.table("tickets");
         if (id === null) {
           await tickets.insert({ ...draft, created_at: new Date().toISOString() });
         } else {
