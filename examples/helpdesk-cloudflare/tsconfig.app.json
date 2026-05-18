@@ -13,5 +13,11 @@
     "types": ["vite/client"],
     "composite": true
   },
-  "include": ["src/web/**/*", "uint8array-base64.d.ts", "types.ts", "vite.config.ts"]
+  "include": [
+    "src/web/**/*",
+    "uint8array-base64.d.ts",
+    "types.ts",
+    "vite.config.ts",
+    "baerly.config.ts"
+  ]
 }
