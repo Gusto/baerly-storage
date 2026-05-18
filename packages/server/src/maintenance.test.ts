@@ -11,9 +11,11 @@
 import { CURRENT_JSON_SCHEMA_VERSION, createCurrentJson, MemoryStorage } from "@baerly/protocol";
 import { reset, type LogRecord, type Sink } from "@logtape/logtape";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { InternalRunGcOptions } from "./gc.ts";
 import {
   CLOUDFLARE_FREE_TIER,
   CLOUDFLARE_PAID_TIER,
+  type InternalMaintenanceOptions,
   NODE_PROFILE,
   runScheduledMaintenance,
 } from "./maintenance.ts";
@@ -50,7 +52,10 @@ describe("runScheduledMaintenance", () => {
       { storage: s, currentJsonKey: KEY },
       // Bypass GC's 7-day grace so the sweep path actually runs in
       // one tick. Compact's bounds come from NODE_PROFILE.
-      { ...NODE_PROFILE, gc: { ...NODE_PROFILE.gc, graceMillis: 0 } },
+      {
+        ...NODE_PROFILE,
+        gc: { ...NODE_PROFILE.gc, graceMillis: 0 } as InternalRunGcOptions,
+      },
     );
     expect(r.compact?.written).toBe(true);
     expect(r.compact?.entriesFolded).toBe(150);
@@ -139,7 +144,10 @@ describe("runScheduledMaintenance", () => {
         // Bypass GC's 7-day grace so the sweep path actually runs in
         // one tick and `db.gc.swept_total` lands on the canonical
         // line's recorder bag.
-        { ...NODE_PROFILE, gc: { ...NODE_PROFILE.gc, graceMillis: 0 } },
+        {
+        ...NODE_PROFILE,
+        gc: { ...NODE_PROFILE.gc, graceMillis: 0 } as InternalRunGcOptions,
+      },
       );
 
       const maintenanceLines = records.filter((r) => r.category.join(".") === "baerly.maintenance");
@@ -181,17 +189,23 @@ describe("runScheduledMaintenance", () => {
   it("profile constants carry the documented bounds", async () => {
     // A regression in these constants means the budget audits and
     // the per-tier docstring lie about the worst-case I/O profile.
-    expect(CLOUDFLARE_FREE_TIER.compact?.maxEntriesPerRun).toBe(20);
-    expect(CLOUDFLARE_FREE_TIER.compact?.minEntriesToCompact).toBe(50);
-    expect(CLOUDFLARE_FREE_TIER.gc?.maxMarksPerRun).toBe(20);
-    expect(CLOUDFLARE_FREE_TIER.gc?.maxSweepsPerRun).toBe(10);
+    // The budget caps live on the InternalMaintenanceOptions surface
+    // (they're not part of the public `MaintenanceOptions` shape).
+    const cfFree = CLOUDFLARE_FREE_TIER as InternalMaintenanceOptions;
+    const cfPaid = CLOUDFLARE_PAID_TIER as InternalMaintenanceOptions;
+    const node = NODE_PROFILE as InternalMaintenanceOptions;
 
-    expect(CLOUDFLARE_PAID_TIER.compact?.maxEntriesPerRun).toBe(2000);
-    expect(CLOUDFLARE_PAID_TIER.gc?.maxMarksPerRun).toBe(1000);
-    expect(CLOUDFLARE_PAID_TIER.gc?.maxSweepsPerRun).toBe(500);
+    expect(cfFree.compact?.maxEntriesPerRun).toBe(20);
+    expect(cfFree.compact?.minEntriesToCompact).toBe(50);
+    expect(cfFree.gc?.maxMarksPerRun).toBe(20);
+    expect(cfFree.gc?.maxSweepsPerRun).toBe(10);
 
-    expect(NODE_PROFILE.compact?.maxEntriesPerRun).toBe(100_000);
-    expect(NODE_PROFILE.gc?.maxMarksPerRun).toBe(100_000);
-    expect(NODE_PROFILE.gc?.maxSweepsPerRun).toBe(1000);
+    expect(cfPaid.compact?.maxEntriesPerRun).toBe(2000);
+    expect(cfPaid.gc?.maxMarksPerRun).toBe(1000);
+    expect(cfPaid.gc?.maxSweepsPerRun).toBe(500);
+
+    expect(node.compact?.maxEntriesPerRun).toBe(100_000);
+    expect(node.gc?.maxMarksPerRun).toBe(100_000);
+    expect(node.gc?.maxSweepsPerRun).toBe(1000);
   });
 });

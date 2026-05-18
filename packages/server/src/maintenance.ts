@@ -19,8 +19,13 @@ import {
   type Storage,
   teeMetricsRecorders,
 } from "@baerly/protocol";
-import { compact, type CompactOptions, type CompactResult } from "./compactor.ts";
-import { runGc, type RunGcOptions, type RunGcResult } from "./gc.ts";
+import {
+  compact,
+  type CompactOptions,
+  type CompactResult,
+  type InternalCompactOptions,
+} from "./compactor.ts";
+import { runGc, type InternalRunGcOptions, type RunGcOptions, type RunGcResult } from "./gc.ts";
 import { getCurrentContext, withObservability } from "./observability/index.ts";
 
 export interface MaintenanceArgs {
@@ -52,6 +57,21 @@ export interface MaintenanceOptions {
    * (`noopMetricsRecorder`).
    */
   readonly metrics?: MetricsRecorder;
+}
+
+/**
+ * Internal-only widening of {@link MaintenanceOptions}. Surfaced via
+ * the `@baerly/server/_internal/testing` subpath (NOT in the
+ * published `publishConfig.exports`); production callers should use
+ * {@link MaintenanceOptions}.
+ *
+ * @internal
+ */
+export interface InternalMaintenanceOptions extends MaintenanceOptions {
+  /** @internal Internal compact options (budget caps). */
+  readonly compact?: InternalCompactOptions;
+  /** @internal Internal GC options (budget caps + clock seam + grace). */
+  readonly gc?: InternalRunGcOptions;
 }
 
 export interface MaintenanceResult {
@@ -155,25 +175,28 @@ export const runScheduledMaintenance = (
  * Memory-storage list calls are cheap (single-page) and the GET-log
  * paths overlap.
  */
-export const CLOUDFLARE_FREE_TIER: MaintenanceOptions = {
+const cfFreeTier: InternalMaintenanceOptions = {
   compact: { maxEntriesPerRun: 20, minEntriesToCompact: 50 },
   gc: { maxMarksPerRun: 20, maxSweepsPerRun: 10 },
 };
+export const CLOUDFLARE_FREE_TIER: MaintenanceOptions = cfFreeTier;
 
 /**
  * Tuning profile for the 10k-subrequest Cloudflare paid-tier budget.
  * One invocation handles thousands of log entries.
  */
-export const CLOUDFLARE_PAID_TIER: MaintenanceOptions = {
+const cfPaidTier: InternalMaintenanceOptions = {
   compact: { maxEntriesPerRun: 2000, minEntriesToCompact: 100 },
   gc: { maxMarksPerRun: 1000, maxSweepsPerRun: 500 },
 };
+export const CLOUDFLARE_PAID_TIER: MaintenanceOptions = cfPaidTier;
 
 /**
  * Tuning profile for Node. No subrequest cap; the compactor folds the
  * entire live tail every pass.
  */
-export const NODE_PROFILE: MaintenanceOptions = {
+const nodeProfile: InternalMaintenanceOptions = {
   compact: { maxEntriesPerRun: 100_000, minEntriesToCompact: 100 },
   gc: { maxMarksPerRun: 100_000, maxSweepsPerRun: 1000 },
 };
+export const NODE_PROFILE: MaintenanceOptions = nodeProfile;

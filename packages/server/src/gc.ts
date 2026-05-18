@@ -63,37 +63,13 @@ import { loadSnapshotAsMap } from "./compactor.ts";
 import { withObservability } from "./observability/index.ts";
 
 /**
- * Tunables for {@link runGc}. All optional; defaults are tuned for
- * the Cloudflare free-tier subrequest budget.
+ * Public tunables for {@link runGc}. All optional; the engine works
+ * unbounded by default. Opt into per-run caps via the
+ * `CLOUDFLARE_FREE_TIER` profile (from `./maintenance.ts`) or by
+ * reaching for {@link InternalRunGcOptions} via the
+ * `@baerly/server/_internal/testing` subpath.
  */
 export interface RunGcOptions {
-  /**
-   * Override grace-period for tests. Defaults to
-   * {@link GC_GRACE_PERIOD_MILLIS} (7 days). Tests use `0` to bypass
-   * the grace and exercise the sweep path in one pass.
-   */
-  readonly graceMillis?: number;
-
-  /**
-   * Maximum candidates marked per category per run. Default 200.
-   * Bounds LIST + classification cost per pass.
-   */
-  readonly maxMarksPerRun?: number;
-
-  /**
-   * Maximum keys deleted per run. Default 40 — CF free-tier safe
-   * when paired with `compact()` in the same scheduled handler.
-   */
-  readonly maxSweepsPerRun?: number;
-
-  /**
-   * Clock injection for tests. Defaults to `() => new Date()`. The
-   * function is invoked at mark time (to compute `due_at` when
-   * `lastModified` is absent) and at sweep time (to compare against
-   * candidate `due_at`).
-   */
-  readonly now?: () => Date;
-
   readonly signal?: AbortSignal;
 
   /**
@@ -106,6 +82,47 @@ export interface RunGcOptions {
    *     emission per non-zero reason group).
    */
   readonly metrics?: MetricsRecorder;
+}
+
+/**
+ * Internal-only widening of {@link RunGcOptions}. Surfaced via the
+ * `@baerly/server/_internal/testing` subpath (NOT in the published
+ * `publishConfig.exports`); production callers should use
+ * {@link RunGcOptions}.
+ *
+ * @internal
+ */
+export interface InternalRunGcOptions extends RunGcOptions {
+  /**
+   * @internal Override grace-period for tests. Defaults to
+   * {@link GC_GRACE_PERIOD_MILLIS} (7 days). Tests use `0` to bypass
+   * the grace and exercise the sweep path in one pass.
+   */
+  readonly graceMillis?: number;
+
+  /**
+   * @internal Budget cap on candidates marked per category per run.
+   * `CLOUDFLARE_FREE_TIER` sets it; bounds LIST + classification
+   * cost per pass. The default is effectively unbounded
+   * (`Number.MAX_SAFE_INTEGER`).
+   */
+  readonly maxMarksPerRun?: number;
+
+  /**
+   * @internal Budget cap on keys deleted per run.
+   * `CLOUDFLARE_FREE_TIER` sets it — CF free-tier safe when paired
+   * with `compact()` in the same scheduled handler. The default is
+   * effectively unbounded (`Number.MAX_SAFE_INTEGER`).
+   */
+  readonly maxSweepsPerRun?: number;
+
+  /**
+   * @internal Clock injection for tests. Defaults to
+   * `() => new Date()`. The function is invoked at mark time (to
+   * compute `due_at` when `lastModified` is absent) and at sweep
+   * time (to compare against candidate `due_at`).
+   */
+  readonly now?: () => Date;
 }
 
 /**
@@ -128,8 +145,8 @@ export interface RunGcResult {
   readonly pendingDepth: number;
 }
 
-const DEFAULT_MAX_MARKS = 200;
-const DEFAULT_MAX_SWEEPS = 40;
+const DEFAULT_MAX_MARKS = Number.MAX_SAFE_INTEGER;
+const DEFAULT_MAX_SWEEPS = Number.MAX_SAFE_INTEGER;
 
 /**
  * Single GC pass — mark new orphans, sweep due-elapsed candidates,
@@ -158,10 +175,14 @@ const runGcInner = async (
   obsRecorder: MetricsRecorder,
 ): Promise<RunGcResult> => {
   const { storage, currentJsonKey } = args;
-  const grace = options.graceMillis ?? GC_GRACE_PERIOD_MILLIS;
-  const maxMarks = options.maxMarksPerRun ?? DEFAULT_MAX_MARKS;
-  const maxSweeps = options.maxSweepsPerRun ?? DEFAULT_MAX_SWEEPS;
-  const now = options.now ?? ((): Date => new Date());
+  // The internal seam fields (caps + clock + grace) ride on the same
+  // runtime object even though the public `RunGcOptions` doesn't
+  // surface them. Safe cast — the JS runtime carries every property.
+  const internal = options as InternalRunGcOptions;
+  const grace = internal.graceMillis ?? GC_GRACE_PERIOD_MILLIS;
+  const maxMarks = internal.maxMarksPerRun ?? DEFAULT_MAX_MARKS;
+  const maxSweeps = internal.maxSweepsPerRun ?? DEFAULT_MAX_SWEEPS;
+  const now = internal.now ?? ((): Date => new Date());
   // Tee per-run observability recorder onto the operator's sink (see
   // `compactor.ts`'s identical pattern for rationale).
   const metrics = teeMetricsRecorders(options.metrics ?? noopMetricsRecorder, obsRecorder);

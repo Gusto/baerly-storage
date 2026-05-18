@@ -45,6 +45,10 @@ import {
 import { LocalFsStorage } from "@baerly/dev";
 import { Db, ServerWriter } from "@baerly/server";
 import { NODE_PROFILE, runScheduledMaintenance } from "@baerly/server/maintenance";
+import type {
+  InternalMaintenanceOptions,
+  InternalRunGcOptions,
+} from "@baerly/server/_internal/testing";
 import { wrapCountingStorage } from "../fixtures/counting-storage.ts";
 
 const APP = "app";
@@ -182,9 +186,13 @@ describe("Synthetic 5000-entry end-to-end gate", () => {
           // Pass 1 → compact folds + GC marks + sweeps a budget worth.
           // Pass 2 → quiescence (entriesFolded === 0, swept === 0).
           // Cap at 20 passes so a regression doesn't infinite-loop.
-          const QUIESCE_PROFILE = {
+          const QUIESCE_PROFILE: InternalMaintenanceOptions = {
             ...NODE_PROFILE,
-            gc: { ...NODE_PROFILE.gc, graceMillis: 0, maxSweepsPerRun: 100_000 },
+            gc: {
+              ...NODE_PROFILE.gc,
+              graceMillis: 0,
+              maxSweepsPerRun: 100_000,
+            } as InternalRunGcOptions,
           };
           let passes = 0;
           for (passes = 0; passes < 20; passes++) {
@@ -265,11 +273,17 @@ describe("Synthetic 5000-entry end-to-end gate", () => {
           // pass 1 folds + marks, pass 2 sweeps under grace=0.
           await runScheduledMaintenance(
             { storage, currentJsonKey: CURRENT_JSON_KEY },
-            { ...NODE_PROFILE, gc: { ...NODE_PROFILE.gc, graceMillis: 0 } },
+            {
+              ...NODE_PROFILE,
+              gc: { ...NODE_PROFILE.gc, graceMillis: 0 } as InternalRunGcOptions,
+            },
           );
           await runScheduledMaintenance(
             { storage, currentJsonKey: CURRENT_JSON_KEY },
-            { ...NODE_PROFILE, gc: { ...NODE_PROFILE.gc, graceMillis: 0 } },
+            {
+              ...NODE_PROFILE,
+              gc: { ...NODE_PROFILE.gc, graceMillis: 0 } as InternalRunGcOptions,
+            },
           );
 
           // Counting proxy. Class A = PUT, DELETE, LIST (S3 / R2

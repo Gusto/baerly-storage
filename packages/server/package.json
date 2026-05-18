@@ -26,6 +26,10 @@
     "./observability": {
       "types": "./src/observability/index.ts",
       "import": "./src/observability/index.ts"
+    },
+    "./_internal/testing": {
+      "types": "./src/_internal/testing.ts",
+      "import": "./src/_internal/testing.ts"
     }
   },
   "publishConfig": {

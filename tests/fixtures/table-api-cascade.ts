@@ -35,6 +35,10 @@ import {
   uuid,
 } from "@baerly/protocol";
 import { Db, ServerWriter, type SchemaValidator, compact, runGc } from "@baerly/server";
+import type {
+  InternalCompactOptions,
+  InternalRunGcOptions,
+} from "@baerly/server/_internal/testing";
 
 const APP = "table-api-test";
 
@@ -446,7 +450,7 @@ const runCompactionCascade = async (
       storage,
       currentJsonKey: `app/${app}/tenant/${tenant}/manifests/${t}/current.json`,
     },
-    { minEntriesToCompact: 10, maxEntriesPerRun: 100 },
+    { minEntriesToCompact: 10, maxEntriesPerRun: 100 } as InternalCompactOptions,
   );
   expect(res.written).toBe(true);
   expect(res.previousSnapshotKey).toBeNull();
@@ -499,7 +503,7 @@ const runGcCascade = async (
 
   const compactRes = await compact(
     { storage, currentJsonKey },
-    { minEntriesToCompact: 10, maxEntriesPerRun: 50 },
+    { minEntriesToCompact: 10, maxEntriesPerRun: 50 } as InternalCompactOptions,
   );
   expect(compactRes.written).toBe(true);
   expect(compactRes.logSeqStartAfter).toBe(30);
@@ -507,7 +511,7 @@ const runGcCascade = async (
   // grace=0 ⇒ same pass marks AND sweeps the 30 stale log entries.
   const gcRes = await runGc(
     { storage, currentJsonKey },
-    { graceMillis: 0, maxSweepsPerRun: 50, maxMarksPerRun: 50 },
+    { graceMillis: 0, maxSweepsPerRun: 50, maxMarksPerRun: 50 } as InternalRunGcOptions,
   );
   expect(gcRes.marked.stale_log).toBe(30);
   expect(gcRes.swept).toBe(30);
@@ -560,11 +564,16 @@ const runMetricsCascade = async (storage: Storage, app: string, tenant: string):
 
   await compact(
     { storage, currentJsonKey },
-    { minEntriesToCompact: 10, maxEntriesPerRun: 100, metrics },
+    { minEntriesToCompact: 10, maxEntriesPerRun: 100, metrics } as InternalCompactOptions,
   );
   await runGc(
     { storage, currentJsonKey },
-    { graceMillis: 0, maxSweepsPerRun: 100, maxMarksPerRun: 100, metrics },
+    {
+      graceMillis: 0,
+      maxSweepsPerRun: 100,
+      maxMarksPerRun: 100,
+      metrics,
+    } as InternalRunGcOptions,
   );
 
   // The six load-bearing metric names per the ticket.

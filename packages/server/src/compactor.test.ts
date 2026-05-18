@@ -17,7 +17,7 @@ import {
   BaerlyError,
 } from "@baerly/protocol";
 import { describe, expect, it } from "vitest";
-import { compact, loadSnapshotAsMap } from "./compactor.ts";
+import { compact, type InternalCompactOptions, loadSnapshotAsMap } from "./compactor.ts";
 import { ServerWriter } from "./server-writer.ts";
 
 const bootstrap = async (storage: MemoryStorage, key: string): Promise<void> => {
@@ -78,7 +78,7 @@ describe("compact", () => {
     }
     const res = await compact(
       { storage: s, currentJsonKey: KEY },
-      { minEntriesToCompact: 10, maxEntriesPerRun: 40 },
+      { minEntriesToCompact: 10, maxEntriesPerRun: 40 } as InternalCompactOptions,
     );
     expect(res.written).toBe(true);
     expect(res.entriesFolded).toBe(40);
@@ -105,7 +105,7 @@ describe("compact", () => {
     }
     const a = await compact(
       { storage: s, currentJsonKey: KEY },
-      { minEntriesToCompact: 10, maxEntriesPerRun: 100 },
+      { minEntriesToCompact: 10, maxEntriesPerRun: 100 } as InternalCompactOptions,
     );
     expect(a.written).toBe(true);
     expect(a.logSeqStartAfter).toBe(50);
@@ -113,7 +113,7 @@ describe("compact", () => {
     // length is 0 < minEntriesToCompact → skip.
     const b = await compact(
       { storage: s, currentJsonKey: KEY },
-      { minEntriesToCompact: 10, maxEntriesPerRun: 100 },
+      { minEntriesToCompact: 10, maxEntriesPerRun: 100 } as InternalCompactOptions,
     );
     expect(b.written).toBe(false);
     expect(b.skippedReason).toBe("below-min-threshold");
@@ -134,7 +134,7 @@ describe("compact", () => {
     }
     const first = await compact(
       { storage: s, currentJsonKey: KEY },
-      { minEntriesToCompact: 10, maxEntriesPerRun: 40 },
+      { minEntriesToCompact: 10, maxEntriesPerRun: 40 } as InternalCompactOptions,
     );
     expect(first.written).toBe(true);
 
@@ -148,7 +148,7 @@ describe("compact", () => {
     }
     const res = await compact(
       { storage: s, currentJsonKey: KEY },
-      { minEntriesToCompact: 10, maxEntriesPerRun: 40 },
+      { minEntriesToCompact: 10, maxEntriesPerRun: 40 } as InternalCompactOptions,
     );
     expect(res.written).toBe(true);
     expect(res.logSeqStartBefore).toBe(40);
@@ -178,8 +178,10 @@ describe("compact", () => {
     expect(res.newSnapshotKey).toBeDefined();
     // `loadSnapshotAsMap` throws Internal on hash mismatch; if this
     // returns, the recompute over the body equals the filename hash.
+    // The default `maxEntriesPerRun` is effectively unbounded, so
+    // all 50 entries get folded in one pass.
     const map = await loadSnapshotAsMap(s, res.newSnapshotKey!, COLL);
-    expect(map.size).toBe(40);
+    expect(map.size).toBe(50);
   });
 
   it("rejects a snapshot whose body has been tampered with", async () => {
@@ -275,7 +277,7 @@ describe("compact", () => {
     const metrics = new InMemoryMetricsRecorder();
     const res = await compact(
       { storage: s, currentJsonKey: KEY },
-      { minEntriesToCompact: 10, maxEntriesPerRun: 40, metrics },
+      { minEntriesToCompact: 10, maxEntriesPerRun: 40, metrics } as InternalCompactOptions,
     );
     expect(res.written).toBe(true);
     // Folded 40 of the 50 available.

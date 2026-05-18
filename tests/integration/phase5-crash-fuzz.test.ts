@@ -38,6 +38,10 @@ import {
   type Storage,
 } from "@baerly/protocol";
 import { compact, Db, runGc, ServerWriter } from "@baerly/server";
+import type {
+  InternalCompactOptions,
+  InternalRunGcOptions,
+} from "@baerly/server/_internal/testing";
 import { abortingStorage } from "../fixtures/aborting-storage.ts";
 
 /**
@@ -202,7 +206,7 @@ describe("Compactor crash never leaves readable corrupt snapshot", () => {
       try {
         await compact(
           { storage: handle.storage, currentJsonKey: CURRENT_JSON_KEY },
-          { minEntriesToCompact: 10, maxEntriesPerRun: numInserts },
+          { minEntriesToCompact: 10, maxEntriesPerRun: numInserts } as InternalCompactOptions,
         );
       } catch {
         // Expected — abort or `Conflict`. Either way, the bucket must
@@ -239,7 +243,7 @@ describe("GC crash never deletes a still-referenced key", () => {
       // to mark as candidates.
       await compact(
         { storage: inner, currentJsonKey: CURRENT_JSON_KEY },
-        { minEntriesToCompact: 10, maxEntriesPerRun: numInserts },
+        { minEntriesToCompact: 10, maxEntriesPerRun: numInserts } as InternalCompactOptions,
       );
       const before = await readAllRowIds(inner);
 
@@ -248,7 +252,7 @@ describe("GC crash never deletes a still-referenced key", () => {
       try {
         await runGc(
           { storage: handle.storage, currentJsonKey: CURRENT_JSON_KEY },
-          { graceMillis: 0, maxSweepsPerRun: 200 },
+          { graceMillis: 0, maxSweepsPerRun: 200 } as InternalRunGcOptions,
         );
       } catch {
         // Expected — abort or `Conflict`. The reader contract is the
@@ -311,14 +315,14 @@ describe("Long-running fuzzer (many tick + crash cycles)", () => {
                     if (op.abortAfter === undefined) {
                       await compact(
                         { storage: inner, currentJsonKey: CURRENT_JSON_KEY },
-                        { minEntriesToCompact: 5, maxEntriesPerRun: 200 },
+                        { minEntriesToCompact: 5, maxEntriesPerRun: 200 } as InternalCompactOptions,
                       );
                     } else {
                       const handle = abortingStorage(inner);
                       handle.armAt(op.abortAfter);
                       await compact(
                         { storage: handle.storage, currentJsonKey: CURRENT_JSON_KEY },
-                        { minEntriesToCompact: 5, maxEntriesPerRun: 200 },
+                        { minEntriesToCompact: 5, maxEntriesPerRun: 200 } as InternalCompactOptions,
                       );
                     }
                     break;
@@ -327,14 +331,14 @@ describe("Long-running fuzzer (many tick + crash cycles)", () => {
                     if (op.abortAfter === undefined) {
                       await runGc(
                         { storage: inner, currentJsonKey: CURRENT_JSON_KEY },
-                        { graceMillis: 0, maxSweepsPerRun: 200 },
+                        { graceMillis: 0, maxSweepsPerRun: 200 } as InternalRunGcOptions,
                       );
                     } else {
                       const handle = abortingStorage(inner);
                       handle.armAt(op.abortAfter);
                       await runGc(
                         { storage: handle.storage, currentJsonKey: CURRENT_JSON_KEY },
-                        { graceMillis: 0, maxSweepsPerRun: 200 },
+                        { graceMillis: 0, maxSweepsPerRun: 200 } as InternalRunGcOptions,
                       );
                     }
                     break;

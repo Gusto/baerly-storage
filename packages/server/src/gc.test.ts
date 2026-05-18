@@ -20,8 +20,8 @@ import {
   readGcPending,
 } from "@baerly/protocol";
 import { describe, expect, it } from "vitest";
-import { compact } from "./compactor.ts";
-import { runGc } from "./gc.ts";
+import { compact, type InternalCompactOptions } from "./compactor.ts";
+import { type InternalRunGcOptions, runGc } from "./gc.ts";
 import { ServerWriter } from "./server-writer.ts";
 
 const bootstrap = async (storage: MemoryStorage, key: string): Promise<void> => {
@@ -77,7 +77,7 @@ describe("runGc", () => {
     }
     await compact(
       { storage: s, currentJsonKey: KEY },
-      { minEntriesToCompact: 10, maxEntriesPerRun: 40 },
+      { minEntriesToCompact: 10, maxEntriesPerRun: 40 } as InternalCompactOptions,
     );
     const r = await runGc({ storage: s, currentJsonKey: KEY });
     expect(r.marked.stale_log).toBe(40);
@@ -104,13 +104,13 @@ describe("runGc", () => {
     }
     await compact(
       { storage: s, currentJsonKey: KEY },
-      { minEntriesToCompact: 10, maxEntriesPerRun: 40 },
+      { minEntriesToCompact: 10, maxEntriesPerRun: 40 } as InternalCompactOptions,
     );
     // grace=0 ⇒ due_at is `now` (or earlier) at mark time, so the
     // same pass marks AND sweeps.
     const r = await runGc(
       { storage: s, currentJsonKey: KEY },
-      { graceMillis: 0, maxSweepsPerRun: 40 },
+      { graceMillis: 0, maxSweepsPerRun: 40 } as InternalRunGcOptions,
     );
     expect(r.marked.stale_log).toBe(40);
     expect(r.swept).toBe(40);
@@ -138,7 +138,7 @@ describe("runGc", () => {
     }
     await compact(
       { storage: s, currentJsonKey: KEY },
-      { minEntriesToCompact: 10, maxEntriesPerRun: 40 },
+      { minEntriesToCompact: 10, maxEntriesPerRun: 40 } as InternalCompactOptions,
     );
 
     let nowMs = Date.parse("2025-01-01T00:00:00.000Z");
@@ -146,7 +146,7 @@ describe("runGc", () => {
 
     const first = await runGc(
       { storage: s, currentJsonKey: KEY },
-      { now: clock, maxSweepsPerRun: 40 },
+      { now: clock, maxSweepsPerRun: 40 } as InternalRunGcOptions,
     );
     expect(first.marked.stale_log).toBe(40);
     expect(first.swept).toBe(0); // grace not yet elapsed
@@ -154,7 +154,7 @@ describe("runGc", () => {
     nowMs += 8 * 24 * 60 * 60 * 1000;
     const second = await runGc(
       { storage: s, currentJsonKey: KEY },
-      { now: clock, maxSweepsPerRun: 40 },
+      { now: clock, maxSweepsPerRun: 40 } as InternalRunGcOptions,
     );
     expect(second.swept).toBe(40);
     // pending.json is empty after the sweep + last_swept_at is set.
@@ -177,7 +177,7 @@ describe("runGc", () => {
     }
     const first = await compact(
       { storage: s, currentJsonKey: KEY },
-      { minEntriesToCompact: 10, maxEntriesPerRun: 40 },
+      { minEntriesToCompact: 10, maxEntriesPerRun: 40 } as InternalCompactOptions,
     );
     expect(first.written).toBe(true);
     for (let i = 40; i < 80; i++) {
@@ -190,7 +190,7 @@ describe("runGc", () => {
     }
     const second = await compact(
       { storage: s, currentJsonKey: KEY },
-      { minEntriesToCompact: 10, maxEntriesPerRun: 40 },
+      { minEntriesToCompact: 10, maxEntriesPerRun: 40 } as InternalCompactOptions,
     );
     expect(second.written).toBe(true);
     expect(second.previousSnapshotKey).toBe(first.newSnapshotKey);
@@ -229,7 +229,7 @@ describe("runGc", () => {
     }
     await compact(
       { storage: s, currentJsonKey: KEY },
-      { minEntriesToCompact: 10, maxEntriesPerRun: 100 },
+      { minEntriesToCompact: 10, maxEntriesPerRun: 100 } as InternalCompactOptions,
     );
     const r2 = await runGc({ storage: s, currentJsonKey: KEY });
     expect(r2.marked.orphan_content).toBe(0);
@@ -260,7 +260,7 @@ describe("runGc", () => {
     });
     const r = await runGc(
       { storage: s, currentJsonKey: KEY },
-      { graceMillis: 0, maxSweepsPerRun: 10 },
+      { graceMillis: 0, maxSweepsPerRun: 10 } as InternalRunGcOptions,
     );
     expect(r.marked.orphan_content).toBe(1);
     expect(r.swept).toBe(1);
@@ -281,9 +281,12 @@ describe("runGc", () => {
     }
     await compact(
       { storage: s, currentJsonKey: KEY },
-      { minEntriesToCompact: 10, maxEntriesPerRun: 200 },
+      { minEntriesToCompact: 10, maxEntriesPerRun: 200 } as InternalCompactOptions,
     );
-    const r = await runGc({ storage: s, currentJsonKey: KEY }, { maxMarksPerRun: 50 });
+    const r = await runGc(
+      { storage: s, currentJsonKey: KEY },
+      { maxMarksPerRun: 50 } as InternalRunGcOptions,
+    );
     expect(r.marked.stale_log).toBe(50);
     const pending = await readGcPending(s, PENDING_KEY);
     expect(pending?.json.candidates).toHaveLength(50);
@@ -303,7 +306,7 @@ describe("runGc", () => {
     }
     await compact(
       { storage: s, currentJsonKey: KEY },
-      { minEntriesToCompact: 10, maxEntriesPerRun: 20 },
+      { minEntriesToCompact: 10, maxEntriesPerRun: 20 } as InternalCompactOptions,
     );
 
     const r1 = await runGc({ storage: s, currentJsonKey: KEY });
@@ -331,12 +334,12 @@ describe("runGc", () => {
     }
     await compact(
       { storage: s, currentJsonKey: KEY },
-      { minEntriesToCompact: 10, maxEntriesPerRun: 40 },
+      { minEntriesToCompact: 10, maxEntriesPerRun: 40 } as InternalCompactOptions,
     );
     const metrics = new InMemoryMetricsRecorder();
     const r = await runGc(
       { storage: s, currentJsonKey: KEY },
-      { graceMillis: 0, maxSweepsPerRun: 40, metrics },
+      { graceMillis: 0, maxSweepsPerRun: 40, metrics } as InternalRunGcOptions,
     );
     expect(r.marked.stale_log).toBe(40);
     expect(r.swept).toBe(40);
@@ -406,7 +409,7 @@ describe("runGc", () => {
     }) as typeof s.put;
     const r = await runGc(
       { storage: s, currentJsonKey: KEY },
-      { graceMillis: 0, maxSweepsPerRun: 10 },
+      { graceMillis: 0, maxSweepsPerRun: 10 } as InternalRunGcOptions,
     );
     // The DELETE of log/0.json landed; the CAS-lose on pending.json
     // is non-fatal.

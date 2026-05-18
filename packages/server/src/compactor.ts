@@ -125,20 +125,13 @@ export const encodeSnapshotBody = (s: SnapshotBody): Uint8Array =>
   new TextEncoder().encode(JSON.stringify(s));
 
 /**
- * Configuration knobs. All optional; defaults are tuned for the
- * Cloudflare free-tier subrequest budget (50 / request).
+ * Public configuration knobs for {@link compact}. All optional; the
+ * engine works unbounded by default. Opt into a per-run cap via the
+ * `CLOUDFLARE_FREE_TIER` profile (from `./maintenance.ts`) or by
+ * reaching for {@link InternalCompactOptions} via the
+ * `@baerly/server/_internal/testing` subpath.
  */
 export interface CompactOptions {
-  /**
-   * Maximum number of log entries to fold in a single `compact()`
-   * call. The compactor's I/O profile is `maxEntriesPerRun + 3`
-   * subrequests (N GETs + 1 PUT snapshot + 1 GET current + 1 PUT
-   * current). Default 40 keeps us under the 50-cap free tier with
-   * headroom. Cloudflare paid tier supports 10k; pick `9000` there.
-   * Node has no cap; pick anything.
-   */
-  readonly maxEntriesPerRun?: number;
-
   /**
    * Minimum log-tail length to compact. Skips work when there are
    * fewer than this many live entries past the last snapshot.
@@ -160,6 +153,26 @@ export interface CompactOptions {
   readonly metrics?: MetricsRecorder;
 }
 
+/**
+ * Internal-only widening of {@link CompactOptions}. Surfaced via the
+ * `@baerly/server/_internal/testing` subpath (NOT in the published
+ * `publishConfig.exports`); production callers should use
+ * {@link CompactOptions}.
+ *
+ * @internal
+ */
+export interface InternalCompactOptions extends CompactOptions {
+  /**
+   * @internal Budget cap for the CF free-tier subrequest budget;
+   * `CLOUDFLARE_FREE_TIER` sets it. Tests also set it to exercise
+   * the cap path. The compactor's I/O profile is
+   * `maxEntriesPerRun + 3` subrequests (N GETs + 1 PUT snapshot +
+   * 1 GET current + 1 PUT current). The default is effectively
+   * unbounded (`Number.MAX_SAFE_INTEGER`).
+   */
+  readonly maxEntriesPerRun?: number;
+}
+
 export interface CompactResult {
   /** `true` iff a new snapshot landed and `current.json` was advanced. */
   readonly written: boolean;
@@ -177,7 +190,7 @@ export interface CompactResult {
   readonly entriesFolded: number;
 }
 
-const DEFAULT_MAX_PER_RUN = 40;
+const DEFAULT_MAX_PER_RUN = Number.MAX_SAFE_INTEGER;
 const DEFAULT_MIN_TO_COMPACT = 100;
 const APPLICATION_JSON = "application/json";
 
@@ -227,7 +240,12 @@ const compactInner = async (
   obsRecorder: MetricsRecorder,
 ): Promise<CompactResult> => {
   const { storage, currentJsonKey } = args;
-  const maxPerRun = options.maxEntriesPerRun ?? DEFAULT_MAX_PER_RUN;
+  // The internal cap fields ride on the same runtime object even
+  // though the public `CompactOptions` doesn't surface them. The cast
+  // is safe — the JS runtime carries every property regardless of TS
+  // narrowing — and keeps the public type honest.
+  const internal = options as InternalCompactOptions;
+  const maxPerRun = internal.maxEntriesPerRun ?? DEFAULT_MAX_PER_RUN;
   const minToCompact = options.minEntriesToCompact ?? DEFAULT_MIN_TO_COMPACT;
   // Tee the per-run observability recorder onto the operator's sink
   // so both the canonical line AND the operator's long-term recorder

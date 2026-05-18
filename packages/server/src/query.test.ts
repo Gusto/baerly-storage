@@ -17,7 +17,7 @@ import {
   type Predicate,
 } from "@baerly/protocol";
 import { beforeEach, describe, expect, test } from "vitest";
-import { compact } from "./compactor.ts";
+import { compact, type InternalCompactOptions } from "./compactor.ts";
 import { Db } from "./db.ts";
 import { planQuery } from "./query-planner.ts";
 import { runAllWithMeta } from "./query.ts";
@@ -378,7 +378,7 @@ describe("Db.table read terminals", () => {
 
     const res = await compact(
       { storage, currentJsonKey: currentJsonKey(COLL) },
-      { minEntriesToCompact: 10, maxEntriesPerRun: 100 },
+      { minEntriesToCompact: 10, maxEntriesPerRun: 100 } as InternalCompactOptions,
     );
     expect(res.written).toBe(true);
     expect(res.logSeqStartAfter).toBe(50);
@@ -402,7 +402,7 @@ describe("Db.table read terminals", () => {
     }
     const res = await compact(
       { storage, currentJsonKey: currentJsonKey(COLL) },
-      { minEntriesToCompact: 10, maxEntriesPerRun: 100 },
+      { minEntriesToCompact: 10, maxEntriesPerRun: 100 } as InternalCompactOptions,
     );
     expect(res.written).toBe(true);
     expect(res.logSeqStartAfter).toBe(40);
