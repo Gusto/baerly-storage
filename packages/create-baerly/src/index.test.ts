@@ -1,80 +1,98 @@
 /**
- * Integration tests for the `create-baerly` entry. Drives the bundled
- * CLI as a child process so `stdio: "pipe"` forces `isTTY === false`
- * — the regression-critical non-TTY path. Asserts that:
+ * In-process tests for the `create-baerly` runner. Drives `runCreateBaerly`
+ * directly so we don't depend on `dist/index.js` being current. Vitest
+ * forks have no TTY (`process.stdin.isTTY === undefined`), so the wizard
+ * branch is unreachable — same property the prior subprocess test got
+ * from `stdio: "pipe"`.
  *
- *   1. Missing `--target` (with a `projectName` positional) still
- *      produces the same error message as today.
- *   2. The `--json` envelope on success is byte-identical to the
- *      pre-clack output.
+ * Asserts:
+ *   1. Invalid --target produces the same error message as today.
+ *   2. The --json envelope on success is byte-identical to the
+ *      pre-refactor output.
  *   3. The plaintext output on non-TTY success matches today's lines.
- *
- * Gated on `process.platform !== "win32"` because subprocess stdio
- * behavior diverges on Windows; CI here is Linux/macOS.
+ *   4. --with=docker scaffolds the three docker files on --target=node.
+ *   5. --with=docker on --target=cloudflare is rejected with an
+ *      actionable message.
+ *   6. --with=junk lists the available add-ons.
  */
-import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { join } from "node:path";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { runCreateBaerly } from "./runner.ts";
 
-const execFileP = promisify(execFile);
-const HERE = dirname(fileURLToPath(import.meta.url));
-const CLI_PATH = resolve(HERE, "..", "dist", "index.js");
+const captureStream = (
+  stream: NodeJS.WriteStream,
+): { restore: () => void; readonly captured: string[] } => {
+  const captured: string[] = [];
+  const original = stream.write.bind(stream);
+  stream.write = ((chunk: unknown): boolean => {
+    captured.push(typeof chunk === "string" ? chunk : String(chunk));
+    return true;
+  }) as typeof stream.write;
+  return {
+    captured,
+    restore: () => {
+      stream.write = original;
+    },
+  };
+};
 
-// Built artifact is required for these tests. `pnpm -F create-baerly build`
-// produces it before running them; skip gracefully if the dev forgot,
-// rather than hard-failing in a confusing way.
-const shouldRun = process.platform !== "win32" && existsSync(CLI_PATH);
-
-describe.runIf(shouldRun)("create-baerly CLI (non-TTY)", () => {
+describe("create-baerly runner (non-TTY)", () => {
   let outRoot: string;
+  let originalCwd: string;
 
   beforeAll(async () => {
-    outRoot = await mkdtemp(join(tmpdir(), "create-baerly-cli-"));
+    outRoot = await mkdtemp(join(tmpdir(), "create-baerly-runner-"));
   });
 
   afterAll(async () => {
     await rm(outRoot, { recursive: true, force: true });
   });
 
+  beforeEach(() => {
+    originalCwd = process.cwd();
+    process.chdir(outRoot);
+  });
+
+  afterEach(() => {
+    process.chdir(originalCwd);
+  });
+
   it("rejects an invalid --target with the same message as today", async () => {
-    let stdout = "";
-    let stderr = "";
-    let exitCode = 0;
+    const stdout = captureStream(process.stdout);
+    const stderr = captureStream(process.stderr);
+    let exitCode: number;
     try {
-      const r = await execFileP(process.execPath, [CLI_PATH, "my-app", "--target=lambda"], {
-        cwd: outRoot,
-        encoding: "utf8",
-      });
-      stdout = r.stdout;
-      stderr = r.stderr;
-    } catch (err) {
-      const e = err as { code?: number; stdout?: string; stderr?: string };
-      exitCode = e.code ?? -1;
-      stdout = e.stdout ?? "";
-      stderr = e.stderr ?? "";
+      exitCode = await runCreateBaerly(["my-app", "--target=lambda"]);
+    } finally {
+      stdout.restore();
+      stderr.restore();
     }
     expect(exitCode).toBe(1);
-    expect(stdout).toBe("");
-    expect(stderr).toContain(`--target must be "cloudflare" or "node", got "lambda"`);
-    expect(stderr).toContain("create-baerly:");
+    expect(stdout.captured.join("")).toBe("");
+    const err = stderr.captured.join("");
+    expect(err).toContain(`--target must be "cloudflare" or "node", got "lambda"`);
+    expect(err).toContain("create-baerly:");
   });
 
   it("emits the JSON envelope unchanged on success", async () => {
     const projectName = "json-app";
-    const { stdout, stderr } = await execFileP(
-      process.execPath,
-      [CLI_PATH, projectName, "--target=cloudflare", "--json"],
-      { cwd: outRoot, encoding: "utf8" },
-    );
-    expect(stderr).toBe("");
-    // Single newline-terminated JSON line.
-    expect(stdout.endsWith("\n")).toBe(true);
-    const parsed = JSON.parse(stdout.trim()) as {
+    const stdout = captureStream(process.stdout);
+    const stderr = captureStream(process.stderr);
+    let exitCode: number;
+    try {
+      exitCode = await runCreateBaerly([projectName, "--target=cloudflare", "--json"]);
+    } finally {
+      stdout.restore();
+      stderr.restore();
+    }
+    expect(exitCode).toBe(0);
+    expect(stderr.captured.join("")).toBe("");
+    const out = stdout.captured.join("");
+    expect(out.endsWith("\n")).toBe(true);
+    const parsed = JSON.parse(out.trim()) as {
       result: {
         command: string;
         status: string;
@@ -88,9 +106,6 @@ describe.runIf(shouldRun)("create-baerly CLI (non-TTY)", () => {
     expect(parsed.result.outDir.endsWith(projectName)).toBe(true);
     expect(parsed.result.filesWritten).toBeGreaterThan(0);
     expect(parsed.result.nextSteps[0]).toBe(`cd ${projectName}`);
-    // Envelope shape is part of the agent contract: assert the exact
-    // key set (order is irrelevant in JS objects post-parse, but the
-    // presence of these and only these keys IS load-bearing).
     expect(Object.keys(parsed.result).toSorted()).toEqual([
       "command",
       "filesWritten",
@@ -102,80 +117,76 @@ describe.runIf(shouldRun)("create-baerly CLI (non-TTY)", () => {
 
   it("accepts --with=docker on --target=node and emits the Dockerfile", async () => {
     const projectName = "with-docker";
-    const { stdout, stderr } = await execFileP(
-      process.execPath,
-      [CLI_PATH, projectName, "--target=node", "--with=docker", "--json"],
-      { cwd: outRoot, encoding: "utf8" },
-    );
-    expect(stderr).toBe("");
-    const parsed = JSON.parse(stdout.trim()) as {
+    const stdout = captureStream(process.stdout);
+    let exitCode: number;
+    try {
+      exitCode = await runCreateBaerly([
+        projectName,
+        "--target=node",
+        "--with=docker",
+        "--json",
+      ]);
+    } finally {
+      stdout.restore();
+    }
+    expect(exitCode).toBe(0);
+    const parsed = JSON.parse(stdout.captured.join("").trim()) as {
       result: { status: string; outDir: string; filesWritten: number };
     };
     expect(parsed.result.status).toBe("ok");
-    // The scaffolded project contains the three add-on files.
     expect(existsSync(join(parsed.result.outDir, "Dockerfile"))).toBe(true);
     expect(existsSync(join(parsed.result.outDir, "healthcheck.js"))).toBe(true);
     expect(existsSync(join(parsed.result.outDir, ".dockerignore"))).toBe(true);
   });
 
   it("rejects --with=docker on --target=cloudflare with an actionable message", async () => {
-    let stderr = "";
-    let exitCode = 0;
+    const stderr = captureStream(process.stderr);
+    let exitCode: number;
     try {
-      await execFileP(
-        process.execPath,
-        [CLI_PATH, "docker-on-cf", "--target=cloudflare", "--with=docker"],
-        { cwd: outRoot, encoding: "utf8" },
-      );
-    } catch (err) {
-      const e = err as { code?: number; stderr?: string };
-      exitCode = e.code ?? -1;
-      stderr = e.stderr ?? "";
+      exitCode = await runCreateBaerly([
+        "docker-on-cf",
+        "--target=cloudflare",
+        "--with=docker",
+      ]);
+    } finally {
+      stderr.restore();
     }
     expect(exitCode).toBe(1);
-    expect(stderr).toContain("--with=docker only applies to --target=node");
-    expect(stderr).toContain("--target=cloudflare");
+    const err = stderr.captured.join("");
+    expect(err).toContain("--with=docker only applies to --target=node");
+    expect(err).toContain("--target=cloudflare");
   });
 
   it("rejects --with=junk with an actionable message", async () => {
-    let stderr = "";
-    let exitCode = 0;
+    const stderr = captureStream(process.stderr);
+    let exitCode: number;
     try {
-      await execFileP(
-        process.execPath,
-        [CLI_PATH, "junk-addon", "--target=node", "--with=junk"],
-        { cwd: outRoot, encoding: "utf8" },
-      );
-    } catch (err) {
-      const e = err as { code?: number; stderr?: string };
-      exitCode = e.code ?? -1;
-      stderr = e.stderr ?? "";
+      exitCode = await runCreateBaerly(["junk-addon", "--target=node", "--with=junk"]);
+    } finally {
+      stderr.restore();
     }
     expect(exitCode).toBe(1);
-    expect(stderr).toContain(`Unknown add-on "junk"`);
-    expect(stderr).toContain("Available add-ons: docker");
+    const err = stderr.captured.join("");
+    expect(err).toContain(`Unknown add-on "junk"`);
+    expect(err).toContain("Available add-ons: docker");
   });
 
   it("emits the plaintext lines unchanged on a non-TTY success", async () => {
     const projectName = "plain-app";
-    const { stdout, stderr } = await execFileP(
-      process.execPath,
-      [CLI_PATH, projectName, "--target=cloudflare"],
-      { cwd: outRoot, encoding: "utf8" },
-    );
-    expect(stderr).toBe("");
-    // The structural shape that scripts may parse: header line,
-    // blank line, "Next steps:" marker, indented steps, trailing
-    // blank line. The leading `✓` is wrapped with a picocolors
-    // green ANSI sequence; assert on the surrounding text rather
-    // than the exact escape (picocolors auto-disables on non-TTY,
-    // so the visible bytes today are `✓ scaffolded ...`).
-    expect(stdout).toContain(`scaffolded `);
-    expect(stdout).toContain(projectName);
-    expect(stdout).toContain("\n  Next steps:\n");
-    expect(stdout).toContain(`    cd ${projectName}\n`);
-    // No clack intro/outro frame characters on non-TTY.
-    expect(stdout).not.toContain("◆");
-    expect(stdout).not.toContain("│");
+    const stdout = captureStream(process.stdout);
+    let exitCode: number;
+    try {
+      exitCode = await runCreateBaerly([projectName, "--target=cloudflare"]);
+    } finally {
+      stdout.restore();
+    }
+    expect(exitCode).toBe(0);
+    const out = stdout.captured.join("");
+    expect(out).toContain(`scaffolded `);
+    expect(out).toContain(projectName);
+    expect(out).toContain("\n  Next steps:\n");
+    expect(out).toContain(`    cd ${projectName}\n`);
+    expect(out).not.toContain("◆");
+    expect(out).not.toContain("│");
   });
 });
