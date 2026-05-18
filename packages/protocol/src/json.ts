@@ -6,8 +6,6 @@ export type JSONArrayless = string | number | boolean | JSONArraylessObject;
 export type JSONObject = { [x: string]: JSONValue };
 export type JSONValue = string | number | boolean | null | JSONObject | Array<JSONValue>;
 
-export const clone = <T extends JSONValue>(state: T): T => structuredClone(state);
-
 /**
  * JSON Merge Patch (RFC 7386)
  * Update target JSON with a merge patch.
@@ -42,37 +40,4 @@ export function merge<T extends JSONArrayless>(
     }
   }
   return combined as T;
-}
-
-export function fold<T extends JSONArrayless>(
-  ...patches: (Partial<T> | undefined)[]
-): Partial<T> | undefined {
-  return patches.reduce<Partial<T> | undefined>(
-    (acc, patch) => merge<T>(acc as T, patch),
-    {} as Partial<T>,
-  );
-}
-
-/**
- * JSON Merge Diff
- * The inverse of JSON-merge-patch
- */
-export function diff<T extends JSONArrayless>(
-  target: T | undefined,
-  source: T | undefined,
-): Partial<T> | undefined | null {
-  if (source === target) return undefined;
-  if (source !== undefined && target === undefined) return null;
-  if (typeof target !== "object" || typeof source !== "object") return target;
-  // recursive diff against two objects: walk the union of keys so that
-  // keys present only in `source` produce a deletion (`null`) in the patch.
-  const patch: Partial<T> = {};
-  const allKeys = new Set([...Object.keys(target), ...Object.keys(source)]);
-  for (const key of allKeys) {
-    const tVal: JSONArrayless | undefined = (target as JSONArraylessObject | undefined)?.[key];
-    const sVal: JSONArrayless | undefined = (source as JSONArraylessObject | undefined)?.[key];
-    const val = diff(tVal, sVal);
-    if (val !== undefined) (patch as JSONArraylessObject)[key] = val as JSONArrayless;
-  }
-  return patch;
 }

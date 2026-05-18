@@ -1,6 +1,6 @@
 import { fc, test } from "@fast-check/vitest";
 import { describe, expect } from "vitest";
-import { type JSONArrayless, diff, fold, merge } from "./json.ts";
+import { type JSONArrayless, merge } from "./json.ts";
 
 const jsonArrayless = fc.letrec((tie) => ({
   doc: fc.oneof(
@@ -97,68 +97,4 @@ describe("JSON Merge Patch (RFC 7386)", () => {
     expect((proto as Record<string, unknown>).prototype).toBeUndefined();
   });
 
-  describe("fold", () => {
-    test.prop({ a: jsonArrayless, b: jsonArrayless, c: jsonArrayless })(
-      "idempotent: fold(fold(a, b, c), a, b, c) === fold(a, b, c)",
-      ({ a, b, c }) => {
-        expect(fold<JSONArrayless>(fold(a, b, c), a, b, c)).toEqual(fold(a, b, c));
-      },
-    );
-
-    test.prop({ a: jsonArrayless, b: jsonArrayless, c: jsonArrayless })(
-      "log repair: fold(fold(a, c), b, c) === fold(a, b, c)",
-      ({ a, b, c }) => {
-        expect(fold<JSONArrayless>(fold(a, c), b, c)).toEqual(fold(a, b, c));
-      },
-    );
-  });
-});
-
-describe("JSON-merge-diff", () => {
-  test.prop({ a: jsonArrayless })("identity: diff(a, undefined) === a", ({ a }) => {
-    expect(diff(a, undefined)).toEqual(a);
-  });
-
-  test.prop({ a: jsonArrayless })("identity: diff(a, a) === undefined", ({ a }) => {
-    expect(diff(a, a)).toBeUndefined();
-  });
-
-  test("case: diff({}, 0) === {}", () => {
-    expect(diff<JSONArrayless>({}, 0)).toEqual({});
-  });
-
-  test("case: diff({a: {}}, {}) === {a: {}}", () => {
-    expect(diff({ a: {} }, {})).toEqual({ a: {} });
-  });
-
-  test("case: diff({}, {a: {}}) === {a: null}", () => {
-    expect(diff({}, { a: {} })).toEqual({ a: null });
-  });
-
-  test("case: diff({a: false}, {a: 0}) === {a: false}", () => {
-    expect(diff({ a: false }, { a: 0 })).toEqual({ a: false });
-  });
-
-  test("case: diff({a: 0}, {b: 0}) === {a: 0, b: null}", () => {
-    expect(diff({ a: 0 }, { b: 0 })).toEqual({ a: 0, b: null });
-  });
-
-  test("case: diff({a: {}}, {a: true}) === {a: {}}", () => {
-    expect(diff({ a: {} }, { a: true })).toEqual({ a: {} });
-  });
-
-  test.prop({ a: jsonArrayless, b: jsonArrayless })(
-    "inverse: merge(a, diff(b, a)) === b",
-    ({ a, b }) => {
-      expect(merge(a, diff(b, a))).toEqual(b);
-    },
-  );
-
-  test.prop({ a: jsonArrayless, b: jsonArrayless })(
-    "inverse: diff(a, b) = c <=> merge(b, c) = a",
-    ({ a, b }) => {
-      const c = diff(a, b);
-      expect(merge(b, c)).toEqual(a);
-    },
-  );
 });
