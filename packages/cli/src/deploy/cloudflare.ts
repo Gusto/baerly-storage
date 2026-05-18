@@ -3,7 +3,7 @@
  * Workers deploy.
  *
  * Behavior:
- *   1. Locate `apps/server/wrangler.jsonc` under the repo root.
+ *   1. Locate `wrangler.jsonc` at the package root.
  *   2. Sniff `wrangler deploy --help` for the `--x-provision` flag.
  *   3. When present, invoke
  *      `wrangler deploy --x-provision --x-auto-create` and rely on
@@ -81,12 +81,8 @@ const defaultRunner: ProcessRunner = {
     }),
 };
 
-/** Path to `apps/server/wrangler.jsonc` relative to the repo root. */
-const wranglerPathFor = (repoRoot: string): string =>
-  resolve(repoRoot, "apps", "server", "wrangler.jsonc");
-
-/** Path to `apps/server/` relative to the repo root. */
-const serverDirFor = (repoRoot: string): string => resolve(repoRoot, "apps", "server");
+/** Path to `wrangler.jsonc` at the package root. */
+const wranglerPathFor = (repoRoot: string): string => resolve(repoRoot, "wrangler.jsonc");
 
 /**
  * Parse the declared `r2_buckets[]` array from a `wrangler.jsonc`
@@ -99,7 +95,7 @@ export const parseR2Bindings = (wranglerPath: string): readonly R2BindingDeclara
   if (!existsSync(wranglerPath)) {
     throw new BaerlyError(
       "InvalidConfig",
-      `baerly deploy: ${wranglerPath} missing. Expected the scaffolded layout (apps/server/wrangler.jsonc).`,
+      `baerly deploy: ${wranglerPath} missing. Expected wrangler.jsonc at the package root.`,
     );
   }
   const text = readFileSync(wranglerPath, "utf8");
@@ -227,7 +223,7 @@ const warnOnMissingSecrets = async (
  * Deploy a baerly app to Cloudflare Workers. Returns the integer
  * exit code from the underlying `wrangler deploy` invocation.
  *
- * @throws BaerlyError code="InvalidConfig" — `apps/server/wrangler.jsonc`
+ * @throws BaerlyError code="InvalidConfig" — `wrangler.jsonc`
  *   missing or unparseable.
  * @throws BaerlyError code="NetworkError" — the fallback path
  *   could not create a declared R2 bucket.
@@ -238,26 +234,25 @@ export const deployCloudflare = async (
 ): Promise<number> => {
   const runner = opts.runner ?? defaultRunner;
   const repoRoot = opts.cwd ?? config.repoRoot;
-  const serverDir = serverDirFor(repoRoot);
   const wranglerPath = wranglerPathFor(repoRoot);
   if (!existsSync(wranglerPath)) {
     throw new BaerlyError(
       "InvalidConfig",
-      `baerly deploy: ${wranglerPath} missing. Expected the scaffolded layout (apps/server/wrangler.jsonc).`,
+      `baerly deploy: ${wranglerPath} missing. Expected wrangler.jsonc at the package root.`,
     );
   }
 
   // Sniff Wrangler for --x-provision support.
-  const help = await runner.run("wrangler", ["deploy", "--help"], serverDir);
+  const help = await runner.run("wrangler", ["deploy", "--help"], repoRoot);
   const hasXProvision = help.code === 0 && help.stdout.includes("--x-provision");
 
-  await warnOnMissingSecrets(runner, serverDir, config.requiredSecrets ?? ["SHARED_SECRET"]);
+  await warnOnMissingSecrets(runner, repoRoot, config.requiredSecrets ?? ["SHARED_SECRET"]);
 
   if (hasXProvision) {
     const r = await runner.run(
       "wrangler",
       ["deploy", "--x-provision", "--x-auto-create"],
-      serverDir,
+      repoRoot,
     );
     return r.code;
   }
@@ -266,7 +261,7 @@ export const deployCloudflare = async (
   process.stderr.write(
     "baerly deploy: wrangler --x-provision unavailable; falling back to manual provisioning\n",
   );
-  await ensureBindings(runner, serverDir, wranglerPath);
-  const r = await runner.run("wrangler", ["deploy"], serverDir);
+  await ensureBindings(runner, repoRoot, wranglerPath);
+  const r = await runner.run("wrangler", ["deploy"], repoRoot);
   return r.code;
 };

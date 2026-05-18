@@ -282,7 +282,7 @@ describe("scaffold", () => {
   // source side so that regression never ships.
   test("examples contain no {{placeholder}} substrings", async () => {
     const PLACEHOLDER_RE = /\{\{\w+\}\}/;
-    const skipName = (name: string): boolean => name === "node_modules";
+    const skipName = (name: string): boolean => name === "node_modules" || name === "dist";
     const skipRel = (rel: string): boolean => rel === join(".baerly", "scaffold.json");
     const walk = async (root: string, rel: string, hits: string[]): Promise<void> => {
       const abs = rel === "" ? root : join(root, rel);

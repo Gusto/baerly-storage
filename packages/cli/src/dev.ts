@@ -9,20 +9,20 @@
  *   $ pnpm dev   # → baerly dev → http://localhost:3000
  *
  * The default path needs zero external binaries. For CF-target
- * parity testing, `baerly dev --wrangler` shells out to
- * `wrangler dev` from `apps/server/` (requires `config.target ===
- * "cloudflare"`).
+ * parity testing, run the scaffold's own `pnpm dev` which boots
+ * `vite dev` with `@cloudflare/vite-plugin` (the plugin replaces the
+ * legacy `wrangler dev` workflow); `baerly dev` itself stays on the
+ * Node + LocalFsStorage path so it works uniformly across all
+ * deploy targets.
  *
  * Args:
  *   --port=<n>         Listen port. Default 3000.
  *   --data-dir=<path>  `LocalFsStorage` root. Default `./.baerly-data`.
- *   --wrangler         CF target only: spawn `wrangler dev` from `apps/server/`.
  *   --json             Emit a JSON envelope to stdout on boot.
  *
  * Exit codes (per `packages/cli/README.md`):
  *   0 — listener bound (the process stays alive serving requests).
- *   1 — InvalidConfig (bad `--port`, `--wrangler` against a Node
- *       target, missing/invalid `baerly.config.ts`).
+ *   1 — InvalidConfig (bad `--port`, missing/invalid `baerly.config.ts`).
  *   2 — storage / network / unknown.
  *   3 — protocol invariant.
  *
@@ -31,7 +31,6 @@
  * secret"` so a fresh `pnpm dev` works without any env wiring.
  */
 
-import { spawn } from "node:child_process";
 import { createServer, type Server } from "node:http";
 import { resolve } from "node:path";
 import { defineCommand, parseArgs, type ArgsDef, type ParsedArgs } from "citty";
@@ -59,14 +58,10 @@ const DEV_ARGS = {
     description: "LocalFsStorage root (default ./.baerly-data).",
     valueHint: "path",
   },
-  wrangler: {
-    type: "boolean",
-    description: "Cloudflare target only: spawn `wrangler dev` from apps/server/.",
-  },
   json: { type: "boolean", description: "Emit JSON envelope to stdout." },
 } as const satisfies ArgsDef;
 
-const KNOWN_KEYS: ReadonlySet<string> = new Set(["port", "data-dir", "wrangler", "json", "_"]);
+const KNOWN_KEYS: ReadonlySet<string> = new Set(["port", "data-dir", "json", "_"]);
 
 const errorToExitCode = (code: string): number => {
   if (code === "InvalidConfig") return 1;
@@ -75,54 +70,36 @@ const errorToExitCode = (code: string): number => {
 };
 
 /**
- * Outcome of a successful `runDev` invocation. For the default path
- * carries the bound port (`server.address()` is observed AFTER the
- * `listening` event fires, so `port: 0` callers get the OS-picked
- * port back). For `--wrangler`, `mode === "wrangler"` and `port` is
- * `null`.
+ * Outcome of a successful `runDev` invocation. Carries the bound
+ * port (`server.address()` is observed AFTER the `listening` event
+ * fires, so `port: 0` callers get the OS-picked port back).
  */
 export interface DevResult {
-  readonly mode: "node" | "wrangler";
-  readonly port: number | null;
-  readonly dataDir: string | null;
+  readonly mode: "node";
+  readonly port: number;
+  readonly dataDir: string;
   readonly target: "cloudflare" | "node-railway" | "node-docker";
-  readonly tenant: string | null;
-  readonly app: string | null;
-  /** Set in the default path so test harnesses can shut the server down deterministically. */
-  readonly server?: Server;
-  /** Set in `--wrangler` mode so the caller can await wrangler's exit. */
-  readonly wranglerExit?: Promise<number>;
+  readonly tenant: string;
+  readonly app: string;
+  /** Set so test harnesses can shut the server down deterministically. */
+  readonly server: Server;
 }
 
 /**
  * Programmatic entry point. Returns a {@link DevResult} after the
- * listener is bound (or, for `--wrangler`, after the wrangler child
- * is spawned). Does NOT block on the server staying up — the caller
- * keeps the event loop busy via the returned `server` (default path)
- * or `wranglerExit` (wrangler path).
+ * listener is bound. Does NOT block on the server staying up — the
+ * caller keeps the event loop busy via the returned `server`.
  *
- * @throws BaerlyError code="InvalidConfig" — `--wrangler` requested
- *   against a Node-target config, or `loadAppConfig` rejected.
+ * @throws BaerlyError code="InvalidConfig" — `loadAppConfig` rejected.
  */
 export const runDev = async (opts: {
   readonly cwd?: string;
   readonly port: number;
   readonly dataDir: string;
-  readonly wrangler: boolean;
   readonly json: boolean;
 }): Promise<DevResult> => {
   const cwd = opts.cwd ?? process.cwd();
   const { config, collections } = await loadAppConfigWithCollections(cwd);
-
-  if (opts.wrangler) {
-    if (config.target !== "cloudflare") {
-      throw new BaerlyError(
-        "InvalidConfig",
-        `baerly dev: --wrangler requires baerly.config.ts:target === "cloudflare" (got ${JSON.stringify(config.target)})`,
-      );
-    }
-    return runWranglerDev({ cwd, target: config.target });
-  }
 
   const dataDir = resolve(cwd, opts.dataDir);
   const storage = new LocalFsStorage({ root: dataDir });
@@ -184,34 +161,6 @@ export const runDev = async (opts: {
 };
 
 /**
- * Spawn `wrangler dev` from `apps/server/`. Inherits stdio so the
- * wrangler TTY (file-watcher logs, dashboard URLs) passes through.
- * Returns a resolved promise as soon as the child is spawned; the
- * caller awaits `wranglerExit` to wait on `close`.
- */
-const runWranglerDev = async (args: {
-  readonly cwd: string;
-  readonly target: "cloudflare" | "node-railway" | "node-docker";
-}): Promise<DevResult> => {
-  const appsServer = resolve(args.cwd, "apps/server");
-  const child = spawn("wrangler", ["dev"], { cwd: appsServer, stdio: "inherit" });
-  const wranglerExit = new Promise<number>((res) => {
-    child.on("close", (code) => {
-      res(code ?? 0);
-    });
-  });
-  return await Promise.resolve({
-    mode: "wrangler" as const,
-    port: null,
-    dataDir: null,
-    target: args.target,
-    tenant: null,
-    app: null,
-    wranglerExit,
-  });
-};
-
-/**
  * Outcome of running the citty body. `code` is the exit code (per the
  * `packages/cli/README.md` contract); `result` is the `runDev` return
  * (or `undefined` on failure) so test harnesses can shut the bound
@@ -242,7 +191,6 @@ const handleDev = async (args: ParsedArgs<typeof DEV_ARGS>): Promise<HandleDevOu
     const result = await runDev({
       port,
       dataDir,
-      wrangler: args.wrangler === true,
       json: args.json === true,
     });
     if (isJsonMode()) {
@@ -278,9 +226,8 @@ export const dev = defineCommand({
   run: async ({ args }) => {
     const { code } = await handleDev(args);
     if (code !== 0) process.exit(code);
-    // Default path: the server's open socket keeps the event loop
-    // alive — do not call process.exit(0). Wrangler path: the spawned
-    // child inherits stdio and keeps the process alive until it exits.
+    // The server's open socket keeps the event loop alive — do not
+    // call process.exit(0).
   },
 });
 

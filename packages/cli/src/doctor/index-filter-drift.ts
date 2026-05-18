@@ -75,7 +75,7 @@ const buildStorage = (findings: DoctorFinding[]): Storage | null => {
       severity: "error",
       check: "index-filter-drift.env",
       message: `--check=index-filter-drift needs ${missing.join(", ")} on the environment; skipped drift scan.`,
-      fix: "Source apps/server/.env or set the vars inline: `BUCKET=... AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=... baerly doctor --check=index-filter-drift` (optionally with S3_ENDPOINT + AWS_REGION).",
+      fix: "Source .env or set the vars inline: `BUCKET=... AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=... baerly doctor --check=index-filter-drift` (optionally with S3_ENDPOINT + AWS_REGION).",
     });
     return null;
   }

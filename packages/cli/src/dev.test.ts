@@ -69,7 +69,6 @@ describe("baerly dev", () => {
         cwd: root,
         port: 0,
         dataDir: join(root, ".baerly-data"),
-        wrangler: false,
         json: false,
       });
     } finally {
@@ -83,7 +82,7 @@ describe("baerly dev", () => {
     openServers.push({
       close: () =>
         new Promise<void>((res, rej) => {
-          result.server!.close((err) => {
+          result.server.close((err) => {
             if (err) rej(err);
             else res();
           });
@@ -107,19 +106,6 @@ describe("baerly dev", () => {
       headers: { Authorization: `Bearer ${DEV_SECRET}` },
     });
     expect(authed.status).not.toBe(401);
-  });
-
-  test("--wrangler against a Node target throws InvalidConfig", async () => {
-    await writeConfig(root, { app: "demo", tenant: "acme", target: "node-docker" });
-    await expect(
-      runDev({
-        cwd: root,
-        port: 0,
-        dataDir: join(root, ".baerly-data"),
-        wrangler: true,
-        json: false,
-      }),
-    ).rejects.toMatchObject({ code: "InvalidConfig" });
   });
 
   test("--port=NaN is rejected via the CLI shim (exit 1)", async () => {
@@ -151,13 +137,12 @@ describe("baerly dev", () => {
       cwd: root,
       port: 0,
       dataDir,
-      wrangler: false,
       json: false,
     });
     openServers.push({
       close: () =>
         new Promise<void>((res, rej) => {
-          result.server!.close((err) => {
+          result.server.close((err) => {
             if (err) rej(err);
             else res();
           });
@@ -193,7 +178,7 @@ describe("baerly dev", () => {
       openServers.push({
         close: () =>
           new Promise<void>((res, rej) => {
-            outcome.result!.server!.close((err) => {
+            outcome.result!.server.close((err) => {
               if (err) rej(err);
               else res();
             });

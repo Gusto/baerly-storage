@@ -53,8 +53,8 @@ const makeRunner = (overrides: { readonly [key: string]: CannedReply } = {}) => 
 };
 
 const writeScaffold = async (repoRoot: string, content: string = PROD_WRANGLER): Promise<void> => {
-  await mkdir(join(repoRoot, "apps/server"), { recursive: true });
-  await writeFile(join(repoRoot, "apps/server/wrangler.jsonc"), content);
+  await mkdir(repoRoot, { recursive: true });
+  await writeFile(join(repoRoot, "wrangler.jsonc"), content);
 };
 
 const makeConfig = (repoRoot: string, extra: Partial<AppConfig> = {}): AppConfig => ({

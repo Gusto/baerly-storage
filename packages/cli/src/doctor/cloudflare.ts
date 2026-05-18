@@ -6,7 +6,7 @@
  * stdin interactively).
  *
  * Checks (each emitting one {@link DoctorFinding}):
- *   1. `wrangler.jsonc` exists at `apps/server/wrangler.jsonc`.
+ *   1. `wrangler.jsonc` exists at the package root.
  *   2. Each declared R2 binding exists in CF
  *      (`wrangler r2 bucket info`).
  *   3. Each `requiredSecrets` entry is in `wrangler secret list`.
@@ -130,8 +130,7 @@ export const doctorCloudflare = async (
   } = {},
 ): Promise<DoctorReport> => {
   const repoRoot = opts.cwd ?? config.repoRoot;
-  const serverDir = resolve(repoRoot, "apps", "server");
-  const wranglerPath = resolve(serverDir, "wrangler.jsonc");
+  const wranglerPath = resolve(repoRoot, "wrangler.jsonc");
   // Seed the findings list with any dispatcher-level results
   // (today: `--check=index-filter-drift`). These influence rollup
   // status the same way local findings do, and they appear at the
@@ -144,7 +143,7 @@ export const doctorCloudflare = async (
     findings.push({
       severity: "error",
       check: "wrangler.jsonc",
-      message: `Expected ${wranglerPath}; the scaffolded layout is apps/server/wrangler.jsonc.`,
+      message: `Expected wrangler.jsonc at the package root: ${wranglerPath}.`,
       fix: "Re-scaffold (npm create baerly@latest) or restore the file from git.",
     });
     return { findings, status: rollupStatus(findings) };
@@ -176,7 +175,7 @@ export const doctorCloudflare = async (
     // Any failure here surfaces as an error finding rather than
     // throwing — doctor's job is to report.
     try {
-      await ensureBindings(opts.runner, serverDir, wranglerPath);
+      await ensureBindings(opts.runner, repoRoot, wranglerPath);
     } catch (e) {
       findings.push({
         severity: "error",
@@ -191,7 +190,7 @@ export const doctorCloudflare = async (
       const info = await opts.runner.run(
         "wrangler",
         ["r2", "bucket", "info", bucket_name],
-        serverDir,
+        repoRoot,
       );
       if (info.code === 0) {
         findings.push({
@@ -219,7 +218,7 @@ export const doctorCloudflare = async (
   // 3. requiredSecrets — best-effort.
   const required = config.requiredSecrets ?? ["SHARED_SECRET"];
   if (opts.runner !== undefined && required.length > 0) {
-    const r = await opts.runner.run("wrangler", ["secret", "list"], serverDir);
+    const r = await opts.runner.run("wrangler", ["secret", "list"], repoRoot);
     if (r.code !== 0) {
       findings.push({
         severity: "warning",

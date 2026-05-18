@@ -98,8 +98,8 @@ const writeScaffold = async (
   repoRoot: string,
   wranglerContent: string = WRANGLER_JSONC,
 ): Promise<void> => {
-  await mkdir(join(repoRoot, "apps/server"), { recursive: true });
-  await writeFile(join(repoRoot, "apps/server/wrangler.jsonc"), wranglerContent);
+  await mkdir(repoRoot, { recursive: true });
+  await writeFile(join(repoRoot, "wrangler.jsonc"), wranglerContent);
 };
 
 const makeConfig = (repoRoot: string): AppConfig => ({
@@ -120,25 +120,25 @@ describe("parseR2Bindings", () => {
 
   it("parses comments + trailing commas", async () => {
     await writeScaffold(repoRoot);
-    const bindings = parseR2Bindings(join(repoRoot, "apps/server/wrangler.jsonc"));
+    const bindings = parseR2Bindings(join(repoRoot, "wrangler.jsonc"));
     expect(bindings).toEqual([{ binding: "BUCKET", bucket_name: "x" }]);
   });
 
   it("returns [] when r2_buckets is absent", async () => {
     await writeScaffold(repoRoot, '{ "name": "x" }\n');
-    expect(parseR2Bindings(join(repoRoot, "apps/server/wrangler.jsonc"))).toEqual([]);
+    expect(parseR2Bindings(join(repoRoot, "wrangler.jsonc"))).toEqual([]);
   });
 
   it("throws InvalidConfig on missing file", () => {
     expect(() => parseR2Bindings(join(repoRoot, "does-not-exist.jsonc"))).toThrow(
-      /missing\. Expected the scaffolded layout/,
+      /missing\. Expected wrangler\.jsonc at the package root/,
     );
   });
 
   it("throws InvalidConfig on malformed JSONC", async () => {
     await writeScaffold(repoRoot, '{ "name": "x" "broken": true }');
     try {
-      parseR2Bindings(join(repoRoot, "apps/server/wrangler.jsonc"));
+      parseR2Bindings(join(repoRoot, "wrangler.jsonc"));
       throw new Error("expected throw");
     } catch (err) {
       expect((err as BaerlyError).code).toBe("InvalidConfig");
@@ -148,11 +148,33 @@ describe("parseR2Bindings", () => {
   it("throws InvalidConfig when r2_buckets[] entry is missing bucket_name", async () => {
     await writeScaffold(repoRoot, '{ "name": "x", "r2_buckets": [{ "binding": "B" }] }');
     try {
-      parseR2Bindings(join(repoRoot, "apps/server/wrangler.jsonc"));
+      parseR2Bindings(join(repoRoot, "wrangler.jsonc"));
       throw new Error("expected throw");
     } catch (err) {
       expect((err as BaerlyError).code).toBe("InvalidConfig");
     }
+  });
+
+  // Regression sentinel for the scaffold flatten — `parseR2Bindings`
+  // must parse the source-of-truth `examples/minimal-cloudflare/wrangler.jsonc`
+  // that the rolldown build ships into `dist/templates/`. If anyone
+  // moves `wrangler.jsonc` back under `apps/server/` (or changes the
+  // R2 binding name), this test fails before drift can land.
+  it("parses the bundled examples/minimal-cloudflare/wrangler.jsonc cleanly", () => {
+    // Walk up from `packages/cli/src/deploy/` to the worktree root,
+    // then into `examples/minimal-cloudflare/wrangler.jsonc`.
+    const wranglerPath = join(
+      import.meta.dirname,
+      "..",
+      "..",
+      "..",
+      "..",
+      "examples",
+      "minimal-cloudflare",
+      "wrangler.jsonc",
+    );
+    const bindings = parseR2Bindings(wranglerPath);
+    expect(bindings).toEqual([{ binding: "BUCKET", bucket_name: "minimal-cloudflare" }]);
   });
 });
 
@@ -265,11 +287,7 @@ describe("ensureBindings", () => {
       "r2 bucket info have-it": { code: 0, stdout: "ok" },
       "r2 bucket info need-it": { code: 1, stderr: "not found" },
     });
-    await ensureBindings(
-      h.runner,
-      join(repoRoot, "apps/server"),
-      join(repoRoot, "apps/server/wrangler.jsonc"),
-    );
+    await ensureBindings(h.runner, repoRoot, join(repoRoot, "wrangler.jsonc"));
     h.stderr();
     expect(h.calls).toContainEqual(["wrangler", "r2", "bucket", "info", "have-it"]);
     expect(h.calls).toContainEqual(["wrangler", "r2", "bucket", "info", "need-it"]);
