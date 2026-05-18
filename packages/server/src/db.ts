@@ -13,6 +13,7 @@ import type {
   StoragePutResult,
   Table,
 } from "@baerly/protocol";
+import type { BaerlyConfig, CollectionNames, RowOf, UnboundConfig } from "./config.ts";
 import type { IndexDefinition } from "./indexes.ts";
 import type { CurrentJsonCacheSlot, TableReadContext } from "./query.ts";
 import type { SchemaValidator } from "./schema.ts";
@@ -141,7 +142,7 @@ export interface RawStorageApi {
  * const got = await db._raw.get("docs/123");
  * ```
  */
-export class Db {
+export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
   readonly app: string;
   readonly tenant: string;
   /** @internal — Storage-shaped escape hatch; prefer the table API. */
@@ -287,7 +288,7 @@ export class Db {
    *   .where({ status: "open", assignee: "alice" }).all();
    * ```
    */
-  static create(config: {
+  static create<TConfig extends BaerlyConfig = UnboundConfig>(config: {
     storage: Storage;
     app: string;
     tenant: string;
@@ -325,7 +326,24 @@ export class Db {
      * throw `BaerlyError{code:"InvalidConfig"}` at construction.
      */
     inFanoutThreshold?: number;
-  }): Db {
+    /**
+     * Optional. When passed, `db.table(name)` narrows `name` to declared
+     * collection names and infers the row type from
+     * `collections[name].schema`. Pass the value returned by
+     * {@link defineConfig} from your `baerly.config.ts`.
+     *
+     * Type-only seam: `Db` does not read `config` at runtime — the
+     * runtime path still consults the separately-passed `schemas` /
+     * `indexes` maps. The field exists purely so TypeScript can capture
+     * a literal-pinned `TConfig`, off of which `db.table("name")` then
+     * recovers the row's `_id` / field shape via {@link RowOf}.
+     *
+     * Adapter authors continue to pass `schemas` + `indexes` maps as
+     * today. `config` is for app-side callers who construct `Db`
+     * directly with a `baerly.config.ts` in scope.
+     */
+    config?: TConfig;
+  }): Db<TConfig> {
     const { storage, app, tenant } = config;
     if (app.length === 0 || tenant.length === 0) {
       throw new BaerlyError(
@@ -347,7 +365,7 @@ export class Db {
         );
       }
     }
-    return new Db(
+    return new Db<TConfig>(
       app,
       tenant,
       storage,
@@ -368,15 +386,22 @@ export class Db {
    *
    * @example
    * ```ts
-   * const open = await db.table<Ticket>("tickets")
+   * // With a baerly.config.ts bound via Db.create({..., config}),
+   * // db.table(name) infers the row type from the declared schema —
+   * // no <Ticket> generic needed.
+   * const open = await db.table("tickets")
    *   .where({ status: "open" })
    *   .order({ commit_ts: "desc" })
    *   .limit(50)
    *   .all();
    * ```
    */
-  table<T extends JSONArraylessObject = JSONArraylessObject>(name: string): Table<T> {
-    return makeTable<T>(this.tableReadContext(name));
+  table<N extends CollectionNames<TConfig>>(
+    name: N,
+  ): Table<RowOf<TConfig, N> & JSONArraylessObject>;
+  table<T extends JSONArraylessObject = JSONArraylessObject>(name: string): Table<T>;
+  table(name: string): Table<JSONArraylessObject> {
+    return makeTable<JSONArraylessObject>(this.tableReadContext(name));
   }
 
   /**

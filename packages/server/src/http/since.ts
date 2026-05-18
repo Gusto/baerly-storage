@@ -38,6 +38,7 @@
 import { BaerlyError } from "@baerly/protocol";
 import type { LogEntry, Storage, StorageGetOptions, StorageGetResult } from "@baerly/protocol";
 import { LOG_KEY_PREFIX, logSeqStartOf, lsnParts, readCurrentJson } from "@baerly/protocol";
+import type { BaerlyConfig } from "../config.ts";
 import type { Db } from "../db.ts";
 import type { SinceResponse } from "../contract.ts";
 
@@ -84,7 +85,7 @@ const DEFAULT_TIMEOUT_MS = Number(env.BAERLY_SINCE_TIMEOUT_MS ?? 25_000);
 const DEFAULT_POLL_INTERVAL_MS = Number(env.BAERLY_SINCE_POLL_INTERVAL_MS ?? 1_000);
 
 export interface LongPollSinceOptions {
-  readonly db: Db;
+  readonly db: Db<BaerlyConfig>;
   readonly table: string;
   /** Opaque cursor; empty string = from `log_seq_start`. */
   readonly cursor: string;
@@ -96,7 +97,7 @@ export interface LongPollSinceOptions {
 }
 
 export interface ListEventsSinceOptions {
-  readonly db: Db;
+  readonly db: Db<BaerlyConfig>;
   readonly table: string;
   /** Opaque cursor; empty string = from `log_seq_start`. */
   readonly cursor: string;
@@ -320,7 +321,7 @@ export async function listEventsSince(opts: ListEventsSinceOptions): Promise<Log
  * `Storage` methods throw `Internal` — they are unreachable inside
  * `readCurrentJson`.
  */
-function rawAsStorage(db: Db): Storage {
+function rawAsStorage(db: Db<BaerlyConfig>): Storage {
   return {
     get: (key: string, opts?: StorageGetOptions): Promise<StorageGetResult | null> => {
       // Forward only the fields the underlying `Db._raw.get` honours.

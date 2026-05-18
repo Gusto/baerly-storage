@@ -26,6 +26,7 @@ import {
   type Predicate,
   type Verifier,
 } from "@baerly/protocol";
+import type { BaerlyConfig } from "../config.ts";
 import type { Db } from "../db.ts";
 import {
   errorEnvelope,
@@ -71,7 +72,7 @@ import { longPollSince } from "./since.ts";
  *   probe hot path off `Db.create`).
  */
 export interface CreateRouterOptions {
-  readonly db: Db;
+  readonly db: Db<BaerlyConfig>;
   readonly verifier?: Verifier;
   readonly healthCheck?: boolean;
   /** Override the long-poll budget. Forwarded to `longPollSince`. */

@@ -6,8 +6,10 @@
  * include glob (see `vitest.config.ts`).
  */
 
+import type { JSONArraylessObject } from "@baerly/protocol";
 import type { CollectionNames, RowOf } from "./config.ts";
 import { defineConfig } from "./config.ts";
+import { Db } from "./db.ts";
 import type { SchemaValidator } from "./schema.ts";
 
 // Minimal in-test stand-in for a real validator. We don't depend on
@@ -68,3 +70,45 @@ export type _AuditFallsBackToRecord = Expect<Equal<Audit, Record<string, unknown
 // surface — which is fine, since the entire `.test-d.ts` file is a
 // type-only assertion module and is not re-exported through any
 // barrel.
+
+// --- Db<TConfig> assertions (T3) -------------------------------
+
+// Pin a `Storage` value at the type level only. We never instantiate
+// it — only `Db.create({ storage, ... })`'s signature is exercised.
+// `declare const` is the standard TS idiom for synthesising a typed
+// value for type-test purposes without runtime cost.
+declare const memStorage: import("@baerly/protocol").Storage;
+
+// Bound: passing `config` captures TConfig and lets `db.table(name)`
+// infer the row shape from `collections[name].schema`.
+const db = Db.create({
+  storage: memStorage,
+  app: "a",
+  tenant: "t",
+  config,
+});
+
+// `db.table("tickets")` resolves to the narrowing overload —
+// `RowOf<typeof config, "tickets"> & JSONArraylessObject`. We check
+// `first()`'s return shape so the assertion stays scoped to public
+// surface (and bypasses Table's internal generic plumbing). The
+// per-step `typeof` capture works around TS's reluctance to evaluate
+// `typeof db.table<"tickets">` directly.
+const boundTable = db.table("tickets");
+const boundRow = await boundTable.where({ _id: "x" }).first();
+export type _BoundDbInfersRow = Expect<
+  Equal<
+    typeof boundRow,
+    ({ _id: string; title: string; status: "open" | "closed" } & JSONArraylessObject) | undefined
+  >
+>;
+
+// Legacy path: no `config` passed → `Db<UnboundConfig>`. The
+// `table<T>(name)` overload's per-call generic is the only way to
+// recover a row shape. Verifies that the legacy DX is preserved.
+const dbLegacy = Db.create({ storage: memStorage, app: "a", tenant: "t" });
+const legacyTable = dbLegacy.table<{ _id: string; n: number }>("any");
+const legacyRow = await legacyTable.where({ _id: "x" }).first();
+export type _LegacyDbCallSiteGenericStillWorks = Expect<
+  Equal<typeof legacyRow, { _id: string; n: number } | undefined>
+>;
