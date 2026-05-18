@@ -432,4 +432,48 @@ describe("baerlyWorker observability", () => {
     expect(findCanonical(records, "compactor")).toBeUndefined();
     expect(findCanonical(records, "gc")).toBeUndefined();
   });
+
+  it("verifier-rejected 401 emits a canonical http line AND the verifier_rejected warn", async () => {
+    // Cross-adapter regression-lock: CF and Node must emit the same
+    // wire shape AND the same observability record when the verifier
+    // returns null. See `packages/adapter-node/src/server.test.ts`
+    // for the Node twin of this assertion.
+    const bucket = getBinding();
+    const { records, sink } = collectingSink();
+    const denyVerifier: Verifier = async () => null;
+    const handler = baerlyWorker({
+      verifier: denyVerifier,
+      observability: { level: "debug", sink, sampleRate: 1 },
+    });
+    const env: Env = { BUCKET: bucket, APP: "t", TENANT: "ignored" };
+    const { ctx } = makeCtx();
+
+    const res = await handler.fetch!(
+      new Request("https://x/v1/t/c", { method: "GET" }) as Request<
+        unknown,
+        IncomingRequestCfProperties
+      >,
+      env,
+      ctx,
+    );
+    expect(res.status).toBe(401);
+    expect(res.headers.get("content-type")).toBe("application/json");
+    const body = (await res.json()) as { error?: { code?: string; message?: string } };
+    expect(body.error?.code).toBe("Unauthorized");
+    expect(body.error?.message).toBe("Missing or invalid Authorization header");
+
+    const line = findCanonical(records, "http");
+    expect(line).toBeDefined();
+    const props = line!.properties as Record<string, unknown>;
+    expect(props["status"]).toBe(401);
+    expect(props["outcome"]).toBe("error");
+    expect(props["method"]).toBe("GET");
+    expect(props["path"]).toBe("/v1/t/c");
+
+    const warn = records.find(
+      (r) => r.message.join("") === "verifier_rejected" && r.category.join(".") === "baerly.http",
+    );
+    expect(warn).toBeDefined();
+    expect(warn!.level).toBe("warning");
+  });
 });

@@ -18,6 +18,7 @@ import {
   type Verifier,
 } from "@baerly/protocol";
 import { ServerWriter } from "@baerly/server";
+import { configureObservability } from "@baerly/server/observability";
 import { reset, type LogRecord, type Sink } from "@logtape/logtape";
 import { afterEach, describe, expect, it } from "vitest";
 import {
@@ -373,6 +374,49 @@ describe("createFetchHandler", () => {
     expect(res.status).toBe(401);
     const body = (await res.json()) as { error: { code: string } };
     expect(body.error.code).toBe("Unauthorized");
+  });
+
+  it("verifier-rejected 401 emits a canonical http line AND the verifier_rejected warn", async () => {
+    // Cross-adapter regression-lock: Node and CF must emit the same
+    // wire shape AND the same observability record when the verifier
+    // returns null. See `packages/adapter-cloudflare/src/worker.test.ts`
+    // for the CF twin of this assertion.
+    const records: LogRecord[] = [];
+    const sink: Sink = (r) => records.push(r);
+    // `createFetchHandler` fires `configureObservability` un-awaited
+    // (factory-time, the production path doesn't need a barrier).
+    // Await it explicitly here so the sink is wired before the first
+    // request reaches `flushUnauthorizedAndRespond`.
+    await configureObservability({ level: "debug", sink, sampleRate: 1 });
+    const storage = new MemoryStorage();
+    const handler = createFetchHandler({
+      app: "t",
+      storage,
+      verifier: denyingVerifier,
+      observability: { level: "debug", sink, sampleRate: 1 },
+    });
+    const res = await handler(new Request("http://x/v1/t/c", { method: "GET" }));
+    expect(res.status).toBe(401);
+    expect(res.headers.get("content-type")).toBe("application/json");
+    const body = (await res.json()) as { error?: { code?: string; message?: string } };
+    expect(body.error?.code).toBe("Unauthorized");
+    expect(body.error?.message).toBe("Missing or invalid Authorization header");
+
+    const line = records.find(
+      (r) => r.message.join("") === "canonical" && r.category.join(".") === "baerly.http",
+    );
+    expect(line).toBeDefined();
+    const props = line!.properties as Record<string, unknown>;
+    expect(props["status"]).toBe(401);
+    expect(props["outcome"]).toBe("error");
+    expect(props["method"]).toBe("GET");
+    expect(props["path"]).toBe("/v1/t/c");
+
+    const warn = records.find(
+      (r) => r.message.join("") === "verifier_rejected" && r.category.join(".") === "baerly.http",
+    );
+    expect(warn).toBeDefined();
+    expect(warn!.level).toBe("warning");
   });
 
   it("returns 200 for an authed GET when the verifier accepts", async () => {

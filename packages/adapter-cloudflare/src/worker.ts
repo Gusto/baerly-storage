@@ -1,6 +1,6 @@
 import { type DevLandingOptions, renderDevLanding } from "@baerly/dev";
 import { type MetricsRecorder, type Verifier, noopMetricsRecorder } from "@baerly/protocol";
-import { Db, createRouter, errorEnvelope } from "@baerly/server";
+import { Db, createRouter } from "@baerly/server";
 import {
   CLOUDFLARE_FREE_TIER,
   compact,
@@ -8,7 +8,6 @@ import {
   runScheduledMaintenance,
 } from "@baerly/server/maintenance";
 import {
-  CATEGORY,
   type ObservabilityConfig,
   alsAwareRecorder,
   configureObservability,
@@ -16,8 +15,8 @@ import {
   decideSample,
   deriveOutcome,
   flushCanonicalLine,
+  flushUnauthorizedAndRespond,
   getEffectiveSampleRate,
-  getLogger,
   observableStorage,
   runWithContext,
 } from "@baerly/server/observability";
@@ -289,29 +288,12 @@ export function baerlyWorker(options: BaerlyWorkerOptions): ExportedHandler<Env>
         });
       }
 
-      // Tenant resolution: the Verifier owns it unconditionally.
-      // Single-tenant dev wires `singleTenantDevVerifier(env.TENANT)`
-      // explicitly — `env.TENANT` is no longer a silent fallback.
-      const result = await options.verifier(req);
-      if (result === null) {
-        getLogger(CATEGORY.http).warn("verifier_rejected", { reason: "null" });
-        return new Response(
-          JSON.stringify(errorEnvelope("Unauthorized", "Missing or invalid Authorization header")),
-          {
-            status: 401,
-            headers: { "content-type": "application/json" },
-          },
-        );
-      }
-      const tenantPrefix = result.tenantPrefix;
-
       // Construct the per-request observability context up front so
-      // EVERYTHING downstream — `Db.create`, the optional caller
-      // handler hook, and the read-cache wrapper — runs inside the
-      // same `runWithContext` scope. Without this lift, a cache hit
-      // would short-circuit the router and bypass canonical-line
-      // emission entirely; with it, the wrapper's `cache_status`
-      // discriminator can be stamped on the line we flush below.
+      // EVERYTHING downstream — verifier rejection, `Db.create`, the
+      // optional caller handler hook, and the read-cache wrapper —
+      // runs inside the same `runWithContext` scope. Without this
+      // lift, a verifier rejection (or a cache-hit short-circuit)
+      // would bypass canonical-line emission entirely.
       //
       // The router's observability middleware (see `router.ts`
       // "Mode A") detects the ambient context and passes through —
@@ -323,6 +305,15 @@ export function baerlyWorker(options: BaerlyWorkerOptions): ExportedHandler<Env>
         request_id: requestId,
         sampled_by_head: decideSample(requestId, sampleRate),
       });
+
+      // Tenant resolution: the Verifier owns it unconditionally.
+      // Single-tenant dev wires `singleTenantDevVerifier(env.TENANT)`
+      // explicitly — `env.TENANT` is no longer a silent fallback.
+      const result = await options.verifier(req);
+      if (result === null) {
+        return runWithContext(obsCtx, async () => flushUnauthorizedAndRespond(obsCtx, req));
+      }
+      const tenantPrefix = result.tenantPrefix;
 
       return runWithContext(obsCtx, async (): Promise<Response> => {
         // Storage is wrapped with `observableStorage(...)` so the

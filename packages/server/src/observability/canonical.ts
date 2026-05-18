@@ -29,6 +29,7 @@
  * - otherwise → `info`
  */
 
+import { errorEnvelope } from "../contract.ts";
 import { CATEGORY, getEffectiveSampleRate, getLogger, type CategoryName } from "./logger.ts";
 import {
   createObservabilityContext,
@@ -153,6 +154,33 @@ export const withObservability = async <T>(
 
 /** Convenience getter — returns the context if `runWithContext` is active, else `undefined`. */
 export const peekContext = (): ObservabilityContext | undefined => getCurrentContext();
+
+/**
+ * Verifier rejected the request — log the warn, flush the canonical
+ * line, and return the 401 envelope Response. Adapters call this
+ * inside `runWithContext(obsCtx, ...)` so the canonical line lands on
+ * the same context the rest of the request would have used.
+ *
+ * Both adapters share this so the 401 wire shape AND the
+ * observability record are byte-identical across runtimes.
+ */
+export const flushUnauthorizedAndRespond = (
+  obsCtx: ObservabilityContext,
+  req: Request,
+): Response => {
+  getLogger(CATEGORY.http).warn("verifier_rejected", { reason: "null" });
+  const path = new URL(req.url).pathname;
+  flushCanonicalLine(obsCtx, obsCtx.recorder, {
+    unit: "http",
+    status: 401,
+    outcome: "error",
+    extra: { method: req.method, path },
+  });
+  return new Response(
+    JSON.stringify(errorEnvelope("Unauthorized", "Missing or invalid Authorization header")),
+    { status: 401, headers: { "content-type": "application/json" } },
+  );
+};
 
 // ---------- internals ----------
 

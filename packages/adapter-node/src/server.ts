@@ -17,10 +17,9 @@ import {
   noopMetricsRecorder,
 } from "@baerly/protocol";
 import { type DevLandingOptions, renderDevLanding } from "@baerly/dev";
-import { Db, MAX_BODY_BYTES, createRouter, errorEnvelope, mapError } from "@baerly/server";
+import { Db, MAX_BODY_BYTES, createRouter, mapError } from "@baerly/server";
 import { runScheduledMaintenance } from "@baerly/server/maintenance";
 import {
-  CATEGORY,
   type ObservabilityConfig,
   alsAwareRecorder,
   configureObservability,
@@ -28,8 +27,8 @@ import {
   decideSample,
   deriveOutcome,
   flushCanonicalLine,
+  flushUnauthorizedAndRespond,
   getEffectiveSampleRate,
-  getLogger,
   observableStorage,
   runWithContext,
 } from "@baerly/server/observability";
@@ -245,19 +244,9 @@ export function createFetchHandler(
 
     const result = await opts.verifier(request);
     if (result === null) {
-      return await runWithContext(obsCtx, async () => {
-        getLogger(CATEGORY.http).warn("verifier_rejected", { reason: "null" });
-        flushCanonicalLine(obsCtx, obsCtx.recorder, {
-          unit: "http",
-          status: 401,
-          outcome: "error",
-          extra: { method: request.method, path },
-        });
-        return new Response(
-          JSON.stringify(errorEnvelope("Unauthorized", "Missing or invalid Authorization header")),
-          { status: 401, headers: { "content-type": "application/json" } },
-        );
-      });
+      return await runWithContext(obsCtx, async () =>
+        flushUnauthorizedAndRespond(obsCtx, request),
+      );
     }
 
     return await runWithContext(obsCtx, async () => {
