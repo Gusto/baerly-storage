@@ -7,7 +7,7 @@
  * Storage: AWS S3 by default; set `R2_ACCOUNT_ID` to switch to
  * Cloudflare R2 via the S3-compat endpoint. For Minio or GCS, see
  * the `minioStorage` / `gcsStorage` factories in
- * `@baerly/adapter-node`.
+ * `baerly-storage/node`.
  *
  * Verifier: JWKS-backed JWT when `JWKS_URL` is set (production);
  * `sharedSecret` otherwise (dev/CI). Production should set
@@ -17,10 +17,10 @@
  * collection slugs). Each tick runs one compact+GC pass per
  * (TENANT, collection) pair.
  */
-import { baerlyNode, r2Storage, s3Storage } from "@baerly/adapter-node";
-import { bearerJwt, sharedSecret } from "@baerly/server/auth";
-import type { FriendlyLogLevel } from "@baerly/server/observability";
-import type { Storage, Verifier } from "@baerly/protocol";
+import { baerlyNode, r2Storage, s3Storage } from "baerly-storage/node";
+import { bearerJwt, sharedSecret } from "baerly-storage/auth";
+import type { FriendlyLogLevel } from "baerly-storage/observability";
+import type { Storage, Verifier } from "baerly-storage";
 
 const reqEnv = (name: string): string => {
   const v = process.env[name];

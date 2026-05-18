@@ -7,7 +7,7 @@ A working CRUD helpdesk over baerly-storage. Single Vite process:
   `/v1/since` long-poll, surfaced through the `useLiveQuery` /
   `useLiveDocument` React hooks.
 - The Baerly HTTP listener is mounted as Vite middleware via
-  `baerlyDev()` from `@baerly/dev/vite`, so the app and `/v1/*` API
+  `baerlyDev()` from `baerly-storage/dev/vite`, so the app and `/v1/*` API
   share an origin (`:5173`) and a single process.
 
 ## Quick start (60 seconds)
@@ -32,7 +32,7 @@ Open `vite.config.ts` — the whole dev backend is one plugin call:
 
 ```ts
 // vite.config.ts
-import { baerlyDev } from "@baerly/dev/vite";
+import { baerlyDev } from "baerly-storage/dev/vite";
 import { seedTickets } from "./src/server/seed.ts";
 
 export default defineConfig({
@@ -51,7 +51,7 @@ export default defineConfig({
 });
 ```
 
-`baerlyDev` (from `@baerly/dev`) constructs `LocalFsStorage`, runs
+`baerlyDev` (from `baerly-storage/dev/vite`) constructs `LocalFsStorage`, runs
 `ensureTable` for each declared table, optionally seeds, and mounts
 `createListener` as Vite middleware ahead of the SPA fallback. App
 plus `/v1/*` API share one origin, one process — no proxy, no
@@ -107,13 +107,13 @@ in an S3 / R2 bucket. The data is yours; the format is mechanical.
 - **No auth UI.** The example uses a hard-coded bearer token via
   `sharedSecret()`. Real apps swap it for `bearerJwt({ jwks })` or
   `cloudflareAccess({ teamDomain, audienceTag })` — both ship from
-  `@baerly/server/auth`.
+  `baerly-storage/auth`.
 - **No multi-tenancy.** One tenant (`helpdesk-demo`), one bearer
   token. Production verifiers resolve `tenantPrefix` from the
   request's credentials.
 - **No router.** Three views; one `useState` discriminated union.
   Bring your own router.
-- **No data lib.** `@baerly/client` returns plain promises. Pair
+- **No data lib.** `baerly-storage/client` returns plain promises. Pair
   with TanStack Query / SWR in production.
 
 ## Cloudflare swap
@@ -123,7 +123,7 @@ UI, same `Ticket` schema, same long-poll live updates — see
 `examples/helpdesk-cloudflare/` (a single Cloudflare Worker that
 hosts both `/v1/*` and the built Vite bundle via Workers Assets).
 Use `pnpm create baerly` to scaffold a production-shaped Worker
-(`@baerly/adapter-cloudflare` + R2 bindings + `cloudflareAccess` /
+(`baerly-storage/cloudflare` + R2 bindings + `cloudflareAccess` /
 `sharedSecret` verifier).
 
 ## Files to read

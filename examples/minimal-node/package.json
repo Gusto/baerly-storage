@@ -11,9 +11,9 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@baerly/adapter-node": "workspace:*",
-    "@baerly/protocol": "workspace:*",
-    "@baerly/server": "workspace:*"
+    "@xmldom/xmldom": "^0.9.10",
+    "aws4fetch": "^1.0.20",
+    "baerly-storage": "workspace:*"
   },
   "devDependencies": {
     "@baerly/cli": "workspace:*",

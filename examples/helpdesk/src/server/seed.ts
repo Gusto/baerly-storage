@@ -1,4 +1,4 @@
-import type { Db } from "@baerly/server";
+import type { Db } from "baerly-storage";
 import type { Ticket } from "../../types.ts";
 
 const DEMO: ReadonlyArray<Omit<Ticket, "_id">> = [

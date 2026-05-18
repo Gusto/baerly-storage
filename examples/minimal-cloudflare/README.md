@@ -2,7 +2,7 @@
 
 A baerly app scaffolded with `create-baerly` for the **Cloudflare
 Workers** target. Single-bucket R2-backed deployment with the
-`@baerly/adapter-cloudflare` adapter and a `sharedSecret` `Verifier`
+`baerly-storage/cloudflare` adapter and a `sharedSecret` `Verifier`
 out of the box.
 
 ## What you got
@@ -142,7 +142,7 @@ require vendor cooperation.
 
 The emitted `src/server/index.ts` uses `sharedSecret()` for parity with
 `wrangler dev`. For production behind Cloudflare Access, swap to
-`cloudflareAccess()` (re-exported from `@baerly/server`) and wire
+`cloudflareAccess()` (re-exported from `baerly-storage/auth`) and wire
 Access in front of the Worker route. The preset reads the JWT off
 `Cf-Access-Jwt-Assertion`, validates it against your team's JWKS,
 and derives `tenantPrefix` from the email claim.

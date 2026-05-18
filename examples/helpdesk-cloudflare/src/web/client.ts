@@ -1,4 +1,4 @@
-import { createBaerlyClient } from "@baerly/client";
+import { createBaerlyClient } from "baerly-storage/client";
 import config from "../../baerly.config.ts";
 
 // Same-origin baseUrl works in both dev and production:

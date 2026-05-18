@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useLiveQuery } from "@baerly/client/react";
+import { useLiveQuery } from "baerly-storage/client/react";
 import { client } from "./client.ts";
 import { STATUSES, type Ticket } from "../types.ts";
 

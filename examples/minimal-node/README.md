@@ -3,7 +3,7 @@
 A baerly app scaffolded with `create-baerly` for the **Node** target —
 any host that runs `node server.js` (Railway, Render, Fly without
 Docker, Heroku, a VM, a container scheduler, your laptop). Uses
-`@baerly/adapter-node` against an S3-compatible bucket (AWS S3, R2 via
+`baerly-storage/node` against an S3-compatible bucket (AWS S3, R2 via
 S3-compat, Minio, etc.) with a `bearerJwt` → `sharedSecret` fallback
 `Verifier` chain.
 

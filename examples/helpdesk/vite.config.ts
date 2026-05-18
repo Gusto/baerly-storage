@@ -1,8 +1,8 @@
 import { resolve } from "node:path";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
-import { freeTierBudgetHint } from "@baerly/dev";
-import { baerlyDev } from "@baerly/dev/vite";
+import { freeTierBudgetHint } from "baerly-storage/dev";
+import { baerlyDev } from "baerly-storage/dev/vite";
 import { seedTickets } from "./src/server/seed.ts";
 
 export default defineConfig({

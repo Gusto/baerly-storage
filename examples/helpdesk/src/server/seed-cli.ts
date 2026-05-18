@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
-import { LocalFsStorage, ensureTable } from "@baerly/dev";
-import { Db } from "@baerly/server";
+import { LocalFsStorage, ensureTable } from "baerly-storage/dev";
+import { Db } from "baerly-storage";
 import { seedTickets } from "./seed.ts";
 
 const APP = "helpdesk";

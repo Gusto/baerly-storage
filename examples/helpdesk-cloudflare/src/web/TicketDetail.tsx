@@ -1,4 +1,4 @@
-import { useLiveDocument } from "@baerly/client/react";
+import { useLiveDocument } from "baerly-storage/client/react";
 import { client } from "./client.ts";
 import type { Ticket } from "../../types.ts";
 

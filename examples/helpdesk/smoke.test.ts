@@ -4,10 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AddressInfo } from "node:net";
 import { describe, expect, test } from "vitest";
-import { createListener } from "@baerly/adapter-node";
-import { sharedSecret } from "@baerly/server/auth";
-import { LocalFsStorage, ensureTable } from "@baerly/dev";
-import { createBaerlyClient } from "@baerly/client";
+import { createListener } from "baerly-storage/node";
+import { sharedSecret } from "baerly-storage/auth";
+import { LocalFsStorage, ensureTable } from "baerly-storage/dev";
+import { createBaerlyClient } from "baerly-storage/client";
 import type { Ticket } from "./types.ts";
 
 describe("helpdesk smoke", () => {

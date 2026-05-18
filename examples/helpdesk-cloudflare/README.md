@@ -69,7 +69,7 @@ expects. Update both files in lockstep when you add a new secret.
 
 |                | `helpdesk` (dev-only)         | `helpdesk-cloudflare` (deployable) |
 |----------------|-------------------------------|------------------------------------|
-| Storage        | `LocalFsStorage`              | R2 via `@baerly/adapter-cloudflare` |
+| Storage        | `LocalFsStorage`              | R2 via `baerly-storage/cloudflare` |
 | Auth           | hard-coded `sharedSecret`     | CF Access → `sharedSecret` fallback |
 | Hosting        | `node:http` server            | Cloudflare Worker + Workers Assets |
 | Multi-tenant   | no (pinned to `helpdesk-demo`)| yes (verifier resolves tenant per request) |
@@ -80,4 +80,4 @@ expects. Update both files in lockstep when you add a new secret.
 - Tune log volume: `LOG_LEVEL` (`debug | info | warn | error`) and
   `LOG_SAMPLE` (0..1) in `wrangler.jsonc`.
 - Declare schemas in `.baerly/schema.lock.json` for runtime
-  insert/update/replace validation (see `@baerly/server` JSDoc).
+  insert/update/replace validation (see `baerly-storage` JSDoc).

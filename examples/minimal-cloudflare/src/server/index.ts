@@ -1,5 +1,5 @@
 /**
- * Worker entry for minimal-cloudflare. Wires `@baerly/adapter-cloudflare`
+ * Worker entry for minimal-cloudflare. Wires `baerly-storage/cloudflare`
  * to the bound R2 bucket and a `Verifier` selected at request time
  * from the bound vars.
  *
@@ -20,10 +20,10 @@
  * `@cloudflare/vite-plugin` reads `wrangler.jsonc:main` to find this
  * entry).
  */
-import { baerlyWorker, type Env as BaerlyEnv } from "@baerly/adapter-cloudflare";
-import { cloudflareAccess, sharedSecret } from "@baerly/server/auth";
-import type { FriendlyLogLevel } from "@baerly/server/observability";
-import type { Verifier } from "@baerly/protocol";
+import { baerlyWorker, type Env as BaerlyEnv } from "baerly-storage/cloudflare";
+import { cloudflareAccess, sharedSecret } from "baerly-storage/auth";
+import type { FriendlyLogLevel } from "baerly-storage/observability";
+import type { Verifier } from "baerly-storage";
 
 interface AppEnv extends BaerlyEnv {
   readonly SHARED_SECRET?: string;
@@ -74,7 +74,7 @@ const selectVerifier = (env: AppEnv): Verifier => {
  * defaults (`info` level, `0.1` sample rate). See `wrangler.jsonc`
  * for the var declarations and the `AGENTS.md` "Maintenance loop"
  * section for the canonical-line field reference (or the
- * `observability` JSDoc on `@baerly/server` via your editor's TS
+ * `observability` JSDoc on `baerly-storage` via your editor's TS
  * hover). Known gap: a CF cache-hit short-circuit emits no
  * canonical line by design.
  */
