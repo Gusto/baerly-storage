@@ -1,7 +1,7 @@
 ---
-title: AGENTS.md — agent guidance for minimal-node-railway
+title: AGENTS.md — agent guidance for minimal-node
 audience: agent
-summary: How to develop and deploy minimal-node-railway, a baerly app.
+summary: How to develop and deploy minimal-node, a baerly app.
 tags: [agent-entry, baerly]
 ---
 
@@ -13,13 +13,19 @@ S3-compatible storage API.
 
 ## What this is
 
-`minimal-node-railway` is a baerly app scaffolded with `create-baerly` for
-the managed PaaS persona (Railway, Render, DO App Platform, Fly
-Machines). One flat package: the Node-side server lives in
-`src/server/index.ts`; the optional client lives in `src/web/`. The
-listener serves the built SPA from `dist/client/` via the
-`createListener({ webRoot })` option, so dev and prod run on a single
-origin. Configuration lives in `baerly.config.ts`.
+`minimal-node` is a baerly app scaffolded with `create-baerly` for the
+Node target — any host that runs `node server.js` (Railway, Render,
+Fly without Docker, Heroku, a VM, a container scheduler). One flat
+package: the Node-side server lives in `src/server/index.ts`; the
+optional client lives in `src/web/`. The listener serves the built
+SPA from `dist/client/` via the `baerlyNode({ webRoot })` option, so
+dev and prod run on a single origin. Configuration lives in
+`baerly.config.ts`.
+
+If this scaffold was created with `--with=docker`, you'll also have a
+multi-stage distroless `Dockerfile`, a `.dockerignore`, and a
+`healthcheck.js` at the project root — wired to the same
+`pnpm install && pnpm build && pnpm start` flow.
 
 Public API docs: https://docs.baerly.dev/ (the JSDoc on
 `@baerly/server`'s `Db` and `Table` is the canonical reference;
@@ -206,8 +212,8 @@ read it via your editor's TS LS or via the published types).
 
   When unset, the entry passes `maintenance: undefined` to
   `baerlyNode` and no in-process loop runs. Operators who prefer
-  external scheduling can wire a separate Railway / Render / Fly /
-  DO App Platform cron trigger per collection that invokes
+  external scheduling can wire a separate cron trigger (PaaS cron,
+  k8s CronJob, systemd timer) per collection that invokes
   `runMaintenanceTick` directly — that function stays exported
   from `@baerly/adapter-node`.
 
@@ -235,17 +241,21 @@ read it via your editor's TS LS or via the published types).
     Useful for dashboards; the four explicit fields above are
     the at-a-glance summary.
 
-- **Deploy** — push to a managed PaaS (Railway, Render, DO App
-  Platform, Fly Machines). The platform's buildpack detects Node
-  and runs the root `package.json`'s `start` script
-  (`node --experimental-strip-types src/server/index.ts`) — no
-  Dockerfile in this scaffold. Set env vars from `.env.example` in
-  the platform's dashboard, and arrange for `pnpm build` to run
-  before `pnpm start` so `dist/client/` is populated for the
-  `webRoot` static-serve branch.
+- **Deploy** — runs anywhere `node server.js` runs. The
+  `package.json`'s `start` script is
+  `node --experimental-strip-types src/server/index.ts`. Arrange the
+  host to run `pnpm install && pnpm build` (populates
+  `dist/client/` for the `webRoot` static-serve branch) before
+  `pnpm start`. Set env vars from `.env.example` in the host's
+  config.
 
-  For raw Docker / k8s, switch to the `node-docker` example
-  instead.
+  Shapes: **managed PaaS** (Railway, Render, DO App Platform, Fly
+  without Docker, Heroku) auto-detects Node and runs the root
+  scripts directly. **VM / bare-metal** uses your process manager
+  of choice (systemd, pm2). **Container** (Docker, k8s, ECS, Fly
+  Machines with a Dockerfile) — scaffold with `--with=docker` to
+  add a production Dockerfile alongside this shape, or write your
+  own.
 
 ## Anti-patterns
 

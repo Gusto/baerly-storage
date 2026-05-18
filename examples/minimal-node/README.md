@@ -1,15 +1,20 @@
-# minimal-node-railway
+# minimal-node
 
-A baerly app scaffolded with `create-baerly` for the **managed PaaS**
-Node target — shaped for Railway, Render, DO App Platform, and Fly
-Machines. Uses `@baerly/adapter-node` against an S3-compatible bucket
-(AWS S3, R2 via S3-compat, Minio, etc.) with a `bearerJwt` →
-`sharedSecret` fallback `Verifier` chain.
+A baerly app scaffolded with `create-baerly` for the **Node** target —
+any host that runs `node server.js` (Railway, Render, Fly without
+Docker, Heroku, a VM, a container scheduler, your laptop). Uses
+`@baerly/adapter-node` against an S3-compatible bucket (AWS S3, R2 via
+S3-compat, Minio, etc.) with a `bearerJwt` → `sharedSecret` fallback
+`Verifier` chain.
+
+To ship a production Dockerfile alongside, scaffold with
+`--with=docker` — the add-on writes a multi-stage distroless Dockerfile,
+`.dockerignore`, and `healthcheck.js` into this same shape.
 
 ## What you got
 
 ```
-minimal-node-railway/
+minimal-node/
 ├── package.json              # one package, all deps
 ├── tsconfig.json             # project-references stub
 ├── tsconfig.app.json         # client TS project (src/web)
@@ -50,13 +55,13 @@ BUCKET=... AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=... SHARED_SECRET=... pnp
 
 The server reads `BUCKET`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`,
 and either `JWKS_URL` (production) or `SHARED_SECRET` (parity with
-`wrangler dev`) at startup. Optional: `R2_ACCOUNT_ID` (switches the
+`pnpm dev`) at startup. Optional: `R2_ACCOUNT_ID` (switches the
 storage factory from `s3Storage` to `r2Storage`), `AWS_REGION`,
 `PORT`, `TENANT`, `WEB_ROOT`, `MAINTENANCE_COLLECTIONS` (comma-
 separated collection slugs — when set, `baerlyNode` runs one
 compact+GC pass per `(tenant, collection)` pair on its
 hourly tick; leave unset to skip the in-process loop and schedule
-maintenance via your PaaS's cron instead).
+maintenance externally — a PaaS cron, k8s CronJob, systemd timer).
 
 After `pnpm build`, `http://localhost:8080/` serves the built SPA
 out of `dist/client/` and `http://localhost:8080/v1/*` is the
@@ -67,23 +72,26 @@ references.
 
 ## Deploy
 
-This scaffold is shaped for managed PaaS platforms that auto-build
-from a `package.json` `start` script — **Railway**, **Render**, **DO
-App Platform**, **Fly Machines**. No Dockerfile required; the
-platform's buildpack will detect Node and use the root
-`package.json`'s `build` + `start` scripts.
+This scaffold runs anywhere `node server.js` runs. The `package.json`
+exposes `build` (Vite SPA + TS check) and `start`
+(`node --experimental-strip-types src/server/index.ts`); arrange your
+host to run `pnpm install && pnpm build`, then `pnpm start`.
 
-Steps (Railway, as a concrete example):
+Concrete shapes:
 
-1. `railway init` (or push the repo to a connected GitHub repo).
-2. Set env vars from `.env.example` in the Railway dashboard.
-3. Deploy. The platform runs `pnpm install && pnpm build` and then
-   `pnpm start` from the repo root.
+- **Managed PaaS** (Railway, Render, DO App Platform, Fly Machines
+  without a Dockerfile, Heroku): push the repo to a connected GitHub
+  repo, set env vars from `.env.example` in the dashboard, deploy.
+  The platform's buildpack detects Node and runs the root scripts.
+- **VM / bare-metal**: clone, install Node 24+, copy `.env.example`
+  to `.env`, run `pnpm install && pnpm build && pnpm start` under
+  your process manager of choice (systemd, pm2, etc.).
+- **Container** (Docker, k8s, ECS, Fly Machines with a Dockerfile):
+  scaffold with `create-baerly --target=node --with=docker` to add
+  a production Dockerfile, `.dockerignore`, and `healthcheck.js`
+  alongside this shape, then `docker build .`.
 
-Then verify: `curl https://<your-service>.up.railway.app/v1/healthz`.
-
-For raw Docker or k8s, see the `node-docker` example instead — it
-ships a distroless Dockerfile and is shaped for container registries.
+Verify: `curl https://<your-service>/v1/healthz`.
 
 ## Next steps
 
@@ -121,7 +129,7 @@ baerly's ~$19/month; the pitch was always portability, not cost.
 
 ```sh
 baerly export --target=postgres \
-  --bucket=minimal-node-railway --app=minimal-node-railway --tenant=<your-tenant> \
+  --bucket=minimal-node --app=minimal-node --tenant=<your-tenant> \
   --table=<collection-name> --output=./out.sql
 ```
 

@@ -1,8 +1,8 @@
 import { defineConfig } from "create-baerly/config";
 
 export default defineConfig({
-  app: "minimal-node-railway",
+  app: "minimal-node",
   tenant: "minimal-demo",
-  target: "node-railway",
+  target: "node",
   domain: undefined,
 });

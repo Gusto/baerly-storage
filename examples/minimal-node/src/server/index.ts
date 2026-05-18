@@ -1,5 +1,5 @@
 /**
- * Server entry for minimal-node-railway. One call composes
+ * Server entry for minimal-node. One call composes
  * `s3Storage` / `r2Storage`, an auth verifier, and a `node:http`
  * server with SIGTERM/SIGINT handling and (optionally) a
  * multi-collection maintenance loop.
@@ -28,7 +28,7 @@ const reqEnv = (name: string): string => {
   return v;
 };
 
-const APP = "minimal-node-railway";
+const APP = "minimal-node";
 const TENANT = process.env["TENANT"] ?? "minimal-demo";
 
 const storage: Storage =
@@ -79,4 +79,4 @@ await baerlyNode({
   ...(maintenance !== undefined && { maintenance }),
 }).listen(PORT);
 
-console.log(`minimal-node-railway listening on :${PORT}`);
+console.log(`minimal-node listening on :${PORT}`);
