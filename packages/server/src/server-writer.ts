@@ -23,15 +23,15 @@
  * with missing content. The compactor sweeps the orphan content
  * later.
  *
- * **`LogEntry` shape parity.** Emitted entries match the shape that
- * the legacy `Syncer.updateContent` log-emit produces
- * (`src/syncer.ts:454-518`). Fields, types, semantics — identical;
- * only the on-bucket key changes from `log/<lsn>.json` to
- * `log/<seq>.json` (the integer `seq` is the load-bearing identifier;
- * the `lsn` string is schema-only).
+ * **`LogEntry` shape.** Emitted entries follow the contract in
+ * `packages/protocol/src/log.ts` (see {@link LogEntry}) and
+ * `docs/spec/log-entry-shape.md`. The on-bucket key is
+ * `log/<seq>.json` (the integer `seq` is the load-bearing
+ * identifier; the `lsn` string is schema-only).
  *
- * @see docs/spec/sync-protocol.md for the legacy invariants this loop
- *      preserves.
+ * @see docs/spec/sync-protocol.md for the protocol invariants this
+ *      loop preserves.
+ * @see docs/spec/log-entry-shape.md for the per-field contract.
  */
 
 import {

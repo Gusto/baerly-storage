@@ -44,11 +44,11 @@ import type { SinceResponse } from "../contract.ts";
 
 /**
  * Validation regex for an opaque LSN cursor. Matches the shape minted
- * by `Syncer.generate_manifest_key()` (see
- * `packages/protocol/src/log.ts:22-30`) —
- * `<base32-time>_<session>_<seq>` where base-32 is `[0-9a-v]` and the
- * trailing seq is two characters. Mirrored from
- * `tests/integration/log-emit.test.ts:77`.
+ * by `ServerWriter.commit` (see
+ * `packages/server/src/server-writer.ts`) and described on
+ * {@link LogEntry.lsn} — `<base32-time>_<session>_<seq>` where
+ * base-32 is `[0-9a-v]` and the trailing seq is two characters.
+ * Mirrored from `tests/integration/log-emit.test.ts:77`.
  */
 const LSN_RE = /^[0-9a-v]+_[0-9a-v]+_[0-9a-v]{2}$/;
 
