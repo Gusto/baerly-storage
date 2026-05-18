@@ -429,23 +429,6 @@ truth.
 
 ### B. Server kernel (db, table, query, writer, indexes, schema, migrate)
 
-#### B1. Production write path never emits index entries — entire writer index-emission block is dead — **HIGH**
-
-`Db.create({ indexes })` threads index defs into the read-side
-`TableReadContext.indexes`, but `query.ts:writerFor()` and
-`Db.transaction`'s `ServerWriter` constructor never pass
-`indexes` through `ServerWriterOptions`. Production paths
-therefore never emit, diff, or delete index keys. The
-`server-writer.ts:286-737` block (pre-image walks,
-`inBatchImage`, `allIndexKeysFor`, `#readPreImage` at 764-800)
-only runs from tests. The codebase ships *index reads* against
-entries that *no production write produces*.
-
-**Fix:** Thread `ctx.indexes` into `writerFor` and the
-transaction-path writer — OR delete the writer-side index
-machinery if indexes are intended to be read-only/rebuild-only.
-Either way, the latent correctness gap must close.
-
 #### B2. `query.ts:runFirstWithMeta` is a redundant alias of `runAllWithMeta` — **MEDIUM**
 
 `runFirstWithMeta` calls `runRead` with `limit:1` and picks
@@ -606,54 +589,34 @@ system boundaries.
 
 **Fix:** Delete `validateInput`.
 
-#### B17. `CommitResult.entry` / `CommitBatchResult.entries` carry full `LogEntry` shape no caller reads — **LOW**
+#### B18. Wire `ServerWriter.options.tenant` (or drop the metric label) — **LOW**
 
-`writerFor(ctx).commit(...)` and `commitBatch(...)` return rich
-results that every production caller (`query.ts:433,506,570,611`,
-`db.ts:535`) discards. Only tests read them.
+The `tenant` option exists in `ServerWriterOptions` and labels
+the writer's metric emissions (`db.tenant.put_rate`,
+`db.tenant.commit_latency`). Every production `new ServerWriter`
+callsite (`query.ts:339`, `db.ts:530`, `cli/src/admin/restore.ts:208`)
+omits it; only tests pass it. Both adapters already compute
+`tenantPrefix` at the request boundary
+(`adapter-node/src/server.ts:278`,
+`adapter-cloudflare/src/worker.ts:331`) but don't thread it
+through to the writer.
 
-**Fix:** Return `void`. Tests can recompute or read state
-directly.
+**Fix:** Either wire `tenantPrefix` → `ServerWriter.tenant` in
+both adapters and the `Db` transaction path, or drop the
+labelled metric variants. Don't leave it half-wired.
 
-#### B18. `ServerWriter.options.tenant` is test-only — **LOW**
+#### B22. Move `migrate.ts` off the kernel barrel — **LOW**
 
-Sole purpose: label histogram emissions. Every production caller
-omits it. `if (this.#tenant !== "")` always takes the false
-branch in production.
+`packages/server/src/migrate.ts` (255 LoC) implements
+`migrateCollection`. Sole non-test caller is `baerly admin
+migrate` via the public re-export at
+`packages/server/src/index.ts:51`. The function is part of the
+documented operator surface, not dead code.
 
-**Fix:** Drop the option and the conditional label-spreading.
-
-#### B19. `verifyLogIntegrityOnCommit` adds a 35-line test-only opt-in branch — **LOW**
-
-Toggle defaulted off; only one test opts in. The read path
-catches the same condition on the next consult.
-
-**Fix:** Delete the option and the `#walkLog` private method.
-
-#### B20. `serializeManifestPointer` exported `@internal` for one in-file caller — **LOW**
-
-Five-character expression (`${snapshot ?? "none"}@${next_seq}`)
-with one caller in the same file.
-
-**Fix:** Inline; drop the export.
-
-#### B21. `RawStorageApi` duplicates `Storage` locally for a gratuitous signature difference — **LOW**
-
-`db.ts:108-116` defines `RawStorageApi` separately from `Storage`
-so its `delete` signature can be slightly narrower
-(`opts?: { signal }` instead of `StorageDeleteOptions`).
-
-**Fix:** Type `_raw` as `Storage`. Drop `RawStorageApi`.
-
-#### B22. `migrate.ts` is a 255-line CLI helper living in the server kernel — **LOW**
-
-Sole non-test caller: `packages/cli/src/admin/migrate.ts:37`.
-Imports `compactor.ts`, `log-walk.ts`. No `Db`/`Table`/`Query`/
-`ServerWriter` reference it.
-
-**Fix:** Move to `@baerly/cli` (or a separate `@baerly/admin`
-package). Cuts ~3KB from the published kernel bundle if not
-tree-shaken.
+**Fix:** Move to a subpath entry (e.g. `@baerly/server/migrate`)
+consistent with the bundle-trim pattern that moved maintenance +
+observability off the kernel barrel. Update the CLI's import
+and any bundle-size budget assertion. **Not a deletion.**
 
 #### B23. `IN_FANOUT_THRESHOLD` is configurable; `IN_FANOUT_PARALLELISM` is hard-coded — pick one — **LOW**
 
@@ -676,42 +639,6 @@ context makes "Server" redundant. Consider merging `commit` and
 readonly CommitInput[])`.
 
 ### C. Server periphery — auth, observability, http, compactor, gc, maintenance
-
-#### C1. Router's verifier middleware is dead code — **HIGH**
-
-`packages/server/src/http/router.ts:206-216` (plus
-`CreateRouterOptions.verifier` and surrounding JSDoc). Both
-adapters call the verifier *before* building per-request `Db`
-and pass `verifier: undefined` to `createRouter`. The
-`app.use("/v1/t/*", verifier)` branch never executes in
-production. Adds an exported option, "Mode A vs Mode B" JSDoc
-framing, and a code path tests must keep alive.
-
-**Fix:** Delete `CreateRouterOptions.verifier`, the middleware
-block, and the Mode-A/B JSDoc. One way: "adapter resolves
-tenant, constructs `Db`, calls `createRouter({ db })`."
-
-#### C2. Healthz served twice; `healthCheck` flag never `true` in production — **HIGH**
-
-Both adapters serve `/v1/healthz` upstream and pass
-`healthCheck: false`. The flag toggles a dead route
-registration + a 3-line short-circuit.
-
-**Fix:** Drop `healthCheck` from `CreateRouterOptions`. Delete
-the route + path-check.
-
-#### C3. Router "Mode A vs Mode B" branching is purely tests + the dead path above — **HIGH**
-
-`router.ts:108-195` — 60 lines of observability middleware in
-two modes. Adapters always provide ambient context (Mode A);
-Mode B duplicates work already in `withObservability` and in
-both adapters.
-
-**Fix:** Delete Mode B (lines 147-194). Document
-`createRouter` as "must be called inside `runWithContext`;
-`flushCanonicalLine` is caller's responsibility." Healthz
-short-circuit, `caughtError`/`c.error` reconciliation, and
-`mapError` fallback all collapse.
 
 #### C4. JWKS refresh-on-kid-miss + per-request WeakMap memo are over-engineered — **MEDIUM**
 
@@ -790,12 +717,6 @@ from here yet."
 `FriendlyLogLevel` from the main barrel. Move the rest to
 `baerly-storage/internal` (or delete). Drop the
 `./observability` subpath entirely.
-
-#### C10. `peekContext` is exported but unused — **LOW**
-
-Trivial wrapper around `getCurrentContext` (also exported).
-
-**Fix:** Delete.
 
 #### C11. `MetricsSnapshot` / `ObservationRow` / `MetricsSummary` are test-only on the public surface — **LOW**
 
@@ -930,60 +851,22 @@ concepts is a navigation/grep landmine. An LLM expects
 **Fix:** Rename `packages/protocol/src/db.ts` → `table-api.ts`
 or move into `query/` next to `predicate.ts`.
 
-#### D2. Dead constants in `protocol/src/constants.ts` — **MEDIUM**
+#### D6. `claimWriter` + `WriterFence.lease_until` are reserved-for-future — **MEDIUM**
 
-`MANIFEST_LIST_LOOKAHEAD_MILLIS`, `SYNCER_CLOCK_SKEW_MAX_RETRIES`,
-`MEM_CACHE_CAPACITY`, `ORPHAN_MANIFEST_GRACE_MILLIS` are
-referenced only from `constants.ts` itself + dead JSDoc
-pointing at a `Syncer` class that no longer exists.
-`SESSION_ID_LENGTH` has 2 callers and could be inlined.
-
-**Fix:** Delete all four. Inline `SESSION_ID_LENGTH = 6` at
-the two `slice(0, 6)` sites.
-
-#### D3. `time.ts:adjustClock` + `measure` + `dateToSecs` are dead — **MEDIUM**
-
-`adjustClock` (40 lines + `AdaptiveClockConfig`) implemented an
-adaptive-clock feature that's gone — `S3HttpStorage` no longer
-plumbs an `AdaptiveClockConfig`. `measure` and `dateToSecs`
-have only test callers.
-
-**Fix:** Delete `adjustClock`, `AdaptiveClockConfig`, `measure`,
-`dateToSecs`. Keep only `timestamp` and `delay`. Shrinks
-`time.ts` from 96 → ~20 lines.
-
-#### D4. `hashing.ts:toB64`/`fromB64`/`or`/`inside`/`b64` are dead bloom-filter scaffolding — **MEDIUM**
-
-Tested in `hashing.test.ts` but unused elsewhere.
-
-**Fix:** Delete. Rename `hashing.ts` → `version.ts` (it now
-only houses `versionFromContent`).
-
-#### D5. `o-map.ts` is dead + the name explains nothing — **MEDIUM**
-
-`OMap<K,V>` is unreferenced outside its own test. The name
-("ordered map"? "object map"?) carries no signal in `.d.ts`.
-
-**Fix:** Delete the file + test. Drop from barrel.
-
-#### D6. `coordination/current-json.ts:claimWriter` is reserved-for-future dead code — **MEDIUM**
-
-95 lines (~20% of the file) implementing a two-CAS-round-trip
-writer-fence claim. `WriterFence.lease_until` is "reserved for
+`packages/protocol/src/coordination/current-json.ts:315`
+implements `claimWriter` (~95 LoC two-CAS-round-trip).
+`WriterFence.lease_until` (L162-168) is documented "Reserved for
 future manual rotation workflows; current code only writes the
-field through if a caller supplies it and does not read it" —
-explicit speculation.
+field through if a caller supplies it and does not read it."
+Zero production read consumers; `claimWriter` is re-exported
+from `packages/server/src/index.ts:120` as documented public API
+("Reserved for admin rotation workflows and initial provisioning").
+`epoch` is the safety-load-bearing field
+(`server-writer.ts:502,869,875`) and must stay.
 
-**Fix:** Delete `claimWriter` and `lease_until` until a caller
-exists. Keep `epoch` minting in `createCurrentJson` (only the
-epoch is safety-load-bearing).
-
-#### D7. `json.ts:diff` / `fold` / `clone` are dead — **MEDIUM**
-
-Only `merge` is used (in `query.ts`). `clone`, `fold`, `diff`
-have only `json.test.ts` callers.
-
-**Fix:** Delete. Shrinks `json.ts` 78 → ~40 lines.
+**Fix:** Defer. Deletion is a public-API surface change; couple
+with the A1 package-publish question. If kept, leave the tests
+that pin the CAS round-trip contract.
 
 #### D8. Brand types `ManifestKey`, `S3VersionId`, `ContentVersionId`, `VersionId` leak with no enforcement — **MEDIUM**
 

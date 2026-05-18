@@ -272,7 +272,34 @@ asymmetry while you're in there.
 
 ---
 
-## 9. `examples/helpdesk/apps/` is dead post-flatten — **LOW**
+## 9. Stale `@internal — exported for query.test.ts` on `serializeManifestPointer` — **LOW**
+
+**Where:** `packages/server/src/query.ts:208` JSDoc on
+`serializeManifestPointer`.
+
+```ts
+/** @internal — exported for query.test.ts */
+export const serializeManifestPointer = …
+```
+
+`grep -rn "serializeManifestPointer" packages/ tests/` shows
+zero references in `query.test.ts`. The JSDoc lies. The export
+is also re-published from `packages/server/src/index.ts:61`
+without a consumer.
+
+**Recommended action.**
+
+- Either inline the 5-character body at the single in-file
+  caller (`query.ts:678`) and drop the export+barrel line, or
+  rewrite the JSDoc to its real purpose.
+- The inline form is cleaner; the JSDoc as written is just
+  wrong.
+
+**Effort:** XS (~5 min).
+
+---
+
+## 10. `examples/helpdesk/apps/` is dead post-flatten — **LOW**
 
 **Where:** `examples/helpdesk/apps/server/` and
 `examples/helpdesk/apps/web/` contain only `node_modules`. The
