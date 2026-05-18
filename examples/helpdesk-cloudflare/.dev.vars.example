@@ -1,0 +1,22 @@
+# Copy to `.dev.vars` (gitignored) for `wrangler dev` to read
+# locally. In production, set each value via:
+#
+#     wrangler secret put <NAME>
+#
+# The Worker's `src/server/index.ts` chooses which verifier to use
+# based on which of these is set; pick one branch per environment.
+
+# --- Dev-fast-path: shared secret (single-tenant) ---------------
+# The default `sharedSecret` verifier expects a single string the
+# client sends as `Authorization: Bearer <SHARED_SECRET>`. Use a
+# strong random value (e.g. `openssl rand -hex 32`) in any
+# environment that's reachable from the public internet.
+SHARED_SECRET=
+
+# --- Production: Cloudflare Access JWT --------------------------
+# Switch `src/server/index.ts` to `cloudflareAccess({ team, audience })`
+# (see the `@baerly/server/auth` JSDoc) and uncomment these.
+# `team` is the slug part of `<team>.cloudflareaccess.com`;
+# `audience` is the Access App's "Audience (AUD) Tag".
+# CF_ACCESS_TEAM_DOMAIN=
+# CF_ACCESS_AUDIENCE_TAG=
