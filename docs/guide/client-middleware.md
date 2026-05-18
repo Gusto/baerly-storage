@@ -19,13 +19,12 @@ This is structurally what tRPC sells as "links" and axios sells as
 line:
 
 ```ts
-type Fetcher = (req: Request) => Promise<Response>;
+import { type Fetcher } from "@baerly/client";
+// type Fetcher = (req: Request) => Promise<Response>;
 ```
 
-That type is the internal name on
-[`packages/client/src/request.ts`](../../packages/client/src/request.ts);
-`@baerly/client` does not currently re-export it. The recipes below
-declare the local shape inline so they stand on their own.
+`Fetcher` is exported from `@baerly/client` for use in your own
+wrappers; every recipe below imports it from there.
 
 ## Hook callbacks: onSuccess / onError
 
@@ -34,9 +33,7 @@ path, one for thrown errors. Useful when an observability layer
 wants to react to outcomes without owning the request loop.
 
 ```ts
-import { createBaerlyClient } from "@baerly/client";
-
-type Fetcher = (req: Request) => Promise<Response>;
+import { createBaerlyClient, type Fetcher } from "@baerly/client";
 
 interface Hooks {
   readonly onSuccess?: (req: Request, res: Response) => void;
@@ -77,7 +74,7 @@ one-shot stream, and reusing the same `Request` across retries
 exhausts it on the first attempt.
 
 ```ts
-type Fetcher = (req: Request) => Promise<Response>;
+import { type Fetcher } from "@baerly/client";
 
 const withRetry =
   (next: Fetcher, max = 3, baseMs = 100): Fetcher =>
@@ -107,7 +104,7 @@ the wrapper below only kicks in if the server rejects the request
 with `401`.
 
 ```ts
-type Fetcher = (req: Request) => Promise<Response>;
+import { type Fetcher } from "@baerly/client";
 
 const withAuthRefresh = (next: Fetcher, refresh: () => Promise<string>): Fetcher => {
   return async (req) => {
@@ -130,6 +127,13 @@ every request; `withAuthRefresh` re-mints it on rejection and
 retries once. `Request` is immutable, so the retry needs
 `new Request(req, ...)` to mint a fresh request with the new
 `Authorization` header.
+
+If the refreshed call also returns 401, this wrapper returns that
+response unchanged — there is no second retry. That avoids an
+infinite refresh loop when the refresh itself yielded a stale or
+revoked token. Wire the next-stage handling (sign-out, prompt for
+re-auth, surface the 401 to the UI) into the caller, not into this
+wrapper.
 
 Caveat: the `body` of a streaming `Request` is one-shot, so this
 wrapper would fail on the retry for streaming uploads. The Baerly
@@ -178,6 +182,7 @@ call"), wrap the client object instead:
 
 ```ts
 import { createBaerlyClient, type BaerlyClient, type ClientTable } from "@baerly/client";
+import type { JSONArraylessObject } from "@baerly/protocol";
 
 const inner = createBaerlyClient({ baseUrl: "https://api.example.com" });
 
@@ -185,7 +190,7 @@ const traced: BaerlyClient = {
   ...inner,
   table: (name: string) => {
     const t = inner.table(name);
-    const wrapped: ClientTable = {
+    const wrapped: ClientTable<JSONArraylessObject> = {
       ...t,
       insert: async (doc) => {
         console.log(`query: table(${name}).insert`, doc);
