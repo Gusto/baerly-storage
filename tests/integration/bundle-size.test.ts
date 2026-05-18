@@ -92,7 +92,7 @@ const BUDGETS: readonly Budget[] = [
   //     `flushUnauthorizedAndRespond` (185350a) and the nesting-aware
   //     `withObservability` guard (46cdd65) added ~37 B raw, pushing
   //     the closure past the prior 349 KiB ceiling. gz unchanged.
-  //   → 351 KiB raw / 101 KiB gz (current): `withHttpObservability`
+  //   → 351 KiB raw / 101 KiB gz: `withHttpObservability`
   //     extraction (e56594a) moved the request-boundary middleware
   //     out of router.ts and into canonical.ts as a reusable helper,
   //     and added `reconstructErrorFromEnvelope` so the canonical
@@ -100,7 +100,12 @@ const BUDGETS: readonly Budget[] = [
   //     compose chain. Net for the index closure: router chunk
   //     shrank and obs chunk grew slightly more, +339 B raw. gz
   //     unchanged.
-  { entry: "index.js", raw: 351 * 1024, gz: 101 * 1024 },
+  //   → 352 KiB raw / 101 KiB gz: adding
+  //     `baerly-storage/cloudflare` + `baerly-storage/node`
+  //     subpath entries caused rolldown to re-split shared chunks,
+  //     pulling ~787 bytes more code into the index.js static
+  //     closure.
+  { entry: "index.js", raw: 352 * 1024, gz: 101 * 1024 },
   // Just the five auth verifier factories. Adding a sixth grows
   // this budget, not the kernel's.
   { entry: "auth.js", raw: 34 * 1024, gz: 12 * 1024 },
