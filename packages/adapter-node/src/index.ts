@@ -15,11 +15,11 @@
  * @example
  * ```ts
  * // One-call host helper — the 90% default. Mirrors `baerlyWorker`
- * // from `@baerly/adapter-cloudflare`. Composes `createListener` +
+ * // from `baerly-storage/cloudflare`. Composes `createListener` +
  * // `node:http` + SIGTERM/SIGINT handlers + per-(tenant, collection)
  * // maintenance.
- * import { baerlyNode, s3Storage } from "@baerly/adapter-node";
- * import { sharedSecret } from "@baerly/server/auth";
+ * import { baerlyNode, s3Storage } from "baerly-storage/node";
+ * import { sharedSecret } from "baerly-storage/auth";
  *
  * const handle = baerlyNode({
  *   app: "tickets",
@@ -43,8 +43,8 @@
  * // Low-level seam for callers who want manual control over the
  * // server lifecycle (cluster mode, custom signal handling, etc.).
  * import { createServer } from "node:http";
- * import { createListener, s3Storage } from "@baerly/adapter-node";
- * import type { Verifier } from "@baerly/server";
+ * import { createListener, s3Storage } from "baerly-storage/node";
+ * import type { Verifier } from "baerly-storage";
  *
  * const verifier: Verifier = async (req) => {
  *   if (req.headers.get("authorization") !== "Bearer dev-token") return null;
@@ -66,7 +66,7 @@
  * // Mount the baerly /v1/* cascade under any Fetch host (Hono shown;
  * // Express, h3, and friends compose the same way).
  * import { Hono } from "hono";
- * import { createFetchHandler, s3Storage } from "@baerly/adapter-node";
+ * import { createFetchHandler, s3Storage } from "baerly-storage/node";
  *
  * const baerly = createFetchHandler({
  *   app: "tickets",

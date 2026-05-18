@@ -85,7 +85,7 @@ export interface BaerlyClientOptions<TConfig extends BaerlyConfig = UnboundConfi
    * `defineConfig` verbatim:
    *
    * ```ts
-   * import { defineConfig } from "@baerly/server";
+   * import { defineConfig } from "create-baerly/config";
    * const config = defineConfig({ collections: { tickets: { schema: TicketSchema } } });
    * const client = createBaerlyClient({ baseUrl, config });
    * await client.table("tickets").first(); // Promise<Ticket | undefined>

@@ -158,7 +158,7 @@ const DEFAULT_MAX_SWEEPS = Number.MAX_SAFE_INTEGER;
  *
  * @example
  * ```ts
- * import { runGc } from "@baerly/server";
+ * import { runGc } from "baerly-storage";
  *
  * const r = await runGc({ storage, currentJsonKey });
  * console.log(`marked ${r.marked.stale_log} stale logs, swept ${r.swept}`);

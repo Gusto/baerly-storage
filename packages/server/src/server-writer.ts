@@ -266,8 +266,8 @@ type SingleAttemptOutcome =
  *
  * @example
  * ```ts
- * import { ServerWriter } from "@baerly/server";
- * import { MemoryStorage } from "@baerly/server";
+ * import { ServerWriter } from "baerly-storage";
+ * import { MemoryStorage } from "baerly-storage";
  *
  * const writer = new ServerWriter({
  *   storage: new MemoryStorage(),

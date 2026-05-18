@@ -132,8 +132,8 @@ export interface CreateListenerOptions {
  * @example
  * ```ts
  * import { createServer } from "node:http";
- * import { createListener, S3HttpStorage } from "@baerly/adapter-node";
- * import type { Verifier } from "@baerly/server";
+ * import { createListener, S3HttpStorage } from "baerly-storage/node";
+ * import type { Verifier } from "baerly-storage";
  *
  * const verifier: Verifier = async (req) => {
  *   if (req.headers.get("authorization") !== "Bearer dev-token") return null;
@@ -202,7 +202,7 @@ export interface CreateFetchHandlerOptions {
  * @example
  * ```ts
  * import { Hono } from "hono";
- * import { createFetchHandler, s3Storage } from "@baerly/adapter-node";
+ * import { createFetchHandler, s3Storage } from "baerly-storage/node";
  *
  * const baerly = createFetchHandler({
  *   app: "tickets",
@@ -699,7 +699,7 @@ export interface NodeMaintenanceOptions {
  * @example
  * ```ts
  * import cron from "node-cron";
- * import { runMaintenanceTick } from "@baerly/adapter-node";
+ * import { runMaintenanceTick } from "baerly-storage/node";
  *
  * cron.schedule("0 * * * *", async () => {  // hourly
  *   await runMaintenanceTick({ storage, currentJsonKey: "..." });

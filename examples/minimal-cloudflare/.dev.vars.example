@@ -15,7 +15,7 @@ SHARED_SECRET=
 
 # --- Production: Cloudflare Access JWT --------------------------
 # Switch `src/server/index.ts` to `cloudflareAccess({ team, audience })`
-# (see the `@baerly/server/auth` JSDoc) and uncomment these.
+# (see the `baerly-storage/auth` JSDoc) and uncomment these.
 # `team` is the slug part of `<team>.cloudflareaccess.com`;
 # `audience` is the Access App's "Audience (AUD) Tag".
 # CF_ACCESS_TEAM_DOMAIN=

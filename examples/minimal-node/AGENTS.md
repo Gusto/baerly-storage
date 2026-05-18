@@ -28,7 +28,7 @@ multi-stage distroless `Dockerfile`, a `.dockerignore`, and a
 `pnpm install && pnpm build && pnpm start` flow.
 
 Public API docs: https://docs.baerly.dev/ (the JSDoc on
-`@baerly/server`'s `Db` and `Table` is the canonical reference;
+`baerly-storage`'s `Db` and `Table` is the canonical reference;
 read it via your editor's TS LS or via the published types).
 
 ## Toolchain
@@ -106,7 +106,7 @@ read it via your editor's TS LS or via the published types).
   Declare indexes in `baerly.config.ts` via:
 
   ```ts
-  import { defineConfig } from "@baerly/server";
+  import { defineConfig } from "create-baerly/config";
 
   export default defineConfig({
     collections: {
@@ -129,7 +129,7 @@ read it via your editor's TS LS or via the published types).
 
   ```ts
   import { z } from "zod";
-  import { defineConfig } from "@baerly/server";
+  import { defineConfig } from "create-baerly/config";
 
   const Ticket = z.object({
     _id: z.string().optional(),
@@ -189,7 +189,7 @@ read it via your editor's TS LS or via the published types).
   `s3Storage` (AWS) and `r2Storage` (Cloudflare R2) based on whether
   `R2_ACCOUNT_ID` is set. To use **Minio** (self-hosted dev S3) or
   **GCS** (HMAC keys), swap the import to `minioStorage` /
-  `gcsStorage` from `@baerly/adapter-node`. All four factories take
+  `gcsStorage` from `baerly-storage/node`. All four factories take
   the same shape — a single bucket-name + credentials object — and
   hide `aws4fetch` / `@xmldom/xmldom` behind the package boundary.
   JSDoc `@example` blocks for each factory are visible in your
@@ -215,7 +215,7 @@ read it via your editor's TS LS or via the published types).
   external scheduling can wire a separate cron trigger (PaaS cron,
   k8s CronJob, systemd timer) per collection that invokes
   `runMaintenanceTick` directly — that function stays exported
-  from `@baerly/adapter-node`.
+  from `baerly-storage/node`.
 
   The template is single-tenant by default (`tenants: [TENANT]`).
   Multi-tenant deployments override the `tenants` array in
@@ -259,9 +259,9 @@ read it via your editor's TS LS or via the published types).
 
 ## Anti-patterns
 
-- Widening branded types from `@baerly/protocol` (`Ref`,
+- Widening branded types from `baerly-storage` (`Ref`,
   `ManifestKey`). The types prevent confusion bugs.
-- Reaching into `node_modules/@baerly/protocol/src/` directly —
+- Reaching into `node_modules/baerly-storage/dist/` directly —
   consume the published exports.
 - Mutating `VerifierResult.tenantPrefix` between the verifier
   and `Db.create`. The dispatcher pins the tenant from the

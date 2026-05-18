@@ -3,7 +3,7 @@ import { defineConfig } from "create-baerly/config";
 
 /**
  * Zod schema for one ticket. Source of truth for both the runtime
- * `SchemaValidator` consumed by `@baerly/server`'s writer and the
+ * `SchemaValidator` consumed by `baerly-storage`'s writer and the
  * compile-time `Ticket` row type imported by the UI.
  */
 export const TicketSchema = z.object({

@@ -16,7 +16,7 @@ the `cloudflareAccess` → `sharedSecret` verifier chain in
 Worker entry look like?" answer.
 
 **Audience:** anyone scaffolding a new CF Worker target, or
-reading the canonical wiring for `@baerly/adapter-cloudflare` +
+reading the canonical wiring for `baerly-storage/cloudflare` +
 R2 bindings + CF Access.
 
 **Run it:**
@@ -34,7 +34,7 @@ selector + `baerlyWorker`), then `wrangler.jsonc`
 ## minimal-node
 
 Bare self-hosted Node scaffold. S3-compatible bucket via
-`@baerly/adapter-node`, JWKS verifier with `sharedSecret` fallback for
+`baerly-storage/node`, JWKS verifier with `sharedSecret` fallback for
 `pnpm dev` parity. Runs anywhere `node server.js` runs — Railway,
 Render, Fly without Docker, Heroku, a VM, any process manager.
 Scaffolded with `--target=node`.
@@ -67,7 +67,7 @@ only required for `pnpm start` and the production deploy.
 
 The production-shaped sibling of `helpdesk`. Same ticket CRUD app —
 same React UI, same `Ticket` schema, same long-poll live updates —
-but on R2 via `@baerly/adapter-cloudflare`, with the
+but on R2 via `baerly-storage/cloudflare`, with the
 `cloudflareAccess` → `sharedSecret` verifier chain, and served as a
 single Cloudflare Worker (the Worker also hosts the built Vite
 bundle via Workers Assets).
@@ -94,7 +94,7 @@ R2 + Assets bindings).
 
 Fully-built ticket CRUD app — React + Vite over `LocalFsStorage`.
 Single Vite process: the Baerly HTTP listener is mounted as Vite
-middleware via `baerlyDev()` from `@baerly/dev/vite`, so the React
+middleware via `baerlyDev()` from `baerly-storage/dev/vite`, so the React
 app and `/v1/*` API share an origin (`:5173`) and a process. This is
 the canonical dev pattern for Node-side Baerly apps. Live multi-tab
 updates via the `/v1/since` long-poll, surfaced through the

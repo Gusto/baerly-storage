@@ -1,4 +1,4 @@
-import type { JSONArraylessObject } from "@baerly/protocol";
+import type { JSONArraylessObject } from "baerly-storage";
 
 export interface Ticket extends JSONArraylessObject {
   readonly _id: string;

@@ -73,8 +73,8 @@ export interface CreateRouterOptions {
  *
  * @example
  * ```ts
- * import { createRouter, Db } from "@baerly/server";
- * import { MemoryStorage } from "@baerly/protocol";
+ * import { createRouter, Db } from "baerly-storage";
+ * import { MemoryStorage } from "baerly-storage";
  *
  * const db = Db.create({ storage: new MemoryStorage(), app: "tickets", tenant: "acme" });
  * const app = createRouter({ db });

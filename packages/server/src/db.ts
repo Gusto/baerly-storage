@@ -132,12 +132,12 @@ export interface RawStorageApi {
  * **Table provisioning.** `Db` provisions tables implicitly on first
  * write — there is no `ensureTable` method on this class. For
  * dev-time eager provisioning (e.g. seed scripts), use
- * {@link "@baerly/dev".ensureTable}.
+ * {@link "baerly-storage/dev".ensureTable}.
  *
  * @example
  * ```ts
- * import { Db } from "@baerly/server";
- * import { MemoryStorage } from "@baerly/server";
+ * import { Db } from "baerly-storage";
+ * import { MemoryStorage } from "baerly-storage";
  *
  * const db = Db.create({
  *   storage: new MemoryStorage(),
@@ -253,7 +253,7 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
    *
    * @example
    * ```ts
-   * import { InMemoryMetricsRecorder } from "@baerly/server";
+   * import { InMemoryMetricsRecorder } from "baerly-storage";
    * const metrics = new InMemoryMetricsRecorder();
    * const db = Db.create({ storage, app: "tickets", tenant: "acme", metrics });
    * await db.table("tickets").insert({ title: "hi" });
@@ -266,8 +266,8 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
    * // can route reads. The map key is the collection name; the
    * // value is the IndexDefinition array. Mirrors the shape
    * // callers build when flattening BaerlyConfig.collections[*].indexes.
-   * import { Db } from "@baerly/server";
-   * import { MemoryStorage } from "@baerly/server";
+   * import { Db } from "baerly-storage";
+   * import { MemoryStorage } from "baerly-storage";
    *
    * const db = Db.create({
    *   storage: new MemoryStorage(),

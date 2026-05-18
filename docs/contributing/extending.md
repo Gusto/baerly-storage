@@ -145,7 +145,7 @@ any validator library — you bring whichever library you like.
 
 ```ts
 // baerly.config.ts
-import { defineConfig } from "@baerly/server";
+import { defineConfig } from "create-baerly/config";
 import { z } from "zod";
 
 const Ticket = z.object({
@@ -165,7 +165,7 @@ export default defineConfig({
 
 ```ts
 // baerly.config.ts
-import { defineConfig } from "@baerly/server";
+import { defineConfig } from "create-baerly/config";
 import * as v from "valibot";
 
 const Ticket = v.object({
@@ -256,7 +256,7 @@ export interface IndexDefinition {
 
 ```ts
 // baerly.config.ts
-import { defineConfig } from "@baerly/server";
+import { defineConfig } from "create-baerly/config";
 
 export default defineConfig({
   collections: {
@@ -324,8 +324,7 @@ export default defineConfig({
 Run
 
 ```sh
-pnpm -F @baerly/cli build && \
-  pnpm exec baerly admin rebuild-index <collection> <name>
+pnpm build && pnpm baerly admin rebuild-index <collection> <name>
 ```
 
 to backfill. The writer emits forward entries on every commit;

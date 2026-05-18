@@ -19,7 +19,7 @@ import {
  *
  * @example
  * ```ts
- * import { LocalFsStorage, ensureTable } from "@baerly/dev";
+ * import { LocalFsStorage, ensureTable } from "baerly-storage/dev";
  *
  * const storage = new LocalFsStorage({ root: "./.baerly-data" });
  * await ensureTable(storage, { app: "helpdesk", tenant: "demo", table: "tickets" });

@@ -34,7 +34,7 @@ function buildS3Storage(opts: {
  *
  * @example
  * ```ts
- * import { s3Storage } from "@baerly/adapter-node";
+ * import { s3Storage } from "baerly-storage/node";
  *
  * const storage = s3Storage({
  *   region: process.env["AWS_REGION"] ?? "us-east-1",
@@ -72,7 +72,7 @@ export function s3Storage(opts: {
  *
  * @example
  * ```ts
- * import { r2Storage } from "@baerly/adapter-node";
+ * import { r2Storage } from "baerly-storage/node";
  *
  * const storage = r2Storage({
  *   accountId: process.env["R2_ACCOUNT_ID"]!,
@@ -106,7 +106,7 @@ export function r2Storage(opts: {
  *
  * @example
  * ```ts
- * import { minioStorage } from "@baerly/adapter-node";
+ * import { minioStorage } from "baerly-storage/node";
  *
  * const storage = minioStorage({
  *   endpoint: process.env["S3_ENDPOINT"] ?? "http://localhost:9102",
@@ -143,7 +143,7 @@ export function minioStorage(opts: {
  *
  * @example
  * ```ts
- * import { gcsStorage } from "@baerly/adapter-node";
+ * import { gcsStorage } from "baerly-storage/node";
  *
  * const storage = gcsStorage({
  *   bucket: process.env["BUCKET"]!,

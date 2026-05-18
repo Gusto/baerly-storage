@@ -88,12 +88,12 @@ export interface VerifierResult {
  *
  * Preset factories — `cloudflareAccess`, `bearerJwt`,
  * `awsIamSigV4`, `sharedSecret`, `allowlistIp` — live in
- * `@baerly/server` (`packages/server/src/auth/presets/`). The
+ * `baerly-storage/auth` (`packages/server/src/auth/presets/`). The
  * kernel owns the type; the server owns the factories.
  *
  * @example
  * ```ts
- * import type { Verifier } from "@baerly/protocol";
+ * import type { Verifier } from "baerly-storage";
  *
  * // A trivial Verifier that pins every request to one tenant.
  * // Useful for tests and single-tenant deployments instead of the

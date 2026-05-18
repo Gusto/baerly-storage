@@ -97,9 +97,9 @@ Per-collection CAS scope (see
 the idle-poll bound tractable: one cheap key per collection rather
 than contention on a global mutex.
 
-## Compression off by default in `@baerly/client`
+## Compression off by default in `baerly-storage/client`
 
-The `@baerly/client` HTTP client defaults `compression: false`.
+The `baerly-storage/client` HTTP client defaults `compression: false`.
 
 **Why.** The dominant Baerly deploy shape is a Cloudflare Worker
 talking to R2 in the same data center. That path is CPU-constrained
@@ -121,7 +121,7 @@ running that shape should set `compression: true` on the client.
 **Default.** `false`. Single-line override on the client config.
 
 This decision is logged at [docs/pricing-log.md](pricing-log.md)
-when it ships in `@baerly/client`.
+when it ships in `baerly-storage/client`.
 
 ## Alternative DBs at M size
 

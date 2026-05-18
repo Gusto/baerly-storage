@@ -90,8 +90,8 @@ const buildCurrentJsonKey = (app: string, tenant: string, collection: string): s
  *
  * @example
  * ```ts
- * import { baerlyNode, s3Storage } from "@baerly/adapter-node";
- * import { sharedSecret } from "@baerly/server/auth";
+ * import { baerlyNode, s3Storage } from "baerly-storage/node";
+ * import { sharedSecret } from "baerly-storage/auth";
  *
  * const handle = baerlyNode({
  *   app: "tickets",

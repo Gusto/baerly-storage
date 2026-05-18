@@ -93,6 +93,7 @@
     "test:export-smoke": "EXPORT_SMOKE=1 vitest run --project=default tests/integration/export-smoke.test.ts",
     "test:export-round-trip": "vitest run --project=default tests/integration/export-round-trip.test.ts",
     "build": "rolldown -c && pnpm -r --filter \"./packages/*\" build",
+    "baerly": "node dist/baerly.js",
     "prepare": "lefthook install && pnpm run build",
     "format": "oxfmt tests packages",
     "format:check": "oxfmt --check tests packages",

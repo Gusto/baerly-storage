@@ -9,7 +9,7 @@ related: ["../adr/001-tenant-cas-isolation.md", "../contributing/extending.md"]
 
 # Authentication
 
-`@baerly/server/auth` ships five `Verifier` presets. Each one
+`baerly-storage/auth` ships five `Verifier` presets. Each one
 authenticates the caller and returns a `tenantPrefix`, which the
 server uses to pin the request to one tenant's keyspace.
 
@@ -86,7 +86,7 @@ guarantees rest on the verifier producing the right prefix — see
   into the kernel release cycle. Deployments that need a proprietary
   IdP, or any scheme not yet in the enum, would have to fork. The
   open-function shape lets a deployment author write its own
-  `Verifier` against any scheme without touching `@baerly/server` internals.
+  `Verifier` against any scheme without touching `baerly-storage` internals.
 - **Multiple `Verifier`s with kernel-side composition.** The right
   composition policy depends on the deployment — some want "try CF
   Access first, fall back to shared-secret"; others want "require

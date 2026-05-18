@@ -126,6 +126,7 @@ export {
   type BaerlyErrorCode,
   claimWriter,
   InMemoryMetricsRecorder,
+  type JSONArraylessObject,
   MemoryStorage,
   type Query,
   type Storage,

@@ -222,8 +222,8 @@ export interface BaerlyWorkerOptions {
  *
  * @example
  * ```ts
- * import { baerlyWorker } from "@baerly/adapter-cloudflare/worker";
- * import type { Verifier } from "@baerly/server";
+ * import { baerlyWorker } from "baerly-storage/cloudflare";
+ * import type { Verifier } from "baerly-storage";
  *
  * // Production: parse a bearer token and pin the tenant from a JWT
  * // claim. Preset factories handle JWKS / Cloudflare-Access.

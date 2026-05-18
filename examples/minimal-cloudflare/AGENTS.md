@@ -23,7 +23,7 @@ the Worker inside `workerd` alongside the SPA dev server, and
 the Worker on deploy. Same origin in dev and prod, one deploy.
 
 Public API docs: https://docs.baerly.dev/ (the JSDoc on
-`@baerly/server`'s `Db` and `Table` is the canonical reference;
+`baerly-storage`'s `Db` and `Table` is the canonical reference;
 read it via your editor's TS LS or via the published types).
 
 ## Toolchain
@@ -105,7 +105,7 @@ read it via your editor's TS LS or via the published types).
   Declare indexes in `baerly.config.ts` via:
 
   ```ts
-  import { defineConfig } from "@baerly/server";
+  import { defineConfig } from "create-baerly/config";
 
   export default defineConfig({
     collections: {
@@ -128,7 +128,7 @@ read it via your editor's TS LS or via the published types).
 
   ```ts
   import { z } from "zod";
-  import { defineConfig } from "@baerly/server";
+  import { defineConfig } from "create-baerly/config";
 
   const Ticket = z.object({
     _id: z.string().optional(),
@@ -182,7 +182,7 @@ read it via your editor's TS LS or via the published types).
 
   Read the JSDoc on `sharedSecret` / `bearerJwt` / `cloudflareAccess`
   / `awsIamSigV4` / `allowlistIp` (re-exported from
-  `@baerly/server/auth`) for the full constraint list.
+  `baerly-storage/auth`) for the full constraint list.
 
 - **Secrets vs. vars** — `wrangler.jsonc:vars` carries non-secret
   config (`APP`, `TENANT`, `LOG_LEVEL`, `LOG_SAMPLE`). The verifier's
@@ -207,7 +207,7 @@ read it via your editor's TS LS or via the published types).
   Multi-tenant deployments override the `scheduled` hook on
   `baerlyWorker({ ... })` to enumerate their own `current.json` keys
   — see the JSDoc on `WorkerScheduledHandler` in
-  `@baerly/adapter-cloudflare`.
+  `baerly-storage/cloudflare`.
 
   Maintenance emits one canonical info line per run on stdout
   (Workers Logs ingestion). Filter your log stream on
@@ -237,9 +237,9 @@ read it via your editor's TS LS or via the published types).
 
 ## Anti-patterns
 
-- Widening branded types from `@baerly/protocol` (`Ref`,
+- Widening branded types from `baerly-storage` (`Ref`,
   `ManifestKey`). The types prevent confusion bugs.
-- Reaching into `node_modules/@baerly/protocol/src/` directly —
+- Reaching into `node_modules/baerly-storage/dist/` directly —
   consume the published exports.
 - Mutating `VerifierResult.tenantPrefix` between the verifier
   and `Db.create`. The dispatcher pins the tenant from the

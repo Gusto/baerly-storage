@@ -42,7 +42,7 @@ export interface CloudflareAccessOptions {
  *
  * @example
  * ```ts
- * import { cloudflareAccess } from "@baerly/server/auth";
+ * import { cloudflareAccess } from "baerly-storage/auth";
  * const verifier = cloudflareAccess({
  *   teamDomain: "acme",
  *   audienceTag: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",

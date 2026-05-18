@@ -15,7 +15,7 @@ import type { Verifier } from "@baerly/protocol";
  *
  * @example
  * ```ts
- * import { baerlyWorker, singleTenantDevVerifier } from "@baerly/adapter-cloudflare";
+ * import { baerlyWorker, singleTenantDevVerifier } from "baerly-storage/cloudflare";
  *
  * // Hardcode the dev tenant. Reading `env.TENANT` requires wrapping
  * // `baerlyWorker` in your own `fetch(req, env, ctx)` so `env` is in

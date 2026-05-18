@@ -119,7 +119,7 @@ read path.
 
 ```ts
 // baerly.config.ts
-import { defineConfig } from "@baerly/server";
+import { defineConfig } from "create-baerly/config";
 
 export default defineConfig({
   collections: {

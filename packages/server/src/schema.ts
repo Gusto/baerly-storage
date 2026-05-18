@@ -10,7 +10,7 @@
  * @example
  * ```ts
  * import { z } from "zod";
- * import { defineConfig } from "@baerly/server";
+ * import { defineConfig } from "create-baerly/config";
  *
  * const Ticket = z.object({
  *   _id: z.string(),

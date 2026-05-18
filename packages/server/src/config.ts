@@ -14,7 +14,7 @@
  *
  * @example
  * ```ts
- * import { defineConfig } from "@baerly/server";
+ * import { defineConfig } from "create-baerly/config";
  *
  * export default defineConfig({
  *   collections: {
@@ -64,7 +64,7 @@ export interface CollectionDefinition {
 
 /**
  * The full `baerly.config.ts` shape. Re-exported from
- * `@baerly/server` and consumed by the day-1 `npm create baerly`
+ * `baerly-storage` and consumed by the day-1 `npm create baerly`
  * scaffold + the `baerly admin rebuild-index` CLI.
  */
 export interface BaerlyConfig {

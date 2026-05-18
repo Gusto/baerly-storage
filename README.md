@@ -13,11 +13,11 @@ Tested with S3, GCS, R2, and self-hosted Minio.
 
 ## Quick start
 
-> 🚧 **Pre-publish preview.** `create-baerly` and `@baerly/cli` are
-> not on npm yet, so the canonical `pnpm dlx create-baerly@latest`
+> 🚧 **Pre-publish preview.** `create-baerly` and `baerly-storage`
+> are not on npm yet, so the canonical `pnpm dlx create-baerly@latest`
 > flow doesn't resolve end-to-end. Until publish, scaffold inside
 > this clone's `examples/` directory — `pnpm-workspace.yaml`
-> resolves `@baerly/*` / `create-baerly` to the in-tree packages.
+> resolves `baerly-storage` / `create-baerly` to the in-tree packages.
 > Tracking the npm-publish work in
 > [`docs/followups/first-touch-dx.md`](./docs/followups/first-touch-dx.md).
 
@@ -25,7 +25,7 @@ Tested with S3, GCS, R2, and self-hosted Minio.
 git clone https://github.com/<you>/baerly-storage && cd baerly-storage
 pnpm install && pnpm -r build
 
-# Scaffold into the workspace so @baerly/* + create-baerly resolve:
+# Scaffold into the workspace so baerly-storage + create-baerly resolve:
 cd examples
 node ../packages/create-baerly/dist/index.js my-app --target=cloudflare --json
 
@@ -46,11 +46,11 @@ needed; `pnpm build && pnpm start` produces the production-shaped
 run that serves the built SPA from `dist/client/` via
 `createListener({ webRoot })`.
 
-Once `create-baerly` + `@baerly/cli` ship to npm the flow shortens
+Once `create-baerly` + `baerly-storage` ship to npm the flow shortens
 to `pnpm dlx create-baerly@latest my-app` (interactive wizard),
 followed by `pnpm install && pnpm dev` in any directory of your
 choice. The local tarballs from `pnpm -F create-baerly pack` /
-`pnpm -F @baerly/cli pack` will work end-to-end once the
+`pnpm pack` will work end-to-end once the
 scaffolded `package.json` references them via `file:` URLs — see
 the followup.
 
@@ -73,9 +73,9 @@ about 30 lines:
 
 ```ts
 import { createServer } from "node:http";
-import { createListener } from "@baerly/adapter-node";
-import { sharedSecret } from "@baerly/server/auth";
-import { LocalFsStorage, ensureTable } from "@baerly/dev";
+import { createListener } from "baerly-storage/node";
+import { sharedSecret } from "baerly-storage/auth";
+import { LocalFsStorage, ensureTable } from "baerly-storage/dev";
 
 const storage = new LocalFsStorage({ root: "./.baerly-data" });
 await ensureTable(storage, { app: "tickets", tenant: "acme", table: "items" });

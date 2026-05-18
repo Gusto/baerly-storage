@@ -215,7 +215,7 @@ const APPLICATION_JSON = "application/json";
  *
  * @example
  * ```ts
- * import { compact } from "@baerly/server";
+ * import { compact } from "baerly-storage";
  *
  * const res = await compact(
  *   { storage, currentJsonKey: "app/x/tenant/t/manifests/tickets/current.json" },
@@ -456,8 +456,8 @@ const compactInner = async (
  * // base map, then walks the live log tail [logSeqStart, nextSeq)
  * // and applies each LogEntry on top before re-encoding as a new
  * // snapshot on the destination bucket.
- * import { loadSnapshotAsMap } from "@baerly/server";
- * import { walkLogRange } from "@baerly/server";
+ * import { loadSnapshotAsMap } from "baerly-storage";
+ * import { walkLogRange } from "baerly-storage";
  *
  * const base =
  *   srcCurrent.snapshot === null

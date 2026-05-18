@@ -86,7 +86,7 @@ const AUTH_REGEX =
  *
  * @example
  * ```ts
- * import { awsIamSigV4 } from "@baerly/server/auth";
+ * import { awsIamSigV4 } from "baerly-storage/auth";
  * const verifier = awsIamSigV4({
  *   principals: [{
  *     accessKeyId: env.PEER_AWS_ACCESS_KEY_ID,

@@ -121,7 +121,7 @@ interface JwtPayload {
  *
  * @example
  * ```ts
- * import { bearerJwt } from "@baerly/server/auth";
+ * import { bearerJwt } from "baerly-storage/auth";
  * const verifier = bearerJwt({
  *   jwks: "https://example.auth0.com/.well-known/jwks.json",
  *   issuer: "https://example.auth0.com/",
