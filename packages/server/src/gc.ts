@@ -23,8 +23,8 @@
  *
  * Three categories of orphan:
  *   - `stale-log`: `<tablePrefix>/log/<seq>.json` with
- *     `seq < log_seq_start`. After ticket 14's compactor folds these
- *     into a snapshot, they're unreferenced.
+ *     `seq < log_seq_start`. After `compact()` folds these into a
+ *     snapshot, they're unreferenced.
  *   - `orphan-snapshot`: a `<tablePrefix>/snapshot/L<n>/...` key not
  *     equal to `current.snapshot`. Each compactor run replaces the
  *     pointer; the prior file becomes unreferenced.
@@ -37,8 +37,6 @@
  * CAS-lost on `gc/pending.json` is non-fatal: the DELETEs already
  * issued are durable, so we return a successful result and the next
  * pass will pick up any work this pass lost.
- *
- * @see ../../../../.claude/research/planning/tickets/15-gc-mark-and-sweep.md
  */
 
 import {
@@ -124,8 +122,8 @@ export interface RunGcResult {
   readonly swept: number;
   /**
    * Depth of `gc/pending.json` after this pass. Drives the
-   * `db.orphan.candidate_count` metric (ticket 17). Best-effort on
-   * `cas-lost` — see module JSDoc.
+   * `db.orphan.candidate_count` metric. Best-effort on `cas-lost` —
+   * see module JSDoc.
    */
   readonly pendingDepth: number;
 }

@@ -7,7 +7,7 @@
  * `Query.replace`, `Query.delete`. MemoryStorage-only, pure-unit; no
  * infra required.
  *
- * The matrix this file covers (from ticket 10 §4.8):
+ * The matrix this file covers:
  *  - Insert auto-id, caller-supplied id, duplicate-id Conflict,
  *    LogEntry shape parity.
  *  - Update single/multi-match, RFC 7386 null-delete, return shape,
@@ -19,8 +19,8 @@
  *  - Per-row CAS retry semantics: forced contention succeeds within
  *    budget; exhausted budget surfaces Conflict.
  *
- * Fast-check property tests are explicitly OUT OF SCOPE — ticket 12
- * owns cross-adapter coverage.
+ * Fast-check property tests are explicitly OUT OF SCOPE — cross-
+ * adapter coverage lives in `tests/integration/randomized.test.ts`.
  */
 
 import {

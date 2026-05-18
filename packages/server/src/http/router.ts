@@ -8,11 +8,11 @@
  * `Response` whose body follows the `HttpOkEnvelope` /
  * `HttpErrorEnvelope` shapes.
  *
- * Ticket 26 appends `GET /v1/since` to the same factory (see
- * `./since.ts` for the long-poll core). Ticket 27 wraps the
- * Worker-side GETs with `caches.default` *outside* `createRouter` so
- * the router stays platform-agnostic; ticket 27 also EXCLUDES
- * `/v1/since` — long-poll idleness is not a cache hit.
+ * `GET /v1/since` is appended to the same factory (see `./since.ts`
+ * for the long-poll core). The Cloudflare adapter wraps Worker-side
+ * GETs with `caches.default` *outside* `createRouter` so the router
+ * stays platform-agnostic; that wrapper EXCLUDES `/v1/since` —
+ * long-poll idleness is not a cache hit.
  */
 
 import { Hono } from "hono/tiny";
@@ -334,12 +334,12 @@ export function createRouter(options: CreateRouterOptions): Hono {
 
   // Long-poll — GET /v1/since?table=<name>&cursor=<opaque>
   //
-  // Cache-API note (ticket 27 will wire `caches.default` for read
-  // paths): `/v1/since` is explicitly EXCLUDED — long-poll idleness
-  // is not a cache hit. Ticket 27's middleware MUST check the path
-  // before consulting the cache. Do NOT add cache reads here.
+  // Cache-API note: the Cloudflare adapter's `caches.default` wrapper
+  // explicitly EXCLUDES `/v1/since` — long-poll idleness is not a
+  // cache hit. The adapter middleware MUST check the path before
+  // consulting the cache. Do NOT add cache reads here.
   app.get("/v1/since", async (c) => {
-    // Ticket 25 does NOT set `c.var.db`; the adapter resolves the
+    // The router does NOT set `c.var.db`; the adapter resolves the
     // Verifier BEFORE `createRouter` is called and the resulting `db`
     // is captured in this closure. The handler reads it from the
     // outer scope, not from `c.var`.
@@ -363,7 +363,7 @@ export function createRouter(options: CreateRouterOptions): Hono {
         pollIntervalMs: sincePollIntervalMs,
       });
       // 200 covers both "new events present" and "timeout idle" —
-      // see ticket 26 §4.5 for why we don't use 304.
+      // see `./since.ts` module JSDoc for why we don't use 304.
       return c.json(result satisfies SinceResponse, 200);
     } catch (e) {
       return mapToResponse(c, e);
@@ -387,7 +387,7 @@ export function createRouter(options: CreateRouterOptions): Hono {
  *   pump. Promote to `packages/protocol/src/constants.ts` only on a
  *   third cross-package consumer.
  */
-export const MAX_BODY_BYTES = 1 << 20; // 1 MiB; see Q5 of ticket 25.
+export const MAX_BODY_BYTES = 1 << 20; // 1 MiB; matches `S3HttpStorage`'s conformance-suite default.
 
 /**
  * Parse the `?consistency=...` query-string param. Absent →
@@ -397,7 +397,7 @@ export const MAX_BODY_BYTES = 1 << 20; // 1 MiB; see Q5 of ticket 25.
  *
  * Mutation routes silently ignore `?consistency` per the locked
  * contract (writes are always strong); only the two read routes
- * call this. See ticket 34 §3.4.
+ * call this.
  *
  * @internal
  */
@@ -431,9 +431,9 @@ const ERROR_TO_STATUS: ReadonlyMap<BaerlyErrorCode, HttpStatus> = new Map<
  * through to 500 by design — see the `OfflineNoCache` / `NetworkError`
  * / `InvalidResponse` / `Internal` comment in `ERROR_TO_STATUS`).
  *
- * @internal — exported for tests and for ticket 26's `/v1/since`
- *   handler. The `HttpErrorEnvelope` shape is locked; do not
- *   mutate it.
+ * @internal — exported for tests and for the `/v1/since` long-poll
+ *   handler in `./since.ts`. The `HttpErrorEnvelope` shape is locked;
+ *   do not mutate it.
  */
 export function mapError(err: unknown): { status: HttpStatus; envelope: HttpErrorEnvelope } {
   if (err instanceof BaerlyError) {

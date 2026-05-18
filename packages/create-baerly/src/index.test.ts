@@ -25,9 +25,9 @@ const execFileP = promisify(execFile);
 const HERE = dirname(fileURLToPath(import.meta.url));
 const CLI_PATH = resolve(HERE, "..", "dist", "index.js");
 
-// Built artifact is required for these tests. The Verification block
-// in ticket 02 builds it before running them; skip gracefully if
-// the dev forgot, rather than hard-failing in a confusing way.
+// Built artifact is required for these tests. `pnpm -F create-baerly build`
+// produces it before running them; skip gracefully if the dev forgot,
+// rather than hard-failing in a confusing way.
 const shouldRun = process.platform !== "win32" && existsSync(CLI_PATH);
 
 describe.runIf(shouldRun)("create-baerly CLI (non-TTY)", () => {

@@ -1,7 +1,7 @@
 /* eslint-disable no-underscore-dangle -- `__BAERLY_R2_BINDING__` is
-   the ticket-06 contract: miniflare's vitest pool sets the global via
-   `tests/setup/r2-binding.ts`; we read it here to provision
-   `current.json` from outside the worker handler. */
+   the miniflare-pool ↔ test contract: `tests/setup/r2-binding.ts`
+   sets the global; we read it here to provision `current.json` from
+   outside the worker handler. */
 
 /**
  * HTTP conformance cascade — Workerd variant.
@@ -65,7 +65,7 @@ describe("HTTP conformance", () => {
       });
     },
     options: {
-      // Workerd serves through `caches.default` (ticket 27). The
+      // Workerd serves through `caches.default` for read paths. The
       // cascade's conditional-GET block tolerates 200 OR 304.
       supportsCacheApi: true,
       // SELF.fetch on Workerd surfaces an AbortError as an unhandled

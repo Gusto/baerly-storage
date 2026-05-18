@@ -5,7 +5,7 @@
 
 /**
  * Long-poll handler tests — `longPollSince` + `listEventsSince`.
- * Seven cases from ticket 26 §4.7:
+ * Seven cases:
  *
  *   1. cursor validation (invalid shape → SchemaError).
  *   2. empty cursor + no current.json → empty events, fast.

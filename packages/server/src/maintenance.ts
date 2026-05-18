@@ -3,16 +3,14 @@
  * `runGc()` over one collection. Designed to fit a single Cloudflare
  * Cron Trigger invocation's 50-subrequest free-tier budget when
  * called with the {@link CLOUDFLARE_FREE_TIER} profile (which the
- * caller pairs with even/odd-minute alternation — see ticket 16);
- * unbounded on Node.
+ * caller pairs with even/odd-minute alternation between compact and
+ * GC ticks); unbounded on Node.
  *
  * Single-attempt: returns the combined result. The caller (cron
  * handler) is responsible for scheduling the next invocation; this
  * function does not loop or retry. `compact()` and `runGc()` are
  * already CAS-protected single-attempts — a restart safely retries
  * next tick.
- *
- * @see ../../../../.claude/research/planning/tickets/16-compactor-runtime-adapters.md
  */
 
 import {

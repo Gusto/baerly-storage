@@ -7,10 +7,10 @@
  *
  * `Table.insert(doc)` is the public insert path. The locked
  * `Query<T>` interface (`@baerly/protocol/src/db.ts`) intentionally
- * does NOT declare `insert` — chainable inserts are out of scope
- * (ticket 10 §7). For an inserted doc whose predicate-bound
- * shape matters, `db.table(...).insert(...)` is the path; predicates
- * are a read-side concern.
+ * does NOT declare `insert` — chainable inserts are out of scope.
+ * For an inserted doc whose predicate-bound shape matters,
+ * `db.table(...).insert(...)` is the path; predicates are a read-
+ * side concern.
  */
 
 import {

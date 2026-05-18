@@ -7,12 +7,11 @@
  * Pure identity function at runtime — the scaffolder never reads this
  * file at scaffold time.
  *
- * As of ticket 04, `BaerlyAppConfig` extends `BaerlyConfig` from
- * `@baerly/server` so one `baerly.config.ts` carries both scaffold
- * metadata (target, domain, auth) and the runtime schema
- * (`collections`). The literal-pinned return type makes the
- * `collections` map's structure flow through to
- * `createBaerlyClient<TConfig>` and `Db.create<TConfig>`.
+ * `BaerlyAppConfig` extends `BaerlyConfig` from `@baerly/server` so
+ * one `baerly.config.ts` carries both scaffold metadata (target,
+ * domain, auth) and the runtime schema (`collections`). The literal-
+ * pinned return type makes the `collections` map's structure flow
+ * through to `createBaerlyClient<TConfig>` and `Db.create<TConfig>`.
  */
 
 import type { BaerlyConfig } from "@baerly/server";

@@ -32,7 +32,7 @@
  * yet); the key format is forward-compatible with future L0..L9
  * rolling merges without a wire change.
  *
- * @see ../../../../.claude/research/planning/tickets/14-snapshot-build-and-pointer-swap.md
+ * @see ../../../docs/spec/sync-protocol.md
  */
 
 import {
@@ -188,9 +188,9 @@ const APPLICATION_JSON = "application/json";
  *
  * Single-attempt: on CAS conflict we return
  * `{written: false, skippedReason: "cas-lost", newSnapshotKey}` — the
- * caller (ticket 16's cron handler) decides whether to schedule
- * another run. The orphan snapshot file just written will be swept by
- * ticket 15.
+ * caller (the cron handler invoking `runScheduledMaintenance` from
+ * `./maintenance.ts`) decides whether to schedule another run. The
+ * orphan snapshot file just written will be swept by `runGc()`.
  *
  * @throws BaerlyError code="InvalidResponse" — `current.json` is
  *   present but malformed, or a snapshot body fails its schema /
@@ -349,7 +349,7 @@ const compactInner = async (
     if (isCasConflict(err)) {
       // Another writer landed between our read and write. The
       // snapshot file we just wrote is now an orphan (correct
-      // content, unreferenced) — GC ticket 15 will sweep it. Surface
+      // content, unreferenced) — `runGc()` will sweep it. Surface
       // cas-lost; the cron handler can rerun us next tick.
       return {
         written: false,

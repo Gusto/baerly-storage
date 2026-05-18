@@ -124,8 +124,9 @@ export const teeMetricsRecorders = (a: MetricsRecorder, b: MetricsRecorder): Met
 });
 
 /**
- * In-memory recorder. Stores every observation; useful for tests and
- * for the synthetic-5000-entry verification (ticket 19). Memory grows
+ * In-memory recorder. Stores every observation; useful for tests
+ * (e.g. the synthetic-5000-entry durability gate in
+ * `tests/integration/phase5-end-to-end.test.ts`). Memory grows
  * unbounded — not suitable for production.
  */
 export class InMemoryMetricsRecorder implements MetricsRecorder {

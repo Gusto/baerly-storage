@@ -1,9 +1,9 @@
 /**
- * Collection-config schema. The `baerly.config.ts` file that
- * ticket 38's `npm create baerly` scaffold ships at the app root has
- * this shape; adapters load it once per process and thread declared
- * fields (`indexes`, future: `schema`, `replica_identity`, lifecycle
- * hooks) into the per-collection `ServerWriter`.
+ * Collection-config schema. The `baerly.config.ts` file that the
+ * `npm create baerly` scaffold ships at the app root has this shape;
+ * adapters load it once per process and thread declared fields
+ * (`indexes`, future: `schema`, `replica_identity`, lifecycle hooks)
+ * into the per-collection `ServerWriter`.
  *
  * The {@link defineConfig} helper returns its input verbatim, but
  * its return type pins the shape so IDEs surface autocomplete on
@@ -64,8 +64,8 @@ export interface CollectionDefinition {
 
 /**
  * The full `baerly.config.ts` shape. Re-exported from
- * `@baerly/server` and consumed by the day-1 scaffold (ticket 38)
- * + the `baerly admin rebuild-index` CLI.
+ * `@baerly/server` and consumed by the day-1 `npm create baerly`
+ * scaffold + the `baerly admin rebuild-index` CLI.
  */
 export interface BaerlyConfig {
   /** Per-collection declarations, keyed by collection name. */

@@ -26,7 +26,7 @@
  *       so CI can wire fsck as a regression gate.
  *   4 — One or more findings (orphan / hole / hash-mismatch /
  *       orphan-index-key). Unique to this command; the other
- *       Phase 9 subcommands reserve 0–3.
+ *       `baerly admin` subcommands reserve 0–3.
  */
 
 import { fileURLToPath, pathToFileURL } from "node:url";

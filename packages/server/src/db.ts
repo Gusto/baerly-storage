@@ -504,7 +504,7 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
 
     // Build a Table<T> whose mutation verbs buffer onto `txCtx`. The
     // read path ignores `txCtx` entirely (locked: no MVCC, no
-    // read-your-writes — ticket 11 §1).
+    // read-your-writes inside a transaction).
     // Reuse the per-(Db, table) `currentJsonCache` slot so a
     // transaction's reads share the same `eventual`-anchor seen by
     // pre-transaction `Db.table(table)` calls. Allocate one lazily
