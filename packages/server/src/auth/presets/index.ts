@@ -1,6 +1,6 @@
 /**
  * Preset Verifier factories shared across both adapters.
- * Re-exported from `@baerly/server` so day-1 deploy templates wire
+ * Re-exported from `baerly-storage` so day-1 deploy templates wire
  * auth from a one-liner. See each factory's docstring for usage.
  */
 export { sharedSecret, type SharedSecretOptions } from "./shared-secret.ts";

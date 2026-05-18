@@ -96,8 +96,9 @@ export {
 
 /**
  * Curated re-export of `@baerly/protocol`'s user-facing symbols.
- * Users only ever import from `@baerly/server`; protocol is an
- * implementation detail of this package and the adapter packages.
+ * Users only ever import from `baerly-storage` (this package's
+ * published name); protocol is an implementation detail of this
+ * package and the adapter packages.
  *
  * - {@link BaerlyError} / {@link BaerlyErrorCode}: every failure
  *   thrown through this surface is a `BaerlyError`; consumers

@@ -158,6 +158,76 @@ const BUDGETS: readonly Budget[] = [
   //     @baerly/server's curated protocol re-exports; marginal cost
   //     from the recorder class landing in the maintenance closure.
   { entry: "maintenance.js", raw: 157 * 1024, gz: 44 * 1024 },
+  // Cloudflare Workers adapter — re-exports the kernel barrel
+  // (Db, ServerWriter, etc.) plus the R2-binding `Storage` impl
+  // and the `baerlyCloudflare` helper. Aggregator: closure
+  // includes index.js + http.js subgraphs since adapters re-export
+  // those for one-stop consumer imports.
+  // Budget history:
+  //   → 433 KiB raw / 127 KiB gz: initial budget set in T9 based on
+  //     post-T8 measurement (427 KiB raw / 125 KiB gz); margin sized
+  //     for ordinary chunk-graph shifts.
+  { entry: "cloudflare.js", raw: 433 * 1024, gz: 127 * 1024 },
+  // Node adapter — re-exports the kernel barrel plus
+  // `s3HttpStorage`, `localFsStorage`, `memoryStorage`,
+  // `localCacheStorage`, and the `baerlyNode` Fetch-API factory.
+  // Aggregator: same shape as cloudflare.js.
+  // Budget history:
+  //   → 410 KiB raw / 120 KiB gz: initial budget set in T9 based on
+  //     post-T8 measurement (405 KiB raw / 118 KiB gz).
+  { entry: "node.js", raw: 410 * 1024, gz: 120 * 1024 },
+  // Client surface — `BaerlyClient<TConfig>` + fetcher plumbing.
+  // Browser/runtime-agnostic; no kernel modules in the closure.
+  // Budget history:
+  //   → 14 KiB raw / 6 KiB gz: initial budget set in T9 based on
+  //     post-T8 measurement (9 KiB raw / 4 KiB gz).
+  { entry: "client.js", raw: 14 * 1024, gz: 6 * 1024 },
+  // React bindings for `BaerlyClient` (provider + hooks). React
+  // itself is external, so the closure stays tiny.
+  // Budget history:
+  //   → 13 KiB raw / 5 KiB gz: initial budget set in T9 based on
+  //     post-T8 measurement (8 KiB raw / 3 KiB gz).
+  { entry: "client-react.js", raw: 13 * 1024, gz: 5 * 1024 },
+  // Testing helpers for `BaerlyClient` (in-memory fetcher etc.).
+  // Vitest is external; closure is minimal.
+  // Budget history:
+  //   → 8 KiB raw / 4 KiB gz: initial budget set in T9 based on
+  //     post-T8 measurement (3 KiB raw / 2 KiB gz).
+  { entry: "client-testing.js", raw: 8 * 1024, gz: 4 * 1024 },
+  // `@baerly/dev` surface — `LocalFsStorage`, `printDevBanner`,
+  // `withRequestLogging`, `renderDevLanding`. Aggregator: re-exports
+  // the kernel barrel so the closure also covers index.js + http.js.
+  // Budget history:
+  //   → 410 KiB raw / 120 KiB gz: initial budget set in T9 based on
+  //     post-T8 measurement (405 KiB raw / 118 KiB gz).
+  { entry: "dev.js", raw: 410 * 1024, gz: 120 * 1024 },
+  // `@baerly/dev/vite` — the `baerlyDev()` vite plugin (mounts the
+  // Baerly HTTP listener as middleware inside a Vite dev server).
+  // Vite is external. Aggregator: re-exports the dev surface.
+  // Budget history:
+  //   → 410 KiB raw / 120 KiB gz: initial budget set in T9 based on
+  //     post-T8 measurement (404 KiB raw / 118 KiB gz).
+  { entry: "dev-vite.js", raw: 410 * 1024, gz: 120 * 1024 },
+  // `@baerly/export` — snapshot dumper for `baerly admin dump` /
+  // `baerly export --target=sqlite`. Pulls the kernel + protocol
+  // hashing/log subgraph; HTTP router is not in its closure.
+  // Budget history:
+  //   → 299 KiB raw / 87 KiB gz: initial budget set in T9 based on
+  //     post-T8 measurement (294 KiB raw / 85 KiB gz).
+  { entry: "export.js", raw: 299 * 1024, gz: 87 * 1024 },
+  // `baerly` CLI bin — `init`, `dev`, `deploy`, `doctor`, `inspect`,
+  // `admin {compact,fsck,migrate,dump,restore,rebuild-index}`,
+  // `export`. Bundled as a single file (no static chunk splits)
+  // with a `#!/usr/bin/env node` shebang. Not a library entry —
+  // bundling a CLI bin is concerns-separate from the library
+  // subpath exports — but budgeted here so cold-start cost stays
+  // observable.
+  // Budget history:
+  //   → 567 KiB raw / 159 KiB gz: initial budget set in T9 based on
+  //     post-T8 measurement (562 KiB raw / 157 KiB gz). CLI carries
+  //     the kernel + maintenance + export + clack subgraphs and
+  //     transitive `tsx` shim — large by design.
+  { entry: "baerly.js", raw: 567 * 1024, gz: 159 * 1024 },
 ];
 
 // Static-import specifiers only. Dynamic `import(...)` is intentionally

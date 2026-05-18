@@ -85,7 +85,7 @@ export interface RebuildIndexResult {
  * optional; the function behaves identically to the older
  * positional-arg shape when `opts` is omitted.
  *
- * @public — surfaced from `@baerly/server` so admin tooling and the
+ * @public — surfaced from `baerly-storage` so admin tooling and the
  *   observability layer can opt in.
  */
 export interface RebuildIndexOptions {

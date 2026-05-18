@@ -419,7 +419,7 @@ const compactInner = async (
  * (`Query.runRead`), `runGc`, `rebuildIndex`, and — across the
  * package boundary — the CLI's `baerly copy` orchestrator.
  *
- * @public — stable utility, re-exported from `@baerly/server`. The
+ * @public — stable utility, re-exported from `baerly-storage`. The
  *   `SnapshotBody.schema_version` is the long-lived format contract;
  *   new versions land additively (existing readers keep working).
  *
