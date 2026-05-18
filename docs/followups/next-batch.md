@@ -5,30 +5,25 @@ session before implementation, not a fix-it ticket. Listed together
 because items 8 and 10 touch the same `examples/*-cloudflare/`
 surface.
 
-### 8. `baerly dev` does not orchestrate `apps/web/`
+### 8. Node `baerly dev` boots the API but not the SPA in dev
 
-**STATUS: deferred — L-effort design question.**
-**Effort:** L (workspace orchestration design + implementation).
+**STATUS: deferred — design question, narrower scope after flatten.**
+**Effort:** M (vite child-process + banner URL threading).
 
 `baerly dev` (`packages/cli/src/dev.ts`) only boots the Node API
-listener over `LocalFsStorage`. For `examples/minimal-node-railway/`
-and `examples/minimal-node-docker/` the root `package.json` has
-`"dev": "baerly dev"`, so the React `apps/web/` workspace is **not**
-started by `pnpm dev`. A user opens the banner's
-`http://localhost:3000` URL, hits a 401 JSON page, then either reads
-the example's README or gives up.
+listener over `LocalFsStorage`. After the scaffold flatten the SPA
+lives at `src/web/` in the same package, but `pnpm dev` still
+launches only the API on `:3000`; a user has to `pnpm build` once
+and then revisit, or spawn `vite` themselves. Cloudflare scaffolds
+solved this via `@cloudflare/vite-plugin` (item 10); Node has no
+equivalent because the Node listener isn't a Vite environment.
 
-Options to weigh in brainstorming:
-
-- Have `baerly dev` detect `apps/web/package.json` and concurrently
-  run `vite` from that directory, then thread the vite URL into
+Options:
+- Have `baerly dev --web` (Node target only) spawn `vite` from the
+  scaffold root and thread its URL into
   `printDevBanner({ primaryUrl: ... })`.
-- Or document in each example's README that `pnpm dev` is API-only
-  and ship a second script (`pnpm dev:web`, or a top-level
-  `concurrently` wrapper).
-
-The load-bearing design choice: should `baerly dev` be a workspace
-orchestrator at all?
+- Or document the two-process flow in each Node example's README
+  and ship a `dev:web` script.
 
 ### 9. `helpdesk-cloudflare` could adopt the banner / log helpers
 
@@ -40,17 +35,10 @@ orchestrator at all?
 wrangler URL plus the vite URL) would improve first-touch UX.
 Related to item 10 — same workspace, related fix.
 
-### 10. Cloudflare-side examples have `[ELIFECYCLE]` noise on Ctrl-C
+### 10. ~~Cloudflare-side examples have `[ELIFECYCLE]` noise on Ctrl-C~~
 
-**STATUS: deferred; blocked on `@cloudflare/vite-plugin` adoption.**
-**Effort:** M (~0.5d once the plugin is wired).
+**STATUS: RESOLVED by the scaffold-flatten branch.**
 
-`examples/helpdesk-cloudflare/` and `examples/minimal-cloudflare/`
-still run `pnpm --parallel vite + wrangler`, so they exhibit the same
-`[ELIFECYCLE]` / `ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL` noise on Ctrl-C
-that the Node-side helpdesk had before the `helpdesk-single-vite`
-branch. The fix shape is **different** there — the right tool is
-`@cloudflare/vite-plugin`, which runs the Worker inside workerd
-inside Vite (genuine single process). The Node-side `baerlyDev()`
-plugin from `@baerly/dev/vite` isn't a fit (different runtime, no
-`http.Server`).
+`examples/minimal-cloudflare/` and `examples/helpdesk-cloudflare/`
+now run `@cloudflare/vite-plugin` (one Vite process; Worker runs
+inside workerd inside Vite). The two-process noise is gone.
