@@ -55,10 +55,7 @@ values.
   });
   ```
 - Stateful classes: model the invariants with `fc.commands` and run the
-  sequence via `fc.modelRun` (sync) or `fc.asyncModelRun` (async). See
-  `packages/protocol/src/o-map.test.ts` for the pattern — `OMap`
-  checked against a plain `Map` reference under arbitrary command
-  interleavings.
+  sequence via `fc.modelRun` (sync) or `fc.asyncModelRun` (async).
 - Failing-seed replay: failure output prints a `seed` and `path`. Paste
   them into `fc.assert(prop, { seed, path })` to reproduce, or just
   rerun the test by name — `@fast-check/vitest` re-seeds automatically
