@@ -7,10 +7,10 @@ import {
   resolve as resolvePath,
   sep as pathSep,
 } from "node:path";
+import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import {
   BaerlyError,
-  type BaerlyErrorCode,
   type MetricsRecorder,
   type Storage,
   type Verifier,
@@ -152,44 +152,26 @@ export interface CreateListenerOptions {
  * ```
  */
 export function createListener(opts: CreateListenerOptions): RequestListener {
-  // Observability wiring. Three pieces, all idempotent + non-blocking
-  // on the request hot path:
-  //
-  // 1. `configureObservability` is called once at factory time.
-  //    Node supports top-level `await`, but the factory is sync, so
-  //    we kick off the configure asynchronously and let LogTape
-  //    queue records emitted before configure resolves. LogTape's
-  //    `configure` is idempotent (we always pass `reset: true`).
-  //    Observability is always on: `resolveDefaultSink` picks the
-  //    pretty sink on a TTY and JSON off-TTY so dev terminals and
-  //    production log aggregators each get the right format without
-  //    any caller-side configuration. To silence non-error lines,
-  //    pass `observability: { sampleRate: 0 }` (head-sampling at 0
-  //    drops all non-error lines; errors are still force-kept).
-  //
-  // 2. `alsAwareRecorder` wraps the operator's MetricsRecorder
-  //    once. Every kernel emission lands in both the operator's
-  //    sink and (when called from inside a `runWithContext` scope)
-  //    the per-request bag. The wrapping is per-factory not
-  //    per-request — the ALS lookup happens at call time.
-  //
-  // 3. `observableStorage` wraps the storage once at factory time
-  //    (the storage handle is operator-owned and pinned per
-  //    deployment, so per-request wrapping would just allocate a
-  //    new closure for no behavior change).
-  // Observability is always on. resolveDefaultSink picks console-pretty
-  // on a TTY and console-json off-TTY; callers override either field
-  // (level / sink / sampleRate) by passing opts.observability.
-  void configureObservability(resolveDefaultSink(opts.observability ?? {}));
-  const operatorRecorder = opts.metrics ?? noopMetricsRecorder;
-  const teeRecorder = alsAwareRecorder(operatorRecorder);
-  const wrappedStorage = observableStorage(opts.storage, teeRecorder);
+  // Build the Fetch handler once. The factory owns observability
+  // wiring, the metrics tee, and storage wrapping — createListener
+  // is now purely the node:http adapter shell.
+  const fetchHandler = createFetchHandler({
+    app: opts.app,
+    storage: opts.storage,
+    verifier: opts.verifier,
+    ...(opts.metrics !== undefined && { metrics: opts.metrics }),
+    ...(opts.observability !== undefined && { observability: opts.observability }),
+    ...(opts.sinceTimeoutMs !== undefined && { sinceTimeoutMs: opts.sinceTimeoutMs }),
+    ...(opts.sincePollIntervalMs !== undefined && {
+      sincePollIntervalMs: opts.sincePollIntervalMs,
+    }),
+  });
 
   return (req: IncomingMessage, res: ServerResponse) => {
     // Fire-and-forget from Node's perspective; `handle` awaits
     // internally and never re-throws. Standard pattern for an async
-    // `node:http` listener.
-    void handle(req, res, opts, wrappedStorage, teeRecorder);
+    // node:http listener.
+    void handle(req, res, opts, fetchHandler);
   };
 }
 
@@ -332,16 +314,13 @@ async function handle(
   req: IncomingMessage,
   res: ServerResponse,
   opts: CreateListenerOptions,
-  storage: Storage,
-  teeRecorder: MetricsRecorder,
+  fetchHandler: (request: Request) => Promise<Response>,
 ): Promise<void> {
-  // /v1/healthz is anonymous; preserves the deploy-probe contract.
   const path = (req.url ?? "/").split("?", 1)[0]!;
-  // Opt-in dev landing page. Off in production (opts.dev unset);
-  // when set, GET / serves HTML and GET /favicon.ico answers 204 so
-  // browsers don't pin a second JSON 404 next to the landing page.
-  // These short-circuit BEFORE context creation — they don't
-  // participate in observability.
+
+  // Opt-in dev landing page (Node-only — returns HTML, isn't part
+  // of the /v1/* surface). Short-circuits BEFORE observability so
+  // it doesn't flood logs.
   if (opts.dev !== undefined && req.method === "GET") {
     if (path === "/") {
       writeHtml(res, 200, renderDevLanding(opts.dev));
@@ -353,20 +332,11 @@ async function handle(
       return;
     }
   }
-  if (req.method === "GET" && path === "/v1/healthz") {
-    writeJson(res, 200, { ok: true });
-    return;
-  }
 
-  // Static-asset branch. Runs only when the caller opted into a
-  // `webRoot`, for GET/HEAD requests that don't target the API
-  // surface. The handler bypasses the verifier (assets are public —
-  // Vite's hashed bundle names act as cache busters, and the SPA
-  // shell is served before auth anyway) and bypasses the canonical
-  // line (static serves are noisy and not part of the observability
-  // contract). If the handler returns `false`, the request falls
-  // through to the verifier-mounted router below, which renders the
-  // kernel's 404 envelope for non-`/v1/*` paths unchanged.
+  // Static-asset branch (Node-fs-specific). Runs only when the
+  // caller opted into a `webRoot`, for GET/HEAD requests that
+  // don't target the API surface. Bypasses verifier + observability
+  // exactly as before.
   if (
     opts.webRoot !== undefined &&
     (req.method === "GET" || req.method === "HEAD") &&
@@ -376,110 +346,41 @@ async function handle(
     if (served) return;
   }
 
-  // Construct the per-request observability context up front so
-  // EVERYTHING downstream — verifier rejection, `Db.create`, the
-  // router dispatch, and the response streaming — runs inside the
-  // same `runWithContext` scope.
-  //
-  // Context lifted into the adapter for cross-host symmetry with the
-  // Cloudflare worker (which also lifts so its cache wrapper can
-  // stamp `cache_status`). Node has no cache layer, so no
-  // `cache_status` field is stamped here.
-  //
-  // The router's observability middleware (T01) detects the ambient
-  // context and passes through — it never creates a competing context,
-  // and it never flushes its own line. The adapter owns the flush.
-  const requestUrl = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
-  const requestId =
-    (Array.isArray(req.headers["x-request-id"])
-      ? req.headers["x-request-id"][0]
-      : req.headers["x-request-id"]) ?? crypto.randomUUID();
-  const sampleRate = getEffectiveSampleRate();
-  const obsCtx = createObservabilityContext({
-    request_id: requestId,
-    sampled_by_head: decideSample(requestId, sampleRate),
-  });
-
+  // Everything else: convert IncomingMessage → Request, delegate
+  // to the Fetch handler, pipeline the Response body back to res.
+  // The hand-rolled IncomingMessage → ReadableStream conversion in
+  // `toFetchRequest` / `readNodeStream` stays — it enforces the
+  // MAX_BODY_BYTES cap with drain-after-exceed semantics that
+  // Readable.toWeb() doesn't preserve.
   const request = toFetchRequest(req);
-  const result = await opts.verifier(request);
-  if (result === null) {
-    // Verifier rejection: wrap in runWithContext so the canonical
-    // line still emits for 401 responses.
-    await runWithContext(obsCtx, async () => {
-      getLogger(CATEGORY.http).warn("verifier_rejected", { reason: "null" });
-      writeError(res, 401, "Unauthorized", "Missing or invalid Authorization header");
-      flushCanonicalLine(obsCtx, obsCtx.recorder, {
-        unit: "http",
-        status: 401,
-        outcome: "error",
-        extra: {
-          method: req.method ?? "GET",
-          path: requestUrl.pathname,
-        },
-      });
-    });
+  let response: Response;
+  try {
+    response = await fetchHandler(request);
+  } catch (err) {
+    // createFetchHandler swallows kernel errors via `mapError`. An
+    // exception here is an unexpected adapter-side fault. Surface
+    // the envelope so node:http doesn't emit an 'error' event and
+    // crash the server.
+    const { status, envelope } = mapError(err);
+    writeJson(res, status, envelope);
     return;
   }
 
-  // Db's `metrics: teeRecorder` carries the tee through to
-  // ServerWriter / compactor / GC emissions so the canonical line
-  // sees kernel-level histograms (class_a_ops_per_logical_write,
-  // 412/429 counters) alongside the storage decorator's per-call
-  // counts. Node has no cache layer so there is no cache_status
-  // discriminator to stamp on the line.
-  await runWithContext(obsCtx, async () => {
-    let outboundStatus = 500;
-    let caughtError: unknown;
-    try {
-      const db = Db.create({
-        storage,
-        app: opts.app,
-        tenant: result.tenantPrefix,
-        metrics: teeRecorder,
-      });
-      const app = createRouter({
-        db,
-        healthCheck: false,
-        sinceTimeoutMs: opts.sinceTimeoutMs,
-        sincePollIntervalMs: opts.sincePollIntervalMs,
-      });
-      const response = await app.fetch(request);
-      outboundStatus = response.status;
-
-      // Stream the Response body back through `res`.
-      res.statusCode = response.status;
-      response.headers.forEach((value, key) => res.setHeader(key, value));
-      if (response.body === null) {
-        res.end();
-      } else {
-        const reader = response.body.getReader();
-        while (true) {
-          const chunk = await reader.read();
-          if (chunk.done) break;
-          res.write(chunk.value);
-        }
-        res.end();
-      }
-    } catch (err) {
-      caughtError = err;
-      // Route through `mapError` so the envelope shape and the 500-path
-      // sanitization stay in lockstep with the Hono router.
-      const { status, envelope } = mapError(err);
-      outboundStatus = status;
-      writeJson(res, status, envelope);
-    } finally {
-      flushCanonicalLine(obsCtx, obsCtx.recorder, {
-        unit: "http",
-        status: outboundStatus,
-        outcome: deriveOutcome(req.method ?? "GET", outboundStatus, caughtError),
-        ...(caughtError !== undefined && { error: caughtError }),
-        extra: {
-          method: req.method ?? "GET",
-          path: requestUrl.pathname,
-        },
-      });
-    }
-  });
+  res.statusCode = response.status;
+  response.headers.forEach((value, key) => res.setHeader(key, value));
+  if (response.body === null) {
+    res.end();
+    return;
+  }
+  // Response.body is the global WHATWG ReadableStream; Readable.fromWeb
+  // wants node:stream/web's ReadableStream. They're structurally
+  // identical at runtime; the cast bridges the type-only difference.
+  await pipeline(
+    Readable.fromWeb(
+      response.body as unknown as import("node:stream/web").ReadableStream<Uint8Array>,
+    ),
+    res,
+  );
 }
 
 /**
@@ -567,15 +468,6 @@ function writeJson(res: ServerResponse, status: number, body: unknown): void {
     "Content-Length": String(Buffer.byteLength(payload)),
   });
   res.end(payload);
-}
-
-function writeError(
-  res: ServerResponse,
-  status: number,
-  code: BaerlyErrorCode,
-  message: string,
-): void {
-  writeJson(res, status, errorEnvelope(code, message));
 }
 
 function writeHtml(res: ServerResponse, status: number, body: string): void {
