@@ -95,25 +95,9 @@ export const S3_REQUEST_MAX_RETRIES: number = 8;
  * / 1000 total) and leaving headroom for the writer's content / index
  * / log / CAS PUTs sharing the same isolate.
  *
- * Bounded fan-out only changes behavior on a cold cache; warm reads
- * are absorbed by {@link MEM_CACHE_CAPACITY} regardless.
- *
  * @see packages/server/src/log-walk.ts (`walkLogRange`)
  */
 export const MAX_PARALLEL_LOG_READS: number = 16;
-
-/**
- * Maximum number of `getObject` responses retained in Baerly's in-memory
- * cache (keyed by `(Bucket, Key, VersionId, IfNoneMatch)`).
- *
- * The cache exists to coalesce repeat reads of the same content version
- * during a single tab session. With `useVersioning: true` every write
- * mints a new `VersionId`, so an unbounded cache pins every historical
- * version forever and grows linearly with write volume. 100 entries is
- * generous for the typical "current value plus a few in-flight reads"
- * working set while keeping memory bounded.
- */
-export const MEM_CACHE_CAPACITY: number = 100;
 
 /**
  * Current major version of the `current.json` control-object schema.
