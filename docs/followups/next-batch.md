@@ -135,20 +135,6 @@ lib (memory item: that shim is load-bearing — coordinate the bump
 with deleting the per-example `uint8array-base64.d.ts` shim once
 the lib lists it natively).
 
-### 8. Wrangler `compatibility_date` is stale
-
-**STATUS: deferred; quick hygiene before next CF deploy.**
-**Effort:** XS (~5 min).
-
-Both `examples/{minimal,helpdesk}-cloudflare/wrangler.jsonc` pin
-`compatibility_date: "2025-06-01"`. Today is 2026-05-18 — almost
-a year of `workerd` semantic improvements left on the floor. Bump
-to a recent date (e.g. `"2026-05-01"`) and verify the worker test
-suite still passes under the new flag set. Also worth touching
-the `tests/setup/r2-binding.ts` miniflare config
-(`compatibilityDate: "2025-01-01"` per `vitest.config.ts`) at the
-same time.
-
 ### 9. `examples/minimal-node-docker/Dockerfile` has avoidable rough edges
 
 **STATUS: deferred; pre-1.0 polish.**
@@ -293,36 +279,20 @@ workspace names to `baerly-storage`/`baerly-storage/auth`/
 Option (a) is the cleaner path. Until this lands, `npm create
 baerly@latest` produces apps that don't compile.
 
-#### A2. `llms.txt` describes the wrong architecture — **HIGH**
-
-Current content: "runs entirely client-side over any
-S3-compatible storage. No server. The client polls a
-time-ordered manifest log to sync state across writers."
-Reality: `Db` runs server-side behind a Verifier; clients hit
-HTTP via `@baerly/client`. An agent reading `llms.txt` first
-will produce confidently broken code.
-
-**Fix:** Rewrite to match reality. Better: replace the doc-
-pointer section with a minimal zero-shot snippet that mirrors
-what `create-baerly` actually scaffolds.
-
 #### A3. README "Quick start" can't be followed — **HIGH**
 
-(a) The "Quick start" block admits `pnpm dlx create-baerly@latest`
+The "Quick start" block admits `pnpm dlx create-baerly@latest`
 "doesn't resolve end-to-end" and tells users to clone and run
-inside the workspace. That's not a quick start — that's "don't
-use this yet."  (b) The "Or wire it by hand" snippet imports
+inside the workspace. The "Or wire it by hand" snippet imports
 `createListener` from `@baerly/adapter-node`, `sharedSecret`
 from `@baerly/server/auth`, `LocalFsStorage` + `ensureTable`
-from `@baerly/dev` — three packages that won't resolve from a
-published `baerly-storage`. (c) README claims support for
-"Backblaze" but no Backblaze factory or conformance test exists
-in the repo (GCS exists but is missing from the claim).
+from `@baerly/dev` — three workspace packages a user can't
+install from npm. This is the user-facing face of **A1**
+(package-name schism); resolve them together.
 
 **Fix:** Either land the publishes before the README ships, or
 mark the README as preview and replace the snippets with the
-one path that *works today*. Drop the Backblaze claim or add a
-factory + conformance run.
+one path that *works today*.
 
 #### A4. The top-level `baerly-storage` barrel re-exports ~50 internal symbols — **HIGH**
 
@@ -418,45 +388,6 @@ pay tax to keep `Db` "library-agnostic" for a use case nobody has.
 
 **Fix:** `Db.create` accepts `BaerlyConfig["collections"]`
 directly and flattens internally. One shape, one path.
-
-#### A10. JSDoc on `Table.where` says "no `$gt`/`$in`/`$or`" — but the validator + evaluator ship all of those — **HIGH**
-
-`packages/protocol/src/db.ts:18-21`: "Day-one operator policy:
-equality + dotted-path only — no `$or` / `$gt` / `$in` /
-`$regex`." Reality: `PredicateOp` in `query/predicate.ts:55-62`
-exports `$eq | $gt | $gte | $lt | $lte | $in` and the validator,
-evaluator, and merger all handle them. An LLM reading the
-`.d.ts` will believe range ops are unsupported and refuse to
-emit them.
-
-**Fix:** Update `Table.where` JSDoc to enumerate the supported
-operators; add an `@example` showing `{ count: { $gte: 1 } }`
-and `{ status: { $in: ["open", "pending"] } }`.
-
-#### A11. JSDoc ticket-references leak internal planning into the IDE hover — **MEDIUM**
-
-Multiple JSDoc strings cite "ticket 38", "ticket 10 §7", "ticket
-11/16/26/70", "Phase 5/8", `.claude/research/planning/tickets/…`.
-Users see these in IDE hover; they belong in commit messages.
-
-**Fix:** `grep -rn "ticket [0-9]\|Phase [0-9]\|\\.claude/research"
-packages/` and strip from JSDoc. Found in `config.ts:3`,
-`table.ts:11-12`, `db.ts:482-486`, `query.ts:29-31`,
-`server-writer.ts:33-34`, `maintenance.ts:15`, and many more.
-
-#### A12. Seven stale JSDoc references to a `Syncer` class that doesn't exist — **HIGH**
-
-`packages/protocol/src/constants.ts:5,26,50,94,231`,
-`log.ts:27,144`, `server-writer.ts:27`, `since.ts:46` all
-describe constants/helpers in terms of `Syncer.isValid`,
-`Syncer.getLatest`, `Syncer.classifyMissingContent`,
-`Syncer.generate_manifest_key()`, `Syncer.updateContent`. No
-`Syncer` class exists. Largest doc-rot vector in the kernel.
-
-**Fix:** Rewrite each block against the actual call site
-(`ServerWriter`, `walkLogRange`). Where the underlying invariant
-is gone (e.g. `MANIFEST_LIST_LOOKAHEAD_MILLIS`), delete the
-constant too.
 
 #### A13. `BaerlyErrorCode.OfflineNoCache` has no producer — **MEDIUM**
 
@@ -1004,8 +935,8 @@ or move into `query/` next to `predicate.ts`.
 `MANIFEST_LIST_LOOKAHEAD_MILLIS`, `SYNCER_CLOCK_SKEW_MAX_RETRIES`,
 `MEM_CACHE_CAPACITY`, `ORPHAN_MANIFEST_GRACE_MILLIS` are
 referenced only from `constants.ts` itself + dead JSDoc
-pointing at the (also dead) `Syncer` (see A12). `SESSION_ID_LENGTH`
-has 2 callers and could be inlined.
+pointing at a `Syncer` class that no longer exists.
+`SESSION_ID_LENGTH` has 2 callers and could be inlined.
 
 **Fix:** Delete all four. Inline `SESSION_ID_LENGTH = 6` at
 the two `slice(0, 6)` sites.
@@ -1877,16 +1808,6 @@ without `vitest` in devDeps.
 `smoke.test.ts` (round-trip the client against `LocalFsStorage`
 or R2 binding). The latter is much higher value at scaffold time.
 
-#### H4. `helpdesk/apps/` is empty stale scaffolder ceremony — **MEDIUM**
-
-`examples/helpdesk/apps/server/` and `apps/web/` contain only
-`node_modules` and untracked `dist/`. The flatten landed; the
-`apps/` layout is dead. Anyone reading helpdesk wonders if
-`apps/` belongs.
-
-**Fix:** `rm -rf examples/helpdesk/apps/`. Add to `.gitignore`
-(see H6).
-
 #### H5. `helpdesk/.baerly-data/` is committed but seed lives in a Vite plugin — **MEDIUM**
 
 14 JSON files of helpdesk-demo manifest/log/content checked
@@ -2018,16 +1939,6 @@ CF Access at all — move CF Access wiring to a fenced "Upgrade
 to CF Access" section in AGENTS.md. Ship `sharedSecret` only
 in `src/server/index.ts`.
 
-#### H18. `examples/README.md` minimal-node-railway/minimal-node-docker "Run it" block is stale — **LOW**
-
-Says `BUCKET=... AWS_ACCESS_KEY_ID=... pnpm dev`. Template's
-own README correctly says `pnpm dev` is creds-free (uses
-`baerly dev` → `LocalFsStorage`). Catalog README didn't get
-the memo.
-
-**Fix:** Update catalog README's Node template blocks. Clarify
-`pnpm dev` is creds-free; creds are for `pnpm start` / prod.
-
 #### H19. `.gitignore` files drift across templates (4 different shapes) — **LOW**
 
 Trailing-slash vs no-trailing-slash, base entries differ.
@@ -2069,15 +1980,6 @@ default), the build fails.
 **Fix:** Replace `dist/server` with `dist/`. Dockerfile
 re-derives `dist/client` from the build stage; local `dist/`
 is build noise.
-
-#### H23. READMEs reference phantom file names (`worker.ts`, `server.ts`) — **LOW**
-
-`minimal-cloudflare/README.md:143` mentions "the emitted
-`worker.ts`" — file is `src/server/index.ts`.
-`minimal-node-railway/README.md:135` mentions `server.ts` —
-also `src/server/index.ts`.
-
-**Fix:** Search-and-replace across READMEs.
 
 #### H24. AGENTS.md "Indexes" example imports `defineConfig` from `@baerly/server` — the shipped file uses `create-baerly/config` — **MEDIUM**
 
