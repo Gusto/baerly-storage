@@ -15,11 +15,12 @@
  * writer-retry window — a paused-process writer that resumes hours
  * later still finds its idempotency anchor on the bucket.
  *
- * Idempotent and bounded. Idempotent: same input bucket state ⇒ same
- * `pending.json` output. Bounded: capped at `maxMarksPerRun` LIST
- * entries scanned per category and `maxSweepsPerRun` DELETEs. Sized
- * by default to fit the Cloudflare 50-subrequest free-tier cap when
- * called alongside `compact()`.
+ * Idempotent: same input bucket state ⇒ same `pending.json` output.
+ * Unbounded by default — the run marks and sweeps the entire eligible
+ * set in one pass. Callers on the Cloudflare 50-subrequest free-tier
+ * budget opt INTO caps via the `CLOUDFLARE_FREE_TIER` profile's
+ * `gc.maxMarksPerRun` / `maxSweepsPerRun` knobs (`InternalRunGcOptions`,
+ * not on the public `RunGcOptions`).
  *
  * Three categories of orphan:
  *   - `stale-log`: `<tablePrefix>/log/<seq>.json` with

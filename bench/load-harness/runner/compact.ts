@@ -56,7 +56,7 @@ export async function runCompact(opts: CompactOpts): Promise<CompactResult> {
       { storage: opts.storage as unknown as Storage, currentJsonKey: key },
       PROFILES[opts.profile],
     );
-    perTableEntriesFolded[key] = res.compact?.entriesFolded ?? 0;
+    perTableEntriesFolded[key] = res.compact.entriesFolded;
   }
 
   return {

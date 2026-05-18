@@ -234,13 +234,10 @@ read it via your editor's TS LS or via the published types).
   read these fields:
 
   - `compact_written` — log entries folded into the new snapshot
-    this tick (`0` when compact was skipped or the live tail was
-    below `minEntriesToCompact`).
-  - `gc_swept` — keys deleted this tick (`0` when GC was skipped
-    or no candidates aged out).
-  - `compact_skipped` / `gc_skipped` — `true` when the caller
-    alternated this phase away (not used by the default Node
-    interval, but available for custom schedulers that toggle).
+    this tick (`0` when the live tail was below
+    `minEntriesToCompact`).
+  - `gc_swept` — keys deleted this tick (`0` when no candidates
+    aged out).
   - The kernel also emits the recorder-bag fields alongside:
     `db.compact.entries_folded_p50` / `_p99` / `_count` / `_sum`,
     `db.manifest.lag_window_depth`, `db.orphan.candidate_count`,

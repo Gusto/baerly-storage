@@ -198,8 +198,8 @@ describe("Synthetic 5000-entry end-to-end gate", () => {
               { storage, currentJsonKey: CURRENT_JSON_KEY },
               QUIESCE_PROFILE,
             );
-            const folded = res.compact?.entriesFolded ?? 0;
-            const swept = res.gc?.swept ?? 0;
+            const folded = res.compact.entriesFolded;
+            const swept = res.gc.swept;
             if (folded === 0 && swept === 0) break;
           }
           expect(passes).toBeLessThan(20);

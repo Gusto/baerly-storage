@@ -43,9 +43,9 @@ export async function runCompactorLoop(
     try {
       result = await runScheduledMaintenance({ storage, currentJsonKey }, {});
       counters.passes++;
-      if (result.compact?.written === true) counters.compactsLanded++;
-      if (result.compact?.skippedReason === "cas-lost") counters.compactsCasLost++;
-      counters.gcSwept += result.gc?.swept ?? 0;
+      if (result.compact.written) counters.compactsLanded++;
+      if (result.compact.skippedReason === "cas-lost") counters.compactsCasLost++;
+      counters.gcSwept += result.gc.swept;
     } catch (e) {
       counters.errors++;
       // Don't surface — methodology counts errors and continues. A
