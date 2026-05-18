@@ -1297,10 +1297,9 @@ describe("auto-planner range and $in walks (T3)", () => {
     // batched fan-out replaced a sequential per-value loop; if a
     // regression dropped a value or duplicated a doc this would trip.
     //
-    // Writes go through `ServerWriter` with `options.indexes` directly
-    // because `Db.create({ indexes })` only threads to the planner,
-    // not to the writer's per-commit index emission (matches the
-    // numeric-range smoke test above).
+    // Seed via `ServerWriter` directly for setup convenience —
+    // equivalent to a `Db.create({ indexes })` path now that the
+    // production wiring threads `options.indexes`.
     await provision(storage);
     const writer = new ServerWriter({
       storage,

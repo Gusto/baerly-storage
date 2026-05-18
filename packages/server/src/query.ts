@@ -339,7 +339,10 @@ const writerFor = (ctx: TableReadContext): ServerWriter =>
   new ServerWriter({
     storage: ctx.storage,
     currentJsonKey: `${ctx.tablePrefix}/current.json`,
-    ...(ctx.metrics !== undefined ? { options: { metrics: ctx.metrics } } : {}),
+    options: {
+      ...(ctx.metrics !== undefined ? { metrics: ctx.metrics } : {}),
+      indexes: ctx.indexes,
+    },
   });
 
 /**
