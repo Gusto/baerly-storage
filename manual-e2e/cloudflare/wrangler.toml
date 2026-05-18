@@ -4,7 +4,7 @@
 
 name = "baerly-e2e-cf"
 main = "worker-entry.ts"
-compatibility_date = "2025-06-01"
+compatibility_date = "2026-05-01"
 compatibility_flags = ["nodejs_compat"]
 
 # R2 binding. Bucket must exist before `wrangler deploy`; create it

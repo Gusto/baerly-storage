@@ -5,7 +5,7 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "minimal-cloudflare",
   "main": "./src/server/index.ts",
-  "compatibility_date": "2025-06-01",
+  "compatibility_date": "2026-05-01",
   "compatibility_flags": ["nodejs_compat"],
 
   // R2 binding. `baerly deploy --target=cloudflare` auto-creates
