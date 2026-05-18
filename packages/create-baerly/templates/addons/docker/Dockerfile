@@ -1,4 +1,4 @@
-# Production Dockerfile emitted by `create-baerly --target=node-docker`.
+# Production Dockerfile emitted by `create-baerly --target=node --with=docker`.
 # Distroless final stage, non-root user, HEALTHCHECK via a Node
 # script (distroless ships no wget/curl).
 #
@@ -41,9 +41,9 @@ COPY --from=build --chown=nonroot:nonroot /app/package.json package.json
 COPY --from=build --chown=nonroot:nonroot /app/node_modules node_modules
 
 # OCI image labels — registries surface these.
-LABEL org.opencontainers.image.title="minimal-node-docker"
+LABEL org.opencontainers.image.title="minimal-node"
 LABEL org.opencontainers.image.description="Baerly app — vendorless document database."
-LABEL org.opencontainers.image.source="https://github.com/your-org/minimal-node-docker"
+LABEL org.opencontainers.image.source="https://github.com/your-org/minimal-node"
 
 ENV NODE_ENV=production
 ENV PORT=8080

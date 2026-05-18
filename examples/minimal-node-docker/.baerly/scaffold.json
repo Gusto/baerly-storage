@@ -1,8 +1,0 @@
-{
-  "renames": [
-    { "from": "minimal-node-docker", "fromKey": "appName" },
-    { "from": "minimal-demo", "fromKey": "tenant" }
-  ],
-  "excludePaths": [".baerly/scaffold.json"],
-  "dropDevDeps": []
-}
