@@ -54,11 +54,11 @@ describe("runScheduledMaintenance", () => {
       // the entire live tail.
       { gc: { graceMillis: 0 } as InternalRunGcOptions },
     );
-    expect(r.compact?.written).toBe(true);
-    expect(r.compact?.entriesFolded).toBe(150);
+    expect(r.compact.written).toBe(true);
+    expect(r.compact.entriesFolded).toBe(150);
     // After compact, [0, 150) become stale-log; GC marks them and the
     // zero-grace lets the same pass sweep them.
-    expect(r.gc?.marked.stale_log).toBeGreaterThan(0);
+    expect(r.gc.marked.stale_log).toBeGreaterThan(0);
   });
 
   it("runGc alone runs without compact", async () => {
