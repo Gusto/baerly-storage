@@ -4,7 +4,6 @@ export * from "./coordination/gc-pending.ts";
 export * from "./db.ts";
 export * from "./errors.ts";
 export * from "./json.ts";
-export * from "./o-map.ts";
 export * from "./query/index.ts";
 export * from "./storage/index.ts";
 export * from "./time.ts";
