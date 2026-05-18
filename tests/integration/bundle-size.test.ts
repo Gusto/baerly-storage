@@ -73,7 +73,12 @@ const BUDGETS: readonly Budget[] = [
   //     to the bundled path.
   //   → 101 KiB gz: pretty sink + picocolors moved behind a dynamic
   //     import (`logger-pretty.ts` chunk).
-  { entry: "index.js", raw: 347 * 1024, gz: 101 * 1024 },
+  //   → 388 KiB raw / 112 KiB gz: protocol re-exports widened to
+  //     include MemoryStorage + InMemoryMetricsRecorder + Storage
+  //     result types + Verifier (curated 11-symbol public surface
+  //     on @baerly/server's barrel); MemoryStorage value export
+  //     lands in the static closure.
+  { entry: "index.js", raw: 388 * 1024, gz: 112 * 1024 },
   // Just the five auth verifier factories. Adding a sixth grows
   // this budget, not the kernel's.
   { entry: "auth.js", raw: 34 * 1024, gz: 12 * 1024 },
@@ -96,7 +101,11 @@ const BUDGETS: readonly Budget[] = [
   // transitively (every work unit runs under withObservability).
   // Operator-side; not part of the kernel barrel as of T01.
   // ~142 KiB raw.
-  { entry: "maintenance.js", raw: 142 * 1024, gz: 40 * 1024 },
+  // Budget history:
+  //   → 157 KiB raw / 44 KiB gz: InMemoryMetricsRecorder added to
+  //     @baerly/server's curated protocol re-exports; marginal cost
+  //     from the recorder class landing in the maintenance closure.
+  { entry: "maintenance.js", raw: 157 * 1024, gz: 44 * 1024 },
 ];
 
 // Static-import specifiers only. Dynamic `import(...)` is intentionally

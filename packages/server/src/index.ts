@@ -88,32 +88,43 @@ export {
 } from "./auth/index.ts";
 
 /**
- * Re-export of {@link claimWriter} from `@baerly/protocol`. Bumping
- * the fence causes any in-flight {@link ServerWriter} commit
- * holding the prior epoch to fail-fast with
- * `BaerlyError{code:"Conflict"}` after its CAS PUT lands (the
- * stale writer's CAS itself may succeed — the fence check is
- * post-write — but the commit return is aborted before the
- * caller observes success). Reserved for admin rotation
- * workflows and initial provisioning. Do NOT call from a
- * normal write path; the fence is split-brain prevention, not
- * a retry primitive.
+ * Curated re-export of `@baerly/protocol`'s user-facing symbols.
+ * Users only ever import from `@baerly/server`; protocol is an
+ * implementation detail of this package and the adapter packages.
+ *
+ * - {@link BaerlyError} / {@link BaerlyErrorCode}: every failure
+ *   thrown through this surface is a `BaerlyError`; consumers
+ *   branch on `error.code` rather than `instanceof` chains.
+ * - {@link Query} / {@link Table}: the locked predicate-AST
+ *   interfaces returned by `Db.table(...)`. Consumers that
+ *   destructure the chain need the named types.
+ * - {@link claimWriter}: bumps the writer-fence epoch. Reserved
+ *   for admin rotation workflows and initial provisioning. Do
+ *   NOT call from a normal write path; the fence is split-brain
+ *   prevention, not a retry primitive.
+ * - {@link Storage} + its result types
+ *   ({@link StorageGetResult}, {@link StorageListEntry},
+ *   {@link StoragePutResult}): the interface every storage adapter
+ *   implements, with the return shapes adapter authors need to
+ *   name.
+ * - {@link MemoryStorage}: in-process `Storage` impl for tests
+ *   and zero-infra dev.
+ * - {@link InMemoryMetricsRecorder}: observability recorder users
+ *   wire into `Db` for tests and dev probes.
+ * - {@link Verifier}: the request-verifier interface that auth
+ *   presets and adapter wiring consume.
  */
-export { claimWriter } from "@baerly/protocol";
-
-/**
- * Re-export of {@link BaerlyError} and its discriminator type from
- * `@baerly/protocol`. Every failure thrown through this surface is
- * an `BaerlyError`; consumers branch on `error.code` (a
- * {@link BaerlyErrorCode}) rather than `instanceof` chains.
- */
-export { BaerlyError, type BaerlyErrorCode } from "@baerly/protocol";
-
-/**
- * Re-export of the locked predicate-AST `Table<T>` and `Query<T>`
- * interfaces from `@baerly/protocol`. These name the read/write
- * handles returned by `Db.table(...)`; consumers that destructure
- * the chain (`type T = Awaited<ReturnType<...>>`) need the named
- * types.
- */
-export type { Query, Table } from "@baerly/protocol";
+export {
+  BaerlyError,
+  type BaerlyErrorCode,
+  claimWriter,
+  InMemoryMetricsRecorder,
+  MemoryStorage,
+  type Query,
+  type Storage,
+  type StorageGetResult,
+  type StorageListEntry,
+  type StoragePutResult,
+  type Table,
+  type Verifier,
+} from "@baerly/protocol";
