@@ -3,7 +3,8 @@ import { type MetricsRecorder, type Verifier, noopMetricsRecorder } from "@baerl
 import { Db, createRouter, errorEnvelope } from "@baerly/server";
 import {
   CLOUDFLARE_FREE_TIER,
-  CLOUDFLARE_PAID_TIER,
+  compact,
+  runGc,
   runScheduledMaintenance,
 } from "@baerly/server/maintenance";
 import {
@@ -108,10 +109,21 @@ export interface BaerlyWorkerOptions {
   readonly handler?: WorkerHandler;
   /**
    * Optional override for the scheduled (Cron Trigger) tick. The
-   * default handler reads `env.CURRENT_JSON_KEY` (no-op if unset),
-   * picks {@link CLOUDFLARE_FREE_TIER} or {@link CLOUDFLARE_PAID_TIER}
-   * from `env.CF_TIER`, and calls `runScheduledMaintenance()` via
-   * `ctx.waitUntil()`. Multi-tenant deployments override here.
+   * default handler reads `env.CURRENT_JSON_KEY` (no-op if unset)
+   * and dispatches via `ctx.waitUntil()` based on `env.CF_TIER`:
+   *
+   *   - `"paid"` → one `runScheduledMaintenance()` per tick with
+   *     engine defaults (unbounded). The 10k-subrequest budget
+   *     comfortably folds the whole live tail and runs GC.
+   *   - anything else (free tier) → alternate phases by minute:
+   *     even-minute ticks call `compact()` with the
+   *     {@link CLOUDFLARE_FREE_TIER} compact caps; odd-minute ticks
+   *     call `runGc()` with the {@link CLOUDFLARE_FREE_TIER} gc
+   *     caps. Either phase alone fits well under the 50-subrequest
+   *     free-tier budget; running both per tick can overflow.
+   *
+   * Multi-tenant deployments override here to iterate `current.json`
+   * keys or implement bespoke scheduling.
    */
   readonly scheduled?: WorkerScheduledHandler;
   /**
@@ -404,25 +416,35 @@ export function baerlyWorker(options: BaerlyWorkerOptions): ExportedHandler<Env>
         return;
       }
       const isPaid = env.CF_TIER === "paid";
-      const profile = isPaid ? CLOUDFLARE_PAID_TIER : CLOUDFLARE_FREE_TIER;
       // Storage wrapping mirrors the fetch path so the maintenance
       // canonical line (emitted by `withObservability("maintenance")`
-      // inside `runScheduledMaintenance`) carries per-call storage
-      // counts too.
+      // inside `runScheduledMaintenance` / `compact` / `runGc`)
+      // carries per-call storage counts too.
       const storage = observableStorage(r2BindingStorage(env.BUCKET), teeRecorder);
-      // Even-minute → compact, odd-minute → GC. Halves the per-tick
-      // subrequest budget on free tier (each phase fits well under
-      // 50 ops; combined can exceed when the live tail is long).
-      // Paid tier (10k cap) runs both phases every tick.
       const minute = new Date(event.scheduledTime).getUTCMinutes();
-      const skipCompact = !isPaid && minute % 2 !== 0;
-      const skipGc = !isPaid && minute % 2 === 0;
-      ctx.waitUntil(
-        runScheduledMaintenance(
-          { storage, currentJsonKey: env.CURRENT_JSON_KEY },
-          { ...profile, skipCompact, skipGc, metrics: teeRecorder },
-        ).then(() => undefined),
-      );
+      const args = { storage, currentJsonKey: env.CURRENT_JSON_KEY };
+      if (isPaid) {
+        // Paid tier has 10k subrequest budget — let engine defaults
+        // (unbounded) fold the whole live tail in one tick.
+        ctx.waitUntil(
+          runScheduledMaintenance(args, { metrics: teeRecorder }).then(() => undefined),
+        );
+      } else if (minute % 2 === 0) {
+        // Free tier: even-minute compact-only. CLOUDFLARE_FREE_TIER's
+        // compact bounds (maxEntriesPerRun: 20, minEntriesToCompact: 50)
+        // ride along on the spread at runtime.
+        ctx.waitUntil(
+          compact(args, { ...CLOUDFLARE_FREE_TIER.compact, metrics: teeRecorder }).then(
+            () => undefined,
+          ),
+        );
+      } else {
+        // Free tier: odd-minute gc-only. CLOUDFLARE_FREE_TIER's gc bounds
+        // (maxMarksPerRun: 20, maxSweepsPerRun: 10) ride along.
+        ctx.waitUntil(
+          runGc(args, { ...CLOUDFLARE_FREE_TIER.gc, metrics: teeRecorder }).then(() => undefined),
+        );
+      }
     },
   };
 }

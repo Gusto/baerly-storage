@@ -26,6 +26,9 @@ import {
   type InternalCompactOptions,
 } from "./compactor.ts";
 import { runGc, type InternalRunGcOptions, type RunGcOptions, type RunGcResult } from "./gc.ts";
+
+export { compact } from "./compactor.ts";
+export { runGc } from "./gc.ts";
 import { getCurrentContext, withObservability } from "./observability/index.ts";
 
 export interface MaintenanceArgs {

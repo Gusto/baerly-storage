@@ -9,9 +9,11 @@
  * `ExecutionContext` / `ScheduledController` types resolve and the
  * R2 binding is real.
  *
- * Two cases:
- *   - even-minute branch invokes `runScheduledMaintenance` with
- *     `skipGc: true` ⇒ compact lands (snapshot pointer set).
+ * Three cases:
+ *   - free-tier even-minute branch invokes `compact()` directly ⇒
+ *     compact lands (snapshot pointer set), GC does not.
+ *   - free-tier odd-minute branch invokes `runGc()` directly ⇒
+ *     `pending.json` is bootstrapped, no snapshot is written.
  *   - empty `CURRENT_JSON_KEY` is a no-op (nothing touched on the
  *     bucket).
  */

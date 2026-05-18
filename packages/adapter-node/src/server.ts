@@ -18,7 +18,7 @@ import {
 } from "@baerly/protocol";
 import { type DevLandingOptions, renderDevLanding } from "@baerly/dev";
 import { Db, MAX_BODY_BYTES, createRouter, errorEnvelope, mapError } from "@baerly/server";
-import { NODE_PROFILE, runScheduledMaintenance } from "@baerly/server/maintenance";
+import { runScheduledMaintenance } from "@baerly/server/maintenance";
 import {
   CATEGORY,
   type ObservabilityConfig,
@@ -651,8 +651,9 @@ export interface NodeMaintenanceOptions {
 
 /**
  * Run one pass of compaction + GC for one collection. Node hosts have
- * no subrequest cap, so the {@link NODE_PROFILE} lets a single pass
- * fold the entire live tail and sweep up to 1000 candidates per run.
+ * no subrequest cap, so this uses the engine defaults (unbounded) —
+ * a single pass folds the entire live tail and sweeps every aged-out
+ * candidate.
  *
  * Pair with `node-cron`, systemd timers, or k8s CronJobs — this
  * function is a single-shot callable that does not loop. Errors
@@ -687,7 +688,6 @@ export const runMaintenanceTick = async (opts: NodeMaintenanceOptions): Promise<
       currentJsonKey: opts.currentJsonKey,
     },
     {
-      ...NODE_PROFILE,
       ...(opts.signal !== undefined && { signal: opts.signal }),
       metrics: teeRecorder,
     },
