@@ -329,7 +329,7 @@ describe("scaffold", () => {
   // End-to-end scaffold + rename. Drives the scaffolder for each
   // target + starter combination with concrete user inputs into a
   // tmpdir and validates the post-substitute invariants the CLI relies
-  // on: package.json identity, baerly.config.ts content, @baerly/*
+  // on: package.json identity, baerly.config.ts content, baerly-storage
   // version pinning, dropped devDeps, excluded paths, and AGENTS.md /
   // CLAUDE.md parity. Subsumes the older single-target smoke checks
   // above for the rewrite-correctness side of the contract.
@@ -386,7 +386,7 @@ describe("scaffold", () => {
         expect(config).not.toContain(sentinel);
       }
 
-      // 3. `@baerly/*` workspace deps pinned to a real semver. All deps
+      // 3. `baerly-storage` workspace dep pinned to a real semver. All deps
       //    live at the package root in the flat layout, so we anchor
       //    on `topPkg` directly.
       const topPkgFull = JSON.parse(
@@ -395,17 +395,14 @@ describe("scaffold", () => {
         dependencies?: Record<string, string>;
         devDependencies?: Record<string, string>;
       };
-      const baerlyDep =
-        Object.entries(topPkgFull.dependencies ?? {}).find(([k]) => k.startsWith("@baerly/")) ??
-        Object.entries(topPkgFull.devDependencies ?? {}).find(([k]) => k.startsWith("@baerly/"));
-      expect(baerlyDep, "expected at least one @baerly/* dependency").toBeDefined();
-      const [, baerlyVersion] = baerlyDep!;
-      expect(baerlyVersion).not.toBe("workspace:*");
-      expect(baerlyVersion).toMatch(/^\^?\d+\.\d+\.\d+/);
+      const baerlyStorageVersion = topPkgFull.dependencies?.["baerly-storage"];
+      expect(baerlyStorageVersion, "expected baerly-storage in dependencies").toBeDefined();
+      expect(baerlyStorageVersion).not.toBe("workspace:*");
+      expect(baerlyStorageVersion).toMatch(/^\^?\d+\.\d+\.\d+/);
 
       // 4. `create-baerly` kept in devDependencies (the emitted
       //    `baerly.config.ts` imports `create-baerly/config`) and
-      //    pinned to a real semver alongside the `@baerly/*` deps.
+      //    pinned to a real semver alongside `baerly-storage`.
       const createBaerlyVersion = topPkg.devDependencies?.["create-baerly"];
       expect(createBaerlyVersion).toBeDefined();
       expect(createBaerlyVersion).not.toBe("workspace:*");

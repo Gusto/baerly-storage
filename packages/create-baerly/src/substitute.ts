@@ -9,7 +9,7 @@
  *      shorter one it contains as a prefix ("minimal-cloudflare").
  *
  *   2. package.json normalisation. For files named `package.json`,
- *      any `workspace:*` value under a dep key matching `@baerly/*`
+ *      any `workspace:*` value under a dep key matching `baerly-storage`
  *      *or* the literal `create-baerly` is pinned to `^<cliVersion>`
  *      (the scaffolder + CLI ship at the same version, and the
  *      emitted `baerly.config.ts` imports `create-baerly/config`),
@@ -60,7 +60,7 @@ export const substituteText = (text: string, ctx: SubstituteContext): string => 
 /**
  * Rewrite a package.json's text content. Applies sentinel renames
  * first (covers the `"name"` field and any other string), then pins
- * `@baerly/*` (and `create-baerly`) workspace deps to the CLI
+ * `baerly-storage` (and `create-baerly`) workspace deps to the CLI
  * version, and drops listed devDependencies.
  */
 export const substitutePackageJson = (text: string, ctx: SubstituteContext): string => {
@@ -76,7 +76,7 @@ export const substitutePackageJson = (text: string, ctx: SubstituteContext): str
     if (deps === undefined) continue;
     for (const [name, value] of Object.entries(deps)) {
       if (value !== "workspace:*") continue;
-      if (name.startsWith("@baerly/") || name === "create-baerly") deps[name] = pin;
+      if (name === "baerly-storage" || name === "create-baerly") deps[name] = pin;
     }
   }
   if (pkg.devDependencies !== undefined) {

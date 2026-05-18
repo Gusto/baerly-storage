@@ -50,24 +50,38 @@ describe("substituteText", () => {
 });
 
 describe("substitutePackageJson", () => {
-  it("pins @baerly/* workspace deps to the cli version", () => {
+  it("pins baerly-storage workspace dep to the cli version", () => {
     const ctx = mkCtx({ renames: [], excludePaths: [], dropDevDeps: [] }, {});
     const text = JSON.stringify(
-      { name: "x", dependencies: { "@baerly/server": "workspace:*", other: "1.0.0" } },
+      { name: "x", dependencies: { "baerly-storage": "workspace:*", other: "1.0.0" } },
       null,
       2,
     );
     const out = JSON.parse(substitutePackageJson(text, ctx)) as {
       dependencies: Record<string, string>;
     };
-    expect(out.dependencies["@baerly/server"]).toBe("^1.2.3");
+    expect(out.dependencies["baerly-storage"]).toBe("^1.2.3");
     expect(out.dependencies["other"]).toBe("1.0.0");
+  });
+
+  it("does not pin unrelated workspace:* dep names", () => {
+    const ctx = mkCtx({ renames: [], excludePaths: [], dropDevDeps: [] }, {});
+    const text = JSON.stringify(
+      { name: "x", dependencies: { "@baerly/protocol": "workspace:*", other: "workspace:*" } },
+      null,
+      2,
+    );
+    const out = JSON.parse(substitutePackageJson(text, ctx)) as {
+      dependencies: Record<string, string>;
+    };
+    expect(out.dependencies["@baerly/protocol"]).toBe("workspace:*");
+    expect(out.dependencies["other"]).toBe("workspace:*");
   });
 
   it("pins the literal `create-baerly` workspace dep to the cli version", () => {
     // The emitted `baerly.config.ts` imports `create-baerly/config`,
     // so the scaffolder keeps `create-baerly` as a devDep and pins
-    // it alongside the `@baerly/*` deps.
+    // it alongside `baerly-storage`.
     const ctx = mkCtx({ renames: [], excludePaths: [], dropDevDeps: [] }, {});
     const text = JSON.stringify(
       { name: "x", devDependencies: { "create-baerly": "workspace:*", typescript: "^5" } },
