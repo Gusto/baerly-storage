@@ -269,34 +269,6 @@ importers:
         specifier: ^6.0.0
         version: 6.4.2(@types/node@25.6.2)(lightningcss@1.32.0)
 
-  examples/minimal-node-docker:
-    dependencies:
-      '@baerly/adapter-node':
-        specifier: workspace:*
-        version: link:../../packages/adapter-node
-      '@baerly/protocol':
-        specifier: workspace:*
-        version: link:../../packages/protocol
-      '@baerly/server':
-        specifier: workspace:*
-        version: link:../../packages/server
-    devDependencies:
-      '@baerly/cli':
-        specifier: workspace:*
-        version: link:../../packages/cli
-      '@types/node':
-        specifier: ^25.0.0
-        version: 25.6.2
-      create-baerly:
-        specifier: workspace:*
-        version: link:../../packages/create-baerly
-      typescript:
-        specifier: ^5.8.0
-        version: 5.9.3
-      vite:
-        specifier: ^6.0.0
-        version: 6.4.2(@types/node@25.6.2)(lightningcss@1.32.0)
-
   packages/adapter-cloudflare:
     dependencies:
       '@baerly/dev':

@@ -9,6 +9,18 @@ import {
   substituteText,
 } from "./substitute.ts";
 
+/**
+ * Optional add-ons that can be layered on top of the base template at
+ * scaffold time. Each add-on is a directory under
+ * `packages/create-baerly/templates/addons/<name>/`; its files are
+ * copied (and substituted) on top of the scaffolded project. Today
+ * `docker` is the only add-on; expanding this tuple is the only place
+ * to declare a new one — the runtime validator and the wizard's
+ * conditional prompts both derive from `KNOWN_ADDONS`.
+ */
+export const KNOWN_ADDONS = ["docker"] as const;
+export type Addon = (typeof KNOWN_ADDONS)[number];
+
 export interface ScaffoldOptions {
   readonly projectName: string;
   readonly target: "cloudflare" | "node";
@@ -16,8 +28,12 @@ export interface ScaffoldOptions {
   readonly pm?: Pm;
   readonly tenant?: string;
   readonly domain?: string;
+  /** Add-ons to layer on top of the base template. */
+  readonly withAddons?: readonly Addon[];
   /** Override the templates root. Tests inject a fixture path. */
   readonly templatesRoot?: string;
+  /** Override the add-ons root. Tests inject a fixture path. */
+  readonly addonsRoot?: string;
   /** Override the output root. Tests inject a tmpdir. */
   readonly outRoot?: string;
 }
@@ -56,8 +72,6 @@ const STARTER_TO_EXAMPLE: Record<string, string> = {
   "cloudflare:minimal": "minimal-cloudflare",
   "cloudflare:helpdesk": "helpdesk-cloudflare",
   "node:minimal": "minimal-node",
-  "node-railway:minimal": "minimal-node-railway",
-  "node-docker:minimal": "minimal-node-docker",
 };
 
 /**
@@ -73,6 +87,20 @@ const resolveTemplatesRoot = (): string => {
   const distSidecar = resolve(here, "templates");
   if (existsSync(distSidecar)) return distSidecar;
   return resolve(here, "..", "..", "..", "examples");
+};
+
+/**
+ * Resolve the add-ons root. In a built CLI, add-on trees are copied
+ * to `dist/templates/addons/<name>/` next to the example templates.
+ * In dev (running from `src/` via Node's strip-types) they live at
+ * `packages/create-baerly/templates/addons/<name>/`, one level up
+ * from `src/`.
+ */
+const resolveAddonsRoot = (): string => {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const distSidecar = resolve(here, "templates", "addons");
+  if (existsSync(distSidecar)) return distSidecar;
+  return resolve(here, "..", "templates", "addons");
 };
 
 /**
@@ -164,8 +192,8 @@ export const scaffold = async (opts: ScaffoldOptions): Promise<ScaffoldResult> =
   const isExcluded = (rel: string): boolean => excluded.has(rel);
 
   const filesWritten: string[] = [];
-  const walk = (rel: string): void => {
-    const from = join(templateDir, rel);
+  const walk = (sourceDir: string, rel: string): void => {
+    const from = join(sourceDir, rel);
     for (const ent of readdirSync(from)) {
       const fromEnt = join(from, ent);
       const relEnt = rel === "" ? ent : join(rel, ent);
@@ -189,7 +217,7 @@ export const scaffold = async (opts: ScaffoldOptions): Promise<ScaffoldResult> =
       const toEnt = join(outDir, relEnt);
       if (statSync(fromEnt).isDirectory()) {
         mkdirSync(toEnt, { recursive: true });
-        walk(relEnt);
+        walk(sourceDir, relEnt);
       } else {
         const ext = ent.includes(".") ? ent.slice(ent.lastIndexOf(".")) : "";
         const isText = TEXT_EXTS.has(ext) || ent === "Dockerfile";
@@ -215,7 +243,26 @@ export const scaffold = async (opts: ScaffoldOptions): Promise<ScaffoldResult> =
       }
     }
   };
-  walk("");
+  walk(templateDir, "");
+
+  // Layer requested add-ons on top of the base scaffold. Each add-on
+  // is a directory under `addonsRoot/<name>/`; its files are walked
+  // through the same substituter pass as the base template, reusing
+  // the host's manifest (so the appName sentinel rewrite picks up
+  // any literal in the add-on files too).
+  const addons = opts.withAddons ?? [];
+  if (addons.length > 0) {
+    const addonsRoot = opts.addonsRoot ?? resolveAddonsRoot();
+    for (const addon of addons) {
+      const addonDir = join(addonsRoot, addon);
+      if (!existsSync(addonDir)) {
+        throw new Error(
+          `create-baerly: add-on directory not found: ${addonDir} (addon=${addon})`,
+        );
+      }
+      walk(addonDir, "");
+    }
+  }
 
   const nextSteps = [`cd ${opts.projectName}`, installCommand(pm), runCommand(pm, "dev")];
   return { outDir, filesWritten, nextSteps };

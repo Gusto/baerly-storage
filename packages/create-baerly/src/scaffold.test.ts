@@ -5,11 +5,10 @@ import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it, test } from "vitest";
 import { scaffold } from "./scaffold.ts";
 
-// `examples/` (containing `minimal-cloudflare/`, `minimal-node/`,
-// `minimal-node-docker/`, and `helpdesk-cloudflare/`) is the templates
-// root. The scaffolder's `STARTER_TO_EXAMPLE` map resolves a
-// `<target>:<starter>` compound key to the matching example
-// directory under this root.
+// `examples/` (containing `minimal-cloudflare/`, `minimal-node/`, and
+// `helpdesk-cloudflare/`) is the templates root. The scaffolder's
+// `STARTER_TO_EXAMPLE` map resolves a `<target>:<starter>` compound
+// key to the matching example directory under this root.
 const TEMPLATES_ROOT = resolve(
   dirname(fileURLToPath(import.meta.url)),
   "..",
@@ -20,9 +19,17 @@ const TEMPLATES_ROOT = resolve(
 const EXAMPLE_DIRS = [
   resolve(TEMPLATES_ROOT, "minimal-cloudflare"),
   resolve(TEMPLATES_ROOT, "minimal-node"),
-  resolve(TEMPLATES_ROOT, "minimal-node-docker"),
   resolve(TEMPLATES_ROOT, "helpdesk-cloudflare"),
 ];
+
+// `packages/create-baerly/templates/addons/` carries the opt-in add-on
+// trees layered on top of the base scaffold via `withAddons`.
+const ADDONS_ROOT = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "templates",
+  "addons",
+);
 
 describe("scaffold", () => {
   let outRoot: string;
@@ -115,6 +122,62 @@ describe("scaffold", () => {
 
     const config = await readFile(join(result.outDir, "baerly.config.ts"), "utf8");
     expect(config).toContain(`target: "node"`);
+  });
+
+  it("target=node by default emits no Dockerfile / healthcheck / .dockerignore", async () => {
+    const result = await scaffold({
+      projectName: "no-docker-default",
+      target: "node",
+      pm: "pnpm",
+      templatesRoot: TEMPLATES_ROOT,
+      addonsRoot: ADDONS_ROOT,
+      outRoot,
+    });
+    expect(result.filesWritten).not.toContain("Dockerfile");
+    expect(result.filesWritten).not.toContain("healthcheck.js");
+    expect(result.filesWritten).not.toContain(".dockerignore");
+  });
+
+  it("target=node + withAddons=[docker] emits addon files with appName-substituted LABELs", async () => {
+    const projectName = "yes-docker";
+    const result = await scaffold({
+      projectName,
+      target: "node",
+      pm: "pnpm",
+      withAddons: ["docker"],
+      templatesRoot: TEMPLATES_ROOT,
+      addonsRoot: ADDONS_ROOT,
+      outRoot,
+    });
+    expect(result.filesWritten).toContain("Dockerfile");
+    expect(result.filesWritten).toContain("healthcheck.js");
+    expect(result.filesWritten).toContain(".dockerignore");
+
+    const dockerfile = await readFile(join(result.outDir, "Dockerfile"), "utf8");
+    // The addon Dockerfile carries the literal `minimal-node` sentinel
+    // (the appName value from the host manifest); the substituter
+    // rewrites it to the user's projectName at copy time.
+    expect(dockerfile).toContain(`LABEL org.opencontainers.image.title="${projectName}"`);
+    expect(dockerfile).toContain(
+      `LABEL org.opencontainers.image.source="https://github.com/your-org/${projectName}"`,
+    );
+    expect(dockerfile).not.toContain("minimal-node");
+  });
+
+  it("rejects an unknown add-on directory", async () => {
+    await expect(
+      scaffold({
+        projectName: "ghost-addon",
+        target: "node",
+        pm: "pnpm",
+        // The cast bypasses the type guard so we exercise the runtime
+        // check (the CLI's parser catches this earlier in normal use).
+        withAddons: ["ghost" as "docker"],
+        templatesRoot: TEMPLATES_ROOT,
+        addonsRoot: ADDONS_ROOT,
+        outRoot,
+      }),
+    ).rejects.toThrow(/add-on directory not found.*addon=ghost/);
   });
 
   it("rejects projectName with disallowed characters", async () => {
