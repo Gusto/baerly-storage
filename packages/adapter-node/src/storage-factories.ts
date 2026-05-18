@@ -2,6 +2,30 @@ import { DOMParser } from "@xmldom/xmldom";
 import { AwsClient } from "aws4fetch";
 import { S3HttpStorage, type Storage } from "@baerly/protocol";
 
+// DOMParser is stateless — one shared instance is safe across factories.
+const xmlParser = new DOMParser();
+
+function buildS3Storage(opts: {
+  endpoint: string;
+  region: string;
+  bucket: string;
+  accessKeyId: string;
+  secretAccessKey: string;
+}): Storage {
+  const aws = new AwsClient({
+    accessKeyId: opts.accessKeyId,
+    secretAccessKey: opts.secretAccessKey,
+    region: opts.region,
+    service: "s3",
+  });
+  return new S3HttpStorage({
+    endpoint: opts.endpoint,
+    bucket: opts.bucket,
+    xmlParser,
+    sign: (req) => aws.sign(req),
+  });
+}
+
 /**
  * AWS S3 `Storage` factory. Wraps `S3HttpStorage` with the standard
  * `aws4fetch` SigV4 signer and the `@xmldom/xmldom` DOMParser. The
@@ -26,17 +50,12 @@ export function s3Storage(opts: {
   accessKeyId: string;
   secretAccessKey: string;
 }): Storage {
-  const aws = new AwsClient({
+  return buildS3Storage({
+    endpoint: `https://s3.${opts.region}.amazonaws.com`,
+    region: opts.region,
+    bucket: opts.bucket,
     accessKeyId: opts.accessKeyId,
     secretAccessKey: opts.secretAccessKey,
-    region: opts.region,
-    service: "s3",
-  });
-  return new S3HttpStorage({
-    endpoint: `https://s3.${opts.region}.amazonaws.com`,
-    bucket: opts.bucket,
-    xmlParser: new DOMParser(),
-    sign: (req) => aws.sign(req),
   });
 }
 
@@ -69,17 +88,12 @@ export function r2Storage(opts: {
   accessKeyId: string;
   secretAccessKey: string;
 }): Storage {
-  const aws = new AwsClient({
+  return buildS3Storage({
+    endpoint: `https://${opts.accountId}.r2.cloudflarestorage.com`,
+    region: "auto",
+    bucket: opts.bucket,
     accessKeyId: opts.accessKeyId,
     secretAccessKey: opts.secretAccessKey,
-    region: "auto",
-    service: "s3",
-  });
-  return new S3HttpStorage({
-    endpoint: `https://${opts.accountId}.r2.cloudflarestorage.com`,
-    bucket: opts.bucket,
-    xmlParser: new DOMParser(),
-    sign: (req) => aws.sign(req),
   });
 }
 
@@ -108,17 +122,12 @@ export function minioStorage(opts: {
   accessKeyId: string;
   secretAccessKey: string;
 }): Storage {
-  const aws = new AwsClient({
+  return buildS3Storage({
+    endpoint: opts.endpoint,
+    region: "us-east-1",
+    bucket: opts.bucket,
     accessKeyId: opts.accessKeyId,
     secretAccessKey: opts.secretAccessKey,
-    region: "us-east-1",
-    service: "s3",
-  });
-  return new S3HttpStorage({
-    endpoint: opts.endpoint,
-    bucket: opts.bucket,
-    xmlParser: new DOMParser(),
-    sign: (req) => aws.sign(req),
   });
 }
 
@@ -148,16 +157,11 @@ export function gcsStorage(opts: {
   hmacAccessKeyId: string;
   hmacSecret: string;
 }): Storage {
-  const aws = new AwsClient({
+  return buildS3Storage({
+    endpoint: "https://storage.googleapis.com",
+    region: "auto",
+    bucket: opts.bucket,
     accessKeyId: opts.hmacAccessKeyId,
     secretAccessKey: opts.hmacSecret,
-    region: "auto",
-    service: "s3",
-  });
-  return new S3HttpStorage({
-    endpoint: "https://storage.googleapis.com",
-    bucket: opts.bucket,
-    xmlParser: new DOMParser(),
-    sign: (req) => aws.sign(req),
   });
 }
