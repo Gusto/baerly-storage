@@ -17,6 +17,9 @@
     "typescript"
   ],
   "license": "MIT",
+  "bin": {
+    "baerly": "./dist/baerly.js"
+  },
   "files": [
     "dist"
   ],

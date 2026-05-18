@@ -3,9 +3,6 @@
   "version": "0.1.0",
   "description": "Baerly CLI — copy, init, inspect, compact, fsck, export, migrate, dump, restore.",
   "license": "MIT",
-  "bin": {
-    "baerly": "./dist/baerly.js"
-  },
   "files": [
     "dist"
   ],
