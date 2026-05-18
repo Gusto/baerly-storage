@@ -1,20 +1,6 @@
 /* eslint-disable no-underscore-dangle -- `_id` is the locked primary-key
    field on document shapes; the maintenance test seeds doc bodies with it. */
 
-/**
- * `baerlyNode` host-helper suite. Locks down the behaviors the helper
- * adds on top of `createListener` + `runMaintenanceTick`:
- *   1. `listen` resolves once the server is bound (real-socket healthz round-trip).
- *   2. `close()` is idempotent.
- *   3. `maintenance` fires one `runMaintenanceTick` per `(tenant, collection)` pair.
- *   4. Failures on one pair don't block siblings; the error is logged to stderr.
- *   5. SIGTERM triggers graceful close + `process.exit(0)`.
- *   6. Signal handlers are removed on `close()` (no listener-count leak).
- *
- * Pattern follows `server.test.ts`: bind a real `http.Server` on an
- * ephemeral port and probe through the OS socket layer.
- */
-
 import { createServer as createNetServer } from "node:net";
 import type { AddressInfo } from "node:net";
 import {
@@ -252,11 +238,9 @@ describe("baerlyNode", () => {
     await handle.listen(port);
 
     process.emit("SIGTERM", "SIGTERM");
-    // Allow the async close() chain inside the signal handler to
-    // settle. 50 ms is comfortable — close() awaits one
-    // `Server.close` callback and nothing else.
-    await new Promise((r) => setTimeout(r, 50));
-    expect(exitSpy).toHaveBeenCalledWith(0);
+    await vi.waitFor(() => {
+      expect(exitSpy).toHaveBeenCalledWith(0);
+    });
 
     exitSpy.mockRestore();
     // The signal-driven close already ran; `closed` makes the
@@ -278,6 +262,30 @@ describe("baerlyNode", () => {
     expect(process.listenerCount("SIGTERM")).toBe(sigtermBefore + 1);
     expect(process.listenerCount("SIGINT")).toBe(sigintBefore + 1);
     await handle.close();
+    expect(process.listenerCount("SIGTERM")).toBe(sigtermBefore);
+    expect(process.listenerCount("SIGINT")).toBe(sigintBefore);
+    activeHandle = undefined;
+  });
+
+  it("close() called mid-bind tears down without installing signal handlers", async () => {
+    const port = await reservePort();
+    const handle = baerlyNode({
+      app: "t",
+      storage: new MemoryStorage(),
+      verifier: sharedDevVerifier,
+      maintenance: {
+        tenants: ["a"],
+        collections: ["c1"],
+        intervalMs: 50,
+      },
+    });
+    const sigtermBefore = process.listenerCount("SIGTERM");
+    const sigintBefore = process.listenerCount("SIGINT");
+
+    const listenPromise = handle.listen(port);
+    await handle.close();
+    await listenPromise;
+
     expect(process.listenerCount("SIGTERM")).toBe(sigtermBefore);
     expect(process.listenerCount("SIGINT")).toBe(sigintBefore);
     activeHandle = undefined;

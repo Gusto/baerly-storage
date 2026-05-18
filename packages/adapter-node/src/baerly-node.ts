@@ -134,10 +134,6 @@ export function baerlyNode(opts: BaerlyNodeOptions): BaerlyNodeHandle {
   const tick = async (): Promise<void> => {
     const m = opts.maintenance;
     if (m === undefined) return;
-    // Run all (tenant, collection) ticks in parallel — they target
-    // disjoint `currentJsonKey`s so there's no contention. Errors on
-    // any pair are logged but do not block the others or crash the
-    // process.
     await Promise.all(
       m.tenants.flatMap((tenant) =>
         m.collections.map(async (collection) => {
@@ -175,11 +171,7 @@ export function baerlyNode(opts: BaerlyNodeOptions): BaerlyNodeHandle {
       signalHandler = undefined;
     }
     await new Promise<void>((resolve, reject) => {
-      // `Server.close` errors when the server isn't listening (e.g.
-      // close() called twice in rapid succession). The `closed`
-      // sentinel above guards the public second-call path; a still-
-      // unlistened server (listen() never ran or already finished
-      // closing) resolves quietly here too.
+      // Node throws ERR_SERVER_NOT_RUNNING on close() of a non-listening server.
       if (!server.listening) {
         resolve();
         return;
@@ -195,16 +187,35 @@ export function baerlyNode(opts: BaerlyNodeOptions): BaerlyNodeHandle {
     await new Promise<void>((resolve, reject) => {
       const onError = (err: Error): void => {
         server.off("listening", onListening);
+        server.off("close", onClose);
         reject(err);
       };
       const onListening = (): void => {
         server.off("error", onError);
+        server.off("close", onClose);
+        resolve();
+      };
+      // close() called between `server.listen(port)` and the
+      // `'listening'` event cancels the bind: `'listening'` never
+      // fires; only `'close'` does. Resolve so we observe `closed`
+      // below and skip handler install.
+      const onClose = (): void => {
+        server.off("error", onError);
+        server.off("listening", onListening);
         resolve();
       };
       server.once("error", onError);
       server.once("listening", onListening);
+      server.once("close", onClose);
       server.listen(port);
     });
+
+    // close() may have run while we were awaiting `'listening'`. Skip
+    // handler install so we don't leak a SIGTERM/SIGINT listener or a
+    // maintenance interval onto a closed handle.
+    if (closed) {
+      return;
+    }
 
     if (opts.maintenance !== undefined) {
       const intervalMs = opts.maintenance.intervalMs ?? DEFAULT_MAINTENANCE_INTERVAL_MS;
@@ -216,11 +227,8 @@ export function baerlyNode(opts: BaerlyNodeOptions): BaerlyNodeHandle {
       maintenanceTimer.unref();
     }
 
-    // Single handler shared by SIGTERM + SIGINT so a double-signal
-    // (e.g. SIGINT immediately followed by SIGTERM) doesn't fire
-    // close() twice — the `closed` sentinel makes close() idempotent
-    // either way, but sharing the handler keeps the listener count
-    // predictable for the close() cleanup path.
+    // Shared handler so a double-signal (SIGINT then SIGTERM) keeps
+    // the listener count predictable for the close() cleanup path.
     signalHandler = (sig): void => {
       console.log(`Received ${sig}; closing baerlyNode server`);
       close()
