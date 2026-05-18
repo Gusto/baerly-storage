@@ -15,15 +15,21 @@ export interface Table<T extends JSONArraylessObject = JSONArraylessObject> {
   readonly name: string;
 
   /**
-   * Filter by exact equality on top-level or dotted-path fields.
-   * Day-one operator policy: equality + dotted-path only — no
-   * `$or` / `$gt` / `$in` / `$regex`. Calling `.where(...)` twice
-   * AND-merges the predicates.
+   * Filter by equality on top-level or dotted-path fields, or by a
+   * per-field operator object. Supported operator vocabulary:
+   * `$eq`, `$gt`, `$gte`, `$lt`, `$lte`, `$in`. Multiple operators
+   * on the same field AND together (`{ count: { $gte: 1, $lt: 10 } }`).
+   * Not supported: top-level boolean connectives (`$or`, `$and`),
+   * `$regex`, and any other operator — `validatePredicate` rejects
+   * them as `InvalidConfig`. Calling `.where(...)` twice AND-merges
+   * the predicates.
    *
    * @example
    * ```ts
    * db.table("tickets").where({ status: "open" }).all();
    * db.table("tickets").where({ "assignee.team": "platform" }).all();
+   * db.table("tickets").where({ count: { $gte: 1 } }).all();
+   * db.table("tickets").where({ status: { $in: ["open", "pending"] } }).all();
    * ```
    */
   where(predicate: Predicate<T>): Query<T>;
