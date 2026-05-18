@@ -1,14 +1,30 @@
 # @baerly/protocol
 
-Pure protocol primitives — types, errors, JSON merge-patch, constants,
-hashing, ordered maps.
+**Internal implementation detail of [`@baerly/server`](../server). Not a public API.**
 
-This package is pure by construction: no `fetch`, no IndexedDB, no DOM
-parsers, no S3 wire formats. Everything that _touches the world_ lives in
-sibling packages (`@baerly/server`, `@baerly/client`, …) and depends on
-this one.
+If you're writing application code, import from `@baerly/server`:
 
-Currently consumed by the umbrella `baerly-storage` package and by future
-`@baerly/*` packages. Internal-only for now (`private: true`).
+```ts
+import { BaerlyError, MemoryStorage, type Storage, type Verifier } from "@baerly/server";
+```
 
-See the repo root [README](../../README.md) for project context.
+This package holds the pure protocol kernel — types, errors, JSON merge-patch,
+constants, hashing, ordered maps, the `Storage` interface, and the
+`MemoryStorage` / `S3HttpStorage` impls. It has no I/O, no Node-only deps, and
+is Worker-bundleable. `@baerly/server` re-exports its user-facing surface; the
+adapter packages (`@baerly/adapter-node`, `@baerly/adapter-cloudflare`) consume
+it directly.
+
+There is no reason for application code to install or name `@baerly/protocol`.
+The package exists as a workspace member so contributors can enforce the
+"no I/O in the kernel" boundary; it's transitively installed under
+`@baerly/server` but should not be imported by user code.
+
+## Subpath: `@baerly/protocol/conformance`
+
+The `./conformance` subpath exposes the shared `Storage` conformance test
+suite that every `Storage` impl runs against. It is consumed only by
+in-workspace adapter tests (`packages/adapter-node`,
+`packages/adapter-cloudflare`); external adapter authors should write their
+`Storage` impl against the interface re-exported from `@baerly/server` and
+use vitest however they like to drive it.
