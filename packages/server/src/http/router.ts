@@ -24,7 +24,6 @@ import {
   type JSONArraylessObject,
   type BaerlyErrorCode,
   type Predicate,
-  type Verifier,
 } from "@baerly/protocol";
 import type { BaerlyConfig } from "../config.ts";
 import type { Db } from "../db.ts";
@@ -57,23 +56,16 @@ import { longPollSince } from "./since.ts";
  *   fresh `Db` per request (after the Verifier resolves the tenant)
  *   and hand it to a freshly-constructed router. The router itself
  *   is stateless and per-request — `app.fetch(req)` is the only
- *   entry point.
- * - `verifier` — optional. When set, `createRouter` mounts an
- *   `app.use("/v1/t/*", ...)` middleware that calls the verifier on
- *   every CRUD request and rejects null with 401. Adapters that
- *   resolve the tenant **before** constructing the `Db` (the
- *   recommended flow — see `worker.ts` / `server.ts`) pass
- *   `verifier: undefined` here and call the Verifier themselves;
- *   router-level Verifier support is for callers who want a single
- *   mount point.
+ *   entry point. The Verifier runs in the adapter (see `worker.ts` /
+ *   `server.ts`) before `createRouter` is called; the router itself
+ *   has no auth seam.
  * - `healthCheck` — default `true`. Mounts `GET /v1/healthz` →
- *   `200 {"ok": true}` bypassing the verifier. Set `false` when the
- *   adapter already served healthz upstream (it should, to keep the
- *   probe hot path off `Db.create`).
+ *   `200 {"ok": true}`. Set `false` when the adapter already served
+ *   healthz upstream (it should, to keep the probe hot path off
+ *   `Db.create`).
  */
 export interface CreateRouterOptions {
   readonly db: Db<BaerlyConfig>;
-  readonly verifier?: Verifier;
   readonly healthCheck?: boolean;
   /** Override the long-poll budget. Forwarded to `longPollSince`. */
   readonly sinceTimeoutMs?: number;
@@ -104,13 +96,12 @@ export interface CreateRouterOptions {
  * ```
  */
 export function createRouter(options: CreateRouterOptions): Hono {
-  const { db, verifier, healthCheck = true, sinceTimeoutMs, sincePollIntervalMs } = options;
+  const { db, healthCheck = true, sinceTimeoutMs, sincePollIntervalMs } = options;
   const app = new Hono();
 
   // Per-request ObservabilityContext + canonical-line emission.
-  // Mounted BEFORE everything else so every dispatched handler —
-  // including the verifier middleware below — runs under
-  // `runWithContext`. The middleware itself operates in two modes:
+  // Mounted BEFORE everything else so every dispatched handler runs
+  // under `runWithContext`. The middleware itself operates in two modes:
   //
   // Mode A (ambient context present): an outer scope (the CF or Node
   // adapter) has already called `createObservabilityContext` +
@@ -129,18 +120,17 @@ export function createRouter(options: CreateRouterOptions): Hono {
   //
   // Healthz always short-circuits first: load balancers fire that
   // probe constantly and the canonical-line cost (sampler + LogTape
-  // sink dispatch) would drown real-traffic logs. Healthz also
-  // bypasses the verifier downstream, matching its "anonymous liveness
-  // probe" contract.
+  // sink dispatch) would drown real-traffic logs. Healthz is the
+  // router's "anonymous liveness probe" contract — adapters that
+  // run a verifier upstream bypass it for this path.
   app.use("*", async (c, next) => {
     if (c.req.path === "/v1/healthz") {
       return next();
     }
 
     // Mode A: adapter-owned context. Pass through — the adapter owns
-    // the flush. The verifier middleware and every CRUD handler
-    // downstream still run inside the existing `runWithContext` scope
-    // provided by the adapter.
+    // the flush. Every CRUD handler downstream still runs inside the
+    // existing `runWithContext` scope provided by the adapter.
     if (getCurrentContext() !== undefined) {
       return next();
     }
@@ -197,22 +187,6 @@ export function createRouter(options: CreateRouterOptions): Hono {
 
   if (healthCheck) {
     app.get("/v1/healthz", (c) => c.json({ ok: true }, 200));
-  }
-
-  // Optional in-router Verifier middleware. Adapters that resolve
-  // the tenant BEFORE constructing the Db (recommended path; see
-  // worker.ts / server.ts) skip this branch — the Db handed in
-  // already pins the tenant. This mount is a convenience for
-  // single-mount-point callers; it does NOT re-derive the Db.
-  if (verifier !== undefined) {
-    app.use("/v1/t/*", async (c, next) => {
-      const result = await verifier(c.req.raw);
-      if (result === null) {
-        getLogger(CATEGORY.http).warn("verifier_rejected", { reason: "null" });
-        throw new BaerlyError("Unauthorized", "Missing or invalid Authorization header");
-      }
-      await next();
-    });
   }
 
   // Read one — GET /v1/t/:table/:id

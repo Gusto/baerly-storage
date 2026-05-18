@@ -274,26 +274,3 @@ describe("ambient-context pass-through", () => {
     expect(lines[0]!.properties["outcome"]).toBe("read");
   });
 });
-
-describe("in-router verifier mount", () => {
-  afterEach(async () => {
-    await reset();
-  });
-
-  test("verifier → null produces 401 with the diagnostic message", async () => {
-    await configureObservability({ level: "debug", sink: () => {}, sampleRate: 1 });
-    const db = Db.create({
-      storage: new MemoryStorage(),
-      app: "router-test",
-      tenant: "t1",
-    });
-    const app = createRouter({ db, verifier: async () => null });
-    const res = await app.request("http://localhost/v1/t/things?where=%7B%7D");
-    expect(res.status).toBe(401);
-    const body = (await res.json()) as {
-      error?: { code?: string; message?: string };
-    };
-    expect(body.error?.code).toBe("Unauthorized");
-    expect(body.error?.message).toBe("Missing or invalid Authorization header");
-  });
-});
