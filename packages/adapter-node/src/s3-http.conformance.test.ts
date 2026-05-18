@@ -5,6 +5,7 @@ import { beforeAll, describe } from "vitest";
 import { defineStorageConformanceSuite } from "@baerly/protocol/conformance";
 import { S3HttpStorage } from "@baerly/protocol";
 import { createBucket } from "../../../tests/fixtures/s3-fixtures.ts";
+import { minioStorage } from "./storage-factories.ts";
 
 // Same Minio that `pnpm dev:storage` provisions. Endpoint and creds
 // are pinned across the existing Minio-touching tests
@@ -65,6 +66,34 @@ describe.runIf(minioEnabled)("S3HttpStorage @ Minio :9102", () => {
     {
       // S3 + the existing `S3HttpStorage` impl supports the full
       // capability set; Minio preserves key case verbatim.
+      caseSensitiveKeys: true,
+      supportsCAS: true,
+      supportsAbort: true,
+      keyArb: MINIO_KEY_ARB,
+      prefixCharArb: MINIO_PREFIX_CHAR_ARB,
+    },
+  );
+});
+
+// Re-run the same conformance suite through the `minioStorage` factory
+// — the public DX surface added in ticket 01. Reuses the same bucket
+// (createBucket tolerates 409) and the same Minio-safe arbitraries.
+describe.runIf(minioEnabled)("minioStorage factory @ Minio :9102", () => {
+  beforeAll(async () => {
+    await createBucket(signer, MINIO_ENDPOINT, BUCKET);
+  });
+
+  defineStorageConformanceSuite(
+    "minioStorage factory @ Minio :9102",
+    async () => ({
+      storage: minioStorage({
+        endpoint: MINIO_ENDPOINT,
+        bucket: BUCKET,
+        accessKeyId: MINIO_ACCESS_KEY,
+        secretAccessKey: MINIO_SECRET_KEY,
+      }),
+    }),
+    {
       caseSensitiveKeys: true,
       supportsCAS: true,
       supportsAbort: true,

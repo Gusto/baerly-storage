@@ -15,26 +15,31 @@
  * @example
  * ```ts
  * import { createServer } from "node:http";
- * import { createListener, S3HttpStorage } from "@baerly/adapter-node";
+ * import { createListener, s3Storage } from "@baerly/adapter-node";
  * import type { Verifier } from "@baerly/server";
- * import { DOMParser } from "@xmldom/xmldom"; // app's own dep
  *
  * const verifier: Verifier = async (req) => {
  *   if (req.headers.get("authorization") !== "Bearer dev-token") return null;
  *   return { tenantPrefix: "acme", identity: { sub: "dev" } };
  * };
  *
- * const storage = new S3HttpStorage({
- *   endpoint: process.env.S3_ENDPOINT!,
- *   bucket: process.env.S3_BUCKET!,
- *   xmlParser: new DOMParser(),
- *   // sign: awsSigner.sign,  // omit for anonymous Minio
+ * const storage = s3Storage({
+ *   region: "us-east-1",
+ *   bucket: process.env.BUCKET!,
+ *   accessKeyId: process.env.AWS_ACCESS_KEY_ID!,
+ *   secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY!,
  * });
  * const listener = createListener({ app: "tickets", storage, verifier });
  * createServer(listener).listen(3000);
  * ```
+ *
+ * Advanced users who need to override the `fetch` / `xmlParser` /
+ * retry knobs can construct `S3HttpStorage` directly — see the
+ * `S3HttpStorageOptions` JSDoc. The four factories above wrap the
+ * common case for AWS S3, R2, Minio, and GCS.
  */
 export { S3HttpStorage } from "@baerly/protocol";
 export type { S3HttpStorageOptions } from "@baerly/protocol";
 export { createListener, runMaintenanceTick } from "./server.ts";
 export type { CreateListenerOptions, NodeMaintenanceOptions } from "./server.ts";
+export { s3Storage, r2Storage, minioStorage, gcsStorage } from "./storage-factories.ts";
