@@ -21,7 +21,8 @@
     }
   },
   "dependencies": {
-    "@baerly/protocol": "workspace:*"
+    "@baerly/protocol": "workspace:*",
+    "@baerly/server": "workspace:*"
   },
   "peerDependencies": {
     "react": ">=18"

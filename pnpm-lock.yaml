@@ -354,6 +354,9 @@ importers:
       '@baerly/protocol':
         specifier: workspace:*
         version: link:../protocol
+      '@baerly/server':
+        specifier: workspace:*
+        version: link:../server
       react:
         specifier: '>=18'
         version: 19.2.6

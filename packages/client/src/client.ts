@@ -4,6 +4,7 @@
    so the typed client stays structurally compatible. */
 
 import type { ConsistencyLevel, JSONArraylessObject, OrderSpec, Predicate } from "@baerly/protocol";
+import type { BaerlyConfig, CollectionNames, RowOf, UnboundConfig } from "@baerly/server";
 import type { SinceResponse } from "./contract.ts";
 import { BaerlyClientError } from "./errors.ts";
 import { type Fetcher, type RequestContext, request } from "./request.ts";
@@ -19,7 +20,7 @@ import { type Fetcher, type RequestContext, request } from "./request.ts";
  * });
  * ```
  */
-export interface BaerlyClientOptions {
+export interface BaerlyClientOptions<TConfig extends BaerlyConfig = UnboundConfig> {
   /**
    * Required. The deployed `baerly` server URL — e.g.
    * `https://acme.example.com`. No trailing slash.
@@ -46,6 +47,24 @@ export interface BaerlyClientOptions {
    * passed, takes precedence.
    */
   readonly signal?: AbortSignal;
+  /**
+   * Optional. When passed, `client.table(name)` narrows `name` to
+   * declared collection names and infers the row type from
+   * `collections[name].schema`. Pass the value returned by
+   * `defineConfig` verbatim:
+   *
+   * ```ts
+   * import { defineConfig } from "@baerly/server";
+   * const config = defineConfig({ collections: { tickets: { schema: TicketSchema } } });
+   * const client = createBaerlyClient({ baseUrl, config });
+   * await client.table("tickets").first(); // Promise<Ticket | undefined>
+   * ```
+   *
+   * Type-only — the runtime client does not read this field. Omit
+   * it (or pass `undefined`) to fall back to the per-call generic
+   * `client.table<Ticket>("tickets")` form.
+   */
+  readonly config?: TConfig;
 }
 
 /**
@@ -119,8 +138,18 @@ export interface ClientQuery<T extends JSONArraylessObject = JSONArraylessObject
  * const row = await client.table("tickets").where({ _id }).first();
  * ```
  */
-export interface BaerlyClient {
-  /** Typed table handle. Cheap; constructs no I/O. */
+export interface BaerlyClient<TConfig extends BaerlyConfig = UnboundConfig> {
+  /**
+   * Typed table handle. Cheap; constructs no I/O.
+   *
+   * When `TConfig` is bound (via `options.config`) and `name` is one
+   * of the declared collection names, the row type is inferred from
+   * `TConfig["collections"][name]["schema"]`. Otherwise the legacy
+   * per-call `<T>` form applies.
+   */
+  table<N extends CollectionNames<TConfig>>(
+    name: N,
+  ): ClientTable<RowOf<TConfig, N> & JSONArraylessObject>;
   table<T extends JSONArraylessObject = JSONArraylessObject>(name: string): ClientTable<T>;
   /**
    * Long-poll for new log events. Returns once events arrive or the
@@ -148,7 +177,9 @@ export interface BaerlyClient {
  * });
  * ```
  */
-export const createBaerlyClient = (options: BaerlyClientOptions): BaerlyClient => {
+export const createBaerlyClient = <TConfig extends BaerlyConfig = UnboundConfig>(
+  options: BaerlyClientOptions<TConfig>,
+): BaerlyClient<TConfig> => {
   const ctx: RequestContext = {
     baseUrl: options.baseUrl,
     fetch: options.fetch ?? ((req) => globalThis.fetch(req)),
