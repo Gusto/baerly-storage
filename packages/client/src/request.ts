@@ -23,7 +23,12 @@ export interface RequestContext {
   readonly baseUrl: string;
   readonly fetch: Fetcher;
   readonly headers: () => Promise<Headers>;
-  readonly signal?: AbortSignal;
+  /**
+   * Lifecycle signal from {@link BaerlyClientOptions.lifecycleSignal}.
+   * Merged with the per-call signal on every request — either firing
+   * aborts the underlying `fetch`.
+   */
+  readonly lifecycleSignal?: AbortSignal;
 }
 
 /**
@@ -49,7 +54,7 @@ export const request = async <T>(ctx: RequestContext, opts: RequestOptions): Pro
     method: opts.method,
     headers,
     body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
-    signal: mergeSignals(ctx.signal, opts.signal),
+    signal: mergeSignals(ctx.lifecycleSignal, opts.signal),
   };
   const req = new Request(`${ctx.baseUrl}${opts.path}`, init);
   const res = await ctx.fetch(req);

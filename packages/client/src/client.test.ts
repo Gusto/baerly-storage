@@ -273,14 +273,14 @@ describe("createBaerlyClient", () => {
     expect(sawSignal?.aborted).toBe(true);
   });
 
-  test("constructor signal and per-call signal both abort (signals are merged)", async () => {
+  test("lifecycleSignal and per-call signal both abort (signals are merged)", async () => {
     const mock = new MockFetch();
     mock.on("PATCH", "/v1/t/tickets/:id", hangUntilAbort);
     const lifecycle = new AbortController();
     const client = createBaerlyClient({
       baseUrl: "http://x",
       fetch: mock.fetch,
-      signal: lifecycle.signal,
+      lifecycleSignal: lifecycle.signal,
     });
     // Lifecycle signal fires → in-flight PATCH aborts.
     const inflight = client.table("tickets").where({ _id: "x" }).update({ title: "y" });
@@ -296,6 +296,19 @@ describe("createBaerlyClient", () => {
       .update({ title: "y" }, { signal: perCall.signal });
     perCall.abort();
     await expect(inflight2).rejects.toMatchObject({ name: "AbortError" });
+  });
+
+  test("healthz() re-throws AbortError instead of resolving false", async () => {
+    // Caller-supplied signal aborts mid-flight. The bare catch used
+    // to map every throw → false, making aborts indistinguishable
+    // from a downed server.
+    const mock = new MockFetch();
+    mock.on("GET", "/v1/healthz", hangUntilAbort);
+    const client = createBaerlyClient({ baseUrl: "http://x", fetch: mock.fetch });
+    const controller = new AbortController();
+    const inflight = client.healthz({ signal: controller.signal });
+    controller.abort();
+    await expect(inflight).rejects.toMatchObject({ name: "AbortError" });
   });
 
   test("missing data field on 200 throws InvalidResponse", async () => {

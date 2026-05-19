@@ -73,11 +73,24 @@ export interface BaerlyClientOptions<TConfig extends BaerlyConfig = UnboundConfi
     | Record<string, string>
     | (() => Promise<Headers | Record<string, string>> | Headers | Record<string, string>);
   /**
-   * Optional. AbortSignal merged into every request. Cancels in-
-   * flight requests when fired. The per-call `signal` option, if
-   * passed, takes precedence.
+   * Optional. Lifecycle signal: aborts every in-flight and future
+   * request issued by this client when fired. Per-call `signal`
+   * options on individual terminals are *merged* with this one —
+   * either firing aborts the underlying `fetch`.
+   *
+   * Canonical use is a React provider that owns the client and wants
+   * to cancel everything on unmount:
+   *
+   * ```ts
+   * const ac = new AbortController();
+   * const client = createBaerlyClient({ baseUrl, lifecycleSignal: ac.signal });
+   * // …on unmount: ac.abort();
+   * ```
+   *
+   * For "cancel *this* request" use the per-call `{ signal }` option
+   * on the terminal instead (see {@link TerminalOptions}).
    */
-  readonly signal?: AbortSignal;
+  readonly lifecycleSignal?: AbortSignal;
   /**
    * Optional. When passed, `client.table(name)` narrows `name` to
    * declared collection names and infers the row type from
@@ -108,8 +121,9 @@ export interface BaerlyClientOptions<TConfig extends BaerlyConfig = UnboundConfi
 export interface TerminalOptions {
   /**
    * Cancels this specific request. Merged with
-   * {@link BaerlyClientOptions.signal} — either firing aborts the
-   * underlying `fetch`. React effect cleanup is the canonical caller:
+   * {@link BaerlyClientOptions.lifecycleSignal} — either firing
+   * aborts the underlying `fetch`. React effect cleanup is the
+   * canonical caller:
    *
    * ```ts
    * useEffect(() => {
@@ -249,7 +263,7 @@ export const createBaerlyClient = <TConfig extends BaerlyConfig = UnboundConfig>
     baseUrl: options.baseUrl,
     fetch: options.fetch ?? ((req) => globalThis.fetch(req)),
     headers: () => resolveHeaders(options.headers),
-    signal: options.signal,
+    lifecycleSignal: options.lifecycleSignal,
   };
   return {
     table<T extends JSONArraylessObject = JSONArraylessObject>(name: string): ClientTable<T> {
@@ -273,7 +287,14 @@ export const createBaerlyClient = <TConfig extends BaerlyConfig = UnboundConfig>
           signal: opts?.signal,
         });
         return true;
-      } catch {
+      } catch (error) {
+        // Re-throw caller-driven aborts so a polling health check
+        // that cancels on unmount doesn't see `false` and flag the
+        // server as down. Everything else (network error, non-200,
+        // shape mismatch) maps to "server unhealthy".
+        if (error instanceof Error && error.name === "AbortError") {
+          throw error;
+        }
         return false;
       }
     },
