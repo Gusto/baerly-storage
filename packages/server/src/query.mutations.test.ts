@@ -60,7 +60,9 @@ const provision = async (storage: MemoryStorage, coll: string = COLL): Promise<v
 
 const readLogEntry = async (storage: MemoryStorage, seq: number): Promise<LogEntry> => {
   const got = await storage.get(logKey(seq));
-  if (got === null) throw new Error(`expected log entry at seq ${seq}`);
+  if (got === null) {
+    throw new Error(`expected log entry at seq ${seq}`);
+  }
   return JSON.parse(new TextDecoder().decode(got.body)) as LogEntry;
 };
 
@@ -105,8 +107,8 @@ describe("Table.insert", () => {
     let thrown: unknown;
     try {
       await t.insert({ _id: "dup", title: "second", status: "open" });
-    } catch (err) {
-      thrown = err;
+    } catch (error) {
+      thrown = error;
     }
     expect(thrown).toBeInstanceOf(BaerlyError);
     expect((thrown as BaerlyError).code).toBe("Conflict");
@@ -276,8 +278,8 @@ describe("Query.replace", () => {
         title: "x",
         status: "open",
       });
-    } catch (err) {
-      thrown = err;
+    } catch (error) {
+      thrown = error;
     }
     expect(thrown).toBeInstanceOf(BaerlyError);
     expect((thrown as BaerlyError).code).toBe("Conflict");
@@ -295,8 +297,8 @@ describe("Query.replace", () => {
         title: "x",
         status: "open",
       });
-    } catch (err) {
-      thrown = err;
+    } catch (error) {
+      thrown = error;
     }
     expect(thrown).toBeInstanceOf(BaerlyError);
     expect((thrown as BaerlyError).code).toBe("Conflict");
@@ -449,8 +451,8 @@ describe("Per-row CAS semantics (internal retries inside ServerWriter)", () => {
     let thrown: unknown;
     try {
       await t.where({ _id: "loser" }).update({ title: "v1" });
-    } catch (err) {
-      thrown = err;
+    } catch (error) {
+      thrown = error;
     }
     expect(thrown).toBeInstanceOf(BaerlyError);
     expect((thrown as BaerlyError).code).toBe("Conflict");

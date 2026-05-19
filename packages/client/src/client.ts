@@ -260,7 +260,9 @@ export const createBaerlyClient = <TConfig extends BaerlyConfig = UnboundConfig>
  * request layer can extend with `content-type`.
  */
 const resolveHeaders = async (source: BaerlyClientOptions["headers"]): Promise<Headers> => {
-  if (source === undefined) return new Headers();
+  if (source === undefined) {
+    return new Headers();
+  }
   const value = typeof source === "function" ? await source() : source;
   return new Headers(value);
 };
@@ -325,7 +327,9 @@ const makeClientQuery = <T extends JSONArraylessObject>(
 
   const listPath = (override?: { limit?: number }): string => {
     const params = listParams();
-    if (override?.limit !== undefined) params.set("limit", String(override.limit));
+    if (override?.limit !== undefined) {
+      params.set("limit", String(override.limit));
+    }
     const qs = params.toString();
     return `/v1/t/${encodeURIComponent(tableName)}${qs.length > 0 ? `?${qs}` : ""}`;
   };
@@ -430,13 +434,17 @@ const makeClientQuery = <T extends JSONArraylessObject>(
           path: `/v1/t/${encodeURIComponent(tableName)}/${encodeURIComponent(id)}`,
         });
         return { deleted: 1 };
-      } catch (e) {
+      } catch (error) {
         // 404 on DELETE → "no row matched". Mirrors `Query.delete()`
         // which returns `{ deleted: 0 }` rather than throwing.
-        if (e instanceof BaerlyClientError && e.code === "Internal" && e.status === 404) {
+        if (
+          error instanceof BaerlyClientError &&
+          error.code === "Internal" &&
+          error.status === 404
+        ) {
           return { deleted: 0 };
         }
-        throw e;
+        throw error;
       }
     },
   };
@@ -450,7 +458,9 @@ const makeClientQuery = <T extends JSONArraylessObject>(
  */
 const singleIdFromPredicate = (p: Predicate<JSONArraylessObject>): string | undefined => {
   const keys = Object.keys(p);
-  if (keys.length !== 1 || keys[0] !== "_id") return undefined;
+  if (keys.length !== 1 || keys[0] !== "_id") {
+    return undefined;
+  }
   const v = (p as Record<string, unknown>)["_id"];
   return typeof v === "string" ? v : undefined;
 };

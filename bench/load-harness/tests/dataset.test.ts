@@ -5,7 +5,7 @@ import { buildDataset } from "../generators/dataset.ts";
 // records up to 1 MB each; the assertions here are about counts and
 // distribution shape, not body bytes, so a tight cap keeps the tests
 // finite.
-const tinyBodies = [{ cumulativeFraction: 1.0, maxBytes: 16 }];
+const tinyBodies = [{ cumulativeFraction: 1, maxBytes: 16 }];
 
 describe("dataset determinism", () => {
   test("same seed → byte-identical dataset", () => {

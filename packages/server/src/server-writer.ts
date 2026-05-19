@@ -314,7 +314,9 @@ export class ServerWriter {
     this.#metrics = opts.options?.metrics ?? noopMetricsRecorder;
     this.#tenant = opts.options?.tenant ?? "";
     const indexes = opts.options?.indexes ?? [];
-    for (const def of indexes) validateIndexDefinition(def);
+    for (const def of indexes) {
+      validateIndexDefinition(def);
+    }
     this.#indexes = indexes;
     this.#verifyLogIntegrityOnCommit = opts.options?.verifyLogIntegrityOnCommit ?? false;
   }
@@ -430,7 +432,9 @@ export class ServerWriter {
     if (inputs.length === 0) {
       return { entries: [], currentEtag: undefined };
     }
-    for (const input of inputs) validateInput(input);
+    for (const input of inputs) {
+      validateInput(input);
+    }
 
     const session = uuid().slice(0, SESSION_ID_LENGTH);
     const logPrefix = this.#currentJsonKey.slice(0, this.#currentJsonKey.lastIndexOf("/"));
@@ -583,10 +587,12 @@ export class ServerWriter {
         parallelPuts.push(
           this.#storage
             .put(contentKey, bytes, { ifNoneMatch: "*", contentType: APPLICATION_JSON })
-            .catch((err: unknown) => {
-              this.#observe429(err, input.collection);
-              if (isPreconditionFailed(err)) return;
-              throw err;
+            .catch((error: unknown) => {
+              this.#observe429(error, input.collection);
+              if (isPreconditionFailed(error)) {
+                return;
+              }
+              throw error;
             }),
         );
       }
@@ -613,10 +619,12 @@ export class ServerWriter {
           parallelPuts.push(
             this.#storage
               .put(k, EMPTY_BODY, { ifNoneMatch: "*", contentType: APPLICATION_JSON })
-              .catch((err: unknown) => {
-                this.#observe429(err, input.collection);
-                if (isPreconditionFailed(err)) return;
-                throw err;
+              .catch((error: unknown) => {
+                this.#observe429(error, input.collection);
+                if (isPreconditionFailed(error)) {
+                  return;
+                }
+                throw error;
               }),
           );
         }
@@ -664,9 +672,11 @@ export class ServerWriter {
           contentType: APPLICATION_JSON,
         });
         return { ok: true };
-      } catch (err) {
-        this.#observe429(err, entry.collection);
-        if (!isPreconditionFailed(err)) throw err;
+      } catch (error) {
+        this.#observe429(error, entry.collection);
+        if (!isPreconditionFailed(error)) {
+          throw error;
+        }
         this.#metrics.counter("db.r2.put.412_total", 1, {
           collection: entry.collection,
           step: "log-put",
@@ -705,16 +715,16 @@ export class ServerWriter {
     let result: StoragePutResult;
     try {
       result = await this.#storage.put(this.#currentJsonKey, nextBody, putOpts);
-    } catch (err) {
-      this.#observe429(err, inputs[0]!.collection);
-      if (isCasConflict(err)) {
+    } catch (error) {
+      this.#observe429(error, inputs[0]!.collection);
+      if (isCasConflict(error)) {
         this.#metrics.counter("db.r2.put.412_total", 1, {
           collection: inputs[0]!.collection,
           step: "current-json-cas",
         });
         return { kind: "cas-conflict" };
       }
-      throw err;
+      throw error;
     }
 
     // ── Step 7. Verify the writer fence epoch is still ours. ────────
@@ -789,8 +799,12 @@ export class ServerWriter {
         // as the protocol violation. Skip.
         continue;
       }
-      if (entry.collection !== collection || entry.doc_id !== docId) continue;
-      if (entry.op === "D") return undefined; // last op was delete
+      if (entry.collection !== collection || entry.doc_id !== docId) {
+        continue;
+      }
+      if (entry.op === "D") {
+        return undefined;
+      } // last op was delete
       if ((entry.op === "I" || entry.op === "U") && entry.new !== undefined) {
         this.#metrics.counter("db.r2.preimage_get_total", 1, { collection });
         return entry.new;
@@ -840,7 +854,9 @@ export class ServerWriter {
    */
   #emitWriteMetrics(collection: string, classAOps: number): void {
     const histLabels: Record<string, string> = { collection };
-    if (this.#tenant !== "") histLabels["tenant"] = this.#tenant;
+    if (this.#tenant !== "") {
+      histLabels["tenant"] = this.#tenant;
+    }
     this.#metrics.histogram("db.write.class_a_ops_per_logical_write", classAOps, histLabels);
     const rateLabels: Record<string, string> = this.#tenant !== "" ? { tenant: this.#tenant } : {};
     this.#metrics.gauge("db.tenant.put_rate", 1, rateLabels);
@@ -865,10 +881,16 @@ export class ServerWriter {
     where: string,
   ): Promise<void> {
     const postRead = await readCurrentJson(this.#storage, this.#currentJsonKey);
-    if (postRead === null) return;
-    if (postRead.json.writer_fence.epoch === expectedEpoch) return;
+    if (postRead === null) {
+      return;
+    }
+    if (postRead.json.writer_fence.epoch === expectedEpoch) {
+      return;
+    }
     const bumpLabels: Record<string, string> = { collection };
-    if (this.#tenant !== "") bumpLabels["tenant"] = this.#tenant;
+    if (this.#tenant !== "") {
+      bumpLabels["tenant"] = this.#tenant;
+    }
     this.#metrics.counter("db.writer.fence_bump_observed_total", 1, bumpLabels);
     throw new BaerlyError(
       "Conflict",
@@ -886,7 +908,9 @@ export class ServerWriter {
   async #backoff(attempt: number): Promise<void> {
     const base = Math.min(this.#initialBackoffMs * 2 ** (attempt - 1), MAX_BACKOFF_MS);
     const sleepMs = base * this.#random();
-    if (sleepMs <= 0) return;
+    if (sleepMs <= 0) {
+      return;
+    }
     await new Promise<void>((r) => setTimeout(r, sleepMs));
   }
 }
@@ -933,7 +957,9 @@ const isCasConflict = (err: unknown): boolean => isPreconditionFailed(err);
  * structured field rather than regex-matching the message.
  */
 const is429 = (err: unknown): boolean => {
-  if (!(err instanceof BaerlyError) || err.code !== "NetworkError") return false;
+  if (!(err instanceof BaerlyError) || err.code !== "NetworkError") {
+    return false;
+  }
   const cause = err.cause as { status?: number } | undefined;
   return cause?.status === 429;
 };

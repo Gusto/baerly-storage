@@ -59,7 +59,9 @@ const CONFIG_BASENAMES: readonly string[] = [
 export const locateConfig = (cwd: string): string | null => {
   for (const base of CONFIG_BASENAMES) {
     const abs = resolve(cwd, base);
-    if (existsSync(abs)) return abs;
+    if (existsSync(abs)) {
+      return abs;
+    }
   }
   return null;
 };
@@ -87,34 +89,34 @@ export const loadAppConfig = async (cwd: string = process.cwd()): Promise<AppCon
     let text: string;
     try {
       text = await readFile(cfgPath, "utf8");
-    } catch (e) {
+    } catch (error) {
       throw new BaerlyError(
         "InvalidConfig",
-        `baerly: failed to read ${cfgPath}: ${(e as Error).message}`,
-        e,
+        `baerly: failed to read ${cfgPath}: ${(error as Error).message}`,
+        error,
       );
     }
     try {
       raw = JSON.parse(text) as unknown;
-    } catch (e) {
+    } catch (error) {
       throw new BaerlyError(
         "InvalidConfig",
-        `baerly: failed to parse ${cfgPath}: ${(e as Error).message}`,
-        e,
+        `baerly: failed to parse ${cfgPath}: ${(error as Error).message}`,
+        error,
       );
     }
   } else {
     let mod: { default?: unknown };
     try {
       mod = (await import(pathToFileURL(cfgPath).href)) as { default?: unknown };
-    } catch (e) {
+    } catch (error) {
       const hint = cfgPath.endsWith(".ts")
         ? " (Node cannot import .ts directly without a TS loader — point at the compiled .js or use a .json config)"
         : "";
       throw new BaerlyError(
         "InvalidConfig",
-        `baerly: failed to load ${cfgPath}: ${(e as Error).message}${hint}`,
-        e,
+        `baerly: failed to load ${cfgPath}: ${(error as Error).message}${hint}`,
+        error,
       );
     }
     raw = mod.default;
@@ -238,7 +240,9 @@ export const loadAppConfigWithCollections = async (
 }> => {
   const config = await loadAppConfig(cwd);
   const cfgPath = locateConfig(cwd);
-  if (cfgPath === null) return { config, collections: undefined };
+  if (cfgPath === null) {
+    return { config, collections: undefined };
+  }
 
   // Re-parse the raw default-export to pluck `collections[*]`. We
   // don't validate the inner shape here — at the doctor surface,
@@ -281,7 +285,9 @@ export const loadAppConfigWithCollections = async (
 
   const out: LoadedCollection[] = [];
   for (const [name, decl] of Object.entries(colsRaw as Record<string, unknown>)) {
-    if (decl === null || typeof decl !== "object") continue;
+    if (decl === null || typeof decl !== "object") {
+      continue;
+    }
     const indexes = (decl as { indexes?: unknown }).indexes;
     if (!Array.isArray(indexes)) {
       out.push({ name, indexes: [] });

@@ -170,7 +170,10 @@ const BUDGETS: readonly Budget[] = [
   //   → 433 KiB raw / 127 KiB gz: initial budget set in T9 based on
   //     post-T8 measurement (427 KiB raw / 125 KiB gz); margin sized
   //     for ordinary chunk-graph shifts.
-  { entry: "cloudflare.js", raw: 433 * 1024, gz: 127 * 1024 },
+  //   → 434 KiB raw / 128 KiB gz: lint-tighten adopted 13 style rules
+  //     (curly braces, no-nested-ternary helper extraction). Measured
+  //     442393 raw / 130174 gz; bumped 1 KiB on each axis.
+  { entry: "cloudflare.js", raw: 434 * 1024, gz: 128 * 1024 },
   // Node adapter — re-exports the kernel barrel plus
   // `s3HttpStorage`, `localFsStorage`, `memoryStorage`,
   // `localCacheStorage`, and the `baerlyNode` Fetch-API factory.
@@ -239,12 +242,16 @@ const BUDGETS: readonly Budget[] = [
 const STATIC_IMPORT_RE = /(?:^|\n)\s*(?:import|export)[^"']*?from\s*["']([^"']+)["']/g;
 
 function collectClosure(entryAbs: string, seen: Set<string>): void {
-  if (seen.has(entryAbs)) return;
+  if (seen.has(entryAbs)) {
+    return;
+  }
   seen.add(entryAbs);
   const src = readFileSync(entryAbs, "utf8");
   for (const m of src.matchAll(STATIC_IMPORT_RE)) {
     const spec = m[1]!;
-    if (!spec.startsWith("./") && !spec.startsWith("../")) continue;
+    if (!spec.startsWith("./") && !spec.startsWith("../")) {
+      continue;
+    }
     collectClosure(resolve(dirname(entryAbs), spec), seen);
   }
 }

@@ -29,8 +29,12 @@ const RESOLUTION = 10_000;
  * bucket.
  */
 export const decideSample = (request_id: string, rate: number): boolean => {
-  if (rate >= 1) return true;
-  if (rate <= 0) return false;
+  if (rate >= 1) {
+    return true;
+  }
+  if (rate <= 0) {
+    return false;
+  }
   const bucket = hash32(request_id) % RESOLUTION;
   return bucket < Math.floor(rate * RESOLUTION);
 };

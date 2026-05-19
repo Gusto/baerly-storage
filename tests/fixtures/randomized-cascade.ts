@@ -67,15 +67,21 @@ const causallyConsistent = (grounding: Grounding, kb: Knowledge): boolean => {
     // around `<`. Split on `<` first to grab the rhs, then strip the
     // leading comment / whitespace off the lhs.
     const ltIdx = clause.indexOf("<");
-    if (ltIdx < 0) return false;
+    if (ltIdx < 0) {
+      return false;
+    }
     const rawLhs = clause.slice(0, ltIdx).trim();
     const rhs = clause.slice(ltIdx + 1).trim();
     // The lhs may be `/*P2*/ C1` — drop the `*/`-prefix if present.
     const lhs = rawLhs.replace(/^\/\*[^*]*\*\/\s*/, "");
     const lv = grounding[lhs];
     const rv = grounding[rhs];
-    if (lv === undefined || rv === undefined) return false;
-    if (!(lv < rv)) return false;
+    if (lv === undefined || rv === undefined) {
+      return false;
+    }
+    if (!(lv < rv)) {
+      return false;
+    }
   }
   return true;
 };
@@ -123,12 +129,14 @@ const seedCurrent = (): CurrentJson => ({
 const ensureCurrent = async (storage: Storage, key: string): Promise<void> => {
   try {
     await createCurrentJson(storage, key, seedCurrent());
-  } catch (err) {
-    if (err instanceof BaerlyError && err.code === "Conflict") {
+  } catch (error) {
+    if (error instanceof BaerlyError && error.code === "Conflict") {
       const got = await readCurrentJson(storage, key);
-      if (got !== null) return;
+      if (got !== null) {
+        return;
+      }
     }
-    throw err;
+    throw error;
   }
 };
 
@@ -142,11 +150,15 @@ const ensureCurrent = async (storage: Storage, key: string): Promise<void> => {
  */
 const readLatest = async (inst: Instance): Promise<CascadeMessage | undefined> => {
   const read = await readCurrentJson(inst.storage, inst.currentJsonKey);
-  if (read === null) return undefined;
+  if (read === null) {
+    return undefined;
+  }
   const nextSeq = read.json.next_seq;
   for (let s = nextSeq - 1; s >= 0; s--) {
     const got = await inst.storage.get(`${inst.logPrefix}/log/${s}.json`);
-    if (got === null) continue;
+    if (got === null) {
+      continue;
+    }
     let entry: LogEntry;
     try {
       entry = JSON.parse(new TextDecoder().decode(got.body)) as LogEntry;
@@ -374,8 +386,12 @@ export const runCausalConsistencyCascade = (opts: {
             // Chain onto the per-client queue so commits on this
             // instance land in broadcast order.
             commitQueues[client_id] = commitQueues[client_id]!.then(async () => {
-              if (finished) return;
-              if (delayMs > 0) await new Promise<void>((r) => setTimeout(r, delayMs));
+              if (finished) {
+                return;
+              }
+              if (delayMs > 0) {
+                await new Promise<void>((r) => setTimeout(r, delayMs));
+              }
               try {
                 await instances[client_id]!.writer.commit({
                   op: "U",
@@ -383,13 +399,15 @@ export const runCausalConsistencyCascade = (opts: {
                   docId: COLLECTION,
                   body: message,
                 });
-              } catch (err) {
+              } catch (error) {
                 // Transient Conflict under contention is fine — the
                 // peer will re-broadcast on its next observe. Other
                 // errors propagate.
-                if (err instanceof BaerlyError && err.code === "Conflict") return;
+                if (error instanceof BaerlyError && error.code === "Conflict") {
+                  return;
+                }
                 finished = true;
-                reject(err);
+                reject(error);
               }
             });
           } else if (system.global_time >= MAX_STEPS && !finished) {
@@ -404,8 +422,8 @@ export const runCausalConsistencyCascade = (opts: {
                   await assertFilteredIndexConsistent(instances[0]!);
                 }
                 done();
-              } catch (err) {
-                reject(err);
+              } catch (error) {
+                reject(error);
               }
             })();
           }
@@ -420,7 +438,9 @@ export const runCausalConsistencyCascade = (opts: {
             let prev: string | undefined = undefined;
             while (!finished) {
               await new Promise<void>((r) => setTimeout(r, opts.pollTickMs));
-              if (finished) return;
+              if (finished) {
+                return;
+              }
               try {
                 const val = await readLatest(inst);
                 const serialized = JSON.stringify(val);
@@ -428,24 +448,24 @@ export const runCausalConsistencyCascade = (opts: {
                   prev = serialized;
                   try {
                     handle(client_id, val);
-                  } catch (err) {
+                  } catch (error) {
                     finished = true;
-                    reject(err);
+                    reject(error);
                     return;
                   }
                 }
-              } catch (err) {
+              } catch (error) {
                 // Swallow transient read failures — under Toxiproxy the
                 // network flips every 100ms during the Minio variant,
                 // and under R2 propagation jitter we may briefly see
                 // stale state. The next tick retries.
-                void err;
+                void error;
               }
             }
           })();
         });
-      } catch (err) {
-        reject(err);
+      } catch (error) {
+        reject(error);
       }
     })();
   });
@@ -564,7 +584,9 @@ export const runRangeWalkParityCascade = async (opts: {
   // off tenant). Spec doesn't require cryptographic randomness;
   // we just want decent coverage of bound combinations.
   let rngState = 0;
-  for (let i = 0; i < tenant.length; i++) rngState = (rngState * 31 + tenant.charCodeAt(i)) | 0;
+  for (let i = 0; i < tenant.length; i++) {
+    rngState = (rngState * 31 + tenant.charCodeAt(i)) | 0;
+  }
   const rand = (): number => {
     rngState = (rngState * 1664525 + 1013904223) | 0;
     return ((rngState >>> 0) % 1_000_000) / 1_000_000;
@@ -589,7 +611,9 @@ export const runRangeWalkParityCascade = async (opts: {
       // strict comparison or lo > hi.
       const a = Math.floor(rand() * priorityAlphabet.length);
       let b = Math.floor(rand() * priorityAlphabet.length);
-      if (a === b) b = (b + 1) % priorityAlphabet.length;
+      if (a === b) {
+        b = (b + 1) % priorityAlphabet.length;
+      }
       const aVal = priorityAlphabet[a]!;
       const bVal = priorityAlphabet[b]!;
       const lo = aVal < bVal ? aVal : bVal;
@@ -604,7 +628,9 @@ export const runRangeWalkParityCascade = async (opts: {
       // $in with 1-3 values
       const size = 1 + Math.floor(rand() * 3);
       const values: string[] = [];
-      for (let v = 0; v < size; v++) values.push(pick(priorityAlphabet));
+      for (let v = 0; v < size; v++) {
+        values.push(pick(priorityAlphabet));
+      }
       predicate = {
         priority: { $in: values },
       } as unknown as Predicate<ParityDoc>;

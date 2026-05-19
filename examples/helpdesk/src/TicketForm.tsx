@@ -17,14 +17,18 @@ export const TicketForm = ({
   const [initial, setInitial] = useState<Draft | undefined>(id === null ? EMPTY : undefined);
 
   useEffect(() => {
-    if (id === null) return;
+    if (id === null) {
+      return;
+    }
     void (async () => {
       const row = await client.table<Ticket>("tickets").where({ _id: id }).first();
       setInitial(row ?? EMPTY);
     })();
   }, [id]);
 
-  if (initial === undefined) return <p>Loading…</p>;
+  if (initial === undefined) {
+    return <p>Loading…</p>;
+  }
 
   return (
     <form

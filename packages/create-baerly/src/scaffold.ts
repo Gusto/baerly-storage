@@ -85,7 +85,9 @@ const STARTER_TO_EXAMPLE: Record<string, string> = {
 const resolveTemplatesRoot = (): string => {
   const here = dirname(fileURLToPath(import.meta.url));
   const distSidecar = resolve(here, "templates");
-  if (existsSync(distSidecar)) return distSidecar;
+  if (existsSync(distSidecar)) {
+    return distSidecar;
+  }
   return resolve(here, "..", "..", "..", "examples");
 };
 
@@ -99,7 +101,9 @@ const resolveTemplatesRoot = (): string => {
 const resolveAddonsRoot = (): string => {
   const here = dirname(fileURLToPath(import.meta.url));
   const distSidecar = resolve(here, "templates", "addons");
-  if (existsSync(distSidecar)) return distSidecar;
+  if (existsSync(distSidecar)) {
+    return distSidecar;
+  }
   return resolve(here, "..", "templates", "addons");
 };
 
@@ -128,7 +132,9 @@ const DEFAULT_MANIFEST: ScaffoldManifest = {
 
 const loadManifest = (exampleRoot: string): ScaffoldManifest => {
   const p = join(exampleRoot, ".baerly", "scaffold.json");
-  if (!existsSync(p)) return DEFAULT_MANIFEST;
+  if (!existsSync(p)) {
+    return DEFAULT_MANIFEST;
+  }
   const raw = JSON.parse(readFileSync(p, "utf8")) as Partial<ScaffoldManifest>;
   return {
     renames: raw.renames ?? [],
@@ -197,7 +203,9 @@ export const scaffold = async (opts: ScaffoldOptions): Promise<ScaffoldResult> =
     for (const ent of readdirSync(from)) {
       const fromEnt = join(from, ent);
       const relEnt = rel === "" ? ent : join(rel, ent);
-      if (isExcluded(relEnt)) continue;
+      if (isExcluded(relEnt)) {
+        continue;
+      }
       // Always skip dev-time / build artifacts. These are gitignored
       // in every example tree but live inside the working dir of any
       // contributor who ran `pnpm build` or `wrangler deploy` against
@@ -256,9 +264,7 @@ export const scaffold = async (opts: ScaffoldOptions): Promise<ScaffoldResult> =
     for (const addon of addons) {
       const addonDir = join(addonsRoot, addon);
       if (!existsSync(addonDir)) {
-        throw new Error(
-          `create-baerly: add-on directory not found: ${addonDir} (addon=${addon})`,
-        );
+        throw new Error(`create-baerly: add-on directory not found: ${addonDir} (addon=${addon})`);
       }
       walk(addonDir, "");
     }

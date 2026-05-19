@@ -160,7 +160,9 @@ export class InMemoryMetricsRecorder implements MetricsRecorder {
   sumCounter(name: string): number {
     let total = 0;
     for (const c of this.counters) {
-      if (c.name === name) total += c.value;
+      if (c.name === name) {
+        total += c.value;
+      }
     }
     return total;
   }
@@ -169,7 +171,9 @@ export class InMemoryMetricsRecorder implements MetricsRecorder {
   lastGauge(name: string): number | undefined {
     for (let i = this.gauges.length - 1; i >= 0; i--) {
       const g = this.gauges[i]!;
-      if (g.name === name) return g.value;
+      if (g.name === name) {
+        return g.value;
+      }
     }
     return undefined;
   }
@@ -178,7 +182,9 @@ export class InMemoryMetricsRecorder implements MetricsRecorder {
   histogramValues(name: string): number[] {
     const out: number[] = [];
     for (const h of this.histograms) {
-      if (h.name === name) out.push(h.value);
+      if (h.name === name) {
+        out.push(h.value);
+      }
     }
     return out;
   }

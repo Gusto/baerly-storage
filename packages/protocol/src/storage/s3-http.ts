@@ -50,9 +50,13 @@ export function parseRetryAfter(
   header: string | null,
   now: () => number = Date.now,
 ): number | undefined {
-  if (header === null) return undefined;
+  if (header === null) {
+    return undefined;
+  }
   const trimmed = header.trim();
-  if (trimmed === "") return undefined;
+  if (trimmed === "") {
+    return undefined;
+  }
   if (/^\d+$/.test(trimmed)) {
     const n = Number.parseInt(trimmed, 10);
     return Number.isFinite(n) ? Math.min(n, RETRY_AFTER_MAX_SECONDS) : undefined;
@@ -60,9 +64,13 @@ export function parseRetryAfter(
   // RFC 7231 §7.1.1.1 HTTP-date formats (IMF-fixdate, RFC 850, asctime)
   // all contain alphabetic month/day-of-week tokens. Gating on a letter
   // avoids V8's lenient `Date.parse` accepting things like "5.5".
-  if (!/[a-z]/i.test(trimmed)) return undefined;
+  if (!/[a-z]/i.test(trimmed)) {
+    return undefined;
+  }
   const t = Date.parse(trimmed);
-  if (Number.isNaN(t)) return undefined;
+  if (Number.isNaN(t)) {
+    return undefined;
+  }
   const seconds = Math.max(0, Math.ceil((t - now()) / 1000));
   return Math.min(seconds, RETRY_AFTER_MAX_SECONDS);
 }
@@ -80,10 +88,14 @@ const retry = async <T>(
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
       return await fn();
-    } catch (e) {
-      if (e instanceof BaerlyError && PERMANENT_ERROR_CODES.has(e.code)) throw e;
-      if (attempt === retries) throw e;
-      const hintMs = retryAfterHintMs(e, maxDelayMs);
+    } catch (error) {
+      if (error instanceof BaerlyError && PERMANENT_ERROR_CODES.has(error.code)) {
+        throw error;
+      }
+      if (attempt === retries) {
+        throw error;
+      }
+      const hintMs = retryAfterHintMs(error, maxDelayMs);
       await delay(hintMs ?? wait);
       if (hintMs === undefined) {
         wait = Math.min(wait * 1.5, maxDelayMs);
@@ -99,9 +111,13 @@ const retry = async <T>(
 };
 
 const retryAfterHintMs = (e: unknown, maxDelayMs: number): number | undefined => {
-  if (!(e instanceof BaerlyError)) return undefined;
+  if (!(e instanceof BaerlyError)) {
+    return undefined;
+  }
   const cause = e.cause as { retryAfterSeconds?: number } | undefined;
-  if (cause?.retryAfterSeconds === undefined) return undefined;
+  if (cause?.retryAfterSeconds === undefined) {
+    return undefined;
+  }
   return Math.min(cause.retryAfterSeconds * 1000, maxDelayMs);
 };
 
@@ -189,7 +205,9 @@ export class S3HttpStorage implements Storage {
     opts?.signal?.throwIfAborted();
     const url = this.#objectUrl(key, opts?.versionId);
     const headers = new Headers();
-    if (opts?.ifNoneMatch !== undefined) headers.set("If-None-Match", opts.ifNoneMatch);
+    if (opts?.ifNoneMatch !== undefined) {
+      headers.set("If-None-Match", opts.ifNoneMatch);
+    }
     return this.#retry(async () => {
       const res = await this.#dispatch(
         new Request(url, { method: "GET", headers, signal: opts?.signal ?? null }),
@@ -205,11 +223,13 @@ export class S3HttpStorage implements Storage {
           return versionId !== undefined ? { body, etag, versionId } : { body, etag };
         }
         case 304:
-        case 404:
+        case 404: {
           return null;
-        case 403:
+        }
+        case 403: {
           throw new BaerlyError("AccessDenied", `GET ${key}: 403`);
-        default:
+        }
+        default: {
           if (res.status === 429 || res.status >= 500) {
             throw new BaerlyError("NetworkError", `GET ${key}: ${res.status} ${await res.text()}`, {
               status: res.status,
@@ -217,6 +237,7 @@ export class S3HttpStorage implements Storage {
             });
           }
           throw new BaerlyError("InvalidResponse", `GET ${key}: ${res.status} ${await res.text()}`);
+        }
       }
     });
   }
@@ -226,8 +247,12 @@ export class S3HttpStorage implements Storage {
     const url = this.#objectUrl(key);
     const headers = new Headers();
     headers.set("Content-Type", opts?.contentType ?? "application/octet-stream");
-    if (opts?.ifMatch !== undefined) headers.set("If-Match", opts.ifMatch);
-    if (opts?.ifNoneMatch === "*") headers.set("If-None-Match", "*");
+    if (opts?.ifMatch !== undefined) {
+      headers.set("If-Match", opts.ifMatch);
+    }
+    if (opts?.ifNoneMatch === "*") {
+      headers.set("If-None-Match", "*");
+    }
     return this.#retry(async () => {
       const res = await this.#dispatch(
         new Request(url, {
@@ -271,8 +296,12 @@ export class S3HttpStorage implements Storage {
       const dateStr = res.headers.get("Date");
       const versionId = res.headers.get("x-amz-version-id") ?? undefined;
       const result: { etag: string; serverDate?: Date; versionId?: string } = { etag };
-      if (dateStr !== null) result.serverDate = new Date(dateStr);
-      if (versionId !== undefined) result.versionId = versionId;
+      if (dateStr !== null) {
+        result.serverDate = new Date(dateStr);
+      }
+      if (versionId !== undefined) {
+        result.versionId = versionId;
+      }
       return result;
     });
   }
@@ -339,7 +368,9 @@ export class S3HttpStorage implements Storage {
           const res = await this.#dispatch(
             new Request(url, { method: "GET", signal: opts?.signal ?? null }),
           );
-          if (res.status === 200) return { kind: "ok" as const, body: await res.text() };
+          if (res.status === 200) {
+            return { kind: "ok" as const, body: await res.text() };
+          }
           if (res.status === 429) {
             return {
               kind: "ratelimited" as const,
@@ -378,17 +409,23 @@ export class S3HttpStorage implements Storage {
       }
 
       for (const entry of parsed.Contents ?? []) {
-        if (entry.Key === undefined) continue;
+        if (entry.Key === undefined) {
+          continue;
+        }
         yield {
           key: entry.Key,
           etag: entry.ETag ?? "",
           ...(entry.LastModified !== undefined && { lastModified: entry.LastModified }),
         };
         yielded += 1;
-        if (opts?.maxKeys !== undefined && yielded >= opts.maxKeys) return;
+        if (opts?.maxKeys !== undefined && yielded >= opts.maxKeys) {
+          return;
+        }
       }
       continuationToken = parsed.NextContinuationToken;
-      if (continuationToken === undefined || continuationToken === "") return;
+      if (continuationToken === undefined || continuationToken === "") {
+        return;
+      }
     }
   }
 }

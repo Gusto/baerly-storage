@@ -64,8 +64,12 @@ const DEV_ARGS = {
 const KNOWN_KEYS: ReadonlySet<string> = new Set(["port", "data-dir", "json", "_"]);
 
 const errorToExitCode = (code: string): number => {
-  if (code === "InvalidConfig") return 1;
-  if (code === "Conflict" || code === "Internal" || code === "InvalidResponse") return 3;
+  if (code === "InvalidConfig") {
+    return 1;
+  }
+  if (code === "Conflict" || code === "Internal" || code === "InvalidResponse") {
+    return 3;
+  }
   return 2;
 };
 
@@ -206,12 +210,12 @@ const handleDev = async (args: ParsedArgs<typeof DEV_ARGS>): Promise<HandleDevOu
       });
     }
     return { code: 0, result };
-  } catch (err) {
-    if (err instanceof BaerlyError) {
-      emitError("dev", err.code, err.message);
-      return { code: errorToExitCode(err.code) };
+  } catch (error) {
+    if (error instanceof BaerlyError) {
+      emitError("dev", error.code, error.message);
+      return { code: errorToExitCode(error.code) };
     }
-    emitError("dev", "Unknown", (err as Error).message);
+    emitError("dev", "Unknown", (error as Error).message);
     return { code: 2 };
   }
 };
@@ -225,7 +229,9 @@ export const dev = defineCommand({
   args: DEV_ARGS,
   run: async ({ args }) => {
     const { code } = await handleDev(args);
-    if (code !== 0) process.exit(code);
+    if (code !== 0) {
+      process.exit(code);
+    }
     // The server's open socket keeps the event loop alive — do not
     // call process.exit(0).
   },
@@ -241,9 +247,9 @@ export const runDevCli = async (argv: readonly string[]): Promise<HandleDevOutco
   let parsed: ParsedArgs<typeof DEV_ARGS>;
   try {
     parsed = parseArgs<typeof DEV_ARGS>(argv as string[], DEV_ARGS);
-  } catch (err) {
+  } catch (error) {
     setJsonMode(argv.includes("--json"));
-    emitError("dev", "InvalidConfig", (err as Error).message);
+    emitError("dev", "InvalidConfig", (error as Error).message);
     return { code: 1 };
   }
   return handleDev(parsed);

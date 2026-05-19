@@ -20,7 +20,7 @@ import {
 import { ServerWriter } from "@baerly/server";
 import { configureObservability } from "@baerly/server/observability";
 import { reset, type LogRecord, type Sink } from "@logtape/logtape";
-import { afterEach, describe, expect, it, test } from "vitest";
+import { afterEach, describe, expect, test } from "vitest";
 import {
   createFetchHandler,
   createListener,
@@ -29,7 +29,7 @@ import {
 } from "./server.ts";
 
 describe("runMaintenanceTick", () => {
-  it("runs both compact and gc against the supplied storage", async () => {
+  test("runs both compact and gc against the supplied storage", async () => {
     const s = new MemoryStorage();
     const key = "app/t/tenant/x/manifests/c/current.json";
     await createCurrentJson(s, key, {
@@ -87,8 +87,11 @@ describe("createListener observability", () => {
     if (server !== undefined) {
       await new Promise<void>((resolve, reject) => {
         server!.close((err) => {
-          if (err !== undefined && err !== null) reject(err);
-          else resolve();
+          if (err !== undefined && err !== null) {
+            reject(err);
+          } else {
+            resolve();
+          }
         });
       });
       server = undefined;
@@ -130,7 +133,7 @@ describe("createListener observability", () => {
     });
   };
 
-  it("emits a canonical line for a write request with class_a_ops and outcome=committed", async () => {
+  test("emits a canonical line for a write request with class_a_ops and outcome=committed", async () => {
     const storage = new MemoryStorage();
     const tenant = "acme";
     await provision(storage, tenant, "c");
@@ -163,7 +166,7 @@ describe("createListener observability", () => {
     expect(classA).toBeGreaterThanOrEqual(3);
   });
 
-  it("emits a canonical line for a GET with outcome=read and non-zero class_b_ops", async () => {
+  test("emits a canonical line for a GET with outcome=read and non-zero class_b_ops", async () => {
     const storage = new MemoryStorage();
     const tenant = "acme";
     await provision(storage, tenant, "c");
@@ -188,7 +191,7 @@ describe("createListener observability", () => {
     expect(props["db.storage.class_b_ops_total"]).toBeGreaterThanOrEqual(1);
   });
 
-  it("honors a caller-supplied x-request-id on the canonical line", async () => {
+  test("honors a caller-supplied x-request-id on the canonical line", async () => {
     const storage = new MemoryStorage();
     const tenant = "acme";
     await provision(storage, tenant, "c");
@@ -215,7 +218,7 @@ describe("createListener observability", () => {
     expect(props["request_id"]).toBe(correlation);
   });
 
-  it("canonical line for a successful GET has no cache_status property", async () => {
+  test("canonical line for a successful GET has no cache_status property", async () => {
     const storage = new MemoryStorage();
     const tenant = "acme";
     await provision(storage, tenant, "c");
@@ -248,7 +251,7 @@ describe("createListener observability", () => {
     expect(props["db.storage.class_b_ops_total"]).toBeGreaterThanOrEqual(1);
   });
 
-  it("the operator's MetricsRecorder receives kernel emissions verbatim", async () => {
+  test("the operator's MetricsRecorder receives kernel emissions verbatim", async () => {
     // Asserts the tee semantic: same metrics that reach the
     // canonical-line bag also reach the operator's long-term sink.
     const storage = new MemoryStorage();
@@ -297,13 +300,13 @@ describe("resolveDefaultSink", () => {
     process.stdout.isTTY = original;
   });
 
-  it("passes a caller-supplied sink through verbatim", () => {
+  test("passes a caller-supplied sink through verbatim", () => {
     const customSink: Sink = () => {};
     const out = resolveDefaultSink({ sink: customSink });
     expect(out.sink).toBe(customSink);
   });
 
-  it("constructs the pretty sink as a function when stdout is a TTY", () => {
+  test("constructs the pretty sink as a function when stdout is a TTY", () => {
     process.stdout.isTTY = true;
     // The kernel only accepts `"console-json"` or a `Sink` function;
     // the adapter constructs the pretty sink locally so picocolors
@@ -312,13 +315,13 @@ describe("resolveDefaultSink", () => {
     expect(typeof resolveDefaultSink({ level: "debug" }).sink).toBe("function");
   });
 
-  it("defaults to console-json when stdout is not a TTY", () => {
+  test("defaults to console-json when stdout is not a TTY", () => {
     process.stdout.isTTY = false;
     expect(resolveDefaultSink({}).sink).toBe("console-json");
     expect(resolveDefaultSink({ level: "debug" }).sink).toBe("console-json");
   });
 
-  it("preserves level and sampleRate when defaulting the sink", () => {
+  test("preserves level and sampleRate when defaulting the sink", () => {
     process.stdout.isTTY = false;
     const out = resolveDefaultSink({ level: "warn", sampleRate: 0.1 });
     expect(out.level).toBe("warn");
@@ -354,7 +357,7 @@ describe("createFetchHandler", () => {
   const okVerifier: Verifier = async () => ({ tenantPrefix: "acme", identity: {} });
   const denyingVerifier: Verifier = async () => null;
 
-  it("answers /v1/healthz with 200 {ok:true} anonymously (verifier bypassed)", async () => {
+  test("answers /v1/healthz with 200 {ok:true} anonymously (verifier bypassed)", async () => {
     const handler = createFetchHandler({
       app: "t",
       storage: new MemoryStorage(),
@@ -362,10 +365,10 @@ describe("createFetchHandler", () => {
     });
     const res = await handler(new Request("http://x/v1/healthz", { method: "GET" }));
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ok: true });
+    await expect(res.json()).resolves.toEqual({ ok: true });
   });
 
-  it("returns 401 envelope when the verifier returns null on a /v1/t path", async () => {
+  test("returns 401 envelope when the verifier returns null on a /v1/t path", async () => {
     const storage = new MemoryStorage();
     await provisionTable(storage, "acme", "c");
     const handler = createFetchHandler({
@@ -379,7 +382,7 @@ describe("createFetchHandler", () => {
     expect(body.error.code).toBe("Unauthorized");
   });
 
-  it("verifier-rejected 401 emits a canonical http line AND the verifier_rejected warn", async () => {
+  test("verifier-rejected 401 emits a canonical http line AND the verifier_rejected warn", async () => {
     // Cross-adapter regression-lock: Node and CF must emit the same
     // wire shape AND the same observability record when the verifier
     // returns null. See `packages/adapter-cloudflare/src/worker.test.ts`
@@ -422,7 +425,7 @@ describe("createFetchHandler", () => {
     expect(warn!.level).toBe("warning");
   });
 
-  it("returns 200 for an authed GET when the verifier accepts", async () => {
+  test("returns 200 for an authed GET when the verifier accepts", async () => {
     const storage = new MemoryStorage();
     await provisionTable(storage, "acme", "c");
     const handler = createFetchHandler({
@@ -434,7 +437,7 @@ describe("createFetchHandler", () => {
     expect(res.status).toBe(200);
   });
 
-  it("commits a router POST and returns 201", async () => {
+  test("commits a router POST and returns 201", async () => {
     const storage = new MemoryStorage();
     await provisionTable(storage, "acme", "c");
     const handler = createFetchHandler({
@@ -452,7 +455,7 @@ describe("createFetchHandler", () => {
     expect(res.status).toBe(201);
   });
 
-  it("non-/v1/* paths fall through to the kernel 404 envelope", async () => {
+  test("non-/v1/* paths fall through to the kernel 404 envelope", async () => {
     const handler = createFetchHandler({
       app: "t",
       storage: new MemoryStorage(),
@@ -484,8 +487,11 @@ describe("createListener client-disconnect resilience", () => {
     if (server !== undefined) {
       await new Promise<void>((resolve, reject) => {
         server!.close((err) => {
-          if (err !== undefined && err !== null) reject(err);
-          else resolve();
+          if (err !== undefined && err !== null) {
+            reject(err);
+          } else {
+            resolve();
+          }
         });
       });
       server = undefined;
@@ -523,110 +529,38 @@ describe("createListener client-disconnect resilience", () => {
   const sleep = (ms: number): Promise<void> =>
     new Promise<void>((resolve) => setTimeout(resolve, ms));
 
-  test(
-    "client-abort of a long-poll /v1/since does not crash the server",
-    async () => {
-      const storage = new MemoryStorage();
-      const tenant = "acme";
-      await provisionSinceTable(storage, tenant, "c");
+  test("client-abort of a long-poll /v1/since does not crash the server", async () => {
+    const storage = new MemoryStorage();
+    const tenant = "acme";
+    await provisionSinceTable(storage, tenant, "c");
 
-      const verifier: Verifier = async () => ({ tenantPrefix: tenant, identity: {} });
-      const listener = createListener({
-        app: "t",
-        storage,
-        verifier,
-        // Short long-poll budget so the broken (pre-fix) path still
-        // completes within the test timeout — pipeline() rejects only
-        // after the long-poll resolves and the handler tries to write.
-        sinceTimeoutMs: 1500,
-        sincePollIntervalMs: 50,
-      });
-      const { host, port, url } = await startServer(listener);
+    const verifier: Verifier = async () => ({ tenantPrefix: tenant, identity: {} });
+    const listener = createListener({
+      app: "t",
+      storage,
+      verifier,
+      // Short long-poll budget so the broken (pre-fix) path still
+      // completes within the test timeout — pipeline() rejects only
+      // after the long-poll resolves and the handler tries to write.
+      sinceTimeoutMs: 1500,
+      sincePollIntervalMs: 50,
+    });
+    const { host, port, url } = await startServer(listener);
 
-      // Capture any unhandledRejection during the abort window. The
-      // pre-fix bug surfaced as `ERR_STREAM_UNABLE_TO_PIPE` rejected
-      // from `pipeline()` without a catch — this listener catches it
-      // if the regression returns.
-      const rejections: unknown[] = [];
-      const onRejection = (err: unknown): void => {
-        rejections.push(err);
-      };
-      process.on("unhandledRejection", onRejection);
+    // Capture any unhandledRejection during the abort window. The
+    // pre-fix bug surfaced as `ERR_STREAM_UNABLE_TO_PIPE` rejected
+    // from `pipeline()` without a catch — this listener catches it
+    // if the regression returns.
+    const rejections: unknown[] = [];
+    const onRejection = (err: unknown): void => {
+      rejections.push(err);
+    };
+    process.on("unhandledRejection", onRejection);
 
-      try {
-        // Open a low-level long-poll request. We must use http.request
-        // (not fetch) so we can destroy the underlying TCP socket
-        // before the response has been fully delivered.
-        const clientReq = httpRequest({
-          host,
-          port,
-          method: "GET",
-          path: "/v1/since?table=c&cursor=",
-          headers: { authorization: "Bearer dev" },
-        });
-        // Send the request without listening for a response — we never
-        // intend to read one. Swallow the `error` event that Node emits
-        // when we `.destroy()` mid-flight; otherwise it leaks as an
-        // `uncaughtException`.
-        clientReq.on("error", () => {});
-        clientReq.end();
-
-        // Give the server time to enter the long-poll loop, then yank
-        // the socket.
-        await sleep(100);
-        clientReq.destroy();
-
-        // Wait long enough for the broken pipeline()-rejection path to
-        // surface (sinceTimeoutMs + slack) so we'd catch a regression
-        // where the rejection only fires after the long-poll resolves.
-        await sleep(1800);
-
-        // Server must still be alive: a fresh GET /v1/healthz answers
-        // 200. fetch() throws ECONNREFUSED if the listener crashed.
-        const probe = await fetch(`${url}/v1/healthz`);
-        expect(probe.status).toBe(200);
-        expect(await probe.json()).toEqual({ ok: true });
-
-        expect(rejections).toEqual([]);
-      } finally {
-        process.off("unhandledRejection", onRejection);
-      }
-    },
-    10_000,
-  );
-
-  test(
-    "client disconnect aborts the synthesized Request.signal",
-    async () => {
-      // Capture the Request passed to the verifier so we can watch its
-      // signal flip when the client socket closes. The verifier runs
-      // inside `createFetchHandler` BEFORE the kernel touches the
-      // request, so the signal we see here is the one wired by
-      // `toFetchRequest(req, controller.signal)` in `handle()`.
-      let capturedRequest: Request | undefined;
-      let resolveCaptured: (() => void) | undefined;
-      const captured = new Promise<void>((resolve) => {
-        resolveCaptured = resolve;
-      });
-
-      const storage = new MemoryStorage();
-      const tenant = "acme";
-      await provisionSinceTable(storage, tenant, "c");
-
-      const verifier: Verifier = async (req) => {
-        capturedRequest = req;
-        resolveCaptured?.();
-        return { tenantPrefix: tenant, identity: {} };
-      };
-      const listener = createListener({
-        app: "t",
-        storage,
-        verifier,
-        sinceTimeoutMs: 1500,
-        sincePollIntervalMs: 50,
-      });
-      const { host, port } = await startServer(listener);
-
+    try {
+      // Open a low-level long-poll request. We must use http.request
+      // (not fetch) so we can destroy the underlying TCP socket
+      // before the response has been fully delivered.
       const clientReq = httpRequest({
         host,
         port,
@@ -634,31 +568,95 @@ describe("createListener client-disconnect resilience", () => {
         path: "/v1/since?table=c&cursor=",
         headers: { authorization: "Bearer dev" },
       });
+      // Send the request without listening for a response — we never
+      // intend to read one. Swallow the `error` event that Node emits
+      // when we `.destroy()` mid-flight; otherwise it leaks as an
+      // `uncaughtException`.
       clientReq.on("error", () => {});
       clientReq.end();
 
-      // Wait for the verifier to capture the request.
-      await captured;
-      expect(capturedRequest).toBeDefined();
-      expect(capturedRequest!.signal.aborted).toBe(false);
-
-      // Watch for the abort event. The signal flips synchronously on
-      // the next event-loop turn after the socket closes; a 500ms
-      // budget is plenty.
-      const aborted = new Promise<void>((resolve) => {
-        capturedRequest!.signal.addEventListener("abort", () => resolve(), { once: true });
-      });
-
+      // Give the server time to enter the long-poll loop, then yank
+      // the socket.
+      await sleep(100);
       clientReq.destroy();
-      await Promise.race([
-        aborted,
-        sleep(500).then(() => {
-          throw new Error("Request.signal did not abort within 500ms of clientReq.destroy()");
-        }),
-      ]);
 
-      expect(capturedRequest!.signal.aborted).toBe(true);
-    },
-    5000,
-  );
+      // Wait long enough for the broken pipeline()-rejection path to
+      // surface (sinceTimeoutMs + slack) so we'd catch a regression
+      // where the rejection only fires after the long-poll resolves.
+      await sleep(1800);
+
+      // Server must still be alive: a fresh GET /v1/healthz answers
+      // 200. fetch() throws ECONNREFUSED if the listener crashed.
+      const probe = await fetch(`${url}/v1/healthz`);
+      expect(probe.status).toBe(200);
+      await expect(probe.json()).resolves.toEqual({ ok: true });
+
+      expect(rejections).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", onRejection);
+    }
+  }, 10_000);
+
+  test("client disconnect aborts the synthesized Request.signal", async () => {
+    // Capture the Request passed to the verifier so we can watch its
+    // signal flip when the client socket closes. The verifier runs
+    // inside `createFetchHandler` BEFORE the kernel touches the
+    // request, so the signal we see here is the one wired by
+    // `toFetchRequest(req, controller.signal)` in `handle()`.
+    let capturedRequest: Request | undefined;
+    let resolveCaptured: (() => void) | undefined;
+    const captured = new Promise<void>((resolve) => {
+      resolveCaptured = resolve;
+    });
+
+    const storage = new MemoryStorage();
+    const tenant = "acme";
+    await provisionSinceTable(storage, tenant, "c");
+
+    const verifier: Verifier = async (req) => {
+      capturedRequest = req;
+      resolveCaptured?.();
+      return { tenantPrefix: tenant, identity: {} };
+    };
+    const listener = createListener({
+      app: "t",
+      storage,
+      verifier,
+      sinceTimeoutMs: 1500,
+      sincePollIntervalMs: 50,
+    });
+    const { host, port } = await startServer(listener);
+
+    const clientReq = httpRequest({
+      host,
+      port,
+      method: "GET",
+      path: "/v1/since?table=c&cursor=",
+      headers: { authorization: "Bearer dev" },
+    });
+    clientReq.on("error", () => {});
+    clientReq.end();
+
+    // Wait for the verifier to capture the request.
+    await captured;
+    expect(capturedRequest).toBeDefined();
+    expect(capturedRequest!.signal.aborted).toBe(false);
+
+    // Watch for the abort event. The signal flips synchronously on
+    // the next event-loop turn after the socket closes; a 500ms
+    // budget is plenty.
+    const aborted = new Promise<void>((resolve) => {
+      capturedRequest!.signal.addEventListener("abort", () => resolve(), { once: true });
+    });
+
+    clientReq.destroy();
+    await Promise.race([
+      aborted,
+      sleep(500).then(() => {
+        throw new Error("Request.signal did not abort within 500ms of clientReq.destroy()");
+      }),
+    ]);
+
+    expect(capturedRequest!.signal.aborted).toBe(true);
+  }, 5000);
 });

@@ -44,7 +44,7 @@ registerPreset({
     // message bodies are ~200–1000 B.
     recordSizeBuckets: [
       { cumulativeFraction: 0.8, maxBytes: 500 },
-      { cumulativeFraction: 1.0, maxBytes: 1_000 },
+      { cumulativeFraction: 1, maxBytes: 1_000 },
     ],
   },
   pipeline: [
@@ -56,7 +56,7 @@ registerPreset({
       mix: {
         weights: {
           "list-recent": 0,
-          insert: 1.0,
+          insert: 1,
           "filtered-list": 0,
           "point-read": 0,
           update: 0,

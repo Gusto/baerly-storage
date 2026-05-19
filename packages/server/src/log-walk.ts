@@ -53,8 +53,8 @@ export const readLogEntry = async (
   }
   try {
     return JSON.parse(new TextDecoder().decode(got.body)) as LogEntry;
-  } catch (e) {
-    throw new BaerlyError("InvalidResponse", `log-walk: malformed log entry at ${key}`, e);
+  } catch (error) {
+    throw new BaerlyError("InvalidResponse", `log-walk: malformed log entry at ${key}`, error);
   }
 };
 
@@ -76,7 +76,9 @@ export const walkLogRange = async (
   toSeqExclusive: number,
   opts?: { signal?: AbortSignal },
 ): Promise<LogEntry[]> => {
-  if (fromSeq >= toSeqExclusive) return [];
+  if (fromSeq >= toSeqExclusive) {
+    return [];
+  }
   const total = toSeqExclusive - fromSeq;
   const out: LogEntry[] = Array.from({ length: total });
   for (let chunkStart = 0; chunkStart < total; chunkStart += MAX_PARALLEL_LOG_READS) {

@@ -74,12 +74,15 @@ function viaFor(network: Network): "direct" | "toxiproxy" {
 
 function jitter(policy: RetryPolicy, attempt: number, prevSleepMs: number): number {
   switch (policy) {
-    case "no-jitter":
+    case "no-jitter": {
       return Math.min(CAP_MS, BASE_MS * 2 ** attempt);
-    case "full-jitter":
+    }
+    case "full-jitter": {
       return Math.random() * Math.min(CAP_MS, BASE_MS * 2 ** attempt);
-    case "decorrelated":
+    }
+    case "decorrelated": {
       return Math.min(CAP_MS, Math.random() * (3 * prevSleepMs - BASE_MS) + BASE_MS);
+    }
   }
 }
 
@@ -89,11 +92,11 @@ async function preflight(network: Network): Promise<void> {
   let res: Response;
   try {
     res = await fetch(MINIO_HEALTH_URL);
-  } catch (e) {
+  } catch (error) {
     throw new Error(
-      `bench: Minio not reachable at ${MINIO_HEALTH_URL} (${(e as Error).message}). ` +
+      `bench: Minio not reachable at ${MINIO_HEALTH_URL} (${(error as Error).message}). ` +
         `Did you run 'pnpm dev:storage'?`,
-      { cause: e },
+      { cause: error },
     );
   }
   if (res.status !== 200) {
@@ -115,9 +118,11 @@ async function preflight(network: Network): Promise<void> {
 async function seedCurrentJson(storage: CountingStorage): Promise<void> {
   try {
     await createCurrentJson(storage, CURRENT_KEY, SEED);
-  } catch (e: unknown) {
-    if (e instanceof BaerlyError && e.code === "Conflict") return; // already there
-    throw e;
+  } catch (error: unknown) {
+    if (error instanceof BaerlyError && error.code === "Conflict") {
+      return;
+    } // already there
+    throw error;
   }
 }
 
@@ -139,8 +144,8 @@ async function s1Writer(
         }));
         metrics.recordCommit(performance.now() - t0, attempts);
         break;
-      } catch (e: unknown) {
-        if (e instanceof BaerlyError && e.code === "Conflict") {
+      } catch (error: unknown) {
+        if (error instanceof BaerlyError && error.code === "Conflict") {
           metrics.recordConflict412();
           const sleepMs = jitter(retryPolicy, attempts, prevSleep);
           prevSleep = sleepMs;
@@ -148,7 +153,7 @@ async function s1Writer(
           attempts++;
           continue;
         }
-        if (e instanceof BaerlyError && e.code === "NetworkError") {
+        if (error instanceof BaerlyError && error.code === "NetworkError") {
           metrics.recordRateLimit429();
           const sleepMs = jitter(retryPolicy, attempts, prevSleep);
           prevSleep = sleepMs;
@@ -156,7 +161,7 @@ async function s1Writer(
           attempts++;
           continue;
         }
-        throw e;
+        throw error;
       }
     }
   }
@@ -271,9 +276,11 @@ async function runS2Multi(cell: SweepCell): Promise<RunResult> {
     const key = multiCollectionKey(i);
     try {
       await createCurrentJson(storage, key, SEED);
-    } catch (e: unknown) {
-      if (e instanceof BaerlyError && e.code === "Conflict") continue;
-      throw e;
+    } catch (error: unknown) {
+      if (error instanceof BaerlyError && error.code === "Conflict") {
+        continue;
+      }
+      throw error;
     }
   }
   // Reset counters; only the rotation loop counts.
@@ -300,8 +307,8 @@ async function runS2Multi(cell: SweepCell): Promise<RunResult> {
           }));
           metrics.recordCommit(performance.now() - tCommit, attempts);
           break;
-        } catch (e: unknown) {
-          if (e instanceof BaerlyError && e.code === "Conflict") {
+        } catch (error: unknown) {
+          if (error instanceof BaerlyError && error.code === "Conflict") {
             // Should be ~impossible (single writer per key) but
             // count the same way so the metric is comparable.
             metrics.recordConflict412();
@@ -311,7 +318,7 @@ async function runS2Multi(cell: SweepCell): Promise<RunResult> {
             attempts++;
             continue;
           }
-          if (e instanceof BaerlyError && e.code === "NetworkError") {
+          if (error instanceof BaerlyError && error.code === "NetworkError") {
             metrics.recordRateLimit429();
             const sleepMs = jitter(cell.retryPolicy, attempts, prevSleep);
             prevSleep = sleepMs;
@@ -319,7 +326,7 @@ async function runS2Multi(cell: SweepCell): Promise<RunResult> {
             attempts++;
             continue;
           }
-          throw e;
+          throw error;
         }
       }
     }
@@ -411,7 +418,9 @@ async function s3SigkillTrial(cell: SweepCell, trialIndex: number): Promise<Tria
         // Child may have exited already; ignore.
       }
     }
-    if (line === "READY-3") childCompleted = true;
+    if (line === "READY-3") {
+      childCompleted = true;
+    }
   };
 
   let buf = "";
@@ -537,9 +546,11 @@ async function s5Writer(storage: CountingStorage, signal: AbortSignal): Promise<
   };
 
   // Bootstrap current.json. The compactor needs it to exist.
-  await createCurrentJson(storage, S5_CURRENT_KEY, SEED).catch((e: unknown) => {
-    if (e instanceof BaerlyError && e.code === "Conflict") return;
-    throw e;
+  await createCurrentJson(storage, S5_CURRENT_KEY, SEED).catch((error: unknown) => {
+    if (error instanceof BaerlyError && error.code === "Conflict") {
+      return;
+    }
+    throw error;
   });
 
   while (!signal.aborted) {
@@ -561,9 +572,11 @@ async function s5Writer(storage: CountingStorage, signal: AbortSignal): Promise<
       const contentKey = `${S5_LOG_PREFIX}/content/${sha}.json`;
       await storage
         .put(contentKey, body, { ifNoneMatch: "*", contentType: "application/json" })
-        .catch((e: unknown) => {
-          if (e instanceof BaerlyError && e.code === "Conflict") return; // idempotent
-          throw e;
+        .catch((error: unknown) => {
+          if (error instanceof BaerlyError && error.code === "Conflict") {
+            return;
+          } // idempotent
+          throw error;
         });
 
       // Step 2. PUT log entry.
@@ -599,22 +612,32 @@ async function s5Writer(storage: CountingStorage, signal: AbortSignal): Promise<
         const checkSeq = start + Math.floor((after.json.next_seq - start) / 2);
         const checkKey = `${S5_LOG_PREFIX}/log/${checkSeq}.json`;
         const got = await storage.get(checkKey);
-        if (got === null) counters.log_404_on_read++;
+        if (got === null) {
+          counters.log_404_on_read++;
+        }
       }
-    } catch (e: unknown) {
+    } catch (error: unknown) {
       // Conflict on CAS is expected — back off and re-read. Don't
       // count as a violation. Other errors are surfaced.
-      if (e instanceof BaerlyError && e.code === "Conflict") continue;
-      if (e instanceof BaerlyError && e.code === "Internal" && e.message.includes("hash")) {
+      if (error instanceof BaerlyError && error.code === "Conflict") {
+        continue;
+      }
+      if (
+        error instanceof BaerlyError &&
+        error.code === "Internal" &&
+        error.message.includes("hash")
+      ) {
         counters.snapshot_hash_mismatch++;
         continue;
       }
-      throw e;
+      throw error;
     }
     // Pacing: target ~50 ops/sec means ~20ms between ops.
     const elapsed = performance.now() - t0;
     const delay = Math.max(0, 1000 / S5_TARGET_OPS_PER_SEC - elapsed);
-    if (delay > 0) await new Promise((r) => setTimeout(r, delay));
+    if (delay > 0) {
+      await new Promise((r) => setTimeout(r, delay));
+    }
   }
   return counters;
 }
@@ -726,21 +749,31 @@ function parseArgs(argv: readonly string[]): SweepCell {
   };
 }
 
+// Scenario → runner dispatch. Extracted from `main` so the table
+// doesn't sit inline as a 5-deep nested ternary.
+async function runScenario(cell: SweepCell): Promise<RunResult> {
+  if (cell.scenario === "S1") {
+    return runS1(cell);
+  }
+  if (cell.scenario === "S2-idle") {
+    return runS2Idle(cell);
+  }
+  if (cell.scenario === "S2-multi") {
+    return runS2Multi(cell);
+  }
+  if (cell.scenario === "S3-sigkill") {
+    return runS3Sigkill(cell);
+  }
+  if (cell.scenario === "S5-compaction") {
+    return runS5Compaction(cell);
+  }
+  return runS3Toxic(cell);
+}
+
 async function main(): Promise<number> {
   const cell = parseArgs(process.argv.slice(2));
   await preflight(cell.network);
-  const result =
-    cell.scenario === "S1"
-      ? await runS1(cell)
-      : cell.scenario === "S2-idle"
-        ? await runS2Idle(cell)
-        : cell.scenario === "S2-multi"
-          ? await runS2Multi(cell)
-          : cell.scenario === "S3-sigkill"
-            ? await runS3Sigkill(cell)
-            : cell.scenario === "S5-compaction"
-              ? await runS5Compaction(cell)
-              : await runS3Toxic(cell);
+  const result = await runScenario(cell);
 
   // The matrix orchestrator (`bench/r2-contention-matrix.ts`) pins
   // `--out-dir` to the sweep's timestamped subdirectory and

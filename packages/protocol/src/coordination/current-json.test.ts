@@ -24,7 +24,7 @@ const seedJson = (overrides: Partial<CurrentJson> = {}): CurrentJson => ({
 describe("readCurrentJson", () => {
   plainTest("returns null on missing key", async () => {
     const s = new MemoryStorage();
-    expect(await readCurrentJson(s, "tenant/coll/current.json")).toBeNull();
+    await expect(readCurrentJson(s, "tenant/coll/current.json")).resolves.toBeNull();
   });
 
   plainTest("round-trips a valid record", async () => {
@@ -181,21 +181,19 @@ describe("CurrentJson schema (PBT)", () => {
   // Enforces the invariant `0 <= log_seq_start <= next_seq` at draw
   // time by chaining a dependent integer arbitrary off `next_seq` so
   // the runtime guard always accepts the produced record.
-  const validCurrentJson = fc
-    .integer({ min: 0, max: 1_000_000 })
-    .chain((next_seq) =>
-      fc.record({
-        schema_version: fc.constant(CURRENT_JSON_SCHEMA_VERSION),
-        snapshot: fc.oneof(fc.constant(null), fc.string()),
-        next_seq: fc.constant(next_seq),
-        log_seq_start: fc.integer({ min: 0, max: next_seq }),
-        writer_fence: fc.record({
-          epoch: fc.integer({ min: 0, max: 1_000_000 }),
-          owner: fc.string(),
-          claimed_at: fc.string(),
-        }),
+  const validCurrentJson = fc.integer({ min: 0, max: 1_000_000 }).chain((next_seq) =>
+    fc.record({
+      schema_version: fc.constant(CURRENT_JSON_SCHEMA_VERSION),
+      snapshot: fc.oneof(fc.constant(null), fc.string()),
+      next_seq: fc.constant(next_seq),
+      log_seq_start: fc.integer({ min: 0, max: next_seq }),
+      writer_fence: fc.record({
+        epoch: fc.integer({ min: 0, max: 1_000_000 }),
+        owner: fc.string(),
+        claimed_at: fc.string(),
       }),
-    );
+    }),
+  );
 
   test.prop({
     initial: validCurrentJson,

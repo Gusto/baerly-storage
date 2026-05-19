@@ -104,8 +104,12 @@ const KNOWN_KEYS: ReadonlySet<string> = new Set([
 ]);
 
 const errorToExitCode = (code: string): number => {
-  if (code === "InvalidConfig") return 1;
-  if (code === "Internal" || code === "InvalidResponse" || code === "Conflict") return 3;
+  if (code === "InvalidConfig") {
+    return 1;
+  }
+  if (code === "Internal" || code === "InvalidResponse" || code === "Conflict") {
+    return 3;
+  }
   return 2;
 };
 
@@ -156,16 +160,17 @@ const loadConfigIndexes = async (
     const text = await readFile(configPath, "utf8");
     try {
       cfg = JSON.parse(text) as BaerlyConfig;
-    } catch (e) {
+    } catch (error) {
       throw new BaerlyError(
         "InvalidConfig",
-        `baerly admin fsck: --config JSON parse error in ${JSON.stringify(configPath)}: ${(e as Error).message}`,
+        `baerly admin fsck: --config JSON parse error in ${JSON.stringify(configPath)}: ${(error as Error).message}`,
       );
     }
   } else {
+    const pathMod = await import("node:path");
     const abs = configPath.startsWith("file://")
       ? fileURLToPath(configPath)
-      : (await import("node:path")).resolve(configPath);
+      : pathMod.resolve(configPath);
     const mod = (await import(pathToFileURL(abs).href)) as { default?: BaerlyConfig };
     if (mod.default === undefined) {
       throw new BaerlyError(
@@ -278,16 +283,19 @@ const handleFsck = async (args: Args): Promise<number> => {
     if (snapshotKey !== null) {
       try {
         await loadSnapshotAsMap(bucket.storage, snapshotKey, args.table);
-      } catch (e) {
-        if (e instanceof BaerlyError && (e.code === "Internal" || e.code === "InvalidResponse")) {
+      } catch (error) {
+        if (
+          error instanceof BaerlyError &&
+          (error.code === "Internal" || error.code === "InvalidResponse")
+        ) {
           findings.push({
             severity: "finding",
             check: "snapshot",
-            message: e.message,
+            message: error.message,
             key: snapshotKey,
           });
         } else {
-          throw e;
+          throw error;
         }
       }
     }
@@ -302,9 +310,13 @@ const handleFsck = async (args: Args): Promise<number> => {
     for (const key of presentKeys) {
       const tail = key.slice(logPrefix.length);
       const match = /^(\d+)\.json$/.exec(tail);
-      if (match === null) continue;
+      if (match === null) {
+        continue;
+      }
       const seq = Number.parseInt(match[1]!, 10);
-      if (Number.isFinite(seq)) presentSeqs.add(seq);
+      if (Number.isFinite(seq)) {
+        presentSeqs.add(seq);
+      }
     }
     let logEntriesPresent = 0;
     for (let s = logFrom; s < logToExcl; s++) {
@@ -385,12 +397,12 @@ const handleFsck = async (args: Args): Promise<number> => {
       );
     }
     return findings.length === 0 ? 0 : 4;
-  } catch (err) {
-    if (err instanceof BaerlyError) {
-      emitError("admin.fsck", err.code, err.message);
-      return errorToExitCode(err.code);
+  } catch (error) {
+    if (error instanceof BaerlyError) {
+      emitError("admin.fsck", error.code, error.message);
+      return errorToExitCode(error.code);
     }
-    emitError("admin.fsck", "Unknown", (err as Error).message);
+    emitError("admin.fsck", "Unknown", (error as Error).message);
     return 2;
   }
 };
@@ -404,7 +416,9 @@ export const fsckCmd = defineCommand({
   args: FSCK_ARGS,
   run: async ({ args }) => {
     const code = await handleFsck(args);
-    if (code !== 0) process.exit(code);
+    if (code !== 0) {
+      process.exit(code);
+    }
   },
 });
 
@@ -417,9 +431,9 @@ export const runFsck = async (argv: readonly string[]): Promise<number> => {
   let parsed: Args;
   try {
     parsed = parseArgs<typeof FSCK_ARGS>(argv as string[], FSCK_ARGS);
-  } catch (err) {
+  } catch (error) {
     setJsonMode(argv.includes("--json"));
-    emitError("admin.fsck", "InvalidConfig", (err as Error).message);
+    emitError("admin.fsck", "InvalidConfig", (error as Error).message);
     return 1;
   }
   return handleFsck(parsed);

@@ -16,7 +16,7 @@ import {
   type StoragePutOptions,
   type StoragePutResult,
 } from "@baerly/protocol";
-import { describe, expect, it } from "vitest";
+import { describe, expect, test } from "vitest";
 import { readLogEntry, walkLogRange } from "./log-walk.ts";
 
 const PREFIX = "app/t/tenant/x/manifests/c";
@@ -59,7 +59,9 @@ class ProbeStorage implements Storage {
   async get(key: string, opts?: StorageGetOptions): Promise<StorageGetResult | null> {
     this.getCalls.push(key);
     this.inFlight += 1;
-    if (this.inFlight > this.peakInFlight) this.peakInFlight = this.inFlight;
+    if (this.inFlight > this.peakInFlight) {
+      this.peakInFlight = this.inFlight;
+    }
     try {
       const match = /\/log\/(\d+)\.json$/.exec(key);
       if (match !== null) {
@@ -91,7 +93,7 @@ class ProbeStorage implements Storage {
 }
 
 describe("walkLogRange", () => {
-  it("returns entries in seq order even when later entries resolve first", async () => {
+  test("returns entries in seq order even when later entries resolve first", async () => {
     const inner = new MemoryStorage();
     await seedRange(inner, 0, 5);
     const probe = new ProbeStorage(inner);
@@ -106,13 +108,15 @@ describe("walkLogRange", () => {
     expect(entries.map((e) => e.seq)).toEqual([0, 1, 2, 3, 4]);
   });
 
-  it("caps concurrent gets at MAX_PARALLEL_LOG_READS", async () => {
+  test("caps concurrent gets at MAX_PARALLEL_LOG_READS", async () => {
     const inner = new MemoryStorage();
     const total = MAX_PARALLEL_LOG_READS * 3 + 5;
     await seedRange(inner, 0, total);
     const probe = new ProbeStorage(inner);
     // Uniform latency so every chunk overlaps fully before resolving.
-    for (let s = 0; s < total; s++) probe.latencyBySeq.set(s, 5);
+    for (let s = 0; s < total; s++) {
+      probe.latencyBySeq.set(s, 5);
+    }
 
     const entries = await walkLogRange(probe, PREFIX, 0, total);
     expect(entries).toHaveLength(total);
@@ -120,21 +124,21 @@ describe("walkLogRange", () => {
     expect(probe.getCalls).toHaveLength(total);
   });
 
-  it("returns [] and issues zero GETs for an empty range", async () => {
+  test("returns [] and issues zero GETs for an empty range", async () => {
     const probe = new ProbeStorage(new MemoryStorage());
     const entries = await walkLogRange(probe, PREFIX, 7, 7);
     expect(entries).toEqual([]);
     expect(probe.getCalls).toEqual([]);
   });
 
-  it("returns [] and issues zero GETs when fromSeq > toSeqExclusive", async () => {
+  test("returns [] and issues zero GETs when fromSeq > toSeqExclusive", async () => {
     const probe = new ProbeStorage(new MemoryStorage());
     const entries = await walkLogRange(probe, PREFIX, 9, 4);
     expect(entries).toEqual([]);
     expect(probe.getCalls).toEqual([]);
   });
 
-  it("throws Internal when an entry is missing inside the range", async () => {
+  test("throws Internal when an entry is missing inside the range", async () => {
     const inner = new MemoryStorage();
     await seedRange(inner, 0, 3);
     // Seed 4 but skip 3 — a hole inside [0, 5).
@@ -144,7 +148,7 @@ describe("walkLogRange", () => {
     });
   });
 
-  it("throws InvalidResponse on a malformed body", async () => {
+  test("throws InvalidResponse on a malformed body", async () => {
     const inner = new MemoryStorage();
     await inner.put(`${PREFIX}/log/0.json`, new TextEncoder().encode("not json"));
     await expect(walkLogRange(inner, PREFIX, 0, 1)).rejects.toBeInstanceOf(BaerlyError);
@@ -153,7 +157,7 @@ describe("walkLogRange", () => {
     });
   });
 
-  it("short-circuits on a pre-aborted signal without issuing GETs", async () => {
+  test("short-circuits on a pre-aborted signal without issuing GETs", async () => {
     const inner = new MemoryStorage();
     await seedRange(inner, 0, 5);
     const probe = new ProbeStorage(inner);
@@ -163,13 +167,15 @@ describe("walkLogRange", () => {
     expect(probe.getCalls).toEqual([]);
   });
 
-  it("stops dispatching further chunks once aborted mid-walk", async () => {
+  test("stops dispatching further chunks once aborted mid-walk", async () => {
     const inner = new MemoryStorage();
     const total = MAX_PARALLEL_LOG_READS * 4;
     await seedRange(inner, 0, total);
     const probe = new ProbeStorage(inner);
     // Slow every read so the first chunk is still in flight when we abort.
-    for (let s = 0; s < total; s++) probe.latencyBySeq.set(s, 20);
+    for (let s = 0; s < total; s++) {
+      probe.latencyBySeq.set(s, 20);
+    }
     const ctrl = new AbortController();
     // Abort during the first chunk.
     setTimeout(() => ctrl.abort(new Error("stop")), 5);
@@ -185,7 +191,7 @@ describe("walkLogRange", () => {
 });
 
 describe("readLogEntry", () => {
-  it("returns the parsed entry for a present key", async () => {
+  test("returns the parsed entry for a present key", async () => {
     const inner = new MemoryStorage();
     await seedRange(inner, 5, 6);
     const entry = await readLogEntry(inner, `${PREFIX}/log/5.json`);
@@ -193,14 +199,14 @@ describe("readLogEntry", () => {
     expect(entry.op).toBe("I");
   });
 
-  it("throws Internal when the key resolves to null", async () => {
+  test("throws Internal when the key resolves to null", async () => {
     const inner = new MemoryStorage();
     await expect(readLogEntry(inner, `${PREFIX}/log/missing.json`)).rejects.toMatchObject({
       code: "Internal",
     });
   });
 
-  it("throws InvalidResponse on a malformed body", async () => {
+  test("throws InvalidResponse on a malformed body", async () => {
     const inner = new MemoryStorage();
     await inner.put(`${PREFIX}/log/0.json`, new TextEncoder().encode("{not json"));
     await expect(readLogEntry(inner, `${PREFIX}/log/0.json`)).rejects.toMatchObject({

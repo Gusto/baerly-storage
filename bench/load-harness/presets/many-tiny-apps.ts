@@ -34,10 +34,10 @@ registerPreset({
     // tight size buckets: 70% ≤100, 30% 100–200).
     tenantSizeBuckets: [
       { cumulativeFraction: 0.7, maxRecords: 100 },
-      { cumulativeFraction: 1.0, maxRecords: 200 },
+      { cumulativeFraction: 1, maxRecords: 200 },
     ],
     // Uniform traffic spread — every tenant equally likely.
-    tenantTrafficBuckets: [{ topFraction: 1.0, trafficShare: 1.0 }],
+    tenantTrafficBuckets: [{ topFraction: 1, trafficShare: 1 }],
   },
   pipeline: [
     { phase: "seed", opCount: 0 },

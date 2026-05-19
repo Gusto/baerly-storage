@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { AppConfig } from "../config.ts";
 import type { ProcessRunner } from "../deploy/cloudflare.ts";
 import { doctorCloudflare, type DoctorFinding } from "./cloudflare.ts";
@@ -29,7 +29,9 @@ const makeRunner = (overrides: { readonly [key: string]: CannedReply } = {}) => 
   const lookup = (args: readonly string[]): CannedReply => {
     const key = args.join(" ");
     const o = overrides[key];
-    if (o !== undefined) return o;
+    if (o !== undefined) {
+      return o;
+    }
     if (args[0] === "r2" && args[1] === "bucket" && args[2] === "info") {
       return { code: 0, stdout: "ok" };
     }
@@ -42,7 +44,7 @@ const makeRunner = (overrides: { readonly [key: string]: CannedReply } = {}) => 
     return { code: 0, stdout: "" };
   };
   const runner: ProcessRunner = {
-    run: vi.fn(async (cmd, args, _cwd) => {
+    run: vi.fn<ProcessRunner["run"]>(async (cmd, args, _cwd) => {
       void _cwd;
       calls.push([cmd, ...args]);
       const r = lookup(args);
@@ -77,7 +79,7 @@ describe("doctorCloudflare", () => {
     await rm(repoRoot, { recursive: true, force: true });
   });
 
-  it("reports ok when every check passes", async () => {
+  test("reports ok when every check passes", async () => {
     await writeScaffold(repoRoot);
     const { runner } = makeRunner();
     const report = await doctorCloudflare(makeConfig(repoRoot), { runner });
@@ -88,14 +90,14 @@ describe("doctorCloudflare", () => {
     expect(findingFor(report.findings, "triggers.crons")?.severity).toBe("ok");
   });
 
-  it("reports an error when wrangler.jsonc is missing", async () => {
+  test("reports an error when wrangler.jsonc is missing", async () => {
     const { runner } = makeRunner();
     const report = await doctorCloudflare(makeConfig(repoRoot), { runner });
     expect(report.status).toBe("error");
     expect(findingFor(report.findings, "wrangler.jsonc")?.severity).toBe("error");
   });
 
-  it("reports an error when a declared R2 bucket is missing", async () => {
+  test("reports an error when a declared R2 bucket is missing", async () => {
     await writeScaffold(repoRoot);
     const { runner } = makeRunner({
       "r2 bucket info x": { code: 1, stderr: "not found" },
@@ -107,9 +109,9 @@ describe("doctorCloudflare", () => {
     expect(f?.fix).toContain("wrangler r2 bucket create x");
   });
 
-  it("creates the missing R2 bucket when --fix is set", async () => {
+  test("creates the missing R2 bucket when --fix is set", async () => {
     await writeScaffold(repoRoot);
-    let infoCalls = 0;
+    const infoCalls = 0;
     const overrides: Record<string, CannedReply> = {
       "r2 bucket info x": { code: 1, stderr: "not found" },
     };
@@ -123,7 +125,7 @@ describe("doctorCloudflare", () => {
     expect(calls).toContainEqual(["wrangler", "r2", "bucket", "create", "x"]);
   });
 
-  it("warns when a required secret is missing", async () => {
+  test("warns when a required secret is missing", async () => {
     await writeScaffold(repoRoot);
     const { runner } = makeRunner({
       "secret list": { code: 0, stdout: "[]" },
@@ -135,7 +137,7 @@ describe("doctorCloudflare", () => {
     expect(f?.fix).toBe("wrangler secret put SHARED_SECRET");
   });
 
-  it("reports an error when cloudflareAccess.audienceTag is malformed", async () => {
+  test("reports an error when cloudflareAccess.audienceTag is malformed", async () => {
     await writeScaffold(repoRoot);
     const { runner } = makeRunner();
     const cfg = makeConfig(repoRoot, {
@@ -147,7 +149,7 @@ describe("doctorCloudflare", () => {
     expect(f?.severity).toBe("error");
   });
 
-  it("accepts a well-formed 64-char hex audienceTag", async () => {
+  test("accepts a well-formed 64-char hex audienceTag", async () => {
     await writeScaffold(repoRoot);
     const { runner } = makeRunner();
     const cfg = makeConfig(repoRoot, {
@@ -157,7 +159,7 @@ describe("doctorCloudflare", () => {
     expect(findingFor(report.findings, "cloudflareAccess")?.severity).toBe("ok");
   });
 
-  it("warns when no cron triggers are declared", async () => {
+  test("warns when no cron triggers are declared", async () => {
     await writeScaffold(
       repoRoot,
       `{ "name": "x", "r2_buckets": [{ "binding": "BUCKET", "bucket_name": "x" }] }`,
@@ -169,7 +171,7 @@ describe("doctorCloudflare", () => {
     expect(report.status).toBe("warning");
   });
 
-  it("warns when baerly.config.ts:domain has no matching wrangler.jsonc:routes pattern", async () => {
+  test("warns when baerly.config.ts:domain has no matching wrangler.jsonc:routes pattern", async () => {
     await writeScaffold(repoRoot);
     const { runner } = makeRunner();
     const cfg = makeConfig(repoRoot, { domain: "app.example.com" });
@@ -179,7 +181,7 @@ describe("doctorCloudflare", () => {
     expect(f?.fix).toContain("app.example.com/*");
   });
 
-  it("accepts a matching domain ↔ routes pair", async () => {
+  test("accepts a matching domain ↔ routes pair", async () => {
     await writeScaffold(
       repoRoot,
       `{
@@ -208,12 +210,15 @@ describe("doctorCloudflare", () => {
     });
     afterEach(() => {
       for (const k of R2_ENV_KEYS) {
-        if (savedEnv[k] === undefined) delete process.env[k];
-        else process.env[k] = savedEnv[k];
+        if (savedEnv[k] === undefined) {
+          delete process.env[k];
+        } else {
+          process.env[k] = savedEnv[k];
+        }
       }
     });
 
-    it("emits error finding when R2 env vars are missing", async () => {
+    test("emits error finding when R2 env vars are missing", async () => {
       await writeScaffold(repoRoot);
       const { runner } = makeRunner();
       const report = await doctorCloudflare(makeConfig(repoRoot), { runner, usage: true });
@@ -225,7 +230,7 @@ describe("doctorCloudflare", () => {
       expect(f?.fix).toContain("R2 API Token");
     });
 
-    it("partial env vars still surface the missing-vars finding listing only the gaps", async () => {
+    test("partial env vars still surface the missing-vars finding listing only the gaps", async () => {
       process.env["CF_ACCOUNT_ID"] = "acct123";
       await writeScaffold(repoRoot);
       const { runner } = makeRunner();
@@ -237,11 +242,13 @@ describe("doctorCloudflare", () => {
       expect(f?.message).toContain("R2_SECRET_ACCESS_KEY");
     });
 
-    it("warns when no R2 bindings are declared in wrangler.jsonc", async () => {
+    test("warns when no R2 bindings are declared in wrangler.jsonc", async () => {
       // wrangler.jsonc with zero r2_buckets — the parse succeeds with
       // an empty bindings list, so we fall through to the usage block
       // and emit a usage-no-binding warning.
-      for (const k of R2_ENV_KEYS) process.env[k] = `set-${k.toLowerCase()}`;
+      for (const k of R2_ENV_KEYS) {
+        process.env[k] = `set-${k.toLowerCase()}`;
+      }
       await writeScaffold(
         repoRoot,
         `{ "name": "x", "r2_buckets": [], "triggers": { "crons": ["* * * * *"] } }`,
@@ -255,7 +262,7 @@ describe("doctorCloudflare", () => {
       expect(f?.severity).toBe("warning");
     });
 
-    it("does not emit usage findings when --usage is omitted", async () => {
+    test("does not emit usage findings when --usage is omitted", async () => {
       await writeScaffold(repoRoot);
       const { runner } = makeRunner();
       const report = await doctorCloudflare(makeConfig(repoRoot), { runner });
@@ -265,7 +272,7 @@ describe("doctorCloudflare", () => {
   });
 
   describe("extraFindings", () => {
-    it("threads drift-check warnings through to the rollup", async () => {
+    test("threads drift-check warnings through to the rollup", async () => {
       await writeScaffold(repoRoot);
       const { runner } = makeRunner();
       const report = await doctorCloudflare(makeConfig(repoRoot), {
@@ -285,7 +292,7 @@ describe("doctorCloudflare", () => {
       expect(drift?.fix).toContain("rebuild-index");
     });
 
-    it("threads drift-check errors and bumps overall status to error", async () => {
+    test("threads drift-check errors and bumps overall status to error", async () => {
       await writeScaffold(repoRoot);
       const { runner } = makeRunner();
       const report = await doctorCloudflare(makeConfig(repoRoot), {

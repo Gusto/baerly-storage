@@ -33,7 +33,7 @@ import {
   type StoragePutOptions,
   type StoragePutResult,
 } from "@baerly/protocol";
-import { describe, expect, it } from "vitest";
+import { describe, expect, test } from "vitest";
 import { compact } from "./compactor.ts";
 import { runGc } from "./gc.ts";
 import { CLOUDFLARE_FREE_TIER } from "./maintenance.ts";
@@ -106,7 +106,7 @@ describe("CLOUDFLARE_FREE_TIER budget", () => {
   const KEY = "app/t/tenant/x/manifests/c/current.json";
   const COLL = "c";
 
-  it("compact-only tick stays at or below 50 storage ops", async () => {
+  test("compact-only tick stays at or below 50 storage ops", async () => {
     // Even-minute branch of the scheduled handler: compact alone.
     // Budget math: 1 GET current + N GETs log (N = maxEntriesPerRun
     // = 20) + 1 PUT snapshot + 1 PUT current = 23. (No prior snapshot
@@ -115,10 +115,7 @@ describe("CLOUDFLARE_FREE_TIER budget", () => {
     await seed(inner, KEY, COLL, 200);
     const { storage, getOps, report } = countingStorage(inner);
 
-    const r = await compact(
-      { storage, currentJsonKey: KEY },
-      CLOUDFLARE_FREE_TIER.compact,
-    );
+    const r = await compact({ storage, currentJsonKey: KEY }, CLOUDFLARE_FREE_TIER.compact);
     expect(r.written).toBe(true);
     const ops = getOps();
     expect(ops, `ops by category: ${JSON.stringify(report())}`).toBeLessThanOrEqual(
@@ -126,7 +123,7 @@ describe("CLOUDFLARE_FREE_TIER budget", () => {
     );
   });
 
-  it("gc-only tick stays at or below 50 storage ops at steady state", async () => {
+  test("gc-only tick stays at or below 50 storage ops at steady state", async () => {
     // Odd-minute branch of the scheduled handler: GC alone. Steady
     // state on free tier: compaction runs at the same cadence as GC
     // and keeps the live log tail near `minEntriesToCompact = 50`,
@@ -154,10 +151,7 @@ describe("CLOUDFLARE_FREE_TIER budget", () => {
     await compact({ storage: inner, currentJsonKey: KEY }, CLOUDFLARE_FREE_TIER.compact);
 
     const { storage, getOps, report } = countingStorage(inner);
-    const r = await runGc(
-      { storage, currentJsonKey: KEY },
-      CLOUDFLARE_FREE_TIER.gc,
-    );
+    const r = await runGc({ storage, currentJsonKey: KEY }, CLOUDFLARE_FREE_TIER.gc);
     expect(r).not.toBeNull();
     const ops = getOps();
     expect(ops, `ops by category: ${JSON.stringify(report())}`).toBeLessThanOrEqual(

@@ -9,6 +9,7 @@ import {
 } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
+import type { ReadableStream as NodeReadableStream } from "node:stream/web";
 import {
   BaerlyError,
   type MetricsRecorder,
@@ -246,9 +247,7 @@ export function createFetchHandler(
 
     const result = await opts.verifier(request);
     if (result === null) {
-      return await runWithContext(obsCtx, async () =>
-        flushUnauthorizedAndRespond(obsCtx, request),
-      );
+      return await runWithContext(obsCtx, async () => flushUnauthorizedAndRespond(obsCtx, request));
     }
 
     return await runWithContext(obsCtx, async () => {
@@ -271,9 +270,9 @@ export function createFetchHandler(
         });
         response = await router.fetch(request);
         outboundStatus = response.status;
-      } catch (err) {
-        caughtError = err;
-        const { status, envelope } = mapError(err);
+      } catch (error) {
+        caughtError = error;
+        const { status, envelope } = mapError(error);
         outboundStatus = status;
         response = new Response(JSON.stringify(envelope), {
           status,
@@ -326,7 +325,9 @@ async function handle(
     !path.startsWith("/v1/")
   ) {
     const served = await serveStaticAsset(req, res, path, opts.webRoot);
-    if (served) return;
+    if (served) {
+      return;
+    }
   }
 
   // Everything else: convert IncomingMessage → Request, delegate
@@ -344,26 +345,32 @@ async function handle(
   // abort in the disconnect case.
   const controller = new AbortController();
   res.once("close", () => {
-    if (!res.writableEnded) controller.abort();
+    if (!res.writableEnded) {
+      controller.abort();
+    }
   });
 
   const request = toFetchRequest(req, controller.signal);
   let response: Response;
   try {
     response = await fetchHandler(request);
-  } catch (err) {
+  } catch (error) {
     // createFetchHandler swallows kernel errors via `mapError`. An
     // exception here is an unexpected adapter-side fault. Surface
     // the envelope so node:http doesn't emit an 'error' event and
     // crash the server.
-    const { status, envelope } = mapError(err);
-    if (!res.destroyed) writeJson(res, status, envelope);
+    const { status, envelope } = mapError(error);
+    if (!res.destroyed) {
+      writeJson(res, status, envelope);
+    }
     return;
   }
 
   // Client disconnected before the handler resolved — `setHeader` on
   // a destroyed `res` would throw, and pumping bytes is pointless.
-  if (res.destroyed) return;
+  if (res.destroyed) {
+    return;
+  }
 
   res.statusCode = response.status;
   response.headers.forEach((value, key) => res.setHeader(key, value));
@@ -383,18 +390,20 @@ async function handle(
   // disconnect codes. Genuine stream errors still propagate.
   try {
     await pipeline(
-      Readable.fromWeb(
-        response.body as unknown as import("node:stream/web").ReadableStream<Uint8Array>,
-      ),
+      Readable.fromWeb(response.body as unknown as NodeReadableStream<Uint8Array>),
       res,
     );
-  } catch (err) {
-    if (!isClientDisconnect(err)) throw err;
+  } catch (error) {
+    if (!isClientDisconnect(error)) {
+      throw error;
+    }
   }
 }
 
 function isClientDisconnect(err: unknown): boolean {
-  if (err === null || typeof err !== "object") return false;
+  if (err === null || typeof err !== "object") {
+    return false;
+  }
   const code = (err as { code?: unknown }).code;
   return (
     code === "ERR_STREAM_UNABLE_TO_PIPE" ||
@@ -418,7 +427,9 @@ function toFetchRequest(req: IncomingMessage, signal: AbortSignal): Request {
   const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
   const headers = new Headers();
   for (const [k, v] of Object.entries(req.headers)) {
-    if (v === undefined) continue;
+    if (v === undefined) {
+      continue;
+    }
     headers.set(k, Array.isArray(v) ? v.join(", ") : v);
   }
   const init: RequestInit = { method: req.method, headers, signal };
@@ -463,7 +474,9 @@ function readNodeStream(req: IncomingMessage, maxBytes: number): ReadableStream<
   return new ReadableStream<Uint8Array>({
     start(controller) {
       req.on("data", (chunk: Buffer) => {
-        if (exceeded) return;
+        if (exceeded) {
+          return;
+        }
         total += chunk.byteLength;
         if (total > maxBytes) {
           exceeded = true;
@@ -475,10 +488,14 @@ function readNodeStream(req: IncomingMessage, maxBytes: number): ReadableStream<
         controller.enqueue(new Uint8Array(chunk));
       });
       req.on("end", () => {
-        if (!exceeded) controller.close();
+        if (!exceeded) {
+          controller.close();
+        }
       });
       req.on("error", (err) => {
-        if (!exceeded) controller.error(err);
+        if (!exceeded) {
+          controller.error(err);
+        }
       });
     },
   });
@@ -542,29 +559,44 @@ function resolveUnderWebRoot(reqPath: string, webRoot: string): string | null {
   // is always a `/`-rooted path; we work in POSIX form regardless of
   // host OS.
   let relative = reqPath;
-  if (relative === "" || relative === "/") relative = "/index.html";
-  else if (relative.endsWith("/")) relative = `${relative}index.html`;
+  if (relative === "" || relative === "/") {
+    relative = "/index.html";
+  } else if (relative.endsWith("/")) {
+    relative = `${relative}index.html`;
+  }
 
   // Reject NUL bytes immediately — no filesystem call should ever see
   // one.
-  if (relative.includes("\0")) return null;
+  if (relative.includes("\0")) {
+    return null;
+  }
 
   // Walk the segments, URL-decoding each one in isolation. Decoding
   // the whole path string would let `%2F` (`/`) sneak through as a
   // segment separator that bypasses the per-segment `..` check.
   const segments: string[] = [];
   for (const raw of relative.split("/")) {
-    if (raw === "") continue;
+    if (raw === "") {
+      continue;
+    }
     let decoded: string;
     try {
       decoded = decodeURIComponent(raw);
     } catch {
       return null;
     }
-    if (decoded === "" || decoded === ".") continue;
-    if (decoded === "..") return null;
-    if (decoded.includes("\0")) return null;
-    if (decoded.includes("/") || decoded.includes("\\")) return null;
+    if (decoded === "" || decoded === ".") {
+      continue;
+    }
+    if (decoded === "..") {
+      return null;
+    }
+    if (decoded.includes("\0")) {
+      return null;
+    }
+    if (decoded.includes("/") || decoded.includes("\\")) {
+      return null;
+    }
     segments.push(decoded);
   }
 
@@ -573,7 +605,9 @@ function resolveUnderWebRoot(reqPath: string, webRoot: string): string | null {
   // `path.relative` returns `""` when `resolved === webRoot` (the
   // directory itself) and a `..`-prefixed path when `resolved` escapes
   // `webRoot`. Both are rejected.
-  if (rel === "" || rel.startsWith("..") || rel.startsWith(`..${pathSep}`)) return null;
+  if (rel === "" || rel.startsWith("..") || rel.startsWith(`..${pathSep}`)) {
+    return null;
+  }
   return resolved;
 }
 
@@ -585,7 +619,9 @@ function resolveUnderWebRoot(reqPath: string, webRoot: string): string | null {
  */
 function wantsHtmlFallback(req: IncomingMessage): boolean {
   const accept = req.headers.accept;
-  if (typeof accept !== "string") return false;
+  if (typeof accept !== "string") {
+    return false;
+  }
   return accept.includes("text/html");
 }
 
@@ -598,10 +634,12 @@ async function statFile(target: string): Promise<Awaited<ReturnType<typeof stat>
   try {
     const stats = await stat(target);
     return stats.isFile() ? stats : null;
-  } catch (err) {
-    const code = (err as NodeJS.ErrnoException).code;
-    if (code === "ENOENT" || code === "ENOTDIR") return null;
-    throw err;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT" || code === "ENOTDIR") {
+      return null;
+    }
+    throw error;
   }
 }
 
@@ -619,7 +657,9 @@ async function serveStaticAsset(
   webRoot: string,
 ): Promise<boolean> {
   const resolved = resolveUnderWebRoot(reqPath, webRoot);
-  if (resolved === null) return false;
+  if (resolved === null) {
+    return false;
+  }
 
   // Try the resolved path first. A miss (ENOENT/ENOTDIR or non-file)
   // can fall through to `<webRoot>/index.html` for HTML navigation so
@@ -628,10 +668,14 @@ async function serveStaticAsset(
   let target = resolved;
   let stats = primary;
   if (stats === null) {
-    if (!wantsHtmlFallback(req)) return false;
+    if (!wantsHtmlFallback(req)) {
+      return false;
+    }
     const indexPath = resolvePath(webRoot, "index.html");
     const fallback = await statFile(indexPath);
-    if (fallback === null) return false;
+    if (fallback === null) {
+      return false;
+    }
     target = indexPath;
     stats = fallback;
   }
@@ -744,7 +788,9 @@ export const runMaintenanceTick = async (opts: NodeMaintenanceOptions): Promise<
  * worth a black-box round-trip.
  */
 export const resolveDefaultSink = (config: ObservabilityConfig): ObservabilityConfig => {
-  if (config.sink !== undefined) return config;
+  if (config.sink !== undefined) {
+    return config;
+  }
   // `process.stdout.isTTY` is `true` only on real terminals. CI
   // pipelines, docker logs, systemd, and pm2 cluster mode all
   // pipe stdout — `isTTY` is `undefined` (falsy) there. The kernel

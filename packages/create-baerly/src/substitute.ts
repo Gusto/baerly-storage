@@ -51,7 +51,9 @@ export const substituteText = (text: string, ctx: SubstituteContext): string => 
   const sorted = ctx.manifest.renames.toSorted((a, b) => b.from.length - a.from.length);
   let out = text;
   for (const r of sorted) {
-    if (!Object.hasOwn(ctx.vars, r.fromKey)) continue;
+    if (!Object.hasOwn(ctx.vars, r.fromKey)) {
+      continue;
+    }
     out = out.replaceAll(r.from, ctx.vars[r.fromKey]!);
   }
   return out;
@@ -73,17 +75,25 @@ export const substitutePackageJson = (text: string, ctx: SubstituteContext): str
   const pin = `^${ctx.cliVersion}`;
   for (const block of ["dependencies", "devDependencies", "peerDependencies"] as const) {
     const deps = pkg[block];
-    if (deps === undefined) continue;
+    if (deps === undefined) {
+      continue;
+    }
     for (const [name, value] of Object.entries(deps)) {
-      if (value !== "workspace:*") continue;
-      if (name === "baerly-storage" || name === "create-baerly") deps[name] = pin;
+      if (value !== "workspace:*") {
+        continue;
+      }
+      if (name === "baerly-storage" || name === "create-baerly") {
+        deps[name] = pin;
+      }
     }
   }
   if (pkg.devDependencies !== undefined) {
     for (const drop of ctx.manifest.dropDevDeps) {
       delete pkg.devDependencies[drop];
     }
-    if (Object.keys(pkg.devDependencies).length === 0) delete pkg.devDependencies;
+    if (Object.keys(pkg.devDependencies).length === 0) {
+      delete pkg.devDependencies;
+    }
   }
   return `${JSON.stringify(pkg, null, 2)}\n`;
 };

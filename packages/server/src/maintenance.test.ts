@@ -10,7 +10,7 @@
 
 import { CURRENT_JSON_SCHEMA_VERSION, createCurrentJson, MemoryStorage } from "@baerly/protocol";
 import { reset, type LogRecord, type Sink } from "@logtape/logtape";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { compact } from "./compactor.ts";
 import { runGc, type InternalRunGcOptions } from "./gc.ts";
 import {
@@ -35,7 +35,7 @@ const bootstrap = async (storage: MemoryStorage, key: string): Promise<void> => 
 };
 
 describe("runScheduledMaintenance", () => {
-  it("runs both compact and gc by default", async () => {
+  test("runs both compact and gc by default", async () => {
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
     const writer = new ServerWriter({ storage: s, currentJsonKey: KEY });
@@ -61,7 +61,7 @@ describe("runScheduledMaintenance", () => {
     expect(r.gc.marked.stale_log).toBeGreaterThan(0);
   });
 
-  it("runGc alone runs without compact", async () => {
+  test("runGc alone runs without compact", async () => {
     // Single-phase ticks (e.g. the CF free-tier even/odd-minute cron
     // pattern) invoke the primitive directly instead of
     // `runScheduledMaintenance`.
@@ -71,7 +71,7 @@ describe("runScheduledMaintenance", () => {
     expect(r).not.toBeNull();
   });
 
-  it("compact alone runs without gc", async () => {
+  test("compact alone runs without gc", async () => {
     // Single-phase ticks invoke the primitive directly instead of
     // `runScheduledMaintenance`.
     const s = new MemoryStorage();
@@ -103,7 +103,7 @@ describe("runScheduledMaintenance", () => {
       await reset();
     });
 
-    it("emits one canonical line at info level on the baerly.maintenance category", async () => {
+    test("emits one canonical line at info level on the baerly.maintenance category", async () => {
       const s = new MemoryStorage();
       await bootstrap(s, KEY);
       await runScheduledMaintenance({ storage: s, currentJsonKey: KEY }, {});
@@ -113,7 +113,7 @@ describe("runScheduledMaintenance", () => {
       expect(maintenanceLines[0]!.properties["outcome"]).toBe("ok");
     });
 
-    it("emits no nested baerly.compactor or baerly.gc lines under runScheduledMaintenance", async () => {
+    test("emits no nested baerly.compactor or baerly.gc lines under runScheduledMaintenance", async () => {
       // `compact()` and `runGc()` are nesting-aware via
       // `withObservability` — when called inside an outer scope, they
       // inherit the outer ctx+recorder instead of opening their own.
@@ -128,7 +128,7 @@ describe("runScheduledMaintenance", () => {
       expect(gcLines).toHaveLength(0);
     });
 
-    it("standalone compact() still emits its own baerly.compactor canonical line", async () => {
+    test("standalone compact() still emits its own baerly.compactor canonical line", async () => {
       const s = new MemoryStorage();
       await bootstrap(s, KEY);
       await compact({ storage: s, currentJsonKey: KEY });
@@ -137,7 +137,7 @@ describe("runScheduledMaintenance", () => {
       expect(lines[0]!.properties["outcome"]).toBe("ok");
     });
 
-    it("standalone runGc() still emits its own baerly.gc canonical line", async () => {
+    test("standalone runGc() still emits its own baerly.gc canonical line", async () => {
       const s = new MemoryStorage();
       await bootstrap(s, KEY);
       await runGc({ storage: s, currentJsonKey: KEY });
@@ -146,7 +146,7 @@ describe("runScheduledMaintenance", () => {
       expect(lines[0]!.properties["outcome"]).toBe("ok");
     });
 
-    it("enriches the canonical line with compact_written / gc_swept + recorder-bag fields", async () => {
+    test("enriches the canonical line with compact_written / gc_swept + recorder-bag fields", async () => {
       // Drive a real compact+GC pass so both phases emit their
       // recorder-bag metrics (`db.compact.entries_folded`,
       // `db.gc.swept_total`, etc.) and the explicit operator-
@@ -188,7 +188,7 @@ describe("runScheduledMaintenance", () => {
     });
   });
 
-  it("CLOUDFLARE_FREE_TIER carries the documented bounds", async () => {
+  test("CLOUDFLARE_FREE_TIER carries the documented bounds", async () => {
     // A regression in these constants means the budget audits and
     // the per-tier docstring lie about the worst-case I/O profile.
     // The budget caps live on the InternalMaintenanceOptions surface

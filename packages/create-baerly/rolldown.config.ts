@@ -1,11 +1,4 @@
-import {
-  copyFileSync,
-  existsSync,
-  mkdirSync,
-  readdirSync,
-  rmSync,
-  statSync,
-} from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { defineConfig } from "rolldown";
 
@@ -36,14 +29,15 @@ import { defineConfig } from "rolldown";
  * at runtime) — without it, dist mode breaks.
  */
 const SKIP_NAMES = new Set(["node_modules", "dist", ".wrangler", ".dev.vars", ".DS_Store"]);
-const shouldSkip = (name: string): boolean =>
-  SKIP_NAMES.has(name) || name.endsWith(".tsbuildinfo");
+const shouldSkip = (name: string): boolean => SKIP_NAMES.has(name) || name.endsWith(".tsbuildinfo");
 
 const copyTree = (src: string, dst: string): void => {
   const walk = (rel: string): void => {
     const from = join(src, rel);
     for (const ent of readdirSync(from)) {
-      if (shouldSkip(ent)) continue;
+      if (shouldSkip(ent)) {
+        continue;
+      }
       const fromEnt = join(from, ent);
       const toEnt = join(dst, rel, ent);
       if (statSync(fromEnt).isDirectory()) {
@@ -66,7 +60,11 @@ const copyTemplates = () => ({
     // bundle's own `dist/index.js` (and its sourcemap) live one level
     // up under `dist/`, so this is a precise scoped reset.
     rmSync(join("dist", "templates"), { recursive: true, force: true });
-    const EXAMPLES: readonly string[] = ["minimal-cloudflare", "minimal-node", "helpdesk-cloudflare"];
+    const EXAMPLES: readonly string[] = [
+      "minimal-cloudflare",
+      "minimal-node",
+      "helpdesk-cloudflare",
+    ];
     for (const name of EXAMPLES) {
       copyTree(join("..", "..", "examples", name), join("dist", "templates", name));
     }
@@ -78,9 +76,13 @@ const copyTemplates = () => ({
     const addonsSrc = join("templates", "addons");
     if (existsSync(addonsSrc)) {
       for (const name of readdirSync(addonsSrc)) {
-        if (shouldSkip(name)) continue;
+        if (shouldSkip(name)) {
+          continue;
+        }
         const addonSrc = join(addonsSrc, name);
-        if (!statSync(addonSrc).isDirectory()) continue;
+        if (!statSync(addonSrc).isDirectory()) {
+          continue;
+        }
         copyTree(addonSrc, join("dist", "templates", "addons", name));
       }
     }

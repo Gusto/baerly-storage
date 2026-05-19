@@ -101,7 +101,9 @@ export const tablePrefixOf = (currentJsonKey: string): string =>
 const seqOfLogKey = (key: string): number => {
   const slash = key.lastIndexOf("/");
   const dot = key.lastIndexOf(".json");
-  if (slash === -1 || dot === -1 || dot <= slash) return Number.NaN;
+  if (slash === -1 || dot === -1 || dot <= slash) {
+    return Number.NaN;
+  }
   const seqStr = key.slice(slash + 1, dot);
   const n = Number.parseInt(seqStr, 10);
   return Number.isFinite(n) ? n : Number.NaN;
@@ -129,15 +131,17 @@ const listLogKeysSortedBySeq = async (
  */
 const readCommitTsMs = async (storage: Storage, key: string): Promise<number | null> => {
   const got = await storage.get(key);
-  if (got === null) return null;
+  if (got === null) {
+    return null;
+  }
   let parsed: LogEntry;
   try {
     parsed = JSON.parse(new TextDecoder().decode(got.body)) as LogEntry;
-  } catch (e) {
+  } catch (error) {
     throw new BaerlyError(
       "InvalidResponse",
       `usage scan: log entry at ${key} is not valid JSON`,
-      e,
+      error,
     );
   }
   if (typeof parsed.commit_ts !== "string") {
@@ -222,12 +226,14 @@ export const estimateWritesPerMin = async (
   let allKeys: readonly string[];
   try {
     allKeys = await listLogKeysSortedBySeq(storage, logPrefix);
-  } catch (e) {
-    if (e instanceof BaerlyError) throw e;
+  } catch (error) {
+    if (error instanceof BaerlyError) {
+      throw error;
+    }
     throw new BaerlyError(
       "NetworkError",
-      `usage scan: list ${logPrefix} failed: ${(e as Error).message}`,
-      e,
+      `usage scan: list ${logPrefix} failed: ${(error as Error).message}`,
+      error,
     );
   }
   const sample = allKeys.slice(Math.max(0, allKeys.length - sampleSize));
@@ -241,9 +247,8 @@ export const estimateWritesPerMin = async (
       fix: "",
     };
   }
-  const timestamps = (await readCommitTsBatched(storage, sample)).filter(
-    (v): v is number => v !== null,
-  );
+  const commitTs = await readCommitTsBatched(storage, sample);
+  const timestamps = commitTs.filter((v): v is number => v !== null);
   if (timestamps.length < 2) {
     return {
       collection,
@@ -257,8 +262,12 @@ export const estimateWritesPerMin = async (
   let minTs = timestamps[0]!;
   let maxTs = timestamps[0]!;
   for (const t of timestamps) {
-    if (t < minTs) minTs = t;
-    if (t > maxTs) maxTs = t;
+    if (t < minTs) {
+      minTs = t;
+    }
+    if (t > maxTs) {
+      maxTs = t;
+    }
   }
   // Guard the denominator: a tight batch may produce identical
   // commit_ts values; degrade to a one-second window so we never
@@ -306,14 +315,18 @@ export const discoverCollections = async (
       const rest = entry.key.slice(prefix.length);
       const slash = rest.indexOf("/");
       const name = slash === -1 ? rest : rest.slice(0, slash);
-      if (name.length > 0) names.add(name);
+      if (name.length > 0) {
+        names.add(name);
+      }
     }
-  } catch (e) {
-    if (e instanceof BaerlyError) throw e;
+  } catch (error) {
+    if (error instanceof BaerlyError) {
+      throw error;
+    }
     throw new BaerlyError(
       "NetworkError",
-      `usage scan: list ${prefix} failed: ${(e as Error).message}`,
-      e,
+      `usage scan: list ${prefix} failed: ${(error as Error).message}`,
+      error,
     );
   }
   return [...names].toSorted();
@@ -341,11 +354,11 @@ export const runUsageScan = async (
   let collections: readonly string[];
   try {
     collections = await discoverCollections(storage, context.app, context.tenant);
-  } catch (e) {
+  } catch (error) {
     findings.push({
       severity: "warning",
       check: "usage-discover",
-      message: `could not enumerate collections under app/${context.app}/tenant/${context.tenant}/manifests/: ${e instanceof BaerlyError ? e.message : (e as Error).message}`,
+      message: `could not enumerate collections under app/${context.app}/tenant/${context.tenant}/manifests/: ${error instanceof BaerlyError ? error.message : (error as Error).message}`,
     });
     return;
   }
@@ -366,11 +379,11 @@ export const runUsageScan = async (
         message: verdict.message,
         ...(verdict.fix !== "" && { fix: verdict.fix }),
       });
-    } catch (e) {
+    } catch (error) {
       findings.push({
         severity: "warning",
         check: `usage-${c}`,
-        message: `failed to estimate writes/min for ${c}: ${e instanceof BaerlyError ? e.message : (e as Error).message}`,
+        message: `failed to estimate writes/min for ${c}: ${error instanceof BaerlyError ? error.message : (error as Error).message}`,
       });
     }
   }

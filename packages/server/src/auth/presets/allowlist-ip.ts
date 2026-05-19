@@ -66,14 +66,20 @@ export const allowlistIp = (opts: AllowlistIpOptions): Verifier => {
 
   return async (req: Request) => {
     const raw = req.headers.get(header);
-    if (raw === null) return null;
+    if (raw === null) {
+      return null;
+    }
     // `X-Forwarded-For` is a comma-separated chain; the leftmost
     // non-empty entry is the original client. CF-Connecting-IP is a
     // single value but the same parsing is safe.
     const ip = raw.split(",")[0]?.trim();
-    if (ip === undefined || ip.length === 0) return null;
+    if (ip === undefined || ip.length === 0) {
+      return null;
+    }
     const addr = parseAddress(ip);
-    if (addr === null) return null;
+    if (addr === null) {
+      return null;
+    }
     for (const cidr of parsed) {
       if (matchesCidr(addr, cidr)) {
         return { tenantPrefix: opts.tenantPrefix, identity: { kind: "ip", ip } };
@@ -110,7 +116,9 @@ export const andAll = (...verifiers: readonly Verifier[]): Verifier => {
     let last: VerifierResult | null = null;
     for (const v of verifiers) {
       last = await v(req);
-      if (last === null) return null;
+      if (last === null) {
+        return null;
+      }
     }
     return last;
   };
@@ -130,15 +138,23 @@ interface ParsedCidr {
 
 const parseCidr = (s: string): ParsedCidr | null => {
   const slash = s.indexOf("/");
-  if (slash < 0) return null;
+  if (slash < 0) {
+    return null;
+  }
   const addrPart = s.slice(0, slash);
   const prefixPart = s.slice(slash + 1);
   const bits = Number.parseInt(prefixPart, 10);
-  if (!Number.isInteger(bits) || bits < 0) return null;
+  if (!Number.isInteger(bits) || bits < 0) {
+    return null;
+  }
   const addr = parseAddress(addrPart);
-  if (addr === null) return null;
+  if (addr === null) {
+    return null;
+  }
   const maxBits = addr.length * 8;
-  if (bits > maxBits) return null;
+  if (bits > maxBits) {
+    return null;
+  }
   return { bytes: addr, prefixBits: bits };
 };
 
@@ -151,20 +167,30 @@ const parseCidr = (s: string): ParsedCidr | null => {
  * matches their proxy's emitted shape.
  */
 const parseAddress = (s: string): Uint8Array | null => {
-  if (s.includes(":")) return parseIpv6(s);
+  if (s.includes(":")) {
+    return parseIpv6(s);
+  }
   return parseIpv4(s);
 };
 
 const parseIpv4 = (s: string): Uint8Array | null => {
   const parts = s.split(".");
-  if (parts.length !== 4) return null;
+  if (parts.length !== 4) {
+    return null;
+  }
   const out = new Uint8Array(4);
   for (let i = 0; i < 4; i++) {
     const p = parts[i]!;
-    if (p.length === 0 || p.length > 3) return null;
-    if (!/^\d+$/.test(p)) return null;
+    if (p.length === 0 || p.length > 3) {
+      return null;
+    }
+    if (!/^\d+$/.test(p)) {
+      return null;
+    }
     const n = Number(p);
-    if (n > 255) return null;
+    if (n > 255) {
+      return null;
+    }
     out[i] = n;
   }
   return out;
@@ -182,7 +208,9 @@ const parseIpv6 = (s: string): Uint8Array | null => {
   const lastColon = lower.lastIndexOf(":");
   if (lastColon >= 0 && lower.slice(lastColon + 1).includes(".")) {
     tail4 = parseIpv4(lower.slice(lastColon + 1));
-    if (tail4 === null) return null;
+    if (tail4 === null) {
+      return null;
+    }
     lower = lower.slice(0, lastColon);
   }
 
@@ -203,27 +231,39 @@ const parseIpv6 = (s: string): Uint8Array | null => {
     tail = [];
   }
   const totalGroups = head.length + tail.length + (tail4 !== null ? 2 : 0);
-  if (totalGroups > 8) return null;
-  if (doubleColon < 0 && totalGroups !== 8) return null;
+  if (totalGroups > 8) {
+    return null;
+  }
+  if (doubleColon < 0 && totalGroups !== 8) {
+    return null;
+  }
 
   const groups: number[] = [];
   for (const part of head) {
-    if (!/^[0-9a-f]{1,4}$/.test(part)) return null;
+    if (!/^[0-9a-f]{1,4}$/.test(part)) {
+      return null;
+    }
     groups.push(Number.parseInt(part, 16));
   }
   const zerosToFill = 8 - totalGroups;
   if (doubleColon >= 0) {
-    for (let i = 0; i < zerosToFill; i++) groups.push(0);
+    for (let i = 0; i < zerosToFill; i++) {
+      groups.push(0);
+    }
   }
   for (const part of tail) {
-    if (!/^[0-9a-f]{1,4}$/.test(part)) return null;
+    if (!/^[0-9a-f]{1,4}$/.test(part)) {
+      return null;
+    }
     groups.push(Number.parseInt(part, 16));
   }
   if (tail4 !== null) {
     groups.push((tail4[0]! << 8) | tail4[1]!);
     groups.push((tail4[2]! << 8) | tail4[3]!);
   }
-  if (groups.length !== 8) return null;
+  if (groups.length !== 8) {
+    return null;
+  }
 
   const out = new Uint8Array(16);
   for (let i = 0; i < 8; i++) {
@@ -236,13 +276,19 @@ const parseIpv6 = (s: string): Uint8Array | null => {
 const matchesCidr = (addr: Uint8Array, cidr: ParsedCidr): boolean => {
   // Different address families never match. Callers configuring both
   // IPv4 and IPv6 ranges add separate entries.
-  if (addr.length !== cidr.bytes.length) return false;
+  if (addr.length !== cidr.bytes.length) {
+    return false;
+  }
   const fullBytes = cidr.prefixBits >> 3;
   const remainingBits = cidr.prefixBits & 7;
   for (let i = 0; i < fullBytes; i++) {
-    if (addr[i]! !== cidr.bytes[i]!) return false;
+    if (addr[i]! !== cidr.bytes[i]!) {
+      return false;
+    }
   }
-  if (remainingBits === 0) return true;
+  if (remainingBits === 0) {
+    return true;
+  }
   const mask = (0xff << (8 - remainingBits)) & 0xff;
   return (addr[fullBytes]! & mask) === (cidr.bytes[fullBytes]! & mask);
 };

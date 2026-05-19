@@ -161,20 +161,29 @@ export const migrateCollection = async (
     signal !== undefined ? { signal } : undefined,
   );
   for (const entry of entries) {
-    if (entry.collection !== collection) continue;
-    if (entry.doc_id === undefined) continue;
+    if (entry.collection !== collection) {
+      continue;
+    }
+    if (entry.doc_id === undefined) {
+      continue;
+    }
     switch (entry.op) {
       case "I":
-      case "U":
-        if (entry.new !== undefined) base.set(entry.doc_id, entry.new);
+      case "U": {
+        if (entry.new !== undefined) {
+          base.set(entry.doc_id, entry.new);
+        }
         break;
-      case "D":
+      }
+      case "D": {
         base.delete(entry.doc_id);
         break;
+      }
       case "T":
-      case "M":
+      case "M": {
         // No-op for forward-compat shapes the writer doesn't emit today.
         break;
+      }
     }
   }
 
@@ -183,13 +192,15 @@ export const migrateCollection = async (
   const transformed = new Map<string, JSONArraylessObject>();
   for (const [id, row] of base) {
     const next = transform(row);
-    if (next === null) continue;
+    if (next === null) {
+      continue;
+    }
     if (next === undefined || typeof next !== "object" || Array.isArray(next)) {
       throw new BaerlyError(
         "SchemaError",
-        `migrateCollection: transform on row ${JSON.stringify(id)} returned a non-object (got ${
-          next === undefined ? "undefined" : Array.isArray(next) ? "array" : typeof next
-        })`,
+        `migrateCollection: transform on row ${JSON.stringify(id)} returned a non-object (got ${describeNonObject(
+          next,
+        )})`,
       );
     }
     transformed.set(id, next);
@@ -199,7 +210,15 @@ export const migrateCollection = async (
   // `min_seq: 0`, `max_seq: nextSeq` — the new snapshot covers
   // [0, nextSeq); the live log becomes empty (log_seq_start === nextSeq).
   const sortedDocs = Array.from(transformed.entries())
-    .toSorted(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .toSorted(([a], [b]) => {
+      if (a < b) {
+        return -1;
+      }
+      if (a > b) {
+        return 1;
+      }
+      return 0;
+    })
     .map(([id, body]) => ({ _id: id, body }));
   const snapshotBody: SnapshotBody = {
     schema_version: 1,
@@ -235,15 +254,15 @@ export const migrateCollection = async (
   let putResult: { readonly etag: string };
   try {
     putResult = await storage.put(currentJsonKey, nextBody, casOpts);
-  } catch (err) {
-    if (err instanceof BaerlyError && err.code === "Conflict") {
+  } catch (error) {
+    if (error instanceof BaerlyError && error.code === "Conflict") {
       throw new BaerlyError(
         "Conflict",
         `migrateCollection: CAS lost on ${currentJsonKey}; retry the whole migrate (transform is deterministic)`,
-        err,
+        error,
       );
     }
-    throw err;
+    throw error;
   }
   return {
     inputRows,
@@ -252,4 +271,17 @@ export const migrateCollection = async (
     newCurrentEtag: putResult.etag,
     noOp: false,
   };
+};
+
+// Build a human-readable label for the "transform returned a non-object"
+// error. `null`, arrays, and the bare `undefined` need to be
+// disambiguated from `typeof`'s default "object".
+const describeNonObject = (v: unknown): string => {
+  if (v === undefined) {
+    return "undefined";
+  }
+  if (Array.isArray(v)) {
+    return "array";
+  }
+  return typeof v;
 };

@@ -243,7 +243,9 @@ export function baerlyWorker(options: BaerlyWorkerOptions): ExportedHandler<Env>
   // race on the cold-start tick just re-runs the same config.
   let observabilityConfigured = false;
   const ensureObservability = async (): Promise<void> => {
-    if (observabilityConfigured) return;
+    if (observabilityConfigured) {
+      return;
+    }
     await configureObservability(resolveCfSink(options.observability));
     observabilityConfigured = true;
   };
@@ -365,9 +367,9 @@ export function baerlyWorker(options: BaerlyWorkerOptions): ExportedHandler<Env>
           );
           cacheStatus = cacheResult.cache_status;
           response = cacheResult.response;
-        } catch (err) {
-          caughtError = err;
-          throw err;
+        } catch (error) {
+          caughtError = error;
+          throw error;
         } finally {
           const status = caughtError !== undefined ? 500 : (response?.status ?? 500);
           flushCanonicalLine(obsCtx, obsCtx.recorder, {

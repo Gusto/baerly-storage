@@ -30,7 +30,9 @@ export const parseListObjectsV2CommandOutput = (
     throw new BaerlyError("InvalidResponse", "DTD not allowed in S3 XML responses");
   }
   const doc = domParser.parseFromString(xml, "text/xml");
-  if (!doc) throw new BaerlyError("InvalidResponse", `Invalid XML: ${xml}`);
+  if (!doc) {
+    throw new BaerlyError("InvalidResponse", `Invalid XML: ${xml}`);
+  }
   // const results = doc.getElementsByTagName("ListBucketResult")[0];
   const contents = doc.getElementsByTagName("Contents");
   //if (!contents) throw new Error(`Invalid XML: ${xml}`);

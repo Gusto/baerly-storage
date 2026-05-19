@@ -11,7 +11,9 @@ const fromBytes = (b: Uint8Array): string => new TextDecoder().decode(b);
 
 const collect = async <T>(iter: AsyncIterable<T>): Promise<T[]> => {
   const out: T[] = [];
-  for await (const x of iter) out.push(x);
+  for await (const x of iter) {
+    out.push(x);
+  }
   return out;
 };
 
@@ -85,7 +87,8 @@ describe("LocalFsStorage — impl-specific", () => {
     await s.put("x/y/z", utf8("hi"));
     const got = await s.get("x/y/z");
     expect(fromBytes(got!.body)).toBe("hi");
-    const entries = (await collect(s.list("x/"))).map((e) => e.key);
+    const listed = await collect(s.list("x/"));
+    const entries = listed.map((e) => e.key);
     expect(entries).toEqual(["x/y/z"]);
   });
 

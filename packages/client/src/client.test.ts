@@ -3,8 +3,7 @@
 
 import type { Table } from "@baerly/protocol";
 import { describe, expect, test } from "vitest";
-import { createBaerlyClient } from "./client.ts";
-import type { ClientTable } from "./client.ts";
+import { type ClientTable, createBaerlyClient } from "./client.ts";
 import type { HttpOkEnvelope, SinceResponse } from "./contract.ts";
 import { MockFetch } from "./testing/index.ts";
 
@@ -137,9 +136,9 @@ describe("createBaerlyClient", () => {
         : jsonResponse({ error: { code: "Internal", message: "boom" } }, 500),
     );
     const client = createBaerlyClient({ baseUrl: "http://x", fetch: mock.fetch });
-    expect(await client.healthz()).toBe(true);
+    await expect(client.healthz()).resolves.toBe(true);
     returnOk = false;
-    expect(await client.healthz()).toBe(false);
+    await expect(client.healthz()).resolves.toBe(false);
   });
 
   test("dynamic headers callback resolves per request", async () => {

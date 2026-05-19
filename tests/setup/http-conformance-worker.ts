@@ -36,7 +36,9 @@ import { CONFORMANCE_BEARER, CONFORMANCE_TENANT } from "../fixtures/test-verifie
 // minimal — a handful of constants over a fixture re-export.)
 const verifier: Verifier = async (req: Request) => {
   const auth = req.headers.get("authorization");
-  if (auth !== `Bearer ${CONFORMANCE_BEARER}`) return null;
+  if (auth !== `Bearer ${CONFORMANCE_BEARER}`) {
+    return null;
+  }
   return { tenantPrefix: CONFORMANCE_TENANT, identity: {} };
 };
 

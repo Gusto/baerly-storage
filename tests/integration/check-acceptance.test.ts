@@ -24,7 +24,9 @@ describe("eval/check-acceptance.mjs", () => {
     expect(Array.isArray(doc.bullets)).toBe(true);
 
     const byId = new Map<string, { pass: boolean | null; stderr: string }>();
-    for (const b of doc.bullets) byId.set(b.id, b);
+    for (const b of doc.bullets) {
+      byId.set(b.id, b);
+    }
 
     const ids = [
       "typecheck",

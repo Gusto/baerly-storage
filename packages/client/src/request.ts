@@ -56,12 +56,16 @@ export const request = async <T>(ctx: RequestContext, opts: RequestOptions): Pro
 
   // 204 No Content — never a body; cast the "no value" to T. The
   // only caller (`delete`) types T = undefined so this is safe.
-  if (res.status === 204) return undefined as T;
+  if (res.status === 204) {
+    return undefined as T;
+  }
 
   // 201 Created — body is `{ _id }`, not `HttpOkEnvelope`. The only
   // caller (`insert`) types T = `{ _id }` so we return the parsed
   // body raw.
-  if (res.status === 201) return (await res.json()) as T;
+  if (res.status === 201) {
+    return (await res.json()) as T;
+  }
 
   // 4xx / 5xx — `HttpErrorEnvelope`. Parse + throw.
   if (!res.ok) {
@@ -106,9 +110,15 @@ const mergeSignals = (
   a: AbortSignal | undefined,
   b: AbortSignal | undefined,
 ): AbortSignal | undefined => {
-  if (a === undefined) return b;
-  if (b === undefined) return a;
-  if (typeof AbortSignal.any === "function") return AbortSignal.any([a, b]);
+  if (a === undefined) {
+    return b;
+  }
+  if (b === undefined) {
+    return a;
+  }
+  if (typeof AbortSignal.any === "function") {
+    return AbortSignal.any([a, b]);
+  }
   const controller = new AbortController();
   const onAbort = (): void => controller.abort();
   a.addEventListener("abort", onAbort, { once: true });

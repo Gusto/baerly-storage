@@ -21,7 +21,7 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MemoryStorage, type Storage, type Verifier } from "@baerly/protocol";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createListener } from "./server.ts";
 
 const denyVerifier: Verifier = async () => null;
@@ -81,17 +81,17 @@ describe("createListener webRoot static-asset handling", () => {
     await rm(webRoot, { recursive: true, force: true });
   });
 
-  it("serves an on-disk file with the correct MIME and Cache-Control", async () => {
+  test("serves an on-disk file with the correct MIME and Cache-Control", async () => {
     await withServer({ verifier: denyVerifier, webRoot }, async (baseUrl) => {
       const res = await fetch(`${baseUrl}/index.html`);
       expect(res.status).toBe(200);
       expect(res.headers.get("content-type")).toBe("text/html; charset=utf-8");
       expect(res.headers.get("cache-control")).toBe("no-cache");
-      expect(await res.text()).toContain("<title>app</title>");
+      await expect(res.text()).resolves.toContain("<title>app</title>");
     });
   });
 
-  it("serves hashed assets with a long-lived Cache-Control", async () => {
+  test("serves hashed assets with a long-lived Cache-Control", async () => {
     await withServer({ verifier: denyVerifier, webRoot }, async (baseUrl) => {
       const res = await fetch(`${baseUrl}/assets/app.hash.js`);
       expect(res.status).toBe(200);
@@ -100,29 +100,29 @@ describe("createListener webRoot static-asset handling", () => {
     });
   });
 
-  it("falls back to index.html for HTML navigation that misses on disk (SPA routing)", async () => {
+  test("falls back to index.html for HTML navigation that misses on disk (SPA routing)", async () => {
     await withServer({ verifier: denyVerifier, webRoot }, async (baseUrl) => {
       const res = await fetch(`${baseUrl}/some/spa/route`, {
         headers: { Accept: "text/html,application/xhtml+xml" },
       });
       expect(res.status).toBe(200);
       expect(res.headers.get("content-type")).toBe("text/html; charset=utf-8");
-      expect(await res.text()).toContain("<title>app</title>");
+      await expect(res.text()).resolves.toContain("<title>app</title>");
     });
   });
 
-  it("serves the SPA shell for GET / (root navigation)", async () => {
+  test("serves the SPA shell for GET / (root navigation)", async () => {
     await withServer({ verifier: denyVerifier, webRoot }, async (baseUrl) => {
       const res = await fetch(`${baseUrl}/`, {
         headers: { Accept: "text/html" },
       });
       expect(res.status).toBe(200);
       expect(res.headers.get("content-type")).toBe("text/html; charset=utf-8");
-      expect(await res.text()).toContain("<title>app</title>");
+      await expect(res.text()).resolves.toContain("<title>app</title>");
     });
   });
 
-  it("returns the kernel 404 envelope (not index.html) for missing non-HTML assets", async () => {
+  test("returns the kernel 404 envelope (not index.html) for missing non-HTML assets", async () => {
     await withServer({ verifier: denyVerifier, webRoot }, async (baseUrl) => {
       const res = await fetch(`${baseUrl}/missing.json`, {
         headers: { Accept: "application/json" },
@@ -135,7 +135,7 @@ describe("createListener webRoot static-asset handling", () => {
     });
   });
 
-  it("returns 404 (not index.html) for missing non-HTML assets under a tenant", async () => {
+  test("returns 404 (not index.html) for missing non-HTML assets under a tenant", async () => {
     // With a trivial verifier, the fall-through reaches the router,
     // which has no route for `/missing.json` and returns its default
     // 404. The point of the test is that we did NOT mistakenly serve
@@ -153,7 +153,7 @@ describe("createListener webRoot static-asset handling", () => {
     });
   });
 
-  it("rejects URL-encoded `..` traversal attempts", async () => {
+  test("rejects URL-encoded `..` traversal attempts", async () => {
     await withServer({ verifier: trivialVerifier, webRoot }, async (baseUrl) => {
       const res = await fetch(`${baseUrl}/..%2F..%2Fetc%2Fpasswd`, {
         headers: { Accept: "application/json" },
@@ -169,15 +169,15 @@ describe("createListener webRoot static-asset handling", () => {
     });
   });
 
-  it("does not shadow GET /v1/healthz (anonymous probe still works)", async () => {
+  test("does not shadow GET /v1/healthz (anonymous probe still works)", async () => {
     await withServer({ verifier: denyVerifier, webRoot }, async (baseUrl) => {
       const res = await fetch(`${baseUrl}/v1/healthz`);
       expect(res.status).toBe(200);
-      expect(await res.json()).toEqual({ ok: true });
+      await expect(res.json()).resolves.toEqual({ ok: true });
     });
   });
 
-  it("does not shadow `/v1/*` API routes (verifier still gates them)", async () => {
+  test("does not shadow `/v1/*` API routes (verifier still gates them)", async () => {
     await withServer({ verifier: denyVerifier, webRoot }, async (baseUrl) => {
       const res = await fetch(`${baseUrl}/v1/t/tickets`);
       expect(res.status).toBe(401);
@@ -186,7 +186,7 @@ describe("createListener webRoot static-asset handling", () => {
     });
   });
 
-  it("behaviour is byte-identical when webRoot is unset (off by default)", async () => {
+  test("behaviour is byte-identical when webRoot is unset (off by default)", async () => {
     await withServer({ verifier: trivialVerifier }, async (baseUrl) => {
       const res = await fetch(`${baseUrl}/index.html`);
       // No webRoot → falls through to the router, which returns its
@@ -197,7 +197,7 @@ describe("createListener webRoot static-asset handling", () => {
     });
   });
 
-  it("HEAD returns 200 + Content-Length with an empty body", async () => {
+  test("HEAD returns 200 + Content-Length with an empty body", async () => {
     await withServer({ verifier: denyVerifier, webRoot }, async (baseUrl) => {
       const res = await fetch(`${baseUrl}/index.html`, { method: "HEAD" });
       expect(res.status).toBe(200);

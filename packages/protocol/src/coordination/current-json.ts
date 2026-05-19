@@ -190,13 +190,19 @@ export async function readCurrentJson(
   opts?: { signal?: AbortSignal },
 ): Promise<CurrentJsonRead | null> {
   const got = await storage.get(key, opts);
-  if (got === null) return null;
+  if (got === null) {
+    return null;
+  }
   const text = new TextDecoder().decode(got.body);
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
-  } catch (e) {
-    throw new BaerlyError("InvalidResponse", `current.json at ${key}: body is not valid JSON`, e);
+  } catch (error) {
+    throw new BaerlyError(
+      "InvalidResponse",
+      `current.json at ${key}: body is not valid JSON`,
+      error,
+    );
   }
   return { json: assertCurrentJson(parsed, key), etag: got.etag };
 }
@@ -228,8 +234,8 @@ export async function createCurrentJson(
   let result: StoragePutResult;
   try {
     result = await storage.put(key, body, putOpts);
-  } catch (e) {
-    throw translateCasError(e, key);
+  } catch (error) {
+    throw translateCasError(error, key);
   }
   return { json: initial, etag: result.etag };
 }
@@ -279,8 +285,8 @@ export async function casUpdateCurrentJson(
   let result: StoragePutResult;
   try {
     result = await storage.put(key, body, putOpts);
-  } catch (e) {
-    throw translateCasError(e, key);
+  } catch (error) {
+    throw translateCasError(error, key);
   }
   return { json: next, etag: result.etag };
 }
@@ -348,8 +354,8 @@ export async function claimWriter(
   let result: StoragePutResult;
   try {
     result = await storage.put(key, body, putOpts);
-  } catch (e) {
-    throw translateCasError(e, key);
+  } catch (error) {
+    throw translateCasError(error, key);
   }
   // No server clock surfaced — leave `claimed_at` empty. The epoch
   // bump is durable; safety is unaffected.
@@ -375,8 +381,8 @@ export async function claimWriter(
   let stampResult: StoragePutResult;
   try {
     stampResult = await storage.put(key, stampedBody, stampPutOpts);
-  } catch (e) {
-    throw translateCasError(e, key);
+  } catch (error) {
+    throw translateCasError(error, key);
   }
   return { json: stamped, etag: stampResult.etag };
 }
@@ -476,7 +482,9 @@ const assertCurrentJson = (parsed: unknown, key: string): CurrentJson => {
   }
   if (
     r["migrated_to"] !== undefined &&
-    (typeof r["migrated_to"] !== "number" || !Number.isInteger(r["migrated_to"]) || r["migrated_to"] < 0)
+    (typeof r["migrated_to"] !== "number" ||
+      !Number.isInteger(r["migrated_to"]) ||
+      r["migrated_to"] < 0)
   ) {
     throw new BaerlyError(
       "InvalidResponse",
@@ -497,6 +505,8 @@ const translateCasError = (e: unknown, key: string): BaerlyError => {
   if (e instanceof BaerlyError && e.code === "Conflict") {
     return new BaerlyError("Conflict", `current.json CAS lost at ${key}: ${e.message}`, e);
   }
-  if (e instanceof BaerlyError) return e;
+  if (e instanceof BaerlyError) {
+    return e;
+  }
   return new BaerlyError("InvalidResponse", `current.json write at ${key} failed: ${String(e)}`, e);
 };

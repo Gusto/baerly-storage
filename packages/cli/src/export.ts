@@ -140,8 +140,12 @@ const KNOWN_KEYS: ReadonlySet<string> = new Set([
 ]);
 
 const errorToExitCode = (code: string): number => {
-  if (code === "InvalidConfig") return 1;
-  if (code === "Conflict" || code === "Internal" || code === "InvalidResponse") return 3;
+  if (code === "InvalidConfig") {
+    return 1;
+  }
+  if (code === "Conflict" || code === "Internal" || code === "InvalidResponse") {
+    return 3;
+  }
   return 2;
 };
 
@@ -174,16 +178,16 @@ const parseWherePredicate = (raw: string): JSONArraylessObject => {
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
-  } catch (e) {
+  } catch (error) {
     throw new BaerlyError(
       "InvalidConfig",
-      `baerly export: --where is not valid JSON: ${(e as Error).message}`,
+      `baerly export: --where is not valid JSON: ${(error as Error).message}`,
     );
   }
   if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
     throw new BaerlyError(
       "InvalidConfig",
-      `baerly export: --where must decode to a JSON object (got ${parsed === null ? "null" : Array.isArray(parsed) ? "array" : typeof parsed})`,
+      `baerly export: --where must decode to a JSON object (got ${describeNonObject(parsed)})`,
     );
   }
   // Re-validate defensively; the translator will reject too, but
@@ -202,7 +206,9 @@ const filterRows = (
       filtered.set(id, body);
       continue;
     }
-    if (matches(predicate, body)) filtered.set(id, body);
+    if (matches(predicate, body)) {
+      filtered.set(id, body);
+    }
   }
   return filtered;
 };
@@ -306,12 +312,12 @@ const handleExport = async (args: Args): Promise<number> => {
       ...(typeof outputPath === "string" && outputPath.length > 0 && { output: outputPath }),
     });
     return 0;
-  } catch (err) {
-    if (err instanceof BaerlyError) {
-      emitError("export", err.code, err.message);
-      return errorToExitCode(err.code);
+  } catch (error) {
+    if (error instanceof BaerlyError) {
+      emitError("export", error.code, error.message);
+      return errorToExitCode(error.code);
     }
-    emitError("export", "Unknown", (err as Error).message);
+    emitError("export", "Unknown", (error as Error).message);
     return 2;
   }
 };
@@ -325,7 +331,9 @@ export const exportCmd = defineCommand({
   args: EXPORT_ARGS,
   run: async ({ args }) => {
     const code = await handleExport(args);
-    if (code !== 0) process.exit(code);
+    if (code !== 0) {
+      process.exit(code);
+    }
   },
 });
 
@@ -338,10 +346,23 @@ export const runExport = async (argv: readonly string[]): Promise<number> => {
   let parsed: Args;
   try {
     parsed = parseArgs<typeof EXPORT_ARGS>(argv as string[], EXPORT_ARGS);
-  } catch (err) {
+  } catch (error) {
     setJsonMode(argv.includes("--json"));
-    emitError("export", "InvalidConfig", (err as Error).message);
+    emitError("export", "InvalidConfig", (error as Error).message);
     return 1;
   }
   return handleExport(parsed);
+};
+
+// Build a human-readable label for the "expected JSON object" error.
+// `null`, arrays, and the bare `undefined` need to be disambiguated
+// from `typeof`'s default "object".
+const describeNonObject = (v: unknown): string => {
+  if (v === null) {
+    return "null";
+  }
+  if (Array.isArray(v)) {
+    return "array";
+  }
+  return typeof v;
 };

@@ -15,7 +15,7 @@ import {
   readCurrentJson,
   type JSONArraylessObject,
 } from "@baerly/protocol";
-import { describe, expect, it } from "vitest";
+import { describe, expect, test } from "vitest";
 import { loadSnapshotAsMap } from "./compactor.ts";
 import { migrateCollection } from "./migrate.ts";
 import { ServerWriter } from "./server-writer.ts";
@@ -46,7 +46,7 @@ const seedRows = async (storage: MemoryStorage, count: number): Promise<void> =>
 };
 
 describe("migrateCollection", () => {
-  it("bumps a field on every row and stamps migrated_to", async () => {
+  test("bumps a field on every row and stamps migrated_to", async () => {
     const s = new MemoryStorage();
     await bootstrap(s);
     await seedRows(s, 10);
@@ -65,7 +65,9 @@ describe("migrateCollection", () => {
 
     const read = await readCurrentJson(s, KEY);
     expect(read).not.toBeNull();
-    if (read === null) throw new Error("unreachable");
+    if (read === null) {
+      throw new Error("unreachable");
+    }
     expect(read.json.migrated_to).toBe(1);
     expect(read.json.snapshot).toBe(result.newSnapshotKey);
     // log_seq_start advances to next_seq — the whole live log is folded.
@@ -78,7 +80,7 @@ describe("migrateCollection", () => {
     }
   });
 
-  it("re-run with the same targetVersion short-circuits to a no-op", async () => {
+  test("re-run with the same targetVersion short-circuits to a no-op", async () => {
     const s = new MemoryStorage();
     await bootstrap(s);
     await seedRows(s, 5);
@@ -109,7 +111,7 @@ describe("migrateCollection", () => {
     expect(invoked).toBe(0);
   });
 
-  it("transform returning null deletes rows", async () => {
+  test("transform returning null deletes rows", async () => {
     const s = new MemoryStorage();
     await bootstrap(s);
     await seedRows(s, 10);
@@ -125,12 +127,14 @@ describe("migrateCollection", () => {
     expect(result.outputRows).toBe(5);
 
     const read = await readCurrentJson(s, KEY);
-    if (read === null) throw new Error("unreachable");
+    if (read === null) {
+      throw new Error("unreachable");
+    }
     const map = await loadSnapshotAsMap(s, read.json.snapshot ?? "", COLL);
     expect(map.size).toBe(5);
   });
 
-  it("transform returning a non-object throws SchemaError", async () => {
+  test("transform returning a non-object throws SchemaError", async () => {
     const s = new MemoryStorage();
     await bootstrap(s);
     await seedRows(s, 3);
@@ -149,7 +153,7 @@ describe("migrateCollection", () => {
     ).rejects.toMatchObject({ code: "SchemaError" });
   });
 
-  it("CAS lost between read and PUT surfaces Conflict", async () => {
+  test("CAS lost between read and PUT surfaces Conflict", async () => {
     const s = new MemoryStorage();
     await bootstrap(s);
     await seedRows(s, 3);
@@ -178,7 +182,7 @@ describe("migrateCollection", () => {
     ).rejects.toMatchObject({ code: "Conflict" });
   });
 
-  it("rejects negative targetVersion as InvalidConfig", async () => {
+  test("rejects negative targetVersion as InvalidConfig", async () => {
     const s = new MemoryStorage();
     await bootstrap(s);
     await expect(
@@ -192,7 +196,7 @@ describe("migrateCollection", () => {
     ).rejects.toMatchObject({ code: "InvalidConfig" });
   });
 
-  it("missing current.json surfaces InvalidConfig", async () => {
+  test("missing current.json surfaces InvalidConfig", async () => {
     const s = new MemoryStorage();
     await expect(
       migrateCollection({

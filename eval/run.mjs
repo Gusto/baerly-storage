@@ -124,14 +124,21 @@ function parseArgs(argv) {
     const a = argv[i];
     if (a === "--help" || a === "-h") {
       out.help = true;
-    } else if (a === "--app") out.app = argv[++i];
-    else if (a === "--tool") out.tool = argv[++i];
-    else if (a === "--trials") out.trials = Number(argv[++i]);
-    else if (a === "--target") out.target = argv[++i];
-    else if (a === "--workdir") out.workdir = argv[++i];
-    else if (a === "--runs-dir") out.runsDir = argv[++i];
-    else if (a === "--report") out.report = argv[++i];
-    else {
+    } else if (a === "--app") {
+      out.app = argv[++i];
+    } else if (a === "--tool") {
+      out.tool = argv[++i];
+    } else if (a === "--trials") {
+      out.trials = Number(argv[++i]);
+    } else if (a === "--target") {
+      out.target = argv[++i];
+    } else if (a === "--workdir") {
+      out.workdir = argv[++i];
+    } else if (a === "--runs-dir") {
+      out.runsDir = argv[++i];
+    } else if (a === "--report") {
+      out.report = argv[++i];
+    } else {
       throw new Error(`Unknown flag: ${a}`);
     }
   }
@@ -181,9 +188,11 @@ async function run(cmd, args, options = {}) {
       stdio: ["ignore", "pipe", "pipe"],
       signal: ac.signal,
     });
-  } catch (err) {
-    if (timer) clearTimeout(timer);
-    return { code: 127, stdout: "", stderr: String(err).slice(0, STDERR_CAP), timedOut };
+  } catch (error) {
+    if (timer) {
+      clearTimeout(timer);
+    }
+    return { code: 127, stdout: "", stderr: String(error).slice(0, STDERR_CAP), timedOut };
   }
 
   const stdoutChunks = [];
@@ -198,16 +207,20 @@ async function run(cmd, args, options = {}) {
   try {
     const [code] = await once(proc, "close");
     exitCode = code ?? 1;
-  } catch (err) {
-    if (timer) clearTimeout(timer);
+  } catch (error) {
+    if (timer) {
+      clearTimeout(timer);
+    }
     return {
       code: 1,
       stdout: Buffer.concat(stdoutChunks).toString("utf8"),
-      stderr: (timedOut ? `timed out after ${timeoutMs}ms` : String(err)).slice(0, STDERR_CAP),
+      stderr: (timedOut ? `timed out after ${timeoutMs}ms` : String(error)).slice(0, STDERR_CAP),
       timedOut,
     };
   } finally {
-    if (timer) clearTimeout(timer);
+    if (timer) {
+      clearTimeout(timer);
+    }
   }
 
   const stdoutBuf = Buffer.concat(stdoutChunks);
@@ -241,7 +254,9 @@ function resolveTool(toolName) {
   // Walk $PATH ourselves (no `which`/`where` shell-out).
   const path = process.env.PATH ?? "";
   for (const dir of path.split(delimiter)) {
-    if (!dir) continue;
+    if (!dir) {
+      continue;
+    }
     const candidate = join(dir, toolName);
     if (existsSync(candidate)) {
       // Probe with --version; require exit 0.
@@ -262,7 +277,9 @@ async function toolVersion(toolPath) {
     stdio: ["ignore", "pipe", "pipe"],
     timeout: PROBE_TIMEOUT_MS,
   });
-  if (probe.status !== 0) return "unknown";
+  if (probe.status !== 0) {
+    return "unknown";
+  }
   const out = (probe.stdout?.toString() ?? "").split(/\r?\n/)[0] ?? "";
   return out.trim() || "unknown";
 }
@@ -544,15 +561,21 @@ async function readMetricsOrZero(metricsPath) {
 }
 
 function median(nums) {
-  if (nums.length === 0) return 0;
+  if (nums.length === 0) {
+    return 0;
+  }
   const sorted = [...nums].toSorted((a, b) => a - b);
   const mid = Math.floor(sorted.length / 2);
-  if (sorted.length % 2 === 1) return sorted[mid];
+  if (sorted.length % 2 === 1) {
+    return sorted[mid];
+  }
   return (sorted[mid - 1] + sorted[mid]) / 2;
 }
 
 function quartile(nums, q) {
-  if (nums.length === 0) return 0;
+  if (nums.length === 0) {
+    return 0;
+  }
   const sorted = [...nums].toSorted((a, b) => a - b);
   const pos = (sorted.length - 1) * q;
   const base = Math.floor(pos);
@@ -564,7 +587,9 @@ function quartile(nums, q) {
 }
 
 function formatCost(usd) {
-  if (typeof usd !== "number" || Number.isNaN(usd)) return "—";
+  if (typeof usd !== "number" || Number.isNaN(usd)) {
+    return "—";
+  }
   return `$${usd.toFixed(2)}`;
 }
 
@@ -605,12 +630,20 @@ async function emitReport({
   lines.push("- Runner: `eval/run.mjs`");
   lines.push(`- Trials per tool: ${args.trials}`);
   const versionsCells = [];
-  if (perTool.claude) versionsCells.push(`claude ${perTool.claude.version}`);
-  if (perTool.codex) versionsCells.push(`codex ${perTool.codex.version}`);
+  if (perTool.claude) {
+    versionsCells.push(`claude ${perTool.claude.version}`);
+  }
+  if (perTool.codex) {
+    versionsCells.push(`codex ${perTool.codex.version}`);
+  }
   lines.push(`- Tools: ${versionsCells.join(", ") || "—"}`);
   const modelsCells = [];
-  if (perTool.claude) modelsCells.push(MODELS.claude);
-  if (perTool.codex) modelsCells.push(MODELS.codex);
+  if (perTool.claude) {
+    modelsCells.push(MODELS.claude);
+  }
+  if (perTool.codex) {
+    modelsCells.push(MODELS.codex);
+  }
   lines.push(`- Models: ${modelsCells.join(", ") || "—"}`);
   lines.push(`- Workdir: ${workdirBase}`);
   lines.push("");
@@ -625,7 +658,9 @@ async function emitReport({
   const allRows = [];
   for (const tool of ["claude", "codex"]) {
     const data = perTool[tool];
-    if (!data) continue;
+    if (!data) {
+      continue;
+    }
     for (const trial of data.trials) {
       const m = await readMetricsOrZero(trial.metricsPath);
       allRows.push({ tool, trial: trial.trial, metrics: m, runDir: trial.runDir });
@@ -642,7 +677,9 @@ async function emitReport({
   const summary = {};
   for (const tool of ["claude", "codex"]) {
     const rows = allRows.filter((r) => r.tool === tool);
-    if (rows.length === 0) continue;
+    if (rows.length === 0) {
+      continue;
+    }
     const scores = rows.map((r) => r.metrics?.score ?? 0);
     const costs = rows.map((r) => r.metrics?.cost_usd ?? 0);
     const med = median(scores);
@@ -743,8 +780,8 @@ async function main(argv) {
   let args;
   try {
     args = parseArgs(argv);
-  } catch (err) {
-    process.stderr.write(`error: ${err.message}\n\n${helpText()}\n`);
+  } catch (error) {
+    process.stderr.write(`error: ${error.message}\n\n${helpText()}\n`);
     return 1;
   }
   if (args.help) {
@@ -754,7 +791,9 @@ async function main(argv) {
 
   const errors = validateArgs(args);
   if (errors.length > 0) {
-    for (const e of errors) process.stderr.write(`error: ${e}\n`);
+    for (const e of errors) {
+      process.stderr.write(`error: ${e}\n`);
+    }
     process.stderr.write(`\n${helpText()}\n`);
     return 1;
   }
@@ -784,8 +823,8 @@ async function main(argv) {
   let promptText;
   try {
     promptText = readFileSync(promptPath, "utf8");
-  } catch (err) {
-    process.stderr.write(`error: failed to read prompt: ${err.message}\n`);
+  } catch (error) {
+    process.stderr.write(`error: failed to read prompt: ${error.message}\n`);
     return 2;
   }
 

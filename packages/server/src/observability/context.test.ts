@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, test } from "vitest";
 import {
   createObservabilityContext,
   getCurrentContext,
@@ -8,7 +8,7 @@ import {
 import { RequestScopedMetricsRecorder } from "./recorder.ts";
 
 describe("createObservabilityContext", () => {
-  it("assigns a fresh request_id when none is supplied", () => {
+  test("assigns a fresh request_id when none is supplied", () => {
     const a = createObservabilityContext();
     const b = createObservabilityContext();
     expect(a.request_id).toMatch(/^[0-9a-f-]{36}$/);
@@ -16,34 +16,34 @@ describe("createObservabilityContext", () => {
     expect(a.request_id).not.toBe(b.request_id);
   });
 
-  it("honours an externally-supplied request_id", () => {
+  test("honours an externally-supplied request_id", () => {
     const ctx = createObservabilityContext({ request_id: "ext-123" });
     expect(ctx.request_id).toBe("ext-123");
   });
 
-  it("captures started_at as a finite, non-negative number", () => {
+  test("captures started_at as a finite, non-negative number", () => {
     const ctx = createObservabilityContext();
     expect(Number.isFinite(ctx.started_at)).toBe(true);
     expect(ctx.started_at).toBeGreaterThanOrEqual(0);
   });
 
-  it("starts with an empty fields map", () => {
+  test("starts with an empty fields map", () => {
     const ctx = createObservabilityContext();
     expect(ctx.fields.size).toBe(0);
   });
 
-  it("defaults sampled_by_head to false and force_kept_by_error to false", () => {
+  test("defaults sampled_by_head to false and force_kept_by_error to false", () => {
     const ctx = createObservabilityContext();
     expect(ctx.sampled_by_head).toBe(false);
     expect(ctx.force_kept_by_error).toBe(false);
   });
 
-  it("honours an externally-supplied sampled_by_head", () => {
+  test("honours an externally-supplied sampled_by_head", () => {
     const ctx = createObservabilityContext({ sampled_by_head: true });
     expect(ctx.sampled_by_head).toBe(true);
   });
 
-  it("constructs a fresh RequestScopedMetricsRecorder by default", () => {
+  test("constructs a fresh RequestScopedMetricsRecorder by default", () => {
     const a = createObservabilityContext();
     const b = createObservabilityContext();
     expect(a.recorder).toBeInstanceOf(RequestScopedMetricsRecorder);
@@ -57,7 +57,7 @@ describe("createObservabilityContext", () => {
     expect(snap.histograms).toEqual([]);
   });
 
-  it("honours an externally-supplied recorder", () => {
+  test("honours an externally-supplied recorder", () => {
     const r = new RequestScopedMetricsRecorder();
     r.counter("seeded", 1);
     const ctx = createObservabilityContext({ recorder: r });
@@ -67,11 +67,11 @@ describe("createObservabilityContext", () => {
 });
 
 describe("runWithContext + getCurrentContext", () => {
-  it("returns undefined outside any runWithContext call", () => {
+  test("returns undefined outside any runWithContext call", () => {
     expect(getCurrentContext()).toBeUndefined();
   });
 
-  it("propagates through synchronous code", () => {
+  test("propagates through synchronous code", () => {
     const ctx = createObservabilityContext({ request_id: "sync" });
     runWithContext(ctx, () => {
       expect(getCurrentContext()?.request_id).toBe("sync");
@@ -79,7 +79,7 @@ describe("runWithContext + getCurrentContext", () => {
     expect(getCurrentContext()).toBeUndefined();
   });
 
-  it("propagates through awaits", async () => {
+  test("propagates through awaits", async () => {
     const ctx = createObservabilityContext({ request_id: "await" });
     await runWithContext(ctx, async () => {
       expect(getCurrentContext()?.request_id).toBe("await");
@@ -89,7 +89,7 @@ describe("runWithContext + getCurrentContext", () => {
     expect(getCurrentContext()).toBeUndefined();
   });
 
-  it("propagates through Promise.all", async () => {
+  test("propagates through Promise.all", async () => {
     const ctx = createObservabilityContext({ request_id: "all" });
     await runWithContext(ctx, async () => {
       const ids = await Promise.all([
@@ -100,7 +100,7 @@ describe("runWithContext + getCurrentContext", () => {
     });
   });
 
-  it("propagates through setTimeout", async () => {
+  test("propagates through setTimeout", async () => {
     const ctx = createObservabilityContext({ request_id: "timer" });
     const id = await runWithContext(
       ctx,
@@ -112,7 +112,7 @@ describe("runWithContext + getCurrentContext", () => {
     expect(id).toBe("timer");
   });
 
-  it("stacks nested runWithContext calls — inner wins, outer restores on exit", () => {
+  test("stacks nested runWithContext calls — inner wins, outer restores on exit", () => {
     const outer = createObservabilityContext({ request_id: "outer" });
     const inner = createObservabilityContext({ request_id: "inner" });
     runWithContext(outer, () => {
@@ -125,7 +125,7 @@ describe("runWithContext + getCurrentContext", () => {
     expect(getCurrentContext()).toBeUndefined();
   });
 
-  it("fields map is mutable through getCurrentContext", () => {
+  test("fields map is mutable through getCurrentContext", () => {
     const ctx = createObservabilityContext();
     runWithContext(ctx, () => {
       getCurrentContext()?.fields.set("collection", "tickets");
@@ -135,7 +135,7 @@ describe("runWithContext + getCurrentContext", () => {
     expect(ctx.fields.get("op_count")).toBe(3);
   });
 
-  it("preserves fn's return value as-is", async () => {
+  test("preserves fn's return value as-is", async () => {
     const ctx = createObservabilityContext();
     const sync = runWithContext(ctx, () => 42);
     expect(sync).toBe(42);
@@ -143,11 +143,13 @@ describe("runWithContext + getCurrentContext", () => {
     expect(asyncResult).toBe("hi");
   });
 
-  it("force_kept_by_error and sampled_by_head are mutable through getCurrentContext", () => {
+  test("force_kept_by_error and sampled_by_head are mutable through getCurrentContext", () => {
     const ctx: ObservabilityContext = createObservabilityContext();
     runWithContext(ctx, () => {
       const here = getCurrentContext();
-      if (here === undefined) throw new Error("no context");
+      if (here === undefined) {
+        throw new Error("no context");
+      }
       here.force_kept_by_error = true;
       here.sampled_by_head = true;
     });

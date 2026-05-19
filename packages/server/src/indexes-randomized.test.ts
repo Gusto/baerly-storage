@@ -115,7 +115,9 @@ describe("ServerWriter + indexes: live index keys reflect live doc set", () => {
         if (op.kind === "I") {
           // Skip if the writer would reject the I (we're single-writer
           // here so a duplicate _id at this layer is the same).
-          if (live.has(op.id)) continue;
+          if (live.has(op.id)) {
+            continue;
+          }
           const doc: Doc =
             op.assignee === undefined
               ? { _id: op.id, status: op.status }
@@ -128,7 +130,9 @@ describe("ServerWriter + indexes: live index keys reflect live doc set", () => {
           });
           live.set(op.id, doc);
         } else if (op.kind === "U") {
-          if (!live.has(op.id)) continue;
+          if (!live.has(op.id)) {
+            continue;
+          }
           const doc: Doc =
             op.assignee === undefined
               ? { _id: op.id, status: op.status }
@@ -141,7 +145,9 @@ describe("ServerWriter + indexes: live index keys reflect live doc set", () => {
           });
           live.set(op.id, doc);
         } else {
-          if (!live.has(op.id)) continue;
+          if (!live.has(op.id)) {
+            continue;
+          }
           await writer.commit({
             op: "D",
             collection: COLLECTION,

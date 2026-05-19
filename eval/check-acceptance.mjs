@@ -64,9 +64,9 @@ async function run(cmd, args, cwd) {
       stdio: ["ignore", "pipe", "pipe"],
       signal: ac.signal,
     });
-  } catch (err) {
+  } catch (error) {
     clearTimeout(timer);
-    return { code: 127, stdout: "", stderr: String(err).slice(0, STDERR_CAP) };
+    return { code: 127, stdout: "", stderr: String(error).slice(0, STDERR_CAP) };
   }
 
   let stdout = "";
@@ -88,11 +88,11 @@ async function run(cmd, args, cwd) {
         STDERR_CAP,
       ),
     };
-  } catch (err) {
+  } catch (error) {
     return {
       code: 127,
       stdout: "",
-      stderr: (timedOut ? `timed out after ${SPAWN_TIMEOUT_MS / 1000}s` : String(err)).slice(
+      stderr: (timedOut ? `timed out after ${SPAWN_TIMEOUT_MS / 1000}s` : String(error)).slice(
         0,
         STDERR_CAP,
       ),
@@ -112,7 +112,9 @@ function walk(root, exts) {
       return;
     }
     for (const ent of entries) {
-      if (SKIP_DIRS.has(ent)) continue;
+      if (SKIP_DIRS.has(ent)) {
+        continue;
+      }
       const p = join(dir, ent);
       let s;
       try {
@@ -120,11 +122,16 @@ function walk(root, exts) {
       } catch {
         continue;
       }
-      if (s.isDirectory()) visit(p);
-      else if (exts.some((e) => ent.endsWith(e))) out.push(p);
+      if (s.isDirectory()) {
+        visit(p);
+      } else if (exts.some((e) => ent.endsWith(e))) {
+        out.push(p);
+      }
     }
   };
-  if (existsSync(root)) visit(root);
+  if (existsSync(root)) {
+    visit(root);
+  }
   return out;
 }
 
@@ -138,7 +145,9 @@ async function grepCount(root, exts, pattern) {
       continue;
     }
     const matches = content.match(pattern);
-    if (matches) total += matches.length;
+    if (matches) {
+      total += matches.length;
+    }
   }
   return total;
 }
@@ -151,7 +160,9 @@ async function grepCoOccurFile(root, exts, regexA, regexB) {
     } catch {
       continue;
     }
-    if (regexA.test(content) && regexB.test(content)) return true;
+    if (regexA.test(content) && regexB.test(content)) {
+      return true;
+    }
   }
   return false;
 }
@@ -180,7 +191,9 @@ function grepZeroBullet(id, exts, regex, subdir) {
   return async ({ root }) => {
     const target = subdir ? join(root, subdir) : root;
     const hits = await grepCount(target, exts, regex);
-    if (hits === 0) return { id, pass: true, stderr: "" };
+    if (hits === 0) {
+      return { id, pass: true, stderr: "" };
+    }
     return {
       id,
       pass: false,
@@ -193,7 +206,9 @@ function grepAnyBullet(id, exts, regex, subdir) {
   return async ({ root }) => {
     const target = subdir ? join(root, subdir) : root;
     const hits = await grepCount(target, exts, regex);
-    if (hits > 0) return { id, pass: true, stderr: "" };
+    if (hits > 0) {
+      return { id, pass: true, stderr: "" };
+    }
     return {
       id,
       pass: false,
@@ -206,7 +221,9 @@ function grepCoOccurBullet(id, exts, regexA, regexB, subdir) {
   return async ({ root }) => {
     const target = subdir ? join(root, subdir) : root;
     const found = await grepCoOccurFile(target, exts, regexA, regexB);
-    if (found) return { id, pass: true, stderr: "" };
+    if (found) {
+      return { id, pass: true, stderr: "" };
+    }
     return {
       id,
       pass: false,
@@ -222,10 +239,14 @@ function crudPresentBullet(id, tableName) {
     const tableHits = await grepCount(target, [".ts"], tableRegex);
     const verbs = ["insert", "update", "delete", "where"];
     const missing = [];
-    if (tableHits === 0) missing.push(`"${tableName}" table-name literal`);
+    if (tableHits === 0) {
+      missing.push(`"${tableName}" table-name literal`);
+    }
     for (const verb of verbs) {
       const verbHits = await grepCount(target, [".ts"], new RegExp(`\\b${verb}\\b`));
-      if (verbHits === 0) missing.push(verb);
+      if (verbHits === 0) {
+        missing.push(verb);
+      }
     }
     if (missing.length === 0) {
       return { id, pass: true, stderr: "" };
@@ -258,7 +279,9 @@ function testBullet({ tableName }) {
         stderr: `pnpm test exit ${cmdResult.code}: ${tail}`.slice(0, STDERR_CAP),
       };
     }
-    if (!tableName) return { id: "test", pass: true, stderr: "" };
+    if (!tableName) {
+      return { id: "test", pass: true, stderr: "" };
+    }
     const insertHits = await grepCount(root, [".test.ts", ".test.tsx"], /insert/);
     const tableHits = await grepCount(root, [".test.ts", ".test.tsx"], new RegExp(tableName));
     if (insertHits > 0 && tableHits > 0) {
@@ -292,7 +315,9 @@ function realVerifierBullet() {
         break;
       }
     }
-    if (sawReal) return { id: "real_verifier", pass: true, stderr: "" };
+    if (sawReal) {
+      return { id: "real_verifier", pass: true, stderr: "" };
+    }
     // Distinguish "only sharedSecret" from "no verifier at all" for the message.
     const sharedHits = await grepCount(target, [".ts"], sharedRegex);
     const reason =
@@ -327,20 +352,28 @@ function grepProximityBullet({ id, exts, anchor, near, windowLines, subdir, mode
               break;
             }
           }
-          if (proximityHit) break;
+          if (proximityHit) {
+            break;
+          }
         }
       }
-      if (proximityHit) break;
+      if (proximityHit) {
+        break;
+      }
     }
     if (mode === "expect-proximity") {
-      if (proximityHit) return { id, pass: true, stderr: "" };
+      if (proximityHit) {
+        return { id, pass: true, stderr: "" };
+      }
       const reason = anyAnchor
         ? `${anchor} found but no ${near} within ${windowLines} lines`
         : `no ${anchor} found under ${subdir ?? "."}`;
       return { id, pass: false, stderr: reason };
     }
     // mode === "expect-no-proximity"
-    if (!proximityHit) return { id, pass: true, stderr: "" };
+    if (!proximityHit) {
+      return { id, pass: true, stderr: "" };
+    }
     return {
       id,
       pass: false,
@@ -357,7 +390,9 @@ function senderFromVerifierBullet() {
     const senderRegex = /sender/;
     const verifierRegex = /\bsub\b|verifier|claim/;
     const coOccur = await grepCoOccurFile(target, [".ts"], senderRegex, verifierRegex);
-    if (coOccur) return { id: "sender_from_verifier", pass: true, stderr: "" };
+    if (coOccur) {
+      return { id: "sender_from_verifier", pass: true, stderr: "" };
+    }
     // Schema has no sender_name field — also acceptable.
     const senderName = await grepCount(target, [".ts"], /sender_name/);
     if (senderName === 0) {
@@ -404,8 +439,12 @@ function callerSuppliedIdBullet() {
           let hasId = false;
           let hasCode = false;
           for (let j = i; j < end; j++) {
-            if (/_id\s*:/.test(lines[j])) hasId = true;
-            if (/\bcode\b/.test(lines[j])) hasCode = true;
+            if (/_id\s*:/.test(lines[j])) {
+              hasId = true;
+            }
+            if (/\bcode\b/.test(lines[j])) {
+              hasCode = true;
+            }
           }
           if (hasId && hasCode) {
             return { id: "caller_supplied_id", pass: true, stderr: "" };
@@ -437,13 +476,19 @@ function noUnboundedArrayBullet() {
       } catch {
         continue;
       }
-      if (/interface\s+Link\b/.test(content)) interfaceFiles.push(f);
+      if (/interface\s+Link\b/.test(content)) {
+        interfaceFiles.push(f);
+      }
     }
     const seen = new Set();
     for (const f of [...candidates, ...interfaceFiles]) {
-      if (seen.has(f)) continue;
+      if (seen.has(f)) {
+        continue;
+      }
       seen.add(f);
-      if (!existsSync(f)) continue;
+      if (!existsSync(f)) {
+        continue;
+      }
       let content;
       try {
         content = await readFile(f, "utf8");
@@ -473,7 +518,9 @@ function catchesConflictBullet() {
       /"Conflict"|'Conflict'/,
       /\bcatch\b|BaerlyError/,
     );
-    if (found) return { id: "catches_conflict", pass: true, stderr: "" };
+    if (found) {
+      return { id: "catches_conflict", pass: true, stderr: "" };
+    }
     return {
       id: "catches_conflict",
       pass: false,
@@ -496,11 +543,11 @@ function declaresByTagIndexBullet() {
     let content;
     try {
       content = await readFile(cfg, "utf8");
-    } catch (err) {
+    } catch (error) {
       return {
         id: "declares_by_tag_index",
         pass: false,
-        stderr: `failed to read baerly.config.ts: ${err.message}`,
+        stderr: `failed to read baerly.config.ts: ${error.message}`,
       };
     }
     if (/by_tag/.test(content) && /tag/.test(content)) {
@@ -555,9 +602,13 @@ function tagsStringArrayBullet() {
     }
     const seen = new Set();
     for (const f of candidates) {
-      if (seen.has(f)) continue;
+      if (seen.has(f)) {
+        continue;
+      }
       seen.add(f);
-      if (!existsSync(f)) continue;
+      if (!existsSync(f)) {
+        continue;
+      }
       let content;
       try {
         content = await readFile(f, "utf8");
@@ -761,11 +812,11 @@ async function main(argv) {
     try {
       const res = await bullet({ root });
       results.push(res);
-    } catch (err) {
+    } catch (error) {
       // A bullet evaluator threw — surface as internal error so the
       // eval runner can distinguish "scaffold is broken" from "checker
       // is broken".
-      process.stderr.write(`internal error in bullet: ${err.stack || err}\n`);
+      process.stderr.write(`internal error in bullet: ${error.stack || error}\n`);
       return 2;
     }
   }

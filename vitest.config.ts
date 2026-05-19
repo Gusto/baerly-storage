@@ -42,7 +42,15 @@ import { configDefaults, defineConfig } from "vitest/config";
 const isRandomize =
   process.env["FC_NUM_RUNS"] !== undefined && Number(process.env["FC_NUM_RUNS"]) > 1_000;
 const isMinio = process.env["MINIO"] === "1";
-const vitestTestTimeoutMs = isRandomize ? 600_000 : isMinio ? 30_000 : 5_000;
+const vitestTestTimeoutMs = ((): number => {
+  if (isRandomize) {
+    return 600_000;
+  }
+  if (isMinio) {
+    return 30_000;
+  }
+  return 5_000;
+})();
 
 // `conformance.test.ts` requires gitignored credentials files
 // (`credentials/*.json`) and a live Minio. Excluded by default;

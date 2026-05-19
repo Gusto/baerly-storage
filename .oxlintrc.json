@@ -7,19 +7,35 @@
     "perf": "deny"
   },
   "rules": {
+    // Writer / retry / replay loops are sequential by design. See 308f986.
     "eslint/no-await-in-loop": "off",
+    // Fire-and-forget logging in observability paths. See 308f986.
     "promise/always-return": "off",
     "import/extensions": ["error", "always", { "ignorePackages": true }],
-    "no-underscore-dangle": ["error", { "allow": ["_id", "_raw"] }]
+    "no-underscore-dangle": ["error", { "allow": ["_id", "_raw"] }],
+    "eslint/curly": "error",
+    "vitest/consistent-test-it": ["error", { "fn": "test" }],
+    "unicorn/catch-error-name": "error",
+    "vitest/prefer-expect-resolves": "error",
+    "unicorn/switch-case-braces": "error",
+    "eslint/no-duplicate-imports": "error",
+    "typescript/consistent-type-imports": "error",
+    "eslint/prefer-const": "error",
+    "unicorn/no-zero-fractions": "error",
+    "unicorn/no-await-expression-member": "error",
+    "eslint/no-nested-ternary": "error",
+    "unicorn/no-nested-ternary": "error",
+    "vitest/require-mock-type-parameters": "error",
+    "vitest/require-to-throw-message": "error"
   },
   "overrides": [
     {
       "files": ["**/*.test.ts", "tests/**/*.ts", "scripts/**/*.ts"],
       "rules": {
         "no-console": "off",
+        // fast-check `test.prop(...)` puts expects inside the prop callback;
+        // also `describe(variant.label, ...)` cascades fail static checks. See 308f986.
         "vitest/no-standalone-expect": "off",
-        "vitest/require-mock-type-parameters": "off",
-        "vitest/require-to-throw-message": "off",
         "vitest/no-conditional-expect": "off",
         "vitest/expect-expect": "off",
         "vitest/valid-title": "off",

@@ -54,7 +54,9 @@ describe("baerly dev", () => {
   afterEach(async () => {
     while (openServers.length > 0) {
       const s = openServers.pop();
-      if (s) await s.close().catch(() => {});
+      if (s) {
+        await s.close().catch(() => {});
+      }
     }
     process.chdir(originalCwd);
     await rm(root, { recursive: true, force: true });
@@ -83,8 +85,11 @@ describe("baerly dev", () => {
       close: () =>
         new Promise<void>((res, rej) => {
           result.server.close((err) => {
-            if (err) rej(err);
-            else res();
+            if (err) {
+              rej(err);
+            } else {
+              res();
+            }
           });
         }),
     });
@@ -143,8 +148,11 @@ describe("baerly dev", () => {
       close: () =>
         new Promise<void>((res, rej) => {
           result.server.close((err) => {
-            if (err) rej(err);
-            else res();
+            if (err) {
+              rej(err);
+            } else {
+              res();
+            }
           });
         }),
     });
@@ -179,8 +187,11 @@ describe("baerly dev", () => {
         close: () =>
           new Promise<void>((res, rej) => {
             outcome.result!.server.close((err) => {
-              if (err) rej(err);
-              else res();
+              if (err) {
+                rej(err);
+              } else {
+                res();
+              }
             });
           }),
       });

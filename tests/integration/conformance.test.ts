@@ -99,8 +99,11 @@ const endpoints: Endpoint[] = [
 const resolvedEndpoints: { name: string; creds: EndpointCreds | null }[] = [];
 for (const ep of endpoints) {
   let creds: EndpointCreds | null = null;
-  if (ep.builtIn) creds = ep.builtIn;
-  else if (ep.file && CONFORMANCE) creds = await loadCreds(ep.file);
+  if (ep.builtIn) {
+    creds = ep.builtIn;
+  } else if (ep.file && CONFORMANCE) {
+    creds = await loadCreds(ep.file);
+  }
   resolvedEndpoints.push({ name: ep.name, creds });
 }
 
@@ -110,7 +113,9 @@ for (const ep of endpoints) {
 describe("conformance", () => {
   for (const ep of resolvedEndpoints) {
     describe.runIf(ep.creds !== null)(ep.name, () => {
-      if (ep.creds === null) return; // unreachable; satisfies the type checker
+      if (ep.creds === null) {
+        return;
+      } // unreachable; satisfies the type checker
       const c = ep.creds;
       const signer = new AwsClient({
         accessKeyId: c.credentials.accessKeyId,

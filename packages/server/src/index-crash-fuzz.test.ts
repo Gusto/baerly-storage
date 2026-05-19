@@ -170,16 +170,16 @@ describe("index emission survives a single crash anywhere in the commit", () => 
             docId: targetId,
           });
         }
-      } catch (e) {
+      } catch (error) {
         // Either the synthetic AbortError fired mid-commit, or the
         // writer surfaced a `Conflict` from a CAS race the abort
         // induced. Both are expected; the property body proceeds
         // unconditionally.
         if (
-          !(e instanceof Error) ||
-          !(e.name === "AbortError" || (e as { code?: string }).code === "Conflict")
+          !(error instanceof Error) ||
+          !(error.name === "AbortError" || (error as { code?: string }).code === "Conflict")
         ) {
-          throw e;
+          throw error;
         }
       }
 
@@ -193,10 +193,13 @@ describe("index emission survives a single crash anywhere in the commit", () => 
       // Reconstruct the live doc set the reader sees, and assert
       // index parity.
       const live = new Map<string, Doc>();
-      const nextSeq = (await readCurrent(inner)).next_seq;
+      const current = await readCurrent(inner);
+      const nextSeq = current.next_seq;
       for (let s = 0; s < nextSeq; s++) {
         const got = await inner.get(`${LOG_PREFIX}/log/${s}.json`);
-        if (got === null) continue;
+        if (got === null) {
+          continue;
+        }
         // We won't trip on malformed bodies — the writer only emits
         // valid JSON.
         const entry = JSON.parse(new TextDecoder().decode(got.body)) as {
@@ -218,7 +221,9 @@ describe("index emission survives a single crash anywhere in the commit", () => 
       }
       const actual = new Set<string>();
       for (const def of INDEXES) {
-        for (const k of await listIndexKeysFor(inner, def.name)) actual.add(k);
+        for (const k of await listIndexKeysFor(inner, def.name)) {
+          actual.add(k);
+        }
       }
       expect([...actual].toSorted()).toEqual([...expected].toSorted());
     },
@@ -228,6 +233,8 @@ describe("index emission survives a single crash anywhere in the commit", () => 
 
 const readCurrent = async (storage: Storage): Promise<{ next_seq: number }> => {
   const got = await storage.get(CURRENT_JSON_KEY);
-  if (got === null) throw new Error("current.json gone (test bug)");
+  if (got === null) {
+    throw new Error("current.json gone (test bug)");
+  }
   return JSON.parse(new TextDecoder().decode(got.body)) as { next_seq: number };
 };

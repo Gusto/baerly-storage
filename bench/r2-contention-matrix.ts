@@ -175,13 +175,27 @@ let violations = 0;
 for (const cell of DEFAULT_CELLS) {
   const args = ["--import", "./bench/register-hooks.mjs", "bench/r2-contention.ts"];
   args.push(`--scenario=${cell.scenario}`);
-  if (cell.concurrency !== undefined) args.push(`--concurrency=${cell.concurrency}`);
-  if (cell.pollers !== undefined) args.push(`--pollers=${cell.pollers}`);
-  if (cell.collections !== undefined) args.push(`--collections=${cell.collections}`);
-  if (cell.retry !== undefined) args.push(`--retry=${cell.retry}`);
-  if (cell.network !== undefined) args.push(`--network=${cell.network}`);
-  if (cell.durationS !== undefined) args.push(`--duration-s=${cell.durationS}`);
-  if (cell.trials !== undefined) args.push(`--trials=${cell.trials}`);
+  if (cell.concurrency !== undefined) {
+    args.push(`--concurrency=${cell.concurrency}`);
+  }
+  if (cell.pollers !== undefined) {
+    args.push(`--pollers=${cell.pollers}`);
+  }
+  if (cell.collections !== undefined) {
+    args.push(`--collections=${cell.collections}`);
+  }
+  if (cell.retry !== undefined) {
+    args.push(`--retry=${cell.retry}`);
+  }
+  if (cell.network !== undefined) {
+    args.push(`--network=${cell.network}`);
+  }
+  if (cell.durationS !== undefined) {
+    args.push(`--duration-s=${cell.durationS}`);
+  }
+  if (cell.trials !== undefined) {
+    args.push(`--trials=${cell.trials}`);
+  }
   // Pin per-cell output to the matrix subdirectory so we can read it
   // back without scanning the whole results/ directory.
   args.push(`--out-dir=${outBase}`);
@@ -195,9 +209,13 @@ for (const cell of DEFAULT_CELLS) {
     try {
       const text = await readFile(join(outBase, `${cell.id}.json`), "utf8");
       const result = JSON.parse(text) as RunResult;
-      if (result.notes !== undefined) violations++;
-    } catch (e) {
-      process.stderr.write(`matrix: cell ${cell.id} JSON read failed: ${(e as Error).message}\n`);
+      if (result.notes !== undefined) {
+        violations++;
+      }
+    } catch (error) {
+      process.stderr.write(
+        `matrix: cell ${cell.id} JSON read failed: ${(error as Error).message}\n`,
+      );
       failures++;
     }
   }
@@ -216,7 +234,8 @@ function run(args: readonly string[]): Promise<number> {
 }
 
 async function emitCsv(dir: string): Promise<void> {
-  const files = (await readdir(dir)).filter((f) => f.endsWith(".json"));
+  const entries = await readdir(dir);
+  const files = entries.filter((f) => f.endsWith(".json"));
   const rows: string[] = [
     [
       "cell_id",
@@ -281,9 +300,13 @@ async function emitCsv(dir: string): Promise<void> {
 }
 
 function escapeNotes(notes: string | undefined): string {
-  if (notes === undefined) return "";
+  if (notes === undefined) {
+    return "";
+  }
   // Notes are short; minimal RFC-4180-ish escape (double-quote-wrap
   // anything with a comma, double internal quotes).
-  if (!notes.includes(",") && !notes.includes('"')) return notes;
+  if (!notes.includes(",") && !notes.includes('"')) {
+    return notes;
+  }
   return `"${notes.replace(/"/g, '""')}"`;
 }

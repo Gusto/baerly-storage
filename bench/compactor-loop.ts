@@ -11,10 +11,7 @@
  * a writer-vs-compactor race in the bench window.
  */
 
-import {
-  runScheduledMaintenance,
-  type MaintenanceResult,
-} from "@baerly/server/maintenance";
+import { runScheduledMaintenance, type MaintenanceResult } from "@baerly/server/maintenance";
 import type { Storage } from "@baerly/protocol";
 
 export interface CompactorLoopCounters {
@@ -43,17 +40,23 @@ export async function runCompactorLoop(
     try {
       result = await runScheduledMaintenance({ storage, currentJsonKey }, {});
       counters.passes++;
-      if (result.compact.written) counters.compactsLanded++;
-      if (result.compact.skippedReason === "cas-lost") counters.compactsCasLost++;
+      if (result.compact.written) {
+        counters.compactsLanded++;
+      }
+      if (result.compact.skippedReason === "cas-lost") {
+        counters.compactsCasLost++;
+      }
       counters.gcSwept += result.gc.swept;
-    } catch (e) {
+    } catch (error) {
       counters.errors++;
       // Don't surface — methodology counts errors and continues. A
       // throw here would terminate the bench prematurely; the writer
       // loop runs to its own deadline regardless.
-      void e;
+      void error;
     }
-    if (signal.aborted) break;
+    if (signal.aborted) {
+      break;
+    }
     await new Promise<void>((resolve, reject) => {
       const t = setTimeout(resolve, cadenceMs);
       signal.addEventListener(

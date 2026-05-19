@@ -254,7 +254,9 @@ export const makeQuery = <T extends JSONArraylessObject>(
   // `Query.where(p)` routes through the merged result below. Empty
   // / undefined predicates short-circuit inside `validatePredicate`
   // (an `{}` predicate has no keys to walk).
-  if (state.predicate !== undefined) validatePredicate<T>(state.predicate);
+  if (state.predicate !== undefined) {
+    validatePredicate<T>(state.predicate);
+  }
   const frozen: QueryState<T> = Object.freeze({ ...state });
   return {
     where: (p) => {
@@ -275,8 +277,14 @@ export const makeQuery = <T extends JSONArraylessObject>(
       const { rows } = await runRead<T>(ctx, { ...frozen, limit: 1 });
       return rows[0]; // undefined when rows.length === 0
     },
-    all: async () => (await runRead<T>(ctx, frozen)).rows,
-    count: async () => (await runRead<T>(ctx, frozen)).rows.length,
+    all: async () => {
+      const res = await runRead<T>(ctx, frozen);
+      return res.rows;
+    },
+    count: async () => {
+      const res = await runRead<T>(ctx, frozen);
+      return res.rows.length;
+    },
     update: (patch) => runUpdate<T>(ctx, frozen, patch),
     replace: (doc) => runReplace<T>(ctx, frozen, doc),
     delete: () => runDelete<T>(ctx, frozen),
@@ -301,7 +309,9 @@ export const runFirstWithMeta = async <T extends JSONArraylessObject>(
   // for chain-based reads: predicates with `$`-keys throw
   // `InvalidConfig` before any I/O. Routes that bypass `Db.table` /
   // `Query.where` must still surface the same error class.
-  if (state.predicate !== undefined) validatePredicate<T>(state.predicate);
+  if (state.predicate !== undefined) {
+    validatePredicate<T>(state.predicate);
+  }
   const { rows, manifestPointer, fresh } = await runRead<T>(ctx, { ...state, limit: 1 });
   return { row: rows[0], manifestPointer, fresh };
 };
@@ -320,7 +330,9 @@ export const runAllWithMeta = <T extends JSONArraylessObject>(
   // See `runFirstWithMeta` — match `makeQuery`'s predicate validation
   // so router calls that skip the chain still surface `InvalidConfig`
   // on `$`-keys.
-  if (state.predicate !== undefined) validatePredicate<T>(state.predicate);
+  if (state.predicate !== undefined) {
+    validatePredicate<T>(state.predicate);
+  }
   return runRead<T>(ctx, state);
 };
 
@@ -478,7 +490,9 @@ const runUpdate = async <T extends JSONArraylessObject>(
   // chain's setting.
   const { rows } = await runRead<T>(ctx, { ...state, consistency: "strong" });
   const tx = ctx.txCtx;
-  if (tx !== undefined) assertTxBindMatches(ctx);
+  if (tx !== undefined) {
+    assertTxBindMatches(ctx);
+  }
   let modified = 0;
   for (const doc of rows) {
     const merged = merge(doc as JSONArraylessObject, patch as Partial<JSONArraylessObject>);
@@ -605,7 +619,9 @@ const runDelete = async <T extends JSONArraylessObject>(
   // chain's setting.
   const { rows } = await runRead<T>(ctx, { ...state, consistency: "strong" });
   const tx = ctx.txCtx;
-  if (tx !== undefined) assertTxBindMatches(ctx);
+  if (tx !== undefined) {
+    assertTxBindMatches(ctx);
+  }
   let deleted = 0;
   for (const doc of rows) {
     if (tx !== undefined) {
@@ -632,7 +648,9 @@ const runDelete = async <T extends JSONArraylessObject>(
  * @throws BaerlyError code="Internal" — txCtx ↔ Table name mismatch.
  */
 const assertTxBindMatches = (ctx: TableReadContext): void => {
-  if (ctx.txCtx === undefined) return;
+  if (ctx.txCtx === undefined) {
+    return;
+  }
   if (ctx.txCtx.table !== ctx.tableName) {
     throw new BaerlyError(
       "Internal",
@@ -686,7 +704,9 @@ const runRead = async <T extends JSONArraylessObject>(
 
   // Not-found is "table not yet provisioned" — return empty rather
   // than throw. Mirrors `Storage.get` returning null on miss.
-  if (head === null) return { rows: [], manifestPointer, fresh };
+  if (head === null) {
+    return { rows: [], manifestPointer, fresh };
+  }
 
   // ── Optional index-walk fast path. ──────────────────────────────
   // `planQuery` is a pure function over `(predicate, indexes)`. It
@@ -703,7 +723,9 @@ const runRead = async <T extends JSONArraylessObject>(
   );
   if (plan.kind === "index-walk") {
     let rows = await runIndexWalkPlan<T>(ctx, head.json, state, plan);
-    if (state.order !== undefined) rows = sortByOrderSpec(rows, state.order);
+    if (state.order !== undefined) {
+      rows = sortByOrderSpec(rows, state.order);
+    }
     if (state.limit !== undefined && state.limit < rows.length) {
       rows = rows.slice(0, state.limit);
     }
@@ -745,22 +767,30 @@ const runRead = async <T extends JSONArraylessObject>(
   // T / M: ignored (T not yet wired; M is a marker).
   const docs = new Map<string, T>(baseDocs as Map<string, T>);
   for (const entry of entries) {
-    if (entry.collection !== ctx.tableName) continue;
-    if (entry.doc_id === undefined) continue;
+    if (entry.collection !== ctx.tableName) {
+      continue;
+    }
+    if (entry.doc_id === undefined) {
+      continue;
+    }
     switch (entry.op) {
       case "I":
       case "U": {
-        if (entry.new === undefined) continue;
+        if (entry.new === undefined) {
+          continue;
+        }
         docs.set(entry.doc_id, entry.new as T);
         break;
       }
-      case "D":
+      case "D": {
         docs.delete(entry.doc_id);
         break;
+      }
       case "T":
-      case "M":
+      case "M": {
         // No-op for this ticket; T/M are forward-compatibility shapes.
         break;
+      }
     }
   }
 
@@ -899,14 +929,20 @@ const runIndexWalkPlan = async <T extends JSONArraylessObject>(
     for await (const entry of ctx.storage.list(eqPrefix, listOpts)) {
       const tail = entry.key.slice(eqPrefix.length);
       const firstSlash = tail.indexOf("/");
-      if (firstSlash < 0) continue; // defensive: malformed key
+      if (firstSlash < 0) {
+        continue;
+      } // defensive: malformed key
       const valueSeg = tail.slice(0, firstSlash);
       // Inclusive-lower in-loop skip (couldn't push to startAfter).
-      if (loEncoded !== undefined && valueSeg < loEncoded) continue;
+      if (loEncoded !== undefined && valueSeg < loEncoded) {
+        continue;
+      }
       // Upper-bound break — lex-ascending enumeration, so once we
       // pass the upper bound we're done.
       if (hiEncoded !== undefined) {
-        if (r.hiInclusive ? valueSeg > hiEncoded : valueSeg >= hiEncoded) break;
+        if (r.hiInclusive ? valueSeg > hiEncoded : valueSeg >= hiEncoded) {
+          break;
+        }
       }
       // Decode the doc-id from the LAST `/`-separated segment of
       // the tail. Single-field walk → tail is `<valueSeg>/<docId>.json`
@@ -916,9 +952,13 @@ const runIndexWalkPlan = async <T extends JSONArraylessObject>(
       const lastSlash = tail.lastIndexOf("/");
       const last =
         lastSlash === firstSlash ? tail.slice(firstSlash + 1) : tail.slice(lastSlash + 1);
-      if (!last.endsWith(".json")) continue;
+      if (!last.endsWith(".json")) {
+        continue;
+      }
       const docId = last.slice(0, -".json".length);
-      if (docId.length === 0) continue;
+      if (docId.length === 0) {
+        continue;
+      }
       docIdSet.add(docId);
     }
   } else if (plan.inOn !== undefined) {
@@ -939,13 +979,17 @@ const runIndexWalkPlan = async <T extends JSONArraylessObject>(
       const ids: string[] = [];
       for await (const entry of ctx.storage.list(valPrefix)) {
         const tail = entry.key.slice(valPrefix.length);
-        if (!tail.endsWith(".json")) continue;
+        if (!tail.endsWith(".json")) {
+          continue;
+        }
         const lastSlash = tail.lastIndexOf("/");
         const docId =
           lastSlash === -1
             ? tail.slice(0, -".json".length)
             : tail.slice(lastSlash + 1, -".json".length);
-        if (docId.length === 0) continue;
+        if (docId.length === 0) {
+          continue;
+        }
         ids.push(docId);
       }
       return ids;
@@ -954,25 +998,33 @@ const runIndexWalkPlan = async <T extends JSONArraylessObject>(
       const batch = values.slice(i, i + IN_FANOUT_PARALLELISM);
       const results = await Promise.all(batch.map(walkOne));
       for (const ids of results) {
-        for (const id of ids) docIdSet.add(id);
+        for (const id of ids) {
+          docIdSet.add(id);
+        }
       }
     }
   } else {
     // Equality-only walk (T2 path).
     for await (const entry of ctx.storage.list(eqPrefix)) {
       const tail = entry.key.slice(eqPrefix.length);
-      if (!tail.endsWith(".json")) continue;
+      if (!tail.endsWith(".json")) {
+        continue;
+      }
       const lastSlash = tail.lastIndexOf("/");
       const docId =
         lastSlash === -1
           ? tail.slice(0, -".json".length)
           : tail.slice(lastSlash + 1, -".json".length);
-      if (docId.length === 0) continue;
+      if (docId.length === 0) {
+        continue;
+      }
       docIdSet.add(docId);
     }
   }
   const docIds = Array.from(docIdSet);
-  if (docIds.length === 0) return [];
+  if (docIds.length === 0) {
+    return [];
+  }
 
   // 2. Resolve each docId by folding `(snapshot, log)` scoped to the
   //    matched set. Same fold the table-scan path uses, scoped to
@@ -985,14 +1037,20 @@ const runIndexWalkPlan = async <T extends JSONArraylessObject>(
   const docs = new Map<string, T>();
   for (const id of matched) {
     const seeded = baseDocs.get(id);
-    if (seeded !== undefined) docs.set(id, seeded as T);
+    if (seeded !== undefined) {
+      docs.set(id, seeded as T);
+    }
   }
   const logSeqStart = logSeqStartOf(head);
   const nextSeq = head.next_seq;
   const entries = await walkLogRange(ctx.storage, ctx.tablePrefix, logSeqStart, nextSeq);
   for (const entry of entries) {
-    if (entry.collection !== ctx.tableName) continue;
-    if (entry.doc_id === undefined || !matched.has(entry.doc_id)) continue;
+    if (entry.collection !== ctx.tableName) {
+      continue;
+    }
+    if (entry.doc_id === undefined || !matched.has(entry.doc_id)) {
+      continue;
+    }
     if ((entry.op === "I" || entry.op === "U") && entry.new !== undefined) {
       docs.set(entry.doc_id, entry.new as T);
     } else if (entry.op === "D") {
@@ -1010,7 +1068,9 @@ const runIndexWalkPlan = async <T extends JSONArraylessObject>(
   const rows: T[] = [];
   const predicate = state.predicate;
   for (const doc of docs.values()) {
-    if (predicate === undefined || matches(predicate, doc)) rows.push(doc);
+    if (predicate === undefined || matches(predicate, doc)) {
+      rows.push(doc);
+    }
   }
   return rows;
 };
@@ -1032,15 +1092,23 @@ const sortByOrderSpec = <T extends JSONArraylessObject>(rows: T[], spec: OrderSp
     for (const [field, dir] of entries) {
       const av: T[keyof T] | undefined = a[field];
       const bv: T[keyof T] | undefined = b[field];
-      if (av === bv) continue;
+      if (av === bv) {
+        continue;
+      }
       // `undefined` (missing field) sorts low under asc / high under
       // desc — same shape SQL's `NULLS FIRST` gives on asc.
-      if (av === undefined) return dir === "desc" ? 1 : -1;
-      if (bv === undefined) return dir === "desc" ? -1 : 1;
+      if (av === undefined) {
+        return dir === "desc" ? 1 : -1;
+      }
+      if (bv === undefined) {
+        return dir === "desc" ? -1 : 1;
+      }
       // string / number / boolean compare uniformly under `<`. Booleans
       // compare false < true (JS default). Object values fall through
       // as "considered equal" — see JSDoc above.
-      if (typeof av === "object" || typeof bv === "object") continue;
+      if (typeof av === "object" || typeof bv === "object") {
+        continue;
+      }
       const cmp = av < bv ? -1 : 1;
       return dir === "desc" ? -cmp : cmp;
     }

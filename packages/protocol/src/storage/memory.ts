@@ -35,7 +35,9 @@ export class MemoryStorage implements Storage {
   async get(key: string, opts?: StorageGetOptions): Promise<StorageGetResult | null> {
     opts?.signal?.throwIfAborted();
     const stored = this.#objects.get(key);
-    if (stored === undefined) return null;
+    if (stored === undefined) {
+      return null;
+    }
     if (opts?.ifNoneMatch !== undefined && opts.ifNoneMatch === stored.etag) {
       // 304 Not Modified — caller's cached copy is current.
       return null;
@@ -100,10 +102,14 @@ export class MemoryStorage implements Storage {
       .toSorted();
     let yielded = 0;
     for (const key of sorted) {
-      if (yielded >= maxKeys) return;
+      if (yielded >= maxKeys) {
+        return;
+      }
       opts?.signal?.throwIfAborted();
       const stored = this.#objects.get(key);
-      if (stored === undefined) continue; // unreachable; satisfies noUncheckedIndexedAccess
+      if (stored === undefined) {
+        continue;
+      } // unreachable; satisfies noUncheckedIndexedAccess
       yield { key, etag: stored.etag };
       yielded += 1;
     }

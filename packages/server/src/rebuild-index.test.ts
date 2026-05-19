@@ -74,7 +74,7 @@ describe("rebuildIndex — healthy index", () => {
     expect(result.added).toBe(0);
     expect(result.removed).toBe(0);
     expect(result.kept).toBe(2);
-    expect(await listIndexKeys(storage)).toEqual(before);
+    await expect(listIndexKeys(storage)).resolves.toEqual(before);
   });
 });
 
@@ -100,17 +100,19 @@ describe("rebuildIndex — orphan cleanup", () => {
       { _id: "ghost", status: "wip" },
       "ghost",
     );
-    if (orphanKey === undefined) throw new Error("test bug: failed to construct orphan key");
+    if (orphanKey === undefined) {
+      throw new Error("test bug: failed to construct orphan key");
+    }
     await storage.put(orphanKey, new Uint8Array(0), {
       ifNoneMatch: "*",
       contentType: "application/json",
     });
-    expect(await listIndexKeys(storage)).toHaveLength(2);
+    await expect(listIndexKeys(storage)).resolves.toHaveLength(2);
     const result = await rebuildIndex(storage, CURRENT_JSON_KEY, BY_STATUS);
     expect(result.removed).toBe(1);
     expect(result.added).toBe(0);
     expect(result.kept).toBe(1);
-    expect(await listIndexKeys(storage)).toHaveLength(1);
+    await expect(listIndexKeys(storage)).resolves.toHaveLength(1);
   });
 });
 
@@ -133,13 +135,13 @@ describe("rebuildIndex — missing-key repair", () => {
       docId: "a",
       body: { _id: "a", status: "open" },
     });
-    expect(await listIndexKeys(storage)).toEqual([]);
+    await expect(listIndexKeys(storage)).resolves.toEqual([]);
 
     const result = await rebuildIndex(storage, CURRENT_JSON_KEY, BY_STATUS);
     expect(result.added).toBe(1);
     expect(result.removed).toBe(0);
     expect(result.kept).toBe(0);
-    expect(await listIndexKeys(storage)).toHaveLength(1);
+    await expect(listIndexKeys(storage)).resolves.toHaveLength(1);
   });
 
   test("idempotence: a second rebuild on the output of the first is a no-op", async () => {
@@ -251,10 +253,12 @@ describe("rebuildIndex — dry-run", () => {
     const adminsListPrefix = `${LOG_PREFIX}/index/${ADMINS_ONLY.name}/`;
     const listAdmins = async (): Promise<string[]> => {
       const out: string[] = [];
-      for await (const entry of storage.list(adminsListPrefix)) out.push(entry.key);
+      for await (const entry of storage.list(adminsListPrefix)) {
+        out.push(entry.key);
+      }
       return out.toSorted();
     };
-    expect(await listAdmins()).toEqual([]);
+    await expect(listAdmins()).resolves.toEqual([]);
 
     // First dryRun reports what a real rebuild WOULD add — exactly
     // one filter-matching doc lives in the snapshot+log fold.
@@ -266,18 +270,19 @@ describe("rebuildIndex — dry-run", () => {
     expect(drift.kept).toBe(0);
 
     // Storage was not modified — a second dryRun returns the same counts.
-    expect(await listAdmins()).toEqual([]);
+    await expect(listAdmins()).resolves.toEqual([]);
     const drift2 = await rebuildIndex(storage, CURRENT_JSON_KEY, ADMINS_ONLY, {
       dryRun: true,
     });
     expect(drift2).toEqual(drift);
-    expect(await listAdmins()).toEqual([]);
+    await expect(listAdmins()).resolves.toEqual([]);
 
     // A real run reconciles; a follow-up dryRun reports zero drift.
     const realRun = await rebuildIndex(storage, CURRENT_JSON_KEY, ADMINS_ONLY);
     expect(realRun.added).toBe(drift.added);
     expect(realRun.removed).toBe(drift.removed);
-    expect((await listAdmins()).length).toBe(drift.added);
+    const admins = await listAdmins();
+    expect(admins.length).toBe(drift.added);
     const drift3 = await rebuildIndex(storage, CURRENT_JSON_KEY, ADMINS_ONLY, {
       dryRun: true,
     });
@@ -305,7 +310,9 @@ describe("rebuildIndex — dry-run", () => {
       { _id: "ghost", role: "admin" },
       "ghost",
     );
-    if (orphanKey === undefined) throw new Error("test bug: failed to construct orphan key");
+    if (orphanKey === undefined) {
+      throw new Error("test bug: failed to construct orphan key");
+    }
     await storage.put(orphanKey, new Uint8Array(0), {
       ifNoneMatch: "*",
       contentType: "application/json",
@@ -328,7 +335,7 @@ describe("rebuildIndex — dry-run", () => {
     expect(drift.removed).toBe(1);
     expect(drift.kept).toBe(1);
     // Storage is unchanged after the dry-run.
-    expect(await listAdmins()).toEqual(before);
+    await expect(listAdmins()).resolves.toEqual(before);
   });
 });
 
@@ -368,7 +375,7 @@ describe("rebuildIndex — filtered index", () => {
       docId: "b",
       body: { _id: "b", status: "closed", assignee: "alice" },
     });
-    expect(await listFilteredKeys(storage)).toEqual([]);
+    await expect(listFilteredKeys(storage)).resolves.toEqual([]);
 
     const result = await rebuildIndex(storage, CURRENT_JSON_KEY, FILTERED);
     expect(result.added).toBe(1);
@@ -402,7 +409,9 @@ describe("rebuildIndex — filtered index", () => {
       { _id: "a", status: "open", assignee: "ghost" },
       "a",
     );
-    if (orphanKey === undefined) throw new Error("test bug: failed to construct orphan key");
+    if (orphanKey === undefined) {
+      throw new Error("test bug: failed to construct orphan key");
+    }
     await storage.put(orphanKey, new Uint8Array(0), {
       ifNoneMatch: "*",
       contentType: "application/json",
@@ -425,6 +434,6 @@ describe("rebuildIndex — filtered index", () => {
     expect(result.added).toBe(0);
     // The orphan is removed (it points at a doc that no longer
     // satisfies the filter).
-    expect(await listFilteredKeys(storage)).toEqual([]);
+    await expect(listFilteredKeys(storage)).resolves.toEqual([]);
   });
 });

@@ -17,8 +17,12 @@ export function merge<T extends JSONArrayless>(
 ): T | undefined {
   // If patch is an array or a primitive, just return it
 
-  if (patch === undefined) return target;
-  if (patch === null) return undefined;
+  if (patch === undefined) {
+    return target;
+  }
+  if (patch === null) {
+    return undefined;
+  }
 
   if (typeof patch !== "object" || typeof target !== "object") {
     return patch as T;
@@ -29,7 +33,9 @@ export function merge<T extends JSONArrayless>(
     // is an own property when patches arrive via JSON.parse (HTTP PATCH
     // bodies hit this path through query.ts:runUpdate). Guard remains
     // load-bearing. See predicate.test.ts for the same vector.
-    if (FORBIDDEN_MERGE_KEYS.has(key)) continue;
+    if (FORBIDDEN_MERGE_KEYS.has(key)) {
+      continue;
+    }
     if (patch[key] === null) {
       delete combined[key];
     } else {

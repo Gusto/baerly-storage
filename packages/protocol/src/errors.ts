@@ -125,6 +125,8 @@ export class BaerlyError extends Error {
     this.name = "BaerlyError";
     this.code = code;
     this.cause = cause;
-    if (issues !== undefined) this.issues = issues;
+    if (issues !== undefined) {
+      this.issues = issues;
+    }
   }
 }

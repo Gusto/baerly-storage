@@ -1,5 +1,5 @@
 import { reset } from "@logtape/logtape";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { CATEGORY, configureObservability, getLogger } from "@baerly/server/observability";
 import { prettyConsoleSink } from "./logger-pretty.ts";
 
@@ -19,7 +19,7 @@ describe("prettyConsoleSink", () => {
     await reset();
   });
 
-  it("renders an HTTP canonical line with method, path, status, duration, class_a/b", () => {
+  test("renders an HTTP canonical line with method, path, status, duration, class_a/b", () => {
     getLogger(CATEGORY.http).info("canonical", {
       request_id: "ab12cd34-ef56-7890-abcd-ef1234567890",
       duration_ms: 1.2,
@@ -41,7 +41,7 @@ describe("prettyConsoleSink", () => {
     expect(line).not.toContain("outcome=read"); // suppressed on 2xx
   });
 
-  it("renders wamp on a write when the prop is present", () => {
+  test("renders wamp on a write when the prop is present", () => {
     getLogger(CATEGORY.http).info("canonical", {
       request_id: "ab12cd34-ef56-7890-abcd-ef1234567890",
       duration_ms: 20,
@@ -57,7 +57,7 @@ describe("prettyConsoleSink", () => {
     expect(line).toContain("wamp=7");
   });
 
-  it("renders outcome on >= 400 and 412 counter when > 0", () => {
+  test("renders outcome on >= 400 and 412 counter when > 0", () => {
     getLogger(CATEGORY.http).warn("canonical", {
       request_id: "ab12cd34-ef56-7890-abcd-ef1234567890",
       duration_ms: 8,
@@ -75,7 +75,7 @@ describe("prettyConsoleSink", () => {
     expect(line).toContain("412=1");
   });
 
-  it("renders a maintenance line with ⚙ prefix and duration", () => {
+  test("renders a maintenance line with ⚙ prefix and duration", () => {
     getLogger(CATEGORY.maintenance).info("canonical", {
       request_id: "ef56gh78-aaaa-bbbb-cccc-dddddddddddd",
       duration_ms: 142,
@@ -88,7 +88,7 @@ describe("prettyConsoleSink", () => {
     expect(line).toContain("class_a=4");
   });
 
-  it("cache_status: 'hit' → cache=hit in tail", () => {
+  test("cache_status: 'hit' → cache=hit in tail", () => {
     getLogger(CATEGORY.http).info("canonical", {
       request_id: "ab12cd34-ef56-7890-abcd-ef1234567890",
       duration_ms: 5,
@@ -104,7 +104,7 @@ describe("prettyConsoleSink", () => {
     expect(line).toContain("cache=hit");
   });
 
-  it("cache_status: 'miss' → cache=miss in tail", () => {
+  test("cache_status: 'miss' → cache=miss in tail", () => {
     getLogger(CATEGORY.http).info("canonical", {
       request_id: "ab12cd34-ef56-7890-abcd-ef1234567890",
       duration_ms: 12,
@@ -120,7 +120,7 @@ describe("prettyConsoleSink", () => {
     expect(line).toContain("cache=miss");
   });
 
-  it("absent cache_status → no cache= in tail", () => {
+  test("absent cache_status → no cache= in tail", () => {
     getLogger(CATEGORY.http).info("canonical", {
       request_id: "ab12cd34-ef56-7890-abcd-ef1234567890",
       duration_ms: 5,
@@ -135,7 +135,7 @@ describe("prettyConsoleSink", () => {
     expect(line).not.toContain("cache=");
   });
 
-  it("falls back to JSON-style for non-canonical records", () => {
+  test("falls back to JSON-style for non-canonical records", () => {
     getLogger(CATEGORY.http).warn("verifier_rejected", { reason: "null" });
     const line = spy.mock.calls[0]![0] as string;
     expect(line).toContain("WARN");

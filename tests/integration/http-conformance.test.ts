@@ -149,9 +149,13 @@ const nodeFetch =
             const buf = Buffer.concat(chunks);
             const resHeaders = new Headers();
             for (const [k, v] of Object.entries(cRes.headers)) {
-              if (v === undefined) continue;
+              if (v === undefined) {
+                continue;
+              }
               if (Array.isArray(v)) {
-                for (const item of v) resHeaders.append(k, item);
+                for (const item of v) {
+                  resHeaders.append(k, item);
+                }
               } else {
                 resHeaders.set(k, v);
               }
@@ -191,10 +195,12 @@ const nodeFetch =
       if (req.method !== "GET" && req.method !== "HEAD" && req.method !== "DELETE") {
         void req.text().then(
           (text) => {
-            if (text.length > 0) cReq.write(text);
+            if (text.length > 0) {
+              cReq.write(text);
+            }
             cReq.end();
           },
-          (err) => reject(err),
+          (error) => reject(error),
         );
       } else {
         cReq.end();
@@ -243,12 +249,17 @@ for (const variant of variants) {
       if (server !== undefined) {
         await new Promise<void>((resolve, reject) => {
           server!.close((err) => {
-            if (err) reject(err);
-            else resolve();
+            if (err) {
+              reject(err);
+            } else {
+              resolve();
+            }
           });
         });
       }
-      if (cleanup) await cleanup();
+      if (cleanup) {
+        await cleanup();
+      }
     });
 
     runHttpConformanceCascade({

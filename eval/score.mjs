@@ -30,10 +30,10 @@ import { dirname, resolve as resolvePath } from "node:path";
 // Pricing snapshot as of 2026-05-13. Update when models rotate.
 // Rates are USD per 1M tokens.
 const PRICING = {
-  "claude-opus-4-7": { input: 15.0, cached_input: 1.5, output: 75.0, cache_creation: 18.75 },
-  "claude-sonnet-4-7": { input: 3.0, cached_input: 0.3, output: 15.0, cache_creation: 3.75 },
-  "gpt-5": { input: 2.5, cached_input: 0.25, output: 10.0, cache_creation: null },
-  "gpt-5-mini": { input: 0.25, cached_input: 0.025, output: 2.0, cache_creation: null },
+  "claude-opus-4-7": { input: 15, cached_input: 1.5, output: 75, cache_creation: 18.75 },
+  "claude-sonnet-4-7": { input: 3, cached_input: 0.3, output: 15, cache_creation: 3.75 },
+  "gpt-5": { input: 2.5, cached_input: 0.25, output: 10, cache_creation: null },
+  "gpt-5-mini": { input: 0.25, cached_input: 0.025, output: 2, cache_creation: null },
 };
 
 const HUMAN_QUESTION_PATTERNS = [
@@ -89,15 +89,25 @@ function parseArgs(argv) {
   const out = { tool: "auto" };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    if (a === "--transcript") out.transcript = argv[++i];
-    else if (a === "--acceptance") out.acceptance = argv[++i];
-    else if (a === "--env") out.env = argv[++i];
-    else if (a === "--diff") out.diff = argv[++i];
-    else if (a === "--out") out.out = argv[++i];
-    else if (a === "--metrics") out.metrics = argv[++i];
-    else if (a === "--tool") out.tool = argv[++i];
-    else if (a === "--help" || a === "-h") out.help = true;
-    else throw new Error(`Unknown flag: ${a}`);
+    if (a === "--transcript") {
+      out.transcript = argv[++i];
+    } else if (a === "--acceptance") {
+      out.acceptance = argv[++i];
+    } else if (a === "--env") {
+      out.env = argv[++i];
+    } else if (a === "--diff") {
+      out.diff = argv[++i];
+    } else if (a === "--out") {
+      out.out = argv[++i];
+    } else if (a === "--metrics") {
+      out.metrics = argv[++i];
+    } else if (a === "--tool") {
+      out.tool = argv[++i];
+    } else if (a === "--help" || a === "-h") {
+      out.help = true;
+    } else {
+      throw new Error(`Unknown flag: ${a}`);
+    }
   }
   return out;
 }
@@ -119,7 +129,9 @@ async function readJsonl(path) {
   const lines = [];
   for (const line of raw.split(/\r?\n/)) {
     const trimmed = line.trim();
-    if (trimmed === "") continue;
+    if (trimmed === "") {
+      continue;
+    }
     lines.push(JSON.parse(trimmed));
   }
   return lines;
@@ -131,7 +143,9 @@ async function readJson(path) {
 }
 
 async function tryReadText(path) {
-  if (!path) return null;
+  if (!path) {
+    return null;
+  }
   try {
     return await readFile(path, "utf8");
   } catch {
@@ -145,11 +159,17 @@ async function tryReadText(path) {
 
 function detectTool(lines) {
   for (const line of lines) {
-    if (!line || typeof line !== "object") continue;
+    if (!line || typeof line !== "object") {
+      continue;
+    }
     const t = line.type;
     if (typeof t === "string") {
-      if (CLAUDE_TYPES.has(t)) return "claude";
-      if (CODEX_STREAM_TYPES.has(t)) return "codex";
+      if (CLAUDE_TYPES.has(t)) {
+        return "claude";
+      }
+      if (CODEX_STREAM_TYPES.has(t)) {
+        return "codex";
+      }
     }
     if (line.payload && typeof line.payload === "object" && typeof line.payload.type === "string") {
       return "codex";
@@ -187,13 +207,17 @@ function parseClaude(lines) {
   let human_questions = 0;
   let tool_version = "unknown";
   let model = null;
-  let toolName = "claude";
+  const toolName = "claude";
 
   for (const line of lines) {
-    if (!line || typeof line !== "object") continue;
+    if (!line || typeof line !== "object") {
+      continue;
+    }
     if (typeof line.timestamp === "string") {
       const ms = Date.parse(line.timestamp);
-      if (!Number.isNaN(ms)) timestamps.push(ms);
+      if (!Number.isNaN(ms)) {
+        timestamps.push(ms);
+      }
     }
     if (typeof line.cliVersion === "string" && tool_version === "unknown") {
       tool_version = `claude-code ${line.cliVersion}`;
@@ -205,9 +229,15 @@ function parseClaude(lines) {
     if (line.type === "assistant" && line.message && typeof line.message === "object") {
       assistant_messages++;
       const msg = line.message;
-      if (typeof msg.model === "string" && !model) model = msg.model;
-      if (msg.stop_reason === "end_turn") end_turn_count++;
-      if (typeof line.requestId === "string") requestIds.add(line.requestId);
+      if (typeof msg.model === "string" && !model) {
+        model = msg.model;
+      }
+      if (msg.stop_reason === "end_turn") {
+        end_turn_count++;
+      }
+      if (typeof line.requestId === "string") {
+        requestIds.add(line.requestId);
+      }
       const msgUsage = msg.usage;
       if (msgUsage && typeof msgUsage === "object") {
         input_tokens += Number(msgUsage.input_tokens) || 0;
@@ -221,7 +251,9 @@ function parseClaude(lines) {
       const content = Array.isArray(msg.content) ? msg.content : [];
       let matchedQuestion = false;
       for (const block of content) {
-        if (!block || typeof block !== "object") continue;
+        if (!block || typeof block !== "object") {
+          continue;
+        }
         if (block.type === "tool_use") {
           tool_calls_total++;
           const name = typeof block.name === "string" ? block.name : "unknown";
@@ -271,17 +303,23 @@ function parseClaude(lines) {
   // Failed tool calls — count by joining tool_use_id back to tool_use entries
   let failed_tool_calls = 0;
   for (const r of toolResults) {
-    if (r.is_error) failed_tool_calls++;
+    if (r.is_error) {
+      failed_tool_calls++;
+    }
   }
 
   // Repeat reads — for each file read >1, count (n - 1)
   let repeat_reads = 0;
   for (const count of readsByFile.values()) {
-    if (count > 1) repeat_reads += count - 1;
+    if (count > 1) {
+      repeat_reads += count - 1;
+    }
   }
 
   // Cap human questions at 99
-  if (human_questions > 99) human_questions = 99;
+  if (human_questions > 99) {
+    human_questions = 99;
+  }
 
   const wall_clock_s =
     timestamps.length > 0
@@ -361,7 +399,9 @@ function parseCodex(lines) {
   ]);
 
   function ingestUsage(u) {
-    if (!u || typeof u !== "object") return;
+    if (!u || typeof u !== "object") {
+      return;
+    }
     input_tokens += Number(u.input_tokens) || 0;
     cache_read_tokens += Number(u.cached_input_tokens ?? u.cache_read_input_tokens) || 0;
     output_tokens += Number(u.output_tokens) || 0;
@@ -369,17 +409,22 @@ function parseCodex(lines) {
   }
 
   for (const line of lines) {
-    if (!line || typeof line !== "object") continue;
+    if (!line || typeof line !== "object") {
+      continue;
+    }
 
     if (typeof line.timestamp === "string") {
       const ms = Date.parse(line.timestamp);
-      if (!Number.isNaN(ms)) timestamps.push(ms);
+      if (!Number.isNaN(ms)) {
+        timestamps.push(ms);
+      }
     }
 
     // Stream shape — events have top-level `type`
     if (typeof line.type === "string" && CODEX_STREAM_TYPES.has(line.type)) {
-      if (line.type === "turn.started") user_turns++;
-      else if (line.type === "turn.completed") {
+      if (line.type === "turn.started") {
+        user_turns++;
+      } else if (line.type === "turn.completed") {
         ingestUsage(line.usage);
         assistant_messages++;
       } else if (line.type === "item.completed") {
@@ -387,14 +432,20 @@ function parseCodex(lines) {
         if (TOOL_ITEM_TYPES.has(item.type)) {
           tool_calls_total++;
           toolCallsByName[item.type] = (toolCallsByName[item.type] || 0) + 1;
-          if (item.status === "failed") failed_tool_calls++;
+          if (item.status === "failed") {
+            failed_tool_calls++;
+          }
           // Best-effort file path extraction
           const file_path = typeof item.path === "string" ? item.path : null;
           if (file_path) {
-            if (item.type === "file_change") filesEdited.add(file_path);
+            if (item.type === "file_change") {
+              filesEdited.add(file_path);
+            }
           }
         } else if (item.type === "agent_message" && typeof item.text === "string") {
-          if (HUMAN_QUESTION_PATTERNS.some((re) => re.test(item.text))) human_questions++;
+          if (HUMAN_QUESTION_PATTERNS.some((re) => re.test(item.text))) {
+            human_questions++;
+          }
         }
       }
       continue;
@@ -404,8 +455,9 @@ function parseCodex(lines) {
     if (line.payload && typeof line.payload === "object") {
       const p = line.payload;
       if (line.type === "event_msg") {
-        if (p.type === "user_message") user_turns++;
-        else if (p.type === "token_count") {
+        if (p.type === "user_message") {
+          user_turns++;
+        } else if (p.type === "token_count") {
           const last = p.info?.last_token_usage;
           const total = p.info?.total_token_usage;
           if (last) {
@@ -417,12 +469,18 @@ function parseCodex(lines) {
             priorTotal = Number(total.input_tokens) || priorTotal;
           }
           const ctxModel = p.info?.turn_context?.model;
-          if (typeof ctxModel === "string" && !model) model = ctxModel;
+          if (typeof ctxModel === "string" && !model) {
+            model = ctxModel;
+          }
         }
       } else if (line.type === "turn_context") {
-        if (typeof p.model === "string" && !model) model = p.model;
+        if (typeof p.model === "string" && !model) {
+          model = p.model;
+        }
       } else if (line.type === "response_item") {
-        if (p.role === "assistant") assistant_messages++;
+        if (p.role === "assistant") {
+          assistant_messages++;
+        }
       }
     }
   }
@@ -432,7 +490,9 @@ function parseCodex(lines) {
     fallback_model = true;
   }
 
-  if (human_questions > 99) human_questions = 99;
+  if (human_questions > 99) {
+    human_questions = 99;
+  }
 
   const wall_clock_s =
     timestamps.length > 0
@@ -505,7 +565,9 @@ function summarizeAcceptance(acc) {
 }
 
 function detectAntiPatterns(diffText) {
-  if (!diffText) return { hits: 0, skipped: true };
+  if (!diffText) {
+    return { hits: 0, skipped: true };
+  }
   let hits = 0;
   let pkgJsonBlock = null;
   let inPkgJson = false;
@@ -522,14 +584,22 @@ function detectAntiPatterns(diffText) {
       }
       continue;
     }
-    if (inPkgJson) pkgJsonLines.push(line);
-    if (!line.startsWith("+") || line.startsWith("+++")) continue;
+    if (inPkgJson) {
+      pkgJsonLines.push(line);
+    }
+    if (!line.startsWith("+") || line.startsWith("+++")) {
+      continue;
+    }
     const added = line.slice(1);
     // Branded-type widens in apps/server/src or apps/web/src — we look
     // at the file context from the most recent `+++ b/` header. Simpler
     // approximation: count anywhere in the diff; cap saturates anyway.
-    if (/\bas (string|number)\b/.test(added)) hits++;
-    if (/\.skip\(|test\.skip\(|it\.skip\(/.test(added)) hits++;
+    if (/\bas (string|number)\b/.test(added)) {
+      hits++;
+    }
+    if (/\.skip\(|test\.skip\(|it\.skip\(/.test(added)) {
+      hits++;
+    }
   }
   if (inPkgJson && pkgJsonLines.length > 0) {
     pkgJsonBlock = pkgJsonLines.join("\n");
@@ -551,7 +621,9 @@ function detectAntiPatterns(diffText) {
         const nameRe = /"([^"]+)"\s*:\s*"[^"]*"/g;
         let m;
         while ((m = nameRe.exec(body)) !== null) {
-          if (!DEP_ALLOWLIST.has(m[1])) hits++;
+          if (!DEP_ALLOWLIST.has(m[1])) {
+            hits++;
+          }
         }
       }
     } catch {
@@ -563,11 +635,17 @@ function detectAntiPatterns(diffText) {
 }
 
 function diffLocChanged(diffText) {
-  if (!diffText) return 0;
+  if (!diffText) {
+    return 0;
+  }
   let count = 0;
   for (const line of diffText.split(/\r?\n/)) {
-    if (line.startsWith("+++") || line.startsWith("---")) continue;
-    if (line.startsWith("+") || line.startsWith("-")) count++;
+    if (line.startsWith("+++") || line.startsWith("---")) {
+      continue;
+    }
+    if (line.startsWith("+") || line.startsWith("-")) {
+      count++;
+    }
   }
   return count;
 }
@@ -594,10 +672,12 @@ function computeCost(model, parsed) {
 }
 
 function computeScore(m) {
-  if (m.compile_pass !== 1) return 0;
+  if (m.compile_pass !== 1) {
+    return 0;
+  }
 
   const P10 = 0.05;
-  const P90 = 2.0;
+  const P90 = 2;
   const effort_score = Math.max(0, Math.min(1, 1 - (m.cost_usd - P10) / (P90 - P10)));
 
   const friction_norm = Math.max(
@@ -624,14 +704,22 @@ function computeScore(m) {
 // ──────────────────────────────────────────────────────────────────────
 
 function fmtNumber(n) {
-  if (n == null) return "—";
-  if (typeof n !== "number") return String(n);
-  if (Number.isInteger(n)) return n.toLocaleString("en-US");
+  if (n == null) {
+    return "—";
+  }
+  if (typeof n !== "number") {
+    return String(n);
+  }
+  if (Number.isInteger(n)) {
+    return n.toLocaleString("en-US");
+  }
   return n.toLocaleString("en-US", { maximumFractionDigits: 3 });
 }
 
 function truncate(s, n) {
-  if (typeof s !== "string") return "";
+  if (typeof s !== "string") {
+    return "";
+  }
   return s.length > n ? s.slice(0, n) + "…" : s;
 }
 
@@ -738,8 +826,8 @@ async function main(argv) {
   let args;
   try {
     args = parseArgs(argv);
-  } catch (err) {
-    process.stderr.write(`error: ${err.message}\n${usage()}\n`);
+  } catch (error) {
+    process.stderr.write(`error: ${error.message}\n${usage()}\n`);
     return 1;
   }
   if (args.help) {
@@ -754,15 +842,15 @@ async function main(argv) {
   let lines;
   try {
     lines = await readJsonl(args.transcript);
-  } catch (err) {
-    process.stderr.write(`error: failed to read transcript ${args.transcript}: ${err.message}\n`);
+  } catch (error) {
+    process.stderr.write(`error: failed to read transcript ${args.transcript}: ${error.message}\n`);
     return 1;
   }
   let acceptance;
   try {
     acceptance = await readJson(args.acceptance);
-  } catch (err) {
-    process.stderr.write(`error: failed to read acceptance ${args.acceptance}: ${err.message}\n`);
+  } catch (error) {
+    process.stderr.write(`error: failed to read acceptance ${args.acceptance}: ${error.message}\n`);
     return 1;
   }
 
@@ -780,8 +868,8 @@ async function main(argv) {
   let parsed;
   try {
     parsed = tool === "claude" ? parseClaude(lines) : parseCodex(lines);
-  } catch (err) {
-    process.stderr.write(`error: parser threw on ${tool} transcript: ${err.message}\n`);
+  } catch (error) {
+    process.stderr.write(`error: parser threw on ${tool} transcript: ${error.message}\n`);
     return 1;
   }
 
@@ -856,8 +944,8 @@ async function main(argv) {
   try {
     await writeFile(outPath, md, "utf8");
     await writeFile(metricsPath, JSON.stringify(metrics, null, 2) + "\n", "utf8");
-  } catch (err) {
-    process.stderr.write(`error: failed to write outputs: ${err.message}\n`);
+  } catch (error) {
+    process.stderr.write(`error: failed to write outputs: ${error.message}\n`);
     return 1;
   }
 

@@ -29,7 +29,9 @@ class MockRes extends Writable {
 
   writeHead(status: number, headers?: Record<string, string>): this {
     this.statusCode = status;
-    if (headers) Object.assign(this.headers, headers);
+    if (headers) {
+      Object.assign(this.headers, headers);
+    }
     return this;
   }
 
@@ -71,7 +73,9 @@ const makeReq = (
     headers: { host: "localhost" },
     on(event, cb) {
       (listeners[event] ??= []).push(cb);
-      if (event === "end") cb();
+      if (event === "end") {
+        cb();
+      }
       return this;
     },
   };
@@ -160,7 +164,9 @@ describe("baerlyDev() plugin", () => {
     });
     // Poll for the response to flush.
     for (let i = 0; i < 50; i += 1) {
-      if (res.finished) break;
+      if (res.finished) {
+        break;
+      }
       await new Promise((r) => setTimeout(r, 20));
     }
     expect(res.statusCode).toBe(200);

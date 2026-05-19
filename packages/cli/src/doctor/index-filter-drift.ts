@@ -74,7 +74,9 @@ const buildStorage = (findings: DoctorFinding[]): Storage | null => {
   const missing: string[] = [];
   for (const k of ["BUCKET", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"]) {
     const v = process.env[k];
-    if (v === undefined || v === "") missing.push(k);
+    if (v === undefined || v === "") {
+      missing.push(k);
+    }
   }
   if (missing.length > 0) {
     findings.push({
@@ -153,7 +155,9 @@ export const checkIndexFilterDrift = async (
   }
 
   const storage = buildStorage(findings);
-  if (storage === null) return findings;
+  if (storage === null) {
+    return findings;
+  }
 
   for (const { collection, def } of filtered) {
     const checkName = `index-filter-drift.${collection}.${def.name}`;
@@ -163,11 +167,11 @@ export const checkIndexFilterDrift = async (
       result = await rebuildIndex(storage, currentJsonKey, def, {
         dryRun: opts.rebuild !== true,
       });
-    } catch (e) {
+    } catch (error) {
       findings.push({
         severity: "error",
         check: checkName,
-        message: `${collection}.${def.name}: drift check failed: ${(e as Error).message}`,
+        message: `${collection}.${def.name}: drift check failed: ${(error as Error).message}`,
       });
       continue;
     }

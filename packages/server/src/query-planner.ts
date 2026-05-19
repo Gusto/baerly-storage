@@ -135,11 +135,17 @@ export const IN_FANOUT_THRESHOLD = 50;
  * `packages/protocol/src/query/predicate.ts`).
  */
 const isOperatorObject = (v: unknown): boolean => {
-  if (v === null || typeof v !== "object") return false;
+  if (v === null || typeof v !== "object") {
+    return false;
+  }
   const keys = Object.keys(v as Record<string, unknown>);
-  if (keys.length === 0) return false;
+  if (keys.length === 0) {
+    return false;
+  }
   for (const k of keys) {
-    if (!k.startsWith("$")) return false;
+    if (!k.startsWith("$")) {
+      return false;
+    }
   }
   return true;
 };
@@ -165,16 +171,27 @@ interface RangeOpInfo {
 const tryExtractRange = (op: Record<string, unknown>): RangeOpInfo | undefined => {
   const keys = Object.keys(op);
   // `$in` is its own routing channel — never mix with range here.
-  if (keys.includes("$in")) return undefined;
+  if (keys.includes("$in")) {
+    return undefined;
+  }
   // `$eq` alone — caller should treat the field as equality, not range.
-  if (keys.length === 1 && keys[0] === "$eq") return undefined;
+  if (keys.length === 1 && keys[0] === "$eq") {
+    return undefined;
+  }
   const hasRange =
-    op["$gt"] !== undefined || op["$gte"] !== undefined || op["$lt"] !== undefined || op["$lte"] !== undefined;
-  if (!hasRange) return undefined;
+    op["$gt"] !== undefined ||
+    op["$gte"] !== undefined ||
+    op["$lt"] !== undefined ||
+    op["$lte"] !== undefined;
+  if (!hasRange) {
+    return undefined;
+  }
   // `$eq` mixed with a range — T1 validation collapses this to a
   // single $eq when satisfiable, but defensively refuse routing
   // anyway; the full-scan path is correct.
-  if (op["$eq"] !== undefined) return undefined;
+  if (op["$eq"] !== undefined) {
+    return undefined;
+  }
   let lo: JSONArrayless | undefined;
   let loInclusive = false;
   if (op["$gte"] !== undefined) {
@@ -209,9 +226,13 @@ const tryExtractRange = (op: Record<string, unknown>): RangeOpInfo | undefined =
  */
 const tryExtractIn = (op: Record<string, unknown>): ReadonlyArray<JSONArrayless> | undefined => {
   const keys = Object.keys(op);
-  if (keys.length !== 1 || keys[0] !== "$in") return undefined;
+  if (keys.length !== 1 || keys[0] !== "$in") {
+    return undefined;
+  }
   const values = op["$in"] as ReadonlyArray<JSONArrayless> | undefined;
-  if (!Array.isArray(values)) return undefined;
+  if (!Array.isArray(values)) {
+    return undefined;
+  }
   return values;
 };
 
@@ -300,7 +321,9 @@ export const planQuery = <T extends JSONArraylessObject = JSONArraylessObject>(
   const inOps = new Map<string, ReadonlyArray<JSONArrayless>>();
   for (const key of Object.keys(predicate)) {
     const value = (predicate as Record<string, unknown>)[key];
-    if (value === undefined) continue;
+    if (value === undefined) {
+      continue;
+    }
     if (isOperatorObject(value)) {
       const op = value as Record<string, unknown>;
       const eq = tryExtractEq(op);
@@ -386,7 +409,9 @@ export const planQuery = <T extends JSONArraylessObject = JSONArraylessObject>(
       break;
     }
     const candidateLen = equalityKeys.length + (tail !== undefined ? 1 : 0);
-    if (candidateLen === 0) continue;
+    if (candidateLen === 0) {
+      continue;
+    }
     candidates.push({
       def,
       defIndex,
@@ -409,14 +434,20 @@ export const planQuery = <T extends JSONArraylessObject = JSONArraylessObject>(
   // matching rows that fell outside the filter), and only the
   // sort order keeps it last.
   const rank = (c: Candidate): number => {
-    if (c.def.predicate === undefined) return 1;
+    if (c.def.predicate === undefined) {
+      return 1;
+    }
     return predicateImplies(c.def.predicate, predicate as Predicate<JSONArraylessObject>) ? 0 : 2;
   };
   candidates.sort((a, b) => {
     const aRank = rank(a);
     const bRank = rank(b);
-    if (aRank !== bRank) return aRank - bRank;
-    if (b.prefixLen !== a.prefixLen) return b.prefixLen - a.prefixLen;
+    if (aRank !== bRank) {
+      return aRank - bRank;
+    }
+    if (b.prefixLen !== a.prefixLen) {
+      return b.prefixLen - a.prefixLen;
+    }
     return a.defIndex - b.defIndex;
   });
   const best: Candidate = candidates[0]!;
@@ -443,9 +474,13 @@ export const planQuery = <T extends JSONArraylessObject = JSONArraylessObject>(
   const postFilter: Record<string, unknown> = {};
   let residueCount = 0;
   for (const key of Object.keys(predicate)) {
-    if (consumedSet.has(key)) continue;
+    if (consumedSet.has(key)) {
+      continue;
+    }
     const value = (predicate as Record<string, unknown>)[key];
-    if (value === undefined) continue;
+    if (value === undefined) {
+      continue;
+    }
     postFilter[key] = value;
     residueCount++;
   }

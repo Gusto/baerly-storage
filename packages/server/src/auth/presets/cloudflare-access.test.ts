@@ -9,7 +9,9 @@ const KID = "cf-key-1";
 
 const base64UrlEncode = (bytes: Uint8Array): string => {
   let bin = "";
-  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]!);
+  for (let i = 0; i < bytes.length; i++) {
+    bin += String.fromCharCode(bytes[i]!);
+  }
   return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 };
 const utf8 = (s: string): Uint8Array => new TextEncoder().encode(s);
@@ -68,7 +70,7 @@ const mkReq = (cfHeader: string | undefined): Request =>
 
 describe("cloudflareAccess", () => {
   test("accepts a CF-Access JWT in the Cf-Access-Jwt-Assertion header", async () => {
-    const fetchStub = vi.fn(async () => new Response(jwksBody, { status: 200 }));
+    const fetchStub = vi.fn<typeof fetch>(async () => new Response(jwksBody, { status: 200 }));
     const verifier = cloudflareAccess({
       teamDomain: TEAM_DOMAIN,
       audienceTag: AUDIENCE_TAG,
@@ -81,29 +83,29 @@ describe("cloudflareAccess", () => {
   });
 
   test("missing Cf-Access-Jwt-Assertion header → null (no JWKS fetch)", async () => {
-    const fetchStub = vi.fn(async () => new Response(jwksBody, { status: 200 }));
+    const fetchStub = vi.fn<typeof fetch>(async () => new Response(jwksBody, { status: 200 }));
     const verifier = cloudflareAccess({
       teamDomain: TEAM_DOMAIN,
       audienceTag: AUDIENCE_TAG,
       fetch: fetchStub,
     });
-    expect(await verifier(mkReq(undefined))).toBeNull();
+    await expect(verifier(mkReq(undefined))).resolves.toBeNull();
     expect(fetchStub).not.toHaveBeenCalled();
   });
 
   test("wrong audience tag in token → null", async () => {
-    const fetchStub = vi.fn(async () => new Response(jwksBody, { status: 200 }));
+    const fetchStub = vi.fn<typeof fetch>(async () => new Response(jwksBody, { status: 200 }));
     const verifier = cloudflareAccess({
       teamDomain: TEAM_DOMAIN,
       audienceTag: AUDIENCE_TAG,
       fetch: fetchStub,
     });
     const token = await signJwt(validPayload({ aud: "f".repeat(64) }));
-    expect(await verifier(mkReq(token))).toBeNull();
+    await expect(verifier(mkReq(token))).resolves.toBeNull();
   });
 
   test("expired CF-Access JWT → null (delegates exp/skew to bearerJwt)", async () => {
-    const fetchStub = vi.fn(async () => new Response(jwksBody, { status: 200 }));
+    const fetchStub = vi.fn<typeof fetch>(async () => new Response(jwksBody, { status: 200 }));
     const verifier = cloudflareAccess({
       teamDomain: TEAM_DOMAIN,
       audienceTag: AUDIENCE_TAG,
@@ -111,16 +113,16 @@ describe("cloudflareAccess", () => {
       clockSkewMs: 1_000,
     });
     const token = await signJwt(validPayload({ exp: Math.floor(Date.now() / 1000) - 600 }));
-    expect(await verifier(mkReq(token))).toBeNull();
+    await expect(verifier(mkReq(token))).resolves.toBeNull();
   });
 
   test("throws BaerlyError{InvalidConfig} on empty teamDomain", () => {
     try {
       cloudflareAccess({ teamDomain: "", audienceTag: AUDIENCE_TAG });
       expect.fail("expected throw");
-    } catch (err) {
-      expect(err).toBeInstanceOf(BaerlyError);
-      expect((err as BaerlyError).code).toBe("InvalidConfig");
+    } catch (error) {
+      expect(error).toBeInstanceOf(BaerlyError);
+      expect((error as BaerlyError).code).toBe("InvalidConfig");
     }
   });
 
@@ -128,8 +130,8 @@ describe("cloudflareAccess", () => {
     try {
       cloudflareAccess({ teamDomain: TEAM_DOMAIN, audienceTag: "not-hex" });
       expect.fail("expected throw");
-    } catch (err) {
-      expect((err as BaerlyError).code).toBe("InvalidConfig");
+    } catch (error) {
+      expect((error as BaerlyError).code).toBe("InvalidConfig");
     }
     // 63 chars (one short)
     expect(() =>

@@ -111,8 +111,12 @@ const KNOWN_KEYS: ReadonlySet<string> = new Set([
 ]);
 
 const errorToExitCode = (code: string): number => {
-  if (code === "InvalidConfig") return 1;
-  if (code === "Conflict" || code === "Internal" || code === "InvalidResponse") return 3;
+  if (code === "InvalidConfig") {
+    return 1;
+  }
+  if (code === "Conflict" || code === "Internal" || code === "InvalidResponse") {
+    return 3;
+  }
   return 2;
 };
 
@@ -137,17 +141,18 @@ const onFieldFromConfig = async (
     const text = await readFile(configPath, "utf8");
     try {
       cfg = JSON.parse(text) as BaerlyConfig;
-    } catch (e) {
+    } catch (error) {
       throw new BaerlyError(
         "InvalidConfig",
-        `baerly admin rebuild-index: --config JSON parse error in ${JSON.stringify(configPath)}: ${(e as Error).message}`,
+        `baerly admin rebuild-index: --config JSON parse error in ${JSON.stringify(configPath)}: ${(error as Error).message}`,
       );
     }
   } else {
     // Absolute-path import for filesystem files.
+    const pathMod = await import("node:path");
     const abs = configPath.startsWith("file://")
       ? fileURLToPath(configPath)
-      : (await import("node:path")).resolve(configPath);
+      : pathMod.resolve(configPath);
     const mod = (await import(pathToFileURL(abs).href)) as { default?: BaerlyConfig };
     if (mod.default === undefined) {
       throw new BaerlyError(
@@ -209,12 +214,12 @@ const handleRebuildIndex = async (args: Args): Promise<number> => {
       );
     }
     return 0;
-  } catch (err) {
-    if (err instanceof BaerlyError) {
-      emitError("admin.rebuild-index", err.code, err.message);
-      return errorToExitCode(err.code);
+  } catch (error) {
+    if (error instanceof BaerlyError) {
+      emitError("admin.rebuild-index", error.code, error.message);
+      return errorToExitCode(error.code);
     }
-    emitError("admin.rebuild-index", "Unknown", (err as Error).message);
+    emitError("admin.rebuild-index", "Unknown", (error as Error).message);
     return 2;
   }
 };
@@ -231,7 +236,9 @@ export const rebuildIndexCmd = defineCommand({
   args: REBUILD_INDEX_ARGS,
   run: async ({ args }) => {
     const code = await handleRebuildIndex(args);
-    if (code !== 0) process.exit(code);
+    if (code !== 0) {
+      process.exit(code);
+    }
   },
 });
 
@@ -246,9 +253,9 @@ export const runRebuildIndex = async (argv: readonly string[]): Promise<number> 
   let parsed: Args;
   try {
     parsed = parseArgs<typeof REBUILD_INDEX_ARGS>(argv as string[], REBUILD_INDEX_ARGS);
-  } catch (err) {
+  } catch (error) {
     setJsonMode(argv.includes("--json"));
-    emitError("admin.rebuild-index", "InvalidConfig", (err as Error).message);
+    emitError("admin.rebuild-index", "InvalidConfig", (error as Error).message);
     return 1;
   }
   return handleRebuildIndex(parsed);

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, test } from "vitest";
 import { gcsStorage, minioStorage, r2Storage, s3Storage } from "./storage-factories.ts";
 
 describe("storage factories", () => {
@@ -25,7 +25,7 @@ describe("storage factories", () => {
         }),
     ],
   ] as const) {
-    it(`${name} returns a Storage shape`, () => {
+    test(`${name} returns a Storage shape`, () => {
       const s = build();
       expect(typeof s.get).toBe("function");
       expect(typeof s.put).toBe("function");

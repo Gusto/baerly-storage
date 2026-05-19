@@ -1,5 +1,5 @@
 import { reset, type LogRecord, type Sink } from "@logtape/logtape";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { CATEGORY, configureObservability, getEffectiveSampleRate, getLogger } from "./logger.ts";
 
 /**
@@ -23,14 +23,20 @@ describe("configureObservability + getLogger", () => {
   });
 
   afterEach(async () => {
-    if (prevLogLevel === undefined) delete process.env["LOG_LEVEL"];
-    else process.env["LOG_LEVEL"] = prevLogLevel;
-    if (prevLogSample === undefined) delete process.env["LOG_SAMPLE"];
-    else process.env["LOG_SAMPLE"] = prevLogSample;
+    if (prevLogLevel === undefined) {
+      delete process.env["LOG_LEVEL"];
+    } else {
+      process.env["LOG_LEVEL"] = prevLogLevel;
+    }
+    if (prevLogSample === undefined) {
+      delete process.env["LOG_SAMPLE"];
+    } else {
+      process.env["LOG_SAMPLE"] = prevLogSample;
+    }
     await reset();
   });
 
-  it("level=info filters debug out and allows info/warn/error", async () => {
+  test("level=info filters debug out and allows info/warn/error", async () => {
     const { records, sink } = collectingSink();
     await configureObservability({ level: "info", sink });
 
@@ -42,7 +48,7 @@ describe("configureObservability + getLogger", () => {
     expect(records.map((r) => r.level)).toEqual(["info", "warning", "error"]);
   });
 
-  it("level=debug allows everything", async () => {
+  test("level=debug allows everything", async () => {
     const { records, sink } = collectingSink();
     await configureObservability({ level: "debug", sink });
     getLogger(CATEGORY.http).debug("d");
@@ -50,7 +56,7 @@ describe("configureObservability + getLogger", () => {
     expect(records.map((r) => r.level)).toEqual(["debug", "info"]);
   });
 
-  it("LOG_LEVEL env override is honoured when no typed option supplied", async () => {
+  test("LOG_LEVEL env override is honoured when no typed option supplied", async () => {
     const { records, sink } = collectingSink();
     process.env["LOG_LEVEL"] = "debug";
     await configureObservability({ sink });
@@ -59,7 +65,7 @@ describe("configureObservability + getLogger", () => {
     expect(records.map((r) => r.level)).toEqual(["debug", "info"]);
   });
 
-  it("LOG_LEVEL=warn maps to LogTape 'warning' and filters info out", async () => {
+  test("LOG_LEVEL=warn maps to LogTape 'warning' and filters info out", async () => {
     const { records, sink } = collectingSink();
     process.env["LOG_LEVEL"] = "warn";
     await configureObservability({ sink });
@@ -68,7 +74,7 @@ describe("configureObservability + getLogger", () => {
     expect(records.map((r) => r.level)).toEqual(["warning"]);
   });
 
-  it("round-trips properties through the memory sink", async () => {
+  test("round-trips properties through the memory sink", async () => {
     const { records, sink } = collectingSink();
     await configureObservability({ level: "info", sink });
     getLogger(CATEGORY.http).info("event", { foo: 1, bar: "x" });
@@ -79,7 +85,7 @@ describe("configureObservability + getLogger", () => {
     expect(rec.properties).toEqual({ foo: 1, bar: "x" });
   });
 
-  it("is idempotent — calling twice doesn't double-emit", async () => {
+  test("is idempotent — calling twice doesn't double-emit", async () => {
     const { records: r1, sink: s1 } = collectingSink();
     await configureObservability({ level: "info", sink: s1 });
     const { records: r2, sink: s2 } = collectingSink();
@@ -97,23 +103,26 @@ describe("getEffectiveSampleRate", () => {
     prev = process.env["LOG_SAMPLE"];
   });
   afterEach(async () => {
-    if (prev === undefined) delete process.env["LOG_SAMPLE"];
-    else process.env["LOG_SAMPLE"] = prev;
+    if (prev === undefined) {
+      delete process.env["LOG_SAMPLE"];
+    } else {
+      process.env["LOG_SAMPLE"] = prev;
+    }
     await reset();
   });
 
-  it("returns the configured rate after configureObservability", async () => {
+  test("returns the configured rate after configureObservability", async () => {
     await configureObservability({ sampleRate: 0.25 });
     expect(getEffectiveSampleRate()).toBe(0.25);
   });
 
-  it("falls back to LOG_SAMPLE env when no typed option supplied", async () => {
+  test("falls back to LOG_SAMPLE env when no typed option supplied", async () => {
     process.env["LOG_SAMPLE"] = "0.1";
     await configureObservability({});
     expect(getEffectiveSampleRate()).toBeCloseTo(0.1, 5);
   });
 
-  it("clamps out-of-range rates into [0, 1]", async () => {
+  test("clamps out-of-range rates into [0, 1]", async () => {
     await configureObservability({ sampleRate: 5 });
     expect(getEffectiveSampleRate()).toBe(1);
     await configureObservability({ sampleRate: -1 });
@@ -122,7 +131,7 @@ describe("getEffectiveSampleRate", () => {
 });
 
 describe("CATEGORY", () => {
-  it('includes every documented category as a ["baerly", <unit>] tuple', () => {
+  test('includes every documented category as a ["baerly", <unit>] tuple', () => {
     expect(CATEGORY).toEqual({
       http: ["baerly", "http"],
       maintenance: ["baerly", "maintenance"],

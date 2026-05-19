@@ -72,9 +72,11 @@ const seedCurrent = (): CurrentJson => ({
 const ensureCurrent = async (storage: Storage, key: string): Promise<void> => {
   try {
     await createCurrentJson(storage, key, seedCurrent());
-  } catch (err) {
-    if (err instanceof BaerlyError && err.code === "Conflict") return;
-    throw err;
+  } catch (error) {
+    if (error instanceof BaerlyError && error.code === "Conflict") {
+      return;
+    }
+    throw error;
   }
 };
 
@@ -153,8 +155,8 @@ const predicateRejection = (db: Db, table: string): void => {
     let err: unknown;
     try {
       db.table(table).where(p);
-    } catch (e) {
-      err = e;
+    } catch (error) {
+      err = error;
     }
     expect(err, `where(${label}) must throw synchronously`).toBeInstanceOf(BaerlyError);
     expect((err as BaerlyError).code, `where(${label}) error.code`).toBe("InvalidConfig");
@@ -182,8 +184,8 @@ const runReadHappyPath = async (
   await db.table<Doc>(t).insert({ k: "b", v: 2 });
   await db.table<Doc>(t).insert({ k: "c", v: 3 });
 
-  expect(await db.table<Doc>(t).count()).toBe(3);
-  expect(await db.table<Doc>(t).where({}).count()).toBe(3);
+  await expect(db.table<Doc>(t).count()).resolves.toBe(3);
+  await expect(db.table<Doc>(t).where({}).count()).resolves.toBe(3);
 
   const onlyB = await db.table<Doc>(t).where({ k: "b" }).first();
   expect(onlyB).toBeDefined();
@@ -209,10 +211,10 @@ const runReadNotFound = async (
 ): Promise<void> => {
   const t = freshTableName("read-empty");
   await provision(storage, app, tenant, t);
-  expect(await db.table<Doc>(t).where({ k: "x" }).first()).toBeUndefined();
-  expect(await db.table<Doc>(t).where({ k: "x" }).all()).toEqual([]);
-  expect(await db.table<Doc>(t).where({ k: "x" }).count()).toBe(0);
-  expect(await db.table<Doc>(t).count()).toBe(0);
+  await expect(db.table<Doc>(t).where({ k: "x" }).first()).resolves.toBeUndefined();
+  await expect(db.table<Doc>(t).where({ k: "x" }).all()).resolves.toEqual([]);
+  await expect(db.table<Doc>(t).where({ k: "x" }).count()).resolves.toBe(0);
+  await expect(db.table<Doc>(t).count()).resolves.toBe(0);
 };
 
 /** Insert contract: UUIDv7 auto-id, caller-supplied `_id` honoured, round-trip. */
@@ -260,7 +262,9 @@ const runUpdateContract = async (
 
   const afterMarker = await db.table<Doc>(t).where({ k: "a" }).all();
   expect(afterMarker).toHaveLength(2);
-  for (const row of afterMarker) expect(row["marker"]).toBe(true);
+  for (const row of afterMarker) {
+    expect(row["marker"]).toBe(true);
+  }
 
   // RFC 7386: null strips a key from the post-image. `Partial<T>`'s
   // type forbids `null` at the leaf (the locked predicate / patch
@@ -274,7 +278,9 @@ const runUpdateContract = async (
     .update({ marker: null } as unknown as Partial<Doc>);
   expect(stripped).toBe(2);
   const afterStrip = await db.table<Doc>(t).where({ k: "a" }).all();
-  for (const row of afterStrip) expect("marker" in row).toBe(false);
+  for (const row of afterStrip) {
+    expect("marker" in row).toBe(false);
+  }
 };
 
 /** Replace cardinality: exactly-one succeeds; zero / multiple → Conflict. */
@@ -323,9 +329,10 @@ const runDeleteContract = async (
   expect(deleted).toBe(2);
 
   // Subsequent reads no longer see the deleted docs.
-  expect(await db.table<Doc>(t).where({ k: "x" }).count()).toBe(0);
-  expect(await db.table<Doc>(t).count()).toBe(1);
-  expect((await db.table<Doc>(t).where({}).first())?.["k"]).toBe("y");
+  await expect(db.table<Doc>(t).where({ k: "x" }).count()).resolves.toBe(0);
+  await expect(db.table<Doc>(t).count()).resolves.toBe(1);
+  const first = await db.table<Doc>(t).where({}).first();
+  expect(first?.["k"]).toBe("y");
 };
 
 /** Transaction body buffering: empty body is a no-op; commit lands after body. */
@@ -342,14 +349,14 @@ const runTransactionBody = async (
   await db.transaction(t, async () => {
     // no-op
   });
-  expect(await db.table<Doc>(t).count()).toBe(0);
+  await expect(db.table<Doc>(t).count()).resolves.toBe(0);
 
   // Body inserts — visible AFTER the body resolves.
   await db.transaction<Doc>(t, async (tx) => {
     await tx.insert({ k: "inside", v: 1 });
     await tx.insert({ k: "inside", v: 2 });
   });
-  expect(await db.table<Doc>(t).where({ k: "inside" }).count()).toBe(2);
+  await expect(db.table<Doc>(t).where({ k: "inside" }).count()).resolves.toBe(2);
 
   // Body throw — commit skipped, mutations dropped, identity preserved.
   const boom = new Error("body-throw");
@@ -359,12 +366,12 @@ const runTransactionBody = async (
       await tx.insert({ k: "doomed" });
       throw boom;
     });
-  } catch (err) {
-    caught = err;
+  } catch (error) {
+    caught = error;
   }
   expect(caught).toBe(boom);
   // Buffered insert NOT materialised.
-  expect(await db.table<Doc>(t).where({ k: "doomed" }).count()).toBe(0);
+  await expect(db.table<Doc>(t).where({ k: "doomed" }).count()).resolves.toBe(0);
 };
 
 /**
@@ -501,24 +508,25 @@ const runGcCascade = async (
   const before = await db.table<Doc>(t).order({ _id: "asc" }).all();
   expect(before).toHaveLength(30);
 
-  const compactRes = await compact(
-    { storage, currentJsonKey },
-    { minEntriesToCompact: 10, maxEntriesPerRun: 50 } as InternalCompactOptions,
-  );
+  const compactRes = await compact({ storage, currentJsonKey }, {
+    minEntriesToCompact: 10,
+    maxEntriesPerRun: 50,
+  } as InternalCompactOptions);
   expect(compactRes.written).toBe(true);
   expect(compactRes.logSeqStartAfter).toBe(30);
 
   // grace=0 ⇒ same pass marks AND sweeps the 30 stale log entries.
-  const gcRes = await runGc(
-    { storage, currentJsonKey },
-    { graceMillis: 0, maxSweepsPerRun: 50, maxMarksPerRun: 50 } as InternalRunGcOptions,
-  );
+  const gcRes = await runGc({ storage, currentJsonKey }, {
+    graceMillis: 0,
+    maxSweepsPerRun: 50,
+    maxMarksPerRun: 50,
+  } as InternalRunGcOptions);
   expect(gcRes.marked.stale_log).toBe(30);
   expect(gcRes.swept).toBe(30);
 
   // log/0..log/29 are gone.
   for (let i = 0; i < 30; i++) {
-    expect(await storage.get(`${tablePrefix}/log/${String(i)}.json`)).toBeNull();
+    await expect(storage.get(`${tablePrefix}/log/${String(i)}.json`)).resolves.toBeNull();
   }
   // Reads still return the same row set — snapshot is the live truth.
   const after = await db.table<Doc>(t).order({ _id: "asc" }).all();
@@ -562,19 +570,17 @@ const runMetricsCascade = async (storage: Storage, app: string, tenant: string):
     });
   }
 
-  await compact(
-    { storage, currentJsonKey },
-    { minEntriesToCompact: 10, maxEntriesPerRun: 100, metrics } as InternalCompactOptions,
-  );
-  await runGc(
-    { storage, currentJsonKey },
-    {
-      graceMillis: 0,
-      maxSweepsPerRun: 100,
-      maxMarksPerRun: 100,
-      metrics,
-    } as InternalRunGcOptions,
-  );
+  await compact({ storage, currentJsonKey }, {
+    minEntriesToCompact: 10,
+    maxEntriesPerRun: 100,
+    metrics,
+  } as InternalCompactOptions);
+  await runGc({ storage, currentJsonKey }, {
+    graceMillis: 0,
+    maxSweepsPerRun: 100,
+    maxMarksPerRun: 100,
+    metrics,
+  } as InternalRunGcOptions);
 
   // The six load-bearing metric names per the ticket.
   expect(metrics.histogramValues("db.write.class_a_ops_per_logical_write").length).toBe(100);
@@ -663,8 +669,8 @@ const runSchemaValidation = async (
   let insertErr: unknown;
   try {
     await db.table<Doc>(t).insert({ status: "bogus" });
-  } catch (e) {
-    insertErr = e;
+  } catch (error) {
+    insertErr = error;
   }
   expect(insertErr).toBeInstanceOf(BaerlyError);
   expect((insertErr as BaerlyError).code).toBe("SchemaError");
@@ -678,8 +684,8 @@ const runSchemaValidation = async (
   let updateErr: unknown;
   try {
     await db.table<Doc>(t).where({ _id: validId }).update({ status: "bogus" });
-  } catch (e) {
-    updateErr = e;
+  } catch (error) {
+    updateErr = error;
   }
   expect(updateErr).toBeInstanceOf(BaerlyError);
   expect((updateErr as BaerlyError).code).toBe("SchemaError");
@@ -690,8 +696,8 @@ const runSchemaValidation = async (
   let replaceErr: unknown;
   try {
     await db.table<Doc>(t).where({ _id: validId }).replace({ _id: validId, status: "bogus" });
-  } catch (e) {
-    replaceErr = e;
+  } catch (error) {
+    replaceErr = error;
   }
   expect(replaceErr).toBeInstanceOf(BaerlyError);
   expect((replaceErr as BaerlyError).code).toBe("SchemaError");
@@ -736,7 +742,9 @@ const runLogEntryShape = async (
   const entries: LogEntry[] = [];
   for await (const { key } of storage.list(`${tablePrefix}/log/`)) {
     const got = await storage.get(key);
-    if (got === null) continue;
+    if (got === null) {
+      continue;
+    }
     entries.push(JSON.parse(new TextDecoder().decode(got.body)) as LogEntry);
   }
   entries.sort((a, b) => a.seq - b.seq);

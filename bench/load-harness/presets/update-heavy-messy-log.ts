@@ -40,7 +40,7 @@ registerPreset({
       opCount: 10_000,
       mix: {
         weights: {
-          "list-recent": 1.0,
+          "list-recent": 1,
           "point-read": 0,
           insert: 0,
           update: 0,
@@ -55,7 +55,7 @@ registerPreset({
       opCount: 10_000,
       mix: {
         weights: {
-          "list-recent": 1.0,
+          "list-recent": 1,
           "point-read": 0,
           insert: 0,
           update: 0,

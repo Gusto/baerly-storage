@@ -39,7 +39,9 @@ import { translatePredicateToSql } from "./where.ts";
  *  decoded value and the index just past the closing quote. Throws
  *  loudly on malformed input — that's a translator-drift signal. */
 const parseStringLit = (sql: string, i: number): [string, number] => {
-  if (sql[i] !== "'") throw new Error(`expected ' at ${i} in ${JSON.stringify(sql)}`);
+  if (sql[i] !== "'") {
+    throw new Error(`expected ' at ${i} in ${JSON.stringify(sql)}`);
+  }
   let j = i + 1;
   let out = "";
   while (j < sql.length) {
@@ -60,7 +62,9 @@ const parseStringLit = (sql: string, i: number): [string, number] => {
 
 /** Parse a double-quoted SQL identifier starting at `i`. */
 const parseIdent = (sql: string, i: number): [string, number] => {
-  if (sql[i] !== '"') throw new Error(`expected " at ${i} in ${JSON.stringify(sql)}`);
+  if (sql[i] !== '"') {
+    throw new Error(`expected " at ${i} in ${JSON.stringify(sql)}`);
+  }
   let j = i + 1;
   let out = "";
   while (j < sql.length) {
@@ -92,14 +96,20 @@ const parseLiteral = (sql: string, i: number): [Literal, number] => {
   }
   // Read everything to end-of-clause.
   const tail = sql.slice(i);
-  if (tail === "true") return [{ kind: "boolean", value: true }, sql.length];
-  if (tail === "false") return [{ kind: "boolean", value: false }, sql.length];
+  if (tail === "true") {
+    return [{ kind: "boolean", value: true }, sql.length];
+  }
+  if (tail === "false") {
+    return [{ kind: "boolean", value: false }, sql.length];
+  }
   // SQLite stores booleans as 1 / 0 but the translator emits "1" / "0"
   // only for booleans. We can't distinguish "boolean 1" from "integer 1"
   // from the SQL alone — but for our purposes both compare to the row's
   // value via the kind-aware equality below. Treat as number.
   const n = Number(tail);
-  if (!Number.isNaN(n) && tail.length > 0) return [{ kind: "number", value: n }, sql.length];
+  if (!Number.isNaN(n) && tail.length > 0) {
+    return [{ kind: "number", value: n }, sql.length];
+  }
   throw new Error(`unparseable literal ${JSON.stringify(tail)}`);
 };
 
@@ -108,7 +118,9 @@ const parseLiteral = (sql: string, i: number): [Literal, number] => {
 const lookupPath = (body: Record<string, unknown>, path: readonly string[]): unknown => {
   let cursor: unknown = body;
   for (const seg of path) {
-    if (cursor === null || cursor === undefined || typeof cursor !== "object") return undefined;
+    if (cursor === null || cursor === undefined || typeof cursor !== "object") {
+      return undefined;
+    }
     cursor = (cursor as Record<string, unknown>)[seg];
   }
   return cursor;
@@ -127,8 +139,12 @@ const matchLiteral = (
     // We're comparing against a JSON-encoded literal (§3.3). The row
     // value, when present, is whatever shape it has; the SQL has the
     // JSON-encoded form. Compare by JSON-stringifying the actual.
-    if (actual === undefined || actual === null) return false;
-    if (literal.kind !== "string") return false;
+    if (actual === undefined || actual === null) {
+      return false;
+    }
+    if (literal.kind !== "string") {
+      return false;
+    }
     return JSON.stringify(actual) === literal.value;
   }
   if (literal.kind === "string") {
@@ -151,18 +167,26 @@ const matchLiteral = (
 
 /** Evaluate one parsed clause against one row body. */
 const evalClause = (clause: string, body: Record<string, unknown>, plan: ExportPlan): boolean => {
-  if (clause === "1 = 0") return false;
+  if (clause === "1 = 0") {
+    return false;
+  }
   // Three top-level shapes share a leading identifier OR the literal
   // `json_extract(`. Dispatch on the first character.
   if (clause.startsWith("json_extract(")) {
     // json_extract("col", '$.a.b.c') = <literal>
     const after = "json_extract(".length;
     const [col, j1] = parseIdent(clause, after);
-    if (clause.slice(j1, j1 + 2) !== ", ") throw new Error(`bad json_extract: ${clause}`);
+    if (clause.slice(j1, j1 + 2) !== ", ") {
+      throw new Error(`bad json_extract: ${clause}`);
+    }
     const [path, j2] = parseStringLit(clause, j1 + 2);
-    if (clause.slice(j2, j2 + 4) !== ") = ") throw new Error(`bad json_extract: ${clause}`);
+    if (clause.slice(j2, j2 + 4) !== ") = ") {
+      throw new Error(`bad json_extract: ${clause}`);
+    }
     const [lit] = parseLiteral(clause, j2 + 4);
-    if (!path.startsWith("$.")) throw new Error(`bad json_extract path: ${path}`);
+    if (!path.startsWith("$.")) {
+      throw new Error(`bad json_extract path: ${path}`);
+    }
     const segments = path.slice(2).split(".");
     const actual = lookupPath(body, [col, ...segments]);
     const colPlan = plan.columns.find((c) => c.source === col);
@@ -172,7 +196,9 @@ const evalClause = (clause: string, body: Record<string, unknown>, plan: ExportP
     });
   }
   // All other clauses start with an identifier.
-  if (clause[0] !== '"') throw new Error(`unrecognised clause shape: ${clause}`);
+  if (clause[0] !== '"') {
+    throw new Error(`unrecognised clause shape: ${clause}`);
+  }
   const [col, j1] = parseIdent(clause, 0);
 
   // Postgres root JSON: "col"::text = '...'
@@ -228,10 +254,14 @@ const evaluateSql = (
   body: Record<string, unknown>,
   plan: ExportPlan,
 ): boolean => {
-  if (whereSql === "") return true;
+  if (whereSql === "") {
+    return true;
+  }
   const clauses = whereSql.split(" AND ");
   for (const clause of clauses) {
-    if (!evalClause(clause, body, plan)) return false;
+    if (!evalClause(clause, body, plan)) {
+      return false;
+    }
   }
   return true;
 };
@@ -242,7 +272,9 @@ const evaluateSql = (
 
 const mapOf = (rec: Record<string, JSONArraylessObject>): ReadonlyMap<string, ExportRow> => {
   const m = new Map<string, ExportRow>();
-  for (const [k, v] of Object.entries(rec)) m.set(k, v);
+  for (const [k, v] of Object.entries(rec)) {
+    m.set(k, v);
+  }
   return m;
 };
 
@@ -339,7 +371,9 @@ describe.each(["postgres", "sqlite", "d1"] as const)(
             // completeness (the SQL evaluator's body map mirrors the
             // same shape — `_id` lives on the row separately, but
             // matches() doesn't care).
-            if (matches(predicate, body as JSONArraylessObject)) matchedByMatches.push(id);
+            if (matches(predicate, body as JSONArraylessObject)) {
+              matchedByMatches.push(id);
+            }
           }
           expect(matchedByMatches.toSorted()).toEqual([...expectedIds].toSorted());
 

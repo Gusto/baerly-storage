@@ -56,8 +56,8 @@ export function baerlyDev(opts: BaerlyDevOptions): Plugin {
 
       // Surface setup failures eagerly; without this an unhandled
       // rejection would silently kill the dev server.
-      ready.catch((err: unknown) => {
-        console.error("[baerly-dev] setup failed:", err);
+      ready.catch((error: unknown) => {
+        console.error("[baerly-dev] setup failed:", error);
       });
 
       server.middlewares.use((req, res, next) => {
@@ -70,10 +70,10 @@ export function baerlyDev(opts: BaerlyDevOptions): Plugin {
           (listener) => {
             listener(req as never, res as never);
           },
-          (err: unknown) => {
+          (error: unknown) => {
             res.statusCode = 503;
             res.setHeader("content-type", "application/json");
-            res.end(JSON.stringify({ error: "baerly-dev setup failed", message: String(err) }));
+            res.end(JSON.stringify({ error: "baerly-dev setup failed", message: String(error) }));
           },
         );
       });

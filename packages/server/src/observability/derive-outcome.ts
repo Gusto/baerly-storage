@@ -31,13 +31,15 @@
  */
 export type Outcome = "read" | "committed" | "conflict" | "error";
 
-export const deriveOutcome = (
-  method: string,
-  status: number,
-  error?: unknown,
-): Outcome => {
-  if (error !== undefined && status >= 500) return "error";
-  if (status < 400) return method === "GET" ? "read" : "committed";
-  if (status === 409) return "conflict";
+export const deriveOutcome = (method: string, status: number, error?: unknown): Outcome => {
+  if (error !== undefined && status >= 500) {
+    return "error";
+  }
+  if (status < 400) {
+    return method === "GET" ? "read" : "committed";
+  }
+  if (status === 409) {
+    return "conflict";
+  }
   return "error";
 };

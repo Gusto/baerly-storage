@@ -5,7 +5,9 @@ describe("rng determinism", () => {
   test("same seed → same sequence", () => {
     const a = mulberry32(42);
     const b = mulberry32(42);
-    for (let i = 0; i < 100; i++) expect(a()).toBe(b());
+    for (let i = 0; i < 100; i++) {
+      expect(a()).toBe(b());
+    }
   });
 
   test("different seeds diverge by the second draw", () => {

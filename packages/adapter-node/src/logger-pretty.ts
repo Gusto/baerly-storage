@@ -45,6 +45,30 @@ const numProp = (props: Record<string, unknown>, key: string): number | undefine
 
 type PicoColors = ReturnType<typeof createColors>;
 
+// Color the status column by class: 5xx red, 4xx yellow, 3xx cyan,
+// 2xx/unset dim. Extracted so the canonical-line renderer doesn't carry
+// a 5-level nested ternary.
+const colorStatus = (
+  statusStr: string,
+  status: number | undefined,
+  plain: boolean,
+  pc: PicoColors,
+): string => {
+  if (plain || status === undefined) {
+    return statusStr;
+  }
+  if (status >= 500) {
+    return pc.red(statusStr);
+  }
+  if (status >= 400) {
+    return pc.yellow(statusStr);
+  }
+  if (status >= 300) {
+    return pc.cyan(statusStr);
+  }
+  return pc.dim(statusStr);
+};
+
 const renderCanonical = (record: LogRecord, pc: PicoColors, plain: boolean): string => {
   const props = record.properties as Record<string, unknown>;
   const ts = new Date(record.timestamp).toISOString().slice(11, 19);
@@ -61,16 +85,7 @@ const renderCanonical = (record: LogRecord, pc: PicoColors, plain: boolean): str
     const m = method.padEnd(METHOD_W);
     const p = path.length > PATH_W ? `${path.slice(0, PATH_W - 1)}…` : path.padEnd(PATH_W);
     const statusStr = status === undefined ? "   " : String(status);
-    const coloredStatus =
-      plain || status === undefined
-        ? statusStr
-        : status >= 500
-          ? pc.red(statusStr)
-          : status >= 400
-            ? pc.yellow(statusStr)
-            : status >= 300
-              ? pc.cyan(statusStr)
-              : pc.dim(statusStr);
+    const coloredStatus = colorStatus(statusStr, status, plain, pc);
     prefix = `${m}${p}  ${coloredStatus}  ${durationStr}`;
   } else {
     const unit = record.category.join(".").replace(/^baerly\./, "");
@@ -80,22 +95,38 @@ const renderCanonical = (record: LogRecord, pc: PicoColors, plain: boolean): str
   }
 
   const tail: string[] = [];
-  if (reqId) tail.push(`req=${reqId}`);
+  if (reqId) {
+    tail.push(`req=${reqId}`);
+  }
   const classA = numProp(props, CANONICAL_KEYS.classA);
   const classB = numProp(props, CANONICAL_KEYS.classB);
-  if (classA !== undefined) tail.push(`class_a=${classA}`);
-  if (classB !== undefined) tail.push(`class_b=${classB}`);
+  if (classA !== undefined) {
+    tail.push(`class_a=${classA}`);
+  }
+  if (classB !== undefined) {
+    tail.push(`class_b=${classB}`);
+  }
   const wamp = numProp(props, CANONICAL_KEYS.wamp);
-  if (wamp !== undefined) tail.push(`wamp=${wamp}`);
+  if (wamp !== undefined) {
+    tail.push(`wamp=${wamp}`);
+  }
   const c412 = numProp(props, CANONICAL_KEYS.put412);
-  if (c412 !== undefined && c412 > 0) tail.push(`412=${c412}`);
+  if (c412 !== undefined && c412 > 0) {
+    tail.push(`412=${c412}`);
+  }
   const c429 = numProp(props, CANONICAL_KEYS.put429);
-  if (c429 !== undefined && c429 > 0) tail.push(`429=${c429}`);
+  if (c429 !== undefined && c429 > 0) {
+    tail.push(`429=${c429}`);
+  }
   const cacheStatus = pickProp(props, CANONICAL_KEYS.cacheStatus);
-  if (typeof cacheStatus === "string") tail.push(`cache=${cacheStatus}`);
+  if (typeof cacheStatus === "string") {
+    tail.push(`cache=${cacheStatus}`);
+  }
   if (status !== undefined && status >= 400) {
     const outcome = pickProp(props, "outcome");
-    if (typeof outcome === "string") tail.push(`outcome=${outcome}`);
+    if (typeof outcome === "string") {
+      tail.push(`outcome=${outcome}`);
+    }
   }
 
   const tailStr = tail.length ? `  ${tail.join(" ")}` : "";

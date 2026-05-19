@@ -154,22 +154,32 @@ const randSuffix = (): string =>
 const freshTable = (prefix: string): string => `${prefix}-${randSuffix()}`;
 
 const bytesEqual = (a: Uint8Array, b: Uint8Array): boolean => {
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i += 1) if (a[i] !== b[i]) return false;
+  if (a.length !== b.length) {
+    return false;
+  }
+  for (let i = 0; i < a.length; i += 1) {
+    if (a[i] !== b[i]) {
+      return false;
+    }
+  }
   return true;
 };
 
 /** Encode bytes as URL-safe base64 (atob/btoa exist in Node 24+ and Workerd). */
 const bytesToBase64 = (bytes: Uint8Array): string => {
   let bin = "";
-  for (let i = 0; i < bytes.length; i += 1) bin += String.fromCharCode(bytes[i]!);
+  for (let i = 0; i < bytes.length; i += 1) {
+    bin += String.fromCharCode(bytes[i]!);
+  }
   return btoa(bin);
 };
 
 const base64ToBytes = (b64: string): Uint8Array => {
   const bin = atob(b64);
   const out = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i += 1) out[i] = bin.charCodeAt(i);
+  for (let i = 0; i < bin.length; i += 1) {
+    out[i] = bin.charCodeAt(i);
+  }
   return out;
 };
 
@@ -338,7 +348,9 @@ export const runHttpConformanceCascade = (opts: {
       for (const fieldCount of [0, 1, 16, 256]) {
         test(`round-trip doc with ${fieldCount} fields`, async () => {
           const doc: JSONArraylessObject = {};
-          for (let i = 0; i < fieldCount; i += 1) doc[`f${i}`] = i;
+          for (let i = 0; i < fieldCount; i += 1) {
+            doc[`f${i}`] = i;
+          }
           const table = await mintTable("rt-pin");
           const ins = await postDoc(table, doc);
           expect(ins.status).toBe(201);
@@ -485,7 +497,9 @@ export const runHttpConformanceCascade = (opts: {
           readonly data: ReadonlyArray<{ readonly status: string }>;
         };
         expect(data.length).toBe(2);
-        for (const row of data) expect(row.status).toBe("open");
+        for (const row of data) {
+          expect(row.status).toBe("open");
+        }
       });
 
       test("?where=<$-prefixed key> returns 400 with InvalidConfig", async () => {
@@ -720,12 +734,10 @@ export const runHttpConformanceCascade = (opts: {
       test("(b) manifest_pointer is byte-stable across two reads with no writer in between", async () => {
         const table = await mintTable("meta-hot");
         const ins = await postDoc(table, { value: "v1" });
-        const r1 = (await (
-          await doFetch(authedRequest("GET", `/v1/t/${table}/${ins.id!}`))
-        ).json()) as MetaBody;
-        const r2 = (await (
-          await doFetch(authedRequest("GET", `/v1/t/${table}/${ins.id!}`))
-        ).json()) as MetaBody;
+        const res1 = await doFetch(authedRequest("GET", `/v1/t/${table}/${ins.id!}`));
+        const r1 = (await res1.json()) as MetaBody;
+        const res2 = await doFetch(authedRequest("GET", `/v1/t/${table}/${ins.id!}`));
+        const r2 = (await res2.json()) as MetaBody;
         expect(r2._meta.manifest_pointer).toBe(r1._meta.manifest_pointer);
       });
 
@@ -740,14 +752,12 @@ export const runHttpConformanceCascade = (opts: {
         // `(table, id)` cache entry wasn't busted by the second POST
         // would re-serve the cached r1 envelope and the cursor would
         // not advance.
-        const r1 = (await (
-          await doFetch(authedRequest("GET", `/v1/t/${table}`))
-        ).json()) as MetaBody;
+        const res1 = await doFetch(authedRequest("GET", `/v1/t/${table}`));
+        const r1 = (await res1.json()) as MetaBody;
         // Concurrent writer bumps next_seq → pointer changes.
         await postDoc(table, { v: 2 });
-        const r2 = (await (
-          await doFetch(authedRequest("GET", `/v1/t/${table}`))
-        ).json()) as MetaBody;
+        const res2 = await doFetch(authedRequest("GET", `/v1/t/${table}`));
+        const r2 = (await res2.json()) as MetaBody;
         expect(r2._meta.manifest_pointer).not.toBe(r1._meta.manifest_pointer);
         expect(r2._meta.fresh).toBe(true);
       });

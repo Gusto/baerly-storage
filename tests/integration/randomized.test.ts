@@ -51,7 +51,9 @@ const minioEnabled = process.env["MINIO"] === "1";
 // when MINIO is off so memory / local-fs variants don't try to reach
 // `:8474`.
 const setOnline = async (state: boolean): Promise<void> => {
-  if (!minioEnabled) return;
+  if (!minioEnabled) {
+    return;
+  }
   await fetch("http://localhost:8474/proxies/minio", {
     method: "POST",
     body: JSON.stringify({ enabled: state }),
@@ -149,9 +151,13 @@ describe("randomized (Db + ServerWriter)", () => {
       });
 
       afterEach(async () => {
-        if (networkTwiddler) clearInterval(networkTwiddler);
+        if (networkTwiddler) {
+          clearInterval(networkTwiddler);
+        }
         await setOnline(true);
-        if (variant.cleanup) await variant.cleanup();
+        if (variant.cleanup) {
+          await variant.cleanup();
+        }
       });
 
       test(

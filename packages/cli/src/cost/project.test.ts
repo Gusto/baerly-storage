@@ -18,7 +18,7 @@ const R2: ProviderPricing = {
 const AWS_S3: ProviderPricing = {
   provider: "aws-s3",
   freeClassAPerMonth: 0,
-  usdPerMillionClassA: 5.0,
+  usdPerMillionClassA: 5,
   freeStorageGb: 0,
   usdPerGbMonth: 0.023,
 };

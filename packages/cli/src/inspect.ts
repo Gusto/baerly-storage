@@ -105,7 +105,9 @@ const KNOWN_KEYS: ReadonlySet<string> = new Set([
 ]);
 
 const errorToExitCode = (code: string): number => {
-  if (code === "InvalidConfig") return 1;
+  if (code === "InvalidConfig") {
+    return 1;
+  }
   return 2;
 };
 
@@ -125,16 +127,17 @@ const loadConfigIndexes = async (
     const text = await readFile(configPath, "utf8");
     try {
       cfg = JSON.parse(text) as BaerlyConfig;
-    } catch (e) {
+    } catch (error) {
       throw new BaerlyError(
         "InvalidConfig",
-        `baerly inspect: --config JSON parse error in ${JSON.stringify(configPath)}: ${(e as Error).message}`,
+        `baerly inspect: --config JSON parse error in ${JSON.stringify(configPath)}: ${(error as Error).message}`,
       );
     }
   } else {
+    const pathMod = await import("node:path");
     const abs = configPath.startsWith("file://")
       ? fileURLToPath(configPath)
-      : (await import("node:path")).resolve(configPath);
+      : pathMod.resolve(configPath);
     const mod = (await import(pathToFileURL(abs).href)) as { default?: BaerlyConfig };
     if (mod.default === undefined) {
       throw new BaerlyError(
@@ -207,8 +210,12 @@ interface InspectResult {
 
 /** Compact "1.5M" / "22k" / "842" rendering for Class A op counts. */
 const formatOps = (n: number): string => {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(0)}k`;
+  if (n >= 1_000_000) {
+    return `${(n / 1_000_000).toFixed(1)}M`;
+  }
+  if (n >= 1_000) {
+    return `${(n / 1_000).toFixed(0)}k`;
+  }
   return n.toFixed(0);
 };
 
@@ -265,9 +272,13 @@ const renderText = (r: InspectResult, table: string): string => {
   }
   lines.push(`  status:              ${r.status}`);
   if (r.errors.length > 0) {
-    for (const e of r.errors) lines.push(`  error:               ${e}`);
+    for (const e of r.errors) {
+      lines.push(`  error:               ${e}`);
+    }
   }
-  if (r.warning !== undefined) lines.push(`  warning:             ${r.warning}`);
+  if (r.warning !== undefined) {
+    lines.push(`  warning:             ${r.warning}`);
+  }
   return lines.join("\n") + "\n";
 };
 
@@ -312,11 +323,11 @@ const handleInspect = async (args: Args): Promise<number> => {
         collection: args.table,
       });
       materialisedRows = view?.size ?? 0;
-    } catch (e) {
-      if (e instanceof BaerlyError) {
-        errors.push(`${e.code}: ${e.message}`);
+    } catch (error) {
+      if (error instanceof BaerlyError) {
+        errors.push(`${error.code}: ${error.message}`);
       } else {
-        errors.push((e as Error).message);
+        errors.push((error as Error).message);
       }
     }
 
@@ -330,9 +341,9 @@ const handleInspect = async (args: Args): Promise<number> => {
           errors.push(`orphan snapshot: ${k}`);
         }
       }
-    } catch (e) {
-      if (e instanceof BaerlyError) {
-        errors.push(`${e.code}: ${e.message}`);
+    } catch (error) {
+      if (error instanceof BaerlyError) {
+        errors.push(`${error.code}: ${error.message}`);
       }
     }
 
@@ -367,9 +378,12 @@ const handleInspect = async (args: Args): Promise<number> => {
           keyPrefix: bucket.keyPrefix,
         });
         trajectory = project(verdict.writesPerMin, 0, pricingFor(provider));
-      } catch (e) {
-        if (e instanceof BaerlyError) errors.push(`${e.code}: ${e.message}`);
-        else errors.push((e as Error).message);
+      } catch (error) {
+        if (error instanceof BaerlyError) {
+          errors.push(`${error.code}: ${error.message}`);
+        } else {
+          errors.push((error as Error).message);
+        }
       }
     }
 
@@ -395,12 +409,12 @@ const handleInspect = async (args: Args): Promise<number> => {
       process.stdout.write(renderText(result, args.table));
     }
     return 0;
-  } catch (err) {
-    if (err instanceof BaerlyError) {
-      emitError("inspect", err.code, err.message);
-      return errorToExitCode(err.code);
+  } catch (error) {
+    if (error instanceof BaerlyError) {
+      emitError("inspect", error.code, error.message);
+      return errorToExitCode(error.code);
     }
-    emitError("inspect", "Unknown", (err as Error).message);
+    emitError("inspect", "Unknown", (error as Error).message);
     return 2;
   }
 };
@@ -414,7 +428,9 @@ export const inspect = defineCommand({
   args: INSPECT_ARGS,
   run: async ({ args }) => {
     const code = await handleInspect(args);
-    if (code !== 0) process.exit(code);
+    if (code !== 0) {
+      process.exit(code);
+    }
   },
 });
 
@@ -427,9 +443,9 @@ export const runInspect = async (argv: readonly string[]): Promise<number> => {
   let parsed: Args;
   try {
     parsed = parseArgs<typeof INSPECT_ARGS>(argv as string[], INSPECT_ARGS);
-  } catch (err) {
+  } catch (error) {
     setJsonMode(argv.includes("--json"));
-    emitError("inspect", "InvalidConfig", (err as Error).message);
+    emitError("inspect", "InvalidConfig", (error as Error).message);
     return 1;
   }
   return handleInspect(parsed);

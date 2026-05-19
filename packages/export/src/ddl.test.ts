@@ -6,7 +6,9 @@ import type { ExportRow } from "./types.ts";
 
 const rowsFromRecord = (rec: Record<string, ExportRow>): ReadonlyMap<string, ExportRow> => {
   const m = new Map<string, ExportRow>();
-  for (const [k, v] of Object.entries(rec)) m.set(k, v);
+  for (const [k, v] of Object.entries(rec)) {
+    m.set(k, v);
+  }
   return m;
 };
 
@@ -105,8 +107,8 @@ describe("emitCreateTable", () => {
     expect(() => emitCreateTable(plan)).toThrow(BaerlyError);
     try {
       emitCreateTable(plan);
-    } catch (e) {
-      expect((e as BaerlyError).code).toBe("SchemaError");
+    } catch (error) {
+      expect((error as BaerlyError).code).toBe("SchemaError");
     }
   });
 
@@ -118,8 +120,8 @@ describe("emitCreateTable", () => {
     expect(() => emitCreateTable(plan)).toThrow(BaerlyError);
     try {
       emitCreateTable(plan);
-    } catch (e) {
-      expect((e as BaerlyError).code).toBe("SchemaError");
+    } catch (error) {
+      expect((error as BaerlyError).code).toBe("SchemaError");
     }
   });
 

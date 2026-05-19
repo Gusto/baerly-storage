@@ -1,8 +1,7 @@
 /* eslint-disable no-underscore-dangle -- `_id` is the locked primary-key
    field on document shapes; the maintenance test seeds doc bodies with it. */
 
-import { createServer as createNetServer } from "node:net";
-import type { AddressInfo } from "node:net";
+import { type AddressInfo, createServer as createNetServer } from "node:net";
 import {
   BaerlyError,
   CURRENT_JSON_SCHEMA_VERSION,
@@ -12,7 +11,7 @@ import {
   type Verifier,
 } from "@baerly/protocol";
 import { ServerWriter } from "@baerly/server";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { baerlyNode, type BaerlyNodeHandle } from "./baerly-node.ts";
 
 const sharedDevVerifier: Verifier = async () => ({
@@ -48,7 +47,7 @@ describe("baerlyNode", () => {
     }
   });
 
-  it("listen resolves once the server is bound and serves /v1/healthz", async () => {
+  test("listen resolves once the server is bound and serves /v1/healthz", async () => {
     const port = await reservePort();
     const handle = baerlyNode({
       app: "t",
@@ -64,7 +63,7 @@ describe("baerlyNode", () => {
     expect(body.ok).toBe(true);
   });
 
-  it("close() shuts down the server and is idempotent", async () => {
+  test("close() shuts down the server and is idempotent", async () => {
     const port = await reservePort();
     const handle = baerlyNode({
       app: "t",
@@ -77,7 +76,7 @@ describe("baerlyNode", () => {
     activeHandle = undefined;
   });
 
-  it("maintenance fires one runMaintenanceTick per (tenant, collection)", async () => {
+  test("maintenance fires one runMaintenanceTick per (tenant, collection)", async () => {
     // Pre-seed `current.json` for the four (tenant × collection)
     // pairs so `runMaintenanceTick` finds a real pointer, then commit
     // 200 docs into each so the compactor has something to fold.
@@ -150,7 +149,7 @@ describe("baerlyNode", () => {
     }
   });
 
-  it("maintenance failures on one pair don't block siblings", async () => {
+  test("maintenance failures on one pair don't block siblings", async () => {
     // Seed only the `good` tenant; the `bad` tenant has no
     // `current.json`. Wrap storage so the `bad` tenant's
     // `current.json` get throws — the helper must catch + log + keep
@@ -223,7 +222,7 @@ describe("baerlyNode", () => {
     stderrSpy.mockRestore();
   });
 
-  it("SIGTERM triggers graceful close + process.exit(0)", async () => {
+  test("SIGTERM triggers graceful close + process.exit(0)", async () => {
     const exitSpy = vi.spyOn(process, "exit").mockImplementation(((_code?: number): never => {
       // No-op; just record so the test process doesn't actually exit.
       return undefined as never;
@@ -249,7 +248,7 @@ describe("baerlyNode", () => {
     activeHandle = undefined;
   });
 
-  it("removes signal handlers on close()", async () => {
+  test("removes signal handlers on close()", async () => {
     const port = await reservePort();
     const handle = baerlyNode({
       app: "t",
@@ -267,7 +266,7 @@ describe("baerlyNode", () => {
     activeHandle = undefined;
   });
 
-  it("close() called mid-bind tears down without installing signal handlers", async () => {
+  test("close() called mid-bind tears down without installing signal handlers", async () => {
     const port = await reservePort();
     const handle = baerlyNode({
       app: "t",

@@ -19,7 +19,7 @@ import {
   createGcPending,
   readGcPending,
 } from "@baerly/protocol";
-import { describe, expect, it } from "vitest";
+import { describe, expect, test } from "vitest";
 import { compact, type InternalCompactOptions } from "./compactor.ts";
 import { type InternalRunGcOptions, runGc } from "./gc.ts";
 import { ServerWriter } from "./server-writer.ts";
@@ -39,7 +39,7 @@ const PENDING_KEY = "app/t/tenant/x/manifests/c/gc/pending.json";
 const COLL = "c";
 
 describe("runGc", () => {
-  it("returns zeros and bootstraps an empty pending.json on first run", async () => {
+  test("returns zeros and bootstraps an empty pending.json on first run", async () => {
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
     const r = await runGc({ storage: s, currentJsonKey: KEY });
@@ -54,16 +54,16 @@ describe("runGc", () => {
     expect(pending?.json.schema_version).toBe(1);
   });
 
-  it("returns zeros when current.json is missing", async () => {
+  test("returns zeros when current.json is missing", async () => {
     const s = new MemoryStorage();
     const r = await runGc({ storage: s, currentJsonKey: KEY });
     expect(r.marked).toEqual({ stale_log: 0, orphan_snapshot: 0, orphan_content: 0 });
     expect(r.swept).toBe(0);
     // Nothing was bootstrapped either — pending.json is absent.
-    expect(await readGcPending(s, PENDING_KEY)).toBeNull();
+    await expect(readGcPending(s, PENDING_KEY)).resolves.toBeNull();
   });
 
-  it("marks stale log entries after compaction (no sweep at default grace)", async () => {
+  test("marks stale log entries after compaction (no sweep at default grace)", async () => {
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
     const writer = new ServerWriter({ storage: s, currentJsonKey: KEY });
@@ -75,10 +75,10 @@ describe("runGc", () => {
         body: { _id: `d${i}`, n: i },
       });
     }
-    await compact(
-      { storage: s, currentJsonKey: KEY },
-      { minEntriesToCompact: 10, maxEntriesPerRun: 40 } as InternalCompactOptions,
-    );
+    await compact({ storage: s, currentJsonKey: KEY }, {
+      minEntriesToCompact: 10,
+      maxEntriesPerRun: 40,
+    } as InternalCompactOptions);
     const r = await runGc({ storage: s, currentJsonKey: KEY });
     expect(r.marked.stale_log).toBe(40);
     expect(r.swept).toBe(0); // 7-day grace not elapsed.
@@ -90,7 +90,7 @@ describe("runGc", () => {
     }
   });
 
-  it("sweeps stale log entries when grace is bypassed", async () => {
+  test("sweeps stale log entries when grace is bypassed", async () => {
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
     const writer = new ServerWriter({ storage: s, currentJsonKey: KEY });
@@ -102,29 +102,29 @@ describe("runGc", () => {
         body: { _id: `d${i}`, n: i },
       });
     }
-    await compact(
-      { storage: s, currentJsonKey: KEY },
-      { minEntriesToCompact: 10, maxEntriesPerRun: 40 } as InternalCompactOptions,
-    );
+    await compact({ storage: s, currentJsonKey: KEY }, {
+      minEntriesToCompact: 10,
+      maxEntriesPerRun: 40,
+    } as InternalCompactOptions);
     // grace=0 ⇒ due_at is `now` (or earlier) at mark time, so the
     // same pass marks AND sweeps.
-    const r = await runGc(
-      { storage: s, currentJsonKey: KEY },
-      { graceMillis: 0, maxSweepsPerRun: 40 } as InternalRunGcOptions,
-    );
+    const r = await runGc({ storage: s, currentJsonKey: KEY }, {
+      graceMillis: 0,
+      maxSweepsPerRun: 40,
+    } as InternalRunGcOptions);
     expect(r.marked.stale_log).toBe(40);
     expect(r.swept).toBe(40);
     // The swept keys really were deleted from the bucket.
     for (let i = 0; i < 40; i++) {
-      expect(await s.get(`app/t/tenant/x/manifests/c/log/${i}.json`)).toBeNull();
+      await expect(s.get(`app/t/tenant/x/manifests/c/log/${i}.json`)).resolves.toBeNull();
     }
     // Live tail [40, 50) untouched.
     for (let i = 40; i < 50; i++) {
-      expect(await s.get(`app/t/tenant/x/manifests/c/log/${i}.json`)).not.toBeNull();
+      await expect(s.get(`app/t/tenant/x/manifests/c/log/${i}.json`)).resolves.not.toBeNull();
     }
   });
 
-  it("sweeps in a second pass after grace elapses (clock injection)", async () => {
+  test("sweeps in a second pass after grace elapses (clock injection)", async () => {
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
     const writer = new ServerWriter({ storage: s, currentJsonKey: KEY });
@@ -136,26 +136,26 @@ describe("runGc", () => {
         body: { _id: `d${i}`, n: i },
       });
     }
-    await compact(
-      { storage: s, currentJsonKey: KEY },
-      { minEntriesToCompact: 10, maxEntriesPerRun: 40 } as InternalCompactOptions,
-    );
+    await compact({ storage: s, currentJsonKey: KEY }, {
+      minEntriesToCompact: 10,
+      maxEntriesPerRun: 40,
+    } as InternalCompactOptions);
 
     let nowMs = Date.parse("2025-01-01T00:00:00.000Z");
     const clock = (): Date => new Date(nowMs);
 
-    const first = await runGc(
-      { storage: s, currentJsonKey: KEY },
-      { now: clock, maxSweepsPerRun: 40 } as InternalRunGcOptions,
-    );
+    const first = await runGc({ storage: s, currentJsonKey: KEY }, {
+      now: clock,
+      maxSweepsPerRun: 40,
+    } as InternalRunGcOptions);
     expect(first.marked.stale_log).toBe(40);
     expect(first.swept).toBe(0); // grace not yet elapsed
 
     nowMs += 8 * 24 * 60 * 60 * 1000;
-    const second = await runGc(
-      { storage: s, currentJsonKey: KEY },
-      { now: clock, maxSweepsPerRun: 40 } as InternalRunGcOptions,
-    );
+    const second = await runGc({ storage: s, currentJsonKey: KEY }, {
+      now: clock,
+      maxSweepsPerRun: 40,
+    } as InternalRunGcOptions);
     expect(second.swept).toBe(40);
     // pending.json is empty after the sweep + last_swept_at is set.
     const pending = await readGcPending(s, PENDING_KEY);
@@ -163,7 +163,7 @@ describe("runGc", () => {
     expect(pending?.json.last_swept_at).toBe(new Date(nowMs).toISOString());
   });
 
-  it("marks the replaced snapshot after a second compaction run", async () => {
+  test("marks the replaced snapshot after a second compaction run", async () => {
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
     const writer = new ServerWriter({ storage: s, currentJsonKey: KEY });
@@ -175,10 +175,10 @@ describe("runGc", () => {
         body: { _id: `d${i}`, n: i },
       });
     }
-    const first = await compact(
-      { storage: s, currentJsonKey: KEY },
-      { minEntriesToCompact: 10, maxEntriesPerRun: 40 } as InternalCompactOptions,
-    );
+    const first = await compact({ storage: s, currentJsonKey: KEY }, {
+      minEntriesToCompact: 10,
+      maxEntriesPerRun: 40,
+    } as InternalCompactOptions);
     expect(first.written).toBe(true);
     for (let i = 40; i < 80; i++) {
       await writer.commit({
@@ -188,10 +188,10 @@ describe("runGc", () => {
         body: { _id: `d${i}`, n: i },
       });
     }
-    const second = await compact(
-      { storage: s, currentJsonKey: KEY },
-      { minEntriesToCompact: 10, maxEntriesPerRun: 40 } as InternalCompactOptions,
-    );
+    const second = await compact({ storage: s, currentJsonKey: KEY }, {
+      minEntriesToCompact: 10,
+      maxEntriesPerRun: 40,
+    } as InternalCompactOptions);
     expect(second.written).toBe(true);
     expect(second.previousSnapshotKey).toBe(first.newSnapshotKey);
 
@@ -204,7 +204,7 @@ describe("runGc", () => {
     expect(snapCandidates[0]?.key).toBe(first.newSnapshotKey);
   });
 
-  it("does NOT mark a live content blob as orphan", async () => {
+  test("does NOT mark a live content blob as orphan", async () => {
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
     const writer = new ServerWriter({ storage: s, currentJsonKey: KEY });
@@ -227,15 +227,15 @@ describe("runGc", () => {
         body: { _id: `d${i}`, n: i },
       });
     }
-    await compact(
-      { storage: s, currentJsonKey: KEY },
-      { minEntriesToCompact: 10, maxEntriesPerRun: 100 } as InternalCompactOptions,
-    );
+    await compact({ storage: s, currentJsonKey: KEY }, {
+      minEntriesToCompact: 10,
+      maxEntriesPerRun: 100,
+    } as InternalCompactOptions);
     const r2 = await runGc({ storage: s, currentJsonKey: KEY });
     expect(r2.marked.orphan_content).toBe(0);
   });
 
-  it("marks a truly orphan content blob (writer crashed pre-log-PUT)", async () => {
+  test("marks a truly orphan content blob (writer crashed pre-log-PUT)", async () => {
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
     // Simulate a crashed writer: PUT a content key without any log
@@ -251,23 +251,23 @@ describe("runGc", () => {
     expect(r.marked.orphan_content).toBe(1);
   });
 
-  it("sweeping orphan content with grace=0 deletes the key", async () => {
+  test("sweeping orphan content with grace=0 deletes the key", async () => {
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
     const orphanKey = "app/t/tenant/x/manifests/c/content/00000000000000000000000000000000.json";
     await s.put(orphanKey, new TextEncoder().encode("{}"), {
       contentType: "application/json",
     });
-    const r = await runGc(
-      { storage: s, currentJsonKey: KEY },
-      { graceMillis: 0, maxSweepsPerRun: 10 } as InternalRunGcOptions,
-    );
+    const r = await runGc({ storage: s, currentJsonKey: KEY }, {
+      graceMillis: 0,
+      maxSweepsPerRun: 10,
+    } as InternalRunGcOptions);
     expect(r.marked.orphan_content).toBe(1);
     expect(r.swept).toBe(1);
-    expect(await s.get(orphanKey)).toBeNull();
+    await expect(s.get(orphanKey)).resolves.toBeNull();
   });
 
-  it("bounds new marks per category at maxMarksPerRun", async () => {
+  test("bounds new marks per category at maxMarksPerRun", async () => {
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
     const writer = new ServerWriter({ storage: s, currentJsonKey: KEY });
@@ -279,20 +279,19 @@ describe("runGc", () => {
         body: { _id: `d${i}`, n: i },
       });
     }
-    await compact(
-      { storage: s, currentJsonKey: KEY },
-      { minEntriesToCompact: 10, maxEntriesPerRun: 200 } as InternalCompactOptions,
-    );
-    const r = await runGc(
-      { storage: s, currentJsonKey: KEY },
-      { maxMarksPerRun: 50 } as InternalRunGcOptions,
-    );
+    await compact({ storage: s, currentJsonKey: KEY }, {
+      minEntriesToCompact: 10,
+      maxEntriesPerRun: 200,
+    } as InternalCompactOptions);
+    const r = await runGc({ storage: s, currentJsonKey: KEY }, {
+      maxMarksPerRun: 50,
+    } as InternalRunGcOptions);
     expect(r.marked.stale_log).toBe(50);
     const pending = await readGcPending(s, PENDING_KEY);
     expect(pending?.json.candidates).toHaveLength(50);
   });
 
-  it("idempotent across two consecutive runs (no double-marking)", async () => {
+  test("idempotent across two consecutive runs (no double-marking)", async () => {
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
     const writer = new ServerWriter({ storage: s, currentJsonKey: KEY });
@@ -304,10 +303,10 @@ describe("runGc", () => {
         body: { _id: `d${i}`, n: i },
       });
     }
-    await compact(
-      { storage: s, currentJsonKey: KEY },
-      { minEntriesToCompact: 10, maxEntriesPerRun: 20 } as InternalCompactOptions,
-    );
+    await compact({ storage: s, currentJsonKey: KEY }, {
+      minEntriesToCompact: 10,
+      maxEntriesPerRun: 20,
+    } as InternalCompactOptions);
 
     const r1 = await runGc({ storage: s, currentJsonKey: KEY });
     expect(r1.marked.stale_log).toBe(20);
@@ -320,7 +319,7 @@ describe("runGc", () => {
     expect(pending?.json.candidates).toHaveLength(20);
   });
 
-  it("emits db.orphan.candidate_count, db.gc.entries_swept_per_second, and db.gc.swept_total", async () => {
+  test("emits db.orphan.candidate_count, db.gc.entries_swept_per_second, and db.gc.swept_total", async () => {
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
     const writer = new ServerWriter({ storage: s, currentJsonKey: KEY });
@@ -332,15 +331,16 @@ describe("runGc", () => {
         body: { _id: `d${i}`, n: i },
       });
     }
-    await compact(
-      { storage: s, currentJsonKey: KEY },
-      { minEntriesToCompact: 10, maxEntriesPerRun: 40 } as InternalCompactOptions,
-    );
+    await compact({ storage: s, currentJsonKey: KEY }, {
+      minEntriesToCompact: 10,
+      maxEntriesPerRun: 40,
+    } as InternalCompactOptions);
     const metrics = new InMemoryMetricsRecorder();
-    const r = await runGc(
-      { storage: s, currentJsonKey: KEY },
-      { graceMillis: 0, maxSweepsPerRun: 40, metrics } as InternalRunGcOptions,
-    );
+    const r = await runGc({ storage: s, currentJsonKey: KEY }, {
+      graceMillis: 0,
+      maxSweepsPerRun: 40,
+      metrics,
+    } as InternalRunGcOptions);
     expect(r.marked.stale_log).toBe(40);
     expect(r.swept).toBe(40);
     // Post-sweep, pendingDepth = 0 (everything swept).
@@ -353,7 +353,7 @@ describe("runGc", () => {
     expect(swept?.labels["reason"]).toBe("stale-log");
   });
 
-  it("emits zero-sweep observations when nothing swept this pass", async () => {
+  test("emits zero-sweep observations when nothing swept this pass", async () => {
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
     const metrics = new InMemoryMetricsRecorder();
@@ -366,7 +366,7 @@ describe("runGc", () => {
     expect(metrics.sumCounter("db.gc.swept_total")).toBe(0);
   });
 
-  it("returns success on CAS-lost on pending.json (best-effort pendingDepth)", async () => {
+  test("returns success on CAS-lost on pending.json (best-effort pendingDepth)", async () => {
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
     // Pre-seed pending.json with an entry due-for-sweep so the run
@@ -407,13 +407,13 @@ describe("runGc", () => {
       }
       return origPut(key, body, opts);
     }) as typeof s.put;
-    const r = await runGc(
-      { storage: s, currentJsonKey: KEY },
-      { graceMillis: 0, maxSweepsPerRun: 10 } as InternalRunGcOptions,
-    );
+    const r = await runGc({ storage: s, currentJsonKey: KEY }, {
+      graceMillis: 0,
+      maxSweepsPerRun: 10,
+    } as InternalRunGcOptions);
     // The DELETE of log/0.json landed; the CAS-lose on pending.json
     // is non-fatal.
     expect(r.swept).toBe(1);
-    expect(await s.get("app/t/tenant/x/manifests/c/log/0.json")).toBeNull();
+    await expect(s.get("app/t/tenant/x/manifests/c/log/0.json")).resolves.toBeNull();
   });
 });

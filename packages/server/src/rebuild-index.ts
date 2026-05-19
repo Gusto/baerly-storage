@@ -201,14 +201,16 @@ const rebuildIndexInner = async (
     let entry: LogEntry;
     try {
       entry = JSON.parse(textDecoder.decode(got.body)) as LogEntry;
-    } catch (e) {
+    } catch (error) {
       throw new BaerlyError(
         "InvalidResponse",
         `rebuildIndex: malformed log entry at ${tablePrefix}/log/${s}.json`,
-        e,
+        error,
       );
     }
-    if (entry.collection !== collection || entry.doc_id === undefined) continue;
+    if (entry.collection !== collection || entry.doc_id === undefined) {
+      continue;
+    }
     if ((entry.op === "I" || entry.op === "U") && entry.new !== undefined) {
       live.set(entry.doc_id, entry.new);
     } else if (entry.op === "D") {
@@ -231,7 +233,9 @@ const rebuildIndexInner = async (
   //    here that's unbounded in cost.
   const actual = new Set<string>();
   const listOpts: { signal?: AbortSignal } = {};
-  if (opts.signal !== undefined) listOpts.signal = opts.signal;
+  if (opts.signal !== undefined) {
+    listOpts.signal = opts.signal;
+  }
   for await (const entry of storage.list(indexKeyPrefix(tablePrefix, def.name), listOpts)) {
     actual.add(entry.key);
   }
@@ -265,19 +269,21 @@ const rebuildIndexInner = async (
         contentType: APPLICATION_JSON,
       });
       added += 1;
-    } catch (e) {
+    } catch (error) {
       // 412 = a peer wrote the entry between our `list` and our
       // PUT. The entry exists; we couldn't have written different
       // bytes (zero-byte body); count it as kept and move on.
-      if (e instanceof BaerlyError && e.code === "Conflict") {
+      if (error instanceof BaerlyError && error.code === "Conflict") {
         kept += 1;
       } else {
-        throw e;
+        throw error;
       }
     }
   }
   for (const k of actual) {
-    if (expected.has(k)) continue;
+    if (expected.has(k)) {
+      continue;
+    }
     if (dryRun) {
       removed += 1;
       continue;

@@ -17,7 +17,9 @@ const fromBytes = (b: Uint8Array): string => new TextDecoder().decode(b);
 
 const collect = async <T>(iter: AsyncIterable<T>): Promise<T[]> => {
   const out: T[] = [];
-  for await (const x of iter) out.push(x);
+  for await (const x of iter) {
+    out.push(x);
+  }
   return out;
 };
 
@@ -38,9 +40,9 @@ describe("Db.create", () => {
     expect(() => Db.create({ storage, app: "", tenant: "acme" })).toThrow(BaerlyError);
     try {
       Db.create({ storage, app: "", tenant: "acme" });
-    } catch (err) {
-      expect(err).toBeInstanceOf(BaerlyError);
-      expect((err as BaerlyError).code).toBe("InvalidConfig");
+    } catch (error) {
+      expect(error).toBeInstanceOf(BaerlyError);
+      expect((error as BaerlyError).code).toBe("InvalidConfig");
     }
   });
 
@@ -49,8 +51,8 @@ describe("Db.create", () => {
     expect(() => Db.create({ storage, app: "x", tenant: "" })).toThrow(BaerlyError);
     try {
       Db.create({ storage, app: "x", tenant: "" });
-    } catch (err) {
-      expect((err as BaerlyError).code).toBe("InvalidConfig");
+    } catch (error) {
+      expect((error as BaerlyError).code).toBe("InvalidConfig");
     }
   });
 
@@ -60,8 +62,8 @@ describe("Db.create", () => {
     expect(() => Db.create({ storage, app: "a", tenant: "t/u" })).toThrow(BaerlyError);
     try {
       Db.create({ storage, app: "a/b", tenant: "t" });
-    } catch (err) {
-      expect((err as BaerlyError).code).toBe("InvalidConfig");
+    } catch (error) {
+      expect((error as BaerlyError).code).toBe("InvalidConfig");
     }
   });
 
@@ -72,9 +74,9 @@ describe("Db.create", () => {
     );
     try {
       Db.create({ storage, app: "a", tenant: "t", inFanoutThreshold: 1.5 });
-    } catch (err) {
-      expect(err).toBeInstanceOf(BaerlyError);
-      expect((err as BaerlyError).code).toBe("InvalidConfig");
+    } catch (error) {
+      expect(error).toBeInstanceOf(BaerlyError);
+      expect((error as BaerlyError).code).toBe("InvalidConfig");
     }
   });
 
@@ -88,8 +90,8 @@ describe("Db.create", () => {
     );
     try {
       Db.create({ storage, app: "a", tenant: "t", inFanoutThreshold: 0 });
-    } catch (err) {
-      expect((err as BaerlyError).code).toBe("InvalidConfig");
+    } catch (error) {
+      expect((error as BaerlyError).code).toBe("InvalidConfig");
     }
   });
 
@@ -114,7 +116,7 @@ describe("Db._raw round-trip", () => {
     const db = Db.create({ storage: new MemoryStorage(), app: "x", tenant: "y" });
     await db._raw.put("k", utf8("v"));
     await db._raw.delete("k");
-    expect(await db._raw.get("k")).toBeNull();
+    await expect(db._raw.get("k")).resolves.toBeNull();
     // idempotent — deleting a missing key resolves without error
     await db._raw.delete("k");
   });
@@ -156,12 +158,12 @@ describe("Db._raw tenant isolation", () => {
     expect(fromBytes(fromA!.body)).toBe("alice-secret");
     expect(fromBytes(fromB!.body)).toBe("bob-secret");
 
-    expect(await collect(dbA._raw.list(""))).toHaveLength(1);
-    expect(await collect(dbB._raw.list(""))).toHaveLength(1);
+    await expect(collect(dbA._raw.list(""))).resolves.toHaveLength(1);
+    await expect(collect(dbB._raw.list(""))).resolves.toHaveLength(1);
 
     await dbA._raw.delete("docs/1");
     // dbB still has its own copy
-    expect(await dbB._raw.get("docs/1")).not.toBeNull();
+    await expect(dbB._raw.get("docs/1")).resolves.not.toBeNull();
   });
 
   test("two apps over the same storage cannot see each other's keys", async () => {
@@ -174,8 +176,8 @@ describe("Db._raw tenant isolation", () => {
 
     expect(fromBytes((await dbX._raw.get("k"))!.body)).toBe("tickets-value");
     expect(fromBytes((await dbY._raw.get("k"))!.body)).toBe("billing-value");
-    expect(await collect(dbX._raw.list(""))).toHaveLength(1);
-    expect(await collect(dbY._raw.list(""))).toHaveLength(1);
+    await expect(collect(dbX._raw.list(""))).resolves.toHaveLength(1);
+    await expect(collect(dbY._raw.list(""))).resolves.toHaveLength(1);
   });
 });
 

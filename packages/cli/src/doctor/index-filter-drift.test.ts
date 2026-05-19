@@ -36,8 +36,11 @@ describe("checkIndexFilterDrift", () => {
   });
   afterEach(() => {
     for (const k of STORAGE_ENV_KEYS) {
-      if (savedEnv[k] === undefined) delete process.env[k];
-      else process.env[k] = savedEnv[k];
+      if (savedEnv[k] === undefined) {
+        delete process.env[k];
+      } else {
+        process.env[k] = savedEnv[k];
+      }
     }
   });
 

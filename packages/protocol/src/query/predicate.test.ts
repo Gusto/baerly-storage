@@ -16,10 +16,10 @@ import {
 const expectInvalidConfig = (fn: () => unknown, snippet: string): void => {
   try {
     fn();
-  } catch (err) {
-    expect(err).toBeInstanceOf(BaerlyError);
-    expect((err as BaerlyError).code).toBe("InvalidConfig");
-    expect((err as BaerlyError).message).toContain(snippet);
+  } catch (error) {
+    expect(error).toBeInstanceOf(BaerlyError);
+    expect((error as BaerlyError).code).toBe("InvalidConfig");
+    expect((error as BaerlyError).message).toContain(snippet);
     return;
   }
   throw new Error(`Expected BaerlyError{InvalidConfig}, none thrown`);
@@ -28,10 +28,10 @@ const expectInvalidConfig = (fn: () => unknown, snippet: string): void => {
 const expectUnsatisfiable = (fn: () => unknown, snippet: string): void => {
   try {
     fn();
-  } catch (err) {
-    expect(err).toBeInstanceOf(BaerlyError);
-    expect((err as BaerlyError).code).toBe("UnsatisfiablePredicate");
-    expect((err as BaerlyError).message).toContain(snippet);
+  } catch (error) {
+    expect(error).toBeInstanceOf(BaerlyError);
+    expect((error as BaerlyError).code).toBe("UnsatisfiablePredicate");
+    expect((error as BaerlyError).message).toContain(snippet);
     return;
   }
   throw new Error(`Expected BaerlyError{UnsatisfiablePredicate}, none thrown`);
@@ -641,14 +641,18 @@ const flatPredArb: fc.Arbitrary<Predicate> = fc
   .array(fc.tuple(keyArb, valArb), { maxLength: 4 })
   .map((pairs) => {
     const out: Record<string, JSONArrayless> = {};
-    for (const [k, v] of pairs) out[k] = v as JSONArrayless;
+    for (const [k, v] of pairs) {
+      out[k] = v as JSONArrayless;
+    }
     return out as Predicate;
   });
 const docArb: fc.Arbitrary<JSONObject> = fc
   .array(fc.tuple(keyArb, valArb), { maxLength: 4 })
   .map((pairs) => {
     const out: Record<string, JSONArrayless> = {};
-    for (const [k, v] of pairs) out[k] = v as JSONArrayless;
+    for (const [k, v] of pairs) {
+      out[k] = v as JSONArrayless;
+    }
     return out as JSONObject;
   });
 
@@ -658,8 +662,8 @@ fcTest.prop({ a: flatPredArb, b: flatPredArb, doc: docArb })(
     let merged: Predicate;
     try {
       merged = mergePredicates(a, b);
-    } catch (err) {
-      expect(err).toBeInstanceOf(BaerlyError);
+    } catch (error) {
+      expect(error).toBeInstanceOf(BaerlyError);
       return;
     }
     expect(matches(merged, doc)).toBe(matches(a, doc) && matches(b, doc));
@@ -684,10 +688,18 @@ const opObjArb: fc.Arbitrary<JSONArrayless> = fc
   .filter((r) => Object.values(r).some((v) => v !== undefined))
   .map((r) => {
     const out: Record<string, JSONArrayless> = {};
-    if (r.$eq !== undefined) out["$eq"] = r.$eq as JSONArrayless;
-    if (r.$gt !== undefined) out["$gt"] = r.$gt as JSONArrayless;
-    if (r.$lt !== undefined) out["$lt"] = r.$lt as JSONArrayless;
-    if (r.$in !== undefined) out["$in"] = r.$in as JSONArrayless[] as unknown as JSONArrayless;
+    if (r.$eq !== undefined) {
+      out["$eq"] = r.$eq as JSONArrayless;
+    }
+    if (r.$gt !== undefined) {
+      out["$gt"] = r.$gt as JSONArrayless;
+    }
+    if (r.$lt !== undefined) {
+      out["$lt"] = r.$lt as JSONArrayless;
+    }
+    if (r.$in !== undefined) {
+      out["$in"] = r.$in as JSONArrayless[] as unknown as JSONArrayless;
+    }
     return out as JSONArrayless;
   });
 
@@ -695,7 +707,9 @@ const opPredArb: fc.Arbitrary<Predicate> = fc
   .array(fc.tuple(keyArb, fc.oneof(valArb, opObjArb)), { maxLength: 4 })
   .map((pairs) => {
     const out: Record<string, JSONArrayless> = {};
-    for (const [k, v] of pairs) out[k] = v;
+    for (const [k, v] of pairs) {
+      out[k] = v;
+    }
     return out as Predicate;
   });
 
@@ -705,15 +719,15 @@ fcTest.prop({ a: opPredArb, b: opPredArb, doc: docArb })(
     try {
       validatePredicate(a);
       validatePredicate(b);
-    } catch (err) {
-      expect(err).toBeInstanceOf(BaerlyError);
+    } catch (error) {
+      expect(error).toBeInstanceOf(BaerlyError);
       return;
     }
     let merged: Predicate;
     try {
       merged = mergePredicates(a, b);
-    } catch (err) {
-      expect(err).toBeInstanceOf(BaerlyError);
+    } catch (error) {
+      expect(error).toBeInstanceOf(BaerlyError);
       return;
     }
     expect(matches(merged, doc)).toBe(matches(a, doc) && matches(b, doc));

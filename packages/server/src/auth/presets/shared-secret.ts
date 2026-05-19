@@ -53,7 +53,9 @@ export const sharedSecret = (opts: SharedSecretOptions): Verifier => {
   return async (req: Request) => {
     const header = req.headers.get("Authorization") ?? "";
     const actual = new TextEncoder().encode(header);
-    if (!timingSafeEqual(expected, actual)) return null;
+    if (!timingSafeEqual(expected, actual)) {
+      return null;
+    }
     return { tenantPrefix: opts.tenantPrefix, identity: { kind: "shared-secret" } };
   };
 };

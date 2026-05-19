@@ -12,7 +12,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   CURRENT_JSON_SCHEMA_VERSION,
   createCurrentJson,
@@ -91,7 +91,9 @@ describe("baerly copy", () => {
     describe(variant.label, () => {
       let cleanup: (() => Promise<void>) | undefined;
       afterEach(async () => {
-        if (cleanup) await cleanup();
+        if (cleanup) {
+          await cleanup();
+        }
         cleanup = undefined;
       });
 
@@ -105,7 +107,7 @@ describe("baerly copy", () => {
         });
       };
 
-      it("preserves find() parity", async () => {
+      test("preserves find() parity", async () => {
         const ctx = await variant.setup();
         cleanup = ctx.cleanup;
         await seed(ctx.src);
@@ -136,7 +138,15 @@ describe("baerly copy", () => {
         expect(code).toBe(0);
 
         const sorted = <T extends { _id: string }>(rs: readonly T[]): T[] =>
-          [...rs].toSorted((a, b) => (a._id < b._id ? -1 : a._id > b._id ? 1 : 0));
+          [...rs].toSorted((a, b) => {
+            if (a._id < b._id) {
+              return -1;
+            }
+            if (a._id > b._id) {
+              return 1;
+            }
+            return 0;
+          });
         const srcRows = await Db.create({ storage: ctx.src, app: APP, tenant: TENANT })
           .table<Doc>(COLL)
           .where({})
@@ -149,7 +159,7 @@ describe("baerly copy", () => {
         expect(dstRows.length).toBe(N);
       });
 
-      it("rejects an advanced cursor (exit 3)", async () => {
+      test("rejects an advanced cursor (exit 3)", async () => {
         const ctx = await variant.setup();
         cleanup = ctx.cleanup;
         await seed(ctx.src);
@@ -167,7 +177,7 @@ describe("baerly copy", () => {
         expect(code).toBe(3);
       });
 
-      it("refuses a second copy onto a populated target (exit 3)", async () => {
+      test("refuses a second copy onto a populated target (exit 3)", async () => {
         const ctx = await variant.setup();
         cleanup = ctx.cleanup;
         await seed(ctx.src);
@@ -186,13 +196,13 @@ describe("baerly copy", () => {
           `--from-snapshot=${CURRENT_JSON_KEY}@${post!.etag}`,
           `--to=${ctx.dstUri}`,
         ];
-        expect(await runCopy(args)).toBe(0);
+        await expect(runCopy(args)).resolves.toBe(0);
         // Second copy: target current.json now exists; createCurrentJson
         // throws Conflict → exit 3.
-        expect(await runCopy(args)).toBe(3);
+        await expect(runCopy(args)).resolves.toBe(3);
       });
 
-      it("rejects a malformed cursor (exit 1)", async () => {
+      test("rejects a malformed cursor (exit 1)", async () => {
         const ctx = await variant.setup();
         cleanup = ctx.cleanup;
         const code = await runCopy([
@@ -203,7 +213,7 @@ describe("baerly copy", () => {
         expect(code).toBe(1);
       });
 
-      it("rejects unknown flag (exit 1)", async () => {
+      test("rejects unknown flag (exit 1)", async () => {
         const ctx = await variant.setup();
         cleanup = ctx.cleanup;
         const code = await runCopy([
@@ -215,7 +225,7 @@ describe("baerly copy", () => {
         expect(code).toBe(1);
       });
 
-      it("--json emits structured envelopes on success and failure", async () => {
+      test("--json emits structured envelopes on success and failure", async () => {
         const ctx = await variant.setup();
         cleanup = ctx.cleanup;
         await seed(ctx.src);

@@ -136,7 +136,9 @@ describe("baerly admin fsck — CLI smoke", () => {
     // Repoint current.json. Read + CAS so the etag stays valid.
     const { readCurrentJson, casUpdateCurrentJson } = await import("@baerly/protocol");
     const read = await readCurrentJson(storage, CURRENT_JSON_KEY);
-    if (read === null) throw new Error("test setup: missing current.json");
+    if (read === null) {
+      throw new Error("test setup: missing current.json");
+    }
     await casUpdateCurrentJson(storage, CURRENT_JSON_KEY, (c) => ({ ...c, snapshot: forgedKey }));
 
     const stdout = captureStream(process.stdout);
@@ -202,7 +204,9 @@ describe("baerly admin fsck — CLI smoke", () => {
       { _id: "ghost", status: "wip" },
       "ghost",
     );
-    if (orphanKey === undefined) throw new Error("test setup: failed to build orphan key");
+    if (orphanKey === undefined) {
+      throw new Error("test setup: failed to build orphan key");
+    }
     await storage.put(orphanKey, new Uint8Array(0), {
       ifNoneMatch: "*",
       contentType: "application/json",
@@ -251,7 +255,9 @@ describe("baerly admin fsck — CLI smoke", () => {
       { _id: "ghost", status: "wip" },
       "ghost",
     );
-    if (orphanKey === undefined) throw new Error("test setup: failed to build orphan key");
+    if (orphanKey === undefined) {
+      throw new Error("test setup: failed to build orphan key");
+    }
     await storage.put(orphanKey, new Uint8Array(0), {
       ifNoneMatch: "*",
       contentType: "application/json",

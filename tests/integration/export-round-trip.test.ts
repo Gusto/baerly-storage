@@ -114,10 +114,16 @@ describe.runIf(sqliteAvailable)("Baerly → SQLite → Baerly round-trip", () =>
   });
 
   afterEach(async () => {
-    if (savedDumpEnv === undefined) delete process.env["BAERLY_DUMP_STDOUT_PATH"];
-    else process.env["BAERLY_DUMP_STDOUT_PATH"] = savedDumpEnv;
-    if (savedRestoreEnv === undefined) delete process.env["BAERLY_RESTORE_STDIN_PATH"];
-    else process.env["BAERLY_RESTORE_STDIN_PATH"] = savedRestoreEnv;
+    if (savedDumpEnv === undefined) {
+      delete process.env["BAERLY_DUMP_STDOUT_PATH"];
+    } else {
+      process.env["BAERLY_DUMP_STDOUT_PATH"] = savedDumpEnv;
+    }
+    if (savedRestoreEnv === undefined) {
+      delete process.env["BAERLY_RESTORE_STDIN_PATH"];
+    } else {
+      process.env["BAERLY_RESTORE_STDIN_PATH"] = savedRestoreEnv;
+    }
     await rm(srcRoot, { recursive: true, force: true }).catch(() => {});
     await rm(dstRoot, { recursive: true, force: true }).catch(() => {});
     await rm(workDir, { recursive: true, force: true }).catch(() => {});
@@ -151,7 +157,9 @@ describe.runIf(sqliteAvailable)("Baerly → SQLite → Baerly round-trip", () =>
     }
     const plan = inferPlanForCollection({ rows: view, target: "sqlite", table: COLL });
     let sql = emitCreateTable(plan);
-    for await (const chunk of emitInsertStatements(plan, view)) sql += chunk;
+    for await (const chunk of emitInsertStatements(plan, view)) {
+      sql += chunk;
+    }
     const sqlFile = join(workDir, "dump.sql");
     const planFile = join(workDir, "dump.sql.plan.json");
     const dbFile = join(workDir, "round-trip.sqlite");
@@ -196,7 +204,9 @@ describe.runIf(sqliteAvailable)("Baerly → SQLite → Baerly round-trip", () =>
       const out: Record<string, JSONArrayless> = {};
       for (const col of sidecarPlan.columns) {
         const raw = row[col.source];
-        if (raw === null || raw === undefined) continue; // SQL NULL → field absent
+        if (raw === null || raw === undefined) {
+          continue;
+        } // SQL NULL → field absent
         if (col.jsonEncoded && typeof raw === "string") {
           // Promoted-to-JSON column (e.g. nested object stored as TEXT).
           out[col.source] = JSON.parse(raw) as JSONArrayless;
@@ -266,24 +276,24 @@ describe.runIf(sqliteAvailable)("Baerly → SQLite → Baerly round-trip", () =>
     const dstDumpPath = join(workDir, "dst.ndjson");
 
     process.env["BAERLY_DUMP_STDOUT_PATH"] = srcDumpPath;
-    expect(
-      await runDump([
+    await expect(
+      runDump([
         `--bucket=file://${srcRoot}`,
         `--app=${APP}`,
         `--tenant=${TENANT}`,
         `--table=${COLL}`,
       ]),
-    ).toBe(0);
+    ).resolves.toBe(0);
 
     process.env["BAERLY_DUMP_STDOUT_PATH"] = dstDumpPath;
-    expect(
-      await runDump([
+    await expect(
+      runDump([
         `--bucket=file://${dstRoot}`,
         `--app=${APP}`,
         `--tenant=${TENANT}`,
         `--table=${COLL}`,
       ]),
-    ).toBe(0);
+    ).resolves.toBe(0);
 
     const srcDump = await readFile(srcDumpPath);
     const dstDump = await readFile(dstDumpPath);

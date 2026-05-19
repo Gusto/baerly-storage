@@ -85,25 +85,25 @@ describe("awsIamSigV4 — reject paths return null", () => {
     const req = new Request("https://api.example.com/", {
       headers: { Authorization: "Bearer not-a-sigv4-cred" },
     });
-    expect(await mkVerifier()(req)).toBeNull();
+    await expect(mkVerifier()(req)).resolves.toBeNull();
   });
 
   test("unknown accessKeyId → null", async () => {
     const aws = makeClient({ accessKeyId: "AKIDOTHER" });
     const signed = await aws.sign(new Request("https://api.example.com/", { method: "GET" }));
-    expect(await mkVerifier()(signed)).toBeNull();
+    await expect(mkVerifier()(signed)).resolves.toBeNull();
   });
 
   test("scope's service mismatch → null", async () => {
     const aws = makeClient({ service: "s3" });
     const signed = await aws.sign(new Request("https://api.example.com/", { method: "GET" }));
-    expect(await mkVerifier()(signed)).toBeNull();
+    await expect(mkVerifier()(signed)).resolves.toBeNull();
   });
 
   test("scope's region mismatch → null", async () => {
     const aws = makeClient({ region: "eu-west-1" });
     const signed = await aws.sign(new Request("https://api.example.com/", { method: "GET" }));
-    expect(await mkVerifier()(signed)).toBeNull();
+    await expect(mkVerifier()(signed)).resolves.toBeNull();
   });
 
   test("X-Amz-Date outside clockSkewMs → null", async () => {
@@ -114,7 +114,7 @@ describe("awsIamSigV4 — reject paths return null", () => {
     const signed = await aws.sign(new Request("https://api.example.com/", { method: "GET" }), {
       aws: { datetime: old },
     });
-    expect(await mkVerifier()(signed)).toBeNull();
+    await expect(mkVerifier()(signed)).resolves.toBeNull();
   });
 
   test("tampered body invalidates the signature → null", async () => {
@@ -133,7 +133,7 @@ describe("awsIamSigV4 — reject paths return null", () => {
       headers: signed.headers,
       body: JSON.stringify({ hello: "tampered" }),
     });
-    expect(await mkVerifier()(tampered)).toBeNull();
+    await expect(mkVerifier()(tampered)).resolves.toBeNull();
   });
 });
 
@@ -142,9 +142,9 @@ describe("awsIamSigV4 — config validation", () => {
     try {
       awsIamSigV4({ principals: [] });
       expect.fail("expected throw");
-    } catch (err) {
-      expect(err).toBeInstanceOf(BaerlyError);
-      expect((err as BaerlyError).code).toBe("InvalidConfig");
+    } catch (error) {
+      expect(error).toBeInstanceOf(BaerlyError);
+      expect((error as BaerlyError).code).toBe("InvalidConfig");
     }
   });
 

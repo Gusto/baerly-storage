@@ -38,8 +38,12 @@ const DEPLOY_ARGS = {
 const KNOWN_KEYS: ReadonlySet<string> = new Set(["target", "json", "_"]);
 
 const errorToExitCode = (code: string): number => {
-  if (code === "InvalidConfig") return 1;
-  if (code === "Conflict" || code === "Internal" || code === "InvalidResponse") return 3;
+  if (code === "InvalidConfig") {
+    return 1;
+  }
+  if (code === "Conflict" || code === "Internal" || code === "InvalidResponse") {
+    return 3;
+  }
   return 2;
 };
 
@@ -55,7 +59,9 @@ const handleDeploy = async (args: ParsedArgs<typeof DEPLOY_ARGS>): Promise<numbe
     const target = args.target ?? config.target;
     if (target === "cloudflare") {
       const exit = await deployCloudflare(config);
-      if (exit === 0) emitSuccess({ command: "deploy", status: "ok", target });
+      if (exit === 0) {
+        emitSuccess({ command: "deploy", status: "ok", target });
+      }
       return exit;
     }
     throw new BaerlyError(
@@ -64,12 +70,12 @@ const handleDeploy = async (args: ParsedArgs<typeof DEPLOY_ARGS>): Promise<numbe
         `Self-host: \`node server.js\` after your PaaS or container build. ` +
         `Cloudflare Workers is the only managed deploy backend today.`,
     );
-  } catch (err) {
-    if (err instanceof BaerlyError) {
-      emitError("deploy", err.code, err.message);
-      return errorToExitCode(err.code);
+  } catch (error) {
+    if (error instanceof BaerlyError) {
+      emitError("deploy", error.code, error.message);
+      return errorToExitCode(error.code);
     }
-    emitError("deploy", "Unknown", (err as Error).message);
+    emitError("deploy", "Unknown", (error as Error).message);
     return 2;
   }
 };
@@ -83,7 +89,9 @@ export const deploy = defineCommand({
   args: DEPLOY_ARGS,
   run: async ({ args }) => {
     const code = await handleDeploy(args);
-    if (code !== 0) process.exit(code);
+    if (code !== 0) {
+      process.exit(code);
+    }
   },
 });
 
@@ -97,9 +105,9 @@ export const runDeploy = async (argv: readonly string[]): Promise<number> => {
   let parsed: ParsedArgs<typeof DEPLOY_ARGS>;
   try {
     parsed = parseArgs<typeof DEPLOY_ARGS>(argv as string[], DEPLOY_ARGS);
-  } catch (err) {
+  } catch (error) {
     setJsonMode(argv.includes("--json"));
-    emitError("deploy", "InvalidConfig", (err as Error).message);
+    emitError("deploy", "InvalidConfig", (error as Error).message);
     return 1;
   }
   return handleDeploy(parsed);

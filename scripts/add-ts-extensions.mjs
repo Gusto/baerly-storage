@@ -61,10 +61,18 @@ async function exists(path) {
 
 async function resolveSuffix(importerDir, specifier) {
   const target = resolvePath(importerDir, specifier);
-  if (await exists(`${target}.ts`)) return ".ts";
-  if (await exists(`${target}.tsx`)) return ".tsx";
-  if (await exists(`${target}/index.ts`)) return "/index.ts";
-  if (await exists(`${target}/index.tsx`)) return "/index.tsx";
+  if (await exists(`${target}.ts`)) {
+    return ".ts";
+  }
+  if (await exists(`${target}.tsx`)) {
+    return ".tsx";
+  }
+  if (await exists(`${target}/index.ts`)) {
+    return "/index.ts";
+  }
+  if (await exists(`${target}/index.tsx`)) {
+    return "/index.tsx";
+  }
   return null;
 }
 
@@ -88,7 +96,9 @@ async function rewriteFile(filePath) {
       // tail: spec = last group, quote = the one before that.
       const spec = groups[groups.length - 1];
       const quote = groups[groups.length - 2];
-      if (KNOWN_SUFFIXES.test(spec)) continue;
+      if (KNOWN_SUFFIXES.test(spec)) {
+        continue;
+      }
       // Find the spec's start index in the source by locating the closing
       // quote right after `spec` ends. `m.index + m[0].length - quote.length`
       // is the index of the closing quote; subtract spec.length to get the
@@ -104,13 +114,17 @@ async function rewriteFile(filePath) {
       replacements.push({ start: specStart, end: specEnd, value: spec + suffix });
     }
   }
-  if (replacements.length === 0) return;
+  if (replacements.length === 0) {
+    return;
+  }
   replacements.sort((a, b) => a.start - b.start);
   // De-dupe identical sites (a literal can match multiple patterns)
   const deduped = [];
   for (const r of replacements) {
     const last = deduped[deduped.length - 1];
-    if (last && last.start === r.start && last.end === r.end) continue;
+    if (last && last.start === r.start && last.end === r.end) {
+      continue;
+    }
     deduped.push(r);
   }
   let out = "";
@@ -120,7 +134,9 @@ async function rewriteFile(filePath) {
     cursor = r.end;
   }
   out += source.slice(cursor);
-  if (out === source) return;
+  if (out === source) {
+    return;
+  }
   editedSites += deduped.length;
   changedFiles += 1;
   if (!CHECK_MODE) {
@@ -132,7 +148,9 @@ const seen = new Set();
 for (const pattern of GLOBS) {
   for await (const rel of glob(pattern, { cwd: REPO_ROOT })) {
     const abs = resolvePath(REPO_ROOT, rel);
-    if (seen.has(abs)) continue;
+    if (seen.has(abs)) {
+      continue;
+    }
     seen.add(abs);
     await rewriteFile(abs);
   }

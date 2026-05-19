@@ -46,7 +46,7 @@ const DEFAULT_TENANT_SIZE = [
   { cumulativeFraction: 0.7, maxRecords: 100 },
   { cumulativeFraction: 0.9, maxRecords: 1_000 },
   { cumulativeFraction: 0.99, maxRecords: 10_000 },
-  { cumulativeFraction: 1.0, maxRecords: 100_000 },
+  { cumulativeFraction: 1, maxRecords: 100_000 },
 ];
 
 const DEFAULT_TENANT_TRAFFIC = [
@@ -58,7 +58,7 @@ const DEFAULT_TENANT_TRAFFIC = [
 const DEFAULT_RECORD_SIZE = [
   { cumulativeFraction: 0.7, maxBytes: 2_000 },
   { cumulativeFraction: 0.95, maxBytes: 10_000 },
-  { cumulativeFraction: 1.0, maxBytes: 1_000_000 },
+  { cumulativeFraction: 1, maxBytes: 1_000_000 },
 ];
 
 /**
@@ -107,7 +107,9 @@ export function buildDataset(params: DatasetParams): Dataset {
       }
       prevCum = bucket.cumulativeFraction;
     }
-    if (recordCount === 0) recordCount = sizeBuckets[sizeBuckets.length - 1]!.maxRecords;
+    if (recordCount === 0) {
+      recordCount = sizeBuckets[sizeBuckets.length - 1]!.maxRecords;
+    }
 
     const rngB = makeRng(params.seed ^ i);
     const records: DatasetRecord[] = [];
@@ -124,7 +126,9 @@ export function buildDataset(params: DatasetParams): Dataset {
       // Cheap deterministic fill — content is not the load-bearing
       // bit; bytes_written is. Hash-like fill avoids zero-pages
       // that some adapters dedup.
-      for (let k = 0; k < recordBytes; k++) bodyBytes[k] = (k + j + i) & 0xff;
+      for (let k = 0; k < recordBytes; k++) {
+        bodyBytes[k] = (k + j + i) & 0xff;
+      }
       records.push({
         recordId: `r-${i.toString(16).padStart(4, "0")}-${j.toString(16).padStart(6, "0")}`,
         bodyBytes,

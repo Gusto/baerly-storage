@@ -84,7 +84,9 @@ const indexKeyFor = (tenantPrefix: string, table: string): string => `${tenantPr
 const tableFromPath = (pathname: string): string | null => {
   const parts = pathname.split("/").filter(Boolean);
   // parts[0] === "v1", parts[1] === "t", parts[2] === table, parts[3] === id (optional)
-  if (parts.length < 3 || parts[0] !== "v1" || parts[1] !== "t") return null;
+  if (parts.length < 3 || parts[0] !== "v1" || parts[1] !== "t") {
+    return null;
+  }
   return parts[2] ?? null;
 };
 
@@ -118,7 +120,9 @@ function trackListUrl(tenantPrefix: string, table: string, keyUrl: string): void
     const oldest = inner.keys().next().value;
     if (typeof oldest === "string") {
       const t = inner.get(oldest);
-      if (t !== undefined) clearTimeout(t);
+      if (t !== undefined) {
+        clearTimeout(t);
+      }
       inner.delete(oldest);
     }
   }
@@ -126,7 +130,9 @@ function trackListUrl(tenantPrefix: string, table: string, keyUrl: string): void
     const m = LIST_KEY_INDEX.get(indexKey);
     if (m !== undefined) {
       m.delete(keyUrl);
-      if (m.size === 0) LIST_KEY_INDEX.delete(indexKey);
+      if (m.size === 0) {
+        LIST_KEY_INDEX.delete(indexKey);
+      }
     }
   }, CACHE_TTL_MS);
   // workerd's setTimeout does not return a Node `Timer` with .unref();
@@ -159,10 +165,14 @@ export function cacheKeyFor(req: Request, tenantPrefix: string): Request {
  * invalidate sides)? Healthz + long-poll + anything not under `/v1/t/`.
  */
 function bypassesCache(url: URL): boolean {
-  if (BYPASS_PREFIXES.some((p) => url.pathname.startsWith(p))) return true;
+  if (BYPASS_PREFIXES.some((p) => url.pathname.startsWith(p))) {
+    return true;
+  }
   // Restrict cache scope to the table routes. Future non-table read
   // routes can opt in by adding their prefix here.
-  if (!url.pathname.startsWith("/v1/t/")) return true;
+  if (!url.pathname.startsWith("/v1/t/")) {
+    return true;
+  }
   return false;
 }
 
@@ -313,11 +323,17 @@ export async function invalidateOnWrite(
   tenantPrefix: string,
   responseStatus: number,
 ): Promise<void> {
-  if (!WRITE_METHODS.has(req.method)) return;
-  if (responseStatus < 200 || responseStatus >= 300) return;
+  if (!WRITE_METHODS.has(req.method)) {
+    return;
+  }
+  if (responseStatus < 200 || responseStatus >= 300) {
+    return;
+  }
 
   const url = new URL(req.url);
-  if (!url.pathname.startsWith("/v1/t/")) return;
+  if (!url.pathname.startsWith("/v1/t/")) {
+    return;
+  }
 
   // `caches.default` is Workers-only; DOM's `CacheStorage` lib type
   // doesn't expose it, so we cast through `unknown` to the shape we
@@ -377,7 +393,9 @@ export async function invalidateOnWrite(
 // eslint-disable-next-line no-underscore-dangle -- `__`-prefix marks the test-only escape hatch
 export function __resetListUrlIndexForTests(): void {
   for (const inner of LIST_KEY_INDEX.values()) {
-    for (const timer of inner.values()) clearTimeout(timer);
+    for (const timer of inner.values()) {
+      clearTimeout(timer);
+    }
   }
   LIST_KEY_INDEX.clear();
 }

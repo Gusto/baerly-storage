@@ -123,7 +123,9 @@ describe("baerly admin migrate — CLI smoke", () => {
     expect(envelope.result.new_snapshot_key).not.toBeNull();
 
     const read = await readCurrentJson(storage, CURRENT_JSON_KEY);
-    if (read === null) throw new Error("unreachable");
+    if (read === null) {
+      throw new Error("unreachable");
+    }
     expect(read.json.migrated_to).toBe(1);
   });
 
@@ -166,8 +168,8 @@ describe("baerly admin migrate — CLI smoke", () => {
     const transformPath = join(root, "noop.mjs");
     await writeFile(transformPath, `export default (row) => row;\n`, "utf8");
 
-    expect(
-      await runMigrate([
+    await expect(
+      runMigrate([
         `--bucket=file://${root}`,
         `--app=${APP}`,
         `--tenant=${TENANT}`,
@@ -176,7 +178,7 @@ describe("baerly admin migrate — CLI smoke", () => {
         "--target-version=1",
         "--json",
       ]),
-    ).toBe(0);
+    ).resolves.toBe(0);
 
     const stdout = captureStream(process.stdout);
     let exitCode: number;

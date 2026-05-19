@@ -35,7 +35,7 @@ const PRESET_NAMES = [
 
 // Bound record bodies to 16 bytes — same pattern as
 // bench/load-harness/tests/dataset.test.ts.
-const tinyBodies = [{ cumulativeFraction: 1.0, maxBytes: 16 }];
+const tinyBodies = [{ cumulativeFraction: 1, maxBytes: 16 }];
 
 // ---------------------------------------------------------------------------
 // 1. Reproducibility
@@ -85,7 +85,7 @@ describe("preset op-mix sum", () => {
     test(`${name}: op mix sums to 1.0 ± 0.01`, () => {
       const preset = getPreset(name);
       const sum = Object.values(preset.opMix.weights).reduce((a, b) => a + b, 0);
-      expect(Math.abs(sum - 1.0)).toBeLessThan(0.01);
+      expect(Math.abs(sum - 1)).toBeLessThan(0.01);
     });
   }
 });
@@ -107,7 +107,7 @@ describe("preset smoke-run", () => {
         seed: rng.int(0, 2 ** 31),
         tenantCount: 4,
         schema: { collection: preset.schema.collection },
-        tenantSizeBuckets: [{ cumulativeFraction: 1.0, maxRecords: 50 }],
+        tenantSizeBuckets: [{ cumulativeFraction: 1, maxRecords: 50 }],
         recordSizeBuckets: tinyBodies,
       });
 

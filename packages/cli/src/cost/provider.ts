@@ -30,15 +30,29 @@ export interface DetectArgs {
 }
 
 export const detectProvider = (args: DetectArgs): ProviderTag => {
-  if (args.override !== undefined) return args.override;
-  if (args.bucketUri.startsWith("file://")) return "dev";
-  if (args.bucketUri.startsWith("memory://")) return "dev";
-  if (!args.bucketUri.startsWith("s3://")) return "self-hosted";
+  if (args.override !== undefined) {
+    return args.override;
+  }
+  if (args.bucketUri.startsWith("file://")) {
+    return "dev";
+  }
+  if (args.bucketUri.startsWith("memory://")) {
+    return "dev";
+  }
+  if (!args.bucketUri.startsWith("s3://")) {
+    return "self-hosted";
+  }
   // s3:// branch — look at the endpoint.
   const endpoint = args.s3Endpoint ?? "";
-  if (endpoint === "") return "aws-s3"; // default AWS
-  if (/\.r2\.cloudflarestorage\.com(:\d+)?\/?$/i.test(endpoint)) return "r2";
-  if (/\.amazonaws\.com(:\d+)?\/?$/i.test(endpoint)) return "aws-s3";
+  if (endpoint === "") {
+    return "aws-s3";
+  } // default AWS
+  if (/\.r2\.cloudflarestorage\.com(:\d+)?\/?$/i.test(endpoint)) {
+    return "r2";
+  }
+  if (/\.amazonaws\.com(:\d+)?\/?$/i.test(endpoint)) {
+    return "aws-s3";
+  }
   return "self-hosted";
 };
 
@@ -64,7 +78,7 @@ const R2_PRICING: ProviderPricing = {
 const AWS_S3_PRICING: ProviderPricing = {
   provider: "aws-s3",
   freeClassAPerMonth: 0,
-  usdPerMillionClassA: 5.0,
+  usdPerMillionClassA: 5,
   freeStorageGb: 0,
   usdPerGbMonth: 0.023,
 };
@@ -87,13 +101,17 @@ const DEV_PRICING: ProviderPricing = {
 
 export const pricingFor = (provider: ProviderTag): ProviderPricing => {
   switch (provider) {
-    case "r2":
+    case "r2": {
       return R2_PRICING;
-    case "aws-s3":
+    }
+    case "aws-s3": {
       return AWS_S3_PRICING;
-    case "self-hosted":
+    }
+    case "self-hosted": {
       return SELF_HOSTED_PRICING;
-    case "dev":
+    }
+    case "dev": {
       return DEV_PRICING;
+    }
   }
 };

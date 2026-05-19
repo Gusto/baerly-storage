@@ -13,7 +13,7 @@
  * `r2BindingStorage` → `Db` → `createRouter` pipeline.
  */
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, test } from "vitest";
 import {
   CURRENT_JSON_SCHEMA_VERSION,
   createCurrentJson,
@@ -86,9 +86,11 @@ const provisionTable = async (bucket: R2Bucket, table: string, tenant = "acme"):
       log_seq_start: 0,
       writer_fence: { epoch: 0, owner: "worker-routes-test", claimed_at: "" },
     });
-  } catch (e) {
-    if (e instanceof BaerlyError && e.code === "Conflict") return;
-    throw e;
+  } catch (error) {
+    if (error instanceof BaerlyError && error.code === "Conflict") {
+      return;
+    }
+    throw error;
   }
 };
 
@@ -102,7 +104,7 @@ const freshTable = (() => {
 })();
 
 describe("baerlyWorker routes", () => {
-  it("baerlyWorker without a verifier is a type error", () => {
+  test("baerlyWorker without a verifier is a type error", () => {
     // The `verifier` field is required on `BaerlyWorkerOptions` —
     // omitting it must fail at type-check time so multi-tenant
     // Workers can't silently fall back to `env.TENANT`.
@@ -110,7 +112,7 @@ describe("baerlyWorker routes", () => {
     baerlyWorker({});
   });
 
-  it("singleTenantDevVerifier resolves every request to the supplied tenant", async () => {
+  test("singleTenantDevVerifier resolves every request to the supplied tenant", async () => {
     const bucket = getBinding();
     const table = freshTable("tickets");
     // Use a non-default tenant so the test fails if the helper ever
@@ -148,7 +150,7 @@ describe("baerlyWorker routes", () => {
     expect(read.data.title).toBe("pinned-tenant");
   });
 
-  it("GET /v1/healthz returns { ok: true } without consulting the verifier", async () => {
+  test("GET /v1/healthz returns { ok: true } without consulting the verifier", async () => {
     const worker = baerlyWorker({ verifier: denyVerifier });
     const res = await worker.fetch!(
       asWorkersRequest(new Request("https://x/v1/healthz")),
@@ -156,10 +158,10 @@ describe("baerlyWorker routes", () => {
       makeCtx(),
     );
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ok: true });
+    await expect(res.json()).resolves.toEqual({ ok: true });
   });
 
-  it("returns 401 with Unauthorized envelope when the verifier returns null", async () => {
+  test("returns 401 with Unauthorized envelope when the verifier returns null", async () => {
     const worker = baerlyWorker({ verifier: denyVerifier });
     const res = await worker.fetch!(
       asWorkersRequest(new Request("https://x/v1/t/tickets")),
@@ -172,7 +174,7 @@ describe("baerlyWorker routes", () => {
     expect(body.error?.message).toBe("Missing or invalid Authorization header");
   });
 
-  it("POST → GET round-trips a document", async () => {
+  test("POST → GET round-trips a document", async () => {
     const bucket = getBinding();
     const table = freshTable("tickets");
     await provisionTable(bucket, table);
@@ -206,7 +208,7 @@ describe("baerlyWorker routes", () => {
     expect(read.data.title).toBe("first");
   });
 
-  it("PATCH on unknown id returns 404 with the HttpErrorEnvelope shape", async () => {
+  test("PATCH on unknown id returns 404 with the HttpErrorEnvelope shape", async () => {
     const bucket = getBinding();
     const table = freshTable("tickets");
     await provisionTable(bucket, table);
@@ -228,7 +230,7 @@ describe("baerlyWorker routes", () => {
     expect(body.error?.code).toBeDefined();
   });
 
-  it("DELETE returns 204 the first time, 404 the second time", async () => {
+  test("DELETE returns 204 the first time, 404 the second time", async () => {
     const bucket = getBinding();
     const table = freshTable("tickets");
     await provisionTable(bucket, table);
@@ -263,7 +265,7 @@ describe("baerlyWorker routes", () => {
     expect(secondRes.status).toBe(404);
   });
 
-  it("GET /v1/t/:table?where=<json> returns the predicate-matched subset", async () => {
+  test("GET /v1/t/:table?where=<json> returns the predicate-matched subset", async () => {
     const bucket = getBinding();
     const table = freshTable("tickets");
     await provisionTable(bucket, table);
@@ -298,10 +300,12 @@ describe("baerlyWorker routes", () => {
     expect(listRes.status).toBe(200);
     const list = (await listRes.json()) as { data: Array<{ status: string }> };
     expect(list.data).toHaveLength(2);
-    for (const row of list.data) expect(row.status).toBe("open");
+    for (const row of list.data) {
+      expect(row.status).toBe("open");
+    }
   });
 
-  it("GET /v1/t/:table?where=notjson returns 400 SchemaError", async () => {
+  test("GET /v1/t/:table?where=notjson returns 400 SchemaError", async () => {
     const worker = baerlyWorker({ verifier: trivialVerifier });
     const res = await worker.fetch!(
       asWorkersRequest(new Request("https://x/v1/t/tickets?where=notjson")),
@@ -315,7 +319,7 @@ describe("baerlyWorker routes", () => {
 });
 
 describe("baerlyWorker dev landing", () => {
-  it("GET / with dev option returns 200 HTML containing the UI link", async () => {
+  test("GET / with dev option returns 200 HTML containing the UI link", async () => {
     // denyVerifier proves the dev short-circuit runs ahead of auth —
     // a 401 here would mean the landing path wasn't taken.
     const worker = baerlyWorker({
@@ -334,7 +338,7 @@ describe("baerlyWorker dev landing", () => {
     expect(html).toContain(`href="http://localhost:5173"`);
   });
 
-  it("GET /favicon.ico with dev option returns 204 with empty body", async () => {
+  test("GET /favicon.ico with dev option returns 204 with empty body", async () => {
     const worker = baerlyWorker({
       verifier: denyVerifier,
       dev: { app: "tickets", uiUrl: "http://localhost:5173" },
@@ -345,10 +349,10 @@ describe("baerlyWorker dev landing", () => {
       makeCtx(),
     );
     expect(res.status).toBe(204);
-    expect(await res.text()).toBe("");
+    await expect(res.text()).resolves.toBe("");
   });
 
-  it("GET / without dev option falls through to the verifier (401)", async () => {
+  test("GET / without dev option falls through to the verifier (401)", async () => {
     const worker = baerlyWorker({ verifier: denyVerifier });
     const res = await worker.fetch!(
       asWorkersRequest(new Request("https://x/")),
@@ -358,7 +362,7 @@ describe("baerlyWorker dev landing", () => {
     expect(res.status).toBe(401);
   });
 
-  it("POST / with dev option falls through to the verifier (no method-bypass)", async () => {
+  test("POST / with dev option falls through to the verifier (no method-bypass)", async () => {
     const worker = baerlyWorker({
       verifier: denyVerifier,
       dev: { app: "tickets", uiUrl: "http://localhost:5173" },

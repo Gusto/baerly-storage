@@ -85,7 +85,7 @@ describe("pricingFor", () => {
     const p = pricingFor("aws-s3");
     expect(p.freeClassAPerMonth).toBe(0);
     expect(p.freeStorageGb).toBe(0);
-    expect(p.usdPerMillionClassA).toBe(5.0);
+    expect(p.usdPerMillionClassA).toBe(5);
     expect(p.usdPerGbMonth).toBe(0.023);
   });
 

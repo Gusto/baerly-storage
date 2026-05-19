@@ -19,7 +19,7 @@ import { existsSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "vitest";
 import { runCreateBaerly } from "./runner.ts";
 
 const captureStream = (
@@ -60,7 +60,7 @@ describe("create-baerly runner (non-TTY)", () => {
     process.chdir(originalCwd);
   });
 
-  it("rejects an invalid --target with the same message as today", async () => {
+  test("rejects an invalid --target with the same message as today", async () => {
     const stdout = captureStream(process.stdout);
     const stderr = captureStream(process.stderr);
     let exitCode: number;
@@ -77,7 +77,7 @@ describe("create-baerly runner (non-TTY)", () => {
     expect(err).toContain("create-baerly:");
   });
 
-  it("emits the JSON envelope unchanged on success", async () => {
+  test("emits the JSON envelope unchanged on success", async () => {
     const projectName = "json-app";
     const stdout = captureStream(process.stdout);
     const stderr = captureStream(process.stderr);
@@ -115,17 +115,12 @@ describe("create-baerly runner (non-TTY)", () => {
     ]);
   });
 
-  it("accepts --with=docker on --target=node and emits the Dockerfile", async () => {
+  test("accepts --with=docker on --target=node and emits the Dockerfile", async () => {
     const projectName = "with-docker";
     const stdout = captureStream(process.stdout);
     let exitCode: number;
     try {
-      exitCode = await runCreateBaerly([
-        projectName,
-        "--target=node",
-        "--with=docker",
-        "--json",
-      ]);
+      exitCode = await runCreateBaerly([projectName, "--target=node", "--with=docker", "--json"]);
     } finally {
       stdout.restore();
     }
@@ -139,15 +134,11 @@ describe("create-baerly runner (non-TTY)", () => {
     expect(existsSync(join(parsed.result.outDir, ".dockerignore"))).toBe(true);
   });
 
-  it("rejects --with=docker on --target=cloudflare with an actionable message", async () => {
+  test("rejects --with=docker on --target=cloudflare with an actionable message", async () => {
     const stderr = captureStream(process.stderr);
     let exitCode: number;
     try {
-      exitCode = await runCreateBaerly([
-        "docker-on-cf",
-        "--target=cloudflare",
-        "--with=docker",
-      ]);
+      exitCode = await runCreateBaerly(["docker-on-cf", "--target=cloudflare", "--with=docker"]);
     } finally {
       stderr.restore();
     }
@@ -157,7 +148,7 @@ describe("create-baerly runner (non-TTY)", () => {
     expect(err).toContain("--target=cloudflare");
   });
 
-  it("rejects --with=junk with an actionable message", async () => {
+  test("rejects --with=junk with an actionable message", async () => {
     const stderr = captureStream(process.stderr);
     let exitCode: number;
     try {
@@ -171,7 +162,7 @@ describe("create-baerly runner (non-TTY)", () => {
     expect(err).toContain("Available add-ons: docker");
   });
 
-  it("emits the plaintext lines unchanged on a non-TTY success", async () => {
+  test("emits the plaintext lines unchanged on a non-TTY success", async () => {
     const projectName = "plain-app";
     const stdout = captureStream(process.stdout);
     let exitCode: number;

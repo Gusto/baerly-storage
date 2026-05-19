@@ -34,7 +34,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, test } from "vitest";
 import {
   CURRENT_JSON_SCHEMA_VERSION,
   createCurrentJson,
@@ -75,12 +75,22 @@ const bootstrap = async (storage: Storage): Promise<void> => {
 
 const countBucketObjects = async (storage: Storage, prefix: string): Promise<number> => {
   let count = 0;
-  for await (const _entry of storage.list(prefix)) count++;
+  for await (const _entry of storage.list(prefix)) {
+    count++;
+  }
   return count;
 };
 
 const sortById = <T extends { _id: string }>(rows: readonly T[]): T[] =>
-  [...rows].toSorted((a, b) => (a._id < b._id ? -1 : a._id > b._id ? 1 : 0));
+  [...rows].toSorted((a, b) => {
+    if (a._id < b._id) {
+      return -1;
+    }
+    if (a._id > b._id) {
+      return 1;
+    }
+    return 0;
+  });
 
 interface Variant {
   readonly label: "memory" | "local-fs";
@@ -115,11 +125,13 @@ describe("Synthetic 5000-entry end-to-end gate", () => {
       let cleanup: (() => Promise<void>) | undefined;
 
       afterEach(async () => {
-        if (cleanup) await cleanup();
+        if (cleanup) {
+          await cleanup();
+        }
         cleanup = undefined;
       });
 
-      it(
+      test(
         "compaction over 5000 entries leaves find() results unchanged and shrinks the bucket",
         // Vitest's default 5s timeout is too tight for the 5000-write
         // seed even via `commitBatch` (memory ≈ 2s, local-fs ≈ 20s
@@ -200,7 +212,9 @@ describe("Synthetic 5000-entry end-to-end gate", () => {
             );
             const folded = res.compact.entriesFolded;
             const swept = res.gc.swept;
-            if (folded === 0 && swept === 0) break;
+            if (folded === 0 && swept === 0) {
+              break;
+            }
           }
           expect(passes).toBeLessThan(20);
 
@@ -241,7 +255,7 @@ describe("Synthetic 5000-entry end-to-end gate", () => {
         },
       );
 
-      it(
+      test(
         "idle reader uses < 1 Class A op / writer / hour (cost-model gate)",
         { timeout: 30_000 },
         async () => {

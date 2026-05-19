@@ -135,7 +135,7 @@ describe("estimateWritesPerMin", () => {
     const v = await estimateWritesPerMin(storage, "x", "y", "z");
     expect(v.severity).toBe("info");
     // 11 intervals over 11 minutes = 1.0 writes/min.
-    expect(v.writesPerMin).toBeCloseTo(1.0, 2);
+    expect(v.writesPerMin).toBeCloseTo(1, 2);
   });
 
   test("sampleSize caps the read window", async () => {
@@ -148,7 +148,7 @@ describe("estimateWritesPerMin", () => {
     });
     const v = await estimateWritesPerMin(storage, "x", "y", "z", { sampleSize: 6 });
     expect(v.severity).toBe("info");
-    expect(v.writesPerMin).toBeCloseTo(1.0, 2);
+    expect(v.writesPerMin).toBeCloseTo(1, 2);
   });
 
   test("M_SIZE_WRITES_PER_MIN_PER_COLLECTION matches the documented thesis", () => {
@@ -213,7 +213,7 @@ describe("discoverCollections", () => {
     const storage = new MemoryStorage();
     await seedLogEntries(storage, "x", "alice", "tickets", { count: 2, windowMinutes: 1 });
     await seedLogEntries(storage, "x", "bob", "comments", { count: 2, windowMinutes: 1 });
-    expect(await discoverCollections(storage, "x", "alice")).toEqual(["tickets"]);
-    expect(await discoverCollections(storage, "x", "bob")).toEqual(["comments"]);
+    await expect(discoverCollections(storage, "x", "alice")).resolves.toEqual(["tickets"]);
+    await expect(discoverCollections(storage, "x", "bob")).resolves.toEqual(["comments"]);
   });
 });

@@ -38,7 +38,7 @@ registerPreset({
         weights: {
           "list-recent": 0,
           "point-read": 0,
-          insert: 1.0,
+          insert: 1,
           update: 0,
           "filtered-list": 0,
           archive: 0,

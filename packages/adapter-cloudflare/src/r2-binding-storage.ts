@@ -1,11 +1,11 @@
-import { BaerlyError } from "@baerly/protocol";
-import type {
-  Storage,
-  StorageGetOptions,
-  StorageGetResult,
-  StorageListEntry,
-  StoragePutOptions,
-  StoragePutResult,
+import {
+  BaerlyError,
+  type Storage,
+  type StorageGetOptions,
+  type StorageGetResult,
+  type StorageListEntry,
+  type StoragePutOptions,
+  type StoragePutResult,
 } from "@baerly/protocol";
 
 /**
@@ -56,11 +56,15 @@ class R2BindingStorageImpl implements Storage {
       getOpts.onlyIf = { etagDoesNotMatch: stripQuotes(opts.ifNoneMatch) };
     }
     const obj = await this.#callBinding(() => this.#bucket.get(key, getOpts), `GET ${key}`);
-    if (obj === null) return null;
+    if (obj === null) {
+      return null;
+    }
     // R2 returns a bare `R2Object` (no body) when a conditional GET's
     // precondition succeeds — i.e. the caller's copy is current.
     // Match the `Storage` contract's 304 → null semantics.
-    if (!("body" in obj) || obj.body === null) return null;
+    if (!("body" in obj) || obj.body === null) {
+      return null;
+    }
     const body = new Uint8Array(await obj.arrayBuffer());
     return { body, etag: quoteEtag(obj.etag) };
   }
@@ -116,7 +120,9 @@ class R2BindingStorageImpl implements Storage {
       // Break BEFORE the next list() call when the cap is already hit
       // — R2 rejects `limit: 0` with `MaxKeys params must be positive
       // integer <= 1000. (10022)`, so we can't just clamp.
-      if (yielded >= cap) return;
+      if (yielded >= cap) {
+        return;
+      }
       // R2.list: `limit` capped at 1000 per request. Page via
       // `cursor` until `truncated === false`. `startAfter` honored
       // only on the first page (one-shot cursor).
@@ -131,7 +137,9 @@ class R2BindingStorageImpl implements Storage {
       }
       const page = await this.#callBinding(() => this.#bucket.list(listOpts), `LIST ${prefix}`);
       for (const obj of page.objects) {
-        if (yielded >= cap) return;
+        if (yielded >= cap) {
+          return;
+        }
         yield {
           key: obj.key,
           etag: quoteEtag(obj.etag),
@@ -139,9 +147,13 @@ class R2BindingStorageImpl implements Storage {
         };
         yielded += 1;
       }
-      if (!page.truncated) return;
+      if (!page.truncated) {
+        return;
+      }
       cursor = page.cursor;
-      if (cursor === undefined) return;
+      if (cursor === undefined) {
+        return;
+      }
     }
   }
 
@@ -154,16 +166,18 @@ class R2BindingStorageImpl implements Storage {
   async #callBinding<T>(fn: () => Promise<T>, op: string): Promise<T> {
     try {
       return await fn();
-    } catch (e) {
-      if (e instanceof BaerlyError) throw e;
-      const msg = e instanceof Error ? e.message : String(e);
+    } catch (error) {
+      if (error instanceof BaerlyError) {
+        throw error;
+      }
+      const msg = error instanceof Error ? error.message : String(error);
       if (/auth|permission|forbidden/i.test(msg)) {
-        throw new BaerlyError("AccessDenied", `${op}: ${msg}`, e);
+        throw new BaerlyError("AccessDenied", `${op}: ${msg}`, error);
       }
       if (/not.*found|no.*such.*bucket/i.test(msg)) {
-        throw new BaerlyError("InvalidConfig", `${op}: ${msg}`, e);
+        throw new BaerlyError("InvalidConfig", `${op}: ${msg}`, error);
       }
-      throw new BaerlyError("NetworkError", `${op}: ${msg}`, e);
+      throw new BaerlyError("NetworkError", `${op}: ${msg}`, error);
     }
   }
 }

@@ -133,7 +133,9 @@ export function baerlyNode(opts: BaerlyNodeOptions): BaerlyNodeHandle {
 
   const tick = async (): Promise<void> => {
     const m = opts.maintenance;
-    if (m === undefined) return;
+    if (m === undefined) {
+      return;
+    }
     await Promise.all(
       m.tenants.flatMap((tenant) =>
         m.collections.map(async (collection) => {
@@ -143,14 +145,14 @@ export function baerlyNode(opts: BaerlyNodeOptions): BaerlyNodeHandle {
               currentJsonKey: buildCurrentJsonKey(opts.app, tenant, collection),
               ...(opts.metrics !== undefined && { metrics: opts.metrics }),
             });
-          } catch (err) {
+          } catch (error) {
             // Match createListener's policy: never re-throw from the
             // scheduled callback. The maintenance canonical line
             // (emitted by runScheduledMaintenance itself) already
             // carries the outcome; we log to stderr as a backstop.
             console.error(
               `baerlyNode maintenance tick failed for tenant=${tenant} collection=${collection}`,
-              err,
+              error,
             );
           }
         }),
@@ -159,7 +161,9 @@ export function baerlyNode(opts: BaerlyNodeOptions): BaerlyNodeHandle {
   };
 
   const close = async (): Promise<void> => {
-    if (closed) return;
+    if (closed) {
+      return;
+    }
     closed = true;
     if (maintenanceTimer !== undefined) {
       clearInterval(maintenanceTimer);
@@ -177,8 +181,11 @@ export function baerlyNode(opts: BaerlyNodeOptions): BaerlyNodeHandle {
         return;
       }
       server.close((err) => {
-        if (err) reject(err);
-        else resolve();
+        if (err) {
+          reject(err);
+        } else {
+          resolve();
+        }
       });
     });
   };
@@ -233,8 +240,8 @@ export function baerlyNode(opts: BaerlyNodeOptions): BaerlyNodeHandle {
       console.log(`Received ${sig}; closing baerlyNode server`);
       close()
         .then(() => process.exit(0))
-        .catch((err: unknown) => {
-          console.error("baerlyNode close failed", err);
+        .catch((error: unknown) => {
+          console.error("baerlyNode close failed", error);
           process.exit(1);
         });
     };

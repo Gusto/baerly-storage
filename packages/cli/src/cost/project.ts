@@ -78,7 +78,9 @@ export const project = (
   storedBytes: number,
   pricing: ProviderPricing,
 ): Trajectory | null => {
-  if (!Number.isFinite(writesPerMin)) return null;
+  if (!Number.isFinite(writesPerMin)) {
+    return null;
+  }
 
   const classAPerMonth = writesPerMin * OPS_PER_WPM_PER_MONTH;
 

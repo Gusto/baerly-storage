@@ -48,7 +48,9 @@ import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import type { JSONArraylessObject } from "@baerly/protocol";
 import { createBaerlyClient } from "@baerly/client";
 
-const TARGETS = new Set((process.env["DAY_ONE_TARGETS"] ?? "").split(",").filter((s) => s.length > 0));
+const TARGETS = new Set(
+  (process.env["DAY_ONE_TARGETS"] ?? "").split(",").filter((s) => s.length > 0),
+);
 const RUN_CF = TARGETS.has("cloudflare");
 const RUN_NODE = TARGETS.has("node");
 
@@ -87,7 +89,9 @@ describe.runIf(RUN_NODE)("day-one handshake — node target", () => {
   });
 
   afterAll(async () => {
-    if (serverHandle !== undefined) await serverHandle.kill();
+    if (serverHandle !== undefined) {
+      await serverHandle.kill();
+    }
     await rm(workdir, { recursive: true, force: true });
     // One-line CSV-shape summary for log scraping.
     console.log(
@@ -195,8 +199,8 @@ describe.runIf(RUN_CF && CF_API_TOKEN !== undefined && CF_ACCOUNT_ID !== undefin
               CLOUDFLARE_ACCOUNT_ID: CF_ACCOUNT_ID,
             },
           });
-        } catch (e) {
-          console.warn(`wrangler delete ${workerName} failed:`, e);
+        } catch (error) {
+          console.warn(`wrangler delete ${workerName} failed:`, error);
         }
       }
       await rm(workdir, { recursive: true, force: true });
@@ -320,7 +324,9 @@ async function spawnServer(appDir: string, port: number): Promise<ServerHandle> 
       while (Date.now() < deadline) {
         try {
           const res = await fetch(`http://127.0.0.1:${port}/v1/healthz`);
-          if (res.ok) return;
+          if (res.ok) {
+            return;
+          }
         } catch {
           // not yet
         }
@@ -353,7 +359,9 @@ async function assertNoManualEnvEdit(appDir: string): Promise<void> {
   // The scaffold may not produce a .env on every target; absence is
   // not a failure (the credential is threaded via process env in
   // those cases).
-  if (found === undefined) return;
+  if (found === undefined) {
+    return;
+  }
   const s = await stat(found);
   const ageMs = Date.now() - s.mtimeMs;
   // The whole gate budget is 3-5 min; an .env older than the

@@ -102,9 +102,8 @@ describe("eval/score.mjs", () => {
 
   test("garbage transcript exits 2 with a stderr diagnostic", async () => {
     const garbage = join(workDir, "garbage.jsonl");
-    await (
-      await import("node:fs/promises")
-    ).writeFile(garbage, "not json at all\nstill not json\n", "utf8");
+    const fs1 = await import("node:fs/promises");
+    await fs1.writeFile(garbage, "not json at all\nstill not json\n", "utf8");
     const result = await execa(
       "node",
       [SCRIPT, "--transcript", garbage, "--acceptance", `${FIXTURE_DIR}/acceptance-pass.json`],
@@ -120,7 +119,8 @@ describe("eval/score.mjs", () => {
 
   test("unrecognized but valid JSONL shape exits 2", async () => {
     const foreign = join(workDir, "foreign.jsonl");
-    await (await import("node:fs/promises")).writeFile(foreign, '{"foo":"bar","baz":42}\n', "utf8");
+    const fs2 = await import("node:fs/promises");
+    await fs2.writeFile(foreign, '{"foo":"bar","baz":42}\n', "utf8");
     const result = await execa(
       "node",
       [SCRIPT, "--transcript", foreign, "--acceptance", `${FIXTURE_DIR}/acceptance-pass.json`],

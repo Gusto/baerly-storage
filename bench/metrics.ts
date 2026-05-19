@@ -33,7 +33,9 @@ export class Metrics {
   snapshot(): MetricsSnapshot {
     const sorted = [...this.latencies].toSorted((a, b) => a - b);
     const pick = (q: number): number => {
-      if (sorted.length === 0) return 0;
+      if (sorted.length === 0) {
+        return 0;
+      }
       const idx = Math.min(sorted.length - 1, Math.floor(sorted.length * q));
       return sorted[idx]!;
     };

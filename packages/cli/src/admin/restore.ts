@@ -104,9 +104,15 @@ const KNOWN_KEYS: ReadonlySet<string> = new Set([
 ]);
 
 const errorToExitCode = (code: string): number => {
-  if (code === "InvalidConfig") return 1;
-  if (code === "Conflict") return 3;
-  if (code === "Internal" || code === "InvalidResponse") return 3;
+  if (code === "InvalidConfig") {
+    return 1;
+  }
+  if (code === "Conflict") {
+    return 3;
+  }
+  if (code === "Internal" || code === "InvalidResponse") {
+    return 3;
+  }
   return 2;
 };
 
@@ -186,11 +192,13 @@ const handleRestore = async (args: Args): Promise<number> => {
           new TextEncoder().encode(JSON.stringify(reseeded)),
           { ifMatch: head.etag, contentType: "application/json" },
         );
-      } catch (e) {
-        if (e instanceof BaerlyError) throw e;
+      } catch (error) {
+        if (error instanceof BaerlyError) {
+          throw error;
+        }
         throw new BaerlyError(
           "NetworkError",
-          `baerly admin restore: failed to reseed current.json: ${(e as Error).message}`,
+          `baerly admin restore: failed to reseed current.json: ${(error as Error).message}`,
         );
       }
     } else {
@@ -215,17 +223,19 @@ const handleRestore = async (args: Args): Promise<number> => {
     let lineNo = 0;
     for await (const line of rl) {
       lineNo++;
-      if (line.length === 0) continue;
+      if (line.length === 0) {
+        continue;
+      }
       let parsed: unknown;
       try {
         parsed = JSON.parse(line);
-      } catch (e) {
+      } catch (error) {
         // Malformed NDJSON mid-stream → exit 2 (the ticket's
         // partial-restore contract: the line that failed wasn't
         // committed, but anything BEFORE it survives).
         throw new Error(
-          `baerly admin restore: line ${lineNo} is not valid JSON: ${(e as Error).message}`,
-          { cause: e },
+          `baerly admin restore: line ${lineNo} is not valid JSON: ${(error as Error).message}`,
+          { cause: error },
         );
       }
       if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
@@ -255,12 +265,12 @@ const handleRestore = async (args: Args): Promise<number> => {
       restored: count,
     });
     return 0;
-  } catch (err) {
-    if (err instanceof BaerlyError) {
-      emitError("admin.restore", err.code, err.message);
-      return errorToExitCode(err.code);
+  } catch (error) {
+    if (error instanceof BaerlyError) {
+      emitError("admin.restore", error.code, error.message);
+      return errorToExitCode(error.code);
     }
-    emitError("admin.restore", "Unknown", (err as Error).message);
+    emitError("admin.restore", "Unknown", (error as Error).message);
     return 2;
   }
 };
@@ -274,7 +284,9 @@ export const restoreCmd = defineCommand({
   args: RESTORE_ARGS,
   run: async ({ args }) => {
     const code = await handleRestore(args);
-    if (code !== 0) process.exit(code);
+    if (code !== 0) {
+      process.exit(code);
+    }
   },
 });
 
@@ -287,9 +299,9 @@ export const runRestore = async (argv: readonly string[]): Promise<number> => {
   let parsed: Args;
   try {
     parsed = parseArgs<typeof RESTORE_ARGS>(argv as string[], RESTORE_ARGS);
-  } catch (err) {
+  } catch (error) {
     setJsonMode(argv.includes("--json"));
-    emitError("admin.restore", "InvalidConfig", (err as Error).message);
+    emitError("admin.restore", "InvalidConfig", (error as Error).message);
     return 1;
   }
   return handleRestore(parsed);

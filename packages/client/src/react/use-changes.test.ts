@@ -59,7 +59,9 @@ describe("useChanges", () => {
       expect(result.current.cursor).toBe("a_b_01");
     });
     unmount();
-    for (const r of pendingRejects) r(new Error("test teardown"));
+    for (const r of pendingRejects) {
+      r(new Error("test teardown"));
+    }
   });
 
   test("does not poll when enabled=false", async () => {
@@ -74,7 +76,9 @@ describe("useChanges", () => {
     // Give the hook's mount effect a fair chance to fire a poll. If
     // it's disabled correctly, no poll is ever scheduled — a few
     // animation frames of microtask drain is plenty.
-    for (let i = 0; i < 5; i += 1) await Promise.resolve();
+    for (let i = 0; i < 5; i += 1) {
+      await Promise.resolve();
+    }
     expect(polls).toBe(0);
     expect(result.current.events).toEqual([]);
     unmount();
@@ -130,7 +134,9 @@ describe("useChanges", () => {
     expect(result.current.events).toBe(firstEventsRef);
     expect(result.current.cursor).toBe(firstCursor);
     unmount();
-    for (const r of pendingRejects) r(new Error("test teardown"));
+    for (const r of pendingRejects) {
+      r(new Error("test teardown"));
+    }
   });
 
   test("aborts in-flight request on unmount", async () => {

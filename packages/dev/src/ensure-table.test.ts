@@ -78,8 +78,14 @@ describe("ensureTable", () => {
     await ensureTable(storage, { app: "helpdesk", tenant: "acme", table: "users" });
     await ensureTable(storage, { app: "helpdesk", tenant: "beta", table: "tickets" });
 
-    expect(await readCurrentJson(storage, keyFor("helpdesk", "acme", "tickets"))).not.toBeNull();
-    expect(await readCurrentJson(storage, keyFor("helpdesk", "acme", "users"))).not.toBeNull();
-    expect(await readCurrentJson(storage, keyFor("helpdesk", "beta", "tickets"))).not.toBeNull();
+    await expect(
+      readCurrentJson(storage, keyFor("helpdesk", "acme", "tickets")),
+    ).resolves.not.toBeNull();
+    await expect(
+      readCurrentJson(storage, keyFor("helpdesk", "acme", "users")),
+    ).resolves.not.toBeNull();
+    await expect(
+      readCurrentJson(storage, keyFor("helpdesk", "beta", "tickets")),
+    ).resolves.not.toBeNull();
   });
 });

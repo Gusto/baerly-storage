@@ -1,8 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, test } from "vitest";
 import { renderDevLanding } from "./dev-landing.ts";
 
 describe("renderDevLanding", () => {
-  it("renders the app name and ui url", () => {
+  test("renders the app name and ui url", () => {
     const html = renderDevLanding({
       app: "tickets",
       uiUrl: "http://localhost:5173",
@@ -13,7 +13,7 @@ describe("renderDevLanding", () => {
     expect(html).toContain(">tickets<");
   });
 
-  it("escapes HTML in app and uiUrl", () => {
+  test("escapes HTML in app and uiUrl", () => {
     const html = renderDevLanding({
       app: "a&b",
       uiUrl: `javascript:alert(1)"<`,

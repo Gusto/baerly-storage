@@ -54,7 +54,9 @@ describe("useLiveDocument", () => {
     });
 
     unmount();
-    for (const r of pendingSinceRejects) r(new Error("test teardown"));
+    for (const r of pendingSinceRejects) {
+      r(new Error("test teardown"));
+    }
   });
 
   test("returns row=undefined when the server has no match", async () => {
@@ -70,7 +72,9 @@ describe("useLiveDocument", () => {
     expect(result.current.error).toBeUndefined();
 
     unmount();
-    for (const r of pendingSinceRejects) r(new Error("test teardown"));
+    for (const r of pendingSinceRejects) {
+      r(new Error("test teardown"));
+    }
   });
 
   test("refetches when a matching event arrives, ignores events for other rows", async () => {
@@ -78,7 +82,9 @@ describe("useLiveDocument", () => {
     let listCalls = 0;
     m.on("GET", "/v1/t/tickets", () => {
       listCalls += 1;
-      if (listCalls === 1) return okEnvelope([{ _id: "a", title: "v1" }]);
+      if (listCalls === 1) {
+        return okEnvelope([{ _id: "a", title: "v1" }]);
+      }
       return okEnvelope([{ _id: "a", title: "v2" }]);
     });
     let sincePoll = 0;
@@ -130,7 +136,9 @@ describe("useLiveDocument", () => {
     expect(listCalls).toBe(2);
 
     unmount();
-    for (const r of pendingSinceRejects) r(new Error("test teardown"));
+    for (const r of pendingSinceRejects) {
+      r(new Error("test teardown"));
+    }
   });
 
   test("idle /v1/since response does not refetch", async () => {
@@ -143,7 +151,9 @@ describe("useLiveDocument", () => {
     let sincePoll = 0;
     m.on("GET", "/v1/since", (req) => {
       sincePoll += 1;
-      if (sincePoll === 1) return sinceResponse({ events: [], next_cursor: "" });
+      if (sincePoll === 1) {
+        return sinceResponse({ events: [], next_cursor: "" });
+      }
       return hangSince(req);
     });
 
@@ -155,7 +165,9 @@ describe("useLiveDocument", () => {
     expect(listCalls).toBe(1);
 
     unmount();
-    for (const r of pendingSinceRejects) r(new Error("test teardown"));
+    for (const r of pendingSinceRejects) {
+      r(new Error("test teardown"));
+    }
   });
 
   test("id change triggers a refetch", async () => {
@@ -180,6 +192,8 @@ describe("useLiveDocument", () => {
     await waitFor(() => expect(seenIds).toContain("b"));
 
     unmount();
-    for (const r of pendingSinceRejects) r(new Error("test teardown"));
+    for (const r of pendingSinceRejects) {
+      r(new Error("test teardown"));
+    }
   });
 });

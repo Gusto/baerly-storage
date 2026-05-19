@@ -120,7 +120,9 @@ describe("table API", () => {
       let cleanup: (() => Promise<void>) | undefined;
 
       afterEach(async () => {
-        if (cleanup) await cleanup();
+        if (cleanup) {
+          await cleanup();
+        }
         cleanup = undefined;
       });
 

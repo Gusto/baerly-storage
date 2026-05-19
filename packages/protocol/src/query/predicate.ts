@@ -332,30 +332,42 @@ const assertOpObjectSatisfiable = (
     "$lte" in node ? ((node as Record<string, JSONArrayless>)["$lte"] as JSONArrayless) : undefined;
   const inArr =
     "$in" in node
-      ? ((node as unknown as Record<string, ReadonlyArray<JSONArrayless>>)["$in"] as ReadonlyArray<JSONArrayless>)
+      ? ((node as unknown as Record<string, ReadonlyArray<JSONArrayless>>)[
+          "$in"
+        ] as ReadonlyArray<JSONArrayless>)
       : undefined;
 
   // Lower bound: pick the stricter of $gt/$gte. Strict ($gt) wins
   // on equal numeric/string value.
   let lo: { value: JSONArrayless; inclusive: boolean } | undefined;
-  if (gt !== undefined) lo = { value: gt, inclusive: false };
+  if (gt !== undefined) {
+    lo = { value: gt, inclusive: false };
+  }
   if (gte !== undefined) {
-    if (lo === undefined) lo = { value: gte, inclusive: true };
-    else if (sameComparableType(lo.value, gte)) {
+    if (lo === undefined) {
+      lo = { value: gte, inclusive: true };
+    } else if (sameComparableType(lo.value, gte)) {
       const c = compareScalar(lo.value, gte);
-      if (c < 0) lo = { value: gte, inclusive: true };
+      if (c < 0) {
+        lo = { value: gte, inclusive: true };
+      }
       // tie: strict $gt already in `lo`; keep it.
     }
   }
   // Upper bound: pick the stricter of $lt/$lte. Strict ($lt) wins
   // on tie.
   let hi: { value: JSONArrayless; inclusive: boolean } | undefined;
-  if (lt !== undefined) hi = { value: lt, inclusive: false };
+  if (lt !== undefined) {
+    hi = { value: lt, inclusive: false };
+  }
   if (lte !== undefined) {
-    if (hi === undefined) hi = { value: lte, inclusive: true };
-    else if (sameComparableType(hi.value, lte)) {
+    if (hi === undefined) {
+      hi = { value: lte, inclusive: true };
+    } else if (sameComparableType(hi.value, lte)) {
       const c = compareScalar(hi.value, lte);
-      if (c > 0) hi = { value: lte, inclusive: true };
+      if (c > 0) {
+        hi = { value: lte, inclusive: true };
+      }
     }
   }
 
@@ -431,10 +443,16 @@ const sameComparableType = (a: JSONArrayless, b: JSONArrayless): boolean =>
 
 /** Returns negative / zero / positive for a<b / a==b / a>b. */
 const compareScalar = (a: JSONArrayless, b: JSONArrayless): number => {
-  if (typeof a === "number" && typeof b === "number") return a - b;
+  if (typeof a === "number" && typeof b === "number") {
+    return a - b;
+  }
   if (typeof a === "string" && typeof b === "string") {
-    if (a < b) return -1;
-    if (a > b) return 1;
+    if (a < b) {
+      return -1;
+    }
+    if (a > b) {
+      return 1;
+    }
     return 0;
   }
   return 0;
@@ -475,7 +493,9 @@ export const matches = <T extends JSONArraylessObject = JSONArraylessObject>(
   for (const key of Object.keys(predicate)) {
     const expected: unknown = (predicate as Record<string, unknown>)[key];
     const actual = lookupPath(doc, key);
-    if (!matchesValue(expected as JSONArrayless, actual)) return false;
+    if (!matchesValue(expected as JSONArrayless, actual)) {
+      return false;
+    }
   }
   return true;
 };
@@ -483,7 +503,9 @@ export const matches = <T extends JSONArraylessObject = JSONArraylessObject>(
 const lookupPath = (doc: JSONObject, key: string): JSONValue | undefined => {
   // Fast path: no dot → top-level lookup. Avoids allocating a split
   // array for the common case.
-  if (!key.includes(".")) return doc[key];
+  if (!key.includes(".")) {
+    return doc[key];
+  }
 
   const segments = key.split(".");
   let cursor: JSONValue | undefined = doc;
@@ -523,9 +545,13 @@ const matchesValue = (expected: JSONArrayless, actual: JSONValue | undefined): b
     // carry extra keys (open-world).
     for (const subKey of expectedKeys) {
       const subExpected = (expected as Record<string, JSONArrayless>)[subKey];
-      if (subExpected === undefined) continue; // tsc satisfaction; validator forbids undefined
+      if (subExpected === undefined) {
+        continue;
+      } // tsc satisfaction; validator forbids undefined
       const subActual = (actual as JSONObject)[subKey];
-      if (!matchesValue(subExpected, subActual)) return false;
+      if (!matchesValue(subExpected, subActual)) {
+        return false;
+      }
     }
     return true;
   }
@@ -554,7 +580,9 @@ const matchesValue = (expected: JSONArrayless, actual: JSONValue | undefined): b
  *   rejects).
  */
 const matchesOp = (op: PredicateOp<JSONArrayless>, actual: JSONValue | undefined): boolean => {
-  if (op.$eq !== undefined && !matchesValue(op.$eq, actual)) return false;
+  if (op.$eq !== undefined && !matchesValue(op.$eq, actual)) {
+    return false;
+  }
   if (op.$in !== undefined) {
     let hit = false;
     for (const m of op.$in) {
@@ -568,12 +596,22 @@ const matchesOp = (op: PredicateOp<JSONArrayless>, actual: JSONValue | undefined
         break;
       }
     }
-    if (!hit) return false;
+    if (!hit) {
+      return false;
+    }
   }
-  if (op.$gt !== undefined && !compareGT(actual, op.$gt, false)) return false;
-  if (op.$gte !== undefined && !compareGT(actual, op.$gte, true)) return false;
-  if (op.$lt !== undefined && !compareLT(actual, op.$lt, false)) return false;
-  if (op.$lte !== undefined && !compareLT(actual, op.$lte, true)) return false;
+  if (op.$gt !== undefined && !compareGT(actual, op.$gt, false)) {
+    return false;
+  }
+  if (op.$gte !== undefined && !compareGT(actual, op.$gte, true)) {
+    return false;
+  }
+  if (op.$lt !== undefined && !compareLT(actual, op.$lt, false)) {
+    return false;
+  }
+  if (op.$lte !== undefined && !compareLT(actual, op.$lte, true)) {
+    return false;
+  }
   return true;
 };
 
@@ -651,13 +689,17 @@ export const mergePredicates = <T extends JSONArraylessObject = JSONArraylessObj
   const out: Record<string, JSONArrayless> = { ...(a as Record<string, JSONArrayless>) };
   for (const key of Object.keys(b)) {
     const bVal = (b as Record<string, JSONArrayless>)[key];
-    if (bVal === undefined) continue; // tsc satisfaction; validator forbids undefined
+    if (bVal === undefined) {
+      continue;
+    } // tsc satisfaction; validator forbids undefined
     if (!(key in out)) {
       out[key] = bVal;
       continue;
     }
     const aVal = out[key];
-    if (aVal === undefined) continue;
+    if (aVal === undefined) {
+      continue;
+    }
     const aOp = isOpObject(aVal);
     const bOp = isOpObject(bVal);
     if (!aOp && !bOp) {
@@ -686,7 +728,9 @@ export const mergePredicates = <T extends JSONArraylessObject = JSONArraylessObj
 };
 
 const isOpObject = (v: JSONArrayless): boolean => {
-  if (typeof v !== "object") return false;
+  if (typeof v !== "object") {
+    return false;
+  }
   const k = Object.keys(v);
   return k.length > 0 && k.every((x) => x.startsWith("$"));
 };
@@ -738,14 +782,20 @@ const mergeOpObjects = (
   // ($gte) on tie.
   const lo = pickStricter("lower", a, b);
   if (lo !== undefined) {
-    if (lo.strict) candidate["$gt"] = lo.value;
-    else candidate["$gte"] = lo.value;
+    if (lo.strict) {
+      candidate["$gt"] = lo.value;
+    } else {
+      candidate["$gte"] = lo.value;
+    }
   }
   // Upper bound: stricter wins.
   const hi = pickStricter("upper", a, b);
   if (hi !== undefined) {
-    if (hi.strict) candidate["$lt"] = hi.value;
-    else candidate["$lte"] = hi.value;
+    if (hi.strict) {
+      candidate["$lt"] = hi.value;
+    } else {
+      candidate["$lte"] = hi.value;
+    }
   }
 
   // Re-run satisfiability against the candidate. Reuses the
@@ -790,23 +840,37 @@ const pickStricter = (
     const out: Array<{ value: JSONArrayless; strict: boolean }> = [];
     const s = (op as Record<string, JSONArrayless>)[strictOp];
     const i = (op as Record<string, JSONArrayless>)[inclOp];
-    if (s !== undefined) out.push({ value: s, strict: true });
-    if (i !== undefined) out.push({ value: i, strict: false });
+    if (s !== undefined) {
+      out.push({ value: s, strict: true });
+    }
+    if (i !== undefined) {
+      out.push({ value: i, strict: false });
+    }
     return out;
   };
   const candidates = [...collect(a), ...collect(b)];
-  if (candidates.length === 0) return undefined;
+  if (candidates.length === 0) {
+    return undefined;
+  }
   let best = candidates[0]!;
   for (let i = 1; i < candidates.length; i++) {
     const cur = candidates[i]!;
-    if (!sameComparableType(best.value, cur.value)) return undefined;
+    if (!sameComparableType(best.value, cur.value)) {
+      return undefined;
+    }
     const c = compareScalar(best.value, cur.value);
     if (side === "lower") {
-      if (c < 0) best = cur;
-      else if (c === 0 && cur.strict && !best.strict) best = cur;
+      if (c < 0) {
+        best = cur;
+      } else if (c === 0 && cur.strict && !best.strict) {
+        best = cur;
+      }
     } else {
-      if (c > 0) best = cur;
-      else if (c === 0 && cur.strict && !best.strict) best = cur;
+      if (c > 0) {
+        best = cur;
+      } else if (c === 0 && cur.strict && !best.strict) {
+        best = cur;
+      }
     }
   }
   return best;
@@ -849,7 +913,9 @@ const decodeClause = (
   const obj = clause as Record<string, JSONArrayless>;
   const keys = Object.keys(obj);
   const allOps = keys.length > 0 && keys.every((k) => k.startsWith("$"));
-  if (!allOps) return { eq: clause as JSONArrayless }; // nested non-op object → equality
+  if (!allOps) {
+    return { eq: clause as JSONArrayless };
+  } // nested non-op object → equality
   const bundle: {
     eq?: JSONArrayless;
     lo?: RangeInfo;
@@ -858,14 +924,23 @@ const decodeClause = (
   } = {};
   for (const k of keys) {
     const v = obj[k];
-    if (v === undefined) continue;
-    if (k === "$eq") bundle.eq = v;
-    else if (k === "$gte") bundle.lo = { value: v, inclusive: true };
-    else if (k === "$gt") bundle.lo = { value: v, inclusive: false };
-    else if (k === "$lte") bundle.hi = { value: v, inclusive: true };
-    else if (k === "$lt") bundle.hi = { value: v, inclusive: false };
-    else if (k === "$in") {
-      if (!Array.isArray(v)) return "unknown-shape";
+    if (v === undefined) {
+      continue;
+    }
+    if (k === "$eq") {
+      bundle.eq = v;
+    } else if (k === "$gte") {
+      bundle.lo = { value: v, inclusive: true };
+    } else if (k === "$gt") {
+      bundle.lo = { value: v, inclusive: false };
+    } else if (k === "$lte") {
+      bundle.hi = { value: v, inclusive: true };
+    } else if (k === "$lt") {
+      bundle.hi = { value: v, inclusive: false };
+    } else if (k === "$in") {
+      if (!Array.isArray(v)) {
+        return "unknown-shape";
+      }
       bundle.in = v as ReadonlyArray<JSONArrayless>;
     } else {
       return "unknown-shape";
@@ -883,29 +958,80 @@ const decodeClause = (
  * tighter inclusivity) always implies a looser `loF`.
  */
 const lowerBoundImplies = (loF: RangeInfo, loQ: RangeInfo | undefined): boolean => {
-  if (loQ === undefined) return false;
+  if (loQ === undefined) {
+    return false;
+  }
   // Mixed types: comparison is `false` either way; refuse implication.
-  if (typeof loF.value !== typeof loQ.value) return false;
-  if (loQ.value > loF.value) return true;
-  if (loQ.value < loF.value) return false;
+  if (typeof loF.value !== typeof loQ.value) {
+    return false;
+  }
+  if (loQ.value > loF.value) {
+    return true;
+  }
+  if (loQ.value < loF.value) {
+    return false;
+  }
   // Equal values: implies iff loQ.inclusive ⇒ loF.inclusive, OR loQ is
   // strictly stricter than loF (loQ exclusive, loF inclusive). Concretely:
   //   loF inclusive + loQ inclusive    → doc ≥ Q == F ≥ F → ok
   //   loF inclusive + loQ exclusive    → doc > Q == F > F-ε → doc > F ≥ F → ok
   //   loF exclusive + loQ inclusive    → doc ≥ Q == F → doc could be == F → NOT > F → fail
   //   loF exclusive + loQ exclusive    → doc > Q == F → ok
-  if (loF.inclusive) return true; // inclusive filter is the loosest case
+  if (loF.inclusive) {
+    return true;
+  } // inclusive filter is the loosest case
   return !loQ.inclusive; // strict filter needs strict query at equal bound
 };
 
 /** Mirror of lowerBoundImplies for upper bounds. */
 const upperBoundImplies = (hiF: RangeInfo, hiQ: RangeInfo | undefined): boolean => {
-  if (hiQ === undefined) return false;
-  if (typeof hiF.value !== typeof hiQ.value) return false;
-  if (hiQ.value < hiF.value) return true;
-  if (hiQ.value > hiF.value) return false;
-  if (hiF.inclusive) return true;
+  if (hiQ === undefined) {
+    return false;
+  }
+  if (typeof hiF.value !== typeof hiQ.value) {
+    return false;
+  }
+  if (hiQ.value < hiF.value) {
+    return true;
+  }
+  if (hiQ.value > hiF.value) {
+    return false;
+  }
+  if (hiF.inclusive) {
+    return true;
+  }
   return !hiQ.inclusive;
+};
+
+// Derive the tightest lower-bound the query enforces, preferring (in
+// order): an `$eq` clamp, the smallest `$in` value, an explicit `lo`.
+// Returns `undefined` when the query gives the planner nothing to lean
+// on — the implication check then fails fast.
+const loFromQuery = (q: OperatorBundle): RangeInfo | undefined => {
+  if (q.eq !== undefined) {
+    return { value: q.eq, inclusive: true };
+  }
+  if (q.in !== undefined && q.in.length > 0) {
+    return {
+      value: q.in.reduce((acc, v) => (v < acc ? v : acc), q.in[0]!),
+      inclusive: true,
+    };
+  }
+  return q.lo;
+};
+
+// Mirror of {@link loFromQuery} for upper bounds.
+const hiFromQuery = (q: OperatorBundle): RangeInfo | undefined => {
+  if (q.eq !== undefined) {
+    return { value: q.eq, inclusive: true };
+  }
+  if (q.in !== undefined && q.in.length > 0) {
+    return {
+      value: q.in.reduce((acc, v) => (v > acc ? v : acc), q.in[0]!),
+      inclusive: true,
+    };
+  }
+  return q.hi;
 };
 
 /**
@@ -963,7 +1089,9 @@ export const predicateImplies = <T extends JSONArraylessObject = JSONArraylessOb
 ): boolean => {
   for (const key of Object.keys(indexFilter)) {
     const filterVal = (indexFilter as Record<string, JSONArrayless | undefined>)[key];
-    if (filterVal === undefined) continue;
+    if (filterVal === undefined) {
+      continue;
+    }
 
     // Nested non-operator object → recurse.
     if (
@@ -994,25 +1122,41 @@ export const predicateImplies = <T extends JSONArraylessObject = JSONArraylessOb
 
     // Decode both clauses.
     const filterBundle = decodeClause(filterVal as JSONArrayless);
-    if (filterBundle === "unknown-shape") return false;
+    if (filterBundle === "unknown-shape") {
+      return false;
+    }
     const queryVal = (queryPredicate as Record<string, JSONArrayless | undefined>)[key];
-    if (queryVal === undefined) return false;
+    if (queryVal === undefined) {
+      return false;
+    }
     const queryBundle = decodeClause(queryVal as JSONArrayless);
-    if (queryBundle === "unknown-shape") return false;
+    if (queryBundle === "unknown-shape") {
+      return false;
+    }
 
     if (filterBundle.eq !== undefined) {
       // Filter pins an exact value. Query must establish equality.
-      if (queryBundle.eq === undefined) return false;
-      if (!deepEqualJSONArrayless(queryBundle.eq, filterBundle.eq)) return false;
+      if (queryBundle.eq === undefined) {
+        return false;
+      }
+      if (!deepEqualJSONArrayless(queryBundle.eq, filterBundle.eq)) {
+        return false;
+      }
       continue;
     }
     if (filterBundle.in !== undefined) {
       const set = filterBundle.in;
       const contains = (v: JSONArrayless): boolean => set.some((m) => deepEqualJSONArrayless(m, v));
       if (queryBundle.eq !== undefined) {
-        if (!contains(queryBundle.eq)) return false;
+        if (!contains(queryBundle.eq)) {
+          return false;
+        }
       } else if (queryBundle.in !== undefined) {
-        for (const v of queryBundle.in) if (!contains(v)) return false;
+        for (const v of queryBundle.in) {
+          if (!contains(v)) {
+            return false;
+          }
+        }
       } else {
         return false; // range query against $in filter — not a subset
       }
@@ -1023,29 +1167,14 @@ export const predicateImplies = <T extends JSONArraylessObject = JSONArraylessOb
     }
     // Range filter (lo / hi). Both bounds (if set) must be implied.
     if (filterBundle.lo !== undefined) {
-      // Query may establish the lower bound via $eq, $in, or its own lo.
-      const loQ: RangeInfo | undefined =
-        queryBundle.eq !== undefined
-          ? { value: queryBundle.eq, inclusive: true }
-          : queryBundle.in !== undefined && queryBundle.in.length > 0
-            ? {
-                value: queryBundle.in.reduce((acc, v) => (v < acc ? v : acc), queryBundle.in[0]!),
-                inclusive: true,
-              }
-            : queryBundle.lo;
-      if (!lowerBoundImplies(filterBundle.lo, loQ)) return false;
+      if (!lowerBoundImplies(filterBundle.lo, loFromQuery(queryBundle))) {
+        return false;
+      }
     }
     if (filterBundle.hi !== undefined) {
-      const hiQ: RangeInfo | undefined =
-        queryBundle.eq !== undefined
-          ? { value: queryBundle.eq, inclusive: true }
-          : queryBundle.in !== undefined && queryBundle.in.length > 0
-            ? {
-                value: queryBundle.in.reduce((acc, v) => (v > acc ? v : acc), queryBundle.in[0]!),
-                inclusive: true,
-              }
-            : queryBundle.hi;
-      if (!upperBoundImplies(filterBundle.hi, hiQ)) return false;
+      if (!upperBoundImplies(filterBundle.hi, hiFromQuery(queryBundle))) {
+        return false;
+      }
     }
   }
   return true;
@@ -1069,17 +1198,29 @@ export const predicateImplies = <T extends JSONArraylessObject = JSONArraylessOb
  * with `Array.isArray` first).
  */
 export const deepEqualJSONArrayless = (a: JSONArrayless, b: JSONArrayless): boolean => {
-  if (a === b) return true; // primitives + object identity
-  if (typeof a !== "object" || typeof b !== "object") return false;
+  if (a === b) {
+    return true;
+  } // primitives + object identity
+  if (typeof a !== "object" || typeof b !== "object") {
+    return false;
+  }
   const aKeys = Object.keys(a);
   const bKeys = Object.keys(b);
-  if (aKeys.length !== bKeys.length) return false;
+  if (aKeys.length !== bKeys.length) {
+    return false;
+  }
   for (const key of aKeys) {
-    if (!(key in b)) return false;
+    if (!(key in b)) {
+      return false;
+    }
     const aSub = (a as Record<string, JSONArrayless>)[key];
     const bSub = (b as Record<string, JSONArrayless>)[key];
-    if (aSub === undefined || bSub === undefined) return false;
-    if (!deepEqualJSONArrayless(aSub, bSub)) return false;
+    if (aSub === undefined || bSub === undefined) {
+      return false;
+    }
+    if (!deepEqualJSONArrayless(aSub, bSub)) {
+      return false;
+    }
   }
   return true;
 };

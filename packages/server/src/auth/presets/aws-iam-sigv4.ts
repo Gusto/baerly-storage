@@ -132,26 +132,44 @@ export const awsIamSigV4 = (opts: AwsIamSigV4Options): Verifier => {
 
   return async (req: Request) => {
     const auth = req.headers.get("Authorization");
-    if (auth === null) return null;
+    if (auth === null) {
+      return null;
+    }
     const m = AUTH_REGEX.exec(auth);
-    if (m === null) return null;
+    if (m === null) {
+      return null;
+    }
     const [, keyId, scopeDate, scopeRegion, scopeService, signedHeadersList, sigHex] =
       m as unknown as [string, string, string, string, string, string, string];
     const principal = byKeyId.get(keyId);
-    if (principal === undefined) return null;
-    if (scopeRegion !== region || scopeService !== service) return null;
+    if (principal === undefined) {
+      return null;
+    }
+    if (scopeRegion !== region || scopeService !== service) {
+      return null;
+    }
 
     const amzDate = req.headers.get("X-Amz-Date");
-    if (amzDate === null) return null;
+    if (amzDate === null) {
+      return null;
+    }
     const datetime = parseAmzDate(amzDate);
-    if (datetime === null) return null;
-    if (Math.abs(Date.now() - datetime) > clockSkewMs) return null;
-    if (amzDate.slice(0, 8) !== scopeDate) return null;
+    if (datetime === null) {
+      return null;
+    }
+    if (Math.abs(Date.now() - datetime) > clockSkewMs) {
+      return null;
+    }
+    if (amzDate.slice(0, 8) !== scopeDate) {
+      return null;
+    }
 
     const signedHeaders = signedHeadersList.split(";");
     const url = new URL(req.url);
     const canonicalHeaders = buildCanonicalHeaders(req.headers, signedHeaders, url.host);
-    if (canonicalHeaders === null) return null;
+    if (canonicalHeaders === null) {
+      return null;
+    }
 
     const bodyHash = await computeBodyHash(req);
     if (bodyHash === null) {
@@ -184,8 +202,12 @@ export const awsIamSigV4 = (opts: AwsIamSigV4Options): Verifier => {
     const kSigning = await hmac(kService, "aws4_request");
     const expectedSigBytes = new Uint8Array(await hmac(kSigning, stringToSign));
     const actualSigBytes = hexToBytes(sigHex);
-    if (actualSigBytes === null) return null;
-    if (!timingSafeEqual(expectedSigBytes, actualSigBytes)) return null;
+    if (actualSigBytes === null) {
+      return null;
+    }
+    if (!timingSafeEqual(expectedSigBytes, actualSigBytes)) {
+      return null;
+    }
 
     return {
       tenantPrefix: principal.tenantPrefix,
@@ -229,20 +251,28 @@ const bufToHex = (buf: ArrayBuffer): string => {
 };
 
 const hexToBytes = (hex: string): Uint8Array | null => {
-  if (hex.length % 2 !== 0) return null;
+  if (hex.length % 2 !== 0) {
+    return null;
+  }
   const out = new Uint8Array(hex.length / 2);
   for (let i = 0; i < out.length; i++) {
     const hi = parseHexNibble(hex.charCodeAt(i * 2));
     const lo = parseHexNibble(hex.charCodeAt(i * 2 + 1));
-    if (hi < 0 || lo < 0) return null;
+    if (hi < 0 || lo < 0) {
+      return null;
+    }
     out[i] = (hi << 4) | lo;
   }
   return out;
 };
 
 const parseHexNibble = (code: number): number => {
-  if (code >= 48 && code <= 57) return code - 48; // 0-9
-  if (code >= 97 && code <= 102) return code - 87; // a-f
+  if (code >= 48 && code <= 57) {
+    return code - 48;
+  } // 0-9
+  if (code >= 97 && code <= 102) {
+    return code - 87;
+  } // a-f
   return -1;
 };
 
@@ -252,7 +282,9 @@ const parseHexNibble = (code: number): number => {
  */
 const parseAmzDate = (s: string): number | null => {
   const m = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/.exec(s);
-  if (m === null) return null;
+  if (m === null) {
+    return null;
+  }
   const [, yyyy, mm, dd, hh, min, sec] = m as unknown as [
     string,
     string,
@@ -277,7 +309,9 @@ const buildCanonicalHeaders = (
       value = headers.get("Host") ?? host;
     } else {
       value = headers.get(name);
-      if (value === null) return null;
+      if (value === null) {
+        return null;
+      }
     }
     lines.push(`${name}:${value.replace(/\s+/g, " ")}`);
   }
@@ -292,7 +326,9 @@ const buildCanonicalHeaders = (
  * mirror that to stay byte-equal with their canonical string.
  */
 const encodePath = (path: string): string => {
-  if (path.length === 0) return "/";
+  if (path.length === 0) {
+    return "/";
+  }
   const enc = encodeURIComponent(path).replace(/%2F/g, "/");
   return enc.replace(/[!'()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
 };
@@ -300,7 +336,9 @@ const encodePath = (path: string): string => {
 const canonicalQueryString = (params: URLSearchParams): string => {
   const pairs: string[] = [];
   for (const [k, v] of params) {
-    if (k.length === 0) continue;
+    if (k.length === 0) {
+      continue;
+    }
     pairs.push(
       `${encodeURIComponent(k).replace(
         /[!'()*]/g,
@@ -323,7 +361,9 @@ const canonicalQueryString = (params: URLSearchParams): string => {
  */
 const computeBodyHash = async (req: Request): Promise<string | null> => {
   const headerHash = req.headers.get("X-Amz-Content-Sha256");
-  if (headerHash !== null) return headerHash;
+  if (headerHash !== null) {
+    return headerHash;
+  }
   if (req.body === null || req.method === "GET" || req.method === "HEAD") {
     return bufToHex(await sha256(new Uint8Array(0)));
   }
@@ -332,17 +372,23 @@ const computeBodyHash = async (req: Request): Promise<string | null> => {
   if (reader === undefined) {
     // No stream — read via arrayBuffer (e.g. small in-memory bodies).
     const buf = new Uint8Array(await cloned.arrayBuffer());
-    if (buf.byteLength > MAX_BODY_BYTES) return null;
+    if (buf.byteLength > MAX_BODY_BYTES) {
+      return null;
+    }
     return bufToHex(await sha256(buf));
   }
   const chunks: Uint8Array[] = [];
   let total = 0;
   for (;;) {
     const { done, value } = await reader.read();
-    if (done) break;
+    if (done) {
+      break;
+    }
     if (value !== undefined) {
       total += value.byteLength;
-      if (total > MAX_BODY_BYTES) return null;
+      if (total > MAX_BODY_BYTES) {
+        return null;
+      }
       chunks.push(value);
     }
   }

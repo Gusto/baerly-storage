@@ -65,8 +65,12 @@ export class MockFetch {
   fetch: Fetcher = async (req: Request): Promise<Response> => {
     const url = new URL(req.url);
     for (const h of this.handlers) {
-      if (h.method !== req.method) continue;
-      if (!h.pattern.test(url.pathname + url.search)) continue;
+      if (h.method !== req.method) {
+        continue;
+      }
+      if (!h.pattern.test(url.pathname + url.search)) {
+        continue;
+      }
       return h.handle(req);
     }
     return new Response(

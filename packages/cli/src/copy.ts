@@ -111,15 +111,18 @@ export const parseBucketUri = async (uri: string): Promise<ParsedBucketUri> => {
     // so the full endpoint flows through verbatim.
     const r2Host = endpoint.match(/^https?:\/\/([^./]+)\.r2\.cloudflarestorage\.com\b/i);
     const isAws = /^https?:\/\/s3(\.[^.]+)?\.amazonaws\.com\b/i.test(endpoint);
-    const storage: Storage =
-      r2Host !== null
-        ? r2Storage({ accountId: r2Host[1]!, bucket, accessKeyId, secretAccessKey })
-        : isAws
-          ? s3Storage({ region, bucket, accessKeyId, secretAccessKey })
-          : minioStorage({ endpoint, bucket, accessKeyId, secretAccessKey });
+    const storage: Storage = pickS3Storage({
+      r2Host,
+      isAws,
+      endpoint,
+      bucket,
+      accessKeyId,
+      secretAccessKey,
+      region,
+    });
     return {
       storage,
-      keyPrefix: prefix === "" ? "" : prefix.endsWith("/") ? prefix : `${prefix}/`,
+      keyPrefix: normalizeKeyPrefix(prefix),
     };
   }
   if (uri.startsWith("file:///")) {
@@ -221,8 +224,12 @@ const COPY_ARGS = {
 const KNOWN_KEYS: ReadonlySet<string> = new Set(["from", "from-snapshot", "to", "json", "_"]);
 
 const errorToExitCode = (code: string): number => {
-  if (code === "InvalidConfig") return 1;
-  if (code === "Conflict" || code === "Internal" || code === "InvalidResponse") return 3;
+  if (code === "InvalidConfig") {
+    return 1;
+  }
+  if (code === "Conflict" || code === "Internal" || code === "InvalidResponse") {
+    return 3;
+  }
   return 2;
 };
 
@@ -259,12 +266,12 @@ const handleCopy = async (args: ParsedArgs<typeof COPY_ARGS>): Promise<number> =
     await doCopy(src, dst, cursor);
     emitSuccess({ command: "copy", status: "ok" });
     return 0;
-  } catch (err) {
-    if (err instanceof BaerlyError) {
-      emitError("copy", err.code, err.message);
-      return errorToExitCode(err.code);
+  } catch (error) {
+    if (error instanceof BaerlyError) {
+      emitError("copy", error.code, error.message);
+      return errorToExitCode(error.code);
     }
-    emitError("copy", "Unknown", (err as Error).message);
+    emitError("copy", "Unknown", (error as Error).message);
     return 2;
   }
 };
@@ -285,7 +292,9 @@ export const copy = defineCommand({
   args: COPY_ARGS,
   run: async ({ args }) => {
     const code = await handleCopy(args);
-    if (code !== 0) process.exit(code);
+    if (code !== 0) {
+      process.exit(code);
+    }
   },
 });
 
@@ -305,9 +314,9 @@ export const runCopy = async (argv: readonly string[]): Promise<number> => {
   let parsed: ParsedArgs<typeof COPY_ARGS>;
   try {
     parsed = parseArgs<typeof COPY_ARGS>(argv as string[], COPY_ARGS);
-  } catch (err) {
+  } catch (error) {
     setJsonMode(argv.includes("--json"));
-    emitError("copy", "InvalidConfig", (err as Error).message);
+    emitError("copy", "InvalidConfig", (error as Error).message);
     return 1;
   }
   return handleCopy(parsed);
@@ -390,14 +399,16 @@ export const doCopy = async (
     let entry: LogEntry;
     try {
       entry = JSON.parse(textDecoder.decode(got.body)) as LogEntry;
-    } catch (e) {
+    } catch (error) {
       throw new BaerlyError(
         "InvalidResponse",
         `baerly copy: log entry at ${logEntryKey} is not valid JSON`,
-        e,
+        error,
       );
     }
-    if (entry.collection !== collection || entry.doc_id === undefined) continue;
+    if (entry.collection !== collection || entry.doc_id === undefined) {
+      continue;
+    }
     if ((entry.op === "I" || entry.op === "U") && entry.new !== undefined) {
       base.set(entry.doc_id, entry.new);
     } else if (entry.op === "D") {
@@ -410,7 +421,15 @@ export const doCopy = async (
   //    encoding as the compactor — same fold ⇒ same bytes ⇒ same
   //    SHA-256 ⇒ same filename.
   const docs = Array.from(base.entries())
-    .toSorted(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .toSorted(([a], [b]) => {
+      if (a < b) {
+        return -1;
+      }
+      if (a > b) {
+        return 1;
+      }
+      return 0;
+    })
     .map(([id, body]) => ({ _id: id, body }));
   const body: SnapshotBody = {
     schema_version: 1,
@@ -442,4 +461,39 @@ export const doCopy = async (
     writer_fence: { epoch: 0, owner: COPY_OWNER, claimed_at: "" },
   };
   await createCurrentJson(dst.storage, dstCurKey, seeded);
+};
+
+// Endpoint-shape dispatch for `s3://...` URIs. Extracted so the parser
+// doesn't carry an inline nested ternary.
+interface S3StoragePick {
+  readonly r2Host: RegExpMatchArray | null;
+  readonly isAws: boolean;
+  readonly endpoint: string;
+  readonly bucket: string;
+  readonly accessKeyId: string;
+  readonly secretAccessKey: string;
+  readonly region: string;
+}
+const pickS3Storage = (opts: S3StoragePick): Storage => {
+  const { r2Host, isAws, endpoint, bucket, accessKeyId, secretAccessKey, region } = opts;
+  if (r2Host !== null) {
+    return r2Storage({ accountId: r2Host[1]!, bucket, accessKeyId, secretAccessKey });
+  }
+  if (isAws) {
+    return s3Storage({ region, bucket, accessKeyId, secretAccessKey });
+  }
+  return minioStorage({ endpoint, bucket, accessKeyId, secretAccessKey });
+};
+
+// "/foo" → "foo/"; "" → ""; "foo/" stays "foo/". S3 prefixes are
+// keystroke-significant; canonicalize to ensure the manifest pointer
+// at the target matches its source's encoding.
+const normalizeKeyPrefix = (prefix: string): string => {
+  if (prefix === "") {
+    return "";
+  }
+  if (prefix.endsWith("/")) {
+    return prefix;
+  }
+  return `${prefix}/`;
 };

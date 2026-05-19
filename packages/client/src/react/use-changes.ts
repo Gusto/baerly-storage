@@ -69,10 +69,12 @@ export const useChanges = (
   const [events, setEvents] = useState<ReadonlyArray<LogEntry>>([]);
   const [cursor, setCursor] = useState<string>(since);
   const [polling, setPolling] = useState<boolean>(false);
-  const [error, setError] = useState<Error | undefined>(undefined);
+  const [pollError, setPollError] = useState<Error | undefined>(undefined);
 
   useEffect(() => {
-    if (!enabled) return undefined;
+    if (!enabled) {
+      return undefined;
+    }
     const controller = new AbortController();
     // `stopped` lives in a single-cell ref so the loop reads it
     // through `.current` — that's what the `useEffect` cleanup
@@ -97,7 +99,9 @@ export const useChanges = (
             cursor: currentCursor,
             signal: controller.signal,
           });
-          if (stopped.current) return;
+          if (stopped.current) {
+            return;
+          }
           // Idle no-op: an empty batch with an unchanged cursor
           // carries no information. Skipping the `setEvents` /
           // `setCursor` calls here prevents a re-render and keeps
@@ -109,12 +113,12 @@ export const useChanges = (
             setEvents(res.events);
             setCursor(res.next_cursor);
           }
-          setError(undefined);
-        } catch (e) {
-          if (stopped.current || (e instanceof DOMException && e.name === "AbortError")) {
+          setPollError(undefined);
+        } catch (error) {
+          if (stopped.current || (error instanceof DOMException && error.name === "AbortError")) {
             return;
           }
-          setError(e instanceof Error ? e : new Error(String(e)));
+          setPollError(error instanceof Error ? error : new Error(String(error)));
           // 1-second backoff on error. Don't accelerate — the server
           // will mostly recover within one budget cycle anyway and a
           // tight retry loop just burns mobile battery.
@@ -132,5 +136,5 @@ export const useChanges = (
     };
   }, [client, table, enabled, since]);
 
-  return { events, cursor, polling, error };
+  return { events, cursor, polling, error: pollError };
 };

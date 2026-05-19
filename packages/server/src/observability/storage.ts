@@ -57,9 +57,13 @@ export const observableStorage = (inner: Storage, recorder: MetricsRecorder): St
     outcome: string,
     bytes?: number,
   ): void => {
-    if (!logger.isEnabledFor("debug")) return;
+    if (!logger.isEnabledFor("debug")) {
+      return;
+    }
     const props: Record<string, unknown> = { op, key, duration_ms: durationMs, outcome };
-    if (bytes !== undefined) props["bytes"] = bytes;
+    if (bytes !== undefined) {
+      props["bytes"] = bytes;
+    }
     logger.debug("storage", props);
   };
 
@@ -90,12 +94,12 @@ export const observableStorage = (inner: Storage, recorder: MetricsRecorder): St
         recordDuration(op, dt);
         debug(op, key, dt, result === null ? "miss" : "hit", result?.body.byteLength);
         return result;
-      } catch (err) {
+      } catch (error) {
         const dt = performance.now() - start;
         recordDuration(op, dt);
         recordError(op);
         debug(op, key, dt, "error");
-        throw err;
+        throw error;
       }
     },
 
@@ -109,12 +113,12 @@ export const observableStorage = (inner: Storage, recorder: MetricsRecorder): St
         recordDuration(op, dt);
         debug(op, key, dt, "ok", body.byteLength);
         return result;
-      } catch (err) {
+      } catch (error) {
         const dt = performance.now() - start;
         recordDuration(op, dt);
         recordError(op);
         debug(op, key, dt, "error", body.byteLength);
-        throw err;
+        throw error;
       }
     },
 
@@ -127,12 +131,12 @@ export const observableStorage = (inner: Storage, recorder: MetricsRecorder): St
         const dt = performance.now() - start;
         recordDuration(op, dt);
         debug(op, key, dt, "ok");
-      } catch (err) {
+      } catch (error) {
         const dt = performance.now() - start;
         recordDuration(op, dt);
         recordError(op);
         debug(op, key, dt, "error");
-        throw err;
+        throw error;
       }
     },
 
@@ -147,16 +151,18 @@ export const observableStorage = (inner: Storage, recorder: MetricsRecorder): St
       return {
         async *[Symbol.asyncIterator]() {
           try {
-            for await (const entry of innerIter) yield entry;
+            for await (const entry of innerIter) {
+              yield entry;
+            }
             const dt = performance.now() - start;
             recordDuration(op, dt);
             debug(op, prefix, dt, "ok");
-          } catch (err) {
+          } catch (error) {
             const dt = performance.now() - start;
             recordDuration(op, dt);
             recordError(op);
             debug(op, prefix, dt, "error");
-            throw err;
+            throw error;
           }
         },
       };

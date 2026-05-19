@@ -85,8 +85,11 @@ export class ManifestCachedStorage implements Storage {
     if (this.#shouldCacheRead(isManifest)) {
       const cached = this.#cache.get(key);
       if (cached !== undefined) {
-        if (isManifest) this.#manifestHits++;
-        else this.#dataHits++;
+        if (isManifest) {
+          this.#manifestHits++;
+        } else {
+          this.#dataHits++;
+        }
         // Refresh LRU recency.
         this.#cache.delete(key);
         this.#cache.set(key, cached);
@@ -98,8 +101,11 @@ export class ManifestCachedStorage implements Storage {
         }
         return { body: cached.body, etag: cached.etag };
       }
-      if (isManifest) this.#manifestMisses++;
-      else this.#dataMisses++;
+      if (isManifest) {
+        this.#manifestMisses++;
+      } else {
+        this.#dataMisses++;
+      }
     }
     const fresh = await this.#inner.get(key, opts);
     if (fresh !== null && this.#shouldCacheRead(isManifest)) {
@@ -134,43 +140,56 @@ export class ManifestCachedStorage implements Storage {
 
   #shouldCacheRead(isManifest: boolean): boolean {
     switch (this.#mode) {
-      case "cold":
+      case "cold": {
         return false;
-      case "metadata-warm":
+      }
+      case "metadata-warm": {
         return isManifest;
+      }
       case "data-warm":
-      case "tiny-cache":
+      case "tiny-cache": {
         return true;
+      }
     }
   }
 
   #admit(key: string, entry: CacheEntry): void {
     const cap = this.#capacity();
-    if (cap === 0) return;
-    if (this.#cache.has(key)) this.#cache.delete(key);
+    if (cap === 0) {
+      return;
+    }
+    if (this.#cache.has(key)) {
+      this.#cache.delete(key);
+    }
     this.#cache.set(key, entry);
     // Evict oldest entry when over capacity.
     while (this.#cache.size > cap) {
       const oldest = this.#cache.keys().next().value;
-      if (oldest === undefined) break;
+      if (oldest === undefined) {
+        break;
+      }
       this.#cache.delete(oldest);
     }
   }
 
   #capacity(): number {
     switch (this.#mode) {
-      case "cold":
+      case "cold": {
         return 0;
-      case "metadata-warm":
+      }
+      case "metadata-warm": {
         // Manifest keys only; in practice ~3-4 per (tenant, table):
         // current.json + the current snapshot + a handful of recent
         // snapshot pointers. 256 is generous for the bench's
         // single-digit-tenants → low-thousand-tenants range.
         return 256;
-      case "data-warm":
+      }
+      case "data-warm": {
         return DATA_WARM_ENTRIES;
-      case "tiny-cache":
+      }
+      case "tiny-cache": {
         return TINY_CACHE_ENTRIES;
+      }
     }
   }
 }

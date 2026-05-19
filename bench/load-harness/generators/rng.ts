@@ -69,7 +69,9 @@ export function makeRng(seed: number): Rng {
       let pick = r() * total;
       for (let i = 0; i < xs.length; i++) {
         pick -= weights[i]!;
-        if (pick <= 0) return xs[i]!;
+        if (pick <= 0) {
+          return xs[i]!;
+        }
       }
       return xs[xs.length - 1]!;
     },

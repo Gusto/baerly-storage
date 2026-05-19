@@ -29,7 +29,7 @@
  */
 
 import { fc, test as propTest } from "@fast-check/vitest";
-import { describe, expect, it } from "vitest";
+import { describe, expect, test } from "vitest";
 import {
   CURRENT_JSON_SCHEMA_VERSION,
   createCurrentJson,
@@ -81,11 +81,21 @@ interface Row extends JSONArraylessObject {
 const readAllRowIds = async (storage: Storage): Promise<string[]> => {
   const db = Db.create({ storage, app: "a", tenant: "t" });
   const rows = await db.table<Row>(COLLECTION).where({}).all();
-  return [...rows].map((r) => r._id).toSorted((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  return [...rows]
+    .map((r) => r._id)
+    .toSorted((a, b) => {
+      if (a < b) {
+        return -1;
+      }
+      if (a > b) {
+        return 1;
+      }
+      return 0;
+    });
 };
 
 describe("abortingStorage harness sanity", () => {
-  it("armAt(K) fires AbortError on the K-th underlying op", async () => {
+  test("armAt(K) fires AbortError on the K-th underlying op", async () => {
     const inner = new MemoryStorage();
     const handle = abortingStorage(inner);
     // op 1 = put, op 2 = get; arm op 2 — first put must succeed,
@@ -204,10 +214,10 @@ describe("Compactor crash never leaves readable corrupt snapshot", () => {
       const handle = abortingStorage(inner);
       handle.armAt(abortAfter);
       try {
-        await compact(
-          { storage: handle.storage, currentJsonKey: CURRENT_JSON_KEY },
-          { minEntriesToCompact: 10, maxEntriesPerRun: numInserts } as InternalCompactOptions,
-        );
+        await compact({ storage: handle.storage, currentJsonKey: CURRENT_JSON_KEY }, {
+          minEntriesToCompact: 10,
+          maxEntriesPerRun: numInserts,
+        } as InternalCompactOptions);
       } catch {
         // Expected — abort or `Conflict`. Either way, the bucket must
         // still surface the original row set to a fresh reader.
@@ -241,19 +251,19 @@ describe("GC crash never deletes a still-referenced key", () => {
       }
       // Fold the log so there's a snapshot + stale-log surface for GC
       // to mark as candidates.
-      await compact(
-        { storage: inner, currentJsonKey: CURRENT_JSON_KEY },
-        { minEntriesToCompact: 10, maxEntriesPerRun: numInserts } as InternalCompactOptions,
-      );
+      await compact({ storage: inner, currentJsonKey: CURRENT_JSON_KEY }, {
+        minEntriesToCompact: 10,
+        maxEntriesPerRun: numInserts,
+      } as InternalCompactOptions);
       const before = await readAllRowIds(inner);
 
       const handle = abortingStorage(inner);
       handle.armAt(abortAfter);
       try {
-        await runGc(
-          { storage: handle.storage, currentJsonKey: CURRENT_JSON_KEY },
-          { graceMillis: 0, maxSweepsPerRun: 200 } as InternalRunGcOptions,
-        );
+        await runGc({ storage: handle.storage, currentJsonKey: CURRENT_JSON_KEY }, {
+          graceMillis: 0,
+          maxSweepsPerRun: 200,
+        } as InternalRunGcOptions);
       } catch {
         // Expected — abort or `Conflict`. The reader contract is the
         // gate.
@@ -267,7 +277,7 @@ describe("GC crash never deletes a still-referenced key", () => {
 });
 
 describe("Long-running fuzzer (many tick + crash cycles)", () => {
-  it(
+  test(
     "converges to a consistent reader view after up to 200 ops with random aborts",
     { timeout: PROP_TIMEOUT_MS },
     async () => {
@@ -313,33 +323,33 @@ describe("Long-running fuzzer (many tick + crash cycles)", () => {
                   }
                   case "compact": {
                     if (op.abortAfter === undefined) {
-                      await compact(
-                        { storage: inner, currentJsonKey: CURRENT_JSON_KEY },
-                        { minEntriesToCompact: 5, maxEntriesPerRun: 200 } as InternalCompactOptions,
-                      );
+                      await compact({ storage: inner, currentJsonKey: CURRENT_JSON_KEY }, {
+                        minEntriesToCompact: 5,
+                        maxEntriesPerRun: 200,
+                      } as InternalCompactOptions);
                     } else {
                       const handle = abortingStorage(inner);
                       handle.armAt(op.abortAfter);
-                      await compact(
-                        { storage: handle.storage, currentJsonKey: CURRENT_JSON_KEY },
-                        { minEntriesToCompact: 5, maxEntriesPerRun: 200 } as InternalCompactOptions,
-                      );
+                      await compact({ storage: handle.storage, currentJsonKey: CURRENT_JSON_KEY }, {
+                        minEntriesToCompact: 5,
+                        maxEntriesPerRun: 200,
+                      } as InternalCompactOptions);
                     }
                     break;
                   }
                   case "gc": {
                     if (op.abortAfter === undefined) {
-                      await runGc(
-                        { storage: inner, currentJsonKey: CURRENT_JSON_KEY },
-                        { graceMillis: 0, maxSweepsPerRun: 200 } as InternalRunGcOptions,
-                      );
+                      await runGc({ storage: inner, currentJsonKey: CURRENT_JSON_KEY }, {
+                        graceMillis: 0,
+                        maxSweepsPerRun: 200,
+                      } as InternalRunGcOptions);
                     } else {
                       const handle = abortingStorage(inner);
                       handle.armAt(op.abortAfter);
-                      await runGc(
-                        { storage: handle.storage, currentJsonKey: CURRENT_JSON_KEY },
-                        { graceMillis: 0, maxSweepsPerRun: 200 } as InternalRunGcOptions,
-                      );
+                      await runGc({ storage: handle.storage, currentJsonKey: CURRENT_JSON_KEY }, {
+                        graceMillis: 0,
+                        maxSweepsPerRun: 200,
+                      } as InternalRunGcOptions);
                     }
                     break;
                   }

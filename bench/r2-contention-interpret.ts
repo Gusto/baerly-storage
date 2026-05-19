@@ -113,12 +113,16 @@ function splitCsvLine(line: string): string[] {
 
 function parseCsv(text: string): readonly Row[] {
   const lines = text.split("\n").filter((l) => l.length > 0);
-  if (lines.length < 1) return [];
+  if (lines.length < 1) {
+    return [];
+  }
   const header = splitCsvLine(lines[0]!);
   const rows: Row[] = [];
   for (let i = 1; i < lines.length; i++) {
     const fields = splitCsvLine(lines[i]!);
-    if (fields.length !== header.length) continue;
+    if (fields.length !== header.length) {
+      continue;
+    }
     const get = (name: string): string => fields[header.indexOf(name)]!;
     rows.push({
       cell_id: get("cell_id"),
@@ -380,8 +384,8 @@ async function main(): Promise<number> {
   if (inputPath === "") {
     try {
       inputPath = await findLatestMatrix();
-    } catch (e) {
-      process.stderr.write(`bench:r2:interpret: ${(e as Error).message}\n`);
+    } catch (error) {
+      process.stderr.write(`bench:r2:interpret: ${(error as Error).message}\n`);
       return 2;
     }
   } else if (!inputPath.endsWith(".csv")) {
@@ -390,8 +394,10 @@ async function main(): Promise<number> {
   let text: string;
   try {
     text = await readFile(inputPath, "utf8");
-  } catch (e) {
-    process.stderr.write(`bench:r2:interpret: cannot read ${inputPath}: ${(e as Error).message}\n`);
+  } catch (error) {
+    process.stderr.write(
+      `bench:r2:interpret: cannot read ${inputPath}: ${(error as Error).message}\n`,
+    );
     return 2;
   }
   const rows = parseCsv(text);
@@ -411,13 +417,17 @@ async function main(): Promise<number> {
   );
 
   const anyFailure = d1.failed || d2.failed || d3.failed || d4.failed || d5.failed;
-  if (anyFailure) return 1;
+  if (anyFailure) {
+    return 1;
+  }
   // In strict mode, an "insufficient data" / "not measured" / "not
   // applicable" outcome on any gate also fails — so CI catches
   // incomplete matrices.
   if (strict) {
     const insufficient = [d1, d2, d3, d4, d5].some((d) => d.markdown.includes("**Status: "));
-    if (insufficient) return 1;
+    if (insufficient) {
+      return 1;
+    }
   }
   return 0;
 }

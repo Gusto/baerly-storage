@@ -24,7 +24,9 @@ import type { Storage, Verifier } from "baerly-storage";
 
 const reqEnv = (name: string): string => {
   const v = process.env[name];
-  if (v === undefined || v === "") throw new Error(`Missing required env var: ${name}`);
+  if (v === undefined || v === "") {
+    throw new Error(`Missing required env var: ${name}`);
+  }
   return v;
 };
 
@@ -58,7 +60,8 @@ const verifier: Verifier =
 const maintenance =
   process.env["MAINTENANCE_COLLECTIONS"] !== undefined
     ? {
-        collections: process.env["MAINTENANCE_COLLECTIONS"].split(",")
+        collections: process.env["MAINTENANCE_COLLECTIONS"]
+          .split(",")
           .map((c) => c.trim())
           .filter((c) => c.length > 0),
         tenants: [TENANT],

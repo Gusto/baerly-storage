@@ -39,7 +39,7 @@ import {
   type ObservabilityContext,
 } from "./context.ts";
 import { deriveOutcome } from "./derive-outcome.ts";
-import { RequestScopedMetricsRecorder } from "./recorder.ts";
+import type { RequestScopedMetricsRecorder } from "./recorder.ts";
 import { serializeError } from "./redact.ts";
 import { decideSample } from "./sampling.ts";
 
@@ -96,15 +96,18 @@ export const flushCanonicalLine = (
   const logger = getLogger(UNIT_TO_CATEGORY[opts.unit]);
 
   switch (level) {
-    case "error":
+    case "error": {
       logger.error("canonical", properties);
       return;
-    case "warn":
+    }
+    case "warn": {
       logger.warn("canonical", properties);
       return;
-    case "info":
+    }
+    case "info": {
       logger.info("canonical", properties);
       return;
+    }
   }
 };
 
@@ -148,9 +151,9 @@ export const withObservability = async <T>(
     const result = await runWithContext(ctx, () => fn(ctx, recorder));
     flushCanonicalLine(ctx, recorder, { unit, outcome: "ok" });
     return result;
-  } catch (err) {
-    flushCanonicalLine(ctx, recorder, { unit, outcome: "error", error: err });
-    throw err;
+  } catch (error) {
+    flushCanonicalLine(ctx, recorder, { unit, outcome: "error", error: error });
+    throw error;
   }
 };
 
@@ -193,12 +196,12 @@ export const withHttpObservability = async (
     try {
       response = await fetch(req);
       return response;
-    } catch (err) {
+    } catch (error) {
       // Rare: a throw escaped `app.onError` (e.g. a non-Error
       // rejection that compose rethrows). The caller sees the throw;
       // we record it on the canonical line as best we can.
-      caughtError = err;
-      throw err;
+      caughtError = error;
+      throw error;
     } finally {
       // Wire status: from the Response when the inner fetch resolved,
       // else 500 for the escaped-throw fallback (matches the
@@ -245,7 +248,9 @@ const reconstructErrorFromEnvelope = async (response: Response): Promise<unknown
     };
     const code = body.error?.code;
     const message = body.error?.message;
-    if (typeof code !== "string" || typeof message !== "string") return undefined;
+    if (typeof code !== "string" || typeof message !== "string") {
+      return undefined;
+    }
     return new BaerlyError(code as BaerlyError["code"], message);
   } catch {
     return undefined;
@@ -284,10 +289,16 @@ export const flushUnauthorizedAndRespond = (
 type Level = "info" | "warn" | "error";
 
 const pickLevel = (opts: FlushCanonicalLineOptions): Level => {
-  if (opts.error !== undefined) return "error";
+  if (opts.error !== undefined) {
+    return "error";
+  }
   if (opts.status !== undefined) {
-    if (opts.status >= 500) return "error";
-    if (opts.status >= 400) return "warn";
+    if (opts.status >= 500) {
+      return "error";
+    }
+    if (opts.status >= 400) {
+      return "warn";
+    }
   }
   return "info";
 };
@@ -305,12 +316,18 @@ const buildProperties = (
     duration_ms,
     outcome: opts.outcome,
   };
-  if (opts.status !== undefined) props["status"] = opts.status;
+  if (opts.status !== undefined) {
+    props["status"] = opts.status;
+  }
 
   // ctx.fields can override summary entries (operator-driven
   // override); opts.extra wins last so callers retain final say.
-  for (const [k, v] of ctx.fields) props[k] = v;
-  if (opts.extra !== undefined) Object.assign(props, opts.extra);
+  for (const [k, v] of ctx.fields) {
+    props[k] = v;
+  }
+  if (opts.extra !== undefined) {
+    Object.assign(props, opts.extra);
+  }
 
   if (opts.error !== undefined) {
     props["error"] = serializeError(opts.error, level === "error");

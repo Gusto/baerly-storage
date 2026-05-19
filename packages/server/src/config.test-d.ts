@@ -12,9 +12,8 @@
  * include glob (see `vitest.config.ts`).
  */
 
-import type { JSONArraylessObject } from "@baerly/protocol";
-import type { CollectionNames, RowOf } from "./config.ts";
-import { defineConfig } from "./config.ts";
+import type { JSONArraylessObject, Storage } from "@baerly/protocol";
+import { type CollectionNames, defineConfig, type RowOf } from "./config.ts";
 import { Db } from "./db.ts";
 import type { SchemaValidator } from "./schema.ts";
 
@@ -83,7 +82,7 @@ export type _AuditFallsBackToRecord = Expect<Equal<Audit, Record<string, unknown
 // it — only `Db.create({ storage, ... })`'s signature is exercised.
 // `declare const` is the standard TS idiom for synthesising a typed
 // value for type-test purposes without runtime cost.
-declare const memStorage: import("@baerly/protocol").Storage;
+declare const memStorage: Storage;
 
 // Bound: passing `config` captures TConfig and lets `db.table(name)`
 // infer the row shape from `collections[name].schema`.

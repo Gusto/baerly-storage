@@ -9,13 +9,15 @@ export const toJS = (grounding: Grounding, kb: Knowledge): string =>
     .join(", ")};\n${Object.keys(kb).join(" &&\n")}`;
 
 export const check = (grounding: Grounding, kb: Knowledge): boolean => {
-  if (Object.keys(kb).length === 0) return true;
+  if (Object.keys(kb).length === 0) {
+    return true;
+  }
   const expr = toJS(grounding, kb);
   try {
     return eval?.(expr);
-  } catch (err) {
+  } catch (error) {
     console.error(expr);
-    throw err;
+    throw error;
   }
 };
 

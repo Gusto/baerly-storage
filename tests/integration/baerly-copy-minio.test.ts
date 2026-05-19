@@ -20,7 +20,7 @@
  */
 import { AwsClient } from "aws4fetch";
 import { DOMParser } from "@xmldom/xmldom";
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, test } from "vitest";
 import {
   CURRENT_JSON_SCHEMA_VERSION,
   S3HttpStorage,
@@ -74,7 +74,7 @@ describe.runIf(minioEnabled)("baerly copy @ Minio :9102", () => {
     await createBucket(signer, MINIO_ENDPOINT, DST_BUCKET);
   });
 
-  it("preserves find() parity across Minio buckets", async () => {
+  test("preserves find() parity across Minio buckets", async () => {
     // Per-test randomised collection so reruns against the persistent
     // dev Minio don't collide. The two buckets host different
     // collection paths; cleanup is "next test uses a fresh prefix."
@@ -119,7 +119,15 @@ describe.runIf(minioEnabled)("baerly copy @ Minio :9102", () => {
     );
 
     const sorted = <T extends { _id: string }>(rs: readonly T[]): T[] =>
-      [...rs].toSorted((a, b) => (a._id < b._id ? -1 : a._id > b._id ? 1 : 0));
+      [...rs].toSorted((a, b) => {
+        if (a._id < b._id) {
+          return -1;
+        }
+        if (a._id > b._id) {
+          return 1;
+        }
+        return 0;
+      });
 
     const srcRows = await Db.create({ storage: src, app: APP, tenant: TENANT })
       .table<Doc>(collection)

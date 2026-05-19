@@ -305,20 +305,29 @@ const compactInner = async (
   // packages/protocol/src/log.ts:67-72). D tombstones. T / M are
   // forward-compat shapes (writer doesn't emit them today).
   for (const entry of entries) {
-    if (entry.collection !== tableName) continue;
-    if (entry.doc_id === undefined) continue;
+    if (entry.collection !== tableName) {
+      continue;
+    }
+    if (entry.doc_id === undefined) {
+      continue;
+    }
     switch (entry.op) {
       case "I":
-      case "U":
-        if (entry.new !== undefined) base.set(entry.doc_id, entry.new);
+      case "U": {
+        if (entry.new !== undefined) {
+          base.set(entry.doc_id, entry.new);
+        }
         break;
-      case "D":
+      }
+      case "D": {
         base.delete(entry.doc_id);
         break;
+      }
       case "T":
-      case "M":
+      case "M": {
         // No-op for this ticket.
         break;
+      }
     }
   }
 
@@ -326,7 +335,15 @@ const compactInner = async (
   // Sort by `_id` so the byte output is deterministic — same fold ⇒
   // same body ⇒ same hash ⇒ same filename. Idempotent re-runs.
   const sortedDocs = Array.from(base.entries())
-    .toSorted(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .toSorted(([a], [b]) => {
+      if (a < b) {
+        return -1;
+      }
+      if (a > b) {
+        return 1;
+      }
+      return 0;
+    })
     .map(([id, body]) => ({ _id: id, body }));
   const snapshotBody: SnapshotBody = {
     schema_version: 1,
@@ -363,8 +380,8 @@ const compactInner = async (
   };
   try {
     await storage.put(currentJsonKey, nextBody, casOpts);
-  } catch (err) {
-    if (isCasConflict(err)) {
+  } catch (error) {
+    if (isCasConflict(error)) {
       // Another writer landed between our read and write. The
       // snapshot file we just wrote is now an orphan (correct
       // content, unreferenced) — `runGc()` will sweep it. Surface
@@ -379,7 +396,7 @@ const compactInner = async (
         entriesFolded: foldEnd - logSeqStartBefore,
       };
     }
-    throw err;
+    throw error;
   }
 
   // ── Step 8. Emit metrics on a successful run. ───────────────────
@@ -506,8 +523,12 @@ export const loadSnapshotAsMap = async (
   let parsed: unknown;
   try {
     parsed = JSON.parse(new TextDecoder().decode(got.body));
-  } catch (e) {
-    throw new BaerlyError("InvalidResponse", `compact: snapshot ${key} body is not valid JSON`, e);
+  } catch (error) {
+    throw new BaerlyError(
+      "InvalidResponse",
+      `compact: snapshot ${key} body is not valid JSON`,
+      error,
+    );
   }
   if (parsed === null || typeof parsed !== "object") {
     throw new BaerlyError("InvalidResponse", `compact: snapshot ${key} body is not an object`);
@@ -526,7 +547,9 @@ export const loadSnapshotAsMap = async (
     );
   }
   const map = new Map<string, JSONArraylessObject>();
-  for (const row of body.docs) map.set(row._id, row.body);
+  for (const row of body.docs) {
+    map.set(row._id, row.body);
+  }
   return map;
 };
 

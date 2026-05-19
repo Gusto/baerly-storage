@@ -51,15 +51,13 @@ const INIT_ARGS = {
 const KNOWN_KEYS: ReadonlySet<string> = new Set(["app", "tenant", "target", "force", "json", "_"]);
 
 const errorToExitCode = (code: string): number => {
-  if (code === "InvalidConfig") return 1;
+  if (code === "InvalidConfig") {
+    return 1;
+  }
   return 2;
 };
 
-const template = (
-  app: string,
-  tenant: string,
-  target: "cloudflare" | "node",
-): string =>
+const template = (app: string, tenant: string, target: "cloudflare" | "node"): string =>
   `import { defineConfig } from "create-baerly/config";
 
 export default defineConfig({
@@ -95,8 +93,8 @@ const handleInit = async (args: ParsedArgs<typeof INIT_ARGS>): Promise<number> =
     }
     try {
       await writeFile(outPath, template(args.app, args.tenant, args.target), "utf8");
-    } catch (e) {
-      emitError("init", "Unknown", (e as Error).message);
+    } catch (error) {
+      emitError("init", "Unknown", (error as Error).message);
       return 2;
     }
     emitSuccess({
@@ -108,12 +106,12 @@ const handleInit = async (args: ParsedArgs<typeof INIT_ARGS>): Promise<number> =
       target: args.target,
     });
     return 0;
-  } catch (err) {
-    if (err instanceof BaerlyError) {
-      emitError("init", err.code, err.message);
-      return errorToExitCode(err.code);
+  } catch (error) {
+    if (error instanceof BaerlyError) {
+      emitError("init", error.code, error.message);
+      return errorToExitCode(error.code);
     }
-    emitError("init", "Unknown", (err as Error).message);
+    emitError("init", "Unknown", (error as Error).message);
     return 2;
   }
 };
@@ -124,7 +122,9 @@ export const init = defineCommand({
   args: INIT_ARGS,
   run: async ({ args }) => {
     const code = await handleInit(args);
-    if (code !== 0) process.exit(code);
+    if (code !== 0) {
+      process.exit(code);
+    }
   },
 });
 
@@ -137,9 +137,9 @@ export const runInit = async (argv: readonly string[]): Promise<number> => {
   let parsed: ParsedArgs<typeof INIT_ARGS>;
   try {
     parsed = parseArgs<typeof INIT_ARGS>(argv as string[], INIT_ARGS);
-  } catch (err) {
+  } catch (error) {
     setJsonMode(argv.includes("--json"));
-    emitError("init", "InvalidConfig", (err as Error).message);
+    emitError("init", "InvalidConfig", (error as Error).message);
     return 1;
   }
   return handleInit(parsed);

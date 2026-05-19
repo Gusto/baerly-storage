@@ -24,8 +24,7 @@
  * ```
  */
 
-import { mkdir, rm, writeFile } from "node:fs/promises";
-import { mkdtemp } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AwsClient } from "aws4fetch";
@@ -140,9 +139,13 @@ function arg(name: string, dflt: string | undefined = undefined): string {
 
 function argNumber(name: string, dflt: number): number {
   const raw = argv.get(name);
-  if (raw === undefined) return dflt;
+  if (raw === undefined) {
+    return dflt;
+  }
   const n = Number(raw);
-  if (!Number.isFinite(n)) throw new Error(`bench:load: --${name}=${raw} is not a number`);
+  if (!Number.isFinite(n)) {
+    throw new Error(`bench:load: --${name}=${raw} is not a number`);
+  }
   return n;
 }
 
@@ -203,10 +206,10 @@ async function buildVariant(v: Variant): Promise<VariantBuild> {
             `bench:load: Minio health check returned ${res.status}. Did you run 'pnpm dev:storage'?`,
           );
         }
-      } catch (e) {
+      } catch (error) {
         throw new Error(
-          `bench:load: Minio unreachable at ${MINIO_ENDPOINT} (${(e as Error).message}). Run 'pnpm dev:storage'.`,
-          { cause: e },
+          `bench:load: Minio unreachable at ${MINIO_ENDPOINT} (${(error as Error).message}). Run 'pnpm dev:storage'.`,
+          { cause: error },
         );
       }
       const signer = new AwsClient({
@@ -286,7 +289,9 @@ interface AssembleOpts {
 }
 
 function pct(arr: number[], q: number): number {
-  if (arr.length === 0) return 0;
+  if (arr.length === 0) {
+    return 0;
+  }
   const sorted = [...arr].toSorted((a, b) => a - b);
   const idx = Math.min(sorted.length - 1, Math.floor(sorted.length * q));
   return sorted[idx]!;
@@ -402,7 +407,7 @@ async function main(): Promise<void> {
       seed: rng.int(0, 2 ** 31),
       tenantCount: tenants,
       schema: { collection: preset.schema.collection },
-      tenantSizeBuckets: [{ cumulativeFraction: 1.0, maxRecords: Math.max(1, records) }],
+      tenantSizeBuckets: [{ cumulativeFraction: 1, maxRecords: Math.max(1, records) }],
     });
 
     // Generate op stream from preset mix.
@@ -546,11 +551,13 @@ async function main(): Promise<void> {
         `out=${out}`,
     );
   } finally {
-    if (built.cleanup !== undefined) await built.cleanup();
+    if (built.cleanup !== undefined) {
+      await built.cleanup();
+    }
   }
 }
 
-main().catch((e: unknown) => {
-  process.stderr.write(`${(e as Error).message}\n`);
+main().catch((error: unknown) => {
+  process.stderr.write(`${(error as Error).message}\n`);
   process.exit(1);
 });

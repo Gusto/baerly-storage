@@ -53,7 +53,7 @@ export const useLiveQuery = <T extends JSONArraylessObject = JSONArraylessObject
   const { enabled = true } = opts;
   const [rows, setRows] = useState<ReadonlyArray<T>>([]);
   const [loading, setLoading] = useState<boolean>(true);
-  const [error, setError] = useState<Error | undefined>(undefined);
+  const [fetchError, setFetchError] = useState<Error | undefined>(undefined);
 
   const { cursor, error: pollError } = useChanges(client, table, { enabled });
 
@@ -76,14 +76,20 @@ export const useLiveQuery = <T extends JSONArraylessObject = JSONArraylessObject
     void (async () => {
       try {
         const next = await client.table<T>(table).where(predicateRef.current).all();
-        if (cancelled) return;
+        if (cancelled) {
+          return;
+        }
         setRows(next);
-        setError(undefined);
-      } catch (e) {
-        if (cancelled) return;
-        setError(e instanceof Error ? e : new Error(String(e)));
+        setFetchError(undefined);
+      } catch (error) {
+        if (cancelled) {
+          return;
+        }
+        setFetchError(error instanceof Error ? error : new Error(String(error)));
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) {
+          setLoading(false);
+        }
       }
     })();
     return (): void => {
@@ -91,5 +97,5 @@ export const useLiveQuery = <T extends JSONArraylessObject = JSONArraylessObject
     };
   }, [client, table, predicateKey, cursor, enabled]);
 
-  return { rows, loading, error: error ?? pollError };
+  return { rows, loading, error: fetchError ?? pollError };
 };

@@ -5,7 +5,9 @@ import type { ExportRow } from "./types.ts";
 
 const rowsFromRecord = (rec: Record<string, ExportRow>): ReadonlyMap<string, ExportRow> => {
   const m = new Map<string, ExportRow>();
-  for (const [k, v] of Object.entries(rec)) m.set(k, v);
+  for (const [k, v] of Object.entries(rec)) {
+    m.set(k, v);
+  }
   return m;
 };
 
@@ -74,7 +76,7 @@ describe("inferPlanForCollection — per-column type inference (§3 table)", () 
   test("non-integer number → double precision on postgres, REAL on sqlite/d1", () => {
     const rows = rowsFromRecord({
       a: { ratio: 1.5 } as JSONArraylessObject,
-      b: { ratio: 2.0 } as JSONArraylessObject,
+      b: { ratio: 2 } as JSONArraylessObject,
     });
     expect(
       inferPlanForCollection({ rows, target: "postgres", table: "t" }).columns.find(
@@ -230,8 +232,8 @@ describe("inferPlanForCollection — per-column type inference (§3 table)", () 
     );
     try {
       inferPlanForCollection({ rows: bad, target: "postgres", table: "t" });
-    } catch (e) {
-      expect((e as BaerlyError).code).toBe("SchemaError");
+    } catch (error) {
+      expect((error as BaerlyError).code).toBe("SchemaError");
     }
   });
 });

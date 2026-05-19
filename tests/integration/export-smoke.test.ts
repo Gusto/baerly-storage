@@ -85,7 +85,9 @@ const PG_CONFIG = {
  */
 async function applyEntry(client: Client, entry: LogEntry): Promise<void> {
   if (entry.op === "I") {
-    if (!entry.doc_id || !entry.new) throw new Error("I requires doc_id+new");
+    if (!entry.doc_id || !entry.new) {
+      throw new Error("I requires doc_id+new");
+    }
     await client.query(
       "INSERT INTO users (id, doc) VALUES ($1, $2) " +
         "ON CONFLICT (id) DO UPDATE SET doc = EXCLUDED.doc",
@@ -94,7 +96,9 @@ async function applyEntry(client: Client, entry: LogEntry): Promise<void> {
     return;
   }
   if (entry.op === "U") {
-    if (!entry.doc_id || !entry.patch) throw new Error("U requires doc_id+patch");
+    if (!entry.doc_id || !entry.patch) {
+      throw new Error("U requires doc_id+patch");
+    }
     const prior = await client.query<{ doc: object | null }>(
       "SELECT doc FROM users WHERE id = $1",
       [entry.doc_id],
@@ -113,7 +117,9 @@ async function applyEntry(client: Client, entry: LogEntry): Promise<void> {
     return;
   }
   if (entry.op === "D") {
-    if (!entry.doc_id) throw new Error("D requires doc_id");
+    if (!entry.doc_id) {
+      throw new Error("D requires doc_id");
+    }
     await client.query("DELETE FROM users WHERE id = $1", [entry.doc_id]);
     return;
   }
@@ -337,18 +343,25 @@ describe.runIf(smokeEnabled)("LogEntry → Postgres round-trip", () => {
 
   test("replays representative entries and round-trips", async () => {
     const ordered = FIXTURES.toSorted((a, b) => a.seq - b.seq);
-    for (const entry of ordered) await applyEntry(client, entry);
+    for (const entry of ordered) {
+      await applyEntry(client, entry);
+    }
 
     // Build the expected end state by replaying the same
     // fixtures through `merge()` in memory — never pre-compute.
     const expected = new Map<string, unknown>();
     for (const entry of ordered) {
       if (entry.op === "I" || entry.op === "U") {
-        if (!entry.doc_id) continue;
+        if (!entry.doc_id) {
+          continue;
+        }
         const prior = expected.get(entry.doc_id);
         const next = merge(prior as never, (entry.patch ?? entry.new) as never);
-        if (next === undefined) expected.delete(entry.doc_id);
-        else expected.set(entry.doc_id, next);
+        if (next === undefined) {
+          expected.delete(entry.doc_id);
+        } else {
+          expected.set(entry.doc_id, next);
+        }
       } else if (entry.op === "D" && entry.doc_id) {
         expected.delete(entry.doc_id);
       }
@@ -356,7 +369,9 @@ describe.runIf(smokeEnabled)("LogEntry → Postgres round-trip", () => {
 
     const actual = new Map<string, unknown>();
     const result = await client.query<{ id: string; doc: unknown }>("SELECT id, doc FROM users");
-    for (const row of result.rows) actual.set(row.id, row.doc);
+    for (const row of result.rows) {
+      actual.set(row.id, row.doc);
+    }
 
     expect(actual.size).toBe(expected.size);
     for (const [id, expectedDoc] of expected) {

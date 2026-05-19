@@ -24,7 +24,9 @@ export async function isToxiproxyReady(): Promise<boolean> {
 
 export async function clearToxics(): Promise<void> {
   const res = await fetch(`${TOXIPROXY_ADMIN}/proxies/${PROXY_NAME}/toxics`);
-  if (!res.ok) return; // proxy not yet registered, nothing to clear
+  if (!res.ok) {
+    return;
+  } // proxy not yet registered, nothing to clear
   const toxics = (await res.json()) as Array<{ name: string }>;
   for (const t of toxics) {
     await fetch(`${TOXIPROXY_ADMIN}/proxies/${PROXY_NAME}/toxics/${t.name}`, {
@@ -35,7 +37,9 @@ export async function clearToxics(): Promise<void> {
 
 export async function installToxics(network: Network): Promise<void> {
   await clearToxics();
-  if (network === "direct") return;
+  if (network === "direct") {
+    return;
+  }
   const cfgs: Array<Record<string, unknown>> =
     network === "wan-50ms"
       ? [
@@ -43,14 +47,14 @@ export async function installToxics(network: Network): Promise<void> {
             name: "latency_up",
             type: "latency",
             stream: "upstream",
-            toxicity: 1.0,
+            toxicity: 1,
             attributes: { latency: 50, jitter: 10 },
           },
           {
             name: "latency_down",
             type: "latency",
             stream: "downstream",
-            toxicity: 1.0,
+            toxicity: 1,
             attributes: { latency: 50, jitter: 10 },
           },
         ]

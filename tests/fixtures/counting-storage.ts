@@ -50,7 +50,9 @@ export function wrapCountingStorage(inner: Storage): CountingStorage {
       opts?: { startAfter?: string; maxKeys?: number; signal?: AbortSignal },
     ): AsyncIterable<StorageListEntry> {
       lists++;
-      for await (const entry of inner.list(prefix, opts)) yield entry;
+      for await (const entry of inner.list(prefix, opts)) {
+        yield entry;
+      }
     },
   };
   return {

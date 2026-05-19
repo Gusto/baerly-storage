@@ -21,7 +21,9 @@ export interface S3FixtureConfig {
  * config without credentials; callers must guard before signing.
  */
 export const makeFixtureClient = (cfg: S3FixtureConfig): AwsClient | undefined => {
-  if (!cfg.credentials) return undefined;
+  if (!cfg.credentials) {
+    return undefined;
+  }
   return new AwsClient({
     accessKeyId: cfg.credentials.accessKeyId,
     secretAccessKey: cfg.credentials.secretAccessKey,

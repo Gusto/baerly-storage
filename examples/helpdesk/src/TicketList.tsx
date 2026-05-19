@@ -13,7 +13,9 @@ export const TicketList = ({ onOpen }: { onOpen: (id: string) => void }): React.
     filter === "all" ? {} : { status: filter },
   );
 
-  if (error !== undefined) return <p style={{ color: "crimson" }}>Error: {error.message}</p>;
+  if (error !== undefined) {
+    return <p style={{ color: "crimson" }}>Error: {error.message}</p>;
+  }
 
   return (
     <>
@@ -30,11 +32,9 @@ export const TicketList = ({ onOpen }: { onOpen: (id: string) => void }): React.
           </select>
         </label>
       </div>
-      {loading ? (
-        <p>Loading…</p>
-      ) : rows.length === 0 ? (
-        <p>No tickets. Click "+ New ticket".</p>
-      ) : (
+      {loading && <p>Loading…</p>}
+      {!loading && rows.length === 0 && <p>No tickets. Click "+ New ticket".</p>}
+      {!loading && rows.length > 0 && (
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead>
             <tr>

@@ -1,16 +1,18 @@
 import { BaerlyError, MemoryStorage, type Storage } from "@baerly/protocol";
-import { describe, expect, it } from "vitest";
+import { describe, expect, test } from "vitest";
 import { RequestScopedMetricsRecorder } from "./recorder.ts";
 import { observableStorage } from "./storage.ts";
 
 const collectAll = async (iter: AsyncIterable<{ key: string }>): Promise<string[]> => {
   const keys: string[] = [];
-  for await (const e of iter) keys.push(e.key);
+  for await (const e of iter) {
+    keys.push(e.key);
+  }
   return keys;
 };
 
 describe("observableStorage", () => {
-  it("round-trips put/get/delete through the wrapper", async () => {
+  test("round-trips put/get/delete through the wrapper", async () => {
     const inner = new MemoryStorage();
     const recorder = new RequestScopedMetricsRecorder();
     const wrapped = observableStorage(inner, recorder);
@@ -21,10 +23,10 @@ describe("observableStorage", () => {
     expect(got?.body).toEqual(body);
 
     await wrapped.delete("k");
-    expect(await wrapped.get("k")).toBeNull();
+    await expect(wrapped.get("k")).resolves.toBeNull();
   });
 
-  it("records duration histogram + calls_total + class-A counter for put", async () => {
+  test("records duration histogram + calls_total + class-A counter for put", async () => {
     const inner = new MemoryStorage();
     const recorder = new RequestScopedMetricsRecorder();
     const wrapped = observableStorage(inner, recorder);
@@ -37,7 +39,7 @@ describe("observableStorage", () => {
     expect(snap.histograms.some((h) => h.name === "db.storage.put.duration_ms")).toBe(true);
   });
 
-  it("records class-B counter for get", async () => {
+  test("records class-B counter for get", async () => {
     const inner = new MemoryStorage();
     const recorder = new RequestScopedMetricsRecorder();
     const wrapped = observableStorage(inner, recorder);
@@ -49,7 +51,7 @@ describe("observableStorage", () => {
     expect(snap.counters.some((c) => c.name === "db.storage.class_a_ops_total")).toBe(false);
   });
 
-  it("records class-A counter for delete and list", async () => {
+  test("records class-A counter for delete and list", async () => {
     const inner = new MemoryStorage();
     const recorder = new RequestScopedMetricsRecorder();
     const wrapped = observableStorage(inner, recorder);
@@ -61,7 +63,7 @@ describe("observableStorage", () => {
     expect(aCount).toBe(2);
   });
 
-  it("error path rethrows and records the error counter", async () => {
+  test("error path rethrows and records the error counter", async () => {
     const exploding: Storage = {
       get: async () => {
         throw new BaerlyError("NetworkError", "down");
@@ -82,7 +84,7 @@ describe("observableStorage", () => {
     expect(snap.histograms.some((h) => h.name === "db.storage.get.duration_ms")).toBe(true);
   });
 
-  it("list error path rethrows mid-iteration and records error counter", async () => {
+  test("list error path rethrows mid-iteration and records error counter", async () => {
     const exploding: Storage = {
       get: async () => null,
       put: async () => ({ etag: "x" }),
@@ -100,7 +102,7 @@ describe("observableStorage", () => {
     expect(snap.counters.some((c) => c.name === "db.storage.list.errors_total")).toBe(true);
   });
 
-  it("preserves AsyncIterable list semantics over MemoryStorage", async () => {
+  test("preserves AsyncIterable list semantics over MemoryStorage", async () => {
     const inner = new MemoryStorage();
     await inner.put("a/1", new Uint8Array([1]));
     await inner.put("a/2", new Uint8Array([2]));

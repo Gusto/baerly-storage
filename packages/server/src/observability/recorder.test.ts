@@ -1,10 +1,10 @@
 import { InMemoryMetricsRecorder } from "@baerly/protocol";
-import { describe, expect, it } from "vitest";
+import { describe, expect, test } from "vitest";
 import { createObservabilityContext, runWithContext } from "./context.ts";
 import { alsAwareRecorder, RequestScopedMetricsRecorder } from "./recorder.ts";
 
 describe("RequestScopedMetricsRecorder.snapshot", () => {
-  it("returns empty arrays before any emission", () => {
+  test("returns empty arrays before any emission", () => {
     const r = new RequestScopedMetricsRecorder();
     const snap = r.snapshot();
     expect(snap.counters).toEqual([]);
@@ -12,7 +12,7 @@ describe("RequestScopedMetricsRecorder.snapshot", () => {
     expect(snap.histograms).toEqual([]);
   });
 
-  it("appends counter, gauge, and histogram observations in insertion order", () => {
+  test("appends counter, gauge, and histogram observations in insertion order", () => {
     const r = new RequestScopedMetricsRecorder();
     r.counter("db.r2.put.412_total", 1, { collection: "tickets" });
     r.counter("db.r2.put.412_total", 2);
@@ -32,7 +32,7 @@ describe("RequestScopedMetricsRecorder.snapshot", () => {
     ]);
   });
 
-  it("snapshot returns a copy — mutating it doesn't affect future emissions", () => {
+  test("snapshot returns a copy — mutating it doesn't affect future emissions", () => {
     const r = new RequestScopedMetricsRecorder();
     r.counter("x", 1);
     const snap = r.snapshot();
@@ -46,11 +46,11 @@ describe("RequestScopedMetricsRecorder.snapshot", () => {
 });
 
 describe("RequestScopedMetricsRecorder.summarize", () => {
-  it("returns an empty object when nothing has been emitted", () => {
+  test("returns an empty object when nothing has been emitted", () => {
     expect(new RequestScopedMetricsRecorder().summarize()).toEqual({});
   });
 
-  it("sums counters into `<name>_total`", () => {
+  test("sums counters into `<name>_total`", () => {
     const r = new RequestScopedMetricsRecorder();
     r.counter("db.r2.put.412_total", 1);
     r.counter("db.r2.put.412_total", 2);
@@ -58,7 +58,7 @@ describe("RequestScopedMetricsRecorder.summarize", () => {
     expect(r.summarize()["db.r2.put.412_total"]).toBe(6);
   });
 
-  it("keeps the last gauge value seen per name", () => {
+  test("keeps the last gauge value seen per name", () => {
     const r = new RequestScopedMetricsRecorder();
     r.gauge("db.manifest.lag_window_depth", 1);
     r.gauge("db.manifest.lag_window_depth", 9);
@@ -66,11 +66,13 @@ describe("RequestScopedMetricsRecorder.summarize", () => {
     expect(r.summarize()["db.manifest.lag_window_depth"]).toBe(4);
   });
 
-  it("derives p50/p99/count/sum from histogram observations", () => {
+  test("derives p50/p99/count/sum from histogram observations", () => {
     const r = new RequestScopedMetricsRecorder();
     // 100 observations: 1..100. p50 = 50 (nearest-rank ceil),
     // p99 = 99, count = 100, sum = 5050.
-    for (let i = 1; i <= 100; i++) r.histogram("h", i);
+    for (let i = 1; i <= 100; i++) {
+      r.histogram("h", i);
+    }
     const s = r.summarize();
     expect(s["h_p50"]).toBe(50);
     expect(s["h_p99"]).toBe(99);
@@ -78,7 +80,7 @@ describe("RequestScopedMetricsRecorder.summarize", () => {
     expect(s["h_sum"]).toBe(5050);
   });
 
-  it("histogram percentiles on a tiny set", () => {
+  test("histogram percentiles on a tiny set", () => {
     const r = new RequestScopedMetricsRecorder();
     r.histogram("h", 10);
     const s = r.summarize();
@@ -88,7 +90,7 @@ describe("RequestScopedMetricsRecorder.summarize", () => {
     expect(s["h_sum"]).toBe(10);
   });
 
-  it("composes counter + gauge + histogram into one flat object", () => {
+  test("composes counter + gauge + histogram into one flat object", () => {
     const r = new RequestScopedMetricsRecorder();
     r.counter("c", 1);
     r.gauge("g", 5);
@@ -104,7 +106,7 @@ describe("RequestScopedMetricsRecorder.summarize", () => {
     });
   });
 
-  it("does not double-append _total to counter names that already end in _total", () => {
+  test("does not double-append _total to counter names that already end in _total", () => {
     const r = new RequestScopedMetricsRecorder();
     r.counter("db.storage.class_a_ops_total", 3);
     r.counter("db.r2.put.412_total", 1);
@@ -124,7 +126,7 @@ describe("RequestScopedMetricsRecorder.summarize", () => {
 });
 
 describe("alsAwareRecorder", () => {
-  it("emissions outside a context land only in the operator sink", () => {
+  test("emissions outside a context land only in the operator sink", () => {
     const operator = new InMemoryMetricsRecorder();
     const tee = alsAwareRecorder(operator);
     tee.counter("c", 1);
@@ -137,7 +139,7 @@ describe("alsAwareRecorder", () => {
     // no per-request bag to populate.
   });
 
-  it("emissions inside a context land in both operator and per-request bag", async () => {
+  test("emissions inside a context land in both operator and per-request bag", async () => {
     const operator = new InMemoryMetricsRecorder();
     const tee = alsAwareRecorder(operator);
     const ctx = createObservabilityContext();
@@ -162,7 +164,7 @@ describe("alsAwareRecorder", () => {
     expect(summary["db.write.class_a_ops_per_logical_write_sum"]).toBe(4);
   });
 
-  it("nested contexts: emissions land in the innermost ctx's recorder only", async () => {
+  test("nested contexts: emissions land in the innermost ctx's recorder only", async () => {
     const operator = new InMemoryMetricsRecorder();
     const tee = alsAwareRecorder(operator);
     const outer = createObservabilityContext();
@@ -194,7 +196,7 @@ describe("alsAwareRecorder", () => {
     expect(innerSummary["outer-after_total"]).toBeUndefined();
   });
 
-  it("operator emissions happen before the per-request bag", () => {
+  test("operator emissions happen before the per-request bag", () => {
     const order: string[] = [];
     const operator = {
       counter: (name: string): void => {

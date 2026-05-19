@@ -34,6 +34,8 @@ export const CONFORMANCE_BEARER = "test-token";
  */
 export const testVerifier = (): Verifier => async (req: Request) => {
   const auth = req.headers.get("authorization");
-  if (auth !== `Bearer ${CONFORMANCE_BEARER}`) return null;
+  if (auth !== `Bearer ${CONFORMANCE_BEARER}`) {
+    return null;
+  }
   return { tenantPrefix: CONFORMANCE_TENANT, identity: {} };
 };

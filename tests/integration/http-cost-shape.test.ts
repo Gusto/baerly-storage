@@ -94,7 +94,9 @@ for (const variant of VARIANTS) {
       server = createServer(listener);
       await new Promise<void>((resolve) => server.listen(0, resolve));
       const addr = server.address();
-      if (!addr || typeof addr === "string") throw new Error("no port");
+      if (!addr || typeof addr === "string") {
+        throw new Error("no port");
+      }
       baseUrl = `http://127.0.0.1:${addr.port}`;
       // Warmup write so the per-verb assertions measure steady-state
       // cost only — the first write into a fresh prefix may include

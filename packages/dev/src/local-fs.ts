@@ -2,14 +2,14 @@ import { createHash } from "node:crypto";
 import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, posix, relative, resolve, sep } from "node:path";
-import { BaerlyError } from "@baerly/protocol";
-import type {
-  Storage,
-  StorageGetOptions,
-  StorageGetResult,
-  StorageListEntry,
-  StoragePutOptions,
-  StoragePutResult,
+import {
+  BaerlyError,
+  type Storage,
+  type StorageGetOptions,
+  type StorageGetResult,
+  type StorageListEntry,
+  type StoragePutOptions,
+  type StoragePutResult,
 } from "@baerly/protocol";
 
 export interface LocalFsStorageOptions {
@@ -50,12 +50,14 @@ export class LocalFsStorage implements Storage {
     let body: Buffer;
     try {
       body = await readFile(path);
-    } catch (e) {
-      if (isErrnoException(e) && e.code === "ENOENT") return null;
+    } catch (error) {
+      if (isErrnoException(error) && error.code === "ENOENT") {
+        return null;
+      }
       throw new BaerlyError(
         "InvalidResponse",
-        `LocalFsStorage.get(${key}): ${(e as Error).message}`,
-        e,
+        `LocalFsStorage.get(${key}): ${(error as Error).message}`,
+        error,
       );
     }
     const etag = etagOf(body);
@@ -111,14 +113,14 @@ export class LocalFsStorage implements Storage {
     await writeFile(tmp, body);
     try {
       await rename(tmp, path);
-    } catch (e) {
+    } catch (error) {
       // Best-effort cleanup of the temp file; swallow any error there
       // so the original failure surfaces unchanged.
       await rm(tmp, { force: true }).catch(() => {});
       throw new BaerlyError(
         "InvalidResponse",
-        `LocalFsStorage.put(${key}): ${(e as Error).message}`,
-        e,
+        `LocalFsStorage.put(${key}): ${(error as Error).message}`,
+        error,
       );
     }
     return { etag: newEtag, serverDate: new Date() };
@@ -129,12 +131,14 @@ export class LocalFsStorage implements Storage {
     const path = this.#pathFor(key);
     try {
       await rm(path);
-    } catch (e) {
-      if (isErrnoException(e) && e.code === "ENOENT") return; // idempotent
+    } catch (error) {
+      if (isErrnoException(error) && error.code === "ENOENT") {
+        return;
+      } // idempotent
       throw new BaerlyError(
         "InvalidResponse",
-        `LocalFsStorage.delete(${key}): ${(e as Error).message}`,
-        e,
+        `LocalFsStorage.delete(${key}): ${(error as Error).message}`,
+        error,
       );
     }
   }
@@ -155,9 +159,15 @@ export class LocalFsStorage implements Storage {
     keys.sort();
     let yielded = 0;
     for (const key of keys) {
-      if (!key.startsWith(prefix)) continue;
-      if (key <= startAfter) continue;
-      if (yielded >= maxKeys) return;
+      if (!key.startsWith(prefix)) {
+        continue;
+      }
+      if (key <= startAfter) {
+        continue;
+      }
+      if (yielded >= maxKeys) {
+        return;
+      }
       opts?.signal?.throwIfAborted();
       const buf = await readFile(this.#pathFor(key));
       yield { key, etag: etagOf(buf) };
@@ -207,9 +217,11 @@ const isErrnoException = (e: unknown): e is NodeJS.ErrnoException =>
 const readExisting = async (path: string): Promise<Buffer | null> => {
   try {
     return await readFile(path);
-  } catch (e) {
-    if (isErrnoException(e) && e.code === "ENOENT") return null;
-    throw e;
+  } catch (error) {
+    if (isErrnoException(error) && error.code === "ENOENT") {
+      return null;
+    }
+    throw error;
   }
 };
 
@@ -225,9 +237,11 @@ const walk = async (root: string, out: string[]): Promise<void> => {
     let entries;
     try {
       entries = await readdir(dir, { withFileTypes: true });
-    } catch (e) {
-      if (isErrnoException(e) && e.code === "ENOENT") continue;
-      throw e;
+    } catch (error) {
+      if (isErrnoException(error) && error.code === "ENOENT") {
+        continue;
+      }
+      throw error;
     }
     for (const entry of entries) {
       const full = join(dir, entry.name);

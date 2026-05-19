@@ -83,15 +83,17 @@ export const readGcPending = async (
   opts?: { signal?: AbortSignal },
 ): Promise<GcPendingRead | null> => {
   const got = await storage.get(key, opts);
-  if (got === null) return null;
+  if (got === null) {
+    return null;
+  }
   let parsed: unknown;
   try {
     parsed = JSON.parse(new TextDecoder().decode(got.body));
-  } catch (e) {
+  } catch (error) {
     throw new BaerlyError(
       "InvalidResponse",
       `gc/pending.json at ${key}: body is not valid JSON`,
-      e,
+      error,
     );
   }
   return { json: assertGcPending(parsed, key), etag: got.etag };
@@ -122,8 +124,8 @@ export const createGcPending = async (
   let result: StoragePutResult;
   try {
     result = await storage.put(key, body, putOpts);
-  } catch (e) {
-    throw translateCasError(e, key);
+  } catch (error) {
+    throw translateCasError(error, key);
   }
   return { json: initial, etag: result.etag };
 };
@@ -168,8 +170,8 @@ export const casUpdateGcPending = async (
   let result: StoragePutResult;
   try {
     result = await storage.put(key, body, putOpts);
-  } catch (e) {
-    throw translateCasError(e, key);
+  } catch (error) {
+    throw translateCasError(error, key);
   }
   return { json: next, etag: result.etag };
 };
@@ -231,7 +233,10 @@ const assertGcPending = (parsed: unknown, key: string): GcPending => {
         `gc/pending.json at ${key}: candidates[${String(i)}].due_at must be a string`,
       );
     }
-    if (typeof cr["reason"] !== "string" || !VALID_REASONS.has(cr["reason"] as GcCandidate["reason"])) {
+    if (
+      typeof cr["reason"] !== "string" ||
+      !VALID_REASONS.has(cr["reason"] as GcCandidate["reason"])
+    ) {
       throw new BaerlyError(
         "InvalidResponse",
         `gc/pending.json at ${key}: candidates[${String(i)}].reason must be one of stale-log|orphan-snapshot|orphan-content`,
@@ -257,7 +262,9 @@ const translateCasError = (e: unknown, key: string): BaerlyError => {
   if (e instanceof BaerlyError && e.code === "Conflict") {
     return new BaerlyError("Conflict", `gc/pending.json CAS lost at ${key}: ${e.message}`, e);
   }
-  if (e instanceof BaerlyError) return e;
+  if (e instanceof BaerlyError) {
+    return e;
+  }
   return new BaerlyError(
     "InvalidResponse",
     `gc/pending.json write at ${key} failed: ${String(e)}`,

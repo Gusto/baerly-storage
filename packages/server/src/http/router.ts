@@ -106,7 +106,9 @@ export function createRouter(options: CreateRouterOptions): Hono {
       limit: 1,
       consistency,
     });
-    if (row === undefined) throw new BaerlyError("NotFound", `No such row: ${id}`);
+    if (row === undefined) {
+      throw new BaerlyError("NotFound", `No such row: ${id}`);
+    }
     return c.json(
       {
         data: row,
@@ -175,7 +177,9 @@ export function createRouter(options: CreateRouterOptions): Hono {
       .table(table)
       .where({ _id: id } as Predicate<JSONArraylessObject>)
       .update(patch as Partial<JSONArraylessObject>);
-    if (modified === 0) throw new BaerlyError("NotFound", `No such row: ${id}`);
+    if (modified === 0) {
+      throw new BaerlyError("NotFound", `No such row: ${id}`);
+    }
     return c.json({ modified }, 200);
   });
 
@@ -186,7 +190,9 @@ export function createRouter(options: CreateRouterOptions): Hono {
       .table(table)
       .where({ _id: id } as Predicate<JSONArraylessObject>)
       .delete();
-    if (deleted === 0) throw new BaerlyError("NotFound", `No such row: ${id}`);
+    if (deleted === 0) {
+      throw new BaerlyError("NotFound", `No such row: ${id}`);
+    }
     return new Response(null, { status: 204 });
   });
 
@@ -256,8 +262,12 @@ export const MAX_BODY_BYTES = 1 << 20; // 1 MiB; matches `S3HttpStorage`'s confo
  * @internal
  */
 function parseConsistency(raw: string | undefined): ConsistencyLevel {
-  if (raw === undefined) return "strong";
-  if (raw === "strong" || raw === "eventual") return raw;
+  if (raw === undefined) {
+    return "strong";
+  }
+  if (raw === "strong" || raw === "eventual") {
+    return raw;
+  }
   throw new BaerlyError(
     "InvalidConfig",
     `?consistency must be "strong" or "eventual"; got ${JSON.stringify(raw)}`,
@@ -348,11 +358,13 @@ async function readJsonBody(c: Context, maxBytes: number): Promise<unknown> {
       throw new BaerlyError("PayloadTooLarge", `Body exceeds ${maxBytes} bytes`);
     }
     raw = new TextDecoder().decode(buffer);
-  } catch (e) {
-    if (e instanceof BaerlyError) throw e;
+  } catch (error) {
+    if (error instanceof BaerlyError) {
+      throw error;
+    }
     throw new BaerlyError(
       "SchemaError",
-      `Failed to read request body: ${e instanceof Error ? e.message : String(e)}`,
+      `Failed to read request body: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
   if (raw.length === 0) {

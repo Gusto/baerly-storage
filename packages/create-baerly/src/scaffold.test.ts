@@ -2,7 +2,7 @@ import { mkdtemp, readdir, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterAll, beforeAll, describe, expect, it, test } from "vitest";
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { scaffold } from "./scaffold.ts";
 
 // `examples/` (containing `minimal-cloudflare/`, `minimal-node/`, and
@@ -24,12 +24,7 @@ const EXAMPLE_DIRS = [
 
 // `packages/create-baerly/templates/addons/` carries the opt-in add-on
 // trees layered on top of the base scaffold via `withAddons`.
-const ADDONS_ROOT = resolve(
-  dirname(fileURLToPath(import.meta.url)),
-  "..",
-  "templates",
-  "addons",
-);
+const ADDONS_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "templates", "addons");
 
 describe("scaffold", () => {
   let outRoot: string;
@@ -42,7 +37,7 @@ describe("scaffold", () => {
     await rm(outRoot, { recursive: true, force: true });
   });
 
-  it("emits a cloudflare scaffold with substituted placeholders", async () => {
+  test("emits a cloudflare scaffold with substituted placeholders", async () => {
     const result = await scaffold({
       projectName: "my-app",
       target: "cloudflare",
@@ -82,7 +77,7 @@ describe("scaffold", () => {
     expect(worker).toContain('tenantPrefix: "acme"');
   });
 
-  it("emits a production-shape wrangler.jsonc for cloudflare", async () => {
+  test("emits a production-shape wrangler.jsonc for cloudflare", async () => {
     const result = await scaffold({
       projectName: "prod-app",
       target: "cloudflare",
@@ -98,7 +93,7 @@ describe("scaffold", () => {
     expect(wrangler).toContain('"name": "prod-app"');
   });
 
-  it("emits a node scaffold with the bearerJwt fallback verifier", async () => {
+  test("emits a node scaffold with the bearerJwt fallback verifier", async () => {
     const projectName = `svc-a-node`;
     const result = await scaffold({
       projectName,
@@ -124,7 +119,7 @@ describe("scaffold", () => {
     expect(config).toContain(`target: "node"`);
   });
 
-  it("target=node by default emits no Dockerfile / healthcheck / .dockerignore", async () => {
+  test("target=node by default emits no Dockerfile / healthcheck / .dockerignore", async () => {
     const result = await scaffold({
       projectName: "no-docker-default",
       target: "node",
@@ -138,7 +133,7 @@ describe("scaffold", () => {
     expect(result.filesWritten).not.toContain(".dockerignore");
   });
 
-  it("target=node + withAddons=[docker] emits addon files with appName-substituted LABELs", async () => {
+  test("target=node + withAddons=[docker] emits addon files with appName-substituted LABELs", async () => {
     const projectName = "yes-docker";
     const result = await scaffold({
       projectName,
@@ -164,7 +159,7 @@ describe("scaffold", () => {
     expect(dockerfile).not.toContain("minimal-node");
   });
 
-  it("rejects an unknown add-on directory", async () => {
+  test("rejects an unknown add-on directory", async () => {
     await expect(
       scaffold({
         projectName: "ghost-addon",
@@ -180,7 +175,7 @@ describe("scaffold", () => {
     ).rejects.toThrow(/add-on directory not found.*addon=ghost/);
   });
 
-  it("rejects projectName with disallowed characters", async () => {
+  test("rejects projectName with disallowed characters", async () => {
     await expect(
       scaffold({
         projectName: "Invalid Name!",
@@ -191,7 +186,7 @@ describe("scaffold", () => {
     ).rejects.toThrow(/projectName must be lowercase/);
   });
 
-  it("rejects an empty projectName", async () => {
+  test("rejects an empty projectName", async () => {
     await expect(
       scaffold({
         projectName: "",
@@ -202,7 +197,7 @@ describe("scaffold", () => {
     ).rejects.toThrow(/projectName must be non-empty/);
   });
 
-  it("refuses to overwrite a non-empty directory", async () => {
+  test("refuses to overwrite a non-empty directory", async () => {
     await scaffold({
       projectName: "exists",
       target: "node",
@@ -219,7 +214,7 @@ describe("scaffold", () => {
     ).rejects.toThrow(/exists and is non-empty/);
   });
 
-  it("returns the correct nextSteps for each detected PM", async () => {
+  test("returns the correct nextSteps for each detected PM", async () => {
     const r = await scaffold({
       projectName: "pm-test",
       target: "cloudflare",
@@ -230,7 +225,7 @@ describe("scaffold", () => {
     expect(r.nextSteps).toEqual(["cd pm-test", "yarn install", "yarn dev"]);
   });
 
-  it("defaults starter to 'minimal' when omitted", async () => {
+  test("defaults starter to 'minimal' when omitted", async () => {
     const result = await scaffold({
       projectName: "default-starter",
       target: "cloudflare",
@@ -242,7 +237,7 @@ describe("scaffold", () => {
     expect(result.filesWritten).toContain("wrangler.jsonc");
   });
 
-  it("rejects an unknown starter", async () => {
+  test("rejects an unknown starter", async () => {
     await expect(
       scaffold({
         projectName: "ghost-starter",
@@ -255,7 +250,7 @@ describe("scaffold", () => {
     ).rejects.toThrow(/template not found for target=cloudflare starter=ghost/);
   });
 
-  it("rejects helpdesk starter on node", async () => {
+  test("rejects helpdesk starter on node", async () => {
     await expect(
       scaffold({
         projectName: `no-helpdesk-node`,
@@ -267,7 +262,7 @@ describe("scaffold", () => {
     ).rejects.toThrow(/template not found for target=node starter=helpdesk/);
   });
 
-  it("rejects an unknown target template", async () => {
+  test("rejects an unknown target template", async () => {
     await expect(
       scaffold({
         projectName: "ghost-target",
@@ -296,18 +291,26 @@ describe("scaffold", () => {
       const abs = rel === "" ? root : join(root, rel);
       const ents = await readdir(abs, { withFileTypes: true });
       for (const ent of ents) {
-        if (skipName(ent.name)) continue;
+        if (skipName(ent.name)) {
+          continue;
+        }
         const relEnt = rel === "" ? ent.name : join(rel, ent.name);
-        if (skipRel(relEnt)) continue;
+        if (skipRel(relEnt)) {
+          continue;
+        }
         if (ent.isDirectory()) {
           await walk(root, relEnt, hits);
           continue;
         }
-        if (!ent.isFile()) continue;
+        if (!ent.isFile()) {
+          continue;
+        }
         const st = await stat(join(root, relEnt));
         // Treat anything > 1 MiB as binary — examples don't ship
         // large blobs but a guard keeps the walk fast under churn.
-        if (st.size > 1024 * 1024) continue;
+        if (st.size > 1024 * 1024) {
+          continue;
+        }
         let text: string;
         try {
           text = await readFile(join(root, relEnt), "utf8");
@@ -320,7 +323,9 @@ describe("scaffold", () => {
       }
     };
     const hits: string[] = [];
-    for (const dir of EXAMPLE_DIRS) await walk(dir, "", hits);
+    for (const dir of EXAMPLE_DIRS) {
+      await walk(dir, "", hits);
+    }
     expect(hits, `unexpected {{placeholder}} substrings in examples: ${hits.join(", ")}`).toEqual(
       [],
     );

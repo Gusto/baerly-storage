@@ -22,9 +22,11 @@ const INT32_MIN = -(2 ** 31);
 const INT32_MAX = 2 ** 31 - 1;
 
 const observe = (obs: ColumnObservation, value: JSONArrayless): void => {
-  if (typeof value === "string") obs.hasString = true;
-  else if (typeof value === "boolean") obs.hasBoolean = true;
-  else if (typeof value === "number") {
+  if (typeof value === "string") {
+    obs.hasString = true;
+  } else if (typeof value === "boolean") {
+    obs.hasBoolean = true;
+  } else if (typeof value === "number") {
     if (Number.isInteger(value) && value >= INT32_MIN && value <= INT32_MAX) {
       obs.hasInteger = true;
     } else {
@@ -41,7 +43,9 @@ const pickSqlType = (
 ): { sqlType: SqlType; jsonEncoded: boolean } => {
   // Nested object present, in any combination → JSON.
   if (obs.hasNestedObject) {
-    if (target === "postgres") return { sqlType: "jsonb", jsonEncoded: true };
+    if (target === "postgres") {
+      return { sqlType: "jsonb", jsonEncoded: true };
+    }
     return { sqlType: "TEXT", jsonEncoded: true };
   }
   const primitiveKinds =
@@ -50,29 +54,41 @@ const pickSqlType = (
     (obs.hasInteger || obs.hasNonInteger ? 1 : 0);
   // Mixed primitives → safest superset = text.
   if (primitiveKinds > 1) {
-    if (target === "postgres") return { sqlType: "text", jsonEncoded: false };
+    if (target === "postgres") {
+      return { sqlType: "text", jsonEncoded: false };
+    }
     return { sqlType: "TEXT", jsonEncoded: false };
   }
   if (obs.hasString) {
-    if (target === "postgres") return { sqlType: "text", jsonEncoded: false };
+    if (target === "postgres") {
+      return { sqlType: "text", jsonEncoded: false };
+    }
     return { sqlType: "TEXT", jsonEncoded: false };
   }
   if (obs.hasBoolean) {
-    if (target === "postgres") return { sqlType: "boolean", jsonEncoded: false };
+    if (target === "postgres") {
+      return { sqlType: "boolean", jsonEncoded: false };
+    }
     return { sqlType: "INTEGER", jsonEncoded: false };
   }
   if (obs.hasNonInteger) {
-    if (target === "postgres") return { sqlType: "double precision", jsonEncoded: false };
+    if (target === "postgres") {
+      return { sqlType: "double precision", jsonEncoded: false };
+    }
     return { sqlType: "REAL", jsonEncoded: false };
   }
   if (obs.hasInteger) {
-    if (target === "postgres") return { sqlType: "integer", jsonEncoded: false };
+    if (target === "postgres") {
+      return { sqlType: "integer", jsonEncoded: false };
+    }
     return { sqlType: "INTEGER", jsonEncoded: false };
   }
   // No observed value at all (column present-but-null on every row).
   // Fall back to text — won't matter because every insert will
   // emit NULL for it.
-  if (target === "postgres") return { sqlType: "text", jsonEncoded: false };
+  if (target === "postgres") {
+    return { sqlType: "text", jsonEncoded: false };
+  }
   return { sqlType: "TEXT", jsonEncoded: false };
 };
 
@@ -109,7 +125,9 @@ export const inferPlanForCollection = (params: {
       );
     }
     for (const [field, value] of Object.entries(body)) {
-      if (value === undefined) continue;
+      if (value === undefined) {
+        continue;
+      }
       let obs = obsByField.get(field);
       if (obs === undefined) {
         obs = {
@@ -135,7 +153,9 @@ export const inferPlanForCollection = (params: {
   // inlined into the per-row loop).
   const totalRows = rows.size;
   for (const [field, obs] of obsByField) {
-    if ((rowsWithField.get(field) ?? 0) < totalRows) obs.hasNull = true;
+    if ((rowsWithField.get(field) ?? 0) < totalRows) {
+      obs.hasNull = true;
+    }
   }
 
   // Build the column list. `_id` first (always — protocol-locked).
@@ -152,9 +172,13 @@ export const inferPlanForCollection = (params: {
     jsonEncoded: false,
   });
   for (const field of orderedFields) {
-    if (field === "_id") continue; // _id from the body is ignored; the map key wins
+    if (field === "_id") {
+      continue;
+    } // _id from the body is ignored; the map key wins
     const obs = obsByField.get(field);
-    if (obs === undefined) continue; // never observed → skip
+    if (obs === undefined) {
+      continue;
+    } // never observed → skip
     const { sqlType, jsonEncoded } = pickSqlType(obs, target);
     columns.push({
       source: field,
@@ -197,7 +221,9 @@ export const loadMaterialisedView = async (params: {
     currentJsonKey,
     params.signal !== undefined ? { signal: params.signal } : undefined,
   );
-  if (read === null) return null;
+  if (read === null) {
+    return null;
+  }
   const tablePrefix = currentJsonKey.slice(0, currentJsonKey.lastIndexOf("/"));
   const base =
     read.json.snapshot === null
@@ -210,10 +236,16 @@ export const loadMaterialisedView = async (params: {
     read.json.next_seq,
   );
   for (const entry of entries) {
-    if (entry.collection !== collection) continue;
-    if (entry.doc_id === undefined) continue;
+    if (entry.collection !== collection) {
+      continue;
+    }
+    if (entry.doc_id === undefined) {
+      continue;
+    }
     if (entry.op === "I" || entry.op === "U") {
-      if (entry.new !== undefined) base.set(entry.doc_id, entry.new);
+      if (entry.new !== undefined) {
+        base.set(entry.doc_id, entry.new);
+      }
     } else if (entry.op === "D") {
       base.delete(entry.doc_id);
     }

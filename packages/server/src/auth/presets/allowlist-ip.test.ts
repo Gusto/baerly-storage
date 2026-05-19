@@ -22,7 +22,7 @@ describe("allowlistIp — accept/reject", () => {
       cidrs: ["10.0.0.0/8"],
       tenantPrefix: "internal",
     });
-    expect(await verifier(mkReq({ "CF-Connecting-IP": "8.8.8.8" }))).toBeNull();
+    await expect(verifier(mkReq({ "CF-Connecting-IP": "8.8.8.8" }))).resolves.toBeNull();
   });
 
   test("rejects request with no IP header with null", async () => {
@@ -30,7 +30,7 @@ describe("allowlistIp — accept/reject", () => {
       cidrs: ["10.0.0.0/8"],
       tenantPrefix: "internal",
     });
-    expect(await verifier(mkReq())).toBeNull();
+    await expect(verifier(mkReq())).resolves.toBeNull();
   });
 
   test("X-Forwarded-For: a, b, c reads the leftmost IP", async () => {
@@ -39,10 +39,10 @@ describe("allowlistIp — accept/reject", () => {
       tenantPrefix: "internal",
       header: "X-Forwarded-For",
     });
-    expect(
-      await verifier(mkReq({ "X-Forwarded-For": "10.0.0.1, 192.0.2.1, 198.51.100.1" })),
-    ).not.toBeNull();
-    expect(await verifier(mkReq({ "X-Forwarded-For": "8.8.8.8, 10.0.0.1" }))).toBeNull();
+    await expect(
+      verifier(mkReq({ "X-Forwarded-For": "10.0.0.1, 192.0.2.1, 198.51.100.1" })),
+    ).resolves.not.toBeNull();
+    await expect(verifier(mkReq({ "X-Forwarded-For": "8.8.8.8, 10.0.0.1" }))).resolves.toBeNull();
   });
 
   test("IPv6 CIDR 2001:db8::/32 accepts 2001:db8::1", async () => {
@@ -50,9 +50,9 @@ describe("allowlistIp — accept/reject", () => {
       cidrs: ["2001:db8::/32"],
       tenantPrefix: "internal",
     });
-    expect(await verifier(mkReq({ "CF-Connecting-IP": "2001:db8::1" }))).not.toBeNull();
+    await expect(verifier(mkReq({ "CF-Connecting-IP": "2001:db8::1" }))).resolves.not.toBeNull();
     // Different family — IPv4 address against IPv6 CIDR should reject.
-    expect(await verifier(mkReq({ "CF-Connecting-IP": "10.0.0.1" }))).toBeNull();
+    await expect(verifier(mkReq({ "CF-Connecting-IP": "10.0.0.1" }))).resolves.toBeNull();
   });
 
   test("malformed IP in header → null", async () => {
@@ -60,7 +60,7 @@ describe("allowlistIp — accept/reject", () => {
       cidrs: ["10.0.0.0/8"],
       tenantPrefix: "internal",
     });
-    expect(await verifier(mkReq({ "CF-Connecting-IP": "not-an-ip" }))).toBeNull();
+    await expect(verifier(mkReq({ "CF-Connecting-IP": "not-an-ip" }))).resolves.toBeNull();
   });
 });
 
@@ -69,9 +69,9 @@ describe("allowlistIp — config validation", () => {
     try {
       allowlistIp({ cidrs: [], tenantPrefix: "internal" });
       expect.fail("expected throw");
-    } catch (err) {
-      expect(err).toBeInstanceOf(BaerlyError);
-      expect((err as BaerlyError).code).toBe("InvalidConfig");
+    } catch (error) {
+      expect(error).toBeInstanceOf(BaerlyError);
+      expect((error as BaerlyError).code).toBe("InvalidConfig");
     }
   });
 

@@ -48,7 +48,7 @@ export const useLiveDocument = <T extends JSONArraylessObject = JSONArraylessObj
   const { enabled = true } = opts;
   const [row, setRow] = useState<T | undefined>(undefined);
   const [loading, setLoading] = useState<boolean>(true);
-  const [error, setError] = useState<Error | undefined>(undefined);
+  const [fetchError, setFetchError] = useState<Error | undefined>(undefined);
 
   const { events, error: pollError } = useChanges(client, table, { enabled });
 
@@ -81,14 +81,20 @@ export const useLiveDocument = <T extends JSONArraylessObject = JSONArraylessObj
           .table<T>(table)
           .where({ _id: id } as Predicate<T>)
           .first();
-        if (cancelled) return;
+        if (cancelled) {
+          return;
+        }
         setRow(next);
-        setError(undefined);
-      } catch (e) {
-        if (cancelled) return;
-        setError(e instanceof Error ? e : new Error(String(e)));
+        setFetchError(undefined);
+      } catch (error) {
+        if (cancelled) {
+          return;
+        }
+        setFetchError(error instanceof Error ? error : new Error(String(error)));
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) {
+          setLoading(false);
+        }
       }
     })();
     return (): void => {
@@ -96,7 +102,7 @@ export const useLiveDocument = <T extends JSONArraylessObject = JSONArraylessObj
     };
   }, [client, table, id, enabled, matchTick]);
 
-  return { row, loading, error: error ?? pollError };
+  return { row, loading, error: fetchError ?? pollError };
 };
 
 // `Array.prototype.findLast` is only available on ES2023+ runtimes.
@@ -107,7 +113,9 @@ const findLastMatch = <U extends { doc_id?: string }>(
   id: string,
 ): U | undefined => {
   for (let i = arr.length - 1; i >= 0; i--) {
-    if (arr[i]!.doc_id === id) return arr[i];
+    if (arr[i]!.doc_id === id) {
+      return arr[i];
+    }
   }
   return undefined;
 };

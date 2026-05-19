@@ -217,12 +217,14 @@ const runGcInner = async (
     };
     try {
       pending = await createGcPending(storage, gcPendingKey, initial, signalOpts);
-    } catch (err) {
-      if (err instanceof BaerlyError && err.code === "Conflict") {
+    } catch (error) {
+      if (error instanceof BaerlyError && error.code === "Conflict") {
         pending = await readGcPending(storage, gcPendingKey, signalOpts);
-        if (pending === null) throw err;
+        if (pending === null) {
+          throw error;
+        }
       } else {
-        throw err;
+        throw error;
       }
     }
   }
@@ -235,10 +237,16 @@ const runGcInner = async (
   let markedStaleLog = 0;
   if (logSeqStart > 0) {
     for await (const entry of listBounded(storage, `${tablePrefix}/log/`, maxMarks, signal)) {
-      if (markedStaleLog >= maxMarks) break;
+      if (markedStaleLog >= maxMarks) {
+        break;
+      }
       const seq = parseSeqFromLogKey(entry.key);
-      if (seq === null || seq >= logSeqStart) continue;
-      if (known.has(entry.key)) continue;
+      if (seq === null || seq >= logSeqStart) {
+        continue;
+      }
+      if (known.has(entry.key)) {
+        continue;
+      }
       newCandidates.push({
         key: entry.key,
         due_at: computeDueAt(entry, now, grace),
@@ -251,9 +259,15 @@ const runGcInner = async (
   // ── Step 4. Mark orphan snapshots. ──────────────────────────────
   let markedOrphanSnapshot = 0;
   for await (const entry of listBounded(storage, `${tablePrefix}/snapshot/`, maxMarks, signal)) {
-    if (markedOrphanSnapshot >= maxMarks) break;
-    if (entry.key === current.snapshot) continue;
-    if (known.has(entry.key)) continue;
+    if (markedOrphanSnapshot >= maxMarks) {
+      break;
+    }
+    if (entry.key === current.snapshot) {
+      continue;
+    }
+    if (known.has(entry.key)) {
+      continue;
+    }
     newCandidates.push({
       key: entry.key,
       due_at: computeDueAt(entry, now, grace),
@@ -279,10 +293,16 @@ const runGcInner = async (
   );
   let markedOrphanContent = 0;
   for await (const entry of listBounded(storage, `${tablePrefix}/content/`, maxMarks, signal)) {
-    if (markedOrphanContent >= maxMarks) break;
+    if (markedOrphanContent >= maxMarks) {
+      break;
+    }
     const hash = parseHashFromContentKey(entry.key);
-    if (hash === null || liveHashes.has(hash)) continue;
-    if (known.has(entry.key)) continue;
+    if (hash === null || liveHashes.has(hash)) {
+      continue;
+    }
+    if (known.has(entry.key)) {
+      continue;
+    }
     newCandidates.push({
       key: entry.key,
       due_at: computeDueAt(entry, now, grace),
@@ -336,17 +356,17 @@ const runGcInner = async (
       signalOpts,
     );
     pendingDepth = updated.json.candidates.length;
-  } catch (err) {
+  } catch (error) {
     // CAS-lost on pending.json: another GC pass landed concurrently.
     // The DELETEs we issued are durable; the next pass picks up any
     // marks we couldn't persist. Surface success — re-throwing here
     // would mask the work we DID complete.
-    if (err instanceof BaerlyError && err.code === "Conflict") {
+    if (error instanceof BaerlyError && error.code === "Conflict") {
       // Best-effort: we know `remaining.length` is at least the
       // post-sweep depth; concurrent passes may have moved it.
       pendingDepth = remaining.length;
     } else {
-      throw err;
+      throw error;
     }
   }
 
@@ -390,7 +410,9 @@ const listBounded = async function* (
   let yielded = 0;
   const opts = signal !== undefined ? { signal } : undefined;
   for await (const entry of storage.list(prefix, opts)) {
-    if (yielded >= cap) return;
+    if (yielded >= cap) {
+      return;
+    }
     yield entry;
     yielded++;
   }
@@ -403,7 +425,9 @@ const listBounded = async function* (
  */
 const parseSeqFromLogKey = (key: string): number | null => {
   const match = /\/log\/(\d+)\.json$/.exec(key);
-  if (match === null) return null;
+  if (match === null) {
+    return null;
+  }
   const n = Number.parseInt(match[1]!, 10);
   return Number.isFinite(n) && n >= 0 ? n : null;
 };
@@ -457,7 +481,9 @@ const collectLiveContentHashes = async (
     logReads.push(
       (async (): Promise<void> => {
         const got = await storage.get(`${tablePrefix}/log/${s}.json`, getOpts);
-        if (got === null) return;
+        if (got === null) {
+          return;
+        }
         let entry: { new?: unknown };
         try {
           entry = JSON.parse(new TextDecoder().decode(got.body)) as { new?: unknown };
@@ -466,7 +492,9 @@ const collectLiveContentHashes = async (
           // Skip and let other invariants catch it.
           return;
         }
-        if (entry.new === undefined) return;
+        if (entry.new === undefined) {
+          return;
+        }
         const bodyBytes = new TextEncoder().encode(JSON.stringify(entry.new));
         hashes.add(await versionFromContent(bodyBytes));
       })(),

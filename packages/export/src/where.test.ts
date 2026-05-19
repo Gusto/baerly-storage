@@ -10,7 +10,9 @@ const buildPlan = (
   table = "tickets",
 ) => {
   const rows = new Map<string, ExportRow>();
-  for (const [k, v] of Object.entries(rec)) rows.set(k, v);
+  for (const [k, v] of Object.entries(rec)) {
+    rows.set(k, v);
+  }
   return inferPlanForCollection({ rows, target, table });
 };
 
@@ -201,8 +203,8 @@ describe("translatePredicateToSql — translation rules (§3)", () => {
     expect(() => translatePredicateToSql({ $or: "x" } as never, plan)).toThrow(BaerlyError);
     try {
       translatePredicateToSql({ $or: "x" } as never, plan);
-    } catch (e) {
-      expect((e as BaerlyError).code).toBe("InvalidConfig");
+    } catch (error) {
+      expect((error as BaerlyError).code).toBe("InvalidConfig");
     }
   });
 

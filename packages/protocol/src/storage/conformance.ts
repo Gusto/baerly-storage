@@ -56,7 +56,9 @@ const DEFAULT_BODY_ARB = fc.uint8Array({ minLength: 0, maxLength: 4096 });
 
 const collect = async <T>(iter: AsyncIterable<T>): Promise<T[]> => {
   const out: T[] = [];
-  for await (const x of iter) out.push(x);
+  for await (const x of iter) {
+    out.push(x);
+  }
   return out;
 };
 
@@ -68,13 +70,22 @@ const collect = async <T>(iter: AsyncIterable<T>): Promise<T[]> => {
  * isolation between vitest cases.
  */
 const drain = async (s: Storage): Promise<void> => {
-  const keys = (await collect(s.list(""))).map((e) => e.key);
-  for (const k of keys) await s.delete(k);
+  const listed = await collect(s.list(""));
+  const keys = listed.map((e) => e.key);
+  for (const k of keys) {
+    await s.delete(k);
+  }
 };
 
 const bytesEqual = (a: Uint8Array, b: Uint8Array): boolean => {
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i += 1) if (a[i] !== b[i]) return false;
+  if (a.length !== b.length) {
+    return false;
+  }
+  for (let i = 0; i < a.length; i += 1) {
+    if (a[i] !== b[i]) {
+      return false;
+    }
+  }
   return true;
 };
 
@@ -129,7 +140,9 @@ export function defineStorageConformanceSuite(
       await drain(s);
     });
     afterEach(async () => {
-      if (teardown) await teardown();
+      if (teardown) {
+        await teardown();
+      }
       teardown = undefined;
     });
 
@@ -147,7 +160,7 @@ export function defineStorageConformanceSuite(
       );
 
       test("get of missing key returns null", async () => {
-        expect(await s.get("missing")).toBeNull();
+        await expect(s.get("missing")).resolves.toBeNull();
       });
 
       // Pinned size boundaries. 1 MiB is the upper bound declared via
@@ -155,9 +168,13 @@ export function defineStorageConformanceSuite(
       // smaller value through `ConformanceOptions`.
       for (const size of [0, 1, 1024, 1 << 20]) {
         test(`round-trip exactly ${size} bytes`, async () => {
-          if (size > opts.maxBodyBytes) return;
+          if (size > opts.maxBodyBytes) {
+            return;
+          }
           const body = new Uint8Array(size);
-          for (let i = 0; i < size; i += 1) body[i] = i & 0xff;
+          for (let i = 0; i < size; i += 1) {
+            body[i] = i & 0xff;
+          }
           const { etag } = await s.put("size", body);
           const got = await s.get("size");
           expect(got).not.toBeNull();
@@ -230,7 +247,7 @@ export function defineStorageConformanceSuite(
     describe("conditional get — ifNoneMatch", () => {
       test("returns null when current etag matches ifNoneMatch", async () => {
         const { etag } = await s.put("k", new TextEncoder().encode("v"));
-        expect(await s.get("k", { ifNoneMatch: etag })).toBeNull();
+        await expect(s.get("k", { ifNoneMatch: etag })).resolves.toBeNull();
       });
 
       test("returns the object when ifNoneMatch is stale", async () => {
@@ -245,7 +262,7 @@ export function defineStorageConformanceSuite(
       test("removes a present key", async () => {
         await s.put("k", new TextEncoder().encode("v"));
         await s.delete("k");
-        expect(await s.get("k")).toBeNull();
+        await expect(s.get("k")).resolves.toBeNull();
       });
 
       test("is idempotent on a missing key", async () => {
@@ -260,7 +277,8 @@ export function defineStorageConformanceSuite(
         await s.put("a/3", new TextEncoder().encode("a3"));
         await s.put("a/2", new TextEncoder().encode("a2"));
         await s.put("c/0", new TextEncoder().encode("c0"));
-        const all = (await collect(s.list("a/"))).map((e) => e.key);
+        const listed = await collect(s.list("a/"));
+        const all = listed.map((e) => e.key);
         expect(all).toEqual(["a/1", "a/2", "a/3"]);
       });
 
@@ -268,7 +286,8 @@ export function defineStorageConformanceSuite(
         await s.put("a/1", new TextEncoder().encode("a1"));
         await s.put("a/2", new TextEncoder().encode("a2"));
         await s.put("a/3", new TextEncoder().encode("a3"));
-        const after = (await collect(s.list("a/", { startAfter: "a/1" }))).map((e) => e.key);
+        const listed = await collect(s.list("a/", { startAfter: "a/1" }));
+        const after = listed.map((e) => e.key);
         expect(after).toEqual(["a/2", "a/3"]);
       });
 
@@ -276,7 +295,8 @@ export function defineStorageConformanceSuite(
         await s.put("a/1", new TextEncoder().encode("a1"));
         await s.put("a/2", new TextEncoder().encode("a2"));
         await s.put("a/3", new TextEncoder().encode("a3"));
-        const capped = (await collect(s.list("a/", { maxKeys: 2 }))).map((e) => e.key);
+        const listed = await collect(s.list("a/", { maxKeys: 2 }));
+        const capped = listed.map((e) => e.key);
         expect(capped).toEqual(["a/1", "a/2"]);
       });
 
@@ -307,8 +327,11 @@ export function defineStorageConformanceSuite(
         prefixChar: opts.prefixCharArb,
       })("list(prefix) returns sorted keys-with-prefix", async ({ entries, prefixChar }) => {
         await drain(s);
-        for (const [k, body] of entries) await s.put(k, body);
-        const listed = (await collect(s.list(prefixChar))).map((e) => e.key);
+        for (const [k, body] of entries) {
+          await s.put(k, body);
+        }
+        const collected = await collect(s.list(prefixChar));
+        const listed = collected.map((e) => e.key);
         const expected = entries
           .map(([k]) => k)
           .filter((k) => k.startsWith(prefixChar))
@@ -324,12 +347,15 @@ export function defineStorageConformanceSuite(
         }),
       })("startAfter:k yields strict suffix of lex-sorted keys", async ({ entries }) => {
         await drain(s);
-        for (const [k, body] of entries) await s.put(k, body);
+        for (const [k, body] of entries) {
+          await s.put(k, body);
+        }
         const sorted = entries.map(([k]) => k).toSorted();
         // Use the first key as the cursor — should yield everything
         // strictly greater than it.
         const cursor = sorted[0]!;
-        const listed = (await collect(s.list("", { startAfter: cursor }))).map((e) => e.key);
+        const collected = await collect(s.list("", { startAfter: cursor }));
+        const listed = collected.map((e) => e.key);
         expect(listed).toEqual(sorted.filter((k) => k > cursor));
       });
     });

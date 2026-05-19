@@ -17,13 +17,9 @@
  *      `invalidateOnWrite` evicted the warm entry.
  */
 
-import {
-  CURRENT_JSON_SCHEMA_VERSION,
-  createCurrentJson,
-  type Verifier,
-} from "@baerly/protocol";
+import { CURRENT_JSON_SCHEMA_VERSION, createCurrentJson, type Verifier } from "@baerly/protocol";
 import { reset, type LogRecord, type Sink } from "@logtape/logtape";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, test } from "vitest";
 import { __resetListUrlIndexForTests } from "./cache.ts";
 import { r2BindingStorage } from "./r2-binding-storage.ts";
 import { baerlyWorker, type Env } from "./worker.ts";
@@ -58,10 +54,7 @@ const collectingSink = (): { records: LogRecord[]; sink: Sink } => {
   return { records, sink };
 };
 
-const findCanonicalRecords = (
-  records: readonly LogRecord[],
-  unit: string,
-): readonly LogRecord[] =>
+const findCanonicalRecords = (records: readonly LogRecord[], unit: string): readonly LogRecord[] =>
   records.filter(
     (r) => r.message.join("") === "canonical" && r.category.join(".") === `baerly.${unit}`,
   );
@@ -72,7 +65,7 @@ describe("baerlyWorker cache_status", () => {
     await reset();
   });
 
-  it("miss then hit on (table, id) stamps cache_status accordingly", async () => {
+  test("miss then hit on (table, id) stamps cache_status accordingly", async () => {
     const bucket = getBinding();
     const tenant = `cs-hit-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
     const verifier: Verifier = async () => ({ tenantPrefix: tenant, identity: {} });
@@ -142,7 +135,7 @@ describe("baerlyWorker cache_status", () => {
     expect(typeof propsHit["request_id"]).toBe("string");
   });
 
-  it("/v1/since bypasses the cache → cache_status=bypass", async () => {
+  test("/v1/since bypasses the cache → cache_status=bypass", async () => {
     const bucket = getBinding();
     const tenant = `cs-bypass-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
     const verifier: Verifier = async () => ({ tenantPrefix: tenant, identity: {} });
@@ -195,7 +188,7 @@ describe("baerlyWorker cache_status", () => {
     expect(props["outcome"]).toBe("read");
   });
 
-  it("write invalidates the list cache — POST is bypass, follow-up GET is miss", async () => {
+  test("write invalidates the list cache — POST is bypass, follow-up GET is miss", async () => {
     const bucket = getBinding();
     const tenant = `cs-inv-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
     const verifier: Verifier = async () => ({ tenantPrefix: tenant, identity: {} });
@@ -219,7 +212,10 @@ describe("baerlyWorker cache_status", () => {
     const warmer = baerlyWorker({ verifier });
     const filteredListUrl = `https://x/v1/t/c?where=${encodeURIComponent('{"v":1}')}`;
     await warmer.fetch!(
-      new Request(filteredListUrl, { method: "GET" }) as Request<unknown, IncomingRequestCfProperties>,
+      new Request(filteredListUrl, { method: "GET" }) as Request<
+        unknown,
+        IncomingRequestCfProperties
+      >,
       env,
       makeExec(),
     );
@@ -264,7 +260,10 @@ describe("baerlyWorker cache_status", () => {
     await Promise.all(pendingTasks);
 
     const getRes = await handler.fetch!(
-      new Request(filteredListUrl, { method: "GET" }) as Request<unknown, IncomingRequestCfProperties>,
+      new Request(filteredListUrl, { method: "GET" }) as Request<
+        unknown,
+        IncomingRequestCfProperties
+      >,
       env,
       makeExec(),
     );
@@ -285,7 +284,7 @@ describe("baerlyWorker cache_status", () => {
     expect(propsGet["outcome"]).toBe("read");
   });
 
-  it("a write busts BOTH bare and filtered list variants", async () => {
+  test("a write busts BOTH bare and filtered list variants", async () => {
     const bucket = getBinding();
     const tenant = `cs-multi-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
     const verifier: Verifier = async () => ({ tenantPrefix: tenant, identity: {} });

@@ -16,7 +16,7 @@ import {
   MemoryStorage,
   BaerlyError,
 } from "@baerly/protocol";
-import { describe, expect, it } from "vitest";
+import { describe, expect, test } from "vitest";
 import { compact, type InternalCompactOptions, loadSnapshotAsMap } from "./compactor.ts";
 import { ServerWriter } from "./server-writer.ts";
 
@@ -34,7 +34,7 @@ describe("compact", () => {
   const KEY = "app/t/tenant/x/manifests/c/current.json";
   const COLL = "c";
 
-  it("returns current-json-missing when current.json doesn't exist", async () => {
+  test("returns current-json-missing when current.json doesn't exist", async () => {
     const s = new MemoryStorage();
     const res = await compact({ storage: s, currentJsonKey: KEY });
     expect(res.written).toBe(false);
@@ -43,7 +43,7 @@ describe("compact", () => {
     expect(res.entriesFolded).toBe(0);
   });
 
-  it("skips when below min threshold", async () => {
+  test("skips when below min threshold", async () => {
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
     const writer = new ServerWriter({ storage: s, currentJsonKey: KEY });
@@ -64,7 +64,7 @@ describe("compact", () => {
     expect(res.entriesFolded).toBe(0);
   });
 
-  it("writes a snapshot and advances log_seq_start", async () => {
+  test("writes a snapshot and advances log_seq_start", async () => {
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
     const writer = new ServerWriter({ storage: s, currentJsonKey: KEY });
@@ -76,10 +76,10 @@ describe("compact", () => {
         body: { _id: `d${i}`, n: i },
       });
     }
-    const res = await compact(
-      { storage: s, currentJsonKey: KEY },
-      { minEntriesToCompact: 10, maxEntriesPerRun: 40 } as InternalCompactOptions,
-    );
+    const res = await compact({ storage: s, currentJsonKey: KEY }, {
+      minEntriesToCompact: 10,
+      maxEntriesPerRun: 40,
+    } as InternalCompactOptions);
     expect(res.written).toBe(true);
     expect(res.entriesFolded).toBe(40);
     expect(res.logSeqStartBefore).toBe(0);
@@ -90,7 +90,7 @@ describe("compact", () => {
     expect(res.newSnapshotKey).toMatch(/\/snapshot\/L9\/0{12}-0{10}40-[0-9a-f]{64}\.json$/);
   });
 
-  it("is idempotent: re-running with no new writes is a no-op", async () => {
+  test("is idempotent: re-running with no new writes is a no-op", async () => {
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
     const writer = new ServerWriter({ storage: s, currentJsonKey: KEY });
@@ -103,24 +103,24 @@ describe("compact", () => {
         body: { _id: `d${i}`, n: i },
       });
     }
-    const a = await compact(
-      { storage: s, currentJsonKey: KEY },
-      { minEntriesToCompact: 10, maxEntriesPerRun: 100 } as InternalCompactOptions,
-    );
+    const a = await compact({ storage: s, currentJsonKey: KEY }, {
+      minEntriesToCompact: 10,
+      maxEntriesPerRun: 100,
+    } as InternalCompactOptions);
     expect(a.written).toBe(true);
     expect(a.logSeqStartAfter).toBe(50);
     // With log_seq_start now at 50 and no new writes, the live-tail
     // length is 0 < minEntriesToCompact → skip.
-    const b = await compact(
-      { storage: s, currentJsonKey: KEY },
-      { minEntriesToCompact: 10, maxEntriesPerRun: 100 } as InternalCompactOptions,
-    );
+    const b = await compact({ storage: s, currentJsonKey: KEY }, {
+      minEntriesToCompact: 10,
+      maxEntriesPerRun: 100,
+    } as InternalCompactOptions);
     expect(b.written).toBe(false);
     expect(b.skippedReason).toBe("below-min-threshold");
     expect(b.previousSnapshotKey).toBe(a.newSnapshotKey);
   });
 
-  it("subsequent run extends the snapshot when new writes have landed", async () => {
+  test("subsequent run extends the snapshot when new writes have landed", async () => {
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
     const writer = new ServerWriter({ storage: s, currentJsonKey: KEY });
@@ -132,10 +132,10 @@ describe("compact", () => {
         body: { _id: `d${i}`, n: i },
       });
     }
-    const first = await compact(
-      { storage: s, currentJsonKey: KEY },
-      { minEntriesToCompact: 10, maxEntriesPerRun: 40 } as InternalCompactOptions,
-    );
+    const first = await compact({ storage: s, currentJsonKey: KEY }, {
+      minEntriesToCompact: 10,
+      maxEntriesPerRun: 40,
+    } as InternalCompactOptions);
     expect(first.written).toBe(true);
 
     for (let i = 40; i < 80; i++) {
@@ -146,10 +146,10 @@ describe("compact", () => {
         body: { _id: `d${i}`, n: i },
       });
     }
-    const res = await compact(
-      { storage: s, currentJsonKey: KEY },
-      { minEntriesToCompact: 10, maxEntriesPerRun: 40 } as InternalCompactOptions,
-    );
+    const res = await compact({ storage: s, currentJsonKey: KEY }, {
+      minEntriesToCompact: 10,
+      maxEntriesPerRun: 40,
+    } as InternalCompactOptions);
     expect(res.written).toBe(true);
     expect(res.logSeqStartBefore).toBe(40);
     expect(res.logSeqStartAfter).toBe(80);
@@ -162,7 +162,7 @@ describe("compact", () => {
     expect(map.size).toBe(80);
   });
 
-  it("snapshot body hash matches the filename hash", async () => {
+  test("snapshot body hash matches the filename hash", async () => {
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
     const writer = new ServerWriter({ storage: s, currentJsonKey: KEY });
@@ -184,7 +184,7 @@ describe("compact", () => {
     expect(map.size).toBe(50);
   });
 
-  it("rejects a snapshot whose body has been tampered with", async () => {
+  test("rejects a snapshot whose body has been tampered with", async () => {
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
     const writer = new ServerWriter({ storage: s, currentJsonKey: KEY });
@@ -207,7 +207,7 @@ describe("compact", () => {
     await expect(loadSnapshotAsMap(s, res.newSnapshotKey!, COLL)).rejects.toThrow(/hash mismatch/);
   });
 
-  it("treats a snapshot pointer with no body as a protocol violation", async () => {
+  test("treats a snapshot pointer with no body as a protocol violation", async () => {
     const s = new MemoryStorage();
     // Hand-craft a snapshot key (valid shape, but the body was never
     // PUT). `loadSnapshotAsMap` should throw Internal.
@@ -220,7 +220,7 @@ describe("compact", () => {
     });
   });
 
-  it("delete tombstones drop docs from the snapshot fold", async () => {
+  test("delete tombstones drop docs from the snapshot fold", async () => {
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
     const writer = new ServerWriter({ storage: s, currentJsonKey: KEY });
@@ -243,7 +243,7 @@ describe("compact", () => {
     expect(map.has("b")).toBe(true);
   });
 
-  it("rejects a snapshot body that names a different collection", async () => {
+  test("rejects a snapshot body that names a different collection", async () => {
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
     const writer = new ServerWriter({ storage: s, currentJsonKey: KEY });
@@ -262,7 +262,7 @@ describe("compact", () => {
     ).rejects.toMatchObject({ code: "InvalidResponse" });
   });
 
-  it("emits db.compact.entries_folded and db.manifest.lag_window_depth on success", async () => {
+  test("emits db.compact.entries_folded and db.manifest.lag_window_depth on success", async () => {
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
     const writer = new ServerWriter({ storage: s, currentJsonKey: KEY });
@@ -275,10 +275,11 @@ describe("compact", () => {
       });
     }
     const metrics = new InMemoryMetricsRecorder();
-    const res = await compact(
-      { storage: s, currentJsonKey: KEY },
-      { minEntriesToCompact: 10, maxEntriesPerRun: 40, metrics } as InternalCompactOptions,
-    );
+    const res = await compact({ storage: s, currentJsonKey: KEY }, {
+      minEntriesToCompact: 10,
+      maxEntriesPerRun: 40,
+      metrics,
+    } as InternalCompactOptions);
     expect(res.written).toBe(true);
     // Folded 40 of the 50 available.
     expect(metrics.histogramValues("db.compact.entries_folded")).toEqual([40]);
@@ -286,7 +287,7 @@ describe("compact", () => {
     expect(metrics.lastGauge("db.manifest.lag_window_depth")).toBe(10);
   });
 
-  it("emits no metrics when run is skipped (below-min-threshold)", async () => {
+  test("emits no metrics when run is skipped (below-min-threshold)", async () => {
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
     const metrics = new InMemoryMetricsRecorder();
@@ -299,7 +300,7 @@ describe("compact", () => {
     expect(metrics.lastGauge("db.manifest.lag_window_depth")).toBeUndefined();
   });
 
-  it("surfaces a missing log entry inside the fold window as Internal", async () => {
+  test("surfaces a missing log entry inside the fold window as Internal", async () => {
     const s = new MemoryStorage();
     // Hand-craft a current.json claiming 10 log entries exist but
     // never plant the bodies. compact() walks [0, 10) and should
@@ -317,9 +318,9 @@ describe("compact", () => {
     // The error message names the missing key prefix.
     try {
       await compact({ storage: s, currentJsonKey: KEY }, { minEntriesToCompact: 5 });
-    } catch (err) {
-      expect(err).toBeInstanceOf(BaerlyError);
-      expect((err as Error).message).toContain("/log/");
+    } catch (error) {
+      expect(error).toBeInstanceOf(BaerlyError);
+      expect((error as Error).message).toContain("/log/");
     }
   });
 });

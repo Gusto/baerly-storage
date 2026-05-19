@@ -59,7 +59,9 @@ const MAX_LATENCY_SAMPLES_PER_OP = 100_000;
 function prefixOf(key: string): string {
   let firstSlash = -1;
   for (let i = 0; i < key.length; i++) {
-    if (key.charCodeAt(i) !== 47) continue; // 47 = '/'
+    if (key.charCodeAt(i) !== 47) {
+      continue;
+    } // 47 = '/'
     if (firstSlash === -1) {
       firstSlash = i;
       continue;
@@ -84,7 +86,9 @@ function bumpPrefix(
 }
 
 function tailOrUndefined(samples: number[]): OpLatencyTail | undefined {
-  if (samples.length === 0) return undefined;
+  if (samples.length === 0) {
+    return undefined;
+  }
   const sorted = [...samples].toSorted((a, b) => a - b);
   const pick = (q: number): number => {
     const idx = Math.min(sorted.length - 1, Math.floor(sorted.length * q));
@@ -164,7 +168,9 @@ export class CountingStorage implements Storage {
     const t0 = performance.now();
     try {
       const res = await this.inner.get(key, opts);
-      if (res !== null) this.bytesRead += res.body.byteLength;
+      if (res !== null) {
+        this.bytesRead += res.body.byteLength;
+      }
       return res;
     } finally {
       this.recordLatency("get", performance.now() - t0);
@@ -179,21 +185,23 @@ export class CountingStorage implements Storage {
     const t0 = performance.now();
     try {
       return await this.inner.put(key, body, opts);
-    } catch (e: unknown) {
+    } catch (error: unknown) {
       // 412 surfaces as BaerlyError{code:"Conflict"}; 429 / 503-SlowDown
       // surface as BaerlyError{code:"NetworkError"} once the retry budget
       // is exhausted (bench passes retries=0, so on the first wire reply).
       // 429 has no dedicated code, so fall back to message sniffing for
       // the rate-limit bucket only.
-      if (e instanceof BaerlyError) {
-        if (e.code === "Conflict") this.conflict412++;
-        else if (
-          e.code === "NetworkError" &&
-          (e.message.includes("429") || e.message.includes("SlowDown"))
-        )
+      if (error instanceof BaerlyError) {
+        if (error.code === "Conflict") {
+          this.conflict412++;
+        } else if (
+          error.code === "NetworkError" &&
+          (error.message.includes("429") || error.message.includes("SlowDown"))
+        ) {
           this.rateLimit429++;
+        }
       }
-      throw e;
+      throw error;
     } finally {
       this.recordLatency("put", performance.now() - t0);
     }
@@ -220,7 +228,9 @@ export class CountingStorage implements Storage {
     bumpPrefix(this.opsByPrefix, prefix, "list");
     const t0 = performance.now();
     try {
-      for await (const entry of this.inner.list(prefix, opts)) yield entry;
+      for await (const entry of this.inner.list(prefix, opts)) {
+        yield entry;
+      }
     } finally {
       this.recordLatency("list", performance.now() - t0);
     }
@@ -242,15 +252,25 @@ export class CountingStorage implements Storage {
       delete?: OpLatencyTail;
     } = {};
     const getLatency = tailOrUndefined(this.latenciesByOp.get);
-    if (getLatency !== undefined) by_op.get = getLatency;
+    if (getLatency !== undefined) {
+      by_op.get = getLatency;
+    }
     const putLatency = tailOrUndefined(this.latenciesByOp.put);
-    if (putLatency !== undefined) by_op.put = putLatency;
+    if (putLatency !== undefined) {
+      by_op.put = putLatency;
+    }
     const headLatency = tailOrUndefined(this.latenciesByOp.head);
-    if (headLatency !== undefined) by_op.head = headLatency;
+    if (headLatency !== undefined) {
+      by_op.head = headLatency;
+    }
     const listLatency = tailOrUndefined(this.latenciesByOp.list);
-    if (listLatency !== undefined) by_op.list = listLatency;
+    if (listLatency !== undefined) {
+      by_op.list = listLatency;
+    }
     const deleteLatency = tailOrUndefined(this.latenciesByOp.delete);
-    if (deleteLatency !== undefined) by_op.delete = deleteLatency;
+    if (deleteLatency !== undefined) {
+      by_op.delete = deleteLatency;
+    }
 
     return {
       object_store: {

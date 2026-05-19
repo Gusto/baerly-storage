@@ -1,6 +1,5 @@
 import { describe, expect, test } from "vitest";
-import type { LogEntry, ReplicaIdentity } from "./log.ts";
-import { LOG_KEY_PREFIX, lsnParts } from "./log.ts";
+import { LOG_KEY_PREFIX, type LogEntry, lsnParts, type ReplicaIdentity } from "./log.ts";
 import { countKey } from "./types.ts";
 
 describe("LogEntry", () => {

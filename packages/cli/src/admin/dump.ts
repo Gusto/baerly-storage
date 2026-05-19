@@ -85,8 +85,12 @@ type Args = ParsedArgs<typeof DUMP_ARGS>;
 const KNOWN_KEYS: ReadonlySet<string> = new Set(["bucket", "app", "tenant", "table", "json", "_"]);
 
 const errorToExitCode = (code: string): number => {
-  if (code === "InvalidConfig") return 1;
-  if (code === "Conflict" || code === "Internal" || code === "InvalidResponse") return 3;
+  if (code === "InvalidConfig") {
+    return 1;
+  }
+  if (code === "Conflict" || code === "Internal" || code === "InvalidResponse") {
+    return 3;
+  }
   return 2;
 };
 
@@ -126,7 +130,9 @@ export const canonicalStringify = (value: JSONArrayless): string => {
     const parts: string[] = [];
     for (const k of keys) {
       const v = (value as Record<string, JSONArrayless>)[k];
-      if (v === undefined) continue;
+      if (v === undefined) {
+        continue;
+      }
       parts.push(`${JSON.stringify(k)}:${canonicalStringify(v)}`);
     }
     return `{${parts.join(",")}}`;
@@ -175,7 +181,9 @@ const writeToSink = async (
     let count = 0;
     for (const id of ids) {
       const body = rows.get(id);
-      if (body === undefined) continue;
+      if (body === undefined) {
+        continue;
+      }
       // Merge `_id` into the body so the row literal carries it. The
       // map key is authoritative; if a stale `_id` field disagrees, we
       // overwrite it.
@@ -190,7 +198,9 @@ const writeToSink = async (
     }
     return count;
   } finally {
-    if (handle !== undefined) await handle.close();
+    if (handle !== undefined) {
+      await handle.close();
+    }
   }
 };
 
@@ -225,12 +235,12 @@ const handleDump = async (args: Args): Promise<number> => {
       dumped: count,
     });
     return 0;
-  } catch (err) {
-    if (err instanceof BaerlyError) {
-      emitError("admin.dump", err.code, err.message);
-      return errorToExitCode(err.code);
+  } catch (error) {
+    if (error instanceof BaerlyError) {
+      emitError("admin.dump", error.code, error.message);
+      return errorToExitCode(error.code);
     }
-    emitError("admin.dump", "Unknown", (err as Error).message);
+    emitError("admin.dump", "Unknown", (error as Error).message);
     return 2;
   }
 };
@@ -244,7 +254,9 @@ export const dumpCmd = defineCommand({
   args: DUMP_ARGS,
   run: async ({ args }) => {
     const code = await handleDump(args);
-    if (code !== 0) process.exit(code);
+    if (code !== 0) {
+      process.exit(code);
+    }
   },
 });
 
@@ -257,9 +269,9 @@ export const runDump = async (argv: readonly string[]): Promise<number> => {
   let parsed: Args;
   try {
     parsed = parseArgs<typeof DUMP_ARGS>(argv as string[], DUMP_ARGS);
-  } catch (err) {
+  } catch (error) {
     setJsonMode(argv.includes("--json"));
-    emitError("admin.dump", "InvalidConfig", (err as Error).message);
+    emitError("admin.dump", "InvalidConfig", (error as Error).message);
     return 1;
   }
   return handleDump(parsed);

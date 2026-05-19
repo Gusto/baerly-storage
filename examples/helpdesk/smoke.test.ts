@@ -48,14 +48,15 @@ describe("helpdesk smoke", () => {
         expect(one?.title).toBe("smoke");
 
         await tickets.where({ _id }).update({ status: "closed" });
-        expect((await tickets.where({ _id }).first())?.status).toBe("closed");
+        const closed = await tickets.where({ _id }).first();
+        expect(closed?.status).toBe("closed");
 
-        expect(await tickets.where({ status: "closed" }).count()).toBe(1);
-        expect(await tickets.where({ status: "open" }).count()).toBe(0);
+        await expect(tickets.where({ status: "closed" }).count()).resolves.toBe(1);
+        await expect(tickets.where({ status: "open" }).count()).resolves.toBe(0);
 
         const { deleted } = await tickets.where({ _id }).delete();
         expect(deleted).toBe(1);
-        expect(await tickets.where({}).count()).toBe(0);
+        await expect(tickets.where({}).count()).resolves.toBe(0);
       } finally {
         await new Promise<void>((r) => server.close(() => r()));
       }
@@ -117,7 +118,7 @@ describe("helpdesk smoke", () => {
 
         const probe = await fetch(`http://127.0.0.1:${port}/v1/healthz`);
         expect(probe.status).toBe(200);
-        expect(await probe.json()).toEqual({ ok: true });
+        await expect(probe.json()).resolves.toEqual({ ok: true });
         expect(rejections).toEqual([]);
       } finally {
         process.off("unhandledRejection", onRejection);

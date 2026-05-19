@@ -80,7 +80,9 @@ describe.runIf(CF_URL !== undefined && SECRET !== undefined)(
           const list = await fetch(`${baseUrl}/v1/t/${table}`, {
             headers: { authorization: bearer },
           });
-          if (!list.ok) continue;
+          if (!list.ok) {
+            continue;
+          }
           const { data } = (await list.json()) as {
             readonly data: ReadonlyArray<{ readonly _id: string }>;
           };

@@ -96,14 +96,17 @@ const KNOWN_KEYS: ReadonlySet<string> = new Set([
 ]);
 
 const errorToExitCode = (code: string): number => {
-  if (code === "InvalidConfig") return 1;
+  if (code === "InvalidConfig") {
+    return 1;
+  }
   if (
     code === "Conflict" ||
     code === "Internal" ||
     code === "InvalidResponse" ||
     code === "SchemaError"
-  )
+  ) {
     return 3;
+  }
   return 2;
 };
 
@@ -116,17 +119,18 @@ const loadTransform = async (transformPath: string): Promise<RowTransform> => {
       `baerly admin migrate: --transform must point at compiled JS (got .ts: ${JSON.stringify(transformPath)})`,
     );
   }
+  const pathMod = await import("node:path");
   const abs = transformPath.startsWith("file://")
     ? fileURLToPath(transformPath)
-    : (await import("node:path")).resolve(transformPath);
+    : pathMod.resolve(transformPath);
   let mod: { default?: unknown };
   try {
     mod = (await import(pathToFileURL(abs).href)) as { default?: unknown };
-  } catch (e) {
+  } catch (error) {
     throw new BaerlyError(
       "InvalidConfig",
-      `baerly admin migrate: failed to load --transform=${JSON.stringify(transformPath)}: ${(e as Error).message}`,
-      e,
+      `baerly admin migrate: failed to load --transform=${JSON.stringify(transformPath)}: ${(error as Error).message}`,
+      error,
     );
   }
   const fn = mod.default;
@@ -204,12 +208,12 @@ const handleMigrate = async (args: Args): Promise<number> => {
       new_snapshot_key: result.newSnapshotKey,
     });
     return 0;
-  } catch (err) {
-    if (err instanceof BaerlyError) {
-      emitError("admin.migrate", err.code, err.message);
-      return errorToExitCode(err.code);
+  } catch (error) {
+    if (error instanceof BaerlyError) {
+      emitError("admin.migrate", error.code, error.message);
+      return errorToExitCode(error.code);
     }
-    emitError("admin.migrate", "Unknown", (err as Error).message);
+    emitError("admin.migrate", "Unknown", (error as Error).message);
     return 2;
   }
 };
@@ -223,7 +227,9 @@ export const migrateCmd = defineCommand({
   args: MIGRATE_ARGS,
   run: async ({ args }) => {
     const code = await handleMigrate(args);
-    if (code !== 0) process.exit(code);
+    if (code !== 0) {
+      process.exit(code);
+    }
   },
 });
 
@@ -236,9 +242,9 @@ export const runMigrate = async (argv: readonly string[]): Promise<number> => {
   let parsed: Args;
   try {
     parsed = parseArgs<typeof MIGRATE_ARGS>(argv as string[], MIGRATE_ARGS);
-  } catch (err) {
+  } catch (error) {
     setJsonMode(argv.includes("--json"));
-    emitError("admin.migrate", "InvalidConfig", (err as Error).message);
+    emitError("admin.migrate", "InvalidConfig", (error as Error).message);
     return 1;
   }
   return handleMigrate(parsed);

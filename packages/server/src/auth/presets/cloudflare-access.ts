@@ -73,7 +73,9 @@ export const cloudflareAccess = (opts: CloudflareAccessOptions): Verifier => {
   });
   return async (req: Request) => {
     const cfHeader = req.headers.get("Cf-Access-Jwt-Assertion");
-    if (cfHeader === null) return null;
+    if (cfHeader === null) {
+      return null;
+    }
     // Re-issue the request with the CF header masquerading as a
     // Bearer Authorization so the inner bearerJwt verifier sees the
     // shape it expects. Mutating headers on the original request is

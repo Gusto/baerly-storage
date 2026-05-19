@@ -4,7 +4,9 @@ import { bearerJwt, type JwksDocument } from "./bearer-jwt.ts";
 
 const base64UrlEncode = (bytes: Uint8Array): string => {
   let bin = "";
-  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]!);
+  for (let i = 0; i < bytes.length; i++) {
+    bin += String.fromCharCode(bytes[i]!);
+  }
   return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 };
 
@@ -103,7 +105,7 @@ describe("bearerJwt — accept path", () => {
 describe("bearerJwt — reject paths return null", () => {
   test("missing Authorization header → null", async () => {
     const verifier = bearerJwt({ jwks, issuer: ISSUER, audience: AUDIENCE });
-    expect(await verifier(mkReq(undefined))).toBeNull();
+    await expect(verifier(mkReq(undefined))).resolves.toBeNull();
   });
 
   test("non-Bearer auth scheme → null", async () => {
@@ -111,13 +113,13 @@ describe("bearerJwt — reject paths return null", () => {
     const req = new Request("https://api.example.com/", {
       headers: { Authorization: "Basic dXNlcjpwYXNz" },
     });
-    expect(await verifier(req)).toBeNull();
+    await expect(verifier(req)).resolves.toBeNull();
   });
 
   test("malformed JWT (not 3 segments) → null", async () => {
     const verifier = bearerJwt({ jwks, issuer: ISSUER, audience: AUDIENCE });
-    expect(await verifier(mkReq("not.a.valid.jwt"))).toBeNull();
-    expect(await verifier(mkReq("garbage"))).toBeNull();
+    await expect(verifier(mkReq("not.a.valid.jwt"))).resolves.toBeNull();
+    await expect(verifier(mkReq("garbage"))).resolves.toBeNull();
   });
 
   test("alg: HS256 rejected before JWKS lookup (algorithm allowlist consulted first)", async () => {
@@ -127,25 +129,25 @@ describe("bearerJwt — reject paths return null", () => {
     const headerB64 = base64UrlEncode(utf8(JSON.stringify({ alg: "HS256", kid: KID })));
     const payloadB64 = base64UrlEncode(utf8(JSON.stringify(validPayload())));
     const token = `${headerB64}.${payloadB64}.AAAA`;
-    expect(await verifier(mkReq(token))).toBeNull();
+    await expect(verifier(mkReq(token))).resolves.toBeNull();
   });
 
   test("expired JWT (past clockSkewMs slack) → null", async () => {
     const verifier = bearerJwt({ jwks, issuer: ISSUER, audience: AUDIENCE, clockSkewMs: 1_000 });
     const token = await signJwt(validPayload({ exp: Math.floor(Date.now() / 1000) - 600 }));
-    expect(await verifier(mkReq(token))).toBeNull();
+    await expect(verifier(mkReq(token))).resolves.toBeNull();
   });
 
   test("wrong issuer → null", async () => {
     const verifier = bearerJwt({ jwks, issuer: ISSUER, audience: AUDIENCE });
     const token = await signJwt(validPayload({ iss: "https://evil.example.com/" }));
-    expect(await verifier(mkReq(token))).toBeNull();
+    await expect(verifier(mkReq(token))).resolves.toBeNull();
   });
 
   test("wrong audience → null", async () => {
     const verifier = bearerJwt({ jwks, issuer: ISSUER, audience: AUDIENCE });
     const token = await signJwt(validPayload({ aud: "https://other-api.example.com/" }));
-    expect(await verifier(mkReq(token))).toBeNull();
+    await expect(verifier(mkReq(token))).resolves.toBeNull();
   });
 
   test("missing tenant claim → null", async () => {
@@ -153,19 +155,21 @@ describe("bearerJwt — reject paths return null", () => {
     const payload = validPayload();
     delete (payload as Record<string, unknown>)["tenant"];
     const token = await signJwt(payload);
-    expect(await verifier(mkReq(token))).toBeNull();
+    await expect(verifier(mkReq(token))).resolves.toBeNull();
   });
 
   test('tenant claim containing "/" → null', async () => {
     const verifier = bearerJwt({ jwks, issuer: ISSUER, audience: AUDIENCE });
     const token = await signJwt(validPayload({ tenant: "a/b" }));
-    expect(await verifier(mkReq(token))).toBeNull();
+    await expect(verifier(mkReq(token))).resolves.toBeNull();
   });
 });
 
 describe("bearerJwt — JWKS cache", () => {
   test("first call fetches; second call within TTL hits cache (fetch invoked once)", async () => {
-    const fetchStub = vi.fn(async () => new Response(JSON.stringify(jwks), { status: 200 }));
+    const fetchStub = vi.fn<typeof fetch>(
+      async () => new Response(JSON.stringify(jwks), { status: 200 }),
+    );
     const verifier = bearerJwt({
       jwks: "https://idp.example.com/.well-known/jwks.json",
       issuer: ISSUER,
@@ -173,13 +177,15 @@ describe("bearerJwt — JWKS cache", () => {
       fetch: fetchStub,
     });
     const token = await signJwt(validPayload());
-    expect(await verifier(mkReq(token))).not.toBeNull();
-    expect(await verifier(mkReq(token))).not.toBeNull();
+    await expect(verifier(mkReq(token))).resolves.not.toBeNull();
+    await expect(verifier(mkReq(token))).resolves.not.toBeNull();
     expect(fetchStub).toHaveBeenCalledTimes(1);
   });
 
   test("kid miss triggers one refresh; second miss inside rate-limit window does NOT refresh", async () => {
-    const fetchStub = vi.fn(async () => new Response(JSON.stringify(jwks), { status: 200 }));
+    const fetchStub = vi.fn<typeof fetch>(
+      async () => new Response(JSON.stringify(jwks), { status: 200 }),
+    );
     const verifier = bearerJwt({
       jwks: "https://idp.example.com/.well-known/jwks.json",
       issuer: ISSUER,
@@ -188,23 +194,23 @@ describe("bearerJwt — JWKS cache", () => {
     });
     // First request warms the cache.
     const okToken = await signJwt(validPayload());
-    expect(await verifier(mkReq(okToken))).not.toBeNull();
+    await expect(verifier(mkReq(okToken))).resolves.not.toBeNull();
     expect(fetchStub).toHaveBeenCalledTimes(1);
 
     // Request with an unknown kid → triggers ONE refresh attempt.
     const unknownKidToken = await signJwt(validPayload(), { kid: "unknown-kid-1" });
-    expect(await verifier(mkReq(unknownKidToken))).toBeNull();
+    await expect(verifier(mkReq(unknownKidToken))).resolves.toBeNull();
     expect(fetchStub).toHaveBeenCalledTimes(2);
 
     // Second request with a different unknown kid inside the rate
     // limit must NOT refresh again.
     const unknownKidToken2 = await signJwt(validPayload(), { kid: "unknown-kid-2" });
-    expect(await verifier(mkReq(unknownKidToken2))).toBeNull();
+    await expect(verifier(mkReq(unknownKidToken2))).resolves.toBeNull();
     expect(fetchStub).toHaveBeenCalledTimes(2);
   });
 
   test("cold-cache JWKS fetch failure throws BaerlyError{NetworkError}", async () => {
-    const fetchStub = vi.fn(async () => {
+    const fetchStub = vi.fn<typeof fetch>(async () => {
       throw new TypeError("network down");
     });
     const verifier = bearerJwt({
@@ -217,9 +223,9 @@ describe("bearerJwt — JWKS cache", () => {
     try {
       await verifier(mkReq(token));
       expect.fail("expected throw");
-    } catch (err) {
-      expect(err).toBeInstanceOf(BaerlyError);
-      expect((err as BaerlyError).code).toBe("NetworkError");
+    } catch (error) {
+      expect(error).toBeInstanceOf(BaerlyError);
+      expect((error as BaerlyError).code).toBe("NetworkError");
     }
   });
 });
@@ -242,7 +248,9 @@ describe("bearerJwt — config validation", () => {
 
 describe("bearerJwt — idempotence", () => {
   test("two verifier(req) calls on the same Request invoke fetch at most once", async () => {
-    const fetchStub = vi.fn(async () => new Response(JSON.stringify(jwks), { status: 200 }));
+    const fetchStub = vi.fn<typeof fetch>(
+      async () => new Response(JSON.stringify(jwks), { status: 200 }),
+    );
     const verifier = bearerJwt({
       jwks: "https://idp.example.com/.well-known/jwks.json",
       issuer: ISSUER,

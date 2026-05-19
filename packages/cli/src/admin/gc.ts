@@ -63,8 +63,7 @@ const GC_ARGS = {
   },
   "cloudflare-free-tier": {
     type: "boolean",
-    description:
-      "Apply the Cloudflare free-tier GC caps (maxMarksPerRun=20, maxSweepsPerRun=10).",
+    description: "Apply the Cloudflare free-tier GC caps (maxMarksPerRun=20, maxSweepsPerRun=10).",
   },
   json: {
     type: "boolean",
@@ -85,8 +84,12 @@ const KNOWN_KEYS: ReadonlySet<string> = new Set([
 ]);
 
 const errorToExitCode = (code: string): number => {
-  if (code === "InvalidConfig") return 1;
-  if (code === "Conflict" || code === "Internal" || code === "InvalidResponse") return 3;
+  if (code === "InvalidConfig") {
+    return 1;
+  }
+  if (code === "Conflict" || code === "Internal" || code === "InvalidResponse") {
+    return 3;
+  }
   return 2;
 };
 
@@ -146,12 +149,12 @@ const handleGc = async (args: Args): Promise<number> => {
       },
     });
     return 0;
-  } catch (err) {
-    if (err instanceof BaerlyError) {
-      emitError("admin.gc", err.code, err.message);
-      return errorToExitCode(err.code);
+  } catch (error) {
+    if (error instanceof BaerlyError) {
+      emitError("admin.gc", error.code, error.message);
+      return errorToExitCode(error.code);
     }
-    emitError("admin.gc", "Unknown", (err as Error).message);
+    emitError("admin.gc", "Unknown", (error as Error).message);
     return 2;
   }
 };
@@ -165,7 +168,9 @@ export const gcCmd = defineCommand({
   args: GC_ARGS,
   run: async ({ args }) => {
     const code = await handleGc(args);
-    if (code !== 0) process.exit(code);
+    if (code !== 0) {
+      process.exit(code);
+    }
   },
 });
 
@@ -182,9 +187,9 @@ export const runGc = async (argv: readonly string[]): Promise<number> => {
   let parsed: Args;
   try {
     parsed = parseArgs<typeof GC_ARGS>(argv as string[], GC_ARGS);
-  } catch (err) {
+  } catch (error) {
     setJsonMode(argv.includes("--json"));
-    emitError("admin.gc", "InvalidConfig", (err as Error).message);
+    emitError("admin.gc", "InvalidConfig", (error as Error).message);
     return 1;
   }
   return handleGc(parsed);

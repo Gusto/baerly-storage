@@ -8,10 +8,8 @@
  */
 
 import type { JSONArraylessObject } from "@baerly/protocol";
-import type { SchemaValidator } from "@baerly/server";
-import { defineConfig } from "@baerly/server";
-import type { ClientTable } from "./client.ts";
-import { createBaerlyClient } from "./client.ts";
+import { defineConfig, type SchemaValidator } from "@baerly/server";
+import { type ClientTable, createBaerlyClient } from "./client.ts";
 
 // Minimal stand-in for a real validator — independent of zod /
 // valibot / arktype so the test-d file doesn't pull a runtime dep.

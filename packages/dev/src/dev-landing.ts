@@ -66,15 +66,20 @@ export const renderDevLanding = (opts: DevLandingOptions): string => {
 const escapeHtml = (s: string): string =>
   s.replace(/[&<>"']/g, (c) => {
     switch (c) {
-      case "&":
+      case "&": {
         return "&amp;";
-      case "<":
+      }
+      case "<": {
         return "&lt;";
-      case ">":
+      }
+      case ">": {
         return "&gt;";
-      case '"':
+      }
+      case '"': {
         return "&quot;";
-      default:
+      }
+      default: {
         return "&#39;";
+      }
     }
   });

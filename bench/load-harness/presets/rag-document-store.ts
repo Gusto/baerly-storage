@@ -45,7 +45,7 @@ registerPreset({
     schema: { collection: "documents" },
     // Documents fan out to RAG_CHUNKS_PER_DOC_MIN–RAG_CHUNKS_PER_DOC_MAX chunks;
     // record-size distribution matches a ~200B document header.
-    recordSizeBuckets: [{ cumulativeFraction: 1.0, maxBytes: 512 }],
+    recordSizeBuckets: [{ cumulativeFraction: 1, maxBytes: 512 }],
   },
   pipeline: [
     { phase: "seed", opCount: 0 },
@@ -56,7 +56,7 @@ registerPreset({
         weights: {
           "list-recent": 0,
           "filtered-list": 0,
-          insert: 1.0,
+          insert: 1,
           "point-read": 0,
           update: 0,
           archive: 0,

@@ -37,7 +37,9 @@ export const quoteIdentifier = (name: string, _target: SqlTarget): string => {
  *   calling this).
  */
 export const quoteValue = (value: JSONArrayless | null, target: SqlTarget): string => {
-  if (value === null) return "NULL";
+  if (value === null) {
+    return "NULL";
+  }
   if (typeof value === "string") {
     return `'${value.replace(/'/g, "''")}'`;
   }
@@ -51,7 +53,9 @@ export const quoteValue = (value: JSONArrayless | null, target: SqlTarget): stri
     return String(value);
   }
   if (typeof value === "boolean") {
-    if (target === "postgres") return value ? "true" : "false";
+    if (target === "postgres") {
+      return value ? "true" : "false";
+    }
     return value ? "1" : "0";
   }
   // Nested object: caller is responsible for setting the column's

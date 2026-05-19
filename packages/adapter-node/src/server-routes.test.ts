@@ -29,7 +29,7 @@ import {
   type Storage,
   type Verifier,
 } from "@baerly/protocol";
-import { describe, expect, it } from "vitest";
+import { describe, expect, test } from "vitest";
 import { createListener } from "./server.ts";
 
 const trivialVerifier: Verifier = async () => ({
@@ -87,15 +87,15 @@ const withServer = async <T>(
 };
 
 describe("createListener routes", () => {
-  it("GET /v1/healthz returns { ok: true } without consulting the verifier", async () => {
+  test("GET /v1/healthz returns { ok: true } without consulting the verifier", async () => {
     await withServer(denyVerifier, async (baseUrl) => {
       const res = await fetch(`${baseUrl}/v1/healthz`);
       expect(res.status).toBe(200);
-      expect(await res.json()).toEqual({ ok: true });
+      await expect(res.json()).resolves.toEqual({ ok: true });
     });
   });
 
-  it("returns 401 with Unauthorized envelope when the verifier returns null", async () => {
+  test("returns 401 with Unauthorized envelope when the verifier returns null", async () => {
     await withServer(denyVerifier, async (baseUrl) => {
       const res = await fetch(`${baseUrl}/v1/t/tickets`);
       expect(res.status).toBe(401);
@@ -105,7 +105,7 @@ describe("createListener routes", () => {
     });
   });
 
-  it("POST → GET round-trips a document", async () => {
+  test("POST → GET round-trips a document", async () => {
     await withServer(trivialVerifier, async (baseUrl, storage) => {
       await provisionTable(storage, "tickets");
       const insertRes = await fetch(`${baseUrl}/v1/t/tickets`, {
@@ -126,7 +126,7 @@ describe("createListener routes", () => {
     });
   });
 
-  it("PATCH on unknown id returns 404; PATCH on known id returns 200 { modified: 1 }", async () => {
+  test("PATCH on unknown id returns 404; PATCH on known id returns 200 { modified: 1 }", async () => {
     await withServer(trivialVerifier, async (baseUrl, storage) => {
       await provisionTable(storage, "tickets");
       const missingRes = await fetch(`${baseUrl}/v1/t/tickets/does-not-exist`, {
@@ -153,7 +153,7 @@ describe("createListener routes", () => {
     });
   });
 
-  it("DELETE returns 204 the first time, 404 the second time", async () => {
+  test("DELETE returns 204 the first time, 404 the second time", async () => {
     await withServer(trivialVerifier, async (baseUrl, storage) => {
       await provisionTable(storage, "tickets");
       const insertRes = await fetch(`${baseUrl}/v1/t/tickets`, {
@@ -171,7 +171,7 @@ describe("createListener routes", () => {
     });
   });
 
-  it("POST with body over 1 MiB returns 413 PayloadTooLarge", async () => {
+  test("POST with body over 1 MiB returns 413 PayloadTooLarge", async () => {
     await withServer(trivialVerifier, async (baseUrl) => {
       // 1.5 MiB filler — comfortably over the 1-MiB cap. No table
       // provisioning needed: the body-size guard short-circuits
@@ -190,7 +190,7 @@ describe("createListener routes", () => {
     });
   });
 
-  it("chunked POST over 1 MiB returns 413 PayloadTooLarge from the stream pump", async () => {
+  test("chunked POST over 1 MiB returns 413 PayloadTooLarge from the stream pump", async () => {
     await withServer(trivialVerifier, async (baseUrl) => {
       // `fetch()` would auto-set `Content-Length` and trigger the
       // router's pre-materialization check at `router.ts:readJsonBody`
@@ -225,7 +225,9 @@ describe("createListener routes", () => {
         // mid-pump (not on the first chunk). 96 KiB × 16 = 1.5 MiB.
         const chunk = "x".repeat(96 * 1024);
         req.write(`{"doc":{"filler":"`);
-        for (let i = 0; i < 16; i += 1) req.write(chunk);
+        for (let i = 0; i < 16; i += 1) {
+          req.write(chunk);
+        }
         req.write(`"}}`);
         req.end();
       });
@@ -234,7 +236,7 @@ describe("createListener routes", () => {
     });
   });
 
-  it("GET /v1/t/:table?where=notjson returns 400 SchemaError", async () => {
+  test("GET /v1/t/:table?where=notjson returns 400 SchemaError", async () => {
     await withServer(trivialVerifier, async (baseUrl) => {
       const res = await fetch(`${baseUrl}/v1/t/tickets?where=notjson`);
       expect(res.status).toBe(400);
@@ -243,7 +245,7 @@ describe("createListener routes", () => {
     });
   });
 
-  it("GET /v1/t/:table?where=<$-prefixed-key> returns 400 (predicate validator rejects)", async () => {
+  test("GET /v1/t/:table?where=<$-prefixed-key> returns 400 (predicate validator rejects)", async () => {
     await withServer(trivialVerifier, async (baseUrl) => {
       // `{"$or":1}` — `$`-prefixed keys are rejected by validatePredicate.
       const where = encodeURIComponent(JSON.stringify({ $or: 1 }));
@@ -254,7 +256,7 @@ describe("createListener routes", () => {
     });
   });
 
-  it("GET / without dev option returns 401 (Unauthorized — falls through to verifier path)", async () => {
+  test("GET / without dev option returns 401 (Unauthorized — falls through to verifier path)", async () => {
     // Without `dev`, the listener has no `GET /` handler. The
     // request flows to the verifier; `denyVerifier` answers 401.
     // (With `trivialVerifier` the router itself would 404.)
@@ -264,7 +266,7 @@ describe("createListener routes", () => {
     });
   });
 
-  it("GET /v1/t/:table?where=<json> returns matching subset", async () => {
+  test("GET /v1/t/:table?where=<json> returns matching subset", async () => {
     await withServer(trivialVerifier, async (baseUrl, storage) => {
       await provisionTable(storage, "tickets");
       // Seed three rows; two open, one closed.
@@ -286,7 +288,9 @@ describe("createListener routes", () => {
       expect(listRes.status).toBe(200);
       const list = (await listRes.json()) as { data: Array<{ status: string }> };
       expect(list.data).toHaveLength(2);
-      for (const row of list.data) expect(row.status).toBe("open");
+      for (const row of list.data) {
+        expect(row.status).toBe("open");
+      }
     });
   });
 });
@@ -321,7 +325,7 @@ describe("createListener dev landing", () => {
     }
   };
 
-  it("GET / with dev option returns 200 HTML containing the UI link", async () => {
+  test("GET / with dev option returns 200 HTML containing the UI link", async () => {
     await withDevServer(async (baseUrl) => {
       const res = await fetch(`${baseUrl}/`);
       expect(res.status).toBe(200);
@@ -332,15 +336,15 @@ describe("createListener dev landing", () => {
     });
   });
 
-  it("GET /favicon.ico with dev option returns 204 with empty body", async () => {
+  test("GET /favicon.ico with dev option returns 204 with empty body", async () => {
     await withDevServer(async (baseUrl) => {
       const res = await fetch(`${baseUrl}/favicon.ico`);
       expect(res.status).toBe(204);
-      expect(await res.text()).toBe("");
+      await expect(res.text()).resolves.toBe("");
     });
   });
 
-  it("POST / with dev option falls through to the verifier (no method-bypass)", async () => {
+  test("POST / with dev option falls through to the verifier (no method-bypass)", async () => {
     await withDevServer(async (baseUrl) => {
       const res = await fetch(`${baseUrl}/`, { method: "POST", body: "" });
       // denyVerifier answers 401 — the dev short-circuit is GET-only.

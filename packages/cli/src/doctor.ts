@@ -78,8 +78,12 @@ const KNOWN_KEYS: ReadonlySet<string> = new Set([
 ]);
 
 const errorToExitCode = (code: string): number => {
-  if (code === "InvalidConfig") return 1;
-  if (code === "Conflict" || code === "Internal" || code === "InvalidResponse") return 3;
+  if (code === "InvalidConfig") {
+    return 1;
+  }
+  if (code === "Conflict" || code === "Internal" || code === "InvalidResponse") {
+    return 3;
+  }
   return 2;
 };
 
@@ -91,9 +95,15 @@ const SEVERITY_GLYPH: Record<string, string> = {
 };
 
 const colorize = (severity: string, glyph: string): string => {
-  if (severity === "error") return color.red(glyph);
-  if (severity === "warning") return color.yellow(glyph);
-  if (severity === "info") return color.dim(glyph);
+  if (severity === "error") {
+    return color.red(glyph);
+  }
+  if (severity === "warning") {
+    return color.yellow(glyph);
+  }
+  if (severity === "info") {
+    return color.dim(glyph);
+  }
   return glyph;
 };
 
@@ -114,9 +124,13 @@ const renderReport = (target: string, report: DoctorReport): void => {
     if (f.fix !== undefined) {
       process.stdout.write(`     fix: ${f.fix}\n`);
     }
-    if (f.severity === "ok") okCount += 1;
-    else if (f.severity === "warning") warningCount += 1;
-    else if (f.severity === "error") errorCount += 1;
+    if (f.severity === "ok") {
+      okCount += 1;
+    } else if (f.severity === "warning") {
+      warningCount += 1;
+    } else if (f.severity === "error") {
+      errorCount += 1;
+    }
   }
   process.stdout.write(
     `\nStatus: ${errorCount} error${errorCount === 1 ? "" : "s"}, ${warningCount} warning${warningCount === 1 ? "" : "s"}, ${okCount} ok.\n`,
@@ -192,12 +206,12 @@ const handleDoctor = async (args: ParsedArgs<typeof DOCTOR_ARGS>): Promise<numbe
       `baerly doctor: target ${JSON.stringify(target)} has no doctor backend. ` +
         `(Node variants self-validate at scaffold time; the example IS the contract.)`,
     );
-  } catch (err) {
-    if (err instanceof BaerlyError) {
-      emitError("doctor", err.code, err.message);
-      return errorToExitCode(err.code);
+  } catch (error) {
+    if (error instanceof BaerlyError) {
+      emitError("doctor", error.code, error.message);
+      return errorToExitCode(error.code);
     }
-    emitError("doctor", "Unknown", (err as Error).message);
+    emitError("doctor", "Unknown", (error as Error).message);
     return 2;
   }
 };
@@ -212,7 +226,9 @@ export const doctor = defineCommand({
   args: DOCTOR_ARGS,
   run: async ({ args }) => {
     const code = await handleDoctor(args);
-    if (code !== 0) process.exit(code);
+    if (code !== 0) {
+      process.exit(code);
+    }
   },
 });
 
@@ -226,9 +242,9 @@ export const runDoctor = async (argv: readonly string[]): Promise<number> => {
   let parsed: ParsedArgs<typeof DOCTOR_ARGS>;
   try {
     parsed = parseArgs<typeof DOCTOR_ARGS>(argv as string[], DOCTOR_ARGS);
-  } catch (err) {
+  } catch (error) {
     setJsonMode(argv.includes("--json"));
-    emitError("doctor", "InvalidConfig", (err as Error).message);
+    emitError("doctor", "InvalidConfig", (error as Error).message);
     return 1;
   }
   return handleDoctor(parsed);

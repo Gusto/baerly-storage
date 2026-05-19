@@ -119,8 +119,7 @@ export const handleCreateBaerly = async (
     if (wantWizard) {
       const w = await runWizard({
         projectName: args.projectName,
-        target:
-          args.target === "cloudflare" || args.target === "node" ? args.target : undefined,
+        target: args.target === "cloudflare" || args.target === "node" ? args.target : undefined,
         ...(withAddonsFromFlag !== undefined && { withAddons: withAddonsFromFlag }),
         install: args.install,
       });
@@ -189,12 +188,14 @@ export const handleCreateBaerly = async (
       // bit-for-bit so any scripts parsing it don't break.
       process.stdout.write(`${pc.green("✓")} scaffolded ${result.outDir}\n`);
       process.stdout.write(`\n  Next steps:\n`);
-      for (const s of result.nextSteps) process.stdout.write(`    ${s}\n`);
+      for (const s of result.nextSteps) {
+        process.stdout.write(`    ${s}\n`);
+      }
       process.stdout.write("\n");
     }
     return 0;
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
     if (args.json === true) {
       process.stderr.write(
         `${JSON.stringify({ error: { code: "InvalidConfig", message: msg, command: "create-baerly" } })}\n`,
@@ -215,7 +216,9 @@ export const main = defineCommand({
   args: CREATE_BAERLY_ARGS,
   run: async ({ args }) => {
     const code = await handleCreateBaerly(args);
-    if (code !== 0) process.exit(code);
+    if (code !== 0) {
+      process.exit(code);
+    }
   },
 });
 
@@ -228,8 +231,8 @@ export const runCreateBaerly = async (argv: readonly string[]): Promise<number> 
   let parsed: ParsedArgs<typeof CREATE_BAERLY_ARGS>;
   try {
     parsed = parseArgs<typeof CREATE_BAERLY_ARGS>(argv as string[], CREATE_BAERLY_ARGS);
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
     if (argv.includes("--json")) {
       process.stderr.write(
         `${JSON.stringify({ error: { code: "InvalidConfig", message: msg, command: "create-baerly" } })}\n`,

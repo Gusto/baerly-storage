@@ -28,9 +28,7 @@
  * non-idle.
  */
 
-import { BaerlyError } from "@baerly/protocol";
-import type { LogEntry } from "@baerly/protocol";
-import { logSeqStartOf, lsnParts } from "@baerly/protocol";
+import { BaerlyError, type LogEntry, logSeqStartOf, lsnParts } from "@baerly/protocol";
 import type { BaerlyConfig } from "../config.ts";
 import type { Db } from "../db.ts";
 import type { SinceResponse } from "../contract.ts";
@@ -150,13 +148,17 @@ export async function longPollSince(opts: LongPollSinceOptions): Promise<SinceRe
     };
 
     const settleResolve = (value: SinceResponse): void => {
-      if (settled) return;
+      if (settled) {
+        return;
+      }
       settled = true;
       cleanup();
       resolve(value);
     };
     const settleReject = (err: unknown): void => {
-      if (settled) return;
+      if (settled) {
+        return;
+      }
       settled = true;
       cleanup();
       reject(err);
@@ -178,10 +180,14 @@ export async function longPollSince(opts: LongPollSinceOptions): Promise<SinceRe
     }
 
     const tick = async (): Promise<void> => {
-      if (settled) return;
+      if (settled) {
+        return;
+      }
       try {
         const events = await listEventsSince({ db, table, cursor, signal, maxEvents });
-        if (settled) return;
+        if (settled) {
+          return;
+        }
         if (events.length > 0) {
           settleResolve({ events, next_cursor: events[events.length - 1]!.lsn });
           return;
@@ -195,8 +201,8 @@ export async function longPollSince(opts: LongPollSinceOptions): Promise<SinceRe
         timer = setTimeout(() => {
           void tick();
         }, delay);
-      } catch (e) {
-        settleReject(e);
+      } catch (error) {
+        settleReject(error);
       }
     };
 

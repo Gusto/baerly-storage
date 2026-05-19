@@ -27,8 +27,8 @@ describe("quoteIdentifier", () => {
     expect(() => quoteIdentifier("", "postgres")).toThrow(BaerlyError);
     try {
       quoteIdentifier("", "postgres");
-    } catch (e) {
-      expect((e as BaerlyError).code).toBe("SchemaError");
+    } catch (error) {
+      expect((error as BaerlyError).code).toBe("SchemaError");
     }
   });
 
@@ -36,8 +36,8 @@ describe("quoteIdentifier", () => {
     expect(() => quoteIdentifier("bad\0name", "postgres")).toThrow(BaerlyError);
     try {
       quoteIdentifier("bad\0name", "postgres");
-    } catch (e) {
-      expect((e as BaerlyError).code).toBe("SchemaError");
+    } catch (error) {
+      expect((error as BaerlyError).code).toBe("SchemaError");
     }
   });
 });
@@ -85,8 +85,8 @@ describe("quoteValue", () => {
     expect(() => quoteValue(-Infinity, "postgres")).toThrow(BaerlyError);
     try {
       quoteValue(NaN, "postgres");
-    } catch (e) {
-      expect((e as BaerlyError).code).toBe("SchemaError");
+    } catch (error) {
+      expect((error as BaerlyError).code).toBe("SchemaError");
     }
   });
 
@@ -94,8 +94,8 @@ describe("quoteValue", () => {
     expect(() => quoteValue({ a: 1 }, "postgres")).toThrow(BaerlyError);
     try {
       quoteValue({ a: 1 }, "postgres");
-    } catch (e) {
-      expect((e as BaerlyError).code).toBe("SchemaError");
+    } catch (error) {
+      expect((error as BaerlyError).code).toBe("SchemaError");
     }
   });
 });

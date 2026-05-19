@@ -1,8 +1,8 @@
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { BaerlyError } from "@baerly/protocol";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import type { BaerlyError } from "@baerly/protocol";
 import type { AppConfig } from "../config.ts";
 import {
   deployCloudflare,
@@ -52,7 +52,9 @@ const makeRunner = (defaults: { readonly [key: string]: CannedReply } = {}): Run
   const lookup = (args: readonly string[]): CannedReply => {
     const key = args.join(" ");
     const override = defaults[key];
-    if (override !== undefined) return override;
+    if (override !== undefined) {
+      return override;
+    }
     if (args[0] === "deploy" && args[1] === "--help") {
       return { code: 0, stdout: "Usage: wrangler deploy [--x-provision] [--x-auto-create] ..." };
     }
@@ -72,7 +74,7 @@ const makeRunner = (defaults: { readonly [key: string]: CannedReply } = {}): Run
   };
 
   const runner: ProcessRunner = {
-    run: vi.fn(async (cmd, args, _cwd) => {
+    run: vi.fn<ProcessRunner["run"]>(async (cmd, args, _cwd) => {
       void _cwd;
       calls.push([cmd, ...args]);
       const reply = lookup(args);
@@ -118,40 +120,40 @@ describe("parseR2Bindings", () => {
     await rm(repoRoot, { recursive: true, force: true });
   });
 
-  it("parses comments + trailing commas", async () => {
+  test("parses comments + trailing commas", async () => {
     await writeScaffold(repoRoot);
     const bindings = parseR2Bindings(join(repoRoot, "wrangler.jsonc"));
     expect(bindings).toEqual([{ binding: "BUCKET", bucket_name: "x" }]);
   });
 
-  it("returns [] when r2_buckets is absent", async () => {
+  test("returns [] when r2_buckets is absent", async () => {
     await writeScaffold(repoRoot, '{ "name": "x" }\n');
     expect(parseR2Bindings(join(repoRoot, "wrangler.jsonc"))).toEqual([]);
   });
 
-  it("throws InvalidConfig on missing file", () => {
+  test("throws InvalidConfig on missing file", () => {
     expect(() => parseR2Bindings(join(repoRoot, "does-not-exist.jsonc"))).toThrow(
       /missing\. Expected wrangler\.jsonc at the package root/,
     );
   });
 
-  it("throws InvalidConfig on malformed JSONC", async () => {
+  test("throws InvalidConfig on malformed JSONC", async () => {
     await writeScaffold(repoRoot, '{ "name": "x" "broken": true }');
     try {
       parseR2Bindings(join(repoRoot, "wrangler.jsonc"));
       throw new Error("expected throw");
-    } catch (err) {
-      expect((err as BaerlyError).code).toBe("InvalidConfig");
+    } catch (error) {
+      expect((error as BaerlyError).code).toBe("InvalidConfig");
     }
   });
 
-  it("throws InvalidConfig when r2_buckets[] entry is missing bucket_name", async () => {
+  test("throws InvalidConfig when r2_buckets[] entry is missing bucket_name", async () => {
     await writeScaffold(repoRoot, '{ "name": "x", "r2_buckets": [{ "binding": "B" }] }');
     try {
       parseR2Bindings(join(repoRoot, "wrangler.jsonc"));
       throw new Error("expected throw");
-    } catch (err) {
-      expect((err as BaerlyError).code).toBe("InvalidConfig");
+    } catch (error) {
+      expect((error as BaerlyError).code).toBe("InvalidConfig");
     }
   });
 
@@ -160,7 +162,7 @@ describe("parseR2Bindings", () => {
   // that the rolldown build ships into `dist/templates/`. If anyone
   // moves `wrangler.jsonc` back under `apps/server/` (or changes the
   // R2 binding name), this test fails before drift can land.
-  it("parses the bundled examples/minimal-cloudflare/wrangler.jsonc cleanly", () => {
+  test("parses the bundled examples/minimal-cloudflare/wrangler.jsonc cleanly", () => {
     // Walk up from `packages/cli/src/deploy/` to the worktree root,
     // then into `examples/minimal-cloudflare/wrangler.jsonc`.
     const wranglerPath = join(
@@ -187,7 +189,7 @@ describe("deployCloudflare", () => {
     await rm(repoRoot, { recursive: true, force: true });
   });
 
-  it("invokes wrangler deploy --x-provision --x-auto-create when supported", async () => {
+  test("invokes wrangler deploy --x-provision --x-auto-create when supported", async () => {
     await writeScaffold(repoRoot);
     const h = makeRunner();
     const exit = await deployCloudflare(makeConfig(repoRoot), { runner: h.runner });
@@ -197,7 +199,7 @@ describe("deployCloudflare", () => {
     expect(h.calls).not.toContainEqual(["wrangler", "deploy"]);
   });
 
-  it("falls back to manual provisioning when --x-provision is missing", async () => {
+  test("falls back to manual provisioning when --x-provision is missing", async () => {
     await writeScaffold(repoRoot);
     const h = makeRunner({
       "deploy --help": { code: 0, stdout: "Usage: wrangler deploy [--env <env>] ..." },
@@ -212,7 +214,7 @@ describe("deployCloudflare", () => {
     expect(h.calls).not.toContainEqual(["wrangler", "deploy", "--x-provision", "--x-auto-create"]);
   });
 
-  it("warns when a required secret is missing", async () => {
+  test("warns when a required secret is missing", async () => {
     await writeScaffold(repoRoot);
     const h = makeRunner({
       "secret list": { code: 0, stdout: "[]" },
@@ -223,7 +225,7 @@ describe("deployCloudflare", () => {
     expect(stderr).toContain("wrangler secret put SHARED_SECRET");
   });
 
-  it("respects a custom requiredSecrets list", async () => {
+  test("respects a custom requiredSecrets list", async () => {
     await writeScaffold(repoRoot);
     const h = makeRunner({
       "secret list": { code: 0, stdout: '[{"name":"AUDIENCE_TAG","type":"secret_text"}]' },
@@ -234,20 +236,20 @@ describe("deployCloudflare", () => {
     expect(stderr).not.toContain("AUDIENCE_TAG is required but unset");
   });
 
-  it("throws InvalidConfig when wrangler.jsonc is missing", async () => {
+  test("throws InvalidConfig when wrangler.jsonc is missing", async () => {
     // No scaffold written.
     const h = makeRunner();
     try {
       await deployCloudflare(makeConfig(repoRoot), { runner: h.runner });
       throw new Error("expected throw");
-    } catch (err) {
-      expect((err as BaerlyError).code).toBe("InvalidConfig");
+    } catch (error) {
+      expect((error as BaerlyError).code).toBe("InvalidConfig");
     } finally {
       h.stderr();
     }
   });
 
-  it("throws NetworkError when bucket creation fails in the fallback", async () => {
+  test("throws NetworkError when bucket creation fails in the fallback", async () => {
     await writeScaffold(repoRoot);
     const h = makeRunner({
       "deploy --help": { code: 0, stdout: "Usage: wrangler deploy [--env <env>] ..." },
@@ -257,8 +259,8 @@ describe("deployCloudflare", () => {
     try {
       await deployCloudflare(makeConfig(repoRoot), { runner: h.runner });
       throw new Error("expected throw");
-    } catch (err) {
-      expect((err as BaerlyError).code).toBe("NetworkError");
+    } catch (error) {
+      expect((error as BaerlyError).code).toBe("NetworkError");
     } finally {
       h.stderr();
     }
@@ -275,7 +277,7 @@ describe("ensureBindings", () => {
     await rm(repoRoot, { recursive: true, force: true });
   });
 
-  it("creates a missing bucket but skips one that already exists", async () => {
+  test("creates a missing bucket but skips one that already exists", async () => {
     await writeScaffold(
       repoRoot,
       `{ "r2_buckets": [

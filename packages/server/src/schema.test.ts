@@ -64,8 +64,8 @@ describe("validateOrThrow", () => {
     try {
       await validateOrThrow(symSchema, {}, { collection: "t", verb: "insert" });
       throw new Error("unreachable");
-    } catch (e) {
-      expect((e as BaerlyError).issues?.[0]?.path).toEqual([String(sym), 0, "nested"]);
+    } catch (error) {
+      expect((error as BaerlyError).issues?.[0]?.path).toEqual([String(sym), 0, "nested"]);
     }
   });
 
@@ -82,8 +82,8 @@ describe("validateOrThrow", () => {
     try {
       await validateOrThrow(segSchema, {}, { collection: "t", verb: "insert" });
       throw new Error("unreachable");
-    } catch (e) {
-      expect((e as BaerlyError).issues?.[0]?.path).toEqual(["users", 2, "name"]);
+    } catch (error) {
+      expect((error as BaerlyError).issues?.[0]?.path).toEqual(["users", 2, "name"]);
     }
   });
 
@@ -129,8 +129,8 @@ describe("validateOrThrow", () => {
           verb: "replace",
         },
       );
-    } catch (e) {
-      err = e;
+    } catch (error) {
+      err = error;
     }
     expect(err).toBeInstanceOf(BaerlyError);
     expect((err as BaerlyError).message).toContain("tickets.replace");

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, test } from "vitest";
 import {
   type ScaffoldManifest,
   type SubstituteContext,
@@ -13,7 +13,7 @@ const mkCtx = (manifest: ScaffoldManifest, vars: Record<string, string>): Substi
 });
 
 describe("substituteText", () => {
-  it("rewrites a single sentinel", () => {
+  test("rewrites a single sentinel", () => {
     const ctx = mkCtx(
       {
         renames: [{ from: "minimal-cloudflare", fromKey: "appName" }],
@@ -25,7 +25,7 @@ describe("substituteText", () => {
     expect(substituteText("name: minimal-cloudflare", ctx)).toBe("name: my-app");
   });
 
-  it("applies longer sentinels first so prefixes don't corrupt", () => {
+  test("applies longer sentinels first so prefixes don't corrupt", () => {
     const ctx = mkCtx(
       {
         renames: [
@@ -40,7 +40,7 @@ describe("substituteText", () => {
     expect(substituteText("[minimal-cloudflare-server]", ctx)).toBe("[my-server]");
   });
 
-  it("leaves unknown fromKeys untouched", () => {
+  test("leaves unknown fromKeys untouched", () => {
     const ctx = mkCtx(
       { renames: [{ from: "minimal-demo", fromKey: "tenant" }], excludePaths: [], dropDevDeps: [] },
       {},
@@ -50,7 +50,7 @@ describe("substituteText", () => {
 });
 
 describe("substitutePackageJson", () => {
-  it("pins baerly-storage workspace dep to the cli version", () => {
+  test("pins baerly-storage workspace dep to the cli version", () => {
     const ctx = mkCtx({ renames: [], excludePaths: [], dropDevDeps: [] }, {});
     const text = JSON.stringify(
       { name: "x", dependencies: { "baerly-storage": "workspace:*", other: "1.0.0" } },
@@ -64,7 +64,7 @@ describe("substitutePackageJson", () => {
     expect(out.dependencies["other"]).toBe("1.0.0");
   });
 
-  it("does not pin unrelated workspace:* dep names", () => {
+  test("does not pin unrelated workspace:* dep names", () => {
     const ctx = mkCtx({ renames: [], excludePaths: [], dropDevDeps: [] }, {});
     const text = JSON.stringify(
       { name: "x", dependencies: { "@baerly/protocol": "workspace:*", other: "workspace:*" } },
@@ -78,7 +78,7 @@ describe("substitutePackageJson", () => {
     expect(out.dependencies["other"]).toBe("workspace:*");
   });
 
-  it("pins the literal `create-baerly` workspace dep to the cli version", () => {
+  test("pins the literal `create-baerly` workspace dep to the cli version", () => {
     // The emitted `baerly.config.ts` imports `create-baerly/config`,
     // so the scaffolder keeps `create-baerly` as a devDep and pins
     // it alongside `baerly-storage`.
@@ -95,7 +95,7 @@ describe("substitutePackageJson", () => {
     expect(out.devDependencies["typescript"]).toBe("^5");
   });
 
-  it("drops listed devDependencies", () => {
+  test("drops listed devDependencies", () => {
     const ctx = mkCtx({ renames: [], excludePaths: [], dropDevDeps: ["create-baerly"] }, {});
     const text = JSON.stringify(
       { name: "x", devDependencies: { "create-baerly": "workspace:*", typescript: "^5" } },
@@ -108,7 +108,7 @@ describe("substitutePackageJson", () => {
     expect(out.devDependencies).toEqual({ typescript: "^5" });
   });
 
-  it("removes the devDependencies block entirely when it becomes empty", () => {
+  test("removes the devDependencies block entirely when it becomes empty", () => {
     const ctx = mkCtx({ renames: [], excludePaths: [], dropDevDeps: ["only"] }, {});
     const text = JSON.stringify({ name: "x", devDependencies: { only: "workspace:*" } }, null, 2);
     const out = JSON.parse(substitutePackageJson(text, ctx)) as {

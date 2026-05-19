@@ -11,9 +11,15 @@ interface Props {
 export const TicketDetail = ({ id, onEdit, onBack }: Props): React.JSX.Element => {
   const { row: t, loading, error } = useLiveDocument<Ticket>(client, "tickets", id);
 
-  if (error !== undefined) return <p style={{ color: "crimson" }}>Error: {error.message}</p>;
-  if (loading) return <p>Loading…</p>;
-  if (t === undefined) return <p>Not found.</p>;
+  if (error !== undefined) {
+    return <p style={{ color: "crimson" }}>Error: {error.message}</p>;
+  }
+  if (loading) {
+    return <p>Loading…</p>;
+  }
+  if (t === undefined) {
+    return <p>Not found.</p>;
+  }
 
   return (
     <div>
@@ -33,7 +39,9 @@ export const TicketDetail = ({ id, onEdit, onBack }: Props): React.JSX.Element =
       <button
         style={{ marginLeft: 8, color: "crimson" }}
         onClick={async () => {
-          if (!window.confirm("Delete this ticket?")) return;
+          if (!window.confirm("Delete this ticket?")) {
+            return;
+          }
           await client.table<Ticket>("tickets").where({ _id: id }).delete();
           onBack();
         }}

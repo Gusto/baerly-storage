@@ -26,7 +26,7 @@ import {
 } from "@baerly/protocol";
 import { ServerWriter } from "@baerly/server";
 import { reset, type LogRecord, type Sink } from "@logtape/logtape";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, test } from "vitest";
 import { r2BindingStorage } from "./r2-binding-storage.ts";
 import { baerlyWorker, type Env } from "./worker.ts";
 
@@ -91,7 +91,7 @@ const seed = async (
 };
 
 describe("baerlyWorker scheduled", () => {
-  it("compacts on an even-minute tick when CURRENT_JSON_KEY is set", async () => {
+  test("compacts on an even-minute tick when CURRENT_JSON_KEY is set", async () => {
     const bucket = getBinding();
     const storage = r2BindingStorage(bucket);
     const key = "app/t/tenant/x/manifests/c/current.json";
@@ -131,7 +131,7 @@ describe("baerlyWorker scheduled", () => {
     expect(pending).toBeNull();
   });
 
-  it("runs GC on an odd-minute tick when CURRENT_JSON_KEY is set", async () => {
+  test("runs GC on an odd-minute tick when CURRENT_JSON_KEY is set", async () => {
     const bucket = getBinding();
     const storage = r2BindingStorage(bucket);
     const key = "app/t/tenant/x/manifests/c/current.json";
@@ -166,7 +166,7 @@ describe("baerlyWorker scheduled", () => {
     expect(json.snapshot).toBeNull();
   });
 
-  it("no-ops when CURRENT_JSON_KEY is unset", async () => {
+  test("no-ops when CURRENT_JSON_KEY is unset", async () => {
     const bucket = getBinding();
     const env: Env = {
       BUCKET: bucket,
@@ -226,7 +226,7 @@ describe("baerlyWorker observability", () => {
       (r) => r.message.join("") === "canonical" && r.category.join(".") === `baerly.${unit}`,
     );
 
-  it("emits a canonical line for a write request with class_a_ops and outcome=committed", async () => {
+  test("emits a canonical line for a write request with class_a_ops and outcome=committed", async () => {
     const bucket = getBinding();
     const { records, sink } = collectingSink();
     const tenant = `obs-write-${Date.now().toString(36)}`;
@@ -277,7 +277,7 @@ describe("baerlyWorker observability", () => {
     expect(classA).toBeGreaterThanOrEqual(3);
   });
 
-  it("cache-miss read emits a canonical line with class_b_ops>0, outcome=read, cache_status=miss", async () => {
+  test("cache-miss read emits a canonical line with class_b_ops>0, outcome=read, cache_status=miss", async () => {
     const bucket = getBinding();
     const { records, sink } = collectingSink();
     const tenant = `obs-miss-${Date.now().toString(36)}`;
@@ -327,7 +327,7 @@ describe("baerlyWorker observability", () => {
     expect(props["db.storage.class_b_ops_total"]).toBeGreaterThanOrEqual(1);
   });
 
-  it("cache-hit read still emits a canonical line with cache_status=hit", async () => {
+  test("cache-hit read still emits a canonical line with cache_status=hit", async () => {
     // The adapter constructs the canonical-line context up front so
     // hits flow through the same `flushCanonicalLine` path as
     // misses, only stamped with `cache_status: "hit"`. Operators
@@ -383,7 +383,7 @@ describe("baerlyWorker observability", () => {
     expect(props["status"]).toBe(200);
   });
 
-  it("scheduled() emits one maintenance canonical line carrying compactor + gc + storage metrics", async () => {
+  test("scheduled() emits one maintenance canonical line carrying compactor + gc + storage metrics", async () => {
     const bucket = getBinding();
     const storage = r2BindingStorage(bucket);
     const tenant = `obs-sched-${Date.now().toString(36)}`;
@@ -433,7 +433,7 @@ describe("baerlyWorker observability", () => {
     expect(findCanonical(records, "gc")).toBeUndefined();
   });
 
-  it("verifier-rejected 401 emits a canonical http line AND the verifier_rejected warn", async () => {
+  test("verifier-rejected 401 emits a canonical http line AND the verifier_rejected warn", async () => {
     // Cross-adapter regression-lock: CF and Node must emit the same
     // wire shape AND the same observability record when the verifier
     // returns null. See `packages/adapter-node/src/server.test.ts`

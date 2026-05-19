@@ -134,7 +134,9 @@ describe("eval/run.mjs", () => {
     expect(trialDirs.length).toBe(1);
 
     const firstTrial = trialDirs[0];
-    if (!firstTrial) throw new Error("no trial directory found");
+    if (!firstTrial) {
+      throw new Error("no trial directory found");
+    }
     const trialDir = join(runsDir, firstTrial.name);
     expect(existsSync(join(trialDir, "score.md"))).toBe(true);
     expect(existsSync(join(trialDir, "metrics.json"))).toBe(true);

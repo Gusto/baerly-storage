@@ -25,9 +25,21 @@ const okResponse = (body: BodyInit | null, headers: Record<string, string>) =>
 const noBody = (status: number, headers: Record<string, string> = {}) =>
   new Response(null, { status, headers });
 
+// `typeof fetch` accepts `RequestInfo | URL`. Tests that branch on the
+// outgoing URL go through this helper to flatten all three shapes.
+const urlOfFetchInput = (input: RequestInfo | URL): string => {
+  if (typeof input === "string") {
+    return input;
+  }
+  if (input instanceof URL) {
+    return input.href;
+  }
+  return input.url;
+};
+
 describe("S3HttpStorage.get", () => {
   test("200 → { body, etag }", async () => {
-    const fetchFn = vi.fn(async (_req: Request) =>
+    const fetchFn = vi.fn<typeof fetch>(async (_req) =>
       okResponse(new TextEncoder().encode("hello").buffer as ArrayBuffer, {
         ETag: '"abc"',
       }),
@@ -44,7 +56,7 @@ describe("S3HttpStorage.get", () => {
   });
 
   test("304 with ifNoneMatch → null", async () => {
-    const fetchFn = vi.fn(async (_req: Request) => noBody(304));
+    const fetchFn = vi.fn<typeof fetch>(async (_req) => noBody(304));
     const s = mkStorage(fetchFn as unknown as typeof fetch);
     const got = await s.get("k", { ifNoneMatch: '"abc"' });
     expect(got).toBeNull();
@@ -53,13 +65,13 @@ describe("S3HttpStorage.get", () => {
   });
 
   test("404 → null", async () => {
-    const fetchFn = vi.fn(async (_req: Request) => noBody(404));
+    const fetchFn = vi.fn<typeof fetch>(async (_req) => noBody(404));
     const s = mkStorage(fetchFn as unknown as typeof fetch);
-    expect(await s.get("missing")).toBeNull();
+    await expect(s.get("missing")).resolves.toBeNull();
   });
 
   test("403 → AccessDenied", async () => {
-    const fetchFn = vi.fn(async (_req: Request) => noBody(403));
+    const fetchFn = vi.fn<typeof fetch>(async (_req) => noBody(403));
     const s = mkStorage(fetchFn as unknown as typeof fetch);
     await expect(s.get("k")).rejects.toMatchObject({
       code: "AccessDenied",
@@ -67,7 +79,7 @@ describe("S3HttpStorage.get", () => {
   });
 
   test("500 → retries then NetworkError when budget exhausted", async () => {
-    const fetchFn = vi.fn(async (_req: Request) => new Response("boom", { status: 500 }));
+    const fetchFn = vi.fn<typeof fetch>(async (_req) => new Response("boom", { status: 500 }));
     const s = mkStorage(fetchFn as unknown as typeof fetch, { retries: 2 });
     await expect(s.get("k")).rejects.toBeInstanceOf(BaerlyError);
     // 1 initial + 2 retries
@@ -75,7 +87,7 @@ describe("S3HttpStorage.get", () => {
   });
 
   test("missing ETag on 200 → InvalidResponse", async () => {
-    const fetchFn = vi.fn(async (_req: Request) =>
+    const fetchFn = vi.fn<typeof fetch>(async (_req) =>
       okResponse(new TextEncoder().encode("x").buffer as ArrayBuffer, {}),
     );
     const s = mkStorage(fetchFn as unknown as typeof fetch);
@@ -85,7 +97,7 @@ describe("S3HttpStorage.get", () => {
   });
 
   test("aborted signal → throws before fetch", async () => {
-    const fetchFn = vi.fn(async (_req: Request) => okResponse(null, { ETag: '"x"' }));
+    const fetchFn = vi.fn<typeof fetch>(async (_req) => okResponse(null, { ETag: '"x"' }));
     const s = mkStorage(fetchFn as unknown as typeof fetch);
     const ac = new AbortController();
     ac.abort();
@@ -94,7 +106,9 @@ describe("S3HttpStorage.get", () => {
   });
 
   test("URL-encodes the key segment", async () => {
-    const fetchFn = vi.fn(async (_req: Request) => okResponse(new ArrayBuffer(0), { ETag: '"x"' }));
+    const fetchFn = vi.fn<typeof fetch>(async (_req) =>
+      okResponse(new ArrayBuffer(0), { ETag: '"x"' }),
+    );
     const s = mkStorage(fetchFn as unknown as typeof fetch);
     await s.get("a/b c");
     const req = fetchFn.mock.calls[0]![0] as Request;
@@ -102,7 +116,7 @@ describe("S3HttpStorage.get", () => {
   });
 
   test("429 → NetworkError with retryAfterSeconds when header present", async () => {
-    const fetchFn = vi.fn(async (_req: Request) => noBody(429, { "Retry-After": "5" }));
+    const fetchFn = vi.fn<typeof fetch>(async (_req) => noBody(429, { "Retry-After": "5" }));
     const s = mkStorage(fetchFn as unknown as typeof fetch);
     await expect(s.get("k")).rejects.toMatchObject({
       code: "NetworkError",
@@ -111,21 +125,21 @@ describe("S3HttpStorage.get", () => {
   });
 
   test("429 without Retry-After → NetworkError, cause has status only", async () => {
-    const fetchFn = vi.fn(async (_req: Request) => noBody(429));
+    const fetchFn = vi.fn<typeof fetch>(async (_req) => noBody(429));
     const s = mkStorage(fetchFn as unknown as typeof fetch);
     try {
       await s.get("k");
       expect.fail("expected throw");
-    } catch (err) {
-      expect((err as BaerlyError).code).toBe("NetworkError");
-      const cause = (err as BaerlyError).cause as { status: number; retryAfterSeconds?: number };
+    } catch (error) {
+      expect((error as BaerlyError).code).toBe("NetworkError");
+      const cause = (error as BaerlyError).cause as { status: number; retryAfterSeconds?: number };
       expect(cause.status).toBe(429);
       expect(cause.retryAfterSeconds).toBeUndefined();
     }
   });
 
   test("503 → NetworkError with retryAfterSeconds", async () => {
-    const fetchFn = vi.fn(async (_req: Request) => noBody(503, { "Retry-After": "2" }));
+    const fetchFn = vi.fn<typeof fetch>(async (_req) => noBody(503, { "Retry-After": "2" }));
     const s = mkStorage(fetchFn as unknown as typeof fetch);
     await expect(s.get("k")).rejects.toMatchObject({
       code: "NetworkError",
@@ -136,7 +150,7 @@ describe("S3HttpStorage.get", () => {
 
 describe("S3HttpStorage.put", () => {
   test("200 → returns ETag from response header", async () => {
-    const fetchFn = vi.fn(async (_req: Request) => noBody(200, { ETag: '"e1"' }));
+    const fetchFn = vi.fn<typeof fetch>(async (_req) => noBody(200, { ETag: '"e1"' }));
     const s = mkStorage(fetchFn as unknown as typeof fetch);
     const result = await s.put("k", new Uint8Array([1, 2, 3]));
     expect(result.etag).toBe('"e1"');
@@ -146,7 +160,7 @@ describe("S3HttpStorage.put", () => {
   });
 
   test("uses caller-provided contentType", async () => {
-    const fetchFn = vi.fn(async (_req: Request) => noBody(200, { ETag: '"e1"' }));
+    const fetchFn = vi.fn<typeof fetch>(async (_req) => noBody(200, { ETag: '"e1"' }));
     const s = mkStorage(fetchFn as unknown as typeof fetch);
     await s.put("k", new Uint8Array(0), { contentType: "application/json" });
     const req = fetchFn.mock.calls[0]![0] as Request;
@@ -154,7 +168,7 @@ describe("S3HttpStorage.put", () => {
   });
 
   test("412 with ifMatch → Conflict", async () => {
-    const fetchFn = vi.fn(async (_req: Request) => noBody(412));
+    const fetchFn = vi.fn<typeof fetch>(async (_req) => noBody(412));
     const s = mkStorage(fetchFn as unknown as typeof fetch);
     await expect(s.put("k", new Uint8Array(0), { ifMatch: '"old"' })).rejects.toMatchObject({
       code: "Conflict",
@@ -163,7 +177,7 @@ describe("S3HttpStorage.put", () => {
   });
 
   test("ifNoneMatch='*' sets If-None-Match: *", async () => {
-    const fetchFn = vi.fn(async (_req: Request) => noBody(200, { ETag: '"e1"' }));
+    const fetchFn = vi.fn<typeof fetch>(async (_req) => noBody(200, { ETag: '"e1"' }));
     const s = mkStorage(fetchFn as unknown as typeof fetch);
     await s.put("k", new Uint8Array(0), { ifNoneMatch: "*" });
     const req = fetchFn.mock.calls[0]![0] as Request;
@@ -171,7 +185,7 @@ describe("S3HttpStorage.put", () => {
   });
 
   test("403 → AccessDenied", async () => {
-    const fetchFn = vi.fn(async (_req: Request) => noBody(403));
+    const fetchFn = vi.fn<typeof fetch>(async (_req) => noBody(403));
     const s = mkStorage(fetchFn as unknown as typeof fetch);
     await expect(s.put("k", new Uint8Array(0))).rejects.toMatchObject({
       code: "AccessDenied",
@@ -179,7 +193,7 @@ describe("S3HttpStorage.put", () => {
   });
 
   test("missing ETag on success → InvalidResponse", async () => {
-    const fetchFn = vi.fn(async (_req: Request) => noBody(200));
+    const fetchFn = vi.fn<typeof fetch>(async (_req) => noBody(200));
     const s = mkStorage(fetchFn as unknown as typeof fetch);
     await expect(s.put("k", new Uint8Array(0))).rejects.toMatchObject({
       code: "InvalidResponse",
@@ -188,7 +202,7 @@ describe("S3HttpStorage.put", () => {
 
   test("parses Date response header into serverDate", async () => {
     const date = new Date("2026-05-10T12:00:00Z");
-    const fetchFn = vi.fn(async (_req: Request) =>
+    const fetchFn = vi.fn<typeof fetch>(async (_req) =>
       noBody(200, { ETag: '"e1"', Date: date.toUTCString() }),
     );
     const s = mkStorage(fetchFn as unknown as typeof fetch);
@@ -199,14 +213,14 @@ describe("S3HttpStorage.put", () => {
   });
 
   test("missing Date header → no serverDate", async () => {
-    const fetchFn = vi.fn(async (_req: Request) => noBody(200, { ETag: '"e1"' }));
+    const fetchFn = vi.fn<typeof fetch>(async (_req) => noBody(200, { ETag: '"e1"' }));
     const s = mkStorage(fetchFn as unknown as typeof fetch);
     const result = await s.put("k", new Uint8Array(0));
     expect(result.serverDate).toBeUndefined();
   });
 
   test("429 → NetworkError with retryAfterSeconds when header present", async () => {
-    const fetchFn = vi.fn(async (_req: Request) => noBody(429, { "Retry-After": "3" }));
+    const fetchFn = vi.fn<typeof fetch>(async (_req) => noBody(429, { "Retry-After": "3" }));
     const s = mkStorage(fetchFn as unknown as typeof fetch);
     await expect(s.put("k", new Uint8Array(0))).rejects.toMatchObject({
       code: "NetworkError",
@@ -215,7 +229,7 @@ describe("S3HttpStorage.put", () => {
   });
 
   test("503 → NetworkError (retryable, not InvalidResponse)", async () => {
-    const fetchFn = vi.fn(async (_req: Request) => noBody(503));
+    const fetchFn = vi.fn<typeof fetch>(async (_req) => noBody(503));
     const s = mkStorage(fetchFn as unknown as typeof fetch);
     await expect(s.put("k", new Uint8Array(0))).rejects.toMatchObject({
       code: "NetworkError",
@@ -226,7 +240,7 @@ describe("S3HttpStorage.put", () => {
 
 describe("S3HttpStorage.delete", () => {
   test("204 → resolves", async () => {
-    const fetchFn = vi.fn(async (_req: Request) => noBody(204));
+    const fetchFn = vi.fn<typeof fetch>(async (_req) => noBody(204));
     const s = mkStorage(fetchFn as unknown as typeof fetch);
     await expect(s.delete("k")).resolves.toBeUndefined();
     const req = fetchFn.mock.calls[0]![0] as Request;
@@ -234,26 +248,26 @@ describe("S3HttpStorage.delete", () => {
   });
 
   test("404 → resolves (idempotent)", async () => {
-    const fetchFn = vi.fn(async (_req: Request) => noBody(404));
+    const fetchFn = vi.fn<typeof fetch>(async (_req) => noBody(404));
     const s = mkStorage(fetchFn as unknown as typeof fetch);
     await expect(s.delete("k")).resolves.toBeUndefined();
   });
 
   test("403 → AccessDenied", async () => {
-    const fetchFn = vi.fn(async (_req: Request) => noBody(403));
+    const fetchFn = vi.fn<typeof fetch>(async (_req) => noBody(403));
     const s = mkStorage(fetchFn as unknown as typeof fetch);
     await expect(s.delete("k")).rejects.toMatchObject({ code: "AccessDenied" });
   });
 
   test("500 retried then NetworkError", async () => {
-    const fetchFn = vi.fn(async (_req: Request) => new Response("boom", { status: 500 }));
+    const fetchFn = vi.fn<typeof fetch>(async (_req) => new Response("boom", { status: 500 }));
     const s = mkStorage(fetchFn as unknown as typeof fetch, { retries: 1 });
     await expect(s.delete("k")).rejects.toMatchObject({ code: "NetworkError" });
     expect(fetchFn).toHaveBeenCalledTimes(2);
   });
 
   test("429 → NetworkError with retryAfterSeconds", async () => {
-    const fetchFn = vi.fn(async (_req: Request) => noBody(429, { "Retry-After": "4" }));
+    const fetchFn = vi.fn<typeof fetch>(async (_req) => noBody(429, { "Retry-After": "4" }));
     const s = mkStorage(fetchFn as unknown as typeof fetch);
     await expect(s.delete("k")).rejects.toMatchObject({
       code: "NetworkError",
@@ -270,8 +284,8 @@ describe("S3HttpStorage.list", () => {
     `</ListBucketResult>`;
 
   test("single page — yields entries and stops", async () => {
-    const fetchFn = vi.fn(
-      async (_req: Request) =>
+    const fetchFn = vi.fn<typeof fetch>(
+      async (_req) =>
         new Response(xmlPage(["a", "b", "c"]), {
           status: 200,
           headers: { "Content-Type": "application/xml" },
@@ -279,7 +293,9 @@ describe("S3HttpStorage.list", () => {
     );
     const s = mkStorage(fetchFn as unknown as typeof fetch);
     const out: { key: string; etag: string }[] = [];
-    for await (const e of s.list("p/")) out.push({ ...e });
+    for await (const e of s.list("p/")) {
+      out.push({ ...e });
+    }
     expect(out).toEqual([
       { key: "a", etag: '"e_a"' },
       { key: "b", etag: '"e_b"' },
@@ -289,8 +305,8 @@ describe("S3HttpStorage.list", () => {
   });
 
   test("multi-page — follows NextContinuationToken", async () => {
-    const fetchFn = vi.fn(async (input: Request | string) => {
-      const url = typeof input === "string" ? input : input.url;
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const url = urlOfFetchInput(input);
       if (url.includes("continuation-token=tok1")) {
         return new Response(xmlPage(["c", "d"]), { status: 200 });
       }
@@ -298,50 +314,60 @@ describe("S3HttpStorage.list", () => {
     });
     const s = mkStorage(fetchFn as unknown as typeof fetch);
     const out: string[] = [];
-    for await (const e of s.list("p/")) out.push(e.key);
+    for await (const e of s.list("p/")) {
+      out.push(e.key);
+    }
     expect(out).toEqual(["a", "b", "c", "d"]);
     expect(fetchFn).toHaveBeenCalledTimes(2);
   });
 
   test("maxKeys stops iteration", async () => {
-    const fetchFn = vi.fn(
-      async (_req: Request) => new Response(xmlPage(["a", "b", "c", "d"]), { status: 200 }),
+    const fetchFn = vi.fn<typeof fetch>(
+      async (_req) => new Response(xmlPage(["a", "b", "c", "d"]), { status: 200 }),
     );
     const s = mkStorage(fetchFn as unknown as typeof fetch);
     const out: string[] = [];
-    for await (const e of s.list("p/", { maxKeys: 2 })) out.push(e.key);
+    for await (const e of s.list("p/", { maxKeys: 2 })) {
+      out.push(e.key);
+    }
     expect(out).toEqual(["a", "b"]);
   });
 
   test("startAfter sets the cursor", async () => {
-    const fetchFn = vi.fn(async (_req: Request) => new Response(xmlPage([]), { status: 200 }));
+    const fetchFn = vi.fn<typeof fetch>(async (_req) => new Response(xmlPage([]), { status: 200 }));
     const s = mkStorage(fetchFn as unknown as typeof fetch);
     const out: string[] = [];
-    for await (const e of s.list("p/", { startAfter: "p/x" })) out.push(e.key);
+    for await (const e of s.list("p/", { startAfter: "p/x" })) {
+      out.push(e.key);
+    }
     expect(out).toEqual([]);
     const req = fetchFn.mock.calls[0]![0] as Request;
     expect(decodeURIComponent(req.url)).toContain("start-after=p/x");
   });
 
   test("403 → AccessDenied", async () => {
-    const fetchFn = vi.fn(async (_req: Request) => noBody(403));
+    const fetchFn = vi.fn<typeof fetch>(async (_req) => noBody(403));
     const s = mkStorage(fetchFn as unknown as typeof fetch);
     const iter = s.list("p/");
     await expect(
       (async () => {
-        for await (const _ of iter) void _;
+        for await (const _ of iter) {
+          void _;
+        }
       })(),
     ).rejects.toMatchObject({ code: "AccessDenied" });
   });
 
   test("aborted signal → throws", async () => {
-    const fetchFn = vi.fn(async (_req: Request) => new Response(xmlPage([]), { status: 200 }));
+    const fetchFn = vi.fn<typeof fetch>(async (_req) => new Response(xmlPage([]), { status: 200 }));
     const s = mkStorage(fetchFn as unknown as typeof fetch);
     const ac = new AbortController();
     ac.abort();
     await expect(
       (async () => {
-        for await (const _ of s.list("p/", { signal: ac.signal })) void _;
+        for await (const _ of s.list("p/", { signal: ac.signal })) {
+          void _;
+        }
       })(),
     ).rejects.toBeDefined();
     expect(fetchFn).not.toHaveBeenCalled();
@@ -351,15 +377,19 @@ describe("S3HttpStorage.list", () => {
     vi.useFakeTimers();
     try {
       let calls = 0;
-      const fetchFn = vi.fn(async (_req: Request) => {
+      const fetchFn = vi.fn<typeof fetch>(async (_req) => {
         calls++;
-        if (calls === 1) return noBody(429, { "Retry-After": "3" });
+        if (calls === 1) {
+          return noBody(429, { "Retry-After": "3" });
+        }
         return new Response(xmlPage([]), { status: 200 });
       });
       const s = mkStorage(fetchFn as unknown as typeof fetch);
       const iter = s.list("p/");
       const drain = (async () => {
-        for await (const _ of iter) void _;
+        for await (const _ of iter) {
+          void _;
+        }
       })();
       await vi.advanceTimersByTimeAsync(0);
       expect(fetchFn).toHaveBeenCalledTimes(1);
@@ -377,13 +407,15 @@ describe("S3HttpStorage.list", () => {
   test("retry budget exhausted → NetworkError carries last-seen retryAfterSeconds", async () => {
     vi.useFakeTimers();
     try {
-      const fetchFn = vi.fn(async (_req: Request) => noBody(429, { "Retry-After": "2" }));
+      const fetchFn = vi.fn<typeof fetch>(async (_req) => noBody(429, { "Retry-After": "2" }));
       const s = mkStorage(fetchFn as unknown as typeof fetch);
       const iter = s.list("p/");
       const drain = (async () => {
-        for await (const _ of iter) void _;
+        for await (const _ of iter) {
+          void _;
+        }
       })();
-      const caught = drain.catch((e: unknown) => e);
+      const caught = drain.catch((error: unknown) => error);
       // 10 attempts × 2s = 20s of in-loop waits.
       await vi.advanceTimersByTimeAsync(60_000);
       const err = (await caught) as BaerlyError;
@@ -399,7 +431,7 @@ describe("S3HttpStorage.list", () => {
     const s = new S3HttpStorage({
       endpoint: "https://example.invalid",
       bucket: "b",
-      fetch: vi.fn() as unknown as typeof fetch,
+      fetch: vi.fn<typeof fetch>(),
       retries: 0,
     });
     // Force xmlParser to undefined by stripping the global default
@@ -409,12 +441,14 @@ describe("S3HttpStorage.list", () => {
       const s2 = new S3HttpStorage({
         endpoint: "https://example.invalid",
         bucket: "b",
-        fetch: vi.fn() as unknown as typeof fetch,
+        fetch: vi.fn<typeof fetch>(),
         retries: 0,
       });
       await expect(
         (async () => {
-          for await (const _ of s2.list("p/")) void _;
+          for await (const _ of s2.list("p/")) {
+            void _;
+          }
         })(),
       ).rejects.toMatchObject({ code: "InvalidConfig" });
     } finally {
@@ -432,9 +466,11 @@ describe("retry honors Retry-After hint", () => {
     vi.useFakeTimers();
     try {
       let calls = 0;
-      const fetchFn = vi.fn(async (_req: Request) => {
+      const fetchFn = vi.fn<typeof fetch>(async (_req) => {
         calls++;
-        if (calls === 1) return noBody(429, { "Retry-After": "5" });
+        if (calls === 1) {
+          return noBody(429, { "Retry-After": "5" });
+        }
         return okResponse(new TextEncoder().encode("ok").buffer as ArrayBuffer, { ETag: '"e"' });
       });
       const s = mkStorage(fetchFn as unknown as typeof fetch, { retries: 3, backoffMs: 100 });
@@ -457,11 +493,13 @@ describe("retry honors Retry-After hint", () => {
     vi.useFakeTimers();
     try {
       let calls = 0;
-      const fetchFn = vi.fn(async (_req: Request) => {
+      const fetchFn = vi.fn<typeof fetch>(async (_req) => {
         calls++;
         // 60 seconds — clamped by parseRetryAfter to RETRY_AFTER_MAX_SECONDS,
         // and then clamped again to retry()'s maxDelayMs of 10_000ms.
-        if (calls === 1) return noBody(429, { "Retry-After": "60" });
+        if (calls === 1) {
+          return noBody(429, { "Retry-After": "60" });
+        }
         return okResponse(new TextEncoder().encode("ok").buffer as ArrayBuffer, { ETag: '"e"' });
       });
       const s = mkStorage(fetchFn as unknown as typeof fetch, { retries: 3, backoffMs: 100 });
@@ -529,8 +567,8 @@ describe("parseRetryAfter", () => {
 
 describe("sign callback", () => {
   test("sign() runs before fetch and its return value is what fetch sees", async () => {
-    const upstreamFetch = vi.fn(async (_req: Request) => noBody(200, { ETag: '"x"' }));
-    const sign = vi.fn(async (req: Request) => {
+    const upstreamFetch = vi.fn<typeof fetch>(async (_req) => noBody(200, { ETag: '"x"' }));
+    const sign = vi.fn<(req: Request) => Promise<Request>>(async (req) => {
       const next = new Request(req, {
         headers: { ...Object.fromEntries(req.headers), "X-Signed": "1" },
       });

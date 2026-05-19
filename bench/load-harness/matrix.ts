@@ -51,7 +51,9 @@ for (const preset of PRESETS) {
         `--seed=${seed}`,
         `--output-dir=${outBase}`,
       ]);
-      if (code !== 0) failures++;
+      if (code !== 0) {
+        failures++;
+      }
     }
   }
 }

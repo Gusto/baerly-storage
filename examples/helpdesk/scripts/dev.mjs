@@ -22,6 +22,8 @@ process.on("SIGINT", () => forward("SIGINT"));
 process.on("SIGTERM", () => forward("SIGTERM"));
 
 child.on("exit", (code, signal) => {
-  if (signal === "SIGINT" || signal === "SIGTERM") process.exit(0);
+  if (signal === "SIGINT" || signal === "SIGTERM") {
+    process.exit(0);
+  }
   process.exit(code ?? 0);
 });

@@ -155,24 +155,36 @@ export const getLogger = (category: string | readonly string[]): Logger =>
 const toLogTapeLevel = (l: FriendlyLogLevel): LogLevel => (l === "warn" ? "warning" : l);
 
 const resolveLevel = (configLevel: FriendlyLogLevel | undefined): LogLevel => {
-  if (configLevel !== undefined) return toLogTapeLevel(configLevel);
+  if (configLevel !== undefined) {
+    return toLogTapeLevel(configLevel);
+  }
   const env = readEnv("LOG_LEVEL")?.toLowerCase();
-  if (env === "debug" || env === "info" || env === "error") return env;
-  if (env === "warn" || env === "warning") return "warning";
+  if (env === "debug" || env === "info" || env === "error") {
+    return env;
+  }
+  if (env === "warn" || env === "warning") {
+    return "warning";
+  }
   return "info";
 };
 
 const resolveSink = (configSink: ObservabilityConfig["sink"]): Sink => {
-  if (typeof configSink === "function") return configSink;
+  if (typeof configSink === "function") {
+    return configSink;
+  }
   return jsonConsoleSink();
 };
 
 const resolveSampleRate = (configRate: number | undefined): number => {
-  if (configRate !== undefined) return clampRate(configRate);
+  if (configRate !== undefined) {
+    return clampRate(configRate);
+  }
   const env = readEnv("LOG_SAMPLE");
-  if (env === undefined) return 1.0;
+  if (env === undefined) {
+    return 1;
+  }
   const parsed = Number(env);
-  return Number.isFinite(parsed) ? clampRate(parsed) : 1.0;
+  return Number.isFinite(parsed) ? clampRate(parsed) : 1;
 };
 
 const clampRate = (r: number): number => Math.max(0, Math.min(1, r));

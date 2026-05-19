@@ -60,17 +60,17 @@ describe("Db.table read terminals", () => {
   test("case 1: empty table (next_seq=0) returns [], undefined, 0", async () => {
     await provision(storage);
     const t = db.table(COLL);
-    expect(await t.where({}).all()).toEqual([]);
-    expect(await t.where({}).first()).toBeUndefined();
-    expect(await t.count()).toBe(0);
+    await expect(t.where({}).all()).resolves.toEqual([]);
+    await expect(t.where({}).first()).resolves.toBeUndefined();
+    await expect(t.count()).resolves.toBe(0);
   });
 
   test("case 2: missing current.json returns [], undefined, 0 (no throw)", async () => {
     // No provision call — current.json doesn't exist.
     const t = db.table(COLL);
-    expect(await t.where({}).all()).toEqual([]);
-    expect(await t.where({}).first()).toBeUndefined();
-    expect(await t.count()).toBe(0);
+    await expect(t.where({}).all()).resolves.toEqual([]);
+    await expect(t.where({}).first()).resolves.toBeUndefined();
+    await expect(t.count()).resolves.toBe(0);
   });
 
   test("case 3: single insert via ServerWriter is visible to all()", async () => {
@@ -114,7 +114,7 @@ describe("Db.table read terminals", () => {
     const rows = await q.all();
     expect(rows).toHaveLength(2);
     expect(rows.map((r) => r["_id"]).toSorted()).toEqual(["a", "c"]);
-    expect(await q.count()).toBe(2);
+    await expect(q.count()).resolves.toBe(2);
     const head = await q.first();
     expect(head).toBeDefined();
     expect((head as { status: string }).status).toBe("open");
@@ -264,14 +264,14 @@ describe("Db.table read terminals", () => {
     expect(() => db.table("")).toThrow(BaerlyError);
     try {
       db.table("");
-    } catch (err) {
-      expect((err as BaerlyError).code).toBe("InvalidConfig");
+    } catch (error) {
+      expect((error as BaerlyError).code).toBe("InvalidConfig");
     }
     // Slash in name → InvalidConfig.
     try {
       db.table("a/b");
-    } catch (err) {
-      expect((err as BaerlyError).code).toBe("InvalidConfig");
+    } catch (error) {
+      expect((error as BaerlyError).code).toBe("InvalidConfig");
     }
   });
 
@@ -285,9 +285,9 @@ describe("Db.table read terminals", () => {
     try {
       await db.table(COLL).where({}).all();
       throw new Error("expected malformed log entry to throw");
-    } catch (err) {
-      expect(err).toBeInstanceOf(BaerlyError);
-      expect((err as BaerlyError).code).toBe("InvalidResponse");
+    } catch (error) {
+      expect(error).toBeInstanceOf(BaerlyError);
+      expect((error as BaerlyError).code).toBe("InvalidResponse");
     }
   });
 
@@ -308,7 +308,7 @@ describe("Db.table read terminals", () => {
     });
 
     // Sanity: the row is visible before we advance log_seq_start.
-    expect(await db.table(COLL).where({}).all()).toHaveLength(1);
+    await expect(db.table(COLL).where({}).all()).resolves.toHaveLength(1);
 
     // Manually advance log_seq_start to 1 (simulates a compactor run
     // that folded log/0.json into a snapshot).
@@ -319,9 +319,9 @@ describe("Db.table read terminals", () => {
     }));
 
     // Reader now walks [1, 1) → empty.
-    expect(await db.table(COLL).where({}).all()).toEqual([]);
-    expect(await db.table(COLL).count()).toBe(0);
-    expect(await db.table(COLL).where({}).first()).toBeUndefined();
+    await expect(db.table(COLL).where({}).all()).resolves.toEqual([]);
+    await expect(db.table(COLL).count()).resolves.toBe(0);
+    await expect(db.table(COLL).where({}).first()).resolves.toBeUndefined();
   });
 
   test("case 14: read walks [log_seq_start, next_seq) and skips dropped entries", async () => {
@@ -376,10 +376,10 @@ describe("Db.table read terminals", () => {
     const before = await db.table<{ _id: string; n: number }>(COLL).order({ _id: "asc" }).all();
     expect(before).toHaveLength(50);
 
-    const res = await compact(
-      { storage, currentJsonKey: currentJsonKey(COLL) },
-      { minEntriesToCompact: 10, maxEntriesPerRun: 100 } as InternalCompactOptions,
-    );
+    const res = await compact({ storage, currentJsonKey: currentJsonKey(COLL) }, {
+      minEntriesToCompact: 10,
+      maxEntriesPerRun: 100,
+    } as InternalCompactOptions);
     expect(res.written).toBe(true);
     expect(res.logSeqStartAfter).toBe(50);
 
@@ -400,10 +400,10 @@ describe("Db.table read terminals", () => {
         body: { _id: `pre${i}`, phase: "pre" },
       });
     }
-    const res = await compact(
-      { storage, currentJsonKey: currentJsonKey(COLL) },
-      { minEntriesToCompact: 10, maxEntriesPerRun: 100 } as InternalCompactOptions,
-    );
+    const res = await compact({ storage, currentJsonKey: currentJsonKey(COLL) }, {
+      minEntriesToCompact: 10,
+      maxEntriesPerRun: 100,
+    } as InternalCompactOptions);
     expect(res.written).toBe(true);
     expect(res.logSeqStartAfter).toBe(40);
 
@@ -518,7 +518,7 @@ describe("Db.table read terminals", () => {
     // Empty table → both levels resolve to `[]`.
     await provision(storage);
     const q = db.table(COLL).consistency("eventual").consistency("strong");
-    expect(await q.all()).toEqual([]);
+    await expect(q.all()).resolves.toEqual([]);
   });
 });
 

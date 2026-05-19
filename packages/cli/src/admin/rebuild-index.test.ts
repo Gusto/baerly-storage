@@ -84,12 +84,14 @@ describe("baerly admin rebuild-index — CLI smoke", () => {
       { _id: "ghost", status: "wip" },
       "ghost",
     );
-    if (orphanKey === undefined) throw new Error("test setup: failed to build orphan key");
+    if (orphanKey === undefined) {
+      throw new Error("test setup: failed to build orphan key");
+    }
     await storage.put(orphanKey, new Uint8Array(0), {
       ifNoneMatch: "*",
       contentType: "application/json",
     });
-    expect(await listIndexKeys(storage, "by_status")).toHaveLength(2);
+    await expect(listIndexKeys(storage, "by_status")).resolves.toHaveLength(2);
 
     // 2. Capture stdout so we can assert on the JSON envelope.
     const captured: string[] = [];
@@ -124,7 +126,7 @@ describe("baerly admin rebuild-index — CLI smoke", () => {
     expect(envelope.result.removed).toBe(1);
     expect(envelope.result.added).toBe(0);
     expect(envelope.result.kept).toBe(1);
-    expect(await listIndexKeys(storage, "by_status")).toHaveLength(1);
+    await expect(listIndexKeys(storage, "by_status")).resolves.toHaveLength(1);
   });
 
   test("text mode: silent on success, exit code 0", async () => {

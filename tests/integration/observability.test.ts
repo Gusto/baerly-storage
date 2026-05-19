@@ -32,7 +32,7 @@
  * deployment's cost shape; treat as P0.
  */
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { reset, type LogRecord, type Sink } from "@logtape/logtape";
 import {
   BaerlyError,
@@ -153,7 +153,7 @@ describe("observability integration — canonical line vs physical reality", () 
     await reset();
   });
 
-  it("single insert: canonical class_a_ops_total matches physical PUT count", async () => {
+  test("single insert: canonical class_a_ops_total matches physical PUT count", async () => {
     // Bootstrap current.json BEFORE wiring the proxy so the bootstrap
     // PUT isn't counted against the workload. The workload is "the
     // application code", not "the operator's one-time setup".
@@ -206,7 +206,7 @@ describe("observability integration — canonical line vs physical reality", () 
     expect(proxy.counts.list).toBe(0);
   });
 
-  it("transaction with 3 inserts: canonical line tracks commitBatch's physical PUTs", async () => {
+  test("transaction with 3 inserts: canonical line tracks commitBatch's physical PUTs", async () => {
     const memory = new MemoryStorage();
     await bootstrap(memory);
 
@@ -250,7 +250,7 @@ describe("observability integration — canonical line vs physical reality", () 
     expect(proxy.counts.list).toBe(0);
   });
 
-  it("duplicate-_id Conflict emits an error-level line with the canonical totals", async () => {
+  test("duplicate-_id Conflict emits an error-level line with the canonical totals", async () => {
     const memory = new MemoryStorage();
     await bootstrap(memory);
 
@@ -290,8 +290,8 @@ describe("observability integration — canonical line vs physical reality", () 
           priority: 2,
         });
       });
-    } catch (err) {
-      caught = err;
+    } catch (error) {
+      caught = error;
     }
     flushCanonicalLine(ctx, ctx.recorder, {
       unit: "http",
@@ -328,7 +328,7 @@ describe("observability integration — canonical line vs physical reality", () 
     expect(proxy.counts.delete).toBe(0);
   });
 
-  it("emits zero canonical lines when sampling is off and the unit succeeds", async () => {
+  test("emits zero canonical lines when sampling is off and the unit succeeds", async () => {
     const memory = new MemoryStorage();
     await bootstrap(memory);
 

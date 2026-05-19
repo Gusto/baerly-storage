@@ -116,7 +116,9 @@ export const parseR2Bindings = (wranglerPath: string): readonly R2BindingDeclara
     );
   }
   const buckets = obj.r2_buckets;
-  if (buckets === undefined) return [];
+  if (buckets === undefined) {
+    return [];
+  }
   if (!Array.isArray(buckets)) {
     throw new BaerlyError(
       "InvalidConfig",
@@ -168,7 +170,9 @@ export const ensureBindings = async (
   const declared = parseR2Bindings(wranglerPath);
   for (const { bucket_name } of declared) {
     const info = await runner.run("wrangler", ["r2", "bucket", "info", bucket_name], cwd);
-    if (info.code === 0) continue;
+    if (info.code === 0) {
+      continue;
+    }
     process.stderr.write(`baerly deploy: creating R2 bucket ${bucket_name}\n`);
     const created = await runner.run("wrangler", ["r2", "bucket", "create", bucket_name], cwd);
     if (created.code !== 0) {
@@ -200,7 +204,9 @@ const warnOnMissingSecrets = async (
   let configured: readonly string[];
   try {
     const parsed = JSON.parse(r.stdout) as unknown;
-    if (!Array.isArray(parsed)) return;
+    if (!Array.isArray(parsed)) {
+      return;
+    }
     configured = parsed
       .map((s) =>
         s !== null && typeof s === "object" ? (s as { name?: unknown }).name : undefined,

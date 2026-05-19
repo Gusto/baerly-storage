@@ -53,8 +53,10 @@ async function main(): Promise<void> {
   // (we'll CAS over it in step 3).
   try {
     await createCurrentJson(storage, SIGKILL_CURRENT_KEY, SEED);
-  } catch (e) {
-    if (!(e instanceof BaerlyError && e.code === "Conflict")) throw e;
+  } catch (error) {
+    if (!(error instanceof BaerlyError && error.code === "Conflict")) {
+      throw error;
+    }
   }
 
   const bodyBytes = new TextEncoder().encode(body);
@@ -67,10 +69,12 @@ async function main(): Promise<void> {
       ifNoneMatch: "*",
       contentType: "application/json",
     })
-    .catch((e: unknown) => {
+    .catch((error: unknown) => {
       // ifNoneMatch:"*" returns Conflict on idempotent re-write; ignore.
-      if (e instanceof BaerlyError && e.code === "Conflict") return;
-      throw e;
+      if (error instanceof BaerlyError && error.code === "Conflict") {
+        return;
+      }
+      throw error;
     });
   process.stdout.write("READY-1\n");
 

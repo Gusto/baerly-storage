@@ -75,7 +75,9 @@ function pickRecordByPopularity(rng: Rng, tenant: DatasetTenant): number {
   // chance to hit the long tail. Within each band, uniform.
   // (The popularityRank field is 0 = most-recent.)
   const N = tenant.records.length;
-  if (N === 0) return 0;
+  if (N === 0) {
+    return 0;
+  }
   const u = rng.next();
   if (u < 0.7) {
     return rng.int(0, Math.max(1, Math.floor(N * 0.1)));

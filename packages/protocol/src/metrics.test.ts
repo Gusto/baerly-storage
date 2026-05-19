@@ -1,8 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, test } from "vitest";
 import { InMemoryMetricsRecorder, noopMetricsRecorder, teeMetricsRecorders } from "./metrics.ts";
 
 describe("MetricsRecorder", () => {
-  it("noop swallows every emission", () => {
+  test("noop swallows every emission", () => {
     // No throw, no observable side effect.
     noopMetricsRecorder.counter("a", 1);
     noopMetricsRecorder.gauge("b", 2);
@@ -12,7 +12,7 @@ describe("MetricsRecorder", () => {
     noopMetricsRecorder.histogram("f", 6, { k: "v" });
   });
 
-  it("in-memory recorder accumulates counters", () => {
+  test("in-memory recorder accumulates counters", () => {
     const r = new InMemoryMetricsRecorder();
     r.counter("foo", 1, { x: "1" });
     r.counter("foo", 2, { x: "1" });
@@ -22,7 +22,7 @@ describe("MetricsRecorder", () => {
     expect(r.sumCounter("missing")).toBe(0);
   });
 
-  it("in-memory recorder records last gauge", () => {
+  test("in-memory recorder records last gauge", () => {
     const r = new InMemoryMetricsRecorder();
     r.gauge("x", 1);
     r.gauge("x", 2);
@@ -31,7 +31,7 @@ describe("MetricsRecorder", () => {
     expect(r.lastGauge("nope")).toBeUndefined();
   });
 
-  it("in-memory recorder preserves histogram order", () => {
+  test("in-memory recorder preserves histogram order", () => {
     const r = new InMemoryMetricsRecorder();
     r.histogram("h", 1);
     r.histogram("h", 5);
@@ -40,7 +40,7 @@ describe("MetricsRecorder", () => {
     expect(r.histogramValues("missing")).toEqual([]);
   });
 
-  it("in-memory recorder defensively copies labels", () => {
+  test("in-memory recorder defensively copies labels", () => {
     const r = new InMemoryMetricsRecorder();
     const labels: Record<string, string> = { k: "v" };
     r.counter("foo", 1, labels);
@@ -50,7 +50,7 @@ describe("MetricsRecorder", () => {
 });
 
 describe("teeMetricsRecorders", () => {
-  it("fans counter() to both sinks with the same args", () => {
+  test("fans counter() to both sinks with the same args", () => {
     const a = new InMemoryMetricsRecorder();
     const b = new InMemoryMetricsRecorder();
     const tee = teeMetricsRecorders(a, b);
@@ -61,7 +61,7 @@ describe("teeMetricsRecorders", () => {
     expect(b.counters[0]).toMatchObject({ name: "foo", value: 3, labels: { k: "v" } });
   });
 
-  it("fans gauge() to both sinks with the same args", () => {
+  test("fans gauge() to both sinks with the same args", () => {
     const a = new InMemoryMetricsRecorder();
     const b = new InMemoryMetricsRecorder();
     const tee = teeMetricsRecorders(a, b);
@@ -72,7 +72,7 @@ describe("teeMetricsRecorders", () => {
     expect(b.gauges[0]?.labels).toEqual({ tenant: "acme" });
   });
 
-  it("fans histogram() to both sinks with the same args", () => {
+  test("fans histogram() to both sinks with the same args", () => {
     const a = new InMemoryMetricsRecorder();
     const b = new InMemoryMetricsRecorder();
     const tee = teeMetricsRecorders(a, b);
@@ -84,7 +84,7 @@ describe("teeMetricsRecorders", () => {
     expect(b.histograms[1]?.labels).toEqual({ coll: "tickets" });
   });
 
-  it("shares the labels object by reference (no defensive copy at the tee)", () => {
+  test("shares the labels object by reference (no defensive copy at the tee)", () => {
     // The tee MUST NOT defensively copy — InMemoryMetricsRecorder's
     // own copy (metrics.ts:95) is what isolates downstream sinks.
     // Sinks that don't copy will see mutation, by design.

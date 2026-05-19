@@ -44,25 +44,21 @@ describe("read consistency knob — multi-instance contention", () => {
     // 1. Seed: writer A inserts r1.
     await w.commit({ op: "I", collection: COLL, docId: "r1", body: { _id: "r1" } });
     // 2. Reader B strong-anchors the cache against the post-seed view.
-    expect((await dbB.table(COLL).consistency("strong").all()).map((r) => r["_id"] as string)).toEqual(
-      ["r1"],
-    );
+    const strong1 = await dbB.table(COLL).consistency("strong").all();
+    expect(strong1.map((r) => r["_id"] as string)).toEqual(["r1"]);
     // 3. Writer A advances current.json with a second insert.
     await w.commit({ op: "I", collection: COLL, docId: "r2", body: { _id: "r2" } });
     // 4. Reader B with eventual returns the pre-advance view — the
     //    cache slot is still pinned to the generation that contained
     //    only r1.
-    expect(
-      (await dbB.table(COLL).consistency("eventual").all()).map((r) => r["_id"] as string),
-    ).toEqual(["r1"]);
+    const eventual1 = await dbB.table(COLL).consistency("eventual").all();
+    expect(eventual1.map((r) => r["_id"] as string)).toEqual(["r1"]);
     // 5. Strong re-anchors against the now-current generation;
     //    subsequent eventual reflects it.
-    expect(
-      (await dbB.table(COLL).consistency("strong").all()).map((r) => r["_id"] as string).toSorted(),
-    ).toEqual(["r1", "r2"]);
-    expect(
-      (await dbB.table(COLL).consistency("eventual").all()).map((r) => r["_id"] as string).toSorted(),
-    ).toEqual(["r1", "r2"]);
+    const strong2 = await dbB.table(COLL).consistency("strong").all();
+    expect(strong2.map((r) => r["_id"] as string).toSorted()).toEqual(["r1", "r2"]);
+    const eventual2 = await dbB.table(COLL).consistency("eventual").all();
+    expect(eventual2.map((r) => r["_id"] as string).toSorted()).toEqual(["r1", "r2"]);
   });
 
   test("first-ever eventual read anchors (returns live view, not empty)", async () => {

@@ -68,7 +68,9 @@ describe.runIf(NODE_URL !== undefined && SECRET !== undefined)("real-deploy: nod
         const list = await fetch(`${baseUrl}/v1/t/${table}`, {
           headers: { authorization: bearer },
         });
-        if (!list.ok) continue;
+        if (!list.ok) {
+          continue;
+        }
         const { data } = (await list.json()) as {
           readonly data: ReadonlyArray<{ readonly _id: string }>;
         };

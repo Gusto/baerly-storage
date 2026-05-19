@@ -96,10 +96,10 @@ export const deserializeExportPlan = (text: string): ExportPlan => {
   let raw: unknown;
   try {
     raw = JSON.parse(text);
-  } catch (e) {
+  } catch (error) {
     throw new BaerlyError(
       "InvalidConfig",
-      `deserializeExportPlan: parse failed: ${(e as Error).message}`,
+      `deserializeExportPlan: parse failed: ${(error as Error).message}`,
     );
   }
   if (!isObject(raw)) {

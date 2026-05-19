@@ -3,22 +3,20 @@
 
 import {
   BaerlyError,
+  type CurrentJsonRead,
+  type JSONArraylessObject,
   LOG_KEY_PREFIX,
+  type LogEntry,
+  type MetricsRecorder,
   noopMetricsRecorder,
   readCurrentJson,
-} from "@baerly/protocol";
-import type {
-  CurrentJsonRead,
-  JSONArraylessObject,
-  LogEntry,
-  MetricsRecorder,
-  Storage,
-  StorageGetOptions,
-  StorageGetResult,
-  StorageListEntry,
-  StoragePutOptions,
-  StoragePutResult,
-  Table,
+  type Storage,
+  type StorageGetOptions,
+  type StorageGetResult,
+  type StorageListEntry,
+  type StoragePutOptions,
+  type StoragePutResult,
+  type Table,
 } from "@baerly/protocol";
 import type { BaerlyConfig, CollectionNames, RowOf, UnboundConfig } from "./config.ts";
 import type { IndexDefinition } from "./indexes.ts";
@@ -551,7 +549,9 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
     await body(tx);
 
     // Empty buffer — nothing to commit, nothing to throw.
-    if (txCtx.mutations.length === 0) return;
+    if (txCtx.mutations.length === 0) {
+      return;
+    }
 
     // Map BufferedMutations -> CommitInputs and fire one
     // single-attempt commitBatch. On CAS loss commitBatch throws
@@ -620,12 +620,18 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
   ): Promise<LogEntry | null> {
     const key = `${physicalPrefixFor(this.app, this.tenant)}manifests/${table}/${LOG_KEY_PREFIX}/${seq}.json`;
     const got = await this.#storage.get(key, opts);
-    if (got === null) return null;
+    if (got === null) {
+      return null;
+    }
     let parsed: unknown;
     try {
       parsed = JSON.parse(new TextDecoder().decode(got.body));
-    } catch (e) {
-      throw new BaerlyError("InvalidResponse", `log entry at ${key}: body is not valid JSON`, e);
+    } catch (error) {
+      throw new BaerlyError(
+        "InvalidResponse",
+        `log entry at ${key}: body is not valid JSON`,
+        error,
+      );
     }
     return parsed as LogEntry;
   }
@@ -665,8 +671,12 @@ const makeRawStorageApi = (app: string, tenant: string, storage: Storage): RawSt
         // effectively ignored.
         passOpts.startAfter = toPhysical(opts.startAfter);
       }
-      if (opts?.maxKeys !== undefined) passOpts.maxKeys = opts.maxKeys;
-      if (opts?.signal !== undefined) passOpts.signal = opts.signal;
+      if (opts?.maxKeys !== undefined) {
+        passOpts.maxKeys = opts.maxKeys;
+      }
+      if (opts?.signal !== undefined) {
+        passOpts.signal = opts.signal;
+      }
       for await (const entry of storage.list(toPhysical(logicalPrefix), passOpts)) {
         yield { ...entry, key: fromPhysical(entry.key) };
       }

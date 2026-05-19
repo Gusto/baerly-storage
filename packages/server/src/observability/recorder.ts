@@ -128,7 +128,9 @@ export class RequestScopedMetricsRecorder implements MetricsRecorder {
       out[`${name}_p99`] = percentile(values, 0.99);
       out[`${name}_count`] = values.length;
       let sum = 0;
-      for (const v of values) sum += v;
+      for (const v of values) {
+        sum += v;
+      }
       out[`${name}_sum`] = sum;
     }
 
@@ -142,7 +144,9 @@ export class RequestScopedMetricsRecorder implements MetricsRecorder {
  * `ceil(p * n) - 1`, clamped to `[0, n-1]`.
  */
 const percentile = (values: readonly number[], p: number): number => {
-  if (values.length === 0) return 0;
+  if (values.length === 0) {
+    return 0;
+  }
   const idx = Math.min(values.length - 1, Math.max(0, Math.ceil(p * values.length) - 1));
   // `!` is safe under noUncheckedIndexedAccess because `idx` is
   // clamped to `[0, length-1]` and `length >= 1` above.

@@ -58,8 +58,12 @@ export interface DoctorReport {
 const rollupStatus = (findings: readonly DoctorFinding[]): DoctorReport["status"] => {
   let worst: DoctorReport["status"] = "ok";
   for (const f of findings) {
-    if (f.severity === "error") return "error";
-    if (f.severity === "warning") worst = "warning";
+    if (f.severity === "error") {
+      return "error";
+    }
+    if (f.severity === "warning") {
+      worst = "warning";
+    }
   }
   return worst;
 };
@@ -74,9 +78,13 @@ const readDeclaredCrons = (wranglerPath: string): readonly string[] => {
   const obj = parse(text, errors, { allowTrailingComma: true, disallowComments: false }) as
     | { triggers?: { crons?: unknown } }
     | undefined;
-  if (errors.length > 0 || obj === undefined) return [];
+  if (errors.length > 0 || obj === undefined) {
+    return [];
+  }
   const crons = obj.triggers?.crons;
-  if (!Array.isArray(crons)) return [];
+  if (!Array.isArray(crons)) {
+    return [];
+  }
   return crons.filter((c): c is string => typeof c === "string");
 };
 
@@ -87,9 +95,13 @@ const readDeclaredRoutePatterns = (wranglerPath: string): readonly string[] => {
   const obj = parse(text, errors, { allowTrailingComma: true, disallowComments: false }) as
     | { routes?: unknown }
     | undefined;
-  if (errors.length > 0 || obj === undefined) return [];
+  if (errors.length > 0 || obj === undefined) {
+    return [];
+  }
   const routes = obj.routes;
-  if (!Array.isArray(routes)) return [];
+  if (!Array.isArray(routes)) {
+    return [];
+  }
   return routes
     .map((r) =>
       r !== null && typeof r === "object" ? (r as { pattern?: unknown }).pattern : undefined,
@@ -159,16 +171,16 @@ export const doctorCloudflare = async (
   let declared: readonly { binding: string; bucket_name: string }[];
   try {
     declared = parseR2Bindings(wranglerPath);
-  } catch (e) {
-    if (e instanceof BaerlyError && e.code === "InvalidConfig") {
+  } catch (error) {
+    if (error instanceof BaerlyError && error.code === "InvalidConfig") {
       findings.push({
         severity: "error",
         check: "wrangler.jsonc.parse",
-        message: e.message,
+        message: error.message,
       });
       return { findings, status: rollupStatus(findings) };
     }
-    throw e;
+    throw error;
   }
 
   if (opts.fix === true && opts.runner !== undefined) {
@@ -177,11 +189,11 @@ export const doctorCloudflare = async (
     // throwing — doctor's job is to report.
     try {
       await ensureBindings(opts.runner, repoRoot, wranglerPath);
-    } catch (e) {
+    } catch (error) {
       findings.push({
         severity: "error",
         check: "r2.fix",
-        message: e instanceof Error ? e.message : "unknown error during ensureBindings",
+        message: error instanceof Error ? error.message : "unknown error during ensureBindings",
       });
     }
   }
@@ -368,7 +380,9 @@ const runUsageCheck = async (
   const missing: string[] = [];
   for (const k of ["CF_ACCOUNT_ID", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY"]) {
     const v = process.env[k];
-    if (v === undefined || v === "") missing.push(k);
+    if (v === undefined || v === "") {
+      missing.push(k);
+    }
   }
   if (missing.length > 0) {
     findings.push({

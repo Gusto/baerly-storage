@@ -60,7 +60,9 @@ describe("useLiveQuery", () => {
     expect(listCalls).toBe(1);
 
     unmount();
-    for (const r of pendingSinceRejects) r(new Error("test teardown"));
+    for (const r of pendingSinceRejects) {
+      r(new Error("test teardown"));
+    }
   });
 
   test("refetches when /v1/since returns a non-empty batch", async () => {
@@ -68,7 +70,9 @@ describe("useLiveQuery", () => {
     let listCalls = 0;
     m.on("GET", "/v1/t/tickets", () => {
       listCalls += 1;
-      if (listCalls === 1) return okEnvelope([{ _id: "a", title: "first" }]);
+      if (listCalls === 1) {
+        return okEnvelope([{ _id: "a", title: "first" }]);
+      }
       return okEnvelope([
         { _id: "a", title: "first" },
         { _id: "b", title: "second" },
@@ -106,7 +110,9 @@ describe("useLiveQuery", () => {
     expect(listCalls).toBe(2);
 
     unmount();
-    for (const r of pendingSinceRejects) r(new Error("test teardown"));
+    for (const r of pendingSinceRejects) {
+      r(new Error("test teardown"));
+    }
   });
 
   test("idle /v1/since response (empty batch, same cursor) does not refetch", async () => {
@@ -141,7 +147,9 @@ describe("useLiveQuery", () => {
     expect(listCalls).toBe(1);
 
     unmount();
-    for (const r of pendingSinceRejects) r(new Error("test teardown"));
+    for (const r of pendingSinceRejects) {
+      r(new Error("test teardown"));
+    }
   });
 
   test("surfaces fetch errors", async () => {
@@ -166,7 +174,9 @@ describe("useLiveQuery", () => {
     });
 
     unmount();
-    for (const r of pendingSinceRejects) r(new Error("test teardown"));
+    for (const r of pendingSinceRejects) {
+      r(new Error("test teardown"));
+    }
   });
 
   test("predicate change triggers a refetch", async () => {
@@ -194,7 +204,9 @@ describe("useLiveQuery", () => {
     });
 
     unmount();
-    for (const r of pendingSinceRejects) r(new Error("test teardown"));
+    for (const r of pendingSinceRejects) {
+      r(new Error("test teardown"));
+    }
   });
 
   test("inline predicate object does not churn refetches across renders", async () => {
@@ -222,10 +234,14 @@ describe("useLiveQuery", () => {
 
     // Give microtasks a chance to drain; if predicate-key churn
     // re-fired the effect, listCalls would already be > 1 here.
-    for (let i = 0; i < 5; i += 1) await Promise.resolve();
+    for (let i = 0; i < 5; i += 1) {
+      await Promise.resolve();
+    }
     expect(listCalls).toBe(1);
 
     unmount();
-    for (const r of pendingSinceRejects) r(new Error("test teardown"));
+    for (const r of pendingSinceRejects) {
+      r(new Error("test teardown"));
+    }
   });
 });

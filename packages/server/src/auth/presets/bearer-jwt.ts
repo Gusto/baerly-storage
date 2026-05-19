@@ -168,11 +168,11 @@ export const bearerJwt = (opts: BearerJwtOptions): Verifier => {
           let res: Response;
           try {
             res = await fetchImpl(opts.jwks);
-          } catch (err) {
+          } catch (error) {
             throw new BaerlyError(
               "NetworkError",
               `bearerJwt: JWKS fetch failed (${opts.jwks})`,
-              err,
+              error,
             );
           }
           if (!res.ok) {
@@ -188,10 +188,16 @@ export const bearerJwt = (opts: BearerJwtOptions): Verifier => {
         const next = new Map<string, CachedKey>();
         for (const jwk of doc.keys) {
           const alg = resolveJwkAlgorithm(jwk);
-          if (alg === null) continue;
-          if (!algorithms.includes(alg)) continue;
+          if (alg === null) {
+            continue;
+          }
+          if (!algorithms.includes(alg)) {
+            continue;
+          }
           const importParams = importParamsFor(alg);
-          if (importParams === null) continue;
+          if (importParams === null) {
+            continue;
+          }
           let cryptoKey: CryptoKey;
           try {
             cryptoKey = await crypto.subtle.importKey(
@@ -217,21 +223,25 @@ export const bearerJwt = (opts: BearerJwtOptions): Verifier => {
   };
 
   const ensureFresh = async (): Promise<void> => {
-    if (keys.size > 0 && Date.now() < expiresAt) return;
+    if (keys.size > 0 && Date.now() < expiresAt) {
+      return;
+    }
     try {
       await loadJwks();
-    } catch (err) {
+    } catch (error) {
       if (keys.size > 0) {
         // Stale cache hit on a network failure: prefer serving stale
         // keys over throwing. Cold-cache failures still throw.
         return;
       }
-      throw err;
+      throw error;
     }
   };
 
   const tryRefreshOnKidMiss = async (): Promise<void> => {
-    if (Date.now() - lastKidMissRefreshAt < JWKS_REFRESH_RATE_LIMIT_MS) return;
+    if (Date.now() - lastKidMissRefreshAt < JWKS_REFRESH_RATE_LIMIT_MS) {
+      return;
+    }
     lastKidMissRefreshAt = Date.now();
     try {
       await loadJwks();
@@ -246,10 +256,14 @@ export const bearerJwt = (opts: BearerJwtOptions): Verifier => {
 
   async function verify(req: Request): Promise<VerifierResult | null> {
     const header = req.headers.get("Authorization") ?? "";
-    if (!header.startsWith("Bearer ")) return null;
+    if (!header.startsWith("Bearer ")) {
+      return null;
+    }
     const token = header.slice("Bearer ".length);
     const segments = token.split(".");
-    if (segments.length !== 3) return null;
+    if (segments.length !== 3) {
+      return null;
+    }
     const [headerB64, payloadB64, signatureB64] = segments as [string, string, string];
 
     let jwtHeader: JwtHeader;
@@ -277,9 +291,13 @@ export const bearerJwt = (opts: BearerJwtOptions): Verifier => {
     if (cached === undefined) {
       await tryRefreshOnKidMiss();
       cached = keys.get(kid);
-      if (cached === undefined) return null;
+      if (cached === undefined) {
+        return null;
+      }
     }
-    if (cached.algorithm !== jwtHeader.alg) return null;
+    if (cached.algorithm !== jwtHeader.alg) {
+      return null;
+    }
 
     if (jwtHeader.alg === "ES256" && signature.length !== 64) {
       // ES256 JWTs carry a raw r||s pair; crypto.subtle.verify expects
@@ -298,15 +316,25 @@ export const bearerJwt = (opts: BearerJwtOptions): Verifier => {
     } catch {
       return null;
     }
-    if (!ok) return null;
+    if (!ok) {
+      return null;
+    }
 
-    if (jwtPayload.iss !== opts.issuer) return null;
-    if (!matchesAudience(jwtPayload.aud, opts.audience)) return null;
+    if (jwtPayload.iss !== opts.issuer) {
+      return null;
+    }
+    if (!matchesAudience(jwtPayload.aud, opts.audience)) {
+      return null;
+    }
 
     const nowSec = Date.now() / 1000;
     const skewSec = clockSkewMs / 1000;
-    if (typeof jwtPayload.exp === "number" && nowSec - skewSec > jwtPayload.exp) return null;
-    if (typeof jwtPayload.nbf === "number" && nowSec + skewSec < jwtPayload.nbf) return null;
+    if (typeof jwtPayload.exp === "number" && nowSec - skewSec > jwtPayload.exp) {
+      return null;
+    }
+    if (typeof jwtPayload.nbf === "number" && nowSec + skewSec < jwtPayload.nbf) {
+      return null;
+    }
 
     const tenantValue = jwtPayload[tenantClaim];
     if (typeof tenantValue !== "string" || tenantValue.length === 0 || tenantValue.includes("/")) {
@@ -321,27 +349,45 @@ const isJwtAlgorithm = (alg: unknown): alg is JwtAlgorithm =>
   alg === "RS256" || alg === "ES256" || alg === "EdDSA";
 
 const resolveJwkAlgorithm = (jwk: Jwk): JwtAlgorithm | null => {
-  if (jwk.alg !== undefined && isJwtAlgorithm(jwk.alg)) return jwk.alg;
+  if (jwk.alg !== undefined && isJwtAlgorithm(jwk.alg)) {
+    return jwk.alg;
+  }
   // Derive from `kty` + curve when `alg` isn't present (some IdPs
   // omit it). RSA → RS256; EC P-256 → ES256; OKP Ed25519 → EdDSA.
-  if (jwk.kty === "RSA") return "RS256";
-  if (jwk.kty === "EC" && (jwk as Record<string, unknown>)["crv"] === "P-256") return "ES256";
-  if (jwk.kty === "OKP" && (jwk as Record<string, unknown>)["crv"] === "Ed25519") return "EdDSA";
+  if (jwk.kty === "RSA") {
+    return "RS256";
+  }
+  if (jwk.kty === "EC" && (jwk as Record<string, unknown>)["crv"] === "P-256") {
+    return "ES256";
+  }
+  if (jwk.kty === "OKP" && (jwk as Record<string, unknown>)["crv"] === "Ed25519") {
+    return "EdDSA";
+  }
   return null;
 };
 
 const importParamsFor = (
   alg: JwtAlgorithm,
 ): RsaHashedImportParams | EcKeyImportParams | { name: "Ed25519" } | null => {
-  if (alg === "RS256") return { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" };
-  if (alg === "ES256") return { name: "ECDSA", namedCurve: "P-256" };
-  if (alg === "EdDSA") return { name: "Ed25519" };
+  if (alg === "RS256") {
+    return { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" };
+  }
+  if (alg === "ES256") {
+    return { name: "ECDSA", namedCurve: "P-256" };
+  }
+  if (alg === "EdDSA") {
+    return { name: "Ed25519" };
+  }
   return null;
 };
 
 const verifyParamsFor = (alg: JwtAlgorithm): AlgorithmIdentifier | EcdsaParams => {
-  if (alg === "RS256") return { name: "RSASSA-PKCS1-v1_5" };
-  if (alg === "ES256") return { name: "ECDSA", hash: "SHA-256" };
+  if (alg === "RS256") {
+    return { name: "RSASSA-PKCS1-v1_5" };
+  }
+  if (alg === "ES256") {
+    return { name: "ECDSA", hash: "SHA-256" };
+  }
   return { name: "Ed25519" };
 };
 
@@ -349,8 +395,12 @@ const matchesAudience = (
   aud: string | readonly string[] | undefined,
   expected: string,
 ): boolean => {
-  if (typeof aud === "string") return aud === expected;
-  if (Array.isArray(aud)) return aud.includes(expected);
+  if (typeof aud === "string") {
+    return aud === expected;
+  }
+  if (Array.isArray(aud)) {
+    return aud.includes(expected);
+  }
   return false;
 };
 
@@ -362,12 +412,18 @@ const matchesAudience = (
 const base64UrlDecode = (input: string): Uint8Array => {
   let s = input.replace(/-/g, "+").replace(/_/g, "/");
   const pad = s.length % 4;
-  if (pad === 2) s += "==";
-  else if (pad === 3) s += "=";
-  else if (pad !== 0) throw new Error("invalid base64url length");
+  if (pad === 2) {
+    s += "==";
+  } else if (pad === 3) {
+    s += "=";
+  } else if (pad !== 0) {
+    throw new Error("invalid base64url length");
+  }
   const bin = atob(s);
   const out = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  for (let i = 0; i < bin.length; i++) {
+    out[i] = bin.charCodeAt(i);
+  }
   return out;
 };
 

@@ -151,18 +151,18 @@ export const validateIndexDefinition = (def: IndexDefinition): void => {
   if (def.predicate !== undefined) {
     try {
       validatePredicate(def.predicate);
-    } catch (err) {
+    } catch (error) {
       // Surface as SchemaError so the failure mode matches the rest
       // of validateIndexDefinition (writer-construction-time bail-out,
       // not query-time).
-      if (err instanceof BaerlyError) {
+      if (error instanceof BaerlyError) {
         throw new BaerlyError(
           "SchemaError",
-          `index ${def.name}.predicate is invalid: ${err.message}`,
-          err,
+          `index ${def.name}.predicate is invalid: ${error.message}`,
+          error,
         );
       }
-      throw err;
+      throw error;
     }
   }
 };
@@ -228,7 +228,9 @@ const encodeNumberPayload = (n: number): Uint8Array => {
     bytes[0] = bytes[0]! ^ 0x80;
   } else {
     // Negative: flip all bits so more-negative sorts lower.
-    for (let i = 0; i < 8; i++) bytes[i] = bytes[i]! ^ 0xff;
+    for (let i = 0; i < 8; i++) {
+      bytes[i] = bytes[i]! ^ 0xff;
+    }
   }
   return bytes;
 };
@@ -242,9 +244,15 @@ const encodeNumberPayload = (n: number): Uint8Array => {
  * to `JSON.stringify` for equality only.
  */
 const encodeBytes = (v: unknown): Uint8Array => {
-  if (v === null || v === undefined) return new Uint8Array([TYPE_NULL]);
-  if (v === false) return new Uint8Array([TYPE_FALSE]);
-  if (v === true) return new Uint8Array([TYPE_TRUE]);
+  if (v === null || v === undefined) {
+    return new Uint8Array([TYPE_NULL]);
+  }
+  if (v === false) {
+    return new Uint8Array([TYPE_FALSE]);
+  }
+  if (v === true) {
+    return new Uint8Array([TYPE_TRUE]);
+  }
   if (typeof v === "number") {
     const payload = encodeNumberPayload(v);
     const out = new Uint8Array(1 + payload.length);
@@ -320,7 +328,9 @@ export const encodeIndexValue = (v: unknown): string => {
       out += B32_ALPHABET[(value >> bits) & 0x1f];
     }
   }
-  if (bits > 0) out += B32_ALPHABET[(value << (5 - bits)) & 0x1f];
+  if (bits > 0) {
+    out += B32_ALPHABET[(value << (5 - bits)) & 0x1f];
+  }
   // The type-prefix guarantees the byte stream is non-empty for every
   // input, so the "empty → '0'" fallback that the old encoder needed
   // is dead. Encoder output is always non-empty under the new contract.
@@ -367,7 +377,9 @@ export const projectIndexValues = (
   def: IndexDefinition,
   body: JSONArraylessObject | undefined,
 ): readonly unknown[] | undefined => {
-  if (body === undefined) return undefined;
+  if (body === undefined) {
+    return undefined;
+  }
   const fields = typeof def.on === "string" ? [def.on] : def.on;
   const values: unknown[] = [];
   for (const field of fields) {
@@ -383,7 +395,9 @@ export const projectIndexValues = (
     const v = body[field];
     // null/undefined are skipped — no index entry. Mirrors SQL
     // "NULL values don't go into a regular index" semantics.
-    if (v === null || v === undefined) return undefined;
+    if (v === null || v === undefined) {
+      return undefined;
+    }
     values.push(v);
   }
   return values;
@@ -414,7 +428,9 @@ export const allIndexKeysFor = (
   const keys: string[] = [];
   for (const def of defs) {
     if (def.predicate !== undefined && body !== undefined) {
-      if (!matches(def.predicate, body)) continue;
+      if (!matches(def.predicate, body)) {
+        continue;
+      }
     }
     const values = projectIndexValues(def, body);
     if (values !== undefined) {

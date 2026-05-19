@@ -4,7 +4,7 @@
  * real TTY. The mock factory exposes per-prompt fixture hooks so
  * each `it` can swap in the value (or `isCancel` sentinel) it needs.
  */
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 
 // `isCancel` returns true when the underlying prompt return value is
 // this sentinel symbol. The clack source uses a distinct cancel
@@ -77,7 +77,7 @@ const importRunWizard = async () => {
 };
 
 describe("runWizard", () => {
-  it("returns the same values back when all inputs are pre-filled (no prompts)", async () => {
+  test("returns the same values back when all inputs are pre-filled (no prompts)", async () => {
     resetFixture();
     const runWizard = await importRunWizard();
     const out = await runWizard({
@@ -100,7 +100,7 @@ describe("runWizard", () => {
     expect(fixture.introCalls).toHaveLength(1);
   });
 
-  it("returns the mocked text value when projectName is missing", async () => {
+  test("returns the mocked text value when projectName is missing", async () => {
     resetFixture();
     fixture.textValue = "my-app";
     fixture.selectValue = "cloudflare";
@@ -118,7 +118,7 @@ describe("runWizard", () => {
     expect(fixture.confirmCalls).toHaveLength(1);
   });
 
-  it("fires the docker confirm when target === node and returns withAddons", async () => {
+  test("fires the docker confirm when target === node and returns withAddons", async () => {
     resetFixture();
     fixture.textValue = "my-app";
     fixture.selectValue = "node";
@@ -134,7 +134,7 @@ describe("runWizard", () => {
     expect(fixture.confirmCalls).toHaveLength(2);
   });
 
-  it("returns withAddons=[] when target === node and the docker confirm is declined", async () => {
+  test("returns withAddons=[] when target === node and the docker confirm is declined", async () => {
     resetFixture();
     fixture.textValue = "my-app";
     fixture.selectValue = "node";
@@ -147,7 +147,7 @@ describe("runWizard", () => {
     expect(fixture.confirmCalls).toHaveLength(2);
   });
 
-  it("skips the docker confirm when withAddons is pre-filled", async () => {
+  test("skips the docker confirm when withAddons is pre-filled", async () => {
     resetFixture();
     fixture.textValue = "my-app";
     fixture.confirmValue = true;
@@ -163,7 +163,7 @@ describe("runWizard", () => {
     expect(fixture.confirmCalls).toHaveLength(1);
   });
 
-  it("exits with code 1 when the user cancels at the text prompt", async () => {
+  test("exits with code 1 when the user cancels at the text prompt", async () => {
     resetFixture();
     fixture.textValue = CANCEL_SENTINEL;
     const exitSpy = vi
@@ -183,7 +183,7 @@ describe("runWizard", () => {
     }
   });
 
-  it("exits with code 1 when the user cancels at the select prompt", async () => {
+  test("exits with code 1 when the user cancels at the select prompt", async () => {
     resetFixture();
     fixture.textValue = "my-app";
     fixture.selectValue = CANCEL_SENTINEL;
@@ -199,7 +199,7 @@ describe("runWizard", () => {
     }
   });
 
-  it("exits with code 1 when the user cancels at the confirm prompt", async () => {
+  test("exits with code 1 when the user cancels at the confirm prompt", async () => {
     resetFixture();
     fixture.textValue = "my-app";
     fixture.selectValue = "node";
@@ -216,7 +216,7 @@ describe("runWizard", () => {
     }
   });
 
-  it("uses a project-name validator that mirrors scaffold.ts (regression)", async () => {
+  test("uses a project-name validator that mirrors scaffold.ts (regression)", async () => {
     // The `text()` prompt receives a `validate` callback. Pull it out
     // and run it through the same shapes that `scaffold.ts` accepts
     // or rejects, so future drift between the two regexes is caught

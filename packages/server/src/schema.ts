@@ -87,7 +87,9 @@ export const validateOrThrow = async <TIn, TOut>(
   context: { readonly collection: string; readonly verb: "insert" | "update" | "replace" },
 ): Promise<TOut> => {
   const result = await schema["~standard"].validate(candidate);
-  if (result.issues === undefined) return result.value;
+  if (result.issues === undefined) {
+    return result.value;
+  }
   const issues = result.issues.map((i) => ({
     path: (i.path ?? []).map((p) => {
       // StandardSchemaV1 permits `{ key: PropertyKey }` segments

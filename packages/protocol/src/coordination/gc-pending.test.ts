@@ -3,7 +3,7 @@
  * `current-json.test.ts` — round-trip, CAS, shape guards.
  */
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, test } from "vitest";
 import { MemoryStorage } from "../storage/memory.ts";
 import { BaerlyError } from "../errors.ts";
 import { GC_PENDING_SCHEMA_VERSION } from "../constants.ts";
@@ -23,12 +23,12 @@ const initial = (): GcPending => ({
 });
 
 describe("gc-pending", () => {
-  it("returns null on not-found", async () => {
+  test("returns null on not-found", async () => {
     const s = new MemoryStorage();
-    expect(await readGcPending(s, KEY)).toBeNull();
+    await expect(readGcPending(s, KEY)).resolves.toBeNull();
   });
 
-  it("creates then reads back the same body", async () => {
+  test("creates then reads back the same body", async () => {
     const s = new MemoryStorage();
     const created = await createGcPending(s, KEY, initial());
     expect(created.json.schema_version).toBe(1);
@@ -41,7 +41,7 @@ describe("gc-pending", () => {
     expect(read?.etag).toBe(created.etag);
   });
 
-  it("create-only: throws Conflict if the key already exists", async () => {
+  test("create-only: throws Conflict if the key already exists", async () => {
     const s = new MemoryStorage();
     await createGcPending(s, KEY, initial());
     await expect(createGcPending(s, KEY, initial())).rejects.toMatchObject({
@@ -49,7 +49,7 @@ describe("gc-pending", () => {
     });
   });
 
-  it("cas-updates appended candidates", async () => {
+  test("cas-updates appended candidates", async () => {
     const s = new MemoryStorage();
     await createGcPending(s, KEY, initial());
     const updated = await casUpdateGcPending(s, KEY, (cur) => ({
@@ -68,7 +68,7 @@ describe("gc-pending", () => {
     expect(read?.json.candidates[0]?.reason).toBe("stale-log");
   });
 
-  it("cas-update on a stale etag throws Conflict", async () => {
+  test("cas-update on a stale etag throws Conflict", async () => {
     const s = new MemoryStorage();
     const created = await createGcPending(s, KEY, initial());
     // First update commits.
@@ -90,14 +90,14 @@ describe("gc-pending", () => {
     ).rejects.toMatchObject({ code: "Conflict" });
   });
 
-  it("cas-update on a missing key throws InvalidResponse", async () => {
+  test("cas-update on a missing key throws InvalidResponse", async () => {
     const s = new MemoryStorage();
     await expect(casUpdateGcPending(s, KEY, (cur) => cur)).rejects.toMatchObject({
       code: "InvalidResponse",
     });
   });
 
-  it("rejects unknown schema_version on read", async () => {
+  test("rejects unknown schema_version on read", async () => {
     const s = new MemoryStorage();
     const bad = new TextEncoder().encode(
       JSON.stringify({ schema_version: 99, candidates: [], last_swept_at: "" }),
@@ -108,7 +108,7 @@ describe("gc-pending", () => {
     });
   });
 
-  it("rejects malformed body on read", async () => {
+  test("rejects malformed body on read", async () => {
     const s = new MemoryStorage();
     await s.put(KEY, new TextEncoder().encode("{ not json"), {
       contentType: "application/json",
@@ -118,7 +118,7 @@ describe("gc-pending", () => {
     });
   });
 
-  it("rejects unknown reason on read", async () => {
+  test("rejects unknown reason on read", async () => {
     const s = new MemoryStorage();
     const bad = new TextEncoder().encode(
       JSON.stringify({
@@ -131,7 +131,7 @@ describe("gc-pending", () => {
     await expect(readGcPending(s, KEY)).rejects.toThrow(BaerlyError);
   });
 
-  it("rejects malformed shape on create", async () => {
+  test("rejects malformed shape on create", async () => {
     const s = new MemoryStorage();
     const bad = { schema_version: 1, candidates: "no", last_swept_at: "" } as unknown as GcPending;
     await expect(createGcPending(s, KEY, bad)).rejects.toMatchObject({

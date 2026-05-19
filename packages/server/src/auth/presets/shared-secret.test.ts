@@ -17,17 +17,17 @@ describe("sharedSecret", () => {
 
   test("rejects missing Authorization header with null", async () => {
     const verifier = sharedSecret({ secret: "s3cret", tenantPrefix: "acme" });
-    expect(await verifier(mkReq())).toBeNull();
+    await expect(verifier(mkReq())).resolves.toBeNull();
   });
 
   test("rejects wrong secret with null", async () => {
     const verifier = sharedSecret({ secret: "s3cret", tenantPrefix: "acme" });
-    expect(await verifier(mkReq({ Authorization: "Bearer wrong" }))).toBeNull();
+    await expect(verifier(mkReq({ Authorization: "Bearer wrong" }))).resolves.toBeNull();
   });
 
   test("rejects bare 'Bearer' (no value) with null", async () => {
     const verifier = sharedSecret({ secret: "s3cret", tenantPrefix: "acme" });
-    expect(await verifier(mkReq({ Authorization: "Bearer" }))).toBeNull();
+    await expect(verifier(mkReq({ Authorization: "Bearer" }))).resolves.toBeNull();
   });
 
   test("rejects a header that is a prefix of the expected value (length-mismatch short-circuit)", async () => {
@@ -35,16 +35,16 @@ describe("sharedSecret", () => {
     // expected prefix but has a different length — the constant-time
     // compare must reject before invoking the diff loop.
     const verifier = sharedSecret({ secret: "abcdef", tenantPrefix: "acme" });
-    expect(await verifier(mkReq({ Authorization: "Bearer abc" }))).toBeNull();
+    await expect(verifier(mkReq({ Authorization: "Bearer abc" }))).resolves.toBeNull();
   });
 
   test("throws BaerlyError{InvalidConfig} on empty secret", () => {
     try {
       sharedSecret({ secret: "", tenantPrefix: "acme" });
       expect.fail("expected throw");
-    } catch (err) {
-      expect(err).toBeInstanceOf(BaerlyError);
-      expect((err as BaerlyError).code).toBe("InvalidConfig");
+    } catch (error) {
+      expect(error).toBeInstanceOf(BaerlyError);
+      expect((error as BaerlyError).code).toBe("InvalidConfig");
     }
   });
 
@@ -52,8 +52,8 @@ describe("sharedSecret", () => {
     try {
       sharedSecret({ secret: "s3cret", tenantPrefix: "" });
       expect.fail("expected throw");
-    } catch (err) {
-      expect((err as BaerlyError).code).toBe("InvalidConfig");
+    } catch (error) {
+      expect((error as BaerlyError).code).toBe("InvalidConfig");
     }
   });
 
@@ -61,8 +61,8 @@ describe("sharedSecret", () => {
     try {
       sharedSecret({ secret: "s3cret", tenantPrefix: "a/b" });
       expect.fail("expected throw");
-    } catch (err) {
-      expect((err as BaerlyError).code).toBe("InvalidConfig");
+    } catch (error) {
+      expect((error as BaerlyError).code).toBe("InvalidConfig");
     }
   });
 

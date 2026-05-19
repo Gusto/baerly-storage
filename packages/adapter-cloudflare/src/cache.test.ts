@@ -14,7 +14,7 @@
  *   8. `cacheKeyFor` server-controlled `__t` wins over caller-supplied
  */
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, test } from "vitest";
 import { cacheKeyFor, invalidateOnWrite, withReadCache } from "./cache.ts";
 
 const json200 = (body: unknown, etag: string): Response =>
@@ -32,7 +32,7 @@ const freshUrl = (path: string): string =>
   `https://baerly-cache.test/v1/t/${path}-${++n}-${Date.now().toString(36)}`;
 
 describe("withReadCache", () => {
-  it("cache miss → invokes handler and populates cache", async () => {
+  test("cache miss → invokes handler and populates cache", async () => {
     const url = freshUrl("tickets/abc");
     const req1 = new Request(url, { method: "GET" });
     const req2 = new Request(url, { method: "GET" });
@@ -61,7 +61,7 @@ describe("withReadCache", () => {
     expect(calls).toBe(1);
   });
 
-  it("cache hit + matching If-None-Match → 304", async () => {
+  test("cache hit + matching If-None-Match → 304", async () => {
     const url = freshUrl("tickets/inm-match");
     // Prime.
     const primed = await withReadCache(new Request(url, { method: "GET" }), "tnt-A", () =>
@@ -79,10 +79,10 @@ describe("withReadCache", () => {
     expect(cache_status).toBe("hit");
     expect(res.status).toBe(304);
     expect(res.headers.get("etag")).toBe('"v3"');
-    expect(await res.text()).toBe("");
+    await expect(res.text()).resolves.toBe("");
   });
 
-  it("cache hit + mismatched If-None-Match → 200 cached body", async () => {
+  test("cache hit + mismatched If-None-Match → 200 cached body", async () => {
     const url = freshUrl("tickets/inm-mismatch");
     // Prime with ETag "v3".
     const primed = await withReadCache(new Request(url, { method: "GET" }), "tnt-A", () =>
@@ -104,7 +104,7 @@ describe("withReadCache", () => {
     expect(body.v).toBe(3);
   });
 
-  it("invalidateOnWrite busts both per-doc and parent list keys", async () => {
+  test("invalidateOnWrite busts both per-doc and parent list keys", async () => {
     // Use a fresh table path so parent / doc URLs are deterministic.
     const tableUrl = `https://baerly-cache.test/v1/t/inv-${++n}-${Date.now().toString(36)}`;
     const docUrl = `${tableUrl}/abc-4`;
@@ -112,14 +112,10 @@ describe("withReadCache", () => {
     // Prime the list and the per-doc entries.
     let listCalls = 0;
     let docCalls = 0;
-    const primeList = await withReadCache(
-      new Request(tableUrl, { method: "GET" }),
-      "tnt-A",
-      () => {
-        listCalls++;
-        return Promise.resolve(json200({ rows: [] }, '"L1"'));
-      },
-    );
+    const primeList = await withReadCache(new Request(tableUrl, { method: "GET" }), "tnt-A", () => {
+      listCalls++;
+      return Promise.resolve(json200({ rows: [] }, '"L1"'));
+    });
     expect(primeList.cache_status).toBe("miss");
     const primeDoc = await withReadCache(new Request(docUrl, { method: "GET" }), "tnt-A", () => {
       docCalls++;
@@ -130,14 +126,10 @@ describe("withReadCache", () => {
     expect(docCalls).toBe(1);
 
     // Confirm warm cache: re-reads do not increment counters.
-    const warmList = await withReadCache(
-      new Request(tableUrl, { method: "GET" }),
-      "tnt-A",
-      () => {
-        listCalls++;
-        return Promise.resolve(json200({}, '"X"'));
-      },
-    );
+    const warmList = await withReadCache(new Request(tableUrl, { method: "GET" }), "tnt-A", () => {
+      listCalls++;
+      return Promise.resolve(json200({}, '"X"'));
+    });
     expect(warmList.cache_status).toBe("hit");
     const warmDoc = await withReadCache(new Request(docUrl, { method: "GET" }), "tnt-A", () => {
       docCalls++;
@@ -169,53 +161,37 @@ describe("withReadCache", () => {
     expect(docCalls).toBe(2);
   });
 
-  it("bypasses /v1/since and /v1/healthz", async () => {
+  test("bypasses /v1/since and /v1/healthz", async () => {
     const sinceUrl = `https://baerly-cache.test/v1/since?cursor=x-${++n}`;
     let sinceCalls = 0;
-    const since1 = await withReadCache(
-      new Request(sinceUrl, { method: "GET" }),
-      "tnt-A",
-      () => {
-        sinceCalls++;
-        return Promise.resolve(json200({ entries: [] }, '"s1"'));
-      },
-    );
+    const since1 = await withReadCache(new Request(sinceUrl, { method: "GET" }), "tnt-A", () => {
+      sinceCalls++;
+      return Promise.resolve(json200({ entries: [] }, '"s1"'));
+    });
     expect(since1.cache_status).toBe("bypass");
-    const since2 = await withReadCache(
-      new Request(sinceUrl, { method: "GET" }),
-      "tnt-A",
-      () => {
-        sinceCalls++;
-        return Promise.resolve(json200({ entries: [] }, '"s2"'));
-      },
-    );
+    const since2 = await withReadCache(new Request(sinceUrl, { method: "GET" }), "tnt-A", () => {
+      sinceCalls++;
+      return Promise.resolve(json200({ entries: [] }, '"s2"'));
+    });
     expect(since2.cache_status).toBe("bypass");
     expect(sinceCalls).toBe(2);
 
     const healthUrl = `https://baerly-cache.test/v1/healthz?probe=${++n}`;
     let healthCalls = 0;
-    const health1 = await withReadCache(
-      new Request(healthUrl, { method: "GET" }),
-      "tnt-A",
-      () => {
-        healthCalls++;
-        return Promise.resolve(json200({ ok: true }, '"h1"'));
-      },
-    );
+    const health1 = await withReadCache(new Request(healthUrl, { method: "GET" }), "tnt-A", () => {
+      healthCalls++;
+      return Promise.resolve(json200({ ok: true }, '"h1"'));
+    });
     expect(health1.cache_status).toBe("bypass");
-    const health2 = await withReadCache(
-      new Request(healthUrl, { method: "GET" }),
-      "tnt-A",
-      () => {
-        healthCalls++;
-        return Promise.resolve(json200({ ok: true }, '"h2"'));
-      },
-    );
+    const health2 = await withReadCache(new Request(healthUrl, { method: "GET" }), "tnt-A", () => {
+      healthCalls++;
+      return Promise.resolve(json200({ ok: true }, '"h2"'));
+    });
     expect(health2.cache_status).toBe("bypass");
     expect(healthCalls).toBe(2);
   });
 
-  it("cross-tenant cache isolation (load-bearing security)", async () => {
+  test("cross-tenant cache isolation (load-bearing security)", async () => {
     // Same URL — different verifier outcomes (`tnt-A` vs `tnt-B`)
     // must NOT share a cache entry.
     const url = freshUrl("xtenant/abc");
@@ -270,7 +246,7 @@ describe("withReadCache", () => {
 });
 
 describe("cacheKeyFor", () => {
-  it("appends __t scoping param, preserves other params, method is GET", () => {
+  test("appends __t scoping param, preserves other params, method is GET", () => {
     const req = new Request("https://baerly-cache.test/v1/t/tickets?limit=10&cursor=abc", {
       method: "POST",
     });
@@ -282,7 +258,7 @@ describe("cacheKeyFor", () => {
     expect(key.method).toBe("GET");
   });
 
-  it("server-controlled __t wins over caller-supplied ?__t=spoof", () => {
+  test("server-controlled __t wins over caller-supplied ?__t=spoof", () => {
     const req = new Request("https://baerly-cache.test/v1/t/tickets/abc?__t=spoof", {
       method: "GET",
     });

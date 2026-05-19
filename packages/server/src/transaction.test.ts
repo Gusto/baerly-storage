@@ -39,13 +39,17 @@ const decodeJson = <T>(bytes: Uint8Array): T => JSON.parse(new TextDecoder().dec
 
 const readEntry = async (storage: MemoryStorage, seq: number): Promise<LogEntry> => {
   const got = await storage.get(logKey(seq));
-  if (got === null) throw new Error(`log entry ${seq} missing`);
+  if (got === null) {
+    throw new Error(`log entry ${seq} missing`);
+  }
   return decodeJson<LogEntry>(got.body);
 };
 
 const readCurrent = async (storage: MemoryStorage): Promise<CurrentJson> => {
   const got = await storage.get(currentJsonKey());
-  if (got === null) throw new Error("current.json missing");
+  if (got === null) {
+    throw new Error("current.json missing");
+  }
   return decodeJson<CurrentJson>(got.body);
 };
 
@@ -145,7 +149,8 @@ describe("Db.transaction", () => {
     // Pre-seed an existing doc so the update + delete have something
     // to act on — the read inside the tx body sees LIVE state.
     await db.table(TABLE).insert({ _id: "existing", v: "v0" });
-    expect((await readCurrent(storage)).next_seq).toBe(1);
+    const beforeTx = await readCurrent(storage);
+    expect(beforeTx.next_seq).toBe(1);
 
     await db.transaction(TABLE, async (tx) => {
       await tx.insert({ _id: "new-doc", v: "n" });
@@ -242,8 +247,8 @@ describe("Db.transaction", () => {
       await dbI.transaction(TABLE, async (tx) => {
         await tx.insert({ _id: "doomed" });
       });
-    } catch (err) {
-      thrown = err;
+    } catch (error) {
+      thrown = error;
     }
 
     expect(thrown).toBeInstanceOf(BaerlyError);
@@ -266,8 +271,8 @@ describe("Db.transaction", () => {
         await tx.insert({ _id: "never" });
         throw boom;
       });
-    } catch (err) {
-      thrown = err;
+    } catch (error) {
+      thrown = error;
     }
 
     // The body's error is re-thrown AS-IS — identity preserved.

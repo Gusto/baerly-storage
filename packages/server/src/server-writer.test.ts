@@ -144,8 +144,8 @@ describe("ServerWriter", () => {
         docId: "doomed",
         body: { _id: "doomed" },
       });
-    } catch (err) {
-      thrown = err;
+    } catch (error) {
+      thrown = error;
     }
 
     expect(thrown).toBeInstanceOf(BaerlyError);
@@ -383,8 +383,8 @@ describe("ServerWriter", () => {
         docId: "doc-429",
         body: { _id: "doc-429" },
       });
-    } catch (err) {
-      thrown = err;
+    } catch (error) {
+      thrown = error;
     }
     // Commit propagates the NetworkError — but the 429 counter
     // bumped on the way through the catch arm.
@@ -444,7 +444,9 @@ describe("ServerWriter — writer fence", () => {
           const bumpedBytes = new TextEncoder().encode(JSON.stringify(decoded));
           await super.put(key, bumpedBytes);
           const fresh = await super.get(key, opts);
-          if (fresh !== null) return fresh;
+          if (fresh !== null) {
+            return fresh;
+          }
         }
       }
       return result;
@@ -497,8 +499,8 @@ describe("ServerWriter — writer fence", () => {
         docId: "doc-staled",
         body: { _id: "doc-staled" },
       });
-    } catch (err) {
-      thrown = err;
+    } catch (error) {
+      thrown = error;
     }
     expect(thrown).toBeInstanceOf(BaerlyError);
     expect((thrown as BaerlyError).code).toBe("Conflict");
@@ -528,8 +530,8 @@ describe("ServerWriter — writer fence", () => {
         { op: "I", collection: COLL, docId: "tx-1", body: { _id: "tx-1" } },
         { op: "I", collection: COLL, docId: "tx-2", body: { _id: "tx-2" } },
       ]);
-    } catch (err) {
-      thrown = err;
+    } catch (error) {
+      thrown = error;
     }
     expect(thrown).toBeInstanceOf(BaerlyError);
     expect((thrown as BaerlyError).code).toBe("Conflict");
@@ -608,7 +610,7 @@ describe("ServerWriter — filtered index", () => {
       docId: "t-1",
       body: { _id: "t-1", status: "closed", assignee: "alice" },
     });
-    expect(await listFilteredKeys(storage)).toEqual([]);
+    await expect(listFilteredKeys(storage)).resolves.toEqual([]);
   });
 
   test("U: filter-match → filter-match diffs keys as today", async () => {
@@ -644,7 +646,7 @@ describe("ServerWriter — filtered index", () => {
       docId: "t-1",
       body: { _id: "t-1", status: "open", assignee: "alice" },
     });
-    expect(await listFilteredKeys(storage)).toHaveLength(1);
+    await expect(listFilteredKeys(storage)).resolves.toHaveLength(1);
 
     // Post-image transitions OUT of the filter — all old keys gone,
     // zero new keys land.
@@ -654,7 +656,7 @@ describe("ServerWriter — filtered index", () => {
       docId: "t-1",
       body: { _id: "t-1", status: "closed", assignee: "alice" },
     });
-    expect(await listFilteredKeys(storage)).toEqual([]);
+    await expect(listFilteredKeys(storage)).resolves.toEqual([]);
   });
 
   test("U: filter-miss → filter-match emits all PUTs, no DELETEs", async () => {
@@ -666,7 +668,7 @@ describe("ServerWriter — filtered index", () => {
       docId: "t-1",
       body: { _id: "t-1", status: "closed", assignee: "alice" },
     });
-    expect(await listFilteredKeys(storage)).toEqual([]);
+    await expect(listFilteredKeys(storage)).resolves.toEqual([]);
 
     // U that transitions INTO the filter → one PUT, zero DELETEs.
     await writer.commit({
@@ -706,7 +708,7 @@ describe("ServerWriter — filtered index", () => {
       docId: "t-1",
       body: { _id: "t-1", status: "wip", assignee: "bob" },
     });
-    expect(await listFilteredKeys(storage)).toEqual([]);
+    await expect(listFilteredKeys(storage)).resolves.toEqual([]);
     const indexHistograms = metrics.histograms.filter(
       (h) => h.name === "db.write.index_ops_per_logical_write",
     );
@@ -721,14 +723,14 @@ describe("ServerWriter — filtered index", () => {
       docId: "t-1",
       body: { _id: "t-1", status: "open", assignee: "alice" },
     });
-    expect(await listFilteredKeys(storage)).toHaveLength(1);
+    await expect(listFilteredKeys(storage)).resolves.toHaveLength(1);
 
     await writer.commit({
       op: "D",
       collection: COLL,
       docId: "t-1",
     });
-    expect(await listFilteredKeys(storage)).toEqual([]);
+    await expect(listFilteredKeys(storage)).resolves.toEqual([]);
   });
 
   test("D: filter-miss pre-image is a no-op", async () => {
@@ -740,7 +742,7 @@ describe("ServerWriter — filtered index", () => {
       docId: "t-1",
       body: { _id: "t-1", status: "closed", assignee: "alice" },
     });
-    expect(await listFilteredKeys(storage)).toEqual([]);
+    await expect(listFilteredKeys(storage)).resolves.toEqual([]);
     // Reset the histogram so we ONLY observe the D-quadrant's behaviour.
     metrics.histograms.length = 0;
 
@@ -749,7 +751,7 @@ describe("ServerWriter — filtered index", () => {
       collection: COLL,
       docId: "t-1",
     });
-    expect(await listFilteredKeys(storage)).toEqual([]);
+    await expect(listFilteredKeys(storage)).resolves.toEqual([]);
     const indexHistograms = metrics.histograms.filter(
       (h) => h.name === "db.write.index_ops_per_logical_write",
     );

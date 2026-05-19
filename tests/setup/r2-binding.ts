@@ -51,8 +51,12 @@ beforeEach(async () => {
   let cursor: string | undefined;
   do {
     const listed = await bucket.list({ cursor, limit: 1000 });
-    for (const obj of listed.objects) keys.push(obj.key);
+    for (const obj of listed.objects) {
+      keys.push(obj.key);
+    }
     cursor = listed.truncated ? listed.cursor : undefined;
   } while (cursor !== undefined);
-  if (keys.length > 0) await bucket.delete(keys);
+  if (keys.length > 0) {
+    await bucket.delete(keys);
+  }
 });
