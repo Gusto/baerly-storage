@@ -99,8 +99,10 @@ function useUpdate<T>(...): { mutate: (id: string, patch: Partial<T>) => Promise
 function useDelete<T>(...): { mutate: (id: string) => Promise<{ deleted: 0 | 1 }>; isPending: boolean; error?: Error }
 ```
 
-Plus the matching `client-terminals-silently-lie.md` wire-fix
-for `.replace()` (or skip `useReplace` until the PUT route lands).
+`.replace()` now uses a proper `PUT /v1/t/:table/:id` route on
+the wire (shipped ahead of this followup), so `useReplace` can
+land alongside the rest of the hook trio without further server-
+side work.
 
 **Option B — commit to the imperative pattern in docs.**
 

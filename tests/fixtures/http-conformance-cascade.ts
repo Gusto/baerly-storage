@@ -518,9 +518,135 @@ export const runHttpConformanceCascade = (opts: {
         const env = (await res.json()) as ErrorEnvelope;
         expect(env.error?.code).toBe("SchemaError");
       });
+
+      test("?order=<JSON spec> sorts the row set", async () => {
+        const table = await mintTable("list-order");
+        for (const doc of [{ n: 3 }, { n: 1 }, { n: 2 }]) {
+          const res = await postDoc(table, doc);
+          expect(res.status).toBe(201);
+        }
+        const order = encodeURIComponent(JSON.stringify({ n: "asc" }));
+        const res = await doFetch(authedRequest("GET", `/v1/t/${table}?order=${order}`));
+        expect(res.status).toBe(200);
+        const { data } = (await res.json()) as { readonly data: ReadonlyArray<{ n: number }> };
+        expect(data.map((r) => r.n)).toEqual([1, 2, 3]);
+
+        const orderDesc = encodeURIComponent(JSON.stringify({ n: "desc" }));
+        const resDesc = await doFetch(authedRequest("GET", `/v1/t/${table}?order=${orderDesc}`));
+        expect(resDesc.status).toBe(200);
+        const { data: dataDesc } = (await resDesc.json()) as {
+          readonly data: ReadonlyArray<{ n: number }>;
+        };
+        expect(dataDesc.map((r) => r.n)).toEqual([3, 2, 1]);
+      });
+
+      test("?order=<malformed JSON> returns 400 with SchemaError", async () => {
+        const table = freshTable("list-order-bad");
+        const res = await doFetch(authedRequest("GET", `/v1/t/${table}?order=notjson`));
+        expect(res.status).toBe(400);
+        const env = (await res.json()) as ErrorEnvelope;
+        expect(env.error?.code).toBe("SchemaError");
+      });
+
+      test("?limit=<n> caps the row set", async () => {
+        const table = await mintTable("list-limit");
+        for (const doc of [{ n: 1 }, { n: 2 }, { n: 3 }, { n: 4 }, { n: 5 }]) {
+          const res = await postDoc(table, doc);
+          expect(res.status).toBe(201);
+        }
+        const res = await doFetch(authedRequest("GET", `/v1/t/${table}?limit=2`));
+        expect(res.status).toBe(200);
+        const { data } = (await res.json()) as { readonly data: ReadonlyArray<{ n: number }> };
+        expect(data.length).toBe(2);
+      });
+
+      test("?limit=<non-integer> returns 400 with SchemaError", async () => {
+        const table = freshTable("list-limit-bad");
+        const res = await doFetch(authedRequest("GET", `/v1/t/${table}?limit=foo`));
+        expect(res.status).toBe(400);
+        const env = (await res.json()) as ErrorEnvelope;
+        expect(env.error?.code).toBe("SchemaError");
+      });
     });
 
     // ── Block 7: Encoding fidelity ─────────────────────────────────
+    describe("GET /v1/count", () => {
+      test("returns scalar { count: N } for the matching row set", async () => {
+        const table = await mintTable("count");
+        for (const doc of [{ s: "open" }, { s: "open" }, { s: "closed" }]) {
+          const res = await postDoc(table, doc);
+          expect(res.status).toBe(201);
+        }
+        const allRes = await doFetch(authedRequest("GET", `/v1/count?table=${table}`));
+        expect(allRes.status).toBe(200);
+        const allBody = (await allRes.json()) as { readonly data: { readonly count: number } };
+        expect(allBody.data.count).toBe(3);
+
+        const where = encodeURIComponent(JSON.stringify({ s: "open" }));
+        const filteredRes = await doFetch(
+          authedRequest("GET", `/v1/count?table=${table}&where=${where}`),
+        );
+        expect(filteredRes.status).toBe(200);
+        const filteredBody = (await filteredRes.json()) as {
+          readonly data: { readonly count: number };
+        };
+        expect(filteredBody.data.count).toBe(2);
+      });
+
+      test("without ?table= returns 400 with SchemaError", async () => {
+        const res = await doFetch(authedRequest("GET", `/v1/count`));
+        expect(res.status).toBe(400);
+        const env = (await res.json()) as ErrorEnvelope;
+        expect(env.error?.code).toBe("SchemaError");
+      });
+    });
+
+    describe("PUT replace", () => {
+      test("PUT /v1/t/:table/:id with { doc } overwrites — omitted fields are dropped", async () => {
+        const table = await mintTable("put-replace");
+        const ins = await postDoc(table, { title: "old", tag: "a", count: 1 });
+        expect(ins.status).toBe(201);
+        const id = ins.id!;
+        // Whole-doc PUT: only `title` survives, `tag`/`count` are dropped.
+        const putRes = await doFetch(
+          authedRequest("PUT", `/v1/t/${table}/${id}`, { doc: { title: "new" } }),
+        );
+        expect(putRes.status).toBe(200);
+        const putBody = (await putRes.json()) as { readonly modified?: number };
+        expect(putBody.modified).toBe(1);
+        const getRes = await doFetch(authedRequest("GET", `/v1/t/${table}/${id}`));
+        expect(getRes.status).toBe(200);
+        const { data } = (await getRes.json()) as { readonly data: Record<string, unknown> };
+        const { _id: _stripped, ...rest } = data;
+        void _stripped;
+        // Contrast with PATCH/merge-patch: omitted keys would have
+        // been preserved. PUT must drop them.
+        expect(rest).toEqual({ title: "new" });
+      });
+
+      test("PUT on missing _id returns 404 with NotFound", async () => {
+        const table = await mintTable("put-404");
+        const res = await doFetch(
+          authedRequest("PUT", `/v1/t/${table}/no-such-row`, { doc: { x: 1 } }),
+        );
+        expect(res.status).toBe(404);
+        const env = (await res.json()) as ErrorEnvelope;
+        expect(env.error?.code).toBe("NotFound");
+      });
+
+      test("PUT without { doc } in body returns 400 with SchemaError", async () => {
+        const table = await mintTable("put-bad");
+        const ins = await postDoc(table, { x: 1 });
+        const id = ins.id!;
+        const res = await doFetch(
+          authedRequest("PUT", `/v1/t/${table}/${id}`, { patch: { x: 2 } }),
+        );
+        expect(res.status).toBe(400);
+        const env = (await res.json()) as ErrorEnvelope;
+        expect(env.error?.code).toBe("SchemaError");
+      });
+    });
+
     describe("encoding fidelity", () => {
       test("UTF-8 multibyte fields round-trip through POST → GET", async () => {
         const doc: JSONArraylessObject = {

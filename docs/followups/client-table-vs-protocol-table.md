@@ -59,13 +59,13 @@ export type { Table, Query, Predicate, OrderSpec } from "baerly-storage";
 
 …with the same internal factory + delete the probe.
 
-## Why bundle with the wire-bug fixes
+## Sequencing
 
-`client-terminals-silently-lie.md` deletes or implements
-`.order()`, `.replace()`, `.count()`. Each of those touches the
-fluent shape. If `ClientTable` is removed and the type is reused
-from protocol, those changes happen in one place instead of two
-(method on `Table<T>` + method on `ClientTable`).
+The wire-bug fixes (`.order()` threaded through, PUT for
+`.replace()`, `/v1/count` route) have already shipped on local
+main — that work landed in tip ahead of this one. Folding
+`ClientTable` into `Table<T>` is now purely a type-hierarchy
+cleanup: the public-method shape is settled.
 
 But: don't sequence this *before* A1. Folding the shape into
 `Table<T>` while the package-name schism is unresolved freezes an

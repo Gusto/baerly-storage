@@ -27,6 +27,7 @@ import {
   BaerlyError,
   type JSONArraylessObject,
   type BaerlyErrorCode,
+  type OrderSpec,
   type Predicate,
 } from "@baerly/protocol";
 import type { BaerlyConfig } from "../config.ts";
@@ -65,10 +66,13 @@ export interface CreateRouterOptions {
  * Build a Hono `app` that serves the CRUD routes:
  *
  *  - `GET    /v1/t/:table/:id` → read one document.
- *  - `GET    /v1/t/:table?where=<json>` → list rows matching a predicate.
+ *  - `GET    /v1/t/:table?where=<json>&order=<json>&limit=<n>` → list rows
+ *    matching a predicate, optionally ordered and capped.
  *  - `POST   /v1/t/:table` → insert. Body: `{ doc }`. → `201 { _id }`.
  *  - `PATCH  /v1/t/:table/:id` → merge-patch. Body: `{ patch }`. → `200 { modified }`.
+ *  - `PUT    /v1/t/:table/:id` → whole-doc replace. Body: `{ doc }`. → `200 { modified }`.
  *  - `DELETE /v1/t/:table/:id` → delete row by id. → `204`.
+ *  - `GET    /v1/count?table=<name>&where=<json>` → scalar `{ count: N }`.
  *  - `GET    /v1/since?table=<name>&cursor=<opaque>` → long-poll log.
  *
  * @example
@@ -131,10 +135,12 @@ export function createRouter(options: CreateRouterOptions): Hono {
       }
     }
     const consistency = parseConsistency(c.req.query("consistency"));
+    const order = parseOrder(c.req.query("order"));
+    const limit = parseLimit(c.req.query("limit"));
     const { rows, manifestPointer, fresh } = await runAllWithMeta(db.tableReadContext(table), {
       predicate: predicate as Predicate<JSONArraylessObject>,
-      order: undefined,
-      limit: undefined,
+      order,
+      limit,
       consistency,
     });
     return c.json(
@@ -183,6 +189,40 @@ export function createRouter(options: CreateRouterOptions): Hono {
     return c.json({ modified }, 200);
   });
 
+  // Replace — PUT /v1/t/:table/:id  Body: { doc }
+  // Whole-document overwrite (NOT merge-patch). Strict cardinality:
+  // missing row → 404; row matches → emits one `op:"U"` log entry
+  // with the post-image, dropping fields absent from `doc`.
+  app.put("/v1/t/:table/:id", async (c) => {
+    const { table, id } = c.req.param();
+    const body = await readJsonBody(c, MAX_BODY_BYTES);
+    const { doc } = body as { doc?: unknown };
+    if (doc === undefined || typeof doc !== "object" || doc === null || Array.isArray(doc)) {
+      throw new BaerlyError("SchemaError", "Request body must be { doc: object }");
+    }
+    try {
+      await db
+        .table(table)
+        .where({ _id: id } as Predicate<JSONArraylessObject>)
+        .replace(doc as JSONArraylessObject);
+    } catch (error) {
+      // `Query.replace` raises `Conflict` with `expected exactly 1
+      // match, got 0` when the row is missing. Translate to the
+      // wire-level 404 NotFound the rest of the surface uses; let
+      // every other Conflict (CAS exhaustion, schema violation, etc.)
+      // bubble unchanged.
+      if (
+        error instanceof BaerlyError &&
+        error.code === "Conflict" &&
+        error.message.includes("got 0")
+      ) {
+        throw new BaerlyError("NotFound", `No such row: ${id}`);
+      }
+      throw error;
+    }
+    return c.json({ modified: 1 }, 200);
+  });
+
   // Delete — DELETE /v1/t/:table/:id  → 204
   app.delete("/v1/t/:table/:id", async (c) => {
     const { table, id } = c.req.param();
@@ -194,6 +234,43 @@ export function createRouter(options: CreateRouterOptions): Hono {
       throw new BaerlyError("NotFound", `No such row: ${id}`);
     }
     return new Response(null, { status: 204 });
+  });
+
+  // Count — GET /v1/count?table=<name>&where=<json>&consistency=<level>
+  //
+  // Returns a scalar row count for the matching predicate. Avoids the
+  // client downloading every row just to take `.length` (silent egress
+  // burn). Engine cost is currently the same as `runAllWithMeta` — the
+  // win is wire bytes; an O(snapshot+log) count path can land later
+  // without touching this route.
+  app.get("/v1/count", async (c) => {
+    const table = c.req.query("table");
+    if (table === undefined || table.length === 0) {
+      throw new BaerlyError("SchemaError", "GET /v1/count requires ?table=<name>");
+    }
+    const whereParam = c.req.query("where");
+    let predicate: Record<string, unknown> = {};
+    if (whereParam !== undefined && whereParam.length > 0) {
+      try {
+        predicate = JSON.parse(whereParam) as Record<string, unknown>;
+      } catch {
+        throw new BaerlyError("SchemaError", "Invalid JSON in ?where=");
+      }
+    }
+    const consistency = parseConsistency(c.req.query("consistency"));
+    const { rows, manifestPointer, fresh } = await runAllWithMeta(db.tableReadContext(table), {
+      predicate: predicate as Predicate<JSONArraylessObject>,
+      order: undefined,
+      limit: undefined,
+      consistency,
+    });
+    return c.json(
+      {
+        data: { count: rows.length },
+        _meta: { manifest_pointer: manifestPointer, fresh },
+      } satisfies HttpOkEnvelope<{ count: number }>,
+      200,
+    );
   });
 
   // Long-poll — GET /v1/since?table=<name>&cursor=<opaque>
@@ -272,6 +349,51 @@ function parseConsistency(raw: string | undefined): ConsistencyLevel {
     "InvalidConfig",
     `?consistency must be "strong" or "eventual"; got ${JSON.stringify(raw)}`,
   );
+}
+
+/**
+ * Parse `?limit=<n>` as a non-negative safe integer. Returns
+ * `undefined` when absent. Rejects floats, NaN, negatives, and
+ * non-numeric input with `SchemaError`.
+ *
+ * @internal
+ */
+function parseLimit(raw: string | undefined): number | undefined {
+  if (raw === undefined) {
+    return undefined;
+  }
+  const n = Number(raw);
+  if (!Number.isSafeInteger(n) || n < 0) {
+    throw new BaerlyError(
+      "SchemaError",
+      `?limit= must be a non-negative integer; got ${JSON.stringify(raw)}`,
+    );
+  }
+  return n;
+}
+
+/**
+ * Parse the `?order=<json>` query param. Mirrors the `?where=` parser
+ * shape: undefined → no order, malformed JSON → `SchemaError`. The
+ * engine (`runAllWithMeta` → `sortByOrderSpec`) validates the shape
+ * itself, so this only handles the wire-level JSON decode.
+ *
+ * @internal
+ */
+function parseOrder(raw: string | undefined): OrderSpec<JSONArraylessObject> | undefined {
+  if (raw === undefined || raw.length === 0) {
+    return undefined;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new BaerlyError("SchemaError", "Invalid JSON in ?order=");
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new BaerlyError("SchemaError", "?order= must encode a JSON object");
+  }
+  return parsed as OrderSpec<JSONArraylessObject>;
 }
 
 const ERROR_TO_STATUS: ReadonlyMap<BaerlyErrorCode, HttpStatus> = new Map<

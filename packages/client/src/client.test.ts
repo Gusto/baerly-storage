@@ -69,6 +69,23 @@ describe("createBaerlyClient", () => {
     expect(res).toEqual({ modified: 1 });
   });
 
+  test("replace() PUTs /v1/t/<name>/<id> with { doc } (full-document overwrite, not merge)", async () => {
+    const mock = new MockFetch();
+    let sawPatch = false;
+    mock.on("PATCH", "/v1/t/tickets/:id", () => {
+      sawPatch = true;
+      return jsonResponse({ modified: 1 });
+    });
+    mock.on("PUT", "/v1/t/tickets/:id", async (req) => {
+      const body = (await req.json()) as { doc: unknown };
+      expect(body).toEqual({ doc: { _id: "x", status: "closed" } });
+      return jsonResponse({ modified: 1 });
+    });
+    const client = createBaerlyClient({ baseUrl: "http://x", fetch: mock.fetch });
+    await client.table("tickets").where({ _id: "x" }).replace({ _id: "x", status: "closed" });
+    expect(sawPatch).toBe(false);
+  });
+
   test("delete() returns { deleted: 1 } on 204", async () => {
     const mock = new MockFetch();
     mock.on("DELETE", "/v1/t/tickets/:id", () => new Response(null, { status: 204 }));
@@ -161,6 +178,58 @@ describe("createBaerlyClient", () => {
     await client.table("tickets").where({ _id: "x" }).first();
     await client.table("tickets").where({ _id: "y" }).first();
     expect(calls).toBe(2);
+  });
+
+  test("count() issues GET /v1/count and returns scalar (does not download rows)", async () => {
+    const mock = new MockFetch();
+    let sawListGet = false;
+    mock.on("GET", "/v1/t/tickets", () => {
+      sawListGet = true;
+      return jsonResponse(okEnvelope([{ _id: "a" }, { _id: "b" }, { _id: "c" }]));
+    });
+    mock.on("GET", "/v1/count", (req) => {
+      const url = new URL(req.url);
+      expect(url.searchParams.get("table")).toBe("tickets");
+      expect(url.searchParams.get("where")).toBe('{"status":"open"}');
+      return jsonResponse({
+        data: { count: 42 },
+        _meta: { manifest_pointer: "none@0", fresh: true },
+      });
+    });
+    const client = createBaerlyClient({ baseUrl: "http://x", fetch: mock.fetch });
+    const n = await client.table("tickets").where({ status: "open" }).count();
+    expect(n).toBe(42);
+    expect(sawListGet).toBe(false);
+  });
+
+  test("table().count() (no predicate) issues GET /v1/count without ?where=", async () => {
+    const mock = new MockFetch();
+    mock.on("GET", "/v1/count", (req) => {
+      const url = new URL(req.url);
+      expect(url.searchParams.get("table")).toBe("tickets");
+      expect(url.searchParams.has("where")).toBe(false);
+      return jsonResponse({
+        data: { count: 7 },
+        _meta: { manifest_pointer: "none@0", fresh: true },
+      });
+    });
+    const client = createBaerlyClient({ baseUrl: "http://x", fetch: mock.fetch });
+    const n = await client.table("tickets").count();
+    expect(n).toBe(7);
+  });
+
+  test("order() forwards as ?order=<json>", async () => {
+    const mock = new MockFetch();
+    mock.on("GET", "/v1/t/tickets", (req) => {
+      const url = new URL(req.url);
+      expect(url.searchParams.get("order")).toBe('{"created_at":"desc"}');
+      return jsonResponse(okEnvelope([]));
+    });
+    const client = createBaerlyClient({ baseUrl: "http://x", fetch: mock.fetch });
+    await client
+      .table<{ _id: string; created_at: string }>("tickets")
+      .order({ created_at: "desc" })
+      .all();
   });
 
   test("consistency() forwards as ?consistency=<level>", async () => {

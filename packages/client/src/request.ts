@@ -9,7 +9,7 @@ import type { HttpErrorEnvelope, HttpOkEnvelope } from "./contract.ts";
 export type Fetcher = (req: Request) => Promise<Response>;
 
 export interface RequestOptions {
-  readonly method: "GET" | "POST" | "PATCH" | "DELETE";
+  readonly method: "GET" | "POST" | "PATCH" | "PUT" | "DELETE";
   readonly path: string;
   readonly body?: unknown;
   readonly signal?: AbortSignal;

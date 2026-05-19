@@ -168,7 +168,7 @@ export interface ClientQuery<T extends JSONArraylessObject = JSONArraylessObject
   first(opts?: TerminalOptions): Promise<T | undefined>;
   /** Every matching document. Pair with `.limit(n)` on large tables. */
   all(opts?: TerminalOptions): Promise<T[]>;
-  /** Count matching rows. Issues `GET /v1/t/:table?where=&limit=` then `.length`. */
+  /** Count matching rows. Issues `GET /v1/count?table=&where=`; server returns a scalar. */
   count(opts?: TerminalOptions): Promise<number>;
   /** JSON-merge-patch applied to the single matching row. Requires `.where({ _id })`. */
   update(patch: Partial<T>, opts?: TerminalOptions): Promise<{ readonly modified: number }>;
@@ -344,6 +344,9 @@ const makeClientQuery = <T extends JSONArraylessObject>(
     if (Object.keys(state.predicate).length > 0) {
       params.set("where", JSON.stringify(state.predicate));
     }
+    if (state.order !== undefined && Object.keys(state.order).length > 0) {
+      params.set("order", JSON.stringify(state.order));
+    }
     if (state.limit !== undefined) {
       params.set("limit", String(state.limit));
     }
@@ -403,16 +406,20 @@ const makeClientQuery = <T extends JSONArraylessObject>(
       return [...data];
     },
     async count(opts): Promise<number> {
-      // No dedicated `/v1/count` route exists (router.ts:130 lists
-      // only the six locked routes). We issue
-      // the list and take `.length`. When/if a count route lands,
-      // swap to it here without changing the public signature.
-      const data = await request<ReadonlyArray<T>>(ctx, {
+      const params = new URLSearchParams();
+      params.set("table", tableName);
+      if (Object.keys(state.predicate).length > 0) {
+        params.set("where", JSON.stringify(state.predicate));
+      }
+      if (state.consistency !== undefined) {
+        params.set("consistency", state.consistency);
+      }
+      const { count } = await request<{ count: number }>(ctx, {
         method: "GET",
-        path: listPath(),
+        path: `/v1/count?${params.toString()}`,
         signal: opts?.signal,
       });
-      return data.length;
+      return count;
     },
 
     async update(patch, opts): Promise<{ readonly modified: number }> {
@@ -440,15 +447,15 @@ const makeClientQuery = <T extends JSONArraylessObject>(
           "replace() requires .where({ _id: ... }) — see ClientQuery docstring",
         );
       }
-      // PATCH with a full document body behaves as a replace under
-      // RFC 7386 merge-patch (every field present overwrites). The
-      // server's `Query.replace` cardinality precondition cannot be
-      // mirrored client-side; surface a missing-row 404 as a thrown
-      // BaerlyClientError per the request-layer policy.
+      // PUT carries whole-document overwrite semantics and maps to the
+      // server's `Query.replace` (single-row strict cardinality:
+      // missing row → 404 here, multi-match → Conflict). NOT PATCH —
+      // PATCH would be RFC 7386 merge-patch and silently retain
+      // omitted fields from the prior doc.
       await request<{ modified: number }>(ctx, {
-        method: "PATCH",
+        method: "PUT",
         path: `/v1/t/${encodeURIComponent(tableName)}/${encodeURIComponent(id)}`,
-        body: { patch: doc },
+        body: { doc },
         signal: opts?.signal,
       });
     },

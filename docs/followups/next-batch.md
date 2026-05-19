@@ -24,7 +24,6 @@ this folder; invalid / stale items are removed entirely.
 - `schema-lock-json-purpose.md` — was H16
 - `env-example-cf-vs-node-asymmetry.md` — was H27
 - `orphan-fixtures-and-verify-script.md` — was I15 + I19
-- `client-terminals-silently-lie.md` — was E1 + E2 + E3
 - `client-abort-signal-threading.md` — was E5
 - `use-changes-naming-and-contract.md` — was E6
 - `client-delete-404-code-mismatch.md` — was E18

@@ -111,7 +111,12 @@ const BUDGETS: readonly Budget[] = [
   //     shared chunks again, pulling ~1093 more bytes into the
   //     index.js static closure. Measured post-rebase onto the
   //     2026-05-18 main: 361611 raw / 104537 gz.
-  { entry: "index.js", raw: 354 * 1024, gz: 103 * 1024 },
+  //   → 357 KiB raw / 103 KiB gz: client-terminals-silently-lie
+  //     follow-up. Router grew by ~2.3 KB raw to land three wire-
+  //     correctness fixes (`?order=`/`?limit=` threading + `parseOrder`
+  //     / `parseLimit`; `PUT /v1/t/:table/:id` for true replace;
+  //     `GET /v1/count` scalar route). gz unchanged.
+  { entry: "index.js", raw: 357 * 1024, gz: 103 * 1024 },
   // Just the five auth verifier factories. Adding a sixth grows
   // this budget, not the kernel's.
   { entry: "auth.js", raw: 34 * 1024, gz: 12 * 1024 },
@@ -138,7 +143,11 @@ const BUDGETS: readonly Budget[] = [
   //     shared chunks, pulling ~397 more bytes into http.js closure.
   //     Measured post-rebase onto 2026-05-18 main: 282102 raw /
   //     81562 gz.
-  { entry: "http.js", raw: 276 * 1024, gz: 80 * 1024 },
+  //   → 279 KiB raw / 81 KiB gz: client-terminals-silently-lie
+  //     follow-up. New `PUT /v1/t/:table/:id` (true replace) +
+  //     `GET /v1/count` routes, plus `parseOrder` / `parseLimit` for
+  //     wired order/limit query params. +2413 raw / +544 gz.
+  { entry: "http.js", raw: 279 * 1024, gz: 81 * 1024 },
   // Observability primitives — ObservabilityContext, the
   // request-scoped MetricsRecorder, LogTape config + the
   // JSON sink only (the pretty sink + picocolors now live in
@@ -179,7 +188,11 @@ const BUDGETS: readonly Budget[] = [
   //   → 434 KiB raw / 128 KiB gz: lint-tighten adopted 13 style rules
   //     (curly braces, no-nested-ternary helper extraction). Measured
   //     442393 raw / 130174 gz; bumped 1 KiB on each axis.
-  { entry: "cloudflare.js", raw: 434 * 1024, gz: 128 * 1024 },
+  //   → 436 KiB raw / 128 KiB gz: client-terminals-silently-lie
+  //     follow-up. Router additions reach the aggregator closure
+  //     (PUT/GET-count routes + order/limit threading). +811 raw, gz
+  //     unchanged.
+  { entry: "cloudflare.js", raw: 436 * 1024, gz: 128 * 1024 },
   // Node adapter — re-exports the kernel barrel plus
   // `s3HttpStorage`, `localFsStorage`, `memoryStorage`,
   // `localCacheStorage`, and the `baerlyNode` Fetch-API factory.
@@ -187,7 +200,11 @@ const BUDGETS: readonly Budget[] = [
   // Budget history:
   //   → 410 KiB raw / 120 KiB gz: initial budget set in T9 based on
   //     post-T8 measurement (405 KiB raw / 118 KiB gz).
-  { entry: "node.js", raw: 410 * 1024, gz: 120 * 1024 },
+  //   → 413 KiB raw / 120 KiB gz: client-terminals-silently-lie
+  //     follow-up. Router additions reach the aggregator closure
+  //     (PUT/GET-count routes + order/limit threading). +2092 raw, gz
+  //     unchanged.
+  { entry: "node.js", raw: 413 * 1024, gz: 120 * 1024 },
   // Client surface — `BaerlyClient<TConfig>` + fetcher plumbing.
   // Browser/runtime-agnostic; no kernel modules in the closure.
   // Budget history:
@@ -212,14 +229,20 @@ const BUDGETS: readonly Budget[] = [
   // Budget history:
   //   → 410 KiB raw / 120 KiB gz: initial budget set in T9 based on
   //     post-T8 measurement (405 KiB raw / 118 KiB gz).
-  { entry: "dev.js", raw: 410 * 1024, gz: 120 * 1024 },
+  //   → 413 KiB raw / 120 KiB gz: client-terminals-silently-lie
+  //     follow-up. Same router additions reach this aggregator's
+  //     closure as well. +2003 raw, gz unchanged.
+  { entry: "dev.js", raw: 413 * 1024, gz: 120 * 1024 },
   // `@baerly/dev/vite` — the `baerlyDev()` vite plugin (mounts the
   // Baerly HTTP listener as middleware inside a Vite dev server).
   // Vite is external. Aggregator: re-exports the dev surface.
   // Budget history:
   //   → 410 KiB raw / 120 KiB gz: initial budget set in T9 based on
   //     post-T8 measurement (404 KiB raw / 118 KiB gz).
-  { entry: "dev-vite.js", raw: 410 * 1024, gz: 120 * 1024 },
+  //   → 413 KiB raw / 120 KiB gz: client-terminals-silently-lie
+  //     follow-up. Same router additions land here too. +1812 raw,
+  //     gz unchanged.
+  { entry: "dev-vite.js", raw: 413 * 1024, gz: 120 * 1024 },
   // `@baerly/export` — snapshot dumper for `baerly admin dump` /
   // `baerly export --target=sqlite`. Pulls the kernel + protocol
   // hashing/log subgraph; HTTP router is not in its closure.
@@ -239,7 +262,11 @@ const BUDGETS: readonly Budget[] = [
   //     post-T8 measurement (562 KiB raw / 157 KiB gz). CLI carries
   //     the kernel + maintenance + export + clack subgraphs and
   //     transitive `tsx` shim — large by design.
-  { entry: "baerly.js", raw: 567 * 1024, gz: 159 * 1024 },
+  //   → 570 KiB raw / 159 KiB gz: client-terminals-silently-lie
+  //     follow-up. CLI bundles the kernel barrel, which now carries
+  //     the new HTTP routes + parseOrder/parseLimit. +2032 raw, gz
+  //     unchanged.
+  { entry: "baerly.js", raw: 570 * 1024, gz: 159 * 1024 },
 ];
 
 // Static-import specifiers only. Dynamic `import(...)` is intentionally
