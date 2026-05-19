@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { defineConfig } from "create-baerly/config";
+import { defineConfig } from "baerly-storage/config";
 
 /**
  * Zod schema for one ticket. Source of truth for both the runtime
