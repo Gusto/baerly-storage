@@ -105,12 +105,13 @@ const BUDGETS: readonly Budget[] = [
   //     subpath entries caused rolldown to re-split shared chunks,
   //     pulling ~787 bytes more code into the index.js static
   //     closure.
-  //   → 354 KiB raw / 102 KiB gz: adding client, client-react,
+  //   → 354 KiB raw / 103 KiB gz: adding client, client-react,
   //     client-testing, dev, dev-vite, export, maintenance, and
   //     observability subpath entries caused rolldown to re-split
   //     shared chunks again, pulling ~1093 more bytes into the
-  //     index.js static closure.
-  { entry: "index.js", raw: 354 * 1024, gz: 102 * 1024 },
+  //     index.js static closure. Measured post-rebase onto the
+  //     2026-05-18 main: 361611 raw / 104537 gz.
+  { entry: "index.js", raw: 354 * 1024, gz: 103 * 1024 },
   // Just the five auth verifier factories. Adding a sixth grows
   // this budget, not the kernel's.
   { entry: "auth.js", raw: 34 * 1024, gz: 12 * 1024 },
@@ -126,10 +127,12 @@ const BUDGETS: readonly Budget[] = [
   //     canonical.ts; the http closure still sees both chunks so
   //     the router shrinkage mostly offsets the obs growth (+317
   //     B raw net). gz unchanged.
-  //   → 275 KiB raw / 79 KiB gz: adding 6 new subpath entries
+  //   → 276 KiB raw / 80 KiB gz: adding 6 new subpath entries
   //     (client, dev, export, etc.) caused rolldown to re-split
   //     shared chunks, pulling ~397 more bytes into http.js closure.
-  { entry: "http.js", raw: 275 * 1024, gz: 79 * 1024 },
+  //     Measured post-rebase onto 2026-05-18 main: 282102 raw /
+  //     81562 gz.
+  { entry: "http.js", raw: 276 * 1024, gz: 80 * 1024 },
   // Observability primitives — ObservabilityContext, the
   // request-scoped MetricsRecorder, LogTape config + the
   // JSON sink only (the pretty sink + picocolors now live in

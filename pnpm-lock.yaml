@@ -214,32 +214,7 @@ importers:
         specifier: ^4.92.0
         version: 4.92.0(@cloudflare/workers-types@4.20260511.1)
 
-  examples/minimal-node-docker:
-    dependencies:
-      '@xmldom/xmldom':
-        specifier: ^0.9.10
-        version: 0.9.10
-      aws4fetch:
-        specifier: ^1.0.20
-        version: 1.0.20
-      baerly-storage:
-        specifier: workspace:*
-        version: link:../..
-    devDependencies:
-      '@types/node':
-        specifier: ^25.0.0
-        version: 25.6.2
-      create-baerly:
-        specifier: workspace:*
-        version: link:../../packages/create-baerly
-      typescript:
-        specifier: ^5.8.0
-        version: 5.9.3
-      vite:
-        specifier: ^6.0.0
-        version: 6.4.2(@types/node@25.6.2)(lightningcss@1.32.0)
-
-  examples/minimal-node-railway:
+  examples/minimal-node:
     dependencies:
       '@xmldom/xmldom':
         specifier: ^0.9.10
@@ -297,6 +272,9 @@ importers:
       aws4fetch:
         specifier: 1.0.20
         version: 1.0.20
+      picocolors:
+        specifier: ^1.1.1
+        version: 1.1.1
 
   packages/cli:
     dependencies:
@@ -392,9 +370,6 @@ importers:
       hono:
         specifier: ^4.12.18
         version: 4.12.18
-      picocolors:
-        specifier: ^1.1.1
-        version: 1.1.1
 
 packages:
 

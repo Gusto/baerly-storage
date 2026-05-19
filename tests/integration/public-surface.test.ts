@@ -83,19 +83,12 @@ describe("baerly-storage/http", () => {
 // ---------------------------------------------------------------------------
 // baerly-storage/maintenance
 // ---------------------------------------------------------------------------
-import {
-  CLOUDFLARE_FREE_TIER,
-  CLOUDFLARE_PAID_TIER,
-  NODE_PROFILE,
-  runScheduledMaintenance,
-} from "baerly-storage/maintenance";
+import { CLOUDFLARE_FREE_TIER, runScheduledMaintenance } from "baerly-storage/maintenance";
 
 describe("baerly-storage/maintenance", () => {
   test("imports resolve", () => {
     expect(typeof runScheduledMaintenance).toBe("function");
     expect(typeof CLOUDFLARE_FREE_TIER).toBe("object");
-    expect(typeof CLOUDFLARE_PAID_TIER).toBe("object");
-    expect(typeof NODE_PROFILE).toBe("object");
   });
 });
 
