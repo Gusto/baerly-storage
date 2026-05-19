@@ -3,15 +3,16 @@
  * project (workerd + miniflare) so `caches.default` is a real per-isolate
  * cache.
  *
- * Eight cases:
+ * Cases:
  *   1. cache miss → handler invoked, response populated
  *   2. cache hit + matching `If-None-Match` → 304
  *   3. cache hit + mismatched `If-None-Match` → 200 cached body
- *   4. `invalidateOnWrite` busts both per-doc and parent list keys
- *   5. `/v1/since` and `/v1/healthz` bypass the cache
- *   6. cross-tenant cache isolation (load-bearing security test)
- *   7. `cacheKeyFor` appends `__t`, preserves other params, method=GET
- *   8. `cacheKeyFor` server-controlled `__t` wins over caller-supplied
+ *   4. `invalidateOnWrite` busts the per-doc URL on PATCH
+ *   5. LIST URLs (`/v1/t/<table>`, with or without filters) bypass
+ *   6. `/v1/since` and `/v1/healthz` bypass the cache
+ *   7. cross-tenant cache isolation (load-bearing security test)
+ *   8. `cacheKeyFor` appends `__t`, preserves other params, method=GET
+ *   9. `cacheKeyFor` server-controlled `__t` wins over caller-supplied
  */
 
 import { describe, expect, test } from "vitest";
@@ -104,61 +105,62 @@ describe("withReadCache", () => {
     expect(body.v).toBe(3);
   });
 
-  test("invalidateOnWrite busts both per-doc and parent list keys", async () => {
-    // Use a fresh table path so parent / doc URLs are deterministic.
-    const tableUrl = `https://baerly-cache.test/v1/t/inv-${++n}-${Date.now().toString(36)}`;
-    const docUrl = `${tableUrl}/abc-4`;
+  test("invalidateOnWrite busts the per-doc URL on PATCH", async () => {
+    const docUrl = freshUrl("inv/abc");
 
-    // Prime the list and the per-doc entries.
-    let listCalls = 0;
     let docCalls = 0;
-    const primeList = await withReadCache(new Request(tableUrl, { method: "GET" }), "tnt-A", () => {
-      listCalls++;
-      return Promise.resolve(json200({ rows: [] }, '"L1"'));
-    });
-    expect(primeList.cache_status).toBe("miss");
-    const primeDoc = await withReadCache(new Request(docUrl, { method: "GET" }), "tnt-A", () => {
+    const prime = await withReadCache(new Request(docUrl, { method: "GET" }), "tnt-A", () => {
       docCalls++;
-      return Promise.resolve(json200({ id: "abc-4" }, '"D1"'));
+      return Promise.resolve(json200({ id: "abc", v: 1 }, '"D1"'));
     });
-    expect(primeDoc.cache_status).toBe("miss");
-    expect(listCalls).toBe(1);
-    expect(docCalls).toBe(1);
+    expect(prime.cache_status).toBe("miss");
 
-    // Confirm warm cache: re-reads do not increment counters.
-    const warmList = await withReadCache(new Request(tableUrl, { method: "GET" }), "tnt-A", () => {
-      listCalls++;
-      return Promise.resolve(json200({}, '"X"'));
-    });
-    expect(warmList.cache_status).toBe("hit");
-    const warmDoc = await withReadCache(new Request(docUrl, { method: "GET" }), "tnt-A", () => {
+    const warm = await withReadCache(new Request(docUrl, { method: "GET" }), "tnt-A", () => {
       docCalls++;
       return Promise.resolve(json200({}, '"X"'));
     });
-    expect(warmDoc.cache_status).toBe("hit");
-    expect(listCalls).toBe(1);
+    expect(warm.cache_status).toBe("hit");
     expect(docCalls).toBe(1);
 
-    // PATCH the doc → invalidate both keys.
     await invalidateOnWrite(new Request(docUrl, { method: "PATCH" }), "tnt-A", 200);
 
-    // Both re-reads should now miss and call the handler.
-    const refillList = await withReadCache(
-      new Request(tableUrl, { method: "GET" }),
-      "tnt-A",
-      () => {
-        listCalls++;
-        return Promise.resolve(json200({ rows: ["abc-4"] }, '"L2"'));
-      },
-    );
-    expect(refillList.cache_status).toBe("miss");
-    const refillDoc = await withReadCache(new Request(docUrl, { method: "GET" }), "tnt-A", () => {
+    const refill = await withReadCache(new Request(docUrl, { method: "GET" }), "tnt-A", () => {
       docCalls++;
-      return Promise.resolve(json200({ id: "abc-4", v: 2 }, '"D2"'));
+      return Promise.resolve(json200({ id: "abc", v: 2 }, '"D2"'));
     });
-    expect(refillDoc.cache_status).toBe("miss");
-    expect(listCalls).toBe(2);
+    expect(refill.cache_status).toBe("miss");
     expect(docCalls).toBe(2);
+  });
+
+  test("LIST URLs bypass — bare and filtered both uncached", async () => {
+    const bare = `https://baerly-cache.test/v1/t/lists-${++n}-${Date.now().toString(36)}`;
+    const filtered = `${bare}?where=%7B%22status%22:%22open%22%7D`;
+
+    let bareCalls = 0;
+    let filteredCalls = 0;
+    const b1 = await withReadCache(new Request(bare, { method: "GET" }), "tnt-A", () => {
+      bareCalls++;
+      return Promise.resolve(json200({ rows: [] }, '"L1"'));
+    });
+    expect(b1.cache_status).toBe("bypass");
+    const b2 = await withReadCache(new Request(bare, { method: "GET" }), "tnt-A", () => {
+      bareCalls++;
+      return Promise.resolve(json200({ rows: [] }, '"L2"'));
+    });
+    expect(b2.cache_status).toBe("bypass");
+    expect(bareCalls).toBe(2);
+
+    const f1 = await withReadCache(new Request(filtered, { method: "GET" }), "tnt-A", () => {
+      filteredCalls++;
+      return Promise.resolve(json200({ rows: [] }, '"F1"'));
+    });
+    expect(f1.cache_status).toBe("bypass");
+    const f2 = await withReadCache(new Request(filtered, { method: "GET" }), "tnt-A", () => {
+      filteredCalls++;
+      return Promise.resolve(json200({ rows: [] }, '"F2"'));
+    });
+    expect(f2.cache_status).toBe("bypass");
+    expect(filteredCalls).toBe(2);
   });
 
   test("bypasses /v1/since and /v1/healthz", async () => {

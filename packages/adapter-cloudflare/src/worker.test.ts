@@ -279,7 +279,6 @@ describe("baerlyWorker observability", () => {
 
   test("cache-miss read emits a canonical line with class_b_ops>0, outcome=read, cache_status=miss", async () => {
     const bucket = getBinding();
-    const { records, sink } = collectingSink();
     const tenant = `obs-miss-${Date.now().toString(36)}`;
     const verifier: Verifier = async () => ({ tenantPrefix: tenant, identity: {} });
     const storage = r2BindingStorage(bucket);
@@ -291,27 +290,41 @@ describe("baerlyWorker observability", () => {
       writer_fence: { epoch: 0, owner: "obs-miss-test", claimed_at: "" },
     });
 
+    const env: Env = { BUCKET: bucket, APP: "t", TENANT: tenant };
+    const makeExec = (): ExecutionContext => ({
+      waitUntil(): void {},
+      passThroughOnException(): void {},
+      props: {},
+    });
+
+    // Seed one doc via a sink-less handler so the GET below has a
+    // body to fetch (per-doc URLs are the only cached shape).
+    const seeder = baerlyWorker({ verifier });
+    await seeder.fetch!(
+      new Request("https://x/v1/t/c", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ doc: { _id: "obs-miss-1", v: 1 } }),
+      }) as Request<unknown, IncomingRequestCfProperties>,
+      env,
+      makeExec(),
+    );
+
+    const { records, sink } = collectingSink();
     const handler = baerlyWorker({
       verifier,
       observability: { level: "debug", sink, sampleRate: 1 },
     });
-    const env: Env = { BUCKET: bucket, APP: "t", TENANT: tenant };
-    const ctx: ExecutionContext = {
-      waitUntil(): void {},
-      passThroughOnException(): void {},
-      props: {},
-    };
 
     // Cold-cache GET (the cache is per-isolate and the tenant key is
     // unique to this test, so this is guaranteed to be a miss).
-    const path = `/v1/t/c?where=${encodeURIComponent("{}")}`;
     const res = await handler.fetch!(
-      new Request(`https://x${path}`, { method: "GET" }) as Request<
+      new Request("https://x/v1/t/c/obs-miss-1", { method: "GET" }) as Request<
         unknown,
         IncomingRequestCfProperties
       >,
       env,
-      ctx,
+      makeExec(),
     );
     expect(res.status).toBe(200);
 
@@ -320,8 +333,8 @@ describe("baerlyWorker observability", () => {
     const props = line!.properties as Record<string, unknown>;
     expect(props["outcome"]).toBe("read");
     // The adapter stamps `cache_status` on every HTTP canonical
-    // line — see `cache-status.test.ts` for the full hit/miss/bypass
-    // matrix.
+    // line — see `worker-cache-discriminator.test.ts` for the full
+    // hit/miss/bypass matrix.
     expect(props["cache_status"]).toBe("miss");
     // class-B ops fire on the read path (GETs against current.json).
     expect(props["db.storage.class_b_ops_total"]).toBeGreaterThanOrEqual(1);
@@ -333,7 +346,7 @@ describe("baerlyWorker observability", () => {
     // misses, only stamped with `cache_status: "hit"`. Operators
     // distinguish hit vs miss directly from the log stream — no CDN
     // dashboard required. The full coverage matrix (miss-then-hit,
-    // bypass, write-invalidates-list) lives in `cache-status.test.ts`.
+    // bypass) lives in `worker-cache-discriminator.test.ts`.
     const bucket = getBinding();
     const tenant = `obs-hit-${Date.now().toString(36)}`;
     const verifier: Verifier = async () => ({ tenantPrefix: tenant, identity: {} });
@@ -345,25 +358,34 @@ describe("baerlyWorker observability", () => {
       log_seq_start: 0,
       writer_fence: { epoch: 0, owner: "obs-hit-test", claimed_at: "" },
     });
-    // First request (miss) configured WITHOUT a collecting sink so
-    // its canonical line doesn't pollute the assertion below.
-    const miss = baerlyWorker({ verifier });
+
     const env: Env = { BUCKET: bucket, APP: "t", TENANT: tenant };
     const makeExec = (): ExecutionContext => ({
       waitUntil(): void {},
       passThroughOnException(): void {},
       props: {},
     });
-    const path = `/v1/t/c?where=${encodeURIComponent("{}")}`;
-    const url = `https://x${path}`;
-    await miss.fetch!(
+
+    // Seed one doc, then warm the cache via a sink-less handler so
+    // its canonical lines don't pollute the assertion below.
+    const warm = baerlyWorker({ verifier });
+    await warm.fetch!(
+      new Request("https://x/v1/t/c", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ doc: { _id: "obs-hit-1", v: 1 } }),
+      }) as Request<unknown, IncomingRequestCfProperties>,
+      env,
+      makeExec(),
+    );
+    const url = "https://x/v1/t/c/obs-hit-1";
+    await warm.fetch!(
       new Request(url, { method: "GET" }) as Request<unknown, IncomingRequestCfProperties>,
       env,
       makeExec(),
     );
 
-    // Second request: now wire the sink and the hit handler. Cache
-    // is per-isolate so the second GET should land a hit.
+    // Now wire the sink and fire the cache-hit GET.
     const { records, sink } = collectingSink();
     const hit = baerlyWorker({
       verifier,

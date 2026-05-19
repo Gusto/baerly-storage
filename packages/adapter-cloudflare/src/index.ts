@@ -29,6 +29,3 @@ export type { BaerlyWorkerOptions, Env, WorkerHandler, WorkerScheduledHandler } 
 // Dev-only convenience verifier. **Not** for production use — see
 // the JSDoc on the helper itself.
 export { singleTenantDevVerifier } from "./single-tenant-dev-verifier.ts";
-
-// Read-path cache integration (Workers-only).
-export { cacheKeyFor, invalidateOnWrite, withReadCache } from "./cache.ts";
