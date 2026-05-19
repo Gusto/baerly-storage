@@ -3,9 +3,10 @@
 A working CRUD helpdesk over baerly-storage. Single Vite process:
 
 - The React app (under `src/`) renders the ticket list and detail
-  views. Edits from one browser tab appear in others over the
-  `/v1/since` long-poll, surfaced through the `useLiveQuery` /
-  `useLiveDocument` React hooks.
+  views. The root is wrapped in `<BaerlyProvider>`; edits from one
+  browser tab appear in others over the `/v1/since` long-poll,
+  surfaced through the `useLiveQuery` / `useLiveDocument` React
+  hooks.
 - The Baerly HTTP listener is mounted as Vite middleware via
   `baerlyDev()` from `baerly-storage/dev/vite`, so the app and `/v1/*` API
   share an origin (`:5173`) and a single process.
@@ -57,27 +58,26 @@ export default defineConfig({
 plus `/v1/*` API share one origin, one process — no proxy, no
 separate server boot.
 
-Reads and writes look the same on the client and the server — the
-client just sends them over HTTP:
+Wrap the app once at the root — every Baerly hook reads the client
+from this context:
 
-```ts
-// src/TicketForm.tsx (etc.)
-await client.table<Ticket>("tickets").insert({ title, status, ... });
-await client.table<Ticket>("tickets").where({ _id }).update({ status: "closed" });
-await client.table<Ticket>("tickets").where({ status: "open" }).all();
+```tsx
+// src/App.tsx
+<BaerlyProvider client={client}>
+  <App />
+</BaerlyProvider>
 ```
 
-Live updates are one hook — `useLiveQuery` re-runs `.where(...).all()`
+Reads are declarative — `useLiveQuery` re-runs `.where(...).all()`
 whenever the server emits log events for the table, and is a no-op
 on idle long-poll cycles:
 
 ```tsx
 // src/TicketList.tsx
-const result = useLiveQuery<Ticket>(
-  client,
-  "tickets",
-  filter === "all" ? {} : { status: filter },
-);
+const result = useLiveQuery<Ticket>({
+  table: "tickets",
+  where: filter === "all" ? {} : { status: filter },
+});
 if (result.status === "loading") return <p>Loading…</p>;
 if (result.status === "error") return <p>Error: {result.error.message}</p>;
 return <ul>{result.rows.map((t) => <li key={t._id}>{t.title}</li>)}</ul>;
@@ -88,11 +88,33 @@ and only refetches when an event touches *that* row:
 
 ```tsx
 // src/TicketDetail.tsx
-const result = useLiveDocument<Ticket>(client, "tickets", id);
+const result = useLiveDocument<Ticket>({ table: "tickets", id });
 if (result.status === "loading") return <p>Loading…</p>;
 if (result.status === "missing") return <p>Not found.</p>;
 if (result.status === "error") return <p>Error: {result.error.message}</p>;
 return <h2>{result.row.title}</h2>;
+```
+
+Mutations get matching hooks (`useInsert`, `useUpdate`, `useReplace`,
+`useDelete`) — each exposes `mutate`, `isPending`, `error`, `reset`,
+and aborts its in-flight call on a fresh `mutate()` or on unmount:
+
+```tsx
+// src/TicketForm.tsx
+const { mutate: addTicket, isPending, error } = useInsert<Ticket>({ table: "tickets" });
+
+<form onSubmit={async (e) => { e.preventDefault(); await addTicket(draft); onDone(); }}>
+  <button disabled={isPending}>{isPending ? "Saving…" : "Create"}</button>
+  {error && <p style={{ color: "crimson" }}>{error.message}</p>}
+</form>
+```
+
+For one-shot imperative access (a custom export, a manual read inside
+an event handler), drop down to the client directly via `useBaerlyClient`:
+
+```ts
+const client = useBaerlyClient();
+const row = await client.table<Ticket>("tickets").where({ _id }).first();
 ```
 
 ## Bucket layout

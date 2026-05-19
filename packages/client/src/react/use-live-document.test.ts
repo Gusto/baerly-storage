@@ -1,11 +1,12 @@
 // @vitest-environment happy-dom
 
 import { renderHook, waitFor } from "@testing-library/react";
+import { createElement, type ReactNode } from "react";
 import { describe, expect, test } from "vitest";
 import type { JSONArraylessObject } from "@baerly/protocol";
 import { createBaerlyClient } from "../client.ts";
 import { MockFetch } from "../testing/index.ts";
-import { useLiveDocument } from "./use-live-document.ts";
+import { BaerlyProvider, useLiveDocument } from "./index.ts";
 
 const okEnvelope = (data: unknown): Response =>
   new Response(JSON.stringify({ data, _meta: { manifest_pointer: "none@0", fresh: true } }), {
@@ -39,6 +40,11 @@ const makeMock = () => {
   return { m, pendingSinceRejects, hangSince };
 };
 
+const wrap = (client: ReturnType<typeof createBaerlyClient>) => {
+  return ({ children }: { children: ReactNode }) =>
+    createElement(BaerlyProvider, { client }, children);
+};
+
 describe("useLiveDocument", () => {
   test("performs initial read and returns the row", async () => {
     const { m, pendingSinceRejects, hangSince } = makeMock();
@@ -46,7 +52,10 @@ describe("useLiveDocument", () => {
     m.on("GET", "/v1/since", hangSince);
 
     const client = createBaerlyClient({ baseUrl: "http://x", fetch: m.fetch });
-    const { result, unmount } = renderHook(() => useLiveDocument<Ticket>(client, "tickets", "a"));
+    const { result, unmount } = renderHook(
+      () => useLiveDocument<Ticket>({ table: "tickets", id: "a" }),
+      { wrapper: wrap(client) },
+    );
 
     await waitFor(() => {
       expect(result.current).toEqual({ status: "ok", row: { _id: "a", title: "hello" } });
@@ -64,7 +73,10 @@ describe("useLiveDocument", () => {
     m.on("GET", "/v1/since", hangSince);
 
     const client = createBaerlyClient({ baseUrl: "http://x", fetch: m.fetch });
-    const { result, unmount } = renderHook(() => useLiveDocument<Ticket>(client, "tickets", "x"));
+    const { result, unmount } = renderHook(
+      () => useLiveDocument<Ticket>({ table: "tickets", id: "x" }),
+      { wrapper: wrap(client) },
+    );
 
     await waitFor(() => expect(result.current.status).toBe("missing"));
 
@@ -88,7 +100,6 @@ describe("useLiveDocument", () => {
     m.on("GET", "/v1/since", (req) => {
       sincePoll += 1;
       if (sincePoll === 1) {
-        // First batch: an event for a DIFFERENT row. Must not refetch.
         return sinceResponse({
           events: [
             {
@@ -106,7 +117,6 @@ describe("useLiveDocument", () => {
         });
       }
       if (sincePoll === 2) {
-        // Second batch: an event for OUR row. Must refetch.
         return sinceResponse({
           events: [
             {
@@ -127,7 +137,10 @@ describe("useLiveDocument", () => {
     });
 
     const client = createBaerlyClient({ baseUrl: "http://x", fetch: m.fetch });
-    const { result, unmount } = renderHook(() => useLiveDocument<Ticket>(client, "tickets", "a"));
+    const { result, unmount } = renderHook(
+      () => useLiveDocument<Ticket>({ table: "tickets", id: "a" }),
+      { wrapper: wrap(client) },
+    );
 
     await waitFor(() => {
       expect(result.current).toEqual({ status: "ok", row: { _id: "a", title: "v2" } });
@@ -157,7 +170,10 @@ describe("useLiveDocument", () => {
     });
 
     const client = createBaerlyClient({ baseUrl: "http://x", fetch: m.fetch });
-    const { result, unmount } = renderHook(() => useLiveDocument<Ticket>(client, "tickets", "a"));
+    const { result, unmount } = renderHook(
+      () => useLiveDocument<Ticket>({ table: "tickets", id: "a" }),
+      { wrapper: wrap(client) },
+    );
 
     await waitFor(() => expect(result.current.status).toBe("ok"));
     await waitFor(() => expect(sincePoll).toBeGreaterThanOrEqual(2));
@@ -182,8 +198,8 @@ describe("useLiveDocument", () => {
 
     const client = createBaerlyClient({ baseUrl: "http://x", fetch: m.fetch });
     const { rerender, unmount } = renderHook(
-      ({ id }: { id: string }) => useLiveDocument<Ticket>(client, "tickets", id),
-      { initialProps: { id: "a" } },
+      ({ id }: { id: string }) => useLiveDocument<Ticket>({ table: "tickets", id }),
+      { initialProps: { id: "a" }, wrapper: wrap(client) },
     );
 
     await waitFor(() => expect(seenIds).toContain("a"));

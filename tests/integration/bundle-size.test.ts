@@ -216,7 +216,14 @@ const BUDGETS: readonly Budget[] = [
   // Budget history:
   //   → 13 KiB raw / 5 KiB gz: initial budget set in T9 based on
   //     post-T8 measurement (8 KiB raw / 3 KiB gz).
-  { entry: "client-react.js", raw: 13 * 1024, gz: 5 * 1024 },
+  //   → 16 KiB raw / 6 KiB gz: client-hooks-api-shape follow-up.
+  //     Added <BaerlyProvider> + useBaerlyClient and the
+  //     useInsert / useUpdate / useReplace / useDelete mutation
+  //     hook trio over a shared `useMutation` primitive. Read
+  //     hooks switched from positional args to options-bag (no
+  //     `client` arg — read from context). Measured: 15268 raw /
+  //     4769 gz.
+  { entry: "client-react.js", raw: 16 * 1024, gz: 6 * 1024 },
   // Testing helpers for `BaerlyClient` (in-memory fetcher etc.).
   // Vitest is external; closure is minimal.
   // Budget history:

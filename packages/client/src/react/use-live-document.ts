@@ -1,9 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
 import type { JSONArraylessObject, LogEntry, Predicate } from "@baerly/protocol";
-import type { BaerlyClient } from "../client.ts";
+import { useBaerlyClient } from "./provider.ts";
 import { useInvalidationTick } from "./use-invalidation-tick.ts";
 
 export interface UseLiveDocumentOptions {
+  /** Table to read from. */
+  readonly table: string;
+  /** Document `_id` to subscribe to. */
+  readonly id: string;
   /** When `false`, suspends both the initial read and the subscription. Default `true`. */
   readonly enabled?: boolean;
 }
@@ -34,7 +38,7 @@ export type UseLiveDocumentResult<T> =
  *
  * @example
  * ```tsx
- * const result = useLiveDocument<Ticket>(client, "tickets", id);
+ * const result = useLiveDocument<Ticket>({ table: "tickets", id });
  * if (result.status === "loading") return <p>Loading…</p>;
  * if (result.status === "error") return <p>Error: {result.error.message}</p>;
  * if (result.status === "missing") return <p>Not found.</p>;
@@ -42,16 +46,14 @@ export type UseLiveDocumentResult<T> =
  * ```
  */
 export const useLiveDocument = <T extends JSONArraylessObject = JSONArraylessObject>(
-  client: BaerlyClient,
-  table: string,
-  id: string,
-  opts: UseLiveDocumentOptions = {},
+  opts: UseLiveDocumentOptions,
 ): UseLiveDocumentResult<T> => {
-  const { enabled = true } = opts;
+  const { table, id, enabled = true } = opts;
+  const client = useBaerlyClient();
   const [state, setState] = useState<UseLiveDocumentResult<T>>({ status: "loading" });
 
   const matchEvent = useCallback((event: LogEntry): boolean => event.doc_id === id, [id]);
-  const tick = useInvalidationTick(client, table, { enabled, matchEvent });
+  const tick = useInvalidationTick({ table, enabled, matchEvent });
 
   useEffect(() => {
     if (!enabled) {

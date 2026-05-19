@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import type { LogEntry } from "@baerly/protocol";
-import type { BaerlyClient } from "../client.ts";
+import { useBaerlyClient } from "./provider.ts";
 
 export interface UseInvalidationTickOptions {
+  /** Table to subscribe to. */
+  readonly table: string;
   /**
    * Initial cursor. Pass `""` (default) to replay from `log_seq_start`.
    * Pass a previously-observed `next_cursor` to resume.
@@ -45,26 +47,23 @@ export interface UseInvalidationTickOptions {
  * @example
  * ```tsx
  * // Manual cache: refetch a custom aggregate whenever the log advances.
- * const tick = useInvalidationTick(client, "tickets");
+ * const tick = useInvalidationTick({ table: "tickets" });
  * useEffect(() => {
  *   void refetchAggregate();
  * }, [tick]);
  * ```
  */
-export const useInvalidationTick = (
-  client: BaerlyClient,
-  table: string,
-  opts: UseInvalidationTickOptions = {},
-): number => {
-  const { since = "", enabled = true, matchEvent } = opts;
+export const useInvalidationTick = (opts: UseInvalidationTickOptions): number => {
+  const { table, since = "", enabled = true, matchEvent } = opts;
+  const client = useBaerlyClient();
   const [tick, setTick] = useState<number>(0);
 
   // Cursor lives in a ref so the poll loop resumes across `enabled`
-  // toggles. The previous `useChanges` implementation seeded
-  // `currentCursor` from `since` inside the effect — when the effect
-  // re-ran (e.g. `enabled` flipped false → true) the loop replayed
-  // history from scratch. The ref persists across effect re-runs and
-  // is only ever set forward.
+  // toggles. The previous implementation seeded `currentCursor` from
+  // `since` inside the effect — when the effect re-ran (e.g.
+  // `enabled` flipped false → true) the loop replayed history from
+  // scratch. The ref persists across effect re-runs and is only ever
+  // set forward.
   const cursorRef = useRef<string>(since);
 
   // Matchers can be inline arrow functions whose identity churns every

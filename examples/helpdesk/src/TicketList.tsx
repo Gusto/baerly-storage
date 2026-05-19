@@ -1,17 +1,15 @@
 import { useState } from "react";
 import { useLiveQuery } from "baerly-storage/client/react";
-import { client } from "./client.ts";
 import { STATUSES, type Ticket } from "../types.ts";
 
 type Filter = "all" | Ticket["status"];
 
 export const TicketList = ({ onOpen }: { onOpen: (id: string) => void }): React.JSX.Element => {
   const [filter, setFilter] = useState<Filter>("all");
-  const result = useLiveQuery<Ticket>(
-    client,
-    "tickets",
-    filter === "all" ? {} : { status: filter },
-  );
+  const result = useLiveQuery<Ticket>({
+    table: "tickets",
+    where: filter === "all" ? {} : { status: filter },
+  });
 
   if (result.status === "error") {
     return <p style={{ color: "crimson" }}>Error: {result.error.message}</p>;

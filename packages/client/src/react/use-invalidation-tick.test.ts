@@ -1,10 +1,12 @@
 // @vitest-environment happy-dom
 
 import { renderHook, waitFor } from "@testing-library/react";
+import { createElement, type ReactNode } from "react";
 import { describe, expect, test } from "vitest";
 import { createBaerlyClient } from "../client.ts";
 import { MockFetch } from "../testing/index.ts";
-import { useInvalidationTick } from "./index.ts";
+import { BaerlyProvider, useInvalidationTick } from "./index.ts";
+import type { LogEntry } from "@baerly/protocol";
 
 const jsonResponse = (body: unknown, status = 200): Response =>
   new Response(JSON.stringify(body), {
@@ -12,7 +14,19 @@ const jsonResponse = (body: unknown, status = 200): Response =>
     headers: { "content-type": "application/json" },
   });
 
+const wrap = (client: ReturnType<typeof createBaerlyClient>) => {
+  // eslint-disable-next-line react/display-name -- inline test wrapper
+  return ({ children }: { children: ReactNode }) =>
+    createElement(BaerlyProvider, { client }, children);
+};
+
 describe("useInvalidationTick", () => {
+  test("throws when used outside <BaerlyProvider>", () => {
+    expect(() => renderHook(() => useInvalidationTick({ table: "tickets" }))).toThrow(
+      /BaerlyProvider/,
+    );
+  });
+
   test("advances when /v1/since returns a non-empty batch", async () => {
     const pendingRejects: Array<(e: unknown) => void> = [];
     let polls = 0;
@@ -46,7 +60,9 @@ describe("useInvalidationTick", () => {
       });
     });
     const client = createBaerlyClient({ baseUrl: "http://x", fetch: mock.fetch });
-    const { result, unmount } = renderHook(() => useInvalidationTick(client, "tickets"));
+    const { result, unmount } = renderHook(() => useInvalidationTick({ table: "tickets" }), {
+      wrapper: wrap(client),
+    });
     expect(result.current).toBe(0);
     await waitFor(() => expect(result.current).toBe(1));
     unmount();
@@ -63,8 +79,9 @@ describe("useInvalidationTick", () => {
       return jsonResponse({ events: [], next_cursor: "" });
     });
     const client = createBaerlyClient({ baseUrl: "http://x", fetch: mock.fetch });
-    const { result, unmount } = renderHook(() =>
-      useInvalidationTick(client, "tickets", { enabled: false }),
+    const { result, unmount } = renderHook(
+      () => useInvalidationTick({ table: "tickets", enabled: false }),
+      { wrapper: wrap(client) },
     );
     for (let i = 0; i < 5; i += 1) {
       await Promise.resolve();
@@ -110,7 +127,9 @@ describe("useInvalidationTick", () => {
       });
     });
     const client = createBaerlyClient({ baseUrl: "http://x", fetch: mock.fetch });
-    const { result, unmount } = renderHook(() => useInvalidationTick(client, "tickets"));
+    const { result, unmount } = renderHook(() => useInvalidationTick({ table: "tickets" }), {
+      wrapper: wrap(client),
+    });
     await waitFor(() => expect(result.current).toBe(1));
     await waitFor(() => expect(polls).toBeGreaterThanOrEqual(3));
     expect(result.current).toBe(1);
@@ -173,15 +192,14 @@ describe("useInvalidationTick", () => {
       });
     });
     const client = createBaerlyClient({ baseUrl: "http://x", fetch: mock.fetch });
-    const { result, unmount } = renderHook(() =>
-      useInvalidationTick(client, "tickets", {
-        matchEvent: (e) => e.doc_id === "target",
-      }),
+    const { result, unmount } = renderHook(
+      () =>
+        useInvalidationTick({
+          table: "tickets",
+          matchEvent: (e: LogEntry) => e.doc_id === "target",
+        }),
+      { wrapper: wrap(client) },
     );
-    // The "target" batch matches and bumps the tick to 1. The
-    // "other" batch (poll #1) did not advance the tick, but it
-    // DID advance the cursor — poll #2 carried cursor "a_b_01",
-    // proving the unmatched branch still updates internal state.
     await waitFor(() => expect(result.current).toBe(1));
     expect(cursorsRequested[0]).toBe("");
     expect(cursorsRequested[1]).toBe("a_b_01");
@@ -228,19 +246,13 @@ describe("useInvalidationTick", () => {
     });
     const client = createBaerlyClient({ baseUrl: "http://x", fetch: mock.fetch });
     const { rerender, result, unmount } = renderHook(
-      ({ enabled }: { enabled: boolean }) => useInvalidationTick(client, "tickets", { enabled }),
-      { initialProps: { enabled: true } },
+      ({ enabled }: { enabled: boolean }) => useInvalidationTick({ table: "tickets", enabled }),
+      { initialProps: { enabled: true }, wrapper: wrap(client) },
     );
-    // First poll advances the cursor to "a_b_01" and bumps the tick.
     await waitFor(() => expect(result.current).toBe(1));
     expect(cursorsRequested[0]).toBe("");
-    // Disable; the second poll (which was hung) aborts.
     rerender({ enabled: false });
-    // Re-enable; the loop restarts.
     rerender({ enabled: true });
-    // The next poll must use the preserved cursor, not the initial
-    // empty-string. With the pre-fix loop-local `currentCursor =
-    // since;` seed, this would have been "".
     await waitFor(() => expect(cursorsRequested.length).toBeGreaterThanOrEqual(3));
     expect(cursorsRequested[cursorsRequested.length - 1]).toBe("a_b_01");
     unmount();
@@ -270,7 +282,9 @@ describe("useInvalidationTick", () => {
         }),
     );
     const client = createBaerlyClient({ baseUrl: "http://x", fetch: mock.fetch });
-    const { unmount } = renderHook(() => useInvalidationTick(client, "tickets"));
+    const { unmount } = renderHook(() => useInvalidationTick({ table: "tickets" }), {
+      wrapper: wrap(client),
+    });
     await waitFor(() => expect(pendingReject).toBeDefined());
     unmount();
     await waitFor(() => expect(abortedOnce).toBe(true));

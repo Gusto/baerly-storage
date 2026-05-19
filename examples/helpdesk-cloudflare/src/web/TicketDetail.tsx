@@ -1,5 +1,4 @@
-import { useLiveDocument } from "baerly-storage/client/react";
-import { client } from "./client.ts";
+import { useDelete, useLiveDocument } from "baerly-storage/client/react";
 import type { Ticket } from "../../types.ts";
 
 interface Props {
@@ -9,7 +8,10 @@ interface Props {
 }
 
 export const TicketDetail = ({ id, onEdit, onBack }: Props): React.JSX.Element => {
-  const result = useLiveDocument<Ticket>(client, "tickets", id);
+  const result = useLiveDocument<Ticket>({ table: "tickets", id });
+  const { mutate: deleteTicket, isPending: isDeleting, error: deleteError } = useDelete({
+    table: "tickets",
+  });
 
   if (result.status === "error") {
     return <p style={{ color: "crimson" }}>Error: {result.error.message}</p>;
@@ -39,16 +41,20 @@ export const TicketDetail = ({ id, onEdit, onBack }: Props): React.JSX.Element =
       <button onClick={onEdit}>Edit</button>
       <button
         style={{ marginLeft: 8, color: "crimson" }}
+        disabled={isDeleting}
         onClick={async () => {
           if (!window.confirm("Delete this ticket?")) {
             return;
           }
-          await client.table("tickets").where({ _id: id }).delete();
+          await deleteTicket(id);
           onBack();
         }}
       >
-        Delete
+        {isDeleting ? "Deleting…" : "Delete"}
       </button>
+      {deleteError && (
+        <p style={{ color: "crimson", marginTop: 8 }}>Delete failed: {deleteError.message}</p>
+      )}
     </div>
   );
 };
