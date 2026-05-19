@@ -92,15 +92,15 @@ R2 + Assets bindings).
 
 ## helpdesk
 
-Fully-built ticket CRUD app — React + Vite over `LocalFsStorage`.
-Single Vite process: the Baerly HTTP listener is mounted as Vite
-middleware via `baerlyDev()` from `baerly-storage/dev/vite`, so the React
-app and `/v1/*` API share an origin (`:5173`) and a process. This is
-the canonical dev pattern for Node-side Baerly apps. Live multi-tab
+**Dev-only teaching fixture** — a complete UI tour of a ticket CRUD
+app over `LocalFsStorage`, not a deployable production template
+(hard-coded `sharedSecret`, single tenant). React + Vite. Single
+Vite process: the Baerly HTTP listener is mounted as Vite middleware
+via `baerlyDev()` from `baerly-storage/dev/vite`, so the React app
+and `/v1/*` API share an origin (`:5173`) and a process. This is the
+canonical dev pattern for Node-side Baerly apps. Live multi-tab
 updates via the `/v1/since` long-poll, surfaced through the
-`useLiveQuery` / `useLiveDocument` hooks. **Dev-only teaching
-fixture**, not a deployable production template: it pins a hard-coded
-`sharedSecret` and a single tenant.
+`useLiveQuery` / `useLiveDocument` hooks.
 
 **Audience:** anyone learning how to build something with baerly
 — what an app looks like end-to-end, what the client API feels
