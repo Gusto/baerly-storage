@@ -50,8 +50,10 @@ follow them literally.
     await tx.where({ _id }).update({ column: newColumn, updated_at: Date.now() });
   })`
 - Long-poll re-render (so the OTHER window sees the move):
-  `useLiveQuery(client, "cards")` from `@baerly/client/react` (or
-  `useInvalidationTick` if you want to invalidate a custom store)
+  `useLiveQuery({ table: "cards" })` from `baerly-storage/client/react`
+  (or `useInvalidationTick({ table: "cards" })` if you want to
+  invalidate a custom store). Wrap your app once in
+  `<BaerlyProvider client={client}>` near the root.
 - The move handler catches `BaerlyError` with `code === "Conflict"`
   and surfaces it to the client.
 

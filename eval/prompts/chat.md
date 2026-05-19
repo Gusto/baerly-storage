@@ -38,9 +38,10 @@ follow them literally.
 - Initial backlog (last 50, oldest first):
   `db.table<Message>("messages").order({ sent_at: "asc" }).limit(50).all()`
 - Long-poll for new messages (React hook):
-  `useLiveQuery(client, "messages", ...)` from `@baerly/client/react`
-  (which wraps the long-poll for you), or direct:
-  `client.since({ table: "messages", cursor })`
+  `useLiveQuery({ table: "messages", where: ... })` from
+  `baerly-storage/client/react` (which wraps the long-poll for you;
+  wrap your app once in `<BaerlyProvider client={client}>`), or
+  direct: `client.since({ table: "messages", cursor })`
 - Insert (server-side; sender_sub comes from the verifier, NOT
   the request body):
   `db.table<Message>("messages").insert({ body, sent_at: Date.now(), sender_sub: sub })`
@@ -53,8 +54,9 @@ not modify the checker script.** Each is binary pass/fail.
 - [ ] `pnpm verify` exits 0.
 - [ ] `pnpm test` exits 0.
 - [ ] A real verifier is wired (cloudflareAccess or bearerJwt).
-- [ ] Long-poll is wired via `useLiveQuery(client, "messages", ...)`,
-      `useInvalidationTick`, or `client.since(...)` — NOT a
+- [ ] Long-poll is wired via `useLiveQuery({ table: "messages", ... })`,
+      `useInvalidationTick({ table: "messages" })`, or
+      `client.since(...)` — NOT a
       `setInterval(... client.table().all())` busy poll.
 - [ ] The sender's identifier on each message comes from the
       verifier (server-side), not from a client-controlled field.
