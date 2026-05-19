@@ -22,7 +22,6 @@
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^5.0.0",
-    "create-baerly": "workspace:*",
     "typescript": "^5.8.0",
     "vite": "^6.0.0",
     "wrangler": "^4.92.0"

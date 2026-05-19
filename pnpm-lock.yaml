@@ -176,9 +176,6 @@ importers:
       '@vitejs/plugin-react':
         specifier: ^5.0.0
         version: 5.2.0(vite@6.4.2(@types/node@25.6.2)(lightningcss@1.32.0))
-      create-baerly:
-        specifier: workspace:*
-        version: link:../../packages/create-baerly
       typescript:
         specifier: ^5.8.0
         version: 5.9.3
@@ -201,9 +198,6 @@ importers:
       '@cloudflare/workers-types':
         specifier: ^4
         version: 4.20260511.1
-      create-baerly:
-        specifier: workspace:*
-        version: link:../../packages/create-baerly
       typescript:
         specifier: ^5.8.0
         version: 5.9.3
@@ -229,9 +223,6 @@ importers:
       '@types/node':
         specifier: ^25.0.0
         version: 25.6.2
-      create-baerly:
-        specifier: workspace:*
-        version: link:../../packages/create-baerly
       typescript:
         specifier: ^5.8.0
         version: 5.9.3
