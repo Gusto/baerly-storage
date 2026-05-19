@@ -115,6 +115,12 @@ const BUDGETS: readonly Budget[] = [
   // Just the five auth verifier factories. Adding a sixth grows
   // this budget, not the kernel's.
   { entry: "auth.js", raw: 34 * 1024, gz: 12 * 1024 },
+  // `BaerlyAppConfig` types + the identity `defineConfig` helper.
+  // No runtime closure — the types erase entirely and the function
+  // is `<C>(c: C) => c`. Measured: 162 raw / 141 gz. Budget is a
+  // sensible floor (1 KiB raw / 512 B gz) since the actual bytes
+  // are dominated by the source-map preamble and `export` keyword.
+  { entry: "app-config.js", raw: 1024, gz: 512 },
   // hono/tiny-backed HTTP router + long-poll/since helpers +
   // observability middleware. Observability is load-bearing at
   // every request boundary (canonical-line emission,
