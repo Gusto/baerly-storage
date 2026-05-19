@@ -248,6 +248,15 @@ export default defineConfig({
         },
       },
     ],
+    // Claude Code sets `CLAUDECODE=1` in child processes. When detected,
+    // use vitest's `minimal` reporter so agent context isn't polluted by
+    // per-test progress noise. Failures still print in full. Override with
+    // `--reporter=dot` for long suites (`test:randomize`, `test:fuzz-phase5`)
+    // when progress signal matters more than compactness.
+    //
+    // `reporters` is a top-level option in vitest 4's config — `ProjectConfig`
+    // doesn't accept it, so the setting applies across both projects from here.
+    reporters: process.env["CLAUDECODE"] ? ["minimal"] : undefined,
     coverage: {
       provider: "v8",
       include: ["src/**", "packages/*/src/**"],
