@@ -9,7 +9,7 @@ export default defineConfig({
     maintenance: "packages/server/src/maintenance.ts",
     observability: "packages/server/src/observability/index.ts",
   },
-  external: ["vitest", "@fast-check/vitest", "@vitest/expect"],
+  external: [/^node:/, "vitest", "@fast-check/vitest", "@vitest/expect"],
   output: {
     dir: "dist",
     format: "esm",

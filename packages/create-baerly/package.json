@@ -1,7 +1,6 @@
 {
   "name": "create-baerly",
   "version": "0.1.0",
-  "private": true,
   "description": "Scaffold a new baerly app. Run via `npm create baerly@latest -- my-app --target=cloudflare` (post-publish; today, stage via `pnpm pack` — see ticket 04).",
   "license": "MIT",
   "bin": {

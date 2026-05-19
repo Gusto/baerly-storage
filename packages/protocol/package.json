@@ -1,7 +1,6 @@
 {
   "name": "@baerly/protocol",
   "version": "0.1.0",
-  "private": true,
   "description": "Internal protocol kernel — implementation detail of @baerly/server. Not a public API: import from @baerly/server instead.",
   "license": "MIT",
   "type": "module",

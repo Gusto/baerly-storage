@@ -1,7 +1,6 @@
 {
   "name": "@baerly/client",
   "version": "0.1.0",
-  "private": true,
   "description": "Baerly typed HTTP client — fetchers + `useLiveQuery` / `useLiveDocument` live-read hooks.",
   "license": "MIT",
   "type": "module",

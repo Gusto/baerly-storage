@@ -1,7 +1,6 @@
 {
   "name": "@baerly/adapter-cloudflare",
   "version": "0.1.0",
-  "private": true,
   "description": "Cloudflare Workers adapter — R2 binding fast-path Storage + s3HttpStorage re-export + fetch(req, env, ctx) mount.",
   "license": "MIT",
   "type": "module",
