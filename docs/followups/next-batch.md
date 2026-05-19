@@ -28,6 +28,11 @@ this folder; invalid / stale items are removed entirely.
 - `client-abort-signal-threading.md` — was E5
 - `use-changes-naming-and-contract.md` — was E6
 - `client-delete-404-code-mismatch.md` — was E18
+- `client-table-vs-protocol-table.md` — was E4
+- `client-hook-state-bugs.md` — was E7 + E10 + E11 + E12
+- `client-hooks-api-shape.md` — was E8 + E9
+- `client-signal-handling-bugs.md` — was E16 + E17
+- `client-small-polish.md` — was E14 + E15 + E19
 
 ### Dropped
 
@@ -46,6 +51,12 @@ this folder; invalid / stale items are removed entirely.
   `manual-e2e/README.md` cover related but distinct flows
   (day-one SLO gate vs hand-rolled deploy harness). Analyst
   overstated as "duplicate"; merge would lose information.
+- **E13** — `@baerly/client/testing` `MockFetch` subpath is a
+  sensible pre-publish library pattern. Zero external users today
+  is expected (nothing's published yet). Keep the export.
+- **E20** — chainable-builder closure-allocation perf claim has
+  no benchmark and the analyst notes "not launch-blocking." Don't
+  pre-optimize pre-launch without numbers.
 
 ---
 
@@ -624,140 +635,6 @@ by `@baerly/cli` doctor/banner.
 **Fix:** Move to `@baerly/cli`. Keep
 `STORAGE_OPS_PER_LOGICAL_WRITE = 3` in protocol (real cost-
 model invariant).
-
-### E. Client (browser + React hooks)
-
-#### E4. `ClientTable` re-declares the protocol's `Table<T>` shape verbatim — **MEDIUM**
-
-`client.ts:60-74,85-102` clones `Table<T>` / `Query<T>` method-
-by-method with identical JSDoc. A `_ShapeParityProbe` in
-`client.test.ts:193` compile-checks they agree — proving the
-duplication is load-bearing dead weight.
-
-**Fix:** Reuse `Table<T>` / `Query<T>` from `@baerly/protocol`
-directly. Drop `ClientTable` / `ClientQuery` exports.
-
-#### E7. `useLiveDocument`'s "not yet read" vs "confirmed missing" is implicit — **MEDIUM**
-
-After the first read returns `[]`, `row = undefined` and
-`loading = false`. The combined state means "missing"; the
-"loading first time" state has the same `row` value. Agents
-will write `if (!row) return <NotFound />` and silently miss
-the loading state.
-
-**Fix:** Promote the discriminator: `{ status:
-"loading"|"ok"|"missing"|"error", row?, error? }`. Or add a
-`notFound: boolean` field.
-
-#### E8. Hook signatures: `(client, table, predicate, opts)` positional — **MEDIUM**
-
-Four positional params, third optional. TanStack/SWR settled on
-one options-bag arg long ago.
-
-**Fix:** Migrate to `useLiveQuery({ client, table, where?,
-enabled? })`. Even better — put `client` on a context
-(`<BaerlyProvider client={...}>`) so the hook is
-`useLiveQuery({ table, where? })`. Every example currently
-imports `client` from a module-scoped file.
-
-#### E9. No `useInsert` / `useUpdate` / `useDelete` — examples use the wrong pattern — **MEDIUM**
-
-Examples write `onClick={async () => { await client.table(...).delete(); ... }}` — no
-in-flight state, no optimistic update, no error toast. The
-library implies hooks should handle this but provides none.
-
-**Fix:** Ship a thin TanStack-style `useMutation` (`{ mutate,
-isPending, error }`), or commit to the imperative pattern and
-make examples reflect that choice.
-
-#### E10. Boolean-state naming inconsistency: `loading` vs `polling` vs (no) `isPending` — **LOW**
-
-Three hooks ship three different "in-flight" field names.
-React 19 + TanStack settled on `isPending`.
-
-**Fix:** Standardise on `isLoading` or `isPending`. Drop
-`polling` (see E11).
-
-#### E11. `polling` and `error` from `useChanges` — `polling` unread, misleading — **LOW**
-
-Neither downstream hook reads `polling`. It's `true` for ~24 of
-every 25 seconds (long-poll wall-clock), so useless for a UI
-spinner.
-
-**Fix:** Drop `polling` from `UseChangesResult`.
-
-#### E12. `useLiveQuery` resets cursor on `enabled` flip — **MEDIUM**
-
-Deps `[client, table, enabled, since]`. Toggling enabled
-`false → true` reassigns `currentCursor = since` (initial)
-inside the effect, replaying history.
-
-**Fix:** Persist cursor across `enabled` flips via a ref, or
-document that re-enabling restarts.
-
-#### E13. `MockFetch` (`@baerly/client/testing`) ships to consumers with zero external users — **MEDIUM**
-
-82-line class. `grep MockFetch outside packages/client/` → 0
-hits. `sideEffects: false` lets tree-shaking handle it, but
-the subpath is on the published `exports` surface.
-
-**Fix:** Drop the `./testing` subpath until a user asks. Or
-replace `MockFetch` with a one-paragraph docs snippet showing
-`vi.fn()` patterns idiomatically.
-
-#### E14. `stableKey` is hand-rolled stable-stringify with predicate-shape blind spots — **LOW**
-
-Comment claims predicates carry `JSONArraylessObject` — but
-predicates include `PredicateOp` (`{ $in: [...] }`). No test
-covers operator-shape predicates.
-
-**Fix:** `JSON.stringify` with a sorted-keys replacer (10
-lines, idiomatic) or `json-stable-stringify`. Add a test for
-`{ priority: { $in: ["p1"] } }`.
-
-#### E15. `findLastMatch` polyfill is dead weight — **LOW**
-
-`Array.prototype.findLast` is baseline since July 2022; Node
-24+, Workerd, all modern browsers ship it.
-
-**Fix:** Drop the polyfill in `use-live-document.ts:102-113`.
-
-#### E16. `healthz()` swallows `AbortError` as `false` — **MEDIUM**
-
-`try { ...request... } catch { return false; }` — bare catch.
-`AbortError` from caller-supplied signal returns `false`,
-indistinguishable from "server is down."
-
-**Fix:** Re-throw `AbortError`; only return `false` for
-network/HTTP errors.
-
-#### E17. `signal` on `BaerlyClientOptions` is constructor-scoped but named like per-request — **LOW**
-
-A `signal` field on the constructor suggests "cancel client
-construction" — actually "merged into every request the
-client ever makes."
-
-**Fix:** Rename `globalSignal` or `lifecycleSignal`. Document
-on the field itself.
-
-#### E19. `index.ts` doesn't re-export protocol types — **LOW**
-
-`Predicate`, `OrderSpec`, `ConsistencyLevel`, `JSONArraylessObject`,
-`LogEntry`, `BaerlyErrorCode` aren't re-exported from
-`@baerly/client`. Users must dual-import.
-
-**Fix:** Re-export the six types that appear on the public
-client surface. Single-import DX for the common case.
-
-#### E20. Chainable builder allocates ~8 closures per modifier — **LOW**
-
-`.where(...).where(...).consistency(...).all()` allocates 32+
-closures (each `makeClientQuery` returns an object literal of
-methods). Hot path on a refetching hook.
-
-**Fix:** Either hoist methods onto a class/prototype, or
-benchmark and accept. Flag for the bundle-size budget; not
-launch-blocking.
 
 ### F. Adapters + dev + export
 
