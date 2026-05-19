@@ -252,9 +252,6 @@ const reconstructErrorFromEnvelope = async (response: Response): Promise<unknown
   }
 };
 
-/** Convenience getter — returns the context if `runWithContext` is active, else `undefined`. */
-export const peekContext = (): ObservabilityContext | undefined => getCurrentContext();
-
 /**
  * Verifier rejected the request — log the warn, flush the canonical
  * line, and return the 401 envelope Response. Adapters call this

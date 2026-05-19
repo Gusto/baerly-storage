@@ -52,7 +52,6 @@ export {
   type Unit,
   flushCanonicalLine,
   flushUnauthorizedAndRespond,
-  peekContext,
   withHttpObservability,
   withObservability,
 } from "./canonical.ts";
