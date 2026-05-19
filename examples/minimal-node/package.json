@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "baerly dev",
+    "dev:web": "vite",
     "build": "tsc -b && vite build",
     "start": "node --experimental-strip-types src/server/index.ts",
     "typecheck": "tsc -b --noEmit",

@@ -18,7 +18,6 @@ this folder; invalid / stale items are removed entirely.
 - `examples-tsconfig-strictness.md` — was #6 + #7
 - `helpdesk-fixture-hygiene.md` — was H5 + H6 + H8
 - `cf-templates-cleanup.md` — was H10 + H11 + H12
-- `node-template-web-half-shipped.md` — was H13 + H20 + H26
 - `gitignore-drift-across-templates.md` — was H19
 - `uint8array-base64-shim-parity.md` — was H14
 - `schema-lock-json-purpose.md` — was H16
