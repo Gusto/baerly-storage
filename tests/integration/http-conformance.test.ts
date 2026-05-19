@@ -41,7 +41,7 @@ import {
 } from "@baerly/protocol";
 import { LocalFsStorage } from "@baerly/dev";
 import { createListener } from "@baerly/adapter-node";
-import { Db, createRouter, type SchemaValidator } from "@baerly/server";
+import { Db, createRouter, withHttpObservability, type SchemaValidator } from "@baerly/server";
 import { createBucket } from "../fixtures/s3-fixtures.ts";
 import { runHttpConformanceCascade, type HttpFetch } from "../fixtures/http-conformance-cascade.ts";
 import { CONFORMANCE_TENANT, testVerifier } from "../fixtures/test-verifier.ts";
@@ -333,13 +333,12 @@ describe("HTTP boundary — schema validation (ticket 70)", () => {
     const app = createRouter({ db });
 
     // Invalid doc: `status` violates the schema.
-    const badRes = await app.fetch(
-      new Request(`http://test.local/v1/t/${TABLE}`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ doc: { status: "bogus" } }),
-      }),
-    );
+    const badReq = new Request(`http://test.local/v1/t/${TABLE}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ doc: { status: "bogus" } }),
+    });
+    const badRes = await withHttpObservability(badReq, (r) => app.fetch(r));
     expect(badRes.status).toBe(400);
     const badBody = (await badRes.json()) as {
       readonly error: {
@@ -354,13 +353,12 @@ describe("HTTP boundary — schema validation (ticket 70)", () => {
     expect(badBody.error.issues?.[0]?.message).toContain("open");
 
     // Valid doc: the same route accepts a schema-compliant body.
-    const okRes = await app.fetch(
-      new Request(`http://test.local/v1/t/${TABLE}`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ doc: { status: "open" } }),
-      }),
-    );
+    const okReq = new Request(`http://test.local/v1/t/${TABLE}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ doc: { status: "open" } }),
+    });
+    const okRes = await withHttpObservability(okReq, (r) => app.fetch(r));
     expect(okRes.status).toBe(201);
   });
 });

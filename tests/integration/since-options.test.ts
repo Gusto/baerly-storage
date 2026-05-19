@@ -1,6 +1,6 @@
 import { describe, test, expect } from "vitest";
 import { MemoryStorage } from "@baerly/protocol";
-import { Db, createRouter } from "@baerly/server";
+import { Db, createRouter, withHttpObservability } from "@baerly/server";
 
 describe("createRouter sinceTimeoutMs override", () => {
   test("idle long-poll returns within the configured budget", async () => {
@@ -9,7 +9,8 @@ describe("createRouter sinceTimeoutMs override", () => {
     const app = createRouter({ db, sinceTimeoutMs: 100, sincePollIntervalMs: 25 });
 
     const t0 = performance.now();
-    const res = await app.fetch(new Request("http://x/v1/since?table=t&cursor="));
+    const req = new Request("http://x/v1/since?table=t&cursor=");
+    const res = await withHttpObservability(req, (r) => app.fetch(r));
     const elapsedMs = performance.now() - t0;
 
     expect(res.status).toBe(200);

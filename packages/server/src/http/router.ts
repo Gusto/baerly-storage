@@ -38,18 +38,7 @@ import {
   type HttpStatus,
   type SinceResponse,
 } from "../contract.ts";
-import {
-  CATEGORY,
-  createObservabilityContext,
-  decideSample,
-  deriveOutcome,
-  flushCanonicalLine,
-  getCurrentContext,
-  getEffectiveSampleRate,
-  getLogger,
-  runWithContext,
-  serializeError,
-} from "../observability/index.ts";
+import { CATEGORY, getLogger, serializeError } from "../observability/index.ts";
 import { runAllWithMeta, runFirstWithMeta } from "../query.ts";
 import { longPollSince } from "./since.ts";
 
@@ -97,81 +86,15 @@ export function createRouter(options: CreateRouterOptions): Hono {
   const { db, sinceTimeoutMs, sincePollIntervalMs } = options;
   const app = new Hono();
 
-  // Per-request ObservabilityContext + canonical-line emission.
-  // Mounted BEFORE everything else so every dispatched handler runs
-  // under `runWithContext`. The middleware itself operates in two modes:
-  //
-  // Mode A (ambient context present): an outer scope (the CF or Node
-  // adapter) has already called `createObservabilityContext` +
-  // `runWithContext`, e.g. so it can stamp a `cache_status` field
-  // before the cache wrapper short-circuits. The router passes
-  // through verbatim — the adapter owns the context lifecycle and
-  // the flush. A second flush here would double-emit the canonical
-  // line.
-  //
-  // Mode B (no ambient context): standalone use — `createRouter`
-  // mounted directly without an enclosing adapter scope (e.g. a test
-  // harness or a future host that doesn't ship its own context
-  // creation). The router creates the context, runs `next()` under
-  // `runWithContext`, and flushes the canonical line in the `finally`
-  // arm exactly as before.
-  app.use("*", async (c, next) => {
-    // Mode A: adapter-owned context. Pass through — the adapter owns
-    // the flush. Every CRUD handler downstream still runs inside the
-    // existing `runWithContext` scope provided by the adapter.
-    if (getCurrentContext() !== undefined) {
-      return next();
-    }
-
-    // Mode B: standalone use. Keep the create-and-flush flow exactly
-    // as before.
-    const requestId = c.req.header("x-request-id") ?? crypto.randomUUID();
-    const sampleRate = getEffectiveSampleRate();
-    const ctx = createObservabilityContext({
-      request_id: requestId,
-      sampled_by_head: decideSample(requestId, sampleRate),
-    });
-
-    let caughtError: unknown;
-    await runWithContext(ctx, async () => {
-      try {
-        await next();
-      } catch (err) {
-        // Hono's `compose` ordinarily catches handler throws and
-        // routes them through `app.onError`, so a synchronous
-        // route-handler throw doesn't reach this catch — `c.error`
-        // carries it instead. This branch covers the rare case
-        // where the throw escapes both `compose` and `onError`
-        // (e.g. a non-`Error` rejection that compose rethrows).
-        caughtError = err;
-        throw err;
-      } finally {
-        // Compose-caught throws surface here via `c.error`. The
-        // local catch wins if both are set (it ran later).
-        const errFromCtx: unknown = c.error;
-        const effectiveError = caughtError ?? errFromCtx;
-
-        // When the body threw, the route handler never set a
-        // response, so `c.res` falls back to a default 200. Derive
-        // the wire status from `mapError` to keep the canonical line
-        // honest about what the client actually sees.
-        const status = caughtError !== undefined ? mapError(caughtError).status : c.res.status;
-
-        // outcome derivation is in `deriveOutcome` (shared with both adapters).
-        const outcome = deriveOutcome(c.req.method, status, effectiveError);
-        flushCanonicalLine(ctx, ctx.recorder, {
-          unit: "http",
-          status,
-          outcome,
-          ...(effectiveError !== undefined && { error: effectiveError }),
-          extra: {
-            method: c.req.method,
-            path: c.req.path,
-          },
-        });
-      }
-    });
-  });
+  // The router intentionally does NOT mount an observability
+  // middleware. Production adapters (`@baerly/adapter-cloudflare`,
+  // `@baerly/adapter-node`) open their own `ObservabilityContext`
+  // BEFORE calling `createRouter().fetch` so they can stamp adapter-
+  // owned fields (e.g. `cache_status`) before the cache wrapper
+  // short-circuits. Standalone callers (tests, one-off harnesses) wrap
+  // their request via `withHttpObservability` from
+  // `@baerly/server`. Either way, one unit-of-work → exactly one
+  // canonical line.
 
   // Read one — GET /v1/t/:table/:id
   app.get("/v1/t/:table/:id", async (c) => {

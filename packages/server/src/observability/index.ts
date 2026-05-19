@@ -9,11 +9,13 @@
  *
  * 1. The adapter calls {@link configureObservability} once at boot.
  * 2. Each unit-of-work creates an {@link ObservabilityContext} (via
- *    {@link createObservabilityContext} or `withObservability` for
- *    non-HTTP units) and runs the work under {@link runWithContext}.
- *    `withObservability` is nesting-aware: nested calls inherit the
- *    outer context+recorder and emit no separate canonical line, so
- *    one unit-of-work → exactly one line.
+ *    {@link createObservabilityContext}, `withObservability` for
+ *    non-HTTP units, or `withHttpObservability` for standalone HTTP
+ *    callers that don't have an adapter-managed scope) and runs the
+ *    work under {@link runWithContext}. `withObservability` is
+ *    nesting-aware: nested calls inherit the outer context+recorder
+ *    and emit no separate canonical line, so one unit-of-work →
+ *    exactly one line.
  * 3. The unit-of-work calls {@link flushCanonicalLine} (or
  *    `withObservability`'s own flush) at the end; verifier-rejected
  *    requests call {@link flushUnauthorizedAndRespond} instead.
@@ -51,6 +53,7 @@ export {
   flushCanonicalLine,
   flushUnauthorizedAndRespond,
   peekContext,
+  withHttpObservability,
   withObservability,
 } from "./canonical.ts";
 export { observableStorage } from "./storage.ts";

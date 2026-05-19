@@ -6,6 +6,7 @@ import {
   configureObservability,
   createObservabilityContext,
   runWithContext,
+  withHttpObservability,
 } from "../observability/index.ts";
 import { createRouter, mapError } from "./router.ts";
 
@@ -98,7 +99,8 @@ describe("observability middleware", () => {
 
   test("successful request emits one canonical INFO line", async () => {
     const app = buildApp();
-    const res = await app.request("http://localhost/v1/t/things?where=%7B%7D");
+    const req = new Request("http://localhost/v1/t/things?where=%7B%7D");
+    const res = await withHttpObservability(req, (r) => app.fetch(r));
     expect(res.status).toBe(200);
     const lines = canonical();
     expect(lines).toHaveLength(1);
@@ -118,9 +120,9 @@ describe("observability middleware", () => {
   test("failed request emits one canonical ERROR line (Conflict → 409)", async () => {
     // Register a route AFTER `createRouter` that throws Conflict
     // synthetically. Hono's compose catches the throw and routes it
-    // through `onError`; the middleware sees the error via `c.error`
-    // and emits a canonical line whose `error` property forces level
-    // = "error" via the canonical-line level picker.
+    // through `onError`; the helper reconstructs the BaerlyError from
+    // the wire envelope so the canonical line's `error` property
+    // forces level = "error" via the canonical-line level picker.
     const db = Db.create({
       storage: new MemoryStorage(),
       app: "router-test",
@@ -135,7 +137,8 @@ describe("observability middleware", () => {
       return Response.json(envelope, { status });
     });
 
-    const res = await conflictApp.request("http://localhost/v1/throw-conflict");
+    const req = new Request("http://localhost/v1/throw-conflict");
+    const res = await withHttpObservability(req, (r) => conflictApp.fetch(r));
     expect(res.status).toBe(409);
     const lines = canonical();
     expect(lines).toHaveLength(1);
@@ -151,9 +154,10 @@ describe("observability middleware", () => {
 
   test("x-request-id header is honoured", async () => {
     const app = buildApp();
-    await app.request("http://localhost/v1/t/things?where=%7B%7D", {
+    const req = new Request("http://localhost/v1/t/things?where=%7B%7D", {
       headers: { "x-request-id": "known-id" },
     });
+    await withHttpObservability(req, (r) => app.fetch(r));
     const lines = canonical();
     expect(lines).toHaveLength(1);
     expect(lines[0]!.properties["request_id"]).toBe("known-id");
@@ -163,7 +167,8 @@ describe("observability middleware", () => {
     await reset();
     await configureObservability({ level: "debug", sink, sampleRate: 0 });
     const app = buildApp();
-    const res = await app.request("http://localhost/v1/t/things?where=%7B%7D");
+    const req = new Request("http://localhost/v1/t/things?where=%7B%7D");
+    const res = await withHttpObservability(req, (r) => app.fetch(r));
     expect(res.status).toBe(200);
     expect(canonical()).toHaveLength(0);
   });
@@ -184,7 +189,8 @@ describe("observability middleware", () => {
       const { status, envelope } = mapError(err);
       return Response.json(envelope, { status });
     });
-    const res = await app.request("http://localhost/v1/throw-internal");
+    const req = new Request("http://localhost/v1/throw-internal");
+    const res = await withHttpObservability(req, (r) => app.fetch(r));
     expect(res.status).toBe(500);
     const lines = canonical();
     expect(lines).toHaveLength(1);
@@ -192,7 +198,15 @@ describe("observability middleware", () => {
   });
 });
 
-describe("ambient-context pass-through", () => {
+describe("router is silent without a wrapping observability scope", () => {
+  // The router no longer mounts its own observability middleware
+  // (Mode A/B logic was extracted into `withHttpObservability`).
+  // Production adapters open their own scope BEFORE calling
+  // `app.fetch`; standalone callers use the helper. A bare
+  // `app.fetch(req)` call must NOT emit a canonical line by itself —
+  // otherwise adapters that already manage their scope would
+  // double-emit.
+
   let records: LogRecord[];
   let sink: Sink;
 
@@ -216,11 +230,7 @@ describe("ambient-context pass-through", () => {
     return createRouter({ db });
   };
 
-  // Case A: an outer scope (simulating an adapter) has already called
-  // createObservabilityContext + runWithContext before the router sees
-  // the request. The router must NOT emit a second canonical line —
-  // the adapter owns the flush.
-  test("Case A: router emits NO canonical line when an ambient context is present", async () => {
+  test("bare app.fetch under an outer scope emits no router-owned canonical line", async () => {
     const app = makeApp();
     const outerCtx = createObservabilityContext({
       request_id: "outer-id",
@@ -234,21 +244,13 @@ describe("ambient-context pass-through", () => {
     });
 
     expect(resStatus).toBe(200);
-    // The router must not have flushed a canonical line — the adapter owns it.
     expect(canonical()).toHaveLength(0);
   });
 
-  // Case B: no ambient context (standalone use — createRouter mounted
-  // directly). The existing create-and-flush flow runs unmodified.
-  test("Case B: router emits exactly one canonical line when there is no ambient context", async () => {
+  test("bare app.fetch with no outer scope still emits no router-owned canonical line", async () => {
     const app = makeApp();
-    const res = await app.request("http://localhost/v1/t/things?where=%7B%7D", {
-      headers: { "x-request-id": "standalone-id" },
-    });
+    const res = await app.request("http://localhost/v1/t/things?where=%7B%7D");
     expect(res.status).toBe(200);
-    const lines = canonical();
-    expect(lines).toHaveLength(1);
-    expect(lines[0]!.properties["request_id"]).toBe("standalone-id");
-    expect(lines[0]!.properties["outcome"]).toBe("read");
+    expect(canonical()).toHaveLength(0);
   });
 });
