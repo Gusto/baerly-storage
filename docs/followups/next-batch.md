@@ -1,3 +1,50 @@
+# Next-batch followups (triage in progress)
+
+This file holds analyst-surfaced findings still pending triage.
+Validated findings are extracted to their own per-topic docs in
+this folder; invalid / stale items are removed entirely.
+
+## Already triaged (2026-05-19)
+
+### Extracted to per-topic docs
+
+- `prelaunch-package-json-polish.md` — was #5
+- `docker-template-cleanups.md` — was #9 + H22
+- `template-tooling-drift.md` — was #10 + H9
+- `scaffolded-user-pnpm-test-fails.md` — was #12 + H3
+- `lefthook-and-oxfmt-tuning.md` — was #13 + #14 + I13
+- `helpdesk-cloudflare-first-touch-bugs.md` — was H1 + H2
+- `examples-readme-helpdesk-positioning.md` — was H25
+- `examples-tsconfig-strictness.md` — was #6 + #7
+- `helpdesk-fixture-hygiene.md` — was H5 + H6 + H8
+- `cf-templates-cleanup.md` — was H10 + H11 + H12
+- `node-template-web-half-shipped.md` — was H13 + H20 + H26
+- `gitignore-drift-across-templates.md` — was H19
+- `uint8array-base64-shim-parity.md` — was H14
+- `schema-lock-json-purpose.md` — was H16
+- `env-example-cf-vs-node-asymmetry.md` — was H27
+- `orphan-fixtures-and-verify-script.md` — was I15 + I19
+
+### Dropped
+
+- **#11** — stale; scaffold manifests already correct
+  (`test(create-baerly): assert create-baerly is absent from
+  scaffolded devDeps` enforces it).
+- **H15** — same false premise as #11 (analyst's
+  `dropDevDeps: ["create-baerly"]` is unnecessary because
+  examples don't carry the dep).
+- **H17** — `cloudflareAccess` is **not** dead — wired and
+  active in `helpdesk-cloudflare/src/server/index.ts:31-34`
+  (analyst misread).
+- **H21** — phantom `@baerly/protocol` import does not exist
+  in `helpdesk-cloudflare/types.ts` (analyst hallucinated).
+- **I18** — `docs/contributing/day-one-gate.md` and
+  `manual-e2e/README.md` cover related but distinct flows
+  (day-one SLO gate vs hand-rolled deploy harness). Analyst
+  overstated as "duplicate"; merge would lose information.
+
+---
+
 ### 1. Node `baerly dev` boots the API but not the SPA in dev
 
 **STATUS: deferred — design question, narrower scope after flatten.**
@@ -27,165 +74,6 @@ Options:
 `http.Server`. `printDevBanner` (or a thin wrapper that takes the
 wrangler URL plus the vite URL) would improve first-touch UX.
 Related to item 10 — same workspace, related fix.
-
-### 5. Root `package.json` is missing npm-registry publication fields
-
-**STATUS: deferred; required before `npm publish`.**
-**Effort:** S (~30 min, mostly deciding the canonical URLs).
-
-Has: `name`, `version`, `description`, `keywords`, `license`,
-`files`, `type`, `sideEffects`, `exports`, `publishConfig`,
-`engines`, `packageManager`. Missing for a polished registry
-listing: `repository`, `bugs`, `homepage`, `author`. Add before
-publishing 1.0 — the npm UI surfaces all four. Also consider
-`engines.pnpm` for symmetry with `engines.node`, and a top-level
-`.npmrc` with `engine-strict=true` so contributors can't silently
-install on Node 22.
-
-### 6. Example tsconfigs silently bypass root strictness
-
-**STATUS: deferred; pre-1.0 hardening.**
-**Effort:** M (likely surfaces real type holes in the example
-source).
-
-All per-target tsconfigs under
-`examples/{minimal-cloudflare,minimal-node,helpdesk-cloudflare}/tsconfig.{app,worker,server}.json`
-declare `target`, `lib`, `module`, `moduleResolution`,
-`allowImportingTsExtensions`, `strict`, `esModuleInterop`,
-`skipLibCheck`, but they do **not** `extends:
-"../../tsconfig.json"`. As a result they drop
-`noUncheckedIndexedAccess`, `noUnusedLocals`,
-`noUnusedParameters`, `noImplicitOverride`,
-`noFallthroughCasesInSwitch`, `verbatimModuleSyntax`,
-`isolatedModules`, `erasableSyntaxOnly`. Scaffolded users inherit
-the weakened config.
-
-Two paths:
-
-- Add `"extends": "../../tsconfig.json"` to each example
-  tsconfig — works in-monorepo, but the scaffolder copies these
-  files into a flat output tree where `../../tsconfig.json` won't
-  exist. Either the scaffolder rewrites `extends` at scaffold
-  time, or
-- Inline the same strict flags in each example tsconfig (heavier
-  but self-contained). This is what scaffolded users actually see,
-  so it's probably the right answer.
-
-### 7. Example tsconfigs target `ES2023`; root targets `ES2025`
-
-**STATUS: deferred; pre-1.0 hardening.**
-**Effort:** S (bump + verify each example still typechecks).
-
-Examples target `ES2023` with `lib: ["ES2023", "DOM", "DOM.Iterable"]`.
-Root targets `ES2025` + `ESNext.TypedArrays`. Node 24 and current
-`workerd` both support `Array.prototype.toSorted`,
-`Promise.withResolvers`, `Object.groupBy`, base-64 typed arrays.
-Bump examples to match the root, including the `ESNext.TypedArrays`
-lib (memory item: that shim is load-bearing — coordinate the bump
-with deleting the per-example `uint8array-base64.d.ts` shim once
-the lib lists it natively).
-
-### 9. `packages/create-baerly/templates/addons/docker/Dockerfile` has avoidable rough edges
-
-**STATUS: deferred; pre-1.0 polish.**
-**Effort:** S (~1h).
-
-Three concrete issues:
-
-- **pnpm version drift.** Line 14 hard-codes
-  `corepack prepare pnpm@10.31.0 --activate`, but every template
-  declares `"packageManager": "pnpm@11.1.2"`. The two will diverge
-  again. Replace with `corepack enable && corepack install` and
-  let `packageManager` drive — or read the literal out of
-  `package.json`. (Memory item: pnpm 11 fixed the `allowBuilds`
-  rename, so 11.1.2 is intentional, not accidental.)
-- **No digest pinning.** `node:24-bookworm-slim` and
-  `gcr.io/distroless/nodejs24-debian12` should pin
-  `@sha256:...` for reproducibility of scaffolded user builds. At
-  minimum a comment telling users to pin once they vendor.
-- **`.dockerignore` excludes `dist/server`, not `dist/`.** Any host
-  `dist/client` build from a prior run leaks into the build
-  context. Replace the entry with `dist`.
-
-Also: `pnpm install --prod --frozen-lockfile` (line 26) re-runs
-the lockfile resolution in the same stage as the dev install.
-Cheaper to `pnpm prune --prod`, or run the prod install into a
-separate dir copied into the runtime stage.
-
-### 10. Tooling-version drift across examples + helpdesk
-
-**STATUS: deferred; pre-1.0 hardening.**
-**Effort:** S (pick one version per tool, update each manifest).
-
-A pre-publish sweep should unify:
-
-- `typescript`: `examples/helpdesk/package.json` pins `5.7.2`;
-  the four templates pin `^5.8.0`. Pick one.
-- `vite`: helpdesk uses `^8.0.11`, the four templates use
-  `^6.0.0`. Pick one (likely `^8`, matching the root devDep).
-- `@vitejs/plugin-react`: helpdesk `^6.0.0`, cloudflare templates
-  `^5.0.0`. Couple to the chosen vite major.
-- `@types/node`: node templates pin `^25.0.0`, Dockerfile runtime
-  is `node:24-bookworm-slim`. Match the runtime — pin `^24.x`.
-
-### 11. Scaffold manifests don't drop `create-baerly` / `@baerly/cli`
-
-**STATUS: confirmed bug — scaffolded users inherit broken refs.**
-**Effort:** S (~30 min — append the right entries to each
-`scaffold.json`'s `dropDevDeps`, regenerate the test scaffolds).
-
-All four `examples/*/.baerly/scaffold.json` files have
-`"dropDevDeps": []`. Each template lists
-`"create-baerly": "workspace:*"` and `"@baerly/cli": "workspace:*"`
-under `devDependencies`. Once scaffolded into a user repo outside
-the monorepo, those `workspace:*` refs will fail to resolve.
-
-`create-baerly` is genuinely not needed in a scaffolded
-project — drop it. `@baerly/cli` *is* useful (scaffolded users
-run `baerly dev` / `baerly deploy`), so either keep it but rewrite
-the version to the published semver at scaffold time, or replace
-with the public binary name (`baerly`) once that's settled.
-
-### 12. Templates declare `pnpm test` but ship no vitest dependency
-
-**STATUS: deferred; pre-1.0 hardening.**
-**Effort:** XS (drop the script, or add a vitest devDep + a
-one-line config).
-
-Each of `examples/{minimal-cloudflare,minimal-node,helpdesk-cloudflare}/package.json` has
-`"test": "vitest run"` but no `vitest` in devDependencies. Running
-`pnpm test` in a freshly scaffolded project will fail with
-"command not found." Either drop the script (templates currently
-ship no `*.test.ts` source) or commit to shipping a minimal
-example test.
-
-### 13. `.oxfmtrc.json` is effectively empty
-
-**STATUS: deferred; minor.**
-**Effort:** XS.
-
-```json
-{ "$schema": "...", "ignorePatterns": [] }
-```
-
-No `printWidth`, `tabWidth`, `useTabs`, `semi`, `singleQuote`,
-`trailingComma`, etc. Likely fine if the defaults match the
-repo's actual style, but an explicit config is more
-self-documenting for a 1.0 project — and prevents an oxfmt
-default change from silently reformatting the tree on upgrade.
-
-### 14. `lefthook.yml` typecheck always runs the full project
-
-**STATUS: deferred; minor DX.**
-**Effort:** XS.
-
-The `typecheck` step has no `glob:`, so it runs `pnpm typecheck`
-on every commit even when no `.ts` file is staged (e.g. a
-docs-only commit). `tsgo` is fast, so the cost is bearable, but
-gating on `glob: "*.{ts,tsx}"` saves a couple of seconds on the
-common case. Also worth adding `skip: [merge, rebase]` at the
-top of `pre-commit:` so the hook doesn't run during a `git
-rebase --continue` after conflict resolution.
 
 ---
 
@@ -1379,56 +1267,6 @@ requires a code edit.
 
 ### H. Examples (scaffolded user's first impression)
 
-#### H1. `helpdesk-cloudflare` README "Quick start" tells the user the wrong command — **HIGH**
-
-Says `wrangler secret put SHARED_SECRET` then `pnpm dev`. But
-`pnpm dev` runs `vite` (with `@cloudflare/vite-plugin`), which
-reads `.dev.vars` — `wrangler secret put` ships secrets to the
-*deployed* Worker. Brand-new user types the documented commands;
-dev server boots; first request gets 500 "No Verifier configured."
-
-**Fix:** Replace with `cp .dev.vars.example .dev.vars` + edit.
-`minimal-cloudflare`'s README documents the correct flow.
-
-#### H2. `helpdesk-cloudflare` `vite-env.d.ts` declares the wrong VITE_ var — **HIGH**
-
-Declares `VITE_HELPDESK_SECRET`. `src/web/client.ts:12` reads
-`import.meta.env.VITE_SHARED_SECRET`. The typed accessor is
-`undefined`; the client falls back to the literal
-`"dev-shared-secret"`; any user trying to override silently
-fails.
-
-**Fix:** Use `VITE_SHARED_SECRET` in both. Add a one-line
-comment in `.dev.vars.example`/`.env.example` documenting it.
-
-#### H3. Every template's `pnpm test` script will fail — **HIGH**
-
-(Cross-reference existing item #12; restated for completeness.)
-All four scaffoldable templates declare `"test": "vitest run"`
-without `vitest` in devDeps.
-
-**Fix:** Drop the script, OR add `vitest` + a one-test
-`smoke.test.ts` (round-trip the client against `LocalFsStorage`
-or R2 binding). The latter is much higher value at scaffold time.
-
-#### H5. `helpdesk/.baerly-data/` is committed but seed lives in a Vite plugin — **MEDIUM**
-
-14 JSON files of helpdesk-demo manifest/log/content checked
-into git. `baerlyDev` calls `seedTickets` on every dev start —
-data is ephemeral. `pnpm reset` literally `rm -rf .baerly-data`
-proves the project considers it disposable.
-
-**Fix:** Add `.baerly-data/` to a new `examples/helpdesk/.gitignore`.
-`git rm -r examples/helpdesk/.baerly-data/`.
-
-#### H6. `examples/helpdesk/` has no `.gitignore` at all — **MEDIUM**
-
-Every other example has one. Helpdesk doesn't — `apps/` and
-`.baerly-data/` churn every time someone runs `pnpm dev`.
-
-**Fix:** Add `.gitignore`: `node_modules`, `dist`,
-`.baerly-data`, `.env`, `.DS_Store`, `*.tsbuildinfo`.
-
 #### H7. `examples/helpdesk/` largely duplicates `helpdesk-cloudflare` — **MEDIUM**
 
 `App.tsx`, `main.tsx`, `TicketList.tsx`, `TicketDetail.tsx`,
@@ -1441,176 +1279,6 @@ with a docs section, or (b) reframe as a 60-line getting-
 started — drop CRUD UI duplication, keep just the seeded list
 view, document `baerlyDev` + `useLiveQuery`. Pick one; today
 it's neither.
-
-#### H8. `helpdesk/scripts/dev.mjs` is a 28-line "SIGINT 130 → exit 0" hack — **MEDIUM**
-
-Exists only to silence pnpm's `[ELIFECYCLE] Command failed.`
-on Ctrl-C. Dev cosmetics, not pedagogy. A learner reading "the
-canonical Node-side Baerly dev pattern" sees `dev: "node
-scripts/dev.mjs"` and assumes this is required.
-
-**Fix:** Drop `dev.mjs`. Change script to `"dev": "vite"`. Eat
-the ELIFECYCLE noise or file upstream.
-
-#### H9. Templates pin `pnpm@11.1.2` but AGENTS.md documents `pnpm@10.31.0`; Dockerfile also pins 10.31.0 — **MEDIUM**
-
-Three locations, three versions. Existing item #9 also covers
-the Dockerfile drift.
-
-**Fix:** Standardise on `pnpm@11.1.2` (matches monorepo memory)
-across `package.json:packageManager`, `AGENTS.md`, `Dockerfile`,
-root CLAUDE.md.
-
-#### H10. CF template `TENANT` wrangler var dead (cross-reference F1) — **LOW**
-
-Both CF examples bind `"TENANT": "minimal-demo"` in
-`wrangler.jsonc` but hard-code `tenantPrefix: "minimal-demo"`
-literally in `src/server/index.ts`. Two-place update for one
-literal.
-
-**Fix:** Either drop `TENANT` from `wrangler.jsonc`, or wire
-`env.TENANT` through `selectVerifier`.
-
-#### H11. `minimal-cloudflare/src/server/index.ts` is 102 lines, ~70 of which are JSDoc — **LOW**
-
-Including a commented-out `wrangler dev` landing-page snippet
-(81-85). Actual logic is ~25 lines. `helpdesk-cloudflare`'s
-equivalent is 61 lines — same logic, no monologue.
-
-**Fix:** Trim to helpdesk-cloudflare shape. Long-form commentary
-to `AGENTS.md`.
-
-#### H12. `wrangler.jsonc` files are ~75 lines of identical commentary across CF templates — **LOW**
-
-The two CF wrangler files differ only in `name` and
-`bucket_name`. Sentinel substitution alone won't prevent drift
-on the ~75 shared comment lines.
-
-**Fix:** Trim per-file commentary to one or two lines pointing
-at `AGENTS.md`. Wrangler tolerates minimal config — let users
-see how small it can be.
-
-#### H13. `minimal-cloudflare/src/web/main.ts` is a 4-line placeholder — **LOW**
-
-(Plus an identical placeholder in `minimal-node`.) User runs
-`pnpm dev`, sees "Edit src/web/main.ts to get started." No
-`createBaerlyClient`, no `fetch("/v1/healthz")`, no demonstration
-the API actually works.
-
-**Fix:** 15-line snippet: ping `/v1/healthz`, call
-`createBaerlyClient`, insert a row, render it. Something
-working beats `<p>Edit me</p>`.
-
-#### H14. `uint8array-base64.d.ts` duplicated identically across four templates — **LOW**
-
-Per memory `reference_uint8array_base64_shim.md`, load-bearing
-and not removable yet.
-
-**Fix:** No deletion. Add a parity check in
-`scripts/add-ts-extensions.mjs` (or a new audit script)
-verifying the four are byte-identical to prevent drift.
-
-#### H15. CF templates' `scaffold.json` should `dropDevDeps: ["create-baerly"]` — **MEDIUM**
-
-(Cross-reference existing item #11.) The README example
-documents exactly this pattern but no template implements it.
-`@baerly/cli` stays (`pnpm exec baerly deploy`), `create-baerly`
-should drop.
-
-**Fix:** Add `"dropDevDeps": ["create-baerly"]` to each
-`.baerly/scaffold.json`.
-
-#### H16. `.baerly/schema.lock.json` is shipped trivially empty with muddled purpose — **LOW**
-
-Content: `{"schema_version": 1, "comment": "...", "tables": {}}`.
-AGENTS.md says it's advisory ("an empty `{tables: {}}` is fine
-when you supply schemas in code"). Occupies a prime `.baerly/`
-slot suggesting it's load-bearing.
-
-**Fix:** Either drop from the scaffold, or include one tiny
-example entry with a one-line "remove if declaring schemas in
-code" comment.
-
-#### H17. `helpdesk-cloudflare` ships `cloudflareAccess` import dead on first run — **LOW**
-
-Wired into `selectVerifier`; tree-shakes from the deploy, but
-adds 6 unused lines + 5 lines of comment in source. Discoverable
-but noisy for a "minimal" template.
-
-**Fix:** Consider whether `minimal-cloudflare` "minimal" needs
-CF Access at all — move CF Access wiring to a fenced "Upgrade
-to CF Access" section in AGENTS.md. Ship `sharedSecret` only
-in `src/server/index.ts`.
-
-#### H19. `.gitignore` files drift across templates (4 different shapes) — **LOW**
-
-Trailing-slash vs no-trailing-slash, base entries differ.
-
-**Fix:** Standardise. Suggest: trailing-slash style, common
-base (`node_modules/ dist/ .DS_Store *.tsbuildinfo`), per-
-target extras.
-
-#### H20. Node templates' `src/web/main.ts` is dead in the `baerly dev` flow — **LOW**
-
-`pnpm dev` runs `baerly dev` (Node listener on `:3000` over
-`LocalFsStorage`); the SPA only ships under `pnpm build && pnpm
-start`. New users following the README run `pnpm dev` and
-never see `src/web/`. `vite.config.ts` proxy port `8080`
-doesn't match `baerly dev`'s `:3000`.
-
-**Fix:** Either delete `src/web/`, `index.html`, `vite.config.ts`,
-`tsconfig.app.json` from Node templates (drop `vite` + `@types/react`
-from devDeps; go server-only), or add `pnpm dev:web` that runs
-vite standalone. Today the SPA is half-shipped.
-
-#### H21. `helpdesk-cloudflare/types.ts` imports `@baerly/protocol` not in `dependencies` — **LOW**
-
-Resolves today only via transitive deps from `@baerly/server` +
-`@baerly/client`. Phantom dependency.
-
-**Fix:** Add `"@baerly/protocol": "workspace:*"` to
-`helpdesk-cloudflare/package.json:dependencies`. Audit same in
-`minimal-cloudflare/src/server/index.ts:26`.
-
-#### H22. `templates/addons/docker/.dockerignore` allow-lists wrong dist path — **LOW**
-
-Excludes `dist/server` (doesn't exist); does NOT exclude
-`dist/client`. The Dockerfile relies on `dist/client/` being
-copied via `COPY --from=build /app/dist/client dist/client`.
-If a contributor adds `dist/` to `.dockerignore` (reasonable
-default), the build fails.
-
-**Fix:** Replace `dist/server` with `dist/`. Dockerfile
-re-derives `dist/client` from the build stage; local `dist/`
-is build noise.
-
-#### H25. `examples/README.md` calls helpdesk both "fully-built CRUD app" and "dev-only teaching fixture" — **LOW**
-
-Two contradictory positionings on the same page.
-
-**Fix:** Lead with `helpdesk` as the "what does Baerly feel
-like?" tour. Then "## Deployable templates" with the four
-scaffoldable ones. One source of truth on what helpdesk is for.
-
-#### H26. Node templates' `tsconfig.app.json` includes `vite.config.ts` — concerns mixed — **LOW**
-
-`tsconfig.app.json` is the web/client project (lib DOM, types
-vite/client, no node). `vite.config.ts` is a Node-side build
-config.
-
-**Fix:** Move `vite.config.ts` to the server project
-(`tsconfig.server.json`/`tsconfig.worker.json`), or carve out a
-`tsconfig.node.json` for tool configs.
-
-#### H27. CF `.dev.vars.example` and Node `.env.example` are asymmetric on observability vars — **LOW**
-
-CF's `.dev.vars.example` doesn't carry `LOG_LEVEL`/`LOG_SAMPLE`
-(those live in `wrangler.jsonc:vars`). Node's `.env.example`
-inlines them. Comparing Node-to-CF won't easily show "in CF,
-observability lives in `vars`".
-
-**Fix:** Add a one-line header comment to each example file
-explaining the asymmetry.
 
 ### I. Contributor infrastructure — cut aggressively
 
@@ -1748,10 +1416,6 @@ no thresholds, no CI gate.
 **Fix:** Either commit to threshold-gated coverage + a doc, or
 delete the block + the dep.
 
-#### I13. `lefthook.yml` typecheck unscoped (cross-reference existing item #14) — **LOW**
-
-Existing item already captures this. No new finding.
-
 #### I14. `tests/fixtures/consistency.ts` uses `eval()` and has near-zero readers — **LOW**
 
 `CausalSystem.check(grounding, knowledge_base)` via `eval(...)`
@@ -1763,15 +1427,6 @@ checker per "Leaving consistency.ts untouched."
 **Fix:** Verify the cascade doesn't consume the `eval()`-based
 checker. If only `consistency.test.ts` uses it, inline the
 helpers there.
-
-#### I15. `manual-e2e/fixtures/s3-key-escaping/` — six empty files of UX cargo — **LOW**
-
-Six zero-byte hostile-key files + a README. No test
-references them. Last touch was a refactor that moved them
-under `manual-e2e/` without re-evaluation.
-
-**Fix:** Move to `docs/spec/fixtures/` or delete entirely. The
-randomized cascade already arbitraries-covers hostile keys.
 
 #### I16. `phase5-crash-fuzz.test.ts` and `index-crash-fuzz.test.ts` overlap on `abortingStorage` — **LOW**
 
@@ -1792,24 +1447,6 @@ exists; the four scaffoldable templates don't have one.
 
 **Fix:** Either remove the glob or ensure every template has
 a smoke test (see H3 — folding both decisions together).
-
-#### I18. `docs/contributing/day-one-gate.md` (6k) duplicates `manual-e2e/README.md` (11k) — **LOW**
-
-Two manual-deploy walkthroughs covering the same
-scaffold-deploy-roundtrip flow.
-
-**Fix:** Collapse with I4. One canonical "manual deploy
-verification" doc.
-
-#### I19. `scripts/add-ts-extensions.mjs` is the right tool but not wired into `verify` — **LOW**
-
-Script enforces a hard project invariant (CLAUDE.md anti-pattern
-list) but isn't in `pnpm verify`. Oxlint's `import/extensions`
-covers most cases; the script audits paths oxlint doesn't
-(root configs, scripts).
-
-**Fix:** Wire `node scripts/add-ts-extensions.mjs --check` into
-`pnpm verify`, OR delete the script and trust oxlint.
 
 #### I20. Coverage / load-harness / extract-bench-calibration / fetch-bench-fixtures — drop with I1-I3 — **LOW**
 
