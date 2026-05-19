@@ -405,13 +405,10 @@ describe("scaffold", () => {
       expect(baerlyStorageVersion).not.toBe("workspace:*");
       expect(baerlyStorageVersion).toMatch(/^\^?\d+\.\d+\.\d+/);
 
-      // 4. `create-baerly` kept in devDependencies (the emitted
-      //    `baerly.config.ts` imports `create-baerly/config`) and
-      //    pinned to a real semver alongside `baerly-storage`.
-      const createBaerlyVersion = topPkg.devDependencies?.["create-baerly"];
-      expect(createBaerlyVersion).toBeDefined();
-      expect(createBaerlyVersion).not.toBe("workspace:*");
-      expect(createBaerlyVersion).toMatch(/^\^?\d+\.\d+\.\d+/);
+      // 4. `create-baerly` is absent from devDependencies. The emitted
+      //    `baerly.config.ts` imports `baerly-storage/config`; the
+      //    scaffolder is one-shot.
+      expect(topPkg.devDependencies?.["create-baerly"]).toBeUndefined();
 
       // 5. `uint8array-base64.d.ts` shim shipped — load-bearing for
       //    `tsc -b --noEmit` against workspace-linked @baerly/protocol
