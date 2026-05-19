@@ -33,6 +33,14 @@ this folder; invalid / stale items are removed entirely.
 - `client-hooks-api-shape.md` — was E8 + E9
 - `client-signal-handling-bugs.md` — was E16 + E17
 - `client-small-polish.md` — was E14 + E15 + E19
+- `adapter-error-envelope-unify.md` — was F19
+- `cf-worker-surface-trim.md` — was F1 + F2 + F3
+- `dev-package-shape.md` — was F12 + F13 + F14 + F16
+- `cf-cache-rework.md` — was F6 + F7 + F8 + F15
+- `export-package-collapse.md` — was F4 + F20
+- `adapter-node-barrel-shape.md` — was F10 + F11
+- `adapter-maintenance-shape-unify.md` — was F17 + F18
+- `cf-r2-binding-error-mapping.md` — was F9
 
 ### Dropped
 
@@ -57,6 +65,11 @@ this folder; invalid / stale items are removed entirely.
 - **E20** — chainable-builder closure-allocation perf claim has
   no benchmark and the analyst notes "not launch-blocking." Don't
   pre-optimize pre-launch without numbers.
+- **F5** — Node adapter backpressure pump fix already shipped at
+  `60bbc04` (2026-05-18) per memory
+  `project_adapter_node_pipeline_crash_fixed`. The current
+  `server.ts:392-395` uses `pipeline(Readable.fromWeb(...), res)`
+  with AbortSignal guards. Analyst's claim is stale.
 
 ---
 
@@ -635,226 +648,6 @@ by `@baerly/cli` doctor/banner.
 **Fix:** Move to `@baerly/cli`. Keep
 `STORAGE_OPS_PER_LOGICAL_WRITE = 3` in protocol (real cost-
 model invariant).
-
-### F. Adapters + dev + export
-
-#### F1. `Env.TENANT` is a required worker field that the adapter never reads — **MEDIUM**
-
-`Env.TENANT: string` declared non-optional; JSDoc admits
-"TENANT is not special-cased by baerlyWorker." Every consuming
-example must put a fake `TENANT` in `wrangler.jsonc` to
-satisfy the type, then `src/server/index.ts` hard-codes the
-tenant separately.
-
-**Fix:** Either drop `TENANT` from `Env`, or wire `env.TENANT`
-through `selectVerifier` and remove the literal in the example.
-
-#### F2. Default `scheduled` handler is dead code in every shipped example — **MEDIUM**
-
-`worker.ts:400-431`'s default cron handler only fires when
-`env.CURRENT_JSON_KEY` is set. Zero examples set it; the
-multi-tenant docs say "use `options.scheduled` instead." So
-the entire single-tenant fallback (`env.CF_TIER`, profile
-selection, minute-parity alternation) ships but never runs in
-test or scaffold.
-
-**Fix:** Either wire `CURRENT_JSON_KEY` in the minimal
-template (so the cron actually does maintenance), or remove
-the default `scheduled` path and require `options.scheduled`.
-
-#### F3. `BaerlyWorkerOptions.handler` / `WorkerHandler` is unused dead surface — **MEDIUM**
-
-No example, manual-e2e, or test uses it. Asymmetric (Node side
-has no equivalent). Examples that need custom routes already
-wrap `baerlyWorker(...)` in their own `fetch` (see
-`minimal-cloudflare/src/server/index.ts:94-101`).
-
-**Fix:** Delete `handler` / `WorkerHandler`. ~25 LoC plus a
-public API field gone.
-
-#### F4. `@baerly/export` is 1500 LOC for a feature with one CLI consumer — **MEDIUM**
-
-Eight public exports, all consumed by exactly two call sites:
-`packages/cli/src/export.ts` and one round-trip integration
-test. The sidecar JSON exists solely so a round-trip test can
-coerce SQLite 0/1 back to booleans. `where.property.test.ts`
-(359 LOC, "property"-named but fixture-driven — `grep "fc\."`
-returns zero hits) ships a hand-rolled SQL parser/evaluator as
-a regression guard for eight fixtures.
-
-**Fix:** Collapse `@baerly/export` into `packages/cli/src/export/`
-as private modules. Drops a public package + a phantom
-property-test file. If a future adapter needs the SQL emitters,
-promote selectively.
-
-#### F5. Body-streaming pump in Node adapter ignores backpressure — **MEDIUM**
-
-`server.ts:317-327` hand-rolls `getReader()` / `while (chunk =
-await reader.read())` to drain the router's `Response.body`
-into `node:http`'s `ServerResponse`. No `res.once("drain", ...)`
-on `res.write() === false` — silently drops backpressure.
-Node 24's `Readable.fromWeb(response.body).pipe(res)` (or
-`pipeline`) handles it correctly. `pipeline` is already
-imported for static-asset streaming.
-
-**Fix:** `await pipeline(Readable.fromWeb(response.body),
-res)`.
-
-#### F6. Cache LIST-URL index is invisible test-only state with brittle TTL coupling — **MEDIUM**
-
-~150 of `cache.ts`'s 383 lines maintain an in-isolate
-`Map<string, Map<string, Timer>>` index of LIST URLs so writes
-can fan-out `cache.delete()` to filtered-list variants. Best-
-effort (cold start has no index hit; "belt-and-braces bare-list
-bust" at line 357 papers the gap). `MAX_KEYS_PER_TABLE = 256`
-eviction has zero test coverage.
-
-**Fix:** Drop the index. Make `withReadCache` skip LIST URLs
-(`/v1/t/:table` without `:id`) entirely — list responses are
-the hot footgun; per-doc URL caching is cheap and per-key
-bustable. Cuts ~150 LoC.
-
-#### F7. `__resetListUrlIndexForTests` leaks test state through module — **LOW**
-
-Module-level `LIST_KEY_INDEX` requires a public reset helper
-just so `afterEach` can clear it.
-
-**Fix:** If F6 lands, gone. Otherwise attach the index to a
-`WithReadCache` class instance instead of module scope.
-
-#### F8. `cacheKeyFor` / `invalidateOnWrite` / `withReadCache` exported from CF adapter main entry — three plumbing fns with no example caller — **LOW**
-
-`baerlyWorker` wires them internally. No template hand-wires.
-
-**Fix:** Drop from public barrel. Document a `@baerly/adapter-
-cloudflare/cache` subpath if advanced users ask.
-
-#### F9. R2 binding storage error mapping is regex-on-message — **MEDIUM**
-
-`r2-binding-storage.ts:160-167` maps errors via regex on
-`e.message` (`/auth|permission|forbidden/i` → `AccessDenied`,
-etc.). CF's binding error messages are not part of the platform
-contract — silently regresses to `NetworkError` on rewording.
-
-**Fix:** When CF types add typed binding errors, switch. For
-now, add a regression test asserting the regex matches the
-*current* miniflare error shape so a future binding change
-fails here, not in production.
-
-#### F10. JWKS factory missing from `@baerly/adapter-node`; auth presets re-import asymmetric — **MEDIUM**
-
-Node adapter ships four `*Storage` factories but no
-`bearerJwt`/`sharedSecret` factory; every Node example imports
-them from `@baerly/server/auth` directly. CF examples similarly
-import `cloudflareAccess`/`sharedSecret` from `@baerly/server/auth`.
-Asymmetric.
-
-**Fix:** Re-export auth presets from each adapter's barrel.
-Saves one import line in every consuming app; makes the
-adapter look like a single dep.
-
-#### F11. `S3HttpStorage` re-exported from adapter barrel where factories already cover the case — **LOW**
-
-`adapter-node/src/index.ts:69-70` exports raw `S3HttpStorage` +
-`S3HttpStorageOptions` alongside the four factories. The
-escape hatch is real but ships `xmldom`-typed symbols 99% of
-callers don't touch. `manual-e2e/node/server-entry.ts:16` even
-reaches for `S3HttpStorage` directly — proving the escape
-hatch is *more discoverable* than the sugar.
-
-**Fix:** Move to `@baerly/adapter-node/advanced` subpath. Keep
-the agent-facing barrel small; the factory path becomes the
-obvious default.
-
-#### F12. `@baerly/dev` exports public surface for one CLI — **MEDIUM**
-
-`printDevBanner`, `freeTierBudgetHint`, `ensureTable`,
-`LocalFsStorage`, `baerlyDev` all in the public surface. Real
-consumers: `packages/cli/src/dev.ts`, `examples/helpdesk`, one
-CF/Node test each. The package is internal infra pretending to
-be a library.
-
-**Fix:** Reduce public surface to `LocalFsStorage`,
-`ensureTable`, `baerlyDev` (the Vite plugin). Make
-`printDevBanner` and `freeTierBudgetHint` internal (CLI is
-in-repo, can import from `./internal/`).
-
-#### F13. `freeTierBudgetHint` hard-codes R2 in a vendorless codebase — **LOW**
-
-`budget-hint.ts:24` template literal references R2 free tier.
-Used unconditionally by `baerly dev` — AWS/Minio/GCS users see
-CF-branded ops budgets in their dev banner.
-
-**Fix:** Either parameterise on storage flavor, or drop the
-export and inline only on CF-aware paths.
-
-#### F14. `LocalFsStorage` has no runtime guard against prod use — **LOW**
-
-JSDoc warns about cross-process TOCTOU; nothing at runtime
-guards. `examples/helpdesk` uses it for a quasi-production-
-looking server, and `packages/cli/src/copy.ts` mounts it on
-`file://` URIs.
-
-**Fix:** Add a one-time `console.warn` outside `NODE_ENV=test`
-on instantiation, OR rename → `DevFsStorage` so the intent is
-visible at every call site.
-
-#### F15. Two cache-test files with overlapping names — **LOW**
-
-`cache.test.ts` (295 LOC) + `cache-status.test.ts` (371 LOC).
-The second tests the canonical-line `cache_status` field which
-is a worker-level concern, not a cache-module one.
-
-**Fix:** Rename `cache-status.test.ts` →
-`worker-cache-discriminator.test.ts` next to `worker.test.ts`.
-
-#### F16. `baerlyDev` Vite plugin is `LocalFsStorage`-only with no escape hatch — **LOW**
-
-Hard-coded `LocalFsStorage` + `sharedSecret`. No `storage` or
-`verifier` override. An agent wanting Minio in dev drops to
-raw `createListener`.
-
-**Fix:** Accept `storage?: Storage`, `verifier?: Verifier`
-overrides. Or rename → `baerlyLocalFsDev` to be honest about
-scope.
-
-#### F17. `runMaintenanceTick` (Node) wraps `runScheduledMaintenance` (kernel) for 20 lines of observability — **LOW**
-
-Three layers of "tick" naming for the same compact-then-GC flow.
-
-**Fix:** Inline the wrap in `baerlyNode`. Re-export
-`runScheduledMaintenance` from the adapter; drop
-`runMaintenanceTick`.
-
-#### F18. Cross-product maintenance shape differs across adapters — **LOW**
-
-Node uses `BaerlyNodeMaintenance: { tenants × collections }`
-computed in-process. CF uses `CURRENT_JSON_KEY` env var for
-one collection or `options.scheduled` for many. Two adapters,
-two mental models.
-
-**Fix:** Unify on `MaintenanceTargets: { currentJsonKeys:
-readonly string[] }`. Extract `buildCurrentJsonKey(app,
-tenant, collection)` to `@baerly/server/maintenance`.
-
-#### F19. Error envelope shape diverges between adapters — **MEDIUM**
-
-CF's `verifier === null` path inlines `errorEnvelope(...)`;
-Node's calls `mapError(err)` for caught exceptions. CF doesn't
-use `mapError` at all in the worker. A thrown `BaerlyError`
-exits CF and Node with different 500 envelopes.
-
-**Fix:** Use `mapError` consistently in both adapters' top-
-level catch. Add a regression test asserting byte-identical
-500 envelopes for the same thrown `BaerlyError`.
-
-#### F20. `@baerly/export/package.json` is missing `publishConfig` block its siblings have — **LOW**
-
-Siblings rewrite `./src/*.ts` → `./dist/*.js` for the published
-artifact. `@baerly/export` doesn't — if made public it'd ship
-raw `.ts` paths. Also missing `sideEffects: false`.
-
-**Fix:** Add the block (or delete the package per F4).
 
 ### G. CLI + create-baerly
 
