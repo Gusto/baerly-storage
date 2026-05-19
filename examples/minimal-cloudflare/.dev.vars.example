@@ -3,6 +3,10 @@
 #
 #     wrangler secret put <NAME>
 #
+# Secrets only — non-secret config (APP, TENANT, LOG_LEVEL,
+# LOG_SAMPLE) lives in `wrangler.jsonc:vars`. The Node equivalent
+# puts both in `.env` because `process.env` doesn't distinguish.
+#
 # The Worker's `src/server/index.ts` chooses which verifier to use
 # based on which of these is set; pick one branch per environment.
 
