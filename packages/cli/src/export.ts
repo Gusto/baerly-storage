@@ -5,7 +5,7 @@
 /**
  * `baerly export` — snapshot dump of one collection to SQL.
  *
- * Drives `@baerly/export` end-to-end: load the materialised view,
+ * Drives the export modules end-to-end: load the materialised view,
  * infer an `ExportPlan` over the row shape, emit `CREATE TABLE` +
  * `INSERT` statements. When `--where=<json>` is supplied the
  * predicate is translated via `translatePredicateToSql` and applied
@@ -58,7 +58,7 @@ import {
   loadMaterialisedView,
   serializeExportPlan,
   translatePredicateToSql,
-} from "@baerly/export";
+} from "./export/index.ts";
 import { loadAppConfig } from "./config.ts";
 import { parseBucketUri } from "./copy.ts";
 import { emitError, emitSuccess, setJsonMode } from "./output.ts";

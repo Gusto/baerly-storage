@@ -21,7 +21,7 @@
  *
  *   - Seed `srcRoot` (LocalFsStorage) with a representative collection
  *     via `Table.insert` + `Query.update` (I + U cycle covered).
- *   - Export src → SQL via `@baerly/export` (plan + DDL + INSERTs).
+ *   - Export src → SQL via packages/cli/src/export (plan + DDL + INSERTs).
  *     Pipe the SQL into `sqlite3 <dbfile> '.read <sqlfile>'`.
  *   - Read SQLite back via `sqlite3 -json ... 'SELECT * FROM tickets
  *     ORDER BY _id'`. Reshape with help from the sidecar plan
@@ -60,7 +60,7 @@ import {
   inferPlanForCollection,
   loadMaterialisedView,
   serializeExportPlan,
-} from "@baerly/export";
+} from "../../packages/cli/src/export/index.ts";
 import { runDump } from "../../packages/cli/src/admin/dump.ts";
 import { runRestore } from "../../packages/cli/src/admin/restore.ts";
 

@@ -16,7 +16,6 @@ export default defineConfig({
     "client-testing": "packages/client/src/testing/index.ts",
     dev: "packages/dev/src/index.ts",
     "dev-vite": "packages/dev/src/vite-plugin.ts",
-    export: "packages/export/src/index.ts",
   },
   external: [
     /^node:/,

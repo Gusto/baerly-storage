@@ -37,7 +37,7 @@ import {
   BaerlyError,
   readCurrentJson,
 } from "@baerly/protocol";
-import { loadMaterialisedView } from "@baerly/export";
+import { loadMaterialisedView } from "../export/index.ts";
 import {
   type BaerlyConfig,
   type IndexDefinition,

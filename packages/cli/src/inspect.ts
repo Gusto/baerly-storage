@@ -15,7 +15,7 @@
  *   - live_log_tail (= next_seq - log_seq_start).
  *   - snapshot key (or null).
  *   - writer_fence (epoch, owner, claimed_at).
- *   - materialised row count (via @baerly/export's loadMaterialisedView).
+ *   - materialised row count (via export/loadMaterialisedView).
  *   - per-declared-index key count (when --config supplied).
  *   - well-formed status: "ok" or "error" with an `errors` array.
  *
@@ -37,7 +37,7 @@
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { defineCommand, parseArgs, type ArgsDef, type ParsedArgs } from "citty";
 import { BaerlyError, readCurrentJson, type CurrentJson, type Storage } from "@baerly/protocol";
-import { loadMaterialisedView } from "@baerly/export";
+import { loadMaterialisedView } from "./export/index.ts";
 import { type BaerlyConfig, type IndexDefinition } from "@baerly/server";
 import { loadAppConfig } from "./config.ts";
 import { parseBucketUri } from "./copy.ts";

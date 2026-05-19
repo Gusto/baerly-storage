@@ -20,7 +20,6 @@
   "dependencies": {
     "@baerly/adapter-node": "workspace:*",
     "@baerly/dev": "workspace:*",
-    "@baerly/export": "workspace:*",
     "@baerly/protocol": "workspace:*",
     "@baerly/server": "workspace:*",
     "citty": "^0.1.6",

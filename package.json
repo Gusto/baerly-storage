@@ -77,10 +77,6 @@
     "./dev/vite": {
       "types": "./dist/dev-vite.d.ts",
       "import": "./dist/dev-vite.js"
-    },
-    "./export": {
-      "types": "./dist/export.d.ts",
-      "import": "./dist/export.js"
     }
   },
   "publishConfig": {
@@ -133,7 +129,6 @@
     "@baerly/adapter-node": "workspace:*",
     "@baerly/client": "workspace:*",
     "@baerly/dev": "workspace:*",
-    "@baerly/export": "workspace:*",
     "@baerly/protocol": "workspace:*",
     "@baerly/server": "workspace:*",
     "@cloudflare/vitest-pool-workers": "0.16.3",

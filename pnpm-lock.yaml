@@ -24,9 +24,6 @@ importers:
       '@baerly/dev':
         specifier: workspace:*
         version: link:packages/dev
-      '@baerly/export':
-        specifier: workspace:*
-        version: link:packages/export
       '@baerly/protocol':
         specifier: workspace:*
         version: link:packages/protocol
@@ -275,9 +272,6 @@ importers:
       '@baerly/dev':
         specifier: workspace:*
         version: link:../dev
-      '@baerly/export':
-        specifier: workspace:*
-        version: link:../export
       '@baerly/protocol':
         specifier: workspace:*
         version: link:../protocol
@@ -338,15 +332,6 @@ importers:
       vite:
         specifier: ^8.0.0
         version: 8.0.11(@types/node@25.6.2)(esbuild@0.27.3)
-
-  packages/export:
-    dependencies:
-      '@baerly/protocol':
-        specifier: workspace:*
-        version: link:../protocol
-      '@baerly/server':
-        specifier: workspace:*
-        version: link:../server
 
   packages/protocol: {}
 

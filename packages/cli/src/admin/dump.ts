@@ -44,7 +44,7 @@
 import { open, type FileHandle } from "node:fs/promises";
 import { defineCommand, parseArgs, type ArgsDef, type ParsedArgs } from "citty";
 import { BaerlyError, type JSONArrayless, type JSONArraylessObject } from "@baerly/protocol";
-import { loadMaterialisedView } from "@baerly/export";
+import { loadMaterialisedView } from "../export/index.ts";
 import { loadAppConfig } from "../config.ts";
 import { parseBucketUri } from "../copy.ts";
 import { emitError, emitSuccess, setJsonMode } from "../output.ts";

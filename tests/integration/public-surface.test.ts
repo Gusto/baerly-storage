@@ -243,23 +243,3 @@ describe("baerly-storage/dev/vite", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// baerly-storage/export
-// ---------------------------------------------------------------------------
-import {
-  emitCreateTable,
-  emitInsertStatements,
-  inferPlanForCollection,
-  quoteIdentifier,
-  translatePredicateToSql,
-} from "baerly-storage/export";
-
-describe("baerly-storage/export", () => {
-  test("imports resolve", () => {
-    expect(typeof inferPlanForCollection).toBe("function");
-    expect(typeof emitCreateTable).toBe("function");
-    expect(typeof quoteIdentifier).toBe("function");
-    expect(typeof emitInsertStatements).toBe("function");
-    expect(typeof translatePredicateToSql).toBe("function");
-  });
-});

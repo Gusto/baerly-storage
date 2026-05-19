@@ -200,37 +200,39 @@ One-shot snapshot dump of a Baerly collection into a SQL-native
 database. Per-column types are inferred from the materialised L9
 snapshot (string / number / boolean / nested-object → SQL type per
 target dialect); `_id` is always emitted as the primary key.
-Library lives in `@baerly/export`; the CLI wiring lands separately.
+Implementation lives under `packages/cli/src/export/` as private CLI
+modules — exposed only through the `baerly` CLI surface, not as a
+publishable package.
 
 - Implementation:
-  [`packages/export/src/plan.ts`](../../packages/export/src/plan.ts)
+  [`packages/cli/src/export/plan.ts`](../../packages/cli/src/export/plan.ts)
   (`inferPlanForCollection`, `loadMaterialisedView`),
-  [`packages/export/src/ddl.ts`](../../packages/export/src/ddl.ts)
+  [`packages/cli/src/export/ddl.ts`](../../packages/cli/src/export/ddl.ts)
   (`emitCreateTable`),
-  [`packages/export/src/rows.ts`](../../packages/export/src/rows.ts)
+  [`packages/cli/src/export/rows.ts`](../../packages/cli/src/export/rows.ts)
   (`emitInsertStatements`),
-  [`packages/export/src/sql-escape.ts`](../../packages/export/src/sql-escape.ts)
+  [`packages/cli/src/export/sql-escape.ts`](../../packages/cli/src/export/sql-escape.ts)
   (`quoteIdentifier`, `quoteValue`)
 - Tests:
-  [`packages/export/src/plan.test.ts`](../../packages/export/src/plan.test.ts),
-  [`packages/export/src/ddl.test.ts`](../../packages/export/src/ddl.test.ts),
-  [`packages/export/src/rows.test.ts`](../../packages/export/src/rows.test.ts),
-  [`packages/export/src/sql-escape.test.ts`](../../packages/export/src/sql-escape.test.ts)
+  [`packages/cli/src/export/plan.test.ts`](../../packages/cli/src/export/plan.test.ts),
+  [`packages/cli/src/export/ddl.test.ts`](../../packages/cli/src/export/ddl.test.ts),
+  [`packages/cli/src/export/rows.test.ts`](../../packages/cli/src/export/rows.test.ts),
+  [`packages/cli/src/export/sql-escape.test.ts`](../../packages/cli/src/export/sql-escape.test.ts)
 
 ## Export round-trip (`pnpm test:export-round-trip`)
 
 Phase 9 gate; ensures byte-equal preservation across `export →
 SQLite → restore`. Seeds a `LocalFsStorage`-backed Baerly bucket,
-runs the `@baerly/export` pipeline against the `sqlite3` CLI binary
+runs the `packages/cli/src/export/` pipeline against the `sqlite3` CLI binary
 (auto-skips when absent), re-imports the SQL dump through `baerly
 admin restore`, and asserts byte-equal `baerly admin dump` between
 the source and restored buckets. Uses
-[`serializeExportPlan` / `deserializeExportPlan`](../../packages/export/src/plan-sidecar.ts)
+[`serializeExportPlan` / `deserializeExportPlan`](../../packages/cli/src/export/plan-sidecar.ts)
 to coerce SQLite values back to their original JS types.
 
 - Tests:
   [`tests/integration/export-round-trip.test.ts`](../../tests/integration/export-round-trip.test.ts),
-  [`packages/export/src/plan-sidecar.test.ts`](../../packages/export/src/plan-sidecar.test.ts)
+  [`packages/cli/src/export/plan-sidecar.test.ts`](../../packages/cli/src/export/plan-sidecar.test.ts)
 
 ## Observability
 

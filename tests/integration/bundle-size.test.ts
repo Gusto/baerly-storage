@@ -204,7 +204,13 @@ const BUDGETS: readonly Budget[] = [
   //     follow-up. Router additions reach the aggregator closure
   //     (PUT/GET-count routes + order/limit threading). +2092 raw, gz
   //     unchanged.
-  { entry: "node.js", raw: 413 * 1024, gz: 120 * 1024 },
+  //   → 413 KiB raw / 121 KiB gz: export-package-collapse follow-up.
+  //     Dropping the `export` entry from rolldown.config.ts reshuffles
+  //     shared-chunk boundaries (one less entry → different
+  //     code-splitting pivot); raw closure actually shrank (421908
+  //     measured) but gz crept up to 123044. Bump the gz ceiling 1 KiB
+  //     to absorb the chunk-layout side effect.
+  { entry: "node.js", raw: 413 * 1024, gz: 121 * 1024 },
   // Client surface — `BaerlyClient<TConfig>` + fetcher plumbing.
   // Browser/runtime-agnostic; no kernel modules in the closure.
   // Budget history:
@@ -239,7 +245,9 @@ const BUDGETS: readonly Budget[] = [
   //   → 413 KiB raw / 120 KiB gz: client-terminals-silently-lie
   //     follow-up. Same router additions reach this aggregator's
   //     closure as well. +2003 raw, gz unchanged.
-  { entry: "dev.js", raw: 413 * 1024, gz: 120 * 1024 },
+  //   → 413 KiB raw / 121 KiB gz: export-package-collapse follow-up.
+  //     Same chunk-layout side effect as node.js — gz measured 123100.
+  { entry: "dev.js", raw: 413 * 1024, gz: 121 * 1024 },
   // `@baerly/dev/vite` — the `baerlyDev()` vite plugin (mounts the
   // Baerly HTTP listener as middleware inside a Vite dev server).
   // Vite is external. Aggregator: re-exports the dev surface.
@@ -249,14 +257,9 @@ const BUDGETS: readonly Budget[] = [
   //   → 413 KiB raw / 120 KiB gz: client-terminals-silently-lie
   //     follow-up. Same router additions land here too. +1812 raw,
   //     gz unchanged.
-  { entry: "dev-vite.js", raw: 413 * 1024, gz: 120 * 1024 },
-  // `@baerly/export` — snapshot dumper for `baerly admin dump` /
-  // `baerly export --target=sqlite`. Pulls the kernel + protocol
-  // hashing/log subgraph; HTTP router is not in its closure.
-  // Budget history:
-  //   → 299 KiB raw / 87 KiB gz: initial budget set in T9 based on
-  //     post-T8 measurement (294 KiB raw / 85 KiB gz).
-  { entry: "export.js", raw: 299 * 1024, gz: 87 * 1024 },
+  //   → 413 KiB raw / 121 KiB gz: export-package-collapse follow-up.
+  //     Same chunk-layout side effect as node.js — gz measured 122950.
+  { entry: "dev-vite.js", raw: 413 * 1024, gz: 121 * 1024 },
   // `baerly` CLI bin — `init`, `dev`, `deploy`, `doctor`, `inspect`,
   // `admin {compact,fsck,migrate,dump,restore,rebuild-index}`,
   // `export`. Bundled as a single file (no static chunk splits)
