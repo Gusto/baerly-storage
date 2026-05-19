@@ -1293,17 +1293,6 @@ has no way to discover it.
 drop the helpdesk template (564KB of the 964KB dist if
 unreachable from the default flow).
 
-#### G12. Scaffolded apps depend on `create-baerly` at runtime for `defineConfig` — **MEDIUM**
-
-`baerly.config.ts` imports `defineConfig` from
-`create-baerly/config` (an identity function). Every scaffolded
-`package.json` therefore lists `create-baerly` as a runtime dep
-— apps ship a coupling to the scaffolder forever.
-
-**Fix:** Move `defineConfig` + `BaerlyAppConfig` into
-`@baerly/server` (or a `@baerly/protocol`). Drop the
-`create-baerly` runtime dep from scaffolds.
-
 #### G13. `admin compact --skip-gc` / `--skip-compact` is a UX trap — **LOW**
 
 A subcommand called `compact` accepts `--skip-compact`. The
@@ -1594,17 +1583,6 @@ default), the build fails.
 **Fix:** Replace `dist/server` with `dist/`. Dockerfile
 re-derives `dist/client` from the build stage; local `dist/`
 is build noise.
-
-#### H24. AGENTS.md "Indexes" example imports `defineConfig` from `@baerly/server` — the shipped file uses `create-baerly/config` — **MEDIUM**
-
-Users copying the AGENTS.md example into their `baerly.config.ts`
-will end up with two `defineConfig` imports with different
-shapes.
-
-**Fix:** Update AGENTS.md to consistently use
-`create-baerly/config`'s `defineConfig`. (Or follow G12: move
-`defineConfig` to `@baerly/server` and rewrite the shipped
-config to import from there.)
 
 #### H25. `examples/README.md` calls helpdesk both "fully-built CRUD app" and "dev-only teaching fixture" — **LOW**
 

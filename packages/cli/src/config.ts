@@ -1,12 +1,11 @@
 /**
  * `baerly.config.ts` loader for `baerly deploy` / `baerly doctor`.
  *
- * Mirrors the shape of {@link BaerlyAppConfig} in `create-baerly`
- * but lives in `@baerly/cli` so the CLI doesn't have to take a
- * runtime dep on `create-baerly`. The scaffolder emits the config
- * file; the CLI reads it. Both sides agree on the wire shape
- * (informally — there is no shared types package, only matching
- * fields).
+ * Mirrors the shape of `BaerlyAppConfig` from `baerly-storage/config`
+ * but lives in `@baerly/cli` so the validator/loader doesn't depend on
+ * the rolldown'd umbrella bundle. The scaffolder emits the config file;
+ * the CLI reads it. Both sides agree on the wire shape (informally —
+ * the duplication is small and intentional).
  *
  * Resolution order:
  *   1. `<cwd>/baerly.config.ts`

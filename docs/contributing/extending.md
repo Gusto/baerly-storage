@@ -145,7 +145,7 @@ any validator library — you bring whichever library you like.
 
 ```ts
 // baerly.config.ts
-import { defineConfig } from "create-baerly/config";
+import { defineConfig } from "baerly-storage/config";
 import { z } from "zod";
 
 const Ticket = z.object({
@@ -165,7 +165,7 @@ export default defineConfig({
 
 ```ts
 // baerly.config.ts
-import { defineConfig } from "create-baerly/config";
+import { defineConfig } from "baerly-storage/config";
 import * as v from "valibot";
 
 const Ticket = v.object({
@@ -256,7 +256,7 @@ export interface IndexDefinition {
 
 ```ts
 // baerly.config.ts
-import { defineConfig } from "create-baerly/config";
+import { defineConfig } from "baerly-storage/config";
 
 export default defineConfig({
   collections: {
