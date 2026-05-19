@@ -88,11 +88,19 @@ const BUDGETS: readonly Budget[] = [
   //   → 349 KiB raw / 101 KiB gz: pretty sink + picocolors moved
   //     out of `@baerly/server` to `@baerly/adapter-node` entirely
   //     (no dynamic-import chunk in the kernel either).
-  //   → 350 KiB raw / 101 KiB gz (current): obs cleanup increment —
+  //   → 350 KiB raw / 101 KiB gz: obs cleanup increment —
   //     `flushUnauthorizedAndRespond` (185350a) and the nesting-aware
   //     `withObservability` guard (46cdd65) added ~37 B raw, pushing
   //     the closure past the prior 349 KiB ceiling. gz unchanged.
-  { entry: "index.js", raw: 350 * 1024, gz: 101 * 1024 },
+  //   → 351 KiB raw / 101 KiB gz (current): `withHttpObservability`
+  //     extraction (e56594a) moved the request-boundary middleware
+  //     out of router.ts and into canonical.ts as a reusable helper,
+  //     and added `reconstructErrorFromEnvelope` so the canonical
+  //     line still carries `{ code, message }` outside Hono's
+  //     compose chain. Net for the index closure: router chunk
+  //     shrank and obs chunk grew slightly more, +339 B raw. gz
+  //     unchanged.
+  { entry: "index.js", raw: 351 * 1024, gz: 101 * 1024 },
   // Just the five auth verifier factories. Adding a sixth grows
   // this budget, not the kernel's.
   { entry: "auth.js", raw: 34 * 1024, gz: 12 * 1024 },
@@ -102,7 +110,13 @@ const BUDGETS: readonly Budget[] = [
   // structured logging, per-request metrics), so the request
   // path carries an observability baseline cost that can't be
   // shifted to a subpath. ~272 KiB raw.
-  { entry: "http.js", raw: 273 * 1024, gz: 79 * 1024 },
+  // Budget history:
+  //   → 274 KiB raw / 79 KiB gz: `withHttpObservability` extraction
+  //     (e56594a) moved the middleware out of router.ts into
+  //     canonical.ts; the http closure still sees both chunks so
+  //     the router shrinkage mostly offsets the obs growth (+317
+  //     B raw net). gz unchanged.
+  { entry: "http.js", raw: 274 * 1024, gz: 79 * 1024 },
   // Observability primitives — ObservabilityContext, the
   // request-scoped MetricsRecorder, LogTape config + the
   // JSON sink only (the pretty sink + picocolors now live in
@@ -112,7 +126,15 @@ const BUDGETS: readonly Budget[] = [
   //   → 89 KiB raw / 24 KiB gz: `flushUnauthorizedAndRespond`
   //     pulls `errorEnvelope` (+ its `HttpErrorEnvelope` type)
   //     from contract.ts into the observability closure (~170 B raw).
-  { entry: "observability.js", raw: 89 * 1024, gz: 24 * 1024 },
+  //   → 92 KiB raw / 25 KiB gz (current): `withHttpObservability`
+  //     extraction (e56594a) landed the standalone-use request
+  //     wrapper plus `reconstructErrorFromEnvelope` in canonical.ts.
+  //     The obs closure (which excludes the router chunk) sees only
+  //     the growth side: +2046 B raw / +101 B gz vs. the prior
+  //     budget. The matching shrinkage lives in the router chunk
+  //     and shows up as a near-wash in the http.js / index.js
+  //     closures.
+  { entry: "observability.js", raw: 92 * 1024, gz: 25 * 1024 },
   // Maintenance loop — compactor + GC + sweep driver. Pulls
   // compactor.ts + gc.ts + the observability subgraph
   // transitively (every work unit runs under withObservability).
