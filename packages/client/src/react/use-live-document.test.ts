@@ -49,8 +49,7 @@ describe("useLiveDocument", () => {
     const { result, unmount } = renderHook(() => useLiveDocument<Ticket>(client, "tickets", "a"));
 
     await waitFor(() => {
-      expect(result.current.row).toEqual({ _id: "a", title: "hello" });
-      expect(result.current.loading).toBe(false);
+      expect(result.current).toEqual({ status: "ok", row: { _id: "a", title: "hello" } });
     });
 
     unmount();
@@ -59,7 +58,7 @@ describe("useLiveDocument", () => {
     }
   });
 
-  test("returns row=undefined when the server has no match", async () => {
+  test("returns status=missing when the server has no match", async () => {
     const { m, pendingSinceRejects, hangSince } = makeMock();
     m.on("GET", "/v1/t/tickets", () => okEnvelope([]));
     m.on("GET", "/v1/since", hangSince);
@@ -67,9 +66,7 @@ describe("useLiveDocument", () => {
     const client = createBaerlyClient({ baseUrl: "http://x", fetch: m.fetch });
     const { result, unmount } = renderHook(() => useLiveDocument<Ticket>(client, "tickets", "x"));
 
-    await waitFor(() => expect(result.current.loading).toBe(false));
-    expect(result.current.row).toBeUndefined();
-    expect(result.current.error).toBeUndefined();
+    await waitFor(() => expect(result.current.status).toBe("missing"));
 
     unmount();
     for (const r of pendingSinceRejects) {
@@ -132,7 +129,9 @@ describe("useLiveDocument", () => {
     const client = createBaerlyClient({ baseUrl: "http://x", fetch: m.fetch });
     const { result, unmount } = renderHook(() => useLiveDocument<Ticket>(client, "tickets", "a"));
 
-    await waitFor(() => expect(result.current.row).toEqual({ _id: "a", title: "v2" }));
+    await waitFor(() => {
+      expect(result.current).toEqual({ status: "ok", row: { _id: "a", title: "v2" } });
+    });
     expect(listCalls).toBe(2);
 
     unmount();
@@ -160,7 +159,7 @@ describe("useLiveDocument", () => {
     const client = createBaerlyClient({ baseUrl: "http://x", fetch: m.fetch });
     const { result, unmount } = renderHook(() => useLiveDocument<Ticket>(client, "tickets", "a"));
 
-    await waitFor(() => expect(result.current.loading).toBe(false));
+    await waitFor(() => expect(result.current.status).toBe("ok"));
     await waitFor(() => expect(sincePoll).toBeGreaterThanOrEqual(2));
     expect(listCalls).toBe(1);
 

@@ -54,8 +54,7 @@ describe("useLiveQuery", () => {
     const { result, unmount } = renderHook(() => useLiveQuery<Ticket>(client, "tickets"));
 
     await waitFor(() => {
-      expect(result.current.rows).toEqual([{ _id: "a", title: "first" }]);
-      expect(result.current.loading).toBe(false);
+      expect(result.current).toEqual({ status: "ok", rows: [{ _id: "a", title: "first" }] });
     });
     expect(listCalls).toBe(1);
 
@@ -105,7 +104,10 @@ describe("useLiveQuery", () => {
     const { result, unmount } = renderHook(() => useLiveQuery<Ticket>(client, "tickets"));
 
     await waitFor(() => {
-      expect(result.current.rows).toHaveLength(2);
+      expect(result.current.status).toBe("ok");
+      if (result.current.status === "ok") {
+        expect(result.current.rows).toHaveLength(2);
+      }
     });
     expect(listCalls).toBe(2);
 
@@ -137,9 +139,7 @@ describe("useLiveQuery", () => {
     const client = createBaerlyClient({ baseUrl: "http://x", fetch: m.fetch });
     const { result, unmount } = renderHook(() => useLiveQuery<Ticket>(client, "tickets"));
 
-    await waitFor(() => {
-      expect(result.current.loading).toBe(false);
-    });
+    await waitFor(() => expect(result.current.status).toBe("ok"));
     // Wait long enough that an extra refetch, if it were going to
     // happen, would have settled. The since poll has resolved
     // (sincePoll >= 1) before this fires.
@@ -168,10 +168,7 @@ describe("useLiveQuery", () => {
     const client = createBaerlyClient({ baseUrl: "http://x", fetch: m.fetch });
     const { result, unmount } = renderHook(() => useLiveQuery<Ticket>(client, "tickets"));
 
-    await waitFor(() => {
-      expect(result.current.error).toBeDefined();
-      expect(result.current.loading).toBe(false);
-    });
+    await waitFor(() => expect(result.current.status).toBe("error"));
 
     unmount();
     for (const r of pendingSinceRejects) {
@@ -238,7 +235,7 @@ describe("useLiveQuery", () => {
     expect(listSignal!.aborted).toBe(true);
     // No fetch-error leaked through to a setState-after-unmount —
     // result is frozen as of the unmounted snapshot.
-    expect(result.current.error).toBeUndefined();
+    expect(result.current.status).toBe("loading");
 
     for (const r of pendingSinceRejects) {
       r(new Error("test teardown"));
@@ -277,7 +274,12 @@ describe("useLiveQuery", () => {
 
     expect(seenSignals[0]!.aborted).toBe(true);
     expect(seenSignals[1]!.aborted).toBe(false);
-    await waitFor(() => expect(result.current.rows).toHaveLength(1));
+    await waitFor(() => {
+      expect(result.current.status).toBe("ok");
+      if (result.current.status === "ok") {
+        expect(result.current.rows).toHaveLength(1);
+      }
+    });
 
     unmount();
     for (const r of pendingSinceRejects) {
@@ -301,7 +303,7 @@ describe("useLiveQuery", () => {
       { initialProps: { tick: 0 } },
     );
 
-    await waitFor(() => expect(result.current.loading).toBe(false));
+    await waitFor(() => expect(result.current.status).toBe("ok"));
     expect(listCalls).toBe(1);
 
     rerender({ tick: 1 });

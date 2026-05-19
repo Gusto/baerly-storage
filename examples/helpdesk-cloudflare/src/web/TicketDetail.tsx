@@ -9,17 +9,18 @@ interface Props {
 }
 
 export const TicketDetail = ({ id, onEdit, onBack }: Props): React.JSX.Element => {
-  const { row: t, loading, error } = useLiveDocument<Ticket>(client, "tickets", id);
+  const result = useLiveDocument<Ticket>(client, "tickets", id);
 
-  if (error !== undefined) {
-    return <p style={{ color: "crimson" }}>Error: {error.message}</p>;
+  if (result.status === "error") {
+    return <p style={{ color: "crimson" }}>Error: {result.error.message}</p>;
   }
-  if (loading) {
+  if (result.status === "loading") {
     return <p>Loading…</p>;
   }
-  if (t === undefined) {
+  if (result.status === "missing") {
     return <p>Not found.</p>;
   }
+  const t = result.row;
 
   return (
     <div>

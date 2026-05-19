@@ -7,14 +7,14 @@ type Filter = "all" | Ticket["status"];
 
 export const TicketList = ({ onOpen }: { onOpen: (id: string) => void }): React.JSX.Element => {
   const [filter, setFilter] = useState<Filter>("all");
-  const { rows, loading, error } = useLiveQuery<Ticket>(
+  const result = useLiveQuery<Ticket>(
     client,
     "tickets",
     filter === "all" ? {} : { status: filter },
   );
 
-  if (error !== undefined) {
-    return <p style={{ color: "crimson" }}>Error: {error.message}</p>;
+  if (result.status === "error") {
+    return <p style={{ color: "crimson" }}>Error: {result.error.message}</p>;
   }
 
   return (
@@ -32,9 +32,11 @@ export const TicketList = ({ onOpen }: { onOpen: (id: string) => void }): React.
           </select>
         </label>
       </div>
-      {loading && <p>Loading…</p>}
-      {!loading && rows.length === 0 && <p>No tickets. Click "+ New ticket".</p>}
-      {!loading && rows.length > 0 && (
+      {result.status === "loading" && <p>Loading…</p>}
+      {result.status === "ok" && result.rows.length === 0 && (
+        <p>No tickets. Click "+ New ticket".</p>
+      )}
+      {result.status === "ok" && result.rows.length > 0 && (
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead>
             <tr>
@@ -45,7 +47,7 @@ export const TicketList = ({ onOpen }: { onOpen: (id: string) => void }): React.
             </tr>
           </thead>
           <tbody>
-            {rows.map((t) => (
+            {result.rows.map((t) => (
               <tr key={t._id} style={{ cursor: "pointer" }} onClick={() => onOpen(t._id)}>
                 <td>{t.title}</td>
                 <td>{t.status}</td>

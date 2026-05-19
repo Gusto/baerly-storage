@@ -11,7 +11,7 @@ Today:
 ```ts
 useLiveQuery(client, table, predicate?, opts?)
 useLiveDocument(client, table, id, opts?)
-useChanges(client, table, opts?)
+useInvalidationTick(client, table, opts?)
 ```
 
 Four positional args, third optional, leaves call sites like:
@@ -32,7 +32,7 @@ here for no benefit.
 ```ts
 useLiveQuery({ client, table, where?, enabled?, since? })
 useLiveDocument({ client, table, id, enabled?, since? })
-useChanges({ client, table, since?, enabled? })
+useInvalidationTick({ client, table, since?, enabled? })
 ```
 
 **Option B — context-injected client + options bag** (TanStack

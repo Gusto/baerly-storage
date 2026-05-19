@@ -50,7 +50,8 @@ follow them literally.
     await tx.where({ _id }).update({ column: newColumn, updated_at: Date.now() });
   })`
 - Long-poll re-render (so the OTHER window sees the move):
-  `useChanges(client, "cards")` from `@baerly/client/react`
+  `useLiveQuery(client, "cards")` from `@baerly/client/react` (or
+  `useInvalidationTick` if you want to invalidate a custom store)
 - The move handler catches `BaerlyError` with `code === "Conflict"`
   and surfaces it to the client.
 
@@ -67,8 +68,8 @@ not modify the checker script.** Each is binary pass/fail.
 - [ ] The handler catches `BaerlyError` with `code === "Conflict"`
       and returns a 409 (or equivalent) to the client.
 - [ ] The initial board fetch uses `.consistency("eventual")`.
-- [ ] Long-poll re-render is wired via `useChanges` or
-      `client.since(...)`.
+- [ ] Long-poll re-render is wired via `useLiveQuery`,
+      `useInvalidationTick`, or `client.since(...)`.
 - [ ] No `db._raw` usage.
 - [ ] All reads go through `db.table(...)`.
 

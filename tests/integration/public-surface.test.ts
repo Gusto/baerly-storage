@@ -174,13 +174,13 @@ describe("baerly-storage/client", () => {
 // ---------------------------------------------------------------------------
 // baerly-storage/client/react
 // ---------------------------------------------------------------------------
-import { useChanges, useLiveDocument, useLiveQuery } from "baerly-storage/client/react";
+import { useInvalidationTick, useLiveDocument, useLiveQuery } from "baerly-storage/client/react";
 
 describe("baerly-storage/client/react", () => {
   test("imports resolve", () => {
     expect(typeof useLiveQuery).toBe("function");
     expect(typeof useLiveDocument).toBe("function");
-    expect(typeof useChanges).toBe("function");
+    expect(typeof useInvalidationTick).toBe("function");
   });
 });
 

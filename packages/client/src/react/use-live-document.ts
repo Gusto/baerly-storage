@@ -1,42 +1,44 @@
-import { useEffect, useRef, useState } from "react";
-import type { JSONArraylessObject, Predicate } from "@baerly/protocol";
+import { useCallback, useEffect, useState } from "react";
+import type { JSONArraylessObject, LogEntry, Predicate } from "@baerly/protocol";
 import type { BaerlyClient } from "../client.ts";
-import { useChanges } from "./use-changes.ts";
+import { useInvalidationTick } from "./use-invalidation-tick.ts";
 
 export interface UseLiveDocumentOptions {
   /** When `false`, suspends both the initial read and the subscription. Default `true`. */
   readonly enabled?: boolean;
 }
 
-export interface UseLiveDocumentResult<T> {
-  /**
-   * Current document, or `undefined` if the row does not exist (a
-   * server 404) or has not been read yet. `loading` discriminates
-   * "not yet read" from "read and confirmed missing."
-   */
-  readonly row: T | undefined;
-  /** `true` while the first read is in flight (cleared after first success). */
-  readonly loading: boolean;
-  /** Most recent read or subscription error. Cleared on the next successful read. */
-  readonly error: Error | undefined;
-}
+/**
+ * Live document result. The `status` field discriminates the four
+ * possible states — narrow on it to access `row` / `error` safely.
+ *
+ * - `"loading"` — the first read is in flight.
+ * - `"ok"` — the most recent read returned a row; `row` is populated.
+ * - `"missing"` — the most recent read confirmed no row exists for `id`.
+ * - `"error"` — the most recent read failed; `error` is populated.
+ */
+export type UseLiveDocumentResult<T> =
+  | { readonly status: "loading" }
+  | { readonly status: "ok"; readonly row: T }
+  | { readonly status: "missing" }
+  | { readonly status: "error"; readonly error: Error };
 
 /**
  * Declarative live document. Subscribes to `table` and re-reads
- * `.where({ _id: id }).first()` whenever a log event arrives whose
- * `doc_id` matches `id`. Events for unrelated rows do not trigger a
- * refetch.
+ * `.where({ _id: id }).first()` whenever the server emits a log
+ * event for `id`. Events for unrelated rows do not trigger a refetch.
  *
- * Idle long-poll cycles are dropped at the {@link useChanges} layer,
- * so a steady-state document costs zero reads.
+ * Idle long-poll cycles are dropped at the
+ * {@link useInvalidationTick} layer, so a steady-state document
+ * costs zero reads.
  *
  * @example
  * ```tsx
- * const { row, loading, error } = useLiveDocument<Ticket>(client, "tickets", id);
- * if (error) return <p>Error: {error.message}</p>;
- * if (loading) return <p>Loading…</p>;
- * if (row === undefined) return <p>Not found.</p>;
- * return <h2>{row.title}</h2>;
+ * const result = useLiveDocument<Ticket>(client, "tickets", id);
+ * if (result.status === "loading") return <p>Loading…</p>;
+ * if (result.status === "error") return <p>Error: {result.error.message}</p>;
+ * if (result.status === "missing") return <p>Not found.</p>;
+ * return <h2>{result.row.title}</h2>;
  * ```
  */
 export const useLiveDocument = <T extends JSONArraylessObject = JSONArraylessObject>(
@@ -46,75 +48,46 @@ export const useLiveDocument = <T extends JSONArraylessObject = JSONArraylessObj
   opts: UseLiveDocumentOptions = {},
 ): UseLiveDocumentResult<T> => {
   const { enabled = true } = opts;
-  const [row, setRow] = useState<T | undefined>(undefined);
-  const [loading, setLoading] = useState<boolean>(true);
-  const [fetchError, setFetchError] = useState<Error | undefined>(undefined);
+  const [state, setState] = useState<UseLiveDocumentResult<T>>({ status: "loading" });
 
-  const { events, error: pollError } = useChanges(client, table, { enabled });
-
-  // Tick counter that advances iff a non-empty event batch contained
-  // an op touching this `id`. The fetch effect depends on the tick,
-  // so events for unrelated rows do not trigger a re-read. The
-  // `lastSeenLsn` ref dedupes when a batch is re-presented (cannot
-  // happen with the current useChanges semantics but is cheap to
-  // guard against).
-  const [matchTick, setMatchTick] = useState<number>(0);
-  const lastSeenLsn = useRef<string>("");
-  useEffect(() => {
-    const last = events.findLast?.((e) => e.doc_id === id) ?? findLastMatch(events, id);
-    if (last !== undefined && last.lsn !== lastSeenLsn.current) {
-      lastSeenLsn.current = last.lsn;
-      setMatchTick((t) => t + 1);
-    }
-  }, [events, id]);
+  const matchEvent = useCallback((event: LogEntry): boolean => event.doc_id === id, [id]);
+  const tick = useInvalidationTick(client, table, { enabled, matchEvent });
 
   useEffect(() => {
     if (!enabled) {
-      setLoading(false);
       return undefined;
     }
     const controller = new AbortController();
-    setLoading(true);
+    setState((prev) => (prev.status === "loading" ? prev : { status: "loading" }));
     void (async () => {
       try {
         const next = await client
           .table<T>(table)
           .where({ _id: id } as Predicate<T>)
           .first({ signal: controller.signal });
-        setRow(next);
-        setFetchError(undefined);
-      } catch (error) {
-        // See note in `use-live-query.ts`: AbortError here is always
-        // our own cleanup, not a server failure — swallow it.
         if (controller.signal.aborted) {
           return;
         }
-        setFetchError(error instanceof Error ? error : new Error(String(error)));
-      } finally {
-        if (!controller.signal.aborted) {
-          setLoading(false);
+        setState(next === undefined ? { status: "missing" } : { status: "ok", row: next });
+      } catch (error) {
+        // `AbortError` here only ever comes from our own
+        // `controller.abort()` in the cleanup below — the effect
+        // re-ran or the component unmounted. Surfacing it would
+        // trigger a setState-after-unmount React warning and clobber
+        // a still-valid result from the next effect run.
+        if (controller.signal.aborted) {
+          return;
         }
+        setState({
+          status: "error",
+          error: error instanceof Error ? error : new Error(String(error)),
+        });
       }
     })();
     return (): void => {
       controller.abort();
     };
-  }, [client, table, id, enabled, matchTick]);
+  }, [client, table, id, enabled, tick]);
 
-  return { row, loading, error: fetchError ?? pollError };
-};
-
-// `Array.prototype.findLast` is only available on ES2023+ runtimes.
-// Workerd and modern browsers / Node 20+ ship it; provide a tiny
-// fallback for older test runners that intercept the prototype.
-const findLastMatch = <U extends { doc_id?: string }>(
-  arr: ReadonlyArray<U>,
-  id: string,
-): U | undefined => {
-  for (let i = arr.length - 1; i >= 0; i--) {
-    if (arr[i]!.doc_id === id) {
-      return arr[i];
-    }
-  }
-  return undefined;
+  return state;
 };

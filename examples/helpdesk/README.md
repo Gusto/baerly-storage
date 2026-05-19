@@ -73,11 +73,14 @@ on idle long-poll cycles:
 
 ```tsx
 // src/TicketList.tsx
-const { rows, loading, error } = useLiveQuery<Ticket>(
+const result = useLiveQuery<Ticket>(
   client,
   "tickets",
   filter === "all" ? {} : { status: filter },
 );
+if (result.status === "loading") return <p>Loading…</p>;
+if (result.status === "error") return <p>Error: {result.error.message}</p>;
+return <ul>{result.rows.map((t) => <li key={t._id}>{t.title}</li>)}</ul>;
 ```
 
 For a single document, `useLiveDocument` does the same with `.first()`
@@ -85,7 +88,11 @@ and only refetches when an event touches *that* row:
 
 ```tsx
 // src/TicketDetail.tsx
-const { row, loading, error } = useLiveDocument<Ticket>(client, "tickets", id);
+const result = useLiveDocument<Ticket>(client, "tickets", id);
+if (result.status === "loading") return <p>Loading…</p>;
+if (result.status === "missing") return <p>Not found.</p>;
+if (result.status === "error") return <p>Error: {result.error.message}</p>;
+return <h2>{result.row.title}</h2>;
 ```
 
 ## Bucket layout
