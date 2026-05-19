@@ -24,6 +24,10 @@ this folder; invalid / stale items are removed entirely.
 - `schema-lock-json-purpose.md` — was H16
 - `env-example-cf-vs-node-asymmetry.md` — was H27
 - `orphan-fixtures-and-verify-script.md` — was I15 + I19
+- `client-terminals-silently-lie.md` — was E1 + E2 + E3
+- `client-abort-signal-threading.md` — was E5
+- `use-changes-naming-and-contract.md` — was E6
+- `client-delete-404-code-mismatch.md` — was E18
 
 ### Dropped
 
@@ -623,43 +627,6 @@ model invariant).
 
 ### E. Client (browser + React hooks)
 
-#### E1. `ClientTable.order()` is dead code on the wire — **HIGH**
-
-Typed `order()` method on `ClientTable` / `ClientQuery` updates
-`QueryState.order`, but `listParams()` never serializes it; the
-server router passes `order: undefined` unconditionally. A user
-writing `.order({ created_at: "desc" })` silently gets
-unordered rows.
-
-**Fix:** Either thread `order` through the query string and
-have the server consume it, or remove `order()` from the client
-surface for day one. Shipping a fluent method that silently lies
-is the worst outcome.
-
-#### E2. `replace()` is JSON-merge-patch, not replace — **HIGH**
-
-`client.ts:330-348`'s `replace()` sends `PATCH { patch: doc }`
-— identical to `update()`. JSDoc admits this. JSON-merge-patch
-*preserves* keys absent from the patch. A user calling
-`replace(newDoc)` to clear a field gets the old field silently
-retained.
-
-**Fix:** Either delete `replace()` until the server has a real
-PUT route, or implement replace semantics (PUT, or PATCH with
-explicit nulls for removed keys).
-
-#### E3. `count()` secretly downloads every row — **HIGH**
-
-`client.ts:302-312`: no `/v1/count` route exists, so `count()`
-issues a list GET and takes `.length`. An agent calling
-`client.table("tickets").count()` on a 100k-row table
-silently downloads all of them.
-
-**Fix:** Add a `/v1/count` route on the server before public
-release, or remove `count()` from the client surface. A
-method that secretly downloads everything is worse than a
-missing one.
-
 #### E4. `ClientTable` re-declares the protocol's `Table<T>` shape verbatim — **MEDIUM**
 
 `client.ts:60-74,85-102` clones `Table<T>` / `Query<T>` method-
@@ -669,33 +636,6 @@ duplication is load-bearing dead weight.
 
 **Fix:** Reuse `Table<T>` / `Query<T>` from `@baerly/protocol`
 directly. Drop `ClientTable` / `ClientQuery` exports.
-
-#### E5. Terminals do not accept per-call `AbortSignal` — **HIGH**
-
-`first`/`all`/`count`/`insert`/`update`/`replace`/`delete` take
-no options. Only `since()` and `healthz()` accept `{ signal }`.
-Hooks must rely on a client-wide `signal` or unmount-time
-cleanup — neither is correct for "cancel this specific list
-when the predicate changes." `useLiveQuery` uses a `cancelled`
-boolean flag instead of signal threading.
-
-**Fix:** Add `{ signal }` as an optional second arg on every
-terminal. Effect-cleanup `AbortController` should hit the
-in-flight request.
-
-#### E6. `useChanges` exposes the wrong semantics for its name — **HIGH**
-
-JSDoc says "each render sees the latest non-empty batch only" —
-agents will assume `useChanges` accumulates. The doc explicitly
-tells users to `useReducer` themselves to dedup-and-accumulate.
-The only existing consumers (`useLiveQuery`/`useLiveDocument`)
-want a "tick when a refetch is warranted" signal, not raw events.
-
-**Fix:** Either (a) hide `useChanges` and expose
-`useInvalidationTick(client, table, predicate?)` whose result
-is `number`, or (b) make `useChanges` accumulate-and-dedup-by-
-`lsn` by default with `accumulate: false` opt-out. Today's
-contract is a sharp edge with one footnote disclaimer.
 
 #### E7. `useLiveDocument`'s "not yet read" vs "confirmed missing" is implicit — **MEDIUM**
 
@@ -799,15 +739,6 @@ client ever makes."
 
 **Fix:** Rename `globalSignal` or `lifecycleSignal`. Document
 on the field itself.
-
-#### E18. `BaerlyClientError.code === "Internal" && status === 404` is undocumented sentinel for DELETE-404 — **MEDIUM**
-
-`client.ts:367-369` swallows 404 on DELETE by matching `code ===
-"Internal"` (the *request layer's* synth) instead of `"NotFound"`
-(the *route's* envelope). Fragile.
-
-**Fix:** Fix the request layer to preserve `NotFound`
-consistently. Match `code === "NotFound"`.
 
 #### E19. `index.ts` doesn't re-export protocol types — **LOW**
 
