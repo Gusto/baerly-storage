@@ -1,7 +1,6 @@
 import { resolve } from "node:path";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
-import { freeTierBudgetHint } from "baerly-storage/dev";
 import { baerlyDev } from "baerly-storage/dev/vite";
 import { seedTickets } from "./src/server/seed.ts";
 
@@ -16,7 +15,6 @@ export default defineConfig({
       tables: ["tickets"],
       seed: seedTickets,
       hints: [
-        freeTierBudgetHint(),
         { key: "data", value: ".baerly-data/" },
         { key: "reset", value: "pnpm reset" },
       ],

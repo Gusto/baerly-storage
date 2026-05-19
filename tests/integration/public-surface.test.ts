@@ -217,7 +217,6 @@ describe("baerly-storage/client/testing", () => {
 import {
   baerlyDev,
   ensureTable,
-  freeTierBudgetHint,
   LocalFsStorage,
   printDevBanner,
   renderDevLanding,
@@ -228,7 +227,6 @@ describe("baerly-storage/dev", () => {
     expect(typeof LocalFsStorage).toBe("function");
     expect(typeof ensureTable).toBe("function");
     expect(typeof printDevBanner).toBe("function");
-    expect(typeof freeTierBudgetHint).toBe("function");
     expect(typeof renderDevLanding).toBe("function");
     expect(typeof baerlyDev).toBe("function");
   });

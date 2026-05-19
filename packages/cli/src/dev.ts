@@ -35,7 +35,7 @@ import { createServer, type Server } from "node:http";
 import { resolve } from "node:path";
 import { defineCommand, parseArgs, type ArgsDef, type ParsedArgs } from "citty";
 import { createListener } from "@baerly/adapter-node";
-import { LocalFsStorage, ensureTable, freeTierBudgetHint, printDevBanner } from "@baerly/dev";
+import { LocalFsStorage, ensureTable, printDevBanner } from "@baerly/dev";
 import { BaerlyError } from "@baerly/protocol";
 import { sharedSecret } from "@baerly/server";
 import { loadAppConfigWithCollections } from "./config.ts";
@@ -138,7 +138,6 @@ export const runDev = async (opts: {
       name: config.app,
       apiUrl: { label: "api", url: `http://localhost:${boundPort}` },
       hints: [
-        freeTierBudgetHint(),
         { key: "data-dir", value: dataDir },
         { key: "tenant", value: tenant },
         { key: "target", value: config.target },
