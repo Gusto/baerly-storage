@@ -73,32 +73,31 @@ export const useLiveDocument = <T extends JSONArraylessObject = JSONArraylessObj
       setLoading(false);
       return undefined;
     }
-    let cancelled = false;
+    const controller = new AbortController();
     setLoading(true);
     void (async () => {
       try {
         const next = await client
           .table<T>(table)
           .where({ _id: id } as Predicate<T>)
-          .first();
-        if (cancelled) {
-          return;
-        }
+          .first({ signal: controller.signal });
         setRow(next);
         setFetchError(undefined);
       } catch (error) {
-        if (cancelled) {
+        // See note in `use-live-query.ts`: AbortError here is always
+        // our own cleanup, not a server failure — swallow it.
+        if (controller.signal.aborted) {
           return;
         }
         setFetchError(error instanceof Error ? error : new Error(String(error)));
       } finally {
-        if (!cancelled) {
+        if (!controller.signal.aborted) {
           setLoading(false);
         }
       }
     })();
     return (): void => {
-      cancelled = true;
+      controller.abort();
     };
   }, [client, table, id, enabled, matchTick]);
 

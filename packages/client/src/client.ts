@@ -99,10 +99,34 @@ export interface BaerlyClientOptions<TConfig extends BaerlyConfig = UnboundConfi
 }
 
 /**
+ * Trailing-options bag accepted by every terminal. Today this is
+ * only `signal`, so the type is split out for readability rather
+ * than forcing every call site to ascribe `{ signal?: AbortSignal }`.
+ * When other per-call options land (timeout, idempotency key, etc.)
+ * they belong here.
+ */
+export interface TerminalOptions {
+  /**
+   * Cancels this specific request. Merged with
+   * {@link BaerlyClientOptions.signal} — either firing aborts the
+   * underlying `fetch`. React effect cleanup is the canonical caller:
+   *
+   * ```ts
+   * useEffect(() => {
+   *   const ac = new AbortController();
+   *   client.table("tickets").where(p).all({ signal: ac.signal }).then(setRows);
+   *   return () => ac.abort();
+   * }, [predicateKey]);
+   * ```
+   */
+  readonly signal?: AbortSignal;
+}
+
+/**
  * Client-side mirror of `Table<T>` from `@baerly/protocol`. Cheap
- * handle; constructs no I/O. Identical method signatures to the
- * in-process `Table<T>` except for the package they live in — see
- * §3.3 of the ticket for why we do not re-export the protocol type.
+ * handle; constructs no I/O. Same method names as the in-process
+ * `Table<T>`, but every terminal also accepts a trailing
+ * {@link TerminalOptions} bag carrying `{ signal }`.
  *
  * @template T — document shape. `_id` is always present on rows
  *               returned from the server.
@@ -118,9 +142,12 @@ export interface ClientTable<T extends JSONArraylessObject = JSONArraylessObject
   /** Read consistency for terminals on the returned query. Default `strong`. */
   consistency(level: ConsistencyLevel): ClientQuery<T>;
   /** Insert a new document. Returns the server-assigned `_id`. */
-  insert(doc: Partial<T> & JSONArraylessObject): Promise<{ readonly _id: string }>;
+  insert(
+    doc: Partial<T> & JSONArraylessObject,
+    opts?: TerminalOptions,
+  ): Promise<{ readonly _id: string }>;
   /** Count every row in the table (equivalent to `.where({}).count()`). */
-  count(): Promise<number>;
+  count(opts?: TerminalOptions): Promise<number>;
 }
 
 /**
@@ -138,17 +165,17 @@ export interface ClientQuery<T extends JSONArraylessObject = JSONArraylessObject
   limit(n: number): ClientQuery<T>;
   consistency(level: ConsistencyLevel): ClientQuery<T>;
   /** First match or `undefined`. Issues `GET /v1/t/:table?...&limit=1`. */
-  first(): Promise<T | undefined>;
+  first(opts?: TerminalOptions): Promise<T | undefined>;
   /** Every matching document. Pair with `.limit(n)` on large tables. */
-  all(): Promise<T[]>;
+  all(opts?: TerminalOptions): Promise<T[]>;
   /** Count matching rows. Issues `GET /v1/t/:table?where=&limit=` then `.length`. */
-  count(): Promise<number>;
+  count(opts?: TerminalOptions): Promise<number>;
   /** JSON-merge-patch applied to the single matching row. Requires `.where({ _id })`. */
-  update(patch: Partial<T>): Promise<{ readonly modified: number }>;
+  update(patch: Partial<T>, opts?: TerminalOptions): Promise<{ readonly modified: number }>;
   /** Whole-document replace on the single matching row. Requires `.where({ _id })`. */
-  replace(doc: T): Promise<void>;
+  replace(doc: T, opts?: TerminalOptions): Promise<void>;
   /** Delete the single matching row. Returns `{ deleted: 0 }` on 404 (not an error). */
-  delete(): Promise<{ readonly deleted: number }>;
+  delete(opts?: TerminalOptions): Promise<{ readonly deleted: number }>;
 }
 
 /**
@@ -293,15 +320,16 @@ const makeClientTable = <T extends JSONArraylessObject>(
     order: (spec) => tableForQuery.order(spec),
     limit: (n) => tableForQuery.limit(n),
     consistency: (level) => tableForQuery.consistency(level),
-    async insert(doc): Promise<{ readonly _id: string }> {
+    async insert(doc, opts): Promise<{ readonly _id: string }> {
       return request<{ _id: string }>(ctx, {
         method: "POST",
         path: `/v1/t/${encodeURIComponent(name)}`,
         body: { doc },
+        signal: opts?.signal,
       });
     },
-    async count(): Promise<number> {
-      return tableForQuery.count();
+    async count(opts): Promise<number> {
+      return tableForQuery.count(opts);
     },
   };
 };
@@ -355,24 +383,26 @@ const makeClientQuery = <T extends JSONArraylessObject>(
     consistency: (level): ClientQuery<T> =>
       makeClientQuery<T>(ctx, tableName, { ...state, consistency: level }),
 
-    async first(): Promise<T | undefined> {
+    async first(opts): Promise<T | undefined> {
       // Mirrors `Db.first()` which sets `limit: 1` on its underlying
       // list call; override the query-state limit for this terminal
       // only (chained `.limit(n).first()` semantics: `first` wins).
       const data = await request<ReadonlyArray<T>>(ctx, {
         method: "GET",
         path: listPath({ limit: 1 }),
+        signal: opts?.signal,
       });
       return data[0];
     },
-    async all(): Promise<T[]> {
+    async all(opts): Promise<T[]> {
       const data = await request<ReadonlyArray<T>>(ctx, {
         method: "GET",
         path: listPath(),
+        signal: opts?.signal,
       });
       return [...data];
     },
-    async count(): Promise<number> {
+    async count(opts): Promise<number> {
       // No dedicated `/v1/count` route exists (router.ts:130 lists
       // only the six locked routes). We issue
       // the list and take `.length`. When/if a count route lands,
@@ -380,11 +410,12 @@ const makeClientQuery = <T extends JSONArraylessObject>(
       const data = await request<ReadonlyArray<T>>(ctx, {
         method: "GET",
         path: listPath(),
+        signal: opts?.signal,
       });
       return data.length;
     },
 
-    async update(patch): Promise<{ readonly modified: number }> {
+    async update(patch, opts): Promise<{ readonly modified: number }> {
       const id = singleIdFromPredicate(state.predicate);
       if (id === undefined) {
         throw new BaerlyClientError(
@@ -396,11 +427,12 @@ const makeClientQuery = <T extends JSONArraylessObject>(
         method: "PATCH",
         path: `/v1/t/${encodeURIComponent(tableName)}/${encodeURIComponent(id)}`,
         body: { patch },
+        signal: opts?.signal,
       });
       return data;
     },
 
-    async replace(doc): Promise<void> {
+    async replace(doc, opts): Promise<void> {
       const id = singleIdFromPredicate(state.predicate);
       if (id === undefined) {
         throw new BaerlyClientError(
@@ -417,10 +449,11 @@ const makeClientQuery = <T extends JSONArraylessObject>(
         method: "PATCH",
         path: `/v1/t/${encodeURIComponent(tableName)}/${encodeURIComponent(id)}`,
         body: { patch: doc },
+        signal: opts?.signal,
       });
     },
 
-    async delete(): Promise<{ readonly deleted: number }> {
+    async delete(opts): Promise<{ readonly deleted: number }> {
       const id = singleIdFromPredicate(state.predicate);
       if (id === undefined) {
         throw new BaerlyClientError(
@@ -432,6 +465,7 @@ const makeClientQuery = <T extends JSONArraylessObject>(
         await request<undefined>(ctx, {
           method: "DELETE",
           path: `/v1/t/${encodeURIComponent(tableName)}/${encodeURIComponent(id)}`,
+          signal: opts?.signal,
         });
         return { deleted: 1 };
       } catch (error) {

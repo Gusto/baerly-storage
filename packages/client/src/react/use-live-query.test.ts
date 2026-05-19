@@ -209,6 +209,82 @@ describe("useLiveQuery", () => {
     }
   });
 
+  test("unmount aborts an in-flight list fetch", async () => {
+    const { m, pendingSinceRejects, hangSince } = makeMock();
+    let listSignal: AbortSignal | undefined;
+    m.on(
+      "GET",
+      "/v1/t/tickets",
+      (req) =>
+        new Promise<Response>((_resolve, reject) => {
+          listSignal = req.signal;
+          req.signal.addEventListener(
+            "abort",
+            () => reject(new DOMException("aborted", "AbortError")),
+            { once: true },
+          );
+        }),
+    );
+    m.on("GET", "/v1/since", hangSince);
+
+    const client = createBaerlyClient({ baseUrl: "http://x", fetch: m.fetch });
+    const { result, unmount } = renderHook(() => useLiveQuery<Ticket>(client, "tickets"));
+
+    // Give the effect a tick to dispatch the list fetch.
+    await waitFor(() => expect(listSignal).toBeDefined());
+    expect(listSignal!.aborted).toBe(false);
+
+    unmount();
+    expect(listSignal!.aborted).toBe(true);
+    // No fetch-error leaked through to a setState-after-unmount —
+    // result is frozen as of the unmounted snapshot.
+    expect(result.current.error).toBeUndefined();
+
+    for (const r of pendingSinceRejects) {
+      r(new Error("test teardown"));
+    }
+  });
+
+  test("predicate change aborts the previous in-flight list fetch", async () => {
+    const { m, pendingSinceRejects, hangSince } = makeMock();
+    const seenSignals: AbortSignal[] = [];
+    m.on("GET", "/v1/t/tickets", (req) => {
+      const ix = seenSignals.length;
+      seenSignals.push(req.signal);
+      return new Promise<Response>((resolve, reject) => {
+        req.signal.addEventListener(
+          "abort",
+          () => reject(new DOMException("aborted", "AbortError")),
+          { once: true },
+        );
+        // Only the most-recent dispatch resolves with data.
+        if (ix > 0) {
+          resolve(okEnvelope([{ _id: "a", title: "ok", status: "closed" }]));
+        }
+      });
+    });
+    m.on("GET", "/v1/since", hangSince);
+
+    const client = createBaerlyClient({ baseUrl: "http://x", fetch: m.fetch });
+    const { rerender, result, unmount } = renderHook(
+      ({ status }: { status: string }) => useLiveQuery<Ticket>(client, "tickets", { status }),
+      { initialProps: { status: "open" } },
+    );
+
+    await waitFor(() => expect(seenSignals.length).toBe(1));
+    rerender({ status: "closed" });
+    await waitFor(() => expect(seenSignals.length).toBe(2));
+
+    expect(seenSignals[0]!.aborted).toBe(true);
+    expect(seenSignals[1]!.aborted).toBe(false);
+    await waitFor(() => expect(result.current.rows).toHaveLength(1));
+
+    unmount();
+    for (const r of pendingSinceRejects) {
+      r(new Error("test teardown"));
+    }
+  });
+
   test("inline predicate object does not churn refetches across renders", async () => {
     const { m, pendingSinceRejects, hangSince } = makeMock();
     let listCalls = 0;

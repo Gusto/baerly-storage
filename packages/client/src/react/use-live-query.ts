@@ -71,29 +71,34 @@ export const useLiveQuery = <T extends JSONArraylessObject = JSONArraylessObject
       setLoading(false);
       return undefined;
     }
-    let cancelled = false;
+    const controller = new AbortController();
     setLoading(true);
     void (async () => {
       try {
-        const next = await client.table<T>(table).where(predicateRef.current).all();
-        if (cancelled) {
-          return;
-        }
+        const next = await client
+          .table<T>(table)
+          .where(predicateRef.current)
+          .all({ signal: controller.signal });
         setRows(next);
         setFetchError(undefined);
       } catch (error) {
-        if (cancelled) {
+        // `AbortError` here only ever comes from our own `controller.abort()`
+        // in the cleanup below — the effect re-ran or the component
+        // unmounted. Either way the caller is gone; surfacing the
+        // throw would trigger a setState-after-unmount React warning
+        // and clobber a still-valid result from the next effect run.
+        if (controller.signal.aborted) {
           return;
         }
         setFetchError(error instanceof Error ? error : new Error(String(error)));
       } finally {
-        if (!cancelled) {
+        if (!controller.signal.aborted) {
           setLoading(false);
         }
       }
     })();
     return (): void => {
-      cancelled = true;
+      controller.abort();
     };
   }, [client, table, predicateKey, cursor, enabled]);
 

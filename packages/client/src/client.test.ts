@@ -174,6 +174,61 @@ describe("createBaerlyClient", () => {
     await client.table("tickets").consistency("eventual").where({}).all();
   });
 
+  // Mirrors what a real `fetch` does with an aborted signal: reject
+  // immediately if already aborted, otherwise reject when it fires.
+  const hangUntilAbort = (req: Request): Promise<Response> =>
+    new Promise<Response>((_resolve, reject) => {
+      if (req.signal.aborted) {
+        reject(new DOMException("aborted", "AbortError"));
+        return;
+      }
+      req.signal.addEventListener(
+        "abort",
+        () => reject(new DOMException("aborted", "AbortError")),
+        { once: true },
+      );
+    });
+
+  test("per-call signal aborts an in-flight terminal request", async () => {
+    const mock = new MockFetch();
+    let sawSignal: AbortSignal | undefined;
+    mock.on("GET", "/v1/t/tickets", (req) => {
+      sawSignal = req.signal;
+      return hangUntilAbort(req);
+    });
+    const client = createBaerlyClient({ baseUrl: "http://x", fetch: mock.fetch });
+    const controller = new AbortController();
+    const inflight = client.table("tickets").where({}).all({ signal: controller.signal });
+    controller.abort();
+    await expect(inflight).rejects.toMatchObject({ name: "AbortError" });
+    expect(sawSignal?.aborted).toBe(true);
+  });
+
+  test("constructor signal and per-call signal both abort (signals are merged)", async () => {
+    const mock = new MockFetch();
+    mock.on("PATCH", "/v1/t/tickets/:id", hangUntilAbort);
+    const lifecycle = new AbortController();
+    const client = createBaerlyClient({
+      baseUrl: "http://x",
+      fetch: mock.fetch,
+      signal: lifecycle.signal,
+    });
+    // Lifecycle signal fires → in-flight PATCH aborts.
+    const inflight = client.table("tickets").where({ _id: "x" }).update({ title: "y" });
+    lifecycle.abort();
+    await expect(inflight).rejects.toMatchObject({ name: "AbortError" });
+
+    // Fresh client, per-call signal fires → in-flight PATCH aborts.
+    const client2 = createBaerlyClient({ baseUrl: "http://x", fetch: mock.fetch });
+    const perCall = new AbortController();
+    const inflight2 = client2
+      .table("tickets")
+      .where({ _id: "x" })
+      .update({ title: "y" }, { signal: perCall.signal });
+    perCall.abort();
+    await expect(inflight2).rejects.toMatchObject({ name: "AbortError" });
+  });
+
   test("missing data field on 200 throws InvalidResponse", async () => {
     const mock = new MockFetch();
     mock.on("GET", "/v1/t/tickets", () => jsonResponse({ rubbish: 1 }));
