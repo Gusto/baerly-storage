@@ -41,7 +41,6 @@ const getBinding = (): R2Bucket => {
 const makeEnv = (bucket: R2Bucket): Env => ({
   BUCKET: bucket,
   APP: "tickets",
-  TENANT: "", // ignored when a verifier is supplied
 });
 
 const makeCtx = (): ExecutionContext => ({
@@ -106,8 +105,8 @@ const freshTable = (() => {
 describe("baerlyWorker routes", () => {
   test("baerlyWorker without a verifier is a type error", () => {
     // The `verifier` field is required on `BaerlyWorkerOptions` —
-    // omitting it must fail at type-check time so multi-tenant
-    // Workers can't silently fall back to `env.TENANT`.
+    // omitting it must fail at type-check time. Tenant resolution
+    // is owned by the verifier; there's no env-var fallback.
     // @ts-expect-error verifier is required
     baerlyWorker({});
   });

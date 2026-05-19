@@ -24,7 +24,7 @@ export type { S3HttpStorageOptions } from "@baerly/protocol";
 
 // Worker module-default + Cron Trigger surface.
 export { baerlyWorker } from "./worker.ts";
-export type { BaerlyWorkerOptions, Env, WorkerHandler, WorkerScheduledHandler } from "./worker.ts";
+export type { BaerlyWorkerOptions, Env, WorkerScheduledHandler } from "./worker.ts";
 
 // Dev-only convenience verifier. **Not** for production use — see
 // the JSDoc on the helper itself.

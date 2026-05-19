@@ -4,42 +4,16 @@
    document shapes. */
 
 /**
- * `baerlyWorker()` Cron Trigger handler test. Runs under the
- * `cloudflare-pool` vitest project (workerd + miniflare) so the
- * `ExecutionContext` / `ScheduledController` types resolve and the
- * R2 binding is real.
- *
- * Three cases:
- *   - free-tier even-minute branch invokes `compact()` directly ⇒
- *     compact lands (snapshot pointer set), GC does not.
- *   - free-tier odd-minute branch invokes `runGc()` directly ⇒
- *     `pending.json` is bootstrapped, no snapshot is written.
- *   - empty `CURRENT_JSON_KEY` is a no-op (nothing touched on the
- *     bucket).
+ * `baerlyWorker()` adapter tests. Runs under the `cloudflare-pool`
+ * vitest project (workerd + miniflare) so the `ExecutionContext` /
+ * `ScheduledController` types resolve and the R2 binding is real.
  */
 
-import {
-  CURRENT_JSON_SCHEMA_VERSION,
-  createCurrentJson,
-  type Storage,
-  type Verifier,
-} from "@baerly/protocol";
-import { ServerWriter } from "@baerly/server";
+import { CURRENT_JSON_SCHEMA_VERSION, createCurrentJson, type Verifier } from "@baerly/protocol";
 import { reset, type LogRecord, type Sink } from "@logtape/logtape";
 import { afterEach, describe, expect, test } from "vitest";
 import { r2BindingStorage } from "./r2-binding-storage.ts";
 import { baerlyWorker, type Env } from "./worker.ts";
-
-/**
- * Stand-in `Verifier` for the scheduled-only tests in this file. The
- * Cron Trigger handler doesn't invoke the verifier, but `baerlyWorker`
- * still requires one at construction time (Task A). Any non-null
- * resolver works.
- */
-const scheduledOnlyVerifier: Verifier = async () => ({
-  tenantPrefix: "x",
-  identity: { kind: "scheduled-test" },
-});
 
 const getBinding = (): R2Bucket => {
   const bucket = (globalThis as { __BAERLY_R2_BINDING__?: R2Bucket }).__BAERLY_R2_BINDING__;
@@ -49,144 +23,54 @@ const getBinding = (): R2Bucket => {
   return bucket;
 };
 
-/**
- * Awaiting-`waitUntil` mock. The production CF runtime fires the
- * `ctx.waitUntil(p)` promise in the background; for the test we
- * collect the promises so the assertions can await them.
- */
-const makeCtx = (): { ctx: ExecutionContext; settled: () => Promise<unknown[]> } => {
-  const pending: Array<Promise<unknown>> = [];
-  const ctx: ExecutionContext = {
-    waitUntil(p: Promise<unknown>): void {
-      pending.push(p);
-    },
-    passThroughOnException(): void {},
-    props: {},
-  };
-  return { ctx, settled: () => Promise.all(pending) };
-};
+const scheduledOnlyVerifier: Verifier = async () => ({
+  tenantPrefix: "x",
+  identity: { kind: "scheduled-test" },
+});
 
-const seed = async (
-  storage: Storage,
-  key: string,
-  collection: string,
-  entries: number,
-): Promise<void> => {
-  await createCurrentJson(storage, key, {
-    schema_version: CURRENT_JSON_SCHEMA_VERSION,
-    snapshot: null,
-    next_seq: 0,
-    log_seq_start: 0,
-    writer_fence: { epoch: 0, owner: "worker-test", claimed_at: "" },
-  });
-  const writer = new ServerWriter({ storage, currentJsonKey: key });
-  for (let i = 0; i < entries; i++) {
-    await writer.commit({
-      op: "I",
-      collection,
-      docId: `d${i}`,
-      body: { _id: `d${i}`, n: i },
-    });
-  }
-};
+const makeScheduledEvent = (): ScheduledController => ({
+  scheduledTime: Date.UTC(2026, 0, 1, 0, 0, 0),
+  cron: "* * * * *",
+  noRetry(): void {},
+});
+
+const makeNoopCtx = (): ExecutionContext => ({
+  waitUntil(): void {},
+  passThroughOnException(): void {},
+  props: {},
+});
 
 describe("baerlyWorker scheduled", () => {
-  test("compacts on an even-minute tick when CURRENT_JSON_KEY is set", async () => {
+  test("no-ops when `options.scheduled` is unset", async () => {
     const bucket = getBinding();
-    const storage = r2BindingStorage(bucket);
-    const key = "app/t/tenant/x/manifests/c/current.json";
-    await seed(storage, key, "c", 60);
-
-    const env: Env = {
-      BUCKET: bucket,
-      APP: "t",
-      TENANT: "x",
-      CURRENT_JSON_KEY: key,
-      CF_TIER: "free",
-    };
+    const env: Env = { BUCKET: bucket, APP: "t" };
     const handler = baerlyWorker({ verifier: scheduledOnlyVerifier });
-    expect(handler.scheduled).toBeDefined();
-    const { ctx, settled } = makeCtx();
+    await expect(
+      handler.scheduled!(makeScheduledEvent(), env, makeNoopCtx()),
+    ).resolves.toBeUndefined();
 
-    // Even minute (0) → compact branch on free tier.
-    const event: ScheduledController = {
-      scheduledTime: Date.UTC(2026, 0, 1, 0, 0, 0),
-      cron: "* * * * *",
-      noRetry(): void {},
-    };
-    await handler.scheduled!(event, env, ctx);
-    await settled();
-
-    // current.json now carries a snapshot pointer.
-    const cur = await storage.get(key);
-    expect(cur).not.toBeNull();
-    const json = JSON.parse(new TextDecoder().decode(cur!.body)) as {
-      snapshot: string | null;
-      log_seq_start?: number;
-    };
-    expect(json.snapshot).not.toBeNull();
-    expect(json.log_seq_start ?? 0).toBeGreaterThan(0);
-    // GC didn't run on the even-minute tick → no pending.json.
-    const pending = await storage.get("app/t/tenant/x/manifests/c/gc/pending.json");
-    expect(pending).toBeNull();
-  });
-
-  test("runs GC on an odd-minute tick when CURRENT_JSON_KEY is set", async () => {
-    const bucket = getBinding();
-    const storage = r2BindingStorage(bucket);
-    const key = "app/t/tenant/x/manifests/c/current.json";
-    await seed(storage, key, "c", 60);
-
-    const env: Env = {
-      BUCKET: bucket,
-      APP: "t",
-      TENANT: "x",
-      CURRENT_JSON_KEY: key,
-      CF_TIER: "free",
-    };
-    const handler = baerlyWorker({ verifier: scheduledOnlyVerifier });
-    const { ctx, settled } = makeCtx();
-    // Odd minute (1) → GC branch on free tier.
-    const event: ScheduledController = {
-      scheduledTime: Date.UTC(2026, 0, 1, 0, 1, 0),
-      cron: "* * * * *",
-      noRetry(): void {},
-    };
-    await handler.scheduled!(event, env, ctx);
-    await settled();
-
-    // GC ran → pending.json was bootstrapped.
-    const pending = await storage.get("app/t/tenant/x/manifests/c/gc/pending.json");
-    expect(pending).not.toBeNull();
-    // Compact didn't run on the odd-minute tick → no snapshot.
-    const cur = await storage.get(key);
-    const json = JSON.parse(new TextDecoder().decode(cur!.body)) as {
-      snapshot: string | null;
-    };
-    expect(json.snapshot).toBeNull();
-  });
-
-  test("no-ops when CURRENT_JSON_KEY is unset", async () => {
-    const bucket = getBinding();
-    const env: Env = {
-      BUCKET: bucket,
-      APP: "t",
-      TENANT: "x",
-      // CURRENT_JSON_KEY intentionally omitted.
-    };
-    const handler = baerlyWorker({ verifier: scheduledOnlyVerifier });
-    const { ctx, settled } = makeCtx();
-    const event: ScheduledController = {
-      scheduledTime: Date.UTC(2026, 0, 1, 0, 0, 0),
-      cron: "* * * * *",
-      noRetry(): void {},
-    };
-    await handler.scheduled!(event, env, ctx);
-    await settled();
-
-    // Nothing was written under the table prefix.
-    const listed = await bucket.list({ prefix: "app/t/tenant/x/" });
+    // Nothing was written anywhere.
+    const listed = await bucket.list({ prefix: "" });
     expect(listed.objects).toHaveLength(0);
+  });
+
+  test("invokes `options.scheduled` with the event/env/ctx triple", async () => {
+    const bucket = getBinding();
+    const env: Env = { BUCKET: bucket, APP: "t" };
+    const calls: Array<[ScheduledController, Env, ExecutionContext]> = [];
+    const handler = baerlyWorker({
+      verifier: scheduledOnlyVerifier,
+      scheduled: (event, e, c) => {
+        calls.push([event, e, c]);
+      },
+    });
+    const event = makeScheduledEvent();
+    const ctx = makeNoopCtx();
+    await handler.scheduled!(event, env, ctx);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]![0]).toBe(event);
+    expect(calls[0]![1]).toBe(env);
+    expect(calls[0]![2]).toBe(ctx);
   });
 });
 
@@ -216,11 +100,6 @@ describe("baerlyWorker observability", () => {
     return { records, sink };
   };
 
-  const obsVerifier: Verifier = async () => ({
-    tenantPrefix: `obs-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`,
-    identity: { kind: "obs-test" },
-  });
-
   const findCanonical = (records: readonly LogRecord[], unit: string): LogRecord | undefined =>
     records.find(
       (r) => r.message.join("") === "canonical" && r.category.join(".") === `baerly.${unit}`,
@@ -245,7 +124,7 @@ describe("baerlyWorker observability", () => {
       verifier,
       observability: { level: "debug", sink, sampleRate: 1 },
     });
-    const env: Env = { BUCKET: bucket, APP: "t", TENANT: tenant };
+    const env: Env = { BUCKET: bucket, APP: "t" };
     const ctx: ExecutionContext = {
       waitUntil(): void {},
       passThroughOnException(): void {},
@@ -290,7 +169,7 @@ describe("baerlyWorker observability", () => {
       writer_fence: { epoch: 0, owner: "obs-miss-test", claimed_at: "" },
     });
 
-    const env: Env = { BUCKET: bucket, APP: "t", TENANT: tenant };
+    const env: Env = { BUCKET: bucket, APP: "t" };
     const makeExec = (): ExecutionContext => ({
       waitUntil(): void {},
       passThroughOnException(): void {},
@@ -359,7 +238,7 @@ describe("baerlyWorker observability", () => {
       writer_fence: { epoch: 0, owner: "obs-hit-test", claimed_at: "" },
     });
 
-    const env: Env = { BUCKET: bucket, APP: "t", TENANT: tenant };
+    const env: Env = { BUCKET: bucket, APP: "t" };
     const makeExec = (): ExecutionContext => ({
       waitUntil(): void {},
       passThroughOnException(): void {},
@@ -405,56 +284,6 @@ describe("baerlyWorker observability", () => {
     expect(props["status"]).toBe(200);
   });
 
-  test("scheduled() emits one maintenance canonical line carrying compactor + gc + storage metrics", async () => {
-    const bucket = getBinding();
-    const storage = r2BindingStorage(bucket);
-    const tenant = `obs-sched-${Date.now().toString(36)}`;
-    const key = `app/t/tenant/${tenant}/manifests/c/current.json`;
-    await seed(storage, key, "c", 30);
-
-    const { records, sink } = collectingSink();
-    const handler = baerlyWorker({
-      verifier: obsVerifier,
-      observability: { level: "debug", sink, sampleRate: 1 },
-    });
-    const env: Env = {
-      BUCKET: bucket,
-      APP: "t",
-      TENANT: tenant,
-      CURRENT_JSON_KEY: key,
-      CF_TIER: "paid",
-    };
-    const { ctx, settled } = makeCtx();
-    const event: ScheduledController = {
-      scheduledTime: Date.UTC(2026, 0, 1, 0, 0, 0),
-      cron: "* * * * *",
-      noRetry(): void {},
-    };
-    await handler.scheduled!(event, env, ctx);
-    await settled();
-
-    // `compact()` and `runGc()` are nesting-aware — they inherit the
-    // outer `withObservability("maintenance")` scope's ctx+recorder
-    // and emit NO separate canonical line. One unit-of-work → one
-    // line, per canonical.ts's invariant.
-    const line = findCanonical(records, "maintenance");
-    expect(line).toBeDefined();
-    const props = line!.properties as Record<string, unknown>;
-    expect(props["outcome"]).toBe("ok");
-
-    // Per-phase gauges/counters land on the maintenance line via the
-    // inherited recorder.
-    expect(props).toHaveProperty("db.orphan.candidate_count");
-    // The storage observer wraps with the ALS-aware tee; under the
-    // maintenance scope it routes class A/B counts onto the
-    // maintenance recorder.
-    expect(props["db.storage.class_b_ops_total"]).toBeGreaterThanOrEqual(1);
-
-    // No nested compactor / gc canonical lines.
-    expect(findCanonical(records, "compactor")).toBeUndefined();
-    expect(findCanonical(records, "gc")).toBeUndefined();
-  });
-
   test("verifier-rejected 401 emits a canonical http line AND the verifier_rejected warn", async () => {
     // Cross-adapter regression-lock: CF and Node must emit the same
     // wire shape AND the same observability record when the verifier
@@ -467,8 +296,8 @@ describe("baerlyWorker observability", () => {
       verifier: denyVerifier,
       observability: { level: "debug", sink, sampleRate: 1 },
     });
-    const env: Env = { BUCKET: bucket, APP: "t", TENANT: "ignored" };
-    const { ctx } = makeCtx();
+    const env: Env = { BUCKET: bucket, APP: "t" };
+    const ctx = makeNoopCtx();
 
     const res = await handler.fetch!(
       new Request("https://x/v1/t/c", { method: "GET" }) as Request<

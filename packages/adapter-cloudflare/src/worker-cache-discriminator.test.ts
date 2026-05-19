@@ -76,7 +76,7 @@ describe("baerlyWorker cache_status", () => {
     // Insert one doc up front via a POST so subsequent GETs have a
     // body to fetch.
     const provisionHandler = baerlyWorker({ verifier });
-    const env: Env = { BUCKET: bucket, APP: "t", TENANT: tenant };
+    const env: Env = { BUCKET: bucket, APP: "t" };
     const insertRes = await provisionHandler.fetch!(
       new Request("https://x/v1/t/c", {
         method: "POST",
@@ -142,7 +142,7 @@ describe("baerlyWorker cache_status", () => {
       writer_fence: { epoch: 0, owner: "cs-bypass-test", claimed_at: "" },
     });
 
-    const env: Env = { BUCKET: bucket, APP: "t", TENANT: tenant };
+    const env: Env = { BUCKET: bucket, APP: "t" };
 
     // Seed one log entry so `/v1/since?cursor=` returns immediately
     // (fast-path: `longPollSince` finds events on the initial poll
@@ -180,5 +180,4 @@ describe("baerlyWorker cache_status", () => {
     expect(props["status"]).toBe(200);
     expect(props["outcome"]).toBe("read");
   });
-
 });

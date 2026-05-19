@@ -13,6 +13,7 @@ import type { FriendlyLogLevel } from "baerly-storage/observability";
 import type { Verifier } from "baerly-storage";
 
 interface AppEnv extends BaerlyEnv {
+  readonly TENANT: string;
   readonly SHARED_SECRET?: string;
   readonly CF_ACCESS_TEAM_DOMAIN?: string;
   readonly CF_ACCESS_AUDIENCE_TAG?: string;

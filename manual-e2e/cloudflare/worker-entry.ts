@@ -16,8 +16,8 @@ import { sharedSecret } from "@baerly/server";
 
 /**
  * Worker env. Adds `SHARED_SECRET` (set via `wrangler secret put
- * SHARED_SECRET`) on top of `baerlyWorker`'s baseline `BUCKET` / `APP`
- * / `TENANT` / `CURRENT_JSON_KEY` / `CF_TIER` shape.
+ * SHARED_SECRET`) on top of `baerlyWorker`'s baseline `BUCKET` /
+ * `APP` shape.
  */
 interface E2eEnv extends BaerlyEnv {
   readonly SHARED_SECRET: string;

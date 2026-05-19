@@ -186,22 +186,17 @@ read it via your editor's TS LS or via the published types).
   is the source of truth for which secrets the Worker reads — keep
   it in sync with the verifier choices in `src/server/index.ts`.
 
-- **Maintenance loop (Cloudflare)** — `wrangler.jsonc`
-  declares `"crons": ["* * * * *"]` (every minute). The Worker's
-  `scheduled` handler reads `env.CURRENT_JSON_KEY` and `env.CF_TIER`
-  and calls `runScheduledMaintenance()` via `ctx.waitUntil()`. Both
-  are optional vars — when `CURRENT_JSON_KEY` is unset the scheduled
-  handler is a no-op (multi-tenant deployments wire their own).
-
-  On **`CF_TIER=free`** (default), the handler alternates: even
-  minutes run `compact()`, odd minutes run `runGc()`. Each phase is
-  sized to fit the 50-subrequest free-tier cap. On **`CF_TIER=paid`**,
-  both phases run every minute (10k-subrequest cap).
-
-  Multi-tenant deployments override the `scheduled` hook on
-  `baerlyWorker({ ... })` to enumerate their own `current.json` keys
-  — see the JSDoc on `WorkerScheduledHandler` in
-  `baerly-storage/cloudflare`.
+- **Maintenance loop (Cloudflare)** — opt-in. Add
+  `"triggers": { "crons": ["* * * * *"] }` to `wrangler.jsonc` and
+  wire `scheduled` on the `baerlyWorker({ ... })` options bag. The
+  handler is your code, so you choose what to call
+  (`runScheduledMaintenance`, `compact`, `runGc`) and which
+  `current.json` keys to target. Multi-tenant deployments iterate
+  their own keys; single-tenant deployments call once with a fixed
+  key. See the JSDoc on `WorkerScheduledHandler` in
+  `baerly-storage/cloudflare` and `runScheduledMaintenance` in
+  `baerly-storage/maintenance` for the wiring + free-vs-paid-tier
+  subrequest-budget guidance.
 
   Maintenance emits one canonical info line per run on stdout
   (Workers Logs ingestion). Filter your log stream on
@@ -209,12 +204,12 @@ read it via your editor's TS LS or via the published types).
 
   - `compact_written` — log entries folded into the new snapshot
     this tick (`0` when the live tail was below
-    `minEntriesToCompact`). Appears on paid-tier ticks only — free
-    tier alternates `compact()` and `runGc()` per minute and emits
-    their per-phase canonical lines (`unit_of_work: "compactor"` /
-    `"gc"`) instead.
+    `minEntriesToCompact`). Only set when the tick called
+    `runScheduledMaintenance` or `compact` directly; isolated
+    `runGc` ticks emit their own `unit_of_work: "gc"` line.
   - `gc_swept` — keys deleted this tick (`0` when no candidates
-    aged out). Same paid-tier-only caveat as `compact_written`.
+    aged out). Only set when the tick called
+    `runScheduledMaintenance` or `runGc` directly.
   - The kernel also emits the recorder-bag fields alongside:
     `db.compact.entries_folded_p50` / `_p99` / `_count` / `_sum`,
     `db.manifest.lag_window_depth`, `db.orphan.candidate_count`,

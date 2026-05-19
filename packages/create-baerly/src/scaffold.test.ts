@@ -87,7 +87,6 @@ describe("scaffold", () => {
     });
     const wrangler = await readFile(join(result.outDir, "wrangler.jsonc"), "utf8");
     expect(wrangler).toContain('"r2_buckets":');
-    expect(wrangler).toContain('"triggers":');
     expect(wrangler).toContain('"limits":');
     expect(wrangler).toContain('"observability":');
     expect(wrangler).toContain('"name": "prod-app"');

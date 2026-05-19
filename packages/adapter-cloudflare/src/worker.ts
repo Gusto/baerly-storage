@@ -2,12 +2,6 @@ import { type DevLandingOptions, renderDevLanding } from "@baerly/dev";
 import { type MetricsRecorder, type Verifier, noopMetricsRecorder } from "@baerly/protocol";
 import { Db, createRouter } from "@baerly/server";
 import {
-  CLOUDFLARE_FREE_TIER,
-  compact,
-  runGc,
-  runScheduledMaintenance,
-} from "@baerly/server/maintenance";
-import {
   type ObservabilityConfig,
   alsAwareRecorder,
   configureObservability,
@@ -34,69 +28,40 @@ const resolveCfSink = (config: ObservabilityConfig | undefined): ObservabilityCo
 };
 
 /**
- * Required Worker bindings. The caller wires these in
- * `wrangler.toml`:
+ * Worker bindings consumed by `baerlyWorker` itself. The caller
+ * wires these in `wrangler.jsonc`:
  *
- *   [[r2_buckets]]
- *   binding = "BUCKET"
- *   bucket_name = "<your-bucket>"
+ *   "r2_buckets": [{ "binding": "BUCKET", "bucket_name": "<your-bucket>" }],
  *
- *   [vars]
- *   APP    = "tickets"
- *   TENANT = "acme-co"
+ *   "vars": { "APP": "tickets" }
  *
- * `TENANT` is **not** special-cased by `baerlyWorker` — the
- * configured `Verifier` resolves the tenant from the request.
- * Single-tenant deployments that want the old "every request pins
- * to `env.TENANT`" behavior pass {@link singleTenantDevVerifier}
- * explicitly: `verifier: singleTenantDevVerifier(env.TENANT)`. The
- * binding is kept on `Env` so callers' existing `wrangler.toml`
- * files stay valid and so app code that wants `env.TENANT` for
- * its own composition (e.g. naming a `CURRENT_JSON_KEY`) can read it.
+ * Tenant resolution is owned by the configured `Verifier`; the
+ * adapter never reads a tenant-shaped env var. App-specific vars
+ * (`SHARED_SECRET`, `CF_ACCESS_*`, `LOG_*`, a `TENANT` literal for
+ * single-tenant `sharedSecret` callers, etc.) belong on the
+ * caller's own env type — extend this one:
  *
- * Optional `CURRENT_JSON_KEY` + `CF_TIER` enable the default Cron
- * Trigger handler — see `scheduled` on {@link baerlyWorker}.
+ * ```ts
+ * import type { Env as BaerlyEnv } from "baerly-storage/cloudflare";
+ *
+ * interface AppEnv extends BaerlyEnv {
+ *   readonly TENANT: string;
+ *   readonly SHARED_SECRET?: string;
+ * }
+ * ```
  */
 export interface Env {
   BUCKET: R2Bucket;
   APP: string;
-  TENANT: string;
-  /**
-   * Optional. Bucket-relative path of the `current.json` to maintain
-   * on every Cron Trigger. Single-tenant Workers pin one table here;
-   * multi-tenant Workers leave it unset and override
-   * `options.scheduled` to enumerate their own tables.
-   *
-   * When unset (or empty), the default scheduled handler is a no-op.
-   */
-  CURRENT_JSON_KEY?: string;
-  /**
-   * Optional. `"free"` (default — 50-subrequest cap, alternates
-   * compact / GC per minute) or `"paid"` (10k cap, runs both phases
-   * every tick). Anything else is treated as `"free"`.
-   */
-  CF_TIER?: "free" | "paid";
 }
 
 /**
- * Custom handler hook. The router ships the full CRUD surface via
- * {@link createRouter}; callers who want to insert a route ahead of
- * the router (e.g. `/v1/admin/*`) wire it here. Returns `undefined`
- * to fall through to the default router.
- */
-export type WorkerHandler = (
-  req: Request,
-  ctx: ExecutionContext,
-  db: Db,
-) => Promise<Response | undefined> | Response | undefined;
-
-/**
- * Custom `scheduled` hook. Replaces the default Cron Trigger handler
- * entirely — useful for multi-tenant deployments that iterate a list
- * of `current.json` keys, or for operators that want bespoke
- * scheduling logic. Returns `void`; lifetime is managed via
- * `ctx.waitUntil()` inside the hook if it needs to outlast the
- * outer handler call.
+ * Cron Trigger handler. Called once per tick when the user has
+ * declared `triggers.crons` in `wrangler.jsonc` AND passed this
+ * option. The body owns its own subrequest budget — wrap any
+ * outlasting work in `ctx.waitUntil(...)`. Multi-tenant deployments
+ * typically iterate a list of `current.json` keys and call
+ * {@link runScheduledMaintenance} per tenant.
  */
 export type WorkerScheduledHandler = (
   event: ScheduledController,
@@ -105,24 +70,9 @@ export type WorkerScheduledHandler = (
 ) => Promise<void> | void;
 
 export interface BaerlyWorkerOptions {
-  readonly handler?: WorkerHandler;
   /**
-   * Optional override for the scheduled (Cron Trigger) tick. The
-   * default handler reads `env.CURRENT_JSON_KEY` (no-op if unset)
-   * and dispatches via `ctx.waitUntil()` based on `env.CF_TIER`:
-   *
-   *   - `"paid"` → one `runScheduledMaintenance()` per tick with
-   *     engine defaults (unbounded). The 10k-subrequest budget
-   *     comfortably folds the whole live tail and runs GC.
-   *   - anything else (free tier) → alternate phases by minute:
-   *     even-minute ticks call `compact()` with the
-   *     {@link CLOUDFLARE_FREE_TIER} compact caps; odd-minute ticks
-   *     call `runGc()` with the {@link CLOUDFLARE_FREE_TIER} gc
-   *     caps. Either phase alone fits well under the 50-subrequest
-   *     free-tier budget; running both per tick can overflow.
-   *
-   * Multi-tenant deployments override here to iterate `current.json`
-   * keys or implement bespoke scheduling.
+   * Cron Trigger handler. When unset, `scheduled()` is a no-op even
+   * if `triggers.crons` is declared. See {@link WorkerScheduledHandler}.
    */
   readonly scheduled?: WorkerScheduledHandler;
   /**
@@ -188,37 +138,23 @@ export interface BaerlyWorkerOptions {
 /**
  * Build a Workers module-default export.
  *
- * Order on `fetch`: **healthz → verifier → handler hook → router**.
- * Health probes don't pay for a Db construction; an auth challenge
- * stops a bad request before any Storage I/O; the custom handler
- * hook still gets first crack at the request after auth; the router
- * catches everything else.
+ * Order on `fetch`: **healthz → verifier → router**. Health probes
+ * don't pay for a Db construction; an auth challenge stops a bad
+ * request before any Storage I/O; the router catches everything else.
  *
  * Observability: every HTTP request that flows past the verifier
  * runs inside a single `runWithContext` scope created up front in
- * this adapter — including the optional `handler` hook and the
- * read-cache wrapper. The canonical line emitted at end-of-request
- * carries a top-level `cache_status: "hit" | "miss" | "bypass"`
- * field so operators can split hit/miss/bypass directly from the
- * log stream without consulting a CDN dashboard. The router's
- * observability middleware detects the ambient context and passes
- * through — the adapter owns the flush.
+ * this adapter — including the read-cache wrapper. The canonical
+ * line emitted at end-of-request carries a top-level
+ * `cache_status: "hit" | "miss" | "bypass"` field so operators can
+ * split hit/miss/bypass directly from the log stream without
+ * consulting a CDN dashboard. The router's observability middleware
+ * detects the ambient context and passes through — the adapter owns
+ * the flush.
  *
- * The `scheduled` handler wires Cron Triggers to the compactor +
- * GC. To enable it, add to `wrangler.toml`:
- *
- * ```toml
- * [triggers]
- * crons = ["* * * * *"]   # every minute
- *
- * [vars]
- * CURRENT_JSON_KEY = "app/tickets/tenant/acme/manifests/tickets/current.json"
- * CF_TIER          = "free"     # or "paid"
- * ```
- *
- * The free-tier handler alternates compaction (even minutes) with GC
- * (odd minutes) to stay under the 50-subrequest free-tier subrequest
- * cap; the paid-tier handler runs both phases every tick.
+ * Cron Triggers are opt-in. Pass `options.scheduled` to wire one;
+ * `wrangler.jsonc:triggers.crons` controls the firing cadence.
+ * When `options.scheduled` is unset the cron tick is a no-op.
  *
  * @example
  * ```ts
@@ -291,11 +227,11 @@ export function baerlyWorker(options: BaerlyWorkerOptions): ExportedHandler<Env>
       }
 
       // Construct the per-request observability context up front so
-      // EVERYTHING downstream — verifier rejection, `Db.create`, the
-      // optional caller handler hook, and the read-cache wrapper —
-      // runs inside the same `runWithContext` scope. Without this
-      // lift, a verifier rejection (or a cache-hit short-circuit)
-      // would bypass canonical-line emission entirely.
+      // EVERYTHING downstream — verifier rejection, `Db.create`, and
+      // the read-cache wrapper — runs inside the same
+      // `runWithContext` scope. Without this lift, a verifier
+      // rejection (or a cache-hit short-circuit) would bypass
+      // canonical-line emission entirely.
       //
       // The router's observability middleware (see `router.ts`
       // "Mode A") detects the ambient context and passes through —
@@ -309,8 +245,6 @@ export function baerlyWorker(options: BaerlyWorkerOptions): ExportedHandler<Env>
       });
 
       // Tenant resolution: the Verifier owns it unconditionally.
-      // Single-tenant dev wires `singleTenantDevVerifier(env.TENANT)`
-      // explicitly — `env.TENANT` is no longer a silent fallback.
       const result = await options.verifier(req);
       if (result === null) {
         return runWithContext(obsCtx, async () => flushUnauthorizedAndRespond(obsCtx, req));
@@ -331,23 +265,6 @@ export function baerlyWorker(options: BaerlyWorkerOptions): ExportedHandler<Env>
           tenant: tenantPrefix,
           metrics: teeRecorder,
         });
-
-        // Caller hook can short-circuit the router. Returns undefined → fall through.
-        // Runs inside `runWithContext` so any emissions it makes
-        // (e.g. via `getCurrentContext()?.fields.set(...)`) land on
-        // the same canonical line we flush below.
-        if (options.handler !== undefined) {
-          const out = await options.handler(req, ctx, db);
-          if (out !== undefined) {
-            flushCanonicalLine(obsCtx, obsCtx.recorder, {
-              unit: "http",
-              status: out.status,
-              outcome: deriveOutcome(req.method, out.status),
-              extra: { method: req.method, path: new URL(req.url).pathname },
-            });
-            return out;
-          }
-        }
 
         const app = createRouter({
           db,
@@ -398,53 +315,6 @@ export function baerlyWorker(options: BaerlyWorkerOptions): ExportedHandler<Env>
       await ensureObservability();
       if (options.scheduled !== undefined) {
         await options.scheduled(event, env, ctx);
-        return;
-      }
-      if (env.CURRENT_JSON_KEY === undefined || env.CURRENT_JSON_KEY === "") {
-        // Single-tenant default needs a target; multi-tenant
-        // deployments override `options.scheduled` explicitly.
-        return;
-      }
-      const isPaid = env.CF_TIER === "paid";
-      // Storage wrapping mirrors the fetch path so the maintenance
-      // canonical line (emitted by `withObservability("maintenance")`
-      // inside `runScheduledMaintenance` / `compact` / `runGc`)
-      // carries per-call storage counts too.
-      const storage = observableStorage(r2BindingStorage(env.BUCKET), teeRecorder);
-      const minute = new Date(event.scheduledTime).getUTCMinutes();
-      const args = { storage, currentJsonKey: env.CURRENT_JSON_KEY };
-      // `metrics:` is the bare `operatorRecorder` here — the cron
-      // path opens its own `withObservability` scope inside
-      // `runScheduledMaintenance` / `compact` / `runGc`, and
-      // `compactInner`/`runGcInner` already tee operator with the
-      // scope's per-run recorder for canonical-line fill. Passing
-      // the ALS-aware `teeRecorder` would double-write the bag (the
-      // ALS lookup resolves to the same recorder the inner tee writes
-      // to). `teeRecorder` stays on `observableStorage` because the
-      // storage observer has no scope-managed bag of its own.
-      if (isPaid) {
-        // Paid tier has 10k subrequest budget — let engine defaults
-        // (unbounded) fold the whole live tail in one tick.
-        ctx.waitUntil(
-          runScheduledMaintenance(args, { metrics: operatorRecorder }).then(() => undefined),
-        );
-      } else if (minute % 2 === 0) {
-        // Free tier: even-minute compact-only. CLOUDFLARE_FREE_TIER's
-        // compact bounds (maxEntriesPerRun: 20, minEntriesToCompact: 50)
-        // ride along on the spread at runtime.
-        ctx.waitUntil(
-          compact(args, { ...CLOUDFLARE_FREE_TIER.compact, metrics: operatorRecorder }).then(
-            () => undefined,
-          ),
-        );
-      } else {
-        // Free tier: odd-minute gc-only. CLOUDFLARE_FREE_TIER's gc bounds
-        // (maxMarksPerRun: 20, maxSweepsPerRun: 10) ride along.
-        ctx.waitUntil(
-          runGc(args, { ...CLOUDFLARE_FREE_TIER.gc, metrics: operatorRecorder }).then(
-            () => undefined,
-          ),
-        );
       }
     },
   };

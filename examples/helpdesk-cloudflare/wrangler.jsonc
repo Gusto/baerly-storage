@@ -27,10 +27,6 @@
     "LOG_SAMPLE": "0.1",
   },
 
-  "triggers": {
-    "crons": ["* * * * *"],
-  },
-
   "limits": {
     "cpu_ms": 50,
   },

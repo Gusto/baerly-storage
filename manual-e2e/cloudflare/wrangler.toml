@@ -14,20 +14,17 @@ binding = "BUCKET"
 bucket_name = "baerly-e2e-cf"
 
 # Single-tenant check deploy. The inline sharedSecret Verifier pins
-# tenantPrefix to "default"; TENANT is ignored when a Verifier is
-# wired (baerlyWorker reads tenantPrefix off the Verifier result).
+# tenantPrefix to "default"; the adapter resolves the tenant from
+# the Verifier, so no TENANT var is needed in the wrangler config.
 [vars]
 APP = "e2e"
-TENANT = "default"
 
 # SHARED_SECRET is injected via `wrangler secret put SHARED_SECRET`
 # at deploy time, NOT committed to this file. See manual-e2e/README.md.
 
-# Optional: Cron Trigger for the maintenance loop. Enabled
-# for the check so we exercise the scheduled-handler path on the real
-# Worker too.
-[triggers]
-crons = ["* * * * *"]
+# Cron Triggers are opt-in. The e2e check doesn't exercise the
+# scheduled path; wire `scheduled` on `baerlyWorker({ ... })` and
+# add a `[triggers] crons = [...]` block here to enable.
 
 # Standard plan — required for the 25s long-poll budget. Free tier
 # (10ms CPU) cannot complete the long-poll cascade.
