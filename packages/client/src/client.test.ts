@@ -80,7 +80,7 @@ describe("createBaerlyClient", () => {
   test("delete() returns { deleted: 0 } on 404 (not an error)", async () => {
     const mock = new MockFetch();
     mock.on("DELETE", "/v1/t/tickets/:id", () =>
-      jsonResponse({ error: { code: "Internal", message: "No such row: x" } }, 404),
+      jsonResponse({ error: { code: "NotFound", message: "No such row: x" } }, 404),
     );
     const client = createBaerlyClient({ baseUrl: "http://x", fetch: mock.fetch });
     const res = await client.table("tickets").where({ _id: "x" }).delete();

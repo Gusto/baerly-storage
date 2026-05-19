@@ -471,11 +471,7 @@ const makeClientQuery = <T extends JSONArraylessObject>(
       } catch (error) {
         // 404 on DELETE → "no row matched". Mirrors `Query.delete()`
         // which returns `{ deleted: 0 }` rather than throwing.
-        if (
-          error instanceof BaerlyClientError &&
-          error.code === "Internal" &&
-          error.status === 404
-        ) {
+        if (error instanceof BaerlyClientError && error.code === "NotFound") {
           return { deleted: 0 };
         }
         throw error;
