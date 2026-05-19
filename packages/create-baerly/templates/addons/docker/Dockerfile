@@ -11,7 +11,8 @@
 FROM node:24-bookworm-slim AS build
 WORKDIR /app
 
-RUN corepack enable && corepack prepare pnpm@10.31.0 --activate
+RUN corepack enable
+# pnpm version is driven by `packageManager` in package.json (pnpm 11.1.2).
 
 # Manifest first for layer-cache hits.
 COPY pnpm-lock.yaml package.json ./

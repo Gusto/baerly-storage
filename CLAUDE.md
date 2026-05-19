@@ -26,7 +26,7 @@ AWS Lambda / Bun / Deno / Fly are an adapter package away.
 
 ## Toolchain
 
-- **Package manager:** pnpm (`packageManager: pnpm@10.31.0`).
+- **Package manager:** pnpm (`packageManager: pnpm@11.1.2`).
 - **Test runner:** vitest (`vitest run`). Tests import from `"vitest"`.
 - **Type checker:** TypeScript 7 / `tsgo` (`@typescript/native-preview`).
 - **Formatter:** oxfmt.

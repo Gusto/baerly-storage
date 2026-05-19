@@ -11,7 +11,7 @@ related: ["../guide/troubleshooting.md", "../../CLAUDE.md"]
 
 ## Prerequisites
 
-- [pnpm](https://pnpm.io) ≥ 10 (the repo declares `packageManager: pnpm@10.31.0`).
+- [pnpm](https://pnpm.io) ≥ 11 (the repo declares `packageManager: pnpm@11.1.2`).
 - [Docker](https://docker.com) + Docker Compose (for local Minio).
 - Node 22+ (`@types/node@^22.9.0` and `tsgo` target).
 

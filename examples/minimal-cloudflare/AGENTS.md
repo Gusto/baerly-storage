@@ -29,7 +29,7 @@ read it via your editor's TS LS or via the published types).
 ## Toolchain
 
 - **Package manager:** pnpm. The emitted repo pins
-  `packageManager: pnpm@10.31.0`.
+  `packageManager: pnpm@11.1.2`.
 - **Test runner:** vitest.
 - **Type checker:** TypeScript 5.6+. (The baerly-storage monorepo
   itself uses TypeScript 7 via `@typescript/native-preview`; this
