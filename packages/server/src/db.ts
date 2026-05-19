@@ -143,8 +143,8 @@ export interface RawStorageApi {
  *   tenant: "acme-co",
  * });
  *
- * await db._raw.put("docs/123", new TextEncoder().encode("hi"));
- * const got = await db._raw.get("docs/123");
+ * await db.table("tickets").insert({ title: "first ticket", status: "open" });
+ * const open = await db.table("tickets").where({ status: "open" }).all();
  * ```
  */
 export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
