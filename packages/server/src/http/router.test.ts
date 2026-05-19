@@ -149,13 +149,6 @@ describe("observability middleware", () => {
     expect(err.message).toBe("CAS lost");
   });
 
-  test("/v1/healthz emits ZERO canonical lines (LB-probe bypass)", async () => {
-    const app = buildApp();
-    const res = await app.request("http://localhost/v1/healthz");
-    expect(res.status).toBe(200);
-    expect(canonical()).toHaveLength(0);
-  });
-
   test("x-request-id header is honoured", async () => {
     const app = buildApp();
     await app.request("http://localhost/v1/t/things?where=%7B%7D", {
@@ -242,21 +235,6 @@ describe("ambient-context pass-through", () => {
 
     expect(resStatus).toBe(200);
     // The router must not have flushed a canonical line — the adapter owns it.
-    expect(canonical()).toHaveLength(0);
-  });
-
-  // Case A also verifies healthz is unaffected (it always bypasses).
-  test("Case A: /v1/healthz still emits zero canonical lines with ambient context", async () => {
-    const app = makeApp();
-    const outerCtx = createObservabilityContext({
-      request_id: "outer-id",
-      sampled_by_head: true,
-    });
-
-    await runWithContext(outerCtx, async () => {
-      await app.request("http://localhost/v1/healthz");
-    });
-
     expect(canonical()).toHaveLength(0);
   });
 

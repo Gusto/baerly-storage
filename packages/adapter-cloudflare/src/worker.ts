@@ -277,10 +277,10 @@ export function baerlyWorker(options: BaerlyWorkerOptions): ExportedHandler<Env>
       }
 
       // Healthz is always anonymous — Cloudflare's load balancer
-      // probes it. Keep it ahead of the verifier check. The router's
-      // observability middleware also short-circuits on healthz,
-      // but doing it here too avoids a Db construction on
-      // every probe.
+      // probes it. Keep it ahead of the verifier check; serving it
+      // here avoids a `Db.create` (and the canonical-line emission)
+      // on every probe. The router no longer mounts healthz — only
+      // the adapter does.
       if (req.method === "GET" && url.pathname === "/v1/healthz") {
         return new Response(JSON.stringify({ ok: true }), {
           status: 200,
@@ -347,11 +347,8 @@ export function baerlyWorker(options: BaerlyWorkerOptions): ExportedHandler<Env>
           }
         }
 
-        // `healthCheck: false` — already served above; keeps the
-        // probe hot path off `Db.create`.
         const app = createRouter({
           db,
-          healthCheck: false,
           sinceTimeoutMs: options.sinceTimeoutMs,
           sincePollIntervalMs: options.sincePollIntervalMs,
         });

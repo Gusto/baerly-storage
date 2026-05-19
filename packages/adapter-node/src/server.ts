@@ -264,7 +264,6 @@ export function createFetchHandler(
         });
         const router = createRouter({
           db,
-          healthCheck: false,
           ...(opts.sinceTimeoutMs !== undefined && { sinceTimeoutMs: opts.sinceTimeoutMs }),
           ...(opts.sincePollIntervalMs !== undefined && {
             sincePollIntervalMs: opts.sincePollIntervalMs,

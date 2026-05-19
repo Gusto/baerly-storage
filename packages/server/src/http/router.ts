@@ -1,12 +1,16 @@
 /**
  * HTTP dispatcher. A small Hono `app` that implements the
- * five locked CRUD routes from `contract.ts` plus an anonymous
- * `/v1/healthz` liveness probe. Mounted into both adapters
- * (`@baerly/adapter-cloudflare` and `@baerly/adapter-node`); the
- * router itself is platform-agnostic — it accepts a single
+ * five locked CRUD routes from `contract.ts`. Mounted into both
+ * adapters (`@baerly/adapter-cloudflare` and `@baerly/adapter-node`);
+ * the router itself is platform-agnostic — it accepts a single
  * `Request`, dispatches against a per-request `Db`, and returns a
  * `Response` whose body follows the `HttpOkEnvelope` /
  * `HttpErrorEnvelope` shapes.
+ *
+ * The anonymous `GET /v1/healthz` liveness probe is served by the
+ * adapters directly (see `worker.ts` / `server.ts`) — keeping it
+ * upstream of the router avoids spending a `Db.create` on every
+ * load-balancer probe.
  *
  * `GET /v1/since` is appended to the same factory (see `./since.ts`
  * for the long-poll core). The Cloudflare adapter wraps Worker-side
@@ -59,14 +63,9 @@ import { longPollSince } from "./since.ts";
  *   entry point. The Verifier runs in the adapter (see `worker.ts` /
  *   `server.ts`) before `createRouter` is called; the router itself
  *   has no auth seam.
- * - `healthCheck` — default `true`. Mounts `GET /v1/healthz` →
- *   `200 {"ok": true}`. Set `false` when the adapter already served
- *   healthz upstream (it should, to keep the probe hot path off
- *   `Db.create`).
  */
 export interface CreateRouterOptions {
   readonly db: Db<BaerlyConfig>;
-  readonly healthCheck?: boolean;
   /** Override the long-poll budget. Forwarded to `longPollSince`. */
   readonly sinceTimeoutMs?: number;
   /** Override the long-poll inner-poll cadence. Forwarded to `longPollSince`. */
@@ -81,7 +80,6 @@ export interface CreateRouterOptions {
  *  - `POST   /v1/t/:table` → insert. Body: `{ doc }`. → `201 { _id }`.
  *  - `PATCH  /v1/t/:table/:id` → merge-patch. Body: `{ patch }`. → `200 { modified }`.
  *  - `DELETE /v1/t/:table/:id` → delete row by id. → `204`.
- *  - `GET    /v1/healthz` (when `healthCheck !== false`) → liveness probe.
  *  - `GET    /v1/since?table=<name>&cursor=<opaque>` → long-poll log.
  *
  * @example
@@ -96,7 +94,7 @@ export interface CreateRouterOptions {
  * ```
  */
 export function createRouter(options: CreateRouterOptions): Hono {
-  const { db, healthCheck = true, sinceTimeoutMs, sincePollIntervalMs } = options;
+  const { db, sinceTimeoutMs, sincePollIntervalMs } = options;
   const app = new Hono();
 
   // Per-request ObservabilityContext + canonical-line emission.
@@ -117,17 +115,7 @@ export function createRouter(options: CreateRouterOptions): Hono {
   // creation). The router creates the context, runs `next()` under
   // `runWithContext`, and flushes the canonical line in the `finally`
   // arm exactly as before.
-  //
-  // Healthz always short-circuits first: load balancers fire that
-  // probe constantly and the canonical-line cost (sampler + LogTape
-  // sink dispatch) would drown real-traffic logs. Healthz is the
-  // router's "anonymous liveness probe" contract — adapters that
-  // run a verifier upstream bypass it for this path.
   app.use("*", async (c, next) => {
-    if (c.req.path === "/v1/healthz") {
-      return next();
-    }
-
     // Mode A: adapter-owned context. Pass through — the adapter owns
     // the flush. Every CRUD handler downstream still runs inside the
     // existing `runWithContext` scope provided by the adapter.
@@ -184,10 +172,6 @@ export function createRouter(options: CreateRouterOptions): Hono {
       }
     });
   });
-
-  if (healthCheck) {
-    app.get("/v1/healthz", (c) => c.json({ ok: true }, 200));
-  }
 
   // Read one — GET /v1/t/:table/:id
   app.get("/v1/t/:table/:id", async (c) => {

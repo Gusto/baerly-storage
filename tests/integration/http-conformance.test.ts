@@ -330,7 +330,7 @@ describe("HTTP boundary — schema validation (ticket 70)", () => {
       tenant: TENANT,
       schemas: new Map<string, SchemaValidator>([[TABLE, STATUS_SCHEMA]]),
     });
-    const app = createRouter({ db, healthCheck: false });
+    const app = createRouter({ db });
 
     // Invalid doc: `status` violates the schema.
     const badRes = await app.fetch(
