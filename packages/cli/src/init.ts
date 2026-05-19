@@ -58,7 +58,7 @@ const errorToExitCode = (code: string): number => {
 };
 
 const template = (app: string, tenant: string, target: "cloudflare" | "node"): string =>
-  `import { defineConfig } from "create-baerly/config";
+  `import { defineConfig } from "baerly-storage/config";
 
 export default defineConfig({
   app: ${JSON.stringify(app)},

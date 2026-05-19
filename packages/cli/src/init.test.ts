@@ -62,7 +62,7 @@ describe("baerly init", () => {
     expect(exitCode).toBe(0);
     const written = await readFile(join(root, "baerly.config.ts"), "utf8");
     expect(written).toBe(
-      `import { defineConfig } from "create-baerly/config";
+      `import { defineConfig } from "baerly-storage/config";
 
 export default defineConfig({
   app: "demo",
@@ -152,7 +152,7 @@ export default defineConfig({
 
 describe("emits configs that load through loadAppConfig", () => {
   // loadAppConfig dynamic-imports the .ts file, which references
-  // `create-baerly/config`. Module resolution only succeeds from a
+  // `baerly-storage/config`. Module resolution only succeeds from a
   // directory whose ancestor node_modules has that package wired —
   // i.e., one of the workspace example dirs. We stage the temp
   // workdir under examples/minimal-cloudflare/ so the import path
