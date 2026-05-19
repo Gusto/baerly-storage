@@ -85,10 +85,14 @@ const BUDGETS: readonly Budget[] = [
   //     which is sideEffects:false so production consumers
   //     tree-shake the LocalFsStorage + vite-plugin + picocolors
   //     subgraph).
-  //   → 349 KiB raw / 101 KiB gz (current): pretty sink + picocolors
-  //     moved out of `@baerly/server` to `@baerly/adapter-node`
-  //     entirely (no dynamic-import chunk in the kernel either).
-  { entry: "index.js", raw: 349 * 1024, gz: 101 * 1024 },
+  //   → 349 KiB raw / 101 KiB gz: pretty sink + picocolors moved
+  //     out of `@baerly/server` to `@baerly/adapter-node` entirely
+  //     (no dynamic-import chunk in the kernel either).
+  //   → 350 KiB raw / 101 KiB gz (current): obs cleanup increment —
+  //     `flushUnauthorizedAndRespond` (185350a) and the nesting-aware
+  //     `withObservability` guard (46cdd65) added ~37 B raw, pushing
+  //     the closure past the prior 349 KiB ceiling. gz unchanged.
+  { entry: "index.js", raw: 350 * 1024, gz: 101 * 1024 },
   // Just the five auth verifier factories. Adding a sixth grows
   // this budget, not the kernel's.
   { entry: "auth.js", raw: 34 * 1024, gz: 12 * 1024 },
