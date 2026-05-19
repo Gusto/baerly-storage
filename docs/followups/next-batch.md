@@ -167,19 +167,6 @@ handling. Zero call sites do `instanceof BaerlyClientError`.
 `cause` or a context bag. One error class, one `code`
 discriminant.
 
-#### A15. Each scaffolded template ships a 100+ line `AGENTS.md` that diverges from the others and from root README — **MEDIUM**
-
-Four templates × ~120-line AGENTS.md → ~480 lines duplicated
-with drift. Examples already disagree (only one mentions
-`CLAUDE.md` mirror, only one documents Docker cron rationale).
-Every predicate/schema change will require four updates.
-
-**Fix:** Either (a) template + slot rendering at scaffold time
-(canonical AGENTS.md in `packages/create-baerly/src/templates/agents/`
-with `{{target}}` tokens), or (b) reduce per-template AGENTS.md
-to a 5-line stub pointing at root `CLAUDE.md`. Single source of
-truth.
-
 ### B. Server kernel (db, table, query, writer, indexes, schema, migrate)
 
 #### B2. `query.ts:runFirstWithMeta` is a redundant alias of `runAllWithMeta` — **MEDIUM**
