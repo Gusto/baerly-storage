@@ -143,19 +143,6 @@ entirely. Move `claimWriter` to `baerly-storage/admin`
 Move `singleTenantDevVerifier` to `@baerly/adapter-cloudflare/dev`
 or fold into `@baerly/server/auth` as `staticTenantVerifier`.
 
-#### A8. `JSONArraylessObject` leaks JSON-merge-patch jargon into every typed insert — **MEDIUM**
-
-Every `Table<T extends JSONArraylessObject>` forces users to
-internalise a research-y constraint label that exists only
-because JSON-merge-patch can't deep-merge top-level arrays. The
-type is not re-exported from `@baerly/server`'s public barrel —
-users have to grab it from `@baerly/protocol` separately.
-
-**Fix:** Rename → `BaerlyDocument` (or just `Document`), re-
-export from the public barrel with a one-line JSDoc: "plain
-JSON object; nested objects ok; arrays only inside nested
-objects."
-
 #### A9. `Db.create` requires users to pre-flatten `BaerlyConfig.collections` — **MEDIUM**
 
 `defineConfig` returns `{ collections: { name: { schema,
