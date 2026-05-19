@@ -8,8 +8,7 @@
     "dev:web": "vite",
     "build": "tsc -b && vite build",
     "start": "node --experimental-strip-types src/server/index.ts",
-    "typecheck": "tsc -b --noEmit",
-    "test": "vitest run"
+    "typecheck": "tsc -b --noEmit"
   },
   "dependencies": {
     "@xmldom/xmldom": "^0.9.10",

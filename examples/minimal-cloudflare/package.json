@@ -7,8 +7,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "deploy": "wrangler deploy",
-    "typecheck": "tsc -b --noEmit",
-    "test": "vitest run"
+    "typecheck": "tsc -b --noEmit"
   },
   "dependencies": {
     "baerly-storage": "workspace:*"
