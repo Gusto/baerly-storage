@@ -1,7 +1,8 @@
 /// <reference types="vite/client" />
 
 interface ImportMetaEnv {
-  readonly VITE_HELPDESK_SECRET?: string;
+  /** Client-visible mirror of `SHARED_SECRET`; set in `.env` (or via shell at build time). */
+  readonly VITE_SHARED_SECRET?: string;
 }
 
 interface ImportMeta {

@@ -11,7 +11,7 @@ Worker via Workers Assets. The production-shaped sibling of
 ```sh
 cd helpdesk-cloudflare
 pnpm install
-wrangler secret put SHARED_SECRET    # any string for dev
+cp .dev.vars.example .dev.vars        # ships SHARED_SECRET=dev-shared-secret, matching the client fallback
 pnpm dev                              # vite (:5173) — `@cloudflare/vite-plugin` runs the Worker inside workerd in the same process
 ```
 
@@ -37,6 +37,10 @@ via Workers Assets.
 ## Deploy
 
 ```sh
+# Set the shared secret (only needed for the sharedSecret() Verifier
+# branch; skip when you're going straight to Cloudflare Access).
+wrangler secret put SHARED_SECRET
+
 pnpm build              # tsc -b && vite build  → emits dist/client/
 pnpm deploy             # wrangler deploy (R2 auto-provisioned)
 ```

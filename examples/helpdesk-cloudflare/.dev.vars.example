@@ -1,5 +1,6 @@
-# Copy to `.dev.vars` (gitignored) for `wrangler dev` to read
-# locally. In production, set each value via:
+# Copy to `.dev.vars` (gitignored) for `pnpm dev` to read locally
+# (`@cloudflare/vite-plugin` loads it into the in-process Worker).
+# In production, set each value via:
 #
 #     wrangler secret put <NAME>
 #
@@ -7,11 +8,13 @@
 # based on which of these is set; pick one branch per environment.
 
 # --- Dev-fast-path: shared secret (single-tenant) ---------------
-# The default `sharedSecret` verifier expects a single string the
-# client sends as `Authorization: Bearer <SHARED_SECRET>`. Use a
-# strong random value (e.g. `openssl rand -hex 32`) in any
-# environment that's reachable from the public internet.
-SHARED_SECRET=
+# `dev-shared-secret` matches the client-side fallback in
+# `src/web/client.ts`, so `cp .dev.vars.example .dev.vars && pnpm dev`
+# works out of the box. For any environment reachable from the
+# public internet, replace with a strong random value (e.g.
+# `openssl rand -hex 32`) and set the matching `VITE_SHARED_SECRET`
+# at build time so the SPA bundle ships the same token.
+SHARED_SECRET=dev-shared-secret
 
 # --- Production: Cloudflare Access JWT --------------------------
 # Switch `src/server/index.ts` to `cloudflareAccess({ team, audience })`
