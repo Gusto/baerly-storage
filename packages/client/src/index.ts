@@ -8,3 +8,11 @@ export type {
 } from "./client.ts";
 export { BaerlyClientError } from "./errors.ts";
 export type { Fetcher } from "./request.ts";
+export type {
+  BaerlyErrorCode,
+  ConsistencyLevel,
+  JSONArraylessObject,
+  LogEntry,
+  OrderSpec,
+  Predicate,
+} from "@baerly/protocol";
