@@ -11,7 +11,7 @@ import {
   CURRENT_JSON_SCHEMA_VERSION,
   type CurrentJson,
   createCurrentJson,
-  type JSONArraylessObject,
+  type DocumentData,
   MemoryStorage,
   BaerlyError,
   type Predicate,
@@ -446,12 +446,12 @@ describe("Db.table read terminals", () => {
     } as const;
 
     // Strong anchors the cache.
-    const r1 = await runAllWithMeta<JSONArraylessObject>(ctx, {
+    const r1 = await runAllWithMeta<DocumentData>(ctx, {
       ...baseState,
       consistency: "strong",
     });
     // Eventual serves from the cache.
-    const r2 = await runAllWithMeta<JSONArraylessObject>(ctx, {
+    const r2 = await runAllWithMeta<DocumentData>(ctx, {
       ...baseState,
       consistency: "eventual",
     });
@@ -485,14 +485,14 @@ describe("Db.table read terminals", () => {
       consistency: "strong",
     } as const;
 
-    const r1 = await runAllWithMeta<JSONArraylessObject>(ctx, strongState);
+    const r1 = await runAllWithMeta<DocumentData>(ctx, strongState);
     await w.commit({
       op: "I",
       collection: COLL,
       docId: "doc-2",
       body: { _id: "doc-2", title: "world" },
     });
-    const r2 = await runAllWithMeta<JSONArraylessObject>(ctx, strongState);
+    const r2 = await runAllWithMeta<DocumentData>(ctx, strongState);
 
     expect(r1.fresh).toBe(true);
     expect(r2.fresh).toBe(true);
@@ -958,7 +958,7 @@ describe("operator predicates — full-scan path", () => {
       op: "I",
       collection: COLL,
       docId: "t-1",
-      body: { _id: "t-1", count: "5" } as unknown as JSONArraylessObject,
+      body: { _id: "t-1", count: "5" } as unknown as DocumentData,
     });
     const rows = await db
       .table<{ _id: string; count: number }>(COLL)
@@ -1269,7 +1269,7 @@ describe("auto-planner range and $in walks (T3)", () => {
     }
     const indexes = [{ name: "by_age", on: "age" }] as const;
     const plan = planQuery(
-      { age: { $gte: 10, $lt: 30 } } as unknown as Predicate<JSONArraylessObject>,
+      { age: { $gte: 10, $lt: 30 } } as unknown as Predicate<DocumentData>,
       indexes,
     );
     expect(plan.kind).toBe("index-walk");
@@ -1322,7 +1322,7 @@ describe("auto-planner range and $in walks (T3)", () => {
     }
     const indexes = [{ name: "by_team", on: "team" }] as const;
     const plan = planQuery(
-      { team: { $in: ["platform", "infra", "data"] } } as unknown as Predicate<JSONArraylessObject>,
+      { team: { $in: ["platform", "infra", "data"] } } as unknown as Predicate<DocumentData>,
       indexes,
     );
     expect(plan.kind).toBe("index-walk");

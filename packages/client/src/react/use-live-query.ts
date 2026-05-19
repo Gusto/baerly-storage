@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import type { JSONArraylessObject, Predicate } from "@baerly/protocol";
+import type { DocumentData, Predicate } from "@baerly/protocol";
 import { useBaerlyClient } from "./provider.ts";
 import { stableKey } from "./stable-key.ts";
 import { useInvalidationTick } from "./use-invalidation-tick.ts";
 
-export interface UseLiveQueryOptions<T extends JSONArraylessObject = JSONArraylessObject> {
+export interface UseLiveQueryOptions<T extends DocumentData = DocumentData> {
   /** Table to read. */
   readonly table: string;
   /**
@@ -54,7 +54,7 @@ export type UseLiveQueryResult<T> =
  * return <ul>{result.rows.map((t) => <li key={t._id}>{t.title}</li>)}</ul>;
  * ```
  */
-export const useLiveQuery = <T extends JSONArraylessObject = JSONArraylessObject>(
+export const useLiveQuery = <T extends DocumentData = DocumentData>(
   opts: UseLiveQueryOptions<T>,
 ): UseLiveQueryResult<T> => {
   const { table, where = {} as Predicate<T>, enabled = true } = opts;

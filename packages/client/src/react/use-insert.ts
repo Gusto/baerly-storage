@@ -1,5 +1,5 @@
 import { useCallback } from "react";
-import type { JSONArraylessObject } from "@baerly/protocol";
+import type { DocumentData } from "@baerly/protocol";
 import { useBaerlyClient } from "./provider.ts";
 import { useMutation, type UseMutationResult } from "./use-mutation.ts";
 
@@ -8,8 +8,8 @@ export interface UseInsertOptions {
   readonly table: string;
 }
 
-export type UseInsertResult<T extends JSONArraylessObject> = UseMutationResult<
-  [doc: Partial<T> & JSONArraylessObject],
+export type UseInsertResult<T extends DocumentData> = UseMutationResult<
+  [doc: Partial<T> & DocumentData],
   { readonly _id: string }
 >;
 
@@ -40,14 +40,14 @@ export type UseInsertResult<T extends JSONArraylessObject> = UseMutationResult<
  * );
  * ```
  */
-export const useInsert = <T extends JSONArraylessObject = JSONArraylessObject>(
+export const useInsert = <T extends DocumentData = DocumentData>(
   opts: UseInsertOptions,
 ): UseInsertResult<T> => {
   const { table } = opts;
   const client = useBaerlyClient();
   return useMutation(
     useCallback(
-      (signal, doc: Partial<T> & JSONArraylessObject) =>
+      (signal, doc: Partial<T> & DocumentData) =>
         client.table<T>(table).insert(doc, { signal }),
       [client, table],
     ),

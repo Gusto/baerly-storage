@@ -45,7 +45,7 @@ import { createServer, type AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
-import type { JSONArraylessObject } from "@baerly/protocol";
+import type { DocumentData } from "@baerly/protocol";
 import { createBaerlyClient } from "@baerly/client";
 
 const TARGETS = new Set(
@@ -61,7 +61,7 @@ const CF_API_TOKEN = process.env["CF_API_TOKEN"];
 const CF_ACCOUNT_ID = process.env["CF_ACCOUNT_ID"];
 const SHARED_SECRET = process.env["SHARED_SECRET"] ?? cryptoRandomSecret();
 
-interface Ticket extends JSONArraylessObject {
+interface Ticket extends DocumentData {
   readonly _id: string;
   readonly title: string;
   readonly status: "open" | "closed";

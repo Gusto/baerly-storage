@@ -45,8 +45,8 @@ import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import {
   CURRENT_JSON_SCHEMA_VERSION,
   createCurrentJson,
-  type JSONArrayless,
-  type JSONArraylessObject,
+  type DocumentValue,
+  type DocumentData,
   type Storage,
 } from "@baerly/protocol";
 import { LocalFsStorage } from "@baerly/dev";
@@ -90,13 +90,13 @@ const bootstrap = async (storage: Storage, owner: string): Promise<void> => {
 };
 
 /**
- * Body shape of one seeded ticket row. Uses `JSONArraylessObject`
+ * Body shape of one seeded ticket row. Uses `DocumentData`
  * as the row body type — this gives the same effective constraint
  * as `Table<T>` and keeps sparse optional fields (`deleted`, `tags`)
  * legal under the index signature (a narrowing `extends` runs into
  * the index signature rejecting `undefined`-typed properties).
  */
-type Ticket = JSONArraylessObject;
+type Ticket = DocumentData;
 
 describe.runIf(sqliteAvailable)("Baerly → SQLite → Baerly round-trip", () => {
   let srcRoot: string;
@@ -201,7 +201,7 @@ describe.runIf(sqliteAvailable)("Baerly → SQLite → Baerly round-trip", () =>
     const sidecarPlan: ExportPlan = deserializeExportPlan(await readFile(planFile, "utf8"));
     const ndjsonLines: string[] = [];
     for (const row of rawRows) {
-      const out: Record<string, JSONArrayless> = {};
+      const out: Record<string, DocumentValue> = {};
       for (const col of sidecarPlan.columns) {
         const raw = row[col.source];
         if (raw === null || raw === undefined) {
@@ -209,7 +209,7 @@ describe.runIf(sqliteAvailable)("Baerly → SQLite → Baerly round-trip", () =>
         } // SQL NULL → field absent
         if (col.jsonEncoded && typeof raw === "string") {
           // Promoted-to-JSON column (e.g. nested object stored as TEXT).
-          out[col.source] = JSON.parse(raw) as JSONArrayless;
+          out[col.source] = JSON.parse(raw) as DocumentValue;
           continue;
         }
         if (col.sqlType === "INTEGER" && typeof raw === "number") {

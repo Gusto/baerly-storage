@@ -49,7 +49,7 @@ const PROP_TIMEOUT_MS = 600_000;
 import {
   CURRENT_JSON_SCHEMA_VERSION,
   createCurrentJson,
-  type JSONArraylessObject,
+  type DocumentData,
   MemoryStorage,
   type Storage,
 } from "@baerly/protocol";
@@ -76,10 +76,10 @@ const listIndexKeysFor = async (storage: Storage, name: string): Promise<string[
 };
 
 // Doc shape carries the writer-required `_id` + the two indexed
-// fields. The intersection with `JSONArraylessObject` widens it to
+// fields. The intersection with `DocumentData` widens it to
 // satisfy the writer's body type without dropping the narrow
 // member types we rely on for assertions.
-type Doc = JSONArraylessObject & {
+type Doc = DocumentData & {
   readonly _id: string;
   readonly status: string;
   readonly assignee: string;

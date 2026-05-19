@@ -47,7 +47,7 @@ const PROP_TIMEOUT_MS = 600_000;
 import {
   CURRENT_JSON_SCHEMA_VERSION,
   createCurrentJson,
-  type JSONArraylessObject,
+  type DocumentData,
   MemoryStorage,
 } from "@baerly/protocol";
 import { allIndexKeysFor, type IndexDefinition } from "./indexes.ts";
@@ -57,9 +57,9 @@ import { ServerWriter } from "./server-writer.ts";
 // "missing field" case is one of the load-bearing arms of the
 // property and must be encoded by OMITTING the key from the
 // literal. Adding `assignee?` here would force `"alice" | "bob" |
-// undefined`, which the `[k: string]: JSONArrayless` index
+// undefined`, which the `[k: string]: DocumentValue` index
 // signature rejects (no undefined in JSON values).
-type Doc = JSONArraylessObject & { _id: string; status: "open" | "closed" | "wip" };
+type Doc = DocumentData & { _id: string; status: "open" | "closed" | "wip" };
 
 const INDEXES: ReadonlyArray<IndexDefinition> = [
   { name: "by_status", on: "status" },

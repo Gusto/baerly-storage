@@ -33,7 +33,7 @@ import { describe, expect, test } from "vitest";
 import {
   CURRENT_JSON_SCHEMA_VERSION,
   createCurrentJson,
-  type JSONArraylessObject,
+  type DocumentData,
   MemoryStorage,
   type Storage,
 } from "@baerly/protocol";
@@ -67,7 +67,7 @@ const provision = async (storage: Storage): Promise<void> => {
   });
 };
 
-interface Row extends JSONArraylessObject {
+interface Row extends DocumentData {
   _id: string;
 }
 

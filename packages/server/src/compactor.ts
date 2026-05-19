@@ -37,7 +37,7 @@
 
 import {
   type CurrentJson,
-  type JSONArraylessObject,
+  type DocumentData,
   type MetricsRecorder,
   logSeqStartOf,
   BaerlyError,
@@ -110,7 +110,7 @@ export interface SnapshotBody {
   readonly collection: string;
   readonly docs: ReadonlyArray<{
     readonly _id: string;
-    readonly body: JSONArraylessObject;
+    readonly body: DocumentData;
   }>;
 }
 
@@ -291,7 +291,7 @@ const compactInner = async (
   // ── Step 2. Load the previous snapshot (if any) as the fold base.
   const base =
     current.snapshot === null
-      ? new Map<string, JSONArraylessObject>()
+      ? new Map<string, DocumentData>()
       : await loadSnapshotAsMap(storage, current.snapshot, tableName, options.signal);
 
   // ── Step 3. Parallel-fetch [logSeqStartBefore, foldEnd) entries. ──
@@ -478,7 +478,7 @@ const compactInner = async (
  *
  * const base =
  *   srcCurrent.snapshot === null
- *     ? new Map<string, JSONArraylessObject>()
+ *     ? new Map<string, DocumentData>()
  *     : await loadSnapshotAsMap(src.storage, srcCurrent.snapshot, "tickets");
  *
  * const entries = await walkLogRange(
@@ -498,7 +498,7 @@ export const loadSnapshotAsMap = async (
   key: string,
   expectedCollection: string,
   signal?: AbortSignal,
-): Promise<Map<string, JSONArraylessObject>> => {
+): Promise<Map<string, DocumentData>> => {
   const got = await storage.get(key, signal !== undefined ? { signal } : undefined);
   if (got === null) {
     throw new BaerlyError(
@@ -546,7 +546,7 @@ export const loadSnapshotAsMap = async (
       `compact: snapshot ${key} carries collection ${body.collection}, expected ${expectedCollection}`,
     );
   }
-  const map = new Map<string, JSONArraylessObject>();
+  const map = new Map<string, DocumentData>();
   for (const row of body.docs) {
     map.set(row._id, row.body);
   }

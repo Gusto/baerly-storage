@@ -1,4 +1,4 @@
-import { BaerlyError, readCurrentJson, type JSONArrayless, type Storage } from "@baerly/protocol";
+import { BaerlyError, readCurrentJson, type DocumentValue, type Storage } from "@baerly/protocol";
 import { loadSnapshotAsMap, walkLogRange } from "@baerly/server";
 import type { ColumnPlan, ExportPlan, ExportRow, SqlTarget, SqlType } from "./types.ts";
 import { quoteIdentifier } from "./sql-escape.ts";
@@ -21,7 +21,7 @@ interface ColumnObservation {
 const INT32_MIN = -(2 ** 31);
 const INT32_MAX = 2 ** 31 - 1;
 
-const observe = (obs: ColumnObservation, value: JSONArrayless): void => {
+const observe = (obs: ColumnObservation, value: DocumentValue): void => {
   if (typeof value === "string") {
     obs.hasString = true;
   } else if (typeof value === "boolean") {
@@ -99,7 +99,7 @@ const pickSqlType = (
  * input map — JavaScript Maps preserve insertion order).
  *
  * @throws BaerlyError code="SchemaError" — a row body is not a
- *   `JSONArraylessObject` (defensive — the type system enforces it,
+ *   `DocumentData` (defensive — the type system enforces it,
  *   but the snapshot reader hands us `unknown`-shaped JSON).
  */
 export const inferPlanForCollection = (params: {

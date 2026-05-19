@@ -33,7 +33,7 @@ import {
   readCurrentJson,
   snapshotHash,
   type CurrentJson,
-  type JSONArraylessObject,
+  type DocumentData,
   type LogEntry,
   type Storage,
 } from "@baerly/protocol";
@@ -383,7 +383,7 @@ export const doCopy = async (
   // 3. Load source snapshot (if any) as the fold base.
   const base =
     srcCur.json.snapshot === null
-      ? new Map<string, JSONArraylessObject>()
+      ? new Map<string, DocumentData>()
       : await loadSnapshotAsMap(src.storage, srcCur.json.snapshot, collection);
 
   // 4. Walk source live tail [logSeqStart, nextSeq) by integer seq —

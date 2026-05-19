@@ -25,8 +25,8 @@
 
 import {
   BaerlyError,
-  type JSONArrayless,
-  type JSONArraylessObject,
+  type DocumentValue,
+  type DocumentData,
   type Predicate,
   validatePredicate,
 } from "@baerly/protocol";
@@ -60,7 +60,7 @@ export interface WhereTranslation {
  *   surfaces.
  */
 export const translatePredicateToSql = (
-  predicate: Predicate<JSONArraylessObject>,
+  predicate: Predicate<DocumentData>,
   plan: ExportPlan,
   options?: { readonly dynamicHint?: string },
 ): WhereTranslation => {
@@ -77,7 +77,7 @@ export const translatePredicateToSql = (
   // the equality-walker and surfaces as a `1 = 0` clause + hint,
   // which is at-worst noisy but never silently wrong. Operator-aware
   // SQL translation is a separate follow-up.
-  const clauses = walkPredicate(predicate as JSONArraylessObject, [], plan, hints);
+  const clauses = walkPredicate(predicate as DocumentData, [], plan, hints);
   return {
     sql: clauses.length === 0 ? "" : clauses.join(" AND "),
     hints,
@@ -85,7 +85,7 @@ export const translatePredicateToSql = (
 };
 
 const walkPredicate = (
-  node: JSONArraylessObject,
+  node: DocumentData,
   basePath: readonly string[],
   plan: ExportPlan,
   hints: string[],
@@ -98,7 +98,7 @@ const walkPredicate = (
     const fullPath = [...basePath, ...segments];
     if (typeof value === "object" && value !== null) {
       // Nested sub-predicate: recurse with the path extended.
-      out.push(...walkPredicate(value as JSONArraylessObject, fullPath, plan, hints));
+      out.push(...walkPredicate(value as DocumentData, fullPath, plan, hints));
       continue;
     }
     out.push(...clauseForLeaf(fullPath, value, plan, hints));
@@ -108,7 +108,7 @@ const walkPredicate = (
 
 const clauseForLeaf = (
   path: readonly string[],
-  value: JSONArrayless,
+  value: DocumentValue,
   plan: ExportPlan,
   hints: string[],
 ): string[] => {
@@ -167,7 +167,7 @@ const clauseForLeaf = (
 const emitJsonPathClause = (
   col: ColumnPlan,
   tail: readonly string[],
-  value: JSONArrayless,
+  value: DocumentValue,
   target: SqlTarget,
 ): string => {
   if (target === "postgres") {
@@ -193,7 +193,7 @@ const emitJsonPathClause = (
  * reach here — `walkPredicate` recurses through them before calling
  * `clauseForLeaf`.
  */
-const quoteLeaf = (value: JSONArrayless, target: SqlTarget): string => {
+const quoteLeaf = (value: DocumentValue, target: SqlTarget): string => {
   if (typeof value === "object") {
     throw new BaerlyError(
       "InvalidConfig",

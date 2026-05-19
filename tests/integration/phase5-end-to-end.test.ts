@@ -38,7 +38,7 @@ import { afterEach, describe, expect, test } from "vitest";
 import {
   CURRENT_JSON_SCHEMA_VERSION,
   createCurrentJson,
-  type JSONArraylessObject,
+  type DocumentData,
   MemoryStorage,
   type Storage,
 } from "@baerly/protocol";
@@ -57,7 +57,7 @@ const COLLECTION = "tickets";
 const TABLE_PREFIX = `app/${APP}/tenant/${TENANT}/manifests/${COLLECTION}`;
 const CURRENT_JSON_KEY = `${TABLE_PREFIX}/current.json`;
 
-interface Ticket extends JSONArraylessObject {
+interface Ticket extends DocumentData {
   _id: string;
   status: "open" | "closed";
   priority: number;

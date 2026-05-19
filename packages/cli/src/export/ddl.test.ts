@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { BaerlyError, type JSONArraylessObject } from "@baerly/protocol";
+import { BaerlyError, type DocumentData } from "@baerly/protocol";
 import { emitCreateTable } from "./ddl.ts";
 import { inferPlanForCollection } from "./plan.ts";
 import type { ExportRow } from "./types.ts";
@@ -15,8 +15,8 @@ const rowsFromRecord = (rec: Record<string, ExportRow>): ReadonlyMap<string, Exp
 describe("emitCreateTable", () => {
   test("postgres — text + integer + boolean column shape", () => {
     const rows = rowsFromRecord({
-      a: { name: "alice", count: 1, active: true } as JSONArraylessObject,
-      b: { name: "bob", count: 2, active: false } as JSONArraylessObject,
+      a: { name: "alice", count: 1, active: true } as DocumentData,
+      b: { name: "bob", count: 2, active: false } as DocumentData,
     });
     const plan = inferPlanForCollection({ rows, target: "postgres", table: "users" });
     const sql = emitCreateTable(plan);
@@ -32,7 +32,7 @@ describe("emitCreateTable", () => {
 
   test("sqlite — uppercase types + INTEGER for booleans", () => {
     const rows = rowsFromRecord({
-      a: { name: "alice", count: 1, active: true } as JSONArraylessObject,
+      a: { name: "alice", count: 1, active: true } as DocumentData,
     });
     const plan = inferPlanForCollection({ rows, target: "sqlite", table: "users" });
     const sql = emitCreateTable(plan);
@@ -48,7 +48,7 @@ describe("emitCreateTable", () => {
 
   test("d1 — same shape as sqlite", () => {
     const rows = rowsFromRecord({
-      a: { name: "alice" } as JSONArraylessObject,
+      a: { name: "alice" } as DocumentData,
     });
     const plan = inferPlanForCollection({ rows, target: "d1", table: "users" });
     const sql = emitCreateTable(plan);
@@ -62,8 +62,8 @@ describe("emitCreateTable", () => {
 
   test("nullable column omits NOT NULL", () => {
     const rows = rowsFromRecord({
-      a: { name: "alice", nickname: "al" } as JSONArraylessObject,
-      b: { name: "bob" } as JSONArraylessObject,
+      a: { name: "alice", nickname: "al" } as DocumentData,
+      b: { name: "bob" } as DocumentData,
     });
     const plan = inferPlanForCollection({ rows, target: "postgres", table: "users" });
     const sql = emitCreateTable(plan);
@@ -73,7 +73,7 @@ describe("emitCreateTable", () => {
 
   test("_id is always PRIMARY KEY and never nullable", () => {
     const rows = rowsFromRecord({
-      a: { name: "alice" } as JSONArraylessObject,
+      a: { name: "alice" } as DocumentData,
     });
     const plan = inferPlanForCollection({ rows, target: "postgres", table: "users" });
     const sql = emitCreateTable(plan);
@@ -82,7 +82,7 @@ describe("emitCreateTable", () => {
 
   test("nested-object column emits jsonb on postgres / TEXT on sqlite", () => {
     const rows = rowsFromRecord({
-      a: { profile: { city: "sf" } } as JSONArraylessObject,
+      a: { profile: { city: "sf" } } as DocumentData,
     });
     expect(
       emitCreateTable(inferPlanForCollection({ rows, target: "postgres", table: "u" })),
@@ -114,7 +114,7 @@ describe("emitCreateTable", () => {
 
   test("d1 — reserves the sqlite_ table-name prefix", () => {
     const rows = rowsFromRecord({
-      a: { name: "alice" } as JSONArraylessObject,
+      a: { name: "alice" } as DocumentData,
     });
     const plan = inferPlanForCollection({ rows, target: "d1", table: "sqlite_master" });
     expect(() => emitCreateTable(plan)).toThrow(BaerlyError);
@@ -127,7 +127,7 @@ describe("emitCreateTable", () => {
 
   test("d1 — rejects sqlite_ prefix case-insensitively", () => {
     const rows = rowsFromRecord({
-      a: { name: "alice" } as JSONArraylessObject,
+      a: { name: "alice" } as DocumentData,
     });
     const plan = inferPlanForCollection({ rows, target: "d1", table: "SQLite_meta" });
     expect(() => emitCreateTable(plan)).toThrow(BaerlyError);
@@ -135,7 +135,7 @@ describe("emitCreateTable", () => {
 
   test("sqlite — sqlite_ table name is allowed (only D1 rejects)", () => {
     const rows = rowsFromRecord({
-      a: { name: "alice" } as JSONArraylessObject,
+      a: { name: "alice" } as DocumentData,
     });
     const plan = inferPlanForCollection({ rows, target: "sqlite", table: "sqlite_my_stats" });
     expect(() => emitCreateTable(plan)).not.toThrow();

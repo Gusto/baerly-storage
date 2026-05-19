@@ -40,7 +40,7 @@ import {
   MemoryStorage,
   createCurrentJson,
   noopMetricsRecorder,
-  type JSONArraylessObject,
+  type DocumentData,
   type Storage,
   type StorageGetOptions,
   type StorageGetResult,
@@ -65,7 +65,7 @@ const COLLECTION = "tickets";
 const TABLE_PREFIX = `app/${APP}/tenant/${TENANT}/manifests/${COLLECTION}`;
 const CURRENT_JSON_KEY = `${TABLE_PREFIX}/current.json`;
 
-interface Ticket extends JSONArraylessObject {
+interface Ticket extends DocumentData {
   _id: string;
   status: "open" | "closed";
   priority: number;

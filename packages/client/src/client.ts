@@ -3,7 +3,7 @@
    and `packages/server/src/contract.ts`); we mirror them verbatim
    so the typed client stays structurally compatible. */
 
-import type { ConsistencyLevel, JSONArraylessObject, OrderSpec, Predicate } from "@baerly/protocol";
+import type { ConsistencyLevel, DocumentData, OrderSpec, Predicate } from "@baerly/protocol";
 import type { BaerlyConfig, CollectionNames, RowOf, UnboundConfig } from "@baerly/server";
 import type { SinceResponse } from "./contract.ts";
 import { BaerlyClientError } from "./errors.ts";
@@ -145,7 +145,7 @@ export interface TerminalOptions {
  * @template T — document shape. `_id` is always present on rows
  *               returned from the server.
  */
-export interface ClientTable<T extends JSONArraylessObject = JSONArraylessObject> {
+export interface ClientTable<T extends DocumentData = DocumentData> {
   readonly name: string;
   /** Equality predicate over top-level or dotted-path keys. AND-merge on repeat. */
   where(predicate: Predicate<T>): ClientQuery<T>;
@@ -157,7 +157,7 @@ export interface ClientTable<T extends JSONArraylessObject = JSONArraylessObject
   consistency(level: ConsistencyLevel): ClientQuery<T>;
   /** Insert a new document. Returns the server-assigned `_id`. */
   insert(
-    doc: Partial<T> & JSONArraylessObject,
+    doc: Partial<T> & DocumentData,
     opts?: TerminalOptions,
   ): Promise<{ readonly _id: string }>;
   /** Count every row in the table (equivalent to `.where({}).count()`). */
@@ -173,7 +173,7 @@ export interface ClientTable<T extends JSONArraylessObject = JSONArraylessObject
  * shape throws `BaerlyClientError{code:"SchemaError"}`. The
  * constraint lifts when the server grows a multi-row PATCH route.
  */
-export interface ClientQuery<T extends JSONArraylessObject = JSONArraylessObject> {
+export interface ClientQuery<T extends DocumentData = DocumentData> {
   where(predicate: Predicate<T>): ClientQuery<T>;
   order(spec: OrderSpec<T>): ClientQuery<T>;
   limit(n: number): ClientQuery<T>;
@@ -221,15 +221,15 @@ export interface BaerlyClient<TConfig extends BaerlyConfig = UnboundConfig> {
    *
    * A name that is not declared on `TConfig` — or a declared collection
    * with no `schema` — falls through to the legacy overload and yields
-   * `ClientTable<JSONArraylessObject>` rather than a type error. This
+   * `ClientTable<DocumentData>` rather than a type error. This
    * matches the in-process `Db.table` shape and preserves the
    * untyped-call DX; pair with a per-call `<T>` when you want a
    * narrower row type.
    */
   table<N extends CollectionNames<TConfig>>(
     name: N,
-  ): ClientTable<RowOf<TConfig, N> & JSONArraylessObject>;
-  table<T extends JSONArraylessObject = JSONArraylessObject>(name: string): ClientTable<T>;
+  ): ClientTable<RowOf<TConfig, N> & DocumentData>;
+  table<T extends DocumentData = DocumentData>(name: string): ClientTable<T>;
   /**
    * Long-poll for new log events. Returns once events arrive or the
    * server-side budget (25 s default) elapses; in the latter case
@@ -266,7 +266,7 @@ export const createBaerlyClient = <TConfig extends BaerlyConfig = UnboundConfig>
     lifecycleSignal: options.lifecycleSignal,
   };
   return {
-    table<T extends JSONArraylessObject = JSONArraylessObject>(name: string): ClientTable<T> {
+    table<T extends DocumentData = DocumentData>(name: string): ClientTable<T> {
       return makeClientTable<T>(ctx, name);
     },
     async since(opts): Promise<SinceResponse> {
@@ -317,8 +317,8 @@ const resolveHeaders = async (source: BaerlyClientOptions["headers"]): Promise<H
 
 /** Query-state carried across the chainable modifiers. */
 interface QueryState {
-  readonly predicate: Predicate<JSONArraylessObject>;
-  readonly order: OrderSpec<JSONArraylessObject> | undefined;
+  readonly predicate: Predicate<DocumentData>;
+  readonly order: OrderSpec<DocumentData> | undefined;
   readonly limit: number | undefined;
   readonly consistency: ConsistencyLevel | undefined;
 }
@@ -330,7 +330,7 @@ const emptyState: QueryState = {
   consistency: undefined,
 };
 
-const makeClientTable = <T extends JSONArraylessObject>(
+const makeClientTable = <T extends DocumentData>(
   ctx: RequestContext,
   name: string,
 ): ClientTable<T> => {
@@ -355,7 +355,7 @@ const makeClientTable = <T extends JSONArraylessObject>(
   };
 };
 
-const makeClientQuery = <T extends JSONArraylessObject>(
+const makeClientQuery = <T extends DocumentData>(
   ctx: RequestContext,
   tableName: string,
   state: QueryState,
@@ -395,13 +395,13 @@ const makeClientQuery = <T extends JSONArraylessObject>(
         // mirrors `Query.where` in `Db`).
         predicate: {
           ...state.predicate,
-          ...(predicate as Predicate<JSONArraylessObject>),
+          ...(predicate as Predicate<DocumentData>),
         },
       }),
     order: (spec): ClientQuery<T> =>
       makeClientQuery<T>(ctx, tableName, {
         ...state,
-        order: spec as OrderSpec<JSONArraylessObject>,
+        order: spec as OrderSpec<DocumentData>,
       }),
     limit: (n): ClientQuery<T> => makeClientQuery<T>(ctx, tableName, { ...state, limit: n }),
     consistency: (level): ClientQuery<T> =>
@@ -514,7 +514,7 @@ const makeClientQuery = <T extends JSONArraylessObject>(
  * update / replace / delete terminals to enforce the day-one
  * "single row by id" HTTP constraint.
  */
-const singleIdFromPredicate = (p: Predicate<JSONArraylessObject>): string | undefined => {
+const singleIdFromPredicate = (p: Predicate<DocumentData>): string | undefined => {
   const keys = Object.keys(p);
   if (keys.length !== 1 || keys[0] !== "_id") {
     return undefined;

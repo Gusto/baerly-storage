@@ -23,7 +23,7 @@ import { expect } from "vitest";
 import {
   type CurrentJson,
   CURRENT_JSON_SCHEMA_VERSION,
-  type JSONArraylessObject,
+  type DocumentData,
   type LogEntry,
   BaerlyError,
   matches,
@@ -107,7 +107,7 @@ const MAX_STEPS = 100;
  * Shape of one client's broadcast — kept in sync with the legacy
  * `Message` type. Doubles as the `LogEntry.new` body.
  */
-interface CascadeMessage extends JSONArraylessObject {
+interface CascadeMessage extends DocumentData {
   sender: number;
   send_time: number;
 }
@@ -482,7 +482,7 @@ export const runCausalConsistencyCascade = (opts: {
  * to short string tokens keeps the cascade's surface stable across
  * tickets and makes the in-memory full-scan baseline easy to read.
  */
-interface ParityDoc extends JSONArraylessObject {
+interface ParityDoc extends DocumentData {
   readonly _id: string;
   readonly priority: string;
 }

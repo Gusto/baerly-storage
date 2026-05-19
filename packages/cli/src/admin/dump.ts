@@ -43,7 +43,7 @@
 
 import { open, type FileHandle } from "node:fs/promises";
 import { defineCommand, parseArgs, type ArgsDef, type ParsedArgs } from "citty";
-import { BaerlyError, type JSONArrayless, type JSONArraylessObject } from "@baerly/protocol";
+import { BaerlyError, type DocumentValue, type DocumentData } from "@baerly/protocol";
 import { loadMaterialisedView } from "../export/index.ts";
 import { loadAppConfig } from "../config.ts";
 import { parseBucketUri } from "../copy.ts";
@@ -101,7 +101,7 @@ const errorToExitCode = (code: string): number => {
  * forbids them in bodies; documenting the case here keeps a future
  * widening from silently drifting the canonical format.
  */
-export const canonicalStringify = (value: JSONArrayless): string => {
+export const canonicalStringify = (value: DocumentValue): string => {
   if (typeof value === "number") {
     if (!Number.isFinite(value)) {
       throw new BaerlyError(
@@ -115,7 +115,7 @@ export const canonicalStringify = (value: JSONArrayless): string => {
     return JSON.stringify(value);
   }
   if (value === null) {
-    // JSONArrayless excludes null at the type level, but `unknown` may
+    // DocumentValue excludes null at the type level, but `unknown` may
     // sneak in via the snapshot fold — be defensive.
     return "null";
   }
@@ -129,7 +129,7 @@ export const canonicalStringify = (value: JSONArrayless): string => {
     const keys = Object.keys(value).toSorted();
     const parts: string[] = [];
     for (const k of keys) {
-      const v = (value as Record<string, JSONArrayless>)[k];
+      const v = (value as Record<string, DocumentValue>)[k];
       if (v === undefined) {
         continue;
       }
@@ -169,7 +169,7 @@ const resolveAppTenant = async (args: Args): Promise<{ app: string; tenant: stri
 
 const writeToSink = async (
   sinkPath: string | undefined,
-  rows: ReadonlyMap<string, JSONArraylessObject>,
+  rows: ReadonlyMap<string, DocumentData>,
 ): Promise<number> => {
   const encoder = new TextEncoder();
   const ids = [...rows.keys()].toSorted();
@@ -187,7 +187,7 @@ const writeToSink = async (
       // Merge `_id` into the body so the row literal carries it. The
       // map key is authoritative; if a stale `_id` field disagrees, we
       // overwrite it.
-      const row: JSONArraylessObject = { ...body, _id: id };
+      const row: DocumentData = { ...body, _id: id };
       const line = `${canonicalStringify(row)}\n`;
       if (handle !== undefined) {
         await handle.write(encoder.encode(line));

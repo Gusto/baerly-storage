@@ -29,7 +29,7 @@
 import {
   CURRENT_JSON_SCHEMA_VERSION,
   createCurrentJson,
-  type JSONArraylessObject,
+  type DocumentData,
   MemoryStorage,
 } from "@baerly/protocol";
 import { beforeEach, describe, expect, test } from "vitest";
@@ -43,7 +43,7 @@ const TABLE_PREFIX = `app/${APP}/tenant/${TENANT}/manifests/${COLL}`;
 const BY_STATUS: IndexDefinition = { name: "by_status", on: "status" };
 const INDEXES: ReadonlyArray<IndexDefinition> = [BY_STATUS];
 
-interface Ticket extends JSONArraylessObject {
+interface Ticket extends DocumentData {
   _id: string;
   status: string;
 }

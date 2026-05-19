@@ -1,6 +1,6 @@
-import type { JSONArraylessObject } from "baerly-storage";
+import type { DocumentData } from "baerly-storage";
 
-export interface Ticket extends JSONArraylessObject {
+export interface Ticket extends DocumentData {
   readonly _id: string;
   readonly title: string;
   readonly status: "open" | "in_progress" | "closed";

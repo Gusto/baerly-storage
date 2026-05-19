@@ -26,7 +26,7 @@ import {
   S3HttpStorage,
   createCurrentJson,
   readCurrentJson,
-  type JSONArraylessObject,
+  type DocumentData,
 } from "@baerly/protocol";
 import { Db, ServerWriter } from "@baerly/server";
 import { doCopy } from "../../packages/cli/src/copy.ts";
@@ -58,7 +58,7 @@ const makeStorage = (bucket: string): S3HttpStorage =>
     xmlParser,
   });
 
-interface Doc extends JSONArraylessObject {
+interface Doc extends DocumentData {
   _id: string;
   title: string;
   status: "open" | "closed";

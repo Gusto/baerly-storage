@@ -27,7 +27,7 @@ import {
   CURRENT_JSON_SCHEMA_VERSION,
   type CurrentJson,
   createCurrentJson,
-  type JSONArraylessObject,
+  type DocumentData,
   type LogEntry,
   MemoryStorage,
   BaerlyError,
@@ -66,7 +66,7 @@ const readLogEntry = async (storage: MemoryStorage, seq: number): Promise<LogEnt
   return JSON.parse(new TextDecoder().decode(got.body)) as LogEntry;
 };
 
-interface TicketDoc extends JSONArraylessObject {
+interface TicketDoc extends DocumentData {
   _id: string;
   title: string;
   status: string;
@@ -190,16 +190,16 @@ describe("Query.update", () => {
   });
 
   test("RFC 7386 null deletes a field from the post-image", async () => {
-    // Use the bare `JSONArraylessObject` shape rather than an
+    // Use the bare `DocumentData` shape rather than an
     // `interface ... extends` with an optional `flag` — the locked
-    // `JSONArrayless` value type does not include `undefined`, so an
+    // `DocumentValue` value type does not include `undefined`, so an
     // optional-key extension doesn't satisfy the index signature.
     const t = db.table(COLL);
     await t.insert({ _id: "n1", title: "x", flag: true });
     // `null` per RFC 7386 deletes the key. The locked patch type is
     // `Partial<T>` (no `null` at the type level); test the runtime
     // contract via cast.
-    await t.where({ _id: "n1" }).update({ flag: null as unknown as JSONArraylessObject });
+    await t.where({ _id: "n1" }).update({ flag: null as unknown as DocumentData });
     const after = await t.where({ _id: "n1" }).first();
     expect(after).toBeDefined();
     expect(after!["_id"]).toBe("n1");

@@ -35,8 +35,8 @@ import {
   type ConsistencyLevel,
   type CurrentJson,
   type CurrentJsonRead,
-  type JSONArrayless,
-  type JSONArraylessObject,
+  type DocumentValue,
+  type DocumentData,
   logSeqStartOf,
   MANIFEST_POINTER_EMPTY_SNAPSHOT,
   matches,
@@ -193,7 +193,7 @@ export interface CurrentJsonCacheSlot {
  *
  * @internal
  */
-export interface ReadResult<T extends JSONArraylessObject> {
+export interface ReadResult<T extends DocumentData> {
   readonly rows: T[];
   readonly manifestPointer: string;
   readonly fresh: boolean;
@@ -217,7 +217,7 @@ export const serializeManifestPointer = (json: CurrentJson): string =>
  *
  * @internal
  */
-export interface QueryState<T extends JSONArraylessObject> {
+export interface QueryState<T extends DocumentData> {
   readonly predicate: Predicate<T> | undefined;
   readonly order: OrderSpec<T> | undefined;
   readonly limit: number | undefined;
@@ -243,7 +243,7 @@ export interface QueryState<T extends JSONArraylessObject> {
  *
  * @internal
  */
-export const makeQuery = <T extends JSONArraylessObject>(
+export const makeQuery = <T extends DocumentData>(
   ctx: TableReadContext,
   state: QueryState<T>,
 ): Query<T> => {
@@ -301,7 +301,7 @@ export const makeQuery = <T extends JSONArraylessObject>(
  *
  * @internal
  */
-export const runFirstWithMeta = async <T extends JSONArraylessObject>(
+export const runFirstWithMeta = async <T extends DocumentData>(
   ctx: TableReadContext,
   state: QueryState<T>,
 ): Promise<{ row: T | undefined; manifestPointer: string; fresh: boolean }> => {
@@ -323,7 +323,7 @@ export const runFirstWithMeta = async <T extends JSONArraylessObject>(
  *
  * @internal
  */
-export const runAllWithMeta = <T extends JSONArraylessObject>(
+export const runAllWithMeta = <T extends DocumentData>(
   ctx: TableReadContext,
   state: QueryState<T>,
 ): Promise<ReadResult<T>> => {
@@ -378,9 +378,9 @@ const writerFor = (ctx: TableReadContext): ServerWriter =>
  *             without duplicating the auto-id / collision-check /
  *             commit pipeline.
  */
-export const runInsert = async <T extends JSONArraylessObject>(
+export const runInsert = async <T extends DocumentData>(
   ctx: TableReadContext,
-  doc: Partial<T> & JSONArraylessObject,
+  doc: Partial<T> & DocumentData,
 ): Promise<{ _id: string }> => {
   // Auto-id semantics: caller-supplied non-empty `_id` wins; otherwise
   // mint a UUIDv7. The locked contract
@@ -388,12 +388,12 @@ export const runInsert = async <T extends JSONArraylessObject>(
   // auto-id source.
   const supplied = doc["_id"];
   const _id = typeof supplied === "string" && supplied.length > 0 ? supplied : uuidv7();
-  // The locked input type `Partial<T> & JSONArraylessObject` is an
+  // The locked input type `Partial<T> & DocumentData` is an
   // intersection of optional-keyed and required-keyed: at runtime the
-  // JSONArraylessObject half is authoritative (Partial widens types
+  // DocumentData half is authoritative (Partial widens types
   // but doesn't add `undefined` to the runtime shape). Cast through
   // the runtime-authoritative half.
-  const body: JSONArraylessObject = { ...(doc as JSONArraylessObject), _id };
+  const body: DocumentData = { ...(doc as DocumentData), _id };
 
   // Schema validation against the post-image. Runs BEFORE the
   // pre-commit collision check and before the writer round-trip so
@@ -420,8 +420,8 @@ export const runInsert = async <T extends JSONArraylessObject>(
   // your-writes); a buffered insert in the same transaction is NOT
   // visible here. The collision check still defends against a doc
   // ALREADY committed to the bucket.
-  const existing = await runRead<JSONArraylessObject>(ctx, {
-    predicate: { _id } as Predicate<JSONArraylessObject>,
+  const existing = await runRead<DocumentData>(ctx, {
+    predicate: { _id } as Predicate<DocumentData>,
     order: undefined,
     limit: 1,
     // Insert's `_id`-collision check is a mutation precondition;
@@ -479,7 +479,7 @@ export const runInsert = async <T extends JSONArraylessObject>(
  *   `undefined` (defensive — `Partial<T>` cannot be `null` at the
  *   root in the type system).
  */
-const runUpdate = async <T extends JSONArraylessObject>(
+const runUpdate = async <T extends DocumentData>(
   ctx: TableReadContext,
   state: QueryState<T>,
   patch: Partial<T>,
@@ -495,7 +495,7 @@ const runUpdate = async <T extends JSONArraylessObject>(
   }
   let modified = 0;
   for (const doc of rows) {
-    const merged = merge(doc as JSONArraylessObject, patch as Partial<JSONArraylessObject>);
+    const merged = merge(doc as DocumentData, patch as Partial<DocumentData>);
     if (merged === undefined) {
       // `merge(target, patch)` returns undefined only when patch is
       // null at the root. `Partial<T>` cannot be `null` at the type
@@ -549,7 +549,7 @@ const runUpdate = async <T extends JSONArraylessObject>(
  *   matched (cardinality is named in the message), OR the writer's
  *   CAS retry budget exhausted.
  */
-const runReplace = async <T extends JSONArraylessObject>(
+const runReplace = async <T extends DocumentData>(
   ctx: TableReadContext,
   state: QueryState<T>,
   doc: T,
@@ -568,7 +568,7 @@ const runReplace = async <T extends JSONArraylessObject>(
   const existingId = String(found[0]!["_id"]);
   // Force the matched row's `_id` onto the post-image so the doc_id
   // on the emitted entry matches the row we resolved against.
-  const body: JSONArraylessObject = { ...(doc as JSONArraylessObject), _id: existingId };
+  const body: DocumentData = { ...(doc as DocumentData), _id: existingId };
   // Schema validation runs against the post-image — same shape as
   // `runInsert`. Buffers in a transaction only after validation
   // passes; an invalid replace inside a tx aborts the body and
@@ -609,7 +609,7 @@ const runReplace = async <T extends JSONArraylessObject>(
  *   exhausted. The partial-progress `deleted` count is NOT returned
  *   in that case.
  */
-const runDelete = async <T extends JSONArraylessObject>(
+const runDelete = async <T extends DocumentData>(
   ctx: TableReadContext,
   state: QueryState<T>,
 ): Promise<{ deleted: number }> => {
@@ -669,7 +669,7 @@ const assertTxBindMatches = (ctx: TableReadContext): void => {
  *   - log entry missing in `[0, next_seq)` → `Internal`.
  *   - log entry malformed → `InvalidResponse`.
  */
-const runRead = async <T extends JSONArraylessObject>(
+const runRead = async <T extends DocumentData>(
   ctx: TableReadContext,
   state: QueryState<T>,
 ): Promise<ReadResult<T>> => {
@@ -742,7 +742,7 @@ const runRead = async <T extends JSONArraylessObject>(
   // bucket may have already swept them via `runGc()`.
   const nextSeq = head.json.next_seq;
   const logSeqStart = logSeqStartOf(head.json);
-  const baseDocs: Map<string, JSONArraylessObject> =
+  const baseDocs: Map<string, DocumentData> =
     head.json.snapshot === null
       ? new Map()
       : await loadSnapshotAsMap(ctx.storage, head.json.snapshot, ctx.tableName);
@@ -887,7 +887,7 @@ const IN_FANOUT_PARALLELISM = 8;
  *
  * @internal
  */
-const runIndexWalkPlan = async <T extends JSONArraylessObject>(
+const runIndexWalkPlan = async <T extends DocumentData>(
   ctx: TableReadContext,
   head: CurrentJson,
   state: QueryState<T>,
@@ -974,7 +974,7 @@ const runIndexWalkPlan = async <T extends JSONArraylessObject>(
     // contract doesn't promise mid-stream cancellation. Storage errors
     // are rare; tightening this is out of scope.
     const values = plan.inOn.values;
-    const walkOne = async (value: JSONArrayless): Promise<string[]> => {
+    const walkOne = async (value: DocumentValue): Promise<string[]> => {
       const valPrefix = `${eqPrefix}${encodeIndexValue(value)}/`;
       const ids: string[] = [];
       for await (const entry of ctx.storage.list(valPrefix)) {
@@ -1030,7 +1030,7 @@ const runIndexWalkPlan = async <T extends JSONArraylessObject>(
   //    matched set. Same fold the table-scan path uses, scoped to
   //    one Set<docId>.
   const matched = new Set(docIds);
-  const baseDocs: Map<string, JSONArraylessObject> =
+  const baseDocs: Map<string, DocumentData> =
     head.snapshot === null
       ? new Map()
       : await loadSnapshotAsMap(ctx.storage, head.snapshot, ctx.tableName);
@@ -1081,12 +1081,12 @@ const runIndexWalkPlan = async <T extends JSONArraylessObject>(
  * expectation. `Array.prototype.sort` is stable on Node 24+ and Workerd.
  *
  * Top-level fields only (locked at `Predicate<T>`/`OrderSpec<T>`).
- * Values are `JSONArrayless` — string / number / boolean / object —
+ * Values are `DocumentValue` — string / number / boolean / object —
  * but only the primitive types are sensibly orderable; comparing two
  * objects falls through to "considered equal," which preserves the
  * stable-sort order of the input.
  */
-const sortByOrderSpec = <T extends JSONArraylessObject>(rows: T[], spec: OrderSpec<T>): T[] => {
+const sortByOrderSpec = <T extends DocumentData>(rows: T[], spec: OrderSpec<T>): T[] => {
   const entries = Object.entries(spec) as Array<[keyof T, "asc" | "desc"]>;
   return rows.toSorted((a, b) => {
     for (const [field, dir] of entries) {

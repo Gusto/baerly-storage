@@ -7,7 +7,7 @@
  * stringify identically, which `JSON.stringify` alone does not
  * guarantee (it preserves insertion order).
  *
- * Predicates carry `JSONArraylessObject` shapes — no `undefined`, no
+ * Predicates carry `DocumentData` shapes — no `undefined`, no
  * functions, no circular references — so a recursive walk terminates
  * and the output is well-defined. Arrays are kept (predicate
  * comparators may include array literals like `{ status: ["open"] }`

@@ -1,6 +1,6 @@
 import { fc, test } from "@fast-check/vitest";
 import { describe, expect } from "vitest";
-import { type JSONArrayless, merge } from "./json.ts";
+import { type DocumentValue, merge } from "./json.ts";
 
 const jsonArrayless = fc.letrec((tie) => ({
   doc: fc.oneof(
@@ -11,7 +11,7 @@ const jsonArrayless = fc.letrec((tie) => ({
     fc.record({ a: tie("doc") }, { requiredKeys: [] }),
     fc.record({ a: tie("doc"), b: tie("doc") }, { requiredKeys: [] }),
   ),
-})).doc as fc.Arbitrary<JSONArrayless>;
+})).doc as fc.Arbitrary<DocumentValue>;
 
 // Mirrors the original `rndStructuredDoc`: objects whose keys are
 // type-partitioned — `scalar-N` always holds a primitive, `subdoc-N`
@@ -35,7 +35,7 @@ const jsonStructuredDoc = fc.letrec((tie) => ({
     fc.boolean(),
     fc.string({ minLength: 0, maxLength: 8 }),
   ),
-})).doc as fc.Arbitrary<JSONArrayless>;
+})).doc as fc.Arbitrary<DocumentValue>;
 
 describe("JSON Merge Patch (RFC 7386)", () => {
   test.prop({ a: jsonArrayless })("identity: merge(a, undefined) === a", ({ a }) => {
@@ -43,7 +43,7 @@ describe("JSON Merge Patch (RFC 7386)", () => {
   });
 
   test("case: merge(0, {}) === {}", () => {
-    expect(merge<JSONArrayless>(0, {})).toEqual({});
+    expect(merge<DocumentValue>(0, {})).toEqual({});
   });
 
   test('case: merge({a: ""}, {}) === {a: ""}', () => {
@@ -55,7 +55,7 @@ describe("JSON Merge Patch (RFC 7386)", () => {
   });
 
   test("case: merge(true, {a: {}}) === {a: {}}", () => {
-    expect(merge<JSONArrayless>(true, { a: {} })).toEqual({ a: {} });
+    expect(merge<DocumentValue>(true, { a: {} })).toEqual({ a: {} });
   });
 
   test("case: merge({}, {a: {}}) === {a: {}}", () => {
@@ -63,7 +63,7 @@ describe("JSON Merge Patch (RFC 7386)", () => {
   });
 
   test("case: merge({a: false}, true) === true", () => {
-    expect(merge<JSONArrayless>({ a: false }, true)).toEqual(true);
+    expect(merge<DocumentValue>({ a: false }, true)).toEqual(true);
   });
 
   test.prop({
@@ -85,15 +85,15 @@ describe("JSON Merge Patch (RFC 7386)", () => {
     // Object literal `{ __proto__: ... }` is a prototype-setter, not an
     // own key — use JSON.parse so the key becomes an actual own property
     // of the patch, mirroring how a malicious HTTP PATCH body would arrive.
-    const target = { safe: 1 } as JSONArrayless;
+    const target = { safe: 1 } as DocumentValue;
     const polluted = merge(target, JSON.parse('{"__proto__":{"polluted":true}}'));
     expect((polluted as Record<string, unknown>)["polluted"]).toBeUndefined();
     expect(Object.getPrototypeOf(polluted)).toBe(Object.prototype);
 
-    const ctor = merge(target, { constructor: "x" } as unknown as Partial<JSONArrayless>);
+    const ctor = merge(target, { constructor: "x" } as unknown as Partial<DocumentValue>);
     expect((ctor as Record<string, unknown>).constructor).toBe(Object);
 
-    const proto = merge(target, { prototype: "x" } as unknown as Partial<JSONArrayless>);
+    const proto = merge(target, { prototype: "x" } as unknown as Partial<DocumentValue>);
     expect((proto as Record<string, unknown>)["prototype"]).toBeUndefined();
   });
 

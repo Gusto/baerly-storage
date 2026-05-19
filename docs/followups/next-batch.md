@@ -104,7 +104,7 @@ can import them directly within-package.
 
 Package description: "Internal protocol kernel — implementation
 detail of @baerly/server. Not a public API." Every template
-imports `Verifier`, `Storage`, `JSONArraylessObject` directly
+imports `Verifier`, `Storage`, `DocumentData` directly
 from `@baerly/protocol`.
 
 **Fix:** Decide. Either rewrite the description (it *is* a

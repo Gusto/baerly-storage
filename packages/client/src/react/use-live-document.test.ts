@@ -3,7 +3,7 @@
 import { renderHook, waitFor } from "@testing-library/react";
 import { createElement, type ReactNode } from "react";
 import { describe, expect, test } from "vitest";
-import type { JSONArraylessObject } from "@baerly/protocol";
+import type { DocumentData } from "@baerly/protocol";
 import { createBaerlyClient } from "../client.ts";
 import { MockFetch } from "../testing/index.ts";
 import { BaerlyProvider, useLiveDocument } from "./index.ts";
@@ -20,7 +20,7 @@ const sinceResponse = (body: unknown): Response =>
     headers: { "content-type": "application/json" },
   });
 
-interface Ticket extends JSONArraylessObject {
+interface Ticket extends DocumentData {
   readonly _id: string;
   readonly title: string;
 }

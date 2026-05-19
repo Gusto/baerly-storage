@@ -34,7 +34,7 @@
 
 import {
   BaerlyError,
-  type JSONArraylessObject,
+  type DocumentData,
   type LogEntry,
   logSeqStartOf,
   type MetricsRecorder,
@@ -187,7 +187,7 @@ const rebuildIndexInner = async (
   //    `doCopy`.
   const live =
     read.json.snapshot === null
-      ? new Map<string, JSONArraylessObject>()
+      ? new Map<string, DocumentData>()
       : await loadSnapshotAsMap(storage, read.json.snapshot, collection);
   const textDecoder = new TextDecoder();
   for (let s = logSeqStart; s < nextSeq; s++) {

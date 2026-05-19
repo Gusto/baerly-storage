@@ -68,9 +68,9 @@ export interface LogEntry {
   collection: string;
   doc_id?: string;                      // I/U/D
   schema_version: number;
-  new?: JSONArraylessObject;            // I/U
-  patch?: JSONArraylessObject;          // I/U; equals `new` today
-  old?: JSONArraylessObject;            // when replica_identity = FULL
+  new?: DocumentData;            // I/U
+  patch?: DocumentData;          // I/U; equals `new` today
+  old?: DocumentData;            // when replica_identity = FULL
   key_old?: { readonly [pk: string]: JSONValue };
   origin?: string;
   session: string;

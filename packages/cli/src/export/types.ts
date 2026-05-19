@@ -1,4 +1,4 @@
-import type { JSONArraylessObject } from "@baerly/protocol";
+import type { DocumentData } from "@baerly/protocol";
 
 /**
  * Supported SQL targets for `baerly export`. Each target gets its own
@@ -55,11 +55,11 @@ export interface ExportPlan {
 
 /**
  * One materialised row from the L9 snapshot fold. Matches the shape
- * of `JSONArraylessObject` from `@baerly/protocol`: every value is
- * `string | number | boolean | JSONArraylessObject`.
+ * of `DocumentData` from `@baerly/protocol`: every value is
+ * `string | number | boolean | DocumentData`.
  *
  * Note: `_id` is not part of the body — it's the map key. The
  * exporter assembles the SQL row by reading the map key into the
  * `_id` column and the body keys into the remaining columns.
  */
-export type ExportRow = JSONArraylessObject;
+export type ExportRow = DocumentData;

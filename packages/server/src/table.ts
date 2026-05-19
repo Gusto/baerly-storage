@@ -15,7 +15,7 @@
 
 import {
   type ConsistencyLevel,
-  type JSONArraylessObject,
+  type DocumentData,
   type OrderSpec,
   type Predicate,
   type Table,
@@ -43,7 +43,7 @@ import { makeQuery, runInsert, type TableReadContext } from "./query.ts";
  *
  * @internal
  */
-export const makeTable = <T extends JSONArraylessObject>(ctx: TableReadContext): Table<T> => {
+export const makeTable = <T extends DocumentData>(ctx: TableReadContext): Table<T> => {
   // Empty seed state. Every modifier merges into a frozen copy.
   const seed = {
     predicate: undefined as Predicate<T> | undefined,

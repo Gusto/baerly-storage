@@ -84,13 +84,13 @@ export interface SinceResponse {
  * URLs carry `app` / `table` / `id` only.
  */
 export type Routes =
-  /** Read one document. → `HttpOkEnvelope<JSONArraylessObject>` | 404. */
+  /** Read one document. → `HttpOkEnvelope<DocumentData>` | 404. */
   | { method: "GET"; path: `/v1/t/${string}/${string}` }
   /** List rows matching a predicate (in query string). */
   | { method: "GET"; path: `/v1/t/${string}` }
-  /** Insert. Body: `{ doc: JSONArraylessObject }`. */
+  /** Insert. Body: `{ doc: DocumentData }`. */
   | { method: "POST"; path: `/v1/t/${string}` }
-  /** JSON-merge-patch. Body: `{ patch: JSONArraylessObject }`. Response: `{ modified: number }`. */
+  /** JSON-merge-patch. Body: `{ patch: DocumentData }`. Response: `{ modified: number }`. */
   | { method: "PATCH"; path: `/v1/t/${string}/${string}` }
   /** Delete row by id. */
   | { method: "DELETE"; path: `/v1/t/${string}/${string}` }

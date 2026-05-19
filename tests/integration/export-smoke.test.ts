@@ -4,20 +4,20 @@ import { merge } from "@baerly/protocol";
 
 /**
  * Local JSON value types — the test deliberately does NOT import
- * `JSONValue` / `JSONArraylessObject` from `@baerly/protocol`. The
+ * `JSONValue` / `DocumentData` from `@baerly/protocol`. The
  * point of the smoke test is to simulate an external consumer of
  * the frozen `LogEntry` contract, so any drift in the protocol
  * package shows up as a TS compile error here. Trimmed to the
  * subset the fixtures need.
  */
 type JSONValue = string | number | boolean | null | JSONValue[] | { [k: string]: JSONValue };
-type JSONArraylessObject = {
-  [k: string]: string | number | boolean | JSONArraylessObject;
+type DocumentData = {
+  [k: string]: string | number | boolean | DocumentData;
 };
 
 /**
  * RFC 7386 merge-patch bodies use `null` as a delete sentinel. The
- * `LogEntry.patch` is typed as `JSONArraylessObject` (no
+ * `LogEntry.patch` is typed as `DocumentData` (no
  * nulls allowed inside doc bodies), but a *patch* body legitimately
  * uses nulls to remove fields. Widen the local `patch` type to
  * allow nulls so fixture #4 ("null deletes nested field") is legal
@@ -41,9 +41,9 @@ interface LogEntry {
   collection: string;
   doc_id?: string;
   schema_version: number;
-  new?: JSONArraylessObject;
+  new?: DocumentData;
   patch?: JSONMergePatchObject;
-  old?: JSONArraylessObject;
+  old?: DocumentData;
   key_old?: { readonly [pk: string]: JSONValue };
   origin?: string;
   session: string;

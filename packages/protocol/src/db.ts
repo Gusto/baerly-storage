@@ -1,4 +1,4 @@
-import type { JSONArrayless, JSONArraylessObject } from "./json.ts";
+import type { DocumentValue, DocumentData } from "./json.ts";
 import type { PredicateOp } from "./query/predicate.ts";
 
 /**
@@ -11,7 +11,7 @@ import type { PredicateOp } from "./query/predicate.ts";
  *              treats `_id` as optional on `insert` (server fills
  *              it in) and required on read.
  */
-export interface Table<T extends JSONArraylessObject = JSONArraylessObject> {
+export interface Table<T extends DocumentData = DocumentData> {
   readonly name: string;
 
   /**
@@ -66,7 +66,7 @@ export interface Table<T extends JSONArraylessObject = JSONArraylessObject> {
    * });
    * ```
    */
-  insert(doc: Partial<T> & JSONArraylessObject): Promise<{ _id: string }>;
+  insert(doc: Partial<T> & DocumentData): Promise<{ _id: string }>;
 
   /**
    * Count every row in the table (equivalent to `.where({}).count()`).
@@ -96,14 +96,14 @@ export interface Table<T extends JSONArraylessObject = JSONArraylessObject> {
  * actual are both `string` or both `number`; other type combos are
  * always-miss (boolean, null, missing, type-mismatched).
  */
-export type Predicate<T extends JSONArraylessObject = JSONArraylessObject> = {
-  readonly [K in keyof T]?: T[K] | PredicateOp<T[K] extends JSONArrayless ? T[K] : never>;
+export type Predicate<T extends DocumentData = DocumentData> = {
+  readonly [K in keyof T]?: T[K] | PredicateOp<T[K] extends DocumentValue ? T[K] : never>;
 } & {
-  readonly [dottedPath: string]: JSONArrayless | PredicateOp<JSONArrayless>;
+  readonly [dottedPath: string]: DocumentValue | PredicateOp<DocumentValue>;
 };
 
 /** Order specifier. Top-level fields only on day one. */
-export type OrderSpec<T extends JSONArraylessObject = JSONArraylessObject> = {
+export type OrderSpec<T extends DocumentData = DocumentData> = {
   readonly [K in keyof T]?: "asc" | "desc";
 };
 
@@ -121,7 +121,7 @@ export type ConsistencyLevel = "strong" | "eventual";
  * order / limit state forward. Modifiers compose; verbs are
  * terminal.
  */
-export interface Query<T extends JSONArraylessObject = JSONArraylessObject> {
+export interface Query<T extends DocumentData = DocumentData> {
   where(predicate: Predicate<T>): Query<T>;
   order(spec: OrderSpec<T>): Query<T>;
   limit(n: number): Query<T>;

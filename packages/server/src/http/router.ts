@@ -25,7 +25,7 @@ import type { ContentfulStatusCode } from "hono/utils/http-status";
 import {
   type ConsistencyLevel,
   BaerlyError,
-  type JSONArraylessObject,
+  type DocumentData,
   type BaerlyErrorCode,
   type OrderSpec,
   type Predicate,
@@ -105,7 +105,7 @@ export function createRouter(options: CreateRouterOptions): Hono {
     const { table, id } = c.req.param();
     const consistency = parseConsistency(c.req.query("consistency"));
     const { row, manifestPointer, fresh } = await runFirstWithMeta(db.tableReadContext(table), {
-      predicate: { _id: id } as Predicate<JSONArraylessObject>,
+      predicate: { _id: id } as Predicate<DocumentData>,
       order: undefined,
       limit: 1,
       consistency,
@@ -117,7 +117,7 @@ export function createRouter(options: CreateRouterOptions): Hono {
       {
         data: row,
         _meta: { manifest_pointer: manifestPointer, fresh },
-      } satisfies HttpOkEnvelope<JSONArraylessObject>,
+      } satisfies HttpOkEnvelope<DocumentData>,
       200,
     );
   });
@@ -138,7 +138,7 @@ export function createRouter(options: CreateRouterOptions): Hono {
     const order = parseOrder(c.req.query("order"));
     const limit = parseLimit(c.req.query("limit"));
     const { rows, manifestPointer, fresh } = await runAllWithMeta(db.tableReadContext(table), {
-      predicate: predicate as Predicate<JSONArraylessObject>,
+      predicate: predicate as Predicate<DocumentData>,
       order,
       limit,
       consistency,
@@ -147,7 +147,7 @@ export function createRouter(options: CreateRouterOptions): Hono {
       {
         data: rows,
         _meta: { manifest_pointer: manifestPointer, fresh },
-      } satisfies HttpOkEnvelope<ReadonlyArray<JSONArraylessObject>>,
+      } satisfies HttpOkEnvelope<ReadonlyArray<DocumentData>>,
       200,
     );
   });
@@ -162,7 +162,7 @@ export function createRouter(options: CreateRouterOptions): Hono {
     }
     const { _id } = await db
       .table(table)
-      .insert(doc as Partial<JSONArraylessObject> & JSONArraylessObject);
+      .insert(doc as Partial<DocumentData> & DocumentData);
     return c.json({ _id }, 201);
   });
 
@@ -181,8 +181,8 @@ export function createRouter(options: CreateRouterOptions): Hono {
     }
     const { modified } = await db
       .table(table)
-      .where({ _id: id } as Predicate<JSONArraylessObject>)
-      .update(patch as Partial<JSONArraylessObject>);
+      .where({ _id: id } as Predicate<DocumentData>)
+      .update(patch as Partial<DocumentData>);
     if (modified === 0) {
       throw new BaerlyError("NotFound", `No such row: ${id}`);
     }
@@ -203,8 +203,8 @@ export function createRouter(options: CreateRouterOptions): Hono {
     try {
       await db
         .table(table)
-        .where({ _id: id } as Predicate<JSONArraylessObject>)
-        .replace(doc as JSONArraylessObject);
+        .where({ _id: id } as Predicate<DocumentData>)
+        .replace(doc as DocumentData);
     } catch (error) {
       // `Query.replace` raises `Conflict` with `expected exactly 1
       // match, got 0` when the row is missing. Translate to the
@@ -228,7 +228,7 @@ export function createRouter(options: CreateRouterOptions): Hono {
     const { table, id } = c.req.param();
     const { deleted } = await db
       .table(table)
-      .where({ _id: id } as Predicate<JSONArraylessObject>)
+      .where({ _id: id } as Predicate<DocumentData>)
       .delete();
     if (deleted === 0) {
       throw new BaerlyError("NotFound", `No such row: ${id}`);
@@ -259,7 +259,7 @@ export function createRouter(options: CreateRouterOptions): Hono {
     }
     const consistency = parseConsistency(c.req.query("consistency"));
     const { rows, manifestPointer, fresh } = await runAllWithMeta(db.tableReadContext(table), {
-      predicate: predicate as Predicate<JSONArraylessObject>,
+      predicate: predicate as Predicate<DocumentData>,
       order: undefined,
       limit: undefined,
       consistency,
@@ -380,7 +380,7 @@ function parseLimit(raw: string | undefined): number | undefined {
  *
  * @internal
  */
-function parseOrder(raw: string | undefined): OrderSpec<JSONArraylessObject> | undefined {
+function parseOrder(raw: string | undefined): OrderSpec<DocumentData> | undefined {
   if (raw === undefined || raw.length === 0) {
     return undefined;
   }
@@ -393,7 +393,7 @@ function parseOrder(raw: string | undefined): OrderSpec<JSONArraylessObject> | u
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
     throw new BaerlyError("SchemaError", "?order= must encode a JSON object");
   }
-  return parsed as OrderSpec<JSONArraylessObject>;
+  return parsed as OrderSpec<DocumentData>;
 }
 
 const ERROR_TO_STATUS: ReadonlyMap<BaerlyErrorCode, HttpStatus> = new Map<

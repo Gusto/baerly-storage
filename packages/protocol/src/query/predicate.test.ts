@@ -3,7 +3,7 @@ import { describe, expect, test } from "vitest";
 
 import type { Predicate } from "../db.ts";
 import { BaerlyError } from "../errors.ts";
-import type { JSONArrayless, JSONObject } from "../json.ts";
+import type { DocumentValue, JSONObject } from "../json.ts";
 
 import {
   matches,
@@ -640,18 +640,18 @@ const valArb = fc.oneof(
 const flatPredArb: fc.Arbitrary<Predicate> = fc
   .array(fc.tuple(keyArb, valArb), { maxLength: 4 })
   .map((pairs) => {
-    const out: Record<string, JSONArrayless> = {};
+    const out: Record<string, DocumentValue> = {};
     for (const [k, v] of pairs) {
-      out[k] = v as JSONArrayless;
+      out[k] = v as DocumentValue;
     }
     return out as Predicate;
   });
 const docArb: fc.Arbitrary<JSONObject> = fc
   .array(fc.tuple(keyArb, valArb), { maxLength: 4 })
   .map((pairs) => {
-    const out: Record<string, JSONArrayless> = {};
+    const out: Record<string, DocumentValue> = {};
     for (const [k, v] of pairs) {
-      out[k] = v as JSONArrayless;
+      out[k] = v as DocumentValue;
     }
     return out as JSONObject;
   });
@@ -675,7 +675,7 @@ fcTest.prop({ a: flatPredArb, b: flatPredArb, doc: docArb })(
 // We validate both predicates first — only valid inputs participate
 // (the validator owns the "well-formed" boundary; the property
 // concerns matcher/merge agreement post-validation).
-const opObjArb: fc.Arbitrary<JSONArrayless> = fc
+const opObjArb: fc.Arbitrary<DocumentValue> = fc
   .record(
     {
       $eq: fc.option(valArb, { nil: undefined }),
@@ -687,26 +687,26 @@ const opObjArb: fc.Arbitrary<JSONArrayless> = fc
   )
   .filter((r) => Object.values(r).some((v) => v !== undefined))
   .map((r) => {
-    const out: Record<string, JSONArrayless> = {};
+    const out: Record<string, DocumentValue> = {};
     if (r.$eq !== undefined) {
-      out["$eq"] = r.$eq as JSONArrayless;
+      out["$eq"] = r.$eq as DocumentValue;
     }
     if (r.$gt !== undefined) {
-      out["$gt"] = r.$gt as JSONArrayless;
+      out["$gt"] = r.$gt as DocumentValue;
     }
     if (r.$lt !== undefined) {
-      out["$lt"] = r.$lt as JSONArrayless;
+      out["$lt"] = r.$lt as DocumentValue;
     }
     if (r.$in !== undefined) {
-      out["$in"] = r.$in as JSONArrayless[] as unknown as JSONArrayless;
+      out["$in"] = r.$in as DocumentValue[] as unknown as DocumentValue;
     }
-    return out as JSONArrayless;
+    return out as DocumentValue;
   });
 
 const opPredArb: fc.Arbitrary<Predicate> = fc
   .array(fc.tuple(keyArb, fc.oneof(valArb, opObjArb)), { maxLength: 4 })
   .map((pairs) => {
-    const out: Record<string, JSONArrayless> = {};
+    const out: Record<string, DocumentValue> = {};
     for (const [k, v] of pairs) {
       out[k] = v;
     }
@@ -738,9 +738,9 @@ describe("predicateImplies", () => {
   // Helper to construct predicates without TypeScript's literal-type
   // narrowing. The runtime predicate type is far more permissive
   // than the declared `Predicate<T>` (which keys off the doc shape);
-  // tests over arbitrary fixtures use the open-world JSONArrayless
+  // tests over arbitrary fixtures use the open-world DocumentValue
   // shape directly.
-  const P = (p: Record<string, JSONArrayless>): Predicate => p as unknown as Predicate;
+  const P = (p: Record<string, DocumentValue>): Predicate => p as unknown as Predicate;
 
   test("identical equality predicates → true", () => {
     expect(predicateImplies(P({ status: "open" }), P({ status: "open" }))).toBe(true);
@@ -805,7 +805,7 @@ describe("predicateImplies", () => {
 
 describe("predicateImplies — range and $in", () => {
   // Test predicates use `$in: [...]` clauses whose array members don't
-  // fit `Record<string, JSONArrayless>`; the open-world Predicate type
+  // fit `Record<string, DocumentValue>`; the open-world Predicate type
   // accepts them at runtime, so we cast each fixture via `unknown`.
   const P = (p: Record<string, unknown>): Predicate => p as unknown as Predicate;
 

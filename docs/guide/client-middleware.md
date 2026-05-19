@@ -182,7 +182,7 @@ call"), wrap the client object instead:
 
 ```ts
 import { createBaerlyClient, type BaerlyClient, type ClientTable } from "baerly-storage/client";
-import type { JSONArraylessObject } from "baerly-storage";
+import type { DocumentData } from "baerly-storage";
 
 const inner = createBaerlyClient({ baseUrl: "https://api.example.com" });
 
@@ -190,7 +190,7 @@ const traced: BaerlyClient = {
   ...inner,
   table: (name: string) => {
     const t = inner.table(name);
-    const wrapped: ClientTable<JSONArraylessObject> = {
+    const wrapped: ClientTable<DocumentData> = {
       ...t,
       insert: async (doc) => {
         console.log(`query: table(${name}).insert`, doc);

@@ -46,7 +46,7 @@ import {
   CURRENT_JSON_SCHEMA_VERSION,
   createCurrentJson,
   type CurrentJson,
-  type JSONArraylessObject,
+  type DocumentData,
   readCurrentJson,
 } from "@baerly/protocol";
 import { ServerWriter } from "@baerly/server";
@@ -249,7 +249,7 @@ const handleRestore = async (args: Args): Promise<number> => {
       // Pass the full object as the body — `_id` is part of the
       // body in the doc shape, and the writer keys on `docId`
       // separately.
-      const body = row as unknown as JSONArraylessObject;
+      const body = row as unknown as DocumentData;
       await writer.commit({
         op: "I",
         collection: args.table,

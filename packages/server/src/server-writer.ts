@@ -36,7 +36,7 @@
 
 import {
   type CurrentJson,
-  type JSONArraylessObject,
+  type DocumentData,
   type LogEntry,
   type MetricsRecorder,
   logSeqStartOf,
@@ -179,7 +179,7 @@ export interface CommitInput {
    * {@link LogEntry.patch} (today's per-doc-replace model). Must be
    * `undefined` for `op: "D"`.
    */
-  readonly body?: JSONArraylessObject;
+  readonly body?: DocumentData;
 
   /** Optional ISO-8601 origin marker; becomes {@link LogEntry.origin}. */
   readonly origin?: string;
@@ -577,7 +577,7 @@ export class ServerWriter {
     // Per-docId in-batch image map: tracks the latest post-image
     // each input lays down so a later input on the same docId reads
     // the in-batch pre-image, not the on-disk one.
-    const inBatchImage = new Map<string, JSONArraylessObject | undefined>();
+    const inBatchImage = new Map<string, DocumentData | undefined>();
     for (const input of inputs) {
       if (input.op !== "D" && input.body !== undefined) {
         contentPutCount++;
@@ -776,7 +776,7 @@ export class ServerWriter {
     collection: string,
     docId: string,
     currentNextSeq: number,
-  ): Promise<JSONArraylessObject | undefined> {
+  ): Promise<DocumentData | undefined> {
     // Walk newest-to-oldest so we hit the most-recent op first.
     // `s = -1` is the natural empty-bucket sentinel.
     for (let s = currentNextSeq - 1; s >= 0; s--) {

@@ -1,5 +1,5 @@
 import { useCallback } from "react";
-import type { JSONArraylessObject, Predicate } from "@baerly/protocol";
+import type { DocumentData, Predicate } from "@baerly/protocol";
 import { useBaerlyClient } from "./provider.ts";
 import { useMutation, type UseMutationResult } from "./use-mutation.ts";
 
@@ -8,7 +8,7 @@ export interface UseUpdateOptions {
   readonly table: string;
 }
 
-export type UseUpdateResult<T extends JSONArraylessObject> = UseMutationResult<
+export type UseUpdateResult<T extends DocumentData> = UseMutationResult<
   [id: string, patch: Partial<T>],
   { readonly modified: number }
 >;
@@ -36,7 +36,7 @@ export type UseUpdateResult<T extends JSONArraylessObject> = UseMutationResult<
  * </button>
  * ```
  */
-export const useUpdate = <T extends JSONArraylessObject = JSONArraylessObject>(
+export const useUpdate = <T extends DocumentData = DocumentData>(
   opts: UseUpdateOptions,
 ): UseUpdateResult<T> => {
   const { table } = opts;

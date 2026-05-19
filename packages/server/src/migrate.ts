@@ -27,7 +27,7 @@
 
 import {
   type CurrentJson,
-  type JSONArraylessObject,
+  type DocumentData,
   type Storage,
   type StoragePutOptions,
   BaerlyError,
@@ -57,7 +57,7 @@ export interface MigrateCollectionArgs {
    * primitive may invoke the transform exactly once per row, but a
    * crashed run that re-CASes on retry assumes determinism.
    */
-  readonly transform: (row: JSONArraylessObject) => JSONArraylessObject | null;
+  readonly transform: (row: DocumentData) => DocumentData | null;
   /**
    * Target `schema_version` to stamp on the new pointer's
    * `migrated_to` field. A subsequent call with the same value on a
@@ -97,7 +97,7 @@ export interface MigrateCollectionResult {
  *   (collection not provisioned), or `targetVersion` is negative /
  *   non-integer.
  * @throws BaerlyError code="SchemaError" — `transform` returned a
- *   value that is not a plain `JSONArraylessObject` and is not
+ *   value that is not a plain `DocumentData` and is not
  *   `null`. The migrate refuses to write an indeterminate body.
  * @throws BaerlyError code="Conflict" — CAS lost on the pointer
  *   advance. The new snapshot body remains on disk and will be swept
@@ -149,7 +149,7 @@ export const migrateCollection = async (
   // ── Step 2. Load the prior snapshot (if any) as the fold base. ──
   const base =
     current.snapshot === null
-      ? new Map<string, JSONArraylessObject>()
+      ? new Map<string, DocumentData>()
       : await loadSnapshotAsMap(storage, current.snapshot, collection, signal);
 
   // ── Step 3. Apply the live-log tail onto `base`. ────────────────
@@ -189,7 +189,7 @@ export const migrateCollection = async (
 
   // ── Step 4. Run the transform. Drop nulls; reject non-objects. ──
   const inputRows = base.size;
-  const transformed = new Map<string, JSONArraylessObject>();
+  const transformed = new Map<string, DocumentData>();
   for (const [id, row] of base) {
     const next = transform(row);
     if (next === null) {

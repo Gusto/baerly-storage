@@ -20,8 +20,8 @@
  */
 
 import {
-  type JSONArrayless,
-  type JSONArraylessObject,
+  type DocumentValue,
+  type DocumentData,
   type Predicate,
   predicateImplies,
 } from "@baerly/protocol";
@@ -53,15 +53,15 @@ export interface IndexWalkPlan {
    * Length ≥ 1. The executor encodes these via `encodeIndexValue` at
    * the I/O boundary; the planner stays storage-encoding-free.
    */
-  readonly equalityKeys: ReadonlyArray<JSONArrayless>;
+  readonly equalityKeys: ReadonlyArray<DocumentValue>;
   /**
    * T3 fills this slot. Range bound on the LAST indexed field beyond
    * the equality prefix. Mutually exclusive with `inOn`.
    */
   readonly rangeOn?: {
     readonly field: string;
-    readonly lo?: JSONArrayless;
-    readonly hi?: JSONArrayless;
+    readonly lo?: DocumentValue;
+    readonly hi?: DocumentValue;
     readonly loInclusive: boolean;
     readonly hiInclusive: boolean;
   };
@@ -71,7 +71,7 @@ export interface IndexWalkPlan {
    */
   readonly inOn?: {
     readonly field: string;
-    readonly values: ReadonlyArray<JSONArrayless>;
+    readonly values: ReadonlyArray<DocumentValue>;
   };
   /**
    * Predicate residue the executor MUST re-apply post-fetch via
@@ -80,7 +80,7 @@ export interface IndexWalkPlan {
    * unrelated equality on a non-indexed field, or operator clauses
    * the planner left for the in-memory re-check).
    */
-  readonly postFilter?: Predicate<JSONArraylessObject>;
+  readonly postFilter?: Predicate<DocumentData>;
 }
 
 /**
@@ -162,8 +162,8 @@ const isOperatorObject = (v: unknown): boolean => {
  * misroute.
  */
 interface RangeOpInfo {
-  readonly lo?: JSONArrayless;
-  readonly hi?: JSONArrayless;
+  readonly lo?: DocumentValue;
+  readonly hi?: DocumentValue;
   readonly loInclusive: boolean;
   readonly hiInclusive: boolean;
 }
@@ -192,22 +192,22 @@ const tryExtractRange = (op: Record<string, unknown>): RangeOpInfo | undefined =
   if (op["$eq"] !== undefined) {
     return undefined;
   }
-  let lo: JSONArrayless | undefined;
+  let lo: DocumentValue | undefined;
   let loInclusive = false;
   if (op["$gte"] !== undefined) {
-    lo = op["$gte"] as JSONArrayless;
+    lo = op["$gte"] as DocumentValue;
     loInclusive = true;
   } else if (op["$gt"] !== undefined) {
-    lo = op["$gt"] as JSONArrayless;
+    lo = op["$gt"] as DocumentValue;
     loInclusive = false;
   }
-  let hi: JSONArrayless | undefined;
+  let hi: DocumentValue | undefined;
   let hiInclusive = false;
   if (op["$lte"] !== undefined) {
-    hi = op["$lte"] as JSONArrayless;
+    hi = op["$lte"] as DocumentValue;
     hiInclusive = true;
   } else if (op["$lt"] !== undefined) {
-    hi = op["$lt"] as JSONArrayless;
+    hi = op["$lt"] as DocumentValue;
     hiInclusive = false;
   }
   return {
@@ -224,12 +224,12 @@ const tryExtractRange = (op: Record<string, unknown>): RangeOpInfo | undefined =
  * `$in` mixed with other operators — the planner only routes the
  * pure shape).
  */
-const tryExtractIn = (op: Record<string, unknown>): ReadonlyArray<JSONArrayless> | undefined => {
+const tryExtractIn = (op: Record<string, unknown>): ReadonlyArray<DocumentValue> | undefined => {
   const keys = Object.keys(op);
   if (keys.length !== 1 || keys[0] !== "$in") {
     return undefined;
   }
-  const values = op["$in"] as ReadonlyArray<JSONArrayless> | undefined;
+  const values = op["$in"] as ReadonlyArray<DocumentValue> | undefined;
   if (!Array.isArray(values)) {
     return undefined;
   }
@@ -241,10 +241,10 @@ const tryExtractIn = (op: Record<string, unknown>): ReadonlyArray<JSONArrayless>
  * the planner can put in `equalityKeys`. Returns `undefined` for any
  * other shape.
  */
-const tryExtractEq = (op: Record<string, unknown>): JSONArrayless | undefined => {
+const tryExtractEq = (op: Record<string, unknown>): DocumentValue | undefined => {
   const keys = Object.keys(op);
   if (keys.length === 1 && keys[0] === "$eq" && op["$eq"] !== undefined) {
-    return op["$eq"] as JSONArrayless;
+    return op["$eq"] as DocumentValue;
   }
   return undefined;
 };
@@ -299,7 +299,7 @@ const tryExtractEq = (op: Record<string, unknown>): JSONArrayless | undefined =>
  *
  * @typeParam T - the document shape the predicate is keyed against.
  */
-export const planQuery = <T extends JSONArraylessObject = JSONArraylessObject>(
+export const planQuery = <T extends DocumentData = DocumentData>(
   predicate: Predicate<T> | undefined,
   indexes: ReadonlyArray<IndexDefinition>,
   options?: PlanQueryOptions,
@@ -316,9 +316,9 @@ export const planQuery = <T extends JSONArraylessObject = JSONArraylessObject>(
   //   - rangeOps (range-only op-objects)
   //   - inOps (`$in`-only op-objects)
   //   - other (anything else — always post-fetch residue)
-  const equality = new Map<string, JSONArrayless>();
+  const equality = new Map<string, DocumentValue>();
   const rangeOps = new Map<string, RangeOpInfo>();
-  const inOps = new Map<string, ReadonlyArray<JSONArrayless>>();
+  const inOps = new Map<string, ReadonlyArray<DocumentValue>>();
   for (const key of Object.keys(predicate)) {
     const value = (predicate as Record<string, unknown>)[key];
     if (value === undefined) {
@@ -346,9 +346,9 @@ export const planQuery = <T extends JSONArraylessObject = JSONArraylessObject>(
       continue;
     }
     // Primitives + non-operator nested objects are routable as
-    // equality. The encoder accepts any JSONArrayless value; equal-
+    // equality. The encoder accepts any DocumentValue value; equal-
     // by-value objects produce byte-equal segments.
-    equality.set(key, value as JSONArrayless);
+    equality.set(key, value as DocumentValue);
   }
 
   if (equality.size === 0 && rangeOps.size === 0 && inOps.size === 0) {
@@ -370,17 +370,17 @@ export const planQuery = <T extends JSONArraylessObject = JSONArraylessObject>(
     readonly def: IndexDefinition;
     readonly defIndex: number;
     readonly prefixLen: number;
-    readonly equalityKeys: JSONArrayless[];
+    readonly equalityKeys: DocumentValue[];
     readonly consumed: ReadonlyArray<string>;
     readonly tail?:
       | { kind: "range"; field: string; info: RangeOpInfo }
-      | { kind: "in"; field: string; values: ReadonlyArray<JSONArrayless> };
+      | { kind: "in"; field: string; values: ReadonlyArray<DocumentValue> };
   }
   const candidates: Candidate[] = [];
   for (let defIndex = 0; defIndex < indexes.length; defIndex++) {
     const def = indexes[defIndex]!;
     const tuple: readonly string[] = typeof def.on === "string" ? [def.on] : def.on;
-    const equalityKeys: JSONArrayless[] = [];
+    const equalityKeys: DocumentValue[] = [];
     const consumed: string[] = [];
     let tail: Candidate["tail"] | undefined;
     for (let i = 0; i < tuple.length; i++) {
@@ -437,7 +437,7 @@ export const planQuery = <T extends JSONArraylessObject = JSONArraylessObject>(
     if (c.def.predicate === undefined) {
       return 1;
     }
-    return predicateImplies(c.def.predicate, predicate as Predicate<JSONArraylessObject>) ? 0 : 2;
+    return predicateImplies(c.def.predicate, predicate as Predicate<DocumentData>) ? 0 : 2;
   };
   candidates.sort((a, b) => {
     const aRank = rank(a);
@@ -503,7 +503,7 @@ export const planQuery = <T extends JSONArraylessObject = JSONArraylessObject>(
     ...(best.tail !== undefined && best.tail.kind === "in"
       ? { inOn: { field: best.tail.field, values: best.tail.values } }
       : {}),
-    ...(residueCount > 0 ? { postFilter: postFilter as Predicate<JSONArraylessObject> } : {}),
+    ...(residueCount > 0 ? { postFilter: postFilter as Predicate<DocumentData> } : {}),
   };
   return plan;
 };

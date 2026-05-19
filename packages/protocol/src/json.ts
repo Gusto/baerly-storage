@@ -1,7 +1,22 @@
 import { FORBIDDEN_MERGE_KEYS } from "./constants.ts";
 
-export type JSONArraylessObject = { [x: string]: JSONArrayless };
-export type JSONArrayless = string | number | boolean | JSONArraylessObject;
+/**
+ * The shape constraint for documents stored in a {@link Table}.
+ *
+ * Plain JSON object: string-keyed; values are strings, numbers,
+ * booleans, or nested {@link DocumentData}. Arrays are allowed only
+ * inside nested objects, never at the top level — JSON Merge Patch
+ * (RFC 7386) can't deep-merge top-level arrays, and Baerly's writer
+ * path is built on merge patch.
+ */
+export type DocumentData = { [x: string]: DocumentValue };
+
+/**
+ * A single field value inside a {@link DocumentData}. The recursive
+ * type that backs {@link DocumentData}, also used by predicate and
+ * order-spec types in `@baerly/protocol/query`.
+ */
+export type DocumentValue = string | number | boolean | DocumentData;
 
 export type JSONObject = { [x: string]: JSONValue };
 export type JSONValue = string | number | boolean | null | JSONObject | Array<JSONValue>;
@@ -11,7 +26,7 @@ export type JSONValue = string | number | boolean | null | JSONObject | Array<JS
  * Update target JSON with a merge patch.
  * This routine does not support arrays
  */
-export function merge<T extends JSONArrayless>(
+export function merge<T extends DocumentValue>(
   target: T | undefined,
   patch: Partial<T> | null | undefined,
 ): T | undefined {
@@ -39,7 +54,7 @@ export function merge<T extends JSONArrayless>(
     if (patch[key] === null) {
       delete combined[key];
     } else {
-      combined[key] = merge(target[key] as JSONArrayless, patch[key] as JSONArrayless) as T[Extract<
+      combined[key] = merge(target[key] as DocumentValue, patch[key] as DocumentValue) as T[Extract<
         keyof T,
         string
       >];

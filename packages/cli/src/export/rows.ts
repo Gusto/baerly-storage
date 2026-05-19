@@ -1,4 +1,4 @@
-import type { JSONArrayless } from "@baerly/protocol";
+import type { DocumentValue } from "@baerly/protocol";
 import type { ExportPlan, ExportRow } from "./types.ts";
 import { quoteValue } from "./sql-escape.ts";
 
@@ -29,10 +29,10 @@ export async function* emitInsertStatements(
   for (const [id, body] of rows) {
     const values: string[] = [];
     for (const col of plan.columns) {
-      const raw: JSONArrayless | undefined =
+      const raw: DocumentValue | undefined =
         col.source === "_id"
-          ? (id as JSONArrayless)
-          : (body as Record<string, JSONArrayless>)[col.source];
+          ? (id as DocumentValue)
+          : (body as Record<string, DocumentValue>)[col.source];
       if (raw === undefined) {
         values.push("NULL");
         continue;

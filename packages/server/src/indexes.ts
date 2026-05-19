@@ -54,7 +54,7 @@
 
 import {
   BaerlyError,
-  type JSONArraylessObject,
+  type DocumentData,
   matches,
   type Predicate,
   validatePredicate,
@@ -112,7 +112,7 @@ export interface IndexDefinition {
    * unfiltered index outranks a filtered one whose predicate is NOT
    * implied (walking the smaller key set would miss matching docs).
    */
-  readonly predicate?: Predicate<JSONArraylessObject>;
+  readonly predicate?: Predicate<DocumentData>;
 }
 
 /** Path-safe segment name. */
@@ -277,7 +277,7 @@ const encodeBytes = (v: unknown): Uint8Array => {
 };
 
 /**
- * Encode an arbitrary `JSONArrayless` value as a path-safe segment.
+ * Encode an arbitrary `DocumentValue` value as a path-safe segment.
  *
  * Type-tagged byte stream, base-32-encoded for path safety. Lex
  * order on encoded bytes matches:
@@ -375,7 +375,7 @@ export const indexKeyFor = (
  */
 export const projectIndexValues = (
   def: IndexDefinition,
-  body: JSONArraylessObject | undefined,
+  body: DocumentData | undefined,
 ): readonly unknown[] | undefined => {
   if (body === undefined) {
     return undefined;
@@ -422,7 +422,7 @@ export const projectIndexValues = (
 export const allIndexKeysFor = (
   logPrefix: string,
   defs: ReadonlyArray<IndexDefinition>,
-  body: JSONArraylessObject | undefined,
+  body: DocumentData | undefined,
   docId: string,
 ): string[] => {
   const keys: string[] = [];

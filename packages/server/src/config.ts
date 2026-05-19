@@ -127,8 +127,8 @@ export type CollectionNames<C extends BaerlyConfig> = C extends {
  * `Record<string, unknown>`.
  *
  * The fallback is intentionally wider than the protocol's
- * `JSONArraylessObject`. Downstream call sites that need
- * `JSONArraylessObject` (e.g. `Table<T extends JSONArraylessObject>`)
+ * `DocumentData`. Downstream call sites that need
+ * `DocumentData` (e.g. `Table<T extends DocumentData>`)
  * apply the intersection at their own seam — keeping that
  * constraint local to the consumer keeps THIS file independent of
  * `@baerly/protocol/src/json.ts`.

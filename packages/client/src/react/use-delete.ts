@@ -1,5 +1,5 @@
 import { useCallback } from "react";
-import type { JSONArraylessObject, Predicate } from "@baerly/protocol";
+import type { DocumentData, Predicate } from "@baerly/protocol";
 import { useBaerlyClient } from "./provider.ts";
 import { useMutation, type UseMutationResult } from "./use-mutation.ts";
 
@@ -33,7 +33,7 @@ export type UseDeleteResult = UseMutationResult<[id: string], { readonly deleted
  * </button>
  * ```
  */
-export const useDelete = <T extends JSONArraylessObject = JSONArraylessObject>(
+export const useDelete = <T extends DocumentData = DocumentData>(
   opts: UseDeleteOptions,
 ): UseDeleteResult => {
   const { table } = opts;

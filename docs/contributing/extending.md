@@ -248,7 +248,7 @@ set at read time; there is no manual-hint API on `Query<T>`.
 export interface IndexDefinition {
   readonly name: string;                       // /^[a-z_][a-z0-9_]*$/
   readonly on: string | readonly string[];     // top-level field(s)
-  readonly predicate?: Predicate<JSONArraylessObject>;
+  readonly predicate?: Predicate<DocumentData>;
 }
 ```
 
@@ -364,7 +364,7 @@ export interface CommitInput {
   readonly op: "I" | "U" | "D" | "T";        // new: T
   readonly collection: string;
   readonly docId?: string;                    // undefined on op:"T"
-  readonly body?: JSONArraylessObject;
+  readonly body?: DocumentData;
   // ...
 }
 ```

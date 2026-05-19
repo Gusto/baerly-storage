@@ -13,7 +13,7 @@ import {
   casUpdateCurrentJson,
   createCurrentJson,
   readCurrentJson,
-  type JSONArraylessObject,
+  type DocumentData,
 } from "@baerly/protocol";
 import { describe, expect, test } from "vitest";
 import { loadSnapshotAsMap } from "./compactor.ts";
@@ -146,8 +146,8 @@ describe("migrateCollection", () => {
         collection: COLL,
         // Caller bug: returning a number instead of an object.
         transform: (() => 42) as unknown as (
-          row: JSONArraylessObject,
-        ) => JSONArraylessObject | null,
+          row: DocumentData,
+        ) => DocumentData | null,
         targetVersion: 1,
       }),
     ).rejects.toMatchObject({ code: "SchemaError" });

@@ -33,7 +33,7 @@
 
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { defineCommand, parseArgs, type ArgsDef, type ParsedArgs } from "citty";
-import { BaerlyError, type JSONArraylessObject } from "@baerly/protocol";
+import { BaerlyError, type DocumentData } from "@baerly/protocol";
 import { migrateCollection } from "@baerly/server";
 import { loadAppConfig } from "../config.ts";
 import { parseBucketUri } from "../copy.ts";
@@ -110,7 +110,7 @@ const errorToExitCode = (code: string): number => {
   return 2;
 };
 
-type RowTransform = (row: JSONArraylessObject) => JSONArraylessObject | null;
+type RowTransform = (row: DocumentData) => DocumentData | null;
 
 const loadTransform = async (transformPath: string): Promise<RowTransform> => {
   if (transformPath.endsWith(".ts")) {

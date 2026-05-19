@@ -32,7 +32,7 @@
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { defineCommand, parseArgs, type ArgsDef, type ParsedArgs } from "citty";
 import {
-  type JSONArraylessObject,
+  type DocumentData,
   type Storage,
   BaerlyError,
   readCurrentJson,
@@ -343,8 +343,8 @@ const handleFsck = async (args: Args): Promise<number> => {
         currentJsonKey,
         collection: args.table,
       });
-      const viewRows: ReadonlyMap<string, JSONArraylessObject> =
-        view ?? new Map<string, JSONArraylessObject>();
+      const viewRows: ReadonlyMap<string, DocumentData> =
+        view ?? new Map<string, DocumentData>();
       for (const def of defs) {
         const expected = new Set<string>();
         for (const [id, body] of viewRows) {

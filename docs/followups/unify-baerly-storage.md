@@ -91,7 +91,7 @@ have to fall back to `@baerly/protocol`, which isn't published.
 Fix: add `export type { MetricsRecorder } from "@baerly/protocol"`
 to `packages/server/src/observability/index.ts` (or wherever the
 existing recorder exports live). One-line change, mirrors the
-T8 `JSONArraylessObject` move.
+T8 `DocumentData` move.
 
 ## 6. `pnpm pack` fails in worktrees
 

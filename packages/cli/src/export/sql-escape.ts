@@ -1,4 +1,4 @@
-import { BaerlyError, type JSONArrayless } from "@baerly/protocol";
+import { BaerlyError, type DocumentValue } from "@baerly/protocol";
 import type { SqlTarget } from "./types.ts";
 
 /**
@@ -36,7 +36,7 @@ export const quoteIdentifier = (name: string, _target: SqlTarget): string => {
  *   {@link emitInsertStatements} pre-filters into `NULL` before
  *   calling this).
  */
-export const quoteValue = (value: JSONArrayless | null, target: SqlTarget): string => {
+export const quoteValue = (value: DocumentValue | null, target: SqlTarget): string => {
   if (value === null) {
     return "NULL";
   }

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import type { JSONArraylessObject } from "@baerly/protocol";
+import type { DocumentData } from "@baerly/protocol";
 import { emitInsertStatements } from "./rows.ts";
 import { inferPlanForCollection } from "./plan.ts";
 import type { ExportRow } from "./types.ts";
@@ -23,8 +23,8 @@ const collect = async (iter: AsyncIterable<string>): Promise<string[]> => {
 describe("emitInsertStatements", () => {
   test("scalar columns — postgres", async () => {
     const rows = rowsFromRecord({
-      a: { name: "alice", count: 1, active: true } as JSONArraylessObject,
-      b: { name: "bob", count: 2, active: false } as JSONArraylessObject,
+      a: { name: "alice", count: 1, active: true } as DocumentData,
+      b: { name: "bob", count: 2, active: false } as DocumentData,
     });
     const plan = inferPlanForCollection({ rows, target: "postgres", table: "users" });
     const chunks = await collect(emitInsertStatements(plan, rows));
@@ -36,8 +36,8 @@ describe("emitInsertStatements", () => {
 
   test("scalar columns — sqlite (boolean as 0/1)", async () => {
     const rows = rowsFromRecord({
-      a: { name: "alice", active: true } as JSONArraylessObject,
-      b: { name: "bob", active: false } as JSONArraylessObject,
+      a: { name: "alice", active: true } as DocumentData,
+      b: { name: "bob", active: false } as DocumentData,
     });
     const plan = inferPlanForCollection({ rows, target: "sqlite", table: "users" });
     const chunks = await collect(emitInsertStatements(plan, rows));
@@ -49,8 +49,8 @@ describe("emitInsertStatements", () => {
 
   test("missing field → NULL", async () => {
     const rows = rowsFromRecord({
-      a: { name: "alice", nickname: "al" } as JSONArraylessObject,
-      b: { name: "bob" } as JSONArraylessObject,
+      a: { name: "alice", nickname: "al" } as DocumentData,
+      b: { name: "bob" } as DocumentData,
     });
     const plan = inferPlanForCollection({ rows, target: "postgres", table: "users" });
     const chunks = await collect(emitInsertStatements(plan, rows));
@@ -61,7 +61,7 @@ describe("emitInsertStatements", () => {
 
   test("JSON-encoded column — postgres jsonb", async () => {
     const rows = rowsFromRecord({
-      a: { profile: { city: "sf", zip: 94110 } } as JSONArraylessObject,
+      a: { profile: { city: "sf", zip: 94110 } } as DocumentData,
     });
     const plan = inferPlanForCollection({ rows, target: "postgres", table: "users" });
     const chunks = await collect(emitInsertStatements(plan, rows));
@@ -72,7 +72,7 @@ describe("emitInsertStatements", () => {
 
   test("JSON-encoded column — sqlite TEXT", async () => {
     const rows = rowsFromRecord({
-      a: { profile: { city: "sf" } } as JSONArraylessObject,
+      a: { profile: { city: "sf" } } as DocumentData,
     });
     const plan = inferPlanForCollection({ rows, target: "sqlite", table: "users" });
     const chunks = await collect(emitInsertStatements(plan, rows));
@@ -83,7 +83,7 @@ describe("emitInsertStatements", () => {
 
   test("apostrophe in string is doubled", async () => {
     const rows = rowsFromRecord({
-      a: { note: "it's fine" } as JSONArraylessObject,
+      a: { note: "it's fine" } as DocumentData,
     });
     const plan = inferPlanForCollection({ rows, target: "postgres", table: "notes" });
     const chunks = await collect(emitInsertStatements(plan, rows));
@@ -94,8 +94,8 @@ describe("emitInsertStatements", () => {
 
   test("mixed-primitive column — value is string-quoted, not JSON-encoded", async () => {
     const rows = rowsFromRecord({
-      a: { val: "hello" } as JSONArraylessObject,
-      b: { val: 42 } as JSONArraylessObject,
+      a: { val: "hello" } as DocumentData,
+      b: { val: 42 } as DocumentData,
     });
     const plan = inferPlanForCollection({ rows, target: "postgres", table: "t" });
     const chunks = await collect(emitInsertStatements(plan, rows));
@@ -108,8 +108,8 @@ describe("emitInsertStatements", () => {
 
   test("primitive + nested-object column → JSON-encoded for both rows", async () => {
     const rows = rowsFromRecord({
-      a: { thing: "string-form" } as JSONArraylessObject,
-      b: { thing: { nested: "obj" } } as JSONArraylessObject,
+      a: { thing: "string-form" } as DocumentData,
+      b: { thing: { nested: "obj" } } as DocumentData,
     });
     const plan = inferPlanForCollection({ rows, target: "postgres", table: "t" });
     const chunks = await collect(emitInsertStatements(plan, rows));
@@ -121,7 +121,7 @@ describe("emitInsertStatements", () => {
 
   test("_id is read from the map key, not from the body", async () => {
     const rows = rowsFromRecord({
-      "doc-1": { name: "alice" } as JSONArraylessObject,
+      "doc-1": { name: "alice" } as DocumentData,
     });
     const plan = inferPlanForCollection({ rows, target: "postgres", table: "u" });
     const chunks = await collect(emitInsertStatements(plan, rows));

@@ -30,7 +30,7 @@
 
 import type { Predicate } from "../db.ts";
 import { BaerlyError } from "../errors.ts";
-import type { JSONArrayless, JSONArraylessObject, JSONObject, JSONValue } from "../json.ts";
+import type { DocumentValue, DocumentData, JSONObject, JSONValue } from "../json.ts";
 
 /**
  * Operator-shaped value for a predicate field. An "operator object"
@@ -52,7 +52,7 @@ import type { JSONArrayless, JSONArraylessObject, JSONObject, JSONValue } from "
  * intervals, and `$eq` outside an interval / `$in` set on the same
  * op-object.
  */
-export type PredicateOp<V extends JSONArrayless> = {
+export type PredicateOp<V extends DocumentValue> = {
   readonly $eq?: V;
   readonly $gt?: V;
   readonly $gte?: V;
@@ -88,18 +88,18 @@ type RangeOp = (typeof RANGE_OPS)[number];
  * validatePredicate({ priority: { $in: [] } }); // throws BaerlyError{UnsatisfiablePredicate}
  * ```
  */
-export const validatePredicate = <T extends JSONArraylessObject = JSONArraylessObject>(
+export const validatePredicate = <T extends DocumentData = DocumentData>(
   predicate: Predicate<T>,
 ): Predicate<T> => {
   // Root is always predicate-mode: top-level keys are field names,
   // never operators. `{ $gt: 1 }` at root rejects via the in-loop
   // `$`-key check below.
-  validateNode(predicate as JSONArraylessObject, [], /* allowOpMode */ false);
+  validateNode(predicate as DocumentData, [], /* allowOpMode */ false);
   return predicate;
 };
 
 const validateNode = (
-  node: JSONArraylessObject,
+  node: DocumentData,
   path: ReadonlyArray<string>,
   allowOpMode: boolean,
 ): void => {
@@ -148,7 +148,7 @@ const validateNode = (
     if (t === "object") {
       // Field-value of a predicate-mode parent: may be either an
       // operator object or a sub-predicate. `allowOpMode = true`.
-      validateNode(value as JSONArraylessObject, [...path, key], /* allowOpMode */ true);
+      validateNode(value as DocumentData, [...path, key], /* allowOpMode */ true);
       continue;
     }
     if (t !== "string" && t !== "number" && t !== "boolean") {
@@ -169,7 +169,7 @@ const validateNode = (
   }
 };
 
-const validateOpNode = (node: JSONArraylessObject, path: ReadonlyArray<string>): void => {
+const validateOpNode = (node: DocumentData, path: ReadonlyArray<string>): void => {
   const keys = Object.keys(node);
   // Empty op-object would be caught by the caller's "all keys start
   // with $" pre-condition (length > 0), but defensive: callers in
@@ -214,7 +214,7 @@ const validateOpNode = (node: JSONArraylessObject, path: ReadonlyArray<string>):
   if ("$eq" in node) {
     validateOpMemberValue((node as Record<string, unknown>)["$eq"], [...path, "$eq"]);
   }
-  assertOpObjectSatisfiable(node as JSONArraylessObject, path);
+  assertOpObjectSatisfiable(node as DocumentData, path);
 };
 
 /**
@@ -243,7 +243,7 @@ const validateOpMemberValue = (value: unknown, path: ReadonlyArray<string>): voi
     // sub-predicate object is OK; a nested operator object as a
     // member of $in / $eq is not (operator objects only appear as
     // field-value containers, and even there only one level deep).
-    validateNode(value as JSONArraylessObject, path, /* allowOpMode */ false);
+    validateNode(value as DocumentData, path, /* allowOpMode */ false);
     return;
   }
   if (t !== "string" && t !== "number" && t !== "boolean") {
@@ -317,29 +317,29 @@ const validateRangeBound = (value: unknown, path: ReadonlyArray<string>): void =
  * or `validateRangeBound`, so types are well-formed.
  */
 const assertOpObjectSatisfiable = (
-  node: JSONArraylessObject,
+  node: DocumentData,
   path: ReadonlyArray<string>,
 ): void => {
   const eq =
-    "$eq" in node ? ((node as Record<string, JSONArrayless>)["$eq"] as JSONArrayless) : undefined;
+    "$eq" in node ? ((node as Record<string, DocumentValue>)["$eq"] as DocumentValue) : undefined;
   const gt =
-    "$gt" in node ? ((node as Record<string, JSONArrayless>)["$gt"] as JSONArrayless) : undefined;
+    "$gt" in node ? ((node as Record<string, DocumentValue>)["$gt"] as DocumentValue) : undefined;
   const gte =
-    "$gte" in node ? ((node as Record<string, JSONArrayless>)["$gte"] as JSONArrayless) : undefined;
+    "$gte" in node ? ((node as Record<string, DocumentValue>)["$gte"] as DocumentValue) : undefined;
   const lt =
-    "$lt" in node ? ((node as Record<string, JSONArrayless>)["$lt"] as JSONArrayless) : undefined;
+    "$lt" in node ? ((node as Record<string, DocumentValue>)["$lt"] as DocumentValue) : undefined;
   const lte =
-    "$lte" in node ? ((node as Record<string, JSONArrayless>)["$lte"] as JSONArrayless) : undefined;
+    "$lte" in node ? ((node as Record<string, DocumentValue>)["$lte"] as DocumentValue) : undefined;
   const inArr =
     "$in" in node
-      ? ((node as unknown as Record<string, ReadonlyArray<JSONArrayless>>)[
+      ? ((node as unknown as Record<string, ReadonlyArray<DocumentValue>>)[
           "$in"
-        ] as ReadonlyArray<JSONArrayless>)
+        ] as ReadonlyArray<DocumentValue>)
       : undefined;
 
   // Lower bound: pick the stricter of $gt/$gte. Strict ($gt) wins
   // on equal numeric/string value.
-  let lo: { value: JSONArrayless; inclusive: boolean } | undefined;
+  let lo: { value: DocumentValue; inclusive: boolean } | undefined;
   if (gt !== undefined) {
     lo = { value: gt, inclusive: false };
   }
@@ -356,7 +356,7 @@ const assertOpObjectSatisfiable = (
   }
   // Upper bound: pick the stricter of $lt/$lte. Strict ($lt) wins
   // on tie.
-  let hi: { value: JSONArrayless; inclusive: boolean } | undefined;
+  let hi: { value: DocumentValue; inclusive: boolean } | undefined;
   if (lt !== undefined) {
     hi = { value: lt, inclusive: false };
   }
@@ -422,7 +422,7 @@ const assertOpObjectSatisfiable = (
     if (inArr !== undefined) {
       let found = false;
       for (const m of inArr) {
-        if (deepEqualJSONArrayless(eq, m)) {
+        if (deepEqualDocumentValue(eq, m)) {
           found = true;
           break;
         }
@@ -437,12 +437,12 @@ const assertOpObjectSatisfiable = (
   }
 };
 
-const sameComparableType = (a: JSONArrayless, b: JSONArrayless): boolean =>
+const sameComparableType = (a: DocumentValue, b: DocumentValue): boolean =>
   (typeof a === "string" && typeof b === "string") ||
   (typeof a === "number" && typeof b === "number");
 
 /** Returns negative / zero / positive for a<b / a==b / a>b. */
-const compareScalar = (a: JSONArrayless, b: JSONArrayless): number => {
+const compareScalar = (a: DocumentValue, b: DocumentValue): number => {
   if (typeof a === "number" && typeof b === "number") {
     return a - b;
   }
@@ -486,14 +486,14 @@ const formatPath = (path: ReadonlyArray<string>): string =>
  * matches({ "a.b": "c" }, { a: "literal" }); // false (path traversal stops at non-object)
  * ```
  */
-export const matches = <T extends JSONArraylessObject = JSONArraylessObject>(
+export const matches = <T extends DocumentData = DocumentData>(
   predicate: Predicate<T>,
   doc: JSONObject,
 ): boolean => {
   for (const key of Object.keys(predicate)) {
     const expected: unknown = (predicate as Record<string, unknown>)[key];
     const actual = lookupPath(doc, key);
-    if (!matchesValue(expected as JSONArrayless, actual)) {
+    if (!matchesValue(expected as DocumentValue, actual)) {
       return false;
     }
   }
@@ -525,13 +525,13 @@ const lookupPath = (doc: JSONObject, key: string): JSONValue | undefined => {
   return cursor;
 };
 
-const matchesValue = (expected: JSONArrayless, actual: JSONValue | undefined): boolean => {
+const matchesValue = (expected: DocumentValue, actual: JSONValue | undefined): boolean => {
   if (typeof expected === "object") {
     const expectedKeys = Object.keys(expected);
     // Operator-object detection rule: every key at this level
     // starts with `$`. Empty `{}` is a match-all sub-predicate.
     if (expectedKeys.length > 0 && expectedKeys.every((k) => k.startsWith("$"))) {
-      return matchesOp(expected as PredicateOp<JSONArrayless>, actual);
+      return matchesOp(expected as PredicateOp<DocumentValue>, actual);
     }
     if (
       actual === undefined ||
@@ -544,7 +544,7 @@ const matchesValue = (expected: JSONArrayless, actual: JSONValue | undefined): b
     // Sub-predicate: recurse into every key in `expected`; doc may
     // carry extra keys (open-world).
     for (const subKey of expectedKeys) {
-      const subExpected = (expected as Record<string, JSONArrayless>)[subKey];
+      const subExpected = (expected as Record<string, DocumentValue>)[subKey];
       if (subExpected === undefined) {
         continue;
       } // tsc satisfaction; validator forbids undefined
@@ -575,11 +575,11 @@ const matchesValue = (expected: JSONArrayless, actual: JSONValue | undefined): b
  *   ASCII strings; numeric ranges are unsafe under the byte-order
  *   index encoder (T3's footgun, not T1's matcher).
  * - `$in` membership: `===` for primitives,
- *   `deepEqualJSONArrayless` for object members.
+ *   `deepEqualDocumentValue` for object members.
  * - Empty `$in: []` can never reach `matchesOp` (validator
  *   rejects).
  */
-const matchesOp = (op: PredicateOp<JSONArrayless>, actual: JSONValue | undefined): boolean => {
+const matchesOp = (op: PredicateOp<DocumentValue>, actual: JSONValue | undefined): boolean => {
   if (op.$eq !== undefined && !matchesValue(op.$eq, actual)) {
     return false;
   }
@@ -617,7 +617,7 @@ const matchesOp = (op: PredicateOp<JSONArrayless>, actual: JSONValue | undefined
 
 const compareGT = (
   actual: JSONValue | undefined,
-  bound: JSONArrayless,
+  bound: DocumentValue,
   inclusive: boolean,
 ): boolean => {
   if (typeof bound === "string") {
@@ -632,7 +632,7 @@ const compareGT = (
 
 const compareLT = (
   actual: JSONValue | undefined,
-  bound: JSONArrayless,
+  bound: DocumentValue,
   inclusive: boolean,
 ): boolean => {
   if (typeof bound === "string") {
@@ -652,7 +652,7 @@ const compareLT = (
  * Shared keys merge per the operator-aware rules in
  * CONTRACTS.md §10:
  *
- * - Both primitive / non-op: must `deepEqualJSONArrayless` — a
+ * - Both primitive / non-op: must `deepEqualDocumentValue` — a
  *   genuine conflict throws `BaerlyError{code:"InvalidConfig"}`.
  * - Both operator-objects: shallow op-level merge —
  *   - `$gt`/`$gte`: keep higher bound; tie favours `$gt` (strict).
@@ -682,13 +682,13 @@ const compareLT = (
  * //   throws BaerlyError{UnsatisfiablePredicate}: empty interval
  * ```
  */
-export const mergePredicates = <T extends JSONArraylessObject = JSONArraylessObject>(
+export const mergePredicates = <T extends DocumentData = DocumentData>(
   a: Predicate<T>,
   b: Predicate<T>,
 ): Predicate<T> => {
-  const out: Record<string, JSONArrayless> = { ...(a as Record<string, JSONArrayless>) };
+  const out: Record<string, DocumentValue> = { ...(a as Record<string, DocumentValue>) };
   for (const key of Object.keys(b)) {
-    const bVal = (b as Record<string, JSONArrayless>)[key];
+    const bVal = (b as Record<string, DocumentValue>)[key];
     if (bVal === undefined) {
       continue;
     } // tsc satisfaction; validator forbids undefined
@@ -703,7 +703,7 @@ export const mergePredicates = <T extends JSONArraylessObject = JSONArraylessObj
     const aOp = isOpObject(aVal);
     const bOp = isOpObject(bVal);
     if (!aOp && !bOp) {
-      if (!deepEqualJSONArrayless(aVal, bVal)) {
+      if (!deepEqualDocumentValue(aVal, bVal)) {
         throw new BaerlyError(
           "InvalidConfig",
           `mergePredicates: conflicting values for key ${JSON.stringify(key)} (a=${JSON.stringify(aVal)}, b=${JSON.stringify(bVal)}). Cumulative .where() chains must agree on shared keys.`,
@@ -716,18 +716,18 @@ export const mergePredicates = <T extends JSONArraylessObject = JSONArraylessObj
     // the op-aware merge uniformly. The promotion is invisible:
     // `mergeOpObjects` collapses `$eq` alone when no other op
     // constrains it.
-    const opA: PredicateOp<JSONArrayless> = aOp
-      ? (aVal as PredicateOp<JSONArrayless>)
+    const opA: PredicateOp<DocumentValue> = aOp
+      ? (aVal as PredicateOp<DocumentValue>)
       : { $eq: aVal };
-    const opB: PredicateOp<JSONArrayless> = bOp
-      ? (bVal as PredicateOp<JSONArrayless>)
+    const opB: PredicateOp<DocumentValue> = bOp
+      ? (bVal as PredicateOp<DocumentValue>)
       : { $eq: bVal };
-    out[key] = mergeOpObjects(opA, opB, key) as unknown as JSONArrayless;
+    out[key] = mergeOpObjects(opA, opB, key) as unknown as DocumentValue;
   }
   return out as Predicate<T>;
 };
 
-const isOpObject = (v: JSONArrayless): boolean => {
+const isOpObject = (v: DocumentValue): boolean => {
   if (typeof v !== "object") {
     return false;
   }
@@ -736,14 +736,14 @@ const isOpObject = (v: JSONArrayless): boolean => {
 };
 
 const mergeOpObjects = (
-  a: PredicateOp<JSONArrayless>,
-  b: PredicateOp<JSONArrayless>,
+  a: PredicateOp<DocumentValue>,
+  b: PredicateOp<DocumentValue>,
   field: string,
-): JSONArraylessObject => {
-  const candidate: Record<string, JSONArrayless> = {};
+): DocumentData => {
+  const candidate: Record<string, DocumentValue> = {};
   // $eq agreement.
   if (a.$eq !== undefined && b.$eq !== undefined) {
-    if (!deepEqualJSONArrayless(a.$eq, b.$eq)) {
+    if (!deepEqualDocumentValue(a.$eq, b.$eq)) {
       throw new BaerlyError(
         "UnsatisfiablePredicate",
         `mergePredicates: conflicting $eq values for key ${JSON.stringify(field)} (a=${JSON.stringify(a.$eq)}, b=${JSON.stringify(b.$eq)}).`,
@@ -757,10 +757,10 @@ const mergeOpObjects = (
   }
   // $in intersection.
   if (a.$in !== undefined && b.$in !== undefined) {
-    const isect: JSONArrayless[] = [];
+    const isect: DocumentValue[] = [];
     for (const m of a.$in) {
       for (const n of b.$in) {
-        if (deepEqualJSONArrayless(m, n)) {
+        if (deepEqualDocumentValue(m, n)) {
           isect.push(m);
           break;
         }
@@ -772,11 +772,11 @@ const mergeOpObjects = (
         `mergePredicates: $in intersection is empty for key ${JSON.stringify(field)}.`,
       );
     }
-    candidate["$in"] = isect as unknown as JSONArrayless;
+    candidate["$in"] = isect as unknown as DocumentValue;
   } else if (a.$in !== undefined) {
-    candidate["$in"] = a.$in as unknown as JSONArrayless;
+    candidate["$in"] = a.$in as unknown as DocumentValue;
   } else if (b.$in !== undefined) {
-    candidate["$in"] = b.$in as unknown as JSONArrayless;
+    candidate["$in"] = b.$in as unknown as DocumentValue;
   }
   // Lower bound: stricter wins. Strict ($gt) beats inclusive
   // ($gte) on tie.
@@ -801,7 +801,7 @@ const mergeOpObjects = (
   // Re-run satisfiability against the candidate. Reuses the
   // construction-time check so merge and validation stay in
   // lockstep.
-  assertOpObjectSatisfiable(candidate as JSONArraylessObject, [field]);
+  assertOpObjectSatisfiable(candidate as DocumentData, [field]);
 
   // If $eq survives alongside any range / $in clause, collapse to
   // `{ $eq: v }` alone — the satisfiability check already proved
@@ -829,17 +829,17 @@ const mergeOpObjects = (
  */
 const pickStricter = (
   side: "lower" | "upper",
-  a: PredicateOp<JSONArrayless>,
-  b: PredicateOp<JSONArrayless>,
-): { value: JSONArrayless; strict: boolean } | undefined => {
+  a: PredicateOp<DocumentValue>,
+  b: PredicateOp<DocumentValue>,
+): { value: DocumentValue; strict: boolean } | undefined => {
   const strictOp: RangeOp = side === "lower" ? "$gt" : "$lt";
   const inclOp: RangeOp = side === "lower" ? "$gte" : "$lte";
   const collect = (
-    op: PredicateOp<JSONArrayless>,
-  ): Array<{ value: JSONArrayless; strict: boolean }> => {
-    const out: Array<{ value: JSONArrayless; strict: boolean }> = [];
-    const s = (op as Record<string, JSONArrayless>)[strictOp];
-    const i = (op as Record<string, JSONArrayless>)[inclOp];
+    op: PredicateOp<DocumentValue>,
+  ): Array<{ value: DocumentValue; strict: boolean }> => {
+    const out: Array<{ value: DocumentValue; strict: boolean }> = [];
+    const s = (op as Record<string, DocumentValue>)[strictOp];
+    const i = (op as Record<string, DocumentValue>)[inclOp];
     if (s !== undefined) {
       out.push({ value: s, strict: true });
     }
@@ -882,7 +882,7 @@ const pickStricter = (
  * `$gt` / `$lt` (exclusive). Private to {@link predicateImplies}.
  */
 interface RangeInfo {
-  readonly value: JSONArrayless;
+  readonly value: DocumentValue;
   readonly inclusive: boolean;
 }
 
@@ -897,30 +897,30 @@ interface RangeInfo {
  * conservatively return `false`. Private to {@link predicateImplies}.
  */
 interface OperatorBundle {
-  readonly eq?: JSONArrayless;
+  readonly eq?: DocumentValue;
   readonly lo?: RangeInfo;
   readonly hi?: RangeInfo;
-  readonly in?: ReadonlyArray<JSONArrayless>;
+  readonly in?: ReadonlyArray<DocumentValue>;
 }
 
 const decodeClause = (
-  clause: JSONArrayless | Record<string, JSONArrayless>,
+  clause: DocumentValue | Record<string, DocumentValue>,
 ): OperatorBundle | "unknown-shape" => {
   // Bare primitive collapses to {eq: clause}.
   if (clause === null || typeof clause !== "object" || Array.isArray(clause)) {
-    return { eq: clause as JSONArrayless };
+    return { eq: clause as DocumentValue };
   }
-  const obj = clause as Record<string, JSONArrayless>;
+  const obj = clause as Record<string, DocumentValue>;
   const keys = Object.keys(obj);
   const allOps = keys.length > 0 && keys.every((k) => k.startsWith("$"));
   if (!allOps) {
-    return { eq: clause as JSONArrayless };
+    return { eq: clause as DocumentValue };
   } // nested non-op object → equality
   const bundle: {
-    eq?: JSONArrayless;
+    eq?: DocumentValue;
     lo?: RangeInfo;
     hi?: RangeInfo;
-    in?: ReadonlyArray<JSONArrayless>;
+    in?: ReadonlyArray<DocumentValue>;
   } = {};
   for (const k of keys) {
     const v = obj[k];
@@ -941,7 +941,7 @@ const decodeClause = (
       if (!Array.isArray(v)) {
         return "unknown-shape";
       }
-      bundle.in = v as ReadonlyArray<JSONArrayless>;
+      bundle.in = v as ReadonlyArray<DocumentValue>;
     } else {
       return "unknown-shape";
     }
@@ -1083,12 +1083,12 @@ const hiFromQuery = (q: OperatorBundle): RangeInfo | undefined => {
  * predicateImplies({ age: { $gte: 18 } }, { age: 21 }); // true
  * ```
  */
-export const predicateImplies = <T extends JSONArraylessObject = JSONArraylessObject>(
+export const predicateImplies = <T extends DocumentData = DocumentData>(
   indexFilter: Predicate<T>,
   queryPredicate: Predicate<T>,
 ): boolean => {
   for (const key of Object.keys(indexFilter)) {
-    const filterVal = (indexFilter as Record<string, JSONArrayless | undefined>)[key];
+    const filterVal = (indexFilter as Record<string, DocumentValue | undefined>)[key];
     if (filterVal === undefined) {
       continue;
     }
@@ -1100,7 +1100,7 @@ export const predicateImplies = <T extends JSONArraylessObject = JSONArraylessOb
       !Array.isArray(filterVal) &&
       !Object.keys(filterVal).every((k) => k.startsWith("$"))
     ) {
-      const queryVal = (queryPredicate as Record<string, JSONArrayless | undefined>)[key];
+      const queryVal = (queryPredicate as Record<string, DocumentValue | undefined>)[key];
       if (
         queryVal === undefined ||
         typeof queryVal !== "object" ||
@@ -1111,8 +1111,8 @@ export const predicateImplies = <T extends JSONArraylessObject = JSONArraylessOb
       }
       if (
         !predicateImplies(
-          filterVal as Predicate<JSONArraylessObject>,
-          queryVal as Predicate<JSONArraylessObject>,
+          filterVal as Predicate<DocumentData>,
+          queryVal as Predicate<DocumentData>,
         )
       ) {
         return false;
@@ -1121,15 +1121,15 @@ export const predicateImplies = <T extends JSONArraylessObject = JSONArraylessOb
     }
 
     // Decode both clauses.
-    const filterBundle = decodeClause(filterVal as JSONArrayless);
+    const filterBundle = decodeClause(filterVal as DocumentValue);
     if (filterBundle === "unknown-shape") {
       return false;
     }
-    const queryVal = (queryPredicate as Record<string, JSONArrayless | undefined>)[key];
+    const queryVal = (queryPredicate as Record<string, DocumentValue | undefined>)[key];
     if (queryVal === undefined) {
       return false;
     }
-    const queryBundle = decodeClause(queryVal as JSONArrayless);
+    const queryBundle = decodeClause(queryVal as DocumentValue);
     if (queryBundle === "unknown-shape") {
       return false;
     }
@@ -1139,14 +1139,14 @@ export const predicateImplies = <T extends JSONArraylessObject = JSONArraylessOb
       if (queryBundle.eq === undefined) {
         return false;
       }
-      if (!deepEqualJSONArrayless(queryBundle.eq, filterBundle.eq)) {
+      if (!deepEqualDocumentValue(queryBundle.eq, filterBundle.eq)) {
         return false;
       }
       continue;
     }
     if (filterBundle.in !== undefined) {
       const set = filterBundle.in;
-      const contains = (v: JSONArrayless): boolean => set.some((m) => deepEqualJSONArrayless(m, v));
+      const contains = (v: DocumentValue): boolean => set.some((m) => deepEqualDocumentValue(m, v));
       if (queryBundle.eq !== undefined) {
         if (!contains(queryBundle.eq)) {
           return false;
@@ -1181,7 +1181,7 @@ export const predicateImplies = <T extends JSONArraylessObject = JSONArraylessOb
 };
 
 /**
- * Recursive structural equality for `JSONArrayless` values. Lifted to
+ * Recursive structural equality for `DocumentValue` values. Lifted to
  * `export` so the filtered-index implication checker
  * ({@link predicateImplies}) and other callers can reuse the same
  * comparison rule the validator + merger already trust. Two values
@@ -1191,13 +1191,13 @@ export const predicateImplies = <T extends JSONArraylessObject = JSONArraylessOb
  *  - or they are both non-`null` objects with the same key set, and
  *    every value pair is recursively equal.
  *
- * Arrays are out-of-band for `JSONArrayless`; this function rejects
+ * Arrays are out-of-band for `DocumentValue`; this function rejects
  * them implicitly via the same key-set walk (an array reads as an
  * object with numeric-string keys plus a `length` exposure that
  * `Object.keys` happens to skip — defensive callers should still gate
  * with `Array.isArray` first).
  */
-export const deepEqualJSONArrayless = (a: JSONArrayless, b: JSONArrayless): boolean => {
+export const deepEqualDocumentValue = (a: DocumentValue, b: DocumentValue): boolean => {
   if (a === b) {
     return true;
   } // primitives + object identity
@@ -1213,12 +1213,12 @@ export const deepEqualJSONArrayless = (a: JSONArrayless, b: JSONArrayless): bool
     if (!(key in b)) {
       return false;
     }
-    const aSub = (a as Record<string, JSONArrayless>)[key];
-    const bSub = (b as Record<string, JSONArrayless>)[key];
+    const aSub = (a as Record<string, DocumentValue>)[key];
+    const bSub = (b as Record<string, DocumentValue>)[key];
     if (aSub === undefined || bSub === undefined) {
       return false;
     }
-    if (!deepEqualJSONArrayless(aSub, bSub)) {
+    if (!deepEqualDocumentValue(aSub, bSub)) {
       return false;
     }
   }

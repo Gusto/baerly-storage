@@ -7,7 +7,7 @@
  * glob (see `vitest.config.ts`).
  */
 
-import type { JSONArraylessObject } from "@baerly/protocol";
+import type { DocumentData } from "@baerly/protocol";
 import { defineConfig, type SchemaValidator } from "@baerly/server";
 import { type ClientTable, createBaerlyClient } from "./client.ts";
 
@@ -41,8 +41,8 @@ type Expect<T extends true> = T;
 
 // (A) Bound config: `.table("tickets")` resolves the narrow overload
 // and yields `ClientTable<RowOf<typeof config, "tickets"> &
-// JSONArraylessObject>`. The intersection comes from the
-// `ClientTable<T extends JSONArraylessObject>` constraint at the
+// DocumentData>`. The intersection comes from the
+// `ClientTable<T extends DocumentData>` constraint at the
 // seam — it forwards the constraint without losing the schema's
 // output shape.
 //
@@ -55,14 +55,14 @@ const boundTicketTable = boundClient.table("tickets");
 const boundTicketQuery = boundTicketTable.where({ _id: "x" });
 type BoundFirst = Awaited<ReturnType<typeof boundTicketQuery.first>>;
 export type _BoundFirstInfersTicket = Expect<
-  Equal<BoundFirst, (TicketShape & JSONArraylessObject) | undefined>
+  Equal<BoundFirst, (TicketShape & DocumentData) | undefined>
 >;
 
 // Companion assertion: the underlying table handle threads the same
 // row shape — this proves the inference flows from `RowOf` directly,
 // not from `.where().first()` happening to massage it.
 export type _BoundTableHandleInfersRowType = Expect<
-  Equal<typeof boundTicketTable, ClientTable<TicketShape & JSONArraylessObject>>
+  Equal<typeof boundTicketTable, ClientTable<TicketShape & DocumentData>>
 >;
 
 // (B) No `config` passed: the legacy per-call generic still works.

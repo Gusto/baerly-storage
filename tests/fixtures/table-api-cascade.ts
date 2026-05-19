@@ -27,7 +27,7 @@ import {
   CURRENT_JSON_SCHEMA_VERSION,
   type CurrentJson,
   InMemoryMetricsRecorder,
-  type JSONArraylessObject,
+  type DocumentData,
   type LogEntry,
   BaerlyError,
   type Storage,
@@ -100,15 +100,15 @@ const freshTableName = (prefix: string): string => `${prefix}-${uuid().slice(0, 
 
 /**
  * Doc shape threaded through the cascade. We type generic verbs as
- * `Table<JSONArraylessObject>` (the default) because the locked
- * `T extends JSONArraylessObject` constraint forbids optional
+ * `Table<DocumentData>` (the default) because the locked
+ * `T extends DocumentData` constraint forbids optional
  * fields under strict-object-mode tsgo — a named interface with
  * `readonly k?: string` is not assignable to
- * `{ [x: string]: JSONArrayless }`. Static doc-shape typing comes
+ * `{ [x: string]: DocumentValue }`. Static doc-shape typing comes
  * back with a future schema-validation pass; today the table
  * read/write path is dynamically typed.
  */
-type Doc = JSONArraylessObject;
+type Doc = DocumentData;
 
 /**
  * Predicate `$`-key rejection. The day-one operator policy
@@ -268,8 +268,8 @@ const runUpdateContract = async (
 
   // RFC 7386: null strips a key from the post-image. `Partial<T>`'s
   // type forbids `null` at the leaf (the locked predicate / patch
-  // value type is `JSONArrayless = string | number | boolean |
-  // JSONArraylessObject`), so we route through an `unknown` cast —
+  // value type is `DocumentValue = string | number | boolean |
+  // DocumentData`), so we route through an `unknown` cast —
   // this is testing the runtime merge contract, which IS
   // `merge(target, null) === undefined` per `packages/protocol/src/json.ts`.
   const { modified: stripped } = await db

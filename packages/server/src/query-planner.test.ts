@@ -3,7 +3,7 @@
  * I/O — the planner is a pure function over `(predicate, indexes)`.
  */
 
-import type { Predicate, JSONArraylessObject } from "@baerly/protocol";
+import type { Predicate, DocumentData } from "@baerly/protocol";
 import { describe, expect, test } from "vitest";
 import type { IndexDefinition } from "./indexes.ts";
 import { IN_FANOUT_THRESHOLD, planQuery } from "./query-planner.ts";
@@ -17,7 +17,7 @@ describe("planQuery", () => {
   });
 
   test("no declared indexes → full-scan with reason 'no-indexes-declared'", () => {
-    expect(planQuery({ a: 1 } as unknown as Predicate<JSONArraylessObject>, [])).toEqual({
+    expect(planQuery({ a: 1 } as unknown as Predicate<DocumentData>, [])).toEqual({
       kind: "full-scan",
       reason: "no-indexes-declared",
     });
@@ -26,7 +26,7 @@ describe("planQuery", () => {
   test("single-field equality routes to single-field index", () => {
     const indexes: IndexDefinition[] = [{ name: "by_status", on: "status" }];
     const plan = planQuery(
-      { status: "open" } as unknown as Predicate<JSONArraylessObject>,
+      { status: "open" } as unknown as Predicate<DocumentData>,
       indexes,
     );
     expect(plan).toEqual({
@@ -39,7 +39,7 @@ describe("planQuery", () => {
   test("composite full hit — two-field predicate over two-field index", () => {
     const indexes: IndexDefinition[] = [{ name: "by_status_priority", on: ["status", "priority"] }];
     const plan = planQuery(
-      { status: "open", priority: "p2" } as unknown as Predicate<JSONArraylessObject>,
+      { status: "open", priority: "p2" } as unknown as Predicate<DocumentData>,
       indexes,
     );
     expect(plan).toEqual({
@@ -52,7 +52,7 @@ describe("planQuery", () => {
   test("composite partial-prefix hit — one of two indexed fields", () => {
     const indexes: IndexDefinition[] = [{ name: "by_status_priority", on: ["status", "priority"] }];
     const plan = planQuery(
-      { status: "open" } as unknown as Predicate<JSONArraylessObject>,
+      { status: "open" } as unknown as Predicate<DocumentData>,
       indexes,
     );
     expect(plan).toEqual({
@@ -64,7 +64,7 @@ describe("planQuery", () => {
 
   test("composite partial-prefix hit at length 2 of 3", () => {
     const indexes: IndexDefinition[] = [{ name: "by_a_b_c", on: ["a", "b", "c"] }];
-    const plan = planQuery({ a: 1, b: 2 } as unknown as Predicate<JSONArraylessObject>, indexes);
+    const plan = planQuery({ a: 1, b: 2 } as unknown as Predicate<DocumentData>, indexes);
     expect(plan).toEqual({
       kind: "index-walk",
       indexName: "by_a_b_c",
@@ -74,7 +74,7 @@ describe("planQuery", () => {
 
   test("left-anchor rejection — equality on a non-leading field doesn't match", () => {
     const indexes: IndexDefinition[] = [{ name: "by_a_b", on: ["a", "b"] }];
-    const plan = planQuery({ b: 2 } as unknown as Predicate<JSONArraylessObject>, indexes);
+    const plan = planQuery({ b: 2 } as unknown as Predicate<DocumentData>, indexes);
     expect(plan).toEqual({
       kind: "full-scan",
       reason: "no-matching-index",
@@ -89,7 +89,7 @@ describe("planQuery", () => {
       { name: "by_status", on: "status" },
     ];
     const plan = planQuery(
-      { status: "open" } as unknown as Predicate<JSONArraylessObject>,
+      { status: "open" } as unknown as Predicate<DocumentData>,
       indexes,
     );
     expect(plan).toEqual({
@@ -105,7 +105,7 @@ describe("planQuery", () => {
       { name: "by_status", on: "status" },
     ];
     const plan = planQuery(
-      { status: "open", priority: "p2" } as unknown as Predicate<JSONArraylessObject>,
+      { status: "open", priority: "p2" } as unknown as Predicate<DocumentData>,
       indexes,
     );
     expect(plan).toEqual({
@@ -122,7 +122,7 @@ describe("planQuery", () => {
     // and the reason discriminant still fires.
     const indexes: IndexDefinition[] = [{ name: "by_status", on: "status" }];
     const plan = planQuery(
-      { priority: { $gt: "p0" } } as unknown as Predicate<JSONArraylessObject>,
+      { priority: { $gt: "p0" } } as unknown as Predicate<DocumentData>,
       indexes,
     );
     expect(plan).toEqual({
@@ -143,7 +143,7 @@ describe("planQuery", () => {
     // T1 validation would reject this, but the planner's behaviour
     // is well-defined for any partition state.
     const plan = planQuery(
-      { priority: { $foo: "p0" } } as unknown as Predicate<JSONArraylessObject>,
+      { priority: { $foo: "p0" } } as unknown as Predicate<DocumentData>,
       indexes,
     );
     expect(plan).toEqual({
@@ -155,7 +155,7 @@ describe("planQuery", () => {
   test("mixed predicate (equality + operator) routes equality, residue holds operator", () => {
     const indexes: IndexDefinition[] = [{ name: "by_a", on: "a" }];
     const plan = planQuery(
-      { a: "x", b: { $gt: 5 } } as unknown as Predicate<JSONArraylessObject>,
+      { a: "x", b: { $gt: 5 } } as unknown as Predicate<DocumentData>,
       indexes,
     );
     expect(plan).toEqual({
@@ -169,7 +169,7 @@ describe("planQuery", () => {
   test("equality on non-indexed field lands on residue", () => {
     const indexes: IndexDefinition[] = [{ name: "by_status", on: "status" }];
     const plan = planQuery(
-      { status: "open", assignee: "alice" } as unknown as Predicate<JSONArraylessObject>,
+      { status: "open", assignee: "alice" } as unknown as Predicate<DocumentData>,
       indexes,
     );
     expect(plan).toEqual({
@@ -185,7 +185,7 @@ describe("planQuery — range walks (T3)", () => {
   test("single-field range, inclusive lower, no upper", () => {
     const indexes: IndexDefinition[] = [{ name: "by_priority", on: "priority" }];
     const plan = planQuery(
-      { priority: { $gte: "p2" } } as unknown as Predicate<JSONArraylessObject>,
+      { priority: { $gte: "p2" } } as unknown as Predicate<DocumentData>,
       indexes,
     );
     expect(plan).toEqual({
@@ -204,7 +204,7 @@ describe("planQuery — range walks (T3)", () => {
   test("single-field range, exclusive both sides", () => {
     const indexes: IndexDefinition[] = [{ name: "by_priority", on: "priority" }];
     const plan = planQuery(
-      { priority: { $gt: "p1", $lt: "p9" } } as unknown as Predicate<JSONArraylessObject>,
+      { priority: { $gt: "p1", $lt: "p9" } } as unknown as Predicate<DocumentData>,
       indexes,
     );
     expect(plan).toEqual({
@@ -227,7 +227,7 @@ describe("planQuery — range walks (T3)", () => {
       {
         tenant: "acme",
         priority: { $gte: "p2", $lt: "p9" },
-      } as unknown as Predicate<JSONArraylessObject>,
+      } as unknown as Predicate<DocumentData>,
       indexes,
     );
     expect(plan).toEqual({
@@ -248,7 +248,7 @@ describe("planQuery — range walks (T3)", () => {
     // Range op on the FIRST slot prevents left-anchored routing.
     const indexes: IndexDefinition[] = [{ name: "by_tenant_priority", on: ["tenant", "priority"] }];
     const plan = planQuery(
-      { tenant: { $gt: "a" }, priority: "p1" } as unknown as Predicate<JSONArraylessObject>,
+      { tenant: { $gt: "a" }, priority: "p1" } as unknown as Predicate<DocumentData>,
       indexes,
     );
     // No equality on `tenant`, so the planner can route by treating
@@ -272,7 +272,7 @@ describe("planQuery — range walks (T3)", () => {
   test("equality on first slot, range on non-indexed field falls into postFilter", () => {
     const indexes: IndexDefinition[] = [{ name: "by_tenant", on: "tenant" }];
     const plan = planQuery(
-      { tenant: "acme", priority: { $gt: "p1" } } as unknown as Predicate<JSONArraylessObject>,
+      { tenant: "acme", priority: { $gt: "p1" } } as unknown as Predicate<DocumentData>,
       indexes,
     );
     expect(plan).toEqual({
@@ -286,22 +286,22 @@ describe("planQuery — range walks (T3)", () => {
   test("range inclusivity round-trip — $gte/$gt/$lte/$lt set flags correctly", () => {
     const indexes: IndexDefinition[] = [{ name: "by_p", on: "p" }];
     expect(
-      planQuery({ p: { $gte: "a" } } as unknown as Predicate<JSONArraylessObject>, indexes),
+      planQuery({ p: { $gte: "a" } } as unknown as Predicate<DocumentData>, indexes),
     ).toMatchObject({
       rangeOn: { lo: "a", loInclusive: true, hiInclusive: false },
     });
     expect(
-      planQuery({ p: { $gt: "a" } } as unknown as Predicate<JSONArraylessObject>, indexes),
+      planQuery({ p: { $gt: "a" } } as unknown as Predicate<DocumentData>, indexes),
     ).toMatchObject({
       rangeOn: { lo: "a", loInclusive: false, hiInclusive: false },
     });
     expect(
-      planQuery({ p: { $lte: "z" } } as unknown as Predicate<JSONArraylessObject>, indexes),
+      planQuery({ p: { $lte: "z" } } as unknown as Predicate<DocumentData>, indexes),
     ).toMatchObject({
       rangeOn: { hi: "z", hiInclusive: true, loInclusive: false },
     });
     expect(
-      planQuery({ p: { $lt: "z" } } as unknown as Predicate<JSONArraylessObject>, indexes),
+      planQuery({ p: { $lt: "z" } } as unknown as Predicate<DocumentData>, indexes),
     ).toMatchObject({
       rangeOn: { hi: "z", hiInclusive: false, loInclusive: false },
     });
@@ -310,7 +310,7 @@ describe("planQuery — range walks (T3)", () => {
   test("string range routes through the index", () => {
     const indexes: IndexDefinition[] = [{ name: "by_priority", on: "priority" }];
     const plan = planQuery(
-      { priority: { $gte: "p2" } } as unknown as Predicate<JSONArraylessObject>,
+      { priority: { $gte: "p2" } } as unknown as Predicate<DocumentData>,
       indexes,
     );
     expect(plan.kind).toBe("index-walk");
@@ -324,7 +324,7 @@ describe("planQuery — $in multi-walk (T3)", () => {
   test("$in under fan-out threshold emits inOn walk plan", () => {
     const indexes: IndexDefinition[] = [{ name: "by_status", on: "status" }];
     const plan = planQuery(
-      { status: { $in: ["open", "pending"] } } as unknown as Predicate<JSONArraylessObject>,
+      { status: { $in: ["open", "pending"] } } as unknown as Predicate<DocumentData>,
       indexes,
     );
     expect(plan).toEqual({
@@ -339,7 +339,7 @@ describe("planQuery — $in multi-walk (T3)", () => {
     const indexes: IndexDefinition[] = [{ name: "by_status", on: "status" }];
     const values = Array.from({ length: IN_FANOUT_THRESHOLD }, (_, i) => `v${i}`);
     const plan = planQuery(
-      { status: { $in: values } } as unknown as Predicate<JSONArraylessObject>,
+      { status: { $in: values } } as unknown as Predicate<DocumentData>,
       indexes,
     );
     expect(plan.kind).toBe("index-walk");
@@ -353,7 +353,7 @@ describe("planQuery — $in multi-walk (T3)", () => {
     const indexes: IndexDefinition[] = [{ name: "by_status", on: "status" }];
     const values = Array.from({ length: IN_FANOUT_THRESHOLD + 1 }, (_, i) => `v${i}`);
     const plan = planQuery(
-      { status: { $in: values } } as unknown as Predicate<JSONArraylessObject>,
+      { status: { $in: values } } as unknown as Predicate<DocumentData>,
       indexes,
     );
     expect(plan).toEqual({
@@ -368,7 +368,7 @@ describe("planQuery — $in multi-walk (T3)", () => {
       {
         tenant: "acme",
         priority: { $in: ["p1", "p2"] },
-      } as unknown as Predicate<JSONArraylessObject>,
+      } as unknown as Predicate<DocumentData>,
       indexes,
     );
     expect(plan).toEqual({
@@ -385,7 +385,7 @@ describe("planQuery — inFanoutThreshold override", () => {
     const indexes: IndexDefinition[] = [{ name: "by_priority", on: "priority" }];
     const values = Array.from({ length: 50 }, (_, i) => `p${i}`);
     const plan = planQuery(
-      { priority: { $in: values } } as unknown as Predicate<JSONArraylessObject>,
+      { priority: { $in: values } } as unknown as Predicate<DocumentData>,
       indexes,
     );
     expect(plan).toMatchObject({ kind: "index-walk", indexName: "by_priority" });
@@ -395,7 +395,7 @@ describe("planQuery — inFanoutThreshold override", () => {
     const indexes: IndexDefinition[] = [{ name: "by_priority", on: "priority" }];
     const values = Array.from({ length: 51 }, (_, i) => `p${i}`);
     const plan = planQuery(
-      { priority: { $in: values } } as unknown as Predicate<JSONArraylessObject>,
+      { priority: { $in: values } } as unknown as Predicate<DocumentData>,
       indexes,
     );
     expect(plan).toEqual({ kind: "full-scan", reason: "no-matching-index" });
@@ -405,7 +405,7 @@ describe("planQuery — inFanoutThreshold override", () => {
     const indexes: IndexDefinition[] = [{ name: "by_priority", on: "priority" }];
     const values = Array.from({ length: 100 }, (_, i) => `p${i}`);
     const plan = planQuery(
-      { priority: { $in: values } } as unknown as Predicate<JSONArraylessObject>,
+      { priority: { $in: values } } as unknown as Predicate<DocumentData>,
       indexes,
       { inFanoutThreshold: 200 },
     );
@@ -416,7 +416,7 @@ describe("planQuery — inFanoutThreshold override", () => {
     const indexes: IndexDefinition[] = [{ name: "by_priority", on: "priority" }];
     const values = Array.from({ length: 5 }, (_, i) => `p${i}`);
     const plan = planQuery(
-      { priority: { $in: values } } as unknown as Predicate<JSONArraylessObject>,
+      { priority: { $in: values } } as unknown as Predicate<DocumentData>,
       indexes,
       { inFanoutThreshold: 2 },
     );
@@ -432,7 +432,7 @@ describe("planQuery — numeric range / $in routing", () => {
   test("routes numeric $gte/$lt range on indexed field", () => {
     const indexes: IndexDefinition[] = [{ name: "by_age", on: "age" }];
     const plan = planQuery(
-      { age: { $gte: 18, $lt: 65 } } as unknown as Predicate<JSONArraylessObject>,
+      { age: { $gte: 18, $lt: 65 } } as unknown as Predicate<DocumentData>,
       indexes,
     );
     expect(plan).toEqual({
@@ -452,7 +452,7 @@ describe("planQuery — numeric range / $in routing", () => {
   test("routes numeric upper-bound-only range on indexed field", () => {
     const indexes: IndexDefinition[] = [{ name: "by_age", on: "age" }];
     const plan = planQuery(
-      { age: { $lt: 100 } } as unknown as Predicate<JSONArraylessObject>,
+      { age: { $lt: 100 } } as unknown as Predicate<DocumentData>,
       indexes,
     );
     expect(plan).toEqual({
@@ -471,7 +471,7 @@ describe("planQuery — numeric range / $in routing", () => {
   test("routes numeric $in on indexed field under threshold", () => {
     const indexes: IndexDefinition[] = [{ name: "by_priority", on: "priority" }];
     const plan = planQuery(
-      { priority: { $in: [1, 2, 3] } } as unknown as Predicate<JSONArraylessObject>,
+      { priority: { $in: [1, 2, 3] } } as unknown as Predicate<DocumentData>,
       indexes,
     );
     expect(plan).toEqual({
@@ -485,7 +485,7 @@ describe("planQuery — numeric range / $in routing", () => {
   test("routes mixed numeric + string $in on indexed field", () => {
     const indexes: IndexDefinition[] = [{ name: "by_x", on: "x" }];
     const plan = planQuery(
-      { x: { $in: ["a", 1] } } as unknown as Predicate<JSONArraylessObject>,
+      { x: { $in: ["a", 1] } } as unknown as Predicate<DocumentData>,
       indexes,
     );
     expect(plan).toEqual({
@@ -509,7 +509,7 @@ describe("planQuery — filtered index cost bias (T4)", () => {
     // the only path to picking `filtered` — proves the bias overrides
     // definition order.
     const plan = planQuery(
-      { status: "open", assignee: "alice" } as unknown as Predicate<JSONArraylessObject>,
+      { status: "open", assignee: "alice" } as unknown as Predicate<DocumentData>,
       [unfiltered, filtered],
     );
     expect(plan.kind).toBe("index-walk");
@@ -534,7 +534,7 @@ describe("planQuery — filtered index cost bias (T4)", () => {
     // Query has no `status` clause → filter is NOT implied. The
     // unfiltered index must win even though `filtered` walks at the
     // same equality prefix length.
-    const plan = planQuery({ assignee: "alice" } as unknown as Predicate<JSONArraylessObject>, [
+    const plan = planQuery({ assignee: "alice" } as unknown as Predicate<DocumentData>, [
       filtered,
       unfiltered,
     ]);
@@ -561,7 +561,7 @@ describe("planQuery — filtered index cost bias (T4)", () => {
         status: "open",
         assignee: "alice",
         priority: "p1",
-      } as unknown as Predicate<JSONArraylessObject>,
+      } as unknown as Predicate<DocumentData>,
       [filtered_short, filtered_long],
     );
     expect(plan.kind).toBe("index-walk");
@@ -587,7 +587,7 @@ describe("planQuery — filtered index cost bias (T4)", () => {
         status: "open",
         assignee: "alice",
         priority: "p1",
-      } as unknown as Predicate<JSONArraylessObject>,
+      } as unknown as Predicate<DocumentData>,
       [unfiltered_single, filtered_composite],
     );
     expect(plan.kind).toBe("index-walk");
@@ -602,7 +602,7 @@ describe("planQuery — filtered index cost bias (T4)", () => {
       { name: "adults_by_age", on: "age", predicate: { age: { $gte: 18 } } },
     ];
     const plan = planQuery(
-      { age: { $gte: 21, $lte: 30 } } as unknown as Predicate<JSONArraylessObject>,
+      { age: { $gte: 21, $lte: 30 } } as unknown as Predicate<DocumentData>,
       indexes,
     );
     expect(plan).toMatchObject({ kind: "index-walk", indexName: "adults_by_age" });
@@ -614,7 +614,7 @@ describe("planQuery — filtered index cost bias (T4)", () => {
       { name: "p0_p1", on: "priority", predicate: { priority: { $in: ["p0", "p1"] } } },
     ];
     const plan = planQuery(
-      { priority: "p1" } as unknown as Predicate<JSONArraylessObject>,
+      { priority: "p1" } as unknown as Predicate<DocumentData>,
       indexes,
     );
     expect(plan).toMatchObject({ kind: "index-walk", indexName: "p0_p1" });
@@ -626,7 +626,7 @@ describe("planQuery — filtered index cost bias (T4)", () => {
       { name: "adults_by_age", on: "age", predicate: { age: { $gte: 18 } } },
     ];
     const plan = planQuery(
-      { age: { $gte: 17, $lte: 30 } } as unknown as Predicate<JSONArraylessObject>,
+      { age: { $gte: 17, $lte: 30 } } as unknown as Predicate<DocumentData>,
       indexes,
     );
     // Falls back to the unfiltered index — walking adults_by_age would

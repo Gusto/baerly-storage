@@ -29,7 +29,7 @@
 
 import { fc, test as fcTest } from "@fast-check/vitest";
 import { describe, expect, test } from "vitest";
-import type { JSONArraylessObject } from "@baerly/protocol";
+import type { DocumentData } from "@baerly/protocol";
 import { CONFORMANCE_BEARER, CONFORMANCE_TENANT } from "./test-verifier.ts";
 
 /**
@@ -90,7 +90,7 @@ export interface HttpConformanceOptions {
   /** Bearer token the test Verifier accepts. Default: `test-token`. */
   readonly bearerToken?: string;
   /** Override the doc-body arbitrary. Default: small JSON object. */
-  readonly bodyArb?: fc.Arbitrary<JSONArraylessObject>;
+  readonly bodyArb?: fc.Arbitrary<DocumentData>;
 }
 
 export type HttpFetch = (req: Request) => Promise<Response>;
@@ -125,13 +125,13 @@ const BASE = "http://test.local";
  * string/number/boolean leaves; small enough to keep fast-check
  * shrinking cheap, large enough to surface JSON-mangling bugs.
  */
-const DEFAULT_BODY_ARB: fc.Arbitrary<JSONArraylessObject> = fc.dictionary(
+const DEFAULT_BODY_ARB: fc.Arbitrary<DocumentData> = fc.dictionary(
   fc.stringMatching(/^[a-z][a-z0-9_]{0,7}$/),
   fc.oneof(fc.string({ maxLength: 32 }), fc.integer(), fc.boolean()) as fc.Arbitrary<
     string | number | boolean
   >,
   { minKeys: 0, maxKeys: 6 },
-) as unknown as fc.Arbitrary<JSONArraylessObject>;
+) as unknown as fc.Arbitrary<DocumentData>;
 
 /**
  * Tiny PNG signature + IHDR — same 33-byte fixture used by the
@@ -268,7 +268,7 @@ export const runHttpConformanceCascade = (opts: {
 
   const postDoc = async (
     table: string,
-    doc: JSONArraylessObject,
+    doc: DocumentData,
   ): Promise<{ readonly status: number; readonly id?: string; readonly body: unknown }> => {
     const res = await doFetch(authedRequest("POST", `/v1/t/${table}`, { doc }));
     const json = (await res.json().catch(() => undefined)) as { readonly _id?: string } | undefined;
@@ -288,7 +288,7 @@ export const runHttpConformanceCascade = (opts: {
           expect(typeof posted._id).toBe("string");
           const getRes = await doFetch(authedRequest("GET", `/v1/t/${table}/${posted._id}`));
           expect(getRes.status).toBe(200);
-          const { data } = (await getRes.json()) as { readonly data: JSONArraylessObject };
+          const { data } = (await getRes.json()) as { readonly data: DocumentData };
           // `_id` is server-assigned (UUIDv7); strip before comparing.
           const { _id: _stripped, ...rest } = data;
           void _stripped;
@@ -347,7 +347,7 @@ export const runHttpConformanceCascade = (opts: {
 
       for (const fieldCount of [0, 1, 16, 256]) {
         test(`round-trip doc with ${fieldCount} fields`, async () => {
-          const doc: JSONArraylessObject = {};
+          const doc: DocumentData = {};
           for (let i = 0; i < fieldCount; i += 1) {
             doc[`f${i}`] = i;
           }
@@ -357,7 +357,7 @@ export const runHttpConformanceCascade = (opts: {
           const id = ins.id!;
           const res = await doFetch(authedRequest("GET", `/v1/t/${table}/${id}`));
           expect(res.status).toBe(200);
-          const { data } = (await res.json()) as { readonly data: JSONArraylessObject };
+          const { data } = (await res.json()) as { readonly data: DocumentData };
           const { _id: _stripped, ...rest } = data;
           void _stripped;
           expect(rest).toEqual(doc);
@@ -649,7 +649,7 @@ export const runHttpConformanceCascade = (opts: {
 
     describe("encoding fidelity", () => {
       test("UTF-8 multibyte fields round-trip through POST → GET", async () => {
-        const doc: JSONArraylessObject = {
+        const doc: DocumentData = {
           greeting: "héllo🌍",
           // Family-with-ZWJ-sequence: the canonical pathological case
           // for a JSON serializer that re-encodes high surrogates.
@@ -662,7 +662,7 @@ export const runHttpConformanceCascade = (opts: {
         const id = ins.id!;
         const res = await doFetch(authedRequest("GET", `/v1/t/${table}/${id}`));
         expect(res.status).toBe(200);
-        const { data } = (await res.json()) as { readonly data: JSONArraylessObject };
+        const { data } = (await res.json()) as { readonly data: DocumentData };
         const { _id: _stripped, ...rest } = data;
         void _stripped;
         expect(rest).toEqual(doc);

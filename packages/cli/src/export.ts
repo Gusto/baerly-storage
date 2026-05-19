@@ -44,7 +44,7 @@ import { writeFile } from "node:fs/promises";
 import { defineCommand, parseArgs, type ArgsDef, type ParsedArgs } from "citty";
 import {
   BaerlyError,
-  type JSONArraylessObject,
+  type DocumentData,
   matches,
   validatePredicate,
 } from "@baerly/protocol";
@@ -174,7 +174,7 @@ const resolveAppTenant = async (args: Args): Promise<{ app: string; tenant: stri
   }
 };
 
-const parseWherePredicate = (raw: string): JSONArraylessObject => {
+const parseWherePredicate = (raw: string): DocumentData => {
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
@@ -192,13 +192,13 @@ const parseWherePredicate = (raw: string): JSONArraylessObject => {
   }
   // Re-validate defensively; the translator will reject too, but
   // surfacing the error here gives a single uniform error path.
-  validatePredicate(parsed as JSONArraylessObject);
-  return parsed as JSONArraylessObject;
+  validatePredicate(parsed as DocumentData);
+  return parsed as DocumentData;
 };
 
 const filterRows = (
   rows: ReadonlyMap<string, ExportRow>,
-  predicate: JSONArraylessObject | null,
+  predicate: DocumentData | null,
 ): Map<string, ExportRow> => {
   const filtered = new Map<string, ExportRow>();
   for (const [id, body] of rows) {
@@ -267,7 +267,7 @@ const handleExport = async (args: Args): Promise<number> => {
       table: args.table,
     });
 
-    let predicate: JSONArraylessObject | null = null;
+    let predicate: DocumentData | null = null;
     let whereClause = "";
     let whereHints: readonly string[] = [];
     if (typeof args.where === "string" && args.where.length > 0) {

@@ -19,14 +19,14 @@ import {
   getOrCreateMemoryStorageForBucket,
   readCurrentJson,
   resetMemoryStorage,
-  type JSONArraylessObject,
+  type DocumentData,
   type Storage,
 } from "@baerly/protocol";
 import { LocalFsStorage } from "@baerly/dev";
 import { Db, ServerWriter } from "@baerly/server";
 import { runCopy } from "./copy.ts";
 
-interface Doc extends JSONArraylessObject {
+interface Doc extends DocumentData {
   _id: string;
   title: string;
   status: "open" | "closed";

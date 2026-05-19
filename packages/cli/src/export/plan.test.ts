@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { BaerlyError, type JSONArraylessObject } from "@baerly/protocol";
+import { BaerlyError, type DocumentData } from "@baerly/protocol";
 import { inferPlanForCollection } from "./plan.ts";
 import type { ExportRow } from "./types.ts";
 
@@ -14,8 +14,8 @@ const rowsFromRecord = (rec: Record<string, ExportRow>): ReadonlyMap<string, Exp
 describe("inferPlanForCollection — per-column type inference (§3 table)", () => {
   test("only-string column → text on postgres, TEXT on sqlite/d1", () => {
     const rows = rowsFromRecord({
-      a: { name: "alice" } as JSONArraylessObject,
-      b: { name: "bob" } as JSONArraylessObject,
+      a: { name: "alice" } as DocumentData,
+      b: { name: "bob" } as DocumentData,
     });
     expect(
       inferPlanForCollection({ rows, target: "postgres", table: "users" }).columns.find(
@@ -36,8 +36,8 @@ describe("inferPlanForCollection — per-column type inference (§3 table)", () 
 
   test("only-boolean column → boolean on postgres, INTEGER on sqlite/d1", () => {
     const rows = rowsFromRecord({
-      a: { active: true } as JSONArraylessObject,
-      b: { active: false } as JSONArraylessObject,
+      a: { active: true } as DocumentData,
+      b: { active: false } as DocumentData,
     });
     expect(
       inferPlanForCollection({ rows, target: "postgres", table: "t" }).columns.find(
@@ -58,8 +58,8 @@ describe("inferPlanForCollection — per-column type inference (§3 table)", () 
 
   test("only-integer column (fits int32) → integer / INTEGER", () => {
     const rows = rowsFromRecord({
-      a: { count: 1 } as JSONArraylessObject,
-      b: { count: 100 } as JSONArraylessObject,
+      a: { count: 1 } as DocumentData,
+      b: { count: 100 } as DocumentData,
     });
     expect(
       inferPlanForCollection({ rows, target: "postgres", table: "t" }).columns.find(
@@ -75,8 +75,8 @@ describe("inferPlanForCollection — per-column type inference (§3 table)", () 
 
   test("non-integer number → double precision on postgres, REAL on sqlite/d1", () => {
     const rows = rowsFromRecord({
-      a: { ratio: 1.5 } as JSONArraylessObject,
-      b: { ratio: 2 } as JSONArraylessObject,
+      a: { ratio: 1.5 } as DocumentData,
+      b: { ratio: 2 } as DocumentData,
     });
     expect(
       inferPlanForCollection({ rows, target: "postgres", table: "t" }).columns.find(
@@ -92,7 +92,7 @@ describe("inferPlanForCollection — per-column type inference (§3 table)", () 
 
   test("integer overflow (> int32) → double precision / REAL", () => {
     const rows = rowsFromRecord({
-      a: { big: 3_000_000_000 } as JSONArraylessObject,
+      a: { big: 3_000_000_000 } as DocumentData,
     });
     expect(
       inferPlanForCollection({ rows, target: "postgres", table: "t" }).columns.find(
@@ -108,8 +108,8 @@ describe("inferPlanForCollection — per-column type inference (§3 table)", () 
 
   test("only nested-object → jsonb on postgres, TEXT on sqlite/d1 with jsonEncoded", () => {
     const rows = rowsFromRecord({
-      a: { profile: { city: "sf" } } as JSONArraylessObject,
-      b: { profile: { city: "ny" } } as JSONArraylessObject,
+      a: { profile: { city: "sf" } } as DocumentData,
+      b: { profile: { city: "ny" } } as DocumentData,
     });
     const pg = inferPlanForCollection({ rows, target: "postgres", table: "t" });
     const sl = inferPlanForCollection({ rows, target: "sqlite", table: "t" });
@@ -125,8 +125,8 @@ describe("inferPlanForCollection — per-column type inference (§3 table)", () 
 
   test("mixed primitives (string + number) → text / TEXT, not JSON-encoded", () => {
     const rows = rowsFromRecord({
-      a: { val: "hello" } as JSONArraylessObject,
-      b: { val: 42 } as JSONArraylessObject,
+      a: { val: "hello" } as DocumentData,
+      b: { val: 42 } as DocumentData,
     });
     const pg = inferPlanForCollection({ rows, target: "postgres", table: "t" });
     const sl = inferPlanForCollection({ rows, target: "sqlite", table: "t" });
@@ -137,8 +137,8 @@ describe("inferPlanForCollection — per-column type inference (§3 table)", () 
 
   test("primitive + nested-object → jsonb / TEXT with jsonEncoded", () => {
     const rows = rowsFromRecord({
-      a: { thing: "string-form" } as JSONArraylessObject,
-      b: { thing: { nested: "obj" } } as JSONArraylessObject,
+      a: { thing: "string-form" } as DocumentData,
+      b: { thing: { nested: "obj" } } as DocumentData,
     });
     const pg = inferPlanForCollection({ rows, target: "postgres", table: "t" });
     const sl = inferPlanForCollection({ rows, target: "sqlite", table: "t" });
@@ -150,8 +150,8 @@ describe("inferPlanForCollection — per-column type inference (§3 table)", () 
 
   test("absent on some rows → nullable: true", () => {
     const rows = rowsFromRecord({
-      a: { name: "alice", nickname: "al" } as JSONArraylessObject,
-      b: { name: "bob" } as JSONArraylessObject,
+      a: { name: "alice", nickname: "al" } as DocumentData,
+      b: { name: "bob" } as DocumentData,
     });
     const plan = inferPlanForCollection({ rows, target: "postgres", table: "t" });
     expect(plan.columns.find((c) => c.source === "nickname")?.nullable).toBe(true);
@@ -168,9 +168,9 @@ describe("inferPlanForCollection — per-column type inference (§3 table)", () 
     // compares each column's observed-row count against the total
     // row count.
     const rows = rowsFromRecord({
-      a: { name: "alice" } as JSONArraylessObject,
-      b: { name: "bob" } as JSONArraylessObject,
-      c: { name: "carol", deleted: true } as JSONArraylessObject,
+      a: { name: "alice" } as DocumentData,
+      b: { name: "bob" } as DocumentData,
+      c: { name: "carol", deleted: true } as DocumentData,
     });
     const plan = inferPlanForCollection({ rows, target: "sqlite", table: "t" });
     expect(plan.columns.find((c) => c.source === "deleted")?.nullable).toBe(true);
@@ -179,8 +179,8 @@ describe("inferPlanForCollection — per-column type inference (§3 table)", () 
 
   test("present on every row → nullable: false", () => {
     const rows = rowsFromRecord({
-      a: { name: "alice" } as JSONArraylessObject,
-      b: { name: "bob" } as JSONArraylessObject,
+      a: { name: "alice" } as DocumentData,
+      b: { name: "bob" } as DocumentData,
     });
     const plan = inferPlanForCollection({ rows, target: "postgres", table: "t" });
     expect(plan.columns.find((c) => c.source === "name")?.nullable).toBe(false);
@@ -188,7 +188,7 @@ describe("inferPlanForCollection — per-column type inference (§3 table)", () 
 
   test("_id is always first and never nullable", () => {
     const rows = rowsFromRecord({
-      a: { name: "alice" } as JSONArraylessObject,
+      a: { name: "alice" } as DocumentData,
     });
     const plan = inferPlanForCollection({ rows, target: "postgres", table: "t" });
     expect(plan.columns[0]?.source).toBe("_id");
@@ -205,8 +205,8 @@ describe("inferPlanForCollection — per-column type inference (§3 table)", () 
 
   test("stable column order across runs with same input", () => {
     const rows = rowsFromRecord({
-      a: { gamma: "g", alpha: "a", beta: "b" } as JSONArraylessObject,
-      b: { alpha: "a2" } as JSONArraylessObject,
+      a: { gamma: "g", alpha: "a", beta: "b" } as DocumentData,
+      b: { alpha: "a2" } as DocumentData,
     });
     const p1 = inferPlanForCollection({ rows, target: "postgres", table: "t" });
     const p2 = inferPlanForCollection({ rows, target: "postgres", table: "t" });
@@ -217,9 +217,9 @@ describe("inferPlanForCollection — per-column type inference (§3 table)", () 
 
   test("rowCount equals input map size", () => {
     const rows = rowsFromRecord({
-      a: {} as JSONArraylessObject,
-      b: {} as JSONArraylessObject,
-      c: {} as JSONArraylessObject,
+      a: {} as DocumentData,
+      b: {} as DocumentData,
+      c: {} as DocumentData,
     });
     expect(inferPlanForCollection({ rows, target: "postgres", table: "t" }).rowCount).toBe(3);
   });

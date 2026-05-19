@@ -11,7 +11,7 @@ export type { Fetcher } from "./request.ts";
 export type {
   BaerlyErrorCode,
   ConsistencyLevel,
-  JSONArraylessObject,
+  DocumentData,
   LogEntry,
   OrderSpec,
   Predicate,

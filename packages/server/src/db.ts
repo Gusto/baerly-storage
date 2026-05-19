@@ -4,7 +4,7 @@
 import {
   BaerlyError,
   type CurrentJsonRead,
-  type JSONArraylessObject,
+  type DocumentData,
   LOG_KEY_PREFIX,
   type LogEntry,
   type MetricsRecorder,
@@ -66,7 +66,7 @@ export interface TxContext {
 export interface BufferedMutation {
   readonly op: "I" | "U" | "D";
   readonly docId: string;
-  readonly body?: JSONArraylessObject;
+  readonly body?: DocumentData;
   readonly origin?: string;
 }
 
@@ -403,18 +403,18 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
    */
   // Resolution order: narrowing overload first (matches declared
   // collection names against bound `TConfig`), legacy generic second
-  // (caller picks T; defaults to `JSONArraylessObject` to mirror the
+  // (caller picks T; defaults to `DocumentData` to mirror the
   // impl's runtime return shape). The impl signature stays widest —
-  // `Table<JSONArraylessObject>` — so byte-identical to overload #2's
-  // default. The runtime never narrows; `makeTable<JSONArraylessObject>`
+  // `Table<DocumentData>` — so byte-identical to overload #2's
+  // default. The runtime never narrows; `makeTable<DocumentData>`
   // builds a single row-agnostic handle and TypeScript handles the rest
   // at the call site.
   table<N extends CollectionNames<TConfig>>(
     name: N,
-  ): Table<RowOf<TConfig, N> & JSONArraylessObject>;
-  table<T extends JSONArraylessObject = JSONArraylessObject>(name: string): Table<T>;
-  table(name: string): Table<JSONArraylessObject> {
-    return makeTable<JSONArraylessObject>(this.tableReadContext(name));
+  ): Table<RowOf<TConfig, N> & DocumentData>;
+  table<T extends DocumentData = DocumentData>(name: string): Table<T>;
+  table(name: string): Table<DocumentData> {
+    return makeTable<DocumentData>(this.tableReadContext(name));
   }
 
   /**
@@ -501,7 +501,7 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
    * });
    * ```
    */
-  async transaction<T extends JSONArraylessObject = JSONArraylessObject>(
+  async transaction<T extends DocumentData = DocumentData>(
     table: string,
     body: (tx: Table<T>) => Promise<void>,
   ): Promise<void> {

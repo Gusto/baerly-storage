@@ -12,7 +12,7 @@
  * include glob (see `vitest.config.ts`).
  */
 
-import type { JSONArraylessObject, Storage } from "@baerly/protocol";
+import type { DocumentData, Storage } from "@baerly/protocol";
 import { type CollectionNames, defineConfig, type RowOf } from "./config.ts";
 import { Db } from "./db.ts";
 import type { SchemaValidator } from "./schema.ts";
@@ -94,7 +94,7 @@ const db = Db.create({
 });
 
 // `db.table("tickets")` resolves to the narrowing overload —
-// `RowOf<typeof config, "tickets"> & JSONArraylessObject`. We check
+// `RowOf<typeof config, "tickets"> & DocumentData`. We check
 // `first()`'s return shape so the assertion stays scoped to public
 // surface (and bypasses Table's internal generic plumbing). The
 // per-step `typeof` capture works around TS's reluctance to evaluate
@@ -104,7 +104,7 @@ const boundRow = await boundTable.where({ _id: "x" }).first();
 export type _BoundDbInfersRow = Expect<
   Equal<
     typeof boundRow,
-    ({ _id: string; title: string; status: "open" | "closed" } & JSONArraylessObject) | undefined
+    ({ _id: string; title: string; status: "open" | "closed" } & DocumentData) | undefined
   >
 >;
 
@@ -120,13 +120,13 @@ export type _LegacyDbCallSiteGenericStillWorks = Expect<
 
 // Fallthrough: a name that is NOT in `CollectionNames<typeof config>`
 // must not produce a type error — overload #1 fails to match, overload
-// #2 fires with its default `T = JSONArraylessObject`, and the call
-// returns `Table<JSONArraylessObject>`. Locks in the documented intent
+// #2 fires with its default `T = DocumentData`, and the call
+// returns `Table<DocumentData>`. Locks in the documented intent
 // in `Db.table` and mirrors `BaerlyClient.table`'s behavior. Regression
 // guard: if a future "narrow-only" single-overload pattern lands, this
 // assertion breaks and forces the change to be deliberate.
 const typoTable = db.table("notACollection");
 const typoRow = await typoTable.where({ _id: "x" }).first();
-export type _BoundDbUnknownNameFallsBackToJSONArraylessObject = Expect<
-  Equal<typeof typoRow, JSONArraylessObject | undefined>
+export type _BoundDbUnknownNameFallsBackToDocumentData = Expect<
+  Equal<typeof typoRow, DocumentData | undefined>
 >;

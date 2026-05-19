@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import type { JSONArraylessObject, LogEntry, Predicate } from "@baerly/protocol";
+import type { DocumentData, LogEntry, Predicate } from "@baerly/protocol";
 import { useBaerlyClient } from "./provider.ts";
 import { useInvalidationTick } from "./use-invalidation-tick.ts";
 
@@ -45,7 +45,7 @@ export type UseLiveDocumentResult<T> =
  * return <h2>{result.row.title}</h2>;
  * ```
  */
-export const useLiveDocument = <T extends JSONArraylessObject = JSONArraylessObject>(
+export const useLiveDocument = <T extends DocumentData = DocumentData>(
   opts: UseLiveDocumentOptions,
 ): UseLiveDocumentResult<T> => {
   const { table, id, enabled = true } = opts;

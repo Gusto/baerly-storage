@@ -1,5 +1,5 @@
 import { BaerlyError } from "./errors.ts";
-import type { JSONArraylessObject, JSONValue } from "./json.ts";
+import type { DocumentData, JSONValue } from "./json.ts";
 import { str2uintDesc } from "./types.ts";
 
 /**
@@ -71,21 +71,21 @@ export interface LogEntry {
   schema_version: number;
 
   /** Required for I, U. The post-image. */
-  new?: JSONArraylessObject;
+  new?: DocumentData;
 
   /**
    * JSON-merge-patch (RFC 7386) form. Required for U; for I equals
    * `new`. In today's per-doc-replace model `new` and `patch` are
    * always equal; that changes when partial-doc merge writes land.
    */
-  patch?: JSONArraylessObject;
+  patch?: DocumentData;
 
   /**
    * The pre-image. Present iff the collection's `replica_identity`
    * is `FULL`. ~2× log size on update-heavy collections; off by
    * default.
    */
-  old?: JSONArraylessObject;
+  old?: DocumentData;
 
   /**
    * Pre-image of the primary key. U/D always carry this when
