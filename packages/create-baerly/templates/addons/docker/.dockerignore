@@ -1,5 +1,6 @@
 node_modules
-dist/server
+# Build artifacts: re-derive from the build stage, never from the host.
+dist
 .env
 .env.*
 *.log

@@ -7,6 +7,12 @@
 # The SPA bundle (vite build) lives under dist/client/ and is served
 # by createListener({ webRoot }).
 
+# Base images are tag-pinned (not digest-pinned) so this template
+# stays fresh as new patch images ship. Once you vendor this file,
+# pin to digests for reproducibility: `docker pull <image>` then
+# `docker inspect --format='{{index .RepoDigests 0}}' <image>` and
+# replace the tag with `@sha256:...`.
+
 # ---- Build stage ----
 FROM node:24-bookworm-slim AS build
 WORKDIR /app
