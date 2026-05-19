@@ -37,10 +37,25 @@ Don't introduce alternate tooling without justification.
 
 ## Verification
 
+Under Claude Code, `vitest` runs use the compact `minimal` reporter —
+vitest 4.1 auto-detects AI-agent environments, and the repo config
+(`vitest.config.ts`) additionally pins this behavior when
+`CLAUDECODE=1` is set so it isn't silently broken by detection
+changes. Failures still print in full. Override with
+`--reporter=dot` for long suites (`test:randomize`,
+`test:fuzz-phase5`) when progress signal matters more than
+compactness, or `--reporter=default` to force the full reporter.
+`pnpm verify` / `pnpm test` is what humans + the lefthook
+pre-commit hook run; `pnpm verify:agent` / `pnpm test:agent` are
+explicit compact-output variants for environments where the env
+var isn't propagated.
+
 | Command | What it catches | Runtime | Clean on `main`? |
 |---|---|---|---|
 | `pnpm verify` | typecheck (`tsgo --noEmit`) + lint (`oxlint`) | ~seconds | ✅ — non-zero exit *is* your regression |
+| `pnpm verify:agent` | same gate as `pnpm verify`, with `tsgo --pretty false` + `oxlint --format=unix --quiet` for one-line-per-finding output (warnings hidden — `pnpm verify` still surfaces them) | ~seconds | ✅ — same gate as `verify`, just quieter |
 | `pnpm test` | vitest unit + integration (zero infra) — includes the `memory` + `local-fs` variants of `randomized.test.ts` | ~3s | ✅ — Minio + credentials tests are gated, see below |
+| `pnpm test:agent` | same gate as `pnpm test`, with `--reporter=minimal --silent=passed-only` baked in (failures still full-detail). Works regardless of `CLAUDECODE` | ~3s | ✅ — same gate as `test`, just quieter |
 | `pnpm test:minio` | adds the Minio-gated suites: the `clock behavior` block of `time.test.ts`, the `node-minio` variant of `randomized.test.ts`, and `adapter-node` Minio conformance | ~10s | ✅ when `pnpm dev:storage` is up |
 | `pnpm test:conformance` | adds `conformance.test.ts` (needs Minio + credentials files) | ~30s | requires credentials in `credentials/{aws,gcs,cloudflare}.json` |
 | `pnpm test:export-smoke` | adds `export-smoke.test.ts` (`LogEntry` round-trip into Postgres; needs local Postgres on `:5433`) | ~5s | ✅ when `pnpm dev:storage` is up |
