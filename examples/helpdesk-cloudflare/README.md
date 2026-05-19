@@ -83,5 +83,6 @@ expects. Update both files in lockstep when you add a new secret.
 - Custom domain: set `domain` in `baerly.config.ts` and re-run `pnpm deploy`.
 - Tune log volume: `LOG_LEVEL` (`debug | info | warn | error`) and
   `LOG_SAMPLE` (0..1) in `wrangler.jsonc`.
-- Declare schemas in `.baerly/schema.lock.json` for runtime
-  insert/update/replace validation (see `baerly-storage` JSDoc).
+- Declare schemas in `baerly.config.ts` under `collections.<name>.schema`
+  (any StandardSchema v1 validator — Zod, Valibot, ArkType) for runtime
+  insert/update/replace validation. See `AGENTS.md` → "Schemas (live feature)".

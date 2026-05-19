@@ -65,9 +65,8 @@ read it via your editor's TS LS or via the published types).
 | `tsconfig.json`            | Root project-references stub                                                                                     |
 | `tsconfig.app.json`        | Client TS project (`src/web/`, DOM lib, `jsx: react-jsx`)                                                        |
 | `tsconfig.worker.json`     | Worker TS project (`src/server/`, workerd lib)                                                                   |
-| `baerly.config.ts`         | App config — `app`, `tenant`, `target`, `domain`                                                                 |
+| `baerly.config.ts`         | App config — `app`, `tenant`, `target`, `domain`, `collections` (schemas live here).                             |
 | `types.ts`                 | Shared `Ticket` interface and `STATUSES` / `PRIORITIES` constants. Imported by both the server and the web client. |
-| `.baerly/schema.lock.json` | Declared collection schemas — see "Schemas (live feature)" below.                                                |
 
 ## When editing X, read Y
 
@@ -156,11 +155,6 @@ read it via your editor's TS LS or via the published types).
   HTTP clients see a 422 with the same envelope. Validation runs
   on the post-image so `update` and `replace` see the full doc, not
   just the patch.
-
-  The companion `.baerly/schema.lock.json` carries an optional
-  declarative form for tooling that wants a JSON view of the active
-  schemas; an empty `{ "tables": {} }` is fine when you supply the
-  schemas in code.
 
 - **Auth setup (Cloudflare)** — `src/server/index.ts` selects a
   `Verifier` per request:

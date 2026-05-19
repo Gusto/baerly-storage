@@ -1,5 +1,0 @@
-{
-  "schema_version": 1,
-  "comment": "Declared collection schemas for this app. Consumed by Db.create({ schemas }) and validated on insert/update/replace via validateOrThrow. See baerly-storage JSDoc for examples.",
-  "tables": {}
-}

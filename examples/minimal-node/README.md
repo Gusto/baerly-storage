@@ -25,7 +25,6 @@ minimal-node/
 ├── baerly.config.ts          # app, tenant, target, domain
 ├── AGENTS.md                 # deeper guide: predicates, schemas,
 │                             #   auth recipes, graduation
-├── .baerly/schema.lock.json  # declared collection schemas
 ├── src/
 │   ├── server/
 │   │   └── index.ts          # baerlyNode({ app, storage, verifier, webRoot, maintenance? }).listen(PORT)

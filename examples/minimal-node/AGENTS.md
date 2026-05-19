@@ -59,8 +59,7 @@ read it via your editor's TS LS or via the published types).
 | `src/web/`, `index.html`    | Optional SPA shell built by Vite into `dist/client/`. Remove if not needed. |
 | `vite.config.ts`            | Vite client build — `outDir: dist/client`; dev proxy `/v1` → `:8080` |
 | `tsconfig.{app,server}.json` | TS project references for the client and server projects |
-| `baerly.config.ts`          | App config — `app`, `tenant`, `target`, `domain`    |
-| `.baerly/schema.lock.json`  | Declared collection schemas — see "Schemas (live feature)" below. |
+| `baerly.config.ts`          | App config — `app`, `tenant`, `target`, `domain`, `collections` (schemas live here). |
 
 ## When editing X, read Y
 
@@ -149,11 +148,6 @@ read it via your editor's TS LS or via the published types).
   HTTP clients see a 422 with the same envelope. Validation runs
   on the post-image so `update` and `replace` see the full doc, not
   just the patch.
-
-  The companion `.baerly/schema.lock.json` carries an optional
-  declarative form for tooling that wants a JSON view of the active
-  schemas; an empty `{ "tables": {} }` is fine when you supply the
-  schemas in code.
 
 - **Auth setup (Node)** — `src/server/index.ts` selects:
 

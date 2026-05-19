@@ -20,7 +20,6 @@ minimal-cloudflare/
 ├── AGENTS.md                 # deeper guide: predicates, schemas,
 │                             #   auth recipes, graduation (Codex CLI)
 ├── CLAUDE.md                 # same content (Claude Code reads this)
-├── .baerly/schema.lock.json  # declared collection schemas
 ├── src/
 │   ├── server/
 │   │   └── index.ts          # baerlyWorker({ verifier })
