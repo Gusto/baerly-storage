@@ -74,7 +74,7 @@ describe("scaffold", () => {
 
     const worker = await readFile(join(result.outDir, "src", "server", "index.ts"), "utf8");
     expect(worker).toContain("sharedSecret");
-    expect(worker).toContain('tenantPrefix: "acme"');
+    expect(worker).toContain("tenantPrefix: env.TENANT");
   });
 
   test("emits a production-shape wrangler.jsonc for cloudflare", async () => {

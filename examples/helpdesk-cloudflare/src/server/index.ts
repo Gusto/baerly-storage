@@ -34,7 +34,7 @@ const selectVerifier = (env: AppEnv): Verifier => {
     });
   }
   if (env.SHARED_SECRET !== undefined) {
-    return sharedSecret({ secret: env.SHARED_SECRET, tenantPrefix: "helpdesk-demo" });
+    return sharedSecret({ secret: env.SHARED_SECRET, tenantPrefix: env.TENANT });
   }
   throw new Error(
     "No Verifier configured. Set SHARED_SECRET (wrangler secret put SHARED_SECRET) or " +
