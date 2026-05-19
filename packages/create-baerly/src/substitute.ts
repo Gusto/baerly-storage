@@ -10,10 +10,9 @@
  *
  *   2. package.json normalisation. For files named `package.json`,
  *      any `workspace:*` value under a dep key matching `baerly-storage`
- *      *or* the literal `create-baerly` is pinned to `^<cliVersion>`
- *      (the scaffolder + CLI ship at the same version, and the
- *      emitted `baerly.config.ts` imports `create-baerly/config`),
- *      and any dep in `manifest.dropDevDeps` is removed from
+ *      is pinned to `^<cliVersion>` (the scaffolder + the
+ *      `baerly-storage` umbrella ship at the same version), and
+ *      any dep in `manifest.dropDevDeps` is removed from
  *      `devDependencies`. Indentation is preserved by round-tripping
  *      through `JSON.parse` + `JSON.stringify(_, null, 2)`.
  *
@@ -62,8 +61,8 @@ export const substituteText = (text: string, ctx: SubstituteContext): string => 
 /**
  * Rewrite a package.json's text content. Applies sentinel renames
  * first (covers the `"name"` field and any other string), then pins
- * `baerly-storage` (and `create-baerly`) workspace deps to the CLI
- * version, and drops listed devDependencies.
+ * `baerly-storage` workspace deps to the CLI version, and drops
+ * listed devDependencies.
  */
 export const substitutePackageJson = (text: string, ctx: SubstituteContext): string => {
   const renamed = substituteText(text, ctx);
@@ -82,7 +81,7 @@ export const substitutePackageJson = (text: string, ctx: SubstituteContext): str
       if (value !== "workspace:*") {
         continue;
       }
-      if (name === "baerly-storage" || name === "create-baerly") {
+      if (name === "baerly-storage") {
         deps[name] = pin;
       }
     }
