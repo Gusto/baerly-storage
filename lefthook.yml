@@ -1,5 +1,8 @@
 pre-commit:
   piped: true
+  skip:
+    - merge
+    - rebase
   commands:
     format:
       glob: "*.{ts,tsx,mjs,cjs,json}"
@@ -10,4 +13,5 @@ pre-commit:
       run: pnpm exec oxlint --fix {staged_files}
       stage_fixed: true
     typecheck:
+      glob: "*.{ts,tsx}"
       run: pnpm typecheck
