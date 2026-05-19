@@ -256,7 +256,10 @@ export default defineConfig({
     //
     // `reporters` is a top-level option in vitest 4's config — `ProjectConfig`
     // doesn't accept it, so the setting applies across both projects from here.
-    reporters: process.env["CLAUDECODE"] ? ["minimal"] : undefined,
+    // Use a conditional spread: omitting the field entirely (vs. `undefined`)
+    // is required — vitest 4.1's `resolveConfig` reads `.length` on the value
+    // and crashes when the literal `undefined` is present.
+    ...(process.env["CLAUDECODE"] ? { reporters: ["minimal"] satisfies string[] } : {}),
     coverage: {
       provider: "v8",
       include: ["src/**", "packages/*/src/**"],
