@@ -100,21 +100,6 @@ Move admin verbs (`compact`, `runGc`, `rebuildIndex`,
 Drop the `@internal` re-exports — `http/router.ts` and `http/since.ts`
 can import them directly within-package.
 
-#### A5. `Db._raw` is the first JSDoc `@example` on the class — **HIGH**
-
-`packages/server/src/db.ts:118-148`: the class-level `@example`
-shows `db._raw.put(...)` / `db._raw.get(...)`. `_raw` is then
-documented `@internal` ("Bypasses every higher-level invariant:
-no LogEntry emit, no CAS on current.json, no schema check"). An
-LLM reading the class docstring will produce code that bypasses
-the entire database.
-
-**Fix:** Replace the class `@example` with the canonical first-
-touch pattern (`Db.create` → `db.table("x").insert(...)` →
-`db.table("x").where({...}).all()`). Make `_raw` a private
-field (`#raw`) or expose only via an explicit
-`db.unsafeRawStorage()` accessor.
-
 #### A6. `@baerly/protocol` says "Not a public API" but every example imports from it — **HIGH**
 
 Package description: "Internal protocol kernel — implementation
