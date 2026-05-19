@@ -106,7 +106,7 @@ read it via your editor's TS LS or via the published types).
   Declare indexes in `baerly.config.ts` via:
 
   ```ts
-  import { defineConfig } from "create-baerly/config";
+  import { defineConfig } from "baerly-storage/config";
 
   export default defineConfig({
     collections: {
@@ -129,7 +129,7 @@ read it via your editor's TS LS or via the published types).
 
   ```ts
   import { z } from "zod";
-  import { defineConfig } from "create-baerly/config";
+  import { defineConfig } from "baerly-storage/config";
 
   const Ticket = z.object({
     _id: z.string().optional(),
