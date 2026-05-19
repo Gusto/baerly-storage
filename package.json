@@ -54,6 +54,10 @@
       "types": "./dist/observability.d.ts",
       "import": "./dist/observability.js"
     },
+    "./config": {
+      "types": "./dist/app-config.d.ts",
+      "import": "./dist/app-config.js"
+    },
     "./client": {
       "types": "./dist/client.d.ts",
       "import": "./dist/client.js"
