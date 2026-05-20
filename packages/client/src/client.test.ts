@@ -104,14 +104,14 @@ describe("createBaerlyClient", () => {
     expect(res).toEqual({ deleted: 0 });
   });
 
-  test("4xx throws BaerlyClientError with decoded code + status", async () => {
+  test("4xx throws BaerlyError with decoded code + status", async () => {
     const mock = new MockFetch();
     mock.on("POST", "/v1/t/tickets", () =>
       jsonResponse({ error: { code: "Unauthorized", message: "Bad token" } }, 401),
     );
     const client = createBaerlyClient({ baseUrl: "http://x", fetch: mock.fetch });
     await expect(client.table("tickets").insert({ x: 1 })).rejects.toMatchObject({
-      name: "BaerlyClientError",
+      name: "BaerlyError",
       code: "Unauthorized",
       status: 401,
     });

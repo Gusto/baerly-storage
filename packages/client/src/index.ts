@@ -6,8 +6,10 @@ export type {
   ClientTable,
   TerminalOptions,
 } from "./client.ts";
-export { BaerlyClientError } from "./errors.ts";
 export type { Fetcher } from "./request.ts";
+export {
+  BaerlyError,
+} from "@baerly/protocol";
 export type {
   BaerlyErrorCode,
   ConsistencyLevel,

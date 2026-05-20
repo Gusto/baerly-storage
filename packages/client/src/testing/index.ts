@@ -59,7 +59,7 @@ export class MockFetch {
    * The `fetch`-compatible function to pass into
    * `createBaerlyClient({ fetch })`. Returns a 500 with an
    * `HttpErrorEnvelope`-shaped body when no handler matches —
-   * surfaces as a `BaerlyClientError` in tests so unhandled paths
+   * surfaces as a `BaerlyError` in tests so unhandled paths
    * fail loudly.
    */
   fetch: Fetcher = async (req: Request): Promise<Response> => {

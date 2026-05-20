@@ -22,7 +22,7 @@ export type UseUpdateResult<T extends DocumentData> = UseMutationResult<
  * The day-one HTTP constraint is single-row update by `_id`; the
  * hook mirrors it (`mutate(id, patch)`). When the server grows a
  * multi-row PATCH route, the signature will widen — until then,
- * passing anything but a row id will throw `BaerlyClientError`.
+ * passing anything but a row id will throw `BaerlyError`.
  *
  * @example
  * ```tsx

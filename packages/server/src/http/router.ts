@@ -407,15 +407,15 @@ const ERROR_TO_STATUS: ReadonlyMap<BaerlyErrorCode, HttpStatus> = new Map<
   ["PayloadTooLarge", 413],
   ["SchemaError", 400],
   ["InvalidConfig", 400],
-  // OfflineNoCache, NetworkError, InvalidResponse, Internal → 500
+  // NetworkError, InvalidResponse, Internal → 500
 ]);
 
 /**
  * Map an unknown thrown value onto the wire envelope plus an HTTP
  * status code. The mapping is keyed by `BaerlyError.code` so any future
  * code addition forces a re-check here (currently unmapped codes fall
- * through to 500 by design — see the `OfflineNoCache` / `NetworkError`
- * / `InvalidResponse` / `Internal` comment in `ERROR_TO_STATUS`).
+ * through to 500 by design — see the `NetworkError` / `InvalidResponse`
+ * / `Internal` comment in `ERROR_TO_STATUS`).
  *
  * @internal — exported for tests and for the `/v1/since` long-poll
  *   handler in `./since.ts`. The `HttpErrorEnvelope` shape is locked;

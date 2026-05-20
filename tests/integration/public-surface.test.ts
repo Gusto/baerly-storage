@@ -162,12 +162,13 @@ describe("baerly-storage/node", () => {
 // ---------------------------------------------------------------------------
 // baerly-storage/client
 // ---------------------------------------------------------------------------
-import { BaerlyClientError, createBaerlyClient } from "baerly-storage/client";
+import { BaerlyError as ClientBaerlyError, createBaerlyClient } from "baerly-storage/client";
 
 describe("baerly-storage/client", () => {
   test("imports resolve", () => {
     expect(typeof createBaerlyClient).toBe("function");
-    expect(typeof BaerlyClientError).toBe("function");
+    expect(typeof ClientBaerlyError).toBe("function");
+    expect(ClientBaerlyError).toBe(BaerlyError);
   });
 });
 

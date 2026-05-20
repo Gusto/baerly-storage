@@ -3,10 +3,15 @@
    and `packages/server/src/contract.ts`); we mirror them verbatim
    so the typed client stays structurally compatible. */
 
-import type { ConsistencyLevel, DocumentData, OrderSpec, Predicate } from "@baerly/protocol";
+import {
+  BaerlyError,
+  type ConsistencyLevel,
+  type DocumentData,
+  type OrderSpec,
+  type Predicate,
+} from "@baerly/protocol";
 import type { BaerlyConfig, CollectionNames, RowOf, UnboundConfig } from "@baerly/server";
 import type { SinceResponse } from "./contract.ts";
-import { BaerlyClientError } from "./errors.ts";
 import { type Fetcher, type RequestContext, request } from "./request.ts";
 
 /**
@@ -170,7 +175,7 @@ export interface ClientTable<T extends DocumentData = DocumentData> {
  *
  * Day-one HTTP constraint: `update` / `replace` / `delete` require
  * `.where({ _id: "<id>" })` (single-row by id). Any other predicate
- * shape throws `BaerlyClientError{code:"SchemaError"}`. The
+ * shape throws `BaerlyError{code:"SchemaError"}`. The
  * constraint lifts when the server grows a multi-row PATCH route.
  */
 export interface ClientQuery<T extends DocumentData = DocumentData> {
@@ -235,7 +240,7 @@ export interface BaerlyClient<TConfig extends BaerlyConfig = UnboundConfig> {
    * server-side budget (25 s default) elapses; in the latter case
    * the response is `{ events: [], next_cursor: <same> }`.
    *
-   * @throws BaerlyClientError code="SchemaError" — cursor shape
+   * @throws BaerlyError code="SchemaError" — cursor shape
    *   invalid or cursor references a GC'd log entry.
    */
   since(opts: { table: string; cursor?: string; signal?: AbortSignal }): Promise<SinceResponse>;
@@ -446,7 +451,7 @@ const makeClientQuery = <T extends DocumentData>(
     async update(patch, opts): Promise<{ readonly modified: number }> {
       const id = singleIdFromPredicate(state.predicate);
       if (id === undefined) {
-        throw new BaerlyClientError(
+        throw new BaerlyError(
           "SchemaError",
           "update() requires .where({ _id: ... }) — multi-row update is not yet exposed over HTTP",
         );
@@ -463,7 +468,7 @@ const makeClientQuery = <T extends DocumentData>(
     async replace(doc, opts): Promise<void> {
       const id = singleIdFromPredicate(state.predicate);
       if (id === undefined) {
-        throw new BaerlyClientError(
+        throw new BaerlyError(
           "SchemaError",
           "replace() requires .where({ _id: ... }) — see ClientQuery docstring",
         );
@@ -484,7 +489,7 @@ const makeClientQuery = <T extends DocumentData>(
     async delete(opts): Promise<{ readonly deleted: number }> {
       const id = singleIdFromPredicate(state.predicate);
       if (id === undefined) {
-        throw new BaerlyClientError(
+        throw new BaerlyError(
           "SchemaError",
           "delete() requires .where({ _id: ... }) — multi-row delete is not yet exposed over HTTP",
         );
@@ -499,7 +504,7 @@ const makeClientQuery = <T extends DocumentData>(
       } catch (error) {
         // 404 on DELETE → "no row matched". Mirrors `Query.delete()`
         // which returns `{ deleted: 0 }` rather than throwing.
-        if (error instanceof BaerlyClientError && error.code === "NotFound") {
+        if (error instanceof BaerlyError && error.code === "NotFound") {
           return { deleted: 0 };
         }
         throw error;

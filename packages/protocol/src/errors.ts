@@ -6,8 +6,6 @@
 export type BaerlyErrorCode =
   /** Caller-provided config or input is invalid (bad bucket, unsupported credential type, malformed URL, bucket not version-enabled when versioning was requested). */
   | "InvalidConfig"
-  /** Read attempted while `online: false` and the value isn't in any cache. */
-  | "OfflineNoCache"
   /** Generic S3/HTTP transport failure (5xx, unexpected status, retries exhausted). */
   | "NetworkError"
   /** S3 returned 403. Either credentials are wrong or the bucket policy denies the operation. */
@@ -85,10 +83,10 @@ export type BaerlyErrorCode =
  * @example
  * ```ts
  * try {
- *   await db._raw.get("k");
+ *   await db.table("tickets").insert({ title: "hi" });
  * } catch (err) {
- *   if (err instanceof BaerlyError && err.code === "OfflineNoCache") {
- *     // ... handle offline
+ *   if (err instanceof BaerlyError && err.code === "Conflict") {
+ *     // ... CAS lost; retry
  *   }
  *   throw err;
  * }
@@ -111,6 +109,16 @@ export class BaerlyError extends Error {
     readonly path: ReadonlyArray<string | number>;
     readonly message: string;
   }>;
+  /**
+   * Raw HTTP status, set only by the client-side wire decoder when
+   * inflating an `HttpErrorEnvelope` into this class. Server-side
+   * throws never set it (the HTTP layer's `mapError` derives the
+   * outbound status from `code`). Useful for diagnostics — e.g. to
+   * distinguish 404-as-"no such row" from 404-as-"route not found".
+   * Discriminate by `code` for behavior; reach for `status` only when
+   * you genuinely need the wire value.
+   */
+  readonly status?: number;
 
   constructor(
     code: BaerlyErrorCode,
@@ -120,6 +128,7 @@ export class BaerlyError extends Error {
       readonly path: ReadonlyArray<string | number>;
       readonly message: string;
     }>,
+    status?: number,
   ) {
     super(message);
     this.name = "BaerlyError";
@@ -127,6 +136,9 @@ export class BaerlyError extends Error {
     this.cause = cause;
     if (issues !== undefined) {
       this.issues = issues;
+    }
+    if (status !== undefined) {
+      this.status = status;
     }
   }
 }

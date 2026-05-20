@@ -1,5 +1,4 @@
-import type { BaerlyErrorCode } from "@baerly/protocol";
-import { BaerlyClientError } from "./errors.ts";
+import { BaerlyError, type BaerlyErrorCode } from "@baerly/protocol";
 import type { HttpErrorEnvelope, HttpOkEnvelope } from "./contract.ts";
 
 /**
@@ -38,8 +37,9 @@ export interface RequestContext {
  * - 204 → `undefined as T` (DELETE success — no body).
  * - 201 → raw parsed body as T (POST insert success — body `{ _id }`).
  * - 4xx / 5xx → parse `HttpErrorEnvelope` and throw
- *   {@link BaerlyClientError}. Non-JSON error bodies synthesize an
- *   `Internal` code so consumers still get a structured throw.
+ *   {@link BaerlyError} with `status` set to the wire HTTP code.
+ *   Non-JSON error bodies synthesize an `Internal` code so consumers
+ *   still get a structured throw.
  * - 200 on non-`GET` (PATCH, future mutations) → raw parsed body
  *   as T (e.g. `{ modified }`).
  * - 200 on `GET /v1/since` → raw `SinceResponse` as T (no `data` unwrap).
@@ -83,7 +83,7 @@ export const request = async <T>(ctx: RequestContext, opts: RequestOptions): Pro
     }
     const code: BaerlyErrorCode = envelope?.error?.code ?? "Internal";
     const message = envelope?.error?.message ?? `HTTP ${res.status}`;
-    throw new BaerlyClientError(code, message, res.status);
+    throw new BaerlyError(code, message, undefined, undefined, res.status);
   }
 
   // 200 — only GET reads ship `HttpOkEnvelope<T>`. PATCH (and any
@@ -97,9 +97,11 @@ export const request = async <T>(ctx: RequestContext, opts: RequestOptions): Pro
     return body as T;
   }
   if (typeof body !== "object" || body === null || !("data" in body)) {
-    throw new BaerlyClientError(
+    throw new BaerlyError(
       "InvalidResponse",
       `Response to ${opts.method} ${opts.path} missing 'data' field`,
+      undefined,
+      undefined,
       res.status,
     );
   }
