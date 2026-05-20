@@ -38,7 +38,7 @@
  */
 
 import { type ArgsDef } from "citty";
-import { BaerlyError, type LogEntry, type Storage } from "@baerly/protocol";
+import { BaerlyError, decodeJsonBytes, type LogEntry, type Storage } from "@baerly/protocol";
 import { parseBucketUri } from "../bucket-uri.ts";
 import { loadAppConfig } from "../config.ts";
 import { emitSuccess, isJsonMode } from "../output.ts";
@@ -159,7 +159,7 @@ const readCommitTsMs = async (storage: Storage, key: string): Promise<number | n
   }
   let parsed: LogEntry;
   try {
-    parsed = JSON.parse(new TextDecoder().decode(got.body)) as LogEntry;
+    parsed = decodeJsonBytes<LogEntry>(got.body);
   } catch (error) {
     throw new BaerlyError(
       "InvalidResponse",
@@ -492,9 +492,7 @@ const bundle = defineBaerlySubcommand({
     // Avoid loading the config when --target is explicit — the CLI
     // should still work outside an app directory if the operator
     // pins target + app + tenant on the flags.
-    const target =
-      args.target ??
-      (await loadAppConfig().then((c) => c.target));
+    const target = args.target ?? (await loadAppConfig().then((c) => c.target));
     if (target !== "cloudflare" && target !== "node") {
       throw new BaerlyError(
         "InvalidConfig",

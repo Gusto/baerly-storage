@@ -39,6 +39,8 @@ import {
   type CurrentJson,
   type DocumentData,
   type MetricsRecorder,
+  decodeJsonBytes,
+  encodeJsonBytes,
   logSeqStartOf,
   BaerlyError,
   noopMetricsRecorder,
@@ -121,8 +123,7 @@ export interface SnapshotBody {
  * `SnapshotBody` (identical input ⇒ identical bytes ⇒ identical
  * filename hash).
  */
-export const encodeSnapshotBody = (s: SnapshotBody): Uint8Array =>
-  new TextEncoder().encode(JSON.stringify(s));
+export const encodeSnapshotBody = (s: SnapshotBody): Uint8Array => encodeJsonBytes(s);
 
 /**
  * Public configuration knobs for {@link compact}. All optional; the
@@ -372,7 +373,7 @@ const compactInner = async (
     snapshot: newKey,
     log_seq_start: foldEnd,
   };
-  const nextBody = new TextEncoder().encode(JSON.stringify(next));
+  const nextBody = encodeJsonBytes(next);
   const casOpts: StoragePutOptions = {
     ifMatch: baseEtag,
     contentType: APPLICATION_JSON,
@@ -522,7 +523,7 @@ export const loadSnapshotAsMap = async (
   }
   let parsed: unknown;
   try {
-    parsed = JSON.parse(new TextDecoder().decode(got.body));
+    parsed = decodeJsonBytes(got.body);
   } catch (error) {
     throw new BaerlyError(
       "InvalidResponse",

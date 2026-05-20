@@ -16,6 +16,7 @@ import {
   casUpdateCurrentJson,
   createCurrentJson,
   type CurrentJson,
+  encodeJsonBytes,
 } from "@baerly/protocol";
 import { buildBenchStorage, ensureBucket } from "./storage.ts";
 
@@ -88,7 +89,7 @@ async function main(): Promise<void> {
     session: "bench-sigkill",
     new: JSON.parse(body),
   };
-  const logBytes = new TextEncoder().encode(JSON.stringify(logEntry));
+  const logBytes = encodeJsonBytes(logEntry);
   await storage.put(logKey, logBytes, {
     ifNoneMatch: "*",
     contentType: "application/json",

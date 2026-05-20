@@ -53,6 +53,8 @@ import {
   BaerlyError,
   casUpdateGcPending,
   createGcPending,
+  decodeJsonBytes,
+  encodeJsonBytes,
   logSeqStartOf,
   noopMetricsRecorder,
   readCurrentJson,
@@ -486,7 +488,7 @@ const collectLiveContentHashes = async (
         }
         let entry: { new?: unknown };
         try {
-          entry = JSON.parse(new TextDecoder().decode(got.body)) as { new?: unknown };
+          entry = decodeJsonBytes<{ new?: unknown }>(got.body);
         } catch {
           // A malformed log entry is the writer's concern, not GC's.
           // Skip and let other invariants catch it.
@@ -495,7 +497,7 @@ const collectLiveContentHashes = async (
         if (entry.new === undefined) {
           return;
         }
-        const bodyBytes = new TextEncoder().encode(JSON.stringify(entry.new));
+        const bodyBytes = encodeJsonBytes(entry.new);
         hashes.add(await versionFromContent(bodyBytes));
       })(),
     );
@@ -510,7 +512,7 @@ const collectLiveContentHashes = async (
       for (const body of map.values()) {
         rowReads.push(
           (async (): Promise<void> => {
-            const bytes = new TextEncoder().encode(JSON.stringify(body));
+            const bytes = encodeJsonBytes(body);
             hashes.add(await versionFromContent(bytes));
           })(),
         );

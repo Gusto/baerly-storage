@@ -28,6 +28,7 @@ import {
   type LogEntry,
   type Storage,
   BaerlyError,
+  decodeJsonBytes,
   MAX_PARALLEL_LOG_READS,
 } from "@baerly/protocol";
 
@@ -58,7 +59,7 @@ export const readLogEntry = async (
     );
   }
   try {
-    return JSON.parse(new TextDecoder().decode(got.body)) as LogEntry;
+    return decodeJsonBytes<LogEntry>(got.body);
   } catch (error) {
     throw new BaerlyError("InvalidResponse", `log-walk: malformed log entry at ${key}`, error);
   }

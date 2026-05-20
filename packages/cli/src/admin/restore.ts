@@ -48,6 +48,7 @@ import {
   createCurrentJson,
   type CurrentJson,
   type DocumentData,
+  encodeJsonBytes,
   readCurrentJson,
 } from "@baerly/protocol";
 import { Writer } from "@baerly/server/_internal/testing";
@@ -137,11 +138,10 @@ const bundle = defineBaerlySubcommand({
         },
       };
       try {
-        await bucket.storage.put(
-          currentJsonKey,
-          new TextEncoder().encode(JSON.stringify(reseeded)),
-          { ifMatch: head.etag, contentType: "application/json" },
-        );
+        await bucket.storage.put(currentJsonKey, encodeJsonBytes(reseeded), {
+          ifMatch: head.etag,
+          contentType: "application/json",
+        });
       } catch (error) {
         if (error instanceof BaerlyError) {
           throw error;

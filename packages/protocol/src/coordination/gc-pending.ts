@@ -18,6 +18,7 @@
  * @see packages/server/src/gc.ts
  */
 
+import { decodeJsonBytes, encodeJsonBytes } from "../bytes.ts";
 import { GC_PENDING_CONTENT_TYPE, GC_PENDING_SCHEMA_VERSION } from "../constants.ts";
 import { BaerlyError } from "../errors.ts";
 import type { Storage, StoragePutOptions, StoragePutResult } from "../storage/types.ts";
@@ -88,7 +89,7 @@ export const readGcPending = async (
   }
   let parsed: unknown;
   try {
-    parsed = JSON.parse(new TextDecoder().decode(got.body));
+    parsed = decodeJsonBytes(got.body);
   } catch (error) {
     throw new BaerlyError(
       "InvalidResponse",
@@ -115,7 +116,7 @@ export const createGcPending = async (
   opts?: { signal?: AbortSignal },
 ): Promise<GcPendingRead> => {
   assertGcPending(initial, key);
-  const body = encodeJson(initial);
+  const body = encodeJsonBytes(initial);
   const putOpts: StoragePutOptions = {
     ifNoneMatch: "*",
     contentType: GC_PENDING_CONTENT_TYPE,
@@ -161,7 +162,7 @@ export const casUpdateGcPending = async (
   }
   const next = mutator(structuredClone(existing.json));
   assertGcPending(next, key);
-  const body = encodeJson(next);
+  const body = encodeJsonBytes(next);
   const putOpts: StoragePutOptions = {
     ifMatch: existing.etag,
     contentType: GC_PENDING_CONTENT_TYPE,
@@ -179,8 +180,6 @@ export const casUpdateGcPending = async (
 // ---------------------------------------------------------------------
 // Internals
 // ---------------------------------------------------------------------
-
-const encodeJson = (json: GcPending): Uint8Array => new TextEncoder().encode(JSON.stringify(json));
 
 const VALID_REASONS = new Set<GcCandidate["reason"]>([
   "stale-log",

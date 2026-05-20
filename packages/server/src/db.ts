@@ -4,6 +4,7 @@
 import {
   BaerlyError,
   type CurrentJsonRead,
+  decodeJsonBytes,
   type DocumentData,
   LOG_KEY_PREFIX,
   type LogEntry,
@@ -360,9 +361,7 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
   // default. The runtime never narrows; `makeTable<DocumentData>`
   // builds a single row-agnostic handle and TypeScript handles the rest
   // at the call site.
-  table<N extends CollectionNames<TConfig>>(
-    name: N,
-  ): Table<RowOf<TConfig, N> & DocumentData>;
+  table<N extends CollectionNames<TConfig>>(name: N): Table<RowOf<TConfig, N> & DocumentData>;
   table<T extends DocumentData = DocumentData>(name: string): Table<T>;
   table(name: string): Table<DocumentData> {
     return makeTable<DocumentData>(this.tableReadContext(name));
@@ -570,7 +569,7 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
     }
     let parsed: unknown;
     try {
-      parsed = JSON.parse(new TextDecoder().decode(got.body));
+      parsed = decodeJsonBytes(got.body);
     } catch (error) {
       throw new BaerlyError(
         "InvalidResponse",

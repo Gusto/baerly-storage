@@ -39,6 +39,8 @@ import {
   type DocumentData,
   type LogEntry,
   type MetricsRecorder,
+  decodeJsonBytes,
+  encodeJsonBytes,
   logSeqStartOf,
   BaerlyError,
   noopMetricsRecorder,
@@ -563,7 +565,7 @@ export class Writer {
     for (const input of inputs) {
       if (input.op !== "D" && input.body !== undefined) {
         contentPutCount++;
-        const bytes = new TextEncoder().encode(JSON.stringify(input.body));
+        const bytes = encodeJsonBytes(input.body);
         const version = await versionFromContent(bytes);
         const contentKey = `${logPrefix}/content/${version}.json`;
         parallelPuts.push(
@@ -647,7 +649,7 @@ export class Writer {
     type LogPutOutcome = { readonly ok: true } | { readonly ok: false };
     const logPutOne = async (entry: LogEntry): Promise<LogPutOutcome> => {
       const logEntryKey = `${logPrefix}/log/${entry.seq}.json`;
-      const logBytes = new TextEncoder().encode(JSON.stringify(entry));
+      const logBytes = encodeJsonBytes(entry);
       try {
         await this.#storage.put(logEntryKey, logBytes, {
           ifNoneMatch: "*",
@@ -696,7 +698,7 @@ export class Writer {
     // Bind to `baseEtag` from step 1 — re-reading would risk advancing
     // `next_seq` past a seq we never wrote a log entry for.
     const next: CurrentJson = { ...current, next_seq: current.next_seq + inputs.length };
-    const nextBody = new TextEncoder().encode(JSON.stringify(next));
+    const nextBody = encodeJsonBytes(next);
     const putOpts: StoragePutOptions = {
       ifMatch: baseEtag,
       contentType: APPLICATION_JSON,
@@ -788,7 +790,7 @@ export class Writer {
       }
       let entry: LogEntry;
       try {
-        entry = JSON.parse(new TextDecoder().decode(got.body)) as LogEntry;
+        entry = decodeJsonBytes<LogEntry>(got.body);
       } catch {
         // Malformed entry shouldn't propagate up the index-emission
         // path — let the outer commit's `#walkLog` (step 2) flag it

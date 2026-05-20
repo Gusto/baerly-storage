@@ -55,6 +55,7 @@
 import {
   BaerlyError,
   type DocumentData,
+  encodeJsonBytes,
   matches,
   type Predicate,
   validatePredicate,
@@ -269,7 +270,7 @@ const encodeBytes = (v: unknown): Uint8Array => {
   }
   // Objects: equality only; insertion-order dependent (matches today's
   // contract on `JSON.stringify`-based equality).
-  const utf8 = new TextEncoder().encode(JSON.stringify(v));
+  const utf8 = encodeJsonBytes(v);
   const out = new Uint8Array(1 + utf8.length);
   out[0] = TYPE_OBJECT;
   out.set(utf8, 1);

@@ -31,6 +31,7 @@ import {
   type Storage,
   type StoragePutOptions,
   BaerlyError,
+  encodeJsonBytes,
   logSeqStartOf,
   readCurrentJson,
   snapshotHash,
@@ -220,7 +221,7 @@ export const migrateCollection = async (
     log_seq_start: nextSeq,
     migrated_to: targetVersion,
   };
-  const nextBody = new TextEncoder().encode(JSON.stringify(next));
+  const nextBody = encodeJsonBytes(next);
   const casOpts: StoragePutOptions = {
     ifMatch: baseEtag,
     contentType: APPLICATION_JSON,

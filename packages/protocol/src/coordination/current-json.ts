@@ -34,6 +34,7 @@
  * context to the message; the `code` is unchanged.
  */
 
+import { encodeJsonBytes } from "../bytes.ts";
 import { CURRENT_JSON_CONTENT_TYPE, CURRENT_JSON_SCHEMA_VERSION } from "../constants.ts";
 import { BaerlyError } from "../errors.ts";
 import type { Storage, StoragePutOptions, StoragePutResult } from "../storage/types.ts";
@@ -401,8 +402,7 @@ export const logSeqStartOf = (c: CurrentJson): number => c.log_seq_start;
 // Internals
 // ---------------------------------------------------------------------
 
-const encodeJson = (json: CurrentJson): Uint8Array =>
-  new TextEncoder().encode(JSON.stringify(json));
+const encodeJson = (json: CurrentJson): Uint8Array => encodeJsonBytes(json);
 
 /**
  * Runtime guard for `parsed` to be a {@link CurrentJson}. Throws

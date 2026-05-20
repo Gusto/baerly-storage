@@ -106,7 +106,7 @@ Net SLOC win was deemed worth the budget bump.
 ## Status
 
 - [x] Ticket 1 — DROPPED (shipped via defineBaerlySubcommand)
-- [ ] Ticket 2 — JSON byte helpers
+- [x] Ticket 2 — JSON byte helpers
 - [ ] Ticket 3 — Router helpers
 - [ ] Ticket 4 — db.ts name-segment guard
 - [ ] Stage-2 review + merge
