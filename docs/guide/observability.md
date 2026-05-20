@@ -185,10 +185,9 @@ in the Node adapter:
 ### Wiring a custom sink
 
 **For a one-shot day-1 cost peek, you don't need a sink at all —
-`baerly inspect <collection>` prints a trajectory footer with
-projected Class A ops/mo and free-tier-aware dollar projection.
-Wire a custom sink (below) only when you need 7-day / 30-day
-trends or alerting.**
+`baerly cost --table=<collection>` projects Class A ops/mo and a
+free-tier-aware dollar trajectory. Wire a custom sink (below) only
+when you need 7-day / 30-day trends or alerting.**
 
 Pass a `Sink` (a function `(LogRecord) => void`) to the adapter's
 `observability.sink` field:
