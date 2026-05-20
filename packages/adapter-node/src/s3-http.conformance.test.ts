@@ -3,7 +3,7 @@ import { DOMParser } from "@xmldom/xmldom";
 import { fc } from "@fast-check/vitest";
 import { beforeAll, describe } from "vitest";
 import { defineStorageConformanceSuite } from "@baerly/protocol/conformance";
-import { S3HttpStorage } from "@baerly/protocol";
+import { S3HttpStorage } from "./s3-http.ts";
 import { createBucket } from "../../../tests/fixtures/s3-fixtures.ts";
 import { minioStorage } from "./storage-factories.ts";
 

@@ -38,10 +38,10 @@ import { DOMParser } from "@xmldom/xmldom";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import {
   CURRENT_JSON_SCHEMA_VERSION,
-  S3HttpStorage,
   createCurrentJson,
   type Storage,
 } from "@baerly/protocol";
+import { S3HttpStorage } from "@baerly/adapter-node";
 import {
   runHttpConformanceCascade,
   type HttpFetch,

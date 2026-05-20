@@ -21,8 +21,8 @@ import {
   type StoragePutResult,
   type StorageListEntry,
   BaerlyError,
-  S3HttpStorage,
 } from "@baerly/protocol";
+import { S3HttpStorage } from "@baerly/adapter-node";
 import type { StorageSnapshot, OpLatencyTail } from "./types.ts";
 
 export interface BenchStorageOpts {

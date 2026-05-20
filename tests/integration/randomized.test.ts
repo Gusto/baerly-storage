@@ -26,10 +26,10 @@ import { DOMParser } from "@xmldom/xmldom";
 import { afterEach, beforeEach, describe, test } from "vitest";
 import {
   getOrCreateMemoryStorageForBucket,
-  S3HttpStorage,
   type Storage,
   uuid,
 } from "@baerly/protocol";
+import { S3HttpStorage } from "@baerly/adapter-node";
 import { LocalFsStorage } from "@baerly/dev";
 import { createBucket } from "../fixtures/s3-fixtures.ts";
 import {

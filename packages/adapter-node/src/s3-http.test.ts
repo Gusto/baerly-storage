@@ -1,8 +1,7 @@
 import { DOMParser } from "@xmldom/xmldom";
 import { describe, expect, test, vi } from "vitest";
-import { RETRY_AFTER_MAX_SECONDS } from "../constants.ts";
-import { BaerlyError } from "../errors.ts";
-import { parseRetryAfter, S3HttpStorage } from "./s3-http.ts";
+import { BaerlyError } from "@baerly/protocol";
+import { S3HttpStorage } from "./s3-http.ts";
 
 const xmlParser = new DOMParser();
 
@@ -514,54 +513,6 @@ describe("retry honors Retry-After hint", () => {
     } finally {
       vi.useRealTimers();
     }
-  });
-});
-
-describe("parseRetryAfter", () => {
-  test("null header → undefined", () => {
-    expect(parseRetryAfter(null)).toBeUndefined();
-  });
-
-  test("empty string → undefined", () => {
-    expect(parseRetryAfter("")).toBeUndefined();
-    expect(parseRetryAfter("   ")).toBeUndefined();
-  });
-
-  test("integer delta-seconds → that many seconds", () => {
-    expect(parseRetryAfter("5")).toBe(5);
-    expect(parseRetryAfter("0")).toBe(0);
-  });
-
-  test("integer above cap → clamped to RETRY_AFTER_MAX_SECONDS", () => {
-    expect(parseRetryAfter("999999")).toBe(RETRY_AFTER_MAX_SECONDS);
-  });
-
-  test("HTTP-date in the future → seconds-until-then", () => {
-    const now = Date.parse("2026-05-13T12:00:00Z");
-    const future = new Date(now + 10_000).toUTCString();
-    expect(parseRetryAfter(future, () => now)).toBe(10);
-  });
-
-  test("HTTP-date in the past → 0", () => {
-    const now = Date.parse("2026-05-13T12:00:00Z");
-    const past = new Date(now - 30_000).toUTCString();
-    expect(parseRetryAfter(past, () => now)).toBe(0);
-  });
-
-  test("HTTP-date far in the future → clamped", () => {
-    const now = Date.parse("2026-05-13T12:00:00Z");
-    const farFuture = new Date(now + 60 * 60 * 1000).toUTCString();
-    expect(parseRetryAfter(farFuture, () => now)).toBe(RETRY_AFTER_MAX_SECONDS);
-  });
-
-  test("malformed input → undefined", () => {
-    expect(parseRetryAfter("not-a-number")).toBeUndefined();
-    expect(parseRetryAfter("5.5")).toBeUndefined();
-    expect(parseRetryAfter("-3")).toBeUndefined();
-  });
-
-  test("whitespace around integer is tolerated", () => {
-    expect(parseRetryAfter(" 5 ")).toBe(5);
   });
 });
 

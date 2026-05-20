@@ -18,9 +18,9 @@ export { r2BindingStorage } from "./r2-binding-storage.ts";
 export type { R2BindingStorageOptions } from "./r2-binding-storage.ts";
 
 // Re-export the HTTP path so callers pick the flavor at construction
-// time without pulling in @baerly/protocol directly.
-export { S3HttpStorage } from "@baerly/protocol";
-export type { S3HttpStorageOptions } from "@baerly/protocol";
+// time without pulling in @baerly/adapter-node directly.
+export { S3HttpStorage } from "@baerly/adapter-node";
+export type { S3HttpStorageOptions } from "@baerly/adapter-node";
 
 // Worker module-default + Cron Trigger surface.
 export { baerlyWorker } from "./worker.ts";

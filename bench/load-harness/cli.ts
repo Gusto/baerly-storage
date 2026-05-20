@@ -30,12 +30,12 @@ import { join } from "node:path";
 import { AwsClient } from "aws4fetch";
 import { DOMParser } from "@xmldom/xmldom";
 import {
-  S3HttpStorage,
   getOrCreateMemoryStorageForBucket,
   createCurrentJson,
   CURRENT_JSON_SCHEMA_VERSION,
   type Storage,
 } from "@baerly/protocol";
+import { S3HttpStorage } from "@baerly/adapter-node";
 import type { IndexDefinition } from "@baerly/server";
 import { LocalFsStorage } from "@baerly/dev";
 import { CountingStorage } from "../storage.ts";

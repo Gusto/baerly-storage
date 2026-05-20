@@ -82,8 +82,8 @@
  * `S3HttpStorageOptions` JSDoc. The four factories above wrap the
  * common case for AWS S3, R2, Minio, and GCS.
  */
-export { S3HttpStorage } from "@baerly/protocol";
-export type { S3HttpStorageOptions } from "@baerly/protocol";
+export { S3HttpStorage } from "./s3-http.ts";
+export type { S3HttpStorageOptions } from "./s3-http.ts";
 export { createFetchHandler, createListener, runMaintenanceTick } from "./server.ts";
 export type {
   CreateFetchHandlerOptions,

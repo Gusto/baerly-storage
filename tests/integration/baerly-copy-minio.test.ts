@@ -23,11 +23,11 @@ import { DOMParser } from "@xmldom/xmldom";
 import { beforeAll, describe, expect, test } from "vitest";
 import {
   CURRENT_JSON_SCHEMA_VERSION,
-  S3HttpStorage,
   createCurrentJson,
   readCurrentJson,
   type DocumentData,
 } from "@baerly/protocol";
+import { S3HttpStorage } from "@baerly/adapter-node";
 import { Db, ServerWriter } from "@baerly/server";
 import { doCopy } from "../../packages/cli/src/copy.ts";
 import { createBucket } from "../fixtures/s3-fixtures.ts";

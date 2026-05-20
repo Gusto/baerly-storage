@@ -1,21 +1,19 @@
 import {
+  BaerlyError,
   LIST_OBJECT_MAX_RETRIES,
   RATE_LIMIT_BACKOFF_MILLIS,
   RETRY_AFTER_MAX_SECONDS,
   S3_REQUEST_MAX_RETRIES,
-} from "../constants.ts";
-import { BaerlyError } from "../errors.ts";
-import { delay } from "../time.ts";
-import type { XmlParser } from "../types.ts";
-import { parseListObjectsV2CommandOutput } from "../xml.ts";
-import type {
-  Storage,
-  StorageGetOptions,
-  StorageGetResult,
-  StorageListEntry,
-  StoragePutOptions,
-  StoragePutResult,
-} from "./types.ts";
+  delay,
+  parseListObjectsV2CommandOutput,
+  type Storage,
+  type StorageGetOptions,
+  type StorageGetResult,
+  type StorageListEntry,
+  type StoragePutOptions,
+  type StoragePutResult,
+  type XmlParser,
+} from "@baerly/protocol";
 
 /**
  * Permanent {@link BaerlyError} codes that must short-circuit `retry`.
@@ -46,7 +44,7 @@ const PERMANENT_ERROR_CODES: ReadonlySet<string> = new Set([
  * The `now` injection point exists for the unit test; production
  * callers should pass nothing.
  */
-export function parseRetryAfter(
+function parseRetryAfter(
   header: string | null,
   now: () => number = Date.now,
 ): number | undefined {

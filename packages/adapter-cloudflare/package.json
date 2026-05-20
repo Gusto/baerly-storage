@@ -28,6 +28,7 @@
     }
   },
   "dependencies": {
+    "@baerly/adapter-node": "workspace:*",
     "@baerly/dev": "workspace:*",
     "@baerly/protocol": "workspace:*",
     "@baerly/server": "workspace:*"

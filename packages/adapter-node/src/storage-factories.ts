@@ -1,6 +1,7 @@
 import { DOMParser } from "@xmldom/xmldom";
 import { AwsClient } from "aws4fetch";
-import { S3HttpStorage, type Storage } from "@baerly/protocol";
+import type { Storage } from "@baerly/protocol";
+import { S3HttpStorage } from "./s3-http.ts";
 
 // DOMParser is stateless — one shared instance is safe across factories.
 const xmlParser = new DOMParser();

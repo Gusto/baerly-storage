@@ -165,7 +165,16 @@ const BUDGETS: readonly Budget[] = [
   //     budget. The matching shrinkage lives in the router chunk
   //     and shows up as a near-wash in the http.js / index.js
   //     closures.
-  { entry: "observability.js", raw: 92 * 1024, gz: 25 * 1024 },
+  //   → 93 KiB raw / 25 KiB gz: s3HttpStorage moved out of
+  //     `@baerly/protocol` into `@baerly/adapter-node`. The protocol
+  //     kernel barrel no longer pulls s3-http co-located code, which
+  //     reshuffles chunk-layout: `BaerlyError` now lives in its own
+  //     `errors-*.js` chunk (~2 KiB) and rolldown wires that chunk
+  //     into the observability closure (canonical-line + envelope
+  //     paths reach `BaerlyError`). Measured: 95099 raw / 25286 gz.
+  //     +891 B raw / +144 B gz vs. the prior budget — bump raw by
+  //     1 KiB to absorb the chunk-layout side effect.
+  { entry: "observability.js", raw: 93 * 1024, gz: 25 * 1024 },
   // Maintenance loop — compactor + GC + sweep driver. Pulls
   // compactor.ts + gc.ts + the observability subgraph
   // transitively (every work unit runs under withObservability).

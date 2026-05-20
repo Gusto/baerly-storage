@@ -36,11 +36,10 @@ import {
   createCurrentJson,
   getOrCreateMemoryStorageForBucket,
   MemoryStorage,
-  S3HttpStorage,
   type Storage,
 } from "@baerly/protocol";
 import { LocalFsStorage } from "@baerly/dev";
-import { createListener } from "@baerly/adapter-node";
+import { createListener, S3HttpStorage } from "@baerly/adapter-node";
 import { Db, createRouter, withHttpObservability, type SchemaValidator } from "@baerly/server";
 import { createBucket } from "../fixtures/s3-fixtures.ts";
 import { runHttpConformanceCascade, type HttpFetch } from "../fixtures/http-conformance-cascade.ts";
