@@ -117,9 +117,17 @@ const BUDGETS: readonly Budget[] = [
   //     / `parseLimit`; `PUT /v1/t/:table/:id` for true replace;
   //     `GET /v1/count` scalar route). gz unchanged.
   { entry: "index.js", raw: 357 * 1024, gz: 103 * 1024 },
-  // Just the five auth verifier factories. Adding a sixth grows
-  // this budget, not the kernel's.
-  { entry: "auth.js", raw: 34 * 1024, gz: 12 * 1024 },
+  // The three auth verifier factories (bearerJwt, sharedSecret,
+  // cloudflareAccess) plus the transitive jose closure pulled in by
+  // bearerJwt's createRemoteJWKSet + jwtVerify. Adding a fourth
+  // verifier grows this budget, not the kernel's.
+  // Budget history:
+  //   34 KiB raw / 12 KiB gz (initial — hand-rolled WebCrypto JWT).
+  //   → 53 KiB raw / 15 KiB gz: replace hand-rolled JWT/JWKS with
+  //     `jose` (bearer-jwt.ts 444 → ~80 LoC; createRemoteJWKSet +
+  //     jwtVerify preserve the kid-miss rate-limit via
+  //     cooldownDuration:60_000).
+  { entry: "auth.js", raw: 53 * 1024, gz: 15 * 1024 },
   // `BaerlyAppConfig` types + the identity `defineConfig` helper.
   // No runtime closure — the types erase entirely and the function
   // is `<C>(c: C) => c`. Measured: 162 raw / 141 gz. Budget is a
@@ -295,7 +303,11 @@ const BUDGETS: readonly Budget[] = [
   //     gz unchanged.
   //   → 413 KiB raw / 121 KiB gz: export-package-collapse follow-up.
   //     Same chunk-layout side effect as node.js — gz measured 122950.
-  { entry: "dev-vite.js", raw: 413 * 1024, gz: 121 * 1024 },
+  //   → 429 KiB raw / 125 KiB gz: transitive jose closure via auth
+  //     chunk after replacing hand-rolled JWT/JWKS. Rolldown's shared-
+  //     chunk splitting threads the auth chunk into dev-vite's static
+  //     closure too.
+  { entry: "dev-vite.js", raw: 429 * 1024, gz: 125 * 1024 },
   // `baerly` CLI bin — `init`, `dev`, `deploy`, `doctor`, `inspect`,
   // `admin {compact,fsck,migrate,dump,restore,rebuild-index}`,
   // `export`. Bundled as a single file (no static chunk splits)
