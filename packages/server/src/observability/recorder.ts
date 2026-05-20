@@ -10,7 +10,7 @@
  * once at end-of-request inside `summarize()`.
  *
  * The shape mirrors {@link InMemoryMetricsRecorder} from
- * `./in-memory-metrics.ts` but adds the per-request product. We do
+ * `../_internal/in-memory-metrics.ts` but adds the per-request product. We do
  * NOT extend that class — composition over inheritance, and the
  * observability layer wants `summarize()` to be the only side-channel.
  */

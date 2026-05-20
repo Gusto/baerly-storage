@@ -21,7 +21,7 @@ import {
   type Storage,
 } from "@baerly/protocol";
 import { allIndexKeysFor, type IndexDefinition } from "./indexes.ts";
-import { InMemoryMetricsRecorder } from "./observability/in-memory-metrics.ts";
+import { InMemoryMetricsRecorder } from "./_internal/in-memory-metrics.ts";
 import { rebuildIndex } from "./rebuild-index.ts";
 import { Writer } from "./writer.ts";
 

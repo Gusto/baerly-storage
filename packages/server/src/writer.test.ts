@@ -11,7 +11,7 @@ import {
 } from "@baerly/protocol";
 import { beforeEach, describe, expect, test } from "vitest";
 import type { IndexDefinition } from "./indexes.ts";
-import { InMemoryMetricsRecorder } from "./observability/in-memory-metrics.ts";
+import { InMemoryMetricsRecorder } from "./_internal/in-memory-metrics.ts";
 import { Writer } from "./writer.ts";
 
 const BUCKET = "writer-test-bucket";

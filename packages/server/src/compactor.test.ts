@@ -17,7 +17,7 @@ import {
 } from "@baerly/protocol";
 import { describe, expect, test } from "vitest";
 import { compact, type InternalCompactOptions, loadSnapshotAsMap } from "./compactor.ts";
-import { InMemoryMetricsRecorder } from "./observability/in-memory-metrics.ts";
+import { InMemoryMetricsRecorder } from "./_internal/in-memory-metrics.ts";
 import { Writer } from "./writer.ts";
 
 const bootstrap = async (storage: MemoryStorage, key: string): Promise<void> => {

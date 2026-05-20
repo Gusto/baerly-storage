@@ -36,11 +36,11 @@ import {
 import { Db, type SchemaValidator } from "@baerly/server";
 import { compact, runGc } from "@baerly/server/maintenance";
 import {
+  InMemoryMetricsRecorder,
   type InternalCompactOptions,
   type InternalRunGcOptions,
   Writer,
 } from "@baerly/server/_internal/testing";
-import { InMemoryMetricsRecorder } from "@baerly/server/observability";
 
 const APP = "table-api-test";
 

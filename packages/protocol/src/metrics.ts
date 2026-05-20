@@ -71,7 +71,7 @@ export const noopMetricsRecorder: MetricsRecorder = {
 /**
  * Fan every emission to both `a` and `b`, in that order. Lets the
  * observability layer tee a short-lived per-request recorder (e.g.
- * `InMemoryMetricsRecorder` from `@baerly/server/observability`, used
+ * `InMemoryMetricsRecorder` from `@baerly/server/_internal/testing`, used
  * to derive canonical-log fields) into the operator's long-term
  * recorder without coupling the kernel to a specific aggregation
  * backend.
@@ -84,7 +84,7 @@ export const noopMetricsRecorder: MetricsRecorder = {
  *
  * **No defensive label copy at the tee.** The labels object is passed
  * to both sinks by reference; recorders that need isolation (such as
- * `InMemoryMetricsRecorder` from `@baerly/server/observability`)
+ * `InMemoryMetricsRecorder` from `@baerly/server/_internal/testing`)
  * defensively copy on their own. Callers passing a labels object
  * they intend to mutate after emission should freeze it or pass a
  * fresh literal.
@@ -92,7 +92,7 @@ export const noopMetricsRecorder: MetricsRecorder = {
  * @example
  * ```ts
  * import { teeMetricsRecorders, type MetricsRecorder } from "@baerly/protocol";
- * import { InMemoryMetricsRecorder } from "@baerly/server/observability";
+ * import { InMemoryMetricsRecorder } from "@baerly/server/_internal/testing";
  *
  * // Long-term sink the operator wired (Workers Analytics Engine,
  * // OpenTelemetry, statsd, etc.).
@@ -120,4 +120,3 @@ export const teeMetricsRecorders = (a: MetricsRecorder, b: MetricsRecorder): Met
     b.histogram(name, value, labels);
   },
 });
-

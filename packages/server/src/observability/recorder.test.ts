@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { createObservabilityContext, runWithContext } from "./context.ts";
-import { InMemoryMetricsRecorder } from "./in-memory-metrics.ts";
+import { InMemoryMetricsRecorder } from "../_internal/in-memory-metrics.ts";
 import { alsAwareRecorder, RequestScopedMetricsRecorder } from "./recorder.ts";
 
 describe("RequestScopedMetricsRecorder.snapshot", () => {

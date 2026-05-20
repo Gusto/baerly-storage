@@ -224,11 +224,8 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
    *
    * @example
    * ```ts
-   * import { InMemoryMetricsRecorder } from "baerly-storage";
-   * const metrics = new InMemoryMetricsRecorder();
-   * const db = Db.create({ storage, app: "tickets", tenant: "acme", metrics });
+   * const db = Db.create({ storage, app: "tickets", tenant: "acme" });
    * await db.table("tickets").insert({ title: "hi" });
-   * // metrics.histogramValues("db.write.class_a_ops_per_logical_write")
    * ```
    *
    * @example

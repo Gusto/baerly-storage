@@ -19,3 +19,4 @@ export {
   type WriterOptions,
   Writer,
 } from "../writer.ts";
+export { InMemoryMetricsRecorder } from "./in-memory-metrics.ts";

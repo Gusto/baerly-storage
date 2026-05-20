@@ -1,13 +1,9 @@
 import { describe, expect, test } from "vitest";
-import {
-  type MetricsRecorder,
-  noopMetricsRecorder,
-  teeMetricsRecorders,
-} from "./metrics.ts";
+import { type MetricsRecorder, noopMetricsRecorder, teeMetricsRecorders } from "./metrics.ts";
 
 /**
  * A tiny in-test recorder. We deliberately do NOT import
- * `InMemoryMetricsRecorder` from `@baerly/server/observability` here —
+ * `InMemoryMetricsRecorder` from `@baerly/server/_internal/testing` here —
  * the protocol package must not depend on server. Each test that
  * needs an inspectable sink rolls its own.
  */
@@ -17,9 +13,18 @@ const makeRecorder = (): {
   gauges: Array<{ name: string; value: number; labels?: Readonly<Record<string, string>> }>;
   histograms: Array<{ name: string; value: number; labels?: Readonly<Record<string, string>> }>;
 } => {
-  const counters: Array<{ name: string; value: number; labels?: Readonly<Record<string, string>> }> = [];
-  const gauges: Array<{ name: string; value: number; labels?: Readonly<Record<string, string>> }> = [];
-  const histograms: Array<{ name: string; value: number; labels?: Readonly<Record<string, string>> }> = [];
+  const counters: Array<{
+    name: string;
+    value: number;
+    labels?: Readonly<Record<string, string>>;
+  }> = [];
+  const gauges: Array<{ name: string; value: number; labels?: Readonly<Record<string, string>> }> =
+    [];
+  const histograms: Array<{
+    name: string;
+    value: number;
+    labels?: Readonly<Record<string, string>>;
+  }> = [];
   return {
     recorder: {
       counter: (name, value, labels) => counters.push({ name, value, labels }),
@@ -79,7 +84,7 @@ describe("teeMetricsRecorders", () => {
 
   test("shares the labels object by reference (no defensive copy at the tee)", () => {
     // The tee MUST NOT defensively copy — recorders that need isolation
-    // (e.g. InMemoryMetricsRecorder in @baerly/server/observability)
+    // (e.g. InMemoryMetricsRecorder in @baerly/server/_internal/testing)
     // copy on their own. Sinks that don't copy will see mutation, by design.
     let captured: Readonly<Record<string, string>> | undefined;
     const sink: MetricsRecorder = {
