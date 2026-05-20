@@ -524,7 +524,7 @@ reference.
   snapshot, verify its SHA-256 against the filename, and return the
   docs as a `Map<_id, body>`. Used internally by the compactor,
   reader, GC, and rebuild-index paths. Cross-package consumer:
-  `baerly copy` (`packages/cli/src/copy.ts`) folds the source
+  `baerly admin copy` (`packages/cli/src/admin/copy.ts`) folds the source
   snapshot as the merge base before walking the live tail. Prefer
   this over hand-rolling a snapshot reader — the function bakes in
   the hash check, schema-version gate, and collection-mismatch

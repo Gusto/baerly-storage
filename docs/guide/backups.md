@@ -1,15 +1,15 @@
 ---
-title: Backups via baerly copy
+title: Backups via baerly admin copy
 audience: operator
 summary: Cost-aware bucket-to-bucket point-in-time copy procedure with retention example.
-last-reviewed: 2026-05-12
+last-reviewed: 2026-05-20
 tags: [operations, backups, copy]
 related: ["../about/cost-model.md"]
 ---
 
-# Backups (`baerly copy`)
+# Backups (`baerly admin copy`)
 
-`baerly copy` takes a point-in-time copy of a Baerly collection
+`baerly admin copy` takes a point-in-time copy of a Baerly collection
 bucket-to-bucket. It bypasses write-path compaction — emitting one
 L9 snapshot directly at the target — so cost is on the order of
 "snapshot + live tail", not "rows".
@@ -44,7 +44,7 @@ ETAG="$(aws s3api head-object --bucket baerly-prod --key "$CURRENT_JSON_KEY" \
         --query ETag --output text | tr -d '"')"
 [ -z "$ETAG" ] && { echo "no source ETag" >&2; exit 2; }
 
-baerly copy \
+baerly admin copy \
   --from=s3://baerly-prod \
   --from-snapshot="${CURRENT_JSON_KEY}@${ETAG}" \
   --to="s3://baerly-backups/${DATE}"
@@ -57,7 +57,7 @@ aws s3 ls s3://baerly-backups/ | awk '{print $2}' | tr -d '/' | \
   done
 ```
 
-Exit-code contract: `baerly copy` exits non-zero on every failure.
+Exit-code contract: `baerly admin copy` exits non-zero on every failure.
 `set -e` fails the cron run loudly; cron's default mail behaviour
 routes stderr to the operator. Pass `--json` to switch output to
 structured envelopes (`{result:...}` on stdout for success,
@@ -74,6 +74,6 @@ entries; the snapshot dominates.
 
 ## Restoring
 
-Run `baerly copy --from=<backup-uri> --from-snapshot=<backup-cursor>
+Run `baerly admin copy --from=<backup-uri> --from-snapshot=<backup-cursor>
 --to=<recovery-uri>`. The backup bucket's `current.json` carries
 the cursor; read its key + ETag via `aws s3api head-object`.

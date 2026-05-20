@@ -14,13 +14,13 @@
  */
 import { defineCommand, runMain } from "citty";
 import { compactCmd } from "./admin/compact.ts";
+import { copy } from "./admin/copy.ts";
 import { dumpCmd } from "./admin/dump.ts";
 import { fsckCmd } from "./admin/fsck.ts";
 import { gcCmd } from "./admin/gc.ts";
 import { migrateCmd } from "./admin/migrate.ts";
 import { rebuildIndexCmd } from "./admin/rebuild-index.ts";
 import { restoreCmd } from "./admin/restore.ts";
-import { copy } from "./copy.ts";
 import { cost } from "./cost.ts";
 import { deploy } from "./deploy.ts";
 import { dev } from "./dev.ts";
@@ -39,7 +39,7 @@ setJsonMode(process.argv.includes("--json"));
 /**
  * `baerly admin <command>` — operator-side reconciliation, inspection,
  * data-shovel, and maintenance tools. Today: `rebuild-index`, `dump`,
- * `restore`, `compact`, `gc`, `fsck`, `migrate`.
+ * `restore`, `compact`, `gc`, `fsck`, `migrate`, `copy`.
  */
 const admin = defineCommand({
   meta: {
@@ -54,6 +54,7 @@ const admin = defineCommand({
     gc: gcCmd,
     fsck: fsckCmd,
     migrate: migrateCmd,
+    copy,
   },
 });
 
@@ -65,7 +66,6 @@ const main = defineCommand({
       "Vendorless document database CLI\n\nSee docs/about/pricing-log.md for the running cost-ceiling history.",
   },
   subCommands: {
-    copy,
     cost,
     deploy,
     dev,

@@ -434,7 +434,7 @@ const compactInner = async (
  * materialise a snapshot as its fold base: the compactor (loading
  * the prior snapshot before merging the live tail), the reader
  * (`Query.runRead`), `runGc`, `rebuildIndex`, and — across the
- * package boundary — the CLI's `baerly copy` orchestrator.
+ * package boundary — the CLI's `baerly admin copy` orchestrator.
  *
  * @public — stable utility, re-exported from `baerly-storage`. The
  *   `SnapshotBody.schema_version` is the long-lived format contract;
@@ -469,7 +469,7 @@ const compactInner = async (
  *
  * @example
  * ```ts
- * // Cross-package: `baerly copy` folds the source snapshot as the
+ * // Cross-package: `baerly admin copy` folds the source snapshot as the
  * // base map, then walks the live log tail [logSeqStart, nextSeq)
  * // and applies each LogEntry on top before re-encoding as a new
  * // snapshot on the destination bucket.

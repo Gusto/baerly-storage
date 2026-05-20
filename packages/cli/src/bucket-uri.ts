@@ -1,10 +1,11 @@
 /**
  * Bucket URI parsing + cursor parsing for the CLI surface.
  *
- * `baerly copy` started life as the only caller, but `baerly inspect`,
- * `baerly export`, and every `baerly admin <cmd>` consume {@link
- * parseBucketUri} too. The cursor parser is `baerly copy`-only today
- * but lives next to the URI parser for cohesion.
+ * `baerly admin copy` started life as the only caller, but `baerly
+ * inspect`, `baerly export`, and every other `baerly admin <cmd>`
+ * consume {@link parseBucketUri} too. The cursor parser is `baerly
+ * admin copy`-only today but lives next to the URI parser for
+ * cohesion.
  *
  * Grammar:
  *   - `s3://<bucket>[/<prefix>]` — S3-compatible HTTP. Creds via env
@@ -63,7 +64,7 @@ export const parseBucketUri = async (uri: string): Promise<ParsedBucketUri> => {
     if (bucket.length === 0) {
       throw new BaerlyError(
         "InvalidConfig",
-        `baerly copy: s3:// URI requires a bucket name (got ${JSON.stringify(uri)})`,
+        `bucket URI: s3:// URI requires a bucket name (got ${JSON.stringify(uri)})`,
       );
     }
     const accessKeyId = requireEnv("BAERLY_S3_ACCESS_KEY_ID");
@@ -97,26 +98,26 @@ export const parseBucketUri = async (uri: string): Promise<ParsedBucketUri> => {
     if (bucket.length === 0) {
       throw new BaerlyError(
         "InvalidConfig",
-        `baerly copy: memory:// URI requires a bucket name (got ${JSON.stringify(uri)})`,
+        `bucket URI: memory:// URI requires a bucket name (got ${JSON.stringify(uri)})`,
       );
     }
     return { storage: getOrCreateMemoryStorageForBucket(bucket), keyPrefix: "" };
   }
-  throw new BaerlyError("InvalidConfig", `baerly copy: unsupported URI ${JSON.stringify(uri)}`);
+  throw new BaerlyError("InvalidConfig", `bucket URI: unsupported URI ${JSON.stringify(uri)}`);
 };
 
 const requireEnv = (name: string): string => {
   const v = process.env[name];
   if (v === undefined || v === "") {
-    throw new BaerlyError("InvalidConfig", `baerly copy: env var ${name} unset`);
+    throw new BaerlyError("InvalidConfig", `bucket URI: env var ${name} unset`);
   }
   return v;
 };
 
 /**
- * Parse a `baerly copy` cursor of shape `<currentJsonKey>@<etag>`.
+ * Parse a `baerly admin copy` cursor of shape `<currentJsonKey>@<etag>`.
  *
- * This is the `baerly copy` CLI cursor format. Distinct from the HTTP
+ * This is the `baerly admin copy` CLI cursor format. Distinct from the HTTP
  * `_meta.manifest_pointer` returned by read responses (which is
  * `<snapshot>@<next_seq>` — a view-generation cursor; see
  * `HttpOkMeta` in `packages/server/src/contract.ts`). The two
@@ -141,7 +142,7 @@ export const parseCursor = (cursor: string): ParsedCursor => {
   if (at < 1 || at === cursor.length - 1) {
     throw new BaerlyError(
       "InvalidConfig",
-      `baerly copy: cursor must be "<currentJsonKey>@<etag>", got ${JSON.stringify(cursor)}`,
+      `cursor must be "<currentJsonKey>@<etag>", got ${JSON.stringify(cursor)}`,
     );
   }
   return { currentJsonKey: cursor.slice(0, at), expectedEtag: cursor.slice(at + 1) };

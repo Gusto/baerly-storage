@@ -3,9 +3,9 @@
    declaration); the synthetic seed populates it directly. */
 
 /**
- * End-to-end test for `baerly copy` over `memory` + `local-fs`. Calls
- * `runCopy` programmatically so we can assert on the integer exit
- * code without `process.exit` killing vitest. The `node-minio`
+ * End-to-end test for `baerly admin copy` over `memory` + `local-fs`.
+ * Calls `runCopy` programmatically so we can assert on the integer
+ * exit code without `process.exit` killing vitest. The `node-minio`
  * variant lives at `tests/integration/baerly-copy-minio.test.ts` and
  * is gated on `MINIO=1`.
  */
@@ -87,7 +87,7 @@ const VARIANTS: readonly Variant[] = [
   },
 ];
 
-describe("baerly copy", () => {
+describe("baerly admin copy", () => {
   for (const variant of VARIANTS) {
     describe(variant.label, () => {
       let cleanup: (() => Promise<void>) | undefined;
@@ -241,7 +241,7 @@ describe("baerly copy", () => {
         });
         const post = await readCurrentJson(ctx.src, CURRENT_JSON_KEY);
 
-        // Success: stdout receives one `{result:{command:"copy",status:"ok"}}` line.
+        // Success: stdout receives one `{result:{command:"admin.copy",status:"ok"}}` line.
         const stdoutOk = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
         const stderrOk = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
         try {
@@ -255,7 +255,7 @@ describe("baerly copy", () => {
           const okWrites = stdoutOk.mock.calls.map(([c]) => String(c)).join("");
           expect(stderrOk).not.toHaveBeenCalled();
           expect(JSON.parse(okWrites.trim())).toEqual({
-            result: { command: "copy", status: "ok" },
+            result: { command: "admin.copy", status: "ok" },
           });
         } finally {
           stdoutOk.mockRestore();
@@ -281,7 +281,7 @@ describe("baerly copy", () => {
             error: { code: string; message: string; command: string };
           };
           expect(parsed.error.code).toBe("InvalidConfig");
-          expect(parsed.error.command).toBe("copy");
+          expect(parsed.error.command).toBe("admin.copy");
           expect(parsed.error.message).toContain("cursor");
         } finally {
           stdoutErr.mockRestore();

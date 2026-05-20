@@ -52,7 +52,7 @@ on success.
 
 ## Environment
 
-`baerly copy` with an `s3://` URI requires:
+`baerly admin copy` with an `s3://` URI requires:
 
 | Var                           | Notes                                               |
 | ----------------------------- | --------------------------------------------------- |

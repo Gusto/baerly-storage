@@ -1,5 +1,5 @@
 /**
- * `baerly copy` — cross-bucket snapshot copy.
+ * `baerly admin copy` — cross-bucket snapshot copy.
  *
  * Walks the source bucket's manifest from a point-in-time cursor and
  * writes a parallel manifest at the target. The copy path bypasses
@@ -16,7 +16,7 @@
  *     path. Tests import this when they want explicit error
  *     assertions.
  *
- * The bucket-URI + cursor grammars live in `./bucket-uri.ts`.
+ * The bucket-URI + cursor grammars live in `../bucket-uri.ts`.
  */
 
 import { defineCommand, parseArgs, type ArgsDef, type ParsedArgs } from "citty";
@@ -37,8 +37,8 @@ import {
   snapshotKey,
   type SnapshotBody,
 } from "@baerly/server";
-import { parseBucketUri, parseCursor, type ParsedBucketUri, type ParsedCursor } from "./bucket-uri.ts";
-import { emitError, emitSuccess, setJsonMode } from "./output.ts";
+import { parseBucketUri, parseCursor, type ParsedBucketUri, type ParsedCursor } from "../bucket-uri.ts";
+import { emitError, emitSuccess, setJsonMode } from "../output.ts";
 
 const COPY_OWNER = "baerly-copy";
 const APPLICATION_JSON = "application/json";
@@ -117,30 +117,30 @@ const handleCopy = async (args: ParsedArgs<typeof COPY_ARGS>): Promise<number> =
   try {
     for (const k of Object.keys(args)) {
       if (!KNOWN_KEYS.has(k)) {
-        throw new BaerlyError("InvalidConfig", `baerly copy: unknown flag --${k}`);
+        throw new BaerlyError("InvalidConfig", `baerly admin copy: unknown flag --${k}`);
       }
     }
     const src = await parseBucketUri(args.from);
     const dst = await parseBucketUri(args.to);
     const cursor = parseCursor(args["from-snapshot"]);
     await doCopy(src, dst, cursor);
-    emitSuccess({ command: "copy", status: "ok" });
+    emitSuccess({ command: "admin.copy", status: "ok" });
     return 0;
   } catch (error) {
     if (error instanceof BaerlyError) {
-      emitError("copy", error.code, error.message);
+      emitError("admin.copy", error.code, error.message);
       return errorToExitCode(error.code);
     }
-    emitError("copy", "Unknown", (error as Error).message);
+    emitError("admin.copy", "Unknown", (error as Error).message);
     return 2;
   }
 };
 
 /**
- * citty `defineCommand` block for `baerly copy`. Used as the
- * subcommand entry in `baerly.ts`. The `run` handler calls
- * `process.exit(code)` because citty's `runMain` doesn't honor the
- * return value as an exit code — only the test-facing `runCopy`
+ * citty `defineCommand` block for `baerly admin copy`. Used as the
+ * subcommand entry under `admin` in `baerly.ts`. The `run` handler
+ * calls `process.exit(code)` because citty's `runMain` doesn't honor
+ * the return value as an exit code — only the test-facing `runCopy`
  * shim below returns the integer directly.
  */
 export const copy = defineCommand({
@@ -168,7 +168,7 @@ export const copy = defineCommand({
  * surfaces as a `CLIError` from `parseArgs` and is mapped to exit 1
  * (matches the legacy hand-rolled parser's behavior).
  *
- * @param argv Args AFTER the `copy` subcommand.
+ * @param argv Args AFTER the `admin copy` subcommands.
  */
 export const runCopy = async (argv: readonly string[]): Promise<number> => {
   let parsed: ParsedArgs<typeof COPY_ARGS>;
@@ -176,7 +176,7 @@ export const runCopy = async (argv: readonly string[]): Promise<number> => {
     parsed = parseArgs<typeof COPY_ARGS>(argv as string[], COPY_ARGS);
   } catch (error) {
     setJsonMode(argv.includes("--json"));
-    emitError("copy", "InvalidConfig", (error as Error).message);
+    emitError("admin.copy", "InvalidConfig", (error as Error).message);
     return 1;
   }
   return handleCopy(parsed);
@@ -214,13 +214,13 @@ export const doCopy = async (
   if (srcCur === null) {
     throw new BaerlyError(
       "InvalidConfig",
-      `baerly copy: source current.json not found at ${cursor.currentJsonKey}`,
+      `baerly admin copy: source current.json not found at ${cursor.currentJsonKey}`,
     );
   }
   if (srcCur.etag !== cursor.expectedEtag) {
     throw new BaerlyError(
       "Conflict",
-      `baerly copy: source advanced (cursor ${cursor.expectedEtag}, live ${srcCur.etag})`,
+      `baerly admin copy: source advanced (cursor ${cursor.expectedEtag}, live ${srcCur.etag})`,
     );
   }
 
@@ -232,7 +232,7 @@ export const doCopy = async (
   if (lastSlash < 0) {
     throw new BaerlyError(
       "InvalidConfig",
-      `baerly copy: cursor currentJsonKey ${JSON.stringify(cursor.currentJsonKey)} must contain "/"`,
+      `baerly admin copy: cursor currentJsonKey ${JSON.stringify(cursor.currentJsonKey)} must contain "/"`,
     );
   }
   const tablePrefix = cursor.currentJsonKey.slice(0, lastSlash);
@@ -254,7 +254,7 @@ export const doCopy = async (
     const logEntryKey = `${tablePrefix}/log/${s}.json`;
     const got = await src.storage.get(logEntryKey);
     if (got === null) {
-      throw new BaerlyError("Internal", `baerly copy: missing log entry at ${logEntryKey}`);
+      throw new BaerlyError("Internal", `baerly admin copy: missing log entry at ${logEntryKey}`);
     }
     let entry: LogEntry;
     try {
@@ -262,7 +262,7 @@ export const doCopy = async (
     } catch (error) {
       throw new BaerlyError(
         "InvalidResponse",
-        `baerly copy: log entry at ${logEntryKey} is not valid JSON`,
+        `baerly admin copy: log entry at ${logEntryKey} is not valid JSON`,
         error,
       );
     }

@@ -30,7 +30,7 @@ import {
 import { S3HttpStorage } from "@baerly/adapter-node";
 import { Db } from "@baerly/server";
 import { Writer } from "@baerly/server/_internal/testing";
-import { doCopy } from "../../packages/cli/src/copy.ts";
+import { doCopy } from "../../packages/cli/src/admin/copy.ts";
 import { createBucket } from "../fixtures/s3-fixtures.ts";
 
 const MINIO_ENDPOINT = "http://127.0.0.1:9102";
