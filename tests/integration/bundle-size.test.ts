@@ -201,7 +201,14 @@ const BUDGETS: readonly Budget[] = [
   //     follow-up. Router additions reach the aggregator closure
   //     (PUT/GET-count routes + order/limit threading). +811 raw, gz
   //     unchanged.
-  { entry: "cloudflare.js", raw: 436 * 1024, gz: 128 * 1024 },
+  //   → 340 KiB raw / 100 KiB gz: unify-baerly-storage F1 follow-up.
+  //     `S3HttpStorage` is no longer re-exported from the CF
+  //     aggregator — R2-only consumers no longer carry the `aws4fetch`
+  //     SigV4 client + `@xmldom/xmldom` parser into their Worker
+  //     closure. Cross-cloud / cross-account R2 consumers now import
+  //     `S3HttpStorage` directly from `baerly-storage/node`. Measured:
+  //     347593 raw / 102077 gz — −97 KiB raw / −26 KiB gz.
+  { entry: "cloudflare.js", raw: 340 * 1024, gz: 100 * 1024 },
   // Node adapter — re-exports the kernel barrel plus
   // `s3HttpStorage`, `localFsStorage`, `memoryStorage`,
   // `localCacheStorage`, and the `baerlyNode` Fetch-API factory.
@@ -246,8 +253,15 @@ const BUDGETS: readonly Budget[] = [
   //     post-T8 measurement (3 KiB raw / 2 KiB gz).
   { entry: "client-testing.js", raw: 8 * 1024, gz: 4 * 1024 },
   // `@baerly/dev` surface — `LocalFsStorage`, `printDevBanner`,
-  // `withRequestLogging`, `renderDevLanding`. Aggregator: re-exports
-  // the kernel barrel so the closure also covers index.js + http.js.
+  // `ensureTable`, `renderDevLanding`. NO longer an aggregator over
+  // the kernel barrel: the only kernel surfaces these helpers touch
+  // are pulled transitively by their own logic (e.g. `LocalFsStorage`
+  // implements `Storage`, so it imports the kernel's `BaerlyError`
+  // chunk). `baerlyDev` (the Vite plugin) is intentionally NOT
+  // re-exported from this barrel — vite users import it from the
+  // `baerly-storage/dev/vite` subpath instead, which keeps the vite
+  // plugin closure out of consumers that only want `LocalFsStorage`
+  // / `ensureTable` / `printDevBanner`.
   // Budget history:
   //   → 410 KiB raw / 120 KiB gz: initial budget set in T9 based on
   //     post-T8 measurement (405 KiB raw / 118 KiB gz).
@@ -256,7 +270,14 @@ const BUDGETS: readonly Budget[] = [
   //     closure as well. +2003 raw, gz unchanged.
   //   → 413 KiB raw / 121 KiB gz: export-package-collapse follow-up.
   //     Same chunk-layout side effect as node.js — gz measured 123100.
-  { entry: "dev.js", raw: 413 * 1024, gz: 121 * 1024 },
+  //   → 26 KiB raw / 10 KiB gz: unify-baerly-storage F3 follow-up.
+  //     `baerlyDev` (the Vite plugin) dropped from the barrel. The
+  //     dev surface no longer pulls the vite-plugin closure, the
+  //     kernel barrel, or hono — closure is now just LocalFsStorage
+  //     + the banner / landing / ensure-table helpers + their tiny
+  //     transitive subgraph. Measured: 26020 raw / 9561 gz —
+  //     −388 KiB raw / −111 KiB gz.
+  { entry: "dev.js", raw: 26 * 1024, gz: 10 * 1024 },
   // `@baerly/dev/vite` — the `baerlyDev()` vite plugin (mounts the
   // Baerly HTTP listener as middleware inside a Vite dev server).
   // Vite is external. Aggregator: re-exports the dev surface.

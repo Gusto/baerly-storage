@@ -107,7 +107,6 @@ describe("baerly-storage/observability", () => {
 import {
   baerlyWorker,
   r2BindingStorage,
-  S3HttpStorage as CloudflareS3HttpStorage,
   singleTenantDevVerifier,
 } from "baerly-storage/cloudflare";
 
@@ -115,7 +114,6 @@ describe("baerly-storage/cloudflare", () => {
   test("imports resolve", () => {
     expect(typeof r2BindingStorage).toBe("function");
     expect(typeof baerlyWorker).toBe("function");
-    expect(typeof CloudflareS3HttpStorage).toBe("function");
     expect(typeof singleTenantDevVerifier).toBe("function");
   });
 });
@@ -206,7 +204,6 @@ describe("baerly-storage/client/testing", () => {
 // baerly-storage/dev
 // ---------------------------------------------------------------------------
 import {
-  baerlyDev,
   ensureTable,
   LocalFsStorage,
   printDevBanner,
@@ -219,7 +216,6 @@ describe("baerly-storage/dev", () => {
     expect(typeof ensureTable).toBe("function");
     expect(typeof printDevBanner).toBe("function");
     expect(typeof renderDevLanding).toBe("function");
-    expect(typeof baerlyDev).toBe("function");
   });
 });
 

@@ -58,3 +58,7 @@ export {
 export { observableStorage } from "./storage.ts";
 export { type Outcome, deriveOutcome } from "./derive-outcome.ts";
 export { InMemoryMetricsRecorder } from "./in-memory-metrics.ts";
+// Exposed so consumers can implement custom `MetricsRecorder`s
+// (e.g. an OTLP sink) without reaching into the unpublished
+// `@baerly/protocol` workspace package.
+export type { MetricsRecorder } from "@baerly/protocol";

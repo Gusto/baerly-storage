@@ -2,4 +2,9 @@ export { printDevBanner, type DevBannerOpts, type DevBannerHint } from "./dev-ba
 export { type DevLandingOptions, renderDevLanding } from "./dev-landing.ts";
 export * from "./ensure-table.ts";
 export * from "./local-fs.ts";
-export { baerlyDev, type BaerlyDevOptions } from "./vite-plugin.ts";
+
+// `baerlyDev` (the Vite plugin) is intentionally NOT re-exported here.
+// It pulls the full vite-plugin closure into `dist/dev.js`, which bloats
+// the base barrel for consumers that only want `LocalFsStorage` /
+// `ensureTable` / `printDevBanner` / `renderDevLanding`. Vite consumers
+// import from the dedicated subpath: `baerly-storage/dev/vite`.

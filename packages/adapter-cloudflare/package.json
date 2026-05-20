@@ -1,7 +1,7 @@
 {
   "name": "@baerly/adapter-cloudflare",
   "version": "0.1.0",
-  "description": "Cloudflare Workers adapter — R2 binding fast-path Storage + s3HttpStorage re-export + fetch(req, env, ctx) mount.",
+  "description": "Cloudflare Workers adapter — R2 binding fast-path Storage + fetch(req, env, ctx) mount.",
   "license": "MIT",
   "type": "module",
   "sideEffects": false,
@@ -28,7 +28,6 @@
     }
   },
   "dependencies": {
-    "@baerly/adapter-node": "workspace:*",
     "@baerly/dev": "workspace:*",
     "@baerly/protocol": "workspace:*",
     "@baerly/server": "workspace:*"

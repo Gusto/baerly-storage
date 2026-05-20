@@ -8,6 +8,10 @@ export default defineConfig({
     entryFileNames: "baerly.js",
     format: "esm",
     sourcemap: true,
-    banner: "#!/usr/bin/env node",
+    // Only the bin entry needs `#!/usr/bin/env node`. Without the
+    // chunk-aware guard, dynamic-import chunks (e.g. `logger-pretty-*.js`)
+    // get the shebang too — Node treats it as a comment in imported
+    // modules but it's a surprising artifact in the published tarball.
+    banner: (chunk) => (chunk.isEntry ? "#!/usr/bin/env node" : ""),
   },
 });

@@ -1,11 +1,15 @@
 /**
- * Cloudflare Workers adapter for Baerly. Ships two `Storage` flavors:
+ * Cloudflare Workers adapter for Baerly. Ships the R2-binding
+ * `Storage` flavor (`r2BindingStorage`) for in-cell R2 access
+ * without SigV4 — the dominant path when your Worker and bucket
+ * are in the same Cloudflare account.
  *
- *  - {@link r2BindingStorage} — fast path. In-cell R2 binding, no
- *    SigV4. Use when your Worker and bucket are in the same
- *    Cloudflare account.
- *  - {@link S3HttpStorage} — fallback. Plain S3 REST. Use for
- *    cross-cloud (AWS, GCS) or cross-account R2.
+ * Cross-cloud or cross-account R2 from a Worker? Import
+ * `S3HttpStorage` directly from `baerly-storage/node`. That path
+ * pulls `aws4fetch` and `@xmldom/xmldom`, which is why it is not
+ * re-exported here: the closure of `baerly-storage/cloudflare`
+ * stays peer-free so R2-only consumers don't carry the SigV4 +
+ * XML parser bytes.
  *
  * The `fetch(req, env, ctx)` Worker mount lives at the `/worker`
  * subpath: `import { baerlyWorker } from "@baerly/adapter-cloudflare/worker"`.
@@ -16,11 +20,6 @@
  */
 export { r2BindingStorage } from "./r2-binding-storage.ts";
 export type { R2BindingStorageOptions } from "./r2-binding-storage.ts";
-
-// Re-export the HTTP path so callers pick the flavor at construction
-// time without pulling in @baerly/adapter-node directly.
-export { S3HttpStorage } from "@baerly/adapter-node";
-export type { S3HttpStorageOptions } from "@baerly/adapter-node";
 
 // Worker module-default + Cron Trigger surface.
 export { baerlyWorker } from "./worker.ts";
