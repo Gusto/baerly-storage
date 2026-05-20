@@ -79,9 +79,6 @@ var isn't propagated.
 | `pnpm build && pnpm baerly export --target=sqlite ...` | snapshot dump one collection to SQL | seconds | ✅ no infra |
 | `pnpm build && pnpm baerly {init,inspect,admin dump,admin restore} ...` | operator surface: `init` drops `baerly.config.ts` into an existing repo; `inspect` prints a read-only summary of one collection's snapshot / log / index state; `admin dump` emits canonical NDJSON of the materialised view; `admin restore` re-imports that NDJSON into a fresh bucket | seconds | ✅ no infra |
 | `pnpm build && pnpm baerly admin {compact,fsck,migrate} ...` | maintenance surface: `admin compact` manually triggers one `runScheduledMaintenance` pass (compact + GC, profile-selectable; `--min-entries=<N>` overrides the active profile's `minEntriesToCompact` threshold for the on-demand pass); `admin fsck` walks `current.json` → snapshot hash → log range → index prefixes read-only and exits 4 on any finding; `admin migrate` applies a `(row) => row \| null` transform across the materialised view and writes a fresh L9 snapshot with `migrated_to` stamped on `current.json` | seconds | ✅ no infra |
-| `pnpm eval:score -- --transcript ... --acceptance ...` | scoring script for a single agent run (zero infra) | ~seconds | ✅ when fixtures + Node 24 are present |
-| `node eval/check-acceptance.mjs <app> [<root>]` | per-app acceptance checker for the scaffolding eval | ~seconds per app | ✅ when the scaffold root has a working `pnpm install` |
-| `pnpm eval:run -- --app <app> --tool <tool> --trials <N>` | scaffolding eval runner — scaffolds, drives the CLI, scores, reports | minutes per trial | requires `claude` and/or `codex` on `$PATH`; first pass: `--app todo --trials 3 --tool both` |
 
 `pnpm verify` is also enforced as a [lefthook](https://lefthook.dev/)
 pre-commit hook (`lefthook.yml`); `pnpm install` wires it up via the
@@ -177,13 +174,6 @@ Pure-unit tests that always pass: `packages/protocol/src/hashing.test.ts`,
 `tests/integration/log-emit.test.ts`,
 `tests/integration/put-all-partial-failure.test.ts`,
 `tests/regressions.test.ts`.
-
-### Scaffolding eval
-
-The scaffolding-eval harness lives in `eval/{run,score,check-acceptance}.mjs`
-and the corpus prompts in `eval/prompts/`. See `eval/run.mjs --help`
-for the full decision matrix. The first eval pass is `pnpm eval:run --
---app todo --tool both --trials 3`; results land under `eval/runs/`.
 
 ## Local dev
 
@@ -377,6 +367,3 @@ auto-load on matching edits and point at the same files.
 - Architecture decisions ("why"): [docs/adr/](docs/adr/)
 - Troubleshooting: [docs/guide/troubleshooting.md](docs/guide/troubleshooting.md)
 - Path-scoped conventions: [docs/contributing/conventions/](docs/contributing/conventions/) (table at top)
-- Scaffolding-eval harness + corpus: eval/ (runner, scorer, acceptance
-  checker, and `eval/prompts/` — one prompt per corpus app, version-
-  pinned).
