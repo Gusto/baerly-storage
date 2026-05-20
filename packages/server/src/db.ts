@@ -311,18 +311,8 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
     config?: TConfig;
   }): Db<TConfig> {
     const { storage, app, tenant } = config;
-    if (app.length === 0 || tenant.length === 0) {
-      throw new BaerlyError(
-        "InvalidConfig",
-        `Db.create requires non-empty app and tenant (got app=${JSON.stringify(app)}, tenant=${JSON.stringify(tenant)})`,
-      );
-    }
-    if (app.includes("/") || tenant.includes("/")) {
-      throw new BaerlyError(
-        "InvalidConfig",
-        `Db.create: "/" is reserved as the key-segment separator (got app=${JSON.stringify(app)}, tenant=${JSON.stringify(tenant)})`,
-      );
-    }
+    assertKeySegment(app, "app");
+    assertKeySegment(tenant, "tenant");
     return new Db<TConfig>(
       app,
       tenant,
@@ -383,12 +373,7 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
    * @internal
    */
   tableReadContext(name: string): TableReadContext {
-    if (name.length === 0 || name.includes("/")) {
-      throw new BaerlyError(
-        "InvalidConfig",
-        `Db.table: name must be non-empty and must not contain "/" (got ${JSON.stringify(name)})`,
-      );
-    }
+    assertKeySegment(name, "table");
     let cache = this.#currentJsonCaches.get(name);
     if (cache === undefined) {
       cache = { value: null };
@@ -626,4 +611,31 @@ const makeRawStorageApi = (app: string, tenant: string, storage: Storage): RawSt
       }
     },
   };
+};
+
+/**
+ * Guard a string used as a path-segment in the bucket-key encoding.
+ * Rejects empty and `/`-containing values with
+ * `BaerlyError{code:"InvalidConfig"}`. `role` is baked into the
+ * message so the caller doesn't need to format their own.
+ *
+ * Used by {@link Db.create} (twice: `app`, `tenant`) and
+ * {@link Db.tableReadContext} (once: `name`).
+ *
+ * @internal
+ */
+const assertKeySegment = (value: string, role: "app" | "tenant" | "table"): void => {
+  const verb = role === "table" ? "Db.table" : "Db.create";
+  if (value.length === 0) {
+    throw new BaerlyError(
+      "InvalidConfig",
+      `${verb}: ${role} must be non-empty (got ${JSON.stringify(value)})`,
+    );
+  }
+  if (value.includes("/")) {
+    throw new BaerlyError(
+      "InvalidConfig",
+      `${verb}: "/" is reserved as the key-segment separator (got ${role}=${JSON.stringify(value)})`,
+    );
+  }
 };
