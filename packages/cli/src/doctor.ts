@@ -25,13 +25,12 @@
  * (which already returned 1 via a thrown BaerlyError).
  */
 
-import { spawn } from "node:child_process";
 import { defineCommand, type ArgsDef, type ParsedArgs } from "citty";
 import { BaerlyError } from "@baerly/protocol";
 import { loadAppConfig, loadAppConfigWithCollections } from "./config.ts";
 import { doctorCloudflare, type DoctorFinding, type DoctorReport } from "./doctor/cloudflare.ts";
 import { checkIndexFilterDrift } from "./doctor/index-filter-drift.ts";
-import type { ProcessRunner } from "./deploy/cloudflare.ts";
+import { defaultRunner } from "./runner.ts";
 import { color, emitError, isJsonMode, setJsonMode } from "./output.ts";
 
 const DOCTOR_ARGS = {
@@ -137,26 +136,6 @@ const renderReport = (target: string, report: DoctorReport): void => {
   );
 };
 
-const defaultRunner: ProcessRunner = {
-  run: (cmd, args, cwd) =>
-    new Promise((res, rej) => {
-      const child = spawn(cmd, args as string[], {
-        cwd,
-        stdio: ["inherit", "pipe", "pipe"],
-      });
-      let stdout = "";
-      let stderr = "";
-      child.stdout?.on("data", (b: Buffer) => {
-        stdout += b.toString("utf8");
-      });
-      child.stderr?.on("data", (b: Buffer) => {
-        stderr += b.toString("utf8");
-      });
-      child.on("error", rej);
-      child.on("close", (code) => res({ code: code ?? 1, stdout, stderr }));
-    }),
-};
-
 const handleDoctor = async (args: ParsedArgs<typeof DOCTOR_ARGS>): Promise<number> => {
   setJsonMode(args.json === true);
   try {
@@ -193,7 +172,7 @@ const handleDoctor = async (args: ParsedArgs<typeof DOCTOR_ARGS>): Promise<numbe
       : [];
     if (target === "cloudflare") {
       const report = await doctorCloudflare(config, {
-        runner: defaultRunner,
+        runner: defaultRunner(),
         ...(args.fix === true && { fix: true }),
         ...(args.usage === true && { usage: true }),
         ...(extraFindings.length > 0 && { extraFindings }),

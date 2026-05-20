@@ -23,26 +23,14 @@
  * default `node:child_process.spawn`-backed implementation.
  */
 
-import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { parse, type ParseError } from "jsonc-parser";
 import { BaerlyError } from "@baerly/protocol";
 import type { AppConfig } from "../config.ts";
+import { defaultRunner, type ProcessRunner } from "../runner.ts";
 
-export interface ProcessRunner {
-  /**
-   * Run `cmd` with `args` in `cwd`. Returns the integer exit code
-   * plus captured stdout/stderr (which are also tee'd to the host
-   * process's stdout/stderr in the default impl so users see
-   * Wrangler's progress).
-   */
-  run(
-    cmd: string,
-    args: readonly string[],
-    cwd: string,
-  ): Promise<{ readonly code: number; readonly stdout: string; readonly stderr: string }>;
-}
+export type { ProcessRunner };
 
 /**
  * Declared R2 binding extracted from `wrangler.jsonc`. Subset of
@@ -52,34 +40,6 @@ export interface R2BindingDeclaration {
   readonly binding: string;
   readonly bucket_name: string;
 }
-
-/**
- * Default `node:child_process.spawn`-backed runner. Inherits stdin
- * and tees child stdout/stderr to the parent so the user sees
- * Wrangler's progress in real time while we still keep a captured
- * copy for parsing.
- */
-const defaultRunner: ProcessRunner = {
-  run: (cmd, args, cwd) =>
-    new Promise((res, rej) => {
-      const child = spawn(cmd, args as string[], {
-        cwd,
-        stdio: ["inherit", "pipe", "pipe"],
-      });
-      let stdout = "";
-      let stderr = "";
-      child.stdout?.on("data", (b: Buffer) => {
-        stdout += b.toString("utf8");
-        process.stdout.write(b);
-      });
-      child.stderr?.on("data", (b: Buffer) => {
-        stderr += b.toString("utf8");
-        process.stderr.write(b);
-      });
-      child.on("error", rej);
-      child.on("close", (code) => res({ code: code ?? 1, stdout, stderr }));
-    }),
-};
 
 /** Path to `wrangler.jsonc` at the package root. */
 const wranglerPathFor = (repoRoot: string): string => resolve(repoRoot, "wrangler.jsonc");
@@ -238,7 +198,7 @@ export const deployCloudflare = async (
   config: AppConfig,
   opts: { readonly runner?: ProcessRunner; readonly cwd?: string } = {},
 ): Promise<number> => {
-  const runner = opts.runner ?? defaultRunner;
+  const runner = opts.runner ?? defaultRunner({ tee: true });
   const repoRoot = opts.cwd ?? config.repoRoot;
   const wranglerPath = wranglerPathFor(repoRoot);
   if (!existsSync(wranglerPath)) {
