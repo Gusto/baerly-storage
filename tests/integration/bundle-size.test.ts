@@ -301,15 +301,7 @@ const BUDGETS: readonly Budget[] = [
   //     + the banner / landing / ensure-table helpers + their tiny
   //     transitive subgraph. Measured: 26020 raw / 9561 gz —
   //     −388 KiB raw / −111 KiB gz.
-  //   → 27 KiB raw / 10 KiB gz: cleanup-tightening T2 follow-up.
-  //     `encodeJsonBytes` / `decodeJsonBytes` extracted into
-  //     `@baerly/protocol`'s `bytes.ts`; the module-level docblock
-  //     justifying the helpers' allocation shape gets inlined into
-  //     the `current-json-*` chunk that `dev.js` pulls transitively
-  //     (via `LocalFsStorage` → `createCurrentJson`). Bytes are in
-  //     the comment, not the runtime, but rolldown preserves JSDoc.
-  //     Measured: 27010 raw / 9960 gz — +990 raw / +399 gz.
-  { entry: "dev.js", raw: 27 * 1024, gz: 10 * 1024 },
+  { entry: "dev.js", raw: 26 * 1024, gz: 10 * 1024 },
   // `@baerly/dev/vite` — the `baerlyDev()` vite plugin (mounts the
   // Baerly HTTP listener as middleware inside a Vite dev server).
   // Vite is external. Aggregator: re-exports the dev surface.
