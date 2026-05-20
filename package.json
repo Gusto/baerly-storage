@@ -112,7 +112,7 @@
     "dev:storage": "docker compose up -d --wait",
     "dev:storage:stop": "docker compose down",
     "verdaccio:reset": "./scripts/verdaccio-reset.sh",
-    "verdaccio:publish": "pnpm verdaccio:reset && pnpm -r publish --registry http://localhost:4873 --no-git-checks",
+    "verdaccio:publish": "pnpm verdaccio:reset && pnpm run build && pnpm -r publish --registry http://localhost:4873 --no-git-checks --force --ignore-scripts",
     "eval:check": "node eval/check-acceptance.mjs",
     "eval:run": "node eval/run.mjs",
     "eval:score": "node eval/score.mjs",
