@@ -12,7 +12,6 @@ import {
   CURRENT_JSON_SCHEMA_VERSION,
   type GcPending,
   GC_PENDING_SCHEMA_VERSION,
-  InMemoryMetricsRecorder,
   MemoryStorage,
   casUpdateGcPending,
   createCurrentJson,
@@ -22,6 +21,7 @@ import {
 import { describe, expect, test } from "vitest";
 import { compact, type InternalCompactOptions } from "./compactor.ts";
 import { type InternalRunGcOptions, runGc } from "./gc.ts";
+import { InMemoryMetricsRecorder } from "./observability/in-memory-metrics.ts";
 import { ServerWriter } from "./server-writer.ts";
 
 const bootstrap = async (storage: MemoryStorage, key: string): Promise<void> => {

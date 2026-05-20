@@ -11,13 +11,13 @@
 
 import {
   CURRENT_JSON_SCHEMA_VERSION,
-  InMemoryMetricsRecorder,
   createCurrentJson,
   MemoryStorage,
   BaerlyError,
 } from "@baerly/protocol";
 import { describe, expect, test } from "vitest";
 import { compact, type InternalCompactOptions, loadSnapshotAsMap } from "./compactor.ts";
+import { InMemoryMetricsRecorder } from "./observability/in-memory-metrics.ts";
 import { ServerWriter } from "./server-writer.ts";
 
 const bootstrap = async (storage: MemoryStorage, key: string): Promise<void> => {

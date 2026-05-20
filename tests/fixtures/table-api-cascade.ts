@@ -26,7 +26,6 @@ import { expect } from "vitest";
 import {
   CURRENT_JSON_SCHEMA_VERSION,
   type CurrentJson,
-  InMemoryMetricsRecorder,
   type DocumentData,
   type LogEntry,
   BaerlyError,
@@ -35,6 +34,7 @@ import {
   uuid,
 } from "@baerly/protocol";
 import { Db, ServerWriter, type SchemaValidator, compact, runGc } from "@baerly/server";
+import { InMemoryMetricsRecorder } from "@baerly/server/observability";
 import type {
   InternalCompactOptions,
   InternalRunGcOptions,

@@ -57,3 +57,4 @@ export {
 } from "./canonical.ts";
 export { observableStorage } from "./storage.ts";
 export { type Outcome, deriveOutcome } from "./derive-outcome.ts";
+export { InMemoryMetricsRecorder } from "./in-memory-metrics.ts";

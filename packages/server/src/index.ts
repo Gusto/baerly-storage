@@ -29,7 +29,7 @@ export {
 export { type BufferedMutation, type RawStorageApi, type TxContext, Db } from "./db.ts";
 export { type RunGcOptions, type RunGcResult, runGc } from "./gc.ts";
 export { type CreateRouterOptions, MAX_BODY_BYTES, createRouter, mapError } from "./http/router.ts";
-export { withHttpObservability } from "./observability/index.ts";
+export { InMemoryMetricsRecorder, withHttpObservability } from "./observability/index.ts";
 export {
   type ListEventsSinceOptions,
   type LongPollSinceOptions,
@@ -115,7 +115,6 @@ export {
 export {
   BaerlyError,
   type BaerlyErrorCode,
-  InMemoryMetricsRecorder,
   type DocumentData,
   MemoryStorage,
   type Query,

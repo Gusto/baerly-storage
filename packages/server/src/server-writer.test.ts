@@ -1,7 +1,6 @@
 import {
   CURRENT_JSON_SCHEMA_VERSION,
   type CurrentJson,
-  InMemoryMetricsRecorder,
   createCurrentJson,
   getOrCreateMemoryStorageForBucket,
   MemoryStorage,
@@ -12,6 +11,7 @@ import {
 } from "@baerly/protocol";
 import { beforeEach, describe, expect, test } from "vitest";
 import type { IndexDefinition } from "./indexes.ts";
+import { InMemoryMetricsRecorder } from "./observability/in-memory-metrics.ts";
 import { ServerWriter } from "./server-writer.ts";
 
 const BUCKET = "server-writer-test-bucket";

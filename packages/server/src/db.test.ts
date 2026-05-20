@@ -4,13 +4,13 @@
 import {
   CURRENT_JSON_SCHEMA_VERSION,
   createCurrentJson,
-  InMemoryMetricsRecorder,
   MemoryStorage,
   BaerlyError,
   type Storage,
 } from "@baerly/protocol";
 import { describe, expect, test } from "vitest";
 import { Db } from "./db.ts";
+import { InMemoryMetricsRecorder } from "./observability/in-memory-metrics.ts";
 
 const utf8 = (s: string): Uint8Array => new TextEncoder().encode(s);
 const fromBytes = (b: Uint8Array): string => new TextDecoder().decode(b);

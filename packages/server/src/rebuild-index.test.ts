@@ -17,11 +17,11 @@ import { describe, expect, test } from "vitest";
 import {
   CURRENT_JSON_SCHEMA_VERSION,
   createCurrentJson,
-  InMemoryMetricsRecorder,
   MemoryStorage,
   type Storage,
 } from "@baerly/protocol";
 import { allIndexKeysFor, type IndexDefinition } from "./indexes.ts";
+import { InMemoryMetricsRecorder } from "./observability/in-memory-metrics.ts";
 import { rebuildIndex } from "./rebuild-index.ts";
 import { ServerWriter } from "./server-writer.ts";
 
