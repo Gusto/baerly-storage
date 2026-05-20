@@ -131,8 +131,8 @@ export interface TableReadContext {
    *
    * Threaded in by {@link Db.tableReadContext} from the per-collection
    * map handed to {@link Db.create}; the boundary calls happen in
-   * `query.ts`, not `server-writer.ts`, so schemas plug in higher than
-   * `ServerWriter.validateInput`'s structural checks.
+   * `query.ts`, not `server-writer.ts`, so schemas plug in at the
+   * read/write API surface rather than at the writer layer.
    *
    * @internal
    */
@@ -356,8 +356,8 @@ const writerFor = (ctx: TableReadContext): ServerWriter =>
  *
  * @throws BaerlyError code="Conflict" — `_id` collision (pre-commit check) or
  *   CAS retry budget exhausted inside `ServerWriter.commit()`.
- * @throws BaerlyError code="SchemaError" — inherited from
- *   `ServerWriter.validateInput`.
+ * @throws BaerlyError code="SchemaError" — from the per-collection
+ *   `SchemaValidator` threaded via {@link Db.tableReadContext}.
  *
  * @internal — exported for `Table.insert` in `./table.ts` to delegate
  *             without duplicating the auto-id / collision-check /
@@ -579,10 +579,9 @@ const runReplace = async <T extends DocumentData>(
 
 /**
  * `Query.delete` implementation. Tombstones every matched row with a
- * single `op:"D"` `LogEntry` per `doc_id`. No `body` on `D` ops —
- * `ServerWriter.validateInput` (server-writer.ts:386–396) would
- * reject one — and `replica_identity` defaults to `PATCH_ONLY`, so
- * emitted entries carry neither `new`/`patch` nor `old`/`key_old`.
+ * single `op:"D"` `LogEntry` per `doc_id`. `replica_identity` defaults
+ * to `PATCH_ONLY`, so emitted `D` entries carry neither `new`/`patch`
+ * nor `old`/`key_old`.
  * Consumers rebuilding pre-images under `PATCH_ONLY` need to
  * maintain a shadow table — see `packages/protocol/src/log.ts:102–118`.
  *

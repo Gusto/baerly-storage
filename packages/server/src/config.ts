@@ -95,10 +95,6 @@ export const defineConfig = <const C extends BaerlyConfig>(cfg: C): C => cfg;
  * so the projection rule (drop empty index arrays; omit absent
  * schemas) stays in one place. Future `CollectionDefinition`
  * fields (lifecycle hooks, replica_identity) land here too.
- *
- * Returns frozen-empty maps when `collections` is undefined or
- * `null` so the caller can `Db.create({ ..., schemas, indexes })`
- * unconditionally without a per-call empty-map allocation.
  */
 export const collectionsToMaps = (
   collections: BaerlyConfig["collections"] | undefined,
@@ -106,11 +102,11 @@ export const collectionsToMaps = (
   schemas: ReadonlyMap<string, SchemaValidator>;
   indexes: ReadonlyMap<string, ReadonlyArray<IndexDefinition>>;
 } => {
-  if (collections === undefined) {
-    return { schemas: EMPTY_SCHEMA_MAP, indexes: EMPTY_INDEX_MAP };
-  }
   const schemas = new Map<string, SchemaValidator>();
   const indexes = new Map<string, ReadonlyArray<IndexDefinition>>();
+  if (collections === undefined) {
+    return { schemas, indexes };
+  }
   for (const [name, def] of Object.entries(collections)) {
     if (def.schema !== undefined) {
       schemas.set(name, def.schema);
@@ -121,9 +117,6 @@ export const collectionsToMaps = (
   }
   return { schemas, indexes };
 };
-
-const EMPTY_SCHEMA_MAP: ReadonlyMap<string, SchemaValidator> = new Map();
-const EMPTY_INDEX_MAP: ReadonlyMap<string, ReadonlyArray<IndexDefinition>> = new Map();
 
 /**
  * Sentinel `BaerlyConfig` used as the default `TConfig` parameter

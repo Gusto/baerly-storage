@@ -71,8 +71,8 @@ export const makeTable = <T extends DocumentData>(ctx: TableReadContext): Table<
      *
      * @throws BaerlyError code="Conflict" — `_id` collision (pre-commit
      *   check) or CAS retry budget exhausted.
-     * @throws BaerlyError code="SchemaError" — inherited from
-     *   `ServerWriter.validateInput`.
+     * @throws BaerlyError code="SchemaError" — from the per-collection
+     *   `SchemaValidator` threaded via {@link Db.tableReadContext}.
      */
     insert: (doc) => runInsert<T>(ctx, doc),
     count: () => makeQuery<T>(ctx, seed).count(),

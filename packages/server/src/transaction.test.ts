@@ -177,7 +177,7 @@ describe("Db.transaction", () => {
     expect(u.session).toBe(i.session);
     expect(d.session).toBe(i.session);
     // Delete entries carry neither `new` nor `patch` (PATCH_ONLY +
-    // op === "D" — `ServerWriter.validateInput` rejects a body).
+    // op === "D" — the type system rejects a body on `D` inputs).
     expect(d.new).toBeUndefined();
     expect(d.patch).toBeUndefined();
     // U carries `new === patch` under per-doc-replace.

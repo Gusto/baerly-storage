@@ -27,7 +27,6 @@
  *   - `db.orphan.candidate_count` — gauge (`gc/pending.json` depth)
  *   - `db.compact.entries_folded` — histogram (entries folded per run)
  *   - `db.gc.swept_total` — counter (labelled by reason)
- *   - `db.tenant.put_rate` — gauge (per-tenant labelled)
  *
  * Names follow `db.<subsystem>.<metric>`, dot-separated, all-lowercase
  * snake_case segments. Labels are flat
