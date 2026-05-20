@@ -19,9 +19,7 @@ before action.
 | Doc | Items covered | Status |
 |---|---|---|
 | [publish-direction.md](./publish-direction.md) | A1, A3, A6 (package-name schism) | **Open strategic question** — needs user call |
-| ~~dead-symbols.md~~ | A7, D6 (deferred), D8, D9 | **Shipped 2026-05-19** — auth helpers + pre-collections symbols + unused brand types deleted; claimWriter public re-exports dropped |
 | [adapter-collections-wiring.md](./adapter-collections-wiring.md) | A9 (corrected framing — adapters drop `baerly.config.ts` collections, schema/index features unreachable) | **Pre-launch gap** — verify + fix before publish |
-| ~~errors-and-types.md~~ | A13 (OfflineNoCache) + A14 (BaerlyClientError) | **Shipped 2026-05-19**; A9 reframed → adapter-collections-wiring.md |
 | [cli-cleanup.md](./cli-cleanup.md) | G1, G2, G3 (strategic), G4–G6, G8, G9, G11, G14, G16–G22 | Validated; G3 needs decision |
 | [server-kernel-cleanup.md](./server-kernel-cleanup.md) | A4, B-series (sans B5/B14/B23 dropped/rescoped) | Mostly validated; some `[needs-verify]` |
 | [protocol-package-cleanup.md](./protocol-package-cleanup.md) | D1, D10–D13, D15–D20 | Validated; D14 dropped |
@@ -41,41 +39,3 @@ before action.
 - [prelaunch-package-json-polish.md](./prelaunch-package-json-polish.md)
   — small package.json polish ahead of public-npm publish.
 
----
-
-## Dropped in triage
-
-Items the analyst raised that were verified shipped, invalid, or
-the framing was wrong enough to start over:
-
-- **G10** — wizard "Install dependencies?" prompt: the value IS
-  threaded through; brief was wrong about it being dropped.
-- **G12** — `defineConfig` move to `baerly-storage/config`:
-  already shipped at commit `0003740`.
-- **G13** — `admin compact` + `admin gc` split: already shipped
-  at commit `cb03690`.
-- **G15** — `freeTierBudgetHint` strip from dev banner: already
-  shipped at commit `8758f95`.
-- **B5** — defensive `undefined` spreads everywhere: grep finds
-  zero hits in `packages/server/src/`; analyst was wrong about
-  scale or saw a different package.
-- **D14** — `Storage.put({ifNoneMatch: "*"})` + unused
-  `versionId` on `get`: the `ifNoneMatch` half not found; the
-  unused-`versionId` half is folded into D15 in
-  `protocol-package-cleanup.md`.
-
-## Rescoped
-
-- **A4** — "top barrel ships ~50 internal symbols" — actual
-  count is ~40 (per the 2026-05-18 bundle trim). Still real;
-  see `server-kernel-cleanup.md`.
-- **B14** — "SingleAttemptOutcome splits one logical operation
-  across 350 lines" — actual is a 9-line discriminated union.
-  Smaller fix; see `server-kernel-cleanup.md`.
-- **B23** — `IN_FANOUT_THRESHOLD` vs `IN_FANOUT_PARALLELISM` —
-  the partner constant doesn't exist. Reframed as "hard-code or
-  keep configurable" question.
-- **G5** — "13 verbs" — actual is 15 (8 top-level + 7 admin).
-  Ordering critique still valid.
-- **G6** — "13 copies of `errorToExitCode`" — actual is 2–3
-  copies of each helper. Pattern is real, scale was overstated.

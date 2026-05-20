@@ -1,41 +1,8 @@
 # Followups: `@baerly/protocol` package cleanup
 
-**Source: 2026-05-19 analyst triage (D-series).** Most items shipped
-on `protocol-cleanup-d-batch`. This file now tracks only what's
-deferred.
+## D13. `Predicate<T>` index signature defeats key narrowing
 
-## Shipped 2026-05-19 (this branch)
-
-- **D1** — `protocol/src/db.ts` → `table-api.ts` (file rename;
-  symbols unchanged).
-- **D10** — `xml.ts` dead comments + 4 unused
-  `ParsedListObjectsV2Output` fields stripped.
-- **D11** — `verifier.ts` JSDoc trimmed to kernel contract.
-- **D12** — `predicate.ts` (1226 LoC) split into
-  `query/{validate,matches,merge,_internals}.ts`;
-  `predicateImplies` moved to `@baerly/server/query-planner-implies.ts`.
-- **D15** — `S3HttpStorage` moved from `@baerly/protocol` →
-  `@baerly/adapter-node`. Public surface stays via the adapter
-  re-export.
-- **D17** — `InMemoryMetricsRecorder` moved from `@baerly/protocol` →
-  `@baerly/server/observability`.
-- **D18** — `lsn` JSDoc rewritten to acknowledge `lsnParts` as the
-  canonical cursor decoder at the `/v1/since` boundary (the
-  ticket's preferred "delete `lsnParts` and use `LogEntry.seq`"
-  doesn't apply — the caller decodes an inbound cursor string
-  where no `LogEntry` is in scope yet).
-- **D19** — `parseRetryAfter` `export` dropped (module-private now).
-
-**Also shipped 2026-05-19 (prior batch, `f80a873`):** D8 (brand
-types), D9 (dead pre-collections symbols).
-
----
-
-## Open
-
-### D13. `Predicate<T>` index signature defeats key narrowing
-
-**Severity: MEDIUM. Real type-safety hole. Deferred — needs design discussion.**
+**Severity: MEDIUM. Real type-safety hole. Needs design discussion.**
 
 `packages/protocol/src/table-api.ts:99-103`:
 ```ts
@@ -63,9 +30,9 @@ that deserves a real design pass:
 Pre-launch, no compat burden. Worth a brainstorm + ADR before
 implementation.
 
-### D20. R2 free-tier constants belong in the CLI, not the protocol kernel
+## D20. R2 free-tier constants belong in the CLI, not the protocol kernel
 
-**Severity: LOW. Deferred — coupled to `cli-cleanup.md` §G3.**
+**Severity: LOW. Coupled to `cli-cleanup.md` §G3.**
 
 `packages/protocol/src/constants.ts:227,237,251` declares
 `R2_FREE_TIER_CLASS_A_OPS_PER_MONTH`,
@@ -78,13 +45,3 @@ subtree) lands.
 
 Keep `STORAGE_OPS_PER_LOGICAL_WRITE = 3` in protocol — that's a
 real cost-model invariant, not a pricing literal.
-
----
-
-## Closed / not pursued
-
-- **D16** (`conformance.ts` imports vitest at module top). Theoretical
-  cross-runtime risk only. Verified the `package.json` `exports`
-  map does NOT expose `./conformance` on the default entry, and
-  the test-only subpath uses static imports that bundlers
-  tree-shake. No action.
