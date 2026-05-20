@@ -35,7 +35,7 @@ import { defineCommand, parseArgs, type ArgsDef, type ParsedArgs } from "citty";
 import { BaerlyError } from "@baerly/protocol";
 import { CLOUDFLARE_FREE_TIER, type CompactOptions, compact } from "@baerly/server/maintenance";
 import { loadAppConfig } from "../config.ts";
-import { parseBucketUri } from "../copy.ts";
+import { parseBucketUri } from "../bucket-uri.ts";
 import { emitError, emitSuccess, setJsonMode } from "../output.ts";
 
 const COMPACT_ARGS = {

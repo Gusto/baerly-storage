@@ -60,7 +60,7 @@ import {
   translatePredicateToSql,
 } from "./export/index.ts";
 import { loadAppConfig } from "./config.ts";
-import { parseBucketUri } from "./copy.ts";
+import { parseBucketUri } from "./bucket-uri.ts";
 import { emitError, emitSuccess, setJsonMode } from "./output.ts";
 
 const EXPORT_ARGS = {

@@ -46,7 +46,7 @@ import { defineCommand, parseArgs, type ArgsDef, type ParsedArgs } from "citty";
 import { BaerlyError, type DocumentValue, type DocumentData } from "@baerly/protocol";
 import { loadMaterialisedView } from "../export/index.ts";
 import { loadAppConfig } from "../config.ts";
-import { parseBucketUri } from "../copy.ts";
+import { parseBucketUri } from "../bucket-uri.ts";
 import { emitError, emitSuccess, setJsonMode } from "../output.ts";
 
 const DUMP_ARGS = {

@@ -51,7 +51,7 @@ import {
 } from "@baerly/protocol";
 import { Writer } from "@baerly/server/_internal/testing";
 import { loadAppConfig } from "../config.ts";
-import { parseBucketUri } from "../copy.ts";
+import { parseBucketUri } from "../bucket-uri.ts";
 import { emitError, emitSuccess, setJsonMode } from "../output.ts";
 
 const RESTORE_OWNER = "baerly-restore";

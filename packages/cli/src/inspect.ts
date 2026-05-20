@@ -38,7 +38,7 @@ import { defineCommand, parseArgs, type ArgsDef, type ParsedArgs } from "citty";
 import { BaerlyError, readCurrentJson, type CurrentJson, type Storage } from "@baerly/protocol";
 import { loadMaterialisedView } from "./export/index.ts";
 import { loadAppConfig, loadCollectionIndexes } from "./config.ts";
-import { parseBucketUri } from "./copy.ts";
+import { parseBucketUri } from "./bucket-uri.ts";
 import { emitError, emitSuccess, isJsonMode, setJsonMode } from "./output.ts";
 import { detectProvider, pricingFor } from "./cost/provider.ts";
 import { project, type Trajectory } from "./cost/project.ts";

@@ -42,7 +42,7 @@ import { BaerlyError } from "@baerly/protocol";
 import { type IndexDefinition } from "@baerly/server";
 import { rebuildIndex } from "@baerly/server/maintenance";
 import { loadCollectionIndexes } from "../config.ts";
-import { parseBucketUri } from "../copy.ts";
+import { parseBucketUri } from "../bucket-uri.ts";
 import { emitError, emitSuccess, setJsonMode } from "../output.ts";
 
 /** citty arg shape. Kebab-case so --help and parsed-object keys line up. */

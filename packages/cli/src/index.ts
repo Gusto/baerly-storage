@@ -1,5 +1,6 @@
-export { copy, runCopy, doCopy, parseBucketUri, parseCursor } from "./copy.ts";
-export type { ParsedBucketUri, ParsedCursor } from "./copy.ts";
+export { copy, runCopy, doCopy } from "./copy.ts";
+export { parseBucketUri, parseCursor } from "./bucket-uri.ts";
+export type { ParsedBucketUri, ParsedCursor } from "./bucket-uri.ts";
 export { emitError, emitSuccess, setJsonMode, isJsonMode } from "./output.ts";
 export { dev, runDev, runDevCli } from "./dev.ts";
 export type { DevResult, HandleDevOutcome } from "./dev.ts";

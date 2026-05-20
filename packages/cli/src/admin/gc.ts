@@ -36,7 +36,7 @@ import {
   runGc as runGcEngine,
 } from "@baerly/server/maintenance";
 import { loadAppConfig } from "../config.ts";
-import { parseBucketUri } from "../copy.ts";
+import { parseBucketUri } from "../bucket-uri.ts";
 import { emitError, emitSuccess, setJsonMode } from "../output.ts";
 
 const GC_ARGS = {
