@@ -717,7 +717,7 @@ export class ServerWriter {
       result = await this.#storage.put(this.#currentJsonKey, nextBody, putOpts);
     } catch (error) {
       this.#observe429(error, inputs[0]!.collection);
-      if (isCasConflict(error)) {
+      if (isPreconditionFailed(error)) {
         this.#metrics.counter("db.r2.put.412_total", 1, {
           collection: inputs[0]!.collection,
           step: "current-json-cas",
@@ -942,13 +942,6 @@ const validateInput = (input: CommitInput): void => {
  */
 const isPreconditionFailed = (err: unknown): boolean =>
   err instanceof BaerlyError && err.code === "Conflict";
-
-/**
- * `true` when an `If-Match` CAS guard lost. Aliased to
- * {@link isPreconditionFailed} — kept as a separate predicate for
- * call-site clarity (step 6 reads better as "CAS conflict").
- */
-const isCasConflict = (err: unknown): boolean => isPreconditionFailed(err);
 
 /**
  * `true` when the underlying storage surfaced an R2 prefix-partition
