@@ -1,5 +1,5 @@
 /* eslint-disable no-underscore-dangle -- `_id` is the locked primary-key
-   field on document shapes (see `@baerly/protocol/src/db.ts`'s `Table<T>` /
+   field on document shapes (see `@baerly/protocol/src/table-api.ts`'s `Table<T>` /
    `Query<T>` declarations); mutation verbs surface and route it by name. */
 
 /**
@@ -364,7 +364,7 @@ const writerFor = (ctx: TableReadContext): ServerWriter =>
  * collection already carries that `_id`) throws
  * `BaerlyError{code:"Conflict"}` BEFORE issuing the writer round-trip
  * — matches the locked `Table.insert` contract
- * (`packages/protocol/src/db.ts:123–125`).
+ * (`packages/protocol/src/table-api.ts:123–125`).
  *
  * The emitted `LogEntry` has `op:"I"` and `new === patch === {...doc, _id}`
  * (today's per-doc-replace model — `packages/protocol/src/log.ts:67–72`).
@@ -384,7 +384,7 @@ export const runInsert = async <T extends DocumentData>(
 ): Promise<{ _id: string }> => {
   // Auto-id semantics: caller-supplied non-empty `_id` wins; otherwise
   // mint a UUIDv7. The locked contract
-  // (`packages/protocol/src/db.ts:120–122`) names UUIDv7 as the
+  // (`packages/protocol/src/table-api.ts:120–122`) names UUIDv7 as the
   // auto-id source.
   const supplied = doc["_id"];
   const _id = typeof supplied === "string" && supplied.length > 0 ? supplied : uuidv7();
@@ -410,7 +410,7 @@ export const runInsert = async <T extends DocumentData>(
 
   // Pre-commit `_id`-collision check. Costs one log walk; matches the
   // locked `Table.insert` throws contract
-  // (`packages/protocol/src/db.ts:123–125`). Without it a caller-
+  // (`packages/protocol/src/table-api.ts:123–125`). Without it a caller-
   // supplied duplicate `_id` would land a second `I` entry that the
   // read fold collapses silently — a contract violation. The CAS
   // retry budget in `ServerWriter` does not surface this case
@@ -462,7 +462,7 @@ export const runInsert = async <T extends DocumentData>(
  * — one `ServerWriter.commit()` round-trip apiece.
  *
  * Atomicity is per row, not across the N-row batch. The locked
- * contract (`packages/protocol/src/db.ts:178–184`) is explicit on
+ * contract (`packages/protocol/src/table-api.ts:178–184`) is explicit on
  * this: all-or-nothing across multiple rows is what
  * `db.transaction(...)` exists to deliver.
  *
@@ -542,7 +542,7 @@ const runUpdate = async <T extends DocumentData>(
  * The matched row's `_id` is preserved on the emitted entry's
  * `doc_id` even if the supplied `doc` carries a different `_id` —
  * preserves doc identity across replaces. The locked contract
- * (`packages/protocol/src/db.ts:187–192`) does not pin this either
+ * (`packages/protocol/src/table-api.ts:187–192`) does not pin this either
  * way; preserving identity is the safe default.
  *
  * @throws BaerlyError code="Conflict" — zero or more than one row

@@ -1,7 +1,7 @@
 import { fc, test as fcTest } from "@fast-check/vitest";
 import { describe, expect, test } from "vitest";
 
-import type { Predicate } from "../db.ts";
+import type { Predicate } from "../table-api.ts";
 import { BaerlyError } from "../errors.ts";
 import type { DocumentValue, JSONObject } from "../json.ts";
 

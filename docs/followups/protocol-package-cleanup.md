@@ -115,7 +115,7 @@ and the helpers are real internal protocol primitives.
 
 **Severity: MEDIUM. Real type-safety hole.**
 
-`packages/protocol/src/db.ts:99-103`:
+`packages/protocol/src/table-api.ts:99-103`:
 ```ts
 { readonly [K in keyof T]?: … } & { readonly [dottedPath: string]: … }
 ```

@@ -1,5 +1,5 @@
 /* eslint-disable no-underscore-dangle -- `_id` is the locked primary-key
-   field on document shapes (see `@baerly/protocol/src/db.ts`'s `Table<T>`
+   field on document shapes (see `@baerly/protocol/src/table-api.ts`'s `Table<T>`
    declaration); snapshot body docs carry it through. */
 
 /**

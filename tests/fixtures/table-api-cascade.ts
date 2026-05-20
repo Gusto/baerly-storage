@@ -1,5 +1,5 @@
 /* eslint-disable no-underscore-dangle -- `_id` is the locked primary-key
-   field on document shapes (see `@baerly/protocol/src/db.ts`'s `Table<T>` /
+   field on document shapes (see `@baerly/protocol/src/table-api.ts`'s `Table<T>` /
    `Query<T>` declarations); the cascade reads / asserts it by name. */
 
 /**
@@ -112,7 +112,7 @@ type Doc = DocumentData;
 
 /**
  * Predicate `$`-key rejection. The day-one operator policy
- * (`packages/protocol/src/db.ts:101-103` + `packages/protocol/src/query/predicate.ts:50-75`)
+ * (`packages/protocol/src/table-api.ts:101-103` + `packages/protocol/src/query/predicate.ts:50-75`)
  * rejects `$`-prefixed predicate keys with
  * `BaerlyError{code:"InvalidConfig"}`. Rejection is SYNCHRONOUS at
  * `.where(...)` — no `await`, no terminal-time deferral — because
@@ -377,7 +377,7 @@ const runTransactionBody = async (
 /**
  * Cross-writer Conflict: two concurrent transactions racing on the
  * same table's `current.json`. The locked contract
- * (`packages/protocol/src/db.ts:211-215`) says single-attempt — at
+ * (`packages/protocol/src/table-api.ts:211-215`) says single-attempt — at
  * least one writer throws `BaerlyError{code:"Conflict"}` on CAS loss.
  *
  * In-process variants (memory, local-fs) share state via the

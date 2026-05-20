@@ -6,7 +6,7 @@
  * that `Query.update` / `replace` / `delete` reuse pieces of.
  *
  * `Table.insert(doc)` is the public insert path. The locked
- * `Query<T>` interface (`@baerly/protocol/src/db.ts`) intentionally
+ * `Query<T>` interface (`@baerly/protocol/src/table-api.ts`) intentionally
  * does NOT declare `insert` — chainable inserts are out of scope.
  * For an inserted doc whose predicate-bound shape matters,
  * `db.table(...).insert(...)` is the path; predicates are a read-
@@ -63,7 +63,7 @@ export const makeTable = <T extends DocumentData>(ctx: TableReadContext): Table<
      * pre-commit existence check against the materialised collection
      * surfaces `Conflict` on duplicate `_id` without round-tripping
      * to the writer — matches the locked `Table.insert` throws
-     * contract (`@baerly/protocol/src/db.ts:123–125`).
+     * contract (`@baerly/protocol/src/table-api.ts:123–125`).
      *
      * Single-attempt per call: CAS retries (up to 8 attempts) live
      * inside `ServerWriter.commit()`. On retry-budget exhaustion the

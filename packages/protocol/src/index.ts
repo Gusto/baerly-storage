@@ -9,7 +9,7 @@ export {
   readCurrentJson,
 } from "./coordination/current-json.ts";
 export * from "./coordination/gc-pending.ts";
-export * from "./db.ts";
+export * from "./table-api.ts";
 export * from "./errors.ts";
 export * from "./json.ts";
 export * from "./query/index.ts";

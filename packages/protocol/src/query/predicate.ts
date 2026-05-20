@@ -1,7 +1,7 @@
 /**
  * Runtime predicate AST + evaluator for the table API.
  *
- * The `Predicate<T>` declared in `../db.ts` is the on-the-wire
+ * The `Predicate<T>` declared in `../table-api.ts` is the on-the-wire
  * shape. It is **also** the AST — there is no separate compile step.
  * This module:
  *
@@ -28,7 +28,7 @@
  * `BaerlyError{code:"UnsatisfiablePredicate"}`.
  */
 
-import type { Predicate } from "../db.ts";
+import type { Predicate } from "../table-api.ts";
 import { BaerlyError } from "../errors.ts";
 import type { DocumentValue, DocumentData, JSONObject, JSONValue } from "../json.ts";
 

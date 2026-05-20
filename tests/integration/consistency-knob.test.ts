@@ -1,5 +1,5 @@
 /* eslint-disable no-underscore-dangle -- `_id` is the locked PK
-   field on document shapes (see `@baerly/protocol/src/db.ts`'s
+   field on document shapes (see `@baerly/protocol/src/table-api.ts`'s
    `Table<T>` / `Query<T>` declarations); assertions surface it by
    name. */
 
