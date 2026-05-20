@@ -93,12 +93,12 @@ Rationale lives in the JSDoc on `BaerlyError`.
 
 ## Branded types
 
-Nominal typing on top of `string` to keep manifest keys, UUIDs, and S3
-version IDs from being confused at protocol boundaries. See the
+Nominal typing on top of `string` to keep UUIDs and content version
+IDs from being confused at protocol boundaries. See the
 "Conventions" section of [`CLAUDE.md`](../../CLAUDE.md).
 
 - Implementation: [`packages/protocol/src/types.ts`](../../packages/protocol/src/types.ts) (definitions and
-  boundary helpers `uuid()`, `versionFromUuid()`)
+  boundary helpers `uuid()`, `uuidv7()`)
 
 ## Hashing / content addressing
 

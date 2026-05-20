@@ -537,12 +537,6 @@ describe("ServerWriter — writer fence", () => {
     expect((thrown as BaerlyError).code).toBe("Conflict");
     expect(metrics.sumCounter("db.writer.fence_bump_observed_total")).toBe(1);
   });
-
-  test("claimWriter is re-exported from @baerly/server", async () => {
-    // Pure module-level smoke: the re-export resolves at runtime.
-    const mod = await import("./index.ts");
-    expect(typeof (mod as { claimWriter?: unknown }).claimWriter).toBe("function");
-  });
 });
 
 describe("ServerWriter — filtered index", () => {

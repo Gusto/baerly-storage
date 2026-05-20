@@ -208,7 +208,7 @@ constraint: anything platform-specific has to live in an adapter.
   entry. Field set is fixed at major versions; consumers ack on
   `lsn`. Full contract in [spec/log-entry-shape.md](../spec/log-entry-shape.md).
 - `Branded<T, B>` (`packages/protocol/src/types.ts`): nominal-type
-  pattern. `UUID` and `VersionId` are both `string`s but not
+  pattern. `UUID` and `ContentVersionId` are both `string`s but not
   assignable to each other.
 - `BaerlyError` / `BaerlyErrorCode` (`packages/protocol/src/errors.ts`):
   discriminated-union error type. Branch on `error.code`.

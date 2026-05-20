@@ -253,8 +253,8 @@ read it via your editor's TS LS or via the published types).
 
 ## Anti-patterns
 
-- Widening branded types from `baerly-storage` (`Ref`,
-  `ManifestKey`). The types prevent confusion bugs.
+- Widening branded types from `baerly-storage` (`UUID`,
+  `ContentVersionId`). The types prevent confusion bugs.
 - Reaching into `node_modules/baerly-storage/dist/` directly —
   consume the published exports.
 - Mutating `VerifierResult.tenantPrefix` between the verifier

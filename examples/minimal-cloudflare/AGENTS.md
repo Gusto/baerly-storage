@@ -175,8 +175,8 @@ read it via your editor's TS LS or via the published types).
      `baerly doctor --target=cloudflare`.
 
   Read the JSDoc on `sharedSecret` / `bearerJwt` / `cloudflareAccess`
-  / `awsIamSigV4` / `allowlistIp` (re-exported from
-  `baerly-storage/auth`) for the full constraint list.
+  (re-exported from `baerly-storage/auth`) for the full constraint
+  list.
 
 - **Secrets vs. vars** — `wrangler.jsonc:vars` carries non-secret
   config (`APP`, `TENANT`, `LOG_LEVEL`, `LOG_SAMPLE`). The verifier's
@@ -226,8 +226,8 @@ read it via your editor's TS LS or via the published types).
 
 ## Anti-patterns
 
-- Widening branded types from `baerly-storage` (`Ref`,
-  `ManifestKey`). The types prevent confusion bugs.
+- Widening branded types from `baerly-storage` (`UUID`,
+  `ContentVersionId`). The types prevent confusion bugs.
 - Reaching into `node_modules/baerly-storage/dist/` directly —
   consume the published exports.
 - Mutating `VerifierResult.tenantPrefix` between the verifier

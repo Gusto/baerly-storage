@@ -4,12 +4,12 @@ import {
   CURRENT_JSON_SCHEMA_VERSION,
   type CurrentJson,
   casUpdateCurrentJson,
-  claimWriter,
   createCurrentJson,
   logSeqStartOf,
   MemoryStorage,
   readCurrentJson,
 } from "../index.ts";
+import { claimWriter } from "./current-json.ts";
 import type { Storage, StoragePutOptions, StoragePutResult } from "../storage/types.ts";
 
 const seedJson = (overrides: Partial<CurrentJson> = {}): CurrentJson => ({

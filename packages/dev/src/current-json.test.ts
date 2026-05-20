@@ -5,10 +5,10 @@ import {
   CURRENT_JSON_SCHEMA_VERSION,
   type CurrentJson,
   casUpdateCurrentJson,
-  claimWriter,
   createCurrentJson,
   readCurrentJson,
 } from "@baerly/protocol";
+import { claimWriter } from "../../protocol/src/coordination/current-json.ts";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { LocalFsStorage } from "./local-fs.ts";
 

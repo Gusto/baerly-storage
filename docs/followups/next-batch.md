@@ -19,7 +19,7 @@ before action.
 | Doc | Items covered | Status |
 |---|---|---|
 | [publish-direction.md](./publish-direction.md) | A1, A3, A6 (package-name schism) | **Open strategic question** — needs user call |
-| [dead-symbols.md](./dead-symbols.md) | A7, D6 (deferred), D8, D9 | Validated; ready to ticket |
+| ~~dead-symbols.md~~ | A7, D6 (deferred), D8, D9 | **Shipped 2026-05-19** — auth helpers + pre-collections symbols + unused brand types deleted; claimWriter public re-exports dropped |
 | [adapter-collections-wiring.md](./adapter-collections-wiring.md) | A9 (corrected framing — adapters drop `baerly.config.ts` collections, schema/index features unreachable) | **Pre-launch gap** — verify + fix before publish |
 | ~~errors-and-types.md~~ | A13 (OfflineNoCache) + A14 (BaerlyClientError) | **Shipped 2026-05-19**; A9 reframed → adapter-collections-wiring.md |
 | [cli-cleanup.md](./cli-cleanup.md) | G1, G2, G3 (strategic), G4–G6, G8, G9, G11, G14, G16–G22 | Validated; G3 needs decision |

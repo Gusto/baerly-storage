@@ -1,5 +1,13 @@
 export * from "./constants.ts";
-export * from "./coordination/current-json.ts";
+export {
+  type CurrentJson,
+  type CurrentJsonRead,
+  type WriterFence,
+  casUpdateCurrentJson,
+  createCurrentJson,
+  logSeqStartOf,
+  readCurrentJson,
+} from "./coordination/current-json.ts";
 export * from "./coordination/gc-pending.ts";
 export * from "./db.ts";
 export * from "./errors.ts";

@@ -78,7 +78,7 @@ not modify the checker script.** Each is binary pass/fail.
 - Do not use web search. Everything you need is in this repo and
   in the `@baerly/server` and `@baerly/client` JSDoc.
 - Do not skip tests or widen branded types from `@baerly/protocol`
-  (`Ref`, `ManifestKey`, `UUID`, `VersionId`). Read
+  (`UUID`, `ContentVersionId`). Read
   `AGENTS.md` for the anti-pattern list.
 - Use pnpm. Do not introduce npm or yarn lockfiles.
 - Use vitest. Do not introduce jest, mocha, or `bun:test`.

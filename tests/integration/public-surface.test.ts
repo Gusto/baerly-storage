@@ -39,23 +39,13 @@ describe("baerly-storage", () => {
 // ---------------------------------------------------------------------------
 // baerly-storage/auth
 // ---------------------------------------------------------------------------
-import {
-  allowlistIp,
-  andAll,
-  awsIamSigV4,
-  bearerJwt,
-  cloudflareAccess,
-  sharedSecret,
-} from "baerly-storage/auth";
+import { bearerJwt, cloudflareAccess, sharedSecret } from "baerly-storage/auth";
 
 describe("baerly-storage/auth", () => {
   test("imports resolve", () => {
     expect(typeof cloudflareAccess).toBe("function");
     expect(typeof sharedSecret).toBe("function");
     expect(typeof bearerJwt).toBe("function");
-    expect(typeof allowlistIp).toBe("function");
-    expect(typeof andAll).toBe("function");
-    expect(typeof awsIamSigV4).toBe("function");
   });
 });
 

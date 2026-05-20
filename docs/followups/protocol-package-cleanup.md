@@ -100,34 +100,16 @@ a real cost-model invariant, not a pricing literal.
 
 ## Types + interface ergonomics
 
-### D8. Brand types `ManifestKey`, `S3VersionId`, `ContentVersionId`, `VersionId` leak with no enforcement
+### D8, D9. ~~Brand types + pre-collections-era types~~
 
-**Severity: MEDIUM.**
-
-`Storage.put`/`get` use plain `string` for `versionId`.
-`ManifestKey` is unused anywhere. `versionFromUuid`
-(`types.ts:129`) exists solely to produce a `ContentVersionId`
-brand nothing enforces.
-
-**Fix:** Delete all four brand types and `versionFromUuid`.
-Type `versionFromContent` as `Promise<string>`.
-
-See `dead-symbols.md` §4 for the same item (cross-referenced).
-
-### D9. Dead pre-collections-era types
-
-**Severity: MEDIUM.**
-
-`Ref` (line 24), `ResolvedRef` (30), `eq` (162), `url` (163),
-`resolveContentRef` (143), `resolveManifestRef` (156),
-`DeleteValue` (17) in `packages/protocol/src/types.ts`. Zero
-cross-package callers per grep.
-
-**Fix:** Delete the seven symbols. Inline `countKey`
-(one caller), `uint2strDesc`, `str2uintDesc` (2–3 call sites
-each).
-
-Also tracked in `dead-symbols.md` §5.
+**Shipped 2026-05-19.** `ManifestKey`, `S3VersionId`,
+`VersionId` (union), `versionFromUuid` deleted; `ContentVersionId`
+kept (load-bearing as `versionFromContent` return type). All
+seven pre-collections symbols (`Ref`, `ResolvedRef`, `eq`, `url`,
+`resolveContentRef`, `resolveManifestRef`, `DeleteValue`) deleted.
+Base32 utils (`countKey`/`uint2strDesc`/`str2uintDesc`) kept on
+`@baerly/protocol` barrel — that package is described as internal
+and the helpers are real internal protocol primitives.
 
 ### D13. `Predicate<T>` index signature defeats key narrowing
 

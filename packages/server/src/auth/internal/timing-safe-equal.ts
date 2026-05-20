@@ -5,9 +5,8 @@
  * lengths match, so its timing cannot leak the position of the first
  * differing byte.
  *
- * Hoisted out of {@link sharedSecret} so {@link awsIamSigV4}'s
- * signature comparison can reuse the same implementation — one TODO
- * is easier to land than two.
+ * Hoisted out of {@link sharedSecret} so future verifiers can reuse
+ * the same implementation — one TODO is easier to land than two.
  */
 export const timingSafeEqual = (a: Uint8Array, b: Uint8Array): boolean => {
   if (a.length !== b.length) {

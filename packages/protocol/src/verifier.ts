@@ -87,9 +87,9 @@ export interface VerifierResult {
  * material.
  *
  * Preset factories — `cloudflareAccess`, `bearerJwt`,
- * `awsIamSigV4`, `sharedSecret`, `allowlistIp` — live in
- * `baerly-storage/auth` (`packages/server/src/auth/presets/`). The
- * kernel owns the type; the server owns the factories.
+ * `sharedSecret` — live in `baerly-storage/auth`
+ * (`packages/server/src/auth/presets/`). The kernel owns the type;
+ * the server owns the factories.
  *
  * @example
  * ```ts

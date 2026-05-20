@@ -77,18 +77,12 @@ export {
 } from "./server-writer.ts";
 export { makeTable } from "./table.ts";
 export {
-  type AllowlistIpOptions,
-  type AwsIamPrincipal,
-  type AwsIamSigV4Options,
   type BearerJwtOptions,
   type CloudflareAccessOptions,
   type Jwk,
   type JwksDocument,
   type JwtAlgorithm,
   type SharedSecretOptions,
-  allowlistIp,
-  andAll,
-  awsIamSigV4,
   bearerJwt,
   cloudflareAccess,
   sharedSecret,
@@ -106,10 +100,6 @@ export {
  * - {@link Query} / {@link Table}: the locked predicate-AST
  *   interfaces returned by `Db.table(...)`. Consumers that
  *   destructure the chain need the named types.
- * - {@link claimWriter}: bumps the writer-fence epoch. Reserved
- *   for admin rotation workflows and initial provisioning. Do
- *   NOT call from a normal write path; the fence is split-brain
- *   prevention, not a retry primitive.
  * - {@link Storage} + its result types
  *   ({@link StorageGetResult}, {@link StorageListEntry},
  *   {@link StoragePutResult}): the interface every storage adapter
@@ -125,7 +115,6 @@ export {
 export {
   BaerlyError,
   type BaerlyErrorCode,
-  claimWriter,
   InMemoryMetricsRecorder,
   type DocumentData,
   MemoryStorage,

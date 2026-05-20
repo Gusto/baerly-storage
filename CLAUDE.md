@@ -297,7 +297,7 @@ auto-load on matching edits and point at the same files.
 - **Imports are relative, with explicit `.ts`/`.tsx` extensions.**
   `tsconfig.json` uses `moduleResolution: "bundler"` and no `baseUrl`.
   Inside `packages/server/src/` write
-  `import { Ref } from "@baerly/protocol"` for cross-package types
+  `import { UUID } from "@baerly/protocol"` for cross-package types
   and `import { makeTable } from "./table.ts"` for siblings. The
   `.ts` extension is required so that Node's native
   `--experimental-strip-types` runtime — used by the helpdesk
@@ -306,8 +306,8 @@ auto-load on matching edits and point at the same files.
   oxlint (`import/extensions: ["error", "always", { ignorePackages: true }]`);
   `scripts/add-ts-extensions.mjs --check` audits the full repo
   including `bench/`, `manual-e2e/`, `examples/`, and `*.config.ts`.
-- **Branded types are load-bearing.** `Ref`, `ManifestKey`, `UUID`,
-  `VersionId` exist to prevent confusion bugs. Don't paper over a type
+- **Branded types are load-bearing.** `UUID` and `ContentVersionId`
+  exist to prevent confusion bugs. Don't paper over a type
   mismatch with `as string`; widen only if you understand why.
 - **Magic values live in `packages/protocol/src/constants.ts`** with a JSDoc citing where the
   value comes from (often `docs/spec/sync-protocol.md`).

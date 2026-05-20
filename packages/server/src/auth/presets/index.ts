@@ -12,5 +12,3 @@ export {
   type JwtAlgorithm,
 } from "./bearer-jwt.ts";
 export { cloudflareAccess, type CloudflareAccessOptions } from "./cloudflare-access.ts";
-export { awsIamSigV4, type AwsIamSigV4Options, type AwsIamPrincipal } from "./aws-iam-sigv4.ts";
-export { allowlistIp, andAll, type AllowlistIpOptions } from "./allowlist-ip.ts";

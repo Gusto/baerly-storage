@@ -3,9 +3,8 @@ import type { ContentVersionId } from "./types.ts";
 /**
  * Width of the {@link ContentVersionId} hex strings produced by
  * {@link versionFromContent}. 32 hex chars = 128 bits, matching the
- * information content of the v4 UUID that previously seeded
- * `versionFromUuid`. Collision probability with N=10⁹ writes is
- * ~3 × 10⁻²⁰; ample for a content-addressed version id.
+ * information content of a v4 UUID. Collision probability with
+ * N=10⁹ writes is ~3 × 10⁻²⁰; ample for a content-addressed version id.
  *
  * @see docs/spec/log-entry-shape.md §"Content body layout"
  */

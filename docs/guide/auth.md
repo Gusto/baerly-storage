@@ -1,15 +1,15 @@
 ---
 title: Authentication
 audience: operator
-summary: "Built-in Verifier presets (shared secret, bearer JWT, CF Access, AWS SigV4, IP allowlist), tenant pinning, and the authorization caveat."
-last-reviewed: 2026-05-13
+summary: "Built-in Verifier presets (shared secret, bearer JWT, CF Access), tenant pinning, and the authorization caveat."
+last-reviewed: 2026-05-19
 tags: [auth, operations]
 related: ["../adr/001-tenant-cas-isolation.md", "../contributing/extending.md"]
 ---
 
 # Authentication
 
-`baerly-storage/auth` ships five `Verifier` presets. Each one
+`baerly-storage/auth` ships three `Verifier` presets. Each one
 authenticates the caller and returns a `tenantPrefix`, which the
 server uses to pin the request to one tenant's keyspace.
 
@@ -20,11 +20,6 @@ server uses to pin the request to one tenant's keyspace.
   reads the tenant from a configurable claim.
 - `cloudflareAccess` — thin shim over `bearerJwt` that consumes
   CF Access's `Cf-Access-Jwt-Assertion` header.
-- `awsIamSigV4` — verifies SigV4-signed requests against a list of
-  IAM principals; each principal pins one tenant.
-- `allowlistIp` — CIDR-based source-IP allowlist for use behind a
-  trusted proxy. Compose with `sharedSecret` / `bearerJwt` via
-  `andAll` for defense in depth.
 
 Source:
 [`packages/server/src/auth/presets/`](../../packages/server/src/auth/presets/).
