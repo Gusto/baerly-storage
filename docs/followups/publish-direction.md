@@ -51,7 +51,7 @@ Pick a side.
 `README.md:14-23` admits `pnpm dlx create-baerly@latest`
 "doesn't resolve end-to-end" and tells users to clone the repo
 and scaffold from `examples/`. The "Or wire it by hand" snippet
-imports `createListener` from `@baerly/adapter-node`,
+imports `createApp` from `@baerly/adapter-node`,
 `sharedSecret` from `@baerly/server/auth`, `LocalFsStorage` +
 `ensureTable` from `@baerly/dev` — three workspace packages a
 user can't install from public npm.

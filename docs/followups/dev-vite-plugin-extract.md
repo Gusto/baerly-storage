@@ -12,7 +12,7 @@ For `@baerly/adapter-cloudflare`, that edge is leaf-clean.
 For `@baerly/adapter-node`, it closes a cycle:
 
 - `@baerly/dev` → `@baerly/adapter-node`:
-  `packages/dev/src/vite-plugin.ts:1` imports `createListener`
+  `packages/dev/src/vite-plugin.ts:1` imports `createApp`
   from `@baerly/adapter-node`. This edge predates the
   dev-landing move — it's how `baerlyDev()` mounts the Baerly
   HTTP listener as Vite middleware in `examples/helpdesk/`.
@@ -56,8 +56,8 @@ edge by relocating `vite-plugin.ts` out of `@baerly/dev`.
 ## Action — pick one
 
 **(a) [preferred] Move `vite-plugin.ts` into `@baerly/adapter-node` as a subpath export.**
-The Vite plugin's job is "mount adapter-node's `createListener`
-as Vite middleware." That belongs next to `createListener`.
+The Vite plugin's job is "mount adapter-node's `createApp`
+as Vite middleware." That belongs next to `createApp`.
 Add `"./vite": { "types": "./src/vite-plugin.ts", "import":
 "./src/vite-plugin.ts" }` to `packages/adapter-node/package.json`
 exports. Move `packages/dev/src/vite-plugin.ts` →
@@ -114,7 +114,7 @@ After the workstream:
 - `pnpm dev:storage && pnpm --filter helpdesk dev` (or
   whatever the helpdesk example's dev command is) — the
   example still boots; the Vite plugin still proxies Baerly
-  HTTP requests through to `createListener`.
+  HTTP requests through to `getRequestListener(createApp(opts).fetch)`.
 - `grep -rn '"@baerly/adapter-node"' packages/dev/` returns
   zero hits (if option a) or `grep -rn 'vite-plugin' packages/dev/`
   returns zero hits (either option).
