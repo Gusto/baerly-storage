@@ -1,0 +1,9 @@
+# pnpm 11 reads the postinstall-script allowlist only from this
+# file: `package.json#pnpm.*` is no longer honoured. Without this
+# map, `pnpm install` exits with `ERR_PNPM_IGNORED_BUILDS` for the
+# bundler chain below.
+#
+# `esbuild` ships a working install script we want to run (it
+# arrives via vite).
+allowBuilds:
+  esbuild: true

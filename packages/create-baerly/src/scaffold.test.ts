@@ -438,6 +438,51 @@ describe("scaffold", () => {
     });
   }
 
+  // Pin the postinstall-allowlist contract. Scaffolded apps inherit
+  // `packageManager: pnpm@11.x`, whose strict-builds gate exits with
+  // `ERR_PNPM_IGNORED_BUILDS` unless the deps with install scripts
+  // are listed in `pnpm-workspace.yaml#allowBuilds`. pnpm 11 reads
+  // the map only from that file — `package.json#pnpm.*` is no longer
+  // honoured. If any template drops the yaml or strips an expected
+  // key, this fails before it reaches a user's terminal.
+  test.each([
+    {
+      target: "cloudflare" as const,
+      starter: undefined,
+      expected: { esbuild: "true", workerd: "true", sharp: "false" },
+    },
+    {
+      target: "cloudflare" as const,
+      starter: "helpdesk" as const,
+      expected: { esbuild: "true", workerd: "true", sharp: "false" },
+    },
+    {
+      target: "node" as const,
+      starter: undefined,
+      expected: { esbuild: "true" },
+    },
+  ])(
+    "scaffolded $target/$starter ships pnpm-workspace.yaml with the expected allowBuilds map",
+    async ({ target, starter, expected }) => {
+      const label = starter === undefined ? target : `${target}-${starter}`;
+      const result = await scaffold({
+        projectName: `ws-${label}`,
+        target,
+        ...(starter !== undefined && { starter }),
+        pm: "pnpm",
+        templatesRoot: TEMPLATES_ROOT,
+        outRoot,
+      });
+      expect(result.filesWritten).toContain("pnpm-workspace.yaml");
+      const ws = await readFile(join(result.outDir, "pnpm-workspace.yaml"), "utf8");
+      expect(ws).toMatch(/^allowBuilds\s*:/m);
+      for (const [pkg, value] of Object.entries(expected)) {
+        // Match `<pkg>: true|false` under any indentation.
+        expect(ws).toMatch(new RegExp(`^\\s+${pkg}\\s*:\\s*${value}\\s*$`, "m"));
+      }
+    },
+  );
+
   // Flat-shape script-row sanity: the scaffolder doesn't manufacture
   // `package.json:scripts`, it just copies what each example ships.
   // This test pins the contract so any future drift on the example

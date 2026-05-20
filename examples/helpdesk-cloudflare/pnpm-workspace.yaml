@@ -1,0 +1,15 @@
+# pnpm 11 reads the postinstall-script allowlist only from this
+# file: `package.json#pnpm.*` is no longer honoured. Without this
+# map, `pnpm install` exits with `ERR_PNPM_IGNORED_BUILDS` for the
+# Cloudflare-stack deps below.
+#
+# - `esbuild` / `workerd` ship working install scripts we want to run.
+# - `sharp` is a transitive miniflare dep whose install script falls
+#   back to a node-gyp build on Node 24 (no prebuilt for our
+#   platform/runtime combo). Set to `false` to suppress cleanly —
+#   sharp still loads from its prebuilt binary at require time, and
+#   nothing in a scaffolded baerly app exercises its code path.
+allowBuilds:
+  esbuild: true
+  workerd: true
+  sharp: false
