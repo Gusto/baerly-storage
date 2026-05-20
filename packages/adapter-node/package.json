@@ -23,8 +23,10 @@
     "@baerly/dev": "workspace:*",
     "@baerly/protocol": "workspace:*",
     "@baerly/server": "workspace:*",
+    "@hono/node-server": "^2.0.3",
     "@xmldom/xmldom": "^0.9.10",
     "aws4fetch": "1.0.20",
+    "hono": "^4.12.18",
     "picocolors": "^1.1.1"
   }
 }

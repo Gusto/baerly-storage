@@ -90,6 +90,8 @@ export type {
   CreateListenerOptions,
   NodeMaintenanceOptions,
 } from "./server.ts";
+export { createApp } from "./app.ts";
+export type { CreateAppOptions } from "./app.ts";
 export { s3Storage, r2Storage, minioStorage, gcsStorage } from "./storage-factories.ts";
 export { baerlyNode } from "./baerly-node.ts";
 export type { BaerlyNodeHandle, BaerlyNodeMaintenance, BaerlyNodeOptions } from "./baerly-node.ts";
