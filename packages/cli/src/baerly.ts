@@ -21,6 +21,7 @@ import { migrateCmd } from "./admin/migrate.ts";
 import { rebuildIndexCmd } from "./admin/rebuild-index.ts";
 import { restoreCmd } from "./admin/restore.ts";
 import { copy } from "./copy.ts";
+import { cost } from "./cost.ts";
 import { deploy } from "./deploy.ts";
 import { dev } from "./dev.ts";
 import { doctor } from "./doctor.ts";
@@ -65,6 +66,7 @@ const main = defineCommand({
   },
   subCommands: {
     copy,
+    cost,
     deploy,
     dev,
     doctor,
