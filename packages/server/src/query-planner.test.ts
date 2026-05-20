@@ -152,7 +152,11 @@ describe("planQuery", () => {
     });
   });
 
-  test("mixed predicate (equality + operator) routes equality, residue holds operator", () => {
+  test("mixed predicate (equality + operator) routes equality; executor re-checks residue", () => {
+    // Unconsumed clauses (the `$gt` on a non-indexed field) are NOT
+    // surfaced on the plan — the executor re-applies the full
+    // original predicate via `matches(...)` post-fetch, so the
+    // planner only needs to commit to the index walk shape.
     const indexes: IndexDefinition[] = [{ name: "by_a", on: "a" }];
     const plan = planQuery(
       { a: "x", b: { $gt: 5 } } as unknown as Predicate<DocumentData>,
@@ -162,11 +166,10 @@ describe("planQuery", () => {
       kind: "index-walk",
       indexName: "by_a",
       equalityKeys: ["x"],
-      postFilter: { b: { $gt: 5 } },
     });
   });
 
-  test("equality on non-indexed field lands on residue", () => {
+  test("equality on non-indexed field is left for the executor's post-fetch re-check", () => {
     const indexes: IndexDefinition[] = [{ name: "by_status", on: "status" }];
     const plan = planQuery(
       { status: "open", assignee: "alice" } as unknown as Predicate<DocumentData>,
@@ -176,7 +179,6 @@ describe("planQuery", () => {
       kind: "index-walk",
       indexName: "by_status",
       equalityKeys: ["open"],
-      postFilter: { assignee: "alice" },
     });
   });
 });
@@ -244,7 +246,7 @@ describe("planQuery — range walks (T3)", () => {
     });
   });
 
-  test("range on non-last indexed field falls back to no-matching-index", () => {
+  test("range on non-last indexed field falls back to single-field range walk", () => {
     // Range op on the FIRST slot prevents left-anchored routing.
     const indexes: IndexDefinition[] = [{ name: "by_tenant_priority", on: ["tenant", "priority"] }];
     const plan = planQuery(
@@ -253,8 +255,8 @@ describe("planQuery — range walks (T3)", () => {
     );
     // No equality on `tenant`, so the planner can route by treating
     // `tenant` itself as a tail-slot range. That's a single-field
-    // range walk over the composite. The `priority` clause becomes
-    // postFilter residue.
+    // range walk over the composite. The `priority` clause is left
+    // for the executor's full-predicate re-check.
     expect(plan).toEqual({
       kind: "index-walk",
       indexName: "by_tenant_priority",
@@ -265,11 +267,10 @@ describe("planQuery — range walks (T3)", () => {
         loInclusive: false,
         hiInclusive: false,
       },
-      postFilter: { priority: "p1" },
     });
   });
 
-  test("equality on first slot, range on non-indexed field falls into postFilter", () => {
+  test("equality on first slot, range on non-indexed field still routes the equality", () => {
     const indexes: IndexDefinition[] = [{ name: "by_tenant", on: "tenant" }];
     const plan = planQuery(
       { tenant: "acme", priority: { $gt: "p1" } } as unknown as Predicate<DocumentData>,
@@ -279,7 +280,6 @@ describe("planQuery — range walks (T3)", () => {
       kind: "index-walk",
       indexName: "by_tenant",
       equalityKeys: ["acme"],
-      postFilter: { priority: { $gt: "p1" } },
     });
   });
 
@@ -516,11 +516,10 @@ describe("planQuery — filtered index cost bias (T4)", () => {
     if (plan.kind === "index-walk") {
       expect(plan.indexName).toBe("open_by_assignee");
       expect(plan.equalityKeys).toEqual(["alice"]);
-      // The full original predicate stays in `postFilter` — the
-      // stale-row defence requires it, even when the filter is
-      // implied. (See T4 step e — filter-elimination from postFilter
-      // is explicitly out of scope.)
-      expect(plan.postFilter).toEqual({ status: "open" });
+      // Unconsumed clauses (the `status: "open"` literal here) are
+      // NOT surfaced on the plan — the executor re-applies the full
+      // original predicate post-fetch, so the stale-row defence is
+      // enforced uniformly there (see `query.ts` "simpler invariant").
     }
   });
 

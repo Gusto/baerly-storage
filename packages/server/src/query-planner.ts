@@ -36,9 +36,10 @@ export type QueryPlan = IndexWalkPlan | FullScanPlan;
  * boundary and lists `<tablePrefix>/index/<indexName>/<v0>/.../<vN>/`.
  *
  * `rangeOn` and `inOn` are reserved for T3 — both `undefined` under
- * T2's equality-only routing. The executor re-applies the original
- * predicate after fetching rows to defend against stale index
- * entries AND to consume the planner's `postFilter` residue.
+ * T2's equality-only routing. The executor re-applies the FULL
+ * original predicate via `matches(...)` after fetching rows; that
+ * single check is both the stale-index defence and the residue
+ * consumer, so the planner does NOT emit a separate `postFilter`.
  */
 export interface IndexWalkPlan {
   readonly kind: "index-walk";
@@ -69,14 +70,6 @@ export interface IndexWalkPlan {
     readonly field: string;
     readonly values: ReadonlyArray<DocumentValue>;
   };
-  /**
-   * Predicate residue the executor MUST re-apply post-fetch via
-   * `matches(...)`. Defends against stale index entries AND consumes
-   * predicate clauses the planner could not push into the walk (e.g.
-   * unrelated equality on a non-indexed field, or operator clauses
-   * the planner left for the in-memory re-check).
-   */
-  readonly postFilter?: Predicate<DocumentData>;
 }
 
 /**
@@ -260,7 +253,9 @@ const tryExtractEq = (op: Record<string, unknown>): DocumentValue | undefined =>
  *      - `rangeOps[k] = {lo, hi, loInclusive, hiInclusive}` for
  *        range-only `{$gt|$gte|$lt|$lte}` op-objects.
  *      - `inOps[k] = [...]` for pure `{$in:[...]}` op-objects.
- *      - Everything else lands on `postFilter` residue.
+ *      - Everything else stays in the original predicate; the
+ *        executor re-applies the full predicate post-fetch via
+ *        `matches(...)`, which catches the residue automatically.
  *  4. If no equality / range / $in candidates exist →
  *     `predicate-uses-operators-only`.
  *  5. For each `def`, walk `def.on` left-to-right consuming
@@ -276,11 +271,6 @@ const tryExtractEq = (op: Record<string, unknown>): DocumentValue | undefined =>
  *     `values.length > IN_FANOUT_THRESHOLD`, fall back to
  *     `FullScanPlan{reason:"no-matching-index"}` — N sequential
  *     LISTs cost more than a snapshot+log fold.
- *  8. Build the `postFilter` residue: every predicate clause NOT
- *     consumed by the walk (operator residue on non-indexed
- *     fields, equality on non-indexed fields, operator residue on
- *     fields BEYOND the tail slot, etc.). Attach only when
- *     non-empty.
  *
  * The planner deliberately treats `def.on` as the LITERAL tuple of
  * field names — top-level only. Dotted paths are out of scope here
@@ -290,8 +280,9 @@ const tryExtractEq = (op: Record<string, unknown>): DocumentValue | undefined =>
  * **Range/`$in` is allowed only on the LAST indexed field beyond the
  * equality prefix** — on a composite `[a, b]`, a range on `a` with
  * equality on `b` is NOT contiguous under the key encoding (the `b`
- * slot sits to the right of the varying `a` slot). The clause
- * landing outside the tail slot becomes `postFilter` residue.
+ * slot sits to the right of the varying `a` slot). Clauses landing
+ * outside the tail slot are simply left for the executor's full-
+ * predicate re-check.
  *
  * @typeParam T - the document shape the predicate is keyed against.
  */
@@ -337,8 +328,9 @@ export const planQuery = <T extends DocumentData = DocumentData>(
         inOps.set(key, inVals);
         continue;
       }
-      // Some other operator-object shape (e.g. mixed). Falls
-      // through to postFilter via the residue rebuild later.
+      // Some other operator-object shape (e.g. mixed). Stays in
+      // the original predicate; the executor's full-predicate
+      // re-check applies it post-fetch.
       continue;
     }
     // Primitives + non-operator nested objects are routable as
@@ -367,7 +359,6 @@ export const planQuery = <T extends DocumentData = DocumentData>(
     readonly defIndex: number;
     readonly prefixLen: number;
     readonly equalityKeys: DocumentValue[];
-    readonly consumed: ReadonlyArray<string>;
     readonly tail?:
       | { kind: "range"; field: string; info: RangeOpInfo }
       | { kind: "in"; field: string; values: ReadonlyArray<DocumentValue> };
@@ -377,14 +368,12 @@ export const planQuery = <T extends DocumentData = DocumentData>(
     const def = indexes[defIndex]!;
     const tuple: readonly string[] = typeof def.on === "string" ? [def.on] : def.on;
     const equalityKeys: DocumentValue[] = [];
-    const consumed: string[] = [];
     let tail: Candidate["tail"] | undefined;
     for (let i = 0; i < tuple.length; i++) {
       const field = tuple[i]!;
       const v = equality.get(field);
       if (v !== undefined) {
         equalityKeys.push(v);
-        consumed.push(field);
         continue;
       }
       // First field WITHOUT equality — this is the "tail slot"
@@ -394,12 +383,10 @@ export const planQuery = <T extends DocumentData = DocumentData>(
       const range = rangeOps.get(field);
       if (range !== undefined) {
         tail = { kind: "range", field, info: range };
-        consumed.push(field);
       } else {
         const inVals = inOps.get(field);
         if (inVals !== undefined) {
           tail = { kind: "in", field, values: inVals };
-          consumed.push(field);
         }
       }
       break;
@@ -413,7 +400,6 @@ export const planQuery = <T extends DocumentData = DocumentData>(
       defIndex,
       prefixLen: candidateLen,
       equalityKeys,
-      consumed,
       ...(tail !== undefined ? { tail } : {}),
     });
   }
@@ -460,27 +446,11 @@ export const planQuery = <T extends DocumentData = DocumentData>(
     }
   }
 
-  // Residue = every predicate key NOT consumed by the winner's
-  // walk prefix. Includes:
-  //   - Equality clauses on non-indexed fields.
-  //   - Operator-shape clauses on fields the walk didn't consume
-  //     (e.g. range on a non-tail-slot field, or mixed-shape
-  //     op-objects the planner refuses to route).
-  const consumedSet = new Set(best.consumed);
-  const postFilter: Record<string, unknown> = {};
-  let residueCount = 0;
-  for (const key of Object.keys(predicate)) {
-    if (consumedSet.has(key)) {
-      continue;
-    }
-    const value = (predicate as Record<string, unknown>)[key];
-    if (value === undefined) {
-      continue;
-    }
-    postFilter[key] = value;
-    residueCount++;
-  }
-
+  // Residue (unconsumed predicate clauses) is intentionally NOT
+  // surfaced on the plan — the executor re-applies the FULL
+  // original predicate via `matches(...)` post-fetch, which is
+  // both the stale-index defence and the residue consumer. See
+  // `query.ts` ("simpler invariant").
   const plan: IndexWalkPlan = {
     kind: "index-walk",
     indexName: best.def.name,
@@ -499,7 +469,6 @@ export const planQuery = <T extends DocumentData = DocumentData>(
     ...(best.tail !== undefined && best.tail.kind === "in"
       ? { inOn: { field: best.tail.field, values: best.tail.values } }
       : {}),
-    ...(residueCount > 0 ? { postFilter: postFilter as Predicate<DocumentData> } : {}),
   };
   return plan;
 };
