@@ -126,15 +126,7 @@ export function createRouter(options: CreateRouterOptions): Hono {
   // List — GET /v1/t/:table?where=<urlencoded-json>
   app.get("/v1/t/:table", async (c) => {
     const { table } = c.req.param();
-    const whereParam = c.req.query("where");
-    let predicate: Record<string, unknown> = {};
-    if (whereParam !== undefined && whereParam.length > 0) {
-      try {
-        predicate = JSON.parse(whereParam) as Record<string, unknown>;
-      } catch {
-        throw new BaerlyError("SchemaError", "Invalid JSON in ?where=");
-      }
-    }
+    const predicate = parseWhereParam(c);
     const consistency = parseConsistency(c.req.query("consistency"));
     const order = parseOrder(c.req.query("order"));
     const limit = parseLimit(c.req.query("limit"));
@@ -157,10 +149,7 @@ export function createRouter(options: CreateRouterOptions): Hono {
   app.post("/v1/t/:table", async (c) => {
     const { table } = c.req.param();
     const body = await readJsonBody(c, MAX_BODY_BYTES);
-    const { doc } = body as { doc?: unknown };
-    if (doc === undefined || typeof doc !== "object" || doc === null || Array.isArray(doc)) {
-      throw new BaerlyError("SchemaError", "Request body must be { doc: object }");
-    }
+    const doc = assertJsonBodyField(body, "doc");
     const { _id } = await db
       .table(table)
       .insert(doc as Partial<DocumentData> & DocumentData);
@@ -171,15 +160,7 @@ export function createRouter(options: CreateRouterOptions): Hono {
   app.patch("/v1/t/:table/:id", async (c) => {
     const { table, id } = c.req.param();
     const body = await readJsonBody(c, MAX_BODY_BYTES);
-    const { patch } = body as { patch?: unknown };
-    if (
-      patch === undefined ||
-      typeof patch !== "object" ||
-      patch === null ||
-      Array.isArray(patch)
-    ) {
-      throw new BaerlyError("SchemaError", "Request body must be { patch: object }");
-    }
+    const patch = assertJsonBodyField(body, "patch");
     const { modified } = await db
       .table(table)
       .where({ _id: id } as Predicate<DocumentData>)
@@ -197,10 +178,7 @@ export function createRouter(options: CreateRouterOptions): Hono {
   app.put("/v1/t/:table/:id", async (c) => {
     const { table, id } = c.req.param();
     const body = await readJsonBody(c, MAX_BODY_BYTES);
-    const { doc } = body as { doc?: unknown };
-    if (doc === undefined || typeof doc !== "object" || doc === null || Array.isArray(doc)) {
-      throw new BaerlyError("SchemaError", "Request body must be { doc: object }");
-    }
+    const doc = assertJsonBodyField(body, "doc");
     try {
       await db
         .table(table)
@@ -249,15 +227,7 @@ export function createRouter(options: CreateRouterOptions): Hono {
     if (table === undefined || table.length === 0) {
       throw new BaerlyError("SchemaError", "GET /v1/count requires ?table=<name>");
     }
-    const whereParam = c.req.query("where");
-    let predicate: Record<string, unknown> = {};
-    if (whereParam !== undefined && whereParam.length > 0) {
-      try {
-        predicate = JSON.parse(whereParam) as Record<string, unknown>;
-      } catch {
-        throw new BaerlyError("SchemaError", "Invalid JSON in ?where=");
-      }
-    }
+    const predicate = parseWhereParam(c);
     const consistency = parseConsistency(c.req.query("consistency"));
     const { rows, manifestPointer, fresh } = await runAllWithMeta(db.tableReadContext(table), {
       predicate: predicate as Predicate<DocumentData>,
@@ -326,6 +296,50 @@ export function createRouter(options: CreateRouterOptions): Hono {
  *   third cross-package consumer.
  */
 export const MAX_BODY_BYTES = 1 << 20; // 1 MiB; matches `S3HttpStorage`'s conformance-suite default.
+
+/**
+ * Assert that `body[field]` is a plain object (not undefined / null /
+ * array / primitive). Returns the value typed as
+ * `Record<string, unknown>` so the caller's next cast doesn't need
+ * another guard. Throws `BaerlyError{code:"SchemaError"}` with the
+ * locked wording `"Request body must be { <field>: object }"`.
+ *
+ * Used by POST `/v1/t/:table` (`doc`), PATCH `/v1/t/:table/:id`
+ * (`patch`), and PUT `/v1/t/:table/:id` (`doc`).
+ *
+ * @internal
+ */
+const assertJsonBodyField = (body: unknown, field: string): Record<string, unknown> => {
+  const value =
+    typeof body === "object" && body !== null
+      ? (body as Record<string, unknown>)[field]
+      : undefined;
+  if (value === undefined || typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new BaerlyError("SchemaError", `Request body must be { ${field}: object }`);
+  }
+  return value as Record<string, unknown>;
+};
+
+/**
+ * Parse the `?where=<urlencoded JSON>` query-string param. Absent or
+ * empty → `{}` (match-all). Malformed JSON → `BaerlyError{code:"SchemaError"}`
+ * with the locked wording `"Invalid JSON in ?where="`. Returns the
+ * parsed object widened to `Record<string, unknown>`; callers cast
+ * to `Predicate<DocumentData>` after.
+ *
+ * @internal
+ */
+const parseWhereParam = (c: Context): Record<string, unknown> => {
+  const whereParam = c.req.query("where");
+  if (whereParam === undefined || whereParam.length === 0) {
+    return {};
+  }
+  try {
+    return JSON.parse(whereParam) as Record<string, unknown>;
+  } catch {
+    throw new BaerlyError("SchemaError", "Invalid JSON in ?where=");
+  }
+};
 
 /**
  * Parse the `?consistency=...` query-string param. Absent →
