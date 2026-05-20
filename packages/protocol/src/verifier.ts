@@ -2,53 +2,18 @@
  * Result of a successful {@link Verifier} call. Returned when the
  * request carries valid credentials; replaced with `null` on
  * failure.
- *
- * `tenantPrefix` is the value passed to `Db.create({ tenant })`.
- * The HTTP dispatcher uses it for **two** distinct
- * responsibilities:
- *
- * 1. **Scope check (403).** The dispatcher compares the request's
- *    URL-derived target (e.g. `/v1/t/<table>/<id>`) against the
- *    physical prefix `app/<app>/tenant/<tenantPrefix>/...`. Anything
- *    that would escape the prefix is rejected with
- *    `BaerlyError{code:"AccessDenied"}` and HTTP 403.
- * 2. **`Db` construction.** After the scope check passes, the
- *    dispatcher invokes
- *    `Db.create({ storage, app, tenant: tenantPrefix })`. `Db.create`
- *    enforces that `tenantPrefix` is non-empty and contains no `/`
- *    (the key-segment separator). A `Verifier` that violates either
- *    constraint surfaces as `BaerlyError{code:"InvalidConfig"}` from
- *    `Db.create`; the dispatcher maps that to 500 +
- *    `code:"Internal"` because it indicates a Verifier bug, not a
- *    client error.
- *
- * `identity` is opaque to the protocol kernel and to the
- * dispatcher. Preset Verifier factories decide the shape:
- * a JWT verifier returns the decoded claim set, a SigV4 verifier
- * returns the IAM principal ARN, a shared-secret verifier returns
- * a constant token. Application code that needs to read `identity`
- * does so off the dispatcher's request context — the dispatcher
- * does not inspect it.
  */
 export interface VerifierResult {
   /**
-   * Non-empty, `/`-free tenant identifier. Spent as `tenant` in
-   * `Db.create({ tenant })`. See {@link VerifierResult} for the
-   * scope-check / `Db.create` split.
-   *
-   * Named `tenantPrefix` (not `tenant`) to surface responsibility 1
-   * — this is a load-bearing path-scope token that the dispatcher
-   * compares against the request URL, not just a free-form tenant
-   * id.
+   * Tenant identifier. Must be non-empty and contain no `/` (the
+   * key-segment separator).
    */
   readonly tenantPrefix: string;
 
   /**
-   * Per-Verifier identity payload. `unknown` because preset
-   * factories choose their own shape; the dispatcher
-   * never reads this field. Application code that wants the
-   * identity reads it off the request context the dispatcher
-   * attaches.
+   * Per-Verifier identity payload. Opaque to the protocol kernel;
+   * the caller-defined shape is whatever the Verifier factory
+   * chooses to return.
    */
   readonly identity: unknown;
 }
