@@ -3,7 +3,7 @@
    declaration); the synthetic seed populates it directly. */
 
 /**
- * `baerly copy` over `S3HttpStorage` against the local Minio that
+ * `baerly admin copy` over `S3HttpStorage` against the local Minio that
  * `pnpm dev:storage` provisions. Gated on `MINIO=1` via
  * `describe.runIf`. Re-uses the Minio creds + endpoint from
  * `packages/adapter-node/src/s3-http.conformance.test.ts` — same
@@ -69,7 +69,7 @@ const APP = "app";
 const TENANT = "t";
 const COLL = "tickets";
 
-describe.runIf(minioEnabled)("baerly copy @ Minio :9102", () => {
+describe.runIf(minioEnabled)("baerly admin copy @ Minio :9102", () => {
   beforeAll(async () => {
     await createBucket(signer, MINIO_ENDPOINT, SRC_BUCKET);
     await createBucket(signer, MINIO_ENDPOINT, DST_BUCKET);

@@ -44,7 +44,7 @@ const COPY_OWNER = "baerly-copy";
 const APPLICATION_JSON = "application/json";
 
 /**
- * citty arg shape for `baerly copy`. Keys stay in kebab-case
+ * citty arg shape for `baerly admin copy`. Keys stay in kebab-case
  * (`from-snapshot`, not `fromSnapshot`) to keep the CLI surface and
  * the parsed-object keys identical — agents reading `--help` see the
  * same names that show up in error messages.

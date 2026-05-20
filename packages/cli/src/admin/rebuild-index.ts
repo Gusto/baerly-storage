@@ -7,7 +7,7 @@
  * Cost shape: `1 GET (current.json) + 1 GET (snapshot, if any) + N
  * GETs (live tail) + 1 LIST (the index prefix) + K PUTs + L DELETEs`.
  *
- * Exit codes (mirrors `baerly copy`):
+ * Exit codes (mirrors `baerly admin copy`):
  *   - `0` — success (envelope on stdout in --json mode).
  *   - `1` — user error (InvalidConfig: bad bucket URI, missing
  *           args, unparseable config).

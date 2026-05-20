@@ -200,9 +200,9 @@ export const inferPlanForCollection = (params: {
 
 /**
  * Read the live materialised view of one collection — snapshot
- * folded with the live log tail. Same shape `baerly copy` uses
- * (see `packages/cli/src/copy.ts`'s `loadSnapshotAsMap` JSDoc
- * example block).
+ * folded with the live log tail. Same shape `baerly admin copy`
+ * uses (see `packages/cli/src/admin/copy.ts`'s `loadSnapshotAsMap`
+ * JSDoc example block).
  *
  * Returns `null` when `current.json` is missing (collection not
  * provisioned). Returns an empty map when the collection is
