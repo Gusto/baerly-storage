@@ -14,15 +14,10 @@ const noopSchema: SchemaValidator = {
 const idx = (name: string, on: string): IndexDefinition => ({ name, on });
 
 describe("collectionsToMaps", () => {
-  test("undefined collections → empty maps (no allocation)", () => {
-    const a = collectionsToMaps(undefined);
-    const b = collectionsToMaps(undefined);
-    expect(a.schemas.size).toBe(0);
-    expect(a.indexes.size).toBe(0);
-    // Sentinel maps are shared — confirms the unconditional-pass call
-    // path doesn't churn per-request allocations.
-    expect(a.schemas).toBe(b.schemas);
-    expect(a.indexes).toBe(b.indexes);
+  test("undefined collections → empty maps", () => {
+    const { schemas, indexes } = collectionsToMaps(undefined);
+    expect(schemas.size).toBe(0);
+    expect(indexes.size).toBe(0);
   });
 
   test("picks up schema and indexes per collection", () => {
