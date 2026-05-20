@@ -20,8 +20,8 @@
  *
  * Args:
  *   --bucket            Required. Bucket URI.
- *   --app               Default "app" (or `baerly.config.ts`).
- *   --tenant            Default "tenant" (or `baerly.config.ts`).
+ *   --app               Required (or via baerly.config.ts).
+ *   --tenant            Required (or via baerly.config.ts).
  *   --table             Required. Collection name.
  *   --target            Required. postgres | sqlite | d1.
  *   --where             Optional. JSON-encoded `Predicate<T>`.
@@ -41,7 +41,7 @@
  */
 
 import { writeFile } from "node:fs/promises";
-import { defineCommand, parseArgs, type ArgsDef, type ParsedArgs } from "citty";
+import { type ArgsDef } from "citty";
 import {
   BaerlyError,
   type DocumentData,
@@ -59,9 +59,9 @@ import {
   serializeExportPlan,
   translatePredicateToSql,
 } from "./export/index.ts";
-import { loadAppConfig } from "./config.ts";
 import { parseBucketUri } from "./bucket-uri.ts";
-import { emitError, emitSuccess, setJsonMode } from "./output.ts";
+import { emitSuccess } from "./output.ts";
+import { defineBaerlySubcommand } from "./subcommand.ts";
 
 const EXPORT_ARGS = {
   bucket: {
@@ -73,13 +73,13 @@ const EXPORT_ARGS = {
   app: {
     type: "string",
     required: false,
-    description: "Application name segment (defaults to baerly.config.ts, then 'app').",
+    description: "Application name segment (defaults to baerly.config.ts).",
     valueHint: "app",
   },
   tenant: {
     type: "string",
     required: false,
-    description: "Tenant name segment (defaults to baerly.config.ts, then 'tenant').",
+    description: "Tenant name segment (defaults to baerly.config.ts).",
     valueHint: "tenant",
   },
   table: {
@@ -123,56 +123,7 @@ const EXPORT_ARGS = {
   },
 } as const satisfies ArgsDef;
 
-type Args = ParsedArgs<typeof EXPORT_ARGS>;
-
-const KNOWN_KEYS: ReadonlySet<string> = new Set([
-  "bucket",
-  "app",
-  "tenant",
-  "table",
-  "target",
-  "where",
-  "where-comment",
-  "output",
-  "sidecar",
-  "json",
-  "_",
-]);
-
-const errorToExitCode = (code: string): number => {
-  if (code === "InvalidConfig") {
-    return 1;
-  }
-  if (code === "Conflict" || code === "Internal" || code === "InvalidResponse") {
-    return 3;
-  }
-  return 2;
-};
-
 const VALID_TARGETS = new Set<string>(["postgres", "sqlite", "d1"]);
-
-const resolveAppTenant = async (args: Args): Promise<{ app: string; tenant: string }> => {
-  if (
-    typeof args.app === "string" &&
-    args.app.length > 0 &&
-    typeof args.tenant === "string" &&
-    args.tenant.length > 0
-  ) {
-    return { app: args.app, tenant: args.tenant };
-  }
-  try {
-    const cfg = await loadAppConfig();
-    return {
-      app: typeof args.app === "string" && args.app.length > 0 ? args.app : cfg.app,
-      tenant: typeof args.tenant === "string" && args.tenant.length > 0 ? args.tenant : cfg.tenant,
-    };
-  } catch {
-    return {
-      app: typeof args.app === "string" && args.app.length > 0 ? args.app : "app",
-      tenant: typeof args.tenant === "string" && args.tenant.length > 0 ? args.tenant : "tenant",
-    };
-  }
-};
 
 const parseWherePredicate = (raw: string): DocumentData => {
   let parsed: unknown;
@@ -232,14 +183,13 @@ const buildSql = async (
   return out;
 };
 
-const handleExport = async (args: Args): Promise<number> => {
-  setJsonMode(args.json === true);
-  try {
-    for (const k of Object.keys(args)) {
-      if (!KNOWN_KEYS.has(k)) {
-        throw new BaerlyError("InvalidConfig", `baerly export: unknown flag --${k}`);
-      }
-    }
+const bundle = defineBaerlySubcommand({
+  name: "export",
+  meta: {
+    description: "Snapshot dump of one collection to SQL.",
+  },
+  args: EXPORT_ARGS,
+  handler: async (args, ctx) => {
     if (!VALID_TARGETS.has(args.target)) {
       throw new BaerlyError(
         "InvalidConfig",
@@ -247,7 +197,7 @@ const handleExport = async (args: Args): Promise<number> => {
       );
     }
     const target = args.target as SqlTarget;
-    const { app, tenant } = await resolveAppTenant(args);
+    const { app, tenant } = await ctx.resolveAppTenant({ app: args.app, tenant: args.tenant });
     const bucket = await parseBucketUri(args.bucket);
     const currentJsonKey = `${bucket.keyPrefix}app/${app}/tenant/${tenant}/manifests/${args.table}/current.json`;
     const view = await loadMaterialisedView({
@@ -312,47 +262,18 @@ const handleExport = async (args: Args): Promise<number> => {
       ...(typeof outputPath === "string" && outputPath.length > 0 && { output: outputPath }),
     });
     return 0;
-  } catch (error) {
-    if (error instanceof BaerlyError) {
-      emitError("export", error.code, error.message);
-      return errorToExitCode(error.code);
-    }
-    emitError("export", "Unknown", (error as Error).message);
-    return 2;
-  }
-};
-
-/** citty `defineCommand` block for `baerly export`. */
-export const exportCmd = defineCommand({
-  meta: {
-    name: "export",
-    description: "Snapshot dump of one collection to SQL.",
-  },
-  args: EXPORT_ARGS,
-  run: async ({ args }) => {
-    const code = await handleExport(args);
-    if (code !== 0) {
-      process.exit(code);
-    }
   },
 });
+
+/** citty `defineCommand` block for `baerly export`. */
+export const exportCmd = bundle.cmd;
 
 /**
  * Programmatic entry used by tests. Bypasses citty's `run` wrapper
  * (which would call `process.exit` and kill vitest) and returns the
  * integer exit code directly.
  */
-export const runExport = async (argv: readonly string[]): Promise<number> => {
-  let parsed: Args;
-  try {
-    parsed = parseArgs<typeof EXPORT_ARGS>(argv as string[], EXPORT_ARGS);
-  } catch (error) {
-    setJsonMode(argv.includes("--json"));
-    emitError("export", "InvalidConfig", (error as Error).message);
-    return 1;
-  }
-  return handleExport(parsed);
-};
+export const runExport = bundle.run;
 
 // Build a human-readable label for the "expected JSON object" error.
 // `null`, arrays, and the bare `undefined` need to be disambiguated

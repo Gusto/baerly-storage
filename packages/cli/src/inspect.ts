@@ -3,8 +3,8 @@
  *
  * Args:
  *   --bucket   Required. Bucket URI.
- *   --app      Default from baerly.config.ts; falls back to "app".
- *   --tenant   Default from baerly.config.ts; falls back to "tenant".
+ *   --app      Required (or via baerly.config.ts).
+ *   --tenant   Required (or via baerly.config.ts).
  *   --table    Required. Collection name.
  *   --config   Optional path to baerly.config.{js,mjs,json} for index info.
  *   --json     JSON envelope.
@@ -32,17 +32,19 @@
  *   0 — inspection ran (status may be "ok" or "error"; both exit 0).
  *   1 — InvalidConfig (bad bucket URI, missing args, unknown flag).
  *   2 — Storage / Network error.
+ *   3 — Protocol invariant (Conflict / Internal / InvalidResponse).
  */
 
-import { defineCommand, parseArgs, type ArgsDef, type ParsedArgs } from "citty";
+import { type ArgsDef } from "citty";
 import { BaerlyError, readCurrentJson, type CurrentJson, type Storage } from "@baerly/protocol";
 import { loadMaterialisedView } from "./export/index.ts";
-import { loadAppConfig, loadCollectionIndexes } from "./config.ts";
+import { loadCollectionIndexes } from "./config.ts";
 import { parseBucketUri } from "./bucket-uri.ts";
-import { emitError, emitSuccess, isJsonMode, setJsonMode } from "./output.ts";
+import { emitSuccess, isJsonMode } from "./output.ts";
 import { detectProvider, pricingFor } from "./cost/provider.ts";
 import { project, type Trajectory } from "./cost/project.ts";
 import { estimateWritesPerMin } from "./doctor/usage.ts";
+import { defineBaerlySubcommand } from "./subcommand.ts";
 
 const INSPECT_ARGS = {
   bucket: {
@@ -54,13 +56,13 @@ const INSPECT_ARGS = {
   app: {
     type: "string",
     required: false,
-    description: "Application name segment (defaults to baerly.config.ts, then 'app').",
+    description: "Application name segment (defaults to baerly.config.ts).",
     valueHint: "app",
   },
   tenant: {
     type: "string",
     required: false,
-    description: "Tenant name segment (defaults to baerly.config.ts, then 'tenant').",
+    description: "Tenant name segment (defaults to baerly.config.ts).",
     valueHint: "tenant",
   },
   table: {
@@ -89,26 +91,6 @@ const INSPECT_ARGS = {
   },
 } as const satisfies ArgsDef;
 
-type Args = ParsedArgs<typeof INSPECT_ARGS>;
-
-const KNOWN_KEYS: ReadonlySet<string> = new Set([
-  "bucket",
-  "app",
-  "tenant",
-  "table",
-  "config",
-  "provider",
-  "json",
-  "_",
-]);
-
-const errorToExitCode = (code: string): number => {
-  if (code === "InvalidConfig") {
-    return 1;
-  }
-  return 2;
-};
-
 const countListEntries = async (
   storage: Storage,
   prefix: string,
@@ -120,34 +102,6 @@ const countListEntries = async (
     keys.push(entry.key);
   }
   return { count, keys };
-};
-
-/** Default-app / default-tenant resolution, with a JSON-mode warning when falling through. */
-const resolveAppTenant = async (
-  args: Args,
-): Promise<{ app: string; tenant: string; warning?: string }> => {
-  if (
-    typeof args.app === "string" &&
-    args.app.length > 0 &&
-    typeof args.tenant === "string" &&
-    args.tenant.length > 0
-  ) {
-    return { app: args.app, tenant: args.tenant };
-  }
-  try {
-    const cfg = await loadAppConfig();
-    return {
-      app: typeof args.app === "string" && args.app.length > 0 ? args.app : cfg.app,
-      tenant: typeof args.tenant === "string" && args.tenant.length > 0 ? args.tenant : cfg.tenant,
-    };
-  } catch {
-    return {
-      app: typeof args.app === "string" && args.app.length > 0 ? args.app : "app",
-      tenant: typeof args.tenant === "string" && args.tenant.length > 0 ? args.tenant : "tenant",
-      warning:
-        "baerly inspect: no baerly.config.{ts,js,mjs,json} in cwd; falling back to defaults app=app, tenant=tenant",
-    };
-  }
 };
 
 interface InspectResult {
@@ -163,7 +117,6 @@ interface InspectResult {
   status: "ok" | "error";
   errors: string[];
   trajectory: Trajectory | null;
-  warning?: string;
 }
 
 /** Compact "1.5M" / "22k" / "842" rendering for Class A op counts. */
@@ -234,20 +187,16 @@ const renderText = (r: InspectResult, table: string): string => {
       lines.push(`  error:               ${e}`);
     }
   }
-  if (r.warning !== undefined) {
-    lines.push(`  warning:             ${r.warning}`);
-  }
   return lines.join("\n") + "\n";
 };
 
-const handleInspect = async (args: Args): Promise<number> => {
-  setJsonMode(args.json === true);
-  try {
-    for (const k of Object.keys(args)) {
-      if (!KNOWN_KEYS.has(k)) {
-        throw new BaerlyError("InvalidConfig", `baerly inspect: unknown flag --${k}`);
-      }
-    }
+const bundle = defineBaerlySubcommand({
+  name: "inspect",
+  meta: {
+    description: "Read-only summary of one collection's snapshot + log state.",
+  },
+  args: INSPECT_ARGS,
+  handler: async (args, ctx) => {
     if (typeof args.provider === "string" && args.provider.length > 0) {
       const allowed = new Set(["r2", "aws-s3", "self-hosted", "dev"]);
       if (!allowed.has(args.provider)) {
@@ -258,7 +207,7 @@ const handleInspect = async (args: Args): Promise<number> => {
       }
     }
     const bucket = await parseBucketUri(args.bucket);
-    const { app, tenant, warning } = await resolveAppTenant(args);
+    const { app, tenant } = await ctx.resolveAppTenant({ app: args.app, tenant: args.tenant });
     const tablePrefix = `${bucket.keyPrefix}app/${app}/tenant/${tenant}/manifests/${args.table}`;
     const currentJsonKey = `${tablePrefix}/current.json`;
 
@@ -358,7 +307,6 @@ const handleInspect = async (args: Args): Promise<number> => {
       status: errors.length === 0 ? "ok" : "error",
       errors,
       trajectory,
-      ...(warning !== undefined && { warning }),
     };
 
     if (isJsonMode()) {
@@ -367,44 +315,15 @@ const handleInspect = async (args: Args): Promise<number> => {
       process.stdout.write(renderText(result, args.table));
     }
     return 0;
-  } catch (error) {
-    if (error instanceof BaerlyError) {
-      emitError("inspect", error.code, error.message);
-      return errorToExitCode(error.code);
-    }
-    emitError("inspect", "Unknown", (error as Error).message);
-    return 2;
-  }
-};
-
-/** citty `defineCommand` block for `baerly inspect`. */
-export const inspect = defineCommand({
-  meta: {
-    name: "inspect",
-    description: "Read-only summary of one collection's snapshot + log state.",
-  },
-  args: INSPECT_ARGS,
-  run: async ({ args }) => {
-    const code = await handleInspect(args);
-    if (code !== 0) {
-      process.exit(code);
-    }
   },
 });
+
+/** citty `defineCommand` block for `baerly inspect`. */
+export const inspect = bundle.cmd;
 
 /**
  * Programmatic entry used by tests. Bypasses citty's `run` wrapper
  * (which would call `process.exit` and kill vitest) and returns the
  * integer exit code directly.
  */
-export const runInspect = async (argv: readonly string[]): Promise<number> => {
-  let parsed: Args;
-  try {
-    parsed = parseArgs<typeof INSPECT_ARGS>(argv as string[], INSPECT_ARGS);
-  } catch (error) {
-    setJsonMode(argv.includes("--json"));
-    emitError("inspect", "InvalidConfig", (error as Error).message);
-    return 1;
-  }
-  return handleInspect(parsed);
-};
+export const runInspect = bundle.run;
