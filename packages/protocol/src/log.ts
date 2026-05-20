@@ -27,8 +27,15 @@ export interface LogEntry {
    * `ServerWriter.commit` (see
    * `packages/server/src/server-writer.ts`) from `timestamp()` +
    * the per-commit `session` + `countKey(seq)`. Consumers ack and
-   * resume from this string; **do not parse it** — use the
-   * `session` / `seq` fields below.
+   * resume from this string.
+   *
+   * When you have a `LogEntry` in hand, prefer the structured
+   * `session` / `seq` fields below over parsing this string. The
+   * one place that *does* need to crack it open is the
+   * `/v1/since` boundary, where a client resumes from an opaque
+   * `next_cursor` and no `LogEntry` is in scope — that path uses
+   * `lsnParts` (the kernel-blessed parser) rather than ad-hoc
+   * `split("_")`.
    */
   lsn: string;
 
@@ -141,6 +148,11 @@ const COUNT_BIT_WIDTH = 10;
  * Extract the `session` and `seq` embedded in an `lsn` of shape
  * `<base32-time>_<session>_<seq>`. The seq portion is decoded as a
  * descending base-32 integer (matches `countKey` in `./types`).
+ *
+ * Use this at the `/v1/since` cursor-decoding boundary, where a
+ * client resumes from an opaque `SinceResponse.next_cursor` and no
+ * `LogEntry` is in scope. When iterating `LogEntry` records, read
+ * `entry.session` / `entry.seq` directly instead.
  *
  * Throws on malformed input; callers should pass only lsns minted
  * by `ServerWriter.commit` (see
