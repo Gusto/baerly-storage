@@ -111,6 +111,8 @@
     "verify:agent": "tsgo --noEmit --pretty false && oxlint --format=unix --quiet tests packages && node scripts/add-ts-extensions.mjs --check",
     "dev:storage": "docker compose up -d --wait",
     "dev:storage:stop": "docker compose down",
+    "verdaccio:reset": "./scripts/verdaccio-reset.sh",
+    "verdaccio:publish": "pnpm verdaccio:reset && pnpm -r publish --registry http://localhost:4873 --no-git-checks",
     "eval:check": "node eval/check-acceptance.mjs",
     "eval:run": "node eval/run.mjs",
     "eval:score": "node eval/score.mjs",
