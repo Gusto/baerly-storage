@@ -30,7 +30,7 @@
  */
 
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { defineCommand, parseArgs, type ArgsDef, type ParsedArgs } from "citty";
+import { type ArgsDef } from "citty";
 import {
   type DocumentData,
   type Storage,
@@ -44,9 +44,9 @@ import {
   allIndexKeysFor,
   loadSnapshotAsMap,
 } from "@baerly/server";
-import { loadAppConfig } from "../config.ts";
 import { parseBucketUri } from "../bucket-uri.ts";
-import { emitError, emitSuccess, isJsonMode, setJsonMode } from "../output.ts";
+import { emitSuccess, isJsonMode } from "../output.ts";
+import { defineBaerlySubcommand } from "../subcommand.ts";
 
 const FSCK_ARGS = {
   bucket: {
@@ -58,13 +58,13 @@ const FSCK_ARGS = {
   app: {
     type: "string",
     required: false,
-    description: "Application name segment (defaults to baerly.config.ts, then 'app').",
+    description: "Application name segment (defaults to baerly.config.ts).",
     valueHint: "app",
   },
   tenant: {
     type: "string",
     required: false,
-    description: "Tenant name segment (defaults to baerly.config.ts, then 'tenant').",
+    description: "Tenant name segment (defaults to baerly.config.ts).",
     valueHint: "tenant",
   },
   table: {
@@ -90,29 +90,6 @@ const FSCK_ARGS = {
   },
 } as const satisfies ArgsDef;
 
-type Args = ParsedArgs<typeof FSCK_ARGS>;
-
-const KNOWN_KEYS: ReadonlySet<string> = new Set([
-  "bucket",
-  "app",
-  "tenant",
-  "table",
-  "config",
-  "rebuild-indexes",
-  "json",
-  "_",
-]);
-
-const errorToExitCode = (code: string): number => {
-  if (code === "InvalidConfig") {
-    return 1;
-  }
-  if (code === "Internal" || code === "InvalidResponse" || code === "Conflict") {
-    return 3;
-  }
-  return 2;
-};
-
 type Severity = "ok" | "finding";
 interface Finding {
   readonly severity: Severity;
@@ -120,29 +97,6 @@ interface Finding {
   readonly message: string;
   readonly key?: string;
 }
-
-const resolveAppTenant = async (args: Args): Promise<{ app: string; tenant: string }> => {
-  if (
-    typeof args.app === "string" &&
-    args.app.length > 0 &&
-    typeof args.tenant === "string" &&
-    args.tenant.length > 0
-  ) {
-    return { app: args.app, tenant: args.tenant };
-  }
-  try {
-    const cfg = await loadAppConfig();
-    return {
-      app: typeof args.app === "string" && args.app.length > 0 ? args.app : cfg.app,
-      tenant: typeof args.tenant === "string" && args.tenant.length > 0 ? args.tenant : cfg.tenant,
-    };
-  } catch {
-    return {
-      app: typeof args.app === "string" && args.app.length > 0 ? args.app : "app",
-      tenant: typeof args.tenant === "string" && args.tenant.length > 0 ? args.tenant : "tenant",
-    };
-  }
-};
 
 const loadConfigIndexes = async (
   configPath: string,
@@ -242,14 +196,13 @@ const renderText = (
   return lines.join("\n") + "\n";
 };
 
-const handleFsck = async (args: Args): Promise<number> => {
-  setJsonMode(args.json === true);
-  try {
-    for (const k of Object.keys(args)) {
-      if (!KNOWN_KEYS.has(k)) {
-        throw new BaerlyError("InvalidConfig", `baerly admin fsck: unknown flag --${k}`);
-      }
-    }
+const bundle = defineBaerlySubcommand({
+  name: "admin.fsck",
+  meta: {
+    description: "Read-only consistency walk for one collection.",
+  },
+  args: FSCK_ARGS,
+  handler: async (args, ctx) => {
     if (
       args["rebuild-indexes"] === true &&
       (args.config === undefined || args.config.length === 0)
@@ -259,7 +212,7 @@ const handleFsck = async (args: Args): Promise<number> => {
         "baerly admin fsck: --rebuild-indexes requires --config=<path> to resolve index definitions",
       );
     }
-    const { app, tenant } = await resolveAppTenant(args);
+    const { app, tenant } = await ctx.resolveAppTenant({ app: args.app, tenant: args.tenant });
     const bucket = await parseBucketUri(args.bucket);
     const tablePrefix = `${bucket.keyPrefix}app/${app}/tenant/${tenant}/manifests/${args.table}`;
     const currentJsonKey = `${tablePrefix}/current.json`;
@@ -397,44 +350,15 @@ const handleFsck = async (args: Args): Promise<number> => {
       );
     }
     return findings.length === 0 ? 0 : 4;
-  } catch (error) {
-    if (error instanceof BaerlyError) {
-      emitError("admin.fsck", error.code, error.message);
-      return errorToExitCode(error.code);
-    }
-    emitError("admin.fsck", "Unknown", (error as Error).message);
-    return 2;
-  }
-};
-
-/** citty `defineCommand` block for `baerly admin fsck`. */
-export const fsckCmd = defineCommand({
-  meta: {
-    name: "fsck",
-    description: "Read-only consistency walk for one collection.",
-  },
-  args: FSCK_ARGS,
-  run: async ({ args }) => {
-    const code = await handleFsck(args);
-    if (code !== 0) {
-      process.exit(code);
-    }
   },
 });
+
+/** citty `defineCommand` block for `baerly admin fsck`. */
+export const fsckCmd = bundle.cmd;
 
 /**
  * Programmatic entry used by tests. Bypasses citty's `run` wrapper
  * (which would call `process.exit` and kill vitest) and returns the
  * integer exit code directly.
  */
-export const runFsck = async (argv: readonly string[]): Promise<number> => {
-  let parsed: Args;
-  try {
-    parsed = parseArgs<typeof FSCK_ARGS>(argv as string[], FSCK_ARGS);
-  } catch (error) {
-    setJsonMode(argv.includes("--json"));
-    emitError("admin.fsck", "InvalidConfig", (error as Error).message);
-    return 1;
-  }
-  return handleFsck(parsed);
-};
+export const runFsck = bundle.run;

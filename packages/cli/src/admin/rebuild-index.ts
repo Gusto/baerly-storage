@@ -21,8 +21,8 @@
  *
  * Args:
  *   --bucket  Bucket URI (s3://...,  file:///<abs>, memory://...).
- *   --app     Application name segment. Default "app".
- *   --tenant  Tenant name segment. Default "tenant".
+ *   --app     Application name segment (defaults to baerly.config.ts).
+ *   --tenant  Tenant name segment (defaults to baerly.config.ts).
  *   --table   Collection name.
  *   --index   Index name (e.g. "by_status").
  *   --on      Field the index projects on (string today; matches
@@ -37,13 +37,14 @@
  * `rebuildIndex`; this command is a thin URI + arg-parsing wrapper.
  */
 
-import { defineCommand, parseArgs, type ArgsDef, type ParsedArgs } from "citty";
+import { type ArgsDef } from "citty";
 import { BaerlyError } from "@baerly/protocol";
 import { type IndexDefinition } from "@baerly/server";
 import { rebuildIndex } from "@baerly/server/maintenance";
 import { loadCollectionIndexes } from "../config.ts";
 import { parseBucketUri } from "../bucket-uri.ts";
-import { emitError, emitSuccess, setJsonMode } from "../output.ts";
+import { emitSuccess } from "../output.ts";
+import { defineBaerlySubcommand } from "../subcommand.ts";
 
 /** citty arg shape. Kebab-case so --help and parsed-object keys line up. */
 const REBUILD_INDEX_ARGS = {
@@ -56,15 +57,13 @@ const REBUILD_INDEX_ARGS = {
   app: {
     type: "string",
     required: false,
-    default: "app",
-    description: "Application segment in the physical key prefix",
+    description: "Application name segment (defaults to baerly.config.ts).",
     valueHint: "app",
   },
   tenant: {
     type: "string",
     required: false,
-    default: "tenant",
-    description: "Tenant segment in the physical key prefix",
+    description: "Tenant name segment (defaults to baerly.config.ts).",
     valueHint: "tenant",
   },
   table: {
@@ -101,31 +100,6 @@ const REBUILD_INDEX_ARGS = {
   },
 } as const satisfies ArgsDef;
 
-type Args = ParsedArgs<typeof REBUILD_INDEX_ARGS>;
-
-const KNOWN_KEYS: ReadonlySet<string> = new Set([
-  "bucket",
-  "app",
-  "tenant",
-  "table",
-  "index",
-  "on",
-  "config",
-  "json",
-  "verbose",
-  "_",
-]);
-
-const errorToExitCode = (code: string): number => {
-  if (code === "InvalidConfig") {
-    return 1;
-  }
-  if (code === "Conflict" || code === "Internal" || code === "InvalidResponse") {
-    return 3;
-  }
-  return 2;
-};
-
 /** Resolve the `on` field of a single named index from the config file. */
 const onFieldFromConfig = async (
   configPath: string,
@@ -143,14 +117,13 @@ const onFieldFromConfig = async (
   return def.on;
 };
 
-const handleRebuildIndex = async (args: Args): Promise<number> => {
-  setJsonMode(args.json === true);
-  try {
-    for (const k of Object.keys(args)) {
-      if (!KNOWN_KEYS.has(k)) {
-        throw new BaerlyError("InvalidConfig", `baerly admin rebuild-index: unknown flag --${k}`);
-      }
-    }
+const bundle = defineBaerlySubcommand({
+  name: "admin.rebuild-index",
+  meta: {
+    description: "Idempotent reconciliation of one secondary index.",
+  },
+  args: REBUILD_INDEX_ARGS,
+  handler: async (args, ctx) => {
     const bucket = await parseBucketUri(args.bucket);
     const on =
       args.config !== undefined && args.config.length > 0
@@ -163,7 +136,8 @@ const handleRebuildIndex = async (args: Args): Promise<number> => {
       );
     }
     const def: IndexDefinition = { name: args.index, on };
-    const currentJsonKey = `${bucket.keyPrefix}app/${args.app}/tenant/${args.tenant}/manifests/${args.table}/current.json`;
+    const { app, tenant } = await ctx.resolveAppTenant({ app: args.app, tenant: args.tenant });
+    const currentJsonKey = `${bucket.keyPrefix}app/${app}/tenant/${tenant}/manifests/${args.table}/current.json`;
     const result = await rebuildIndex(bucket.storage, currentJsonKey, def);
     emitSuccess({
       command: "admin.rebuild-index",
@@ -178,33 +152,14 @@ const handleRebuildIndex = async (args: Args): Promise<number> => {
       );
     }
     return 0;
-  } catch (error) {
-    if (error instanceof BaerlyError) {
-      emitError("admin.rebuild-index", error.code, error.message);
-      return errorToExitCode(error.code);
-    }
-    emitError("admin.rebuild-index", "Unknown", (error as Error).message);
-    return 2;
-  }
-};
+  },
+});
 
 /**
  * citty `defineCommand` block for `baerly admin rebuild-index`.
  * Mounted on the `admin` subcommand tree in `baerly.ts`.
  */
-export const rebuildIndexCmd = defineCommand({
-  meta: {
-    name: "rebuild-index",
-    description: "Idempotent reconciliation of one secondary index.",
-  },
-  args: REBUILD_INDEX_ARGS,
-  run: async ({ args }) => {
-    const code = await handleRebuildIndex(args);
-    if (code !== 0) {
-      process.exit(code);
-    }
-  },
-});
+export const rebuildIndexCmd = bundle.cmd;
 
 /**
  * Programmatic entry used by tests. Bypasses citty's `run` wrapper
@@ -213,14 +168,4 @@ export const rebuildIndexCmd = defineCommand({
  *
  * @param argv Args AFTER the `admin rebuild-index` subcommand.
  */
-export const runRebuildIndex = async (argv: readonly string[]): Promise<number> => {
-  let parsed: Args;
-  try {
-    parsed = parseArgs<typeof REBUILD_INDEX_ARGS>(argv as string[], REBUILD_INDEX_ARGS);
-  } catch (error) {
-    setJsonMode(argv.includes("--json"));
-    emitError("admin.rebuild-index", "InvalidConfig", (error as Error).message);
-    return 1;
-  }
-  return handleRebuildIndex(parsed);
-};
+export const runRebuildIndex = bundle.run;

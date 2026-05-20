@@ -13,8 +13,8 @@
  *
  * Args:
  *   --bucket               Required. Bucket URI.
- *   --app                  Default "app" (or `baerly.config.ts`).
- *   --tenant               Default "tenant" (or `baerly.config.ts`).
+ *   --app                  Required (or via baerly.config.ts).
+ *   --tenant               Required (or via baerly.config.ts).
  *   --table                Required. Collection name.
  *   --cloudflare-free-tier Apply the CF free-tier compact caps
  *                          (maxEntriesPerRun=20, minEntriesToCompact=50).
@@ -31,12 +31,12 @@
  *   3 — Protocol invariant (Conflict / Internal / InvalidResponse).
  */
 
-import { defineCommand, parseArgs, type ArgsDef, type ParsedArgs } from "citty";
+import { type ArgsDef } from "citty";
 import { BaerlyError } from "@baerly/protocol";
 import { CLOUDFLARE_FREE_TIER, type CompactOptions, compact } from "@baerly/server/maintenance";
-import { loadAppConfig } from "../config.ts";
 import { parseBucketUri } from "../bucket-uri.ts";
-import { emitError, emitSuccess, setJsonMode } from "../output.ts";
+import { emitSuccess } from "../output.ts";
+import { defineBaerlySubcommand } from "../subcommand.ts";
 
 const COMPACT_ARGS = {
   bucket: {
@@ -48,13 +48,13 @@ const COMPACT_ARGS = {
   app: {
     type: "string",
     required: false,
-    description: "Application name segment (defaults to baerly.config.ts, then 'app').",
+    description: "Application name segment (defaults to baerly.config.ts).",
     valueHint: "app",
   },
   tenant: {
     type: "string",
     required: false,
-    description: "Tenant name segment (defaults to baerly.config.ts, then 'tenant').",
+    description: "Tenant name segment (defaults to baerly.config.ts).",
     valueHint: "tenant",
   },
   table: {
@@ -81,60 +81,13 @@ const COMPACT_ARGS = {
   },
 } as const satisfies ArgsDef;
 
-type Args = ParsedArgs<typeof COMPACT_ARGS>;
-
-const KNOWN_KEYS: ReadonlySet<string> = new Set([
-  "bucket",
-  "app",
-  "tenant",
-  "table",
-  "cloudflare-free-tier",
-  "min-entries",
-  "json",
-  "_",
-]);
-
-const errorToExitCode = (code: string): number => {
-  if (code === "InvalidConfig") {
-    return 1;
-  }
-  if (code === "Conflict" || code === "Internal" || code === "InvalidResponse") {
-    return 3;
-  }
-  return 2;
-};
-
-const resolveAppTenant = async (args: Args): Promise<{ app: string; tenant: string }> => {
-  if (
-    typeof args.app === "string" &&
-    args.app.length > 0 &&
-    typeof args.tenant === "string" &&
-    args.tenant.length > 0
-  ) {
-    return { app: args.app, tenant: args.tenant };
-  }
-  try {
-    const cfg = await loadAppConfig();
-    return {
-      app: typeof args.app === "string" && args.app.length > 0 ? args.app : cfg.app,
-      tenant: typeof args.tenant === "string" && args.tenant.length > 0 ? args.tenant : cfg.tenant,
-    };
-  } catch {
-    return {
-      app: typeof args.app === "string" && args.app.length > 0 ? args.app : "app",
-      tenant: typeof args.tenant === "string" && args.tenant.length > 0 ? args.tenant : "tenant",
-    };
-  }
-};
-
-const handleCompact = async (args: Args): Promise<number> => {
-  setJsonMode(args.json === true);
-  try {
-    for (const k of Object.keys(args)) {
-      if (!KNOWN_KEYS.has(k)) {
-        throw new BaerlyError("InvalidConfig", `baerly admin compact: unknown flag --${k}`);
-      }
-    }
+const bundle = defineBaerlySubcommand({
+  name: "admin.compact",
+  meta: {
+    description: "Manually trigger one compact pass (fold log entries into a new snapshot).",
+  },
+  args: COMPACT_ARGS,
+  handler: async (args, ctx) => {
     let minEntriesOverride: number | undefined;
     if (typeof args["min-entries"] === "string") {
       const raw = args["min-entries"];
@@ -152,7 +105,7 @@ const handleCompact = async (args: Args): Promise<number> => {
       }
       minEntriesOverride = parsed;
     }
-    const { app, tenant } = await resolveAppTenant(args);
+    const { app, tenant } = await ctx.resolveAppTenant({ app: args.app, tenant: args.tenant });
     const bucket = await parseBucketUri(args.bucket);
     const currentJsonKey = `${bucket.keyPrefix}app/${app}/tenant/${tenant}/manifests/${args.table}/current.json`;
     // `CLOUDFLARE_FREE_TIER` is typed as `MaintenanceOptions` but its
@@ -180,44 +133,15 @@ const handleCompact = async (args: Args): Promise<number> => {
       },
     });
     return 0;
-  } catch (error) {
-    if (error instanceof BaerlyError) {
-      emitError("admin.compact", error.code, error.message);
-      return errorToExitCode(error.code);
-    }
-    emitError("admin.compact", "Unknown", (error as Error).message);
-    return 2;
-  }
-};
-
-/** citty `defineCommand` block for `baerly admin compact`. */
-export const compactCmd = defineCommand({
-  meta: {
-    name: "compact",
-    description: "Manually trigger one compact pass (fold log entries into a new snapshot).",
-  },
-  args: COMPACT_ARGS,
-  run: async ({ args }) => {
-    const code = await handleCompact(args);
-    if (code !== 0) {
-      process.exit(code);
-    }
   },
 });
+
+/** citty `defineCommand` block for `baerly admin compact`. */
+export const compactCmd = bundle.cmd;
 
 /**
  * Programmatic entry used by tests. Bypasses citty's `run` wrapper
  * (which would call `process.exit` and kill vitest) and returns the
  * integer exit code directly.
  */
-export const runCompact = async (argv: readonly string[]): Promise<number> => {
-  let parsed: Args;
-  try {
-    parsed = parseArgs<typeof COMPACT_ARGS>(argv as string[], COMPACT_ARGS);
-  } catch (error) {
-    setJsonMode(argv.includes("--json"));
-    emitError("admin.compact", "InvalidConfig", (error as Error).message);
-    return 1;
-  }
-  return handleCompact(parsed);
-};
+export const runCompact = bundle.run;

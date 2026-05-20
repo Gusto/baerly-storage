@@ -28,8 +28,8 @@
  *
  * Args:
  *   --bucket   Required. Bucket URI.
- *   --app      Default from baerly.config.ts; falls back to "app".
- *   --tenant   Default from baerly.config.ts; falls back to "tenant".
+ *   --app      Required (or via baerly.config.ts).
+ *   --tenant   Required (or via baerly.config.ts).
  *   --table    Required. Collection name.
  *   --json     JSON envelope (on stdout). Mutually informative with the
  *              NDJSON output: when --json is set the NDJSON body is
@@ -39,15 +39,16 @@
  *   0 — dump completed.
  *   1 — InvalidConfig (bad bucket URI, missing args).
  *   2 — Storage / Network / Internal protocol violation.
+ *   3 — Protocol invariant (Conflict / Internal / InvalidResponse).
  */
 
 import { open, type FileHandle } from "node:fs/promises";
-import { defineCommand, parseArgs, type ArgsDef, type ParsedArgs } from "citty";
+import { type ArgsDef } from "citty";
 import { BaerlyError, type DocumentValue, type DocumentData } from "@baerly/protocol";
 import { loadMaterialisedView } from "../export/index.ts";
-import { loadAppConfig } from "../config.ts";
 import { parseBucketUri } from "../bucket-uri.ts";
-import { emitError, emitSuccess, setJsonMode } from "../output.ts";
+import { emitSuccess } from "../output.ts";
+import { defineBaerlySubcommand } from "../subcommand.ts";
 
 const DUMP_ARGS = {
   bucket: {
@@ -59,13 +60,13 @@ const DUMP_ARGS = {
   app: {
     type: "string",
     required: false,
-    description: "Application name segment (defaults to baerly.config.ts, then 'app').",
+    description: "Application name segment (defaults to baerly.config.ts).",
     valueHint: "app",
   },
   tenant: {
     type: "string",
     required: false,
-    description: "Tenant name segment (defaults to baerly.config.ts, then 'tenant').",
+    description: "Tenant name segment (defaults to baerly.config.ts).",
     valueHint: "tenant",
   },
   table: {
@@ -79,20 +80,6 @@ const DUMP_ARGS = {
     description: "Emit a structured JSON envelope to stdout (success) or stderr (error)",
   },
 } as const satisfies ArgsDef;
-
-type Args = ParsedArgs<typeof DUMP_ARGS>;
-
-const KNOWN_KEYS: ReadonlySet<string> = new Set(["bucket", "app", "tenant", "table", "json", "_"]);
-
-const errorToExitCode = (code: string): number => {
-  if (code === "InvalidConfig") {
-    return 1;
-  }
-  if (code === "Conflict" || code === "Internal" || code === "InvalidResponse") {
-    return 3;
-  }
-  return 2;
-};
 
 /**
  * Recursive byte-stable JSON stringifier. Keys at every nesting level
@@ -143,30 +130,6 @@ export const canonicalStringify = (value: DocumentValue): string => {
   );
 };
 
-/** Default-app / default-tenant resolution. Falls back silently to "app"/"tenant". */
-const resolveAppTenant = async (args: Args): Promise<{ app: string; tenant: string }> => {
-  if (
-    typeof args.app === "string" &&
-    args.app.length > 0 &&
-    typeof args.tenant === "string" &&
-    args.tenant.length > 0
-  ) {
-    return { app: args.app, tenant: args.tenant };
-  }
-  try {
-    const cfg = await loadAppConfig();
-    return {
-      app: typeof args.app === "string" && args.app.length > 0 ? args.app : cfg.app,
-      tenant: typeof args.tenant === "string" && args.tenant.length > 0 ? args.tenant : cfg.tenant,
-    };
-  } catch {
-    return {
-      app: typeof args.app === "string" && args.app.length > 0 ? args.app : "app",
-      tenant: typeof args.tenant === "string" && args.tenant.length > 0 ? args.tenant : "tenant",
-    };
-  }
-};
-
 const writeToSink = async (
   sinkPath: string | undefined,
   rows: ReadonlyMap<string, DocumentData>,
@@ -204,16 +167,15 @@ const writeToSink = async (
   }
 };
 
-const handleDump = async (args: Args): Promise<number> => {
-  setJsonMode(args.json === true);
-  try {
-    for (const k of Object.keys(args)) {
-      if (!KNOWN_KEYS.has(k)) {
-        throw new BaerlyError("InvalidConfig", `baerly admin dump: unknown flag --${k}`);
-      }
-    }
+const bundle = defineBaerlySubcommand({
+  name: "admin.dump",
+  meta: {
+    description: "Canonical NDJSON of the materialised view of one collection.",
+  },
+  args: DUMP_ARGS,
+  handler: async (args, ctx) => {
     const bucket = await parseBucketUri(args.bucket);
-    const { app, tenant } = await resolveAppTenant(args);
+    const { app, tenant } = await ctx.resolveAppTenant({ app: args.app, tenant: args.tenant });
     const currentJsonKey = `${bucket.keyPrefix}app/${app}/tenant/${tenant}/manifests/${args.table}/current.json`;
     const view = await loadMaterialisedView({
       storage: bucket.storage,
@@ -235,44 +197,15 @@ const handleDump = async (args: Args): Promise<number> => {
       dumped: count,
     });
     return 0;
-  } catch (error) {
-    if (error instanceof BaerlyError) {
-      emitError("admin.dump", error.code, error.message);
-      return errorToExitCode(error.code);
-    }
-    emitError("admin.dump", "Unknown", (error as Error).message);
-    return 2;
-  }
-};
-
-/** citty `defineCommand` block for `baerly admin dump`. */
-export const dumpCmd = defineCommand({
-  meta: {
-    name: "dump",
-    description: "Canonical NDJSON of the materialised view of one collection.",
-  },
-  args: DUMP_ARGS,
-  run: async ({ args }) => {
-    const code = await handleDump(args);
-    if (code !== 0) {
-      process.exit(code);
-    }
   },
 });
+
+/** citty `defineCommand` block for `baerly admin dump`. */
+export const dumpCmd = bundle.cmd;
 
 /**
  * Programmatic entry used by tests. Bypasses citty's `run` wrapper
  * (which would call `process.exit` and kill vitest) and returns the
  * integer exit code directly.
  */
-export const runDump = async (argv: readonly string[]): Promise<number> => {
-  let parsed: Args;
-  try {
-    parsed = parseArgs<typeof DUMP_ARGS>(argv as string[], DUMP_ARGS);
-  } catch (error) {
-    setJsonMode(argv.includes("--json"));
-    emitError("admin.dump", "InvalidConfig", (error as Error).message);
-    return 1;
-  }
-  return handleDump(parsed);
-};
+export const runDump = bundle.run;

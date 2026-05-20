@@ -14,8 +14,8 @@
  *
  * Args:
  *   --bucket               Required. Bucket URI.
- *   --app                  Default "app" (or `baerly.config.ts`).
- *   --tenant               Default "tenant" (or `baerly.config.ts`).
+ *   --app                  Required (or via baerly.config.ts).
+ *   --tenant               Required (or via baerly.config.ts).
  *   --table                Required. Collection name.
  *   --cloudflare-free-tier Apply the CF free-tier GC caps
  *                          (maxMarksPerRun=20, maxSweepsPerRun=10).
@@ -28,16 +28,15 @@
  *   3 — Protocol invariant (Conflict / Internal / InvalidResponse).
  */
 
-import { defineCommand, parseArgs, type ArgsDef, type ParsedArgs } from "citty";
-import { BaerlyError } from "@baerly/protocol";
+import { type ArgsDef } from "citty";
 import {
   CLOUDFLARE_FREE_TIER,
   type RunGcOptions,
   runGc as runGcEngine,
 } from "@baerly/server/maintenance";
-import { loadAppConfig } from "../config.ts";
 import { parseBucketUri } from "../bucket-uri.ts";
-import { emitError, emitSuccess, setJsonMode } from "../output.ts";
+import { emitSuccess } from "../output.ts";
+import { defineBaerlySubcommand } from "../subcommand.ts";
 
 const GC_ARGS = {
   bucket: {
@@ -49,13 +48,13 @@ const GC_ARGS = {
   app: {
     type: "string",
     required: false,
-    description: "Application name segment (defaults to baerly.config.ts, then 'app').",
+    description: "Application name segment (defaults to baerly.config.ts).",
     valueHint: "app",
   },
   tenant: {
     type: "string",
     required: false,
-    description: "Tenant name segment (defaults to baerly.config.ts, then 'tenant').",
+    description: "Tenant name segment (defaults to baerly.config.ts).",
     valueHint: "tenant",
   },
   table: {
@@ -74,60 +73,14 @@ const GC_ARGS = {
   },
 } as const satisfies ArgsDef;
 
-type Args = ParsedArgs<typeof GC_ARGS>;
-
-const KNOWN_KEYS: ReadonlySet<string> = new Set([
-  "bucket",
-  "app",
-  "tenant",
-  "table",
-  "cloudflare-free-tier",
-  "json",
-  "_",
-]);
-
-const errorToExitCode = (code: string): number => {
-  if (code === "InvalidConfig") {
-    return 1;
-  }
-  if (code === "Conflict" || code === "Internal" || code === "InvalidResponse") {
-    return 3;
-  }
-  return 2;
-};
-
-const resolveAppTenant = async (args: Args): Promise<{ app: string; tenant: string }> => {
-  if (
-    typeof args.app === "string" &&
-    args.app.length > 0 &&
-    typeof args.tenant === "string" &&
-    args.tenant.length > 0
-  ) {
-    return { app: args.app, tenant: args.tenant };
-  }
-  try {
-    const cfg = await loadAppConfig();
-    return {
-      app: typeof args.app === "string" && args.app.length > 0 ? args.app : cfg.app,
-      tenant: typeof args.tenant === "string" && args.tenant.length > 0 ? args.tenant : cfg.tenant,
-    };
-  } catch {
-    return {
-      app: typeof args.app === "string" && args.app.length > 0 ? args.app : "app",
-      tenant: typeof args.tenant === "string" && args.tenant.length > 0 ? args.tenant : "tenant",
-    };
-  }
-};
-
-const handleGc = async (args: Args): Promise<number> => {
-  setJsonMode(args.json === true);
-  try {
-    for (const k of Object.keys(args)) {
-      if (!KNOWN_KEYS.has(k)) {
-        throw new BaerlyError("InvalidConfig", `baerly admin gc: unknown flag --${k}`);
-      }
-    }
-    const { app, tenant } = await resolveAppTenant(args);
+const bundle = defineBaerlySubcommand({
+  name: "admin.gc",
+  meta: {
+    description: "Manually trigger one GC pass (mark + sweep orphan blobs).",
+  },
+  args: GC_ARGS,
+  handler: async (args, ctx) => {
+    const { app, tenant } = await ctx.resolveAppTenant({ app: args.app, tenant: args.tenant });
     const bucket = await parseBucketUri(args.bucket);
     const currentJsonKey = `${bucket.keyPrefix}app/${app}/tenant/${tenant}/manifests/${args.table}/current.json`;
     // `CLOUDFLARE_FREE_TIER` is typed as `MaintenanceOptions` but its
@@ -152,30 +105,11 @@ const handleGc = async (args: Args): Promise<number> => {
       },
     });
     return 0;
-  } catch (error) {
-    if (error instanceof BaerlyError) {
-      emitError("admin.gc", error.code, error.message);
-      return errorToExitCode(error.code);
-    }
-    emitError("admin.gc", "Unknown", (error as Error).message);
-    return 2;
-  }
-};
-
-/** citty `defineCommand` block for `baerly admin gc`. */
-export const gcCmd = defineCommand({
-  meta: {
-    name: "gc",
-    description: "Manually trigger one GC pass (mark + sweep orphan blobs).",
-  },
-  args: GC_ARGS,
-  run: async ({ args }) => {
-    const code = await handleGc(args);
-    if (code !== 0) {
-      process.exit(code);
-    }
   },
 });
+
+/** citty `defineCommand` block for `baerly admin gc`. */
+export const gcCmd = bundle.cmd;
 
 /**
  * Programmatic entry used by tests. Bypasses citty's `run` wrapper
@@ -186,14 +120,4 @@ export const gcCmd = defineCommand({
  * `runGc` from `@baerly/server/maintenance` is imported as
  * `runGcEngine` to avoid the shadow.
  */
-export const runGc = async (argv: readonly string[]): Promise<number> => {
-  let parsed: Args;
-  try {
-    parsed = parseArgs<typeof GC_ARGS>(argv as string[], GC_ARGS);
-  } catch (error) {
-    setJsonMode(argv.includes("--json"));
-    emitError("admin.gc", "InvalidConfig", (error as Error).message);
-    return 1;
-  }
-  return handleGc(parsed);
-};
+export const runGc = bundle.run;

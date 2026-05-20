@@ -10,8 +10,8 @@
  *
  * Args:
  *   --bucket   Required. Target bucket URI.
- *   --app      Default from baerly.config.ts; falls back to "app".
- *   --tenant   Default from baerly.config.ts; falls back to "tenant".
+ *   --app      Required (or via baerly.config.ts).
+ *   --tenant   Required (or via baerly.config.ts).
  *   --table    Required. Target collection name.
  *   --force    Truncate the target if it exists (fence-bump + reseed).
  *   --json     JSON envelope.
@@ -31,16 +31,16 @@
  *
  * Exit codes:
  *   0 — every row committed.
- *   1 — InvalidConfig (bad bucket URI, missing args, malformed NDJSON
- *       line — line-level shape problems are operator-fixable).
- *   2 — Network / storage error mid-stream.
+ *   1 — InvalidConfig (bad bucket URI, missing args).
+ *   2 — Network / storage error mid-stream, or a malformed NDJSON
+ *       line (raised as a plain `Error`, not `BaerlyError`).
  *   3 — Conflict from a pre-existing target without --force, or from a
  *       concurrent writer when --force was used.
  */
 
 import { createReadStream } from "node:fs";
 import { createInterface } from "node:readline";
-import { defineCommand, parseArgs, type ArgsDef, type ParsedArgs } from "citty";
+import { type ArgsDef } from "citty";
 import {
   BaerlyError,
   CURRENT_JSON_SCHEMA_VERSION,
@@ -50,9 +50,9 @@ import {
   readCurrentJson,
 } from "@baerly/protocol";
 import { Writer } from "@baerly/server/_internal/testing";
-import { loadAppConfig } from "../config.ts";
 import { parseBucketUri } from "../bucket-uri.ts";
-import { emitError, emitSuccess, setJsonMode } from "../output.ts";
+import { emitSuccess } from "../output.ts";
+import { defineBaerlySubcommand } from "../subcommand.ts";
 
 const RESTORE_OWNER = "baerly-restore";
 
@@ -66,13 +66,13 @@ const RESTORE_ARGS = {
   app: {
     type: "string",
     required: false,
-    description: "Application name segment (defaults to baerly.config.ts, then 'app').",
+    description: "Application name segment (defaults to baerly.config.ts).",
     valueHint: "app",
   },
   tenant: {
     type: "string",
     required: false,
-    description: "Tenant name segment (defaults to baerly.config.ts, then 'tenant').",
+    description: "Tenant name segment (defaults to baerly.config.ts).",
     valueHint: "tenant",
   },
   table: {
@@ -91,66 +91,15 @@ const RESTORE_ARGS = {
   },
 } as const satisfies ArgsDef;
 
-type Args = ParsedArgs<typeof RESTORE_ARGS>;
-
-const KNOWN_KEYS: ReadonlySet<string> = new Set([
-  "bucket",
-  "app",
-  "tenant",
-  "table",
-  "force",
-  "json",
-  "_",
-]);
-
-const errorToExitCode = (code: string): number => {
-  if (code === "InvalidConfig") {
-    return 1;
-  }
-  if (code === "Conflict") {
-    return 3;
-  }
-  if (code === "Internal" || code === "InvalidResponse") {
-    return 3;
-  }
-  return 2;
-};
-
-/** Default-app / default-tenant resolution. Falls back silently to "app"/"tenant". */
-const resolveAppTenant = async (args: Args): Promise<{ app: string; tenant: string }> => {
-  if (
-    typeof args.app === "string" &&
-    args.app.length > 0 &&
-    typeof args.tenant === "string" &&
-    args.tenant.length > 0
-  ) {
-    return { app: args.app, tenant: args.tenant };
-  }
-  try {
-    const cfg = await loadAppConfig();
-    return {
-      app: typeof args.app === "string" && args.app.length > 0 ? args.app : cfg.app,
-      tenant: typeof args.tenant === "string" && args.tenant.length > 0 ? args.tenant : cfg.tenant,
-    };
-  } catch {
-    return {
-      app: typeof args.app === "string" && args.app.length > 0 ? args.app : "app",
-      tenant: typeof args.tenant === "string" && args.tenant.length > 0 ? args.tenant : "tenant",
-    };
-  }
-};
-
-const handleRestore = async (args: Args): Promise<number> => {
-  setJsonMode(args.json === true);
-  try {
-    for (const k of Object.keys(args)) {
-      if (!KNOWN_KEYS.has(k)) {
-        throw new BaerlyError("InvalidConfig", `baerly admin restore: unknown flag --${k}`);
-      }
-    }
-
+const bundle = defineBaerlySubcommand({
+  name: "admin.restore",
+  meta: {
+    description: "Bulk-import canonical NDJSON into a fresh collection.",
+  },
+  args: RESTORE_ARGS,
+  handler: async (args, ctx) => {
     const bucket = await parseBucketUri(args.bucket);
-    const { app, tenant } = await resolveAppTenant(args);
+    const { app, tenant } = await ctx.resolveAppTenant({ app: args.app, tenant: args.tenant });
     const currentJsonKey = `${bucket.keyPrefix}app/${app}/tenant/${tenant}/manifests/${args.table}/current.json`;
 
     const head = await readCurrentJson(bucket.storage, currentJsonKey);
@@ -232,7 +181,9 @@ const handleRestore = async (args: Args): Promise<number> => {
       } catch (error) {
         // Malformed NDJSON mid-stream → exit 2 (the ticket's
         // partial-restore contract: the line that failed wasn't
-        // committed, but anything BEFORE it survives).
+        // committed, but anything BEFORE it survives). Bare `Error`
+        // (not `BaerlyError`) routes through the helper's "unknown"
+        // arm → exit 2.
         throw new Error(
           `baerly admin restore: line ${lineNo} is not valid JSON: ${(error as Error).message}`,
           { cause: error },
@@ -265,44 +216,15 @@ const handleRestore = async (args: Args): Promise<number> => {
       restored: count,
     });
     return 0;
-  } catch (error) {
-    if (error instanceof BaerlyError) {
-      emitError("admin.restore", error.code, error.message);
-      return errorToExitCode(error.code);
-    }
-    emitError("admin.restore", "Unknown", (error as Error).message);
-    return 2;
-  }
-};
-
-/** citty `defineCommand` block for `baerly admin restore`. */
-export const restoreCmd = defineCommand({
-  meta: {
-    name: "restore",
-    description: "Bulk-import canonical NDJSON into a fresh collection.",
-  },
-  args: RESTORE_ARGS,
-  run: async ({ args }) => {
-    const code = await handleRestore(args);
-    if (code !== 0) {
-      process.exit(code);
-    }
   },
 });
+
+/** citty `defineCommand` block for `baerly admin restore`. */
+export const restoreCmd = bundle.cmd;
 
 /**
  * Programmatic entry used by tests. Bypasses citty's `run` wrapper
  * (which would call `process.exit` and kill vitest) and returns the
  * integer exit code directly.
  */
-export const runRestore = async (argv: readonly string[]): Promise<number> => {
-  let parsed: Args;
-  try {
-    parsed = parseArgs<typeof RESTORE_ARGS>(argv as string[], RESTORE_ARGS);
-  } catch (error) {
-    setJsonMode(argv.includes("--json"));
-    emitError("admin.restore", "InvalidConfig", (error as Error).message);
-    return 1;
-  }
-  return handleRestore(parsed);
-};
+export const runRestore = bundle.run;
