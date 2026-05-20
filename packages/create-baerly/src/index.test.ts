@@ -60,7 +60,7 @@ describe("create-baerly runner (non-TTY)", () => {
     process.chdir(originalCwd);
   });
 
-  test("rejects an invalid --target with the same message as today", async () => {
+  test("rejects an invalid --target at parse time", async () => {
     const stdout = captureStream(process.stdout);
     const stderr = captureStream(process.stderr);
     let exitCode: number;
@@ -73,7 +73,9 @@ describe("create-baerly runner (non-TTY)", () => {
     expect(exitCode).toBe(1);
     expect(stdout.captured.join("")).toBe("");
     const err = stderr.captured.join("");
-    expect(err).toContain(`--target must be "cloudflare" or "node", got "lambda"`);
+    // citty 0.2.2's `type: "enum"` rejects invalid values at parse time
+    // with this wording.
+    expect(err).toMatch(/Invalid value for argument.*--target/);
     expect(err).toContain("create-baerly:");
   });
 

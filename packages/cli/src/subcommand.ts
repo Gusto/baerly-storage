@@ -164,12 +164,23 @@ const makeResolveAppTenant = (name: string): SubcommandContext["resolveAppTenant
  * invocation attach its own `streams` override without leaking across
  * invocations.
  */
+const kebabToCamel = (s: string): string =>
+  s.replace(/-(\w)/g, (_, c: string) => c.toUpperCase());
+
 const wrapHandler = <TArgs extends ArgsDef>(
   def: SubcommandDef<TArgs>,
 ): ((args: ParsedArgs<TArgs>, ctx: SubcommandContext) => Promise<number>) => {
   // Compute the allow-list once from the ArgsDef. citty injects `_`
-  // for positional captures, so it must stay allowed.
-  const allowedKeys: ReadonlySet<string> = new Set([...Object.keys(def.args), "_"]);
+  // for positional captures, so it must stay allowed. citty 0.2.2
+  // also auto-injects a camelCase alias for every kebab-case flag
+  // (e.g. `--where-comment` produces both `whereComment` and
+  // `where-comment` on the parsed args), so each kebab key is
+  // expanded to its camelCase variant in the allow-list too.
+  const allowedKeys: ReadonlySet<string> = new Set(
+    Object.keys(def.args)
+      .flatMap((k) => (k.includes("-") ? [k, kebabToCamel(k)] : [k]))
+      .concat(["_"]),
+  );
   return async (args, ctx) => {
     // `json` is conventional but not required — only toggle when it's
     // both declared in the ArgsDef and truthy on the parsed args.

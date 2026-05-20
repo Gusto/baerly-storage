@@ -39,10 +39,10 @@ const INIT_ARGS = {
     valueHint: "name",
   },
   target: {
-    type: "string",
+    type: "enum",
+    options: ["cloudflare", "node"],
     default: "cloudflare",
     description: "Deploy target.",
-    valueHint: "cloudflare|node",
   },
   force: { type: "boolean", description: "Overwrite existing baerly.config.ts." },
   json: { type: "boolean", description: "Emit JSON envelope output." },
@@ -77,12 +77,6 @@ const handleInit = async (args: ParsedArgs<typeof INIT_ARGS>): Promise<number> =
     }
     if (typeof args.app !== "string" || args.app.length === 0) {
       throw new BaerlyError("InvalidConfig", "baerly init: --app=<name> is required");
-    }
-    if (args.target !== "cloudflare" && args.target !== "node") {
-      throw new BaerlyError(
-        "InvalidConfig",
-        `baerly init: --target must be "cloudflare" or "node" (got ${JSON.stringify(args.target)})`,
-      );
     }
     const outPath = resolve(process.cwd(), "baerly.config.ts");
     if (existsSync(outPath) && args.force !== true) {

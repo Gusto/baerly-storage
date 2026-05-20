@@ -89,10 +89,10 @@ const EXPORT_ARGS = {
     valueHint: "name",
   },
   target: {
-    type: "string",
+    type: "enum",
+    options: ["postgres", "sqlite", "d1"],
     required: true,
     description: "SQL target: postgres | sqlite | d1.",
-    valueHint: "postgres|sqlite|d1",
   },
   where: {
     type: "string",
@@ -122,8 +122,6 @@ const EXPORT_ARGS = {
     description: "Emit a structured JSON envelope to stdout (success) or stderr (error)",
   },
 } as const satisfies ArgsDef;
-
-const VALID_TARGETS = new Set<string>(["postgres", "sqlite", "d1"]);
 
 const parseWherePredicate = (raw: string): DocumentData => {
   let parsed: unknown;
@@ -190,13 +188,7 @@ const bundle = defineBaerlySubcommand({
   },
   args: EXPORT_ARGS,
   handler: async (args, ctx) => {
-    if (!VALID_TARGETS.has(args.target)) {
-      throw new BaerlyError(
-        "InvalidConfig",
-        `baerly export: --target must be postgres|sqlite|d1 (got ${JSON.stringify(args.target)})`,
-      );
-    }
-    const target = args.target as SqlTarget;
+    const target: SqlTarget = args.target;
     const { app, tenant } = await ctx.resolveAppTenant({ app: args.app, tenant: args.tenant });
     const bucket = await parseBucketUri(args.bucket);
     const currentJsonKey = `${bucket.keyPrefix}app/${app}/tenant/${tenant}/manifests/${args.table}/current.json`;

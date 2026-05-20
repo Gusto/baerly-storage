@@ -39,18 +39,18 @@ export const CREATE_BAERLY_ARGS = {
     valueHint: "name",
   },
   target: {
-    type: "string",
+    type: "enum",
+    options: ["cloudflare", "node"],
     description: 'Deploy target — "cloudflare" or "node".',
     // Optional at the citty layer so a bare `create-baerly` on a
     // TTY can fall into the wizard. The flag-driven branch below
     // re-validates when wizard mode is suppressed (non-TTY / --json).
     required: false,
-    valueHint: "cloudflare|node",
   },
   starter: {
-    type: "string",
+    type: "enum",
+    options: ["minimal", "helpdesk"],
     description: 'Starter template — "minimal" (default) or "helpdesk".',
-    valueHint: "minimal|helpdesk",
   },
   tenant: {
     type: "string",
@@ -119,7 +119,7 @@ export const handleCreateBaerly = async (
     if (wantWizard) {
       const w = await runWizard({
         projectName: args.projectName,
-        target: args.target === "cloudflare" || args.target === "node" ? args.target : undefined,
+        ...(args.target !== undefined && { target: args.target }),
         ...(withAddonsFromFlag !== undefined && { withAddons: withAddonsFromFlag }),
         install: args.install,
       });
@@ -131,9 +131,9 @@ export const handleCreateBaerly = async (
       if (args.projectName === undefined) {
         throw new Error("projectName is required (positional)");
       }
-      if (args.target !== "cloudflare" && args.target !== "node") {
+      if (args.target === undefined) {
         throw new Error(
-          `--target must be "cloudflare" or "node", got ${JSON.stringify(args.target)}`,
+          `--target is required when not running in wizard mode (got undefined)`,
         );
       }
       projectName = args.projectName;
@@ -151,15 +151,10 @@ export const handleCreateBaerly = async (
           `drop --with=docker to scaffold for --target=${target}.`,
       );
     }
-    if (args.starter !== undefined && args.starter !== "minimal" && args.starter !== "helpdesk") {
-      throw new Error(
-        `--starter must be "minimal" or "helpdesk", got ${JSON.stringify(args.starter)}`,
-      );
-    }
     const result = await scaffold({
       projectName,
       target,
-      ...(args.starter !== undefined && { starter: args.starter as "minimal" | "helpdesk" }),
+      ...(args.starter !== undefined && { starter: args.starter }),
       ...(args.tenant !== undefined && { tenant: args.tenant }),
       ...(args.domain !== undefined && { domain: args.domain }),
       ...(args.pm !== undefined && { pm: args.pm as "npm" | "pnpm" | "yarn" }),

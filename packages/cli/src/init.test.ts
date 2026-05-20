@@ -106,7 +106,10 @@ export default defineConfig({
     }
     expect(exitCode).toBe(1);
     expect(existsSync(join(root, "baerly.config.ts"))).toBe(false);
-    expect(stderr.captured.join("")).toMatch(/--target must be "cloudflare" or "node"/);
+    // citty 0.2.2's `type: "enum"` rejects invalid values at parse time
+    // with this wording. The shim catches the parse-time `CLIError` and
+    // surfaces it as InvalidConfig.
+    expect(stderr.captured.join("")).toMatch(/Invalid value for argument.*--target/);
   });
 
   test("refuses to overwrite without --force (InvalidConfig, exit 1)", async () => {

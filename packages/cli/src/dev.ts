@@ -62,7 +62,16 @@ const DEV_ARGS = {
   json: { type: "boolean", description: "Emit JSON envelope to stdout." },
 } as const satisfies ArgsDef;
 
-const KNOWN_KEYS: ReadonlySet<string> = new Set(["port", "data-dir", "json", "_"]);
+// citty 0.2.2 auto-injects a camelCase alias for every kebab-case
+// flag (`--data-dir` produces both `data-dir` and `dataDir` on the
+// parsed args), so `dataDir` must be accepted alongside `data-dir`.
+const KNOWN_KEYS: ReadonlySet<string> = new Set([
+  "port",
+  "data-dir",
+  "dataDir",
+  "json",
+  "_",
+]);
 
 const errorToExitCode = (code: string): number => {
   if (code === "InvalidConfig") {

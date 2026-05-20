@@ -80,8 +80,20 @@ const COPY_ARGS = {
  * erroring — so we re-introduce the strict-mode behavior the
  * hand-rolled parser had (rejects `--foo=bar` if `foo` is unknown).
  * Required because `copy.test.ts:209` asserts unknown flags exit 1.
+ *
+ * citty 0.2.2 also auto-injects a camelCase alias for every
+ * kebab-case flag (`--from-snapshot` produces both `from-snapshot`
+ * and `fromSnapshot` on the parsed args), so `fromSnapshot` must be
+ * accepted here too.
  */
-const KNOWN_KEYS: ReadonlySet<string> = new Set(["from", "from-snapshot", "to", "json", "_"]);
+const KNOWN_KEYS: ReadonlySet<string> = new Set([
+  "from",
+  "from-snapshot",
+  "fromSnapshot",
+  "to",
+  "json",
+  "_",
+]);
 
 const errorToExitCode = (code: string): number => {
   if (code === "InvalidConfig") {
