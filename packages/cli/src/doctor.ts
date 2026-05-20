@@ -1,13 +1,16 @@
 /**
- * `baerly doctor` — citty dispatcher.
+ * `baerly doctor` — citty dispatcher for deploy-invariant checks.
  *
  * Reads `baerly.config.ts:target` and routes to
  * {@link doctorCloudflare}. The Node target self-validates at
  * scaffold time — the example IS the contract — so it has no
- * doctor backend. The dispatcher
- * also accepts two cross-target sub-checks — `--check=index-filter-drift`
- * (read-only drift scan) and `--rebuild-drift` (drift scan + auto-rebuild)
- * — whose findings splice into whichever backend report it dispatches to.
+ * doctor backend.
+ *
+ * Read-only target-invariant checks only. Drift detection, index
+ * rebuilds, and writes/min health are separate verbs:
+ *   - `baerly admin fsck --indexes [--fix]` — index drift.
+ *   - `baerly admin usage` — writes/min M-size graduation.
+ *   - `baerly admin rebuild-index` — single-index reconciliation.
  *
  * Renders the returned {@link DoctorReport} into either a
  * stdout checklist (text mode) or a JSON envelope (`--json`
@@ -27,9 +30,8 @@
 
 import { type ArgsDef } from "citty";
 import { BaerlyError } from "@baerly/protocol";
-import { loadAppConfig, loadAppConfigWithCollections } from "./config.ts";
-import { doctorCloudflare, type DoctorFinding, type DoctorReport } from "./doctor/cloudflare.ts";
-import { checkIndexFilterDrift } from "./doctor/index-filter-drift.ts";
+import { loadAppConfig } from "./config.ts";
+import { doctorCloudflare, type DoctorReport } from "./doctor/cloudflare.ts";
 import { defaultRunner } from "./runner.ts";
 import { color, isJsonMode } from "./output.ts";
 import { defineBaerlySubcommand } from "./subcommand.ts";
@@ -49,21 +51,6 @@ const DOCTOR_ARGS = {
   json: {
     type: "boolean",
     description: "Emit a structured JSON envelope to stdout (success) or stderr (error)",
-  },
-  usage: {
-    type: "boolean",
-    description:
-      "Scan recent log entries per collection and emit a graduation hint when writes/min approaches the M-size ceiling (CF target emits a follow-up breadcrumb).",
-  },
-  check: {
-    type: "string",
-    description: "Run a single named check (today: 'index-filter-drift').",
-    valueHint: "name",
-  },
-  "rebuild-drift": {
-    type: "boolean",
-    description:
-      "When index-filter-drift detects orphans / missing keys, call rebuildIndex to fix them. Implies --check=index-filter-drift.",
   },
 } as const satisfies ArgsDef;
 
@@ -125,38 +112,12 @@ const bundle = defineBaerlySubcommand({
   },
   args: DOCTOR_ARGS,
   handler: async (args) => {
-    // `--check` is the named-check dispatcher; today the only known
-    // value is `index-filter-drift`. Reject unknown values early so
-    // the operator gets an actionable error rather than a silent
-    // skip.
-    if (args.check !== undefined && args.check !== "index-filter-drift") {
-      throw new BaerlyError(
-        "InvalidConfig",
-        `baerly doctor: unknown --check value ${JSON.stringify(args.check)} (supported: "index-filter-drift")`,
-      );
-    }
-    // The drift check is dispatcher-level — it runs once and its
-    // findings splice into whichever backend the target dispatches
-    // to. `--rebuild-drift` implies the check, so either flag
-    // triggers the scan. Only the drift path needs `collections[*]`
-    // reflection, so non-drift invocations skip the
-    // collections-aware re-parse and use the narrow loader.
-    const runDrift = args.check === "index-filter-drift" || args["rebuild-drift"] === true;
-    const { config, collections } = runDrift
-      ? await loadAppConfigWithCollections()
-      : { config: await loadAppConfig(), collections: undefined };
+    const config = await loadAppConfig();
     const target = args.target ?? config.target;
-    const extraFindings: DoctorFinding[] = runDrift
-      ? await checkIndexFilterDrift(config, collections, {
-          ...(args["rebuild-drift"] === true && { rebuild: true }),
-        })
-      : [];
     if (target === "cloudflare") {
       const report = await doctorCloudflare(config, {
         runner: defaultRunner(),
         ...(args.fix === true && { fix: true }),
-        ...(args.usage === true && { usage: true }),
-        ...(extraFindings.length > 0 && { extraFindings }),
       });
       renderReport(target, report);
       return report.status === "error" ? 2 : 0;

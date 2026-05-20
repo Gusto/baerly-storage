@@ -1,21 +1,27 @@
 /**
- * `baerly doctor --usage` — bucket-side writes/min estimator.
+ * `baerly admin usage` — all-collection writes/min health check.
  *
- * Reads the most recent `SAMPLE_SIZE` log entries for one collection
- * from `Storage`, compares the spread of their embedded `commit_ts`
- * timestamps against the M-size operating ceiling
- * (~30 writes/min/collection — see `docs/about/thesis.md:50-68`)
- * and returns a structured {@link UsageVerdict} the doctor backends
- * fold into their report.
+ * Reads the most recent `SAMPLE_SIZE` log entries for every collection
+ * under `app/<app>/tenant/<tenant>/manifests/`, compares the spread of
+ * their embedded `commit_ts` timestamps against the M-size operating
+ * ceiling (~30 writes/min/collection — see
+ * `docs/about/thesis.md:50-68`), and prints one finding per collection
+ * — `info` when well under the ceiling, `warning` when approaching or
+ * exceeding it.
  *
- * The module is pure-storage: it takes a `Storage` handle from the
- * caller, never reads `process.env`, never constructs adapters. The
- * Node doctor backend uses the `s3Storage` / `r2Storage` /
- * `minioStorage` factories from `@baerly/adapter-node` against
- * env-supplied credentials; the Cloudflare doctor backend
- * short-circuits with an info-level "not yet wired" finding (full CF
- * support is a follow-up — see `docs/followups/agent-friendliness.md`
- * entry 10).
+ * Distinct from `baerly cost` (the per-table, $/month projection):
+ * `cost` is a developer-facing trajectory for one table, `usage` is an
+ * operator-facing M-size graduation health check across all
+ * collections.
+ *
+ * The pure-storage half — {@link estimateWritesPerMin},
+ * {@link discoverCollections}, {@link runUsageScan} — takes a
+ * `Storage` handle from the caller and never reads `process.env`.
+ * The CLI wrapper at the bottom of the file constructs that
+ * `Storage` from `--bucket=<uri>` via `parseBucketUri`. The
+ * Cloudflare target short-circuits with an info-level "not yet
+ * wired" finding pending the follow-up work in
+ * `docs/followups/agent-friendliness.md` entry 10.
  *
  * Why GET each entry instead of relying on list-time
  * `Last-Modified`: `MemoryStorage` (the test backend) intentionally
@@ -31,8 +37,25 @@
  *      `tableName` derivation pattern reused here.
  */
 
+import { type ArgsDef } from "citty";
 import { BaerlyError, type LogEntry, type Storage } from "@baerly/protocol";
-import type { DoctorFinding } from "./cloudflare.ts";
+import { parseBucketUri } from "../bucket-uri.ts";
+import { loadAppConfig } from "../config.ts";
+import { emitSuccess, isJsonMode } from "../output.ts";
+import { defineBaerlySubcommand } from "../subcommand.ts";
+
+/**
+ * Verdict-shaped finding the scan emits. Mirrors the
+ * `severity / check / message / fix?` shape that `baerly doctor` uses,
+ * but doesn't depend on `doctor/cloudflare.ts` — `admin usage` runs
+ * outside the doctor surface.
+ */
+export interface UsageFinding {
+  readonly severity: "ok" | "info" | "warning" | "error";
+  readonly check: string;
+  readonly message: string;
+  readonly fix?: string;
+}
 
 /**
  * M-size writes-per-minute-per-collection ceiling from
@@ -67,7 +90,7 @@ export interface UsageVerdict {
    * ceiling).
    */
   readonly severity: "info" | "warning";
-  /** Human-readable one-liner suitable for a {@link DoctorFinding}. */
+  /** Human-readable one-liner suitable for a {@link UsageFinding}. */
   readonly message: string;
   /** Empty when no remediation is meaningful (under 50%). */
   readonly fix: string;
@@ -333,14 +356,14 @@ export const discoverCollections = async (
 };
 
 /**
- * Orchestrate the `--usage` scan against a caller-supplied
- * {@link Storage}. Each backend (Node / Cloudflare) handles its own
- * env-var validation and storage construction; this helper runs the
- * shared discover → per-collection-estimate → finding-push loop.
+ * Orchestrate the usage scan against a caller-supplied
+ * {@link Storage}. The CLI wrapper handles bucket-URI construction;
+ * this helper runs the shared discover → per-collection-estimate →
+ * finding-push loop.
  *
  * Mutates `findings` in place. Returns when the scan completes
  * (success or per-collection failure all surface as findings). The
- * outer doctor exit code is driven by the rollup over all findings.
+ * outer CLI exit code is driven by the rollup over all findings.
  *
  * Errors land as warnings (not errors) so one bad collection doesn't
  * abort the whole scan and so the operator stays deployable while a
@@ -349,7 +372,7 @@ export const discoverCollections = async (
 export const runUsageScan = async (
   context: { readonly app: string; readonly tenant: string },
   storage: Storage,
-  findings: DoctorFinding[],
+  findings: UsageFinding[],
 ): Promise<void> => {
   let collections: readonly string[];
   try {
@@ -388,3 +411,146 @@ export const runUsageScan = async (
     }
   }
 };
+
+// ---------------------------------------------------------------------------
+// CLI surface — `baerly admin usage`
+// ---------------------------------------------------------------------------
+
+const USAGE_ARGS = {
+  bucket: {
+    type: "string",
+    required: false,
+    description:
+      "Bucket URI (s3://<bucket>[/<prefix>], file:///<abs>, memory://<bucket>). Required for --target=node.",
+    valueHint: "bucket-uri",
+  },
+  target: {
+    type: "string",
+    required: false,
+    description: 'Override `baerly.config.ts:target`. One of "cloudflare" | "node".',
+    valueHint: "target",
+  },
+  app: {
+    type: "string",
+    required: false,
+    description: "Application name segment (defaults to baerly.config.ts).",
+    valueHint: "app",
+  },
+  tenant: {
+    type: "string",
+    required: false,
+    description: "Tenant name segment (defaults to baerly.config.ts).",
+    valueHint: "tenant",
+  },
+  json: {
+    type: "boolean",
+    description: "Emit a structured JSON envelope to stdout (success) or stderr (error)",
+  },
+} as const satisfies ArgsDef;
+
+const SEVERITY_GLYPH: Record<UsageFinding["severity"], string> = {
+  ok: "✓",
+  info: "•",
+  warning: "⚠",
+  error: "✗",
+};
+
+const renderText = (target: string, findings: readonly UsageFinding[]): string => {
+  const lines: string[] = [];
+  lines.push(`baerly admin usage --target=${target}`);
+  lines.push("");
+  for (const f of findings) {
+    lines.push(`  ${SEVERITY_GLYPH[f.severity]} ${f.message}`);
+    if (f.fix !== undefined && f.fix !== "") {
+      lines.push(`     fix: ${f.fix}`);
+    }
+  }
+  let warnings = 0;
+  let errors = 0;
+  for (const f of findings) {
+    if (f.severity === "warning") {
+      warnings++;
+    } else if (f.severity === "error") {
+      errors++;
+    }
+  }
+  lines.push("");
+  lines.push(
+    `Status: ${errors} error${errors === 1 ? "" : "s"}, ${warnings} warning${warnings === 1 ? "" : "s"}.`,
+  );
+  return lines.join("\n") + "\n";
+};
+
+const bundle = defineBaerlySubcommand({
+  name: "admin.usage",
+  meta: {
+    description:
+      "All-collection writes/min health check; flags collections approaching the M-size ceiling.",
+  },
+  args: USAGE_ARGS,
+  handler: async (args, ctx) => {
+    // Avoid loading the config when --target is explicit — the CLI
+    // should still work outside an app directory if the operator
+    // pins target + app + tenant on the flags.
+    const target =
+      args.target ??
+      (await loadAppConfig().then((c) => c.target));
+    if (target !== "cloudflare" && target !== "node") {
+      throw new BaerlyError(
+        "InvalidConfig",
+        `baerly admin usage: unsupported --target ${JSON.stringify(target)} (one of "cloudflare" | "node")`,
+      );
+    }
+    const { app, tenant } = await ctx.resolveAppTenant({ app: args.app, tenant: args.tenant });
+
+    const findings: UsageFinding[] = [];
+
+    if (target === "cloudflare") {
+      // The CLI runs in Node and can't reach a Workerd-side R2 binding
+      // from `--bucket=<uri>`; full CF wiring is a follow-up — see
+      // `docs/followups/agent-friendliness.md` entry 10.
+      findings.push({
+        severity: "info",
+        check: "usage.cloudflare",
+        message:
+          "baerly admin usage is not yet wired for --target=cloudflare. See docs/followups/agent-friendliness.md entry 10.",
+      });
+    } else {
+      if (args.bucket === undefined || args.bucket.length === 0) {
+        throw new BaerlyError(
+          "InvalidConfig",
+          "baerly admin usage: --bucket=<uri> is required for --target=node",
+        );
+      }
+      const parsed = await parseBucketUri(args.bucket);
+      await runUsageScan({ app, tenant }, parsed.storage, findings);
+    }
+
+    if (isJsonMode()) {
+      emitSuccess({
+        command: "admin.usage",
+        status: "ok",
+        target,
+        findings: findings.map((f) => ({
+          severity: f.severity,
+          check: f.check,
+          message: f.message,
+          ...(f.fix !== undefined && f.fix !== "" && { fix: f.fix }),
+        })),
+      });
+    } else {
+      process.stdout.write(renderText(target, findings));
+    }
+    return 0;
+  },
+});
+
+/** citty `defineCommand` block for `baerly admin usage`. */
+export const usageCmd = bundle.cmd;
+
+/**
+ * Programmatic entry used by tests. Bypasses citty's `run` wrapper
+ * (which would call `process.exit` and kill vitest) and returns the
+ * integer exit code directly.
+ */
+export const runUsage = bundle.run;

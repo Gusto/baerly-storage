@@ -34,7 +34,7 @@ import { parseBucketUri } from "./bucket-uri.ts";
 import { emitSuccess, isJsonMode } from "./output.ts";
 import { detectProvider, pricingFor, type ProviderTag } from "./cost/provider.ts";
 import { project, type Trajectory } from "./cost/project.ts";
-import { estimateWritesPerMin } from "./doctor/usage.ts";
+import { estimateWritesPerMin } from "./admin/usage.ts";
 import { defineBaerlySubcommand } from "./subcommand.ts";
 
 const COST_ARGS = {

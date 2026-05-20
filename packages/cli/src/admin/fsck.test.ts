@@ -194,7 +194,7 @@ describe("baerly admin fsck — CLI smoke", () => {
     );
   });
 
-  test("orphan index key with --rebuild-indexes → exit 4 finding lists it", async () => {
+  test("orphan index key with --indexes → exit 4 with drift finding", async () => {
     await provision(storage);
     await seedRows(storage, 3);
     // Inject an orphan index key. Use `allIndexKeysFor` so the
@@ -231,7 +231,7 @@ describe("baerly admin fsck — CLI smoke", () => {
         `--app=${APP}`,
         `--tenant=${TENANT}`,
         `--table=${COLL}`,
-        "--rebuild-indexes",
+        "--indexes",
         `--config=${cfgPath}`,
         "--json",
       ]);
@@ -240,14 +240,24 @@ describe("baerly admin fsck — CLI smoke", () => {
     }
     expect(exitCode).toBe(4);
     const envelope = JSON.parse(stdout.captured.join("").trim()) as {
-      result: { findings: { check: string; key?: string }[] };
+      result: {
+        mode: string;
+        indexes: { name: string; added: number; removed: number; rebuilt: boolean }[];
+        findings: { check: string; severity: string }[];
+      };
     };
+    expect(envelope.result.mode).toBe("indexes");
+    const summary = envelope.result.indexes.find((i) => i.name === "by_status");
+    expect(summary?.removed).toBeGreaterThanOrEqual(1);
+    expect(summary?.rebuilt).toBe(false);
     expect(
-      envelope.result.findings.some((f) => f.check === "index.by_status" && f.key === orphanKey),
+      envelope.result.findings.some(
+        (f) => f.check === "index.by_status" && f.severity === "warning",
+      ),
     ).toBe(true);
   });
 
-  test("orphan index key WITHOUT --rebuild-indexes → exit 0 (indexes not walked)", async () => {
+  test("orphan index key WITHOUT --indexes → exit 0 (default mode skips index walk)", async () => {
     await provision(storage);
     await seedRows(storage, 3);
     const [orphanKey] = allIndexKeysFor(
@@ -280,7 +290,71 @@ describe("baerly admin fsck — CLI smoke", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("--rebuild-indexes without --config rejected with InvalidConfig (exit 1)", async () => {
+  test("--indexes --fix rebuilds drifted keys; finding downgrades to info", async () => {
+    await provision(storage);
+    await seedRows(storage, 3);
+    const [orphanKey] = allIndexKeysFor(
+      TABLE_PREFIX,
+      [{ name: "by_status", on: "status" }],
+      { _id: "ghost", status: "wip" },
+      "ghost",
+    );
+    if (orphanKey === undefined) {
+      throw new Error("test setup: failed to build orphan key");
+    }
+    await storage.put(orphanKey, new Uint8Array(0), {
+      ifNoneMatch: "*",
+      contentType: "application/json",
+    });
+
+    const cfgPath = join(root, "baerly.config.json");
+    await writeFile(
+      cfgPath,
+      JSON.stringify({
+        collections: { [COLL]: { indexes: [{ name: "by_status", on: "status" }] } },
+      }),
+      "utf8",
+    );
+
+    const stdout = captureStream(process.stdout);
+    let exitCode: number;
+    try {
+      exitCode = await runFsck([
+        `--bucket=file://${root}`,
+        `--app=${APP}`,
+        `--tenant=${TENANT}`,
+        `--table=${COLL}`,
+        "--indexes",
+        "--fix",
+        `--config=${cfgPath}`,
+        "--json",
+      ]);
+    } finally {
+      stdout.restore();
+    }
+    // `--fix` downgrades drift findings to `info` (since drift was
+    // both detected AND fixed in one pass); only `warning` / `finding`
+    // severities count toward exit 4, so exit 0.
+    expect(exitCode).toBe(0);
+    const envelope = JSON.parse(stdout.captured.join("").trim()) as {
+      result: {
+        mode: string;
+        indexes: { name: string; rebuilt: boolean }[];
+        findings: { check: string; severity: string }[];
+      };
+    };
+    expect(envelope.result.mode).toBe("indexes-fix");
+    expect(envelope.result.indexes.find((i) => i.name === "by_status")?.rebuilt).toBe(true);
+    expect(
+      envelope.result.findings.some(
+        (f) => f.check === "index.by_status" && f.severity === "info",
+      ),
+    ).toBe(true);
+    // Orphan key was deleted by the rebuild.
+    await expect(storage.get(orphanKey)).resolves.toBeNull();
+  });
+
+  test("--fix without --indexes rejected with InvalidConfig (exit 1)", async () => {
     await provision(storage);
     const stderr = captureStream(process.stderr);
     let exitCode: number;
@@ -290,7 +364,26 @@ describe("baerly admin fsck — CLI smoke", () => {
         `--app=${APP}`,
         `--tenant=${TENANT}`,
         `--table=${COLL}`,
-        "--rebuild-indexes",
+        "--fix",
+      ]);
+    } finally {
+      stderr.restore();
+    }
+    expect(exitCode).toBe(1);
+    expect(stderr.captured.join("")).toContain("InvalidConfig");
+  });
+
+  test("--indexes without --config rejected with InvalidConfig (exit 1)", async () => {
+    await provision(storage);
+    const stderr = captureStream(process.stderr);
+    let exitCode: number;
+    try {
+      exitCode = await runFsck([
+        `--bucket=file://${root}`,
+        `--app=${APP}`,
+        `--tenant=${TENANT}`,
+        `--table=${COLL}`,
+        "--indexes",
       ]);
     } finally {
       stderr.restore();

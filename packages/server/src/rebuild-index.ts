@@ -109,7 +109,7 @@ export interface RebuildIndexOptions {
   /**
    * When `true`, walk the expected-vs-actual diff and return the
    * counts that a real rebuild would have produced WITHOUT issuing
-   * any PUT or DELETE. Used by `baerly doctor --check=index-filter-drift`
+   * any PUT or DELETE. Used by `baerly admin fsck --indexes`
    * to report drift cheaply. Defaults to `false`.
    *
    * `kept` is reported as the pre-existing intersection
@@ -221,7 +221,7 @@ const rebuildIndexInner = async (
   //    Under `opts.dryRun`, we walk the same diff but skip every
   //    mutating storage call — `added` / `removed` then report the
   //    counts a real rebuild WOULD have produced, leaving storage
-  //    untouched. This is what `baerly doctor --check=index-filter-drift`
+  //    untouched. This is what `baerly admin fsck --indexes`
   //    consumes to surface drift without paying the rebuild cost.
   const dryRun = opts.dryRun === true;
   let added = 0;

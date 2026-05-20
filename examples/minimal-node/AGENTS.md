@@ -277,8 +277,8 @@ The graduation target is **D1** (or Postgres, or SQLite via Litestream
 costs roughly $5/month versus baerly's ~$19/month; the pitch is
 portability, not cost.
 
-**Estimate your current rate:** `baerly doctor --usage --target=...`
-(upcoming) lists recent log entries per collection and computes
+**Estimate your current rate:** `baerly admin usage --target=...`
+lists recent log entries per collection and computes
 writes/min. Warning at 50% of the ceiling; export suggestion at
 100%.
 

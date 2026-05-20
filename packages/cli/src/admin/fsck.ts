@@ -1,7 +1,8 @@
 /**
- * `baerly admin fsck` — read-only consistency walk for one collection.
+ * `baerly admin fsck` — consistency walk for one collection.
  *
- * Checks (no mutations, ever):
+ * Default mode (no `--indexes`): read-only checks against the
+ * snapshot + log tail.
  *   1. `current.json` exists at the expected key and parses.
  *   2. When `current.snapshot !== null`, the snapshot body's
  *      SHA-256 matches the hash embedded in the filename
@@ -11,39 +12,42 @@
  *   4. Every entry inside the live tail is well-formed JSON with
  *      the locked `op`, `collection`, `doc_id`, `schema_version`
  *      fields.
- *   5. `--rebuild-indexes` + `--config=<path>`: walk each declared
- *      index's prefix and report orphan keys (keys that don't point
- *      at a live doc + value combination from the materialised view).
- *      Reports only — `baerly admin rebuild-index` is the mutating
- *      remediation path.
+ *
+ * `--indexes` + `--config=<path>` mode: SKIP the snapshot + log
+ * walks and ONLY check each declared index for drift via
+ * `rebuildIndex(..., { dryRun: true })`. Drift is `(added > 0)`
+ * (rows that should be projected but have no key on storage) or
+ * `(removed > 0)` (orphan keys for rows that no longer match).
+ * Read-only.
+ *
+ * `--indexes --fix`: same drift walk but with `dryRun: false`, so
+ * `rebuildIndex` PUTs missing keys and DELETEs orphans. The findings
+ * downgrade from `warning` to `info` (drift was found AND fixed in
+ * one pass). `--fix` without `--indexes` is rejected — fsck has no
+ * auto-fix outside the index check.
  *
  * Exit codes:
  *   0 — all checks pass.
- *   1 — InvalidConfig (bad bucket URI, missing args, unknown flag).
+ *   1 — InvalidConfig (bad bucket URI, missing args, unknown flag,
+ *       `--fix` without `--indexes`).
  *   2 — Storage / Network error during the walk.
  *   3 — Protocol invariant violation surfaced by the kernel
  *       (Internal / InvalidResponse) — distinguished from exit 4
  *       so CI can wire fsck as a regression gate.
  *   4 — One or more findings (orphan / hole / hash-mismatch /
- *       orphan-index-key). Unique to this command; the other
+ *       index drift). Unique to this command; the other
  *       `baerly admin` subcommands reserve 0–3.
  */
 
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { type ArgsDef } from "citty";
-import {
-  type DocumentData,
-  type Storage,
-  BaerlyError,
-  readCurrentJson,
-} from "@baerly/protocol";
-import { loadMaterialisedView } from "../export/index.ts";
+import { type Storage, BaerlyError, readCurrentJson } from "@baerly/protocol";
 import {
   type BaerlyConfig,
   type IndexDefinition,
-  allIndexKeysFor,
   loadSnapshotAsMap,
 } from "@baerly/server";
+import { rebuildIndex } from "@baerly/server/maintenance";
 import { parseBucketUri } from "../bucket-uri.ts";
 import { emitSuccess, isJsonMode } from "../output.ts";
 import { defineBaerlySubcommand } from "../subcommand.ts";
@@ -77,12 +81,18 @@ const FSCK_ARGS = {
     type: "string",
     required: false,
     description:
-      "Path to baerly.config.{js,mjs,json}. Required with --rebuild-indexes; resolves index definitions.",
+      "Path to baerly.config.{js,mjs,json}. Required with --indexes; resolves index definitions.",
     valueHint: "path",
   },
-  "rebuild-indexes": {
+  indexes: {
     type: "boolean",
-    description: "Also walk declared index prefixes and report orphan keys (read-only).",
+    description:
+      "Skip snapshot + log walks; check declared indexes for drift via rebuildIndex (read-only by default).",
+  },
+  fix: {
+    type: "boolean",
+    description:
+      "With --indexes, rebuild drifted indexes (PUT missing keys, DELETE orphans). Rejected without --indexes.",
   },
   json: {
     type: "boolean",
@@ -90,13 +100,16 @@ const FSCK_ARGS = {
   },
 } as const satisfies ArgsDef;
 
-type Severity = "ok" | "finding";
+type Severity = "ok" | "info" | "warning" | "finding";
 interface Finding {
   readonly severity: Severity;
   readonly check: string;
   readonly message: string;
   readonly key?: string;
 }
+
+/** Severities that count toward the exit-4 "findings present" status. */
+const isFindingSeverity = (s: Severity): boolean => s === "finding" || s === "warning";
 
 const loadConfigIndexes = async (
   configPath: string,
@@ -149,14 +162,21 @@ const listKeys = async (storage: Storage, prefix: string): Promise<string[]> => 
 const statusLine = (label: string, ok: boolean, detail: string): string =>
   `  ${label.padEnd(22)}${ok ? "ok" : "error"} ${detail}`.trimEnd();
 
-const renderText = (
+interface IndexSummary {
+  readonly name: string;
+  readonly added: number;
+  readonly removed: number;
+  readonly kept: number;
+  readonly rebuilt: boolean;
+}
+
+const renderSnapshotLog = (
   table: string,
   findings: readonly Finding[],
   context: {
     readonly logRange: readonly [number, number];
     readonly logEntriesPresent: number;
     readonly snapshotKey: string | null;
-    readonly indexSummaries: readonly { name: string; count: number; orphans: number }[];
   },
 ): string => {
   const lines: string[] = [];
@@ -183,18 +203,42 @@ const renderText = (
       `(${context.logEntriesPresent}/${toExcl - from} entries present)`,
     ),
   );
-  if (context.indexSummaries.length > 0) {
-    const parts = context.indexSummaries.map(
-      (s) => `${s.name} (count=${s.count}; ${s.orphans} orphans)`,
-    );
-    lines.push(`  indexes:              ${parts.join(", ")}`);
-  }
-  lines.push(`  status:               ${findings.length === 0 ? "ok" : "findings"}`);
+  lines.push(
+    `  status:               ${findings.some(isFindingFinding) ? "findings" : "ok"}`,
+  );
   for (const f of findings) {
     lines.push(`  ${f.check}: ${f.message}${f.key !== undefined ? ` (key=${f.key})` : ""}`);
   }
   return lines.join("\n") + "\n";
 };
+
+const renderIndexes = (
+  table: string,
+  findings: readonly Finding[],
+  summaries: readonly IndexSummary[],
+  fix: boolean,
+): string => {
+  const lines: string[] = [];
+  lines.push(`baerly admin fsck ${table} --indexes${fix ? " --fix" : ""}`);
+  for (const s of summaries) {
+    const verb = s.rebuilt ? "rebuilt" : "would rebuild";
+    if (s.added === 0 && s.removed === 0) {
+      lines.push(`  ${s.name}: in sync (${s.kept} keys)`);
+    } else {
+      lines.push(`  ${s.name}: ${verb} — added ${s.added}, removed ${s.removed}, kept ${s.kept}`);
+    }
+  }
+  lines.push(`  status:               ${findings.some(isFindingFinding) ? "findings" : "ok"}`);
+  for (const f of findings) {
+    if (f.check === "log" || f.check === "snapshot" || f.check === "current.json") {
+      continue;
+    }
+    lines.push(`  ${f.check}: ${f.message}${f.key !== undefined ? ` (key=${f.key})` : ""}`);
+  }
+  return lines.join("\n") + "\n";
+};
+
+const isFindingFinding = (f: Finding): boolean => isFindingSeverity(f.severity);
 
 const bundle = defineBaerlySubcommand({
   name: "admin.fsck",
@@ -203,13 +247,18 @@ const bundle = defineBaerlySubcommand({
   },
   args: FSCK_ARGS,
   handler: async (args, ctx) => {
-    if (
-      args["rebuild-indexes"] === true &&
-      (args.config === undefined || args.config.length === 0)
-    ) {
+    const indexMode = args.indexes === true;
+    const fixMode = args.fix === true;
+    if (fixMode && !indexMode) {
       throw new BaerlyError(
         "InvalidConfig",
-        "baerly admin fsck: --rebuild-indexes requires --config=<path> to resolve index definitions",
+        "baerly admin fsck: --fix is only valid with --indexes (fsck has no auto-fix outside the index check)",
+      );
+    }
+    if (indexMode && (args.config === undefined || args.config.length === 0)) {
+      throw new BaerlyError(
+        "InvalidConfig",
+        "baerly admin fsck: --indexes requires --config=<path> to resolve index definitions",
       );
     }
     const { app, tenant } = await ctx.resolveAppTenant({ app: args.app, tenant: args.tenant });
@@ -219,7 +268,79 @@ const bundle = defineBaerlySubcommand({
 
     const findings: Finding[] = [];
 
-    // ── Check 1. current.json exists and parses. ────────────────────
+    if (indexMode) {
+      // ── Index drift mode. ──────────────────────────────────────────
+      // Skip snapshot + log walks. For each declared index, call
+      // `rebuildIndex(..., { dryRun: !fix })` — it returns the
+      // `(added, removed, kept)` triple we need to call drift.
+      const defs = await loadConfigIndexes(args.config!, args.table);
+      const summaries: IndexSummary[] = [];
+      for (const def of defs) {
+        const check = `index.${def.name}`;
+        let result;
+        try {
+          result = await rebuildIndex(bucket.storage, currentJsonKey, def, {
+            dryRun: !fixMode,
+          });
+        } catch (error) {
+          findings.push({
+            severity: "finding",
+            check,
+            message: `${def.name}: drift check failed: ${(error as Error).message}`,
+          });
+          continue;
+        }
+        const summary: IndexSummary = {
+          name: def.name,
+          added: result.added,
+          removed: result.removed,
+          kept: result.kept,
+          rebuilt: fixMode,
+        };
+        summaries.push(summary);
+        const drifted = result.added > 0 || result.removed > 0;
+        if (!drifted) {
+          findings.push({
+            severity: "ok",
+            check,
+            message: `${def.name}: in sync (${result.kept} keys).`,
+          });
+        } else if (fixMode) {
+          findings.push({
+            severity: "info",
+            check,
+            message: `${def.name}: rebuilt — added ${result.added}, removed ${result.removed}, kept ${result.kept}.`,
+          });
+        } else {
+          findings.push({
+            severity: "warning",
+            check,
+            message: `${def.name}: drift detected — ${result.added} missing, ${result.removed} orphaned (${result.kept} in sync).`,
+          });
+        }
+      }
+
+      if (isJsonMode()) {
+        emitSuccess({
+          command: "admin.fsck",
+          status: findings.some(isFindingFinding) ? "findings" : "ok",
+          table: args.table,
+          mode: fixMode ? "indexes-fix" : "indexes",
+          indexes: summaries,
+          findings: findings.map((f) => ({
+            severity: f.severity,
+            check: f.check,
+            message: f.message,
+            ...(f.key !== undefined && { key: f.key }),
+          })),
+        });
+      } else {
+        process.stdout.write(renderIndexes(args.table, findings, summaries, fixMode));
+      }
+      return findings.some(isFindingFinding) ? 4 : 0;
+    }
+
+    // ── Default mode. current.json + snapshot + log walks. ─────────
     const read = await readCurrentJson(bucket.storage, currentJsonKey);
     if (read === null) {
       throw new BaerlyError(
@@ -232,7 +353,7 @@ const bundle = defineBaerlySubcommand({
     const logToExcl = cur.next_seq;
     const snapshotKey = cur.snapshot;
 
-    // ── Check 2. Snapshot hash verifies (loadSnapshotAsMap throws on mismatch). ──
+    // ── Snapshot hash verifies (loadSnapshotAsMap throws on mismatch). ──
     if (snapshotKey !== null) {
       try {
         await loadSnapshotAsMap(bucket.storage, snapshotKey, args.table);
@@ -253,7 +374,7 @@ const bundle = defineBaerlySubcommand({
       }
     }
 
-    // ── Check 3 + 4. Log range [from, toExcl) has no holes; entries well-formed. ──
+    // ── Log range [from, toExcl) has no holes; entries well-formed. ──
     // LIST the log/ prefix; expect exactly `toExcl - from` keys named
     // `${from}.json` … `${toExcl - 1}.json`. Use a single LIST so the
     // op count is O(pages) not O(range).
@@ -285,53 +406,14 @@ const bundle = defineBaerlySubcommand({
       }
     }
 
-    // ── Check 5. Optional index orphan probe. ───────────────────────
-    const indexSummaries: { name: string; count: number; orphans: number }[] = [];
-    if (args["rebuild-indexes"] === true && args.config !== undefined && args.config.length > 0) {
-      const defs = await loadConfigIndexes(args.config, args.table);
-      // Materialised view computes the expected index-key set (parity with
-      // `baerly admin rebuild-index`'s reconciliation walk).
-      const view = await loadMaterialisedView({
-        storage: bucket.storage,
-        currentJsonKey,
-        collection: args.table,
-      });
-      const viewRows: ReadonlyMap<string, DocumentData> =
-        view ?? new Map<string, DocumentData>();
-      for (const def of defs) {
-        const expected = new Set<string>();
-        for (const [id, body] of viewRows) {
-          for (const key of allIndexKeysFor(tablePrefix, [def], body, id)) {
-            expected.add(key);
-          }
-        }
-        const indexPrefix = `${tablePrefix}/index/${def.name}/`;
-        const present = await listKeys(bucket.storage, indexPrefix);
-        let orphans = 0;
-        for (const key of present) {
-          if (!expected.has(key)) {
-            orphans++;
-            findings.push({
-              severity: "finding",
-              check: `index.${def.name}`,
-              message: `orphan index key (not produced by any live row's projection)`,
-              key,
-            });
-          }
-        }
-        indexSummaries.push({ name: def.name, count: present.length, orphans });
-      }
-    }
-
     if (isJsonMode()) {
       emitSuccess({
         command: "admin.fsck",
-        status: findings.length === 0 ? "ok" : "findings",
+        status: findings.some(isFindingFinding) ? "findings" : "ok",
         table: args.table,
         current_json_key: currentJsonKey,
         snapshot: snapshotKey,
         log_range: { from: logFrom, to_excl: logToExcl, present: logEntriesPresent },
-        indexes: indexSummaries,
         findings: findings.map((f) => ({
           severity: f.severity,
           check: f.check,
@@ -341,15 +423,14 @@ const bundle = defineBaerlySubcommand({
       });
     } else {
       process.stdout.write(
-        renderText(args.table, findings, {
+        renderSnapshotLog(args.table, findings, {
           logRange: [logFrom, logToExcl],
           logEntriesPresent,
           snapshotKey,
-          indexSummaries,
         }),
       );
     }
-    return findings.length === 0 ? 0 : 4;
+    return findings.some(isFindingFinding) ? 4 : 0;
   },
 });
 

@@ -1,5 +1,5 @@
 /**
- * Unit tests for the `baerly doctor --usage` writes/min estimator.
+ * Unit tests for the `baerly admin usage` writes/min estimator.
  *
  * Drives `MemoryStorage` directly so the suite has zero infra deps
  * and runs in the default vitest project. Log entries are seeded as
@@ -12,12 +12,17 @@
  * test — the writer is not under test.
  */
 
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 import { MemoryStorage, type LogEntry } from "@baerly/protocol";
+import { LocalFsStorage } from "@baerly/dev";
 import {
   M_SIZE_WRITES_PER_MIN_PER_COLLECTION,
   discoverCollections,
   estimateWritesPerMin,
+  runUsage,
 } from "./usage.ts";
 
 interface SeedOpts {
@@ -215,5 +220,132 @@ describe("discoverCollections", () => {
     await seedLogEntries(storage, "x", "bob", "comments", { count: 2, windowMinutes: 1 });
     await expect(discoverCollections(storage, "x", "alice")).resolves.toEqual(["tickets"]);
     await expect(discoverCollections(storage, "x", "bob")).resolves.toEqual(["comments"]);
+  });
+});
+
+describe("baerly admin usage — CLI smoke", () => {
+  const captureStream = (
+    stream: NodeJS.WriteStream,
+  ): { restore: () => void; readonly captured: string[] } => {
+    const captured: string[] = [];
+    const original = stream.write.bind(stream);
+    stream.write = ((chunk: unknown): boolean => {
+      captured.push(typeof chunk === "string" ? chunk : String(chunk));
+      return true;
+    }) as typeof stream.write;
+    return {
+      captured,
+      restore: () => {
+        stream.write = original;
+      },
+    };
+  };
+
+  // Helper that bypasses MemoryStorage (which lives in a separate
+  // process from runUsage's parseBucketUri lookup) and uses a temp
+  // file:// bucket instead.
+  const seedToFs = async (
+    storage: LocalFsStorage,
+    app: string,
+    tenant: string,
+    collection: string,
+    count: number,
+    windowMinutes: number,
+  ): Promise<void> => {
+    const startMs = Date.UTC(2026, 0, 1, 0, 0, 0);
+    const prefix = `app/${app}/tenant/${tenant}/manifests/${collection}/log`;
+    for (let seq = 0; seq < count; seq++) {
+      const t =
+        count === 1 ? startMs : startMs + Math.round((seq * windowMinutes * 60_000) / (count - 1));
+      const entry: LogEntry = {
+        lsn: `dummy_${seq.toString(16).padStart(6, "0")}_00`,
+        commit_ts: new Date(t).toISOString(),
+        op: "I",
+        collection,
+        doc_id: `doc_${seq}`,
+        schema_version: 0,
+        session: "abcdef",
+        seq,
+        new: { value: seq },
+        patch: { value: seq },
+      };
+      await storage.put(
+        `${prefix}/${seq}.json`,
+        new TextEncoder().encode(JSON.stringify(entry)),
+        { contentType: "application/json" },
+      );
+    }
+  };
+
+  test("--target=node scans every collection under the bucket", async () => {
+    const root = await mkdtemp(join(tmpdir(), "baerly-admin-usage-"));
+    try {
+      const storage = new LocalFsStorage({ root });
+      await seedToFs(storage, "myapp", "t1", "tickets", 10, 60);
+      await seedToFs(storage, "myapp", "t1", "comments", 21, 1);
+
+      const stdout = captureStream(process.stdout);
+      let exitCode: number;
+      try {
+        exitCode = await runUsage([
+          `--bucket=file://${root}`,
+          `--app=myapp`,
+          `--tenant=t1`,
+          `--target=node`,
+          `--json`,
+        ]);
+      } finally {
+        stdout.restore();
+      }
+      expect(exitCode).toBe(0);
+      const envelope = JSON.parse(stdout.captured.join("").trim()) as {
+        result: {
+          target: string;
+          findings: { check: string; severity: string; message: string }[];
+        };
+      };
+      expect(envelope.result.target).toBe("node");
+      const tickets = envelope.result.findings.find((f) => f.check === "usage-tickets");
+      const comments = envelope.result.findings.find((f) => f.check === "usage-comments");
+      expect(tickets?.severity).toBe("info");
+      expect(comments?.severity).toBe("warning");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("--target=cloudflare short-circuits with an info finding", async () => {
+    const stdout = captureStream(process.stdout);
+    let exitCode: number;
+    try {
+      exitCode = await runUsage([
+        `--app=myapp`,
+        `--tenant=t1`,
+        `--target=cloudflare`,
+        `--json`,
+      ]);
+    } finally {
+      stdout.restore();
+    }
+    expect(exitCode).toBe(0);
+    const envelope = JSON.parse(stdout.captured.join("").trim()) as {
+      result: { findings: { check: string; severity: string }[] };
+    };
+    expect(envelope.result.findings).toHaveLength(1);
+    expect(envelope.result.findings[0]?.check).toBe("usage.cloudflare");
+    expect(envelope.result.findings[0]?.severity).toBe("info");
+  });
+
+  test("--target=node without --bucket rejected with InvalidConfig (exit 1)", async () => {
+    const stderr = captureStream(process.stderr);
+    let exitCode: number;
+    try {
+      exitCode = await runUsage([`--app=myapp`, `--tenant=t1`, `--target=node`]);
+    } finally {
+      stderr.restore();
+    }
+    expect(exitCode).toBe(1);
+    expect(stderr.captured.join("")).toContain("InvalidConfig");
+    expect(stderr.captured.join("")).toContain("--bucket");
   });
 });
