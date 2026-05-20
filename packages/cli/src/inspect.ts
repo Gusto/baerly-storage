@@ -19,6 +19,11 @@
  *   - per-declared-index key count (when --config supplied).
  *   - well-formed status: "ok" or "error" with an `errors` array.
  *
+ * For projected monthly Class A / $ trajectories, use
+ * `baerly cost --table=<name>` — the projection used to live as a
+ * footer here but moved to its own verb so inspect stays a glance
+ * command (no GET-storm over the trailing log sample).
+ *
  * Cost shape:
  *   1 GET current.json
  *   + 1 GET snapshot (if any)
@@ -41,9 +46,6 @@ import { loadMaterialisedView } from "./export/index.ts";
 import { loadCollectionIndexes } from "./config.ts";
 import { parseBucketUri } from "./bucket-uri.ts";
 import { emitSuccess, isJsonMode } from "./output.ts";
-import { detectProvider, pricingFor } from "./cost/provider.ts";
-import { project, type Trajectory } from "./cost/project.ts";
-import { estimateWritesPerMin } from "./doctor/usage.ts";
 import { defineBaerlySubcommand } from "./subcommand.ts";
 
 const INSPECT_ARGS = {
@@ -78,13 +80,6 @@ const INSPECT_ARGS = {
       "Path to baerly.config.{js,mjs,json}; pulls declared indexes for key-count probes.",
     valueHint: "path",
   },
-  provider: {
-    type: "string",
-    required: false,
-    description:
-      "Override pricing provider for the trajectory footer (r2|aws-s3|self-hosted|dev). Auto-detected from the bucket URI + BAERLY_S3_ENDPOINT.",
-    valueHint: "r2|aws-s3|self-hosted|dev",
-  },
   json: {
     type: "boolean",
     description: "Emit a structured JSON envelope to stdout (success) or stderr (error)",
@@ -116,48 +111,7 @@ interface InspectResult {
   indexes: { name: string; count: number }[];
   status: "ok" | "error";
   errors: string[];
-  trajectory: Trajectory | null;
 }
-
-/** Compact "1.5M" / "22k" / "842" rendering for Class A op counts. */
-const formatOps = (n: number): string => {
-  if (n >= 1_000_000) {
-    return `${(n / 1_000_000).toFixed(1)}M`;
-  }
-  if (n >= 1_000) {
-    return `${(n / 1_000).toFixed(0)}k`;
-  }
-  return n.toFixed(0);
-};
-
-/** Two-line trajectory block. Three output states per design spec §4.2. */
-const renderTrajectory = (t: Trajectory): string => {
-  const wpm = t.writesPerMin.toFixed(t.writesPerMin < 10 ? 1 : 0);
-  const classA = formatOps(t.classAPerMonth);
-  // State 2: ops-only — provider known but no $ model. Today only
-  // self-hosted reaches this (dev is filtered out by the
-  // `provider !== "dev"` gate in inspect.ts before calling project()).
-  if (t.projectedUsdPerMonth === null) {
-    return [
-      `  trajectory:          ~${wpm} writes/min  →  ~${classA} Class A/mo`,
-      `                       ${t.percentOfGraduation.toFixed(2)}% of 50M/mo graduation trigger. Self-hosted — bill model not modelled.`,
-    ].join("\n");
-  }
-  // Only "r2" can reach withinFreeTier===true (aws-s3 has freeClassAPerMonth: 0).
-  // self-hosted/dev are filtered upstream.
-  const usd = t.withinFreeTier
-    ? `~$0 (R2 free tier)`
-    : `~$${t.projectedUsdPerMonth!.toFixed(2)}/mo`;
-  // Invariant: withinFreeTier===true implies pricing.freeClassAPerMonth>0,
-  // which in turn implies percentOfFreeTier!==null (see project.ts).
-  const tail = t.withinFreeTier
-    ? `${t.percentOfFreeTier!.toFixed(0)}% of free-tier Class A budget. ${t.percentOfFreeTier! < 50 ? "Well inside the promise." : "Approaching free-tier ceiling."}`
-    : `${t.percentOfGraduation.toFixed(2)}% of 50M/mo graduation trigger.`;
-  return [
-    `  trajectory:          ~${wpm} writes/min  →  ~${classA} Class A/mo  →  ${usd}`,
-    `                       ${tail}`,
-  ].join("\n");
-};
 
 const renderText = (r: InspectResult, table: string): string => {
   const lines: string[] = [];
@@ -178,9 +132,6 @@ const renderText = (r: InspectResult, table: string): string => {
   } else {
     lines.push(`  indexes:             (none declared)`);
   }
-  if (r.trajectory !== null) {
-    lines.push(renderTrajectory(r.trajectory));
-  }
   lines.push(`  status:              ${r.status}`);
   if (r.errors.length > 0) {
     for (const e of r.errors) {
@@ -197,15 +148,6 @@ const bundle = defineBaerlySubcommand({
   },
   args: INSPECT_ARGS,
   handler: async (args, ctx) => {
-    if (typeof args.provider === "string" && args.provider.length > 0) {
-      const allowed = new Set(["r2", "aws-s3", "self-hosted", "dev"]);
-      if (!allowed.has(args.provider)) {
-        throw new BaerlyError(
-          "InvalidConfig",
-          `baerly inspect: --provider must be one of r2|aws-s3|self-hosted|dev (got ${JSON.stringify(args.provider)})`,
-        );
-      }
-    }
     const bucket = await parseBucketUri(args.bucket);
     const { app, tenant } = await ctx.resolveAppTenant({ app: args.app, tenant: args.tenant });
     const tablePrefix = `${bucket.keyPrefix}app/${app}/tenant/${tenant}/manifests/${args.table}`;
@@ -264,36 +206,6 @@ const bundle = defineBaerlySubcommand({
       }
     }
 
-    // Trajectory footer: derive a projected cost trajectory from a fresh
-    // estimate of writes/min. Skipped for dev backends (file://, memory://)
-    // because $ projection is meaningless there. Errors land in errors[]
-    // so the inspection still completes — consistent with how
-    // loadMaterialisedView failure is handled above.
-    const providerOverride =
-      typeof args.provider === "string" && args.provider.length > 0
-        ? (args.provider as "r2" | "aws-s3" | "self-hosted" | "dev")
-        : undefined;
-    const provider = detectProvider({
-      bucketUri: args.bucket,
-      s3Endpoint: process.env["BAERLY_S3_ENDPOINT"],
-      override: providerOverride,
-    });
-    let trajectory: Trajectory | null = null;
-    if (provider !== "dev") {
-      try {
-        const verdict = await estimateWritesPerMin(bucket.storage, app, tenant, args.table, {
-          keyPrefix: bucket.keyPrefix,
-        });
-        trajectory = project(verdict.writesPerMin, 0, pricingFor(provider));
-      } catch (error) {
-        if (error instanceof BaerlyError) {
-          errors.push(`${error.code}: ${error.message}`);
-        } else {
-          errors.push((error as Error).message);
-        }
-      }
-    }
-
     const result: InspectResult = {
       currentJsonKey,
       schema_version: cur.schema_version,
@@ -306,7 +218,6 @@ const bundle = defineBaerlySubcommand({
       indexes,
       status: errors.length === 0 ? "ok" : "error",
       errors,
-      trajectory,
     };
 
     if (isJsonMode()) {
