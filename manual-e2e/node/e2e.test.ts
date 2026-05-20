@@ -11,10 +11,24 @@
  * `createListener()`. **Manual** — both gating env vars must be set
  * for the suite to run; `pnpm test` silently skips this file.
  *
+ * The deploy target is the production scaffold at
+ * `examples/minimal-node/`, materialised via
+ * `npm create baerly@latest <name> -- --target=node --with=docker`
+ * and shipped via `docker build && docker run` (or any PaaS / VM
+ * that runs `node server.js`). See `manual-e2e/README.md` for the
+ * full lifecycle.
+ *
  * Required env:
  *
  *   - `NODE_DEPLOY_URL`      — e.g. `http://localhost:8080`
  *   - `SHARED_SECRET`        — same value as the container's env
+ *
+ * Optional (override only when the scaffold defaults were changed):
+ *
+ *   - `APP`     — defaults to `minimal-node` (matches the scaffold's
+ *                 hard-coded `APP` constant in `src/server/index.ts`)
+ *   - `TENANT`  — defaults to `minimal-demo` (matches the
+ *                 scaffold's `.env.example:TENANT`)
  *
  * Optional (provisioning seam — needed for the conformance cascade
  * but not for the latency / long-poll / 401 probes):
@@ -29,8 +43,6 @@
  * direct `Storage` handle to seed `current.json` per fresh table.
  * The test process opens its own `S3HttpStorage` against the same
  * bucket the container talks to.
- *
- * See `manual-e2e/README.md` for the full lifecycle.
  */
 
 import { AwsClient } from "aws4fetch";
@@ -49,11 +61,10 @@ import {
 
 const NODE_URL = process.env["NODE_DEPLOY_URL"];
 const SECRET = process.env["SHARED_SECRET"];
-// Tenant the inline sharedSecret Verifier in `manual-e2e/node/server-
-// entry.ts` maps every authorized request to. Hard-coded (the check
-// is single-tenant); change in lockstep with the deploy entry.
-const TENANT = process.env["TENANT"] ?? "default";
-const APP = process.env["APP"] ?? "e2e";
+// APP / TENANT must match the deployed Node host's env (defaults
+// match examples/minimal-node).
+const APP = process.env["APP"] ?? "minimal-node";
+const TENANT = process.env["TENANT"] ?? "minimal-demo";
 
 const RUN_PREFIX = `e2e-${Date.now()}`;
 

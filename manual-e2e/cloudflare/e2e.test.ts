@@ -11,10 +11,22 @@
  * `baerlyWorker()`. **Manual** — both gating env vars must be set
  * for the suite to run; `pnpm test` silently skips this file.
  *
+ * The deploy target is the production scaffold at
+ * `examples/minimal-cloudflare/`, materialised via
+ * `npm create baerly@latest <name> -- --target=cloudflare` and
+ * shipped with `pnpm baerly deploy`. See `manual-e2e/README.md`
+ * for the full lifecycle.
+ *
  * Required env:
  *
  *   - `CF_DEPLOY_URL`  — e.g.  `https://baerly-e2e-cf.<sub>.workers.dev`
  *   - `SHARED_SECRET`  — same secret as `wrangler secret put SHARED_SECRET`
+ *
+ * Optional (override only when the scaffold defaults were changed):
+ *
+ *   - `APP`     — defaults to `minimal-cloudflare` (matches the
+ *                 scaffold's `wrangler.jsonc` `vars.APP`)
+ *   - `TENANT`  — defaults to `minimal-demo` (matches `vars.TENANT`)
  *
  * Optional (provisioning seam — needed for the conformance cascade
  * but not for the latency / long-poll / 401 probes):
@@ -22,15 +34,14 @@
  *   - `CF_R2_S3_ENDPOINT`     — `https://<accountid>.r2.cloudflarestorage.com`
  *   - `CF_R2_ACCESS_KEY_ID`   — R2 API token (object read/write)
  *   - `CF_R2_SECRET_ACCESS_KEY` — R2 API token secret
- *   - `CF_R2_BUCKET`          — bucket name (defaults to `baerly-e2e-cf`)
+ *   - `CF_R2_BUCKET`          — bucket name (defaults to `minimal-cloudflare`,
+ *                                matching the scaffold's `r2_buckets[0].bucket_name`)
  *
  * There is no "create table" HTTP route, so the cascade needs a
  * direct `Storage` handle to seed `current.json` per fresh table.
  * The test process opens its own `S3HttpStorage` against the R2
  * S3-compat endpoint to satisfy the seam; the deployed Worker
  * continues to read R2 via the in-cell binding fast-path.
- *
- * See `manual-e2e/README.md` for the full lifecycle.
  */
 
 import { AwsClient } from "aws4fetch";
@@ -49,12 +60,10 @@ import {
 
 const CF_URL = process.env["CF_DEPLOY_URL"];
 const SECRET = process.env["SHARED_SECRET"];
-// Tenant the inline sharedSecret Verifier in `manual-e2e/cloudflare/
-// worker-entry.ts` maps every authorized request to. Hard-coded
-// (the check is single-tenant); change in lockstep with the deploy
-// entry's verifier closure.
-const TENANT = "default";
-const APP = "e2e";
+// APP / TENANT must match the deployed Worker's wrangler.jsonc vars
+// (defaults match examples/minimal-cloudflare).
+const APP = process.env["APP"] ?? "minimal-cloudflare";
+const TENANT = process.env["TENANT"] ?? "minimal-demo";
 
 // Per-run namespace so concurrent runs don't collide and so cleanup
 // can scope its sweep. The cascade itself mints fresh tables inside
@@ -202,7 +211,7 @@ describe.runIf(CF_URL !== undefined && SECRET !== undefined)(
     const R2_ENDPOINT = process.env["CF_R2_S3_ENDPOINT"];
     const R2_ACCESS = process.env["CF_R2_ACCESS_KEY_ID"];
     const R2_SECRET = process.env["CF_R2_SECRET_ACCESS_KEY"];
-    const R2_BUCKET = process.env["CF_R2_BUCKET"] ?? "baerly-e2e-cf";
+    const R2_BUCKET = process.env["CF_R2_BUCKET"] ?? "minimal-cloudflare";
 
     const cascadeReady =
       R2_ENDPOINT !== undefined && R2_ACCESS !== undefined && R2_SECRET !== undefined;

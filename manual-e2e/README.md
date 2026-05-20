@@ -1,94 +1,29 @@
 ---
 title: Manual end-to-end check
 audience: maintainer
-summary: "Manual lifecycle for the hand-rolled CF + Node skeleton apps. Run pnpm test:manual-e2e after provisioning."
-last-reviewed: 2026-05-12
+summary: "Manual lifecycle for the CF + Node end-to-end check. Deploy the production scaffolds, then run pnpm test:manual-e2e against the deployed URLs."
+last-reviewed: 2026-05-20
 tags: [manual-e2e, operations]
 related: ["../CLAUDE.md"]
 ---
 
 # Baerly manual end-to-end check
 
-Hand-rolled skeleton apps that let a maintainer verify
-`baerlyWorker()` and `createListener()` against real R2 and real S3
-before merging adapter changes. Manual — not part of CI, not a
-production template. See the inline warnings throughout.
+A two-file check (`manual-e2e/cloudflare/e2e.test.ts` +
+`manual-e2e/node/e2e.test.ts`) that lets a maintainer verify
+`baerlyWorker()` and `baerlyNode()` against real R2 and real S3
+before merging adapter changes. Manual — not part of CI.
 
-## Production lifecycle (preferred)
-
-For real apps, do not copy the artifacts in this directory.
-Scaffold with `create-baerly` and use the `baerly` CLI.
-
-### Cloudflare production
-
-```sh
-# Scaffold (writes wrangler.jsonc, baerly.config.ts, src/server/index.ts, ...).
-npm create baerly@latest my-app -- --target=cloudflare
-cd my-app
-pnpm install
-
-# Set the SHARED_SECRET (or wire Cloudflare Access).
-wrangler secret put SHARED_SECRET
-
-# One-command deploy. Auto-provisions R2 buckets via
-# `wrangler deploy --x-provision --x-auto-create` (Wrangler 4.10+);
-# falls back to `wrangler r2 bucket create` + `wrangler deploy`
-# when the experimental flag is unavailable.
-pnpm exec baerly deploy
-
-# Walk the deploy invariants and report findings. --fix auto-creates
-# missing R2 buckets; secret prompts stay manual.
-pnpm exec baerly doctor --target=cloudflare
-```
-
-The production template lives at
-`examples/minimal-cloudflare/`. It ships a
-`wrangler.jsonc` with R2 bindings, vars, cron triggers, CPU
-limits, and observability; the worker entry wires a verifier
-selector that prefers `cloudflareAccess()` when configured and
-falls back to `sharedSecret()` for `wrangler dev` parity.
-
-### Node production
-
-```sh
-# Scaffold (writes src/server/index.ts, baerly.config.ts, ...).
-# Add --with=docker to ship a multi-stage distroless Dockerfile
-# alongside (distroless image, non-root user, Node-script HEALTHCHECK).
-npm create baerly@latest my-svc -- --target=node --with=docker
-cd my-svc
-pnpm install
-
-# Edit .env and set AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY,
-# BUCKET, and either JWKS_URL (production) or SHARED_SECRET (dev).
-
-# Build the image (the docker add-on ships the Dockerfile + .dockerignore
-# + healthcheck.js into the scaffolded project).
-docker build -t my-svc:latest -f Dockerfile .
-
-# Run with the env file you populated from .env.example.
-docker run -p 8080:8080 --env-file .env my-svc:latest
-```
-
-The production template lives at `examples/minimal-node/`; the
-`--with=docker` add-on at
-`packages/create-baerly/templates/addons/docker/` layers on top.
-The add-on Dockerfile is a multi-stage distroless build with
-non-root user (UID 65532), a `healthcheck.js` Node script, and a
-`.dockerignore`. The Node target self-deploys via your PaaS, VM,
-or container build — `baerly deploy` only handles the Cloudflare
-target. For a PaaS-shaped Node scaffold without a Dockerfile, drop
-the `--with=docker` flag.
-
-The artifacts under `manual-e2e/cloudflare/` and `manual-e2e/node/` below
-are the **manual end-to-end check** — they exist so PRs touching
-the adapters can validate against real R2 / real S3 before
-merging. Production users never copy them.
+The deploy artifacts are the production templates at
+`examples/minimal-cloudflare/` and `examples/minimal-node/`
+(materialised via `create-baerly`). This directory holds only the
+test driver — there are no skeleton apps to maintain.
 
 ## Lifecycle
 
 1. Provision resources (one-time): R2 bucket, S3 bucket, IAM /
    wrangler credentials, shared secret.
-2. Deploy both runtimes.
+2. Deploy both runtimes from the `create-baerly` scaffolds.
 3. `pnpm test:manual-e2e` — runs the two test files against the
    deployed URLs.
 4. Inspect the pass criteria below.
@@ -113,21 +48,24 @@ plumbing is a future addition.
 ### Step-by-step
 
 ```sh
-cd manual-e2e/cloudflare
+# 1. Scaffold the production Cloudflare template. The name doubles
+#    as the R2 bucket name; pick something memorable.
+npm create baerly@latest baerly-e2e-cf -- --target=cloudflare
+cd baerly-e2e-cf
+pnpm install
 
-# 1. Auth.
+# 2. Auth.
 wrangler login
-
-# 2. Create the R2 bucket (one-time).
-wrangler r2 bucket create baerly-e2e-cf
 
 # 3. Set the shared secret. Read a strong random secret into
 #    SHARED_SECRET; the same value goes into the check runner's env.
 export SHARED_SECRET="$(openssl rand -hex 32)"
 echo "$SHARED_SECRET" | wrangler secret put SHARED_SECRET
 
-# 4. Deploy.
-wrangler deploy
+# 4. Deploy. `baerly deploy` auto-provisions the R2 bucket via
+#    `wrangler deploy --x-provision --x-auto-create` (with a
+#    `wrangler r2 bucket create` fallback).
+pnpm baerly deploy
 
 # 5. Note the deployed URL (e.g.
 #    https://baerly-e2e-cf.<sub>.workers.dev).
@@ -138,12 +76,14 @@ export CF_DEPLOY_URL="https://baerly-e2e-cf.<your-subdomain>.workers.dev"
 
 | Var | Source | Used by |
 | --- | --- | --- |
-| `CF_DEPLOY_URL` | output of `wrangler deploy` | check test file |
+| `CF_DEPLOY_URL` | output of `baerly deploy` | check test file |
 | `SHARED_SECRET` | the value put via `wrangler secret put` | check test client |
+| `APP` | optional, defaults to `minimal-cloudflare` (only override if the scaffold's `wrangler.jsonc` `vars.APP` was customised) | check test client |
+| `TENANT` | optional, defaults to `minimal-demo` (only override if `vars.TENANT` was customised) | check test client |
 | `CF_R2_S3_ENDPOINT` | `https://<accountid>.r2.cloudflarestorage.com` | provisioning seam |
 | `CF_R2_ACCESS_KEY_ID` | R2 API token (with object read/write) | provisioning seam |
 | `CF_R2_SECRET_ACCESS_KEY` | R2 API token secret | provisioning seam |
-| `CF_R2_BUCKET` | `baerly-e2e-cf` (or your bucket name) | provisioning seam |
+| `CF_R2_BUCKET` | optional, defaults to `minimal-cloudflare` (the scaffold's `r2_buckets[0].bucket_name`; override only if you renamed the scaffold) | provisioning seam |
 
 `CF_R2_*` are the **provisioning seam**: the HTTP conformance cascade
 needs to write `current.json` for each fresh table before the first
@@ -177,27 +117,33 @@ curl -s "$CF_DEPLOY_URL/v1/t/some-table"
   section).
 - IAM credentials with `s3:GetObject`, `s3:PutObject`,
   `s3:DeleteObject`, `s3:ListBucket` on the bucket.
-- A host with TCP/8080 open. Local Docker is fine for the check; do
-  not use this image for production traffic — see the inline
-  warnings in `manual-e2e/node/Dockerfile`.
+- A host with TCP/8080 open. Local Docker is fine for the check.
 
 ### Step-by-step
 
 ```sh
-# From repo root:
-docker build -f manual-e2e/node/Dockerfile -t baerly-e2e-node:dev .
+# 1. Scaffold the production Node template with the docker add-on.
+#    The add-on layers a multi-stage distroless Dockerfile + healthcheck.js
+#    + .dockerignore on top of the base template.
+npm create baerly@latest baerly-e2e-node -- --target=node --with=docker
+cd baerly-e2e-node
+pnpm install
+
+# 2. Populate .env from .env.example (AWS_ACCESS_KEY_ID,
+#    AWS_SECRET_ACCESS_KEY, BUCKET, SHARED_SECRET, etc.).
+cp .env.example .env
+$EDITOR .env
 
 # Generate a shared secret (same value will go to the runner).
 export SHARED_SECRET="$(openssl rand -hex 32)"
+# Drop $SHARED_SECRET into .env's SHARED_SECRET= line.
 
+# 3. Build and run.
+docker build -t baerly-e2e-node:dev .
 docker run --rm -d \
   --name baerly-e2e-node \
   -p 8080:8080 \
-  -e AWS_ACCESS_KEY_ID=... \
-  -e AWS_SECRET_ACCESS_KEY=... \
-  -e AWS_REGION=us-east-1 \
-  -e BUCKET=baerly-e2e-node \
-  -e SHARED_SECRET="$SHARED_SECRET" \
+  --env-file .env \
   baerly-e2e-node:dev
 
 export NODE_DEPLOY_URL="http://localhost:8080"
@@ -213,6 +159,8 @@ export NODE_DEPLOY_URL="http://localhost:8080"
 | `BUCKET` | bucket name | container + provisioning seam |
 | `SHARED_SECRET` | generated | container + check test client |
 | `NODE_DEPLOY_URL` | container's external URL | check test file |
+| `APP` | optional, defaults to `minimal-node` (only override if you edited the scaffold's `src/server/index.ts`) | check test client |
+| `TENANT` | optional, defaults to `minimal-demo` (matches the scaffold's `.env.example:TENANT`; override only if you changed `.env`) | check test client |
 | `S3_ENDPOINT` | optional, default `https://s3.<region>.amazonaws.com` | container + provisioning seam |
 
 The same AWS credentials and bucket the container uses double as the
@@ -222,10 +170,13 @@ The same AWS credentials and bucket the container uses double as the
 ### R2-via-S3-compat fallback
 
 If you don't have AWS, point the Node host at Cloudflare R2 with the
-S3 API:
+S3 API. Either edit the `.env` you populated above, or override at
+`docker run` time:
 
 ```sh
-docker run ... \
+docker run --rm -d \
+  --name baerly-e2e-node \
+  -p 8080:8080 \
   -e S3_ENDPOINT="https://<accountid>.r2.cloudflarestorage.com" \
   -e AWS_REGION=auto \
   -e AWS_ACCESS_KEY_ID=<r2-token-id> \
@@ -272,14 +223,17 @@ wrangler r2 bucket delete baerly-e2e-cf   # optional
 
 # Node
 docker stop baerly-e2e-node && docker rm baerly-e2e-node
-aws s3 rb s3://baerly-e2e-node --force    # optional
+aws s3 rb s3://<your-bucket> --force      # optional
 ```
 
 Residual data: every check run scopes writes under a fresh
 `e2e-<unix-ms>/`-prefixed table namespace. If a run is interrupted,
 leftover keys are under that prefix; a one-line `aws s3 rm
---recursive s3://<bucket>/app/e2e/tenant/default/manifests/<e2e-prefix>*`
+--recursive s3://<bucket>/app/<APP>/tenant/<TENANT>/manifests/<e2e-prefix>*`
 (or the matching `wrangler r2 object delete` script) cleans up.
+Substitute the `APP` / `TENANT` values from your deploy (defaults
+`minimal-cloudflare` / `minimal-demo` for CF, `minimal-node` /
+`minimal-demo` for Node).
 
 ## Cost summary (per run)
 
@@ -319,10 +273,6 @@ quietly relax the constants.
 
 ## Out of scope (deferred)
 
-- Production-ready CF / Node templates (no observability config,
-  secret rotation, multi-env, custom domains).
-- Preset `Verifier` factories (`sharedSecret`, `jwks`, `hmac`,
-  Cloudflare Access).
 - Automated CI integration (GitHub Actions / Buildkite).
 - Multi-region / failover.
 - Observability dashboards beyond stdout summaries.

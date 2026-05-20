@@ -229,15 +229,16 @@ Read in this order to build a mental model:
    `Storage` with content-addressed ETags and atomic writes; used by
    future `baerly dev` and by tests that need cross-`Db`-instance
    visibility without Minio).
-10. **`manual-e2e/`** — hand-rolled skeleton apps used for manual
-   end-to-end validation against real R2 / real S3. Each subdir is
-   self-contained: `manual-e2e/cloudflare/` holds `wrangler.toml` +
-   `worker-entry.ts` + `e2e.test.ts`; `manual-e2e/node/` holds
-   `Dockerfile` + `server-entry.ts` + `e2e.test.ts`. Manual
-   lifecycle in `manual-e2e/README.md`; driven by `pnpm
-   test:manual-e2e`. **Not** a production template — sits at the
-   root alongside `bench/` because it's manual maintainer
-   infrastructure, not part of the automated test suite.
+10. **`manual-e2e/`** — manual end-to-end check that drives the
+   HTTP conformance cascade + latency / long-poll / 401 probes
+   against real R2 / real S3. Each subdir now holds only its
+   `e2e.test.ts`; the deploy artifacts are the production scaffolds
+   `examples/minimal-cloudflare` (via `pnpm baerly deploy`) and
+   `examples/minimal-node --with=docker` (via `docker build && docker
+   run`). Manual lifecycle in `manual-e2e/README.md`; driven by
+   `pnpm test:manual-e2e`. Sits at the root alongside `bench/`
+   because it's manual maintainer infrastructure, not part of the
+   automated test suite.
 11. **`examples/`** — runnable example apps that double as the CLI
    template source. `examples/minimal-cloudflare/` (R2 +
    `cloudflareAccess`→`sharedSecret`), `examples/minimal-node/`
