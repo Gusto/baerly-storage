@@ -1,4 +1,5 @@
 import { BaerlyError } from "@baerly/protocol";
+import { exportJWK, generateKeyPair, SignJWT } from "jose";
 import { beforeAll, describe, expect, test, vi } from "vitest";
 import { cloudflareAccess } from "./cloudflare-access.ts";
 
@@ -7,51 +8,24 @@ const AUDIENCE_TAG = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789
 const ISSUER = `https://${TEAM_DOMAIN}.cloudflareaccess.com`;
 const KID = "cf-key-1";
 
-const base64UrlEncode = (bytes: Uint8Array): string => {
-  let bin = "";
-  for (let i = 0; i < bytes.length; i++) {
-    bin += String.fromCharCode(bytes[i]!);
-  }
-  return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-};
-const utf8 = (s: string): Uint8Array => new TextEncoder().encode(s);
-
 type SignFn = (payload: Record<string, unknown>) => Promise<string>;
 let signJwt: SignFn;
 let jwksBody: string;
 
 beforeAll(async () => {
-  const keyPair = (await crypto.subtle.generateKey(
-    {
-      name: "RSASSA-PKCS1-v1_5",
-      modulusLength: 2048,
-      publicExponent: new Uint8Array([1, 0, 1]),
-      hash: "SHA-256",
-    },
-    true,
-    ["sign", "verify"],
-  )) as CryptoKeyPair;
-  const publicJwk = (await crypto.subtle.exportKey("jwk", keyPair.publicKey)) as Record<
-    string,
-    unknown
-  >;
-  publicJwk["kid"] = KID;
-  publicJwk["alg"] = "RS256";
-  publicJwk["use"] = "sig";
+  const { privateKey, publicKey } = await generateKeyPair("RS256", { extractable: true });
+  const publicJwk = {
+    ...(await exportJWK(publicKey)),
+    kid: KID,
+    alg: "RS256",
+    use: "sig",
+  };
   jwksBody = JSON.stringify({ keys: [publicJwk] });
 
-  signJwt = async (payload) => {
-    const header = { alg: "RS256", typ: "JWT", kid: KID };
-    const headerB64 = base64UrlEncode(utf8(JSON.stringify(header)));
-    const payloadB64 = base64UrlEncode(utf8(JSON.stringify(payload)));
-    const signingInput = utf8(`${headerB64}.${payloadB64}`);
-    const buf = new ArrayBuffer(signingInput.byteLength);
-    new Uint8Array(buf).set(signingInput);
-    const sig = new Uint8Array(
-      await crypto.subtle.sign({ name: "RSASSA-PKCS1-v1_5" }, keyPair.privateKey, buf),
-    );
-    return `${headerB64}.${payloadB64}.${base64UrlEncode(sig)}`;
-  };
+  signJwt = async (payload) =>
+    new SignJWT(payload)
+      .setProtectedHeader({ alg: "RS256", kid: KID, typ: "JWT" })
+      .sign(privateKey);
 });
 
 const validPayload = (overrides: Record<string, unknown> = {}): Record<string, unknown> => ({

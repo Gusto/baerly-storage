@@ -1,6 +1,40 @@
 import { BaerlyError } from "@baerly/protocol";
+import { exportJWK, generateKeyPair, SignJWT } from "jose";
 import { beforeAll, describe, expect, test, vi } from "vitest";
 import { bearerJwt, type JwksDocument } from "./bearer-jwt.ts";
+
+const KID = "test-key-1";
+const ISSUER = "https://idp.example.com/";
+const AUDIENCE = "https://api.example.com/";
+
+type SignFn = (
+  payload: Record<string, unknown>,
+  headerOverride?: { kid?: string; alg?: string },
+) => Promise<string>;
+
+let signJwt: SignFn;
+let jwks: JwksDocument;
+
+beforeAll(async () => {
+  const { privateKey, publicKey } = await generateKeyPair("RS256", { extractable: true });
+  const publicJwk = {
+    ...(await exportJWK(publicKey)),
+    kid: KID,
+    alg: "RS256",
+    use: "sig",
+  };
+  jwks = { keys: [publicJwk as { kty: string; kid: string }] };
+
+  signJwt = async (payload, headerOverride) => {
+    const alg = headerOverride?.alg ?? "RS256";
+    const kid = headerOverride?.kid ?? KID;
+    return new SignJWT(payload as Record<string, unknown>)
+      .setProtectedHeader({ alg, kid, typ: "JWT" })
+      .sign(privateKey);
+  };
+});
+
+const utf8 = (s: string): Uint8Array => new TextEncoder().encode(s);
 
 const base64UrlEncode = (bytes: Uint8Array): string => {
   let bin = "";
@@ -9,56 +43,6 @@ const base64UrlEncode = (bytes: Uint8Array): string => {
   }
   return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 };
-
-const utf8 = (s: string): Uint8Array => new TextEncoder().encode(s);
-
-const KID = "test-key-1";
-const ISSUER = "https://idp.example.com/";
-const AUDIENCE = "https://api.example.com/";
-
-type SignFn = (
-  payload: Record<string, unknown>,
-  headerOverride?: Record<string, unknown>,
-) => Promise<string>;
-
-let signJwt: SignFn;
-let jwks: JwksDocument;
-
-beforeAll(async () => {
-  const keyPair = (await crypto.subtle.generateKey(
-    {
-      name: "RSASSA-PKCS1-v1_5",
-      modulusLength: 2048,
-      publicExponent: new Uint8Array([1, 0, 1]),
-      hash: "SHA-256",
-    },
-    true,
-    ["sign", "verify"],
-  )) as CryptoKeyPair;
-  const publicJwk = (await crypto.subtle.exportKey("jwk", keyPair.publicKey)) as Record<
-    string,
-    unknown
-  >;
-  publicJwk["kid"] = KID;
-  publicJwk["alg"] = "RS256";
-  publicJwk["use"] = "sig";
-  jwks = { keys: [publicJwk as { kty: string; kid: string }] };
-
-  signJwt = async (payload, headerOverride) => {
-    const header = { alg: "RS256", typ: "JWT", kid: KID, ...headerOverride };
-    const headerB64 = base64UrlEncode(utf8(JSON.stringify(header)));
-    const payloadB64 = base64UrlEncode(utf8(JSON.stringify(payload)));
-    const signingInput = utf8(`${headerB64}.${payloadB64}`);
-    // Allocate fresh ArrayBuffer to satisfy WebCrypto's BufferSource
-    // contract under TS strict typing.
-    const buf = new ArrayBuffer(signingInput.byteLength);
-    new Uint8Array(buf).set(signingInput);
-    const sig = new Uint8Array(
-      await crypto.subtle.sign({ name: "RSASSA-PKCS1-v1_5" }, keyPair.privateKey, buf),
-    );
-    return `${headerB64}.${payloadB64}.${base64UrlEncode(sig)}`;
-  };
-});
 
 const mkReq = (token: string | undefined, url = "https://api.example.com/v1/t/items"): Request =>
   new Request(url, {
@@ -182,7 +166,7 @@ describe("bearerJwt — JWKS cache", () => {
     expect(fetchStub).toHaveBeenCalledTimes(1);
   });
 
-  test("kid miss triggers one refresh; second miss inside rate-limit window does NOT refresh", async () => {
+  test("flood of unknown-kid tokens does NOT N-fetch the IdP (cooldown rate-limit)", async () => {
     const fetchStub = vi.fn<typeof fetch>(
       async () => new Response(JSON.stringify(jwks), { status: 200 }),
     );
@@ -197,16 +181,16 @@ describe("bearerJwt — JWKS cache", () => {
     await expect(verifier(mkReq(okToken))).resolves.not.toBeNull();
     expect(fetchStub).toHaveBeenCalledTimes(1);
 
-    // Request with an unknown kid → triggers ONE refresh attempt.
-    const unknownKidToken = await signJwt(validPayload(), { kid: "unknown-kid-1" });
-    await expect(verifier(mkReq(unknownKidToken))).resolves.toBeNull();
-    expect(fetchStub).toHaveBeenCalledTimes(2);
-
-    // Second request with a different unknown kid inside the rate
-    // limit must NOT refresh again.
+    // Two consecutive unknown-kid tokens must NOT trigger one fetch
+    // each. jose's `cooldownDuration` bounds JWKS reloads to one per
+    // window from the last successful fetch, regardless of trigger;
+    // so the bound is "at most one additional fetch across N misses
+    // inside the window".
+    const unknownKidToken1 = await signJwt(validPayload(), { kid: "unknown-kid-1" });
+    await expect(verifier(mkReq(unknownKidToken1))).resolves.toBeNull();
     const unknownKidToken2 = await signJwt(validPayload(), { kid: "unknown-kid-2" });
     await expect(verifier(mkReq(unknownKidToken2))).resolves.toBeNull();
-    expect(fetchStub).toHaveBeenCalledTimes(2);
+    expect(fetchStub.mock.calls.length).toBeLessThanOrEqual(2);
   });
 
   test("cold-cache JWKS fetch failure throws BaerlyError{NetworkError}", async () => {
