@@ -88,33 +88,16 @@ export interface FullScanPlan {
 }
 
 /**
- * Optional configuration for {@link planQuery}.
- */
-export interface PlanQueryOptions {
-  /** Diagnostic toggle; attaches `consideredIndexes` when true. */
-  readonly trace?: boolean;
-  /**
-   * Per-call `$in` fan-out threshold override. Defaults to
-   * {@link IN_FANOUT_THRESHOLD}. Values ≤ 0 throw at construction —
-   * the planner does not validate here (the public `Db.create`
-   * surface already validates the input). Internal callers that
-   * construct `PlanQueryOptions` directly must pre-validate.
-   */
-  readonly inFanoutThreshold?: number;
-}
-
-/**
- * Default `$in` fan-out threshold. `$in: [...]` with `values.length`
+ * `$in` fan-out threshold. `$in: [...]` with `values.length`
  * at or below this number emits an `inOn` walk plan; over this
  * number the planner falls back to `FullScanPlan` because N
- * parallel-fan-out-of-`IN_FANOUT_PARALLELISM` LIST round-trips cost
- * more than one snapshot+log fold on every backend we benchmark
- * (see `bench/load-harness/`).
+ * parallel-fan-out LIST round-trips cost more than one snapshot+log
+ * fold on every backend we benchmark (see `bench/load-harness/`).
  *
- * Override at the Db level via
- * `Db.create({ inFanoutThreshold })` when your backend's LIST
- * round-trip is cheaper than ours (Minio / S3 / GCS have no
- * 50-subrequest budget like Cloudflare does).
+ * Hard-coded at the value that survives Cloudflare's 50-subrequest
+ * budget. If the default proves wrong on cheap-LIST backends
+ * (Minio / S3 / GCS), file a bug — the answer is "good, let's tune
+ * the default," not "make it configurable."
  */
 export const IN_FANOUT_THRESHOLD = 50;
 
@@ -289,7 +272,6 @@ const tryExtractEq = (op: Record<string, unknown>): DocumentValue | undefined =>
 export const planQuery = <T extends DocumentData = DocumentData>(
   predicate: Predicate<T> | undefined,
   indexes: ReadonlyArray<IndexDefinition>,
-  options?: PlanQueryOptions,
 ): QueryPlan => {
   if (predicate === undefined) {
     return { kind: "full-scan", reason: "no-predicate" };
@@ -434,14 +416,11 @@ export const planQuery = <T extends DocumentData = DocumentData>(
   });
   const best: Candidate = candidates[0]!;
 
-  // `$in` fan-out guard. Over the threshold, N sequential LISTs cost
-  // more than one snapshot+log fold on every backend we benchmark —
-  // refuse routing. Full-scan is correct. The threshold defaults to
-  // {@link IN_FANOUT_THRESHOLD} but can be overridden per-Db via
-  // `Db.create({ inFanoutThreshold })`.
-  const threshold = options?.inFanoutThreshold ?? IN_FANOUT_THRESHOLD;
+  // `$in` fan-out guard. Over {@link IN_FANOUT_THRESHOLD}, N
+  // sequential LISTs cost more than one snapshot+log fold on every
+  // backend we benchmark — refuse routing. Full-scan is correct.
   if (best.tail !== undefined && best.tail.kind === "in") {
-    if (best.tail.values.length > threshold) {
+    if (best.tail.values.length > IN_FANOUT_THRESHOLD) {
       return { kind: "full-scan", reason: "no-matching-index" };
     }
   }

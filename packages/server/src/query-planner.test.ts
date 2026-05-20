@@ -380,8 +380,8 @@ describe("planQuery — $in multi-walk (T3)", () => {
   });
 });
 
-describe("planQuery — inFanoutThreshold override", () => {
-  test("$in fan-out under default threshold routes", () => {
+describe("planQuery — $in fan-out threshold", () => {
+  test("$in fan-out under threshold routes", () => {
     const indexes: IndexDefinition[] = [{ name: "by_priority", on: "priority" }];
     const values = Array.from({ length: 50 }, (_, i) => `p${i}`);
     const plan = planQuery(
@@ -391,34 +391,12 @@ describe("planQuery — inFanoutThreshold override", () => {
     expect(plan).toMatchObject({ kind: "index-walk", indexName: "by_priority" });
   });
 
-  test("$in fan-out over default threshold falls back to full-scan", () => {
+  test("$in fan-out over threshold falls back to full-scan", () => {
     const indexes: IndexDefinition[] = [{ name: "by_priority", on: "priority" }];
     const values = Array.from({ length: 51 }, (_, i) => `p${i}`);
     const plan = planQuery(
       { priority: { $in: values } } as unknown as Predicate<DocumentData>,
       indexes,
-    );
-    expect(plan).toEqual({ kind: "full-scan", reason: "no-matching-index" });
-  });
-
-  test("$in fan-out respects inFanoutThreshold override (raise)", () => {
-    const indexes: IndexDefinition[] = [{ name: "by_priority", on: "priority" }];
-    const values = Array.from({ length: 100 }, (_, i) => `p${i}`);
-    const plan = planQuery(
-      { priority: { $in: values } } as unknown as Predicate<DocumentData>,
-      indexes,
-      { inFanoutThreshold: 200 },
-    );
-    expect(plan).toMatchObject({ kind: "index-walk", indexName: "by_priority" });
-  });
-
-  test("$in fan-out respects inFanoutThreshold override (lower)", () => {
-    const indexes: IndexDefinition[] = [{ name: "by_priority", on: "priority" }];
-    const values = Array.from({ length: 5 }, (_, i) => `p${i}`);
-    const plan = planQuery(
-      { priority: { $in: values } } as unknown as Predicate<DocumentData>,
-      indexes,
-      { inFanoutThreshold: 2 },
     );
     expect(plan).toEqual({ kind: "full-scan", reason: "no-matching-index" });
   });
