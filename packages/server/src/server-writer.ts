@@ -353,11 +353,8 @@ export class ServerWriter {
    * @throws BaerlyError code="InvalidResponse" when `current.json` does
    *   not exist (caller must bootstrap it first), or a log-entry body
    *   isn't valid JSON.
-   * @throws BaerlyError code="SchemaError" when `op !== "D"` and `body`
-   *   is missing, or `op === "D"` and `body` is provided.
    */
   async commit(input: CommitInput): Promise<CommitResult> {
-    validateInput(input);
     const session = uuid().slice(0, SESSION_ID_LENGTH);
     const logPrefix = this.#currentJsonKey.slice(0, this.#currentJsonKey.lastIndexOf("/"));
 
@@ -425,15 +422,10 @@ export class ServerWriter {
    * @throws BaerlyError code="InvalidResponse" — `current.json` does
    *   not exist (caller must bootstrap first), or malformed log
    *   body.
-   * @throws BaerlyError code="SchemaError" — an input failed the
-   *   `op === "D"` ↔ `body === undefined` invariant.
    */
   async commitBatch(inputs: readonly CommitInput[]): Promise<CommitBatchResult> {
     if (inputs.length === 0) {
       return { entries: [], currentEtag: undefined };
-    }
-    for (const input of inputs) {
-      validateInput(input);
     }
 
     const session = uuid().slice(0, SESSION_ID_LENGTH);
@@ -918,22 +910,6 @@ export class ServerWriter {
 // ---------------------------------------------------------------------
 // Internals
 // ---------------------------------------------------------------------
-
-/**
- * Reject inputs that the {@link LogEntry} shape can't represent
- * coherently. `D` ops can't carry a `body`; `I`/`U` ops must.
- */
-const validateInput = (input: CommitInput): void => {
-  if (input.op === "D" && input.body !== undefined) {
-    throw new BaerlyError("SchemaError", `ServerWriter: op "D" must not carry a body`);
-  }
-  if (input.op !== "D" && input.body === undefined) {
-    throw new BaerlyError(
-      "SchemaError",
-      `ServerWriter: op "${input.op}" requires a body (post-image)`,
-    );
-  }
-};
 
 /**
  * `true` when the underlying storage surfaced a `PreconditionFailed`
