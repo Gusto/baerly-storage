@@ -34,12 +34,10 @@
  *   2 — Storage / Network error.
  */
 
-import { fileURLToPath, pathToFileURL } from "node:url";
 import { defineCommand, parseArgs, type ArgsDef, type ParsedArgs } from "citty";
 import { BaerlyError, readCurrentJson, type CurrentJson, type Storage } from "@baerly/protocol";
 import { loadMaterialisedView } from "./export/index.ts";
-import { type BaerlyConfig, type IndexDefinition } from "@baerly/server";
-import { loadAppConfig } from "./config.ts";
+import { loadAppConfig, loadCollectionIndexes } from "./config.ts";
 import { parseBucketUri } from "./copy.ts";
 import { emitError, emitSuccess, isJsonMode, setJsonMode } from "./output.ts";
 import { detectProvider, pricingFor } from "./cost/provider.ts";
@@ -109,46 +107,6 @@ const errorToExitCode = (code: string): number => {
     return 1;
   }
   return 2;
-};
-
-const loadConfigIndexes = async (
-  configPath: string,
-  table: string,
-): Promise<readonly IndexDefinition[]> => {
-  if (configPath.endsWith(".ts")) {
-    throw new BaerlyError(
-      "InvalidConfig",
-      `baerly inspect: --config must point at compiled JS / JSON (got .ts: ${JSON.stringify(configPath)})`,
-    );
-  }
-  let cfg: BaerlyConfig;
-  if (configPath.endsWith(".json")) {
-    const { readFile } = await import("node:fs/promises");
-    const text = await readFile(configPath, "utf8");
-    try {
-      cfg = JSON.parse(text) as BaerlyConfig;
-    } catch (error) {
-      throw new BaerlyError(
-        "InvalidConfig",
-        `baerly inspect: --config JSON parse error in ${JSON.stringify(configPath)}: ${(error as Error).message}`,
-      );
-    }
-  } else {
-    const pathMod = await import("node:path");
-    const abs = configPath.startsWith("file://")
-      ? fileURLToPath(configPath)
-      : pathMod.resolve(configPath);
-    const mod = (await import(pathToFileURL(abs).href)) as { default?: BaerlyConfig };
-    if (mod.default === undefined) {
-      throw new BaerlyError(
-        "InvalidConfig",
-        `baerly inspect: --config ${JSON.stringify(configPath)} has no default export`,
-      );
-    }
-    cfg = mod.default;
-  }
-  const collection = cfg.collections?.[table];
-  return collection?.indexes ?? [];
 };
 
 const countListEntries = async (
@@ -349,7 +307,7 @@ const handleInspect = async (args: Args): Promise<number> => {
 
     const indexes: { name: string; count: number }[] = [];
     if (typeof args.config === "string" && args.config.length > 0) {
-      const defs = await loadConfigIndexes(args.config, args.table);
+      const defs = await loadCollectionIndexes(args.config, args.table, "baerly inspect");
       for (const def of defs) {
         const prefix = `${tablePrefix}/index/${def.name}/`;
         const { count } = await countListEntries(bucket.storage, prefix);

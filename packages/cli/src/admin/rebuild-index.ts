@@ -37,11 +37,11 @@
  * `rebuildIndex`; this command is a thin URI + arg-parsing wrapper.
  */
 
-import { fileURLToPath, pathToFileURL } from "node:url";
 import { defineCommand, parseArgs, type ArgsDef, type ParsedArgs } from "citty";
 import { BaerlyError } from "@baerly/protocol";
-import { type IndexDefinition, type BaerlyConfig } from "@baerly/server";
+import { type IndexDefinition } from "@baerly/server";
 import { rebuildIndex } from "@baerly/server/maintenance";
+import { loadCollectionIndexes } from "../config.ts";
 import { parseBucketUri } from "../copy.ts";
 import { emitError, emitSuccess, setJsonMode } from "../output.ts";
 
@@ -121,56 +121,14 @@ const errorToExitCode = (code: string): number => {
   return 2;
 };
 
-/** Load a .js / .mjs / .json config and resolve the matching index's `on` field. */
+/** Resolve the `on` field of a single named index from the config file. */
 const onFieldFromConfig = async (
   configPath: string,
   table: string,
   indexName: string,
 ): Promise<string | readonly string[]> => {
-  if (configPath.endsWith(".ts")) {
-    throw new BaerlyError(
-      "InvalidConfig",
-      `baerly admin rebuild-index: --config must point at compiled JS / JSON (got .ts: ${JSON.stringify(configPath)})`,
-    );
-  }
-  // Dynamic import with a `file://` URL works for `.js` / `.mjs`.
-  // For `.json` we read + parse directly — Node's JSON-module loader
-  // requires `--experimental-json-modules` on some versions.
-  let cfg: BaerlyConfig;
-  if (configPath.endsWith(".json")) {
-    const { readFile } = await import("node:fs/promises");
-    const text = await readFile(configPath, "utf8");
-    try {
-      cfg = JSON.parse(text) as BaerlyConfig;
-    } catch (error) {
-      throw new BaerlyError(
-        "InvalidConfig",
-        `baerly admin rebuild-index: --config JSON parse error in ${JSON.stringify(configPath)}: ${(error as Error).message}`,
-      );
-    }
-  } else {
-    // Absolute-path import for filesystem files.
-    const pathMod = await import("node:path");
-    const abs = configPath.startsWith("file://")
-      ? fileURLToPath(configPath)
-      : pathMod.resolve(configPath);
-    const mod = (await import(pathToFileURL(abs).href)) as { default?: BaerlyConfig };
-    if (mod.default === undefined) {
-      throw new BaerlyError(
-        "InvalidConfig",
-        `baerly admin rebuild-index: --config ${JSON.stringify(configPath)} has no default export`,
-      );
-    }
-    cfg = mod.default;
-  }
-  const collection = cfg.collections?.[table];
-  if (collection === undefined) {
-    throw new BaerlyError(
-      "InvalidConfig",
-      `baerly admin rebuild-index: config has no collections.${table}`,
-    );
-  }
-  const def = collection.indexes?.find((d) => d.name === indexName);
+  const indexes = await loadCollectionIndexes(configPath, table, "baerly admin rebuild-index");
+  const def = indexes.find((d) => d.name === indexName);
   if (def === undefined) {
     throw new BaerlyError(
       "InvalidConfig",
