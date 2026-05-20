@@ -128,8 +128,8 @@ export const doctorCloudflare = async (
      * `R2_SECRET_ACCESS_KEY`), then runs the same writes/min
      * estimator the Node target uses. Bucket name is read from the
      * parsed R2 bindings (the `BUCKET` binding by default). An
-     * explicit `R2_ENDPOINT` env var routes through `minioStorage`
-     * for callers fronting R2 with a custom proxy.
+     * explicit `BAERLY_S3_ENDPOINT` env var routes through
+     * `minioStorage` for callers fronting R2 with a custom proxy.
      */
     readonly usage?: boolean;
     /**
@@ -360,7 +360,7 @@ export const doctorCloudflare = async (
 /**
  * Append usage findings to `findings` for the Cloudflare target.
  * Reads `CF_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`
- * (and optionally `R2_ENDPOINT` for a custom S3-compat URL) from
+ * (and optionally `BAERLY_S3_ENDPOINT` for a custom S3-compat URL) from
  * `process.env`, picks the R2 binding to scan (the `BUCKET` binding
  * by convention, else the first declared), and runs the
  * pure-storage estimator via `runUsageScan`.
@@ -408,12 +408,12 @@ const runUsageCheck = async (
   }
 
   // Prefer the R2 factory (derives the endpoint from `accountId`); fall
-  // back to `minioStorage` when the operator pins a custom `R2_ENDPOINT`
-  // (e.g. a private S3-compat proxy in front of R2).
+  // back to `minioStorage` when the operator pins a custom endpoint via
+  // `BAERLY_S3_ENDPOINT` (e.g. a private S3-compat proxy in front of R2).
   const accessKeyId = process.env["R2_ACCESS_KEY_ID"]!;
   const secretAccessKey = process.env["R2_SECRET_ACCESS_KEY"]!;
   const bucket = bucketBinding.bucket_name;
-  const customEndpoint = process.env["R2_ENDPOINT"];
+  const customEndpoint = process.env["BAERLY_S3_ENDPOINT"];
   const storage: Storage =
     customEndpoint !== undefined && customEndpoint !== ""
       ? minioStorage({ endpoint: customEndpoint, bucket, accessKeyId, secretAccessKey })

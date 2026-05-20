@@ -110,7 +110,7 @@ export function r2Storage(opts: {
  * import { minioStorage } from "baerly-storage/node";
  *
  * const storage = minioStorage({
- *   endpoint: process.env["S3_ENDPOINT"] ?? "http://localhost:9102",
+ *   endpoint: process.env["BAERLY_S3_ENDPOINT"] ?? "http://localhost:9102",
  *   bucket: "baerly",
  *   accessKeyId: process.env["MINIO_ACCESS_KEY"]!,
  *   secretAccessKey: process.env["MINIO_SECRET_KEY"]!,

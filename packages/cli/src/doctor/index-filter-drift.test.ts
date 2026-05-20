@@ -77,7 +77,7 @@ describe("checkIndexFilterDrift", () => {
     expect(err!.message).toContain("BUCKET");
     expect(err!.message).toContain("AWS_ACCESS_KEY_ID");
     expect(err!.message).toContain("AWS_SECRET_ACCESS_KEY");
-    expect(err!.fix).toContain("S3_ENDPOINT");
+    expect(err!.fix).toContain("BAERLY_S3_ENDPOINT");
   });
 
   test("error finding lists only the missing env vars (partial coverage)", async () => {

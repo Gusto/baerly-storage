@@ -10,8 +10,9 @@
  * the remediation command pinned.
  *
  * Requires storage credentials in env: `BUCKET`, `AWS_ACCESS_KEY_ID`,
- * `AWS_SECRET_ACCESS_KEY` (optionally `S3_ENDPOINT` + `AWS_REGION`).
- * Missing env yields a single `index-filter-drift.env` error finding
+ * `AWS_SECRET_ACCESS_KEY` (optionally `BAERLY_S3_ENDPOINT` +
+ * `AWS_REGION`). Missing env yields a single `index-filter-drift.env`
+ * error finding
  * and short-circuits the scan. Mirrors the env-var contract the Node
  * doctor's `--usage` path already uses.
  *
@@ -60,8 +61,8 @@ const currentJsonKeyFor = (app: string, tenant: string, collection: string): str
  * missing — the dispatcher maps that to an exit-2 doctor report.
  *
  * Endpoint-pattern dispatch matches `baerly copy` (see
- * `../copy.ts:parseBucketUri`): an explicit `S3_ENDPOINT` flows
- * through `minioStorage` (full endpoint), R2-shaped hosts pick
+ * `../bucket-uri.ts:parseBucketUri`): an explicit `BAERLY_S3_ENDPOINT`
+ * flows through `minioStorage` (full endpoint), R2-shaped hosts pick
  * `r2Storage`, else `s3Storage` derives the AWS endpoint from
  * `AWS_REGION`.
  *
@@ -84,7 +85,7 @@ const buildStorage = (findings: DoctorFinding[]): Storage | null => {
       severity: "error",
       check: "index-filter-drift.env",
       message: `--check=index-filter-drift needs ${missing.join(", ")} on the environment; skipped drift scan.`,
-      fix: "Source .env or set the vars inline: `BUCKET=... AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=... baerly doctor --check=index-filter-drift` (optionally with S3_ENDPOINT + AWS_REGION).",
+      fix: "Source .env or set the vars inline: `BUCKET=... AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=... baerly doctor --check=index-filter-drift` (optionally with BAERLY_S3_ENDPOINT + AWS_REGION).",
     });
     return null;
   }
@@ -92,7 +93,7 @@ const buildStorage = (findings: DoctorFinding[]): Storage | null => {
   const bucket = process.env["BUCKET"]!;
   const accessKeyId = process.env["AWS_ACCESS_KEY_ID"]!;
   const secretAccessKey = process.env["AWS_SECRET_ACCESS_KEY"]!;
-  const endpoint = process.env["S3_ENDPOINT"];
+  const endpoint = process.env["BAERLY_S3_ENDPOINT"];
   if (endpoint !== undefined && endpoint !== "") {
     const r2Host = endpoint.match(/^https?:\/\/([^./]+)\.r2\.cloudflarestorage\.com\b/i);
     if (r2Host !== null) {
