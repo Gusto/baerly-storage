@@ -11,6 +11,7 @@ import { baerlyWorker, type Env as BaerlyEnv } from "baerly-storage/cloudflare";
 import { cloudflareAccess, sharedSecret } from "baerly-storage/auth";
 import type { FriendlyLogLevel } from "baerly-storage/observability";
 import type { Verifier } from "baerly-storage";
+import config from "../../baerly.config.ts";
 
 interface AppEnv extends BaerlyEnv {
   readonly TENANT: string;
@@ -39,6 +40,7 @@ const selectVerifier = (env: AppEnv): Verifier => {
 
 const workerOptions = (env: AppEnv) => ({
   verifier: selectVerifier(env),
+  config,
   observability: {
     level: env.LOG_LEVEL,
     sampleRate: env.LOG_SAMPLE !== undefined ? Number(env.LOG_SAMPLE) : 0.1,

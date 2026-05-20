@@ -21,6 +21,7 @@ import { baerlyNode, r2Storage, s3Storage } from "baerly-storage/node";
 import { bearerJwt, sharedSecret } from "baerly-storage/auth";
 import type { FriendlyLogLevel } from "baerly-storage/observability";
 import type { Storage, Verifier } from "baerly-storage";
+import config from "../../baerly.config.ts";
 
 const reqEnv = (name: string): string => {
   const v = process.env[name];
@@ -74,6 +75,7 @@ await baerlyNode({
   app: APP,
   storage,
   verifier,
+  config,
   webRoot: process.env["WEB_ROOT"] ?? "./dist/client",
   observability: {
     level: process.env["LOG_LEVEL"] as FriendlyLogLevel | undefined,

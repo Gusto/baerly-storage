@@ -20,6 +20,7 @@ import {
   BaerlyError,
   type Verifier,
 } from "@baerly/protocol";
+import type { BaerlyConfig, SchemaValidator } from "@baerly/server";
 import { r2BindingStorage } from "./r2-binding-storage.ts";
 import { singleTenantDevVerifier } from "./single-tenant-dev-verifier.ts";
 import { baerlyWorker, type Env } from "./worker.ts";
@@ -314,6 +315,86 @@ describe("baerlyWorker routes", () => {
     expect(res.status).toBe(400);
     const body = (await res.json()) as BaseEnvelope;
     expect(body.error?.code).toBe("SchemaError");
+  });
+});
+
+describe("baerlyWorker config wiring", () => {
+  // StandardSchema-shaped validator that rejects `status === "invalid"`.
+  // Hand-written so this suite stays free of zod/valibot deps; same
+  // `~standard.validate` seam those libraries expose at runtime.
+  const statusValidator: SchemaValidator = {
+    "~standard": {
+      version: 1,
+      vendor: "test",
+      validate: (input) => {
+        const doc = input as { status?: unknown };
+        if (doc.status === "invalid") {
+          return { issues: [{ path: ["status"], message: "status must not be 'invalid'" }] };
+        }
+        return { value: input };
+      },
+    },
+  };
+
+  test("server-side schema fires on POST when collections.<table>.schema is declared", async () => {
+    const bucket = getBinding();
+    const table = freshTable("tickets");
+    await provisionTable(bucket, table);
+    const config: BaerlyConfig = { collections: { [table]: { schema: statusValidator } } };
+    const worker = baerlyWorker({ verifier: trivialVerifier, config });
+    const env = makeEnv(bucket);
+
+    const goodRes = await worker.fetch!(
+      asWorkersRequest(
+        new Request(`https://x/v1/t/${table}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ doc: { title: "ok", status: "open" } }),
+        }),
+      ),
+      env,
+      makeCtx(),
+    );
+    expect(goodRes.status).toBe(201);
+
+    const badRes = await worker.fetch!(
+      asWorkersRequest(
+        new Request(`https://x/v1/t/${table}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ doc: { title: "bad", status: "invalid" } }),
+        }),
+      ),
+      env,
+      makeCtx(),
+    );
+    expect(badRes.status).toBe(400);
+    const body = (await badRes.json()) as BaseEnvelope;
+    expect(body.error?.code).toBe("SchemaError");
+  });
+
+  test("declared schema has no effect when config is not passed (regression guard)", async () => {
+    // Pins the bug the wiring fixes: declaring schemas in
+    // baerly.config.ts is inert through the adapter path unless
+    // the adapter is told about them.
+    const bucket = getBinding();
+    const table = freshTable("tickets");
+    await provisionTable(bucket, table);
+    const worker = baerlyWorker({ verifier: trivialVerifier });
+    const env = makeEnv(bucket);
+
+    const res = await worker.fetch!(
+      asWorkersRequest(
+        new Request(`https://x/v1/t/${table}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ doc: { title: "bad", status: "invalid" } }),
+        }),
+      ),
+      env,
+      makeCtx(),
+    );
+    expect(res.status).toBe(201);
   });
 });
 

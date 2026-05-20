@@ -15,6 +15,7 @@ export {
   type CollectionNames,
   type RowOf,
   type UnboundConfig,
+  collectionsToMaps,
   defineConfig,
 } from "./config.ts";
 export {
