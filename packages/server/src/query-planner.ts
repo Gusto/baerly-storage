@@ -19,13 +19,9 @@
  * numbers.
  */
 
-import {
-  type DocumentValue,
-  type DocumentData,
-  type Predicate,
-  predicateImplies,
-} from "@baerly/protocol";
+import { type DocumentValue, type DocumentData, type Predicate } from "@baerly/protocol";
 import type { IndexDefinition } from "./indexes.ts";
+import { predicateImplies } from "./query-planner-implies.ts";
 
 /**
  * Tagged union returned by {@link planQuery}. The read path
@@ -132,7 +128,7 @@ export const IN_FANOUT_THRESHOLD = 50;
 /**
  * Detect "operator-shape object": every key starts with `$`. Mirrors
  * T1's `validatePredicate` rule (see
- * `packages/protocol/src/query/predicate.ts`).
+ * `packages/protocol/src/query/validate.ts`).
  */
 const isOperatorObject = (v: unknown): boolean => {
   if (v === null || typeof v !== "object") {

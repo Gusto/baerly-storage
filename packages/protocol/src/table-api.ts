@@ -1,5 +1,5 @@
 import type { DocumentValue, DocumentData } from "./json.ts";
-import type { PredicateOp } from "./query/predicate.ts";
+import type { PredicateOp } from "./query/_internals.ts";
 
 /**
  * Handle on one table (collection). Chainable: `where`, `order`,

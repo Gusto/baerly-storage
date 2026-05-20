@@ -182,8 +182,10 @@ priorities, zero-padded numerics in string form, etc.).
   (`runIndexWalkPlan` at the I/O boundary),
   [`packages/server/src/rebuild-index.ts`](../../packages/server/src/rebuild-index.ts)
   (filter-aware reconciliation),
-  [`packages/protocol/src/query/predicate.ts`](../../packages/protocol/src/query/predicate.ts)
-  (`PredicateOp<V>`, `predicateImplies`).
+  [`packages/protocol/src/query/_internals.ts`](../../packages/protocol/src/query/_internals.ts)
+  (`PredicateOp<V>`),
+  [`packages/server/src/query-planner-implies.ts`](../../packages/server/src/query-planner-implies.ts)
+  (`predicateImplies`).
 - Tests:
   [`packages/server/src/query-planner.test.ts`](../../packages/server/src/query-planner.test.ts),
   [`packages/server/src/query.test.ts`](../../packages/server/src/query.test.ts)

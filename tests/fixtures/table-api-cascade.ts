@@ -112,7 +112,7 @@ type Doc = DocumentData;
 
 /**
  * Predicate `$`-key rejection. The day-one operator policy
- * (`packages/protocol/src/table-api.ts:101-103` + `packages/protocol/src/query/predicate.ts:50-75`)
+ * (`packages/protocol/src/table-api.ts:101-103` + `packages/protocol/src/query/validate.ts`)
  * rejects `$`-prefixed predicate keys with
  * `BaerlyError{code:"InvalidConfig"}`. Rejection is SYNCHRONOUS at
  * `.where(...)` — no `await`, no terminal-time deferral — because
