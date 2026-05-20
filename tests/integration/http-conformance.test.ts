@@ -40,7 +40,9 @@ import {
 } from "@baerly/protocol";
 import { LocalFsStorage } from "@baerly/dev";
 import { createListener, S3HttpStorage } from "@baerly/adapter-node";
-import { Db, createRouter, withHttpObservability, type SchemaValidator } from "@baerly/server";
+import { Db, type SchemaValidator } from "@baerly/server";
+import { createRouter } from "@baerly/server/http";
+import { withHttpObservability } from "@baerly/server/observability";
 import { createBucket } from "../fixtures/s3-fixtures.ts";
 import { runHttpConformanceCascade, type HttpFetch } from "../fixtures/http-conformance-cascade.ts";
 import { CONFORMANCE_TENANT, testVerifier } from "../fixtures/test-verifier.ts";

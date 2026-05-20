@@ -25,7 +25,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { CURRENT_JSON_SCHEMA_VERSION, createCurrentJson, type Storage } from "@baerly/protocol";
 import { LocalFsStorage } from "@baerly/dev";
-import { ServerWriter } from "@baerly/server";
+import { ServerWriter } from "@baerly/server/_internal/testing";
 import { runExport } from "./export.ts";
 
 const APP = "app";

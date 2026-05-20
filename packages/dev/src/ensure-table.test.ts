@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { MemoryStorage, readCurrentJson } from "@baerly/protocol";
-import { ServerWriter } from "@baerly/server";
+import { ServerWriter } from "@baerly/server/_internal/testing";
 import { ensureTable } from "./ensure-table.ts";
 
 const keyFor = (app: string, tenant: string, table: string): string =>

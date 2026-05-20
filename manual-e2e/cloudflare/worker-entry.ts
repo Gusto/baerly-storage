@@ -12,7 +12,7 @@
 // because the manual check runs without a CF Access tunnel.
 
 import { baerlyWorker, type Env as BaerlyEnv } from "@baerly/adapter-cloudflare";
-import { sharedSecret } from "@baerly/server";
+import { sharedSecret } from "@baerly/server/auth";
 
 /**
  * Worker env. Adds `SHARED_SECRET` (set via `wrangler secret put

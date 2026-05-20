@@ -37,10 +37,12 @@ import {
   MemoryStorage,
   type Storage,
 } from "@baerly/protocol";
-import { compact, Db, runGc, ServerWriter } from "@baerly/server";
-import type {
-  InternalCompactOptions,
-  InternalRunGcOptions,
+import { Db } from "@baerly/server";
+import { compact, runGc } from "@baerly/server/maintenance";
+import {
+  type InternalCompactOptions,
+  type InternalRunGcOptions,
+  ServerWriter,
 } from "@baerly/server/_internal/testing";
 import { abortingStorage } from "../fixtures/aborting-storage.ts";
 

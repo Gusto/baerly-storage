@@ -34,7 +34,7 @@
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { defineCommand, parseArgs, type ArgsDef, type ParsedArgs } from "citty";
 import { BaerlyError, type DocumentData } from "@baerly/protocol";
-import { migrateCollection } from "@baerly/server";
+import { migrateCollection } from "@baerly/server/maintenance";
 import { loadAppConfig } from "../config.ts";
 import { parseBucketUri } from "../copy.ts";
 import { emitError, emitSuccess, setJsonMode } from "../output.ts";

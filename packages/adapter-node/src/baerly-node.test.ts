@@ -10,7 +10,7 @@ import {
   type Storage,
   type Verifier,
 } from "@baerly/protocol";
-import { ServerWriter } from "@baerly/server";
+import { ServerWriter } from "@baerly/server/_internal/testing";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { baerlyNode, type BaerlyNodeHandle } from "./baerly-node.ts";
 

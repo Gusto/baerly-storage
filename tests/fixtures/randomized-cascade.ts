@@ -33,13 +33,9 @@ import {
   readCurrentJson,
   uuid,
 } from "@baerly/protocol";
-import {
-  allIndexKeysFor,
-  Db,
-  type IndexDefinition,
-  rebuildIndex,
-  ServerWriter,
-} from "@baerly/server";
+import { allIndexKeysFor, Db, type IndexDefinition } from "@baerly/server";
+import { rebuildIndex } from "@baerly/server/maintenance";
+import { ServerWriter } from "@baerly/server/_internal/testing";
 import {
   CentralisedOfflineFirstCausalSystem,
   type Grounding,

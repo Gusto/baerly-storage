@@ -18,7 +18,8 @@ import {
   getOrCreateMemoryStorageForBucket,
   uuid,
 } from "@baerly/protocol";
-import { Db, ServerWriter } from "@baerly/server";
+import { Db } from "@baerly/server";
+import { ServerWriter } from "@baerly/server/_internal/testing";
 
 const APP = "consistency-knob";
 const TENANT = "t";

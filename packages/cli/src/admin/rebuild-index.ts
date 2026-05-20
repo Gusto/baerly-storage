@@ -40,7 +40,8 @@
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { defineCommand, parseArgs, type ArgsDef, type ParsedArgs } from "citty";
 import { BaerlyError } from "@baerly/protocol";
-import { type IndexDefinition, rebuildIndex, type BaerlyConfig } from "@baerly/server";
+import { type IndexDefinition, type BaerlyConfig } from "@baerly/server";
+import { rebuildIndex } from "@baerly/server/maintenance";
 import { parseBucketUri } from "../copy.ts";
 import { emitError, emitSuccess, setJsonMode } from "../output.ts";
 

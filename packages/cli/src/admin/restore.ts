@@ -49,7 +49,7 @@ import {
   type DocumentData,
   readCurrentJson,
 } from "@baerly/protocol";
-import { ServerWriter } from "@baerly/server";
+import { ServerWriter } from "@baerly/server/_internal/testing";
 import { loadAppConfig } from "../config.ts";
 import { parseBucketUri } from "../copy.ts";
 import { emitError, emitSuccess, setJsonMode } from "../output.ts";

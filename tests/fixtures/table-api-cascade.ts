@@ -33,12 +33,14 @@ import {
   createCurrentJson,
   uuid,
 } from "@baerly/protocol";
-import { Db, ServerWriter, type SchemaValidator, compact, runGc } from "@baerly/server";
-import { InMemoryMetricsRecorder } from "@baerly/server/observability";
-import type {
-  InternalCompactOptions,
-  InternalRunGcOptions,
+import { Db, type SchemaValidator } from "@baerly/server";
+import { compact, runGc } from "@baerly/server/maintenance";
+import {
+  type InternalCompactOptions,
+  type InternalRunGcOptions,
+  ServerWriter,
 } from "@baerly/server/_internal/testing";
+import { InMemoryMetricsRecorder } from "@baerly/server/observability";
 
 const APP = "table-api-test";
 

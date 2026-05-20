@@ -184,7 +184,13 @@ const BUDGETS: readonly Budget[] = [
   //   → 157 KiB raw / 44 KiB gz: InMemoryMetricsRecorder added to
   //     @baerly/server's curated protocol re-exports; marginal cost
   //     from the recorder class landing in the maintenance closure.
-  { entry: "maintenance.js", raw: 157 * 1024, gz: 44 * 1024 },
+  //   → 185 KiB raw / 51 KiB gz: kernel-cleanup (A4 + B22) moved
+  //     `rebuildIndex` and `migrateCollection` off the top-level
+  //     barrel and onto `baerly-storage/maintenance`. The two
+  //     primitives plus their walkLogRange dependency widen the
+  //     maintenance closure by ~28 KiB raw / 7 KiB gz; the matching
+  //     shrinkage lands in the index.js closure.
+  { entry: "maintenance.js", raw: 185 * 1024, gz: 51 * 1024 },
   // Cloudflare Workers adapter — re-exports the kernel barrel
   // (Db, ServerWriter, etc.) plus the R2-binding `Storage` impl
   // and the `baerlyCloudflare` helper. Aggregator: closure

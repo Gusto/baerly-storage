@@ -1,6 +1,8 @@
 import { describe, test, expect } from "vitest";
 import { MemoryStorage } from "@baerly/protocol";
-import { Db, createRouter, withHttpObservability } from "@baerly/server";
+import { Db } from "@baerly/server";
+import { createRouter } from "@baerly/server/http";
+import { withHttpObservability } from "@baerly/server/observability";
 
 describe("createRouter sinceTimeoutMs override", () => {
   test("idle long-poll returns within the configured budget", async () => {

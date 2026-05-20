@@ -37,7 +37,7 @@ import { defineCommand, parseArgs, type ArgsDef, type ParsedArgs } from "citty";
 import { createListener } from "@baerly/adapter-node";
 import { LocalFsStorage, ensureTable, printDevBanner } from "@baerly/dev";
 import { BaerlyError } from "@baerly/protocol";
-import { sharedSecret } from "@baerly/server";
+import { sharedSecret } from "@baerly/server/auth";
 import { loadAppConfigWithCollections } from "./config.ts";
 import { emitError, emitSuccess, isJsonMode, setJsonMode } from "./output.ts";
 

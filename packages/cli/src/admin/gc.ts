@@ -30,8 +30,11 @@
 
 import { defineCommand, parseArgs, type ArgsDef, type ParsedArgs } from "citty";
 import { BaerlyError } from "@baerly/protocol";
-import { type RunGcOptions } from "@baerly/server";
-import { CLOUDFLARE_FREE_TIER, runGc as runGcEngine } from "@baerly/server/maintenance";
+import {
+  CLOUDFLARE_FREE_TIER,
+  type RunGcOptions,
+  runGc as runGcEngine,
+} from "@baerly/server/maintenance";
 import { loadAppConfig } from "../config.ts";
 import { parseBucketUri } from "../copy.ts";
 import { emitError, emitSuccess, setJsonMode } from "../output.ts";

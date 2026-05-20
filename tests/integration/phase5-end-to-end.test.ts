@@ -43,11 +43,12 @@ import {
   type Storage,
 } from "@baerly/protocol";
 import { LocalFsStorage } from "@baerly/dev";
-import { Db, ServerWriter } from "@baerly/server";
+import { Db } from "@baerly/server";
 import { runScheduledMaintenance } from "@baerly/server/maintenance";
-import type {
-  InternalMaintenanceOptions,
-  InternalRunGcOptions,
+import {
+  type InternalMaintenanceOptions,
+  type InternalRunGcOptions,
+  ServerWriter,
 } from "@baerly/server/_internal/testing";
 import { wrapCountingStorage } from "../fixtures/counting-storage.ts";
 

@@ -27,8 +27,18 @@ import {
 } from "./compactor.ts";
 import { runGc, type InternalRunGcOptions, type RunGcOptions, type RunGcResult } from "./gc.ts";
 
-export { compact } from "./compactor.ts";
-export { runGc } from "./gc.ts";
+export { type CompactOptions, type CompactResult, compact } from "./compactor.ts";
+export { type RunGcOptions, type RunGcResult, runGc } from "./gc.ts";
+export {
+  type RebuildIndexOptions,
+  type RebuildIndexResult,
+  rebuildIndex,
+} from "./rebuild-index.ts";
+export {
+  type MigrateCollectionArgs,
+  type MigrateCollectionResult,
+  migrateCollection,
+} from "./migrate.ts";
 import { getCurrentContext, withObservability } from "./observability/index.ts";
 
 export interface MaintenanceArgs {

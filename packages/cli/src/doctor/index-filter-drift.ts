@@ -36,7 +36,8 @@
 
 import { minioStorage, r2Storage, s3Storage } from "@baerly/adapter-node";
 import type { Storage } from "@baerly/protocol";
-import { rebuildIndex, type IndexDefinition } from "@baerly/server";
+import { type IndexDefinition } from "@baerly/server";
+import { rebuildIndex } from "@baerly/server/maintenance";
 import type { AppConfig, LoadedCollection } from "../config.ts";
 import type { DoctorFinding } from "./cloudflare.ts";
 

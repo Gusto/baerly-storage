@@ -18,7 +18,8 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { CURRENT_JSON_SCHEMA_VERSION, createCurrentJson, type Storage } from "@baerly/protocol";
 import { LocalFsStorage } from "@baerly/dev";
-import { ServerWriter, allIndexKeysFor } from "@baerly/server";
+import { allIndexKeysFor } from "@baerly/server";
+import { ServerWriter } from "@baerly/server/_internal/testing";
 import { runFsck } from "./fsck.ts";
 
 const APP = "app";

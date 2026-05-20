@@ -23,7 +23,8 @@ import {
   type Storage,
 } from "@baerly/protocol";
 import { LocalFsStorage } from "@baerly/dev";
-import { Db, ServerWriter } from "@baerly/server";
+import { Db } from "@baerly/server";
+import { ServerWriter } from "@baerly/server/_internal/testing";
 import { runCopy } from "./copy.ts";
 
 interface Doc extends DocumentData {

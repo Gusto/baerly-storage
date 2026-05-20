@@ -17,7 +17,7 @@ import {
   MemoryStorage,
   type Verifier,
 } from "@baerly/protocol";
-import { ServerWriter } from "@baerly/server";
+import { ServerWriter } from "@baerly/server/_internal/testing";
 import { configureObservability } from "@baerly/server/observability";
 import { reset, type LogRecord, type Sink } from "@logtape/logtape";
 import { afterEach, describe, expect, test } from "vitest";

@@ -14,7 +14,7 @@ import { createServer } from "node:http";
 import { DOMParser } from "@xmldom/xmldom";
 import { AwsClient } from "aws4fetch";
 import { createListener, S3HttpStorage } from "@baerly/adapter-node";
-import { sharedSecret } from "@baerly/server";
+import { sharedSecret } from "@baerly/server/auth";
 
 const reqEnv = (name: string): string => {
   const v = process.env[name];

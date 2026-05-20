@@ -28,7 +28,8 @@ import {
   type DocumentData,
 } from "@baerly/protocol";
 import { S3HttpStorage } from "@baerly/adapter-node";
-import { Db, ServerWriter } from "@baerly/server";
+import { Db } from "@baerly/server";
+import { ServerWriter } from "@baerly/server/_internal/testing";
 import { doCopy } from "../../packages/cli/src/copy.ts";
 import { createBucket } from "../fixtures/s3-fixtures.ts";
 

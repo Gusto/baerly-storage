@@ -25,14 +25,13 @@ import { describe, expect, test } from "vitest";
 // ---------------------------------------------------------------------------
 // baerly-storage (root barrel)
 // ---------------------------------------------------------------------------
-import { BaerlyError, Db, MemoryStorage, ServerWriter } from "baerly-storage";
+import { BaerlyError, Db, MemoryStorage } from "baerly-storage";
 
 describe("baerly-storage", () => {
   test("imports resolve", () => {
     expect(typeof Db).toBe("function");
     expect(typeof BaerlyError).toBe("function");
     expect(typeof MemoryStorage).toBe("function");
-    expect(typeof ServerWriter).toBe("function");
   });
 });
 
@@ -73,12 +72,23 @@ describe("baerly-storage/http", () => {
 // ---------------------------------------------------------------------------
 // baerly-storage/maintenance
 // ---------------------------------------------------------------------------
-import { CLOUDFLARE_FREE_TIER, runScheduledMaintenance } from "baerly-storage/maintenance";
+import {
+  CLOUDFLARE_FREE_TIER,
+  compact,
+  migrateCollection,
+  rebuildIndex,
+  runGc,
+  runScheduledMaintenance,
+} from "baerly-storage/maintenance";
 
 describe("baerly-storage/maintenance", () => {
   test("imports resolve", () => {
     expect(typeof runScheduledMaintenance).toBe("function");
     expect(typeof CLOUDFLARE_FREE_TIER).toBe("object");
+    expect(typeof compact).toBe("function");
+    expect(typeof runGc).toBe("function");
+    expect(typeof rebuildIndex).toBe("function");
+    expect(typeof migrateCollection).toBe("function");
   });
 });
 

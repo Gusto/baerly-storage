@@ -18,14 +18,8 @@ import {
   noopMetricsRecorder,
 } from "@baerly/protocol";
 import { type DevLandingOptions, renderDevLanding } from "@baerly/dev";
-import {
-  type BaerlyConfig,
-  Db,
-  MAX_BODY_BYTES,
-  collectionsToMaps,
-  createRouter,
-  mapError,
-} from "@baerly/server";
+import { type BaerlyConfig, Db, collectionsToMaps } from "@baerly/server";
+import { MAX_BODY_BYTES, createRouter, mapError } from "@baerly/server/http";
 import { runScheduledMaintenance } from "@baerly/server/maintenance";
 import { prettyConsoleSink } from "./logger-pretty.ts";
 import {

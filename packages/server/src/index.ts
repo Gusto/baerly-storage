@@ -1,14 +1,21 @@
-export {
-  type CompactOptions,
-  type CompactResult,
-  type SnapshotBody,
-  SEQ_DIGITS,
-  SNAPSHOT_LEVEL,
-  compact,
-  encodeSnapshotBody,
-  loadSnapshotAsMap,
-  snapshotKey,
-} from "./compactor.ts";
+/**
+ * Public barrel for `baerly-storage`. The canonical top-level
+ * surface — read/write API, config types, storage adapter
+ * contracts, and the curated protocol-kernel re-exports.
+ *
+ * Subpaths carry the rest of the surface:
+ *
+ * - `baerly-storage/auth` — auth presets (`bearerJwt`,
+ *   `cloudflareAccess`, `sharedSecret`).
+ * - `baerly-storage/http` — `createRouter`, `mapError`,
+ *   `listEventsSince`, `longPollSince`, body-size cap.
+ * - `baerly-storage/maintenance` — `compact`, `runGc`,
+ *   `rebuildIndex`, `migrateCollection`, `runScheduledMaintenance`,
+ *   tuning profiles.
+ * - `baerly-storage/observability` — context, recorder,
+ *   canonical-line helpers, logger config.
+ */
+
 export {
   type BaerlyConfig,
   type CollectionDefinition,
@@ -18,76 +25,16 @@ export {
   collectionsToMaps,
   defineConfig,
 } from "./config.ts";
+export { Db } from "./db.ts";
+export { type IndexDefinition, allIndexKeysFor } from "./indexes.ts";
 export {
-  type HttpErrorEnvelope,
-  type HttpOkEnvelope,
-  type HttpOkMeta,
-  type HttpStatus,
-  type Routes,
-  type SinceResponse,
-  errorEnvelope,
-} from "./contract.ts";
-export { type BufferedMutation, type RawStorageApi, type TxContext, Db } from "./db.ts";
-export { type RunGcOptions, type RunGcResult, runGc } from "./gc.ts";
-export { type CreateRouterOptions, MAX_BODY_BYTES, createRouter, mapError } from "./http/router.ts";
-export { InMemoryMetricsRecorder, withHttpObservability } from "./observability/index.ts";
-export {
-  type ListEventsSinceOptions,
-  type LongPollSinceOptions,
-  listEventsSince,
-  longPollSince,
-} from "./http/since.ts";
-export {
-  type IndexDefinition,
-  allIndexKeysFor,
-  encodeIndexValue,
-  indexKeyFor,
-  indexKeyPrefix,
-  projectIndexValues,
-  validateIndexDefinition,
-} from "./indexes.ts";
-export { readLogEntry, walkLogRange } from "./log-walk.ts";
-export {
-  type RebuildIndexOptions,
-  type RebuildIndexResult,
-  rebuildIndex,
-} from "./rebuild-index.ts";
-export {
-  type MigrateCollectionArgs,
-  type MigrateCollectionResult,
-  migrateCollection,
-} from "./migrate.ts";
-export {
-  type CurrentJsonCacheSlot,
-  type QueryState,
-  type ReadResult,
-  type TableReadContext,
-  makeQuery,
-  runAllWithMeta,
-  runFirstWithMeta,
-  runInsert,
-  serializeManifestPointer,
-} from "./query.ts";
+  type SnapshotBody,
+  encodeSnapshotBody,
+  loadSnapshotAsMap,
+  snapshotKey,
+} from "./compactor.ts";
+export { walkLogRange } from "./log-walk.ts";
 export { type SchemaIssue, type SchemaValidator, validateOrThrow } from "./schema.ts";
-export {
-  type CommitBatchResult,
-  type CommitInput,
-  type CommitResult,
-  type ServerWriterOptions,
-  ServerWriter,
-} from "./server-writer.ts";
-export { makeTable } from "./table.ts";
-export {
-  type BearerJwtOptions,
-  type CloudflareAccessOptions,
-  type Jwk,
-  type JwksDocument,
-  type JwtAlgorithm,
-  type SharedSecretOptions,
-  bearerJwt,
-  cloudflareAccess,
-  sharedSecret,
-} from "./auth/index.ts";
 
 /**
  * Curated re-export of `@baerly/protocol`'s user-facing symbols.
@@ -108,8 +55,6 @@ export {
  *   name.
  * - {@link MemoryStorage}: in-process `Storage` impl for tests
  *   and zero-infra dev.
- * - {@link InMemoryMetricsRecorder}: observability recorder users
- *   wire into `Db` for tests and dev probes.
  * - {@link Verifier}: the request-verifier interface that auth
  *   presets and adapter wiring consume.
  */
