@@ -12,7 +12,7 @@
  * Exit codes are documented in `packages/cli/README.md` and per-
  * subcommand in each module's docstring.
  */
-import { defineCommand, runMain } from "citty";
+import { defineCommand } from "citty";
 import { compactCmd } from "./admin/compact.ts";
 import { copy } from "./admin/copy.ts";
 import { dumpCmd } from "./admin/dump.ts";
@@ -29,13 +29,7 @@ import { doctor } from "./doctor.ts";
 import { exportCmd } from "./export.ts";
 import { init } from "./init.ts";
 import { inspect } from "./inspect.ts";
-import { setJsonMode } from "./output.ts";
-
-// citty has no global-flag concept, so sniff --json off process.argv
-// before runMain. This way a citty parse-time error (missing required
-// flag, unknown subcommand) still emits the JSON envelope on stderr
-// if the user / agent asked for one.
-setJsonMode(process.argv.includes("--json"));
+import { runBin } from "./bin-runner.ts";
 
 /**
  * `baerly admin <command>` — operator-side reconciliation, inspection,
@@ -81,4 +75,4 @@ const main = defineCommand({
   },
 });
 
-void runMain(main);
+void runBin(main, process.argv.slice(2), "baerly");

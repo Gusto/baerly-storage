@@ -39,16 +39,36 @@ export const color = {
 };
 
 /**
- * Emit an error. Text mode preserves the exact `baerly <cmd>:
+ * Emit an error. Text mode preserves the legacy `baerly <cmd>:
  * <code>: <msg>\n` shape that `copy.test.ts` (transitively) and any
  * scripts piping stderr already expect.
+ *
+ * Two corner cases the brand prefix needs to handle:
+ *  - When the runBin shim catches a top-level error it passes
+ *    `command === "baerly"` (or `"create-baerly"`); doubling the
+ *    brand (`baerly baerly: …`) is ugly. Collapse to just
+ *    `baerly: <code>: <msg>` in that case.
+ *  - When `command` is empty (top-level parse errors that haven't
+ *    matched a subcommand), drop the trailing space and emit
+ *    `baerly: <code>: <msg>`.
+ *
+ * JSON-mode envelope is untouched — it carries `command` as a
+ * structured field, no double-prefix problem.
  */
 export const emitError = (command: string, code: string, message: string): void => {
   if (jsonMode) {
     process.stderr.write(`${JSON.stringify({ error: { code, message, command } })}\n`);
-  } else {
-    process.stderr.write(`baerly ${command}: ${code}: ${message}\n`);
+    return;
   }
+  let prefix: string;
+  if (command === "" || command === "baerly") {
+    prefix = "baerly";
+  } else if (command === "create-baerly") {
+    prefix = "create-baerly";
+  } else {
+    prefix = `baerly ${command}`;
+  }
+  process.stderr.write(`${prefix}: ${code}: ${message}\n`);
 };
 
 /**
