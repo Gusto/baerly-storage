@@ -3,7 +3,7 @@
  *
  * Reads NDJSON from stdin (or from `BAERLY_RESTORE_STDIN_PATH` if
  * set — the round-trip test uses this), reconstructs each row, and
- * calls `ServerWriter.commit({op:"I"})` per row into the target
+ * calls `Writer.commit({op:"I"})` per row into the target
  * bucket. Idempotent on a fresh bucket: re-running on a
  * half-completed restore **refuses** unless `--force` is set (which
  * bumps the writer fence and seeds a fresh `current.json` first).
@@ -49,7 +49,7 @@ import {
   type DocumentData,
   readCurrentJson,
 } from "@baerly/protocol";
-import { ServerWriter } from "@baerly/server/_internal/testing";
+import { Writer } from "@baerly/server/_internal/testing";
 import { loadAppConfig } from "../config.ts";
 import { parseBucketUri } from "../copy.ts";
 import { emitError, emitSuccess, setJsonMode } from "../output.ts";
@@ -213,7 +213,7 @@ const handleRestore = async (args: Args): Promise<number> => {
       await createCurrentJson(bucket.storage, currentJsonKey, seed);
     }
 
-    const writer = new ServerWriter({ storage: bucket.storage, currentJsonKey });
+    const writer = new Writer({ storage: bucket.storage, currentJsonKey });
 
     const stdinPath = process.env["BAERLY_RESTORE_STDIN_PATH"];
     const stream =

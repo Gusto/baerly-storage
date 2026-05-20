@@ -17,7 +17,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { CURRENT_JSON_SCHEMA_VERSION, createCurrentJson, type Storage } from "@baerly/protocol";
 import { LocalFsStorage } from "@baerly/dev";
-import { ServerWriter } from "@baerly/server/_internal/testing";
+import { Writer } from "@baerly/server/_internal/testing";
 import { runCompact } from "./compact.ts";
 
 const APP = "app";
@@ -36,7 +36,7 @@ const provision = async (storage: Storage): Promise<void> => {
 };
 
 const seedRows = async (storage: Storage, count: number): Promise<void> => {
-  const writer = new ServerWriter({ storage, currentJsonKey: CURRENT_JSON_KEY });
+  const writer = new Writer({ storage, currentJsonKey: CURRENT_JSON_KEY });
   for (let i = 0; i < count; i++) {
     await writer.commit({
       op: "I",

@@ -15,7 +15,7 @@ patterns and your changes will fit the codebase's conventions.
 > Before adding a feature, read [architecture.md](architecture.md) so you
 > know which module owns what. Most additions touch
 > `packages/server/src/db.ts` or `packages/server/src/table.ts`, but the
-> *invariants* live in `packages/server/src/server-writer.ts`.
+> *invariants* live in `packages/server/src/writer.ts`.
 
 ---
 
@@ -70,7 +70,7 @@ public async tables(): Promise<string[]> {
   directly from source — they are the public-API reference.
 - **No state on `Db`.** `Db` carries the `Storage` handle and the
   `app` / `tenant` pair only. Per-request state belongs in the
-  caller; per-write state belongs in a fresh `ServerWriter`.
+  caller; per-write state belongs in a fresh `Writer`.
 - **Reads are on-demand.** Use the injected `#storage` directly for
   `list` / `get` reads; use `Table<T>.where(...).all()` for log-fold
   reads. Don't build a parallel cache layer.
@@ -109,7 +109,7 @@ describe("Db.tables()", () => {
 ```
 
 For protocol-shape changes (anything in
-`packages/server/src/server-writer.ts`), also add a property-based
+`packages/server/src/writer.ts`), also add a property-based
 variant in `tests/integration/randomized.test.ts` so the behavior is
 exercised under random write interleavings.
 
@@ -343,22 +343,22 @@ pnpm test          # vitest run
 
 Use this pattern when you're adding a new `op` (e.g. a TRUNCATE
 analogue) or a new shape of `CommitInput` that the existing
-`ServerWriter.commit` path can't express.
+`Writer.commit` path can't express.
 
 The write primitive lives in two places:
 
 1. **The wire shape** — `LogEntry` in
    `packages/protocol/src/log.ts`. Adding a new `op` letter is a
    stability change (see [spec/log-entry-shape.md](../spec/log-entry-shape.md)).
-2. **The commit path** — `ServerWriter` in
-   `packages/server/src/server-writer.ts`. Extend `CommitInput`
+2. **The commit path** — `Writer` in
+   `packages/server/src/writer.ts`. Extend `CommitInput`
    with the new shape and update `commit` / `commitBatch` to emit
    the new `LogEntry`.
 
 ### File template
 
 ```ts
-// packages/server/src/server-writer.ts (extending CommitInput)
+// packages/server/src/writer.ts (extending CommitInput)
 
 export interface CommitInput {
   readonly op: "I" | "U" | "D" | "T";        // new: T
@@ -386,10 +386,10 @@ export interface CommitInput {
 ### Don't
 
 - ❌ Add a config knob unless it's user-facing. Internal toggles bloat
-  `ServerWriterOptions`; prefer a constant in
+  `WriterOptions`; prefer a constant in
   `packages/protocol/src/constants.ts`.
 - ❌ Reach for `Math.random`, `Date.now`, or `node:fs` directly inside
-  `ServerWriter`. The class accepts injected `random` /
+  `Writer`. The class accepts injected `random` /
   `randomMillis` callbacks and reads time off the `Storage`
   response (`X-Baerly-Server-Time`) for clock correction.
 - ❌ Use baseUrl-style imports — there's no `baseUrl` configured.
@@ -478,7 +478,7 @@ A property test in this codebase typically:
 
 1. Generates a random sequence of `insert` / `update` / `delete`
    operations across multiple writers.
-2. Runs them through `Db` + `ServerWriter` (often with multiple
+2. Runs them through `Db` + `Writer` (often with multiple
    writers contending on the same `current.json`).
 3. Asserts a property like "every observer eventually sees a
    sequence consistent with some serialization of the writes" or

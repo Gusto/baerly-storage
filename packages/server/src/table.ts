@@ -66,7 +66,7 @@ export const makeTable = <T extends DocumentData>(ctx: TableReadContext): Table<
      * contract (`@baerly/protocol/src/table-api.ts:123–125`).
      *
      * Single-attempt per call: CAS retries (up to 8 attempts) live
-     * inside `ServerWriter.commit()`. On retry-budget exhaustion the
+     * inside `Writer.commit()`. On retry-budget exhaustion the
      * writer throws `Conflict` and we surface unchanged.
      *
      * @throws BaerlyError code="Conflict" — `_id` collision (pre-commit

@@ -5,7 +5,7 @@
 /**
  * CLI smoke test for `baerly export`.
  *
- * Each test seeds a `LocalFsStorage` collection through `ServerWriter`,
+ * Each test seeds a `LocalFsStorage` collection through `Writer`,
  * runs `runExport(...)` with the target arguments, and verifies the
  * emitted SQL / sidecar plan / envelope. The four key paths covered:
  *
@@ -25,7 +25,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { CURRENT_JSON_SCHEMA_VERSION, createCurrentJson, type Storage } from "@baerly/protocol";
 import { LocalFsStorage } from "@baerly/dev";
-import { ServerWriter } from "@baerly/server/_internal/testing";
+import { Writer } from "@baerly/server/_internal/testing";
 import { runExport } from "./export.ts";
 
 const APP = "app";
@@ -44,7 +44,7 @@ const provision = async (storage: Storage): Promise<void> => {
 };
 
 const seedRows = async (storage: Storage): Promise<void> => {
-  const writer = new ServerWriter({ storage, currentJsonKey: CURRENT_JSON_KEY });
+  const writer = new Writer({ storage, currentJsonKey: CURRENT_JSON_KEY });
   await writer.commit({
     op: "I",
     collection: COLL,

@@ -12,7 +12,7 @@
  * Same describe-block organisation, same capability-flag policy, same
  * `beforeEach` reset pattern (each `freshTable(...)` minted in a test
  * body is its own namespace — table provisioning happens server-side
- * on first write through `ServerWriter.commit()`, so the test only
+ * on first write through `Writer.commit()`, so the test only
  * needs to vary the table name).
  *
  * Pure module — no Node imports, no `node:fs`, no `node:http`, no
@@ -98,7 +98,7 @@ export type HttpFetch = (req: Request) => Promise<Response>;
 /**
  * Provision `current.json` for a (test-verifier tenant, app, table)
  * triple. The HTTP surface has no "create table" endpoint;
- * the underlying `ServerWriter.commit()` throws `InvalidResponse`
+ * the underlying `Writer.commit()` throws `InvalidResponse`
  * when `current.json` is missing. Production deployments provision
  * via `createCurrentJson()` at deploy time; tests need the same
  * step inside the runtime that owns the storage handle.

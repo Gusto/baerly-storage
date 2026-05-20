@@ -6,8 +6,8 @@
  * raw `LogEntry` JSON under the canonical
  * `app/<app>/tenant/<tenant>/manifests/<collection>/log/<seq>.json`
  * key shape (see `docs/spec/log-entry-shape.md` and
- * `packages/server/src/server-writer.ts:643`); driving a real
- * `ServerWriter` here would force a `current.json` bootstrap +
+ * `packages/server/src/writer.ts:643`); driving a real
+ * `Writer` here would force a `current.json` bootstrap +
  * full CAS cycle per write, which buys nothing for this estimator
  * test — the writer is not under test.
  */

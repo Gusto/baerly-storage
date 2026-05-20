@@ -13,7 +13,7 @@ const VERSION_HEX_LENGTH = 32;
 /**
  * Content-addressed {@link ContentVersionId}: SHA-256 of `body`,
  * lowercase hex, truncated to {@link VERSION_HEX_LENGTH}. Same body
- * bytes ⇒ same ContentVersionId — the property `ServerWriter.commit`
+ * bytes ⇒ same ContentVersionId — the property `Writer.commit`
  * relies on for idempotent replay (a crash-recovery rewrite of the
  * same logical value produces the same content key the manifest
  * already referenced).

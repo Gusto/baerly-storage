@@ -3,7 +3,7 @@
  * `npm create baerly` scaffold ships at the app root has this shape;
  * adapters load it once per process and thread declared fields
  * (`indexes`, future: `schema`, `replica_identity`, lifecycle hooks)
- * into the per-collection `ServerWriter`.
+ * into the per-collection `Writer`.
  *
  * The {@link defineConfig} helper returns its input verbatim, but
  * its return type pins the shape so IDEs surface autocomplete on

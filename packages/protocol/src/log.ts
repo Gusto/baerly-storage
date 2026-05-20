@@ -24,8 +24,8 @@ export interface LogEntry {
   /**
    * Opaque, monotonic, lex-asc cursor. Shape is
    * `<base32-time>_<session>_<seq>` — minted inside
-   * `ServerWriter.commit` (see
-   * `packages/server/src/server-writer.ts`) from `timestamp()` +
+   * `Writer.commit` (see
+   * `packages/server/src/writer.ts`) from `timestamp()` +
    * the per-commit `session` + `countKey(seq)`. Consumers ack and
    * resume from this string.
    *
@@ -136,7 +136,7 @@ export type ReplicaIdentity = "PATCH_ONLY" | "FULL";
 /**
  * S3 path segment for log entries (under the manifest prefix). The
  * full key shape is `<manifestPrefix>/log/<seq>.json` — composed
- * inline by callers (`server-writer`, `gc`, `rebuild-index`,
+ * inline by callers (`writer`, `gc`, `rebuild-index`,
  * `http/since`) since the `<seq>` integer is the load-bearing
  * identifier and a one-arg helper would just hide the join.
  */
@@ -155,8 +155,8 @@ const COUNT_BIT_WIDTH = 10;
  * `entry.session` / `entry.seq` directly instead.
  *
  * Throws on malformed input; callers should pass only lsns minted
- * by `ServerWriter.commit` (see
- * `packages/server/src/server-writer.ts`).
+ * by `Writer.commit` (see
+ * `packages/server/src/writer.ts`).
  */
 export const lsnParts = (lsn: string): { session: string; seq: number } => {
   const parts = lsn.split("_");

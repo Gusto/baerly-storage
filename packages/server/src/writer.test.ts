@@ -12,9 +12,9 @@ import {
 import { beforeEach, describe, expect, test } from "vitest";
 import type { IndexDefinition } from "./indexes.ts";
 import { InMemoryMetricsRecorder } from "./observability/in-memory-metrics.ts";
-import { ServerWriter } from "./server-writer.ts";
+import { Writer } from "./writer.ts";
 
-const BUCKET = "server-writer-test-bucket";
+const BUCKET = "writer-test-bucket";
 const COLL = "tickets";
 const CURRENT_KEY = `app/test/tenant/t/manifests/${COLL}/current.json`;
 
@@ -57,7 +57,7 @@ class InstrumentedStorage extends MemoryStorage {
   }
 }
 
-describe("ServerWriter", () => {
+describe("Writer", () => {
   beforeEach(() => {
     resetMemoryStorage();
   });
@@ -65,7 +65,7 @@ describe("ServerWriter", () => {
   test("single-writer happy path: one commit advances next_seq by 1", async () => {
     const storage = new MemoryStorage();
     await createCurrentJson(storage, CURRENT_KEY, seedCurrent());
-    const writer = new ServerWriter({ storage, currentJsonKey: CURRENT_KEY });
+    const writer = new Writer({ storage, currentJsonKey: CURRENT_KEY });
 
     const result = await writer.commit({
       op: "I",
@@ -104,7 +104,7 @@ describe("ServerWriter", () => {
     await createCurrentJson(storage, CURRENT_KEY, seedCurrent());
     storage.failNextCasOnce = true;
 
-    const writer = new ServerWriter({
+    const writer = new Writer({
       storage,
       currentJsonKey: CURRENT_KEY,
       options: { initialBackoffMs: 1, random: () => 0 },
@@ -130,7 +130,7 @@ describe("ServerWriter", () => {
     await createCurrentJson(storage, CURRENT_KEY, seedCurrent());
     storage.failEveryCas = true;
 
-    const writer = new ServerWriter({
+    const writer = new Writer({
       storage,
       currentJsonKey: CURRENT_KEY,
       options: { maxRetries: 3, initialBackoffMs: 1, random: () => 0 },
@@ -190,7 +190,7 @@ describe("ServerWriter", () => {
     // walk is gated off by default in production (it's purely observational
     // — see `verifyLogIntegrityOnCommit` JSDoc); turning it on here keeps
     // the test exercising the invariant it claims to test.
-    const writer = new ServerWriter({
+    const writer = new Writer({
       storage,
       currentJsonKey: CURRENT_KEY,
       options: { verifyLogIntegrityOnCommit: true },
@@ -216,12 +216,12 @@ describe("ServerWriter", () => {
     const storage = getOrCreateMemoryStorageForBucket(BUCKET);
     await createCurrentJson(storage, CURRENT_KEY, seedCurrent());
 
-    const w1 = new ServerWriter({
+    const w1 = new Writer({
       storage,
       currentJsonKey: CURRENT_KEY,
       options: { initialBackoffMs: 1, random: () => 0 },
     });
-    const w2 = new ServerWriter({
+    const w2 = new Writer({
       storage,
       currentJsonKey: CURRENT_KEY,
       options: { initialBackoffMs: 1, random: () => 0 },
@@ -264,7 +264,7 @@ describe("ServerWriter", () => {
     const storage = new MemoryStorage();
     await createCurrentJson(storage, CURRENT_KEY, seedCurrent());
     const metrics = new InMemoryMetricsRecorder();
-    const writer = new ServerWriter({
+    const writer = new Writer({
       storage,
       currentJsonKey: CURRENT_KEY,
       options: { metrics },
@@ -292,7 +292,7 @@ describe("ServerWriter", () => {
     const storage = new MemoryStorage();
     await createCurrentJson(storage, CURRENT_KEY, seedCurrent());
     const metrics = new InMemoryMetricsRecorder();
-    const writer = new ServerWriter({
+    const writer = new Writer({
       storage,
       currentJsonKey: CURRENT_KEY,
       options: { metrics },
@@ -316,7 +316,7 @@ describe("ServerWriter", () => {
     storage.failNextCasOnce = true;
 
     const metrics = new InMemoryMetricsRecorder();
-    const writer = new ServerWriter({
+    const writer = new Writer({
       storage,
       currentJsonKey: CURRENT_KEY,
       options: { initialBackoffMs: 1, random: () => 0, metrics },
@@ -367,7 +367,7 @@ describe("ServerWriter", () => {
     const storage = new ThrottlingStorage();
     await createCurrentJson(storage, CURRENT_KEY, seedCurrent());
     const metrics = new InMemoryMetricsRecorder();
-    const writer = new ServerWriter({
+    const writer = new Writer({
       storage,
       currentJsonKey: CURRENT_KEY,
       options: { metrics },
@@ -394,7 +394,7 @@ describe("ServerWriter", () => {
   test("default metrics is no-op (no observable side effect)", async () => {
     const storage = new MemoryStorage();
     await createCurrentJson(storage, CURRENT_KEY, seedCurrent());
-    const writer = new ServerWriter({ storage, currentJsonKey: CURRENT_KEY });
+    const writer = new Writer({ storage, currentJsonKey: CURRENT_KEY });
     // Pure smoke: commit succeeds without an explicit recorder.
     const r = await writer.commit({
       op: "I",
@@ -406,7 +406,7 @@ describe("ServerWriter", () => {
   });
 });
 
-describe("ServerWriter — writer fence", () => {
+describe("Writer — writer fence", () => {
   beforeEach(() => {
     resetMemoryStorage();
   });
@@ -455,7 +455,7 @@ describe("ServerWriter — writer fence", () => {
     const storage = new MemoryStorage();
     await createCurrentJson(storage, CURRENT_KEY, seedCurrent());
     const metrics = new InMemoryMetricsRecorder();
-    const writer = new ServerWriter({
+    const writer = new Writer({
       storage,
       currentJsonKey: CURRENT_KEY,
       options: { metrics },
@@ -483,7 +483,7 @@ describe("ServerWriter — writer fence", () => {
     // landed but before we verified."
     storage.bumpAfterReadsCount = 2;
     const metrics = new InMemoryMetricsRecorder();
-    const writer = new ServerWriter({
+    const writer = new Writer({
       storage,
       currentJsonKey: CURRENT_KEY,
       options: { metrics },
@@ -516,7 +516,7 @@ describe("ServerWriter — writer fence", () => {
     await createCurrentJson(storage, CURRENT_KEY, seedCurrent());
     storage.bumpAfterReadsCount = 2;
     const metrics = new InMemoryMetricsRecorder();
-    const writer = new ServerWriter({
+    const writer = new Writer({
       storage,
       currentJsonKey: CURRENT_KEY,
       options: { metrics },
@@ -537,7 +537,7 @@ describe("ServerWriter — writer fence", () => {
   });
 });
 
-describe("ServerWriter — filtered index", () => {
+describe("Writer — filtered index", () => {
   /**
    * The four U-quadrants are the load-bearing correctness gate of
    * T4. Each named test exercises ONE quadrant; collapsing them
@@ -545,7 +545,7 @@ describe("ServerWriter — filtered index", () => {
    * of "filtered index broken in the miss→match arm." The
    * `allIndexKeysFor` short-circuit handles all four arms via the
    * writer's existing diff path (`oldKeys` vs `newKeys`) — see the
-   * JSDoc above the index-emission block in `server-writer.ts`.
+   * JSDoc above the index-emission block in `writer.ts`.
    */
   const FILTERED_CURRENT_KEY = `app/test/tenant/t/manifests/${COLL}/current.json`;
   const FILTERED_LOG_PREFIX = `app/test/tenant/t/manifests/${COLL}`;
@@ -569,10 +569,10 @@ describe("ServerWriter — filtered index", () => {
 
   const newFilteredWriter = async (
     metrics?: InMemoryMetricsRecorder,
-  ): Promise<{ storage: MemoryStorage; writer: ServerWriter }> => {
+  ): Promise<{ storage: MemoryStorage; writer: Writer }> => {
     const storage = new MemoryStorage();
     await createCurrentJson(storage, FILTERED_CURRENT_KEY, seedCurrent());
-    const writer = new ServerWriter({
+    const writer = new Writer({
       storage,
       currentJsonKey: FILTERED_CURRENT_KEY,
       options: metrics !== undefined ? { indexes: [open_only], metrics } : { indexes: [open_only] },

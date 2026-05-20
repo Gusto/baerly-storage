@@ -19,7 +19,7 @@ import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { CURRENT_JSON_SCHEMA_VERSION, createCurrentJson, type Storage } from "@baerly/protocol";
 import { LocalFsStorage } from "@baerly/dev";
 import { allIndexKeysFor } from "@baerly/server";
-import { ServerWriter } from "@baerly/server/_internal/testing";
+import { Writer } from "@baerly/server/_internal/testing";
 import { runFsck } from "./fsck.ts";
 
 const APP = "app";
@@ -39,7 +39,7 @@ const provision = async (storage: Storage): Promise<void> => {
 };
 
 const seedRows = async (storage: Storage, count: number): Promise<void> => {
-  const writer = new ServerWriter({
+  const writer = new Writer({
     storage,
     currentJsonKey: CURRENT_JSON_KEY,
     options: { indexes: [{ name: "by_status", on: "status" }] },

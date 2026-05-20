@@ -49,7 +49,7 @@ const TABLE = "tickets";
 
 /**
  * Bootstrap the `current.json` for one (app, tenant, table) triple.
- * `ServerWriter.commit()` throws `InvalidResponse` when the file is
+ * `Writer.commit()` throws `InvalidResponse` when the file is
  * missing — production code provisions it via `claimWriter` /
  * `createCurrentJson` at deploy time; tests do the same. Mirrors
  * `packages/adapter-node/src/server-routes.test.ts`.

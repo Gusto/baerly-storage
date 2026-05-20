@@ -2,7 +2,7 @@
  * Randomized causal-consistency cascade — Node-side variant runner.
  *
  * Replaces the legacy `Baerly`-class harness. Now drives
- * `ServerWriter.commit()` through three Node-runnable backends:
+ * `Writer.commit()` through three Node-runnable backends:
  *   - `memory`    — `MemoryStorage` shared per bucket; zero infra.
  *   - `local-fs`  — `LocalFsStorage` over a fresh tmp dir; zero infra.
  *   - `node-minio`— `S3HttpStorage` against Toxiproxy → Minio; gated on
@@ -134,7 +134,7 @@ const allVariants: Variant[] = [
 
 const variants = allVariants.filter((v) => !v.requiresMinio || minioEnabled);
 
-describe("randomized (Db + ServerWriter)", () => {
+describe("randomized (Db + Writer)", () => {
   for (const variant of variants) {
     describe(variant.label, () => {
       let networkTwiddler: ReturnType<typeof setInterval> | undefined;

@@ -56,7 +56,7 @@ import {
 import { abortingStorage } from "../../../tests/fixtures/aborting-storage.ts";
 import { allIndexKeysFor, type IndexDefinition } from "./indexes.ts";
 import { rebuildIndex } from "./rebuild-index.ts";
-import { ServerWriter } from "./server-writer.ts";
+import { Writer } from "./writer.ts";
 
 const CURRENT_JSON_KEY = "app/x/tenant/t/manifests/tickets/current.json";
 const LOG_PREFIX = "app/x/tenant/t/manifests/tickets";
@@ -107,7 +107,7 @@ describe("index emission survives a single crash anywhere in the commit", () => 
     async ({ abortAfter, seedCount, finalOp }) => {
       const inner = new MemoryStorage();
       await provision(inner);
-      const goodWriter = new ServerWriter({
+      const goodWriter = new Writer({
         storage: inner,
         currentJsonKey: CURRENT_JSON_KEY,
         options: { indexes: INDEXES },
@@ -143,7 +143,7 @@ describe("index emission survives a single crash anywhere in the commit", () => 
       // AbortError so the property body can continue to the rebuild.
       const handle = abortingStorage(inner);
       handle.armAt(abortAfter);
-      const crashWriter = new ServerWriter({
+      const crashWriter = new Writer({
         storage: handle.storage,
         currentJsonKey: CURRENT_JSON_KEY,
         options: { indexes: INDEXES },

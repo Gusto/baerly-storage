@@ -18,7 +18,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { CURRENT_JSON_SCHEMA_VERSION, createCurrentJson, type Storage } from "@baerly/protocol";
 import { LocalFsStorage } from "@baerly/dev";
-import { ServerWriter } from "@baerly/server/_internal/testing";
+import { Writer } from "@baerly/server/_internal/testing";
 import { runInspect } from "./inspect.ts";
 import type { Trajectory } from "./cost/project.ts";
 
@@ -70,7 +70,7 @@ describe("baerly inspect", () => {
 
   test("reports row count + next_seq + log_seq_start in JSON envelope", async () => {
     await provision(storage);
-    const writer = new ServerWriter({ storage, currentJsonKey: CURRENT_JSON_KEY });
+    const writer = new Writer({ storage, currentJsonKey: CURRENT_JSON_KEY });
     await writer.commit({
       op: "I",
       collection: COLL,
@@ -124,7 +124,7 @@ describe("baerly inspect", () => {
 
   test("text mode renders a human-readable summary", async () => {
     await provision(storage);
-    const writer = new ServerWriter({ storage, currentJsonKey: CURRENT_JSON_KEY });
+    const writer = new Writer({ storage, currentJsonKey: CURRENT_JSON_KEY });
     await writer.commit({
       op: "I",
       collection: COLL,
@@ -212,7 +212,7 @@ describe("baerly inspect", () => {
 
   test("dev backend (file://) produces trajectory: null in JSON envelope", async () => {
     await provision(storage);
-    const writer = new ServerWriter({ storage, currentJsonKey: CURRENT_JSON_KEY });
+    const writer = new Writer({ storage, currentJsonKey: CURRENT_JSON_KEY });
     await writer.commit({
       op: "I",
       collection: COLL,
@@ -242,7 +242,7 @@ describe("baerly inspect", () => {
 
   test("--provider=r2 with sufficient data produces a Trajectory in JSON envelope", async () => {
     await provision(storage);
-    const writer = new ServerWriter({ storage, currentJsonKey: CURRENT_JSON_KEY });
+    const writer = new Writer({ storage, currentJsonKey: CURRENT_JSON_KEY });
     for (let i = 0; i < 3; i++) {
       await writer.commit({
         op: "I",
@@ -279,7 +279,7 @@ describe("baerly inspect", () => {
 
   test("--provider=self-hosted produces a Trajectory with null usd", async () => {
     await provision(storage);
-    const writer = new ServerWriter({ storage, currentJsonKey: CURRENT_JSON_KEY });
+    const writer = new Writer({ storage, currentJsonKey: CURRENT_JSON_KEY });
     for (let i = 0; i < 3; i++) {
       await writer.commit({
         op: "I",
@@ -339,7 +339,7 @@ describe("baerly inspect", () => {
 
   test("--provider=r2 text mode renders a trajectory footer block", async () => {
     await provision(storage);
-    const writer = new ServerWriter({ storage, currentJsonKey: CURRENT_JSON_KEY });
+    const writer = new Writer({ storage, currentJsonKey: CURRENT_JSON_KEY });
     for (let i = 0; i < 3; i++) {
       await writer.commit({
         op: "I",
@@ -411,7 +411,7 @@ describe("baerly inspect", () => {
 
   test("--provider=aws-s3 produces a paid Trajectory (no free tier)", async () => {
     await provision(storage);
-    const writer = new ServerWriter({ storage, currentJsonKey: CURRENT_JSON_KEY });
+    const writer = new Writer({ storage, currentJsonKey: CURRENT_JSON_KEY });
     for (let i = 0; i < 3; i++) {
       await writer.commit({
         op: "I",

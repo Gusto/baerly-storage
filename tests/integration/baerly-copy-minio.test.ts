@@ -29,7 +29,7 @@ import {
 } from "@baerly/protocol";
 import { S3HttpStorage } from "@baerly/adapter-node";
 import { Db } from "@baerly/server";
-import { ServerWriter } from "@baerly/server/_internal/testing";
+import { Writer } from "@baerly/server/_internal/testing";
 import { doCopy } from "../../packages/cli/src/copy.ts";
 import { createBucket } from "../fixtures/s3-fixtures.ts";
 
@@ -95,7 +95,7 @@ describe.runIf(minioEnabled)("baerly copy @ Minio :9102", () => {
       writer_fence: { epoch: 0, owner: "copy-minio-test", claimed_at: "" },
     });
 
-    const w = new ServerWriter({ storage: src, currentJsonKey });
+    const w = new Writer({ storage: src, currentJsonKey });
     const N = 25;
     await w.commitBatch(
       Array.from({ length: N }, (_, i) => ({

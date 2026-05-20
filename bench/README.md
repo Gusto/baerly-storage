@@ -13,7 +13,7 @@ Two harnesses live under `bench/`:
 
 | Harness | What it measures | When to run |
 |---|---|---|
-| `bench/r2-contention.ts` | CAS-storm 412/429 rates on one `current.json`; validates the idle-reader bound on the wire | When changing `packages/server/src/server-writer.ts`, coordination primitives, or retry policy |
+| `bench/r2-contention.ts` | CAS-storm 412/429 rates on one `current.json`; validates the idle-reader bound on the wire | When changing `packages/server/src/writer.ts`, coordination primitives, or retry policy |
 | `bench/load-harness/` | S3 ops + bytes per logical `Db` operation across seven workload presets; validates the workload cost model | When changing storage layout, manifest cache TTLs, or compaction profile — run before/after a perf-shaped PR |
 
 Both require `pnpm dev:storage` (Minio `:9102` + Toxiproxy `:9104`)

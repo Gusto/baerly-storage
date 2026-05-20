@@ -63,7 +63,7 @@ const provision = async (storage: MemoryStorage, table = TABLE): Promise<void> =
  * Test-only `MemoryStorage` subclass that injects a CAS failure on
  * the FIRST `If-Match` PUT of a tracked `current.json` key. Local to
  * this test file — NOT exported from `@baerly/server`. Mirrors the
- * pattern in `server-writer.test.ts`.
+ * pattern in `writer.test.ts`.
  */
 class InstrumentedStorage extends MemoryStorage {
   failNextCasOnce = false;

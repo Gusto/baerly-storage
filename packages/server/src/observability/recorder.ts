@@ -162,7 +162,7 @@ const percentile = (values: readonly number[], p: number): number => {
  * Adapters construct this once per request (or once at module init —
  * the ALS lookup is per-call, so call site doesn't matter) and pass
  * the result as the `Db`'s `metrics` option. Net effect: every
- * kernel emission (ServerWriter's class-A-op histogram, the
+ * kernel emission (Writer's class-A-op histogram, the
  * compactor's `db.compact.entries_folded`, the GC's
  * `db.gc.swept_total`, the storage decorator's per-call counters,
  * etc.) lands in BOTH:

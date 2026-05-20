@@ -91,7 +91,7 @@ export interface BaerlyWorkerOptions {
   readonly verifier: Verifier;
   /**
    * Operator's long-term {@link MetricsRecorder}. Receives every
-   * kernel emission (ServerWriter histograms, CAS-conflict counters,
+   * kernel emission (Writer histograms, CAS-conflict counters,
    * storage per-call counts) verbatim. Defaults to
    * {@link noopMetricsRecorder} so non-instrumented deployments see
    * zero behavior change.
@@ -285,7 +285,7 @@ export function baerlyWorker(options: BaerlyWorkerOptions): ExportedHandler<Env>
         // land in BOTH the operator's long-term sink and (via the
         // ALS-aware tee) the per-request bag we just created. The
         // Db's `metrics: teeRecorder` carries the same tee through to
-        // ServerWriter / compactor / GC emissions.
+        // Writer / compactor / GC emissions.
         const storage = observableStorage(r2BindingStorage(env.BUCKET), teeRecorder);
         const db = Db.create({
           storage,

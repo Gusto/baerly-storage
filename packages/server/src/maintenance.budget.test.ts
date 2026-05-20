@@ -37,7 +37,7 @@ import { describe, expect, test } from "vitest";
 import { compact } from "./compactor.ts";
 import { runGc } from "./gc.ts";
 import { CLOUDFLARE_FREE_TIER } from "./maintenance.ts";
-import { ServerWriter } from "./server-writer.ts";
+import { Writer } from "./writer.ts";
 
 const FREE_TIER_BUDGET = 50;
 
@@ -91,7 +91,7 @@ const seed = async (
     log_seq_start: 0,
     writer_fence: { epoch: 0, owner: "budget-test", claimed_at: "" },
   });
-  const writer = new ServerWriter({ storage, currentJsonKey: key });
+  const writer = new Writer({ storage, currentJsonKey: key });
   for (let i = 0; i < entries; i++) {
     await writer.commit({
       op: "I",

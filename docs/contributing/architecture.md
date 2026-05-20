@@ -44,7 +44,7 @@ graph TD
     query[query.ts<br/>Query&lt;T&gt; predicate AST + reader]
     planner[query-planner.ts<br/>planQuery]
     indexes[indexes.ts<br/>IndexDefinition + key encoding]
-    writer[server-writer.ts<br/>ServerWriter.commit / commitBatch]
+    writer[writer.ts<br/>Writer.commit / commitBatch]
     compactor[compactor.ts<br/>compact()]
     gc[gc.ts<br/>runGc()]
     maint[maintenance.ts<br/>runScheduledMaintenance]
@@ -80,10 +80,10 @@ graph TD
 1. **`Table.insert(doc)`** (`packages/server/src/table.ts`):
    normalises the document, generates a UUIDv7 `_id` if absent,
    constructs a `CommitInput{ op: "I", collection, docId, body }`,
-   and calls `ServerWriter.commit(...)`.
+   and calls `Writer.commit(...)`.
 
-2. **`ServerWriter.commit(req)`**
-   (`packages/server/src/server-writer.ts`): reads `current.json`
+2. **`Writer.commit(req)`**
+   (`packages/server/src/writer.ts`): reads `current.json`
    for the current `next_seq` and the `writer_fence.epoch` it
    operates under, mints a `LogEntry` at `next_seq`, PUTs the
    content body under `tenants/<t>/c/<collection>/<doc_id>`,
@@ -172,7 +172,7 @@ constraint: anything platform-specific has to live in an adapter.
 
 ## Where invariants live
 
-- **Causal consistency:** `packages/server/src/server-writer.ts` and
+- **Causal consistency:** `packages/server/src/writer.ts` and
   `packages/server/src/query.ts` — the writer mints LSNs against the
   current `next_seq` and CAS-advances `current.json` atomically; the
   reader walks `[log_seq_start, next_seq)` from a single read of
@@ -202,8 +202,8 @@ constraint: anything platform-specific has to live in an adapter.
   predicate AST (`where` / `order` / `limit` /
   `first` / `all` / `count`).
 - `CommitInput` / `CommitResult` / `CommitBatchResult`
-  (`packages/server/src/server-writer.ts`): the
-  `ServerWriter.commit` and `commitBatch` request/response shapes.
+  (`packages/server/src/writer.ts`): the
+  `Writer.commit` and `commitBatch` request/response shapes.
 - `LogEntry` (`packages/protocol/src/log.ts`): the per-mutation log
   entry. Field set is fixed at major versions; consumers ack on
   `lsn`. Full contract in [spec/log-entry-shape.md](../spec/log-entry-shape.md).

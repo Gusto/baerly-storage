@@ -23,7 +23,7 @@ import {
   type Storage,
 } from "@baerly/protocol";
 import { LocalFsStorage } from "@baerly/dev";
-import { ServerWriter } from "@baerly/server/_internal/testing";
+import { Writer } from "@baerly/server/_internal/testing";
 import { runMigrate } from "./migrate.ts";
 
 const APP = "app";
@@ -42,7 +42,7 @@ const provision = async (storage: Storage): Promise<void> => {
 };
 
 const seedRows = async (storage: Storage, count: number): Promise<void> => {
-  const writer = new ServerWriter({ storage, currentJsonKey: CURRENT_JSON_KEY });
+  const writer = new Writer({ storage, currentJsonKey: CURRENT_JSON_KEY });
   for (let i = 0; i < count; i++) {
     await writer.commit({
       op: "I",

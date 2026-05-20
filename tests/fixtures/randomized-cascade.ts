@@ -2,7 +2,7 @@
  * Causal-consistency cascade — backend-agnostic property test driver.
  *
  * Lifted from the legacy `tests/integration/randomized.test.ts` body
- * with three substitutions: writes go through `ServerWriter.commit()`
+ * with three substitutions: writes go through `Writer.commit()`
  * (one `LogEntry` per call), reads walk the log to the freshest entry
  * for `(collection, docId)`, and clock-skew entropy moves from a
  * legacy `clockOffset` config field to a per-instance offset added
@@ -35,7 +35,7 @@ import {
 } from "@baerly/protocol";
 import { allIndexKeysFor, Db, type IndexDefinition } from "@baerly/server";
 import { rebuildIndex } from "@baerly/server/maintenance";
-import { ServerWriter } from "@baerly/server/_internal/testing";
+import { Writer } from "@baerly/server/_internal/testing";
 import {
   CentralisedOfflineFirstCausalSystem,
   type Grounding,
@@ -84,12 +84,12 @@ const causallyConsistent = (grounding: Grounding, kb: Knowledge): boolean => {
 
 /**
  * One write target: a `Db` (for tenant-scoped key resolution + future
- * lint compliance), the `ServerWriter` bound to its collection, and
+ * lint compliance), the `Writer` bound to its collection, and
  * the bucket-relative `current.json` key shared across instances.
  */
 interface Instance {
   readonly db: Db;
-  readonly writer: ServerWriter;
+  readonly writer: Writer;
   readonly storage: Storage;
   readonly currentJsonKey: string;
   readonly logPrefix: string;
@@ -249,7 +249,7 @@ const buildInstances = async (
       tenant: sharedTenant,
     });
     void i;
-    const writer = new ServerWriter({
+    const writer = new Writer({
       storage,
       currentJsonKey: sharedCurrentKey,
       // Smaller initial backoff to keep N-way races snappy under
@@ -316,7 +316,7 @@ export const runCausalConsistencyCascade = (opts: {
         let testFailed = false;
         let finished = false;
 
-        // Per-client commit serializer. `ServerWriter.commit()` is
+        // Per-client commit serializer. `Writer.commit()` is
         // stateless and concurrent — two `commit()` calls on the same
         // instance race each other, and the loser of a CAS race can
         // ultimately land at a HIGHER `seq` than the winner even
@@ -364,7 +364,7 @@ export const runCausalConsistencyCascade = (opts: {
             const send_time = system.client_clocks[client_id]! - 1;
             console.log(`${system.global_time}: ${label}@${send_time} broadcast`);
 
-            // Drive the new write loop directly. ServerWriter mints the
+            // Drive the new write loop directly. Writer mints the
             // LogEntry; clock skew is per-instance and unused by the
             // new core's lsn shape (the seq is what's load-bearing) —
             // we keep it as fault-injection entropy: the
@@ -484,7 +484,7 @@ interface ParityDoc extends DocumentData {
 }
 
 /**
- * Seed N random docs into the collection via a single ServerWriter
+ * Seed N random docs into the collection via a single Writer
  * with the `by_priority` index declared. Returns the seeded docs
  * so the caller can compute the expected (full-scan) result in
  * memory.
@@ -500,7 +500,7 @@ const seedParityDocs = async (
 ): Promise<ParityDoc[]> => {
   const currentJsonKey = `app/${app}/tenant/${tenant}/manifests/${collection}/current.json`;
   await ensureCurrent(storage, currentJsonKey);
-  const writer = new ServerWriter({
+  const writer = new Writer({
     storage,
     currentJsonKey,
     options: { indexes },

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { MemoryStorage, readCurrentJson } from "@baerly/protocol";
-import { ServerWriter } from "@baerly/server/_internal/testing";
+import { Writer } from "@baerly/server/_internal/testing";
 import { ensureTable } from "./ensure-table.ts";
 
 const keyFor = (app: string, tenant: string, table: string): string =>
@@ -35,7 +35,7 @@ describe("ensureTable", () => {
     await ensureTable(storage, { app: "helpdesk", tenant: "acme", table: "tickets" });
 
     // Commit one mutation to advance next_seq.
-    const writer = new ServerWriter({
+    const writer = new Writer({
       storage,
       currentJsonKey: keyFor("helpdesk", "acme", "tickets"),
     });
@@ -55,11 +55,11 @@ describe("ensureTable", () => {
     expect(after?.json.next_seq).toBe(1);
   });
 
-  test("ServerWriter.commit succeeds end-to-end after ensureTable", async () => {
+  test("Writer.commit succeeds end-to-end after ensureTable", async () => {
     const storage = new MemoryStorage();
     await ensureTable(storage, { app: "helpdesk", tenant: "acme", table: "tickets" });
 
-    const writer = new ServerWriter({
+    const writer = new Writer({
       storage,
       currentJsonKey: keyFor("helpdesk", "acme", "tickets"),
     });

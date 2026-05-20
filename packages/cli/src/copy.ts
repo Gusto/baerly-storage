@@ -4,7 +4,7 @@
  * Walks the source bucket's manifest from a point-in-time cursor and
  * writes a parallel manifest at the target. The copy path bypasses
  * write-path compaction: it emits one L9 snapshot directly at the
- * target, skipping the per-entry `ServerWriter.commit` → fold →
+ * target, skipping the per-entry `Writer.commit` → fold →
  * re-snapshot round trip a naive replay would incur. The same
  * physical insight Turbopuffer uses for its `copy_from_namespace` 75%
  * write discount — the source already paid for the fold.

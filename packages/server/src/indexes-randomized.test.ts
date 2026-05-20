@@ -6,7 +6,7 @@
  * Property-based test for the writer + secondary-index data plane.
  *
  * Drives any fast-check sequence of I/U/D ops through a
- * `ServerWriter` configured with two indexes (`by_status`,
+ * `Writer` configured with two indexes (`by_status`,
  * `by_assignee`) and asserts the load-bearing invariant: after the
  * sequence settles, the set of live index keys on storage equals
  * the set of keys the live doc set projects under
@@ -51,7 +51,7 @@ import {
   MemoryStorage,
 } from "@baerly/protocol";
 import { allIndexKeysFor, type IndexDefinition } from "./indexes.ts";
-import { ServerWriter } from "./server-writer.ts";
+import { Writer } from "./writer.ts";
 
 // `assignee` is intentionally absent from the declared shape — the
 // "missing field" case is one of the load-bearing arms of the
@@ -89,7 +89,7 @@ const opArb = fc.oneof(
   }),
 );
 
-describe("ServerWriter + indexes: live index keys reflect live doc set", () => {
+describe("Writer + indexes: live index keys reflect live doc set", () => {
   test.prop({ ops: fc.array(opArb, { minLength: 0, maxLength: 30 }) })(
     "after N ops, live index keys = projection of live doc set",
     async ({ ops }) => {
@@ -101,7 +101,7 @@ describe("ServerWriter + indexes: live index keys reflect live doc set", () => {
         log_seq_start: 0,
         writer_fence: { epoch: 0, owner: "test", claimed_at: "" },
       });
-      const writer = new ServerWriter({
+      const writer = new Writer({
         storage,
         currentJsonKey: CURRENT_JSON_KEY,
         options: { indexes: INDEXES },

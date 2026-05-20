@@ -135,7 +135,7 @@ hex chars; hashing to the full 64-char SHA-256 will not match the key
 on the bucket.
 
 Same body bytes ⇒ same content key — the property
-`ServerWriter.commit` relies on for idempotent replay (a crash-recovery
+`Writer.commit` relies on for idempotent replay (a crash-recovery
 rewrite of the same logical value produces the same content key the
 manifest already referenced). Constant lives at
 `VERSION_HEX_LENGTH` in `packages/protocol/src/hashing.ts`.
@@ -163,9 +163,9 @@ the replay loop). Within a single session, `seq` ascends in causal
 order; consumers can sort by `seq` to recover ordering without
 reaching for list semantics.
 
-Within a single `ServerWriter.commitBatch` over N inputs, N lsns
+Within a single `Writer.commitBatch` over N inputs, N lsns
 are minted — one per `LogEntry`. The single-mutation
-`ServerWriter.commit` is the N=1 case.
+`Writer.commit` is the N=1 case.
 
 ## What we borrowed from `pgoutput`
 

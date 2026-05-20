@@ -24,7 +24,7 @@ import {
 } from "@baerly/protocol";
 import { LocalFsStorage } from "@baerly/dev";
 import { Db } from "@baerly/server";
-import { ServerWriter } from "@baerly/server/_internal/testing";
+import { Writer } from "@baerly/server/_internal/testing";
 import { runCopy } from "./copy.ts";
 
 interface Doc extends DocumentData {
@@ -112,7 +112,7 @@ describe("baerly copy", () => {
         const ctx = await variant.setup();
         cleanup = ctx.cleanup;
         await seed(ctx.src);
-        const w = new ServerWriter({
+        const w = new Writer({
           storage: ctx.src,
           currentJsonKey: CURRENT_JSON_KEY,
         });
@@ -166,7 +166,7 @@ describe("baerly copy", () => {
         await seed(ctx.src);
         const pre = await readCurrentJson(ctx.src, CURRENT_JSON_KEY);
         expect(pre).not.toBeNull();
-        await new ServerWriter({
+        await new Writer({
           storage: ctx.src,
           currentJsonKey: CURRENT_JSON_KEY,
         }).commit({ op: "I", collection: COLL, docId: "x", body: { _id: "x" } });
@@ -182,7 +182,7 @@ describe("baerly copy", () => {
         const ctx = await variant.setup();
         cleanup = ctx.cleanup;
         await seed(ctx.src);
-        await new ServerWriter({
+        await new Writer({
           storage: ctx.src,
           currentJsonKey: CURRENT_JSON_KEY,
         }).commit({
@@ -230,7 +230,7 @@ describe("baerly copy", () => {
         const ctx = await variant.setup();
         cleanup = ctx.cleanup;
         await seed(ctx.src);
-        await new ServerWriter({
+        await new Writer({
           storage: ctx.src,
           currentJsonKey: CURRENT_JSON_KEY,
         }).commit({

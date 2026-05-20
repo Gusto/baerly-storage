@@ -126,7 +126,7 @@ export class MemoryStorage implements Storage {
 }
 
 // Process-singleton MemoryStorage map keyed by bucket. Tests that need
-// multiple `Db` / `ServerWriter` instances to see each other's writes
+// multiple `Db` / `Writer` instances to see each other's writes
 // against an in-memory backend reach for this via
 // {@link getOrCreateMemoryStorageForBucket}; {@link resetMemoryStorage}
 // drops every bucket between test cases.

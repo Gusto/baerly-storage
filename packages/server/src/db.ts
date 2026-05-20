@@ -22,17 +22,17 @@ import type { BaerlyConfig, CollectionNames, RowOf, UnboundConfig } from "./conf
 import type { IndexDefinition } from "./indexes.ts";
 import type { CurrentJsonCacheSlot, TableReadContext } from "./query.ts";
 import type { SchemaValidator } from "./schema.ts";
-import { ServerWriter, type CommitInput } from "./server-writer.ts";
+import { Writer, type CommitInput } from "./writer.ts";
 import { makeTable } from "./table.ts";
 
 /**
  * In-memory buffer for a single in-flight {@link Db.transaction}
  * call. The `Table<T>` instance passed to the transaction body holds
  * a reference to this object; every mutation verb appends to
- * `mutations` instead of calling `ServerWriter.commit` directly.
+ * `mutations` instead of calling `Writer.commit` directly.
  *
  * After the body resolves, `Db.transaction` performs ONE
- * `ServerWriter.commitBatch(...)` to commit every buffered mutation
+ * `Writer.commitBatch(...)` to commit every buffered mutation
  * in a single CAS attempt.
  *
  * @internal — referenced by `table.ts` and `query.ts`; not part of
@@ -50,8 +50,8 @@ export interface TxContext {
 
   /**
    * Mutations buffered in order of issuance. The commit converts
-   * each into one `CommitInput` (`ServerWriter`'s single-mutation
-   * shape) and passes the array to `ServerWriter.commitBatch`.
+   * each into one `CommitInput` (`Writer`'s single-mutation
+   * shape) and passes the array to `Writer.commitBatch`.
    */
   readonly mutations: BufferedMutation[];
 }
@@ -152,7 +152,7 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
    */
   readonly #currentJsonCaches: Map<string, CurrentJsonCacheSlot> = new Map();
   /**
-   * Metrics sink forwarded to every {@link ServerWriter} this `Db`
+   * Metrics sink forwarded to every {@link Writer} this `Db`
    * constructs (the single-mutation path in `query.ts:writerFor` and
    * the transaction path below). Defaults to
    * {@link noopMetricsRecorder} so non-instrumented callers see zero
@@ -209,7 +209,7 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
    * is empty or contains `/` (the segment separator).
    *
    * `config.metrics` is an optional {@link MetricsRecorder} forwarded
-   * to every {@link ServerWriter} the `Db` constructs — both the
+   * to every {@link Writer} the `Db` constructs — both the
    * single-mutation path (`Table.insert` / `Query.update` /
    * `Query.replace` / `Query.delete`) and the transaction path
    * ({@link Db.transaction}). Defaults to {@link noopMetricsRecorder}
@@ -513,7 +513,7 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
       inputs.push(input);
     }
 
-    const writer = new ServerWriter({
+    const writer = new Writer({
       storage: this.#storage,
       currentJsonKey: `${tablePrefix}/current.json`,
       options: { metrics: this.#metrics, indexes },

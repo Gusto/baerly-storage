@@ -17,14 +17,14 @@ export const LAG_WINDOW_MILLIS: number = 5000;
 /**
  * Bit width of the base-32 timestamp prefix encoded into every
  * {@link LogEntry.lsn} (`<base32-time>_<session>_<seq>`, minted in
- * `ServerWriter.commit`). 42 bits gives ~139 years of millisecond
+ * `Writer.commit`). 42 bits gives ~139 years of millisecond
  * precision, which is enough for the protocol's lifetime.
  *
  * Changing this is a protocol-breaking change — it would re-shape
  * every emitted LSN.
  *
  * @see packages/protocol/src/time.ts (`timestamp`)
- * @see packages/server/src/server-writer.ts (`ServerWriter.commit`)
+ * @see packages/server/src/writer.ts (`Writer.commit`)
  * @see docs/spec/sync-protocol.md
  */
 export const TIMESTAMP_BIT_WIDTH: number = 42;
@@ -38,7 +38,7 @@ export const TIMESTAMP_BIT_WIDTH: number = 42;
  * within a single commit's writer set are also disambiguated by the
  * trailing `<seq>` counter.
  *
- * @see packages/server/src/server-writer.ts (`ServerWriter.commit` —
+ * @see packages/server/src/writer.ts (`Writer.commit` —
  *      `session = uuid().slice(0, SESSION_ID_LENGTH)`)
  */
 export const SESSION_ID_LENGTH: number = 6;
@@ -74,7 +74,7 @@ export const RETRY_AFTER_MAX_SECONDS: number = 60;
  * each of the four `Storage` methods). Bounded so that permanent
  * failures (CORS misconfig, NXDOMAIN, persistent 5xx) surface to
  * callers as rejected promises instead of retrying forever and
- * leaving `ServerWriter.commit()` permanently pending.
+ * leaving `Writer.commit()` permanently pending.
  *
  * 8 attempts at the existing 100ms→×1.5→10s schedule covers ~30s of
  * transient turbulence, which is enough to ride out a leader election

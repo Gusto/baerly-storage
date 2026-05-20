@@ -7,7 +7,7 @@
  *
  *   - The {@link IndexDefinition} shape (`name`, `on`).
  *   - {@link validateIndexDefinition} — synchronous schema check
- *     for path-segment safety; thrown at `ServerWriter` construction.
+ *     for path-segment safety; thrown at `Writer` construction.
  *   - {@link encodeIndexValue} — value-order-preserving base-32 of a
  *     type-tagged byte stream (null/bool tag-only, numbers as sortable
  *     IEEE 754, strings as raw UTF-8, objects as `JSON.stringify`
@@ -63,7 +63,7 @@ import {
 /**
  * A secondary index declaration. Lives in `baerly.config.ts` under
  * `collections.<name>.indexes[]` and is threaded through
- * `ServerWriter` via `ServerWriterOptions.indexes`.
+ * `Writer` via `WriterOptions.indexes`.
  *
  * Validated synchronously by {@link validateIndexDefinition} at
  * writer construction; an invalid def throws `BaerlyError{code:
@@ -414,7 +414,7 @@ export const projectIndexValues = (
  * must satisfy `matches(def.predicate, body)` or the def contributes
  * zero keys. The writer's diff `oldKeys` vs `newKeys` then covers
  * all four U-quadrants automatically — see the JSDoc on
- * `server-writer.ts` above the index-emission block. `body ===
+ * `writer.ts` above the index-emission block. `body ===
  * undefined` short-circuits ahead of the filter check (no keys for
  * an unknown pre-image, regardless of filter), preserving the prior
  * D-quadrant behaviour.

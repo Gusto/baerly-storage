@@ -35,8 +35,8 @@ import type { SinceResponse } from "../contract.ts";
 
 /**
  * Validation regex for an opaque LSN cursor. Matches the shape minted
- * by `ServerWriter.commit` (see
- * `packages/server/src/server-writer.ts`) and described on
+ * by `Writer.commit` (see
+ * `packages/server/src/writer.ts`) and described on
  * {@link LogEntry.lsn} — `<base32-time>_<session>_<seq>` where
  * base-32 is `[0-9a-v]` and the trailing seq is two characters.
  * Mirrored from `tests/integration/log-emit.test.ts:77`.

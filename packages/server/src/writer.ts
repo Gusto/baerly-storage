@@ -1,13 +1,13 @@
 /**
- * `ServerWriter` — stateless multi-instance write engine.
+ * `Writer` — stateless multi-instance write engine.
  *
- * Each {@link ServerWriter.commit} call reads `current.json` FRESH from
+ * Each {@link Writer.commit} call reads `current.json` FRESH from
  * the bucket, mints the next {@link LogEntry}, PUTs the content body
  * and the log entry, and CAS-advances `current.json` with `If-Match`.
  * Up to {@link S3_REQUEST_MAX_RETRIES} attempts on contention before
  * surfacing `BaerlyError{code:"Conflict"}`. The optional integrity
  * walk over the live log tail is gated by
- * {@link ServerWriterOptions.verifyLogIntegrityOnCommit} (default off
+ * {@link WriterOptions.verifyLogIntegrityOnCommit} (default off
  * — see the option's docstring).
  *
  * The instance carries no per-write cache: every commit re-reads
@@ -57,10 +57,10 @@ import { allIndexKeysFor, type IndexDefinition, validateIndexDefinition } from "
 import { readLogEntry, walkLogRange } from "./log-walk.ts";
 
 /**
- * Tunables for {@link ServerWriter}. All optional; defaults match the
+ * Tunables for {@link Writer}. All optional; defaults match the
  * legacy retry budget so the new loop is a drop-in replacement.
  */
-export interface ServerWriterOptions {
+export interface WriterOptions {
   /**
    * Max CAS attempts on 412 before throwing `Conflict`. Default
    * {@link S3_REQUEST_MAX_RETRIES} (8). Override only in tests.
@@ -113,7 +113,7 @@ export interface ServerWriterOptions {
    * a no-op (writer behaves identically to the no-index path — no
    * extra GET, no extra PUTs).
    *
-   * Note: `ServerWriter` is per-collection (the `currentJsonKey`
+   * Note: `Writer` is per-collection (the `currentJsonKey`
    * is per-collection), so this array applies to one collection
    * only — adapters that serve multiple collections instantiate
    * one writer per collection.
@@ -175,7 +175,7 @@ export interface CommitInput {
   readonly origin?: string;
 }
 
-/** Return shape of {@link ServerWriter.commit}. */
+/** Return shape of {@link Writer.commit}. */
 export interface CommitResult {
   /** The committed `LogEntry`. Caller can ack on `entry.lsn`. */
   readonly entry: LogEntry;
@@ -187,7 +187,7 @@ export interface CommitResult {
   readonly attempts: number;
 }
 
-/** Return shape of {@link ServerWriter.commitBatch}. */
+/** Return shape of {@link Writer.commitBatch}. */
 export interface CommitBatchResult {
   /**
    * One emitted `LogEntry` per input, in input order.
@@ -218,7 +218,7 @@ const APPLICATION_JSON = "application/json";
 const EMPTY_BODY = new Uint8Array(0);
 
 /**
- * Successful outcome of one full {@link ServerWriter.#singleAttemptCommit}
+ * Successful outcome of one full {@link Writer.#singleAttemptCommit}
  * attempt. Retryable failures (log-peer race, CAS 412) throw
  * `BaerlyError{code:"Conflict"}` directly; the caller catches via
  * {@link isPreconditionFailed} and decides whether to retry. Non-retryable
@@ -238,15 +238,15 @@ interface SingleAttemptSuccess {
  * Stateless write engine for the multi-instance core.
  *
  * Construction is cheap and performs zero I/O — adapters build a
- * fresh `ServerWriter` per request and discard it. All real work
+ * fresh `Writer` per request and discard it. All real work
  * happens in {@link commit}.
  *
  * @example
  * ```ts
- * import { ServerWriter } from "baerly-storage";
+ * import { Writer } from "baerly-storage";
  * import { MemoryStorage } from "baerly-storage";
  *
- * const writer = new ServerWriter({
+ * const writer = new Writer({
  *   storage: new MemoryStorage(),
  *   currentJsonKey: "app/tickets/tenant/acme/manifests/tickets/current.json",
  * });
@@ -260,7 +260,7 @@ interface SingleAttemptSuccess {
  * console.log(result.entry.seq, result.attempts);
  * ```
  */
-export class ServerWriter {
+export class Writer {
   readonly #storage: Storage;
   readonly #currentJsonKey: string;
   readonly #maxRetries: number;
@@ -280,7 +280,7 @@ export class ServerWriter {
      * log and content keys are derived from it.
      */
     currentJsonKey: string;
-    options?: ServerWriterOptions;
+    options?: WriterOptions;
   }) {
     this.#storage = opts.storage;
     this.#currentJsonKey = opts.currentJsonKey;
@@ -340,7 +340,7 @@ export class ServerWriter {
           [input],
           session,
           logPrefix,
-          "ServerWriter",
+          "Writer",
           /* adoptOwnSessionOnLogConflict */ true,
         );
       } catch (error) {
@@ -357,7 +357,7 @@ export class ServerWriter {
       // Fence verify lives in the caller so its `Conflict` propagates
       // past the retry-catch arm above. Bypasses the retry loop —
       // the stale writer must defer to the new authority.
-      await this.#verifyFenceUnchanged(success.expectedEpoch, input.collection, "ServerWriter");
+      await this.#verifyFenceUnchanged(success.expectedEpoch, input.collection, "Writer");
       // `success.classAOps` is the per-attempt base; add `(attempt
       // - 1)` to bill prior failed attempts as one PUT each (the
       // simple-and-test-locked cost model — not a precise replay
@@ -373,7 +373,7 @@ export class ServerWriter {
     // Retry budget exhausted.
     throw new BaerlyError(
       "Conflict",
-      `ServerWriter: CAS conflict on ${this.#currentJsonKey} after ${this.#maxRetries} attempts`,
+      `Writer: CAS conflict on ${this.#currentJsonKey} after ${this.#maxRetries} attempts`,
     );
   }
 
@@ -427,13 +427,13 @@ export class ServerWriter {
       inputs,
       session,
       logPrefix,
-      "ServerWriter.commitBatch",
+      "Writer.commitBatch",
       /* adoptOwnSessionOnLogConflict */ false,
     );
     await this.#verifyFenceUnchanged(
       success.expectedEpoch,
       inputs[0]!.collection,
-      "ServerWriter.commitBatch",
+      "Writer.commitBatch",
     );
     // Pick the first input's collection as the batch label; in the
     // current `Db.transaction` model every input shares one
@@ -549,7 +549,7 @@ export class ServerWriter {
     //   miss  → miss  : both empty → no-op for this def.
     //
     // All four quadrants are pinned by named tests in
-    // `server-writer.test.ts` ("ServerWriter — filtered index"). Do
+    // `writer.test.ts` ("Writer — filtered index"). Do
     // not collapse them into one combined case — a regression in one
     // quadrant should fail exactly one named test so the bug is
     // localisable.

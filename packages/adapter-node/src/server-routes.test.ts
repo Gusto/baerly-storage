@@ -47,7 +47,7 @@ interface BaseEnvelope {
 
 /**
  * Bootstrap the `current.json` for one (app, tenant, table) triple.
- * `ServerWriter.commit()` throws `InvalidResponse` when the file is
+ * `Writer.commit()` throws `InvalidResponse` when the file is
  * missing — production code provisions it via `claimWriter` /
  * `createCurrentJson` at deploy time; the cascade test fixtures do
  * the same. Mirrors `tests/fixtures/table-api-cascade.ts`.

@@ -191,7 +191,7 @@ then build `makeTable({ ...ctx, txCtx })`. Deletes ~30 lines.
 
 **Severity: LOW.**
 
-`packages/server/src/server-writer.ts:943` `isPreconditionFailed`;
+`packages/server/src/writer.ts:943` `isPreconditionFailed`;
 line 951 `isCasConflict` is a same-named alias. The JSDoc
 comment "kept as a separate predicate for call-site clarity"
 doesn't justify a real function.
@@ -203,7 +203,7 @@ doesn't justify a real function.
 
 **Severity: LOW.**
 
-`packages/server/src/server-writer.ts:902` `validateInput`
+`packages/server/src/writer.ts:902` `validateInput`
 checks `op === "D" && body !== undefined` and the inverse.
 `CommitInput` is typed; every production caller (`query.ts`,
 `db.ts`) builds the right shape from typed verbs. Writer
@@ -211,18 +211,18 @@ inputs are internal — these aren't system boundaries.
 
 **Fix:** Delete `validateInput`.
 
-### B18. Wire `ServerWriter.options.tenant` (or drop the metric label)
+### B18. Wire `Writer.options.tenant` (or drop the metric label)
 
 **Severity: LOW. Half-wired observability.**
 
-`ServerWriter.options.tenant` (constructor `server-writer.ts:292`)
+`Writer.options.tenant` (constructor `writer.ts:292`)
 labels the writer's metric emissions
 (`db.tenant.put_rate`, `db.tenant.commit_latency`). Every
-production `new ServerWriter` callsite omits it; only tests pass
+production `new Writer` callsite omits it; only tests pass
 it. Both adapters already compute `tenantPrefix` at the request
 boundary but don't thread it through to the writer.
 
-**Fix:** Either wire `tenantPrefix` → `ServerWriter.tenant` in
+**Fix:** Either wire `tenantPrefix` → `Writer.tenant` in
 both adapters and the `Db` transaction path, or drop the
 labelled metric variants. Don't leave it half-wired.
 
@@ -232,7 +232,7 @@ labelled metric variants. Don't leave it half-wired.
 
 The brief described `SingleAttemptOutcome` as "splitting one
 logical operation across 350 lines." Actual: a 9-line
-discriminated union (`server-writer.ts:250-259`). The
+discriminated union (`writer.ts:250-259`). The
 `commit` / `commitBatch` shared body is real but the line-count
 framing was wrong.
 

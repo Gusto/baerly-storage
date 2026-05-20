@@ -15,7 +15,7 @@
  *
  * No fault-injection twiddler: R2's miniflare backend is in-process
  * and the `r2BindingStorage` adapter has no network seam to twiddle.
- * The cascade still exercises CAS contention through `ServerWriter`
+ * The cascade still exercises CAS contention through `Writer`
  * — that's the property under test here.
  */
 
@@ -37,7 +37,7 @@ const getBinding = (): R2Bucket => {
   return bucket;
 };
 
-describe("randomized (Db + ServerWriter)", () => {
+describe("randomized (Db + Writer)", () => {
   describe("cloudflare-r2", () => {
     test(
       "causal consistency all-to-all, single key (multi-instance)",

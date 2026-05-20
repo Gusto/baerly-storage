@@ -18,7 +18,7 @@ import {
 import { describe, expect, test } from "vitest";
 import { loadSnapshotAsMap } from "./compactor.ts";
 import { migrateCollection } from "./migrate.ts";
-import { ServerWriter } from "./server-writer.ts";
+import { Writer } from "./writer.ts";
 
 const KEY = "app/a/tenant/t/manifests/c/current.json";
 const COLL = "c";
@@ -34,7 +34,7 @@ const bootstrap = async (storage: MemoryStorage): Promise<void> => {
 };
 
 const seedRows = async (storage: MemoryStorage, count: number): Promise<void> => {
-  const writer = new ServerWriter({ storage, currentJsonKey: KEY });
+  const writer = new Writer({ storage, currentJsonKey: KEY });
   for (let i = 0; i < count; i++) {
     await writer.commit({
       op: "I",

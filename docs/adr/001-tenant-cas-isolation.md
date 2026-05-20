@@ -20,7 +20,7 @@ mutates it locally, and CAS-writes it back with `If-Match: <etag>`. CAS
 loss surfaces as a `412 Precondition Failed`, which the writer maps to
 `BaerlyError{code:"Conflict"}`
 ([`packages/protocol/src/coordination/current-json.ts:224`](../../packages/protocol/src/coordination/current-json.ts),
-[`packages/server/src/server-writer.ts:348`](../../packages/server/src/server-writer.ts)).
+[`packages/server/src/writer.ts:348`](../../packages/server/src/writer.ts)).
 A multi-tenant deployment shares one bucket across many tenants, so two
 questions present themselves and must be answered together: how does
 tenant T avoid seeing tenant U's keys, and at what granularity does the

@@ -6,7 +6,7 @@
  * Synthetic 5000-entry end-to-end verification gate.
  *
  * The "verifies the cost model" gate:
- * write 5000 entries through `ServerWriter`, run `runScheduledMaintenance`
+ * write 5000 entries through `Writer`, run `runScheduledMaintenance`
  * to quiescence, then assert
  *
  *   (a) every `find()` / `all()` / `where()` result is identical before
@@ -48,7 +48,7 @@ import { runScheduledMaintenance } from "@baerly/server/maintenance";
 import {
   type InternalMaintenanceOptions,
   type InternalRunGcOptions,
-  ServerWriter,
+  Writer,
 } from "@baerly/server/_internal/testing";
 import { wrapCountingStorage } from "../fixtures/counting-storage.ts";
 
@@ -144,7 +144,7 @@ describe("Synthetic 5000-entry end-to-end gate", () => {
           cleanup = made.cleanup;
           const { storage } = made;
           await bootstrap(storage);
-          const writer = new ServerWriter({ storage, currentJsonKey: CURRENT_JSON_KEY });
+          const writer = new Writer({ storage, currentJsonKey: CURRENT_JSON_KEY });
 
           // ── (1) Seed 5000 entries through the writer. ────────────────
           // Use `commitBatch` rather than 5000 sequential `commit()`
@@ -264,7 +264,7 @@ describe("Synthetic 5000-entry end-to-end gate", () => {
           cleanup = made.cleanup;
           const { storage } = made;
           await bootstrap(storage);
-          const writer = new ServerWriter({ storage, currentJsonKey: CURRENT_JSON_KEY });
+          const writer = new Writer({ storage, currentJsonKey: CURRENT_JSON_KEY });
 
           // Seed enough writes to make compaction interesting; the
           // engine's default minEntriesToCompact is 100, so seed

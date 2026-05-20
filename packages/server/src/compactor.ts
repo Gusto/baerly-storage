@@ -15,7 +15,7 @@
  * "missing." The atomic moment is the CAS-swap of
  * `current.json.snapshot`, which is a single conditional PUT.
  *
- * Order of operations (matches `ServerWriter.commit`'s manifest-first-
+ * Order of operations (matches `Writer.commit`'s manifest-first-
  * REVERSED ordering): PUT snapshot body → CAS-advance `current.json`.
  * A crash before the swap leaves an orphan snapshot file; the swap
  * succeeds iff our captured ETag still matches.

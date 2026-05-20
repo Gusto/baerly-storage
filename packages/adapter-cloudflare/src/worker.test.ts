@@ -149,7 +149,7 @@ describe("baerlyWorker observability", () => {
     expect(props["status"]).toBe(201);
     expect(props["method"]).toBe("POST");
     // Storage class-A counter is the load-bearing signal that the
-    // tee wiring is in place. ServerWriter PUTs content + log +
+    // tee wiring is in place. Writer PUTs content + log +
     // current.json on every commit ⇒ at least 3 Class A ops.
     const classA = props["db.storage.class_a_ops_total"];
     expect(typeof classA).toBe("number");

@@ -22,7 +22,7 @@ import { describe, expect, test } from "vitest";
 import { compact, type InternalCompactOptions } from "./compactor.ts";
 import { type InternalRunGcOptions, runGc } from "./gc.ts";
 import { InMemoryMetricsRecorder } from "./observability/in-memory-metrics.ts";
-import { ServerWriter } from "./server-writer.ts";
+import { Writer } from "./writer.ts";
 
 const bootstrap = async (storage: MemoryStorage, key: string): Promise<void> => {
   await createCurrentJson(storage, key, {
@@ -66,7 +66,7 @@ describe("runGc", () => {
   test("marks stale log entries after compaction (no sweep at default grace)", async () => {
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
-    const writer = new ServerWriter({ storage: s, currentJsonKey: KEY });
+    const writer = new Writer({ storage: s, currentJsonKey: KEY });
     for (let i = 0; i < 50; i++) {
       await writer.commit({
         op: "I",
@@ -93,7 +93,7 @@ describe("runGc", () => {
   test("sweeps stale log entries when grace is bypassed", async () => {
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
-    const writer = new ServerWriter({ storage: s, currentJsonKey: KEY });
+    const writer = new Writer({ storage: s, currentJsonKey: KEY });
     for (let i = 0; i < 50; i++) {
       await writer.commit({
         op: "I",
@@ -127,7 +127,7 @@ describe("runGc", () => {
   test("sweeps in a second pass after grace elapses (clock injection)", async () => {
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
-    const writer = new ServerWriter({ storage: s, currentJsonKey: KEY });
+    const writer = new Writer({ storage: s, currentJsonKey: KEY });
     for (let i = 0; i < 50; i++) {
       await writer.commit({
         op: "I",
@@ -166,7 +166,7 @@ describe("runGc", () => {
   test("marks the replaced snapshot after a second compaction run", async () => {
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
-    const writer = new ServerWriter({ storage: s, currentJsonKey: KEY });
+    const writer = new Writer({ storage: s, currentJsonKey: KEY });
     for (let i = 0; i < 40; i++) {
       await writer.commit({
         op: "I",
@@ -207,7 +207,7 @@ describe("runGc", () => {
   test("does NOT mark a live content blob as orphan", async () => {
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
-    const writer = new ServerWriter({ storage: s, currentJsonKey: KEY });
+    const writer = new Writer({ storage: s, currentJsonKey: KEY });
     await writer.commit({
       op: "I",
       collection: COLL,
@@ -270,7 +270,7 @@ describe("runGc", () => {
   test("bounds new marks per category at maxMarksPerRun", async () => {
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
-    const writer = new ServerWriter({ storage: s, currentJsonKey: KEY });
+    const writer = new Writer({ storage: s, currentJsonKey: KEY });
     for (let i = 0; i < 200; i++) {
       await writer.commit({
         op: "I",
@@ -294,7 +294,7 @@ describe("runGc", () => {
   test("idempotent across two consecutive runs (no double-marking)", async () => {
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
-    const writer = new ServerWriter({ storage: s, currentJsonKey: KEY });
+    const writer = new Writer({ storage: s, currentJsonKey: KEY });
     for (let i = 0; i < 20; i++) {
       await writer.commit({
         op: "I",
@@ -322,7 +322,7 @@ describe("runGc", () => {
   test("emits db.orphan.candidate_count, db.gc.entries_swept_per_second, and db.gc.swept_total", async () => {
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
-    const writer = new ServerWriter({ storage: s, currentJsonKey: KEY });
+    const writer = new Writer({ storage: s, currentJsonKey: KEY });
     for (let i = 0; i < 50; i++) {
       await writer.commit({
         op: "I",

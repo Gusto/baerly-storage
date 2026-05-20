@@ -448,7 +448,7 @@ async function main(): Promise<void> {
         : undefined;
 
     // Bootstrap current.json for every tenant in the dataset before
-    // seeding. `ServerWriter` requires current.json to exist; `Db.create`
+    // seeding. `Writer` requires current.json to exist; `Db.create`
     // alone does NOT create it (same pattern as the integration tests).
     for (const tenant of dataset.tenants) {
       const key = `app/${app}/tenant/${tenant.tenantId}/manifests/${collection}/current.json`;

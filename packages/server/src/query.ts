@@ -7,7 +7,7 @@
  * three read terminals (`first`, `all`, `count`) that fold the log
  * under a fresh `current.json` snapshot, and the four mutation
  * terminals (`insert`, `update`, `replace`, `delete`) that each
- * compile to one or more `ServerWriter.commit()` round-trips.
+ * compile to one or more `Writer.commit()` round-trips.
  *
  * Every modifier (`.where` / `.order` / `.limit`) returns a NEW
  * `Query<T>` carrying merged frozen state — the input state is never
@@ -22,7 +22,7 @@
  * instance rules, every read sees a fresh CAS snapshot.
  *
  * Mutation terminals are SINGLE-ATTEMPT per call site. CAS contention
- * retries (up to 8 attempts) live inside `ServerWriter.commit()`; the
+ * retries (up to 8 attempts) live inside `Writer.commit()`; the
  * verbs do NOT add their own retry loop. On retry-budget exhaustion
  * `commit()` throws `BaerlyError{code:"Conflict"}` and the verb
  * surfaces it unchanged — the caller's option is to wrap in
@@ -58,14 +58,14 @@ import { encodeIndexValue, type IndexDefinition } from "./indexes.ts";
 import { foldLogEntriesOnto, walkLogRange } from "./log-walk.ts";
 import { type IndexWalkPlan, planQuery, type QueryPlan } from "./query-planner.ts";
 import { type SchemaValidator, validateOrThrow } from "./schema.ts";
-import { ServerWriter } from "./server-writer.ts";
+import { Writer } from "./writer.ts";
 
 /**
  * What a `Query<T>` needs to issue a read against the bucket. The
  * `Db` builds this once and hands it to `Table` / `Query`; the chain
  * carries it forward unchanged.
  *
- * The `tablePrefix` shape matches what `ServerWriter` writes under —
+ * The `tablePrefix` shape matches what `Writer` writes under —
  * e.g. `"app/<app>/tenant/<tenant>/manifests/<name>"`. Drift between
  * the reader and writer prefix is the most likely bug class; both
  * compose the same string from `app`/`tenant`/`name`.
@@ -80,7 +80,7 @@ export interface TableReadContext {
   /**
    * When defined, mutation verbs (`Table.insert`, `Query.update`,
    * `Query.replace`, `Query.delete`) buffer a {@link BufferedMutation}
-   * onto `txCtx.mutations` instead of calling `ServerWriter.commit`
+   * onto `txCtx.mutations` instead of calling `Writer.commit`
    * directly. Reads ignore `txCtx` entirely — they go through
    * `Storage` live, by design (no MVCC; see `Db.transaction`'s JSDoc
    * in `./db.ts`). Threaded in by `Db.transaction(...)`; `undefined`
@@ -111,11 +111,11 @@ export interface TableReadContext {
   readonly currentJsonCache: CurrentJsonCacheSlot;
   /**
    * Optional metrics sink threaded from {@link Db}. Forwarded to every
-   * {@link ServerWriter} the mutation terminals construct so the
+   * {@link Writer} the mutation terminals construct so the
    * writer's existing emissions (`db.write.class_a_ops_per_logical_write`,
    * `db.r2.put.412_total`, `db.r2.put.429_total`, etc.) reach the
    * operator's recorder. `undefined` means "no metrics" — the
-   * {@link ServerWriter} defaults to {@link noopMetricsRecorder} on
+   * {@link Writer} defaults to {@link noopMetricsRecorder} on
    * its own, so threading is strictly additive.
    *
    * @internal
@@ -131,7 +131,7 @@ export interface TableReadContext {
    *
    * Threaded in by {@link Db.tableReadContext} from the per-collection
    * map handed to {@link Db.create}; the boundary calls happen in
-   * `query.ts`, not `server-writer.ts`, so schemas plug in at the
+   * `query.ts`, not `writer.ts`, so schemas plug in at the
    * read/write API surface rather than at the writer layer.
    *
    * @internal
@@ -317,14 +317,14 @@ export const runAllWithMeta = <T extends DocumentData>(
 // ---------------------------------------------------------------------
 
 /**
- * Build a fresh `ServerWriter` bound to this table's `current.json`.
- * Construction is zero-I/O (server-writer.ts:160) so we mint one per
+ * Build a fresh `Writer` bound to this table's `current.json`.
+ * Construction is zero-I/O (writer.ts:160) so we mint one per
  * `commit()` rather than caching on the chain — same writer object
  * shared across N commits would inherit retry-budget state we want
  * fresh per call.
  */
-const writerFor = (ctx: TableReadContext): ServerWriter =>
-  new ServerWriter({
+const writerFor = (ctx: TableReadContext): Writer =>
+  new Writer({
     storage: ctx.storage,
     currentJsonKey: `${ctx.tablePrefix}/current.json`,
     options: {
@@ -346,7 +346,7 @@ const writerFor = (ctx: TableReadContext): ServerWriter =>
  * (today's per-doc-replace model — `packages/protocol/src/log.ts:67–72`).
  *
  * @throws BaerlyError code="Conflict" — `_id` collision (pre-commit check) or
- *   CAS retry budget exhausted inside `ServerWriter.commit()`.
+ *   CAS retry budget exhausted inside `Writer.commit()`.
  * @throws BaerlyError code="SchemaError" — from the per-collection
  *   `SchemaValidator` threaded via {@link Db.tableReadContext}.
  *
@@ -389,7 +389,7 @@ export const runInsert = async <T extends DocumentData>(
   // (`packages/protocol/src/table-api.ts:123–125`). Without it a caller-
   // supplied duplicate `_id` would land a second `I` entry that the
   // read fold collapses silently — a contract violation. The CAS
-  // retry budget in `ServerWriter` does not surface this case
+  // retry budget in `Writer` does not surface this case
   // (no `current.json` conflict; both writes succeed at different seqs).
   //
   // Inside a transaction the read sees LIVE state (no MVCC, no read-
@@ -419,7 +419,7 @@ export const runInsert = async <T extends DocumentData>(
   }
 
   // Single-attempt at the verb level; CAS retries are internal to
-  // `ServerWriter.commit()`. If `commit` throws `Conflict`, the
+  // `Writer.commit()`. If `commit` throws `Conflict`, the
   // budget is exhausted and we surface unchanged.
   await writerFor(ctx).commit({
     op: "I",
@@ -435,7 +435,7 @@ export const runInsert = async <T extends DocumentData>(
  * `Query.update` implementation. Materialises the predicate/order/
  * limit-filtered match set, applies RFC 7386 `merge(prev, patch)`
  * per row, and emits one `op:"U"` `LogEntry` per affected `doc_id`
- * — one `ServerWriter.commit()` round-trip apiece.
+ * — one `Writer.commit()` round-trip apiece.
  *
  * Atomicity is per row, not across the N-row batch. The locked
  * contract (`packages/protocol/src/table-api.ts:178–184`) is explicit on
@@ -449,7 +449,7 @@ export const runInsert = async <T extends DocumentData>(
  * `packages/protocol/src/log.ts:102–118`.
  *
  * @throws BaerlyError code="Conflict" — any one row's CAS retry budget
- *   exhausted inside `ServerWriter.commit()`. The partial-progress
+ *   exhausted inside `Writer.commit()`. The partial-progress
  *   `modified` count is NOT returned in that case.
  * @throws BaerlyError code="SchemaError" — `merge(prev, patch)` produced
  *   `undefined` (defensive — `Partial<T>` cannot be `null` at the

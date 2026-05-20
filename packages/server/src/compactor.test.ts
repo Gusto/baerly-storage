@@ -18,7 +18,7 @@ import {
 import { describe, expect, test } from "vitest";
 import { compact, type InternalCompactOptions, loadSnapshotAsMap } from "./compactor.ts";
 import { InMemoryMetricsRecorder } from "./observability/in-memory-metrics.ts";
-import { ServerWriter } from "./server-writer.ts";
+import { Writer } from "./writer.ts";
 
 const bootstrap = async (storage: MemoryStorage, key: string): Promise<void> => {
   await createCurrentJson(storage, key, {
@@ -46,7 +46,7 @@ describe("compact", () => {
   test("skips when below min threshold", async () => {
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
-    const writer = new ServerWriter({ storage: s, currentJsonKey: KEY });
+    const writer = new Writer({ storage: s, currentJsonKey: KEY });
     for (let i = 0; i < 5; i++) {
       await writer.commit({
         op: "I",
@@ -67,7 +67,7 @@ describe("compact", () => {
   test("writes a snapshot and advances log_seq_start", async () => {
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
-    const writer = new ServerWriter({ storage: s, currentJsonKey: KEY });
+    const writer = new Writer({ storage: s, currentJsonKey: KEY });
     for (let i = 0; i < 50; i++) {
       await writer.commit({
         op: "I",
@@ -93,7 +93,7 @@ describe("compact", () => {
   test("is idempotent: re-running with no new writes is a no-op", async () => {
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
-    const writer = new ServerWriter({ storage: s, currentJsonKey: KEY });
+    const writer = new Writer({ storage: s, currentJsonKey: KEY });
     // 50 entries, fold them all in one shot so no live tail remains.
     for (let i = 0; i < 50; i++) {
       await writer.commit({
@@ -123,7 +123,7 @@ describe("compact", () => {
   test("subsequent run extends the snapshot when new writes have landed", async () => {
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
-    const writer = new ServerWriter({ storage: s, currentJsonKey: KEY });
+    const writer = new Writer({ storage: s, currentJsonKey: KEY });
     for (let i = 0; i < 40; i++) {
       await writer.commit({
         op: "I",
@@ -165,7 +165,7 @@ describe("compact", () => {
   test("snapshot body hash matches the filename hash", async () => {
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
-    const writer = new ServerWriter({ storage: s, currentJsonKey: KEY });
+    const writer = new Writer({ storage: s, currentJsonKey: KEY });
     for (let i = 0; i < 50; i++) {
       await writer.commit({
         op: "I",
@@ -187,7 +187,7 @@ describe("compact", () => {
   test("rejects a snapshot whose body has been tampered with", async () => {
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
-    const writer = new ServerWriter({ storage: s, currentJsonKey: KEY });
+    const writer = new Writer({ storage: s, currentJsonKey: KEY });
     for (let i = 0; i < 50; i++) {
       await writer.commit({
         op: "I",
@@ -223,7 +223,7 @@ describe("compact", () => {
   test("delete tombstones drop docs from the snapshot fold", async () => {
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
-    const writer = new ServerWriter({ storage: s, currentJsonKey: KEY });
+    const writer = new Writer({ storage: s, currentJsonKey: KEY });
     await writer.commit({ op: "I", collection: COLL, docId: "a", body: { _id: "a" } });
     await writer.commit({ op: "I", collection: COLL, docId: "b", body: { _id: "b" } });
     await writer.commit({ op: "D", collection: COLL, docId: "a" });
@@ -246,7 +246,7 @@ describe("compact", () => {
   test("rejects a snapshot body that names a different collection", async () => {
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
-    const writer = new ServerWriter({ storage: s, currentJsonKey: KEY });
+    const writer = new Writer({ storage: s, currentJsonKey: KEY });
     for (let i = 0; i < 50; i++) {
       await writer.commit({
         op: "I",
@@ -265,7 +265,7 @@ describe("compact", () => {
   test("emits db.compact.entries_folded and db.manifest.lag_window_depth on success", async () => {
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
-    const writer = new ServerWriter({ storage: s, currentJsonKey: KEY });
+    const writer = new Writer({ storage: s, currentJsonKey: KEY });
     for (let i = 0; i < 50; i++) {
       await writer.commit({
         op: "I",

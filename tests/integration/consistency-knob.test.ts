@@ -19,7 +19,7 @@ import {
   uuid,
 } from "@baerly/protocol";
 import { Db } from "@baerly/server";
-import { ServerWriter } from "@baerly/server/_internal/testing";
+import { Writer } from "@baerly/server/_internal/testing";
 
 const APP = "consistency-knob";
 const TENANT = "t";
@@ -40,7 +40,7 @@ describe("read consistency knob — multi-instance contention", () => {
     const sB = getOrCreateMemoryStorageForBucket(bucket);
     await createCurrentJson(sA, currentJsonKey, seedCurrent());
     const dbB = Db.create({ storage: sB, app: APP, tenant: TENANT });
-    const w = new ServerWriter({ storage: sA, currentJsonKey });
+    const w = new Writer({ storage: sA, currentJsonKey });
 
     // 1. Seed: writer A inserts r1.
     await w.commit({ op: "I", collection: COLL, docId: "r1", body: { _id: "r1" } });
@@ -73,7 +73,7 @@ describe("read consistency knob — multi-instance contention", () => {
     const sB = getOrCreateMemoryStorageForBucket(bucket);
     await createCurrentJson(sA, currentJsonKey, seedCurrent());
     const dbB = Db.create({ storage: sB, app: APP, tenant: TENANT });
-    const w = new ServerWriter({ storage: sA, currentJsonKey });
+    const w = new Writer({ storage: sA, currentJsonKey });
 
     await w.commit({ op: "I", collection: COLL, docId: "r1", body: { _id: "r1" } });
 

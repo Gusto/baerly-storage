@@ -124,9 +124,9 @@ distinguish your regressions from the pre-existing state.
    something fails.
 2. Narrow: copy the failing test name and run that file alone.
 3. Logs: pass a `MetricsRecorder` (or wrap one) into the
-   `ServerWriter` under test to observe internal events. The
+   `Writer` under test to observe internal events. The
    `db.write.*` metric names enumerated in
-   `packages/server/src/server-writer.ts`'s JSDoc are the
+   `packages/server/src/writer.ts`'s JSDoc are the
    canonical event taxonomy.
 4. Inspect Minio: when running against `dev:storage`, the Minio console at
    `http://localhost:9103` shows current bucket contents — useful for

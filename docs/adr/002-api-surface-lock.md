@@ -22,7 +22,7 @@ and
 [`packages/server/src/query.ts`](../../packages/server/src/query.ts).
 The barrel at
 [`packages/server/src/index.ts`](../../packages/server/src/index.ts)
-exports these classes plus `ServerWriter`, the maintenance budget
+exports these classes plus `Writer`, the maintenance budget
 machinery, and the GC / compactor entry points. The CLAUDE.md
 positioning is that "the protocol kernel is small enough that an LLM
 can use the public API zero-shot from the `.d.ts` files alone"; once

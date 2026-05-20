@@ -10,7 +10,7 @@ import {
   type Storage,
   type Verifier,
 } from "@baerly/protocol";
-import { ServerWriter } from "@baerly/server/_internal/testing";
+import { Writer } from "@baerly/server/_internal/testing";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { baerlyNode, type BaerlyNodeHandle } from "./baerly-node.ts";
 
@@ -93,7 +93,7 @@ describe("baerlyNode", () => {
           log_seq_start: 0,
           writer_fence: { epoch: 0, owner: "baerly-node-test", claimed_at: "" },
         });
-        const writer = new ServerWriter({ storage, currentJsonKey: key });
+        const writer = new Writer({ storage, currentJsonKey: key });
         for (let i = 0; i < 200; i++) {
           await writer.commit({
             op: "I",
@@ -163,7 +163,7 @@ describe("baerlyNode", () => {
       log_seq_start: 0,
       writer_fence: { epoch: 0, owner: "baerly-node-test", claimed_at: "" },
     });
-    const writer = new ServerWriter({ storage: realStorage, currentJsonKey: seededKey });
+    const writer = new Writer({ storage: realStorage, currentJsonKey: seededKey });
     for (let i = 0; i < 200; i++) {
       await writer.commit({
         op: "I",

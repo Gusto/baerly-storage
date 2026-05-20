@@ -163,19 +163,19 @@ describe("Db metrics threading", () => {
     });
   };
 
-  test("single-mutation insert forwards metrics to the ServerWriter", async () => {
+  test("single-mutation insert forwards metrics to the Writer", async () => {
     const storage = new MemoryStorage();
     await provision(storage);
     const metrics = new InMemoryMetricsRecorder();
     const db = Db.create({ storage, app: APP, tenant: TENANT, metrics });
     await db.table<{ _id: string; title: string }>(TABLE).insert({ title: "hi" });
-    // server-writer.ts emits one histogram observation per successful
+    // writer.ts emits one histogram observation per successful
     // commit. Without metrics threading the recorder stays empty.
     const observed = metrics.histogramValues("db.write.class_a_ops_per_logical_write");
     expect(observed.length).toBeGreaterThan(0);
   });
 
-  test("transaction commit forwards metrics to the ServerWriter", async () => {
+  test("transaction commit forwards metrics to the Writer", async () => {
     const storage = new MemoryStorage();
     await provision(storage);
     const metrics = new InMemoryMetricsRecorder();

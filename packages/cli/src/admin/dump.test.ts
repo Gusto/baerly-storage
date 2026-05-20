@@ -18,7 +18,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { CURRENT_JSON_SCHEMA_VERSION, createCurrentJson, type Storage } from "@baerly/protocol";
 import { LocalFsStorage } from "@baerly/dev";
-import { ServerWriter } from "@baerly/server/_internal/testing";
+import { Writer } from "@baerly/server/_internal/testing";
 import { runDump, canonicalStringify } from "./dump.ts";
 
 const APP = "app";
@@ -85,7 +85,7 @@ describe("baerly admin dump", () => {
 
   test("emits canonical NDJSON byte-for-byte", async () => {
     await provision(storage);
-    const writer = new ServerWriter({ storage, currentJsonKey: CURRENT_JSON_KEY });
+    const writer = new Writer({ storage, currentJsonKey: CURRENT_JSON_KEY });
     // Insert in a deliberately-non-sorted order so the row-order
     // sort (ascending `_id`) is observable.
     await writer.commit({

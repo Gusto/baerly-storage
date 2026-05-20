@@ -28,7 +28,7 @@
  *
  * @see ./indexes.ts — `IndexDefinition`, `allIndexKeysFor`,
  *      `indexKeyPrefix`.
- * @see ./server-writer.ts — the fence-time emission path this
+ * @see ./writer.ts — the fence-time emission path this
  *      command reconciles.
  */
 

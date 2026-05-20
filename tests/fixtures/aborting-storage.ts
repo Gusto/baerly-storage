@@ -16,7 +16,7 @@
 import type { Storage, StorageListEntry } from "@baerly/protocol";
 
 export interface AbortingStorageHandle {
-  /** The proxy `Storage`. Pass to `ServerWriter` / `compact` / `runGc`. */
+  /** The proxy `Storage`. Pass to `Writer` / `compact` / `runGc`. */
   readonly storage: Storage;
   /** Number of ops issued since the last `resetCount()`. */
   readonly opCount: () => number;

@@ -6,8 +6,8 @@
  * Regression — production `Db.create({ indexes })` → write path must
  * emit secondary-index PUTs.
  *
- * The writer-side index-emission block in `ServerWriter` is correct in
- * isolation, but for a while the production `Db → ServerWriter` wiring
+ * The writer-side index-emission block in `Writer` is correct in
+ * isolation, but for a while the production `Db → Writer` wiring
  * dropped `indexes` on the floor: declaring an index gave a *write*
  * path that never populated the index, while the *read* path queried
  * an index that was never written. Reads silently missed rows.
@@ -92,7 +92,7 @@ const makeDb = (storage: MemoryStorage): Db =>
   });
 
 /**
- * Bootstrap the collection's `current.json`. `ServerWriter` requires
+ * Bootstrap the collection's `current.json`. `Writer` requires
  * the manifest to exist before any commit; `Db.create` itself is
  * zero-I/O so we do this once per test.
  */
@@ -106,7 +106,7 @@ const provision = async (storage: MemoryStorage): Promise<void> => {
   });
 };
 
-describe("Db → ServerWriter index emission (e2e)", () => {
+describe("Db → Writer index emission (e2e)", () => {
   let storage: MemoryStorage;
   let db: Db;
 

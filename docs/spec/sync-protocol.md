@@ -171,7 +171,7 @@ poller in the kernel.
 2. List objects backward in time from the `now + lag` timestamp
 	- See the log-walk loop in [`packages/server/src/query.ts`](../packages/server/src/query.ts).
 3. Exclude entries whose `abs(timestamp - LastModified) > stale` because they were created by a client with significant clock skew
-	- See `Syncer.isValid`-equivalent guard logic in [`packages/server/src/server-writer.ts`](../packages/server/src/server-writer.ts).
+	- See `Syncer.isValid`-equivalent guard logic in [`packages/server/src/writer.ts`](../packages/server/src/writer.ts).
 4. Let the first entry encountered be `latest_state`
 	- See [`packages/server/src/query.ts`](../packages/server/src/query.ts).
 5. json-merge-patch all `operations` with `operations.timestamp - lag > latest_state.timestamp` in order into  `latest_state`

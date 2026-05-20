@@ -86,7 +86,7 @@ export const tablePrefixOf = (currentJsonKey: string): string =>
  * Returns the keys in **chronological order** (oldest seq first).
  *
  * The on-bucket key shape is `<tablePrefix>/log/<seq>.json` where
- * `<seq>` is a base-10 integer minted by `ServerWriter`. Lex-ascending
+ * `<seq>` is a base-10 integer minted by `Writer`. Lex-ascending
  * key order disagrees with numeric seq order past seq=9 (`log/10.json`
  * sorts before `log/2.json`), so we parse the trailing integer out of
  * each key and sort numerically.

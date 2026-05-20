@@ -385,7 +385,7 @@ describe("Query.delete", () => {
  * `MemoryStorage` subclass that injects CAS failures on the
  * collection's `current.json` to exercise the writer's internal
  * retry loop from the verb-call surface. Mirrors the pattern in
- * `server-writer.test.ts`. Kept local to this file — not exported.
+ * `writer.test.ts`. Kept local to this file — not exported.
  */
 class InstrumentedStorage extends MemoryStorage {
   failNextNCas = 0;
@@ -413,7 +413,7 @@ class InstrumentedStorage extends MemoryStorage {
   }
 }
 
-describe("Per-row CAS semantics (internal retries inside ServerWriter)", () => {
+describe("Per-row CAS semantics (internal retries inside Writer)", () => {
   test("forced CAS contention within budget: mutation eventually lands", async () => {
     const storage = new InstrumentedStorage();
     await provision(storage);
@@ -424,7 +424,7 @@ describe("Per-row CAS semantics (internal retries inside ServerWriter)", () => {
     // seed doc is set up cleanly. Then arm two failures so the
     // next `commit()` (the update) must retry twice and succeed
     // on attempt 3 — well under the 8-attempt budget. The verb
-    // itself does NOT loop; ServerWriter does internally.
+    // itself does NOT loop; Writer does internally.
     await t.insert({ _id: "x", title: "v0", status: "open" });
     const insertAttempts = storage.casAttempts;
     storage.failNextNCas = 2;

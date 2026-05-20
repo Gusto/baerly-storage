@@ -47,7 +47,7 @@ import {
  *   the listener short-circuits with 401. `GET /v1/healthz` bypasses
  *   the verifier so readiness probes don't need an auth token.
  * - `metrics` — operator's long-term {@link MetricsRecorder}.
- *   Receives every kernel emission (ServerWriter histograms,
+ *   Receives every kernel emission (Writer histograms,
  *   CAS-conflict counters, storage per-call counts) verbatim.
  *   Defaults to {@link noopMetricsRecorder}.
  * - `observability` — LogTape config (level/sink/sampleRate)

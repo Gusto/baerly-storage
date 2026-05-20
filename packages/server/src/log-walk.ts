@@ -1,7 +1,7 @@
 /**
  * Shared log-walk primitives consumed by the read path (`query.ts`),
  * the compactor (`compactor.ts`), and the optional integrity walk in
- * `ServerWriter.#singleAttemptCommit` (`server-writer.ts`).
+ * `Writer.#singleAttemptCommit` (`writer.ts`).
  *
  * Two operations: read one log entry, or walk a contiguous range of
  * log entries with bounded parallelism. Each kernel call site

@@ -16,6 +16,6 @@ export {
   type CommitBatchResult,
   type CommitInput,
   type CommitResult,
-  type ServerWriterOptions,
-  ServerWriter,
-} from "../server-writer.ts";
+  type WriterOptions,
+  Writer,
+} from "../writer.ts";

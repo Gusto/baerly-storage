@@ -36,7 +36,7 @@ delivered out-of-band by the HTTP `/v1/since` long-poll route.
 The hard invariant of the system. Writes from one client become visible
 to others in an order consistent with happened-before.
 
-- Implementation: [`packages/server/src/server-writer.ts`](../../packages/server/src/server-writer.ts),
+- Implementation: [`packages/server/src/writer.ts`](../../packages/server/src/writer.ts),
   [`packages/server/src/query.ts`](../../packages/server/src/query.ts)
 - Constants: [`packages/protocol/src/constants.ts`](../../packages/protocol/src/constants.ts)
   (`LAG_WINDOW_MILLIS` clock-skew tolerance)
@@ -301,7 +301,7 @@ view (`dump`) and its inverse (`restore`). `dump` emits
 lex row order, and no BOM — a byte-stable format the export
 round-trip test (`pnpm test:export-round-trip`) gates against.
 `restore` streams NDJSON from stdin and commits one `op:"I"` per
-row through `ServerWriter`; refuses an existing `current.json`
+row through `Writer`; refuses an existing `current.json`
 unless `--force` truncates first.
 
 - Implementation:

@@ -38,7 +38,7 @@ import { compact, runGc } from "@baerly/server/maintenance";
 import {
   type InternalCompactOptions,
   type InternalRunGcOptions,
-  ServerWriter,
+  Writer,
 } from "@baerly/server/_internal/testing";
 import { InMemoryMetricsRecorder } from "@baerly/server/observability";
 
@@ -84,7 +84,7 @@ const ensureCurrent = async (storage: Storage, key: string): Promise<void> => {
 
 /**
  * Provision `current.json` for every table the cascade touches.
- * `ServerWriter.commit()` throws `InvalidResponse` if the table's
+ * `Writer.commit()` throws `InvalidResponse` if the table's
  * `current.json` is missing; the read path returns empty. Mirroring
  * the `transaction.test.ts` pattern, the cascade seeds each table
  * before any insert.
@@ -546,8 +546,8 @@ const runGcCascade = async (
  * every adapter via the variant table — the assertion is "the
  * emission sites fire correctly on every {@link Storage} backend."
  *
- * Uses {@link ServerWriter} directly (instead of `db.table().insert()`)
- * so we can pass the recorder through `ServerWriterOptions.metrics`
+ * Uses {@link Writer} directly (instead of `db.table().insert()`)
+ * so we can pass the recorder through `WriterOptions.metrics`
  * — the public `Db` API doesn't yet thread the recorder, by design
  * (the HTTP server wires it at the request adapter).
  */
@@ -557,8 +557,8 @@ const runMetricsCascade = async (storage: Storage, app: string, tenant: string):
   const currentJsonKey = `app/${app}/tenant/${tenant}/manifests/${t}/current.json`;
   const metrics = new InMemoryMetricsRecorder();
 
-  // 100 writes through ServerWriter with the recorder wired.
-  const writer = new ServerWriter({
+  // 100 writes through Writer with the recorder wired.
+  const writer = new Writer({
     storage,
     currentJsonKey,
     options: { metrics },

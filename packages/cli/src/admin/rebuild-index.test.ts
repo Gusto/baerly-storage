@@ -22,7 +22,7 @@ import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { CURRENT_JSON_SCHEMA_VERSION, createCurrentJson, type Storage } from "@baerly/protocol";
 import { LocalFsStorage } from "@baerly/dev";
 import { allIndexKeysFor } from "@baerly/server";
-import { ServerWriter } from "@baerly/server/_internal/testing";
+import { Writer } from "@baerly/server/_internal/testing";
 import { runRebuildIndex } from "./rebuild-index.ts";
 
 const APP = "app";
@@ -68,7 +68,7 @@ describe("baerly admin rebuild-index — CLI smoke", () => {
     //    entry, then inject an orphan key for a doc the log never
     //    references.
     await provision(storage);
-    const writer = new ServerWriter({
+    const writer = new Writer({
       storage,
       currentJsonKey,
       options: { indexes: [{ name: "by_status", on: "status" }] },
@@ -132,7 +132,7 @@ describe("baerly admin rebuild-index — CLI smoke", () => {
 
   test("text mode: silent on success, exit code 0", async () => {
     await provision(storage);
-    const writer = new ServerWriter({
+    const writer = new Writer({
       storage,
       currentJsonKey,
       options: { indexes: [{ name: "by_status", on: "status" }] },

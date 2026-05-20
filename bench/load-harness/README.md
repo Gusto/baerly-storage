@@ -74,9 +74,9 @@ Ticket 53's runner follows this sequence for each preset:
 2. `buildDataset({ seed, ...preset.datasetParams, calibration })` — builds
    the in-memory tenant/record tree.
 3. Walk `preset.pipeline` in order:
-   - **seed phase:** PUT every record once via `ServerWriter`.
+   - **seed phase:** PUT every record once via `Writer`.
    - **other phases:** `generateOpStream({ seed, dataset, mix, opCount })`
-     then dispatch each `Op` to the appropriate `Db` / `ServerWriter` call.
+     then dispatch each `Op` to the appropriate `Db` / `Writer` call.
    - Take a `CountingStorage` snapshot before and after each phase.
 4. Emit the per-phase snapshot deltas as the run-JSON (ticket 54).
 

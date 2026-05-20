@@ -3,7 +3,7 @@
  * metrics. The kernel does not emit to any specific backend; the
  * operator wires their preferred sink (Workers Analytics Engine,
  * OpenTelemetry, statsd, in-process aggregation) by implementing this
- * interface and passing it to `ServerWriter`, `compact`, `runGc`, and
+ * interface and passing it to `Writer`, `compact`, `runGc`, and
  * the scheduled handler.
  *
  * The default {@link noopMetricsRecorder} swallows everything — safe

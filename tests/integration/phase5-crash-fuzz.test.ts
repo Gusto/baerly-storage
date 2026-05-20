@@ -5,7 +5,7 @@
 /**
  * Crash-injection fuzzer.
  *
- * Property-based fault-injection that drives `ServerWriter`,
+ * Property-based fault-injection that drives `Writer`,
  * `compact()`, and `runGc()` against a `Storage` proxy that aborts the
  * K-th underlying operation. Asserts the durability contracts:
  *
@@ -42,7 +42,7 @@ import { compact, runGc } from "@baerly/server/maintenance";
 import {
   type InternalCompactOptions,
   type InternalRunGcOptions,
-  ServerWriter,
+  Writer,
 } from "@baerly/server/_internal/testing";
 import { abortingStorage } from "../fixtures/aborting-storage.ts";
 
@@ -126,7 +126,7 @@ describe("Writer crash never leaves readable phantom row", () => {
 
       // Seed with `numInsertsBefore` good writes so the log isn't
       // empty when the crash fires.
-      const goodWriter = new ServerWriter({ storage: inner, currentJsonKey: CURRENT_JSON_KEY });
+      const goodWriter = new Writer({ storage: inner, currentJsonKey: CURRENT_JSON_KEY });
       const seededIds = new Set<string>();
       for (let i = 0; i < numInsertsBefore; i++) {
         const id = `seed-${i}`;
@@ -144,7 +144,7 @@ describe("Writer crash never leaves readable phantom row", () => {
       // Wrap + arm. The trap fires before the K-th underlying I/O on
       // `inner`. Counter starts at 0; the very next op is op 1.
       const handle = abortingStorage(inner);
-      const crashWriter = new ServerWriter({
+      const crashWriter = new Writer({
         storage: handle.storage,
         currentJsonKey: CURRENT_JSON_KEY,
       });
@@ -199,7 +199,7 @@ describe("Compactor crash never leaves readable corrupt snapshot", () => {
     async ({ abortAfter, numInserts }) => {
       const inner = new MemoryStorage();
       await provision(inner);
-      const writer = new ServerWriter({ storage: inner, currentJsonKey: CURRENT_JSON_KEY });
+      const writer = new Writer({ storage: inner, currentJsonKey: CURRENT_JSON_KEY });
       for (let i = 0; i < numInserts; i++) {
         const id = `d-${i}`;
         await writer.commit({
@@ -241,7 +241,7 @@ describe("GC crash never deletes a still-referenced key", () => {
     async ({ abortAfter, numInserts }) => {
       const inner = new MemoryStorage();
       await provision(inner);
-      const writer = new ServerWriter({ storage: inner, currentJsonKey: CURRENT_JSON_KEY });
+      const writer = new Writer({ storage: inner, currentJsonKey: CURRENT_JSON_KEY });
       for (let i = 0; i < numInserts; i++) {
         const id = `d-${i}`;
         await writer.commit({
@@ -305,7 +305,7 @@ describe("Long-running fuzzer (many tick + crash cycles)", () => {
           async (ops) => {
             const inner = new MemoryStorage();
             await provision(inner);
-            const writer = new ServerWriter({
+            const writer = new Writer({
               storage: inner,
               currentJsonKey: CURRENT_JSON_KEY,
             });

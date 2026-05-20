@@ -21,7 +21,7 @@ import { compact, type InternalCompactOptions } from "./compactor.ts";
 import { Db } from "./db.ts";
 import { planQuery } from "./query-planner.ts";
 import { runAllWithMeta } from "./query.ts";
-import { ServerWriter } from "./server-writer.ts";
+import { Writer } from "./writer.ts";
 
 const APP = "test";
 const TENANT = "t";
@@ -45,8 +45,8 @@ const provision = async (storage: MemoryStorage, coll = COLL): Promise<void> => 
   await createCurrentJson(storage, currentJsonKey(coll), seedCurrent());
 };
 
-const commit = (storage: MemoryStorage, coll = COLL): ServerWriter =>
-  new ServerWriter({ storage, currentJsonKey: currentJsonKey(coll) });
+const commit = (storage: MemoryStorage, coll = COLL): Writer =>
+  new Writer({ storage, currentJsonKey: currentJsonKey(coll) });
 
 describe("Db.table read terminals", () => {
   let storage: MemoryStorage;
@@ -73,7 +73,7 @@ describe("Db.table read terminals", () => {
     await expect(t.count()).resolves.toBe(0);
   });
 
-  test("case 3: single insert via ServerWriter is visible to all()", async () => {
+  test("case 3: single insert via Writer is visible to all()", async () => {
     await provision(storage);
     const w = commit(storage);
     await w.commit({
@@ -232,11 +232,11 @@ describe("Db.table read terminals", () => {
       `app/${APP}/tenant/bob/manifests/${COLL}/current.json`,
       seedCurrent(),
     );
-    const wA = new ServerWriter({
+    const wA = new Writer({
       storage,
       currentJsonKey: `app/${APP}/tenant/alice/manifests/${COLL}/current.json`,
     });
-    const wB = new ServerWriter({
+    const wB = new Writer({
       storage,
       currentJsonKey: `app/${APP}/tenant/bob/manifests/${COLL}/current.json`,
     });
@@ -552,7 +552,7 @@ describe("auto-planner index routing", () => {
 
   test("auto-routes a single-field equality predicate to the declared index", async () => {
     await provision(storage);
-    const writer = new ServerWriter({
+    const writer = new Writer({
       storage,
       currentJsonKey: currentJsonKey(COLL),
       options: { indexes: [{ name: "by_status", on: "status" }] },
@@ -586,7 +586,7 @@ describe("auto-planner index routing", () => {
 
   test("returns empty result when the index prefix is empty (no matches)", async () => {
     await provision(storage);
-    const writer = new ServerWriter({
+    const writer = new Writer({
       storage,
       currentJsonKey: currentJsonKey(COLL),
       options: { indexes: [{ name: "by_status", on: "status" }] },
@@ -609,7 +609,7 @@ describe("auto-planner index routing", () => {
     // The planner routes through `by_status` at prefix-length 1; the
     // post-fetch `matches(...)` re-check filters by `assignee`.
     await provision(storage);
-    const writer = new ServerWriter({
+    const writer = new Writer({
       storage,
       currentJsonKey: currentJsonKey(COLL),
       options: { indexes: [{ name: "by_status", on: "status" }] },
@@ -636,7 +636,7 @@ describe("auto-planner index routing", () => {
 
   test("respects .limit() applied after the index walk", async () => {
     await provision(storage);
-    const writer = new ServerWriter({
+    const writer = new Writer({
       storage,
       currentJsonKey: currentJsonKey(COLL),
       options: { indexes: [{ name: "by_status", on: "status" }] },
@@ -662,7 +662,7 @@ describe("auto-planner index routing", () => {
     // [status, priority] index, full walk (length 2 of 2). Each
     // yielded key has tail `<docId>.json` (single segment).
     await provision(storage);
-    const writer = new ServerWriter({
+    const writer = new Writer({
       storage,
       currentJsonKey: currentJsonKey(COLL),
       options: { indexes: [{ name: "by_status_priority", on: ["status", "priority"] }] },
@@ -699,7 +699,7 @@ describe("auto-planner index routing", () => {
     // `<priority-b32>/<docId>.json` — TWO segments. This exercises
     // the multi-segment doc-id extraction in `runIndexWalkPlan`.
     await provision(storage);
-    const writer = new ServerWriter({
+    const writer = new Writer({
       storage,
       currentJsonKey: currentJsonKey(COLL),
       options: { indexes: [{ name: "by_status_priority", on: ["status", "priority"] }] },
@@ -744,7 +744,7 @@ describe("auto-planner index routing", () => {
     // values × ~1 doc/c = ~9 docs; assert just the 3 docs whose
     // (a,b) = (1,2).
     await provision(storage);
-    const writer = new ServerWriter({
+    const writer = new Writer({
       storage,
       currentJsonKey: currentJsonKey(COLL),
       options: { indexes: [{ name: "by_a_b_c", on: ["a", "b", "c"] }] },
@@ -789,7 +789,7 @@ describe("auto-planner index routing", () => {
     // The planner routes on the equality clause; the operator clause
     // lands on the post-fetch matches() re-check.
     await provision(storage);
-    const writer = new ServerWriter({
+    const writer = new Writer({
       storage,
       currentJsonKey: currentJsonKey(COLL),
       options: { indexes: [{ name: "by_status", on: "status" }] },
@@ -1003,7 +1003,7 @@ describe("auto-planner range and $in walks (T3)", () => {
     // Seed docs with `priority` ∈ {p1..p9}. Index on `priority`.
     // Walk inclusive lower / exclusive upper [p3, p7).
     await provision(storage);
-    const writer = new ServerWriter({
+    const writer = new Writer({
       storage,
       currentJsonKey: currentJsonKey(COLL),
       options: { indexes: [{ name: "by_priority", on: "priority" }] },
@@ -1029,7 +1029,7 @@ describe("auto-planner range and $in walks (T3)", () => {
 
   test("exclusive lower bound walk skips the lower-bound bucket via sentinel", async () => {
     await provision(storage);
-    const writer = new ServerWriter({
+    const writer = new Writer({
       storage,
       currentJsonKey: currentJsonKey(COLL),
       options: { indexes: [{ name: "by_priority", on: "priority" }] },
@@ -1056,7 +1056,7 @@ describe("auto-planner range and $in walks (T3)", () => {
 
   test("inclusive upper bound walk includes the upper-bound bucket", async () => {
     await provision(storage);
-    const writer = new ServerWriter({
+    const writer = new Writer({
       storage,
       currentJsonKey: currentJsonKey(COLL),
       options: { indexes: [{ name: "by_priority", on: "priority" }] },
@@ -1088,7 +1088,7 @@ describe("auto-planner range and $in walks (T3)", () => {
     // numeric encoder's lex/value-order behaviour, which has its own
     // dedicated smoke test below.
     await provision(storage);
-    const writer = new ServerWriter({
+    const writer = new Writer({
       storage,
       currentJsonKey: currentJsonKey(COLL),
       options: { indexes: [{ name: "by_tenant_age", on: ["tenant", "age"] }] },
@@ -1127,7 +1127,7 @@ describe("auto-planner range and $in walks (T3)", () => {
 
   test("$in multi-walk returns the union of matching docs", async () => {
     await provision(storage);
-    const writer = new ServerWriter({
+    const writer = new Writer({
       storage,
       currentJsonKey: currentJsonKey(COLL),
       options: { indexes: [{ name: "by_status", on: "status" }] },
@@ -1168,7 +1168,7 @@ describe("auto-planner range and $in walks (T3)", () => {
     // by the writer's diff, AND the matches() re-check would catch
     // any leftover anyway).
     await provision(storage);
-    const writer = new ServerWriter({
+    const writer = new Writer({
       storage,
       currentJsonKey: currentJsonKey(COLL),
       options: { indexes: [{ name: "by_priority", on: "priority" }] },
@@ -1210,7 +1210,7 @@ describe("auto-planner range and $in walks (T3)", () => {
     // (no equality consumes it), pushes the age=012 into postFilter.
     // Verify result matches the in-memory full-scan.
     await provision(storage);
-    const writer = new ServerWriter({
+    const writer = new Writer({
       storage,
       currentJsonKey: currentJsonKey(COLL),
       options: { indexes: [{ name: "by_tenant_age", on: ["tenant", "age"] }] },
@@ -1254,7 +1254,7 @@ describe("auto-planner range and $in walks (T3)", () => {
     // trip this test instead of silently passing on the executor's
     // correctness — the surrounding cascade already covers that.
     await provision(storage);
-    const writer = new ServerWriter({
+    const writer = new Writer({
       storage,
       currentJsonKey: currentJsonKey(COLL),
       options: { indexes: [{ name: "by_age", on: "age" }] },
@@ -1297,11 +1297,11 @@ describe("auto-planner range and $in walks (T3)", () => {
     // batched fan-out replaced a sequential per-value loop; if a
     // regression dropped a value or duplicated a doc this would trip.
     //
-    // Seed via `ServerWriter` directly for setup convenience —
+    // Seed via `Writer` directly for setup convenience —
     // equivalent to a `Db.create({ indexes })` path now that the
     // production wiring threads `options.indexes`.
     await provision(storage);
-    const writer = new ServerWriter({
+    const writer = new Writer({
       storage,
       currentJsonKey: currentJsonKey(COLL),
       options: { indexes: [{ name: "by_team", on: "team" }] },

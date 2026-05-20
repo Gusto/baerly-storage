@@ -12,7 +12,7 @@ import { describe, expect, test } from "vitest";
 // transitive closure independently.
 //
 // The barrel (`baerly-storage`) carries the kernel surface (`Db`,
-// `ServerWriter`, query/table helpers, schema, indexes) plus the
+// `Writer`, query/table helpers, schema, indexes) plus the
 // auth presets. Maintenance (`runScheduledMaintenance`, profile
 // constants) and observability primitives are NOT on the barrel
 // as of 2026-05 — operator-side code reaches them via their
@@ -192,7 +192,7 @@ const BUDGETS: readonly Budget[] = [
   //     shrinkage lands in the index.js closure.
   { entry: "maintenance.js", raw: 185 * 1024, gz: 51 * 1024 },
   // Cloudflare Workers adapter — re-exports the kernel barrel
-  // (Db, ServerWriter, etc.) plus the R2-binding `Storage` impl
+  // (Db, Writer, etc.) plus the R2-binding `Storage` impl
   // and the `baerlyCloudflare` helper. Aggregator: closure
   // includes index.js + http.js subgraphs since adapters re-export
   // those for one-stop consumer imports.

@@ -17,7 +17,7 @@ import {
   MemoryStorage,
   type Verifier,
 } from "@baerly/protocol";
-import { ServerWriter } from "@baerly/server/_internal/testing";
+import { Writer } from "@baerly/server/_internal/testing";
 import { configureObservability } from "@baerly/server/observability";
 import { reset, type LogRecord, type Sink } from "@logtape/logtape";
 import { afterEach, describe, expect, test } from "vitest";
@@ -39,7 +39,7 @@ describe("runMaintenanceTick", () => {
       log_seq_start: 0,
       writer_fence: { epoch: 0, owner: "node-maintenance-test", claimed_at: "" },
     });
-    const writer = new ServerWriter({ storage: s, currentJsonKey: key });
+    const writer = new Writer({ storage: s, currentJsonKey: key });
     for (let i = 0; i < 200; i++) {
       await writer.commit({
         op: "I",

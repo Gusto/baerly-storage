@@ -19,7 +19,7 @@ import {
   runScheduledMaintenance,
 } from "./maintenance.ts";
 import { configureObservability } from "./observability/index.ts";
-import { ServerWriter } from "./server-writer.ts";
+import { Writer } from "./writer.ts";
 
 const KEY = "app/t/tenant/x/manifests/c/current.json";
 const COLL = "c";
@@ -38,7 +38,7 @@ describe("runScheduledMaintenance", () => {
   test("runs both compact and gc by default", async () => {
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
-    const writer = new ServerWriter({ storage: s, currentJsonKey: KEY });
+    const writer = new Writer({ storage: s, currentJsonKey: KEY });
     for (let i = 0; i < 150; i++) {
       await writer.commit({
         op: "I",
@@ -76,7 +76,7 @@ describe("runScheduledMaintenance", () => {
     // `runScheduledMaintenance`.
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
-    const writer = new ServerWriter({ storage: s, currentJsonKey: KEY });
+    const writer = new Writer({ storage: s, currentJsonKey: KEY });
     for (let i = 0; i < 150; i++) {
       await writer.commit({
         op: "I",
@@ -153,7 +153,7 @@ describe("runScheduledMaintenance", () => {
       // facing fields land alongside them.
       const s = new MemoryStorage();
       await bootstrap(s, KEY);
-      const writer = new ServerWriter({ storage: s, currentJsonKey: KEY });
+      const writer = new Writer({ storage: s, currentJsonKey: KEY });
       for (let i = 0; i < 150; i++) {
         await writer.commit({
           op: "I",

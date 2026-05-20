@@ -28,7 +28,7 @@
  *
  * Why CAS errors are wrapped: every in-tree {@link Storage} impl
  * surfaces a lost CAS as `BaerlyError{code:"Conflict"}`. Downstream
- * callers — the ServerWriter, the compactor, the sweeper —
+ * callers — the Writer, the compactor, the sweeper —
  * discriminate by `code` to decide whether to retry.
  * We re-wrap here only to add the `current.json at <key>` location
  * context to the message; the `code` is unchanged.
@@ -43,7 +43,7 @@ import type { Storage, StoragePutOptions, StoragePutResult } from "../storage/ty
  * `(tenant, collection)` key — for example
  * `<tenant>/<collection>/current.json`. The compactor swaps
  * snapshot generations by CAS-writing this object; the
- * ServerWriter reads it on every commit to find the snapshot
+ * Writer reads it on every commit to find the snapshot
  * pointer; the sweeper reads `writer_fence` to decide which log
  * entries are eligible for GC.
  *
@@ -70,7 +70,7 @@ export interface CurrentJson {
 
   /**
    * Sequence number of the next log entry. Monotonic per
-   * collection. The ServerWriter reads this on commit to mint the
+   * collection. The Writer reads this on commit to mint the
    * next log filename; CAS-write back with `next_seq + 1` ensures
    * no two writers pick the same sequence.
    */

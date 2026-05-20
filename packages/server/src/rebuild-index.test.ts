@@ -23,7 +23,7 @@ import {
 import { allIndexKeysFor, type IndexDefinition } from "./indexes.ts";
 import { InMemoryMetricsRecorder } from "./observability/in-memory-metrics.ts";
 import { rebuildIndex } from "./rebuild-index.ts";
-import { ServerWriter } from "./server-writer.ts";
+import { Writer } from "./writer.ts";
 
 const CURRENT_JSON_KEY = "app/x/tenant/t/manifests/tickets/current.json";
 const LOG_PREFIX = "app/x/tenant/t/manifests/tickets";
@@ -52,7 +52,7 @@ describe("rebuildIndex — healthy index", () => {
   test("re-running on a writer-built index is a no-op", async () => {
     const storage = new MemoryStorage();
     await provision(storage);
-    const writer = new ServerWriter({
+    const writer = new Writer({
       storage,
       currentJsonKey: CURRENT_JSON_KEY,
       options: { indexes: [BY_STATUS] },
@@ -82,7 +82,7 @@ describe("rebuildIndex — orphan cleanup", () => {
   test("removes index keys that point at a no-longer-live doc", async () => {
     const storage = new MemoryStorage();
     await provision(storage);
-    const writer = new ServerWriter({
+    const writer = new Writer({
       storage,
       currentJsonKey: CURRENT_JSON_KEY,
       options: { indexes: [BY_STATUS] },
@@ -122,7 +122,7 @@ describe("rebuildIndex — missing-key repair", () => {
     await provision(storage);
     // Write a doc WITHOUT the writer's index path (no indexes
     // declared) so no index key lands.
-    const writer = new ServerWriter({
+    const writer = new Writer({
       storage,
       currentJsonKey: CURRENT_JSON_KEY,
       // Intentionally empty — simulates a doc written before the
@@ -147,7 +147,7 @@ describe("rebuildIndex — missing-key repair", () => {
   test("idempotence: a second rebuild on the output of the first is a no-op", async () => {
     const storage = new MemoryStorage();
     await provision(storage);
-    const writer = new ServerWriter({
+    const writer = new Writer({
       storage,
       currentJsonKey: CURRENT_JSON_KEY,
       options: {},
@@ -179,7 +179,7 @@ describe("rebuildIndex — options bag", () => {
   test("accepts a MetricsRecorder without throwing (additive signature)", async () => {
     const storage = new MemoryStorage();
     await provision(storage);
-    const writer = new ServerWriter({
+    const writer = new Writer({
       storage,
       currentJsonKey: CURRENT_JSON_KEY,
       options: { indexes: [BY_STATUS] },
@@ -232,7 +232,7 @@ describe("rebuildIndex — dry-run", () => {
     // — the on-storage state lands the same way a pre-existing
     // collection would look BEFORE the operator declared the
     // (now-tightened) `adminsOnly` index.
-    const writer = new ServerWriter({
+    const writer = new Writer({
       storage,
       currentJsonKey: CURRENT_JSON_KEY,
       options: {},
@@ -292,7 +292,7 @@ describe("rebuildIndex — dry-run", () => {
   test("dryRun reports orphan-removal counts without deleting", async () => {
     const storage = new MemoryStorage();
     await provision(storage);
-    const writer = new ServerWriter({
+    const writer = new Writer({
       storage,
       currentJsonKey: CURRENT_JSON_KEY,
       options: { indexes: [ADMINS_ONLY] },
@@ -358,7 +358,7 @@ describe("rebuildIndex — filtered index", () => {
     const storage = new MemoryStorage();
     await provision(storage);
     // Writer with NO indexes commits two docs — one open, one closed.
-    const writer = new ServerWriter({
+    const writer = new Writer({
       storage,
       currentJsonKey: CURRENT_JSON_KEY,
       options: {},
@@ -389,7 +389,7 @@ describe("rebuildIndex — filtered index", () => {
   test("rebuild over a filtered index removes orphans from docs that fell out of the filter", async () => {
     const storage = new MemoryStorage();
     await provision(storage);
-    const writer = new ServerWriter({
+    const writer = new Writer({
       storage,
       currentJsonKey: CURRENT_JSON_KEY,
       options: { indexes: [FILTERED] },
