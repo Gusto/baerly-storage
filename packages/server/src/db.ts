@@ -400,10 +400,10 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
 
   /**
    * Build a freshly-seeded {@link TableReadContext} for `name`. The
-   * HTTP router uses this so it can drive `runFirstWithMeta` /
-   * `runAllWithMeta` directly (whose return shapes carry the
-   * manifest-pointer cursor used to pack `_meta` onto the read
-   * response envelope). Application callers should keep using
+   * HTTP router uses this so it can drive `runAllWithMeta` directly
+   * (the return shape carries the manifest-pointer cursor used to
+   * pack `_meta` onto the read response envelope). Application
+   * callers should keep using
    * {@link Db.table}; the chainable terminals destructure the cursor
    * out and discard it to keep the locked `Query<T>` signature.
    *

@@ -40,7 +40,7 @@ import {
   type SinceResponse,
 } from "../contract.ts";
 import { CATEGORY, getLogger, serializeError } from "../observability/index.ts";
-import { runAllWithMeta, runFirstWithMeta } from "../query.ts";
+import { runAllWithMeta } from "../query.ts";
 import { longPollSince } from "./since.ts";
 
 /**
@@ -104,12 +104,13 @@ export function createRouter(options: CreateRouterOptions): Hono {
   app.get("/v1/t/:table/:id", async (c) => {
     const { table, id } = c.req.param();
     const consistency = parseConsistency(c.req.query("consistency"));
-    const { row, manifestPointer, fresh } = await runFirstWithMeta(db.tableReadContext(table), {
+    const { rows, manifestPointer, fresh } = await runAllWithMeta(db.tableReadContext(table), {
       predicate: { _id: id } as Predicate<DocumentData>,
       order: undefined,
       limit: 1,
       consistency,
     });
+    const row = rows[0];
     if (row === undefined) {
       throw new BaerlyError("NotFound", `No such row: ${id}`);
     }

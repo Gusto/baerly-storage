@@ -257,7 +257,10 @@ export const makeQuery = <T extends DocumentData>(
   if (state.predicate !== undefined) {
     validatePredicate<T>(state.predicate);
   }
-  const frozen: QueryState<T> = Object.freeze({ ...state });
+  // Every modifier below produces a fresh spread; identity inequality
+  // with `state` is intentional and load-bearing. A shallow `Object.freeze`
+  // would only protect the top-level object (the chain never mutates it
+  // anyway) and not nested predicate / order objects — pure ceremony.
   return {
     where: (p) => {
       // Validate the incoming fragment before merge so error messages
@@ -266,60 +269,45 @@ export const makeQuery = <T extends DocumentData>(
       // boundary is the public contract surface.
       validatePredicate<T>(p);
       return makeQuery<T>(ctx, {
-        ...frozen,
-        predicate: frozen.predicate === undefined ? p : mergePredicates<T>(frozen.predicate, p),
+        ...state,
+        predicate: state.predicate === undefined ? p : mergePredicates<T>(state.predicate, p),
       });
     },
-    order: (s) => makeQuery<T>(ctx, { ...frozen, order: s }),
-    limit: (n) => makeQuery<T>(ctx, { ...frozen, limit: n }),
-    consistency: (level) => makeQuery<T>(ctx, { ...frozen, consistency: level }),
+    order: (s) => makeQuery<T>(ctx, { ...state, order: s }),
+    limit: (n) => makeQuery<T>(ctx, { ...state, limit: n }),
+    consistency: (level) => makeQuery<T>(ctx, { ...state, consistency: level }),
     first: async () => {
-      const { rows } = await runRead<T>(ctx, { ...frozen, limit: 1 });
+      const { rows } = await runRead<T>(ctx, { ...state, limit: 1 });
       return rows[0]; // undefined when rows.length === 0
     },
     all: async () => {
-      const res = await runRead<T>(ctx, frozen);
+      const res = await runRead<T>(ctx, state);
       return res.rows;
     },
     count: async () => {
-      const res = await runRead<T>(ctx, frozen);
+      const res = await runRead<T>(ctx, state);
       return res.rows.length;
     },
-    update: (patch) => runUpdate<T>(ctx, frozen, patch),
-    replace: (doc) => runReplace<T>(ctx, frozen, doc),
-    delete: () => runDelete<T>(ctx, frozen),
+    update: (patch) => runUpdate<T>(ctx, state, patch),
+    replace: (doc) => runReplace<T>(ctx, state, doc),
+    delete: () => runDelete<T>(ctx, state),
   };
 };
 
 /**
  * Server-internal read entry surfacing the manifest-pointer cursor
- * and freshness flag alongside the first matched row. The HTTP
+ * and freshness flag alongside the materialised rows. The HTTP
  * router calls this directly so the read-response handler can pack
- * `_meta` onto the envelope; the public `Query<T>.first()` terminal
- * destructures the row out and discards the cursor to keep the
- * locked interface signature.
+ * `_meta` onto the envelope; the public `Query<T>` terminals
+ * destructure the rows out and discard the cursor to keep the
+ * locked interface signature. Single-row routes (`GET /v1/t/:table/:id`)
+ * call this with `limit:1` and pick `rows[0]`.
  *
- * @internal
- */
-export const runFirstWithMeta = async <T extends DocumentData>(
-  ctx: TableReadContext,
-  state: QueryState<T>,
-): Promise<{ row: T | undefined; manifestPointer: string; fresh: boolean }> => {
-  // Mirror the operator-policy boundary check that `makeQuery` runs
-  // for chain-based reads: predicates with `$`-keys throw
-  // `InvalidConfig` before any I/O. Routes that bypass `Db.table` /
-  // `Query.where` must still surface the same error class.
-  if (state.predicate !== undefined) {
-    validatePredicate<T>(state.predicate);
-  }
-  const { rows, manifestPointer, fresh } = await runRead<T>(ctx, { ...state, limit: 1 });
-  return { row: rows[0], manifestPointer, fresh };
-};
-
-/**
- * Server-internal read entry mirroring `runFirstWithMeta` for the
- * list/predicate route. Returns the materialised rows + cursor +
- * freshness so the HTTP router can pack `_meta` onto the envelope.
+ * Mirrors the operator-policy boundary check that `makeQuery` runs
+ * for chain-based reads: predicates with `$`-keys throw
+ * `InvalidConfig` before any I/O. Routes that bypass `Db.table` /
+ * `Query.where` (router callers parsing `?where=`) must still
+ * surface the same error class.
  *
  * @internal
  */
@@ -327,9 +315,6 @@ export const runAllWithMeta = <T extends DocumentData>(
   ctx: TableReadContext,
   state: QueryState<T>,
 ): Promise<ReadResult<T>> => {
-  // See `runFirstWithMeta` — match `makeQuery`'s predicate validation
-  // so router calls that skip the chain still surface `InvalidConfig`
-  // on `$`-keys.
   if (state.predicate !== undefined) {
     validatePredicate<T>(state.predicate);
   }
