@@ -37,7 +37,6 @@ export {
 } from "./context.ts";
 export { alsAwareRecorder } from "./recorder.ts";
 export { decideSample } from "./sampling.ts";
-export { type SerializedError, serializeError } from "./redact.ts";
 export {
   type CategoryName,
   type FriendlyLogLevel,

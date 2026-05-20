@@ -40,7 +40,6 @@ import {
 } from "./context.ts";
 import { deriveOutcome } from "./derive-outcome.ts";
 import type { RequestScopedMetricsRecorder } from "./recorder.ts";
-import { serializeError } from "./redact.ts";
 import { decideSample } from "./sampling.ts";
 
 /** Discriminator for the canonical line's `category` derivation. */
@@ -334,4 +333,69 @@ const buildProperties = (
   }
 
   return props;
+};
+
+/**
+ * Shape carried by the canonical line under its `error` key.
+ *
+ * `code` is one of `BaerlyErrorCode` for known `BaerlyError`s, or the
+ * literal `"Internal"` for anything else. The string-typing keeps the
+ * consumer-side handling grep-friendly.
+ */
+export interface SerializedError {
+  readonly code: string;
+  readonly message: string;
+  readonly stack?: string;
+}
+
+/**
+ * Convert an unknown thrown value into a {@link SerializedError}.
+ *
+ * Two rules:
+ *
+ * 1. `BaerlyError` — preserve its `code` discriminant verbatim.
+ * 2. Any other error or non-error value — collapse to
+ *    `{ code: "Internal", message: <stringified> }`.
+ *
+ * Stacks are opt-in via two independent gates: the `includeStack`
+ * parameter AND the `BAERLY_LOG_STACKS=1` env var. The two-gate
+ * design lets operators turn stacks on globally during an incident
+ * without redeploy, while still defaulting off in steady state.
+ *
+ * @param err The thrown value (anything `try { ... } catch (e)` can yield).
+ * @param includeStack If `true` AND `BAERLY_LOG_STACKS=1`, include
+ *   the stack trace. Defaults to `false`.
+ */
+export const serializeError = (err: unknown, includeStack = false): SerializedError => {
+  const wantsStack = includeStack && stacksEnabled();
+
+  if (err instanceof BaerlyError) {
+    const base: SerializedError = { code: err.code, message: err.message };
+    return wantsStack && err.stack !== undefined ? { ...base, stack: err.stack } : base;
+  }
+
+  if (err instanceof Error) {
+    const base: SerializedError = { code: "Internal", message: err.message };
+    return wantsStack && err.stack !== undefined ? { ...base, stack: err.stack } : base;
+  }
+
+  if (typeof err === "object" && err !== null) {
+    try {
+      return { code: "Internal", message: JSON.stringify(err) };
+    } catch {
+      return { code: "Internal", message: "[unserializable object]" };
+    }
+  }
+  return { code: "Internal", message: String(err) };
+};
+
+/**
+ * Read `BAERLY_LOG_STACKS` env var. Wrapped to dodge the Workers
+ * Runtime's `process` shim — `globalThis.process?.env` is the
+ * portable form. Returns `true` iff the var is the literal `"1"`.
+ */
+const stacksEnabled = (): boolean => {
+  const env = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process
+    ?.env;
+  return env?.["BAERLY_LOG_STACKS"] === "1";
 };

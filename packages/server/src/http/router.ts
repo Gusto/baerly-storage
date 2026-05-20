@@ -39,7 +39,8 @@ import {
   type HttpStatus,
   type SinceResponse,
 } from "../contract.ts";
-import { CATEGORY, getLogger, serializeError } from "../observability/index.ts";
+import { serializeError } from "../observability/canonical.ts";
+import { CATEGORY, getLogger } from "../observability/index.ts";
 import { runAllWithMeta } from "../query.ts";
 import { longPollSince } from "./since.ts";
 
