@@ -5,30 +5,16 @@
  *
  * Subcommands live in their own modules and register via citty's
  * `defineCommand`. Adding a new subcommand: write its module, export
- * a `defineCommand` block, drop it into `subCommands` below. citty
- * auto-generates `--help` / `--version` / dispatch from there — no
- * hand-rolled `case` arm, no `HELP` constant.
+ * a `defineCommand` block, drop it into `subCommands` below as a
+ * lazy `() => import("./x.ts").then(m => m.x)` factory. citty 0.2.2
+ * supports `Resolvable<CommandDef>` in `subCommands`, so the factory
+ * shape is type-correct and only the dispatched module's transitive
+ * imports are evaluated at startup.
  *
  * Exit codes are documented in `packages/cli/README.md` and per-
  * subcommand in each module's docstring.
  */
 import { defineCommand } from "citty";
-import { compactCmd } from "./admin/compact.ts";
-import { copy } from "./admin/copy.ts";
-import { dumpCmd } from "./admin/dump.ts";
-import { fsckCmd } from "./admin/fsck.ts";
-import { gcCmd } from "./admin/gc.ts";
-import { migrateCmd } from "./admin/migrate.ts";
-import { rebuildIndexCmd } from "./admin/rebuild-index.ts";
-import { restoreCmd } from "./admin/restore.ts";
-import { usageCmd } from "./admin/usage.ts";
-import { cost } from "./cost.ts";
-import { deploy } from "./deploy.ts";
-import { dev } from "./dev.ts";
-import { doctor } from "./doctor.ts";
-import { exportCmd } from "./export.ts";
-import { init } from "./init.ts";
-import { inspect } from "./inspect.ts";
 import { runBin } from "./bin-runner.ts";
 
 /**
@@ -42,15 +28,15 @@ const admin = defineCommand({
     description: "Operator commands — reconciliation and inspection.",
   },
   subCommands: {
-    "rebuild-index": rebuildIndexCmd,
-    dump: dumpCmd,
-    restore: restoreCmd,
-    compact: compactCmd,
-    gc: gcCmd,
-    fsck: fsckCmd,
-    migrate: migrateCmd,
-    copy,
-    usage: usageCmd,
+    "rebuild-index": () => import("./admin/rebuild-index.ts").then((m) => m.rebuildIndexCmd),
+    dump: () => import("./admin/dump.ts").then((m) => m.dumpCmd),
+    restore: () => import("./admin/restore.ts").then((m) => m.restoreCmd),
+    compact: () => import("./admin/compact.ts").then((m) => m.compactCmd),
+    gc: () => import("./admin/gc.ts").then((m) => m.gcCmd),
+    fsck: () => import("./admin/fsck.ts").then((m) => m.fsckCmd),
+    migrate: () => import("./admin/migrate.ts").then((m) => m.migrateCmd),
+    copy: () => import("./admin/copy.ts").then((m) => m.copy),
+    usage: () => import("./admin/usage.ts").then((m) => m.usageCmd),
   },
 });
 
@@ -64,13 +50,13 @@ const main = defineCommand({
   // Day-1 verbs (init → dev → deploy) come first, then operator
   // reads (doctor → inspect → export → cost), then `admin`.
   subCommands: {
-    dev,
-    init,
-    deploy,
-    doctor,
-    inspect,
-    export: exportCmd,
-    cost,
+    dev: () => import("./dev.ts").then((m) => m.dev),
+    init: () => import("./init.ts").then((m) => m.init),
+    deploy: () => import("./deploy.ts").then((m) => m.deploy),
+    doctor: () => import("./doctor.ts").then((m) => m.doctor),
+    inspect: () => import("./inspect.ts").then((m) => m.inspect),
+    export: () => import("./export.ts").then((m) => m.exportCmd),
+    cost: () => import("./cost.ts").then((m) => m.cost),
     admin,
   },
 });
