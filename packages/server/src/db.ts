@@ -79,25 +79,6 @@ export interface BufferedMutation {
 const physicalPrefixFor = (app: string, tenant: string): string => `app/${app}/tenant/${tenant}/`;
 
 /**
- * Shared sentinel map for {@link Db.create} callers that don't pass a
- * `schemas` map. Frozen so an accidental `.set(...)` on the captured
- * reference throws at runtime instead of silently mutating the
- * fallback every `Db` shares.
- */
-const EMPTY_SCHEMA_MAP: ReadonlyMap<string, SchemaValidator> = new Map();
-
-/**
- * Shared sentinel map for {@link Db.create} callers that don't pass
- * an `indexes` map. Frozen so an accidental `.set(...)` on the
- * captured reference throws at runtime instead of silently mutating
- * the fallback every `Db` shares.
- */
-const EMPTY_INDEX_MAP: ReadonlyMap<string, ReadonlyArray<IndexDefinition>> = new Map();
-
-/** Shared sentinel array used when no index is declared for a table. */
-const EMPTY_INDEX_ARRAY: ReadonlyArray<IndexDefinition> = [];
-
-/**
  * Escape hatch: a Storage-shaped surface scoped to one
  * `(app, tenant)` pair. Keys callers see are **logical** (e.g.
  * `"docs/123"`); the wrapper composes
@@ -375,8 +356,8 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
       tenant,
       storage,
       config.metrics ?? noopMetricsRecorder,
-      config.schemas ?? EMPTY_SCHEMA_MAP,
-      config.indexes ?? EMPTY_INDEX_MAP,
+      config.schemas ?? new Map(),
+      config.indexes ?? new Map(),
       config.inFanoutThreshold,
     );
   }
@@ -451,7 +432,7 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
       tableName: name,
       currentJsonCache: cache,
       metrics: this.#metrics,
-      indexes: this.#indexes.get(name) ?? EMPTY_INDEX_ARRAY,
+      indexes: this.#indexes.get(name) ?? [],
       ...(schema !== undefined ? { schema } : {}),
       ...(this.#inFanoutThreshold !== undefined
         ? { inFanoutThreshold: this.#inFanoutThreshold }
@@ -528,7 +509,7 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
       this.#currentJsonCaches.set(table, cache);
     }
     const schema = this.#schemas.get(table);
-    const indexes = this.#indexes.get(table) ?? EMPTY_INDEX_ARRAY;
+    const indexes = this.#indexes.get(table) ?? [];
     const tx = makeTable<T>({
       storage: this.#storage,
       tablePrefix,

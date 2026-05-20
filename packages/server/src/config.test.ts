@@ -39,7 +39,7 @@ describe("collectionsToMaps", () => {
     expect(indexes.get("audits")?.map((i) => i.name)).toEqual(["by_actor"]);
   });
 
-  test("empty index array is dropped (matches Db.create's EMPTY_INDEX_ARRAY contract)", () => {
+  test("empty index array is dropped (matches Db.create's empty-fallback contract)", () => {
     const { indexes } = collectionsToMaps({
       tickets: { indexes: [] },
     });
