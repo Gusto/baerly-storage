@@ -311,8 +311,8 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
     config?: TConfig;
   }): Db<TConfig> {
     const { storage, app, tenant } = config;
-    assertKeySegment(app, "app");
-    assertKeySegment(tenant, "tenant");
+    assertKeySegment(app, "app", "Db.create");
+    assertKeySegment(tenant, "tenant", "Db.create");
     return new Db<TConfig>(
       app,
       tenant,
@@ -373,7 +373,7 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
    * @internal
    */
   tableReadContext(name: string): TableReadContext {
-    assertKeySegment(name, "table");
+    assertKeySegment(name, "table", "Db.table");
     let cache = this.#currentJsonCaches.get(name);
     if (cache === undefined) {
       cache = { value: null };
@@ -437,12 +437,7 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
     table: string,
     body: (tx: Table<T>) => Promise<void>,
   ): Promise<void> {
-    if (table.length === 0 || table.includes("/")) {
-      throw new BaerlyError(
-        "InvalidConfig",
-        `Db.transaction: name must be non-empty and must not contain "/" (got ${JSON.stringify(table)})`,
-      );
-    }
+    assertKeySegment(table, "table", "Db.transaction");
 
     const txCtx: TxContext = { table, mutations: [] };
     const tablePrefix = `${physicalPrefixFor(this.app, this.tenant)}manifests/${table}`;
@@ -616,16 +611,16 @@ const makeRawStorageApi = (app: string, tenant: string, storage: Storage): RawSt
 /**
  * Guard a string used as a path-segment in the bucket-key encoding.
  * Rejects empty and `/`-containing values with
- * `BaerlyError{code:"InvalidConfig"}`. `role` is baked into the
- * message so the caller doesn't need to format their own.
+ * `BaerlyError{code:"InvalidConfig"}`. `role` and `verb` are baked
+ * into the message so the caller doesn't need to format their own.
  *
- * Used by {@link Db.create} (twice: `app`, `tenant`) and
- * {@link Db.tableReadContext} (once: `name`).
+ * Used by {@link Db.create} (twice — `app`, `tenant`),
+ * {@link Db.tableReadContext} (once — `name`), and
+ * {@link Db.transaction} (once — `table`).
  *
  * @internal
  */
-const assertKeySegment = (value: string, role: "app" | "tenant" | "table"): void => {
-  const verb = role === "table" ? "Db.table" : "Db.create";
+const assertKeySegment = (value: string, role: string, verb: string): void => {
   if (value.length === 0) {
     throw new BaerlyError(
       "InvalidConfig",
