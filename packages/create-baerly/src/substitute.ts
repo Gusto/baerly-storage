@@ -30,7 +30,20 @@ export interface ManifestRename {
 
 export interface ScaffoldManifest {
   readonly renames: readonly ManifestRename[];
+  /**
+   * Paths relative to the example root that must be skipped during
+   * the copy. Matched as exact relative paths (e.g.
+   * `".baerly/scaffold.json"`).
+   */
   readonly excludePaths: readonly string[];
+  /**
+   * Basename patterns skipped at any depth in the source tree. Each
+   * entry is either a literal name (e.g. `"node_modules"`) or a
+   * `*.<ext>` suffix glob (e.g. `"*.tsbuildinfo"`). Use this for
+   * build artifacts / OS detritus that may exist inside the
+   * example's working tree but must never land in a scaffolded app.
+   */
+  readonly excludeNames: readonly string[];
   readonly dropDevDeps: readonly string[];
 }
 

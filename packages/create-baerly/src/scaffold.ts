@@ -127,6 +127,7 @@ const readCliVersion = (): string => {
 const DEFAULT_MANIFEST: ScaffoldManifest = {
   renames: [],
   excludePaths: [".baerly/scaffold.json"],
+  excludeNames: [],
   dropDevDeps: [],
 };
 
@@ -139,8 +140,29 @@ const loadManifest = (exampleRoot: string): ScaffoldManifest => {
   return {
     renames: raw.renames ?? [],
     excludePaths: raw.excludePaths ?? [".baerly/scaffold.json"],
+    excludeNames: raw.excludeNames ?? [],
     dropDevDeps: raw.dropDevDeps ?? [],
   };
+};
+
+/**
+ * `excludeNames` supports both literal basenames (`node_modules`)
+ * and `*.<ext>` suffix globs (`*.tsbuildinfo`). Split once per
+ * scaffold; the walker calls `matchesExcludeName` per entry.
+ */
+const splitExcludeNames = (
+  names: readonly string[],
+): { literals: Set<string>; suffixes: string[] } => {
+  const literals = new Set<string>();
+  const suffixes: string[] = [];
+  for (const n of names) {
+    if (n.startsWith("*.")) {
+      suffixes.push(n.slice(1));
+    } else {
+      literals.add(n);
+    }
+  }
+  return { literals, suffixes };
 };
 
 /**
@@ -196,6 +218,20 @@ export const scaffold = async (opts: ScaffoldOptions): Promise<ScaffoldResult> =
 
   const excluded = new Set(manifest.excludePaths.map((p) => p.split("/").join(sep)));
   const isExcluded = (rel: string): boolean => excluded.has(rel);
+  const { literals: excludeLiterals, suffixes: excludeSuffixes } = splitExcludeNames(
+    manifest.excludeNames,
+  );
+  const matchesExcludeName = (name: string): boolean => {
+    if (excludeLiterals.has(name)) {
+      return true;
+    }
+    for (const suffix of excludeSuffixes) {
+      if (name.endsWith(suffix)) {
+        return true;
+      }
+    }
+    return false;
+  };
 
   const filesWritten: string[] = [];
   const walk = (sourceDir: string, rel: string): void => {
@@ -203,23 +239,7 @@ export const scaffold = async (opts: ScaffoldOptions): Promise<ScaffoldResult> =
     for (const ent of readdirSync(from)) {
       const fromEnt = join(from, ent);
       const relEnt = rel === "" ? ent : join(rel, ent);
-      if (isExcluded(relEnt)) {
-        continue;
-      }
-      // Always skip dev-time / build artifacts. These are gitignored
-      // in every example tree but live inside the working dir of any
-      // contributor who ran `pnpm build` or `wrangler deploy` against
-      // an example before invoking the scaffolder. Hardcoding the
-      // list here keeps the per-example manifests focused on the
-      // semantic excludes (e.g. `uint8array-base64.d.ts`).
-      if (
-        ent === "node_modules" ||
-        ent === "dist" ||
-        ent === ".wrangler" ||
-        ent === ".dev.vars" ||
-        ent === ".DS_Store" ||
-        ent.endsWith(".tsbuildinfo")
-      ) {
+      if (isExcluded(relEnt) || matchesExcludeName(ent)) {
         continue;
       }
       const toEnt = join(outDir, relEnt);

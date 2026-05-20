@@ -18,6 +18,7 @@ describe("substituteText", () => {
       {
         renames: [{ from: "minimal-cloudflare", fromKey: "appName" }],
         excludePaths: [],
+        excludeNames: [],
         dropDevDeps: [],
       },
       { appName: "my-app" },
@@ -33,6 +34,7 @@ describe("substituteText", () => {
           { from: "minimal-cloudflare-server", fromKey: "serverName" },
         ],
         excludePaths: [],
+        excludeNames: [],
         dropDevDeps: [],
       },
       { appName: "my-app", serverName: "my-server" },
@@ -42,7 +44,7 @@ describe("substituteText", () => {
 
   test("leaves unknown fromKeys untouched", () => {
     const ctx = mkCtx(
-      { renames: [{ from: "minimal-demo", fromKey: "tenant" }], excludePaths: [], dropDevDeps: [] },
+      { renames: [{ from: "minimal-demo", fromKey: "tenant" }], excludePaths: [], excludeNames: [], dropDevDeps: [] },
       {},
     );
     expect(substituteText("tenant=minimal-demo", ctx)).toBe("tenant=minimal-demo");
@@ -51,7 +53,7 @@ describe("substituteText", () => {
 
 describe("substitutePackageJson", () => {
   test("pins baerly-storage workspace dep to the cli version", () => {
-    const ctx = mkCtx({ renames: [], excludePaths: [], dropDevDeps: [] }, {});
+    const ctx = mkCtx({ renames: [], excludePaths: [], excludeNames: [], dropDevDeps: [] }, {});
     const text = JSON.stringify(
       { name: "x", dependencies: { "baerly-storage": "workspace:*", other: "1.0.0" } },
       null,
@@ -65,7 +67,7 @@ describe("substitutePackageJson", () => {
   });
 
   test("does not pin unrelated workspace:* dep names", () => {
-    const ctx = mkCtx({ renames: [], excludePaths: [], dropDevDeps: [] }, {});
+    const ctx = mkCtx({ renames: [], excludePaths: [], excludeNames: [], dropDevDeps: [] }, {});
     const text = JSON.stringify(
       { name: "x", dependencies: { "@baerly/protocol": "workspace:*", other: "workspace:*" } },
       null,
@@ -79,7 +81,10 @@ describe("substitutePackageJson", () => {
   });
 
   test("drops listed devDependencies", () => {
-    const ctx = mkCtx({ renames: [], excludePaths: [], dropDevDeps: ["create-baerly"] }, {});
+    const ctx = mkCtx(
+      { renames: [], excludePaths: [], excludeNames: [], dropDevDeps: ["create-baerly"] },
+      {},
+    );
     const text = JSON.stringify(
       { name: "x", devDependencies: { "create-baerly": "workspace:*", typescript: "^5" } },
       null,
@@ -92,7 +97,10 @@ describe("substitutePackageJson", () => {
   });
 
   test("removes the devDependencies block entirely when it becomes empty", () => {
-    const ctx = mkCtx({ renames: [], excludePaths: [], dropDevDeps: ["only"] }, {});
+    const ctx = mkCtx(
+      { renames: [], excludePaths: [], excludeNames: [], dropDevDeps: ["only"] },
+      {},
+    );
     const text = JSON.stringify({ name: "x", devDependencies: { only: "workspace:*" } }, null, 2);
     const out = JSON.parse(substitutePackageJson(text, ctx)) as {
       devDependencies?: Record<string, string>;
