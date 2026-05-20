@@ -285,7 +285,12 @@ const BUDGETS: readonly Budget[] = [
   //     follow-up. CLI bundles the kernel barrel, which now carries
   //     the new HTTP routes + parseOrder/parseLimit. +2032 raw, gz
   //     unchanged.
-  { entry: "baerly.js", raw: 570 * 1024, gz: 159 * 1024 },
+  //   → 571 KiB raw / 159 KiB gz: adapter-collections-wiring landed
+  //     `collectionsToMaps` (+ two frozen empty-map sentinels) on the
+  //     server barrel for the adapter flatten path. +899 raw, gz still
+  //     under budget. Dead code from the CLI's perspective but the
+  //     CLI imports the barrel by design.
+  { entry: "baerly.js", raw: 571 * 1024, gz: 159 * 1024 },
 ];
 
 // Static-import specifiers only. Dynamic `import(...)` is intentionally
