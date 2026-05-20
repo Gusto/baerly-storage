@@ -86,6 +86,46 @@ export interface BaerlyConfig {
 export const defineConfig = <const C extends BaerlyConfig>(cfg: C): C => cfg;
 
 /**
+ * Flatten `BaerlyConfig.collections` into the per-collection
+ * `schemas` and `indexes` maps that {@link Db.create} consumes at
+ * runtime. Used by the Cloudflare and Node adapters to pipe a
+ * single `config` object through to the writer/planner.
+ *
+ * Both adapters import this helper rather than inlining the loop
+ * so the projection rule (drop empty index arrays; omit absent
+ * schemas) stays in one place. Future `CollectionDefinition`
+ * fields (lifecycle hooks, replica_identity) land here too.
+ *
+ * Returns frozen-empty maps when `collections` is undefined or
+ * `null` so the caller can `Db.create({ ..., schemas, indexes })`
+ * unconditionally without a per-call empty-map allocation.
+ */
+export const collectionsToMaps = (
+  collections: BaerlyConfig["collections"] | undefined,
+): {
+  schemas: ReadonlyMap<string, SchemaValidator>;
+  indexes: ReadonlyMap<string, ReadonlyArray<IndexDefinition>>;
+} => {
+  if (collections === undefined) {
+    return { schemas: EMPTY_SCHEMA_MAP, indexes: EMPTY_INDEX_MAP };
+  }
+  const schemas = new Map<string, SchemaValidator>();
+  const indexes = new Map<string, ReadonlyArray<IndexDefinition>>();
+  for (const [name, def] of Object.entries(collections)) {
+    if (def.schema !== undefined) {
+      schemas.set(name, def.schema);
+    }
+    if (def.indexes !== undefined && def.indexes.length > 0) {
+      indexes.set(name, def.indexes);
+    }
+  }
+  return { schemas, indexes };
+};
+
+const EMPTY_SCHEMA_MAP: ReadonlyMap<string, SchemaValidator> = new Map();
+const EMPTY_INDEX_MAP: ReadonlyMap<string, ReadonlyArray<IndexDefinition>> = new Map();
+
+/**
  * Sentinel `BaerlyConfig` used as the default `TConfig` parameter
  * by consumers (`Db<TConfig>`, `BaerlyClient<TConfig>`). Setting
  * `collections` to `Record<never, never>` makes

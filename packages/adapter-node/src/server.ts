@@ -18,7 +18,14 @@ import {
   noopMetricsRecorder,
 } from "@baerly/protocol";
 import { type DevLandingOptions, renderDevLanding } from "@baerly/dev";
-import { Db, MAX_BODY_BYTES, createRouter, mapError } from "@baerly/server";
+import {
+  type BaerlyConfig,
+  Db,
+  MAX_BODY_BYTES,
+  collectionsToMaps,
+  createRouter,
+  mapError,
+} from "@baerly/server";
 import { runScheduledMaintenance } from "@baerly/server/maintenance";
 import { prettyConsoleSink } from "./logger-pretty.ts";
 import {
@@ -69,6 +76,18 @@ export interface CreateListenerOptions {
   readonly app: string;
   readonly storage: Storage;
   readonly verifier: Verifier;
+  /**
+   * Your `baerly.config.ts`. When set, the adapter flattens
+   * `collections[*].schema` and `collections[*].indexes` into the
+   * per-collection maps that {@link Db.create} consumes — so
+   * server-side schema validation fires on commits and the auto-
+   * planner sees declared indexes. Without this option, declared
+   * collections have no effect on the `/v1/t/*` surface.
+   *
+   * Only `collections` is read — deploy-time fields (`target`,
+   * `domain`, `requiredSecrets`, …) are ignored here.
+   */
+  readonly config?: BaerlyConfig;
   readonly metrics?: MetricsRecorder;
   readonly observability?: ObservabilityConfig;
   /**
@@ -154,6 +173,7 @@ export function createListener(opts: CreateListenerOptions): RequestListener {
     app: opts.app,
     storage: opts.storage,
     verifier: opts.verifier,
+    ...(opts.config !== undefined && { config: opts.config }),
     ...(opts.metrics !== undefined && { metrics: opts.metrics }),
     ...(opts.observability !== undefined && { observability: opts.observability }),
     ...(opts.sinceTimeoutMs !== undefined && { sinceTimeoutMs: opts.sinceTimeoutMs }),
@@ -183,6 +203,8 @@ export interface CreateFetchHandlerOptions {
   readonly app: string;
   readonly storage: Storage;
   readonly verifier: Verifier;
+  /** See {@link CreateListenerOptions.config}. */
+  readonly config?: BaerlyConfig;
   readonly metrics?: MetricsRecorder;
   readonly observability?: ObservabilityConfig;
   readonly sinceTimeoutMs?: number;
@@ -223,6 +245,10 @@ export function createFetchHandler(
   const operatorRecorder = opts.metrics ?? noopMetricsRecorder;
   const teeRecorder = alsAwareRecorder(operatorRecorder);
   const wrappedStorage = observableStorage(opts.storage, teeRecorder);
+  // Flatten declared collections once at factory time. Maps are
+  // frozen-empty sentinels when `config` is unset, so per-request
+  // `Db.create` is allocation-free either way.
+  const { schemas, indexes } = collectionsToMaps(opts.config?.collections);
 
   return async (request: Request): Promise<Response> => {
     const url = new URL(request.url);
@@ -260,6 +286,8 @@ export function createFetchHandler(
           app: opts.app,
           tenant: result.tenantPrefix,
           metrics: teeRecorder,
+          schemas,
+          indexes,
         });
         const router = createRouter({
           db,

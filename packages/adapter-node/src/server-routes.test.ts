@@ -29,6 +29,7 @@ import {
   type Storage,
   type Verifier,
 } from "@baerly/protocol";
+import type { BaerlyConfig, SchemaValidator } from "@baerly/server";
 import { describe, expect, test } from "vitest";
 import { createListener } from "./server.ts";
 
@@ -65,9 +66,15 @@ const provisionTable = async (storage: Storage, table: string): Promise<void> =>
 const withServer = async <T>(
   verifier: Verifier,
   body: (baseUrl: string, storage: Storage) => Promise<T>,
+  opts: { config?: BaerlyConfig } = {},
 ): Promise<T> => {
   const storage = new MemoryStorage();
-  const listener = createListener({ app: "tickets", storage, verifier });
+  const listener = createListener({
+    app: "tickets",
+    storage,
+    verifier,
+    ...(opts.config !== undefined && { config: opts.config }),
+  });
   const server = createServer(listener);
   await new Promise<void>((resolve) => server.listen(0, resolve));
   const address = server.address() as AddressInfo;
@@ -291,6 +298,71 @@ describe("createListener routes", () => {
       for (const row of list.data) {
         expect(row.status).toBe("open");
       }
+    });
+  });
+});
+
+describe("createListener config wiring", () => {
+  // StandardSchema-shaped validator that rejects `status === "invalid"`.
+  // Hand-written to keep this test free of zod/valibot test deps;
+  // exercises the same `~standard.validate` seam those libraries
+  // expose at runtime.
+  const statusValidator: SchemaValidator = {
+    "~standard": {
+      version: 1,
+      vendor: "test",
+      validate: (input) => {
+        const doc = input as { status?: unknown };
+        if (doc.status === "invalid") {
+          return { issues: [{ path: ["status"], message: "status must not be 'invalid'" }] };
+        }
+        return { value: input };
+      },
+    },
+  };
+  const configWithSchema: BaerlyConfig = {
+    collections: { tickets: { schema: statusValidator } },
+  };
+
+  test("server-side schema fires on POST when collections.<table>.schema is declared", async () => {
+    await withServer(
+      trivialVerifier,
+      async (baseUrl, storage) => {
+        await provisionTable(storage, "tickets");
+
+        const goodRes = await fetch(`${baseUrl}/v1/t/tickets`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ doc: { title: "ok", status: "open" } }),
+        });
+        expect(goodRes.status).toBe(201);
+
+        const badRes = await fetch(`${baseUrl}/v1/t/tickets`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ doc: { title: "bad", status: "invalid" } }),
+        });
+        expect(badRes.status).toBe(400);
+        const body = (await badRes.json()) as BaseEnvelope;
+        expect(body.error?.code).toBe("SchemaError");
+      },
+      { config: configWithSchema },
+    );
+  });
+
+  test("declared schema has no effect when config is not passed (regression guard)", async () => {
+    // Without `config`, the same "invalid" doc that's rejected above
+    // commits silently — the test pins the bug the wiring fixes:
+    // declaring schemas in baerly.config.ts is inert through the
+    // adapter path unless the adapter is told about them.
+    await withServer(trivialVerifier, async (baseUrl, storage) => {
+      await provisionTable(storage, "tickets");
+      const res = await fetch(`${baseUrl}/v1/t/tickets`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ doc: { title: "bad", status: "invalid" } }),
+      });
+      expect(res.status).toBe(201);
     });
   });
 });

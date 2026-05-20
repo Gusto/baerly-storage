@@ -1,6 +1,7 @@
 import { createServer, type Server } from "node:http";
 import type { DevLandingOptions } from "@baerly/dev";
 import type { MetricsRecorder, Storage, Verifier } from "@baerly/protocol";
+import type { BaerlyConfig } from "@baerly/server";
 import type { ObservabilityConfig } from "@baerly/server/observability";
 import { createListener, runMaintenanceTick } from "./server.ts";
 
@@ -31,6 +32,8 @@ export interface BaerlyNodeOptions {
   readonly app: string;
   readonly storage: Storage;
   readonly verifier: Verifier;
+  /** See {@link "@baerly/adapter-node".CreateListenerOptions.config}. */
+  readonly config?: BaerlyConfig;
   readonly metrics?: MetricsRecorder;
   readonly observability?: ObservabilityConfig;
   readonly dev?: DevLandingOptions;
@@ -116,6 +119,7 @@ export function baerlyNode(opts: BaerlyNodeOptions): BaerlyNodeHandle {
     app: opts.app,
     storage: opts.storage,
     verifier: opts.verifier,
+    ...(opts.config !== undefined && { config: opts.config }),
     ...(opts.metrics !== undefined && { metrics: opts.metrics }),
     ...(opts.observability !== undefined && { observability: opts.observability }),
     ...(opts.dev !== undefined && { dev: opts.dev }),

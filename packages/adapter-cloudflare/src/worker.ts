@@ -1,6 +1,6 @@
 import { type DevLandingOptions, renderDevLanding } from "@baerly/dev";
 import { type MetricsRecorder, type Verifier, noopMetricsRecorder } from "@baerly/protocol";
-import { Db, createRouter } from "@baerly/server";
+import { type BaerlyConfig, Db, collectionsToMaps, createRouter } from "@baerly/server";
 import {
   type ObservabilityConfig,
   alsAwareRecorder,
@@ -133,6 +133,29 @@ export interface BaerlyWorkerOptions {
   readonly sinceTimeoutMs?: number;
   /** Override the long-poll inner-poll cadence. Forwarded to `longPollSince`. */
   readonly sincePollIntervalMs?: number;
+  /**
+   * Your `baerly.config.ts` (or any object that satisfies
+   * {@link BaerlyConfig}). When set, the adapter flattens
+   * `collections[*].schema` and `collections[*].indexes` into the
+   * per-collection maps that {@link Db.create} consumes — so
+   * server-side schema validation fires on commits and the auto-
+   * planner sees declared indexes.
+   *
+   * Without this option, declared collections have no effect on the
+   * server's `/v1/t/*` surface: writes accept any shape and reads
+   * fall back to the snapshot+log fold. Pass the value imported
+   * from your `baerly.config.ts`:
+   *
+   * ```ts
+   * import config from "../../baerly.config.ts";
+   * export default baerlyWorker({ verifier, config });
+   * ```
+   *
+   * Only `collections` is read — fields like `target`, `domain`,
+   * `cloudflareAccess` are deploy-time concerns that the adapter
+   * ignores.
+   */
+  readonly config?: BaerlyConfig;
 }
 
 /**
@@ -192,6 +215,10 @@ export function baerlyWorker(options: BaerlyWorkerOptions): ExportedHandler<Env>
   // `runWithContext` scope is active.
   const operatorRecorder = options.metrics ?? noopMetricsRecorder;
   const teeRecorder = alsAwareRecorder(operatorRecorder);
+  // Flatten declared collections once at factory time. Maps are
+  // frozen-empty sentinels when `config` is unset so per-request
+  // `Db.create` is allocation-free either way.
+  const { schemas, indexes } = collectionsToMaps(options.config?.collections);
 
   return {
     async fetch(req, env, ctx): Promise<Response> {
@@ -264,6 +291,8 @@ export function baerlyWorker(options: BaerlyWorkerOptions): ExportedHandler<Env>
           app: env.APP,
           tenant: tenantPrefix,
           metrics: teeRecorder,
+          schemas,
+          indexes,
         });
 
         const app = createRouter({
