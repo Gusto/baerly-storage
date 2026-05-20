@@ -68,3 +68,17 @@ Verify before reshape:
   default `pnpm test` (per I17 in the parked infra-cuts doc,
   the smoke-glob picks up only this one file).
 - Whether `eval/` corpus apps import the helpdesk shape.
+
+## Coupled item
+
+**Wizard helpdesk option** (was G11 in the now-closed cli-cleanup
+followup): the `create-baerly` wizard at
+`packages/create-baerly/src/prompts.ts` returns
+`{ projectName, target, withAddons, install }` and never surfaces
+the `helpdesk-cloudflare` template — reachable only via
+`--starter=helpdesk` on the flag-driven path. If option (a)
+above lands (helpdesk merges into the cloudflare example), there
+may be nothing left to gate behind a wizard prompt. If option
+(b) lands (helpdesk becomes a ~60-line getting-started), the
+wizard may want a different shape than "pick a starter." Defer
+the wizard change until this followup resolves.
