@@ -267,7 +267,7 @@ describe("ServerWriter", () => {
     const writer = new ServerWriter({
       storage,
       currentJsonKey: CURRENT_KEY,
-      options: { metrics, tenant: "acme" },
+      options: { metrics },
     });
 
     await writer.commit({
@@ -281,13 +281,11 @@ describe("ServerWriter", () => {
     expect(samples).toHaveLength(1);
     // content + log + current.json = 3 PUTs on first-try success.
     expect(samples[0]).toBe(3);
-    // Tenant label travels.
+    // Collection label travels.
     const hist = metrics.histograms.find(
       (h) => h.name === "db.write.class_a_ops_per_logical_write",
     );
-    expect(hist?.labels).toEqual({ collection: COLL, tenant: "acme" });
-    // Put-rate gauge emitted once per commit.
-    expect(metrics.lastGauge("db.tenant.put_rate")).toBe(1);
+    expect(hist?.labels).toEqual({ collection: COLL });
   });
 
   test('op:"D" commit emits class_a = 2 (no content PUT)', async () => {
@@ -488,7 +486,7 @@ describe("ServerWriter — writer fence", () => {
     const writer = new ServerWriter({
       storage,
       currentJsonKey: CURRENT_KEY,
-      options: { metrics, tenant: "acme" },
+      options: { metrics },
     });
 
     let thrown: unknown;
@@ -506,11 +504,11 @@ describe("ServerWriter — writer fence", () => {
     expect((thrown as BaerlyError).code).toBe("Conflict");
     expect((thrown as BaerlyError).message).toMatch(/writer fence bumped from epoch 0 to 1/);
     expect(metrics.sumCounter("db.writer.fence_bump_observed_total")).toBe(1);
-    // Tenant + collection labels travel.
+    // Collection label travels.
     const bumpEvent = metrics.counters.find(
       (c) => c.name === "db.writer.fence_bump_observed_total",
     );
-    expect(bumpEvent?.labels).toEqual({ collection: COLL, tenant: "acme" });
+    expect(bumpEvent?.labels).toEqual({ collection: COLL });
   });
 
   test("commitBatch() under fence bump: throws Conflict, increments metric exactly once", async () => {

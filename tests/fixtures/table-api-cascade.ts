@@ -561,7 +561,7 @@ const runMetricsCascade = async (storage: Storage, app: string, tenant: string):
   const writer = new ServerWriter({
     storage,
     currentJsonKey,
-    options: { metrics, tenant },
+    options: { metrics },
   });
   for (let i = 0; i < 100; i++) {
     await writer.commit({

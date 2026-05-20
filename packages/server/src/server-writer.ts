@@ -90,22 +90,12 @@ export interface ServerWriterOptions {
    *   - `db.r2.put.429_total` counter on rate-limit (best effort —
    *     detected via `BaerlyError{code:"NetworkError"}` with a `429`
    *     token in the message).
-   *   - `db.tenant.put_rate` gauge per commit (each commit emits
-   *     `1` at observation time; downstream aggregation
-   *     rate-converts).
    *   - `db.writer.fence_bump_observed_total` counter on a
    *     concurrent fence-epoch bump observed during commit
    *     (split-brain detection; commit fails fast with
    *     `Conflict`).
    */
   readonly metrics?: MetricsRecorder;
-
-  /**
-   * Tenant label used on emitted metrics. The full `currentJsonKey`
-   * already encodes the tenant; this is a denormalised convenience
-   * for the metrics sink. Defaults to `""` (no label emitted).
-   */
-  readonly tenant?: string;
 
   /**
    * Optional. Indexes declared for the collection this writer
@@ -290,7 +280,6 @@ export class ServerWriter {
   readonly #initialBackoffMs: number;
   readonly #random: () => number;
   readonly #metrics: MetricsRecorder;
-  readonly #tenant: string;
   readonly #indexes: ReadonlyArray<IndexDefinition>;
   readonly #verifyLogIntegrityOnCommit: boolean;
 
@@ -312,7 +301,6 @@ export class ServerWriter {
     this.#initialBackoffMs = opts.options?.initialBackoffMs ?? DEFAULT_INITIAL_BACKOFF_MS;
     this.#random = opts.options?.random ?? Math.random;
     this.#metrics = opts.options?.metrics ?? noopMetricsRecorder;
-    this.#tenant = opts.options?.tenant ?? "";
     const indexes = opts.options?.indexes ?? [];
     for (const def of indexes) {
       validateIndexDefinition(def);
@@ -839,19 +827,13 @@ export class ServerWriter {
   }
 
   /**
-   * Emit the per-logical-write metrics shared by `commit` and
-   * `commitBatch`: the `class_a_ops_per_logical_write` histogram and
-   * the `tenant.put_rate` gauge. `classAOps` differs between the two
-   * paths (retry-budget vs batch shape), so each caller computes it.
+   * Emit the per-logical-write `class_a_ops_per_logical_write`
+   * histogram shared by `commit` and `commitBatch`. `classAOps`
+   * differs between the two paths (retry-budget vs batch shape),
+   * so each caller computes it.
    */
   #emitWriteMetrics(collection: string, classAOps: number): void {
-    const histLabels: Record<string, string> = { collection };
-    if (this.#tenant !== "") {
-      histLabels["tenant"] = this.#tenant;
-    }
-    this.#metrics.histogram("db.write.class_a_ops_per_logical_write", classAOps, histLabels);
-    const rateLabels: Record<string, string> = this.#tenant !== "" ? { tenant: this.#tenant } : {};
-    this.#metrics.gauge("db.tenant.put_rate", 1, rateLabels);
+    this.#metrics.histogram("db.write.class_a_ops_per_logical_write", classAOps, { collection });
   }
 
   /**
@@ -879,11 +861,7 @@ export class ServerWriter {
     if (postRead.json.writer_fence.epoch === expectedEpoch) {
       return;
     }
-    const bumpLabels: Record<string, string> = { collection };
-    if (this.#tenant !== "") {
-      bumpLabels["tenant"] = this.#tenant;
-    }
-    this.#metrics.counter("db.writer.fence_bump_observed_total", 1, bumpLabels);
+    this.#metrics.counter("db.writer.fence_bump_observed_total", 1, { collection });
     throw new BaerlyError(
       "Conflict",
       `${where}: writer fence bumped from epoch ${expectedEpoch} to ${postRead.json.writer_fence.epoch} during commit on ${this.#currentJsonKey}; stale writer aborting`,
