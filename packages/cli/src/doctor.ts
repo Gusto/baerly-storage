@@ -25,13 +25,14 @@
  * (which already returned 1 via a thrown BaerlyError).
  */
 
-import { defineCommand, type ArgsDef, type ParsedArgs } from "citty";
+import { type ArgsDef } from "citty";
 import { BaerlyError } from "@baerly/protocol";
 import { loadAppConfig, loadAppConfigWithCollections } from "./config.ts";
 import { doctorCloudflare, type DoctorFinding, type DoctorReport } from "./doctor/cloudflare.ts";
 import { checkIndexFilterDrift } from "./doctor/index-filter-drift.ts";
 import { defaultRunner } from "./runner.ts";
-import { color, emitError, isJsonMode, setJsonMode } from "./output.ts";
+import { color, isJsonMode } from "./output.ts";
+import { defineBaerlySubcommand } from "./subcommand.ts";
 
 const DOCTOR_ARGS = {
   target: {
@@ -65,26 +66,6 @@ const DOCTOR_ARGS = {
       "When index-filter-drift detects orphans / missing keys, call rebuildIndex to fix them. Implies --check=index-filter-drift.",
   },
 } as const satisfies ArgsDef;
-
-const KNOWN_KEYS: ReadonlySet<string> = new Set([
-  "target",
-  "fix",
-  "json",
-  "usage",
-  "check",
-  "rebuild-drift",
-  "_",
-]);
-
-const errorToExitCode = (code: string): number => {
-  if (code === "InvalidConfig") {
-    return 1;
-  }
-  if (code === "Conflict" || code === "Internal" || code === "InvalidResponse") {
-    return 3;
-  }
-  return 2;
-};
 
 const SEVERITY_GLYPH: Record<string, string> = {
   ok: "✓",
@@ -136,14 +117,14 @@ const renderReport = (target: string, report: DoctorReport): void => {
   );
 };
 
-const handleDoctor = async (args: ParsedArgs<typeof DOCTOR_ARGS>): Promise<number> => {
-  setJsonMode(args.json === true);
-  try {
-    for (const k of Object.keys(args)) {
-      if (!KNOWN_KEYS.has(k)) {
-        throw new BaerlyError("InvalidConfig", `baerly doctor: unknown flag --${k}`);
-      }
-    }
+const bundle = defineBaerlySubcommand({
+  name: "doctor",
+  meta: {
+    description:
+      "Walk the deploy invariants and report findings. Dispatches by baerly.config.ts:target.",
+  },
+  args: DOCTOR_ARGS,
+  handler: async (args) => {
     // `--check` is the named-check dispatcher; today the only known
     // value is `index-filter-drift`. Reject unknown values early so
     // the operator gets an actionable error rather than a silent
@@ -185,46 +166,15 @@ const handleDoctor = async (args: ParsedArgs<typeof DOCTOR_ARGS>): Promise<numbe
       `baerly doctor: target ${JSON.stringify(target)} has no doctor backend. ` +
         `(Node variants self-validate at scaffold time; the example IS the contract.)`,
     );
-  } catch (error) {
-    if (error instanceof BaerlyError) {
-      emitError("doctor", error.code, error.message);
-      return errorToExitCode(error.code);
-    }
-    emitError("doctor", "Unknown", (error as Error).message);
-    return 2;
-  }
-};
-
-/** citty `defineCommand` block for `baerly doctor`. */
-export const doctor = defineCommand({
-  meta: {
-    name: "doctor",
-    description:
-      "Walk the deploy invariants and report findings. Dispatches by baerly.config.ts:target.",
-  },
-  args: DOCTOR_ARGS,
-  run: async ({ args }) => {
-    const code = await handleDoctor(args);
-    if (code !== 0) {
-      process.exit(code);
-    }
   },
 });
+
+/** citty `defineCommand` block for `baerly doctor`. */
+export const doctor = bundle.cmd;
 
 /**
  * Programmatic entry used by tests. Bypasses citty's `run` wrapper
  * (which would call `process.exit` and kill vitest) and returns the
  * integer exit code directly.
  */
-export const runDoctor = async (argv: readonly string[]): Promise<number> => {
-  const { parseArgs } = await import("citty");
-  let parsed: ParsedArgs<typeof DOCTOR_ARGS>;
-  try {
-    parsed = parseArgs<typeof DOCTOR_ARGS>(argv as string[], DOCTOR_ARGS);
-  } catch (error) {
-    setJsonMode(argv.includes("--json"));
-    emitError("doctor", "InvalidConfig", (error as Error).message);
-    return 1;
-  }
-  return handleDoctor(parsed);
-};
+export const runDoctor = bundle.run;
