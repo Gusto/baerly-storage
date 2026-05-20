@@ -95,6 +95,10 @@ const REBUILD_INDEX_ARGS = {
     type: "boolean",
     description: "Emit a structured JSON envelope to stdout (success) or stderr (error)",
   },
+  verbose: {
+    type: "boolean",
+    description: "Emit a one-line summary to stdout in addition to the JSON envelope.",
+  },
 } as const satisfies ArgsDef;
 
 type Args = ParsedArgs<typeof REBUILD_INDEX_ARGS>;
@@ -108,6 +112,7 @@ const KNOWN_KEYS: ReadonlySet<string> = new Set([
   "on",
   "config",
   "json",
+  "verbose",
   "_",
 ]);
 
@@ -167,7 +172,7 @@ const handleRebuildIndex = async (args: Args): Promise<number> => {
       removed: result.removed,
       kept: result.kept,
     });
-    if (process.env["BAERLY_REBUILD_INDEX_VERBOSE"] === "1") {
+    if (args.verbose === true) {
       process.stdout.write(
         `rebuild-index: added=${result.added} removed=${result.removed} kept=${result.kept}\n`,
       );
