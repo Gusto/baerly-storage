@@ -1,9 +1,9 @@
 /**
  * Node listener — static-asset (`webRoot`) tests over a real
- * `http.Server`. Mirrors the bootstrap pattern from
- * `server-routes.test.ts`: each test boots
- * `createServer(listener).listen(0)` against a per-test temp
- * directory provisioned with `mkdtemp` + `writeFile`.
+ * `http.Server` driven by `createApp` → `getRequestListener`. Mirrors
+ * the bootstrap pattern from `server-routes.test.ts`: each test boots
+ * `createServer(getRequestListener(app.fetch)).listen(0)` against a
+ * per-test temp directory provisioned with `mkdtemp` + `writeFile`.
  *
  * Covers:
  *   - happy path: GET a file present on disk with the right MIME
@@ -15,6 +15,7 @@
  *   - HEAD: 200 + Content-Length, empty body
  */
 
+import { getRequestListener } from "@hono/node-server";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
@@ -22,7 +23,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MemoryStorage, type Storage, type Verifier } from "@baerly/protocol";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { createListener } from "./server.ts";
+import { createApp } from "./app.ts";
 
 const denyVerifier: Verifier = async () => null;
 const trivialVerifier: Verifier = async () => ({
@@ -42,13 +43,13 @@ const withServer = async <T>(
   body: (baseUrl: string, storage: Storage) => Promise<T>,
 ): Promise<T> => {
   const storage = new MemoryStorage();
-  const listener = createListener({
+  const app = createApp({
     app: "tickets",
     storage,
     verifier: opts.verifier,
     ...(opts.webRoot !== undefined && { webRoot: opts.webRoot }),
   });
-  const server = createServer(listener);
+  const server = createServer(getRequestListener(app.fetch));
   await new Promise<void>((resolve) => server.listen(0, resolve));
   const address = server.address() as AddressInfo;
   try {
@@ -66,7 +67,7 @@ const withServer = async <T>(
   }
 };
 
-describe("createListener webRoot static-asset handling", () => {
+describe("createApp webRoot static-asset handling", () => {
   let webRoot: string;
 
   beforeEach(async () => {

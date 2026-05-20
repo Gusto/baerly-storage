@@ -3,7 +3,8 @@
  *
  * Drives the shared {@link runHttpConformanceCascade} driver
  * (`tests/fixtures/http-conformance-cascade.ts`) against
- * `createListener({ app, storage, verifier })` over three Node-
+ * `createApp({ app, storage, verifier })` (mounted via
+ * `getRequestListener` from `@hono/node-server`) over three Node-
  * runnable storage backends:
  *
  *   - `memory`    — `MemoryStorage`; zero infra.
@@ -15,7 +16,8 @@
  * `cloudflare-pool` vitest project — see
  * `packages/adapter-cloudflare/src/http-conformance.test.ts`.
  *
- * Per variant we spin up a fresh `http.createServer(listener).listen(0)`
+ * Per variant we spin up a fresh
+ * `http.createServer(getRequestListener(createApp(...).fetch)).listen(0)`
  * inside a top-level `describe(variant.label, ...)` block. The cascade
  * registers its own `describe`/`test` blocks at vitest collection
  * time, so the server boot has to happen in a `beforeAll` that runs
@@ -38,8 +40,9 @@ import {
   MemoryStorage,
   type Storage,
 } from "@baerly/protocol";
+import { getRequestListener } from "@hono/node-server";
 import { LocalFsStorage } from "@baerly/dev";
-import { createListener, S3HttpStorage } from "@baerly/adapter-node";
+import { createApp, S3HttpStorage } from "@baerly/adapter-node";
 import { Db, type SchemaValidator } from "@baerly/server";
 import { createRouter } from "@baerly/server/http";
 import { withHttpObservability } from "@baerly/server/observability";
@@ -225,23 +228,22 @@ for (const variant of variants) {
       const made = await variant.makeStorage(bucket);
       storage = made.storage;
       cleanup = made.cleanup;
-      server = createServer(
-        createListener({
-          app: APP,
-          storage: made.storage,
-          verifier: testVerifier(),
-          // Drive the long-poll idle budget down from the 25s default
-          // so the cascade's idle-poll wire-shape test (two back-to-
-          // back idle polls + cursor-stability assertion) finishes
-          // in ~1.2s per variant instead of timing out the suite.
-          // The existing race-write test (~50ms write latency vs.
-          // the previous 25s budget) still fits comfortably under
-          // 500ms; the fast-path test returns immediately and is
-          // unaffected.
-          sinceTimeoutMs: 500,
-          sincePollIntervalMs: 50,
-        }),
-      );
+      const app = createApp({
+        app: APP,
+        storage: made.storage,
+        verifier: testVerifier(),
+        // Drive the long-poll idle budget down from the 25s default
+        // so the cascade's idle-poll wire-shape test (two back-to-
+        // back idle polls + cursor-stability assertion) finishes
+        // in ~1.2s per variant instead of timing out the suite.
+        // The existing race-write test (~50ms write latency vs.
+        // the previous 25s budget) still fits comfortably under
+        // 500ms; the fast-path test returns immediately and is
+        // unaffected.
+        sinceTimeoutMs: 500,
+        sincePollIntervalMs: 50,
+      });
+      server = createServer(getRequestListener(app.fetch));
       await new Promise<void>((resolve) => server!.listen(0, resolve));
       port = (server!.address() as AddressInfo).port;
     });
@@ -280,7 +282,7 @@ for (const variant of variants) {
         });
       },
       options: {
-        // `createListener` above passes `sinceTimeoutMs: 500`, so the
+        // `createApp` above passes `sinceTimeoutMs: 500`, so the
         // cascade's idle-poll test fits inside the vitest default
         // timeout. The Workerd-side variant pins this `false` because
         // `baerlyWorker` does not thread the override through.

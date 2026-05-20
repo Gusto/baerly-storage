@@ -1,9 +1,11 @@
 import { createServer, type Server } from "node:http";
+import { serve } from "@hono/node-server";
 import type { DevLandingOptions } from "@baerly/dev";
 import type { MetricsRecorder, Storage, Verifier } from "@baerly/protocol";
 import type { BaerlyConfig } from "@baerly/server";
 import type { ObservabilityConfig } from "@baerly/server/observability";
-import { createListener, runMaintenanceTick } from "./server.ts";
+import { createApp } from "./app.ts";
+import { runMaintenanceTick } from "./server.ts";
 
 /**
  * Multi-collection maintenance schedule. Each tick spawns one
@@ -21,7 +23,7 @@ export interface BaerlyNodeMaintenance {
 }
 
 /**
- * Options for {@link baerlyNode}. Composes the {@link createListener}
+ * Options for {@link baerlyNode}. Composes the {@link createApp}
  * surface (same `app` / `storage` / `verifier` / `webRoot` / etc.)
  * with optional maintenance scheduling and a `node:http` server
  * lifecycle (`listen` / `close` + SIGTERM/SIGINT handling).
@@ -32,7 +34,7 @@ export interface BaerlyNodeOptions {
   readonly app: string;
   readonly storage: Storage;
   readonly verifier: Verifier;
-  /** See {@link "@baerly/adapter-node".CreateListenerOptions.config}. */
+  /** See {@link "@baerly/adapter-node".CreateAppOptions.config}. */
   readonly config?: BaerlyConfig;
   readonly metrics?: MetricsRecorder;
   readonly observability?: ObservabilityConfig;
@@ -76,7 +78,7 @@ const buildCurrentJsonKey = (app: string, tenant: string, collection: string): s
  * from `@baerly/adapter-cloudflare`.
  *
  * Composes:
- * - {@link createListener} → `node:http.createServer(listener)`.
+ * - {@link createApp} → `@hono/node-server.serve({ fetch, createServer })`.
  * - Optional maintenance loop: each `intervalMs` tick fires one
  *   {@link runMaintenanceTick} per `(tenant, collection)` pair
  *   (cross-product of `opts.maintenance.tenants` × `.collections`).
@@ -115,7 +117,7 @@ const buildCurrentJsonKey = (app: string, tenant: string, collection: string): s
  * ```
  */
 export function baerlyNode(opts: BaerlyNodeOptions): BaerlyNodeHandle {
-  const listener = createListener({
+  const app = createApp({
     app: opts.app,
     storage: opts.storage,
     verifier: opts.verifier,
@@ -129,7 +131,18 @@ export function baerlyNode(opts: BaerlyNodeOptions): BaerlyNodeHandle {
       sincePollIntervalMs: opts.sincePollIntervalMs,
     }),
   });
-  const server: Server = createServer(listener);
+  // `serve()` builds an `http.Server` via the supplied `createServer`
+  // factory and wires the Hono `fetch` handler into it (handling
+  // backpressure, client-abort → AbortController, and stream
+  // cleanup natively). The `port` / `hostname` here are placeholders —
+  // the actual bind happens via the explicit `server.listen(port)`
+  // call below, which overrides them.
+  const server: Server = serve({
+    fetch: app.fetch,
+    port: 0,
+    hostname: "0.0.0.0",
+    createServer,
+  }) as Server;
 
   let maintenanceTimer: NodeJS.Timeout | undefined;
   let signalHandler: ((sig: NodeJS.Signals) => void) | undefined;
@@ -150,8 +163,8 @@ export function baerlyNode(opts: BaerlyNodeOptions): BaerlyNodeHandle {
               ...(opts.metrics !== undefined && { metrics: opts.metrics }),
             });
           } catch (error) {
-            // Match createListener's policy: never re-throw from the
-            // scheduled callback. The maintenance canonical line
+            // Never re-throw from the scheduled callback. The
+            // maintenance canonical line
             // (emitted by runScheduledMaintenance itself) already
             // carries the outcome; we log to stderr as a backstop.
             console.error(

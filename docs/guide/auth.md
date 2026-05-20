@@ -94,6 +94,6 @@ Beyond tenant pinning, there is no built-in authorization — an
 authenticated caller can read and write anything under their
 tenant prefix, including the manifest. Use-cases that need finer
 policy (per-collection ACLs, row-level rules, manifest-change
-validation) wrap `createListener` in a server they control and
+validation) wrap `createApp` in a server they control and
 enforce policy before passthrough. If you're using S3 + IAM
 directly, scope STS tokens to a sub-path per user/team.

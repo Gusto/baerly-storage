@@ -1,6 +1,7 @@
 import type { AddressInfo } from "node:net";
+import { getRequestListener } from "@hono/node-server";
 import type { Plugin } from "vite";
-import { createListener } from "@baerly/adapter-node";
+import { createApp } from "@baerly/adapter-node";
 import { Db } from "@baerly/server";
 import { sharedSecret } from "@baerly/server/auth";
 import { type DevBannerHint, printDevBanner } from "./dev-banner.ts";
@@ -8,7 +9,7 @@ import { ensureTable } from "./ensure-table.ts";
 import { LocalFsStorage } from "./local-fs.ts";
 
 export interface BaerlyDevOptions {
-  /** App namespace (matches createListener's `app`). */
+  /** App namespace (matches createApp's `app`). */
   readonly app: string;
   /** Tenant namespace passed to ensureTable + sharedSecret. */
   readonly tenant: string;
@@ -47,11 +48,12 @@ export function baerlyDev(opts: BaerlyDevOptions): Plugin {
           const db = Db.create({ storage, app: opts.app, tenant: opts.tenant });
           await opts.seed(db);
         }
-        return createListener({
+        const app = createApp({
           app: opts.app,
           storage,
           verifier: sharedSecret({ secret: opts.secret, tenantPrefix: opts.tenant }),
         });
+        return getRequestListener(app.fetch);
       })();
 
       // Surface setup failures eagerly; without this an unhandled

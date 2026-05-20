@@ -54,7 +54,8 @@ export default defineConfig({
 
 `baerlyDev` (from `baerly-storage/dev/vite`) constructs `LocalFsStorage`, runs
 `ensureTable` for each declared table, optionally seeds, and mounts
-`createListener` as Vite middleware ahead of the SPA fallback. App
+`createApp` (the baerly Hono app, via `getRequestListener` from
+`@hono/node-server`) as Vite middleware ahead of the SPA fallback. App
 plus `/v1/*` API share one origin, one process — no proxy, no
 separate server boot.
 

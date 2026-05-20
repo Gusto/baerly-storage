@@ -240,7 +240,17 @@ const BUDGETS: readonly Budget[] = [
   //     code-splitting pivot); raw closure actually shrank (421908
   //     measured) but gz crept up to 123044. Bump the gz ceiling 1 KiB
   //     to absorb the chunk-layout side effect.
-  { entry: "node.js", raw: 413 * 1024, gz: 121 * 1024 },
+  //   → 426 KiB raw / 125 KiB gz: hono-node-server pivot. Replaced the
+  //     hand-rolled Node↔Fetch bridge (handle/readNodeStream/
+  //     toFetchRequest/isClientDisconnect/serveStaticAsset, ~400 LOC)
+  //     with `@hono/node-server`'s `serve()` + a Hono-middleware
+  //     composition (`createApp`). The library's listener chunk lands
+  //     in the closure; deletion of the body-cap middleware (it raced
+  //     with the library's own `incoming` reader; kernel router's
+  //     defence-in-depth is now the only mechanism, matching the
+  //     cloudflare adapter) trims a few hundred bytes back. Measured:
+  //     433698 raw / 125904 gz.
+  { entry: "node.js", raw: 426 * 1024, gz: 125 * 1024 },
   // Client surface — `BaerlyClient<TConfig>` + fetcher plumbing.
   // Browser/runtime-agnostic; no kernel modules in the closure.
   // Budget history:
@@ -307,7 +317,12 @@ const BUDGETS: readonly Budget[] = [
   //     chunk after replacing hand-rolled JWT/JWKS. Rolldown's shared-
   //     chunk splitting threads the auth chunk into dev-vite's static
   //     closure too.
-  { entry: "dev-vite.js", raw: 429 * 1024, gz: 125 * 1024 },
+  //   → 455 KiB raw / 132 KiB gz: hono-node-server pivot on top of
+  //     jose. The Vite dev plugin imports `createApp` (+ the
+  //     `@hono/node-server` listener chunk) from adapter-node, so the
+  //     dev-vite closure tracks the node.js bump. Re-measure after
+  //     pnpm build lands the post-rebase artifact.
+  { entry: "dev-vite.js", raw: 455 * 1024, gz: 132 * 1024 },
   // `baerly` CLI bin — `init`, `dev`, `deploy`, `doctor`, `inspect`,
   // `admin {compact,fsck,migrate,dump,restore,rebuild-index}`,
   // `export`. Bundled as a single file (no static chunk splits)

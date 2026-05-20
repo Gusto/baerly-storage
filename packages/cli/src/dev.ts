@@ -33,8 +33,9 @@
 
 import { createServer, type Server } from "node:http";
 import { resolve } from "node:path";
+import { getRequestListener } from "@hono/node-server";
 import { defineCommand, parseArgs, type ArgsDef, type ParsedArgs } from "citty";
-import { createListener } from "@baerly/adapter-node";
+import { createApp } from "@baerly/adapter-node";
 import { LocalFsStorage, ensureTable, printDevBanner } from "@baerly/dev";
 import { BaerlyError } from "@baerly/protocol";
 import { sharedSecret } from "@baerly/server/auth";
@@ -121,8 +122,8 @@ export const runDev = async (opts: {
     }
   }
 
-  const listener = createListener({ app: config.app, storage, verifier });
-  const server = createServer(listener);
+  const app = createApp({ app: config.app, storage, verifier });
+  const server = createServer(getRequestListener(app.fetch));
   await new Promise<void>((res, rej) => {
     server.once("error", rej);
     server.listen(opts.port, () => {

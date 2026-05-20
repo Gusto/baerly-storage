@@ -44,7 +44,7 @@ next to the SPA dev server, so `/v1/*` and the React UI share
 `http://localhost:3000` over `LocalFsStorage` with no S3 creds
 needed; `pnpm build && pnpm start` produces the production-shaped
 run that serves the built SPA from `dist/client/` via
-`createListener({ webRoot })`.
+`createApp({ webRoot })`.
 
 Once `create-baerly` + `baerly-storage` ship to npm the flow shortens
 to `pnpm dlx create-baerly@latest my-app` (interactive wizard),
@@ -73,17 +73,18 @@ about 30 lines:
 
 ```ts
 import { createServer } from "node:http";
-import { createListener } from "baerly-storage/node";
+import { getRequestListener } from "@hono/node-server";
+import { createApp } from "baerly-storage/node";
 import { sharedSecret } from "baerly-storage/auth";
 import { LocalFsStorage, ensureTable } from "baerly-storage/dev";
 
 const storage = new LocalFsStorage({ root: "./.baerly-data" });
 await ensureTable(storage, { app: "tickets", tenant: "acme", table: "items" });
 
-const listener = createListener({
+const app = createApp({
   app: "tickets",
   storage,
   verifier: sharedSecret({ secret: "dev-secret", tenantPrefix: "acme" }),
 });
-createServer(listener).listen(3000);
+createServer(getRequestListener(app.fetch)).listen(3000);
 ```

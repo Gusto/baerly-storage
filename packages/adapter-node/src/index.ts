@@ -1,23 +1,25 @@
 /**
  * `@baerly/adapter-node` — Node host adapter for `@baerly/server`.
  *
- * Re-exports the runtime-appropriate `Storage` impls and a
- * `node:http` mount factory. Pairs with `@baerly/adapter-cloudflare`,
- * which provides the same surface for Workers + R2 bindings.
+ * Re-exports the runtime-appropriate `Storage` impls and a Hono-based
+ * mount factory. Pairs with `@baerly/adapter-cloudflare`, which
+ * provides the same surface for Workers + R2 bindings.
  *
- * `createListener` serves the full CRUD surface
+ * `createApp` builds a Hono app that serves the full CRUD surface
  * (`/v1/t/:table[/:id]`) plus an anonymous `/v1/healthz` probe via
  * the shared `createRouter` factory from `@baerly/server`. The
- * caller threads a `Verifier` through `createListener({ verifier })`
- * to resolve the per-request tenant; the `(app, storage, verifier)`
- * boundary is stable.
+ * caller threads a `Verifier` through `createApp({ verifier })` to
+ * resolve the per-request tenant; the `(app, storage, verifier)`
+ * boundary is stable. The returned `Hono` exposes `.fetch` (a
+ * `(req: Request) => Promise<Response>` handler) so the same factory
+ * mounts under any Fetch host.
  *
  * @example
  * ```ts
  * // One-call host helper — the 90% default. Mirrors `baerlyWorker`
- * // from `baerly-storage/cloudflare`. Composes `createListener` +
- * // `node:http` + SIGTERM/SIGINT handlers + per-(tenant, collection)
- * // maintenance.
+ * // from `baerly-storage/cloudflare`. Composes `createApp` +
+ * // `@hono/node-server`'s `serve()` + SIGTERM/SIGINT handlers +
+ * // per-(tenant, collection) maintenance.
  * import { baerlyNode, s3Storage } from "baerly-storage/node";
  * import { sharedSecret } from "baerly-storage/auth";
  *
@@ -40,10 +42,9 @@
  *
  * @example
  * ```ts
- * // Low-level seam for callers who want manual control over the
- * // server lifecycle (cluster mode, custom signal handling, etc.).
- * import { createServer } from "node:http";
- * import { createListener, s3Storage } from "baerly-storage/node";
+ * // Advanced: mount the baerly cascade under any Fetch host.
+ * import { Hono } from "hono";
+ * import { createApp, s3Storage } from "baerly-storage/node";
  * import type { Verifier } from "baerly-storage";
  *
  * const verifier: Verifier = async (req) => {
@@ -51,30 +52,24 @@
  *   return { tenantPrefix: "acme", identity: { sub: "dev" } };
  * };
  *
- * const storage = s3Storage({
- *   region: "us-east-1",
- *   bucket: process.env["BUCKET"]!,
- *   accessKeyId: process.env["AWS_ACCESS_KEY_ID"]!,
- *   secretAccessKey: process.env["AWS_SECRET_ACCESS_KEY"]!,
- * });
- * const listener = createListener({ app: "tickets", storage, verifier });
- * createServer(listener).listen(3000);
- * ```
- *
- * @example
- * ```ts
- * // Mount the baerly /v1/* cascade under any Fetch host (Hono shown;
- * // Express, h3, and friends compose the same way).
- * import { Hono } from "hono";
- * import { createFetchHandler, s3Storage } from "baerly-storage/node";
- *
- * const baerly = createFetchHandler({
+ * const baerly = createApp({
  *   app: "tickets",
  *   storage: s3Storage({ ... }),
  *   verifier,
  * });
+ *
+ * // Option A: hand the Fetch handler to any Fetch host
+ * // (Cloudflare Workers, Bun.serve, Deno.serve, etc.).
+ * export default { fetch: baerly.fetch };
+ *
+ * // Option B: mount under another Hono app.
  * const app = new Hono();
- * app.all("/v1/*", (c) => baerly(c.req.raw));
+ * app.route("/", baerly);
+ *
+ * // Option C: get a Node http listener.
+ * import { createServer } from "node:http";
+ * import { getRequestListener } from "@hono/node-server";
+ * createServer(getRequestListener(baerly.fetch)).listen(3000);
  * ```
  *
  * Advanced users who need to override the `fetch` / `xmlParser` /
@@ -84,12 +79,8 @@
  */
 export { S3HttpStorage } from "./s3-http.ts";
 export type { S3HttpStorageOptions } from "./s3-http.ts";
-export { createFetchHandler, createListener, runMaintenanceTick } from "./server.ts";
-export type {
-  CreateFetchHandlerOptions,
-  CreateListenerOptions,
-  NodeMaintenanceOptions,
-} from "./server.ts";
+export { runMaintenanceTick } from "./server.ts";
+export type { NodeMaintenanceOptions } from "./server.ts";
 export { createApp } from "./app.ts";
 export type { CreateAppOptions } from "./app.ts";
 export { s3Storage, r2Storage, minioStorage, gcsStorage } from "./storage-factories.ts";

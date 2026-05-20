@@ -13,8 +13,9 @@ import {
   type Storage,
   type Verifier,
 } from "@baerly/protocol";
+import { getRequestListener } from "@hono/node-server";
 import { LocalFsStorage } from "@baerly/dev";
-import { createListener } from "@baerly/adapter-node";
+import { createApp } from "@baerly/adapter-node";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { wrapCountingStorage, type CountingStorage } from "../fixtures/counting-storage.ts";
 
@@ -86,12 +87,12 @@ for (const variant of VARIANTS) {
         const auth = req.headers.get("authorization") ?? "";
         return auth === `Bearer ${SECRET}` ? { tenantPrefix: TENANT, identity: null } : null;
       };
-      const listener = createListener({
+      const app = createApp({
         app: APP,
         storage: counting.storage,
         verifier,
       });
-      server = createServer(listener);
+      server = createServer(getRequestListener(app.fetch));
       await new Promise<void>((resolve) => server.listen(0, resolve));
       const addr = server.address();
       if (!addr || typeof addr === "string") {

@@ -15,11 +15,12 @@ interface FakeServer {
 }
 
 // Duck-typed `ServerResponse` stand-in. Extends `node:stream.Writable`
-// so `stream.pipeline()` (used by `createListener`'s response pump) gets
-// the full Writable contract — `.once`, `.removeListener`, `.destroy`,
-// drain semantics — without us hand-rolling each method. `writeHead` /
-// `setHeader` / `statusCode` / `headers` mirror the bits of
-// `http.ServerResponse` that Vite's connect-style middleware actually
+// so the response-write loop in `@hono/node-server`'s
+// `getRequestListener` (which uses manual `write`/`drain` coordination)
+// gets the full Writable contract — `.once`, `.removeListener`,
+// `.destroy`, drain semantics — without us hand-rolling each method.
+// `writeHead` / `setHeader` / `statusCode` / `headers` mirror the bits
+// of `http.ServerResponse` that Vite's connect-style middleware actually
 // touches.
 class MockRes extends Writable {
   statusCode = 0;

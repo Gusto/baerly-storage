@@ -2,10 +2,8 @@
  * Tests for `createApp` — the Hono-app factory layered on top of
  * `createFetchHandler`. Verifies the public shape, the cascade
  * end-to-end via `app.fetch(new Request(...))`, and that the
- * body-cap middleware is mounted.
- *
- * The richer body-cap matrix lives in `body-cap.test.ts`. This file
- * covers `createApp`-level wiring only.
+ * kernel router's defence-in-depth body-size check surfaces the
+ * 413 envelope through the cascade.
  */
 
 import {
@@ -66,13 +64,12 @@ describe("createApp", () => {
     expect(res.status).toBe(200);
   });
 
-  test("body-cap is mounted: oversized content-length POST returns 413 via defence-in-depth", async () => {
-    // With `app.fetch(new Request(...))`, the body-cap middleware
-    // is a no-op (no c.env.incoming). The router's own length
-    // check (`router.ts:464-501`) is the backstop, surfacing 413
-    // via the cascade's error envelope. Either path proves the
-    // body-cap mounting is wired correctly — the route handler is
-    // never asked to materialise a multi-MB body.
+  test("oversized content-length POST returns 413 via the kernel's defence-in-depth", async () => {
+    // The cutover dropped the Node-side body-cap middleware (it
+    // raced with `@hono/node-server`'s `incoming` reader). The
+    // kernel router's own length check (`router.ts:464-501`)
+    // surfaces 413 through the cascade's error envelope, matching
+    // the cloudflare adapter's posture.
     const storage = new MemoryStorage();
     const tenant = "acme";
     await provision(storage, tenant, "c");

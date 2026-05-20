@@ -3,8 +3,9 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AddressInfo } from "node:net";
+import { getRequestListener } from "@hono/node-server";
 import { describe, expect, test } from "vitest";
-import { createListener } from "baerly-storage/node";
+import { createApp } from "baerly-storage/node";
 import { sharedSecret } from "baerly-storage/auth";
 import { LocalFsStorage, ensureTable } from "baerly-storage/dev";
 import { createBaerlyClient } from "baerly-storage/client";
@@ -16,12 +17,12 @@ describe("helpdesk smoke", () => {
     try {
       const storage = new LocalFsStorage({ root: dir });
       await ensureTable(storage, { app: "helpdesk", tenant: "smoke", table: "tickets" });
-      const listener = createListener({
+      const app = createApp({
         app: "helpdesk",
         storage,
         verifier: sharedSecret({ secret: "smoke", tenantPrefix: "smoke" }),
       });
-      const server = createServer(listener);
+      const server = createServer(getRequestListener(app.fetch));
       await new Promise<void>((r) => server.listen(0, r));
       try {
         const port = (server.address() as AddressInfo).port;
@@ -74,17 +75,17 @@ describe("helpdesk smoke", () => {
     try {
       const storage = new LocalFsStorage({ root: dir });
       await ensureTable(storage, { app: "helpdesk", tenant: "smoke", table: "tickets" });
-      const listener = createListener({
+      const app = createApp({
         app: "helpdesk",
         storage,
         verifier: sharedSecret({ secret: "smoke", tenantPrefix: "smoke" }),
-        // Short budget so a pre-fix pipeline() rejection (which fires
-        // only after the long-poll resolves) lands within this test's
-        // wall-clock budget.
+        // Short budget so a regression-equivalent rejection (which
+        // would fire only after the long-poll resolves) lands within
+        // this test's wall-clock budget.
         sinceTimeoutMs: 1500,
         sincePollIntervalMs: 50,
       });
-      const server = createServer(listener);
+      const server = createServer(getRequestListener(app.fetch));
       await new Promise<void>((r) => server.listen(0, r));
 
       const rejections: unknown[] = [];

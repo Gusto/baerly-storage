@@ -3,10 +3,11 @@
    server's `{ _id }` response and re-encodes it as JSON. */
 
 /**
- * Node listener — CRUD route tests over a real
- * `http.Server`. The `withServer` helper boots
- * `createServer(listener).listen(0)` so each test gets an
- * isolated socket and an isolated `MemoryStorage`-backed `Db`.
+ * Node listener — CRUD route tests over a real `http.Server`
+ * driven by `createApp` → `getRequestListener`. The `withServer`
+ * helper boots `createServer(getRequestListener(app.fetch)).listen(0)`
+ * so each test gets an isolated socket and an isolated
+ * `MemoryStorage`-backed `Db`.
  *
  * Covers the full status-code matrix from `contract.ts:57-69`:
  *   - 200 OK (read / list / patch)
@@ -20,6 +21,7 @@
  *     a multi-MiB body for the router to reject after the fact)
  */
 
+import { getRequestListener } from "@hono/node-server";
 import { createServer, request as httpRequest } from "node:http";
 import type { AddressInfo } from "node:net";
 import {
@@ -31,7 +33,7 @@ import {
 } from "@baerly/protocol";
 import type { BaerlyConfig, SchemaValidator } from "@baerly/server";
 import { describe, expect, test } from "vitest";
-import { createListener } from "./server.ts";
+import { createApp } from "./app.ts";
 
 const trivialVerifier: Verifier = async () => ({
   tenantPrefix: "acme",
@@ -69,13 +71,13 @@ const withServer = async <T>(
   opts: { config?: BaerlyConfig } = {},
 ): Promise<T> => {
   const storage = new MemoryStorage();
-  const listener = createListener({
+  const app = createApp({
     app: "tickets",
     storage,
     verifier,
     ...(opts.config !== undefined && { config: opts.config }),
   });
-  const server = createServer(listener);
+  const server = createServer(getRequestListener(app.fetch));
   await new Promise<void>((resolve) => server.listen(0, resolve));
   const address = server.address() as AddressInfo;
   try {
@@ -93,7 +95,7 @@ const withServer = async <T>(
   }
 };
 
-describe("createListener routes", () => {
+describe("createApp routes", () => {
   test("GET /v1/healthz returns { ok: true } without consulting the verifier", async () => {
     await withServer(denyVerifier, async (baseUrl) => {
       const res = await fetch(`${baseUrl}/v1/healthz`);
@@ -302,7 +304,7 @@ describe("createListener routes", () => {
   });
 });
 
-describe("createListener config wiring", () => {
+describe("createApp config wiring", () => {
   // StandardSchema-shaped validator that rejects `status === "invalid"`.
   // Hand-written to keep this test free of zod/valibot test deps;
   // exercises the same `~standard.validate` seam those libraries
@@ -367,19 +369,19 @@ describe("createListener config wiring", () => {
   });
 });
 
-describe("createListener dev landing", () => {
+describe("createApp dev landing", () => {
   const withDevServer = async <T>(body: (baseUrl: string) => Promise<T>): Promise<T> => {
     const storage = new MemoryStorage();
     // `denyVerifier` proves the landing-page short-circuit runs
     // ahead of the verifier — a 401 here would mean the dev path
     // wasn't taken.
-    const listener = createListener({
+    const app = createApp({
       app: "tickets",
       storage,
       verifier: denyVerifier,
       dev: { app: "tickets", uiUrl: "http://localhost:5173" },
     });
-    const server = createServer(listener);
+    const server = createServer(getRequestListener(app.fetch));
     await new Promise<void>((resolve) => server.listen(0, resolve));
     const address = server.address() as AddressInfo;
     try {

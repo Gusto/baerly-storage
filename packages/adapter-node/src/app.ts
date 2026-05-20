@@ -1,7 +1,5 @@
 import { type DevLandingOptions } from "@baerly/dev";
-import { MAX_BODY_BYTES } from "@baerly/server/http";
 import { Hono } from "hono";
-import { bodyCapMiddleware } from "./middleware/body-cap.ts";
 import { devLandingMiddleware } from "./middleware/dev-landing.ts";
 import { staticAssetsMiddleware } from "./middleware/static-assets.ts";
 import { type CreateFetchHandlerOptions, createFetchHandler } from "./server.ts";
@@ -32,19 +30,28 @@ export interface CreateAppOptions extends CreateFetchHandlerOptions {
 /**
  * Build a Hono app that serves the baerly cascade plus Node-host
  * middleware (dev-landing when `dev` is set, then static-assets when
- * `webRoot` is set, then body-cap, then the cascade).
+ * `webRoot` is set, then the cascade).
  *
  * The returned app's `.fetch` is `(req: Request) => Promise<Response>`
  * — feed it to `@hono/node-server`'s `serve({ fetch })`, mount under
  * another Hono app via `app.route(prefix, baerlyApp)`, or convert
  * to a Node listener via `getRequestListener(baerlyApp.fetch)`.
+ *
+ * Body size enforcement: the kernel router's `readJsonBody` checks
+ * Content-Length up-front and the materialised buffer post-read
+ * (`packages/server/src/http/router.ts:464-501`), matching the
+ * cloudflare adapter's posture. A `@hono/node-server`-aware mid-
+ * stream cap (the pre-cutover `bodyCapMiddleware` design) raced
+ * with the bridge's own `incoming` reader and is intentionally
+ * absent here — the chunked-no-Content-Length OOM-attack surface
+ * is equivalent to the cloudflare adapter's.
  */
 export function createApp(opts: CreateAppOptions): Hono {
   const fetchHandler = createFetchHandler(opts);
   const app = new Hono();
 
-  // Order: dev-landing → static-assets → body-cap → cascade. The
-  // dev short-circuit must precede static-assets so a `webRoot` that
+  // Order: dev-landing → static-assets → cascade. The dev
+  // short-circuit must precede static-assets so a `webRoot` that
   // happens to contain `index.html` / `favicon.ico` doesn't shadow
   // the dev affordance.
   if (opts.dev !== undefined) {
@@ -53,8 +60,6 @@ export function createApp(opts: CreateAppOptions): Hono {
   if (opts.webRoot !== undefined) {
     app.use("*", staticAssetsMiddleware({ webRoot: opts.webRoot }));
   }
-
-  app.use("*", bodyCapMiddleware(MAX_BODY_BYTES));
 
   app.all("*", async (c) => fetchHandler(c.req.raw));
 

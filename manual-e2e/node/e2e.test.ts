@@ -8,8 +8,9 @@
  *
  * Drives the HTTP conformance cascade + a latency probe + a long-
  * poll wall-clock check + a 401 sniff against a real deployed
- * `createListener()`. **Manual** — both gating env vars must be set
- * for the suite to run; `pnpm test` silently skips this file.
+ * `createApp()` (served via `getRequestListener` from
+ * `@hono/node-server`). **Manual** — both gating env vars must be
+ * set for the suite to run; `pnpm test` silently skips this file.
  *
  * The deploy target is the production scaffold at
  * `examples/minimal-node/`, materialised via

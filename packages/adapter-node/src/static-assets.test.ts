@@ -1,8 +1,8 @@
 /**
  * Tests for `staticAssetsMiddleware` — the Hono middleware mounted by
  * `createApp` when `opts.webRoot` is set. Mirrors the most load-bearing
- * cases from `server-static.test.ts`, but drives through `createApp`
- * (Fetch-shaped) rather than the hand-rolled `createListener` bridge.
+ * cases from `server-static.test.ts`, with focused per-middleware unit
+ * coverage of MIME mapping, SPA fallback, and traversal rejection.
  *
  * Covers:
  *   - happy path: GET an on-disk file with the right MIME / Cache-Control

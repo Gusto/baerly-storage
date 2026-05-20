@@ -3,12 +3,13 @@
 
 /**
  * Node adapter — `runMaintenanceTick` smoke test plus
- * `createListener` observability wiring tests. The cross-adapter
+ * `createApp` observability wiring tests. The cross-adapter
  * compactor + GC behaviour itself is covered by the `@baerly/server`
  * package's tests; this file confirms the Node-side helpers plumb
  * through the observability pipe (LogTape config + canonical-line bag).
  */
 
+import { getRequestListener } from "@hono/node-server";
 import { createServer, request as httpRequest, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import {
@@ -21,12 +22,8 @@ import { Writer } from "@baerly/server/_internal/testing";
 import { configureObservability } from "@baerly/server/observability";
 import { reset, type LogRecord, type Sink } from "@logtape/logtape";
 import { afterEach, describe, expect, test } from "vitest";
-import {
-  createFetchHandler,
-  createListener,
-  resolveDefaultSink,
-  runMaintenanceTick,
-} from "./server.ts";
+import { createApp, type CreateAppOptions } from "./app.ts";
+import { createFetchHandler, resolveDefaultSink, runMaintenanceTick } from "./server.ts";
 
 describe("runMaintenanceTick", () => {
   test("runs both compact and gc against the supplied storage", async () => {
@@ -71,17 +68,17 @@ describe("runMaintenanceTick", () => {
 });
 
 /**
- * Per-request observability suite for `createListener`. Verifies
+ * Per-request observability suite for `createApp`. Verifies
  * the canonical line carries the kernel-emitted metrics (storage
  * class A/B counts, request_id, outcome) and that the verifier /
  * router contract still holds end-to-end through `node:http`.
  *
- * We bind a real `http.Server` to a high port so the request
- * round-trips through the OS socket layer, matching the production
- * path (instead of poking the listener with a synthetic
- * IncomingMessage).
+ * We bind a real `http.Server` (via `getRequestListener`) to a high
+ * port so the request round-trips through the OS socket layer,
+ * matching the production path (instead of poking the listener with
+ * a synthetic IncomingMessage).
  */
-describe("createListener observability", () => {
+describe("createApp observability", () => {
   let server: Server | undefined;
   afterEach(async () => {
     if (server !== undefined) {
@@ -110,10 +107,9 @@ describe("createListener observability", () => {
       (r) => r.message.join("") === "canonical" && r.category.join(".") === `baerly.${unit}`,
     );
 
-  const startServer = async (
-    listener: ReturnType<typeof createListener>,
-  ): Promise<{ url: string }> => {
-    server = createServer(listener);
+  const startServer = async (opts: CreateAppOptions): Promise<{ url: string }> => {
+    const app = createApp(opts);
+    server = createServer(getRequestListener(app.fetch));
     await new Promise<void>((resolve) => server!.listen(0, "127.0.0.1", () => resolve()));
     const addr = server.address() as AddressInfo;
     return { url: `http://127.0.0.1:${addr.port}` };
@@ -140,13 +136,12 @@ describe("createListener observability", () => {
 
     const { records, sink } = collectingSink();
     const verifier: Verifier = async () => ({ tenantPrefix: tenant, identity: {} });
-    const listener = createListener({
+    const { url } = await startServer({
       app: "t",
       storage,
       verifier,
       observability: { level: "debug", sink, sampleRate: 1 },
     });
-    const { url } = await startServer(listener);
 
     const res = await fetch(`${url}/v1/t/c`, {
       method: "POST",
@@ -173,13 +168,12 @@ describe("createListener observability", () => {
 
     const { records, sink } = collectingSink();
     const verifier: Verifier = async () => ({ tenantPrefix: tenant, identity: {} });
-    const listener = createListener({
+    const { url } = await startServer({
       app: "t",
       storage,
       verifier,
       observability: { level: "debug", sink, sampleRate: 1 },
     });
-    const { url } = await startServer(listener);
 
     const res = await fetch(`${url}/v1/t/c`);
     expect(res.status).toBe(200);
@@ -198,13 +192,12 @@ describe("createListener observability", () => {
 
     const { records, sink } = collectingSink();
     const verifier: Verifier = async () => ({ tenantPrefix: tenant, identity: {} });
-    const listener = createListener({
+    const { url } = await startServer({
       app: "t",
       storage,
       verifier,
       observability: { level: "debug", sink, sampleRate: 1 },
     });
-    const { url } = await startServer(listener);
 
     const correlation = "test-correlation-7a3f";
     const res = await fetch(`${url}/v1/t/c`, {
@@ -225,13 +218,12 @@ describe("createListener observability", () => {
 
     const { records, sink } = collectingSink();
     const verifier: Verifier = async () => ({ tenantPrefix: tenant, identity: {} });
-    const listener = createListener({
+    const { url } = await startServer({
       app: "t",
       storage,
       verifier,
       observability: { level: "debug", sink, sampleRate: 1 },
     });
-    const { url } = await startServer(listener);
 
     const res = await fetch(`${url}/v1/t/c`);
     expect(res.status).toBe(200);
@@ -267,13 +259,12 @@ describe("createListener observability", () => {
       histogram: (): void => {},
     };
     const verifier: Verifier = async () => ({ tenantPrefix: tenant, identity: {} });
-    const listener = createListener({
+    const { url } = await startServer({
       app: "t",
       storage,
       verifier,
       metrics: operator,
     });
-    const { url } = await startServer(listener);
 
     const res = await fetch(`${url}/v1/t/c`, {
       method: "POST",
@@ -468,12 +459,13 @@ describe("createFetchHandler", () => {
 
 /**
  * Regression coverage for the `/v1/since` long-poll client-abort
- * crash (pre-fix: `pipeline(Readable.fromWeb(...), res)` rejected
- * with `ERR_STREAM_UNABLE_TO_PIPE` and the rejection escaped as
- * `unhandledRejection`, killing the Node process). The fix wires
- * `res.once("close", ...)` → `AbortController` into the synthesized
- * Request's signal and swallows the known disconnect-codes from
- * `pipeline()`.
+ * crash (pre-cutover hand-rolled bridge: `pipeline(Readable.fromWeb(...),
+ * res)` rejected with `ERR_STREAM_UNABLE_TO_PIPE` and the rejection
+ * escaped as `unhandledRejection`, killing the Node process — see
+ * commit `60bbc04`). After the cutover, `@hono/node-server` owns the
+ * `outgoing.on('close', ...)` → `AbortController` wiring and uses a
+ * manual write loop with `drain` coordination instead of `pipeline()`,
+ * so the rejection-escape failure mode is structurally absent.
  *
  * Two tests:
  *  - the server stays up after a mid-flight client abort
@@ -481,7 +473,7 @@ describe("createFetchHandler", () => {
  *  - the AbortSignal attached to the synthesized Request actually
  *    flips when the client socket closes.
  */
-describe("createListener client-disconnect resilience", () => {
+describe("createApp client-disconnect resilience", () => {
   let server: Server | undefined;
   afterEach(async () => {
     if (server !== undefined) {
@@ -500,9 +492,10 @@ describe("createListener client-disconnect resilience", () => {
   });
 
   const startServer = async (
-    listener: ReturnType<typeof createListener>,
+    opts: CreateAppOptions,
   ): Promise<{ host: string; port: number; url: string }> => {
-    server = createServer(listener);
+    const app = createApp(opts);
+    server = createServer(getRequestListener(app.fetch));
     await new Promise<void>((resolve) => server!.listen(0, "127.0.0.1", () => resolve()));
     const addr = server.address() as AddressInfo;
     return {
@@ -535,7 +528,7 @@ describe("createListener client-disconnect resilience", () => {
     await provisionSinceTable(storage, tenant, "c");
 
     const verifier: Verifier = async () => ({ tenantPrefix: tenant, identity: {} });
-    const listener = createListener({
+    const { host, port, url } = await startServer({
       app: "t",
       storage,
       verifier,
@@ -545,7 +538,6 @@ describe("createListener client-disconnect resilience", () => {
       sinceTimeoutMs: 1500,
       sincePollIntervalMs: 50,
     });
-    const { host, port, url } = await startServer(listener);
 
     // Capture any unhandledRejection during the abort window. The
     // pre-fix bug surfaced as `ERR_STREAM_UNABLE_TO_PIPE` rejected
@@ -602,7 +594,8 @@ describe("createListener client-disconnect resilience", () => {
     // signal flip when the client socket closes. The verifier runs
     // inside `createFetchHandler` BEFORE the kernel touches the
     // request, so the signal we see here is the one wired by
-    // `toFetchRequest(req, controller.signal)` in `handle()`.
+    // `@hono/node-server`'s incoming-request bridge (which attaches
+    // an `AbortController` driven by `outgoing.on('close', ...)`).
     let capturedRequest: Request | undefined;
     let resolveCaptured: (() => void) | undefined;
     const captured = new Promise<void>((resolve) => {
@@ -618,14 +611,13 @@ describe("createListener client-disconnect resilience", () => {
       resolveCaptured?.();
       return { tenantPrefix: tenant, identity: {} };
     };
-    const listener = createListener({
+    const { host, port } = await startServer({
       app: "t",
       storage,
       verifier,
       sinceTimeoutMs: 1500,
       sincePollIntervalMs: 50,
     });
-    const { host, port } = await startServer(listener);
 
     const clientReq = httpRequest({
       host,

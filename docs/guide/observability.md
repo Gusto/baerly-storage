@@ -161,8 +161,8 @@ once at request entry and held until flush.
   suppress success lines entirely (errors still emit). The typed-
   option equivalent — platform-portable, no env var required — is
   `observability: { sampleRate: 0 }` passed to `baerlyWorker` /
-  `createListener`. Either form works; the typed option wins when
-  both are set.
+  `createApp` (or `baerlyNode`). Either form works; the typed
+  option wins when both are set.
 
 Sampling is hash-based on `request_id`, so retries (which carry the
 same `X-Request-Id`) are kept-or-dropped consistently — you won't
@@ -215,7 +215,7 @@ const otelSink: Sink = (record) => {
   });
 };
 
-createListener({ app, storage, verifier, observability: { sink: otelSink } });
+createApp({ app, storage, verifier, observability: { sink: otelSink } });
 ```
 
 ### Cloudflare Workers Analytics Engine
@@ -331,7 +331,7 @@ const datadogSink: Sink = (record) => {
   operator's `MetricsRecorder` sink.
 - **Direct `Storage` access (via `db._raw`) bypasses the
   observability storage decorator.** The decorator wraps the
-  storage handed to `createListener` / `baerlyWorker`; code that
+  storage handed to `createApp` / `baerlyWorker`; code that
   reaches the raw handle skips per-op counters. This is intentional
   — `_raw` is an `@internal` escape hatch.
 
@@ -341,7 +341,7 @@ const datadogSink: Sink = (record) => {
   — contributor-facing rules for adding new emit sites.
 - [`docs/cost-model.md`](../about/cost-model.md) — how class-A counts map to
   S3 / R2 spend.
-- Public API: JSDoc on `createListener` (Node) and `baerlyWorker`
+- Public API: JSDoc on `createApp` (Node) and `baerlyWorker`
   (Cloudflare). Both expose `observability?: ObservabilityConfig`.
 - LogTape itself: <https://logtape.org/>. The kernel uses LogTape's
   `Sink` / `Logger` types directly; anything in the LogTape ecosystem

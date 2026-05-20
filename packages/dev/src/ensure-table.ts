@@ -23,7 +23,7 @@ import {
  *
  * const storage = new LocalFsStorage({ root: "./.baerly-data" });
  * await ensureTable(storage, { app: "helpdesk", tenant: "demo", table: "tickets" });
- * // …then `createListener({ app: "helpdesk", storage, verifier })`.
+ * // …then `createApp({ app: "helpdesk", storage, verifier })`.
  * ```
  */
 export const ensureTable = async (

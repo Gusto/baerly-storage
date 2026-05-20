@@ -133,8 +133,7 @@ describe("baerly-storage/cloudflare", () => {
 // ---------------------------------------------------------------------------
 import {
   baerlyNode,
-  createFetchHandler,
-  createListener,
+  createApp,
   gcsStorage,
   minioStorage,
   r2Storage,
@@ -146,8 +145,7 @@ import {
 describe("baerly-storage/node", () => {
   test("imports resolve", () => {
     expect(typeof baerlyNode).toBe("function");
-    expect(typeof createListener).toBe("function");
-    expect(typeof createFetchHandler).toBe("function");
+    expect(typeof createApp).toBe("function");
     expect(typeof s3Storage).toBe("function");
     expect(typeof r2Storage).toBe("function");
     expect(typeof minioStorage).toBe("function");
