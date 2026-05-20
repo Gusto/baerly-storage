@@ -64,17 +64,19 @@ const main = defineCommand({
   meta: {
     name: "baerly",
     version: "0.0.0",
-    description:
-      "Vendorless document database CLI\n\nSee docs/about/pricing-log.md for the running cost-ceiling history.",
+    description: "Vendorless document database CLI.",
   },
+  // Order matters: citty renders --help in declaration order.
+  // Day-1 verbs (init → dev → deploy) come first, then operator
+  // reads (doctor → inspect → export → cost), then `admin`.
   subCommands: {
-    cost,
-    deploy,
     dev,
-    doctor,
     init,
+    deploy,
+    doctor,
     inspect,
     export: exportCmd,
+    cost,
     admin,
   },
 });
