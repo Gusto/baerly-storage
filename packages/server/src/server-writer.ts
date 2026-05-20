@@ -218,34 +218,21 @@ const APPLICATION_JSON = "application/json";
 const EMPTY_BODY = new Uint8Array(0);
 
 /**
- * Discriminated outcome of one full {@link ServerWriter.#singleAttemptCommit}
- * attempt. The helper is the shared body of {@link ServerWriter.commit} and
- * {@link ServerWriter.commitBatch}; the caller decides what each retryable
- * outcome means in context.
- *
- *   - `success` — log entries landed, CAS advanced, fence intact. The caller
- *     emits `db.write.class_a_ops_per_logical_write` (with any retry-cost
- *     adjustment) and returns the result.
- *   - `log-peer-race` — at least one log entry already exists at our seq
- *     under a foreign session. `commit` backs off and retries (the loser's
- *     CAS would have failed anyway); `commitBatch` translates to a public
- *     `BaerlyError{code:"Conflict"}` and surfaces.
- *   - `cas-conflict` — the final `current.json` CAS PUT 412'd. Same caller
- *     dispositions as `log-peer-race`.
- *
- * Fence-bump and protocol-invariant violations propagate as thrown
- * `BaerlyError`s from inside the helper — they are NOT retryable and don't
- * surface as outcome variants.
+ * Successful outcome of one full {@link ServerWriter.#singleAttemptCommit}
+ * attempt. Retryable failures (log-peer race, CAS 412) throw
+ * `BaerlyError{code:"Conflict"}` directly; the caller catches via
+ * {@link isPreconditionFailed} and decides whether to retry. Non-retryable
+ * failures (fence bump, protocol-invariant violations, network errors)
+ * also throw, but the caller verifies the fence OUTSIDE the catch arm so
+ * the fence-bump `Conflict` propagates instead of being mistaken for a
+ * retryable CAS loss.
  */
-type SingleAttemptOutcome =
-  | {
-      readonly kind: "success";
-      readonly entries: readonly LogEntry[];
-      readonly currentEtag: string;
-      readonly classAOps: number;
-    }
-  | { readonly kind: "log-peer-race"; readonly seq: number }
-  | { readonly kind: "cas-conflict" };
+interface SingleAttemptSuccess {
+  readonly entries: readonly LogEntry[];
+  readonly currentEtag: string;
+  readonly classAOps: number;
+  readonly expectedEpoch: number;
+}
 
 /**
  * Stateless write engine for the multi-instance core.
@@ -347,29 +334,40 @@ export class ServerWriter {
     const logPrefix = this.#currentJsonKey.slice(0, this.#currentJsonKey.lastIndexOf("/"));
 
     for (let attempt = 1; attempt <= this.#maxRetries; attempt++) {
-      const outcome = await this.#singleAttemptCommit(
-        [input],
-        session,
-        logPrefix,
-        "ServerWriter",
-        /* adoptOwnSessionOnLogConflict */ true,
-      );
-      if (outcome.kind === "success") {
-        // `outcome.classAOps` is the per-attempt base; add `(attempt
-        // - 1)` to bill prior failed attempts as one PUT each (the
-        // simple-and-test-locked cost model — not a precise replay
-        // of every PUT in every dropped attempt).
-        this.#emitWriteMetrics(input.collection, outcome.classAOps + (attempt - 1));
-        return {
-          entry: outcome.entries[0]!,
-          currentEtag: outcome.currentEtag,
-          attempts: attempt,
-        };
+      let success: SingleAttemptSuccess;
+      try {
+        success = await this.#singleAttemptCommit(
+          [input],
+          session,
+          logPrefix,
+          "ServerWriter",
+          /* adoptOwnSessionOnLogConflict */ true,
+        );
+      } catch (error) {
+        // Only retryable conflicts (storage 412 on log PUT or
+        // current.json CAS) come back as `Conflict`. The fence-bump
+        // throw happens AFTER the helper returns, so it never
+        // reaches this catch arm. Anything else propagates.
+        if (!isPreconditionFailed(error)) {
+          throw error;
+        }
+        await this.#backoff(attempt);
+        continue;
       }
-      // `log-peer-race` or `cas-conflict` — back off and retry from
-      // step 1. Either way our work in this attempt is discarded; a
-      // peer's CAS will land at our seq.
-      await this.#backoff(attempt);
+      // Fence verify lives in the caller so its `Conflict` propagates
+      // past the retry-catch arm above. Bypasses the retry loop —
+      // the stale writer must defer to the new authority.
+      await this.#verifyFenceUnchanged(success.expectedEpoch, input.collection, "ServerWriter");
+      // `success.classAOps` is the per-attempt base; add `(attempt
+      // - 1)` to bill prior failed attempts as one PUT each (the
+      // simple-and-test-locked cost model — not a precise replay
+      // of every PUT in every dropped attempt).
+      this.#emitWriteMetrics(input.collection, success.classAOps + (attempt - 1));
+      return {
+        entry: success.entries[0]!,
+        currentEtag: success.currentEtag,
+        attempts: attempt,
+      };
     }
 
     // Retry budget exhausted.
@@ -419,45 +417,49 @@ export class ServerWriter {
     const session = uuid().slice(0, SESSION_ID_LENGTH);
     const logPrefix = this.#currentJsonKey.slice(0, this.#currentJsonKey.lastIndexOf("/"));
 
-    const outcome = await this.#singleAttemptCommit(
+    // No retry — `#singleAttemptCommit`'s `Conflict` (log-peer race
+    // or `current.json` CAS loss) propagates verbatim to the caller
+    // (`Db.transaction` decides whether to re-run the body). The
+    // fence-bump check sits AFTER the helper returns so its
+    // `Conflict` propagates with the fence-bump message rather than
+    // a generic CAS-loss one.
+    const success = await this.#singleAttemptCommit(
       inputs,
       session,
       logPrefix,
       "ServerWriter.commitBatch",
       /* adoptOwnSessionOnLogConflict */ false,
     );
-    if (outcome.kind === "cas-conflict") {
-      throw new BaerlyError(
-        "Conflict",
-        `ServerWriter.commitBatch: CAS conflict on ${this.#currentJsonKey}`,
-      );
-    }
-    if (outcome.kind === "log-peer-race") {
-      throw new BaerlyError(
-        "Conflict",
-        `ServerWriter.commitBatch: log entry already exists at ${logPrefix}/log/${outcome.seq}.json; peer wrote our seq`,
-      );
-    }
+    await this.#verifyFenceUnchanged(
+      success.expectedEpoch,
+      inputs[0]!.collection,
+      "ServerWriter.commitBatch",
+    );
     // Pick the first input's collection as the batch label; in the
     // current `Db.transaction` model every input shares one
     // collection, so this is exact. If future tickets relax that
     // we'll need a per-collection split here.
-    this.#emitWriteMetrics(inputs[0]!.collection, outcome.classAOps);
-    return { entries: outcome.entries, currentEtag: outcome.currentEtag };
+    this.#emitWriteMetrics(inputs[0]!.collection, success.classAOps);
+    return { entries: success.entries, currentEtag: success.currentEtag };
   }
 
   /**
    * One full commit attempt — the shared body of {@link commit} and
    * {@link commitBatch}. Reads `current.json`, walks the log, mints N
    * entries, PUTs content + indexes in parallel, PUTs log entries,
-   * CAS-advances `current.json`, verifies the fence-epoch is intact.
+   * CAS-advances `current.json`. Returns the success payload + the
+   * pre-commit fence epoch so the caller can run
+   * {@link #verifyFenceUnchanged} outside the retry-catch arm.
    *
-   * Retryable failures surface as {@link SingleAttemptOutcome} variants
-   * (`log-peer-race`, `cas-conflict`); the caller decides whether to
-   * back off and retry (`commit`) or surface as `Conflict`
-   * (`commitBatch`). Non-retryable failures (fence bump, protocol-
-   * invariant violations, network errors) propagate as thrown
-   * `BaerlyError`s — `commit`'s retry loop must NOT catch them.
+   * Retryable failures (a peer wrote our seq; a peer won the CAS on
+   * `current.json`) throw `BaerlyError{code:"Conflict"}`. The caller
+   * catches via {@link isPreconditionFailed} and either retries
+   * (`commit`) or surfaces (`commitBatch`). Fence-bump and protocol-
+   * invariant violations are NOT thrown from this helper — the fence
+   * check lives in the caller so its `Conflict` propagates past the
+   * retry-catch arm. Other thrown `BaerlyError`s (Internal,
+   * InvalidResponse, NetworkError) bypass `isPreconditionFailed` and
+   * propagate naturally.
    *
    * Crash safety invariant: content / index PUTs are awaited before
    * log PUTs, which are awaited before the CAS. A crashed mid-attempt
@@ -472,7 +474,7 @@ export class ServerWriter {
     logPrefix: string,
     errorPrefix: string,
     adoptOwnSessionOnLogConflict: boolean,
-  ): Promise<SingleAttemptOutcome> {
+  ): Promise<SingleAttemptSuccess> {
     // ── Step 1. Read current.json (fresh; carries the ETag). ────────
     const read = await readCurrentJson(this.#storage, this.#currentJsonKey);
     if (read === null) {
@@ -673,13 +675,20 @@ export class ServerWriter {
         const logEntryKey = `${logPrefix}/log/${entry.seq}.json`;
         const existing = await readLogEntry(this.#storage, logEntryKey);
         if (existing.session !== session) {
-          return { kind: "log-peer-race", seq: entry.seq };
+          throw new BaerlyError(
+            "Conflict",
+            `${errorPrefix}: log entry already exists at ${logEntryKey}; peer wrote our seq`,
+          );
         }
         // Our previous attempt's entry — adopt so the returned shape
         // matches what's actually stored.
         committedEntries = [existing];
       } else {
-        return { kind: "log-peer-race", seq: entries[firstConflictIdx]!.seq };
+        const seq = entries[firstConflictIdx]!.seq;
+        throw new BaerlyError(
+          "Conflict",
+          `${errorPrefix}: log entry already exists at ${logPrefix}/log/${seq}.json; peer wrote our seq`,
+        );
       }
     }
 
@@ -702,25 +711,32 @@ export class ServerWriter {
           collection: inputs[0]!.collection,
           step: "current-json-cas",
         });
-        return { kind: "cas-conflict" };
+        throw new BaerlyError(
+          "Conflict",
+          `${errorPrefix}: CAS conflict on ${this.#currentJsonKey}`,
+        );
       }
       throw error;
     }
 
-    // ── Step 7. Verify the writer fence epoch is still ours. ────────
-    // Throws `BaerlyError{code:"Conflict"}` on a mid-flight bump.
-    // Retry would re-race the new authority indefinitely, so the
-    // stale writer aborts immediately on epoch drift — the throw
-    // bypasses the caller's retry loop by being a `throw`, not a
-    // {@link SingleAttemptOutcome} variant.
-    await this.#verifyFenceUnchanged(expectedEpoch, inputs[0]!.collection, errorPrefix);
+    // Step 7 — the fence-verify GET — lives in the caller, not here.
+    // Both fence-bump and a 412-driven CAS retry use
+    // `BaerlyError{code:"Conflict"}`; keeping the fence check outside
+    // this helper's body lets the caller's retry-catch arm
+    // (`isPreconditionFailed`) match ONLY retryable conflicts thrown
+    // from inside, while the fence-bump throw propagates.
 
     // Base class-A op count for this attempt: content PUTs (skipping
     // `op:"D"`) + log PUTs (= N) + index PUTs + index DELETEs + 1
     // current.json CAS. The fence-verify GET is Class B and excluded.
     // The caller of `commit()` adds `(attempt - 1)` for retry cost.
     const classAOps = contentPutCount + entries.length + indexClassA + 1;
-    return { kind: "success", entries: committedEntries, currentEtag: result.etag, classAOps };
+    return {
+      entries: committedEntries,
+      currentEtag: result.etag,
+      classAOps,
+      expectedEpoch,
+    };
   }
 
   /**
