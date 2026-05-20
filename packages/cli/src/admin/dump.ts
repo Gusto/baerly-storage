@@ -1,10 +1,10 @@
 /**
  * `baerly admin dump` — canonical NDJSON of the materialised view.
  *
- * Writes one row per line to stdout (or to the file path in
- * `BAERLY_DUMP_STDOUT_PATH` for the round-trip test), in a strict
- * byte-stable shape so two semantically-equal collections produce
- * byte-equal output.
+ * Writes one row per line to stdout, in a strict byte-stable shape so
+ * two semantically-equal collections produce byte-equal output. Tests
+ * and other programmatic callers can divert the NDJSON output to a
+ * file or buffer by passing `{ streams: { stdout } }` to {@link runDump}.
  *
  * Canonical NDJSON dump format:
  *
@@ -31,9 +31,9 @@
  *   --app      Required (or via baerly.config.ts).
  *   --tenant   Required (or via baerly.config.ts).
  *   --table    Required. Collection name.
- *   --json     JSON envelope (on stdout). Mutually informative with the
- *              NDJSON output: when --json is set the NDJSON body is
- *              redirected to `BAERLY_DUMP_STDOUT_PATH` (or rejected).
+ *   --json     JSON envelope (on stdout). Programmatic callers can
+ *              divert the NDJSON body to a separate writable via the
+ *              `streams.stdout` option on {@link runDump}.
  *
  * Exit codes:
  *   0 — dump completed.
@@ -42,7 +42,7 @@
  *   3 — Protocol invariant (Conflict / Internal / InvalidResponse).
  */
 
-import { open, type FileHandle } from "node:fs/promises";
+import { type Writable } from "node:stream";
 import { type ArgsDef } from "citty";
 import { BaerlyError, type DocumentValue, type DocumentData } from "@baerly/protocol";
 import { loadMaterialisedView } from "../export/index.ts";
@@ -130,41 +130,34 @@ export const canonicalStringify = (value: DocumentValue): string => {
   );
 };
 
+/**
+ * Drain rows to the supplied writable, applying back-pressure on every
+ * line. We don't `end()` the stream — the caller owns its lifecycle
+ * (`process.stdout` shouldn't be closed; a test-supplied
+ * `createWriteStream` flushes on its own `end()`).
+ */
 const writeToSink = async (
-  sinkPath: string | undefined,
+  sink: Writable,
   rows: ReadonlyMap<string, DocumentData>,
 ): Promise<number> => {
-  const encoder = new TextEncoder();
   const ids = [...rows.keys()].toSorted();
-  let handle: FileHandle | undefined;
-  try {
-    if (sinkPath !== undefined) {
-      handle = await open(sinkPath, "w");
+  let count = 0;
+  for (const id of ids) {
+    const body = rows.get(id);
+    if (body === undefined) {
+      continue;
     }
-    let count = 0;
-    for (const id of ids) {
-      const body = rows.get(id);
-      if (body === undefined) {
-        continue;
-      }
-      // Merge `_id` into the body so the row literal carries it. The
-      // map key is authoritative; if a stale `_id` field disagrees, we
-      // overwrite it.
-      const row: DocumentData = { ...body, _id: id };
-      const line = `${canonicalStringify(row)}\n`;
-      if (handle !== undefined) {
-        await handle.write(encoder.encode(line));
-      } else {
-        process.stdout.write(line);
-      }
-      count++;
+    // Merge `_id` into the body so the row literal carries it. The
+    // map key is authoritative; if a stale `_id` field disagrees, we
+    // overwrite it.
+    const row: DocumentData = { ...body, _id: id };
+    const line = `${canonicalStringify(row)}\n`;
+    if (!sink.write(line)) {
+      await new Promise<void>((resolve) => sink.once("drain", resolve));
     }
-    return count;
-  } finally {
-    if (handle !== undefined) {
-      await handle.close();
-    }
+    count++;
   }
+  return count;
 };
 
 const bundle = defineBaerlySubcommand({
@@ -188,8 +181,8 @@ const bundle = defineBaerlySubcommand({
         `baerly admin dump: current.json not found at ${currentJsonKey}`,
       );
     }
-    const sinkPath = process.env["BAERLY_DUMP_STDOUT_PATH"];
-    const count = await writeToSink(sinkPath, view);
+    const sink: Writable = ctx.streams?.stdout ?? process.stdout;
+    const count = await writeToSink(sink, view);
     emitSuccess({
       command: "admin.dump",
       status: "ok",

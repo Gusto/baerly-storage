@@ -1,12 +1,14 @@
 /**
  * `baerly admin restore` — bulk-import NDJSON into a fresh collection.
  *
- * Reads NDJSON from stdin (or from `BAERLY_RESTORE_STDIN_PATH` if
- * set — the round-trip test uses this), reconstructs each row, and
- * calls `Writer.commit({op:"I"})` per row into the target
- * bucket. Idempotent on a fresh bucket: re-running on a
- * half-completed restore **refuses** unless `--force` is set (which
- * bumps the writer fence and seeds a fresh `current.json` first).
+ * Reads NDJSON from stdin, reconstructs each row, and calls
+ * `Writer.commit({op:"I"})` per row into the target bucket.
+ * Programmatic callers (today: tests + the export round-trip
+ * integration test) can divert the input by passing
+ * `{ streams: { stdin } }` to {@link runRestore}. Idempotent on a fresh
+ * bucket: re-running on a half-completed restore **refuses** unless
+ * `--force` is set (which bumps the writer fence and seeds a fresh
+ * `current.json` first).
  *
  * Args:
  *   --bucket   Required. Target bucket URI.
@@ -38,7 +40,6 @@
  *       concurrent writer when --force was used.
  */
 
-import { createReadStream } from "node:fs";
 import { createInterface } from "node:readline";
 import { type ArgsDef } from "citty";
 import {
@@ -164,10 +165,8 @@ const bundle = defineBaerlySubcommand({
 
     const writer = new Writer({ storage: bucket.storage, currentJsonKey });
 
-    const stdinPath = process.env["BAERLY_RESTORE_STDIN_PATH"];
-    const stream =
-      stdinPath !== undefined && stdinPath.length > 0 ? createReadStream(stdinPath) : process.stdin;
-    const rl = createInterface({ input: stream, crlfDelay: Infinity });
+    const input = ctx.streams?.stdin ?? process.stdin;
+    const rl = createInterface({ input, crlfDelay: Infinity });
     let count = 0;
     let lineNo = 0;
     for await (const line of rl) {

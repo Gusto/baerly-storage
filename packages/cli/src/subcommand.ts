@@ -35,6 +35,7 @@
  *     wrapped handler.
  */
 
+import { type Readable, type Writable } from "node:stream";
 import {
   defineCommand,
   parseArgs,
@@ -45,6 +46,18 @@ import {
 import { BaerlyError } from "@baerly/protocol";
 import { loadAppConfig } from "./config.ts";
 import { emitError, setJsonMode } from "./output.ts";
+
+/**
+ * Optional stdin / stdout streams that a programmatic caller (today:
+ * `runDump` / `runRestore` tests, and the export round-trip
+ * integration test) can divert in place of `process.stdin` /
+ * `process.stdout`. The citty entry point always uses the process
+ * streams; only {@link SubcommandBundle.run} accepts these overrides.
+ */
+export interface SubcommandStreams {
+  readonly stdin?: Readable;
+  readonly stdout?: Writable;
+}
 
 /**
  * Capabilities the subcommand handler receives. Today: app/tenant
@@ -64,6 +77,13 @@ export interface SubcommandContext {
     readonly app?: string;
     readonly tenant?: string;
   }) => Promise<{ app: string; tenant: string }>;
+  /**
+   * Programmatic stdin / stdout overrides. `undefined` (or any
+   * missing field) means "use the process stream". Only
+   * `admin dump` / `admin restore` consume this; other commands
+   * ignore the field.
+   */
+  readonly streams?: SubcommandStreams;
 }
 
 /**
@@ -86,7 +106,10 @@ export interface SubcommandDef<TArgs extends ArgsDef> {
  */
 export interface SubcommandBundle<TArgs extends ArgsDef> {
   readonly cmd: CommandDef<TArgs>;
-  readonly run: (argv: readonly string[]) => Promise<number>;
+  readonly run: (
+    argv: readonly string[],
+    options?: { readonly streams?: SubcommandStreams },
+  ) => Promise<number>;
 }
 
 /** Shared exit-code mapping for caught `BaerlyError`s. */
@@ -136,16 +159,18 @@ const makeResolveAppTenant = (name: string): SubcommandContext["resolveAppTenant
 /**
  * Wrap `def.handler` with the standard JSON-mode toggle, unknown-key
  * rejection, and error-to-exit-code mapping. Shared by both the citty
- * `run({ args })` path and the test `run(argv)` path.
+ * `run({ args })` path and the test `run(argv)` path. The caller
+ * supplies the {@link SubcommandContext}; this lets each `run(argv)`
+ * invocation attach its own `streams` override without leaking across
+ * invocations.
  */
 const wrapHandler = <TArgs extends ArgsDef>(
   def: SubcommandDef<TArgs>,
-  ctx: SubcommandContext,
-): ((args: ParsedArgs<TArgs>) => Promise<number>) => {
+): ((args: ParsedArgs<TArgs>, ctx: SubcommandContext) => Promise<number>) => {
   // Compute the allow-list once from the ArgsDef. citty injects `_`
   // for positional captures, so it must stay allowed.
   const allowedKeys: ReadonlySet<string> = new Set([...Object.keys(def.args), "_"]);
-  return async (args) => {
+  return async (args, ctx) => {
     // `json` is conventional but not required — only toggle when it's
     // both declared in the ArgsDef and truthy on the parsed args.
     if ("json" in def.args) {
@@ -186,23 +211,24 @@ const wrapHandler = <TArgs extends ArgsDef>(
 export const defineBaerlySubcommand = <TArgs extends ArgsDef>(
   def: SubcommandDef<TArgs>,
 ): SubcommandBundle<TArgs> => {
-  const ctx: SubcommandContext = {
-    resolveAppTenant: makeResolveAppTenant(def.name),
-  };
-  const wrapped = wrapHandler(def, ctx);
+  const resolveAppTenant = makeResolveAppTenant(def.name);
+  const wrapped = wrapHandler(def);
 
   const cmd = defineCommand({
     meta: { name: def.name, description: def.meta.description },
     args: def.args,
     run: async ({ args }) => {
-      const code = await wrapped(args as ParsedArgs<TArgs>);
+      const code = await wrapped(args as ParsedArgs<TArgs>, { resolveAppTenant });
       if (code !== 0) {
         process.exit(code);
       }
     },
   });
 
-  const run = async (argv: readonly string[]): Promise<number> => {
+  const run = async (
+    argv: readonly string[],
+    options?: { readonly streams?: SubcommandStreams },
+  ): Promise<number> => {
     let parsed: ParsedArgs<TArgs>;
     try {
       parsed = parseArgs<TArgs>(argv as string[], def.args);
@@ -214,7 +240,7 @@ export const defineBaerlySubcommand = <TArgs extends ArgsDef>(
       emitError(def.name, "InvalidConfig", (error as Error).message);
       return 1;
     }
-    return wrapped(parsed);
+    return wrapped(parsed, { resolveAppTenant, streams: options?.streams });
   };
 
   return { cmd, run };

@@ -1,8 +1,8 @@
 # Followups: CLI cleanup
 
 **Source: 2026-05-19 analyst triage (G-series).** Verified
-against current state. Items already shipped (G12, G13, G15)
-are dropped. G6, G10, G11 are rescoped to match what's
+against current state. Items already shipped (G12, G13, G15,
+G16) are dropped. G6, G10, G11 are rescoped to match what's
 actually there.
 
 The CLI is the first thing a user types after `npm install`.
@@ -261,19 +261,6 @@ branch.
 
 ## Env-var grooming
 
-### G16. Env-var test hooks live in production code
-
-**Severity: LOW.**
-
-`packages/cli/src/admin/dump.ts:229` and
-`packages/cli/src/admin/restore.ts:218` branch on
-`BAERLY_DUMP_STDOUT_PATH` / `BAERLY_RESTORE_STDIN_PATH` solely
-so vitest can divert stdin/stdout to files.
-
-**Fix:** Make `runDump` / `runRestore` accept `{ streams?:
-{ stdin?: Readable, stdout?: Writable } }`; tests pass file
-handles directly. Delete the env-var branches.
-
 ### G17. `BAERLY_REBUILD_INDEX_VERBOSE` is undocumented env-only verbosity
 
 **Severity: LOW.**
@@ -340,3 +327,7 @@ from the subcommand module directly.
 - **G10** — invalid: the wizard's `install` value IS threaded
   through (`prompts.ts:118–120` captures, returned in
   `WizardOutput`, consumed in scaffold).
+- **G16** — shipped: `runDump` / `runRestore` accept an optional
+  `{ streams: { stdin?, stdout? } }` argument; the
+  `BAERLY_DUMP_STDOUT_PATH` / `BAERLY_RESTORE_STDIN_PATH` branches
+  are gone.

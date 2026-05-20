@@ -28,8 +28,8 @@
  *     (booleans come back as 0/1; JSON-encoded columns come back as
  *     strings — both flagged on the {@link ExportPlan.columns}).
  *   - Pipe the reshaped NDJSON into `baerly admin restore --bucket=
- *     file://$dstRoot` via the `BAERLY_RESTORE_STDIN_PATH` env-var
- *     contract.
+ *     file://$dstRoot` via the `streams.stdin` option on
+ *     {@link runRestore}.
  *   - Dump both buckets via `baerly admin dump` and assert byte-equal.
  *
  * Gated on `sqlite3` being on `PATH` via `describe.runIf`. Auto-skips
@@ -38,6 +38,7 @@
  */
 
 import { spawnSync } from "node:child_process";
+import { createReadStream, createWriteStream, type WriteStream } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -98,32 +99,30 @@ const bootstrap = async (storage: Storage, owner: string): Promise<void> => {
  */
 type Ticket = DocumentData;
 
+/** Open a write-stream sink and return a `{ stream, finish }` pair. */
+const openSink = (path: string): { stream: WriteStream; finish: () => Promise<void> } => {
+  const stream = createWriteStream(path);
+  const finish = async (): Promise<void> => {
+    await new Promise<void>((resolve, reject) => {
+      stream.once("error", reject);
+      stream.end(() => resolve());
+    });
+  };
+  return { stream, finish };
+};
+
 describe.runIf(sqliteAvailable)("Baerly → SQLite → Baerly round-trip", () => {
   let srcRoot: string;
   let dstRoot: string;
   let workDir: string;
-  let savedDumpEnv: string | undefined;
-  let savedRestoreEnv: string | undefined;
 
   beforeEach(async () => {
     srcRoot = await mkdtemp(join(tmpdir(), "baerly-rt-src-"));
     dstRoot = await mkdtemp(join(tmpdir(), "baerly-rt-dst-"));
     workDir = await mkdtemp(join(tmpdir(), "baerly-rt-work-"));
-    savedDumpEnv = process.env["BAERLY_DUMP_STDOUT_PATH"];
-    savedRestoreEnv = process.env["BAERLY_RESTORE_STDIN_PATH"];
   });
 
   afterEach(async () => {
-    if (savedDumpEnv === undefined) {
-      delete process.env["BAERLY_DUMP_STDOUT_PATH"];
-    } else {
-      process.env["BAERLY_DUMP_STDOUT_PATH"] = savedDumpEnv;
-    }
-    if (savedRestoreEnv === undefined) {
-      delete process.env["BAERLY_RESTORE_STDIN_PATH"];
-    } else {
-      process.env["BAERLY_RESTORE_STDIN_PATH"] = savedRestoreEnv;
-    }
     await rm(srcRoot, { recursive: true, force: true }).catch(() => {});
     await rm(dstRoot, { recursive: true, force: true }).catch(() => {});
     await rm(workDir, { recursive: true, force: true }).catch(() => {});
@@ -262,38 +261,48 @@ describe.runIf(sqliteAvailable)("Baerly → SQLite → Baerly round-trip", () =>
     await writeFile(ndjsonFile, ndjsonRestored, "utf8");
 
     // ── 4. Restore into dst via `baerly admin restore`. ────────────
-    process.env["BAERLY_RESTORE_STDIN_PATH"] = ndjsonFile;
-    const restoreCode = await runRestore([
-      `--bucket=file://${dstRoot}`,
-      `--app=${APP}`,
-      `--tenant=${TENANT}`,
-      `--table=${COLL}`,
-    ]);
+    const restoreCode = await runRestore(
+      [
+        `--bucket=file://${dstRoot}`,
+        `--app=${APP}`,
+        `--tenant=${TENANT}`,
+        `--table=${COLL}`,
+      ],
+      { streams: { stdin: createReadStream(ndjsonFile) } },
+    );
     expect(restoreCode).toBe(0);
 
     // ── 5. Dump both buckets and compare byte-equal. ───────────────
     const srcDumpPath = join(workDir, "src.ndjson");
     const dstDumpPath = join(workDir, "dst.ndjson");
 
-    process.env["BAERLY_DUMP_STDOUT_PATH"] = srcDumpPath;
+    const srcSink = openSink(srcDumpPath);
     await expect(
-      runDump([
-        `--bucket=file://${srcRoot}`,
-        `--app=${APP}`,
-        `--tenant=${TENANT}`,
-        `--table=${COLL}`,
-      ]),
+      runDump(
+        [
+          `--bucket=file://${srcRoot}`,
+          `--app=${APP}`,
+          `--tenant=${TENANT}`,
+          `--table=${COLL}`,
+        ],
+        { streams: { stdout: srcSink.stream } },
+      ),
     ).resolves.toBe(0);
+    await srcSink.finish();
 
-    process.env["BAERLY_DUMP_STDOUT_PATH"] = dstDumpPath;
+    const dstSink = openSink(dstDumpPath);
     await expect(
-      runDump([
-        `--bucket=file://${dstRoot}`,
-        `--app=${APP}`,
-        `--tenant=${TENANT}`,
-        `--table=${COLL}`,
-      ]),
+      runDump(
+        [
+          `--bucket=file://${dstRoot}`,
+          `--app=${APP}`,
+          `--tenant=${TENANT}`,
+          `--table=${COLL}`,
+        ],
+        { streams: { stdout: dstSink.stream } },
+      ),
     ).resolves.toBe(0);
+    await dstSink.finish();
 
     const srcDump = await readFile(srcDumpPath);
     const dstDump = await readFile(dstDumpPath);

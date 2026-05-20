@@ -7,11 +7,12 @@
  *
  * Provisions a fresh `LocalFsStorage` collection with two rows (one
  * with a nested object whose keys are inserted out of order), runs
- * `runDump` with `BAERLY_DUMP_STDOUT_PATH` redirected to a temp
- * file, and asserts the output matches a hand-crafted canonical
- * string byte-for-byte.
+ * `runDump` with a `createWriteStream` redirected to a temp file, and
+ * asserts the output matches a hand-crafted canonical string
+ * byte-for-byte.
  */
 
+import { createWriteStream, type WriteStream } from "node:fs";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -20,6 +21,24 @@ import { CURRENT_JSON_SCHEMA_VERSION, createCurrentJson, type Storage } from "@b
 import { LocalFsStorage } from "@baerly/dev";
 import { Writer } from "@baerly/server/_internal/testing";
 import { runDump, canonicalStringify } from "./dump.ts";
+
+/**
+ * Open a write-stream sink and return a `{ stream, finish }` pair.
+ * `finish` resolves once the kernel has flushed the file to disk —
+ * vitest reads the file synchronously right after, and on the macOS
+ * APFS path that read raced a not-yet-flushed `WriteStream` in
+ * practice.
+ */
+const openSink = (path: string): { stream: WriteStream; finish: () => Promise<void> } => {
+  const stream = createWriteStream(path);
+  const finish = async (): Promise<void> => {
+    await new Promise<void>((resolve, reject) => {
+      stream.once("error", reject);
+      stream.end(() => resolve());
+    });
+  };
+  return { stream, finish };
+};
 
 const APP = "app";
 const TENANT = "tenant";
@@ -79,7 +98,6 @@ describe("baerly admin dump", () => {
   });
 
   afterEach(async () => {
-    delete process.env["BAERLY_DUMP_STDOUT_PATH"];
     await rm(root, { recursive: true, force: true });
   });
 
@@ -101,13 +119,17 @@ describe("baerly admin dump", () => {
       body: { _id: "t-1", title: "first", status: "open" },
     });
 
-    process.env["BAERLY_DUMP_STDOUT_PATH"] = outFile;
-    const exitCode = await runDump([
-      `--bucket=file://${root}`,
-      `--app=${APP}`,
-      `--tenant=${TENANT}`,
-      `--table=${COLL}`,
-    ]);
+    const sink = openSink(outFile);
+    const exitCode = await runDump(
+      [
+        `--bucket=file://${root}`,
+        `--app=${APP}`,
+        `--tenant=${TENANT}`,
+        `--table=${COLL}`,
+      ],
+      { streams: { stdout: sink.stream } },
+    );
+    await sink.finish();
     expect(exitCode).toBe(0);
     const got = await readFile(outFile, "utf8");
     // The canonical wire: keys sorted at every level, rows sorted by
@@ -120,13 +142,17 @@ describe("baerly admin dump", () => {
 
   test("empty collection → empty file (no trailing newline)", async () => {
     await provision(storage);
-    process.env["BAERLY_DUMP_STDOUT_PATH"] = outFile;
-    const exitCode = await runDump([
-      `--bucket=file://${root}`,
-      `--app=${APP}`,
-      `--tenant=${TENANT}`,
-      `--table=${COLL}`,
-    ]);
+    const sink = openSink(outFile);
+    const exitCode = await runDump(
+      [
+        `--bucket=file://${root}`,
+        `--app=${APP}`,
+        `--tenant=${TENANT}`,
+        `--table=${COLL}`,
+      ],
+      { streams: { stdout: sink.stream } },
+    );
+    await sink.finish();
     expect(exitCode).toBe(0);
     const got = await readFile(outFile, "utf8");
     expect(got).toBe("");
@@ -151,20 +177,28 @@ describe("baerly admin dump", () => {
 
   test("--json emits the success envelope on stdout", async () => {
     await provision(storage);
-    process.env["BAERLY_DUMP_STDOUT_PATH"] = outFile;
+    // Empty collection → no NDJSON written to the sink — but we still
+    // pass one in so the `--json` envelope (which lands on
+    // `process.stdout`) and the NDJSON body (which lands on
+    // `streams.stdout`) flow through separate sinks.
+    const sink = openSink(outFile);
     const stdout = captureStream(process.stdout);
     let exitCode: number;
     try {
-      exitCode = await runDump([
-        `--bucket=file://${root}`,
-        `--app=${APP}`,
-        `--tenant=${TENANT}`,
-        `--table=${COLL}`,
-        "--json",
-      ]);
+      exitCode = await runDump(
+        [
+          `--bucket=file://${root}`,
+          `--app=${APP}`,
+          `--tenant=${TENANT}`,
+          `--table=${COLL}`,
+          "--json",
+        ],
+        { streams: { stdout: sink.stream } },
+      );
     } finally {
       stdout.restore();
     }
+    await sink.finish();
     expect(exitCode).toBe(0);
     const envelope = JSON.parse(stdout.captured.join("").trim()) as {
       result: { command: string; dumped: number; status: string };

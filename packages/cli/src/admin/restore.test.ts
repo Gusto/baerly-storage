@@ -5,11 +5,13 @@
 /**
  * CLI test for `baerly admin restore`.
  *
- * Streams canonical NDJSON via `BAERLY_RESTORE_STDIN_PATH`, asserts
- * the post-state `next_seq` equals the row count, and exercises
- * the `--force` / pre-existing / malformed-line branches.
+ * Streams canonical NDJSON via the programmatic `streams.stdin` hook
+ * on `runRestore`, asserts the post-state `next_seq` equals the row
+ * count, and exercises the `--force` / pre-existing / malformed-line
+ * branches.
  */
 
+import { createReadStream } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -56,19 +58,20 @@ describe("baerly admin restore", () => {
   });
 
   afterEach(async () => {
-    delete process.env["BAERLY_RESTORE_STDIN_PATH"];
     await rm(root, { recursive: true, force: true });
   });
 
   test("seeds a fresh bucket and lands next_seq === rowCount", async () => {
     await writeFile(stdinPath, CANONICAL_NDJSON, "utf8");
-    process.env["BAERLY_RESTORE_STDIN_PATH"] = stdinPath;
-    const exitCode = await runRestore([
-      `--bucket=file://${root}`,
-      `--app=${APP}`,
-      `--tenant=${TENANT}`,
-      `--table=${COLL}`,
-    ]);
+    const exitCode = await runRestore(
+      [
+        `--bucket=file://${root}`,
+        `--app=${APP}`,
+        `--tenant=${TENANT}`,
+        `--table=${COLL}`,
+      ],
+      { streams: { stdin: createReadStream(stdinPath) } },
+    );
     expect(exitCode).toBe(0);
     const head = await readCurrentJson(storage, CURRENT_JSON_KEY);
     expect(head).not.toBeNull();
@@ -77,45 +80,55 @@ describe("baerly admin restore", () => {
 
   test("re-running without --force on a populated target → Conflict (exit 3)", async () => {
     await writeFile(stdinPath, CANONICAL_NDJSON, "utf8");
-    process.env["BAERLY_RESTORE_STDIN_PATH"] = stdinPath;
-    const first = await runRestore([
-      `--bucket=file://${root}`,
-      `--app=${APP}`,
-      `--tenant=${TENANT}`,
-      `--table=${COLL}`,
-    ]);
+    const first = await runRestore(
+      [
+        `--bucket=file://${root}`,
+        `--app=${APP}`,
+        `--tenant=${TENANT}`,
+        `--table=${COLL}`,
+      ],
+      { streams: { stdin: createReadStream(stdinPath) } },
+    );
     expect(first).toBe(0);
-    const second = await runRestore([
-      `--bucket=file://${root}`,
-      `--app=${APP}`,
-      `--tenant=${TENANT}`,
-      `--table=${COLL}`,
-    ]);
+    const second = await runRestore(
+      [
+        `--bucket=file://${root}`,
+        `--app=${APP}`,
+        `--tenant=${TENANT}`,
+        `--table=${COLL}`,
+      ],
+      { streams: { stdin: createReadStream(stdinPath) } },
+    );
     expect(second).toBe(3);
   });
 
   test("re-running with --force truncates and reseeds", async () => {
     await writeFile(stdinPath, CANONICAL_NDJSON, "utf8");
-    process.env["BAERLY_RESTORE_STDIN_PATH"] = stdinPath;
-    const first = await runRestore([
-      `--bucket=file://${root}`,
-      `--app=${APP}`,
-      `--tenant=${TENANT}`,
-      `--table=${COLL}`,
-    ]);
+    const first = await runRestore(
+      [
+        `--bucket=file://${root}`,
+        `--app=${APP}`,
+        `--tenant=${TENANT}`,
+        `--table=${COLL}`,
+      ],
+      { streams: { stdin: createReadStream(stdinPath) } },
+    );
     expect(first).toBe(0);
 
     // Second run: feed three rows so we can confirm the seed was
     // reset (next_seq = 3, not 5 = 2 + 3).
     const secondNdjson = `{"_id":"u-1","x":1}\n{"_id":"u-2","x":2}\n{"_id":"u-3","x":3}\n`;
     await writeFile(stdinPath, secondNdjson, "utf8");
-    const second = await runRestore([
-      `--bucket=file://${root}`,
-      `--app=${APP}`,
-      `--tenant=${TENANT}`,
-      `--table=${COLL}`,
-      "--force",
-    ]);
+    const second = await runRestore(
+      [
+        `--bucket=file://${root}`,
+        `--app=${APP}`,
+        `--tenant=${TENANT}`,
+        `--table=${COLL}`,
+        "--force",
+      ],
+      { streams: { stdin: createReadStream(stdinPath) } },
+    );
     expect(second).toBe(0);
     const head = await readCurrentJson(storage, CURRENT_JSON_KEY);
     // --force advances next_seq past the old log entries (stale log
@@ -134,16 +147,18 @@ describe("baerly admin restore", () => {
     // "no partial-restore state survives when the first line is
     // the failure" semantics.
     await writeFile(stdinPath, `{"missing_id":true}\n`, "utf8");
-    process.env["BAERLY_RESTORE_STDIN_PATH"] = stdinPath;
     const stderr = captureStream(process.stderr);
     let exitCode: number;
     try {
-      exitCode = await runRestore([
-        `--bucket=file://${root}`,
-        `--app=${APP}`,
-        `--tenant=${TENANT}`,
-        `--table=${COLL}`,
-      ]);
+      exitCode = await runRestore(
+        [
+          `--bucket=file://${root}`,
+          `--app=${APP}`,
+          `--tenant=${TENANT}`,
+          `--table=${COLL}`,
+        ],
+        { streams: { stdin: createReadStream(stdinPath) } },
+      );
     } finally {
       stderr.restore();
     }
@@ -154,17 +169,19 @@ describe("baerly admin restore", () => {
 
   test("--json emits the success envelope on stdout", async () => {
     await writeFile(stdinPath, CANONICAL_NDJSON, "utf8");
-    process.env["BAERLY_RESTORE_STDIN_PATH"] = stdinPath;
     const stdout = captureStream(process.stdout);
     let exitCode: number;
     try {
-      exitCode = await runRestore([
-        `--bucket=file://${root}`,
-        `--app=${APP}`,
-        `--tenant=${TENANT}`,
-        `--table=${COLL}`,
-        "--json",
-      ]);
+      exitCode = await runRestore(
+        [
+          `--bucket=file://${root}`,
+          `--app=${APP}`,
+          `--tenant=${TENANT}`,
+          `--table=${COLL}`,
+          "--json",
+        ],
+        { streams: { stdin: createReadStream(stdinPath) } },
+      );
     } finally {
       stdout.restore();
     }
@@ -179,13 +196,15 @@ describe("baerly admin restore", () => {
 
   test("empty lines tolerated", async () => {
     await writeFile(stdinPath, `\n${CANONICAL_NDJSON}\n\n`, "utf8");
-    process.env["BAERLY_RESTORE_STDIN_PATH"] = stdinPath;
-    const exitCode = await runRestore([
-      `--bucket=file://${root}`,
-      `--app=${APP}`,
-      `--tenant=${TENANT}`,
-      `--table=${COLL}`,
-    ]);
+    const exitCode = await runRestore(
+      [
+        `--bucket=file://${root}`,
+        `--app=${APP}`,
+        `--tenant=${TENANT}`,
+        `--table=${COLL}`,
+      ],
+      { streams: { stdin: createReadStream(stdinPath) } },
+    );
     expect(exitCode).toBe(0);
     const head = await readCurrentJson(storage, CURRENT_JSON_KEY);
     expect(head?.json.next_seq).toBe(2);
