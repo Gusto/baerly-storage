@@ -12,5 +12,6 @@
     ".DS_Store",
     "*.tsbuildinfo"
   ],
-  "dropDevDeps": []
+  "dropDevDeps": [],
+  "copies": [{ "from": "AGENTS.md", "to": "CLAUDE.md" }]
 }

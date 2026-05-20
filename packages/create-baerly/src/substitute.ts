@@ -28,6 +28,11 @@ export interface ManifestRename {
   readonly fromKey: string;
 }
 
+export interface ManifestCopy {
+  readonly from: string;
+  readonly to: string;
+}
+
 export interface ScaffoldManifest {
   readonly renames: readonly ManifestRename[];
   /**
@@ -45,6 +50,15 @@ export interface ScaffoldManifest {
    */
   readonly excludeNames: readonly string[];
   readonly dropDevDeps: readonly string[];
+  /**
+   * Files written more than once during a single scaffold pass. Each
+   * entry mirrors a source file (`from`, relative to the example
+   * root) into a second destination (`to`, relative to the output
+   * root) with the same `substituteText` pass applied. Lets the
+   * example author declare AGENTS.md ↔ CLAUDE.md parity (and any
+   * future coding-tool variant) in data, not in walker branches.
+   */
+  readonly copies: readonly ManifestCopy[];
 }
 
 export interface SubstituteContext {

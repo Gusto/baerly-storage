@@ -129,6 +129,7 @@ const DEFAULT_MANIFEST: ScaffoldManifest = {
   excludePaths: [".baerly/scaffold.json"],
   excludeNames: [],
   dropDevDeps: [],
+  copies: [],
 };
 
 const loadManifest = (exampleRoot: string): ScaffoldManifest => {
@@ -142,6 +143,7 @@ const loadManifest = (exampleRoot: string): ScaffoldManifest => {
     excludePaths: raw.excludePaths ?? [".baerly/scaffold.json"],
     excludeNames: raw.excludeNames ?? [],
     dropDevDeps: raw.dropDevDeps ?? [],
+    copies: raw.copies ?? [],
   };
 };
 
@@ -233,6 +235,10 @@ export const scaffold = async (opts: ScaffoldOptions): Promise<ScaffoldResult> =
     return false;
   };
 
+  const copyByFrom = new Map<string, string>(
+    manifest.copies.map((c) => [c.from.split("/").join(sep), c.to.split("/").join(sep)]),
+  );
+
   const filesWritten: string[] = [];
   const walk = (sourceDir: string, rel: string): void => {
     const from = join(sourceDir, rel);
@@ -258,15 +264,12 @@ export const scaffold = async (opts: ScaffoldOptions): Promise<ScaffoldResult> =
           writeFileSync(toEnt, readFileSync(fromEnt));
         }
         filesWritten.push(relEnt);
-        // AGENTS.md ↔ CLAUDE.md parity:
-        // Codex CLI reads AGENTS.md; Claude Code reads CLAUDE.md.
-        // Write both copies from the same substituted template so a
-        // freshly scaffolded app gives both tools identical context.
-        if (rel === "" && ent === "AGENTS.md") {
-          const claudeMdPath = join(outDir, "CLAUDE.md");
-          const content = substituteText(readFileSync(fromEnt, "utf8"), ctx);
-          writeFileSync(claudeMdPath, content);
-          filesWritten.push("CLAUDE.md");
+        const copyTo = copyByFrom.get(relEnt);
+        if (copyTo !== undefined) {
+          const copyDest = join(outDir, copyTo);
+          mkdirSync(dirname(copyDest), { recursive: true });
+          writeFileSync(copyDest, substituteText(readFileSync(fromEnt, "utf8"), ctx));
+          filesWritten.push(copyTo);
         }
       }
     }
