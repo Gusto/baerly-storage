@@ -345,7 +345,11 @@ const BUDGETS: readonly Budget[] = [
   //     server barrel for the adapter flatten path. +899 raw, gz still
   //     under budget. Dead code from the CLI's perspective but the
   //     CLI imports the barrel by design.
-  { entry: "baerly.js", raw: 571 * 1024, gz: 159 * 1024 },
+  //   → 590 KiB raw / 165 KiB gz: hono-node-server pivot. `baerly dev`
+  //     mounts the adapter via `getRequestListener(createApp(opts).fetch)`,
+  //     so the `@hono/node-server` listener chunk + Hono itself land in
+  //     the single-file CLI bundle. Measured: 601911 raw / 168282 gz.
+  { entry: "baerly.js", raw: 590 * 1024, gz: 165 * 1024 },
 ];
 
 // Static-import specifiers only. Dynamic `import(...)` is intentionally
