@@ -317,12 +317,13 @@ const BUDGETS: readonly Budget[] = [
   //     chunk after replacing hand-rolled JWT/JWKS. Rolldown's shared-
   //     chunk splitting threads the auth chunk into dev-vite's static
   //     closure too.
-  //   → 455 KiB raw / 132 KiB gz: hono-node-server pivot on top of
+  //   → 476 KiB raw / 137 KiB gz: hono-node-server pivot on top of
   //     jose. The Vite dev plugin imports `createApp` (+ the
   //     `@hono/node-server` listener chunk) from adapter-node, so the
-  //     dev-vite closure tracks the node.js bump. Re-measure after
-  //     pnpm build lands the post-rebase artifact.
-  { entry: "dev-vite.js", raw: 455 * 1024, gz: 132 * 1024 },
+  //     dev-vite closure tracks the node.js bump. The jose + hono
+  //     deltas stack — both auth and listener chunks land in the
+  //     transitive closure. Measured: 485674 raw / 138557 gz.
+  { entry: "dev-vite.js", raw: 476 * 1024, gz: 137 * 1024 },
   // `baerly` CLI bin — `init`, `dev`, `deploy`, `doctor`, `inspect`,
   // `admin {compact,fsck,migrate,dump,restore,rebuild-index}`,
   // `export`. Bundled as a single file (no static chunk splits)
