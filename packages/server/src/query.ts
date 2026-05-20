@@ -55,7 +55,7 @@ import {
 import { loadSnapshotAsMap } from "./compactor.ts";
 import type { TxContext } from "./db.ts";
 import { encodeIndexValue, type IndexDefinition } from "./indexes.ts";
-import { walkLogRange } from "./log-walk.ts";
+import { foldLogEntriesOnto, walkLogRange } from "./log-walk.ts";
 import { type IndexWalkPlan, planQuery, type QueryPlan } from "./query-planner.ts";
 import { type SchemaValidator, validateOrThrow } from "./schema.ts";
 import { ServerWriter } from "./server-writer.ts";
@@ -154,15 +154,6 @@ export interface TableReadContext {
    * @internal
    */
   readonly indexes: ReadonlyArray<IndexDefinition>;
-  /**
-   * Per-call `$in` fan-out threshold, threaded from {@link Db.create}.
-   * `undefined` means "use the planner default"
-   * ({@link IN_FANOUT_THRESHOLD}). Consumed by `planQuery(...)` inside
-   * `runRead` — see {@link PlanQueryOptions.inFanoutThreshold}.
-   *
-   * @internal
-   */
-  readonly inFanoutThreshold?: number;
 }
 
 /**
@@ -700,11 +691,7 @@ const runRead = async <T extends DocumentData>(
   // re-check on every fetched doc defends against stale index
   // entries AND consumes the planner's residue (operator clauses,
   // unrelated equality on non-indexed fields).
-  const plan: QueryPlan = planQuery(
-    state.predicate,
-    ctx.indexes,
-    ctx.inFanoutThreshold !== undefined ? { inFanoutThreshold: ctx.inFanoutThreshold } : undefined,
-  );
+  const plan: QueryPlan = planQuery(state.predicate, ctx.indexes);
   if (plan.kind === "index-walk") {
     let rows = await runIndexWalkPlan<T>(ctx, head.json, state, plan);
     if (state.order !== undefined) {
@@ -750,33 +737,7 @@ const runRead = async <T extends DocumentData>(
   // D: tombstone — remove from the map.
   // T / M: ignored (T not yet wired; M is a marker).
   const docs = new Map<string, T>(baseDocs as Map<string, T>);
-  for (const entry of entries) {
-    if (entry.collection !== ctx.tableName) {
-      continue;
-    }
-    if (entry.doc_id === undefined) {
-      continue;
-    }
-    switch (entry.op) {
-      case "I":
-      case "U": {
-        if (entry.new === undefined) {
-          continue;
-        }
-        docs.set(entry.doc_id, entry.new as T);
-        break;
-      }
-      case "D": {
-        docs.delete(entry.doc_id);
-        break;
-      }
-      case "T":
-      case "M": {
-        // No-op for this ticket; T/M are forward-compatibility shapes.
-        break;
-      }
-    }
-  }
+  foldLogEntriesOnto(docs, entries, { collection: ctx.tableName });
 
   // ── Step 4. Apply predicate. ──────────────────────────────────────
   let rows = Array.from(docs.values());
@@ -1028,19 +989,7 @@ const runIndexWalkPlan = async <T extends DocumentData>(
   const logSeqStart = logSeqStartOf(head);
   const nextSeq = head.next_seq;
   const entries = await walkLogRange(ctx.storage, ctx.tablePrefix, logSeqStart, nextSeq);
-  for (const entry of entries) {
-    if (entry.collection !== ctx.tableName) {
-      continue;
-    }
-    if (entry.doc_id === undefined || !matched.has(entry.doc_id)) {
-      continue;
-    }
-    if ((entry.op === "I" || entry.op === "U") && entry.new !== undefined) {
-      docs.set(entry.doc_id, entry.new as T);
-    } else if (entry.op === "D") {
-      docs.delete(entry.doc_id);
-    }
-  }
+  foldLogEntriesOnto(docs, entries, { collection: ctx.tableName, docIdFilter: matched });
 
   // 3. Apply the FULL original predicate as the stale-row defence,
   //    then the planner's residue postFilter on top. `matches` is

@@ -41,7 +41,7 @@ import {
   loadSnapshotAsMap,
   snapshotKey,
 } from "./compactor.ts";
-import { walkLogRange } from "./log-walk.ts";
+import { foldLogEntriesOnto, walkLogRange } from "./log-walk.ts";
 
 const APPLICATION_JSON = "application/json";
 
@@ -160,32 +160,7 @@ export const migrateCollection = async (
     nextSeq,
     signal !== undefined ? { signal } : undefined,
   );
-  for (const entry of entries) {
-    if (entry.collection !== collection) {
-      continue;
-    }
-    if (entry.doc_id === undefined) {
-      continue;
-    }
-    switch (entry.op) {
-      case "I":
-      case "U": {
-        if (entry.new !== undefined) {
-          base.set(entry.doc_id, entry.new);
-        }
-        break;
-      }
-      case "D": {
-        base.delete(entry.doc_id);
-        break;
-      }
-      case "T":
-      case "M": {
-        // No-op for forward-compat shapes the writer doesn't emit today.
-        break;
-      }
-    }
-  }
+  foldLogEntriesOnto(base, entries, { collection });
 
   // ── Step 4. Run the transform. Drop nulls; reject non-objects. ──
   const inputRows = base.size;

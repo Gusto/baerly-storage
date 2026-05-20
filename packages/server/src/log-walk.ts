@@ -23,7 +23,13 @@
  * `Storage.get` call.
  */
 
-import { type LogEntry, type Storage, BaerlyError, MAX_PARALLEL_LOG_READS } from "@baerly/protocol";
+import {
+  type DocumentData,
+  type LogEntry,
+  type Storage,
+  BaerlyError,
+  MAX_PARALLEL_LOG_READS,
+} from "@baerly/protocol";
 
 /**
  * Fetch a single log entry. Centralises the "missing entry inside the
@@ -95,4 +101,73 @@ export const walkLogRange = async (
     }
   }
   return out;
+};
+
+/**
+ * Fold a sequence of `LogEntry` records onto a doc-id-keyed map,
+ * applying the protocol's per-doc-replace semantics:
+ *
+ *   - `I` / `U`: when `entry.new !== undefined`, set
+ *     `map.set(entry.doc_id, entry.new)`. Entries with `new ===
+ *     undefined` (the partial-merge writer's future patch-only shape)
+ *     are ignored — today's writer always emits `new`, so this is a
+ *     forward-compat guard, not a live branch.
+ *   - `D`: tombstone — `map.delete(entry.doc_id)`.
+ *   - `T` / `M`: ignored. `T` (TRUNCATE) is not yet wired; `M`
+ *     (MESSAGE) is a marker. The emitter never produces them today.
+ *
+ * Entries whose `collection` does not match `opts.collection`, or
+ * whose `doc_id` is `undefined`, are skipped. When
+ * `opts.docIdFilter` is provided, only entries whose `doc_id` is
+ * present in the filter set are folded — used by the index-walk
+ * read path to scope the fold to the docs the planner already
+ * resolved.
+ *
+ * This is the canonical fold used by the read path
+ * (`query.ts`), the schema-version migrator (`migrate.ts`), and the
+ * index reconciler (`rebuild-index.ts`). Centralising it keeps the
+ * "ignore T/M; straight `set` on I/U; tombstone on D" protocol
+ * invariant in one place.
+ *
+ * @see ../../../docs/spec/sync-protocol.md
+ */
+export const foldLogEntriesOnto = <T extends DocumentData>(
+  map: Map<string, T>,
+  entries: Iterable<LogEntry>,
+  opts: {
+    readonly collection: string;
+    readonly docIdFilter?: ReadonlySet<string>;
+  },
+): void => {
+  const { collection, docIdFilter } = opts;
+  for (const entry of entries) {
+    if (entry.collection !== collection) {
+      continue;
+    }
+    if (entry.doc_id === undefined) {
+      continue;
+    }
+    if (docIdFilter !== undefined && !docIdFilter.has(entry.doc_id)) {
+      continue;
+    }
+    switch (entry.op) {
+      case "I":
+      case "U": {
+        if (entry.new === undefined) {
+          continue;
+        }
+        map.set(entry.doc_id, entry.new as T);
+        break;
+      }
+      case "D": {
+        map.delete(entry.doc_id);
+        break;
+      }
+      case "T":
+      case "M": {
+        // No-op for forward-compat shapes the writer doesn't emit today.
+        break;
+      }
+    }
+  }
 };

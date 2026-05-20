@@ -35,7 +35,6 @@
 import {
   BaerlyError,
   type DocumentData,
-  type LogEntry,
   logSeqStartOf,
   type MetricsRecorder,
   noopMetricsRecorder,
@@ -45,6 +44,7 @@ import {
 } from "@baerly/protocol";
 import { loadSnapshotAsMap } from "./compactor.ts";
 import { allIndexKeysFor, type IndexDefinition, indexKeyPrefix } from "./indexes.ts";
+import { foldLogEntriesOnto, walkLogRange } from "./log-walk.ts";
 import { withObservability } from "./observability/index.ts";
 
 const EMPTY_BODY = new Uint8Array(0);
@@ -189,35 +189,8 @@ const rebuildIndexInner = async (
     read.json.snapshot === null
       ? new Map<string, DocumentData>()
       : await loadSnapshotAsMap(storage, read.json.snapshot, collection);
-  const textDecoder = new TextDecoder();
-  for (let s = logSeqStart; s < nextSeq; s++) {
-    const got = await storage.get(`${tablePrefix}/log/${s}.json`);
-    if (got === null) {
-      throw new BaerlyError(
-        "Internal",
-        `rebuildIndex: missing log entry at ${tablePrefix}/log/${s}.json; protocol invariant violation`,
-      );
-    }
-    let entry: LogEntry;
-    try {
-      entry = JSON.parse(textDecoder.decode(got.body)) as LogEntry;
-    } catch (error) {
-      throw new BaerlyError(
-        "InvalidResponse",
-        `rebuildIndex: malformed log entry at ${tablePrefix}/log/${s}.json`,
-        error,
-      );
-    }
-    if (entry.collection !== collection || entry.doc_id === undefined) {
-      continue;
-    }
-    if ((entry.op === "I" || entry.op === "U") && entry.new !== undefined) {
-      live.set(entry.doc_id, entry.new);
-    } else if (entry.op === "D") {
-      live.delete(entry.doc_id);
-    }
-    // T / M: no-ops; emitter never produces them today.
-  }
+  const entries = await walkLogRange(storage, tablePrefix, logSeqStart, nextSeq);
+  foldLogEntriesOnto(live, entries, { collection });
 
   // 2. Compute the expected index-key set.
   const expected = new Set<string>();
