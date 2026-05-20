@@ -170,7 +170,7 @@ Pure-unit tests that always pass: `packages/protocol/src/hashing.test.ts`,
 `packages/protocol/src/json.test.ts`,
 `packages/protocol/src/log.test.ts`,
 `packages/protocol/src/storage/memory.test.ts`,
-`packages/protocol/src/storage/s3-http.test.ts`,
+`packages/adapter-node/src/s3-http.test.ts`,
 `packages/dev/src/local-fs.test.ts`,
 `tests/unit/datatypes.test.ts`,
 `tests/integration/bundle-size.test.ts`,
@@ -227,9 +227,13 @@ Read in this order to build a mental model:
    `packages/protocol/src/o-map.ts`,
    `packages/protocol/src/time.ts`,
    `packages/protocol/src/xml.ts`,
+   `packages/protocol/src/table-api.ts` (on-the-wire
+   `Table`/`Query`/`Predicate` contracts),
+   `packages/protocol/src/query/` (validate / matches / merge —
+   the kernel half of the predicate algebra),
    `packages/protocol/src/storage/` (`Storage` interface +
-   `MemoryStorage`, `S3HttpStorage` impls + the legacy
-   `fetchFnFromStorage` adapter, `@deprecated`).
+   `MemoryStorage` only — concrete S3/R2 adapters live in
+   `@baerly/adapter-node` / `@baerly/adapter-cloudflare`).
 9. **`@baerly/dev`** (Node-only `Storage` impls + dev harness):
    `packages/dev/src/local-fs.ts` (`LocalFsStorage` — directory-tree
    `Storage` with content-addressed ETags and atomic writes; used by
