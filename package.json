@@ -168,6 +168,7 @@
     "dev:storage:stop": "docker compose down",
     "verdaccio:reset": "./scripts/verdaccio-reset.sh",
     "verdaccio:publish": "node scripts/verdaccio-publish.mjs",
+    "dlx:bust-cache": "node scripts/dlx-bust-cache.mjs",
     "bench:r2": "node --import ./bench/register-hooks.mjs bench/r2-contention.ts",
     "bench:r2:matrix": "node --import ./bench/register-hooks.mjs bench/r2-contention-matrix.ts",
     "bench:r2:interpret": "node --import ./bench/register-hooks.mjs bench/r2-contention-interpret.ts",

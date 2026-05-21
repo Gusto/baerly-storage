@@ -25,10 +25,14 @@ const VERSION = `0.1.${Math.floor(Date.now() / 1000)}`;
 
 const candidates = ["package.json"];
 for (const dir of ["packages", "examples"]) {
-  if (!existsSync(dir)) {continue;}
+  if (!existsSync(dir)) {
+    continue;
+  }
   for (const sub of readdirSync(dir)) {
     const p = join(dir, sub, "package.json");
-    if (existsSync(p)) {candidates.push(p);}
+    if (existsSync(p)) {
+      candidates.push(p);
+    }
   }
 }
 
@@ -38,7 +42,9 @@ for (const dir of ["packages", "examples"]) {
 const touched = [];
 for (const p of candidates) {
   const pkg = JSON.parse(readFileSync(p, "utf8"));
-  if (pkg.private || typeof pkg.version !== "string") {continue;}
+  if (pkg.private || typeof pkg.version !== "string") {
+    continue;
+  }
   touched.push({ path: p, originalVersion: pkg.version });
   pkg.version = VERSION;
   writeFileSync(p, `${JSON.stringify(pkg, null, 2)}\n`);
@@ -72,8 +78,8 @@ try {
   restore();
 }
 
-run(
-  'find "$HOME/.cache/pnpm" "$HOME/Library/Caches/pnpm" \\( -name dlx -o -name "localhost+4873" \\) -prune -exec rm -rf {} + 2>/dev/null || true',
-);
+run("node scripts/dlx-bust-cache.mjs");
 
-if (ok) {console.log(`\nPublished as ${VERSION}`);}
+if (ok) {
+  console.log(`\nPublished as ${VERSION}`);
+}
