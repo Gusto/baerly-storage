@@ -1,5 +1,5 @@
 /**
- * Pretty console sink for the `baerly dev` boot path.
+ * Pretty console sink for the `baerlyDev()` Vite-mount boot path.
  *
  * Lives in `@baerly/adapter-node` so the `@baerly/server` kernel
  * doesn't pull `picocolors` or the canonical-line column renderer
@@ -153,7 +153,7 @@ const isPlainEnv = (): boolean => {
  * Built-in pretty sink. Renders canonical-line records (the
  * single-emit/unit-of-work records produced by `flushCanonicalLine`
  * in `@baerly/server/observability`) in a column-aligned cost-aware
- * format intended for `baerly dev`; falls back to a generic
+ * format intended for local dev; falls back to a generic
  * `<ts> <LEVEL> <category> <msg> <jsonProps>` layout for every
  * other record (warn-line `verifier_rejected`, debug storage
  * emits, etc.).

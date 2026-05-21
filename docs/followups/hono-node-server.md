@@ -99,8 +99,6 @@ Added to:
 
 - `packages/adapter-node/package.json` (primary consumer; uses
   `serve()` and `getRequestListener`)
-- `packages/cli/package.json` (uses `getRequestListener` in
-  `baerly dev`'s Vite mount path)
 - `packages/dev/package.json` (uses `getRequestListener` in
   `vite-plugin.ts`)
 - Root `package.json` devDep (manual-e2e + tests)

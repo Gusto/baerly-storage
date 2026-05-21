@@ -9,7 +9,7 @@ Currently:
 - **`LocalFsStorage`** (`src/local-fs.ts`) — `Storage` impl backed by
   a directory tree. Content-addressed `"<sha-256-hex>"` ETags, atomic
   `write-temp + rename` writes, idempotent deletes. Useful for
-  `baerly dev` against a fixture directory and for tests that need
+  `baerlyDev()` against a fixture directory and for tests that need
   cross-`Baerly`-instance visibility without standing up Minio. Single-
   process design center; multi-process scenarios should use Minio.
 

@@ -581,7 +581,7 @@ describe("scaffold", () => {
   // side surfaces here instead of at user-install time.
   test.each([
     { target: "cloudflare" as const, dev: "vite", build: "tsc -b && vite build" },
-    { target: "node" as const, dev: "baerly dev", build: "tsc -b && vite build" },
+    { target: "node" as const, dev: "vite", build: "tsc -b && vite build" },
   ])("emits flat-shape scripts for $target", async ({ target, dev, build }) => {
     const result = await scaffold({
       projectName: `scripts-${target}`,

@@ -30,7 +30,7 @@ export interface LocalFsStorageOptions {
  * never see a partially-written file. The adapter does NOT coordinate
  * cross-process `ifMatch`/`ifNoneMatch` checks (a TOCTOU race is
  * possible if two processes write the same key concurrently).
- * Single-process `baerly dev` is the design center; multi-process
+ * Single-process `baerlyDev()` is the design center; multi-process
  * scenarios use the S3 / Minio path.
  *
  * Node-only — imports `node:fs`, `node:path`, `node:crypto`. Lives in

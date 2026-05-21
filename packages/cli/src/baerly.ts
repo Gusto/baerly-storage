@@ -47,10 +47,9 @@ const main = defineCommand({
     description: "Vendorless document database CLI.",
   },
   // Order matters: citty renders --help in declaration order.
-  // Day-1 verbs (init → dev → deploy) come first, then operator
+  // Day-1 verbs (init → deploy) come first, then operator
   // reads (doctor → inspect → export → cost), then `admin`.
   subCommands: {
-    dev: () => import("./dev.ts").then((m) => m.dev),
     init: () => import("./init.ts").then((m) => m.init),
     deploy: () => import("./deploy.ts").then((m) => m.deploy),
     doctor: () => import("./doctor.ts").then((m) => m.doctor),

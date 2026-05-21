@@ -127,3 +127,8 @@ this followup doesn't revisit `renderDevLanding`'s location.
 Other server-periphery cleanups (router options trim,
 bearer-jwt trim, maintenance options trim, observability
 scope) are tracked in sibling files under `docs/followups/`.
+
+> **Update 2026-05-21.** `baerlyDev()` now accepts `BaerlyAppConfig`
+> (commit `6c951c2`) instead of `app`/`tenant`/`tables` separately.
+> The move-to-adapter-node refactor in option (a) above must carry
+> that signature.

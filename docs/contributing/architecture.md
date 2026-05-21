@@ -158,11 +158,13 @@ picks an impl itself.
   bucket name.
 - `LocalFsStorage` (`packages/dev/src/local-fs.ts`, ships in the
   Node-only `@baerly/dev` package — not part of the runtime bundle
-  since the kernel can't depend on `node:fs`) backs `baerly dev`
-  against a fixture directory. Content-addressed `"<sha-256-hex>"`
-  ETags so identical bodies match across runs; atomic writes via
-  `write-temp + rename`. Callers construct it directly and inject
-  it where a `Storage` is required.
+  since the kernel can't depend on `node:fs`) backs the `baerlyDev()`
+  Vite plugin (which the `examples/minimal-node/` and
+  `examples/helpdesk/` scaffolds use as `pnpm dev`) against a fixture
+  directory. Content-addressed `"<sha-256-hex>"` ETags so identical
+  bodies match across runs; atomic writes via `write-temp + rename`.
+  Callers construct it directly and inject it where a `Storage` is
+  required.
 - `r2BindingStorage` (`packages/adapter-cloudflare/src/r2-binding-storage.ts`)
   for Cloudflare Workers. Wraps an R2 bucket binding, no HTTP hop.
 

@@ -87,9 +87,10 @@ export interface ObservabilityConfig {
    * - `"console-json"` — one JSON object per line via `console.log`.
    * - A {@link Sink} function — passed through verbatim. Adapters
    *   targeting TTY environments (e.g. `@baerly/adapter-node`'s
-   *   `baerly dev` path) construct a pretty sink locally and pass
-   *   it as a function; the kernel deliberately does not ship a
-   *   pretty-printer to keep `picocolors` off the runtime closure.
+   *   `baerlyDev()` Vite-mount path) construct a pretty sink locally
+   *   and pass it as a function; the kernel deliberately does not
+   *   ship a pretty-printer to keep `picocolors` off the runtime
+   *   closure.
    *
    * Default: `"console-json"`.
    */

@@ -24,7 +24,7 @@ before action.
 | [server-kernel-cleanup.md](./server-kernel-cleanup.md) | A4, B-series (sans B5/B14/B23 dropped/rescoped) | Mostly validated; some `[needs-verify]` |
 | [protocol-package-cleanup.md](./protocol-package-cleanup.md) | D1, D10–D13, D15–D20 | Validated; D14 dropped |
 | [examples-helpdesk-dedup.md](./examples-helpdesk-dedup.md) | H7 | **Open strategic question** — needs user call |
-| [dev-command-spa.md](./dev-command-spa.md) | Items 1, 2 (baerly dev + helpdesk-cloudflare banner) | Deferred design questions |
+| [dev-command-spa.md](./dev-command-spa.md) | Item 2 (helpdesk-cloudflare banner) | Deferred design questions |
 | [infra-cuts-parked.md](./infra-cuts-parked.md) | I1–I20 (bench/eval cuts) | Parked — revisit post-launch preflight |
 
 ---
