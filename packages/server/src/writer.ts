@@ -35,10 +35,13 @@
  */
 
 import {
+  CURRENT_JSON_SCHEMA_VERSION,
   type CurrentJson,
+  type CurrentJsonRead,
   type DocumentData,
   type LogEntry,
   type MetricsRecorder,
+  createCurrentJson,
   decodeJsonBytes,
   encodeJsonBytes,
   logSeqStartOf,
@@ -327,9 +330,16 @@ export class Writer {
    * @throws BaerlyError code="Internal" when a log entry expected in
    *   `[0, next_seq)` is missing — a protocol-invariant violation
    *   (compactor bug or stale `current.json`).
-   * @throws BaerlyError code="InvalidResponse" when `current.json` does
-   *   not exist (caller must bootstrap it first), or a log-entry body
+   * @throws BaerlyError code="InvalidResponse" when a log-entry body
    *   isn't valid JSON.
+   *
+   * **Implicit provisioning.** When `current.json` does not exist at
+   * `currentJsonKey` (fresh bucket, fresh collection), the writer
+   * auto-creates it with a zero-state manifest before the commit
+   * lands. The cost is one extra Class A PUT on the very first
+   * commit per collection; steady-state cost is unchanged. A peer
+   * racing the same first-write loses cleanly on the create CAS
+   * and re-reads to pick up the winner's manifest.
    */
   async commit(input: CommitInput): Promise<CommitResult> {
     const session = uuid().slice(0, SESSION_ID_LENGTH);
@@ -407,9 +417,14 @@ export class Writer {
    *   recipe.
    * @throws BaerlyError code="Internal" — protocol-invariant violation
    *   (missing log entry inside `[0, next_seq)`).
-   * @throws BaerlyError code="InvalidResponse" — `current.json` does
-   *   not exist (caller must bootstrap first), or malformed log
-   *   body.
+   * @throws BaerlyError code="InvalidResponse" — malformed log body.
+   *
+   * **Implicit provisioning.** Like {@link commit}, this path auto-
+   * creates `current.json` with a zero-state manifest on a missing
+   * read. Because `commitBatch` does NOT retry on CAS loss, a peer
+   * racing the same first-write surfaces `Conflict` to the caller
+   * (`Db.transaction` re-runs the body); the manifest is durable
+   * regardless of which writer won the create.
    */
   async commitBatch(inputs: readonly CommitInput[]): Promise<CommitBatchResult> {
     if (inputs.length === 0) {
@@ -478,13 +493,15 @@ export class Writer {
     adoptOwnSessionOnLogConflict: boolean,
   ): Promise<SingleAttemptSuccess> {
     // ── Step 1. Read current.json (fresh; carries the ETag). ────────
-    const read = await readCurrentJson(this.#storage, this.#currentJsonKey);
-    if (read === null) {
-      throw new BaerlyError(
-        "InvalidResponse",
-        `${errorPrefix}: current.json missing at ${this.#currentJsonKey}; bootstrap via createCurrentJson first`,
-      );
-    }
+    // On a fresh bucket / fresh collection the manifest doesn't exist
+    // yet. Auto-create it with a zero-state initial so `db.table(x)
+    // .insert(...)` works zero-shot. A peer racing the same create
+    // loses cleanly on `If-None-Match: "*"`; we re-read to pick up
+    // the winner's manifest. Cost: one extra Class A PUT on the very
+    // first commit per collection, zero overhead thereafter.
+    const read =
+      (await readCurrentJson(this.#storage, this.#currentJsonKey)) ??
+      (await this.#provisionCurrentJson());
     const current = read.json;
     const baseEtag = read.etag;
     const expectedEpoch = current.writer_fence.epoch;
@@ -769,6 +786,53 @@ export class Writer {
    * Emits `db.r2.preimage_get_total` (counter, labelled by
    * `collection`) on every successful pre-image find.
    */
+  /**
+   * Auto-create the per-collection `current.json` at
+   * `this.#currentJsonKey` with a zero-state initial manifest. Called
+   * by `#singleAttemptCommit` when the read returned `null` (fresh
+   * bucket / fresh collection).
+   *
+   * Concurrency: `createCurrentJson` uses `If-None-Match: "*"`. If a
+   * peer raced us and won, the storage layer surfaces `Conflict`; we
+   * recover by re-reading the now-present manifest. We do NOT retry
+   * the create — a single recover-via-read covers every race that
+   * could have produced our null read.
+   *
+   * The seed shape (`snapshot: null`, `next_seq: 0`, `log_seq_start:
+   * 0`, `writer_fence: { epoch: 0, owner: "", claimed_at: "" }`)
+   * matches `ensureTable` and `baerly deploy`'s pre-warm path, so an
+   * operator who pre-provisions and a writer who auto-creates land
+   * on byte-identical bytes.
+   *
+   * @throws BaerlyError code="InvalidResponse" — the post-recover
+   *   re-read also returned null. Defensive guard; in practice
+   *   unreachable because the Conflict implies the key now exists.
+   */
+  async #provisionCurrentJson(): Promise<CurrentJsonRead> {
+    const initial: CurrentJson = {
+      schema_version: CURRENT_JSON_SCHEMA_VERSION,
+      snapshot: null,
+      next_seq: 0,
+      log_seq_start: 0,
+      writer_fence: { epoch: 0, owner: "", claimed_at: "" },
+    };
+    try {
+      return await createCurrentJson(this.#storage, this.#currentJsonKey, initial);
+    } catch (error) {
+      if (!(error instanceof BaerlyError) || error.code !== "Conflict") {
+        throw error;
+      }
+    }
+    const recovered = await readCurrentJson(this.#storage, this.#currentJsonKey);
+    if (recovered === null) {
+      throw new BaerlyError(
+        "InvalidResponse",
+        `Writer: current.json missing at ${this.#currentJsonKey} after auto-create raced and recover read returned null`,
+      );
+    }
+    return recovered;
+  }
+
   async #readPreImage(
     logPrefix: string,
     collection: string,

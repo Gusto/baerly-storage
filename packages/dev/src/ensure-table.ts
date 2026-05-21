@@ -6,22 +6,29 @@ import {
 } from "@baerly/protocol";
 
 /**
- * Idempotently create the `current.json` manifest for a single
- * `(app, tenant, table)` triple. Use this once at process boot in a
- * dev server — production deployments provision manifests via
- * `baerly deploy` instead.
+ * Optional pre-warm: idempotently create the `current.json` manifest
+ * for a single `(app, tenant, table)` triple. The kernel auto-creates
+ * this manifest on the first commit anyway (see `Db.create` and
+ * `Writer.commit`), so calling `ensureTable` is **not required** for
+ * correctness — it's a one-Class-A-PUT optimization for callers that
+ * want the manifest in place before the first request lands (seed
+ * scripts, deploy-time provisioning, CI fixtures that snapshot the
+ * bucket between phases, etc.).
  *
  * Wraps {@link createCurrentJson} with the canonical key shape
  * (`app/<app>/tenant/<tenant>/manifests/<table>/current.json`) and
  * swallows `BaerlyError{code:"Conflict"}` so re-runs are safe. An
  * existing manifest is preserved verbatim — this function never
- * overwrites a populated manifest.
+ * overwrites a populated manifest. The seed shape matches the
+ * kernel's auto-create exactly, so a pre-warm and an
+ * auto-provisioned bucket are byte-identical.
  *
  * @example
  * ```ts
  * import { LocalFsStorage, ensureTable } from "baerly-storage/dev";
  *
  * const storage = new LocalFsStorage({ root: "./.baerly-data" });
+ * // Pre-warm so the first request doesn't pay the bootstrap PUT.
  * await ensureTable(storage, { app: "helpdesk", tenant: "demo", table: "tickets" });
  * // …then `createApp({ app: "helpdesk", storage, verifier })`.
  * ```

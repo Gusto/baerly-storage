@@ -109,9 +109,13 @@ export interface RawStorageApi {
  * Construct via {@link Db.create} — the constructor is private so
  * callers don't accidentally bypass validation.
  *
- * **Table provisioning.** `Db` provisions tables implicitly on first
- * write — there is no `ensureTable` method on this class. For
- * dev-time eager provisioning (e.g. seed scripts), use
+ * **Table provisioning.** `Db` provisions tables implicitly on the
+ * first commit — the writer auto-creates the per-collection
+ * `current.json` manifest with a zero-state seed, costing one extra
+ * Class A PUT on the very first write per collection and zero
+ * thereafter. There is no `ensureTable` method on this class. For
+ * eager pre-warm (seed scripts, deploy-time provisioning, CI fixtures
+ * that want byte-identical bytes before the first request), use
  * {@link "baerly-storage/dev".ensureTable}.
  *
  * @example

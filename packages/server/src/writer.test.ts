@@ -99,6 +99,85 @@ describe("Writer", () => {
     expect(persistedEntry.doc_id).toBe("doc-1");
   });
 
+  test("fresh storage: first commit auto-provisions current.json zero-shot", async () => {
+    // No `createCurrentJson` seed — the writer must handle the empty
+    // bucket itself, otherwise zero-shot `db.table().insert(...)`
+    // from a brand-new R2 bucket / LocalFs root crashes with
+    // "current.json missing".
+    const storage = new MemoryStorage();
+    const writer = new Writer({ storage, currentJsonKey: CURRENT_KEY });
+
+    const result = await writer.commit({
+      op: "I",
+      collection: COLL,
+      docId: "doc-1",
+      body: { _id: "doc-1", title: "hello" },
+    });
+
+    expect(result.attempts).toBe(1);
+    expect(result.entry.seq).toBe(0);
+
+    const stored = await storage.get(CURRENT_KEY);
+    expect(stored).not.toBeNull();
+    const persisted = decodeJson<CurrentJson>(stored!.body);
+    expect(persisted.schema_version).toBe(CURRENT_JSON_SCHEMA_VERSION);
+    expect(persisted.snapshot).toBeNull();
+    expect(persisted.next_seq).toBe(1);
+    expect(persisted.log_seq_start).toBe(0);
+    expect(persisted.writer_fence.epoch).toBe(0);
+    expect(persisted.writer_fence.owner).toBe("");
+
+    // Second commit on the same writer reuses the now-existing
+    // manifest — no double-provision.
+    const second = await writer.commit({
+      op: "I",
+      collection: COLL,
+      docId: "doc-2",
+      body: { _id: "doc-2", title: "world" },
+    });
+    expect(second.entry.seq).toBe(1);
+  });
+
+  test("fresh storage race: two writers contending the first write both succeed", async () => {
+    // Two writers point at the same `currentJsonKey` and both see
+    // null on the initial read. One wins the `If-None-Match: "*"`
+    // create; the other recovers via re-read and proceeds. Both
+    // commits must land successfully — the loser's retry budget
+    // absorbs the CAS-conflict on `current.json` once the first
+    // writer's manifest is in place.
+    const storage = getOrCreateMemoryStorageForBucket(BUCKET);
+    const writerA = new Writer({
+      storage,
+      currentJsonKey: CURRENT_KEY,
+      options: { initialBackoffMs: 1, random: () => 0 },
+    });
+    const writerB = new Writer({
+      storage,
+      currentJsonKey: CURRENT_KEY,
+      options: { initialBackoffMs: 1, random: () => 0 },
+    });
+
+    const [a, b] = await Promise.all([
+      writerA.commit({
+        op: "I",
+        collection: COLL,
+        docId: "doc-A",
+        body: { _id: "doc-A", title: "from A" },
+      }),
+      writerB.commit({
+        op: "I",
+        collection: COLL,
+        docId: "doc-B",
+        body: { _id: "doc-B", title: "from B" },
+      }),
+    ]);
+
+    const seqs = new Set([a.entry.seq, b.entry.seq]);
+    expect(seqs).toEqual(new Set([0, 1]));
+    const persisted = decodeJson<CurrentJson>((await storage.get(CURRENT_KEY))!.body);
+    expect(persisted.next_seq).toBe(2);
+  });
+
   test("CAS conflict on first attempt retries and succeeds on attempt 2", async () => {
     const storage = new InstrumentedStorage();
     await createCurrentJson(storage, CURRENT_KEY, seedCurrent());
