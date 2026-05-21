@@ -17,13 +17,21 @@ export default defineConfig({
     dev: "packages/dev/src/index.ts",
     "dev-vite": "packages/dev/src/vite-plugin.ts",
   },
+  // `@xmldom/xmldom` and `aws4fetch` are bundled into the library
+  // entries that use them (`dist/node.js` + `dist/dev-vite.js`). They
+  // used to be optional peer deps, but pnpm skips optional peers on
+  // install, so a fresh `create-baerly` scaffold's `node_modules` had
+  // no copy on disk and `vite.config.ts` died on first load with
+  // `Cannot find package '@xmldom/xmldom'`. Bundling them in here
+  // mirrors `packages/cli/rolldown.config.ts` (the bin) and trades
+  // some cold-start bytes for a working scaffold. The
+  // `bundle-no-live-import` test in `tests/integration/bundle-size.test.ts`
+  // pins this contract across every entry.
   external: [
     /^node:/,
     "@cloudflare/workers-types",
     "@fast-check/vitest",
     "@vitest/expect",
-    "@xmldom/xmldom",
-    "aws4fetch",
     "react",
     "react-dom",
     "vite",

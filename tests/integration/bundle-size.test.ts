@@ -250,7 +250,15 @@ const BUDGETS: readonly Budget[] = [
   //     defence-in-depth is now the only mechanism, matching the
   //     cloudflare adapter) trims a few hundred bytes back. Measured:
   //     433698 raw / 125904 gz.
-  { entry: "node.js", raw: 426 * 1024, gz: 125 * 1024 },
+  //   → 720 KiB raw / 200 KiB gz: `@xmldom/xmldom` + `aws4fetch` now
+  //     bundle into the library entries that use them (previously
+  //     externalised, then declared as optional peerDeps which pnpm
+  //     skips on install — scaffolded apps died with `Cannot find
+  //     package '@xmldom/xmldom'` on first `vite` load). The S3 client
+  //     subgraph (DOMParser + SigV4 signer) now lands in `dist/node.js`
+  //     directly. Cold-start cost only; consumer-bundler-irrelevant.
+  //     Measured: 676293 raw / 187995 gz.
+  { entry: "node.js", raw: 720 * 1024, gz: 200 * 1024 },
   // Client surface — `BaerlyClient<TConfig>` + fetcher plumbing.
   // Browser/runtime-agnostic; no kernel modules in the closure.
   // Budget history:
@@ -334,7 +342,12 @@ const BUDGETS: readonly Budget[] = [
   //     489957 raw / 140341 gz (+4283 raw / +1784 gz since the hono-
   //     node-server bump). Bump leaves ~1.5 KiB raw / ~1 KiB gz of
   //     headroom.
-  { entry: "dev-vite.js", raw: 480 * 1024, gz: 138 * 1024 },
+  //   → 780 KiB raw / 215 KiB gz: dev-vite shares the adapter-node
+  //     listener chunk, so the `@xmldom/xmldom` + `aws4fetch` self-
+  //     containment (see the `node.js` budget note above) lands here
+  //     too. Dev-only Node import — never enters a consumer bundle.
+  //     Measured: 731315 raw / 201995 gz.
+  { entry: "dev-vite.js", raw: 780 * 1024, gz: 215 * 1024 },
   // `baerly` CLI bin — `init`, `dev`, `deploy`, `doctor`, `inspect`,
   // `admin {compact,fsck,migrate,dump,restore,rebuild-index}`,
   // `export`. Bundled as a single file (no static chunk splits)
@@ -409,30 +422,56 @@ describe("bundle size", () => {
     });
   }
 
-  // The `baerly` bin runs in a scaffolded user's app, where the only
-  // installed dep is `baerly-storage` — `@xmldom/xmldom` and
-  // `aws4fetch` are optional peers of the library import surface and
-  // are NOT on disk. The bin therefore can't leave live `import "…"`
-  // statements for those packages in its dist closure; it has to
-  // bundle them. This test pins the contract so a future "move them
-  // back to external" PR fails here instead of at user-install time.
-  test("dist/baerly.js closure has no live import of optional peer deps", () => {
-    const distDir = resolve(__dirname, "../../dist");
-    const seen = new Set<string>();
-    collectClosure(resolve(distDir, "baerly.js"), seen);
-    const offenders: string[] = [];
-    for (const file of seen) {
-      const src = readFileSync(file, "utf8");
-      for (const m of src.matchAll(STATIC_IMPORT_RE)) {
-        const spec = m[1]!;
-        if (spec === "@xmldom/xmldom" || spec === "aws4fetch") {
-          offenders.push(`${file.replace(`${distDir}/`, "")} → ${spec}`);
+  // Scaffolded apps install only `baerly-storage`. `@xmldom/xmldom`
+  // and `aws4fetch` are bundled into the published library + bin
+  // chunks that use them (see `rolldown.config.ts` and
+  // `packages/cli/rolldown.config.ts`); no dist closure may leave a
+  // live `import "@xmldom/xmldom"` or `import "aws4fetch"` for the
+  // host's module resolver to chase, because the host doesn't have
+  // those packages on disk.
+  //
+  // History: the first version of this test only walked
+  // `dist/baerly.js` (commit `51b532e`, agent-struggle #14). A second
+  // regression of the same class slipped through on the library
+  // surface — `dist/dev-vite.js` transitively pulled `dist/node.js`'s
+  // S3 client and emitted a live `import "@xmldom/xmldom"`, which
+  // killed `vite` on scaffolded Cloudflare apps. This test now walks
+  // every entry in the published `exports` map plus the bin.
+  const BUNDLED_OPTIONAL_PEERS = new Set(["@xmldom/xmldom", "aws4fetch"]);
+  const pkgRoot = resolve(__dirname, "../..");
+  const distDir = resolve(pkgRoot, "dist");
+  const rootPkg = JSON.parse(readFileSync(resolve(pkgRoot, "package.json"), "utf8")) as {
+    bin?: Record<string, string>;
+    exports?: Record<string, { import?: string }>;
+  };
+  const entries: string[] = [];
+  for (const cond of Object.values(rootPkg.exports ?? {})) {
+    if (cond.import?.endsWith(".js")) {
+      entries.push(resolve(pkgRoot, cond.import));
+    }
+  }
+  for (const binPath of Object.values(rootPkg.bin ?? {})) {
+    entries.push(resolve(pkgRoot, binPath));
+  }
+  for (const entryAbs of entries) {
+    const label = entryAbs.replace(`${pkgRoot}/`, "");
+    test(`${label} closure has no live import of bundled optional peers`, () => {
+      const seen = new Set<string>();
+      collectClosure(entryAbs, seen);
+      const offenders: string[] = [];
+      for (const file of seen) {
+        const src = readFileSync(file, "utf8");
+        for (const m of src.matchAll(STATIC_IMPORT_RE)) {
+          const spec = m[1]!;
+          if (BUNDLED_OPTIONAL_PEERS.has(spec)) {
+            offenders.push(`${file.replace(`${distDir}/`, "")} → ${spec}`);
+          }
         }
       }
-    }
-    expect(
-      offenders,
-      `baerly bin must self-contain optional peers; live imports: ${offenders.join(", ")}`,
-    ).toEqual([]);
-  });
+      expect(
+        offenders,
+        `${label} must self-contain optional peers; live imports: ${offenders.join(", ")}`,
+      ).toEqual([]);
+    });
+  }
 });
