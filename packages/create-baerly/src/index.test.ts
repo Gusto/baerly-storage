@@ -248,5 +248,10 @@ describe("create-baerly runner (non-TTY)", () => {
     expect(exitCode).toBe(0);
     const err = stderr.captured.join("");
     expect(err).toContain("install exited with code 7");
+    // Recovery hint: the warning must also tell the user how to retry by hand.
+    // detectPm() reads npm_config_user_agent; in the vitest environment that
+    // resolves to "npm", so the hint reads `npm install … manually`.
+    expect(err).toContain("npm install");
+    expect(err).toContain("manually");
   });
 });
