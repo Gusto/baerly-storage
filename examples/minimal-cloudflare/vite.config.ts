@@ -7,12 +7,8 @@ import { baerlyDevAuth, loadDevVars } from "baerly-storage/dev/vite";
 // Bearer token the verifier expects — the secret never enters the SPA
 // bundle (this plugin runs only in dev, server-side).
 const vars = loadDevVars(".dev.vars");
+const SECRET = vars["SHARED_SECRET"] ?? process.env["SHARED_SECRET"] ?? "";
 
 export default defineConfig({
-  plugins: [
-    cloudflare(),
-    ...(vars["SHARED_SECRET"] !== undefined && vars["SHARED_SECRET"] !== ""
-      ? [baerlyDevAuth({ secret: vars["SHARED_SECRET"] })]
-      : []),
-  ],
+  plugins: [cloudflare(), ...(SECRET !== "" ? [baerlyDevAuth({ secret: SECRET })] : [])],
 });
