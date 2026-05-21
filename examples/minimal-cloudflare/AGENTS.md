@@ -165,12 +165,16 @@ read it via your editor's TS LS or via the published types).
     warning gates this.
 
 - **Secrets vs. vars** — `wrangler.jsonc:vars` carries non-secret
-  config (`APP`, `TENANT`, `LOG_LEVEL`, `LOG_SAMPLE`). The verifier's
-  secrets (`SHARED_SECRET` and the optional `CF_ACCESS_*` for
-  Cloudflare Access) live in `.dev.vars` for local `wrangler dev`
-  and behind `wrangler secret put` in production. `.dev.vars.example`
-  is the source of truth for which secrets the Worker reads — keep
-  it in sync with the verifier choices in `src/server/index.ts`.
+  config (`APP`, `TENANT`, `LOG_LEVEL`, `LOG_SAMPLE`, and CF Access
+  identifiers `CF_ACCESS_TEAM_DOMAIN` / `CF_ACCESS_AUDIENCE_TAG` —
+  both are public identifiers, not secrets). The verifier's only
+  secret is `SHARED_SECRET`; it lives in `.dev.vars` for local
+  `wrangler dev` and behind `wrangler secret put` in production.
+  `.dev.vars.example` is the source of truth for which secrets the
+  Worker reads — keep it in sync with the verifier choices in
+  `src/server/index.ts`. `baerly doctor --target=cloudflare` only
+  reads `CF_ACCESS_*` from `wrangler.jsonc:vars`, so setting them
+  via `wrangler secret put` would silently defeat the doctor check.
 
 - **Maintenance loop (Cloudflare)** — opt-in. Add
   `"triggers": { "crons": ["* * * * *"] }` to `wrangler.jsonc` and

@@ -17,14 +17,13 @@
 # plugin runs server-side and `apply: "serve"` skips production
 # builds entirely.
 #
-# Set to a strong random value (e.g. `openssl rand -hex 32`) for
-# any environment reachable from the public internet.
-SHARED_SECRET=
+# `dev-shared-secret` is a working default so
+# `cp .dev.vars.example .dev.vars && pnpm dev` works out of the box.
+# Replace with a strong random value (e.g. `openssl rand -hex 32`)
+# for any environment reachable from the public internet.
+SHARED_SECRET=dev-shared-secret
 
-# --- Production: Cloudflare Access JWT --------------------------
-# Switch `src/server/index.ts` to `cloudflareAccess({ team, audience })`
-# (see the `baerly-storage/auth` JSDoc) and uncomment these.
-# `team` is the slug part of `<team>.cloudflareaccess.com`;
-# `audience` is the Access App's "Audience (AUD) Tag".
-# CF_ACCESS_TEAM_DOMAIN=
-# CF_ACCESS_AUDIENCE_TAG=
+# CF Access identifiers (`CF_ACCESS_TEAM_DOMAIN`,
+# `CF_ACCESS_AUDIENCE_TAG`) are public, not secrets — declare them
+# in `wrangler.jsonc:vars` instead of here. `baerly doctor` reads
+# them from `wrangler.jsonc:vars` only.
