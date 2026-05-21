@@ -4,8 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "baerly dev",
-    "dev:web": "vite",
+    "dev": "vite",
     "build": "tsc -b && vite build",
     "start": "node --experimental-strip-types src/server/index.ts",
     "test": "vitest run --passWithNoTests",
