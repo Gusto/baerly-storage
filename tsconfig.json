@@ -44,10 +44,6 @@
     "examples/helpdesk/src/**/*.tsx",
     "examples/helpdesk/src/**/*.d.ts",
     "examples/helpdesk/vite.config.ts",
-    "examples/*/apps/*/src/**/*.ts",
-    "examples/*/apps/*/src/**/*.tsx",
-    "examples/*/apps/*/src/**/*.d.ts",
-    "examples/*/apps/*/*.config.ts",
     "examples/*/types.ts",
     "examples/*/smoke.test.ts"
   ],

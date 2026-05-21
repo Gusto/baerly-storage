@@ -21,14 +21,13 @@
 
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "types": ["vite/client"],
+    "types": ["vite/client", "node"],
     "composite": true
   },
   "include": [
     "src/web/**/*",
     "uint8array-base64.d.ts",
     "types.ts",
-    "vite.config.ts",
     "baerly.config.ts"
   ]
 }
