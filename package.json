@@ -149,7 +149,7 @@
     "test:export-round-trip": "vitest run --project=default tests/integration/export-round-trip.test.ts",
     "build": "rolldown -c && pnpm -r --filter \"./packages/*\" build",
     "baerly": "node dist/baerly.js",
-    "prepare": "lefthook install && pnpm run build",
+    "prepare": "node scripts/prepare.mjs",
     "format": "oxfmt tests packages",
     "format:check": "oxfmt --check tests packages",
     "lint": "oxlint tests packages",
