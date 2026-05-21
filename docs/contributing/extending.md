@@ -121,7 +121,7 @@ exercised under random write interleavings.
 ### Verify
 
 ```sh
-pnpm verify        # typecheck + lint
+pnpm verify        # typecheck + verify:examples + lint
 pnpm test          # vitest run
 ```
 
@@ -338,7 +338,7 @@ pre-existing rows are not back-projected until rebuild runs.
 ### Verify
 
 ```sh
-pnpm verify        # typecheck + lint
+pnpm verify        # typecheck + verify:examples + lint
 pnpm test          # vitest run
 ```
 

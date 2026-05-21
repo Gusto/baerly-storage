@@ -83,7 +83,7 @@ ref to regenerate.
 ## The verification ritual
 
 ```sh
-pnpm verify       # typecheck + lint — guaranteed green on main
+pnpm verify       # typecheck + verify:examples + lint — guaranteed green on main
 pnpm test         # vitest run — see CLAUDE.md "Test gating" for which tests are gated
 pnpm format:check # currently red on ~20 pre-existing files; run pnpm format to fix
 pnpm build        # exercise the build path (rolldown bundle)
