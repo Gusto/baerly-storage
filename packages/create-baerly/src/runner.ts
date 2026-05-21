@@ -33,7 +33,7 @@ import { detectPm } from "./pm-detect.ts";
 export const CREATE_BAERLY_ARGS = {
   projectName: {
     type: "positional",
-    description: "Output directory name; lowercase alphanumeric + - / _",
+    description: "Output directory name (or '.' to scaffold into the current directory)",
     // Optional at the citty layer so a bare `create-baerly` on a
     // TTY can fall into the wizard. The flag-driven branch below
     // re-validates when wizard mode is suppressed (non-TTY / --json).

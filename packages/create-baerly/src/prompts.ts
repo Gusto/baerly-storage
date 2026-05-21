@@ -70,15 +70,22 @@ export const runWizard = async (input: WizardInput): Promise<WizardOutput> => {
 
 const promptProjectName = async (): Promise<string> => {
   const v = await text({
-    message: "Project name",
+    message: "Project name (use '.' for current directory)",
     placeholder: "my-app",
     validate: (raw) => {
       if (raw.length === 0) {
         return "name must be non-empty";
       }
+      // `"."` (exactly one character) is the shorthand for "scaffold
+      // into the current directory" — `scaffold.ts` derives `appName`
+      // from `basename(cwd)` and applies the same regex below to that
+      // derived value.
+      if (raw === ".") {
+        return undefined;
+      }
       // MUST mirror the validation regex in `scaffold.ts`'s `scaffold()`.
       if (!/^[a-z0-9][a-z0-9_-]*$/.test(raw)) {
-        return "lowercase, alphanumeric + - / _, starting with [a-z0-9]";
+        return "lowercase, alphanumeric + - / _, starting with [a-z0-9] (or '.' for current directory)";
       }
       return undefined;
     },

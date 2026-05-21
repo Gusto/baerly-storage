@@ -1,5 +1,5 @@
 import { fileURLToPath } from "node:url";
-import { dirname, join, resolve, sep } from "node:path";
+import { basename, dirname, join, resolve, sep } from "node:path";
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { detectPm, installCommand, runCommand, type Pm } from "./pm-detect.ts";
 import {
@@ -43,6 +43,22 @@ export interface ScaffoldResult {
   readonly filesWritten: readonly string[];
   readonly nextSteps: readonly string[];
 }
+
+/**
+ * When `projectName === "."` (scaffold into the current directory),
+ * the "non-empty directory" guard is relaxed for these basenames so
+ * a freshly `git init`'d repo with the usual top-level metadata is
+ * acceptable. Any other entry (e.g. `package.json`, `src/`) still
+ * fails the guard.
+ */
+const SCAFFOLD_HERE_ALLOWLIST: ReadonlySet<string> = new Set([
+  ".git",
+  ".gitignore",
+  ".gitattributes",
+  "README.md",
+  "LICENSE",
+  "LICENSE.md",
+]);
 
 const TEXT_EXTS = new Set([
   ".ts",
@@ -180,8 +196,14 @@ export const scaffold = async (opts: ScaffoldOptions): Promise<ScaffoldResult> =
   if (opts.projectName.length === 0) {
     throw new Error("create-baerly: projectName must be non-empty");
   }
+  // `"."` (exactly one character) is the sole sentinel for "scaffold
+  // into the current directory" — matches `npm create vite@latest`
+  // and `create-next-app`. `"./"`, `"./foo"`, `".."`, etc. fall
+  // through to the regex check below and are rejected like any other
+  // invalid name.
+  const here = opts.projectName === ".";
   // MUST mirror the regex in `prompts.ts:promptProjectName`.
-  if (!/^[a-z0-9][a-z0-9_-]*$/.test(opts.projectName)) {
+  if (!here && !/^[a-z0-9][a-z0-9_-]*$/.test(opts.projectName)) {
     throw new Error(
       `create-baerly: projectName must be lowercase, alphanumeric + "_"/"-", starting with [a-z0-9] (got ${JSON.stringify(opts.projectName)})`,
     );
@@ -191,9 +213,31 @@ export const scaffold = async (opts: ScaffoldOptions): Promise<ScaffoldResult> =
   const domain = opts.domain ?? "";
   const templatesRoot = opts.templatesRoot ?? resolveTemplatesRoot();
   const outRoot = opts.outRoot ?? process.cwd();
-  const outDir = resolve(outRoot, opts.projectName);
-  if (existsSync(outDir) && readdirSync(outDir).length > 0) {
-    throw new Error(`create-baerly: ${outDir} exists and is non-empty`);
+  const outDir = here ? resolve(outRoot) : resolve(outRoot, opts.projectName);
+  // When scaffolding into the current directory, derive the
+  // substitution sentinel (`appName`) from the directory's basename
+  // and re-run it through the same regex — the value lands in
+  // `package.json:name`, `wrangler.jsonc`, etc., which all require
+  // an npm-package-shaped slug.
+  const appName = here ? basename(outDir) : opts.projectName;
+  if (here && !/^[a-z0-9][a-z0-9_-]*$/.test(appName)) {
+    throw new Error(
+      `create-baerly: appName must be lowercase, alphanumeric + "_"/"-", starting with [a-z0-9] (got ${JSON.stringify(appName)}) — derived from current directory ${JSON.stringify(outDir)}`,
+    );
+  }
+  if (existsSync(outDir)) {
+    const entries = readdirSync(outDir);
+    if (here) {
+      const offending = entries.filter((e) => !SCAFFOLD_HERE_ALLOWLIST.has(e));
+      if (offending.length > 0) {
+        throw new Error(
+          `create-baerly: ${outDir} contains files that would be overwritten: ${offending.join(", ")}. ` +
+            `Scaffold into '.' is allowed only in an empty directory (a fresh \`git init\` is fine).`,
+        );
+      }
+    } else if (entries.length > 0) {
+      throw new Error(`create-baerly: ${outDir} exists and is non-empty`);
+    }
   }
 
   const starter = opts.starter ?? "minimal";
@@ -208,7 +252,7 @@ export const scaffold = async (opts: ScaffoldOptions): Promise<ScaffoldResult> =
 
   const manifest = loadManifest(templateDir);
   const vars: Record<string, string> = {
-    appName: opts.projectName,
+    appName,
     tenant,
     domain,
     pm,
@@ -293,6 +337,11 @@ export const scaffold = async (opts: ScaffoldOptions): Promise<ScaffoldResult> =
     }
   }
 
-  const nextSteps = [`cd ${opts.projectName}`, installCommand(pm), runCommand(pm, "dev")];
+  // When scaffolding into the current directory the user is already
+  // sitting in `outDir`, so the `cd <projectName>` step would be a
+  // no-op confusion. Drop it.
+  const nextSteps = here
+    ? [installCommand(pm), runCommand(pm, "dev")]
+    : [`cd ${opts.projectName}`, installCommand(pm), runCommand(pm, "dev")];
   return { outDir, filesWritten, nextSteps };
 };

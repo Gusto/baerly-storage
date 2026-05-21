@@ -244,4 +244,31 @@ describe("runWizard", () => {
     expect(opts.validate("a")).toBeUndefined();
     expect(opts.validate("0abc")).toBeUndefined();
   });
+
+  test("validator accepts '.' as the current-directory shorthand", async () => {
+    // Mirror of `scaffold.ts` accepting `projectName === "."`. The
+    // wizard's validator short-circuits to `undefined` so the wizard
+    // returns `"."` to the caller; `scaffold()` then derives `appName`
+    // from `basename(cwd)`.
+    resetFixture();
+    fixture.textValue = "my-app";
+    fixture.selectValue = "cloudflare";
+    fixture.confirmValue = true;
+    const runWizard = await importRunWizard();
+    await runWizard({});
+    const opts = fixture.textCalls[0] as {
+      message: string;
+      validate: (raw: string) => string | undefined;
+    };
+    expect(opts.validate(".")).toBeUndefined();
+    // The message advertises the shorthand.
+    expect(opts.message).toMatch(/current directory/);
+    // Anything else dot-shaped is still rejected, and the error
+    // message points the user at the shorthand.
+    const slashErr = opts.validate("./");
+    expect(slashErr).toMatch(/lowercase/);
+    expect(slashErr).toMatch(/current directory/);
+    expect(opts.validate("..")).toMatch(/lowercase/);
+    expect(opts.validate("./foo")).toMatch(/lowercase/);
+  });
 });

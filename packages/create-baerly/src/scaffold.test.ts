@@ -1,6 +1,6 @@
-import { mkdtemp, readdir, readFile, rm, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join, relative, resolve } from "node:path";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { scaffold } from "./scaffold.ts";
@@ -673,5 +673,124 @@ describe("scaffold", () => {
     expect(mainTs).not.toContain("void client;");
     const config = await readFile(join(result.outDir, "baerly.config.ts"), "utf8");
     expect(config).toContain("notes:");
+  });
+
+  // `projectName === "."` scaffolds into the current directory and
+  // derives `appName` from `basename(outDir)`, matching the convention
+  // used by `npm create vite@latest`, `create-next-app`, etc.
+  describe("scaffold into '.' (current directory)", () => {
+    // `mkdtemp` suffixes a per-platform random string (macOS uses a
+    // mixed-case base-58 alphabet) so we can't trust it to satisfy
+    // the appName regex on its own. Instead we mkdtemp once and then
+    // nest a known-good named subdirectory under it for each test.
+    const makeDotRoot = async (name: string): Promise<string> => {
+      const parent = await mkdtemp(join(tmpdir(), "create-baerly-dot-"));
+      const dotRoot = join(parent, name);
+      await mkdir(dotRoot, { recursive: true });
+      return dotRoot;
+    };
+
+    test("emits files at the outRoot root and derives appName from the basename", async () => {
+      const expectedAppName = "my-here-app";
+      const dotRoot = await makeDotRoot(expectedAppName);
+      try {
+        expect(basename(dotRoot)).toBe(expectedAppName);
+        const result = await scaffold({
+          projectName: ".",
+          target: "cloudflare",
+          pm: "pnpm",
+          tenant: "acme",
+          templatesRoot: TEMPLATES_ROOT,
+          outRoot: dotRoot,
+        });
+        expect(result.outDir).toBe(dotRoot);
+        expect(result.filesWritten).toContain("package.json");
+        const pkg = JSON.parse(await readFile(join(result.outDir, "package.json"), "utf8")) as {
+          name: string;
+        };
+        expect(pkg.name).toBe(expectedAppName);
+        // `cd <projectName>` step is dropped — the user is already in
+        // `outDir`.
+        expect(result.nextSteps).toEqual(["pnpm install", "pnpm dev"]);
+      } finally {
+        await rm(dirname(dotRoot), { recursive: true, force: true });
+      }
+    });
+
+    test("permits an outRoot that already contains allowlisted files (e.g. .git, README.md)", async () => {
+      const dotRoot = await makeDotRoot("my-here-allowlisted");
+      try {
+        // Pre-seed the dir with a fresh-`git init`-style layout.
+        await mkdir(join(dotRoot, ".git"), { recursive: true });
+        await writeFile(join(dotRoot, "README.md"), "# placeholder\n");
+        const result = await scaffold({
+          projectName: ".",
+          target: "node",
+          pm: "pnpm",
+          templatesRoot: TEMPLATES_ROOT,
+          outRoot: dotRoot,
+        });
+        expect(result.outDir).toBe(dotRoot);
+        // README.md ships in the scaffold too; the test only proves
+        // that the pre-existing allowlisted files didn't trip the
+        // emptiness guard.
+        expect(result.filesWritten).toContain("package.json");
+      } finally {
+        await rm(dirname(dotRoot), { recursive: true, force: true });
+      }
+    });
+
+    test("rejects an outRoot that contains a non-allowlisted file", async () => {
+      const dotRoot = await makeDotRoot("my-here-blocked");
+      try {
+        await writeFile(join(dotRoot, "package.json"), "{}\n");
+        await expect(
+          scaffold({
+            projectName: ".",
+            target: "cloudflare",
+            pm: "pnpm",
+            templatesRoot: TEMPLATES_ROOT,
+            outRoot: dotRoot,
+          }),
+        ).rejects.toThrow(/package\.json/);
+      } finally {
+        await rm(dirname(dotRoot), { recursive: true, force: true });
+      }
+    });
+
+    test("rejects when the derived appName (basename of outDir) violates the regex", async () => {
+      // Nested basename intentionally contains uppercase, which the
+      // regex rejects.
+      const dotRoot = await makeDotRoot("Invalid-Caps");
+      try {
+        await expect(
+          scaffold({
+            projectName: ".",
+            target: "cloudflare",
+            pm: "pnpm",
+            templatesRoot: TEMPLATES_ROOT,
+            outRoot: dotRoot,
+          }),
+        ).rejects.toThrow(/appName must be lowercase.*Invalid-Caps.*derived from current directory/);
+      } finally {
+        await rm(dirname(dotRoot), { recursive: true, force: true });
+      }
+    });
+
+    test("'./' is still rejected — only the exact one-char string '.' is the sentinel", async () => {
+      const dotRoot = await makeDotRoot("my-here-slash");
+      try {
+        await expect(
+          scaffold({
+            projectName: "./",
+            target: "cloudflare",
+            templatesRoot: TEMPLATES_ROOT,
+            outRoot: dotRoot,
+          }),
+        ).rejects.toThrow(/projectName must be lowercase/);
+      } finally {
+        await rm(dirname(dotRoot), { recursive: true, force: true });
+      }
+    });
   });
 });
