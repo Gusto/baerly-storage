@@ -14,6 +14,12 @@ const okEnvelope = (data: unknown): Response =>
     headers: { "content-type": "application/json" },
   });
 
+const notFoundResponse = (id: string): Response =>
+  new Response(JSON.stringify({ error: { code: "NotFound", message: `No such row: ${id}` } }), {
+    status: 404,
+    headers: { "content-type": "application/json" },
+  });
+
 const sinceResponse = (body: unknown): Response =>
   new Response(JSON.stringify(body), {
     status: 200,
@@ -48,7 +54,7 @@ const wrap = (client: ReturnType<typeof createBaerlyClient>) => {
 describe("useLiveDocument", () => {
   test("performs initial read and returns the row", async () => {
     const { m, pendingSinceRejects, hangSince } = makeMock();
-    m.on("GET", "/v1/t/tickets", () => okEnvelope([{ _id: "a", title: "hello" }]));
+    m.on("GET", "/v1/t/tickets/:id", () => okEnvelope({ _id: "a", title: "hello" }));
     m.on("GET", "/v1/since", hangSince);
 
     const client = createBaerlyClient({ baseUrl: "http://x", fetch: m.fetch });
@@ -69,7 +75,7 @@ describe("useLiveDocument", () => {
 
   test("returns status=missing when the server has no match", async () => {
     const { m, pendingSinceRejects, hangSince } = makeMock();
-    m.on("GET", "/v1/t/tickets", () => okEnvelope([]));
+    m.on("GET", "/v1/t/tickets/:id", () => notFoundResponse("x"));
     m.on("GET", "/v1/since", hangSince);
 
     const client = createBaerlyClient({ baseUrl: "http://x", fetch: m.fetch });
@@ -89,12 +95,12 @@ describe("useLiveDocument", () => {
   test("refetches when a matching event arrives, ignores events for other rows", async () => {
     const { m, pendingSinceRejects, hangSince } = makeMock();
     let listCalls = 0;
-    m.on("GET", "/v1/t/tickets", () => {
+    m.on("GET", "/v1/t/tickets/:id", () => {
       listCalls += 1;
       if (listCalls === 1) {
-        return okEnvelope([{ _id: "a", title: "v1" }]);
+        return okEnvelope({ _id: "a", title: "v1" });
       }
-      return okEnvelope([{ _id: "a", title: "v2" }]);
+      return okEnvelope({ _id: "a", title: "v2" });
     });
     let sincePoll = 0;
     m.on("GET", "/v1/since", (req) => {
@@ -156,9 +162,9 @@ describe("useLiveDocument", () => {
   test("idle /v1/since response does not refetch", async () => {
     const { m, pendingSinceRejects, hangSince } = makeMock();
     let listCalls = 0;
-    m.on("GET", "/v1/t/tickets", () => {
+    m.on("GET", "/v1/t/tickets/:id", () => {
       listCalls += 1;
-      return okEnvelope([{ _id: "a", title: "v1" }]);
+      return okEnvelope({ _id: "a", title: "v1" });
     });
     let sincePoll = 0;
     m.on("GET", "/v1/since", (req) => {
@@ -188,11 +194,12 @@ describe("useLiveDocument", () => {
   test("id change triggers a refetch", async () => {
     const { m, pendingSinceRejects, hangSince } = makeMock();
     const seenIds: string[] = [];
-    m.on("GET", "/v1/t/tickets", (req) => {
+    m.on("GET", "/v1/t/tickets/:id", (req) => {
+      // Last path segment is the encoded id.
       const url = new URL(req.url);
-      const where = JSON.parse(url.searchParams.get("where") ?? "{}") as { _id?: string };
-      seenIds.push(where._id ?? "");
-      return okEnvelope([{ _id: where._id ?? "?", title: "x" }]);
+      const id = decodeURIComponent(url.pathname.split("/").pop() ?? "");
+      seenIds.push(id);
+      return okEnvelope({ _id: id, title: "x" });
     });
     m.on("GET", "/v1/since", hangSince);
 
