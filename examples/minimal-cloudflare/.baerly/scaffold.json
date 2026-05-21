@@ -13,5 +13,8 @@
     "*.tsbuildinfo"
   ],
   "dropDevDeps": [],
-  "copies": [{ "from": "AGENTS.md", "to": "CLAUDE.md" }]
+  "copies": [
+    { "from": "AGENTS.md", "to": "CLAUDE.md" },
+    { "from": ".dev.vars.example", "to": ".dev.vars" }
+  ]
 }

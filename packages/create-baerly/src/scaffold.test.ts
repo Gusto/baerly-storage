@@ -77,6 +77,58 @@ describe("scaffold", () => {
     expect(worker).toContain("tenantPrefix: env.TENANT");
   });
 
+  // First-touch DX: scaffolder seeds a working `.dev.vars` (cloudflare)
+  // / `.env` (node) so `pnpm dev` succeeds without a manual cp step.
+  // Both files are gitignored by the template, so the seeded dev secret
+  // stays local. Locking this contract per target prevents accidental
+  // regression of the zero-touch onboarding flow.
+  test("cloudflare scaffold seeds .dev.vars from .dev.vars.example", async () => {
+    const result = await scaffold({
+      projectName: "seeded-cf",
+      target: "cloudflare",
+      pm: "pnpm",
+      templatesRoot: TEMPLATES_ROOT,
+      outRoot,
+    });
+    expect(result.filesWritten).toContain(".dev.vars.example");
+    expect(result.filesWritten).toContain(".dev.vars");
+    const example = await readFile(join(result.outDir, ".dev.vars.example"), "utf8");
+    const seeded = await readFile(join(result.outDir, ".dev.vars"), "utf8");
+    expect(seeded).toEqual(example);
+    expect(seeded).toContain("SHARED_SECRET=dev-shared-secret");
+  });
+
+  test("helpdesk-cloudflare scaffold also seeds .dev.vars", async () => {
+    const result = await scaffold({
+      projectName: "seeded-helpdesk",
+      target: "cloudflare",
+      starter: "helpdesk",
+      pm: "pnpm",
+      templatesRoot: TEMPLATES_ROOT,
+      outRoot,
+    });
+    expect(result.filesWritten).toContain(".dev.vars.example");
+    expect(result.filesWritten).toContain(".dev.vars");
+    const seeded = await readFile(join(result.outDir, ".dev.vars"), "utf8");
+    expect(seeded).toContain("SHARED_SECRET=dev-shared-secret");
+  });
+
+  test("node scaffold seeds .env from .env.example", async () => {
+    const result = await scaffold({
+      projectName: "seeded-node",
+      target: "node",
+      pm: "pnpm",
+      templatesRoot: TEMPLATES_ROOT,
+      outRoot,
+    });
+    expect(result.filesWritten).toContain(".env.example");
+    expect(result.filesWritten).toContain(".env");
+    const example = await readFile(join(result.outDir, ".env.example"), "utf8");
+    const seeded = await readFile(join(result.outDir, ".env"), "utf8");
+    expect(seeded).toEqual(example);
+    expect(seeded).toContain("SHARED_SECRET=dev-shared-secret");
+  });
+
   test("emits a production-shape wrangler.jsonc for cloudflare", async () => {
     const result = await scaffold({
       projectName: "prod-app",
