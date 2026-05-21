@@ -43,6 +43,12 @@ export interface WizardInput {
 }
 
 export interface WizardOutput {
+  /**
+   * May be `"."` — the sentinel for "scaffold into the current
+   * directory". Callers must not blindly compose this with a path
+   * (e.g. `path.join(cwd, projectName)`); branch on `=== "."`
+   * first or pass it straight through to `scaffold()`.
+   */
   readonly projectName: string;
   readonly target: "cloudflare" | "node";
   readonly withAddons: readonly Addon[];

@@ -22,6 +22,13 @@ export const KNOWN_ADDONS = ["docker"] as const;
 export type Addon = (typeof KNOWN_ADDONS)[number];
 
 export interface ScaffoldOptions {
+  /**
+   * Lowercase alphanumeric + `-` / `_`, starting with `[a-z0-9]`.
+   * `"."` is a sentinel that scaffolds into the current `outRoot`
+   * (or `process.cwd()` when `outRoot` is unset); the `appName`
+   * substitution sentinel is then derived from that directory's
+   * basename and must itself satisfy the same regex.
+   */
   readonly projectName: string;
   readonly target: "cloudflare" | "node";
   readonly starter?: "minimal" | "helpdesk";
@@ -58,6 +65,7 @@ const SCAFFOLD_HERE_ALLOWLIST: ReadonlySet<string> = new Set([
   "README.md",
   "LICENSE",
   "LICENSE.md",
+  "LICENSE.txt",
 ]);
 
 const TEXT_EXTS = new Set([
@@ -201,9 +209,9 @@ export const scaffold = async (opts: ScaffoldOptions): Promise<ScaffoldResult> =
   // and `create-next-app`. `"./"`, `"./foo"`, `".."`, etc. fall
   // through to the regex check below and are rejected like any other
   // invalid name.
-  const here = opts.projectName === ".";
+  const inPlace = opts.projectName === ".";
   // MUST mirror the regex in `prompts.ts:promptProjectName`.
-  if (!here && !/^[a-z0-9][a-z0-9_-]*$/.test(opts.projectName)) {
+  if (!inPlace && !/^[a-z0-9][a-z0-9_-]*$/.test(opts.projectName)) {
     throw new Error(
       `create-baerly: projectName must be lowercase, alphanumeric + "_"/"-", starting with [a-z0-9] (got ${JSON.stringify(opts.projectName)})`,
     );
@@ -213,21 +221,21 @@ export const scaffold = async (opts: ScaffoldOptions): Promise<ScaffoldResult> =
   const domain = opts.domain ?? "";
   const templatesRoot = opts.templatesRoot ?? resolveTemplatesRoot();
   const outRoot = opts.outRoot ?? process.cwd();
-  const outDir = here ? resolve(outRoot) : resolve(outRoot, opts.projectName);
+  const outDir = inPlace ? resolve(outRoot) : resolve(outRoot, opts.projectName);
   // When scaffolding into the current directory, derive the
   // substitution sentinel (`appName`) from the directory's basename
   // and re-run it through the same regex — the value lands in
   // `package.json:name`, `wrangler.jsonc`, etc., which all require
   // an npm-package-shaped slug.
-  const appName = here ? basename(outDir) : opts.projectName;
-  if (here && !/^[a-z0-9][a-z0-9_-]*$/.test(appName)) {
+  const appName = inPlace ? basename(outDir) : opts.projectName;
+  if (inPlace && !/^[a-z0-9][a-z0-9_-]*$/.test(appName)) {
     throw new Error(
       `create-baerly: appName must be lowercase, alphanumeric + "_"/"-", starting with [a-z0-9] (got ${JSON.stringify(appName)}) — derived from current directory ${JSON.stringify(outDir)}`,
     );
   }
   if (existsSync(outDir)) {
     const entries = readdirSync(outDir);
-    if (here) {
+    if (inPlace) {
       const offending = entries.filter((e) => !SCAFFOLD_HERE_ALLOWLIST.has(e));
       if (offending.length > 0) {
         throw new Error(
@@ -340,7 +348,7 @@ export const scaffold = async (opts: ScaffoldOptions): Promise<ScaffoldResult> =
   // When scaffolding into the current directory the user is already
   // sitting in `outDir`, so the `cd <projectName>` step would be a
   // no-op confusion. Drop it.
-  const nextSteps = here
+  const nextSteps = inPlace
     ? [installCommand(pm), runCommand(pm, "dev")]
     : [`cd ${opts.projectName}`, installCommand(pm), runCommand(pm, "dev")];
   return { outDir, filesWritten, nextSteps };
