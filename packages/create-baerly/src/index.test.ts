@@ -227,6 +227,8 @@ describe("create-baerly runner (non-TTY)", () => {
     expect(exitCode).toBe(0);
     expect(calls).toHaveLength(1);
     expect(calls[0]!.cwd.endsWith(projectName)).toBe(true);
+    // detectPm() resolves npm_config_user_agent — vitest sets it to npm.
+    expect(calls[0]!.pm).toBe("npm");
   });
 
   test("warns but exits 0 when the installer reports a non-zero code", async () => {
