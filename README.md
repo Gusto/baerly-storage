@@ -76,10 +76,11 @@ import { createServer } from "node:http";
 import { getRequestListener } from "@hono/node-server";
 import { createApp } from "baerly-storage/node";
 import { sharedSecret } from "baerly-storage/auth";
-import { LocalFsStorage, ensureTable } from "baerly-storage/dev";
+import { LocalFsStorage } from "baerly-storage/dev";
 
 const storage = new LocalFsStorage({ root: "./.baerly-data" });
-await ensureTable(storage, { app: "tickets", tenant: "acme", table: "items" });
+// No manifest bootstrap needed — the writer auto-provisions
+// `current.json` on the first commit to each (app, tenant, table).
 
 const app = createApp({
   app: "tickets",
