@@ -544,4 +544,42 @@ describe("scaffold", () => {
     expect(pkg.scripts?.["dev"]).toBe(dev);
     expect(pkg.scripts?.["build"]).toBe(build);
   });
+
+  // Drift sentinel: vitest is the project-wide test runner (CLAUDE.md +
+  // every scaffold's AGENTS.md says so). Agents zero-shotting a
+  // scaffolded app start by running `pnpm test`. If a scaffold ships
+  // neither the dep nor a `test` script nor a standalone
+  // `vitest.config.ts`, `pnpm test` either errors with "command not
+  // found" or — on Cloudflare scaffolds — auto-loads `vite.config.ts`
+  // and collides with the Cloudflare Vite plugin
+  // (`The following environment options are incompatible…`). Pin the
+  // three pieces of the contract here so a future scaffold edit that
+  // drops one fails before it reaches a user's terminal.
+  test.each([
+    { target: "cloudflare" as const, starter: undefined },
+    { target: "cloudflare" as const, starter: "helpdesk" as const },
+    { target: "node" as const, starter: undefined },
+  ])("scaffolded $target/$starter ships vitest wired end-to-end", async ({ target, starter }) => {
+    const label = starter === undefined ? target : `${target}-${starter}`;
+    const result = await scaffold({
+      projectName: `vitest-${label}`,
+      target,
+      ...(starter !== undefined && { starter }),
+      pm: "pnpm",
+      templatesRoot: TEMPLATES_ROOT,
+      outRoot,
+    });
+    const pkg = JSON.parse(await readFile(join(result.outDir, "package.json"), "utf8")) as {
+      scripts?: Record<string, string>;
+      devDependencies?: Record<string, string>;
+    };
+    expect(pkg.scripts?.["test"]).toMatch(/^vitest run/);
+    expect(pkg.devDependencies?.["vitest"]).toBeDefined();
+    expect(result.filesWritten).toContain("vitest.config.ts");
+    // The standalone config must NOT re-import `vite.config.ts` — the
+    // whole point is to keep the Cloudflare plugin out of vitest's
+    // pipeline on CF scaffolds and keep startup time minimal on Node.
+    const vitestConfig = await readFile(join(result.outDir, "vitest.config.ts"), "utf8");
+    expect(vitestConfig).not.toMatch(/from\s+["']\.\/vite\.config/);
+  });
 });

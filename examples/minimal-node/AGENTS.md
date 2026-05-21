@@ -46,6 +46,7 @@ read it via your editor's TS LS or via the published types).
 | Command            | What it does                                       | Runtime          |
 | ------------------ | -------------------------------------------------- | ---------------- |
 | `pnpm typecheck`   | TS typecheck across the `app` + `server` project references | seconds   |
+| `pnpm test`        | `vitest run --passWithNoTests` — standalone `vitest.config.ts` (Node env) | seconds |
 | `pnpm dev`         | Run the server locally via `baerly dev` — Node listener on :3000 | seconds to start |
 | `pnpm build`       | `tsc -b && vite build` — emits the SPA into `dist/client/` | seconds  |
 | `pnpm start`       | `node --experimental-strip-types src/server/index.ts` — production entry; serves the SPA from `dist/client/` via `webRoot` | seconds to start |
