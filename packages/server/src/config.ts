@@ -68,8 +68,14 @@ export interface CollectionDefinition {
  * scaffold + the `baerly admin rebuild-index` CLI.
  */
 export interface BaerlyConfig {
-  /** Per-collection declarations, keyed by collection name. */
-  readonly collections?: Readonly<Record<string, CollectionDefinition>>;
+  /**
+   * Per-collection declarations, keyed by collection name. Required
+   * (declare `{}` when you have no collections yet) — this keeps the
+   * config interface from being structurally empty, which would
+   * trigger TypeScript's weak-type check when the adapter accepts
+   * the literal as `BaerlyWorkerOptions.config` / `BaerlyNodeOptions.config`.
+   */
+  readonly collections: Readonly<Record<string, CollectionDefinition>>;
 }
 
 /**

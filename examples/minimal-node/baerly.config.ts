@@ -5,4 +5,5 @@ export default defineConfig({
   tenant: "minimal-demo",
   target: "node",
   domain: undefined,
+  collections: {},
 });

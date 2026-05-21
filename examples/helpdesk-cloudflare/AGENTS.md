@@ -70,7 +70,28 @@ read it via your editor's TS LS or via the published types).
 
 ## When editing X, read Y
 
-- **Predicates** — `db.table<Doc>(name).where({...}).all()`. The
+- **Typed tables** — three ways to get a typed row, in DX order:
+  1. **Bind the config.** This template's `src/web/client.ts`
+     already passes `config` to `createBaerlyClient({ baseUrl,
+     config })`, so `client.table("tickets")` returns
+     `ClientTable<Row>` with `Row` derived from the
+     `TicketSchema` declared in `baerly.config.ts`. No generic
+     needed. Use `client.table<Ticket>("tickets")` (with
+     `Ticket = z.infer<typeof TicketSchema>` from `types.ts`)
+     only when you need the row type by name elsewhere.
+  2. **Explicit generic, kernel constraint.** Without a declared
+     collection, the second overload requires the row to satisfy
+     the kernel's `DocumentData` shape (`{ [k: string]: DocumentValue }`):
+     ```ts
+     import type { DocumentData } from "baerly-storage";
+     interface Bookmark extends DocumentData { _id: string; url: string }
+     await client.table<Bookmark>("bookmarks").all();
+     ```
+     A plain `interface Bookmark { _id: string; url: string }`
+     (no index signature) will fail with TS2344 — the constraint
+     is intentional so the row stays JSON-compatible.
+
+- **Predicates** — `db.table("tickets").where({...}).all()`. The
   predicate is exact-equality only on day one; top-level fields and
   dotted-path keys are supported. There are no operators (`$or`,
   `$gt`, `$in`, `$regex`). Calling `.where(...)` twice AND-merges:

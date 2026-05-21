@@ -59,16 +59,36 @@ read it via your editor's TS LS or via the published types).
 | `tsconfig.app.json`        | Client TS project (`src/web/`, DOM lib)                                              |
 | `tsconfig.worker.json`     | Worker TS project (`src/server/`, workerd lib)                                       |
 | `baerly.config.ts`         | App config — `app`, `tenant`, `target`, `domain`, `collections` (schemas live here). |
+| `types.ts`                 | Shared types between the Worker (`src/server/`) and the SPA (`src/web/`). Both project tsconfigs include this file; put any row type or interface that crosses the boundary here. |
 
 ## When editing X, read Y
 
-- **Predicates** — `db.table<Doc>(name).where({...}).all()`. The
+- **Typed tables** — three ways to get a typed row, in DX order:
+  1. **Bind the config.** Declare the collection (with an optional
+     schema) in `baerly.config.ts`, pass `config` to
+     `createBaerlyClient({ baseUrl, config })` (or `Db.create({
+     storage, config })`), and `client.table("tickets")` returns
+     `ClientTable<Row>` with `Row` derived from the schema. No
+     generic needed.
+  2. **Explicit generic, kernel constraint.** Without a declared
+     collection, the second overload requires the row to satisfy
+     the kernel's `DocumentData` shape (`{ [k: string]: DocumentValue }`):
+     ```ts
+     import type { DocumentData } from "baerly-storage";
+     interface Bookmark extends DocumentData { _id: string; url: string }
+     await client.table<Bookmark>("bookmarks").all();
+     ```
+     A plain `interface Bookmark { _id: string; url: string }`
+     (no index signature) will fail with TS2344 — the constraint
+     is intentional so the row stays JSON-compatible.
+
+- **Predicates** — `db.table("tickets").where({...}).all()`. The
   predicate is exact-equality only on day one; top-level fields and
   dotted-path keys are supported. There are no operators (`$or`,
   `$gt`, `$in`, `$regex`). Calling `.where(...)` twice AND-merges:
 
   ```ts
-  // Top-level equality
+  // Top-level equality (Db inside the Worker, client in the SPA)
   await db.table("tickets").where({ status: "open" }).all();
 
   // Dotted-path on a nested field
