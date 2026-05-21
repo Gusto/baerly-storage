@@ -107,6 +107,19 @@ const readDeclaredRoutePatterns = (wranglerPath: string): readonly string[] => {
     .filter((p): p is string => typeof p === "string");
 };
 
+/** Read declared `vars` keys from `wrangler.jsonc`. */
+const readDeclaredVarKeys = (wranglerPath: string): readonly string[] => {
+  const text = readFileSync(wranglerPath, "utf8");
+  const errors: ParseError[] = [];
+  const obj = parse(text, errors, { allowTrailingComma: true, disallowComments: false }) as
+    | { vars?: Record<string, unknown> }
+    | undefined;
+  if (errors.length > 0 || obj === undefined || obj.vars === undefined) {
+    return [];
+  }
+  return Object.keys(obj.vars);
+};
+
 /**
  * Walk the Cloudflare deploy invariants. With `opts.fix === true`,
  * remediate the auto-fixable issues (bucket creation). Secret
@@ -238,6 +251,29 @@ export const doctorCloudflare = async (
             check: `secret.${name}`,
             message: `secret ${name} is required but unset.`,
             fix: `wrangler secret put ${name}`,
+          });
+        }
+      }
+      // Warn when SHARED_SECRET is deployed without CF Access in front.
+      // In that configuration, the SPA can't authenticate with
+      // SHARED_SECRET without shipping the token in its static bundle.
+      // See docs/guide/client-auth.md.
+      if (configured.includes("SHARED_SECRET")) {
+        const varKeys = new Set(readDeclaredVarKeys(wranglerPath));
+        if (!(varKeys.has("CF_ACCESS_TEAM_DOMAIN") && varKeys.has("CF_ACCESS_AUDIENCE_TAG"))) {
+          findings.push({
+            severity: "warning",
+            check: "shared-secret-without-access",
+            message:
+              "SHARED_SECRET is set on the deployed Worker but CF Access is not " +
+              "configured (CF_ACCESS_TEAM_DOMAIN + CF_ACCESS_AUDIENCE_TAG not in " +
+              "wrangler.jsonc:vars). The SPA cannot authenticate with SHARED_SECRET " +
+              "in prod without leaking the token into the static bundle.",
+            fix:
+              "Set CF_ACCESS_TEAM_DOMAIN + CF_ACCESS_AUDIENCE_TAG in " +
+              "wrangler.jsonc:vars and wire CF Access in front of the Worker route. " +
+              "Or remove SHARED_SECRET (`wrangler secret delete SHARED_SECRET`) if " +
+              "no server-to-server caller needs it.",
           });
         }
       }

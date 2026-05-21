@@ -80,7 +80,21 @@ describe("doctorCloudflare", () => {
   });
 
   test("reports ok when every check passes", async () => {
-    await writeScaffold(repoRoot);
+    await writeScaffold(
+      repoRoot,
+      `{
+        "name": "x",
+        "main": "src/worker.ts",
+        "r2_buckets": [{ "binding": "BUCKET", "bucket_name": "x" }],
+        "vars": {
+          "APP": "x",
+          "TENANT": "default",
+          "CF_ACCESS_TEAM_DOMAIN": "acme.cloudflareaccess.com",
+          "CF_ACCESS_AUDIENCE_TAG": "${"a".repeat(64)}"
+        },
+        "triggers": { "crons": ["* * * * *"] }
+      }`,
+    );
     const { runner } = makeRunner();
     const report = await doctorCloudflare(makeConfig(repoRoot), { runner });
     expect(report.status).toBe("ok");
@@ -195,6 +209,48 @@ describe("doctorCloudflare", () => {
     const cfg = makeConfig(repoRoot, { domain: "app.example.com" });
     const report = await doctorCloudflare(cfg, { runner });
     expect(findingFor(report.findings, "routes.domain")?.severity).toBe("ok");
+  });
+
+  test("warns when SHARED_SECRET is set without CF_ACCESS_* vars", async () => {
+    // PROD_WRANGLER has SHARED_SECRET in the mock secret list but
+    // does not declare CF_ACCESS_TEAM_DOMAIN / CF_ACCESS_AUDIENCE_TAG
+    // in vars. The new check should warn.
+    await writeScaffold(repoRoot);
+    const { runner } = makeRunner();
+    const report = await doctorCloudflare(makeConfig(repoRoot), { runner });
+    const f = findingFor(report.findings, "shared-secret-without-access");
+    expect(f?.severity).toBe("warning");
+    expect(f?.message).toMatch(/CF Access/);
+  });
+
+  test("does not warn when both SHARED_SECRET and CF_ACCESS_* are set", async () => {
+    await writeScaffold(
+      repoRoot,
+      `{
+        "name": "x",
+        "main": "src/worker.ts",
+        "r2_buckets": [{ "binding": "BUCKET", "bucket_name": "x" }],
+        "vars": {
+          "APP": "x",
+          "TENANT": "default",
+          "CF_ACCESS_TEAM_DOMAIN": "acme.cloudflareaccess.com",
+          "CF_ACCESS_AUDIENCE_TAG": "${"a".repeat(64)}"
+        },
+        "triggers": { "crons": ["* * * * *"] }
+      }`,
+    );
+    const { runner } = makeRunner();
+    const report = await doctorCloudflare(makeConfig(repoRoot), { runner });
+    expect(findingFor(report.findings, "shared-secret-without-access")).toBeUndefined();
+  });
+
+  test("does not warn when SHARED_SECRET is unset", async () => {
+    await writeScaffold(repoRoot);
+    const { runner } = makeRunner({
+      "secret list": { code: 0, stdout: "[]" },
+    });
+    const report = await doctorCloudflare(makeConfig(repoRoot), { runner });
+    expect(findingFor(report.findings, "shared-secret-without-access")).toBeUndefined();
   });
 
 });
