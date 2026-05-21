@@ -2,6 +2,7 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { gzipSync } from "node:zlib";
 import { describe, expect, test } from "vitest";
+import { formatBundleSizeLine } from "../helpers/bundle-size-report.ts";
 
 // Bundle weight matters because this lib ships into a user's app
 // bundle — every byte we add is a byte they pay. To keep barrel
@@ -416,9 +417,28 @@ describe("bundle size", () => {
       const measured = measureClosure(entry);
       // Show closure composition in failure output so a regression
       // points straight at the chunk that grew.
-      const report = `${entry} closure: raw=${measured.raw} (budget ${raw}), gz=${measured.gz} (budget ${gz})\n  chunks: ${measured.files.join(", ")}`;
-      expect(measured.raw, `raw bytes over budget — ${report}`).toBeLessThanOrEqual(raw);
-      expect(measured.gz, `gzipped bytes over budget — ${report}`).toBeLessThanOrEqual(gz);
+      const rawLine = formatBundleSizeLine({
+        entry,
+        kind: "raw",
+        measured: measured.raw,
+        budget: raw,
+        chunks: measured.files,
+      });
+      const gzLine = formatBundleSizeLine({
+        entry,
+        kind: "gz",
+        measured: measured.gz,
+        budget: gz,
+        chunks: measured.files,
+      });
+      if (process.env["BUNDLE_SIZE_REPORT"]) {
+        console.log(rawLine);
+        console.log(gzLine);
+      }
+      // oxlint-disable-next-line vitest/valid-expect
+      expect(measured.raw, rawLine).toBeLessThanOrEqual(raw);
+      // oxlint-disable-next-line vitest/valid-expect
+      expect(measured.gz, gzLine).toBeLessThanOrEqual(gz);
     });
   }
 
