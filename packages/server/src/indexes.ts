@@ -372,7 +372,8 @@ export const indexKeyFor = (
  * that index (SQL "NULL values don't enter the index" semantics).
  *
  * @throws BaerlyError code="SchemaError" — `on` contains a dotted
- *   path. A future change lifts this restriction.
+ *   path, or the indexed field's value is an array. Both restrictions
+ *   are pre-launch; multi-value (array) indexes are a follow-up.
  */
 export const projectIndexValues = (
   def: IndexDefinition,
@@ -398,6 +399,17 @@ export const projectIndexValues = (
     // "NULL values don't go into a regular index" semantics.
     if (v === null || v === undefined) {
       return undefined;
+    }
+    // Array values are valid in documents (RFC 7396 replacement
+    // semantics) but multi-value indexes aren't supported yet — the
+    // prefix-tree encoder produces one key per doc, not one per
+    // element. Throw loudly so a user indexing a tag list gets a
+    // clear error instead of garbage keys.
+    if (Array.isArray(v)) {
+      throw new BaerlyError(
+        "SchemaError",
+        `index ${def.name}: cannot index array field "${field}" — multi-value indexes are not supported yet`,
+      );
     }
     values.push(v);
   }

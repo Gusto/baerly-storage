@@ -82,11 +82,9 @@ const DUMP_ARGS = {
 } as const satisfies ArgsDef;
 
 /**
- * Recursive byte-stable JSON stringifier. Keys at every nesting level
- * are sorted ASCII-lex. Numbers must be finite (protocol forbids
- * NaN / Infinity in bodies). Arrays are rejected — the protocol
- * forbids them in bodies; documenting the case here keeps a future
- * widening from silently drifting the canonical format.
+ * Recursive byte-stable JSON stringifier. Object keys at every nesting
+ * level are sorted ASCII-lex; array element order is preserved as-is.
+ * Numbers must be finite (protocol forbids NaN / Infinity in bodies).
  */
 export const canonicalStringify = (value: DocumentValue): string => {
   if (typeof value === "number") {
@@ -107,10 +105,8 @@ export const canonicalStringify = (value: DocumentValue): string => {
     return "null";
   }
   if (Array.isArray(value)) {
-    throw new BaerlyError(
-      "InvalidResponse",
-      "baerly admin dump: array in row body; protocol violation",
-    );
+    const parts = value.map((v) => canonicalStringify(v));
+    return `[${parts.join(",")}]`;
   }
   if (typeof value === "object") {
     const keys = Object.keys(value).toSorted();

@@ -2,7 +2,7 @@ import { fc, test } from "@fast-check/vitest";
 import { describe, expect } from "vitest";
 import { type DocumentValue, merge } from "./json.ts";
 
-const jsonArrayless = fc.letrec((tie) => ({
+const documentValueArb = fc.letrec((tie) => ({
   doc: fc.oneof(
     { depthSize: "small", withCrossShrink: true },
     fc.double({ noNaN: true, noDefaultInfinity: true }),
@@ -10,6 +10,7 @@ const jsonArrayless = fc.letrec((tie) => ({
     fc.string({ minLength: 0, maxLength: 8 }),
     fc.record({ a: tie("doc") }, { requiredKeys: [] }),
     fc.record({ a: tie("doc"), b: tie("doc") }, { requiredKeys: [] }),
+    fc.array(tie("doc"), { minLength: 0, maxLength: 4 }),
   ),
 })).doc as fc.Arbitrary<DocumentValue>;
 
@@ -37,8 +38,8 @@ const jsonStructuredDoc = fc.letrec((tie) => ({
   ),
 })).doc as fc.Arbitrary<DocumentValue>;
 
-describe("JSON Merge Patch (RFC 7386)", () => {
-  test.prop({ a: jsonArrayless })("identity: merge(a, undefined) === a", ({ a }) => {
+describe("JSON Merge Patch (RFC 7396)", () => {
+  test.prop({ a: documentValueArb })("identity: merge(a, undefined) === a", ({ a }) => {
     expect(merge(a, undefined)).toEqual(a);
   });
 
@@ -50,7 +51,7 @@ describe("JSON Merge Patch (RFC 7386)", () => {
     expect(merge({ a: "" }, {})).toEqual({ a: "" });
   });
 
-  test.prop({ a: jsonArrayless })("deletion: merge(a, null) === undefined", ({ a }) => {
+  test.prop({ a: documentValueArb })("deletion: merge(a, null) === undefined", ({ a }) => {
     expect(merge(a, null)).toBeUndefined();
   });
 
@@ -77,7 +78,7 @@ describe("JSON Merge Patch (RFC 7386)", () => {
     },
   );
 
-  test.prop({ a: jsonArrayless })("idempotent: merge(a, a) === a", ({ a }) => {
+  test.prop({ a: documentValueArb })("idempotent: merge(a, a) === a", ({ a }) => {
     expect(merge(a, a)).toEqual(a);
   });
 
@@ -97,4 +98,68 @@ describe("JSON Merge Patch (RFC 7386)", () => {
     expect((proto as Record<string, unknown>)["prototype"]).toBeUndefined();
   });
 
+  describe("array values (RFC 7396 §1: opaque replacement)", () => {
+    test("nested array is replaced wholesale, not element-merged", () => {
+      // The pre-fix bug: merge spread the array as an object and emitted
+      // `{tags: {"0":"c","1":"b"}}` for this exact input.
+      const out = merge({ tags: ["a", "b"] }, { tags: ["c"] });
+      expect(out).toEqual({ tags: ["c"] });
+    });
+
+    test("shrinking patch fully replaces longer target array", () => {
+      const out = merge({ tags: ["a", "b", "c"] }, { tags: ["x"] });
+      expect(out).toEqual({ tags: ["x"] });
+    });
+
+    test("growing patch fully replaces shorter target array", () => {
+      const out = merge({ tags: ["a"] }, { tags: ["x", "y", "z"] });
+      expect(out).toEqual({ tags: ["x", "y", "z"] });
+    });
+
+    test("empty array patch clears the field to []", () => {
+      const out = merge({ tags: ["a", "b"] }, { tags: [] });
+      expect(out).toEqual({ tags: [] });
+    });
+
+    test("array patch replaces an object target wholesale", () => {
+      const out = merge<DocumentValue>({ a: 1 }, [1, 2, 3] as unknown as Partial<DocumentValue>);
+      expect(out).toEqual([1, 2, 3]);
+    });
+
+    test("object patch replaces an array target wholesale", () => {
+      const out = merge<DocumentValue>(
+        [1, 2, 3] as DocumentValue,
+        { a: 1 } as unknown as Partial<DocumentValue>,
+      );
+      expect(out).toEqual({ a: 1 });
+    });
+
+    test("array of objects: elements are not deep-merged", () => {
+      const out = merge<DocumentValue>(
+        { items: [{ id: 1, name: "old" }] },
+        { items: [{ id: 1 }] } as Partial<DocumentValue>,
+      );
+      // RFC 7396: the array is replaced — `name: "old"` is gone.
+      expect(out).toEqual({ items: [{ id: 1 }] });
+    });
+
+    test("array sibling: other keys deep-merge as normal", () => {
+      const out = merge<DocumentValue>(
+        { tags: ["a"], meta: { version: 1, author: "alice" } },
+        { tags: ["b"], meta: { version: 2 } } as Partial<DocumentValue>,
+      );
+      expect(out).toEqual({
+        tags: ["b"],
+        meta: { version: 2, author: "alice" },
+      });
+    });
+
+    test("null inside array is preserved (array is opaque)", () => {
+      const out = merge<DocumentValue>(
+        { tags: ["a"] },
+        { tags: [null, "b"] } as unknown as Partial<DocumentValue>,
+      );
+      expect(out).toEqual({ tags: [null, "b"] });
+    });
+  });
 });
