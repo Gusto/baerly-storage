@@ -19,7 +19,13 @@ import {
   type StoragePutResult,
   type Table,
 } from "@baerly/protocol";
-import type { BaerlyConfig, CollectionNames, RowOf, UnboundConfig } from "./config.ts";
+import {
+  type BaerlyConfig,
+  type CollectionNames,
+  collectionsToMaps,
+  type RowOf,
+  type UnboundConfig,
+} from "./config.ts";
 import type { IndexDefinition } from "./indexes.ts";
 import type { CurrentJsonCacheSlot, TableReadContext } from "./query.ts";
 import type { SchemaValidator } from "./schema.ts";
@@ -294,33 +300,56 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
      */
     indexes?: ReadonlyMap<string, ReadonlyArray<IndexDefinition>>;
     /**
-     * Optional. When passed, `db.table(name)` narrows `name` to declared
-     * collection names and infers the row type from
-     * `collections[name].schema`. Pass the value returned by
-     * {@link defineConfig} from your `baerly.config.ts`.
+     * Optional. Pass the value returned by {@link defineConfig} from
+     * your `baerly.config.ts`. Two things happen:
      *
-     * Type-only seam: `Db` does not read `config` at runtime — the
-     * runtime path still consults the separately-passed `schemas` /
-     * `indexes` maps. The field exists purely so TypeScript can capture
-     * a literal-pinned `TConfig`, off of which `db.table("name")` then
-     * recovers the row's `_id` / field shape via {@link RowOf}.
+     * 1. **Types.** `db.table(name)` narrows `name` to declared
+     *    collection names and infers the row type from
+     *    `collections[name].schema` via {@link RowOf}.
+     * 2. **Runtime.** When `schemas` / `indexes` are not explicitly
+     *    passed, `Db.create` derives them from `config.collections`
+     *    via {@link collectionsToMaps}. Schema validation and index
+     *    routing are wired automatically — no second hand-off step.
      *
-     * Adapter authors continue to pass `schemas` + `indexes` maps as
-     * today. `config` is for app-side callers who construct `Db`
-     * directly with a `baerly.config.ts` in scope.
+     * Explicit `schemas` / `indexes` overrides the derived maps. The
+     * adapter hot path (`adapter-node`, `adapter-cloudflare`) pre-
+     * flattens once at factory time and passes the maps explicitly
+     * to keep per-request `Db.create` allocation-free; app and test
+     * code can pass `config` alone.
+     *
+     * @example
+     * ```ts
+     * import config from "../baerly.config.ts";
+     * const db = Db.create({
+     *   storage: new MemoryStorage(),
+     *   app: "helpdesk",
+     *   tenant: "test",
+     *   config,
+     * });
+     * // db.table("tickets") is typed AND validates writes against
+     * // the schema declared in baerly.config.ts.
+     * ```
      */
     config?: TConfig;
   }): Db<TConfig> {
     const { storage, app, tenant } = config;
     assertKeySegment(app, "app", "Db.create");
     assertKeySegment(tenant, "tenant", "Db.create");
+    // Derive runtime maps from `config` when caller hasn't supplied
+    // explicit `schemas`/`indexes`. Adapters pre-flatten once and
+    // pass explicit maps for the hot path; app/test code passes
+    // `config` alone and skips the extra hand-off.
+    const derived =
+      config.config !== undefined && (config.schemas === undefined || config.indexes === undefined)
+        ? collectionsToMaps(config.config.collections)
+        : undefined;
     return new Db<TConfig>(
       app,
       tenant,
       storage,
       config.metrics ?? noopMetricsRecorder,
-      config.schemas ?? new Map(),
-      config.indexes ?? new Map(),
+      config.schemas ?? derived?.schemas ?? new Map(),
+      config.indexes ?? derived?.indexes ?? new Map(),
     );
   }
 

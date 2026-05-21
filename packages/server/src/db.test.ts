@@ -9,8 +9,10 @@ import {
   type Storage,
 } from "@baerly/protocol";
 import { describe, expect, test } from "vitest";
+import type { BaerlyConfig } from "./config.ts";
 import { Db } from "./db.ts";
 import { InMemoryMetricsRecorder } from "./_internal/in-memory-metrics.ts";
+import type { SchemaValidator } from "./schema.ts";
 
 const utf8 = (s: string): Uint8Array => new TextEncoder().encode(s);
 const fromBytes = (b: Uint8Array): string => new TextDecoder().decode(b);
@@ -65,6 +67,81 @@ describe("Db.create", () => {
     } catch (error) {
       expect((error as BaerlyError).code).toBe("InvalidConfig");
     }
+  });
+});
+
+describe("Db.create config derivation", () => {
+  // Regression: `config` used to be a type-only seam. App and test
+  // code that wrote `Db.create({ storage, app, tenant, config })`
+  // silently dropped schemas + indexes at runtime; callers had to
+  // discover `collectionsToMaps(config.collections)` and thread the
+  // flattened maps explicitly. The fix derives the maps inside
+  // `Db.create` when explicit `schemas` / `indexes` aren't passed.
+  const onlyStrings: SchemaValidator = {
+    "~standard": {
+      version: 1,
+      vendor: "test",
+      validate: (value) => {
+        if (typeof value === "object" && value !== null && "title" in value) {
+          const t = (value as { title: unknown }).title;
+          if (typeof t === "string") {
+            return { value };
+          }
+        }
+        return { issues: [{ path: ["title"], message: "title must be a string" }] };
+      },
+    },
+  };
+
+  test("derives schemas from config — invalid insert throws SchemaError", async () => {
+    const config: BaerlyConfig = {
+      collections: { tickets: { schema: onlyStrings } },
+    };
+    const db = Db.create({ storage: new MemoryStorage(), app: "x", tenant: "y", config });
+    await expect(db.table("tickets").insert({ title: 42 })).rejects.toMatchObject({
+      code: "SchemaError",
+    });
+    // Valid insert still goes through — proves the schema was wired
+    // (not just thrown blindly).
+    await expect(db.table("tickets").insert({ title: "ok" })).resolves.toBeDefined();
+  });
+
+  test("derives indexes from config — visible on the tableReadContext", () => {
+    const config: BaerlyConfig = {
+      collections: { tickets: { indexes: [{ name: "by_status", on: "status" }] } },
+    };
+    const db = Db.create({ storage: new MemoryStorage(), app: "x", tenant: "y", config });
+    expect(db.tableReadContext("tickets").indexes.map((i) => i.name)).toEqual(["by_status"]);
+  });
+
+  test("explicit `schemas` overrides config-derived schemas", async () => {
+    const config: BaerlyConfig = {
+      collections: { tickets: { schema: onlyStrings } },
+    };
+    const db = Db.create({
+      storage: new MemoryStorage(),
+      app: "x",
+      tenant: "y",
+      config,
+      schemas: new Map(),
+    });
+    // Explicit empty override wins — the bad insert that would have
+    // tripped `onlyStrings` now succeeds.
+    await expect(db.table("tickets").insert({ title: 42 })).resolves.toBeDefined();
+  });
+
+  test("explicit `indexes` overrides config-derived indexes", () => {
+    const config: BaerlyConfig = {
+      collections: { tickets: { indexes: [{ name: "by_status", on: "status" }] } },
+    };
+    const db = Db.create({
+      storage: new MemoryStorage(),
+      app: "x",
+      tenant: "y",
+      config,
+      indexes: new Map(),
+    });
+    expect(db.tableReadContext("tickets").indexes).toEqual([]);
   });
 });
 
