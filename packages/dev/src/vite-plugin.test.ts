@@ -59,20 +59,28 @@ class MockRes extends Writable {
 
 const makeRes = (): MockRes => new MockRes();
 
-const makeReq = (
-  url: string,
-  method = "GET",
-): {
+interface FakeReq {
   url: string;
   method: string;
   headers: Record<string, string>;
+  /**
+   * Node's `http.IncomingMessage` exposes BOTH a parsed `headers` map AND
+   * a wire-form `rawHeaders` array `[name1, value1, name2, value2, ...]`.
+   * `@cloudflare/vite-plugin` builds its Fetch `Request` from `rawHeaders`,
+   * so the mock must carry both — mutating only `headers` will silently
+   * mask the bug this file regression-tests.
+   */
+  rawHeaders: string[];
   on: (event: string, cb: (...args: unknown[]) => void) => unknown;
-} => {
+}
+
+const makeReq = (url: string, method = "GET"): FakeReq => {
   const listeners: Record<string, Array<(...args: unknown[]) => void>> = {};
   return {
     url,
     method,
     headers: { host: "localhost" },
+    rawHeaders: ["Host", "localhost"],
     on(event, cb) {
       (listeners[event] ??= []).push(cb);
       if (event === "end") {
@@ -81,6 +89,22 @@ const makeReq = (
       return this;
     },
   };
+};
+
+/**
+ * Reconstruct a Fetch `Headers` from `req.rawHeaders` the way
+ * `@cloudflare/vite-plugin`'s `createHeaders()` does. Used by tests
+ * to assert that wire-form readers see what `baerlyDevAuth` injected.
+ */
+const headersFromRaw = (req: FakeReq): Headers => {
+  const h = new Headers();
+  for (let i = 0; i < req.rawHeaders.length; i += 2) {
+    if (req.rawHeaders[i]!.startsWith(":")) {
+      continue;
+    }
+    h.append(req.rawHeaders[i]!, req.rawHeaders[i + 1]!);
+  }
+  return h;
 };
 
 let tmp: string;
@@ -215,12 +239,47 @@ describe("baerlyDevAuth", () => {
     expect(nextCalled).toBe(1);
   });
 
-  test("leaves non-/v1 requests alone", () => {
+  // Regression: `@cloudflare/vite-plugin` builds the in-process Worker's
+  // Fetch `Request` from `req.rawHeaders`, not `req.headers`. Mutating
+  // only the parsed view silently drops the bearer token — the worker's
+  // verifier then returns 401. This test pins the wire-form contract by
+  // reconstructing the Headers object the same way the cloudflare plugin
+  // does (see node_modules/@cloudflare/vite-plugin/dist/index.mjs:1550).
+  test("mutates rawHeaders so wire-form Headers reads the bearer", () => {
+    const mw = captureMw(baerlyDevAuth({ secret: "test-secret" }));
+    const req = makeReq("/v1/healthz");
+    mw(req, makeRes(), () => {});
+    expect(headersFromRaw(req).get("authorization")).toBe("Bearer test-secret");
+  });
+
+  test("replaces an existing Authorization in rawHeaders (no duplication)", () => {
+    const mw = captureMw(baerlyDevAuth({ secret: "test-secret" }));
+    const req = makeReq("/v1/healthz");
+    // Simulate a stale Authorization on the inbound request — the
+    // injected secret must REPLACE it, otherwise `Headers.append` would
+    // concat the values with ", " and the verifier would 401.
+    req.headers["authorization"] = "Bearer stale";
+    req.rawHeaders.push("authorization", "Bearer stale");
+    mw(req, makeRes(), () => {});
+    expect(req.headers["authorization"]).toBe("Bearer test-secret");
+    expect(headersFromRaw(req).get("authorization")).toBe("Bearer test-secret");
+    // Count occurrences of the (case-insensitive) authorization slot.
+    let count = 0;
+    for (let i = 0; i < req.rawHeaders.length; i += 2) {
+      if (req.rawHeaders[i]!.toLowerCase() === "authorization") {
+        count += 1;
+      }
+    }
+    expect(count).toBe(1);
+  });
+
+  test("leaves non-/v1 requests alone (rawHeaders untouched)", () => {
     const mw = captureMw(baerlyDevAuth({ secret: "test-secret" }));
     const req = makeReq("/index.html");
-    const res = makeRes();
-    mw(req, res, () => {});
+    const before = [...req.rawHeaders];
+    mw(req, makeRes(), () => {});
     expect(req.headers["authorization"]).toBeUndefined();
+    expect(req.rawHeaders).toEqual(before);
   });
 
   test("apply is 'serve' so prod builds skip injection entirely", () => {
@@ -231,9 +290,9 @@ describe("baerlyDevAuth", () => {
   test("respects custom prefix", () => {
     const mw = captureMw(baerlyDevAuth({ secret: "x", prefix: "/api" }));
     const req = makeReq("/api/foo");
-    const res = makeRes();
-    mw(req, res, () => {});
+    mw(req, makeRes(), () => {});
     expect(req.headers["authorization"]).toBe("Bearer x");
+    expect(headersFromRaw(req).get("authorization")).toBe("Bearer x");
   });
 
   test("rejects empty secret eagerly", () => {

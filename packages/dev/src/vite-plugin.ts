@@ -31,6 +31,41 @@ export interface BaerlyDevOptions {
 const isV1Path = (url: string): boolean =>
   url === "/v1" || url.startsWith("/v1/") || url.startsWith("/v1?");
 
+/**
+ * Inject `Authorization: ${value}` into a Node `IncomingMessage` such
+ * that BOTH the parsed (`req.headers`) and the wire-form (`req.rawHeaders`)
+ * views agree.
+ *
+ * Why both: `req.headers` is the parsed-and-lowercased JS map most
+ * connect-style middleware reads, but Node→Fetch bridges typically
+ * rebuild the Fetch `Headers` from `req.rawHeaders` (the original
+ * `[name, value, name, value, …]` wire array) to preserve case and
+ * multi-value semantics. `@cloudflare/vite-plugin`'s `createHeaders()`
+ * does exactly that — so mutating `req.headers` alone silently drops
+ * the bearer token when the in-process Worker receives the request.
+ * Treat any new injection in this file as obligated to touch both.
+ */
+const injectAuthorizationHeader = (
+  req: {
+    headers: Record<string, string | string[] | undefined>;
+    rawHeaders?: string[];
+  },
+  value: string,
+): void => {
+  req.headers["authorization"] = value;
+  const raw = req.rawHeaders;
+  if (raw === undefined) {
+    return;
+  }
+  for (let i = 0; i < raw.length; i += 2) {
+    if (raw[i]!.toLowerCase() === "authorization") {
+      raw[i + 1] = value;
+      return;
+    }
+  }
+  raw.push("Authorization", value);
+};
+
 export interface BaerlyDevAuthOptions {
   /** Bearer token to inject on matched paths. */
   readonly secret: string;
@@ -73,7 +108,7 @@ export function baerlyDevAuth(opts: BaerlyDevAuthOptions): Plugin {
       server.middlewares.use((req, _res, next) => {
         const url = req.url ?? "";
         if (url === prefix || url.startsWith(`${prefix}/`) || url.startsWith(`${prefix}?`)) {
-          req.headers["authorization"] = `Bearer ${opts.secret}`;
+          injectAuthorizationHeader(req, `Bearer ${opts.secret}`);
         }
         next();
       });
@@ -153,8 +188,9 @@ export function baerlyDev(opts: BaerlyDevOptions): Plugin {
         }
         // Inject the bearer token server-side so the SPA never sees
         // the secret. The verifier inside app.fetch validates the
-        // injected header normally.
-        req.headers["authorization"] = `Bearer ${opts.secret}`;
+        // injected header normally. Mutates both `req.headers` and
+        // `req.rawHeaders` — see `injectAuthorizationHeader`'s JSDoc.
+        injectAuthorizationHeader(req, `Bearer ${opts.secret}`);
         ready.then(
           (listener) => {
             listener(req as never, res as never);
