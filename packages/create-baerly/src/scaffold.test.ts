@@ -634,4 +634,44 @@ describe("scaffold", () => {
     const vitestConfig = await readFile(join(result.outDir, "vitest.config.ts"), "utf8");
     expect(vitestConfig).not.toMatch(/from\s+["']\.\/vite\.config/);
   });
+
+  test("cloudflare scaffold ships a wired notes-collection example in main.ts", async () => {
+    const result = await scaffold({
+      projectName: "wired-cf",
+      target: "cloudflare",
+      pm: "pnpm",
+      templatesRoot: TEMPLATES_ROOT,
+      outRoot,
+    });
+    expect(result.filesWritten).toContain(join("src", "web", "main.ts"));
+    const mainTs = await readFile(join(result.outDir, "src", "web", "main.ts"), "utf8");
+    // Round-trip wired example must reach the DB on first load.
+    expect(mainTs).toContain('.table<Note>("notes")');
+    expect(mainTs).toContain(".all()");
+    expect(mainTs).toContain(".insert(");
+    // Regression: no more `void client;` standalone no-op placeholder.
+    expect(mainTs).not.toContain("void client;");
+
+    const config = await readFile(join(result.outDir, "baerly.config.ts"), "utf8");
+    expect(config).toContain("notes:");
+  });
+
+  test("node scaffold ships a wired notes-collection example in main.ts", async () => {
+    const result = await scaffold({
+      projectName: "wired-node",
+      target: "node",
+      pm: "pnpm",
+      templatesRoot: TEMPLATES_ROOT,
+      outRoot,
+    });
+    expect(result.filesWritten).toContain(join("src", "web", "main.ts"));
+    const mainTs = await readFile(join(result.outDir, "src", "web", "main.ts"), "utf8");
+    expect(mainTs).toContain('.table<Note>("notes")');
+    expect(mainTs).toContain(".all()");
+    expect(mainTs).toContain(".insert(");
+    // Regression: no more `void client;` standalone no-op placeholder.
+    expect(mainTs).not.toContain("void client;");
+    const config = await readFile(join(result.outDir, "baerly.config.ts"), "utf8");
+    expect(config).toContain("notes:");
+  });
 });
