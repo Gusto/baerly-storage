@@ -9,7 +9,8 @@
     "build": "tsc -b && vite build",
     "start": "node --experimental-strip-types src/server/index.ts",
     "test": "vitest run --passWithNoTests",
-    "typecheck": "tsc -b --noEmit"
+    "typecheck": "tsc -b --noEmit",
+    "verify": "pnpm run typecheck && pnpm run test"
   },
   "dependencies": {
     "@xmldom/xmldom": "^0.9.10",

@@ -6,7 +6,6 @@ import config from "../../baerly.config.ts";
 //          server-side; this file never sees the bearer.
 //  - Prod: wire CF Access in front of the Worker route; the browser
 //          sends `Cf-Access-Jwt-Assertion` as a cookie automatically.
-//          See docs/guide/client-auth.md.
 export const client = createBaerlyClient({
   baseUrl: "",
   config,

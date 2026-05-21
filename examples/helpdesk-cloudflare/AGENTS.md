@@ -33,6 +33,12 @@ Public API docs: https://docs.baerly.dev/ (the JSDoc on
 `baerly-storage`'s `Db` and `Table` is the canonical reference;
 read it via your editor's TS LS or via the published types).
 
+Headless / CLI agents without a TS LS: `cat
+node_modules/baerly-storage/dist/AGENTS.md` is a one-read quickref
+of the full public API surface (`Db`, `Table`, `Query`,
+`ConsistencyLevel`, `DocumentData`, `BaerlyError`, `defineConfig`,
+`createBaerlyClient`, and the common imports).
+
 ## Toolchain
 
 - **Package manager:** pnpm. The emitted repo pins
@@ -47,6 +53,7 @@ read it via your editor's TS LS or via the published types).
 
 | Command          | What it does                                                                            | Runtime          |
 | ---------------- | --------------------------------------------------------------------------------------- | ---------------- |
+| `pnpm verify`    | `pnpm run typecheck && pnpm run test` — the green-light gate; what an agent should run as the smoke check before claiming the change works | seconds |
 | `pnpm typecheck` | TS typecheck across the worker + web project references (`tsc -b --noEmit`)            | seconds          |
 | `pnpm test`      | `vitest run --passWithNoTests` — standalone `vitest.config.ts` (Node env, ignores `vite.config.ts` so the Cloudflare plugin doesn't load) | seconds |
 | `pnpm dev`       | Run `vite` — the Cloudflare plugin runs the Worker inside `workerd` next to the SPA dev server; same origin on :5173 | seconds to start |
@@ -149,6 +156,32 @@ read it via your editor's TS LS or via the published types).
   to the full table scan with a metric bump — correctness is
   preserved.
 
+- **Consistency** — every terminal read takes an optional
+  `.consistency("eventual" | "strong")` modifier; mutations are
+  always strong.
+
+  ```ts
+  // Strong (default): GETs `current.json` fresh, then folds the log.
+  // Use after a write you just made, or for single-user flows where
+  // the user expects to see their own change reflected immediately.
+  await db.table("tickets").where({ status: "open" }).all();
+
+  // Eventual: skips the per-call `current.json` GET; serves the view
+  // this isolate observed when it last advanced. May be one pointer
+  // old. Use for background polls, auto-refresh, list views — places
+  // where shaving one Class B op per read matters more than the
+  // last-write being reflected.
+  await db.table("tickets")
+    .where({ status: "open" })
+    .consistency("eventual")
+    .all();
+  ```
+
+  Last-call-wins on repeat invocation. A follow-up
+  `.consistency("strong")` re-anchors. HTTP mirror:
+  `?consistency=eventual` on `GET /v1/t/:table` and
+  `GET /v1/t/:table/:id`.
+
 - **Schemas (live feature)** — schemas are validated on the server
   for every `insert` / `update` / `replace` when bound. Declare via
   `defineConfig` using any StandardSchema v1 validator (Zod 3.24+,
@@ -197,11 +230,9 @@ read it via your editor's TS LS or via the published types).
   reference: the `Routes` type and the JSDoc on `createRouter` in
   `baerly-storage`.
 
-- **Auth setup (Cloudflare)** — see
-  [docs/guide/client-auth.md](../../docs/guide/client-auth.md) for the
-  full dev/prod recipe and why `SHARED_SECRET` is server-to-server-only.
+- **Auth setup (Cloudflare)** — `SHARED_SECRET` is
+  server-to-server-only; never put it in the SPA bundle.
 
-  Short version:
   - **Dev:** `baerlyDevAuth` in `vite.config.ts` injects the bearer
     server-side from `.dev.vars`. The SPA calls `/v1/*` with no
     `Authorization` header — the secret never enters the bundle.

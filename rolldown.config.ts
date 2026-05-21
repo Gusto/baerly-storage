@@ -1,5 +1,21 @@
+import { copyFileSync, mkdirSync } from "node:fs";
 import { defineConfig } from "rolldown";
 import { dts } from "rolldown-plugin-dts";
+
+/**
+ * Copy the hand-authored public-API quickref into `dist/AGENTS.md`
+ * so a freshly-installed `node_modules/baerly-storage/dist/AGENTS.md`
+ * gives a CLI agent (no TS LS) the entire public surface in one
+ * read. The `.d.ts` files are split into hash-suffixed shared chunks
+ * by the bundler's type splitter; the quickref is the flat sibling.
+ */
+const copyAgentsQuickref = () => ({
+  name: "copy-agents-quickref",
+  closeBundle() {
+    mkdirSync("dist", { recursive: true });
+    copyFileSync("packages/server/AGENTS.md", "dist/AGENTS.md");
+  },
+});
 
 export default defineConfig({
   input: {
@@ -42,5 +58,5 @@ export default defineConfig({
     format: "esm",
     sourcemap: true,
   },
-  plugins: [dts({ tsgo: true })],
+  plugins: [dts({ tsgo: true }), copyAgentsQuickref()],
 });
