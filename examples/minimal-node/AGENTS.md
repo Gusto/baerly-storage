@@ -63,7 +63,7 @@ of the full public API surface (`Db`, `Table`, `Query`,
 | Path                        | What it is                                          |
 | --------------------------- | --------------------------------------------------- |
 | `src/server/index.ts`       | Server entry — composes `s3Storage` / `r2Storage` + a verifier and calls `baerlyNode({ ... }).listen(PORT)` |
-| `src/web/`, `index.html`    | Optional SPA shell built by Vite into `dist/client/`. Remove if not needed. |
+| `src/web/`, `index.html`    | Optional SPA shell built by Vite into `dist/client/`. `src/web/main.ts` ships a wired list+insert example against the `notes` collection so the DB round-trips on first load — extend, replace, or remove the whole tree if not needed. |
 | `vite.config.ts`            | Vite client build — `outDir: dist/client`; dev proxy `/v1` → `:8080` |
 | `tsconfig.{app,server}.json` | TS project references for the client and server projects |
 | `baerly.config.ts`          | App config — `app`, `tenant`, `target`, `domain`, `collections` (schemas live here). |

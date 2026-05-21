@@ -60,7 +60,7 @@ of the full public API surface (`Db`, `Table`, `Query`,
 | `src/server/index.ts`      | Worker entry — `baerlyWorker({ verifier })`                                          |
 | `wrangler.jsonc`           | Cloudflare Worker manifest — name, R2 binding, assets, vars, triggers, limits, observability |
 | `index.html`               | SPA shell — Vite's entry point at the project root; references `/src/web/main.ts`.  |
-| `src/web/main.ts`          | SPA client entry. Workers Assets serves the built bundle from `dist/client/`.        |
+| `src/web/main.ts`          | SPA client entry — ships a wired list+insert example against the `notes` collection so the DB round-trips on first load. Extend or replace; `client.table<Row>(name)` is the typed surface. Workers Assets serves the built bundle from `dist/client/`. |
 | `vite.config.ts`           | Vite + `@cloudflare/vite-plugin` — runs the Worker inside `workerd` in dev          |
 | `tsconfig.json`            | Root project-references stub                                                         |
 | `tsconfig.app.json`        | Client TS project (`src/web/`, DOM lib)                                              |
