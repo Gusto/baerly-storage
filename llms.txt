@@ -22,7 +22,7 @@ Day-1 deploy targets, both first-class:
 Server (Cloudflare Worker — `examples/minimal-cloudflare/src/server/index.ts`):
 
 ```ts
-import { baerlyWorker, type Env as BaerlyEnv } from "@baerly/adapter-cloudflare";
+import { baerlyWorker, type BaerlyEnv } from "@baerly/adapter-cloudflare";
 import { sharedSecret } from "@baerly/server/auth";
 
 export default {

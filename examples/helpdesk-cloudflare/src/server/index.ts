@@ -16,7 +16,7 @@
  * The `baerly.config.ts` is passed through `config:` so its declared
  * `collections.tickets.schema` runs on every server-side commit.
  */
-import { baerlyWorker, type Env as BaerlyEnv } from "baerly-storage/cloudflare";
+import { baerlyWorker, type BaerlyEnv } from "baerly-storage/cloudflare";
 import { cloudflareAccess, sharedSecret } from "baerly-storage/auth";
 import type { FriendlyLogLevel } from "baerly-storage/observability";
 import type { Verifier } from "baerly-storage";
