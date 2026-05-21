@@ -2,11 +2,11 @@ import { createBaerlyClient } from "baerly-storage/client";
 import config from "../../baerly.config.ts";
 import type { Note } from "../../types.ts";
 
-// Same-origin baseUrl: Vite's dev proxy forwards /v1/* to the Node
-// server on :3000. `baerlyDevAuth` in vite.config.ts injects
-// Authorization before the proxy hop, so this file never sees the
-// bearer token. Passing `config` lets `client.table("notes")` infer
-// the row type from baerly.config.ts.
+// Same-origin baseUrl: `baerlyDev` in vite.config.ts mounts the Node
+// HTTP listener as Connect middleware on the same Vite process that
+// serves this SPA, so /v1/* is in-process — no proxy hop. The plugin
+// also injects Authorization server-side, so this file never sees
+// the bearer token. Passing `config` infers the row type.
 const client = createBaerlyClient({ baseUrl: "", config });
 
 const root = document.querySelector<HTMLDivElement>("#app");
@@ -24,9 +24,7 @@ const render = (notes: ReadonlyArray<Note>): void => {
       <button type="submit">Add</button>
     </form>
     <ul>
-      ${notes
-        .map((n) => `<li>${escapeHtml(n.body)} <small>${n.created_at}</small></li>`)
-        .join("")}
+      ${notes.map((n) => `<li>${escapeHtml(n.body)} <small>${n.created_at}</small></li>`).join("")}
     </ul>
   `;
   const form = root.querySelector<HTMLFormElement>("#add");

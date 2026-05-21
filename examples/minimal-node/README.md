@@ -40,21 +40,14 @@ pnpm install
 pnpm dev
 ```
 
-`pnpm dev` runs `baerly dev`, which boots a Node listener on
-`http://localhost:3000` backed by local filesystem storage — no
-S3 creds needed. Use it for first-touch exploration.
-
-To iterate on the SPA with HMR, run Vite in a second terminal:
-
-```sh
-pnpm dev:web    # http://localhost:5173 — proxies /v1 → :3000
-```
-
-The Vite dev server at `:5173` proxies `/v1/*` to `baerly dev`
-on `:3000`, so the SPA gets live reload while still talking to
-the real storage protocol. (The Cloudflare template integrates
-these into a single `pnpm dev` via `@cloudflare/vite-plugin`;
-the Node side keeps them as separate processes for now.)
+`pnpm dev` runs `vite`. `baerlyDev()` from `baerly-storage/dev/vite`
+mounts the Node HTTP listener as Connect middleware on the same Vite
+process that serves the SPA, so `GET /` hits the SPA on
+`http://localhost:5173/` and anything baerly handles (e.g.
+`GET /v1/healthz`) is served on the same origin — one process, one
+port, SPA + HMR + `/v1/*` in one command. Storage is `LocalFsStorage`
+rooted at `.baerly-data/`, so first-touch needs no S3 creds, no JWKS,
+and no second process.
 
 For production-shaped local runs (S3, the verifier of your choice,
 and the bundled SPA served from `dist/client/`):

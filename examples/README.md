@@ -56,9 +56,12 @@ pnpm install
 pnpm dev
 ```
 
-`pnpm dev` runs `baerly dev` over `LocalFsStorage` and needs no
-credentials; the `BUCKET` / `AWS_*` / `SHARED_SECRET` env vars are
-only required for `pnpm start` and the production deploy.
+`pnpm dev` runs a single `vite` process — `baerlyDev()` from
+`baerly-storage/dev/vite` mounts the Node HTTP listener as Connect
+middleware on `:5173` next to the SPA dev server, backed by
+`LocalFsStorage`. No credentials needed; the `BUCKET` / `AWS_*` /
+`SHARED_SECRET` env vars are only required for `pnpm start` and the
+production deploy.
 
 **Read first:** `src/server/index.ts` (the `node:http` listener
 + verifier selector).
