@@ -3,23 +3,24 @@ import { existsSync, readFileSync } from "node:fs";
 import { getRequestListener } from "@hono/node-server";
 import type { Plugin } from "vite";
 import { createApp } from "@baerly/adapter-node";
-import { Db } from "@baerly/server";
+import { type BaerlyAppConfig, Db } from "@baerly/server";
 import { sharedSecret } from "@baerly/server/auth";
 import { type DevBannerHint, printDevBanner } from "./dev-banner.ts";
 import { ensureTable } from "./ensure-table.ts";
 import { LocalFsStorage } from "./local-fs.ts";
 
 export interface BaerlyDevOptions {
-  /** App namespace (matches createApp's `app`). */
-  readonly app: string;
-  /** Tenant namespace passed to ensureTable + sharedSecret. */
-  readonly tenant: string;
+  /**
+   * The project's `baerly.config.ts`. `app`, `tenant`, and the
+   * table set (`Object.keys(config.collections)`) are derived from
+   * it; per-collection schemas/indexes flow through to the in-process
+   * listener the same way `baerlyNode` / `baerlyWorker` pipe them.
+   */
+  readonly config: BaerlyAppConfig;
   /** Shared-secret token; clients send `Authorization: Bearer <secret>`. */
   readonly secret: string;
   /** Absolute path to the data directory for LocalFsStorage. */
   readonly dataDir: string;
-  /** Tables to ensure() at startup. */
-  readonly tables: readonly string[];
   /** Optional async seed callback, invoked after ensureTable, before mount. */
   readonly seed?: (db: Db) => Promise<void>;
   /** Extra hints appended to the dev banner. */
@@ -157,21 +158,25 @@ export function baerlyDev(opts: BaerlyDevOptions): Plugin {
       // middleware runs BEFORE Vite's internal SPA history fallback.
       // Otherwise /v1/* requests get caught by the SPA fallback and
       // served the index.html shell.
+      const app = opts.config.app;
+      const tenant = opts.config.tenant;
+      const tables = Object.keys(opts.config.collections);
       const ready = (async () => {
         const storage = new LocalFsStorage({ root: opts.dataDir });
-        for (const table of opts.tables) {
-          await ensureTable(storage, { app: opts.app, tenant: opts.tenant, table });
+        for (const table of tables) {
+          await ensureTable(storage, { app, tenant, table });
         }
         if (opts.seed !== undefined) {
-          const db = Db.create({ storage, app: opts.app, tenant: opts.tenant });
+          const db = Db.create({ storage, app, tenant, config: opts.config });
           await opts.seed(db);
         }
-        const app = createApp({
-          app: opts.app,
+        const honoApp = createApp({
+          app,
           storage,
-          verifier: sharedSecret({ secret: opts.secret, tenantPrefix: opts.tenant }),
+          verifier: sharedSecret({ secret: opts.secret, tenantPrefix: tenant }),
+          config: opts.config,
         });
-        return getRequestListener(app.fetch);
+        return getRequestListener(honoApp.fetch);
       })();
 
       // Surface setup failures eagerly; without this an unhandled
@@ -212,7 +217,7 @@ export function baerlyDev(opts: BaerlyDevOptions): Plugin {
               : undefined;
           const url = port !== undefined ? `http://localhost:${port}/` : "http://localhost/";
           printDevBanner({
-            name: opts.app,
+            name: opts.config.app,
             primaryUrl: { label: "App", url },
             ...(opts.hints !== undefined && { hints: opts.hints }),
           });

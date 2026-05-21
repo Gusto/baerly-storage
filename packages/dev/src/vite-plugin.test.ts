@@ -123,11 +123,14 @@ beforeAll(async () => {
   };
 
   const plugin = baerlyDev({
-    app: "test",
-    tenant: "test",
+    config: {
+      app: "test",
+      tenant: "test",
+      target: "node",
+      collections: { t: {} },
+    },
     secret: "test-secret",
     dataDir: tmp,
-    tables: ["t"],
     banner: false,
   });
 

@@ -16,6 +16,7 @@
  *   canonical-line helpers, logger config.
  */
 
+export { type BaerlyAppConfig } from "./app-config.ts";
 export {
   type BaerlyConfig,
   type CollectionDefinition,
