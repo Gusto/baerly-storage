@@ -2,9 +2,12 @@ import type { DocumentValue, DocumentData } from "./json.ts";
 import type { PredicateOp } from "./query/_internals.ts";
 
 /**
- * Handle on one table (collection). Chainable: `where`, `order`,
- * `limit` return a `Query<T>`; `insert`, `count` are terminal
- * verbs that fire I/O on the spot.
+ * Handle on one table (collection). The common single-row case lives
+ * here as direct verbs (`get(id)`, `update(id, patch)`,
+ * `replace(id, doc)`, `delete(id)`) plus whole-collection reads
+ * (`first()`, `all()`, `count()`). For bulk-by-predicate mutation —
+ * or for chained `.where()` / `.order()` / `.limit()` reads — call
+ * the modifier verbs to get a {@link Query} back.
  *
  * @template T — the document shape. Documents always carry an
  *              auto-generated `_id` (UUIDv7); the type system
@@ -13,6 +16,54 @@ import type { PredicateOp } from "./query/_internals.ts";
  */
 export interface Table<T extends DocumentData = DocumentData> {
   readonly name: string;
+
+  /**
+   * First document in the whole collection or `undefined` when the
+   * collection is empty. Equivalent to `.where({}).first()`.
+   *
+   * @example
+   * ```ts
+   * const any = await db.table("tickets").first();
+   * ```
+   */
+  first(): Promise<T | undefined>;
+
+  /**
+   * Every document in the whole collection. Equivalent to
+   * `.where({}).all()`. No implicit cap — prefer
+   * `.where(p).limit(n).all()` on large tables.
+   *
+   * @example
+   * ```ts
+   * const all = await db.table("tickets").all();
+   * ```
+   */
+  all(): Promise<T[]>;
+
+  /**
+   * Count every row in the table (equivalent to `.where({}).count()`).
+   *
+   * @example
+   * ```ts
+   * const total = await db.table("tickets").count();
+   * ```
+   */
+  count(): Promise<number>;
+
+  /**
+   * Fetch one document by primary key. Equivalent to
+   * `.where({ _id: id }).first()`. Returns `undefined` when the id
+   * is unknown — does not throw `NotFound`.
+   *
+   * @example
+   * ```ts
+   * const ticket = await db.table("tickets").get(id);
+   * if (ticket === undefined) {
+   *   // row not in this table
+   * }
+   * ```
+   */
+  get(id: string): Promise<T | undefined>;
 
   /**
    * Filter by equality on top-level or dotted-path fields, or by a
@@ -44,7 +95,7 @@ export interface Table<T extends DocumentData = DocumentData> {
    * Read consistency level for the terminal call. Default `strong`.
    * See {@link Query.consistency} for the staleness contract — the
    * level threaded here applies to the `Query<T>` returned and any
-   * terminal called on it (including `count()`).
+   * terminal called on it.
    */
   consistency(level: ConsistencyLevel): Query<T>;
 
@@ -69,14 +120,47 @@ export interface Table<T extends DocumentData = DocumentData> {
   insert(doc: Partial<T> & DocumentData): Promise<{ _id: string }>;
 
   /**
-   * Count every row in the table (equivalent to `.where({}).count()`).
+   * JSON-merge-patch (RFC 7386) applied to one row by primary key.
+   * For predicate-aware bulk mutation, use
+   * `.where(predicate).update(patch)` on {@link Query}.
+   *
+   * @throws BaerlyError{code: "Conflict"} — concurrent write lost
+   *         the CAS race. Caller's choice whether to retry.
+   * @throws BaerlyError{code: "SchemaError"} — patch produced an
+   *         invalid doc.
    *
    * @example
    * ```ts
-   * const total = await db.table("tickets").count();
+   * const { modified } = await db.table("tickets")
+   *   .update(id, { status: "closed" });
    * ```
    */
-  count(): Promise<number>;
+  update(id: string, patch: Partial<T>): Promise<{ modified: number }>;
+
+  /**
+   * Whole-document replace on one row by primary key. For
+   * predicate-aware bulk replace, use `.where(predicate).replace(doc)`
+   * on {@link Query}.
+   *
+   * @example
+   * ```ts
+   * await db.table("tickets")
+   *   .replace(id, { _id: id, status: "open", title: "Rewrite" });
+   * ```
+   */
+  replace(id: string, doc: T): Promise<void>;
+
+  /**
+   * Delete one row by primary key. Returns `{ deleted: 0 }` when the
+   * id is unknown rather than throwing. For predicate-aware bulk
+   * delete, use `.where(predicate).delete()` on {@link Query}.
+   *
+   * @example
+   * ```ts
+   * const { deleted } = await db.table("tickets").delete(id);
+   * ```
+   */
+  delete(id: string): Promise<{ deleted: number }>;
 }
 
 /**
@@ -119,7 +203,10 @@ export type ConsistencyLevel = "strong" | "eventual";
 /**
  * `Table<T>` after at least one modifier. Carries predicate /
  * order / limit state forward. Modifiers compose; verbs are
- * terminal.
+ * terminal. Mutation verbs here are **predicate-aware bulk** — they
+ * apply to every matching row. For the common single-row case
+ * (`{ _id }`), prefer {@link Table.update} / {@link Table.replace} /
+ * {@link Table.delete}.
  */
 export interface Query<T extends DocumentData = DocumentData> {
   where(predicate: Predicate<T>): Query<T>;
@@ -195,8 +282,10 @@ export interface Query<T extends DocumentData = DocumentData> {
   count(): Promise<number>;
 
   /**
-   * JSON-merge-patch (RFC 7386) applied to every matching doc.
-   * Atomic per row. `null` at any field deletes it.
+   * Predicate-aware bulk mutation: JSON-merge-patch (RFC 7386)
+   * applied to every matching doc. Atomic per row. `null` at any
+   * field deletes it. For the single-row case prefer
+   * {@link Table.update}(id, patch).
    *
    * @throws BaerlyError{code: "Conflict"} — concurrent write lost
    *         the CAS race. Caller's choice whether to retry.
@@ -213,21 +302,23 @@ export interface Query<T extends DocumentData = DocumentData> {
   update(patch: Partial<T>): Promise<{ modified: number }>;
 
   /**
-   * Whole-document replace on the first matching row. Throws
-   * `BaerlyError{code: "Conflict"}` if zero or more than one row
-   * matches — `replace` is intentionally narrow.
+   * Predicate-aware whole-document replace on the first matching
+   * row. Throws `BaerlyError{code: "Conflict"}` if zero or more
+   * than one row matches — `replace` is intentionally narrow. For
+   * the single-row case prefer {@link Table.replace}(id, doc).
    *
    * @example
    * ```ts
    * await db.table("tickets")
-   *   .where({ _id: "01HQ..." })
+   *   .where({ status: "draft" })
    *   .replace({ _id: "01HQ...", status: "open", title: "Rewrite" });
    * ```
    */
   replace(doc: T): Promise<void>;
 
   /**
-   * Delete every matching document.
+   * Predicate-aware bulk delete: every matching document. For the
+   * single-row case prefer {@link Table.delete}(id).
    *
    * @example
    * ```ts

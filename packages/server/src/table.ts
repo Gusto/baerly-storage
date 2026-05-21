@@ -51,8 +51,19 @@ export const makeTable = <T extends DocumentData>(ctx: TableReadContext): Table<
     limit: undefined as number | undefined,
     consistency: undefined as ConsistencyLevel | undefined,
   };
+  // `{ _id: id } as Predicate<T>` cast: `Predicate<T>` is
+  // structurally narrower than a generic record (it carries the
+  // operator-vocabulary side-channel), but `singleIdFromPredicate`
+  // inside `query.ts` recognises the `{ _id }` shape and takes the
+  // single-row CAS path. A bespoke single-row fast path is out of
+  // scope for this layer.
+  const byId = (id: string) => ({ ...seed, predicate: { _id: id } as Predicate<T> });
   return {
     name: ctx.tableName,
+    first: () => makeQuery<T>(ctx, seed).first(),
+    all: () => makeQuery<T>(ctx, seed).all(),
+    count: () => makeQuery<T>(ctx, seed).count(),
+    get: (id) => makeQuery<T>(ctx, byId(id)).first(),
     where: (p) => makeQuery<T>(ctx, { ...seed, predicate: p }),
     order: (s) => makeQuery<T>(ctx, { ...seed, order: s }),
     limit: (n) => makeQuery<T>(ctx, { ...seed, limit: n }),
@@ -63,7 +74,7 @@ export const makeTable = <T extends DocumentData>(ctx: TableReadContext): Table<
      * pre-commit existence check against the materialised collection
      * surfaces `Conflict` on duplicate `_id` without round-tripping
      * to the writer — matches the locked `Table.insert` throws
-     * contract (`@baerly/protocol/src/table-api.ts:123–125`).
+     * contract (`@baerly/protocol/src/table-api.ts`).
      *
      * Single-attempt per call: CAS retries (up to 8 attempts) live
      * inside `Writer.commit()`. On retry-budget exhaustion the
@@ -75,6 +86,8 @@ export const makeTable = <T extends DocumentData>(ctx: TableReadContext): Table<
      *   `SchemaValidator` threaded via {@link Db.tableReadContext}.
      */
     insert: (doc) => runInsert<T>(ctx, doc),
-    count: () => makeQuery<T>(ctx, seed).count(),
+    update: (id, patch) => makeQuery<T>(ctx, byId(id)).update(patch),
+    replace: (id, doc) => makeQuery<T>(ctx, byId(id)).replace(doc),
+    delete: (id) => makeQuery<T>(ctx, byId(id)).delete(),
   };
 };
