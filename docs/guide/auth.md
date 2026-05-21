@@ -88,6 +88,12 @@ guarantees rest on the verifier producing the right prefix — see
   both an IP allowlist and a JWT." A future sugar package can ship
   `firstOf` / `allOf` without the kernel having to pick.
 
+## Browser callers
+
+See [client-auth.md](./client-auth.md) for the SPA recipe — dev
+proxy in dev, CF Access / OIDC in prod, never `SHARED_SECRET` in
+the bundle.
+
 ## Authorization
 
 Beyond tenant pinning, there is no built-in authorization — an

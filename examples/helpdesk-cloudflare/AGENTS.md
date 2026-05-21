@@ -156,35 +156,21 @@ read it via your editor's TS LS or via the published types).
   on the post-image so `update` and `replace` see the full doc, not
   just the patch.
 
-- **Auth setup (Cloudflare)** — `src/server/index.ts` selects a
-  `Verifier` per request:
+- **Auth setup (Cloudflare)** — see
+  [docs/guide/client-auth.md](../../docs/guide/client-auth.md) for the
+  full dev/prod recipe and why `SHARED_SECRET` is server-to-server-only.
 
-  1. `cloudflareAccess()` when **both** `CF_ACCESS_TEAM_DOMAIN` and
-     `CF_ACCESS_AUDIENCE_TAG` are set on the bound vars. Wire CF
-     Access in front of the Worker route so it injects the
-     `Cf-Access-Jwt-Assertion` header.
-  2. `sharedSecret()` when `SHARED_SECRET` is set
-     (`wrangler secret put SHARED_SECRET`). Used for `wrangler dev`
-     and pre-Access environments.
-  3. Otherwise the Worker throws on the first request;
-     `baerly doctor --target=cloudflare` flags the case before
-     deploy.
-
-  **Production recipe (5 minutes):**
-
-  1. In the Cloudflare dashboard, create a CF Access application
-     in front of your Worker route.
-  2. Note the **team domain** (e.g. `acme.cloudflareaccess.com`).
-  3. Note the **audience tag** for the application (looks like
-     `1c5e0...c20`).
-  4. Edit `wrangler.jsonc:vars` to add
-     `CF_ACCESS_TEAM_DOMAIN` and `CF_ACCESS_AUDIENCE_TAG`. Commit.
-  5. Deploy: `baerly deploy --target=cloudflare`. Verify with
-     `baerly doctor --target=cloudflare`.
-
-  Read the JSDoc on `sharedSecret` / `bearerJwt` / `cloudflareAccess`
-  (re-exported from `baerly-storage/auth`) for the full constraint
-  list.
+  Short version:
+  - **Dev:** `baerlyDevAuth` in `vite.config.ts` injects the bearer
+    server-side from `.dev.vars`. The SPA calls `/v1/*` with no
+    `Authorization` header — the secret never enters the bundle.
+  - **Prod:** wire CF Access in front of the Worker route and set
+    `CF_ACCESS_TEAM_DOMAIN` + `CF_ACCESS_AUDIENCE_TAG` in
+    `wrangler.jsonc:vars`. `baerly doctor --target=cloudflare`
+    warns if `SHARED_SECRET` is set on a deploy without CF Access.
+  - **`SHARED_SECRET` in prod** is for server-to-server callers
+    (CI, cron, internal services), not the SPA. The doctor
+    warning gates this.
 
 - **Secrets vs. vars** — `wrangler.jsonc:vars` carries non-secret
   config (`APP`, `TENANT`, `LOG_LEVEL`, `LOG_SAMPLE`). The verifier's

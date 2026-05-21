@@ -149,35 +149,21 @@ read it via your editor's TS LS or via the published types).
   on the post-image so `update` and `replace` see the full doc, not
   just the patch.
 
-- **Auth setup (Node)** — `src/server/index.ts` selects:
+- **Auth setup (Node)** — see
+  [docs/guide/client-auth.md](../../docs/guide/client-auth.md) for the
+  full dev/prod recipe and why `SHARED_SECRET` is server-to-server-only.
 
-  1. `bearerJwt({ jwks, issuer, audience })` when `JWKS_URL` is set.
-     The verifier fetches the JWKS, validates `iss` / `aud` /
-     signature, and derives `tenantPrefix` from the `sub` claim by
-     default.
-  2. `sharedSecret({ secret, tenantPrefix })` when `SHARED_SECRET` is
-     set. Use for `pnpm dev` parity only — production deployments
-     should always set `JWKS_URL` and remove the shared-secret
-     branch.
-
-  **Production recipe (5 minutes):**
-
-  1. Pick an IdP (Auth0, Okta, Cognito, Clerk, Workers Access,
-     self-hosted Keycloak — anything that exposes a JWKS endpoint).
-  2. Find the JWKS URL — usually `https://<issuer>/.well-known/jwks.json`.
-  3. Set the env vars in `.env` (or your deploy environment):
-
-     ```sh
-     JWKS_URL=https://your-idp.example.com/.well-known/jwks.json
-     JWT_ISSUER=https://your-idp.example.com/
-     JWT_AUDIENCE=baerly-prod
-     ```
-
-  4. Restart the server. (Reachability of the JWKS endpoint will
-     be checked by `baerly doctor` for the relevant PaaS target.)
-  5. Remove the `SHARED_SECRET` branch from `src/server/index.ts`
-     before going to prod (or set `SHARED_SECRET` to an unguessable
-     value behind a feature flag).
+  Short version:
+  - **Dev:** `baerlyDevAuth` in `vite.config.ts` injects the bearer
+    server-side from `.env` (or `process.env.SHARED_SECRET`). The
+    SPA calls `/v1/*` with no `Authorization` header — the secret
+    never enters the bundle.
+  - **Prod:** swap `sharedSecret` for `bearerJwt({ jwks, issuer,
+    audience })` against your OIDC provider. The SPA acquires its
+    token via the OIDC flow and sends
+    `Authorization: Bearer <jwt>`.
+  - **`SHARED_SECRET` in prod** is for server-to-server callers
+    (CI, cron, internal services), not the SPA.
 
 - **Storage backend** — `src/server/index.ts` picks between
   `s3Storage` (AWS) and `r2Storage` (Cloudflare R2) based on whether

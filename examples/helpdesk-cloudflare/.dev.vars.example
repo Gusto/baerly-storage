@@ -7,13 +7,17 @@
 # The Worker's `src/server/index.ts` chooses which verifier to use
 # based on which of these is set; pick one branch per environment.
 
-# --- Dev-fast-path: shared secret (single-tenant) ---------------
-# `dev-shared-secret` matches the client-side fallback in
-# `src/web/client.ts`, so `cp .dev.vars.example .dev.vars && pnpm dev`
-# works out of the box. For any environment reachable from the
-# public internet, replace with a strong random value (e.g.
-# `openssl rand -hex 32`) and set the matching `VITE_SHARED_SECRET`
-# at build time so the SPA bundle ships the same token.
+# --- SHARED_SECRET (single-tenant dev) -------------------------
+# Used by both the server (verifier) AND the Vite dev-auth plugin
+# (which injects Authorization: Bearer <SHARED_SECRET> on /v1/*
+# requests in dev). The SPA bundle never ships this value — the
+# plugin runs server-side and `apply: "serve"` skips production
+# builds entirely.
+#
+# `dev-shared-secret` is a working default so `cp .dev.vars.example
+# .dev.vars && pnpm dev` works out of the box. Replace with a
+# strong random value (e.g. `openssl rand -hex 32`) for any
+# environment reachable from the public internet.
 SHARED_SECRET=dev-shared-secret
 
 # --- Production: Cloudflare Access JWT --------------------------
