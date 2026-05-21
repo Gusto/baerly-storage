@@ -45,6 +45,10 @@ import { emitError, emitSuccess, isJsonMode, setJsonMode } from "./output.ts";
 const DEFAULT_PORT = 3000;
 const DEFAULT_DATA_DIR = "./.baerly-data";
 const DEV_SECRET_FALLBACK = "dev-only-secret";
+/** Match Vite / Next / Astro: try N consecutive ports before erroring. */
+const PORT_FALLBACK_ATTEMPTS = 10;
+/** Poll cadence for detecting the parent-shell-died → reparent-to-init case. */
+const PPID_POLL_MS = 2_000;
 
 const DEV_ARGS = {
   port: {
@@ -65,13 +69,7 @@ const DEV_ARGS = {
 // citty 0.2.2 auto-injects a camelCase alias for every kebab-case
 // flag (`--data-dir` produces both `data-dir` and `dataDir` on the
 // parsed args), so `dataDir` must be accepted alongside `data-dir`.
-const KNOWN_KEYS: ReadonlySet<string> = new Set([
-  "port",
-  "data-dir",
-  "dataDir",
-  "json",
-  "_",
-]);
+const KNOWN_KEYS: ReadonlySet<string> = new Set(["port", "data-dir", "dataDir", "json", "_"]);
 
 const errorToExitCode = (code: string): number => {
   if (code === "InvalidConfig") {
@@ -133,15 +131,14 @@ export const runDev = async (opts: {
 
   const app = createApp({ app: config.app, storage, verifier });
   const server = createServer(getRequestListener(app.fetch));
-  await new Promise<void>((res, rej) => {
-    server.once("error", rej);
-    server.listen(opts.port, () => {
-      server.off("error", rej);
-      res();
-    });
-  });
-  const addr = server.address();
-  const boundPort = typeof addr === "object" && addr !== null ? addr.port : opts.port;
+  const boundPort = await listenWithFallback(server, opts.port, !opts.json);
+  // Wire OS-signal + parent-death shutdown so a `pnpm dev` whose
+  // controlling shell dies abruptly doesn't leave an orphaned zombie
+  // holding :3000 (the symptom that triggered this whole code path).
+  // Auto-detach when the server closes so repeated `runDev` calls in
+  // tests don't accumulate listeners on `process`.
+  const uninstall = installShutdownHandlers(server);
+  server.once("close", uninstall);
 
   if (!opts.json) {
     printDevBanner({
@@ -262,4 +259,147 @@ export const runDevCli = async (argv: readonly string[]): Promise<HandleDevOutco
     return { code: 1 };
   }
   return handleDev(parsed);
+};
+
+const tryListen = (server: Server, port: number): Promise<void> =>
+  new Promise((res, rej) => {
+    const onError = (err: Error): void => {
+      server.off("listening", onListening);
+      rej(err);
+    };
+    const onListening = (): void => {
+      server.off("error", onError);
+      res();
+    };
+    server.once("error", onError);
+    server.once("listening", onListening);
+    server.listen(port);
+  });
+
+/**
+ * Bind `server` on the requested port, auto-incrementing on `EADDRINUSE`
+ * up to {@link PORT_FALLBACK_ATTEMPTS} times — the same idiom Vite,
+ * Next.js, and Astro use. Returns the actually-bound port. When the
+ * caller asked for port 0 (OS-picked), there's nothing to fall back
+ * over, so we just do the single bind.
+ *
+ * Emits a one-line stderr notice when fallback kicked in so the user
+ * can see they're not on the port they asked for. Stays silent on the
+ * happy path (first port worked).
+ *
+ * @throws `BaerlyError("InvalidConfig", ...)` when the whole window is
+ * busy. Message names the tried ports and tells the user how to find
+ * the offending process — the experience the old `Unknown:
+ * EADDRINUSE` wrapper failed to give.
+ */
+const listenWithFallback = async (
+  server: Server,
+  requestedPort: number,
+  emitNotice: boolean,
+): Promise<number> => {
+  // port=0 means "OS picks" — fallback is meaningless. One attempt, the
+  // OS gives us whatever it gives us (or a real bind error).
+  if (requestedPort === 0) {
+    await tryListen(server, 0);
+    const addr = server.address();
+    return typeof addr === "object" && addr !== null ? addr.port : 0;
+  }
+  const tried: number[] = [];
+  for (let i = 0; i < PORT_FALLBACK_ATTEMPTS; i++) {
+    const candidate = requestedPort + i;
+    tried.push(candidate);
+    try {
+      await tryListen(server, candidate);
+      if (i > 0 && emitNotice) {
+        process.stderr.write(
+          `baerly dev: port ${requestedPort} in use, bound to ${candidate} instead\n`,
+        );
+      }
+      const addr = server.address();
+      return typeof addr === "object" && addr !== null ? addr.port : candidate;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== "EADDRINUSE") {
+        throw error;
+      }
+      // try the next slot
+    }
+  }
+  throw new BaerlyError(
+    "InvalidConfig",
+    `ports ${tried.join(", ")} are all in use. Find the holder with ` +
+      `\`lsof -nP -iTCP:${requestedPort} -sTCP:LISTEN\`, kill it, ` +
+      `or pass \`--port=<n>\` to pick a different port.`,
+  );
+};
+
+/**
+ * Options for {@link installShutdownHandlers}. Production callers leave
+ * all fields default — they're seams so tests can inject a fake event
+ * emitter, freeze `ppid`, and spy on exit calls without poking real
+ * process state.
+ */
+export interface ShutdownHandlersOptions {
+  readonly proc?: NodeJS.EventEmitter;
+  readonly getPpid?: () => number;
+  readonly originalPpid?: number;
+  readonly ppidPollMs?: number;
+  readonly exit?: (code: number) => void;
+}
+
+/**
+ * Wire SIGHUP/SIGINT/SIGTERM and a PPID watcher to a clean
+ * `server.close()` → `exit(0)`. The PPID watcher closes the gap that
+ * SIGHUP can't: when a parent shell dies abruptly (kill -9, crash,
+ * SSH-session torn down without a hangup), no SIGHUP is delivered and
+ * the child gets reparented to PID 1, silently holding the port
+ * forever. Polling `process.ppid` and exiting when it changes catches
+ * that case.
+ *
+ * Returns an `uninstall()` function so tests (and `server.close()`
+ * callers) can detach the handlers deterministically.
+ */
+export const installShutdownHandlers = (
+  server: Pick<Server, "close">,
+  opts: ShutdownHandlersOptions = {},
+): (() => void) => {
+  const proc = opts.proc ?? process;
+  const getPpid = opts.getPpid ?? ((): number => process.ppid);
+  const originalPpid = opts.originalPpid ?? process.ppid;
+  const pollMs = opts.ppidPollMs ?? PPID_POLL_MS;
+  const exit = opts.exit ?? ((c: number): void => process.exit(c));
+
+  let shuttingDown = false;
+  const shutdown = (): void => {
+    if (shuttingDown) {
+      return;
+    }
+    shuttingDown = true;
+    server.close(() => exit(0));
+  };
+
+  const onHup = (): void => shutdown();
+  const onInt = (): void => shutdown();
+  const onTerm = (): void => shutdown();
+  proc.on("SIGHUP", onHup);
+  proc.on("SIGINT", onInt);
+  proc.on("SIGTERM", onTerm);
+
+  const watcher = setInterval(() => {
+    if (getPpid() !== originalPpid) {
+      shutdown();
+    }
+  }, pollMs);
+  // The server's open socket already keeps the loop alive — the
+  // watcher must not pin the process on its own.
+  if (typeof (watcher as { unref?: () => void }).unref === "function") {
+    (watcher as { unref: () => void }).unref();
+  }
+
+  return (): void => {
+    proc.off("SIGHUP", onHup);
+    proc.off("SIGINT", onInt);
+    proc.off("SIGTERM", onTerm);
+    clearInterval(watcher);
+  };
 };

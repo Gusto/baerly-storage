@@ -8,12 +8,14 @@
  * path so the test stays loader-agnostic.
  */
 
+import { EventEmitter } from "node:events";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { LocalFsStorage } from "@baerly/dev";
-import { runDev, runDevCli } from "./dev.ts";
+import { installShutdownHandlers, runDev, runDevCli } from "./dev.ts";
 
 const DEV_SECRET = "dev-only-secret";
 
@@ -166,6 +168,216 @@ describe("baerly dev", () => {
     const gadgets = await storage.get("app/demo/tenant/acme/manifests/gadgets/current.json");
     expect(widgets).not.toBeNull();
     expect(gadgets).not.toBeNull();
+  });
+
+  test("auto-increments to the next free port when the requested port is in use", async () => {
+    await writeConfig(root, { app: "demo", tenant: "acme", target: "node" });
+    // Bind a blocker on an OS-picked port (no interface arg → same family
+    // resolution as runDev's `server.listen(N)`, so the conflict is guaranteed
+    // on every platform).
+    const blocker = createServer();
+    await new Promise<void>((res, rej) => {
+      blocker.once("error", rej);
+      blocker.listen(0, () => {
+        blocker.off("error", rej);
+        res();
+      });
+    });
+    const blockerAddr = blocker.address();
+    const blockerPort =
+      typeof blockerAddr === "object" && blockerAddr !== null ? blockerAddr.port : 0;
+    try {
+      const stderr = captureStream(process.stderr);
+      let result;
+      try {
+        result = await runDev({
+          cwd: root,
+          port: blockerPort,
+          dataDir: join(root, ".baerly-data"),
+          json: false,
+        });
+      } finally {
+        stderr.restore();
+      }
+      openServers.push({
+        close: () =>
+          new Promise<void>((res, rej) => {
+            result.server.close((err) => {
+              if (err) {
+                rej(err);
+              } else {
+                res();
+              }
+            });
+          }),
+      });
+      expect(result.port).not.toBe(blockerPort);
+      expect(result.port).toBeGreaterThan(blockerPort);
+      // First-touch UX: the fallback should be visible, not silent.
+      expect(stderr.captured.join("")).toMatch(/in use/);
+    } finally {
+      await new Promise<void>((res) => blocker.close(() => res()));
+    }
+  });
+
+  test("emits a clear actionable error when every fallback port is in use", async () => {
+    await writeConfig(root, { app: "demo", tenant: "acme", target: "node" });
+    // Hold a wide-enough contiguous range to exhaust the fallback window.
+    // runDev tries port..port+9 (10 attempts) by design; we hold 10 starting
+    // from an OS-picked base. No interface arg → match runDev's family
+    // resolution so the conflict is guaranteed on macOS + Linux.
+    const blockers: Server[] = [];
+    const bind = (port: number): Promise<number> =>
+      new Promise((res, rej) => {
+        const s = createServer();
+        s.once("error", rej);
+        s.listen(port, () => {
+          s.off("error", rej);
+          const a = s.address();
+          blockers.push(s);
+          res(typeof a === "object" && a !== null ? a.port : port);
+        });
+      });
+    const basePort = await bind(0);
+    for (let i = 1; i < 10; i++) {
+      // Mid-range collisions with unrelated host services are tolerated;
+      // we only need enough of the window held that runDev exhausts attempts.
+      try {
+        await bind(basePort + i);
+      } catch {
+        // ignore — host-process race, not a test failure
+      }
+    }
+    try {
+      const stderr = captureStream(process.stderr);
+      let outcome;
+      try {
+        outcome = await runDevCli([`--port=${basePort}`]);
+      } finally {
+        stderr.restore();
+      }
+      // Defensive cleanup if implementation accidentally bound something.
+      if (outcome.result?.server) {
+        openServers.push({
+          close: () =>
+            new Promise<void>((res, rej) => {
+              outcome.result!.server.close((err) => {
+                if (err) {
+                  rej(err);
+                } else {
+                  res();
+                }
+              });
+            }),
+        });
+        throw new Error("expected listener to fail, but it bound");
+      }
+      expect(outcome.code).not.toBe(0);
+      const stderrText = stderr.captured.join("");
+      expect(stderrText).toMatch(/in use/);
+      expect(stderrText).toMatch(/--port/);
+      expect(stderrText).toMatch(/lsof/);
+      // Must NOT be the dreaded `Unknown:` wrapper.
+      expect(stderrText).not.toMatch(/Unknown/);
+    } finally {
+      await Promise.all(
+        blockers.map(
+          (s) =>
+            new Promise<void>((res) => {
+              s.close(() => res());
+            }),
+        ),
+      );
+    }
+  });
+
+  describe("installShutdownHandlers", () => {
+    test("closes the server on SIGHUP", async () => {
+      const emitter = new EventEmitter();
+      let closeCalls = 0;
+      const exits: number[] = [];
+      const fakeServer = {
+        close: (cb?: (err?: Error) => void) => {
+          closeCalls++;
+          cb?.();
+        },
+      };
+      const uninstall = installShutdownHandlers(fakeServer as unknown as Server, {
+        proc: emitter as unknown as NodeJS.EventEmitter,
+        getPpid: () => 1000,
+        originalPpid: 1000,
+        ppidPollMs: 1_000_000,
+        exit: (c) => exits.push(c),
+      });
+      try {
+        emitter.emit("SIGHUP");
+        expect(closeCalls).toBe(1);
+        expect(exits).toEqual([0]);
+        // Idempotent: second SIGHUP must not double-close.
+        emitter.emit("SIGHUP");
+        expect(closeCalls).toBe(1);
+      } finally {
+        uninstall();
+      }
+    });
+
+    test("exits when the parent process dies and we get reparented", async () => {
+      const emitter = new EventEmitter();
+      let closeCalls = 0;
+      const exits: number[] = [];
+      let ppid = 5000;
+      const fakeServer = {
+        close: (cb?: (err?: Error) => void) => {
+          closeCalls++;
+          cb?.();
+        },
+      };
+      const uninstall = installShutdownHandlers(fakeServer as unknown as Server, {
+        proc: emitter as unknown as NodeJS.EventEmitter,
+        getPpid: () => ppid,
+        originalPpid: 5000,
+        ppidPollMs: 5,
+        exit: (c) => exits.push(c),
+      });
+      try {
+        ppid = 1; // simulate reparent-to-init (the exact 3-day-zombie symptom)
+        await new Promise((r) => setTimeout(r, 40));
+        expect(closeCalls).toBe(1);
+        expect(exits).toEqual([0]);
+      } finally {
+        uninstall();
+      }
+    });
+
+    test("uninstall removes signal listeners and stops the watcher", () => {
+      const emitter = new EventEmitter();
+      let closeCalls = 0;
+      const exits: number[] = [];
+      const fakeServer = {
+        close: (cb?: (err?: Error) => void) => {
+          closeCalls++;
+          cb?.();
+        },
+      };
+      const uninstall = installShutdownHandlers(fakeServer as unknown as Server, {
+        proc: emitter as unknown as NodeJS.EventEmitter,
+        getPpid: () => 100,
+        originalPpid: 100,
+        ppidPollMs: 1_000_000,
+        exit: (c) => exits.push(c),
+      });
+      expect(emitter.listenerCount("SIGHUP")).toBe(1);
+      expect(emitter.listenerCount("SIGINT")).toBe(1);
+      expect(emitter.listenerCount("SIGTERM")).toBe(1);
+      uninstall();
+      expect(emitter.listenerCount("SIGHUP")).toBe(0);
+      expect(emitter.listenerCount("SIGINT")).toBe(0);
+      expect(emitter.listenerCount("SIGTERM")).toBe(0);
+      // After uninstall, signals are no-ops.
+      emitter.emit("SIGHUP");
+      expect(closeCalls).toBe(0);
+      expect(exits).toEqual([]);
+    });
   });
 
   test("--json emits a structured envelope on success", async () => {
