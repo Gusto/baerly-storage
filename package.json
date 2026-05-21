@@ -27,60 +27,114 @@
   "sideEffects": false,
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "types": "./packages/server/src/index.ts",
+      "import": "./packages/server/src/index.ts"
     },
     "./auth": {
-      "types": "./dist/auth.d.ts",
-      "import": "./dist/auth.js"
+      "types": "./packages/server/src/auth/index.ts",
+      "import": "./packages/server/src/auth/index.ts"
     },
     "./http": {
-      "types": "./dist/http.d.ts",
-      "import": "./dist/http.js"
+      "types": "./packages/server/src/http/index.ts",
+      "import": "./packages/server/src/http/index.ts"
     },
     "./cloudflare": {
-      "types": "./dist/cloudflare.d.ts",
-      "import": "./dist/cloudflare.js"
+      "types": "./packages/adapter-cloudflare/src/index.ts",
+      "import": "./packages/adapter-cloudflare/src/index.ts"
     },
     "./node": {
-      "types": "./dist/node.d.ts",
-      "import": "./dist/node.js"
+      "types": "./packages/adapter-node/src/index.ts",
+      "import": "./packages/adapter-node/src/index.ts"
     },
     "./maintenance": {
-      "types": "./dist/maintenance.d.ts",
-      "import": "./dist/maintenance.js"
+      "types": "./packages/server/src/maintenance.ts",
+      "import": "./packages/server/src/maintenance.ts"
     },
     "./observability": {
-      "types": "./dist/observability.d.ts",
-      "import": "./dist/observability.js"
+      "types": "./packages/server/src/observability/index.ts",
+      "import": "./packages/server/src/observability/index.ts"
     },
     "./config": {
-      "types": "./dist/app-config.d.ts",
-      "import": "./dist/app-config.js"
+      "types": "./packages/server/src/app-config.ts",
+      "import": "./packages/server/src/app-config.ts"
     },
     "./client": {
-      "types": "./dist/client.d.ts",
-      "import": "./dist/client.js"
+      "types": "./packages/client/src/index.ts",
+      "import": "./packages/client/src/index.ts"
     },
     "./client/react": {
-      "types": "./dist/client-react.d.ts",
-      "import": "./dist/client-react.js"
+      "types": "./packages/client/src/react/index.ts",
+      "import": "./packages/client/src/react/index.ts"
     },
     "./client/testing": {
-      "types": "./dist/client-testing.d.ts",
-      "import": "./dist/client-testing.js"
+      "types": "./packages/client/src/testing/index.ts",
+      "import": "./packages/client/src/testing/index.ts"
     },
     "./dev": {
-      "types": "./dist/dev.d.ts",
-      "import": "./dist/dev.js"
+      "types": "./packages/dev/src/index.ts",
+      "import": "./packages/dev/src/index.ts"
     },
     "./dev/vite": {
-      "types": "./dist/dev-vite.d.ts",
-      "import": "./dist/dev-vite.js"
+      "types": "./packages/dev/src/vite-plugin.ts",
+      "import": "./packages/dev/src/vite-plugin.ts"
     }
   },
   "publishConfig": {
     "access": "public",
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js"
+      },
+      "./auth": {
+        "types": "./dist/auth.d.ts",
+        "import": "./dist/auth.js"
+      },
+      "./http": {
+        "types": "./dist/http.d.ts",
+        "import": "./dist/http.js"
+      },
+      "./cloudflare": {
+        "types": "./dist/cloudflare.d.ts",
+        "import": "./dist/cloudflare.js"
+      },
+      "./node": {
+        "types": "./dist/node.d.ts",
+        "import": "./dist/node.js"
+      },
+      "./maintenance": {
+        "types": "./dist/maintenance.d.ts",
+        "import": "./dist/maintenance.js"
+      },
+      "./observability": {
+        "types": "./dist/observability.d.ts",
+        "import": "./dist/observability.js"
+      },
+      "./config": {
+        "types": "./dist/app-config.d.ts",
+        "import": "./dist/app-config.js"
+      },
+      "./client": {
+        "types": "./dist/client.d.ts",
+        "import": "./dist/client.js"
+      },
+      "./client/react": {
+        "types": "./dist/client-react.d.ts",
+        "import": "./dist/client-react.js"
+      },
+      "./client/testing": {
+        "types": "./dist/client-testing.d.ts",
+        "import": "./dist/client-testing.js"
+      },
+      "./dev": {
+        "types": "./dist/dev.d.ts",
+        "import": "./dist/dev.js"
+      },
+      "./dev/vite": {
+        "types": "./dist/dev-vite.d.ts",
+        "import": "./dist/dev-vite.js"
+      }
+    },
     "provenance": true
   },
   "scripts": {
