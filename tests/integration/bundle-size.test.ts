@@ -301,7 +301,12 @@ const BUDGETS: readonly Budget[] = [
   //     + the banner / landing / ensure-table helpers + their tiny
   //     transitive subgraph. Measured: 26020 raw / 9561 gz —
   //     −388 KiB raw / −111 KiB gz.
-  { entry: "dev.js", raw: 26 * 1024, gz: 10 * 1024 },
+  //   → 27 KiB raw / 10 KiB gz: ambient drift across the shared
+  //     `current-json` / `errors` / `src-*` chunks the dev barrel
+  //     pulls in. Measured: 26868 raw / 9952 gz — +848 raw, +391 gz
+  //     since F3. Bump raw with a 1 KiB headroom; gz is still under
+  //     the existing budget.
+  { entry: "dev.js", raw: 27 * 1024, gz: 10 * 1024 },
   // `@baerly/dev/vite` — the `baerlyDev()` vite plugin (mounts the
   // Baerly HTTP listener as middleware inside a Vite dev server).
   // Vite is external. Aggregator: re-exports the dev surface.
@@ -323,7 +328,13 @@ const BUDGETS: readonly Budget[] = [
   //     dev-vite closure tracks the node.js bump. The jose + hono
   //     deltas stack — both auth and listener chunks land in the
   //     transitive closure. Measured: 485674 raw / 138557 gz.
-  { entry: "dev-vite.js", raw: 476 * 1024, gz: 137 * 1024 },
+  //   → 480 KiB raw / 138 KiB gz: ambient drift across the shared
+  //     `auth` / `compactor` / `http` / `query` / `src-*` chunks that
+  //     thread through dev-vite's closure. Measured on a clean main:
+  //     489957 raw / 140341 gz (+4283 raw / +1784 gz since the hono-
+  //     node-server bump). Bump leaves ~1.5 KiB raw / ~1 KiB gz of
+  //     headroom.
+  { entry: "dev-vite.js", raw: 480 * 1024, gz: 138 * 1024 },
   // `baerly` CLI bin — `init`, `dev`, `deploy`, `doctor`, `inspect`,
   // `admin {compact,fsck,migrate,dump,restore,rebuild-index}`,
   // `export`. Bundled as a single file (no static chunk splits)
