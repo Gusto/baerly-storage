@@ -397,4 +397,31 @@ describe("bundle size", () => {
       expect(measured.gz, `gzipped bytes over budget — ${report}`).toBeLessThanOrEqual(gz);
     });
   }
+
+  // The `baerly` bin runs in a scaffolded user's app, where the only
+  // installed dep is `baerly-storage` — `@xmldom/xmldom` and
+  // `aws4fetch` are optional peers of the library import surface and
+  // are NOT on disk. The bin therefore can't leave live `import "…"`
+  // statements for those packages in its dist closure; it has to
+  // bundle them. This test pins the contract so a future "move them
+  // back to external" PR fails here instead of at user-install time.
+  test("dist/baerly.js closure has no live import of optional peer deps", () => {
+    const distDir = resolve(__dirname, "../../dist");
+    const seen = new Set<string>();
+    collectClosure(resolve(distDir, "baerly.js"), seen);
+    const offenders: string[] = [];
+    for (const file of seen) {
+      const src = readFileSync(file, "utf8");
+      for (const m of src.matchAll(STATIC_IMPORT_RE)) {
+        const spec = m[1]!;
+        if (spec === "@xmldom/xmldom" || spec === "aws4fetch") {
+          offenders.push(`${file.replace(`${distDir}/`, "")} → ${spec}`);
+        }
+      }
+    }
+    expect(
+      offenders,
+      `baerly bin must self-contain optional peers; live imports: ${offenders.join(", ")}`,
+    ).toEqual([]);
+  });
 });
