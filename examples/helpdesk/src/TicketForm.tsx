@@ -24,10 +24,18 @@ export const TicketForm = ({
   const client = useBaerlyClient();
   const [initial, setInitial] = useState<Draft | undefined>(id === null ? EMPTY : undefined);
 
-  const { mutate: insertTicket, isPending: isInserting, error: insertError } = useInsert<Ticket>({
+  const {
+    mutate: insertTicket,
+    isPending: isInserting,
+    error: insertError,
+  } = useInsert<Ticket>({
     table: "tickets",
   });
-  const { mutate: updateTicket, isPending: isUpdating, error: updateError } = useUpdate<Ticket>({
+  const {
+    mutate: updateTicket,
+    isPending: isUpdating,
+    error: updateError,
+  } = useUpdate<Ticket>({
     table: "tickets",
   });
   const submitting = isInserting || isUpdating;
@@ -38,7 +46,7 @@ export const TicketForm = ({
       return;
     }
     void (async () => {
-      const row = await client.table<Ticket>("tickets").where({ _id: id }).first();
+      const row = await client.table<Ticket>("tickets").get(id);
       setInitial(row ?? EMPTY);
     })();
   }, [client, id]);

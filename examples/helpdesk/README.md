@@ -115,7 +115,7 @@ an event handler), drop down to the client directly via `useBaerlyClient`:
 
 ```ts
 const client = useBaerlyClient();
-const row = await client.table<Ticket>("tickets").where({ _id }).first();
+const row = await client.table<Ticket>("tickets").get(_id);
 ```
 
 ## Bucket layout
