@@ -90,31 +90,43 @@ Db.create<TConfig>({
 
 ## `db.table(name)` → `Table<T>`
 
-`Table<T>` is chainable. Modifiers (`where`, `order`, `limit`,
-`consistency`) return a `Query<T>`. Terminals fire I/O on the spot.
+`Table<T>` carries the common-case verbs directly (table-level reads
+plus by-primary-key mutations). Modifiers (`where`, `order`, `limit`,
+`consistency`) return a `Query<T>` for bulk-by-predicate work.
+Terminals fire I/O on the spot.
 
 ```ts
 interface Table<T extends DocumentData = DocumentData> {
   readonly name: string;
+  // Reads — whole collection / by id.
+  first(): Promise<T | undefined>;
+  all(): Promise<T[]>;
+  count(): Promise<number>;
+  get(id: string): Promise<T | undefined>;
+  // Modifiers — return Query<T>.
   where(predicate: Predicate<T>): Query<T>;
   order(spec: OrderSpec<T>): Query<T>;
   limit(n: number): Query<T>;
   consistency(level: ConsistencyLevel): Query<T>;   // "strong" | "eventual"
+  // Writes — by primary key.
   insert(doc: Partial<T> & DocumentData): Promise<{ _id: string }>;
-  count(): Promise<number>;
+  update(id: string, patch: Partial<T>): Promise<{ modified: number }>;
+  replace(id: string, doc: T): Promise<void>;
+  delete(id: string): Promise<{ deleted: number }>;
 }
 ```
 
-`Query<T>` adds the read + write terminals:
+`Query<T>` keeps the chainable read terminals and the predicate-aware
+bulk mutation verbs:
 
 ```ts
 interface Query<T> extends /* Table<T>'s modifiers */ {
   first(): Promise<T | undefined>;
   all(): Promise<T[]>;
   count(): Promise<number>;
-  update(patch: Partial<T>): Promise<{ modified: number }>;
-  replace(doc: T): Promise<void>;
-  delete(): Promise<{ deleted: number }>;
+  update(patch: Partial<T>): Promise<{ modified: number }>;   // bulk
+  replace(doc: T): Promise<void>;                              // single-row strict
+  delete(): Promise<{ deleted: number }>;                      // bulk
 }
 ```
 
@@ -158,19 +170,30 @@ HTTP mirror: `?consistency=eventual` on `GET /v1/t/:table` and
 
 ## Mutations
 
+By-id (the common case) lives on `Table<T>`; predicate-aware bulk
+verbs live on `Query<T>` after `.where(...)`.
+
 ```ts
 await db.table("tickets").insert({ status: "open", title: "ship it" });
 // → { _id: "01HQ..." }  (UUIDv7; caller may supply `_id`)
 
+// By-id (Table<T>):
+await db.table("tickets").update("01HQ...", { status: "closed" });
+// → { modified: 1 }  (JSON-merge-patch RFC 7386; `null` deletes a field)
+
+await db.table("tickets").replace("01HQ...", {
+  _id: "01HQ...", status: "open", title: "rewrite",
+});
+// → void  (whole-document overwrite)
+
+await db.table("tickets").delete("01HQ...");
+// → { deleted: 1 }  (or `{ deleted: 0 }` if the id is unknown)
+
+// Bulk-by-predicate (Query<T>):
 await db.table("tickets")
   .where({ status: "open" })
   .update({ status: "closed", closed_at: new Date().toISOString() });
-// → { modified: N }  (JSON-merge-patch RFC 7386; `null` deletes a field)
-
-await db.table("tickets")
-  .where({ _id: "01HQ..." })
-  .replace({ _id: "01HQ...", status: "open", title: "rewrite" });
-// → void  (`replace` is narrow: throws Conflict if zero or >1 rows match)
+// → { modified: N }
 
 await db.table("tickets").where({ status: "closed" }).delete();
 // → { deleted: N }

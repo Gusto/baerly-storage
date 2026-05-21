@@ -158,7 +158,7 @@ describe.runIf(RUN_NODE)("day-one handshake — node target", () => {
       });
       stamp("first-write");
       expect(_id).toMatch(/.+/);
-      const row = await client.table<Ticket>("tickets").where({ _id }).first();
+      const row = await client.table<Ticket>("tickets").get(_id);
       expect(row).toEqual({ _id, title: "day-one gate", status: "open" });
       stamp("first-read");
 
@@ -271,7 +271,7 @@ describe.runIf(RUN_CF && CF_API_TOKEN !== undefined && CF_ACCOUNT_ID !== undefin
         });
         stamp("first-write");
         expect(_id).toMatch(/.+/);
-        const row = await client.table<Ticket>("tickets").where({ _id }).first();
+        const row = await client.table<Ticket>("tickets").get(_id);
         expect(row).toEqual({ _id, title: "day-one gate cf", status: "open" });
         stamp("first-read");
 

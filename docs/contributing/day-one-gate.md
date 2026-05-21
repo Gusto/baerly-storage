@@ -156,8 +156,7 @@ wrangler r2 bucket delete <name>
 - **`no-manual-env-edit`** — `.env` mtime is within the gate budget
   (proves it wasn't hand-edited after `pnpm install`).
 - **`first-write`** — `client.table().insert()` returned a `_id`.
-- **`first-read`** — `client.table().where({_id}).first()`
-  round-tripped the doc.
+- **`first-read`** — `client.table().get(id)` round-tripped the doc.
 
 ## Adjusting the budgets
 

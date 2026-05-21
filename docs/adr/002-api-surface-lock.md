@@ -13,6 +13,14 @@ related: [README.md]
 
 Accepted (2026-05-11).
 
+- Amended (2026-05-21): mutations moved to by-primary-key on `Table<T>`
+  (`update(id, patch)`, `replace(id, doc)`, `delete(id)`), and reads
+  `first()` / `all()` / `count()` / `get(id)` are now table-level. The
+  predicate-aware bulk mutation verbs stay on `Query<T>` (kernel only —
+  the wire has no bulk mutation route). The lock's "additive-only"
+  contract is reset against the new baseline. See ticket
+  `01-table-api-by-id-mutations.md` for the supersession context.
+
 ## Context
 
 The SQL-shape table API lives in
@@ -34,11 +42,12 @@ Two factual anchors describe what is in the lock today:
 1. `Db` exposes exactly four methods: `Db.create`, `db.table`,
    `db.transaction`, and the `db._raw` escape hatch
    ([`packages/server/src/db.ts:120-287`](../../packages/server/src/db.ts)).
-2. `Table<T>` exposes seven verbs (`first`, `all`, `count`, `insert`,
-   `update`, `replace`, `delete`) plus `where()` returning a `Query`.
-   The transaction callback receives a `Table<T>`, not a `Db`, so
-   cross-table writes inside `transaction()` are a TypeScript compile
-   error
+2. `Table<T>` exposes the common-case verbs (`first`, `all`, `count`,
+   `get`, `insert`, `update`, `replace`, `delete` — by primary key)
+   plus modifiers (`where`, `order`, `limit`, `consistency`) returning
+   a `Query<T>`. The transaction callback receives a `Table<T>`, not a
+   `Db`, so cross-table writes inside `transaction()` are a TypeScript
+   compile error
    ([`packages/server/src/db.ts:235-287`](../../packages/server/src/db.ts)).
 
 Three options for what "locked" should mean:
@@ -76,13 +85,18 @@ Locked surface, by file:
   - Readonly properties: `db.app`, `db.tenant`.
 - `Table<T>`
   ([`packages/server/src/table.ts`](../../packages/server/src/table.ts)):
-  `first(predicate?)`, `all(predicate?)`, `count(predicate?)`,
-  `where(predicate)`, `insert(body)`, `update(predicate, patch)`,
-  `replace(predicate, body)`, `delete(predicate)`.
+  `name` (readonly), `first()`, `all()`, `count()`, `get(id)`,
+  `where(predicate)`, `order(spec)`, `limit(n)`,
+  `consistency(level)`, `insert(doc)`, `update(id, patch)`,
+  `replace(id, doc)`, `delete(id)`. Mutation verbs operate by
+  primary key.
 - `Query<T>`
   ([`packages/server/src/query.ts`](../../packages/server/src/query.ts)):
-  `first()`, `all()`, `count()`, `update(patch)`, `replace(body)`,
-  `delete()`.
+  `where(predicate)`, `order(spec)`, `limit(n)`,
+  `consistency(level)`, `first()`, `all()`, `count()`,
+  `update(patch)`, `replace(doc)`, `delete()`. Mutation verbs are
+  predicate-aware bulk; no HTTP mirror exists for bulk mutation, so
+  `ClientQuery<T>` is read-only.
 - `Db.transaction` callback context: a `Table<T>` whose mutation verbs
   buffer; reads pass through to live storage. No MVCC, no
   read-your-writes. The buffer commits atomically via one `commitBatch`
