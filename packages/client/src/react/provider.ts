@@ -1,5 +1,5 @@
 import { createContext, createElement, useContext, type ReactNode } from "react";
-import type { BaerlyConfig, UnboundConfig } from "@baerly/server";
+import type { BaerlyConfig, UnboundConfig } from "@baerly/protocol";
 import type { BaerlyClient } from "../client.ts";
 
 const ClientContext = createContext<BaerlyClient | undefined>(undefined);

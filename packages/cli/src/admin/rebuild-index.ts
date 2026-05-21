@@ -38,8 +38,7 @@
  */
 
 import { type ArgsDef } from "citty";
-import { BaerlyError } from "@baerly/protocol";
-import { type IndexDefinition } from "@baerly/server";
+import { BaerlyError, type IndexDefinition } from "@baerly/protocol";
 import { rebuildIndex } from "@baerly/server/maintenance";
 import { loadCollectionIndexes } from "../config.ts";
 import { parseBucketUri } from "../bucket-uri.ts";

@@ -1,11 +1,11 @@
 /**
- * Schema-validator adapter for `Db.insert` / `Query.update` /
+ * Schema-validator runtime helper for `Db.insert` / `Query.update` /
  * `Query.replace` boundary checks.
  *
- * Compatible with any library implementing StandardSchemaV1 — Zod
- * 3.24+, Valibot 0.36+, ArkType 2.0+, and others
- * (<https://standardschema.dev/>). The interface is pure-type:
- * no runtime import, no peer dep.
+ * The `SchemaValidator` / `SchemaIssue` TYPES live in
+ * `@baerly/protocol` (cross-platform). This module owns the runtime
+ * helper `validateOrThrow` that runs a validator and raises a
+ * `BaerlyError{code:"SchemaError"}` on failure.
  *
  * @example
  * ```ts
@@ -26,47 +26,9 @@
  * ```
  */
 
-import { BaerlyError } from "@baerly/protocol";
+import { BaerlyError, type SchemaValidator } from "@baerly/protocol";
 
-/**
- * Subset of the StandardSchemaV1 contract Baerly consumes at the
- * server boundary. The full spec lives at
- * <https://standardschema.dev/>; we copy the `validate` shape locally
- * because that's the only field the boundary calls, and inlining
- * preserves the repo's "no new runtime deps" rule (the spec package
- * is just this interface).
- */
-export interface SchemaValidator<TInput = unknown, TOutput = TInput> {
-  readonly "~standard": {
-    readonly version: 1;
-    readonly vendor: string;
-    readonly validate: (
-      value: unknown,
-    ) =>
-      | { value: TOutput; issues?: undefined }
-      | { issues: ReadonlyArray<SchemaIssue> }
-      | Promise<{ value: TOutput; issues?: undefined } | { issues: ReadonlyArray<SchemaIssue> }>;
-    readonly types?: { input: TInput; output: TOutput };
-  };
-}
-
-/**
- * One per-field validation failure. `path` is the validator-native
- * shape — entries are either a bare `PropertyKey` (string / number /
- * symbol) or a `{ key: PropertyKey }` segment, mirroring the live
- * StandardSchemaV1 spec. `validateOrThrow` normalises both forms to
- * `(string | number)[]` before raising the resulting
- * `BaerlyError{code:"SchemaError"}`.
- */
-export interface SchemaIssue {
-  readonly message: string;
-  /**
-   * Field path. Each entry is a string key, integer index, symbol
-   * (rare), or a `{ key: PropertyKey }` segment object — Zod 3.24+,
-   * Valibot 0.36+, ArkType 2.0+ etc. all emit the latter shape.
-   */
-  readonly path?: ReadonlyArray<PropertyKey | { readonly key: PropertyKey }> | undefined;
-}
+export type { SchemaIssue, SchemaValidator } from "@baerly/protocol";
 
 /**
  * Run a validator and throw `BaerlyError{code:"SchemaError"}` on failure.

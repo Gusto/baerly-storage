@@ -16,16 +16,16 @@
  *   canonical-line helpers, logger config.
  */
 
-export { type BaerlyAppConfig } from "./app-config.ts";
 export {
+  type BaerlyAppConfig,
   type BaerlyConfig,
   type CollectionDefinition,
   type CollectionNames,
   type RowOf,
   type UnboundConfig,
-  collectionsToMaps,
   defineConfig,
-} from "./config.ts";
+} from "@baerly/protocol";
+export { collectionsToMaps } from "./config.ts";
 export { Db } from "./db.ts";
 export { type IndexDefinition, allIndexKeysFor } from "./indexes.ts";
 export {

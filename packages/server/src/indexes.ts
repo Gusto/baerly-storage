@@ -3,9 +3,10 @@
  * index entries that the writer emits inside the same CAS fence as
  * the log entry and content body.
  *
- * This module owns:
+ * The {@link IndexDefinition} TYPE lives in `@baerly/protocol`
+ * (cross-platform). This module owns the runtime helpers that
+ * operate on that shape:
  *
- *   - The {@link IndexDefinition} shape (`name`, `on`).
  *   - {@link validateIndexDefinition} — synchronous schema check
  *     for path-segment safety; thrown at `Writer` construction.
  *   - {@link encodeIndexValue} — value-order-preserving base-32 of a
@@ -56,65 +57,12 @@ import {
   BaerlyError,
   type DocumentData,
   encodeJsonBytes,
+  type IndexDefinition,
   matches,
-  type Predicate,
   validatePredicate,
 } from "@baerly/protocol";
 
-/**
- * A secondary index declaration. Lives in `baerly.config.ts` under
- * `collections.<name>.indexes[]` and is threaded through
- * `Writer` via `WriterOptions.indexes`.
- *
- * Validated synchronously by {@link validateIndexDefinition} at
- * writer construction; an invalid def throws `BaerlyError{code:
- * "SchemaError"}` before the first commit.
- */
-export interface IndexDefinition {
-  /**
-   * Stable path-safe identifier. Must match `/^[a-z_][a-z0-9_]*$/`
-   * — used directly as a key segment under
-   * `<logPrefix>/index/<name>/...`.
-   */
-  readonly name: string;
-
-  /**
-   * Field name(s) to index on. `string` is a single-field index
-   * (today's read-path target). `readonly string[]` is composite —
-   * accepted by the key encoder but the predicate matcher only
-   * consults single-field index entries today.
-   *
-   * Top-level fields only — dotted-path `on` values throw
-   * `SchemaError` from {@link projectIndexValues}. A future change
-   * widens the projector to dotted paths (mirroring what
-   * `packages/server/src/query.ts` already does on the predicate
-   * side).
-   */
-  readonly on: string | readonly string[];
-
-  /**
-   * Optional sparse-projection filter. When present, the writer
-   * emits index keys ONLY for docs that satisfy `predicate` under
-   * `matches(predicate, body)`. Sparse indexes shrink the on-storage
-   * key set proportionally to filter selectivity — an index that
-   * matches ~1% of writes pays ~1% of the dense Class-A PUT cost.
-   *
-   * Operators allowed: `$eq`, `$gt`, `$gte`, `$lt`, `$lte`, `$in`.
-   * Range-shaped and `$in`-shaped filters compose with the planner's
-   * cost-bias step via
-   * ({@link "@baerly/protocol".predicateImplies}), which proves
-   * whether a query predicate is contained in the filter's value
-   * range. A query that the filter's range / set strictly contains
-   * will route through the filtered index in preference to an
-   * unfiltered alternative.
-   *
-   * Planner cost-bias: a filtered index whose predicate is implied
-   * by the query predicate outranks an unfiltered alternative; an
-   * unfiltered index outranks a filtered one whose predicate is NOT
-   * implied (walking the smaller key set would miss matching docs).
-   */
-  readonly predicate?: Predicate<DocumentData>;
-}
+export type { IndexDefinition };
 
 /** Path-safe segment name. */
 const INDEX_NAME_RE = /^[a-z_][a-z0-9_]*$/;

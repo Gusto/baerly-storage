@@ -1,10 +1,11 @@
 import {
+  type BaerlyConfig,
   type MetricsRecorder,
   type Storage,
   type Verifier,
   noopMetricsRecorder,
 } from "@baerly/protocol";
-import { type BaerlyConfig, Db, collectionsToMaps } from "@baerly/server";
+import { Db, collectionsToMaps } from "@baerly/server";
 import { createRouter, mapError } from "@baerly/server/http";
 import { runScheduledMaintenance } from "@baerly/server/maintenance";
 import { prettyConsoleSink } from "./logger-pretty.ts";

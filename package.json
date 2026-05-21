@@ -55,8 +55,8 @@
       "import": "./packages/server/src/observability/index.ts"
     },
     "./config": {
-      "types": "./packages/server/src/app-config.ts",
-      "import": "./packages/server/src/app-config.ts"
+      "types": "./packages/protocol/src/app-config.ts",
+      "import": "./packages/protocol/src/app-config.ts"
     },
     "./client": {
       "types": "./packages/client/src/index.ts",

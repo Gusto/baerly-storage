@@ -1,3 +1,4 @@
+export * from "./app-config.ts";
 export * from "./bytes.ts";
 export * from "./constants.ts";
 export {
@@ -12,8 +13,10 @@ export {
 export * from "./coordination/gc-pending.ts";
 export * from "./table-api.ts";
 export * from "./errors.ts";
+export * from "./indexes.ts";
 export * from "./json.ts";
 export * from "./query/index.ts";
+export * from "./schema.ts";
 export * from "./storage/index.ts";
 export * from "./time.ts";
 export * from "./types.ts";

@@ -24,8 +24,7 @@ import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { BaerlyError } from "@baerly/protocol";
-import type { BaerlyConfig, IndexDefinition } from "@baerly/server";
+import { type BaerlyConfig, BaerlyError, type IndexDefinition } from "@baerly/protocol";
 
 export interface AppConfig {
   readonly app: string;

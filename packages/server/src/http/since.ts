@@ -28,8 +28,13 @@
  * non-idle.
  */
 
-import { BaerlyError, type LogEntry, logSeqStartOf, lsnParts } from "@baerly/protocol";
-import type { BaerlyConfig } from "../config.ts";
+import {
+  type BaerlyConfig,
+  BaerlyError,
+  type LogEntry,
+  logSeqStartOf,
+  lsnParts,
+} from "@baerly/protocol";
 import type { Db } from "../db.ts";
 import type { SinceResponse } from "../contract.ts";
 

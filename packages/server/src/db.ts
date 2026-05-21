@@ -2,15 +2,20 @@
    name for the Storage escape hatch; marked `@internal`. */
 
 import {
+  type BaerlyConfig,
   BaerlyError,
+  type CollectionNames,
   type CurrentJsonRead,
   decodeJsonBytes,
   type DocumentData,
+  type IndexDefinition,
   LOG_KEY_PREFIX,
   type LogEntry,
   type MetricsRecorder,
   noopMetricsRecorder,
   readCurrentJson,
+  type RowOf,
+  type SchemaValidator,
   type Storage,
   type StorageGetOptions,
   type StorageGetResult,
@@ -18,17 +23,10 @@ import {
   type StoragePutOptions,
   type StoragePutResult,
   type Table,
-} from "@baerly/protocol";
-import {
-  type BaerlyConfig,
-  type CollectionNames,
-  collectionsToMaps,
-  type RowOf,
   type UnboundConfig,
-} from "./config.ts";
-import type { IndexDefinition } from "./indexes.ts";
+} from "@baerly/protocol";
+import { collectionsToMaps } from "./config.ts";
 import type { CurrentJsonCacheSlot, TableReadContext } from "./query.ts";
-import type { SchemaValidator } from "./schema.ts";
 import { Writer, type CommitInput } from "./writer.ts";
 import { makeTable } from "./table.ts";
 

@@ -2,17 +2,17 @@
    name on `Db` (mirrors the declaration in `@baerly/protocol`). */
 
 import {
+  type BaerlyConfig,
+  BaerlyError,
   CURRENT_JSON_SCHEMA_VERSION,
   createCurrentJson,
   MemoryStorage,
-  BaerlyError,
+  type SchemaValidator,
   type Storage,
 } from "@baerly/protocol";
 import { describe, expect, test } from "vitest";
-import type { BaerlyConfig } from "./config.ts";
 import { Db } from "./db.ts";
 import { InMemoryMetricsRecorder } from "./_internal/in-memory-metrics.ts";
-import type { SchemaValidator } from "./schema.ts";
 
 const utf8 = (s: string): Uint8Array => new TextEncoder().encode(s);
 const fromBytes = (b: Uint8Array): string => new TextDecoder().decode(b);

@@ -30,10 +30,11 @@ import {
   CURRENT_JSON_SCHEMA_VERSION,
   createCurrentJson,
   type DocumentData,
+  type IndexDefinition,
   MemoryStorage,
 } from "@baerly/protocol";
 import { beforeEach, describe, expect, test } from "vitest";
-import { allIndexKeysFor, Db, type IndexDefinition } from "@baerly/server";
+import { allIndexKeysFor, Db } from "@baerly/server";
 
 const APP = "test";
 const TENANT = "t";

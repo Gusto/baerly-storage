@@ -1,6 +1,11 @@
 import { type DevLandingOptions, renderDevLanding } from "@baerly/dev";
-import { type MetricsRecorder, type Verifier, noopMetricsRecorder } from "@baerly/protocol";
-import { type BaerlyConfig, Db, collectionsToMaps } from "@baerly/server";
+import {
+  type BaerlyConfig,
+  type MetricsRecorder,
+  type Verifier,
+  noopMetricsRecorder,
+} from "@baerly/protocol";
+import { Db, collectionsToMaps } from "@baerly/server";
 import { createRouter } from "@baerly/server/http";
 import {
   type ObservabilityConfig,

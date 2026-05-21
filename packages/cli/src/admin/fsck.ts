@@ -41,12 +41,14 @@
 
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { type ArgsDef } from "citty";
-import { type Storage, BaerlyError, readCurrentJson } from "@baerly/protocol";
 import {
   type BaerlyConfig,
+  BaerlyError,
   type IndexDefinition,
-  loadSnapshotAsMap,
-} from "@baerly/server";
+  readCurrentJson,
+  type Storage,
+} from "@baerly/protocol";
+import { loadSnapshotAsMap } from "@baerly/server";
 import { rebuildIndex } from "@baerly/server/maintenance";
 import { parseBucketUri } from "../bucket-uri.ts";
 import { emitSuccess, isJsonMode } from "../output.ts";
@@ -203,9 +205,7 @@ const renderSnapshotLog = (
       `(${context.logEntriesPresent}/${toExcl - from} entries present)`,
     ),
   );
-  lines.push(
-    `  status:               ${findings.some(isFindingFinding) ? "findings" : "ok"}`,
-  );
+  lines.push(`  status:               ${findings.some(isFindingFinding) ? "findings" : "ok"}`);
   for (const f of findings) {
     lines.push(`  ${f.check}: ${f.message}${f.key !== undefined ? ` (key=${f.key})` : ""}`);
   }

@@ -1,7 +1,6 @@
+import type { BaerlyConfig, IndexDefinition, SchemaValidator } from "@baerly/protocol";
 import { describe, expect, test } from "vitest";
-import { type BaerlyConfig, collectionsToMaps } from "./config.ts";
-import type { IndexDefinition } from "./indexes.ts";
-import type { SchemaValidator } from "./schema.ts";
+import { collectionsToMaps } from "./config.ts";
 
 const noopSchema: SchemaValidator = {
   "~standard": {

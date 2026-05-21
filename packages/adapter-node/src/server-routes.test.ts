@@ -25,13 +25,14 @@ import { getRequestListener } from "@hono/node-server";
 import { createServer, request as httpRequest } from "node:http";
 import type { AddressInfo } from "node:net";
 import {
+  type BaerlyConfig,
   CURRENT_JSON_SCHEMA_VERSION,
   MemoryStorage,
   createCurrentJson,
+  type SchemaValidator,
   type Storage,
   type Verifier,
 } from "@baerly/protocol";
-import type { BaerlyConfig, SchemaValidator } from "@baerly/server";
 import { describe, expect, test } from "vitest";
 import { createApp } from "./app.ts";
 

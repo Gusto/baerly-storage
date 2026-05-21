@@ -23,6 +23,7 @@ import { Hono } from "hono/tiny";
 import type { Context } from "hono";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import {
+  type BaerlyConfig,
   type ConsistencyLevel,
   BaerlyError,
   type DocumentData,
@@ -30,7 +31,6 @@ import {
   type OrderSpec,
   type Predicate,
 } from "@baerly/protocol";
-import type { BaerlyConfig } from "../config.ts";
 import type { Db } from "../db.ts";
 import {
   errorEnvelope,
@@ -151,9 +151,7 @@ export function createRouter(options: CreateRouterOptions): Hono {
     const { table } = c.req.param();
     const body = await readJsonBody(c, MAX_BODY_BYTES);
     const doc = assertJsonBodyField(body, "doc");
-    const { _id } = await db
-      .table(table)
-      .insert(doc as Partial<DocumentData> & DocumentData);
+    const { _id } = await db.table(table).insert(doc as Partial<DocumentData> & DocumentData);
     return c.json({ _id }, 201);
   });
 

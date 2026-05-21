@@ -1,0 +1,262 @@
+/**
+ * Collection-config schema types + `defineConfig` identity helper.
+ *
+ * Lives in `@baerly/protocol` (the cross-platform package) so the
+ * scaffold's `baerly.config.ts` and the client can reference these
+ * types without transitively dragging Node-only server modules
+ * (`AsyncLocalStorage` etc.) into their import graph.
+ *
+ * Runtime helpers that operate on these shapes —
+ * `collectionsToMaps`, `validateIndexDefinition`, `validateOrThrow`
+ * — stay in `@baerly/server`; they have impl detail that's allowed
+ * to depend on Node-only modules.
+ *
+ * @see ./indexes.ts — `IndexDefinition` type.
+ * @see ./schema.ts — `SchemaValidator` / `SchemaIssue` types.
+ *
+ * @example
+ * ```ts
+ * import { defineConfig } from "baerly-storage/config";
+ *
+ * export default defineConfig({
+ *   app: "tickets",
+ *   tenant: "acme",
+ *   target: "cloudflare",
+ *   collections: {
+ *     tickets: {
+ *       indexes: [
+ *         { name: "by_status", on: "status" },
+ *         { name: "by_assignee", on: "assignee" },
+ *       ],
+ *     },
+ *   },
+ * });
+ * ```
+ */
+
+import type { IndexDefinition } from "./indexes.ts";
+import type { SchemaValidator } from "./schema.ts";
+
+// Cross-platform protocol types re-exported from `baerly-storage/config`
+// so the scaffold's `baerly.config.ts` and its sibling `types.ts` can
+// pull every shape they need from one DOM-pure entry. `DocumentData`
+// is the row-shape constraint that scaffolded `interface Note extends
+// DocumentData {...}` declarations target; re-exporting here keeps the
+// example's typecheck graph from reaching into the server barrel.
+export type { DocumentData, DocumentValue } from "./json.ts";
+
+/**
+ * One collection's declarative config. Today `indexes` and `schema`
+ * are consumed; future tickets add `replica_identity` and lifecycle
+ * hooks.
+ */
+export interface CollectionDefinition {
+  /**
+   * Secondary indexes declared for this collection. Each declared
+   * index produces one zero-byte PUT per commit (when the indexed
+   * field is set on the doc) inside the same fence as the log
+   * entry and content body. See `./indexes.ts` for the key shape.
+   */
+  readonly indexes?: ReadonlyArray<IndexDefinition>;
+  /**
+   * Optional schema for this collection. When set, every server-side
+   * `insert` / `update` / `replace` validates the resulting post-image
+   * before committing — invalid input throws
+   * `BaerlyError{code:"SchemaError"}` carrying a `.issues` array of
+   * `{ path, message }` entries.
+   *
+   * Adapter: StandardSchemaV1 (see `./schema.ts`). Compatible with
+   * Zod 3.24+, Valibot 0.36+, ArkType 2.0+ today; any future library
+   * implementing the spec works without a code change here.
+   *
+   * `undefined` means no validation — every write proceeds as today
+   * (zero overhead, today's tests untouched).
+   */
+  readonly schema?: SchemaValidator;
+}
+
+/**
+ * The full `baerly.config.ts` runtime shape. Re-exported from
+ * `baerly-storage` and consumed by the day-1 `npm create baerly`
+ * scaffold + the `baerly admin rebuild-index` CLI.
+ */
+export interface BaerlyConfig {
+  /**
+   * Per-collection declarations, keyed by collection name. Required
+   * (declare `{}` when you have no collections yet) — this keeps the
+   * config interface from being structurally empty, which would
+   * trigger TypeScript's weak-type check when the adapter accepts
+   * the literal as `BaerlyWorkerOptions.config` / `BaerlyNodeOptions.config`.
+   */
+  readonly collections: Readonly<Record<string, CollectionDefinition>>;
+}
+
+/**
+ * `BaerlyAppConfig` extends `BaerlyConfig` with scaffold-flavoured
+ * deploy metadata (`target`, `domain`, `cloudflareAccess`, etc.).
+ *
+ * Exposed at `baerly-storage/config`. Imported by the
+ * `baerly.config.ts` that `npm create baerly` emits, and by anyone
+ * who wants IDE/`tsgo` type inference on the full scaffold-aware
+ * config shape on top of the runtime `BaerlyConfig.collections` map.
+ *
+ * One `baerly.config.ts` carries both scaffold metadata (consumed by
+ * `baerly deploy` / `baerly doctor`) and the runtime schema
+ * (consumed by `Db.create`). The literal-pinned return type of
+ * {@link defineConfig} makes `collections` flow through to
+ * `Db.create<TConfig>` and `createBaerlyClient<TConfig>`.
+ */
+export interface BaerlyAppConfig extends BaerlyConfig {
+  /** Bucket-prefix for this baerly app. One bucket per app. */
+  readonly app: string;
+  /**
+   * Default tenant pin for `Verifier`s that don't derive a tenant
+   * from a claim. Production `Verifier`s (`bearerJwt`,
+   * `cloudflareAccess`) ignore this and derive `tenantPrefix` from
+   * the request.
+   */
+  readonly tenant: string;
+  /**
+   * Deploy target — `"cloudflare"` or `"node"`.
+   * Read by `baerly deploy` to dispatch the correct deploy command.
+   */
+  readonly target: "cloudflare" | "node";
+  /**
+   * Optional. Custom domain for the deployed service. Cloudflare:
+   * wired to the Worker as a route. Node: rendered into the
+   * Dockerfile's `EXPOSE` and the emitted readme.
+   */
+  readonly domain?: string | undefined;
+  /**
+   * Names of secrets the deployed runtime needs. `baerly deploy`
+   * and `baerly doctor` check each against the platform's secret
+   * store and warn (deploy) / report (doctor) when missing.
+   * Default treatment (when unset) is `["SHARED_SECRET"]` — matches
+   * the scaffolder's emitted Verifier wiring.
+   */
+  readonly requiredSecrets?: readonly string[];
+  /**
+   * Optional Cloudflare Access app config. When set, the production
+   * CF template prefers `cloudflareAccess()` as the `Verifier` and
+   * `baerly doctor --target=cloudflare` walks the CF Access app
+   * config to confirm the audience tag matches.
+   *
+   * - `teamDomain` — CF Access team domain, e.g. `"acme"`.
+   * - `audienceTag` — Application Audience (AUD) tag from the CF
+   *   Access app, 64 lowercase-hex characters.
+   */
+  readonly cloudflareAccess?: {
+    readonly teamDomain: string;
+    readonly audienceTag: string;
+  };
+  /**
+   * Optional observability overrides. The templates already
+   * read `LOG_LEVEL` and `LOG_SAMPLE` from the runtime env; this
+   * field is a typed-config alternative for deployments that prefer
+   * to pin defaults in source. See `docs/guide/observability.md` for the
+   * canonical-line shape and `docs/contributing/conventions/observability.md` for
+   * the one-canonical-line-per-unit-of-work rule.
+   *
+   * - `level` — lowest record level reaching the sink. Falls back
+   *   to the `LOG_LEVEL` env var, then to `"info"`.
+   * - `sampleRate` — head-based sample rate for successful HTTP
+   *   requests in `[0, 1]`. Falls back to the `LOG_SAMPLE` env var,
+   *   then to `0.1`. Errors are always kept; maintenance always
+   *   emits.
+   */
+  readonly observability?: {
+    readonly level?: "debug" | "info" | "warn" | "error";
+    readonly sampleRate?: number;
+  };
+}
+
+/**
+ * Identity helper that pins the config's TypeScript shape so IDEs
+ * surface autocomplete and `tsgo --noEmit` catches typos at write
+ * time. Returns its input verbatim — no runtime transformation.
+ *
+ * Two overloads: one for the scaffold-flavoured `BaerlyAppConfig`
+ * (the shape `npm create baerly` emits, which carries `app`,
+ * `tenant`, `target` deploy metadata) and one for the runtime
+ * `BaerlyConfig` shape (just `collections`, used by tests and by
+ * apps that wire deploy metadata in some other way). Both preserve
+ * the literal shape of `cfg` via `<const C>` so `CollectionNames<C>`
+ * and `RowOf<C, N>` resolve to literal unions.
+ */
+export function defineConfig<const C extends BaerlyAppConfig>(cfg: C): C;
+export function defineConfig<const C extends BaerlyConfig>(cfg: C): C;
+export function defineConfig<const C extends BaerlyConfig>(cfg: C): C {
+  return cfg;
+}
+
+/**
+ * Sentinel `BaerlyConfig` used as the default `TConfig` parameter
+ * by consumers (`Db<TConfig>`, `BaerlyClient<TConfig>`). Setting
+ * `collections` to `Record<never, never>` makes
+ * `CollectionNames<UnboundConfig>` resolve to `never`, which in
+ * turn makes the narrowing `.table<N extends CollectionNames<C>>(name: N)`
+ * overload unsatisfiable; the legacy per-call generic
+ * `.table<T>(name: string)` overload wins for consumers that
+ * haven't opted in to typed configs.
+ */
+export type UnboundConfig = { readonly collections: Record<never, never> };
+
+/**
+ * Set of declared collection names on a `BaerlyConfig`, as a string
+ * union. Resolves to `never` when no `collections` are declared
+ * (notably for `UnboundConfig`), which the typed `Db` / client
+ * overloads use to disable narrowing for unbound consumers.
+ *
+ * @example
+ * ```ts
+ * const config = defineConfig({
+ *   collections: {
+ *     tickets: { schema: TicketSchema },
+ *     audits: {},
+ *   },
+ * });
+ * type Names = CollectionNames<typeof config>; // "tickets" | "audits"
+ * ```
+ */
+export type CollectionNames<C extends BaerlyConfig> = C extends {
+  readonly collections: infer Cs;
+}
+  ? Extract<keyof Cs, string>
+  : never;
+
+/**
+ * Row type for collection `N` on config `C`. Resolves to the
+ * `StandardSchemaV1` output type of `C["collections"][N]["schema"]`
+ * when one is declared; otherwise falls back to
+ * `Record<string, unknown>`.
+ *
+ * The fallback is intentionally wider than the protocol's
+ * `DocumentData`. Downstream call sites that need
+ * `DocumentData` (e.g. `Table<T extends DocumentData>`)
+ * apply the intersection at their own seam — keeping that
+ * constraint local to the consumer keeps THIS file independent of
+ * `@baerly/protocol/src/json.ts`.
+ *
+ * @example
+ * ```ts
+ * const config = defineConfig({
+ *   collections: {
+ *     tickets: { schema: TicketSchema },
+ *     audits: {},
+ *   },
+ * });
+ * type Ticket = RowOf<typeof config, "tickets">; // z.infer<typeof TicketSchema>
+ * type Audit = RowOf<typeof config, "audits">;   // Record<string, unknown>
+ * ```
+ */
+export type RowOf<C extends BaerlyConfig, N extends CollectionNames<C>> = C extends {
+  readonly collections: infer Cs;
+}
+  ? N extends keyof Cs
+    ? Cs[N] extends { readonly schema: infer S }
+      ? S extends SchemaValidator<unknown, infer Out>
+        ? Out
+        : Record<string, unknown>
+      : Record<string, unknown>
+    : Record<string, unknown>
+  : Record<string, unknown>;

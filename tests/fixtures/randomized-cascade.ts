@@ -24,6 +24,7 @@ import {
   type CurrentJson,
   CURRENT_JSON_SCHEMA_VERSION,
   type DocumentData,
+  type IndexDefinition,
   type LogEntry,
   BaerlyError,
   matches,
@@ -33,7 +34,7 @@ import {
   readCurrentJson,
   uuid,
 } from "@baerly/protocol";
-import { allIndexKeysFor, Db, type IndexDefinition } from "@baerly/server";
+import { allIndexKeysFor, Db } from "@baerly/server";
 import { rebuildIndex } from "@baerly/server/maintenance";
 import { Writer } from "@baerly/server/_internal/testing";
 import {

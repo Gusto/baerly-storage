@@ -29,11 +29,12 @@ import {
   type DocumentData,
   type LogEntry,
   BaerlyError,
+  type SchemaValidator,
   type Storage,
   createCurrentJson,
   uuid,
 } from "@baerly/protocol";
-import { Db, type SchemaValidator } from "@baerly/server";
+import { Db } from "@baerly/server";
 import { compact, runGc } from "@baerly/server/maintenance";
 import {
   InMemoryMetricsRecorder,

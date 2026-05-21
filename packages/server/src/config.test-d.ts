@@ -12,10 +12,15 @@
  * include glob (see `vitest.config.ts`).
  */
 
-import type { DocumentData, Storage } from "@baerly/protocol";
-import { type CollectionNames, defineConfig, type RowOf } from "./config.ts";
+import {
+  type CollectionNames,
+  defineConfig,
+  type DocumentData,
+  type RowOf,
+  type SchemaValidator,
+  type Storage,
+} from "@baerly/protocol";
 import { Db } from "./db.ts";
-import type { SchemaValidator } from "./schema.ts";
 
 // Minimal in-test stand-in for a real validator. We don't depend on
 // `zod` here — the type-level check is "does `RowOf` recover the

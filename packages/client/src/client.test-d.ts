@@ -7,8 +7,7 @@
  * glob (see `vitest.config.ts`).
  */
 
-import type { DocumentData } from "@baerly/protocol";
-import { defineConfig, type SchemaValidator } from "@baerly/server";
+import { defineConfig, type DocumentData, type SchemaValidator } from "@baerly/protocol";
 import { type ClientTable, createBaerlyClient } from "./client.ts";
 
 // Minimal stand-in for a real validator — independent of zod /

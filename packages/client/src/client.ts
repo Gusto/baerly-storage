@@ -4,13 +4,16 @@
    so the typed client stays structurally compatible. */
 
 import {
+  type BaerlyConfig,
   BaerlyError,
+  type CollectionNames,
   type ConsistencyLevel,
   type DocumentData,
   type OrderSpec,
   type Predicate,
+  type RowOf,
+  type UnboundConfig,
 } from "@baerly/protocol";
-import type { BaerlyConfig, CollectionNames, RowOf, UnboundConfig } from "@baerly/server";
 import type { SinceResponse } from "./contract.ts";
 import { type Fetcher, type RequestContext, request } from "./request.ts";
 

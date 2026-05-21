@@ -15,12 +15,13 @@
 
 import { describe, expect, test } from "vitest";
 import {
+  type BaerlyConfig,
   CURRENT_JSON_SCHEMA_VERSION,
   createCurrentJson,
   BaerlyError,
+  type SchemaValidator,
   type Verifier,
 } from "@baerly/protocol";
-import type { BaerlyConfig, SchemaValidator } from "@baerly/server";
 import { r2BindingStorage } from "./r2-binding-storage.ts";
 import { singleTenantDevVerifier } from "./single-tenant-dev-verifier.ts";
 import { baerlyWorker, type BaerlyEnv } from "./worker.ts";

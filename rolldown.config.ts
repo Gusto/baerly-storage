@@ -24,7 +24,7 @@ export default defineConfig({
     http: "packages/server/src/http/index.ts",
     maintenance: "packages/server/src/maintenance.ts",
     observability: "packages/server/src/observability/index.ts",
-    "app-config": "packages/server/src/app-config.ts",
+    "app-config": "packages/protocol/src/app-config.ts",
     cloudflare: "packages/adapter-cloudflare/src/index.ts",
     node: "packages/adapter-node/src/index.ts",
     client: "packages/client/src/index.ts",
