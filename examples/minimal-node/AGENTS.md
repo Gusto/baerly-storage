@@ -49,7 +49,6 @@ read it via your editor's TS LS or via the published types).
 | `pnpm dev`         | Run the server locally via `baerly dev` — Node listener on :3000 | seconds to start |
 | `pnpm build`       | `tsc -b && vite build` — emits the SPA into `dist/client/` | seconds  |
 | `pnpm start`       | `node --experimental-strip-types src/server/index.ts` — production entry; serves the SPA from `dist/client/` via `webRoot` | seconds to start |
-| `pnpm test`        | Run vitest                                          | seconds          |
 
 ## Where the code is
 

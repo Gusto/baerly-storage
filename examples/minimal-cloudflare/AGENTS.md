@@ -44,7 +44,6 @@ read it via your editor's TS LS or via the published types).
 | `pnpm dev`       | Run `vite` — the Cloudflare plugin runs the Worker inside `workerd` next to the SPA dev server; same origin on :5173 | seconds to start |
 | `pnpm build`     | `tsc -b && vite build` — emits `dist/client/` for the Workers Assets binding            | seconds          |
 | `pnpm deploy`    | `wrangler deploy` — ships Worker + assets in one shipment (auto-creates R2 on first run via `--x-provision`) | seconds          |
-| `pnpm test`      | Run vitest                                                                              | seconds          |
 
 ## Where the code is
 
