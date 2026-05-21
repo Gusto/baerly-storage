@@ -21,7 +21,7 @@
 
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "types": ["node", "@cloudflare/workers-types"],
+    "types": ["@cloudflare/workers-types"],
     "composite": true
   },
   "include": ["src/server/**/*", "uint8array-base64.d.ts", "baerly.config.ts"]

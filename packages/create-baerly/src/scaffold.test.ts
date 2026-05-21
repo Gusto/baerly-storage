@@ -275,6 +275,46 @@ describe("scaffold", () => {
     ).rejects.toThrow(/template not found for target=lambda starter=minimal/);
   });
 
+  // Drift sentinel: a tsconfig referencing `@types/X` (via the
+  // `types: ["X", ...]` whitelist) without the matching devDep in
+  // the same example's package.json fails `tsc -b` on a fresh
+  // scaffold with TS2688: "Cannot find type definition file for X".
+  // The monorepo masks this — `@types/node` is hoisted by pnpm — so
+  // the failure only surfaces for users running `pnpm create baerly`
+  // outside this repo. Lock the contract here.
+  test("tsconfig types[] entries are covered by local devDependencies", async () => {
+    type Pkg = { devDependencies?: Record<string, string> };
+    type Tsc = { compilerOptions?: { types?: string[] } };
+    const findings: string[] = [];
+    for (const dir of EXAMPLE_DIRS) {
+      const pkgJson = JSON.parse(await readFile(join(dir, "package.json"), "utf8")) as Pkg;
+      const devDeps = pkgJson.devDependencies ?? {};
+      const entries = await readdir(dir);
+      const tsconfigs = entries.filter((n) => n.startsWith("tsconfig") && n.endsWith(".json"));
+      for (const name of tsconfigs) {
+        const tsc = JSON.parse(await readFile(join(dir, name), "utf8")) as Tsc;
+        for (const entry of tsc.compilerOptions?.types ?? []) {
+          // TS's `types[]` entries are package specifiers: `node`,
+          // `@cloudflare/workers-types`, `vite/client`. Reduce to the
+          // owning package name, then accept either that package or
+          // `@types/<pkg>` (the DefinitelyTyped convention) in devDeps.
+          const parts = entry.split("/");
+          const owner = entry.startsWith("@") ? `${parts[0]}/${parts[1]}` : parts[0]!;
+          const ok = owner in devDeps || `@types/${owner}` in devDeps;
+          if (!ok) {
+            findings.push(
+              `${relative(TEMPLATES_ROOT, dir)}/${name}: "${entry}" (need devDep "${owner}" or "@types/${owner}")`,
+            );
+          }
+        }
+      }
+    }
+    expect(
+      findings,
+      `tsconfig types[] entries missing a devDependency: ${findings.join(", ")}`,
+    ).toEqual([]);
+  });
+
   // Drift sentinel: both example trees were migrated off the old
   // `\{\{...\}\}` placeholder convention to manifest-driven sentinel
   // renames. If anyone reintroduces a `\{\{placeholder\}\}` to one of
