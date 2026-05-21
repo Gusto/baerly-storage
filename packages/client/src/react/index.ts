@@ -6,7 +6,7 @@
  * **Reads:**
  * - {@link useLiveQuery} — live `.where(where).all()`. Returns a
  *   discriminated union over `loading` / `ok` / `error`.
- * - {@link useLiveDocument} — live `.where({ _id }).first()`. Returns
+ * - {@link useLiveDocument} — live `.get(id)`. Returns
  *   a discriminated union over `loading` / `ok` / `missing` / `error`.
  * - {@link useInvalidationTick} — escape hatch over the raw
  *   `/v1/since` event stream; advances on log events. Use only when

@@ -226,7 +226,7 @@ export interface ClientQuery<T extends DocumentData = DocumentData> {
  * ```ts
  * const client = createBaerlyClient({ baseUrl: "https://api.example.com" });
  * const { _id } = await client.table("tickets").insert({ title: "hi" });
- * const row = await client.table("tickets").where({ _id }).first();
+ * const row = await client.table("tickets").get(_id);
  * ```
  */
 export interface BaerlyClient<TConfig extends BaerlyConfig = UnboundConfig> {

@@ -41,14 +41,14 @@ Two factual anchors describe what is in the lock today:
 
 1. `Db` exposes exactly four methods: `Db.create`, `db.table`,
    `db.transaction`, and the `db._raw` escape hatch
-   ([`packages/server/src/db.ts:120-287`](../../packages/server/src/db.ts)).
+   ([`packages/server/src/db.ts:140-464`](../../packages/server/src/db.ts)).
 2. `Table<T>` exposes the common-case verbs (`first`, `all`, `count`,
    `get`, `insert`, `update`, `replace`, `delete` — by primary key)
    plus modifiers (`where`, `order`, `limit`, `consistency`) returning
    a `Query<T>`. The transaction callback receives a `Table<T>`, not a
    `Db`, so cross-table writes inside `transaction()` are a TypeScript
    compile error
-   ([`packages/server/src/db.ts:235-287`](../../packages/server/src/db.ts)).
+   ([`packages/server/src/db.ts:464-510`](../../packages/server/src/db.ts)).
 
 Three options for what "locked" should mean:
 
@@ -101,7 +101,7 @@ Locked surface, by file:
   buffer; reads pass through to live storage. No MVCC, no
   read-your-writes. The buffer commits atomically via one `commitBatch`
   call
-  ([`packages/server/src/db.ts:265-287`](../../packages/server/src/db.ts)).
+  ([`packages/server/src/db.ts:464-560`](../../packages/server/src/db.ts)).
 
 Allowed additive changes (no ADR required):
 
