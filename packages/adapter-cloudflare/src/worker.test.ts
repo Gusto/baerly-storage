@@ -13,7 +13,7 @@ import { CURRENT_JSON_SCHEMA_VERSION, createCurrentJson, type Verifier } from "@
 import { reset, type LogRecord, type Sink } from "@logtape/logtape";
 import { afterEach, describe, expect, test } from "vitest";
 import { r2BindingStorage } from "./r2-binding-storage.ts";
-import { baerlyWorker, type Env } from "./worker.ts";
+import { baerlyWorker, type BaerlyEnv } from "./worker.ts";
 
 const getBinding = (): R2Bucket => {
   const bucket = (globalThis as { __BAERLY_R2_BINDING__?: R2Bucket }).__BAERLY_R2_BINDING__;
@@ -43,7 +43,7 @@ const makeNoopCtx = (): ExecutionContext => ({
 describe("baerlyWorker scheduled", () => {
   test("no-ops when `options.scheduled` is unset", async () => {
     const bucket = getBinding();
-    const env: Env = { BUCKET: bucket, APP: "t" };
+    const env: BaerlyEnv = { BUCKET: bucket, APP: "t" };
     const handler = baerlyWorker({ verifier: scheduledOnlyVerifier });
     await expect(
       handler.scheduled!(makeScheduledEvent(), env, makeNoopCtx()),
@@ -56,8 +56,8 @@ describe("baerlyWorker scheduled", () => {
 
   test("invokes `options.scheduled` with the event/env/ctx triple", async () => {
     const bucket = getBinding();
-    const env: Env = { BUCKET: bucket, APP: "t" };
-    const calls: Array<[ScheduledController, Env, ExecutionContext]> = [];
+    const env: BaerlyEnv = { BUCKET: bucket, APP: "t" };
+    const calls: Array<[ScheduledController, BaerlyEnv, ExecutionContext]> = [];
     const handler = baerlyWorker({
       verifier: scheduledOnlyVerifier,
       scheduled: (event, e, c) => {
@@ -124,7 +124,7 @@ describe("baerlyWorker observability", () => {
       verifier,
       observability: { level: "debug", sink, sampleRate: 1 },
     });
-    const env: Env = { BUCKET: bucket, APP: "t" };
+    const env: BaerlyEnv = { BUCKET: bucket, APP: "t" };
     const ctx: ExecutionContext = {
       waitUntil(): void {},
       passThroughOnException(): void {},
@@ -169,7 +169,7 @@ describe("baerlyWorker observability", () => {
       writer_fence: { epoch: 0, owner: "obs-miss-test", claimed_at: "" },
     });
 
-    const env: Env = { BUCKET: bucket, APP: "t" };
+    const env: BaerlyEnv = { BUCKET: bucket, APP: "t" };
     const makeExec = (): ExecutionContext => ({
       waitUntil(): void {},
       passThroughOnException(): void {},
@@ -238,7 +238,7 @@ describe("baerlyWorker observability", () => {
       writer_fence: { epoch: 0, owner: "obs-hit-test", claimed_at: "" },
     });
 
-    const env: Env = { BUCKET: bucket, APP: "t" };
+    const env: BaerlyEnv = { BUCKET: bucket, APP: "t" };
     const makeExec = (): ExecutionContext => ({
       waitUntil(): void {},
       passThroughOnException(): void {},
@@ -296,7 +296,7 @@ describe("baerlyWorker observability", () => {
       verifier: denyVerifier,
       observability: { level: "debug", sink, sampleRate: 1 },
     });
-    const env: Env = { BUCKET: bucket, APP: "t" };
+    const env: BaerlyEnv = { BUCKET: bucket, APP: "t" };
     const ctx = makeNoopCtx();
 
     const res = await handler.fetch!(

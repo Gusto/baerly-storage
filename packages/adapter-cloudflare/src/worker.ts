@@ -43,7 +43,7 @@ const resolveCfSink = (config: ObservabilityConfig | undefined): ObservabilityCo
  * caller's own env type — extend this one:
  *
  * ```ts
- * import type { Env as BaerlyEnv } from "baerly-storage/cloudflare";
+ * import type { BaerlyEnv } from "baerly-storage/cloudflare";
  *
  * interface AppEnv extends BaerlyEnv {
  *   readonly TENANT: string;
@@ -51,7 +51,7 @@ const resolveCfSink = (config: ObservabilityConfig | undefined): ObservabilityCo
  * }
  * ```
  */
-export interface Env {
+export interface BaerlyEnv {
   BUCKET: R2Bucket;
   APP: string;
 }
@@ -66,7 +66,7 @@ export interface Env {
  */
 export type WorkerScheduledHandler = (
   event: ScheduledController,
-  env: Env,
+  env: BaerlyEnv,
   ctx: ExecutionContext,
 ) => Promise<void> | void;
 
@@ -195,7 +195,7 @@ export interface BaerlyWorkerOptions {
  * export default baerlyWorker({ verifier });
  * ```
  */
-export function baerlyWorker(options: BaerlyWorkerOptions): ExportedHandler<Env> {
+export function baerlyWorker(options: BaerlyWorkerOptions): ExportedHandler<BaerlyEnv> {
   // Lazy-init flag for `configureObservability`. CF Worker modules
   // cannot `await` at the module top level, so the first fetch /
   // scheduled invocation runs the configure. LogTape's `configure`

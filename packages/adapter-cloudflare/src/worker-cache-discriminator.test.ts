@@ -16,7 +16,7 @@ import { CURRENT_JSON_SCHEMA_VERSION, createCurrentJson, type Verifier } from "@
 import { reset, type LogRecord, type Sink } from "@logtape/logtape";
 import { afterEach, describe, expect, test } from "vitest";
 import { r2BindingStorage } from "./r2-binding-storage.ts";
-import { baerlyWorker, type Env } from "./worker.ts";
+import { baerlyWorker, type BaerlyEnv } from "./worker.ts";
 
 const getBinding = (): R2Bucket => {
   const bucket = (globalThis as { __BAERLY_R2_BINDING__?: R2Bucket }).__BAERLY_R2_BINDING__;
@@ -76,7 +76,7 @@ describe("baerlyWorker cache_status", () => {
     // Insert one doc up front via a POST so subsequent GETs have a
     // body to fetch.
     const provisionHandler = baerlyWorker({ verifier });
-    const env: Env = { BUCKET: bucket, APP: "t" };
+    const env: BaerlyEnv = { BUCKET: bucket, APP: "t" };
     const insertRes = await provisionHandler.fetch!(
       new Request("https://x/v1/t/c", {
         method: "POST",
@@ -142,7 +142,7 @@ describe("baerlyWorker cache_status", () => {
       writer_fence: { epoch: 0, owner: "cs-bypass-test", claimed_at: "" },
     });
 
-    const env: Env = { BUCKET: bucket, APP: "t" };
+    const env: BaerlyEnv = { BUCKET: bucket, APP: "t" };
 
     // Seed one log entry so `/v1/since?cursor=` returns immediately
     // (fast-path: `longPollSince` finds events on the initial poll

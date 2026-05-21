@@ -25,7 +25,7 @@
  */
 
 import type { Verifier } from "@baerly/protocol";
-import { baerlyWorker, type Env } from "@baerly/adapter-cloudflare";
+import { baerlyWorker, type BaerlyEnv } from "@baerly/adapter-cloudflare";
 
 import { CONFORMANCE_BEARER, CONFORMANCE_TENANT } from "../fixtures/test-verifier.ts";
 
@@ -49,7 +49,7 @@ const handler = baerlyWorker({
 });
 
 export default {
-  fetch(req: Request, env: Env, ctx: ExecutionContext): Response | Promise<Response> {
+  fetch(req: Request, env: BaerlyEnv, ctx: ExecutionContext): Response | Promise<Response> {
     // `baerlyWorker` returns an `ExportedHandler<Env>` whose `fetch`
     // is `(Request, Env, ExecutionContext) => Promise<Response>`.
     return handler.fetch!(
@@ -58,4 +58,4 @@ export default {
       ctx,
     );
   },
-} satisfies ExportedHandler<Env>;
+} satisfies ExportedHandler<BaerlyEnv>;

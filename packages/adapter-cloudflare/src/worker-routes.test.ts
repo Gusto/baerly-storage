@@ -23,7 +23,7 @@ import {
 import type { BaerlyConfig, SchemaValidator } from "@baerly/server";
 import { r2BindingStorage } from "./r2-binding-storage.ts";
 import { singleTenantDevVerifier } from "./single-tenant-dev-verifier.ts";
-import { baerlyWorker, type Env } from "./worker.ts";
+import { baerlyWorker, type BaerlyEnv } from "./worker.ts";
 
 const trivialVerifier: Verifier = async () => ({
   tenantPrefix: "acme",
@@ -39,7 +39,7 @@ const getBinding = (): R2Bucket => {
   return bucket;
 };
 
-const makeEnv = (bucket: R2Bucket): Env => ({
+const makeEnv = (bucket: R2Bucket): BaerlyEnv => ({
   BUCKET: bucket,
   APP: "tickets",
 });
