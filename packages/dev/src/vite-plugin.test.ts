@@ -1,9 +1,10 @@
 import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Writable } from "node:stream";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
-import { baerlyDev } from "./vite-plugin.ts";
+import { baerlyDev, baerlyDevAuth, loadDevVars } from "./vite-plugin.ts";
 
 interface CapturedMw {
   (req: unknown, res: unknown, next: () => void): void;
@@ -172,5 +173,91 @@ describe("baerlyDev() plugin", () => {
     }
     expect(res.statusCode).toBe(200);
     expect(res.written.join("")).toContain('"ok":true');
+  });
+
+  test("injects Authorization: Bearer <secret> before listener fires", async () => {
+    const mw = middlewares[0]!;
+    const req = makeReq("/v1/healthz");
+    const res = makeRes();
+    mw(req, res, () => {
+      throw new Error("next should not be called");
+    });
+    // Wait a tick so we capture the post-mutation state synchronously
+    // — the mutation happens before the async ready.then() resolves.
+    expect(req.headers["authorization"]).toBe("Bearer test-secret");
+  });
+});
+
+describe("baerlyDevAuth", () => {
+  const captureMw = (plugin: ReturnType<typeof baerlyDevAuth>): CapturedMw => {
+    const mws: CapturedMw[] = [];
+    const server = {
+      middlewares: { use: (mw: CapturedMw) => mws.push(mw) },
+      httpServer: null,
+    };
+    const configureServer = plugin.configureServer;
+    if (typeof configureServer !== "function") {
+      throw new Error("configureServer must be a function");
+    }
+    configureServer.call(null as never, server as never);
+    return mws[0]!;
+  };
+
+  test("injects Authorization header on /v1/* requests", () => {
+    const mw = captureMw(baerlyDevAuth({ secret: "test-secret" }));
+    const req = makeReq("/v1/healthz");
+    const res = makeRes();
+    let nextCalled = 0;
+    mw(req, res, () => {
+      nextCalled += 1;
+    });
+    expect(req.headers["authorization"]).toBe("Bearer test-secret");
+    expect(nextCalled).toBe(1);
+  });
+
+  test("leaves non-/v1 requests alone", () => {
+    const mw = captureMw(baerlyDevAuth({ secret: "test-secret" }));
+    const req = makeReq("/index.html");
+    const res = makeRes();
+    mw(req, res, () => {});
+    expect(req.headers["authorization"]).toBeUndefined();
+  });
+
+  test("apply is 'serve' so prod builds skip injection entirely", () => {
+    const plugin = baerlyDevAuth({ secret: "test-secret" });
+    expect(plugin.apply).toBe("serve");
+  });
+
+  test("respects custom prefix", () => {
+    const mw = captureMw(baerlyDevAuth({ secret: "x", prefix: "/api" }));
+    const req = makeReq("/api/foo");
+    const res = makeRes();
+    mw(req, res, () => {});
+    expect(req.headers["authorization"]).toBe("Bearer x");
+  });
+
+  test("rejects empty secret eagerly", () => {
+    expect(() => baerlyDevAuth({ secret: "" })).toThrow(/secret must be non-empty/);
+  });
+});
+
+describe("loadDevVars", () => {
+  test("parses k=v pairs with comments, blank lines, and quoting", () => {
+    const dir = mkdtempSync(join(tmpdir(), "devvars-"));
+    const file = join(dir, ".dev.vars");
+    writeFileSync(
+      file,
+      `# top comment\n\nFOO=bar\nBAZ="quoted value"\nEMPTY=\n# trailing\n`,
+      "utf8",
+    );
+    try {
+      expect(loadDevVars(file)).toEqual({ FOO: "bar", BAZ: "quoted value", EMPTY: "" });
+    } finally {
+      rmSync(dir, { recursive: true });
+    }
+  });
+
+  test("returns empty object when the file does not exist", () => {
+    expect(loadDevVars("/no/such/file.dev.vars")).toEqual({});
   });
 });

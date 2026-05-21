@@ -1,4 +1,5 @@
 import type { AddressInfo } from "node:net";
+import { existsSync, readFileSync } from "node:fs";
 import { getRequestListener } from "@hono/node-server";
 import type { Plugin } from "vite";
 import { createApp } from "@baerly/adapter-node";
@@ -29,6 +30,88 @@ export interface BaerlyDevOptions {
 
 const isV1Path = (url: string): boolean =>
   url === "/v1" || url.startsWith("/v1/") || url.startsWith("/v1?");
+
+export interface BaerlyDevAuthOptions {
+  /** Bearer token to inject on matched paths. */
+  readonly secret: string;
+  /** Pathname prefix to match. Default "/v1". */
+  readonly prefix?: string;
+}
+
+/**
+ * Vite dev plugin: inject `Authorization: Bearer ${secret}` on every
+ * request whose URL starts with `prefix` (default `/v1`). Use this
+ * to keep the bearer token out of the SPA bundle — the browser sends
+ * the request, Vite's middleware adds the header, and the upstream
+ * handler (in-process worker or proxied Node server) sees an
+ * authenticated request.
+ *
+ * @example
+ * ```ts
+ * import { baerlyDevAuth, loadDevVars } from "baerly-storage/dev/vite";
+ *
+ * const vars = loadDevVars(".dev.vars");
+ * export default defineConfig({
+ *   plugins: [
+ *     cloudflare(),
+ *     baerlyDevAuth({ secret: vars["SHARED_SECRET"] ?? "" }),
+ *   ],
+ * });
+ * ```
+ */
+export function baerlyDevAuth(opts: BaerlyDevAuthOptions): Plugin {
+  if (opts.secret === "") {
+    throw new Error(
+      "baerlyDevAuth: secret must be non-empty. Set SHARED_SECRET in .dev.vars / .env.",
+    );
+  }
+  const prefix = opts.prefix ?? "/v1";
+  return {
+    name: "baerly-dev-auth",
+    apply: "serve",
+    configureServer(server) {
+      server.middlewares.use((req, _res, next) => {
+        const url = req.url ?? "";
+        if (url === prefix || url.startsWith(`${prefix}/`) || url.startsWith(`${prefix}?`)) {
+          req.headers["authorization"] = `Bearer ${opts.secret}`;
+        }
+        next();
+      });
+    },
+  };
+}
+
+/**
+ * Parse a `.dev.vars` / `.env` file. Supports `KEY=value`, `# comments`,
+ * blank lines, and single- or double-quoted values. Returns `{}` if
+ * the file does not exist.
+ */
+export function loadDevVars(path: string): Record<string, string> {
+  if (!existsSync(path)) {
+    return {};
+  }
+  const out: Record<string, string> = {};
+  for (const rawLine of readFileSync(path, "utf8").split("\n")) {
+    const line = rawLine.trim();
+    if (line === "" || line.startsWith("#")) {
+      continue;
+    }
+    const eq = line.indexOf("=");
+    if (eq === -1) {
+      continue;
+    }
+    const key = line.slice(0, eq).trim();
+    let value = line.slice(eq + 1).trim();
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
+    }
+    out[key] = value;
+  }
+  return out;
+}
 
 export function baerlyDev(opts: BaerlyDevOptions): Plugin {
   return {
@@ -68,6 +151,10 @@ export function baerlyDev(opts: BaerlyDevOptions): Plugin {
           next();
           return;
         }
+        // Inject the bearer token server-side so the SPA never sees
+        // the secret. The verifier inside app.fetch validates the
+        // injected header normally.
+        req.headers["authorization"] = `Bearer ${opts.secret}`;
         ready.then(
           (listener) => {
             listener(req as never, res as never);
