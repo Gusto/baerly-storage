@@ -2,18 +2,12 @@ import { createBaerlyClient } from "baerly-storage/client";
 import config from "../../baerly.config.ts";
 
 // Same-origin baseUrl works in both dev and production:
-//  - Dev: `@cloudflare/vite-plugin` runs the Worker inside `workerd`
-//    in the same Vite process; /v1/* resolves in-process on :5173.
-//  - Prod: the Worker serves both /v1/* and the static bundle via
-//    Workers Assets on the same hostname.
-//
-// The bearer token is the value passed to `wrangler secret put
-// SHARED_SECRET` for the deployed Worker. For dev, set
-// VITE_SHARED_SECRET in a .env file (Vite reads it at build time).
-const SECRET = import.meta.env.VITE_SHARED_SECRET ?? "dev-shared-secret";
-
+//  - Dev:  `baerlyDevAuth` in vite.config.ts injects Authorization
+//          server-side; this file never sees the bearer.
+//  - Prod: wire CF Access in front of the Worker route; the browser
+//          sends `Cf-Access-Jwt-Assertion` as a cookie automatically.
+//          See docs/guide/client-auth.md.
 export const client = createBaerlyClient({
   baseUrl: "",
-  headers: { Authorization: `Bearer ${SECRET}` },
   config,
 });
