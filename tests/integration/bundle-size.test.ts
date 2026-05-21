@@ -435,10 +435,8 @@ describe("bundle size", () => {
         console.log(rawLine);
         console.log(gzLine);
       }
-      // oxlint-disable-next-line vitest/valid-expect
-      expect(measured.raw, rawLine).toBeLessThanOrEqual(raw);
-      // oxlint-disable-next-line vitest/valid-expect
-      expect(measured.gz, gzLine).toBeLessThanOrEqual(gz);
+      expect(measured.raw, `${rawLine}`).toBeLessThanOrEqual(raw);
+      expect(measured.gz, `${gzLine}`).toBeLessThanOrEqual(gz);
     });
   }
 
