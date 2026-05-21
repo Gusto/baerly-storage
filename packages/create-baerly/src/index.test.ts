@@ -182,4 +182,71 @@ describe("create-baerly runner (non-TTY)", () => {
     expect(out).not.toContain("◆");
     expect(out).not.toContain("│");
   });
+
+  test("does not call the installer when --install is not passed", async () => {
+    const projectName = "no-install-app";
+    const calls: Array<{ pm: string; cwd: string }> = [];
+    const stdout = captureStream(process.stdout);
+    let exitCode: number;
+    try {
+      exitCode = await runCreateBaerly([projectName, "--target=cloudflare", "--json"], {
+        installer: {
+          run: async (pm, cwd) => {
+            calls.push({ pm, cwd });
+            return { code: 0 };
+          },
+        },
+      });
+    } finally {
+      stdout.restore();
+    }
+    expect(exitCode).toBe(0);
+    expect(calls).toEqual([]);
+  });
+
+  test("calls the installer in outDir when --install is passed", async () => {
+    const projectName = "yes-install-app";
+    const calls: Array<{ pm: string; cwd: string }> = [];
+    const stdout = captureStream(process.stdout);
+    let exitCode: number;
+    try {
+      exitCode = await runCreateBaerly(
+        [projectName, "--target=cloudflare", "--install", "--json"],
+        {
+          installer: {
+            run: async (pm, cwd) => {
+              calls.push({ pm, cwd });
+              return { code: 0 };
+            },
+          },
+        },
+      );
+    } finally {
+      stdout.restore();
+    }
+    expect(exitCode).toBe(0);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.cwd.endsWith(projectName)).toBe(true);
+  });
+
+  test("warns but exits 0 when the installer reports a non-zero code", async () => {
+    const projectName = "fail-install-app";
+    const stdout = captureStream(process.stdout);
+    const stderr = captureStream(process.stderr);
+    let exitCode: number;
+    try {
+      exitCode = await runCreateBaerly([projectName, "--target=cloudflare", "--install"], {
+        installer: { run: async () => ({ code: 7 }) },
+      });
+    } finally {
+      stdout.restore();
+      stderr.restore();
+    }
+    // Scaffold succeeded; only the install failed. The directory is on
+    // disk and the user can re-run install themselves, so we don't roll
+    // back. We exit 0 but write a visible warning to stderr.
+    expect(exitCode).toBe(0);
+    const err = stderr.captured.join("");
+    expect(err).toContain("install exited with code 7");
+  });
 });

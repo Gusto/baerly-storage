@@ -27,6 +27,8 @@ import { outro } from "@clack/prompts";
 import pc from "picocolors";
 import { runWizard } from "./prompts.ts";
 import { type Addon, KNOWN_ADDONS, scaffold } from "./scaffold.ts";
+import { defaultInstaller, type Installer } from "./install.ts";
+import { detectPm } from "./pm-detect.ts";
 
 export const CREATE_BAERLY_ARGS = {
   projectName: {
@@ -85,6 +87,7 @@ export const CREATE_BAERLY_ARGS = {
 
 export const handleCreateBaerly = async (
   args: ParsedArgs<typeof CREATE_BAERLY_ARGS>,
+  opts: { readonly installer?: Installer } = {},
 ): Promise<number> => {
   try {
     const isInteractive = process.stdin.isTTY === true && args.json !== true;
@@ -113,21 +116,19 @@ export const handleCreateBaerly = async (
     let projectName: string;
     let target: "cloudflare" | "node";
     let withAddons: readonly Addon[];
-    // The wizard returns `install` too; install handling itself is
-    // unchanged from the prior code path (not yet implemented), so
-    // the value is intentionally not threaded further.
+    let install: boolean;
     if (wantWizard) {
       const w = await runWizard({
         projectName: args.projectName,
         ...(args.target !== undefined && { target: args.target }),
         ...(withAddonsFromFlag !== undefined && { withAddons: withAddonsFromFlag }),
-        install: args.install,
+        ...(args.install !== undefined && { install: args.install }),
       });
       projectName = w.projectName;
       target = w.target;
       withAddons = w.withAddons;
+      install = w.install;
     } else {
-      // Flag-driven path. Errors thrown here match current behavior.
       if (args.projectName === undefined) {
         throw new Error("projectName is required (positional)");
       }
@@ -139,6 +140,10 @@ export const handleCreateBaerly = async (
       projectName = args.projectName;
       target = args.target;
       withAddons = withAddonsFromFlag ?? [];
+      // Flag-driven path: no wizard, so default to false unless the user
+      // explicitly passed --install. Today's CI/agent callers see no
+      // behavior change because they never pass --install.
+      install = args.install === true;
     }
     // Cross-field validation: today the only add-on is `docker`,
     // which only applies to `--target=node`. Catch the mismatch
@@ -160,6 +165,17 @@ export const handleCreateBaerly = async (
       ...(args.pm !== undefined && { pm: args.pm as "npm" | "pnpm" | "yarn" }),
       ...(withAddons.length > 0 && { withAddons }),
     });
+    if (install) {
+      const installer = opts.installer ?? defaultInstaller;
+      const pm = (args.pm as "npm" | "pnpm" | "yarn" | undefined) ?? detectPm();
+      const { code } = await installer.run(pm, result.outDir);
+      if (code !== 0) {
+        process.stderr.write(
+          `${pc.yellow("create-baerly:")} install exited with code ${code}. ` +
+            `Run \`${pm} install\` in ${result.outDir} manually.\n`,
+        );
+      }
+    }
     if (args.json === true) {
       process.stdout.write(
         `${JSON.stringify({
@@ -222,7 +238,10 @@ export const main = defineCommand({
  * (which would call `process.exit` and kill vitest) and returns the
  * integer exit code directly.
  */
-export const runCreateBaerly = async (argv: readonly string[]): Promise<number> => {
+export const runCreateBaerly = async (
+  argv: readonly string[],
+  opts: { readonly installer?: Installer } = {},
+): Promise<number> => {
   let parsed: ParsedArgs<typeof CREATE_BAERLY_ARGS>;
   try {
     parsed = parseArgs<typeof CREATE_BAERLY_ARGS>(argv as string[], CREATE_BAERLY_ARGS);
@@ -237,5 +256,5 @@ export const runCreateBaerly = async (argv: readonly string[]): Promise<number> 
     }
     return 1;
   }
-  return handleCreateBaerly(parsed);
+  return handleCreateBaerly(parsed, opts);
 };
