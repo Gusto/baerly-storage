@@ -97,20 +97,21 @@ export interface BaerlyClientOptions<TConfig extends BaerlyConfig = UnboundConfi
    */
   readonly lifecycleSignal?: AbortSignal;
   /**
-   * Optional. When passed, `client.table(name)` narrows `name` to
-   * declared collection names and infers the row type from
-   * `collections[name].schema`. Pass the value returned by
-   * `defineConfig` verbatim:
+   * Optional. **Type-only** — the runtime client does not read this
+   * field; it exists so `client.table(name)` can narrow `name` to
+   * declared collection names and infer the row type from
+   * `collections[name].schema`. Bind the type via the generic
+   * parameter using `import type` so the server-side storage
+   * adapter and secrets in `baerly.config.ts` do not enter the
+   * browser bundle:
    *
    * ```ts
-   * import { defineConfig } from "baerly-storage/config";
-   * const config = defineConfig({ collections: { tickets: { schema: TicketSchema } } });
-   * const client = createBaerlyClient({ baseUrl, config });
+   * import type config from "./baerly.config.ts";
+   * const client = createBaerlyClient<typeof config>({ baseUrl });
    * await client.table("tickets").first(); // Promise<Ticket | undefined>
    * ```
    *
-   * Type-only — the runtime client does not read this field. Omit
-   * it (or pass `undefined`) to fall back to the per-call generic
+   * Skip the type parameter to fall back to the per-call generic
    * `client.table<Ticket>("tickets")` form.
    */
   readonly config?: TConfig;
@@ -161,10 +162,7 @@ export interface ClientTable<T extends DocumentData = DocumentData> {
   /** Read consistency for terminals on the returned query. Default `strong`. */
   consistency(level: ConsistencyLevel): ClientQuery<T>;
   /** Insert a new document. Returns the server-assigned `_id`. */
-  insert(
-    doc: Partial<T> & DocumentData,
-    opts?: TerminalOptions,
-  ): Promise<{ readonly _id: string }>;
+  insert(doc: Partial<T> & DocumentData, opts?: TerminalOptions): Promise<{ readonly _id: string }>;
   /** Count every row in the table (equivalent to `.where({}).count()`). */
   count(opts?: TerminalOptions): Promise<number>;
 }
@@ -231,9 +229,7 @@ export interface BaerlyClient<TConfig extends BaerlyConfig = UnboundConfig> {
    * untyped-call DX; pair with a per-call `<T>` when you want a
    * narrower row type.
    */
-  table<N extends CollectionNames<TConfig>>(
-    name: N,
-  ): ClientTable<RowOf<TConfig, N> & DocumentData>;
+  table<N extends CollectionNames<TConfig>>(name: N): ClientTable<RowOf<TConfig, N> & DocumentData>;
   table<T extends DocumentData = DocumentData>(name: string): ClientTable<T>;
   /**
    * Long-poll for new log events. Returns once events arrive or the
