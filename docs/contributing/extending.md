@@ -4,7 +4,7 @@ audience: coder
 summary: Worked patterns for adding methods to Db, Query verbs, and Table verbs.
 last-reviewed: 2026-05-12
 tags: [extending, api-design, patterns]
-related: [architecture.md, "../adr/002-api-surface-lock.md", "conventions/tests.md"]
+related: [architecture.md, "../adr/002-api-surface-lock.md", "../adr/003-naming-convention.md", "conventions/tests.md"]
 ---
 
 # Extending Baerly
@@ -16,6 +16,11 @@ patterns and your changes will fit the codebase's conventions.
 > know which module owns what. Most additions touch
 > `packages/server/src/db.ts` or `packages/server/src/table.ts`, but the
 > *invariants* live in `packages/server/src/writer.ts`.
+
+> Before adding a public symbol to a barrel, read
+> [ADR-003 — brand-prefix naming convention](../adr/003-naming-convention.md).
+> It codifies when an export carries the `Baerly` prefix and when it
+> stays generic.
 
 ---
 
