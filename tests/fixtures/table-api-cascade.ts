@@ -239,8 +239,8 @@ const runInsertContract = async (
   const { _id } = await db.table<Doc>(t).insert({ _id: customId, k: "custom" });
   expect(_id).toBe(customId);
 
-  // Round-trip via where() to confirm the doc is materialised.
-  const got = await db.table<Doc>(t).where({ _id: customId }).first();
+  // Round-trip via get() to confirm the doc is materialised.
+  const got = await db.table<Doc>(t).get(customId);
   expect(got).toBeDefined();
   expect(got?.["_id"]).toBe(customId);
   expect(got?.["k"]).toBe("custom");
@@ -657,7 +657,7 @@ const runSchemaValidation = async (
   const { _id: ok } = await noSchemaDb.table<Doc>(t).insert({ status: "bogus" });
   expect(typeof ok).toBe("string");
   // Tidy up so the schema-bound Db sees a clean slate.
-  await noSchemaDb.table<Doc>(t).where({ _id: ok }).delete();
+  await noSchemaDb.table<Doc>(t).delete(ok);
 
   const schemas = new Map<string, SchemaValidator>([[t, STATUS_SCHEMA]]);
   const db = Db.create({ storage, app, tenant, schemas });
@@ -685,7 +685,7 @@ const runSchemaValidation = async (
   // is on `status`, not "missing _id".
   let updateErr: unknown;
   try {
-    await db.table<Doc>(t).where({ _id: validId }).update({ status: "bogus" });
+    await db.table<Doc>(t).update(validId, { status: "bogus" });
   } catch (error) {
     updateErr = error;
   }
@@ -697,7 +697,7 @@ const runSchemaValidation = async (
   // schema → SchemaError on `status`.
   let replaceErr: unknown;
   try {
-    await db.table<Doc>(t).where({ _id: validId }).replace({ _id: validId, status: "bogus" });
+    await db.table<Doc>(t).replace(validId, { _id: validId, status: "bogus" });
   } catch (error) {
     replaceErr = error;
   }
@@ -708,7 +708,7 @@ const runSchemaValidation = async (
   // The schema-bound Db's writes that DID succeed remain visible —
   // the validity check fires synchronously inside the verb, before
   // any wire I/O for invalid inputs.
-  const round = await db.table<Doc>(t).where({ _id: validId }).first();
+  const round = await db.table<Doc>(t).get(validId);
   expect(round?.["status"]).toBe("open");
 };
 
@@ -729,9 +729,9 @@ const runLogEntryShape = async (
   // Direct-mutation sequence (one commit per call → distinct sessions).
   const { _id: id1 } = await db.table<Doc>(t).insert({ k: "1", v: 1 });
   const { _id: id2 } = await db.table<Doc>(t).insert({ k: "2", v: 2 });
-  const { modified } = await db.table<Doc>(t).where({ _id: id1 }).update({ marker: true });
+  const { modified } = await db.table<Doc>(t).update(id1, { marker: true });
   expect(modified).toBe(1);
-  const { deleted } = await db.table<Doc>(t).where({ _id: id2 }).delete();
+  const { deleted } = await db.table<Doc>(t).delete(id2);
   expect(deleted).toBe(1);
 
   // Transaction emit: two inserts inside one tx share a session id.

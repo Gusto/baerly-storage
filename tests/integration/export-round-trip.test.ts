@@ -143,7 +143,7 @@ describe.runIf(sqliteAvailable)("Baerly → SQLite → Baerly round-trip", () =>
       tags: { primary: "bug", meta: { lang: "en" } },
     });
     await srcTable.insert({ _id: "u_c", status: "closed", priority: 3, deleted: true });
-    await srcTable.where({ _id: "u_a" }).update({ status: "closed" });
+    await srcTable.update("u_a", { status: "closed" });
 
     // ── 2. Export src → SQLite. ────────────────────────────────────
     const view = await loadMaterialisedView({
@@ -262,12 +262,7 @@ describe.runIf(sqliteAvailable)("Baerly → SQLite → Baerly round-trip", () =>
 
     // ── 4. Restore into dst via `baerly admin restore`. ────────────
     const restoreCode = await runRestore(
-      [
-        `--bucket=file://${dstRoot}`,
-        `--app=${APP}`,
-        `--tenant=${TENANT}`,
-        `--table=${COLL}`,
-      ],
+      [`--bucket=file://${dstRoot}`, `--app=${APP}`, `--tenant=${TENANT}`, `--table=${COLL}`],
       { streams: { stdin: createReadStream(ndjsonFile) } },
     );
     expect(restoreCode).toBe(0);
@@ -279,12 +274,7 @@ describe.runIf(sqliteAvailable)("Baerly → SQLite → Baerly round-trip", () =>
     const srcSink = openSink(srcDumpPath);
     await expect(
       runDump(
-        [
-          `--bucket=file://${srcRoot}`,
-          `--app=${APP}`,
-          `--tenant=${TENANT}`,
-          `--table=${COLL}`,
-        ],
+        [`--bucket=file://${srcRoot}`, `--app=${APP}`, `--tenant=${TENANT}`, `--table=${COLL}`],
         { streams: { stdout: srcSink.stream } },
       ),
     ).resolves.toBe(0);
@@ -293,12 +283,7 @@ describe.runIf(sqliteAvailable)("Baerly → SQLite → Baerly round-trip", () =>
     const dstSink = openSink(dstDumpPath);
     await expect(
       runDump(
-        [
-          `--bucket=file://${dstRoot}`,
-          `--app=${APP}`,
-          `--tenant=${TENANT}`,
-          `--table=${COLL}`,
-        ],
+        [`--bucket=file://${dstRoot}`, `--app=${APP}`, `--tenant=${TENANT}`, `--table=${COLL}`],
         { streams: { stdout: dstSink.stream } },
       ),
     ).resolves.toBe(0);

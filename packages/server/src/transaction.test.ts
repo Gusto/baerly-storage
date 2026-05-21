@@ -154,9 +154,9 @@ describe("Db.transaction", () => {
 
     await db.transaction(TABLE, async (tx) => {
       await tx.insert({ _id: "new-doc", v: "n" });
-      const updated = await tx.where({ _id: "existing" }).update({ v: "v1" });
+      const updated = await tx.update("existing", { v: "v1" });
       expect(updated.modified).toBe(1);
-      const deleted = await tx.where({ _id: "existing" }).delete();
+      const deleted = await tx.delete("existing");
       expect(deleted.deleted).toBe(1);
     });
 
@@ -191,7 +191,7 @@ describe("Db.transaction", () => {
 
     let observed: { _id: string; v: string } | undefined;
     await db.transaction<{ _id: string; v: string }>(TABLE, async (tx) => {
-      observed = await tx.where({ _id: "pre" }).first();
+      observed = await tx.get("pre");
     });
     expect(observed).toEqual({ _id: "pre", v: "p" });
   });
@@ -205,17 +205,14 @@ describe("Db.transaction", () => {
       await tx.insert({ _id: "buffered", v: 99 });
       // Live read does NOT see the buffered insert — current.json is
       // untouched until the post-body commitBatch.
-      observedAfterBufferedInsert = await tx.where({ _id: "buffered" }).first();
+      observedAfterBufferedInsert = await tx.get("buffered");
       bufferedCount = await tx.count();
     });
     expect(observedAfterBufferedInsert).toBeUndefined();
     expect(bufferedCount).toBe(0);
 
     // After the tx commits, the doc IS visible.
-    const after = await db
-      .table<{ _id: string; v: number }>(TABLE)
-      .where({ _id: "buffered" })
-      .first();
+    const after = await db.table<{ _id: string; v: number }>(TABLE).get("buffered");
     expect(after).toEqual({ _id: "buffered", v: 99 });
   });
 

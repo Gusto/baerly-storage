@@ -16,8 +16,8 @@
  * from `Db`:
  *
  *   1. `db.table(coll).insert({...})`
- *   2. `db.table(coll).where({_id}).update({...})`
- *   3. `db.table(coll).where({_id}).delete()`
+ *   2. `db.table(coll).update(id, {...})`
+ *   3. `db.table(coll).delete(id)`
  *   4. `db.transaction(coll, async (tx) => { ... })`
  *
  * After each verb, list keys under `<tablePrefix>/index/<indexName>/`
@@ -127,7 +127,7 @@ describe("Db → Writer index emission (e2e)", () => {
     const t = db.table<Ticket>(COLL);
     await t.insert({ _id: "t-1", status: "open" });
 
-    await t.where({ _id: "t-1" }).update({ status: "closed" });
+    await t.update("t-1", { status: "closed" });
 
     await assertIndexParity(storage, new Map([["t-1", { _id: "t-1", status: "closed" }]]));
   });
@@ -137,7 +137,7 @@ describe("Db → Writer index emission (e2e)", () => {
     await t.insert({ _id: "t-1", status: "open" });
     await t.insert({ _id: "t-2", status: "open" });
 
-    await t.where({ _id: "t-1" }).delete();
+    await t.delete("t-1");
 
     await assertIndexParity(storage, new Map([["t-2", { _id: "t-2", status: "open" }]]));
   });
@@ -150,7 +150,7 @@ describe("Db → Writer index emission (e2e)", () => {
 
     await db.transaction<Ticket>(COLL, async (tx) => {
       await tx.insert({ _id: "c", status: "in-progress" });
-      await tx.where({ _id: "a" }).delete();
+      await tx.delete("a");
     });
 
     await assertIndexParity(
