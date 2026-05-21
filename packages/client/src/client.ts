@@ -148,11 +148,23 @@ export interface TerminalOptions {
  * `Table<T>`, but every terminal also accepts a trailing
  * {@link TerminalOptions} bag carrying `{ signal }`.
  *
+ * By-id mutation verbs (`update`, `replace`, `delete`) live here;
+ * predicate-aware bulk mutation has no HTTP route today and is
+ * intentionally absent from {@link ClientQuery}.
+ *
  * @template T — document shape. `_id` is always present on rows
  *               returned from the server.
  */
 export interface ClientTable<T extends DocumentData = DocumentData> {
   readonly name: string;
+  /** First document in the whole collection or `undefined`. */
+  first(opts?: TerminalOptions): Promise<T | undefined>;
+  /** Every document in the whole collection. Pair with `.where(...).limit(n)` on large tables. */
+  all(opts?: TerminalOptions): Promise<T[]>;
+  /** Count every row in the table (equivalent to `.where({}).count()`). */
+  count(opts?: TerminalOptions): Promise<number>;
+  /** Fetch one document by primary key. Returns `undefined` when the id is unknown. */
+  get(id: string, opts?: TerminalOptions): Promise<T | undefined>;
   /** Equality predicate over top-level or dotted-path keys. AND-merge on repeat. */
   where(predicate: Predicate<T>): ClientQuery<T>;
   /** Order modifier; last call wins. */
@@ -163,18 +175,25 @@ export interface ClientTable<T extends DocumentData = DocumentData> {
   consistency(level: ConsistencyLevel): ClientQuery<T>;
   /** Insert a new document. Returns the server-assigned `_id`. */
   insert(doc: Partial<T> & DocumentData, opts?: TerminalOptions): Promise<{ readonly _id: string }>;
-  /** Count every row in the table (equivalent to `.where({}).count()`). */
-  count(opts?: TerminalOptions): Promise<number>;
+  /** JSON-merge-patch applied to one row by primary key. */
+  update(
+    id: string,
+    patch: Partial<T>,
+    opts?: TerminalOptions,
+  ): Promise<{ readonly modified: number }>;
+  /** Whole-document replace on one row by primary key. */
+  replace(id: string, doc: T, opts?: TerminalOptions): Promise<void>;
+  /** Delete one row by primary key. Returns `{ deleted: 0 }` on 404 (not an error). */
+  delete(id: string, opts?: TerminalOptions): Promise<{ readonly deleted: number }>;
 }
 
 /**
  * Client-side mirror of `Query<T>` from `@baerly/protocol`. See
  * {@link ClientTable} for the method-shape contract.
  *
- * Day-one HTTP constraint: `update` / `replace` / `delete` require
- * `.where({ _id: "<id>" })` (single-row by id). Any other predicate
- * shape throws `BaerlyError{code:"SchemaError"}`. The
- * constraint lifts when the server grows a multi-row PATCH route.
+ * Read-only over HTTP: by-id mutation lives on {@link ClientTable}
+ * directly. Predicate-aware bulk mutation is server-only — the HTTP
+ * surface has no route for it.
  */
 export interface ClientQuery<T extends DocumentData = DocumentData> {
   where(predicate: Predicate<T>): ClientQuery<T>;
@@ -187,12 +206,6 @@ export interface ClientQuery<T extends DocumentData = DocumentData> {
   all(opts?: TerminalOptions): Promise<T[]>;
   /** Count matching rows. Issues `GET /v1/count?table=&where=`; server returns a scalar. */
   count(opts?: TerminalOptions): Promise<number>;
-  /** JSON-merge-patch applied to the single matching row. Requires `.where({ _id })`. */
-  update(patch: Partial<T>, opts?: TerminalOptions): Promise<{ readonly modified: number }>;
-  /** Whole-document replace on the single matching row. Requires `.where({ _id })`. */
-  replace(doc: T, opts?: TerminalOptions): Promise<void>;
-  /** Delete the single matching row. Returns `{ deleted: 0 }` on 404 (not an error). */
-  delete(opts?: TerminalOptions): Promise<{ readonly deleted: number }>;
 }
 
 /**
@@ -336,12 +349,33 @@ const makeClientTable = <T extends DocumentData>(
   name: string,
 ): ClientTable<T> => {
   const tableForQuery = makeClientQuery<T>(ctx, name, emptyState);
+  const idPath = (id: string): string =>
+    `/v1/t/${encodeURIComponent(name)}/${encodeURIComponent(id)}`;
   return {
     name,
     where: (predicate) => tableForQuery.where(predicate),
     order: (spec) => tableForQuery.order(spec),
     limit: (n) => tableForQuery.limit(n),
     consistency: (level) => tableForQuery.consistency(level),
+    first: (opts) => tableForQuery.first(opts),
+    all: (opts) => tableForQuery.all(opts),
+    count: (opts) => tableForQuery.count(opts),
+    async get(id, opts): Promise<T | undefined> {
+      try {
+        return await request<T>(ctx, {
+          method: "GET",
+          path: idPath(id),
+          signal: opts?.signal,
+        });
+      } catch (error) {
+        // 404 on GET → unknown id. Mirrors `Db.table().get(id)` which
+        // resolves `undefined` rather than throwing.
+        if (error instanceof BaerlyError && error.code === "NotFound") {
+          return undefined;
+        }
+        throw error;
+      }
+    },
     async insert(doc, opts): Promise<{ readonly _id: string }> {
       return request<{ _id: string }>(ctx, {
         method: "POST",
@@ -350,8 +384,42 @@ const makeClientTable = <T extends DocumentData>(
         signal: opts?.signal,
       });
     },
-    async count(opts): Promise<number> {
-      return tableForQuery.count(opts);
+    async update(id, patch, opts): Promise<{ readonly modified: number }> {
+      return request<{ modified: number }>(ctx, {
+        method: "PATCH",
+        path: idPath(id),
+        body: { patch },
+        signal: opts?.signal,
+      });
+    },
+    async replace(id, doc, opts): Promise<void> {
+      // PUT = whole-document overwrite; matches the server-side
+      // `Query.replace` single-row strict cardinality. NOT PATCH —
+      // PATCH would be RFC 7386 merge-patch and silently retain
+      // omitted fields from the prior doc.
+      await request<{ modified: number }>(ctx, {
+        method: "PUT",
+        path: idPath(id),
+        body: { doc },
+        signal: opts?.signal,
+      });
+    },
+    async delete(id, opts): Promise<{ readonly deleted: number }> {
+      try {
+        await request<undefined>(ctx, {
+          method: "DELETE",
+          path: idPath(id),
+          signal: opts?.signal,
+        });
+        return { deleted: 1 };
+      } catch (error) {
+        // 404 on DELETE → "no row matched". Mirrors `Query.delete()`
+        // which returns `{ deleted: 0 }` rather than throwing.
+        if (error instanceof BaerlyError && error.code === "NotFound") {
+          return { deleted: 0 };
+        }
+        throw error;
+      }
     },
   };
 };
@@ -443,83 +511,5 @@ const makeClientQuery = <T extends DocumentData>(
       });
       return count;
     },
-
-    async update(patch, opts): Promise<{ readonly modified: number }> {
-      const id = singleIdFromPredicate(state.predicate);
-      if (id === undefined) {
-        throw new BaerlyError(
-          "SchemaError",
-          "update() requires .where({ _id: ... }) — multi-row update is not yet exposed over HTTP",
-        );
-      }
-      const data = await request<{ modified: number }>(ctx, {
-        method: "PATCH",
-        path: `/v1/t/${encodeURIComponent(tableName)}/${encodeURIComponent(id)}`,
-        body: { patch },
-        signal: opts?.signal,
-      });
-      return data;
-    },
-
-    async replace(doc, opts): Promise<void> {
-      const id = singleIdFromPredicate(state.predicate);
-      if (id === undefined) {
-        throw new BaerlyError(
-          "SchemaError",
-          "replace() requires .where({ _id: ... }) — see ClientQuery docstring",
-        );
-      }
-      // PUT carries whole-document overwrite semantics and maps to the
-      // server's `Query.replace` (single-row strict cardinality:
-      // missing row → 404 here, multi-match → Conflict). NOT PATCH —
-      // PATCH would be RFC 7386 merge-patch and silently retain
-      // omitted fields from the prior doc.
-      await request<{ modified: number }>(ctx, {
-        method: "PUT",
-        path: `/v1/t/${encodeURIComponent(tableName)}/${encodeURIComponent(id)}`,
-        body: { doc },
-        signal: opts?.signal,
-      });
-    },
-
-    async delete(opts): Promise<{ readonly deleted: number }> {
-      const id = singleIdFromPredicate(state.predicate);
-      if (id === undefined) {
-        throw new BaerlyError(
-          "SchemaError",
-          "delete() requires .where({ _id: ... }) — multi-row delete is not yet exposed over HTTP",
-        );
-      }
-      try {
-        await request<undefined>(ctx, {
-          method: "DELETE",
-          path: `/v1/t/${encodeURIComponent(tableName)}/${encodeURIComponent(id)}`,
-          signal: opts?.signal,
-        });
-        return { deleted: 1 };
-      } catch (error) {
-        // 404 on DELETE → "no row matched". Mirrors `Query.delete()`
-        // which returns `{ deleted: 0 }` rather than throwing.
-        if (error instanceof BaerlyError && error.code === "NotFound") {
-          return { deleted: 0 };
-        }
-        throw error;
-      }
-    },
   };
-};
-
-/**
- * Predicate-shape probe. Returns the bare id when the predicate is
- * exactly `{ _id: "<string>" }`; `undefined` otherwise. Used by the
- * update / replace / delete terminals to enforce the day-one
- * "single row by id" HTTP constraint.
- */
-const singleIdFromPredicate = (p: Predicate<DocumentData>): string | undefined => {
-  const keys = Object.keys(p);
-  if (keys.length !== 1 || keys[0] !== "_id") {
-    return undefined;
-  }
-  const v = (p as Record<string, unknown>)["_id"];
-  return typeof v === "string" ? v : undefined;
 };

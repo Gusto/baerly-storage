@@ -1,5 +1,5 @@
 import { useCallback } from "react";
-import type { DocumentData, Predicate } from "@baerly/protocol";
+import type { DocumentData } from "@baerly/protocol";
 import { useBaerlyClient } from "./provider.ts";
 import { useMutation, type UseMutationResult } from "./use-mutation.ts";
 
@@ -11,10 +11,10 @@ export interface UseDeleteOptions {
 export type UseDeleteResult = UseMutationResult<[id: string], { readonly deleted: number }>;
 
 /**
- * Mutation hook for `client.table(...).where({ _id }).delete()`.
- * Issues `DELETE /v1/t/:table/:id`. Returns `{ deleted: 1 }` when a
- * row was removed and `{ deleted: 0 }` when no row matched — the
- * 404 case is not surfaced as an error, mirroring the in-process
+ * Mutation hook for `client.table(...).delete(id)`. Issues
+ * `DELETE /v1/t/:table/:id`. Returns `{ deleted: 1 }` when a row
+ * was removed and `{ deleted: 0 }` when no row matched — the 404
+ * case is not surfaced as an error, mirroring the in-process
  * `Query.delete()` shape.
  *
  * @example
@@ -40,11 +40,7 @@ export const useDelete = <T extends DocumentData = DocumentData>(
   const client = useBaerlyClient();
   return useMutation(
     useCallback(
-      (signal, id: string) =>
-        client
-          .table<T>(table)
-          .where({ _id: id } as Predicate<T>)
-          .delete({ signal }),
+      (signal, id: string) => client.table<T>(table).delete(id, { signal }),
       [client, table],
     ),
   );

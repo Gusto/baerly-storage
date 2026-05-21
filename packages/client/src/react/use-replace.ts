@@ -1,5 +1,5 @@
 import { useCallback } from "react";
-import type { DocumentData, Predicate } from "@baerly/protocol";
+import type { DocumentData } from "@baerly/protocol";
 import { useBaerlyClient } from "./provider.ts";
 import { useMutation, type UseMutationResult } from "./use-mutation.ts";
 
@@ -14,13 +14,13 @@ export type UseReplaceResult<T extends DocumentData> = UseMutationResult<
 >;
 
 /**
- * Mutation hook for `client.table(...).where({ _id }).replace(doc)`.
- * Issues `PUT /v1/t/:table/:id` — whole-document overwrite. Unlike
+ * Mutation hook for `client.table(...).replace(id, doc)`. Issues
+ * `PUT /v1/t/:table/:id` — whole-document overwrite. Unlike
  * {@link useUpdate}, omitted keys are removed (not preserved). Pair
  * with `useLiveDocument` to read-modify-write.
  *
- * The day-one HTTP constraint is single-row replace by `_id`; the
- * hook mirrors it (`mutate(id, doc)`).
+ * Single-row replace by `_id`; the hook signature is `mutate(id, doc)`
+ * and mirrors {@link ClientTable.replace}.
  *
  * @example
  * ```tsx
@@ -45,11 +45,7 @@ export const useReplace = <T extends DocumentData = DocumentData>(
   const client = useBaerlyClient();
   return useMutation(
     useCallback(
-      (signal, id: string, doc: T) =>
-        client
-          .table<T>(table)
-          .where({ _id: id } as Predicate<T>)
-          .replace(doc, { signal }),
+      (signal, id: string, doc: T) => client.table<T>(table).replace(id, doc, { signal }),
       [client, table],
     ),
   );

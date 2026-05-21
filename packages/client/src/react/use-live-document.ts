@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import type { DocumentData, LogEntry, Predicate } from "@baerly/protocol";
+import type { DocumentData, LogEntry } from "@baerly/protocol";
 import { useBaerlyClient } from "./provider.ts";
 import { useInvalidationTick } from "./use-invalidation-tick.ts";
 
@@ -29,8 +29,8 @@ export type UseLiveDocumentResult<T> =
 
 /**
  * Declarative live document. Subscribes to `table` and re-reads
- * `.where({ _id: id }).first()` whenever the server emits a log
- * event for `id`. Events for unrelated rows do not trigger a refetch.
+ * `.get(id)` whenever the server emits a log event for `id`.
+ * Events for unrelated rows do not trigger a refetch.
  *
  * Idle long-poll cycles are dropped at the
  * {@link useInvalidationTick} layer, so a steady-state document
@@ -63,10 +63,7 @@ export const useLiveDocument = <T extends DocumentData = DocumentData>(
     setState((prev) => (prev.status === "loading" ? prev : { status: "loading" }));
     void (async () => {
       try {
-        const next = await client
-          .table<T>(table)
-          .where({ _id: id } as Predicate<T>)
-          .first({ signal: controller.signal });
+        const next = await client.table<T>(table).get(id, { signal: controller.signal });
         if (controller.signal.aborted) {
           return;
         }

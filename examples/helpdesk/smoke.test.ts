@@ -45,17 +45,17 @@ describe("helpdesk smoke", () => {
         expect(all).toHaveLength(1);
         expect(all[0]?._id).toBe(_id);
 
-        const one = await tickets.where({ _id }).first();
+        const one = await tickets.get(_id);
         expect(one?.title).toBe("smoke");
 
-        await tickets.where({ _id }).update({ status: "closed" });
-        const closed = await tickets.where({ _id }).first();
+        await tickets.update(_id, { status: "closed" });
+        const closed = await tickets.get(_id);
         expect(closed?.status).toBe("closed");
 
         await expect(tickets.where({ status: "closed" }).count()).resolves.toBe(1);
         await expect(tickets.where({ status: "open" }).count()).resolves.toBe(0);
 
-        const { deleted } = await tickets.where({ _id }).delete();
+        const { deleted } = await tickets.delete(_id);
         expect(deleted).toBe(1);
         await expect(tickets.where({}).count()).resolves.toBe(0);
       } finally {

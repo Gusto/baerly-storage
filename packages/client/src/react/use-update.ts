@@ -1,5 +1,5 @@
 import { useCallback } from "react";
-import type { DocumentData, Predicate } from "@baerly/protocol";
+import type { DocumentData } from "@baerly/protocol";
 import { useBaerlyClient } from "./provider.ts";
 import { useMutation, type UseMutationResult } from "./use-mutation.ts";
 
@@ -14,15 +14,13 @@ export type UseUpdateResult<T extends DocumentData> = UseMutationResult<
 >;
 
 /**
- * Mutation hook for `client.table(...).where({ _id }).update(patch)`.
- * Issues `PATCH /v1/t/:table/:id` with JSON-merge-patch semantics —
- * keys present in `patch` are set, keys explicitly set to `null` are
+ * Mutation hook for `client.table(...).update(id, patch)`. Issues
+ * `PATCH /v1/t/:table/:id` with JSON-merge-patch semantics — keys
+ * present in `patch` are set, keys explicitly set to `null` are
  * deleted, omitted keys are left unchanged.
  *
- * The day-one HTTP constraint is single-row update by `_id`; the
- * hook mirrors it (`mutate(id, patch)`). When the server grows a
- * multi-row PATCH route, the signature will widen — until then,
- * passing anything but a row id will throw `BaerlyError`.
+ * Single-row update by `_id`; the hook signature is `mutate(id, patch)`
+ * and mirrors {@link ClientTable.update}.
  *
  * @example
  * ```tsx
@@ -44,10 +42,7 @@ export const useUpdate = <T extends DocumentData = DocumentData>(
   return useMutation(
     useCallback(
       (signal, id: string, patch: Partial<T>) =>
-        client
-          .table<T>(table)
-          .where({ _id: id } as Predicate<T>)
-          .update(patch, { signal }),
+        client.table<T>(table).update(id, patch, { signal }),
       [client, table],
     ),
   );

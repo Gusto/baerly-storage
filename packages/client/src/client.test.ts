@@ -65,7 +65,7 @@ describe("createBaerlyClient", () => {
       return jsonResponse({ modified: 1 });
     });
     const client = createBaerlyClient({ baseUrl: "http://x", fetch: mock.fetch });
-    const res = await client.table("tickets").where({ _id: "x" }).update({ status: "closed" });
+    const res = await client.table("tickets").update("x", { status: "closed" });
     expect(res).toEqual({ modified: 1 });
   });
 
@@ -82,7 +82,7 @@ describe("createBaerlyClient", () => {
       return jsonResponse({ modified: 1 });
     });
     const client = createBaerlyClient({ baseUrl: "http://x", fetch: mock.fetch });
-    await client.table("tickets").where({ _id: "x" }).replace({ _id: "x", status: "closed" });
+    await client.table("tickets").replace("x", { _id: "x", status: "closed" });
     expect(sawPatch).toBe(false);
   });
 
@@ -90,7 +90,7 @@ describe("createBaerlyClient", () => {
     const mock = new MockFetch();
     mock.on("DELETE", "/v1/t/tickets/:id", () => new Response(null, { status: 204 }));
     const client = createBaerlyClient({ baseUrl: "http://x", fetch: mock.fetch });
-    const res = await client.table("tickets").where({ _id: "x" }).delete();
+    const res = await client.table("tickets").delete("x");
     expect(res).toEqual({ deleted: 1 });
   });
 
@@ -100,7 +100,7 @@ describe("createBaerlyClient", () => {
       jsonResponse({ error: { code: "NotFound", message: "No such row: x" } }, 404),
     );
     const client = createBaerlyClient({ baseUrl: "http://x", fetch: mock.fetch });
-    const res = await client.table("tickets").where({ _id: "x" }).delete();
+    const res = await client.table("tickets").delete("x");
     expect(res).toEqual({ deleted: 0 });
   });
 
@@ -114,19 +114,6 @@ describe("createBaerlyClient", () => {
       name: "BaerlyError",
       code: "Unauthorized",
       status: 401,
-    });
-  });
-
-  test("update()/replace()/delete() throw SchemaError without .where({_id})", async () => {
-    const client = createBaerlyClient({ baseUrl: "http://x", fetch: new MockFetch().fetch });
-    await expect(
-      client.table("tickets").where({ status: "open" }).update({ x: 1 }),
-    ).rejects.toMatchObject({ code: "SchemaError" });
-    await expect(
-      client.table("tickets").where({ status: "open" }).replace({ _id: "x", status: "closed" }),
-    ).rejects.toMatchObject({ code: "SchemaError" });
-    await expect(client.table("tickets").where({ status: "open" }).delete()).rejects.toMatchObject({
-      code: "SchemaError",
     });
   });
 
@@ -283,7 +270,7 @@ describe("createBaerlyClient", () => {
       lifecycleSignal: lifecycle.signal,
     });
     // Lifecycle signal fires → in-flight PATCH aborts.
-    const inflight = client.table("tickets").where({ _id: "x" }).update({ title: "y" });
+    const inflight = client.table("tickets").update("x", { title: "y" });
     lifecycle.abort();
     await expect(inflight).rejects.toMatchObject({ name: "AbortError" });
 
@@ -292,8 +279,7 @@ describe("createBaerlyClient", () => {
     const perCall = new AbortController();
     const inflight2 = client2
       .table("tickets")
-      .where({ _id: "x" })
-      .update({ title: "y" }, { signal: perCall.signal });
+      .update("x", { title: "y" }, { signal: perCall.signal });
     perCall.abort();
     await expect(inflight2).rejects.toMatchObject({ name: "AbortError" });
   });
@@ -321,15 +307,22 @@ describe("createBaerlyClient", () => {
   });
 });
 
-// Shape-parity compile-time check (§5.6 of the ticket). The
-// client-side `ClientTable` must remain a structural superset of the
-// methods we expose from `@baerly/protocol`'s `Table<T>` — `name`,
-// `where`, `insert`, `count`. tsgo errors here when the surfaces
-// drift. Pure type position; no runtime emit.
+// Shape-parity compile-time check. The client-side `ClientTable`
+// keeps the same method names as `@baerly/protocol`'s `Table<T>` for
+// the read-side terminals (`name`, `count`, `get`, `first`, `all`).
+// Mutation verbs (`insert`, `update`, `replace`, `delete`) on
+// `ClientTable<T>` are intentionally NOT structural subtypes of
+// `Table<T>` — `ClientTable` adds a trailing `opts?: TerminalOptions`
+// bag that `Table<T>` does not carry — but the names match
+// 1:1 so call-site refactors port across. `where` returns
+// `ClientQuery<T>` (a structural subset of `Query<T>` — no mutation
+// verbs on the wire) so it is not asserted here either. tsgo errors
+// when one of the read-side names drifts. Pure type position; no
+// runtime emit.
 type _ShapeParityProbe =
   ClientTable<{ _id: string; status: string }> extends Pick<
     Table<{ _id: string; status: string }>,
-    "name" | "where" | "insert" | "count"
+    "name" | "count"
   >
     ? true
     : never;
