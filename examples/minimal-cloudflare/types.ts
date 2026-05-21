@@ -4,7 +4,7 @@
  * include this file, so a type defined here is visible on both
  * sides without a project-references workaround.
  */
-import type { DocumentData } from "baerly-storage";
+import type { DocumentData } from "baerly-storage/config";
 
 /**
  * One row in the `notes` collection. The minimal scaffold ships a

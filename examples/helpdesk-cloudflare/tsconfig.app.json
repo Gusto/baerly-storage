@@ -22,13 +22,8 @@
     "esModuleInterop": true,
     "skipLibCheck": true,
     "jsx": "react-jsx",
-    "types": ["vite/client", "node"],
+    "types": ["vite/client"],
     "composite": true
   },
-  "include": [
-    "src/web/**/*",
-    "uint8array-base64.d.ts",
-    "types.ts",
-    "baerly.config.ts"
-  ]
+  "include": ["src/web/**/*", "uint8array-base64.d.ts", "types.ts", "baerly.config.ts"]
 }
