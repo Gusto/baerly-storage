@@ -14,4 +14,4 @@ pre-commit:
       stage_fixed: true
     typecheck:
       glob: "*.{ts,tsx}"
-      run: pnpm typecheck
+      run: pnpm verify
