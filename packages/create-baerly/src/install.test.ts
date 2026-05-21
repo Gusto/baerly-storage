@@ -58,14 +58,13 @@ describe("defaultInstaller", () => {
   });
 
   test("returns the child's non-zero exit code verbatim", async () => {
-    const failingBin = join(binDir, "failing-pm");
-    await writeFile(failingBin, `#!/bin/sh\nexit 7\n`, "utf8");
-    await chmod(failingBin, 0o755);
-    // We can't change the pm enum, so swap PATH so `npm` hits a
-    // failing shim for this one case.
-    const oldNpm = join(binDir, "npm");
-    await writeFile(oldNpm, `#!/bin/sh\nexit 7\n`, "utf8");
-    await chmod(oldNpm, 0o755);
+    // Overwrite the npm shim from beforeAll with a failing variant.
+    // `Pm` is a closed union (`"npm" | "pnpm" | "yarn"`), so we can't
+    // introduce a fresh binary name without widening the type — task 2
+    // exercises mock injection where dispatch is verified directly.
+    const npmBin = join(binDir, "npm");
+    await writeFile(npmBin, `#!/bin/sh\nexit 7\n`, "utf8");
+    await chmod(npmBin, 0o755);
     const result = await defaultInstaller.run("npm", workDir);
     expect(result.code).toBe(7);
   });
