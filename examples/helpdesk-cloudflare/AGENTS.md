@@ -155,6 +155,26 @@ read it via your editor's TS LS or via the published types).
   on the post-image so `update` and `replace` see the full doc, not
   just the patch.
 
+- **HTTP wire format (calling `/v1/*` directly)** — the JS SDK
+  (`db.table(name).insert(...)`) is the canonical path; reach for `curl`
+  only when debugging the wire. Mutation bodies are wrapped:
+
+  | Route                       | Body                | Response                      |
+  | --------------------------- | ------------------- | ----------------------------- |
+  | `POST   /v1/t/:table`       | `{"doc":{...}}`     | `201 {_id}`                   |
+  | `PATCH  /v1/t/:table/:id`   | `{"patch":{...}}`   | `200 {modified}`              |
+  | `PUT    /v1/t/:table/:id`   | `{"doc":{...}}`     | `200 {modified}`              |
+  | `DELETE /v1/t/:table/:id`   | —                   | `204`                         |
+
+  Reads (`GET /v1/t/:table[/:id]`, `GET /v1/count?table=…`,
+  `GET /v1/since?table=…&cursor=…`) take no body and return
+  `{ data, _meta }` or a route-specific envelope. A flat `POST` body
+  (without the `doc` wrapper) returns
+  `400 SchemaError "Request body must be { doc: object }"` — the
+  wording is locked by `assertJsonBodyField` in the kernel. Canonical
+  reference: the `Routes` type and the JSDoc on `createRouter` in
+  `baerly-storage`.
+
 - **Auth setup (Cloudflare)** — see
   [docs/guide/client-auth.md](../../docs/guide/client-auth.md) for the
   full dev/prod recipe and why `SHARED_SECRET` is server-to-server-only.
