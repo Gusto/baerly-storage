@@ -27,7 +27,7 @@ request **server-side**. The browser fetches plain
 to the in-process Worker (CF templates) or proxying to the Node
 server (Node templates).
 
-- **`minimal-cloudflare`, `helpdesk-cloudflare`** —
+- **`minimal-cloudflare`, `react-cloudflare`** —
   `loadDevVars(".dev.vars")` reads `SHARED_SECRET`;
   `baerlyDevAuth({ secret })` uses it. `process.env.SHARED_SECRET`
   is consulted as a fallback for CI / shell-export flows.

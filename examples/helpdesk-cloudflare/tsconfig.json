@@ -1,9 +1,0 @@
-// Stub — TS picks up the referenced projects below.
-// `tsconfig.app.json` covers the SPA (DOM); `tsconfig.worker.json`
-// covers the Worker entry (workerd). Tests at the repo root match
-// `vitest.config.ts:test.include` (e.g. `*.test.ts`); they don't
-// belong to any tsconfig — vitest type-checks them via its own pipe.
-{
-  "files": [],
-  "references": [{ "path": "./tsconfig.app.json" }, { "path": "./tsconfig.worker.json" }]
-}

@@ -135,34 +135,6 @@ selector + `baerlyNode` invocation for production).
 **Scaffold from the CLI:** `pnpm create baerly my-app --target=node --starter=react`
 (add `--with=docker` for a Dockerfile + healthcheck).
 
-## helpdesk-cloudflare
-
-A reference example — full Cloudflare-deployable ticket CRUD app
-on R2 + CF Access + Workers Assets. **Browse it for a fully-
-fleshed-out example** of a schema-bound app (status / priority /
-assignee enums on the `Ticket` schema), not as a CLI starter — for
-that, use `react-cloudflare`.
-
-**Audience:** anyone reading source code to understand what a
-"real" baerly-storage app on Cloudflare looks like end-to-end with
-a richer schema than `notes`.
-
-**Run it:**
-
-```sh
-cd examples/helpdesk-cloudflare
-pnpm install
-cp .dev.vars.example .dev.vars
-pnpm dev
-```
-
-Then open <http://localhost:5173>.
-
-**Read first:** `src/server/index.ts` (the verifier selector +
-the `/v1/*` ↔ Assets split), then `wrangler.jsonc` (the R2 +
-Assets bindings), then `baerly.config.ts` (the Zod ticket schema
-with enum fields).
-
 ## Make a new example
 
 If the example should be CLI-scaffoldable, drop a

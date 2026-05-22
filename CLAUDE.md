@@ -56,7 +56,7 @@ var isn't propagated.
 |---|---|---|---|
 | `pnpm verify` | typecheck (`tsgo --noEmit`) + `verify:examples` + lint (`oxlint`) | ~seconds | ✅ — non-zero exit *is* your regression |
 | `pnpm verify:agent` | same gate as `pnpm verify`, with `tsgo --pretty false` + `oxlint --format=unix --quiet` for one-line-per-finding output (warnings hidden — `pnpm verify` still surfaces them) | ~seconds | ✅ — same gate as `verify`, just quieter |
-| `pnpm verify:examples` | runs each scaffoldable example's `tsc -b --noEmit` (`minimal-cloudflare`, `minimal-node`, `helpdesk-cloudflare`, `react-cloudflare`, `react-node`) so SPA + Worker bugs in the templates fail fast | ~seconds | ✅ |
+| `pnpm verify:examples` | runs each scaffoldable example's `tsc -b --noEmit` (`minimal-cloudflare`, `minimal-node`, `react-cloudflare`, `react-node`) so SPA + Worker bugs in the templates fail fast | ~seconds | ✅ |
 | `pnpm test` | vitest unit + integration (zero infra) — includes the `memory` + `local-fs` variants of `randomized.test.ts` | ~3s | ✅ — Minio + credentials tests are gated, see below |
 | `pnpm test:agent` | same gate as `pnpm test`, with `--reporter=minimal --silent=passed-only` baked in (failures still full-detail). Works regardless of `CLAUDECODE` | ~3s | ✅ — same gate as `test`, just quieter |
 | `pnpm test:minio` | adds the Minio-gated suites: the `clock behavior` block of `time.test.ts`, the `node-minio` variant of `randomized.test.ts`, and `adapter-node` Minio conformance | ~10s | ✅ when `pnpm dev:storage` is up |
@@ -252,11 +252,10 @@ Read in this order to build a mental model:
    `examples/react-cloudflare/` (full React + Vite SPA over a
    `NoteSchema` collection; dev uses workerd-in-Vite via
    `@cloudflare/vite-plugin` + `baerlyDevAuth` from
-   `baerly-storage/dev/vite`), `examples/react-node/` (same SPA +
+   `baerly-storage/dev/vite`), and `examples/react-node/` (same SPA +
    `NoteSchema`; dev uses `baerlyDev()` from `baerly-storage/dev/vite`
-   over `LocalFsStorage` as a single-Vite-process middleware), and
-   `examples/helpdesk-cloudflare/` are the production-shaped
-   scaffolds. Each scaffoldable example carries
+   over `LocalFsStorage` as a single-Vite-process middleware) are the
+   production-shaped scaffolds. Each scaffoldable example carries
    a `.baerly/scaffold.json` manifest declaring rename sentinels,
    copy exclusions, and devDep drops. The CLI consumes them at
    scaffold time via `STARTER_TO_EXAMPLE` in

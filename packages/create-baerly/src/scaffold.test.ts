@@ -6,10 +6,10 @@ import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { scaffold } from "./scaffold.ts";
 
 // `examples/` (containing `minimal-cloudflare/`, `minimal-node/`,
-// `helpdesk-cloudflare/`, `react-cloudflare/`, and `react-node/`) is
-// the templates root. The scaffolder's `STARTER_TO_EXAMPLE` map
-// resolves a `<target>:<starter>` compound key to the matching
-// example directory under this root.
+// `react-cloudflare/`, and `react-node/`) is the templates root.
+// The scaffolder's `STARTER_TO_EXAMPLE` map resolves a
+// `<target>:<starter>` compound key to the matching example
+// directory under this root.
 const TEMPLATES_ROOT = resolve(
   dirname(fileURLToPath(import.meta.url)),
   "..",
@@ -20,7 +20,6 @@ const TEMPLATES_ROOT = resolve(
 const EXAMPLE_DIRS = [
   resolve(TEMPLATES_ROOT, "minimal-cloudflare"),
   resolve(TEMPLATES_ROOT, "minimal-node"),
-  resolve(TEMPLATES_ROOT, "helpdesk-cloudflare"),
   resolve(TEMPLATES_ROOT, "react-cloudflare"),
   resolve(TEMPLATES_ROOT, "react-node"),
 ];
