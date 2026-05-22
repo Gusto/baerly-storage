@@ -27,6 +27,18 @@ export interface SharedSecretOptions {
  * differed. Real-world relevance over HTTPS is debated, but
  * `timingSafeEqual` is one line of code and erases the question.
  *
+ * **Identity shape.** On success the returned `VerifierResult` has:
+ * ```ts
+ * { tenantPrefix: "<configured>", identity: { kind: "shared-secret" } }
+ * ```
+ * `sharedSecret` has no notion of a per-user subject — every caller
+ * presenting the bearer is the same principal. Downstream code that
+ * wants a stable per-request `sender_sub` should fall back to a
+ * synthetic value (`"shared-secret:" + tenantPrefix`) when
+ * `identity.kind === "shared-secret"`. The `kind` field is the
+ * discriminant across all preset identities; switch on it instead of
+ * sniffing properties.
+ *
  * @throws BaerlyError code="InvalidConfig" — `secret` empty or
  *   `tenantPrefix` empty / contains "/".
  *

@@ -36,6 +36,18 @@ export interface VerifierResult {
  * header; SigV4 verifies against a SHA-256 of the body) compose on
  * top.
  *
+ * **Workers-types caveat.** `@cloudflare/workers-types` augments the
+ * global `Request` with the generic parameters
+ * `Request<CfHostMetadata, Cf>`. A Worker `fetch` handler receives
+ * `req: Request<CfHostMetadata, Cf>`, but a `Verifier` declared in
+ * user code resolves to `Request<unknown, CfProperties<unknown>>` —
+ * the same runtime object, narrowed differently by the type system.
+ * `baerlyWorker` handles this internally; you only see it if you
+ * intercept routes in your own Worker `fetch` before forwarding to
+ * `baerlyWorker`. In that case call the verifier with a one-line
+ * cast: `await verifier(req as unknown as Request)`. The runtime
+ * shape is identical; the cast is purely a generic-narrowing nudge.
+ *
  * **Errors.** A `Verifier` SHOULD return `null` for any
  * unauthenticated outcome — missing header, bad signature, expired
  * token, IP outside allowlist. It MAY throw an `BaerlyError` for

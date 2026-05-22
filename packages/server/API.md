@@ -326,6 +326,61 @@ That extra options bag is the **only** API difference between
 `Table<T>` and `ClientTable<T>`. Same modifiers, same terminals,
 same predicates, same consistency knob.
 
+## Long-poll: `client.since(...)`
+
+`client.since` is how the client receives a stream of mutations
+without WebSockets. The server holds the request open for ~25 s; if
+new log entries land in that window it flushes them immediately,
+otherwise it returns an empty batch with the cursor unchanged.
+
+```ts
+interface SinceResponse {
+  readonly events: ReadonlyArray<LogEntry>;
+  readonly next_cursor: string;
+}
+
+interface LogEntry {
+  readonly lsn: string;             // opaque cursor; lex-asc, monotonic
+  readonly commit_ts: string;       // ISO-8601 ms
+  readonly op: "I" | "U" | "D" | "T" | "M";
+  readonly collection: string;
+  readonly doc_id?: string;         // I/U/D only
+  readonly new?: DocumentData;      // I/U — post-image
+  readonly patch?: DocumentData;    // U — JSON-merge-patch (RFC 7386)
+  readonly schema_version: number;
+  readonly session: string;
+  readonly seq: number;
+  // `old` / `key_old` / `origin` are optional; see `LogEntry` JSDoc.
+}
+
+await client.since({ table: "tickets", cursor: "" });
+// → { events: [{lsn, op, doc_id, new, ...}, ...], next_cursor: "..." }
+```
+
+**Cursor priming.** First call: pass `cursor: ""` (or omit). The
+server replies with the current head and `next_cursor`. Pass that
+cursor back on every subsequent call. The cursor is opaque — treat
+it as a string. `events` is empty iff the budget elapsed with no new
+writes (and `next_cursor` is unchanged).
+
+```ts
+// Idiomatic live-updates loop. Pair with `client.table(...).all()`
+// to seed the initial view; tail forward from the cursor that
+// `since` returned alongside the seed batch.
+let cursor = "";
+while (!ac.signal.aborted) {
+  const resp = await client.since({ table: "notes", cursor, signal: ac.signal });
+  cursor = resp.next_cursor;
+  if (resp.events.length > 0) {
+    await refresh();              // re-render from whatever store you keep
+  }
+}
+```
+
+The React hooks `useLiveDocument` / `useLiveQuery` in
+`baerly-storage/client/react` wrap this loop with mount lifecycle,
+backoff on transport errors, and cursor persistence.
+
 ## HTTP wire format
 
 The JS SDK is the canonical path. Reach for `curl` only when

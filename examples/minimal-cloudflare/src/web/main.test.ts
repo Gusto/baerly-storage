@@ -10,18 +10,37 @@
 // guidance).
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 
+// URL-aware fetch stub. The read endpoints (`GET /v1/t/<table>`,
+// `GET /v1/t/<table>/<id>`, `GET /v1/count`) return the
+// `{ data, _meta }` envelope; `GET /v1/since` returns the long-poll
+// envelope `{ events: [], next_cursor: "" }`. A naive single-shape
+// stub would TypeError the moment anyone wires `client.since(...)`
+// into `main.ts` for live updates.
+const resolveFetchUrl = (input: RequestInfo | URL): string => {
+  if (typeof input === "string") {
+    return input;
+  }
+  if (input instanceof URL) {
+    return input.href;
+  }
+  return input.url;
+};
+
+const stubBaerlyFetch = (): typeof fetch =>
+  vi.fn<typeof fetch>(async (input) => {
+    const pathname = new URL(resolveFetchUrl(input), "http://localhost").pathname;
+    const body = pathname.startsWith("/v1/since")
+      ? { events: [], next_cursor: "" }
+      : { data: [], _meta: {} };
+    return new Response(JSON.stringify(body), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  });
+
 beforeEach(() => {
   document.body.innerHTML = '<div id="app"></div>';
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(
-      async () =>
-        new Response(JSON.stringify({ data: [], _meta: {} }), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        }),
-    ),
-  );
+  vi.stubGlobal("fetch", stubBaerlyFetch());
 });
 
 afterEach(() => {

@@ -87,6 +87,18 @@ const JWKS_KID_REFRESH_MIN_INTERVAL_MS = 60_000;
  * (Auth0, Okta, Azure AD, Keycloak) ship a `/.well-known/jwks.json`
  * endpoint suitable for the `jwks` option.
  *
+ * **Identity shape.** On success the returned `VerifierResult` has:
+ * ```ts
+ * { tenantPrefix: <payload[tenantClaim]>, identity: <verified JWTPayload> }
+ * ```
+ * `identity` is the raw, validated JWT payload — `identity.sub` is
+ * the canonical per-user subject; other claims (`email`, `name`,
+ * `groups`, …) pass through verbatim. The kernel types it as
+ * `unknown` to keep `Verifier` plain; cast at the call site with the
+ * payload shape your IdP emits, e.g. `const id = result.identity as
+ * { sub: string }`. Token-level failures (bad signature, expired,
+ * wrong audience, missing/non-string tenant claim) return `null`.
+ *
  * @throws BaerlyError code="InvalidConfig" — required option
  *   missing, `issuer`/`audience` empty, `algorithms` empty.
  * @throws BaerlyError code="NetworkError" — JWKS fetch failed AND
@@ -156,11 +168,7 @@ export const bearerJwt = (opts: BearerJwtOptions): Verifier => {
     }
 
     const tenantValue = payload[tenantClaim];
-    if (
-      typeof tenantValue !== "string" ||
-      tenantValue.length === 0 ||
-      tenantValue.includes("/")
-    ) {
+    if (typeof tenantValue !== "string" || tenantValue.length === 0 || tenantValue.includes("/")) {
       return null;
     }
 

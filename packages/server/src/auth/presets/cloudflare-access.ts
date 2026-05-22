@@ -37,6 +37,12 @@ export interface CloudflareAccessOptions {
  * CF-specific header, points at CF Access's JWKS, and pins
  * issuer/audience to the CF-Access shape.
  *
+ * **Identity shape.** Same as {@link bearerJwt}: the returned
+ * `identity` is the verified JWT payload CF Access mints (after IdP
+ * sign-in). Useful claims are `identity.sub` (user id), `identity.email`,
+ * `identity.identity_nonce` — see Cloudflare's "Application Token"
+ * reference. The kernel types it as `unknown`; cast at the call site.
+ *
  * @throws BaerlyError code="InvalidConfig" — `teamDomain` or
  *   `audienceTag` empty, or `audienceTag` not 64 lowercase-hex chars.
  *
