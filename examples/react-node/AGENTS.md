@@ -374,6 +374,109 @@ The export is point-in-time and honours the active schema. Flags:
 `--no-sidecar`, `--json`. Exit codes: 0 success, 1 InvalidConfig,
 2 Storage/Network, 3 Protocol invariant.
 
+## Worked extensions
+
+Three recipes that come up routinely when you extend the
+scaffolded `notes` shape. Each one is target-agnostic — the same
+code works in `react-cloudflare` and `react-node`.
+
+### Adding an enum field (e.g. `status`)
+
+A row often needs a constrained set of string values. Declare the
+enum inside the Zod schema; re-export the option tuple from
+`types.ts` for UI rendering; the predicate API picks the field up
+automatically.
+
+```typescript
+// baerly.config.ts
+import { z } from "zod";
+
+export const NoteSchema = z.object({
+  _id: z.string(),
+  body: z.string().min(1),
+  created_at: z.string(),
+  status: z.enum(["open", "in_progress", "closed"]),
+});
+```
+
+```typescript
+// types.ts
+import type { z } from "zod";
+// Note: `NoteSchema` is imported at the value level here (not via
+// `import type`) so that `.shape.status.options` is available
+// at runtime. If your scaffolded `types.ts` declares it type-only,
+// drop the `type` qualifier.
+import config, { NoteSchema } from "./baerly.config.ts";
+
+export type Note = z.infer<typeof NoteSchema>;
+export const STATUSES = NoteSchema.shape.status.options;
+```
+
+```tsx
+// In a form component:
+import { STATUSES } from "../../types.ts";
+
+<select name="status" defaultValue="open">
+  {STATUSES.map((s) => (
+    <option key={s} value={s}>{s}</option>
+  ))}
+</select>
+```
+
+The schema enum is the single source of truth — adding a value
+there expands the `<select>` immediately. Adding more enum fields
+(`priority`, `severity`) follows the same shape.
+
+### Filtering a live query by predicate
+
+`useLiveQuery({ where })` takes the same predicate AST the backend
+uses. To narrow by an enum field, drive it off `useState`:
+
+```tsx
+import { useState } from "react";
+import { useLiveQuery } from "baerly-storage/client/react";
+import { STATUSES, type Note } from "../../types.ts";
+
+type Filter = "all" | Note["status"];
+
+const [filter, setFilter] = useState<Filter>("all");
+const result = useLiveQuery<Note>({
+  table: "notes",
+  where: filter === "all" ? {} : { status: filter },
+});
+```
+
+`useLiveQuery` re-runs the query when the predicate changes AND
+when the `/v1/since` long-poll batches a non-empty change for
+`notes`. Idle long-poll cycles (empty batches) are dropped at the
+`useInvalidationTick` layer, so a steady-state table costs zero
+list reads. Add a `<select>` bound to `setFilter` and the list
+narrows live.
+
+### Optional fields
+
+Some fields aren't always present (`tags` may be missing entirely
+on some rows). Zod's `.optional()` models this:
+
+```typescript
+export const NoteSchema = z.object({
+  _id: z.string(),
+  body: z.string().min(1),
+  created_at: z.string(),
+  tags: z.array(z.string()).optional(),     // tags?: string[]
+});
+```
+
+The Zod-inferred `Note` type reflects the shape (`tags?: string[]`)
+and call sites pick it up through `import type { Note }`.
+JSON-merge-patch (RFC 7396) semantics apply on `update()`:
+omitting `tags` from an update preserves the existing value;
+passing `tags: null` deletes the field; passing `tags: []` sets
+it to an empty array. Note that `null` is the deletion sentinel,
+not a storable value — `DocumentValue` doesn't include `null`,
+so `find()` returns deleted fields as `undefined`, not `null`.
+That's why this recipe uses `.optional()` and not `.nullable()`.
+
 ## Pointers
 
 - `baerly.config.ts` — app config.
