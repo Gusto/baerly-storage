@@ -301,13 +301,21 @@ export const scaffold = async (opts: ScaffoldOptions): Promise<ScaffoldResult> =
       if (isExcluded(relEnt) || matchesExcludeName(ent)) {
         continue;
       }
-      const toEnt = join(outDir, relEnt);
+      // `npm pack` strips `.gitignore` files from published tarballs
+      // (it reads each one as an ignore-source control file and then
+      // drops the file itself), so template trees ship `_gitignore`
+      // and we rename on emit. Same trick as create-vite. Output
+      // file name lives in `outName` / `relOut`; the source name
+      // (`ent` / `relEnt`) is unchanged for read + manifest lookup.
+      const outName = ent === "_gitignore" ? ".gitignore" : ent;
+      const relOut = rel === "" ? outName : join(rel, outName);
+      const toEnt = join(outDir, relOut);
       if (statSync(fromEnt).isDirectory()) {
         mkdirSync(toEnt, { recursive: true });
         walk(sourceDir, relEnt);
       } else {
         const ext = ent.includes(".") ? ent.slice(ent.lastIndexOf(".")) : "";
-        const isText = TEXT_EXTS.has(ext) || ent === "Dockerfile";
+        const isText = TEXT_EXTS.has(ext) || ent === "Dockerfile" || ent === "_gitignore";
         mkdirSync(dirname(toEnt), { recursive: true });
         if (ent === "package.json") {
           writeFileSync(toEnt, substitutePackageJson(readFileSync(fromEnt, "utf8"), ctx));
@@ -316,7 +324,7 @@ export const scaffold = async (opts: ScaffoldOptions): Promise<ScaffoldResult> =
         } else {
           writeFileSync(toEnt, readFileSync(fromEnt));
         }
-        filesWritten.push(relEnt);
+        filesWritten.push(relOut);
         const copyTo = copyByFrom.get(relEnt);
         if (copyTo !== undefined) {
           const copyDest = join(outDir, copyTo);

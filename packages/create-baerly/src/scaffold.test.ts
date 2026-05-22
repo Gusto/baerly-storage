@@ -131,6 +131,44 @@ describe("scaffold", () => {
     expect(seeded).toContain("SHARED_SECRET=dev-shared-secret");
   });
 
+  // Regression: `npm pack` treats `.gitignore` as a control file and
+  // strips it from published tarballs, so the template form is named
+  // `_gitignore` and the walker renames it on emit. Without this, the
+  // seeded `.dev.vars` / `.env` lands in the user's first commit.
+  test("each example ships _gitignore (not .gitignore) — survives `npm pack`", async () => {
+    for (const exampleDir of EXAMPLE_DIRS) {
+      const entries = await readdir(exampleDir);
+      expect(entries, `${basename(exampleDir)} must carry _gitignore`).toContain("_gitignore");
+      expect(
+        entries,
+        `${basename(exampleDir)} must NOT carry .gitignore (stripped by npm pack)`,
+      ).not.toContain(".gitignore");
+    }
+  });
+
+  test.for([
+    ["cloudflare", "minimal", ".dev.vars"],
+    ["cloudflare", "react", ".dev.vars"],
+    ["node", "minimal", ".env"],
+    ["node", "react", ".env"],
+  ] as const)(
+    "%s/%s scaffold emits a .gitignore that ignores %s",
+    async ([target, starter, secret]) => {
+      const result = await scaffold({
+        projectName: `gi-${target}-${starter}`,
+        target,
+        starter,
+        pm: "pnpm",
+        templatesRoot: TEMPLATES_ROOT,
+        outRoot,
+      });
+      expect(result.filesWritten).toContain(".gitignore");
+      expect(result.filesWritten).not.toContain("_gitignore");
+      const gi = await readFile(join(result.outDir, ".gitignore"), "utf8");
+      expect(gi).toMatch(new RegExp(`^${secret.replace(".", "\\.")}$`, "m"));
+    },
+  );
+
   test("emits a production-shape wrangler.jsonc for cloudflare", async () => {
     const result = await scaffold({
       projectName: "prod-app",
