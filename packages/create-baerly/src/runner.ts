@@ -51,8 +51,8 @@ export const CREATE_BAERLY_ARGS = {
   },
   starter: {
     type: "enum",
-    options: ["minimal", "helpdesk"],
-    description: 'Starter template — "minimal" (default) or "helpdesk".',
+    options: ["minimal", "react"],
+    description: 'Starter template — "minimal" (default) or "react".',
   },
   tenant: {
     type: "string",
@@ -133,9 +133,7 @@ export const handleCreateBaerly = async (
         throw new Error("projectName is required (positional)");
       }
       if (args.target === undefined) {
-        throw new Error(
-          `--target is required when not running in wizard mode (got undefined)`,
-        );
+        throw new Error(`--target is required when not running in wizard mode (got undefined)`);
       }
       projectName = args.projectName;
       target = args.target;

@@ -31,7 +31,7 @@ export interface ScaffoldOptions {
    */
   readonly projectName: string;
   readonly target: "cloudflare" | "node";
-  readonly starter?: "minimal" | "helpdesk";
+  readonly starter?: "minimal" | "react";
   readonly pm?: Pm;
   readonly tenant?: string;
   readonly domain?: string;
@@ -94,7 +94,7 @@ const TEXT_EXTS = new Set([
  */
 const STARTER_TO_EXAMPLE: Record<string, string> = {
   "cloudflare:minimal": "minimal-cloudflare",
-  "cloudflare:helpdesk": "helpdesk-cloudflare",
+  "cloudflare:react": "react-cloudflare",
   "node:minimal": "minimal-node",
 };
 

@@ -5,10 +5,11 @@ import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { scaffold } from "./scaffold.ts";
 
-// `examples/` (containing `minimal-cloudflare/`, `minimal-node/`, and
-// `helpdesk-cloudflare/`) is the templates root. The scaffolder's
-// `STARTER_TO_EXAMPLE` map resolves a `<target>:<starter>` compound
-// key to the matching example directory under this root.
+// `examples/` (containing `minimal-cloudflare/`, `minimal-node/`,
+// `helpdesk-cloudflare/`, and `react-cloudflare/`) is the templates
+// root. The scaffolder's `STARTER_TO_EXAMPLE` map resolves a
+// `<target>:<starter>` compound key to the matching example directory
+// under this root.
 const TEMPLATES_ROOT = resolve(
   dirname(fileURLToPath(import.meta.url)),
   "..",
@@ -20,6 +21,7 @@ const EXAMPLE_DIRS = [
   resolve(TEMPLATES_ROOT, "minimal-cloudflare"),
   resolve(TEMPLATES_ROOT, "minimal-node"),
   resolve(TEMPLATES_ROOT, "helpdesk-cloudflare"),
+  resolve(TEMPLATES_ROOT, "react-cloudflare"),
 ];
 
 // `packages/create-baerly/templates/addons/` carries the opt-in add-on
@@ -98,11 +100,11 @@ describe("scaffold", () => {
     expect(seeded).toContain("SHARED_SECRET=dev-shared-secret");
   });
 
-  test("helpdesk-cloudflare scaffold also seeds .dev.vars", async () => {
+  test("react-cloudflare scaffold also seeds .dev.vars", async () => {
     const result = await scaffold({
-      projectName: "seeded-helpdesk",
+      projectName: "seeded-react",
       target: "cloudflare",
-      starter: "helpdesk",
+      starter: "react",
       pm: "pnpm",
       templatesRoot: TEMPLATES_ROOT,
       outRoot,
@@ -301,16 +303,16 @@ describe("scaffold", () => {
     ).rejects.toThrow(/template not found for target=cloudflare starter=ghost/);
   });
 
-  test("rejects helpdesk starter on node", async () => {
+  test("rejects react starter on node", async () => {
     await expect(
       scaffold({
-        projectName: `no-helpdesk-node`,
+        projectName: `no-react-node`,
         target: "node",
-        starter: "helpdesk",
+        starter: "react",
         templatesRoot: TEMPLATES_ROOT,
         outRoot,
       }),
-    ).rejects.toThrow(/template not found for target=node starter=helpdesk/);
+    ).rejects.toThrow(/template not found for target=node starter=react/);
   });
 
   test("rejects an unknown target template", async () => {
@@ -449,9 +451,9 @@ describe("scaffold", () => {
     },
     {
       target: "cloudflare",
-      starter: "helpdesk",
-      sentinels: ["helpdesk-cloudflare", "helpdesk-demo"],
-      shape: "helpdesk",
+      starter: "react",
+      sentinels: ["react-cloudflare", "react-demo"],
+      shape: "react",
     },
   ] as const;
   for (const { target, starter, sentinels, shape } of E2E_CASES) {
@@ -517,16 +519,16 @@ describe("scaffold", () => {
       const claude = await readFile(join(result.outDir, "CLAUDE.md"), "utf8");
       expect(claude).toEqual(agents);
 
-      // 7. Helpdesk shape: real React UI shipped at src/web/, with
+      // 7. React shape: real React UI shipped at src/web/, with
       //    Vite's `index.html` at the package root.
-      if (shape === "helpdesk") {
+      if (shape === "react") {
         expect(result.filesWritten).toContain("index.html");
-        expect(result.filesWritten).toContain(join("src", "web", "TicketList.tsx"));
+        expect(result.filesWritten).toContain(join("src", "web", "NoteList.tsx"));
         const html = await readFile(join(result.outDir, "index.html"), "utf8");
-        // "Baerly Helpdesk" is deliberate prose, not a slug. The renames
-        // manifest only sentinelizes `helpdesk-cloudflare` and
-        // `helpdesk-demo`; bare `Helpdesk`/`helpdesk` must survive intact.
-        expect(html).toContain("Baerly Helpdesk");
+        // "Notes" is deliberate prose, not a slug. The renames manifest
+        // only sentinelizes `react-cloudflare` and `react-demo`; bare
+        // `Notes`/`notes` must survive intact.
+        expect(html).toContain("Notes");
         // The root `package.json:name` already renamed to `appName`
         // above (assertion #1). The flat layout has no separate web
         // package, so there's no `${appName}-web` workspace name to
@@ -550,7 +552,7 @@ describe("scaffold", () => {
     },
     {
       target: "cloudflare" as const,
-      starter: "helpdesk" as const,
+      starter: "react" as const,
       expected: { esbuild: "true", workerd: "true", sharp: "false" },
     },
     {
@@ -614,7 +616,7 @@ describe("scaffold", () => {
   // drops one fails before it reaches a user's terminal.
   test.each([
     { target: "cloudflare" as const, starter: undefined },
-    { target: "cloudflare" as const, starter: "helpdesk" as const },
+    { target: "cloudflare" as const, starter: "react" as const },
     { target: "node" as const, starter: undefined },
   ])("scaffolded $target/$starter ships vitest wired end-to-end", async ({ target, starter }) => {
     const label = starter === undefined ? target : `${target}-${starter}`;
