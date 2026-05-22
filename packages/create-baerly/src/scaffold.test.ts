@@ -6,10 +6,10 @@ import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { scaffold } from "./scaffold.ts";
 
 // `examples/` (containing `minimal-cloudflare/`, `minimal-node/`,
-// `helpdesk-cloudflare/`, and `react-cloudflare/`) is the templates
-// root. The scaffolder's `STARTER_TO_EXAMPLE` map resolves a
-// `<target>:<starter>` compound key to the matching example directory
-// under this root.
+// `helpdesk-cloudflare/`, `react-cloudflare/`, and `react-node/`) is
+// the templates root. The scaffolder's `STARTER_TO_EXAMPLE` map
+// resolves a `<target>:<starter>` compound key to the matching
+// example directory under this root.
 const TEMPLATES_ROOT = resolve(
   dirname(fileURLToPath(import.meta.url)),
   "..",
@@ -22,6 +22,7 @@ const EXAMPLE_DIRS = [
   resolve(TEMPLATES_ROOT, "minimal-node"),
   resolve(TEMPLATES_ROOT, "helpdesk-cloudflare"),
   resolve(TEMPLATES_ROOT, "react-cloudflare"),
+  resolve(TEMPLATES_ROOT, "react-node"),
 ];
 
 // `packages/create-baerly/templates/addons/` carries the opt-in add-on
@@ -303,18 +304,6 @@ describe("scaffold", () => {
     ).rejects.toThrow(/template not found for target=cloudflare starter=ghost/);
   });
 
-  test("rejects react starter on node", async () => {
-    await expect(
-      scaffold({
-        projectName: `no-react-node`,
-        target: "node",
-        starter: "react",
-        templatesRoot: TEMPLATES_ROOT,
-        outRoot,
-      }),
-    ).rejects.toThrow(/template not found for target=node starter=react/);
-  });
-
   test("rejects an unknown target template", async () => {
     await expect(
       scaffold({
@@ -455,6 +444,12 @@ describe("scaffold", () => {
       sentinels: ["react-cloudflare", "react-demo"],
       shape: "react",
     },
+    {
+      target: "node",
+      starter: "react",
+      sentinels: ["react-node", "react-demo"],
+      shape: "react",
+    },
   ] as const;
   for (const { target, starter, sentinels, shape } of E2E_CASES) {
     const label = starter === undefined ? target : `${target}+${starter}`;
@@ -560,6 +555,11 @@ describe("scaffold", () => {
       starter: undefined,
       expected: { esbuild: "true" },
     },
+    {
+      target: "node" as const,
+      starter: "react" as const,
+      expected: { esbuild: "true" },
+    },
   ])(
     "scaffolded $target/$starter ships pnpm-workspace.yaml with the expected allowBuilds map",
     async ({ target, starter, expected }) => {
@@ -618,6 +618,7 @@ describe("scaffold", () => {
     { target: "cloudflare" as const, starter: undefined },
     { target: "cloudflare" as const, starter: "react" as const },
     { target: "node" as const, starter: undefined },
+    { target: "node" as const, starter: "react" as const },
   ])("scaffolded $target/$starter ships vitest wired end-to-end", async ({ target, starter }) => {
     const label = starter === undefined ? target : `${target}-${starter}`;
     const result = await scaffold({

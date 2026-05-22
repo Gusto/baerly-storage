@@ -96,6 +96,7 @@ const STARTER_TO_EXAMPLE: Record<string, string> = {
   "cloudflare:minimal": "minimal-cloudflare",
   "cloudflare:react": "react-cloudflare",
   "node:minimal": "minimal-node",
+  "node:react": "react-node",
 };
 
 /**
