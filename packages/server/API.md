@@ -23,6 +23,7 @@ only for exact signatures).
 // Server kernel
 import {
   Db,
+  MemoryStorage,                 // in-memory `Storage`; canonical for tests
   type Table, type Query,
   type DocumentData, type ConsistencyLevel,
   BaerlyError, type BaerlyErrorCode,
