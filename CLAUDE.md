@@ -267,7 +267,7 @@ Read in this order to build a mental model:
    `--with=<name>` is passed (Docker requires `--target=node`).
    `rolldown.config.ts` mirrors `templates/addons/` into
    `dist/templates/addons/` so the published binary ships them too.
-   Catalog index in `examples/README.md`.
+   Catalog index in `examples/README.md`. See `packages/create-baerly/AGENTS.md` for the full scaffold pipeline (examples → dist/templates → tgz → user dir).
 
 The full lifecycle of `db.table().insert()` is in
 [docs/contributing/architecture.md](docs/contributing/architecture.md) — read it before
