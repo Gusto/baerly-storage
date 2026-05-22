@@ -337,12 +337,6 @@ describe("baerlyWorker factory caching", () => {
     identity: { kind: "cache-test" },
   });
 
-  const makeCtx = (): ExecutionContext => ({
-    waitUntil(): void {},
-    passThroughOnException(): void {},
-    props: {},
-  });
-
   test("baerlyWorker resolves the factory exactly once across N fetches", async () => {
     const bucket = getBinding();
     const env: BaerlyEnv = { BUCKET: bucket, APP: "t" };
@@ -356,7 +350,7 @@ describe("baerlyWorker factory caching", () => {
       await handler.fetch!(
         new Request("https://x/v1/healthz") as Request<unknown, IncomingRequestCfProperties>,
         env,
-        makeCtx(),
+        makeNoopCtx(),
       );
     }
     expect(factoryCalls).toBe(1);
@@ -374,17 +368,9 @@ describe("baerlyWorker factory caching", () => {
     await handler.fetch!(
       new Request("https://x/v1/healthz") as Request<unknown, IncomingRequestCfProperties>,
       env,
-      makeCtx(),
+      makeNoopCtx(),
     );
-    await handler.scheduled!(
-      {
-        scheduledTime: Date.now(),
-        cron: "* * * * *",
-        noRetry(): void {},
-      } as ScheduledController,
-      env,
-      makeCtx(),
-    );
+    await handler.scheduled!(makeScheduledEvent(), env, makeNoopCtx());
     expect(factoryCalls).toBe(1);
   });
 });
