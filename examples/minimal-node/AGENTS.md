@@ -38,10 +38,12 @@ Public API docs: https://docs.baerly.dev/ (the JSDoc on
 read it via your editor's TS LS or via the published types).
 
 Headless / CLI agents without a TS LS: `cat
-node_modules/baerly-storage/dist/AGENTS.md` is a one-read quickref
-of the full public API surface (`Db`, `Table`, `Query`,
-`ConsistencyLevel`, `DocumentData`, `BaerlyError`, `defineConfig`,
-`createBaerlyClient`, and the common imports).
+node_modules/baerly-storage/dist/API.md` is a one-read quickref of the
+full public API surface (`Db`, `Table`, `Query`, `ConsistencyLevel`,
+`DocumentData`, `BaerlyError`, `defineConfig`, `createBaerlyClient`,
+and the common imports). Note: that file is `API.md`, not `AGENTS.md`
+— this file (the project-root `AGENTS.md` you're reading now) is the
+agent guide; the lib ships its API reference at `dist/API.md`.
 
 ## Toolchain
 

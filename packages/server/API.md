@@ -7,13 +7,15 @@ tags: [agent-quickref, baerly]
 
 # baerly-storage — public API quickref
 
-This file ships in `dist/AGENTS.md` so a freshly-installed
-`node_modules/baerly-storage/dist/AGENTS.md` is one `cat` away from
-the full public surface. It is hand-curated; the `.d.ts` files in
-this same directory remain the source of truth (the bundler chunks
-them across `index-*.d.ts` / `client-*.d.ts` / `db-*.d.ts` / etc., so
-they're noisy to read flat — read this first, drop into the `.d.ts`
-chunks only for exact signatures).
+This file ships in `dist/API.md` so a freshly-installed
+`node_modules/baerly-storage/dist/API.md` is one `cat` away from the
+full public surface. (It is named `API.md` rather than `AGENTS.md` to
+avoid colliding with the scaffolded user app's own `AGENTS.md` at the
+project root.) It is hand-curated; the `.d.ts` files in this same
+directory remain the source of truth (the bundler chunks them across
+`index-*.d.ts` / `client-*.d.ts` / `db-*.d.ts` / etc., so they're
+noisy to read flat — read this first, drop into the `.d.ts` chunks
+only for exact signatures).
 
 ## Imports cheat sheet
 
