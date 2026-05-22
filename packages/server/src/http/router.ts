@@ -162,7 +162,7 @@ export function createRouter(options: CreateRouterOptions): Hono {
     const patch = assertJsonBodyField(body, "patch");
     const { modified } = await db
       .table(table)
-      .where({ _id: id } as Predicate<DocumentData>)
+      .where({ _id: id })
       .update(patch as Partial<DocumentData>);
     if (modified === 0) {
       throw new BaerlyError("NotFound", `No such row: ${id}`);
@@ -181,7 +181,7 @@ export function createRouter(options: CreateRouterOptions): Hono {
     try {
       await db
         .table(table)
-        .where({ _id: id } as Predicate<DocumentData>)
+        .where({ _id: id })
         .replace(doc as DocumentData);
     } catch (error) {
       // `Query.replace` raises `Conflict` with `expected exactly 1
@@ -204,10 +204,7 @@ export function createRouter(options: CreateRouterOptions): Hono {
   // Delete — DELETE /v1/t/:table/:id  → 204
   app.delete("/v1/t/:table/:id", async (c) => {
     const { table, id } = c.req.param();
-    const { deleted } = await db
-      .table(table)
-      .where({ _id: id } as Predicate<DocumentData>)
-      .delete();
+    const { deleted } = await db.table(table).where({ _id: id }).delete();
     if (deleted === 0) {
       throw new BaerlyError("NotFound", `No such row: ${id}`);
     }

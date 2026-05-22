@@ -30,6 +30,15 @@
   },
   "overrides": [
     {
+      "files": ["**/*.test-d.ts"],
+      "rules": {
+        // test-d files use `export const _name` pattern so noUnusedLocals
+        // doesn't fire; the leading underscore is a naming convention for
+        // type-level assertion handles, not private members.
+        "no-underscore-dangle": "off"
+      }
+    },
+    {
       "files": ["**/*.test.ts", "tests/**/*.ts", "scripts/**/*.ts"],
       "rules": {
         "no-console": "off",

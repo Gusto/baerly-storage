@@ -381,7 +381,8 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
   // at the call site.
   table<N extends CollectionNames<TConfig>>(name: N): Table<RowOf<TConfig, N> & DocumentData>;
   table<T extends DocumentData = DocumentData>(name: string): Table<T>;
-  table(name: string): Table<DocumentData> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- impl signature must be wider than all overloads; with Predicate<T> typed, Table<DocumentData> is no longer assignable to Table<RowOf<...>&DocumentData> due to contravariance on where(). `any` widens correctly.
+  table(name: string): Table<any> {
     return makeTable<DocumentData>(this.tableReadContext(name));
   }
 

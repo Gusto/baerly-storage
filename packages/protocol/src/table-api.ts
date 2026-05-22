@@ -164,12 +164,98 @@ export interface Table<T extends DocumentData = DocumentData> {
 }
 
 /**
- * Predicate over a document shape. Today: equality, dotted-path
- * traversal, and an operator vocabulary on field values
+ * Decrementing depth markers for {@link Path}'s recursion cap.
+ * The default of 4 means dotted paths up to `a.b.c.d` are legal;
+ * `a.b.c.d.e` is rejected. Keeps `tsgo` recursion bounded.
+ * @internal
+ */
+type _PathDepth = [never, 0, 1, 2, 3, 4];
+
+/**
+ * True when `V` is a value position that should terminate {@link Path}
+ * recursion. Primitives, `null`, and arrays are leaves — we do not
+ * descend into array indices via dotted-path keys (the runtime
+ * evaluator treats every segment as an object key, so `"tags.0"`
+ * would resolve to `arr["0"]`, which works but is poor DX).
+ * @internal
+ */
+type _IsPathLeaf<V> = V extends string | number | boolean | null
+  ? true
+  : V extends ReadonlyArray<unknown>
+    ? true
+    : false;
+
+/**
+ * Strip the string index signature from `T` so {@link Path} can
+ * iterate over named keys only. Without this, `T = DocumentData &
+ * UserShape` (the canonical user-doc shape across the kernel)
+ * collapses `keyof T` to `string` and defeats narrowing.
+ *
+ * The pattern `string extends K ? never : K` is the standard TS
+ * idiom: the parameter of a `[k: string]: …` signature has type
+ * `string`, so `string extends string` is true for it (excluded);
+ * any literal key like `"status"` does not extend `string`
+ * (kept).
+ * @internal
+ */
+type _StripIndex<T> = {
+  [K in keyof T as string extends K ? never : K]: T[K];
+};
+
+/**
+ * Recursively-derived union of every legal dotted-path key over `T`.
+ * Depth-capped at 4 segments (`a.b.c.d` legal, `a.b.c.d.e` not) so
+ * the type checker doesn't blow recursion limits on deep schemas.
+ *
+ * When `T` is just `DocumentData` (the default — no user shape
+ * passed), `_StripIndex<T>` is `{}` and `_Keys<T>` is `never`. In
+ * that case we fall through to bare `string` keys, preserving
+ * today's open-keyed default behavior.
+ * @internal
+ */
+type Path<T, D extends _PathDepth[number] = 4> = [D] extends [never]
+  ? never
+  : T extends object
+    ? keyof _StripIndex<T> & string extends never
+      ? string
+      : {
+          [K in keyof _StripIndex<T> & string]: _IsPathLeaf<T[K]> extends true
+            ? K
+            : K | `${K}.${Path<NonNullable<T[K]>, _PathDepth[D]>}`;
+        }[keyof _StripIndex<T> & string]
+    : never;
+
+/**
+ * Resolves the leaf value type at dotted path `P` through `T`.
+ * Paired with {@link Path} to type the value side of
+ * {@link Predicate}. `NonNullable` collapses optional intermediate
+ * fields so `"a.b"` resolves through `{ a?: { b: number } }`.
+ *
+ * Falls back to `DocumentValue` when `P` does not resolve to a
+ * named key — this only happens when `Path<T> = string` (no user
+ * shape), in which case any string is legal and the value side
+ * widens to `DocumentValue` to match today's default.
+ * @internal
+ */
+type PathValue<T, P extends string> = P extends `${infer H}.${infer R}`
+  ? H extends keyof T
+    ? PathValue<NonNullable<T[H]>, R>
+    : never
+  : P extends keyof T
+    ? T[P]
+    : DocumentValue;
+
+/**
+ * Predicate over a document shape. Equality, dotted-path traversal,
+ * and an operator vocabulary on field values
  * (`$eq | $gt | $gte | $lt | $lte | $in`).
  *
  * Top-level equality: `{ status: "open" }`.
- * Dotted-path: `{ "assignee.team": "platform" }`.
+ * Dotted-path: `{ "assignee.team": "platform" }` — typechecks against
+ *              the nested leaf type; misspelled segments fail at
+ *              compile time. Dotted paths are not index-eligible
+ *              today (`packages/server/src/indexes.ts` rejects
+ *              dotted `on:`), so they always fall back to scan.
  * Operator: `{ priority: { $in: ["p1", "p2"] } }` or
  *           `{ created_at: { $gte: "2026-01-01" } }`.
  * Multiple ops AND on one field: `{ count: { $gte: 1, $lt: 10 } }`.
@@ -179,11 +265,22 @@ export interface Table<T extends DocumentData = DocumentData> {
  * `validatePredicate`. Range ops apply only when expected and
  * actual are both `string` or both `number`; other type combos are
  * always-miss (boolean, null, missing, type-mismatched).
+ *
+ * **No top-level boolean connectives.** `$or` / `$and` / `$not` are
+ * intentionally not supported. Use:
+ *   - `$in` for OR over one field:
+ *     `{ status: { $in: ["open", "pending"] } }`.
+ *   - Chained `.where(p1).where(p2)` for AND across multiple
+ *     predicates — the chain AND-merges.
+ *
+ * **Depth cap.** Dotted paths are limited to 4 segments
+ * (`a.b.c.d` legal, `a.b.c.d.e` not). Real doc-DB schemas rarely
+ * exceed 2–3 levels.
  */
 export type Predicate<T extends DocumentData = DocumentData> = {
-  readonly [K in keyof T]?: T[K] | PredicateOp<T[K] extends DocumentValue ? T[K] : never>;
-} & {
-  readonly [dottedPath: string]: DocumentValue | PredicateOp<DocumentValue>;
+  readonly [P in Path<T>]?:
+    | PathValue<T, P>
+    | PredicateOp<PathValue<T, P> extends DocumentValue ? PathValue<T, P> : never>;
 };
 
 /** Order specifier. Top-level fields only on day one. */
