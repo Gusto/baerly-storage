@@ -245,6 +245,49 @@ agent guide; the lib ships its API reference at `dist/API.md`.
     (CI, cron, internal services), not the SPA. The doctor
     warning gates this.
 
+- **Extending the Worker with a custom route** — `baerlyWorker(...)`
+  owns `/v1/*` + `/healthz`. For server-side endpoints the SPA
+  client can't run on its own (the canonical case: an endpoint that
+  needs `db.transaction(...)`, since `createBaerlyClient` is
+  reads + by-id mutations only), wrap the worker `fetch`:
+
+  ```ts
+  // src/server/index.ts
+  import { baerlyWorker, r2BindingStorage, type BaerlyEnv } from "baerly-storage/cloudflare";
+  import { Db } from "baerly-storage";
+  // …existing selectVerifier / workerOptions helpers…
+
+  export default {
+    async fetch(req, env, ctx): Promise<Response> {
+      const url = new URL(req.url);
+      if (req.method === "POST" && url.pathname.startsWith("/api/")) {
+        const verifier = selectVerifier(env);
+        // workers-types vs. kernel `Request` narrowing nudge —
+        // runtime shape is identical; see the JSDoc on `Verifier`.
+        const verified = await verifier(req as unknown as Request);
+        if (verified === null) return new Response(null, { status: 401 });
+        const db = Db.create({
+          storage: r2BindingStorage(env.BUCKET),
+          app: config.app,
+          tenant: verified.tenantPrefix,
+          config,
+        });
+        // …db.transaction(...), db.table(...).get(id), etc.
+        return new Response(null, { status: 204 });
+      }
+      // Fall through to the baerly cascade for /v1/* + /healthz.
+      return baerlyWorker(workerOptions(env)).fetch!(req, env, ctx);
+    },
+  } satisfies ExportedHandler<AppEnv>;
+  ```
+
+  **Pair this with `baerlyDevAuth({ prefix: ["/v1", "/api"] })`** in
+  `vite.config.ts` — otherwise the dev plugin only injects the
+  bearer on `/v1/*` and your `/api/*` route returns 401 in
+  `vite dev`. `pnpm verify` is silent on this gap: the typecheck
+  is green and the dev plugin isn't exercised by the test suite,
+  so the only signal is manually hitting the route.
+
 - **Secrets vs. vars** — `wrangler.jsonc:vars` carries non-secret
   config (`APP`, `TENANT`, `LOG_LEVEL`, `LOG_SAMPLE`, and CF Access
   identifiers `CF_ACCESS_TEAM_DOMAIN` / `CF_ACCESS_AUDIENCE_TAG` —
