@@ -1,13 +1,13 @@
 # baerly-storage
 
-**Storage is the missing primitive for agent-built software.** A vendorless
-document database for the flood of small, semi-serious apps the agent loop
-now produces — real enough to need state, too small to deserve a Postgres +
-Docker + on-call stack. Your bytes in your bucket. ~100 KB gzipped.
+**Storage is the missing primitive for agent-built software, and all you need is a library.**
+`baerly-storage` is a document database backed S3 by with no runtime, no binaries, ~100 KB gzipped, and small enough to keep the whole `.d.ts` into context. It's built for the flood of small, apps LLM are helping us create that are real enough to need state, but too small to deserve a Postgres + Docker + on-call stack. Your bytes in your bucket. ~100 KB gzipped.
 
 Tested with S3, GCS, R2, and self-hosted Minio.
 
-Compute: serverless. Tokens: the API. Storage: this.
+Compute: FaaS
+Tokens: LLM API
+Storage: this.
 
 ## The whole backend
 
@@ -29,8 +29,6 @@ Compute: serverless. Tokens: the API. Storage: this.
 +
 + // that's the whole backend.
 ```
-
-The new middle: too real for static HTML, too small for the real stack.
 
 ## In code
 
@@ -56,12 +54,12 @@ That's the whole flow. No DDL. No SQL strings. Live across every tab.
 Your data is in your bucket — and an LLM can use the whole surface from the
 `.d.ts` files alone.
 
-## Sized for the loop
+## Why?
 
 - **An API an LLM can actually use.** The whole public surface fits in
   `.d.ts` files. No DDL. No raw SQL. Discriminated string errors.
   Provisioning is `pnpm install`, not a cloud-console detour. An LLM can
-  use it correctly first try.
+  use it correctly first try. I eval using zero-shot app creation :).
 - **Idle rounds to zero.** No $5/mo floors multiplied across forty
   abandoned internal tools the loop produced last quarter. The runtime is
   a rounding error against the bucket.
