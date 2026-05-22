@@ -340,6 +340,13 @@ auto-load on matching edits and point at the same files.
   `from "./foo.ts"` or `from "./foo/index.ts"`. Node's
   strip-types runtime can't resolve them; oxlint's
   `import/extensions` rule fails the lint.
+- ❌ Calling `vitest` via `pnpm exec vitest` or `./node_modules/.bin/vitest` —
+  both skip the `pretest` hook (`pnpm run build`), leaving `dist/` empty or
+  stale and producing spurious failures in bundle-size / dist-consuming tests.
+  Use `pnpm test:agent` or `pnpm bundle-sizes` (whose script self-builds).
+  Same idea for the other tools: prefer `pnpm verify:agent` / `pnpm build`
+  over `pnpm exec tsgo` / `pnpm exec rolldown` so the canonical flags
+  (`--pretty false`, `--format=unix --quiet`, etc.) come along.
 
 ## Scope guidance
 
