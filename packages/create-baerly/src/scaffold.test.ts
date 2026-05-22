@@ -680,11 +680,19 @@ describe("scaffold", () => {
     });
     expect(result.filesWritten).toContain(join("src", "web", "main.ts"));
     const mainTs = await readFile(join(result.outDir, "src", "web", "main.ts"), "utf8");
+    // Round-trip wired example must reach the DB on first load — both
+    // reads (count) and writes (Add-note button) are exercised.
     expect(mainTs).toContain('.table<Note>("notes")');
     expect(mainTs).toContain(".all()");
     expect(mainTs).toContain(".insert(");
     // Regression: no more `void client;` standalone no-op placeholder.
     expect(mainTs).not.toContain("void client;");
+    // Drift sentinel: the ~89-LoC list+insert tutorial body (form
+    // input, escapeHtml helper, per-row <li> rendering) was retired
+    // in favour of the hello-world shape. Guard against silent
+    // re-introduction from copy/paste or a partial revert.
+    expect(mainTs).not.toContain("escapeHtml");
+    expect(mainTs).not.toContain("<form");
     const config = await readFile(join(result.outDir, "baerly.config.ts"), "utf8");
     expect(config).toContain("notes:");
   });
