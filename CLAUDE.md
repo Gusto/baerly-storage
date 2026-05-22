@@ -347,6 +347,12 @@ auto-load on matching edits and point at the same files.
   Same idea for the other tools: prefer `pnpm verify:agent` / `pnpm build`
   over `pnpm exec tsgo` / `pnpm exec rolldown` so the canonical flags
   (`--pretty false`, `--format=unix --quiet`, etc.) come along.
+- ❌ Probing `pnpm config get cache-dir` to locate the dlx cache. It
+  returns the literal string `"undefined"` when not explicitly set
+  (the default), so `rm -rf "$(pnpm config get cache-dir)/dlx"` is a
+  silent no-op that exits 0. The real dlx cache lives at `~/.cache/pnpm/dlx`
+  (Linux/XDG) or `~/Library/Caches/pnpm/dlx` (macOS) — both can
+  exist. Use `pnpm dlx:bust-cache` instead.
 
 ## Scope guidance
 
