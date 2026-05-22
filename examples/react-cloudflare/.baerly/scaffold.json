@@ -1,0 +1,13 @@
+{
+  "renames": [
+    { "from": "react-cloudflare", "fromKey": "appName" },
+    { "from": "react-demo", "fromKey": "tenant" }
+  ],
+  "excludePaths": [".baerly/scaffold.json"],
+  "excludeNames": ["node_modules", "dist", ".wrangler", ".dev.vars", ".DS_Store", "*.tsbuildinfo"],
+  "dropDevDeps": [],
+  "copies": [
+    { "from": "AGENTS.md", "to": "CLAUDE.md" },
+    { "from": ".dev.vars.example", "to": ".dev.vars" }
+  ]
+}

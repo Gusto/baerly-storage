@@ -164,7 +164,7 @@
     "bundle-sizes": "node scripts/bundle-sizes.mjs",
     "verify": "pnpm run typecheck && pnpm run verify:examples && pnpm run lint && node scripts/add-ts-extensions.mjs --check",
     "verify:agent": "tsgo --noEmit --pretty false && pnpm run verify:examples && oxlint --format=unix --quiet tests packages && node scripts/add-ts-extensions.mjs --check",
-    "verify:examples": "pnpm --filter minimal-cloudflare typecheck && pnpm --filter minimal-node typecheck && pnpm --filter helpdesk-cloudflare typecheck",
+    "verify:examples": "pnpm --filter minimal-cloudflare typecheck && pnpm --filter minimal-node typecheck && pnpm --filter helpdesk-cloudflare typecheck && pnpm --filter react-cloudflare typecheck",
     "dev:storage": "docker compose up -d --wait",
     "dev:storage:stop": "docker compose down",
     "verdaccio:reset": "./scripts/verdaccio-reset.sh",
