@@ -1,26 +1,36 @@
 # baerly-storage
 
-**A vendorless document database for software that's real enough to need
-state, but not real enough to deserve a Postgres + Docker + on-call stack.**
-Your bytes in your bucket. ~100 KB gzipped. Zero infra.
+**Storage is the missing primitive for agent-built software.** A vendorless
+document database for the flood of small, semi-serious apps the agent loop
+now produces — real enough to need state, too small to deserve a Postgres +
+Docker + on-call stack. Your bytes in your bucket. ~100 KB gzipped.
 
 Tested with S3, GCS, R2, and self-hosted Minio.
 
+Compute: serverless. Tokens: the API. Storage: this.
+
 ## The whole backend
 
-| What you'd reach for          | What this is                       |
-|-------------------------------|------------------------------------|
-| `docker-compose.yml`          | `// baerly.config.ts`              |
-| `init.sql`                    | `export default defineConfig({`    |
-| `prisma/schema.prisma`        | `  app: "tickets",`                |
-| `migrations/0001_initial.sql` | `  collections: { tickets: {} },`  |
-| RLS policies                  | `  target: "cloudflare",`          |
-| `DATABASE_URL` secret         | `});`                              |
-| connection pool (pgbouncer)   |                                    |
-| pager rotation                | *that's the whole backend.*        |
+```diff
+- docker-compose.yml
+- init.sql
+- prisma/schema.prisma
+- migrations/0001_initial.sql
+- RLS policies
+- DATABASE_URL secret
+- connection pool (pgbouncer)
+- pager rotation
++ // baerly.config.ts
++ export default defineConfig({
++   app: "tickets",
++   collections: { tickets: {} },
++   target: "cloudflare",
++ });
++
++ // that's the whole backend.
+```
 
-You need three primitives in 2026: compute, tokens, storage. The first
-two have answers. This is one shape of an answer for the third.
+The new middle: too real for static HTML, too small for the real stack.
 
 ## In code
 
@@ -43,19 +53,21 @@ const { rows } = useLiveQuery<Ticket>({
 ```
 
 That's the whole flow. No DDL. No SQL strings. Live across every tab.
-Your data is in your bucket.
+Your data is in your bucket — and an LLM can use the whole surface from the
+`.d.ts` files alone.
 
-## Why
+## Sized for the loop
 
-- **Idle rounds to zero.** No $5/mo floors multiplied across forty
-  abandoned internal tools. The runtime is a rounding error against the
-  bucket.
-- **No hostage situation.** Log entries are shaped like Postgres
-  logical-replication messages. `baerly export --target=postgres`
-  graduates you out, mechanically, on the day you outgrow this.
 - **An API an LLM can actually use.** The whole public surface fits in
   `.d.ts` files. No DDL. No raw SQL. Discriminated string errors.
-  Provisioning is `pnpm install`, not a cloud-console detour.
+  Provisioning is `pnpm install`, not a cloud-console detour. An LLM can
+  use it correctly first try.
+- **Idle rounds to zero.** No $5/mo floors multiplied across forty
+  abandoned internal tools the loop produced last quarter. The runtime is
+  a rounding error against the bucket.
+- **No hostage situation.** Log entries are shaped like Postgres
+  logical-replication messages. `baerly export --target=postgres`
+  graduates you out, mechanically, on the day an app outgrows this.
 
 ## Quick start
 
