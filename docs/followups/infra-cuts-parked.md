@@ -1,36 +1,4 @@
-# Followups: contributor-infra cuts (parked)
-
-**Source: 2026-05-19 analyst triage (I1–I20).** Parked per user
-direction during triage: these aren't first-touch DX wins, and
-deletion risk-reward is worse than for surface-trim work.
-Revisit after launch preflight.
-
-The analyst was aggressive here ("free maintainer time for DX
-work"). That bias is reasonable but not a forcing function —
-several of these directories also serve as failure-mode escape
-hatches that pay off rarely but pay off hugely when they do
-(R2-contention, manual-e2e). Don't delete pre-launch what
-might be needed post-launch.
-
----
-
-## Why parked
-
-Two reasons:
-
-1. **Pre-launch, contributor infra is cheap to keep, expensive
-   to recreate.** `bench/r2-contention*` and `eval/` are
-   launch-preflight tools. Once we've run the preflight, they
-   can move to a branch — but until then, they're load-bearing.
-2. **The analyst conflates "unused on every PR" with "dead
-   code."** A bench that hasn't been re-run since May doesn't
-   mean delete; it means the cost model it validates hasn't
-   changed. The maintainer infra still answers questions when
-   something breaks.
-
----
-
-## Items deferred
+# Followups: contributor-infra cuts
 
 ### I1. `bench/r2-contention*` matrix
 
@@ -51,24 +19,6 @@ re-run since May.
 catch tail-latency regressions; "haven't run it" ≠ "won't run
 it." After launch, freeze one preset + one backend + one cache
 mode, delete the rest.
-
-### I3. `eval/` scaffolding eval
-
-**Brief's claim:** 3.1k LoC harness for one-shot launch
-preflight ("first eval pass is `--app todo --trials 3`").
-
-**Why parked:** This is *the* launch preflight. Run it, then
-archive to a branch. Deleting before running is irreversible
-loss of the eval harness for the launch decision.
-
-### I4. `tests/integration/day-one-handshake.test.ts`
-
-**Brief's claim:** Duplicates `manual-e2e/*/e2e.test.ts`.
-
-**Why parked:** Possible — but the day-one gate exists with a
-specific contract (manual deploy lifecycle). Verify the actual
-overlap before deletion. Low-effort to verify; medium-blast
-to delete.
 
 ### I5–I20. Misc test/build infra
 
