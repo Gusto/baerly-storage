@@ -5,7 +5,7 @@ import { defineConfig } from "baerly-storage/config";
  * example in `src/web/main.ts` round-trips through the DB on
  * first load. No schema is declared — `defineConfig` accepts
  * collection entries with neither `schema` nor `indexes` set, and
- * the writer treats them as schema-free. See `helpdesk-cloudflare`
+ * the writer treats them as schema-free. See `react-cloudflare`
  * for the schema-bound shape.
  */
 export default defineConfig({
