@@ -73,3 +73,22 @@ export const _noArrayIndexing: Predicate<Ticket> = {
   // @ts-expect-error — tags is a leaf (array); no "tags.0" path
   "tags.0": "x",
 };
+
+// --- Depth-cap boundary ---------------------------------------
+
+type DeepDoc = DocumentData & {
+  a: { b: { c: { d: { e: { f: string } } } } };
+};
+
+// Positive: 5-segment paths typecheck (cap = 5).
+// `"a.b.c.d.e"` must be a key in `Path<DeepDoc>` — confirmed by the
+// object literal assignment typechecking without error.
+export const _depth5Legal: Predicate<DeepDoc> = {
+  "a.b.c.d.e": { f: "x" },
+};
+
+// Negative: 6-segment paths fail typecheck.
+export const _depth6Rejected: Predicate<DeepDoc> = {
+  // @ts-expect-error — depth cap excludes 6-segment paths.
+  "a.b.c.d.e.f": "x",
+};

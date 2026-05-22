@@ -165,8 +165,8 @@ export interface Table<T extends DocumentData = DocumentData> {
 
 /**
  * Decrementing depth markers for {@link Path}'s recursion cap.
- * The default of 4 means dotted paths up to `a.b.c.d` are legal;
- * `a.b.c.d.e` is rejected. Keeps `tsgo` recursion bounded.
+ * The default of 4 means dotted paths up to `a.b.c.d.e` are legal;
+ * `a.b.c.d.e.f` is rejected. Keeps `tsgo` recursion bounded.
  * @internal
  */
 type _PathDepth = [never, 0, 1, 2, 3, 4];
@@ -204,7 +204,7 @@ type _StripIndex<T> = {
 
 /**
  * Recursively-derived union of every legal dotted-path key over `T`.
- * Depth-capped at 4 segments (`a.b.c.d` legal, `a.b.c.d.e` not) so
+ * Depth-capped at 5 segments (`a.b.c.d.e` legal, `a.b.c.d.e.f` not) so
  * the type checker doesn't blow recursion limits on deep schemas.
  *
  * When `T` is just `DocumentData` (the default — no user shape
@@ -273,8 +273,8 @@ type PathValue<T, P extends string> = P extends `${infer H}.${infer R}`
  *   - Chained `.where(p1).where(p2)` for AND across multiple
  *     predicates — the chain AND-merges.
  *
- * **Depth cap.** Dotted paths are limited to 4 segments
- * (`a.b.c.d` legal, `a.b.c.d.e` not). Real doc-DB schemas rarely
+ * **Depth cap.** Dotted paths are limited to 5 segments
+ * (`a.b.c.d.e` legal, `a.b.c.d.e.f` not). Real doc-DB schemas rarely
  * exceed 2–3 levels.
  */
 export type Predicate<T extends DocumentData = DocumentData> = {

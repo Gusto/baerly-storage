@@ -375,8 +375,8 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
   // collection names against bound `TConfig`), legacy generic second
   // (caller picks T; defaults to `DocumentData` to mirror the
   // impl's runtime return shape). The impl signature stays widest —
-  // `Table<DocumentData>` — so byte-identical to overload #2's
-  // default. The runtime never narrows; `makeTable<DocumentData>`
+  // `Table<any>` — so assignable to all overloads despite contravariance
+  // on `where()`. The runtime never narrows; `makeTable<DocumentData>`
   // builds a single row-agnostic handle and TypeScript handles the rest
   // at the call site.
   table<N extends CollectionNames<TConfig>>(name: N): Table<RowOf<TConfig, N> & DocumentData>;
