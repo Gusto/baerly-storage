@@ -2,13 +2,17 @@
 
 **Storage is the missing primitive for agent-built software, and all you need is a library.**
 
-`baerly-storage` is a document database backed S3 by with no runtime, no binaries, ~100 KB gzipped, and small enough to keep the whole `.d.ts` into context. It's built for the flood of small, apps LLM are helping us create that are real enough to need state, but too small to deserve a Postgres + Docker + on-call stack. Your bytes in your bucket. ~100 KB gzipped.
+`baerly-storage` is a ~100 KB library that lets you use S3-compatible bucket as a document database. No runtime, no server, no service bill, no on-call, no binaries, and small enough that an LLM can hold the whole `.d.ts` in context.
 
-Tested with S3, GCS, R2, and self-hosted Minio.
+[S3 is does the hard parts](https://aws.amazon.com/blogs/aws/amazon-s3-update-strong-read-after-write-consistency/), `baerly-storage` is the coordination that fixes the API. Document model, live queries, snapshot isolation — the whole surface in a `.d.ts` an LLM can use zero-shot.
 
-Compute: FaaS
-Tokens: LLM API
-Storage: this.
+The apps LLMs spit out by the dozen don't deserve Postgres + Docker + a pager; they deserve this.
+
+```
+Compute   →  FaaS
+Tokens    →  LLM API
+Storage   →  this.
+```
 
 ## The whole backend
 
@@ -21,28 +25,23 @@ Storage: this.
 - DATABASE_URL secret
 - connection pool (pgbouncer)
 - pager rotation
+-
 + // baerly.config.ts
 + export default defineConfig({
 +   app: "tickets",
 +   collections: { tickets: {} },
 +   target: "cloudflare",
 + });
-+
-+ // that's the whole backend.
 ```
+
+Your data lives in your bucket. The entire public surface fits in `.d.ts` files — no DDL, no SQL strings, no migrations to chase across deploys.
 
 ## In code
 
 ```ts
-// baerly.config.ts — no DDL, no migrations
-export default defineConfig({
-  app: "tickets",
-  collections: { tickets: {} },
-  target: "cloudflare",
-});
-
 // server — writes land in your R2 bucket
-await db.table("tickets").insert({ title: "Onboard Alex", status: "open" });
+await db.table("tickets")
+  .insert({ title: "Onboard Alex", status: "open" });
 
 // client — live across every open tab
 const { rows } = useLiveQuery<Ticket>({
@@ -51,49 +50,35 @@ const { rows } = useLiveQuery<Ticket>({
 });
 ```
 
-That's the whole flow. No DDL. No SQL strings. Live across every tab.
-Your data is in your bucket — and an LLM can use the whole surface from the
-`.d.ts` files alone.
-
 ## Why?
 
-- **An API an LLM can actually use.** The whole public surface fits in
+- **An API an LLM can use first try.** The whole public surface fits in
   `.d.ts` files. No DDL. No raw SQL. Discriminated string errors.
-  Provisioning is `pnpm install`, not a cloud-console detour. An LLM can
-  use it correctly first try. I eval using zero-shot app creation :).
+  Provisioning is `pnpm install`, not a cloud-console detour. Verified
+  with zero-shot eval suites.
 - **Idle rounds to zero.** No $5/mo floors multiplied across forty
-  abandoned internal tools the loop produced last quarter. The runtime is
-  a rounding error against the bucket.
+  abandoned internal tools the loop produced last quarter. The runtime
+  is a rounding error against the bucket.
 - **No hostage situation.** Log entries are shaped like Postgres
   logical-replication messages. `baerly export --target=postgres`
   graduates you out, mechanically, on the day an app outgrows this.
 
 ## Quick start
 
-> 🚧 Pre-publish — `create-baerly` isn't on npm yet. Scaffold inside this
-> clone's `examples/` directory until publish; see
-> [`docs/followups/publish-direction.md`](./docs/followups/publish-direction.md).
+Not on npm yet — clone the repo:
 
 ```sh
 git clone https://github.com/<you>/baerly-storage && cd baerly-storage
 pnpm install && pnpm -r build
 
 cd examples
-node ../packages/create-baerly/dist/index.js my-app --target=cloudflare --json
-
-cd my-app
-pnpm install
-pnpm dev          # → vite + workerd on :5173
+node ../packages/create-baerly/dist/index.js my-app --target=cloudflare
+cd my-app && pnpm install && pnpm dev
 ```
 
-For the Cloudflare target, `pnpm dev` runs `vite`;
-`@cloudflare/vite-plugin` boots the Worker inside `workerd` next to the
-SPA dev server, so `/v1/*` and the React UI share `http://localhost:5173`.
-For the Node target, `pnpm dev` runs over `LocalFsStorage` on
-`http://localhost:3000` — no S3 creds needed.
+`pnpm dev` boots Vite + workerd on `:5173`, so `/v1/*` and the React UI share one origin. For `--target=node`, it's `:3000` over `LocalFsStorage` — no S3 creds needed.
 
-Once `create-baerly` ships to npm the flow shortens to
-`pnpm dlx create-baerly@latest my-app`.
+Once `create-baerly` ships to npm: `pnpm dlx create-baerly@latest my-app`.
 
 For a runnable multi-tab demo see [`examples/helpdesk/`](./examples/helpdesk); for production-shaped scaffolds see [`examples/`](./examples).
 
