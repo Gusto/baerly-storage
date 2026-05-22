@@ -50,7 +50,7 @@ agent guide; the lib ships its API reference at `dist/API.md`.
 | ---------------- | --------------------------------------------------------------------------------------- | ---------------- |
 | `pnpm verify`    | `pnpm run typecheck && pnpm run test` — the green-light gate; what an agent should run as the smoke check before claiming the change works | seconds |
 | `pnpm typecheck` | TS typecheck across the worker + web project references (`tsc -b --noEmit`)            | seconds          |
-| `pnpm test`      | `vitest run --passWithNoTests` — standalone `vitest.config.ts` (Node env, ignores `vite.config.ts` so the Cloudflare plugin doesn't load). Ships one happy-dom DOM smoke (`src/web/main.test.ts`) that pins the SPA contract: a list re-render must preserve the user's half-typed form input. | seconds |
+| `pnpm test`      | `vitest run --passWithNoTests` — standalone `vitest.config.ts` (Node env, ignores `vite.config.ts` so the Cloudflare plugin doesn't load). The minimal template ships no SPA tests by default; `--passWithNoTests` keeps the gate green until you add one. | seconds |
 | `pnpm dev`       | Run `vite` — the Cloudflare plugin runs the Worker inside `workerd` next to the SPA dev server; same origin on :5173 | seconds to start |
 | `pnpm build`     | `tsc -b && vite build` — emits `dist/client/` for the Workers Assets binding            | seconds          |
 | `pnpm deploy`    | `wrangler deploy` — ships Worker + assets in one shipment (auto-creates R2 on first run via `--x-provision`) | seconds          |
@@ -62,7 +62,7 @@ agent guide; the lib ships its API reference at `dist/API.md`.
 | `src/server/index.ts`      | Worker entry — `baerlyWorker({ verifier })`                                          |
 | `wrangler.jsonc`           | Cloudflare Worker manifest — name, R2 binding, assets, vars, triggers, limits, observability |
 | `index.html`               | SPA shell — Vite's entry point at the project root; references `/src/web/main.ts`.  |
-| `src/web/main.ts`          | SPA client entry — ships a wired list+insert example against the `notes` collection so the DB round-trips on first load. Extend or replace; `client.table<Row>(name)` is the typed surface. Workers Assets serves the built bundle from `dist/client/`. |
+| `src/web/main.ts`          | SPA client entry — a ~17-line hello-world: reads `client.table<Note>("notes").all()` to render a `${n} note(s)` count and an `[Add note]` button that inserts a timestamped row and re-fetches. Demonstrates both read and write paths on first load. Extend or replace; `client.table<Row>(name)` is the typed surface. Workers Assets serves the built bundle from `dist/client/`. |
 | `vite.config.ts`           | Vite + `@cloudflare/vite-plugin` — runs the Worker inside `workerd` in dev          |
 | `tsconfig.json`            | Root project-references stub                                                         |
 | `tsconfig.app.json`        | Client TS project (`src/web/`, DOM lib)                                              |
