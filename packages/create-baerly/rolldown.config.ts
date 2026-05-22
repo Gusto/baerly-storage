@@ -12,8 +12,8 @@ import { defineConfig } from "rolldown";
 
 /**
  * Bundle the scaffolder entry; copy the runnable example trees from
- * `../../examples/{minimal-cloudflare,minimal-node,react-cloudflare}/`
- * into `dist/templates/{minimal-cloudflare,minimal-node,react-cloudflare}/`,
+ * `../../examples/{minimal-cloudflare,minimal-node,react-cloudflare,react-node}/`
+ * into `dist/templates/{minimal-cloudflare,minimal-node,react-cloudflare,react-node}/`,
  * AND copy the opt-in add-on trees from `templates/addons/<name>/`
  * (sibling to `src/`) into `dist/templates/addons/<name>/` so the
  * bundled binary is self-contained for both the base scaffold path
@@ -98,7 +98,12 @@ const copyTemplates = () => ({
     // bundle's own `dist/index.js` (and its sourcemap) live one level
     // up under `dist/`, so this is a precise scoped reset.
     rmSync(join("dist", "templates"), { recursive: true, force: true });
-    const EXAMPLES: readonly string[] = ["minimal-cloudflare", "minimal-node", "react-cloudflare"];
+    const EXAMPLES: readonly string[] = [
+      "minimal-cloudflare",
+      "minimal-node",
+      "react-cloudflare",
+      "react-node",
+    ];
     for (const name of EXAMPLES) {
       const exampleSrc = join("..", "..", "examples", name);
       copyTree(exampleSrc, join("dist", "templates", name), loadExampleSkipFn(exampleSrc));
