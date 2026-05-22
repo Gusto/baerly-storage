@@ -1,5 +1,7 @@
 import { type DevLandingOptions } from "@baerly/dev";
+import { MAX_BODY_BYTES } from "@baerly/server/http";
 import { Hono } from "hono";
+import { applyBodyCap } from "./middleware/body-cap.ts";
 import { devLandingMiddleware } from "./middleware/dev-landing.ts";
 import { staticAssetsMiddleware } from "./middleware/static-assets.ts";
 import { type CreateFetchHandlerOptions, createFetchHandler } from "./server.ts";
@@ -37,14 +39,18 @@ export interface CreateAppOptions extends CreateFetchHandlerOptions {
  * another Hono app via `app.route(prefix, baerlyApp)`, or convert
  * to a Node listener via `getRequestListener(baerlyApp.fetch)`.
  *
- * Body size enforcement: the kernel router's `readJsonBody` checks
- * Content-Length up-front and the materialised buffer post-read
- * (`packages/server/src/http/router.ts:464-501`), matching the
- * cloudflare adapter's posture. A `@hono/node-server`-aware mid-
- * stream cap (the pre-cutover `bodyCapMiddleware` design) raced
- * with the bridge's own `incoming` reader and is intentionally
- * absent here — the chunked-no-Content-Length OOM-attack surface
- * is equivalent to the cloudflare adapter's.
+ * Body size enforcement: every non-`GET`/`HEAD`/`OPTIONS` request
+ * passes through {@link applyBodyCap} before reaching the cascade.
+ * The helper short-circuits with a 413 envelope when `Content-
+ * Length` advertises an over-cap body, and otherwise wraps
+ * `req.body` with a counting `TransformStream` that errors with
+ * `BaerlyError{code:"PayloadTooLarge"}` once the running byte
+ * count exceeds {@link MAX_BODY_BYTES}. On cap-trip in either
+ * path the upstream `IncomingMessage` is drained (`resume()`) so
+ * the client's body write completes and the 413 reaches it
+ * cleanly. The kernel router's defence-in-depth
+ * (`packages/server/src/http/router.ts:464-501`) remains the
+ * backstop for hosts without an `incoming` binding.
  */
 export function createApp(opts: CreateAppOptions): Hono {
   const fetchHandler = createFetchHandler(opts);
@@ -61,7 +67,13 @@ export function createApp(opts: CreateAppOptions): Hono {
     app.use("*", staticAssetsMiddleware({ webRoot: opts.webRoot }));
   }
 
-  app.all("*", async (c) => fetchHandler(c.req.raw));
+  app.all("*", async (c) => {
+    const capped = applyBodyCap(c.req.raw, c.env, MAX_BODY_BYTES);
+    if (capped instanceof Response) {
+      return capped;
+    }
+    return fetchHandler(capped);
+  });
 
   return app;
 }
