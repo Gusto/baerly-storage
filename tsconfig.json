@@ -40,10 +40,6 @@
     "*.config.ts",
     "scripts/**/*.ts",
     "bench/**/*",
-    "examples/helpdesk/src/**/*.ts",
-    "examples/helpdesk/src/**/*.tsx",
-    "examples/helpdesk/src/**/*.d.ts",
-    "examples/helpdesk/vite.config.ts",
     "examples/*/types.ts",
     "examples/*/smoke.test.ts"
   ],

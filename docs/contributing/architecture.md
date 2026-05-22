@@ -160,7 +160,7 @@ picks an impl itself.
   Node-only `@baerly/dev` package — not part of the runtime bundle
   since the kernel can't depend on `node:fs`) backs the `baerlyDev()`
   Vite plugin (which the `examples/minimal-node/` and
-  `examples/helpdesk/` scaffolds use as `pnpm dev`) against a fixture
+  `examples/react-node/` scaffolds use as `pnpm dev`) against a fixture
   directory. Content-addressed `"<sha-256-hex>"` ETags so identical
   bodies match across runs; atomic writes via `write-temp + rename`.
   Callers construct it directly and inject it where a `Storage` is

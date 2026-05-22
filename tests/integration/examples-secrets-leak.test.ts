@@ -10,8 +10,9 @@ const FORBIDDEN_PATTERNS: readonly RegExp[] = [
 const SEARCH_ROOTS: readonly string[] = [
   "examples/minimal-cloudflare/src",
   "examples/helpdesk-cloudflare/src",
-  "examples/helpdesk/src",
   "examples/minimal-node/src",
+  "examples/react-cloudflare/src",
+  "examples/react-node/src",
 ];
 
 const isClientFile = (path: string): boolean =>

@@ -23,7 +23,6 @@ before action.
 | [cli-cleanup.md](./cli-cleanup.md) | G1, G2, G3 (strategic), G4–G6, G8, G9, G11, G14, G16–G22 | Validated; G3 needs decision |
 | [server-kernel-cleanup.md](./server-kernel-cleanup.md) | A4, B-series (sans B5/B14/B23 dropped/rescoped) | Mostly validated; some `[needs-verify]` |
 | [protocol-package-cleanup.md](./protocol-package-cleanup.md) | D1, D10–D13, D15–D20 | Validated; D14 dropped |
-| [examples-helpdesk-dedup.md](./examples-helpdesk-dedup.md) | H7 | **Open strategic question** — needs user call |
 | [dev-command-spa.md](./dev-command-spa.md) | Item 2 (helpdesk-cloudflare banner) | Deferred design questions |
 | [infra-cuts-parked.md](./infra-cuts-parked.md) | I1–I20 (bench/eval cuts) | Parked — revisit post-launch preflight |
 

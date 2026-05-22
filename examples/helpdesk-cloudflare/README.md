@@ -2,9 +2,10 @@
 
 Ticket CRUD app on Cloudflare. R2-backed storage, `cloudflareAccess` →
 `sharedSecret` verifier fallback, React + Vite frontend served by the
-Worker via Workers Assets. The production-shaped sibling of
-`examples/helpdesk` (which is a dev-only teaching fixture on
-`LocalFsStorage`).
+Worker via Workers Assets. A reference example of a schema-bound
+app (status / priority / assignee enums on the `Ticket` schema) —
+browse it for a fully-fleshed-out app, scaffold from
+`react-cloudflare` if you want a starter to build on.
 
 ## Quick start
 
@@ -68,15 +69,6 @@ needs (`SHARED_SECRET`, `CF_ACCESS_*`) — live separately:
 
 `.dev.vars.example` is the catalog of every secret the Worker
 expects. Update both files in lockstep when you add a new secret.
-
-## Differences from `examples/helpdesk`
-
-|                | `helpdesk` (dev-only)         | `helpdesk-cloudflare` (deployable) |
-|----------------|-------------------------------|------------------------------------|
-| Storage        | `LocalFsStorage`              | R2 via `baerly-storage/cloudflare` |
-| Auth           | hard-coded `sharedSecret`     | CF Access → `sharedSecret` fallback |
-| Hosting        | `node:http` server            | Cloudflare Worker + Workers Assets |
-| Multi-tenant   | no (pinned to `helpdesk-demo`)| yes (verifier resolves tenant per request) |
 
 ## Next steps
 

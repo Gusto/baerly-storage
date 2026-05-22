@@ -15,7 +15,8 @@ For `@baerly/adapter-node`, it closes a cycle:
   `packages/dev/src/vite-plugin.ts:1` imports `createApp`
   from `@baerly/adapter-node`. This edge predates the
   dev-landing move — it's how `baerlyDev()` mounts the Baerly
-  HTTP listener as Vite middleware in `examples/helpdesk/`.
+  HTTP listener as Vite middleware in
+  `examples/react-node/` and `examples/minimal-node/`.
 - `@baerly/adapter-node` → `@baerly/dev` (new):
   `packages/adapter-node/src/server.ts` and
   `packages/adapter-node/src/baerly-node.ts` import
@@ -62,7 +63,8 @@ Add `"./vite": { "types": "./src/vite-plugin.ts", "import":
 "./src/vite-plugin.ts" }` to `packages/adapter-node/package.json`
 exports. Move `packages/dev/src/vite-plugin.ts` →
 `packages/adapter-node/src/vite-plugin.ts`. Update
-`examples/helpdesk/vite.config.ts` (and any other importer)
+`examples/react-node/vite.config.ts` and
+`examples/minimal-node/vite.config.ts` (and any other importer)
 from `@baerly/dev/vite` to `@baerly/adapter-node/vite`. Remove
 `"@baerly/adapter-node"` from `@baerly/dev`'s `dependencies`.
 
@@ -111,10 +113,10 @@ After the workstream:
 - `pnpm test:adapter-node` and `pnpm test:adapter-cloudflare`
   — both adapter cascades still pass; `GET /` still serves
   the dev landing when `opts.dev` is set.
-- `pnpm dev:storage && pnpm --filter helpdesk dev` (or
-  whatever the helpdesk example's dev command is) — the
-  example still boots; the Vite plugin still proxies Baerly
-  HTTP requests through to `getRequestListener(createApp(opts).fetch)`.
+- `pnpm --filter react-node dev` (or
+  `pnpm --filter minimal-node dev`) — the example still boots;
+  the Vite plugin still proxies Baerly HTTP requests through to
+  `getRequestListener(createApp(opts).fetch)`.
 - `grep -rn '"@baerly/adapter-node"' packages/dev/` returns
   zero hits (if option a) or `grep -rn 'vite-plugin' packages/dev/`
   returns zero hits (either option).

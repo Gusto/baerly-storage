@@ -99,14 +99,49 @@ selector + `/v1/*` ↔ Assets split).
 
 **Scaffold from the CLI:** `pnpm create baerly my-app --target=cloudflare --starter=react`.
 
+## react-node
+
+Self-hosted Node scaffold with a React + Vite SPA. LocalFs-backed
+storage in dev via `baerlyDev()` (single Vite process — Vite serves
+both `/v1/*` and the SPA), any S3-compatible bucket in production
+via `baerly-storage/node`. Demonstrates the full React hook surface
+(`useLiveQuery`, `useLiveDocument`, `useInsert`, `useUpdate`,
+`useDelete`) over the same `NoteSchema` as `react-cloudflare`.
+
+Runs anywhere `node server.js` runs — Railway, Render, Fly, a VM,
+a container.
+
+**Audience:** the modal "I want a self-hosted full-stack web app
+on my own bucket" user. The Node-target sibling of
+`react-cloudflare`.
+
+**Run it:**
+
+```sh
+cd examples/react-node
+pnpm install
+cp .env.example .env
+pnpm dev
+```
+
+Open <http://localhost:5173>. No credentials needed for dev —
+`baerlyDev()` writes to `./.baerly-data/` via `LocalFsStorage`.
+
+**Read first:** `src/web/NoteList.tsx` (the `useLiveQuery`
+live-updates hook), then `baerly.config.ts` (the `NoteSchema`
+shape), then `src/server/index.ts` (the `s3Storage` / `r2Storage`
+selector + `baerlyNode` invocation for production).
+
+**Scaffold from the CLI:** `pnpm create baerly my-app --target=node --starter=react`
+(add `--with=docker` for a Dockerfile + healthcheck).
+
 ## helpdesk-cloudflare
 
 A reference example — full Cloudflare-deployable ticket CRUD app
-on R2 + CF Access + Workers Assets, with the React + Vite SPA
-matching `examples/helpdesk/`. **Browse it for a fully-fleshed-out
-example** of a schema-bound app (status / priority / assignee enums
-on the `Ticket` schema), not as a CLI starter — for that, use
-`react-cloudflare`.
+on R2 + CF Access + Workers Assets. **Browse it for a fully-
+fleshed-out example** of a schema-bound app (status / priority /
+assignee enums on the `Ticket` schema), not as a CLI starter — for
+that, use `react-cloudflare`.
 
 **Audience:** anyone reading source code to understand what a
 "real" baerly-storage app on Cloudflare looks like end-to-end with
@@ -127,39 +162,6 @@ Then open <http://localhost:5173>.
 the `/v1/*` ↔ Assets split), then `wrangler.jsonc` (the R2 +
 Assets bindings), then `baerly.config.ts` (the Zod ticket schema
 with enum fields).
-
-## helpdesk
-
-**Dev-only teaching fixture** — a complete UI tour of a ticket CRUD
-app over `LocalFsStorage`, not a deployable production template
-(hard-coded `sharedSecret`, single tenant). React + Vite. Single
-Vite process: the Baerly HTTP listener is mounted as Vite middleware
-via `baerlyDev()` from `baerly-storage/dev/vite`, so the React app
-and `/v1/*` API share an origin (`:5173`) and a process. This is the
-canonical dev pattern for Node-side Baerly apps. Live multi-tab
-updates via the `/v1/since` long-poll, surfaced through the
-`useLiveQuery` / `useLiveDocument` hooks.
-
-**Audience:** anyone learning how to build something with baerly
-— what an app looks like end-to-end, what the client API feels
-like, how live updates work.
-
-**Run it:**
-
-```sh
-cd examples/helpdesk
-pnpm install
-pnpm dev
-```
-
-Then open <http://localhost:5173>.
-
-**Read first:** `vite.config.ts` (the `baerlyDev()` middleware mount
-— the entire dev backend in one plugin call), then
-`src/TicketList.tsx` (the `useLiveQuery` live-update hook).
-
-For a deployable production version of this same app — R2, Cloudflare
-Access, Workers Assets — see `helpdesk-cloudflare` above.
 
 ## Make a new example
 
@@ -185,7 +187,7 @@ The manifest shape:
 }
 ```
 
-Examples without a manifest (e.g. `helpdesk`) are runnable but
-not CLI-scaffoldable. The rolldown build copies every example
-into `dist/templates/<name>/` so the published `create-baerly`
-binary is self-contained.
+Examples without a manifest are runnable but not CLI-
+scaffoldable. The rolldown build copies every example into
+`dist/templates/<name>/` so the published `create-baerly` binary
+is self-contained.

@@ -80,7 +80,7 @@ cd my-app && pnpm install && pnpm dev
 
 Once `create-baerly` ships to npm: `pnpm dlx create-baerly@latest my-app`.
 
-For a runnable multi-tab demo see [`examples/helpdesk/`](./examples/helpdesk); for production-shaped scaffolds see [`examples/`](./examples).
+For a runnable multi-tab demo see [`examples/react-node/`](./examples/react-node); for the full set of production-shaped scaffolds see [`examples/`](./examples).
 
 ## Go deeper
 
@@ -95,5 +95,5 @@ For a runnable multi-tab demo see [`examples/helpdesk/`](./examples/helpdesk); f
   fastest map for humans too). `AGENTS.md` is a symlink.
 - [`docs/README.md`](./docs/README.md) — topic map: architecture,
   conventions, ADRs, protocol specs, operating procedures.
-- [`examples/`](./examples) — runnable scaffolds + the `helpdesk/`
+- [`examples/`](./examples) — runnable scaffolds + the `react-node/`
   multi-tab demo.

@@ -33,9 +33,10 @@ server (Node templates).
   is consulted as a fallback for CI / shell-export flows.
 - **`minimal-node`** — `loadDevVars(".env")` + `process.env`
   fallback; same plugin.
-- **`helpdesk`** — the `baerlyDev()` plugin owns the secret and the
-  request boundary; injection happens inside the plugin. No extra
-  wiring in `vite.config.ts`.
+- **`react-node`** — the `baerlyDev()` plugin owns the secret and
+  the request boundary; injection happens inside the plugin. The
+  `vite.config.ts` still reads `SHARED_SECRET` from `.env` via
+  `loadDevVars` and passes it to `baerlyDev({ secret })`.
 
 In all four, `src/web/client.ts` (or `main.ts`) calls
 `createBaerlyClient({ baseUrl: "" })` with no `Authorization`
