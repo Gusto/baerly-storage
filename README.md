@@ -1,6 +1,7 @@
 # baerly-storage
 
 **Storage is the missing primitive for agent-built software, and all you need is a library.**
+
 `baerly-storage` is a document database backed S3 by with no runtime, no binaries, ~100 KB gzipped, and small enough to keep the whole `.d.ts` into context. It's built for the flood of small, apps LLM are helping us create that are real enough to need state, but too small to deserve a Postgres + Docker + on-call stack. Your bytes in your bucket. ~100 KB gzipped.
 
 Tested with S3, GCS, R2, and self-hosted Minio.
