@@ -208,6 +208,10 @@ describe("create-baerly runner (non-TTY)", () => {
     const projectName = "yes-install-app";
     const calls: Array<{ pm: string; cwd: string }> = [];
     const stdout = captureStream(process.stdout);
+    // Pin npm_config_user_agent so detectPm() resolves to "npm" regardless
+    // of which PM ran this suite. Same save/restore shape as pm-detect.test.ts.
+    const savedUA = process.env["npm_config_user_agent"];
+    process.env["npm_config_user_agent"] = "npm/10.5.0 node/v24.0.0 darwin x64";
     let exitCode: number;
     try {
       exitCode = await runCreateBaerly(
@@ -223,11 +227,15 @@ describe("create-baerly runner (non-TTY)", () => {
       );
     } finally {
       stdout.restore();
+      if (savedUA === undefined) {
+        delete process.env["npm_config_user_agent"];
+      } else {
+        process.env["npm_config_user_agent"] = savedUA;
+      }
     }
     expect(exitCode).toBe(0);
     expect(calls).toHaveLength(1);
     expect(calls[0]!.cwd.endsWith(projectName)).toBe(true);
-    // detectPm() resolves npm_config_user_agent — vitest sets it to npm.
     expect(calls[0]!.pm).toBe("npm");
   });
 
@@ -235,6 +243,10 @@ describe("create-baerly runner (non-TTY)", () => {
     const projectName = "fail-install-app";
     const stdout = captureStream(process.stdout);
     const stderr = captureStream(process.stderr);
+    // Pin npm_config_user_agent so the recovery hint reads `npm install …`
+    // regardless of which PM ran this suite.
+    const savedUA = process.env["npm_config_user_agent"];
+    process.env["npm_config_user_agent"] = "npm/10.5.0 node/v24.0.0 darwin x64";
     let exitCode: number;
     try {
       exitCode = await runCreateBaerly([projectName, "--target=cloudflare", "--install"], {
@@ -243,6 +255,11 @@ describe("create-baerly runner (non-TTY)", () => {
     } finally {
       stdout.restore();
       stderr.restore();
+      if (savedUA === undefined) {
+        delete process.env["npm_config_user_agent"];
+      } else {
+        process.env["npm_config_user_agent"] = savedUA;
+      }
     }
     // Scaffold succeeded; only the install failed. The directory is on
     // disk and the user can re-run install themselves, so we don't roll
@@ -251,8 +268,6 @@ describe("create-baerly runner (non-TTY)", () => {
     const err = stderr.captured.join("");
     expect(err).toContain("install exited with code 7");
     // Recovery hint: the warning must also tell the user how to retry by hand.
-    // detectPm() reads npm_config_user_agent; in the vitest environment that
-    // resolves to "npm", so the hint reads `npm install … manually`.
     expect(err).toContain("npm install");
     expect(err).toContain("manually");
   });
