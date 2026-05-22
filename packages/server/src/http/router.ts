@@ -285,14 +285,17 @@ export function createRouter(options: CreateRouterOptions): Hono {
  * conformance-suite default. Over-cap → `413 PayloadTooLarge`.
  *
  * The Node adapter (`@baerly/adapter-node`) imports this constant
- * and enforces it during the `node:http` stream pump so the process
- * never materializes a multi-MiB body. The router's `readJsonBody`
- * keeps the cap as a defence-in-depth check for adapters whose
- * platform doesn't pre-cap.
+ * and passes it to `applyBodyCap`, which wraps the request body
+ * with a counting `TransformStream` so chunked uploads trip the cap
+ * mid-stream rather than materialising the full buffer. The
+ * router's `readJsonBody` keeps the cap as a defence-in-depth check
+ * (Content-Length pre-read + post-`arrayBuffer` length) for adapters
+ * whose platform doesn't pre-cap.
  *
- * @internal — exported for tests and for the Node adapter's stream
- *   pump. Promote to `packages/protocol/src/constants.ts` only on a
- *   third cross-package consumer.
+ * @internal — exported for tests and for the Node adapter's
+ *   `applyBodyCap` helper. Promote to
+ *   `packages/protocol/src/constants.ts` only on a third cross-
+ *   package consumer.
  */
 export const MAX_BODY_BYTES = 1 << 20; // 1 MiB; matches `S3HttpStorage`'s conformance-suite default.
 
