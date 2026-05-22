@@ -344,7 +344,12 @@ describe("scaffold", () => {
       const entries = await readdir(dir);
       const tsconfigs = entries.filter((n) => n.startsWith("tsconfig") && n.endsWith(".json"));
       for (const name of tsconfigs) {
-        const tsc = JSON.parse(await readFile(join(dir, name), "utf8")) as Tsc;
+        // tsconfig.json is JSONC — tsc and editors strip `//` and `/* */`
+        // comments before parsing. Match that here so a scaffold stub
+        // can carry a header comment without breaking this gate.
+        const raw = await readFile(join(dir, name), "utf8");
+        const stripped = raw.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+        const tsc = JSON.parse(stripped) as Tsc;
         for (const entry of tsc.compilerOptions?.types ?? []) {
           // TS's `types[]` entries are package specifiers: `node`,
           // `@cloudflare/workers-types`, `vite/client`. Reduce to the
@@ -771,7 +776,9 @@ describe("scaffold", () => {
             templatesRoot: TEMPLATES_ROOT,
             outRoot: dotRoot,
           }),
-        ).rejects.toThrow(/appName must be lowercase.*Invalid-Caps.*derived from current directory/);
+        ).rejects.toThrow(
+          /appName must be lowercase.*Invalid-Caps.*derived from current directory/,
+        );
       } finally {
         await rm(dirname(dotRoot), { recursive: true, force: true });
       }
