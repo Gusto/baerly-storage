@@ -56,8 +56,9 @@ export { type SchemaIssue, type SchemaValidator, validateOrThrow } from "./schem
  *   name.
  * - {@link MemoryStorage}: in-process `Storage` impl for tests
  *   and zero-infra dev.
- * - {@link Verifier}: the request-verifier interface that auth
- *   presets and adapter wiring consume.
+ * - {@link Verifier} / {@link VerifierResult}: the request-verifier
+ *   interface that auth presets and adapter wiring consume, and the
+ *   `{ tenantPrefix, identity }` shape it returns on success.
  */
 export {
   BaerlyError,
@@ -71,4 +72,5 @@ export {
   type StoragePutResult,
   type Table,
   type Verifier,
+  type VerifierResult,
 } from "@baerly/protocol";
