@@ -1,0 +1,33 @@
+{
+  "name": "react-node",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "start": "node --experimental-strip-types src/server/index.ts",
+    "test": "vitest run --passWithNoTests",
+    "typecheck": "tsc -b --noEmit",
+    "verify": "pnpm run typecheck && pnpm run test"
+  },
+  "dependencies": {
+    "@xmldom/xmldom": "^0.9.10",
+    "aws4fetch": "^1.0.20",
+    "baerly-storage": "workspace:*",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^6.0.0",
+    "happy-dom": "^20.9.0",
+    "typescript": "^5.8.0",
+    "vite": "^8.0.11",
+    "vitest": "^4.1.5"
+  },
+  "packageManager": "pnpm@11.1.2"
+}

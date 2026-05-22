@@ -1,0 +1,13 @@
+{
+  "renames": [
+    { "from": "react-node", "fromKey": "appName" },
+    { "from": "react-demo", "fromKey": "tenant" }
+  ],
+  "excludePaths": [".baerly/scaffold.json"],
+  "excludeNames": ["node_modules", "dist", ".baerly-data", ".DS_Store", "*.tsbuildinfo"],
+  "dropDevDeps": [],
+  "copies": [
+    { "from": "AGENTS.md", "to": "CLAUDE.md" },
+    { "from": ".env.example", "to": ".env" }
+  ]
+}
