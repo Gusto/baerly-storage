@@ -9,12 +9,50 @@ import type { Note } from "../../types.ts";
 // the bearer token. Passing `config` infers the row type.
 const client = createBaerlyClient({ baseUrl: "", config });
 
-const root = document.querySelector<HTMLDivElement>("#app");
-if (root === null) {
-  throw new Error("missing #app root");
-}
+// The shell (h1 / form / ul) is mounted ONCE by `init()`; subsequent
+// refreshes only repaint the <ul id="list"> via `renderList(...)`. If
+// you instead reach for `root.innerHTML = ...` to re-render, you'll
+// blow away any half-typed text in #body — which matters as soon as
+// you wire `setInterval(refresh, 5000)` for auto-refresh.
+let listEl: HTMLUListElement | null = null;
 
-const render = (notes: ReadonlyArray<Note>): void => {
+const escapeHtml = (s: string): string =>
+  s
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+
+export const renderList = (notes: ReadonlyArray<Note>): void => {
+  if (listEl === null) {
+    return;
+  }
+  listEl.innerHTML = notes
+    .map((n) => `<li>${escapeHtml(n.body)} <small>${n.created_at}</small></li>`)
+    .join("");
+};
+
+const refresh = (): void => {
+  void client
+    .table<Note>("notes")
+    .all()
+    .then((rows) => renderList([...rows].toReversed()))
+    .catch(showError);
+};
+
+const showError = (err: unknown): void => {
+  const root = document.querySelector<HTMLDivElement>("#app");
+  if (root !== null) {
+    root.innerHTML = `<h1>minimal-node</h1><pre>${escapeHtml(String(err))}</pre>`;
+    listEl = null;
+  }
+};
+
+export const init = (): void => {
+  const root = document.querySelector<HTMLDivElement>("#app");
+  if (root === null) {
+    throw new Error("missing #app root");
+  }
   root.innerHTML = `
     <h1>minimal-node</h1>
     <p>Stored on the local filesystem (dev) or S3 (prod) via
@@ -23,10 +61,9 @@ const render = (notes: ReadonlyArray<Note>): void => {
       <input id="body" placeholder="Write a note…" autocomplete="off" />
       <button type="submit">Add</button>
     </form>
-    <ul>
-      ${notes.map((n) => `<li>${escapeHtml(n.body)} <small>${n.created_at}</small></li>`).join("")}
-    </ul>
+    <ul id="list"></ul>
   `;
+  listEl = root.querySelector<HTMLUListElement>("#list");
   const form = root.querySelector<HTMLFormElement>("#add");
   const input = root.querySelector<HTMLInputElement>("#body");
   form?.addEventListener("submit", (e) => {
@@ -38,28 +75,15 @@ const render = (notes: ReadonlyArray<Note>): void => {
     void client
       .table<Note>("notes")
       .insert({ body, created_at: new Date().toISOString() })
-      .then(refresh)
+      .then(() => {
+        if (input !== null) {
+          input.value = "";
+        }
+        refresh();
+      })
       .catch(showError);
   });
+  refresh();
 };
 
-const refresh = (): void => {
-  void client
-    .table<Note>("notes")
-    .all()
-    .then((rows) => render([...rows].toReversed()))
-    .catch(showError);
-};
-
-const showError = (err: unknown): void => {
-  root.innerHTML = `<h1>minimal-node</h1><pre>${escapeHtml(String(err))}</pre>`;
-};
-
-const escapeHtml = (s: string): string =>
-  s
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;");
-
-refresh();
+init();
