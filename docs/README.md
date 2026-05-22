@@ -23,6 +23,8 @@ For integrators and operators running Baerly against a real bucket.
 
 - `guide/auth.md` — Verifier presets (shared secret, JWT, CF Access,
   AWS SigV4, IP allowlist) and the tenant-isolation caveat.
+- `guide/embed.md` — 30-line snippet to drop baerly-storage into an
+  existing Node app, bypassing `create-baerly`.
 - `guide/client-middleware.md` — wrap `BaerlyClientOptions.fetch` to
   add logging, retry, auth-refresh, and `onSuccess` / `onError`
   hooks without new API surface.
