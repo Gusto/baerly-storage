@@ -30,18 +30,3 @@ that deserves a real design pass:
 Pre-launch, no compat burden. Worth a brainstorm + ADR before
 implementation.
 
-## D20. R2 free-tier constants belong in the CLI, not the protocol kernel
-
-**Severity: LOW. Coupled to `cli-cleanup.md` §G3.**
-
-`packages/protocol/src/constants.ts:227,237,251` declares
-`R2_FREE_TIER_CLASS_A_OPS_PER_MONTH`,
-`R2_FREE_TIER_CLASS_B_OPS_PER_MONTH`,
-`R2_FREE_TIER_STORAGE_GB_PER_MONTH`. No external consumers found
-via grep — these are dead in the kernel today but the analyst
-flagged `packages/cli/src/cost/` as the eventual home. Resolves
-once `cli-cleanup.md` §G3 (the strategic question about that
-subtree) lands.
-
-Keep `STORAGE_OPS_PER_LOGICAL_WRITE = 3` in protocol — that's a
-real cost-model invariant, not a pricing literal.
