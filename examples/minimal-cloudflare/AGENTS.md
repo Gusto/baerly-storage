@@ -91,10 +91,11 @@ agent guide; the lib ships its API reference at `dist/API.md`.
      (no index signature) will fail with TS2344 — the constraint
      is intentional so the row stays JSON-compatible.
 
-- **Predicates** — `db.table("tickets").where({...}).all()`. The
-  predicate is exact-equality only on day one; top-level fields and
-  dotted-path keys are supported. There are no operators (`$or`,
-  `$gt`, `$in`, `$regex`). Calling `.where(...)` twice AND-merges:
+- **Predicates** — `db.table("tickets").where({...}).all()`. Top-level
+  equality on fields and dotted paths, plus per-field operators
+  (`$eq`, `$gt`, `$gte`, `$lt`, `$lte`, `$in`); multiple operators on
+  the same field AND. No top-level `$or` / `$and` / `$regex`. Two
+  `.where(...)` calls AND-merge:
 
   ```ts
   // Top-level equality (Db inside the Worker, client in the SPA)
@@ -105,6 +106,11 @@ agent guide; the lib ships its API reference at `dist/API.md`.
     .where({ "assignee.team": "platform" })
     .all();
 
+  // Operator on a single field — set-membership
+  await db.table("tickets")
+    .where({ status: { $in: ["open", "pending"] } })
+    .all();
+
   // AND-merge across two .where() calls
   await db.table("tickets")
     .where({ status: "open" })
@@ -112,25 +118,15 @@ agent guide; the lib ships its API reference at `dist/API.md`.
     .all();
   ```
 
-  The value type is JSON-arrayless: string / number / boolean / nested
-  object. Arrays are intentionally not supported as predicate values;
-  use `useIndex` (next bullet) for index-backed lookups.
+  The plain-equality value type is JSON-arrayless: string / number /
+  boolean / nested object. Use `$in` for set-membership when you'd
+  otherwise want `{ status: ["open","pending"] }`.
 
-- **Indexes (`useIndex`)** — opt-in hint for the read path to walk a
-  secondary index instead of folding the snapshot + scanning the
-  table. Single-field equality only today (the planner that
-  auto-picks an index is future work). The reader still re-checks the
-  predicate in memory, so a stale index never produces wrong rows —
-  only at worst surfaces a row the predicate then drops.
-
-  ```ts
-  await db.table("tickets")
-    .where({ status: "open" })
-    .useIndex("by_status")
-    .all();
-  ```
-
-  Declare indexes in `baerly.config.ts` via:
+- **Indexes** — declare them in `baerly.config.ts`; the read-path
+  planner picks one automatically when the predicate's equality
+  fields cover an index's keys. No call-site hint is needed (the
+  earlier `.useIndex(name)` chain was removed when the planner
+  shipped — `Query<T>` has no such method).
 
   ```ts
   import { defineConfig } from "baerly-storage/config";
@@ -144,10 +140,13 @@ agent guide; the lib ships its API reference at `dist/API.md`.
   });
   ```
 
-  The adapter threads `collections` into `Db.create({ ... })` for
-  you. Mismatches (multi-field predicate or missing index) fall back
-  to the full table scan with a metric bump — correctness is
-  preserved.
+  With that declared, `db.table("tickets").where({ status: "open"
+  }).all()` walks `by_status` automatically. Composite indexes
+  (`on: ["status", "priority"]`) match any leftmost prefix.
+  Mismatches (predicate doesn't cover any index) fall back to a full
+  table scan with a metric bump; correctness is preserved because the
+  reader re-checks the predicate in memory regardless of how it got
+  the row set.
 
 - **Consistency** — every terminal read takes an optional
   `.consistency("eventual" | "strong")` modifier; mutations are
