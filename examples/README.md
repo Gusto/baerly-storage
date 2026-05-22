@@ -92,10 +92,10 @@ Open <http://localhost:5173>. Type a note. Open a second tab —
 edits in one tab appear in the other over the `/v1/since`
 long-poll.
 
-**Read first:** `src/web/NoteList.tsx` (the `useLiveQuery` live-
-updates hook), then `baerly.config.ts` (the `NoteSchema` shape
-you extend), then `src/server/index.ts` (the verifier selector
-+ `/v1/*` ↔ Assets split).
+**Read first:** `src/web/NoteList.tsx` (the `useLiveQuery`
+live-updates hook), then `baerly.config.ts` (the `NoteSchema`
+shape you extend), then `src/server/index.ts` (the verifier
+selector + `/v1/*` ↔ Assets split).
 
 **Scaffold from the CLI:** `pnpm create baerly my-app --target=cloudflare --starter=react`.
 
