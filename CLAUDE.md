@@ -50,6 +50,8 @@ pre-commit hook run; `pnpm verify:agent` / `pnpm test:agent` are
 explicit compact-output variants for environments where the env
 var isn't propagated.
 
+> **Agents: don't pipe `verify:agent` / `test:agent` through `| tail -N` or `| head -N`.** Both scripts are already compact — one finding per line, with full detail preserved on failures. Piping to `tail`/`head` removes the lines you need; if the first run prints nothing useful, the *output is empty because the gate passed*, not because the tail was wrong. Same applies to `pnpm bundle-sizes`.
+
 | Command | What it catches | Runtime | Clean on `main`? |
 |---|---|---|---|
 | `pnpm verify` | typecheck (`tsgo --noEmit`) + `verify:examples` + lint (`oxlint`) | ~seconds | ✅ — non-zero exit *is* your regression |
