@@ -47,7 +47,7 @@ import {
 } from "baerly-storage/auth";
 
 // Adapters
-import { baerlyWorker } from "baerly-storage/cloudflare";
+import { baerlyWorker, r2BindingStorage } from "baerly-storage/cloudflare";
 import { baerlyNode, s3Storage, r2Storage, minioStorage, gcsStorage } from "baerly-storage/node";
 
 // Dev helpers (Vite, local-fs storage)
@@ -66,7 +66,7 @@ import { Db, MemoryStorage } from "baerly-storage";
 import config from "./baerly.config.ts";
 
 const db = Db.create({
-  storage: new MemoryStorage(),   // or `s3Storage(...)`, `r2Storage(env.BUCKET)`, …
+  storage: new MemoryStorage(),   // or `s3Storage(...)`, `r2BindingStorage(env.BUCKET)`, …
   app: "tickets",
   tenant: "acme-co",
   config,                          // ← optional. Wires schemas + indexes
@@ -420,9 +420,15 @@ baerlyNode({
 }).listen(PORT);
 ```
 
-`s3Storage` / `r2Storage` / `minioStorage` / `gcsStorage` are
-re-exports of one factory family — same shape (bucket + credentials),
-all hide `aws4fetch` / `@xmldom/xmldom` behind the package boundary.
+`s3Storage` / `r2Storage` / `minioStorage` / `gcsStorage` from
+`baerly-storage/node` are re-exports of one factory family — same
+shape (bucket + credentials), all hide `aws4fetch` / `@xmldom/xmldom`
+behind the package boundary. **Don't confuse them with
+`r2BindingStorage` from `baerly-storage/cloudflare`**: that one takes
+the platform-bound `R2Bucket` directly (`r2BindingStorage(env.BUCKET)`)
+and is the only storage factory a Worker should reach for — the
+credential-based factories assume `fetch` + Node TLS, not the Workers
+runtime.
 
 ## Anti-patterns
 
