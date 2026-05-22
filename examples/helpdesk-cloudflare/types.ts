@@ -6,6 +6,11 @@ import config, { TicketSchema } from "./baerly.config.ts";
  * `baerly.config.ts`. Single source of truth — adding a field to
  * the schema adds it here, and call sites pick it up via
  * `BaerlyClient<typeof config>`.
+ *
+ * **Replacing the demo?** `src/web/{TicketForm,TicketList,TicketDetail}.tsx`
+ * import `Ticket` from this file. Rename the Zod schema in
+ * `baerly.config.ts` first — this file follows automatically via
+ * `z.infer`, and the consumer imports update by find-replace.
  */
 export type Ticket = z.infer<typeof TicketSchema>;
 
