@@ -252,14 +252,10 @@ const analyticsSink = (env: AppEnv): Sink => (record) => {
   });
 };
 
-export default {
-  async fetch(req, env, ctx) {
-    return baerlyWorker({
-      verifier: ...,
-      observability: { sink: analyticsSink(env) },
-    }).fetch!(req, env, ctx);
-  },
-};
+export default baerlyWorker<AppEnv>((env) => ({
+  verifier: ...,
+  observability: { sink: analyticsSink(env) },
+}));
 ```
 
 Declare the binding in `wrangler.jsonc`:

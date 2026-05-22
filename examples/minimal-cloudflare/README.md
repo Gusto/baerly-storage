@@ -22,7 +22,7 @@ minimal-cloudflare/
 ├── CLAUDE.md                 # same content (Claude Code reads this)
 ├── src/
 │   ├── server/
-│   │   └── index.ts          # baerlyWorker({ verifier })
+│   │   └── index.ts          # baerlyWorker((env) => ({ verifier }))
 │   └── web/
 │       └── main.ts           # SPA client entry — Workers Assets serves the build
 └── README.md

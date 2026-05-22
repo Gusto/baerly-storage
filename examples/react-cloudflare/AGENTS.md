@@ -254,7 +254,13 @@ agent guide; the lib ships its API reference at `dist/API.md`.
   // src/server/index.ts
   import { baerlyWorker, r2BindingStorage, type BaerlyEnv } from "baerly-storage/cloudflare";
   import { Db } from "baerly-storage";
-  // …existing selectVerifier / workerOptions helpers…
+  // …existing selectVerifier helper…
+
+  // Hoist the baerly handler so its resolved state is cached for the isolate.
+  const baerly = baerlyWorker<AppEnv>((env) => ({
+    verifier: selectVerifier(env),
+    config,
+  }));
 
   export default {
     async fetch(req, env, ctx): Promise<Response> {
@@ -275,7 +281,7 @@ agent guide; the lib ships its API reference at `dist/API.md`.
         return new Response(null, { status: 204 });
       }
       // Fall through to the baerly cascade for /v1/* + /healthz.
-      return baerlyWorker(workerOptions(env)).fetch!(req, env, ctx);
+      return baerly.fetch!(req, env, ctx);
     },
   } satisfies ExportedHandler<AppEnv>;
   ```
@@ -301,7 +307,7 @@ agent guide; the lib ships its API reference at `dist/API.md`.
 
 - **Maintenance loop (Cloudflare)** — opt-in. Add
   `"triggers": { "crons": ["* * * * *"] }` to `wrangler.jsonc` and
-  wire `scheduled` on the `baerlyWorker({ ... })` options bag. The
+  wire `scheduled` on the options the factory returns from `baerlyWorker((env) => ({ ... }))`. The
   handler is your code, so you choose what to call
   (`runScheduledMaintenance`, `compact`, `runGc`) and which
   `current.json` keys to target. Multi-tenant deployments iterate

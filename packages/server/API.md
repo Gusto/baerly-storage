@@ -405,10 +405,10 @@ locked by `assertJsonBodyField` in the kernel.
 ```ts
 // Cloudflare Worker entry
 import { baerlyWorker } from "baerly-storage/cloudflare";
-export default baerlyWorker({
+export default baerlyWorker((env) => ({
   verifier: cloudflareAccess({ teamDomain, audienceTag }),
   // scheduled?: (controller, env, ctx) => …    // opt-in cron handler
-});
+}));
 
 // Node listener entry (any host that runs `node server.js`)
 import { baerlyNode, s3Storage } from "baerly-storage/node";

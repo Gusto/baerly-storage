@@ -25,13 +25,9 @@ Server (Cloudflare Worker — `examples/minimal-cloudflare/src/server/index.ts`)
 import { baerlyWorker, type BaerlyEnv } from "@baerly/adapter-cloudflare";
 import { sharedSecret } from "@baerly/server/auth";
 
-export default {
-  fetch(req, env: BaerlyEnv & { SHARED_SECRET: string }, ctx) {
-    return baerlyWorker({
-      verifier: sharedSecret({ secret: env.SHARED_SECRET, tenantPrefix: "demo" }),
-    }).fetch!(req, env, ctx);
-  },
-} satisfies ExportedHandler;
+export default baerlyWorker<BaerlyEnv & { SHARED_SECRET: string }>((env) => ({
+  verifier: sharedSecret({ secret: env.SHARED_SECRET, tenantPrefix: "demo" }),
+}));
 ```
 
 Server (Node — `examples/minimal-node/src/server/index.ts`):

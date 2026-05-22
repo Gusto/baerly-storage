@@ -23,7 +23,7 @@ react-cloudflare/
 ├── CLAUDE.md                 # same content (Claude Code reads this)
 ├── src/
 │   ├── server/
-│   │   └── index.ts          # baerlyWorker({ verifier })
+│   │   └── index.ts          # baerlyWorker((env) => ({ verifier }))
 │   └── web/
 │       ├── main.tsx          # React entry
 │       ├── App.tsx           # Provider + view router
