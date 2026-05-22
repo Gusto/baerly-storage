@@ -50,7 +50,7 @@ agent guide; the lib ships its API reference at `dist/API.md`.
 | ---------------- | --------------------------------------------------------------------------------------- | ---------------- |
 | `pnpm verify`    | `pnpm run typecheck && pnpm run test` — the green-light gate; what an agent should run as the smoke check before claiming the change works | seconds |
 | `pnpm typecheck` | TS typecheck across the worker + web project references (`tsc -b --noEmit`)            | seconds          |
-| `pnpm test`      | `vitest run --passWithNoTests` — standalone `vitest.config.ts` (Node env, ignores `vite.config.ts` so the Cloudflare plugin doesn't load) | seconds |
+| `pnpm test`      | `vitest run --passWithNoTests` — standalone `vitest.config.ts` (Node env, ignores `vite.config.ts` so the Cloudflare plugin doesn't load). Ships one happy-dom DOM smoke (`src/web/main.test.ts`) that pins the SPA contract: a list re-render must preserve the user's half-typed form input. | seconds |
 | `pnpm dev`       | Run `vite` — the Cloudflare plugin runs the Worker inside `workerd` next to the SPA dev server; same origin on :5173 | seconds to start |
 | `pnpm build`     | `tsc -b && vite build` — emits `dist/client/` for the Workers Assets binding            | seconds          |
 | `pnpm deploy`    | `wrangler deploy` — ships Worker + assets in one shipment (auto-creates R2 on first run via `--x-provision`) | seconds          |

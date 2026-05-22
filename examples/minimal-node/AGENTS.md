@@ -61,7 +61,7 @@ agent guide; the lib ships its API reference at `dist/API.md`.
 | ------------------ | -------------------------------------------------- | ---------------- |
 | `pnpm verify`      | `pnpm run typecheck && pnpm run test` — the green-light gate; what an agent should run as the smoke check before claiming the change works | seconds |
 | `pnpm typecheck`   | TS typecheck across the `app` + `server` project references | seconds   |
-| `pnpm test`        | `vitest run --passWithNoTests` — standalone `vitest.config.ts` (Node env) | seconds |
+| `pnpm test`        | `vitest run --passWithNoTests` — standalone `vitest.config.ts` (Node env). Ships one happy-dom DOM smoke (`src/web/main.test.ts`) that pins the SPA contract: a list re-render must preserve the user's half-typed form input. | seconds |
 | `pnpm dev`         | Run `vite` — `baerlyDev()` mounts the Node HTTP listener as Connect middleware next to the SPA dev server; same origin on :5173 | seconds to start |
 | `pnpm build`       | `tsc -b && vite build` — emits the SPA into `dist/client/` | seconds  |
 | `pnpm start`       | `node --experimental-strip-types src/server/index.ts` — production entry; serves the SPA from `dist/client/` via `webRoot` | seconds to start |
