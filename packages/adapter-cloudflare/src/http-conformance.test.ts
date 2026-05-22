@@ -11,7 +11,7 @@
  * binding invokes the `main` worker configured on the
  * `cloudflareTest({ main: ... })` plugin call in `vitest.config.ts` —
  * which points at `tests/setup/http-conformance-worker.ts`. That
- * module composes `baerlyWorker({ verifier: testVerifier() })`
+ * module composes `baerlyWorker(() => ({ verifier: testVerifier() }))`
  * against the miniflare R2 binding `BUCKET`, so this file just hands
  * `SELF.fetch` to the shared cascade.
  *

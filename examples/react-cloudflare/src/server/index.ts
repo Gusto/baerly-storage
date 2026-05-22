@@ -47,20 +47,11 @@ const selectVerifier = (env: AppEnv): Verifier => {
   );
 };
 
-const workerOptions = (env: AppEnv) => ({
+export default baerlyWorker<AppEnv>((env) => ({
   verifier: selectVerifier(env),
   config,
   observability: {
     level: env.LOG_LEVEL,
     sampleRate: env.LOG_SAMPLE !== undefined ? Number(env.LOG_SAMPLE) : 0.1,
   },
-});
-
-export default {
-  async fetch(req, env, ctx): Promise<Response> {
-    return baerlyWorker(workerOptions(env)).fetch!(req, env, ctx);
-  },
-  async scheduled(event, env, ctx): Promise<void> {
-    return baerlyWorker(workerOptions(env)).scheduled!(event, env, ctx);
-  },
-} satisfies ExportedHandler<AppEnv>;
+}));

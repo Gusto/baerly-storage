@@ -44,7 +44,7 @@ describe("baerlyWorker scheduled", () => {
   test("no-ops when `options.scheduled` is unset", async () => {
     const bucket = getBinding();
     const env: BaerlyEnv = { BUCKET: bucket, APP: "t" };
-    const handler = baerlyWorker({ verifier: scheduledOnlyVerifier });
+    const handler = baerlyWorker(() => ({ verifier: scheduledOnlyVerifier }));
     await expect(
       handler.scheduled!(makeScheduledEvent(), env, makeNoopCtx()),
     ).resolves.toBeUndefined();
@@ -58,12 +58,12 @@ describe("baerlyWorker scheduled", () => {
     const bucket = getBinding();
     const env: BaerlyEnv = { BUCKET: bucket, APP: "t" };
     const calls: Array<[ScheduledController, BaerlyEnv, ExecutionContext]> = [];
-    const handler = baerlyWorker({
+    const handler = baerlyWorker(() => ({
       verifier: scheduledOnlyVerifier,
       scheduled: (event, e, c) => {
         calls.push([event, e, c]);
       },
-    });
+    }));
     const event = makeScheduledEvent();
     const ctx = makeNoopCtx();
     await handler.scheduled!(event, env, ctx);
@@ -120,10 +120,10 @@ describe("baerlyWorker observability", () => {
       writer_fence: { epoch: 0, owner: "obs-write-test", claimed_at: "" },
     });
 
-    const handler = baerlyWorker({
+    const handler = baerlyWorker(() => ({
       verifier,
       observability: { level: "debug", sink, sampleRate: 1 },
-    });
+    }));
     const env: BaerlyEnv = { BUCKET: bucket, APP: "t" };
     const ctx: ExecutionContext = {
       waitUntil(): void {},
@@ -178,7 +178,7 @@ describe("baerlyWorker observability", () => {
 
     // Seed one doc via a sink-less handler so the GET below has a
     // body to fetch (per-doc URLs are the only cached shape).
-    const seeder = baerlyWorker({ verifier });
+    const seeder = baerlyWorker(() => ({ verifier }));
     await seeder.fetch!(
       new Request("https://x/v1/t/c", {
         method: "POST",
@@ -190,10 +190,10 @@ describe("baerlyWorker observability", () => {
     );
 
     const { records, sink } = collectingSink();
-    const handler = baerlyWorker({
+    const handler = baerlyWorker(() => ({
       verifier,
       observability: { level: "debug", sink, sampleRate: 1 },
-    });
+    }));
 
     // Cold-cache GET (the cache is per-isolate and the tenant key is
     // unique to this test, so this is guaranteed to be a miss).
@@ -247,7 +247,7 @@ describe("baerlyWorker observability", () => {
 
     // Seed one doc, then warm the cache via a sink-less handler so
     // its canonical lines don't pollute the assertion below.
-    const warm = baerlyWorker({ verifier });
+    const warm = baerlyWorker(() => ({ verifier }));
     await warm.fetch!(
       new Request("https://x/v1/t/c", {
         method: "POST",
@@ -266,10 +266,10 @@ describe("baerlyWorker observability", () => {
 
     // Now wire the sink and fire the cache-hit GET.
     const { records, sink } = collectingSink();
-    const hit = baerlyWorker({
+    const hit = baerlyWorker(() => ({
       verifier,
       observability: { level: "debug", sink, sampleRate: 1 },
-    });
+    }));
     const res = await hit.fetch!(
       new Request(url, { method: "GET" }) as Request<unknown, IncomingRequestCfProperties>,
       env,
@@ -292,10 +292,10 @@ describe("baerlyWorker observability", () => {
     const bucket = getBinding();
     const { records, sink } = collectingSink();
     const denyVerifier: Verifier = async () => null;
-    const handler = baerlyWorker({
+    const handler = baerlyWorker(() => ({
       verifier: denyVerifier,
       observability: { level: "debug", sink, sampleRate: 1 },
-    });
+    }));
     const env: BaerlyEnv = { BUCKET: bucket, APP: "t" };
     const ctx = makeNoopCtx();
 
@@ -326,5 +326,65 @@ describe("baerlyWorker observability", () => {
     );
     expect(warn).toBeDefined();
     expect(warn!.level).toBe("warning");
+  });
+});
+
+describe("baerlyWorker factory caching", () => {
+  // Trivial verifier that lets every request through — same pattern as
+  // `trivialVerifier` in `worker-routes.test.ts`.
+  const trivialVerifier: Verifier = async () => ({
+    tenantPrefix: "acme",
+    identity: { kind: "cache-test" },
+  });
+
+  const makeCtx = (): ExecutionContext => ({
+    waitUntil(): void {},
+    passThroughOnException(): void {},
+    props: {},
+  });
+
+  test("baerlyWorker resolves the factory exactly once across N fetches", async () => {
+    const bucket = getBinding();
+    const env: BaerlyEnv = { BUCKET: bucket, APP: "t" };
+    let factoryCalls = 0;
+    const handler = baerlyWorker(() => {
+      factoryCalls += 1;
+      return { verifier: trivialVerifier };
+    });
+
+    for (let i = 0; i < 5; i++) {
+      await handler.fetch!(
+        new Request("https://x/v1/healthz") as Request<unknown, IncomingRequestCfProperties>,
+        env,
+        makeCtx(),
+      );
+    }
+    expect(factoryCalls).toBe(1);
+  });
+
+  test("baerlyWorker.scheduled shares the cache with fetch", async () => {
+    const bucket = getBinding();
+    const env: BaerlyEnv = { BUCKET: bucket, APP: "t" };
+    let factoryCalls = 0;
+    const handler = baerlyWorker(() => {
+      factoryCalls += 1;
+      return { verifier: trivialVerifier };
+    });
+
+    await handler.fetch!(
+      new Request("https://x/v1/healthz") as Request<unknown, IncomingRequestCfProperties>,
+      env,
+      makeCtx(),
+    );
+    await handler.scheduled!(
+      {
+        scheduledTime: Date.now(),
+        cron: "* * * * *",
+        noRetry(): void {},
+      } as ScheduledController,
+      env,
+      makeCtx(),
+    );
+    expect(factoryCalls).toBe(1);
   });
 });

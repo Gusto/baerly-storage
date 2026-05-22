@@ -26,8 +26,8 @@ export const CONFORMANCE_BEARER = "test-token";
 
 /**
  * Build a fresh {@link Verifier} suitable for handing to the HTTP
- * adapters (`createApp({ verifier })` / `baerlyWorker({
- * verifier })`). The verifier inspects the `Authorization` header and
+ * adapters (`createApp({ verifier })` / `baerlyWorker(() => ({
+ * verifier }))`). The verifier inspects the `Authorization` header and
  * returns `{ tenantPrefix, identity: {} }` on a match, `null`
  * otherwise. Identity is intentionally empty — the HTTP conformance
  * suite has no `identity`-shape assertions.

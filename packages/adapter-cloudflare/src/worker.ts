@@ -154,7 +154,7 @@ export interface BaerlyWorkerOptions {
    *
    * ```ts
    * import config from "../../baerly.config.ts";
-   * export default baerlyWorker({ verifier, config });
+   * export default baerlyWorker(() => ({ verifier, config }));
    * ```
    *
    * Only `collections` is read — fields like `target`, `domain`,
@@ -185,6 +185,12 @@ export interface BaerlyWorkerOptions {
  * `wrangler.jsonc:triggers.crons` controls the firing cadence.
  * When `options.scheduled` is unset the cron tick is a no-op.
  *
+ * The factory receives `env` on the first `fetch` or `scheduled`
+ * invocation, resolves `BaerlyWorkerOptions` once, and caches the
+ * result for the lifetime of the isolate. Cloudflare Workers cannot
+ * `await` at the module top level — the factory pattern is the
+ * supported way to read env bindings at startup.
+ *
  * @example
  * ```ts
  * import { baerlyWorker } from "baerly-storage/cloudflare";
@@ -197,38 +203,55 @@ export interface BaerlyWorkerOptions {
  *   if (auth !== "Bearer dev-token") return null;
  *   return { tenantPrefix: "acme", identity: { sub: "dev" } };
  * };
- * export default baerlyWorker({ verifier });
+ * export default baerlyWorker(() => ({ verifier }));
  * ```
  */
-export function baerlyWorker(options: BaerlyWorkerOptions): ExportedHandler<BaerlyEnv> {
-  // Lazy-init flag for `configureObservability`. CF Worker modules
-  // cannot `await` at the module top level, so the first fetch /
-  // scheduled invocation runs the configure. LogTape's `configure`
-  // is idempotent (we always pass `reset: true`); a thundering-herd
-  // race on the cold-start tick just re-runs the same config.
+export function baerlyWorker<E extends BaerlyEnv = BaerlyEnv>(
+  factory: (env: E) => BaerlyWorkerOptions,
+): ExportedHandler<E> {
+  // Cached resolution: populated on first fetch/scheduled, reused on
+  // every subsequent invocation. Cloudflare Workers can't `await` at
+  // the module top level, so we lazy-init on first call to whichever
+  // handler fires first.
+  interface ResolvedState {
+    readonly options: BaerlyWorkerOptions;
+    readonly teeRecorder: ReturnType<typeof alsAwareRecorder>;
+    readonly schemas: ReturnType<typeof collectionsToMaps>["schemas"];
+    readonly indexes: ReturnType<typeof collectionsToMaps>["indexes"];
+  }
+  let resolved: ResolvedState | undefined;
   let observabilityConfigured = false;
-  const ensureObservability = async (): Promise<void> => {
-    if (observabilityConfigured) {
-      return;
-    }
-    await configureObservability(resolveCfSink(options.observability));
-    observabilityConfigured = true;
-  };
 
-  // Operator's long-term sink wrapped once with the ALS-aware tee.
-  // The ALS lookup is per-call, so a single shared instance is safe
-  // across all requests — each call resolves the bag from whichever
-  // `runWithContext` scope is active.
-  const operatorRecorder = options.metrics ?? noopMetricsRecorder;
-  const teeRecorder = alsAwareRecorder(operatorRecorder);
-  // Flatten declared collections once at factory time. Maps are
-  // frozen-empty sentinels when `config` is unset so per-request
-  // `Db.create` is allocation-free either way.
-  const { schemas, indexes } = collectionsToMaps(options.config?.collections);
+  const ensureResolved = async (env: E): Promise<ResolvedState> => {
+    if (resolved === undefined) {
+      const options = factory(env);
+      // Operator's long-term sink wrapped once with the ALS-aware tee.
+      // The ALS lookup is per-call, so a single shared instance is safe
+      // across all requests — each call resolves the bag from whichever
+      // `runWithContext` scope is active.
+      const operatorRecorder = options.metrics ?? noopMetricsRecorder;
+      const teeRecorder = alsAwareRecorder(operatorRecorder);
+      // Flatten declared collections once at factory time. Maps are
+      // frozen-empty sentinels when `config` is unset so per-request
+      // `Db.create` is allocation-free either way.
+      const { schemas, indexes } = collectionsToMaps(options.config?.collections);
+      resolved = { options, teeRecorder, schemas, indexes };
+    }
+    // Lazy-init flag for `configureObservability`. CF Worker modules
+    // cannot `await` at the module top level, so the first fetch /
+    // scheduled invocation runs the configure. LogTape's `configure`
+    // is idempotent (we always pass `reset: true`); a thundering-herd
+    // race on the cold-start tick just re-runs the same config.
+    if (!observabilityConfigured) {
+      await configureObservability(resolveCfSink(resolved.options.observability));
+      observabilityConfigured = true;
+    }
+    return resolved;
+  };
 
   return {
     async fetch(req, env, ctx): Promise<Response> {
-      await ensureObservability();
+      const { options, teeRecorder, schemas, indexes } = await ensureResolved(env);
 
       // Opt-in dev landing page. Off in production (options.dev
       // unset); when set, GET / serves HTML and GET /favicon.ico
@@ -347,7 +370,7 @@ export function baerlyWorker(options: BaerlyWorkerOptions): ExportedHandler<Baer
     },
 
     async scheduled(event, env, ctx): Promise<void> {
-      await ensureObservability();
+      const { options } = await ensureResolved(env);
       if (options.scheduled !== undefined) {
         await options.scheduled(event, env, ctx);
       }

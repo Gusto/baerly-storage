@@ -15,8 +15,8 @@
  * subpath: `import { baerlyWorker } from "@baerly/adapter-cloudflare/worker"`.
  * The adapter ships the full CRUD surface via the shared
  * `createRouter` factory in `@baerly/server`; callers thread a
- * `Verifier` through `baerlyWorker({ verifier })` to resolve the
- * tenant per request.
+ * `Verifier` through `baerlyWorker((env) => ({ verifier }))` to
+ * resolve the tenant per request.
  */
 export { r2BindingStorage } from "./r2-binding-storage.ts";
 export type { R2BindingStorageOptions } from "./r2-binding-storage.ts";

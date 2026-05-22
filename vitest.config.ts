@@ -203,7 +203,7 @@ export default defineConfig({
             // as the `SELF` binding — the HTTP-conformance Workerd
             // variant (`packages/adapter-cloudflare/src/http-conformance.test.ts`)
             // calls `SELF.fetch(req)` to drive the full CRUD
-            // surface through `baerlyWorker({ verifier: testVerifier() })`.
+            // surface through `baerlyWorker(() => ({ verifier: testVerifier() }))`.
             // The other cloudflare-pool tests don't reference `SELF`,
             // so wiring a `main` for them is a no-op.
             main: "tests/setup/http-conformance-worker.ts",

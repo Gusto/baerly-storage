@@ -110,7 +110,7 @@ describe("baerlyWorker routes", () => {
     // omitting it must fail at type-check time. Tenant resolution
     // is owned by the verifier; there's no env-var fallback.
     // @ts-expect-error verifier is required
-    baerlyWorker({});
+    baerlyWorker(() => ({}));
   });
 
   test("singleTenantDevVerifier resolves every request to the supplied tenant", async () => {
@@ -120,7 +120,7 @@ describe("baerlyWorker routes", () => {
     // stops threading its argument through (e.g. hardcodes "acme").
     const tenant = `dev-${table}`;
     await provisionTable(bucket, table, tenant);
-    const worker = baerlyWorker({ verifier: singleTenantDevVerifier(tenant) });
+    const worker = baerlyWorker(() => ({ verifier: singleTenantDevVerifier(tenant) }));
     const env = makeEnv(bucket);
 
     const insertRes = await worker.fetch!(
@@ -152,7 +152,7 @@ describe("baerlyWorker routes", () => {
   });
 
   test("GET /v1/healthz returns { ok: true } without consulting the verifier", async () => {
-    const worker = baerlyWorker({ verifier: denyVerifier });
+    const worker = baerlyWorker(() => ({ verifier: denyVerifier }));
     const res = await worker.fetch!(
       asWorkersRequest(new Request("https://x/v1/healthz")),
       makeEnv(getBinding()),
@@ -163,7 +163,7 @@ describe("baerlyWorker routes", () => {
   });
 
   test("returns 401 with Unauthorized envelope when the verifier returns null", async () => {
-    const worker = baerlyWorker({ verifier: denyVerifier });
+    const worker = baerlyWorker(() => ({ verifier: denyVerifier }));
     const res = await worker.fetch!(
       asWorkersRequest(new Request("https://x/v1/t/tickets")),
       makeEnv(getBinding()),
@@ -179,7 +179,7 @@ describe("baerlyWorker routes", () => {
     const bucket = getBinding();
     const table = freshTable("tickets");
     await provisionTable(bucket, table);
-    const worker = baerlyWorker({ verifier: trivialVerifier });
+    const worker = baerlyWorker(() => ({ verifier: trivialVerifier }));
     const env = makeEnv(bucket);
 
     const insertRes = await worker.fetch!(
@@ -213,7 +213,7 @@ describe("baerlyWorker routes", () => {
     const bucket = getBinding();
     const table = freshTable("tickets");
     await provisionTable(bucket, table);
-    const worker = baerlyWorker({ verifier: trivialVerifier });
+    const worker = baerlyWorker(() => ({ verifier: trivialVerifier }));
     const env = makeEnv(bucket);
     const res = await worker.fetch!(
       asWorkersRequest(
@@ -235,7 +235,7 @@ describe("baerlyWorker routes", () => {
     const bucket = getBinding();
     const table = freshTable("tickets");
     await provisionTable(bucket, table);
-    const worker = baerlyWorker({ verifier: trivialVerifier });
+    const worker = baerlyWorker(() => ({ verifier: trivialVerifier }));
     const env = makeEnv(bucket);
 
     const insertRes = await worker.fetch!(
@@ -270,7 +270,7 @@ describe("baerlyWorker routes", () => {
     const bucket = getBinding();
     const table = freshTable("tickets");
     await provisionTable(bucket, table);
-    const worker = baerlyWorker({ verifier: trivialVerifier });
+    const worker = baerlyWorker(() => ({ verifier: trivialVerifier }));
     const env = makeEnv(bucket);
 
     for (const ticket of [
@@ -307,7 +307,7 @@ describe("baerlyWorker routes", () => {
   });
 
   test("GET /v1/t/:table?where=notjson returns 400 SchemaError", async () => {
-    const worker = baerlyWorker({ verifier: trivialVerifier });
+    const worker = baerlyWorker(() => ({ verifier: trivialVerifier }));
     const res = await worker.fetch!(
       asWorkersRequest(new Request("https://x/v1/t/tickets?where=notjson")),
       makeEnv(getBinding()),
@@ -342,7 +342,7 @@ describe("baerlyWorker config wiring", () => {
     const table = freshTable("tickets");
     await provisionTable(bucket, table);
     const config: BaerlyConfig = { collections: { [table]: { schema: statusValidator } } };
-    const worker = baerlyWorker({ verifier: trivialVerifier, config });
+    const worker = baerlyWorker(() => ({ verifier: trivialVerifier, config }));
     const env = makeEnv(bucket);
 
     const goodRes = await worker.fetch!(
@@ -381,7 +381,7 @@ describe("baerlyWorker config wiring", () => {
     const bucket = getBinding();
     const table = freshTable("tickets");
     await provisionTable(bucket, table);
-    const worker = baerlyWorker({ verifier: trivialVerifier });
+    const worker = baerlyWorker(() => ({ verifier: trivialVerifier }));
     const env = makeEnv(bucket);
 
     const res = await worker.fetch!(
@@ -403,10 +403,10 @@ describe("baerlyWorker dev landing", () => {
   test("GET / with dev option returns 200 HTML containing the UI link", async () => {
     // denyVerifier proves the dev short-circuit runs ahead of auth —
     // a 401 here would mean the landing path wasn't taken.
-    const worker = baerlyWorker({
+    const worker = baerlyWorker(() => ({
       verifier: denyVerifier,
       dev: { app: "tickets", uiUrl: "http://localhost:5173" },
-    });
+    }));
     const res = await worker.fetch!(
       asWorkersRequest(new Request("https://x/")),
       makeEnv(getBinding()),
@@ -420,10 +420,10 @@ describe("baerlyWorker dev landing", () => {
   });
 
   test("GET /favicon.ico with dev option returns 204 with empty body", async () => {
-    const worker = baerlyWorker({
+    const worker = baerlyWorker(() => ({
       verifier: denyVerifier,
       dev: { app: "tickets", uiUrl: "http://localhost:5173" },
-    });
+    }));
     const res = await worker.fetch!(
       asWorkersRequest(new Request("https://x/favicon.ico")),
       makeEnv(getBinding()),
@@ -434,7 +434,7 @@ describe("baerlyWorker dev landing", () => {
   });
 
   test("GET / without dev option falls through to the verifier (401)", async () => {
-    const worker = baerlyWorker({ verifier: denyVerifier });
+    const worker = baerlyWorker(() => ({ verifier: denyVerifier }));
     const res = await worker.fetch!(
       asWorkersRequest(new Request("https://x/")),
       makeEnv(getBinding()),
@@ -444,10 +444,10 @@ describe("baerlyWorker dev landing", () => {
   });
 
   test("POST / with dev option falls through to the verifier (no method-bypass)", async () => {
-    const worker = baerlyWorker({
+    const worker = baerlyWorker(() => ({
       verifier: denyVerifier,
       dev: { app: "tickets", uiUrl: "http://localhost:5173" },
-    });
+    }));
     const res = await worker.fetch!(
       asWorkersRequest(new Request("https://x/", { method: "POST", body: "" })),
       makeEnv(getBinding()),

@@ -75,7 +75,7 @@ describe("baerlyWorker cache_status", () => {
 
     // Insert one doc up front via a POST so subsequent GETs have a
     // body to fetch.
-    const provisionHandler = baerlyWorker({ verifier });
+    const provisionHandler = baerlyWorker(() => ({ verifier }));
     const env: BaerlyEnv = { BUCKET: bucket, APP: "t" };
     const insertRes = await provisionHandler.fetch!(
       new Request("https://x/v1/t/c", {
@@ -90,10 +90,10 @@ describe("baerlyWorker cache_status", () => {
 
     // Now wire the sink and fire two GETs against the same id.
     const { records, sink } = collectingSink();
-    const handler = baerlyWorker({
+    const handler = baerlyWorker(() => ({
       verifier,
       observability: { level: "debug", sink, sampleRate: 1 },
-    });
+    }));
     const url = "https://x/v1/t/c/cs-1";
 
     // First GET → miss.
@@ -148,7 +148,7 @@ describe("baerlyWorker cache_status", () => {
     // (fast-path: `longPollSince` finds events on the initial poll
     // and short-circuits — no wall-clock waiting on the default
     // 25s long-poll deadline).
-    const seedHandler = baerlyWorker({ verifier });
+    const seedHandler = baerlyWorker(() => ({ verifier }));
     await seedHandler.fetch!(
       new Request("https://x/v1/t/c", {
         method: "POST",
@@ -160,10 +160,10 @@ describe("baerlyWorker cache_status", () => {
     );
 
     const { records, sink } = collectingSink();
-    const handler = baerlyWorker({
+    const handler = baerlyWorker(() => ({
       verifier,
       observability: { level: "debug", sink, sampleRate: 1 },
-    });
+    }));
 
     const sinceUrl = `https://x/v1/since?table=c&cursor=`;
     const res = await handler.fetch!(

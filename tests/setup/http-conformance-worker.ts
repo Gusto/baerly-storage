@@ -10,8 +10,8 @@
  * `export default` into miniflare so the `SELF` binding exposed by
  * `cloudflare:test` invokes it on every `SELF.fetch(req)`.
  *
- * The module composes a `baerlyWorker({ verifier })` against the
- * R2 binding `BUCKET` (declared in `vitest.config.ts`'s
+ * The module composes a `baerlyWorker(() => ({ verifier }))` against
+ * the R2 binding `BUCKET` (declared in `vitest.config.ts`'s
  * `miniflare.r2Buckets`) plus the shared `testVerifier()` from
  * `tests/fixtures/test-verifier.ts`. The factory expects an
  * `ExportedHandler<Env>` shape; the `Env` has `BUCKET` +
@@ -42,11 +42,11 @@ const verifier: Verifier = async (req: Request) => {
   return { tenantPrefix: CONFORMANCE_TENANT, identity: {} };
 };
 
-const handler = baerlyWorker({
+const handler = baerlyWorker(() => ({
   verifier,
   sinceTimeoutMs: 500,
   sincePollIntervalMs: 50,
-});
+}));
 
 export default {
   fetch(req: Request, env: BaerlyEnv, ctx: ExecutionContext): Response | Promise<Response> {

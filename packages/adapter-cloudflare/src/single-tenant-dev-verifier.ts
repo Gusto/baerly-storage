@@ -17,12 +17,11 @@ import type { Verifier } from "@baerly/protocol";
  * ```ts
  * import { baerlyWorker, singleTenantDevVerifier } from "baerly-storage/cloudflare";
  *
- * // Hardcode the dev tenant. Reading `env.TENANT` requires wrapping
- * // `baerlyWorker` in your own `fetch(req, env, ctx)` so `env` is in
- * // scope — see the {@link baerlyWorker} JSDoc for that pattern.
- * export default baerlyWorker({
+ * // Hardcode the dev tenant. To read `env.TENANT` at runtime, pass
+ * // it through the factory — see the {@link baerlyWorker} JSDoc.
+ * export default baerlyWorker(() => ({
  *   verifier: singleTenantDevVerifier("acme"),
- * });
+ * }));
  * ```
  */
 export function singleTenantDevVerifier(tenantPrefix: string): Verifier {
