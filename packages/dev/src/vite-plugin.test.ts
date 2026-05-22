@@ -298,6 +298,23 @@ describe("baerlyDevAuth", () => {
     expect(headersFromRaw(req).get("authorization")).toBe("Bearer x");
   });
 
+  test("array prefix covers multiple roots (default /v1 + custom /api)", () => {
+    const mw = captureMw(baerlyDevAuth({ secret: "x", prefix: ["/v1", "/api"] }));
+
+    const v1Req = makeReq("/v1/t/notes");
+    mw(v1Req, makeRes(), () => {});
+    expect(v1Req.headers["authorization"]).toBe("Bearer x");
+
+    const apiReq = makeReq("/api/cards/abc/move");
+    mw(apiReq, makeRes(), () => {});
+    expect(apiReq.headers["authorization"]).toBe("Bearer x");
+
+    // Paths outside both prefixes remain untouched.
+    const indexReq = makeReq("/index.html");
+    mw(indexReq, makeRes(), () => {});
+    expect(indexReq.headers["authorization"]).toBeUndefined();
+  });
+
   test("rejects empty secret eagerly", () => {
     expect(() => baerlyDevAuth({ secret: "" })).toThrow(/secret must be non-empty/);
   });

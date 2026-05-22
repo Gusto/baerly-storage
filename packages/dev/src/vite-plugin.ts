@@ -71,9 +71,32 @@ const injectAuthorizationHeader = (
 export interface BaerlyDevAuthOptions {
   /** Bearer token to inject on matched paths. */
   readonly secret: string;
-  /** Pathname prefix to match. Default "/v1". */
-  readonly prefix?: string;
+  /**
+   * Pathname prefix to match. Pass an array to cover multiple
+   * prefixes (e.g. `["/v1", "/api"]` when the Worker mounts custom
+   * routes alongside the baerly HTTP cascade). Default `"/v1"`.
+   */
+  readonly prefix?: string | readonly string[];
 }
+
+const normalisePrefixes = (prefix: string | readonly string[] | undefined): readonly string[] => {
+  if (prefix === undefined) {
+    return ["/v1"];
+  }
+  if (typeof prefix === "string") {
+    return [prefix];
+  }
+  return prefix;
+};
+
+const matchesAnyPrefix = (url: string, prefixes: readonly string[]): boolean => {
+  for (const prefix of prefixes) {
+    if (url === prefix || url.startsWith(`${prefix}/`) || url.startsWith(`${prefix}?`)) {
+      return true;
+    }
+  }
+  return false;
+};
 
 /**
  * Vite dev plugin: inject `Authorization: Bearer ${secret}` on every
@@ -82,6 +105,22 @@ export interface BaerlyDevAuthOptions {
  * the request, Vite's middleware adds the header, and the upstream
  * handler (in-process worker or proxied Node server) sees an
  * authenticated request.
+ *
+ * **Custom Worker routes.** `baerlyWorker` only sees `/v1/*`; if you
+ * mount your own `/api/*` routes (e.g. to expose a server-side
+ * `db.transaction(...)` endpoint the SPA client can't run on its
+ * own), they receive the request with no Authorization header and
+ * the inline `verifier(req)` call returns 401. Cover both prefixes
+ * with one plugin instance:
+ *
+ * ```ts
+ * baerlyDevAuth({ secret, prefix: ["/v1", "/api"] });
+ * ```
+ *
+ * The bearer is dev-only convenience — production deploys put the
+ * SPA, the baerly cascade, AND your custom routes behind the same
+ * tenant boundary (CF Access, an upstream JWT, …), so this matters
+ * exclusively while `vite dev` is the front door.
  *
  * @example
  * ```ts
@@ -102,14 +141,14 @@ export function baerlyDevAuth(opts: BaerlyDevAuthOptions): Plugin {
       "baerlyDevAuth: secret must be non-empty. Set SHARED_SECRET in .dev.vars / .env.",
     );
   }
-  const prefix = opts.prefix ?? "/v1";
+  const prefixes: readonly string[] = normalisePrefixes(opts.prefix);
   return {
     name: "baerly-dev-auth",
     apply: "serve",
     configureServer(server) {
       server.middlewares.use((req, _res, next) => {
         const url = req.url ?? "";
-        if (url === prefix || url.startsWith(`${prefix}/`) || url.startsWith(`${prefix}?`)) {
+        if (matchesAnyPrefix(url, prefixes)) {
           injectAuthorizationHeader(req, `Bearer ${opts.secret}`);
         }
         next();
