@@ -83,20 +83,20 @@ describe("runWizard", () => {
     const out = await runWizard({
       projectName: "my-app",
       target: "cloudflare",
+      starter: "minimal",
       withAddons: [],
       install: false,
     });
     expect(out).toEqual({
       projectName: "my-app",
       target: "cloudflare",
+      starter: "minimal",
       withAddons: [],
       install: false,
     });
-    // None of the prompt helpers were called.
     expect(fixture.textCalls).toHaveLength(0);
     expect(fixture.selectCalls).toHaveLength(0);
     expect(fixture.confirmCalls).toHaveLength(0);
-    // The intro still fires.
     expect(fixture.introCalls).toHaveLength(1);
   });
 
@@ -109,12 +109,12 @@ describe("runWizard", () => {
     const out = await runWizard({});
     expect(out.projectName).toBe("my-app");
     expect(out.target).toBe("cloudflare");
+    expect(out.starter).toBe("cloudflare"); // mock returns selectValue for both target + starter selects
     expect(out.withAddons).toEqual([]);
     expect(out.install).toBe(true);
     expect(fixture.textCalls).toHaveLength(1);
-    expect(fixture.selectCalls).toHaveLength(1);
-    // Only the install confirm fires — the docker confirm is gated on
-    // `target === "node"`.
+    // Two selects now: target + starter.
+    expect(fixture.selectCalls).toHaveLength(2);
     expect(fixture.confirmCalls).toHaveLength(1);
   });
 
@@ -126,7 +126,7 @@ describe("runWizard", () => {
     // both the docker confirm and the install confirm see `true`.
     fixture.confirmValue = true;
     const runWizard = await importRunWizard();
-    const out = await runWizard({});
+    const out = await runWizard({ starter: "minimal" });
     expect(out.target).toBe("node");
     expect(out.withAddons).toEqual(["docker"]);
     expect(out.install).toBe(true);
@@ -140,7 +140,7 @@ describe("runWizard", () => {
     fixture.selectValue = "node";
     fixture.confirmValue = false;
     const runWizard = await importRunWizard();
-    const out = await runWizard({});
+    const out = await runWizard({ starter: "minimal" });
     expect(out.target).toBe("node");
     expect(out.withAddons).toEqual([]);
     expect(out.install).toBe(false);
@@ -154,6 +154,7 @@ describe("runWizard", () => {
     const runWizard = await importRunWizard();
     const out = await runWizard({
       target: "node",
+      starter: "minimal",
       withAddons: ["docker"],
     });
     expect(out.withAddons).toEqual(["docker"]);
@@ -192,7 +193,7 @@ describe("runWizard", () => {
     }) as never);
     try {
       const runWizard = await importRunWizard();
-      await expect(runWizard({})).rejects.toThrow(/__exit:1/);
+      await expect(runWizard({ starter: "minimal" })).rejects.toThrow(/__exit:1/);
       expect(exitSpy).toHaveBeenCalledWith(1);
     } finally {
       exitSpy.mockRestore();
@@ -209,7 +210,7 @@ describe("runWizard", () => {
     }) as never);
     try {
       const runWizard = await importRunWizard();
-      await expect(runWizard({})).rejects.toThrow(/__exit:1/);
+      await expect(runWizard({ starter: "minimal" })).rejects.toThrow(/__exit:1/);
       expect(exitSpy).toHaveBeenCalledWith(1);
     } finally {
       exitSpy.mockRestore();
@@ -226,7 +227,7 @@ describe("runWizard", () => {
     fixture.selectValue = "cloudflare";
     fixture.confirmValue = true;
     const runWizard = await importRunWizard();
-    await runWizard({});
+    await runWizard({ starter: "minimal" });
     expect(fixture.textCalls).toHaveLength(1);
     const opts = fixture.textCalls[0] as { validate: (raw: string) => string | undefined };
     // Empty: rejected with "non-empty" message.
@@ -255,7 +256,7 @@ describe("runWizard", () => {
     fixture.selectValue = "cloudflare";
     fixture.confirmValue = true;
     const runWizard = await importRunWizard();
-    await runWizard({});
+    await runWizard({ starter: "minimal" });
     const opts = fixture.textCalls[0] as {
       message: string;
       validate: (raw: string) => string | undefined;
@@ -270,5 +271,90 @@ describe("runWizard", () => {
     expect(slashErr).toMatch(/current directory/);
     expect(opts.validate("..")).toMatch(/lowercase/);
     expect(opts.validate("./foo")).toMatch(/lowercase/);
+  });
+
+  test("skips the starter select when starter is pre-filled", async () => {
+    resetFixture();
+    fixture.confirmValue = true;
+    const runWizard = await importRunWizard();
+    const out = await runWizard({
+      projectName: "my-app",
+      target: "cloudflare",
+      starter: "react",
+      withAddons: [],
+      install: true,
+    });
+    expect(out.starter).toBe("react");
+    // No select calls fired: target was pre-filled, starter was pre-filled.
+    expect(fixture.selectCalls).toHaveLength(0);
+  });
+
+  test("fires the starter select when starter is missing and returns the mocked value", async () => {
+    resetFixture();
+    // Pre-fill target so only the starter select fires (the mock returns
+    // the same `selectValue` for every call — see fixture comment).
+    fixture.selectValue = "react";
+    fixture.confirmValue = false;
+    const runWizard = await importRunWizard();
+    const out = await runWizard({
+      projectName: "my-app",
+      target: "cloudflare",
+      withAddons: [],
+      install: false,
+    });
+    expect(out.starter).toBe("react");
+    expect(fixture.selectCalls).toHaveLength(1);
+  });
+
+  test("starter select advertises both minimal and react with hints", async () => {
+    resetFixture();
+    fixture.selectValue = "minimal";
+    fixture.confirmValue = false;
+    const runWizard = await importRunWizard();
+    await runWizard({
+      projectName: "my-app",
+      target: "cloudflare",
+      withAddons: [],
+      install: false,
+    });
+    expect(fixture.selectCalls).toHaveLength(1);
+    const opts = fixture.selectCalls[0] as {
+      message: string;
+      initialValue: string;
+      options: ReadonlyArray<{ value: string; label: string; hint: string }>;
+    };
+    expect(opts.initialValue).toBe("minimal");
+    const values = opts.options.map((o) => o.value).toSorted();
+    expect(values).toEqual(["minimal", "react"]);
+    // Each option carries a non-empty hint so the user sees the one-line
+    // description next to the label.
+    for (const o of opts.options) {
+      expect(o.hint.length).toBeGreaterThan(0);
+    }
+  });
+
+  test("exits with code 1 when the user cancels at the starter prompt", async () => {
+    resetFixture();
+    fixture.selectValue = CANCEL_SENTINEL;
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`__exit:${code}`);
+    }) as never);
+    try {
+      const runWizard = await importRunWizard();
+      // Pre-fill projectName + target so the starter select is the first
+      // prompt that returns the cancel sentinel.
+      await expect(
+        runWizard({
+          projectName: "my-app",
+          target: "cloudflare",
+          withAddons: [],
+          install: false,
+        }),
+      ).rejects.toThrow(/__exit:1/);
+      expect(exitSpy).toHaveBeenCalledWith(1);
+      expect(fixture.cancelCalls).toEqual(["Cancelled."]);
+    } finally {
+      exitSpy.mockRestore();
+    }
   });
 });

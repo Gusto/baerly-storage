@@ -27,11 +27,26 @@ const TARGETS = [
   },
 ] as const;
 
+const STARTERS = [
+  {
+    value: "minimal",
+    label: "Minimal",
+    hint: "Server only — no UI framework",
+  },
+  {
+    value: "react",
+    label: "React",
+    hint: "React + Vite SPA over a sample notes collection",
+  },
+] as const;
+
 export interface WizardInput {
   /** When non-undefined, skip the projectName prompt and use this. */
   readonly projectName?: string;
   /** When non-undefined, skip the target prompt and use this. */
   readonly target?: "cloudflare" | "node";
+  /** When non-undefined, skip the starter prompt and use this. */
+  readonly starter?: "minimal" | "react";
   /**
    * When non-undefined, skip the per-add-on confirms and use this set.
    * Today only `"docker"` is a meaningful element (and only when
@@ -51,6 +66,7 @@ export interface WizardOutput {
    */
   readonly projectName: string;
   readonly target: "cloudflare" | "node";
+  readonly starter: "minimal" | "react";
   readonly withAddons: readonly Addon[];
   readonly install: boolean;
 }
@@ -59,6 +75,7 @@ export const runWizard = async (input: WizardInput): Promise<WizardOutput> => {
   intro(pc.bold(pc.cyan("create-baerly")));
   const projectName = input.projectName ?? (await promptProjectName());
   const target = input.target ?? (await promptTarget());
+  const starter = input.starter ?? (await promptStarter());
   // Add-on prompts are gated per-target. Today only `docker` exists
   // and only applies when `target === "node"`; on `cloudflare` we
   // skip the prompt and emit an empty addon list.
@@ -71,7 +88,7 @@ export const runWizard = async (input: WizardInput): Promise<WizardOutput> => {
     withAddons = [];
   }
   const install = input.install ?? (await promptInstall());
-  return { projectName, target, withAddons, install };
+  return { projectName, target, starter, withAddons, install };
 };
 
 const promptProjectName = async (): Promise<string> => {
@@ -114,6 +131,19 @@ const promptTarget = async (): Promise<"cloudflare" | "node"> => {
     process.exit(1);
   }
   return v as "cloudflare" | "node";
+};
+
+const promptStarter = async (): Promise<"minimal" | "react"> => {
+  const v = await select({
+    message: "Starter template",
+    options: [...STARTERS],
+    initialValue: "minimal",
+  });
+  if (isCancel(v)) {
+    cancel("Cancelled.");
+    process.exit(1);
+  }
+  return v as "minimal" | "react";
 };
 
 const promptDocker = async (): Promise<boolean> => {
