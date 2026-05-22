@@ -115,17 +115,20 @@ export const handleCreateBaerly = async (
     }
     let projectName: string;
     let target: "cloudflare" | "node";
+    let starter: "minimal" | "react";
     let withAddons: readonly Addon[];
     let install: boolean;
     if (wantWizard) {
       const w = await runWizard({
         projectName: args.projectName,
         ...(args.target !== undefined && { target: args.target }),
+        ...(args.starter !== undefined && { starter: args.starter }),
         ...(withAddonsFromFlag !== undefined && { withAddons: withAddonsFromFlag }),
         ...(args.install !== undefined && { install: args.install }),
       });
       projectName = w.projectName;
       target = w.target;
+      starter = w.starter;
       withAddons = w.withAddons;
       install = w.install;
     } else {
@@ -137,6 +140,10 @@ export const handleCreateBaerly = async (
       }
       projectName = args.projectName;
       target = args.target;
+      // Flag-driven path: scaffold() defaults to "minimal" internally,
+      // so the explicit fallback here keeps the local `starter` type
+      // tight without changing observed behavior.
+      starter = args.starter ?? "minimal";
       withAddons = withAddonsFromFlag ?? [];
       // Flag-driven path: no wizard, so default to false unless the user
       // explicitly passed --install. Today's CI/agent callers see no
@@ -157,7 +164,7 @@ export const handleCreateBaerly = async (
     const result = await scaffold({
       projectName,
       target,
-      ...(args.starter !== undefined && { starter: args.starter }),
+      starter,
       ...(args.tenant !== undefined && { tenant: args.tenant }),
       ...(args.domain !== undefined && { domain: args.domain }),
       ...(args.pm !== undefined && { pm: args.pm as "npm" | "pnpm" | "yarn" }),
