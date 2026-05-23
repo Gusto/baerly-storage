@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { DocumentData, Predicate } from "@baerly/protocol";
+import type { ConsistencyLevel, DocumentData, OrderSpec, Predicate } from "@baerly/protocol";
 import { useBaerlyClient } from "./provider.ts";
 import { stableKey } from "./stable-key.ts";
 import { useInvalidationTick } from "./use-invalidation-tick.ts";
@@ -14,6 +14,19 @@ export interface UseLiveQueryOptions<T extends DocumentData = DocumentData> {
    * not refetch.
    */
   readonly where?: Predicate<T>;
+  /**
+   * Order modifier for the read. Mirrors `ClientTable.order(...)`.
+   * Inline objects are fine — the hook stable-stringifies internally.
+   */
+  readonly order?: OrderSpec<T>;
+  /**
+   * Read consistency for the underlying terminal read. Defaults to
+   * `strong`. Use `"eventual"` for auto-refresh / list views where
+   * shaving one Class B op per read matters more than the last-write
+   * being reflected; the long-poll subscription still fires the
+   * refetch as soon as a change lands.
+   */
+  readonly consistency?: ConsistencyLevel;
   /** When `false`, suspends both the initial read and the subscription. Default `true`. */
   readonly enabled?: boolean;
 }
@@ -34,20 +47,22 @@ export type UseLiveQueryResult<T> =
 
 /**
  * Declarative live query. Subscribes to `table` and re-reads
- * `.where(where).all()` whenever the server emits new log events.
- * Idle long-poll cycles are dropped at the
- * {@link useInvalidationTick} layer, so a steady-state table costs
- * zero list reads.
+ * `.where(where).order(order).consistency(consistency).all()` whenever
+ * the server emits new log events. Idle long-poll cycles are dropped
+ * at the {@link useInvalidationTick} layer, so a steady-state table
+ * costs zero list reads.
  *
- * The `where` predicate is stable-stringified internally — passing
- * an inline object (`{ status: filter }`) does not churn extra
- * fetches.
+ * `where` and `order` are stable-stringified internally — passing
+ * inline objects (`{ status: filter }`, `{ created_at: "desc" }`) does
+ * not churn extra fetches.
  *
  * @example
  * ```tsx
  * const result = useLiveQuery<Ticket>({
  *   table: "tickets",
  *   where: filter === "all" ? {} : { status: filter },
+ *   order: { created_at: "desc" },
+ *   consistency: "eventual",  // auto-refresh shaves one Class B op per read
  * });
  * if (result.status === "loading") return <p>Loading…</p>;
  * if (result.status === "error") return <p>Error: {result.error.message}</p>;
@@ -57,20 +72,22 @@ export type UseLiveQueryResult<T> =
 export const useLiveQuery = <T extends DocumentData = DocumentData>(
   opts: UseLiveQueryOptions<T>,
 ): UseLiveQueryResult<T> => {
-  const { table, where = {} as Predicate<T>, enabled = true } = opts;
+  const { table, where = {} as Predicate<T>, order, consistency, enabled = true } = opts;
   const client = useBaerlyClient();
   const [state, setState] = useState<UseLiveQueryResult<T>>({ status: "loading" });
 
   const tick = useInvalidationTick({ table, enabled });
 
-  // Snapshot the predicate by value through a ref so the fetch
+  // Snapshot the predicate + order by value through refs so the fetch
   // closure reads the latest snapshot via `.current` rather than
-  // closing over a stale literal. The dep is the stable string key,
-  // so predicate-reference churn on every render doesn't trigger
-  // refetches.
+  // closing over a stale literal. The deps are stable string keys,
+  // so reference churn on every render doesn't trigger refetches.
   const predicateKey = stableKey(where);
   const predicateRef = useRef<Predicate<T>>(where);
   predicateRef.current = where;
+  const orderKey = order === undefined ? "" : stableKey(order);
+  const orderRef = useRef<OrderSpec<T> | undefined>(order);
+  orderRef.current = order;
 
   useEffect(() => {
     if (!enabled) {
@@ -80,10 +97,14 @@ export const useLiveQuery = <T extends DocumentData = DocumentData>(
     setState((prev) => (prev.status === "loading" ? prev : { status: "loading" }));
     void (async () => {
       try {
-        const next = await client
-          .table<T>(table)
-          .where(predicateRef.current)
-          .all({ signal: controller.signal });
+        let q = client.table<T>(table).where(predicateRef.current);
+        if (orderRef.current !== undefined) {
+          q = q.order(orderRef.current);
+        }
+        if (consistency !== undefined) {
+          q = q.consistency(consistency);
+        }
+        const next = await q.all({ signal: controller.signal });
         if (controller.signal.aborted) {
           return;
         }
@@ -107,7 +128,7 @@ export const useLiveQuery = <T extends DocumentData = DocumentData>(
     return (): void => {
       controller.abort();
     };
-  }, [client, table, predicateKey, tick, enabled]);
+  }, [client, table, predicateKey, orderKey, consistency, tick, enabled]);
 
   return state;
 };

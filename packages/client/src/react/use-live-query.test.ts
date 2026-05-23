@@ -57,10 +57,9 @@ describe("useLiveQuery", () => {
     m.on("GET", "/v1/since", hangSince);
 
     const client = createBaerlyClient({ baseUrl: "http://x", fetch: m.fetch });
-    const { result, unmount } = renderHook(
-      () => useLiveQuery<Ticket>({ table: "tickets" }),
-      { wrapper: wrap(client) },
-    );
+    const { result, unmount } = renderHook(() => useLiveQuery<Ticket>({ table: "tickets" }), {
+      wrapper: wrap(client),
+    });
 
     await waitFor(() => {
       expect(result.current).toEqual({ status: "ok", rows: [{ _id: "a", title: "first" }] });
@@ -110,10 +109,9 @@ describe("useLiveQuery", () => {
     });
 
     const client = createBaerlyClient({ baseUrl: "http://x", fetch: m.fetch });
-    const { result, unmount } = renderHook(
-      () => useLiveQuery<Ticket>({ table: "tickets" }),
-      { wrapper: wrap(client) },
-    );
+    const { result, unmount } = renderHook(() => useLiveQuery<Ticket>({ table: "tickets" }), {
+      wrapper: wrap(client),
+    });
 
     await waitFor(() => {
       expect(result.current.status).toBe("ok");
@@ -146,10 +144,9 @@ describe("useLiveQuery", () => {
     });
 
     const client = createBaerlyClient({ baseUrl: "http://x", fetch: m.fetch });
-    const { result, unmount } = renderHook(
-      () => useLiveQuery<Ticket>({ table: "tickets" }),
-      { wrapper: wrap(client) },
-    );
+    const { result, unmount } = renderHook(() => useLiveQuery<Ticket>({ table: "tickets" }), {
+      wrapper: wrap(client),
+    });
 
     await waitFor(() => expect(result.current.status).toBe("ok"));
     await waitFor(() => expect(sincePoll).toBeGreaterThanOrEqual(2));
@@ -175,10 +172,9 @@ describe("useLiveQuery", () => {
     m.on("GET", "/v1/since", hangSince);
 
     const client = createBaerlyClient({ baseUrl: "http://x", fetch: m.fetch });
-    const { result, unmount } = renderHook(
-      () => useLiveQuery<Ticket>({ table: "tickets" }),
-      { wrapper: wrap(client) },
-    );
+    const { result, unmount } = renderHook(() => useLiveQuery<Ticket>({ table: "tickets" }), {
+      wrapper: wrap(client),
+    });
 
     await waitFor(() => expect(result.current.status).toBe("error"));
 
@@ -238,10 +234,9 @@ describe("useLiveQuery", () => {
     m.on("GET", "/v1/since", hangSince);
 
     const client = createBaerlyClient({ baseUrl: "http://x", fetch: m.fetch });
-    const { result, unmount } = renderHook(
-      () => useLiveQuery<Ticket>({ table: "tickets" }),
-      { wrapper: wrap(client) },
-    );
+    const { result, unmount } = renderHook(() => useLiveQuery<Ticket>({ table: "tickets" }), {
+      wrapper: wrap(client),
+    });
 
     await waitFor(() => expect(listSignal).toBeDefined());
     expect(listSignal!.aborted).toBe(false);
@@ -300,6 +295,105 @@ describe("useLiveQuery", () => {
     }
   });
 
+  test("forwards order + consistency to /v1/t/:table", async () => {
+    const { m, pendingSinceRejects, hangSince } = makeMock();
+    const observed: Array<{ order: string | null; consistency: string | null }> = [];
+    m.on("GET", "/v1/t/tickets", (req) => {
+      const url = new URL(req.url);
+      observed.push({
+        order: url.searchParams.get("order"),
+        consistency: url.searchParams.get("consistency"),
+      });
+      return okEnvelope([]);
+    });
+    m.on("GET", "/v1/since", hangSince);
+
+    const client = createBaerlyClient({ baseUrl: "http://x", fetch: m.fetch });
+    const { result, unmount } = renderHook(
+      () =>
+        useLiveQuery<Ticket>({
+          table: "tickets",
+          order: { _id: "desc" },
+          consistency: "eventual",
+        }),
+      { wrapper: wrap(client) },
+    );
+
+    await waitFor(() => expect(result.current.status).toBe("ok"));
+    expect(observed).toHaveLength(1);
+    expect(observed[0]).toEqual({
+      order: JSON.stringify({ _id: "desc" }),
+      consistency: "eventual",
+    });
+
+    unmount();
+    for (const r of pendingSinceRejects) {
+      r(new Error("test teardown"));
+    }
+  });
+
+  test("consistency change triggers a refetch", async () => {
+    const { m, pendingSinceRejects, hangSince } = makeMock();
+    const seen: string[] = [];
+    m.on("GET", "/v1/t/tickets", (req) => {
+      const url = new URL(req.url);
+      seen.push(url.searchParams.get("consistency") ?? "");
+      return okEnvelope([]);
+    });
+    m.on("GET", "/v1/since", hangSince);
+
+    const client = createBaerlyClient({ baseUrl: "http://x", fetch: m.fetch });
+    const { rerender, result, unmount } = renderHook(
+      ({ level }: { level: "eventual" | "strong" }) =>
+        useLiveQuery<Ticket>({ table: "tickets", consistency: level }),
+      { initialProps: { level: "eventual" }, wrapper: wrap(client) },
+    );
+
+    await waitFor(() => expect(result.current.status).toBe("ok"));
+    rerender({ level: "strong" });
+    await waitFor(() => expect(seen).toContain("strong"));
+    expect(seen).toEqual(["eventual", "strong"]);
+
+    unmount();
+    for (const r of pendingSinceRejects) {
+      r(new Error("test teardown"));
+    }
+  });
+
+  test("inline order object does not churn refetches across renders", async () => {
+    const { m, pendingSinceRejects, hangSince } = makeMock();
+    let listCalls = 0;
+    m.on("GET", "/v1/t/tickets", () => {
+      listCalls += 1;
+      return okEnvelope([]);
+    });
+    m.on("GET", "/v1/since", hangSince);
+
+    const client = createBaerlyClient({ baseUrl: "http://x", fetch: m.fetch });
+    const { rerender, result, unmount } = renderHook(
+      // New `{ _id: "desc" }` literal every render — must NOT trigger a refetch.
+      ({ tick: _tick }: { tick: number }) =>
+        useLiveQuery<Ticket>({ table: "tickets", order: { _id: "desc" } }),
+      { initialProps: { tick: 0 }, wrapper: wrap(client) },
+    );
+
+    await waitFor(() => expect(result.current.status).toBe("ok"));
+    expect(listCalls).toBe(1);
+
+    rerender({ tick: 1 });
+    rerender({ tick: 2 });
+
+    for (let i = 0; i < 5; i += 1) {
+      await Promise.resolve();
+    }
+    expect(listCalls).toBe(1);
+
+    unmount();
+    for (const r of pendingSinceRejects) {
+      r(new Error("test teardown"));
+    }
+  });
+
   test("inline predicate object does not churn refetches across renders", async () => {
     const { m, pendingSinceRejects, hangSince } = makeMock();
     let listCalls = 0;
@@ -312,8 +406,7 @@ describe("useLiveQuery", () => {
     const client = createBaerlyClient({ baseUrl: "http://x", fetch: m.fetch });
     const { rerender, result, unmount } = renderHook(
       // New `{}` literal every render — must NOT trigger a refetch.
-      ({ tick: _tick }: { tick: number }) =>
-        useLiveQuery<Ticket>({ table: "tickets", where: {} }),
+      ({ tick: _tick }: { tick: number }) => useLiveQuery<Ticket>({ table: "tickets", where: {} }),
       { initialProps: { tick: 0 }, wrapper: wrap(client) },
     );
 
