@@ -1,7 +1,7 @@
 import { useLiveQuery } from "baerly-storage/client/react";
 import type { Note } from "../../types.ts";
 
-export const NoteList = ({ onOpen }: { onOpen: (id: string) => void }): React.JSX.Element => {
+export const NoteList = ({ onOpen }: { onOpen: (id: string) => void }) => {
   const result = useLiveQuery<Note>({ table: "notes" });
 
   if (result.status === "error") {

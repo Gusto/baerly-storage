@@ -12,15 +12,9 @@ const submitButtonLabel = (submitting: boolean, isNew: boolean): string => {
   return isNew ? "Create" : "Save";
 };
 
-export const NoteForm = ({
-  id,
-  onDone,
-}: {
-  id: string | null;
-  onDone: () => void;
-}): React.JSX.Element => {
+export const NoteForm = ({ id, onDone }: { id?: string; onDone: () => void }) => {
   const client = useBaerlyClient();
-  const [initial, setInitial] = useState<Draft | undefined>(id === null ? EMPTY : undefined);
+  const [initial, setInitial] = useState<Draft | undefined>(id === undefined ? EMPTY : undefined);
 
   const {
     mutate: insertNote,
@@ -36,7 +30,7 @@ export const NoteForm = ({
   const submitError = insertError ?? updateError;
 
   useEffect(() => {
-    if (id === null) {
+    if (id === undefined) {
       return;
     }
     void (async () => {
@@ -55,12 +49,16 @@ export const NoteForm = ({
         e.preventDefault();
         const fd = new FormData(e.currentTarget);
         const draft: Draft = { body: String(fd.get("body")) };
-        if (id === null) {
-          await insertNote({ ...draft, created_at: new Date().toISOString() });
-        } else {
-          await updateNote(id, draft);
+        try {
+          if (id === undefined) {
+            await insertNote({ ...draft, created_at: new Date().toISOString() });
+          } else {
+            await updateNote(id, draft);
+          }
+          onDone();
+        } catch {
+          // Error is already surfaced via `submitError`; stay on the form.
         }
-        onDone();
       }}
     >
       <div className="field">
@@ -71,7 +69,7 @@ export const NoteForm = ({
       </div>
       <div className="actions">
         <button type="submit" disabled={submitting}>
-          {submitButtonLabel(submitting, id === null)}
+          {submitButtonLabel(submitting, id === undefined)}
         </button>
         <button type="button" onClick={onDone}>
           Cancel

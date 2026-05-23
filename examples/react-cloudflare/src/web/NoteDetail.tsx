@@ -7,7 +7,7 @@ interface Props {
   onBack: () => void;
 }
 
-export const NoteDetail = ({ id, onEdit, onBack }: Props): React.JSX.Element => {
+export const NoteDetail = ({ id, onEdit, onBack }: Props) => {
   const result = useLiveDocument<Note>({ table: "notes", id });
   const {
     mutate: deleteNote,

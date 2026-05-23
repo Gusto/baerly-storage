@@ -5,16 +5,16 @@ import { NoteList } from "./NoteList.tsx";
 import { NoteDetail } from "./NoteDetail.tsx";
 import { NoteForm } from "./NoteForm.tsx";
 
-type View = { kind: "list" } | { kind: "detail"; id: string } | { kind: "edit"; id: string | null };
+type View = { kind: "list" } | { kind: "detail"; id: string } | { kind: "edit"; id?: string };
 
-export const App = (): React.JSX.Element => {
+export const App = () => {
   const [view, setView] = useState<View>({ kind: "list" });
   return (
     <BaerlyProvider client={client}>
       <div className="app">
         <header className="app-header">
           <h1>Notes</h1>
-          <button onClick={() => setView({ kind: "edit", id: null })}>+ New note</button>
+          <button onClick={() => setView({ kind: "edit" })}>+ New note</button>
         </header>
         {view.kind === "list" && <NoteList onOpen={(id) => setView({ kind: "detail", id })} />}
         {view.kind === "detail" && (
