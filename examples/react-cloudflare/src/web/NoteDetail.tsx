@@ -16,7 +16,7 @@ export const NoteDetail = ({ id, onEdit, onBack }: Props): React.JSX.Element => 
   } = useDelete({ table: "notes" });
 
   if (result.status === "error") {
-    return <p style={{ color: "crimson" }}>Error: {result.error.message}</p>;
+    return <p className="error">Error: {result.error.message}</p>;
   }
   if (result.status === "loading") {
     return <p>Loading…</p>;
@@ -29,12 +29,12 @@ export const NoteDetail = ({ id, onEdit, onBack }: Props): React.JSX.Element => 
   return (
     <div>
       <button onClick={onBack}>← Back</button>
-      <p style={{ whiteSpace: "pre-wrap", marginTop: 16 }}>{n.body}</p>
-      <small style={{ color: "#666" }}>Created {n.created_at}</small>
-      <div style={{ marginTop: 16 }}>
+      <p className="note-body">{n.body}</p>
+      <small className="muted">Created {n.created_at}</small>
+      <div className="actions">
         <button onClick={onEdit}>Edit</button>
         <button
-          style={{ marginLeft: 8, color: "crimson" }}
+          className="danger"
           disabled={isDeleting}
           onClick={async () => {
             if (!window.confirm("Delete this note?")) {
@@ -47,9 +47,7 @@ export const NoteDetail = ({ id, onEdit, onBack }: Props): React.JSX.Element => 
           {isDeleting ? "Deleting…" : "Delete"}
         </button>
       </div>
-      {deleteError && (
-        <p style={{ color: "crimson", marginTop: 8 }}>Delete failed: {deleteError.message}</p>
-      )}
+      {deleteError && <p className="error">Delete failed: {deleteError.message}</p>}
     </div>
   );
 };

@@ -1,0 +1,63 @@
+body {
+  font-family: system-ui, sans-serif;
+  margin: 0;
+}
+
+.app {
+  padding: 24px;
+  max-width: 720px;
+  margin: 0 auto;
+}
+
+.app-header {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 24px;
+}
+
+.app-header h1 {
+  margin: 0;
+}
+
+.note-list {
+  list-style: none;
+  padding: 0;
+}
+
+.note-list li {
+  padding: 8px 12px;
+  border-bottom: 1px solid #eee;
+  cursor: pointer;
+}
+
+.muted {
+  color: #666;
+}
+
+.error,
+.danger {
+  color: crimson;
+}
+
+.note-body {
+  white-space: pre-wrap;
+  margin-top: 16px;
+}
+
+.actions {
+  margin-top: 16px;
+}
+
+.actions button + button {
+  margin-left: 8px;
+}
+
+.field {
+  margin-bottom: 12px;
+}
+
+.field textarea {
+  display: block;
+  width: 100%;
+  margin-top: 4px;
+}

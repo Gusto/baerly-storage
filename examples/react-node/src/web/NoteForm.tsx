@@ -63,27 +63,21 @@ export const NoteForm = ({
         onDone();
       }}
     >
-      <div style={{ marginBottom: 12 }}>
+      <div className="field">
         <label>
           Body
-          <textarea
-            name="body"
-            defaultValue={initial.body}
-            required
-            rows={4}
-            style={{ display: "block", width: "100%", marginTop: 4 }}
-          />
+          <textarea name="body" defaultValue={initial.body} required rows={4} />
         </label>
       </div>
-      <button type="submit" disabled={submitting}>
-        {submitButtonLabel(submitting, id === null)}
-      </button>
-      <button type="button" style={{ marginLeft: 8 }} onClick={onDone}>
-        Cancel
-      </button>
-      {submitError && (
-        <p style={{ color: "crimson", marginTop: 8 }}>Save failed: {submitError.message}</p>
-      )}
+      <div className="actions">
+        <button type="submit" disabled={submitting}>
+          {submitButtonLabel(submitting, id === null)}
+        </button>
+        <button type="button" onClick={onDone}>
+          Cancel
+        </button>
+      </div>
+      {submitError && <p className="error">Save failed: {submitError.message}</p>}
     </form>
   );
 };
