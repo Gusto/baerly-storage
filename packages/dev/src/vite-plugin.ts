@@ -126,11 +126,11 @@ const matchesAnyPrefix = (url: string, prefixes: readonly string[]): boolean => 
  * ```ts
  * import { baerlyDevAuth, loadDevVars } from "baerly-storage/dev/vite";
  *
- * const vars = loadDevVars(".dev.vars");
+ * const { SHARED_SECRET } = loadDevVars(".dev.vars", "SHARED_SECRET");
  * export default defineConfig({
  *   plugins: [
  *     cloudflare(),
- *     baerlyDevAuth({ secret: vars["SHARED_SECRET"] ?? "" }),
+ *     baerlyDevAuth({ secret: SHARED_SECRET ?? "" }),
  *   ],
  * });
  * ```
@@ -158,15 +158,33 @@ export function baerlyDevAuth(opts: BaerlyDevAuthOptions): Plugin {
 }
 
 /**
- * Parse a `.dev.vars` / `.env` file. Supports `KEY=value`, `# comments`,
- * blank lines, and single- or double-quoted values. Returns `{}` if
- * the file does not exist.
+ * Parse a `.dev.vars` / `.env` file and return the values for the
+ * requested `keys`. Supports `KEY=value`, `# comments`, blank lines,
+ * and single- or double-quoted values. Keys missing from the file
+ * (or the whole file when it does not exist) come back as
+ * `undefined` — fall back with `??` at the call site.
+ *
+ * The return type is `Record<K, string | undefined>` where `K` is
+ * the union of literal key names you pass in, so property access
+ * works under strict `noPropertyAccessFromIndexSignature`:
+ *
+ * ```ts
+ * const { SHARED_SECRET } = loadDevVars(".dev.vars", "SHARED_SECRET");
+ * //      ^? string | undefined
+ * ```
  */
-export function loadDevVars(path: string): Record<string, string> {
-  if (!existsSync(path)) {
-    return {};
+export function loadDevVars<K extends string>(
+  path: string,
+  ...keys: readonly K[]
+): Record<K, string | undefined> {
+  const out = {} as Record<K, string | undefined>;
+  for (const key of keys) {
+    out[key] = undefined;
   }
-  const out: Record<string, string> = {};
+  if (!existsSync(path)) {
+    return out;
+  }
+  const wanted = new Set<string>(keys);
   for (const rawLine of readFileSync(path, "utf8").split("\n")) {
     const line = rawLine.trim();
     if (line === "" || line.startsWith("#")) {
@@ -177,6 +195,9 @@ export function loadDevVars(path: string): Record<string, string> {
       continue;
     }
     const key = line.slice(0, eq).trim();
+    if (!wanted.has(key)) {
+      continue;
+    }
     let value = line.slice(eq + 1).trim();
     if (
       (value.startsWith('"') && value.endsWith('"')) ||
@@ -184,7 +205,7 @@ export function loadDevVars(path: string): Record<string, string> {
     ) {
       value = value.slice(1, -1);
     }
-    out[key] = value;
+    out[key as K] = value;
   }
   return out;
 }

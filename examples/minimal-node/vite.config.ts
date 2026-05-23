@@ -3,8 +3,8 @@ import { defineConfig } from "vite";
 import { baerlyDev, loadDevVars } from "baerly-storage/dev/vite";
 import config from "./baerly.config.ts";
 
-const vars = loadDevVars(".env");
-const SECRET = vars["SHARED_SECRET"] ?? process.env["SHARED_SECRET"] ?? "dev-shared-secret";
+const { SHARED_SECRET } = loadDevVars(".env", "SHARED_SECRET");
+const SECRET = SHARED_SECRET ?? process.env["SHARED_SECRET"] ?? "dev-shared-secret";
 
 export default defineConfig({
   build: { outDir: "dist/client", emptyOutDir: true },

@@ -28,11 +28,11 @@ to the in-process Worker (CF templates) or proxying to the Node
 server (Node templates).
 
 - **`minimal-cloudflare`, `react-cloudflare`** —
-  `loadDevVars(".dev.vars")` reads `SHARED_SECRET`;
+  `loadDevVars(".dev.vars", "SHARED_SECRET")` reads the secret;
   `baerlyDevAuth({ secret })` uses it. `process.env.SHARED_SECRET`
   is consulted as a fallback for CI / shell-export flows.
-- **`minimal-node`** — `loadDevVars(".env")` + `process.env`
-  fallback; same plugin.
+- **`minimal-node`** — `loadDevVars(".env", "SHARED_SECRET")` +
+  `process.env` fallback; same plugin.
 - **`react-node`** — the `baerlyDev()` plugin owns the secret and
   the request boundary; injection happens inside the plugin. The
   `vite.config.ts` still reads `SHARED_SECRET` from `.env` via

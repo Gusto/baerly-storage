@@ -330,13 +330,42 @@ describe("loadDevVars", () => {
       "utf8",
     );
     try {
-      expect(loadDevVars(file)).toEqual({ FOO: "bar", BAZ: "quoted value", EMPTY: "" });
+      expect(loadDevVars(file, "FOO", "BAZ", "EMPTY")).toEqual({
+        FOO: "bar",
+        BAZ: "quoted value",
+        EMPTY: "",
+      });
     } finally {
       rmSync(dir, { recursive: true });
     }
   });
 
-  test("returns empty object when the file does not exist", () => {
-    expect(loadDevVars("/no/such/file.dev.vars")).toEqual({});
+  test("missing keys come back as undefined", () => {
+    const dir = mkdtempSync(join(tmpdir(), "devvars-"));
+    const file = join(dir, ".dev.vars");
+    writeFileSync(file, `FOO=bar\n`, "utf8");
+    try {
+      expect(loadDevVars(file, "FOO", "MISSING")).toEqual({
+        FOO: "bar",
+        MISSING: undefined,
+      });
+    } finally {
+      rmSync(dir, { recursive: true });
+    }
+  });
+
+  test("returns requested keys as undefined when the file does not exist", () => {
+    expect(loadDevVars("/no/such/file.dev.vars", "SHARED_SECRET")).toEqual({
+      SHARED_SECRET: undefined,
+    });
+  });
+
+  test("return type narrows to the requested key union", () => {
+    // Compile-time check: property access works under
+    // noPropertyAccessFromIndexSignature because the return type
+    // is keyed by the literal `K` we pass in.
+    const vars = loadDevVars("/no/such/file", "SHARED_SECRET");
+    const value: string | undefined = vars.SHARED_SECRET;
+    expect(value).toBeUndefined();
   });
 });
