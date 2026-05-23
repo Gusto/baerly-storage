@@ -1,20 +1,14 @@
-import { useEffect, useState } from "react";
-import { useBaerlyClient, useInsert, useUpdate } from "baerly-storage/client/react";
+import { useInsert, useLiveDocument, useUpdate } from "baerly-storage/client/react";
 import type { Note } from "../../types.ts";
 
 type Draft = Pick<Note, "body">;
-const EMPTY: Draft = { body: "" };
-
-const submitButtonLabel = (submitting: boolean, isNew: boolean): string => {
-  if (submitting) {
-    return "Saving…";
-  }
-  return isNew ? "Create" : "Save";
-};
 
 export const NoteForm = ({ id, onDone }: { id?: string; onDone: () => void }) => {
-  const client = useBaerlyClient();
-  const [initial, setInitial] = useState<Draft | undefined>(id === undefined ? EMPTY : undefined);
+  const existing = useLiveDocument<Note>({
+    table: "notes",
+    id: id ?? "",
+    enabled: id !== undefined,
+  });
 
   const {
     mutate: insertNote,
@@ -29,19 +23,16 @@ export const NoteForm = ({ id, onDone }: { id?: string; onDone: () => void }) =>
   const submitting = isInserting || isUpdating;
   const submitError = insertError ?? updateError;
 
-  useEffect(() => {
-    if (id === undefined) {
-      return;
+  if (id !== undefined) {
+    if (existing.status === "loading") {
+      return <p>Loading…</p>;
     }
-    void (async () => {
-      const row = await client.table<Note>("notes").get(id);
-      setInitial(row === undefined ? EMPTY : { body: row.body });
-    })();
-  }, [client, id]);
-
-  if (initial === undefined) {
-    return <p>Loading…</p>;
+    if (existing.status === "error") {
+      return <p className="error">Error: {existing.error.message}</p>;
+    }
   }
+  const initial: Draft = existing.status === "ok" ? { body: existing.row.body } : { body: "" };
+  const idleLabel = id === undefined ? "Create" : "Save";
 
   return (
     <form
@@ -69,7 +60,7 @@ export const NoteForm = ({ id, onDone }: { id?: string; onDone: () => void }) =>
       </div>
       <div className="actions">
         <button type="submit" disabled={submitting}>
-          {submitButtonLabel(submitting, id === undefined)}
+          {submitting ? "Saving…" : idleLabel}
         </button>
         <button type="button" onClick={onDone}>
           Cancel
