@@ -55,6 +55,7 @@ agent guide; the lib ships its API reference at `dist/API.md`.
 
 | Command          | What it does                                                                            | Runtime          |
 | ---------------- | --------------------------------------------------------------------------------------- | ---------------- |
+| `pnpm install`   | One-time bootstrap — the scaffold ships without `node_modules/`, so `pnpm verify` / `pnpm dev` fail with `Cannot find package '…'` until this runs once | seconds to a minute |
 | `pnpm verify`    | `pnpm run typecheck && pnpm run test` — the green-light gate; what an agent should run as the smoke check before claiming the change works | seconds |
 | `pnpm typecheck` | TS typecheck across the worker + web project references (`tsc -b --noEmit`)            | seconds          |
 | `pnpm test`      | `vitest run --passWithNoTests` — standalone `vitest.config.ts` (Node env, ignores `vite.config.ts` so the Cloudflare plugin doesn't load) | seconds |
@@ -99,6 +100,40 @@ agent guide; the lib ships its API reference at `dist/API.md`.
      A plain `interface Bookmark { _id: string; url: string }`
      (no index signature) will fail with TS2344 — the constraint
      is intentional so the row stays JSON-compatible.
+
+- **Writing tests** — the kernel exports `MemoryStorage`, an
+  in-memory `Storage` impl that's the canonical backend for unit
+  tests. Don't roll your own — `Db.create({ storage, app, tenant,
+  config })` is the same boilerplate prod uses; passing
+  `new MemoryStorage()` swaps R2 / S3 for an in-process map.
+
+  ```ts
+  // src/notes.test.ts
+  import { test, expect } from "vitest";
+  import { Db, MemoryStorage } from "baerly-storage";
+  import config from "../baerly.config.ts";
+
+  test("notes round-trip", async () => {
+    const db = Db.create({
+      storage: new MemoryStorage(),
+      app: "test",
+      tenant: "t",
+      config,
+    });
+    const { _id } = await db.table("notes").insert({
+      body: "hello",
+      created_at: new Date().toISOString(),
+    });
+    const row = await db.table("notes").get(_id);
+    expect(row?.body).toBe("hello");
+  });
+  ```
+
+  Each `new MemoryStorage()` is a fresh bucket — no shared state
+  across tests. For multi-writer scenarios (causal-consistency
+  tests, etc.), construct one `MemoryStorage` and pass the same
+  instance into multiple `Db.create` calls so they share the
+  underlying bucket.
 
 - **Predicates** — `db.table("notes").where({...}).all()`. Top-level
   equality on fields and dotted paths, plus per-field operators
@@ -181,6 +216,20 @@ agent guide; the lib ships its API reference at `dist/API.md`.
   `.consistency("strong")` re-anchors. HTTP mirror:
   `?consistency=eventual` on `GET /v1/t/:table` and
   `GET /v1/t/:table/:id`.
+
+  `useLiveQuery` accepts the same `consistency` and `order`
+  options as an options-bag — auto-refresh list views are the
+  canonical case for `consistency: "eventual"` since the long-poll
+  subscription still fires the refetch as soon as a change lands:
+
+  ```tsx
+  const result = useLiveQuery<Note>({
+    table: "notes",
+    where: { body: "TODO" },
+    order: { created_at: "desc" },
+    consistency: "eventual",
+  });
+  ```
 
 - **Schemas (live feature)** — schemas are validated on the server
   for every `insert` / `update` / `replace` when bound. Declare via
