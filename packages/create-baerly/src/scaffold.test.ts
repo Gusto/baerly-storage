@@ -818,6 +818,40 @@ describe("scaffold", () => {
       }
     });
 
+    test("permits pre-existing files that don't collide with the scaffold (e.g. .npmrc, mise.toml)", async () => {
+      const dotRoot = await makeDotRoot("my-here-extras");
+      try {
+        // Top-level files that no template ships. They aren't in the
+        // allowlist either — under the old emptiness guard their
+        // presence would error. Under the collision guard they must
+        // survive the scaffold untouched.
+        await writeFile(join(dotRoot, ".npmrc"), "auto-install-peers=true\n");
+        await writeFile(join(dotRoot, "mise.toml"), '[tools]\nnode = "22"\n');
+        await writeFile(join(dotRoot, ".tool-versions"), "nodejs 22.0.0\n");
+        const result = await scaffold({
+          projectName: ".",
+          target: "node",
+          pm: "pnpm",
+          templatesRoot: TEMPLATES_ROOT,
+          outRoot: dotRoot,
+        });
+        expect(result.outDir).toBe(dotRoot);
+        expect(result.filesWritten).toContain("package.json");
+        // The pre-existing files survive the scaffold unchanged.
+        await expect(readFile(join(dotRoot, ".npmrc"), "utf8")).resolves.toBe(
+          "auto-install-peers=true\n",
+        );
+        await expect(readFile(join(dotRoot, "mise.toml"), "utf8")).resolves.toBe(
+          '[tools]\nnode = "22"\n',
+        );
+        await expect(readFile(join(dotRoot, ".tool-versions"), "utf8")).resolves.toBe(
+          "nodejs 22.0.0\n",
+        );
+      } finally {
+        await rm(dirname(dotRoot), { recursive: true, force: true });
+      }
+    });
+
     test("rejects when the derived appName (basename of outDir) violates the regex", async () => {
       // Nested basename intentionally contains uppercase, which the
       // regex rejects.

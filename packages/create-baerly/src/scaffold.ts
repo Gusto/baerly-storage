@@ -53,10 +53,13 @@ export interface ScaffoldResult {
 
 /**
  * When `projectName === "."` (scaffold into the current directory),
- * the "non-empty directory" guard is relaxed for these basenames so
- * a freshly `git init`'d repo with the usual top-level metadata is
- * acceptable. Any other entry (e.g. `package.json`, `src/`) still
- * fails the guard.
+ * a pre-existing entry whose basename is in this set is always
+ * permitted — even if the scaffold also ships a file by the same
+ * name (the scaffold overwrites). Other names are checked against
+ * the precomputed "would-write" set (see `topLevelOutputs`); only
+ * actual collisions fail the guard, so a pre-existing `.npmrc` /
+ * `mise.toml` / `.tool-versions` (or any other top-level metadata
+ * the user already wrote) coexists with the scaffold.
  */
 const SCAFFOLD_HERE_ALLOWLIST: ReadonlySet<string> = new Set([
   ".git",
@@ -67,6 +70,60 @@ const SCAFFOLD_HERE_ALLOWLIST: ReadonlySet<string> = new Set([
   "LICENSE.md",
   "LICENSE.txt",
 ]);
+
+/**
+ * Compute the set of top-level basenames the scaffold will emit
+ * into `outDir`. Used by the `inPlace` guard to decide which
+ * pre-existing entries actually collide.
+ *
+ * Mirrors the logic in `walk()`: applies `excludePaths` /
+ * `excludeNames`, renames `_gitignore` → `.gitignore`, and folds
+ * in the top-level destination of each `manifest.copies` entry.
+ * Add-ons layer on top of the base template via the same walker,
+ * so their top-level basenames are included here too.
+ */
+const topLevelOutputs = (
+  templateDir: string,
+  manifest: ScaffoldManifest,
+  addonDirs: readonly string[],
+): Set<string> => {
+  const excluded = new Set(manifest.excludePaths.map((p) => p.split("/").join(sep)));
+  const { literals: excludeLiterals, suffixes: excludeSuffixes } = splitExcludeNames(
+    manifest.excludeNames,
+  );
+  const matchesExcludeName = (name: string): boolean => {
+    if (excludeLiterals.has(name)) {
+      return true;
+    }
+    for (const suffix of excludeSuffixes) {
+      if (name.endsWith(suffix)) {
+        return true;
+      }
+    }
+    return false;
+  };
+  const out = new Set<string>();
+  const addTopLevel = (sourceDir: string): void => {
+    for (const ent of readdirSync(sourceDir)) {
+      if (excluded.has(ent) || matchesExcludeName(ent)) {
+        continue;
+      }
+      out.add(ent === "_gitignore" ? ".gitignore" : ent);
+    }
+  };
+  addTopLevel(templateDir);
+  for (const addonDir of addonDirs) {
+    addTopLevel(addonDir);
+  }
+  for (const copy of manifest.copies) {
+    const dest = copy.to.split("/").join(sep);
+    const firstSeg = dest.split(sep)[0];
+    if (firstSeg !== undefined && firstSeg.length > 0) {
+      out.add(firstSeg);
+    }
+  }
+  return out;
+};
 
 const TEXT_EXTS = new Set([
   ".ts",
@@ -234,21 +291,6 @@ export const scaffold = async (opts: ScaffoldOptions): Promise<ScaffoldResult> =
       `create-baerly: appName must be lowercase, alphanumeric + "_"/"-", starting with [a-z0-9] (got ${JSON.stringify(appName)}) — derived from current directory ${JSON.stringify(outDir)}`,
     );
   }
-  if (existsSync(outDir)) {
-    const entries = readdirSync(outDir);
-    if (inPlace) {
-      const offending = entries.filter((e) => !SCAFFOLD_HERE_ALLOWLIST.has(e));
-      if (offending.length > 0) {
-        throw new Error(
-          `create-baerly: ${outDir} contains files that would be overwritten: ${offending.join(", ")}. ` +
-            `Scaffold into '.' is allowed only in an empty directory (a fresh \`git init\` is fine).`,
-        );
-      }
-    } else if (entries.length > 0) {
-      throw new Error(`create-baerly: ${outDir} exists and is non-empty`);
-    }
-  }
-
   const starter = opts.starter ?? "minimal";
   const lookupKey = `${opts.target}:${starter}`;
   const exampleName = STARTER_TO_EXAMPLE[lookupKey];
@@ -260,6 +302,42 @@ export const scaffold = async (opts: ScaffoldOptions): Promise<ScaffoldResult> =
   }
 
   const manifest = loadManifest(templateDir);
+
+  // Resolve add-on directories up-front so the in-place collision
+  // check below can see their top-level outputs too, and so an
+  // unknown add-on fails fast before we start writing files.
+  const addons = opts.withAddons ?? [];
+  const addonsRoot = addons.length > 0 ? (opts.addonsRoot ?? resolveAddonsRoot()) : "";
+  const addonDirs: string[] = [];
+  for (const addon of addons) {
+    const addonDir = join(addonsRoot, addon);
+    if (!existsSync(addonDir)) {
+      throw new Error(`create-baerly: add-on directory not found: ${addonDir} (addon=${addon})`);
+    }
+    addonDirs.push(addonDir);
+  }
+
+  if (existsSync(outDir)) {
+    const entries = readdirSync(outDir);
+    if (inPlace) {
+      // Allow pre-existing files that don't collide with the scaffold:
+      // a user's `.npmrc`, `mise.toml`, `.tool-versions`, etc. should
+      // survive untouched. The allowlist (`.git`, `README.md`, …) is a
+      // strict superset — those names are permitted even when the
+      // scaffold also ships them (the scaffold overwrites).
+      const wouldWrite = topLevelOutputs(templateDir, manifest, addonDirs);
+      const colliding = entries.filter((e) => !SCAFFOLD_HERE_ALLOWLIST.has(e) && wouldWrite.has(e));
+      if (colliding.length > 0) {
+        throw new Error(
+          `create-baerly: ${outDir} contains files that would be overwritten: ${colliding.join(", ")}. ` +
+            `Move or remove these, then re-run.`,
+        );
+      }
+    } else if (entries.length > 0) {
+      throw new Error(`create-baerly: ${outDir} exists and is non-empty`);
+    }
+  }
+
   const vars: Record<string, string> = {
     appName,
     tenant,
@@ -338,20 +416,13 @@ export const scaffold = async (opts: ScaffoldOptions): Promise<ScaffoldResult> =
   walk(templateDir, "");
 
   // Layer requested add-ons on top of the base scaffold. Each add-on
-  // is a directory under `addonsRoot/<name>/`; its files are walked
-  // through the same substituter pass as the base template, reusing
-  // the host's manifest (so the appName sentinel rewrite picks up
-  // any literal in the add-on files too).
-  const addons = opts.withAddons ?? [];
-  if (addons.length > 0) {
-    const addonsRoot = opts.addonsRoot ?? resolveAddonsRoot();
-    for (const addon of addons) {
-      const addonDir = join(addonsRoot, addon);
-      if (!existsSync(addonDir)) {
-        throw new Error(`create-baerly: add-on directory not found: ${addonDir} (addon=${addon})`);
-      }
-      walk(addonDir, "");
-    }
+  // directory was already resolved + existence-checked above so the
+  // in-place collision guard could see its top-level outputs; here we
+  // just walk them through the same substituter pass as the base
+  // template (reusing the host's manifest so the appName sentinel
+  // rewrite picks up any literal in the add-on files too).
+  for (const addonDir of addonDirs) {
+    walk(addonDir, "");
   }
 
   // When scaffolding into the current directory the user is already
