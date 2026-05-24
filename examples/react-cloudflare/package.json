@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "deploy": "wrangler deploy",
-    "test": "vitest run --passWithNoTests",
+    "test": "vitest run",
     "typecheck": "tsc -b --noEmit",
     "verify": "pnpm run typecheck && pnpm run test"
   },
