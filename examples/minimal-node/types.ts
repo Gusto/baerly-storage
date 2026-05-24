@@ -20,5 +20,4 @@ import type { DocumentData } from "baerly-storage/config";
 export interface Note extends DocumentData {
   _id: string;
   body: string;
-  created_at: string;
 }

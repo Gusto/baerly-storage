@@ -9,7 +9,9 @@ import type { Note } from "../../types.ts";
 const client = createBaerlyClient({ baseUrl: "", config });
 
 const app = document.querySelector<HTMLDivElement>("#app");
-if (app === null) {throw new Error("missing #app root");}
+if (app === null) {
+  throw new Error("missing #app root");
+}
 
 const render = async (): Promise<void> => {
   const notes = await client.table<Note>("notes").all();
@@ -17,9 +19,8 @@ const render = async (): Promise<void> => {
   // innerHTML above replaced the previous button along with everything
   // else, so the new #add has no listener yet — attach a fresh one.
   app.querySelector("#add")?.addEventListener("click", async () => {
-    await client
-      .table<Note>("notes")
-      .insert({ body: "note", created_at: new Date().toISOString() });
+    // `_id` is auto-stamped UUIDv7 — sortable by server mint time, no separate timestamp column needed.
+    await client.table<Note>("notes").insert({ body: "note" });
     await render();
   });
 };

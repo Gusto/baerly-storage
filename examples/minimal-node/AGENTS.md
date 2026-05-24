@@ -98,10 +98,7 @@ agent guide; the lib ships its API reference at `dist/API.md`.
       tenant: "t",
       config,
     });
-    const { _id } = await db.table("notes").insert({
-      body: "hello",
-      created_at: new Date().toISOString(),
-    });
+    const { _id } = await db.table("notes").insert({ body: "hello" });
     const row = await db.table("notes").get(_id);
     expect(row?.body).toBe("hello");
   });
