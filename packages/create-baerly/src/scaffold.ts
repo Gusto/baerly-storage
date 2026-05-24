@@ -49,6 +49,20 @@ export interface ScaffoldResult {
   readonly outDir: string;
   readonly filesWritten: readonly string[];
   readonly nextSteps: readonly string[];
+  /**
+   * `create-baerly`'s own `package.json:version`. Stamped into the
+   * post-scaffold initial commit (when `--git` runs) so the user
+   * can grep `git log` for the scaffolder version that produced
+   * their repo.
+   */
+  readonly cliVersion: string;
+  /**
+   * The substitution sentinel that was applied to template literals.
+   * Equals `projectName` for the named-dir form and `basename(outDir)`
+   * for `create-baerly .`. Surfaced on the result so the caller can
+   * pass it through to the git-init commit body without re-deriving.
+   */
+  readonly appName: string;
 }
 
 /**
@@ -431,5 +445,5 @@ export const scaffold = async (opts: ScaffoldOptions): Promise<ScaffoldResult> =
   const nextSteps = inPlace
     ? [installCommand(pm), runCommand(pm, "dev")]
     : [`cd ${opts.projectName}`, installCommand(pm), runCommand(pm, "dev")];
-  return { outDir, filesWritten, nextSteps };
+  return { outDir, filesWritten, nextSteps, cliVersion: ctx.cliVersion, appName };
 };

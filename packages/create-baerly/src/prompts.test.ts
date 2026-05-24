@@ -86,6 +86,7 @@ describe("runWizard", () => {
       starter: "minimal",
       withAddons: [],
       install: false,
+      git: false,
     });
     expect(out).toEqual({
       projectName: "my-app",
@@ -93,6 +94,7 @@ describe("runWizard", () => {
       starter: "minimal",
       withAddons: [],
       install: false,
+      git: false,
     });
     expect(fixture.textCalls).toHaveLength(0);
     expect(fixture.selectCalls).toHaveLength(0);

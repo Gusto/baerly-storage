@@ -15,12 +15,21 @@
  *      actionable message.
  *   6. --with=junk lists the available add-ons.
  */
+import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "vitest";
+import type { GitRunner } from "./git.ts";
 import { runCreateBaerly } from "./runner.ts";
+
+/**
+ * `it.skipIf` guard for the integration tests that shell out to real
+ * git. CI runners and dev machines all have git, but it's worth being
+ * explicit so the file passes on a barebones host.
+ */
+const hasGit = spawnSync("git", ["--version"]).status === 0;
 
 const captureStream = (
   stream: NodeJS.WriteStream,
@@ -270,5 +279,243 @@ describe("create-baerly runner (non-TTY)", () => {
     // Recovery hint: the warning must also tell the user how to retry by hand.
     expect(err).toContain("npm install");
     expect(err).toContain("manually");
+  });
+});
+
+/**
+ * Tests for the optional post-scaffold `git init` + initial commit.
+ * Each test gets its own tmpdir so one test's `git init` doesn't bleed
+ * into another's "fresh tmpdir" assertions. The whole block is
+ * `skipIf(!hasGit)` so a host without `git` still passes (the runner
+ * itself reports `git-not-available` in that case — see the stubbed
+ * tests further down).
+ */
+describe.skipIf(!hasGit)("git init (integration, real git)", () => {
+  let originalCwd: string;
+  let cleanup: string[] = [];
+
+  beforeEach(() => {
+    originalCwd = process.cwd();
+    cleanup = [];
+  });
+
+  afterEach(async () => {
+    process.chdir(originalCwd);
+    for (const dir of cleanup) {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  const freshTmpdir = async (): Promise<string> => {
+    const d = await mkdtemp(join(tmpdir(), "create-baerly-git-"));
+    cleanup.push(d);
+    process.chdir(d);
+    return d;
+  };
+
+  test("--git on a fresh tmpdir creates .git/, ends on main, with one initial commit", async () => {
+    const root = await freshTmpdir();
+    const projectName = "git-init-app";
+    const stdout = captureStream(process.stdout);
+    const stderr = captureStream(process.stderr);
+    let exitCode: number;
+    try {
+      exitCode = await runCreateBaerly([projectName, "--target=cloudflare", "--git", "--json"]);
+    } finally {
+      stdout.restore();
+      stderr.restore();
+    }
+    expect(exitCode).toBe(0);
+    const outDir = join(root, projectName);
+    expect(existsSync(join(outDir, ".git"))).toBe(true);
+    // Branch is `main` regardless of which git version is on PATH —
+    // the fallback path in `initWithMainBranch` covers gits older
+    // than 2.28.
+    const branch = spawnSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
+      cwd: outDir,
+      encoding: "utf8",
+    });
+    expect(branch.stdout.trim()).toBe("main");
+    // Exactly one commit, and its subject matches the rich body's
+    // first line.
+    const log = spawnSync("git", ["log", "--oneline"], { cwd: outDir, encoding: "utf8" });
+    const lines = log.stdout.trim().split("\n");
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain("Initial commit (by create-baerly)");
+    // The commit body must include the version + target + starter
+    // stamps so a future user can grep `git log` for them.
+    const body = spawnSync("git", ["log", "-1", "--format=%B"], {
+      cwd: outDir,
+      encoding: "utf8",
+    });
+    expect(body.stdout).toContain("create-baerly = ");
+    expect(body.stdout).toContain(`project name  = ${projectName}`);
+    expect(body.stdout).toContain("target        = cloudflare");
+    expect(body.stdout).toContain("starter       = minimal");
+  });
+
+  test("--no-git does not create .git/", async () => {
+    const root = await freshTmpdir();
+    const projectName = "no-git-app";
+    const stdout = captureStream(process.stdout);
+    try {
+      const code = await runCreateBaerly([
+        projectName,
+        "--target=cloudflare",
+        "--no-git",
+        "--json",
+      ]);
+      expect(code).toBe(0);
+    } finally {
+      stdout.restore();
+    }
+    expect(existsSync(join(root, projectName, ".git"))).toBe(false);
+  });
+
+  test("default (no --git flag, non-TTY) does not run git", async () => {
+    // Mirrors the `install` flag default: in flag-driven mode, the
+    // step is opt-in. CI/agents that have never passed `--git` see
+    // no behaviour change.
+    const root = await freshTmpdir();
+    const projectName = "default-no-git-app";
+    const stdout = captureStream(process.stdout);
+    try {
+      const code = await runCreateBaerly([projectName, "--target=cloudflare", "--json"]);
+      expect(code).toBe(0);
+    } finally {
+      stdout.restore();
+    }
+    expect(existsSync(join(root, projectName, ".git"))).toBe(false);
+  });
+
+  test("--git inside an existing git repo silently skips re-init", async () => {
+    // Parent tmpdir is itself a git repo (e.g. the user is scaffolding
+    // into an existing monorepo). The scaffold proceeds, but git init
+    // is skipped — nested repos are a footgun and the host repo owns
+    // the history.
+    const root = await freshTmpdir();
+    const initRoot = spawnSync("git", ["init", "--initial-branch=main"], {
+      cwd: root,
+      encoding: "utf8",
+    });
+    expect(initRoot.status).toBe(0);
+    const projectName = "nested-app";
+    const stdout = captureStream(process.stdout);
+    const stderr = captureStream(process.stderr);
+    try {
+      const code = await runCreateBaerly([projectName, "--target=cloudflare", "--git", "--json"]);
+      expect(code).toBe(0);
+    } finally {
+      stdout.restore();
+      stderr.restore();
+    }
+    // No nested .git inside the scaffolded sub-directory.
+    expect(existsSync(join(root, projectName, ".git"))).toBe(false);
+    // And the parent repo still has no commits — `git add .` was never
+    // called on it (silent skip).
+    const log = spawnSync("git", ["log", "--oneline"], { cwd: root, encoding: "utf8" });
+    expect(log.status).not.toBe(0); // exit 128 on an empty repo
+    // The skip is silent — no "git init skipped" warning leaks to stderr.
+    expect(stderr.captured.join("")).not.toContain("git init skipped");
+  });
+});
+
+describe("git init (stubbed GitRunner)", () => {
+  let outRoot: string;
+  let originalCwd: string;
+
+  beforeAll(async () => {
+    outRoot = await mkdtemp(join(tmpdir(), "create-baerly-git-stub-"));
+  });
+
+  afterAll(async () => {
+    await rm(outRoot, { recursive: true, force: true });
+  });
+
+  beforeEach(() => {
+    originalCwd = process.cwd();
+    process.chdir(outRoot);
+  });
+
+  afterEach(() => {
+    process.chdir(originalCwd);
+  });
+
+  /**
+   * Build a `GitRunner` stub that returns canned responses per
+   * argv-prefix. The first matching prefix wins; unmatched calls
+   * default to `{ code: 0, stdout: "", stderr: "" }` so the stub is
+   * easy to read at the call site.
+   */
+  const stubRunner = (
+    canned: ReadonlyArray<{
+      readonly when: readonly string[];
+      readonly result: { code: number; stdout?: string; stderr?: string };
+    }>,
+  ): GitRunner => ({
+    run: (args) => {
+      for (const c of canned) {
+        const matches = c.when.every((w, i) => args[i] === w);
+        if (matches) {
+          return {
+            code: c.result.code,
+            stdout: c.result.stdout ?? "",
+            stderr: c.result.stderr ?? "",
+          };
+        }
+      }
+      return { code: 0, stdout: "", stderr: "" };
+    },
+  });
+
+  test("warns but exits 0 when `git --version` fails (binary not on PATH)", async () => {
+    const stdout = captureStream(process.stdout);
+    const stderr = captureStream(process.stderr);
+    let exitCode: number;
+    try {
+      exitCode = await runCreateBaerly(
+        ["no-git-binary", "--target=cloudflare", "--git", "--json"],
+        {
+          gitRunner: stubRunner([
+            { when: ["--version"], result: { code: 127, stderr: "spawn git ENOENT" } },
+          ]),
+        },
+      );
+    } finally {
+      stdout.restore();
+      stderr.restore();
+    }
+    expect(exitCode).toBe(0);
+    const err = stderr.captured.join("");
+    expect(err).toContain("git init skipped");
+    expect(err).toContain("git is not installed");
+    // Scaffold still wrote the project — the git step is best-effort.
+    expect(existsSync(join(outRoot, "no-git-binary", "package.json"))).toBe(true);
+    expect(existsSync(join(outRoot, "no-git-binary", ".git"))).toBe(false);
+  });
+
+  test("warns but exits 0 when git user.name / user.email are unset", async () => {
+    const stdout = captureStream(process.stdout);
+    const stderr = captureStream(process.stderr);
+    let exitCode: number;
+    try {
+      exitCode = await runCreateBaerly(["no-identity", "--target=cloudflare", "--git", "--json"], {
+        gitRunner: stubRunner([
+          { when: ["--version"], result: { code: 0, stdout: "git version 2.54.0\n" } },
+          { when: ["rev-parse", "--is-inside-work-tree"], result: { code: 128 } },
+          { when: ["config", "user.name"], result: { code: 1, stdout: "" } },
+          { when: ["config", "user.email"], result: { code: 1, stdout: "" } },
+        ]),
+      });
+    } finally {
+      stdout.restore();
+      stderr.restore();
+    }
+    expect(exitCode).toBe(0);
+    const err = stderr.captured.join("");
+    expect(err).toContain("git init skipped");
+    expect(err).toContain("user.name");
+    expect(existsSync(join(outRoot, "no-identity", "package.json"))).toBe(true);
+    expect(existsSync(join(outRoot, "no-identity", ".git"))).toBe(false);
   });
 });

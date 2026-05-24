@@ -12,6 +12,7 @@
  */
 import { cancel, confirm, intro, isCancel, select, text } from "@clack/prompts";
 import pc from "picocolors";
+import { defaultGitRunner, type GitRunner } from "./git.ts";
 import type { Addon } from "./scaffold.ts";
 
 const TARGETS = [
@@ -55,6 +56,14 @@ export interface WizardInput {
   readonly withAddons?: readonly Addon[];
   /** When non-undefined, skip the install confirm and use this. */
   readonly install?: boolean;
+  /**
+   * When non-undefined, skip the git-init confirm and use this. The
+   * wizard also skips the prompt — defaulting to `false` — when the
+   * current directory is already inside a git work tree, since
+   * `create-baerly` won't nest a new repo inside an existing one
+   * either way.
+   */
+  readonly git?: boolean;
 }
 
 export interface WizardOutput {
@@ -69,9 +78,13 @@ export interface WizardOutput {
   readonly starter: "minimal" | "react";
   readonly withAddons: readonly Addon[];
   readonly install: boolean;
+  readonly git: boolean;
 }
 
-export const runWizard = async (input: WizardInput): Promise<WizardOutput> => {
+export const runWizard = async (
+  input: WizardInput,
+  opts: { readonly gitRunner?: GitRunner } = {},
+): Promise<WizardOutput> => {
   intro(pc.bold(pc.cyan("create-baerly")));
   const projectName = input.projectName ?? (await promptProjectName());
   const target = input.target ?? (await promptTarget());
@@ -88,7 +101,22 @@ export const runWizard = async (input: WizardInput): Promise<WizardOutput> => {
     withAddons = [];
   }
   const install = input.install ?? (await promptInstall());
-  return { projectName, target, starter, withAddons, install };
+  // Skip the git prompt entirely when we're already inside a git
+  // work tree — `initRepoAndCommit` would skip with `already-in-repo`
+  // anyway, and asking the question would only confuse a user who
+  // can't usefully answer it. `opts.gitRunner` makes this stubbable
+  // for the wizard-flow tests. Pre-filled `input.git` short-circuits
+  // BEFORE the spawn so pure-prompt tests don't incur the side effect.
+  let git: boolean;
+  if (input.git !== undefined) {
+    git = input.git;
+  } else {
+    const gitRunner = opts.gitRunner ?? defaultGitRunner;
+    const insideRepo =
+      gitRunner.run(["rev-parse", "--is-inside-work-tree"], process.cwd()).stdout.trim() === "true";
+    git = insideRepo ? false : await promptGit();
+  }
+  return { projectName, target, starter, withAddons, install, git };
 };
 
 const promptProjectName = async (): Promise<string> => {
@@ -160,6 +188,18 @@ const promptDocker = async (): Promise<boolean> => {
 
 const promptInstall = async (): Promise<boolean> => {
   const v = await confirm({ message: "Install dependencies?", initialValue: true });
+  if (isCancel(v)) {
+    cancel("Cancelled.");
+    process.exit(1);
+  }
+  return v as boolean;
+};
+
+const promptGit = async (): Promise<boolean> => {
+  const v = await confirm({
+    message: "Initialise a git repo and create the initial commit?",
+    initialValue: true,
+  });
   if (isCancel(v)) {
     cancel("Cancelled.");
     process.exit(1);

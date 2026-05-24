@@ -4,6 +4,8 @@
  * their `create` shorthand. Defaults to `"npm"` on any parse
  * failure (most conservative — npm has the widest install base).
  */
+import { spawnSync } from "node:child_process";
+
 export type Pm = "npm" | "pnpm" | "yarn";
 
 export const detectPm = (
@@ -47,4 +49,20 @@ export const runCommand = (pm: Pm, script: string): string => {
     return `yarn ${script}`;
   }
   return `npm run ${script}`;
+};
+
+/**
+ * Best-effort `<pm> --version` probe. Returns the trimmed version
+ * string on success, or `undefined` if the pm binary can't be
+ * spawned or returns non-zero. Used by the `git init` commit-message
+ * body — a missing pm version is a stylistic loss, not a hard error,
+ * so callers should pass the result through unchecked.
+ */
+export const probePmVersion = (pm: Pm): string | undefined => {
+  const res = spawnSync(pm, ["--version"], { encoding: "utf8" });
+  if (res.error !== undefined || res.status !== 0) {
+    return undefined;
+  }
+  const out = (res.stdout ?? "").trim();
+  return out.length > 0 ? out : undefined;
 };

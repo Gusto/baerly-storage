@@ -28,7 +28,8 @@ import pc from "picocolors";
 import { runWizard } from "./prompts.ts";
 import { type Addon, KNOWN_ADDONS, scaffold } from "./scaffold.ts";
 import { defaultInstaller, type Installer } from "./install.ts";
-import { detectPm } from "./pm-detect.ts";
+import { detectPm, probePmVersion } from "./pm-detect.ts";
+import { defaultGitRunner, type GitRunner, initRepoAndCommit } from "./git.ts";
 
 export const CREATE_BAERLY_ARGS = {
   projectName: {
@@ -68,6 +69,11 @@ export const CREATE_BAERLY_ARGS = {
     type: "boolean",
     description: "Run <pm> install after writing files (default false).",
   },
+  git: {
+    type: "boolean",
+    description:
+      "Initialise a git repo + create the initial commit after scaffold (default true in wizard, false in flag-driven mode). Negate with --no-git.",
+  },
   with: {
     type: "string",
     description:
@@ -87,7 +93,7 @@ export const CREATE_BAERLY_ARGS = {
 
 export const handleCreateBaerly = async (
   args: ParsedArgs<typeof CREATE_BAERLY_ARGS>,
-  opts: { readonly installer?: Installer } = {},
+  opts: { readonly installer?: Installer; readonly gitRunner?: GitRunner } = {},
 ): Promise<number> => {
   try {
     const isInteractive = process.stdin.isTTY === true && args.json !== true;
@@ -118,6 +124,7 @@ export const handleCreateBaerly = async (
     let starter: "minimal" | "react";
     let withAddons: readonly Addon[];
     let install: boolean;
+    let git: boolean;
     if (wantWizard) {
       const w = await runWizard({
         projectName: args.projectName,
@@ -125,12 +132,14 @@ export const handleCreateBaerly = async (
         starter: args.starter,
         withAddons: withAddonsFromFlag,
         install: args.install,
+        git: args.git,
       });
       projectName = w.projectName;
       target = w.target;
       starter = w.starter;
       withAddons = w.withAddons;
       install = w.install;
+      git = w.git;
     } else {
       if (args.projectName === undefined) {
         throw new Error("projectName is required (positional)");
@@ -149,6 +158,12 @@ export const handleCreateBaerly = async (
       // explicitly passed --install. Today's CI/agent callers see no
       // behavior change because they never pass --install.
       install = args.install === true;
+      // Same shape as `install`: in flag-driven mode the default is off
+      // so CI / agents see no behavior change unless they opt in with
+      // `--git`. The wizard branch defaults to `true` because a fresh
+      // scaffold without a baseline commit is a strict downgrade for
+      // anyone iterating against `git diff`.
+      git = args.git === true;
     }
     // Cross-field validation: today the only add-on is `docker`,
     // which only applies to `--target=node`. Catch the mismatch
@@ -170,9 +185,48 @@ export const handleCreateBaerly = async (
       ...(args.pm !== undefined && { pm: args.pm as "npm" | "pnpm" | "yarn" }),
       ...(withAddons.length > 0 && { withAddons }),
     });
+    // Resolve the package manager once; both the git commit body and
+    // the optional install step read it.
+    const pm = (args.pm as "npm" | "pnpm" | "yarn" | undefined) ?? detectPm();
+    // Git init runs BEFORE install so the initial commit captures the
+    // scaffold contents only — `node_modules/` is gitignored by the
+    // template, but committing pre-install also keeps `git diff` from
+    // the start matching exactly what `scaffold()` wrote.
+    if (git) {
+      const gitRunner = opts.gitRunner ?? defaultGitRunner;
+      const pmVersion = probePmVersion(pm);
+      const outcome = initRepoAndCommit(
+        {
+          outDir: result.outDir,
+          cliVersion: result.cliVersion,
+          appName: result.appName,
+          target,
+          starter,
+          pm,
+          ...(pmVersion !== undefined && { pmVersion }),
+        },
+        gitRunner,
+      );
+      if (!outcome.initialized && outcome.reason !== "already-in-repo") {
+        // `already-in-repo` is a *silent* skip — the user opted into
+        // scaffold-in-place inside an existing repo, so init would be
+        // an error. Every other skip is worth surfacing so the user
+        // knows the scaffold succeeded but the git step did not.
+        const detail =
+          outcome.message === undefined || outcome.message.length === 0
+            ? ""
+            : `: ${outcome.message}`;
+        let hint = `${outcome.reason}${detail}`;
+        if (outcome.reason === "git-not-available") {
+          hint = `git is not installed; install it then run \`git init && git add . && git commit -m '…'\` in ${result.outDir}.`;
+        } else if (outcome.reason === "no-identity") {
+          hint = `git user.name / user.email are not configured. Set them with \`git config --global user.name '…'\` + \`git config --global user.email '…'\`, then commit manually.`;
+        }
+        process.stderr.write(`${pc.yellow("create-baerly:")} git init skipped — ${hint}\n`);
+      }
+    }
     if (install) {
       const installer = opts.installer ?? defaultInstaller;
-      const pm = (args.pm as "npm" | "pnpm" | "yarn" | undefined) ?? detectPm();
       const { code } = await installer.run(pm, result.outDir);
       if (code !== 0) {
         process.stderr.write(
@@ -245,7 +299,7 @@ export const main = defineCommand({
  */
 export const runCreateBaerly = async (
   argv: readonly string[],
-  opts: { readonly installer?: Installer } = {},
+  opts: { readonly installer?: Installer; readonly gitRunner?: GitRunner } = {},
 ): Promise<number> => {
   let parsed: ParsedArgs<typeof CREATE_BAERLY_ARGS>;
   try {

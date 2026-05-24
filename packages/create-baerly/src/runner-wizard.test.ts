@@ -42,6 +42,8 @@ describe("runner wizard → scaffold plumbing", () => {
       outDir: "/tmp/scaffold-stub",
       filesWritten: [],
       nextSteps: [],
+      cliVersion: "0.0.0-stub",
+      appName: "stub",
     });
   });
 
@@ -60,6 +62,7 @@ describe("runner wizard → scaffold plumbing", () => {
       starter: "react",
       withAddons: [],
       install: false,
+      git: false,
     });
     // Omitting the positional `projectName` forces wantWizard=true.
     const code = await runCreateBaerly([]);
@@ -78,6 +81,7 @@ describe("runner wizard → scaffold plumbing", () => {
       starter: "react",
       withAddons: [],
       install: false,
+      git: false,
     });
     // projectName missing → wizard fires; --starter=react is forwarded
     // as wizard input so the prompt can be skipped.
