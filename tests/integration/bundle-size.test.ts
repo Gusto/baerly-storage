@@ -43,6 +43,18 @@ import { formatBundleSizeLine } from "../helpers/bundle-size-report.ts";
 // budget bump — either justify it and raise the number, or refactor
 // behind another subpath.
 
+// The `baerly` CLI bin is intentionally NOT budgeted. citty-cleanup
+// lazy-loaded all 14 subcommands behind dynamic import, so the
+// static-import closure this test measures is just the entry shim
+// (~28 KiB) and tells nothing about what any subcommand actually
+// pays at runtime. The CLI runs on developer machines or CI, never
+// ships in a user app bundle, and Node startup dwarfs any sub-MB
+// parse cost — so cold-start size here is not a useful signal. The
+// `BUNDLED_OPTIONAL_PEERS` check further down still walks
+// `dist/baerly.js` to catch live imports of `@xmldom/xmldom` /
+// `aws4fetch` (the original agent-struggle #14 regression class);
+// that's a behavioural guard, not a byte budget.
+
 interface Budget {
   /** Entry filename under `dist/`. */
   entry: string;
@@ -354,32 +366,6 @@ const BUDGETS: readonly Budget[] = [
   //     too. Dev-only Node import — never enters a consumer bundle.
   //     Measured: 731315 raw / 201995 gz.
   { entry: "dev-vite.js", raw: 780 * 1024, gz: 215 * 1024 },
-  // `baerly` CLI bin — `init`, `dev`, `deploy`, `doctor`, `inspect`,
-  // `admin {compact,fsck,migrate,dump,restore,rebuild-index}`,
-  // `export`. Bundled as a single file (no static chunk splits)
-  // with a `#!/usr/bin/env node` shebang. Not a library entry —
-  // bundling a CLI bin is concerns-separate from the library
-  // subpath exports — but budgeted here so cold-start cost stays
-  // observable.
-  // Budget history:
-  //   → 567 KiB raw / 159 KiB gz: initial budget set in T9 based on
-  //     post-T8 measurement (562 KiB raw / 157 KiB gz). CLI carries
-  //     the kernel + maintenance + export + clack subgraphs and
-  //     transitive `tsx` shim — large by design.
-  //   → 570 KiB raw / 159 KiB gz: client-terminals-silently-lie
-  //     follow-up. CLI bundles the kernel barrel, which now carries
-  //     the new HTTP routes + parseOrder/parseLimit. +2032 raw, gz
-  //     unchanged.
-  //   → 571 KiB raw / 159 KiB gz: adapter-collections-wiring landed
-  //     `collectionsToMaps` (+ two frozen empty-map sentinels) on the
-  //     server barrel for the adapter flatten path. +899 raw, gz still
-  //     under budget. Dead code from the CLI's perspective but the
-  //     CLI imports the barrel by design.
-  //   → 590 KiB raw / 165 KiB gz: hono-node-server pivot. `baerly dev`
-  //     mounts the adapter via `getRequestListener(createApp(opts).fetch)`,
-  //     so the `@hono/node-server` listener chunk + Hono itself land in
-  //     the single-file CLI bundle. Measured: 601911 raw / 168282 gz.
-  { entry: "baerly.js", raw: 590 * 1024, gz: 165 * 1024 },
 ];
 
 // Static-import specifiers only. Dynamic `import(...)` is intentionally
