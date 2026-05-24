@@ -59,6 +59,11 @@ export default defineConfig({
     dir: "dist",
     format: "esm",
     sourcemap: true,
+    // Wipe `dist/` before each build. Stale files (e.g. an `AGENTS.md`
+    // copy from before we renamed the quickref to `API.md`) would
+    // otherwise survive incremental rebuilds and ship via the
+    // package.json `files: ["dist"]` field.
+    cleanDir: true,
   },
   plugins: [dts({ tsgo: true }), copyApiQuickref()],
 });
