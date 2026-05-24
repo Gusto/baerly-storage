@@ -332,8 +332,22 @@ auto-load on matching edits and point at the same files.
 
 ## Anti-patterns
 
-- ❌ Adding dependencies. The runtime footprint is intentionally small
-  (`aws4fetch`, `idb-keyval`, `@xmldom/xmldom`). Justify any addition.
+- ❌ Adding **runtime** dependencies to anything that ships to user
+  apps. The runtime footprint of `baerly-storage` and the adapters
+  is intentionally small (`aws4fetch`, `idb-keyval`,
+  `@xmldom/xmldom`); every additional dep widens the kernel bundle
+  and the audit surface for users. Justify any addition.
+- ✅ **Build-time / CLI / dev-tooling deps are fair game.** Inside
+  `packages/create-baerly/`, `packages/cli/`, `packages/dev/`,
+  `bench/`, `manual-e2e/`, `scripts/`, and `examples/*/devDependencies`,
+  prefer a well-maintained dep over reinventing it in-house. None
+  of this code ends up in a user's production bundle, so the
+  trade-off flips: the cost is one more line in our lockfile, the
+  benefit is less undifferentiated heavy lifting we own forever.
+  Examples worth reaching for here: `@clack/prompts`,
+  `nypm`, `citty`. Still pick maintained, narrow,
+  ESM-friendly packages — but the default answer is "yes, take the
+  dep" rather than "justify it."
 - ❌ Widening a branded type to its base (`as string`, `as number`).
 - ❌ Skipping or `.skip()`'ing a test to ship. If a test is wrong, fix it;
   if the code is wrong, fix the code.
