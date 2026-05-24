@@ -1,31 +1,37 @@
-import { useState } from "react";
-import { BaerlyProvider } from "baerly-storage/client/react";
+import { BaerlyProvider, useInsert } from "baerly-storage/client/react";
 import { client } from "./client.ts";
 import { NoteList } from "./NoteList.tsx";
-import { NoteDetail } from "./NoteDetail.tsx";
-import { NoteForm } from "./NoteForm.tsx";
+import type { Note } from "../../types.ts";
 
-type View = { kind: "list" } | { kind: "detail"; id: string } | { kind: "edit"; id?: string };
-
-export const App = () => {
-  const [view, setView] = useState<View>({ kind: "list" });
+const NewNoteForm = () => {
+  const { mutate: insertNote, isPending, error } = useInsert<Note>({ table: "notes" });
   return (
-    <BaerlyProvider client={client}>
-      <div className="app">
-        <header className="app-header">
-          <h1>Notes</h1>
-          <button onClick={() => setView({ kind: "edit" })}>+ New note</button>
-        </header>
-        {view.kind === "list" && <NoteList onOpen={(id) => setView({ kind: "detail", id })} />}
-        {view.kind === "detail" && (
-          <NoteDetail
-            id={view.id}
-            onEdit={() => setView({ kind: "edit", id: view.id })}
-            onBack={() => setView({ kind: "list" })}
-          />
-        )}
-        {view.kind === "edit" && <NoteForm id={view.id} onDone={() => setView({ kind: "list" })} />}
-      </div>
-    </BaerlyProvider>
+    <form
+      className="new-note"
+      onSubmit={async (e) => {
+        e.preventDefault();
+        const form = e.currentTarget;
+        const body = String(new FormData(form).get("body")).trim();
+        if (body.length === 0) {return;}
+        await insertNote({ body });
+        form.reset();
+      }}
+    >
+      <textarea name="body" placeholder="Write a note…" rows={2} required />
+      <button type="submit" disabled={isPending}>
+        {isPending ? "Saving…" : "Add note"}
+      </button>
+      {error && <p className="error">Save failed: {error.message}</p>}
+    </form>
   );
 };
+
+export const App = () => (
+  <BaerlyProvider client={client}>
+    <div className="app">
+      <h1>Notes</h1>
+      <NewNoteForm />
+      <NoteList />
+    </div>
+  </BaerlyProvider>
+);

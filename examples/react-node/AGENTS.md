@@ -130,10 +130,7 @@ agent guide; the lib ships its API reference at `dist/API.md`.
       tenant: "t",
       config,
     });
-    const { _id } = await db.table("notes").insert({
-      body: "hello",
-      created_at: new Date().toISOString(),
-    });
+    const { _id } = await db.table("notes").insert({ body: "hello" });
     const row = await db.table("notes").get(_id);
     expect(row?.body).toBe("hello");
   });
@@ -238,7 +235,7 @@ agent guide; the lib ships its API reference at `dist/API.md`.
   const result = useLiveQuery<Note>({
     table: "notes",
     where: { body: "TODO" },
-    order: { created_at: "desc" },
+    order: { _id: "desc" },
     consistency: "eventual",
   });
   ```
@@ -255,7 +252,6 @@ agent guide; the lib ships its API reference at `dist/API.md`.
   const Note = z.object({
     _id: z.string(),
     body: z.string().min(1),
-    created_at: z.string(),
   });
 
   export default defineConfig({
@@ -443,7 +439,6 @@ import { z } from "zod";
 export const NoteSchema = z.object({
   _id: z.string(),
   body: z.string().min(1),
-  created_at: z.string(),
   status: z.enum(["open", "in_progress", "closed"]),
 });
 ```
@@ -511,7 +506,6 @@ on some rows). Zod's `.optional()` models this:
 export const NoteSchema = z.object({
   _id: z.string(),
   body: z.string().min(1),
-  created_at: z.string(),
   tags: z.array(z.string()).optional(),     // tags?: string[]
 });
 ```

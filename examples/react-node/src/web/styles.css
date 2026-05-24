@@ -9,14 +9,23 @@ body {
   margin: 0 auto;
 }
 
-.app-header {
-  display: flex;
-  justify-content: space-between;
+.app h1 {
+  margin: 0 0 24px;
+}
+
+.new-note {
   margin-bottom: 24px;
 }
 
-.app-header h1 {
-  margin: 0;
+.new-note textarea,
+.note-row textarea {
+  display: block;
+  width: 100%;
+  resize: vertical;
+}
+
+.new-note button {
+  margin-top: 8px;
 }
 
 .note-list {
@@ -24,40 +33,20 @@ body {
   padding: 0;
 }
 
-.note-list li {
-  padding: 8px 12px;
+.note-row {
+  padding: 12px 0;
   border-bottom: 1px solid #eee;
-  cursor: pointer;
-}
-
-.muted {
-  color: #666;
-}
-
-.error,
-.danger {
-  color: crimson;
-}
-
-.note-body {
-  white-space: pre-wrap;
-  margin-top: 16px;
 }
 
 .actions {
-  margin-top: 16px;
+  margin-top: 8px;
 }
 
 .actions button + button {
   margin-left: 8px;
 }
 
-.field {
-  margin-bottom: 12px;
-}
-
-.field textarea {
-  display: block;
-  width: 100%;
-  margin-top: 4px;
+.error,
+.danger {
+  color: crimson;
 }

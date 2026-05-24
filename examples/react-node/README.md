@@ -32,11 +32,9 @@ react-node/
 │   │   └── index.ts          # baerlyNode({ app, storage, verifier, webRoot, maintenance? }).listen(PORT)
 │   └── web/
 │       ├── main.tsx          # React entry
-│       ├── App.tsx           # Provider + view router
+│       ├── App.tsx           # Provider + new-note form (useInsert)
 │       ├── client.ts         # BaerlyClient bound to this config
-│       ├── NoteList.tsx      # useLiveQuery
-│       ├── NoteDetail.tsx    # useLiveDocument + useDelete
-│       └── NoteForm.tsx      # useInsert + useUpdate
+│       └── NoteList.tsx      # useLiveQuery + per-row useUpdate / useDelete
 └── README.md
 ```
 
@@ -56,9 +54,9 @@ one process, one port, SPA + HMR + `/v1/*` in one command. Storage is
 `LocalFsStorage` rooted at `.baerly-data/`, so first-touch needs no
 S3 creds, no JWKS, and no second process.
 
-Open <http://localhost:5173>. Type a note, hit Create. Open a second
-tab — edits in one tab appear in the other over the `/v1/since`
-long-poll.
+Open <http://localhost:5173>. Type a note, hit "Add note." Open a
+second tab — inserts, edits, and deletes in one tab appear in the
+other over the `/v1/since` long-poll.
 
 For production-shaped local runs (S3, the verifier of your choice,
 and the bundled SPA served from `dist/client/`):
@@ -118,7 +116,6 @@ the UI through `import type { Note }`.
 export const NoteSchema = z.object({
   _id: z.string(),
   body: z.string().min(1),
-  created_at: z.string(),
   // Add fields here:
   tags: z.array(z.string()).optional(),
 });

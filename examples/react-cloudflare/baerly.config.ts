@@ -9,17 +9,17 @@ import { defineConfig } from "baerly-storage/config";
 export const NoteSchema = z.object({
   // Auto-stamped by the kernel on insert (UUIDv7) — never provide it from the
   // client. Declared here so `z.infer<typeof NoteSchema>` produces a row type
-  // that includes `_id`, which the UI reads via `n._id`.
+  // that includes `_id`, which the UI reads via `n._id`. UUIDv7 sorts
+  // by server mint time, so the list orders newest-first via `_id` —
+  // no separate `created_at` column needed.
   _id: z.string(),
   body: z.string().min(1),
-  created_at: z.string(),
 });
 
 export default defineConfig({
   app: "react-cloudflare",
   tenant: "react-demo",
   target: "cloudflare",
-  domain: undefined,
   collections: {
     notes: { schema: NoteSchema },
   },

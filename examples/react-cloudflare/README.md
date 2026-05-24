@@ -26,11 +26,9 @@ react-cloudflare/
 │   │   └── index.ts          # baerlyWorker((env) => ({ verifier }))
 │   └── web/
 │       ├── main.tsx          # React entry
-│       ├── App.tsx           # Provider + view router
+│       ├── App.tsx           # Provider + new-note form (useInsert)
 │       ├── client.ts         # BaerlyClient bound to this config
-│       ├── NoteList.tsx      # useLiveQuery
-│       ├── NoteDetail.tsx    # useLiveDocument + useDelete
-│       └── NoteForm.tsx      # useInsert + useUpdate
+│       └── NoteList.tsx      # useLiveQuery + per-row useUpdate / useDelete
 └── README.md
 ```
 
@@ -47,9 +45,9 @@ inside `workerd` next to the SPA dev server, so the SPA and `/v1/*`
 share an origin (`http://localhost:5173`). First run downloads the
 `workerd` binary.
 
-Open <http://localhost:5173>. Type a note, hit Create. Open a
-second tab — edits in one tab appear in the other over the
-`/v1/since` long-poll.
+Open <http://localhost:5173>. Type a note, hit "Add note." Open a
+second tab — inserts, edits, and deletes in one tab appear in the
+other over the `/v1/since` long-poll.
 
 `pnpm build` runs `tsc -b && vite build`; the SPA lands in
 `dist/client/` for the `assets:` binding in `wrangler.jsonc` to
@@ -74,7 +72,6 @@ the UI through `import type { Note }`.
 export const NoteSchema = z.object({
   _id: z.string(),
   body: z.string().min(1),
-  created_at: z.string(),
   // Add fields here:
   tags: z.array(z.string()).optional(),
 });

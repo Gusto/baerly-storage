@@ -120,10 +120,7 @@ agent guide; the lib ships its API reference at `dist/API.md`.
       tenant: "t",
       config,
     });
-    const { _id } = await db.table("notes").insert({
-      body: "hello",
-      created_at: new Date().toISOString(),
-    });
+    const { _id } = await db.table("notes").insert({ body: "hello" });
     const row = await db.table("notes").get(_id);
     expect(row?.body).toBe("hello");
   });
@@ -186,7 +183,7 @@ agent guide; the lib ships its API reference at `dist/API.md`.
 
   With that declared, `db.table("notes").where({ body: "TODO" }).all()`
   walks `by_body` automatically. Composite indexes (`on: ["body",
-  "created_at"]`) match any leftmost prefix. Mismatches (predicate
+  "tag"]`) match any leftmost prefix. Mismatches (predicate
   doesn't cover any index) fall back to a full table scan with a
   metric bump; correctness is preserved because the reader re-checks
   the predicate in memory regardless of how it got the row set.
@@ -226,7 +223,7 @@ agent guide; the lib ships its API reference at `dist/API.md`.
   const result = useLiveQuery<Note>({
     table: "notes",
     where: { body: "TODO" },
-    order: { created_at: "desc" },
+    order: { _id: "desc" },
     consistency: "eventual",
   });
   ```
@@ -243,7 +240,6 @@ agent guide; the lib ships its API reference at `dist/API.md`.
   const Note = z.object({
     _id: z.string(),
     body: z.string().min(1),
-    created_at: z.string(),
   });
 
   export default defineConfig({
@@ -452,7 +448,6 @@ import { z } from "zod";
 export const NoteSchema = z.object({
   _id: z.string(),
   body: z.string().min(1),
-  created_at: z.string(),
   status: z.enum(["open", "in_progress", "closed"]),
 });
 ```
@@ -520,7 +515,6 @@ on some rows). Zod's `.optional()` models this:
 export const NoteSchema = z.object({
   _id: z.string(),
   body: z.string().min(1),
-  created_at: z.string(),
   tags: z.array(z.string()).optional(),     // tags?: string[]
 });
 ```
