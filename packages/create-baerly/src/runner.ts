@@ -121,10 +121,10 @@ export const handleCreateBaerly = async (
     if (wantWizard) {
       const w = await runWizard({
         projectName: args.projectName,
-        ...(args.target !== undefined && { target: args.target }),
-        ...(args.starter !== undefined && { starter: args.starter }),
-        ...(withAddonsFromFlag !== undefined && { withAddons: withAddonsFromFlag }),
-        ...(args.install !== undefined && { install: args.install }),
+        target: args.target,
+        starter: args.starter,
+        withAddons: withAddonsFromFlag,
+        install: args.install,
       });
       projectName = w.projectName;
       target = w.target;
