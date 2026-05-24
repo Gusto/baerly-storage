@@ -5,6 +5,7 @@
  * each `it` can swap in the value (or `isCancel` sentinel) it needs.
  */
 import { describe, expect, test, vi } from "vitest";
+import type { ScaffoldWizardOutput } from "./prompts.ts";
 
 // `isCancel` returns true when the underlying prompt return value is
 // this sentinel symbol. The clack source uses a distinct cancel
@@ -53,6 +54,9 @@ vi.mock("@clack/prompts", () => ({
   outro: (_msg: string) => {
     /* not exercised by these tests */
   },
+  note: (_msg: string) => {
+    /* not exercised by these tests */
+  },
   text: async (opts: unknown) => {
     fixture.textCalls.push(opts);
     return fixture.textValue;
@@ -89,6 +93,7 @@ describe("runWizard", () => {
       git: false,
     });
     expect(out).toEqual({
+      mode: "scaffold",
       projectName: "my-app",
       target: "cloudflare",
       starter: "minimal",
@@ -108,7 +113,7 @@ describe("runWizard", () => {
     fixture.selectValue = "cloudflare";
     fixture.confirmValue = true;
     const runWizard = await importRunWizard();
-    const out = await runWizard({});
+    const out = (await runWizard({})) as ScaffoldWizardOutput;
     expect(out.projectName).toBe("my-app");
     expect(out.target).toBe("cloudflare");
     expect(out.starter).toBe("cloudflare"); // mock returns selectValue for both target + starter selects
@@ -128,7 +133,7 @@ describe("runWizard", () => {
     // both the docker confirm and the install confirm see `true`.
     fixture.confirmValue = true;
     const runWizard = await importRunWizard();
-    const out = await runWizard({ starter: "minimal" });
+    const out = (await runWizard({ starter: "minimal" })) as ScaffoldWizardOutput;
     expect(out.target).toBe("node");
     expect(out.withAddons).toEqual(["docker"]);
     expect(out.install).toBe(true);
@@ -142,7 +147,7 @@ describe("runWizard", () => {
     fixture.selectValue = "node";
     fixture.confirmValue = false;
     const runWizard = await importRunWizard();
-    const out = await runWizard({ starter: "minimal" });
+    const out = (await runWizard({ starter: "minimal" })) as ScaffoldWizardOutput;
     expect(out.target).toBe("node");
     expect(out.withAddons).toEqual([]);
     expect(out.install).toBe(false);
@@ -154,11 +159,11 @@ describe("runWizard", () => {
     fixture.textValue = "my-app";
     fixture.confirmValue = true;
     const runWizard = await importRunWizard();
-    const out = await runWizard({
+    const out = (await runWizard({
       target: "node",
       starter: "minimal",
       withAddons: ["docker"],
-    });
+    })) as ScaffoldWizardOutput;
     expect(out.withAddons).toEqual(["docker"]);
     expect(out.install).toBe(true);
     // Only the install confirm fires — the docker confirm is skipped
@@ -279,13 +284,13 @@ describe("runWizard", () => {
     resetFixture();
     fixture.confirmValue = true;
     const runWizard = await importRunWizard();
-    const out = await runWizard({
+    const out = (await runWizard({
       projectName: "my-app",
       target: "cloudflare",
       starter: "react",
       withAddons: [],
       install: true,
-    });
+    })) as ScaffoldWizardOutput;
     expect(out.starter).toBe("react");
     // No select calls fired: target was pre-filled, starter was pre-filled.
     expect(fixture.selectCalls).toHaveLength(0);
@@ -298,12 +303,12 @@ describe("runWizard", () => {
     fixture.selectValue = "react";
     fixture.confirmValue = false;
     const runWizard = await importRunWizard();
-    const out = await runWizard({
+    const out = (await runWizard({
       projectName: "my-app",
       target: "cloudflare",
       withAddons: [],
       install: false,
-    });
+    })) as ScaffoldWizardOutput;
     expect(out.starter).toBe("react");
     expect(fixture.selectCalls).toHaveLength(1);
   });

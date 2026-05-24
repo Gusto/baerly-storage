@@ -25,8 +25,11 @@
 import { defineCommand, parseArgs, type ArgsDef, type ParsedArgs } from "citty";
 import { outro } from "@clack/prompts";
 import pc from "picocolors";
+import { existsSync } from "node:fs";
+import { resolve } from "node:path";
 import { runWizard } from "./prompts.ts";
 import { type Addon, KNOWN_ADDONS, scaffold } from "./scaffold.ts";
+import { boltOnExistingWrangler } from "./bolt-on.ts";
 import { defaultInstaller, type Installer } from "./install.ts";
 import { detectPm, probePmVersion } from "./pm-detect.ts";
 import { defaultGitRunner, type GitRunner, initRepoAndCommit } from "./git.ts";
@@ -69,6 +72,11 @@ export const CREATE_BAERLY_ARGS = {
     type: "boolean",
     description: "Run <pm> install after writing files (default false).",
   },
+  force: {
+    type: "boolean",
+    description:
+      "In bolt-on mode, overwrite an existing baerly.config.ts (no-op in scaffold mode).",
+  },
   git: {
     type: "boolean",
     description:
@@ -91,12 +99,99 @@ export const CREATE_BAERLY_ARGS = {
   },
 } as const satisfies ArgsDef;
 
+const resolveOutDir = (projectName: string): string =>
+  projectName === "." ? process.cwd() : resolve(process.cwd(), projectName);
+
+interface DispatchBoltOnOpts {
+  readonly outDir: string;
+  readonly tenant: string;
+  readonly force: boolean;
+  readonly install: boolean;
+  readonly pm: "npm" | "pnpm" | "yarn" | undefined;
+  readonly json: boolean;
+  readonly isInteractive: boolean;
+  readonly installer: Installer | undefined;
+}
+
+const dispatchBoltOn = async (opts: DispatchBoltOnOpts): Promise<number> => {
+  try {
+    const result = await boltOnExistingWrangler({
+      outDir: opts.outDir,
+      tenant: opts.tenant,
+      ...(opts.force && { force: true }),
+      runInstall: opts.install,
+      ...(opts.pm !== undefined && { pm: opts.pm }),
+      ...(opts.installer !== undefined && { installer: opts.installer }),
+    });
+    if (opts.json) {
+      process.stdout.write(
+        `${JSON.stringify({
+          result: {
+            command: "create-baerly",
+            status: "ok",
+            mode: "bolt-on",
+            outDir: opts.outDir,
+            app: result.app,
+            tenant: result.tenant,
+            changes: result.changes,
+            snippet: result.snippet,
+            snippetTarget: result.snippetTarget,
+            nextSteps: result.nextSteps,
+          },
+        })}\n`,
+      );
+    } else if (opts.isInteractive) {
+      const changesBlock =
+        result.changes.length === 0
+          ? "  (no changes — already bolted on)"
+          : result.changes.map((c) => `  ${c}`).join("\n");
+      outro(
+        `${pc.green("✓")} bolted baerly onto ${opts.outDir}\n\n` +
+          `Changes:\n${changesBlock}\n\n` +
+          `Paste this into ${result.snippetTarget}, replacing the stock handler:\n\n` +
+          result.snippet +
+          `\nNext steps:\n` +
+          result.nextSteps.map((s) => `  ${s}`).join("\n"),
+      );
+    } else {
+      process.stdout.write(`${pc.green("✓")} bolted baerly onto ${opts.outDir}\n`);
+      if (result.changes.length > 0) {
+        process.stdout.write(`\n  Changes:\n`);
+        for (const c of result.changes) {
+          process.stdout.write(`    ${c}\n`);
+        }
+      }
+      process.stdout.write(
+        `\n  Paste this into ${result.snippetTarget}, replacing the stock handler:\n\n`,
+      );
+      process.stdout.write(result.snippet);
+      process.stdout.write(`\n  Next steps:\n`);
+      for (const s of result.nextSteps) {
+        process.stdout.write(`    ${s}\n`);
+      }
+      process.stdout.write("\n");
+    }
+    return 0;
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    if (opts.json) {
+      process.stderr.write(
+        `${JSON.stringify({ error: { code: "InvalidConfig", message: msg, command: "create-baerly" } })}\n`,
+      );
+    } else {
+      process.stderr.write(`${pc.red("create-baerly:")} ${msg}\n`);
+    }
+    return 1;
+  }
+};
+
 export const handleCreateBaerly = async (
   args: ParsedArgs<typeof CREATE_BAERLY_ARGS>,
   opts: { readonly installer?: Installer; readonly gitRunner?: GitRunner } = {},
 ): Promise<number> => {
+  const jsonMode = args.json === true;
   try {
-    const isInteractive = process.stdin.isTTY === true && args.json !== true;
+    const isInteractive = process.stdin.isTTY === true && !jsonMode;
     const wantWizard =
       isInteractive && (args.projectName === undefined || args.target === undefined);
     // Parse `--with=docker,…` early so both the flag-driven and
@@ -133,7 +228,20 @@ export const handleCreateBaerly = async (
         withAddons: withAddonsFromFlag,
         install: args.install,
         git: args.git,
+        ...(args.tenant !== undefined && { tenant: args.tenant }),
       });
+      if (w.mode === "bolt-on") {
+        return await dispatchBoltOn({
+          outDir: resolveOutDir(w.projectName),
+          tenant: w.tenant,
+          force: args.force === true,
+          install: w.install,
+          pm: args.pm as "npm" | "pnpm" | "yarn" | undefined,
+          json: jsonMode,
+          isInteractive,
+          installer: opts.installer,
+        });
+      }
       projectName = w.projectName;
       target = w.target;
       starter = w.starter;
@@ -144,10 +252,29 @@ export const handleCreateBaerly = async (
       if (args.projectName === undefined) {
         throw new Error("projectName is required (positional)");
       }
+      projectName = args.projectName;
+      const outDir = resolveOutDir(projectName);
+      if (args.target === "node" && existsSync(resolve(outDir, "wrangler.jsonc"))) {
+        throw new Error(
+          "create-baerly: detected wrangler.jsonc but --target=node was passed. " +
+            "Bolt-on only supports Cloudflare. Remove --target=node, or move out of this directory to scaffold a Node app.",
+        );
+      }
+      if (existsSync(resolve(outDir, "wrangler.jsonc"))) {
+        return await dispatchBoltOn({
+          outDir,
+          tenant: args.tenant ?? "default",
+          force: args.force === true,
+          install: args.install === true,
+          pm: args.pm as "npm" | "pnpm" | "yarn" | undefined,
+          json: jsonMode,
+          isInteractive,
+          installer: opts.installer,
+        });
+      }
       if (args.target === undefined) {
         throw new Error(`--target is required when not running in wizard mode (got undefined)`);
       }
-      projectName = args.projectName;
       target = args.target;
       // Flag-driven path: scaffold() defaults to "minimal" internally,
       // so the explicit fallback here keeps the local `starter` type
@@ -235,7 +362,7 @@ export const handleCreateBaerly = async (
         );
       }
     }
-    if (args.json === true) {
+    if (jsonMode) {
       process.stdout.write(
         `${JSON.stringify({
           result: {
@@ -266,7 +393,7 @@ export const handleCreateBaerly = async (
     return 0;
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
-    if (args.json === true) {
+    if (jsonMode) {
       process.stderr.write(
         `${JSON.stringify({ error: { code: "InvalidConfig", message: msg, command: "create-baerly" } })}\n`,
       );

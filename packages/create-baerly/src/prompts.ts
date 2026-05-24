@@ -10,8 +10,10 @@
  * `true` when the user hits Ctrl+C; in that case we call `cancel()`
  * and `process.exit(1)` (same exit code as a user error).
  */
-import { cancel, confirm, intro, isCancel, select, text } from "@clack/prompts";
+import { cancel, confirm, intro, isCancel, note, select, text } from "@clack/prompts";
 import pc from "picocolors";
+import { existsSync } from "node:fs";
+import { resolve } from "node:path";
 import { defaultGitRunner, type GitRunner } from "./git.ts";
 import type { Addon } from "./scaffold.ts";
 
@@ -64,9 +66,14 @@ export interface WizardInput {
    * either way.
    */
   readonly git?: boolean;
+  /** Tenant pin passed through from --tenant; bolt-on mode uses it directly. */
+  readonly tenant?: string;
 }
 
-export interface WizardOutput {
+export type WizardOutput = ScaffoldWizardOutput | BoltOnWizardOutput;
+
+export interface ScaffoldWizardOutput {
+  readonly mode: "scaffold";
   /**
    * May be `"."` — the sentinel for "scaffold into the current
    * directory". Callers must not blindly compose this with a path
@@ -81,12 +88,31 @@ export interface WizardOutput {
   readonly git: boolean;
 }
 
+export interface BoltOnWizardOutput {
+  readonly mode: "bolt-on";
+  readonly projectName: string;
+  readonly tenant: string;
+  readonly install: boolean;
+}
+
 export const runWizard = async (
   input: WizardInput,
   opts: { readonly gitRunner?: GitRunner } = {},
 ): Promise<WizardOutput> => {
   intro(pc.bold(pc.cyan("create-baerly")));
   const projectName = input.projectName ?? (await promptProjectName());
+  const outDir = projectName === "." ? process.cwd() : resolve(process.cwd(), projectName);
+  const wranglerPath = resolve(outDir, "wrangler.jsonc");
+  if (existsSync(wranglerPath)) {
+    note("Detected existing Cloudflare Worker — bolting baerly on instead of scaffolding.");
+    const install = input.install ?? (await promptInstall());
+    return {
+      mode: "bolt-on",
+      projectName,
+      tenant: input.tenant ?? "default",
+      install,
+    };
+  }
   const target = input.target ?? (await promptTarget());
   const starter = input.starter ?? (await promptStarter());
   // Add-on prompts are gated per-target. Today only `docker` exists
@@ -116,7 +142,7 @@ export const runWizard = async (
       gitRunner.run(["rev-parse", "--is-inside-work-tree"], process.cwd()).stdout.trim() === "true";
     git = insideRepo ? false : await promptGit();
   }
-  return { projectName, target, starter, withAddons, install, git };
+  return { mode: "scaffold", projectName, target, starter, withAddons, install, git };
 };
 
 const promptProjectName = async (): Promise<string> => {

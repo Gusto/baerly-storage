@@ -57,6 +57,7 @@ describe("runner wizard → scaffold plumbing", () => {
 
   test("passes the wizard's starter value to scaffold()", async () => {
     runWizardMock.mockResolvedValue({
+      mode: "scaffold",
       projectName: "wizard-app",
       target: "cloudflare",
       starter: "react",
@@ -76,6 +77,7 @@ describe("runner wizard → scaffold plumbing", () => {
 
   test("forwards an explicit --starter flag into the wizard input", async () => {
     runWizardMock.mockResolvedValue({
+      mode: "scaffold",
       projectName: "wizard-app",
       target: "cloudflare",
       starter: "react",

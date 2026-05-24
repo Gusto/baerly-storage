@@ -17,7 +17,7 @@
  */
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "vitest";
@@ -417,6 +417,83 @@ describe.skipIf(!hasGit)("git init (integration, real git)", () => {
     expect(log.status).not.toBe(0); // exit 128 on an empty repo
     // The skip is silent — no "git init skipped" warning leaks to stderr.
     expect(stderr.captured.join("")).not.toContain("git init skipped");
+  });
+});
+
+describe("create-baerly runner — bolt-on dispatch (non-TTY)", () => {
+  let outRoot: string;
+  let originalCwd: string;
+
+  beforeAll(async () => {
+    outRoot = await mkdtemp(join(tmpdir(), "create-baerly-bolton-"));
+  });
+
+  afterAll(async () => {
+    await rm(outRoot, { recursive: true, force: true });
+  });
+
+  beforeEach(() => {
+    originalCwd = process.cwd();
+  });
+
+  afterEach(() => {
+    process.chdir(originalCwd);
+  });
+
+  test("dispatches bolt-on when wrangler.jsonc exists in the outDir", async () => {
+    const dir = join(outRoot, "wrangler-dir-1");
+    await mkdir(dir);
+    await writeFile(
+      join(dir, "wrangler.jsonc"),
+      `{
+  "name": "test-app",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-05-24"
+}
+`,
+    );
+    await writeFile(
+      join(dir, "package.json"),
+      JSON.stringify({ name: "test-app", version: "0.0.0", private: true }, null, 2),
+    );
+    process.chdir(dir);
+    const stdout = captureStream(process.stdout);
+    const stderr = captureStream(process.stderr);
+    let exitCode: number;
+    try {
+      exitCode = await runCreateBaerly([".", "--tenant=default"]);
+    } finally {
+      stdout.restore();
+      stderr.restore();
+    }
+    expect(stderr.captured.join("")).toBe("");
+    expect(exitCode).toBe(0);
+    const out = stdout.captured.join("");
+    expect(out).toContain("bolted baerly onto");
+    expect(out).toContain(`baerlyWorker<AppEnv>`);
+    expect(out).toContain("Paste this into src/index.ts");
+    expect(existsSync(join(dir, "baerly.config.ts"))).toBe(true);
+  });
+
+  test("rejects --target=node when wrangler.jsonc is present", async () => {
+    const dir = join(outRoot, "wrangler-dir-2");
+    await mkdir(dir);
+    await writeFile(
+      join(dir, "wrangler.jsonc"),
+      `{ "name": "x", "main": "src/index.ts", "compatibility_date": "2026-05-24" }`,
+    );
+    process.chdir(dir);
+    const stdout = captureStream(process.stdout);
+    const stderr = captureStream(process.stderr);
+    let exitCode: number;
+    try {
+      exitCode = await runCreateBaerly([".", "--target=node"]);
+    } finally {
+      stdout.restore();
+      stderr.restore();
+    }
+    expect(exitCode).toBe(1);
+    expect(stderr.captured.join("")).toMatch(/detected wrangler\.jsonc but --target=node/);
   });
 });
 
