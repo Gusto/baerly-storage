@@ -76,6 +76,7 @@ agent guide; the lib ships its API reference at `dist/API.md`.
 | `vite.config.ts`            | Vite client build — `outDir: dist/client`; `baerlyDev()` mounts the Node listener as middleware so SPA + `/v1/*` share `:5173` in dev |
 | `tsconfig.{app,server}.json` | TS project references for the client and server projects |
 | `baerly.config.ts`          | App config — `app`, `tenant`, `target`, `domain`, `collections` (schemas live here). |
+| `types.ts`                  | Shared types between the Node server (`src/server/`) and the SPA (`src/web/`). Both `tsconfig.app.json` and `tsconfig.server.json` include this file; put any row type or interface that crosses the boundary here. |
 
 ## When editing X, read Y
 
