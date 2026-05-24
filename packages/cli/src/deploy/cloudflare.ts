@@ -25,21 +25,17 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { parse, type ParseError } from "jsonc-parser";
 import { BaerlyError } from "@baerly/protocol";
 import type { AppConfig } from "../config.ts";
 import { defaultRunner, type ProcessRunner } from "../runner.ts";
+import {
+  parseR2Bindings as parseR2BindingsFromSource,
+  type R2BindingDeclaration,
+} from "../wrangler-patch.ts";
 
 export type { ProcessRunner };
 
-/**
- * Declared R2 binding extracted from `wrangler.jsonc`. Subset of
- * Wrangler's full schema — only the fields `baerly` cares about.
- */
-export interface R2BindingDeclaration {
-  readonly binding: string;
-  readonly bucket_name: string;
-}
+export type { R2BindingDeclaration };
 
 /** Path to `wrangler.jsonc` at the package root. */
 const wranglerPathFor = (repoRoot: string): string => resolve(repoRoot, "wrangler.jsonc");
@@ -58,57 +54,7 @@ export const parseR2Bindings = (wranglerPath: string): readonly R2BindingDeclara
       `baerly deploy: ${wranglerPath} missing. Expected wrangler.jsonc at the package root.`,
     );
   }
-  const text = readFileSync(wranglerPath, "utf8");
-  const errors: ParseError[] = [];
-  const obj = parse(text, errors, { allowTrailingComma: true, disallowComments: false }) as
-    | { r2_buckets?: unknown }
-    | undefined;
-  if (errors.length > 0) {
-    throw new BaerlyError(
-      "InvalidConfig",
-      `baerly deploy: ${wranglerPath} is not valid JSONC (${errors.length} error${errors.length === 1 ? "" : "s"}; first at offset ${errors[0]?.offset ?? "?"})`,
-    );
-  }
-  if (obj === undefined || typeof obj !== "object") {
-    throw new BaerlyError(
-      "InvalidConfig",
-      `baerly deploy: ${wranglerPath} did not parse to an object`,
-    );
-  }
-  const buckets = obj.r2_buckets;
-  if (buckets === undefined) {
-    return [];
-  }
-  if (!Array.isArray(buckets)) {
-    throw new BaerlyError(
-      "InvalidConfig",
-      `baerly deploy: ${wranglerPath}: r2_buckets must be an array`,
-    );
-  }
-  const out: R2BindingDeclaration[] = [];
-  for (const b of buckets) {
-    if (b === null || typeof b !== "object") {
-      throw new BaerlyError(
-        "InvalidConfig",
-        `baerly deploy: ${wranglerPath}: r2_buckets entry must be an object`,
-      );
-    }
-    const entry = b as { binding?: unknown; bucket_name?: unknown };
-    if (typeof entry.binding !== "string" || entry.binding.length === 0) {
-      throw new BaerlyError(
-        "InvalidConfig",
-        `baerly deploy: ${wranglerPath}: r2_buckets[].binding must be a non-empty string`,
-      );
-    }
-    if (typeof entry.bucket_name !== "string" || entry.bucket_name.length === 0) {
-      throw new BaerlyError(
-        "InvalidConfig",
-        `baerly deploy: ${wranglerPath}: r2_buckets[].bucket_name must be a non-empty string`,
-      );
-    }
-    out.push({ binding: entry.binding, bucket_name: entry.bucket_name });
-  }
-  return out;
+  return parseR2BindingsFromSource(readFileSync(wranglerPath, "utf8"));
 };
 
 /**
