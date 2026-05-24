@@ -111,13 +111,23 @@ describe("boltOnExistingWrangler", () => {
     expect(gi).toContain(".dev.vars");
   });
 
-  test("does NOT duplicate .dev.vars when already covered by .env*.local pattern", async () => {
+  test("does NOT duplicate .dev.vars when already present literally", async () => {
     const dir = await fixtureDir();
     await writeFile(join(dir, ".gitignore"), ".dev.vars\nnode_modules\n");
     await boltOnExistingWrangler({ outDir: dir, tenant: "default", runInstall: false });
     const gi = await readFile(join(dir, ".gitignore"), "utf8");
     const matches = gi.split("\n").filter((l) => l === ".dev.vars").length;
     expect(matches).toBe(1);
+  });
+
+  test("does NOT add .dev.vars when .gitignore has a recognised cover pattern (.env*.local)", async () => {
+    const dir = await fixtureDir();
+    await writeFile(join(dir, ".gitignore"), ".env*.local\nnode_modules\n");
+    await boltOnExistingWrangler({ outDir: dir, tenant: "default", runInstall: false });
+    const gi = await readFile(join(dir, ".gitignore"), "utf8");
+    const matches = gi.split("\n").filter((l) => l === ".dev.vars").length;
+    expect(matches).toBe(0);
+    expect(gi).toContain(".env*.local");
   });
 
   test("preserves an existing baerly.config.ts without --force", async () => {
@@ -140,5 +150,13 @@ describe("boltOnExistingWrangler", () => {
     });
     const after = await readFile(join(dir, "baerly.config.ts"), "utf8");
     expect(after).toContain(`app: "test-app"`);
+  });
+
+  test("throws InvalidConfig when package.json is not valid JSON", async () => {
+    const dir = await fixtureDir();
+    await writeFile(join(dir, "package.json"), "{ not json");
+    await expect(
+      boltOnExistingWrangler({ outDir: dir, tenant: "default", runInstall: false }),
+    ).rejects.toThrow(/package\.json is not valid JSON/);
   });
 });

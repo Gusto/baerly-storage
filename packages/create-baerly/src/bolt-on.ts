@@ -12,7 +12,7 @@
  * written.
  */
 
-import { existsSync, constants } from "node:fs";
+import { constants } from "node:fs";
 import { readFile, writeFile, appendFile, access } from "node:fs/promises";
 import { resolve } from "node:path";
 import { BaerlyError } from "@baerly/protocol";
@@ -23,7 +23,10 @@ import { defaultInstaller, type Installer } from "./install.ts";
 
 const DEV_SHARED_SECRET = "dev-shared-secret";
 
-const GITIGNORE_COVER_PATTERNS = new Set([".dev.vars", ".env*.local", "*.local", ".env"]);
+// Lines that, if present literally in .gitignore, are treated as "the user
+// already has a story for env-var files." We don't add a separate .dev.vars
+// entry in that case — we trust their convention. (NOT gitignore glob semantics.)
+const GITIGNORE_DEV_VARS_ALIASES = new Set([".dev.vars", ".env*.local", "*.local", ".env"]);
 
 export interface BoltOnOptions {
   readonly outDir: string;
@@ -56,7 +59,7 @@ export default defineConfig({
 
 const gitignoreCovers = (text: string, line: string): boolean => {
   const lines = text.split("\n").map((l) => l.trim());
-  return lines.some((l) => GITIGNORE_COVER_PATTERNS.has(l) || l === line);
+  return lines.some((l) => GITIGNORE_DEV_VARS_ALIASES.has(l) || l === line);
 };
 
 const fileExists = async (path: string): Promise<boolean> => {
@@ -70,7 +73,17 @@ const fileExists = async (path: string): Promise<boolean> => {
 
 const appendBaerlyStorageDep = async (pkgJsonPath: string, changes: string[]): Promise<void> => {
   const raw = await readFile(pkgJsonPath, "utf8");
-  const pkg = JSON.parse(raw) as { dependencies?: Record<string, string> };
+  let pkg: { dependencies?: Record<string, string> };
+  try {
+    pkg = JSON.parse(raw) as { dependencies?: Record<string, string> };
+  } catch (error) {
+    throw new BaerlyError(
+      "InvalidConfig",
+      `create-baerly bolt-on: ${pkgJsonPath} is not valid JSON — ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
   pkg.dependencies = pkg.dependencies ?? {};
   if (pkg.dependencies["baerly-storage"] !== undefined) {
     return;
@@ -82,7 +95,7 @@ const appendBaerlyStorageDep = async (pkgJsonPath: string, changes: string[]): P
 
 export const boltOnExistingWrangler = async (opts: BoltOnOptions): Promise<BoltOnResult> => {
   const wranglerPath = resolve(opts.outDir, "wrangler.jsonc");
-  if (!existsSync(wranglerPath)) {
+  if (!(await fileExists(wranglerPath))) {
     throw new BaerlyError(
       "InvalidConfig",
       `create-baerly bolt-on: ${wranglerPath} missing — bolt-on mode requires wrangler.jsonc`,
