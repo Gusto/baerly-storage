@@ -27,8 +27,8 @@ interface AppEnv extends BaerlyEnv {
   readonly SHARED_SECRET?: string;
   readonly CF_ACCESS_TEAM_DOMAIN?: string;
   readonly CF_ACCESS_AUDIENCE_TAG?: string;
-  readonly LOG_LEVEL?: FriendlyLogLevel;
-  readonly LOG_SAMPLE?: string;
+  readonly LOG_LEVEL: FriendlyLogLevel;
+  readonly LOG_SAMPLE: string;
 }
 
 const selectVerifier = (env: AppEnv): Verifier => {
@@ -52,6 +52,6 @@ export default baerlyWorker<AppEnv>((env) => ({
   config,
   observability: {
     level: env.LOG_LEVEL,
-    sampleRate: env.LOG_SAMPLE !== undefined ? Number(env.LOG_SAMPLE) : 0.1,
+    sampleRate: Number(env.LOG_SAMPLE),
   },
 }));
