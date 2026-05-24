@@ -47,7 +47,7 @@ import {
 } from "baerly-storage/auth";
 
 // Adapters
-import { baerlyWorker, r2BindingStorage } from "baerly-storage/cloudflare";
+import { baerlyWorker, r2BindingStorage, singleTenantDevVerifier } from "baerly-storage/cloudflare";
 import { baerlyNode, s3Storage, r2Storage, minioStorage, gcsStorage } from "baerly-storage/node";
 
 // Dev helpers (Vite, local-fs storage)
@@ -63,7 +63,7 @@ write (no `ensureTable` step).
 
 ```ts
 import { Db, MemoryStorage } from "baerly-storage";
-import config from "./baerly.config.ts";
+import config from "./baerly.config";
 
 const db = Db.create({
   storage: new MemoryStorage(),   // or `s3Storage(...)`, `r2BindingStorage(env.BUCKET)`, …
@@ -300,7 +300,7 @@ preserved).
 ## `createBaerlyClient` (browser / Node HTTP client)
 
 ```ts
-import type config from "./baerly.config.ts";  // type-only — server adapter stays out of the SPA bundle
+import type config from "./baerly.config";  // type-only — server adapter stays out of the SPA bundle
 const client = createBaerlyClient<typeof config>({
   baseUrl: "",                                  // same-origin
   headers: { Authorization: "Bearer …" },       // or a function for fresh tokens
@@ -419,6 +419,29 @@ baerlyNode({
   maintenance: { collections: ["tickets"], tenants: ["acme"] },  // optional
 }).listen(PORT);
 ```
+
+**Single-tenant CF Access.** Vanilla CF Access JWTs carry `sub`/`email`
+but no `tenant` claim. Pin the tenant from env instead of a claim:
+`cloudflareAccess({ teamDomain, audienceTag, tenantPrefix: "main" })`.
+Same option is available on `bearerJwt`.
+
+**Local dev (`wrangler dev`, no Vite).** Use `singleTenantDevVerifier`
+behind an env flag so the wire-auth check stays covered by tests:
+
+```ts
+import { baerlyWorker, singleTenantDevVerifier } from "baerly-storage/cloudflare";
+import { cloudflareAccess } from "baerly-storage/auth";
+export default baerlyWorker((env) => ({
+  verifier: env.DEV_AUTH === "1"
+    ? singleTenantDevVerifier("main")
+    : cloudflareAccess({ teamDomain: env.CF_ACCESS_TEAM_DOMAIN, audienceTag: env.CF_ACCESS_AUD_TAG, tenantPrefix: "main" }),
+}));
+```
+
+If your tests use `@cloudflare/vitest-pool-workers`, pin
+`DEV_AUTH: ""` under `poolOptions.workers.miniflare.bindings` so
+`.dev.vars` doesn't leak into the anon-401 assertions.
+
 
 `s3Storage` / `r2Storage` / `minioStorage` / `gcsStorage` from
 `baerly-storage/node` are re-exports of one factory family — same
