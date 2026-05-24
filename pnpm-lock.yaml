@@ -353,6 +353,9 @@ importers:
 
   packages/create-baerly:
     dependencies:
+      '@baerly/cli':
+        specifier: workspace:*
+        version: link:../cli
       '@baerly/server':
         specifier: workspace:*
         version: link:../server

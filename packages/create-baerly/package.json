@@ -21,6 +21,7 @@
     "prepack": "rolldown -c"
   },
   "dependencies": {
+    "@baerly/cli": "workspace:*",
     "@baerly/server": "workspace:*",
     "@clack/prompts": "^0.7.0",
     "citty": "^0.2.2",

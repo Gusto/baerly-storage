@@ -1,0 +1,169 @@
+/**
+ * The wrangler bolt-on flow for `create-baerly`. Runs when `runner.ts`
+ * detects an existing `wrangler.jsonc` in the resolved `outDir` — the
+ * user has a Cloudflare Worker project already and wants to add
+ * baerly. No template copy. Patches the mergeable files
+ * (`wrangler.jsonc`, `.dev.vars`, `.gitignore`, `package.json`),
+ * writes `baerly.config.ts` (skip-if-exists), and returns the
+ * worker-entry snippet for the caller to print.
+ *
+ * Mirrors Convex's `npx convex dev` philosophy: structured config is
+ * fair game; user code (`src/index.ts`) is sacred — printed, never
+ * written.
+ */
+
+import { existsSync, constants } from "node:fs";
+import { readFile, writeFile, appendFile, access } from "node:fs/promises";
+import { resolve } from "node:path";
+import { BaerlyError } from "@baerly/protocol";
+import { patchWranglerJsonc, readWranglerName, readWranglerMain } from "@baerly/cli/wrangler-patch";
+import { renderWorkerEntrySnippet } from "@baerly/cli/init-snippet";
+import { detectPm, type Pm } from "./pm-detect.ts";
+import { defaultInstaller, type Installer } from "./install.ts";
+
+const DEV_SHARED_SECRET = "dev-shared-secret";
+
+const GITIGNORE_COVER_PATTERNS = new Set([".dev.vars", ".env*.local", "*.local", ".env"]);
+
+export interface BoltOnOptions {
+  readonly outDir: string;
+  readonly tenant: string;
+  readonly app?: string;
+  readonly force?: boolean;
+  readonly runInstall?: boolean;
+  readonly pm?: Pm;
+  readonly installer?: Installer;
+}
+
+export interface BoltOnResult {
+  readonly app: string;
+  readonly tenant: string;
+  readonly changes: readonly string[];
+  readonly snippet: string;
+  readonly snippetTarget: string;
+  readonly nextSteps: readonly string[];
+}
+
+const configTemplate = (app: string, tenant: string): string =>
+  `import { defineConfig } from "baerly-storage/config";
+
+export default defineConfig({
+  app: ${JSON.stringify(app)},
+  tenant: ${JSON.stringify(tenant)},
+  target: "cloudflare",
+});
+`;
+
+const gitignoreCovers = (text: string, line: string): boolean => {
+  const lines = text.split("\n").map((l) => l.trim());
+  return lines.some((l) => GITIGNORE_COVER_PATTERNS.has(l) || l === line);
+};
+
+const fileExists = async (path: string): Promise<boolean> => {
+  try {
+    await access(path, constants.F_OK);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const appendBaerlyStorageDep = async (pkgJsonPath: string, changes: string[]): Promise<void> => {
+  const raw = await readFile(pkgJsonPath, "utf8");
+  const pkg = JSON.parse(raw) as { dependencies?: Record<string, string> };
+  pkg.dependencies = pkg.dependencies ?? {};
+  if (pkg.dependencies["baerly-storage"] !== undefined) {
+    return;
+  }
+  pkg.dependencies["baerly-storage"] = "*";
+  await writeFile(pkgJsonPath, `${JSON.stringify(pkg, null, 2)}\n`, "utf8");
+  changes.push("package.json: added baerly-storage dependency");
+};
+
+export const boltOnExistingWrangler = async (opts: BoltOnOptions): Promise<BoltOnResult> => {
+  const wranglerPath = resolve(opts.outDir, "wrangler.jsonc");
+  if (!existsSync(wranglerPath)) {
+    throw new BaerlyError(
+      "InvalidConfig",
+      `create-baerly bolt-on: ${wranglerPath} missing — bolt-on mode requires wrangler.jsonc`,
+    );
+  }
+  const wranglerSource = await readFile(wranglerPath, "utf8");
+  const detectedName = readWranglerName(wranglerSource);
+  const detectedMain = readWranglerMain(wranglerSource) ?? "src/index.ts";
+
+  const app = opts.app ?? detectedName;
+  if (typeof app !== "string" || app.length === 0) {
+    throw new BaerlyError(
+      "InvalidConfig",
+      "create-baerly bolt-on: --app=<name> is required (no wrangler.jsonc:name to infer from)",
+    );
+  }
+
+  const changes: string[] = [];
+
+  const patch = patchWranglerJsonc(
+    wranglerSource,
+    { binding: "BUCKET", bucket_name: app },
+    { APP: app, TENANT: opts.tenant, LOG_LEVEL: "info", LOG_SAMPLE: "0.1" },
+  );
+  if (patch.changes.length > 0) {
+    await writeFile(wranglerPath, patch.text, "utf8");
+    for (const c of patch.changes) {
+      changes.push(`wrangler.jsonc: ${c}`);
+    }
+  }
+
+  const devVarsPath = resolve(opts.outDir, ".dev.vars");
+  if (!(await fileExists(devVarsPath))) {
+    await writeFile(devVarsPath, `SHARED_SECRET=${DEV_SHARED_SECRET}\n`, "utf8");
+    changes.push(".dev.vars: seeded SHARED_SECRET (dev-only placeholder; replace before deploy)");
+  }
+
+  const gitignorePath = resolve(opts.outDir, ".gitignore");
+  let gitignoreText = "";
+  if (await fileExists(gitignorePath)) {
+    gitignoreText = await readFile(gitignorePath, "utf8");
+  }
+  if (!gitignoreCovers(gitignoreText, ".dev.vars")) {
+    const suffix = gitignoreText.length === 0 || gitignoreText.endsWith("\n") ? "" : "\n";
+    await appendFile(gitignorePath, `${suffix}.dev.vars\n`, "utf8");
+    changes.push(".gitignore: added .dev.vars");
+  }
+
+  const configPath = resolve(opts.outDir, "baerly.config.ts");
+  const configExists = await fileExists(configPath);
+  if (!configExists || opts.force === true) {
+    await writeFile(configPath, configTemplate(app, opts.tenant), "utf8");
+    changes.push(`baerly.config.ts: ${configExists ? "rewrote" : "wrote"}`);
+  }
+
+  const pkgJsonPath = resolve(opts.outDir, "package.json");
+  if (await fileExists(pkgJsonPath)) {
+    await appendBaerlyStorageDep(pkgJsonPath, changes);
+  }
+
+  if (opts.runInstall === true) {
+    const pm = opts.pm ?? detectPm();
+    const installer = opts.installer ?? defaultInstaller;
+    await installer.run(pm, opts.outDir);
+    changes.push(`${pm} install`);
+  }
+
+  const snippet = renderWorkerEntrySnippet({
+    tenant: opts.tenant,
+    wranglerMain: detectedMain,
+  });
+
+  return {
+    app,
+    tenant: opts.tenant,
+    changes,
+    snippet,
+    snippetTarget: detectedMain,
+    nextSteps: [
+      `Paste the snippet above into ${detectedMain}, replacing the stock handler.`,
+      `Before deploy: \`wrangler secret put SHARED_SECRET\` (the .dev.vars value is dev-only).`,
+    ],
+  };
+};

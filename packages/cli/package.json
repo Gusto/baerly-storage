@@ -7,6 +7,10 @@
     "dist"
   ],
   "type": "module",
+  "exports": {
+    "./wrangler-patch": "./src/wrangler-patch.ts",
+    "./init-snippet": "./src/init-snippet.ts"
+  },
   "scripts": {
     "build": "rolldown -c",
     "prepack": "rolldown -c"
