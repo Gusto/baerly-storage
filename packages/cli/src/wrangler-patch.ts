@@ -140,39 +140,41 @@ const FORMATTING_OPTIONS = { tabSize: 2, insertSpaces: true, eol: "\n" } as cons
  *
  * Comments and trailing commas are preserved by `jsonc-parser`.
  *
- * @throws BaerlyError code="InvalidConfig" — malformed JSONC.
+ * @throws BaerlyError code="InvalidConfig" — malformed JSONC or
+ *   invalid `r2_buckets` / `vars` shape.
  */
 export const patchWranglerJsonc = (
   source: string,
   binding: R2BindingSpec,
   vars: VarsSpec,
 ): PatchResult => {
+  const existingBindings = parseR2Bindings(source);
+
   const errors: ParseError[] = [];
-  const parsed = parse(source, errors, { allowTrailingComma: true }) as
-    | { r2_buckets?: readonly R2BindingDeclaration[]; vars?: Record<string, string> }
+  const entry = parse(source, errors, { allowTrailingComma: true }) as
+    | { vars?: unknown }
     | undefined;
-  if (errors.length > 0) {
-    throw new BaerlyError(
-      "InvalidConfig",
-      `wrangler.jsonc parse error at offset ${errors[0]!.offset}: ${errors[0]!.error}`,
-    );
+
+  const rawVars = entry?.vars;
+  if (rawVars !== undefined) {
+    if (typeof rawVars !== "object" || rawVars === null || Array.isArray(rawVars)) {
+      throw new BaerlyError("InvalidConfig", "wrangler.jsonc: vars must be an object");
+    }
   }
+  const existingVars = (rawVars ?? {}) as Record<string, unknown>;
 
   const changes: string[] = [];
   let text = source;
 
-  // R2 binding append (only if no entry with this binding name exists).
-  const existingBindings = parsed?.r2_buckets ?? [];
   const bindingAlreadyDeclared = existingBindings.some((b) => b.binding === binding.binding);
   if (!bindingAlreadyDeclared) {
-    const appendPath = ["r2_buckets", existingBindings.length];
-    const edits = modify(text, appendPath, binding, { formattingOptions: FORMATTING_OPTIONS });
+    const edits = modify(text, ["r2_buckets", -1], binding, {
+      formattingOptions: FORMATTING_OPTIONS,
+    });
     text = applyEdits(text, edits);
     changes.push(`added r2 binding ${binding.binding} → ${binding.bucket_name}`);
   }
 
-  // Vars merge (per-key, user wins on conflict).
-  const existingVars = parsed?.vars ?? {};
   const addedVarKeys: string[] = [];
   for (const [key, value] of Object.entries(vars)) {
     if (!(key in existingVars)) {

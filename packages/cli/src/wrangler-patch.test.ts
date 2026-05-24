@@ -37,6 +37,11 @@ describe("readWranglerName / readWranglerMain", () => {
     expect(readWranglerName("{}")).toBeUndefined();
     expect(readWranglerMain("{}")).toBeUndefined();
   });
+
+  test("returns undefined on malformed JSONC", () => {
+    expect(readWranglerName("{ not json")).toBeUndefined();
+    expect(readWranglerMain("{ not json")).toBeUndefined();
+  });
 });
 
 describe("patchWranglerJsonc — first patch", () => {
@@ -129,5 +134,15 @@ describe("patchWranglerJsonc — error cases", () => {
     expect(() => patchWranglerJsonc("{ this is not json", BINDING, VARS)).toThrow(
       /wrangler\.jsonc parse error/,
     );
+  });
+
+  test("malformed r2_buckets entry throws InvalidConfig", () => {
+    const bad = `{ "name": "x", "main": "src/index.ts", "r2_buckets": [42] }`;
+    expect(() => patchWranglerJsonc(bad, BINDING, {})).toThrow(/r2_buckets/);
+  });
+
+  test("non-object vars throws InvalidConfig", () => {
+    const bad = `{ "name": "x", "main": "src/index.ts", "vars": "not an object" }`;
+    expect(() => patchWranglerJsonc(bad, BINDING, {})).toThrow(/vars/);
   });
 });
