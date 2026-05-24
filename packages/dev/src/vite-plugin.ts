@@ -72,16 +72,25 @@ export interface BaerlyDevAuthOptions {
   /** Bearer token to inject on matched paths. */
   readonly secret: string;
   /**
-   * Pathname prefix to match. Pass an array to cover multiple
-   * prefixes (e.g. `["/v1", "/api"]` when the Worker mounts custom
-   * routes alongside the baerly HTTP cascade). Default `"/v1"`.
+   * Pathname prefixes to match. Default `["/v1", "/api"]` — the
+   * baerly cascade lives at `/v1/*`, and `/api/*` is the canonical
+   * namespace for custom Worker routes (the "wrap `baerly.fetch!`"
+   * recipe in the scaffold's AGENTS.md). Covering both by default
+   * closes a recurring "added a custom route, browser silently 401s"
+   * trap: agents typically edit `src/server/index.ts` without touching
+   * `vite.config.ts`, so a `"/v1"`-only default leaves their new route
+   * unauthenticated in `vite dev` and `pnpm verify` is silent on it.
+   *
+   * Override when you mount under a different namespace, or pass
+   * `prefix: "/v1"` to opt out of `/api/*` injection entirely (rare —
+   * the bearer is a harmless extra header on unmatched routes).
    */
   readonly prefix?: string | readonly string[];
 }
 
 const normalisePrefixes = (prefix: string | readonly string[] | undefined): readonly string[] => {
   if (prefix === undefined) {
-    return ["/v1"];
+    return ["/v1", "/api"];
   }
   if (typeof prefix === "string") {
     return [prefix];
@@ -100,21 +109,21 @@ const matchesAnyPrefix = (url: string, prefixes: readonly string[]): boolean => 
 
 /**
  * Vite dev plugin: inject `Authorization: Bearer ${secret}` on every
- * request whose URL starts with `prefix` (default `/v1`). Use this
- * to keep the bearer token out of the SPA bundle — the browser sends
- * the request, Vite's middleware adds the header, and the upstream
- * handler (in-process worker or proxied Node server) sees an
- * authenticated request.
+ * request whose URL starts with one of `prefix` (default
+ * `["/v1", "/api"]`). Use this to keep the bearer token out of the
+ * SPA bundle — the browser sends the request, Vite's middleware adds
+ * the header, and the upstream handler (in-process worker or proxied
+ * Node server) sees an authenticated request.
  *
- * **Custom Worker routes.** `baerlyWorker` only sees `/v1/*`; if you
- * mount your own `/api/*` routes (e.g. to expose a server-side
- * `db.transaction(...)` endpoint the SPA client can't run on its
- * own), they receive the request with no Authorization header and
- * the inline `verifier(req)` call returns 401. Cover both prefixes
- * with one plugin instance:
+ * **Custom Worker routes.** `baerlyWorker` only sees `/v1/*`; the
+ * default `prefix` also covers `/api/*` because that's the canonical
+ * namespace for the "wrap `baerly.fetch!`" recipe (a server-side
+ * endpoint the SPA client can't run on its own, e.g. an endpoint
+ * that needs `db.transaction(...)`). If you mount under a different
+ * namespace, override:
  *
  * ```ts
- * baerlyDevAuth({ secret, prefix: ["/v1", "/api"] });
+ * baerlyDevAuth({ secret, prefix: ["/v1", "/internal"] });
  * ```
  *
  * The bearer is dev-only convenience — production deploys put the

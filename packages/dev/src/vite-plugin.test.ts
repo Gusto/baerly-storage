@@ -298,6 +298,31 @@ describe("baerlyDevAuth", () => {
     expect(headersFromRaw(req).get("authorization")).toBe("Bearer x");
   });
 
+  // Regression: the default surface area must cover BOTH `/v1/*` (the
+  // baerly cascade) AND `/api/*` (the canonical extension namespace).
+  // The "/api/* 401-trap" — agent adds a custom route, scaffold's
+  // vite.config.ts calls `baerlyDevAuth({ secret })` with no `prefix`
+  // override, browser silently 401s, `pnpm verify` exits green — has
+  // recurred three times in the wild despite explicit warnings in
+  // AGENTS.md. Widening the default closes the trap; consumers who
+  // want `/v1`-only behavior can pass `prefix: "/v1"` explicitly.
+  test("default prefix covers /v1 AND /api so custom routes work out-of-box", () => {
+    const mw = captureMw(baerlyDevAuth({ secret: "x" }));
+
+    const v1Req = makeReq("/v1/t/notes");
+    mw(v1Req, makeRes(), () => {});
+    expect(v1Req.headers["authorization"]).toBe("Bearer x");
+
+    const apiReq = makeReq("/api/notes/search");
+    mw(apiReq, makeRes(), () => {});
+    expect(apiReq.headers["authorization"]).toBe("Bearer x");
+
+    // Paths outside the default prefixes remain untouched.
+    const indexReq = makeReq("/index.html");
+    mw(indexReq, makeRes(), () => {});
+    expect(indexReq.headers["authorization"]).toBeUndefined();
+  });
+
   test("array prefix covers multiple roots (default /v1 + custom /api)", () => {
     const mw = captureMw(baerlyDevAuth({ secret: "x", prefix: ["/v1", "/api"] }));
 
