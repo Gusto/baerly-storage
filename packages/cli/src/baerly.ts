@@ -47,10 +47,12 @@ const main = defineCommand({
     description: "Vendorless document database CLI.",
   },
   // Order matters: citty renders --help in declaration order.
-  // Day-1 verbs (init → deploy) come first, then operator
-  // reads (doctor → inspect → export → cost), then `admin`.
+  // Day-1 verbs (deploy) come first, then operator reads
+  // (doctor → inspect → export → cost), then `admin`. Scaffolding +
+  // bolt-on into an existing wrangler project both live in the
+  // `create-baerly` package — invoke via `pnpm create baerly` /
+  // `pnpm create baerly .`, not a `baerly` subcommand.
   subCommands: {
-    init: () => import("./init.ts").then((m) => m.init),
     deploy: () => import("./deploy.ts").then((m) => m.deploy),
     doctor: () => import("./doctor.ts").then((m) => m.doctor),
     inspect: () => import("./inspect.ts").then((m) => m.inspect),

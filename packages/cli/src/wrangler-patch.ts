@@ -1,8 +1,8 @@
 /**
- * Surgical wrangler.jsonc helpers used by `baerly init` and
- * `baerly deploy`. All functions are pure (no I/O) — callers do
- * the file read/write. Built on `jsonc-parser` so comments and
- * trailing commas survive round-trips.
+ * Surgical wrangler.jsonc helpers used by `baerly deploy` and the
+ * `create-baerly` bolt-on flow. All functions are pure (no I/O) —
+ * callers do the file read/write. Built on `jsonc-parser` so
+ * comments and trailing commas survive round-trips.
  */
 
 import { parse, modify, applyEdits, type ParseError } from "jsonc-parser";
