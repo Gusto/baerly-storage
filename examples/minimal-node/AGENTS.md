@@ -54,6 +54,16 @@ agent guide; the lib ships its API reference at `dist/API.md`.
   itself uses TypeScript 7 via `@typescript/native-preview`; this
   template tracks the broadly-compatible TS major so scaffolded
   apps work with the wider ecosystem.)
+- **`erasableSyntaxOnly`** is enabled in every `tsconfig*.json` so the
+  code stays compatible with type-stripping runtimes (Node's
+  `--experimental-strip-types`, esbuild's strip path). The flag bans
+  TS constructs that can't be type-erased: write
+  `class { x: T; constructor(x: T) { this.x = x } }` explicitly
+  instead of parameter-property shorthand
+  (`constructor(private x: T) {}` fails with TS1294). The same goes
+  for `enum`, namespaces with non-type bindings, and `private` /
+  `protected` / `public` accessibility modifiers on constructor
+  parameters.
 
 ## Verification
 
@@ -66,6 +76,14 @@ agent guide; the lib ships its API reference at `dist/API.md`.
 | `pnpm dev`         | Run `vite` — `baerlyDev()` mounts the Node HTTP listener as Connect middleware next to the SPA dev server; same origin on :5173 | seconds to start |
 | `pnpm build`       | `tsc -b && vite build` — emits the SPA into `dist/client/` | seconds  |
 | `pnpm start`       | `node --experimental-strip-types src/server/index.ts` — production entry; serves the SPA from `dist/client/` via `webRoot` | seconds to start |
+
+**`pnpm verify` exercises typecheck + tests only.** The dev-auth
+middleware, the SPA bundle, and any custom `/api/*` route are NOT
+under test — verify will exit green even when the dev plugin returns
+401 on every browser request or the SPA throws on mount. For changes
+that touch `vite.config.ts`, `src/server/index.ts`, or SPA logic, run
+`pnpm dev` and exercise the change in a browser (or `curl
+http://localhost:5173/<path>`) before declaring the task complete.
 
 ## Where the code is
 
@@ -337,6 +355,15 @@ agent guide; the lib ships its API reference at `dist/API.md`.
 - Mutating `VerifierResult.tenantPrefix` between the verifier
   and `Db.create`. The dispatcher pins the tenant from the
   verifier's return value.
+- Calling `db.table(...).all()` (or any unbounded read) inside a
+  per-request handler. The call scans the entire collection on every
+  request — fine for a fixture-sized table, catastrophic at any real
+  size, and `pnpm verify` doesn't surface the cost. Push the filter
+  into the predicate so the index planner can prune
+  (`db.table("notes").where({ ... }).all()`), or maintain a
+  side-projection (Postgres/SQLite/search index) populated
+  incrementally from the `/v1/since` log feed or from a write hook —
+  never re-scan per request.
 
 ## When to graduate
 

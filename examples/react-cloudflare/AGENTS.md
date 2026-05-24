@@ -50,6 +50,16 @@ agent guide; the lib ships its API reference at `dist/API.md`.
   itself uses TypeScript 7 via `@typescript/native-preview`; this
   template tracks the broadly-compatible TS major so scaffolded
   apps work with the wider ecosystem.)
+- **`erasableSyntaxOnly`** is enabled in every `tsconfig*.json` so the
+  code stays compatible with type-stripping runtimes (Node's
+  `--experimental-strip-types`, esbuild's strip path). The flag bans
+  TS constructs that can't be type-erased: write
+  `class { x: T; constructor(x: T) { this.x = x } }` explicitly
+  instead of parameter-property shorthand
+  (`constructor(private x: T) {}` fails with TS1294). The same goes
+  for `enum`, namespaces with non-type bindings, and `private` /
+  `protected` / `public` accessibility modifiers on constructor
+  parameters.
 
 ## Verification
 
@@ -62,6 +72,14 @@ agent guide; the lib ships its API reference at `dist/API.md`.
 | `pnpm dev`       | Run `vite` — the Cloudflare plugin runs the Worker inside `workerd` next to the SPA dev server; same origin on :5173 | seconds to start |
 | `pnpm build`     | `tsc -b && vite build` — emits `dist/client/` for the Workers Assets binding            | seconds          |
 | `pnpm deploy`    | `wrangler deploy` — ships Worker + assets in one shipment (auto-creates R2 on first run via `--x-provision`) | seconds          |
+
+**`pnpm verify` exercises typecheck + tests only.** The dev-auth
+middleware, the SPA bundle, and any custom `/api/*` route are NOT
+under test — verify will exit green even when the dev plugin returns
+401 on every browser request or the SPA throws on mount. For changes
+that touch `vite.config.ts`, `src/server/index.ts`, or SPA logic, run
+`pnpm dev` and exercise the change in a browser (or `curl
+http://localhost:5173/<path>`) before declaring the task complete.
 
 ## Where the code is
 
@@ -330,12 +348,16 @@ agent guide; the lib ships its API reference at `dist/API.md`.
   } satisfies ExportedHandler<AppEnv>;
   ```
 
-  **Pair this with `baerlyDevAuth({ prefix: ["/v1", "/api"] })`** in
-  `vite.config.ts` — otherwise the dev plugin only injects the
-  bearer on `/v1/*` and your `/api/*` route returns 401 in
-  `vite dev`. `pnpm verify` is silent on this gap: the typecheck
-  is green and the dev plugin isn't exercised by the test suite,
-  so the only signal is manually hitting the route.
+  **`/api/*` dev-auth.** The scaffold's `vite.config.ts` already
+  passes `prefix: ["/v1", "/api"]` to `baerlyDevAuth` (also the
+  function's default), so `/api/*` calls get the bearer in `vite dev`
+  out of the box. **If you mount your custom routes under a different
+  namespace** (e.g. `/internal/*`), extend the prefix list there —
+  otherwise the request lands at the worker with no `Authorization`
+  header and the inline `verifier(req)` call returns 401. `pnpm
+  verify` is silent on this gap: the typecheck is green and the dev
+  plugin isn't exercised by the test suite, so the only signal is
+  manually hitting the route in a browser or with `curl`.
 
 - **Secrets vs. vars** — `wrangler.jsonc:vars` carries non-secret
   config (`APP`, `TENANT`, `LOG_LEVEL`, `LOG_SAMPLE`, and CF Access
@@ -396,6 +418,15 @@ agent guide; the lib ships its API reference at `dist/API.md`.
 - Mutating `VerifierResult.tenantPrefix` between the verifier
   and `Db.create`. The dispatcher pins the tenant from the
   verifier's return value.
+- Calling `db.table(...).all()` (or any unbounded read) inside a
+  per-request handler. The call scans the entire collection on every
+  request — fine for a fixture-sized table, catastrophic at any real
+  size, and `pnpm verify` doesn't surface the cost. Push the filter
+  into the predicate so the index planner can prune
+  (`db.table("notes").where({ ... }).all()`), or maintain a
+  side-projection (D1/KV/search index) populated incrementally from
+  the `/v1/since` log feed or from a write hook — never re-scan per
+  request.
 
 ## When to graduate
 
