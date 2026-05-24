@@ -17,8 +17,7 @@ react-cloudflare/
 ├── vite.config.ts            # Vite + @vitejs/plugin-react + @cloudflare/vite-plugin
 ├── wrangler.jsonc            # Worker manifest — R2 binding, assets, vars, cron, observability
 ├── index.html                # SPA shell — Vite's entry point
-├── baerly.config.ts          # app, tenant, target, NoteSchema
-├── types.ts                  # `Note` type inferred from the Zod schema
+├── baerly.config.ts          # app, tenant, target, NoteSchema, `Note` type
 ├── AGENTS.md                 # deeper guide: hooks, schema, auth, deploy
 ├── CLAUDE.md                 # same content (Claude Code reads this)
 ├── src/
@@ -64,9 +63,9 @@ baerly doctor --target=cloudflare     # verify bindings, secrets, cron
 
 ## Extend the schema
 
-Edit `baerly.config.ts`. The `Note` row type in `types.ts` is
-inferred from `NoteSchema` — adding a field there propagates to
-the UI through `import type { Note }`.
+Edit `baerly.config.ts`. The `Note` row type is inferred from
+`NoteSchema` in the same file — adding a field to the schema
+propagates to the UI through `import type { Note }`.
 
 ```typescript
 export const NoteSchema = z.object({

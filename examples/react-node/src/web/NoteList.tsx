@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useDelete, useLiveQuery, useUpdate } from "baerly-storage/client/react";
-import type { Note } from "../../types.ts";
+import type { Note } from "../../baerly.config.ts";
 
 const NoteRow = ({ note }: { note: Note }) => {
   const [body, setBody] = useState(note.body);
@@ -26,7 +26,9 @@ const NoteRow = ({ note }: { note: Note }) => {
           className="danger"
           disabled={isDeleting}
           onClick={async () => {
-            if (!window.confirm("Delete this note?")) {return;}
+            if (!window.confirm("Delete this note?")) {
+              return;
+            }
             await deleteNote(note._id);
           }}
         >
@@ -40,9 +42,15 @@ const NoteRow = ({ note }: { note: Note }) => {
 
 export const NoteList = () => {
   const result = useLiveQuery<Note>({ table: "notes" });
-  if (result.status === "error") {return <p className="error">Error: {result.error.message}</p>;}
-  if (result.status === "loading") {return <p>Loading…</p>;}
-  if (result.rows.length === 0) {return <p>No notes yet. Add one above.</p>;}
+  if (result.status === "error") {
+    return <p className="error">Error: {result.error.message}</p>;
+  }
+  if (result.status === "loading") {
+    return <p>Loading…</p>;
+  }
+  if (result.rows.length === 0) {
+    return <p>No notes yet. Add one above.</p>;
+  }
   // Newest first — UUIDv7 `_id`s sort by server mint time descending.
   const sorted = result.rows.toSorted((a, b) => b._id.localeCompare(a._id));
   return (

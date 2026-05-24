@@ -16,6 +16,16 @@ export const NoteSchema = z.object({
   body: z.string().min(1),
 });
 
+/**
+ * Compile-time row type derived from {@link NoteSchema}. Single
+ * source of truth — adding a field to the schema adds it here.
+ *
+ * **Replacing the demo?** `src/web/{App,NoteList}.tsx` import
+ * `Note` from this file; rename `NoteSchema` first and the
+ * inferred type follows.
+ */
+export type Note = z.infer<typeof NoteSchema>;
+
 export default defineConfig({
   app: "react-cloudflare",
   tenant: "react-demo",

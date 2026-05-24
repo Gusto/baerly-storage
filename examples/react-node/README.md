@@ -23,8 +23,7 @@ react-node/
 ├── vite.config.ts            # Vite + @vitejs/plugin-react + baerlyDev()
 ├── index.html                # SPA shell — Vite's entry point
 ├── .env.example              # storage creds, verifier, observability
-├── baerly.config.ts          # app, tenant, target, NoteSchema
-├── types.ts                  # `Note` type inferred from the Zod schema
+├── baerly.config.ts          # app, tenant, target, NoteSchema, `Note` type
 ├── AGENTS.md                 # deeper guide: hooks, schema, auth, deploy
 ├── CLAUDE.md                 # same content (Claude Code reads this)
 ├── src/
@@ -108,9 +107,9 @@ Verify: `curl https://<your-service>/v1/healthz`.
 
 ## Extend the schema
 
-Edit `baerly.config.ts`. The `Note` row type in `types.ts` is
-inferred from `NoteSchema` — adding a field there propagates to
-the UI through `import type { Note }`.
+Edit `baerly.config.ts`. The `Note` row type is inferred from
+`NoteSchema` in the same file — adding a field to the schema
+propagates to the UI through `import type { Note }`.
 
 ```typescript
 export const NoteSchema = z.object({

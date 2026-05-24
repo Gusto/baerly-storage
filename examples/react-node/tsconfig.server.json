@@ -24,5 +24,5 @@
     "types": ["node"],
     "composite": true
   },
-  "include": ["src/server/**/*", "uint8array-base64.d.ts", "types.ts", "baerly.config.ts"]
+  "include": ["src/server/**/*", "uint8array-base64.d.ts", "baerly.config.ts"]
 }

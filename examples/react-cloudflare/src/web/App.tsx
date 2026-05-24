@@ -1,7 +1,7 @@
 import { BaerlyProvider, useInsert } from "baerly-storage/client/react";
 import { client } from "./client.ts";
 import { NoteList } from "./NoteList.tsx";
-import type { Note } from "../../types.ts";
+import type { Note } from "../../baerly.config.ts";
 
 const NewNoteForm = () => {
   const { mutate: insertNote, isPending, error } = useInsert<Note>({ table: "notes" });
@@ -12,7 +12,9 @@ const NewNoteForm = () => {
         e.preventDefault();
         const form = e.currentTarget;
         const body = String(new FormData(form).get("body")).trim();
-        if (body.length === 0) {return;}
+        if (body.length === 0) {
+          return;
+        }
         await insertNote({ body });
         form.reset();
       }}

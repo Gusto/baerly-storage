@@ -25,7 +25,7 @@ the Worker on deploy. Same origin in dev and prod, one deploy.
 This starter is a generic notes app you extend with your own fields —
 a Cloudflare Worker wired to R2 plus a working React+Vite frontend in
 `src/web/` (served by the Worker via Workers Assets) with the `Note`
-shape declared in `types.ts`. The bare server-only version is
+shape declared in `baerly.config.ts`. The bare server-only version is
 `pnpm create baerly <app> --target=cloudflare`; this one is
 `--target=cloudflare --starter=react`.
 
@@ -75,8 +75,7 @@ agent guide; the lib ships its API reference at `dist/API.md`.
 | `tsconfig.json`            | Root project-references stub                                                                                     |
 | `tsconfig.app.json`        | Client TS project (`src/web/`, DOM lib, `jsx: react-jsx`)                                                        |
 | `tsconfig.worker.json`     | Worker TS project (`src/server/`, workerd lib)                                                                   |
-| `baerly.config.ts`         | App config — `app`, `tenant`, `target`, `domain`, `collections` (schemas live here).                             |
-| `types.ts`                 | `Note` row type inferred from `NoteSchema` in `baerly.config.ts`. Imported by both the server and the web client. |
+| `baerly.config.ts`         | App config — `app`, `tenant`, `target`, `collections` (schemas live here). Also exports the inferred `Note` row type used by the web client. |
 
 ## When editing X, read Y
 
@@ -86,8 +85,8 @@ agent guide; the lib ships its API reference at `dist/API.md`.
      config })`, so `client.table("notes")` returns
      `ClientTable<Row>` with `Row` derived from the
      `NoteSchema` declared in `baerly.config.ts`. No generic
-     needed. Use `client.table<Note>("notes")` (with
-     `Note = z.infer<typeof NoteSchema>` from `types.ts`)
+     needed. Use `client.table<Note>("notes")` (with `Note`
+     exported from `baerly.config.ts` next to the schema)
      only when you need the row type by name elsewhere.
   2. **Explicit generic, kernel constraint.** Without a declared
      collection, the second overload requires the row to satisfy
@@ -437,37 +436,30 @@ code works in `react-cloudflare` and `react-node`.
 ### Adding an enum field (e.g. `status`)
 
 A row often needs a constrained set of string values. Declare the
-enum inside the Zod schema; re-export the option tuple from
-`types.ts` for UI rendering; the predicate API picks the field up
+enum inside the Zod schema and export the option tuple next to it
+in `baerly.config.ts`; the predicate API picks the field up
 automatically.
 
 ```typescript
 // baerly.config.ts
 import { z } from "zod";
+import { defineConfig } from "baerly-storage/config";
 
 export const NoteSchema = z.object({
   _id: z.string(),
   body: z.string().min(1),
   status: z.enum(["open", "in_progress", "closed"]),
 });
-```
-
-```typescript
-// types.ts
-import type { z } from "zod";
-// Note: `NoteSchema` is imported at the value level here (not via
-// `import type`) so that `.shape.status.options` is available
-// at runtime. If your scaffolded `types.ts` declares it type-only,
-// drop the `type` qualifier.
-import config, { NoteSchema } from "./baerly.config.ts";
 
 export type Note = z.infer<typeof NoteSchema>;
 export const STATUSES = NoteSchema.shape.status.options;
+
+export default defineConfig({ /* ... */ });
 ```
 
 ```tsx
 // In a form component:
-import { STATUSES } from "../../types.ts";
+import { STATUSES } from "../../baerly.config.ts";
 
 <select name="status" defaultValue="open">
   {STATUSES.map((s) => (
@@ -488,7 +480,7 @@ uses. To narrow by an enum field, drive it off `useState`:
 ```tsx
 import { useState } from "react";
 import { useLiveQuery } from "baerly-storage/client/react";
-import { STATUSES, type Note } from "../../types.ts";
+import { STATUSES, type Note } from "../../baerly.config.ts";
 
 type Filter = "all" | Note["status"];
 
@@ -531,9 +523,8 @@ That's why this recipe uses `.optional()` and not `.nullable()`.
 
 ## Pointers
 
-- `baerly.config.ts` — app config.
+- `baerly.config.ts` — app config + `NoteSchema` + inferred `Note` type.
 - `src/server/index.ts` — Worker entry.
 - `wrangler.jsonc` — Cloudflare Worker manifest (R2 binding, `assets:`, vars, cron, observability).
 - `vite.config.ts` — Vite + `@vitejs/plugin-react` + `@cloudflare/vite-plugin`.
-- `types.ts` — `Note` row type inferred from `NoteSchema`.
 - `package.json` — root scripts + dependencies.
