@@ -39,7 +39,6 @@ import {
   type CurrentJson,
   type DocumentData,
   type MetricsRecorder,
-  decodeJsonBytes,
   encodeJsonBytes,
   logSeqStartOf,
   BaerlyError,
@@ -52,78 +51,12 @@ import {
 } from "@baerly/protocol";
 import { walkLogRange } from "./log-walk.ts";
 import { withObservability } from "./observability/index.ts";
-
-/**
- * Snapshot filenames are sealed by their body's SHA-256:
- *
- *   `<tablePrefix>/snapshot/L<level>/<minSeq>-<maxSeq>-<sha256>.json`
- *
- *   - `L<level>`: integer ≥ 0. This ticket ships single-level
- *     snapshots written at L9 (one snapshot replaces the prior; no
- *     multi-level merge yet). Future tickets may introduce L0 (small,
- *     recent) and merge runs that produce L1, L2, …, L9.
- *   - `minSeq` / `maxSeq`: zero-padded decimal log sequence numbers,
- *     inclusive-exclusive. `maxSeq` equals the new `log_seq_start` —
- *     the snapshot covers `[minSeq, maxSeq)` and the live log starts
- *     at `maxSeq`.
- *   - `sha256`: 64 hex chars; the body's SHA-256.
- *
- * `minSeq` and `maxSeq` are padded to {@link SEQ_DIGITS} digits so
- * lex-order over snapshot keys matches numeric order. JavaScript's
- * `Number.MAX_SAFE_INTEGER` is 2^53 - 1 ≈ 9.007e15 (16 digits); we
- * pad to 12 digits — enough for ~one trillion entries — without
- * making the filenames noisy. `snapshotKey` refuses to produce a
- * snapshot whose `maxSeq` overflows 12 digits.
- */
-export const SNAPSHOT_LEVEL = 9 as const;
-export const SEQ_DIGITS = 12 as const;
-const MAX_SEQ = 10 ** SEQ_DIGITS - 1;
-
-export const snapshotKey = (
-  tablePrefix: string,
-  minSeq: number,
-  maxSeq: number,
-  sha256: string,
-): string => {
-  if (minSeq < 0 || maxSeq < 0 || minSeq > maxSeq || maxSeq > MAX_SEQ) {
-    throw new BaerlyError("InvalidConfig", `snapshotKey: invalid range [${minSeq}, ${maxSeq})`);
-  }
-  if (!/^[0-9a-f]{64}$/.test(sha256)) {
-    throw new BaerlyError("InvalidConfig", "snapshotKey: sha256 must be 64 hex chars");
-  }
-  const pad = (n: number): string => n.toString().padStart(SEQ_DIGITS, "0");
-  return `${tablePrefix}/snapshot/L${SNAPSHOT_LEVEL}/${pad(minSeq)}-${pad(maxSeq)}-${sha256}.json`;
-};
-
-/**
- * On-bucket body of a snapshot file. The reader recomputes the SHA-256
- * over the canonical serialisation ({@link encodeSnapshotBody}) and
- * rejects any mismatch with the filename hash.
- *
- * `docs` is sorted by `_id` for deterministic byte output — two
- * compactions over the same fold produce byte-identical snapshots,
- * which means same filename, which means an idempotent re-run never
- * leaves an orphan.
- */
-export interface SnapshotBody {
-  readonly schema_version: 1;
-  readonly min_seq: number;
-  readonly max_seq: number;
-  readonly collection: string;
-  readonly docs: ReadonlyArray<{
-    readonly _id: string;
-    readonly body: DocumentData;
-  }>;
-}
-
-/**
- * Canonical byte encoding of a {@link SnapshotBody}. Only the
- * compactor produces snapshots, and only this function does the
- * serialisation — so the byte output is deterministic for a given
- * `SnapshotBody` (identical input ⇒ identical bytes ⇒ identical
- * filename hash).
- */
-export const encodeSnapshotBody = (s: SnapshotBody): Uint8Array => encodeJsonBytes(s);
+import {
+  encodeSnapshotBody,
+  loadSnapshotAsMap,
+  type SnapshotBody,
+  snapshotKey,
+} from "./snapshot.ts";
 
 /**
  * Public configuration knobs for {@link compact}. All optional; the
@@ -419,139 +352,6 @@ const compactInner = async (
     logSeqStartAfter: foldEnd,
     entriesFolded,
   };
-};
-
-/**
- * Load a content-addressed snapshot from object storage and return
- * its docs as a `Map<_id, body>`. The function verifies the body's
- * SHA-256 against the hash embedded in the snapshot filename (the
- * segment after the last `-` in `<min>-<max>-<sha256>.json`), parses
- * the JSON as a {@link SnapshotBody}, and checks the schema version
- * and `collection` field — so callers consuming the returned map are
- * guaranteed an integrity- and identity-validated view of the
- * snapshot.
- *
- * The function is consumed by every read or write path that needs to
- * materialise a snapshot as its fold base: the compactor (loading
- * the prior snapshot before merging the live tail), the reader
- * (`Query.runRead`), `runGc`, `rebuildIndex`, and — across the
- * package boundary — the CLI's `baerly admin copy` orchestrator.
- *
- * @public — stable utility, re-exported from `baerly-storage`. The
- *   `SnapshotBody.schema_version` is the long-lived format contract;
- *   new versions land additively (existing readers keep working).
- *
- * @param storage — the `Storage` handle to GET the snapshot body
- *   from. Tenant-scoped; must already point at the same bucket the
- *   snapshot `key` resolves under.
- * @param key — fully-qualified snapshot key, typically the value of
- *   `current.snapshot` on a `current.json` pointer.
- *   The function reads the SHA-256 expected hash from the filename's
- *   last `-`-delimited segment.
- * @param expectedCollection — the collection name the snapshot must
- *   carry inside its `SnapshotBody.collection` field. Mismatch
- *   surfaces as `BaerlyError{code:"InvalidResponse"}` — the call
- *   refuses to fold the wrong collection's docs into a caller's
- *   merge state.
- * @param signal — optional `AbortSignal`. Forwarded to the underlying
- *   `Storage.get` call.
- *
- * @returns a `Map<_id, body>` of every doc in the snapshot. The map
- *   is fresh on each call (no internal cache); mutating it does not
- *   affect future reads.
- *
- * @throws BaerlyError code="Internal" — the snapshot pointer resolves
- *   to no body, or the body's SHA-256 hash doesn't match the
- *   filename. A crashed mid-PUT compactor produces the latter;
- *   readers treat it as "missing."
- * @throws BaerlyError code="InvalidResponse" — body isn't valid JSON,
- *   isn't an object, carries an unknown `schema_version`, or names a
- *   different collection than `expectedCollection`.
- *
- * @example
- * ```ts
- * // Cross-package: `baerly admin copy` folds the source snapshot as the
- * // base map, then walks the live log tail [logSeqStart, nextSeq)
- * // and applies each LogEntry on top before re-encoding as a new
- * // snapshot on the destination bucket.
- * import { loadSnapshotAsMap } from "baerly-storage";
- * import { walkLogRange } from "baerly-storage";
- *
- * const base =
- *   srcCurrent.snapshot === null
- *     ? new Map<string, DocumentData>()
- *     : await loadSnapshotAsMap(src.storage, srcCurrent.snapshot, "tickets");
- *
- * const entries = await walkLogRange(
- *   src.storage,
- *   tablePrefix,
- *   srcCurrent.log_seq_start,
- *   srcCurrent.next_seq,
- * );
- * for (const entry of entries) {
- *   if (entry.op === "D") base.delete(entry.doc_id);
- *   else if (entry.new !== undefined) base.set(entry.doc_id, entry.new);
- * }
- * ```
- */
-export const loadSnapshotAsMap = async (
-  storage: Storage,
-  key: string,
-  expectedCollection: string,
-  signal?: AbortSignal,
-): Promise<Map<string, DocumentData>> => {
-  const got = await storage.get(key, signal !== undefined ? { signal } : undefined);
-  if (got === null) {
-    throw new BaerlyError(
-      "Internal",
-      `compact: snapshot pointer ${key} resolves to no body; protocol violation`,
-    );
-  }
-  // Verify hash: the filename shape is
-  // `<...>/snapshot/L<n>/<min>-<max>-<sha256>.json`. The sha256 is
-  // the segment after the LAST `-` (the two seq fields don't contain
-  // dashes), with `.json` stripped.
-  const filename = key.slice(key.lastIndexOf("/") + 1).replace(/\.json$/, "");
-  const lastDash = filename.lastIndexOf("-");
-  const expectedHash = filename.slice(lastDash + 1);
-  const actualHash = await snapshotHash(got.body);
-  if (actualHash !== expectedHash) {
-    throw new BaerlyError(
-      "Internal",
-      `compact: snapshot ${key} body hash mismatch (got ${actualHash}); protocol violation`,
-    );
-  }
-  let parsed: unknown;
-  try {
-    parsed = decodeJsonBytes(got.body);
-  } catch (error) {
-    throw new BaerlyError(
-      "InvalidResponse",
-      `compact: snapshot ${key} body is not valid JSON`,
-      error,
-    );
-  }
-  if (parsed === null || typeof parsed !== "object") {
-    throw new BaerlyError("InvalidResponse", `compact: snapshot ${key} body is not an object`);
-  }
-  const body = parsed as SnapshotBody;
-  if (body.schema_version !== 1) {
-    throw new BaerlyError(
-      "InvalidResponse",
-      `compact: snapshot ${key} has unsupported schema_version ${String(body.schema_version)}`,
-    );
-  }
-  if (body.collection !== expectedCollection) {
-    throw new BaerlyError(
-      "InvalidResponse",
-      `compact: snapshot ${key} carries collection ${body.collection}, expected ${expectedCollection}`,
-    );
-  }
-  const map = new Map<string, DocumentData>();
-  for (const row of body.docs) {
-    map.set(row._id, row.body);
-  }
-  return map;
 };
 
 // ---------------------------------------------------------------------

@@ -52,7 +52,7 @@ import {
   type Storage,
   uuidv7,
 } from "@baerly/protocol";
-import { loadSnapshotAsMap } from "./compactor.ts";
+import { loadSnapshotAsMap } from "./snapshot.ts";
 import type { TxContext } from "./db.ts";
 import { encodeIndexValue, type IndexDefinition } from "./indexes.ts";
 import { foldLogEntriesOnto, walkLogRange } from "./log-walk.ts";

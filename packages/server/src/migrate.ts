@@ -41,7 +41,7 @@ import {
   encodeSnapshotBody,
   loadSnapshotAsMap,
   snapshotKey,
-} from "./compactor.ts";
+} from "./snapshot.ts";
 import { foldLogEntriesOnto, walkLogRange } from "./log-walk.ts";
 
 const APPLICATION_JSON = "application/json";

@@ -16,7 +16,7 @@ import {
   type DocumentData,
 } from "@baerly/protocol";
 import { describe, expect, test } from "vitest";
-import { loadSnapshotAsMap } from "./compactor.ts";
+import { loadSnapshotAsMap } from "./snapshot.ts";
 import { migrateCollection } from "./migrate.ts";
 import { Writer } from "./writer.ts";
 
@@ -145,9 +145,7 @@ describe("migrateCollection", () => {
         currentJsonKey: KEY,
         collection: COLL,
         // Caller bug: returning a number instead of an object.
-        transform: (() => 42) as unknown as (
-          row: DocumentData,
-        ) => DocumentData | null,
+        transform: (() => 42) as unknown as (row: DocumentData) => DocumentData | null,
         targetVersion: 1,
       }),
     ).rejects.toMatchObject({ code: "SchemaError" });

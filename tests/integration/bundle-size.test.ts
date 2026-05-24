@@ -117,7 +117,12 @@ const BUDGETS: readonly Budget[] = [
   //     correctness fixes (`?order=`/`?limit=` threading + `parseOrder`
   //     / `parseLimit`; `PUT /v1/t/:table/:id` for true replace;
   //     `GET /v1/count` scalar route). gz unchanged.
-  { entry: "index.js", raw: 357 * 1024, gz: 103 * 1024 },
+  //   → 160 KiB raw / 50 KiB gz: snapshot-primitives
+  //     extracted into `packages/server/src/snapshot.ts`; the kernel
+  //     barrel re-exports them from there instead of `compactor.ts`, so
+  //     the observability chunk no longer lands in the kernel closure.
+  //     Measured: 150792 raw / 47342 gz.
+  { entry: "index.js", raw: 160 * 1024, gz: 50 * 1024 },
   // The three auth verifier factories (bearerJwt, sharedSecret,
   // cloudflareAccess) plus the transitive jose closure pulled in by
   // bearerJwt's createRemoteJWKSet + jwtVerify. Adding a fourth
@@ -439,6 +444,23 @@ describe("bundle size", () => {
       expect(measured.gz, `${gzLine}`).toBeLessThanOrEqual(gz);
     });
   }
+
+  // The kernel barrel (`baerly-storage`) is the surface every consumer
+  // pays for. Historically the rolldown chunk graph dragged the
+  // observability subgraph (~89 KiB raw / ~24 KiB gz) into the kernel
+  // closure because `compactor.ts` exported both lightweight snapshot
+  // primitives (re-exported from the barrel) and `compact()` (which
+  // calls `withObservability`). After splitting the primitives into
+  // `packages/server/src/snapshot.ts`, the kernel barrel must not
+  // transitively pull any `observability-*.js` chunk.
+  test("dist/index.js closure excludes the observability subgraph", () => {
+    const measured = measureClosure("index.js");
+    const observabilityChunks = measured.files.filter((f) => f.startsWith("observability-"));
+    expect(
+      observabilityChunks,
+      `kernel barrel must not pull the observability subgraph; found: ${observabilityChunks.join(", ")}`,
+    ).toEqual([]);
+  });
 
   // Scaffolded apps install only `baerly-storage`. `@xmldom/xmldom`
   // and `aws4fetch` are bundled into the published library + bin

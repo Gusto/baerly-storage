@@ -16,7 +16,8 @@ import {
   BaerlyError,
 } from "@baerly/protocol";
 import { describe, expect, test } from "vitest";
-import { compact, type InternalCompactOptions, loadSnapshotAsMap } from "./compactor.ts";
+import { compact, type InternalCompactOptions } from "./compactor.ts";
+import { loadSnapshotAsMap } from "./snapshot.ts";
 import { InMemoryMetricsRecorder } from "./_internal/in-memory-metrics.ts";
 import { Writer } from "./writer.ts";
 

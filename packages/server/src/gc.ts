@@ -62,7 +62,7 @@ import {
   teeMetricsRecorders,
   versionFromContent,
 } from "@baerly/protocol";
-import { loadSnapshotAsMap } from "./compactor.ts";
+import { loadSnapshotAsMap } from "./snapshot.ts";
 import { withObservability } from "./observability/index.ts";
 
 /**

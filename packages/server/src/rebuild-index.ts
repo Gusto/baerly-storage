@@ -42,7 +42,7 @@ import {
   type Storage,
   teeMetricsRecorders,
 } from "@baerly/protocol";
-import { loadSnapshotAsMap } from "./compactor.ts";
+import { loadSnapshotAsMap } from "./snapshot.ts";
 import { allIndexKeysFor, type IndexDefinition, indexKeyPrefix } from "./indexes.ts";
 import { foldLogEntriesOnto, walkLogRange } from "./log-walk.ts";
 import { withObservability } from "./observability/index.ts";

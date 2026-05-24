@@ -33,7 +33,7 @@ export {
   encodeSnapshotBody,
   loadSnapshotAsMap,
   snapshotKey,
-} from "./compactor.ts";
+} from "./snapshot.ts";
 export { walkLogRange } from "./log-walk.ts";
 export { type SchemaIssue, type SchemaValidator, validateOrThrow } from "./schema.ts";
 
