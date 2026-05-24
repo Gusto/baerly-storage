@@ -325,6 +325,11 @@ http://localhost:5173/<path>`) before declaring the task complete.
   }));
 
   export default {
+    // Keep `req` / `env` / `ctx` inferred — the `satisfies
+    // ExportedHandler<AppEnv>` line below narrows them to the same
+    // shapes `baerly.fetch!` accepts. Annotating them (`req: Request`,
+    // `env: AppEnv`, `ctx: ExecutionContext`) widens to the kernel
+    // `Request` and triggers TS2345 at the fall-through.
     async fetch(req, env, ctx): Promise<Response> {
       const url = new URL(req.url);
       if (req.method === "POST" && url.pathname.startsWith("/api/")) {
@@ -343,6 +348,10 @@ http://localhost:5173/<path>`) before declaring the task complete.
         return new Response(null, { status: 204 });
       }
       // Fall through to the baerly cascade for /v1/* + /healthz.
+      // No cast at the call: `req`/`env`/`ctx` already match
+      // `baerly`'s `ExportedHandler<AppEnv>` because both come from
+      // the same `E`. If you hit TS2345 here, you re-annotated the
+      // parameters above — drop the annotations.
       return baerly.fetch!(req, env, ctx);
     },
   } satisfies ExportedHandler<AppEnv>;
