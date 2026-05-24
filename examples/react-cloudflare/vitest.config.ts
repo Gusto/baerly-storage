@@ -1,12 +1,8 @@
 import { defineConfig } from "vitest/config";
 
 // Standalone — `vite.config.ts` loads `@cloudflare/vite-plugin`, which
-// rejects vitest's pool/environment combo at runtime (`The following
-// environment options are incompatible with the Cloudflare Vite
-// plugin`). Keeping this config separate means vitest never touches
-// the Worker dev pipeline. For Worker-side integration tests, add
-// `@cloudflare/vitest-pool-workers` and a `test.poolOptions.workers`
-// project alongside this one.
+// rejects vitest's pool/environment combo. Add `@cloudflare/vitest-pool-workers`
+// here if you want Worker-side integration tests.
 export default defineConfig({
   test: {
     environment: "node",
