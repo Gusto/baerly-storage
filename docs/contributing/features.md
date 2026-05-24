@@ -276,21 +276,20 @@ zero overhead.
   (schema-validation block in the cascade)
 - Docs: [`docs/extending.md`](./extending.md) §"Declare a schema for a collection"
 
-## Operator CLI — `baerly init` / `baerly inspect`
+## Operator CLI — `baerly inspect`
 
-Two top-level operator commands that mirror `deploy` / `doctor`.
-`init` drops a `baerly.config.ts` into an existing repo (the
-add-to-existing-repo counterpart to `npm create baerly`).
-`inspect` reads `current.json` + snapshot + live log tail and
-prints a read-only summary of one collection (next_seq,
-log_seq_start, writer_fence, materialised row count, per-index
-key counts).
+Reads `current.json` + snapshot + live log tail and prints a
+read-only summary of one collection (next_seq, log_seq_start,
+writer_fence, materialised row count, per-index key counts).
+
+Bolt-on (adding baerly to an existing Cloudflare Worker project) lives
+in `create-baerly`: `pnpm create baerly .` detects `wrangler.jsonc` and
+dispatches to the bolt-on flow. See
+[`docs/guide/add-to-existing-cf-worker.md`](../guide/add-to-existing-cf-worker.md).
 
 - Implementation:
-  [`packages/cli/src/init.ts`](../../packages/cli/src/init.ts),
   [`packages/cli/src/inspect.ts`](../../packages/cli/src/inspect.ts)
 - Tests:
-  [`packages/cli/src/init.test.ts`](../../packages/cli/src/init.test.ts),
   [`packages/cli/src/inspect.test.ts`](../../packages/cli/src/inspect.test.ts)
 
 ## Operator CLI — `baerly admin dump` / `baerly admin restore`

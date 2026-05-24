@@ -13,7 +13,6 @@ Subcommands are built on [citty](https://github.com/unjs/citty);
 | Command   | Status      | Module        |
 | --------- | ----------- | ------------- |
 | `copy`    | implemented | `src/copy.ts` |
-| `init`    | planned     | —             |
 | `inspect` | planned     | —             |
 | `compact` | planned     | —             |
 | `fsck`    | planned     | —             |
@@ -21,6 +20,11 @@ Subcommands are built on [citty](https://github.com/unjs/citty);
 | `migrate` | planned     | —             |
 | `dump`    | planned     | —             |
 | `restore` | planned     | —             |
+
+Bolt-on (adding baerly to an existing Cloudflare Worker project) lives
+in `create-baerly` — see
+[`packages/create-baerly/AGENTS.md`](../create-baerly/AGENTS.md)
+§"Bolt-on branch".
 
 Each subcommand is one `defineCommand` block exported from its own
 module and registered in `src/baerly.ts`. Adding one: copy the shape

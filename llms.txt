@@ -71,6 +71,21 @@ const open = await client.table<Ticket>("tickets").where({ status: "open" }).all
 a peer of the kernel. All causal-consistency / fence-time logic
 lives in the server-side `Db` + `ServerWriter`.
 
+## Bolt onto an existing Cloudflare Worker
+
+If you already have a `wrangler.jsonc` (from `wrangler create` or an
+existing project), the one-command bolt-on is:
+
+```sh
+pnpm create baerly .
+```
+
+`create-baerly` detects `wrangler.jsonc`, patches the R2 binding +
+vars, seeds `.dev.vars`, appends `baerly-storage` to `package.json`,
+and prints the `src/index.ts` snippet for you to paste. Every write
+is idempotent — re-running is safe. Full reference:
+[docs/guide/add-to-existing-cf-worker.md](docs/guide/add-to-existing-cf-worker.md).
+
 ## Toolchain
 
 pnpm · vitest · TypeScript 7 (tsgo) · oxfmt · oxlint · rolldown

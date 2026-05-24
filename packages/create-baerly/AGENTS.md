@@ -43,6 +43,53 @@ packages/create-baerly/dist/templates/<template>/
   `dist/templates/<picked>/` and `templates/addons/` into
   `dist/templates/addons/` so the published bin is self-contained.
 
+## Bolt-on branch
+
+When `pnpm create baerly .` is run inside a directory that already has
+a `wrangler.jsonc`, the runner and wizard dispatch to the bolt-on flow
+instead of scaffolding a template.
+
+**Runner dispatch (`src/runner.ts`):** After `projectName` is resolved
+via `resolveOutDir`, `handleCreateBaerly` calls `existsSync` on
+`resolve(outDir, "wrangler.jsonc")`. If found, it dispatches to
+`dispatchBoltOn` (which calls `boltOnExistingWrangler` from
+`bolt-on.ts`) and returns early — the scaffold path is never entered.
+`--target=node` + `wrangler.jsonc` is an error (bolt-on is
+Cloudflare-only).
+
+**Wizard mid-flow detection (`src/prompts.ts`):** After the
+`projectName` prompt resolves, `runWizard` checks `existsSync` on the
+resolved `wrangler.jsonc` path. If found, it shows a `note()` and
+returns a `BoltOnWizardOutput` (`mode: "bolt-on"`) — skipping the
+target, starter, git, and Docker prompts entirely (all are forced:
+no template, target=cloudflare, no git).
+
+**Orchestrator (`src/bolt-on.ts`, `boltOnExistingWrangler`):** Reads
+`wrangler.jsonc` via `readWranglerName` + `readWranglerMain` from
+`@baerly/cli/wrangler-patch`, then runs five writes in order — each
+gated on skip-if-exists or merge-if-present semantics:
+
+1. `wrangler.jsonc` — `patchWranglerJsonc` merges R2 binding + four `vars`.
+2. `.dev.vars` — created with `SHARED_SECRET=dev-shared-secret`; skipped if already exists.
+3. `.gitignore` — appends `.dev.vars` unless a covering pattern exists.
+4. `baerly.config.ts` — written if absent; `--force` overwrites.
+5. `package.json` — appends `baerly-storage` to `dependencies` if absent.
+
+Returns `BoltOnResult` containing `app`, `tenant`, `changes` (human-
+readable list), `snippet` (the worker-entry snippet text), `snippetTarget`
+(path from `wrangler.jsonc:main`), and `nextSteps`.
+
+**Pure helpers (in `@baerly/cli`):** `patchWranglerJsonc` and
+`readWranglerName`/`readWranglerMain` come from
+`@baerly/cli/wrangler-patch`; `renderWorkerEntrySnippet` comes from
+`@baerly/cli/init-snippet`. Both are consumed here and by `baerly
+deploy` (which patches wrangler.jsonc for the same reason on the other
+end of the lifecycle).
+
+**Convex-style boundary:** structured config (`wrangler.jsonc`,
+`baerly.config.ts`) is fair game to write; the user's worker entry
+(`src/index.ts`) is printed as a snippet, never written.
+
 ## When iterating against local Verdaccio
 
 `pnpm dlx` caches resolved tarballs by `pkg@version`. Republishing
