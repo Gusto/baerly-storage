@@ -21,6 +21,14 @@ server uses to pin the request to one tenant's keyspace.
 - `cloudflareAccess` — thin shim over `bearerJwt` that consumes
   CF Access's `Cf-Access-Jwt-Assertion` header.
 
+Both `bearerJwt` and `cloudflareAccess` accept a `tenantPrefix?: string`
+option that pins every verified request to a fixed tenant, bypassing
+claim lookup. Use this for single-tenant deployments where the IdP
+doesn't ship a tenant claim — the default `tenantClaim: "tenant"`
+would 401 every request because vanilla CF Access JWTs carry only
+`sub`/`email`. Signature, audience, and expiry checks are still
+enforced; only tenant derivation is replaced.
+
 Source:
 [`packages/server/src/auth/presets/`](../../packages/server/src/auth/presets/).
 

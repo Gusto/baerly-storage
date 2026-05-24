@@ -149,6 +149,52 @@ describe("bearerJwt — reject paths return null", () => {
   });
 });
 
+describe("bearerJwt — tenantPrefix override", () => {
+  test("pins tenant from a fixed string, ignoring the JWT payload entirely", async () => {
+    const verifier = bearerJwt({ jwks, issuer: ISSUER, audience: AUDIENCE, tenantPrefix: "main" });
+    // Token with NO tenant claim — would 401 today.
+    const payload = validPayload();
+    delete (payload as Record<string, unknown>)["tenant"];
+    const token = await signJwt(payload);
+    const res = await verifier(mkReq(token));
+    expect(res).not.toBeNull();
+    expect(res!.tenantPrefix).toBe("main");
+  });
+
+  test("still rejects an expired token (verification is not bypassed)", async () => {
+    const verifier = bearerJwt({
+      jwks,
+      issuer: ISSUER,
+      audience: AUDIENCE,
+      tenantPrefix: "main",
+      clockSkewMs: 1_000,
+    });
+    const token = await signJwt(validPayload({ exp: Math.floor(Date.now() / 1000) - 600 }));
+    await expect(verifier(mkReq(token))).resolves.toBeNull();
+  });
+
+  test("throws InvalidConfig when tenantPrefix is empty or contains '/'", () => {
+    expect(() => bearerJwt({ jwks, issuer: ISSUER, audience: AUDIENCE, tenantPrefix: "" })).toThrow(
+      BaerlyError,
+    );
+    expect(() =>
+      bearerJwt({ jwks, issuer: ISSUER, audience: AUDIENCE, tenantPrefix: "a/b" }),
+    ).toThrow(BaerlyError);
+  });
+
+  test("throws InvalidConfig when both tenantPrefix and tenantClaim are set (ambiguous)", () => {
+    expect(() =>
+      bearerJwt({
+        jwks,
+        issuer: ISSUER,
+        audience: AUDIENCE,
+        tenantPrefix: "main",
+        tenantClaim: "sub",
+      }),
+    ).toThrow(BaerlyError);
+  });
+});
+
 describe("bearerJwt — JWKS cache", () => {
   test("first call fetches; second call within TTL hits cache (fetch invoked once)", async () => {
     const fetchStub = vi.fn<typeof fetch>(

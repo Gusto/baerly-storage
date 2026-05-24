@@ -23,7 +23,14 @@ import {
  * - `tenantClaim` — name of the claim that carries the tenant
  *   identifier. Defaults to `"tenant"`. Custom IdPs may use a
  *   namespaced claim (`"https://example.com/tenant"`); set to that
- *   string.
+ *   string. Mutually exclusive with `tenantPrefix`.
+ * - `tenantPrefix` — pin every verified token to a fixed tenant
+ *   string, bypassing claim lookup. Use for single-tenant
+ *   deployments where the IdP doesn't ship a tenant claim (the
+ *   common case for vanilla CF Access). The signature, `iss`,
+ *   `aud`, `exp`, and algorithm allowlist are still enforced —
+ *   only the tenant-derivation step is replaced. Mutually exclusive
+ *   with `tenantClaim`; must be non-empty and contain no `/`.
  * - `algorithms` — allowlist of `alg` header values. Defaults to
  *   `["RS256", "ES256", "EdDSA"]`. `none`, `HS256`, anything else
  *   is rejected without consulting the JWKS.
@@ -40,6 +47,7 @@ export interface BearerJwtOptions {
   readonly issuer: string;
   readonly audience: string;
   readonly tenantClaim?: string;
+  readonly tenantPrefix?: string;
   readonly algorithms?: readonly JwtAlgorithm[];
   readonly clockSkewMs?: number;
   readonly jwksCacheTtlMs?: number;
@@ -129,7 +137,23 @@ export const bearerJwt = (opts: BearerJwtOptions): Verifier => {
     throw new BaerlyError("InvalidConfig", "bearerJwt: algorithms must be non-empty");
   }
 
+  if (opts.tenantPrefix !== undefined) {
+    if (opts.tenantClaim !== undefined) {
+      throw new BaerlyError(
+        "InvalidConfig",
+        "bearerJwt: tenantPrefix and tenantClaim are mutually exclusive",
+      );
+    }
+    if (opts.tenantPrefix.length === 0 || opts.tenantPrefix.includes("/")) {
+      throw new BaerlyError(
+        "InvalidConfig",
+        `bearerJwt: tenantPrefix must be non-empty and contain no "/" (got ${JSON.stringify(opts.tenantPrefix)})`,
+      );
+    }
+  }
+
   const tenantClaim = opts.tenantClaim ?? DEFAULT_TENANT_CLAIM;
+  const fixedTenantPrefix = opts.tenantPrefix;
   const clockToleranceSec = (opts.clockSkewMs ?? DEFAULT_CLOCK_SKEW_MS) / 1000;
   const cacheMaxAge = opts.jwksCacheTtlMs ?? DEFAULT_JWKS_CACHE_TTL_MS;
 
@@ -165,6 +189,10 @@ export const bearerJwt = (opts: BearerJwtOptions): Verifier => {
         throw new BaerlyError("NetworkError", "bearerJwt: JWKS fetch failed", error);
       }
       return null;
+    }
+
+    if (fixedTenantPrefix !== undefined) {
+      return { tenantPrefix: fixedTenantPrefix, identity: payload };
     }
 
     const tenantValue = payload[tenantClaim];

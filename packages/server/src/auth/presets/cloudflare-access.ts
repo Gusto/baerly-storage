@@ -14,7 +14,14 @@ import { bearerJwt } from "./bearer-jwt.ts";
  * - `tenantClaim` — same as `BearerJwtOptions.tenantClaim`.
  *   Defaults to `"tenant"`. Set to a custom claim if you've wired
  *   CF Access to a SAML / OIDC provider that ships a tenant in a
- *   namespaced claim.
+ *   namespaced claim. Mutually exclusive with `tenantPrefix`.
+ * - `tenantPrefix` — pin every verified token to a fixed tenant
+ *   string. Use for single-tenant CF Access deployments: vanilla
+ *   CF Access JWTs ship `sub`/`email` but no `tenant` claim, so
+ *   the default claim-based derivation 401s every request. Signature
+ *   + audience + expiry checks are still enforced; only the
+ *   tenant-derivation step is replaced. Must be non-empty and
+ *   contain no `/`. Mutually exclusive with `tenantClaim`.
  * - `fetch` / `clockSkewMs` / `jwksCacheTtlMs` — forwarded to the
  *   inner `bearerJwt`.
  */
@@ -22,6 +29,7 @@ export interface CloudflareAccessOptions {
   readonly teamDomain: string;
   readonly audienceTag: string;
   readonly tenantClaim?: string;
+  readonly tenantPrefix?: string;
   readonly fetch?: typeof fetch;
   readonly clockSkewMs?: number;
   readonly jwksCacheTtlMs?: number;
@@ -54,6 +62,16 @@ export interface CloudflareAccessOptions {
  *   audienceTag: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
  * });
  * ```
+ *
+ * @example Single-tenant CF Access (no `tenant` claim in the JWT)
+ * ```ts
+ * import { cloudflareAccess } from "baerly-storage/auth";
+ * const verifier = cloudflareAccess({
+ *   teamDomain: "acme",
+ *   audienceTag: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+ *   tenantPrefix: "main",
+ * });
+ * ```
  */
 export const cloudflareAccess = (opts: CloudflareAccessOptions): Verifier => {
   if (opts.teamDomain.length === 0) {
@@ -73,6 +91,7 @@ export const cloudflareAccess = (opts: CloudflareAccessOptions): Verifier => {
     issuer,
     audience: opts.audienceTag,
     ...(opts.tenantClaim !== undefined && { tenantClaim: opts.tenantClaim }),
+    ...(opts.tenantPrefix !== undefined && { tenantPrefix: opts.tenantPrefix }),
     ...(opts.fetch !== undefined && { fetch: opts.fetch }),
     ...(opts.clockSkewMs !== undefined && { clockSkewMs: opts.clockSkewMs }),
     ...(opts.jwksCacheTtlMs !== undefined && { jwksCacheTtlMs: opts.jwksCacheTtlMs }),

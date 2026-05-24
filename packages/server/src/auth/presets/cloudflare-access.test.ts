@@ -100,6 +100,54 @@ describe("cloudflareAccess", () => {
     }
   });
 
+  test("tenantPrefix pins tenant from a fixed string, ignoring JWT claims", async () => {
+    const fetchStub = vi.fn<typeof fetch>(async () => new Response(jwksBody, { status: 200 }));
+    const verifier = cloudflareAccess({
+      teamDomain: TEAM_DOMAIN,
+      audienceTag: AUDIENCE_TAG,
+      tenantPrefix: "main",
+      fetch: fetchStub,
+    });
+    // Token has no `tenant` claim — would 401 today.
+    const token = await signJwt(validPayload({ tenant: undefined }));
+    const res = await verifier(mkReq(token));
+    expect(res).not.toBeNull();
+    expect(res!.tenantPrefix).toBe("main");
+  });
+
+  test("tenantPrefix still requires a valid signature (expired token → null)", async () => {
+    const fetchStub = vi.fn<typeof fetch>(async () => new Response(jwksBody, { status: 200 }));
+    const verifier = cloudflareAccess({
+      teamDomain: TEAM_DOMAIN,
+      audienceTag: AUDIENCE_TAG,
+      tenantPrefix: "main",
+      clockSkewMs: 1_000,
+      fetch: fetchStub,
+    });
+    const token = await signJwt(validPayload({ exp: Math.floor(Date.now() / 1000) - 600 }));
+    await expect(verifier(mkReq(token))).resolves.toBeNull();
+  });
+
+  test("throws BaerlyError{InvalidConfig} when tenantPrefix is empty or contains '/'", () => {
+    expect(() =>
+      cloudflareAccess({ teamDomain: TEAM_DOMAIN, audienceTag: AUDIENCE_TAG, tenantPrefix: "" }),
+    ).toThrow(BaerlyError);
+    expect(() =>
+      cloudflareAccess({ teamDomain: TEAM_DOMAIN, audienceTag: AUDIENCE_TAG, tenantPrefix: "a/b" }),
+    ).toThrow(BaerlyError);
+  });
+
+  test("throws BaerlyError{InvalidConfig} when both tenantPrefix and tenantClaim are set", () => {
+    expect(() =>
+      cloudflareAccess({
+        teamDomain: TEAM_DOMAIN,
+        audienceTag: AUDIENCE_TAG,
+        tenantPrefix: "main",
+        tenantClaim: "sub",
+      }),
+    ).toThrow(BaerlyError);
+  });
+
   test("throws BaerlyError{InvalidConfig} on malformed audienceTag", () => {
     try {
       cloudflareAccess({ teamDomain: TEAM_DOMAIN, audienceTag: "not-hex" });

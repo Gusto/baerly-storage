@@ -145,7 +145,12 @@ const BUDGETS: readonly Budget[] = [
   //     `jose` (bearer-jwt.ts 444 → ~80 LoC; createRemoteJWKSet +
   //     jwtVerify preserve the kid-miss rate-limit via
   //     cooldownDuration:60_000).
-  { entry: "auth.js", raw: 53 * 1024, gz: 15 * 1024 },
+  //   → 54 KiB raw / 15 KiB gz: add `tenantPrefix?: string` override
+  //     to bearerJwt + cloudflareAccess (validation branch + error
+  //     messages + fixed-prefix short-circuit in the inner verifier).
+  //     Closes the single-tenant CF Access gap where vanilla JWTs
+  //     ship `sub`/`email` but no `tenant` claim. Measured: 54746 raw.
+  { entry: "auth.js", raw: 54 * 1024, gz: 15 * 1024 },
   // `BaerlyAppConfig` types + the identity `defineConfig` helper.
   // No runtime closure — the types erase entirely and the function
   // is `<C>(c: C) => c`. Measured: 162 raw / 141 gz. Budget is a
