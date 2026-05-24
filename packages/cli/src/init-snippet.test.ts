@@ -17,6 +17,13 @@ describe("computeConfigImportPath", () => {
   test("./src/index.ts (leading dot) normalised", () => {
     expect(computeConfigImportPath("./src/index.ts")).toBe("../baerly.config.ts");
   });
+
+  test("Windows-style backslash separators are normalised to forward slashes", () => {
+    // POSIX normalize treats `\\` as a literal char, not a separator; callers
+    // must use forward slashes. `wrangler.jsonc:main` always does on every host.
+    // dirname("src\\index.ts") === "." so the result is the root-relative form.
+    expect(computeConfigImportPath("src\\index.ts")).toBe("./baerly.config.ts");
+  });
 });
 
 describe("renderWorkerEntrySnippet", () => {

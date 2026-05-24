@@ -7,10 +7,15 @@
  * structured config is fair game; the worker entry is sacred).
  */
 
-import { relative, dirname, normalize } from "node:path";
+import { relative, dirname, normalize } from "node:path/posix";
 
 export interface SnippetContext {
-  /** Value the snippet substitutes for `env.TENANT` semantics. */
+  /**
+   * Tenant identifier the bolt-on flow seeds into `wrangler.jsonc:vars.TENANT`.
+   * The snippet itself does NOT interpolate this — it references the runtime
+   * `env.TENANT`. The field lives on this context type so callers pass a
+   * single object to both the snippet renderer and the wrangler patcher.
+   */
   readonly tenant: string;
   /** Verbatim `wrangler.jsonc:main` — drives the import-to-config relpath. */
   readonly wranglerMain: string;
@@ -23,6 +28,10 @@ export interface SnippetContext {
  * (project convention; see CLAUDE.md "Imports are relative, with
  * explicit `.ts`/`.tsx` extensions").
  */
+// Callers must pass forward-slash paths. POSIX normalize treats `\\` as a
+// literal character, not a separator, so backslash-style Windows paths
+// would be misinterpreted. `wrangler.jsonc:main` always uses forward slashes
+// on every host, so this is safe in practice.
 export const computeConfigImportPath = (wranglerMain: string): string => {
   const normalised = normalize(wranglerMain);
   const fromDir = dirname(normalised);
