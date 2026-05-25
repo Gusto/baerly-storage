@@ -1,31 +1,32 @@
-# Extend `baerly init` with opt-in `--with=agent-rules`
+# Extend `pnpm create baerly .` (bolt-on path) with `--with=agent-rules`
 
-**Severity: MEDIUM. Closes the agent-onboarding gap for the "dropped
-into an existing repo" path. Strictly opt-in — must not run by
-default and must not run at `pnpm install` time.**
+**Severity: MEDIUM. Closes the agent-onboarding gap for the
+"dropped into an existing repo" path. Strictly opt-in.**
 
-`baerly init` today drops a `baerly.config.ts` into the current
-directory and exits (`packages/cli/src/init.ts`). That's correct for
-"I'm wiring baerly into an existing project," but it leaves the
-agent-onboarding story to the user. There's no pointer telling Claude
-/ Cursor / Copilot that the code under
-`node_modules/baerly-storage/dist/` is the source of truth, and no
-warning that the patterns those agents' training data is densest with
+`pnpm create baerly .` in an existing wrangler project (bolt-on mode)
+patches `wrangler.jsonc`, seeds `.dev.vars`/`.gitignore`, appends
+`baerly-storage` to `package.json`, writes `baerly.config.ts`, and
+prints the worker-entry snippet. What it does NOT do is tell the
+user's AI agents (Claude / Cursor / Copilot) that the code under
+`node_modules/baerly-storage/dist/` is the source of truth and that
+the patterns those agents' training data is densest with
 (Postgres/Prisma/Drizzle, Mongo, Firebase) don't apply.
 
-Scaffolded apps already get this via the per-scaffold `AGENTS.md`
-shipped by `create-baerly`. `baerly init` users are on their own.
+Scaffolded apps already get this via the per-template `AGENTS.md`
+shipped by `create-baerly`'s scaffold path. Bolt-on users — i.e.,
+people adopting baerly into an existing repo — are on their own.
 
-This ticket adds an explicit, reversible way to drop a small pointer
-block into the user's agent rules — behind a flag they have to ask
-for.
+This ticket adds an opt-in `--with=agent-rules` add-on to the bolt-on
+flow (matching the existing `--with=docker` precedent in the scaffold
+path).
 
 ## Non-goals (the etiquette guardrails)
 
 - **No postinstall mutation.** Nothing changes in the user's repo at
   `pnpm install` / `npm install` time. Ever.
-- **No default-on.** A user who runs `baerly init` without the flag
-  must see the same single-file write they see today.
+- **No default-on.** A user who runs `pnpm create baerly .` without
+  the flag must see only the changes documented in
+  `docs/guide/add-to-existing-cf-worker.md`.
 - **No inlining `API.md`.** The block is ~15 lines, not 367. The
   point of bundling `dist/API.md` is that it's the canonical agent
   doc; the block just tells the agent it's there.
@@ -39,12 +40,14 @@ for.
 ## UX
 
 ```sh
-baerly init --app=tickets --with=agent-rules
+pnpm create baerly . --with=agent-rules
 ```
 
-`--with=<addon>` matches the existing `create-baerly --with=docker`
-precedent and leaves room for future add-ons (`--with=mcp` etc.).
-Prefer this over a bespoke `--with-agent-rules` boolean.
+`--with=<addon>` already exists in `create-baerly` (`--with=docker`
+for the scaffold-mode Dockerfile add-on). Bolt-on mode currently
+ignores `--with` flags; this ticket adds `agent-rules` as the first
+bolt-on-mode-aware add-on. Leaves room for future add-ons
+(`--with=mcp` etc.).
 
 Behavior:
 
@@ -58,14 +61,11 @@ Behavior:
 2. **Idempotent.** Inserted content is wrapped with
    `<!-- baerly:start --> … <!-- baerly:end -->` so a second run
    replaces in place rather than duplicating.
-3. **Non-interactive.** In TTY mode without `--with=agent-rules`, do
-   NOT prompt — the gating is the flag, not a wizard. If interactive
-   selection ever lands, it belongs in `create-baerly`, not here.
-4. **Existing `--force`** is for the config file. The block is
-   always self-identifying, so we can always replace our own block
-   without `--force`; only the `baerly.config.ts` overwrite remains
-   gated.
-5. **JSON envelope** (`--json`) grows
+3. **Non-interactive in flag mode.** Without `--with=agent-rules`, no
+   prompt — the gating is the flag, not a wizard. The wizard COULD
+   add a "drop agent rules?" confirm in bolt-on mode (today the
+   wizard only asks `install`); pick whichever shape ships first.
+4. **JSON envelope** (`--json`) grows
    `agentRules?: { path, action: "created" | "appended" | "replaced" | "noop" }`.
 
 ## What the block contains
@@ -103,39 +103,38 @@ Anti-patterns that compile but are wrong:
 <!-- baerly:end -->
 ```
 
-Extract the literal as a module-level constant; if `create-baerly`
-ends up reusing it, move both call sites to a shared
-`packages/cli/src/agent-rules-block.ts` (or `@baerly/cli`'s internal
-surface).
+Extract the literal as a module-level constant; if the scaffold
+`AGENTS.md` templates eventually consume it too, move both call sites
+to a shared `agent-rules-block.ts` (in `packages/create-baerly/src/`
+or a shared `@baerly/cli` subpath).
 
 ## Implementation sketch
 
-- `packages/cli/src/init.ts`:
-  - Add `with: { type: "string", description: "Add-on to layer on top of init (e.g. agent-rules)." }`
-    to `INIT_ARGS`. Validate the value is `"agent-rules"` (mirror the
-    enum-style check used for `--target`).
-  - Add `"with"` to `KNOWN_KEYS`.
-  - After the existing `writeFile(outPath, ...)`, branch on
-    `args.with === "agent-rules"` and call a new
-    `writeAgentRulesBlock(cwd)` helper.
-- `packages/cli/src/agent-rules.ts` (new, ~60 LoC):
-  - `detectTarget(cwd): Promise<{ path: string; mode: "create" | "append" }>`
-  - `writeAgentRulesBlock(cwd): Promise<{ path: string; action: "created" | "appended" | "replaced" }>`
+- `packages/create-baerly/src/bolt-on.ts`:
+  - Add an `agentRules?: boolean` option to `BoltOnOptions`.
+  - After the existing side-effects, branch on `opts.agentRules ===
+    true` and call a new `writeAgentRulesBlock(outDir)` helper.
+- `packages/create-baerly/src/runner.ts`:
+  - Detect `args.with` containing `agent-rules` and thread it into
+    `dispatchBoltOn`.
+- `packages/create-baerly/src/agent-rules.ts` (new, ~60 LoC):
+  - `detectAgentRulesTarget(outDir): Promise<{ path: string; mode: "create" | "append" }>`
+  - `writeAgentRulesBlock(outDir): Promise<{ path: string; action: "created" | "appended" | "replaced" }>`
   - Block-replace logic anchored on
     `<!-- baerly:start -->`/`<!-- baerly:end -->`. Treat absence as
     append/create; presence as in-place replace.
-- `emitSuccess` envelope grows the `agentRules` field; JSON consumers
-  can opt into reading it.
+- `BoltOnResult` grows the `agentRules` field; the JSON envelope
+  exposes it.
 
 ## Tests
 
-`packages/cli/src/init.test.ts` already has the harness. Add cases:
+Add to `packages/create-baerly/src/bolt-on.test.ts`:
 
 - Without `--with=agent-rules`, no agent file is created or modified
   (regression-pin the opt-in contract — this is the most important
   test).
-- `--with=agent-rules` in an empty dir → creates `AGENTS.md` with the
-  block.
+- `--with=agent-rules` in an empty dir (no AGENTS.md / no
+  .claude/rules) → creates `AGENTS.md` with the block.
 - `--with=agent-rules` with pre-existing root `AGENTS.md` containing
   user content → block is appended after the existing content; user
   content is byte-identical before the block.
@@ -143,17 +142,11 @@ surface).
   → writes `.claude/rules/baerly.md`, leaves `AGENTS.md` alone.
 - Second run of `--with=agent-rules` → idempotent (block replaced in
   place, file not doubled, surrounding user content untouched).
-- Unknown `--with=foo` value → `InvalidConfig` exit code 1 with a
-  helpful message listing valid add-ons.
+- Unknown `--with=foo` value → already rejected by existing
+  `KNOWN_ADDONS` check in `runner.ts`; add `agent-rules` to that set.
 
 ## Out of scope
 
-- Folding this into `create-baerly`. Different entry points: a
-  scaffolded app gets its `AGENTS.md` at scaffold time and ships it
-  in the user's repo; `baerly init` is the path for an
-  already-existing repo that does NOT come from `create-baerly`.
-  Share the block text via the shared template module, not the call
-  sites.
 - An MCP server (`baerly-mcp`). Future work, tracked separately if
   and when `docs.baerly.dev` exists.
 - `llms.txt` at a docs site. Different surface (web-fetch by AI
@@ -164,10 +157,11 @@ surface).
 
 ## Verification
 
-- `pnpm test:agent` — the new `init.test.ts` cases.
-- Manual: `cd $(mktemp -d) && node …/baerly init --app=foo --with=agent-rules`
-  → confirm both `baerly.config.ts` and `AGENTS.md` land.
-- Manual: re-run the same command → confirm `AGENTS.md` is
+- `pnpm test:agent` — the new bolt-on.test.ts cases.
+- Manual: in a freshly-scaffolded `pnpm create cloudflare` project,
+  `pnpm create baerly . --with=agent-rules` → confirm both
+  `baerly.config.ts` and `AGENTS.md` land.
+- Manual: re-run the same command → confirm `AGENTS.md` block is
   byte-identical (idempotent).
 - Manual: in a repo with a pre-existing `AGENTS.md`, run with the
   flag → confirm only the delimited block is appended; the user's
