@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Writable } from "node:stream";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import type { BaerlyAppConfig } from "@baerly/protocol";
 import { baerlyDev, baerlyDevAuth, loadDevVars } from "./vite-plugin.ts";
 
 interface CapturedMw {
@@ -107,6 +108,37 @@ const headersFromRaw = (req: FakeReq): Headers => {
   return h;
 };
 
+const baseConfig = (auth: BaerlyAppConfig["auth"]): BaerlyAppConfig => ({
+  app: "test",
+  tenant: "test",
+  target: "node",
+  auth,
+  collections: { t: {} },
+});
+
+/**
+ * Run `plugin.configureServer` against a capturing fake-server and
+ * return the registered middleware. Each call yields a fresh
+ * middleware array so per-test mutations stay isolated.
+ */
+const captureMiddleware = (plugin: ReturnType<typeof baerlyDev>): CapturedMw => {
+  const captured: CapturedMw[] = [];
+  const fakeServer: FakeServer = {
+    middlewares: {
+      use: (mw) => {
+        captured.push(mw);
+      },
+    },
+    httpServer: null,
+  };
+  const configureServer = plugin.configureServer;
+  if (typeof configureServer !== "function") {
+    throw new Error("configureServer must be a function");
+  }
+  configureServer.call(null as never, fakeServer as never);
+  return captured[0]!;
+};
+
 let tmp: string;
 let middlewares: CapturedMw[];
 
@@ -122,14 +154,13 @@ beforeAll(async () => {
     httpServer: null,
   };
 
+  // Default fixture: `auth: "shared-secret"` exercises both the
+  // listener-side verifier and the middleware bearer-injection
+  // branch — the bulk of the dev-plugin contract surface. The
+  // alternate `auth: "none"` and `verifier:` override branches get
+  // dedicated tests below.
   const plugin = baerlyDev({
-    config: {
-      app: "test",
-      tenant: "test",
-      target: "node",
-      auth: "none",
-      collections: { t: {} },
-    },
+    config: baseConfig("shared-secret"),
     secret: "test-secret",
     dataDir: tmp,
     banner: false,
@@ -213,6 +244,82 @@ describe("baerlyDev() plugin", () => {
     // Wait a tick so we capture the post-mutation state synchronously
     // — the mutation happens before the async ready.then() resolves.
     expect(req.headers["authorization"]).toBe("Bearer test-secret");
+  });
+});
+
+describe("baerlyDev — auth resolution", () => {
+  const withDataDir = async (
+    fn: (dataDir: string) => void | Promise<void>,
+  ): Promise<void> => {
+    const dir = await mkdtemp(join(tmpdir(), "baerly-dev-auth-"));
+    try {
+      await fn(dir);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  };
+
+  test('auth: "none" → middleware does NOT inject Authorization on /v1/*', async () => {
+    await withDataDir((dir) => {
+      const plugin = baerlyDev({
+        config: baseConfig("none"),
+        dataDir: dir,
+        banner: false,
+      });
+      const mw = captureMiddleware(plugin);
+      const req = makeReq("/v1/foo");
+      mw(req, makeRes(), () => {});
+      expect(req.headers["authorization"]).toBeUndefined();
+      expect(headersFromRaw(req).get("authorization")).toBeNull();
+    });
+  });
+
+  test('auth: "shared-secret" + secret → middleware injects Bearer <secret>', async () => {
+    await withDataDir((dir) => {
+      const plugin = baerlyDev({
+        config: baseConfig("shared-secret"),
+        secret: "s3cr3t",
+        dataDir: dir,
+        banner: false,
+      });
+      const mw = captureMiddleware(plugin);
+      const req = makeReq("/v1/foo");
+      mw(req, makeRes(), () => {});
+      expect(req.headers["authorization"]).toBe("Bearer s3cr3t");
+      expect(headersFromRaw(req).get("authorization")).toBe("Bearer s3cr3t");
+    });
+  });
+
+  test('auth: "shared-secret" + no secret → throws InvalidConfig at startup', async () => {
+    await withDataDir((dir) => {
+      expect(() =>
+        baerlyDev({
+          config: baseConfig("shared-secret"),
+          dataDir: dir,
+          banner: false,
+        }),
+      ).toThrow(/SHARED_SECRET/);
+    });
+  });
+
+  test("verifier override wins over config.auth + does NOT inject Bearer", async () => {
+    await withDataDir((dir) => {
+      const plugin = baerlyDev({
+        config: baseConfig("shared-secret"),
+        secret: "ignored",
+        verifier: async () => ({
+          tenantPrefix: "x",
+          identity: { kind: "test" },
+        }),
+        dataDir: dir,
+        banner: false,
+      });
+      const mw = captureMiddleware(plugin);
+      const req = makeReq("/v1/foo");
+      mw(req, makeRes(), () => {});
+      // Override owns the auth seam — no bearer injection.
+      expect(req.headers["authorization"]).toBeUndefined();
+    });
   });
 });
 

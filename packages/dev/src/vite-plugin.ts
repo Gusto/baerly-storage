@@ -3,23 +3,43 @@ import { existsSync, readFileSync } from "node:fs";
 import { getRequestListener } from "@hono/node-server";
 import type { Plugin } from "vite";
 import { createApp } from "@baerly/adapter-node";
-import type { BaerlyAppConfig } from "@baerly/protocol";
-import { Db } from "@baerly/server";
-import { sharedSecret } from "@baerly/server/auth";
+import type { BaerlyAppConfig, Verifier } from "@baerly/protocol";
+import { Db, resolveVerifier } from "@baerly/server";
 import { type DevBannerHint, printDevBanner } from "./dev-banner.ts";
 import { ensureTable } from "./ensure-table.ts";
 import { LocalFsStorage } from "./local-fs.ts";
 
 export interface BaerlyDevOptions {
   /**
-   * The project's `baerly.config.ts`. `app`, `tenant`, and the
-   * table set (`Object.keys(config.collections)`) are derived from
-   * it; per-collection schemas/indexes flow through to the in-process
+   * The project's `baerly.config.ts`. `app`, `tenant`, `auth`, and the
+   * table set (`Object.keys(config.collections)`) are derived from it.
+   * Per-collection schemas/indexes flow through to the in-process
    * listener the same way `baerlyNode` / `baerlyWorker` pipe them.
    */
   readonly config: BaerlyAppConfig;
-  /** Shared-secret token; clients send `Authorization: Bearer <secret>`. */
-  readonly secret: string;
+  /**
+   * Shared-secret token. **Optional.** Required only when
+   * `config.auth === "shared-secret"` and `verifier` is unset — in
+   * that branch, clients must send `Authorization: Bearer <secret>`
+   * AND the middleware injects the same bearer server-side before
+   * forwarding to the in-process listener.
+   *
+   * Ignored when `config.auth === "none"` (no bearer to inject) or
+   * when `verifier` is supplied (the operator owns the auth seam).
+   *
+   * Throwing the symmetric `InvalidConfig` on a misconfig matches
+   * production behaviour: forgetting `SHARED_SECRET` in dev fails
+   * fast at `vite dev` startup with the same locked wording the
+   * adapter would emit.
+   */
+  readonly secret?: string;
+  /**
+   * Per-request `Verifier`. **Optional.** When set, overrides both
+   * `config.auth` and `secret` (same precedence as the production
+   * adapter factories). Use for dev-mode JWT validation against a
+   * staging IdP, or any custom auth shape.
+   */
+  readonly verifier?: Verifier;
   /** Absolute path to the data directory for LocalFsStorage. */
   readonly dataDir: string;
   /** Optional async seed callback, invoked after ensureTable, before mount. */
@@ -219,7 +239,46 @@ export function loadDevVars<K extends string>(
   return out;
 }
 
+/**
+ * Resolution order for the in-process verifier (mirrors
+ * `baerlyNode` / `baerlyWorker`):
+ *
+ *   1. `opts.verifier` set → use as-is.
+ *   2. else `opts.config.auth === "shared-secret"` → require
+ *      `opts.secret`; build `sharedSecret({ secret, tenantPrefix:
+ *      config.tenant })`. Throws `BaerlyError("InvalidConfig", ...)`
+ *      at Vite startup when `opts.secret` is empty/unset — same
+ *      locked wording the production adapter would emit.
+ *   3. else `opts.config.auth === "none"` → pin every request to
+ *      `config.tenant`; no header check.
+ *
+ * Bearer injection on `/v1/*` only fires in branch 2 (and only when
+ * branch 1 didn't win) — the dev convenience that lets the SPA call
+ * the listener without putting the secret in the browser bundle.
+ * Branch 3 leaves the `Authorization` header alone.
+ *
+ * Verifier resolution happens eagerly at factory time so a misconfig
+ * fails Vite startup, not the first `/v1/*` round-trip.
+ */
 export function baerlyDev(opts: BaerlyDevOptions): Plugin {
+  // Resolution order: opts.verifier → config.auth.shared-secret →
+  // config.auth.none → throw. Mirrors `baerlyWorker` / `baerlyNode`.
+  // The synthetic `readEnv` hoists `opts.secret` to `SHARED_SECRET`
+  // so the same resolver works — `baerlyDev` takes the secret as a
+  // typed option rather than reading `process.env` directly.
+  const verifier = resolveVerifier({
+    factoryVerifier: opts.verifier,
+    config: opts.config,
+    readEnv: (k) => (k === "SHARED_SECRET" ? opts.secret : process.env[k]),
+  });
+
+  // Bearer injection only matters in the shared-secret branch (and
+  // only when no override owns auth). For "none" or any custom
+  // verifier, the `Authorization` header reaches the listener
+  // unchanged.
+  const bearerForInjection: string | undefined =
+    opts.verifier === undefined && opts.config.auth === "shared-secret" ? opts.secret : undefined;
+
   return {
     name: "baerly-dev",
     apply: "serve",
@@ -243,7 +302,7 @@ export function baerlyDev(opts: BaerlyDevOptions): Plugin {
         const honoApp = createApp({
           app,
           storage,
-          verifier: sharedSecret({ secret: opts.secret, tenantPrefix: tenant }),
+          verifier,
           config: opts.config,
         });
         return getRequestListener(honoApp.fetch);
@@ -262,10 +321,14 @@ export function baerlyDev(opts: BaerlyDevOptions): Plugin {
           return;
         }
         // Inject the bearer token server-side so the SPA never sees
-        // the secret. The verifier inside app.fetch validates the
-        // injected header normally. Mutates both `req.headers` and
-        // `req.rawHeaders` — see `injectAuthorizationHeader`'s JSDoc.
-        injectAuthorizationHeader(req, `Bearer ${opts.secret}`);
+        // the secret. Only runs for `config.auth === "shared-secret"`
+        // without a `verifier:` override — otherwise the header
+        // reaches the listener unchanged. Mutates both `req.headers`
+        // and `req.rawHeaders` — see `injectAuthorizationHeader`'s
+        // JSDoc.
+        if (bearerForInjection !== undefined) {
+          injectAuthorizationHeader(req, `Bearer ${bearerForInjection}`);
+        }
         ready.then(
           (listener) => {
             listener(req as never, res as never);
