@@ -126,7 +126,12 @@ describe("defineBaerlySubcommand", () => {
   test("resolveAppTenant fills missing flag from baerly.config.json", async () => {
     await writeFile(
       join(root, "baerly.config.json"),
-      JSON.stringify({ app: "cfg-app", tenant: "cfg-tenant", target: "node" }),
+      JSON.stringify({
+        app: "cfg-app",
+        tenant: "cfg-tenant",
+        target: "node",
+        auth: "shared-secret",
+      }),
       "utf8",
     );
     let resolved: { app: string; tenant: string } | undefined;

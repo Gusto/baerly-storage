@@ -26,7 +26,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { parse, type ParseError } from "jsonc-parser";
-import { BaerlyError } from "@baerly/protocol";
+import { BaerlyError, SHARED_SECRET_MISSING_MESSAGE } from "@baerly/protocol";
 import type { AppConfig } from "../config.ts";
 import { ensureBindings, parseR2Bindings, type ProcessRunner } from "../deploy/cloudflare.ts";
 
@@ -215,7 +215,13 @@ export const doctorCloudflare = async (
   }
 
   // 3. requiredSecrets — best-effort.
+  //
+  //    `configured` is lifted to the outer scope so the auth-posture
+  //    block below can read the deployed secret set without re-running
+  //    `wrangler secret list`. Empty when the runner is absent or the
+  //    listing call failed.
   const required = config.requiredSecrets ?? ["SHARED_SECRET"];
+  let configured: readonly string[] = [];
   if (opts.runner !== undefined && required.length > 0) {
     const r = await opts.runner.run("wrangler", ["secret", "list"], repoRoot);
     if (r.code !== 0) {
@@ -225,7 +231,6 @@ export const doctorCloudflare = async (
         message: "could not list secrets (wrangler exit non-zero); skipping check.",
       });
     } else {
-      let configured: readonly string[] = [];
       try {
         const parsed = JSON.parse(r.stdout) as unknown;
         if (Array.isArray(parsed)) {
@@ -254,35 +259,84 @@ export const doctorCloudflare = async (
           });
         }
       }
-      // Warn when SHARED_SECRET is deployed without CF Access in front.
-      // In that configuration, the SPA can't authenticate with
-      // SHARED_SECRET without shipping the token in its static bundle.
-      // See docs/guide/client-auth.md.
-      if (configured.includes("SHARED_SECRET")) {
-        const varKeys = new Set(readDeclaredVarKeys(wranglerPath));
-        if (!(varKeys.has("CF_ACCESS_TEAM_DOMAIN") && varKeys.has("CF_ACCESS_AUDIENCE_TAG"))) {
-          findings.push({
-            severity: "warning",
-            check: "shared-secret-without-access",
-            message:
-              "SHARED_SECRET is set on the deployed Worker but CF Access is not " +
-              "configured (CF_ACCESS_TEAM_DOMAIN + CF_ACCESS_AUDIENCE_TAG not in " +
-              "wrangler.jsonc:vars). The SPA cannot authenticate with SHARED_SECRET " +
-              "in prod without leaking the token into the static bundle.",
-            fix:
-              "Set CF_ACCESS_TEAM_DOMAIN + CF_ACCESS_AUDIENCE_TAG in " +
-              "wrangler.jsonc:vars and wire CF Access in front of the Worker route. " +
-              "Or remove SHARED_SECRET (`wrangler secret delete SHARED_SECRET`) if " +
-              "no server-to-server caller needs it.",
-          });
-        }
-      }
     }
   } else if (required.length > 0) {
     findings.push({
       severity: "info",
       check: "secrets.skip",
       message: "no runner supplied; skipped secret checks.",
+    });
+  }
+
+  // 7. config.auth — graduated-auth posture. Walks the typed `auth`
+  //    field added in `packages/protocol/src/app-config.ts`.
+  //    FAIL: shared-secret without SHARED_SECRET set on the worker.
+  //    WARN: auth: "none" + deploy target (operator may have a
+  //          network gate in front; surface it so they confirm).
+  //    INFO: CF Access vars present + adapter uses config.auth (auth
+  //          is using config.auth, CF Access env is inert).
+  //
+  //    The presence of the typed field is guaranteed by the loader
+  //    (config.ts throws on omission), so we walk every loaded config
+  //    without an existence guard.
+  if (config.auth === "none") {
+    // Deploy-target check: "cloudflare" / "node" are the only valid
+    // values, and both ship to a network-reachable runtime. We warn
+    // unconditionally — the doctor's job is to surface the choice,
+    // not to second-guess whether the operator's network seam (CF
+    // Access, intranet ACL, Tunnel) is upstream.
+    findings.push({
+      severity: "warning",
+      check: "auth.none-on-deploy",
+      message:
+        `baerly.config.ts has auth: "none" and ships to target=${JSON.stringify(config.target)}. ` +
+        "Every request will resolve to config.tenant with no header check. " +
+        "Put a network gate in front (CF Access, an upstream JWT, Cloudflare Tunnel, intranet ACL, …) " +
+        'or change `auth` to "shared-secret" or pass a custom `verifier:` on the adapter factory.',
+      fix:
+        'Edit baerly.config.ts: set `auth: "shared-secret"` and run `wrangler secret put SHARED_SECRET`; ' +
+        'or keep `auth: "none"` and wire CF Access in `wrangler.jsonc:vars` + pass a `verifier:` override in `src/server/index.ts`.',
+    });
+  }
+
+  if (config.auth === "shared-secret" && opts.runner !== undefined) {
+    // Mirror the FAIL message wording from the adapter's runtime
+    // throw. Locked via `SHARED_SECRET_MISSING_MESSAGE` so doctor +
+    // adapter stay in sync.
+    //
+    // If `configured` is still empty here, the `wrangler secret list`
+    // invocation either failed (we already warned with the "secrets"
+    // finding above) or really lists no secrets. Either way the
+    // operator-facing remediation is the same.
+    const requiredSecret = "SHARED_SECRET";
+    if (!configured.includes(requiredSecret)) {
+      findings.push({
+        severity: "error",
+        check: "auth.shared-secret-missing",
+        message: SHARED_SECRET_MISSING_MESSAGE,
+        fix:
+          "wrangler secret put SHARED_SECRET (for production) " +
+          "or add SHARED_SECRET=<value> to .dev.vars (for `wrangler dev`).",
+      });
+    }
+  }
+
+  // INFO: CF Access env vars in wrangler.jsonc:vars but the adapter
+  // is using `config.auth` for the verifier (so the env values are
+  // inert). We can't statically parse the user's worker source —
+  // surface the heuristic.
+  const varKeys = new Set(readDeclaredVarKeys(wranglerPath));
+  if (
+    varKeys.has("CF_ACCESS_TEAM_DOMAIN") &&
+    varKeys.has("CF_ACCESS_AUDIENCE_TAG")
+  ) {
+    findings.push({
+      severity: "info",
+      check: "auth.cf-access-inert",
+      message:
+        `CF Access env vars (CF_ACCESS_TEAM_DOMAIN, CF_ACCESS_AUDIENCE_TAG) are set in ${wranglerPath} ` +
+        `but the adapter uses config.auth=${JSON.stringify(config.auth)}. ` +
+        `To wire CF Access, pass \`verifier: cloudflareAccess({ teamDomain, audienceTag })\` on the baerlyWorker factory.`,
     });
   }
 

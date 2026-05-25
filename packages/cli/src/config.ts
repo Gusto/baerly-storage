@@ -24,12 +24,24 @@ import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { type BaerlyConfig, BaerlyError, type IndexDefinition } from "@baerly/protocol";
+import {
+  AUTH_CONFIG_VALUES,
+  type AuthConfig,
+  type BaerlyConfig,
+  BaerlyError,
+  type IndexDefinition,
+} from "@baerly/protocol";
 
 export interface AppConfig {
   readonly app: string;
   readonly tenant: string;
   readonly target: "cloudflare" | "node";
+  /**
+   * Required. See `AuthConfig` for the per-value semantics. The loader
+   * throws `BaerlyError("InvalidConfig", ...)` when `auth` is missing or
+   * not a member of `AUTH_CONFIG_VALUES`.
+   */
+  readonly auth: AuthConfig;
   readonly domain?: string;
   readonly requiredSecrets?: readonly string[];
   readonly cloudflareAccess?: {
@@ -150,6 +162,22 @@ export const loadAppConfig = async (cwd: string = process.cwd()): Promise<AppCon
     );
   }
 
+  // `auth` is a required typed posture as of the graduated-auth
+  // redesign. The widening cast to `readonly string[]` is needed
+  // because `.includes` on a tuple narrows its parameter to the
+  // tuple's element type; widening locally is the standard idiom.
+  const authRaw = obj["auth"];
+  if (
+    typeof authRaw !== "string" ||
+    !(AUTH_CONFIG_VALUES as readonly string[]).includes(authRaw)
+  ) {
+    throw new BaerlyError(
+      "InvalidConfig",
+      `baerly: ${cfgPath}: \`auth\` is required and must be one of ${JSON.stringify(AUTH_CONFIG_VALUES)} (got ${JSON.stringify(authRaw)})`,
+    );
+  }
+  const auth = authRaw as AuthConfig;
+
   const domainRaw = obj["domain"];
   if (domainRaw !== undefined && typeof domainRaw !== "string") {
     throw new BaerlyError(
@@ -201,6 +229,7 @@ export const loadAppConfig = async (cwd: string = process.cwd()): Promise<AppCon
     app,
     tenant,
     target,
+    auth,
     ...(domainRaw !== undefined && { domain: domainRaw }),
     ...(requiredSecrets !== undefined && { requiredSecrets }),
     ...(cloudflareAccess !== undefined && { cloudflareAccess }),

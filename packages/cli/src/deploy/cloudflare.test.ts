@@ -108,6 +108,7 @@ const makeConfig = (repoRoot: string): AppConfig => ({
   app: "x",
   tenant: "default",
   target: "cloudflare",
+  auth: "shared-secret",
   repoRoot,
 });
 

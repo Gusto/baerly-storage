@@ -63,6 +63,7 @@ const makeConfig = (repoRoot: string, extra: Partial<AppConfig> = {}): AppConfig
   app: "x",
   tenant: "default",
   target: "cloudflare",
+  auth: "shared-secret",
   repoRoot,
   ...extra,
 });
@@ -140,11 +141,15 @@ describe("doctorCloudflare", () => {
   });
 
   test("warns when a required secret is missing", async () => {
+    // The default requiredSecrets walk still emits a warning when
+    // SHARED_SECRET is unset. We pin `auth: "none"` here so the new
+    // `auth.shared-secret-missing` FAIL doesn't blanket-bump the
+    // rollup to "error" — that case is covered separately below.
     await writeScaffold(repoRoot);
     const { runner } = makeRunner({
       "secret list": { code: 0, stdout: "[]" },
     });
-    const report = await doctorCloudflare(makeConfig(repoRoot), { runner });
+    const report = await doctorCloudflare(makeConfig(repoRoot, { auth: "none" }), { runner });
     expect(report.status).toBe("warning");
     const f = findingFor(report.findings, "secret.SHARED_SECRET");
     expect(f?.severity).toBe("warning");
@@ -211,19 +216,62 @@ describe("doctorCloudflare", () => {
     expect(findingFor(report.findings, "routes.domain")?.severity).toBe("ok");
   });
 
-  test("warns when SHARED_SECRET is set without CF_ACCESS_* vars", async () => {
-    // PROD_WRANGLER has SHARED_SECRET in the mock secret list but
-    // does not declare CF_ACCESS_TEAM_DOMAIN / CF_ACCESS_AUDIENCE_TAG
-    // in vars. The new check should warn.
+  test("the superseded shared-secret-without-access finding is gone", async () => {
+    // Sanity gate: the old `shared-secret-without-access` check was
+    // strictly narrower than the new auth-posture matrix and would
+    // double-fire under the new policy. Verify it doesn't reappear.
     await writeScaffold(repoRoot);
     const { runner } = makeRunner();
     const report = await doctorCloudflare(makeConfig(repoRoot), { runner });
-    const f = findingFor(report.findings, "shared-secret-without-access");
-    expect(f?.severity).toBe("warning");
-    expect(f?.message).toMatch(/CF Access/);
+    expect(findingFor(report.findings, "shared-secret-without-access")).toBeUndefined();
+  });
+});
+
+describe("doctorCloudflare — config.auth", () => {
+  let repoRoot: string;
+  beforeEach(async () => {
+    repoRoot = await mkdtemp(join(tmpdir(), "baerly-doctor-cf-auth-"));
+  });
+  afterEach(async () => {
+    await rm(repoRoot, { recursive: true, force: true });
   });
 
-  test("does not warn when both SHARED_SECRET and CF_ACCESS_* are set", async () => {
+  test('auth: "none" + target: cloudflare → WARN auth.none-on-deploy', async () => {
+    await writeScaffold(repoRoot);
+    const { runner } = makeRunner();
+    const report = await doctorCloudflare(makeConfig(repoRoot, { auth: "none" }), { runner });
+    const f = findingFor(report.findings, "auth.none-on-deploy");
+    expect(f?.severity).toBe("warning");
+    expect(f?.message).toContain('auth: "none"');
+    expect(f?.message).toContain('"cloudflare"');
+    expect(report.status).toBe("warning");
+  });
+
+  test('auth: "shared-secret" + SHARED_SECRET in wrangler secret list → no auth.shared-secret-missing', async () => {
+    await writeScaffold(repoRoot);
+    const { runner } = makeRunner();
+    const report = await doctorCloudflare(makeConfig(repoRoot, { auth: "shared-secret" }), {
+      runner,
+    });
+    expect(findingFor(report.findings, "auth.shared-secret-missing")).toBeUndefined();
+  });
+
+  test('auth: "shared-secret" + SHARED_SECRET absent → FAIL auth.shared-secret-missing with locked wording', async () => {
+    await writeScaffold(repoRoot);
+    const { runner } = makeRunner({
+      "secret list": { code: 0, stdout: "[]" },
+    });
+    const report = await doctorCloudflare(makeConfig(repoRoot, { auth: "shared-secret" }), {
+      runner,
+    });
+    const f = findingFor(report.findings, "auth.shared-secret-missing");
+    expect(f?.severity).toBe("error");
+    expect(f?.message).toContain('auth="shared-secret"');
+    expect(f?.message).toContain("SHARED_SECRET");
+    expect(report.status).toBe("error");
+  });
+
+  test("CF Access vars present + config.auth=shared-secret → INFO auth.cf-access-inert", async () => {
     await writeScaffold(
       repoRoot,
       `{
@@ -240,17 +288,20 @@ describe("doctorCloudflare", () => {
       }`,
     );
     const { runner } = makeRunner();
-    const report = await doctorCloudflare(makeConfig(repoRoot), { runner });
-    expect(findingFor(report.findings, "shared-secret-without-access")).toBeUndefined();
-  });
-
-  test("does not warn when SHARED_SECRET is unset", async () => {
-    await writeScaffold(repoRoot);
-    const { runner } = makeRunner({
-      "secret list": { code: 0, stdout: "[]" },
+    const report = await doctorCloudflare(makeConfig(repoRoot, { auth: "shared-secret" }), {
+      runner,
     });
-    const report = await doctorCloudflare(makeConfig(repoRoot), { runner });
-    expect(findingFor(report.findings, "shared-secret-without-access")).toBeUndefined();
+    const f = findingFor(report.findings, "auth.cf-access-inert");
+    expect(f?.severity).toBe("info");
+    expect(f?.message).toContain("CF_ACCESS_TEAM_DOMAIN");
   });
 
+  test("CF Access vars absent → no auth.cf-access-inert", async () => {
+    await writeScaffold(repoRoot);
+    const { runner } = makeRunner();
+    const report = await doctorCloudflare(makeConfig(repoRoot, { auth: "shared-secret" }), {
+      runner,
+    });
+    expect(findingFor(report.findings, "auth.cf-access-inert")).toBeUndefined();
+  });
 });
