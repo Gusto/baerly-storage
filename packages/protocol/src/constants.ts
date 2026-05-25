@@ -227,3 +227,20 @@ export const FORBIDDEN_MERGE_KEYS: ReadonlySet<string> = new Set([
  * @see tests/integration/phase5-end-to-end.test.ts
  */
 export const STORAGE_OPS_PER_LOGICAL_WRITE: number = 3;
+
+/**
+ * Canonical auth posture identifiers consumed by `BaerlyAppConfig.auth`,
+ * the adapter resolution path (`packages/adapter-cloudflare/src/worker.ts`,
+ * `packages/adapter-node/src/baerly-node.ts`), and `baerly doctor`.
+ *
+ * - `"none"` — no header check; pin every request to `config.tenant`.
+ *   For local dev, intranet, CLI tools — contexts where the network
+ *   seam itself is the trust boundary.
+ * - `"shared-secret"` — bearer-token check; reads `SHARED_SECRET` from
+ *   the runtime env and pins every request to `config.tenant`.
+ *
+ * Custom verifiers (`cloudflareAccess`, `bearerJwt`, SigV4, …) bypass
+ * this enum — pass a `Verifier` to the adapter factory's `verifier:`
+ * option instead.
+ */
+export const AUTH_CONFIG_VALUES = ["none", "shared-secret"] as const;

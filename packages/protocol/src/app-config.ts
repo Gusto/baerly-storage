@@ -34,6 +34,7 @@
  * ```
  */
 
+import type { AUTH_CONFIG_VALUES } from "./constants.ts";
 import type { IndexDefinition } from "./indexes.ts";
 import type { SchemaValidator } from "./schema.ts";
 
@@ -90,6 +91,35 @@ export interface BaerlyConfig {
    */
   readonly collections: Readonly<Record<string, CollectionDefinition>>;
 }
+
+/**
+ * Auth posture for the deployed app. REQUIRED on `BaerlyAppConfig`.
+ *
+ * - `"none"`: no header check; every request resolves to
+ *   `config.tenant`. Use for local dev, intranet deployments, CLI
+ *   tools — contexts where the network seam itself is the trust
+ *   boundary. The adapter logs one startup line so the state is not
+ *   silent.
+ * - `"shared-secret"`: bearer-token check; the adapter reads
+ *   `SHARED_SECRET` from the runtime env and pins every request to
+ *   `config.tenant`. Module init throws `BaerlyError("InvalidConfig", ...)`
+ *   on first `fetch` if the env var is missing/empty.
+ *
+ * For custom verifiers (Cloudflare Access, JWT, SigV4, …), pass a
+ * `Verifier` directly to the adapter factory's `verifier:` option.
+ * The factory `verifier:` silently overrides `config.auth` when both
+ * are set — this is the "dev default in config, prod override via
+ * env" recipe.
+ *
+ * Field is required on `BaerlyAppConfig`. Omitting it causes both a
+ * TypeScript error at `defineConfig({...})` and (defensively) an
+ * `InvalidConfig` error at adapter module init.
+ *
+ * The literal values come from
+ * {@link AUTH_CONFIG_VALUES} so the runtime-only consumers (doctor,
+ * adapter) share the same source of truth.
+ */
+export type AuthConfig = (typeof AUTH_CONFIG_VALUES)[number];
 
 /**
  * `BaerlyAppConfig` extends `BaerlyConfig` with scaffold-flavoured
@@ -168,6 +198,14 @@ export interface BaerlyAppConfig extends BaerlyConfig {
     readonly level?: "debug" | "info" | "warn" | "error";
     readonly sampleRate?: number;
   };
+  /**
+   * Auth posture. See {@link AuthConfig} for the full per-value
+   * semantics, the failure modes, and the "dev default, prod override"
+   * recipe. Field is required — omission fails typecheck and (for
+   * adapters that didn't supply a `verifier:` override) throws
+   * `BaerlyError("InvalidConfig", ...)` at first request.
+   */
+  readonly auth: AuthConfig;
 }
 
 /**
