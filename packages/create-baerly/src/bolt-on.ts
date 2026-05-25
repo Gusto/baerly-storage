@@ -26,7 +26,13 @@ const DEV_SHARED_SECRET = "dev-shared-secret";
 // Lines that, if present literally in .gitignore, are treated as "the user
 // already has a story for env-var files." We don't add a separate .dev.vars
 // entry in that case — we trust their convention. (NOT gitignore glob semantics.)
-const GITIGNORE_DEV_VARS_ALIASES = new Set([".dev.vars", ".env*.local", "*.local", ".env"]);
+const GITIGNORE_DEV_VARS_ALIASES = new Set([
+  ".dev.vars",
+  ".dev.vars*",
+  ".env*.local",
+  "*.local",
+  ".env",
+]);
 
 export interface BoltOnOptions {
   readonly outDir: string;

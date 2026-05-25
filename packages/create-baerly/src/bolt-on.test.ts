@@ -130,6 +130,16 @@ describe("boltOnExistingWrangler", () => {
     expect(gi).toContain(".env*.local");
   });
 
+  test("does NOT add .dev.vars when .gitignore has .dev.vars* (wrangler-create default)", async () => {
+    const dir = await fixtureDir();
+    await writeFile(join(dir, ".gitignore"), ".dev.vars*\n!.dev.vars.example\n.wrangler/\n");
+    await boltOnExistingWrangler({ outDir: dir, tenant: "default", runInstall: false });
+    const gi = await readFile(join(dir, ".gitignore"), "utf8");
+    const matches = gi.split("\n").filter((l) => l === ".dev.vars").length;
+    expect(matches).toBe(0);
+    expect(gi).toContain(".dev.vars*");
+  });
+
   test("preserves an existing baerly.config.ts without --force", async () => {
     const dir = await fixtureDir();
     const existing = `// user-authored config\nexport default { app: "user-app", tenant: "x", target: "cloudflare" };\n`;
