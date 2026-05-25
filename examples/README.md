@@ -8,12 +8,28 @@ reads `examples/<name>/`, applies the `.baerly/scaffold.json`
 manifest (rename sentinels, copy exclusions, devDep drops), and
 writes the result into the user's target directory.
 
+## Auth posture
+
+Every scaffold below ships `auth: "none"` in `baerly.config.ts` so
+the day-1 happy path works with zero env vars. The adapter reads
+`config.auth` and synthesizes its verifier; for production, each
+scaffold's `AGENTS.md` "Going to production" section documents the
+two upgrade recipes — Pattern A (env-aware factory `verifier:`
+override, used by CF Access on CF / JWKS on Node) and Pattern B
+(flip `auth` to `"shared-secret"` and set `SHARED_SECRET`).
+`baerly doctor --target={cloudflare,node}` warns on `auth: "none"`
+for deploy targets and FAILs on `"shared-secret"` without
+`SHARED_SECRET` reachable from the runtime env.
+
 ## minimal-cloudflare
 
-Bare Cloudflare Workers scaffold. R2-backed, schema-less, ships
-the `cloudflareAccess` → `sharedSecret` verifier chain in
-`src/server/index.ts`. The "what does a production CF
-Worker entry look like?" answer.
+Bare Cloudflare Workers scaffold. R2-backed, schema-less. Ships
+`auth: "none"` (the adapter synthesizes a no-op verifier and pins
+every request to `config.tenant`). See the scaffold's `AGENTS.md`
+"Going to production" recipes — Pattern A flips to CF Access via an
+env-aware factory `verifier:` override; Pattern B flips
+`auth: "shared-secret"`. The "what does a production CF Worker
+entry look like?" answer.
 
 **Audience:** anyone scaffolding a new CF Worker target, or
 reading the canonical wiring for `baerly-storage/cloudflare` +
@@ -34,10 +50,12 @@ selector + `baerlyWorker`), then `wrangler.jsonc`
 ## minimal-node
 
 Bare self-hosted Node scaffold. S3-compatible bucket via
-`baerly-storage/node`, JWKS verifier with `sharedSecret` fallback for
-`pnpm dev` parity. Runs anywhere `node server.js` runs — Railway,
-Render, Fly without Docker, Heroku, a VM, any process manager.
-Scaffolded with `--target=node`.
+`baerly-storage/node`. Ships `auth: "none"`; see the scaffold's
+`AGENTS.md` "Going to production" recipes — Pattern B flips
+`auth: "shared-secret"`; Pattern C wires `bearerJwt` against your
+OIDC IdP via an env-aware factory `verifier:` override. Runs anywhere
+`node server.js` runs — Railway, Render, Fly without Docker, Heroku,
+a VM, any process manager. Scaffolded with `--target=node`.
 
 For a production Dockerfile alongside (distroless multi-stage build
 + `healthcheck.js` + `.dockerignore`), scaffold with
@@ -59,9 +77,10 @@ pnpm dev
 `pnpm dev` runs a single `vite` process — `baerlyDev()` from
 `baerly-storage/dev/vite` mounts the Node HTTP listener as Connect
 middleware on `:5173` next to the SPA dev server, backed by
-`LocalFsStorage`. No credentials needed; the `BUCKET` / `AWS_*` /
-`SHARED_SECRET` env vars are only required for `pnpm start` and the
-production deploy.
+`LocalFsStorage`. No credentials needed; the `BUCKET` / `AWS_*` env
+vars are only required for `pnpm start` and the production deploy.
+Auth-related env vars (`SHARED_SECRET` / `JWKS_URL` etc.) only
+appear if you adopt one of the "Going to production" recipes.
 
 **Read first:** `src/server/index.ts` (the `node:http` listener
 + verifier selector).
@@ -70,8 +89,14 @@ production deploy.
 
 Cloudflare Workers scaffold with a React + Vite SPA. Schema-bound
 `notes` collection (Zod-validated, 3-field), R2-backed storage via
-`baerly-storage/cloudflare`, `sharedSecret` verifier. Demonstrates
-the full React hook surface (`useLiveQuery`, `useLiveDocument`,
+`baerly-storage/cloudflare`. Ships `auth: "none"` (the SPA hits
+`/v1/*` unauthenticated; the schema validates writes server-side
+regardless of the auth posture). See the scaffold's `AGENTS.md`
+"Going to production" recipes — Pattern A flips to CF Access via an
+env-aware factory `verifier:` override; Pattern B flips
+`auth: "shared-secret"` (re-enable `baerlyDevAuth` in
+`vite.config.ts` for browser bearer injection). Demonstrates the
+full React hook surface (`useLiveQuery`, `useLiveDocument`,
 `useInsert`, `useUpdate`, `useDelete`) over a generic placeholder
 domain you extend.
 
@@ -104,9 +129,13 @@ selector + `/v1/*` ↔ Assets split).
 Self-hosted Node scaffold with a React + Vite SPA. LocalFs-backed
 storage in dev via `baerlyDev()` (single Vite process — Vite serves
 both `/v1/*` and the SPA), any S3-compatible bucket in production
-via `baerly-storage/node`. Demonstrates the full React hook surface
-(`useLiveQuery`, `useLiveDocument`, `useInsert`, `useUpdate`,
-`useDelete`) over the same `NoteSchema` as `react-cloudflare`.
+via `baerly-storage/node`. Ships `auth: "none"`; see the scaffold's
+`AGENTS.md` "Going to production" recipes — Pattern B flips
+`auth: "shared-secret"`; Pattern C wires `bearerJwt` against your
+OIDC IdP via an env-aware factory `verifier:` override. Demonstrates
+the full React hook surface (`useLiveQuery`, `useLiveDocument`,
+`useInsert`, `useUpdate`, `useDelete`) over the same `NoteSchema`
+as `react-cloudflare`.
 
 Runs anywhere `node server.js` runs — Railway, Render, Fly, a VM,
 a container.

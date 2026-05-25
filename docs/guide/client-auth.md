@@ -2,7 +2,7 @@
 title: Browser → server auth
 audience: integrator
 summary: How the SPA in your scaffolded app authenticates to the Worker / Node server in dev and prod.
-last-reviewed: 2026-05-20
+last-reviewed: 2026-05-24
 tags: [client, auth, integration]
 related: ["./auth.md", "./client-middleware.md"]
 ---
@@ -15,38 +15,55 @@ runs the verifier and pins the tenant. The browser never owns the
 bearer token — anything that lands in `import.meta.env.*` lands in
 the static SPA bundle, which is served to every visitor.
 
-The scaffold templates use this split:
+The scaffolds default to `auth: "none"` in `baerly.config.ts`, so
+the SPA can hit `/v1/*` with no `Authorization` header on day one
+and every request resolves to `config.tenant`. The sections below
+describe how the browser → server seam stays clean once you flip
+the posture (Pattern A / B / C in each scaffold's `AGENTS.md` →
+"Going to production").
 
-## Dev (any target)
+## Dev (any target), default `auth: "none"`
 
-Vite's `baerlyDevAuth` plugin (re-exported from
-`baerly-storage/dev/vite`) attaches a `configureServer` middleware
-that injects `Authorization: Bearer ${secret}` on every `/v1/*`
-request **server-side**. The browser fetches plain
-`/v1/healthz`; Vite mutates the request headers before forwarding
-to the in-process Worker (CF templates) or proxying to the Node
-server (Node templates).
-
-- **`minimal-cloudflare`, `react-cloudflare`** —
-  `loadDevVars(".dev.vars", "SHARED_SECRET")` reads the secret;
-  `baerlyDevAuth({ secret })` uses it. `process.env.SHARED_SECRET`
-  is consulted as a fallback for CI / shell-export flows.
-- **`minimal-node`** — `loadDevVars(".env", "SHARED_SECRET")` +
-  `process.env` fallback; same plugin.
-- **`react-node`** — the `baerlyDev()` plugin owns the secret and
-  the request boundary; injection happens inside the plugin. The
-  `vite.config.ts` still reads `SHARED_SECRET` from `.env` via
-  `loadDevVars` and passes it to `baerlyDev({ secret })`.
-
-In all four, `src/web/client.ts` (or `main.ts`) calls
+No bearer to inject. The SPA calls
 `createBaerlyClient({ baseUrl: "" })` with no `Authorization`
-header. The secret stays out of the bundle.
+header; the dev plugin synthesizes a `noAuthVerifier` from
+`config.auth`, the adapter pins the tenant to `config.tenant`, and
+the request succeeds. Bundle stays clean.
 
-The dev-auth plugin is `apply: "serve"`, so `vite build` skips it
-entirely. No code path puts the secret into the produced
-`dist/client/`.
+## Dev, `auth: "shared-secret"` (Pattern B)
 
-## Prod, Cloudflare target
+Once you flip `auth` to `"shared-secret"`, the Vite dev plugin
+needs the bearer for browser calls. `baerlyDevAuth` (re-exported
+from `baerly-storage/dev/vite`) is the seam: a `configureServer`
+middleware that injects `Authorization: Bearer ${secret}` on every
+`/v1/*` request **server-side**. The browser fetches plain
+`/v1/healthz`; Vite mutates the request headers before forwarding
+to the in-process Worker (CF templates) or to the Node listener
+mounted on the same Vite process (Node templates).
+
+The wiring in each scaffold's `vite.config.ts` (per its `AGENTS.md`
+→ "Going to production" Pattern B recipe):
+
+```ts
+import { baerlyDevAuth, loadDevVars } from "baerly-storage/dev/vite";
+
+const { SHARED_SECRET } = loadDevVars(".dev.vars", "SHARED_SECRET");
+// …
+plugins: [
+  // …existing plugins,
+  ...(SHARED_SECRET !== undefined
+    ? [baerlyDevAuth({ secret: SHARED_SECRET })]
+    : []),
+],
+```
+
+`src/web/client.ts` (or `main.ts`) still calls
+`createBaerlyClient({ baseUrl: "" })` with no `Authorization`
+header. The secret stays out of the bundle. `baerlyDevAuth` is
+`apply: "serve"`, so `vite build` skips it entirely — no code path
+puts the secret into the produced `dist/client/`.
+
+## Prod, Cloudflare target (Pattern A)
 
 Wire **Cloudflare Access** in front of the Worker route. Browsers
 authenticate against the Access app and CF sets a
@@ -54,30 +71,48 @@ authenticate against the Access app and CF sets a
 `cloudflareAccess({ teamDomain, audienceTag })` verifier reads it
 and derives `tenantPrefix` from the email claim.
 
+The scaffold's "Going to production" Pattern A keeps
+`config.auth: "none"` and supplies the verifier via the factory's
+`verifier:` override (the adapter resolves the factory `verifier:`
+first, so `cloudflareAccess` silently supersedes `config.auth` in
+prod):
+
 ```ts
 // src/server/index.ts — minimal-cloudflare
+import { baerlyWorker, type BaerlyEnv } from "baerly-storage/cloudflare";
 import { cloudflareAccess } from "baerly-storage/auth";
+import config from "../../baerly.config.ts";
 
-const verifier =
-  env.CF_ACCESS_TEAM_DOMAIN !== undefined && env.CF_ACCESS_AUDIENCE_TAG !== undefined
-    ? cloudflareAccess({
+interface AppEnv extends BaerlyEnv {
+  readonly CF_ACCESS_TEAM_DOMAIN?: string;
+  readonly CF_ACCESS_AUDIENCE_TAG?: string;
+}
+
+export default baerlyWorker<AppEnv>((env) => ({
+  config,
+  ...(env.CF_ACCESS_TEAM_DOMAIN !== undefined &&
+    env.CF_ACCESS_AUDIENCE_TAG !== undefined && {
+      verifier: cloudflareAccess({
         teamDomain: env.CF_ACCESS_TEAM_DOMAIN,
         audienceTag: env.CF_ACCESS_AUDIENCE_TAG,
-      })
-    : /* fallback for server-to-server callers (CI, cron) */ sharedSecret({ ... });
+      }),
+    }),
+}));
 ```
 
-`baerly doctor --target=cloudflare` warns if a deployed Worker has
-`SHARED_SECRET` set without `CF_ACCESS_*` configured — because in
-that configuration the SPA can't authenticate without leaking the
-token.
+Set both env vars in `wrangler.jsonc:vars` for prod (they're public
+identifiers, not secrets). Dev `wrangler dev` sees them as
+`undefined`, the spread short-circuits, and `config.auth: "none"`
+runs.
 
-## Prod, Node target
+## Prod, Node target (Pattern C)
 
 Use `bearerJwt({ jwks, issuer, audience })` against your OIDC
 provider. The SPA acquires the token via your auth flow (Auth0,
 Cognito, Okta, etc.) and sends `Authorization: Bearer <jwt>`. The
 verifier validates against JWKS and pins the tenant from a claim.
+The factory `verifier:` override engages only when `JWKS_URL` is
+set, so dev (no env vars) keeps `config.auth: "none"`.
 
 ## `SHARED_SECRET` in prod
 

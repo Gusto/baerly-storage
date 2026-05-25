@@ -274,12 +274,105 @@ http://localhost:5173/<path>`) before declaring the task complete.
 
 - **Auth** — your scaffold ships `auth: "none"` in `baerly.config.ts`:
   every request resolves to `tenant: "minimal-demo"` and `Authorization`
-  is ignored. **For production**, change `auth` to `"shared-secret"`
-  (and set `SHARED_SECRET` via `wrangler secret put`), or pass a
-  custom `verifier:` on the adapter factory
-  (`cloudflareAccess(...)`, `bearerJwt(...)`, …). `baerly doctor
+  is ignored. The adapter reads `config.auth` to pick its verifier;
+  a `verifier:` on the factory overrides it. `baerly doctor
   --target=cloudflare` warns on `"none"` for deploy targets. See
-  "Going to production" below for concrete recipes.
+  "Going to production" below for the two production-fit recipes.
+
+### Going to production
+
+The scaffold ships `auth: "none"` so the day-1 happy path works with
+zero env vars. Two patterns flip to a production-fit posture; pick the
+one matching your gate.
+
+**Pattern A — env-aware verifier (recommended for CF Access).** Same
+artifact ships to dev and prod; the factory `verifier:` override
+engages only when prod env vars are present. `baerlyWorker` resolves
+the factory `verifier:` first, so the override silently supersedes
+`config.auth: "none"` in prod.
+
+```ts
+// baerly.config.ts — unchanged
+import { defineConfig } from "baerly-storage/config";
+
+export default defineConfig({
+  app: "minimal-cloudflare",
+  tenant: "minimal-demo",
+  target: "cloudflare",
+  auth: "none",     // dev default
+  collections: { notes: {} },
+});
+```
+
+```ts
+// src/server/index.ts
+import { baerlyWorker, type BaerlyEnv } from "baerly-storage/cloudflare";
+import { cloudflareAccess } from "baerly-storage/auth";
+import config from "../../baerly.config.ts";
+
+interface AppEnv extends BaerlyEnv {
+  readonly CF_ACCESS_TEAM_DOMAIN?: string;
+  readonly CF_ACCESS_AUDIENCE_TAG?: string;
+}
+
+export default baerlyWorker<AppEnv>((env) => ({
+  config,
+  ...(env.CF_ACCESS_TEAM_DOMAIN !== undefined &&
+    env.CF_ACCESS_AUDIENCE_TAG !== undefined && {
+      verifier: cloudflareAccess({
+        teamDomain: env.CF_ACCESS_TEAM_DOMAIN,
+        audienceTag: env.CF_ACCESS_AUDIENCE_TAG,
+      }),
+    }),
+}));
+```
+
+Set both `CF_ACCESS_TEAM_DOMAIN` and `CF_ACCESS_AUDIENCE_TAG` in
+`wrangler.jsonc:vars` for prod (they're public identifiers, not
+secrets). Dev `wrangler dev` sees them as `undefined`, the spread
+short-circuits, and `config.auth: "none"` runs. Prod sees them set
+and `cloudflareAccess` engages.
+
+**Pattern B — `auth: "shared-secret"`.** Single-tenant
+server-to-server callers (CI, cron, internal services). No factory
+code changes; only `baerly.config.ts` flips:
+
+```ts
+// baerly.config.ts
+auth: "shared-secret",     // ← flip from "none"
+```
+
+```sh
+# Dev:
+echo 'SHARED_SECRET=dev-shared-secret' > .dev.vars
+
+# Prod:
+wrangler secret put SHARED_SECRET
+```
+
+The Vite dev plugin needs the bearer injected for browser calls —
+re-enable `baerlyDevAuth` in `vite.config.ts`:
+
+```ts
+import { cloudflare } from "@cloudflare/vite-plugin";
+import { defineConfig } from "vite";
+import { baerlyDevAuth, loadDevVars } from "baerly-storage/dev/vite";
+
+const { SHARED_SECRET } = loadDevVars(".dev.vars", "SHARED_SECRET");
+
+export default defineConfig({
+  plugins: [
+    cloudflare(),
+    ...(SHARED_SECRET !== undefined
+      ? [baerlyDevAuth({ secret: SHARED_SECRET })]
+      : []),
+  ],
+});
+```
+
+`baerly doctor --target=cloudflare` FAILs (`auth.shared-secret-missing`)
+if `auth: "shared-secret"` is set without `SHARED_SECRET` reachable
+from the runtime env.
 
 - **Extending the Worker with a custom route** — `baerlyWorker(...)`
   owns `/v1/*` + `/healthz`. For server-side endpoints the SPA

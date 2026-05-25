@@ -2,9 +2,10 @@
 
 A baerly app scaffolded with `create-baerly` for the **Cloudflare
 Workers** target, with a React + Vite SPA. Single-bucket R2-backed
-deployment via `baerly-storage/cloudflare`. Ships a `sharedSecret`
-verifier out of the box and a one-collection `notes` schema you
-extend.
+deployment via `baerly-storage/cloudflare`. Ships `auth: "none"`
+so the day-1 happy path works with zero env vars, plus a
+one-collection `notes` schema you extend; flip to Cloudflare Access
+or a shared secret before deploy — see "Production auth" below.
 
 ## What you got
 
@@ -35,7 +36,6 @@ react-cloudflare/
 
 ```sh
 pnpm install
-cp .dev.vars.example .dev.vars   # ships SHARED_SECRET=dev-shared-secret
 pnpm dev
 ```
 
@@ -55,11 +55,13 @@ serve on deploy.
 ## Deploy
 
 ```sh
-wrangler secret put SHARED_SECRET     # only if you stay on the sharedSecret verifier
-
 baerly deploy                         # reads baerly.config.ts:target, runs wrangler deploy
 baerly doctor --target=cloudflare     # verify bindings, secrets, cron
 ```
+
+`baerly doctor --target=cloudflare` warns on `auth: "none"` for
+deploy targets — see "Production auth" below to flip the posture
+before shipping.
 
 ## Extend the schema
 
@@ -78,13 +80,23 @@ export const NoteSchema = z.object({
 
 ## Production auth
 
-The emitted `src/server/index.ts` uses `sharedSecret()` for parity
-with `wrangler dev`. For production behind Cloudflare Access, swap
-to `cloudflareAccess()` (re-exported from `baerly-storage/auth`)
-and wire Access in front of the Worker route. The preset reads the
-JWT off `Cf-Access-Jwt-Assertion`, validates it against your team's
-JWKS, and derives `tenantPrefix` from the email claim. See
-`AGENTS.md` → "Production auth" for the swap.
+The scaffold ships `auth: "none"` so the day-1 happy path works
+with zero env vars; every request resolves to `config.tenant` and
+the `NoteSchema` still validates writes server-side. Before deploy,
+follow `AGENTS.md` → "Going to production":
+
+- **Pattern A — CF Access (recommended).** Same artifact in dev and
+  prod; the factory `verifier:` override engages when
+  `CF_ACCESS_TEAM_DOMAIN` + `CF_ACCESS_AUDIENCE_TAG` are present in
+  `wrangler.jsonc:vars`. The `cloudflareAccess()` preset
+  (re-exported from `baerly-storage/auth`) reads the JWT off
+  `Cf-Access-Jwt-Assertion`, validates it against your team's JWKS,
+  and derives `tenantPrefix` from the email claim.
+- **Pattern B — `auth: "shared-secret"`.** Single-tenant
+  server-to-server callers. Flip `auth` in `baerly.config.ts`, set
+  `SHARED_SECRET` via `wrangler secret put`, and re-enable
+  `baerlyDevAuth` in `vite.config.ts` for browser bearer injection
+  (the SPA never owns the secret — Vite injects it server-side).
 
 ## When to graduate
 

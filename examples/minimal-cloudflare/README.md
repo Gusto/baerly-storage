@@ -1,9 +1,11 @@
 # minimal-cloudflare
 
 A baerly app scaffolded with `create-baerly` for the **Cloudflare
-Workers** target. Single-bucket R2-backed deployment with the
-`baerly-storage/cloudflare` adapter and a `sharedSecret` `Verifier`
-out of the box.
+Workers** target. Single-bucket R2-backed deployment via the
+`baerly-storage/cloudflare` adapter. Ships `auth: "none"` so the
+day-1 happy path works with zero env vars; flip to Cloudflare
+Access or a shared secret before deploy — see "Going to
+production" below.
 
 ## What you got
 
@@ -51,10 +53,6 @@ references.
 ## Deploy
 
 ```sh
-# Set the shared secret (only needed for the sharedSecret() Verifier
-# branch; skip when you're going straight to Cloudflare Access).
-wrangler secret put SHARED_SECRET
-
 # One-command deploy. baerly reads `baerly.config.ts:target`, finds
 # `wrangler.jsonc`, and runs:
 #   wrangler deploy --x-provision --x-auto-create
@@ -67,6 +65,10 @@ baerly deploy
 baerly doctor --target=cloudflare
 ```
 
+`baerly doctor --target=cloudflare` warns on `auth: "none"` for
+deploy targets — see "Going to production" below to flip the
+posture before shipping.
+
 If you'd rather run the steps by hand: `pnpm build` → `wrangler r2
 bucket create minimal-cloudflare` → `wrangler deploy` from this
 directory. The `assets:` binding in `wrangler.jsonc` picks up
@@ -75,17 +77,16 @@ directory. The `assets:` binding in `wrangler.jsonc` picks up
 ## Secrets
 
 Public configuration (`APP`, `TENANT`, `LOG_LEVEL`, `LOG_SAMPLE`)
-lives in `wrangler.jsonc:vars`. Secrets — anything the verifier
-needs (`SHARED_SECRET`, `CF_ACCESS_*`) — live separately:
+lives in `wrangler.jsonc:vars`. The default `auth: "none"` posture
+needs no secrets. If you adopt a "Going to production" recipe:
 
-- **Local dev:** `cp .dev.vars.example .dev.vars`, fill in the
-  values, and `wrangler dev` reads it. `.dev.vars` is gitignored.
-- **Production:** `wrangler secret put SHARED_SECRET` (one secret
-  per command — value piped or prompted). Each secret is encrypted
-  at rest and exposed on `env` at runtime.
-
-`.dev.vars.example` is the catalog of every secret the Worker
-expects. Update both files in lockstep when you add a new secret.
+- **Pattern A (CF Access):** `CF_ACCESS_TEAM_DOMAIN` +
+  `CF_ACCESS_AUDIENCE_TAG` go in `wrangler.jsonc:vars` (they're
+  public identifiers, not secrets).
+- **Pattern B (`auth: "shared-secret"`):** `SHARED_SECRET` is a
+  secret — `.dev.vars` for `wrangler dev`, `wrangler secret put
+  SHARED_SECRET` for production. Each secret is encrypted at rest
+  and exposed on `env` at runtime.
 
 ## Next steps
 
@@ -98,9 +99,9 @@ expects. Update both files in lockstep when you add a new secret.
    via `defineConfig({ collections: { ... } })` and pass it to
    `Db.create({ ..., collections })`. Schema validation is live;
    bad inserts return 422.
-3. **Set up production auth** — wire CF Access in front of your
-   Worker route, then add `CF_ACCESS_TEAM_DOMAIN` +
-   `CF_ACCESS_AUDIENCE_TAG` to `wrangler.jsonc:vars`.
+3. **Set up production auth** — follow `AGENTS.md` → "Going to
+   production". Pattern A wires CF Access via an env-aware factory
+   `verifier:` override; Pattern B flips `auth: "shared-secret"`.
    `baerly doctor --target=cloudflare` reports any gaps.
 4. **Check usage trends** — run `baerly doctor --target=cloudflare
    --usage` periodically. It estimates your current writes/minute
@@ -139,12 +140,20 @@ require vendor cooperation.
 
 ## Production auth
 
-The emitted `src/server/index.ts` uses `sharedSecret()` for parity with
-`wrangler dev`. For production behind Cloudflare Access, swap to
-`cloudflareAccess()` (re-exported from `baerly-storage/auth`) and wire
-Access in front of the Worker route. The preset reads the JWT off
-`Cf-Access-Jwt-Assertion`, validates it against your team's JWKS,
-and derives `tenantPrefix` from the email claim.
+The scaffold ships `auth: "none"` so the day-1 happy path works
+with zero env vars; every request resolves to `config.tenant`.
+Before deploy, follow `AGENTS.md` → "Going to production":
+
+- **Pattern A — CF Access (recommended).** Same artifact in dev and
+  prod; the factory `verifier:` override engages when
+  `CF_ACCESS_TEAM_DOMAIN` + `CF_ACCESS_AUDIENCE_TAG` are present in
+  `wrangler.jsonc:vars`. The `cloudflareAccess()` preset
+  (re-exported from `baerly-storage/auth`) reads the JWT off
+  `Cf-Access-Jwt-Assertion`, validates it against your team's JWKS,
+  and derives `tenantPrefix` from the email claim.
+- **Pattern B — `auth: "shared-secret"`.** Single-tenant
+  server-to-server callers. Flip `auth` in `baerly.config.ts` and
+  set `SHARED_SECRET` via `wrangler secret put`.
 
 ## Pointers
 

@@ -1,12 +1,13 @@
 # Baerly Storage
 
 Vendorless, causally consistent document database that runs as a
-server-side `Db` (from `@baerly/server`) behind a `Verifier`, with
-your data persisted in any S3-compatible bucket (S3, R2, GCS,
-Minio). Browsers and other clients talk to it over HTTP via the
-typed `@baerly/client`. The change-feed is a long-poll on
-`/v1/since?cursor=<lsn>` — there is no client-side polling of the
-storage layer.
+server-side `Db` (from `@baerly/server`) behind a `Verifier`
+synthesized from `config.auth` (or supplied directly via the
+adapter factory), with your data persisted in any S3-compatible
+bucket (S3, R2, GCS, Minio). Browsers and other clients talk to it
+over HTTP via the typed `@baerly/client`. The change-feed is a
+long-poll on `/v1/since?cursor=<lsn>` — there is no client-side
+polling of the storage layer.
 
 Day-1 deploy targets, both first-class:
 
@@ -19,32 +20,40 @@ Day-1 deploy targets, both first-class:
 
 ## Minimal shape
 
+Every scaffold ships `auth: "none"` in `baerly.config.ts` so the
+day-1 happy path works with zero env vars; the adapter synthesizes
+a no-op verifier and pins every request to `config.tenant`. For
+production, each scaffold's `AGENTS.md` "Going to production"
+section documents two upgrade recipes: Pattern A (env-aware factory
+`verifier:` override — CF Access on CF, JWKS on Node) and Pattern B
+(flip `auth: "shared-secret"` and supply `SHARED_SECRET` via the
+platform's secret store).
+
 Server (Cloudflare Worker — `examples/minimal-cloudflare/src/server/index.ts`):
 
 ```ts
-import { baerlyWorker, type BaerlyEnv } from "@baerly/adapter-cloudflare";
-import { sharedSecret } from "@baerly/server/auth";
+import { baerlyWorker } from "@baerly/adapter-cloudflare";
+import config from "../../baerly.config.ts";
 
-export default baerlyWorker<BaerlyEnv & { SHARED_SECRET: string }>((env) => ({
-  verifier: sharedSecret({ secret: env.SHARED_SECRET, tenantPrefix: "demo" }),
-}));
+// baerly.config.ts ships `auth: "none"`. Override with `verifier:`
+// when prod env vars (CF Access team domain / audience) are set.
+export default baerlyWorker(() => ({ config }));
 ```
 
 Server (Node — `examples/minimal-node/src/server/index.ts`):
 
 ```ts
 import { baerlyNode, s3Storage } from "@baerly/adapter-node";
-import { sharedSecret } from "@baerly/server/auth";
+import config from "../../baerly.config.ts";
 
 await baerlyNode({
-  app: "demo",
+  config,
   storage: s3Storage({
     region: "us-east-1",
     bucket: process.env.BUCKET!,
     accessKeyId: process.env.AWS_ACCESS_KEY_ID!,
     secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY!,
   }),
-  verifier: sharedSecret({ secret: process.env.SHARED_SECRET!, tenantPrefix: "demo" }),
 }).listen(8080);
 ```
 
@@ -53,10 +62,7 @@ Client (browser / Node, hitting either server):
 ```ts
 import { createBaerlyClient } from "@baerly/client";
 
-const client = createBaerlyClient({
-  baseUrl: "", // same-origin; otherwise "https://your-worker.example"
-  headers: { Authorization: `Bearer ${SHARED_SECRET}` },
-});
+const client = createBaerlyClient({ baseUrl: "" }); // same-origin
 
 type Ticket = { _id: string; title: string; status: "open" | "closed" };
 

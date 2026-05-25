@@ -1,21 +1,42 @@
 ---
 title: Authentication
 audience: operator
-summary: "Built-in Verifier presets (shared secret, bearer JWT, CF Access), tenant pinning, and the authorization caveat."
-last-reviewed: 2026-05-19
+summary: "config.auth postures (none, shared-secret, custom verifier), Verifier presets, tenant pinning, and the authorization caveat."
+last-reviewed: 2026-05-24
 tags: [auth, operations]
 related: ["../adr/001-tenant-cas-isolation.md", "../contributing/extending.md"]
 ---
 
 # Authentication
 
-`baerly-storage/auth` ships three `Verifier` presets. Each one
-authenticates the caller and returns a `tenantPrefix`, which the
-server uses to pin the request to one tenant's keyspace.
+baerly has two seams for configuring auth:
+
+- **`config.auth` in `baerly.config.ts`** — the graduated-auth
+  posture the adapter synthesizes a verifier from. Today's values:
+  `"none"` (no header check; pins to `config.tenant`) and
+  `"shared-secret"` (reads `SHARED_SECRET` from the runtime env).
+- **`verifier:` on the adapter factory** — a `Verifier` value that
+  overrides `config.auth`. The factory `verifier:` resolves first,
+  so the override silently supersedes the posture in `config.auth`.
+  This is the seam Patterns A and C in each scaffold's `AGENTS.md`
+  → "Going to production" lean on (env-aware override in prod, fall
+  back to `config.auth: "none"` in dev).
+
+Scaffolds default to `auth: "none"` so day-1 happy path works with
+zero env vars. `baerly doctor --target=<cloudflare|node>` warns on
+`"none"` for deploy targets, FAILs on `"shared-secret"` without
+`SHARED_SECRET` reachable from the runtime env, and INFO-flags
+`CF_ACCESS_*` vars set without a `cloudflareAccess` verifier
+override (they're inert).
+
+`baerly-storage/auth` ships three `Verifier` presets you pass as
+the override:
 
 - `sharedSecret` — `Authorization: Bearer <secret>` with
   constant-time compare. Single-tenant; the simplest preset to
-  stand up.
+  stand up. (Synthesized automatically when
+  `config.auth: "shared-secret"`; you only construct this directly
+  if you need a non-default `tenantPrefix`.)
 - `bearerJwt` — JWT over JWKS with `iss` / `aud` / `alg` allowlist;
   reads the tenant from a configurable claim.
 - `cloudflareAccess` — thin shim over `bearerJwt` that consumes

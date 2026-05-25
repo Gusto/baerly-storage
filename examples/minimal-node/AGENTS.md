@@ -262,12 +262,67 @@ http://localhost:5173/<path>`) before declaring the task complete.
 
 - **Auth** — your scaffold ships `auth: "none"` in `baerly.config.ts`:
   every request resolves to `tenant: "minimal-demo"` and `Authorization`
-  is ignored. **For production**, change `auth` to `"shared-secret"`
-  (and set `SHARED_SECRET` in the process env), or pass a custom
-  `verifier:` on `baerlyNode({ ... })`
-  (`bearerJwt(...)` against your OIDC provider, etc.). `baerly doctor
-  --target=node` warns on `"none"` for deploy targets. See
-  "Going to production" below for concrete recipes.
+  is ignored. The adapter reads `config.auth` to pick its verifier;
+  a `verifier:` on `baerlyNode({ ... })` overrides it. `baerly
+  doctor --target=node` warns on `"none"` for deploy targets. See
+  "Going to production" below for the two production-fit recipes.
+
+### Going to production
+
+The scaffold ships `auth: "none"` so the day-1 happy path works with
+zero env vars. Two patterns flip to a production-fit posture; pick
+the one matching your gate.
+
+**Pattern B — `auth: "shared-secret"`** (single-tenant
+server-to-server). No factory code changes; `baerly.config.ts` flips:
+
+```ts
+// baerly.config.ts
+auth: "shared-secret",     // ← flip from "none"
+```
+
+Dev: put `SHARED_SECRET=dev-shared-secret` in `.env`. Prod: set
+`SHARED_SECRET` in the process environment (your PaaS / secret
+manager). `baerly doctor --target=node` FAILs if
+`auth: "shared-secret"` is set without `SHARED_SECRET` reachable from
+`process.env`.
+
+**Pattern C — JWKS-backed JWT** (multi-tenant; OIDC IdP). The factory
+`verifier:` overrides `config.auth`, so dev keeps `"none"` and prod
+gets `bearerJwt`:
+
+```ts
+// baerly.config.ts — unchanged
+auth: "none",     // dev default
+```
+
+```ts
+// src/server/index.ts
+import { baerlyNode, s3Storage } from "baerly-storage/node";
+import { bearerJwt } from "baerly-storage/auth";
+import config from "../../baerly.config.ts";
+
+await baerlyNode({
+  config,
+  storage: s3Storage({
+    region: process.env["AWS_REGION"] ?? "us-east-1",
+    bucket: process.env["BUCKET"]!,
+    accessKeyId: process.env["AWS_ACCESS_KEY_ID"]!,
+    secretAccessKey: process.env["AWS_SECRET_ACCESS_KEY"]!,
+  }),
+  ...(process.env["JWKS_URL"] !== undefined && {
+    verifier: bearerJwt({
+      jwks: process.env["JWKS_URL"],
+      issuer: process.env["JWT_ISSUER"]!,
+      audience: process.env["JWT_AUDIENCE"]!,
+    }),
+  }),
+}).listen(Number(process.env["PORT"] ?? 8080));
+```
+
+Dev sees `JWKS_URL` as `undefined`, spread short-circuits, and
+`config.auth: "none"` runs. Prod sets `JWKS_URL` + `JWT_ISSUER` +
+`JWT_AUDIENCE` and `bearerJwt` engages.
 
 - **Storage backend** — `src/server/index.ts` picks between
   `s3Storage` (AWS) and `r2Storage` (Cloudflare R2) based on whether

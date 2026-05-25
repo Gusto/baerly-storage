@@ -4,9 +4,11 @@ A baerly app scaffolded with `create-baerly` for the **Node** target —
 any host that runs `node server.js` (Railway, Render, Fly without
 Docker, Heroku, a VM, a container scheduler, your laptop). Uses
 `baerly-storage/node` against an S3-compatible bucket (AWS S3, R2 via
-S3-compat, Minio, etc.) with a `bearerJwt` → `sharedSecret` fallback
-`Verifier` chain, plus a React + Vite SPA and a one-collection `notes`
-schema you extend.
+S3-compat, Minio, etc.). Ships `auth: "none"` so the day-1 happy
+path works with zero env vars, plus a React + Vite SPA and a
+one-collection `notes` schema you extend; flip to a shared secret
+or wire `bearerJwt` against your OIDC IdP before deploy — see
+"Production auth" below.
 
 To ship a production Dockerfile alongside, scaffold with
 `--with=docker` — the add-on writes a multi-stage distroless Dockerfile,
@@ -44,6 +46,7 @@ pnpm install
 pnpm dev
 ```
 
+
 `pnpm dev` runs `vite`. `baerlyDev()` from `baerly-storage/dev/vite`
 mounts the Node HTTP listener as Connect middleware on the same Vite
 process that serves the SPA, so `GET /` hits the SPA on
@@ -57,23 +60,26 @@ Open <http://localhost:5173>. Type a note, hit "Add note." Open a
 second tab — inserts, edits, and deletes in one tab appear in the
 other over the `/v1/since` long-poll.
 
-For production-shaped local runs (S3, the verifier of your choice,
-and the bundled SPA served from `dist/client/`):
+For production-shaped local runs (S3 and the bundled SPA served
+from `dist/client/`):
 
 ```sh
 pnpm build
-BUCKET=... AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=... SHARED_SECRET=... pnpm start
+BUCKET=... AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=... pnpm start
 ```
 
-The server reads `BUCKET`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`,
-and either `JWKS_URL` (production) or `SHARED_SECRET` (parity with
-`pnpm dev`) at startup. Optional: `R2_ACCOUNT_ID` (switches the
-storage factory from `s3Storage` to `r2Storage`), `AWS_REGION`,
-`PORT`, `TENANT`, `WEB_ROOT`, `MAINTENANCE_COLLECTIONS` (comma-
-separated collection slugs — when set, `baerlyNode` runs one
-compact+GC pass per `(tenant, collection)` pair on its
-hourly tick; leave unset to skip the in-process loop and schedule
-maintenance externally — a PaaS cron, k8s CronJob, systemd timer).
+The server reads `BUCKET`, `AWS_ACCESS_KEY_ID`,
+`AWS_SECRET_ACCESS_KEY` at startup. The default `auth: "none"`
+posture needs no auth env vars; if you adopt Pattern B / C from
+"Production auth" below, also set `SHARED_SECRET` (Pattern B) or
+`JWKS_URL` + `JWT_ISSUER` + `JWT_AUDIENCE` (Pattern C). Optional:
+`R2_ACCOUNT_ID` (switches the storage factory from `s3Storage` to
+`r2Storage`), `AWS_REGION`, `PORT`, `TENANT`, `WEB_ROOT`,
+`MAINTENANCE_COLLECTIONS` (comma-separated collection slugs — when
+set, `baerlyNode` runs one compact+GC pass per `(tenant, collection)`
+pair on its hourly tick; leave unset to skip the in-process loop
+and schedule maintenance externally — a PaaS cron, k8s CronJob,
+systemd timer).
 
 After `pnpm build`, `http://localhost:8080/` serves the built SPA
 out of `dist/client/` and `http://localhost:8080/v1/*` is the
@@ -122,12 +128,21 @@ export const NoteSchema = z.object({
 
 ## Production auth
 
-The emitted `src/server/index.ts` chooses `bearerJwt()` when `JWKS_URL`
-is set, else falls back to `sharedSecret()` for parity with `pnpm dev`.
-Point `JWKS_URL` at your IdP's JWKS endpoint
-(`https://<issuer>/.well-known/jwks.json`) and set `JWT_ISSUER` +
-`JWT_AUDIENCE`. Remove the shared-secret branch before production.
-See `AGENTS.md` → "Production auth" for the swap.
+The scaffold ships `auth: "none"` so the day-1 happy path works
+with zero env vars; every request resolves to `config.tenant` and
+the `NoteSchema` still validates writes server-side. Before deploy,
+follow `AGENTS.md` → "Going to production":
+
+- **Pattern B — `auth: "shared-secret"`.** Single-tenant
+  server-to-server callers (CI, cron, internal services). Flip
+  `auth` in `baerly.config.ts` and put `SHARED_SECRET` in
+  `process.env` (your PaaS / secret manager).
+- **Pattern C — JWKS-backed JWT (recommended for multi-tenant).**
+  Same artifact in dev and prod; the factory `verifier:` override
+  engages when `JWKS_URL` is set. `bearerJwt()` (re-exported from
+  `baerly-storage/auth`) validates against your IdP's JWKS endpoint
+  (`https://<issuer>/.well-known/jwks.json`) with `JWT_ISSUER` +
+  `JWT_AUDIENCE` and pins the tenant from a claim.
 
 ## When to graduate
 
