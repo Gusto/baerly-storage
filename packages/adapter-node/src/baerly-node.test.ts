@@ -3,10 +3,12 @@
 
 import { type AddressInfo, createServer as createNetServer } from "node:net";
 import {
+  type BaerlyAppConfig,
   BaerlyError,
   CURRENT_JSON_SCHEMA_VERSION,
   createCurrentJson,
   MemoryStorage,
+  SHARED_SECRET_MISSING_MESSAGE,
   type Storage,
   type Verifier,
 } from "@baerly/protocol";
@@ -18,6 +20,19 @@ const sharedDevVerifier: Verifier = async () => ({
   tenantPrefix: "test-tenant",
   identity: { sub: "dev" },
 });
+
+/**
+ * Minimal-shape `BaerlyAppConfig` for tests that exercise an explicit
+ * `verifier:` override — the override branch wins in `resolveVerifier`,
+ * so `auth` is effectively placeholder for these cases.
+ */
+const testConfig: BaerlyAppConfig = {
+  app: "t",
+  tenant: "test-tenant",
+  target: "node",
+  auth: "none",
+  collections: {},
+};
 
 /**
  * Reserve and immediately release an ephemeral port so the test can
@@ -50,7 +65,7 @@ describe("baerlyNode", () => {
   test("listen resolves once the server is bound and serves /v1/healthz", async () => {
     const port = await reservePort();
     const handle = baerlyNode({
-      app: "t",
+      config: testConfig,
       storage: new MemoryStorage(),
       verifier: sharedDevVerifier,
     });
@@ -66,7 +81,7 @@ describe("baerlyNode", () => {
   test("close() shuts down the server and is idempotent", async () => {
     const port = await reservePort();
     const handle = baerlyNode({
-      app: "t",
+      config: testConfig,
       storage: new MemoryStorage(),
       verifier: sharedDevVerifier,
     });
@@ -107,7 +122,7 @@ describe("baerlyNode", () => {
 
     const port = await reservePort();
     const handle = baerlyNode({
-      app: "t",
+      config: testConfig,
       storage,
       verifier: sharedDevVerifier,
       maintenance: {
@@ -190,7 +205,7 @@ describe("baerlyNode", () => {
 
     const port = await reservePort();
     const handle = baerlyNode({
-      app: "t",
+      config: testConfig,
       storage: flakyStorage,
       verifier: sharedDevVerifier,
       maintenance: {
@@ -230,7 +245,7 @@ describe("baerlyNode", () => {
 
     const port = await reservePort();
     const handle = baerlyNode({
-      app: "t",
+      config: testConfig,
       storage: new MemoryStorage(),
       verifier: sharedDevVerifier,
     });
@@ -251,7 +266,7 @@ describe("baerlyNode", () => {
   test("removes signal handlers on close()", async () => {
     const port = await reservePort();
     const handle = baerlyNode({
-      app: "t",
+      config: testConfig,
       storage: new MemoryStorage(),
       verifier: sharedDevVerifier,
     });
@@ -269,7 +284,7 @@ describe("baerlyNode", () => {
   test("close() called mid-bind tears down without installing signal handlers", async () => {
     const port = await reservePort();
     const handle = baerlyNode({
-      app: "t",
+      config: testConfig,
       storage: new MemoryStorage(),
       verifier: sharedDevVerifier,
       maintenance: {
@@ -288,5 +303,120 @@ describe("baerlyNode", () => {
     expect(process.listenerCount("SIGTERM")).toBe(sigtermBefore);
     expect(process.listenerCount("SIGINT")).toBe(sigintBefore);
     activeHandle = undefined;
+  });
+});
+
+/**
+ * `config.auth` synthesis suite. Asserts `baerlyNode` wires the
+ * declared posture into a real `Verifier` when no `verifier:`
+ * override is supplied. Node throws synchronously at `baerlyNode({...})`
+ * for the "unset SHARED_SECRET" branch (resolution happens at factory
+ * time, not first fetch — Node can throw at startup unlike CF Workers).
+ */
+describe("baerlyNode config.auth synthesis", () => {
+  let activeHandle: BaerlyNodeHandle | undefined;
+  afterEach(async () => {
+    if (activeHandle !== undefined) {
+      await activeHandle.close();
+      activeHandle = undefined;
+    }
+  });
+
+  test('auth: "none" without `verifier:` resolves every request to config.tenant', async () => {
+    const tenant = "auth-none-tenant";
+    const storage = new MemoryStorage();
+    await createCurrentJson(storage, `app/t/tenant/${tenant}/manifests/c/current.json`, {
+      schema_version: CURRENT_JSON_SCHEMA_VERSION,
+      snapshot: null,
+      next_seq: 0,
+      log_seq_start: 0,
+      writer_fence: { epoch: 0, owner: "auth-none-test", claimed_at: "" },
+    });
+    const config: BaerlyAppConfig = {
+      app: "t",
+      tenant,
+      target: "node",
+      auth: "none",
+      collections: {},
+    };
+    const port = await reservePort();
+    const handle = baerlyNode({ config, storage });
+    activeHandle = handle;
+    await handle.listen(port);
+
+    // No Authorization header — `auth: "none"` pins anonymously.
+    const res = await fetch(`http://127.0.0.1:${port}/v1/t/c`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ doc: { _id: "none-1", v: 1 } }),
+    });
+    expect(res.status).toBe(201);
+  });
+
+  test('auth: "shared-secret" with env.SHARED_SECRET present accepts the bearer and rejects without', async () => {
+    const tenant = "auth-ss-tenant";
+    const storage = new MemoryStorage();
+    await createCurrentJson(storage, `app/t/tenant/${tenant}/manifests/c/current.json`, {
+      schema_version: CURRENT_JSON_SCHEMA_VERSION,
+      snapshot: null,
+      next_seq: 0,
+      log_seq_start: 0,
+      writer_fence: { epoch: 0, owner: "auth-ss-test", claimed_at: "" },
+    });
+    const config: BaerlyAppConfig = {
+      app: "t",
+      tenant,
+      target: "node",
+      auth: "shared-secret",
+      collections: {},
+    };
+    const prior = process.env["SHARED_SECRET"];
+    process.env["SHARED_SECRET"] = "topsecret";
+    try {
+      const port = await reservePort();
+      const handle = baerlyNode({ config, storage });
+      activeHandle = handle;
+      await handle.listen(port);
+
+      const okRes = await fetch(`http://127.0.0.1:${port}/v1/t/c`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: "Bearer topsecret",
+        },
+        body: JSON.stringify({ doc: { _id: "ss-1", v: 1 } }),
+      });
+      expect(okRes.status).toBe(201);
+
+      const badRes = await fetch(`http://127.0.0.1:${port}/v1/t/c`);
+      expect(badRes.status).toBe(401);
+    } finally {
+      if (prior === undefined) {
+        delete process.env["SHARED_SECRET"];
+      } else {
+        process.env["SHARED_SECRET"] = prior;
+      }
+    }
+  });
+
+  test('auth: "shared-secret" with missing env throws synchronously at baerlyNode() with the locked message', () => {
+    const config: BaerlyAppConfig = {
+      app: "t",
+      tenant: "auth-ss-miss-tenant",
+      target: "node",
+      auth: "shared-secret",
+      collections: {},
+    };
+    const prior = process.env["SHARED_SECRET"];
+    delete process.env["SHARED_SECRET"];
+    try {
+      expect(() => baerlyNode({ config, storage: new MemoryStorage() })).toThrow(
+        SHARED_SECRET_MISSING_MESSAGE,
+      );
+    } finally {
+      if (prior !== undefined) {
+        process.env["SHARED_SECRET"] = prior;
+      }
+    }
   });
 });

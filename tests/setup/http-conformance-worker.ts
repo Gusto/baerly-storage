@@ -24,7 +24,7 @@
  * resolves to the same physical-prefix-tree on both pools.
  */
 
-import type { Verifier } from "@baerly/protocol";
+import type { BaerlyAppConfig, Verifier } from "@baerly/protocol";
 import { baerlyWorker, type BaerlyEnv } from "@baerly/adapter-cloudflare";
 
 import { CONFORMANCE_BEARER, CONFORMANCE_TENANT } from "../fixtures/test-verifier.ts";
@@ -42,7 +42,16 @@ const verifier: Verifier = async (req: Request) => {
   return { tenantPrefix: CONFORMANCE_TENANT, identity: {} };
 };
 
+const config: BaerlyAppConfig = {
+  app: "http-conf",
+  tenant: CONFORMANCE_TENANT,
+  target: "cloudflare",
+  auth: "none",
+  collections: {},
+};
+
 const handler = baerlyWorker(() => ({
+  config,
   verifier,
   sinceTimeoutMs: 500,
   sincePollIntervalMs: 50,

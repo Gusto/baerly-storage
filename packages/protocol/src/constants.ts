@@ -244,3 +244,24 @@ export const STORAGE_OPS_PER_LOGICAL_WRITE: number = 3;
  * option instead.
  */
 export const AUTH_CONFIG_VALUES = ["none", "shared-secret"] as const;
+
+/**
+ * Locked error wording for the "no auth configured" failure mode. The
+ * adapter throws this when neither `config.auth` nor `verifier:`
+ * resolves a real `Verifier`. Pinned via a regression test so future
+ * refactors do not drift the operator-facing wording.
+ *
+ * Consumed by:
+ * - `packages/adapter-cloudflare/src/worker.ts` (first-fetch throw)
+ * - `packages/adapter-node/src/server.ts` (first-fetch throw)
+ * - `packages/cli/src/doctor/cloudflare.ts` (FAIL finding mirrors it)
+ */
+export const NO_AUTH_CONFIGURED_MESSAGE: string =
+  'baerly: no auth configured. Set `auth` in baerly.config.ts ("none", "shared-secret") or pass `verifier` on the adapter factory.';
+
+/**
+ * Locked error wording for `auth: "shared-secret"` + missing env var.
+ * Same pinning rationale as {@link NO_AUTH_CONFIGURED_MESSAGE}.
+ */
+export const SHARED_SECRET_MISSING_MESSAGE: string =
+  'baerly: auth="shared-secret" but SHARED_SECRET env is empty/unset. Cloudflare: `wrangler secret put SHARED_SECRET`, or add to .dev.vars for local dev. Node: set in process env.';

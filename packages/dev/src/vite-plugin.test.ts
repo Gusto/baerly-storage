@@ -127,6 +127,7 @@ beforeAll(async () => {
       app: "test",
       tenant: "test",
       target: "node",
+      auth: "none",
       collections: { t: {} },
     },
     secret: "test-secret",

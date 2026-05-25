@@ -9,11 +9,31 @@
  * `ScheduledController` types resolve and the R2 binding is real.
  */
 
-import { CURRENT_JSON_SCHEMA_VERSION, createCurrentJson, type Verifier } from "@baerly/protocol";
+import {
+  type BaerlyAppConfig,
+  CURRENT_JSON_SCHEMA_VERSION,
+  createCurrentJson,
+  SHARED_SECRET_MISSING_MESSAGE,
+  type Verifier,
+} from "@baerly/protocol";
 import { reset, type LogRecord, type Sink } from "@logtape/logtape";
 import { afterEach, describe, expect, test } from "vitest";
 import { r2BindingStorage } from "./r2-binding-storage.ts";
 import { baerlyWorker, type BaerlyEnv } from "./worker.ts";
+
+/**
+ * Minimal-shape `BaerlyAppConfig` for tests that aren't exercising
+ * the resolver branches. Most cases pin a real `Verifier` via
+ * `verifier:` so the `auth` field here is effectively a placeholder —
+ * the override branch in `resolveVerifier` wins.
+ */
+const testConfig: BaerlyAppConfig = {
+  app: "test-app",
+  tenant: "test-tenant",
+  target: "cloudflare",
+  auth: "none",
+  collections: {},
+};
 
 const getBinding = (): R2Bucket => {
   const bucket = (globalThis as { __BAERLY_R2_BINDING__?: R2Bucket }).__BAERLY_R2_BINDING__;
@@ -44,7 +64,7 @@ describe("baerlyWorker scheduled", () => {
   test("no-ops when `options.scheduled` is unset", async () => {
     const bucket = getBinding();
     const env: BaerlyEnv = { BUCKET: bucket, APP: "t" };
-    const handler = baerlyWorker(() => ({ verifier: scheduledOnlyVerifier }));
+    const handler = baerlyWorker(() => ({ verifier: scheduledOnlyVerifier, config: testConfig }));
     await expect(
       handler.scheduled!(makeScheduledEvent(), env, makeNoopCtx()),
     ).resolves.toBeUndefined();
@@ -59,6 +79,7 @@ describe("baerlyWorker scheduled", () => {
     const env: BaerlyEnv = { BUCKET: bucket, APP: "t" };
     const calls: Array<[ScheduledController, BaerlyEnv, ExecutionContext]> = [];
     const handler = baerlyWorker(() => ({
+      config: testConfig,
       verifier: scheduledOnlyVerifier,
       scheduled: (event, e, c) => {
         calls.push([event, e, c]);
@@ -121,6 +142,7 @@ describe("baerlyWorker observability", () => {
     });
 
     const handler = baerlyWorker(() => ({
+      config: testConfig,
       verifier,
       observability: { level: "debug", sink, sampleRate: 1 },
     }));
@@ -178,7 +200,7 @@ describe("baerlyWorker observability", () => {
 
     // Seed one doc via a sink-less handler so the GET below has a
     // body to fetch (per-doc URLs are the only cached shape).
-    const seeder = baerlyWorker(() => ({ verifier }));
+    const seeder = baerlyWorker(() => ({ verifier, config: testConfig }));
     await seeder.fetch!(
       new Request("https://x/v1/t/c", {
         method: "POST",
@@ -191,6 +213,7 @@ describe("baerlyWorker observability", () => {
 
     const { records, sink } = collectingSink();
     const handler = baerlyWorker(() => ({
+      config: testConfig,
       verifier,
       observability: { level: "debug", sink, sampleRate: 1 },
     }));
@@ -247,7 +270,7 @@ describe("baerlyWorker observability", () => {
 
     // Seed one doc, then warm the cache via a sink-less handler so
     // its canonical lines don't pollute the assertion below.
-    const warm = baerlyWorker(() => ({ verifier }));
+    const warm = baerlyWorker(() => ({ verifier, config: testConfig }));
     await warm.fetch!(
       new Request("https://x/v1/t/c", {
         method: "POST",
@@ -267,6 +290,7 @@ describe("baerlyWorker observability", () => {
     // Now wire the sink and fire the cache-hit GET.
     const { records, sink } = collectingSink();
     const hit = baerlyWorker(() => ({
+      config: testConfig,
       verifier,
       observability: { level: "debug", sink, sampleRate: 1 },
     }));
@@ -293,6 +317,7 @@ describe("baerlyWorker observability", () => {
     const { records, sink } = collectingSink();
     const denyVerifier: Verifier = async () => null;
     const handler = baerlyWorker(() => ({
+      config: testConfig,
       verifier: denyVerifier,
       observability: { level: "debug", sink, sampleRate: 1 },
     }));
@@ -343,7 +368,7 @@ describe("baerlyWorker factory caching", () => {
     let factoryCalls = 0;
     const handler = baerlyWorker(() => {
       factoryCalls += 1;
-      return { verifier: trivialVerifier };
+      return { verifier: trivialVerifier, config: testConfig };
     });
 
     for (let i = 0; i < 5; i++) {
@@ -362,7 +387,7 @@ describe("baerlyWorker factory caching", () => {
     let factoryCalls = 0;
     const handler = baerlyWorker(() => {
       factoryCalls += 1;
-      return { verifier: trivialVerifier };
+      return { verifier: trivialVerifier, config: testConfig };
     });
 
     await handler.fetch!(
@@ -372,5 +397,150 @@ describe("baerlyWorker factory caching", () => {
     );
     await handler.scheduled!(makeScheduledEvent(), env, makeNoopCtx());
     expect(factoryCalls).toBe(1);
+  });
+});
+
+/**
+ * `config.auth` synthesis suite. Asserts the adapter wires the
+ * declared posture into a real `Verifier` when no `verifier:`
+ * override is supplied. Covers the three end-to-end branches
+ * from `resolveVerifier`: `"none"`, `"shared-secret"` happy path,
+ * and `"shared-secret"` + missing env (the cached-error path).
+ */
+describe("baerlyWorker config.auth synthesis", () => {
+  const provisionTable = async (bucket: R2Bucket, tenant: string): Promise<void> => {
+    const storage = r2BindingStorage(bucket);
+    await createCurrentJson(storage, `app/t/tenant/${tenant}/manifests/c/current.json`, {
+      schema_version: CURRENT_JSON_SCHEMA_VERSION,
+      snapshot: null,
+      next_seq: 0,
+      log_seq_start: 0,
+      writer_fence: { epoch: 0, owner: "auth-synth-test", claimed_at: "" },
+    });
+  };
+
+  test('auth: "none" without `verifier:` resolves every request to config.tenant', async () => {
+    const bucket = getBinding();
+    const tenant = `auth-none-${Date.now().toString(36)}`;
+    await provisionTable(bucket, tenant);
+    const config: BaerlyAppConfig = {
+      app: "t",
+      tenant,
+      target: "cloudflare",
+      auth: "none",
+      collections: {},
+    };
+    const handler = baerlyWorker(() => ({ config }));
+    const env: BaerlyEnv = { BUCKET: bucket, APP: "t" };
+
+    // No Authorization header — `auth: "none"` pins anonymously.
+    const res = await handler.fetch!(
+      new Request("https://x/v1/t/c", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ doc: { _id: "none-1", v: 1 } }),
+      }) as Request<unknown, IncomingRequestCfProperties>,
+      env,
+      makeNoopCtx(),
+    );
+    expect(res.status).toBe(201);
+
+    // The doc landed under `tenant/${tenant}/...` — proves the
+    // adapter pinned `config.tenant`.
+    const readRes = await handler.fetch!(
+      new Request("https://x/v1/t/c/none-1", { method: "GET" }) as Request<
+        unknown,
+        IncomingRequestCfProperties
+      >,
+      env,
+      makeNoopCtx(),
+    );
+    expect(readRes.status).toBe(200);
+  });
+
+  test('auth: "shared-secret" with env.SHARED_SECRET present accepts the bearer and rejects without', async () => {
+    const bucket = getBinding();
+    const tenant = `auth-ss-${Date.now().toString(36)}`;
+    await provisionTable(bucket, tenant);
+    const config: BaerlyAppConfig = {
+      app: "t",
+      tenant,
+      target: "cloudflare",
+      auth: "shared-secret",
+      collections: {},
+    };
+    const handler = baerlyWorker(() => ({ config }));
+    // CF env bindings are read via `(env as Record<string, unknown>)[k]`;
+    // augment the env with `SHARED_SECRET` so the resolver picks it up.
+    const env = { BUCKET: bucket, APP: "t", SHARED_SECRET: "topsecret" } as unknown as BaerlyEnv;
+
+    const okRes = await handler.fetch!(
+      new Request("https://x/v1/t/c", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: "Bearer topsecret",
+        },
+        body: JSON.stringify({ doc: { _id: "ss-1", v: 1 } }),
+      }) as Request<unknown, IncomingRequestCfProperties>,
+      env,
+      makeNoopCtx(),
+    );
+    expect(okRes.status).toBe(201);
+
+    const badRes = await handler.fetch!(
+      new Request("https://x/v1/t/c", {
+        method: "GET",
+      }) as Request<unknown, IncomingRequestCfProperties>,
+      env,
+      makeNoopCtx(),
+    );
+    expect(badRes.status).toBe(401);
+  });
+
+  test('auth: "shared-secret" with missing env throws on first fetch and caches the error on subsequent fetches', async () => {
+    const bucket = getBinding();
+    const tenant = `auth-ss-miss-${Date.now().toString(36)}`;
+    const config: BaerlyAppConfig = {
+      app: "t",
+      tenant,
+      target: "cloudflare",
+      auth: "shared-secret",
+      collections: {},
+    };
+    // No SHARED_SECRET on the env — `resolveVerifier` throws.
+    const env: BaerlyEnv = { BUCKET: bucket, APP: "t" };
+    const handler = baerlyWorker(() => ({ config }));
+
+    // The first fetch surfaces the `InvalidConfig` BaerlyError via the
+    // ExportedHandler's default exception-propagation path. We catch it
+    // here and assert on the locked message.
+    let first: unknown;
+    try {
+      await handler.fetch!(
+        new Request("https://x/v1/t/c") as Request<unknown, IncomingRequestCfProperties>,
+        env,
+        makeNoopCtx(),
+      );
+    } catch (error) {
+      first = error;
+    }
+    expect(first).toBeDefined();
+    expect((first as Error).message).toBe(SHARED_SECRET_MISSING_MESSAGE);
+
+    // Second fetch re-throws the cached error rather than re-running
+    // `resolveVerifier`. Identity-equality on the caught value pins
+    // the cached path.
+    let second: unknown;
+    try {
+      await handler.fetch!(
+        new Request("https://x/v1/t/c") as Request<unknown, IncomingRequestCfProperties>,
+        env,
+        makeNoopCtx(),
+      );
+    } catch (error) {
+      second = error;
+    }
+    expect(second).toBe(first);
   });
 });

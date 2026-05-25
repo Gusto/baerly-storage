@@ -26,6 +26,8 @@ export {
   defineConfig,
 } from "@baerly/protocol";
 export { collectionsToMaps } from "./config.ts";
+/** @internal — consumed by `@baerly/adapter-cloudflare` and `@baerly/adapter-node`. */
+export { resolveVerifier } from "./auth/internal/resolve-verifier.ts";
 export { Db } from "./db.ts";
 export { type IndexDefinition, allIndexKeysFor } from "./indexes.ts";
 export {

@@ -12,11 +12,25 @@
  *   2. `/v1/since` long-poll — always `bypass`.
  */
 
-import { CURRENT_JSON_SCHEMA_VERSION, createCurrentJson, type Verifier } from "@baerly/protocol";
+import {
+  type BaerlyAppConfig,
+  CURRENT_JSON_SCHEMA_VERSION,
+  createCurrentJson,
+  type Verifier,
+} from "@baerly/protocol";
 import { reset, type LogRecord, type Sink } from "@logtape/logtape";
 import { afterEach, describe, expect, test } from "vitest";
 import { r2BindingStorage } from "./r2-binding-storage.ts";
 import { baerlyWorker, type BaerlyEnv } from "./worker.ts";
+
+/** Minimal `BaerlyAppConfig` — `verifier:` override wins in every case. */
+const testConfig: BaerlyAppConfig = {
+  app: "t",
+  tenant: "cs",
+  target: "cloudflare",
+  auth: "none",
+  collections: {},
+};
 
 const getBinding = (): R2Bucket => {
   const bucket = (globalThis as { __BAERLY_R2_BINDING__?: R2Bucket }).__BAERLY_R2_BINDING__;
@@ -75,7 +89,7 @@ describe("baerlyWorker cache_status", () => {
 
     // Insert one doc up front via a POST so subsequent GETs have a
     // body to fetch.
-    const provisionHandler = baerlyWorker(() => ({ verifier }));
+    const provisionHandler = baerlyWorker(() => ({ verifier, config: testConfig }));
     const env: BaerlyEnv = { BUCKET: bucket, APP: "t" };
     const insertRes = await provisionHandler.fetch!(
       new Request("https://x/v1/t/c", {
@@ -91,6 +105,7 @@ describe("baerlyWorker cache_status", () => {
     // Now wire the sink and fire two GETs against the same id.
     const { records, sink } = collectingSink();
     const handler = baerlyWorker(() => ({
+      config: testConfig,
       verifier,
       observability: { level: "debug", sink, sampleRate: 1 },
     }));
@@ -148,7 +163,7 @@ describe("baerlyWorker cache_status", () => {
     // (fast-path: `longPollSince` finds events on the initial poll
     // and short-circuits — no wall-clock waiting on the default
     // 25s long-poll deadline).
-    const seedHandler = baerlyWorker(() => ({ verifier }));
+    const seedHandler = baerlyWorker(() => ({ verifier, config: testConfig }));
     await seedHandler.fetch!(
       new Request("https://x/v1/t/c", {
         method: "POST",
@@ -161,6 +176,7 @@ describe("baerlyWorker cache_status", () => {
 
     const { records, sink } = collectingSink();
     const handler = baerlyWorker(() => ({
+      config: testConfig,
       verifier,
       observability: { level: "debug", sink, sampleRate: 1 },
     }));

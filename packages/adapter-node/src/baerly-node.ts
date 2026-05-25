@@ -1,7 +1,8 @@
 import { createServer, type Server } from "node:http";
 import { serve } from "@hono/node-server";
 import type { DevLandingOptions } from "@baerly/dev";
-import type { BaerlyConfig, MetricsRecorder, Storage, Verifier } from "@baerly/protocol";
+import type { BaerlyAppConfig, MetricsRecorder, Storage, Verifier } from "@baerly/protocol";
+import { resolveVerifier } from "@baerly/server";
 import type { ObservabilityConfig } from "@baerly/server/observability";
 import { createApp } from "./app.ts";
 import { runMaintenanceTick } from "./server.ts";
@@ -30,11 +31,37 @@ export interface BaerlyNodeMaintenance {
  * Mirrors `baerlyWorker` in `@baerly/adapter-cloudflare`.
  */
 export interface BaerlyNodeOptions {
-  readonly app: string;
+  /**
+   * Your `baerly.config.ts`. **Required.** Carries `auth`, `tenant`,
+   * `app`, and the declared `collections` (their schemas/indexes flow
+   * through to per-request `Db.create` automatically).
+   *
+   * The adapter resolves the per-request `Verifier` from
+   * `config.auth` when no `verifier:` override is supplied — see
+   * resolution order on {@link verifier} below. Only
+   * `app` / `tenant` / `auth` / `collections` are read for runtime
+   * kernel wiring; deploy-time fields (`target`, `domain`,
+   * `requiredSecrets`) are ignored here.
+   */
+  readonly config: BaerlyAppConfig;
   readonly storage: Storage;
-  readonly verifier: Verifier;
-  /** See {@link "@baerly/adapter-node".CreateAppOptions.config}. */
-  readonly config?: BaerlyConfig;
+  /**
+   * Per-request `Verifier`. **Optional.** When set, overrides
+   * `config.auth` (the "dev default in config, prod override via env"
+   * recipe). When unset, the adapter synthesizes one from
+   * `config.auth`:
+   *
+   *   - `"shared-secret"` → `sharedSecret({ secret:
+   *     process.env.SHARED_SECRET, tenantPrefix: config.tenant })`.
+   *     Throws `BaerlyError("InvalidConfig", ...)` at factory time
+   *     when `SHARED_SECRET` is missing/empty (Node can throw at
+   *     startup unlike CF Workers).
+   *   - `"none"` → pins every request to `config.tenant` with no
+   *     header check.
+   *
+   * `GET /v1/healthz` always bypasses the verifier.
+   */
+  readonly verifier?: Verifier;
   readonly metrics?: MetricsRecorder;
   readonly observability?: ObservabilityConfig;
   readonly dev?: DevLandingOptions;
@@ -95,20 +122,17 @@ const buildCurrentJsonKey = (app: string, tenant: string, collection: string): s
  * @example
  * ```ts
  * import { baerlyNode, s3Storage } from "baerly-storage/node";
- * import { sharedSecret } from "baerly-storage/auth";
+ * import config from "./baerly.config.ts";
  *
  * const handle = baerlyNode({
- *   app: "tickets",
+ *   config,
  *   storage: s3Storage({
  *     region: "us-east-1",
  *     bucket: process.env["BUCKET"]!,
  *     accessKeyId: process.env["AWS_ACCESS_KEY_ID"]!,
  *     secretAccessKey: process.env["AWS_SECRET_ACCESS_KEY"]!,
  *   }),
- *   verifier: sharedSecret({
- *     secret: process.env["SHARED_SECRET"]!,
- *     tenantPrefix: "acme",
- *   }),
+ *   // No verifier needed when config.auth is "none" or "shared-secret".
  *   webRoot: "./dist/client",
  *   maintenance: { collections: ["tickets", "comments"], tenants: ["acme"] },
  * });
@@ -116,11 +140,30 @@ const buildCurrentJsonKey = (app: string, tenant: string, collection: string): s
  * ```
  */
 export function baerlyNode(opts: BaerlyNodeOptions): BaerlyNodeHandle {
+  // Node can `await` / throw at top level (unlike CF Workers), so
+  // verifier resolution lives here at factory time. An unset
+  // `SHARED_SECRET` for `auth: "shared-secret"` fails the process
+  // startup with a locked `InvalidConfig` message rather than
+  // surprising the first inbound request.
+  const verifier = resolveVerifier({
+    factoryVerifier: opts.verifier,
+    config: opts.config,
+    readEnv: (k) => process.env[k],
+  });
+  // auth=none startup banner: emit one info line when the operator
+  // opted into no-auth via config (not when they passed a real
+  // verifier override). Suppressed for shared-secret — operator
+  // already knows.
+  if (opts.verifier === undefined && opts.config.auth === "none") {
+    console.log(
+      `[baerly] auth=none — all requests resolve to tenant=${JSON.stringify(opts.config.tenant)}`,
+    );
+  }
   const app = createApp({
-    app: opts.app,
+    app: opts.config.app,
     storage: opts.storage,
-    verifier: opts.verifier,
-    ...(opts.config !== undefined && { config: opts.config }),
+    verifier,
+    config: opts.config,
     ...(opts.metrics !== undefined && { metrics: opts.metrics }),
     ...(opts.observability !== undefined && { observability: opts.observability }),
     ...(opts.dev !== undefined && { dev: opts.dev }),
@@ -158,7 +201,7 @@ export function baerlyNode(opts: BaerlyNodeOptions): BaerlyNodeHandle {
           try {
             await runMaintenanceTick({
               storage: opts.storage,
-              currentJsonKey: buildCurrentJsonKey(opts.app, tenant, collection),
+              currentJsonKey: buildCurrentJsonKey(opts.config.app, tenant, collection),
               ...(opts.metrics !== undefined && { metrics: opts.metrics }),
             });
           } catch (error) {

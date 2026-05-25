@@ -1,13 +1,14 @@
 import { type DevLandingOptions, renderDevLanding } from "@baerly/dev";
 import {
-  type BaerlyConfig,
+  type BaerlyAppConfig,
   type MetricsRecorder,
   type Verifier,
   noopMetricsRecorder,
 } from "@baerly/protocol";
-import { Db, collectionsToMaps } from "@baerly/server";
+import { Db, collectionsToMaps, resolveVerifier } from "@baerly/server";
 import { createRouter } from "@baerly/server/http";
 import {
+  CATEGORY,
   type ObservabilityConfig,
   alsAwareRecorder,
   configureObservability,
@@ -17,6 +18,7 @@ import {
   flushCanonicalLine,
   flushUnauthorizedAndRespond,
   getEffectiveSampleRate,
+  getLogger,
   observableStorage,
   runWithContext,
 } from "@baerly/server/observability";
@@ -77,23 +79,42 @@ export type WorkerScheduledHandler = (
 
 export interface BaerlyWorkerOptions {
   /**
+   * Your `baerly.config.ts`. **Required.** Carries `auth`,
+   * `tenant`, and the declared `collections` (their schemas/indexes
+   * flow through to per-request `Db.create` automatically).
+   *
+   * The adapter resolves the per-request `Verifier` from
+   * `config.auth` when no `verifier:` override is supplied — see
+   * resolution order on {@link verifier} below.
+   *
+   * Only `collections` is read for runtime kernel wiring — fields
+   * like `target`, `domain`, `cloudflareAccess` are deploy-time
+   * concerns that the adapter ignores.
+   */
+  readonly config: BaerlyAppConfig;
+  /**
    * Cron Trigger handler. When unset, `scheduled()` is a no-op even
    * if `triggers.crons` is declared. See {@link WorkerScheduledHandler}.
    */
   readonly scheduled?: WorkerScheduledHandler;
   /**
-   * Per-request `Verifier`. **Required.** Every non-healthz request
-   * runs the verifier first; the resolved `tenantPrefix` pins the
-   * per-request `Db`. On `null`, the request short-circuits with 401.
+   * Per-request `Verifier`. **Optional.** When set, overrides
+   * `config.auth` (the "dev default in config, prod override via env"
+   * recipe). When unset, the adapter synthesizes one from
+   * `config.auth`:
    *
-   * `GET /v1/healthz` bypasses the verifier so deploy readiness
-   * probes don't need an auth token.
+   *   - `"shared-secret"` → `sharedSecret({ secret: env.SHARED_SECRET,
+   *     tenantPrefix: config.tenant })`. Throws `InvalidConfig` on
+   *     first fetch when `SHARED_SECRET` is missing/empty.
+   *   - `"none"` → pins every request to `config.tenant` with no
+   *     header check.
    *
-   * For local single-tenant dev, use {@link singleTenantDevVerifier}.
+   * `GET /v1/healthz` always bypasses the verifier.
+   *
    * Multi-tenant deployments compose their own verifier on top of a
    * real IdP — JWT, SigV4, Cloudflare Access, etc.
    */
-  readonly verifier: Verifier;
+  readonly verifier?: Verifier;
   /**
    * Operator's long-term {@link MetricsRecorder}. Receives every
    * kernel emission (Writer histograms, CAS-conflict counters,
@@ -139,29 +160,6 @@ export interface BaerlyWorkerOptions {
   readonly sinceTimeoutMs?: number;
   /** Override the long-poll inner-poll cadence. Forwarded to `longPollSince`. */
   readonly sincePollIntervalMs?: number;
-  /**
-   * Your `baerly.config.ts` (or any object that satisfies
-   * {@link BaerlyConfig}). When set, the adapter flattens
-   * `collections[*].schema` and `collections[*].indexes` into the
-   * per-collection maps that {@link Db.create} consumes — so
-   * server-side schema validation fires on commits and the auto-
-   * planner sees declared indexes.
-   *
-   * Without this option, declared collections have no effect on the
-   * server's `/v1/t/*` surface: writes accept any shape and reads
-   * fall back to the snapshot+log fold. Pass the value imported
-   * from your `baerly.config.ts`:
-   *
-   * ```ts
-   * import config from "../../baerly.config.ts";
-   * export default baerlyWorker(() => ({ verifier, config }));
-   * ```
-   *
-   * Only `collections` is read — fields like `target`, `domain`,
-   * `cloudflareAccess` are deploy-time concerns that the adapter
-   * ignores.
-   */
-  readonly config?: BaerlyConfig;
 }
 
 /**
@@ -194,16 +192,12 @@ export interface BaerlyWorkerOptions {
  * @example
  * ```ts
  * import { baerlyWorker } from "baerly-storage/cloudflare";
- * import type { Verifier } from "baerly-storage";
+ * import config from "../../baerly.config.ts";
  *
- * // Production: parse a bearer token and pin the tenant from a JWT
- * // claim. Preset factories handle JWKS / Cloudflare-Access.
- * const verifier: Verifier = async (req) => {
- *   const auth = req.headers.get("authorization");
- *   if (auth !== "Bearer dev-token") return null;
- *   return { tenantPrefix: "acme", identity: { sub: "dev" } };
- * };
- * export default baerlyWorker(() => ({ verifier }));
+ * // Dev default: `auth: "none"` in baerly.config.ts pins every
+ * // request to `config.tenant`. Switch to `auth: "shared-secret"`
+ * // for staging/prod and `wrangler secret put SHARED_SECRET`.
+ * export default baerlyWorker(() => ({ config }));
  * ```
  */
 export function baerlyWorker<E extends BaerlyEnv = BaerlyEnv>(
@@ -215,27 +209,47 @@ export function baerlyWorker<E extends BaerlyEnv = BaerlyEnv>(
   // handler fires first.
   interface ResolvedState {
     readonly options: BaerlyWorkerOptions;
+    readonly verifier: Verifier;
     readonly teeRecorder: ReturnType<typeof alsAwareRecorder>;
     readonly schemas: ReturnType<typeof collectionsToMaps>["schemas"];
     readonly indexes: ReturnType<typeof collectionsToMaps>["indexes"];
   }
   let resolved: ResolvedState | undefined;
+  // Cached so every subsequent fetch re-throws the same error rather
+  // than re-running `resolveVerifier` on every request after a
+  // misconfig. Mirrors the "first fetch errors, every fetch errors"
+  // contract documented on `auth: "shared-secret"` + missing env.
+  let resolutionError: unknown;
   let observabilityConfigured = false;
 
   const ensureResolved = async (env: E): Promise<ResolvedState> => {
+    if (resolutionError !== undefined) {
+      throw resolutionError;
+    }
     if (resolved === undefined) {
-      const options = factory(env);
-      // Operator's long-term sink wrapped once with the ALS-aware tee.
-      // The ALS lookup is per-call, so a single shared instance is safe
-      // across all requests — each call resolves the bag from whichever
-      // `runWithContext` scope is active.
-      const operatorRecorder = options.metrics ?? noopMetricsRecorder;
-      const teeRecorder = alsAwareRecorder(operatorRecorder);
-      // Flatten declared collections once at factory time. Maps are
-      // frozen-empty sentinels when `config` is unset so per-request
-      // `Db.create` is allocation-free either way.
-      const { schemas, indexes } = collectionsToMaps(options.config?.collections);
-      resolved = { options, teeRecorder, schemas, indexes };
+      try {
+        const options = factory(env);
+        const verifier = resolveVerifier({
+          factoryVerifier: options.verifier,
+          config: options.config,
+          readEnv: (k) => {
+            const value = (env as unknown as Record<string, unknown>)[k];
+            return typeof value === "string" ? value : undefined;
+          },
+        });
+        // Operator's long-term sink wrapped once with the ALS-aware tee.
+        // The ALS lookup is per-call, so a single shared instance is safe
+        // across all requests — each call resolves the bag from whichever
+        // `runWithContext` scope is active.
+        const operatorRecorder = options.metrics ?? noopMetricsRecorder;
+        const teeRecorder = alsAwareRecorder(operatorRecorder);
+        // Flatten declared collections once at factory time.
+        const { schemas, indexes } = collectionsToMaps(options.config.collections);
+        resolved = { options, verifier, teeRecorder, schemas, indexes };
+      } catch (error) {
+        resolutionError = error;
+        throw error;
+      }
     }
     // Lazy-init flag for `configureObservability`. CF Worker modules
     // cannot `await` at the module top level, so the first fetch /
@@ -245,13 +259,25 @@ export function baerlyWorker<E extends BaerlyEnv = BaerlyEnv>(
     if (!observabilityConfigured) {
       await configureObservability(resolveCfSink(resolved.options.observability));
       observabilityConfigured = true;
+      // Emit the auth=none startup banner exactly once per isolate.
+      // Suppress when an explicit `verifier:` override is in play —
+      // the override wins, the log would be misleading. Suppress
+      // when `auth === "shared-secret"` — the operator already knows.
+      if (
+        resolved.options.verifier === undefined &&
+        resolved.options.config.auth === "none"
+      ) {
+        getLogger(CATEGORY.http).info(
+          `[baerly] auth=none — all requests resolve to tenant=${JSON.stringify(resolved.options.config.tenant)}`,
+        );
+      }
     }
     return resolved;
   };
 
   return {
     async fetch(req, env, ctx): Promise<Response> {
-      const { options, teeRecorder, schemas, indexes } = await ensureResolved(env);
+      const { options, verifier, teeRecorder, schemas, indexes } = await ensureResolved(env);
 
       // Opt-in dev landing page. Off in production (options.dev
       // unset); when set, GET / serves HTML and GET /favicon.ico
@@ -301,7 +327,7 @@ export function baerlyWorker<E extends BaerlyEnv = BaerlyEnv>(
       });
 
       // Tenant resolution: the Verifier owns it unconditionally.
-      const result = await options.verifier(req);
+      const result = await verifier(req);
       if (result === null) {
         return runWithContext(obsCtx, async () => flushUnauthorizedAndRespond(obsCtx, req));
       }
