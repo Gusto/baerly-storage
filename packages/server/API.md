@@ -47,7 +47,7 @@ import {
 } from "baerly-storage/auth";
 
 // Adapters
-import { baerlyWorker, r2BindingStorage, singleTenantDevVerifier } from "baerly-storage/cloudflare";
+import { baerlyWorker, r2BindingStorage } from "baerly-storage/cloudflare";
 import { baerlyNode, s3Storage, r2Storage, minioStorage, gcsStorage } from "baerly-storage/node";
 
 // Dev helpers (Vite, local-fs storage)
@@ -425,22 +425,30 @@ but no `tenant` claim. Pin the tenant from env instead of a claim:
 `cloudflareAccess({ teamDomain, audienceTag, tenantPrefix: "main" })`.
 Same option is available on `bearerJwt`.
 
-**Local dev (`wrangler dev`, no Vite).** Use `singleTenantDevVerifier`
-behind an env flag so the wire-auth check stays covered by tests:
+**Local dev (`wrangler dev`, no Vite).** Declare `auth: "none"` in
+`baerly.config.ts` for the dev posture — the adapter synthesizes a
+verifier that pins every request to `config.tenant` without consulting
+the `Authorization` header. Swap to `auth: "shared-secret"` (or pass a
+custom `Verifier` on the factory) when you're ready to gate by wire
+credentials. Production CF Worker recipes layer CF Access in front of
+the Worker route; the verifier reads the resulting JWT:
 
 ```ts
-import { baerlyWorker, singleTenantDevVerifier } from "baerly-storage/cloudflare";
-import { cloudflareAccess } from "baerly-storage/auth";
-export default baerlyWorker((env) => ({
-  verifier: env.DEV_AUTH === "1"
-    ? singleTenantDevVerifier("main")
-    : cloudflareAccess({ teamDomain: env.CF_ACCESS_TEAM_DOMAIN, audienceTag: env.CF_ACCESS_AUD_TAG, tenantPrefix: "main" }),
-}));
-```
+// baerly.config.ts
+import { defineConfig } from "baerly-storage/config";
+export default defineConfig({
+  app: "tickets",
+  tenant: "main",
+  target: "cloudflare",
+  auth: "none", // dev only — production swaps to "shared-secret" or a custom Verifier
+  collections: { /* … */ },
+});
 
-If your tests use `@cloudflare/vitest-pool-workers`, pin
-`DEV_AUTH: ""` under `poolOptions.workers.miniflare.bindings` so
-`.dev.vars` doesn't leak into the anon-401 assertions.
+// src/server/index.ts
+import { baerlyWorker } from "baerly-storage/cloudflare";
+import config from "../../baerly.config.ts";
+export default baerlyWorker(() => ({ config }));
+```
 
 
 `s3Storage` / `r2Storage` / `minioStorage` / `gcsStorage` from

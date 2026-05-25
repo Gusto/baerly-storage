@@ -9,9 +9,7 @@ import type { Verifier } from "@baerly/protocol";
  *
  * Discriminant note: `identity.kind === "none"` distinguishes the
  * "operator opted into auth=none in baerly.config.ts" branch from the
- * existing `singleTenantDevVerifier(...)` helper (`kind:
- * "single-tenant-dev"`) and the bearer-token paths (`kind:
- * "shared-secret"`, `kind: "jwt"`, etc).
+ * bearer-token paths (`kind: "shared-secret"`, `kind: "jwt"`, etc).
  *
  * Not part of the public surface. Consumed by `baerlyWorker` /
  * `baerlyNode` resolution; the operator-facing API is the typed

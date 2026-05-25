@@ -24,7 +24,3 @@ export type { R2BindingStorageOptions } from "./r2-binding-storage.ts";
 // Worker module-default + Cron Trigger surface.
 export { baerlyWorker } from "./worker.ts";
 export type { BaerlyEnv, BaerlyWorkerOptions, WorkerScheduledHandler } from "./worker.ts";
-
-// Dev-only convenience verifier. **Not** for production use — see
-// the JSDoc on the helper itself.
-export { singleTenantDevVerifier } from "./single-tenant-dev-verifier.ts";

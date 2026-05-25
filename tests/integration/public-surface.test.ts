@@ -114,17 +114,12 @@ describe("baerly-storage/observability", () => {
 // ---------------------------------------------------------------------------
 // baerly-storage/cloudflare
 // ---------------------------------------------------------------------------
-import {
-  baerlyWorker,
-  r2BindingStorage,
-  singleTenantDevVerifier,
-} from "baerly-storage/cloudflare";
+import { baerlyWorker, r2BindingStorage } from "baerly-storage/cloudflare";
 
 describe("baerly-storage/cloudflare", () => {
   test("imports resolve", () => {
     expect(typeof r2BindingStorage).toBe("function");
     expect(typeof baerlyWorker).toBe("function");
-    expect(typeof singleTenantDevVerifier).toBe("function");
   });
 });
 
@@ -211,12 +206,7 @@ describe("baerly-storage/client/testing", () => {
 // ---------------------------------------------------------------------------
 // baerly-storage/dev
 // ---------------------------------------------------------------------------
-import {
-  ensureTable,
-  LocalFsStorage,
-  printDevBanner,
-  renderDevLanding,
-} from "baerly-storage/dev";
+import { ensureTable, LocalFsStorage, printDevBanner, renderDevLanding } from "baerly-storage/dev";
 
 describe("baerly-storage/dev", () => {
   test("imports resolve", () => {
@@ -237,4 +227,3 @@ describe("baerly-storage/dev/vite", () => {
     expect(typeof baerlyDevVite).toBe("function");
   });
 });
-

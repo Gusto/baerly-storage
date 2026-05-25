@@ -23,7 +23,6 @@ import {
   type Verifier,
 } from "@baerly/protocol";
 import { r2BindingStorage } from "./r2-binding-storage.ts";
-import { singleTenantDevVerifier } from "./single-tenant-dev-verifier.ts";
 import { baerlyWorker, type BaerlyEnv } from "./worker.ts";
 
 const trivialVerifier: Verifier = async () => ({
@@ -128,47 +127,6 @@ describe("baerlyWorker routes", () => {
     // time.
     // @ts-expect-error config is required
     baerlyWorker(() => ({}));
-  });
-
-  test("singleTenantDevVerifier resolves every request to the supplied tenant", async () => {
-    const bucket = getBinding();
-    const table = freshTable("tickets");
-    // Use a non-default tenant so the test fails if the helper ever
-    // stops threading its argument through (e.g. hardcodes "acme").
-    const tenant = `dev-${table}`;
-    await provisionTable(bucket, table, tenant);
-    const worker = baerlyWorker(() => ({
-      verifier: singleTenantDevVerifier(tenant),
-      config: baseConfig,
-    }));
-    const env = makeEnv(bucket);
-
-    const insertRes = await worker.fetch!(
-      asWorkersRequest(
-        new Request(`https://x/v1/t/${table}`, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ doc: { title: "pinned-tenant" } }),
-        }),
-      ),
-      env,
-      makeCtx(),
-    );
-    expect(insertRes.status).toBe(201);
-    const inserted = (await insertRes.json()) as BaseEnvelope;
-    const id = inserted._id;
-    expect(typeof id).toBe("string");
-
-    // The round-trip only succeeds because the manifest lives under
-    // `tenant/${tenant}/` — proves the helper threaded the argument.
-    const readRes = await worker.fetch!(
-      asWorkersRequest(new Request(`https://x/v1/t/${table}/${id!}`)),
-      env,
-      makeCtx(),
-    );
-    expect(readRes.status).toBe(200);
-    const read = (await readRes.json()) as { data: { _id: string; title: string } };
-    expect(read.data.title).toBe("pinned-tenant");
   });
 
   test("GET /v1/healthz returns { ok: true } without consulting the verifier", async () => {

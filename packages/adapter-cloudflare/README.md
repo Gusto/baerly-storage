@@ -12,14 +12,15 @@ Cloudflare Workers adapter for Baerly. Ships two `Storage` flavors and a
 - **`S3HttpStorage`** — re-exported from `@baerly/protocol` for the
   HTTP fallback. Use when running against AWS S3, GCS, or cross-account
   R2 — anywhere the binding isn't available.
-- **`baerlyWorker((env) => options)`** — env-lazy factory; resolves once on first `fetch` / `scheduled` and caches for the isolate. Returns the `fetch(req, env, ctx)` module-default export. `options.verifier` is **required** — every non-healthz
-  request runs the verifier first. Single-tenant dev wires
-  `singleTenantDevVerifier(env.TENANT)` explicitly. The
-  forward-compatible `handler` hook lets callers ship custom routes
-  ahead of the default router.
-- **`singleTenantDevVerifier(tenantPrefix)`** — dev-only convenience
-  `Verifier` that resolves every request to one tenant. Never use
-  in multi-tenant production.
+- **`baerlyWorker((env) => options)`** — env-lazy factory; resolves
+  once on first `fetch` / `scheduled` and caches for the isolate.
+  Returns the `fetch(req, env, ctx)` module-default export. When
+  `options.verifier` is omitted the adapter synthesizes one from
+  `config.auth` (declare `auth: "none"` in `baerly.config.ts` for the
+  dev-time, pin-every-request-to-`config.tenant` posture; declare
+  `auth: "shared-secret"` or pass a custom `Verifier` for production).
+  The forward-compatible `handler` hook lets callers ship custom
+  routes ahead of the default router.
 
 Internal-only for now (`"private": true`). Public API surface is the
 JSDoc on `src/*.ts`.
