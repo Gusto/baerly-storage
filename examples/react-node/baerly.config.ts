@@ -30,6 +30,7 @@ export default defineConfig({
   app: "react-node",
   tenant: "react-demo",
   target: "node",
+  auth: "none",
   collections: {
     notes: { schema: NoteSchema },
   },

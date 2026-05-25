@@ -1,11 +1,8 @@
 import { resolve } from "node:path";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
-import { baerlyDev, loadDevVars } from "baerly-storage/dev/vite";
+import { baerlyDev } from "baerly-storage/dev/vite";
 import config from "./baerly.config.ts";
-
-const { SHARED_SECRET } = loadDevVars(".env", "SHARED_SECRET");
-const SECRET = SHARED_SECRET ?? process.env["SHARED_SECRET"] ?? "dev-shared-secret";
 
 export default defineConfig({
   build: { outDir: "dist/client", emptyOutDir: true },
@@ -14,7 +11,6 @@ export default defineConfig({
     react(),
     baerlyDev({
       config,
-      secret: SECRET,
       dataDir: resolve(import.meta.dirname, ".baerly-data"),
     }),
   ],

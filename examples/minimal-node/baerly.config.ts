@@ -12,6 +12,7 @@ export default defineConfig({
   app: "minimal-node",
   tenant: "minimal-demo",
   target: "node",
+  auth: "none",
   domain: undefined,
   collections: {
     notes: {},

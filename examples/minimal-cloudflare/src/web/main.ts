@@ -3,9 +3,9 @@ import config from "../../baerly.config.ts";
 import type { Note } from "../../types.ts";
 
 // Same-origin baseUrl: in dev, `@cloudflare/vite-plugin` runs the
-// Worker inside workerd on this Vite process, and `baerlyDevAuth` in
-// vite.config.ts injects Authorization on /v1/* requests — so this
-// file never sees the bearer token.
+// Worker inside workerd on this Vite process. With `auth: "none"`
+// in baerly.config.ts the SPA hits /v1/* without an `Authorization`
+// header and the adapter pins every request to `config.tenant`.
 const client = createBaerlyClient({ baseUrl: "", config });
 
 const app = document.querySelector<HTMLDivElement>("#app");

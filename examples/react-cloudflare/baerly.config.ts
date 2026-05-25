@@ -30,6 +30,7 @@ export default defineConfig({
   app: "react-cloudflare",
   tenant: "react-demo",
   target: "cloudflare",
+  auth: "none",
   collections: {
     notes: { schema: NoteSchema },
   },

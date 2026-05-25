@@ -304,21 +304,14 @@ http://localhost:5173/<path>`) before declaring the task complete.
   reference: the `Routes` type and the JSDoc on `createRouter` in
   `baerly-storage`.
 
-- **Auth setup (Node)** — `SHARED_SECRET` is server-to-server-only;
-  never put it in the SPA bundle.
-
-  - **Dev:** `baerlyDevAuth` in `vite.config.ts` injects the bearer
-    server-side from `.env` (or `process.env.SHARED_SECRET`). The
-    SPA calls `/v1/*` with no `Authorization` header — the secret
-    never enters the bundle.
-  - **Prod:** swap `sharedSecret` for `bearerJwt({ jwks, issuer,
-    audience })` against your OIDC provider. The Node entry reads
-    `JWKS_URL`, `JWT_ISSUER`, and `JWT_AUDIENCE` from the
-    environment and constructs the verifier. The SPA acquires its
-    token via the OIDC flow and sends
-    `Authorization: Bearer <jwt>`.
-  - **`SHARED_SECRET` in prod** is for server-to-server callers
-    (CI, cron, internal services), not the SPA.
+- **Auth** — your scaffold ships `auth: "none"` in `baerly.config.ts`:
+  every request resolves to `tenant: "react-demo"` and `Authorization`
+  is ignored. **For production**, change `auth` to `"shared-secret"`
+  (and set `SHARED_SECRET` in the process env), or pass a custom
+  `verifier:` on `baerlyNode({ ... })`
+  (`bearerJwt(...)` against your OIDC provider, etc.). `baerly doctor
+  --target=node` warns on `"none"` for deploy targets. See
+  "Going to production" below for concrete recipes.
 
 - **Storage backend** — `src/server/index.ts` picks between
   `s3Storage` (AWS) and `r2Storage` (Cloudflare R2 via S3-compat)

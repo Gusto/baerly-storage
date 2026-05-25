@@ -12,6 +12,7 @@ export default defineConfig({
   app: "minimal-cloudflare",
   tenant: "minimal-demo",
   target: "cloudflare",
+  auth: "none",
   domain: undefined,
   collections: {
     notes: {},

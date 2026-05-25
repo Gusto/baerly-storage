@@ -1,26 +1,15 @@
 /**
- * Server entry for minimal-node. One call composes
- * `s3Storage` / `r2Storage`, an auth verifier, and a `node:http`
- * server with SIGTERM/SIGINT handling and (optionally) a
- * multi-collection maintenance loop.
+ * Server entry for minimal-node. `baerlyNode(opts)` reads
+ * `opts.config.auth` to choose its verifier — the scaffold ships
+ * `auth: "none"`, so every request resolves to `config.tenant`
+ * with no header check. See AGENTS.md "Going to production" for
+ * the recipe to flip `auth` or wire a custom verifier.
  *
  * Storage: AWS S3 by default; set `R2_ACCOUNT_ID` to switch to
- * Cloudflare R2 via the S3-compat endpoint. For Minio or GCS, see
- * the `minioStorage` / `gcsStorage` factories in
- * `baerly-storage/node`.
- *
- * Verifier: JWKS-backed JWT when `JWKS_URL` is set (production);
- * `sharedSecret` otherwise (dev/CI). Production should set
- * `JWKS_URL` and remove the shared-secret branch.
- *
- * Maintenance: opt-in via `MAINTENANCE_COLLECTIONS` (comma-separated
- * collection slugs). Each tick runs one compact+GC pass per
- * (TENANT, collection) pair.
+ * Cloudflare R2 via the S3-compat endpoint.
  */
 import { baerlyNode, r2Storage, s3Storage } from "baerly-storage/node";
-import { bearerJwt, sharedSecret } from "baerly-storage/auth";
-import type { FriendlyLogLevel } from "baerly-storage/observability";
-import type { Storage, Verifier } from "baerly-storage";
+import type { Storage } from "baerly-storage";
 import config from "../../baerly.config.ts";
 
 const reqEnv = (name: string): string => {
@@ -30,9 +19,6 @@ const reqEnv = (name: string): string => {
   }
   return v;
 };
-
-const APP = "minimal-node";
-const TENANT = process.env["TENANT"] ?? "minimal-demo";
 
 const storage: Storage =
   process.env["R2_ACCOUNT_ID"] !== undefined
@@ -49,39 +35,8 @@ const storage: Storage =
         secretAccessKey: reqEnv("AWS_SECRET_ACCESS_KEY"),
       });
 
-const verifier: Verifier =
-  process.env["JWKS_URL"] !== undefined
-    ? bearerJwt({
-        jwks: process.env["JWKS_URL"],
-        issuer: reqEnv("JWT_ISSUER"),
-        audience: reqEnv("JWT_AUDIENCE"),
-      })
-    : sharedSecret({ secret: reqEnv("SHARED_SECRET"), tenantPrefix: TENANT });
-
-const maintenance =
-  process.env["MAINTENANCE_COLLECTIONS"] !== undefined
-    ? {
-        collections: process.env["MAINTENANCE_COLLECTIONS"]
-          .split(",")
-          .map((c) => c.trim())
-          .filter((c) => c.length > 0),
-        tenants: [TENANT],
-      }
-    : undefined;
-
 const PORT = Number(process.env["PORT"] ?? 8080);
 
-await baerlyNode({
-  app: APP,
-  storage,
-  verifier,
-  config,
-  webRoot: process.env["WEB_ROOT"] ?? "./dist/client",
-  observability: {
-    level: process.env["LOG_LEVEL"] as FriendlyLogLevel | undefined,
-    sampleRate: process.env["LOG_SAMPLE"] !== undefined ? Number(process.env["LOG_SAMPLE"]) : 0.1,
-  },
-  ...(maintenance !== undefined && { maintenance }),
-}).listen(PORT);
+await baerlyNode({ config, storage }).listen(PORT);
 
 console.log(`minimal-node listening on :${PORT}`);

@@ -1,57 +1,12 @@
 /**
- * Worker entry for react-cloudflare. Handles /v1/* via
- * baerlyWorker (R2-backed); the Cloudflare platform routes every
- * other request to the assets layer first (see `wrangler.jsonc:assets`)
- * with `not_found_handling: "single-page-application"` rewriting
- * unknown asset paths to `/index.html` for client-side routing.
- *
- * Verifier selection: cloudflareAccess() when both CF_ACCESS_TEAM_DOMAIN
- * and CF_ACCESS_AUDIENCE_TAG are set as vars, else sharedSecret() when
- * SHARED_SECRET is set, else throw on first request.
- *
- * File path: `src/server/index.ts` (single-package layout; the
- * `@cloudflare/vite-plugin` reads `wrangler.jsonc:main` to find this
- * entry).
- *
- * The `baerly.config.ts` is passed through `config:` so its declared
- * `collections.notes.schema` runs on every server-side commit.
+ * Worker entry for react-cloudflare. `baerlyWorker(opts)` reads
+ * `opts.config.auth` to choose its verifier — the scaffold ships
+ * `auth: "none"`, so every request resolves to `config.tenant`.
+ * The schema declared in `baerly.config.ts:collections.notes.schema`
+ * runs server-side on every write. See AGENTS.md "Going to
+ * production" for the recipe to flip `auth` or wire a custom verifier.
  */
-import { baerlyWorker, type BaerlyEnv } from "baerly-storage/cloudflare";
-import { cloudflareAccess, sharedSecret } from "baerly-storage/auth";
-import type { FriendlyLogLevel } from "baerly-storage/observability";
-import type { Verifier } from "baerly-storage";
+import { baerlyWorker } from "baerly-storage/cloudflare";
 import config from "../../baerly.config.ts";
 
-interface AppEnv extends BaerlyEnv {
-  readonly TENANT: string;
-  readonly SHARED_SECRET?: string;
-  readonly CF_ACCESS_TEAM_DOMAIN?: string;
-  readonly CF_ACCESS_AUDIENCE_TAG?: string;
-  readonly LOG_LEVEL: FriendlyLogLevel;
-  readonly LOG_SAMPLE: string;
-}
-
-const selectVerifier = (env: AppEnv): Verifier => {
-  if (env.CF_ACCESS_TEAM_DOMAIN !== undefined && env.CF_ACCESS_AUDIENCE_TAG !== undefined) {
-    return cloudflareAccess({
-      teamDomain: env.CF_ACCESS_TEAM_DOMAIN,
-      audienceTag: env.CF_ACCESS_AUDIENCE_TAG,
-    });
-  }
-  if (env.SHARED_SECRET !== undefined) {
-    return sharedSecret({ secret: env.SHARED_SECRET, tenantPrefix: env.TENANT });
-  }
-  throw new Error(
-    "No Verifier configured. Set SHARED_SECRET (wrangler secret put SHARED_SECRET) or " +
-      "wire CF Access (set CF_ACCESS_TEAM_DOMAIN + CF_ACCESS_AUDIENCE_TAG).",
-  );
-};
-
-export default baerlyWorker<AppEnv>((env) => ({
-  verifier: selectVerifier(env),
-  config,
-  observability: {
-    level: env.LOG_LEVEL,
-    sampleRate: Number(env.LOG_SAMPLE),
-  },
-}));
+export default baerlyWorker(() => ({ config }));

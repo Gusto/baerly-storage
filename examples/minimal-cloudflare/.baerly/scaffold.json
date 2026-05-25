@@ -4,17 +4,7 @@
     { "from": "minimal-demo", "fromKey": "tenant" }
   ],
   "excludePaths": [".baerly/scaffold.json"],
-  "excludeNames": [
-    "node_modules",
-    "dist",
-    ".wrangler",
-    ".dev.vars",
-    ".DS_Store",
-    "*.tsbuildinfo"
-  ],
+  "excludeNames": ["node_modules", "dist", ".wrangler", ".dev.vars", ".DS_Store", "*.tsbuildinfo"],
   "dropDevDeps": [],
-  "copies": [
-    { "from": "AGENTS.md", "to": "CLAUDE.md" },
-    { "from": ".dev.vars.example", "to": ".dev.vars" }
-  ]
+  "copies": [{ "from": "AGENTS.md", "to": "CLAUDE.md" }]
 }

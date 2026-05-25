@@ -292,19 +292,14 @@ http://localhost:5173/<path>`) before declaring the task complete.
   reference: the `Routes` type and the JSDoc on `createRouter` in
   `baerly-storage`.
 
-- **Auth setup (Cloudflare)** — `SHARED_SECRET` is
-  server-to-server-only; never put it in the SPA bundle.
-
-  - **Dev:** `baerlyDevAuth` in `vite.config.ts` injects the bearer
-    server-side from `.dev.vars`. The SPA calls `/v1/*` with no
-    `Authorization` header — the secret never enters the bundle.
-  - **Prod:** wire CF Access in front of the Worker route and set
-    `CF_ACCESS_TEAM_DOMAIN` + `CF_ACCESS_AUDIENCE_TAG` in
-    `wrangler.jsonc:vars`. `baerly doctor --target=cloudflare`
-    warns if `SHARED_SECRET` is set on a deploy without CF Access.
-  - **`SHARED_SECRET` in prod** is for server-to-server callers
-    (CI, cron, internal services), not the SPA. The doctor
-    warning gates this.
+- **Auth** — your scaffold ships `auth: "none"` in `baerly.config.ts`:
+  every request resolves to `tenant: "react-demo"` and `Authorization`
+  is ignored. **For production**, change `auth` to `"shared-secret"`
+  (and set `SHARED_SECRET` via `wrangler secret put`), or pass a
+  custom `verifier:` on the adapter factory
+  (`cloudflareAccess(...)`, `bearerJwt(...)`, …). `baerly doctor
+  --target=cloudflare` warns on `"none"` for deploy targets. See
+  "Going to production" below for concrete recipes.
 
 - **Extending the Worker with a custom route** — `baerlyWorker(...)`
   owns `/v1/*` + `/healthz`. For server-side endpoints the SPA
@@ -316,69 +311,60 @@ http://localhost:5173/<path>`) before declaring the task complete.
   // src/server/index.ts
   import { baerlyWorker, r2BindingStorage, type BaerlyEnv } from "baerly-storage/cloudflare";
   import { Db } from "baerly-storage";
-  // …existing selectVerifier helper…
+  import config from "../../baerly.config.ts";
 
-  // Hoist the baerly handler so its resolved state is cached for the isolate.
-  const baerly = baerlyWorker<AppEnv>((env) => ({
-    verifier: selectVerifier(env),
-    config,
-  }));
+  // Hoist the baerly handler so its resolved state is cached for
+  // the isolate. With `auth: "none"` in `baerly.config.ts` the
+  // adapter pins every `/v1/*` call to `config.tenant` and skips
+  // any header check.
+  const baerly = baerlyWorker<BaerlyEnv>(() => ({ config }));
 
   export default {
     // Keep `req` / `env` / `ctx` inferred — the `satisfies
-    // ExportedHandler<AppEnv>` line below narrows them to the same
-    // shapes `baerly.fetch!` accepts. Annotating them (`req: Request`,
-    // `env: AppEnv`, `ctx: ExecutionContext`) widens to the kernel
-    // `Request` and triggers TS2345 at the fall-through.
+    // ExportedHandler<BaerlyEnv>` line below narrows them to the
+    // same shapes `baerly.fetch!` accepts.
     async fetch(req, env, ctx): Promise<Response> {
       const url = new URL(req.url);
       if (req.method === "POST" && url.pathname.startsWith("/api/")) {
-        const verifier = selectVerifier(env);
-        // workers-types vs. kernel `Request` narrowing nudge —
-        // runtime shape is identical; see the JSDoc on `Verifier`.
-        const verified = await verifier(req as unknown as Request);
-        if (verified === null) return new Response(null, { status: 401 });
+        // Under `auth: "none"` the SPA hits `/api/*` unauthenticated
+        // — pin every custom route to `config.tenant` here. When you
+        // flip to `auth: "shared-secret"` or pass a custom
+        // `verifier:`, replicate that check explicitly (read
+        // `Authorization`, verify, derive `tenantPrefix`) — see the
+        // "Going to production" recipe.
         const db = Db.create({
           storage: r2BindingStorage(env.BUCKET),
           app: config.app,
-          tenant: verified.tenantPrefix,
+          tenant: config.tenant,
           config,
         });
         // …db.transaction(...), db.table(...).get(id), etc.
         return new Response(null, { status: 204 });
       }
       // Fall through to the baerly cascade for /v1/* + /healthz.
-      // No cast at the call: `req`/`env`/`ctx` already match
-      // `baerly`'s `ExportedHandler<AppEnv>` because both come from
-      // the same `E`. If you hit TS2345 here, you re-annotated the
-      // parameters above — drop the annotations.
       return baerly.fetch!(req, env, ctx);
     },
-  } satisfies ExportedHandler<AppEnv>;
+  } satisfies ExportedHandler<BaerlyEnv>;
   ```
 
-  **`/api/*` dev-auth.** The scaffold's `vite.config.ts` already
-  passes `prefix: ["/v1", "/api"]` to `baerlyDevAuth` (also the
-  function's default), so `/api/*` calls get the bearer in `vite dev`
-  out of the box. **If you mount your custom routes under a different
-  namespace** (e.g. `/internal/*`), extend the prefix list there —
-  otherwise the request lands at the worker with no `Authorization`
-  header and the inline `verifier(req)` call returns 401. `pnpm
-  verify` is silent on this gap: the typecheck is green and the dev
-  plugin isn't exercised by the test suite, so the only signal is
-  manually hitting the route in a browser or with `curl`.
+  Under `auth: "none"` the dev plugin no longer injects an
+  `Authorization` header — `/api/*` and `/v1/*` reach the Worker
+  unauthenticated and the adapter pins both to `config.tenant`. When
+  you flip to `auth: "shared-secret"` (or a custom verifier) per the
+  "Going to production" recipe, your `/api/*` handler must read and
+  verify `Authorization` explicitly; `baerlyWorker` only does the
+  header check for routes it owns (`/v1/*`).
 
 - **Secrets vs. vars** — `wrangler.jsonc:vars` carries non-secret
   config (`APP`, `TENANT`, `LOG_LEVEL`, `LOG_SAMPLE`, and CF Access
   identifiers `CF_ACCESS_TEAM_DOMAIN` / `CF_ACCESS_AUDIENCE_TAG` —
-  both are public identifiers, not secrets). The verifier's only
-  secret is `SHARED_SECRET`; it lives in `.dev.vars` for local
-  `wrangler dev` and behind `wrangler secret put` in production.
-  `.dev.vars.example` is the source of truth for which secrets the
-  Worker reads — keep it in sync with the verifier choices in
-  `src/server/index.ts`. `baerly doctor --target=cloudflare` only
-  reads `CF_ACCESS_*` from `wrangler.jsonc:vars`, so setting them
-  via `wrangler secret put` would silently defeat the doctor check.
+  both are public identifiers, not secrets). Secrets like
+  `SHARED_SECRET` (only required if you flip `auth` to
+  `"shared-secret"`) live in `.dev.vars` for local `wrangler dev`
+  and behind `wrangler secret put` in production. `baerly doctor
+  --target=cloudflare` reads `CF_ACCESS_*` from `wrangler.jsonc:vars`
+  only, so setting them via `wrangler secret put` would silently
+  defeat the doctor check.
 
 - **Maintenance loop (Cloudflare)** — opt-in. Add
   `"triggers": { "crons": ["* * * * *"] }` to `wrangler.jsonc` and

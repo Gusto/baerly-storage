@@ -68,53 +68,30 @@ describe("scaffold", () => {
     expect(config).toContain('app: "my-app"');
     expect(config).toContain('tenant: "acme"');
     expect(config).toContain('target: "cloudflare"');
+    expect(config).toContain('auth: "none"');
 
     const wrangler = await readFile(join(result.outDir, "wrangler.jsonc"), "utf8");
     expect(wrangler).toContain('"name": "my-app"');
     expect(wrangler).toContain('"bucket_name": "my-app"');
     expect(wrangler).toContain('"TENANT": "acme"');
 
+    // The default scaffold ships `auth: "none"`; the Worker entry
+    // collapses to a single `baerlyWorker(() => ({ config }))`
+    // expression — no `selectVerifier` helper, no
+    // `sharedSecret(...)` / `cloudflareAccess(...)` import.
     const worker = await readFile(join(result.outDir, "src", "server", "index.ts"), "utf8");
-    expect(worker).toContain("sharedSecret");
-    expect(worker).toContain("tenantPrefix: env.TENANT");
+    expect(worker).toContain("baerlyWorker(() => ({ config }))");
+    expect(worker).not.toContain("sharedSecret");
+    expect(worker).not.toContain("selectVerifier");
   });
 
-  // First-touch DX: scaffolder seeds a working `.dev.vars` (cloudflare)
-  // / `.env` (node) so `pnpm dev` succeeds without a manual cp step.
-  // Both files are gitignored by the template, so the seeded dev secret
-  // stays local. Locking this contract per target prevents accidental
-  // regression of the zero-touch onboarding flow.
-  test("cloudflare scaffold seeds .dev.vars from .dev.vars.example", async () => {
-    const result = await scaffold({
-      projectName: "seeded-cf",
-      target: "cloudflare",
-      pm: "pnpm",
-      templatesRoot: TEMPLATES_ROOT,
-      outRoot,
-    });
-    expect(result.filesWritten).toContain(".dev.vars.example");
-    expect(result.filesWritten).toContain(".dev.vars");
-    const example = await readFile(join(result.outDir, ".dev.vars.example"), "utf8");
-    const seeded = await readFile(join(result.outDir, ".dev.vars"), "utf8");
-    expect(seeded).toEqual(example);
-    expect(seeded).toContain("SHARED_SECRET=dev-shared-secret");
-  });
-
-  test("react-cloudflare scaffold also seeds .dev.vars", async () => {
-    const result = await scaffold({
-      projectName: "seeded-react",
-      target: "cloudflare",
-      starter: "react",
-      pm: "pnpm",
-      templatesRoot: TEMPLATES_ROOT,
-      outRoot,
-    });
-    expect(result.filesWritten).toContain(".dev.vars.example");
-    expect(result.filesWritten).toContain(".dev.vars");
-    const seeded = await readFile(join(result.outDir, ".dev.vars"), "utf8");
-    expect(seeded).toContain("SHARED_SECRET=dev-shared-secret");
-  });
-
+  // First-touch DX: node scaffolds seed a working `.env` so `pnpm dev`
+  // succeeds without a manual cp step. Cloudflare scaffolds no longer
+  // seed a `.dev.vars` by default — every template ships
+  // `auth: "none"` in `baerly.config.ts` and the dev plugin / adapter
+  // synthesizes the verifier from that. Operators opting into
+  // `auth: "shared-secret"` follow the AGENTS.md "Going to production"
+  // recipe (commit 07) to re-introduce the secret.
   test("node scaffold seeds .env from .env.example", async () => {
     const result = await scaffold({
       projectName: "seeded-node",
@@ -128,7 +105,47 @@ describe("scaffold", () => {
     const example = await readFile(join(result.outDir, ".env.example"), "utf8");
     const seeded = await readFile(join(result.outDir, ".env"), "utf8");
     expect(seeded).toEqual(example);
-    expect(seeded).toContain("SHARED_SECRET=dev-shared-secret");
+  });
+
+  // Regression: default scaffolds ship no `.dev.vars.example` and
+  // their `vite.config.ts` does not import `baerlyDevAuth` /
+  // `loadDevVars`. `src/server/index.ts` does not define
+  // `selectVerifier`. The adapter resolves the verifier from
+  // `config.auth` (the scaffold ships `"none"`).
+  test("default scaffolds do not import baerlyDevAuth or define selectVerifier", async () => {
+    for (const root of EXAMPLE_DIRS) {
+      const viteSrc = await readFile(join(root, "vite.config.ts"), "utf8");
+      expect(
+        viteSrc,
+        `${basename(root)} vite.config.ts must not import baerlyDevAuth`,
+      ).not.toContain("baerlyDevAuth");
+      expect(viteSrc, `${basename(root)} vite.config.ts must not import loadDevVars`).not.toContain(
+        "loadDevVars",
+      );
+
+      const serverSrc = await readFile(join(root, "src", "server", "index.ts"), "utf8");
+      expect(
+        serverSrc,
+        `${basename(root)} src/server/index.ts must not define selectVerifier`,
+      ).not.toContain("selectVerifier");
+      expect(
+        serverSrc,
+        `${basename(root)} src/server/index.ts must not throw "No Verifier configured"`,
+      ).not.toContain('"No Verifier configured');
+    }
+
+    // CF templates no longer ship a `.dev.vars.example`. (Node
+    // templates still ship `.env.example` for storage credentials.)
+    for (const root of [
+      resolve(TEMPLATES_ROOT, "minimal-cloudflare"),
+      resolve(TEMPLATES_ROOT, "react-cloudflare"),
+    ]) {
+      const entries = await readdir(root);
+      expect(
+        entries,
+        `${basename(root)} must not ship .dev.vars.example (scaffold defaults to auth: "none")`,
+      ).not.toContain(".dev.vars.example");
+    }
   });
 
   // Regression: `npm pack` treats `.gitignore` as a control file and
@@ -184,7 +201,7 @@ describe("scaffold", () => {
     expect(wrangler).toContain('"name": "prod-app"');
   });
 
-  test("emits a node scaffold with the bearerJwt fallback verifier", async () => {
+  test("emits a node scaffold that delegates auth to config.auth", async () => {
     const projectName = `svc-a-node`;
     const result = await scaffold({
       projectName,
@@ -201,13 +218,18 @@ describe("scaffold", () => {
     const claudeMd = await readFile(join(result.outDir, "CLAUDE.md"), "utf8");
     expect(claudeMd).toEqual(agentsMd);
 
+    // The default scaffold ships `auth: "none"`; the Node entry
+    // composes `baerlyNode({ config, storage })` with no inline
+    // verifier ternary. `bearerJwt(...)` / `sharedSecret(...)` only
+    // re-enter via the AGENTS.md "Going to production" recipe.
     const server = await readFile(join(result.outDir, "src", "server", "index.ts"), "utf8");
-    expect(server).toContain("bearerJwt");
-    expect(server).toContain("sharedSecret");
-    expect(server).toContain(`const APP = "${projectName}"`);
+    expect(server).toContain("baerlyNode({ config, storage })");
+    expect(server).not.toContain("bearerJwt");
+    expect(server).not.toContain("sharedSecret");
 
     const config = await readFile(join(result.outDir, "baerly.config.ts"), "utf8");
     expect(config).toContain(`target: "node"`);
+    expect(config).toContain('auth: "none"');
   });
 
   test("target=node by default emits no Dockerfile / healthcheck / .dockerignore", async () => {
@@ -514,9 +536,14 @@ describe("scaffold", () => {
 
       // 2. baerly.config.ts parses (read as text) and reflects the
       //    user-supplied values — and contains NO sentinel residue.
+      //    Also pins the `auth: "none"` literal that every default
+      //    scaffold ships post-graduated-auth: the verifier is
+      //    synthesized by the adapter from this field, not from a
+      //    `selectVerifier(env)` helper in the source.
       const config = await readFile(join(result.outDir, "baerly.config.ts"), "utf8");
       expect(config).toContain(`app: "${appName}"`);
       expect(config).toContain(`tenant: "${tenant}"`);
+      expect(config).toContain('auth: "none"');
       for (const sentinel of sentinels) {
         expect(config).not.toContain(sentinel);
       }
