@@ -82,7 +82,17 @@ export const uuidv7 = (): UUID => {
   return `${millisHex.slice(0, 8)}-${millisHex.slice(8, 12)}-${b.slice(0, 4)}-${b.slice(4, 8)}-${b.slice(8, 20)}` as UUID;
 };
 
+/**
+ * Mint the trailing seq segment of an LSN (`<base32-time>_<sess>_<seq>`).
+ * `COUNT_BIT_WIDTH = 10` (matches `packages/protocol/src/log.ts:145`)
+ * gives a 2-char descending base-32 string with a domain of 0..1023.
+ *
+ * Used together with {@link timestamp} (the descending base-32
+ * encoding of millis-since-epoch). See {@link uint2strDesc} for the
+ * lex-reversal property both rely on.
+ */
 export const countKey = (number: number): string => uint2strDesc(number, 10);
+
 export const uint2str = (num: number, bits: number) => {
   const maxBase32Length = Math.ceil(bits / 5); // Change from 4 to 5 because log2(32) is roughly 5.
   const base32Representation = num.toString(32);
@@ -93,6 +103,30 @@ export const str2uint = (str: string) => {
   return parseInt(str, 32); // Parse the string as base 32.
 };
 
+/**
+ * Lex-reversed base-32 encoder for an unsigned integer in `[0, 2^bits)`.
+ * Pads to `Math.ceil(bits/5)` chars so all values in the domain compare
+ * lex against each other.
+ *
+ * **Order-reversal property:** for any pair of integers `a < b` (with
+ * `a, b ∈ [0, 2^bits)`), `uint2strDesc(a, bits) > uint2strDesc(b, bits)`
+ * lexicographically. Composed into an LSN of shape
+ * `<base32-time>_<session>_<seq>` (where both `<base32-time>` and
+ * `<seq>` use this encoder), a forward `Storage.list(prefix)`
+ * returns log entries in reverse-causal order — newer entries first.
+ *
+ * This is the structural property the read path leans on:
+ * `ListObjectsV2` is forward-only on S3, but the descending encoding
+ * makes "fetch the K newest entries" a single bounded LIST with
+ * `maxKeys=K` instead of a full-population LIST + in-memory reverse.
+ *
+ * Behaviourally verified across randomized populations in
+ * `packages/protocol/src/lsn-reverse-list.test.ts`. Quantified
+ * bytes-listed reduction is in
+ * `docs/spec/attachments/lsn-reverse-walk-baseline.json`
+ * (run `pnpm bench:lsn-reverse-walk` to reproduce). Spec rationale:
+ * `docs/spec/sync-protocol.md` §"Subtleties of the manifest key".
+ */
 export const uint2strDesc = (num: number, bits: number): string => {
   const maxValue = Math.pow(2, bits) - 1;
   return uint2str(maxValue - num, bits);
