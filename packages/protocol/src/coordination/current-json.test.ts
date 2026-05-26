@@ -697,17 +697,22 @@ describe("claimWriter vs single-PUT counter-example (patent C1)", () => {
       }
       // I3: idempotency of the stamp within an epoch — once an epoch
       // has been stamped with a non-empty `claimed_at`, any later
-      // observation at the same epoch must carry the same string.
-      // (No epoch is ever stamped twice with different values.)
+      // observation at the same epoch must carry the same string,
+      // and an epoch already stamped must never regress to "".
+      // (No epoch is ever stamped twice with different values, and
+      // no stamp ever goes backward within an epoch.)
       const stampedByEpoch = new Map<number, string>();
       for (const o of observed) {
+        const prior = stampedByEpoch.get(o.epoch);
         if (o.claimed_at.length > 0) {
-          const prior = stampedByEpoch.get(o.epoch);
           if (prior !== undefined) {
             expect(prior).toBe(o.claimed_at);
           } else {
             stampedByEpoch.set(o.epoch, o.claimed_at);
           }
+        } else if (prior !== undefined && prior.length > 0) {
+          // stamp went backward within an epoch — forbidden
+          expect.fail(`epoch ${o.epoch} regressed from "${prior}" to ""`);
         }
       }
     },
