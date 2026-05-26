@@ -176,6 +176,43 @@ shape. See [`docs/contributing/features.md`](../contributing/features.md) §"Sec
 and [`docs/contributing/architecture.md`](../contributing/architecture.md) §"Planner step
 (between the predicate and the log fold)".
 
+### Self-session log-conflict adoption
+
+The writer PUTs each log entry with `If-None-Match: "*"` (see step
+5 of `Writer.#singleAttemptCommit` in
+[`packages/server/src/writer.ts`](../../packages/server/src/writer.ts)).
+A 412 on that PUT means either a peer wrote our `seq` (we lost the
+race), OR our own previous attempt landed step 5 but lost the
+subsequent `current.json` CAS-advance and we're now re-driving the
+same logical commit. The writer discriminates by `session` — the
+random 6-hex-char per-commit secret embedded in every emitted
+`LogEntry.lsn`.
+
+The decision is isolated in
+[`packages/server/src/log-conflict-adoption.ts`](../../packages/server/src/log-conflict-adoption.ts)
+(`tryAdoptOwnSessionLogEntry`). Adoption is sound iff three clauses
+hold:
+
+1. **Same session.** `existing.session === self.session` — the
+   session id is in-RAM-only for the lifetime of one commit; an
+   adversary with bucket-write access cannot forge a value they
+   did not observe being PUT.
+2. **Matching seq.** `existing.seq === self.seq` — implied by
+   the key shape (the writer reads back from `/log/<seq>.json`),
+   re-asserted at the decision site.
+3. **Single-input commit.** `Writer.commit`, not
+   `Writer.commitBatch`. Batches surface a log-PUT 412 as
+   `Conflict` immediately; the caller (`Db.transaction`) decides
+   whether to re-run the body.
+
+When any clause fails, the writer throws
+`BaerlyError{code:"Conflict"}`. The adversarial-replay property
+test at
+[`tests/integration/log-conflict-adversarial.test.ts`](../../tests/integration/log-conflict-adversarial.test.ts)
+enumerates the threat model and pins the property "no forged
+pre-populated log entry causes the writer to return a commit with
+a `LogEntry` it didn't author."
+
 ### Minimising list-object-v2 calls
 
 List API calls are costly on S3, they are charged at the same rate as PUTs which are 10x more expensive than GETs. Readers refresh explicitly (via a `get` or a write), and callers that want change-detection drive their own polling, so we want to avoid having the list-object-v2 API call on the hot path of every refresh.
