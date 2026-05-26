@@ -1,4 +1,17 @@
-export { type PredicateOp, deepEqualDocumentValue } from "./_internals.ts";
-export { matches } from "./matches.ts";
-export { mergePredicates } from "./merge.ts";
-export { validatePredicate, validateWirePredicate } from "./validate.ts";
+export { deepEqualDocumentValue } from "./_internals.ts";
+export {
+  type PredicateArg,
+  type PredicateBuilder,
+  makeBuilder,
+  wireFromBuilder,
+} from "./builder.ts";
+export { matchesWire } from "./matches.ts";
+export { mergePredicateWires } from "./merge.ts";
+export { normalizeObject, normalizePredicateArg } from "./normalize.ts";
+export { validateWire } from "./validate.ts";
+export {
+  EMPTY_PREDICATE_WIRE,
+  type PredicateClause,
+  type PredicateOpName,
+  type PredicateWire,
+} from "./wire.ts";

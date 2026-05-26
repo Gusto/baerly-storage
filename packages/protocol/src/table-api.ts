@@ -1,5 +1,7 @@
 import type { DocumentValue, DocumentData } from "./json.ts";
-import type { PredicateOp } from "./query/_internals.ts";
+import type { PredicateArg, PredicateBuilder } from "./query/builder.ts";
+
+export type { PredicateArg, PredicateBuilder };
 
 /**
  * Handle on one table (collection). The common single-row case lives
@@ -65,24 +67,33 @@ export interface Table<T extends DocumentData = DocumentData> {
   get(id: string): Promise<T | undefined>;
 
   /**
-   * Filter by equality on top-level or dotted-path fields, or by a
-   * per-field operator object. Supported operator vocabulary:
-   * `$eq`, `$gt`, `$gte`, `$lt`, `$lte`, `$in`. Multiple operators
-   * on the same field AND together (`{ count: { $gte: 1, $lt: 10 } }`).
-   * Not supported: top-level boolean connectives (`$or`, `$and`),
-   * `$regex`, and any other operator — `validatePredicate` rejects
-   * them as `InvalidConfig`. Calling `.where(...)` twice AND-merges
-   * the predicates.
+   * Filter rows. Two shapes:
+   *
+   *  - **Object literal** — equality only. Top-level, dotted-path,
+   *    or nested-literal sub-predicate.
+   *  - **Callback DSL** — `q => q.eq(...).gt(...).in(...)`. The
+   *    operator vocabulary (`eq` / `gt` / `gte` / `lt` / `lte` /
+   *    `in`) lives here. Chained calls AND-merge inside one
+   *    callback; chained `.where(...).where(...)` AND-merges
+   *    across calls and across shapes.
+   *
+   * Methods that do not exist on {@link PredicateBuilder}
+   * (`or`, `not`, `regex`, `ne`, `exists`, ...) are intentionally
+   * absent — invoking them is a TS compile error.
    *
    * @example
    * ```ts
    * db.table("tickets").where({ status: "open" }).all();
    * db.table("tickets").where({ "assignee.team": "platform" }).all();
-   * db.table("tickets").where({ count: { $gte: 1 } }).all();
-   * db.table("tickets").where({ status: { $in: ["open", "pending"] } }).all();
+   * db.table("tickets").where(q => q.gte("count", 1).lt("count", 10)).all();
+   * db.table("tickets").where(q => q.in("status", ["open", "pending"])).all();
+   * db.table("tickets")
+   *   .where({ status: "open" })
+   *   .where(q => q.gte("priority", 5))
+   *   .all();
    * ```
    */
-  where(predicate: Predicate<T>): Query<T>;
+  where(predicate: PredicateArg<T>): Query<T>;
 
   /** Order modifier; last call wins. */
   order(spec: OrderSpec<T>): Query<T>;
@@ -238,7 +249,10 @@ type _AllPaths<T, D extends _PathDepth[number] = 4> = [D] extends [never]
  * branch unchanged — open-keyed predicates still typecheck.
  * @internal
  */
-type Path<T, D extends _PathDepth[number] = 4> = Exclude<_AllPaths<T, D>, "_id" | `_id.${string}`>;
+export type Path<T, D extends _PathDepth[number] = 4> = Exclude<
+  _AllPaths<T, D>,
+  "_id" | `_id.${string}`
+>;
 
 /**
  * Resolves the leaf value type at dotted path `P` through `T`.
@@ -252,7 +266,7 @@ type Path<T, D extends _PathDepth[number] = 4> = Exclude<_AllPaths<T, D>, "_id" 
  * widens to `DocumentValue` to match today's default.
  * @internal
  */
-type PathValue<T, P extends string> = P extends `${infer H}.${infer R}`
+export type PathValue<T, P extends string> = P extends `${infer H}.${infer R}`
   ? H extends keyof T
     ? PathValue<NonNullable<T[H]>, R>
     : never
@@ -261,30 +275,49 @@ type PathValue<T, P extends string> = P extends `${infer H}.${infer R}`
     : DocumentValue;
 
 /**
- * Predicate over a document shape. Equality, dotted-path traversal,
- * and an operator vocabulary on field values
- * (`$eq | $gt | $gte | $lt | $lte | $in`).
+ * Recursive partial sub-predicate. The value side of a nested
+ * predicate clause: every nested key is optional, and recurses into
+ * objects. `_SubPredicate<{a: number, b: {c: string}}>` admits
+ * `{a: 1}`, `{b: {c: "x"}}`, and `{a: 1, b: {c: "x"}}` — the same
+ * open-world matching the matcher delivers at the wire level
+ * (`{ assignee: { team: "x" } }` matches docs where
+ * `assignee.team === "x"`, ignoring other keys on `assignee`).
  *
- * Top-level equality: `{ status: "open" }`.
- * Dotted-path: `{ "assignee.team": "platform" }` — typechecks against
- *              the nested leaf type; misspelled segments fail at
- *              compile time. Dotted paths are not index-eligible
- *              today (`packages/server/src/indexes.ts` rejects
- *              dotted `on:`), so they always fall back to scan.
- * Operator: `{ priority: { $in: ["p1", "p2"] } }` or
- *           `{ created_at: { $gte: "2026-01-01" } }`.
- * Multiple ops AND on one field: `{ count: { $gte: 1, $lt: 10 } }`.
+ * Recurses over `keyof T` directly (NOT through `Path<T>`) so the
+ * root-level `_id` exclusion does not propagate — a nested `_id`
+ * names the primary key of an embedded reference and remains
+ * queryable (`.where({ author: { _id: "u1" } })` typechecks).
+ * @internal
+ */
+type _SubPredicate<T> = T extends object
+  ? T extends ReadonlyArray<unknown>
+    ? never
+    : {
+        readonly [K in keyof _StripIndex<T> & string]?: T[K] | _SubPredicate<T[K]>;
+      }
+  : never;
+
+/**
+ * Equality-only predicate over a document shape. Object-form
+ * accepts:
  *
- * An operator object is one whose keys all start with `$`. Mixing
- * operator and non-operator keys on the same object is rejected by
- * `validatePredicate`. Range ops apply only when expected and
- * actual are both `string` or both `number`; other type combos are
- * always-miss (boolean, null, missing, type-mismatched).
+ *  - top-level equality: `{ status: "open" }`
+ *  - dotted-path equality: `{ "assignee.team": "platform" }`
+ *  - nested literal sub-predicates: `{ assignee: { team: "platform" } }`
+ *    — the normaliser flattens to dotted-path `eq` clauses; the
+ *    nested object may carry only a subset of keys (open-world
+ *    matching against the document).
  *
- * **No top-level boolean connectives.** `$or` / `$and` / `$not` are
- * intentionally not supported. Use:
- *   - `$in` for OR over one field:
- *     `{ status: { $in: ["open", "pending"] } }`.
+ * **Operator vocabulary moved to the callback form.** Range / `in`
+ * / mixed eq+range queries write
+ * `.where(q => q.gt("priority", 5).in("status", ["open", "pending"]))`.
+ * The methods on {@link PredicateBuilder} ARE the supported vocabulary
+ * — there is no `$`-keyed object surface, so a method we did not
+ * write cannot be called.
+ *
+ * **No top-level boolean connectives.** `or` / `not` are
+ * intentionally absent. Use:
+ *   - `q.in(field, ["a", "b"])` for OR over one field.
  *   - Chained `.where(p1).where(p2)` for AND across multiple
  *     predicates — the chain AND-merges.
  *
@@ -293,9 +326,9 @@ type PathValue<T, P extends string> = P extends `${infer H}.${infer R}`
  * exceed 2–3 levels.
  */
 export type Predicate<T extends DocumentData = DocumentData> = {
-  readonly [P in Path<T>]?:
-    | PathValue<T, P>
-    | PredicateOp<PathValue<T, P> extends DocumentValue ? PathValue<T, P> : never>;
+  readonly [P in Path<T>]?: PathValue<T, P> extends DocumentValue
+    ? PathValue<T, P> | _SubPredicate<PathValue<T, P>>
+    : DocumentValue;
 };
 
 /** Order specifier. Top-level fields only on day one. */
@@ -321,7 +354,7 @@ export type ConsistencyLevel = "strong" | "eventual";
  * {@link Table.delete}.
  */
 export interface Query<T extends DocumentData = DocumentData> {
-  where(predicate: Predicate<T>): Query<T>;
+  where(predicate: PredicateArg<T>): Query<T>;
   order(spec: OrderSpec<T>): Query<T>;
   limit(n: number): Query<T>;
 
