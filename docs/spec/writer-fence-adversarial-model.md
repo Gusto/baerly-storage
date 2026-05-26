@@ -12,7 +12,7 @@ related: [sync-protocol.md, causal-consistency-checking.md, log-entry-shape.md]
 This document is the written failure envelope of the two-phase
 fence-claim protocol implemented in
 [`packages/protocol/src/coordination/current-json.ts`](../../packages/protocol/src/coordination/current-json.ts)
-(`claimWriter`, lines 295–389), and verified against in
+(the `claimWriter` function), and verified against in
 [`packages/protocol/src/coordination/current-json.test.ts`](../../packages/protocol/src/coordination/current-json.test.ts).
 
 The mechanism: promote a writer to a new generation epoch over an
@@ -89,7 +89,7 @@ Under the threat model above, every observable execution of
   tuple unless one is a retry continuation of the other's
   provisional PUT (the rare case where the stamp PUT lost,
   `claimed_at` remained `""`, and a subsequent claim succeeded).
-  Verified by the fast-check property in `current-json.test.ts`.
+  Verified by the `two-phase: (epoch, claimed_at) tuples are distinct and only carry server-clock values` fast-check property in `current-json.test.ts`.
 
 ## Failure modes
 
@@ -106,7 +106,7 @@ invariants I1–I4 above is preserved or compromised.
 | **F5. Client crashes between PUTs 1 and 2** (process kill, network partition, hard timeout) | The provisional PUT is durable; no stamp ever lands. A subsequent reader observes `epoch: N+1, claimed_at: ""`. | ✓ | ✓ | ✓ | ✓ | Identical observable state to F1 and F3 from the reader's perspective. The empty-string sentinel does the work; no recovery scan is needed. |
 | **F6. Server advances `Date` non-monotonically** (NTP step across requests; clock jumps backwards) | Successive `claimWriter` returns may carry `claimed_at` values whose ISO-8601 strings are not monotonically increasing. | ✓ | ✓ | ✓ | ✓ | The protocol does NOT promise monotonic `claimed_at`; safety is on `epoch` (which is integer-monotonic by construction). `claimed_at` is informational telemetry; readers MUST NOT use it to order claims. |
 | **F7. Storage adapter never surfaces `serverDate`** (some test harnesses, future bindings) | Every `claimWriter` call returns `claimed_at: ""`. | ✓ | ✓ | ✓ | ✓ | Degenerate but safe. The fence still functions; `claimed_at` is debug-only. |
-| **F8. Bounded clock skew up to `LAG_WINDOW_MILLIS`** (NTP-synchronized but not lockstep) | Multiple peers' local clocks disagree by ≤ 5000 ms; the server's clock is the single shared reference. | ✓ | ✓ | ✓ | ✓ | The patent's adversarial bound. The single-PUT counter-example breaks I3 and I4 here; the two-phase protocol does not. Verified by the `two-phase: (epoch, claimed_at) tuples are distinct and only carry server-clock values` test. |
+| **F8. Bounded clock skew up to `LAG_WINDOW_MILLIS`** (NTP-synchronized but not lockstep) | Multiple peers' local clocks disagree by ≤ 5000 ms; the server's clock is the single shared reference. | ✓ | ✓ | ✓ | ✓ | The patent's adversarial bound. The single-PUT counter-example breaks I3 and I4 here; the two-phase protocol does not. The two-phase side is verified by the `two-phase: (epoch, claimed_at) tuples are distinct and only carry server-clock values` fast-check property; the single-PUT counter-example breaking I3 is verified deterministically by the `narrative: single-PUT records client clock; two-phase records server clock (patent C1)` test. |
 
 ## What is NOT defended
 
