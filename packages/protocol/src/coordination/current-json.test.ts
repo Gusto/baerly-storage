@@ -386,115 +386,94 @@ describe("CurrentJson log_seq_start", () => {
   });
 });
 
+/**
+ * Deliberately-broken single-PUT variant of claimWriter, defined
+ * inline for the patent C1 counter-example test. Uses a
+ * caller-supplied `now: Date` instead of the server-derived
+ * `StoragePutResult.serverDate`. This is the "obvious composition"
+ * a naive implementer would write — it satisfies every requirement
+ * stated by reading the WriterFence shape, but fails the
+ * adversarial soundness property under bounded clock skew.
+ *
+ * Lives in the test file (NOT in production code) so the kernel
+ * cannot accidentally call it.
+ */
+async function claimWriterSinglePut(
+  storage: Storage,
+  key: string,
+  owner: string,
+  now: Date,
+): Promise<CurrentJsonRead> {
+  const existing = await readCurrentJson(storage, key);
+  if (existing === null) {
+    throw new BaerlyError("InvalidResponse", `current.json at ${key} does not exist`);
+  }
+  const next: CurrentJson = {
+    ...existing.json,
+    writer_fence: {
+      epoch: existing.json.writer_fence.epoch + 1,
+      owner,
+      claimed_at: now.toISOString(),
+    },
+  };
+  const body = new TextEncoder().encode(JSON.stringify(next));
+  const result = await storage.put(key, body, {
+    ifMatch: existing.etag,
+    contentType: "application/json",
+  });
+  return { json: next, etag: result.etag };
+}
+
+/**
+ * MemoryStorage wrapper that overrides StoragePutResult.serverDate
+ * with a script of pre-computed Date values, exposing the
+ * skew-between-client-clock-and-server-clock dimension the patent
+ * C1 counter-example test drives. Once the script is exhausted,
+ * subsequent PUTs fall back to the inner serverDate.
+ */
+class SkewedClockStorage implements Storage {
+  #inner: Storage;
+  #script: Date[];
+  #i = 0;
+  constructor(inner: Storage, script: Date[]) {
+    this.#inner = inner;
+    this.#script = script;
+  }
+  get(k: string, o?: Parameters<Storage["get"]>[1]) {
+    return this.#inner.get(k, o);
+  }
+  delete(k: string, o?: Parameters<Storage["delete"]>[1]) {
+    return this.#inner.delete(k, o);
+  }
+  list(p: string, o?: Parameters<Storage["list"]>[1]) {
+    return this.#inner.list(p, o);
+  }
+  async put(k: string, b: Uint8Array, o?: StoragePutOptions): Promise<StoragePutResult> {
+    const result = await this.#inner.put(k, b, o);
+    if (this.#i < this.#script.length) {
+      const serverDate = this.#script[this.#i]!;
+      this.#i += 1;
+      return { ...result, serverDate };
+    }
+    return result;
+  }
+}
+
 describe("claimWriter vs single-PUT counter-example (patent C1)", () => {
-  /**
-   * Deliberately-broken single-PUT variant of claimWriter, defined
-   * inline for the patent C1 counter-example test. Uses a
-   * caller-supplied `now: Date` instead of the server-derived
-   * `StoragePutResult.serverDate`. This is the "obvious composition"
-   * a naive implementer would write — it satisfies every requirement
-   * stated by reading the WriterFence shape, but fails the
-   * adversarial soundness property under bounded clock skew.
-   *
-   * Lives in the test file (NOT in production code) so the kernel
-   * cannot accidentally call it.
-   */
-  async function claimWriterSinglePut(
-    storage: Storage,
-    key: string,
-    owner: string,
-    now: Date,
-  ): Promise<CurrentJsonRead> {
-    const existing = await readCurrentJson(storage, key);
-    if (existing === null) {
-      throw new BaerlyError("InvalidResponse", `current.json at ${key} does not exist`);
-    }
-    const next: CurrentJson = {
-      ...existing.json,
-      writer_fence: {
-        epoch: existing.json.writer_fence.epoch + 1,
-        owner,
-        claimed_at: now.toISOString(),
-      },
-    };
-    const body = new TextEncoder().encode(JSON.stringify(next));
-    const result = await storage.put(key, body, {
-      ifMatch: existing.etag,
-      contentType: "application/json",
-    });
-    return { json: next, etag: result.etag };
-  }
-
-  /**
-   * MemoryStorage wrapper that overrides StoragePutResult.serverDate
-   * with a script of pre-computed Date values, exposing the
-   * skew-between-client-clock-and-server-clock dimension the patent
-   * C1 counter-example test drives. Once the script is exhausted,
-   * subsequent PUTs fall back to the inner serverDate.
-   */
-  class SkewedClockStorage implements Storage {
-    #inner: Storage;
-    #script: Date[];
-    #i = 0;
-    constructor(inner: Storage, script: Date[]) {
-      this.#inner = inner;
-      this.#script = script;
-    }
-    get(k: string, o?: Parameters<Storage["get"]>[1]) {
-      return this.#inner.get(k, o);
-    }
-    delete(k: string, o?: Parameters<Storage["delete"]>[1]) {
-      return this.#inner.delete(k, o);
-    }
-    list(p: string, o?: Parameters<Storage["list"]>[1]) {
-      return this.#inner.list(p, o);
-    }
-    async put(k: string, b: Uint8Array, o?: StoragePutOptions): Promise<StoragePutResult> {
-      const result = await this.#inner.put(k, b, o);
-      if (this.#i < this.#script.length) {
-        const serverDate = this.#script[this.#i]!;
-        this.#i += 1;
-        return { ...result, serverDate };
-      }
-      return result;
-    }
-  }
-
   test.prop({
     attempts: fc.array(
       fc.record({
         ownerSeed: fc.string({ minLength: 1, maxLength: 8 }),
-        // Client-supplied "now" for the single-PUT variant. Drawn
-        // independently of the server's clock, then bounded to a
-        // 5s skew window — the bound asserted by
+        // Server-side clock for the PUT pair (provisional + stamp).
+        // Bounded to a 5s skew window — the bound asserted by
         // docs/spec/sync-protocol.md (LAG_WINDOW_MILLIS).
-        clientMs: fc.integer({ min: 1_700_000_000_000, max: 1_700_000_005_000 }),
-        // Server-side clock for the SAME PUT.
         serverMs: fc.integer({ min: 1_700_000_000_000, max: 1_700_000_005_000 }),
       }),
       { minLength: 2, maxLength: 6 },
     ),
   })(
-    "single-PUT variant admits duplicate (epoch, claimed_at) under bounded skew; two-phase does not",
+    "two-phase: (epoch, claimed_at) tuples are distinct and only carry server-clock values",
     async ({ attempts }) => {
-      // ── Single-PUT variant ──────────────────────────────────────
-      const singleInner = new MemoryStorage();
-      await createCurrentJson(singleInner, "k", seedJson());
-      const singleStamps: Array<{ epoch: number; claimed_at: string }> = [];
-      for (const a of attempts) {
-        try {
-          const r = await claimWriterSinglePut(singleInner, "k", a.ownerSeed, new Date(a.clientMs));
-          singleStamps.push({
-            epoch: r.json.writer_fence.epoch,
-            claimed_at: r.json.writer_fence.claimed_at,
-          });
-        } catch (error) {
-          if (!(error instanceof BaerlyError) || error.code !== "Conflict") {
-            throw error;
-          }
-        }
-      }
-
       // ── Two-phase variant ───────────────────────────────────────
       const twoPhaseInner = new MemoryStorage();
       // Two PUTs per claim (provisional + stamp) — script entry count
