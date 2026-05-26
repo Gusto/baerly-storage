@@ -60,6 +60,43 @@ export const validatePredicate = <T extends DocumentData = DocumentData>(
   return predicate;
 };
 
+/**
+ * Wire-only validator: rejects depth-0 `_id` then delegates to
+ * {@link validatePredicate}. Nested `_id` paths (e.g. `"author._id"`)
+ * survive.
+ *
+ * // REMOVE WHEN predicate-redesign LANDS
+ *
+ * @example
+ * ```ts
+ * validateWirePredicate({ "author._id": "u1" }); // ok — nested
+ * validateWirePredicate({ _id: "x" });
+ * //   → BaerlyError{ code: "InvalidConfig",
+ * //       message: 'Predicates may not key on "_id"; use .get(id) ...' }
+ * ```
+ */
+export const validateWirePredicate = <T extends DocumentData = DocumentData>(
+  predicate: Predicate<T>,
+): Predicate<T> => {
+  // Exact root-key match — no `endsWith("._id")` traversal. Nested
+  // `_id` names a different document's primary key (an embedded
+  // reference) and remains queryable. `Object.prototype.hasOwnProperty`
+  // is the right test: an `_id` prop INHERITED from the prototype
+  // chain (vanishingly unlikely on parsed JSON, but defensive) is
+  // ignored, only own-property `_id` rejects.
+  if (
+    predicate !== null &&
+    typeof predicate === "object" &&
+    Object.prototype.hasOwnProperty.call(predicate, "_id")
+  ) {
+    throw new BaerlyError(
+      "InvalidConfig",
+      'Predicates may not key on "_id"; use .get(id) / .update(id, patch) / .replace(id, doc) / .delete(id) instead.',
+    );
+  }
+  return validatePredicate<T>(predicate);
+};
+
 const validateNode = (
   node: DocumentData,
   path: ReadonlyArray<string>,
@@ -267,4 +304,3 @@ const validateRangeBound = (value: unknown, path: ReadonlyArray<string>): void =
     );
   }
 };
-

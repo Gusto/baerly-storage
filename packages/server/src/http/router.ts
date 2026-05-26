@@ -30,6 +30,7 @@ import {
   type BaerlyErrorCode,
   type OrderSpec,
   type Predicate,
+  validateWirePredicate,
 } from "@baerly/protocol";
 import type { Db } from "../db.ts";
 import {
@@ -41,7 +42,7 @@ import {
 } from "../contract.ts";
 import { serializeError } from "../observability/canonical.ts";
 import { CATEGORY, getLogger } from "../observability/index.ts";
-import { runAllWithMeta } from "../query.ts";
+import { runAllWithMeta, runByIdWithMeta } from "../query.ts";
 import { longPollSince } from "./since.ts";
 
 /**
@@ -105,10 +106,7 @@ export function createRouter(options: CreateRouterOptions): Hono {
   app.get("/v1/t/:table/:id", async (c) => {
     const { table, id } = c.req.param();
     const consistency = parseConsistency(c.req.query("consistency"));
-    const { rows, manifestPointer, fresh } = await runAllWithMeta(db.tableReadContext(table), {
-      predicate: { _id: id } as Predicate<DocumentData>,
-      order: undefined,
-      limit: 1,
+    const { rows, manifestPointer, fresh } = await runByIdWithMeta(db.tableReadContext(table), id, {
       consistency,
     });
     const row = rows[0];
@@ -326,6 +324,15 @@ const assertJsonBodyField = (body: unknown, field: string): Record<string, unkno
  * parsed object widened to `Record<string, unknown>`; callers cast
  * to `Predicate<DocumentData>` after.
  *
+ * Wire-only validation: any depth-0 `_id` key rejects with
+ * `BaerlyError{code:"InvalidConfig"}` and the locked redirect-to-
+ * by-id-verbs wording — agents zero-shot writing
+ * `?where={"_id":"x"}` against the list route get pointed at
+ * `GET /v1/t/:table/:id` instead. Kernel-internal `_id` predicate
+ * construction (`./table.ts:byId`, `runByIdWithMeta`, `runInsert`)
+ * bypasses this layer by design — those paths never come back
+ * through `?where=` parsing.
+ *
  * @internal
  */
 const parseWhereParam = (c: Context): Record<string, unknown> => {
@@ -333,11 +340,14 @@ const parseWhereParam = (c: Context): Record<string, unknown> => {
   if (whereParam === undefined || whereParam.length === 0) {
     return {};
   }
+  let parsed: Record<string, unknown>;
   try {
-    return JSON.parse(whereParam) as Record<string, unknown>;
+    parsed = JSON.parse(whereParam) as Record<string, unknown>;
   } catch {
     throw new BaerlyError("SchemaError", "Invalid JSON in ?where=");
   }
+  validateWirePredicate(parsed as Predicate<DocumentData>);
+  return parsed;
 };
 
 /**

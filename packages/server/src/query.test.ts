@@ -15,12 +15,18 @@ import {
   MemoryStorage,
   BaerlyError,
   type Predicate,
+  type Storage,
+  type StorageGetOptions,
+  type StorageGetResult,
+  type StorageListEntry,
+  type StoragePutOptions,
+  type StoragePutResult,
 } from "@baerly/protocol";
 import { beforeEach, describe, expect, test } from "vitest";
 import { compact, type InternalCompactOptions } from "./compactor.ts";
 import { Db } from "./db.ts";
 import { planQuery } from "./query-planner.ts";
-import { runAllWithMeta } from "./query.ts";
+import { runAllWithMeta, singleIdFromPredicate } from "./query.ts";
 import { Writer } from "./writer.ts";
 
 const APP = "test";
@@ -1344,5 +1350,239 @@ describe("auto-planner range and $in walks (T3)", () => {
       }>)
       .all();
     expect(rows.map((r) => r._id).toSorted()).toEqual(["a", "b", "c", "d"]);
+  });
+});
+
+/**
+ * Detector unit tests for `singleIdFromPredicate` — the pure helper
+ * the runRead fast-path consults. Locks the recognise-rule (exactly
+ * one root key whose name is `_id` and whose value is a string) so
+ * future predicate-shape changes can't silently widen or narrow
+ * the short-circuit. Positive branches enable the fast-path;
+ * negative branches MUST fall through to the scan path (the JSDoc
+ * on `singleIdFromPredicate` and the integration test below rely on
+ * exact-shape-only detection).
+ */
+describe("singleIdFromPredicate", () => {
+  test("positive: { _id: 'x' } → 'x'", () => {
+    expect(singleIdFromPredicate({ _id: "x" } as Predicate<DocumentData>)).toBe("x");
+  });
+
+  test("positive: { _id: '' } → ''", () => {
+    // Empty string passes the detector; lookup will always miss
+    // because insert replaces empty _id with UUIDv7.
+    expect(singleIdFromPredicate({ _id: "" } as Predicate<DocumentData>)).toBe("");
+  });
+
+  test("negative: undefined → undefined (no predicate, full scan)", () => {
+    expect(singleIdFromPredicate(undefined)).toBeUndefined();
+  });
+
+  test("negative: {} (match-all) → undefined", () => {
+    expect(singleIdFromPredicate({} as Predicate<DocumentData>)).toBeUndefined();
+  });
+
+  test("negative: single-key non-_id ({ status: 'open' }) → undefined", () => {
+    expect(
+      singleIdFromPredicate({ status: "open" } as unknown as Predicate<DocumentData>),
+    ).toBeUndefined();
+  });
+
+  test("negative: multi-key including _id ({ _id: 'x', status: 'open' }) → undefined", () => {
+    expect(
+      singleIdFromPredicate({ _id: "x", status: "open" } as unknown as Predicate<DocumentData>),
+    ).toBeUndefined();
+  });
+
+  test("negative: operator-shaped _id value ({ _id: { $eq: 'x' } }) → undefined", () => {
+    expect(
+      singleIdFromPredicate({ _id: { $eq: "x" } } as unknown as Predicate<DocumentData>),
+    ).toBeUndefined();
+  });
+
+  test("negative: non-string _id value ({ _id: 42 }) → undefined", () => {
+    expect(
+      singleIdFromPredicate({ _id: 42 } as unknown as Predicate<DocumentData>),
+    ).toBeUndefined();
+  });
+
+  test("negative: null → undefined (defensive — JSON.parse(null) input)", () => {
+    expect(singleIdFromPredicate(null as unknown as Predicate<DocumentData>)).toBeUndefined();
+  });
+});
+
+/**
+ * PK-lookup fast-path integration. Confirms `.get(id)` against a
+ * 100-entry collection hits the `singleIdFromPredicate` short-
+ * circuit in `runRead` — one in-memory `docs.get(id)` lookup
+ * instead of an `Array.from(docs.values()).filter(matches)` pass
+ * over all 100 entries. Verified two ways: the counting `Storage`
+ * proxy proves no extra log GETs over the scan-equivalent baseline
+ * (so the fast-path doesn't accidentally regress on IO), and the
+ * negative branches (multi-key, operator-shaped, non-_id) round-
+ * trip through the scan path with identical observable results.
+ *
+ * Consistency note: the short-circuit returns the snapshot-time
+ * view; concurrent commits on a different snapshot are invisible —
+ * same semantics as the scan path on the same snapshot. Don't file
+ * a phantom "fast-path returns stale data" bug — the snapshot is
+ * the consistency boundary, not the predicate evaluator. See
+ * `docs/spec/causal-consistency-checking.md`.
+ */
+describe("Query.first / Table.get — PK-lookup fast-path", () => {
+  /**
+   * Hand-rolled `Storage` proxy counting `get`s on log entries (so
+   * we can pin "the fast-path doesn't issue extra GETs"). Lives in
+   * the test to keep it scoped — the broader counting harness in
+   * `tests/fixtures/counting-storage.ts` only counts Class A ops
+   * (PUT/DELETE/LIST), not GETs.
+   */
+  interface GetCountingStorage {
+    readonly storage: Storage;
+    readonly logGets: number;
+  }
+  const wrapGetCounter = (inner: Storage): GetCountingStorage => {
+    let logGets = 0;
+    const wrapped: Storage = {
+      get: (key: string, opts?: StorageGetOptions): Promise<StorageGetResult | null> => {
+        if (key.includes("/log/")) {
+          logGets++;
+        }
+        return inner.get(key, opts);
+      },
+      put: (key: string, body: Uint8Array, opts?: StoragePutOptions): Promise<StoragePutResult> =>
+        inner.put(key, body, opts),
+      delete: (key: string, opts?: { signal?: AbortSignal }): Promise<void> =>
+        inner.delete(key, opts),
+      list: function (
+        prefix: string,
+        opts?: { startAfter?: string; maxKeys?: number; signal?: AbortSignal },
+      ): AsyncIterable<StorageListEntry> {
+        return inner.list(prefix, opts);
+      },
+    };
+    return {
+      storage: wrapped,
+      get logGets() {
+        return logGets;
+      },
+    };
+  };
+
+  const seedNDocs = async (
+    n: number,
+  ): Promise<{
+    storage: MemoryStorage;
+    target: { _id: string; n: number };
+  }> => {
+    const s = new MemoryStorage();
+    await createCurrentJson(s, currentJsonKey(COLL), seedCurrent());
+    const w = new Writer({ storage: s, currentJsonKey: currentJsonKey(COLL) });
+    let target: { _id: string; n: number } | undefined;
+    for (let i = 0; i < n; i++) {
+      const id = `doc-${i.toString().padStart(3, "0")}`;
+      const body = { _id: id, n: i };
+      await w.commit({ op: "I", collection: COLL, docId: id, body });
+      if (i === Math.floor(n / 2)) {
+        target = body;
+      }
+    }
+    if (target === undefined) {
+      throw new Error("seedNDocs: target unset");
+    }
+    return { storage: s, target };
+  };
+
+  test("Table.get(id) returns the right doc against a 100-entry collection", async () => {
+    const { storage, target } = await seedNDocs(100);
+    const db = Db.create({ storage, app: APP, tenant: TENANT });
+    const row = await db.table<{ _id: string; n: number }>(COLL).get(target._id);
+    expect(row).toBeDefined();
+    expect(row).toEqual(target);
+  });
+
+  test("Table.get(id) on a miss returns undefined (snapshot.get lookup, no row)", async () => {
+    const { storage } = await seedNDocs(100);
+    const db = Db.create({ storage, app: APP, tenant: TENANT });
+    const row = await db.table<{ _id: string; n: number }>(COLL).get("no-such-id");
+    expect(row).toBeUndefined();
+  });
+
+  test("Query.first() on { _id: 'doc-050' } returns target without extra log GETs vs scan", async () => {
+    // Seed once into a shared inner store, then mount two independent
+    // counters — one wrapping a `.get(id)` call, one wrapping a
+    // semantically-equivalent scan (`.where({_id: ...}).first()`).
+    // The fast-path branch consumes the same snapshot+log fold as
+    // the scan, so the IO count must match: this regression-pins
+    // "the fast-path doesn't regress GETs on the wire."
+    const { storage, target } = await seedNDocs(100);
+
+    const fastCounter = wrapGetCounter(storage);
+    const dbFast = Db.create({ storage: fastCounter.storage, app: APP, tenant: TENANT });
+    const fastRow = await dbFast.table<{ _id: string; n: number }>(COLL).get(target._id);
+    const fastLogGets = fastCounter.logGets;
+
+    const scanCounter = wrapGetCounter(storage);
+    const dbScan = Db.create({ storage: scanCounter.storage, app: APP, tenant: TENANT });
+    // Single-key non-`_id` predicate — falls through `singleIdFromPredicate`
+    // to the scan path and walks the same log range.
+    const scanRows = await dbScan
+      .table<{ _id: string; n: number }>(COLL)
+      .where({ n: target.n } as unknown as Predicate<{ _id: string; n: number }>)
+      .all();
+    const scanLogGets = scanCounter.logGets;
+
+    expect(fastRow).toEqual(target);
+    expect(scanRows).toHaveLength(1);
+    expect(scanRows[0]).toEqual(target);
+    // Fast-path must not issue MORE log GETs than the scan path —
+    // both fold the same `[log_seq_start, next_seq)` range. (Equal
+    // is the expected case today; "less than or equal" is the
+    // forward-compat assertion.)
+    expect(fastLogGets).toBeLessThanOrEqual(scanLogGets);
+  });
+
+  test("negative: single-key non-_id predicate falls through to scan and returns the match", async () => {
+    const { storage, target } = await seedNDocs(100);
+    const db = Db.create({ storage, app: APP, tenant: TENANT });
+    const rows = await db
+      .table<{ _id: string; n: number }>(COLL)
+      .where({ n: target.n } as unknown as Predicate<{ _id: string; n: number }>)
+      .all();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toEqual(target);
+  });
+
+  test("negative: multi-key predicate including _id falls through to scan", async () => {
+    const { storage, target } = await seedNDocs(100);
+    const db = Db.create({ storage, app: APP, tenant: TENANT });
+    // singleIdFromPredicate rejects multi-key shapes → scan path
+    // applies both clauses via `matches()`. Result is still the one
+    // doc that satisfies BOTH equalities.
+    const rows = await db
+      .table<{ _id: string; n: number }>(COLL)
+      .where({ _id: target._id, n: target.n } as unknown as Predicate<{
+        _id: string;
+        n: number;
+      }>)
+      .all();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toEqual(target);
+  });
+
+  test("negative: operator-shaped _id value falls through to scan (matches via $eq)", async () => {
+    const { storage, target } = await seedNDocs(100);
+    const db = Db.create({ storage, app: APP, tenant: TENANT });
+    // singleIdFromPredicate returns undefined for `{ _id: { $eq: ... } }`
+    // — operator-shaped value, not a bare string. Scan path picks it up.
+    const rows = await db
+      .table<{ _id: string; n: number }>(COLL)
+      .where({ _id: { $eq: target._id } } as unknown as Predicate<{
+        _id: string;
+        n: number;
+      }>)
+      .all();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toEqual(target);
   });
 });

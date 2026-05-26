@@ -51,12 +51,8 @@ export const makeTable = <T extends DocumentData>(ctx: TableReadContext): Table<
     limit: undefined as number | undefined,
     consistency: undefined as ConsistencyLevel | undefined,
   };
-  // `{ _id: id } as Predicate<T>` cast: `Predicate<T>` is
-  // structurally narrower than a generic record (it carries the
-  // operator-vocabulary side-channel), but `singleIdFromPredicate`
-  // inside `query.ts` recognises the `{ _id }` shape and takes the
-  // single-row CAS path. A bespoke single-row fast path is out of
-  // scope for this layer.
+  // Cast: `Predicate<T>` is structurally narrower than this literal —
+  // the operator-vocabulary side-channel forces the assertion.
   const byId = (id: string) => ({ ...seed, predicate: { _id: id } as Predicate<T> });
   return {
     name: ctx.tableName,

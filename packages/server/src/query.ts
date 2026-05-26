@@ -221,6 +221,28 @@ export interface QueryState<T extends DocumentData> {
 }
 
 /**
+ * Returns the id iff `p` is exactly `{ _id: <string> }` — the shape
+ * `runRead` short-circuits to a single `Map.get`. Any other shape
+ * (multi-key, non-`_id` key, operator-valued, non-string value)
+ * returns `undefined` and falls through to the scan path.
+ *
+ * @internal
+ */
+export const singleIdFromPredicate = (
+  p: Predicate<DocumentData> | undefined,
+): string | undefined => {
+  if (p === undefined || typeof p !== "object" || p === null) {
+    return undefined;
+  }
+  const keys = Object.keys(p);
+  if (keys.length !== 1 || keys[0] !== "_id") {
+    return undefined;
+  }
+  const v = (p as { _id: unknown })._id;
+  return typeof v === "string" ? v : undefined;
+};
+
+/**
  * Build a `Query<T>` from a context + frozen state. Every modifier
  * returns a NEW `Query<T>` carrying merged state — the input state
  * is never mutated. Identity inequality with the input chain is
@@ -310,6 +332,38 @@ export const runAllWithMeta = <T extends DocumentData>(
     validatePredicate<T>(state.predicate);
   }
   return runRead<T>(ctx, state);
+};
+
+/**
+ * By-id read entry surfacing the same `ReadResult<T>` shape as
+ * {@link runAllWithMeta} so the HTTP router can preserve the
+ * `_meta` wire envelope while routing through the PK-lookup
+ * fast-path. Mirrors {@link runAllWithMeta}'s signature; the
+ * predicate is built internally as a single-key `{ _id: id }`
+ * shape (same form as the `byId` helper in `./table.ts` and the
+ * `runInsert` duplicate-collision check) which routes through
+ * `runRead`'s `singleIdFromPredicate` short-circuit automatically.
+ *
+ * Bypasses {@link validatePredicate} — the predicate is kernel-
+ * constructed, never wire-submitted, so it would always pass the
+ * structural rules. Skipping the validator also keeps this helper
+ * usable from kernel-internal sites (`Table<T>.get` etc.) without
+ * tripping any future wire-only rule that bans `_id` at the root.
+ *
+ * @internal — router uses this to preserve `_meta` envelope;
+ *   mirrors {@link runAllWithMeta} and {@link Table.get}.
+ */
+export const runByIdWithMeta = <T extends DocumentData>(
+  ctx: TableReadContext,
+  id: string,
+  opts?: { readonly consistency?: ConsistencyLevel },
+): Promise<ReadResult<T>> => {
+  return runRead<T>(ctx, {
+    predicate: { _id: id } as Predicate<T>,
+    order: undefined,
+    limit: 1,
+    consistency: opts?.consistency,
+  });
 };
 
 // ---------------------------------------------------------------------
@@ -740,10 +794,19 @@ const runRead = async <T extends DocumentData>(
   foldLogEntriesOnto(docs, entries, { collection: ctx.tableName });
 
   // ── Step 4. Apply predicate. ──────────────────────────────────────
-  let rows = Array.from(docs.values());
-  if (state.predicate !== undefined) {
-    const p = state.predicate;
-    rows = rows.filter((d) => matches(p, d));
+  // PK fast-path: `{ _id: "x" }` short-circuits the O(n) scan with a
+  // `Map.get` on the same snapshot — observable contract unchanged.
+  const fastId = singleIdFromPredicate(state.predicate as Predicate<DocumentData> | undefined);
+  let rows: T[];
+  if (fastId !== undefined) {
+    const hit = docs.get(fastId);
+    rows = hit === undefined ? [] : [hit];
+  } else {
+    rows = Array.from(docs.values());
+    if (state.predicate !== undefined) {
+      const p = state.predicate;
+      rows = rows.filter((d) => matches(p, d));
+    }
   }
 
   // ── Step 5. Apply order. ──────────────────────────────────────────

@@ -511,6 +511,22 @@ export const runHttpConformanceCascade = (opts: {
         expect(env.error?.code).toBe("InvalidConfig");
       });
 
+      test('?where={"_id":"x"} returns 400 with InvalidConfig and the by-id-verb redirect message', async () => {
+        // Wire-validator depth-0 `_id` reject — agents zero-shot
+        // writing the ceremony shape against the list route get
+        // pointed at `GET /v1/t/:table/:id`. Shape-agnostic (HTTP
+        // status + body substring only) so the assertion survives
+        // the predicate-redesign sibling spec's validator rewrite
+        // (`validatePredicate` → `validateWire`'s clause walk).
+        const table = freshTable("list-id-keyed");
+        const where = encodeURIComponent(JSON.stringify({ _id: "x" }));
+        const res = await doFetch(authedRequest("GET", `/v1/t/${table}?where=${where}`));
+        expect(res.status).toBe(400);
+        const env = (await res.json()) as ErrorEnvelope;
+        expect(env.error?.code).toBe("InvalidConfig");
+        expect(env.error?.message ?? "").toContain('Predicates may not key on "_id"');
+      });
+
       test("?where=<malformed JSON> returns 400 with SchemaError", async () => {
         const table = freshTable("list-bad");
         const res = await doFetch(authedRequest("GET", `/v1/t/${table}?where=notjson`));
