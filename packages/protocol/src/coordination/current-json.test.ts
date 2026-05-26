@@ -132,6 +132,40 @@ describe("casUpdateCurrentJson", () => {
   });
 });
 
+/**
+ * Storage wrapper that fires a one-shot callback AFTER the first
+ * successful `put`. Used by the two-phase-fence-claim regression to
+ * deterministically land a peer write between `claimWriter`'s
+ * provisional PUT (epoch bump, `claimed_at:""`) and its stamp PUT
+ * (claimed_at:serverDate.toISOString()).
+ */
+class InterposingStorage implements Storage {
+  #inner: Storage;
+  #onAfterFirstPut: ((etag: string) => Promise<void>) | undefined;
+  #fired = false;
+  constructor(inner: Storage, onAfterFirstPut?: (etag: string) => Promise<void>) {
+    this.#inner = inner;
+    this.#onAfterFirstPut = onAfterFirstPut;
+  }
+  get(k: string, o?: Parameters<Storage["get"]>[1]) {
+    return this.#inner.get(k, o);
+  }
+  delete(k: string, o?: Parameters<Storage["delete"]>[1]) {
+    return this.#inner.delete(k, o);
+  }
+  list(p: string, o?: Parameters<Storage["list"]>[1]) {
+    return this.#inner.list(p, o);
+  }
+  async put(k: string, b: Uint8Array, o?: StoragePutOptions): Promise<StoragePutResult> {
+    const result = await this.#inner.put(k, b, o);
+    if (!this.#fired && this.#onAfterFirstPut !== undefined) {
+      this.#fired = true;
+      await this.#onAfterFirstPut(result.etag);
+    }
+    return result;
+  }
+}
+
 describe("claimWriter", () => {
   plainTest("bumps epoch monotonically across successive claims", async () => {
     const s = new MemoryStorage();
@@ -175,6 +209,39 @@ describe("claimWriter", () => {
     expect(r.json.writer_fence.claimed_at).toBe("");
     expect(r.json.writer_fence.epoch).toBe(1);
   });
+
+  plainTest(
+    "two-phase: peer landing between PUTs loses on stamp; epoch bump survives durably",
+    async () => {
+      const inner = new MemoryStorage();
+      await createCurrentJson(inner, "k", seedJson());
+
+      // A peer writes between claimWriter's provisional PUT and its
+      // stamp PUT. The peer is a vanilla `casUpdateCurrentJson` that
+      // bumps `next_seq`; it reads the etag claimWriter just wrote,
+      // mutates the record, and writes — invalidating the etag
+      // claimWriter is about to use for its stamp.
+      const storage = new InterposingStorage(inner, async () => {
+        await casUpdateCurrentJson(inner, "k", (c) => ({
+          ...c,
+          next_seq: c.next_seq + 1,
+        }));
+      });
+
+      await expect(claimWriter(storage, "k", "owner-a")).rejects.toMatchObject({
+        code: "Conflict",
+      });
+
+      // The epoch bump from PUT #1 is durable — the patent claim's
+      // core safety property. The stamp PUT lost, so `claimed_at`
+      // remains the provisional empty string.
+      const after = await readCurrentJson(inner, "k");
+      expect(after!.json.writer_fence.epoch).toBe(1);
+      expect(after!.json.writer_fence.claimed_at).toBe("");
+      // The peer's mutation also landed.
+      expect(after!.json.next_seq).toBe(1);
+    },
+  );
 });
 
 describe("CurrentJson schema (PBT)", () => {
