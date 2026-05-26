@@ -222,7 +222,7 @@ describe("rebuildIndex — dry-run", () => {
   const ADMINS_ONLY: IndexDefinition = {
     name: "admins",
     on: "role",
-    predicate: { role: "admin" },
+    predicate: { clauses: [{ op: "eq", field: "role", value: "admin" }] },
   };
 
   test("dryRun reports drift counts without modifying storage", async () => {
@@ -343,7 +343,7 @@ describe("rebuildIndex — filtered index", () => {
   const FILTERED: IndexDefinition = {
     name: "open_only",
     on: "assignee",
-    predicate: { status: "open" },
+    predicate: { clauses: [{ op: "eq", field: "status", value: "open" }] },
   };
 
   const listFilteredKeys = async (storage: Storage): Promise<string[]> => {

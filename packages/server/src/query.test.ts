@@ -14,7 +14,7 @@ import {
   type DocumentData,
   MemoryStorage,
   BaerlyError,
-  type Predicate,
+  type PredicateWire,
   type Storage,
   type StorageGetOptions,
   type StorageGetResult,
@@ -27,6 +27,8 @@ import { compact, type InternalCompactOptions } from "./compactor.ts";
 import { Db } from "./db.ts";
 import { planQuery } from "./query-planner.ts";
 import { runAllWithMeta, singleIdFromPredicate } from "./query.ts";
+
+const wireOf = (clauses: PredicateWire["clauses"]): PredicateWire => ({ clauses });
 import { Writer } from "./writer.ts";
 
 const APP = "test";
@@ -221,7 +223,9 @@ describe("Db.table read terminals", () => {
     expect(open).toHaveLength(1);
     expect(open[0]!["_id"]).toBe("1");
     // Two consecutive `.where` calls produce distinct Query objects.
-    const q2 = q1.where({ _id: "1" });
+    // (`_id` is excluded from `Path<T>` — use `.get(id)` for that
+    // shape; here we just exercise the chain.)
+    const q2 = q1.where({ status: "open" });
     expect(q2 as unknown).not.toBe(q1 as unknown);
   });
 
@@ -446,7 +450,7 @@ describe("Db.table read terminals", () => {
 
     const ctx = db.tableReadContext(COLL);
     const baseState = {
-      predicate: undefined,
+      wire: undefined,
       order: undefined,
       limit: undefined,
     } as const;
@@ -485,7 +489,7 @@ describe("Db.table read terminals", () => {
 
     const ctx = db.tableReadContext(COLL);
     const strongState = {
-      predicate: undefined,
+      wire: undefined,
       order: undefined,
       limit: undefined,
       consistency: "strong",
@@ -827,11 +831,7 @@ describe("auto-planner index routing", () => {
     const db = dbWithByStatus();
     const rows = await db
       .table<{ _id: string; status: string; priority: string }>(COLL)
-      .where({ status: "open", priority: { $gt: "p2" } } as unknown as Predicate<{
-        _id: string;
-        status: string;
-        priority: string;
-      }>)
+      .where((q) => q.eq("status", "open").gt("priority", "p2"))
       .all();
     expect(rows.map((r) => r._id)).toEqual(["t-3"]);
   });
@@ -858,10 +858,7 @@ describe("operator predicates — full-scan path", () => {
     }
     const rows = await db
       .table<{ _id: string; count: number }>(COLL)
-      .where({ count: { $gte: 3, $lt: 7 } } as unknown as Predicate<{
-        _id: string;
-        count: number;
-      }>)
+      .where((q) => q.gte("count", 3).lt("count", 7))
       .all();
     expect(rows.map((r) => r.count).toSorted((a, b) => a - b)).toEqual([3, 4, 5, 6]);
   });
@@ -879,10 +876,7 @@ describe("operator predicates — full-scan path", () => {
     }
     const rows = await db
       .table<{ _id: string; priority: string }>(COLL)
-      .where({ priority: { $in: ["p1", "p2"] } } as unknown as Predicate<{
-        _id: string;
-        priority: string;
-      }>)
+      .where((q) => q.in("priority", ["p1", "p2"]))
       .all();
     expect(rows.map((r) => r._id).toSorted()).toEqual(["t-p1", "t-p2"]);
   });
@@ -900,9 +894,7 @@ describe("operator predicates — full-scan path", () => {
     }
     const rows = await db
       .table<{ _id: string; created_at: string }>(COLL)
-      .where({
-        created_at: { $gte: "2026-01-01", $lt: "2026-02-01" },
-      } as unknown as Predicate<{ _id: string; created_at: string }>)
+      .where((q) => q.gte("created_at", "2026-01-01").lt("created_at", "2026-02-01"))
       .all();
     expect(rows.map((r) => r._id).toSorted()).toEqual(["2026-01-01", "2026-01-15"]);
   });
@@ -930,11 +922,7 @@ describe("operator predicates — full-scan path", () => {
     });
     const rows = await db
       .table<{ _id: string; status: string; count: number }>(COLL)
-      .where({ status: "open", count: { $lt: 10 } } as unknown as Predicate<{
-        _id: string;
-        status: string;
-        count: number;
-      }>)
+      .where((q) => q.eq("status", "open").lt("count", 10))
       .all();
     expect(rows.map((r) => r._id)).toEqual(["t-1"]);
   });
@@ -952,7 +940,7 @@ describe("operator predicates — full-scan path", () => {
     }
     const n = await db
       .table<{ _id: string; count: number }>(COLL)
-      .where({ count: { $gte: 2 } } as unknown as Predicate<{ _id: string; count: number }>)
+      .where((q) => q.gte("count", 2))
       .count();
     expect(n).toBe(3);
   });
@@ -968,7 +956,7 @@ describe("operator predicates — full-scan path", () => {
     });
     const rows = await db
       .table<{ _id: string; count: number }>(COLL)
-      .where({ count: { $gte: 1 } } as unknown as Predicate<{ _id: string; count: number }>)
+      .where((q) => q.gte("count", 1))
       .all();
     expect(rows).toEqual([]);
   });
@@ -1025,10 +1013,7 @@ describe("auto-planner range and $in walks (T3)", () => {
     const db = dbWithByPriority();
     const rows = await db
       .table<{ _id: string; priority: string }>(COLL)
-      .where({ priority: { $gte: "p3", $lt: "p7" } } as unknown as Predicate<{
-        _id: string;
-        priority: string;
-      }>)
+      .where((q) => q.gte("priority", "p3").lt("priority", "p7"))
       .all();
     expect(rows.map((r) => r.priority).toSorted()).toEqual(["p3", "p4", "p5", "p6"]);
   });
@@ -1049,13 +1034,10 @@ describe("auto-planner range and $in walks (T3)", () => {
       });
     }
     const db = dbWithByPriority();
-    // $gt:p2 is exclusive — should NOT include p2.
+    // q.gt is exclusive — should NOT include p2.
     const rows = await db
       .table<{ _id: string; priority: string }>(COLL)
-      .where({ priority: { $gt: "p2" } } as unknown as Predicate<{
-        _id: string;
-        priority: string;
-      }>)
+      .where((q) => q.gt("priority", "p2"))
       .all();
     expect(rows.map((r) => r.priority).toSorted()).toEqual(["p3", "p4", "p5"]);
   });
@@ -1078,10 +1060,7 @@ describe("auto-planner range and $in walks (T3)", () => {
     const db = dbWithByPriority();
     const rows = await db
       .table<{ _id: string; priority: string }>(COLL)
-      .where({ priority: { $lte: "p3" } } as unknown as Predicate<{
-        _id: string;
-        priority: string;
-      }>)
+      .where((q) => q.lte("priority", "p3"))
       .all();
     expect(rows.map((r) => r.priority).toSorted()).toEqual(["p1", "p2", "p3"]);
   });
@@ -1122,11 +1101,7 @@ describe("auto-planner range and $in walks (T3)", () => {
     // (wrong tenant).
     const rows = await db
       .table<{ _id: string; tenant: string; age: string }>(COLL)
-      .where({ tenant: "acme", age: { $gte: "012", $lt: "099" } } as unknown as Predicate<{
-        _id: string;
-        tenant: string;
-        age: string;
-      }>)
+      .where((q) => q.eq("tenant", "acme").gte("age", "012").lt("age", "099"))
       .all();
     expect(rows.map((r) => r._id).toSorted()).toEqual(["a1", "a2", "a3"]);
   });
@@ -1156,10 +1131,7 @@ describe("auto-planner range and $in walks (T3)", () => {
     const db = dbWithByStatus();
     const rows = await db
       .table<{ _id: string; status: string }>(COLL)
-      .where({ status: { $in: ["open", "done"] } } as unknown as Predicate<{
-        _id: string;
-        status: string;
-      }>)
+      .where((q) => q.in("status", ["open", "done"]))
       .all();
     expect(rows.map((r) => r._id).toSorted()).toEqual(["t-1", "t-3", "t-4"]);
   });
@@ -1194,18 +1166,12 @@ describe("auto-planner range and $in walks (T3)", () => {
     const db = dbWithByPriority();
     const above = await db
       .table<{ _id: string; priority: string }>(COLL)
-      .where({ priority: { $gte: "p4" } } as unknown as Predicate<{
-        _id: string;
-        priority: string;
-      }>)
+      .where((q) => q.gte("priority", "p4"))
       .all();
     expect(above.map((r) => r._id)).toEqual(["t-1"]);
     const below = await db
       .table<{ _id: string; priority: string }>(COLL)
-      .where({ priority: { $lte: "p3" } } as unknown as Predicate<{
-        _id: string;
-        priority: string;
-      }>)
+      .where((q) => q.lte("priority", "p3"))
       .all();
     expect(below).toEqual([]);
   });
@@ -1238,11 +1204,7 @@ describe("auto-planner range and $in walks (T3)", () => {
     const db = dbWithComposite();
     const rows = await db
       .table<{ _id: string; tenant: string; age: string }>(COLL)
-      .where({ tenant: { $gt: "a" }, age: "012" } as unknown as Predicate<{
-        _id: string;
-        tenant: string;
-        age: string;
-      }>)
+      .where((q) => q.gt("tenant", "a").eq("age", "012"))
       .all();
     // All tenants are > "a" lexically. age must equal "012".
     expect(rows.map((r) => r._id).toSorted()).toEqual(["a1", "b1", "z1"]);
@@ -1275,7 +1237,10 @@ describe("auto-planner range and $in walks (T3)", () => {
     }
     const indexes = [{ name: "by_age", on: "age" }] as const;
     const plan = planQuery(
-      { age: { $gte: 10, $lt: 30 } } as unknown as Predicate<DocumentData>,
+      wireOf([
+        { op: "gte", field: "age", value: 10 },
+        { op: "lt", field: "age", value: 30 },
+      ]),
       indexes,
     );
     expect(plan.kind).toBe("index-walk");
@@ -1290,10 +1255,7 @@ describe("auto-planner range and $in walks (T3)", () => {
     });
     const rows = await db
       .table<{ _id: string; age: number }>(COLL)
-      .where({ age: { $gte: 10, $lt: 30 } } as unknown as Predicate<{
-        _id: string;
-        age: number;
-      }>)
+      .where((q) => q.gte("age", 10).lt("age", 30))
       .all();
     expect(rows.map((r) => r.age).toSorted((a, b) => a - b)).toEqual([10, 15, 18, 22]);
   });
@@ -1328,7 +1290,7 @@ describe("auto-planner range and $in walks (T3)", () => {
     }
     const indexes = [{ name: "by_team", on: "team" }] as const;
     const plan = planQuery(
-      { team: { $in: ["platform", "infra", "data"] } } as unknown as Predicate<DocumentData>,
+      wireOf([{ op: "in", field: "team", value: ["platform", "infra", "data"] }]),
       indexes,
     );
     expect(plan.kind).toBe("index-walk");
@@ -1344,10 +1306,7 @@ describe("auto-planner range and $in walks (T3)", () => {
     });
     const rows = await db
       .table<{ _id: string; team: string }>(COLL)
-      .where({ team: { $in: ["platform", "infra", "data"] } } as unknown as Predicate<{
-        _id: string;
-        team: string;
-      }>)
+      .where((q) => q.in("team", ["platform", "infra", "data"]))
       .all();
     expect(rows.map((r) => r._id).toSorted()).toEqual(["a", "b", "c", "d"]);
   });
@@ -1364,50 +1323,56 @@ describe("auto-planner range and $in walks (T3)", () => {
  * exact-shape-only detection).
  */
 describe("singleIdFromPredicate", () => {
-  test("positive: { _id: 'x' } → 'x'", () => {
-    expect(singleIdFromPredicate({ _id: "x" } as Predicate<DocumentData>)).toBe("x");
+  // The fast-path takes the kernel-internal wire shape; the wire
+  // validator never sees these inputs (the byId / runByIdWithMeta /
+  // runInsert paths mint them directly), so the detector accepts the
+  // `_id` field even though `validateWire` would reject it on the
+  // public path.
+  test("positive: { clauses: [{op:'eq', field:'_id', value:'x'}] } → 'x'", () => {
+    expect(singleIdFromPredicate(wireOf([{ op: "eq", field: "_id", value: "x" }]))).toBe("x");
   });
 
-  test("positive: { _id: '' } → ''", () => {
+  test("positive: empty-string value passes the detector", () => {
     // Empty string passes the detector; lookup will always miss
     // because insert replaces empty _id with UUIDv7.
-    expect(singleIdFromPredicate({ _id: "" } as Predicate<DocumentData>)).toBe("");
+    expect(singleIdFromPredicate(wireOf([{ op: "eq", field: "_id", value: "" }]))).toBe("");
   });
 
   test("negative: undefined → undefined (no predicate, full scan)", () => {
     expect(singleIdFromPredicate(undefined)).toBeUndefined();
   });
 
-  test("negative: {} (match-all) → undefined", () => {
-    expect(singleIdFromPredicate({} as Predicate<DocumentData>)).toBeUndefined();
+  test("negative: empty clause list (match-all) → undefined", () => {
+    expect(singleIdFromPredicate(wireOf([]))).toBeUndefined();
   });
 
-  test("negative: single-key non-_id ({ status: 'open' }) → undefined", () => {
+  test("negative: single non-_id clause → undefined", () => {
     expect(
-      singleIdFromPredicate({ status: "open" } as unknown as Predicate<DocumentData>),
+      singleIdFromPredicate(wireOf([{ op: "eq", field: "status", value: "open" }])),
     ).toBeUndefined();
   });
 
-  test("negative: multi-key including _id ({ _id: 'x', status: 'open' }) → undefined", () => {
+  test("negative: multi-clause wire including _id → undefined", () => {
     expect(
-      singleIdFromPredicate({ _id: "x", status: "open" } as unknown as Predicate<DocumentData>),
+      singleIdFromPredicate(
+        wireOf([
+          { op: "eq", field: "_id", value: "x" },
+          { op: "eq", field: "status", value: "open" },
+        ]),
+      ),
     ).toBeUndefined();
   });
 
-  test("negative: operator-shaped _id value ({ _id: { $eq: 'x' } }) → undefined", () => {
+  test("negative: non-eq op on _id → undefined", () => {
     expect(
-      singleIdFromPredicate({ _id: { $eq: "x" } } as unknown as Predicate<DocumentData>),
+      singleIdFromPredicate(wireOf([{ op: "in", field: "_id", value: ["x"] }])),
     ).toBeUndefined();
   });
 
-  test("negative: non-string _id value ({ _id: 42 }) → undefined", () => {
+  test("negative: non-string value on _id clause → undefined", () => {
     expect(
-      singleIdFromPredicate({ _id: 42 } as unknown as Predicate<DocumentData>),
+      singleIdFromPredicate(wireOf([{ op: "eq", field: "_id", value: 42 }])),
     ).toBeUndefined();
-  });
-
-  test("negative: null → undefined (defensive — JSON.parse(null) input)", () => {
-    expect(singleIdFromPredicate(null as unknown as Predicate<DocumentData>)).toBeUndefined();
   });
 });
 
@@ -1528,7 +1493,7 @@ describe("Query.first / Table.get — PK-lookup fast-path", () => {
     // to the scan path and walks the same log range.
     const scanRows = await dbScan
       .table<{ _id: string; n: number }>(COLL)
-      .where({ n: target.n } as unknown as Predicate<{ _id: string; n: number }>)
+      .where({ n: target.n })
       .all();
     const scanLogGets = scanCounter.logGets;
 
@@ -1547,40 +1512,22 @@ describe("Query.first / Table.get — PK-lookup fast-path", () => {
     const db = Db.create({ storage, app: APP, tenant: TENANT });
     const rows = await db
       .table<{ _id: string; n: number }>(COLL)
-      .where({ n: target.n } as unknown as Predicate<{ _id: string; n: number }>)
+      .where({ n: target.n })
       .all();
     expect(rows).toHaveLength(1);
     expect(rows[0]).toEqual(target);
   });
 
-  test("negative: multi-key predicate including _id falls through to scan", async () => {
+  test("negative: non-_id callback predicate threads to scan and matches the doc", async () => {
     const { storage, target } = await seedNDocs(100);
     const db = Db.create({ storage, app: APP, tenant: TENANT });
-    // singleIdFromPredicate rejects multi-key shapes → scan path
-    // applies both clauses via `matches()`. Result is still the one
-    // doc that satisfies BOTH equalities.
+    // The public `.where(...)` surface rejects `_id` at the wire
+    // validator now (use `.get(id)` to hit it). A callback-form
+    // predicate on a non-`_id` field still routes through the scan
+    // path; the result is the doc that satisfies the equality.
     const rows = await db
       .table<{ _id: string; n: number }>(COLL)
-      .where({ _id: target._id, n: target.n } as unknown as Predicate<{
-        _id: string;
-        n: number;
-      }>)
-      .all();
-    expect(rows).toHaveLength(1);
-    expect(rows[0]).toEqual(target);
-  });
-
-  test("negative: operator-shaped _id value falls through to scan (matches via $eq)", async () => {
-    const { storage, target } = await seedNDocs(100);
-    const db = Db.create({ storage, app: APP, tenant: TENANT });
-    // singleIdFromPredicate returns undefined for `{ _id: { $eq: ... } }`
-    // — operator-shaped value, not a bare string. Scan path picks it up.
-    const rows = await db
-      .table<{ _id: string; n: number }>(COLL)
-      .where({ _id: { $eq: target._id } } as unknown as Predicate<{
-        _id: string;
-        n: number;
-      }>)
+      .where((q) => q.eq("n", target.n))
       .all();
     expect(rows).toHaveLength(1);
     expect(rows[0]).toEqual(target);

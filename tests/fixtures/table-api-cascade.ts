@@ -114,17 +114,18 @@ const freshTableName = (prefix: string): string => `${prefix}-${uuid().slice(0, 
 type Doc = DocumentData;
 
 /**
- * Predicate `$`-key rejection. The day-one operator policy
- * (`packages/protocol/src/table-api.ts:101-103` + `packages/protocol/src/query/validate.ts`)
- * rejects `$`-prefixed predicate keys with
- * `BaerlyError{code:"InvalidConfig"}`. Rejection is SYNCHRONOUS at
- * `.where(...)` — no `await`, no terminal-time deferral — because
- * the operator-policy boundary is the public contract surface
- * (ticket 12 §Hard constraints: "Runtime rejects $-keys with
- * InvalidConfig, not a later phase.").
+ * Predicate `$`-key rejection. The operator vocabulary lives on the
+ * callback form (`.where(q => q.gt(...))`); the object-form is
+ * equality-only and the normaliser
+ * (`packages/protocol/src/query/normalize.ts`) rejects any `$`-prefixed
+ * key with `BaerlyError{code:"InvalidConfig"}`. Rejection is
+ * SYNCHRONOUS at `.where(...)` — no `await`, no terminal-time
+ * deferral — because the operator-policy boundary is the public
+ * contract surface.
  *
- * The error message names the offending `$`-key so downstream
- * tooling can match without parsing prose.
+ * The error message names the offending `$`-key AND surfaces the
+ * "operator vocabulary moved to the callback form" wording so
+ * downstream tooling can match without parsing prose.
  */
 const predicateRejection = (db: Db, table: string): void => {
   const cases: ReadonlyArray<{
@@ -136,11 +137,11 @@ const predicateRejection = (db: Db, table: string): void => {
     { label: "$gt at root", predicate: { $gt: 1 }, offender: "$gt" },
     { label: "$in at root", predicate: { $in: ["x"] }, offender: "$in" },
     { label: "$regex at root", predicate: { $regex: "x" }, offender: "$regex" },
-    // Nested unknown operator. `$eq`/`$gt`/`$gte`/`$lt`/`$lte`/`$in`
-    // are legal inside an operator-object value post the T1 AST
-    // extension; `$regex` is reserved-but-unsupported and still
-    // throws `Unsupported predicate operator` at validation time.
+    // Nested $-key — the normaliser walks the sub-predicate and
+    // rejects at the first $-prefixed segment, regardless of whether
+    // the operator name is part of the locked vocabulary or not.
     { label: "nested $regex", predicate: { a: { $regex: "x" } }, offender: "$regex" },
+    { label: "nested $gte", predicate: { a: { $gte: 1 } }, offender: "$gte" },
   ];
 
   for (const { label, predicate, offender } of cases) {
@@ -163,14 +164,18 @@ const predicateRejection = (db: Db, table: string): void => {
     }
     expect(err, `where(${label}) must throw synchronously`).toBeInstanceOf(BaerlyError);
     expect((err as BaerlyError).code, `where(${label}) error.code`).toBe("InvalidConfig");
-    // Message names the offending `$`-key verbatim (e.g. "$or",
-    // "$regex"). The validator's wording is `Unsupported
-    // predicate operator "$or" at <root> — …` so a substring match
-    // on the operator name is sufficient and resilient to wording
-    // tweaks.
+    // Message names the offending `$`-key verbatim and surfaces the
+    // documented redirection to the callback form. The normaliser's
+    // wording is:
+    //   `Unsupported predicate operator "$or" at <root> — operator
+    //    vocabulary moved to the callback form (.where(q => q.gt(field, value))).`
     expect((err as BaerlyError).message, `where(${label}) message names ${offender}`).toContain(
       offender,
     );
+    expect(
+      (err as BaerlyError).message,
+      `where(${label}) message redirects to the callback form`,
+    ).toContain("operator vocabulary");
   }
 };
 

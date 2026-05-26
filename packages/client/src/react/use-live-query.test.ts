@@ -202,11 +202,15 @@ describe("useLiveQuery", () => {
     );
 
     await waitFor(() => {
-      expect(observedWheres).toContain(JSON.stringify({ status: "open" }));
+      expect(observedWheres).toContain(
+        JSON.stringify({ clauses: [{ op: "eq", field: "status", value: "open" }] }),
+      );
     });
     rerender({ status: "closed" });
     await waitFor(() => {
-      expect(observedWheres).toContain(JSON.stringify({ status: "closed" }));
+      expect(observedWheres).toContain(
+        JSON.stringify({ clauses: [{ op: "eq", field: "status", value: "closed" }] }),
+      );
     });
 
     unmount();

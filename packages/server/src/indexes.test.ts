@@ -236,7 +236,7 @@ describe("allIndexKeysFor — filtered index", () => {
   const filtered = {
     name: "open_only",
     on: "assignee",
-    predicate: { status: "open" },
+    predicate: { clauses: [{ op: "eq", field: "status", value: "open" }] },
   } as const;
 
   test("doc not matching def.predicate produces no keys for that index", () => {
@@ -270,49 +270,54 @@ describe("allIndexKeysFor — filtered index", () => {
 });
 
 describe("validateIndexDefinition — predicate field", () => {
-  test("accepts an equality-only predicate", () => {
+  test("accepts an equality-only predicate (wire form)", () => {
     expect(() =>
       validateIndexDefinition({
         name: "open_only",
         on: "assignee",
-        predicate: { status: "open" },
+        predicate: { clauses: [{ op: "eq", field: "status", value: "open" }] },
       }),
     ).not.toThrow();
   });
 
-  test("accepts a nested-object equality predicate", () => {
+  test("accepts a flattened-multi-key equality predicate (wire form)", () => {
     expect(() =>
       validateIndexDefinition({
         name: "open_ui_only",
         on: "assignee",
-        predicate: { status: "open", meta: { source: "ui" } },
+        predicate: {
+          clauses: [
+            { op: "eq", field: "status", value: "open" },
+            { op: "eq", field: "meta.source", value: "ui" },
+          ],
+        },
       }),
     ).not.toThrow();
   });
 
-  test("accepts an operator-shaped predicate clause", () => {
+  test("accepts range and in operator clauses on the wire", () => {
     expect(() =>
       validateIndexDefinition({
         name: "adult_only",
         on: "name",
-        predicate: { age: { $gte: 18 } },
+        predicate: { clauses: [{ op: "gte", field: "age", value: 18 }] },
       }),
     ).not.toThrow();
     expect(() =>
       validateIndexDefinition({
         name: "p0_p1",
         on: "assignee",
-        predicate: { priority: { $in: ["p0", "p1"] } },
+        predicate: { clauses: [{ op: "in", field: "priority", value: ["p0", "p1"] }] },
       }),
     ).not.toThrow();
   });
 
-  test("rejects a predicate with $-prefixed top-level key", () => {
+  test("rejects a predicate that fails wire validation (top-level _id)", () => {
     expect(() =>
       validateIndexDefinition({
-        name: "bad_op",
+        name: "bad_id",
         on: "assignee",
-        predicate: { $or: "x" } as unknown as never,
+        predicate: { clauses: [{ op: "eq", field: "_id", value: "x" }] } as never,
       }),
     ).toThrow(/predicate is invalid/);
   });
@@ -322,7 +327,9 @@ describe("validateIndexDefinition — predicate field", () => {
       validateIndexDefinition({
         name: "null_val",
         on: "assignee",
-        predicate: { status: null } as unknown as never,
+        predicate: {
+          clauses: [{ op: "eq", field: "status", value: null as unknown as string }],
+        } as never,
       }),
     ).toThrow(/predicate is invalid/);
   });

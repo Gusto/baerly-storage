@@ -19,11 +19,15 @@ const jsonResponse = (body: unknown, status = 200): Response =>
   });
 
 describe("createBaerlyClient", () => {
-  test("table().where().all() issues GET /v1/t/<name>?where=<json>", async () => {
+  test("table().where().all() issues GET /v1/t/<name>?where=<wire-json>", async () => {
     const mock = new MockFetch();
     mock.on("GET", "/v1/t/tickets", (req) => {
       const url = new URL(req.url);
-      expect(url.searchParams.get("where")).toBe('{"status":"open"}');
+      // Object-form predicate normalises to a wire-form predicate
+      // on the way out — the client serialises the wire directly.
+      expect(url.searchParams.get("where")).toBe(
+        JSON.stringify({ clauses: [{ op: "eq", field: "status", value: "open" }] }),
+      );
       return jsonResponse(okEnvelope([{ _id: "a", status: "open" }]));
     });
     const client = createBaerlyClient({ baseUrl: "http://x", fetch: mock.fetch });
@@ -175,7 +179,9 @@ describe("createBaerlyClient", () => {
     mock.on("GET", "/v1/count", (req) => {
       const url = new URL(req.url);
       expect(url.searchParams.get("table")).toBe("tickets");
-      expect(url.searchParams.get("where")).toBe('{"status":"open"}');
+      expect(url.searchParams.get("where")).toBe(
+        JSON.stringify({ clauses: [{ op: "eq", field: "status", value: "open" }] }),
+      );
       return jsonResponse({
         data: { count: 42 },
         _meta: { manifest_pointer: "none@0", fresh: true },
