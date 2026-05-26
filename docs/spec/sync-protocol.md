@@ -4,7 +4,7 @@ audience: spec
 summary: Atomic multi-key writes over S3 via manifest indirection; time-ordered log; reconciliation algorithm.
 last-reviewed: 2026-05-12
 tags: [protocol, sync, manifest, causal-consistency]
-related: [causal-consistency-checking.md, log-entry-shape.md, json-merge-patch.md]
+related: [causal-consistency-checking.md, log-entry-shape.md, json-merge-patch.md, writer-fence-adversarial-model.md]
 ---
 
 

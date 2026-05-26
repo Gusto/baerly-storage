@@ -314,6 +314,10 @@ export async function casUpdateCurrentJson(
  * readers MUST treat the empty string as "unknown claim time"
  * rather than parsing it.
  *
+ * @see {@link ../../../../docs/spec/writer-fence-adversarial-model.md} —
+ *   the full failure envelope (absent / lying / non-monotonic Date,
+ *   peer-between-PUTs, bounded clock skew).
+ *
  * @throws BaerlyError{code:"Conflict"} — another writer claimed the
  *         fence between this call's read and write. Caller decides
  *         whether to retry.
