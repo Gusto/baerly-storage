@@ -192,3 +192,6 @@ None of these prior-art systems extract the storage server's HTTP
 timestamp, and none of them write that extracted value back
 through a second conditional PUT to durably stamp it. The
 two-phase pattern is C1's specific computer-implemented step.
+
+See also: `prior-art.md` for the IDS-shaped consolidated
+differentiation.

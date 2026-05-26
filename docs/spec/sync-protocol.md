@@ -4,7 +4,7 @@ audience: spec
 summary: Atomic multi-key writes over S3 via manifest indirection; time-ordered log; reconciliation algorithm.
 last-reviewed: 2026-05-12
 tags: [protocol, sync, manifest, causal-consistency]
-related: [causal-consistency-checking.md, log-entry-shape.md, json-merge-patch.md, writer-fence-adversarial-model.md]
+related: [causal-consistency-checking.md, log-entry-shape.md, json-merge-patch.md, writer-fence-adversarial-model.md, prior-art.md]
 ---
 
 
@@ -261,6 +261,9 @@ thundering-herd CAS livelock on a single shared object, GCS's
 the standard failure modes reported in the S3-as-database
 literature. The ~30 writes/min/collection ceiling baked into the
 product thesis is the conservative bound those reports converge on.
+
+See also: `prior-art.md` for differentiation against external
+prior art.
 
 ## CAS scope is per-collection
 

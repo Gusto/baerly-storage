@@ -1,0 +1,182 @@
+---
+title: Prior-art differentiation
+audience: spec
+summary: IDS-shaped consolidated differentiation against known prior art for the C1, C2, and C3 mechanisms.
+last-reviewed: 2026-05-26
+tags: [protocol, patent, prior-art]
+related: [sync-protocol.md, writer-fence-adversarial-model.md]
+---
+
+# Prior-art differentiation
+
+## 1. Scope
+
+This document enumerates known prior art the maintainers consider
+relevant to the differentiation of mechanisms described in
+`docs/spec/sync-protocol.md`,
+`docs/spec/writer-fence-adversarial-model.md`, and the source modules
+cross-referenced therein. It is intended as a reference for patent
+prosecution and is the IDS-shaped artifact for any subsequent USPTO
+filing.
+
+The three mechanisms differentiated below are labelled C1, C2, and
+C3:
+
+- **C1** — Two-phase fence-claim with server-`Date`-header
+  extraction. Implemented in
+  `packages/protocol/src/coordination/current-json.ts`
+  (`claimWriter`). The adversarial model lives in
+  `docs/spec/writer-fence-adversarial-model.md`.
+- **C2** — In-flight log-entry self-adoption after a recoverable
+  crash. Implemented in
+  `packages/server/src/log-conflict-adoption.ts`
+  (`tryAdoptOwnSessionLogEntry`).
+- **C3** — Reverse-LIST encoding of log sequence numbers using a
+  descending base-32 alphabet so that the storage layer's native
+  ascending `LIST` is a cheap descending tail-walk. Implemented in
+  `packages/server/src/indexes.ts`; benchmark evidence under
+  `bench/lsn-reverse-walk/` with the baseline at
+  `docs/spec/attachments/lsn-reverse-walk-baseline.json`.
+
+## 2. Apache Iceberg & Delta Lake (manifest-CAS commit family)
+
+Both systems implement a commit protocol in which a writer attempts
+to advance a manifest pointer via conditional write; concurrent
+losers retry against the new manifest. The pre-existing Iceberg
+mention in `docs/spec/sync-protocol.md` is in the "Prior art"
+section (around line 248), under the
+`CommitFailedException`-storm failure mode.
+
+Two deltas matter for differentiation:
+
+- **Cost-bound shape.** Iceberg and Delta Lake commit costs are
+  O(seconds) and the commit retries tolerate this latency via
+  `CommitFailedException` (Iceberg) or analogous conflict exception
+  paths (Delta). Baerly's per-collection CAS targets a much smaller
+  per-document key-value workload and publishes a documented
+  *"< 1 Class A op / writer / hour"* cost bound for idle readers (see
+  `docs/about/cost-model.md#cost-ceiling` and the end-to-end
+  durability gate in `tests/integration/phase5-end-to-end.test.ts`).
+- **No server-`Date` capture.** Neither Iceberg nor Delta stamps the
+  storage server's HTTP `Date` response header into the commit
+  record. Their commit logs carry application-supplied timestamps
+  (or no timestamp), and neither protocol issues a *second*
+  conditional PUT to durably back-stamp a server-extracted clock.
+  This is the distinguishing axis for C1.
+
+## 3. SlateDB (slatedb.io, RFC-0001)
+
+SlateDB is a recent LSM-tree-over-object-storage design. The
+RFC-0001 writer protocol uses `PutMode::Create` (semantically
+equivalent to S3 `If-None-Match: *`) on per-LSN-shaped SST objects
+and a manifest CAS over numbered manifest slots. The writer
+protocol enumerates four cases when discovering an SST it did not
+expect.
+
+**C2 differentiation.** Scenario 3 of the RFC's four-case writer
+protocol — "the conflicting SST has the same `writer_epoch` as
+mine" — is explicitly classified as an **illegal state that should
+panic**. SlateDB's reasoning is that within a single epoch only one
+writer is permitted to allocate that LSN, so observing such a
+collision implies an invariant break.
+
+Baerly's `tryAdoptOwnSessionLogEntry`
+(`packages/server/src/log-conflict-adoption.ts`) recognises this
+exact case as the writer's *own* prior in-flight commit attempt —
+e.g. after a process crash between PUT-log-entry and CAS-current —
+and **adopts** the existing entry rather than panicking. The
+adoption gate is constrained by the session identifier, content
+hash equality, and a bounded staleness window, so it does not blur
+into accepting a foreign writer's entry. This is the citable C2
+gap: a system that would panic where baerly recovers.
+
+**C1 differentiation.** SlateDB fences via a `writer_epoch` field
+bumped in a single CAS. There is no harvesting of the storage
+server's HTTP `Date` header and no second conditional PUT to back-
+stamp a server-extracted timestamp.
+
+## 4. mps3 (endpointservices/mps3, MIT, Eric Baer's prior work)
+
+mps3 (`docs/sync_protocol.md` in that repository) describes a
+two-step write — content + manifest, with a `touch last_change`
+follow-up — and explicitly uses HTTP `Date` for **client clock
+correction**: *"clients use the `Date` header to continuously
+correct their clocks"*. Sync-side comparison uses the server-
+provided `LastModified` field.
+
+mps3 does **not** issue a second CAS to atomically back-stamp the
+storage server's `Date` value into the manifest record. The
+`Date` header is consumed transiently on the client to bound clock
+skew, not durably captured as a per-claim provenance field via a
+second conditional PUT. This is the citable C1 gap.
+
+**Disclosure note.** Under 35 U.S.C. § 102(b) (AIA), prior work by
+the same inventor is not automatically exempt from prior-art
+analysis once outside the one-year grace window, and is listed on
+any Information Disclosure Statement regardless. mps3 is included
+here in the IDS-shaped catalogue for that reason.
+
+## 5. Adjacent S3-leader-election literature
+
+Three further reference points sit adjacent to C1's claim
+mechanism:
+
+- **Morling, "Leader Election With S3 Conditional Writes"**
+  (`morling.dev/blog/leader-election-with-s3-conditional-writes/`)
+  — single-CAS epoch advance on `lock_NNNNN.json`. No server
+  timestamp; no second-phase back-stamp.
+- **AWS S3 Conditional Writes launch announcement** (Nov 2024) —
+  the underlying platform primitive (`If-None-Match: *` and
+  `If-Match` on PUT). This is the substrate C1 builds on, not a
+  fencing protocol in its own right.
+- **RFC 3161 Time-Stamp Protocol** and **draft-thomson-httpapi-
+  date-requests** — both treat HTTP `Date` as untrusted by default.
+  The Date Requests draft is explicit: *"Clients MUST NOT accept
+  the time provided by an arbitrary HTTP server as the basis for
+  system-wide time."*
+
+The last point cuts *for* C1 novelty, not against it. The standard
+posture in the literature is to warn against trusting an arbitrary
+HTTP server's `Date`. C1's inverse position is narrower and
+specific: trust your *own bucket's* `Date` header — under a
+controlled trust relationship the writer already has with that
+bucket — as a *provenance* field, and durably capture it via a
+second conditional PUT whose precondition is the etag of the first
+PUT. The distinguishing inventive step sits in this two-phase
+durable capture, not in any general claim about HTTP-server time.
+
+## 6. Reverse-LIST encoding folklore (C3 acknowledgment)
+
+The descending-key trick for cheap reverse iteration on a
+lexicographically-ordered storage layer is folklore that predates
+this project:
+
+- **Microsoft Azure Table Storage "Log tail pattern"** — see
+  `learn.microsoft.com/en-us/azure/storage/tables/table-storage-design-patterns`.
+  Canonical recipe: store `DateTime.MaxValue.Ticks
+  - DateTime.UtcNow.Ticks` zero-padded as the `RowKey` so that the
+  natural ascending scan yields most-recent-first.
+- **HBase folklore** — the `Long.MAX_VALUE - timestamp` row-key
+  trick documented across numerous HBase tutorials and operator
+  guides for the same purpose.
+- **ULID issue #44 (2017)** — feature request for a "descending
+  ULID" variant on the upstream ULID spec repository.
+- **RocksDB reverse-comparator convention** — the standard
+  technique of supplying a reverse comparator to a column family
+  rather than re-encoding keys.
+
+This body of folklore **anticipates the C3 encoding** at the
+general level of "encode keys so an ascending native LIST is a
+descending logical walk." It is acknowledged here in writing.
+
+Any defensive publication of `docs/spec/lsn-reverse-walk.md` (see
+the sibling follow-up
+`docs/followups/patent-c3-defensive-publication-draft.md` — that
+draft is currently un-committed; the forward reference is
+intentional) should not claim more than the *residual narrow
+composition*: the specific combination of descending base-32 LSN
+encoding with the per-collection-CAS commit protocol and the
+two-phase fence-claim, measured against the
+`bench/lsn-reverse-walk/` evidence under the baerly-storage cost
+model. The raw encoding trick is not the claim; the composition
+with C1 and the publishable cost bound is.
