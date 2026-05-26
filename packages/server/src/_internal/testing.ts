@@ -19,4 +19,9 @@ export {
   type WriterOptions,
   Writer,
 } from "../writer.ts";
+export {
+  type AdoptionContext,
+  type AdoptionDecision,
+  tryAdoptOwnSessionLogEntry,
+} from "../log-conflict-adoption.ts";
 export { InMemoryMetricsRecorder } from "./in-memory-metrics.ts";
