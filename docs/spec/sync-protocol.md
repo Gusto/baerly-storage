@@ -123,6 +123,30 @@ const uint2str = (num: number, bits: number) => {
 };
 ```
 
+#### Verification of the reverse-lex property
+
+The "lex-asc list of descending-base-32 keys is reverse-causal"
+claim is verified two ways:
+
+- **Property test** —
+  [`packages/protocol/src/lsn-reverse-list.test.ts`](../../packages/protocol/src/lsn-reverse-list.test.ts)
+  asserts the invariant across randomized populations of 2..64
+  `(millis, seq)` tuples: for any pair A causally < B,
+  `enc(A) > enc(B)` lex, and `MemoryStorage.list(prefix)`
+  returns the population in reverse-causal order. The PR-gate
+  runs the test at fast-check's default 100 runs; the encoder
+  has been verified at `FC_NUM_RUNS=10000` (see commit body).
+- **Microbenchmark** —
+  [`bench/lsn-reverse-walk.ts`](../../bench/lsn-reverse-walk.ts)
+  quantifies bytes-listed reduction vs. the counterfactual
+  ascending-base-32 encoding (which would force a full-prefix
+  LIST + in-memory reverse). The pinned baseline at
+  [`docs/spec/attachments/lsn-reverse-walk-baseline.json`](attachments/lsn-reverse-walk-baseline.json)
+  reports, for a 100 000-key population, `bytes_saved_fraction`
+  of 99.99% at K=10 and 90% at K=10 000 (analytic ratio K/N
+  with fixed-width 37-byte keys). Reproduce with
+  `pnpm bench:lsn-reverse-walk`.
+
 ### Log entry shape
 
 Every successful manifest write also emits one JSON object per
