@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "population_n": 100000,
+  "seed": 1592614637,
+  "k_grid": [10, 100, 1000, 10000],
+  "metric": "sum_of_key_lengths_yielded_by_storage_list",
+  "cells": [
+    {
+      "k": 10,
+      "desc_bytes_listed": 370,
+      "desc_keys_listed": 10,
+      "asc_bytes_listed": 3700000,
+      "asc_keys_listed": 100000,
+      "bytes_ratio": 0.0001,
+      "bytes_saved_fraction": 0.9999
+    },
+    {
+      "k": 100,
+      "desc_bytes_listed": 3700,
+      "desc_keys_listed": 100,
+      "asc_bytes_listed": 3700000,
+      "asc_keys_listed": 100000,
+      "bytes_ratio": 0.001,
+      "bytes_saved_fraction": 0.999
+    },
+    {
+      "k": 1000,
+      "desc_bytes_listed": 37000,
+      "desc_keys_listed": 1000,
+      "asc_bytes_listed": 3700000,
+      "asc_keys_listed": 100000,
+      "bytes_ratio": 0.01,
+      "bytes_saved_fraction": 0.99
+    },
+    {
+      "k": 10000,
+      "desc_bytes_listed": 370000,
+      "desc_keys_listed": 10000,
+      "asc_bytes_listed": 3700000,
+      "asc_keys_listed": 100000,
+      "bytes_ratio": 0.1,
+      "bytes_saved_fraction": 0.9
+    }
+  ],
+  "timestamp_iso": "2026-05-26T19:41:30.380Z",
+  "node_version": "v24.14.0"
+}
