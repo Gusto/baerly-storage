@@ -2,7 +2,7 @@
 title: Extending Baerly
 audience: coder
 summary: Worked patterns for adding methods to Db, Query verbs, and Table verbs.
-last-reviewed: 2026-05-12
+last-reviewed: 2026-05-26
 tags: [extending, api-design, patterns]
 related: [architecture.md, "../adr/002-api-surface-lock.md", "../adr/003-naming-convention.md", "conventions/tests.md"]
 ---
@@ -71,6 +71,13 @@ public async tables(): Promise<string[]> {
 
 ### Conventions to follow
 
+- **Check for redundancy first.** Before adding a method, run the
+  "One canonical form per operation" check in
+  [conventions/change-discipline.md](conventions/change-discipline.md).
+  If the new method's operation is already expressible via an
+  existing type-valid path, plan for removal of the old path in the
+  same PR — or amend [ADR-002](../adr/002-api-surface-lock.md) with
+  the justification for keeping both.
 - **JSDoc with `@example`.** IDE hover and `tsgo` surface these
   directly from source — they are the public-API reference.
 - **No state on `Db`.** `Db` carries the `Storage` handle and the
