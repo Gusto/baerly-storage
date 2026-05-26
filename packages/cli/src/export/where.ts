@@ -80,11 +80,7 @@ export const translatePredicateWireToSql = (
   };
 };
 
-const clauseForWire = (
-  clause: PredicateClause,
-  plan: ExportPlan,
-  hints: string[],
-): string[] => {
+const clauseForWire = (clause: PredicateClause, plan: ExportPlan, hints: string[]): string[] => {
   const segments = clause.field.includes(".") ? clause.field.split(".") : [clause.field];
   const head = segments[0];
   if (head === undefined || head.length === 0) {
@@ -119,22 +115,32 @@ const clauseForWire = (
   return [jsonPathClause(col, segments.slice(1), clause, plan.target)];
 };
 
-const flatColumnClause = (identifier: string, clause: PredicateClause, target: SqlTarget): string => {
+const flatColumnClause = (
+  identifier: string,
+  clause: PredicateClause,
+  target: SqlTarget,
+): string => {
   switch (clause.op) {
-    case "eq":
+    case "eq": {
       return `${identifier} = ${quoteLeaf(clause.value as DocumentValue, target)}`;
-    case "gt":
+    }
+    case "gt": {
       return `${identifier} > ${quoteLeaf(clause.value as DocumentValue, target)}`;
-    case "gte":
+    }
+    case "gte": {
       return `${identifier} >= ${quoteLeaf(clause.value as DocumentValue, target)}`;
-    case "lt":
+    }
+    case "lt": {
       return `${identifier} < ${quoteLeaf(clause.value as DocumentValue, target)}`;
-    case "lte":
+    }
+    case "lte": {
       return `${identifier} <= ${quoteLeaf(clause.value as DocumentValue, target)}`;
-    case "in":
+    }
+    case "in": {
       return `${identifier} IN (${(clause.value as ReadonlyArray<DocumentValue>)
         .map((v) => quoteLeaf(v, target))
         .join(", ")})`;
+    }
   }
 };
 
@@ -168,8 +174,7 @@ const jsonColumnRootClause = (
   // Range against JSON-encoded root: fall back to a lex compare on
   // the JSON serialisation. Surface a comment via the SQL itself;
   // the operator can hand-edit.
-  const comparator =
-    clause.op === "gt" ? ">" : clause.op === "gte" ? ">=" : clause.op === "lt" ? "<" : "<=";
+  const comparator = rangeComparator(clause.op);
   const literal = JSON.stringify(clause.value);
   if (target === "postgres") {
     return `${col.identifier}::text ${comparator} ${quoteValue(literal, target)}`;
@@ -185,21 +190,40 @@ const jsonPathClause = (
 ): string => {
   const accessor = jsonPathAccessor(col.identifier, tail, target);
   switch (clause.op) {
-    case "eq":
+    case "eq": {
       return `${accessor} = ${quoteLeaf(clause.value as DocumentValue, target)}`;
-    case "gt":
+    }
+    case "gt": {
       return `${accessor} > ${quoteLeaf(clause.value as DocumentValue, target)}`;
-    case "gte":
+    }
+    case "gte": {
       return `${accessor} >= ${quoteLeaf(clause.value as DocumentValue, target)}`;
-    case "lt":
+    }
+    case "lt": {
       return `${accessor} < ${quoteLeaf(clause.value as DocumentValue, target)}`;
-    case "lte":
+    }
+    case "lte": {
       return `${accessor} <= ${quoteLeaf(clause.value as DocumentValue, target)}`;
-    case "in":
+    }
+    case "in": {
       return `${accessor} IN (${(clause.value as ReadonlyArray<DocumentValue>)
         .map((v) => quoteLeaf(v, target))
         .join(", ")})`;
+    }
   }
+};
+
+const rangeComparator = (op: PredicateClause["op"]): string => {
+  if (op === "gt") {
+    return ">";
+  }
+  if (op === "gte") {
+    return ">=";
+  }
+  if (op === "lt") {
+    return "<";
+  }
+  return "<=";
 };
 
 const jsonPathAccessor = (

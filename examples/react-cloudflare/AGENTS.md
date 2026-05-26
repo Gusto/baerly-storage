@@ -149,11 +149,16 @@ http://localhost:5173/<path>`) before declaring the task complete.
   instance into multiple `Db.create` calls so they share the
   underlying bucket.
 
-- **Predicates** — `db.table("notes").where({...}).all()`. Top-level
-  equality on fields and dotted paths, plus per-field operators
-  (`$eq`, `$gt`, `$gte`, `$lt`, `$lte`, `$in`); multiple operators on
-  the same field AND. No top-level `$or` / `$and` / `$regex`. Two
-  `.where(...)` calls AND-merge:
+- **Predicates** — `db.table("notes").where({...}).all()`. Two
+  shapes:
+
+  - **Object literal** — equality only (top-level, dotted-path, or
+    nested literal sub-predicate). Multi-field is implicit AND.
+  - **Callback DSL** — `q => q.eq(...).gt(...).gte(...).lt(...).lte(...).in(...)`
+    for the operator vocabulary. The methods on `PredicateBuilder<T>`
+    ARE the supported surface — `q.or` / `q.regex` / `q.ne` /
+    `q.exists` are TS compile errors. Chained `.where(...).where(...)`
+    AND-merges across shapes.
 
   ```ts
   // Top-level equality
@@ -164,21 +169,26 @@ http://localhost:5173/<path>`) before declaring the task complete.
     .where({ "meta.source": "import" })
     .all();
 
-  // Operator on a single field — set-membership
+  // Operator on a single field — set membership (callback form)
   await db.table("notes")
-    .where({ tag: { $in: ["todo", "wip"] } })
+    .where(q => q.in("tag", ["todo", "wip"]))
     .all();
 
-  // AND-merge across two .where() calls
+  // Range — also callback form
+  await db.table("notes")
+    .where(q => q.gte("created_at", "2026-01-01"))
+    .all();
+
+  // AND-merge across two .where() calls (mix shapes freely)
   await db.table("notes")
     .where({ body: "TODO" })
-    .where({ "meta.source": "import" })
+    .where(q => q.gte("priority", 5))
     .all();
   ```
 
   The plain-equality value type is JSON-arrayless: string / number /
-  boolean / nested object. Use `$in` for set-membership when you'd
-  otherwise want `{ tag: ["todo","wip"] }`.
+  boolean / nested object. Use `q.in("tag", [...])` for set
+  membership when you'd otherwise want `{ tag: ["todo","wip"] }`.
 
 - **Indexes** — declare them in `baerly.config.ts`; the read-path
   planner picks one automatically when the predicate's equality

@@ -113,7 +113,7 @@ read and before the log fold. The planner returns either
 to LIST under the encoded index prefix and resolve only the matching
 doc ids — or `FullScanPlan{reason}` — which falls through to the
 snapshot+log fold. Every fetched row passes through
-`matches(predicate, doc)` post-fetch; the re-check is load-bearing
+`matchesWire(wire, doc)` post-fetch; the re-check is load-bearing
 (it defends against stale index entries AND consumes the planner's
 residue `postFilter`). The plan shape and diagnostic `reason` values
 are documented in [features.md](features.md) §"Secondary indexes".

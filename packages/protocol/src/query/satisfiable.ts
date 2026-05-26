@@ -53,24 +53,30 @@ const groupByField = (wire: PredicateWire): Map<string, FieldGroup> => {
 
 const applyClause = (group: FieldGroup, field: string, clause: PredicateClause): void => {
   switch (clause.op) {
-    case "eq":
+    case "eq": {
       group.eqs.push(clause.value as DocumentValue);
       return;
-    case "in":
+    }
+    case "in": {
       group.ins.push(clause.value as ReadonlyArray<DocumentValue>);
       return;
-    case "gt":
+    }
+    case "gt": {
       tightenLower(group, field, clause.value as DocumentValue, false);
       return;
-    case "gte":
+    }
+    case "gte": {
       tightenLower(group, field, clause.value as DocumentValue, true);
       return;
-    case "lt":
+    }
+    case "lt": {
       tightenUpper(group, field, clause.value as DocumentValue, false);
       return;
-    case "lte":
+    }
+    case "lte": {
       tightenUpper(group, field, clause.value as DocumentValue, true);
       return;
+    }
   }
 };
 

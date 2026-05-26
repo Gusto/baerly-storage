@@ -18,8 +18,7 @@ import { BaerlyError } from "../errors.ts";
 import type { DocumentData } from "../json.ts";
 import type { Predicate } from "../table-api.ts";
 
-import type { PredicateBuilder, PredicateArg } from "./builder.ts";
-import { wireFromBuilder } from "./builder.ts";
+import { type PredicateArg, type PredicateBuilder, wireFromBuilder } from "./builder.ts";
 import { formatPath } from "./_internals.ts";
 import type { PredicateClause, PredicateWire } from "./wire.ts";
 

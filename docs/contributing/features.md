@@ -129,7 +129,7 @@ export default defineConfig({
         { name: "by_status_priority", on: ["status", "priority"] },
         { name: "by_open_assignee",
           on: "assignee",
-          predicate: { status: "open" } },
+          predicate: { clauses: [{ op: "eq", field: "status", value: "open" }] } },
       ],
     },
   },
@@ -146,26 +146,27 @@ as `IndexDefinition`.
 
 - Equality on the leftmost indexed field is the cheapest plan; the
   planner walks under the encoded equality prefix.
-- Range (`$gt`/`$gte`/`$lt`/`$lte`) and `$in` clauses are accepted
+- Range (`gt`/`gte`/`lt`/`lte`) and `in` clauses are accepted
   on the **last** indexed field after any equality prefix. Range on
   a non-last field peels the equality and pushes the range clause
-  into the post-fetch `matches(...)` residue (`postFilter`).
+  into the post-fetch `matchesWire(...)` residue (`postFilter`).
 - When multiple indexes match, the planner prefers (in order):
-  filtered indexes whose `def.predicate` is implied by the query
-  predicate; longest equality prefix; definition order.
+  filtered indexes whose `def.predicate` (a `PredicateWire`) is
+  implied by the query wire; longest equality prefix; definition
+  order.
 - Otherwise `planQuery` emits `FullScanPlan` and the read walks the
   snapshot+log fold. Diagnostic `reason` values:
   `"no-predicate"`, `"no-indexes-declared"`,
   `"no-matching-index"`, `"predicate-uses-operators-only"`.
 
-#### Numeric range and `$in` walks
+#### Numeric range and `in` walks
 
 `encodeIndexValue` is value-order-preserving across types: numbers
 are encoded as sortable IEEE 754, strings as raw UTF-8, and a
 leading type tag keeps `"5"` and `5` in disjoint slots. Range walks
-and `$in` walks over numeric fields route normally — no full-scan
-fallback. The only routing-side guard that remains for `$in` is
-`IN_FANOUT_THRESHOLD` (50): an `$in` whose value list exceeds that
+and `in` walks over numeric fields route normally — no full-scan
+fallback. The only routing-side guard that remains for `in` is
+`IN_FANOUT_THRESHOLD` (50): an `in` whose value list exceeds that
 threshold falls back to full-scan because N sequential LISTs cost
 more than one snapshot+log fold. String range walks remain safe
 under UTF-8 byte order (ISO 8601 timestamps, `"p1"/"p2"/"p3"`
@@ -182,8 +183,10 @@ priorities, zero-padded numerics in string form, etc.).
   (`runIndexWalkPlan` at the I/O boundary),
   [`packages/server/src/rebuild-index.ts`](../../packages/server/src/rebuild-index.ts)
   (filter-aware reconciliation),
-  [`packages/protocol/src/query/_internals.ts`](../../packages/protocol/src/query/_internals.ts)
-  (`PredicateOp<V>`),
+  [`packages/protocol/src/query/wire.ts`](../../packages/protocol/src/query/wire.ts)
+  (`PredicateWire`, `PredicateClause`, `PredicateOpName`),
+  [`packages/protocol/src/query/builder.ts`](../../packages/protocol/src/query/builder.ts)
+  (`PredicateBuilder<T>`),
   [`packages/server/src/query-planner-implies.ts`](../../packages/server/src/query-planner-implies.ts)
   (`predicateImplies`).
 - Tests:

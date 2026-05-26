@@ -78,18 +78,24 @@ const lookupPath = (doc: JSONObject, field: string): JSONValue | undefined => {
 
 const matchesClause = (clause: PredicateClause, actual: JSONValue | undefined): boolean => {
   switch (clause.op) {
-    case "eq":
+    case "eq": {
       return matchesEq(clause.value as DocumentValue, actual);
-    case "in":
+    }
+    case "in": {
       return matchesIn(clause.value as ReadonlyArray<DocumentValue>, actual);
-    case "gt":
+    }
+    case "gt": {
       return compareGT(actual, clause.value as DocumentValue, false);
-    case "gte":
+    }
+    case "gte": {
       return compareGT(actual, clause.value as DocumentValue, true);
-    case "lt":
+    }
+    case "lt": {
       return compareLT(actual, clause.value as DocumentValue, false);
-    case "lte":
+    }
+    case "lte": {
       return compareLT(actual, clause.value as DocumentValue, true);
+    }
   }
 };
 
