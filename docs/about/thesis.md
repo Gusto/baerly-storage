@@ -2,7 +2,7 @@
 title: Product thesis
 audience: product
 summary: Why Baerly exists, what it is, and what it deliberately is not.
-last-reviewed: 2026-05-15
+last-reviewed: 2026-05-26
 tags: [positioning, product]
 related: [cost-model.md, "../contributing/conventions/change-discipline.md"]
 ---
@@ -54,10 +54,21 @@ The criteria the rest of this document is shaped around:
    storage without an exit is deferred migration pain. The day the
    app outgrows the system, leaving has to be mechanical.
 4. **An API an LLM can use from the type definitions alone.** Small
-   surface, no hallucinated ceremony, string error codes,
-   `@example` blocks that are tested. The additive-only lock on the
-   public surface is codified in
-   [ADR-002](../adr/002-api-surface-lock.md).
+   surface, string error codes, `@example` blocks that are tested.
+   *Type signatures are the contract; JSDoc is prose.* An LLM should
+   reach the correct call zero-shot from the `.d.ts` shapes alone —
+   even when it ignores the comments. Two failure modes follow:
+   - *Hallucinated ceremony* — the agent invents an API the kernel
+     does not ship (e.g. `.findOneById()`). The fix is teaching the
+     real surface via `@example` blocks and the AGENTS.md quickref.
+   - *Redundant ceremony* — the kernel ships two type-valid paths
+     for the same operation (e.g. `.get(id)` *and*
+     `.where({_id}).first()`). JSDoc steering does not override
+     training-distribution priors; the fix is making one of the
+     paths not type-check. The additive-only lock on the public
+     surface is codified in
+     [ADR-002](../adr/002-api-surface-lock.md), which scopes
+     "additive" to *capabilities*, not *forms*.
 5. **No DDL.** The moment the loop requires `CREATE TABLE`, "invent
    and preserve a schema across edits" is inserted into the part of
    the loop LLMs are worst at (`category` vs `categories` four
