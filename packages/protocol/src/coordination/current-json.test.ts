@@ -621,20 +621,21 @@ describe("claimWriter vs single-PUT counter-example (patent C1)", () => {
     },
   );
 
-  // ── Lying-Date adversarial property (F5–F7 of adv-model) ────────
+  // ── Lying-Date adversarial property (F2 + F6 of adv-model) ──────
   //
-  // For each of the three named bounded `Date` adversaries
-  // (backward-jump / repeated / non-monotonic), drive a fresh
+  // For each of the three named bounded `Date` adversaries (spanning
+  // F2 "Server lies about `Date`" via the `"repeated"` pinned-header
+  // mode, and F6 "Server advances `Date` non-monotonically" via the
+  // `"backward-jump"` and `"non-monotonic"` modes), drive a fresh
   // current.json through a sequence of `claimWriter` calls and assert
-  // the I1–I3 invariants from
+  // the I1, I3, and I5 invariants from
   // `docs/spec/writer-fence-adversarial-model.md` hold against the
   // resulting observable state.
   //
   // I4 ("uniqueness of `(epoch, claimed_at)` across successful
-  // returns") from the doc is structurally subsumed here by I3's
-  // idempotency check — every claim bumps `epoch`, so two observed
-  // entries with the same `epoch` can only differ in `claimed_at` if
-  // the stamp PUT mutated the row mid-epoch, which I3 rejects.
+  // returns") follows trivially from I1: monotonically-bumped epochs
+  // make every successful return's `(epoch, claimed_at)` tuple
+  // distinct from every earlier one's, regardless of stamp content.
   test.prop({
     adversary: fc.constantFrom(
       "backward-jump" as const,
@@ -644,7 +645,7 @@ describe("claimWriter vs single-PUT counter-example (patent C1)", () => {
     writerSequence: fc.array(fc.constantFrom("A", "B", "C"), { minLength: 2, maxLength: 16 }),
     seed: fc.integer({ min: 0, max: 0x7fff_ffff }),
   })(
-    "lying-Date adversary: invariants I1–I3 hold under any bounded Date adversary",
+    "lying-Date adversary: invariants I1, I3, I5 hold under any bounded Date adversary",
     async ({ adversary, writerSequence, seed }) => {
       const inner = new MemoryStorage();
       // Each claim issues two PUTs (provisional + stamp) and the
@@ -683,7 +684,7 @@ describe("claimWriter vs single-PUT counter-example (patent C1)", () => {
       for (let i = 1; i < observed.length; i++) {
         expect(observed[i]!.epoch).toBeGreaterThanOrEqual(observed[i - 1]!.epoch);
       }
-      // I2: every non-empty `claimed_at` came from a server-attested
+      // I3: every non-empty `claimed_at` came from a server-attested
       // Date value (i.e. is in the set the adversary handed out).
       // Never from a client-invented timestamp. This is the
       // server-clock-provenance contract of the two-phase protocol —
@@ -695,7 +696,7 @@ describe("claimWriter vs single-PUT counter-example (patent C1)", () => {
           expect(handed.has(o.claimed_at)).toBe(true);
         }
       }
-      // I3: idempotency of the stamp within an epoch — once an epoch
+      // I5: idempotency of the stamp within an epoch — once an epoch
       // has been stamped with a non-empty `claimed_at`, any later
       // observation at the same epoch must carry the same string,
       // and an epoch already stamped must never regress to "".

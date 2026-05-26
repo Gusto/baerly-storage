@@ -90,6 +90,13 @@ Under the threat model above, every observable execution of
   provisional PUT (the rare case where the stamp PUT lost,
   `claimed_at` remained `""`, and a subsequent claim succeeded).
   Verified by the `two-phase: (epoch, claimed_at) tuples are distinct and only carry server-clock values` fast-check property in `current-json.test.ts`.
+- **I5. Stamp idempotency within an epoch.** Once an epoch has been
+  stamped with a non-empty `claimed_at`, every later observation at
+  that same epoch carries the identical string, and a non-empty
+  stamp never regresses to `""`. Follows from the two-phase split
+  between provisional PUT and stamp PUT — once stamped, the same
+  `(epoch, claimed_at)` tuple is the only valid observation for
+  that epoch. Verified by the `lying-Date adversary: invariants I1, I3, I5 hold under any bounded Date adversary` fast-check property in `current-json.test.ts`.
 
 ## Failure modes
 
@@ -108,7 +115,7 @@ invariants I1–I4 above is preserved or compromised.
 | **F7. Storage adapter never surfaces `serverDate`** (some test harnesses, future bindings) | Every `claimWriter` call returns `claimed_at: ""`. | ✓ | ✓ | ✓ | ✓ | Degenerate but safe. The fence still functions; `claimed_at` is debug-only. |
 | **F8. Bounded clock skew up to `LAG_WINDOW_MILLIS`** (NTP-synchronized but not lockstep) | Multiple peers' local clocks disagree by ≤ 5000 ms; the server's clock is the single shared reference. | ✓ | ✓ | ✓ | ✓ | The patent's adversarial bound. The single-PUT counter-example breaks I3 and I4 here; the two-phase protocol does not. The two-phase side is verified by the `two-phase: (epoch, claimed_at) tuples are distinct and only carry server-clock values` fast-check property; the single-PUT counter-example breaking I3 is verified deterministically by the `narrative: single-PUT records client clock; two-phase records server clock (patent C1)` test. |
 
-Pinned by `packages/protocol/src/coordination/current-json.test.ts` §"lying-Date adversary: invariants I1–I3 hold under any bounded Date adversary" (`FC_NUM_RUNS=100` default, verified at 10 000). The property drives a fresh `current.json` through `SkewedClockStorage` under three named bounded `Date` adversaries — `"backward-jump"` (strictly-decreasing `serverDate`), `"repeated"` (pinned `serverDate`), and `"non-monotonic"` (oscillating `serverDate` within ±10 min) — and asserts that every observable execution preserves I1 (epoch monotonicity), I2 (server-clock provenance: every non-empty `claimed_at` is in the adversary-handed set), and I3 (stamp idempotency within an epoch). I4 from the invariant list is structurally subsumed by I3 on the in-test observation cadence (one read per attempt); the dedicated I4 surface remains pinned by the bounded-skew `two-phase: (epoch, claimed_at) tuples are distinct and only carry server-clock values` property in the same file.
+Pinned by `packages/protocol/src/coordination/current-json.test.ts` §"lying-Date adversary: invariants I1, I3, I5 hold under any bounded Date adversary" (`FC_NUM_RUNS=100` default, verified at 10 000). The property drives a fresh `current.json` through `SkewedClockStorage` under three named bounded `Date` adversaries spanning rows **F2** (pinned `Date` header; the `"repeated"` mode) and **F6** (`Date` advances non-monotonically; the `"backward-jump"` and `"non-monotonic"` modes) of the failure-mode table above. The property asserts that every observable execution preserves I1 (epoch monotonicity), I3 (server-clock provenance: every non-empty `claimed_at` is in the adversary-handed set), and I5 (stamp idempotency within an epoch). I4 follows trivially from I1: monotonically-bumped epochs make every successful return's `(epoch, claimed_at)` tuple distinct from every earlier one's, regardless of stamp content; the dedicated I4 surface remains pinned by the bounded-skew `two-phase: (epoch, claimed_at) tuples are distinct and only carry server-clock values` property in the same file.
 
 ## What is NOT defended
 
