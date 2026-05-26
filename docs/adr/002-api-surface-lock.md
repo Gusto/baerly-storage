@@ -2,7 +2,7 @@
 title: API surface lock
 audience: adr
 summary: ADR 002 — API surface lock.
-last-reviewed: 2026-05-12
+last-reviewed: 2026-05-26
 tags: [decision, adr]
 related: [README.md]
 ---
@@ -20,6 +20,9 @@ Accepted (2026-05-11).
   the wire has no bulk mutation route). The lock's "additive-only"
   contract is reset against the new baseline. See ticket
   `01-table-api-by-id-mutations.md` for the supersession context.
+- Amended (2026-05-26): scoped "additive-only" to capabilities, not
+  forms — a redundant type-valid path to an existing capability is
+  a defect, not an addition. See "Scope of 'additive'" below.
 
 ## Context
 
@@ -110,6 +113,23 @@ Allowed additive changes (no ADR required):
 - New optional config fields on `Db.create` (e.g. `metrics`, `signal`).
 - New `BaerlyErrorCode` values appended to the union in
   [`packages/protocol/src/errors.ts`](../../packages/protocol/src/errors.ts).
+
+### Scope of "additive"
+
+The lock is on *capabilities*, not *forms*. A second type-valid path
+to an existing capability is not an "addition" — it is redundancy,
+and redundant forms are a defect against criterion #4 of the
+[product thesis](../about/thesis.md) (the *redundant ceremony*
+failure mode). When a new canonical form lands for an existing
+capability, the prior form is a candidate for removal in the same
+amendment cycle. Pre-launch (no external users), the cost of
+removal is zero; the 2026-05-21 amendment above is the precedent.
+
+In practice this means: if a PR adds `Table<T>.method(x)` and the
+same operation was previously expressible as
+`Table<T>.where({...}).other()`, the PR should either (a) make the
+ceremony path not type-check, or (b) amend this ADR with the
+justification for keeping both.
 
 Prohibited without a supersession ADR:
 
