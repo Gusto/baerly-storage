@@ -19,7 +19,7 @@
  * numbers.
  */
 
-import { type DocumentValue, type DocumentData, type Predicate } from "@baerly/protocol";
+import { type DocumentValue, type PredicateWire } from "@baerly/protocol";
 import type { IndexDefinition } from "./indexes.ts";
 import { predicateImplies } from "./query-planner-implies.ts";
 
@@ -37,7 +37,7 @@ export type QueryPlan = IndexWalkPlan | FullScanPlan;
  *
  * `rangeOn` and `inOn` are reserved for T3 — both `undefined` under
  * T2's equality-only routing. The executor re-applies the FULL
- * original predicate via `matches(...)` after fetching rows; that
+ * original wire via `matchesWire(...)` after fetching rows; that
  * single check is both the stale-index defence and the residue
  * consumer, so the planner does NOT emit a separate `postFilter`.
  */
@@ -102,36 +102,9 @@ export interface FullScanPlan {
 export const IN_FANOUT_THRESHOLD = 50;
 
 /**
- * Detect "operator-shape object": every key starts with `$`. Mirrors
- * T1's `validatePredicate` rule (see
- * `packages/protocol/src/query/validate.ts`).
- */
-const isOperatorObject = (v: unknown): boolean => {
-  if (v === null || typeof v !== "object") {
-    return false;
-  }
-  const keys = Object.keys(v as Record<string, unknown>);
-  if (keys.length === 0) {
-    return false;
-  }
-  for (const k of keys) {
-    if (!k.startsWith("$")) {
-      return false;
-    }
-  }
-  return true;
-};
-
-/**
- * Extract a normalized range bound from an operator object, if one
- * is present. Returns `undefined` when the op-object has neither a
- * range bound nor `$eq` (e.g. `{$in:[...]}` only). When `$eq` is
- * present alongside no range bounds, returns it as an equality.
- *
- * The detection is conservative — any unsupported shape (mixed
- * `$eq` + range, `$in` mixed with anything else) returns
- * `undefined` so the planner skips routing that field rather than
- * misroute.
+ * Per-field range bound bundle decoded from a {@link PredicateWire}.
+ * Mirrors the shape the executor consumes on the plan's `rangeOn`
+ * slot.
  */
 interface RangeOpInfo {
   readonly lo?: DocumentValue;
@@ -140,117 +113,36 @@ interface RangeOpInfo {
   readonly hiInclusive: boolean;
 }
 
-const tryExtractRange = (op: Record<string, unknown>): RangeOpInfo | undefined => {
-  const keys = Object.keys(op);
-  // `$in` is its own routing channel — never mix with range here.
-  if (keys.includes("$in")) {
-    return undefined;
-  }
-  // `$eq` alone — caller should treat the field as equality, not range.
-  if (keys.length === 1 && keys[0] === "$eq") {
-    return undefined;
-  }
-  const hasRange =
-    op["$gt"] !== undefined ||
-    op["$gte"] !== undefined ||
-    op["$lt"] !== undefined ||
-    op["$lte"] !== undefined;
-  if (!hasRange) {
-    return undefined;
-  }
-  // `$eq` mixed with a range — T1 validation collapses this to a
-  // single $eq when satisfiable, but defensively refuse routing
-  // anyway; the full-scan path is correct.
-  if (op["$eq"] !== undefined) {
-    return undefined;
-  }
-  let lo: DocumentValue | undefined;
-  let loInclusive = false;
-  if (op["$gte"] !== undefined) {
-    lo = op["$gte"] as DocumentValue;
-    loInclusive = true;
-  } else if (op["$gt"] !== undefined) {
-    lo = op["$gt"] as DocumentValue;
-    loInclusive = false;
-  }
-  let hi: DocumentValue | undefined;
-  let hiInclusive = false;
-  if (op["$lte"] !== undefined) {
-    hi = op["$lte"] as DocumentValue;
-    hiInclusive = true;
-  } else if (op["$lt"] !== undefined) {
-    hi = op["$lt"] as DocumentValue;
-    hiInclusive = false;
-  }
-  return {
-    ...(lo !== undefined ? { lo } : {}),
-    ...(hi !== undefined ? { hi } : {}),
-    loInclusive,
-    hiInclusive,
-  };
-};
-
 /**
- * Extract `$in` member values from an op-object, if it is an
- * `$in`-only clause. Returns `undefined` for anything else (including
- * `$in` mixed with other operators — the planner only routes the
- * pure shape).
- */
-const tryExtractIn = (op: Record<string, unknown>): ReadonlyArray<DocumentValue> | undefined => {
-  const keys = Object.keys(op);
-  if (keys.length !== 1 || keys[0] !== "$in") {
-    return undefined;
-  }
-  const values = op["$in"] as ReadonlyArray<DocumentValue> | undefined;
-  if (!Array.isArray(values)) {
-    return undefined;
-  }
-  return values;
-};
-
-/**
- * `$eq` extraction — collapses `{$eq:v}` to a bare equality value
- * the planner can put in `equalityKeys`. Returns `undefined` for any
- * other shape.
- */
-const tryExtractEq = (op: Record<string, unknown>): DocumentValue | undefined => {
-  const keys = Object.keys(op);
-  if (keys.length === 1 && keys[0] === "$eq" && op["$eq"] !== undefined) {
-    return op["$eq"] as DocumentValue;
-  }
-  return undefined;
-};
-
-/**
- * Choose a query plan over the predicate + declared indexes. Pure
- * function. The executor enforces the I/O semantics; the planner's
- * only contract is "given these inputs, this is the routing
- * decision."
+ * Choose a query plan over the wire predicate + declared indexes.
+ * Pure function. The executor enforces the I/O semantics; the
+ * planner's only contract is "given these inputs, this is the
+ * routing decision."
  *
  * Algorithm:
- *  1. `predicate === undefined` → `no-predicate`.
+ *  1. `wire === undefined` or empty → `no-predicate`.
  *  2. `indexes.length === 0` → `no-indexes-declared`.
- *  3. Partition predicate keys into:
- *      - `equality[k] = v` (JSON primitive, non-operator nested
- *        object, or `{$eq:v}` collapsing to `v`).
- *      - `rangeOps[k] = {lo, hi, loInclusive, hiInclusive}` for
- *        range-only `{$gt|$gte|$lt|$lte}` op-objects.
- *      - `inOps[k] = [...]` for pure `{$in:[...]}` op-objects.
- *      - Everything else stays in the original predicate; the
- *        executor re-applies the full predicate post-fetch via
- *        `matches(...)`, which catches the residue automatically.
- *  4. If no equality / range / $in candidates exist →
+ *  3. Partition wire clauses per field into:
+ *      - `equality[f] = v` from `eq` clauses.
+ *      - `rangeOps[f] = {lo, hi, loInclusive, hiInclusive}` from
+ *        one or more of `gt`/`gte`/`lt`/`lte` clauses on `f`.
+ *      - `inOps[f] = [...]` from a single `in` clause on `f`.
+ *      - Defensive: any field whose clause group mixes op-channels
+ *        (mostly impossible post-validation) is marked unroutable
+ *        and skipped — the executor's full-wire `matchesWire(...)`
+ *        post-fetch catches the residue automatically.
+ *  4. If no equality / range / `in` candidates exist →
  *     `predicate-uses-operators-only`.
  *  5. For each `def`, walk `def.on` left-to-right consuming
  *     equality clauses for each indexed field. On the FIRST field
  *     where the equality clause is absent, check whether a range
- *     or `$in` clause is available for that field — if so, that's
+ *     or `in` clause is available for that field — if so, that's
  *     the "tail slot" of the walk.
  *  6. Score candidates by `(equalityPrefixLen, hasTailExtension)`.
  *     Longest prefix wins; tail-extension breaks ties. If no
  *     candidate consumed at least one field (equality OR
- *     range/$in): `no-matching-index`.
- *  7. `$in` FAN-OUT GUARD: if the chosen plan's `$in` slot has
+ *     range/`in`): `no-matching-index`.
+ *  7. `in` FAN-OUT GUARD: if the chosen plan's `in` slot has
  *     `values.length > IN_FANOUT_THRESHOLD`, fall back to
  *     `FullScanPlan{reason:"no-matching-index"}` — N sequential
  *     LISTs cost more than a snapshot+log fold.
@@ -260,65 +152,139 @@ const tryExtractEq = (op: Record<string, unknown>): DocumentValue | undefined =>
  * (the projector at `indexes.ts:projectIndexValues` is top-level-
  * only too).
  *
- * **Range/`$in` is allowed only on the LAST indexed field beyond the
+ * **Range/`in` is allowed only on the LAST indexed field beyond the
  * equality prefix** — on a composite `[a, b]`, a range on `a` with
  * equality on `b` is NOT contiguous under the key encoding (the `b`
  * slot sits to the right of the varying `a` slot). Clauses landing
  * outside the tail slot are simply left for the executor's full-
  * predicate re-check.
- *
- * @typeParam T - the document shape the predicate is keyed against.
  */
-export const planQuery = <T extends DocumentData = DocumentData>(
-  predicate: Predicate<T> | undefined,
+export const planQuery = (
+  wire: PredicateWire | undefined,
   indexes: ReadonlyArray<IndexDefinition>,
 ): QueryPlan => {
-  if (predicate === undefined) {
+  if (wire === undefined || wire.clauses.length === 0) {
     return { kind: "full-scan", reason: "no-predicate" };
   }
   if (indexes.length === 0) {
     return { kind: "full-scan", reason: "no-indexes-declared" };
   }
 
-  // Partition predicate keys into:
-  //   - equality (planner-consumable; bare value or `{$eq:v}`)
-  //   - rangeOps (range-only op-objects)
-  //   - inOps (`$in`-only op-objects)
-  //   - other (anything else — always post-fetch residue)
+  // Partition wire clauses per-field into:
+  //   - equality (one `eq` clause on a field)
+  //   - rangeOps (one or more of `gt`/`gte`/`lt`/`lte` on a field)
+  //   - inOps (one `in` clause on a field)
+  //   - "unroutable" fields are skipped — the executor re-applies the
+  //     FULL original wire via `matchesWire(...)` post-fetch, which
+  //     catches the residue automatically.
+  //
+  // Validator-guaranteed invariants we lean on:
+  //   - Single op per field is the common case; multi-eq + multi-range
+  //     are pre-collapsed to a satisfiable group.
+  //   - An `eq` clause never coexists with `in` on the same field.
+  //   - An `in` clause never coexists with other ops on the same field.
+  //
+  // Defensive posture for "mixed eq+in" or "two `in` clauses" (which
+  // the validator does NOT explicitly forbid for routing's sake but
+  // are not worth set-intersecting at plan time): mark the field as
+  // unroutable and let the executor's full-wire post-filter cover
+  // correctness.
   const equality = new Map<string, DocumentValue>();
   const rangeOps = new Map<string, RangeOpInfo>();
   const inOps = new Map<string, ReadonlyArray<DocumentValue>>();
-  for (const key of Object.keys(predicate)) {
-    const value = (predicate as Record<string, unknown>)[key];
-    if (value === undefined) {
+  const unroutable = new Set<string>();
+
+  // First pass: per field, accumulate the lo/hi bounds and detect
+  // collisions between op channels.
+  interface RangeAcc {
+    lo?: DocumentValue;
+    hi?: DocumentValue;
+    loInclusive: boolean;
+    hiInclusive: boolean;
+  }
+  const rangeAcc = new Map<string, RangeAcc>();
+  for (const clause of wire.clauses) {
+    const field = clause.field;
+    if (unroutable.has(field)) {
       continue;
     }
-    if (isOperatorObject(value)) {
-      const op = value as Record<string, unknown>;
-      const eq = tryExtractEq(op);
-      if (eq !== undefined) {
-        equality.set(key, eq);
+    if (clause.op === "eq") {
+      if (inOps.has(field) || rangeAcc.has(field)) {
+        // Defensive: shouldn't happen post-validation, but keep the
+        // executor's post-filter as the safety net.
+        unroutable.add(field);
+        equality.delete(field);
+        inOps.delete(field);
+        rangeAcc.delete(field);
         continue;
       }
-      const range = tryExtractRange(op);
-      if (range !== undefined) {
-        rangeOps.set(key, range);
+      // Multiple `eq` on a field: the validator proves agreement; pick
+      // the first observed (overwrite is fine — values agree).
+      equality.set(field, clause.value as DocumentValue);
+    } else if (clause.op === "in") {
+      if (equality.has(field) || rangeAcc.has(field) || inOps.has(field)) {
+        unroutable.add(field);
+        equality.delete(field);
+        inOps.delete(field);
+        rangeAcc.delete(field);
         continue;
       }
-      const inVals = tryExtractIn(op);
-      if (inVals !== undefined) {
-        inOps.set(key, inVals);
+      if (!Array.isArray(clause.value)) {
+        unroutable.add(field);
         continue;
       }
-      // Some other operator-object shape (e.g. mixed). Stays in
-      // the original predicate; the executor's full-predicate
-      // re-check applies it post-fetch.
-      continue;
+      inOps.set(field, clause.value as ReadonlyArray<DocumentValue>);
+    } else {
+      // Range op (gt / gte / lt / lte).
+      if (equality.has(field) || inOps.has(field)) {
+        unroutable.add(field);
+        equality.delete(field);
+        inOps.delete(field);
+        rangeAcc.delete(field);
+        continue;
+      }
+      const acc: RangeAcc = rangeAcc.get(field) ?? { loInclusive: false, hiInclusive: false };
+      const v = clause.value as DocumentValue;
+      if (clause.op === "gte") {
+        // Tighten lo upward.
+        if (acc.lo === undefined || v > acc.lo) {
+          acc.lo = v;
+          acc.loInclusive = true;
+        } else if (v === acc.lo && !acc.loInclusive) {
+          // existing exclusive is stricter — keep it
+        }
+      } else if (clause.op === "gt") {
+        if (acc.lo === undefined || v > acc.lo) {
+          acc.lo = v;
+          acc.loInclusive = false;
+        } else if (v === acc.lo) {
+          // Same value; exclusive wins.
+          acc.loInclusive = false;
+        }
+      } else if (clause.op === "lte") {
+        if (acc.hi === undefined || v < acc.hi) {
+          acc.hi = v;
+          acc.hiInclusive = true;
+        }
+      } else if (clause.op === "lt") {
+        if (acc.hi === undefined || v < acc.hi) {
+          acc.hi = v;
+          acc.hiInclusive = false;
+        } else if (v === acc.hi) {
+          acc.hiInclusive = false;
+        }
+      }
+      rangeAcc.set(field, acc);
     }
-    // Primitives + non-operator nested objects are routable as
-    // equality. The encoder accepts any DocumentValue value; equal-
-    // by-value objects produce byte-equal segments.
-    equality.set(key, value as DocumentValue);
+  }
+  // Project the range accumulators into the final `RangeOpInfo` map.
+  for (const [field, acc] of rangeAcc) {
+    rangeOps.set(field, {
+      ...(acc.lo !== undefined ? { lo: acc.lo } : {}),
+      ...(acc.hi !== undefined ? { hi: acc.hi } : {}),
+      loInclusive: acc.loInclusive,
+      hiInclusive: acc.hiInclusive,
+    });
   }
 
   if (equality.size === 0 && rangeOps.size === 0 && inOps.size === 0) {
@@ -329,7 +295,7 @@ export const planQuery = <T extends DocumentData = DocumentData>(
   // then sort with the T4 tie-break:
   //
   //  (1) Implied filter — a filtered index whose
-  //      `predicateImplies(def.predicate, queryPredicate)` is `true`
+  //      `predicateImplies(def.predicate, queryWire)` is `true`
   //      outranks an unfiltered alternative (sparser key range →
   //      smaller LIST). An unfiltered index outranks a filtered one
   //      whose `predicateImplies` is `false` — walking the smaller
@@ -392,7 +358,7 @@ export const planQuery = <T extends DocumentData = DocumentData>(
   // T4 cost-bias rank: 0 = filtered + implied (best), 1 = unfiltered
   // (mid), 2 = filtered + NOT implied (worst). A filtered candidate
   // whose filter is NOT implied is STILL eligible — but only as a
-  // last resort. The post-fetch `matches(predicate, ...)` re-check
+  // last resort. The post-fetch `matchesWire(wire, ...)` re-check
   // would still drop the rows that fall outside the filter, so the
   // index walk is unsound for the query (it would silently miss
   // matching rows that fell outside the filter), and only the
@@ -401,7 +367,7 @@ export const planQuery = <T extends DocumentData = DocumentData>(
     if (c.def.predicate === undefined) {
       return 1;
     }
-    return predicateImplies(c.def.predicate, predicate as Predicate<DocumentData>) ? 0 : 2;
+    return predicateImplies(c.def.predicate, wire) ? 0 : 2;
   };
   candidates.sort((a, b) => {
     const aRank = rank(a);
@@ -425,9 +391,9 @@ export const planQuery = <T extends DocumentData = DocumentData>(
     }
   }
 
-  // Residue (unconsumed predicate clauses) is intentionally NOT
+  // Residue (unconsumed wire clauses) is intentionally NOT
   // surfaced on the plan — the executor re-applies the FULL
-  // original predicate via `matches(...)` post-fetch, which is
+  // original wire via `matchesWire(...)` post-fetch, which is
   // both the stale-index defence and the residue consumer. See
   // `query.ts` ("simpler invariant").
   const plan: IndexWalkPlan = {

@@ -24,8 +24,7 @@
  *      `allIndexKeysFor` (all impl).
  */
 
-import type { DocumentData } from "./json.ts";
-import type { Predicate } from "./table-api.ts";
+import type { PredicateWire } from "./query/wire.ts";
 
 /**
  * A secondary index declaration. Lives in `baerly.config.ts` under
@@ -59,25 +58,29 @@ export interface IndexDefinition {
   readonly on: string | readonly string[];
 
   /**
-   * Optional sparse-projection filter. When present, the writer
-   * emits index keys ONLY for docs that satisfy `predicate` under
-   * `matches(predicate, body)`. Sparse indexes shrink the on-storage
-   * key set proportionally to filter selectivity — an index that
-   * matches ~1% of writes pays ~1% of the dense Class-A PUT cost.
+   * Optional sparse-projection filter (wire-form). When present, the
+   * writer emits index keys ONLY for docs that satisfy `predicate`
+   * under `matchesWire(predicate, body)`. Sparse indexes shrink the
+   * on-storage key set proportionally to filter selectivity — an
+   * index that matches ~1% of writes pays ~1% of the dense Class-A
+   * PUT cost.
    *
-   * Operators allowed: `$eq`, `$gt`, `$gte`, `$lt`, `$lte`, `$in`.
-   * Range-shaped and `$in`-shaped filters compose with the planner's
-   * cost-bias step via
-   * ({@link "@baerly/protocol".predicateImplies}), which proves
-   * whether a query predicate is contained in the filter's value
-   * range. A query that the filter's range / set strictly contains
-   * will route through the filtered index in preference to an
-   * unfiltered alternative.
+   * Operators allowed: `eq`, `gt`, `gte`, `lt`, `lte`, `in` — the
+   * locked {@link PredicateOpName} vocabulary. Range-shaped and
+   * `in`-shaped filters compose with the planner's cost-bias step
+   * via the implication checker, which proves whether a query
+   * predicate is contained in the filter's value range. A query
+   * that the filter's range / set strictly contains will route
+   * through the filtered index in preference to an unfiltered
+   * alternative.
+   *
+   * Wire shape example:
+   * `{ clauses: [{ op: "eq", field: "status", value: "open" }] }`.
    *
    * Planner cost-bias: a filtered index whose predicate is implied
    * by the query predicate outranks an unfiltered alternative; an
    * unfiltered index outranks a filtered one whose predicate is NOT
    * implied (walking the smaller key set would miss matching docs).
    */
-  readonly predicate?: Predicate<DocumentData>;
+  readonly predicate?: PredicateWire;
 }

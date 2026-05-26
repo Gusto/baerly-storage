@@ -14,7 +14,8 @@
  * mutated. Identity inequality between the original and the returned
  * builder is intentional: callers cannot share a chain.
  *
- * `.where()` AND-merges through `mergePredicates`.
+ * `.where()` AND-merges through `mergePredicateWires` (clause-level
+ * AND on the normalised wire form).
  * `.order()` and `.limit()` are last-call-wins (state replace).
  *
  * Each terminal reads `current.json` FRESH and walks `[0, next_seq)`
@@ -39,14 +40,15 @@ import {
   type DocumentData,
   logSeqStartOf,
   MANIFEST_POINTER_EMPTY_SNAPSHOT,
-  matches,
+  matchesWire,
   merge,
-  mergePredicates,
+  mergePredicateWires,
   type MetricsRecorder,
-  validatePredicate,
+  normalizePredicateArg,
+  validateWire,
   BaerlyError,
   type OrderSpec,
-  type Predicate,
+  type PredicateWire,
   type Query,
   readCurrentJson,
   type Storage,
@@ -204,12 +206,19 @@ export const serializeManifestPointer = (json: CurrentJson): string =>
 /**
  * Frozen state carried along a `Query<T>` chain. Every modifier
  * produces a fresh `QueryState<T>` via spread + `Object.freeze`; the
- * predicate / order / limit fields are never mutated in place.
+ * wire / order / limit fields are never mutated in place.
+ *
+ * The chain carries the normalised wire form ({@link PredicateWire})
+ * — the public seam (`.where(p)` accepting `PredicateArg<T>`) routes
+ * incoming object-form / callback-form predicates through
+ * `normalizePredicateArg` before they reach this state, so every
+ * downstream consumer (planner, executor, post-filter) reads the
+ * same shape.
  *
  * @internal
  */
 export interface QueryState<T extends DocumentData> {
-  readonly predicate: Predicate<T> | undefined;
+  readonly wire: PredicateWire | undefined;
   readonly order: OrderSpec<T> | undefined;
   readonly limit: number | undefined;
   /**
@@ -221,25 +230,32 @@ export interface QueryState<T extends DocumentData> {
 }
 
 /**
- * Returns the id iff `p` is exactly `{ _id: <string> }` — the shape
+ * Returns the id iff `wire` carries exactly one clause and that
+ * clause is `{op:"eq", field:"_id", value:<string>}` — the shape
  * `runRead` short-circuits to a single `Map.get`. Any other shape
- * (multi-key, non-`_id` key, operator-valued, non-string value)
+ * (multi-clause, non-`eq` op, non-`_id` field, non-string value)
  * returns `undefined` and falls through to the scan path.
+ *
+ * Kernel-internal `_id`-shaped wires (built by `byId`,
+ * `runByIdWithMeta`, `runInsert`) bypass the wire validator by
+ * design (`_id` at the root is a wire-only rejection); this
+ * recogniser matches the same shape so the fast-path stays
+ * symmetric.
  *
  * @internal
  */
-export const singleIdFromPredicate = (
-  p: Predicate<DocumentData> | undefined,
-): string | undefined => {
-  if (p === undefined || typeof p !== "object" || p === null) {
+export const singleIdFromPredicate = (wire: PredicateWire | undefined): string | undefined => {
+  if (wire === undefined) {
     return undefined;
   }
-  const keys = Object.keys(p);
-  if (keys.length !== 1 || keys[0] !== "_id") {
+  if (wire.clauses.length !== 1) {
     return undefined;
   }
-  const v = (p as { _id: unknown })._id;
-  return typeof v === "string" ? v : undefined;
+  const clause = wire.clauses[0]!;
+  if (clause.op !== "eq" || clause.field !== "_id") {
+    return undefined;
+  }
+  return typeof clause.value === "string" ? clause.value : undefined;
 };
 
 /**
@@ -248,9 +264,16 @@ export const singleIdFromPredicate = (
  * is never mutated. Identity inequality with the input chain is
  * intentional.
  *
+ * Validation happens at the public seams — `Query.where(p)`
+ * normalises + validates the incoming fragment before merging into
+ * `state.wire`. By the time `makeQuery` is reached from elsewhere
+ * (`Table.where`, `runAllWithMeta`, kernel-internal `_id`-shaped
+ * wires from `byId` / `runByIdWithMeta` / `runInsert`), the wire is
+ * already trusted.
+ *
  * @example
  * ```ts
- * const q = makeQuery<Ticket>(ctx, { predicate: undefined, order: undefined, limit: undefined, consistency: undefined });
+ * const q = makeQuery<Ticket>(ctx, { wire: undefined, order: undefined, limit: undefined, consistency: undefined });
  * const open = await q.where({ status: "open" }).order({ created_at: "desc" }).limit(10).all();
  * ```
  *
@@ -260,30 +283,24 @@ export const makeQuery = <T extends DocumentData>(
   ctx: TableReadContext,
   state: QueryState<T>,
 ): Query<T> => {
-  // Operator-policy boundary is public contract: reject `$`-keys
-  // synchronously, here, before any `Query<T>` carries an invalid
-  // predicate forward. Covers both entry points — `Table.where(p)`
-  // routes through `makeQuery({ predicate: p, ... })`, and
-  // `Query.where(p)` routes through the merged result below. Empty
-  // / undefined predicates short-circuit inside `validatePredicate`
-  // (an `{}` predicate has no keys to walk).
-  if (state.predicate !== undefined) {
-    validatePredicate<T>(state.predicate);
-  }
   // Every modifier below produces a fresh spread; identity inequality
   // with `state` is intentional and load-bearing. A shallow `Object.freeze`
   // would only protect the top-level object (the chain never mutates it
-  // anyway) and not nested predicate / order objects — pure ceremony.
+  // anyway) and not nested wire / order objects — pure ceremony.
   return {
     where: (p) => {
-      // Validate the incoming fragment before merge so error messages
-      // pin the offender to `p`, not the merged whole. `makeQuery`
-      // re-validates the result on the next hop — the operator-policy
-      // boundary is the public contract surface.
-      validatePredicate<T>(p);
+      // Normalise + validate the incoming fragment before merge so
+      // error messages pin the offender to `p`, not the merged whole.
+      // The validator is the wire-arrival contract surface; running
+      // it once per fragment is sufficient because `mergePredicateWires`
+      // preserves the per-clause shape that `validateWire` already
+      // approved.
+      const incoming = normalizePredicateArg<T>(p);
+      validateWire(incoming);
       return makeQuery<T>(ctx, {
         ...state,
-        predicate: state.predicate === undefined ? p : mergePredicates<T>(state.predicate, p),
+        wire:
+          state.wire === undefined ? incoming : mergePredicateWires(state.wire, incoming),
       });
     },
     order: (s) => makeQuery<T>(ctx, { ...state, order: s }),
@@ -316,11 +333,11 @@ export const makeQuery = <T extends DocumentData>(
  * locked interface signature. Single-row routes (`GET /v1/t/:table/:id`)
  * call this with `limit:1` and pick `rows[0]`.
  *
- * Mirrors the operator-policy boundary check that `makeQuery` runs
- * for chain-based reads: predicates with `$`-keys throw
- * `InvalidConfig` before any I/O. Routes that bypass `Db.table` /
- * `Query.where` (router callers parsing `?where=`) must still
- * surface the same error class.
+ * `state.wire` is assumed already validated — the public seam
+ * (`Query.where(p)` → `normalizePredicateArg` → `validateWire`) is
+ * the wire-arrival contract surface. Router callers parsing
+ * `?where=` run `validateWire` themselves inside `parseWhereParam`,
+ * keeping a single validation pass per wire.
  *
  * @internal
  */
@@ -328,9 +345,6 @@ export const runAllWithMeta = <T extends DocumentData>(
   ctx: TableReadContext,
   state: QueryState<T>,
 ): Promise<ReadResult<T>> => {
-  if (state.predicate !== undefined) {
-    validatePredicate<T>(state.predicate);
-  }
   return runRead<T>(ctx, state);
 };
 
@@ -339,16 +353,17 @@ export const runAllWithMeta = <T extends DocumentData>(
  * {@link runAllWithMeta} so the HTTP router can preserve the
  * `_meta` wire envelope while routing through the PK-lookup
  * fast-path. Mirrors {@link runAllWithMeta}'s signature; the
- * predicate is built internally as a single-key `{ _id: id }`
- * shape (same form as the `byId` helper in `./table.ts` and the
- * `runInsert` duplicate-collision check) which routes through
- * `runRead`'s `singleIdFromPredicate` short-circuit automatically.
+ * wire is built internally as a single-clause `{op:"eq",
+ * field:"_id", value:id}` shape (same form as the `byId` helper in
+ * `./table.ts` and the `runInsert` duplicate-collision check)
+ * which routes through `runRead`'s `singleIdFromPredicate`
+ * short-circuit automatically.
  *
- * Bypasses {@link validatePredicate} — the predicate is kernel-
- * constructed, never wire-submitted, so it would always pass the
- * structural rules. Skipping the validator also keeps this helper
- * usable from kernel-internal sites (`Table<T>.get` etc.) without
- * tripping any future wire-only rule that bans `_id` at the root.
+ * Bypasses {@link validateWire} — the wire is kernel-constructed,
+ * never wire-submitted, so it would always pass the structural
+ * rules. Skipping the validator also keeps this helper usable
+ * from kernel-internal sites (`Table<T>.get` etc.) without
+ * tripping the wire-only rule that bans top-level `_id`.
  *
  * @internal — router uses this to preserve `_meta` envelope;
  *   mirrors {@link runAllWithMeta} and {@link Table.get}.
@@ -359,7 +374,7 @@ export const runByIdWithMeta = <T extends DocumentData>(
   opts?: { readonly consistency?: ConsistencyLevel },
 ): Promise<ReadResult<T>> => {
   return runRead<T>(ctx, {
-    predicate: { _id: id } as Predicate<T>,
+    wire: { clauses: [{ op: "eq", field: "_id", value: id }] },
     order: undefined,
     limit: 1,
     consistency: opts?.consistency,
@@ -451,7 +466,7 @@ export const runInsert = async <T extends DocumentData>(
   // visible here. The collision check still defends against a doc
   // ALREADY committed to the bucket.
   const existing = await runRead<DocumentData>(ctx, {
-    predicate: { _id } as Predicate<DocumentData>,
+    wire: { clauses: [{ op: "eq", field: "_id", value: _id }] },
     order: undefined,
     limit: 1,
     // Insert's `_id`-collision check is a mutation precondition;
@@ -738,14 +753,14 @@ const runRead = async <T extends DocumentData>(
   }
 
   // ── Optional index-walk fast path. ──────────────────────────────
-  // `planQuery` is a pure function over `(predicate, indexes)`. It
-  // picks the longest-prefix-matching index from the collection's
-  // declared indexes and emits a `FullScanPlan` when nothing
-  // matches. We route on `plan.kind`; the in-memory `matches(...)`
-  // re-check on every fetched doc defends against stale index
-  // entries AND consumes the planner's residue (operator clauses,
-  // unrelated equality on non-indexed fields).
-  const plan: QueryPlan = planQuery(state.predicate, ctx.indexes);
+  // `planQuery` is a pure function over `(wire, indexes)`. It picks
+  // the longest-prefix-matching index from the collection's declared
+  // indexes and emits a `FullScanPlan` when nothing matches. We
+  // route on `plan.kind`; the in-memory `matchesWire(...)` re-check
+  // on every fetched doc defends against stale index entries AND
+  // consumes the planner's residue (range clauses, unrelated
+  // equality on non-indexed fields).
+  const plan: QueryPlan = planQuery(state.wire, ctx.indexes);
   if (plan.kind === "index-walk") {
     let rows = await runIndexWalkPlan<T>(ctx, head.json, state, plan);
     if (state.order !== undefined) {
@@ -794,18 +809,19 @@ const runRead = async <T extends DocumentData>(
   foldLogEntriesOnto(docs, entries, { collection: ctx.tableName });
 
   // ── Step 4. Apply predicate. ──────────────────────────────────────
-  // PK fast-path: `{ _id: "x" }` short-circuits the O(n) scan with a
-  // `Map.get` on the same snapshot — observable contract unchanged.
-  const fastId = singleIdFromPredicate(state.predicate as Predicate<DocumentData> | undefined);
+  // PK fast-path: a single `eq` clause on `_id` short-circuits the
+  // O(n) scan with a `Map.get` on the same snapshot — observable
+  // contract unchanged.
+  const fastId = singleIdFromPredicate(state.wire);
   let rows: T[];
   if (fastId !== undefined) {
     const hit = docs.get(fastId);
     rows = hit === undefined ? [] : [hit];
   } else {
     rows = Array.from(docs.values());
-    if (state.predicate !== undefined) {
-      const p = state.predicate;
-      rows = rows.filter((d) => matches(p, d));
+    if (state.wire !== undefined) {
+      const w = state.wire;
+      rows = rows.filter((d) => matchesWire(w, d));
     }
   }
 
@@ -855,9 +871,9 @@ const IN_FANOUT_PARALLELISM = 8;
 /**
  * Execute an {@link IndexWalkPlan} against the bucket. Returns the
  * post-filtered, fully-resolved row set. The full original
- * `state.predicate` is re-applied via `matches(...)` after fetching
+ * `state.wire` is re-applied via `matchesWire(...)` after fetching
  * rows — this defends against stale index entries AND consumes the
- * planner's residue (operator clauses, unrelated equality on
+ * planner's residue (range clauses, unrelated equality on
  * non-indexed fields) in one place.
  *
  * Storage shape (equality-only walks):
@@ -888,7 +904,7 @@ const IN_FANOUT_PARALLELISM = 8;
  * Stale-row defence:
  *   - An index entry pointing at a docId whose underlying doc has
  *     since been updated to a different value (rebuild hasn't run)
- *     is dropped by the in-memory `matches(...)` re-check.
+ *     is dropped by the in-memory `matchesWire(...)` re-check.
  *   - An index entry pointing at a docId whose underlying doc has
  *     been deleted (tombstone in the log) is dropped during the
  *     fold (the `D` op removes it from the materialised set).
@@ -1054,17 +1070,17 @@ const runIndexWalkPlan = async <T extends DocumentData>(
   const entries = await walkLogRange(ctx.storage, ctx.tablePrefix, logSeqStart, nextSeq);
   foldLogEntriesOnto(docs, entries, { collection: ctx.tableName, docIdFilter: matched });
 
-  // 3. Apply the FULL original predicate as the stale-row defence,
-  //    then the planner's residue postFilter on top. `matches` is
-  //    open-world, so applying the full original predicate (which
-  //    the planner partly consumed) is the simpler invariant: if
-  //    the doc still passes the original predicate, it stays.
-  //    Operator clauses that landed in `plan.postFilter` are part
-  //    of `state.predicate` — they pass through here automatically.
+  // 3. Apply the FULL original wire as the stale-row defence, then
+  //    the planner's residue postFilter on top. `matchesWire` is
+  //    open-world, so applying the full original wire (which the
+  //    planner partly consumed) is the simpler invariant: if the
+  //    doc still passes the original wire, it stays. Range / `in`
+  //    clauses that landed in `plan.postFilter` are part of
+  //    `state.wire` — they pass through here automatically.
   const rows: T[] = [];
-  const predicate = state.predicate;
+  const wire = state.wire;
   for (const doc of docs.values()) {
-    if (predicate === undefined || matches(predicate, doc)) {
+    if (wire === undefined || matchesWire(wire, doc)) {
       rows.push(doc);
     }
   }
@@ -1076,7 +1092,7 @@ const runIndexWalkPlan = async <T extends DocumentData>(
  * the spec's insertion order, which matches the caller's source-order
  * expectation. `Array.prototype.sort` is stable on Node 24+ and Workerd.
  *
- * Top-level fields only (locked at `Predicate<T>`/`OrderSpec<T>`).
+ * Top-level fields only (locked at `OrderSpec<T>`).
  * Values are `DocumentValue` — string / number / boolean / object —
  * but only the primitive types are sensibly orderable; comparing two
  * objects falls through to "considered equal," which preserves the
