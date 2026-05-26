@@ -159,10 +159,16 @@ http://localhost:5173/<path>`) before declaring the task complete.
   instance into multiple `Db.create` calls so they share the
   underlying bucket.
 
-- **Predicates** — `db.table("notes").where({...}).all()`. The
-  predicate is exact-equality only on day one; top-level fields and
-  dotted-path keys are supported. There are no operators (`$or`,
-  `$gt`, `$in`, `$regex`). Calling `.where(...)` twice AND-merges:
+- **Predicates** — `db.table("notes").where({...}).all()`. Two
+  shapes:
+
+  - **Object literal** — equality only (top-level, dotted-path, or
+    nested literal sub-predicate). Multi-field is implicit AND.
+  - **Callback DSL** — `q => q.eq(...).gt(...).gte(...).lt(...).lte(...).in(...)`
+    for the operator vocabulary. The methods on `PredicateBuilder<T>`
+    ARE the supported surface — `q.or` / `q.regex` / `q.ne` /
+    `q.exists` are TS compile errors. Chained `.where(...).where(...)`
+    AND-merges across shapes.
 
   ```ts
   // Top-level equality
@@ -173,32 +179,32 @@ http://localhost:5173/<path>`) before declaring the task complete.
     .where({ "meta.source": "import" })
     .all();
 
-  // AND-merge across two .where() calls
+  // Operator on a single field — set membership (callback form)
+  await db.table("notes")
+    .where(q => q.in("tag", ["todo", "wip"]))
+    .all();
+
+  // Range — also callback form
+  await db.table("notes")
+    .where(q => q.gte("created_at", "2026-01-01"))
+    .all();
+
+  // AND-merge across two .where() calls (mix shapes freely)
   await db.table("notes")
     .where({ body: "TODO" })
-    .where({ "meta.source": "import" })
+    .where(q => q.gte("priority", 5))
     .all();
   ```
 
-  The value type is JSON-arrayless: string / number / boolean / nested
-  object. Arrays are intentionally not supported as predicate values;
-  use `useIndex` (next bullet) for index-backed lookups.
+  The plain-equality value type is JSON-arrayless: string / number /
+  boolean / nested object. Use `q.in("tag", [...])` for set
+  membership when you'd otherwise want `{ tag: ["todo","wip"] }`.
 
-- **Indexes (`useIndex`)** — opt-in hint for the read path to walk a
-  secondary index instead of folding the snapshot + scanning the
-  table. Single-field equality only today (the planner that
-  auto-picks an index is future work). The reader still re-checks the
-  predicate in memory, so a stale index never produces wrong rows —
-  only at worst surfaces a row the predicate then drops.
-
-  ```ts
-  await db.table("notes")
-    .where({ body: "TODO" })
-    .useIndex("by_body")
-    .all();
-  ```
-
-  Declare indexes in `baerly.config.ts` via:
+- **Indexes** — declare them in `baerly.config.ts`; the read-path
+  planner picks one automatically when the predicate's equality
+  fields (and at most one range / `in` clause on the next indexed
+  field) cover the index's `on` tuple. No call-site hint is needed
+  — `Query<T>` has no `.useIndex()` method.
 
   ```ts
   import { defineConfig } from "baerly-storage/config";
@@ -213,9 +219,8 @@ http://localhost:5173/<path>`) before declaring the task complete.
   ```
 
   The adapter threads `collections` into `Db.create({ ... })` for
-  you. Mismatches (multi-field predicate or missing index) fall back
-  to the full table scan with a metric bump — correctness is
-  preserved.
+  you. Predicates the planner can't route fall back to the full
+  scan with a metric bump — correctness is preserved.
 
 - **Consistency** — every terminal read takes an optional
   `.consistency("eventual" | "strong")` modifier; mutations are

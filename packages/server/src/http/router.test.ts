@@ -99,7 +99,7 @@ describe("observability middleware", () => {
 
   test("successful request emits one canonical INFO line", async () => {
     const app = buildApp();
-    const req = new Request("http://localhost/v1/t/things?where=%7B%7D");
+    const req = new Request("http://localhost/v1/t/things?where=%7B%22clauses%22%3A%5B%5D%7D");
     const res = await withHttpObservability(req, (r) => app.fetch(r));
     expect(res.status).toBe(200);
     const lines = canonical();
@@ -154,7 +154,7 @@ describe("observability middleware", () => {
 
   test("x-request-id header is honoured", async () => {
     const app = buildApp();
-    const req = new Request("http://localhost/v1/t/things?where=%7B%7D", {
+    const req = new Request("http://localhost/v1/t/things?where=%7B%22clauses%22%3A%5B%5D%7D", {
       headers: { "x-request-id": "known-id" },
     });
     await withHttpObservability(req, (r) => app.fetch(r));
@@ -167,7 +167,7 @@ describe("observability middleware", () => {
     await reset();
     await configureObservability({ level: "debug", sink, sampleRate: 0 });
     const app = buildApp();
-    const req = new Request("http://localhost/v1/t/things?where=%7B%7D");
+    const req = new Request("http://localhost/v1/t/things?where=%7B%22clauses%22%3A%5B%5D%7D");
     const res = await withHttpObservability(req, (r) => app.fetch(r));
     expect(res.status).toBe(200);
     expect(canonical()).toHaveLength(0);
@@ -239,7 +239,7 @@ describe("router is silent without a wrapping observability scope", () => {
 
     let resStatus: number | undefined;
     await runWithContext(outerCtx, async () => {
-      const res = await app.request("http://localhost/v1/t/things?where=%7B%7D");
+      const res = await app.request("http://localhost/v1/t/things?where=%7B%22clauses%22%3A%5B%5D%7D");
       resStatus = res.status;
     });
 
@@ -249,7 +249,7 @@ describe("router is silent without a wrapping observability scope", () => {
 
   test("bare app.fetch with no outer scope still emits no router-owned canonical line", async () => {
     const app = makeApp();
-    const res = await app.request("http://localhost/v1/t/things?where=%7B%7D");
+    const res = await app.request("http://localhost/v1/t/things?where=%7B%22clauses%22%3A%5B%5D%7D");
     expect(res.status).toBe(200);
     expect(canonical()).toHaveLength(0);
   });

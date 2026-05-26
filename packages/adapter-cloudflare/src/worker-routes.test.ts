@@ -270,7 +270,9 @@ describe("baerlyWorker routes", () => {
       expect(res.status).toBe(201);
     }
 
-    const where = encodeURIComponent(JSON.stringify({ status: "open" }));
+    const where = encodeURIComponent(
+      JSON.stringify({ clauses: [{ op: "eq", field: "status", value: "open" }] }),
+    );
     const listRes = await worker.fetch!(
       asWorkersRequest(new Request(`https://x/v1/t/${table}?where=${where}`)),
       env,

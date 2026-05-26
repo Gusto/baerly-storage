@@ -14,25 +14,33 @@ describe("stableKey", () => {
     expect(stableKey([1, 2, 3])).not.toBe(stableKey([3, 2, 1]));
   });
 
-  test("operator predicates: $in is stable across object key order", () => {
-    expect(stableKey({ status: { $in: ["open", "p1"] } })).toBe(
-      stableKey({ status: { $in: ["open", "p1"] } }),
+  test("wire predicate: equivalent clause lists hash identically", () => {
+    // The React hook now feeds `PredicateWire` into stableKey. Two
+    // wires with the same clause list serialise identically — the
+    // outer `{clauses: …}` key is the only top-level field.
+    expect(
+      stableKey({ clauses: [{ op: "in", field: "status", value: ["open", "p1"] }] }),
+    ).toBe(stableKey({ clauses: [{ op: "in", field: "status", value: ["open", "p1"] }] }));
+  });
+
+  test("wire predicate: in-clause value-array order is preserved", () => {
+    expect(
+      stableKey({ clauses: [{ op: "in", field: "status", value: ["a", "b"] }] }),
+    ).not.toBe(stableKey({ clauses: [{ op: "in", field: "status", value: ["b", "a"] }] }));
+  });
+
+  test("wire predicate: gt vs lt produce distinct keys", () => {
+    expect(stableKey({ clauses: [{ op: "gt", field: "priority", value: 1 }] })).not.toBe(
+      stableKey({ clauses: [{ op: "lt", field: "priority", value: 1 }] }),
     );
   });
 
-  test("operator predicates: $in preserves array order", () => {
-    expect(stableKey({ status: { $in: ["a", "b"] } })).not.toBe(
-      stableKey({ status: { $in: ["b", "a"] } }),
-    );
-  });
-
-  test("operator predicates: $gt and $lt produce distinct keys", () => {
-    expect(stableKey({ priority: { $gt: 1 } })).not.toBe(stableKey({ priority: { $lt: 1 } }));
-  });
-
-  test("operator predicates: outer key order does not matter", () => {
-    expect(stableKey({ a: { $gt: 1 }, b: { $lt: 2 } })).toBe(
-      stableKey({ b: { $lt: 2 }, a: { $gt: 1 } }),
+  test("wire predicate: clause object key order does not matter", () => {
+    // The wire's per-clause object keys (`op` / `field` / `value`)
+    // can land in any order on the JSON parse — stableKey normalises
+    // by sorting keys recursively.
+    expect(stableKey({ op: "eq", field: "x", value: 1 })).toBe(
+      stableKey({ value: 1, field: "x", op: "eq" }),
     );
   });
 });

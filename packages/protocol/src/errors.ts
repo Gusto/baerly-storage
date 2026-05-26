@@ -58,13 +58,19 @@ export type BaerlyErrorCode =
   | "PayloadTooLarge"
   /**
    * A predicate is structurally well-formed but contradicts itself —
-   * no document can match. Emitted by {@link validatePredicate} and
-   * {@link mergePredicates}. Triggers:
-   *  - `$in: []`
-   *  - `$eq:X` together with a range op whose interval excludes `X`
-   *  - merging `{$gt:10}` with `{$lt:5}` (or `$eq` with two different
-   *    values)
-   *  - merging two `$in` sets with empty intersection
+   * no document can match. Emitted by `validateWire` and
+   * `mergePredicateWires`. Triggers:
+   *  - `{ clauses: [{op:"in", field:"priority", value:[]}] }` (empty `in` set)
+   *  - an `eq` clause with a value outside the residual interval
+   *    established by range clauses on the same field
+   *  - merging `{op:"gt", value:10}` with `{op:"lt", value:5}` on the
+   *    same field (empty interval)
+   *  - merging two `in` clauses on the same field with empty intersection
+   *
+   * Conflicting equality across clauses (`eq:"open"` + `eq:"closed"` on
+   * the same field) surfaces as `InvalidConfig` rather than this code —
+   * the merger treats it as a caller-side configuration bug, not an
+   * algebraic contradiction.
    *
    * The HTTP layer treats this as a 400 (caller error). The distinct
    * code lets downstream code short-circuit empty-by-construction

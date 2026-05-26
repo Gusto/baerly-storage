@@ -44,9 +44,9 @@ import { writeFile } from "node:fs/promises";
 import { type ArgsDef } from "citty";
 import {
   BaerlyError,
-  type DocumentData,
-  matches,
-  validatePredicate,
+  matchesWire,
+  type PredicateWire,
+  validateWire,
 } from "@baerly/protocol";
 import {
   type ExportPlan,
@@ -57,7 +57,7 @@ import {
   inferPlanForCollection,
   loadMaterialisedView,
   serializeExportPlan,
-  translatePredicateToSql,
+  translatePredicateWireToSql,
 } from "./export/index.ts";
 import { parseBucketUri } from "./bucket-uri.ts";
 import { emitSuccess } from "./output.ts";
@@ -97,7 +97,7 @@ const EXPORT_ARGS = {
   where: {
     type: "string",
     required: false,
-    description: "JSON-encoded Predicate<T> filtering the rows to export.",
+    description: "JSON-encoded PredicateWire ({ clauses: [...] }) filtering the rows to export.",
     valueHint: "json",
   },
   "where-comment": {
@@ -123,7 +123,7 @@ const EXPORT_ARGS = {
   },
 } as const satisfies ArgsDef;
 
-const parseWherePredicate = (raw: string): DocumentData => {
+const parseWherePredicate = (raw: string): PredicateWire => {
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
@@ -141,21 +141,21 @@ const parseWherePredicate = (raw: string): DocumentData => {
   }
   // Re-validate defensively; the translator will reject too, but
   // surfacing the error here gives a single uniform error path.
-  validatePredicate(parsed as DocumentData);
-  return parsed as DocumentData;
+  validateWire(parsed as PredicateWire);
+  return parsed as PredicateWire;
 };
 
 const filterRows = (
   rows: ReadonlyMap<string, ExportRow>,
-  predicate: DocumentData | null,
+  wire: PredicateWire | null,
 ): Map<string, ExportRow> => {
   const filtered = new Map<string, ExportRow>();
   for (const [id, body] of rows) {
-    if (predicate === null) {
+    if (wire === null) {
       filtered.set(id, body);
       continue;
     }
-    if (matches(predicate, body)) {
+    if (matchesWire(wire, body)) {
       filtered.set(id, body);
     }
   }
@@ -209,13 +209,13 @@ const bundle = defineBaerlySubcommand({
       table: args.table,
     });
 
-    let predicate: DocumentData | null = null;
+    let wire: PredicateWire | null = null;
     let whereClause = "";
     let whereHints: readonly string[] = [];
     if (typeof args.where === "string" && args.where.length > 0) {
-      predicate = parseWherePredicate(args.where);
-      const translation = translatePredicateToSql(
-        predicate,
+      wire = parseWherePredicate(args.where);
+      const translation = translatePredicateWireToSql(
+        wire,
         plan,
         typeof args["where-comment"] === "string" && args["where-comment"].length > 0
           ? { dynamicHint: args["where-comment"] }
@@ -231,7 +231,7 @@ const bundle = defineBaerlySubcommand({
       ];
     }
 
-    const filtered = filterRows(view, predicate);
+    const filtered = filterRows(view, wire);
     const sql = await buildSql(plan, filtered, whereClause, whereHints);
 
     const outputPath = args.output;

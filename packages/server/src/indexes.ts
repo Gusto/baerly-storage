@@ -58,8 +58,8 @@ import {
   type DocumentData,
   encodeJsonBytes,
   type IndexDefinition,
-  matches,
-  validatePredicate,
+  matchesWire,
+  validateWire,
 } from "@baerly/protocol";
 
 export type { IndexDefinition };
@@ -99,7 +99,7 @@ export const validateIndexDefinition = (def: IndexDefinition): void => {
   }
   if (def.predicate !== undefined) {
     try {
-      validatePredicate(def.predicate);
+      validateWire(def.predicate);
     } catch (error) {
       // Surface as SchemaError so the failure mode matches the rest
       // of validateIndexDefinition (writer-construction-time bail-out,
@@ -372,7 +372,7 @@ export const projectIndexValues = (
  * the expected key set across the live doc map).
  *
  * Filter-aware (T4): when `def.predicate !== undefined`, the doc
- * must satisfy `matches(def.predicate, body)` or the def contributes
+ * must satisfy `matchesWire(def.predicate, body)` or the def contributes
  * zero keys. The writer's diff `oldKeys` vs `newKeys` then covers
  * all four U-quadrants automatically — see the JSDoc on
  * `writer.ts` above the index-emission block. `body ===
@@ -389,7 +389,7 @@ export const allIndexKeysFor = (
   const keys: string[] = [];
   for (const def of defs) {
     if (def.predicate !== undefined && body !== undefined) {
-      if (!matches(def.predicate, body)) {
+      if (!matchesWire(def.predicate, body)) {
         continue;
       }
     }

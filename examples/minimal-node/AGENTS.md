@@ -129,11 +129,16 @@ http://localhost:5173/<path>`) before declaring the task complete.
   instance into multiple `Db.create` calls so they share the
   underlying bucket.
 
-- **Predicates** — `db.table<Doc>(name).where({...}).all()`. Top-level
-  equality on fields and dotted paths, plus per-field operators
-  (`$eq`, `$gt`, `$gte`, `$lt`, `$lte`, `$in`); multiple operators on
-  the same field AND. No top-level `$or` / `$and` / `$regex`. Two
-  `.where(...)` calls AND-merge:
+- **Predicates** — `db.table<Doc>(name).where({...}).all()`. Two
+  shapes:
+
+  - **Object literal** — equality only (top-level, dotted-path, or
+    nested literal sub-predicate). Multi-field is implicit AND.
+  - **Callback DSL** — `q => q.eq(...).gt(...).gte(...).lt(...).lte(...).in(...)`
+    for the operator vocabulary. The methods on `PredicateBuilder<T>`
+    ARE the supported surface — `q.or` / `q.regex` / `q.ne` /
+    `q.exists` are TS compile errors. Chained `.where(...).where(...)`
+    AND-merges across shapes.
 
   ```ts
   // Top-level equality
@@ -144,21 +149,27 @@ http://localhost:5173/<path>`) before declaring the task complete.
     .where({ "assignee.team": "platform" })
     .all();
 
-  // Operator on a single field — set-membership
+  // Operator on a single field — set membership (callback form)
   await db.table("tickets")
-    .where({ status: { $in: ["open", "pending"] } })
+    .where(q => q.in("status", ["open", "pending"]))
     .all();
 
-  // AND-merge across two .where() calls
+  // Range — also callback form
+  await db.table("tickets")
+    .where(q => q.gte("priority", 5).lt("priority", 10))
+    .all();
+
+  // AND-merge across two .where() calls (mix shapes freely)
   await db.table("tickets")
     .where({ status: "open" })
-    .where({ "assignee.team": "platform" })
+    .where(q => q.gte("priority", 5))
     .all();
   ```
 
   The plain-equality value type is JSON-arrayless: string / number /
-  boolean / nested object. Use `$in` for set-membership when you'd
-  otherwise want `{ status: ["open","pending"] }`.
+  boolean / nested object. Use `q.in("status", [...])` for
+  set membership when you'd otherwise want
+  `{ status: ["open","pending"] }`.
 
 - **Indexes** — declare them in `baerly.config.ts`; the read-path
   planner picks one automatically when the predicate's equality

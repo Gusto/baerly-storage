@@ -7,19 +7,25 @@
  * Pure-function module: no I/O, no `Db` / `Storage` imports. Lives
  * in `@baerly/server` (not in `@baerly/protocol`) because the
  * planner is the only caller.
+ *
+ * Operates on the wire form: both inputs are {@link PredicateWire}s
+ * with clauses already grouped by `(op, field, value)`. The
+ * normaliser at `@baerly/protocol`'s `./query/normalize.ts` has
+ * already flattened nested literal sub-predicates into dotted-path
+ * `eq` clauses, so there is no recursion on nested objects here.
  */
 
 import {
   deepEqualDocumentValue,
-  type DocumentData,
   type DocumentValue,
-  type Predicate,
+  type PredicateClause,
+  type PredicateWire,
 } from "@baerly/protocol";
 
 /**
- * One side of a range bound extracted from an operator clause. The
- * `inclusive` flag distinguishes `$gte` / `$lte` (inclusive) from
- * `$gt` / `$lt` (exclusive). Private to {@link predicateImplies}.
+ * One side of a range bound extracted from a clause group. The
+ * `inclusive` flag distinguishes `gte` / `lte` (inclusive) from
+ * `gt` / `lt` (exclusive). Private to {@link predicateImplies}.
  */
 interface RangeInfo {
   readonly value: DocumentValue;
@@ -27,14 +33,14 @@ interface RangeInfo {
 }
 
 /**
- * Normalised view of one predicate clause for the implication
- * checker. A clause is either a bare primitive (collapses to `eq`),
- * a non-operator nested object (handled by the recursive path in
- * {@link predicateImplies}, never decoded here), or an operator
- * object whose keys are a subset of `{$eq, $gt, $gte, $lt, $lte, $in}`.
- * Any other shape — unknown operator key, malformed `$in`, mixed
- * key set — surfaces as `"unknown-shape"` so the caller can
- * conservatively return `false`. Private to {@link predicateImplies}.
+ * Normalised view of one field's clause group. A field may carry an
+ * `eq` clause, range bounds (`lo` / `hi`), and/or an `in` clause.
+ * Multiple clauses on one field AND together; the validator has
+ * already proved the group is internally consistent. An "unknown
+ * shape" sentinel surfaces when the planner can't safely reason
+ * about the group (e.g. two `in` clauses on one field — the
+ * intersection requires set arithmetic we don't do at plan time).
+ * Private to {@link predicateImplies}.
  */
 interface OperatorBundle {
   readonly eq?: DocumentValue;
@@ -43,41 +49,71 @@ interface OperatorBundle {
   readonly in?: ReadonlyArray<DocumentValue>;
 }
 
-const decodeClause = (
-  clause: DocumentValue | Record<string, DocumentValue>,
-): OperatorBundle | "unknown-shape" => {
-  // Bare primitive collapses to {eq: clause}.
-  if (clause === null || typeof clause !== "object" || Array.isArray(clause)) {
-    return { eq: clause as DocumentValue };
+type DecodeResult = OperatorBundle | "unknown-shape";
+
+/**
+ * Group a wire's clauses by `field` so the per-field implication
+ * check can reason over one bundle at a time. Inlined small helper
+ * (not exported) so the planner module doesn't need to expose its
+ * grouping helper as a cross-module contract.
+ */
+const groupByField = (wire: PredicateWire): Map<string, ReadonlyArray<PredicateClause>> => {
+  const groups = new Map<string, PredicateClause[]>();
+  for (const clause of wire.clauses) {
+    const bucket = groups.get(clause.field);
+    if (bucket === undefined) {
+      groups.set(clause.field, [clause]);
+    } else {
+      bucket.push(clause);
+    }
   }
-  const obj = clause as Record<string, DocumentValue>;
-  const keys = Object.keys(obj);
-  const allOps = keys.length > 0 && keys.every((k) => k.startsWith("$"));
-  if (!allOps) {
-    return { eq: clause as DocumentValue };
-  } // nested non-op object → equality
+  return groups;
+};
+
+/**
+ * Collapse a per-field clause list into an {@link OperatorBundle}.
+ * Returns `"unknown-shape"` when the group has more than one `in`
+ * clause (set-intersection at plan time is out of scope) or
+ * unrecognised ops slipping through (defensive — the validator
+ * already locked the op vocabulary). Multiple `eq` clauses on one
+ * field: the validator proves they all agree, so we pick the first.
+ * Multiple range clauses on one field: take the strictest bound
+ * (tightest `lo` = numerically largest; tightest `hi` = numerically
+ * smallest).
+ */
+const decodeGroup = (clauses: ReadonlyArray<PredicateClause>): DecodeResult => {
   const bundle: {
     eq?: DocumentValue;
     lo?: RangeInfo;
     hi?: RangeInfo;
     in?: ReadonlyArray<DocumentValue>;
   } = {};
-  for (const k of keys) {
-    const v = obj[k];
-    if (v === undefined) {
-      continue;
-    }
-    if (k === "$eq") {
-      bundle.eq = v;
-    } else if (k === "$gte") {
-      bundle.lo = { value: v, inclusive: true };
-    } else if (k === "$gt") {
-      bundle.lo = { value: v, inclusive: false };
-    } else if (k === "$lte") {
-      bundle.hi = { value: v, inclusive: true };
-    } else if (k === "$lt") {
-      bundle.hi = { value: v, inclusive: false };
-    } else if (k === "$in") {
+  for (const clause of clauses) {
+    const v = clause.value;
+    if (clause.op === "eq") {
+      // Validator: every eq on a field carries the same value.
+      bundle.eq = v as DocumentValue;
+    } else if (clause.op === "gte") {
+      const next: RangeInfo = { value: v as DocumentValue, inclusive: true };
+      bundle.lo = tightestLo(bundle.lo, next);
+    } else if (clause.op === "gt") {
+      const next: RangeInfo = { value: v as DocumentValue, inclusive: false };
+      bundle.lo = tightestLo(bundle.lo, next);
+    } else if (clause.op === "lte") {
+      const next: RangeInfo = { value: v as DocumentValue, inclusive: true };
+      bundle.hi = tightestHi(bundle.hi, next);
+    } else if (clause.op === "lt") {
+      const next: RangeInfo = { value: v as DocumentValue, inclusive: false };
+      bundle.hi = tightestHi(bundle.hi, next);
+    } else if (clause.op === "in") {
+      if (bundle.in !== undefined) {
+        // Multiple `in` clauses on one field: the validator already
+        // proved the intersection is non-empty, but reasoning about
+        // the intersection's containment at plan time is out of
+        // scope — bail out to "unknown-shape" so the caller refuses
+        // implication conservatively.
+        return "unknown-shape";
+      }
       if (!Array.isArray(v)) {
         return "unknown-shape";
       }
@@ -87,6 +123,48 @@ const decodeClause = (
     }
   }
   return bundle;
+};
+
+const tightestLo = (existing: RangeInfo | undefined, next: RangeInfo): RangeInfo => {
+  if (existing === undefined) {
+    return next;
+  }
+  if (typeof existing.value !== typeof next.value) {
+    // Mixed types — bail to existing; the validator already proves
+    // the group is satisfiable, so this case is a defensive no-op.
+    return existing;
+  }
+  if (next.value > existing.value) {
+    return next;
+  }
+  if (next.value < existing.value) {
+    return existing;
+  }
+  // Equal value — strictest inclusivity wins (exclusive > inclusive
+  // for lo bounds).
+  if (!next.inclusive && existing.inclusive) {
+    return next;
+  }
+  return existing;
+};
+
+const tightestHi = (existing: RangeInfo | undefined, next: RangeInfo): RangeInfo => {
+  if (existing === undefined) {
+    return next;
+  }
+  if (typeof existing.value !== typeof next.value) {
+    return existing;
+  }
+  if (next.value < existing.value) {
+    return next;
+  }
+  if (next.value > existing.value) {
+    return existing;
+  }
+  if (!next.inclusive && existing.inclusive) {
+    return next;
+  }
+  return existing;
 };
 
 /**
@@ -144,7 +222,7 @@ const upperBoundImplies = (hiF: RangeInfo, hiQ: RangeInfo | undefined): boolean 
 };
 
 // Derive the tightest lower-bound the query enforces, preferring (in
-// order): an `$eq` clamp, the smallest `$in` value, an explicit `lo`.
+// order): an `eq` clamp, the smallest `in` value, an explicit `lo`.
 // Returns `undefined` when the query gives the planner nothing to lean
 // on — the implication check then fails fast.
 const loFromQuery = (q: OperatorBundle): RangeInfo | undefined => {
@@ -176,100 +254,63 @@ const hiFromQuery = (q: OperatorBundle): RangeInfo | undefined => {
 
 /**
  * Filtered-index implication checker — decides whether every document
- * accepted by `queryPredicate` is also accepted by `indexFilter`. When
- * `true`, a walk over an index declared with `predicate: indexFilter`
- * is **complete** for `queryPredicate`: no matching doc is missing
+ * accepted by `queryWire` is also accepted by `indexFilterWire`. When
+ * `true`, a walk over an index declared with `predicate: indexFilterWire`
+ * is **complete** for `queryWire`: no matching doc is missing
  * from the smaller key set, so the planner can prefer it.
  *
- * Implication on `$eq`, `$gt` / `$gte`, `$lt` / `$lte`, and `$in` is
+ * Implication on `eq`, `gt` / `gte`, `lt` / `lte`, and `in` is
  * sound and complete in pure operator form; combined shapes (e.g.
- * range-on-filter and `$in`-on-query) follow the algebra in the body
+ * range-on-filter and `in`-on-query) follow the algebra in the body
  * JSDoc.
  *
- * Algorithm — for every top-level key `k` in `indexFilter`:
+ * Algorithm — group both wires by `field`, then for every field
+ * present in `indexFilterWire`:
  *
- *  1. `indexFilter[k]` is a non-operator nested object → require
- *     `queryPredicate[k]` to be an object (not primitive / missing /
- *     array) and recurse with the sub-predicates.
- *  2. Otherwise decode both `indexFilter[k]` and `queryPredicate[k]`
- *     into an {@link OperatorBundle} (bare primitive collapses to
- *     `eq`; operator object decomposes into `eq` / `lo` / `hi` / `in`).
- *     For each non-empty slot of the filter bundle, the query bundle
+ *  1. Decode the filter's clause group into an {@link OperatorBundle}.
+ *     "unknown-shape" → refuse implication conservatively.
+ *  2. The query MUST have at least one clause on that field —
+ *     otherwise the query says nothing about that field and cannot
+ *     possibly imply the filter's constraint.
+ *  3. Decode the query's clause group on the same field.
+ *  4. For each non-empty slot of the filter bundle, the query bundle
  *     must establish the constraint:
- *       - `eq` → query establishes equality (via its own `eq`).
- *       - `in` → query is contained in the set (via `eq` ∈ set or
- *         `in` ⊆ set).
- *       - `lo` / `hi` → query establishes the bound via `eq`, `in`
- *         (then min/max of the set), or its own `lo`/`hi` with the
- *         inclusivity rules in {@link lowerBoundImplies} /
- *         {@link upperBoundImplies}.
+ *      - `eq` → query establishes equality (via its own `eq`).
+ *      - `in` → query is contained in the set (via `eq` ∈ set or
+ *        `in` ⊆ set).
+ *      - `lo` / `hi` → query establishes the bound via `eq`, `in`
+ *        (then min/max of the set), or its own `lo`/`hi` with the
+ *        inclusivity rules in {@link lowerBoundImplies} /
+ *        {@link upperBoundImplies}.
  *     Mixed types (e.g. number filter vs string query) refuse
  *     implication conservatively.
  *
  * Returns `true` iff every clause was satisfied. An empty
- * `indexFilter` is vacuously implied by any `queryPredicate`.
+ * `indexFilterWire` is vacuously implied by any `queryWire`.
  *
  * Soundness contract — when this function returns `true`,
- * `matches(queryPredicate, doc) ⇒ matches(indexFilter, doc)` for any
- * document `doc`. Tests pin this property; see
+ * `matchesWire(queryWire, doc) ⇒ matchesWire(indexFilterWire, doc)` for
+ * any document `doc`. Tests pin this property; see
  * `./query-planner-implies.test.ts`.
- *
- * @example
- * ```ts
- * predicateImplies({ status: "open" }, { status: "open" }); // true
- * predicateImplies({ status: "open" }, { status: "open", assignee: "alice" }); // true
- * predicateImplies({ status: "open" }, { status: "closed" }); // false
- * predicateImplies({ assignee: { team: "platform" } }, { assignee: { team: "platform" } }); // true
- * predicateImplies({ age: { $gte: 18 } }, { age: 21 }); // true
- * ```
  */
-export const predicateImplies = <T extends DocumentData = DocumentData>(
-  indexFilter: Predicate<T>,
-  queryPredicate: Predicate<T>,
+export const predicateImplies = (
+  indexFilterWire: PredicateWire,
+  queryWire: PredicateWire,
 ): boolean => {
-  for (const key of Object.keys(indexFilter)) {
-    const filterVal = (indexFilter as Record<string, DocumentValue | undefined>)[key];
-    if (filterVal === undefined) {
-      continue;
-    }
+  const filterGroups = groupByField(indexFilterWire);
+  const queryGroups = groupByField(queryWire);
 
-    // Nested non-operator object → recurse.
-    if (
-      typeof filterVal === "object" &&
-      filterVal !== null &&
-      !Array.isArray(filterVal) &&
-      !Object.keys(filterVal).every((k) => k.startsWith("$"))
-    ) {
-      const queryVal = (queryPredicate as Record<string, DocumentValue | undefined>)[key];
-      if (
-        queryVal === undefined ||
-        typeof queryVal !== "object" ||
-        queryVal === null ||
-        Array.isArray(queryVal)
-      ) {
-        return false;
-      }
-      if (
-        !predicateImplies(
-          filterVal as Predicate<DocumentData>,
-          queryVal as Predicate<DocumentData>,
-        )
-      ) {
-        return false;
-      }
-      continue;
-    }
-
-    // Decode both clauses.
-    const filterBundle = decodeClause(filterVal as DocumentValue);
+  for (const [field, filterClauses] of filterGroups) {
+    const filterBundle = decodeGroup(filterClauses);
     if (filterBundle === "unknown-shape") {
       return false;
     }
-    const queryVal = (queryPredicate as Record<string, DocumentValue | undefined>)[key];
-    if (queryVal === undefined) {
+
+    const queryClauses = queryGroups.get(field);
+    if (queryClauses === undefined) {
       return false;
     }
-    const queryBundle = decodeClause(queryVal as DocumentValue);
+    const queryBundle = decodeGroup(queryClauses);
     if (queryBundle === "unknown-shape") {
       return false;
     }
@@ -298,11 +339,11 @@ export const predicateImplies = <T extends DocumentData = DocumentData>(
           }
         }
       } else {
-        return false; // range query against $in filter — not a subset
+        return false; // range query against `in` filter — not a subset
       }
-      // $in filter clause forbids any extra range constraint on the
-      // filter side (enforced upstream by `validatePredicate`);
-      // nothing else to check.
+      // `in` filter clause forbids any extra range constraint on the
+      // filter side (enforced upstream by `validateWire`); nothing
+      // else to check.
       continue;
     }
     // Range filter (lo / hi). Both bounds (if set) must be implied.

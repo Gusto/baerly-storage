@@ -1,9 +1,10 @@
 import { describe, expect, test } from "vitest";
 
-import type { Predicate } from "../table-api.ts";
 import { BaerlyError } from "../errors.ts";
 
-import { validatePredicate } from "./validate.ts";
+import { normalizeObject, normalizePredicateArg } from "./normalize.ts";
+import { validateWire } from "./validate.ts";
+import type { PredicateWire } from "./wire.ts";
 
 const expectInvalidConfig = (fn: () => unknown, snippet: string): void => {
   try {
@@ -29,234 +30,378 @@ const expectUnsatisfiable = (fn: () => unknown, snippet: string): void => {
   throw new Error(`Expected BaerlyError{UnsatisfiablePredicate}, none thrown`);
 };
 
-describe("validatePredicate — happy paths", () => {
-  test("accepts top-level equality on string / number / boolean", () => {
-    validatePredicate({ status: "open" });
-    validatePredicate({ count: 7 });
-    validatePredicate({ archived: false });
+describe("validateWire — happy paths", () => {
+  test("accepts an empty wire (matches everything)", () => {
+    expect(validateWire({ clauses: [] })).toEqual({ clauses: [] });
   });
 
-  test("accepts dotted-path keys", () => {
-    validatePredicate({ "assignee.team": "platform" });
-    validatePredicate({ "a.b.c.d": 1 });
+  test("accepts a single eq clause on string / number / boolean", () => {
+    validateWire({ clauses: [{ op: "eq", field: "status", value: "open" }] });
+    validateWire({ clauses: [{ op: "eq", field: "count", value: 7 }] });
+    validateWire({ clauses: [{ op: "eq", field: "archived", value: false }] });
   });
 
-  test("accepts nested-object sub-predicates", () => {
-    validatePredicate({ assignee: { team: "platform" } });
-    validatePredicate({ a: { b: { c: 1 } } });
+  test("accepts dotted-path fields", () => {
+    validateWire({ clauses: [{ op: "eq", field: "assignee.team", value: "platform" }] });
+    validateWire({ clauses: [{ op: "eq", field: "a.b.c.d", value: 1 }] });
   });
 
-  test("accepts an empty predicate (matches everything)", () => {
-    validatePredicate({});
+  test("accepts range clauses (gt / gte / lt / lte) on numbers", () => {
+    validateWire({ clauses: [{ op: "gt", field: "count", value: 5 }] });
+    validateWire({ clauses: [{ op: "gte", field: "count", value: 5 }] });
+    validateWire({ clauses: [{ op: "lt", field: "count", value: 10 }] });
+    validateWire({ clauses: [{ op: "lte", field: "count", value: 10 }] });
+    validateWire({
+      clauses: [
+        { op: "gte", field: "count", value: 1 },
+        { op: "lt", field: "count", value: 10 },
+      ],
+    });
   });
 
-  test("returns its input unchanged", () => {
-    const p: Predicate = { status: "open" };
-    expect(validatePredicate(p)).toBe(p);
+  test("accepts range clauses on ISO date strings", () => {
+    validateWire({
+      clauses: [
+        { op: "gte", field: "created_at", value: "2026-01-01" },
+        { op: "lt", field: "created_at", value: "2026-02-01" },
+      ],
+    });
+  });
+
+  test("accepts in clauses with primitive members", () => {
+    validateWire({ clauses: [{ op: "in", field: "priority", value: ["p1", "p2", "p3"] }] });
+    validateWire({ clauses: [{ op: "in", field: "count", value: [1, 2, 3] }] });
+    validateWire({ clauses: [{ op: "in", field: "archived", value: [true, false] }] });
+  });
+
+  test("returns its input unchanged on success", () => {
+    const wire: PredicateWire = { clauses: [{ op: "eq", field: "status", value: "open" }] };
+    expect(validateWire(wire)).toBe(wire);
   });
 });
 
-describe("validatePredicate — rejections", () => {
-  test('rejects "$"-prefixed operator at top level', () => {
-    expectInvalidConfig(() => validatePredicate({ $or: "x" } as unknown as Predicate), '"$or"');
-    expectInvalidConfig(() => validatePredicate({ $gt: 1 } as unknown as Predicate), '"$gt"');
-    expectInvalidConfig(() => validatePredicate({ $in: "x" } as unknown as Predicate), '"$in"');
+describe("validateWire — rejections (structural)", () => {
+  test("rejects malformed wire shape", () => {
+    expectInvalidConfig(() => validateWire(null as unknown as PredicateWire), "clauses");
     expectInvalidConfig(
-      () => validatePredicate({ $regex: "x" } as unknown as Predicate),
-      '"$regex"',
+      () => validateWire({} as unknown as PredicateWire),
+      "clauses",
+    );
+    expectInvalidConfig(
+      () => validateWire({ clauses: "x" } as unknown as PredicateWire),
+      "clauses",
     );
   });
 
-  test('rejects unsupported "$"-prefixed operator nested under a sub-predicate', () => {
-    // T1 widens validation so nested `$gt`/`$in`/etc. are accepted as
-    // operator-object values; only operators outside the supported
-    // vocabulary (`$or`, `$regex`, etc.) still reject. See the new
-    // "validatePredicate — operator-object" block below for the
-    // positive coverage.
+  test("rejects clauses with unsupported op", () => {
     expectInvalidConfig(
-      () => validatePredicate({ a: { $or: "x" } } as unknown as Predicate),
-      '"$or"',
+      () => validateWire({ clauses: [{ op: "regex", field: "x", value: "foo" } as never] }),
+      "unsupported op",
     );
     expectInvalidConfig(
-      () => validatePredicate({ a: { b: { $regex: "x" } } } as unknown as Predicate),
+      () => validateWire({ clauses: [{ op: "ne", field: "x", value: 1 } as never] }),
+      "unsupported op",
+    );
+  });
+
+  test("rejects empty / non-string field names", () => {
+    expectInvalidConfig(
+      () => validateWire({ clauses: [{ op: "eq", field: "", value: "x" }] }),
+      "empty",
+    );
+    expectInvalidConfig(
+      () =>
+        validateWire({
+          clauses: [{ op: "eq", field: 42 as unknown as string, value: "x" }],
+        }),
+      "empty",
+    );
+  });
+
+  test("rejects top-level _id field", () => {
+    expectInvalidConfig(
+      () => validateWire({ clauses: [{ op: "eq", field: "_id", value: "x" }] }),
+      "_id",
+    );
+  });
+
+  test("rejects null / undefined values on eq clauses", () => {
+    expectInvalidConfig(
+      () =>
+        validateWire({
+          clauses: [{ op: "eq", field: "x", value: null as unknown as string }],
+        }),
+      "null",
+    );
+    expectInvalidConfig(
+      () =>
+        validateWire({
+          clauses: [{ op: "eq", field: "x", value: undefined as unknown as string }],
+        }),
+      "undefined",
+    );
+  });
+
+  test("rejects NaN / Infinity (don't round-trip through JSON)", () => {
+    expectInvalidConfig(
+      () => validateWire({ clauses: [{ op: "eq", field: "x", value: NaN }] }),
+      "NaN",
+    );
+    expectInvalidConfig(
+      () => validateWire({ clauses: [{ op: "gt", field: "x", value: Infinity }] }),
+      "Infinity",
+    );
+    expectInvalidConfig(
+      () => validateWire({ clauses: [{ op: "lt", field: "x", value: -Infinity }] }),
+      "Infinity",
+    );
+  });
+
+  test("rejects range bounds with boolean / null / nested object", () => {
+    expectInvalidConfig(
+      () =>
+        validateWire({
+          clauses: [{ op: "gt", field: "x", value: true as unknown as number }],
+        }),
+      "boolean",
+    );
+    expectInvalidConfig(
+      () =>
+        validateWire({
+          clauses: [{ op: "gt", field: "x", value: null as unknown as number }],
+        }),
+      "null",
+    );
+    expectInvalidConfig(
+      () =>
+        validateWire({
+          clauses: [
+            {
+              op: "gt",
+              field: "x",
+              value: { y: 1 } as unknown as number,
+            },
+          ],
+        }),
+      "nested object",
+    );
+  });
+
+  test("rejects array value on non-in clauses", () => {
+    expectInvalidConfig(
+      () =>
+        validateWire({
+          clauses: [{ op: "eq", field: "x", value: [1, 2] as unknown as number }],
+        }),
+      "array",
+    );
+    expectInvalidConfig(
+      () =>
+        validateWire({
+          clauses: [{ op: "gt", field: "x", value: [1, 2] as unknown as number }],
+        }),
+      "array",
+    );
+  });
+
+  test("rejects non-array value on in clauses", () => {
+    expectInvalidConfig(
+      () =>
+        validateWire({
+          clauses: [{ op: "in", field: "x", value: "x" as unknown as string }],
+        }),
+      "array",
+    );
+  });
+
+  test("rejects empty `in` value array as UnsatisfiablePredicate", () => {
+    expectUnsatisfiable(
+      () => validateWire({ clauses: [{ op: "in", field: "priority", value: [] }] }),
+      "empty value array",
+    );
+  });
+
+  test("rejects null / undefined members inside an in clause", () => {
+    expectInvalidConfig(
+      () =>
+        validateWire({
+          clauses: [{ op: "in", field: "x", value: [1, null as unknown as number] }],
+        }),
+      "null",
+    );
+    expectInvalidConfig(
+      () =>
+        validateWire({
+          clauses: [
+            { op: "in", field: "x", value: [1, undefined as unknown as number] },
+          ],
+        }),
+      "undefined",
+    );
+  });
+});
+
+describe("validateWire — satisfiability (cross-clause)", () => {
+  test("rejects conflicting eq clauses on the same field", () => {
+    expectInvalidConfig(
+      () =>
+        validateWire({
+          clauses: [
+            { op: "eq", field: "status", value: "open" },
+            { op: "eq", field: "status", value: "closed" },
+          ],
+        }),
+      "Conflicting equality",
+    );
+  });
+
+  test("rejects empty interval (lo > hi)", () => {
+    expectUnsatisfiable(
+      () =>
+        validateWire({
+          clauses: [
+            { op: "gt", field: "x", value: 10 },
+            { op: "lt", field: "x", value: 5 },
+          ],
+        }),
+      "empty interval",
+    );
+  });
+
+  test("rejects strict-tie ($gt:5, $lte:5) interval", () => {
+    expectUnsatisfiable(
+      () =>
+        validateWire({
+          clauses: [
+            { op: "gt", field: "x", value: 5 },
+            { op: "lte", field: "x", value: 5 },
+          ],
+        }),
+      "empty interval",
+    );
+  });
+
+  test("rejects eq value outside the residual interval", () => {
+    expectUnsatisfiable(
+      () =>
+        validateWire({
+          clauses: [
+            { op: "eq", field: "x", value: 1 },
+            { op: "gt", field: "x", value: 5 },
+          ],
+        }),
+      "excluded by lower bound",
+    );
+    expectUnsatisfiable(
+      () =>
+        validateWire({
+          clauses: [
+            { op: "eq", field: "x", value: 10 },
+            { op: "lt", field: "x", value: 5 },
+          ],
+        }),
+      "excluded by upper bound",
+    );
+  });
+
+  test("rejects eq value not present in an in() set", () => {
+    expectUnsatisfiable(
+      () =>
+        validateWire({
+          clauses: [
+            { op: "eq", field: "x", value: "z" },
+            { op: "in", field: "x", value: ["a", "b"] },
+          ],
+        }),
+      "not present in in()",
+    );
+  });
+
+  test("rejects two in() clauses with empty intersection", () => {
+    expectUnsatisfiable(
+      () =>
+        validateWire({
+          clauses: [
+            { op: "in", field: "x", value: ["a", "b"] },
+            { op: "in", field: "x", value: ["c", "d"] },
+          ],
+        }),
+      "empty in() intersection",
+    );
+  });
+});
+
+describe("normalizeObject — rejections (object-form pre-walk)", () => {
+  // The pre-redesign `validatePredicate` rejected $-keys on the way in.
+  // Post-redesign, `validateWire` never sees a $-key (it ingests
+  // already-flat wire clauses), so the rejection lifted into the
+  // normaliser. These tests pin that the normaliser surface still
+  // catches every shape the old validator did.
+
+  test('rejects "$"-prefixed operator at top level', () => {
+    expectInvalidConfig(() => normalizeObject({ $or: "x" }, []), '"$or"');
+    expectInvalidConfig(() => normalizeObject({ $or: "x" }, []), "operator vocabulary");
+    expectInvalidConfig(() => normalizeObject({ $gt: 1 }, []), '"$gt"');
+    expectInvalidConfig(() => normalizeObject({ $in: "x" }, []), '"$in"');
+    expectInvalidConfig(() => normalizeObject({ $regex: "x" }, []), '"$regex"');
+  });
+
+  test('rejects "$"-prefixed operator nested under a sub-predicate', () => {
+    expectInvalidConfig(() => normalizeObject({ a: { $or: "x" } }, []), '"$or"');
+    expectInvalidConfig(
+      () => normalizeObject({ a: { b: { $regex: "x" } } }, []),
       '"$regex"',
     );
   });
 
   test("rejects null / undefined values", () => {
-    expectInvalidConfig(() => validatePredicate({ x: null } as unknown as Predicate), "null");
     expectInvalidConfig(
-      () => validatePredicate({ x: undefined } as unknown as Predicate),
+      () => normalizeObject({ x: null as unknown as string }, []),
+      "null",
+    );
+    expectInvalidConfig(
+      () => normalizeObject({ x: undefined as unknown as string }, []),
       "undefined",
     );
   });
 
-  test("rejects array values (no $in: [...])", () => {
-    expectInvalidConfig(() => validatePredicate({ x: [1, 2] } as unknown as Predicate), "array");
+  test("rejects array values", () => {
+    expectInvalidConfig(
+      () => normalizeObject({ x: [1, 2] as unknown as string }, []),
+      "array",
+    );
   });
 
   test("rejects __proto__ / constructor / prototype keys", () => {
     // Object literal `{ __proto__: ... }` is a prototype-setter, not an
-    // own key — `Object.keys` won't see it. Use `JSON.parse` (or a
-    // computed key) so `__proto__` becomes an actual own property of
-    // the predicate, mirroring how a malicious payload would arrive.
+    // own key — `Object.keys` won't see it. Use `JSON.parse` so
+    // `__proto__` becomes an actual own property, mirroring how a
+    // malicious payload would arrive.
     expectInvalidConfig(
-      () => validatePredicate(JSON.parse('{"__proto__":"x"}') as Predicate),
+      () => normalizeObject(JSON.parse('{"__proto__":"x"}'), []),
       "__proto__",
     );
     expectInvalidConfig(
-      () => validatePredicate({ constructor: "x" } as unknown as Predicate),
+      () => normalizeObject({ constructor: "x" }, []),
       "constructor",
     );
     expectInvalidConfig(
-      () => validatePredicate({ prototype: "x" } as unknown as Predicate),
+      () => normalizeObject({ prototype: "x" }, []),
       "prototype",
     );
   });
 
-  test("rejects NaN / Infinity (don't round-trip through JSON)", () => {
-    expectInvalidConfig(() => validatePredicate({ x: NaN } as unknown as Predicate), "NaN");
+  test("rejects NaN / Infinity values", () => {
+    expectInvalidConfig(() => normalizeObject({ x: NaN }, []), "NaN");
+    expectInvalidConfig(() => normalizeObject({ x: Infinity }, []), "Infinity");
+    expectInvalidConfig(() => normalizeObject({ x: -Infinity }, []), "Infinity");
+  });
+
+  test("normalizePredicateArg threads $-key rejections", () => {
+    // Surfaces the same throws when called via the public dispatch.
     expectInvalidConfig(
-      () => validatePredicate({ x: Infinity } as unknown as Predicate),
-      "Infinity",
-    );
-    expectInvalidConfig(
-      () => validatePredicate({ x: -Infinity } as unknown as Predicate),
-      "Infinity",
-    );
-  });
-});
-
-describe("validatePredicate — operator-object", () => {
-  test("accepts $eq alone on string / number / boolean", () => {
-    validatePredicate({ status: { $eq: "open" } } as unknown as Predicate);
-    validatePredicate({ count: { $eq: 7 } } as unknown as Predicate);
-    validatePredicate({ archived: { $eq: false } } as unknown as Predicate);
-  });
-
-  test("accepts $gt / $gte / $lt / $lte on numbers", () => {
-    validatePredicate({ count: { $gt: 5 } } as unknown as Predicate);
-    validatePredicate({ count: { $gte: 5 } } as unknown as Predicate);
-    validatePredicate({ count: { $lt: 10 } } as unknown as Predicate);
-    validatePredicate({ count: { $lte: 10 } } as unknown as Predicate);
-    validatePredicate({ count: { $gte: 1, $lt: 10 } } as unknown as Predicate);
-  });
-
-  test("accepts $gt / $gte / $lt / $lte on ISO date strings", () => {
-    validatePredicate({
-      created_at: { $gte: "2026-01-01", $lt: "2026-02-01" },
-    } as unknown as Predicate);
-  });
-
-  test("accepts $in with primitive members", () => {
-    validatePredicate({ priority: { $in: ["p1", "p2", "p3"] } } as unknown as Predicate);
-    validatePredicate({ count: { $in: [1, 2, 3] } } as unknown as Predicate);
-    validatePredicate({ archived: { $in: [true, false] } } as unknown as Predicate);
-  });
-
-  test("accepts dotted-path key with operator value", () => {
-    validatePredicate({
-      "assignee.priority": { $in: ["p1", "p2"] },
-    } as unknown as Predicate);
-  });
-
-  test("accepts x: {} as a match-all sub-predicate (not an op-object)", () => {
-    // Empty object falls through op-detection (length === 0) into
-    // the equality-walker — a match-all sub-predicate, which is the
-    // documented behaviour.
-    validatePredicate({ x: {} } as unknown as Predicate);
-  });
-
-  test("rejects unknown operator ($regex / $or)", () => {
-    expectInvalidConfig(
-      () => validatePredicate({ x: { $regex: "x" } } as unknown as Predicate),
-      '"$regex"',
-    );
-    expectInvalidConfig(
-      () => validatePredicate({ x: { $or: 1 } } as unknown as Predicate),
-      '"$or"',
-    );
-  });
-
-  test("rejects mixed operator + non-operator keys", () => {
-    // Outer predicate-mode `$`-key check fires.
-    expectInvalidConfig(
-      () => validatePredicate({ x: { $eq: 1, y: 2 } } as unknown as Predicate),
-      '"$eq"',
-    );
-  });
-
-  test("rejects $in: [] as UnsatisfiablePredicate", () => {
-    expectUnsatisfiable(() => validatePredicate({ x: { $in: [] } } as unknown as Predicate), "$in");
-  });
-
-  test("rejects range op on boolean / null / nested-object bound", () => {
-    expectInvalidConfig(
-      () => validatePredicate({ x: { $gt: true } } as unknown as Predicate),
-      "boolean",
-    );
-    expectInvalidConfig(
-      () => validatePredicate({ x: { $gt: null } } as unknown as Predicate),
-      "null",
-    );
-    expectInvalidConfig(
-      () => validatePredicate({ x: { $gt: { y: 1 } } } as unknown as Predicate),
-      "nested object",
-    );
-  });
-
-  test("rejects range op with NaN / Infinity bound", () => {
-    expectInvalidConfig(
-      () => validatePredicate({ x: { $gt: NaN } } as unknown as Predicate),
-      "NaN",
-    );
-    expectInvalidConfig(
-      () => validatePredicate({ x: { $lt: Infinity } } as unknown as Predicate),
-      "Infinity",
-    );
-  });
-
-  test("rejects $eq + range whose interval excludes $eq", () => {
-    expectUnsatisfiable(
-      () => validatePredicate({ x: { $eq: 1, $gt: 5 } } as unknown as Predicate),
-      "$eq=1",
-    );
-    expectUnsatisfiable(
-      () => validatePredicate({ x: { $eq: 10, $lt: 5 } } as unknown as Predicate),
-      "$eq=10",
-    );
-  });
-
-  test("rejects lo > hi and strict-tie ($gt:5, $lte:5)", () => {
-    expectUnsatisfiable(
-      () => validatePredicate({ x: { $gt: 10, $lt: 5 } } as unknown as Predicate),
-      "empty interval",
-    );
-    expectUnsatisfiable(
-      () => validatePredicate({ x: { $gt: 5, $lte: 5 } } as unknown as Predicate),
-      "empty interval",
-    );
-    expectUnsatisfiable(
-      () => validatePredicate({ x: { $gte: 5, $lt: 5 } } as unknown as Predicate),
-      "empty interval",
-    );
-  });
-
-  test("rejects $eq not present in $in set", () => {
-    expectUnsatisfiable(
-      () => validatePredicate({ x: { $eq: "z", $in: ["a", "b"] } } as unknown as Predicate),
-      "$in set",
-    );
-  });
-
-  test("rejects empty operator object at field value via mixed-keys path", () => {
-    // `{ x: {} }` is a valid match-all sub-predicate; we cover the
-    // explicit empty-op via the direct internal hint:
-    //   `{ x: { $eq: undefined } }` is structurally an op-object via
-    //   `$eq` presence but undefined value rejects in $eq validation.
-    expectInvalidConfig(
-      () => validatePredicate({ x: { $eq: undefined } } as unknown as Predicate),
-      "undefined",
+      () => normalizePredicateArg({ $or: "x" } as never),
+      "$or",
     );
   });
 });

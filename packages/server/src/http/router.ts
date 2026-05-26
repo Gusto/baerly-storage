@@ -28,9 +28,10 @@ import {
   BaerlyError,
   type DocumentData,
   type BaerlyErrorCode,
+  EMPTY_PREDICATE_WIRE,
   type OrderSpec,
-  type Predicate,
-  validateWirePredicate,
+  type PredicateWire,
+  validateWire,
 } from "@baerly/protocol";
 import type { Db } from "../db.ts";
 import {
@@ -125,12 +126,12 @@ export function createRouter(options: CreateRouterOptions): Hono {
   // List — GET /v1/t/:table?where=<urlencoded-json>
   app.get("/v1/t/:table", async (c) => {
     const { table } = c.req.param();
-    const predicate = parseWhereParam(c);
+    const wire = parseWhereParam(c);
     const consistency = parseConsistency(c.req.query("consistency"));
     const order = parseOrder(c.req.query("order"));
     const limit = parseLimit(c.req.query("limit"));
     const { rows, manifestPointer, fresh } = await runAllWithMeta(db.tableReadContext(table), {
-      predicate: predicate as Predicate<DocumentData>,
+      wire,
       order,
       limit,
       consistency,
@@ -215,10 +216,10 @@ export function createRouter(options: CreateRouterOptions): Hono {
     if (table === undefined || table.length === 0) {
       throw new BaerlyError("SchemaError", "GET /v1/count requires ?table=<name>");
     }
-    const predicate = parseWhereParam(c);
+    const wire = parseWhereParam(c);
     const consistency = parseConsistency(c.req.query("consistency"));
     const { rows, manifestPointer, fresh } = await runAllWithMeta(db.tableReadContext(table), {
-      predicate: predicate as Predicate<DocumentData>,
+      wire,
       order: undefined,
       limit: undefined,
       consistency,
@@ -313,35 +314,34 @@ const assertJsonBodyField = (body: unknown, field: string): Record<string, unkno
 
 /**
  * Parse the `?where=<urlencoded JSON>` query-string param. Absent or
- * empty → `{}` (match-all). Malformed JSON → `BaerlyError{code:"SchemaError"}`
- * with the locked wording `"Invalid JSON in ?where="`. Returns the
- * parsed object widened to `Record<string, unknown>`; callers cast
- * to `Predicate<DocumentData>` after.
+ * empty → {@link EMPTY_PREDICATE_WIRE} (match-all). Malformed JSON →
+ * `BaerlyError{code:"SchemaError"}` with the locked wording
+ * `"Invalid JSON in ?where="`. Returns the validated wire form
+ * ({@link PredicateWire}).
  *
- * Wire-only validation: any depth-0 `_id` key rejects with
- * `BaerlyError{code:"InvalidConfig"}` and the locked redirect-to-
- * by-id-verbs wording — agents zero-shot writing
- * `?where={"_id":"x"}` against the list route get pointed at
- * `GET /v1/t/:table/:id` instead. Kernel-internal `_id` predicate
- * construction (`./table.ts:byId`, `runByIdWithMeta`, `runInsert`)
- * bypasses this layer by design — those paths never come back
- * through `?where=` parsing.
+ * Wire-only validation: any clause with `field === "_id"` rejects
+ * with `BaerlyError{code:"InvalidConfig"}` — agents zero-shot
+ * writing `?where={"clauses":[{"op":"eq","field":"_id","value":"x"}]}`
+ * against the list route get pointed at `GET /v1/t/:table/:id`
+ * instead. Kernel-internal `_id` wire construction
+ * (`./table.ts:byId`, `runByIdWithMeta`, `runInsert`) bypasses this
+ * layer by design — those paths never come back through `?where=`
+ * parsing.
  *
  * @internal
  */
-const parseWhereParam = (c: Context): Record<string, unknown> => {
+const parseWhereParam = (c: Context): PredicateWire => {
   const whereParam = c.req.query("where");
   if (whereParam === undefined || whereParam.length === 0) {
-    return {};
+    return EMPTY_PREDICATE_WIRE;
   }
-  let parsed: Record<string, unknown>;
+  let parsed: unknown;
   try {
-    parsed = JSON.parse(whereParam) as Record<string, unknown>;
+    parsed = JSON.parse(whereParam);
   } catch {
     throw new BaerlyError("SchemaError", "Invalid JSON in ?where=");
   }
-  validateWirePredicate(parsed as Predicate<DocumentData>);
-  return parsed;
+  return validateWire(parsed as PredicateWire);
 };
 
 /**

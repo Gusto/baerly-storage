@@ -1,64 +1,64 @@
 /**
- * Predicate evaluator. Walks a validated `Predicate<T>` against a
- * `JSONObject` document and returns `true` iff every clause holds.
+ * Wire predicate evaluator. Walks a validated {@link PredicateWire}
+ * against a `JSONObject` document and returns `true` iff every
+ * clause holds. Multiple clauses across all fields AND together.
+ *
+ * Pre-condition: `wire` must have been returned by
+ * {@link validateWire} (see `./validate.ts`). Passing an
+ * un-validated wire is a caller bug; behaviour is undefined.
  *
  * Companion modules: `./validate.ts` (construction-time check),
- * `./merge.ts` (AND-merge). Shared types and helpers live in
- * `./_internals.ts`.
+ * `./merge.ts` (AND-merge), `./wire.ts` (types).
  */
 
-import type { Predicate } from "../table-api.ts";
-import type { DocumentData, DocumentValue, JSONObject, JSONValue } from "../json.ts";
+import type { DocumentValue, JSONObject, JSONValue } from "../json.ts";
 
-import { type PredicateOp } from "./_internals.ts";
+import type { PredicateClause, PredicateWire } from "./wire.ts";
 
 /**
- * Evaluate a validated predicate against a `JSONObject` document.
- *
- * Returns `true` iff every key in the predicate satisfies its
- * value-spec. Dotted-path keys (`"assignee.team"`) traverse nested
- * objects. Object values whose keys all start with `$` are
- * interpreted as operator objects ({@link PredicateOp}); other
- * object values are interpreted as sub-predicates (open-world:
- * extra keys in the document are ignored).
- *
- * Pre-condition: `predicate` must have been returned by
- * `validatePredicate` (see `./validate.ts`). Passing an
- * un-validated predicate is a caller bug; behaviour is undefined.
+ * Evaluate a validated wire-form predicate against a `JSONObject`
+ * document. Returns `true` iff every clause holds.
  *
  * @example
  * ```ts
- * matches({ status: "open" }, { status: "open", priority: "p1" }); // true
- * matches({ "assignee.team": "platform" }, { assignee: { team: "platform" } }); // true
- * matches({ assignee: { team: "platform" } }, { assignee: { team: "platform", oncall: "a" } }); // true
- * matches({ count: { $gte: 1, $lt: 10 } }, { count: 5 }); // true
- * matches({ priority: { $in: ["p1", "p2"] } }, { priority: "p3" }); // false
- * matches({ status: "open" }, { status: "closed" }); // false
- * matches({ "a.b": "c" }, { a: "literal" }); // false (path traversal stops at non-object)
+ * matchesWire(
+ *   { clauses: [{ op: "eq", field: "status", value: "open" }] },
+ *   { status: "open", priority: "p1" },
+ * ); // true
+ *
+ * matchesWire(
+ *   { clauses: [{ op: "in", field: "priority", value: ["p1", "p2"] }] },
+ *   { priority: "p3" },
+ * ); // false
+ *
+ * matchesWire(
+ *   {
+ *     clauses: [
+ *       { op: "gte", field: "count", value: 1 },
+ *       { op: "lt", field: "count", value: 10 },
+ *     ],
+ *   },
+ *   { count: 5 },
+ * ); // true
  * ```
  */
-export const matches = <T extends DocumentData = DocumentData>(
-  predicate: Predicate<T>,
-  doc: JSONObject,
-): boolean => {
-  for (const key of Object.keys(predicate)) {
-    const expected: unknown = (predicate as Record<string, unknown>)[key];
-    const actual = lookupPath(doc, key);
-    if (!matchesValue(expected as DocumentValue, actual)) {
+export const matchesWire = (wire: PredicateWire, doc: JSONObject): boolean => {
+  for (const clause of wire.clauses) {
+    const actual = lookupPath(doc, clause.field);
+    if (!matchesClause(clause, actual)) {
       return false;
     }
   }
   return true;
 };
 
-const lookupPath = (doc: JSONObject, key: string): JSONValue | undefined => {
+const lookupPath = (doc: JSONObject, field: string): JSONValue | undefined => {
   // Fast path: no dot → top-level lookup. Avoids allocating a split
   // array for the common case.
-  if (!key.includes(".")) {
-    return doc[key];
+  if (!field.includes(".")) {
+    return doc[field];
   }
-
-  const segments = key.split(".");
+  const segments = field.split(".");
   let cursor: JSONValue | undefined = doc;
   for (const segment of segments) {
     if (
@@ -76,14 +76,36 @@ const lookupPath = (doc: JSONObject, key: string): JSONValue | undefined => {
   return cursor;
 };
 
-const matchesValue = (expected: DocumentValue, actual: JSONValue | undefined): boolean => {
-  if (typeof expected === "object") {
-    const expectedKeys = Object.keys(expected);
-    // Operator-object detection rule: every key at this level
-    // starts with `$`. Empty `{}` is a match-all sub-predicate.
-    if (expectedKeys.length > 0 && expectedKeys.every((k) => k.startsWith("$"))) {
-      return matchesOp(expected as PredicateOp<DocumentValue>, actual);
+const matchesClause = (clause: PredicateClause, actual: JSONValue | undefined): boolean => {
+  switch (clause.op) {
+    case "eq": {
+      return matchesEq(clause.value as DocumentValue, actual);
     }
+    case "in": {
+      return matchesIn(clause.value as ReadonlyArray<DocumentValue>, actual);
+    }
+    case "gt": {
+      return compareGT(actual, clause.value as DocumentValue, false);
+    }
+    case "gte": {
+      return compareGT(actual, clause.value as DocumentValue, true);
+    }
+    case "lt": {
+      return compareLT(actual, clause.value as DocumentValue, false);
+    }
+    case "lte": {
+      return compareLT(actual, clause.value as DocumentValue, true);
+    }
+  }
+};
+
+const matchesEq = (expected: DocumentValue, actual: JSONValue | undefined): boolean => {
+  if (typeof expected === "object") {
+    // Nested object equality is a sub-predicate match — open-world:
+    // doc may carry extra keys. The object-form normaliser flattens
+    // nested sub-predicates to dotted-path clauses on the way in, so
+    // the only callers reaching this branch are callback-form
+    // `q.eq("nested", { ... })`.
     if (
       actual === undefined ||
       actual === null ||
@@ -92,78 +114,35 @@ const matchesValue = (expected: DocumentValue, actual: JSONValue | undefined): b
     ) {
       return false;
     }
-    // Sub-predicate: recurse into every key in `expected`; doc may
-    // carry extra keys (open-world).
-    for (const subKey of expectedKeys) {
+    for (const subKey of Object.keys(expected)) {
       const subExpected = (expected as Record<string, DocumentValue>)[subKey];
       if (subExpected === undefined) {
         continue;
-      } // tsc satisfaction; validator forbids undefined
+      }
       const subActual = (actual as JSONObject)[subKey];
-      if (!matchesValue(subExpected, subActual)) {
+      if (!matchesEq(subExpected, subActual)) {
         return false;
       }
     }
     return true;
   }
-  // Primitive: strict equality. JSON's primitives are value-equal
-  // under `===` (string / number / boolean), so no further work.
   return expected === actual;
 };
 
-/**
- * Evaluate an operator object against a doc value. All declared ops
- * AND together — multiple ops on one field
- * (`{ $gte: 1, $lt: 10 }`) are a conjunction.
- *
- * Critical semantic notes:
- * - Boolean / null / missing / mismatched-type actuals against
- *   range ops are **always-miss**, never throw. Mirrors the
- *   equality matcher's type-mismatch behaviour
- *   (`matches({count: 7}, {count: "7"})` returns `false`).
- * - String comparison uses JS `<` / `>` (UTF-16 code-unit order).
- *   Matches the byte order the index encoder produces on stored
- *   ASCII strings; numeric ranges are unsafe under the byte-order
- *   index encoder (T3's footgun, not T1's matcher).
- * - `$in` membership: `===` for primitives,
- *   `deepEqualDocumentValue` for object members.
- * - Empty `$in: []` can never reach `matchesOp` (validator
- *   rejects).
- */
-const matchesOp = (op: PredicateOp<DocumentValue>, actual: JSONValue | undefined): boolean => {
-  if (op.$eq !== undefined && !matchesValue(op.$eq, actual)) {
-    return false;
-  }
-  if (op.$in !== undefined) {
-    let hit = false;
-    for (const m of op.$in) {
-      if (typeof m === "object") {
-        if (matchesValue(m, actual)) {
-          hit = true;
-          break;
-        }
-      } else if (m === actual) {
-        hit = true;
-        break;
+const matchesIn = (
+  members: ReadonlyArray<DocumentValue>,
+  actual: JSONValue | undefined,
+): boolean => {
+  for (const m of members) {
+    if (typeof m === "object") {
+      if (matchesEq(m, actual)) {
+        return true;
       }
+    } else if (m === actual) {
+      return true;
     }
-    if (!hit) {
-      return false;
-    }
   }
-  if (op.$gt !== undefined && !compareGT(actual, op.$gt, false)) {
-    return false;
-  }
-  if (op.$gte !== undefined && !compareGT(actual, op.$gte, true)) {
-    return false;
-  }
-  if (op.$lt !== undefined && !compareLT(actual, op.$lt, false)) {
-    return false;
-  }
-  if (op.$lte !== undefined && !compareLT(actual, op.$lte, true)) {
-    return false;
-  }
-  return true;
+  return false;
 };
 
 const compareGT = (

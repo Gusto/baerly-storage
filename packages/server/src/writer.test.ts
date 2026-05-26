@@ -631,7 +631,7 @@ describe("Writer — filtered index", () => {
   const open_only: IndexDefinition = {
     name: "open_only",
     on: "assignee",
-    predicate: { status: "open" },
+    predicate: { clauses: [{ op: "eq", field: "status", value: "open" }] },
   };
 
   beforeEach(() => {

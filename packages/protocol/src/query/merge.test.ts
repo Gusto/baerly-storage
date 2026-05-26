@@ -1,14 +1,13 @@
 import { fc, test as fcTest } from "@fast-check/vitest";
 import { describe, expect, test } from "vitest";
 
-import type { Predicate } from "../table-api.ts";
 import { BaerlyError } from "../errors.ts";
 import type { DocumentValue, JSONObject } from "../json.ts";
 
-import { type PredicateOp } from "./_internals.ts";
-import { matches } from "./matches.ts";
-import { mergePredicates } from "./merge.ts";
-import { validatePredicate } from "./validate.ts";
+import { matchesWire } from "./matches.ts";
+import { mergePredicateWires } from "./merge.ts";
+import { validateWire } from "./validate.ts";
+import type { PredicateClause, PredicateOpName, PredicateWire } from "./wire.ts";
 
 const expectInvalidConfig = (fn: () => unknown, snippet: string): void => {
   try {
@@ -34,212 +33,194 @@ const expectUnsatisfiable = (fn: () => unknown, snippet: string): void => {
   throw new Error(`Expected BaerlyError{UnsatisfiablePredicate}, none thrown`);
 };
 
-describe("mergePredicates", () => {
-  test("disjoint keys merge to a union", () => {
-    expect(mergePredicates({ status: "open" }, { priority: "p1" })).toEqual({
-      status: "open",
-      priority: "p1",
-    });
-  });
+const eq = (field: string, value: DocumentValue): PredicateClause => ({
+  op: "eq",
+  field,
+  value,
+});
+const op = (
+  o: PredicateOpName,
+  field: string,
+  value: DocumentValue | ReadonlyArray<DocumentValue>,
+): PredicateClause => ({ op: o, field, value });
 
-  test("merging with an empty predicate returns the other side", () => {
-    expect(mergePredicates({}, { status: "open" })).toEqual({ status: "open" });
-    expect(mergePredicates({ status: "open" }, {})).toEqual({ status: "open" });
-  });
-
-  test("shared key with deep-equal primitive values collapses", () => {
-    expect(mergePredicates({ status: "open" }, { status: "open" })).toEqual({
-      status: "open",
-    });
-  });
-
-  test("shared key with deep-equal sub-predicates collapses", () => {
+describe("mergePredicateWires", () => {
+  test("disjoint clauses concatenate", () => {
     expect(
-      mergePredicates({ assignee: { team: "platform" } }, { assignee: { team: "platform" } }),
-    ).toEqual({ assignee: { team: "platform" } });
+      mergePredicateWires({ clauses: [eq("status", "open")] }, { clauses: [eq("priority", "p1")] }),
+    ).toEqual({ clauses: [eq("status", "open"), eq("priority", "p1")] });
   });
 
-  test("shared key with conflicting primitive values throws InvalidConfig", () => {
+  test("merging with an empty wire returns the other side's clauses", () => {
+    expect(mergePredicateWires({ clauses: [] }, { clauses: [eq("status", "open")] })).toEqual({
+      clauses: [eq("status", "open")],
+    });
+    expect(mergePredicateWires({ clauses: [eq("status", "open")] }, { clauses: [] })).toEqual({
+      clauses: [eq("status", "open")],
+    });
+  });
+
+  test("shared field with deep-equal eq values is kept (no contradiction)", () => {
+    // The merger concatenates; the per-field satisfiability check sees
+    // two eq clauses with equal values and accepts.
+    const merged = mergePredicateWires(
+      { clauses: [eq("status", "open")] },
+      { clauses: [eq("status", "open")] },
+    );
+    expect(merged).toEqual({ clauses: [eq("status", "open"), eq("status", "open")] });
+    // The merged wire matches any doc where status==="open" — identical to
+    // the result for either side alone.
+    expect(matchesWire(merged, { status: "open" })).toBe(true);
+    expect(matchesWire(merged, { status: "closed" })).toBe(false);
+  });
+
+  test("shared field with conflicting eq primitives throws InvalidConfig", () => {
     expectInvalidConfig(
-      () => mergePredicates<{ status: string }>({ status: "open" }, { status: "closed" }),
+      () =>
+        mergePredicateWires(
+          { clauses: [eq("status", "open")] },
+          { clauses: [eq("status", "closed")] },
+        ),
       '"status"',
     );
   });
 
-  test("shared key with conflicting sub-predicate throws InvalidConfig", () => {
-    expectInvalidConfig(
-      () =>
-        mergePredicates<{ assignee: { team: string } }>(
-          { assignee: { team: "platform" } },
-          { assignee: { team: "billing" } },
-        ),
-      '"assignee"',
+  test("disjoint range clauses on different fields concatenate", () => {
+    const m = mergePredicateWires(
+      { clauses: [op("gt", "count", 5)] },
+      { clauses: [op("in", "priority", ["p1"])] },
     );
+    expect(matchesWire(m, { count: 10, priority: "p1" })).toBe(true);
+    expect(matchesWire(m, { count: 10, priority: "p2" })).toBe(false);
+    expect(matchesWire(m, { count: 4, priority: "p1" })).toBe(false);
   });
 
-  test("acceptance is symmetric: merge(a,b) ≡ merge(b,a) when both succeed", () => {
-    const m1 = mergePredicates({ status: "open" }, { priority: "p1" });
-    const m2 = mergePredicates({ priority: "p1" }, { status: "open" });
-    expect(matches(m1, { status: "open", priority: "p1" })).toBe(true);
-    expect(matches(m2, { status: "open", priority: "p1" })).toBe(true);
-    expect(matches(m1, { status: "closed", priority: "p1" })).toBe(false);
-    expect(matches(m2, { status: "closed", priority: "p1" })).toBe(false);
-  });
-});
-
-describe("mergePredicates — operator-object", () => {
-  test("disjoint operator clauses on different fields union", () => {
-    const m = mergePredicates(
-      { count: { $gt: 5 } } as unknown as Predicate,
-      { priority: { $in: ["p1"] } } as unknown as Predicate,
+  test("two gt clauses → both retained; matcher AND's so the tighter bound wins", () => {
+    const m = mergePredicateWires(
+      { clauses: [op("gt", "x", 5)] },
+      { clauses: [op("gt", "x", 10)] },
     );
-    expect(matches(m, { count: 10, priority: "p1" })).toBe(true);
-    expect(matches(m, { count: 10, priority: "p2" })).toBe(false);
-    expect(matches(m, { count: 4, priority: "p1" })).toBe(false);
+    expect(matchesWire(m, { x: 10 })).toBe(false);
+    expect(matchesWire(m, { x: 11 })).toBe(true);
   });
 
-  test("intersect $gt → keep higher bound; strict tie wins", () => {
-    const m = mergePredicates(
-      { x: { $gt: 5 } } as unknown as Predicate,
-      { x: { $gt: 10 } } as unknown as Predicate,
+  test("two lt clauses → matcher AND keeps the lower bound", () => {
+    const m = mergePredicateWires(
+      { clauses: [op("lt", "x", 100)] },
+      { clauses: [op("lt", "x", 50)] },
     );
-    expect(matches(m, { x: 10 })).toBe(false);
-    expect(matches(m, { x: 11 })).toBe(true);
+    expect(matchesWire(m, { x: 50 })).toBe(false);
+    expect(matchesWire(m, { x: 49 })).toBe(true);
   });
 
-  test("intersect $lt → keep lower bound", () => {
-    const m = mergePredicates(
-      { x: { $lt: 100 } } as unknown as Predicate,
-      { x: { $lt: 50 } } as unknown as Predicate,
+  test("gt + gte on the same equal bound — strict wins via the matcher AND", () => {
+    const m = mergePredicateWires(
+      { clauses: [op("gt", "x", 5)] },
+      { clauses: [op("gte", "x", 5)] },
     );
-    expect(matches(m, { x: 50 })).toBe(false);
-    expect(matches(m, { x: 49 })).toBe(true);
+    expect(matchesWire(m, { x: 5 })).toBe(false);
+    expect(matchesWire(m, { x: 6 })).toBe(true);
   });
 
-  test("$gt beats $gte on equal bound", () => {
-    const m = mergePredicates(
-      { x: { $gt: 5 } } as unknown as Predicate,
-      { x: { $gte: 5 } } as unknown as Predicate,
+  test("two in clauses on the same field — matcher AND keeps the intersection", () => {
+    const m = mergePredicateWires(
+      { clauses: [op("in", "x", ["a", "b", "c"])] },
+      { clauses: [op("in", "x", ["b", "c", "d"])] },
     );
-    // Strict wins on tie → effectively `$gt: 5`.
-    expect(matches(m, { x: 5 })).toBe(false);
-    expect(matches(m, { x: 6 })).toBe(true);
+    expect(matchesWire(m, { x: "a" })).toBe(false);
+    expect(matchesWire(m, { x: "b" })).toBe(true);
+    expect(matchesWire(m, { x: "c" })).toBe(true);
+    expect(matchesWire(m, { x: "d" })).toBe(false);
   });
 
-  test("$in intersection collapses to shared members", () => {
-    const m = mergePredicates(
-      { x: { $in: ["a", "b", "c"] } } as unknown as Predicate,
-      { x: { $in: ["b", "c", "d"] } } as unknown as Predicate,
-    );
-    expect(matches(m, { x: "a" })).toBe(false);
-    expect(matches(m, { x: "b" })).toBe(true);
-    expect(matches(m, { x: "c" })).toBe(true);
-    expect(matches(m, { x: "d" })).toBe(false);
-  });
-
-  test("empty $in intersection → UnsatisfiablePredicate", () => {
+  test("two in clauses with empty intersection → UnsatisfiablePredicate", () => {
     expectUnsatisfiable(
       () =>
-        mergePredicates(
-          { x: { $in: ["a", "b"] } } as unknown as Predicate,
-          { x: { $in: ["c", "d"] } } as unknown as Predicate,
+        mergePredicateWires(
+          { clauses: [op("in", "x", ["a", "b"])] },
+          { clauses: [op("in", "x", ["c", "d"])] },
         ),
-      "$in intersection",
-    );
-  });
-
-  test("conflicting $eq → UnsatisfiablePredicate", () => {
-    expectUnsatisfiable(
-      () =>
-        mergePredicates(
-          { x: { $eq: 1 } } as unknown as Predicate,
-          { x: { $eq: 2 } } as unknown as Predicate,
-        ),
-      "conflicting $eq",
+      "empty in() intersection",
     );
   });
 
   test("lo > hi after merge → UnsatisfiablePredicate", () => {
     expectUnsatisfiable(
       () =>
-        mergePredicates(
-          { x: { $gt: 10 } } as unknown as Predicate,
-          { x: { $lt: 5 } } as unknown as Predicate,
+        mergePredicateWires(
+          { clauses: [op("gt", "x", 10)] },
+          { clauses: [op("lt", "x", 5)] },
         ),
       "empty interval",
     );
   });
 
-  test("primitive on one side coerces to $eq and collapses inside interval", () => {
-    // Pre-T1 behaviour: this chain threw InvalidConfig because the
-    // two sides disagreed structurally. Post-T1: the primitive
-    // promotes to `{$eq:1}`, merges with `{$in:[1,2]}`, and
-    // collapses to `{$eq:1}`. Verified end-to-end via matches().
-    const m = mergePredicates(
-      { x: 1 } as unknown as Predicate,
-      { x: { $in: [1, 2] } } as unknown as Predicate,
+  test("eq on one side + in on the other collapses via the matcher", () => {
+    const m = mergePredicateWires(
+      { clauses: [eq("x", 1)] },
+      { clauses: [op("in", "x", [1, 2])] },
     );
-    expect(matches(m, { x: 1 })).toBe(true);
-    expect(matches(m, { x: 2 })).toBe(false);
+    expect(matchesWire(m, { x: 1 })).toBe(true);
+    expect(matchesWire(m, { x: 2 })).toBe(false);
   });
 
-  test("primitive outside operator interval → UnsatisfiablePredicate", () => {
+  test("eq outside the merged interval → UnsatisfiablePredicate", () => {
     expectUnsatisfiable(
       () =>
-        mergePredicates(
-          { x: 1 } as unknown as Predicate,
-          { x: { $gt: 5 } } as unknown as Predicate,
+        mergePredicateWires(
+          { clauses: [eq("x", 1)] },
+          { clauses: [op("gt", "x", 5)] },
         ),
-      "$eq=1",
+      "excluded by lower bound",
     );
   });
 
-  // Regression: primitive of a different type than the range bound
-  // is provably unsatisfiable (boolean $eq vs numeric range, string
-  // $eq vs numeric range, etc.). Without the type-compatibility
-  // check inside `assertOpObjectSatisfiable`, the satisfiability
-  // pass silently skipped the cross-type case and the collapse step
-  // dropped the range, leaving a predicate that incorrectly accepted
-  // the boolean/string value. Surfaced by the property test under
-  // FC_NUM_RUNS=10000 (counterexample: a={b:false}, b={b:{$gt:0}}).
-  test("boolean $eq vs numeric range → UnsatisfiablePredicate (T1 regression)", () => {
+  test("boolean eq vs numeric range → UnsatisfiablePredicate", () => {
     expectUnsatisfiable(
       () =>
-        mergePredicates(
-          { b: false } as unknown as Predicate,
-          { b: { $gt: 0 } } as unknown as Predicate,
+        mergePredicateWires(
+          { clauses: [eq("b", false)] },
+          { clauses: [op("gt", "b", 0)] },
         ),
       "type-incompatible",
     );
   });
 
-  test("string $eq vs numeric upper bound → UnsatisfiablePredicate", () => {
+  test("string eq vs numeric upper bound → UnsatisfiablePredicate", () => {
     expectUnsatisfiable(
       () =>
-        mergePredicates(
-          { x: "p2" } as unknown as Predicate,
-          { x: { $lt: 10 } } as unknown as Predicate,
+        mergePredicateWires(
+          { clauses: [eq("x", "p2")] },
+          { clauses: [op("lt", "x", 10)] },
         ),
       "type-incompatible",
     );
   });
 
-  test("numeric $eq vs string range → UnsatisfiablePredicate", () => {
+  test("numeric eq vs string range → UnsatisfiablePredicate", () => {
     expectUnsatisfiable(
       () =>
-        mergePredicates(
-          { x: 5 } as unknown as Predicate,
-          { x: { $gte: "a" } } as unknown as Predicate,
+        mergePredicateWires(
+          { clauses: [eq("x", 5)] },
+          { clauses: [op("gte", "x", "a")] },
         ),
       "type-incompatible",
     );
   });
 
-  test("PredicateOp<V> type is re-exported from the protocol barrel", () => {
-    // Smoke test: the new type flows through the protocol barrel
-    // and can be used to type-cast a predicate's value position.
-    const op: PredicateOp<number> = { $gte: 1, $lt: 10 };
-    expect(matches({ x: op } as unknown as Predicate, { x: 5 })).toBe(true);
+  test("acceptance is symmetric: merge(a,b) and merge(b,a) accept the same doc set", () => {
+    const m1 = mergePredicateWires(
+      { clauses: [eq("status", "open")] },
+      { clauses: [eq("priority", "p1")] },
+    );
+    const m2 = mergePredicateWires(
+      { clauses: [eq("priority", "p1")] },
+      { clauses: [eq("status", "open")] },
+    );
+    expect(matchesWire(m1, { status: "open", priority: "p1" })).toBe(true);
+    expect(matchesWire(m2, { status: "open", priority: "p1" })).toBe(true);
+    expect(matchesWire(m1, { status: "closed", priority: "p1" })).toBe(false);
+    expect(matchesWire(m2, { status: "closed", priority: "p1" })).toBe(false);
   });
 });
 
@@ -252,15 +233,15 @@ const valArb = fc.oneof(
   fc.integer({ min: -3, max: 3 }),
   fc.boolean(),
 );
-const flatPredArb: fc.Arbitrary<Predicate> = fc
-  .array(fc.tuple(keyArb, valArb), { maxLength: 4 })
-  .map((pairs) => {
-    const out: Record<string, DocumentValue> = {};
-    for (const [k, v] of pairs) {
-      out[k] = v as DocumentValue;
-    }
-    return out as Predicate;
-  });
+
+const eqClauseArb: fc.Arbitrary<PredicateClause> = fc
+  .tuple(keyArb, valArb)
+  .map(([k, v]) => ({ op: "eq" as const, field: k, value: v as DocumentValue }));
+
+const wireArb: fc.Arbitrary<PredicateWire> = fc
+  .array(eqClauseArb, { maxLength: 4 })
+  .map((clauses) => ({ clauses }));
+
 const docArb: fc.Arbitrary<JSONObject> = fc
   .array(fc.tuple(keyArb, valArb), { maxLength: 4 })
   .map((pairs) => {
@@ -271,80 +252,69 @@ const docArb: fc.Arbitrary<JSONObject> = fc
     return out as JSONObject;
   });
 
-fcTest.prop({ a: flatPredArb, b: flatPredArb, doc: docArb })(
-  "matches(merge(a,b), doc) === matches(a, doc) && matches(b, doc) (when merge doesn't throw)",
+fcTest.prop({ a: wireArb, b: wireArb, doc: docArb })(
+  "matchesWire(merge(a,b), doc) === matchesWire(a, doc) && matchesWire(b, doc) (when merge doesn't throw)",
   ({ a, b, doc }) => {
-    let merged: Predicate;
+    let merged: PredicateWire;
     try {
-      merged = mergePredicates(a, b);
+      merged = mergePredicateWires(a, b);
     } catch (error) {
       expect(error).toBeInstanceOf(BaerlyError);
       return;
     }
-    expect(matches(merged, doc)).toBe(matches(a, doc) && matches(b, doc));
+    expect(matchesWire(merged, doc)).toBe(matchesWire(a, doc) && matchesWire(b, doc));
   },
 );
 
-// Operator-aware property test: each field value is either a
-// primitive or an operator object (`$eq` / `$gt` / `$lt` / `$in`).
-// We validate both predicates first — only valid inputs participate
-// (the validator owns the "well-formed" boundary; the property
-// concerns matcher/merge agreement post-validation).
-const opObjArb: fc.Arbitrary<DocumentValue> = fc
-  .record(
-    {
-      $eq: fc.option(valArb, { nil: undefined }),
-      $gt: fc.option(fc.integer({ min: -3, max: 3 }), { nil: undefined }),
-      $lt: fc.option(fc.integer({ min: -3, max: 3 }), { nil: undefined }),
-      $in: fc.option(fc.array(valArb, { minLength: 1, maxLength: 3 }), { nil: undefined }),
-    },
-    { requiredKeys: [] },
-  )
-  .filter((r) => Object.values(r).some((v) => v !== undefined))
-  .map((r) => {
-    const out: Record<string, DocumentValue> = {};
-    if (r.$eq !== undefined) {
-      out["$eq"] = r.$eq as DocumentValue;
-    }
-    if (r.$gt !== undefined) {
-      out["$gt"] = r.$gt as DocumentValue;
-    }
-    if (r.$lt !== undefined) {
-      out["$lt"] = r.$lt as DocumentValue;
-    }
-    if (r.$in !== undefined) {
-      out["$in"] = r.$in as DocumentValue[] as unknown as DocumentValue;
-    }
-    return out as DocumentValue;
-  });
+// Operator-aware property test: build wires with eq / gt / lt / in
+// clauses on a small key/value pool, validate each side first, and
+// assert matcher/merge agreement when the merge doesn't throw.
+const opClauseArb: fc.Arbitrary<PredicateClause> = fc.oneof(
+  fc.tuple(keyArb, valArb).map(([k, v]) => ({
+    op: "eq" as const,
+    field: k,
+    value: v as DocumentValue,
+  })),
+  fc.tuple(keyArb, fc.integer({ min: -3, max: 3 })).map(([k, v]) => ({
+    op: "gt" as const,
+    field: k,
+    value: v as DocumentValue,
+  })),
+  fc.tuple(keyArb, fc.integer({ min: -3, max: 3 })).map(([k, v]) => ({
+    op: "lt" as const,
+    field: k,
+    value: v as DocumentValue,
+  })),
+  fc
+    .tuple(keyArb, fc.array(valArb, { minLength: 1, maxLength: 3 }))
+    .map(([k, vs]) => ({
+      op: "in" as const,
+      field: k,
+      value: vs as ReadonlyArray<DocumentValue>,
+    })),
+);
 
-const opPredArb: fc.Arbitrary<Predicate> = fc
-  .array(fc.tuple(keyArb, fc.oneof(valArb, opObjArb)), { maxLength: 4 })
-  .map((pairs) => {
-    const out: Record<string, DocumentValue> = {};
-    for (const [k, v] of pairs) {
-      out[k] = v;
-    }
-    return out as Predicate;
-  });
+const opWireArb: fc.Arbitrary<PredicateWire> = fc
+  .array(opClauseArb, { maxLength: 4 })
+  .map((clauses) => ({ clauses }));
 
-fcTest.prop({ a: opPredArb, b: opPredArb, doc: docArb })(
-  "matches(merge(a,b), doc) === matches(a, doc) && matches(b, doc) — operators",
+fcTest.prop({ a: opWireArb, b: opWireArb, doc: docArb })(
+  "matchesWire(merge(a,b), doc) === matchesWire(a, doc) && matchesWire(b, doc) — operators",
   ({ a, b, doc }) => {
     try {
-      validatePredicate(a);
-      validatePredicate(b);
+      validateWire(a);
+      validateWire(b);
     } catch (error) {
       expect(error).toBeInstanceOf(BaerlyError);
       return;
     }
-    let merged: Predicate;
+    let merged: PredicateWire;
     try {
-      merged = mergePredicates(a, b);
+      merged = mergePredicateWires(a, b);
     } catch (error) {
       expect(error).toBeInstanceOf(BaerlyError);
       return;
     }
-    expect(matches(merged, doc)).toBe(matches(a, doc) && matches(b, doc));
+    expect(matchesWire(merged, doc)).toBe(matchesWire(a, doc) && matchesWire(b, doc));
   },
 );

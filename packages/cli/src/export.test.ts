@@ -144,7 +144,7 @@ describe("baerly export — CLI smoke", () => {
     await expect(access(`${outFile}.plan.json`)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  test('--where=\'{"status":"open"}\' filters the INSERTs', async () => {
+  test('--where=<wire predicate> filters the INSERTs', async () => {
     await provision(storage);
     await seedRows(storage);
     const stdout = captureStream(process.stdout);
@@ -157,7 +157,7 @@ describe("baerly export — CLI smoke", () => {
         `--table=${COLL}`,
         "--target=sqlite",
         `--output=${outFile}`,
-        `--where={"status":"open"}`,
+        `--where={"clauses":[{"op":"eq","field":"status","value":"open"}]}`,
         "--json",
       ]);
     } finally {
@@ -189,7 +189,7 @@ describe("baerly export — CLI smoke", () => {
       `--table=${COLL}`,
       "--target=sqlite",
       `--output=${outFile}`,
-      `--where={"status":"open"}`,
+      `--where={"clauses":[{"op":"eq","field":"status","value":"open"}]}`,
       "--where-comment=from spread",
     ]);
     expect(exitCode).toBe(0);

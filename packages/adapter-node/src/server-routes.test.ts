@@ -255,9 +255,10 @@ describe("createApp routes", () => {
     });
   });
 
-  test("GET /v1/t/:table?where=<$-prefixed-key> returns 400 (predicate validator rejects)", async () => {
+  test("GET /v1/t/:table?where=<malformed wire> returns 400 (wire validator rejects)", async () => {
     await withServer(trivialVerifier, async (baseUrl) => {
-      // `{"$or":1}` — `$`-prefixed keys are rejected by validatePredicate.
+      // Post-redesign `?where=` carries a wire-form predicate; the
+      // wire validator rejects anything lacking a `clauses` array.
       const where = encodeURIComponent(JSON.stringify({ $or: 1 }));
       const res = await fetch(`${baseUrl}/v1/t/tickets?where=${where}`);
       expect(res.status).toBe(400);
@@ -293,7 +294,9 @@ describe("createApp routes", () => {
         expect(res.status).toBe(201);
       }
 
-      const where = encodeURIComponent(JSON.stringify({ status: "open" }));
+      const where = encodeURIComponent(
+        JSON.stringify({ clauses: [{ op: "eq", field: "status", value: "open" }] }),
+      );
       const listRes = await fetch(`${baseUrl}/v1/t/tickets?where=${where}`);
       expect(listRes.status).toBe(200);
       const list = (await listRes.json()) as { data: Array<{ status: string }> };

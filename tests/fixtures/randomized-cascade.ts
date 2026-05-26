@@ -27,8 +27,9 @@ import {
   type IndexDefinition,
   type LogEntry,
   BaerlyError,
-  matches,
-  type Predicate,
+  matchesWire,
+  normalizePredicateArg,
+  type PredicateArg,
   type Storage,
   createCurrentJson,
   readCurrentJson,
@@ -223,7 +224,7 @@ const assertFilteredIndexConsistent = async (inst: Instance): Promise<void> => {
 const FILTERED_INDEX: IndexDefinition = {
   name: "cascade_filter",
   on: "send_time",
-  predicate: { sender: 0 },
+  predicate: { clauses: [{ op: "eq", field: "sender", value: 0 }] },
 };
 
 const buildInstances = async (
@@ -592,19 +593,25 @@ export const runRangeWalkParityCascade = async (opts: {
 
   for (let iter = 0; iter < iterations; iter++) {
     // Random predicate shape — mix of one-sided / two-sided range
-    // and small $in. All bounds are string-typed.
+    // and small `in`. All bounds are string-typed. We build the
+    // callback-form PredicateArg so the cascade exercises the
+    // normaliser → validator → planner seam end-to-end (a direct
+    // wire literal would bypass the normaliser and lose coverage
+    // of that boundary).
     const shape = Math.floor(rand() * 5);
-    let predicate: Predicate<ParityDoc>;
+    let predicate: PredicateArg<ParityDoc>;
     if (shape === 0) {
-      // One-sided $gte
-      predicate = { priority: { $gte: pick(priorityAlphabet) } } as unknown as Predicate<ParityDoc>;
+      // One-sided gte
+      const v = pick(priorityAlphabet);
+      predicate = (q) => q.gte("priority", v);
     } else if (shape === 1) {
-      // One-sided $lt
-      predicate = { priority: { $lt: pick(priorityAlphabet) } } as unknown as Predicate<ParityDoc>;
+      // One-sided lt
+      const v = pick(priorityAlphabet);
+      predicate = (q) => q.lt("priority", v);
     } else if (shape === 2) {
       // Two-sided, varying inclusivity. Pick distinct values so
-      // the interval is never empty (lo < hi strictly); T1
-      // validation throws UnsatisfiablePredicate on lo == hi with
+      // the interval is never empty (lo < hi strictly); the wire
+      // validator throws UnsatisfiablePredicate on lo == hi with
       // strict comparison or lo > hi.
       const a = Math.floor(rand() * priorityAlphabet.length);
       let b = Math.floor(rand() * priorityAlphabet.length);
@@ -617,30 +624,32 @@ export const runRangeWalkParityCascade = async (opts: {
       const hi = aVal < bVal ? bVal : aVal;
       const loInclusive = rand() > 0.5;
       const hiInclusive = rand() > 0.5;
-      const op: Record<string, string> = {};
-      op[loInclusive ? "$gte" : "$gt"] = lo;
-      op[hiInclusive ? "$lte" : "$lt"] = hi;
-      predicate = { priority: op } as unknown as Predicate<ParityDoc>;
+      predicate = (q) => {
+        const withLo = loInclusive ? q.gte("priority", lo) : q.gt("priority", lo);
+        return hiInclusive ? withLo.lte("priority", hi) : withLo.lt("priority", hi);
+      };
     } else if (shape === 3) {
-      // $in with 1-3 values
+      // in with 1-3 values
       const size = 1 + Math.floor(rand() * 3);
       const values: string[] = [];
       for (let v = 0; v < size; v++) {
         values.push(pick(priorityAlphabet));
       }
-      predicate = {
-        priority: { $in: values },
-      } as unknown as Predicate<ParityDoc>;
+      predicate = (q) => q.in("priority", values);
     } else {
       // Plain equality (still exercises the planner's routing).
-      predicate = { priority: pick(priorityAlphabet) } as unknown as Predicate<ParityDoc>;
+      const v = pick(priorityAlphabet);
+      predicate = (q) => q.eq("priority", v);
     }
 
-    const expected = seeded.filter((d) => matches(predicate, d));
+    // Materialise the wire for the in-memory parity baseline; the
+    // routed read consumes the same callback via `.where(...)`.
+    const wire = normalizePredicateArg<ParityDoc>(predicate);
+    const expected = seeded.filter((d) => matchesWire(wire, d));
     const actual = await table.where(predicate).all();
     expect(
       actual.map((r) => r._id).toSorted(),
-      `range-walk parity mismatch for predicate ${JSON.stringify(predicate)}`,
+      `range-walk parity mismatch for wire ${JSON.stringify(wire)}`,
     ).toEqual(expected.map((d) => d._id).toSorted());
   }
 };

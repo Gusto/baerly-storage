@@ -107,7 +107,7 @@ interface Table<T extends DocumentData = DocumentData> {
   count(): Promise<number>;
   get(id: string): Promise<T | undefined>;
   // Modifiers — return Query<T>.
-  where(predicate: Predicate<T>): Query<T>;
+  where(predicate: PredicateArg<T>): Query<T>;     // PredicateArg = Predicate<T> | (q => PredicateBuilder<T>)
   order(spec: OrderSpec<T>): Query<T>;
   limit(n: number): Query<T>;
   consistency(level: ConsistencyLevel): Query<T>;   // "strong" | "eventual"
@@ -135,22 +135,50 @@ interface Query<T> extends /* Table<T>'s modifiers */ {
 
 ### Predicates
 
-Exact equality on top-level fields and dotted paths, plus per-field
-operators `$eq | $gt | $gte | $lt | $lte | $in`. Multiple operators
-on the same field AND. Two `.where(...)` calls AND-merge. No
-top-level `$or` / `$and` / `$regex`.
+Two shapes, both legal on `.where(...)`:
+
+1. **Object literal** — equality only. Top-level, dotted-path, or
+   nested literal sub-predicate. Multi-field is implicit AND.
+2. **Callback DSL** — `q => q.eq(...).gt(...).gte(...).lt(...).lte(...).in(...)`.
+   The methods on `PredicateBuilder<T>` ARE the supported operator
+   vocabulary; methods absent from the type (`or`, `not`, `regex`,
+   `ne`, `exists`) do not exist and won't typecheck.
+
+Chained `.where(...).where(...)` AND-merges across calls and across
+shapes. Both forms normalise to one wire format (a flat clause list,
+`{ clauses: PredicateClause[] }`); the HTTP `?where=` param carries
+that wire JSON.
 
 Use `.get(id)` / `.update(id, patch)` / `.replace(id, doc)` /
 `.delete(id)` for by-`_id` operations — `_id` is excluded from
-`Predicate<T>`.
+`Path<T>` (and so from `PredicateBuilder<T>`'s field arg).
 
 ```ts
 db.table("tickets").where({ status: "open" }).all();
 db.table("tickets").where({ "assignee.team": "platform" }).all();
-db.table("tickets").where({ count: { $gte: 1, $lt: 10 } }).all();
-db.table("tickets").where({ status: { $in: ["open", "pending"] } }).all();
-db.table("tickets").where({ status: "open" }).where({ priority: "p1" }).all(); // AND
+db.table("tickets").where(q => q.gte("count", 1).lt("count", 10)).all();
+db.table("tickets").where(q => q.in("status", ["open", "pending"])).all();
+db.table("tickets")
+  .where({ status: "open" })
+  .where(q => q.gte("priority", 5))
+  .all();
 ```
+
+#### Wire format (`?where=`)
+
+`PredicateWire` is the on-the-wire shape:
+
+```ts
+interface PredicateClause {
+  readonly op: "eq" | "gt" | "gte" | "lt" | "lte" | "in";
+  readonly field: string;          // top-level or dotted path
+  readonly value: DocumentValue | ReadonlyArray<DocumentValue>;   // array iff op === "in"
+}
+interface PredicateWire { readonly clauses: ReadonlyArray<PredicateClause>; }
+```
+
+Example: `.where({ status: "open" })` → `{"clauses":[{"op":"eq","field":"status","value":"open"}]}`.
+The empty wire `{"clauses":[]}` matches every document.
 
 ### Consistency
 
@@ -258,7 +286,7 @@ try {
 | `Unauthorized`           | 401  | Verifier returned no identity                                        |
 | `NotFound`               | 404  | Row by id not found                                                  |
 | `PayloadTooLarge`        | 413  | Body > 1 MiB cap                                                     |
-| `UnsatisfiablePredicate` | 400  | Predicate is well-formed but contradicts itself (`$in:[]`, etc.)     |
+| `UnsatisfiablePredicate` | 400  | Predicate is well-formed but contradicts itself (empty `in` set, etc.) |
 
 ## `defineConfig({ app, tenant, target, collections })`
 

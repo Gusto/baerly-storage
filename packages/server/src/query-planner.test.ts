@@ -1,12 +1,14 @@
 /**
  * Pure-unit tests for the query planner. No `Db`, no `Storage`, no
- * I/O — the planner is a pure function over `(predicate, indexes)`.
+ * I/O — the planner is a pure function over `(wire, indexes)`.
  */
 
-import type { Predicate, DocumentData } from "@baerly/protocol";
+import type { PredicateWire } from "@baerly/protocol";
 import { describe, expect, test } from "vitest";
 import type { IndexDefinition } from "./indexes.ts";
 import { IN_FANOUT_THRESHOLD, planQuery } from "./query-planner.ts";
+
+const wire = (clauses: PredicateWire["clauses"]): PredicateWire => ({ clauses });
 
 describe("planQuery", () => {
   test("no predicate → full-scan with reason 'no-predicate'", () => {
@@ -16,8 +18,15 @@ describe("planQuery", () => {
     });
   });
 
+  test("empty wire → full-scan with reason 'no-predicate'", () => {
+    expect(planQuery(wire([]), [])).toEqual({
+      kind: "full-scan",
+      reason: "no-predicate",
+    });
+  });
+
   test("no declared indexes → full-scan with reason 'no-indexes-declared'", () => {
-    expect(planQuery({ a: 1 } as unknown as Predicate<DocumentData>, [])).toEqual({
+    expect(planQuery(wire([{ op: "eq", field: "a", value: 1 }]), [])).toEqual({
       kind: "full-scan",
       reason: "no-indexes-declared",
     });
@@ -25,10 +34,7 @@ describe("planQuery", () => {
 
   test("single-field equality routes to single-field index", () => {
     const indexes: IndexDefinition[] = [{ name: "by_status", on: "status" }];
-    const plan = planQuery(
-      { status: "open" } as unknown as Predicate<DocumentData>,
-      indexes,
-    );
+    const plan = planQuery(wire([{ op: "eq", field: "status", value: "open" }]), indexes);
     expect(plan).toEqual({
       kind: "index-walk",
       indexName: "by_status",
@@ -37,9 +43,14 @@ describe("planQuery", () => {
   });
 
   test("composite full hit — two-field predicate over two-field index", () => {
-    const indexes: IndexDefinition[] = [{ name: "by_status_priority", on: ["status", "priority"] }];
+    const indexes: IndexDefinition[] = [
+      { name: "by_status_priority", on: ["status", "priority"] },
+    ];
     const plan = planQuery(
-      { status: "open", priority: "p2" } as unknown as Predicate<DocumentData>,
+      wire([
+        { op: "eq", field: "status", value: "open" },
+        { op: "eq", field: "priority", value: "p2" },
+      ]),
       indexes,
     );
     expect(plan).toEqual({
@@ -50,11 +61,10 @@ describe("planQuery", () => {
   });
 
   test("composite partial-prefix hit — one of two indexed fields", () => {
-    const indexes: IndexDefinition[] = [{ name: "by_status_priority", on: ["status", "priority"] }];
-    const plan = planQuery(
-      { status: "open" } as unknown as Predicate<DocumentData>,
-      indexes,
-    );
+    const indexes: IndexDefinition[] = [
+      { name: "by_status_priority", on: ["status", "priority"] },
+    ];
+    const plan = planQuery(wire([{ op: "eq", field: "status", value: "open" }]), indexes);
     expect(plan).toEqual({
       kind: "index-walk",
       indexName: "by_status_priority",
@@ -64,7 +74,13 @@ describe("planQuery", () => {
 
   test("composite partial-prefix hit at length 2 of 3", () => {
     const indexes: IndexDefinition[] = [{ name: "by_a_b_c", on: ["a", "b", "c"] }];
-    const plan = planQuery({ a: 1, b: 2 } as unknown as Predicate<DocumentData>, indexes);
+    const plan = planQuery(
+      wire([
+        { op: "eq", field: "a", value: 1 },
+        { op: "eq", field: "b", value: 2 },
+      ]),
+      indexes,
+    );
     expect(plan).toEqual({
       kind: "index-walk",
       indexName: "by_a_b_c",
@@ -74,7 +90,7 @@ describe("planQuery", () => {
 
   test("left-anchor rejection — equality on a non-leading field doesn't match", () => {
     const indexes: IndexDefinition[] = [{ name: "by_a_b", on: ["a", "b"] }];
-    const plan = planQuery({ b: 2 } as unknown as Predicate<DocumentData>, indexes);
+    const plan = planQuery(wire([{ op: "eq", field: "b", value: 2 }]), indexes);
     expect(plan).toEqual({
       kind: "full-scan",
       reason: "no-matching-index",
@@ -88,10 +104,7 @@ describe("planQuery", () => {
       { name: "by_status_priority", on: ["status", "priority"] },
       { name: "by_status", on: "status" },
     ];
-    const plan = planQuery(
-      { status: "open" } as unknown as Predicate<DocumentData>,
-      indexes,
-    );
+    const plan = planQuery(wire([{ op: "eq", field: "status", value: "open" }]), indexes);
     expect(plan).toEqual({
       kind: "index-walk",
       indexName: "by_status_priority",
@@ -105,7 +118,10 @@ describe("planQuery", () => {
       { name: "by_status", on: "status" },
     ];
     const plan = planQuery(
-      { status: "open", priority: "p2" } as unknown as Predicate<DocumentData>,
+      wire([
+        { op: "eq", field: "status", value: "open" },
+        { op: "eq", field: "priority", value: "p2" },
+      ]),
       indexes,
     );
     expect(plan).toEqual({
@@ -115,51 +131,27 @@ describe("planQuery", () => {
     });
   });
 
-  test("operator-only predicate with no matching index → 'predicate-uses-operators-only'", () => {
-    // T3: a range op on an INDEXED field is now routable via the
-    // tail-slot rangeOn slot, so we re-target the test at an op on
-    // a NON-INDEXED field — there the planner has nothing to route
-    // and the reason discriminant still fires.
+  test("operator-only predicate with no matching index → 'no-matching-index'", () => {
+    // Range op on a NON-indexed field — the planner has nothing to
+    // route, even though `by_status` is declared.
     const indexes: IndexDefinition[] = [{ name: "by_status", on: "status" }];
-    const plan = planQuery(
-      { priority: { $gt: "p0" } } as unknown as Predicate<DocumentData>,
-      indexes,
-    );
+    const plan = planQuery(wire([{ op: "gt", field: "priority", value: "p0" }]), indexes);
     expect(plan).toEqual({
       kind: "full-scan",
       reason: "no-matching-index",
     });
   });
 
-  test("operator-only predicate with no indexed field at all → 'predicate-uses-operators-only'", () => {
-    // When the only predicate clauses are operator-objects on
-    // fields none of which appear in any declared index, the
-    // partition has zero equality / range / $in candidates that
-    // could plausibly be routed.
-    const indexes: IndexDefinition[] = [{ name: "by_status", on: "status" }];
-    // Use an unsupported mixed-operator shape on a non-indexed
-    // field so the partitioner classifies it as neither range nor
-    // $in nor equality — falling into the "other" bucket. Today
-    // T1 validation would reject this, but the planner's behaviour
-    // is well-defined for any partition state.
-    const plan = planQuery(
-      { priority: { $foo: "p0" } } as unknown as Predicate<DocumentData>,
-      indexes,
-    );
-    expect(plan).toEqual({
-      kind: "full-scan",
-      reason: "predicate-uses-operators-only",
-    });
-  });
-
-  test("mixed predicate (equality + operator) routes equality; executor re-checks residue", () => {
-    // Unconsumed clauses (the `$gt` on a non-indexed field) are NOT
+  test("mixed predicate (equality + range on non-indexed field) routes the equality", () => {
+    // Unconsumed clauses (the `gt` on a non-indexed field) are NOT
     // surfaced on the plan — the executor re-applies the full
-    // original predicate via `matches(...)` post-fetch, so the
-    // planner only needs to commit to the index walk shape.
+    // original wire via `matchesWire(...)` post-fetch.
     const indexes: IndexDefinition[] = [{ name: "by_a", on: "a" }];
     const plan = planQuery(
-      { a: "x", b: { $gt: 5 } } as unknown as Predicate<DocumentData>,
+      wire([
+        { op: "eq", field: "a", value: "x" },
+        { op: "gt", field: "b", value: 5 },
+      ]),
       indexes,
     );
     expect(plan).toEqual({
@@ -172,7 +164,10 @@ describe("planQuery", () => {
   test("equality on non-indexed field is left for the executor's post-fetch re-check", () => {
     const indexes: IndexDefinition[] = [{ name: "by_status", on: "status" }];
     const plan = planQuery(
-      { status: "open", assignee: "alice" } as unknown as Predicate<DocumentData>,
+      wire([
+        { op: "eq", field: "status", value: "open" },
+        { op: "eq", field: "assignee", value: "alice" },
+      ]),
       indexes,
     );
     expect(plan).toEqual({
@@ -183,13 +178,10 @@ describe("planQuery", () => {
   });
 });
 
-describe("planQuery — range walks (T3)", () => {
+describe("planQuery — range walks", () => {
   test("single-field range, inclusive lower, no upper", () => {
     const indexes: IndexDefinition[] = [{ name: "by_priority", on: "priority" }];
-    const plan = planQuery(
-      { priority: { $gte: "p2" } } as unknown as Predicate<DocumentData>,
-      indexes,
-    );
+    const plan = planQuery(wire([{ op: "gte", field: "priority", value: "p2" }]), indexes);
     expect(plan).toEqual({
       kind: "index-walk",
       indexName: "by_priority",
@@ -206,7 +198,10 @@ describe("planQuery — range walks (T3)", () => {
   test("single-field range, exclusive both sides", () => {
     const indexes: IndexDefinition[] = [{ name: "by_priority", on: "priority" }];
     const plan = planQuery(
-      { priority: { $gt: "p1", $lt: "p9" } } as unknown as Predicate<DocumentData>,
+      wire([
+        { op: "gt", field: "priority", value: "p1" },
+        { op: "lt", field: "priority", value: "p9" },
+      ]),
       indexes,
     );
     expect(plan).toEqual({
@@ -224,12 +219,15 @@ describe("planQuery — range walks (T3)", () => {
   });
 
   test("composite eq+range on tail field", () => {
-    const indexes: IndexDefinition[] = [{ name: "by_tenant_priority", on: ["tenant", "priority"] }];
+    const indexes: IndexDefinition[] = [
+      { name: "by_tenant_priority", on: ["tenant", "priority"] },
+    ];
     const plan = planQuery(
-      {
-        tenant: "acme",
-        priority: { $gte: "p2", $lt: "p9" },
-      } as unknown as Predicate<DocumentData>,
+      wire([
+        { op: "eq", field: "tenant", value: "acme" },
+        { op: "gte", field: "priority", value: "p2" },
+        { op: "lt", field: "priority", value: "p9" },
+      ]),
       indexes,
     );
     expect(plan).toEqual({
@@ -248,15 +246,16 @@ describe("planQuery — range walks (T3)", () => {
 
   test("range on non-last indexed field falls back to single-field range walk", () => {
     // Range op on the FIRST slot prevents left-anchored routing.
-    const indexes: IndexDefinition[] = [{ name: "by_tenant_priority", on: ["tenant", "priority"] }];
+    const indexes: IndexDefinition[] = [
+      { name: "by_tenant_priority", on: ["tenant", "priority"] },
+    ];
     const plan = planQuery(
-      { tenant: { $gt: "a" }, priority: "p1" } as unknown as Predicate<DocumentData>,
+      wire([
+        { op: "gt", field: "tenant", value: "a" },
+        { op: "eq", field: "priority", value: "p1" },
+      ]),
       indexes,
     );
-    // No equality on `tenant`, so the planner can route by treating
-    // `tenant` itself as a tail-slot range. That's a single-field
-    // range walk over the composite. The `priority` clause is left
-    // for the executor's full-predicate re-check.
     expect(plan).toEqual({
       kind: "index-walk",
       indexName: "by_tenant_priority",
@@ -273,7 +272,10 @@ describe("planQuery — range walks (T3)", () => {
   test("equality on first slot, range on non-indexed field still routes the equality", () => {
     const indexes: IndexDefinition[] = [{ name: "by_tenant", on: "tenant" }];
     const plan = planQuery(
-      { tenant: "acme", priority: { $gt: "p1" } } as unknown as Predicate<DocumentData>,
+      wire([
+        { op: "eq", field: "tenant", value: "acme" },
+        { op: "gt", field: "priority", value: "p1" },
+      ]),
       indexes,
     );
     expect(plan).toEqual({
@@ -283,48 +285,28 @@ describe("planQuery — range walks (T3)", () => {
     });
   });
 
-  test("range inclusivity round-trip — $gte/$gt/$lte/$lt set flags correctly", () => {
+  test("range inclusivity round-trip — gte/gt/lte/lt set flags correctly", () => {
     const indexes: IndexDefinition[] = [{ name: "by_p", on: "p" }];
-    expect(
-      planQuery({ p: { $gte: "a" } } as unknown as Predicate<DocumentData>, indexes),
-    ).toMatchObject({
+    expect(planQuery(wire([{ op: "gte", field: "p", value: "a" }]), indexes)).toMatchObject({
       rangeOn: { lo: "a", loInclusive: true, hiInclusive: false },
     });
-    expect(
-      planQuery({ p: { $gt: "a" } } as unknown as Predicate<DocumentData>, indexes),
-    ).toMatchObject({
+    expect(planQuery(wire([{ op: "gt", field: "p", value: "a" }]), indexes)).toMatchObject({
       rangeOn: { lo: "a", loInclusive: false, hiInclusive: false },
     });
-    expect(
-      planQuery({ p: { $lte: "z" } } as unknown as Predicate<DocumentData>, indexes),
-    ).toMatchObject({
+    expect(planQuery(wire([{ op: "lte", field: "p", value: "z" }]), indexes)).toMatchObject({
       rangeOn: { hi: "z", hiInclusive: true, loInclusive: false },
     });
-    expect(
-      planQuery({ p: { $lt: "z" } } as unknown as Predicate<DocumentData>, indexes),
-    ).toMatchObject({
+    expect(planQuery(wire([{ op: "lt", field: "p", value: "z" }]), indexes)).toMatchObject({
       rangeOn: { hi: "z", hiInclusive: false, loInclusive: false },
     });
   });
-
-  test("string range routes through the index", () => {
-    const indexes: IndexDefinition[] = [{ name: "by_priority", on: "priority" }];
-    const plan = planQuery(
-      { priority: { $gte: "p2" } } as unknown as Predicate<DocumentData>,
-      indexes,
-    );
-    expect(plan.kind).toBe("index-walk");
-    if (plan.kind === "index-walk") {
-      expect(plan.rangeOn).toBeDefined();
-    }
-  });
 });
 
-describe("planQuery — $in multi-walk (T3)", () => {
-  test("$in under fan-out threshold emits inOn walk plan", () => {
+describe("planQuery — in multi-walk", () => {
+  test("in under fan-out threshold emits inOn walk plan", () => {
     const indexes: IndexDefinition[] = [{ name: "by_status", on: "status" }];
     const plan = planQuery(
-      { status: { $in: ["open", "pending"] } } as unknown as Predicate<DocumentData>,
+      wire([{ op: "in", field: "status", value: ["open", "pending"] }]),
       indexes,
     );
     expect(plan).toEqual({
@@ -335,13 +317,10 @@ describe("planQuery — $in multi-walk (T3)", () => {
     });
   });
 
-  test("$in at the fan-out threshold (length === 50) emits inOn", () => {
+  test("in at the fan-out threshold (length === 50) emits inOn", () => {
     const indexes: IndexDefinition[] = [{ name: "by_status", on: "status" }];
     const values = Array.from({ length: IN_FANOUT_THRESHOLD }, (_, i) => `v${i}`);
-    const plan = planQuery(
-      { status: { $in: values } } as unknown as Predicate<DocumentData>,
-      indexes,
-    );
+    const plan = planQuery(wire([{ op: "in", field: "status", value: values }]), indexes);
     expect(plan.kind).toBe("index-walk");
     if (plan.kind === "index-walk") {
       expect(plan.inOn).toBeDefined();
@@ -349,26 +328,25 @@ describe("planQuery — $in multi-walk (T3)", () => {
     }
   });
 
-  test("$in over the fan-out threshold (length === 51) falls back to full-scan", () => {
+  test("in over the fan-out threshold (length === 51) falls back to full-scan", () => {
     const indexes: IndexDefinition[] = [{ name: "by_status", on: "status" }];
     const values = Array.from({ length: IN_FANOUT_THRESHOLD + 1 }, (_, i) => `v${i}`);
-    const plan = planQuery(
-      { status: { $in: values } } as unknown as Predicate<DocumentData>,
-      indexes,
-    );
+    const plan = planQuery(wire([{ op: "in", field: "status", value: values }]), indexes);
     expect(plan).toEqual({
       kind: "full-scan",
       reason: "no-matching-index",
     });
   });
 
-  test("composite eq + $in on tail field emits inOn walk plan", () => {
-    const indexes: IndexDefinition[] = [{ name: "by_tenant_priority", on: ["tenant", "priority"] }];
+  test("composite eq + in on tail field emits inOn walk plan", () => {
+    const indexes: IndexDefinition[] = [
+      { name: "by_tenant_priority", on: ["tenant", "priority"] },
+    ];
     const plan = planQuery(
-      {
-        tenant: "acme",
-        priority: { $in: ["p1", "p2"] },
-      } as unknown as Predicate<DocumentData>,
+      wire([
+        { op: "eq", field: "tenant", value: "acme" },
+        { op: "in", field: "priority", value: ["p1", "p2"] },
+      ]),
       indexes,
     );
     expect(plan).toEqual({
@@ -380,37 +358,16 @@ describe("planQuery — $in multi-walk (T3)", () => {
   });
 });
 
-describe("planQuery — $in fan-out threshold", () => {
-  test("$in fan-out under threshold routes", () => {
-    const indexes: IndexDefinition[] = [{ name: "by_priority", on: "priority" }];
-    const values = Array.from({ length: 50 }, (_, i) => `p${i}`);
-    const plan = planQuery(
-      { priority: { $in: values } } as unknown as Predicate<DocumentData>,
-      indexes,
-    );
-    expect(plan).toMatchObject({ kind: "index-walk", indexName: "by_priority" });
-  });
-
-  test("$in fan-out over threshold falls back to full-scan", () => {
-    const indexes: IndexDefinition[] = [{ name: "by_priority", on: "priority" }];
-    const values = Array.from({ length: 51 }, (_, i) => `p${i}`);
-    const plan = planQuery(
-      { priority: { $in: values } } as unknown as Predicate<DocumentData>,
-      indexes,
-    );
-    expect(plan).toEqual({ kind: "full-scan", reason: "no-matching-index" });
-  });
-});
-
-describe("planQuery — numeric range / $in routing", () => {
+describe("planQuery — numeric range / in routing", () => {
   // The encoder at `./indexes.ts:encodeIndexValue` is value-order-
-  // preserving for numbers — the old `numeric-range-on-byte-encoder`
-  // full-scan reason was deleted along with the `containsNumber`
-  // guard. These tests pin the routed plans.
-  test("routes numeric $gte/$lt range on indexed field", () => {
+  // preserving for numbers; numeric ranges/ins route normally.
+  test("routes numeric gte/lt range on indexed field", () => {
     const indexes: IndexDefinition[] = [{ name: "by_age", on: "age" }];
     const plan = planQuery(
-      { age: { $gte: 18, $lt: 65 } } as unknown as Predicate<DocumentData>,
+      wire([
+        { op: "gte", field: "age", value: 18 },
+        { op: "lt", field: "age", value: 65 },
+      ]),
       indexes,
     );
     expect(plan).toEqual({
@@ -429,10 +386,7 @@ describe("planQuery — numeric range / $in routing", () => {
 
   test("routes numeric upper-bound-only range on indexed field", () => {
     const indexes: IndexDefinition[] = [{ name: "by_age", on: "age" }];
-    const plan = planQuery(
-      { age: { $lt: 100 } } as unknown as Predicate<DocumentData>,
-      indexes,
-    );
+    const plan = planQuery(wire([{ op: "lt", field: "age", value: 100 }]), indexes);
     expect(plan).toEqual({
       kind: "index-walk",
       indexName: "by_age",
@@ -446,10 +400,10 @@ describe("planQuery — numeric range / $in routing", () => {
     });
   });
 
-  test("routes numeric $in on indexed field under threshold", () => {
+  test("routes numeric in on indexed field under threshold", () => {
     const indexes: IndexDefinition[] = [{ name: "by_priority", on: "priority" }];
     const plan = planQuery(
-      { priority: { $in: [1, 2, 3] } } as unknown as Predicate<DocumentData>,
+      wire([{ op: "in", field: "priority", value: [1, 2, 3] }]),
       indexes,
     );
     expect(plan).toEqual({
@@ -460,12 +414,9 @@ describe("planQuery — numeric range / $in routing", () => {
     });
   });
 
-  test("routes mixed numeric + string $in on indexed field", () => {
+  test("routes mixed numeric + string in on indexed field", () => {
     const indexes: IndexDefinition[] = [{ name: "by_x", on: "x" }];
-    const plan = planQuery(
-      { x: { $in: ["a", 1] } } as unknown as Predicate<DocumentData>,
-      indexes,
-    );
+    const plan = planQuery(wire([{ op: "in", field: "x", value: ["a", 1] }]), indexes);
     expect(plan).toEqual({
       kind: "index-walk",
       indexName: "by_x",
@@ -475,29 +426,27 @@ describe("planQuery — numeric range / $in routing", () => {
   });
 });
 
-describe("planQuery — filtered index cost bias (T4)", () => {
+describe("planQuery — filtered index cost bias", () => {
   test("filtered index whose filter is implied wins over unfiltered alternative", () => {
     const unfiltered: IndexDefinition = { name: "by_assignee", on: "assignee" };
     const filtered: IndexDefinition = {
       name: "open_by_assignee",
       on: "assignee",
-      predicate: { status: "open" },
+      predicate: { clauses: [{ op: "eq", field: "status", value: "open" }] },
     };
-    // Order the unfiltered FIRST in the array so the cost bias is
-    // the only path to picking `filtered` — proves the bias overrides
-    // definition order.
+    // Order the unfiltered FIRST so the cost bias is the only path to
+    // picking `filtered` — proves the bias overrides definition order.
     const plan = planQuery(
-      { status: "open", assignee: "alice" } as unknown as Predicate<DocumentData>,
+      wire([
+        { op: "eq", field: "status", value: "open" },
+        { op: "eq", field: "assignee", value: "alice" },
+      ]),
       [unfiltered, filtered],
     );
     expect(plan.kind).toBe("index-walk");
     if (plan.kind === "index-walk") {
       expect(plan.indexName).toBe("open_by_assignee");
       expect(plan.equalityKeys).toEqual(["alice"]);
-      // Unconsumed clauses (the `status: "open"` literal here) are
-      // NOT surfaced on the plan — the executor re-applies the full
-      // original predicate post-fetch, so the stale-row defence is
-      // enforced uniformly there (see `query.ts` "simpler invariant").
     }
   });
 
@@ -506,12 +455,12 @@ describe("planQuery — filtered index cost bias (T4)", () => {
     const filtered: IndexDefinition = {
       name: "open_by_assignee",
       on: "assignee",
-      predicate: { status: "open" },
+      predicate: { clauses: [{ op: "eq", field: "status", value: "open" }] },
     };
     // Query has no `status` clause → filter is NOT implied. The
     // unfiltered index must win even though `filtered` walks at the
     // same equality prefix length.
-    const plan = planQuery({ assignee: "alice" } as unknown as Predicate<DocumentData>, [
+    const plan = planQuery(wire([{ op: "eq", field: "assignee", value: "alice" }]), [
       filtered,
       unfiltered,
     ]);
@@ -523,23 +472,23 @@ describe("planQuery — filtered index cost bias (T4)", () => {
   });
 
   test("longest equality prefix breaks ties among implied filters", () => {
-    const filtered_short: IndexDefinition = {
+    const filteredShort: IndexDefinition = {
       name: "open_by_assignee",
       on: "assignee",
-      predicate: { status: "open" },
+      predicate: { clauses: [{ op: "eq", field: "status", value: "open" }] },
     };
-    const filtered_long: IndexDefinition = {
+    const filteredLong: IndexDefinition = {
       name: "open_by_assignee_priority",
       on: ["assignee", "priority"],
-      predicate: { status: "open" },
+      predicate: { clauses: [{ op: "eq", field: "status", value: "open" }] },
     };
     const plan = planQuery(
-      {
-        status: "open",
-        assignee: "alice",
-        priority: "p1",
-      } as unknown as Predicate<DocumentData>,
-      [filtered_short, filtered_long],
+      wire([
+        { op: "eq", field: "status", value: "open" },
+        { op: "eq", field: "assignee", value: "alice" },
+        { op: "eq", field: "priority", value: "p1" },
+      ]),
+      [filteredShort, filteredLong],
     );
     expect(plan.kind).toBe("index-walk");
     if (plan.kind === "index-walk") {
@@ -549,23 +498,19 @@ describe("planQuery — filtered index cost bias (T4)", () => {
   });
 
   test("filtered composite index beats unfiltered single-field for the same query", () => {
-    // Critical regression pin: planner must prefer an implied
-    // filtered composite over an unfiltered single-field at the
-    // same equality prefix length (the composite's larger key set
-    // doesn't matter — the filtered prefix is sparse and correct).
-    const unfiltered_single: IndexDefinition = { name: "by_assignee", on: "assignee" };
-    const filtered_composite: IndexDefinition = {
+    const unfilteredSingle: IndexDefinition = { name: "by_assignee", on: "assignee" };
+    const filteredComposite: IndexDefinition = {
       name: "open_by_assignee_priority",
       on: ["assignee", "priority"],
-      predicate: { status: "open" },
+      predicate: { clauses: [{ op: "eq", field: "status", value: "open" }] },
     };
     const plan = planQuery(
-      {
-        status: "open",
-        assignee: "alice",
-        priority: "p1",
-      } as unknown as Predicate<DocumentData>,
-      [unfiltered_single, filtered_composite],
+      wire([
+        { op: "eq", field: "status", value: "open" },
+        { op: "eq", field: "assignee", value: "alice" },
+        { op: "eq", field: "priority", value: "p1" },
+      ]),
+      [unfilteredSingle, filteredComposite],
     );
     expect(plan.kind).toBe("index-walk");
     if (plan.kind === "index-walk") {
@@ -576,34 +521,49 @@ describe("planQuery — filtered index cost bias (T4)", () => {
   test("range-filtered index preferred when query range is contained", () => {
     const indexes: IndexDefinition[] = [
       { name: "any_age", on: "age" },
-      { name: "adults_by_age", on: "age", predicate: { age: { $gte: 18 } } },
+      {
+        name: "adults_by_age",
+        on: "age",
+        predicate: { clauses: [{ op: "gte", field: "age", value: 18 }] },
+      },
     ];
     const plan = planQuery(
-      { age: { $gte: 21, $lte: 30 } } as unknown as Predicate<DocumentData>,
+      wire([
+        { op: "gte", field: "age", value: 21 },
+        { op: "lte", field: "age", value: 30 },
+      ]),
       indexes,
     );
     expect(plan).toMatchObject({ kind: "index-walk", indexName: "adults_by_age" });
   });
 
-  test("$in-filtered index preferred when query value is in the filter set", () => {
+  test("in-filtered index preferred when query value is in the filter set", () => {
     const indexes: IndexDefinition[] = [
       { name: "any_priority", on: "priority" },
-      { name: "p0_p1", on: "priority", predicate: { priority: { $in: ["p0", "p1"] } } },
+      {
+        name: "p0_p1",
+        on: "priority",
+        predicate: { clauses: [{ op: "in", field: "priority", value: ["p0", "p1"] }] },
+      },
     ];
-    const plan = planQuery(
-      { priority: "p1" } as unknown as Predicate<DocumentData>,
-      indexes,
-    );
+    const plan = planQuery(wire([{ op: "eq", field: "priority", value: "p1" }]), indexes);
     expect(plan).toMatchObject({ kind: "index-walk", indexName: "p0_p1" });
   });
 
   test("range-filtered index NOT preferred when query exits the filter", () => {
     const indexes: IndexDefinition[] = [
       { name: "any_age", on: "age" },
-      { name: "adults_by_age", on: "age", predicate: { age: { $gte: 18 } } },
+      {
+        name: "adults_by_age",
+        on: "age",
+        predicate: { clauses: [{ op: "gte", field: "age", value: 18 }] },
+      },
     ];
     const plan = planQuery(
-      { age: { $gte: 17, $lte: 30 } } as unknown as Predicate<DocumentData>,
+      wire([
+        { op: "gte", field: "age", value: 17 },
+        { op: "lte", field: "age", value: 30 },
+      ]),
       indexes,
     );
     // Falls back to the unfiltered index — walking adults_by_age would

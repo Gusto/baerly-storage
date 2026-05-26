@@ -127,8 +127,13 @@ Each design choice falls out of a specific criterion above.
   Per-collection CAS scope ([ADR-001](../adr/001-tenant-cas-isolation.md))
   is what keeps the idle-poll bound tractable: one cheap key per
   collection, not contention on a global mutex.
-- **LLM-legible API.** Drizzle-shaped, not SQL strings:
-  `db.table('tickets').where({ status: ['=', 'open'] }).all()`.
+- **LLM-legible API.** Drizzle-shaped, not SQL strings. Two predicate
+  shapes — object literal for equality
+  (`db.table('tickets').where({ status: 'open' }).all()`) and a
+  callback builder for the operator vocabulary
+  (`db.table('tickets').where(q => q.gte('priority', 5)).all()`). The
+  methods on `PredicateBuilder<T>` ARE the supported surface —
+  methods we did not write (`or`, `regex`, `ne`) cannot be invoked.
   Seven verbs, five modifiers, one transaction. Operators are added
   one at a time, each gated by whether it admits a correct SQL
   translation. The whole interface lives in `.d.ts` files small

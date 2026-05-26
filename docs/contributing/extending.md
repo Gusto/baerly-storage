@@ -260,7 +260,7 @@ set at read time; there is no manual-hint API on `Query<T>`.
 export interface IndexDefinition {
   readonly name: string;                       // /^[a-z_][a-z0-9_]*$/
   readonly on: string | readonly string[];     // top-level field(s)
-  readonly predicate?: Predicate<DocumentData>;
+  readonly predicate?: PredicateWire;          // { clauses: PredicateClause[] }
 }
 ```
 
@@ -297,7 +297,7 @@ export default defineConfig({
 // than a dense `by_assignee` when most tickets are closed.
 { name: "by_open_assignee",
   on: "assignee",
-  predicate: { status: "open" } },
+  predicate: { clauses: [{ op: "eq", field: "status", value: "open" }] } },
 ```
 
 ### What the planner does at read time
@@ -315,14 +315,15 @@ export default defineConfig({
   `SchemaError` at projection time
   (`packages/server/src/indexes.ts:192-216`).
 - `name` must match `/^[a-z_][a-z0-9_]*$/`.
-- `predicate?` accepts operator-shaped clauses (`$eq`, `$gt` /
-  `$gte`, `$lt` / `$lte`, `$in`) end-to-end. `predicateImplies`
-  reasons about range and `$in` containment, so the planner
-  prefers a filtered index whenever the query's bounds (whether
-  expressed as equality, `$in` members, or another range) fall
-  inside the filter's bounds.
-- **Numeric range and `$in` walks route through the index** — see
-  [`docs/features.md`](features.md) §"Numeric range and `$in` walks".
+- `predicate?` is a {@link PredicateWire} — `{ clauses:
+  PredicateClause[] }`. Accepts the full operator vocabulary (`eq`,
+  `gt` / `gte`, `lt` / `lte`, `in`) end-to-end. `predicateImplies`
+  reasons about range and `in` containment, so the planner prefers
+  a filtered index whenever the query's bounds (whether expressed
+  as equality, `in` members, or another range) fall inside the
+  filter's bounds.
+- **Numeric range and `in` walks route through the index** — see
+  [`docs/features.md`](features.md) §"Numeric range and `in` walks".
   The value-order-preserving encoder keeps numeric and string ranges
   in disjoint, sortable slots; string-encoded values (ISO 8601
   timestamps, zero-padded numerics) remain a fine choice when you

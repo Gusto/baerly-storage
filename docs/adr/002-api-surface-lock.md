@@ -49,6 +49,48 @@ Accepted (2026-05-11).
   See spec
   `docs/superpowers/specs/2026-05-25-get-by-id-split-design.md`.
 
+- Amended (2026-05-26): predicate redesign — object-form `Predicate<T>`
+  is equality-only; the operator vocabulary
+  (`eq` / `gt` / `gte` / `lt` / `lte` / `in`) moves to the callback
+  builder `PredicateBuilder<T>` accessed via
+  `.where(q => q.gte("priority", 5))`. Both forms normalise to one
+  wire shape (`{ clauses: PredicateClause[] }`); the server has one
+  parser, and `?where=` carries that JSON.
+
+  Mechanism: structural cap on the operator surface. The methods on
+  `PredicateBuilder<T>` ARE the vocabulary — there is no `$`-keyed
+  AST to over-reach against. `q.regex(...)` / `q.or(...)` /
+  `q.ne(...)` / `q.exists(...)` fail TS2339 at the call site instead
+  of `InvalidConfig` at runtime; "what we don't support" is no
+  longer a page in the docs that the model must keep in context.
+  Type-constrained code generation (arXiv:2504.09246) supports the
+  mechanism; absent operator-hallucination benchmarks for this exact
+  shape, this is a mechanism + industry-signal bet (MongoDB's
+  `/query` Copilot extension exists because `$`-keyed shapes
+  hallucinate operators with vanilla LLMs).
+
+  Third worked example of the 2026-05-26 "additive-only scoped to
+  capabilities" rule: range / in queries are still expressible —
+  the capability is preserved — but the redundant
+  `{field: {$op: v}}` type-valid path is removed in favour of the
+  builder. The new wire shape is the canonical on-disk encoding of
+  any predicate; the object literal compiles down to it.
+
+  **Predicate algebra lock decision (settled here).** The wire is
+  intentionally a flat `clauses: PredicateClause[]` — a conjunction
+  of clauses, no tree root. This commits the algebra to
+  conjunction-only in perpetuity; `or` / `not` are NOT a future
+  feature behind a deferred amendment. The argument for the flat
+  shape is that the structural cap on the vocabulary depends on
+  these methods not existing on `PredicateBuilder<T>`; introducing
+  them later would re-open the operator surface to hallucination
+  pressure that the redesign exists to close. If the case for
+  boolean connectives ever becomes load-bearing, that is a separate
+  spec AND a separate ADR — never additive on top of this one.
+
+  See spec
+  `docs/superpowers/specs/2026-05-25-predicate-redesign-design.md`.
+
 ## Context
 
 The SQL-shape table API lives in

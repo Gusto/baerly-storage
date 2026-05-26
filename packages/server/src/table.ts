@@ -17,7 +17,7 @@ import {
   type ConsistencyLevel,
   type DocumentData,
   type OrderSpec,
-  type Predicate,
+  type PredicateWire,
   type Table,
 } from "@baerly/protocol";
 import { makeQuery, runInsert, type TableReadContext } from "./query.ts";
@@ -46,21 +46,26 @@ import { makeQuery, runInsert, type TableReadContext } from "./query.ts";
 export const makeTable = <T extends DocumentData>(ctx: TableReadContext): Table<T> => {
   // Empty seed state. Every modifier merges into a frozen copy.
   const seed = {
-    predicate: undefined as Predicate<T> | undefined,
+    wire: undefined as PredicateWire | undefined,
     order: undefined as OrderSpec<T> | undefined,
     limit: undefined as number | undefined,
     consistency: undefined as ConsistencyLevel | undefined,
   };
-  // Cast: `Predicate<T>` is structurally narrower than this literal —
-  // the operator-vocabulary side-channel forces the assertion.
-  const byId = (id: string) => ({ ...seed, predicate: { _id: id } as Predicate<T> });
+  // Kernel-internal `_id`-shaped wire. Bypasses `validateWire`
+  // (which rejects top-level `_id`) by construction — the wire is
+  // never wire-submitted; it short-circuits to `Map.get` via
+  // `singleIdFromPredicate` inside `runRead`.
+  const byId = (id: string) => ({
+    ...seed,
+    wire: { clauses: [{ op: "eq" as const, field: "_id", value: id }] } as PredicateWire,
+  });
   return {
     name: ctx.tableName,
     first: () => makeQuery<T>(ctx, seed).first(),
     all: () => makeQuery<T>(ctx, seed).all(),
     count: () => makeQuery<T>(ctx, seed).count(),
     get: (id) => makeQuery<T>(ctx, byId(id)).first(),
-    where: (p) => makeQuery<T>(ctx, { ...seed, predicate: p }),
+    where: (p) => makeQuery<T>(ctx, seed).where(p),
     order: (s) => makeQuery<T>(ctx, { ...seed, order: s }),
     limit: (n) => makeQuery<T>(ctx, { ...seed, limit: n }),
     consistency: (level) => makeQuery<T>(ctx, { ...seed, consistency: level }),
