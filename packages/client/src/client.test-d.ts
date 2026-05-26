@@ -51,7 +51,10 @@ type Expect<T extends true> = T;
 // call signature; binding the *result* of the call sidesteps that).
 const boundClient = createBaerlyClient({ baseUrl: "", config });
 const boundTicketTable = boundClient.table("tickets");
-const boundTicketQuery = boundTicketTable.where({ _id: "x" });
+// Use a non-`_id` predicate because `Path<T>` excludes the root
+// `_id` key on typed shapes; the row-shape inference doesn't depend
+// on which field is used.
+const boundTicketQuery = boundTicketTable.where({ status: "open" });
 type BoundFirst = Awaited<ReturnType<typeof boundTicketQuery.first>>;
 export type _BoundFirstInfersTicket = Expect<
   Equal<BoundFirst, (TicketShape & DocumentData) | undefined>
@@ -71,9 +74,16 @@ export type _BoundTableHandleInfersRowType = Expect<
 const unboundClient = createBaerlyClient({ baseUrl: "" });
 type Foo = { _id: string; tag: string };
 const unboundFooTable = unboundClient.table<Foo>("anything");
-const unboundFooQuery = unboundFooTable.where({ _id: "x" });
+const unboundFooQuery = unboundFooTable.where({ tag: "x" });
 type UnboundFirst = Awaited<ReturnType<typeof unboundFooQuery.first>>;
 export type _UnboundFirstAcceptsPerCallGeneric = Expect<Equal<UnboundFirst, Foo | undefined>>;
+
+export const _idIsNotAPredicateKeyOnClientTypedTables = () => {
+  // @ts-expect-error — `_id` is excluded from `Path<T>` on typed shapes.
+  void boundTicketTable.where({ _id: "x" });
+  // @ts-expect-error — same for the per-call-generic shape.
+  void unboundFooTable.where({ _id: "x" });
+};
 
 // The `_*` aliases above are exported as `type` rather than declared
 // module-local because `noUnusedLocals: true` flags unused type

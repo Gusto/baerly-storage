@@ -51,9 +51,8 @@ export interface Table<T extends DocumentData = DocumentData> {
   count(): Promise<number>;
 
   /**
-   * Fetch one document by primary key. Equivalent to
-   * `.where({ _id: id }).first()`. Returns `undefined` when the id
-   * is unknown — does not throw `NotFound`.
+   * Fetch one document by primary key. Returns `undefined` when the
+   * id is unknown — does not throw `NotFound`.
    *
    * @example
    * ```ts
@@ -213,7 +212,7 @@ type _StripIndex<T> = {
  * today's open-keyed default behavior.
  * @internal
  */
-type Path<T, D extends _PathDepth[number] = 4> = [D] extends [never]
+type _AllPaths<T, D extends _PathDepth[number] = 4> = [D] extends [never]
   ? never
   : T extends object
     ? keyof _StripIndex<T> & string extends never
@@ -221,9 +220,25 @@ type Path<T, D extends _PathDepth[number] = 4> = [D] extends [never]
       : {
           [K in keyof _StripIndex<T> & string]: _IsPathLeaf<T[K]> extends true
             ? K
-            : K | `${K}.${Path<NonNullable<T[K]>, _PathDepth[D]>}`;
+            : K | `${K}.${_AllPaths<NonNullable<T[K]>, _PathDepth[D]>}`;
         }[keyof _StripIndex<T> & string]
     : never;
+
+/**
+ * Legal dotted-path keys over `T`, with the root-level `_id` filtered
+ * out so the top-level shape no longer accepts `{ _id: "x" }`. Nested
+ * `_id` paths (e.g. `"author._id"`) survive — only the bare `"_id"`
+ * head and any literal `"_id.<rest>"` head are excluded (no
+ * `_id.<rest>` shape exists today since `_id` is a string leaf, but
+ * the template-string guard keeps the contract intact if the doc
+ * shape ever changes).
+ *
+ * When `T = DocumentData` (no user-supplied shape), `_AllPaths<T>`
+ * degrades to bare `string` and the `Exclude<>` wrapper leaves that
+ * branch unchanged — open-keyed predicates still typecheck.
+ * @internal
+ */
+type Path<T, D extends _PathDepth[number] = 4> = Exclude<_AllPaths<T, D>, "_id" | `_id.${string}`>;
 
 /**
  * Resolves the leaf value type at dotted path `P` through `T`.

@@ -82,13 +82,13 @@ describe("Table.insert", () => {
     await provision(storage);
   });
 
-  test("auto-id mints UUIDv7 _id; doc visible via Table.where({_id}).first()", async () => {
+  test("auto-id mints UUIDv7 _id; doc visible via Table.get(_id)", async () => {
     const t = db.table<TicketDoc>(COLL);
     const { _id } = await t.insert({ title: "hello", status: "open" });
     expect(typeof _id).toBe("string");
     // UUIDv7 wire format: 8-4-4-4-12 hex groups.
     expect(_id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[0-9a-f]{4}-[0-9a-f]{12}$/);
-    const found = await t.where({ _id }).first();
+    const found = await t.get(_id);
     expect(found).toEqual({ _id, title: "hello", status: "open" });
   });
 
@@ -96,7 +96,7 @@ describe("Table.insert", () => {
     const t = db.table<TicketDoc>(COLL);
     const { _id } = await t.insert({ _id: "custom-id-42", title: "x", status: "open" });
     expect(_id).toBe("custom-id-42");
-    const found = await t.where({ _id: "custom-id-42" }).first();
+    const found = await t.get("custom-id-42");
     expect(found).toBeDefined();
     expect(found!._id).toBe("custom-id-42");
   });
@@ -166,9 +166,9 @@ describe("Query.update", () => {
   test("applies merge patch on a single match; returns { modified: 1 }", async () => {
     const t = db.table<TicketDoc>(COLL);
     await t.insert({ _id: "u1", title: "old", status: "open" });
-    const result = await t.where({ _id: "u1" }).update({ title: "new" });
+    const result = await t.update("u1", { title: "new" });
     expect(result).toEqual({ modified: 1 });
-    const after = await t.where({ _id: "u1" }).first();
+    const after = await t.get("u1");
     expect(after).toEqual({ _id: "u1", title: "new", status: "open" });
   });
 
@@ -199,8 +199,8 @@ describe("Query.update", () => {
     // `null` per RFC 7386 deletes the key. The locked patch type is
     // `Partial<T>` (no `null` at the type level); test the runtime
     // contract via cast.
-    await t.where({ _id: "n1" }).update({ flag: null as unknown as DocumentData });
-    const after = await t.where({ _id: "n1" }).first();
+    await t.update("n1", { flag: null as unknown as DocumentData });
+    const after = await t.get("n1");
     expect(after).toBeDefined();
     expect(after!["_id"]).toBe("n1");
     expect(after!["title"]).toBe("x");
@@ -214,7 +214,7 @@ describe("Query.update", () => {
     const beforeCurrent: CurrentJson = JSON.parse(
       new TextDecoder().decode(beforeNextSeq.body),
     ) as CurrentJson;
-    const result = await t.where({ _id: "nope" }).update({ title: "y" });
+    const result = await t.update("nope", { title: "y" });
     expect(result).toEqual({ modified: 0 });
     const afterRaw = (await storage.get(currentJsonKey()))!;
     const afterCurrent: CurrentJson = JSON.parse(
@@ -260,12 +260,12 @@ describe("Query.replace", () => {
   test("exactly one match: replaces the doc", async () => {
     const t = db.table<TicketDoc>(COLL);
     await t.insert({ _id: "r1", title: "old", status: "open" });
-    await t.where({ _id: "r1" }).replace({
+    await t.replace("r1", {
       _id: "r1",
       title: "completely-new",
       status: "archived",
     });
-    const after = await t.where({ _id: "r1" }).first();
+    const after = await t.get("r1");
     expect(after).toEqual({ _id: "r1", title: "completely-new", status: "archived" });
   });
 
@@ -273,7 +273,7 @@ describe("Query.replace", () => {
     const t = db.table<TicketDoc>(COLL);
     let thrown: unknown;
     try {
-      await t.where({ _id: "missing" }).replace({
+      await t.replace("missing", {
         _id: "missing",
         title: "x",
         status: "open",
@@ -308,18 +308,18 @@ describe("Query.replace", () => {
   test("replace preserves the matched row's _id even when doc carries a different one", async () => {
     const t = db.table<TicketDoc>(COLL);
     await t.insert({ _id: "keep-me", title: "v1", status: "open" });
-    await t.where({ _id: "keep-me" }).replace({
+    await t.replace("keep-me", {
       _id: "different-id",
       title: "v2",
       status: "open",
     });
     // The matched row's id wins; the replaced doc lives under "keep-me".
-    const after = await t.where({ _id: "keep-me" }).first();
+    const after = await t.get("keep-me");
     expect(after).toBeDefined();
     expect(after!._id).toBe("keep-me");
     expect(after!.title).toBe("v2");
     // No row landed at "different-id".
-    const ghost = await t.where({ _id: "different-id" }).first();
+    const ghost = await t.get("different-id");
     expect(ghost).toBeUndefined();
   });
 });
@@ -348,7 +348,7 @@ describe("Query.delete", () => {
   test("LogEntry shape: D op has no new / patch / old / key_old", async () => {
     const t = db.table<TicketDoc>(COLL);
     await t.insert({ _id: "tomb", title: "soon-gone", status: "open" });
-    await t.where({ _id: "tomb" }).delete();
+    await t.delete("tomb");
     // seq 0 is the insert; seq 1 is the delete.
     const entry = await readLogEntry(storage, 1);
     expect(entry.op).toBe("D");
@@ -368,7 +368,7 @@ describe("Query.delete", () => {
     const beforeRaw = (await storage.get(currentJsonKey()))!;
     const beforeNextSeq = (JSON.parse(new TextDecoder().decode(beforeRaw.body)) as CurrentJson)
       .next_seq;
-    const result = await t.where({ _id: "absent" }).delete();
+    const result = await t.delete("absent");
     expect(result).toEqual({ deleted: 0 });
     const afterRaw = (await storage.get(currentJsonKey()))!;
     const afterNextSeq = (JSON.parse(new TextDecoder().decode(afterRaw.body)) as CurrentJson)
@@ -428,10 +428,10 @@ describe("Per-row CAS semantics (internal retries inside Writer)", () => {
     await t.insert({ _id: "x", title: "v0", status: "open" });
     const insertAttempts = storage.casAttempts;
     storage.failNextNCas = 2;
-    const result = await t.where({ _id: "x" }).update({ title: "v1" });
+    const result = await t.update("x", { title: "v1" });
     expect(result).toEqual({ modified: 1 });
     expect(storage.casAttempts).toBe(insertAttempts + 3); // 2 fails + 1 win
-    const after = await t.where({ _id: "x" }).first();
+    const after = await t.get("x");
     expect(after).toEqual({ _id: "x", title: "v1", status: "open" });
   });
 
@@ -450,7 +450,7 @@ describe("Per-row CAS semantics (internal retries inside Writer)", () => {
     storage.failEveryCas = true;
     let thrown: unknown;
     try {
-      await t.where({ _id: "loser" }).update({ title: "v1" });
+      await t.update("loser", { title: "v1" });
     } catch (error) {
       thrown = error;
     }

@@ -85,14 +85,15 @@ export async function runReplay(opts: ReplayOpts): Promise<ReplayResult> {
  * Op dispatch. Exhaustive over `OpKind` — adding a new kind in ticket
  * 55 (or later) is a compiler error here, not a runtime no-op.
  *
- * `update`, `archive`: use the `recordId` from the op as a predicate
- * on `_id` so only the targeted row is affected.
+ * `update`, `archive`: drive the by-id verbs directly so only the
+ * targeted row is touched.
  *
  * `list-recent`, `filtered-list`: no record target; list by recency
  * or a fixed predicate. The bench measures "S3 ops per list" so the
  * limit is intentionally generous (50) rather than unbounded.
  */
 async function dispatch(db: Db, collection: string, op: Op): Promise<void> {
+  // .get/.update/etc. take the PK fast-path in query.ts — single Map.get, not O(n) scan.
   switch (op.kind) {
     case "list-recent": {
       await db.table(collection).order({ createdAtMs: "desc" }).limit(50).all();
@@ -100,7 +101,7 @@ async function dispatch(db: Db, collection: string, op: Op): Promise<void> {
     }
     case "point-read": {
       if (op.recordId !== undefined) {
-        await db.table(collection).where({ _id: op.recordId }).first();
+        await db.table(collection).get(op.recordId);
       }
       return;
     }
@@ -116,7 +117,7 @@ async function dispatch(db: Db, collection: string, op: Op): Promise<void> {
     case "update": {
       if (op.recordId !== undefined) {
         // Patch the popularity rank to simulate an update touch.
-        await db.table(collection).where({ _id: op.recordId }).update({ popularityRank: -1 });
+        await db.table(collection).update(op.recordId, { popularityRank: -1 });
       }
       return;
     }
@@ -127,8 +128,8 @@ async function dispatch(db: Db, collection: string, op: Op): Promise<void> {
     }
     case "archive": {
       if (op.recordId !== undefined) {
-        // Archive = set status="archived" via predicate update.
-        await db.table(collection).where({ _id: op.recordId }).update({ status: "archived" });
+        // Archive = set status="archived" via by-id update.
+        await db.table(collection).update(op.recordId, { status: "archived" });
       }
       return;
     }

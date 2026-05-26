@@ -74,6 +74,40 @@ export const _noArrayIndexing: Predicate<Ticket> = {
   "tags.0": "x",
 };
 
+// --- _id excluded from Path<T> on typed shapes -----------------
+
+type NoteRow = DocumentData & {
+  _id: string;
+  status: "open" | "closed";
+  assignee?: { _id: string; team: string };
+};
+
+export const _topLevelNonIdKey: Predicate<NoteRow> = { status: "open" };
+
+export const _dottedNonIdKey: Predicate<NoteRow> = { "assignee.team": "platform" };
+
+export const _nestedIdViaDottedPath: Predicate<NoteRow> = { "assignee._id": "user_123" };
+
+export const _topLevelIdRejected: Predicate<NoteRow> = {
+  // @ts-expect-error — `_id` is excluded from `Path<T>`; use `.get(id)` instead.
+  _id: "x",
+};
+
+export const _misspelledRootKey: Predicate<NoteRow> = {
+  // @ts-expect-error — `stutus` is not a key on NoteRow
+  stutus: "open",
+};
+
+export const _misspelledNestedSegment: Predicate<NoteRow> = {
+  // @ts-expect-error — assignee has no `tem` field
+  "assignee.tem": "platform",
+};
+
+export const _wrongValueTypeForKey: Predicate<NoteRow> = {
+  // @ts-expect-error — status is "open" | "closed", not number
+  status: 42,
+};
+
 // --- Depth-cap boundary ---------------------------------------
 
 type DeepDoc = DocumentData & {

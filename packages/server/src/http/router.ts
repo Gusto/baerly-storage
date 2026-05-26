@@ -158,10 +158,7 @@ export function createRouter(options: CreateRouterOptions): Hono {
     const { table, id } = c.req.param();
     const body = await readJsonBody(c, MAX_BODY_BYTES);
     const patch = assertJsonBodyField(body, "patch");
-    const { modified } = await db
-      .table(table)
-      .where({ _id: id })
-      .update(patch as Partial<DocumentData>);
+    const { modified } = await db.table(table).update(id, patch as Partial<DocumentData>);
     if (modified === 0) {
       throw new BaerlyError("NotFound", `No such row: ${id}`);
     }
@@ -177,10 +174,7 @@ export function createRouter(options: CreateRouterOptions): Hono {
     const body = await readJsonBody(c, MAX_BODY_BYTES);
     const doc = assertJsonBodyField(body, "doc");
     try {
-      await db
-        .table(table)
-        .where({ _id: id })
-        .replace(doc as DocumentData);
+      await db.table(table).replace(id, doc as DocumentData);
     } catch (error) {
       // `Query.replace` raises `Conflict` with `expected exactly 1
       // match, got 0` when the row is missing. Translate to the
@@ -202,7 +196,7 @@ export function createRouter(options: CreateRouterOptions): Hono {
   // Delete — DELETE /v1/t/:table/:id  → 204
   app.delete("/v1/t/:table/:id", async (c) => {
     const { table, id } = c.req.param();
-    const { deleted } = await db.table(table).where({ _id: id }).delete();
+    const { deleted } = await db.table(table).delete(id);
     if (deleted === 0) {
       throw new BaerlyError("NotFound", `No such row: ${id}`);
     }

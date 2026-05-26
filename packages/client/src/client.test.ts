@@ -45,15 +45,13 @@ describe("createBaerlyClient", () => {
     expect(_id).toBe("doc-1");
   });
 
-  test("first() sets limit=1 and returns undefined on empty", async () => {
+  test("get() issues GET /v1/t/<name>/<id> and returns undefined on 404", async () => {
     const mock = new MockFetch();
-    mock.on("GET", "/v1/t/tickets", (req) => {
-      const url = new URL(req.url);
-      expect(url.searchParams.get("limit")).toBe("1");
-      return jsonResponse(okEnvelope([]));
-    });
+    mock.on("GET", "/v1/t/tickets/:id", () =>
+      jsonResponse({ error: { code: "NotFound", message: "No such row: missing" } }, 404),
+    );
     const client = createBaerlyClient({ baseUrl: "http://x", fetch: mock.fetch });
-    const row = await client.table("tickets").where({ _id: "missing" }).first();
+    const row = await client.table("tickets").get("missing");
     expect(row).toBeUndefined();
   });
 
@@ -148,10 +146,10 @@ describe("createBaerlyClient", () => {
   test("dynamic headers callback resolves per request", async () => {
     const mock = new MockFetch();
     let calls = 0;
-    mock.on("GET", "/v1/t/tickets", (req) => {
+    mock.on("GET", "/v1/t/tickets/:id", (req) => {
       calls += 1;
       expect(req.headers.get("authorization")).toBe(`Bearer token-${calls}`);
-      return jsonResponse(okEnvelope([{ _id: "x" }]));
+      return jsonResponse(okEnvelope({ _id: "x" }));
     });
     let counter = 0;
     const client = createBaerlyClient({
@@ -162,8 +160,8 @@ describe("createBaerlyClient", () => {
         return { Authorization: `Bearer token-${counter}` };
       },
     });
-    await client.table("tickets").where({ _id: "x" }).first();
-    await client.table("tickets").where({ _id: "y" }).first();
+    await client.table("tickets").get("x");
+    await client.table("tickets").get("y");
     expect(calls).toBe(2);
   });
 

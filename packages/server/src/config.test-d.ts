@@ -103,9 +103,11 @@ const db = Db.create({
 // `first()`'s return shape so the assertion stays scoped to public
 // surface (and bypasses Table's internal generic plumbing). The
 // per-step `typeof` capture works around TS's reluctance to evaluate
-// `typeof db.table<"tickets">` directly.
+// `typeof db.table<"tickets">` directly. Uses a non-`_id` predicate
+// because `Path<T>` excludes the root `_id` key — the row-shape
+// inference doesn't depend on the predicate field anyway.
 const boundTable = db.table("tickets");
-const boundRow = await boundTable.where({ _id: "x" }).first();
+const boundRow = await boundTable.where({ status: "open" }).first();
 export type _BoundDbInfersRow = Expect<
   Equal<
     typeof boundRow,
@@ -118,7 +120,7 @@ export type _BoundDbInfersRow = Expect<
 // recover a row shape. Verifies that the legacy DX is preserved.
 const dbLegacy = Db.create({ storage: memStorage, app: "a", tenant: "t" });
 const legacyTable = dbLegacy.table<{ _id: string; n: number }>("any");
-const legacyRow = await legacyTable.where({ _id: "x" }).first();
+const legacyRow = await legacyTable.where({ n: 1 }).first();
 export type _LegacyDbCallSiteGenericStillWorks = Expect<
   Equal<typeof legacyRow, { _id: string; n: number } | undefined>
 >;
@@ -129,9 +131,19 @@ export type _LegacyDbCallSiteGenericStillWorks = Expect<
 // returns `Table<DocumentData>`. Locks in the documented intent
 // in `Db.table` and mirrors `BaerlyClient.table`'s behavior. Regression
 // guard: if a future "narrow-only" single-overload pattern lands, this
-// assertion breaks and forces the change to be deliberate.
+// assertion breaks and forces the change to be deliberate. `Path<T>`
+// falls back to bare `string` on `DocumentData`, so `_id` is still a
+// legal predicate key here — useful evidence that the filter only
+// fires on typed shapes.
 const typoTable = db.table("notACollection");
 const typoRow = await typoTable.where({ _id: "x" }).first();
 export type _BoundDbUnknownNameFallsBackToDocumentData = Expect<
   Equal<typeof typoRow, DocumentData | undefined>
 >;
+
+export const _idIsNotAPredicateKeyOnTypedTables = () => {
+  // @ts-expect-error — `_id` is excluded from `Path<T>` on typed shapes.
+  void boundTable.where({ _id: "x" });
+  // @ts-expect-error — same on the legacy per-call-generic shape.
+  void legacyTable.where({ _id: "x" });
+};
