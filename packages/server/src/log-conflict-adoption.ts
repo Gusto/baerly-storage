@@ -53,6 +53,25 @@
  * the adversarial-replay property test
  * (`tests/integration/log-conflict-adversarial.test.ts`).
  *
+ * ## Prior art
+ *
+ * SlateDB's manifest-pivot writer protocol (rfcs/0001-manifest.md,
+ * scenarios 1–4) is the closest published prior art on the broader
+ * commit-protocol skeleton. SlateDB's scenario 3 — "conflicting SST
+ * has same `writer_epoch` as me" — is explicitly labelled an
+ * **illegal state that should panic**. The three-clause adoption
+ * decision encoded here (same session ∧ matching seq ∧ single-input)
+ * recognises that case as the writer's own prior in-flight attempt
+ * and adopts it as success rather than aborting, closing the recovery
+ * gap SlateDB leaves to operator intervention.
+ *
+ * Apache Iceberg and Delta Lake commits surface analogous failures as
+ * `CommitFailedException` / commit-conflict retries; neither inspects
+ * the conflicting object to determine ownership.
+ *
+ * See `docs/spec/prior-art.md` for the consolidated IDS-shaped
+ * differentiation.
+ *
  * @see docs/spec/sync-protocol.md §"Self-session log-conflict adoption"
  */
 
