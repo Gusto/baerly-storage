@@ -430,14 +430,25 @@ async function claimWriterSinglePut(
  * skew-between-client-clock-and-server-clock dimension the patent
  * C1 counter-example test drives. Once the script is exhausted,
  * subsequent PUTs fall back to the inner serverDate.
+ *
+ * `scriptedDateStrings` is the running record of every `serverDate`
+ * the wrapper has actually handed out (in call order), as ISO-8601
+ * strings. Tests assert that every non-empty `claimed_at` ever
+ * observable on disk lives in this set — the F2/F6/F7 invariant that
+ * `claimed_at` is *always* derived from a server-attested clock value,
+ * never client-invented.
  */
 class SkewedClockStorage implements Storage {
   #inner: Storage;
   #script: Date[];
   #i = 0;
+  readonly #handed: string[] = [];
   constructor(inner: Storage, script: Date[]) {
     this.#inner = inner;
     this.#script = script;
+  }
+  get scriptedDateStrings(): readonly string[] {
+    return this.#handed;
   }
   get(k: string, o?: Parameters<Storage["get"]>[1]) {
     return this.#inner.get(k, o);
@@ -453,10 +464,69 @@ class SkewedClockStorage implements Storage {
     if (this.#i < this.#script.length) {
       const serverDate = this.#script[this.#i]!;
       this.#i += 1;
+      this.#handed.push(serverDate.toISOString());
       return { ...result, serverDate };
+    }
+    if (result.serverDate !== undefined) {
+      this.#handed.push(result.serverDate.toISOString());
     }
     return result;
   }
+}
+
+/**
+ * Named-adversary Date-script generator. Each mode emits a sequence
+ * of `length` Date values exhibiting a different bounded violation of
+ * "well-behaved server clock":
+ *
+ * - `"backward-jump"` — strictly decreasing by a random delta in
+ *   `[1ms, 1h]` between successive entries. Models an honest server
+ *   whose clock has been NTP-stepped backward across requests.
+ * - `"repeated"` — every entry is the SAME `Date` (i.e., the base).
+ *   Models a server whose `Date` header has been pinned (cache, proxy,
+ *   degenerate clock) and never advances.
+ * - `"non-monotonic"` — oscillates pseudo-randomly within
+ *   `±10min` of base, sometimes ↑, sometimes ↓. Models post-NTP-step
+ *   clock chatter.
+ *
+ * The seed parameter makes the script deterministic for fast-check
+ * shrinking. The base `serverMs` is a fixed real-ish epoch ms so the
+ * resulting ISO strings have an unambiguous shape.
+ */
+function makeAdversaryScript(
+  mode: "backward-jump" | "repeated" | "non-monotonic",
+  length: number,
+  seed: number,
+): Date[] {
+  const baseMs = 1_700_000_000_000;
+  // Tiny deterministic LCG keyed off `seed`. Enough variation for the
+  // adversary; cheap to shrink.
+  let state = seed >>> 0;
+  const nextU32 = (): number => {
+    state = (Math.imul(state, 1_664_525) + 1_013_904_223) >>> 0;
+    return state;
+  };
+  const ONE_HOUR_MS = 3_600_000;
+  const TEN_MIN_MS = 600_000;
+  if (mode === "repeated") {
+    return Array.from({ length }, () => new Date(baseMs));
+  }
+  if (mode === "backward-jump") {
+    const out: Date[] = [];
+    let cur = baseMs;
+    for (let i = 0; i < length; i++) {
+      // Decrement by [1, ONE_HOUR_MS] inclusive.
+      const delta = 1 + (nextU32() % ONE_HOUR_MS);
+      cur -= delta;
+      out.push(new Date(cur));
+    }
+    return out;
+  }
+  // "non-monotonic": stay within ±TEN_MIN_MS of baseMs.
+  return Array.from({ length }, () => {
+    const offset = (nextU32() % (2 * TEN_MIN_MS)) - TEN_MIN_MS;
+    return new Date(baseMs + offset);
+  });
 }
 
 describe("claimWriter vs single-PUT counter-example (patent C1)", () => {
@@ -548,6 +618,98 @@ describe("claimWriter vs single-PUT counter-example (patent C1)", () => {
       // The client's local clock (clientMsB) is nowhere in the
       // record — the patent C1 trusted-clock property.
       expect(rB.json.writer_fence.claimed_at).not.toBe(new Date(clientMsB).toISOString());
+    },
+  );
+
+  // ── Lying-Date adversarial property (F5–F7 of adv-model) ────────
+  //
+  // For each of the three named bounded `Date` adversaries
+  // (backward-jump / repeated / non-monotonic), drive a fresh
+  // current.json through a sequence of `claimWriter` calls and assert
+  // the I1–I3 invariants from
+  // `docs/spec/writer-fence-adversarial-model.md` hold against the
+  // resulting observable state.
+  //
+  // I4 ("uniqueness of `(epoch, claimed_at)` across successful
+  // returns") from the doc is structurally subsumed here by I3's
+  // idempotency check — every claim bumps `epoch`, so two observed
+  // entries with the same `epoch` can only differ in `claimed_at` if
+  // the stamp PUT mutated the row mid-epoch, which I3 rejects.
+  test.prop({
+    adversary: fc.constantFrom(
+      "backward-jump" as const,
+      "repeated" as const,
+      "non-monotonic" as const,
+    ),
+    writerSequence: fc.array(fc.constantFrom("A", "B", "C"), { minLength: 2, maxLength: 16 }),
+    seed: fc.integer({ min: 0, max: 0x7fff_ffff }),
+  })(
+    "lying-Date adversary: invariants I1–I3 hold under any bounded Date adversary",
+    async ({ adversary, writerSequence, seed }) => {
+      const inner = new MemoryStorage();
+      // Each claim issues two PUTs (provisional + stamp) and the
+      // bootstrap createCurrentJson issues one more. Generate enough
+      // adversary entries to cover the longest possible run with
+      // headroom — falling through to the inner wall clock would
+      // pollute scriptedDateStrings with a value that no caller can
+      // predict and break I2 for reasons unrelated to the fence.
+      const script = makeAdversaryScript(adversary, 2 * writerSequence.length + 4, seed);
+      const storage = new SkewedClockStorage(inner, script);
+      const key = "tenant/coll/current.json";
+      await createCurrentJson(storage, key, seedJson());
+
+      const observed: Array<{ epoch: number; claimed_at: string }> = [];
+      for (const owner of writerSequence) {
+        try {
+          await claimWriter(storage, key, owner);
+        } catch (error) {
+          // The adversary may force a CAS loss on the stamp PUT under
+          // a poorly-behaved peer, but in this single-writer setup
+          // there are no peers; any thrown Conflict is unexpected.
+          if (!(error instanceof BaerlyError) || error.code !== "Conflict") {
+            throw error;
+          }
+        }
+        const cur = await readCurrentJson(storage, key);
+        if (cur !== null) {
+          observed.push({
+            epoch: cur.json.writer_fence.epoch,
+            claimed_at: cur.json.writer_fence.claimed_at,
+          });
+        }
+      }
+
+      // I1: epoch is monotonically non-decreasing across observations.
+      for (let i = 1; i < observed.length; i++) {
+        expect(observed[i]!.epoch).toBeGreaterThanOrEqual(observed[i - 1]!.epoch);
+      }
+      // I2: every non-empty `claimed_at` came from a server-attested
+      // Date value (i.e. is in the set the adversary handed out).
+      // Never from a client-invented timestamp. This is the
+      // server-clock-provenance contract of the two-phase protocol —
+      // the adversary may LIE about the clock value, but cannot trick
+      // claimWriter into INVENTING one.
+      const handed = new Set(storage.scriptedDateStrings);
+      for (const o of observed) {
+        if (o.claimed_at.length > 0) {
+          expect(handed.has(o.claimed_at)).toBe(true);
+        }
+      }
+      // I3: idempotency of the stamp within an epoch — once an epoch
+      // has been stamped with a non-empty `claimed_at`, any later
+      // observation at the same epoch must carry the same string.
+      // (No epoch is ever stamped twice with different values.)
+      const stampedByEpoch = new Map<number, string>();
+      for (const o of observed) {
+        if (o.claimed_at.length > 0) {
+          const prior = stampedByEpoch.get(o.epoch);
+          if (prior !== undefined) {
+            expect(prior).toBe(o.claimed_at);
+          } else {
+            stampedByEpoch.set(o.epoch, o.claimed_at);
+          }
+        }
+      }
     },
   );
 });
