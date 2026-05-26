@@ -128,7 +128,7 @@ describe("Db.table read terminals", () => {
     expect((head as { status: string }).status).toBe("open");
   });
 
-  test("case 5: .where().where() AND-merges via mergePredicates", async () => {
+  test("case 5: .where().where() AND-merges via mergePredicateWires", async () => {
     await provision(storage);
     const w = commit(storage);
     await w.commit({ op: "I", collection: COLL, docId: "1", body: { _id: "1", a: 1, b: 2 } });
@@ -1370,9 +1370,7 @@ describe("singleIdFromPredicate", () => {
   });
 
   test("negative: non-string value on _id clause → undefined", () => {
-    expect(
-      singleIdFromPredicate(wireOf([{ op: "eq", field: "_id", value: 42 }])),
-    ).toBeUndefined();
+    expect(singleIdFromPredicate(wireOf([{ op: "eq", field: "_id", value: 42 }]))).toBeUndefined();
   });
 });
 
@@ -1510,10 +1508,7 @@ describe("Query.first / Table.get — PK-lookup fast-path", () => {
   test("negative: single-key non-_id predicate falls through to scan and returns the match", async () => {
     const { storage, target } = await seedNDocs(100);
     const db = Db.create({ storage, app: APP, tenant: TENANT });
-    const rows = await db
-      .table<{ _id: string; n: number }>(COLL)
-      .where({ n: target.n })
-      .all();
+    const rows = await db.table<{ _id: string; n: number }>(COLL).where({ n: target.n }).all();
     expect(rows).toHaveLength(1);
     expect(rows[0]).toEqual(target);
   });
