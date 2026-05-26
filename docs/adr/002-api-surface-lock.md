@@ -23,6 +23,31 @@ Accepted (2026-05-11).
 - Amended (2026-05-26): scoped "additive-only" to capabilities, not
   forms — a redundant type-valid path to an existing capability is
   a defect, not an addition. See "Scope of 'additive'" below.
+- Amended (2026-05-26): `_id` excluded from `Path<T>` / `Predicate<T>`
+  at the top level via `Path<T> = Exclude<_AllPaths<T>, "_id" |
+  \`_id.${string}\`>`. Nested `_id`-named fields (embedded references)
+  survive — at nested positions the field names a different document's
+  primary key, not this row's. The `.where({_id}).first/update/replace/
+  delete()` ceremony was a redundant type-valid path to a capability
+  served by `.get(id)` / `.update(id, p)` / `.replace(id, d)` /
+  `.delete(id)`.
+
+  Mechanism: fewer type-valid paths → tighter typechecker signal on
+  a wrong first draft → faster correction in the agent loop. This
+  is the empirically-supported mechanism (Type-Constrained Code
+  Generation, arXiv:2504.09246 — type constraints in the loop
+  measurably reduce compile errors and improve pass@1).
+
+  Cross-system precedent for the asymmetry: Convex reserves
+  underscore-prefixed names at the top level of `defineTable` only;
+  JSON-LD's `@id` carries different semantics at root vs nested per
+  W3C; Prisma allows `id` in nested-relation filters.
+
+  Second worked example of the 2026-05-26 "additive-only scoped to
+  capabilities" amendment (the first was the Table API collapse).
+
+  See spec
+  `docs/superpowers/specs/2026-05-25-get-by-id-split-design.md`.
 
 ## Context
 

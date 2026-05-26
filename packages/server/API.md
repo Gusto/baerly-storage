@@ -140,6 +140,10 @@ operators `$eq | $gt | $gte | $lt | $lte | $in`. Multiple operators
 on the same field AND. Two `.where(...)` calls AND-merge. No
 top-level `$or` / `$and` / `$regex`.
 
+Use `.get(id)` / `.update(id, patch)` / `.replace(id, doc)` /
+`.delete(id)` for by-`_id` operations — `_id` is excluded from
+`Predicate<T>`.
+
 ```ts
 db.table("tickets").where({ status: "open" }).all();
 db.table("tickets").where({ "assignee.team": "platform" }).all();
