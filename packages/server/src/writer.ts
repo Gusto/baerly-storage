@@ -60,6 +60,7 @@ import {
 } from "@baerly/protocol";
 import { allIndexKeysFor, type IndexDefinition, validateIndexDefinition } from "./indexes.ts";
 import { readLogEntry, walkLogRange } from "./log-walk.ts";
+import { tryAdoptOwnSessionLogEntry } from "./log-conflict-adoption.ts";
 
 /**
  * Tunables for {@link Writer}. All optional; defaults match the
@@ -689,24 +690,27 @@ export class Writer {
     let committedEntries: readonly LogEntry[] = entries;
     const firstConflictIdx = logPutResults.findIndex((r) => !r.ok);
     if (firstConflictIdx !== -1) {
-      if (adoptOwnSessionOnLogConflict && entries.length === 1) {
-        const entry = entries[0]!;
-        const logEntryKey = `${logPrefix}/log/${entry.seq}.json`;
+      const conflictedEntry = entries[firstConflictIdx]!;
+      const logEntryKey = `${logPrefix}/log/${conflictedEntry.seq}.json`;
+      if (adoptOwnSessionOnLogConflict) {
         const existing = await readLogEntry(this.#storage, logEntryKey);
-        if (existing.session !== session) {
+        const decision = tryAdoptOwnSessionLogEntry({
+          self: conflictedEntry,
+          existing,
+          batchSize: inputs.length,
+        });
+        if (decision.adopt) {
+          committedEntries = [decision.entry];
+        } else {
           throw new BaerlyError(
             "Conflict",
-            `${errorPrefix}: log entry already exists at ${logEntryKey}; peer wrote our seq`,
+            `${errorPrefix}: log entry already exists at ${logEntryKey}; ${decision.reason}`,
           );
         }
-        // Our previous attempt's entry — adopt so the returned shape
-        // matches what's actually stored.
-        committedEntries = [existing];
       } else {
-        const seq = entries[firstConflictIdx]!.seq;
         throw new BaerlyError(
           "Conflict",
-          `${errorPrefix}: log entry already exists at ${logPrefix}/log/${seq}.json; peer wrote our seq`,
+          `${errorPrefix}: log entry already exists at ${logEntryKey}; peer wrote our seq`,
         );
       }
     }
