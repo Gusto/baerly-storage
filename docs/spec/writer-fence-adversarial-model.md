@@ -195,3 +195,26 @@ two-phase pattern is C1's specific computer-implemented step.
 
 See also: `prior-art.md` for the IDS-shaped consolidated
 differentiation.
+
+### Differentiation from mps3 (Date header used for clock correction)
+
+The author's prior work mps3 (`github.com/endpointservices/mps3`, MIT,
+public) uses the HTTP `Date` header returned by S3 as a *client-side
+clock-correction input* — clients accumulate observed `Date` values to
+estimate the trusted wall-clock for their own use, but the `Date` value
+is never written back into a durable storage object as a provenance
+field. mps3's two-step write (content + manifest + `touch last_change`)
+embeds a *client-minted* timestamp in the manifest filename; the server
+clock is never committed.
+
+The mechanism in `claimWriter`
+(`packages/protocol/src/coordination/current-json.ts`, lines 296–399)
+differs by **atomically capturing the storage server's `Date` response
+header as a durable provenance field** on the fence record itself,
+established via an etag-guarded second CAS that any concurrent peer
+loses. The two-PUT protocol forces the timestamp written to be one the
+server attested to in a previous response, not one the writer client
+made up. This is the load-bearing inventive step distinguishing C1 from
+the mps3 prior-art baseline and from the broader S3-leader-election
+literature (Morling 2024; AWS conditional-writes launch 2024-11) which
+uniformly embed client-supplied timestamps.

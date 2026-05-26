@@ -317,6 +317,12 @@ export async function casUpdateCurrentJson(
  * @see {@link ../../../../docs/spec/writer-fence-adversarial-model.md} —
  *   the full failure envelope (absent / lying / non-monotonic Date,
  *   peer-between-PUTs, bounded clock skew).
+ * @see {@link ../../../../docs/spec/writer-fence-adversarial-model.md} —
+ *   the "Differentiation from mps3" subsection that frames the §103
+ *   non-obviousness story.
+ * @see {@link ../../../../docs/spec/prior-art.md} —
+ *   IDS-shaped prior-art differentiation against mps3, SlateDB,
+ *   Iceberg, Delta, and the broader S3-leader-election literature.
  *
  * @throws BaerlyError{code:"Conflict"} — another writer claimed the
  *         fence between this call's read and write. Caller decides
