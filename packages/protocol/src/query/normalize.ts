@@ -19,8 +19,14 @@ import type { DocumentData } from "../json.ts";
 import type { Predicate } from "../table-api.ts";
 
 import { type PredicateArg, type PredicateBuilder, wireFromBuilder } from "./builder.ts";
-import { formatPath } from "./_internals.ts";
 import type { PredicateClause, PredicateWire } from "./wire.ts";
+
+// Inlined so the normaliser's chunk does not pull in `_internals.ts`
+// (which carries the merger/validator's heavier comparator helpers
+// the client never executes). Keeping a tiny local copy of formatPath
+// keeps the SPA bundle's predicate footprint to normalize+wire only.
+const formatPath = (path: ReadonlyArray<string>): string =>
+  path.length === 0 ? "<root>" : path.map((p) => JSON.stringify(p)).join(".");
 
 /**
  * Walk an object-literal predicate, emit one `PredicateClause[]`.

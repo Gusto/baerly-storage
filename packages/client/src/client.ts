@@ -10,7 +10,6 @@ import {
   type ConsistencyLevel,
   type DocumentData,
   EMPTY_PREDICATE_WIRE,
-  mergePredicateWires,
   normalizePredicateArg,
   type OrderSpec,
   type PredicateArg,
@@ -472,14 +471,19 @@ const makeClientQuery = <T extends DocumentData>(
 
   return {
     where: (predicate): ClientQuery<T> => {
-      // Normalise the incoming arg (object or callback) to a wire,
-      // then AND-merge with any prior clauses. The merger asserts
-      // the combined wire is satisfiable; conflicting equality on a
-      // shared field surfaces as `BaerlyError{InvalidConfig}`,
-      // matching `Db.Query.where(...)`'s chain composition rules.
+      // Normalise the incoming arg (object or callback) to a wire and
+      // concatenate clauses with any prior wire. The server's
+      // `parseWhereParam` runs `validateWire` on arrival, so empty
+      // `in` / conflicting `eq` / unsatisfiable interval surface as
+      // a 400 `InvalidConfig` / `UnsatisfiablePredicate` from the
+      // HTTP layer — no client-side merger needed. Skipping the
+      // satisfiability check here keeps the SPA bundle out of the
+      // wire-merger / per-field-fold code path.
       const incoming = normalizePredicateArg<T>(predicate);
-      const merged =
-        state.wire.clauses.length === 0 ? incoming : mergePredicateWires(state.wire, incoming);
+      const merged: PredicateWire =
+        state.wire.clauses.length === 0
+          ? incoming
+          : { clauses: [...state.wire.clauses, ...incoming.clauses] };
       return makeClientQuery<T>(ctx, tableName, { ...state, wire: merged });
     },
     order: (spec): ClientQuery<T> =>

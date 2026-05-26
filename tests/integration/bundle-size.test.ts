@@ -134,7 +134,14 @@ const BUDGETS: readonly Budget[] = [
   //     barrel re-exports them from there instead of `compactor.ts`, so
   //     the observability chunk no longer lands in the kernel closure.
   //     Measured: 150792 raw / 47342 gz.
-  { entry: "index.js", raw: 160 * 1024, gz: 50 * 1024 },
+  //   → 162 KiB raw / 51 KiB gz: predicate redesign. The wire-form
+  //     migration adds `wire.ts` + `builder.ts` + `normalize.ts` +
+  //     `satisfiable.ts` to the kernel closure (replacing the
+  //     monolithic `validate.ts` / `merge.ts` / `matches.ts` that
+  //     previously walked operator-object predicates). Net: more
+  //     chunk-count, slightly more code (per-field-fold helpers).
+  //     Measured: 165125 raw / 51476 gz.
+  { entry: "index.js", raw: 162 * 1024, gz: 51 * 1024 },
   // The three auth verifier factories (bearerJwt, sharedSecret,
   // cloudflareAccess) plus the transitive jose closure pulled in by
   // bearerJwt's createRemoteJWKSet + jwtVerify. Adding a fourth
@@ -178,7 +185,14 @@ const BUDGETS: readonly Budget[] = [
   //     follow-up. New `PUT /v1/t/:table/:id` (true replace) +
   //     `GET /v1/count` routes, plus `parseOrder` / `parseLimit` for
   //     wired order/limit query params. +2413 raw / +544 gz.
-  { entry: "http.js", raw: 279 * 1024, gz: 81 * 1024 },
+  //   → 281 KiB raw / 82 KiB gz: predicate redesign. The wire-form
+  //     normaliser + validator + matcher + per-field satisfiability
+  //     check thread into the router closure (via `parseWhereParam`,
+  //     `runRead`, `runAllWithMeta`). The merger isn't directly
+  //     imported here, but `mergePredicateWires` reaches the closure
+  //     via the kernel `Query.where` seam. Measured: 287051 raw /
+  //     83035 gz.
+  { entry: "http.js", raw: 281 * 1024, gz: 82 * 1024 },
   // Observability primitives — ObservabilityContext, the
   // request-scoped MetricsRecorder, LogTape config + the
   // JSON sink only (the pretty sink + picocolors now live in
@@ -287,7 +301,19 @@ const BUDGETS: readonly Budget[] = [
   // Budget history:
   //   → 14 KiB raw / 6 KiB gz: initial budget set in T9 based on
   //     post-T8 measurement (9 KiB raw / 4 KiB gz).
-  { entry: "client.js", raw: 14 * 1024, gz: 6 * 1024 },
+  //   → 16 KiB raw / 6 KiB gz: predicate redesign. The SDK now
+  //     normalises `.where(...)` arguments to the wire form on the
+  //     client (so the two-shape API works in the browser without a
+  //     server round-trip for object→wire conversion). Adds
+  //     `normalize.ts` + `wire.ts` + the `errors` chunk to the
+  //     client closure. The client does NOT pull
+  //     `mergePredicateWires` / `assertWireSatisfiable` — chained
+  //     `.where(...)` concatenates clauses; the server's
+  //     `parseWhereParam` validator is the satisfiability check.
+  //     Measured: 15334 raw / 5187 gz — gz actually dropped
+  //     vs. the previous budget (gzip dedup over the new wire-form
+  //     identifiers).
+  { entry: "client.js", raw: 16 * 1024, gz: 6 * 1024 },
   // React bindings for `BaerlyClient` (provider + hooks). React
   // itself is external, so the closure stays tiny.
   // Budget history:
@@ -300,7 +326,17 @@ const BUDGETS: readonly Budget[] = [
   //     hooks switched from positional args to options-bag (no
   //     `client` arg — read from context). Measured: 15268 raw /
   //     4769 gz.
-  { entry: "client-react.js", raw: 16 * 1024, gz: 6 * 1024 },
+  //   → 24 KiB raw / 8 KiB gz: predicate redesign. The React hook
+  //     (`useLiveQuery`) calls `normalizePredicateArg` on every
+  //     render so its `stableKey(...)` dep is computed over the
+  //     normalised wire — object-form and callback-form
+  //     predicates with the same semantic content share a cache
+  //     entry. Pulls `normalize.ts` + the `errors` chunk into the
+  //     closure. The +1 KiB gz delta is the intrinsic cost of the
+  //     wire-form normalisation; the React closure also pays
+  //     because the hook lives downstream of the SDK's wire-aware
+  //     `.where(...)` seam. Measured: 22522 raw / 7262 gz.
+  { entry: "client-react.js", raw: 24 * 1024, gz: 8 * 1024 },
   // Testing helpers for `BaerlyClient` (in-memory fetcher etc.).
   // Vitest is external; closure is minimal.
   // Budget history:
