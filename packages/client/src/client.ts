@@ -9,8 +9,12 @@ import {
   type CollectionNames,
   type ConsistencyLevel,
   type DocumentData,
+  EMPTY_PREDICATE_WIRE,
+  mergePredicateWires,
+  normalizePredicateArg,
   type OrderSpec,
-  type Predicate,
+  type PredicateArg,
+  type PredicateWire,
   type RowOf,
   type UnboundConfig,
 } from "@baerly/protocol";
@@ -168,8 +172,16 @@ export interface ClientTable<T extends DocumentData = DocumentData> {
   count(opts?: TerminalOptions): Promise<number>;
   /** Fetch one document by primary key. Returns `undefined` when the id is unknown. */
   get(id: string, opts?: TerminalOptions): Promise<T | undefined>;
-  /** Equality predicate over top-level or dotted-path keys. AND-merge on repeat. */
-  where(predicate: Predicate<T>): ClientQuery<T>;
+  /**
+   * Filter rows. Two shapes:
+   *
+   *  - **Object literal** — equality only.
+   *  - **Callback DSL** — `q => q.eq(...).gt(...).in(...)` for the
+   *    operator vocabulary.
+   *
+   * Chained calls AND-merge across shapes.
+   */
+  where(predicate: PredicateArg<T>): ClientQuery<T>;
   /** Order modifier; last call wins. */
   order(spec: OrderSpec<T>): ClientQuery<T>;
   /** Limit modifier; last call wins. */
@@ -199,7 +211,7 @@ export interface ClientTable<T extends DocumentData = DocumentData> {
  * surface has no route for it.
  */
 export interface ClientQuery<T extends DocumentData = DocumentData> {
-  where(predicate: Predicate<T>): ClientQuery<T>;
+  where(predicate: PredicateArg<T>): ClientQuery<T>;
   order(spec: OrderSpec<T>): ClientQuery<T>;
   limit(n: number): ClientQuery<T>;
   consistency(level: ConsistencyLevel): ClientQuery<T>;
@@ -334,14 +346,14 @@ const resolveHeaders = async (source: BaerlyClientOptions["headers"]): Promise<H
 
 /** Query-state carried across the chainable modifiers. */
 interface QueryState {
-  readonly predicate: Predicate<DocumentData>;
+  readonly wire: PredicateWire;
   readonly order: OrderSpec<DocumentData> | undefined;
   readonly limit: number | undefined;
   readonly consistency: ConsistencyLevel | undefined;
 }
 
 const emptyState: QueryState = {
-  predicate: {},
+  wire: EMPTY_PREDICATE_WIRE,
   order: undefined,
   limit: undefined,
   consistency: undefined,
@@ -434,8 +446,8 @@ const makeClientQuery = <T extends DocumentData>(
 ): ClientQuery<T> => {
   const listParams = (): URLSearchParams => {
     const params = new URLSearchParams();
-    if (Object.keys(state.predicate).length > 0) {
-      params.set("where", JSON.stringify(state.predicate));
+    if (state.wire.clauses.length > 0) {
+      params.set("where", JSON.stringify(state.wire));
     }
     if (state.order !== undefined && Object.keys(state.order).length > 0) {
       params.set("order", JSON.stringify(state.order));
@@ -459,17 +471,17 @@ const makeClientQuery = <T extends DocumentData>(
   };
 
   return {
-    where: (predicate): ClientQuery<T> =>
-      makeClientQuery<T>(ctx, tableName, {
-        ...state,
-        // AND-merge with prior predicates, matching `Table<T>.where`
-        // composition semantics (later keys win on collision —
-        // mirrors `Query.where` in `Db`).
-        predicate: {
-          ...state.predicate,
-          ...(predicate as Predicate<DocumentData>),
-        },
-      }),
+    where: (predicate): ClientQuery<T> => {
+      // Normalise the incoming arg (object or callback) to a wire,
+      // then AND-merge with any prior clauses. The merger asserts
+      // the combined wire is satisfiable; conflicting equality on a
+      // shared field surfaces as `BaerlyError{InvalidConfig}`,
+      // matching `Db.Query.where(...)`'s chain composition rules.
+      const incoming = normalizePredicateArg<T>(predicate);
+      const merged =
+        state.wire.clauses.length === 0 ? incoming : mergePredicateWires(state.wire, incoming);
+      return makeClientQuery<T>(ctx, tableName, { ...state, wire: merged });
+    },
     order: (spec): ClientQuery<T> =>
       makeClientQuery<T>(ctx, tableName, {
         ...state,
@@ -501,8 +513,8 @@ const makeClientQuery = <T extends DocumentData>(
     async count(opts): Promise<number> {
       const params = new URLSearchParams();
       params.set("table", tableName);
-      if (Object.keys(state.predicate).length > 0) {
-        params.set("where", JSON.stringify(state.predicate));
+      if (state.wire.clauses.length > 0) {
+        params.set("where", JSON.stringify(state.wire));
       }
       if (state.consistency !== undefined) {
         params.set("consistency", state.consistency);

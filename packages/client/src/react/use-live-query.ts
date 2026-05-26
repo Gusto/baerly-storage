@@ -1,5 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import type { ConsistencyLevel, DocumentData, OrderSpec, Predicate } from "@baerly/protocol";
+import {
+  type ConsistencyLevel,
+  type DocumentData,
+  normalizePredicateArg,
+  type OrderSpec,
+  type PredicateArg,
+} from "@baerly/protocol";
 import { useBaerlyClient } from "./provider.ts";
 import { stableKey } from "./stable-key.ts";
 import { useInvalidationTick } from "./use-invalidation-tick.ts";
@@ -8,12 +14,16 @@ export interface UseLiveQueryOptions<T extends DocumentData = DocumentData> {
   /** Table to read. */
   readonly table: string;
   /**
-   * Equality predicate over top-level or dotted-path keys. Optional;
-   * defaults to `{}` (matches every row). Inline objects are fine —
-   * the hook stable-stringifies internally so reference churn does
-   * not refetch.
+   * Filter rows. Accepts the same two shapes as `ClientTable.where`:
+   * an equality-only object literal, or a callback DSL
+   * (`q => q.eq(...).gt(...)`) for the operator vocabulary. Optional;
+   * defaults to `{}` (matches every row).
+   *
+   * Inline values are fine — the hook stable-stringifies the
+   * normalised wire form internally so reference churn (e.g. a fresh
+   * inline arrow each render) does not refetch.
    */
-  readonly where?: Predicate<T>;
+  readonly where?: PredicateArg<T>;
   /**
    * Order modifier for the read. Mirrors `ClientTable.order(...)`.
    * Inline objects are fine — the hook stable-stringifies internally.
@@ -72,7 +82,7 @@ export type UseLiveQueryResult<T> =
 export const useLiveQuery = <T extends DocumentData = DocumentData>(
   opts: UseLiveQueryOptions<T>,
 ): UseLiveQueryResult<T> => {
-  const { table, where = {} as Predicate<T>, order, consistency, enabled = true } = opts;
+  const { table, where = {} as PredicateArg<T>, order, consistency, enabled = true } = opts;
   const client = useBaerlyClient();
   const [state, setState] = useState<UseLiveQueryResult<T>>({ status: "loading" });
 
@@ -82,8 +92,16 @@ export const useLiveQuery = <T extends DocumentData = DocumentData>(
   // closure reads the latest snapshot via `.current` rather than
   // closing over a stale literal. The deps are stable string keys,
   // so reference churn on every render doesn't trigger refetches.
-  const predicateKey = stableKey(where);
-  const predicateRef = useRef<Predicate<T>>(where);
+  //
+  // Normalise `where` to the wire form BEFORE stable-keying. Object-
+  // form and callback-form predicates with the same semantic content
+  // produce the same wire, so `.where({ status: "open" })` and
+  // `.where(q => q.eq("status", "open"))` share a cache entry. The
+  // builder pass is cheap (just clause-array push), but is not zero
+  // per render — hoist the callback if the hook is hot-path.
+  const wire = normalizePredicateArg<T>(where);
+  const predicateKey = stableKey(wire);
+  const predicateRef = useRef<PredicateArg<T>>(where);
   predicateRef.current = where;
   const orderKey = order === undefined ? "" : stableKey(order);
   const orderRef = useRef<OrderSpec<T> | undefined>(order);
