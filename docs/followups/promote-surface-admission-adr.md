@@ -42,6 +42,15 @@ surface has to pass before it ships pre-launch:
    from a production-tier reference (Debezium / Datadog /
    Postgres / k8s)? If yes, pre-launch is the window to NOT ship
    borrowed maturity. *(Deferred-memo §5.)*
+6. **Load-bearer-exception test.** Does the surface satisfy one
+   of the three exceptions in thesis §"What we keep even when it
+   looks like ceremony" — kernel-bug tripwire, empirical LLM
+   ergonomics, or audience-reach across deploy targets? If yes,
+   the surface stays even when tests #1–#5 would cut it. The
+   exception must be cited explicitly in a one-line
+   `load-bearer:` tag on the surface's JSDoc or doc page, so the
+   exception is auditable and can't be smuggled in to justify
+   unrelated additions.
 
 ## ADR shape (rough sketch)
 
@@ -62,7 +71,7 @@ Any new public surface (CLI verb, kernel method, client method,
 React hook, exported type) is held against five tests before
 ship. Failing any one is sufficient grounds to defer or cut.
 
-[The five tests, structured as above.]
+[The six tests, structured as above.]
 
 ## Consequences
 - "Defer" is a first-class outcome with a deferral-memo template
@@ -80,6 +89,20 @@ ship. Failing any one is sufficient grounds to defer or cut.
   test #1 (workload shape: invites schema-migration as a
   baerly-shaped flow). Failed core thesis ("No automatic schema
   migration").
+- **Kept under exception #1 (kernel-bug tripwire):** `baerly cost`
+  — would fail test #5 on borrowed-maturity grounds, but the
+  user-visible op-count surface is the second-line defence
+  against a kernel regression that blows write-amp before the
+  CI gate catches it on `main`.
+- **Kept under exception #2 (empirical LLM ergonomics):** scaffold
+  pre-wired `vitest` + a single round-trip test — would fail
+  test #5, but scaffold testing showed LLMs reach for tests by
+  default; un-pre-wiring it makes Haiku-class models burn
+  context on `pnpm install vitest`.
+- **Kept under exception #3 (audience reach):** the
+  `--with=docker` scaffold add-on — would fail test #5 on
+  borrowed-maturity grounds, but unblocks deployers who can only
+  ship via container (corporate, air-gapped, no-PaaS).
 - **Accepted:** `Db.create({ config })` single canonical form —
   passes tests #3 and #4 by removing `schemas`/`indexes`/`metrics`
   override knobs.

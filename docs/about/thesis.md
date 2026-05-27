@@ -83,6 +83,34 @@ Plus one anti-feature:
   the `Db` layer ([ADR-001](../adr/001-tenant-cas-isolation.md)),
   not delegated to generated SQL.
 
+## What we keep even when it looks like ceremony
+
+The cutting lens above is strong, and it has three exceptions. A
+surface that fails the cutting lens *but* satisfies one of these
+stays:
+
+1. **Kernel-bug tripwires.** Surfaces that let maintainers *and
+   users* catch protocol regressions before they hit the invoice
+   (`baerly cost`'s % of free tier, write-amp counters, op-count
+   histograms). The CI gate is the canonical enforcement; the
+   user-visible surface is the second line of defence and the
+   one users feel first when something drifts.
+
+2. **Empirical LLM ergonomics.** Pre-wired surfaces validated
+   against real zero-shot scaffold use stay even when they look
+   like ceremony. Pre-installed `vitest` is the canonical case:
+   LLMs reach for tests by default, and unsubsidised
+   `pnpm install vitest` burns lower-powered-model context. If a
+   surface measurably improves zero-shot app construction, it's
+   load-bearing.
+
+3. **Audience reach across deploy targets.** "Self-hosted Node"
+   means *any* Node target — including container-only,
+   air-gapped, or no-PaaS environments. Surfaces that the
+   happy-path PaaS audience doesn't need (Dockerfile, `healthz`,
+   explicit `node server.js` entry) stay if they unblock a real
+   deploy population.
+
 ## Why object storage
 
 Two claims, stacked.

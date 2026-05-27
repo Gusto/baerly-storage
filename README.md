@@ -78,6 +78,8 @@ cd my-app && pnpm install && pnpm dev
 
 `pnpm dev` boots Vite + workerd on `:5173`, so `/v1/*` and the React UI share one origin. For `--target=node`, it's `:3000` over `LocalFsStorage` — no S3 creds needed.
 
+Production deploys: anywhere `node server.js` runs — Railway, Render, Fly, Docker, bare VMs, on-prem boxes.
+
 Once `create-baerly` ships to npm: `pnpm dlx create-baerly@latest my-app`.
 
 For a runnable multi-tab demo see [`examples/react-node/`](./examples/react-node); for the full set of production-shaped scaffolds see [`examples/`](./examples).
