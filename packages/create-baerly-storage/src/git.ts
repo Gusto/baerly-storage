@@ -62,7 +62,7 @@ export type GitInitOutcome =
 export interface GitInitDetails {
   /** Absolute path to the freshly-scaffolded directory. */
   readonly outDir: string;
-  /** `create-baerly` package version. Stamped into the commit body. */
+  /** `create-baerly-storage` package version. Stamped into the commit body. */
   readonly cliVersion: string;
   /** Substituted `appName` sentinel from the scaffold. */
   readonly appName: string;
@@ -106,10 +106,10 @@ const commitMessage = (details: GitInitDetails, gitVersion: string): string => {
   const pmLine =
     details.pmVersion === undefined ? details.pm : `${details.pm}@${details.pmVersion}`;
   return [
-    "Initial commit (by create-baerly)",
+    "Initial commit (by create-baerly-storage)",
     "",
     "Details:",
-    `  create-baerly = ${details.cliVersion}`,
+    `  create-baerly-storage = ${details.cliVersion}`,
     `  project name  = ${details.appName}`,
     `  target        = ${details.target}`,
     `  starter       = ${details.starter}`,

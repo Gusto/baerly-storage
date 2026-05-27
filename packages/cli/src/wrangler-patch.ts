@@ -1,6 +1,6 @@
 /**
  * Surgical wrangler.jsonc helpers used by `baerly deploy` and the
- * `create-baerly` bolt-on flow. All functions are pure (no I/O) —
+ * `@gusto/create-baerly-storage` bolt-on flow. All functions are pure (no I/O) —
  * callers do the file read/write. Built on `jsonc-parser` so
  * comments and trailing commas survive round-trips.
  */

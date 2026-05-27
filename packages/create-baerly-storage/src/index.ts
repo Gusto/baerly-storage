@@ -1,5 +1,5 @@
 /**
- * `create-baerly` bin entry. Imports the citty command from `./runner.ts`
+ * `create-baerly-storage` bin entry. Imports the citty command from `./runner.ts`
  * and dispatches via an inline `runBin` shim. Kept as a thin shim so
  * the runner module has no import-time side effects — tests can
  * import `runCreateBaerly` from `./runner.ts` directly without citty
@@ -8,7 +8,7 @@
  * The shim mirrors the shape of `@baerly/cli`'s `bin-runner.ts`
  * (same `--help` / `--version` interception, same `CLIError →
  * InvalidConfig` translation). Inlined here rather than imported
- * cross-package because `create-baerly` is a separate publishable
+ * cross-package because `create-baerly-storage` is a separate publishable
  * with its own dependency surface — the cross-package import
  * overhead beats the dedup at this scale.
  */
@@ -26,10 +26,10 @@ const resolve = async <T>(v: Resolvable<T>): Promise<T> => {
 const writeError = (json: boolean, code: string, message: string): void => {
   if (json) {
     process.stderr.write(
-      `${JSON.stringify({ error: { code, message, command: "create-baerly" } })}\n`,
+      `${JSON.stringify({ error: { code, message, command: "create-baerly-storage" } })}\n`,
     );
   } else {
-    process.stderr.write(`${pc.red("create-baerly:")} ${code}: ${message}\n`);
+    process.stderr.write(`${pc.red("create-baerly-storage:")} ${code}: ${message}\n`);
   }
 };
 
@@ -38,7 +38,7 @@ const wantJson = argv.includes("--json");
 
 const run = async (): Promise<void> => {
   if (argv.includes("--help") || argv.includes("-h")) {
-    // create-baerly has no subCommands, so the top-level command is
+    // create-baerly-storage has no subCommands, so the top-level command is
     // always the showUsage target.
     await showUsage(main);
     process.exit(0);

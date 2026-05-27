@@ -100,13 +100,13 @@ const leadingPositionals = (argv: readonly string[]): readonly string[] => {
  * with the mapped code.
  *
  * `brand` controls the {@link emitError} prefix on top-level
- * failures — `"baerly"` for the main CLI, `"create-baerly"` for
+ * failures — `"baerly"` for the main CLI, `"create-baerly-storage"` for
  * the scaffolder.
  */
 export const runBin = async (
   cmd: CommandDef,
   argv: readonly string[],
-  brand: "baerly" | "create-baerly" = "baerly",
+  brand: "baerly" | "create-baerly-storage" = "baerly",
 ): Promise<void> => {
   setJsonMode(argv.includes("--json"));
 

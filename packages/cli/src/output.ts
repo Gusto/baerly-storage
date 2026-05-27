@@ -45,7 +45,7 @@ export const color = {
  *
  * Two corner cases the brand prefix needs to handle:
  *  - When the runBin shim catches a top-level error it passes
- *    `command === "baerly"` (or `"create-baerly"`); doubling the
+ *    `command === "baerly"` (or `"create-baerly-storage"`); doubling the
  *    brand (`baerly baerly: …`) is ugly. Collapse to just
  *    `baerly: <code>: <msg>` in that case.
  *  - When `command` is empty (top-level parse errors that haven't
@@ -63,8 +63,8 @@ export const emitError = (command: string, code: string, message: string): void 
   let prefix: string;
   if (command === "" || command === "baerly") {
     prefix = "baerly";
-  } else if (command === "create-baerly") {
-    prefix = "create-baerly";
+  } else if (command === "create-baerly-storage") {
+    prefix = "create-baerly-storage";
   } else {
     prefix = `baerly ${command}`;
   }

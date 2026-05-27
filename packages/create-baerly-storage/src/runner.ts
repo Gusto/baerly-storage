@@ -1,5 +1,5 @@
 /**
- * `create-baerly` command logic — citty `defineCommand` plus the
+ * `create-baerly-storage` command logic — citty `defineCommand` plus the
  * programmatic `runCreateBaerly` entry consumed by tests. The bin
  * shim at `./index.ts` imports `main` from here and invokes citty's
  * `runMain`. Tests import `runCreateBaerly` so they can drive the
@@ -38,7 +38,7 @@ export const CREATE_BAERLY_ARGS = {
   projectName: {
     type: "positional",
     description: "Output directory name (or '.' to scaffold into the current directory)",
-    // Optional at the citty layer so a bare `create-baerly` on a
+    // Optional at the citty layer so a bare `create-baerly-storage` on a
     // TTY can fall into the wizard. The flag-driven branch below
     // re-validates when wizard mode is suppressed (non-TTY / --json).
     required: false,
@@ -48,7 +48,7 @@ export const CREATE_BAERLY_ARGS = {
     type: "enum",
     options: ["cloudflare", "node"],
     description: 'Deploy target — "cloudflare" or "node".',
-    // Optional at the citty layer so a bare `create-baerly` on a
+    // Optional at the citty layer so a bare `create-baerly-storage` on a
     // TTY can fall into the wizard. The flag-driven branch below
     // re-validates when wizard mode is suppressed (non-TTY / --json).
     required: false,
@@ -131,7 +131,7 @@ const dispatchBoltOn = async (opts: DispatchBoltOnOpts): Promise<number> => {
       process.stdout.write(
         `${JSON.stringify({
           result: {
-            command: "create-baerly",
+            command: "create-baerly-storage",
             status: "ok",
             mode: "bolt-on",
             outDir: opts.outDir,
@@ -181,10 +181,10 @@ const dispatchBoltOn = async (opts: DispatchBoltOnOpts): Promise<number> => {
     const msg = error instanceof Error ? error.message : String(error);
     if (opts.json) {
       process.stderr.write(
-        `${JSON.stringify({ error: { code: "InvalidConfig", message: msg, command: "create-baerly" } })}\n`,
+        `${JSON.stringify({ error: { code: "InvalidConfig", message: msg, command: "create-baerly-storage" } })}\n`,
       );
     } else {
-      process.stderr.write(`${pc.red("create-baerly:")} ${msg}\n`);
+      process.stderr.write(`${pc.red("create-baerly-storage:")} ${msg}\n`);
     }
     return 1;
   }
@@ -262,7 +262,7 @@ export const handleCreateBaerly = async (
       const outDir = resolveOutDir(projectName);
       if (args.target === "node" && existsSync(resolve(outDir, "wrangler.jsonc"))) {
         throw new Error(
-          "create-baerly: detected wrangler.jsonc but --target=node was passed. " +
+          "create-baerly-storage: detected wrangler.jsonc but --target=node was passed. " +
             "Bolt-on only supports Cloudflare. Remove --target=node, or move out of this directory to scaffold a Node app.",
         );
       }
@@ -362,7 +362,7 @@ export const handleCreateBaerly = async (
         } else if (outcome.reason === "no-identity") {
           hint = `git user.name / user.email are not configured. Set them with \`git config --global user.name '…'\` + \`git config --global user.email '…'\`, then commit manually.`;
         }
-        process.stderr.write(`${pc.yellow("create-baerly:")} git init skipped — ${hint}\n`);
+        process.stderr.write(`${pc.yellow("create-baerly-storage:")} git init skipped — ${hint}\n`);
       }
     }
     if (install) {
@@ -370,7 +370,7 @@ export const handleCreateBaerly = async (
       const { code } = await installer.run(pm, result.outDir);
       if (code !== 0) {
         process.stderr.write(
-          `${pc.yellow("create-baerly:")} install exited with code ${code}. ` +
+          `${pc.yellow("create-baerly-storage:")} install exited with code ${code}. ` +
             `Run \`${pm} install\` in ${result.outDir} manually.\n`,
         );
       }
@@ -379,7 +379,7 @@ export const handleCreateBaerly = async (
       process.stdout.write(
         `${JSON.stringify({
           result: {
-            command: "create-baerly",
+            command: "create-baerly-storage",
             status: "ok",
             outDir: result.outDir,
             filesWritten: result.filesWritten.length,
@@ -408,10 +408,10 @@ export const handleCreateBaerly = async (
     const msg = error instanceof Error ? error.message : String(error);
     if (jsonMode) {
       process.stderr.write(
-        `${JSON.stringify({ error: { code: "InvalidConfig", message: msg, command: "create-baerly" } })}\n`,
+        `${JSON.stringify({ error: { code: "InvalidConfig", message: msg, command: "create-baerly-storage" } })}\n`,
       );
     } else {
-      process.stderr.write(`${pc.red("create-baerly:")} ${msg}\n`);
+      process.stderr.write(`${pc.red("create-baerly-storage:")} ${msg}\n`);
     }
     return 1;
   }
@@ -419,7 +419,7 @@ export const handleCreateBaerly = async (
 
 export const main = defineCommand({
   meta: {
-    name: "create-baerly",
+    name: "create-baerly-storage",
     version: "0.0.0",
     description: "Scaffold a new baerly app (Cloudflare Worker or self-hosted Node).",
   },
@@ -448,10 +448,10 @@ export const runCreateBaerly = async (
     const msg = error instanceof Error ? error.message : String(error);
     if (argv.includes("--json")) {
       process.stderr.write(
-        `${JSON.stringify({ error: { code: "InvalidConfig", message: msg, command: "create-baerly" } })}\n`,
+        `${JSON.stringify({ error: { code: "InvalidConfig", message: msg, command: "create-baerly-storage" } })}\n`,
       );
     } else {
-      process.stderr.write(`${pc.red("create-baerly:")} ${msg}\n`);
+      process.stderr.write(`${pc.red("create-baerly-storage:")} ${msg}\n`);
     }
     return 1;
   }

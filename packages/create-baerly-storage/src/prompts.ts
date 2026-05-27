@@ -1,5 +1,5 @@
 /**
- * Interactive wizard for `create-baerly`. Invoked only when the
+ * Interactive wizard for `create-baerly-storage`. Invoked only when the
  * process is attached to a real TTY and at least one required arg
  * (`projectName` / `target`) is missing. Non-TTY callers (CI, agents,
  * piped stdin) and `--json` callers retain the flag-driven path and
@@ -62,7 +62,7 @@ export interface WizardInput {
    * When non-undefined, skip the git-init confirm and use this. The
    * wizard also skips the prompt — defaulting to `false` — when the
    * current directory is already inside a git work tree, since
-   * `create-baerly` won't nest a new repo inside an existing one
+   * `create-baerly-storage` won't nest a new repo inside an existing one
    * either way.
    */
   readonly git?: boolean;
@@ -99,7 +99,7 @@ export const runWizard = async (
   input: WizardInput,
   opts: { readonly gitRunner?: GitRunner } = {},
 ): Promise<WizardOutput> => {
-  intro(pc.bold(pc.cyan("create-baerly")));
+  intro(pc.bold(pc.cyan("create-baerly-storage")));
   const projectName = input.projectName ?? (await promptProjectName());
   const outDir = projectName === "." ? process.cwd() : resolve(process.cwd(), projectName);
   const wranglerPath = resolve(outDir, "wrangler.jsonc");

@@ -46,8 +46,9 @@ const main = defineCommand({
   // Day-1 verbs (deploy) come first, then operator reads
   // (doctor → inspect → export → cost), then `admin`. Scaffolding +
   // bolt-on into an existing wrangler project both live in the
-  // `create-baerly` package — invoke via `pnpm create baerly` /
-  // `pnpm create baerly .`, not a `baerly` subcommand.
+  // `@gusto/create-baerly-storage` package — invoke via
+  // `pnpm create @gusto/baerly-storage@latest` /
+  // `pnpm create @gusto/baerly-storage@latest .`, not a `baerly` subcommand.
   subCommands: {
     deploy: () => import("./deploy.ts").then((m) => m.deploy),
     doctor: () => import("./doctor.ts").then((m) => m.doctor),

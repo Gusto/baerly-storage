@@ -6,7 +6,7 @@
  * mock to avoid spawning real installs.
  *
  * Mirrors the shape of `packages/cli/src/runner.ts:ProcessRunner` —
- * intentionally not imported cross-package because `create-baerly`
+ * intentionally not imported cross-package because `create-baerly-storage`
  * has its own dependency surface (no `@baerly/cli` dep).
  */
 import { spawn } from "node:child_process";

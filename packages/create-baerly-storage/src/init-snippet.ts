@@ -1,5 +1,5 @@
 /**
- * Render the worker-entry paste-string that the create-baerly
+ * Render the worker-entry paste-string that the create-baerly-storage
  * bolt-on flow prints after patching `wrangler.jsonc`. The user
  * copies this verbatim into the path declared in
  * `wrangler.jsonc:main`, replacing the stock `wrangler create`

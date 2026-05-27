@@ -1,5 +1,5 @@
 /**
- * The wrangler bolt-on flow for `create-baerly`. Runs when `runner.ts`
+ * The wrangler bolt-on flow for `create-baerly-storage`. Runs when `runner.ts`
  * detects an existing `wrangler.jsonc` in the resolved `outDir` — the
  * user has a Cloudflare Worker project already and wants to add
  * baerly. No template copy. Patches the mergeable files
@@ -100,7 +100,7 @@ const appendBaerlyStorageDep = async (pkgJsonPath: string, changes: string[]): P
   } catch (error) {
     throw new BaerlyError(
       "InvalidConfig",
-      `create-baerly bolt-on: ${pkgJsonPath} is not valid JSON — ${
+      `create-baerly-storage bolt-on: ${pkgJsonPath} is not valid JSON — ${
         error instanceof Error ? error.message : String(error)
       }`,
     );
@@ -119,7 +119,7 @@ export const boltOnExistingWrangler = async (opts: BoltOnOptions): Promise<BoltO
   if (!(await fileExists(wranglerPath))) {
     throw new BaerlyError(
       "InvalidConfig",
-      `create-baerly bolt-on: ${wranglerPath} missing — bolt-on mode requires wrangler.jsonc`,
+      `create-baerly-storage bolt-on: ${wranglerPath} missing — bolt-on mode requires wrangler.jsonc`,
     );
   }
   const wranglerSource = await readFile(wranglerPath, "utf8");
@@ -130,7 +130,7 @@ export const boltOnExistingWrangler = async (opts: BoltOnOptions): Promise<BoltO
   if (typeof app !== "string" || app.length === 0) {
     throw new BaerlyError(
       "InvalidConfig",
-      "create-baerly bolt-on: --app=<name> is required (no wrangler.jsonc:name to infer from)",
+      "create-baerly-storage bolt-on: --app=<name> is required (no wrangler.jsonc:name to infer from)",
     );
   }
 

@@ -23,7 +23,7 @@ import {
  *   canonical API surface. Scaffolded apps already ship that
  *   guidance via the per-template `AGENTS.md`; this closes the gap
  *   for users adopting baerly into a repo that didn't start from a
- *   `create-baerly` template.
+ *   `create-baerly-storage` template.
  */
 export const KNOWN_ADDONS = ["docker", "agent-rules"] as const;
 export type Addon = (typeof KNOWN_ADDONS)[number];
@@ -57,7 +57,7 @@ export interface ScaffoldResult {
   readonly filesWritten: readonly string[];
   readonly nextSteps: readonly string[];
   /**
-   * `create-baerly`'s own `package.json:version`. Stamped into the
+   * `create-baerly-storage`'s own `package.json:version`. Stamped into the
    * post-scaffold initial commit (when `--git` runs) so the user
    * can grep `git log` for the scaffolder version that produced
    * their repo.
@@ -66,7 +66,7 @@ export interface ScaffoldResult {
   /**
    * The substitution sentinel that was applied to template literals.
    * Equals `projectName` for the named-dir form and `basename(outDir)`
-   * for `create-baerly .`. Surfaced on the result so the caller can
+   * for `create-baerly-storage .`. Surfaced on the result so the caller can
    * pass it through to the git-init commit body without re-deriving.
    */
   readonly appName: string;
@@ -183,7 +183,7 @@ const STARTER_TO_EXAMPLE: Record<string, string> = {
  * (preserving today's `package.json:files` shape). In dev (running
  * straight from `src/` via Node's strip-types) the same directory
  * doesn't exist, so we fall back to `examples/` three levels up
- * (`src/ → create-baerly/ → packages/ → repo-root`).
+ * (`src/ → create-baerly-storage/ → packages/ → repo-root`).
  */
 const resolveTemplatesRoot = (): string => {
   const here = dirname(fileURLToPath(import.meta.url));
@@ -198,7 +198,7 @@ const resolveTemplatesRoot = (): string => {
  * Resolve the add-ons root. In a built CLI, add-on trees are copied
  * to `dist/templates/addons/<name>/` next to the example templates.
  * In dev (running from `src/` via Node's strip-types) they live at
- * `packages/create-baerly/templates/addons/<name>/`, one level up
+ * `packages/create-baerly-storage/templates/addons/<name>/`, one level up
  * from `src/`.
  */
 const resolveAddonsRoot = (): string => {
@@ -213,7 +213,7 @@ const resolveAddonsRoot = (): string => {
 /**
  * Read the CLI's own package.json:version. Used to rewrite
  * `workspace:*` dep specs to `^X.Y.Z` at copy time, since
- * `create-baerly` ships in the same release train as `@baerly/*`.
+ * `create-baerly-storage` ships in the same release train as `@baerly/*`.
  */
 const readCliVersion = (): string => {
   const here = dirname(fileURLToPath(import.meta.url));
@@ -222,7 +222,7 @@ const readCliVersion = (): string => {
   const pkgPath = resolve(here, "..", "package.json");
   const pkg = JSON.parse(readFileSync(pkgPath, "utf8")) as { version?: string };
   if (typeof pkg.version !== "string" || pkg.version.length === 0) {
-    throw new Error(`create-baerly: could not read version from ${pkgPath}`);
+    throw new Error(`create-baerly-storage: could not read version from ${pkgPath}`);
   }
   return pkg.version;
 };
@@ -281,7 +281,7 @@ const splitExcludeNames = (
  */
 export const scaffold = async (opts: ScaffoldOptions): Promise<ScaffoldResult> => {
   if (opts.projectName.length === 0) {
-    throw new Error("create-baerly: projectName must be non-empty");
+    throw new Error("create-baerly-storage: projectName must be non-empty");
   }
   // `"."` (exactly one character) is the sole sentinel for "scaffold
   // into the current directory" — matches `npm create vite@latest`
@@ -292,7 +292,7 @@ export const scaffold = async (opts: ScaffoldOptions): Promise<ScaffoldResult> =
   // MUST mirror the regex in `prompts.ts:promptProjectName`.
   if (!inPlace && !/^[a-z0-9][a-z0-9_-]*$/.test(opts.projectName)) {
     throw new Error(
-      `create-baerly: projectName must be lowercase, alphanumeric + "_"/"-", starting with [a-z0-9] (got ${JSON.stringify(opts.projectName)})`,
+      `create-baerly-storage: projectName must be lowercase, alphanumeric + "_"/"-", starting with [a-z0-9] (got ${JSON.stringify(opts.projectName)})`,
     );
   }
   const pm = opts.pm ?? detectPm();
@@ -309,7 +309,7 @@ export const scaffold = async (opts: ScaffoldOptions): Promise<ScaffoldResult> =
   const appName = inPlace ? basename(outDir) : opts.projectName;
   if (inPlace && !/^[a-z0-9][a-z0-9_-]*$/.test(appName)) {
     throw new Error(
-      `create-baerly: appName must be lowercase, alphanumeric + "_"/"-", starting with [a-z0-9] (got ${JSON.stringify(appName)}) — derived from current directory ${JSON.stringify(outDir)}`,
+      `create-baerly-storage: appName must be lowercase, alphanumeric + "_"/"-", starting with [a-z0-9] (got ${JSON.stringify(appName)}) — derived from current directory ${JSON.stringify(outDir)}`,
     );
   }
   const starter = opts.starter ?? "minimal";
@@ -318,7 +318,7 @@ export const scaffold = async (opts: ScaffoldOptions): Promise<ScaffoldResult> =
   const templateDir = exampleName === undefined ? "" : join(templatesRoot, exampleName);
   if (exampleName === undefined || !existsSync(templateDir)) {
     throw new Error(
-      `create-baerly: template not found for target=${opts.target} starter=${starter}`,
+      `create-baerly-storage: template not found for target=${opts.target} starter=${starter}`,
     );
   }
 
@@ -333,7 +333,7 @@ export const scaffold = async (opts: ScaffoldOptions): Promise<ScaffoldResult> =
   for (const addon of addons) {
     const addonDir = join(addonsRoot, addon);
     if (!existsSync(addonDir)) {
-      throw new Error(`create-baerly: add-on directory not found: ${addonDir} (addon=${addon})`);
+      throw new Error(`create-baerly-storage: add-on directory not found: ${addonDir} (addon=${addon})`);
     }
     addonDirs.push(addonDir);
   }
@@ -350,12 +350,12 @@ export const scaffold = async (opts: ScaffoldOptions): Promise<ScaffoldResult> =
       const colliding = entries.filter((e) => !SCAFFOLD_HERE_ALLOWLIST.has(e) && wouldWrite.has(e));
       if (colliding.length > 0) {
         throw new Error(
-          `create-baerly: ${outDir} contains files that would be overwritten: ${colliding.join(", ")}. ` +
+          `create-baerly-storage: ${outDir} contains files that would be overwritten: ${colliding.join(", ")}. ` +
             `Move or remove these, then re-run.`,
         );
       }
     } else if (entries.length > 0) {
-      throw new Error(`create-baerly: ${outDir} exists and is non-empty`);
+      throw new Error(`create-baerly-storage: ${outDir} exists and is non-empty`);
     }
   }
 
