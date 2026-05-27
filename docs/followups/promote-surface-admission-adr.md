@@ -1,16 +1,15 @@
-# Promote the deferred-spec reasoning to an ADR
+# Promote the pre-launch surface-admission doctrine to an ADR
 
-**Severity: MEDIUM. Pre-launch doctrine. The reasoning in the
-deferred changes-iterator memo is reusable for every future
-"should we ship X?" question; it should live where future-us
-will find it.**
+**Severity: MEDIUM. Pre-launch doctrine. The five-test structure
+below is reusable for every future "should we ship X?" question;
+it should live where future-us will find it.**
 
-The deferred changes-iterator memo
-(`docs/superpowers/specs/2026-05-25-changes-iterator-design.md`)
-contains the strongest articulation of the pre-launch admission
-criteria in the codebase. The five-objection structure (§1–§5)
-is reusable for every future surface-addition decision; right now
-it's living in a `specs/` directory where it'll get lost.
+The strongest articulation of the pre-launch admission criteria
+in the codebase emerged from a deferral debate (the `.changes()`
+async iterator, "Move F" — declined 2026-05-26 on thesis review).
+The five-objection structure that justified the deferral
+generalises to every surface-addition decision and should be
+captured as an ADR before it gets lost.
 
 ## What to do
 
@@ -25,24 +24,23 @@ tests plus one load-bearer exception):
 
 1. **Workload-shape test.** Does the surface invite a workload
    the published cost ceiling (~30 writes/min/collection, ~10
-   GB/tenant) cannot sustain? *(Deferred-memo §1.)*
+   GB/tenant) cannot sustain?
 2. **Graduation-coverage test.** Does the graduation story
    (`baerly export`) already cover the audiences who'd ask for
    this? If so, the absent surface routes them through
-   graduation — which is the success path. *(Deferred-memo §2.)*
+   graduation — which is the success path.
 3. **Canonical-path test.** Does the existing kernel surface
    *already* serve this need via a single canonical path? If
    yes, the new surface is redundant ceremony per ADR-002.
-   *(Deferred-memo §3.)*
 4. **Escape-hatch pricing test.** Does the new surface exist
    only for power users who chose not to use the canonical
    higher-level surface? If yes, route them through internals or
    a lower-level primitive — don't ship polished surface for an
-   audience that is exiting your audience. *(Deferred-memo §4.)*
+   audience that is exiting your audience.
 5. **Reference-class test.** Is the new surface shape borrowed
    from a production-tier reference (Debezium / Datadog /
    Postgres / k8s)? If yes, pre-launch is the window to NOT ship
-   borrowed maturity. *(Deferred-memo §5.)*
+   borrowed maturity.
 6. **Load-bearer-exception test.** Does the surface satisfy one
    of the three exceptions in thesis §"What we keep even when it
    looks like ceremony" — kernel-bug tripwire, empirical LLM
@@ -76,8 +74,9 @@ or cut, unless test #6 (load-bearer exception) applies.
 [The six tests, structured as above.]
 
 ## Consequences
-- "Defer" is a first-class outcome with a deferral-memo template
-  (model: `docs/superpowers/specs/2026-05-25-changes-iterator-design.md`).
+- "Defer" is a first-class outcome — capture the five-test scoring
+  for the deferred surface in the ADR's worked-examples section
+  so future-us doesn't re-litigate it.
 - New features that pass all five tests still ship additively
   under ADR-002.
 - Post-launch the tests' weight shifts — borrowed-maturity surfaces
@@ -86,7 +85,7 @@ or cut, unless test #6 (load-bearer exception) applies.
 
 ## Worked examples
 - **Deferred:** `client.table(name).changes()` async iterator —
-  failed tests #1, #4, #5 (deferred-memo `2026-05-25-changes-iterator-design.md`).
+  failed tests #1, #4, #5 (thesis review 2026-05-26).
 - **Cut (pre-launch trim):** `baerly admin migrate` — failed
   test #1 (workload shape: invites schema-migration as a
   baerly-shaped flow). Failed core thesis ("No automatic schema
@@ -127,7 +126,6 @@ valuable.
 
 ## Related
 
-- **Source memo:** `docs/superpowers/specs/2026-05-25-changes-iterator-design.md`
 - **Surface-lock companion:** `docs/adr/002-api-surface-lock.md`
 - **Strengthening companion:** `docs/about/thesis.md`
   §"What prototype-tier storage needs" (graduation-is-success +

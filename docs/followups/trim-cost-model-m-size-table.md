@@ -37,8 +37,9 @@ optimization that closes the gap with D1 — which adds load to the
 borrowing the maturity of a product with a real change history.
 Pre-launch, this *is* the change history. A one-entry file
 performing seriousness about price-change discipline is exactly
-the borrowed-maturity pattern the deferred changes-iterator memo
-§5 calls out.
+the borrowed-maturity pattern pre-launch is the window to avoid
+— modeling a one-entry change history on a system with a real
+one.
 
 The trust-artifact mechanism is good; the *file* is premature.
 
