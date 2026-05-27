@@ -7,7 +7,6 @@ import {
   type BaerlyConfig,
   BaerlyError,
   type CollectionNames,
-  type ConsistencyLevel,
   type DocumentData,
   EMPTY_PREDICATE_WIRE,
   normalizePredicateArg,
@@ -163,8 +162,6 @@ export interface ClientTable<T extends DocumentData = DocumentData> {
   order(spec: OrderSpec<T>): ClientQuery<T>;
   /** Limit modifier; last call wins. */
   limit(n: number): ClientQuery<T>;
-  /** Read consistency for terminals on the returned query. Default `strong`. */
-  consistency(level: ConsistencyLevel): ClientQuery<T>;
   /** Insert a new document. Returns the server-assigned `_id`. */
   insert(doc: Partial<T> & DocumentData, opts?: TerminalOptions): Promise<{ readonly _id: string }>;
   /** JSON-merge-patch applied to one row by primary key. */
@@ -191,7 +188,6 @@ export interface ClientQuery<T extends DocumentData = DocumentData> {
   where(predicate: PredicateArg<T>): ClientQuery<T>;
   order(spec: OrderSpec<T>): ClientQuery<T>;
   limit(n: number): ClientQuery<T>;
-  consistency(level: ConsistencyLevel): ClientQuery<T>;
   /** First match or `undefined`. Issues `GET /v1/t/:table?...&limit=1`. */
   first(opts?: TerminalOptions): Promise<T | undefined>;
   /** Every matching document. Pair with `.limit(n)` on large tables. */
@@ -273,14 +269,12 @@ interface QueryState {
   readonly wire: PredicateWire;
   readonly order: OrderSpec<DocumentData> | undefined;
   readonly limit: number | undefined;
-  readonly consistency: ConsistencyLevel | undefined;
 }
 
 const emptyState: QueryState = {
   wire: EMPTY_PREDICATE_WIRE,
   order: undefined,
   limit: undefined,
-  consistency: undefined,
 };
 
 const makeClientTable = <T extends DocumentData>(
@@ -295,7 +289,6 @@ const makeClientTable = <T extends DocumentData>(
     where: (predicate) => tableForQuery.where(predicate),
     order: (spec) => tableForQuery.order(spec),
     limit: (n) => tableForQuery.limit(n),
-    consistency: (level) => tableForQuery.consistency(level),
     first: (opts) => tableForQuery.first(opts),
     all: (opts) => tableForQuery.all(opts),
     count: (opts) => tableForQuery.count(opts),
@@ -379,9 +372,6 @@ const makeClientQuery = <T extends DocumentData>(
     if (state.limit !== undefined) {
       params.set("limit", String(state.limit));
     }
-    if (state.consistency !== undefined) {
-      params.set("consistency", state.consistency);
-    }
     return params;
   };
 
@@ -417,8 +407,6 @@ const makeClientQuery = <T extends DocumentData>(
         order: spec as OrderSpec<DocumentData>,
       }),
     limit: (n): ClientQuery<T> => makeClientQuery<T>(ctx, tableName, { ...state, limit: n }),
-    consistency: (level): ClientQuery<T> =>
-      makeClientQuery<T>(ctx, tableName, { ...state, consistency: level }),
 
     async first(opts): Promise<T | undefined> {
       // Mirrors `Db.first()` which sets `limit: 1` on its underlying
@@ -444,9 +432,6 @@ const makeClientQuery = <T extends DocumentData>(
       params.set("table", tableName);
       if (state.wire.clauses.length > 0) {
         params.set("where", JSON.stringify(state.wire));
-      }
-      if (state.consistency !== undefined) {
-        params.set("consistency", state.consistency);
       }
       const { count } = await request<{ count: number }>(ctx, {
         method: "GET",

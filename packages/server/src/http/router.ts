@@ -24,7 +24,6 @@ import type { Context } from "hono";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import {
   type BaerlyConfig,
-  type ConsistencyLevel,
   BaerlyError,
   type DocumentData,
   type BaerlyErrorCode,
@@ -106,10 +105,7 @@ export function createRouter(options: CreateRouterOptions): Hono {
   // Read one — GET /v1/t/:table/:id
   app.get("/v1/t/:table/:id", async (c) => {
     const { table, id } = c.req.param();
-    const consistency = parseConsistency(c.req.query("consistency"));
-    const { rows, manifestPointer, fresh } = await runByIdWithMeta(db.tableReadContext(table), id, {
-      consistency,
-    });
+    const { rows, manifestPointer, fresh } = await runByIdWithMeta(db.tableReadContext(table), id);
     const row = rows[0];
     if (row === undefined) {
       throw new BaerlyError("NotFound", `No such row: ${id}`);
@@ -127,14 +123,12 @@ export function createRouter(options: CreateRouterOptions): Hono {
   app.get("/v1/t/:table", async (c) => {
     const { table } = c.req.param();
     const wire = parseWhereParam(c);
-    const consistency = parseConsistency(c.req.query("consistency"));
     const order = parseOrder(c.req.query("order"));
     const limit = parseLimit(c.req.query("limit"));
     const { rows, manifestPointer, fresh } = await runAllWithMeta(db.tableReadContext(table), {
       wire,
       order,
       limit,
-      consistency,
     });
     return c.json(
       {
@@ -204,7 +198,7 @@ export function createRouter(options: CreateRouterOptions): Hono {
     return new Response(null, { status: 204 });
   });
 
-  // Count — GET /v1/count?table=<name>&where=<json>&consistency=<level>
+  // Count — GET /v1/count?table=<name>&where=<json>
   //
   // Returns a scalar row count for the matching predicate. Avoids the
   // client downloading every row just to take `.length` (silent egress
@@ -217,12 +211,10 @@ export function createRouter(options: CreateRouterOptions): Hono {
       throw new BaerlyError("SchemaError", "GET /v1/count requires ?table=<name>");
     }
     const wire = parseWhereParam(c);
-    const consistency = parseConsistency(c.req.query("consistency"));
     const { rows, manifestPointer, fresh } = await runAllWithMeta(db.tableReadContext(table), {
       wire,
       order: undefined,
       limit: undefined,
-      consistency,
     });
     return c.json(
       {
@@ -343,31 +335,6 @@ const parseWhereParam = (c: Context): PredicateWire => {
   }
   return validateWire(parsed as PredicateWire);
 };
-
-/**
- * Parse the `?consistency=...` query-string param. Absent →
- * `"strong"`. Known values → that value. Anything else →
- * `BaerlyError{code:"InvalidConfig"}` (mapped to 400 by
- * {@link mapToResponse}).
- *
- * Mutation routes silently ignore `?consistency` per the locked
- * contract (writes are always strong); only the two read routes
- * call this.
- *
- * @internal
- */
-function parseConsistency(raw: string | undefined): ConsistencyLevel {
-  if (raw === undefined) {
-    return "strong";
-  }
-  if (raw === "strong" || raw === "eventual") {
-    return raw;
-  }
-  throw new BaerlyError(
-    "InvalidConfig",
-    `?consistency must be "strong" or "eventual"; got ${JSON.stringify(raw)}`,
-  );
-}
 
 /**
  * Parse `?limit=<n>` as a non-negative safe integer. Returns

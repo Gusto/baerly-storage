@@ -94,9 +94,9 @@ Db.create<TConfig>({
 ## `db.table(name)` → `Table<T>`
 
 `Table<T>` carries the common-case verbs directly (table-level reads
-plus by-primary-key mutations). Modifiers (`where`, `order`, `limit`,
-`consistency`) return a `Query<T>` for bulk-by-predicate work.
-Terminals fire I/O on the spot.
+plus by-primary-key mutations). Modifiers (`where`, `order`, `limit`)
+return a `Query<T>` for bulk-by-predicate work. Terminals fire I/O on
+the spot.
 
 ```ts
 interface Table<T extends DocumentData = DocumentData> {
@@ -110,7 +110,6 @@ interface Table<T extends DocumentData = DocumentData> {
   where(predicate: PredicateArg<T>): Query<T>;     // PredicateArg = Predicate<T> | (q => PredicateBuilder<T>)
   order(spec: OrderSpec<T>): Query<T>;
   limit(n: number): Query<T>;
-  consistency(level: ConsistencyLevel): Query<T>;   // "strong" | "eventual"
   // Writes — by primary key.
   insert(doc: Partial<T> & DocumentData): Promise<{ _id: string }>;
   update(id: string, patch: Partial<T>): Promise<{ modified: number }>;
@@ -179,29 +178,6 @@ interface PredicateWire { readonly clauses: ReadonlyArray<PredicateClause>; }
 
 Example: `.where({ status: "open" })` → `{"clauses":[{"op":"eq","field":"status","value":"open"}]}`.
 The empty wire `{"clauses":[]}` matches every document.
-
-### Consistency
-
-```ts
-type ConsistencyLevel = "strong" | "eventual";
-```
-
-- `strong` (default): every terminal call GETs `current.json` fresh
-  then folds the log. Reflects every write that landed before the
-  call. Use after a write the same user just made, or for any flow
-  where "I just clicked save" must see its own change.
-- `eventual`: skips the per-call `current.json` GET; serves the view
-  this isolate observed when it last advanced. May be one pointer
-  old. Use for background polls, auto-refresh, list views — places
-  where shaving one Class B op per read matters more than
-  last-write-wins.
-
-Mutations are always strong. Last-call-wins on repeat. A follow-up
-`.consistency("strong")` re-anchors the cache.
-
-HTTP mirror: `?consistency=eventual` on `GET /v1/t/:table` and
-`GET /v1/t/:table/:id`. Any other value → `BaerlyError{code:
-"InvalidConfig"}`.
 
 ## Mutations
 
@@ -355,7 +331,7 @@ await client.table("tickets").all({ signal: ac.signal });
 
 That extra options bag is the **only** API difference between
 `Table<T>` and `ClientTable<T>`. Same modifiers, same terminals,
-same predicates, same consistency knob.
+same predicates.
 
 ## Long-poll: `/v1/since`
 

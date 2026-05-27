@@ -173,17 +173,6 @@ describe("createBaerlyClient", () => {
       .all();
   });
 
-  test("consistency() forwards as ?consistency=<level>", async () => {
-    const mock = new MockFetch();
-    mock.on("GET", "/v1/t/tickets", (req) => {
-      const url = new URL(req.url);
-      expect(url.searchParams.get("consistency")).toBe("eventual");
-      return jsonResponse(okEnvelope([]));
-    });
-    const client = createBaerlyClient({ baseUrl: "http://x", fetch: mock.fetch });
-    await client.table("tickets").consistency("eventual").where({}).all();
-  });
-
   // Mirrors what a real `fetch` does with an aborted signal: reject
   // immediately if already aborted, otherwise reject when it fires.
   const hangUntilAbort = (req: Request): Promise<Response> =>

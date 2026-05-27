@@ -7,12 +7,9 @@ export type {
   TerminalOptions,
 } from "./client.ts";
 export type { Fetcher } from "./request.ts";
-export {
-  BaerlyError,
-} from "@baerly/protocol";
+export { BaerlyError } from "@baerly/protocol";
 export type {
   BaerlyErrorCode,
-  ConsistencyLevel,
   DocumentData,
   LogEntry,
   OrderSpec,

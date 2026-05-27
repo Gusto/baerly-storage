@@ -81,7 +81,7 @@ const makeTerminal = (): Promise<unknown> => TERMINAL_RESULT;
 
 const makeQuery = (state: RecorderState): unknown => {
   const query: Record<string, unknown> = {};
-  for (const modifier of ["where", "order", "limit", "consistency"]) {
+  for (const modifier of ["where", "order", "limit"]) {
     query[modifier] = (): unknown => {
       state.chain.push(modifier);
       return query;
@@ -102,7 +102,7 @@ const makeTable = (name: string, state: RecorderState): unknown => {
   const table: Record<string, unknown> = {
     name,
   };
-  for (const modifier of ["where", "order", "limit", "consistency"]) {
+  for (const modifier of ["where", "order", "limit"]) {
     table[modifier] = (): unknown => {
       state.chain.push(modifier);
       return makeQuery(state);

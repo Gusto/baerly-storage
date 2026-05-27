@@ -33,9 +33,7 @@
  */
 
 import {
-  type ConsistencyLevel,
   type CurrentJson,
-  type CurrentJsonRead,
   type DocumentValue,
   type DocumentData,
   logSeqStartOf,
@@ -92,26 +90,6 @@ export interface TableReadContext {
    */
   readonly txCtx?: TxContext;
   /**
-   * Per-(Db × table) single-slot cache the `eventual` read path
-   * serves from. Mutated by `runRead` after a successful `strong`
-   * read so the next `eventual` call can skip the `readCurrentJson`
-   * round-trip and reuse the captured snapshot/log head. Lifetime:
-   * the `Db` instance — allocated by {@link Db.table} (and the
-   * `Db.transaction` body's scoped context). Two `Table` handles
-   * over the same name share one slot.
-   *
-   * `value === null` means "cache not anchored yet on this isolate";
-   * a first-ever `eventual` read falls through to a `strong`-style
-   * anchor (the contract is "may be one pointer behind reality,"
-   * not "may be empty on cold start"). After at least one read the
-   * slot holds the full {@link CurrentJsonRead} the last `strong`
-   * call observed, including the etag — the `manifestPointer`
-   * surfaced on the read result is recomputed from this slot.
-   *
-   * @internal
-   */
-  readonly currentJsonCache: CurrentJsonCacheSlot;
-  /**
    * Optional metrics sink threaded from {@link Db}. Forwarded to every
    * {@link Writer} the mutation terminals construct so the
    * writer's existing emissions (`db.write.class_a_ops_per_logical_write`,
@@ -159,25 +137,6 @@ export interface TableReadContext {
 }
 
 /**
- * Mutable single-slot cache shared by `eventual` reads over a
- * `(Db, table)` pair. The cache slot is a tiny object so the
- * `TableReadContext` itself can stay `readonly` while the
- * underlying value is swapped in place.
- *
- * @internal
- */
-export interface CurrentJsonCacheSlot {
-  /**
-   * Last `strong`-read `current.json` head, or `null` when the cache
-   * has not been anchored yet on this isolate. `eventual` reads
-   * serve from this value; a first-ever `eventual` read on a `null`
-   * slot falls through to a `strong`-style anchor (see
-   * {@link TableReadContext.currentJsonCache}).
-   */
-  value: CurrentJsonRead | null;
-}
-
-/**
  * What `runRead` hands back: the materialised rows plus the cursor
  * + freshness pair surfaced as `_meta` on read response envelopes
  * (see `contract.ts:HttpOkMeta`). The public `Query<T>` terminals
@@ -221,12 +180,6 @@ export interface QueryState<T extends DocumentData> {
   readonly wire: PredicateWire | undefined;
   readonly order: OrderSpec<T> | undefined;
   readonly limit: number | undefined;
-  /**
-   * Read consistency level for the terminal call. `undefined` is
-   * treated as `"strong"` by `runRead`. Mutation paths force
-   * `strong` internally regardless of this field.
-   */
-  readonly consistency: ConsistencyLevel | undefined;
 }
 
 /**
@@ -273,7 +226,7 @@ export const singleIdFromPredicate = (wire: PredicateWire | undefined): string |
  *
  * @example
  * ```ts
- * const q = makeQuery<Ticket>(ctx, { wire: undefined, order: undefined, limit: undefined, consistency: undefined });
+ * const q = makeQuery<Ticket>(ctx, { wire: undefined, order: undefined, limit: undefined });
  * const open = await q.where({ status: "open" }).order({ created_at: "desc" }).limit(10).all();
  * ```
  *
@@ -299,13 +252,11 @@ export const makeQuery = <T extends DocumentData>(
       validateWire(incoming);
       return makeQuery<T>(ctx, {
         ...state,
-        wire:
-          state.wire === undefined ? incoming : mergePredicateWires(state.wire, incoming),
+        wire: state.wire === undefined ? incoming : mergePredicateWires(state.wire, incoming),
       });
     },
     order: (s) => makeQuery<T>(ctx, { ...state, order: s }),
     limit: (n) => makeQuery<T>(ctx, { ...state, limit: n }),
-    consistency: (level) => makeQuery<T>(ctx, { ...state, consistency: level }),
     first: async () => {
       const { rows } = await runRead<T>(ctx, { ...state, limit: 1 });
       return rows[0]; // undefined when rows.length === 0
@@ -371,13 +322,11 @@ export const runAllWithMeta = <T extends DocumentData>(
 export const runByIdWithMeta = <T extends DocumentData>(
   ctx: TableReadContext,
   id: string,
-  opts?: { readonly consistency?: ConsistencyLevel },
 ): Promise<ReadResult<T>> => {
   return runRead<T>(ctx, {
     wire: { clauses: [{ op: "eq", field: "_id", value: id }] },
     order: undefined,
     limit: 1,
-    consistency: opts?.consistency,
   });
 };
 
@@ -469,10 +418,6 @@ export const runInsert = async <T extends DocumentData>(
     wire: { clauses: [{ op: "eq", field: "_id", value: _id }] },
     order: undefined,
     limit: 1,
-    // Insert's `_id`-collision check is a mutation precondition;
-    // it must always see the latest view. See `runUpdate` for the
-    // shared rationale.
-    consistency: "strong",
   });
   if (existing.rows.length > 0) {
     throw new BaerlyError(
@@ -529,11 +474,7 @@ const runUpdate = async <T extends DocumentData>(
   state: QueryState<T>,
   patch: Partial<T>,
 ): Promise<{ modified: number }> => {
-  // Mutations are always strong: the row-cardinality precondition
-  // (`replace`'s length !== 1) and per-row CAS would silently
-  // misfire on a stale cache. Force the level regardless of the
-  // chain's setting.
-  const { rows } = await runRead<T>(ctx, { ...state, consistency: "strong" });
+  const { rows } = await runRead<T>(ctx, state);
   const tx = ctx.txCtx;
   if (tx !== undefined) {
     assertTxBindMatches(ctx);
@@ -599,11 +540,7 @@ const runReplace = async <T extends DocumentData>(
   state: QueryState<T>,
   doc: T,
 ): Promise<void> => {
-  // Mutations are always strong: the row-cardinality precondition
-  // (`replace`'s length !== 1) and per-row CAS would silently
-  // misfire on a stale cache. Force the level regardless of the
-  // chain's setting.
-  const { rows: found } = await runRead<T>(ctx, { ...state, consistency: "strong" });
+  const { rows: found } = await runRead<T>(ctx, state);
   if (found.length !== 1) {
     throw new BaerlyError(
       "Conflict",
@@ -657,11 +594,7 @@ const runDelete = async <T extends DocumentData>(
   ctx: TableReadContext,
   state: QueryState<T>,
 ): Promise<{ deleted: number }> => {
-  // Mutations are always strong: the row-cardinality precondition
-  // (`replace`'s length !== 1) and per-row CAS would silently
-  // misfire on a stale cache. Force the level regardless of the
-  // chain's setting.
-  const { rows } = await runRead<T>(ctx, { ...state, consistency: "strong" });
+  const { rows } = await runRead<T>(ctx, state);
   const tx = ctx.txCtx;
   if (tx !== undefined) {
     assertTxBindMatches(ctx);
@@ -717,34 +650,20 @@ const runRead = async <T extends DocumentData>(
   ctx: TableReadContext,
   state: QueryState<T>,
 ): Promise<ReadResult<T>> => {
-  // ── Step 1. Read current.json (strong: fresh; eventual: cached). ──
-  // `strong` mirrors the multi-instance rules: every read sees
-  // a fresh CAS snapshot, matching the writer's per-commit GET.
-  // `eventual` skips the GET and serves the view this isolate
-  // observed when it last advanced (the cache slot, anchored by
-  // the previous strong read). First-ever eventual on a cold cache
-  // falls through to a strong-style anchor — the contract is "may
-  // be one pointer behind reality," not "may be empty on cold
-  // start." So the first read MUST anchor.
+  // ── Step 1. Read current.json. ────────────────────────────────────
+  // Every read GETs `current.json` fresh — mirrors the multi-instance
+  // rules: every read sees a fresh CAS snapshot, matching the writer's
+  // per-commit GET.
   const currentJsonKey = `${ctx.tablePrefix}/current.json`;
-  const level: ConsistencyLevel = state.consistency ?? "strong";
-  let head: CurrentJsonRead | null;
-  if (level === "strong" || ctx.currentJsonCache.value === null) {
-    head = await readCurrentJson(ctx.storage, currentJsonKey);
-    ctx.currentJsonCache.value = head;
-  } else {
-    head = ctx.currentJsonCache.value;
-  }
+  const head = await readCurrentJson(ctx.storage, currentJsonKey);
 
   // Capture the wire cursor before the rest of the fold runs. A
   // not-found head ("table not yet provisioned") still emits a
   // well-defined cursor so the wire shape never carries `""`.
   const manifestPointer =
     head === null ? `${MANIFEST_POINTER_EMPTY_SNAPSHOT}@0` : serializeManifestPointer(head.json);
-  // `fresh` is "this call asked for strong" — an eventual read that
-  // anchored on cold start is still semantically eventual from the
-  // caller's perspective.
-  const fresh = level === "strong";
+  // Every read is strong by construction — `fresh` reflects that.
+  const fresh = true;
 
   // Not-found is "table not yet provisioned" — return empty rather
   // than throw. Mirrors `Storage.get` returning null on miss.

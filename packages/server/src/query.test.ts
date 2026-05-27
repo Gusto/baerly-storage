@@ -433,12 +433,11 @@ describe("Db.table read terminals", () => {
     expect(rows.filter((r) => r.phase === "post")).toHaveLength(10);
   });
 
-  test("case 17: eventual read against unchanged current.json returns fresh:false and stable pointer", async () => {
-    // Invariant: `fresh` reflects the caller's requested level —
-    // `false` whenever `eventual` served the response. Two reads
-    // against the same `current.json` generation return the same
-    // cursor; the second (eventual) read carries `fresh:false` and
-    // skips the per-call `current.json` GET.
+  test("case 18: read sees the new pointer after a writer advances next_seq", async () => {
+    // Invariant: a concurrent commit between two reads advances
+    // `current.json`; the second read observes a new manifest pointer
+    // and reports `fresh:true`. Every read carries `fresh:true` by
+    // definition — reads always GET `current.json` fresh.
     await provision(storage);
     const w = commit(storage);
     await w.commit({
@@ -455,80 +454,20 @@ describe("Db.table read terminals", () => {
       limit: undefined,
     } as const;
 
-    // Strong anchors the cache.
-    const r1 = await runAllWithMeta<DocumentData>(ctx, {
-      ...baseState,
-      consistency: "strong",
-    });
-    // Eventual serves from the cache.
-    const r2 = await runAllWithMeta<DocumentData>(ctx, {
-      ...baseState,
-      consistency: "eventual",
-    });
-
-    expect(r1.fresh).toBe(true);
-    expect(r2.fresh).toBe(false);
-    expect(r2.manifestPointer).toBe(r1.manifestPointer);
-    expect(r1.rows.map((r) => r["_id"])).toEqual(["doc-1"]);
-    expect(r2.rows.map((r) => r["_id"])).toEqual(["doc-1"]);
-  });
-
-  test("case 18: strong read sees the new pointer after a writer advances next_seq", async () => {
-    // Invariant: a concurrent commit between two strong reads
-    // advances `current.json`; the second read observes a new
-    // manifest pointer and reports `fresh:true`. Every strong read
-    // carries `fresh:true` by definition.
-    await provision(storage);
-    const w = commit(storage);
-    await w.commit({
-      op: "I",
-      collection: COLL,
-      docId: "doc-1",
-      body: { _id: "doc-1", title: "hello" },
-    });
-
-    const ctx = db.tableReadContext(COLL);
-    const strongState = {
-      wire: undefined,
-      order: undefined,
-      limit: undefined,
-      consistency: "strong",
-    } as const;
-
-    const r1 = await runAllWithMeta<DocumentData>(ctx, strongState);
+    const r1 = await runAllWithMeta<DocumentData>(ctx, baseState);
     await w.commit({
       op: "I",
       collection: COLL,
       docId: "doc-2",
       body: { _id: "doc-2", title: "world" },
     });
-    const r2 = await runAllWithMeta<DocumentData>(ctx, strongState);
+    const r2 = await runAllWithMeta<DocumentData>(ctx, baseState);
 
     expect(r1.fresh).toBe(true);
     expect(r2.fresh).toBe(true);
     expect(r2.manifestPointer).not.toBe(r1.manifestPointer);
     expect(r1.rows.map((r) => r["_id"])).toEqual(["doc-1"]);
     expect(r2.rows.map((r) => r["_id"]).toSorted()).toEqual(["doc-1", "doc-2"]);
-  });
-
-  test("case 19: consistency('eventual') returns a new Query; chain is immutable", async () => {
-    // `.consistency(level)` follows the same identity-inequality
-    // contract as `.where` / `.order` / `.limit`.
-    await provision(storage);
-    const t = db.table(COLL);
-    const a = t.where({});
-    const b = a.consistency("eventual");
-    expect(b as unknown).not.toBe(a as unknown);
-    expect(typeof b.all).toBe("function");
-  });
-
-  test("case 20: last-call-wins on .consistency()", async () => {
-    // Repeat `.consistency(level)` invocations replace the level
-    // (matching `.order()` / `.limit()` semantics).
-    // Empty table → both levels resolve to `[]`.
-    await provision(storage);
-    const q = db.table(COLL).consistency("eventual").consistency("strong");
-    await expect(q.all()).resolves.toEqual([]);
   });
 });
 

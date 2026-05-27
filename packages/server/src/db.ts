@@ -26,7 +26,7 @@ import {
   type UnboundConfig,
 } from "@baerly/protocol";
 import { collectionsToMaps } from "./config.ts";
-import type { CurrentJsonCacheSlot, TableReadContext } from "./query.ts";
+import type { TableReadContext } from "./query.ts";
 import { Writer, type CommitInput } from "./writer.ts";
 import { makeTable } from "./table.ts";
 
@@ -151,15 +151,6 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
    * latent bug class.
    */
   readonly #storage: Storage;
-  /**
-   * Per-table `current.json` cache slots for the `eventual` read
-   * path. Allocated lazily by {@link Db.tableReadContext}; two
-   * `Table` handles over the same name share one slot so a
-   * `consistency('strong')` call on one handle anchors the cache
-   * the other reuses. Per-`Db`, NOT per-process — two `Db` instances
-   * over the same bucket do NOT share cache.
-   */
-  readonly #currentJsonCaches: Map<string, CurrentJsonCacheSlot> = new Map();
   /**
    * Metrics sink forwarded to every {@link Writer} this `Db`
    * constructs (the single-mutation path in `query.ts:writerFor` and
@@ -403,17 +394,11 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
    */
   tableReadContext(name: string): TableReadContext {
     assertKeySegment(name, "table", "Db.table");
-    let cache = this.#currentJsonCaches.get(name);
-    if (cache === undefined) {
-      cache = { value: null };
-      this.#currentJsonCaches.set(name, cache);
-    }
     const schema = this.#schemas.get(name);
     return {
       storage: this.#storage,
       tablePrefix: `${physicalPrefixFor(this.app, this.tenant)}manifests/${name}`,
       tableName: name,
-      currentJsonCache: cache,
       metrics: this.#metrics,
       indexes: this.#indexes.get(name) ?? [],
       ...(schema !== undefined ? { schema } : {}),
@@ -474,15 +459,6 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
     // Build a Table<T> whose mutation verbs buffer onto `txCtx`. The
     // read path ignores `txCtx` entirely (locked: no MVCC, no
     // read-your-writes inside a transaction).
-    // Reuse the per-(Db, table) `currentJsonCache` slot so a
-    // transaction's reads share the same `eventual`-anchor seen by
-    // pre-transaction `Db.table(table)` calls. Allocate one lazily
-    // if no `Db.table(table)` ran first.
-    let cache = this.#currentJsonCaches.get(table);
-    if (cache === undefined) {
-      cache = { value: null };
-      this.#currentJsonCaches.set(table, cache);
-    }
     const schema = this.#schemas.get(table);
     const indexes = this.#indexes.get(table) ?? [];
     const tx = makeTable<T>({
@@ -490,7 +466,6 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
       tablePrefix,
       tableName: table,
       txCtx,
-      currentJsonCache: cache,
       metrics: this.#metrics,
       indexes,
       ...(schema !== undefined ? { schema } : {}),

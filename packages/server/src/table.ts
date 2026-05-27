@@ -14,7 +14,6 @@
  */
 
 import {
-  type ConsistencyLevel,
   type DocumentData,
   type OrderSpec,
   type PredicateWire,
@@ -49,7 +48,6 @@ export const makeTable = <T extends DocumentData>(ctx: TableReadContext): Table<
     wire: undefined as PredicateWire | undefined,
     order: undefined as OrderSpec<T> | undefined,
     limit: undefined as number | undefined,
-    consistency: undefined as ConsistencyLevel | undefined,
   };
   // Kernel-internal `_id`-shaped wire. Bypasses `validateWire`
   // (which rejects top-level `_id`) by construction — the wire is
@@ -68,7 +66,6 @@ export const makeTable = <T extends DocumentData>(ctx: TableReadContext): Table<
     where: (p) => makeQuery<T>(ctx, seed).where(p),
     order: (s) => makeQuery<T>(ctx, { ...seed, order: s }),
     limit: (n) => makeQuery<T>(ctx, { ...seed, limit: n }),
-    consistency: (level) => makeQuery<T>(ctx, { ...seed, consistency: level }),
     /**
      * Insert one document. UUIDv7 auto-id when `_id` is absent or
      * empty; otherwise the caller-supplied `_id` is honoured. A

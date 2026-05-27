@@ -228,32 +228,6 @@ http://localhost:5173/<path>`) before declaring the task complete.
   reader re-checks the predicate in memory regardless of how it got
   the row set.
 
-- **Consistency** — every terminal read takes an optional
-  `.consistency("eventual" | "strong")` modifier; mutations are
-  always strong.
-
-  ```ts
-  // Strong (default): GETs `current.json` fresh, then folds the log.
-  // Use after a write you just made, or for single-user flows where
-  // the user expects to see their own change reflected immediately.
-  await db.table("tickets").where({ status: "open" }).all();
-
-  // Eventual: skips the per-call `current.json` GET; serves the view
-  // this isolate observed when it last advanced. May be one pointer
-  // old. Use for background polls, auto-refresh, list views — places
-  // where shaving one Class B op per read matters more than the
-  // last-write being reflected.
-  await db.table("tickets")
-    .where({ status: "open" })
-    .consistency("eventual")
-    .all();
-  ```
-
-  Last-call-wins on repeat invocation. A follow-up
-  `.consistency("strong")` re-anchors. HTTP mirror:
-  `?consistency=eventual` on `GET /v1/t/:table` and
-  `GET /v1/t/:table/:id`.
-
 - **Schemas (live feature)** — schemas are validated on the server
   for every `insert` / `update` / `replace` when bound. Declare via
   `defineConfig` using any StandardSchema v1 validator (Zod 3.24+,

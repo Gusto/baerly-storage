@@ -156,17 +156,15 @@ Locked surface, by file:
 - `Table<T>`
   ([`packages/server/src/table.ts`](../../packages/server/src/table.ts)):
   `name` (readonly), `first()`, `all()`, `count()`, `get(id)`,
-  `where(predicate)`, `order(spec)`, `limit(n)`,
-  `consistency(level)`, `insert(doc)`, `update(id, patch)`,
-  `replace(id, doc)`, `delete(id)`. Mutation verbs operate by
-  primary key.
+  `where(predicate)`, `order(spec)`, `limit(n)`, `insert(doc)`,
+  `update(id, patch)`, `replace(id, doc)`, `delete(id)`. Mutation
+  verbs operate by primary key.
 - `Query<T>`
   ([`packages/server/src/query.ts`](../../packages/server/src/query.ts)):
-  `where(predicate)`, `order(spec)`, `limit(n)`,
-  `consistency(level)`, `first()`, `all()`, `count()`,
-  `update(patch)`, `replace(doc)`, `delete()`. Mutation verbs are
-  predicate-aware bulk; no HTTP mirror exists for bulk mutation, so
-  `ClientQuery<T>` is read-only.
+  `where(predicate)`, `order(spec)`, `limit(n)`, `first()`, `all()`,
+  `count()`, `update(patch)`, `replace(doc)`, `delete()`. Mutation
+  verbs are predicate-aware bulk; no HTTP mirror exists for bulk
+  mutation, so `ClientQuery<T>` is read-only.
 - `Db.transaction` callback context: a `Table<T>` whose mutation verbs
   buffer; reads pass through to live storage. No MVCC, no
   read-your-writes. The buffer commits atomically via one `commitBatch`
