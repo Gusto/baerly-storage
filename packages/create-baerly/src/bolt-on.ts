@@ -20,6 +20,7 @@ import { patchWranglerJsonc, readWranglerName, readWranglerMain } from "@baerly/
 import { renderWorkerEntrySnippet } from "@baerly/cli/init-snippet";
 import { detectPm, type Pm } from "./pm-detect.ts";
 import { defaultInstaller, type Installer } from "./install.ts";
+import { writeAgentRulesBlock, type AgentRulesResult } from "./agent-rules.ts";
 
 const DEV_SHARED_SECRET = "dev-shared-secret";
 
@@ -42,6 +43,13 @@ export interface BoltOnOptions {
   readonly runInstall?: boolean;
   readonly pm?: Pm;
   readonly installer?: Installer;
+  /**
+   * When `true`, drop a delimited "this repo uses baerly-storage"
+   * block telling the user's AI agent where the canonical API
+   * surface lives. Default `false`. See `agent-rules.ts` for the
+   * target-detection chain and the literal block content.
+   */
+  readonly agentRules?: boolean;
 }
 
 export interface BoltOnResult {
@@ -51,6 +59,8 @@ export interface BoltOnResult {
   readonly snippet: string;
   readonly snippetTarget: string;
   readonly nextSteps: readonly string[];
+  /** Present iff `opts.agentRules === true`. */
+  readonly agentRules?: AgentRulesResult;
 }
 
 const configTemplate = (app: string, tenant: string): string =>
@@ -162,6 +172,15 @@ export const boltOnExistingWrangler = async (opts: BoltOnOptions): Promise<BoltO
     await appendBaerlyStorageDep(pkgJsonPath, changes);
   }
 
+  let agentRules: AgentRulesResult | undefined;
+  if (opts.agentRules === true) {
+    agentRules = await writeAgentRulesBlock(opts.outDir);
+    const relPath = agentRules.path.startsWith(opts.outDir)
+      ? agentRules.path.slice(opts.outDir.length + 1)
+      : agentRules.path;
+    changes.push(`${relPath}: ${agentRules.action} agent-rules block`);
+  }
+
   if (opts.runInstall === true) {
     const pm = opts.pm ?? detectPm();
     const installer = opts.installer ?? defaultInstaller;
@@ -184,5 +203,6 @@ export const boltOnExistingWrangler = async (opts: BoltOnOptions): Promise<BoltO
       `Paste the snippet above into ${detectedMain}, replacing the stock handler.`,
       `Before deploy: \`wrangler secret put SHARED_SECRET\` (the .dev.vars value is dev-only).`,
     ],
+    ...(agentRules !== undefined && { agentRules }),
   };
 };

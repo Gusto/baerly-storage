@@ -170,7 +170,27 @@ describe("create-baerly runner (non-TTY)", () => {
     expect(exitCode).toBe(1);
     const err = stderr.captured.join("");
     expect(err).toContain(`Unknown add-on "junk"`);
-    expect(err).toContain("Available add-ons: docker");
+    expect(err).toContain("Available add-ons:");
+    expect(err).toContain("docker");
+    expect(err).toContain("agent-rules");
+  });
+
+  test("rejects --with=agent-rules in scaffold mode (bolt-on-only addon)", async () => {
+    const stderr = captureStream(process.stderr);
+    let exitCode: number;
+    try {
+      exitCode = await runCreateBaerly([
+        "agent-rules-on-scaffold",
+        "--target=cloudflare",
+        "--with=agent-rules",
+      ]);
+    } finally {
+      stderr.restore();
+    }
+    expect(exitCode).toBe(1);
+    const err = stderr.captured.join("");
+    expect(err).toContain("--with=agent-rules only applies to bolt-on mode");
+    expect(err).toContain("Scaffolded apps already include");
   });
 
   test("emits the plaintext lines unchanged on a non-TTY success", async () => {

@@ -170,3 +170,111 @@ describe("boltOnExistingWrangler", () => {
     ).rejects.toThrow(/package\.json is not valid JSON/);
   });
 });
+
+describe("boltOnExistingWrangler --with=agent-rules", () => {
+  test("without agentRules, no agent file is created or modified", async () => {
+    const dir = await fixtureDir();
+    const result = await boltOnExistingWrangler({
+      outDir: dir,
+      tenant: "default",
+      runInstall: false,
+    });
+    await expect(fileExists(join(dir, "AGENTS.md"))).resolves.toBe(false);
+    await expect(fileExists(join(dir, ".claude", "rules", "baerly.md"))).resolves.toBe(false);
+    await expect(fileExists(join(dir, ".cursor", "rules", "baerly.md"))).resolves.toBe(false);
+    expect(result.agentRules).toBeUndefined();
+    expect(result.changes.some((c) => c.includes("agent-rules"))).toBe(false);
+  });
+
+  test("creates AGENTS.md when no agent file or rules dir exists", async () => {
+    const dir = await fixtureDir();
+    const result = await boltOnExistingWrangler({
+      outDir: dir,
+      tenant: "default",
+      runInstall: false,
+      agentRules: true,
+    });
+    expect(result.agentRules).toEqual({
+      path: join(dir, "AGENTS.md"),
+      action: "created",
+    });
+    const agents = await readFile(join(dir, "AGENTS.md"), "utf8");
+    expect(agents).toContain("<!-- baerly:start -->");
+    expect(agents).toContain("<!-- baerly:end -->");
+    expect(agents).toContain("baerly-storage");
+    expect(agents).toContain("node_modules/baerly-storage/dist/API.md");
+    expect(result.changes).toContain("AGENTS.md: created agent-rules block");
+  });
+
+  test("appends to a pre-existing AGENTS.md without touching the user's content", async () => {
+    const dir = await fixtureDir();
+    const userContent = "# My agent rules\n\nDo the thing.\n";
+    await writeFile(join(dir, "AGENTS.md"), userContent);
+    const result = await boltOnExistingWrangler({
+      outDir: dir,
+      tenant: "default",
+      runInstall: false,
+      agentRules: true,
+    });
+    expect(result.agentRules?.action).toBe("appended");
+    const after = await readFile(join(dir, "AGENTS.md"), "utf8");
+    // User content is byte-identical at the front of the file.
+    expect(after.startsWith(userContent)).toBe(true);
+    expect(after).toContain("<!-- baerly:start -->");
+    expect(after).toContain("<!-- baerly:end -->");
+  });
+
+  test("writes to .claude/rules/baerly.md when that directory exists", async () => {
+    const dir = await fixtureDir();
+    await mkdir(join(dir, ".claude", "rules"), { recursive: true });
+    const result = await boltOnExistingWrangler({
+      outDir: dir,
+      tenant: "default",
+      runInstall: false,
+      agentRules: true,
+    });
+    expect(result.agentRules?.path).toBe(join(dir, ".claude", "rules", "baerly.md"));
+    expect(result.agentRules?.action).toBe("created");
+    await expect(fileExists(join(dir, "AGENTS.md"))).resolves.toBe(false);
+    await expect(fileExists(join(dir, ".claude", "rules", "baerly.md"))).resolves.toBe(true);
+  });
+
+  test("writes to .cursor/rules/baerly.md when only .cursor/rules exists", async () => {
+    const dir = await fixtureDir();
+    await mkdir(join(dir, ".cursor", "rules"), { recursive: true });
+    const result = await boltOnExistingWrangler({
+      outDir: dir,
+      tenant: "default",
+      runInstall: false,
+      agentRules: true,
+    });
+    expect(result.agentRules?.path).toBe(join(dir, ".cursor", "rules", "baerly.md"));
+    await expect(fileExists(join(dir, "AGENTS.md"))).resolves.toBe(false);
+  });
+
+  test("second run is idempotent — block replaced in place, file not doubled", async () => {
+    const dir = await fixtureDir();
+    const userContent = "# My agent rules\n\nDo the thing.\n";
+    await writeFile(join(dir, "AGENTS.md"), userContent);
+    await boltOnExistingWrangler({
+      outDir: dir,
+      tenant: "default",
+      runInstall: false,
+      agentRules: true,
+    });
+    const afterFirst = await readFile(join(dir, "AGENTS.md"), "utf8");
+
+    const second = await boltOnExistingWrangler({
+      outDir: dir,
+      tenant: "default",
+      runInstall: false,
+      agentRules: true,
+    });
+    const afterSecond = await readFile(join(dir, "AGENTS.md"), "utf8");
+    expect(afterSecond).toBe(afterFirst);
+    expect(second.agentRules?.action).toBe("replaced");
+    // The managed block appears exactly once.
+    const startCount = afterSecond.split("<!-- baerly:start -->").length - 1;
+    expect(startCount).toBe(1);
+  });
+});

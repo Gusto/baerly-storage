@@ -10,15 +10,22 @@ import {
 } from "./substitute.ts";
 
 /**
- * Optional add-ons that can be layered on top of the base template at
- * scaffold time. Each add-on is a directory under
- * `packages/create-baerly/templates/addons/<name>/`; its files are
- * copied (and substituted) on top of the scaffolded project. Today
- * `docker` is the only add-on; expanding this tuple is the only place
- * to declare a new one — the runtime validator and the wizard's
- * conditional prompts both derive from `KNOWN_ADDONS`.
+ * Optional add-ons that can be layered on top of a base template
+ * (`docker`) or on top of an existing wrangler project in bolt-on
+ * mode (`agent-rules`). Adding a new entry here is what makes
+ * `--with=<name>` recognised by both the flag parser and the wizard.
+ *
+ * - `docker` (scaffold-only, `--target=node`): copies the Dockerfile
+ *   add-on under `templates/addons/docker/` on top of the scaffolded
+ *   project.
+ * - `agent-rules` (bolt-on-only): drops a delimited block telling AI
+ *   agents that `node_modules/baerly-storage/dist/API.md` is the
+ *   canonical API surface. Scaffolded apps already ship that
+ *   guidance via the per-template `AGENTS.md`; this closes the gap
+ *   for users adopting baerly into a repo that didn't start from a
+ *   `create-baerly` template.
  */
-export const KNOWN_ADDONS = ["docker"] as const;
+export const KNOWN_ADDONS = ["docker", "agent-rules"] as const;
 export type Addon = (typeof KNOWN_ADDONS)[number];
 
 export interface ScaffoldOptions {

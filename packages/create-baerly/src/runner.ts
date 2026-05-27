@@ -85,8 +85,10 @@ export const CREATE_BAERLY_ARGS = {
   with: {
     type: "string",
     description:
-      'Comma-separated add-ons to layer on the base template. Today: "docker" (requires --target=node).',
-    valueHint: "docker",
+      'Comma-separated add-ons. Scaffold mode: "docker" (requires --target=node). ' +
+      "Bolt-on mode (`create baerly .` in an existing wrangler project): " +
+      '"agent-rules" drops an AGENTS.md block pointing at the baerly API surface.',
+    valueHint: "docker|agent-rules",
   },
   pm: {
     type: "string",
@@ -111,6 +113,7 @@ interface DispatchBoltOnOpts {
   readonly json: boolean;
   readonly isInteractive: boolean;
   readonly installer: Installer | undefined;
+  readonly agentRules: boolean;
 }
 
 const dispatchBoltOn = async (opts: DispatchBoltOnOpts): Promise<number> => {
@@ -122,6 +125,7 @@ const dispatchBoltOn = async (opts: DispatchBoltOnOpts): Promise<number> => {
       runInstall: opts.install,
       ...(opts.pm !== undefined && { pm: opts.pm }),
       ...(opts.installer !== undefined && { installer: opts.installer }),
+      ...(opts.agentRules && { agentRules: true }),
     });
     if (opts.json) {
       process.stdout.write(
@@ -137,6 +141,7 @@ const dispatchBoltOn = async (opts: DispatchBoltOnOpts): Promise<number> => {
             snippet: result.snippet,
             snippetTarget: result.snippetTarget,
             nextSteps: result.nextSteps,
+            ...(result.agentRules !== undefined && { agentRules: result.agentRules }),
           },
         })}\n`,
       );
@@ -240,6 +245,7 @@ export const handleCreateBaerly = async (
           json: jsonMode,
           isInteractive,
           installer: opts.installer,
+          agentRules: withAddonsFromFlag?.includes("agent-rules") === true,
         });
       }
       projectName = w.projectName;
@@ -270,6 +276,7 @@ export const handleCreateBaerly = async (
           json: jsonMode,
           isInteractive,
           installer: opts.installer,
+          agentRules: withAddonsFromFlag?.includes("agent-rules") === true,
         });
       }
       if (args.target === undefined) {
@@ -292,15 +299,21 @@ export const handleCreateBaerly = async (
       // anyone iterating against `git diff`.
       git = args.git === true;
     }
-    // Cross-field validation: today the only add-on is `docker`,
-    // which only applies to `--target=node`. Catch the mismatch
-    // here (it's identical whether the value came from the flag
-    // or the wizard).
+    // Cross-field validation: each add-on's mode/target constraint
+    // is checked here. Control only reaches this block in scaffold
+    // mode — bolt-on dispatch already returned above.
     if (withAddons.includes("docker") && target !== "node") {
       throw new Error(
         `--with=docker only applies to --target=node. The Docker add-on adds a ` +
           `Dockerfile to the Node template. Use --target=node --with=docker, or ` +
           `drop --with=docker to scaffold for --target=${target}.`,
+      );
+    }
+    if (withAddons.includes("agent-rules")) {
+      throw new Error(
+        `--with=agent-rules only applies to bolt-on mode (pnpm create baerly . ` +
+          `inside an existing wrangler project). Scaffolded apps already include ` +
+          `an AGENTS.md preamble — drop --with=agent-rules.`,
       );
     }
     const result = await scaffold({
