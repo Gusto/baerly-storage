@@ -119,20 +119,6 @@ describe("createBaerlyClient", () => {
     });
   });
 
-  test("healthz() returns true on 200, false otherwise", async () => {
-    const mock = new MockFetch();
-    let returnOk = true;
-    mock.on("GET", "/v1/healthz", () =>
-      returnOk
-        ? jsonResponse({ data: { ok: true }, _meta: { manifest_pointer: "none@0", fresh: true } })
-        : jsonResponse({ error: { code: "Internal", message: "boom" } }, 500),
-    );
-    const client = createBaerlyClient({ baseUrl: "http://x", fetch: mock.fetch });
-    await expect(client.healthz()).resolves.toBe(true);
-    returnOk = false;
-    await expect(client.healthz()).resolves.toBe(false);
-  });
-
   test("dynamic headers callback resolves per request", async () => {
     const mock = new MockFetch();
     let calls = 0;
@@ -272,19 +258,6 @@ describe("createBaerlyClient", () => {
       .update("x", { title: "y" }, { signal: perCall.signal });
     perCall.abort();
     await expect(inflight2).rejects.toMatchObject({ name: "AbortError" });
-  });
-
-  test("healthz() re-throws AbortError instead of resolving false", async () => {
-    // Caller-supplied signal aborts mid-flight. The bare catch used
-    // to map every throw → false, making aborts indistinguishable
-    // from a downed server.
-    const mock = new MockFetch();
-    mock.on("GET", "/v1/healthz", hangUntilAbort);
-    const client = createBaerlyClient({ baseUrl: "http://x", fetch: mock.fetch });
-    const controller = new AbortController();
-    const inflight = client.healthz({ signal: controller.signal });
-    controller.abort();
-    await expect(inflight).rejects.toMatchObject({ name: "AbortError" });
   });
 
   test("missing data field on 200 throws InvalidResponse", async () => {

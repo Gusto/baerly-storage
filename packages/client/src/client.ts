@@ -258,8 +258,6 @@ export interface BaerlyClient<TConfig extends BaerlyConfig = UnboundConfig> {
    */
   table<N extends CollectionNames<TConfig>>(name: N): ClientTable<RowOf<TConfig, N> & DocumentData>;
   table<T extends DocumentData = DocumentData>(name: string): ClientTable<T>;
-  /** Liveness probe. Returns `true` on 200, `false` on any other status. Does not throw. */
-  healthz(opts?: { signal?: AbortSignal }): Promise<boolean>;
 }
 
 /**
@@ -288,25 +286,6 @@ export const createBaerlyClient = <TConfig extends BaerlyConfig = UnboundConfig>
     [CLIENT_CONTEXT]: ctx,
     table<T extends DocumentData = DocumentData>(name: string): ClientTable<T> {
       return makeClientTable<T>(ctx, name);
-    },
-    async healthz(opts?: { signal?: AbortSignal }): Promise<boolean> {
-      try {
-        await request<{ ok: true }>(ctx, {
-          method: "GET",
-          path: "/v1/healthz",
-          signal: opts?.signal,
-        });
-        return true;
-      } catch (error) {
-        // Re-throw caller-driven aborts so a polling health check
-        // that cancels on unmount doesn't see `false` and flag the
-        // server as down. Everything else (network error, non-200,
-        // shape mismatch) maps to "server unhealthy".
-        if (error instanceof Error && error.name === "AbortError") {
-          throw error;
-        }
-        return false;
-      }
     },
   };
   return client as BaerlyClient<TConfig>;
