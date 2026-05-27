@@ -29,7 +29,7 @@ zero env vars. `baerly doctor --target=<cloudflare|node>` warns on
 `CF_ACCESS_*` vars set without a `cloudflareAccess` verifier
 override (they're inert).
 
-`baerly-storage/auth` ships three `Verifier` presets you pass as
+`@gusto/baerly-storage/auth` ships three `Verifier` presets you pass as
 the override:
 
 - `sharedSecret` — `Authorization: Bearer <secret>` with
@@ -110,7 +110,7 @@ guarantees rest on the verifier producing the right prefix — see
   into the kernel release cycle. Deployments that need a proprietary
   IdP, or any scheme not yet in the enum, would have to fork. The
   open-function shape lets a deployment author write its own
-  `Verifier` against any scheme without touching `baerly-storage` internals.
+  `Verifier` against any scheme without touching `@gusto/baerly-storage` internals.
 - **Multiple `Verifier`s with kernel-side composition.** The right
   composition policy depends on the deployment — some want "try CF
   Access first, fall back to shared-secret"; others want "require

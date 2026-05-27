@@ -184,7 +184,7 @@ Wire it via a custom sink that pulls the binding off `env`:
 
 ```ts
 // worker.ts
-import { baerlyWorker } from "baerly-storage/cloudflare";
+import { baerlyWorker } from "@gusto/baerly-storage/cloudflare";
 
 interface AppEnv {
   readonly ANALYTICS: AnalyticsEngineDataset;

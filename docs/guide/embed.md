@@ -15,9 +15,9 @@ about 30 lines:
 ```ts
 import { createServer } from "node:http";
 import { getRequestListener } from "@hono/node-server";
-import { createApp } from "baerly-storage/node";
-import { sharedSecret } from "baerly-storage/auth";
-import { LocalFsStorage } from "baerly-storage/dev";
+import { createApp } from "@gusto/baerly-storage/node";
+import { sharedSecret } from "@gusto/baerly-storage/auth";
+import { LocalFsStorage } from "@gusto/baerly-storage/dev";
 
 const storage = new LocalFsStorage({ root: "./.baerly-data" });
 // No manifest bootstrap needed — the writer auto-provisions

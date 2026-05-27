@@ -34,7 +34,7 @@ the request succeeds. Bundle stays clean.
 
 Once you flip `auth` to `"shared-secret"`, the Vite dev plugin
 needs the bearer for browser calls. `baerlyDevAuth` (re-exported
-from `baerly-storage/dev/vite`) is the seam: a `configureServer`
+from `@gusto/baerly-storage/dev/vite`) is the seam: a `configureServer`
 middleware that injects `Authorization: Bearer ${secret}` on every
 `/v1/*` request **server-side**. The browser fetches plain
 `/v1/healthz`; Vite mutates the request headers before forwarding
@@ -45,7 +45,7 @@ The wiring in each scaffold's `vite.config.ts` (per its `AGENTS.md`
 → "Going to production" Pattern B recipe):
 
 ```ts
-import { baerlyDevAuth, loadDevVars } from "baerly-storage/dev/vite";
+import { baerlyDevAuth, loadDevVars } from "@gusto/baerly-storage/dev/vite";
 
 const { SHARED_SECRET } = loadDevVars(".dev.vars", "SHARED_SECRET");
 // …
@@ -79,8 +79,8 @@ prod):
 
 ```ts
 // src/server/index.ts — minimal-cloudflare
-import { baerlyWorker, type BaerlyEnv } from "baerly-storage/cloudflare";
-import { cloudflareAccess } from "baerly-storage/auth";
+import { baerlyWorker, type BaerlyEnv } from "@gusto/baerly-storage/cloudflare";
+import { cloudflareAccess } from "@gusto/baerly-storage/auth";
 import config from "../../baerly.config.ts";
 
 interface AppEnv extends BaerlyEnv {

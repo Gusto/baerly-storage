@@ -9,7 +9,7 @@ related: ["./auth.md", "./observability.md", "./troubleshooting.md"]
 
 # Client middleware
 
-`baerly-storage/client` exposes one composable seam: the `fetch` option on
+`@gusto/baerly-storage/client` exposes one composable seam: the `fetch` option on
 `BaerlyClientOptions`. Every HTTP request the client makes — table
 reads, writes, the `since(...)` long-poll path — routes through that
 one function. Cross-cutting concerns (logging, retry, tracing, auth
@@ -19,11 +19,11 @@ This is structurally what tRPC sells as "links" and axios sells as
 line:
 
 ```ts
-import { type Fetcher } from "baerly-storage/client";
+import { type Fetcher } from "@gusto/baerly-storage/client";
 // type Fetcher = (req: Request) => Promise<Response>;
 ```
 
-`Fetcher` is exported from `baerly-storage/client` for use in your own
+`Fetcher` is exported from `@gusto/baerly-storage/client` for use in your own
 wrappers; every recipe below imports it from there.
 
 ## Hook callbacks: onSuccess / onError
@@ -33,7 +33,7 @@ path, one for thrown errors. Useful when an observability layer
 wants to react to outcomes without owning the request loop.
 
 ```ts
-import { createBaerlyClient, type Fetcher } from "baerly-storage/client";
+import { createBaerlyClient, type Fetcher } from "@gusto/baerly-storage/client";
 
 interface Hooks {
   readonly onSuccess?: (req: Request, res: Response) => void;
@@ -182,8 +182,8 @@ query level (e.g. "log every `client.table('issues').insert(...)`
 call"), wrap the client object instead:
 
 ```ts
-import { createBaerlyClient, type BaerlyClient, type ClientTable } from "baerly-storage/client";
-import type { DocumentData } from "baerly-storage";
+import { createBaerlyClient, type BaerlyClient, type ClientTable } from "@gusto/baerly-storage/client";
+import type { DocumentData } from "@gusto/baerly-storage";
 
 const inner = createBaerlyClient({ baseUrl: "https://api.example.com" });
 
