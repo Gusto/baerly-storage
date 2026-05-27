@@ -56,7 +56,8 @@
  * **Pinned by:** `tests/integration/log-conflict-forgery.test.ts`
  * exercises the session-id-unguessability claim under a
  * `ForgeryStorage` adversary that plants arbitrary entries at the
- * writer's expected log key. Property verified at `FC_NUM_RUNS=10000`.
+ * writer's expected log key. Property verified by default at
+ * `numRuns: 1000`; `FC_NUM_RUNS=10000` for the hardening sweep.
  *
  * ## Prior art
  *

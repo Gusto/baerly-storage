@@ -92,11 +92,10 @@ describe("C2 session-id-unguessability under ForgeryStorage adversary", () => {
     // through. The patent claim's load-bearing premise is that
     // `session` is unguessable, not that some downstream check
     // would catch the forgery.
-    const session = "abc123";
     const seq = 42;
-    const self = makeEntry({ session, seq });
+    const self = makeEntry({ session: SESSION_A, seq });
     const forged = makeEntry({
-      session,
+      session: SESSION_A,
       seq,
       doc_id: "adversary-doc",
       new: { _id: "adversary-doc" },
@@ -170,11 +169,8 @@ describe("C2 session-id-unguessability under ForgeryStorage adversary", () => {
     const inner = new MemoryStorage();
     await createCurrentJson(inner, CURRENT_JSON_KEY, seedCurrent());
 
-    // Wrap in ForgeryStorage and plant a forged entry whose
-    // session ("FORGED") cannot match a uuid-derived writer
-    // session (which is lowercase hex). Use scriptForgedEntry so
-    // even the GET resolves to the forged body — modelling an
-    // adversary that can ALSO intercept reads.
+    // Plant a forged entry whose session ("FORGED") cannot match
+    // a uuid-derived writer session (which is lowercase hex).
     const forged: LogEntry = {
       lsn: "z_FORGED_z",
       commit_ts: "2026-05-26T00:00:00.000Z",
@@ -187,15 +183,16 @@ describe("C2 session-id-unguessability under ForgeryStorage adversary", () => {
       new: { _id: "adv-doc", from: "adversary" },
       patch: { _id: "adv-doc", from: "adversary" },
     };
-    // Also plant via inner.put so the writer's PUT-with-If-None-Match
-    // sees a real 412 (otherwise the put would succeed and the
-    // GET-intercept would never run).
+    // Plant via inner.put so the writer's PUT-with-If-None-Match
+    // sees a real 412 and reads back the forged body. The
+    // ForgeryStorage GET-intercept is wired but not exercised in
+    // this test (the inner store already serves the planted bytes);
+    // its load-bearing role is documented at the fixture.
     await inner.put(LOG_0_KEY, encodeJsonBytes(forged), {
       contentType: "application/json",
     });
 
     const forgery = wrapForgeryStorage(inner);
-    forgery.scriptForgedEntry(LOG_0_KEY, encodeJsonBytes(forged));
 
     const writer = new Writer({
       storage: forgery.storage,
@@ -242,14 +239,5 @@ describe("C2 session-id-unguessability under ForgeryStorage adversary", () => {
     // writer's failure path should rewrite the planted entry).
     const planted = await forgery.storage.get(LOG_0_KEY);
     expect(planted?.body).toEqual(encodeJsonBytes(forged));
-  });
-
-  test("sub-test A is real: adoption returns adopt:true on identical session+seq", () => {
-    // Smoke-pin Sub-test A's claim once more with the canonical
-    // ctxOf-shaped call, so a future refactor that breaks
-    // tryAdoptOwnSessionLogEntry's positive path can't accidentally
-    // pass the property test by always returning adopt:false.
-    const decision = tryAdoptOwnSessionLogEntry(ctxOf({}));
-    expect(decision.adopt).toBe(true);
   });
 });

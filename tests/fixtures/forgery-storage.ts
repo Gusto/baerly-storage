@@ -1,26 +1,16 @@
 /**
- * Storage wrapper that lets a test plant arbitrary entries at arbitrary
- * keys via `scriptForgedEntry`, without going through the writer's PUT
- * path. The forged bytes are returned by subsequent GETs of that key,
- * letting the test simulate an adversary that has bucket-write access
- * but cannot read writer RAM (and therefore cannot observe the
- * per-commit session id).
+ * Storage wrapper that models a bucket-write adversary who has ALSO
+ * compromised the read path (e.g. via a CDN edge or DNS hijack), but
+ * cannot read the writer's local RAM — and therefore cannot observe
+ * the per-commit session id minted inside `Writer.commit`.
+ *
+ * `scriptForgedEntry(key, body)` plants forged bytes at `key`;
+ * subsequent `storage.get(key)` calls return those bytes,
+ * shadowing the inner backend. All other methods delegate.
  *
  * Used by `tests/integration/log-conflict-forgery.test.ts` to verify
  * that `tryAdoptOwnSessionLogEntry` never returns `adopt: true` on a
  * forged entry, regardless of how the adversary crafts the body.
- *
- * Surface:
- *   - `wrapForgeryStorage(inner)` → `{ storage, scriptForgedEntry,
- *     unscriptForgedEntry, clearForgeries }`.
- *   - `scriptForgedEntry(key, body)` plants forged bytes that will
- *     be returned by subsequent `storage.get(key)` calls, shadowing
- *     whatever the inner backend holds.
- *   - All other methods (`put`, `delete`, `list`) delegate to the
- *     inner storage unchanged — the adversary's surface here is
- *     specifically the GET-intercept (which models a bucket-write
- *     adversary who has ALSO replaced the read path, e.g. via a
- *     compromised CDN edge or DNS hijack).
  *
  * Not thread-safe; tests should not share an instance across
  * concurrent workers.
@@ -43,10 +33,6 @@ export interface ForgeryStorage {
    * inner backend would have produced. Multiple calls overwrite.
    */
   scriptForgedEntry(key: string, body: Uint8Array): void;
-  /** Remove a previously scripted forgery for `key`. */
-  unscriptForgedEntry(key: string): void;
-  /** Clear all scripted forgeries. */
-  clearForgeries(): void;
 }
 
 export function wrapForgeryStorage(inner: Storage): ForgeryStorage {
@@ -78,12 +64,6 @@ export function wrapForgeryStorage(inner: Storage): ForgeryStorage {
     storage,
     scriptForgedEntry(key, body) {
       forged.set(key, body);
-    },
-    unscriptForgedEntry(key) {
-      forged.delete(key);
-    },
-    clearForgeries() {
-      forged.clear();
     },
   };
 }
