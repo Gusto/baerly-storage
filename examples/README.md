@@ -183,7 +183,7 @@ The manifest shape:
   "excludePaths": ["uint8array-base64.d.ts", ".baerly/scaffold.json"],
   // devDependencies stripped from the scaffolded `package.json`
   // (e.g. workspace-internal tooling that doesn't ship).
-  "dropDevDeps": ["create-baerly"]
+  "dropDevDeps": ["@gusto/create-baerly-storage"]
 }
 ```
 
