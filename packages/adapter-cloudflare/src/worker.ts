@@ -5,7 +5,7 @@ import {
   type Verifier,
   noopMetricsRecorder,
 } from "@baerly/protocol";
-import { Db, collectionsToMaps, resolveVerifier } from "@baerly/server";
+import { Db, resolveVerifier } from "@baerly/server";
 import { createRouter } from "@baerly/server/http";
 import {
   CATEGORY,
@@ -21,6 +21,7 @@ import {
   getLogger,
   observableStorage,
   runWithContext,
+  setKernelMetricsRecorder,
 } from "@baerly/server/observability";
 import { type CacheStatus, invalidateOnWrite, withReadCache } from "./cache.ts";
 import { r2BindingStorage } from "./r2-binding-storage.ts";
@@ -211,8 +212,6 @@ export function baerlyWorker<E extends BaerlyEnv = BaerlyEnv>(
     readonly options: BaerlyWorkerOptions;
     readonly verifier: Verifier;
     readonly teeRecorder: ReturnType<typeof alsAwareRecorder>;
-    readonly schemas: ReturnType<typeof collectionsToMaps>["schemas"];
-    readonly indexes: ReturnType<typeof collectionsToMaps>["indexes"];
   }
   let resolved: ResolvedState | undefined;
   // Cached so every subsequent fetch re-throws the same error rather
@@ -243,9 +242,12 @@ export function baerlyWorker<E extends BaerlyEnv = BaerlyEnv>(
         // `runWithContext` scope is active.
         const operatorRecorder = options.metrics ?? noopMetricsRecorder;
         const teeRecorder = alsAwareRecorder(operatorRecorder);
-        // Flatten declared collections once at factory time.
-        const { schemas, indexes } = collectionsToMaps(options.config.collections);
-        resolved = { options, verifier, teeRecorder, schemas, indexes };
+        // Per-isolate kernel-recorder singleton. The module singleton is
+        // safe in Workers because every isolate has its own module state.
+        // Placed inside `ensureResolved` (not at top-level) because the
+        // operator-supplied recorder is unknown until the first fetch.
+        setKernelMetricsRecorder(teeRecorder);
+        resolved = { options, verifier, teeRecorder };
       } catch (error) {
         resolutionError = error;
         throw error;
@@ -277,7 +279,7 @@ export function baerlyWorker<E extends BaerlyEnv = BaerlyEnv>(
 
   return {
     async fetch(req, env, ctx): Promise<Response> {
-      const { options, verifier, teeRecorder, schemas, indexes } = await ensureResolved(env);
+      const { options, verifier, teeRecorder } = await ensureResolved(env);
 
       // Opt-in dev landing page. Off in production (options.dev
       // unset); when set, GET / serves HTML and GET /favicon.ico
@@ -338,16 +340,14 @@ export function baerlyWorker<E extends BaerlyEnv = BaerlyEnv>(
         // per-call class A/B counts and per-op duration histograms
         // land in BOTH the operator's long-term sink and (via the
         // ALS-aware tee) the per-request bag we just created. The
-        // Db's `metrics: teeRecorder` carries the same tee through to
-        // Writer / compactor / GC emissions.
+        // kernel-recorder singleton (set in `ensureResolved`) carries
+        // the same tee through to Writer / compactor / GC emissions.
         const storage = observableStorage(r2BindingStorage(env.BUCKET), teeRecorder);
         const db = Db.create({
           storage,
           app: env.APP,
           tenant: tenantPrefix,
-          metrics: teeRecorder,
-          schemas,
-          indexes,
+          config: options.config,
         });
 
         const app = createRouter({

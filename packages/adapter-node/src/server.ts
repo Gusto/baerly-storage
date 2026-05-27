@@ -5,7 +5,7 @@ import {
   type Verifier,
   noopMetricsRecorder,
 } from "@baerly/protocol";
-import { Db, collectionsToMaps } from "@baerly/server";
+import { Db } from "@baerly/server";
 import { createRouter, mapError } from "@baerly/server/http";
 import { runScheduledMaintenance } from "@baerly/server/maintenance";
 import { prettyConsoleSink } from "./logger-pretty.ts";
@@ -21,6 +21,7 @@ import {
   getEffectiveSampleRate,
   observableStorage,
   runWithContext,
+  setKernelMetricsRecorder,
 } from "@baerly/server/observability";
 
 /**
@@ -38,12 +39,11 @@ export interface CreateFetchHandlerOptions {
   readonly storage: Storage;
   readonly verifier: Verifier;
   /**
-   * Your `baerly.config.ts`. When set, the adapter flattens
-   * `collections[*].schema` and `collections[*].indexes` into the
-   * per-collection maps that {@link Db.create} consumes — so
-   * server-side schema validation fires on commits and the auto-
-   * planner sees declared indexes. Without this option, declared
-   * collections have no effect on the `/v1/t/*` surface.
+   * Your `baerly.config.ts`. When set, the adapter forwards it to
+   * {@link Db.create} on every request — so server-side schema
+   * validation fires on commits and the auto-planner sees declared
+   * indexes. Without this option, declared collections have no
+   * effect on the `/v1/t/*` surface.
    *
    * Only `collections` is read — deploy-time fields (`target`,
    * `domain`, `requiredSecrets`, …) are ignored here.
@@ -96,11 +96,8 @@ export function createFetchHandler(
   void configureObservability(resolveDefaultSink(opts.observability ?? {}));
   const operatorRecorder = opts.metrics ?? noopMetricsRecorder;
   const teeRecorder = alsAwareRecorder(operatorRecorder);
+  setKernelMetricsRecorder(teeRecorder);
   const wrappedStorage = observableStorage(opts.storage, teeRecorder);
-  // Flatten declared collections once at factory time. Maps are
-  // frozen-empty sentinels when `config` is unset, so per-request
-  // `Db.create` is allocation-free either way.
-  const { schemas, indexes } = collectionsToMaps(opts.config?.collections);
 
   return async (request: Request): Promise<Response> => {
     const url = new URL(request.url);
@@ -137,9 +134,7 @@ export function createFetchHandler(
           storage: wrappedStorage,
           app: opts.app,
           tenant: result.tenantPrefix,
-          metrics: teeRecorder,
-          schemas,
-          indexes,
+          config: opts.config,
         });
         const router = createRouter({
           db,
@@ -226,6 +221,7 @@ export const runMaintenanceTick = async (opts: NodeMaintenanceOptions): Promise<
   // Passing the ALS-aware wrapper here would double-write the bag.
   const operatorRecorder = opts.metrics ?? noopMetricsRecorder;
   const teeRecorder = alsAwareRecorder(operatorRecorder);
+  setKernelMetricsRecorder(teeRecorder);
   await runScheduledMaintenance(
     {
       storage: observableStorage(opts.storage, teeRecorder),
@@ -233,7 +229,6 @@ export const runMaintenanceTick = async (opts: NodeMaintenanceOptions): Promise<
     },
     {
       ...(opts.signal !== undefined && { signal: opts.signal }),
-      metrics: operatorRecorder,
     },
   );
 };
