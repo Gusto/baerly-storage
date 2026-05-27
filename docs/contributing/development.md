@@ -23,31 +23,6 @@ cd baerly-storage
 pnpm install
 ```
 
-## Private-registry setup (Phase 1)
-
-`@gusto/baerly-storage` and `@gusto/create-baerly-storage` publish to
-Gusto's private npm registry. Both publishing and installing the
-scoped packages require the `@gusto:` scope to route to that
-registry. Configure once per machine in `~/.npmrc`:
-
-```
-@gusto:registry=<gusto-private-registry-url>
-//<gusto-private-registry-host>/:_authToken=${NPM_TOKEN}
-```
-
-Replace `<gusto-private-registry-url>` with the URL from Gusto's
-infra team and set `NPM_TOKEN` in your shell environment. Confirm
-auth with:
-
-```sh
-npm whoami --registry=<gusto-private-registry-url>
-```
-
-This setup is not committed to the repo (the URL is internal). The
-Phase 2 public-OSS release will not require any of this — the
-unscoped `baerly-storage` resolves through the default npm
-registry.
-
 ## Running tests
 
 The full suite is run with vitest:
