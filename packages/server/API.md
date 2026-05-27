@@ -85,9 +85,6 @@ Db.create<TConfig>({
   app: string;                   // required
   tenant: string;                // required
   config?: TConfig;              // optional; from `defineConfig(...)`
-  schemas?: ReadonlyMap<string, SchemaValidator>;       // overrides `config.collections[*].schema`
-  indexes?: ReadonlyMap<string, IndexDefinition[]>;     // overrides `config.collections[*].indexes`
-  metrics?: MetricsRecorder;
 });
 ```
 

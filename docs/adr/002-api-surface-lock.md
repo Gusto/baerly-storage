@@ -98,6 +98,25 @@ Accepted (2026-05-11).
   See spec
   `docs/superpowers/specs/2026-05-25-predicate-redesign-design.md`.
 
+- Amended (2026-05-27): `Db.create` cut `metrics?`, `schemas?`, and
+  `indexes?` from the public config. Final shape:
+  `Db.create({ storage, app, tenant, config? })`. The `schemas` and
+  `indexes` overrides were redundant type-valid paths to capabilities
+  already served by `config.collections[*]` (since `4bb859d` made
+  config-derivation canonical). The `metrics` knob was on the wrong
+  API shape — a per-request `Db.create` is the wrong site for an
+  observability sink configured once at adapter boot — and is now
+  routed through a module-level `setKernelMetricsRecorder(...)` in
+  `packages/server/src/observability/kernel-recorder.ts`
+  (Sentry / OTel / Pino idiom). The same cut also dropped `metrics?`
+  from `MaintenanceOptions` / `CompactOptions` / `RunGcOptions`.
+
+  Fourth worked example of the 2026-05-26 "additive-only scoped to
+  capabilities" rule. The capability is preserved at both layers — an
+  operator can still tee a recorder, just via the observability
+  layer rather than via every `Db.create` call — and the LLM-zero-shot
+  surface drops three knobs that no prototype-tier author would wire.
+
 ## Context
 
 The SQL-shape table API lives in
