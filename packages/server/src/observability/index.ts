@@ -56,6 +56,11 @@ export {
 } from "./canonical.ts";
 export { observableStorage } from "./storage.ts";
 export { type Outcome, deriveOutcome } from "./derive-outcome.ts";
+export {
+  getKernelMetricsRecorder,
+  resetKernelMetricsRecorder,
+  setKernelMetricsRecorder,
+} from "./kernel-recorder.ts";
 // Exposed so consumers can implement custom `MetricsRecorder`s
 // (e.g. an OTLP sink) without reaching into the unpublished
 // `@baerly/protocol` workspace package.

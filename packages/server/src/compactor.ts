@@ -42,7 +42,6 @@ import {
   encodeJsonBytes,
   logSeqStartOf,
   BaerlyError,
-  noopMetricsRecorder,
   readCurrentJson,
   snapshotHash,
   type Storage,
@@ -50,6 +49,7 @@ import {
   teeMetricsRecorders,
 } from "@baerly/protocol";
 import { walkLogRange } from "./log-walk.ts";
+import { getKernelMetricsRecorder } from "./observability/kernel-recorder.ts";
 import { withObservability } from "./observability/index.ts";
 import {
   encodeSnapshotBody,
@@ -75,16 +75,6 @@ export interface CompactOptions {
 
   /** Optional AbortSignal forwarded to every storage call. */
   readonly signal?: AbortSignal;
-
-  /**
-   * Optional metrics sink. Defaults to {@link noopMetricsRecorder}.
-   * On a landed compaction (i.e. `result.written === true`) emits:
-   *   - `db.compact.entries_folded` histogram (the count of log
-   *     entries folded into the new snapshot).
-   *   - `db.manifest.lag_window_depth` gauge (post-compaction live
-   *     tail length: `next_seq - foldEnd`).
-   */
-  readonly metrics?: MetricsRecorder;
 }
 
 /**
@@ -183,8 +173,10 @@ const compactInner = async (
   const minToCompact = options.minEntriesToCompact ?? DEFAULT_MIN_TO_COMPACT;
   // Tee the per-run observability recorder onto the operator's sink
   // so both the canonical line AND the operator's long-term recorder
-  // see this compactor pass's emissions.
-  const metrics = teeMetricsRecorders(options.metrics ?? noopMetricsRecorder, obsRecorder);
+  // see this compactor pass's emissions. The operator's recorder
+  // lives in the kernel singleton (set once at adapter boot by
+  // `setKernelMetricsRecorder`).
+  const metrics = teeMetricsRecorders(getKernelMetricsRecorder(), obsRecorder);
   const tablePrefix = currentJsonKey.slice(0, currentJsonKey.lastIndexOf("/"));
   const tableName = tablePrefix.slice(tablePrefix.lastIndexOf("/") + 1);
 

@@ -18,7 +18,7 @@
  * pattern uses exactly that.
  */
 
-import { type MetricsRecorder, type Storage } from "@baerly/protocol";
+import { type Storage } from "@baerly/protocol";
 import {
   compact,
   type CompactOptions,
@@ -49,13 +49,6 @@ export interface MaintenanceOptions {
   readonly gc?: RunGcOptions;
   /** Forwarded to both primitives. */
   readonly signal?: AbortSignal;
-  /**
-   * Optional metrics sink. Forwarded to BOTH `compact()` and `runGc()`
-   * (overriding any `metrics` field on `options.compact` /
-   * `options.gc`). Defaults to the primitives' own defaults
-   * (`noopMetricsRecorder`).
-   */
-  readonly metrics?: MetricsRecorder;
 }
 
 /**
@@ -112,18 +105,17 @@ export const runScheduledMaintenance = (
     // `compact()` and `runGc()` are nesting-aware: they inherit this
     // scope's context+recorder via `withObservability`, so the per-run
     // canonical-line bag fills automatically via `compactInner` /
-    // `runGcInner`'s own tee with `obsRecorder`. We forward only
-    // `options.metrics` (operator's long-term sink) and the signal —
-    // no explicit teeing here would just double-write the bag.
+    // `runGcInner`'s own tee with `obsRecorder`. The operator's
+    // long-term sink is wired ambiently via
+    // `setKernelMetricsRecorder` at adapter boot — no per-call
+    // recorder forwarding needed.
     const compactRes = await compact(args, {
       ...options.compact,
       ...(options.signal !== undefined && { signal: options.signal }),
-      ...(options.metrics !== undefined && { metrics: options.metrics }),
     });
     const gcRes = await runGc(args, {
       ...options.gc,
       ...(options.signal !== undefined && { signal: options.signal }),
-      ...(options.metrics !== undefined && { metrics: options.metrics }),
     });
 
     // Enrich the canonical line with operator-facing summary fields.

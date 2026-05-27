@@ -8,8 +8,6 @@ import {
   type IndexDefinition,
   LOG_KEY_PREFIX,
   type LogEntry,
-  type MetricsRecorder,
-  noopMetricsRecorder,
   readCurrentJson,
   type RowOf,
   type SchemaValidator,
@@ -18,6 +16,7 @@ import {
   type UnboundConfig,
 } from "@baerly/protocol";
 import { collectionsToMaps } from "./config.ts";
+import { getKernelMetricsRecorder } from "./observability/kernel-recorder.ts";
 import type { TableReadContext } from "./query.ts";
 import { Writer, type CommitInput } from "./writer.ts";
 import { makeTable } from "./table.ts";
@@ -114,24 +113,12 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
    */
   readonly #storage: Storage;
   /**
-   * Metrics sink forwarded to every {@link Writer} this `Db`
-   * constructs (the single-mutation path in `query.ts:writerFor` and
-   * the transaction path below). Defaults to
-   * {@link noopMetricsRecorder} so non-instrumented callers see zero
-   * behavioural change. Threaded onto every {@link TableReadContext}
-   * the table API hands out.
-   */
-  readonly #metrics: MetricsRecorder;
-  /**
    * Per-collection {@link SchemaValidator}s threaded onto every
    * {@link TableReadContext} this `Db` mints. Empty map means "no
    * validation declared" — every write proceeds at zero overhead.
    *
-   * Mirrors the shape callers build when flattening
-   * `BaerlyConfig.collections[*].schema` into a map keyed by name
-   * before constructing the `Db`; we keep the `Db` itself library-
-   * agnostic by accepting the pre-flattened map (not the full
-   * `BaerlyConfig`).
+   * Derived from `config.collections[*].schema` via
+   * {@link collectionsToMaps} at {@link Db.create} time.
    */
   readonly #schemas: ReadonlyMap<string, SchemaValidator>;
   /**
@@ -140,11 +127,8 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
    * indexes declared" — every read falls through to the snapshot +
    * log fold path.
    *
-   * Mirrors the shape callers build when flattening
-   * `BaerlyConfig.collections[*].indexes` into a map keyed by name
-   * before constructing the `Db`; we keep the `Db` itself library-
-   * agnostic by accepting the pre-flattened map (not the full
-   * `BaerlyConfig`).
+   * Derived from `config.collections[*].indexes` via
+   * {@link collectionsToMaps} at {@link Db.create} time.
    */
   readonly #indexes: ReadonlyMap<string, ReadonlyArray<IndexDefinition>>;
 
@@ -152,14 +136,12 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
     app: string,
     tenant: string,
     storage: Storage,
-    metrics: MetricsRecorder,
     schemas: ReadonlyMap<string, SchemaValidator>,
     indexes: ReadonlyMap<string, ReadonlyArray<IndexDefinition>>,
   ) {
     this.app = app;
     this.tenant = tenant;
     this.#storage = storage;
-    this.#metrics = metrics;
     this.#schemas = schemas;
     this.#indexes = indexes;
   }
@@ -169,16 +151,6 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
    * `BaerlyError{code:"InvalidConfig"}` if either `app` or `tenant`
    * is empty or contains `/` (the segment separator).
    *
-   * `config.metrics` is an optional {@link MetricsRecorder} forwarded
-   * to every {@link Writer} the `Db` constructs — both the
-   * single-mutation path (`Table.insert` / `Query.update` /
-   * `Table.replace` / `Query.delete`) and the transaction path
-   * ({@link Db.transaction}). Defaults to {@link noopMetricsRecorder}
-   * so non-instrumented callers see zero behavioural change. The
-   * observability layer wires its per-request recorder here
-   * so writer emissions (`db.write.class_a_ops_per_logical_write`,
-   * `db.r2.put.412_total`, etc.) reach the operator's sink.
-   *
    * @throws BaerlyError code="InvalidConfig" when `app` or `tenant` is
    *   empty or contains `/`.
    *
@@ -187,68 +159,11 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
    * const db = Db.create({ storage, app: "tickets", tenant: "acme" });
    * await db.table("tickets").insert({ title: "hi" });
    * ```
-   *
-   * @example
-   * ```ts
-   * // Wire declared indexes through Db.create so the auto-planner
-   * // can route reads. The map key is the collection name; the
-   * // value is the IndexDefinition array. Mirrors the shape
-   * // callers build when flattening BaerlyConfig.collections[*].indexes.
-   * import { Db } from "baerly-storage";
-   * import { MemoryStorage } from "baerly-storage";
-   *
-   * const db = Db.create({
-   *   storage: new MemoryStorage(),
-   *   app: "tickets",
-   *   tenant: "acme",
-   *   indexes: new Map([
-   *     ["tickets", [
-   *       { name: "by_status", on: "status" },
-   *       { name: "by_status_priority", on: ["status", "priority"] },
-   *       { name: "by_open_assignee",
-   *         on: "assignee",
-   *         predicate: { status: "open" } },
-   *     ]],
-   *   ]),
-   * });
-   *
-   * // Single-field index routes equality predicates.
-   * await db.table("tickets").where({ status: "open" }).all();
-   * // Composite index routes left-anchored equality.
-   * await db.table("tickets")
-   *   .where({ status: "open", priority: "p1" }).all();
-   * // Filtered index implies `status: "open"` — preferred over
-   * // `by_status` when both match.
-   * await db.table("tickets")
-   *   .where({ status: "open", assignee: "alice" }).all();
-   * ```
    */
   static create<TConfig extends BaerlyConfig = UnboundConfig>(config: {
     storage: Storage;
     app: string;
     tenant: string;
-    metrics?: MetricsRecorder;
-    /**
-     * Optional per-collection {@link SchemaValidator} map. The adapter
-     * layer (or app code) flattens `BaerlyConfig.collections[*].schema`
-     * into this map before constructing the `Db`; the `Db` itself
-     * stays library-agnostic. `undefined` or an empty map means "no
-     * validation" — every write proceeds at zero overhead.
-     */
-    schemas?: ReadonlyMap<string, SchemaValidator>;
-    /**
-     * Per-collection {@link IndexDefinition} map. Each entry is one
-     * collection's declared indexes. The auto-planner
-     * ({@link planQuery} in `./query-planner.ts`) consults this map
-     * at read time; declaring an index here is the only way to bias
-     * the read path — there is no manual-hint API on `Query<T>`.
-     * The adapter layer (or app code) flattens
-     * `BaerlyConfig.collections[*].indexes` into this map before
-     * constructing the `Db`. `undefined` or an empty map means "no
-     * indexes declared" — every read falls through to the
-     * snapshot+log fold at zero overhead.
-     */
-    indexes?: ReadonlyMap<string, ReadonlyArray<IndexDefinition>>;
     /**
      * Optional. Pass the value returned by {@link defineConfig} from
      * your `baerly.config.ts`. Two things happen:
@@ -256,16 +171,10 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
      * 1. **Types.** `db.table(name)` narrows `name` to declared
      *    collection names and infers the row type from
      *    `collections[name].schema` via {@link RowOf}.
-     * 2. **Runtime.** When `schemas` / `indexes` are not explicitly
-     *    passed, `Db.create` derives them from `config.collections`
-     *    via {@link collectionsToMaps}. Schema validation and index
-     *    routing are wired automatically — no second hand-off step.
-     *
-     * Explicit `schemas` / `indexes` overrides the derived maps. The
-     * adapter hot path (`adapter-node`, `adapter-cloudflare`) pre-
-     * flattens once at factory time and passes the maps explicitly
-     * to keep per-request `Db.create` allocation-free; app and test
-     * code can pass `config` alone.
+     * 2. **Runtime.** Schemas and indexes are derived from
+     *    `config.collections` via {@link collectionsToMaps}. Schema
+     *    validation and index routing are wired automatically — no
+     *    second hand-off step.
      *
      * @example
      * ```ts
@@ -285,21 +194,17 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
     const { storage, app, tenant } = config;
     assertKeySegment(app, "app", "Db.create");
     assertKeySegment(tenant, "tenant", "Db.create");
-    // Derive runtime maps from `config` when caller hasn't supplied
-    // explicit `schemas`/`indexes`. Adapters pre-flatten once and
-    // pass explicit maps for the hot path; app/test code passes
-    // `config` alone and skips the extra hand-off.
+    // Always derive runtime maps from `config.collections`. Absent
+    // config ⇒ empty maps (no schemas, no indexes); the kernel
+    // behaves the same as a config with `collections: {}`.
     const derived =
-      config.config !== undefined && (config.schemas === undefined || config.indexes === undefined)
-        ? collectionsToMaps(config.config.collections)
-        : undefined;
+      config.config !== undefined ? collectionsToMaps(config.config.collections) : undefined;
     return new Db<TConfig>(
       app,
       tenant,
       storage,
-      config.metrics ?? noopMetricsRecorder,
-      config.schemas ?? derived?.schemas ?? new Map(),
-      config.indexes ?? derived?.indexes ?? new Map(),
+      derived?.schemas ?? new Map(),
+      derived?.indexes ?? new Map(),
     );
   }
 
@@ -360,7 +265,7 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
       storage: this.#storage,
       tablePrefix: `${physicalPrefixFor(this.app, this.tenant)}manifests/${name}`,
       tableName: name,
-      metrics: this.#metrics,
+      metrics: getKernelMetricsRecorder(),
       indexes: this.#indexes.get(name) ?? [],
       ...(schema !== undefined ? { schema } : {}),
     };
@@ -427,7 +332,7 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
       tablePrefix,
       tableName: table,
       txCtx,
-      metrics: this.#metrics,
+      metrics: getKernelMetricsRecorder(),
       indexes,
       ...(schema !== undefined ? { schema } : {}),
     });
@@ -460,7 +365,7 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
     const writer = new Writer({
       storage: this.#storage,
       currentJsonKey: `${tablePrefix}/current.json`,
-      options: { metrics: this.#metrics, indexes },
+      options: { metrics: getKernelMetricsRecorder(), indexes },
     });
     await writer.commitBatch(inputs);
   }

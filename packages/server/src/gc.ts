@@ -56,13 +56,13 @@ import {
   decodeJsonBytes,
   encodeJsonBytes,
   logSeqStartOf,
-  noopMetricsRecorder,
   readCurrentJson,
   readGcPending,
   teeMetricsRecorders,
   versionFromContent,
 } from "@baerly/protocol";
 import { loadSnapshotAsMap } from "./snapshot.ts";
+import { getKernelMetricsRecorder } from "./observability/kernel-recorder.ts";
 import { withObservability } from "./observability/index.ts";
 
 /**
@@ -74,17 +74,6 @@ import { withObservability } from "./observability/index.ts";
  */
 export interface RunGcOptions {
   readonly signal?: AbortSignal;
-
-  /**
-   * Optional metrics sink. Defaults to {@link noopMetricsRecorder}.
-   * After every pass (including the CAS-lost arm) emits:
-   *   - `db.orphan.candidate_count` gauge (post-pass `pendingDepth`).
-   *   - `db.gc.entries_swept_per_second` gauge (sweep count this
-   *     pass; downstream aggregation rate-converts).
-   *   - `db.gc.swept_total` counter, labelled by `reason` (one
-   *     emission per non-zero reason group).
-   */
-  readonly metrics?: MetricsRecorder;
 }
 
 /**
@@ -187,8 +176,10 @@ const runGcInner = async (
   const maxSweeps = internal.maxSweepsPerRun ?? DEFAULT_MAX_SWEEPS;
   const now = internal.now ?? ((): Date => new Date());
   // Tee per-run observability recorder onto the operator's sink (see
-  // `compactor.ts`'s identical pattern for rationale).
-  const metrics = teeMetricsRecorders(options.metrics ?? noopMetricsRecorder, obsRecorder);
+  // `compactor.ts`'s identical pattern for rationale). The operator
+  // recorder lives in the kernel singleton (set once at adapter boot
+  // by `setKernelMetricsRecorder`).
+  const metrics = teeMetricsRecorders(getKernelMetricsRecorder(), obsRecorder);
   const tablePrefix = currentJsonKey.slice(0, currentJsonKey.lastIndexOf("/"));
   const tableName = tablePrefix.slice(tablePrefix.lastIndexOf("/") + 1);
   const gcPendingKey = `${tablePrefix}/gc/pending.json`;
