@@ -205,10 +205,10 @@ export function baerlyNode(opts: BaerlyNodeOptions): BaerlyNodeHandle {
               ...(opts.metrics !== undefined && { metrics: opts.metrics }),
             });
           } catch (error) {
-            // Never re-throw from the scheduled callback. The
-            // maintenance canonical line
-            // (emitted by runScheduledMaintenance itself) already
-            // carries the outcome; we log to stderr as a backstop.
+            // Never re-throw from the scheduled callback — a transient
+            // storage hiccup must not crash the process or block
+            // sibling pairs. Errors throw to stderr; the platform's
+            // log aggregator picks them up.
             console.error(
               `baerlyNode maintenance tick failed for tenant=${tenant} collection=${collection}`,
               error,

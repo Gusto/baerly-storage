@@ -9,12 +9,14 @@ related: ["../contributing/conventions/observability.md", "../about/cost-model.m
 
 # Observability
 
-baerly-storage emits **one canonical log line per unit of work** —
-HTTP request, maintenance run, GC sweep, compactor run,
-`rebuildIndex` call — on stdout. Default level `info`, default
-sample rate `0.1`. Errors are always kept; maintenance always
-emits. The scaffolded templates wire this on day one; no code
-change required to opt in.
+baerly-storage emits **one canonical log line per HTTP request** on
+stdout. Default level `info`; every request emits one line.
+Background work (compactor / GC / `rebuildIndex` /
+`runScheduledMaintenance`) does NOT emit a canonical line — those
+ticks run unattended on a cron and their errors throw to the
+platform (Cloudflare dashboard, Node process logs). The scaffolded
+templates wire the HTTP path on day one; no code change required to
+opt in.
 
 This doc is for the operator deploying baerly. For the contributor
 adding a new code path, see
@@ -65,7 +67,6 @@ column-aligned, one line per unit-of-work. Sample lines:
 12:34:57 POST  /v1/t/tickets                201  20ms  req=cd34ef56 class_a=3 class_b=0 wamp=7
 12:34:58 POST  /v1/t/tickets                409   8ms  req=ef56gh78 class_a=1 class_b=0 412=1 outcome=conflict
 12:34:59 GET   /v1/t/tickets                200   0ms  req=gh78ij90 cache=hit
-12:35:00 ⚙ maintenance                                 142ms  class_a=4
 ```
 
 The TTY shape is presentation only — the underlying fields are the
@@ -81,13 +82,10 @@ wiring.
 
 ## The canonical log line
 
-One event per unit of work. The kernel emits one line for each:
-
-- HTTP request (every `/v1/*` route).
-- Maintenance run (the scheduled compactor + GC cycle).
-- GC sweep.
-- Compactor run.
-- `rebuildIndex` admin call.
+One event per HTTP request. The kernel emits one line on every
+`/v1/*` route. Background runs (compactor / GC / `rebuildIndex` /
+`runScheduledMaintenance`) emit no canonical line; their errors
+propagate to the platform.
 
 ### Field reference
 
@@ -116,32 +114,13 @@ Class A / Class B totals are the **load-bearing fields** —
 cost ceiling, and the canonical line is how you verify a deployed
 service stays under it.
 
-### Maintenance-specific fields
-
-The `maintenance` unit-of-work emits the fields above plus two
-explicit summary fields read off the `MaintenanceResult` returned
-by `runScheduledMaintenance`:
-
-| Field | Type | Meaning |
-|---|---|---|
-| `compact_written` | number | Log entries folded into the new snapshot this tick. `0` when the live tail was below `minEntriesToCompact`. |
-| `gc_swept` | number | Keys deleted this tick. `0` when no candidates had aged out. |
-
-The kernel still emits the recorder-bag fields (`db.compact.entries_folded_count` / `_sum`,
-`db.manifest.lag_window_depth`, `db.orphan.candidate_count`,
-`db.gc.entries_swept_per_second`, `db.gc.swept_total`)
-alongside — useful for dashboards. The two explicit fields above
-are the at-a-glance summary so a log scan answers "did anything
-happen this tick?" without decoding `_count` / `_sum` / `_total`
-suffixes.
-
 ## Log levels
 
 | Level | What lands |
 |---|---|
 | `error` | `error` records only. The canonical line emits at `error` level when `status >= 500` or an exception was thrown. |
 | `warn` | Adds 4xx canonical lines and explicit `warn` records. |
-| `info` (default) | Adds 2xx canonical lines, maintenance runs, lifecycle events. |
+| `info` (default) | Adds 2xx canonical lines and lifecycle events. |
 | `debug` | Adds per-storage-op events (one per `get` / `put` / `delete` / `list`). **High volume**; off in production. Useful for diagnosing a single slow request. |
 
 Toggle via the `LOG_LEVEL` env var (both templates) or the typed

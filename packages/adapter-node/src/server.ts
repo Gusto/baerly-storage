@@ -175,9 +175,7 @@ export interface NodeMaintenanceOptions {
   /**
    * Operator's long-term {@link MetricsRecorder}. Defaults to
    * {@link noopMetricsRecorder}. Receives every compactor + GC
-   * emission verbatim alongside the canonical-line bag
-   * created by `withObservability("maintenance", ...)` inside
-   * `runScheduledMaintenance`.
+   * emission verbatim.
    */
   readonly metrics?: MetricsRecorder;
 }
@@ -208,12 +206,11 @@ export interface NodeMaintenanceOptions {
  */
 export const runMaintenanceTick = async (opts: NodeMaintenanceOptions): Promise<void> => {
   // `teeRecorder` (ALS-aware) wraps the storage observer so storage
-  // metrics land in the operator's sink AND the active per-scope bag
-  // via ALS. `metrics:` to maintenance is the bare `operatorRecorder`
-  // — `runScheduledMaintenance`'s own `withObservability` opens the
-  // scope, and `compactInner` / `runGcInner` already tee operator
-  // with the scope's per-run recorder for canonical-line fill.
-  // Passing the ALS-aware wrapper here would double-write the bag.
+  // metrics land in the operator's sink AND, when called inside an
+  // HTTP context, the active per-request bag via ALS. Maintenance
+  // ticks run outside any HTTP scope so kernel emissions reach only
+  // the operator's sink — by design (no human reads cron-tick
+  // canonical lines).
   const operatorRecorder = opts.metrics ?? noopMetricsRecorder;
   const teeRecorder = alsAwareRecorder(operatorRecorder);
   setKernelMetricsRecorder(teeRecorder);

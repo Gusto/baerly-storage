@@ -34,7 +34,6 @@ export {
   type RebuildIndexResult,
   rebuildIndex,
 } from "./rebuild-index.ts";
-import { getCurrentContext, withObservability } from "./observability/index.ts";
 
 export interface MaintenanceArgs {
   readonly storage: Storage;
@@ -97,47 +96,20 @@ export interface MaintenanceResult {
  * await runScheduledMaintenance({ storage, currentJsonKey }, CLOUDFLARE_FREE_TIER);
  * ```
  */
-export const runScheduledMaintenance = (
+export const runScheduledMaintenance = async (
   args: MaintenanceArgs,
   options: MaintenanceOptions = {},
-): Promise<MaintenanceResult> =>
-  withObservability("maintenance", async () => {
-    // `compact()` and `runGc()` are nesting-aware: they inherit this
-    // scope's context+recorder via `withObservability`, so the per-run
-    // canonical-line bag fills automatically via `compactInner` /
-    // `runGcInner`'s own tee with `obsRecorder`. The operator's
-    // long-term sink is wired ambiently via
-    // `setKernelMetricsRecorder` at adapter boot — no per-call
-    // recorder forwarding needed.
-    const compactRes = await compact(args, {
-      ...options.compact,
-      ...(options.signal !== undefined && { signal: options.signal }),
-    });
-    const gcRes = await runGc(args, {
-      ...options.gc,
-      ...(options.signal !== undefined && { signal: options.signal }),
-    });
-
-    // Enrich the canonical line with operator-facing summary fields.
-    // The recorder-bag fields (`db.compact.entries_folded_count`,
-    // `db.gc.swept_total`, etc.) still land on the line via
-    // the per-run recorder's `summarize()`; these explicit numbers
-    // answer "did anything happen this tick?" without forcing the
-    // operator to decode `_count` / `_sum` / `_total` suffixes.
-    //
-    // - `compact_written`: count of log entries folded into the new
-    //   snapshot this pass (0 when the live tail was below
-    //   `minEntriesToCompact`).
-    // - `gc_swept`: count of keys deleted this pass (0 when no
-    //   candidates had aged out).
-    const fields = getCurrentContext()?.fields;
-    if (fields !== undefined) {
-      fields.set("compact_written", compactRes.entriesFolded);
-      fields.set("gc_swept", gcRes.swept);
-    }
-
-    return { compact: compactRes, gc: gcRes };
+): Promise<MaintenanceResult> => {
+  const compactRes = await compact(args, {
+    ...options.compact,
+    ...(options.signal !== undefined && { signal: options.signal }),
   });
+  const gcRes = await runGc(args, {
+    ...options.gc,
+    ...(options.signal !== undefined && { signal: options.signal }),
+  });
+  return { compact: compactRes, gc: gcRes };
+};
 
 /**
  * Tuning profile for the 50-subrequest Cloudflare free-tier budget.

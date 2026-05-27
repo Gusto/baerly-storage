@@ -1,7 +1,7 @@
 import { BaerlyError } from "@baerly/protocol";
 import { reset, type LogRecord, type Sink } from "@logtape/logtape";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { flushCanonicalLine, serializeError, withObservability } from "./canonical.ts";
+import { flushCanonicalLine, serializeError } from "./canonical.ts";
 import { createObservabilityContext } from "./context.ts";
 import { configureObservability } from "./logger.ts";
 import { RequestScopedMetricsRecorder } from "./recorder.ts";
@@ -141,80 +141,14 @@ describe("flushCanonicalLine", () => {
     expect(err.message).toBe("CAS lost");
   });
 
-  test("routes to the right category per unit", () => {
+  test("routes the http unit to the baerly.http category", () => {
     flushCanonicalLine(createObservabilityContext(), new RequestScopedMetricsRecorder(), {
-      unit: "maintenance",
+      unit: "http",
       outcome: "ok",
+      status: 200,
     });
-    flushCanonicalLine(createObservabilityContext(), new RequestScopedMetricsRecorder(), {
-      unit: "compactor",
-      outcome: "ok",
-    });
-    expect(records.map((r) => r.category)).toEqual([
-      ["baerly", "maintenance"],
-      ["baerly", "compactor"],
-    ]);
-  });
-});
-
-describe("withObservability", () => {
-  let records: LogRecord[];
-  let sink: Sink;
-
-  beforeEach(async () => {
-    ({ records, sink } = collectingSink());
-    await configureObservability({ level: "debug", sink });
-  });
-
-  afterEach(async () => {
-    await reset();
-  });
-
-  test("flushes one canonical line on success and returns the body's value", async () => {
-    const result = await withObservability("maintenance", async (ctx, rec) => {
-      rec.counter("did_work", 1);
-      ctx.fields.set("phase", "compactor");
-      return 42;
-    });
-    expect(result).toBe(42);
     expect(records).toHaveLength(1);
-    const p = records[0]!.properties;
-    expect(p["outcome"]).toBe("ok");
-    expect(p["phase"]).toBe("compactor");
-    expect(p["did_work_total"]).toBe(1);
-  });
-
-  test("flushes one canonical line on error and re-throws", async () => {
-    const boom = new BaerlyError("Internal", "kaboom");
-    await expect(
-      withObservability("compactor", async () => {
-        throw boom;
-      }),
-    ).rejects.toBe(boom);
-
-    expect(records).toHaveLength(1);
-    expect(records[0]!.level).toBe("error");
-    expect(records[0]!.properties["outcome"]).toBe("error");
-    const err = records[0]!.properties["error"] as { code: string; message: string };
-    expect(err.code).toBe("Internal");
-    expect(err.message).toBe("kaboom");
-  });
-
-  test("propagates the observability context to the body", async () => {
-    await withObservability("gc", async (ctx) => {
-      expect(typeof ctx.request_id).toBe("string");
-      expect(ctx.request_id.length).toBeGreaterThan(0);
-    });
-  });
-
-  test("the body's recorder is the same instance attached to ctx.recorder", async () => {
-    await withObservability("maintenance", async (ctx, rec) => {
-      expect(rec).toBe(ctx.recorder);
-      rec.counter("via_body", 1);
-      // The same recorder is reachable from inside the body without
-      // closure capture (this is what adapters in Dispatch 4 rely on).
-      expect(ctx.recorder.snapshot().counters).toHaveLength(1);
-    });
+    expect(records[0]!.category).toEqual(["baerly", "http"]);
   });
 });
 

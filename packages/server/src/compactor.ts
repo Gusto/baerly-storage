@@ -42,21 +42,22 @@ import {
   encodeJsonBytes,
   logSeqStartOf,
   BaerlyError,
+  noopMetricsRecorder,
   readCurrentJson,
   snapshotHash,
   type Storage,
   type StoragePutOptions,
-  teeMetricsRecorders,
 } from "@baerly/protocol";
 import { walkLogRange } from "./log-walk.ts";
-import { getKernelMetricsRecorder } from "./observability/kernel-recorder.ts";
-import { withObservability } from "./observability/index.ts";
+import { getCurrentContext } from "./observability/index.ts";
 import {
   encodeSnapshotBody,
   loadSnapshotAsMap,
   type SnapshotBody,
   snapshotKey,
 } from "./snapshot.ts";
+
+const ctxMetrics = (): MetricsRecorder => getCurrentContext()?.recorder ?? noopMetricsRecorder;
 
 /**
  * Public configuration knobs for {@link compact}. All optional; the
@@ -148,20 +149,13 @@ const APPLICATION_JSON = "application/json";
  * if (res.written) console.log("snapshot landed at", res.newSnapshotKey);
  * ```
  */
-export const compact = (
+export const compact = async (
   args: {
     storage: Storage;
     /** Full bucket-relative key of the CAS pointer. */
     currentJsonKey: string;
   },
   options: CompactOptions = {},
-): Promise<CompactResult> =>
-  withObservability("compactor", (_ctx, recorder) => compactInner(args, options, recorder));
-
-const compactInner = async (
-  args: { storage: Storage; currentJsonKey: string },
-  options: CompactOptions,
-  obsRecorder: MetricsRecorder,
 ): Promise<CompactResult> => {
   const { storage, currentJsonKey } = args;
   // The internal cap fields ride on the same runtime object even
@@ -171,12 +165,6 @@ const compactInner = async (
   const internal = options as InternalCompactOptions;
   const maxPerRun = internal.maxEntriesPerRun ?? DEFAULT_MAX_PER_RUN;
   const minToCompact = options.minEntriesToCompact ?? DEFAULT_MIN_TO_COMPACT;
-  // Tee the per-run observability recorder onto the operator's sink
-  // so both the canonical line AND the operator's long-term recorder
-  // see this compactor pass's emissions. The operator's recorder
-  // lives in the kernel singleton (set once at adapter boot by
-  // `setKernelMetricsRecorder`).
-  const metrics = teeMetricsRecorders(getKernelMetricsRecorder(), obsRecorder);
   const tablePrefix = currentJsonKey.slice(0, currentJsonKey.lastIndexOf("/"));
   const tableName = tablePrefix.slice(tablePrefix.lastIndexOf("/") + 1);
 
@@ -331,6 +319,7 @@ const compactInner = async (
   // the per-run histogram sample. Metrics are in-memory only; they
   // add zero storage ops.
   const entriesFolded = foldEnd - logSeqStartBefore;
+  const metrics = ctxMetrics();
   metrics.histogram("db.compact.entries_folded", entriesFolded, { collection: tableName });
   metrics.gauge("db.manifest.lag_window_depth", current.next_seq - foldEnd, {
     collection: tableName,

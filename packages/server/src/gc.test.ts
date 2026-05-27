@@ -18,14 +18,10 @@ import {
   createGcPending,
   readGcPending,
 } from "@baerly/protocol";
-import { afterEach, describe, expect, test } from "vitest";
+import { describe, expect, test } from "vitest";
 import { compact, type InternalCompactOptions } from "./compactor.ts";
 import { type InternalRunGcOptions, runGc } from "./gc.ts";
-import { InMemoryMetricsRecorder } from "./_internal/in-memory-metrics.ts";
-import {
-  resetKernelMetricsRecorder,
-  setKernelMetricsRecorder,
-} from "./observability/kernel-recorder.ts";
+import { createObservabilityContext, runWithContext } from "./observability/index.ts";
 import { Writer } from "./writer.ts";
 
 const bootstrap = async (storage: MemoryStorage, key: string): Promise<void> => {
@@ -43,8 +39,6 @@ const PENDING_KEY = "app/t/tenant/x/manifests/c/gc/pending.json";
 const COLL = "c";
 
 describe("runGc", () => {
-  afterEach(() => resetKernelMetricsRecorder());
-
   test("returns zeros and bootstraps an empty pending.json on first run", async () => {
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
@@ -341,36 +335,46 @@ describe("runGc", () => {
       minEntriesToCompact: 10,
       maxEntriesPerRun: 40,
     } as InternalCompactOptions);
-    const metrics = new InMemoryMetricsRecorder();
-    setKernelMetricsRecorder(metrics);
-    const r = await runGc({ storage: s, currentJsonKey: KEY }, {
-      graceMillis: 0,
-      maxSweepsPerRun: 40,
-    } as InternalRunGcOptions);
+    const ctx = createObservabilityContext();
+    let r!: Awaited<ReturnType<typeof runGc>>;
+    await runWithContext(ctx, async () => {
+      r = await runGc({ storage: s, currentJsonKey: KEY }, {
+        graceMillis: 0,
+        maxSweepsPerRun: 40,
+      } as InternalRunGcOptions);
+    });
     expect(r.marked.stale_log).toBe(40);
     expect(r.swept).toBe(40);
+    const snap = ctx.recorder.snapshot();
     // Post-sweep, pendingDepth = 0 (everything swept).
-    expect(metrics.lastGauge("db.orphan.candidate_count")).toBe(0);
+    const candidate = snap.gauges.findLast((g) => g.name === "db.orphan.candidate_count");
+    expect(candidate?.value).toBe(0);
     // Sweep count is the swept-per-pass observation.
-    expect(metrics.lastGauge("db.gc.entries_swept_per_second")).toBe(40);
+    const sweptGauge = snap.gauges.findLast((g) => g.name === "db.gc.entries_swept_per_second");
+    expect(sweptGauge?.value).toBe(40);
     // Counter labelled by reason; one bucket since all were stale-log.
-    expect(metrics.sumCounter("db.gc.swept_total")).toBe(40);
-    const swept = metrics.counters.find((c) => c.name === "db.gc.swept_total");
+    const swept = snap.counters.find((c) => c.name === "db.gc.swept_total");
+    expect(swept?.value).toBe(40);
     expect(swept?.labels["reason"]).toBe("stale-log");
   });
 
   test("emits zero-sweep observations when nothing swept this pass", async () => {
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
-    const metrics = new InMemoryMetricsRecorder();
-    setKernelMetricsRecorder(metrics);
-    const r = await runGc({ storage: s, currentJsonKey: KEY });
+    const ctx = createObservabilityContext();
+    let r!: Awaited<ReturnType<typeof runGc>>;
+    await runWithContext(ctx, async () => {
+      r = await runGc({ storage: s, currentJsonKey: KEY });
+    });
     expect(r.swept).toBe(0);
+    const snap = ctx.recorder.snapshot();
     // Sweep gauge still emitted (operator wants 0-state visibility).
-    expect(metrics.lastGauge("db.gc.entries_swept_per_second")).toBe(0);
-    expect(metrics.lastGauge("db.orphan.candidate_count")).toBe(0);
+    const sweptGauge = snap.gauges.findLast((g) => g.name === "db.gc.entries_swept_per_second");
+    expect(sweptGauge?.value).toBe(0);
+    const candidate = snap.gauges.findLast((g) => g.name === "db.orphan.candidate_count");
+    expect(candidate?.value).toBe(0);
     // No swept_total counter emitted on zero-sweep runs (avoid noise).
-    expect(metrics.sumCounter("db.gc.swept_total")).toBe(0);
+    expect(snap.counters.find((c) => c.name === "db.gc.swept_total")).toBeUndefined();
   });
 
   test("returns success on CAS-lost on pending.json (best-effort pendingDepth)", async () => {

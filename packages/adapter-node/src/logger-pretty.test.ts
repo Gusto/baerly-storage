@@ -75,19 +75,6 @@ describe("prettyConsoleSink", () => {
     expect(line).toContain("412=1");
   });
 
-  test("renders a maintenance line with ⚙ prefix and duration", () => {
-    getLogger(CATEGORY.maintenance).info("canonical", {
-      request_id: "ef56gh78-aaaa-bbbb-cccc-dddddddddddd",
-      duration_ms: 142,
-      outcome: "ok",
-      "db.storage.class_a_ops_total": 4,
-    });
-    const line = spy.mock.calls[0]![0] as string;
-    expect(line).toMatch(/maintenance/);
-    expect(line).toContain("142ms");
-    expect(line).toContain("class_a=4");
-  });
-
   test("cache_status: 'hit' → cache=hit in tail", () => {
     getLogger(CATEGORY.http).info("canonical", {
       request_id: "ab12cd34-ef56-7890-abcd-ef1234567890",

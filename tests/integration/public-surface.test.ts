@@ -97,7 +97,7 @@ import {
   configureObservability,
   createObservabilityContext,
   getLogger,
-  withObservability,
+  withHttpObservability,
 } from "baerly-storage/observability";
 
 describe("baerly-storage/observability", () => {
@@ -105,7 +105,7 @@ describe("baerly-storage/observability", () => {
     expect(typeof configureObservability).toBe("function");
     expect(typeof createObservabilityContext).toBe("function");
     expect(typeof getLogger).toBe("function");
-    expect(typeof withObservability).toBe("function");
+    expect(typeof withHttpObservability).toBe("function");
   });
 });
 

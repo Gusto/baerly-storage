@@ -36,16 +36,12 @@ import {
   BaerlyError,
   type DocumentData,
   logSeqStartOf,
-  type MetricsRecorder,
-  noopMetricsRecorder,
   readCurrentJson,
   type Storage,
-  teeMetricsRecorders,
 } from "@baerly/protocol";
 import { loadSnapshotAsMap } from "./snapshot.ts";
 import { allIndexKeysFor, type IndexDefinition, indexKeyPrefix } from "./indexes.ts";
 import { foldLogEntriesOnto, walkLogRange } from "./log-walk.ts";
-import { withObservability } from "./observability/index.ts";
 
 const EMPTY_BODY = new Uint8Array(0);
 const APPLICATION_JSON = "application/json";
@@ -90,13 +86,6 @@ export interface RebuildIndexResult {
  */
 export interface RebuildIndexOptions {
   /**
-   * Metrics sink. Reserved for a follow-up that wires
-   * sweep counters (`db.gc.swept_total`-style emissions) on the
-   * rebuild path. This commit only accepts the recorder; emission
-   * lands in a later dispatch. Defaults to no sink.
-   */
-  readonly metrics?: MetricsRecorder;
-  /**
    * Cancellation signal. Forwarded to every storage `list` call so
    * long-running rebuilds over large collections can be cut short
    * by admin tooling. Storage `get` / `put` / `delete` calls inside
@@ -139,30 +128,12 @@ export interface RebuildIndexOptions {
  *   violation (snapshot hash mismatch, missing log entry inside
  *   `[log_seq_start, next_seq)`).
  */
-export const rebuildIndex = (
+export const rebuildIndex = async (
   storage: Storage,
   currentJsonKey: string,
   def: IndexDefinition,
   opts: RebuildIndexOptions = {},
-): Promise<RebuildIndexResult> =>
-  withObservability("rebuild", (_ctx, recorder) =>
-    rebuildIndexInner(storage, currentJsonKey, def, opts, recorder),
-  );
-
-const rebuildIndexInner = async (
-  storage: Storage,
-  currentJsonKey: string,
-  def: IndexDefinition,
-  opts: RebuildIndexOptions,
-  _obsRecorder: MetricsRecorder,
 ): Promise<RebuildIndexResult> => {
-  // `rebuildIndex` doesn't currently emit metrics through its
-  // options-bag recorder (Dispatch 1 reserved the field but the
-  // emission lands later). Tee anyway so future emissions flow into
-  // both the observability bag AND any operator-supplied recorder
-  // without further refactoring.
-  void teeMetricsRecorders(opts.metrics ?? noopMetricsRecorder, _obsRecorder);
-
   const read = await readCurrentJson(storage, currentJsonKey);
   if (read === null) {
     throw new BaerlyError(

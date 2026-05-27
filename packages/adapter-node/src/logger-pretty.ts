@@ -77,22 +77,15 @@ const renderCanonical = (record: LogRecord, pc: PicoColors, plain: boolean): str
   const durationStr = `${Math.round(duration)}ms`.padStart(5);
 
   const status = numProp(props, "status");
-  const method = pickProp(props, "method");
-  const path = pickProp(props, "path");
+  const method =
+    typeof pickProp(props, "method") === "string" ? String(pickProp(props, "method")) : "";
+  const path = typeof pickProp(props, "path") === "string" ? String(pickProp(props, "path")) : "";
 
-  let prefix: string;
-  if (typeof method === "string" && typeof path === "string") {
-    const m = method.padEnd(METHOD_W);
-    const p = path.length > PATH_W ? `${path.slice(0, PATH_W - 1)}…` : path.padEnd(PATH_W);
-    const statusStr = status === undefined ? "   " : String(status);
-    const coloredStatus = colorStatus(statusStr, status, plain, pc);
-    prefix = `${m}${p}  ${coloredStatus}  ${durationStr}`;
-  } else {
-    const unit = record.category.join(".").replace(/^baerly\./, "");
-    const icon = plain ? "* " : "⚙ ";
-    const head = `${icon}${unit}`.padEnd(METHOD_W + PATH_W);
-    prefix = `${head}      ${durationStr}`;
-  }
+  const m = method.padEnd(METHOD_W);
+  const p = path.length > PATH_W ? `${path.slice(0, PATH_W - 1)}…` : path.padEnd(PATH_W);
+  const statusStr = status === undefined ? "   " : String(status);
+  const coloredStatus = colorStatus(statusStr, status, plain, pc);
+  const prefix = `${m}${p}  ${coloredStatus}  ${durationStr}`;
 
   const tail: string[] = [];
   if (reqId) {

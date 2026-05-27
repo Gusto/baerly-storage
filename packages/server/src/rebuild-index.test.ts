@@ -21,7 +21,6 @@ import {
   type Storage,
 } from "@baerly/protocol";
 import { allIndexKeysFor, type IndexDefinition } from "./indexes.ts";
-import { InMemoryMetricsRecorder } from "./_internal/in-memory-metrics.ts";
 import { rebuildIndex } from "./rebuild-index.ts";
 import { Writer } from "./writer.ts";
 
@@ -176,30 +175,6 @@ describe("rebuildIndex — error surface", () => {
 });
 
 describe("rebuildIndex — options bag", () => {
-  test("accepts a MetricsRecorder without throwing (additive signature)", async () => {
-    const storage = new MemoryStorage();
-    await provision(storage);
-    const writer = new Writer({
-      storage,
-      currentJsonKey: CURRENT_JSON_KEY,
-      options: { indexes: [BY_STATUS] },
-    });
-    await writer.commit({
-      op: "I",
-      collection: COLLECTION,
-      docId: "a",
-      body: { _id: "a", status: "open" },
-    });
-    const metrics = new InMemoryMetricsRecorder();
-    const result = await rebuildIndex(storage, CURRENT_JSON_KEY, BY_STATUS, { metrics });
-    // Signature compiles; no current metric emissions required from
-    // rebuildIndex in this dispatch (the sweep-counter wiring lands
-    // later). The call body MUST still produce a sane result.
-    expect(result.added).toBe(0);
-    expect(result.removed).toBe(0);
-    expect(result.kept).toBe(1);
-  });
-
   test("accepts an AbortSignal in the options bag (additive signature)", async () => {
     const storage = new MemoryStorage();
     await provision(storage);

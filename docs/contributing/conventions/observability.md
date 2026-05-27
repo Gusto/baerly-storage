@@ -14,15 +14,22 @@ counterpart is [`docs/observability.md`](../../guide/observability.md).
 
 ## The one rule
 
-**Every unit of work emits one canonical line.** A unit is an HTTP
-request, a maintenance run, a GC sweep, a compactor run, or a
-`rebuildIndex` call. The kernel emits the line; you don't.
+**Every HTTP request emits one canonical line.** The kernel emits it
+on the request boundary; you don't.
 
-Direct `Db` calls outside an HTTP request or `withObservability`
-scope — e.g. a `baerlyDev()` seed callback that calls
-`db.table().insert()` from inside the Vite plugin — don't emit a
-canonical line on their own. The unit boundary lives on the wrapping
-HTTP request (or `withObservability` scope), not on the `Db` method.
+Maintenance ticks (compactor, GC, `rebuildIndex`, `runScheduledMaintenance`)
+emit NO canonical line — there's no human reading cron-tick logs on a
+15-user app, and errors throw to the platform (Cloudflare dashboard,
+Node process logs). Their per-emission metrics still flow into the
+canonical line when called from within an HTTP scope (e.g. an admin
+route that triggers `rebuildIndex`); outside any HTTP scope they reach
+only the operator's `MetricsRecorder` (when one is wired) or the no-op
+default.
+
+Direct `Db` calls outside an HTTP request — e.g. a `baerlyDev()` seed
+callback that calls `db.table().insert()` from inside the Vite
+plugin — don't emit a canonical line on their own. The unit boundary
+lives on the wrapping HTTP request, not on the `Db` method.
 Field-setters like `getCurrentContext()?.fields.set(...)` are no-ops
 in that mode, and metrics that attach to the canonical line (e.g.
 `db.write.class_a_ops_per_logical_write`) won't surface — so don't
@@ -46,7 +53,7 @@ If you want extra detail on a code path, use `debug`:
 ```ts
 import { CATEGORY, getLogger } from "../observability";
 
-getLogger(CATEGORY.maintenance).debug("step", { collection, attempt });
+getLogger(CATEGORY.storage).debug("step", { collection, attempt });
 ```
 
 DEBUG is below the `info` threshold in production; the formatting
@@ -71,37 +78,36 @@ in. `null` is fine.
 The context is `undefined` when no `runWithContext` scope is active
 — optional-chain the access. Library code must work in both modes.
 
-## When to create a new `withObservability` scope
+## Background entry points
 
-Whenever you add a new top-level entry point that does meaningful
-work and isn't already wrapped:
-
-- Admin commands (e.g. `baerly admin rebuild-index`).
-- Batch operations triggered out-of-band.
-- Long-running background jobs.
-
-`withObservability` handles the recorder, the sample decision, and
-the canonical-line flush:
+There is no `withObservability` wrapper for background work — only
+HTTP requests get a canonical line, and they are wrapped by the
+adapter. Background entry points (admin commands, batch jobs,
+maintenance ticks) call the kernel primitives directly:
 
 ```ts
-import { withObservability } from "../observability";
+import { rebuildIndex } from "baerly-storage/maintenance";
 
-await withObservability("rebuild", async (ctx, recorder) => {
-  ctx.fields.set("collection", collection);
-  await runTheWork();
-});
+await rebuildIndex(storage, currentJsonKey, def);
 ```
 
-The body sees the context positionally for ergonomic field-setting,
-but `getCurrentContext()` works inside any descendant too — async
-propagation is via `AsyncLocalStorage`.
+Errors propagate to the platform's process / Worker log. Metric
+emissions reach the operator's `MetricsRecorder` when one is wired
+on the surrounding scope; otherwise they fall through to the no-op
+default.
 
-**Nesting is a no-op.** If a `withObservability` call is made
-inside an outer scope (e.g. `runScheduledMaintenance` calling
-`compact()` and `runGc()`), the inner call inherits the outer
-ctx+recorder and emits no separate canonical line — the outer
-scope owns it. "One unit-of-work → exactly one canonical line"
-is a hard invariant.
+If you need per-emission visibility during local testing, construct
+an `ObservabilityContext` and wrap the work in `runWithContext`:
+
+```ts
+import { createObservabilityContext, runWithContext } from "../observability";
+
+const ctx = createObservabilityContext();
+await runWithContext(ctx, async () => {
+  await rebuildIndex(storage, currentJsonKey, def);
+});
+console.log(ctx.recorder.snapshot());
+```
 
 ## When to use DEBUG
 

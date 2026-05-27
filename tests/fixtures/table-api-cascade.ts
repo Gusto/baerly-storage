@@ -29,6 +29,7 @@ import {
   type DocumentData,
   type LogEntry,
   BaerlyError,
+  noopMetricsRecorder,
   type SchemaValidator,
   type Storage,
   createCurrentJson,
@@ -36,9 +37,12 @@ import {
 } from "@baerly/protocol";
 import { Db } from "@baerly/server";
 import { compact, runGc } from "@baerly/server/maintenance";
-import { resetKernelMetricsRecorder, setKernelMetricsRecorder } from "@baerly/server/observability";
 import {
-  InMemoryMetricsRecorder,
+  alsAwareRecorder,
+  createObservabilityContext,
+  runWithContext,
+} from "@baerly/server/observability";
+import {
   type InternalCompactOptions,
   type InternalRunGcOptions,
   Writer,
@@ -541,32 +545,32 @@ const runGcCascade = async (
 
 /**
  * [metrics] Full lifecycle cycle (writes + compact + runGc) wired
- * through an {@link InMemoryMetricsRecorder} — the six load-bearing
- * metric names MUST appear in the recorder. This runs across
- * every adapter via the variant table — the assertion is "the
- * emission sites fire correctly on every {@link Storage} backend."
+ * through a per-request observability context — the six load-bearing
+ * metric names MUST appear in the context's recorder. This runs
+ * across every adapter via the variant table — the assertion is
+ * "the emission sites fire correctly on every {@link Storage}
+ * backend."
  *
- * The recorder is installed via {@link setKernelMetricsRecorder}
- * (the same seam adapters use at boot) so Writer / compactor / GC
- * pick it up via `getKernelMetricsRecorder()`. Restored to the noop
- * default on exit so the variant ring doesn't leak state.
+ * Writer / compactor / GC emit via `getCurrentContext()?.recorder`,
+ * so wrapping the whole pass in `runWithContext(ctx, ...)` is the
+ * test-side seam.
  */
 const runMetricsCascade = async (storage: Storage, app: string, tenant: string): Promise<void> => {
   const t = freshTableName("metrics");
   await provision(storage, app, tenant, t);
   const currentJsonKey = `app/${app}/tenant/${tenant}/manifests/${t}/current.json`;
-  const metrics = new InMemoryMetricsRecorder();
-  // Compact/GC read their recorder from the kernel singleton
-  // (post-Phase-1); Writer still accepts the recorder via
-  // WriterOptions. Wire both so this fixture exercises all three
-  // emission sites with one recorder.
-  setKernelMetricsRecorder(metrics);
-  try {
-    // 100 writes through Writer with the recorder wired.
+  const ctx = createObservabilityContext();
+  // Writer reads its recorder from constructor options; we wire an
+  // ALS-aware shim so its emissions reach ctx.recorder when the
+  // commit runs inside `runWithContext`. Cut 6 collapses Writer to
+  // the same `getCurrentContext()?.recorder` lookup compactor/gc
+  // already use, removing this seam.
+  const writerMetrics = alsAwareRecorder(noopMetricsRecorder);
+  await runWithContext(ctx, async () => {
     const writer = new Writer({
       storage,
       currentJsonKey,
-      options: { metrics },
+      options: { metrics: writerMetrics },
     });
     for (let i = 0; i < 100; i++) {
       await writer.commit({
@@ -586,17 +590,23 @@ const runMetricsCascade = async (storage: Storage, app: string, tenant: string):
       maxSweepsPerRun: 100,
       maxMarksPerRun: 100,
     } as InternalRunGcOptions);
+  });
 
-    // The six load-bearing metric names per the ticket.
-    expect(metrics.histogramValues("db.write.class_a_ops_per_logical_write").length).toBe(100);
-    expect(metrics.histogramValues("db.compact.entries_folded").length).toBeGreaterThan(0);
-    expect(metrics.lastGauge("db.manifest.lag_window_depth")).toBeDefined();
-    expect(metrics.lastGauge("db.orphan.candidate_count")).toBeDefined();
-    expect(metrics.lastGauge("db.gc.entries_swept_per_second")).toBeDefined();
-    expect(metrics.sumCounter("db.gc.swept_total")).toBeGreaterThan(0);
-  } finally {
-    resetKernelMetricsRecorder();
-  }
+  const snap = ctx.recorder.snapshot();
+  const histogramCount = (name: string): number =>
+    snap.histograms.filter((h) => h.name === name).length;
+  const lastGaugeValue = (name: string): number | undefined =>
+    snap.gauges.findLast((g) => g.name === name)?.value;
+  const sumCounter = (name: string): number =>
+    snap.counters.filter((c) => c.name === name).reduce((acc, c) => acc + c.value, 0);
+
+  // The six load-bearing metric names per the ticket.
+  expect(histogramCount("db.write.class_a_ops_per_logical_write")).toBe(100);
+  expect(histogramCount("db.compact.entries_folded")).toBeGreaterThan(0);
+  expect(lastGaugeValue("db.manifest.lag_window_depth")).toBeDefined();
+  expect(lastGaugeValue("db.orphan.candidate_count")).toBeDefined();
+  expect(lastGaugeValue("db.gc.entries_swept_per_second")).toBeDefined();
+  expect(sumCounter("db.gc.swept_total")).toBeGreaterThan(0);
 };
 
 /**

@@ -1,16 +1,14 @@
 /**
  * Canonical-log-line flusher.
  *
- * One unit-of-work — an HTTP request, a maintenance tick, a GC
- * sweep, a rebuild run — emits exactly one canonical line at its
- * end. The line carries: the request id, the duration, the
- * outcome string, the HTTP status (when applicable), every entry
- * the per-request {@link RequestScopedMetricsRecorder} accumulated,
- * every entry the {@link ObservabilityContext.fields} bag picked
- * up along the way, and a redacted error structure on the failure
- * path.
+ * One HTTP request emits exactly one canonical line at its end. The
+ * line carries: the request id, the duration, the outcome string,
+ * the HTTP status, every entry the per-request
+ * {@link RequestScopedMetricsRecorder} accumulated, every entry the
+ * {@link ObservabilityContext.fields} bag picked up along the way,
+ * and a redacted error structure on the failure path.
  *
- * Every unit-of-work emits a line; level is computed from
+ * Every HTTP request emits a line; level is computed from
  * status/error.
  *
  * Level mapping at emit time:
@@ -23,10 +21,9 @@
 
 import { BaerlyError } from "@baerly/protocol";
 import { errorEnvelope } from "../contract.ts";
-import { CATEGORY, getLogger, type CategoryName } from "./logger.ts";
+import { CATEGORY, getLogger } from "./logger.ts";
 import {
   createObservabilityContext,
-  getCurrentContext,
   runWithContext,
   type ObservabilityContext,
 } from "./context.ts";
@@ -34,7 +31,7 @@ import { deriveOutcome } from "./derive-outcome.ts";
 import type { RequestScopedMetricsRecorder } from "./recorder.ts";
 
 /** Discriminator for the canonical line's `category` derivation. */
-export type Unit = "http" | "maintenance" | "compactor" | "gc" | "rebuild";
+export type Unit = "http";
 
 /** Options accepted by {@link flushCanonicalLine}. */
 export interface FlushCanonicalLineOptions {
@@ -48,14 +45,6 @@ export interface FlushCanonicalLineOptions {
   /** Caller-supplied extra fields, spread onto the line last (override fields/summary). */
   readonly extra?: Readonly<Record<string, unknown>>;
 }
-
-const UNIT_TO_CATEGORY: Readonly<Record<Unit, CategoryName>> = {
-  http: CATEGORY.http,
-  maintenance: CATEGORY.maintenance,
-  compactor: CATEGORY.compactor,
-  gc: CATEGORY.gc,
-  rebuild: CATEGORY.rebuild,
-};
 
 /**
  * Emit (or suppress) the canonical line for this unit-of-work.
@@ -71,7 +60,7 @@ export const flushCanonicalLine = (
 ): void => {
   const level = pickLevel(opts);
   const properties = buildProperties(ctx, recorder, opts, level);
-  const logger = getLogger(UNIT_TO_CATEGORY[opts.unit]);
+  const logger = getLogger(CATEGORY.http);
 
   switch (level) {
     case "error": {
@@ -86,46 +75,6 @@ export const flushCanonicalLine = (
       logger.info("canonical", properties);
       return;
     }
-  }
-};
-
-/**
- * Wrap a non-HTTP unit-of-work in a per-request context + recorder,
- * flush the canonical line on completion, and re-throw any error
- * after flushing.
- *
- * Nesting-aware: when an outer context is already active (e.g.
- * `runScheduledMaintenance` calling `compact()` / `runGc()`, or a
- * caller wrapping a primitive inside their own scope), this just
- * runs `fn` against the outer ctx+recorder and emits NO separate
- * canonical line — the outer scope owns the line. The invariant is
- * "one unit-of-work, one canonical line"; a nested primitive call
- * is part of the outer unit-of-work, not a unit-of-work of its own.
- */
-export const withObservability = async <T>(
-  unit: Exclude<Unit, "http">,
-  fn: (ctx: ObservabilityContext, recorder: RequestScopedMetricsRecorder) => Promise<T>,
-): Promise<T> => {
-  const outer = getCurrentContext();
-  if (outer !== undefined) {
-    // Nested call — inherit outer ctx+recorder, do not flush.
-    return fn(outer, outer.recorder);
-  }
-
-  const ctx = createObservabilityContext();
-
-  // The recorder lives on the context so adapters (and any code
-  // reaching `getCurrentContext()`) can find it; the body callback
-  // also receives it positionally for ergonomic emission.
-  const recorder = ctx.recorder;
-
-  try {
-    const result = await runWithContext(ctx, () => fn(ctx, recorder));
-    flushCanonicalLine(ctx, recorder, { unit, outcome: "ok" });
-    return result;
-  } catch (error) {
-    flushCanonicalLine(ctx, recorder, { unit, outcome: "error", error: error });
-    throw error;
   }
 };
 

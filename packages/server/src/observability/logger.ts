@@ -56,10 +56,6 @@ import {
  */
 export const CATEGORY = {
   http: ["baerly", "http"],
-  maintenance: ["baerly", "maintenance"],
-  compactor: ["baerly", "compactor"],
-  gc: ["baerly", "gc"],
-  rebuild: ["baerly", "rebuild"],
   storage: ["baerly", "storage"],
 } as const;
 

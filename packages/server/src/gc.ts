@@ -56,14 +56,15 @@ import {
   decodeJsonBytes,
   encodeJsonBytes,
   logSeqStartOf,
+  noopMetricsRecorder,
   readCurrentJson,
   readGcPending,
-  teeMetricsRecorders,
   versionFromContent,
 } from "@baerly/protocol";
 import { loadSnapshotAsMap } from "./snapshot.ts";
-import { getKernelMetricsRecorder } from "./observability/kernel-recorder.ts";
-import { withObservability } from "./observability/index.ts";
+import { getCurrentContext } from "./observability/index.ts";
+
+const ctxMetrics = (): MetricsRecorder => getCurrentContext()?.recorder ?? noopMetricsRecorder;
 
 /**
  * Public tunables for {@link runGc}. All optional; the engine works
@@ -155,16 +156,9 @@ const DEFAULT_MAX_SWEEPS = Number.MAX_SAFE_INTEGER;
  * console.log(`marked ${r.marked.stale_log} stale logs, swept ${r.swept}`);
  * ```
  */
-export const runGc = (
+export const runGc = async (
   args: { storage: Storage; currentJsonKey: string },
   options: RunGcOptions = {},
-): Promise<RunGcResult> =>
-  withObservability("gc", (_ctx, recorder) => runGcInner(args, options, recorder));
-
-const runGcInner = async (
-  args: { storage: Storage; currentJsonKey: string },
-  options: RunGcOptions,
-  obsRecorder: MetricsRecorder,
 ): Promise<RunGcResult> => {
   const { storage, currentJsonKey } = args;
   // The internal seam fields (caps + clock + grace) ride on the same
@@ -175,11 +169,6 @@ const runGcInner = async (
   const maxMarks = internal.maxMarksPerRun ?? DEFAULT_MAX_MARKS;
   const maxSweeps = internal.maxSweepsPerRun ?? DEFAULT_MAX_SWEEPS;
   const now = internal.now ?? ((): Date => new Date());
-  // Tee per-run observability recorder onto the operator's sink (see
-  // `compactor.ts`'s identical pattern for rationale). The operator
-  // recorder lives in the kernel singleton (set once at adapter boot
-  // by `setKernelMetricsRecorder`).
-  const metrics = teeMetricsRecorders(getKernelMetricsRecorder(), obsRecorder);
   const tablePrefix = currentJsonKey.slice(0, currentJsonKey.lastIndexOf("/"));
   const tableName = tablePrefix.slice(tablePrefix.lastIndexOf("/") + 1);
   const gcPendingKey = `${tablePrefix}/gc/pending.json`;
@@ -367,6 +356,7 @@ const runGcInner = async (
   // In-memory only — zero storage ops. Emit regardless of CAS-lost
   // (the operator wants visibility into best-effort runs too).
   const labels = { collection: tableName };
+  const metrics = ctxMetrics();
   metrics.gauge("db.orphan.candidate_count", pendingDepth, labels);
   metrics.gauge("db.gc.entries_swept_per_second", toSweep.length, labels);
   if (toSweep.length > 0) {

@@ -15,14 +15,10 @@ import {
   MemoryStorage,
   BaerlyError,
 } from "@baerly/protocol";
-import { afterEach, describe, expect, test } from "vitest";
+import { describe, expect, test } from "vitest";
 import { compact, type InternalCompactOptions } from "./compactor.ts";
 import { loadSnapshotAsMap } from "./snapshot.ts";
-import { InMemoryMetricsRecorder } from "./_internal/in-memory-metrics.ts";
-import {
-  resetKernelMetricsRecorder,
-  setKernelMetricsRecorder,
-} from "./observability/kernel-recorder.ts";
+import { createObservabilityContext, runWithContext } from "./observability/index.ts";
 import { Writer } from "./writer.ts";
 
 const bootstrap = async (storage: MemoryStorage, key: string): Promise<void> => {
@@ -38,8 +34,6 @@ const bootstrap = async (storage: MemoryStorage, key: string): Promise<void> => 
 describe("compact", () => {
   const KEY = "app/t/tenant/x/manifests/c/current.json";
   const COLL = "c";
-
-  afterEach(() => resetKernelMetricsRecorder());
 
   test("returns current-json-missing when current.json doesn't exist", async () => {
     const s = new MemoryStorage();
@@ -281,28 +275,37 @@ describe("compact", () => {
         body: { _id: `d${i}`, n: i },
       });
     }
-    const metrics = new InMemoryMetricsRecorder();
-    setKernelMetricsRecorder(metrics);
-    const res = await compact({ storage: s, currentJsonKey: KEY }, {
-      minEntriesToCompact: 10,
-      maxEntriesPerRun: 40,
-    } as InternalCompactOptions);
+    const ctx = createObservabilityContext();
+    let res!: Awaited<ReturnType<typeof compact>>;
+    await runWithContext(ctx, async () => {
+      res = await compact({ storage: s, currentJsonKey: KEY }, {
+        minEntriesToCompact: 10,
+        maxEntriesPerRun: 40,
+      } as InternalCompactOptions);
+    });
     expect(res.written).toBe(true);
+    const snap = ctx.recorder.snapshot();
     // Folded 40 of the 50 available.
-    expect(metrics.histogramValues("db.compact.entries_folded")).toEqual([40]);
+    expect(snap.histograms.filter((h) => h.name === "db.compact.entries_folded")).toEqual([
+      { name: "db.compact.entries_folded", value: 40, labels: { collection: COLL } },
+    ]);
     // Live tail after fold = 50 (next_seq) - 40 (foldEnd) = 10.
-    expect(metrics.lastGauge("db.manifest.lag_window_depth")).toBe(10);
+    const lag = snap.gauges.findLast((g) => g.name === "db.manifest.lag_window_depth");
+    expect(lag?.value).toBe(10);
   });
 
   test("emits no metrics when run is skipped (below-min-threshold)", async () => {
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
-    const metrics = new InMemoryMetricsRecorder();
-    setKernelMetricsRecorder(metrics);
-    const res = await compact({ storage: s, currentJsonKey: KEY }, { minEntriesToCompact: 10 });
+    const ctx = createObservabilityContext();
+    let res!: Awaited<ReturnType<typeof compact>>;
+    await runWithContext(ctx, async () => {
+      res = await compact({ storage: s, currentJsonKey: KEY }, { minEntriesToCompact: 10 });
+    });
     expect(res.written).toBe(false);
-    expect(metrics.histogramValues("db.compact.entries_folded")).toEqual([]);
-    expect(metrics.lastGauge("db.manifest.lag_window_depth")).toBeUndefined();
+    const snap = ctx.recorder.snapshot();
+    expect(snap.histograms.filter((h) => h.name === "db.compact.entries_folded")).toEqual([]);
+    expect(snap.gauges.find((g) => g.name === "db.manifest.lag_window_depth")).toBeUndefined();
   });
 
   test("surfaces a missing log entry inside the fold window as Internal", async () => {
