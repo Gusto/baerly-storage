@@ -325,11 +325,6 @@ const datadogSink: Sink = (record) => {
   response is sent. Its work doesn't contribute to the canonical
   line that already shipped. Aggregate counts are still in the
   operator's `MetricsRecorder` sink.
-- **Direct `Storage` access (via `db._raw`) bypasses the
-  observability storage decorator.** The decorator wraps the
-  storage handed to `createApp` / `baerlyWorker`; code that
-  reaches the raw handle skips per-op counters. This is intentional
-  — `_raw` is an `@internal` escape hatch.
 
 ## Cross-references
 

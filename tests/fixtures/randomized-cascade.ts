@@ -247,7 +247,7 @@ const buildInstances = async (
       app: APP,
       // Use the same tenant for the CAS target while still constructing
       // a Db per client so the lint rule's no-tenantless-ctor check is
-      // exercised and the Db._raw surface is available to callers.
+      // exercised.
       tenant: sharedTenant,
     });
     void i;

@@ -301,10 +301,10 @@ Trade-offs:
 - Hot single-collection workloads above roughly 30 writes/min on
   the same table see CAS contention.
 - Cross-collection atomicity is impossible by construction.
-  Applications that need it use `db._raw` or graduate to Postgres
-  via the export contract ([log-entry-shape.md](log-entry-shape.md));
-  transaction scope inherits the per-collection boundary — see the
-  JSDoc on `Db.transaction`.
+  Applications that need it graduate to Postgres via the export
+  contract ([log-entry-shape.md](log-entry-shape.md)); transaction
+  scope inherits the per-collection boundary — see the JSDoc on
+  `Db.transaction`.
 
 ## Bound choices
 

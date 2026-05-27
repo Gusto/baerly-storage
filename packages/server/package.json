@@ -1,7 +1,7 @@
 {
   "name": "@baerly/server",
   "version": "0.1.0",
-  "description": "Baerly server — portable HTTP/RPC surface over a Storage adapter. Ships the `Db` API + `_raw` Storage escape hatch and the HTTP CRUD router.",
+  "description": "Baerly server — portable HTTP/RPC surface over a Storage adapter. Ships the `Db` API and the HTTP CRUD router.",
   "license": "MIT",
   "type": "module",
   "sideEffects": false,

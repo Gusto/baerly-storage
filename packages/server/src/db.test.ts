@@ -1,6 +1,3 @@
-/* eslint-disable no-underscore-dangle -- `_raw` is the locked public symbol
-   name on `Db` (mirrors the declaration in `@baerly/protocol`). */
-
 import {
   type BaerlyConfig,
   BaerlyError,
@@ -14,27 +11,12 @@ import { describe, expect, test } from "vitest";
 import { Db } from "./db.ts";
 import { InMemoryMetricsRecorder } from "./_internal/in-memory-metrics.ts";
 
-const utf8 = (s: string): Uint8Array => new TextEncoder().encode(s);
-const fromBytes = (b: Uint8Array): string => new TextDecoder().decode(b);
-
-const collect = async <T>(iter: AsyncIterable<T>): Promise<T[]> => {
-  const out: T[] = [];
-  for await (const x of iter) {
-    out.push(x);
-  }
-  return out;
-};
-
 describe("Db.create", () => {
   test("returns a Db scoped to the given app and tenant", () => {
     const storage = new MemoryStorage();
     const db = Db.create({ storage, app: "tickets", tenant: "acme" });
     expect(db.app).toBe("tickets");
     expect(db.tenant).toBe("acme");
-    expect(typeof db._raw.put).toBe("function");
-    expect(typeof db._raw.get).toBe("function");
-    expect(typeof db._raw.delete).toBe("function");
-    expect(typeof db._raw.list).toBe("function");
   });
 
   test("rejects empty app with BaerlyError{InvalidConfig}", () => {
@@ -142,84 +124,6 @@ describe("Db.create config derivation", () => {
       indexes: new Map(),
     });
     expect(db.tableReadContext("tickets").indexes).toEqual([]);
-  });
-});
-
-describe("Db._raw round-trip", () => {
-  test("put then get returns the same bytes", async () => {
-    const db = Db.create({ storage: new MemoryStorage(), app: "x", tenant: "y" });
-    await db._raw.put("docs/1", utf8("hello"));
-    const got = await db._raw.get("docs/1");
-    expect(got).not.toBeNull();
-    expect(fromBytes(got!.body)).toBe("hello");
-  });
-
-  test("delete clears the key; missing-key delete is a no-op", async () => {
-    const db = Db.create({ storage: new MemoryStorage(), app: "x", tenant: "y" });
-    await db._raw.put("k", utf8("v"));
-    await db._raw.delete("k");
-    await expect(db._raw.get("k")).resolves.toBeNull();
-    // idempotent — deleting a missing key resolves without error
-    await db._raw.delete("k");
-  });
-
-  test("list yields logical keys (no physical prefix leak)", async () => {
-    const db = Db.create({ storage: new MemoryStorage(), app: "x", tenant: "y" });
-    await db._raw.put("docs/1", utf8("a"));
-    await db._raw.put("docs/2", utf8("b"));
-    await db._raw.put("other/3", utf8("c"));
-    const entries = await collect(db._raw.list(""));
-    expect(entries.map((e) => e.key)).toEqual(["docs/1", "docs/2", "other/3"]);
-    // Sanity-check: no entry leaks the physical prefix.
-    for (const e of entries) {
-      expect(e.key.startsWith("app/")).toBe(false);
-    }
-  });
-
-  test("startAfter cursor is interpreted as a logical key", async () => {
-    const db = Db.create({ storage: new MemoryStorage(), app: "x", tenant: "y" });
-    for (const k of ["docs/1", "docs/2", "docs/3"]) {
-      await db._raw.put(k, utf8(k));
-    }
-    const entries = await collect(db._raw.list("docs/", { startAfter: "docs/2" }));
-    expect(entries.map((e) => e.key)).toEqual(["docs/3"]);
-  });
-});
-
-describe("Db._raw tenant isolation", () => {
-  test("two tenants over the same storage cannot see each other's keys", async () => {
-    const storage = new MemoryStorage();
-    const dbA = Db.create({ storage, app: "shared", tenant: "alice" });
-    const dbB = Db.create({ storage, app: "shared", tenant: "bob" });
-
-    await dbA._raw.put("docs/1", utf8("alice-secret"));
-    await dbB._raw.put("docs/1", utf8("bob-secret"));
-
-    const fromA = await dbA._raw.get("docs/1");
-    const fromB = await dbB._raw.get("docs/1");
-    expect(fromBytes(fromA!.body)).toBe("alice-secret");
-    expect(fromBytes(fromB!.body)).toBe("bob-secret");
-
-    await expect(collect(dbA._raw.list(""))).resolves.toHaveLength(1);
-    await expect(collect(dbB._raw.list(""))).resolves.toHaveLength(1);
-
-    await dbA._raw.delete("docs/1");
-    // dbB still has its own copy
-    await expect(dbB._raw.get("docs/1")).resolves.not.toBeNull();
-  });
-
-  test("two apps over the same storage cannot see each other's keys", async () => {
-    const storage = new MemoryStorage();
-    const dbX = Db.create({ storage, app: "tickets", tenant: "acme" });
-    const dbY = Db.create({ storage, app: "billing", tenant: "acme" });
-
-    await dbX._raw.put("k", utf8("tickets-value"));
-    await dbY._raw.put("k", utf8("billing-value"));
-
-    expect(fromBytes((await dbX._raw.get("k"))!.body)).toBe("tickets-value");
-    expect(fromBytes((await dbY._raw.get("k"))!.body)).toBe("billing-value");
-    await expect(collect(dbX._raw.list(""))).resolves.toHaveLength(1);
-    await expect(collect(dbY._raw.list(""))).resolves.toHaveLength(1);
   });
 });
 

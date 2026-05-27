@@ -23,6 +23,13 @@ Accepted (2026-05-11).
 - Amended (2026-05-26): scoped "additive-only" to capabilities, not
   forms — a redundant type-valid path to an existing capability is
   a defect, not an addition. See "Scope of 'additive'" below.
+- Amended (2026-05-27): `db._raw: RawStorageApi` cut entirely. No
+  production code consumed it (`baerly export` uses
+  `parseBucketUri(...).storage` directly); the field was a
+  type-discoverable escape hatch that bypassed log emit, CAS, and
+  schema. Graduation paths consume the raw `Storage` adapter from
+  outside the `Db` boundary. The locked surface is now exactly three
+  methods on `Db`: `Db.create`, `db.table`, `db.transaction`.
 - Amended (2026-05-26): `_id` excluded from `Path<T>` / `Predicate<T>`
   at the top level via `Path<T> = Exclude<_AllPaths<T>, "_id" |
   \`_id.${string}\`>`. Nested `_id`-named fields (embedded references)
@@ -109,8 +116,8 @@ event with a long blast radius.
 
 Two factual anchors describe what is in the lock today:
 
-1. `Db` exposes exactly four methods: `Db.create`, `db.table`,
-   `db.transaction`, and the `db._raw` escape hatch
+1. `Db` exposes exactly three methods: `Db.create`, `db.table`,
+   `db.transaction`
    ([`packages/server/src/db.ts:140-464`](../../packages/server/src/db.ts)).
 2. `Table<T>` exposes the common-case verbs (`first`, `all`, `count`,
    `get`, `insert`, `update`, `replace`, `delete` — by primary key)
@@ -150,8 +157,6 @@ Locked surface, by file:
   - `db.transaction<T>(table, body) -> Promise<void>` — body receives
     `Table<T>`, NOT `Db`; cross-table writes are a compile error;
     single-attempt, CAS conflict throws `BaerlyError{code:"Conflict"}`.
-  - `db._raw: RawStorageApi` — escape hatch; re-applies the
-    `app/<app>/tenant/<tenant>/` prefix internally.
   - Readonly properties: `db.app`, `db.tenant`.
 - `Table<T>`
   ([`packages/server/src/table.ts`](../../packages/server/src/table.ts)):
@@ -237,12 +242,6 @@ path without making the public API a moving target.
   [`docs/contributing/conventions/docs.md`](../contributing/conventions/docs.md), the public-API
   reference lives as JSDoc on the implementation, not as a
   hand-maintained markdown ref.
-- `_raw` is intentionally undocumented in the README and excluded from
-  the LLM-zero-shot claim. It exists for graduation paths (e.g.
-  `baerly export`, see
-  [`docs/spec/log-entry-shape.md`](../spec/log-entry-shape.md)) and is
-  not part of the locked surface — `_raw`'s shape is allowed to change
-  with a minor version bump because no public-API tutorial mentions it.
 - TypeScript is the enforcement mechanism for the callback shape
   (`transaction(callback: (tx: Table<T>) => …)`); branded types (see
   the "Conventions" section of [`CLAUDE.md`](../../CLAUDE.md)) keep

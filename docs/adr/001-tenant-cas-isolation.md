@@ -62,9 +62,9 @@ into a single isolation story:
 
 1. **Isolation by prefix.** `Db.create({ app, tenant })` mints a
    physical-key prefix `app/<app>/tenant/<tenant>/` and refuses to
-   enumerate outside it; `Db._raw` re-applies the prefix on every read
-   and write. Cross-tenant key access is therefore a programming error
-   inside the runtime, not a permission check on a shared bucket. See
+   enumerate outside it. Cross-tenant key access is therefore a
+   programming error inside the runtime, not a permission check on a
+   shared bucket. See
    [`packages/server/src/db.ts:65-70`](../../packages/server/src/db.ts).
 2. **Per-collection CAS scope.** `current.json` lives at
    `app/<app>/tenant/<tenant>/manifests/<collection>/current.json` —

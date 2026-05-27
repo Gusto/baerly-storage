@@ -1,6 +1,3 @@
-/* eslint-disable no-underscore-dangle -- `_raw` is the locked public-symbol
-   name for the Storage escape hatch; marked `@internal`. */
-
 import {
   type BaerlyConfig,
   BaerlyError,
@@ -17,11 +14,6 @@ import {
   type RowOf,
   type SchemaValidator,
   type Storage,
-  type StorageGetOptions,
-  type StorageGetResult,
-  type StorageListEntry,
-  type StoragePutOptions,
-  type StoragePutResult,
   type Table,
   type UnboundConfig,
 } from "@baerly/protocol";
@@ -84,30 +76,6 @@ export interface BufferedMutation {
 const physicalPrefixFor = (app: string, tenant: string): string => `app/${app}/tenant/${tenant}/`;
 
 /**
- * Escape hatch: a Storage-shaped surface scoped to one
- * `(app, tenant)` pair. Keys callers see are **logical** (e.g.
- * `"docs/123"`); the wrapper composes
- * `app/<app>/tenant/<tenant>/<key>` before touching the underlying
- * `Storage`, and strips the prefix back off when yielding from
- * `list`.
- *
- * Bypasses every higher-level invariant: no `LogEntry` emit, no CAS
- * on `current.json`, no schema check.
- *
- * @internal — public symbol, but the table API is the recommended
- *             surface for app code.
- */
-export interface RawStorageApi {
-  get(key: string, opts?: StorageGetOptions): Promise<StorageGetResult | null>;
-  put(key: string, body: Uint8Array, opts?: StoragePutOptions): Promise<StoragePutResult>;
-  delete(key: string, opts?: { signal?: AbortSignal }): Promise<void>;
-  list(
-    prefix: string,
-    opts?: { startAfter?: string; maxKeys?: number; signal?: AbortSignal },
-  ): AsyncIterable<StorageListEntry>;
-}
-
-/**
  * Runtime entry point. One `Db` per `(app, tenant)` request.
  *
  * Construct via {@link Db.create} — the constructor is private so
@@ -140,15 +108,9 @@ export interface RawStorageApi {
 export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
   readonly app: string;
   readonly tenant: string;
-  /** @internal — Storage-shaped escape hatch; prefer the table API. */
-  readonly _raw: RawStorageApi;
   /**
    * Underlying `Storage`, captured so the table API can issue reads
-   * using physical keys directly. The reader must NOT route through
-   * `_raw` — `_raw` re-applies the `app/<app>/tenant/<tenant>/`
-   * prefix, and the table-API code already composes the full
-   * physical prefix. Two prefix-rewriters on one key would be a
-   * latent bug class.
+   * using physical keys directly.
    */
   readonly #storage: Storage;
   /**
@@ -200,7 +162,6 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
     this.#metrics = metrics;
     this.#schemas = schemas;
     this.#indexes = indexes;
-    this._raw = makeRawStorageApi(app, tenant, storage);
   }
 
   /**
@@ -515,10 +476,8 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
    * `packages/server/src/http/since.ts`; that handler needs the parsed
    * `CurrentJson` plus an ETag for the follow-up reads.
    *
-   * @internal — public symbol, but the table API is the recommended
-   *             surface for app code; this is here so the HTTP handler
-   *             doesn't have to reach through `_raw` under a
-   *             Storage-shaped half-stub.
+   * @internal — typed seam for the HTTP handler; app code should use
+   *             the table API.
    */
   async getCurrentJson(
     table: string,
@@ -537,9 +496,8 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
    * entry). Throws `BaerlyError{code:"InvalidResponse"}` on a body
    * that isn't valid JSON.
    *
-   * @internal — public symbol, but the table API is the recommended
-   *             surface for app code; this is here so the HTTP handler
-   *             doesn't have to reach through `_raw` directly.
+   * @internal — typed seam for the HTTP handler; app code should use
+   *             the table API.
    */
   async getLogEntry(
     table: string,
@@ -564,53 +522,6 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
     return parsed as LogEntry;
   }
 }
-
-const makeRawStorageApi = (app: string, tenant: string, storage: Storage): RawStorageApi => {
-  const prefix = physicalPrefixFor(app, tenant);
-  const toPhysical = (logical: string): string => `${prefix}${logical}`;
-  const fromPhysical = (physical: string): string => {
-    if (!physical.startsWith(prefix)) {
-      // Underlying storage yielded a key outside our tenant's
-      // prefix. Unreachable under a correct `Storage` impl (we
-      // asked it to list our prefix), so an `Internal` invariant
-      // violation is the right shape.
-      throw new BaerlyError(
-        "Internal",
-        `Db._raw.list: storage yielded key ${JSON.stringify(physical)} outside expected prefix ${JSON.stringify(prefix)}`,
-      );
-    }
-    return physical.slice(prefix.length);
-  };
-
-  return {
-    get: (key, opts) => storage.get(toPhysical(key), opts),
-    put: (key, body, opts) => storage.put(toPhysical(key), body, opts),
-    delete: (key, opts) => storage.delete(toPhysical(key), opts),
-    list: async function* (logicalPrefix, opts) {
-      const passOpts: {
-        startAfter?: string;
-        maxKeys?: number;
-        signal?: AbortSignal;
-      } = {};
-      if (opts?.startAfter !== undefined) {
-        // The cursor must also be rewritten to physical — otherwise
-        // the underlying storage compares a logical-keyed cursor
-        // against physical-keyed entries and the cursor is
-        // effectively ignored.
-        passOpts.startAfter = toPhysical(opts.startAfter);
-      }
-      if (opts?.maxKeys !== undefined) {
-        passOpts.maxKeys = opts.maxKeys;
-      }
-      if (opts?.signal !== undefined) {
-        passOpts.signal = opts.signal;
-      }
-      for await (const entry of storage.list(toPhysical(logicalPrefix), passOpts)) {
-        yield { ...entry, key: fromPhysical(entry.key) };
-      }
-    },
-  };
-};
 
 /**
  * Guard a string used as a path-segment in the bucket-key encoding.

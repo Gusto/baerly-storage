@@ -1,7 +1,5 @@
-/* eslint-disable no-underscore-dangle -- `_raw` is the locked public symbol
-   name on `Db` (see `../db.ts`); the pre-snapshot-cursor test reaches
-   through it to surgically mutate `current.json` and delete a log entry.
-   `_id` is the locked primary-key field on inserted docs. */
+/* eslint-disable no-underscore-dangle -- `_id` is the locked primary-key
+   field on inserted docs. */
 
 /**
  * Long-poll handler tests — `longPollSince` + `listEventsSince`.
@@ -239,15 +237,15 @@ describe("listEventsSince — pre-snapshot cursor → SchemaError", () => {
     // physical `log/<seq>.json` file is left in place — the handler
     // decides "folded" by comparing the cursor's seq against
     // `log_seq_start`, not by probing for the file.
-    const cjKey = "manifests/" + TABLE + "/current.json";
-    const cj = await db._raw.get(cjKey);
+    const cjKey = currentJsonKey(TABLE);
+    const cj = await storage.get(cjKey);
     expect(cj).not.toBeNull();
     const parsed = JSON.parse(new TextDecoder().decode(cj!.body)) as CurrentJson;
     const mutated: CurrentJson = {
       ...parsed,
       log_seq_start: parsed.next_seq,
     };
-    await db._raw.put(cjKey, new TextEncoder().encode(JSON.stringify(mutated)));
+    await storage.put(cjKey, new TextEncoder().encode(JSON.stringify(mutated)));
 
     await expect(listEventsSince({ db, table: TABLE, cursor })).rejects.toMatchObject({
       name: "BaerlyError",
