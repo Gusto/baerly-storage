@@ -530,14 +530,12 @@ describe("Writer — writer fence", () => {
     }
   }
 
-  test("happy path: epoch unchanged across a commit → commit succeeds, no bump metric", async () => {
+  test("happy path: epoch unchanged across a commit → commit succeeds", async () => {
     const storage = new MemoryStorage();
     await createCurrentJson(storage, CURRENT_KEY, seedCurrent());
-    const metrics = new InMemoryMetricsRecorder();
     const writer = new Writer({
       storage,
       currentJsonKey: CURRENT_KEY,
-      options: { metrics },
     });
 
     const r = await writer.commit({
@@ -547,13 +545,12 @@ describe("Writer — writer fence", () => {
       body: { _id: "doc-fence-ok" },
     });
     expect(r.attempts).toBe(1);
-    expect(metrics.sumCounter("db.writer.fence_bump_observed_total")).toBe(0);
 
     const persisted = decodeJson<CurrentJson>((await storage.get(CURRENT_KEY))!.body);
     expect(persisted.writer_fence.epoch).toBe(0);
   });
 
-  test("fence bump observed mid-flight: commit() fails fast with Conflict + metric", async () => {
+  test("fence bump observed mid-flight: commit() fails fast with Conflict", async () => {
     const storage = new FenceBumpingStorage();
     await createCurrentJson(storage, CURRENT_KEY, seedCurrent());
     // The writer's step-1 read of current.json is the first GET on
@@ -561,11 +558,9 @@ describe("Writer — writer fence", () => {
     // second — simulates "peer claimed the fence after our CAS
     // landed but before we verified."
     storage.bumpAfterReadsCount = 2;
-    const metrics = new InMemoryMetricsRecorder();
     const writer = new Writer({
       storage,
       currentJsonKey: CURRENT_KEY,
-      options: { metrics },
     });
 
     let thrown: unknown;
@@ -582,23 +577,15 @@ describe("Writer — writer fence", () => {
     expect(thrown).toBeInstanceOf(BaerlyError);
     expect((thrown as BaerlyError).code).toBe("Conflict");
     expect((thrown as BaerlyError).message).toMatch(/writer fence bumped from epoch 0 to 1/);
-    expect(metrics.sumCounter("db.writer.fence_bump_observed_total")).toBe(1);
-    // Collection label travels.
-    const bumpEvent = metrics.counters.find(
-      (c) => c.name === "db.writer.fence_bump_observed_total",
-    );
-    expect(bumpEvent?.labels).toEqual({ collection: COLL });
   });
 
-  test("commitBatch() under fence bump: throws Conflict, increments metric exactly once", async () => {
+  test("commitBatch() under fence bump: throws Conflict", async () => {
     const storage = new FenceBumpingStorage();
     await createCurrentJson(storage, CURRENT_KEY, seedCurrent());
     storage.bumpAfterReadsCount = 2;
-    const metrics = new InMemoryMetricsRecorder();
     const writer = new Writer({
       storage,
       currentJsonKey: CURRENT_KEY,
-      options: { metrics },
     });
 
     let thrown: unknown;
@@ -612,7 +599,6 @@ describe("Writer — writer fence", () => {
     }
     expect(thrown).toBeInstanceOf(BaerlyError);
     expect((thrown as BaerlyError).code).toBe("Conflict");
-    expect(metrics.sumCounter("db.writer.fence_bump_observed_total")).toBe(1);
   });
 });
 

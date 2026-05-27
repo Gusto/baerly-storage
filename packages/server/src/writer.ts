@@ -96,10 +96,6 @@ export interface WriterOptions {
    *   - `db.r2.put.429_total` counter on rate-limit (best effort —
    *     detected via `BaerlyError{code:"NetworkError"}` with a `429`
    *     token in the message).
-   *   - `db.writer.fence_bump_observed_total` counter on a
-   *     concurrent fence-epoch bump observed during commit
-   *     (split-brain detection; commit fails fast with
-   *     `Conflict`).
    */
   readonly metrics?: MetricsRecorder;
 
@@ -124,10 +120,7 @@ export interface WriterOptions {
    * only — adapters that serve multiple collections instantiate
    * one writer per collection.
    *
-   * Emits two new metrics when at least one index is declared:
-   *   - `db.r2.preimage_get_total` (counter, labelled by
-   *     `collection`) — bumped on every U/D log-walk that finds
-   *     a pre-image entry.
+   * Emits one new metric when at least one index is declared:
    *   - `db.write.index_ops_per_logical_write` (histogram,
    *     labelled by `collection`) — `K (PUT) + L (DELETE)` per
    *     successful commit.
@@ -370,7 +363,7 @@ export class Writer {
       // Fence verify lives in the caller so its `Conflict` propagates
       // past the retry-catch arm above. Bypasses the retry loop —
       // the stale writer must defer to the new authority.
-      await this.#verifyFenceUnchanged(success.expectedEpoch, input.collection, "Writer");
+      await this.#verifyFenceUnchanged(success.expectedEpoch, "Writer");
       // `success.classAOps` is the per-attempt base; add `(attempt
       // - 1)` to bill prior failed attempts as one PUT each (the
       // simple-and-test-locked cost model — not a precise replay
@@ -448,11 +441,7 @@ export class Writer {
       "Writer.commitBatch",
       /* adoptOwnSessionOnLogConflict */ false,
     );
-    await this.#verifyFenceUnchanged(
-      success.expectedEpoch,
-      inputs[0]!.collection,
-      "Writer.commitBatch",
-    );
+    await this.#verifyFenceUnchanged(success.expectedEpoch, "Writer.commitBatch");
     // Pick the first input's collection as the batch label; in the
     // current `Db.transaction` model every input shares one
     // collection, so this is exact. If future tickets relax that
@@ -786,9 +775,6 @@ export class Writer {
    * entries (`packages/server/src/compactor.ts`). A follow-up ticket
    * caches per-doc index head in `current.json` for O(1) lookup.
    * The bound is documented; out of scope here.
-   *
-   * Emits `db.r2.preimage_get_total` (counter, labelled by
-   * `collection`) on every successful pre-image find.
    */
   /**
    * Auto-create the per-collection `current.json` at
@@ -872,7 +858,6 @@ export class Writer {
         return undefined;
       } // last op was delete
       if ((entry.op === "I" || entry.op === "U") && entry.new !== undefined) {
-        this.#metrics.counter("db.r2.preimage_get_total", 1, { collection });
         return entry.new;
       }
     }
@@ -928,18 +913,13 @@ export class Writer {
    * (the fence is preserved from `current`), so a post-write epoch
    * mismatch can only mean another writer claimed the fence between
    * our step-1 read and step-6 PUT — the exact split-brain
-   * `WriterFence` prevents. Bumps `db.writer.fence_bump_observed_total`
-   * and throws `Conflict`; no retry, since the stale writer must defer
-   * to the new authority.
+   * `WriterFence` prevents. Throws `Conflict`; no retry, since the
+   * stale writer must defer to the new authority.
    *
    * The fence-verify GET is Class B and intentionally NOT counted in
    * `class_a_ops_per_logical_write`.
    */
-  async #verifyFenceUnchanged(
-    expectedEpoch: number,
-    collection: string,
-    where: string,
-  ): Promise<void> {
+  async #verifyFenceUnchanged(expectedEpoch: number, where: string): Promise<void> {
     const postRead = await readCurrentJson(this.#storage, this.#currentJsonKey);
     if (postRead === null) {
       return;
@@ -947,7 +927,6 @@ export class Writer {
     if (postRead.json.writer_fence.epoch === expectedEpoch) {
       return;
     }
-    this.#metrics.counter("db.writer.fence_bump_observed_total", 1, { collection });
     throw new BaerlyError(
       "Conflict",
       `${where}: writer fence bumped from epoch ${expectedEpoch} to ${postRead.json.writer_fence.epoch} during commit on ${this.#currentJsonKey}; stale writer aborting`,

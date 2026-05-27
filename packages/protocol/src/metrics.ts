@@ -16,10 +16,6 @@
  *     in the commit's fence. Idle-reader cost is unchanged.
  *   - `db.r2.put.412_total` — counter (CAS conflict / If-Match-or-None-Match loss)
  *   - `db.r2.put.429_total` — counter (R2 prefix-partition rate-limit)
- *   - `db.r2.preimage_get_total` — counter. One per U/D for
- *     an indexed collection — the writer back-walks the log to read the
- *     pre-image body so it can DELETE stale index keys. Per-collection
- *     label; ZERO when no indexes are declared.
  *   - `db.write.index_ops_per_logical_write` — histogram.
  *     `K (PUT) + L (DELETE)` per commit. Per-collection label.
  *   - `db.manifest.lag_window_depth` — gauge (alert at >100)
