@@ -196,9 +196,11 @@ describe("scaffold", () => {
     });
     const wrangler = await readFile(join(result.outDir, "wrangler.jsonc"), "utf8");
     expect(wrangler).toContain('"r2_buckets":');
-    expect(wrangler).toContain('"limits":');
-    expect(wrangler).toContain('"observability":');
     expect(wrangler).toContain('"name": "prod-app"');
+    expect(wrangler).not.toContain('"limits":');
+    expect(wrangler).not.toContain('"observability":');
+    expect(wrangler).not.toContain("LOG_LEVEL");
+    expect(wrangler).not.toContain("LOG_SAMPLE");
   });
 
   test("emits a node scaffold that delegates auth to config.auth", async () => {

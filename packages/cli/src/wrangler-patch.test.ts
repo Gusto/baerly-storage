@@ -23,8 +23,6 @@ const BINDING: R2BindingSpec = { binding: "BUCKET", bucket_name: "noisy-cell-04d
 const VARS: VarsSpec = {
   APP: "noisy-cell-04d4",
   TENANT: "default",
-  LOG_LEVEL: "info",
-  LOG_SAMPLE: "0.1",
 };
 
 describe("readWranglerName / readWranglerMain", () => {
@@ -53,7 +51,7 @@ describe("patchWranglerJsonc — first patch", () => {
     expect(result.text).toContain(`"APP": "noisy-cell-04d4"`);
     expect(result.text).toContain(`"TENANT": "default"`);
     expect(result.changes).toContain("added r2 binding BUCKET → noisy-cell-04d4");
-    expect(result.changes).toContain("merged vars: APP, TENANT, LOG_LEVEL, LOG_SAMPLE");
+    expect(result.changes).toContain("merged vars: APP, TENANT");
   });
 
   test("preserves user comments", () => {
@@ -124,7 +122,7 @@ describe("patchWranglerJsonc — idempotency", () => {
     expect(result.text).toContain(`"APP": "user-set-value"`);
     expect(result.text).toContain(`"CUSTOM": "user-only"`);
     expect(result.text).toContain(`"TENANT": "default"`);
-    expect(result.changes).toContain("merged vars: TENANT, LOG_LEVEL, LOG_SAMPLE");
+    expect(result.changes).toContain("merged vars: TENANT");
     expect(result.changes.join("\n")).not.toContain("APP");
   });
 });

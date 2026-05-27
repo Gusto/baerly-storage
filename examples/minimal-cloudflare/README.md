@@ -76,8 +76,8 @@ directory. The `assets:` binding in `wrangler.jsonc` picks up
 
 ## Secrets
 
-Public configuration (`APP`, `TENANT`, `LOG_LEVEL`, `LOG_SAMPLE`)
-lives in `wrangler.jsonc:vars`. The default `auth: "none"` posture
+Public configuration (`APP`, `TENANT`) lives in
+`wrangler.jsonc:vars`. The default `auth: "none"` posture
 needs no secrets. If you adopt a "Going to production" recipe:
 
 - **Pattern A (CF Access):** `CF_ACCESS_TEAM_DOMAIN` +

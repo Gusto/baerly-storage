@@ -124,7 +124,7 @@ export const boltOnExistingWrangler = async (opts: BoltOnOptions): Promise<BoltO
   const patch = patchWranglerJsonc(
     wranglerSource,
     { binding: "BUCKET", bucket_name: app },
-    { APP: app, TENANT: opts.tenant, LOG_LEVEL: "info", LOG_SAMPLE: "0.1" },
+    { APP: app, TENANT: opts.tenant },
   );
   if (patch.changes.length > 0) {
     await writeFile(wranglerPath, patch.text, "utf8");

@@ -23,15 +23,5 @@
   "vars": {
     "APP": "minimal-cloudflare",
     "TENANT": "minimal-demo",
-    "LOG_LEVEL": "info",
-    "LOG_SAMPLE": "0.1",
-  },
-
-  "limits": {
-    "cpu_ms": 50,
-  },
-
-  "observability": {
-    "enabled": true,
   },
 }

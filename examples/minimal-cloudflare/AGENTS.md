@@ -459,9 +459,9 @@ from the runtime env.
   header check for routes it owns (`/v1/*`).
 
 - **Secrets vs. vars** — `wrangler.jsonc:vars` carries non-secret
-  config (`APP`, `TENANT`, `LOG_LEVEL`, `LOG_SAMPLE`, and CF Access
-  identifiers `CF_ACCESS_TEAM_DOMAIN` / `CF_ACCESS_AUDIENCE_TAG` —
-  both are public identifiers, not secrets). Secrets like
+  config (`APP`, `TENANT`, and CF Access identifiers
+  `CF_ACCESS_TEAM_DOMAIN` / `CF_ACCESS_AUDIENCE_TAG` — both are
+  public identifiers, not secrets). Secrets like
   `SHARED_SECRET` (only required if you flip `auth` to
   `"shared-secret"`) live in `.dev.vars` for local `wrangler dev`
   and behind `wrangler secret put` in production. `baerly doctor
