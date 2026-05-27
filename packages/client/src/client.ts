@@ -17,7 +17,7 @@ import {
   type RowOf,
   type UnboundConfig,
 } from "@baerly/protocol";
-import type { SinceResponse } from "./contract.ts";
+import { CLIENT_CONTEXT } from "./internal/context.ts";
 import { type Fetcher, type RequestContext, request } from "./request.ts";
 
 /**
@@ -258,15 +258,6 @@ export interface BaerlyClient<TConfig extends BaerlyConfig = UnboundConfig> {
    */
   table<N extends CollectionNames<TConfig>>(name: N): ClientTable<RowOf<TConfig, N> & DocumentData>;
   table<T extends DocumentData = DocumentData>(name: string): ClientTable<T>;
-  /**
-   * Long-poll for new log events. Returns once events arrive or the
-   * server-side budget (25 s default) elapses; in the latter case
-   * the response is `{ events: [], next_cursor: <same> }`.
-   *
-   * @throws BaerlyError code="SchemaError" — cursor shape
-   *   invalid or cursor references a GC'd log entry.
-   */
-  since(opts: { table: string; cursor?: string; signal?: AbortSignal }): Promise<SinceResponse>;
   /** Liveness probe. Returns `true` on 200, `false` on any other status. Does not throw. */
   healthz(opts?: { signal?: AbortSignal }): Promise<boolean>;
 }
@@ -293,21 +284,12 @@ export const createBaerlyClient = <TConfig extends BaerlyConfig = UnboundConfig>
     headers: () => resolveHeaders(options.headers),
     lifecycleSignal: options.lifecycleSignal,
   };
-  return {
+  const client = {
+    [CLIENT_CONTEXT]: ctx,
     table<T extends DocumentData = DocumentData>(name: string): ClientTable<T> {
       return makeClientTable<T>(ctx, name);
     },
-    async since(opts): Promise<SinceResponse> {
-      const params = new URLSearchParams();
-      params.set("table", opts.table);
-      params.set("cursor", opts.cursor ?? "");
-      return request<SinceResponse>(ctx, {
-        method: "GET",
-        path: `/v1/since?${params.toString()}`,
-        signal: opts.signal,
-      });
-    },
-    async healthz(opts): Promise<boolean> {
+    async healthz(opts?: { signal?: AbortSignal }): Promise<boolean> {
       try {
         await request<{ ok: true }>(ctx, {
           method: "GET",
@@ -327,6 +309,7 @@ export const createBaerlyClient = <TConfig extends BaerlyConfig = UnboundConfig>
       }
     },
   };
+  return client as BaerlyClient<TConfig>;
 };
 
 /**

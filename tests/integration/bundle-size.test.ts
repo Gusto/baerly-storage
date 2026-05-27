@@ -141,7 +141,13 @@ const BUDGETS: readonly Budget[] = [
   //     previously walked operator-object predicates). Net: more
   //     chunk-count, slightly more code (per-field-fold helpers).
   //     Measured: 165125 raw / 51476 gz.
-  { entry: "index.js", raw: 162 * 1024, gz: 51 * 1024 },
+  //   → 163 KiB raw / 51 KiB gz: pre-existing ambient drift across
+  //     the `current-json` / `errors` / `query` / `snapshot` /
+  //     `app-config` / `shared-secret` / `normalize` chunks the
+  //     kernel barrel pulls in. Measured at react-hooks-collapse
+  //     baseline: 166035 raw / 51758 gz — +910 raw vs. prior budget.
+  //     Bump raw by ~1 KiB to absorb; gz is well under budget.
+  { entry: "index.js", raw: 163 * 1024, gz: 51 * 1024 },
   // The three auth verifier factories (bearerJwt, sharedSecret,
   // cloudflareAccess) plus the transitive jose closure pulled in by
   // bearerJwt's createRemoteJWKSet + jwtVerify. Adding a fourth
@@ -185,6 +191,10 @@ const BUDGETS: readonly Budget[] = [
   //     follow-up. New `PUT /v1/t/:table/:id` (true replace) +
   //     `GET /v1/count` routes, plus `parseOrder` / `parseLimit` for
   //     wired order/limit query params. +2413 raw / +544 gz.
+  //   → 282 KiB raw / 82 KiB gz: pre-existing ambient drift on the
+  //     http router closure. Measured at react-hooks-collapse
+  //     baseline: 287961 raw / 83315 gz — +910 raw vs. prior budget.
+  //     Bump raw by ~1 KiB; gz is well under budget.
   //   → 281 KiB raw / 82 KiB gz: predicate redesign. The wire-form
   //     normaliser + validator + matcher + per-field satisfiability
   //     check thread into the router closure (via `parseWhereParam`,
@@ -192,7 +202,7 @@ const BUDGETS: readonly Budget[] = [
   //     imported here, but `mergePredicateWires` reaches the closure
   //     via the kernel `Query.where` seam. Measured: 287051 raw /
   //     83035 gz.
-  { entry: "http.js", raw: 281 * 1024, gz: 82 * 1024 },
+  { entry: "http.js", raw: 282 * 1024, gz: 82 * 1024 },
   // Observability primitives — ObservabilityContext, the
   // request-scoped MetricsRecorder, LogTape config + the
   // JSON sink only (the pretty sink + picocolors now live in
@@ -336,7 +346,19 @@ const BUDGETS: readonly Budget[] = [
   //     wire-form normalisation; the React closure also pays
   //     because the hook lives downstream of the SDK's wire-aware
   //     `.where(...)` seam. Measured: 22522 raw / 7262 gz.
-  { entry: "client-react.js", raw: 24 * 1024, gz: 8 * 1024 },
+  //   → 26 KiB raw / 9 KiB gz: react-hooks-collapse. Six hooks
+  //     (`useLiveQuery` / `useLiveDocument` / `useInsert` / `useUpdate`
+  //     / `useReplace` / `useDelete`) plus `useInvalidationTick`
+  //     collapse to two (`useQuery` / `useMutation`). New closure
+  //     carries the Proxy-free recorder (sentinel-trap on awaited
+  //     terminals), the `subscription-pool` (per-(client, table)
+  //     ref-counted long-poll, signature-keyed result cache, AbortController
+  //     fetch lifecycle), and the `useSyncExternalStore` plumbing.
+  //     `normalizePredicateArg` / `stableKey`-on-predicates dropped
+  //     from the closure (signature now comes from chain + deps;
+  //     predicate values flow through deps). Measured: 25063 raw /
+  //     8534 gz — net +2541 raw / +1272 gz vs. pre-collapse.
+  { entry: "client-react.js", raw: 26 * 1024, gz: 9 * 1024 },
   // Testing helpers for `BaerlyClient` (in-memory fetcher etc.).
   // Vitest is external; closure is minimal.
   // Budget history:
@@ -373,7 +395,11 @@ const BUDGETS: readonly Budget[] = [
   //     pulls in. Measured: 26868 raw / 9952 gz — +848 raw, +391 gz
   //     since F3. Bump raw with a 1 KiB headroom; gz is still under
   //     the existing budget.
-  { entry: "dev.js", raw: 27 * 1024, gz: 10 * 1024 },
+  //   → 28 KiB raw / 11 KiB gz: pre-existing ambient drift across
+  //     the same chunks the dev barrel transitively pulls. Measured
+  //     at react-hooks-collapse baseline: 27951 raw / 10381 gz —
+  //     +1083 raw / +429 gz vs. prior. Bump both axes by ~1 KiB.
+  { entry: "dev.js", raw: 28 * 1024, gz: 11 * 1024 },
   // `@baerly/dev/vite` — the `baerlyDev()` vite plugin (mounts the
   // Baerly HTTP listener as middleware inside a Vite dev server).
   // Vite is external. Aggregator: re-exports the dev surface.

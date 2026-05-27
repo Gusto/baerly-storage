@@ -1,7 +1,7 @@
 {
   "name": "@baerly/client",
   "version": "0.1.0",
-  "description": "Baerly typed HTTP client — fetchers + `useLiveQuery` / `useLiveDocument` live-read hooks.",
+  "description": "Baerly typed HTTP client — fetchers + `useQuery` / `useMutation` React hooks.",
   "license": "MIT",
   "type": "module",
   "sideEffects": false,

@@ -1,25 +1,20 @@
 import { useState } from "react";
-import { useDelete, useLiveQuery, useUpdate } from "baerly-storage/client/react";
+import { useMutation, useQuery } from "baerly-storage/client/react";
 import type { Note } from "../../baerly.config.ts";
 
 const NoteRow = ({ note }: { note: Note }) => {
   const [body, setBody] = useState(note.body);
-  const {
-    mutate: updateNote,
-    isPending: isSaving,
-    error: saveError,
-  } = useUpdate<Note>({ table: "notes" });
-  const {
-    mutate: deleteNote,
-    isPending: isDeleting,
-    error: deleteError,
-  } = useDelete({ table: "notes" });
+  const [save, { isPending: isSaving, error: saveError }] = useMutation();
+  const [del, { isPending: isDeleting, error: deleteError }] = useMutation();
   const error = saveError ?? deleteError;
   return (
     <li className="note-row">
       <textarea value={body} onChange={(e) => setBody(e.target.value)} rows={2} />
       <div className="actions">
-        <button disabled={isSaving} onClick={() => updateNote(note._id, { body })}>
+        <button
+          disabled={isSaving}
+          onClick={() => save((c) => c.table("notes").update(note._id, { body }))}
+        >
           {isSaving ? "Saving…" : "Save"}
         </button>
         <button
@@ -29,7 +24,7 @@ const NoteRow = ({ note }: { note: Note }) => {
             if (!window.confirm("Delete this note?")) {
               return;
             }
-            await deleteNote(note._id);
+            await del((c) => c.table("notes").delete(note._id));
           }}
         >
           {isDeleting ? "Deleting…" : "Delete"}
@@ -41,18 +36,21 @@ const NoteRow = ({ note }: { note: Note }) => {
 };
 
 export const NoteList = () => {
-  const result = useLiveQuery<Note>({ table: "notes" });
+  const result = useQuery((c) => c.table<Note>("notes").all(), []);
   if (result.status === "error") {
     return <p className="error">Error: {result.error.message}</p>;
   }
   if (result.status === "loading") {
     return <p>Loading…</p>;
   }
-  if (result.rows.length === 0) {
+  // `result.status` is now "ok" or "refreshing" — `data` is `Note[]`.
+  // ("skipped" is unreachable: this useQuery never returns the skip sentinel.)
+  const rows = result.data ?? [];
+  if (rows.length === 0) {
     return <p>No notes yet. Add one above.</p>;
   }
   // Newest first — UUIDv7 `_id`s sort by server mint time descending.
-  const sorted = result.rows.toSorted((a, b) => b._id.localeCompare(a._id));
+  const sorted = rows.toSorted((a, b) => b._id.localeCompare(a._id));
   return (
     <ul className="note-list">
       {sorted.map((n) => (

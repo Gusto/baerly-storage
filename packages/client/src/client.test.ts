@@ -4,7 +4,7 @@
 import type { Table } from "@baerly/protocol";
 import { describe, expect, test } from "vitest";
 import { type ClientTable, createBaerlyClient } from "./client.ts";
-import type { HttpOkEnvelope, SinceResponse } from "./contract.ts";
+import type { HttpOkEnvelope } from "./contract.ts";
 import { MockFetch } from "./testing/index.ts";
 
 const okEnvelope = <T>(data: T): HttpOkEnvelope<T> => ({
@@ -117,20 +117,6 @@ describe("createBaerlyClient", () => {
       code: "Unauthorized",
       status: 401,
     });
-  });
-
-  test("since() returns { events, next_cursor } from GET /v1/since", async () => {
-    const mock = new MockFetch();
-    mock.on("GET", "/v1/since", (req) => {
-      const url = new URL(req.url);
-      expect(url.searchParams.get("table")).toBe("tickets");
-      expect(url.searchParams.get("cursor")).toBe("");
-      const body: SinceResponse = { events: [], next_cursor: "" };
-      return jsonResponse(body);
-    });
-    const client = createBaerlyClient({ baseUrl: "http://x", fetch: mock.fetch });
-    const res = await client.since({ table: "tickets" });
-    expect(res).toEqual({ events: [], next_cursor: "" });
   });
 
   test("healthz() returns true on 200, false otherwise", async () => {

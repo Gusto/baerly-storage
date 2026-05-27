@@ -76,7 +76,36 @@ export type BaerlyErrorCode =
    * code lets downstream code short-circuit empty-by-construction
    * without re-running the validator or parsing messages.
    */
-  | "UnsatisfiablePredicate";
+  | "UnsatisfiablePredicate"
+  /**
+   * A `useQuery` callback awaited a recorder terminal
+   * (`.get`/`.first`/`.all`/`.count`). The recorder runs once per
+   * render to capture the chain shape; it cannot survive an `await`
+   * because the proxy doesn't proxy across microtask boundaries. The
+   * recorder's terminal returns a thenable whose `.then` throws this
+   * error synchronously, converting what would otherwise be a silent
+   * spinner-hang into a render-time error the hook surfaces as
+   * `status: "error"`. Companion `baerly/no-await-in-use-query` lint
+   * flags the pattern at edit time. For compound reads, use
+   * `Promise.all` (parallel) or compose two `useQuery` calls with
+   * `useQuery.skip` (dependent).
+   */
+  | "UseQueryAwaitedRecorder"
+  /**
+   * A write method (`.insert`/`.update`/`.replace`/`.delete`) was
+   * called on the recorder inside a `useQuery` callback. Writes
+   * inside reads are a programming error; the recorder rejects them
+   * synchronously from the discovery pass, before any I/O fires. Use
+   * `useMutation()` instead.
+   */
+  | "UnexpectedWriteInQuery"
+  /**
+   * A `useMutation()` callback rejected with a non-`BaerlyError`
+   * throwable. The hook wraps the original throw under this code so
+   * the `error` slot is always a `BaerlyError`; the original value
+   * is preserved on `.cause`.
+   */
+  | "MutationFailed";
 
 /**
  * The single error class thrown by Baerly. Discriminate by `code`, not

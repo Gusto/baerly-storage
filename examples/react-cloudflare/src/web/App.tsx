@@ -1,10 +1,9 @@
-import { BaerlyProvider, useInsert } from "baerly-storage/client/react";
+import { BaerlyProvider, useMutation } from "baerly-storage/client/react";
 import { client } from "./client.ts";
 import { NoteList } from "./NoteList.tsx";
-import type { Note } from "../../baerly.config.ts";
 
 const NewNoteForm = () => {
-  const { mutate: insertNote, isPending, error } = useInsert<Note>({ table: "notes" });
+  const [mutate, { isPending, error }] = useMutation();
   return (
     <form
       className="new-note"
@@ -15,7 +14,7 @@ const NewNoteForm = () => {
         if (body.length === 0) {
           return;
         }
-        await insertNote({ body });
+        await mutate((c) => c.table("notes").insert({ body }));
         form.reset();
       }}
     >

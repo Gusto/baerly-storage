@@ -169,26 +169,17 @@ describe("baerly-storage/client", () => {
 import {
   BaerlyProvider,
   useBaerlyClient,
-  useDelete,
-  useInsert,
-  useInvalidationTick,
-  useLiveDocument,
-  useLiveQuery,
-  useReplace,
-  useUpdate,
+  useMutation,
+  useQuery,
 } from "baerly-storage/client/react";
 
 describe("baerly-storage/client/react", () => {
   test("imports resolve", () => {
     expect(typeof BaerlyProvider).toBe("function");
     expect(typeof useBaerlyClient).toBe("function");
-    expect(typeof useLiveQuery).toBe("function");
-    expect(typeof useLiveDocument).toBe("function");
-    expect(typeof useInvalidationTick).toBe("function");
-    expect(typeof useInsert).toBe("function");
-    expect(typeof useUpdate).toBe("function");
-    expect(typeof useReplace).toBe("function");
-    expect(typeof useDelete).toBe("function");
+    expect(typeof useQuery).toBe("function");
+    expect(typeof useMutation).toBe("function");
+    expect(typeof useQuery.skip).toBe("symbol");
   });
 });
 

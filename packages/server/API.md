@@ -358,14 +358,16 @@ That extra options bag is the **only** API difference between
 `Table<T>` and `ClientTable<T>`. Same modifiers, same terminals,
 same predicates, same consistency knob.
 
-## Long-poll: `client.since(...)`
+## Long-poll: `/v1/since`
 
-`client.since` is how the client receives a stream of mutations
-without WebSockets. The server holds the request open for ~25 s; if
-new log entries land in that window it flushes them immediately,
-otherwise it returns an empty batch with the cursor unchanged.
+`GET /v1/since?table=…&cursor=…` is the long-poll endpoint that
+streams mutations without WebSockets. The server holds the request
+open for ~25 s; if new log entries land in that window it flushes
+them immediately, otherwise it returns an empty batch with the
+cursor unchanged.
 
 ```ts
+// Wire shape (returned raw — not wrapped in HttpOkEnvelope):
 interface SinceResponse {
   readonly events: ReadonlyArray<LogEntry>;
   readonly next_cursor: string;
@@ -384,34 +386,22 @@ interface LogEntry {
   readonly seq: number;
   // `old` / `key_old` / `origin` are optional; see `LogEntry` JSDoc.
 }
-
-await client.since({ table: "tickets", cursor: "" });
-// → { events: [{lsn, op, doc_id, new, ...}, ...], next_cursor: "..." }
 ```
 
-**Cursor priming.** First call: pass `cursor: ""` (or omit). The
+**Cursor priming.** First call: pass `cursor=` (empty string). The
 server replies with the current head and `next_cursor`. Pass that
 cursor back on every subsequent call. The cursor is opaque — treat
 it as a string. `events` is empty iff the budget elapsed with no new
 writes (and `next_cursor` is unchanged).
 
-```ts
-// Idiomatic live-updates loop. Pair with `client.table(...).all()`
-// to seed the initial view; tail forward from the cursor that
-// `since` returned alongside the seed batch.
-let cursor = "";
-while (!ac.signal.aborted) {
-  const resp = await client.since({ table: "notes", cursor, signal: ac.signal });
-  cursor = resp.next_cursor;
-  if (resp.events.length > 0) {
-    await refresh();              // re-render from whatever store you keep
-  }
-}
-```
-
-The React hooks `useLiveDocument` / `useLiveQuery` in
-`baerly-storage/client/react` wrap this loop with mount lifecycle,
-backoff on transport errors, and cursor persistence.
+For React applications, `useQuery` from
+`baerly-storage/client/react` is the canonical consumer — it owns a
+shared per-`(client, table)` long-poll and invalidates any read
+whose chain touches the firing table. Hand-rolled subscribers in
+other UI frameworks can issue a `fetch` loop against this endpoint
+directly, or import the internal `pollSinceOnce` helper from
+`@baerly/client` package internals if cursor-aware tailing is
+needed.
 
 ## HTTP wire format
 
