@@ -1,10 +1,10 @@
 {
-  "name": "create-baerly",
+  "name": "@gusto/create-baerly-storage",
   "version": "0.1.0",
-  "description": "Scaffold a new baerly app. Run via `npm create baerly@latest -- my-app --target=cloudflare` (post-publish; today, stage via `pnpm pack` — see ticket 04).",
+  "description": "Scaffold a new baerly-storage app. Run via `pnpm create @gusto/baerly-storage@latest -- my-app --target=cloudflare`.",
   "license": "MIT",
   "bin": {
-    "create-baerly": "./dist/index.js"
+    "create-baerly-storage": "./dist/index.js"
   },
   "files": [
     "dist"
