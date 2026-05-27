@@ -11,8 +11,24 @@ import {
 } from "@baerly/protocol";
 import { beforeEach, describe, expect, test } from "vitest";
 import type { IndexDefinition } from "./indexes.ts";
-import { InMemoryMetricsRecorder } from "./_internal/in-memory-metrics.ts";
+import {
+  createObservabilityContext,
+  type ObservabilityContext,
+  runWithContext,
+} from "./observability/index.ts";
 import { Writer } from "./writer.ts";
+
+const histogramValues = (ctx: ObservabilityContext, name: string): number[] =>
+  ctx.recorder
+    .snapshot()
+    .histograms.filter((h) => h.name === name)
+    .map((h) => h.value);
+
+const sumCounter = (ctx: ObservabilityContext, name: string): number =>
+  ctx.recorder
+    .snapshot()
+    .counters.filter((c) => c.name === name)
+    .reduce((acc, c) => acc + c.value, 0);
 
 const BUCKET = "writer-test-bucket";
 const COLL = "tickets";
@@ -342,50 +358,44 @@ describe("Writer", () => {
   test("emits db.write.class_a_ops_per_logical_write histogram per commit", async () => {
     const storage = new MemoryStorage();
     await createCurrentJson(storage, CURRENT_KEY, seedCurrent());
-    const metrics = new InMemoryMetricsRecorder();
-    const writer = new Writer({
-      storage,
-      currentJsonKey: CURRENT_KEY,
-      options: { metrics },
+    const writer = new Writer({ storage, currentJsonKey: CURRENT_KEY });
+    const ctx = createObservabilityContext();
+    await runWithContext(ctx, async () => {
+      await writer.commit({
+        op: "I",
+        collection: COLL,
+        docId: "doc-1",
+        body: { _id: "doc-1" },
+      });
     });
 
-    await writer.commit({
-      op: "I",
-      collection: COLL,
-      docId: "doc-1",
-      body: { _id: "doc-1" },
-    });
-
-    const samples = metrics.histogramValues("db.write.class_a_ops_per_logical_write");
+    const samples = histogramValues(ctx, "db.write.class_a_ops_per_logical_write");
     expect(samples).toHaveLength(1);
     // content + log + current.json = 3 PUTs on first-try success.
     expect(samples[0]).toBe(3);
     // Collection label travels.
-    const hist = metrics.histograms.find(
-      (h) => h.name === "db.write.class_a_ops_per_logical_write",
-    );
+    const hist = ctx.recorder
+      .snapshot()
+      .histograms.find((h) => h.name === "db.write.class_a_ops_per_logical_write");
     expect(hist?.labels).toEqual({ collection: COLL });
   });
 
   test('op:"D" commit emits class_a = 2 (no content PUT)', async () => {
     const storage = new MemoryStorage();
     await createCurrentJson(storage, CURRENT_KEY, seedCurrent());
-    const metrics = new InMemoryMetricsRecorder();
-    const writer = new Writer({
-      storage,
-      currentJsonKey: CURRENT_KEY,
-      options: { metrics },
+    const writer = new Writer({ storage, currentJsonKey: CURRENT_KEY });
+    const ctx = createObservabilityContext();
+    await runWithContext(ctx, async () => {
+      await writer.commit({
+        op: "I",
+        collection: COLL,
+        docId: "doc-d",
+        body: { _id: "doc-d" },
+      });
+      await writer.commit({ op: "D", collection: COLL, docId: "doc-d" });
     });
 
-    await writer.commit({
-      op: "I",
-      collection: COLL,
-      docId: "doc-d",
-      body: { _id: "doc-d" },
-    });
-    await writer.commit({ op: "D", collection: COLL, docId: "doc-d" });
-
-    const samples = metrics.histogramValues("db.write.class_a_ops_per_logical_write");
+    const samples = histogramValues(ctx, "db.write.class_a_ops_per_logical_write");
     expect(samples).toEqual([3, 2]);
   });
 
@@ -394,18 +404,20 @@ describe("Writer", () => {
     await createCurrentJson(storage, CURRENT_KEY, seedCurrent());
     storage.failNextCasOnce = true;
 
-    const metrics = new InMemoryMetricsRecorder();
     const writer = new Writer({
       storage,
       currentJsonKey: CURRENT_KEY,
-      options: { initialBackoffMs: 1, random: () => 0, metrics },
+      options: { initialBackoffMs: 1, random: () => 0 },
     });
 
-    await writer.commit({
-      op: "I",
-      collection: COLL,
-      docId: "doc-cas",
-      body: { _id: "doc-cas" },
+    const ctx = createObservabilityContext();
+    await runWithContext(ctx, async () => {
+      await writer.commit({
+        op: "I",
+        collection: COLL,
+        docId: "doc-cas",
+        body: { _id: "doc-cas" },
+      });
     });
 
     // Two 412s: one on the current-json CAS (the simulated 412) and
@@ -413,18 +425,19 @@ describe("Writer", () => {
     // entry is now present at our seq — the own-session adoption
     // path). Both are real `PreconditionFailed` responses from the
     // bucket, both are counted.
-    expect(metrics.sumCounter("db.r2.put.412_total")).toBe(2);
-    const cas412 = metrics.counters.find(
+    expect(sumCounter(ctx, "db.r2.put.412_total")).toBe(2);
+    const counters = ctx.recorder.snapshot().counters;
+    const cas412 = counters.find(
       (c) => c.name === "db.r2.put.412_total" && c.labels["step"] === "current-json-cas",
     );
     expect(cas412).toBeDefined();
     expect(cas412?.labels["collection"]).toBe(COLL);
-    const logPut412 = metrics.counters.find(
+    const logPut412 = counters.find(
       (c) => c.name === "db.r2.put.412_total" && c.labels["step"] === "log-put",
     );
     expect(logPut412).toBeDefined();
     // After one retry the class-A op count is 3 + 1 retry = 4.
-    expect(metrics.histogramValues("db.write.class_a_ops_per_logical_write")).toEqual([4]);
+    expect(histogramValues(ctx, "db.write.class_a_ops_per_logical_write")).toEqual([4]);
   });
 
   test("emits db.r2.put.429_total when storage surfaces a 429 NetworkError", async () => {
@@ -445,36 +458,34 @@ describe("Writer", () => {
     }
     const storage = new ThrottlingStorage();
     await createCurrentJson(storage, CURRENT_KEY, seedCurrent());
-    const metrics = new InMemoryMetricsRecorder();
-    const writer = new Writer({
-      storage,
-      currentJsonKey: CURRENT_KEY,
-      options: { metrics },
-    });
+    const writer = new Writer({ storage, currentJsonKey: CURRENT_KEY });
 
+    const ctx = createObservabilityContext();
     let thrown: unknown;
-    try {
-      await writer.commit({
-        op: "I",
-        collection: COLL,
-        docId: "doc-429",
-        body: { _id: "doc-429" },
-      });
-    } catch (error) {
-      thrown = error;
-    }
+    await runWithContext(ctx, async () => {
+      try {
+        await writer.commit({
+          op: "I",
+          collection: COLL,
+          docId: "doc-429",
+          body: { _id: "doc-429" },
+        });
+      } catch (error) {
+        thrown = error;
+      }
+    });
     // Commit propagates the NetworkError — but the 429 counter
     // bumped on the way through the catch arm.
     expect(thrown).toBeInstanceOf(BaerlyError);
     expect((thrown as BaerlyError).code).toBe("NetworkError");
-    expect(metrics.sumCounter("db.r2.put.429_total")).toBe(1);
+    expect(sumCounter(ctx, "db.r2.put.429_total")).toBe(1);
   });
 
-  test("default metrics is no-op (no observable side effect)", async () => {
+  test("outside any observability context emissions are no-ops", async () => {
     const storage = new MemoryStorage();
     await createCurrentJson(storage, CURRENT_KEY, seedCurrent());
     const writer = new Writer({ storage, currentJsonKey: CURRENT_KEY });
-    // Pure smoke: commit succeeds without an explicit recorder.
+    // Pure smoke: commit succeeds without an active context.
     const r = await writer.commit({
       op: "I",
       collection: COLL,
@@ -632,15 +643,13 @@ describe("Writer — filtered index", () => {
     return out.toSorted();
   };
 
-  const newFilteredWriter = async (
-    metrics?: InMemoryMetricsRecorder,
-  ): Promise<{ storage: MemoryStorage; writer: Writer }> => {
+  const newFilteredWriter = async (): Promise<{ storage: MemoryStorage; writer: Writer }> => {
     const storage = new MemoryStorage();
     await createCurrentJson(storage, FILTERED_CURRENT_KEY, seedCurrent());
     const writer = new Writer({
       storage,
       currentJsonKey: FILTERED_CURRENT_KEY,
-      options: metrics !== undefined ? { indexes: [open_only], metrics } : { indexes: [open_only] },
+      options: { indexes: [open_only] },
     });
     return { storage, writer };
   };
@@ -741,34 +750,36 @@ describe("Writer — filtered index", () => {
   });
 
   test("U: filter-miss → filter-miss is a no-op for the filtered index", async () => {
-    const metrics = new InMemoryMetricsRecorder();
-    const { storage, writer } = await newFilteredWriter(metrics);
-    // I doc with status:"closed" → outside the filter, no keys, no
-    // histogram emission for the filtered index.
-    await writer.commit({
-      op: "I",
-      collection: COLL,
-      docId: "t-1",
-      body: { _id: "t-1", status: "closed", assignee: "alice" },
-    });
-    const indexHistogramsAfterI = metrics.histograms.filter(
-      (h) => h.name === "db.write.index_ops_per_logical_write",
-    );
-    expect(indexHistogramsAfterI).toEqual([]);
+    const { storage, writer } = await newFilteredWriter();
+    const ctx = createObservabilityContext();
+    await runWithContext(ctx, async () => {
+      // I doc with status:"closed" → outside the filter, no keys, no
+      // histogram emission for the filtered index.
+      await writer.commit({
+        op: "I",
+        collection: COLL,
+        docId: "t-1",
+        body: { _id: "t-1", status: "closed", assignee: "alice" },
+      });
+      const indexHistogramsAfterI = ctx.recorder
+        .snapshot()
+        .histograms.filter((h) => h.name === "db.write.index_ops_per_logical_write");
+      expect(indexHistogramsAfterI).toEqual([]);
 
-    // U keeps the doc outside the filter — still no keys, still no
-    // histogram. The writer's guard
-    // `newKeys.length + staleKeys.length > 0` must fire.
-    await writer.commit({
-      op: "U",
-      collection: COLL,
-      docId: "t-1",
-      body: { _id: "t-1", status: "wip", assignee: "bob" },
+      // U keeps the doc outside the filter — still no keys, still no
+      // histogram. The writer's guard
+      // `newKeys.length + staleKeys.length > 0` must fire.
+      await writer.commit({
+        op: "U",
+        collection: COLL,
+        docId: "t-1",
+        body: { _id: "t-1", status: "wip", assignee: "bob" },
+      });
     });
     await expect(listFilteredKeys(storage)).resolves.toEqual([]);
-    const indexHistograms = metrics.histograms.filter(
-      (h) => h.name === "db.write.index_ops_per_logical_write",
-    );
+    const indexHistograms = ctx.recorder
+      .snapshot()
+      .histograms.filter((h) => h.name === "db.write.index_ops_per_logical_write");
     expect(indexHistograms).toEqual([]);
   });
 
@@ -791,8 +802,7 @@ describe("Writer — filtered index", () => {
   });
 
   test("D: filter-miss pre-image is a no-op", async () => {
-    const metrics = new InMemoryMetricsRecorder();
-    const { storage, writer } = await newFilteredWriter(metrics);
+    const { storage, writer } = await newFilteredWriter();
     await writer.commit({
       op: "I",
       collection: COLL,
@@ -800,18 +810,21 @@ describe("Writer — filtered index", () => {
       body: { _id: "t-1", status: "closed", assignee: "alice" },
     });
     await expect(listFilteredKeys(storage)).resolves.toEqual([]);
-    // Reset the histogram so we ONLY observe the D-quadrant's behaviour.
-    metrics.histograms.length = 0;
 
-    await writer.commit({
-      op: "D",
-      collection: COLL,
-      docId: "t-1",
+    // Wrap only the D commit so its observations are the only ones
+    // visible to the assertion.
+    const ctx = createObservabilityContext();
+    await runWithContext(ctx, async () => {
+      await writer.commit({
+        op: "D",
+        collection: COLL,
+        docId: "t-1",
+      });
     });
     await expect(listFilteredKeys(storage)).resolves.toEqual([]);
-    const indexHistograms = metrics.histograms.filter(
-      (h) => h.name === "db.write.index_ops_per_logical_write",
-    );
+    const indexHistograms = ctx.recorder
+      .snapshot()
+      .histograms.filter((h) => h.name === "db.write.index_ops_per_logical_write");
     expect(indexHistograms).toEqual([]);
   });
 });

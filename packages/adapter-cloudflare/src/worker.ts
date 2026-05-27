@@ -1,16 +1,10 @@
 import { type DevLandingOptions, renderDevLanding } from "@baerly/dev";
-import {
-  type BaerlyAppConfig,
-  type MetricsRecorder,
-  type Verifier,
-  noopMetricsRecorder,
-} from "@baerly/protocol";
+import { type BaerlyAppConfig, type Verifier } from "@baerly/protocol";
 import { Db, resolveVerifier } from "@baerly/server";
 import { createRouter } from "@baerly/server/http";
 import {
   CATEGORY,
   type ObservabilityConfig,
-  alsAwareRecorder,
   configureObservability,
   createObservabilityContext,
   deriveOutcome,
@@ -19,7 +13,6 @@ import {
   getLogger,
   observableStorage,
   runWithContext,
-  setKernelMetricsRecorder,
 } from "@baerly/server/observability";
 import { type CacheStatus, invalidateOnWrite, withReadCache } from "./cache.ts";
 import { r2BindingStorage } from "./r2-binding-storage.ts";
@@ -115,19 +108,6 @@ export interface BaerlyWorkerOptions {
    */
   readonly verifier?: Verifier;
   /**
-   * Operator's long-term {@link MetricsRecorder}. Receives every
-   * kernel emission (Writer histograms, CAS-conflict counters,
-   * storage per-call counts) verbatim. Defaults to
-   * {@link noopMetricsRecorder} so non-instrumented deployments see
-   * zero behavior change.
-   *
-   * Wire your aggregation backend here — Workers Analytics Engine,
-   * OpenTelemetry, statsd, in-memory rollup, etc. The
-   * canonical-line bag is wired separately and reads through
-   * {@link alsAwareRecorder} alongside this sink.
-   */
-  readonly metrics?: MetricsRecorder;
-  /**
    * Observability config (LogTape sink + level). When supplied, the
    * Worker calls {@link configureObservability} lazily on first
    * `fetch` / `scheduled` invocation (CF Worker modules can't
@@ -208,7 +188,6 @@ export function baerlyWorker<E extends BaerlyEnv = BaerlyEnv>(
   interface ResolvedState {
     readonly options: BaerlyWorkerOptions;
     readonly verifier: Verifier;
-    readonly teeRecorder: ReturnType<typeof alsAwareRecorder>;
   }
   let resolved: ResolvedState | undefined;
   // Cached so every subsequent fetch re-throws the same error rather
@@ -233,18 +212,7 @@ export function baerlyWorker<E extends BaerlyEnv = BaerlyEnv>(
             return typeof value === "string" ? value : undefined;
           },
         });
-        // Operator's long-term sink wrapped once with the ALS-aware tee.
-        // The ALS lookup is per-call, so a single shared instance is safe
-        // across all requests — each call resolves the bag from whichever
-        // `runWithContext` scope is active.
-        const operatorRecorder = options.metrics ?? noopMetricsRecorder;
-        const teeRecorder = alsAwareRecorder(operatorRecorder);
-        // Per-isolate kernel-recorder singleton. The module singleton is
-        // safe in Workers because every isolate has its own module state.
-        // Placed inside `ensureResolved` (not at top-level) because the
-        // operator-supplied recorder is unknown until the first fetch.
-        setKernelMetricsRecorder(teeRecorder);
-        resolved = { options, verifier, teeRecorder };
+        resolved = { options, verifier };
       } catch (error) {
         resolutionError = error;
         throw error;
@@ -273,7 +241,7 @@ export function baerlyWorker<E extends BaerlyEnv = BaerlyEnv>(
 
   return {
     async fetch(req, env, ctx): Promise<Response> {
-      const { options, verifier, teeRecorder } = await ensureResolved(env);
+      const { options, verifier } = await ensureResolved(env);
 
       // Opt-in dev landing page. Off in production (options.dev
       // unset); when set, GET / serves HTML and GET /favicon.ico
@@ -330,11 +298,10 @@ export function baerlyWorker<E extends BaerlyEnv = BaerlyEnv>(
       return runWithContext(obsCtx, async (): Promise<Response> => {
         // Storage is wrapped with `observableStorage(...)` so the
         // per-call class A/B counts and per-op duration histograms
-        // land in BOTH the operator's long-term sink and (via the
-        // ALS-aware tee) the per-request bag we just created. The
-        // kernel-recorder singleton (set in `ensureResolved`) carries
-        // the same tee through to Writer / compactor / GC emissions.
-        const storage = observableStorage(r2BindingStorage(env.BUCKET), teeRecorder);
+        // land in the active per-request bag. Writer / compactor / GC
+        // emissions reach the same bag via `getCurrentContext()?.recorder`
+        // — the canonical-line flusher reads it at end-of-request.
+        const storage = observableStorage(r2BindingStorage(env.BUCKET));
         const db = Db.create({
           storage,
           app: env.APP,

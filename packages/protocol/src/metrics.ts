@@ -1,14 +1,15 @@
 /**
- * `MetricsRecorder` — pluggable sink for the six load-bearing
- * metrics. The kernel does not emit to any specific backend; the
- * operator wires their preferred sink (Workers Analytics Engine,
- * OpenTelemetry, statsd, in-process aggregation) by implementing this
- * interface and passing it to `Writer`, `compact`, `runGc`, and
- * the scheduled handler.
+ * `MetricsRecorder` — internal emission contract for the six
+ * load-bearing kernel metrics. Writer / compactor / GC emit through
+ * an instance of this interface; in production the instance is the
+ * per-request `RequestScopedMetricsRecorder` on the active
+ * `ObservabilityContext`, and emissions flow onto the canonical line
+ * via `summarize()`. Tests use a local `InMemoryMetricsRecorder` and
+ * wrap their workload in `runWithContext` to attach it.
  *
- * The default {@link noopMetricsRecorder} swallows everything — safe
- * to use when no operator is present (CI, tests that don't care about
- * metrics).
+ * Operators do not wire a custom sink against this interface — the
+ * operator's view of kernel emissions is the canonical line on
+ * stdout (one JSON object per HTTP request).
  *
  * **Naming convention** matches the load-bearing metrics:
  *   - `db.write.class_a_ops_per_logical_write` — histogram (p99 alert at 5).
@@ -26,23 +27,10 @@
  *
  * Names follow `db.<subsystem>.<metric>`, dot-separated, all-lowercase
  * snake_case segments. Labels are flat
- * `Readonly<Record<string, string>>` — no numbers, no nested objects —
- * so any aggregation backend can consume them.
+ * `Readonly<Record<string, string>>` — no numbers, no nested objects.
  *
  * Metric emissions never throw on the hot path; the default
- * `noopMetricsRecorder` cannot throw. Operator-supplied recorders that
- * throw are an operator bug.
- *
- * @example
- * ```ts
- * import type { MetricsRecorder } from "@baerly/protocol";
- *
- * const recorder: MetricsRecorder = {
- *   counter: (name, value, labels) => analytics.increment(name, value, labels),
- *   gauge:   (name, value, labels) => analytics.gauge(name, value, labels),
- *   histogram: (name, value, labels) => analytics.observe(name, value, labels),
- * };
- * ```
+ * `noopMetricsRecorder` cannot throw.
  */
 export interface MetricsRecorder {
   /** Monotonically-incrementing event count. */
@@ -55,64 +43,11 @@ export interface MetricsRecorder {
 
 /**
  * No-op recorder. Safe default when no operator sink is wired —
- * callers that thread `metrics?: MetricsRecorder` default to this so
- * non-instrumented code sees zero behavioural change.
+ * emission sites that read `getCurrentContext()?.recorder` fall
+ * back to this outside an active `runWithContext` scope.
  */
 export const noopMetricsRecorder: MetricsRecorder = {
   counter: (): void => {},
   gauge: (): void => {},
   histogram: (): void => {},
 };
-
-/**
- * Fan every emission to both `a` and `b`, in that order. Lets the
- * observability layer tee a short-lived per-request recorder (e.g.
- * `InMemoryMetricsRecorder` from `@baerly/server/_internal/testing`, used
- * to derive canonical-log fields) into the operator's long-term
- * recorder without coupling the kernel to a specific aggregation
- * backend.
- *
- * **No error swallowing.** The kernel guarantees its own recorders
- * never throw (see the JSDoc on {@link MetricsRecorder}); if an
- * operator wires a throwing recorder, the throw propagates and `b`'s
- * call does not run. That is intentional — silently swallowing
- * operator bugs would let a metric sink fail half-open.
- *
- * **No defensive label copy at the tee.** The labels object is passed
- * to both sinks by reference; recorders that need isolation (such as
- * `InMemoryMetricsRecorder` from `@baerly/server/_internal/testing`)
- * defensively copy on their own. Callers passing a labels object
- * they intend to mutate after emission should freeze it or pass a
- * fresh literal.
- *
- * @example
- * ```ts
- * import { teeMetricsRecorders, type MetricsRecorder } from "@baerly/protocol";
- * import { InMemoryMetricsRecorder } from "@baerly/server/_internal/testing";
- *
- * // Long-term sink the operator wired (Workers Analytics Engine,
- * // OpenTelemetry, statsd, etc.).
- * const operator: MetricsRecorder = wireOperatorSink();
- * // Per-request scratch sink the request handler reads to derive
- * // its canonical log line.
- * const perRequest = new InMemoryMetricsRecorder();
- *
- * const metrics = teeMetricsRecorders(perRequest, operator);
- * await db.transaction("tickets", async (tx) => { ... });
- * // ... read perRequest.histogramValues(...) to populate the log line ...
- * ```
- */
-export const teeMetricsRecorders = (a: MetricsRecorder, b: MetricsRecorder): MetricsRecorder => ({
-  counter: (name, value, labels) => {
-    a.counter(name, value, labels);
-    b.counter(name, value, labels);
-  },
-  gauge: (name, value, labels) => {
-    a.gauge(name, value, labels);
-    b.gauge(name, value, labels);
-  },
-  histogram: (name, value, labels) => {
-    a.histogram(name, value, labels);
-    b.histogram(name, value, labels);
-  },
-});

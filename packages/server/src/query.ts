@@ -41,7 +41,6 @@ import {
   matchesWire,
   merge,
   mergePredicateWires,
-  type MetricsRecorder,
   normalizePredicateArg,
   validateWire,
   BaerlyError,
@@ -89,18 +88,6 @@ export interface TableReadContext {
    * @internal
    */
   readonly txCtx?: TxContext;
-  /**
-   * Optional metrics sink threaded from {@link Db}. Forwarded to every
-   * {@link Writer} the mutation terminals construct so the
-   * writer's existing emissions (`db.write.class_a_ops_per_logical_write`,
-   * `db.r2.put.412_total`, `db.r2.put.429_total`, etc.) reach the
-   * operator's recorder. `undefined` means "no metrics" — the
-   * {@link Writer} defaults to {@link noopMetricsRecorder} on
-   * its own, so threading is strictly additive.
-   *
-   * @internal
-   */
-  readonly metrics?: MetricsRecorder;
   /**
    * Optional StandardSchemaV1-shaped validator for this collection.
    * When set, `runInsert`, `runUpdate`, and `runReplaceById` validate the
@@ -345,7 +332,6 @@ const writerFor = (ctx: TableReadContext): Writer =>
     storage: ctx.storage,
     currentJsonKey: `${ctx.tablePrefix}/current.json`,
     options: {
-      ...(ctx.metrics !== undefined ? { metrics: ctx.metrics } : {}),
       indexes: ctx.indexes,
     },
   });

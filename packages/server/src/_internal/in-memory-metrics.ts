@@ -6,11 +6,10 @@
  * `tests/integration/phase5-end-to-end.test.ts`) and dev probes.
  * Memory grows unbounded — **not suitable for production**.
  *
- * Production code should wire the operator's long-term recorder
- * (Workers Analytics Engine, OpenTelemetry, statsd) via
- * {@link alsAwareRecorder} instead. Per-request scratch sinks belong
- * to the `RequestScopedMetricsRecorder` inside the observability
- * context, not to this class.
+ * Production emissions flow through the per-request
+ * `RequestScopedMetricsRecorder` on the active
+ * `ObservabilityContext`; operators read kernel metrics off the
+ * canonical-line JSON the adapter prints to stdout.
  */
 
 import type { MetricsRecorder } from "@baerly/protocol";

@@ -242,42 +242,6 @@ describe("createApp observability", () => {
     // A GET issues class B ops (reads); class A (writes) may be zero.
     expect(props["db.storage.class_b_ops_total"]).toBeGreaterThanOrEqual(1);
   });
-
-  test("the operator's MetricsRecorder receives kernel emissions verbatim", async () => {
-    // Asserts the tee semantic: same metrics that reach the
-    // canonical-line bag also reach the operator's long-term sink.
-    const storage = new MemoryStorage();
-    const tenant = "acme";
-    await provision(storage, tenant, "c");
-
-    const operatorCounters: Array<{ name: string; value: number }> = [];
-    const operator = {
-      counter: (name: string, value: number): void => {
-        operatorCounters.push({ name, value });
-      },
-      gauge: (): void => {},
-      histogram: (): void => {},
-    };
-    const verifier: Verifier = async () => ({ tenantPrefix: tenant, identity: {} });
-    const { url } = await startServer({
-      app: "t",
-      storage,
-      verifier,
-      metrics: operator,
-    });
-
-    const res = await fetch(`${url}/v1/t/c`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ doc: { _id: "op-1", v: 1 } }),
-    });
-    expect(res.status).toBe(201);
-
-    const totalClassA = operatorCounters
-      .filter((c) => c.name === "db.storage.class_a_ops_total")
-      .reduce((acc, c) => acc + c.value, 0);
-    expect(totalClassA).toBeGreaterThanOrEqual(3);
-  });
 });
 
 describe("resolveDefaultSink", () => {

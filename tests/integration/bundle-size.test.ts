@@ -19,12 +19,13 @@ import { formatBundleSizeLine } from "../helpers/bundle-size-report.ts";
 // as of 2026-05 — operator-side code reaches them via their
 // subpath entries.
 //
-// `http.js` and (transitively) `index.js` carry a baseline
-// observability cost that can't be shifted to a subpath:
-// `packages/server/src/http/router.ts` directly calls
-// `getLogger`/`CATEGORY` at the request boundary for structured
-// logging, and the maintenance work units use `withObservability`.
-// The thresholds below reflect that floor.
+// `http.js` carries a baseline observability cost that can't be
+// shifted to a subpath: `packages/server/src/http/router.ts`
+// directly calls `getLogger`/`CATEGORY` at the request boundary
+// for structured logging. `index.js` pulls only the tiny
+// `context.ts` chunk for the ALS lookup Writer/compactor/GC use
+// to read the active per-request recorder — the full logtape
+// subgraph stays out.
 //
 // Each entry is a static-import closure: rolldown code-splits shared
 // modules into chunks, so importing `baerly-storage/auth` actually
@@ -235,8 +236,8 @@ const BUDGETS: readonly Budget[] = [
   { entry: "observability.js", raw: 93 * 1024, gz: 25 * 1024 },
   // Maintenance loop — compactor + GC + sweep driver. Pulls
   // compactor.ts + gc.ts + the observability subgraph
-  // transitively (every work unit runs under withObservability).
-  // Operator-side; not part of the kernel barrel as of T01.
+  // transitively (storage decorator + logger config + canonical
+  // line). Operator-side; not part of the kernel barrel as of T01.
   // ~142 KiB raw.
   // Budget history:
   //   → 157 KiB raw / 44 KiB gz: InMemoryMetricsRecorder added to
@@ -496,13 +497,11 @@ describe("bundle size", () => {
   }
 
   // The kernel barrel (`baerly-storage`) is the surface every consumer
-  // pays for. Historically the rolldown chunk graph dragged the
-  // observability subgraph (~89 KiB raw / ~24 KiB gz) into the kernel
-  // closure because `compactor.ts` exported both lightweight snapshot
-  // primitives (re-exported from the barrel) and `compact()` (which
-  // calls `withObservability`). After splitting the primitives into
-  // `packages/server/src/snapshot.ts`, the kernel barrel must not
-  // transitively pull any `observability-*.js` chunk.
+  // pays for. Writer / compactor / GC read the active per-request
+  // recorder via `getCurrentContext()?.recorder`; that lookup needs
+  // the tiny `context.ts` chunk but MUST NOT drag the full
+  // `observability-*.js` subgraph (logtape + canonical-line render +
+  // pretty sink) into the barrel.
   test("dist/index.js closure excludes the observability subgraph", () => {
     const measured = measureClosure("index.js");
     const observabilityChunks = measured.files.filter((f) => f.startsWith("observability-"));

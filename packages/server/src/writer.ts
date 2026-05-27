@@ -61,6 +61,9 @@ import {
 import { allIndexKeysFor, type IndexDefinition, validateIndexDefinition } from "./indexes.ts";
 import { readLogEntry, walkLogRange } from "./log-walk.ts";
 import { tryAdoptOwnSessionLogEntry } from "./log-conflict-adoption.ts";
+import { getCurrentContext } from "./observability/context.ts";
+
+const ctxMetrics = (): MetricsRecorder => getCurrentContext()?.recorder ?? noopMetricsRecorder;
 
 /**
  * Tunables for {@link Writer}. All optional; defaults match the
@@ -81,23 +84,6 @@ export interface WriterOptions {
    * inject a deterministic generator. Defaults to `Math.random`.
    */
   readonly random?: () => number;
-
-  /**
-   * Optional metrics sink. Defaults to {@link noopMetricsRecorder} so
-   * non-instrumented callers see zero behavioural change. The writer
-   * emits:
-   *   - `db.write.class_a_ops_per_logical_write` histogram per
-   *     successful commit (PUT count: content + log + current.json,
-   *     minus the content PUT on `op:"D"`, plus one per backoff
-   *     retry).
-   *   - `db.r2.put.412_total` counter on `PreconditionFailed` (CAS
-   *     loss on `current.json` or `If-None-Match: "*"` loss on the
-   *     log PUT).
-   *   - `db.r2.put.429_total` counter on rate-limit (best effort —
-   *     detected via `BaerlyError{code:"NetworkError"}` with a `429`
-   *     token in the message).
-   */
-  readonly metrics?: MetricsRecorder;
 
   /**
    * Optional. Indexes declared for the collection this writer
@@ -265,7 +251,6 @@ export class Writer {
   readonly #maxRetries: number;
   readonly #initialBackoffMs: number;
   readonly #random: () => number;
-  readonly #metrics: MetricsRecorder;
   readonly #indexes: ReadonlyArray<IndexDefinition>;
   readonly #verifyLogIntegrityOnCommit: boolean;
 
@@ -286,7 +271,6 @@ export class Writer {
     this.#maxRetries = opts.options?.maxRetries ?? S3_REQUEST_MAX_RETRIES;
     this.#initialBackoffMs = opts.options?.initialBackoffMs ?? DEFAULT_INITIAL_BACKOFF_MS;
     this.#random = opts.options?.random ?? Math.random;
-    this.#metrics = opts.options?.metrics ?? noopMetricsRecorder;
     const indexes = opts.options?.indexes ?? [];
     for (const def of indexes) {
       validateIndexDefinition(def);
@@ -625,7 +609,7 @@ export class Writer {
         }
         indexClassA += newKeys.length + staleKeys.length;
         if (newKeys.length + staleKeys.length > 0) {
-          this.#metrics.histogram(
+          ctxMetrics().histogram(
             "db.write.index_ops_per_logical_write",
             newKeys.length + staleKeys.length,
             { collection: input.collection },
@@ -668,7 +652,7 @@ export class Writer {
         if (!isPreconditionFailed(error)) {
           throw error;
         }
-        this.#metrics.counter("db.r2.put.412_total", 1, {
+        ctxMetrics().counter("db.r2.put.412_total", 1, {
           collection: entry.collection,
           step: "log-put",
         });
@@ -719,7 +703,7 @@ export class Writer {
     } catch (error) {
       this.#observe429(error, inputs[0]!.collection);
       if (isPreconditionFailed(error)) {
-        this.#metrics.counter("db.r2.put.412_total", 1, {
+        ctxMetrics().counter("db.r2.put.412_total", 1, {
           collection: inputs[0]!.collection,
           step: "current-json-cas",
         });
@@ -893,7 +877,7 @@ export class Writer {
    */
   #observe429(err: unknown, collection: string): void {
     if (is429(err)) {
-      this.#metrics.counter("db.r2.put.429_total", 1, { collection });
+      ctxMetrics().counter("db.r2.put.429_total", 1, { collection });
     }
   }
 
@@ -904,7 +888,7 @@ export class Writer {
    * so each caller computes it.
    */
   #emitWriteMetrics(collection: string, classAOps: number): void {
-    this.#metrics.histogram("db.write.class_a_ops_per_logical_write", classAOps, { collection });
+    ctxMetrics().histogram("db.write.class_a_ops_per_logical_write", classAOps, { collection });
   }
 
   /**

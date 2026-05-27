@@ -18,12 +18,11 @@
  *    how many entries it yields — matches the S3 pricing model
  *    (one ListObjectsV2 request = one Class A op even with
  *    multiple keys in the response page).
- * 2. Wrap the proxy with `observableStorage(proxy, recorder)` so
- *    the recorder sees the same physical events from the kernel's
- *    side.
- * 3. Drive the workload inside `runWithContext(ctx, ...)` with an
- *    `alsAwareRecorder` so the per-request bag (`ctx.recorder`)
- *    fills.
+ * 2. Wrap the proxy with `observableStorage(proxy)` so the decorator
+ *    emits storage-level counters into `getCurrentContext()?.recorder`
+ *    when inside a `runWithContext` scope.
+ * 3. Drive the workload inside `runWithContext(ctx, ...)` so kernel
+ *    emissions land in `ctx.recorder`.
  * 4. Call `flushCanonicalLine` and inspect the emitted record's
  *    `db.storage.class_a_ops_total` / `class_b_ops_total`.
  * 5. Assert: canonical-line totals === physical proxy totals.
@@ -39,7 +38,6 @@ import {
   CURRENT_JSON_SCHEMA_VERSION,
   MemoryStorage,
   createCurrentJson,
-  noopMetricsRecorder,
   type DocumentData,
   type Storage,
   type StorageGetOptions,
@@ -50,14 +48,11 @@ import {
 } from "@baerly/protocol";
 import { Db } from "@baerly/server";
 import {
-  alsAwareRecorder,
   configureObservability,
   createObservabilityContext,
   flushCanonicalLine,
   observableStorage,
-  resetKernelMetricsRecorder,
   runWithContext,
-  setKernelMetricsRecorder,
 } from "@baerly/server/observability";
 
 const APP = "app";
@@ -145,7 +140,6 @@ describe("observability integration — canonical line vs physical reality", () 
   });
 
   afterEach(async () => {
-    resetKernelMetricsRecorder();
     await reset();
   });
 
@@ -157,14 +151,7 @@ describe("observability integration — canonical line vs physical reality", () 
     await bootstrap(memory);
 
     const proxy = countingProxy(memory);
-    const recorder = alsAwareRecorder(noopMetricsRecorder);
-    const wrapped = observableStorage(proxy.storage, recorder);
-    // Adapters call setKernelMetricsRecorder once at boot with their
-    // tee'd recorder; we mirror that here so Writer/compactor/GC
-    // emissions reach the recorder (and from there, the ALS bag the
-    // canonical-line flusher reads). resetKernelMetricsRecorder() in
-    // the describe-level afterEach restores the noop default.
-    setKernelMetricsRecorder(recorder);
+    const wrapped = observableStorage(proxy.storage);
     const db = Db.create({ storage: wrapped, app: APP, tenant: TENANT });
 
     const ctx = createObservabilityContext();
@@ -213,14 +200,7 @@ describe("observability integration — canonical line vs physical reality", () 
     await bootstrap(memory);
 
     const proxy = countingProxy(memory);
-    const recorder = alsAwareRecorder(noopMetricsRecorder);
-    const wrapped = observableStorage(proxy.storage, recorder);
-    // Adapters call setKernelMetricsRecorder once at boot with their
-    // tee'd recorder; we mirror that here so Writer/compactor/GC
-    // emissions reach the recorder (and from there, the ALS bag the
-    // canonical-line flusher reads). resetKernelMetricsRecorder() in
-    // the describe-level afterEach restores the noop default.
-    setKernelMetricsRecorder(recorder);
+    const wrapped = observableStorage(proxy.storage);
     const db = Db.create({ storage: wrapped, app: APP, tenant: TENANT });
 
     const ctx = createObservabilityContext();
@@ -263,14 +243,7 @@ describe("observability integration — canonical line vs physical reality", () 
     await bootstrap(memory);
 
     const proxy = countingProxy(memory);
-    const recorder = alsAwareRecorder(noopMetricsRecorder);
-    const wrapped = observableStorage(proxy.storage, recorder);
-    // Adapters call setKernelMetricsRecorder once at boot with their
-    // tee'd recorder; we mirror that here so Writer/compactor/GC
-    // emissions reach the recorder (and from there, the ALS bag the
-    // canonical-line flusher reads). resetKernelMetricsRecorder() in
-    // the describe-level afterEach restores the noop default.
-    setKernelMetricsRecorder(recorder);
+    const wrapped = observableStorage(proxy.storage);
     const db = Db.create({ storage: wrapped, app: APP, tenant: TENANT });
 
     // Seed one doc OUTSIDE the observed window so the seed's physical

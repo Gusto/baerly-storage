@@ -7,13 +7,9 @@ import {
   type SchemaValidator,
   type Storage,
 } from "@baerly/protocol";
-import { afterEach, describe, expect, test } from "vitest";
+import { describe, expect, test } from "vitest";
 import { Db } from "./db.ts";
-import { InMemoryMetricsRecorder } from "./_internal/in-memory-metrics.ts";
-import {
-  resetKernelMetricsRecorder,
-  setKernelMetricsRecorder,
-} from "./observability/kernel-recorder.ts";
+import { createObservabilityContext, runWithContext } from "./observability/index.ts";
 
 describe("Db.create", () => {
   test("returns a Db scoped to the given app and tenant", () => {
@@ -101,7 +97,7 @@ describe("Db.create config derivation", () => {
   });
 });
 
-describe("Db → kernel metrics recorder", () => {
+describe("Db → per-request metrics emission", () => {
   const APP = "tickets";
   const TENANT = "acme";
   const TABLE = "tickets";
@@ -117,37 +113,41 @@ describe("Db → kernel metrics recorder", () => {
     });
   };
 
-  afterEach(() => resetKernelMetricsRecorder());
-
-  test("single-mutation insert emits to the kernel recorder", async () => {
+  test("single-mutation insert emits to the active context's recorder", async () => {
     const storage = new MemoryStorage();
     await provision(storage);
-    const metrics = new InMemoryMetricsRecorder();
-    setKernelMetricsRecorder(metrics);
+    const ctx = createObservabilityContext();
     const db = Db.create({ storage, app: APP, tenant: TENANT });
-    await db.table<{ _id: string; title: string }>(TABLE).insert({ title: "hi" });
-    // writer.ts emits one histogram observation per successful
-    // commit via getKernelMetricsRecorder(). Without the kernel
-    // recorder set, observations route through the noop default.
-    const observed = metrics.histogramValues("db.write.class_a_ops_per_logical_write");
-    expect(observed.length).toBeGreaterThan(0);
-  });
-
-  test("transaction commit emits to the kernel recorder", async () => {
-    const storage = new MemoryStorage();
-    await provision(storage);
-    const metrics = new InMemoryMetricsRecorder();
-    setKernelMetricsRecorder(metrics);
-    const db = Db.create({ storage, app: APP, tenant: TENANT });
-    await db.transaction<{ _id: string; title: string }>(TABLE, async (tx) => {
-      await tx.insert({ title: "one" });
-      await tx.insert({ title: "two" });
+    await runWithContext(ctx, async () => {
+      await db.table<{ _id: string; title: string }>(TABLE).insert({ title: "hi" });
     });
-    const observed = metrics.histogramValues("db.write.class_a_ops_per_logical_write");
+    // writer.ts emits one histogram observation per successful
+    // commit via getCurrentContext()?.recorder. Outside any context,
+    // observations route through the noop default.
+    const observed = ctx.recorder
+      .snapshot()
+      .histograms.filter((h) => h.name === "db.write.class_a_ops_per_logical_write");
     expect(observed.length).toBeGreaterThan(0);
   });
 
-  test("default kernel recorder is a no-op (no throw)", async () => {
+  test("transaction commit emits to the active context's recorder", async () => {
+    const storage = new MemoryStorage();
+    await provision(storage);
+    const ctx = createObservabilityContext();
+    const db = Db.create({ storage, app: APP, tenant: TENANT });
+    await runWithContext(ctx, async () => {
+      await db.transaction<{ _id: string; title: string }>(TABLE, async (tx) => {
+        await tx.insert({ title: "one" });
+        await tx.insert({ title: "two" });
+      });
+    });
+    const observed = ctx.recorder
+      .snapshot()
+      .histograms.filter((h) => h.name === "db.write.class_a_ops_per_logical_write");
+    expect(observed.length).toBeGreaterThan(0);
+  });
+
+  test("outside any context emissions are a no-op (no throw)", async () => {
     const storage = new MemoryStorage();
     await provision(storage);
     const db = Db.create({ storage, app: APP, tenant: TENANT });

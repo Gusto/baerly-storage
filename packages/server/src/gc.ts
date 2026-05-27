@@ -62,7 +62,7 @@ import {
   versionFromContent,
 } from "@baerly/protocol";
 import { loadSnapshotAsMap } from "./snapshot.ts";
-import { getCurrentContext } from "./observability/index.ts";
+import { getCurrentContext } from "./observability/context.ts";
 
 const ctxMetrics = (): MetricsRecorder => getCurrentContext()?.recorder ?? noopMetricsRecorder;
 

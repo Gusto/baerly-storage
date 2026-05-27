@@ -27,28 +27,36 @@
  * `info` or higher. (LogTape provides `isEnabledFor` since 2.0.0.)
  */
 
-import type {
-  MetricsRecorder,
-  Storage,
-  StorageGetOptions,
-  StorageGetResult,
-  StorageListEntry,
-  StoragePutOptions,
-  StoragePutResult,
+import {
+  type MetricsRecorder,
+  noopMetricsRecorder,
+  type Storage,
+  type StorageGetOptions,
+  type StorageGetResult,
+  type StorageListEntry,
+  type StoragePutOptions,
+  type StoragePutResult,
 } from "@baerly/protocol";
+import { getCurrentContext } from "./context.ts";
 import { CATEGORY, getLogger } from "./logger.ts";
 
 type Op = "get" | "put" | "delete" | "list";
 
 const CLASS_A_OPS: ReadonlySet<Op> = new Set<Op>(["put", "delete", "list"]);
 
+const ctxMetrics = (): MetricsRecorder => getCurrentContext()?.recorder ?? noopMetricsRecorder;
+
 /**
  * Wrap `inner` with metric emission. The returned object is itself
  * a `Storage` impl and passes the `Storage` conformance suite
  * (round-trip semantics, ETag preservation, `list` ordering — none
  * of which the decorator touches).
+ *
+ * Per-op counters and per-op duration histograms flow into the
+ * active {@link ObservabilityContext}'s recorder (`ctxMetrics()`);
+ * outside any context they fall through to {@link noopMetricsRecorder}.
  */
-export const observableStorage = (inner: Storage, recorder: MetricsRecorder): Storage => {
+export const observableStorage = (inner: Storage): Storage => {
   const logger = getLogger(CATEGORY.storage);
   const debug = (
     op: Op,
@@ -68,6 +76,7 @@ export const observableStorage = (inner: Storage, recorder: MetricsRecorder): St
   };
 
   const recordCall = (op: Op): void => {
+    const recorder = ctxMetrics();
     recorder.counter(`db.storage.${op}.calls_total`, 1);
     recorder.counter(
       CLASS_A_OPS.has(op) ? "db.storage.class_a_ops_total" : "db.storage.class_b_ops_total",
@@ -76,11 +85,11 @@ export const observableStorage = (inner: Storage, recorder: MetricsRecorder): St
   };
 
   const recordError = (op: Op): void => {
-    recorder.counter(`db.storage.${op}.errors_total`, 1);
+    ctxMetrics().counter(`db.storage.${op}.errors_total`, 1);
   };
 
   const recordDuration = (op: Op, durationMs: number): void => {
-    recorder.histogram(`db.storage.${op}.duration_ms`, durationMs);
+    ctxMetrics().histogram(`db.storage.${op}.duration_ms`, durationMs);
   };
 
   return {

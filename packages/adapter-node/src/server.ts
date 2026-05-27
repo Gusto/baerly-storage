@@ -1,17 +1,10 @@
-import {
-  type BaerlyConfig,
-  type MetricsRecorder,
-  type Storage,
-  type Verifier,
-  noopMetricsRecorder,
-} from "@baerly/protocol";
+import { type BaerlyConfig, type Storage, type Verifier } from "@baerly/protocol";
 import { Db } from "@baerly/server";
 import { createRouter, mapError } from "@baerly/server/http";
 import { runScheduledMaintenance } from "@baerly/server/maintenance";
 import { prettyConsoleSink } from "./logger-pretty.ts";
 import {
   type ObservabilityConfig,
-  alsAwareRecorder,
   configureObservability,
   createObservabilityContext,
   deriveOutcome,
@@ -19,7 +12,6 @@ import {
   flushUnauthorizedAndRespond,
   observableStorage,
   runWithContext,
-  setKernelMetricsRecorder,
 } from "@baerly/server/observability";
 
 /**
@@ -47,12 +39,6 @@ export interface CreateFetchHandlerOptions {
    * `domain`, `requiredSecrets`, …) are ignored here.
    */
   readonly config?: BaerlyConfig;
-  /**
-   * Operator's long-term {@link MetricsRecorder}. Receives every kernel
-   * emission (Writer histograms, CAS-conflict counters, storage per-call
-   * counts) verbatim. Defaults to {@link noopMetricsRecorder}.
-   */
-  readonly metrics?: MetricsRecorder;
   /**
    * LogTape config (level/sink) with `LOG_LEVEL` envvar fallback.
    * When the field is unset, the default sink is auto-selected: the
@@ -91,10 +77,7 @@ export function createFetchHandler(
 ): (req: Request) => Promise<Response> {
   // Factory-time, idempotent.
   void configureObservability(resolveDefaultSink(opts.observability ?? {}));
-  const operatorRecorder = opts.metrics ?? noopMetricsRecorder;
-  const teeRecorder = alsAwareRecorder(operatorRecorder);
-  setKernelMetricsRecorder(teeRecorder);
-  const wrappedStorage = observableStorage(opts.storage, teeRecorder);
+  const wrappedStorage = observableStorage(opts.storage);
 
   return async (request: Request): Promise<Response> => {
     const url = new URL(request.url);
@@ -172,12 +155,6 @@ export interface NodeMaintenanceOptions {
   readonly currentJsonKey: string;
   /** Forwarded to both `compact()` and `runGc()` underneath. */
   readonly signal?: AbortSignal;
-  /**
-   * Operator's long-term {@link MetricsRecorder}. Defaults to
-   * {@link noopMetricsRecorder}. Receives every compactor + GC
-   * emission verbatim.
-   */
-  readonly metrics?: MetricsRecorder;
 }
 
 /**
@@ -205,18 +182,13 @@ export interface NodeMaintenanceOptions {
  * ```
  */
 export const runMaintenanceTick = async (opts: NodeMaintenanceOptions): Promise<void> => {
-  // `teeRecorder` (ALS-aware) wraps the storage observer so storage
-  // metrics land in the operator's sink AND, when called inside an
-  // HTTP context, the active per-request bag via ALS. Maintenance
-  // ticks run outside any HTTP scope so kernel emissions reach only
-  // the operator's sink — by design (no human reads cron-tick
-  // canonical lines).
-  const operatorRecorder = opts.metrics ?? noopMetricsRecorder;
-  const teeRecorder = alsAwareRecorder(operatorRecorder);
-  setKernelMetricsRecorder(teeRecorder);
+  // Maintenance ticks run outside any HTTP scope, so kernel
+  // emissions inside compact / GC reach the no-op recorder by
+  // design (no human reads cron-tick canonical lines; errors throw
+  // to the process log).
   await runScheduledMaintenance(
     {
-      storage: observableStorage(opts.storage, teeRecorder),
+      storage: observableStorage(opts.storage),
       currentJsonKey: opts.currentJsonKey,
     },
     {

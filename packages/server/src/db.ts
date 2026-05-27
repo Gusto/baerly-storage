@@ -16,7 +16,6 @@ import {
   type UnboundConfig,
 } from "@baerly/protocol";
 import { collectionsToMaps } from "./config.ts";
-import { getKernelMetricsRecorder } from "./observability/kernel-recorder.ts";
 import type { TableReadContext } from "./query.ts";
 import { Writer, type CommitInput } from "./writer.ts";
 import { makeTable } from "./table.ts";
@@ -265,7 +264,6 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
       storage: this.#storage,
       tablePrefix: `${physicalPrefixFor(this.app, this.tenant)}manifests/${name}`,
       tableName: name,
-      metrics: getKernelMetricsRecorder(),
       indexes: this.#indexes.get(name) ?? [],
       ...(schema !== undefined ? { schema } : {}),
     };
@@ -332,7 +330,6 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
       tablePrefix,
       tableName: table,
       txCtx,
-      metrics: getKernelMetricsRecorder(),
       indexes,
       ...(schema !== undefined ? { schema } : {}),
     });
@@ -365,7 +362,7 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
     const writer = new Writer({
       storage: this.#storage,
       currentJsonKey: `${tablePrefix}/current.json`,
-      options: { metrics: getKernelMetricsRecorder(), indexes },
+      options: { indexes },
     });
     await writer.commitBatch(inputs);
   }

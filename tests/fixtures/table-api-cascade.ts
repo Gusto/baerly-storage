@@ -29,7 +29,6 @@ import {
   type DocumentData,
   type LogEntry,
   BaerlyError,
-  noopMetricsRecorder,
   type SchemaValidator,
   type Storage,
   createCurrentJson,
@@ -37,11 +36,7 @@ import {
 } from "@baerly/protocol";
 import { Db } from "@baerly/server";
 import { compact, runGc } from "@baerly/server/maintenance";
-import {
-  alsAwareRecorder,
-  createObservabilityContext,
-  runWithContext,
-} from "@baerly/server/observability";
+import { createObservabilityContext, runWithContext } from "@baerly/server/observability";
 import {
   type InternalCompactOptions,
   type InternalRunGcOptions,
@@ -560,18 +555,8 @@ const runMetricsCascade = async (storage: Storage, app: string, tenant: string):
   await provision(storage, app, tenant, t);
   const currentJsonKey = `app/${app}/tenant/${tenant}/manifests/${t}/current.json`;
   const ctx = createObservabilityContext();
-  // Writer reads its recorder from constructor options; we wire an
-  // ALS-aware shim so its emissions reach ctx.recorder when the
-  // commit runs inside `runWithContext`. Cut 6 collapses Writer to
-  // the same `getCurrentContext()?.recorder` lookup compactor/gc
-  // already use, removing this seam.
-  const writerMetrics = alsAwareRecorder(noopMetricsRecorder);
   await runWithContext(ctx, async () => {
-    const writer = new Writer({
-      storage,
-      currentJsonKey,
-      options: { metrics: writerMetrics },
-    });
+    const writer = new Writer({ storage, currentJsonKey });
     for (let i = 0; i < 100; i++) {
       await writer.commit({
         op: "I",

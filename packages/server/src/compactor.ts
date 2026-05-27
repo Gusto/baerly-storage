@@ -49,7 +49,7 @@ import {
   type StoragePutOptions,
 } from "@baerly/protocol";
 import { walkLogRange } from "./log-walk.ts";
-import { getCurrentContext } from "./observability/index.ts";
+import { getCurrentContext } from "./observability/context.ts";
 import {
   encodeSnapshotBody,
   loadSnapshotAsMap,

@@ -1,7 +1,7 @@
 import { createServer, type Server } from "node:http";
 import { serve } from "@hono/node-server";
 import type { DevLandingOptions } from "@baerly/dev";
-import type { BaerlyAppConfig, MetricsRecorder, Storage, Verifier } from "@baerly/protocol";
+import type { BaerlyAppConfig, Storage, Verifier } from "@baerly/protocol";
 import { resolveVerifier } from "@baerly/server";
 import type { ObservabilityConfig } from "@baerly/server/observability";
 import { createApp } from "./app.ts";
@@ -62,7 +62,6 @@ export interface BaerlyNodeOptions {
    * `GET /v1/healthz` always bypasses the verifier.
    */
   readonly verifier?: Verifier;
-  readonly metrics?: MetricsRecorder;
   readonly observability?: ObservabilityConfig;
   readonly dev?: DevLandingOptions;
   readonly webRoot?: string;
@@ -164,7 +163,6 @@ export function baerlyNode(opts: BaerlyNodeOptions): BaerlyNodeHandle {
     storage: opts.storage,
     verifier,
     config: opts.config,
-    ...(opts.metrics !== undefined && { metrics: opts.metrics }),
     ...(opts.observability !== undefined && { observability: opts.observability }),
     ...(opts.dev !== undefined && { dev: opts.dev }),
     ...(opts.webRoot !== undefined && { webRoot: opts.webRoot }),
@@ -202,7 +200,6 @@ export function baerlyNode(opts: BaerlyNodeOptions): BaerlyNodeHandle {
             await runMaintenanceTick({
               storage: opts.storage,
               currentJsonKey: buildCurrentJsonKey(opts.config.app, tenant, collection),
-              ...(opts.metrics !== undefined && { metrics: opts.metrics }),
             });
           } catch (error) {
             // Never re-throw from the scheduled callback — a transient
