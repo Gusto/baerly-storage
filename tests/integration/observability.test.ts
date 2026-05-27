@@ -55,7 +55,9 @@ import {
   createObservabilityContext,
   flushCanonicalLine,
   observableStorage,
+  resetKernelMetricsRecorder,
   runWithContext,
+  setKernelMetricsRecorder,
   type ObservabilityContext,
 } from "@baerly/server/observability";
 
@@ -150,6 +152,7 @@ describe("observability integration — canonical line vs physical reality", () 
   });
 
   afterEach(async () => {
+    resetKernelMetricsRecorder();
     await reset();
   });
 
@@ -163,7 +166,13 @@ describe("observability integration — canonical line vs physical reality", () 
     const proxy = countingProxy(memory);
     const recorder = alsAwareRecorder(noopMetricsRecorder);
     const wrapped = observableStorage(proxy.storage, recorder);
-    const db = Db.create({ storage: wrapped, app: APP, tenant: TENANT, metrics: recorder });
+    // Adapters call setKernelMetricsRecorder once at boot with their
+    // tee'd recorder; we mirror that here so Writer/compactor/GC
+    // emissions reach the recorder (and from there, the ALS bag the
+    // canonical-line flusher reads). resetKernelMetricsRecorder() in
+    // the describe-level afterEach restores the noop default.
+    setKernelMetricsRecorder(recorder);
+    const db = Db.create({ storage: wrapped, app: APP, tenant: TENANT });
 
     const ctx = sampledCtx();
     await runWithContext(ctx, async () => {
@@ -213,7 +222,13 @@ describe("observability integration — canonical line vs physical reality", () 
     const proxy = countingProxy(memory);
     const recorder = alsAwareRecorder(noopMetricsRecorder);
     const wrapped = observableStorage(proxy.storage, recorder);
-    const db = Db.create({ storage: wrapped, app: APP, tenant: TENANT, metrics: recorder });
+    // Adapters call setKernelMetricsRecorder once at boot with their
+    // tee'd recorder; we mirror that here so Writer/compactor/GC
+    // emissions reach the recorder (and from there, the ALS bag the
+    // canonical-line flusher reads). resetKernelMetricsRecorder() in
+    // the describe-level afterEach restores the noop default.
+    setKernelMetricsRecorder(recorder);
+    const db = Db.create({ storage: wrapped, app: APP, tenant: TENANT });
 
     const ctx = sampledCtx();
     await runWithContext(ctx, async () => {
@@ -257,7 +272,13 @@ describe("observability integration — canonical line vs physical reality", () 
     const proxy = countingProxy(memory);
     const recorder = alsAwareRecorder(noopMetricsRecorder);
     const wrapped = observableStorage(proxy.storage, recorder);
-    const db = Db.create({ storage: wrapped, app: APP, tenant: TENANT, metrics: recorder });
+    // Adapters call setKernelMetricsRecorder once at boot with their
+    // tee'd recorder; we mirror that here so Writer/compactor/GC
+    // emissions reach the recorder (and from there, the ALS bag the
+    // canonical-line flusher reads). resetKernelMetricsRecorder() in
+    // the describe-level afterEach restores the noop default.
+    setKernelMetricsRecorder(recorder);
+    const db = Db.create({ storage: wrapped, app: APP, tenant: TENANT });
 
     // Seed one doc OUTSIDE the observed window so the seed's physical
     // ops don't pollute the assertion. The retry / collision path
@@ -335,7 +356,13 @@ describe("observability integration — canonical line vs physical reality", () 
     const proxy = countingProxy(memory);
     const recorder = alsAwareRecorder(noopMetricsRecorder);
     const wrapped = observableStorage(proxy.storage, recorder);
-    const db = Db.create({ storage: wrapped, app: APP, tenant: TENANT, metrics: recorder });
+    // Adapters call setKernelMetricsRecorder once at boot with their
+    // tee'd recorder; we mirror that here so Writer/compactor/GC
+    // emissions reach the recorder (and from there, the ALS bag the
+    // canonical-line flusher reads). resetKernelMetricsRecorder() in
+    // the describe-level afterEach restores the noop default.
+    setKernelMetricsRecorder(recorder);
+    const db = Db.create({ storage: wrapped, app: APP, tenant: TENANT });
 
     // Default head-sampling decision is `false`; without
     // `sampled_by_head = true` the flusher should drop the line.

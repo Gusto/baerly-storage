@@ -18,10 +18,14 @@ import {
   createGcPending,
   readGcPending,
 } from "@baerly/protocol";
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test } from "vitest";
 import { compact, type InternalCompactOptions } from "./compactor.ts";
 import { type InternalRunGcOptions, runGc } from "./gc.ts";
 import { InMemoryMetricsRecorder } from "./_internal/in-memory-metrics.ts";
+import {
+  resetKernelMetricsRecorder,
+  setKernelMetricsRecorder,
+} from "./observability/kernel-recorder.ts";
 import { Writer } from "./writer.ts";
 
 const bootstrap = async (storage: MemoryStorage, key: string): Promise<void> => {
@@ -39,6 +43,8 @@ const PENDING_KEY = "app/t/tenant/x/manifests/c/gc/pending.json";
 const COLL = "c";
 
 describe("runGc", () => {
+  afterEach(() => resetKernelMetricsRecorder());
+
   test("returns zeros and bootstraps an empty pending.json on first run", async () => {
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
@@ -336,10 +342,10 @@ describe("runGc", () => {
       maxEntriesPerRun: 40,
     } as InternalCompactOptions);
     const metrics = new InMemoryMetricsRecorder();
+    setKernelMetricsRecorder(metrics);
     const r = await runGc({ storage: s, currentJsonKey: KEY }, {
       graceMillis: 0,
       maxSweepsPerRun: 40,
-      metrics,
     } as InternalRunGcOptions);
     expect(r.marked.stale_log).toBe(40);
     expect(r.swept).toBe(40);
@@ -357,7 +363,8 @@ describe("runGc", () => {
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
     const metrics = new InMemoryMetricsRecorder();
-    const r = await runGc({ storage: s, currentJsonKey: KEY }, { metrics });
+    setKernelMetricsRecorder(metrics);
+    const r = await runGc({ storage: s, currentJsonKey: KEY });
     expect(r.swept).toBe(0);
     // Sweep gauge still emitted (operator wants 0-state visibility).
     expect(metrics.lastGauge("db.gc.entries_swept_per_second")).toBe(0);

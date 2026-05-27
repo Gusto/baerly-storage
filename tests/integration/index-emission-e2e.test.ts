@@ -3,7 +3,7 @@
    declaration); tests reference it by name. */
 
 /**
- * Regression — production `Db.create({ indexes })` → write path must
+ * Regression — production `Db.create({ config })` → write path must
  * emit secondary-index PUTs.
  *
  * The writer-side index-emission block in `Writer` is correct in
@@ -89,7 +89,7 @@ const makeDb = (storage: MemoryStorage): Db =>
     storage,
     app: APP,
     tenant: TENANT,
-    indexes: new Map([[COLL, [BY_STATUS]]]),
+    config: { collections: { [COLL]: { indexes: [BY_STATUS] } } },
   });
 
 /**

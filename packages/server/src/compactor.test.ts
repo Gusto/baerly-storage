@@ -15,10 +15,14 @@ import {
   MemoryStorage,
   BaerlyError,
 } from "@baerly/protocol";
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test } from "vitest";
 import { compact, type InternalCompactOptions } from "./compactor.ts";
 import { loadSnapshotAsMap } from "./snapshot.ts";
 import { InMemoryMetricsRecorder } from "./_internal/in-memory-metrics.ts";
+import {
+  resetKernelMetricsRecorder,
+  setKernelMetricsRecorder,
+} from "./observability/kernel-recorder.ts";
 import { Writer } from "./writer.ts";
 
 const bootstrap = async (storage: MemoryStorage, key: string): Promise<void> => {
@@ -34,6 +38,8 @@ const bootstrap = async (storage: MemoryStorage, key: string): Promise<void> => 
 describe("compact", () => {
   const KEY = "app/t/tenant/x/manifests/c/current.json";
   const COLL = "c";
+
+  afterEach(() => resetKernelMetricsRecorder());
 
   test("returns current-json-missing when current.json doesn't exist", async () => {
     const s = new MemoryStorage();
@@ -276,10 +282,10 @@ describe("compact", () => {
       });
     }
     const metrics = new InMemoryMetricsRecorder();
+    setKernelMetricsRecorder(metrics);
     const res = await compact({ storage: s, currentJsonKey: KEY }, {
       minEntriesToCompact: 10,
       maxEntriesPerRun: 40,
-      metrics,
     } as InternalCompactOptions);
     expect(res.written).toBe(true);
     // Folded 40 of the 50 available.
@@ -292,10 +298,8 @@ describe("compact", () => {
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
     const metrics = new InMemoryMetricsRecorder();
-    const res = await compact(
-      { storage: s, currentJsonKey: KEY },
-      { minEntriesToCompact: 10, metrics },
-    );
+    setKernelMetricsRecorder(metrics);
+    const res = await compact({ storage: s, currentJsonKey: KEY }, { minEntriesToCompact: 10 });
     expect(res.written).toBe(false);
     expect(metrics.histogramValues("db.compact.entries_folded")).toEqual([]);
     expect(metrics.lastGauge("db.manifest.lag_window_depth")).toBeUndefined();

@@ -36,6 +36,7 @@ import {
 } from "@baerly/protocol";
 import { Db } from "@baerly/server";
 import { compact, runGc } from "@baerly/server/maintenance";
+import { resetKernelMetricsRecorder, setKernelMetricsRecorder } from "@baerly/server/observability";
 import {
   InMemoryMetricsRecorder,
   type InternalCompactOptions,
@@ -545,51 +546,57 @@ const runGcCascade = async (
  * every adapter via the variant table — the assertion is "the
  * emission sites fire correctly on every {@link Storage} backend."
  *
- * Uses {@link Writer} directly (instead of `db.table().insert()`)
- * so we can pass the recorder through `WriterOptions.metrics`
- * — the public `Db` API doesn't yet thread the recorder, by design
- * (the HTTP server wires it at the request adapter).
+ * The recorder is installed via {@link setKernelMetricsRecorder}
+ * (the same seam adapters use at boot) so Writer / compactor / GC
+ * pick it up via `getKernelMetricsRecorder()`. Restored to the noop
+ * default on exit so the variant ring doesn't leak state.
  */
 const runMetricsCascade = async (storage: Storage, app: string, tenant: string): Promise<void> => {
   const t = freshTableName("metrics");
   await provision(storage, app, tenant, t);
   const currentJsonKey = `app/${app}/tenant/${tenant}/manifests/${t}/current.json`;
   const metrics = new InMemoryMetricsRecorder();
-
-  // 100 writes through Writer with the recorder wired.
-  const writer = new Writer({
-    storage,
-    currentJsonKey,
-    options: { metrics },
-  });
-  for (let i = 0; i < 100; i++) {
-    await writer.commit({
-      op: "I",
-      collection: t,
-      docId: `m${i}`,
-      body: { _id: `m${i}`, n: i },
+  // Compact/GC read their recorder from the kernel singleton
+  // (post-Phase-1); Writer still accepts the recorder via
+  // WriterOptions. Wire both so this fixture exercises all three
+  // emission sites with one recorder.
+  setKernelMetricsRecorder(metrics);
+  try {
+    // 100 writes through Writer with the recorder wired.
+    const writer = new Writer({
+      storage,
+      currentJsonKey,
+      options: { metrics },
     });
+    for (let i = 0; i < 100; i++) {
+      await writer.commit({
+        op: "I",
+        collection: t,
+        docId: `m${i}`,
+        body: { _id: `m${i}`, n: i },
+      });
+    }
+
+    await compact({ storage, currentJsonKey }, {
+      minEntriesToCompact: 10,
+      maxEntriesPerRun: 100,
+    } as InternalCompactOptions);
+    await runGc({ storage, currentJsonKey }, {
+      graceMillis: 0,
+      maxSweepsPerRun: 100,
+      maxMarksPerRun: 100,
+    } as InternalRunGcOptions);
+
+    // The six load-bearing metric names per the ticket.
+    expect(metrics.histogramValues("db.write.class_a_ops_per_logical_write").length).toBe(100);
+    expect(metrics.histogramValues("db.compact.entries_folded").length).toBeGreaterThan(0);
+    expect(metrics.lastGauge("db.manifest.lag_window_depth")).toBeDefined();
+    expect(metrics.lastGauge("db.orphan.candidate_count")).toBeDefined();
+    expect(metrics.lastGauge("db.gc.entries_swept_per_second")).toBeDefined();
+    expect(metrics.sumCounter("db.gc.swept_total")).toBeGreaterThan(0);
+  } finally {
+    resetKernelMetricsRecorder();
   }
-
-  await compact({ storage, currentJsonKey }, {
-    minEntriesToCompact: 10,
-    maxEntriesPerRun: 100,
-    metrics,
-  } as InternalCompactOptions);
-  await runGc({ storage, currentJsonKey }, {
-    graceMillis: 0,
-    maxSweepsPerRun: 100,
-    maxMarksPerRun: 100,
-    metrics,
-  } as InternalRunGcOptions);
-
-  // The six load-bearing metric names per the ticket.
-  expect(metrics.histogramValues("db.write.class_a_ops_per_logical_write").length).toBe(100);
-  expect(metrics.histogramValues("db.compact.entries_folded").length).toBeGreaterThan(0);
-  expect(metrics.lastGauge("db.manifest.lag_window_depth")).toBeDefined();
-  expect(metrics.lastGauge("db.orphan.candidate_count")).toBeDefined();
-  expect(metrics.lastGauge("db.gc.entries_swept_per_second")).toBeDefined();
-  expect(metrics.sumCounter("db.gc.swept_total")).toBeGreaterThan(0);
 };
 
 /**
@@ -658,8 +665,12 @@ const runSchemaValidation = async (
   // Tidy up so the schema-bound Db sees a clean slate.
   await noSchemaDb.table<Doc>(t).delete(ok);
 
-  const schemas = new Map<string, SchemaValidator>([[t, STATUS_SCHEMA]]);
-  const db = Db.create({ storage, app, tenant, schemas });
+  const db = Db.create({
+    storage,
+    app,
+    tenant,
+    config: { collections: { [t]: { schema: STATUS_SCHEMA } } },
+  });
 
   // (4) Happy path: post-image satisfies the schema → insert succeeds.
   const { _id: validId } = await db.table<Doc>(t).insert({ status: "open" });

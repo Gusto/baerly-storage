@@ -343,7 +343,7 @@ describe("HTTP boundary — schema validation (ticket 70)", () => {
       storage: memStorage,
       app: APP_NAME,
       tenant: TENANT,
-      schemas: new Map<string, SchemaValidator>([[TABLE, STATUS_SCHEMA]]),
+      config: { collections: { [TABLE]: { schema: STATUS_SCHEMA } } },
     });
     const app = createRouter({ db });
 

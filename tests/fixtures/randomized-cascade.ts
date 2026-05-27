@@ -574,7 +574,7 @@ export const runRangeWalkParityCascade = async (opts: {
     storage: opts.storage,
     app,
     tenant,
-    indexes: new Map([[collection, indexes]]),
+    config: { collections: { [collection]: { indexes: [...indexes] } } },
   });
   const table = db.table<ParityDoc>(collection);
 

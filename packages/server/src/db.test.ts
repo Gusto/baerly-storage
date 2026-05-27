@@ -7,9 +7,13 @@ import {
   type SchemaValidator,
   type Storage,
 } from "@baerly/protocol";
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test } from "vitest";
 import { Db } from "./db.ts";
 import { InMemoryMetricsRecorder } from "./_internal/in-memory-metrics.ts";
+import {
+  resetKernelMetricsRecorder,
+  setKernelMetricsRecorder,
+} from "./observability/kernel-recorder.ts";
 
 describe("Db.create", () => {
   test("returns a Db scoped to the given app and tenant", () => {
@@ -95,39 +99,9 @@ describe("Db.create config derivation", () => {
     const db = Db.create({ storage: new MemoryStorage(), app: "x", tenant: "y", config });
     expect(db.tableReadContext("tickets").indexes.map((i) => i.name)).toEqual(["by_status"]);
   });
-
-  test("explicit `schemas` overrides config-derived schemas", async () => {
-    const config: BaerlyConfig = {
-      collections: { tickets: { schema: onlyStrings } },
-    };
-    const db = Db.create({
-      storage: new MemoryStorage(),
-      app: "x",
-      tenant: "y",
-      config,
-      schemas: new Map(),
-    });
-    // Explicit empty override wins — the bad insert that would have
-    // tripped `onlyStrings` now succeeds.
-    await expect(db.table("tickets").insert({ title: 42 })).resolves.toBeDefined();
-  });
-
-  test("explicit `indexes` overrides config-derived indexes", () => {
-    const config: BaerlyConfig = {
-      collections: { tickets: { indexes: [{ name: "by_status", on: "status" }] } },
-    };
-    const db = Db.create({
-      storage: new MemoryStorage(),
-      app: "x",
-      tenant: "y",
-      config,
-      indexes: new Map(),
-    });
-    expect(db.tableReadContext("tickets").indexes).toEqual([]);
-  });
 });
 
-describe("Db metrics threading", () => {
+describe("Db → kernel metrics recorder", () => {
   const APP = "tickets";
   const TENANT = "acme";
   const TABLE = "tickets";
@@ -143,23 +117,28 @@ describe("Db metrics threading", () => {
     });
   };
 
-  test("single-mutation insert forwards metrics to the Writer", async () => {
+  afterEach(() => resetKernelMetricsRecorder());
+
+  test("single-mutation insert emits to the kernel recorder", async () => {
     const storage = new MemoryStorage();
     await provision(storage);
     const metrics = new InMemoryMetricsRecorder();
-    const db = Db.create({ storage, app: APP, tenant: TENANT, metrics });
+    setKernelMetricsRecorder(metrics);
+    const db = Db.create({ storage, app: APP, tenant: TENANT });
     await db.table<{ _id: string; title: string }>(TABLE).insert({ title: "hi" });
     // writer.ts emits one histogram observation per successful
-    // commit. Without metrics threading the recorder stays empty.
+    // commit via getKernelMetricsRecorder(). Without the kernel
+    // recorder set, observations route through the noop default.
     const observed = metrics.histogramValues("db.write.class_a_ops_per_logical_write");
     expect(observed.length).toBeGreaterThan(0);
   });
 
-  test("transaction commit forwards metrics to the Writer", async () => {
+  test("transaction commit emits to the kernel recorder", async () => {
     const storage = new MemoryStorage();
     await provision(storage);
     const metrics = new InMemoryMetricsRecorder();
-    const db = Db.create({ storage, app: APP, tenant: TENANT, metrics });
+    setKernelMetricsRecorder(metrics);
+    const db = Db.create({ storage, app: APP, tenant: TENANT });
     await db.transaction<{ _id: string; title: string }>(TABLE, async (tx) => {
       await tx.insert({ title: "one" });
       await tx.insert({ title: "two" });
@@ -168,7 +147,7 @@ describe("Db metrics threading", () => {
     expect(observed.length).toBeGreaterThan(0);
   });
 
-  test("omitting metrics is a no-op (no throw)", async () => {
+  test("default kernel recorder is a no-op (no throw)", async () => {
     const storage = new MemoryStorage();
     await provision(storage);
     const db = Db.create({ storage, app: APP, tenant: TENANT });

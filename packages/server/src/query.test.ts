@@ -488,7 +488,9 @@ describe("auto-planner index routing", () => {
       storage,
       app: APP,
       tenant: TENANT,
-      indexes: new Map([[COLL, [{ name: "by_status", on: "status" }]]]),
+      config: {
+        collections: { [COLL]: { indexes: [{ name: "by_status", on: "status" }] } },
+      },
     });
 
   const dbWithComposite = (): Db =>
@@ -496,7 +498,11 @@ describe("auto-planner index routing", () => {
       storage,
       app: APP,
       tenant: TENANT,
-      indexes: new Map([[COLL, [{ name: "by_status_priority", on: ["status", "priority"] }]]]),
+      config: {
+        collections: {
+          [COLL]: { indexes: [{ name: "by_status_priority", on: ["status", "priority"] }] },
+        },
+      },
     });
 
   test("auto-routes a single-field equality predicate to the declared index", async () => {
@@ -725,7 +731,9 @@ describe("auto-planner index routing", () => {
       storage,
       app: APP,
       tenant: TENANT,
-      indexes: new Map([[COLL, [{ name: "by_a_b_c", on: ["a", "b", "c"] }]]]),
+      config: {
+        collections: { [COLL]: { indexes: [{ name: "by_a_b_c", on: ["a", "b", "c"] }] } },
+      },
     });
     const rows = await db
       .table<{ _id: string; a: number; b: number; c: number }>(COLL)
@@ -913,7 +921,9 @@ describe("auto-planner range and $in walks (T3)", () => {
       storage,
       app: APP,
       tenant: TENANT,
-      indexes: new Map([[COLL, [{ name: "by_priority", on: "priority" }]]]),
+      config: {
+        collections: { [COLL]: { indexes: [{ name: "by_priority", on: "priority" }] } },
+      },
     });
 
   const dbWithByStatus = (): Db =>
@@ -921,7 +931,9 @@ describe("auto-planner range and $in walks (T3)", () => {
       storage,
       app: APP,
       tenant: TENANT,
-      indexes: new Map([[COLL, [{ name: "by_status", on: "status" }]]]),
+      config: {
+        collections: { [COLL]: { indexes: [{ name: "by_status", on: "status" }] } },
+      },
     });
 
   const dbWithComposite = (): Db =>
@@ -929,7 +941,11 @@ describe("auto-planner range and $in walks (T3)", () => {
       storage,
       app: APP,
       tenant: TENANT,
-      indexes: new Map([[COLL, [{ name: "by_tenant_age", on: ["tenant", "age"] }]]]),
+      config: {
+        collections: {
+          [COLL]: { indexes: [{ name: "by_tenant_age", on: ["tenant", "age"] }] },
+        },
+      },
     });
 
   test("single-field range walk over string-typed field returns the slice", async () => {
@@ -1190,7 +1206,7 @@ describe("auto-planner range and $in walks (T3)", () => {
       storage,
       app: APP,
       tenant: TENANT,
-      indexes: new Map([[COLL, [...indexes]]]),
+      config: { collections: { [COLL]: { indexes: [...indexes] } } },
     });
     const rows = await db
       .table<{ _id: string; age: number }>(COLL)
@@ -1205,8 +1221,8 @@ describe("auto-planner range and $in walks (T3)", () => {
     // regression dropped a value or duplicated a doc this would trip.
     //
     // Seed via `Writer` directly for setup convenience —
-    // equivalent to a `Db.create({ indexes })` path now that the
-    // production wiring threads `options.indexes`.
+    // equivalent to a `Db.create({ config })` path now that the
+    // production wiring threads `config.collections[].indexes`.
     await provision(storage);
     const writer = new Writer({
       storage,
@@ -1241,7 +1257,7 @@ describe("auto-planner range and $in walks (T3)", () => {
       storage,
       app: APP,
       tenant: TENANT,
-      indexes: new Map([[COLL, [...indexes]]]),
+      config: { collections: { [COLL]: { indexes: [...indexes] } } },
     });
     const rows = await db
       .table<{ _id: string; team: string }>(COLL)
