@@ -75,7 +75,6 @@ describe("baerly-storage/http", () => {
 import {
   CLOUDFLARE_FREE_TIER,
   compact,
-  migrateCollection,
   rebuildIndex,
   runGc,
   runScheduledMaintenance,
@@ -88,7 +87,6 @@ describe("baerly-storage/maintenance", () => {
     expect(typeof compact).toBe("function");
     expect(typeof runGc).toBe("function");
     expect(typeof rebuildIndex).toBe("function");
-    expect(typeof migrateCollection).toBe("function");
   });
 });
 

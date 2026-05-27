@@ -71,7 +71,7 @@ interface Budget {
 
 const BUDGETS: readonly Budget[] = [
   // Full barrel: kernel + http + auth. Maintenance entry points
-  // (runGc, rebuildIndex, migrateCollection) are exported from
+  // (runGc, rebuildIndex) are exported from
   // index.js and carry the observability subgraph with them.
   // `prettyConsoleSink` + picocolors no longer ship in
   // `@baerly/server` — the kernel's `configureObservability` only
@@ -243,11 +243,11 @@ const BUDGETS: readonly Budget[] = [
   //     @baerly/server's curated protocol re-exports; marginal cost
   //     from the recorder class landing in the maintenance closure.
   //   → 185 KiB raw / 51 KiB gz: kernel-cleanup (A4 + B22) moved
-  //     `rebuildIndex` and `migrateCollection` off the top-level
-  //     barrel and onto `baerly-storage/maintenance`. The two
-  //     primitives plus their walkLogRange dependency widen the
-  //     maintenance closure by ~28 KiB raw / 7 KiB gz; the matching
-  //     shrinkage lands in the index.js closure.
+  //     `rebuildIndex` off the top-level barrel and onto
+  //     `baerly-storage/maintenance`. The primitive plus its
+  //     walkLogRange dependency widens the maintenance closure
+  //     by ~28 KiB raw / 7 KiB gz; the matching shrinkage lands
+  //     in the index.js closure.
   { entry: "maintenance.js", raw: 185 * 1024, gz: 51 * 1024 },
   // Cloudflare Workers adapter — re-exports the kernel barrel
   // (Db, Writer, etc.) plus the R2-binding `Storage` impl

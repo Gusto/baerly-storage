@@ -98,21 +98,6 @@ export interface CurrentJson {
    * Embedded write-fence epoch. See {@link WriterFence}.
    */
   writer_fence: WriterFence;
-
-  /**
-   * Highest schema version this collection has been migrated to via
-   * `migrateCollection` / `baerly admin migrate`. Optional and
-   * additive — older readers ignore the field; older writers leave
-   * it unset. A subsequent `migrateCollection` call observing
-   * `migrated_to === targetVersion` short-circuits to a no-op so
-   * re-runs of the same migration are idempotent.
-   *
-   * Unrelated to the per-{@link LogEntry} `schema_version` field —
-   * that field is stamped at commit time on each new log entry; this
-   * field records the highest collection-wide migration the operator
-   * has applied via `migrateCollection`.
-   */
-  migrated_to?: number;
 }
 
 /**
@@ -488,17 +473,6 @@ const assertCurrentJson = (parsed: unknown, key: string): CurrentJson => {
     throw new BaerlyError(
       "InvalidResponse",
       `current.json at ${key}: writer_fence.lease_until must be string if present`,
-    );
-  }
-  if (
-    r["migrated_to"] !== undefined &&
-    (typeof r["migrated_to"] !== "number" ||
-      !Number.isInteger(r["migrated_to"]) ||
-      r["migrated_to"] < 0)
-  ) {
-    throw new BaerlyError(
-      "InvalidResponse",
-      `current.json at ${key}: migrated_to must be a non-negative integer if present`,
     );
   }
   return parsed as CurrentJson;

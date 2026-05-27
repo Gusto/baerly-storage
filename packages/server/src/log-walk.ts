@@ -125,8 +125,8 @@ export const walkLogRange = async (
  * resolved.
  *
  * This is the canonical fold used by the read path
- * (`query.ts`), the schema-version migrator (`migrate.ts`), and the
- * index reconciler (`rebuild-index.ts`). Centralising it keeps the
+ * (`query.ts`) and the index reconciler (`rebuild-index.ts`).
+ * Centralising it keeps the
  * "ignore T/M; straight `set` on I/U; tombstone on D" protocol
  * invariant in one place.
  *

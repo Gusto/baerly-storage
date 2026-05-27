@@ -17,7 +17,6 @@ Subcommands are built on [citty](https://github.com/unjs/citty);
 | `compact` | planned     | —             |
 | `fsck`    | planned     | —             |
 | `export`  | planned     | —             |
-| `migrate` | planned     | —             |
 | `dump`    | planned     | —             |
 | `restore` | planned     | —             |
 

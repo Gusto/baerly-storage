@@ -34,11 +34,6 @@ export {
   type RebuildIndexResult,
   rebuildIndex,
 } from "./rebuild-index.ts";
-export {
-  type MigrateCollectionArgs,
-  type MigrateCollectionResult,
-  migrateCollection,
-} from "./migrate.ts";
 import { getCurrentContext, withObservability } from "./observability/index.ts";
 
 export interface MaintenanceArgs {

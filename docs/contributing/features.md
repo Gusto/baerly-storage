@@ -327,21 +327,3 @@ wire `fsck` as a regression gate.
   [`packages/cli/src/admin/fsck.ts`](../../packages/cli/src/admin/fsck.ts)
 - Tests:
   [`packages/cli/src/admin/fsck.test.ts`](../../packages/cli/src/admin/fsck.test.ts)
-
-## Operator CLI — `baerly admin migrate`
-
-Applies a `(row) => row | null` transform across the materialised
-view of one collection and writes the result as a fresh L9
-snapshot, advancing `current.json` atomically and stamping a new
-`migrated_to: N` field on the manifest. Transform is loaded from
-a user-supplied `.js`/`.mjs`/`.cjs` file's default export.
-Idempotent re-runs short-circuit when `migrated_to ===
-targetVersion` already.
-
-- Implementation:
-  [`packages/server/src/migrate.ts`](../../packages/server/src/migrate.ts)
-  (`migrateCollection` primitive),
-  [`packages/cli/src/admin/migrate.ts`](../../packages/cli/src/admin/migrate.ts)
-- Tests:
-  [`packages/server/src/migrate.test.ts`](../../packages/server/src/migrate.test.ts),
-  [`packages/cli/src/admin/migrate.test.ts`](../../packages/cli/src/admin/migrate.test.ts)

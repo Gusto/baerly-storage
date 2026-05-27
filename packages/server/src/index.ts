@@ -10,7 +10,7 @@
  * - `baerly-storage/http` — `createRouter`, `mapError`,
  *   `listEventsSince`, `longPollSince`, body-size cap.
  * - `baerly-storage/maintenance` — `compact`, `runGc`,
- *   `rebuildIndex`, `migrateCollection`, `runScheduledMaintenance`,
+ *   `rebuildIndex`, `runScheduledMaintenance`,
  *   tuning profiles.
  * - `baerly-storage/observability` — context, recorder,
  *   canonical-line helpers, logger config.
