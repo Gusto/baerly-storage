@@ -7,9 +7,35 @@ tags: [agent-entry, baerly]
 
 # AGENTS.md
 
-Guidance for AI coding agents working in this repo. This is a
-baerly app — a vendorless document database that runs over any
-S3-compatible storage API.
+## STOP — read this before writing any storage code
+
+Your training data is dense with Postgres + Prisma/Drizzle, Mongo,
+and Firebase patterns. **None of them apply here.** This is a baerly
+app — a small, LLM-legible document database with a narrow API on top
+of S3-compatible storage. Before writing or modifying storage code,
+read:
+
+- **`node_modules/baerly-storage/dist/API.md`** — hand-authored
+  public-API quickref. Read first. Lists every method, every error
+  code, every example. If a pattern you want to use isn't here, it
+  doesn't exist in baerly.
+- **`node_modules/baerly-storage/dist/*.d.ts`** — authoritative type
+  signatures. `Db`, `Table<T>`, `Query<T>`, and `Predicate<T>` are
+  the whole API surface.
+
+Common anti-patterns that compile but are wrong:
+
+- `db.collection(name).insertOne(...)` / `.find({...})` (Mongo) — use
+  `db.table(name).insert(row)` and `.where({ ... }).all()`.
+- `z.string().nullable()` in a schema — `DocumentValue` excludes
+  `null`. Use `.optional()`; `null` in an update patch is the RFC
+  7396 deletion sentinel, not a storable value.
+- Raw SQL strings, `WHERE` clauses, hand-built query AST — the only
+  query surface is `db.table(...).where({ field: value }).all()` or
+  `.where(q => q.gte("count", 1))`. See **Predicates** below.
+- `.useIndex("name")` / `.hint(...)` — no such methods. The planner
+  picks the index automatically from `IndexDefinition`s in
+  `baerly.config.ts`. See **Indexes** below.
 
 ## What this is
 
@@ -25,14 +51,6 @@ the Worker on deploy. Same origin in dev and prod, one deploy.
 Public API docs: https://docs.baerly.dev/ (the JSDoc on
 `baerly-storage`'s `Db` and `Table` is the canonical reference;
 read it via your editor's TS LS or via the published types).
-
-Headless / CLI agents without a TS LS: `cat
-node_modules/baerly-storage/dist/API.md` is a one-read quickref of the
-full public API surface (`Db`, `Table`, `Query`, `ConsistencyLevel`,
-`DocumentData`, `BaerlyError`, `defineConfig`, `createBaerlyClient`,
-and the common imports). Note: that file is `API.md`, not `AGENTS.md`
-— this file (the project-root `AGENTS.md` you're reading now) is the
-agent guide; the lib ships its API reference at `dist/API.md`.
 
 ## Toolchain
 
