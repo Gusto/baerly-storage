@@ -16,7 +16,16 @@
     "serverless",
     "typescript"
   ],
+  "homepage": "https://github.com/Gusto/baerly-storage#readme",
+  "bugs": {
+    "url": "https://github.com/Gusto/baerly-storage/issues"
+  },
   "license": "MIT",
+  "author": "Eric Baer",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Gusto/baerly-storage.git"
+  },
   "bin": {
     "baerly": "./dist/baerly.js"
   },
