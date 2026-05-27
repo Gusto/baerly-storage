@@ -114,6 +114,15 @@ http://localhost:5173/<path>`) before declaring the task complete.
 | `baerly.config.ts`          | App config — `app`, `tenant`, `target`, `domain`, `collections` (schemas live here). |
 | `types.ts`                  | Shared types between the Node server (`src/server/`) and the SPA (`src/web/`). Both `tsconfig.app.json` and `tsconfig.server.json` include this file; put any row type or interface that crosses the boundary here. |
 
+> **`baerly.config.ts` and `types.ts` are dual-included** by both
+> `tsconfig.app.json` and `tsconfig.server.json`. Both can only
+> import from `baerly-storage`, `zod`, and other dual-included root
+> files. Paths under `src/server/` are server-only; importing them
+> here triggers `TS6307: File … is not listed within the file list
+> of project … tsconfig.app.json`. Cross-boundary interfaces belong
+> in `types.ts`; re-export from a server-only file if downstream code
+> wants a local name.
+
 ## When editing X, read Y
 
 - **Writing tests** — the kernel exports `MemoryStorage`, an

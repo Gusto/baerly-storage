@@ -1,3 +1,7 @@
+// Example test for the shipped `notes` collection. Replace or
+// delete when you change the schema in `baerly.config.ts` — the
+// import on line below will stop typechecking once `notes` is
+// gone.
 import { test, expect } from "vitest";
 import { Db, MemoryStorage } from "baerly-storage";
 import config from "../baerly.config.ts";

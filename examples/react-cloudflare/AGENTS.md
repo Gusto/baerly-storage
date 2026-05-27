@@ -113,6 +113,16 @@ http://localhost:5173/<path>`) before declaring the task complete.
 | `tsconfig.worker.json`     | Worker TS project (`src/server/`, workerd lib)                                                                   |
 | `baerly.config.ts`         | App config — `app`, `tenant`, `target`, `collections` (schemas live here). Also exports the inferred `Note` row type used by the web client. |
 
+> **`baerly.config.ts` is dual-included.** Both `tsconfig.app.json`
+> and `tsconfig.worker.json` `include` this file, so it must only
+> import from `baerly-storage`, `zod`, and other files reachable
+> from **both** projects. Paths under `src/server/` are worker-only;
+> importing them here triggers `TS6307: File … is not listed within
+> the file list of project … tsconfig.app.json`. Put document
+> interfaces here next to their schema (`export type Note =
+> z.infer<typeof NoteSchema>`); re-export from a server-only file if
+> downstream code wants a local name.
+
 ## When editing X, read Y
 
 - **Typed tables** — three ways to get a typed row, in DX order:

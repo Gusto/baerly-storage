@@ -149,9 +149,11 @@ shapes. Both forms normalise to one wire format (a flat clause list,
 `{ clauses: PredicateClause[] }`); the HTTP `?where=` param carries
 that wire JSON.
 
-Use `.get(id)` / `.update(id, patch)` / `.replace(id, doc)` /
-`.delete(id)` for by-`_id` operations — `_id` is excluded from
-`Path<T>` (and so from `PredicateBuilder<T>`'s field arg).
+By-`_id` lookups go through `.get(id)` / `.update(id, patch)` /
+`.replace(id, doc)` / `.delete(id)`, **not** `.where({ _id: id })`.
+`_id` is excluded from `Path<T>` (and so from `PredicateBuilder<T>`),
+so `.where({ _id: ... })` is a compile-time TS error. Nested `_id`
+paths (`author._id`) on referenced documents are still allowed.
 
 ```ts
 db.table("tickets").where({ status: "open" }).all();
@@ -370,14 +372,52 @@ cursor back on every subsequent call. The cursor is opaque — treat
 it as a string. `events` is empty iff the budget elapsed with no new
 writes (and `next_cursor` is unchanged).
 
-For React applications, `useQuery` from
-`baerly-storage/client/react` is the canonical consumer — it owns a
-shared per-`(client, table)` long-poll and invalidates any read
-whose chain touches the firing table. Hand-rolled subscribers in
-other UI frameworks can issue a `fetch` loop against this endpoint
+React applications use `baerly-storage/client/react` (see next
+section) instead of poking `/v1/since` by hand; hand-rolled
+subscribers in other UI frameworks can `fetch` this endpoint
 directly, or import the internal `pollSinceOnce` helper from
-`@baerly/client` package internals if cursor-aware tailing is
-needed.
+`@baerly/client` if cursor-aware tailing is needed.
+
+## React: `BaerlyProvider`, `useQuery`, `useMutation`
+
+`baerly-storage/client/react` exposes three symbols. The provider
+owns a shared `/v1/since` long-poll per `(client, table)`; idle
+cycles cost zero list reads, and any non-empty batch invalidates
+every `useQuery` whose chain touches the firing table.
+
+```tsx
+import {
+  BaerlyProvider, useQuery, useMutation,
+} from "baerly-storage/client/react";
+
+// 1. Wrap your app once.
+<BaerlyProvider client={createBaerlyClient({ baseUrl: "", config })}>
+  <App />
+</BaerlyProvider>
+
+// 2. useQuery(cb, deps) — cb receives the bare client and returns
+//    a ClientTable / ClientQuery chain. Re-runs on deps change OR
+//    on long-poll invalidation. Result is a discriminated union:
+const result = useQuery((c) => c.table<Note>("notes").all(), []);
+// result.status: "loading" | "ok" | "error" | "skipped"
+// result.data:   T[] | undefined        (present iff status === "ok")
+// result.error:  BaerlyError | undefined (present iff status === "error")
+
+// 3. useQuery.skip — short-circuit to status: "skipped", no
+//    subscription. Use for conditional or dependent reads.
+const filtered = useQuery(
+  (c) => filter === "all"
+    ? useQuery.skip
+    : c.table<Note>("notes").where({ status: filter }).all(),
+  [filter],
+);
+
+// 4. useMutation() — returns [mutate, { isPending, error }].
+//    Run any client call inside mutate; subscribed useQuery reads
+//    re-run automatically once the long-poll sees the write.
+const [mutate, { isPending, error }] = useMutation();
+await mutate((c) => c.table("notes").insert({ body }));
+```
 
 ## HTTP wire format
 
