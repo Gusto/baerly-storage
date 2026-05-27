@@ -8,7 +8,7 @@ tags: [agent-quickref, baerly]
 # baerly-storage — public API quickref
 
 This file ships in `dist/API.md` so a freshly-installed
-`node_modules/baerly-storage/dist/API.md` is one `cat` away from the
+`node_modules/@gusto/baerly-storage/dist/API.md` is one `cat` away from the
 full public surface. (It is named `API.md` rather than `AGENTS.md` to
 avoid colliding with the scaffolded user app's own `AGENTS.md` at the
 project root.) It is hand-curated; the `.d.ts` files in this same
@@ -28,10 +28,10 @@ import {
   type DocumentData, type ConsistencyLevel,
   BaerlyError, type BaerlyErrorCode,
   defineConfig,                  // narrower; root barrel
-} from "baerly-storage";
+} from "@gusto/baerly-storage";
 
 // Scaffold-aware config (`app`, `tenant`, `target`, `domain`, …)
-import { defineConfig } from "baerly-storage/config";
+import { defineConfig } from "@gusto/baerly-storage/config";
 // → use this one inside `baerly.config.ts`.
 
 // Browser / Node client (HTTP)
@@ -39,20 +39,20 @@ import {
   createBaerlyClient,
   type BaerlyClient, type ClientTable, type ClientQuery,
   type TerminalOptions, type Fetcher,
-} from "baerly-storage/client";
+} from "@gusto/baerly-storage/client";
 
 // Auth verifiers
 import {
   sharedSecret, cloudflareAccess, bearerJwt,
-} from "baerly-storage/auth";
+} from "@gusto/baerly-storage/auth";
 
 // Adapters
-import { baerlyWorker, r2BindingStorage } from "baerly-storage/cloudflare";
-import { baerlyNode, s3Storage, r2Storage, minioStorage, gcsStorage } from "baerly-storage/node";
+import { baerlyWorker, r2BindingStorage } from "@gusto/baerly-storage/cloudflare";
+import { baerlyNode, s3Storage, r2Storage, minioStorage, gcsStorage } from "@gusto/baerly-storage/node";
 
 // Dev helpers (Vite, local-fs storage)
-import { baerlyDevAuth, loadDevVars } from "baerly-storage/dev/vite";
-import { LocalFsStorage } from "baerly-storage/dev";
+import { baerlyDevAuth, loadDevVars } from "@gusto/baerly-storage/dev/vite";
+import { LocalFsStorage } from "@gusto/baerly-storage/dev";
 ```
 
 ## `Db.create({ storage, app, tenant, config? })`
@@ -62,7 +62,7 @@ always go through `Db.create`. Tables are auto-provisioned on first
 write (no `ensureTable` step).
 
 ```ts
-import { Db, MemoryStorage } from "baerly-storage";
+import { Db, MemoryStorage } from "@gusto/baerly-storage";
 import config from "./baerly.config";
 
 const db = Db.create({
@@ -228,7 +228,7 @@ Three ways to get a typed row:
 
 2. **Per-call generic.** Without a bound config:
    ```ts
-   import type { DocumentData } from "baerly-storage";
+   import type { DocumentData } from "@gusto/baerly-storage";
    interface Bookmark extends DocumentData { _id: string; url: string }
    await db.table<Bookmark>("bookmarks").all();
    ```
@@ -269,12 +269,12 @@ try {
 
 ## `defineConfig({ app, tenant, target, collections })`
 
-Scaffold-aware: lives at `baerly-storage/config`. Holds both deploy
+Scaffold-aware: lives at `@gusto/baerly-storage/config`. Holds both deploy
 metadata (`app`, `tenant`, `target`, `domain`, `cloudflareAccess`,
 `requiredSecrets`, `observability`) AND the runtime schema map.
 
 ```ts
-import { defineConfig } from "baerly-storage/config";
+import { defineConfig } from "@gusto/baerly-storage/config";
 import { z } from "zod";
 
 const TicketSchema = z.object({
@@ -372,7 +372,7 @@ cursor back on every subsequent call. The cursor is opaque — treat
 it as a string. `events` is empty iff the budget elapsed with no new
 writes (and `next_cursor` is unchanged).
 
-React applications use `baerly-storage/client/react` (see next
+React applications use `@gusto/baerly-storage/client/react` (see next
 section) instead of poking `/v1/since` by hand; hand-rolled
 subscribers in other UI frameworks can `fetch` this endpoint
 directly, or import the internal `pollSinceOnce` helper from
@@ -380,7 +380,7 @@ directly, or import the internal `pollSinceOnce` helper from
 
 ## React: `BaerlyProvider`, `useQuery`, `useMutation`
 
-`baerly-storage/client/react` exposes three symbols. The provider
+`@gusto/baerly-storage/client/react` exposes three symbols. The provider
 owns a shared `/v1/since` long-poll per `(client, table)`; idle
 cycles cost zero list reads, and any non-empty batch invalidates
 every `useQuery` whose chain touches the firing table.
@@ -388,7 +388,7 @@ every `useQuery` whose chain touches the firing table.
 ```tsx
 import {
   BaerlyProvider, useQuery, useMutation,
-} from "baerly-storage/client/react";
+} from "@gusto/baerly-storage/client/react";
 
 // 1. Wrap your app once.
 <BaerlyProvider client={createBaerlyClient({ baseUrl: "", config })}>
@@ -442,14 +442,14 @@ locked by `assertJsonBodyField` in the kernel.
 
 ```ts
 // Cloudflare Worker entry
-import { baerlyWorker } from "baerly-storage/cloudflare";
+import { baerlyWorker } from "@gusto/baerly-storage/cloudflare";
 export default baerlyWorker((env) => ({
   verifier: cloudflareAccess({ teamDomain, audienceTag }),
   // scheduled?: (controller, env, ctx) => …    // opt-in cron handler
 }));
 
 // Node listener entry (any host that runs `node server.js`)
-import { baerlyNode, s3Storage } from "baerly-storage/node";
+import { baerlyNode, s3Storage } from "@gusto/baerly-storage/node";
 baerlyNode({
   storage: s3Storage({ bucket: "…", credentials: { … } }),
   verifier: bearerJwt({ jwks, issuer, audience }),
@@ -473,7 +473,7 @@ the Worker route; the verifier reads the resulting JWT:
 
 ```ts
 // baerly.config.ts
-import { defineConfig } from "baerly-storage/config";
+import { defineConfig } from "@gusto/baerly-storage/config";
 export default defineConfig({
   app: "tickets",
   tenant: "main",
@@ -483,17 +483,17 @@ export default defineConfig({
 });
 
 // src/server/index.ts
-import { baerlyWorker } from "baerly-storage/cloudflare";
+import { baerlyWorker } from "@gusto/baerly-storage/cloudflare";
 import config from "../../baerly.config.ts";
 export default baerlyWorker(() => ({ config }));
 ```
 
 
 `s3Storage` / `r2Storage` / `minioStorage` / `gcsStorage` from
-`baerly-storage/node` are re-exports of one factory family — same
+`@gusto/baerly-storage/node` are re-exports of one factory family — same
 shape (bucket + credentials), all hide `aws4fetch` / `@xmldom/xmldom`
 behind the package boundary. **Don't confuse them with
-`r2BindingStorage` from `baerly-storage/cloudflare`**: that one takes
+`r2BindingStorage` from `@gusto/baerly-storage/cloudflare`**: that one takes
 the platform-bound `R2Bucket` directly (`r2BindingStorage(env.BUCKET)`)
 and is the only storage factory a Worker should reach for — the
 credential-based factories assume `fetch` + Node TLS, not the Workers
@@ -501,7 +501,7 @@ runtime.
 
 ## Anti-patterns
 
-- Don't reach into `node_modules/baerly-storage/dist/` at runtime —
+- Don't reach into `node_modules/@gusto/baerly-storage/dist/` at runtime —
   consume the published exports.
 - Don't widen branded types (`UUID`, `ContentVersionId`) with
   `as string`. The brand exists to prevent confusion bugs.
