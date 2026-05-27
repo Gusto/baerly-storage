@@ -53,6 +53,11 @@
  * the adversarial-replay property test
  * (`tests/integration/log-conflict-adversarial.test.ts`).
  *
+ * **Pinned by:** `tests/integration/log-conflict-forgery.test.ts`
+ * exercises the session-id-unguessability claim under a
+ * `ForgeryStorage` adversary that plants arbitrary entries at the
+ * writer's expected log key. Property verified at `FC_NUM_RUNS=10000`.
+ *
  * ## Prior art
  *
  * SlateDB's manifest-pivot writer protocol (rfcs/0001-manifest.md,
