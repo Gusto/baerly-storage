@@ -116,7 +116,7 @@ const JWKS_KID_REFRESH_MIN_INTERVAL_MS = 60_000;
  *
  * @example
  * ```ts
- * import { bearerJwt } from "baerly-storage/auth";
+ * import { bearerJwt } from "@gusto/baerly-storage/auth";
  * const verifier = bearerJwt({
  *   jwks: "https://example.auth0.com/.well-known/jwks.json",
  *   issuer: "https://example.auth0.com/",

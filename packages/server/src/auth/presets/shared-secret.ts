@@ -44,7 +44,7 @@ export interface SharedSecretOptions {
  *
  * @example
  * ```ts
- * import { sharedSecret } from "baerly-storage/auth";
+ * import { sharedSecret } from "@gusto/baerly-storage/auth";
  * const verifier = sharedSecret({
  *   secret: env.SHARED_SECRET,
  *   tenantPrefix: "acme",

@@ -90,8 +90,8 @@ const physicalPrefixFor = (app: string, tenant: string): string => `app/${app}/t
  *
  * @example
  * ```ts
- * import { Db } from "baerly-storage";
- * import { MemoryStorage } from "baerly-storage";
+ * import { Db } from "@gusto/baerly-storage";
+ * import { MemoryStorage } from "@gusto/baerly-storage";
  *
  * const db = Db.create({
  *   storage: new MemoryStorage(),

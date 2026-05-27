@@ -140,7 +140,7 @@ const APPLICATION_JSON = "application/json";
  *
  * @example
  * ```ts
- * import { compact } from "baerly-storage";
+ * import { compact } from "@gusto/baerly-storage";
  *
  * const res = await compact(
  *   { storage, currentJsonKey: "app/x/tenant/t/manifests/tickets/current.json" },

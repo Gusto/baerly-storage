@@ -56,7 +56,7 @@ export interface CloudflareAccessOptions {
  *
  * @example
  * ```ts
- * import { cloudflareAccess } from "baerly-storage/auth";
+ * import { cloudflareAccess } from "@gusto/baerly-storage/auth";
  * const verifier = cloudflareAccess({
  *   teamDomain: "acme",
  *   audienceTag: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
@@ -65,7 +65,7 @@ export interface CloudflareAccessOptions {
  *
  * @example Single-tenant CF Access (no `tenant` claim in the JWT)
  * ```ts
- * import { cloudflareAccess } from "baerly-storage/auth";
+ * import { cloudflareAccess } from "@gusto/baerly-storage/auth";
  * const verifier = cloudflareAccess({
  *   teamDomain: "acme",
  *   audienceTag: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",

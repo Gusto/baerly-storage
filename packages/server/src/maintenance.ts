@@ -84,7 +84,7 @@ export interface MaintenanceResult {
  *
  * @example
  * ```ts
- * import { runScheduledMaintenance, CLOUDFLARE_FREE_TIER } from "baerly-storage/maintenance";
+ * import { runScheduledMaintenance, CLOUDFLARE_FREE_TIER } from "@gusto/baerly-storage/maintenance";
  *
  * // Node (unbounded — defaults fold the entire live tail):
  * const res = await runScheduledMaintenance(

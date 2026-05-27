@@ -96,7 +96,7 @@ export const encodeSnapshotBody = (s: SnapshotBody): Uint8Array => encodeJsonByt
  *
  * @example
  * ```ts
- * import { loadSnapshotAsMap } from "baerly-storage";
+ * import { loadSnapshotAsMap } from "@gusto/baerly-storage";
  *
  * const map =
  *   srcCurrent.snapshot === null

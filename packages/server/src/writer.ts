@@ -228,8 +228,8 @@ interface SingleAttemptSuccess {
  *
  * @example
  * ```ts
- * import { Writer } from "baerly-storage";
- * import { MemoryStorage } from "baerly-storage";
+ * import { Writer } from "@gusto/baerly-storage";
+ * import { MemoryStorage } from "@gusto/baerly-storage";
  *
  * const writer = new Writer({
  *   storage: new MemoryStorage(),
