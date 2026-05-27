@@ -2,7 +2,7 @@
 title: Product thesis
 audience: product
 summary: Why Baerly exists, what it is, and what it deliberately is not.
-last-reviewed: 2026-05-26
+last-reviewed: 2026-05-27
 tags: [positioning, product]
 related: [cost-model.md, "../contributing/conventions/change-discipline.md"]
 ---
@@ -216,12 +216,16 @@ Each design choice falls out of a specific criterion above.
 - **No on-disk caches.** Object storage + the platform's HTTP cache
   (CF Cache API on the CF target, none on Node by default) + small
   in-memory caches only.
-- **Cost is not the moat.** Baerly is cheaper than Postgres for
-  hello-world (free tier) and on par or more expensive past M-size.
-  See [cost-model.md](cost-model.md) for the per-line-item rates
-  and the M-size operating-point comparison. The pitch is that the
-  machinery is matched to the task and available where Postgres is
-  not — not that it is cheaper.
+- **Cost is decisive on some axes, a loss on others — we name
+  both.** At the audience operating point (idle × N portfolio,
+  small high-cardinality apps), Baerly rounds to zero against
+  per-app managed-DB floors. At M-size, D1 wins per-write
+  (~$5 vs. ~$19) where it's available — that's the graduation
+  signal, not a competitive position. Availability and switching
+  cost both favor Baerly: any S3-API cloud, any Node runtime,
+  Postgres-logical-replication-shaped log entries. See
+  [cost-model.md](cost-model.md) for the operating-point tables
+  and per-line-item rates.
 - **Not a D1 / Postgres replacement.** D1 is the graduation target.
   Baerly's job is to keep the experiment cheap and fast until the
   user knows whether it's worth graduating. Graduation is a tool we

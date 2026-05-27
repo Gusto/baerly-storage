@@ -2,7 +2,7 @@
 title: Cost model
 audience: product
 summary: Per-line-item rates, write-amp meter, compression posture.
-last-reviewed: 2026-05-26
+last-reviewed: 2026-05-27
 tags: [cost, pricing, operations]
 related: [pricing-log.md, thesis.md]
 ---
@@ -123,6 +123,50 @@ running that shape should set `compression: true` on the client.
 This decision is logged at [docs/pricing-log.md](pricing-log.md)
 when it ships in `baerly-storage/client`.
 
+## Two operating points, two stories
+
+The cost story breaks cleanly along the workload-shape axis the
+thesis targets. Comparing Baerly to managed DBs at a single
+operating point is misleading — the same protocol that wins at
+idle and across portfolios is what loses on per-write unit cost
+at the graduation cliff. We grade at both.
+
+### At the audience operating point: idle × N portfolio
+
+The thesis's [audience-in-practice](thesis.md#audience-in-practice)
+section names a population, not a single app: forty internal
+tools, a Saturday side project that might be abandoned, a finance
+team's Claude Artifact, a $20/mo ChatGPT subscriber's dream. For
+this population, **the per-app floor is the cost line, not the
+per-write rate.** Costs at N=30 mostly-idle apps (a realistic
+internal-tools fleet at a 10,000-person company):
+
+| Service | Cost at N=30 idle apps | Notes |
+|---|---|---|
+| **Baerly (Cloudflare)** | **~$5/mo** | One Workers Paid floor amortized across all N apps. Class A/B ops effectively zero at idle (`< 1 op/writer/hour`, [CI-gated](#cost-ceiling)). |
+| **Baerly (self-hosted Node)** | **$0/mo** (your hardware) | No platform floor; idle is free against any S3-API bucket. |
+| Cloudflare D1 | ~$5/mo | Same Workers Paid floor; ties Baerly here, **but only if all N apps are Workers-native**. No portable exit. |
+| Supabase Free | $0 | Apps **pause** after 1 week inactivity. Pause = the app is dead until somebody clicks "resume." Fine for some workloads, fatal for "share link with the CFO." |
+| Supabase Pro | $25 × N = **~$750/mo** | Always-on Postgres has no scale-to-zero. |
+| Neon Launch | $5 × N = **~$150/mo** (best case) | Scale-to-zero helps; CU-hours still meter on first request after a cold pause. |
+| Firebase Spark | $0 | Project **pauses** when reads cross 50k/day. Pause story matches Supabase Free; harder to predict because it's quota-driven. |
+
+The idle × portfolio multiplier is where Baerly's "rounds to zero"
+property does its real work. A team with 30 internal tools doesn't
+pay 30 platform floors — they pay one (or zero, on self-hosted
+Node). That's not a moat against D1 specifically; it's what makes
+the workload class economically viable at all. The alternative
+for most of these apps isn't "another database" — it's **the
+experiment doesn't happen** and the data stays in a Google Sheet.
+
+### At the graduation cliff: M-size and above
+
+Past the workload ceiling, cost inverts. D1 wins per-write where
+it's available; managed Postgres wins above L. The "Alternative
+DBs at M size" table below grades the system where users
+*shouldn't* be running it long-term — it's the graduation
+trigger, not a competitive operating point.
+
 ## Alternative DBs at M size
 
 The M-size operating point is ~100 MAU, 10 000 docs, ~24 000
@@ -143,22 +187,32 @@ $5 Workers Paid floor plus R2 Class A/B ops dominate. Rough
 
 Read this as positioning, not a cost claim:
 
-- **XS / S workloads:** Baerly is genuinely free, at parity with
-  Supabase Free, D1 free, Neon free, Firebase Spark. The
-  differentiator is *what* you get, not the price.
-- **M workload:** Baerly (~$19) is **~4× more expensive than D1
-  (~$5)** but cheaper than Firebase Blaze and Supabase Pro. The
-  pitch is "you're paying for schemaless docs + multi-instance
-  causal consistency, not for ops." A user willing to give those
-  up for a SQL schema should **switch to D1** — it's strictly
-  cheaper, and [that move is the success path, not a churn
-  event](thesis.md#what-prototype-tier-storage-needs). The
-  product thesis is explicit that
-  [cost is not the moat](thesis.md#what-this-deliberately-is-not).
+- **XS / S workloads:** Baerly is decisively cheaper than any
+  always-on managed DB, especially across a portfolio — see the
+  [idle × portfolio table](#at-the-audience-operating-point-idle--n-portfolio).
+  The differentiator is both *what* you get (schemaless docs,
+  multi-instance causal consistency, bytes-in-your-bucket) AND
+  the price.
+- **M workload:** Baerly (~$19) is ~4× more expensive than D1
+  (~$5) **where D1 is available** — and D1 is Workers-only with
+  no portable exit. Off-Workers (AWS, on-prem, self-hosted Node,
+  any environment that doesn't tolerate Cloudflare lock-in),
+  managed Postgres at $25+/mo behind a vendor's managed catalog
+  is the relevant comparison. A user willing to accept
+  Cloudflare lock-in and a SQL schema should **switch to D1** —
+  it's strictly cheaper, and [that move is the success path,
+  not a churn event](thesis.md#what-prototype-tier-storage-needs).
 - **L workload:** Baerly's R2 Class B alone (~$1 500) costs more
   than a Postgres Pro plan. That's the graduation cliff —
   read-heavy traffic on a per-doc fan-out protocol is
   disproportionately expensive vs. a B-tree lookup in a real DB.
+
+Cost is decisive in the regimes Baerly is sized for; it's a
+wash-to-loss in the regimes where you should graduate. We name
+both axes explicitly because the workload class the thesis
+targets (idle × portfolio, XS/S experimentation, large
+internal-tools fleet) isn't economically viable under per-app
+managed-DB floors — and that's where the real argument lives.
 
 The graduation triggers (surfaced via the `baerly cost` projection's
 `percentOfGraduation`) follow directly: any one
