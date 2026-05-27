@@ -15,8 +15,7 @@ const jsonResponse = (body: unknown, status = 200): Response =>
 const ctxFor = (mock: MockFetch): RequestContext => ({
   baseUrl: "http://x",
   fetch: mock.fetch,
-  headers: async () => new Headers(),
-  lifecycleSignal: undefined,
+  headers: new Headers(),
 });
 
 describe("pollSinceOnce", () => {
@@ -75,8 +74,7 @@ describe("pollSinceOnce", () => {
           );
         });
       },
-      headers: async () => new Headers(),
-      lifecycleSignal: undefined,
+      headers: new Headers(),
     };
     const controller = new AbortController();
     const promise = pollSinceOnce(ctx, "tickets", "", controller.signal);

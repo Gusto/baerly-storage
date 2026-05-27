@@ -119,28 +119,6 @@ describe("createBaerlyClient", () => {
     });
   });
 
-  test("dynamic headers callback resolves per request", async () => {
-    const mock = new MockFetch();
-    let calls = 0;
-    mock.on("GET", "/v1/t/tickets/:id", (req) => {
-      calls += 1;
-      expect(req.headers.get("authorization")).toBe(`Bearer token-${calls}`);
-      return jsonResponse(okEnvelope({ _id: "x" }));
-    });
-    let counter = 0;
-    const client = createBaerlyClient({
-      baseUrl: "http://x",
-      fetch: mock.fetch,
-      headers: async () => {
-        counter += 1;
-        return { Authorization: `Bearer token-${counter}` };
-      },
-    });
-    await client.table("tickets").get("x");
-    await client.table("tickets").get("y");
-    expect(calls).toBe(2);
-  });
-
   test("count() issues GET /v1/count and returns scalar (does not download rows)", async () => {
     const mock = new MockFetch();
     let sawListGet = false;
@@ -234,30 +212,6 @@ describe("createBaerlyClient", () => {
     controller.abort();
     await expect(inflight).rejects.toMatchObject({ name: "AbortError" });
     expect(sawSignal?.aborted).toBe(true);
-  });
-
-  test("lifecycleSignal and per-call signal both abort (signals are merged)", async () => {
-    const mock = new MockFetch();
-    mock.on("PATCH", "/v1/t/tickets/:id", hangUntilAbort);
-    const lifecycle = new AbortController();
-    const client = createBaerlyClient({
-      baseUrl: "http://x",
-      fetch: mock.fetch,
-      lifecycleSignal: lifecycle.signal,
-    });
-    // Lifecycle signal fires → in-flight PATCH aborts.
-    const inflight = client.table("tickets").update("x", { title: "y" });
-    lifecycle.abort();
-    await expect(inflight).rejects.toMatchObject({ name: "AbortError" });
-
-    // Fresh client, per-call signal fires → in-flight PATCH aborts.
-    const client2 = createBaerlyClient({ baseUrl: "http://x", fetch: mock.fetch });
-    const perCall = new AbortController();
-    const inflight2 = client2
-      .table("tickets")
-      .update("x", { title: "y" }, { signal: perCall.signal });
-    perCall.abort();
-    await expect(inflight2).rejects.toMatchObject({ name: "AbortError" });
   });
 
   test("missing data field on 200 throws InvalidResponse", async () => {

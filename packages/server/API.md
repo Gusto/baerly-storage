@@ -335,9 +335,8 @@ preserved).
 import type config from "./baerly.config";  // type-only — server adapter stays out of the SPA bundle
 const client = createBaerlyClient<typeof config>({
   baseUrl: "",                                  // same-origin
-  headers: { Authorization: "Bearer …" },       // or a function for fresh tokens
+  headers: { Authorization: "Bearer …" },       // wrap `fetch` for per-call refresh
   fetch: customFetcher,                          // optional Fetcher middleware
-  lifecycleSignal: ac.signal,                    // optional global AbortSignal
 });
 
 await client.table("tickets").where({ status: "open" }).all();
@@ -348,7 +347,7 @@ trailing `TerminalOptions`:
 
 ```ts
 interface TerminalOptions {
-  signal?: AbortSignal;          // merged with `lifecycleSignal`
+  signal?: AbortSignal;          // cancels this specific request
 }
 
 await client.table("tickets").all({ signal: ac.signal });

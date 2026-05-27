@@ -76,32 +76,12 @@ export interface BaerlyClientOptions<TConfig extends BaerlyConfig = UnboundConfi
   readonly fetch?: Fetcher;
   /**
    * Optional. Forwarded on every request. Typically
-   * `{ Authorization: "Bearer <token>" }`. Pass a function to
-   * resolve the header per-call (e.g. fresh JWT from an IdP).
+   * `{ Authorization: "Bearer <token>" }`. For credential refresh
+   * (fresh JWT per call, 401-driven re-issue, etc.) wrap
+   * {@link BaerlyClientOptions.fetch} instead — see the retry +
+   * logging examples above.
    */
-  readonly headers?:
-    | Headers
-    | Record<string, string>
-    | (() => Promise<Headers | Record<string, string>> | Headers | Record<string, string>);
-  /**
-   * Optional. Lifecycle signal: aborts every in-flight and future
-   * request issued by this client when fired. Per-call `signal`
-   * options on individual terminals are *merged* with this one —
-   * either firing aborts the underlying `fetch`.
-   *
-   * Canonical use is a React provider that owns the client and wants
-   * to cancel everything on unmount:
-   *
-   * ```ts
-   * const ac = new AbortController();
-   * const client = createBaerlyClient({ baseUrl, lifecycleSignal: ac.signal });
-   * // …on unmount: ac.abort();
-   * ```
-   *
-   * For "cancel *this* request" use the per-call `{ signal }` option
-   * on the terminal instead (see {@link TerminalOptions}).
-   */
-  readonly lifecycleSignal?: AbortSignal;
+  readonly headers?: Headers | Record<string, string>;
   /**
    * Optional. **Type-only** — the runtime client does not read this
    * field; it exists so `client.table(name)` can narrow `name` to
@@ -132,9 +112,7 @@ export interface BaerlyClientOptions<TConfig extends BaerlyConfig = UnboundConfi
  */
 export interface TerminalOptions {
   /**
-   * Cancels this specific request. Merged with
-   * {@link BaerlyClientOptions.lifecycleSignal} — either firing
-   * aborts the underlying `fetch`. React effect cleanup is the
+   * Cancels this specific request. React effect cleanup is the
    * canonical caller:
    *
    * ```ts
@@ -279,8 +257,7 @@ export const createBaerlyClient = <TConfig extends BaerlyConfig = UnboundConfig>
   const ctx: RequestContext = {
     baseUrl: options.baseUrl,
     fetch: options.fetch ?? ((req) => globalThis.fetch(req)),
-    headers: () => resolveHeaders(options.headers),
-    lifecycleSignal: options.lifecycleSignal,
+    headers: new Headers(options.headers ?? {}),
   };
   const client = {
     [CLIENT_CONTEXT]: ctx,
@@ -289,20 +266,6 @@ export const createBaerlyClient = <TConfig extends BaerlyConfig = UnboundConfig>
     },
   };
   return client as BaerlyClient<TConfig>;
-};
-
-/**
- * Per-call header resolution. Supports `Headers`, plain record,
- * and an (a)sync callback so consumers can refresh JWTs on every
- * request. Always returns a fresh mutable `Headers` instance the
- * request layer can extend with `content-type`.
- */
-const resolveHeaders = async (source: BaerlyClientOptions["headers"]): Promise<Headers> => {
-  if (source === undefined) {
-    return new Headers();
-  }
-  const value = typeof source === "function" ? await source() : source;
-  return new Headers(value);
 };
 
 /** Query-state carried across the chainable modifiers. */

@@ -17,17 +17,14 @@ export interface RequestOptions {
 /**
  * Internal carrier passed to every {@link request} call. Built once
  * by `createBaerlyClient` from `BaerlyClientOptions`.
+ *
+ * `headers` is the shared template; callers MUST clone before
+ * mutating (each request adds `content-type`).
  */
 export interface RequestContext {
   readonly baseUrl: string;
   readonly fetch: Fetcher;
-  readonly headers: () => Promise<Headers>;
-  /**
-   * Lifecycle signal from {@link BaerlyClientOptions.lifecycleSignal}.
-   * Merged with the per-call signal on every request — either firing
-   * aborts the underlying `fetch`.
-   */
-  readonly lifecycleSignal?: AbortSignal;
+  readonly headers: Headers;
 }
 
 /**
@@ -46,7 +43,7 @@ export interface RequestContext {
  * - 200 on any other `GET` → `HttpOkEnvelope<T>.data`.
  */
 export const request = async <T>(ctx: RequestContext, opts: RequestOptions): Promise<T> => {
-  const headers = await ctx.headers();
+  const headers = new Headers(ctx.headers);
   if (opts.body !== undefined) {
     headers.set("content-type", "application/json");
   }
@@ -54,7 +51,7 @@ export const request = async <T>(ctx: RequestContext, opts: RequestOptions): Pro
     method: opts.method,
     headers,
     body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
-    signal: mergeSignals(ctx.lifecycleSignal, opts.signal),
+    signal: opts.signal,
   };
   const req = new Request(`${ctx.baseUrl}${opts.path}`, init);
   const res = await ctx.fetch(req);
@@ -106,29 +103,4 @@ export const request = async <T>(ctx: RequestContext, opts: RequestOptions): Pro
     );
   }
   return (body as HttpOkEnvelope<T>).data;
-};
-
-/**
- * Merge two optional `AbortSignal`s into one that fires on either.
- * Uses `AbortSignal.any` where available (Node 24+, modern browsers);
- * falls back to a manual controller otherwise.
- */
-const mergeSignals = (
-  a: AbortSignal | undefined,
-  b: AbortSignal | undefined,
-): AbortSignal | undefined => {
-  if (a === undefined) {
-    return b;
-  }
-  if (b === undefined) {
-    return a;
-  }
-  if (typeof AbortSignal.any === "function") {
-    return AbortSignal.any([a, b]);
-  }
-  const controller = new AbortController();
-  const onAbort = (): void => controller.abort();
-  a.addEventListener("abort", onAbort, { once: true });
-  b.addEventListener("abort", onAbort, { once: true });
-  return controller.signal;
 };

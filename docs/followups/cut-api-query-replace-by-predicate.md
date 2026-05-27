@@ -60,8 +60,7 @@ prove the verb works.
 
 ## Related cuts
 
-- This is one of three ADR-002 violations in the audit. Pairs with
-  `cut-api-db-create-overrides.md` (schemas/indexes override) and
-  `cut-client-options-redundant-paths.md` (lifecycleSignal +
-  headers callback). All three should land together so ADR-002
-  rereads coherently.
+- One of the ADR-002 violations from the same audit. Pairs with
+  `cut-api-db-create-overrides.md` (schemas/indexes override). The
+  third leg — `lifecycleSignal` + async `headers` callback — already
+  shipped.
