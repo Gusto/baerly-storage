@@ -183,9 +183,9 @@ const createPool = (client: BaerlyClient): SubscriptionPool => {
           if (error instanceof DOMException && error.name === "AbortError") {
             return;
           }
-          // 1-second backoff on error — match the prior
-          // useInvalidationTick semantics. Downstream subscribers'
-          // next fetch will see the same failure if it's persistent.
+          // 1-second backoff on error to avoid hot-spinning on a
+          // persistent failure; downstream subscribers' next fetch
+          // sees the same error if it doesn't clear.
           await new Promise((r) => setTimeout(r, 1000));
         }
       }
