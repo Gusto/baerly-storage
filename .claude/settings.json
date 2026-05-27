@@ -1,5 +1,22 @@
 {
   "permissions": {
-    "allow": ["Bash(pnpm verify *)", "Bash(pnpm format:check *)", "Bash(pnpm test:minio *)"]
+    "allow": [
+      "Bash(pnpm verify *)",
+      "Bash(pnpm verify:agent *)",
+      "Bash(pnpm format:check *)",
+      "Bash(pnpm test *)",
+      "Bash(pnpm test:agent *)",
+      "Bash(pnpm test:one *)",
+      "Bash(pnpm test:minio *)",
+      "Bash(pnpm typecheck *)",
+      "Bash(pnpm build *)",
+      "Bash(pnpm bundle-sizes *)",
+      "Bash(pnpm install *)",
+      "Bash(pnpm dev *)",
+      "Bash(pnpm create *)",
+      "Bash(pnpm pack *)",
+      "Bash(pnpm worktree:bootstrap *)",
+      "Bash(pnpm -F *)"
+    ]
   }
 }

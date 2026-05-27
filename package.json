@@ -134,6 +134,7 @@
     "pretest": "pnpm run build",
     "test": "vitest run --project=default",
     "test:agent": "vitest run --project=default --reporter=minimal --silent=passed-only",
+    "test:one": "pnpm run build && vitest run --project=default",
     "test:coverage": "vitest run --project=default --coverage",
     "test:minio": "MINIO=1 vitest run --project=default",
     "test:conformance": "CONFORMANCE=1 MINIO=1 vitest run --project=default tests/integration/conformance.test.ts",
