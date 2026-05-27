@@ -550,7 +550,7 @@ describe("scaffold", () => {
         expect(config).not.toContain(sentinel);
       }
 
-      // 3. `baerly-storage` workspace dep pinned to a real semver. All deps
+      // 3. `@gusto/baerly-storage` workspace dep pinned to a real semver. All deps
       //    live at the package root in the flat layout, so we anchor
       //    on `topPkg` directly.
       const topPkgFull = JSON.parse(
@@ -559,15 +559,15 @@ describe("scaffold", () => {
         dependencies?: Record<string, string>;
         devDependencies?: Record<string, string>;
       };
-      const baerlyStorageVersion = topPkgFull.dependencies?.["baerly-storage"];
-      expect(baerlyStorageVersion, "expected baerly-storage in dependencies").toBeDefined();
+      const baerlyStorageVersion = topPkgFull.dependencies?.["@gusto/baerly-storage"];
+      expect(baerlyStorageVersion, "expected @gusto/baerly-storage in dependencies").toBeDefined();
       expect(baerlyStorageVersion).not.toBe("workspace:*");
       expect(baerlyStorageVersion).toMatch(/^\^?\d+\.\d+\.\d+/);
 
-      // 4. `create-baerly` is absent from devDependencies. The emitted
-      //    `baerly.config.ts` imports `baerly-storage/config`; the
+      // 4. `@gusto/create-baerly-storage` is absent from devDependencies. The emitted
+      //    `baerly.config.ts` imports `@gusto/baerly-storage/config`; the
       //    scaffolder is one-shot.
-      expect(topPkg.devDependencies?.["create-baerly"]).toBeUndefined();
+      expect(topPkg.devDependencies?.["@gusto/create-baerly-storage"]).toBeUndefined();
 
       // 5. `uint8array-base64.d.ts` shim shipped — load-bearing for
       //    `tsc -b --noEmit` against workspace-linked @baerly/protocol

@@ -1,5 +1,5 @@
 /**
- * In-process tests for the `create-baerly` runner. Drives `runCreateBaerly`
+ * In-process tests for the `create-baerly-storage` runner. Drives `runCreateBaerly`
  * directly so we don't depend on `dist/index.js` being current. Vitest
  * forks have no TTY (`process.stdin.isTTY === undefined`), so the wizard
  * branch is unreachable — same property the prior subprocess test got
@@ -48,7 +48,7 @@ const captureStream = (
   };
 };
 
-describe("create-baerly runner (non-TTY)", () => {
+describe("create-baerly-storage runner (non-TTY)", () => {
   let outRoot: string;
   let originalCwd: string;
 
@@ -85,7 +85,7 @@ describe("create-baerly runner (non-TTY)", () => {
     // citty 0.2.2's `type: "enum"` rejects invalid values at parse time
     // with this wording.
     expect(err).toMatch(/Invalid value for argument.*--target/);
-    expect(err).toContain("create-baerly:");
+    expect(err).toContain("create-baerly-storage:");
   });
 
   test("emits the JSON envelope unchanged on success", async () => {
@@ -112,7 +112,7 @@ describe("create-baerly runner (non-TTY)", () => {
         nextSteps: string[];
       };
     };
-    expect(parsed.result.command).toBe("create-baerly");
+    expect(parsed.result.command).toBe("create-baerly-storage");
     expect(parsed.result.status).toBe("ok");
     expect(parsed.result.outDir.endsWith(projectName)).toBe(true);
     expect(parsed.result.filesWritten).toBeGreaterThan(0);
@@ -361,14 +361,14 @@ describe.skipIf(!hasGit)("git init (integration, real git)", () => {
     const log = spawnSync("git", ["log", "--oneline"], { cwd: outDir, encoding: "utf8" });
     const lines = log.stdout.trim().split("\n");
     expect(lines).toHaveLength(1);
-    expect(lines[0]).toContain("Initial commit (by create-baerly)");
+    expect(lines[0]).toContain("Initial commit (by create-baerly-storage)");
     // The commit body must include the version + target + starter
     // stamps so a future user can grep `git log` for them.
     const body = spawnSync("git", ["log", "-1", "--format=%B"], {
       cwd: outDir,
       encoding: "utf8",
     });
-    expect(body.stdout).toContain("create-baerly = ");
+    expect(body.stdout).toContain("create-baerly-storage = ");
     expect(body.stdout).toContain(`project name  = ${projectName}`);
     expect(body.stdout).toContain("target        = cloudflare");
     expect(body.stdout).toContain("starter       = minimal");
@@ -440,7 +440,7 @@ describe.skipIf(!hasGit)("git init (integration, real git)", () => {
   });
 });
 
-describe("create-baerly runner — bolt-on dispatch (non-TTY)", () => {
+describe("create-baerly-storage runner — bolt-on dispatch (non-TTY)", () => {
   let outRoot: string;
   let originalCwd: string;
 

@@ -32,8 +32,8 @@ describe("renderWorkerEntrySnippet", () => {
       tenant: "default",
       wranglerMain: "src/index.ts",
     });
-    expect(snippet).toContain(`from "baerly-storage/cloudflare"`);
-    expect(snippet).toContain(`from "baerly-storage/auth"`);
+    expect(snippet).toContain(`from "@gusto/baerly-storage/cloudflare"`);
+    expect(snippet).toContain(`from "@gusto/baerly-storage/auth"`);
     expect(snippet).toContain(`import config from "../baerly.config.ts"`);
     expect(snippet).toContain(`tenantPrefix: env.TENANT`);
     expect(snippet).toContain(`export default baerlyWorker<AppEnv>`);

@@ -75,7 +75,7 @@ describe("boltOnExistingWrangler", () => {
     const pkg = JSON.parse(await readFile(join(dir, "package.json"), "utf8")) as {
       dependencies?: Record<string, string>;
     };
-    expect(pkg.dependencies?.["baerly-storage"]).toBeDefined();
+    expect(pkg.dependencies?.["@gusto/baerly-storage"]).toBeDefined();
 
     expect(result.snippet).toContain(`baerlyWorker<AppEnv>`);
     expect(result.snippetTarget).toBe("src/index.ts");
@@ -202,8 +202,8 @@ describe("boltOnExistingWrangler --with=agent-rules", () => {
     const agents = await readFile(join(dir, "AGENTS.md"), "utf8");
     expect(agents).toContain("<!-- baerly:start -->");
     expect(agents).toContain("<!-- baerly:end -->");
-    expect(agents).toContain("baerly-storage");
-    expect(agents).toContain("node_modules/baerly-storage/dist/API.md");
+    expect(agents).toContain("@gusto/baerly-storage");
+    expect(agents).toContain("node_modules/@gusto/baerly-storage/dist/API.md");
     expect(result.changes).toContain("AGENTS.md: created agent-rules block");
   });
 

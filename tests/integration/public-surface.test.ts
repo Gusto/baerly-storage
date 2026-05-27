@@ -1,10 +1,10 @@
 /**
  * Published-surface gate: asserts that every subpath declared in the
- * `baerly-storage` `exports` map resolves and exposes representative
+ * `@gusto/baerly-storage` `exports` map resolves and exposes representative
  * named exports.
  *
- * Imports use the `baerly-storage` package name exactly as a consumer
- * would after `npm install baerly-storage` — not the internal
+ * Imports use the `@gusto/baerly-storage` package name exactly as a consumer
+ * would after `npm install @gusto/baerly-storage` — not the internal
  * `@baerly/*` workspace names. This is the gate that catches missing
  * re-exports, wrong subpath names, and broken `exports` map entries
  * introduced between T2+T3's bundle wiring and the T6 examples /
@@ -16,18 +16,18 @@
  * tests reachability.
  *
  * Runs in the default vitest project (Node, no Workerd). The file
- * deliberately imports `baerly-storage/node` (Node-only) so it must
+ * deliberately imports `@gusto/baerly-storage/node` (Node-only) so it must
  * NOT be added to the cloudflare-pool project.
  */
 
 import { describe, expect, test } from "vitest";
 
 // ---------------------------------------------------------------------------
-// baerly-storage (root barrel)
+// @gusto/baerly-storage (root barrel)
 // ---------------------------------------------------------------------------
-import { BaerlyError, Db, MemoryStorage } from "baerly-storage";
+import { BaerlyError, Db, MemoryStorage } from "@gusto/baerly-storage";
 
-describe("baerly-storage", () => {
+describe("@gusto/baerly-storage", () => {
   test("imports resolve", () => {
     expect(typeof Db).toBe("function");
     expect(typeof BaerlyError).toBe("function");
@@ -36,11 +36,11 @@ describe("baerly-storage", () => {
 });
 
 // ---------------------------------------------------------------------------
-// baerly-storage/auth
+// @gusto/baerly-storage/auth
 // ---------------------------------------------------------------------------
-import { bearerJwt, cloudflareAccess, sharedSecret } from "baerly-storage/auth";
+import { bearerJwt, cloudflareAccess, sharedSecret } from "@gusto/baerly-storage/auth";
 
-describe("baerly-storage/auth", () => {
+describe("@gusto/baerly-storage/auth", () => {
   test("imports resolve", () => {
     expect(typeof cloudflareAccess).toBe("function");
     expect(typeof sharedSecret).toBe("function");
@@ -49,7 +49,7 @@ describe("baerly-storage/auth", () => {
 });
 
 // ---------------------------------------------------------------------------
-// baerly-storage/http
+// @gusto/baerly-storage/http
 // ---------------------------------------------------------------------------
 import {
   createRouter,
@@ -57,9 +57,9 @@ import {
   longPollSince,
   mapError,
   MAX_BODY_BYTES,
-} from "baerly-storage/http";
+} from "@gusto/baerly-storage/http";
 
-describe("baerly-storage/http", () => {
+describe("@gusto/baerly-storage/http", () => {
   test("imports resolve", () => {
     expect(typeof createRouter).toBe("function");
     expect(typeof listEventsSince).toBe("function");
@@ -70,7 +70,7 @@ describe("baerly-storage/http", () => {
 });
 
 // ---------------------------------------------------------------------------
-// baerly-storage/maintenance
+// @gusto/baerly-storage/maintenance
 // ---------------------------------------------------------------------------
 import {
   CLOUDFLARE_FREE_TIER,
@@ -78,9 +78,9 @@ import {
   rebuildIndex,
   runGc,
   runScheduledMaintenance,
-} from "baerly-storage/maintenance";
+} from "@gusto/baerly-storage/maintenance";
 
-describe("baerly-storage/maintenance", () => {
+describe("@gusto/baerly-storage/maintenance", () => {
   test("imports resolve", () => {
     expect(typeof runScheduledMaintenance).toBe("function");
     expect(typeof CLOUDFLARE_FREE_TIER).toBe("object");
@@ -91,16 +91,16 @@ describe("baerly-storage/maintenance", () => {
 });
 
 // ---------------------------------------------------------------------------
-// baerly-storage/observability
+// @gusto/baerly-storage/observability
 // ---------------------------------------------------------------------------
 import {
   configureObservability,
   createObservabilityContext,
   getLogger,
   withHttpObservability,
-} from "baerly-storage/observability";
+} from "@gusto/baerly-storage/observability";
 
-describe("baerly-storage/observability", () => {
+describe("@gusto/baerly-storage/observability", () => {
   test("imports resolve", () => {
     expect(typeof configureObservability).toBe("function");
     expect(typeof createObservabilityContext).toBe("function");
@@ -110,11 +110,11 @@ describe("baerly-storage/observability", () => {
 });
 
 // ---------------------------------------------------------------------------
-// baerly-storage/cloudflare
+// @gusto/baerly-storage/cloudflare
 // ---------------------------------------------------------------------------
-import { baerlyWorker, r2BindingStorage } from "baerly-storage/cloudflare";
+import { baerlyWorker, r2BindingStorage } from "@gusto/baerly-storage/cloudflare";
 
-describe("baerly-storage/cloudflare", () => {
+describe("@gusto/baerly-storage/cloudflare", () => {
   test("imports resolve", () => {
     expect(typeof r2BindingStorage).toBe("function");
     expect(typeof baerlyWorker).toBe("function");
@@ -122,7 +122,7 @@ describe("baerly-storage/cloudflare", () => {
 });
 
 // ---------------------------------------------------------------------------
-// baerly-storage/node
+// @gusto/baerly-storage/node
 // ---------------------------------------------------------------------------
 import {
   baerlyNode,
@@ -133,9 +133,9 @@ import {
   runMaintenanceTick,
   S3HttpStorage as NodeS3HttpStorage,
   s3Storage,
-} from "baerly-storage/node";
+} from "@gusto/baerly-storage/node";
 
-describe("baerly-storage/node", () => {
+describe("@gusto/baerly-storage/node", () => {
   test("imports resolve", () => {
     expect(typeof baerlyNode).toBe("function");
     expect(typeof createApp).toBe("function");
@@ -149,11 +149,11 @@ describe("baerly-storage/node", () => {
 });
 
 // ---------------------------------------------------------------------------
-// baerly-storage/client
+// @gusto/baerly-storage/client
 // ---------------------------------------------------------------------------
-import { BaerlyError as ClientBaerlyError, createBaerlyClient } from "baerly-storage/client";
+import { BaerlyError as ClientBaerlyError, createBaerlyClient } from "@gusto/baerly-storage/client";
 
-describe("baerly-storage/client", () => {
+describe("@gusto/baerly-storage/client", () => {
   test("imports resolve", () => {
     expect(typeof createBaerlyClient).toBe("function");
     expect(typeof ClientBaerlyError).toBe("function");
@@ -162,16 +162,16 @@ describe("baerly-storage/client", () => {
 });
 
 // ---------------------------------------------------------------------------
-// baerly-storage/client/react
+// @gusto/baerly-storage/client/react
 // ---------------------------------------------------------------------------
 import {
   BaerlyProvider,
   useBaerlyClient,
   useMutation,
   useQuery,
-} from "baerly-storage/client/react";
+} from "@gusto/baerly-storage/client/react";
 
-describe("baerly-storage/client/react", () => {
+describe("@gusto/baerly-storage/client/react", () => {
   test("imports resolve", () => {
     expect(typeof BaerlyProvider).toBe("function");
     expect(typeof useBaerlyClient).toBe("function");
@@ -182,11 +182,16 @@ describe("baerly-storage/client/react", () => {
 });
 
 // ---------------------------------------------------------------------------
-// baerly-storage/dev
+// @gusto/baerly-storage/dev
 // ---------------------------------------------------------------------------
-import { ensureTable, LocalFsStorage, printDevBanner, renderDevLanding } from "baerly-storage/dev";
+import {
+  ensureTable,
+  LocalFsStorage,
+  printDevBanner,
+  renderDevLanding,
+} from "@gusto/baerly-storage/dev";
 
-describe("baerly-storage/dev", () => {
+describe("@gusto/baerly-storage/dev", () => {
   test("imports resolve", () => {
     expect(typeof LocalFsStorage).toBe("function");
     expect(typeof ensureTable).toBe("function");
@@ -196,11 +201,11 @@ describe("baerly-storage/dev", () => {
 });
 
 // ---------------------------------------------------------------------------
-// baerly-storage/dev/vite
+// @gusto/baerly-storage/dev/vite
 // ---------------------------------------------------------------------------
-import { baerlyDev as baerlyDevVite } from "baerly-storage/dev/vite";
+import { baerlyDev as baerlyDevVite } from "@gusto/baerly-storage/dev/vite";
 
-describe("baerly-storage/dev/vite", () => {
+describe("@gusto/baerly-storage/dev/vite", () => {
   test("imports resolve", () => {
     expect(typeof baerlyDevVite).toBe("function");
   });

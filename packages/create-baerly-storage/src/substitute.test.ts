@@ -46,7 +46,13 @@ describe("substituteText", () => {
 
   test("leaves unknown fromKeys untouched", () => {
     const ctx = mkCtx(
-      { renames: [{ from: "minimal-demo", fromKey: "tenant" }], excludePaths: [], excludeNames: [], dropDevDeps: [], copies: [] },
+      {
+        renames: [{ from: "minimal-demo", fromKey: "tenant" }],
+        excludePaths: [],
+        excludeNames: [],
+        dropDevDeps: [],
+        copies: [],
+      },
       {},
     );
     expect(substituteText("tenant=minimal-demo", ctx)).toBe("tenant=minimal-demo");
@@ -54,22 +60,28 @@ describe("substituteText", () => {
 });
 
 describe("substitutePackageJson", () => {
-  test("pins baerly-storage workspace dep to the cli version", () => {
-    const ctx = mkCtx({ renames: [], excludePaths: [], excludeNames: [], dropDevDeps: [], copies: [] }, {});
+  test("pins @gusto/baerly-storage workspace dep to the cli version", () => {
+    const ctx = mkCtx(
+      { renames: [], excludePaths: [], excludeNames: [], dropDevDeps: [], copies: [] },
+      {},
+    );
     const text = JSON.stringify(
-      { name: "x", dependencies: { "baerly-storage": "workspace:*", other: "1.0.0" } },
+      { name: "x", dependencies: { "@gusto/baerly-storage": "workspace:*", other: "1.0.0" } },
       null,
       2,
     );
     const out = JSON.parse(substitutePackageJson(text, ctx)) as {
       dependencies: Record<string, string>;
     };
-    expect(out.dependencies["baerly-storage"]).toBe("^1.2.3");
+    expect(out.dependencies["@gusto/baerly-storage"]).toBe("^1.2.3");
     expect(out.dependencies["other"]).toBe("1.0.0");
   });
 
   test("does not pin unrelated workspace:* dep names", () => {
-    const ctx = mkCtx({ renames: [], excludePaths: [], excludeNames: [], dropDevDeps: [], copies: [] }, {});
+    const ctx = mkCtx(
+      { renames: [], excludePaths: [], excludeNames: [], dropDevDeps: [], copies: [] },
+      {},
+    );
     const text = JSON.stringify(
       { name: "x", dependencies: { "@baerly/protocol": "workspace:*", other: "workspace:*" } },
       null,
@@ -84,11 +96,20 @@ describe("substitutePackageJson", () => {
 
   test("drops listed devDependencies", () => {
     const ctx = mkCtx(
-      { renames: [], excludePaths: [], excludeNames: [], dropDevDeps: ["create-baerly"], copies: [] },
+      {
+        renames: [],
+        excludePaths: [],
+        excludeNames: [],
+        dropDevDeps: ["@gusto/create-baerly-storage"],
+        copies: [],
+      },
       {},
     );
     const text = JSON.stringify(
-      { name: "x", devDependencies: { "create-baerly": "workspace:*", typescript: "^5" } },
+      {
+        name: "x",
+        devDependencies: { "@gusto/create-baerly-storage": "workspace:*", typescript: "^5" },
+      },
       null,
       2,
     );
