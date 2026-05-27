@@ -315,43 +315,57 @@ describe("serializeError", () => {
   });
 
   describe("stack inclusion", () => {
-    let prev: string | undefined;
-    beforeEach(() => {
-      prev = process.env["BAERLY_LOG_STACKS"];
-    });
-    afterEach(() => {
-      if (prev === undefined) {
-        delete process.env["BAERLY_LOG_STACKS"];
-      } else {
-        process.env["BAERLY_LOG_STACKS"] = prev;
-      }
-    });
-
-    test("omits stack when includeStack=false (regardless of env)", () => {
-      process.env["BAERLY_LOG_STACKS"] = "1";
+    test("omits stack when includeStack=false", () => {
       const err = new BaerlyError("Internal", "x");
       expect(serializeError(err, false).stack).toBeUndefined();
     });
 
-    test("omits stack when env is absent (regardless of includeStack)", () => {
-      delete process.env["BAERLY_LOG_STACKS"];
-      const err = new BaerlyError("Internal", "x");
-      expect(serializeError(err, true).stack).toBeUndefined();
-    });
-
-    test("includes stack when both gates permit (BaerlyError)", () => {
-      process.env["BAERLY_LOG_STACKS"] = "1";
+    test("includes stack when includeStack=true (BaerlyError)", () => {
       const err = new BaerlyError("Internal", "stack-marker-message");
       const out = serializeError(err, true);
       expect(typeof out.stack).toBe("string");
       expect(out.stack).toContain("stack-marker-message");
     });
 
-    test("includes stack when both gates permit (plain Error)", () => {
-      process.env["BAERLY_LOG_STACKS"] = "1";
+    test("includes stack when includeStack=true (plain Error)", () => {
       const err = new Error("boom");
       const out = serializeError(err, true);
       expect(typeof out.stack).toBe("string");
     });
+  });
+});
+
+describe("flushCanonicalLine stack inclusion at error level", () => {
+  let records: LogRecord[];
+  let sink: Sink;
+
+  beforeEach(async () => {
+    ({ records, sink } = collectingSink());
+    await configureObservability({ level: "debug", sink, sampleRate: 1 });
+  });
+
+  afterEach(async () => {
+    await reset();
+  });
+
+  test("includes stack at error level", () => {
+    flushCanonicalLine(sampledCtx(), new RequestScopedMetricsRecorder(), {
+      unit: "http",
+      outcome: "internal_error",
+      status: 500,
+      error: new BaerlyError("Internal", "stack-marker-message"),
+    });
+    const err = records[0]!.properties["error"] as { stack?: string };
+    expect(typeof err.stack).toBe("string");
+    expect(err.stack).toContain("stack-marker-message");
+  });
+
+  test("omits stack at info level (success path, no error envelope)", () => {
+    flushCanonicalLine(sampledCtx(), new RequestScopedMetricsRecorder(), {
+      unit: "http",
+      outcome: "ok",
+      status: 200,
+    });
+    expect(records[0]!.properties["error"]).toBeUndefined();
   });
 });

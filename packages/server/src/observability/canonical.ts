@@ -357,26 +357,22 @@ export interface SerializedError {
  * 2. Any other error or non-error value — collapse to
  *    `{ code: "Internal", message: <stringified> }`.
  *
- * Stacks are opt-in via two independent gates: the `includeStack`
- * parameter AND the `BAERLY_LOG_STACKS=1` env var. The two-gate
- * design lets operators turn stacks on globally during an incident
- * without redeploy, while still defaulting off in steady state.
+ * Stacks are included when `includeStack` is `true`. Callers pass
+ * `level === "error"` to honor the "stacks only at error level" rule.
  *
  * @param err The thrown value (anything `try { ... } catch (e)` can yield).
- * @param includeStack If `true` AND `BAERLY_LOG_STACKS=1`, include
- *   the stack trace. Defaults to `false`.
+ * @param includeStack If `true`, include the stack trace when `err` is
+ *   an `Error` (or `BaerlyError`) with a `stack` property. Defaults to `false`.
  */
 export const serializeError = (err: unknown, includeStack = false): SerializedError => {
-  const wantsStack = includeStack && stacksEnabled();
-
   if (err instanceof BaerlyError) {
     const base: SerializedError = { code: err.code, message: err.message };
-    return wantsStack && err.stack !== undefined ? { ...base, stack: err.stack } : base;
+    return includeStack && err.stack !== undefined ? { ...base, stack: err.stack } : base;
   }
 
   if (err instanceof Error) {
     const base: SerializedError = { code: "Internal", message: err.message };
-    return wantsStack && err.stack !== undefined ? { ...base, stack: err.stack } : base;
+    return includeStack && err.stack !== undefined ? { ...base, stack: err.stack } : base;
   }
 
   if (typeof err === "object" && err !== null) {
@@ -387,15 +383,4 @@ export const serializeError = (err: unknown, includeStack = false): SerializedEr
     }
   }
   return { code: "Internal", message: String(err) };
-};
-
-/**
- * Read `BAERLY_LOG_STACKS` env var. Wrapped to dodge the Workers
- * Runtime's `process` shim — `globalThis.process?.env` is the
- * portable form. Returns `true` iff the var is the literal `"1"`.
- */
-const stacksEnabled = (): boolean => {
-  const env = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process
-    ?.env;
-  return env?.["BAERLY_LOG_STACKS"] === "1";
 };
