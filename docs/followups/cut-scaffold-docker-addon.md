@@ -1,5 +1,16 @@
 # Cut the `--with=docker` scaffold add-on
 
+**Status: REJECTED.** Kept under load-bearer exception #3
+(audience reach across deploy targets): "self-hosted Node" means
+*any* Node target — including container-only, air-gapped, or
+no-PaaS environments. The Docker add-on unblocks a real deploy
+population the happy-path PaaS audience doesn't cover.
+
+See `docs/about/thesis.md` §"What we keep even when it looks like ceremony"
+and `docs/followups/promote-surface-admission-adr.md` test #6.
+
+## Original analysis (preserved for context)
+
 **Severity: HIGH. Pre-launch cut. Distroless multi-stage Dockerfile
 for a hello-world is textbook borrowed maturity; the README
 itself admits Docker isn't on the happy path.**

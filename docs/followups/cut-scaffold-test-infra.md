@@ -1,5 +1,16 @@
 # Cut scaffold test infrastructure (notes.test.ts + vitest devDeps)
 
+**Status: REJECTED.** Kept under load-bearer exception #2
+(empirical LLM ergonomics): pre-installed `vitest` + a single
+round-trip test reduce zero-shot context burn — LLMs reach for
+tests by default, and unsubsidised `pnpm install vitest` makes
+lower-powered models burn context on tooling instead of code.
+
+See `docs/about/thesis.md` §"What we keep even when it looks like ceremony"
+and `docs/followups/promote-surface-admission-adr.md` test #6.
+
+## Original analysis (preserved for context)
+
 **Severity: MEDIUM. Pre-launch cut. DevDeps that exist only to
 make `pnpm verify:examples` happy; teach the agent that prototype
 baerly comes with a test harness pre-installed.**

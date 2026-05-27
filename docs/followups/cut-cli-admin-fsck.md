@@ -1,8 +1,28 @@
 # Cut `baerly admin fsck`
 
-**Severity: HIGH. Pre-launch cut. 445-LoC consistency walker whose
-reference class (e2fsck, pg_amcheck) is wrong for a strongly
-consistent CAS-advance system on S3.**
+**Status: REJECTED.** Kept under load-bearer exception #1
+(kernel-bug tripwire). The original cut-case correctly identified
+that consistency drift on a strongly-consistent S3 + CAS-advance
+system is either a kernel bug or impossible — and that *is* the
+exception #1 framing. `fsck` is the user-visible tripwire that
+catches the "kernel bug" branch on the user's own bucket: a
+regression in `compactor.ts` / `gc.ts` / `server-writer.ts` that
+drops a log entry, a buggy custom `Storage` adapter that ACKs a
+partial write, an operator who manually mutated bucket objects.
+The CI gate (`phase5-crash-fuzz.test.ts`, `randomized.test.ts`)
+catches these on `main`; `fsck` catches them on the user's bucket
+against their own workload — exactly the "user feels it first when
+something drifts" pattern in thesis §"What we keep even when it
+looks like ceremony" exception #1. The e2fsck/pg_amcheck reference
+class is a red herring: those tools target hardware corruption;
+this one targets kernel-protocol divergence, which is the analogue
+the thesis explicitly carves out a tripwire surface for.
+
+See `docs/about/thesis.md` §"What we keep even when it looks like
+ceremony" and `docs/followups/promote-surface-admission-adr.md`
+test #6.
+
+## Original analysis (preserved for context)
 
 `baerly admin fsck` does a snapshot-hash + log-hole + index-drift
 consistency walk with reserved exit code 4, plus `--indexes`,

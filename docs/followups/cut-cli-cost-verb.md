@@ -1,7 +1,21 @@
 # Cut `baerly cost`
 
-**Severity: HIGH. Pre-launch cut. Datadog cosplay on a prototype-tier
-primitive — the bucket invoice is the gauge.**
+**Status: REJECTED.** Kept under load-bearer exception #1
+(kernel-bug tripwire): a kernel regression that blows write-amp
+from 3 to 8 — or that re-introduces redundant index emission, or
+that breaks the idle-reader bound — surfaces in `baerly cost`'s
+write-amp / op-count / % of free tier output *before* the user
+sees it on the R2 invoice the following month. The CI gate
+(`tests/integration/phase5-end-to-end.test.ts`) is canonical
+enforcement on `main`; the user-visible verb is the second line of
+defence that catches drift on the user's own bucket, against their
+own workload shape, before billing day.
+
+See `docs/about/thesis.md` §"What we keep even when it looks like
+ceremony" and `docs/followups/promote-surface-admission-adr.md`
+test #6.
+
+## Original analysis (preserved for context)
 
 `baerly cost --table=<collection>` GETs ~120 trailing log entries,
 computes writes/min × write-amp × minutes/month, then renders

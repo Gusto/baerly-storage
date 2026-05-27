@@ -1,7 +1,27 @@
 # Cut `baerly doctor`
 
-**Severity: HIGH. Pre-launch cut. 412-LoC invariant walker that
-duplicates what `wrangler` already surfaces inline.**
+**Status: REJECTED.** Kept under load-bearer exceptions #1
+(kernel-bug tripwire) and #3 (audience reach across deploy
+targets). Two of the deploy invariants `doctor` walks — CF Access
+`audienceTag` hex-format validity and Cron Trigger presence — are
+*not* surfaced cleanly by wrangler: a wrong audienceTag fails
+silently at request-verify time (auth rejects every request with
+no actionable error), and a missing cron trigger means scheduled
+maintenance never fires (the compaction / GC loop stops, write-amp
+drifts up, the `< 1 Class A op / writer / hour` idle bound is no
+longer enforced — a kernel-protocol invariant violation that only
+shows up on the invoice). The verb is the second line of defence
+against deploy-shape regressions the CI gate on `main` cannot see
+because the misconfiguration lives in the user's `wrangler.jsonc`,
+not in the kernel. It is also the only diagnostic path for
+container-only / air-gapped / no-PaaS Node deployers debugging an
+auth/cron failure without wrangler expertise.
+
+See `docs/about/thesis.md` §"What we keep even when it looks like
+ceremony" and `docs/followups/promote-surface-admission-adr.md`
+test #6.
+
+## Original analysis (preserved for context)
 
 `baerly doctor --target=cloudflare` walks deploy invariants —
 wrangler.jsonc presence, R2 bindings, secrets, CF Access

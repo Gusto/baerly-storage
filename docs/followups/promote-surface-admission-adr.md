@@ -19,8 +19,9 @@ Promote the reasoning to a permanent ADR. Suggested:
 - **`/Users/eric.baer/workspace/baerly-storage/docs/adr/004-pre-launch-surface-admission-criteria.md`**
   (or wherever the next ADR number lands)
 
-The ADR's job is to codify the **five tests** any new public
-surface has to pass before it ships pre-launch:
+The ADR's job is to codify the **six tests** any new public
+surface has to pass before it ships pre-launch (five cutting
+tests plus one load-bearer exception):
 
 1. **Workload-shape test.** Does the surface invite a workload
    the published cost ceiling (~30 writes/min/collection, ~10
@@ -68,8 +69,9 @@ ships pre-launch.
 
 ## Decision
 Any new public surface (CLI verb, kernel method, client method,
-React hook, exported type) is held against five tests before
-ship. Failing any one is sufficient grounds to defer or cut.
+React hook, exported type) is held against six tests before
+ship. Failing any of tests #1–#5 is sufficient grounds to defer
+or cut, unless test #6 (load-bearer exception) applies.
 
 [The six tests, structured as above.]
 

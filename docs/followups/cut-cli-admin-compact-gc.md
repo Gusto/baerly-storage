@@ -1,8 +1,25 @@
 # Cut `baerly admin compact` + `baerly admin gc` (verb shells)
 
-**Severity: MEDIUM. Pre-launch cut. Manual triggers wrapping
-scheduled maintenance — the on-call escape hatch for an audience
-that does not own on-call.**
+**Status: REJECTED.** Kept under load-bearer exception #3
+(audience reach across deploy targets). Scheduled maintenance is
+not universally available: CF Workers Cron Triggers require
+specific configuration that a free-tier user may not have wired
+(see `baerly doctor`'s cron-trigger check, kept under the same
+doctrine), and container-only / air-gapped / no-PaaS Node
+deployers may have no scheduler at all. When the scheduled loop is
+absent or silently broken, write-amp drifts up and the
+`< 1 Class A op / writer / hour` idle bound is no longer enforced
+— a manual trigger is the user's only recovery path before the
+invoice. The `node -e 'await import(...)'` two-liner suggested by
+the original cut-case is realistic for the happy-path PaaS
+audience but not for the deploy populations exception #3 exists to
+protect.
+
+See `docs/about/thesis.md` §"What we keep even when it looks like
+ceremony" and `docs/followups/promote-surface-admission-adr.md`
+test #6.
+
+## Original analysis (preserved for context)
 
 Both verbs are manual triggers for one pass of the maintenance
 loop, with `--cloudflare-free-tier` profile caps and `--min-entries`

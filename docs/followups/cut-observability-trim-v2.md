@@ -1,5 +1,97 @@
 # Observability trim v2
 
+**Status: PARTIALLY REJECTED.** Items 1 (histogram only — sibling
+counters still candidates), 4 (`force_kept_by_error` only —
+sampling still cut), and 6 (kernel seam only — public knob still
+cut) are kept under load-bearer exception #1 (kernel-bug
+tripwires). Items 2, 3, 5 stand as cuts. See
+`docs/about/thesis.md` §"What we keep even when it looks like
+ceremony" — the thesis itself names "op-count histograms" as the
+canonical kernel-bug-tripwire example.
+
+## Revised verdict per item
+
+- **Item 1a — `db.write.class_a_ops_per_logical_write` histogram:**
+  **KEEP.** Named explicitly in the thesis as a kernel-bug
+  tripwire. Write-amp regressions blow the invoice before the CI
+  gate catches them on `main`; the user-visible surface is the
+  second-line defence. The "exactly one CI consumer" framing in
+  the original analysis missed that the *user* is the other
+  consumer when write-amp drifts in production.
+- **Item 1b — 4 sibling counters:** **REWORK / mostly CUT.**
+  Individual judgment:
+  - `db.r2.put.412_total`, `db.r2.put.429_total` — KEEP. Distinct
+    kernel-bug tripwires (CAS livelock, rate-limit floor); not
+    derivable from the histogram. A 412 storm is the canonical
+    "CAS scope regression" signal.
+  - `db.r2.preimage_get_total` — CUT. Pre-image reads are
+    subsumed by the histogram's class-A op count; redundant.
+  - `db.writer.fence_bump_observed_total` — CUT. Internal-only
+    diagnostic; no user-visible regression it catches that the
+    412 counter doesn't already cover.
+  - `db.write.index_ops_per_logical_write` — KEEP if cheap to
+    keep alongside the main histogram; this is the
+    index-amplification tripwire (a buggy index def can 10x
+    write-amp silently). Re-evaluate if it duplicates work.
+- **Item 2 — `RequestScopedMetricsRecorder.summarize()`
+  percentiles:** **CUT stands.** p99 of 3 samples is meaningless;
+  per-request percentile machinery doesn't serve the
+  kernel-bug-tripwire role (the histogram aggregated at the
+  Workers Analytics Engine / operator sink level does). Replace
+  with `_sum`/`_count` suffixes only, drop the sort.
+- **Item 3 — `BAERLY_LOG_STACKS` two-gate:** **CUT stands, but
+  simplify rather than delete.** Stacks at `error` level DO catch
+  kernel bugs (silent retry exhaustion, conflict-loop blow-up),
+  but the two-gate env-var ceremony is incident-response cosplay.
+  Simplify to "always include stack at `error` level, never
+  elsewhere." Delete the env var and the `includeStack` param.
+- **Item 4a — head-based deterministic sampling:** **CUT stands.**
+  At 30 writes/min/collection ceiling, sampling is overkill; FNV
+  hashing for cross-service trace correlation is microservice
+  thinking. Delete the sampling module.
+- **Item 4b — `force_kept_by_error`:** **KEEP the mechanism, drop
+  the field name.** Errors must reach maintainers — that's the
+  kernel-bug-tripwire role. With sampling deleted (4a), the
+  *implementation* of force-keep is trivial (every line is kept),
+  so the `force_kept_by_error` provenance field can go. The
+  invariant "errors are never dropped" stays as a doc/test
+  contract; the field stops existing because there is nothing to
+  contrast against.
+- **Item 5 — `runScheduledMaintenance` per-tick enrichment:**
+  **CUT stands.** No human reads 6 AM cron canonical lines for a
+  15-user app. Maintenance errors throw to the platform (CF
+  dashboard / Node process logs); the kernel-bug-tripwire role is
+  served by the per-write histogram (item 1a), not by
+  maintenance-tick summary fields. Delete `withObservability` for
+  maintenance/compactor/gc/rebuild.
+- **Item 6 — `MetricsRecorder` kernel seam:** **REWORK.** Because
+  item 1a stays, *something* has to emit the histogram. But the
+  three-method recorder interface + tee combinator + ALS-aware
+  wrapper are graduation-tier sink machinery for a kernel that
+  ships ~3 emissions (histogram + 412 counter + 429 counter +
+  maybe index-ops counter). Collapse to a single
+  `MetricsRecorder` interface with no tee, no ALS wrapper; keep
+  it as an *internal* seam (consumed by tests and the canonical
+  emission site). The public `Db.create({ metrics })` knob still
+  cuts per `cut-api-db-create-overrides.md` — operators wire to
+  Workers Analytics Engine / OTel by reading the recorder output
+  from canonical log lines, not by passing a custom recorder.
+
+## Cross-item pattern
+
+The original cut treated "no on-call" as if it removed *all*
+observability load. It doesn't — the thesis carves out
+kernel-bug tripwires precisely because the *maintainer's* job is
+to catch protocol regressions before they hit the *user's*
+invoice. The histogram + the two error-class counters (412, 429)
++ the always-kept error path are the minimum surface that
+satisfies that role. Everything else (per-request percentiles,
+env-gated stacks, head sampling, maintenance-tick enrichment,
+public recorder seam) was Datadog cosplay grafted onto the
+tripwires and goes.
+
+## Original analysis (preserved for context)
+
 **Severity: HIGH. Pre-launch cut. Six items of Datadog-grade
 ceremony grafted onto a primitive whose audience does not own
 on-call. The CI gates are the value; the recorder plumbing is

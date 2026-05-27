@@ -1,5 +1,24 @@
 # Cut `minimal-cloudflare` and `minimal-node` scaffolds
 
+**Status: REJECTED.** Kept under load-bearer exception #3
+(audience reach across deploy targets): a server-only baerly app
+with no React in the dependency tree is a real audience —
+internal scripts, scheduled Workers, JSON-only HTTP services,
+Slack bots, webhook receivers. `react-* minus src/web/` is not
+adequate because React + Vite stay in `package.json` and the
+build pipeline; the minimal scaffolds are the only path that
+ships a server with no SPA dependencies.
+
+The `innerHTML` mental-model objection in the original analysis
+is a real concern, but it argues for tightening the minimal
+scaffold's UI (or dropping `src/web/` from minimals entirely so
+they're truly server-only) — not for cutting both variants.
+
+See `docs/about/thesis.md` §"What we keep even when it looks like ceremony"
+and `docs/followups/promote-surface-admission-adr.md` test #6.
+
+## Original analysis (preserved for context)
+
 **Severity: HIGH. Pre-launch cut. 4 scaffolds → 2. The README
 already routes new users to `react-node`; the minimal variants
 teach `innerHTML` re-rendering as the canonical UI pattern.**
