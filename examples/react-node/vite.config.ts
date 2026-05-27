@@ -1,7 +1,7 @@
 import { resolve } from "node:path";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
-import { baerlyDev } from "baerly-storage/dev/vite";
+import { baerlyDev } from "@gusto/baerly-storage/dev/vite";
 import config from "./baerly.config.ts";
 
 export default defineConfig({

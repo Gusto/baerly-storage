@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { defineConfig } from "baerly-storage/config";
+import { defineConfig } from "@gusto/baerly-storage/config";
 
 /**
  * Zod schema for one note. Source of truth for both the runtime

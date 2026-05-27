@@ -5,7 +5,7 @@
  * with no header check. See AGENTS.md "Going to production" for
  * the recipe to flip `auth` or wire a custom verifier.
  */
-import { baerlyWorker } from "baerly-storage/cloudflare";
+import { baerlyWorker } from "@gusto/baerly-storage/cloudflare";
 import config from "../../baerly.config.ts";
 
 export default baerlyWorker(() => ({ config }));

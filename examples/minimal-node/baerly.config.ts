@@ -1,4 +1,4 @@
-import { defineConfig } from "baerly-storage/config";
+import { defineConfig } from "@gusto/baerly-storage/config";
 
 /**
  * One collection (`notes`) ships out of the box so the wired

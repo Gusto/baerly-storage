@@ -148,7 +148,7 @@ http://localhost:5173/<path>`) before declaring the task complete.
      collection, the second overload requires the row to satisfy
      the kernel's `DocumentData` shape (`{ [k: string]: DocumentValue }`):
      ```ts
-     import type { DocumentData } from "baerly-storage";
+     import type { DocumentData } from "@gusto/baerly-storage";
      interface Bookmark extends DocumentData { _id: string; url: string }
      await client.table<Bookmark>("bookmarks").all();
      ```
@@ -165,7 +165,7 @@ http://localhost:5173/<path>`) before declaring the task complete.
   ```ts
   // src/notes.test.ts
   import { test, expect } from "vitest";
-  import { Db, MemoryStorage } from "baerly-storage";
+  import { Db, MemoryStorage } from "@gusto/baerly-storage";
   import config from "../baerly.config.ts";
 
   test("notes round-trip", async () => {
@@ -235,7 +235,7 @@ http://localhost:5173/<path>`) before declaring the task complete.
   — `Query<T>` has no `.useIndex()` method.
 
   ```ts
-  import { defineConfig } from "baerly-storage/config";
+  import { defineConfig } from "@gusto/baerly-storage/config";
 
   export default defineConfig({
     collections: {
@@ -257,7 +257,7 @@ http://localhost:5173/<path>`) before declaring the task complete.
 
   ```ts
   import { z } from "zod";
-  import { defineConfig } from "baerly-storage/config";
+  import { defineConfig } from "@gusto/baerly-storage/config";
 
   const Note = z.object({
     _id: z.string(),
@@ -338,8 +338,8 @@ auth: "none",     // dev default
 
 ```ts
 // src/server/index.ts
-import { baerlyNode, s3Storage } from "baerly-storage/node";
-import { bearerJwt } from "baerly-storage/auth";
+import { baerlyNode, s3Storage } from "@gusto/baerly-storage/node";
+import { bearerJwt } from "@gusto/baerly-storage/auth";
 import config from "../../baerly.config.ts";
 
 await baerlyNode({
@@ -511,7 +511,7 @@ automatically.
 ```typescript
 // baerly.config.ts
 import { z } from "zod";
-import { defineConfig } from "baerly-storage/config";
+import { defineConfig } from "@gusto/baerly-storage/config";
 
 export const NoteSchema = z.object({
   _id: z.string(),
@@ -549,7 +549,7 @@ the cache key changes when the filter does:
 
 ```tsx
 import { useState } from "react";
-import { useQuery } from "baerly-storage/client/react";
+import { useQuery } from "@gusto/baerly-storage/client/react";
 import { STATUSES, type Note } from "../../baerly.config.ts";
 
 type Filter = "all" | Note["status"];

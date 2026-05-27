@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useMutation, useQuery } from "baerly-storage/client/react";
+import { useMutation, useQuery } from "@gusto/baerly-storage/client/react";
 import type { Note } from "../../baerly.config.ts";
 
 const NoteRow = ({ note }: { note: Note }) => {

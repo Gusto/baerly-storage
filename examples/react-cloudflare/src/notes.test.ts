@@ -3,7 +3,7 @@
 // import on line below will stop typechecking once `notes` is
 // gone.
 import { test, expect } from "vitest";
-import { Db, MemoryStorage } from "baerly-storage";
+import { Db, MemoryStorage } from "@gusto/baerly-storage";
 import config from "../baerly.config.ts";
 
 test("notes round-trip", async () => {

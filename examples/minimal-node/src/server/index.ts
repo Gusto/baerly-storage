@@ -8,8 +8,8 @@
  * Storage: AWS S3 by default; set `R2_ACCOUNT_ID` to switch to
  * Cloudflare R2 via the S3-compat endpoint.
  */
-import { baerlyNode, r2Storage, s3Storage } from "baerly-storage/node";
-import type { Storage } from "baerly-storage";
+import { baerlyNode, r2Storage, s3Storage } from "@gusto/baerly-storage/node";
+import type { Storage } from "@gusto/baerly-storage";
 import config from "../../baerly.config.ts";
 
 const reqEnv = (name: string): string => {

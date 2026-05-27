@@ -1,4 +1,4 @@
-import { createBaerlyClient } from "baerly-storage/client";
+import { createBaerlyClient } from "@gusto/baerly-storage/client";
 import config from "../../baerly.config.ts";
 import type { Note } from "../../types.ts";
 

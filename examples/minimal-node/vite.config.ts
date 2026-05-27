@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 import { defineConfig } from "vite";
-import { baerlyDev } from "baerly-storage/dev/vite";
+import { baerlyDev } from "@gusto/baerly-storage/dev/vite";
 import config from "./baerly.config.ts";
 
 export default defineConfig({

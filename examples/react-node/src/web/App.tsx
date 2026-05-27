@@ -1,4 +1,4 @@
-import { BaerlyProvider, useMutation } from "baerly-storage/client/react";
+import { BaerlyProvider, useMutation } from "@gusto/baerly-storage/client/react";
 import { client } from "./client.ts";
 import { NoteList } from "./NoteList.tsx";
 

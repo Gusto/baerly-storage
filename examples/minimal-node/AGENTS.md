@@ -134,7 +134,7 @@ http://localhost:5173/<path>`) before declaring the task complete.
   ```ts
   // src/notes.test.ts
   import { test, expect } from "vitest";
-  import { Db, MemoryStorage } from "baerly-storage";
+  import { Db, MemoryStorage } from "@gusto/baerly-storage";
   import config from "../baerly.config.ts";
 
   test("notes round-trip", async () => {
@@ -205,7 +205,7 @@ http://localhost:5173/<path>`) before declaring the task complete.
   shipped — `Query<T>` has no such method).
 
   ```ts
-  import { defineConfig } from "baerly-storage/config";
+  import { defineConfig } from "@gusto/baerly-storage/config";
 
   export default defineConfig({
     collections: {
@@ -231,7 +231,7 @@ http://localhost:5173/<path>`) before declaring the task complete.
 
   ```ts
   import { z } from "zod";
-  import { defineConfig } from "baerly-storage/config";
+  import { defineConfig } from "@gusto/baerly-storage/config";
 
   const Ticket = z.object({
     _id: z.string().optional(),
@@ -310,8 +310,8 @@ auth: "none",     // dev default
 
 ```ts
 // src/server/index.ts
-import { baerlyNode, s3Storage } from "baerly-storage/node";
-import { bearerJwt } from "baerly-storage/auth";
+import { baerlyNode, s3Storage } from "@gusto/baerly-storage/node";
+import { bearerJwt } from "@gusto/baerly-storage/auth";
 import config from "../../baerly.config.ts";
 
 await baerlyNode({
