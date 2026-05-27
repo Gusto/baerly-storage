@@ -84,6 +84,6 @@ The trust-artifact mechanism is good; the *file* is premature.
   ceremony for an audience that reads the cloud bill.
 - **`cut-api-consistency-eventual.md`** — the M-size table cites
   this modifier; cutting the table removes one of its few users.
-- **`strengthen-thesis-message.md`** — the thesis line "Cost is
-  not the moat" wins more weight when the cost-comparison surface
-  goes away.
+- **`docs/about/thesis.md` §"What this deliberately is not"** —
+  the "Cost is not the moat" doctrine wins more weight when the
+  cost-comparison surface goes away.

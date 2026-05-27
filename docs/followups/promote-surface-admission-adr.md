@@ -129,6 +129,8 @@ valuable.
 
 - **Source memo:** `docs/superpowers/specs/2026-05-25-changes-iterator-design.md`
 - **Surface-lock companion:** `docs/adr/002-api-surface-lock.md`
-- **Strengthening companion:** `strengthen-thesis-message.md`
+- **Strengthening companion:** `docs/about/thesis.md`
+  §"What prototype-tier storage needs" (graduation-is-success +
+  hallucinated-vs-redundant ceremony) and `docs/adr/004-ephemeral-coordination.md`
 - **Every other followup in this directory** that says "cut" —
   this ADR is the doctrine those cuts cite.

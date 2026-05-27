@@ -2,7 +2,7 @@
 title: Sync protocol
 audience: spec
 summary: Atomic multi-key writes over S3 via manifest indirection; time-ordered log; reconciliation algorithm.
-last-reviewed: 2026-05-12
+last-reviewed: 2026-05-26
 tags: [protocol, sync, manifest, causal-consistency]
 related: [causal-consistency-checking.md, log-entry-shape.md, json-merge-patch.md, writer-fence-adversarial-model.md, prior-art.md]
 ---
@@ -221,11 +221,23 @@ So after writing a new manifest entry, the client then touches a `last_change` f
 
 For APIs where listing is cheap (e.g. local-first/IndexDB), this optimization can be disabled by the `minimizeListObjectsCalls` flag to `false`. 
 
+## Protocol invariants
+
+Properties the kernel and the rest of this document both rely on.
+
+1. **Ephemerality.** The protocol runs only inside the lifetime
+   of an HTTP request or a cron invocation. There is no
+   background poller, no long-lived writer, no leader election.
+   Every commit reads `current.json` fresh, does its work, and
+   exits. Maintenance (compaction, GC) is a scheduled cron pass
+   that respects the platform's subrequest budget and yields.
+   The doctrinal rationale lives in
+   [ADR-004](../adr/004-ephemeral-coordination.md).
+
 ## The Sync Algorithm
 
 The algorithm runs once per refresh — initiated by a read
-(`getVersion`) or a write (`updateContent`). There is no background
-poller in the kernel.
+(`getVersion`) or a write (`updateContent`).
 
 1. Check the `last_change` file using `If-None-Match` headers; if it hasn't changed, return the cached state.
 	- See the read path in [`packages/server/src/query.ts`](../packages/server/src/query.ts).

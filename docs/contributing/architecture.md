@@ -2,7 +2,7 @@
 title: Architecture overview
 audience: coder
 summary: Module dependency graph and lifecycle of db.table(...).insert().
-last-reviewed: 2026-05-12
+last-reviewed: 2026-05-26
 tags: [architecture, lifecycle, module-map]
 related: ["../spec/sync-protocol.md", extending.md, features.md]
 ---
@@ -34,6 +34,30 @@ went strongly consistent in December 2020 (see
 part is not the kernel; it is shaping the system so the public API
 stays small enough that an LLM can use it from `.d.ts` alone (see
 [ADR-002](../adr/002-api-surface-lock.md)).
+
+## Runtime model
+
+All coordination runs inside a single HTTP request or cron
+invocation. There is no daemon, no leader, no coordinator service.
+A request enters the Worker/Node handler; the handler constructs a
+`Db` via `Db.create({ storage, config })`; the `Db` reads a fresh
+`current.json` from the bucket (no warm-cache shortcut for
+correctness — `consistency: "strong"` does this explicitly); it
+does the work — query evaluation, conflict resolution, CAS-advance
+of `current.json` — and exits. No background thread runs between
+requests, and no in-memory state from one request is load-bearing
+for the next: the next request re-reads `current.json` from the
+bucket.
+
+The cron path has the same shape, triggered by the platform's cron
+scheduler rather than HTTP. The entry point is
+[`runScheduledMaintenance`](../../packages/server/src/maintenance.ts),
+which runs one compaction + GC pass and returns. The pass is sized
+to fit inside the platform's subrequest budget — Cloudflare
+Workers' 50-subrequest limit is the tightest target — so larger
+backlogs are paced across multiple cron ticks rather than spilling
+into a long-lived process. The doctrinal rationale lives in
+[ADR-004](../adr/004-ephemeral-coordination.md).
 
 ## Module dependency graph
 

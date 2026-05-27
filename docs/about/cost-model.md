@@ -2,7 +2,7 @@
 title: Cost model
 audience: product
 summary: Per-line-item rates, write-amp meter, compression posture.
-last-reviewed: 2026-05-16
+last-reviewed: 2026-05-26
 tags: [cost, pricing, operations]
 related: [pricing-log.md, thesis.md]
 ---
@@ -151,8 +151,10 @@ Read this as positioning, not a cost claim:
   pitch is "you're paying for schemaless docs + multi-instance
   causal consistency, not for ops." A user willing to give those
   up for a SQL schema should **switch to D1** — it's strictly
-  cheaper. The product thesis is explicit that
-  [cost is not the moat](thesis.md#positioning).
+  cheaper, and [that move is the success path, not a churn
+  event](thesis.md#what-prototype-tier-storage-needs). The
+  product thesis is explicit that
+  [cost is not the moat](thesis.md#what-this-deliberately-is-not).
 - **L workload:** Baerly's R2 Class B alone (~$1 500) costs more
   than a Postgres Pro plan. That's the graduation cliff —
   read-heavy traffic on a per-doc fan-out protocol is

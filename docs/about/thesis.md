@@ -53,6 +53,10 @@ The criteria the rest of this document is shaped around:
 3. **Graduation path with no hostage situation.** Prototype-tier
    storage without an exit is deferred migration pain. The day the
    app outgrows the system, leaving has to be mechanical.
+   *Graduation is the success path, not a failure mode.* A
+   prototype-tier app that crossed the ceiling and moved to D1
+   is a Baerly **win**, not a churn event. The "no hostage"
+   promise is what makes the prototype-tier bet safe to take.
 4. **An API an LLM can use from the type definitions alone.** Small
    surface, string error codes, `@example` blocks that are tested.
    *Type signatures are the contract; JSDoc is prose.* An LLM should
@@ -128,6 +132,29 @@ storage is the rare primitive every cloud implements with the same
 abstraction (the S3 API), and the substance is portable by
 definition. Your bytes in your bucket — no managed catalog, no
 proprietary runtime, leaving needs no vendor cooperation.
+
+## Runtime model: nothing between requests
+
+Baerly's kernel runs entirely within ephemeral compute. Every
+coordination decision — fencing, conflict resolution, atomic
+commit, log emission, index maintenance, garbage collection,
+compaction — completes within the lifetime of a single HTTP
+request or scheduled cron invocation. The kernel holds no
+in-memory state that's load-bearing for correctness; a cold
+start reads correctly the same as a warm one. The only
+persistent component is the bucket.
+
+This is unusual. Apache Iceberg requires a catalog service.
+Delta Lake on S3 requires a DynamoDB lock table. SlateDB is
+designed around a long-lived writer and a long-lived compactor.
+Cloudflare's Durable Objects is the architectural antithesis —
+its pitch is that you *need* a persistent single-threaded
+coordinator. Baerly's bet is that you don't, because the
+conditional-write primitives that S3, R2, GCS, and Azure Blob
+all expose are sufficient — provided the protocol does the work.
+The full rationale, comparators, and the rules for what would
+break the property are in
+[ADR-004](../adr/004-ephemeral-coordination.md).
 
 ## Requirements → architecture
 
