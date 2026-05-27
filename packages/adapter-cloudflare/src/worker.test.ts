@@ -144,7 +144,7 @@ describe("baerlyWorker observability", () => {
     const handler = baerlyWorker(() => ({
       config: testConfig,
       verifier,
-      observability: { level: "debug", sink, sampleRate: 1 },
+      observability: { level: "debug", sink },
     }));
     const env: BaerlyEnv = { BUCKET: bucket, APP: "t" };
     const ctx: ExecutionContext = {
@@ -215,7 +215,7 @@ describe("baerlyWorker observability", () => {
     const handler = baerlyWorker(() => ({
       config: testConfig,
       verifier,
-      observability: { level: "debug", sink, sampleRate: 1 },
+      observability: { level: "debug", sink },
     }));
 
     // Cold-cache GET (the cache is per-isolate and the tenant key is
@@ -292,7 +292,7 @@ describe("baerlyWorker observability", () => {
     const hit = baerlyWorker(() => ({
       config: testConfig,
       verifier,
-      observability: { level: "debug", sink, sampleRate: 1 },
+      observability: { level: "debug", sink },
     }));
     const res = await hit.fetch!(
       new Request(url, { method: "GET" }) as Request<unknown, IncomingRequestCfProperties>,
@@ -319,7 +319,7 @@ describe("baerlyWorker observability", () => {
     const handler = baerlyWorker(() => ({
       config: testConfig,
       verifier: denyVerifier,
-      observability: { level: "debug", sink, sampleRate: 1 },
+      observability: { level: "debug", sink },
     }));
     const env: BaerlyEnv = { BUCKET: bucket, APP: "t" };
     const ctx = makeNoopCtx();

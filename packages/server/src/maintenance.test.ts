@@ -96,7 +96,7 @@ describe("runScheduledMaintenance", () => {
     beforeEach(async () => {
       records = [];
       sink = (r) => records.push(r);
-      await configureObservability({ level: "debug", sink, sampleRate: 1 });
+      await configureObservability({ level: "debug", sink });
     });
 
     afterEach(async () => {

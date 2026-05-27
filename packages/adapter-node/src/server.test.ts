@@ -140,7 +140,7 @@ describe("createApp observability", () => {
       app: "t",
       storage,
       verifier,
-      observability: { level: "debug", sink, sampleRate: 1 },
+      observability: { level: "debug", sink },
     });
 
     const res = await fetch(`${url}/v1/t/c`, {
@@ -172,7 +172,7 @@ describe("createApp observability", () => {
       app: "t",
       storage,
       verifier,
-      observability: { level: "debug", sink, sampleRate: 1 },
+      observability: { level: "debug", sink },
     });
 
     const res = await fetch(`${url}/v1/t/c`);
@@ -196,7 +196,7 @@ describe("createApp observability", () => {
       app: "t",
       storage,
       verifier,
-      observability: { level: "debug", sink, sampleRate: 1 },
+      observability: { level: "debug", sink },
     });
 
     const correlation = "test-correlation-7a3f";
@@ -222,7 +222,7 @@ describe("createApp observability", () => {
       app: "t",
       storage,
       verifier,
-      observability: { level: "debug", sink, sampleRate: 1 },
+      observability: { level: "debug", sink },
     });
 
     const res = await fetch(`${url}/v1/t/c`);
@@ -312,11 +312,10 @@ describe("resolveDefaultSink", () => {
     expect(resolveDefaultSink({ level: "debug" }).sink).toBe("console-json");
   });
 
-  test("preserves level and sampleRate when defaulting the sink", () => {
+  test("preserves level when defaulting the sink", () => {
     process.stdout.isTTY = false;
-    const out = resolveDefaultSink({ level: "warn", sampleRate: 0.1 });
+    const out = resolveDefaultSink({ level: "warn" });
     expect(out.level).toBe("warn");
-    expect(out.sampleRate).toBe(0.1);
     expect(out.sink).toBe("console-json");
   });
 });
@@ -384,13 +383,13 @@ describe("createFetchHandler", () => {
     // (factory-time, the production path doesn't need a barrier).
     // Await it explicitly here so the sink is wired before the first
     // request reaches `flushUnauthorizedAndRespond`.
-    await configureObservability({ level: "debug", sink, sampleRate: 1 });
+    await configureObservability({ level: "debug", sink });
     const storage = new MemoryStorage();
     const handler = createFetchHandler({
       app: "t",
       storage,
       verifier: denyingVerifier,
-      observability: { level: "debug", sink, sampleRate: 1 },
+      observability: { level: "debug", sink },
     });
     const res = await handler(new Request("http://x/v1/t/c", { method: "GET" }));
     expect(res.status).toBe(401);

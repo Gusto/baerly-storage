@@ -95,22 +95,7 @@ export interface ObservabilityConfig {
    * Default: `"console-json"`.
    */
   readonly sink?: "console-json" | Sink;
-  /**
-   * Head-based sample rate in `[0, 1]`. Cached for
-   * {@link getEffectiveSampleRate}; the canonical-line flusher
-   * reads it via that getter rather than re-parsing on every call.
-   * Fallback chain: `config.sampleRate → LOG_SAMPLE env → 1.0`.
-   */
-  readonly sampleRate?: number;
 }
-
-/**
- * Cached after the last successful `configureObservability` call.
- * `0` (never sample) is a valid value, so we sentinel "unset" with
- * `null`. The canonical-line flusher reads via
- * {@link getEffectiveSampleRate} which defaults to `1.0`.
- */
-let effectiveSampleRate: number | null = null;
 
 /**
  * Wire LogTape's global config.
@@ -134,13 +119,7 @@ export const configureObservability = async (config: ObservabilityConfig = {}): 
       { category: ["logtape", "meta"], sinks: ["primary"], lowestLevel: "error" },
     ],
   });
-
-  effectiveSampleRate = resolveSampleRate(config.sampleRate);
 };
-
-/** Returns the cached sample rate, or `1.0` if config hasn't been wired yet. */
-export const getEffectiveSampleRate = (): number =>
-  effectiveSampleRate ?? resolveSampleRate(undefined);
 
 /**
  * Thin re-export. Identical shape to `@logtape/logtape`'s `getLogger`.
@@ -175,20 +154,6 @@ const resolveSink = (configSink: ObservabilityConfig["sink"]): Sink => {
   }
   return jsonConsoleSink();
 };
-
-const resolveSampleRate = (configRate: number | undefined): number => {
-  if (configRate !== undefined) {
-    return clampRate(configRate);
-  }
-  const env = readEnv("LOG_SAMPLE");
-  if (env === undefined) {
-    return 1;
-  }
-  const parsed = Number(env);
-  return Number.isFinite(parsed) ? clampRate(parsed) : 1;
-};
-
-const clampRate = (r: number): number => Math.max(0, Math.min(1, r));
 
 const readEnv = (name: string): string | undefined => {
   const env = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process

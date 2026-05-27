@@ -10,16 +10,8 @@
  * up along the way, and a redacted error structure on the failure
  * path.
  *
- * The line is suppressed when:
- *
- * - `ctx.sampled_by_head === false` AND
- * - `ctx.force_kept_by_error === false` (no error force-keep).
- *
- * Error force-keep mutates `ctx.force_kept_by_error = true` on the
- * way in so a downstream layer that re-reads the context sees the
- * decision was overridden. (`sampled_by_head` stays as the sampler
- * left it — the sampler is one-shot and we don't want to lose that
- * provenance.)
+ * Every unit-of-work emits a line; level is computed from
+ * status/error.
  *
  * Level mapping at emit time:
  *
@@ -31,7 +23,7 @@
 
 import { BaerlyError } from "@baerly/protocol";
 import { errorEnvelope } from "../contract.ts";
-import { CATEGORY, getEffectiveSampleRate, getLogger, type CategoryName } from "./logger.ts";
+import { CATEGORY, getLogger, type CategoryName } from "./logger.ts";
 import {
   createObservabilityContext,
   getCurrentContext,
@@ -40,7 +32,6 @@ import {
 } from "./context.ts";
 import { deriveOutcome } from "./derive-outcome.ts";
 import type { RequestScopedMetricsRecorder } from "./recorder.ts";
-import { decideSample } from "./sampling.ts";
 
 /** Discriminator for the canonical line's `category` derivation. */
 export type Unit = "http" | "maintenance" | "compactor" | "gc" | "rebuild";
@@ -52,7 +43,7 @@ export interface FlushCanonicalLineOptions {
   readonly status?: number;
   /** Short outcome tag ("ok", "conflict", "not_found", "client_error", "internal_error", ...). */
   readonly outcome: string;
-  /** Thrown value on the failure path. Triggers `force_kept_by_error`. */
+  /** Thrown value on the failure path. */
   readonly error?: unknown;
   /** Caller-supplied extra fields, spread onto the line last (override fields/summary). */
   readonly extra?: Readonly<Record<string, unknown>>;
@@ -78,18 +69,6 @@ export const flushCanonicalLine = (
   recorder: RequestScopedMetricsRecorder,
   opts: FlushCanonicalLineOptions,
 ): void => {
-  // Force-keep on error path. This flips `force_kept_by_error`
-  // for the caller's benefit so subsequent code can detect "we
-  // kept this line even though the sampler said no" without
-  // re-deriving from the absence of an error.
-  if (opts.error !== undefined) {
-    ctx.force_kept_by_error = true;
-  }
-
-  if (!ctx.force_kept_by_error && !ctx.sampled_by_head) {
-    return;
-  }
-
   const level = pickLevel(opts);
   const properties = buildProperties(ctx, recorder, opts, level);
   const logger = getLogger(UNIT_TO_CATEGORY[opts.unit]);
@@ -115,11 +94,6 @@ export const flushCanonicalLine = (
  * flush the canonical line on completion, and re-throw any error
  * after flushing.
  *
- * Sampling is applied head-style at entry; the body sees an
- * already-decided context and can read `ctx.sampled_by_head` if it
- * wants to skip expensive debug instrumentation. The error path
- * always emits regardless.
- *
  * Nesting-aware: when an outer context is already active (e.g.
  * `runScheduledMaintenance` calling `compact()` / `runGc()`, or a
  * caller wrapping a primitive inside their own scope), this just
@@ -139,7 +113,6 @@ export const withObservability = async <T>(
   }
 
   const ctx = createObservabilityContext();
-  ctx.sampled_by_head = decideSample(ctx.request_id, getEffectiveSampleRate());
 
   // The recorder lives on the context so adapters (and any code
   // reaching `getCurrentContext()`) can find it; the body callback
@@ -168,23 +141,21 @@ export const withObservability = async <T>(
  * managing the bracket themselves.
  *
  * Behaviour mirrors what the legacy `app.use("*", ...)` middleware
- * did in Mode B (no ambient context): sampling head-style at entry,
- * canonical line on every request in `finally`. Because this wrapper
- * sits OUTSIDE `app.fetch`, errors absorbed by `app.onError` reach the
- * caller as a non-2xx `Response` whose body is the
- * {@link HttpErrorEnvelope}; the helper reconstructs a `BaerlyError`
- * from that envelope so the canonical line carries the same
- * `{ code, message }` shape it would have under the in-Hono middleware.
+ * did in Mode B (no ambient context): canonical line on every
+ * request in `finally`. Because this wrapper sits OUTSIDE
+ * `app.fetch`, errors absorbed by `app.onError` reach the caller as
+ * a non-2xx `Response` whose body is the {@link HttpErrorEnvelope};
+ * the helper reconstructs a `BaerlyError` from that envelope so the
+ * canonical line carries the same `{ code, message }` shape it would
+ * have under the in-Hono middleware.
  */
 export const withHttpObservability = async (
   req: Request,
   fetch: (req: Request) => Promise<Response> | Response,
 ): Promise<Response> => {
   const requestId = req.headers.get("x-request-id") ?? crypto.randomUUID();
-  const sampleRate = getEffectiveSampleRate();
   const ctx = createObservabilityContext({
     request_id: requestId,
-    sampled_by_head: decideSample(requestId, sampleRate),
   });
 
   const path = new URL(req.url).pathname;

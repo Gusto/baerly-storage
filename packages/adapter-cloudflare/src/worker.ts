@@ -13,11 +13,9 @@ import {
   alsAwareRecorder,
   configureObservability,
   createObservabilityContext,
-  decideSample,
   deriveOutcome,
   flushCanonicalLine,
   flushUnauthorizedAndRespond,
-  getEffectiveSampleRate,
   getLogger,
   observableStorage,
   runWithContext,
@@ -130,16 +128,15 @@ export interface BaerlyWorkerOptions {
    */
   readonly metrics?: MetricsRecorder;
   /**
-   * Observability config (LogTape sink + level + head sample
-   * rate). When supplied, the Worker calls
-   * {@link configureObservability} lazily on first `fetch` /
-   * `scheduled` invocation (CF Worker modules can't `await` at the
-   * top level). `configureObservability` is idempotent — passing
-   * `{ reset: true }` to LogTape — so re-invocation is harmless.
+   * Observability config (LogTape sink + level). When supplied, the
+   * Worker calls {@link configureObservability} lazily on first
+   * `fetch` / `scheduled` invocation (CF Worker modules can't
+   * `await` at the top level). `configureObservability` is
+   * idempotent — passing `{ reset: true }` to LogTape — so
+   * re-invocation is harmless.
    *
-   * Each field falls through to an env-var:
-   * - `level` → `env.LOG_LEVEL` (when typed option is undefined).
-   * - `sampleRate` → `env.LOG_SAMPLE`.
+   * - `level` falls through to `env.LOG_LEVEL` (when typed option
+   *   is undefined).
    * - `sink` defaults to `"console-json"` (Cloudflare's stdout is
    *   ingested by Workers Logs as JSON-shaped records).
    *
@@ -265,10 +262,7 @@ export function baerlyWorker<E extends BaerlyEnv = BaerlyEnv>(
       // Suppress when an explicit `verifier:` override is in play —
       // the override wins, the log would be misleading. Suppress
       // when `auth === "shared-secret"` — the operator already knows.
-      if (
-        resolved.options.verifier === undefined &&
-        resolved.options.config.auth === "none"
-      ) {
+      if (resolved.options.verifier === undefined && resolved.options.config.auth === "none") {
         getLogger(CATEGORY.http).info(
           `[baerly] auth=none — all requests resolve to tenant=${JSON.stringify(resolved.options.config.tenant)}`,
         );
@@ -322,10 +316,8 @@ export function baerlyWorker<E extends BaerlyEnv = BaerlyEnv>(
       // it never creates a competing context, and it never flushes
       // its own line. The adapter owns the flush from here on.
       const requestId = req.headers.get("x-request-id") ?? crypto.randomUUID();
-      const sampleRate = getEffectiveSampleRate();
       const obsCtx = createObservabilityContext({
         request_id: requestId,
-        sampled_by_head: decideSample(requestId, sampleRate),
       });
 
       // Tenant resolution: the Verifier owns it unconditionally.

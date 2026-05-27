@@ -35,7 +35,7 @@ one.)
 
 | File | What happens |
 |---|---|
-| `wrangler.jsonc` | Adds `r2_buckets: [{ binding: "BUCKET", bucket_name: <app> }]` if no entry named `BUCKET` exists. Merges `vars: { APP, TENANT, LOG_LEVEL, LOG_SAMPLE }` — keys you've already set win. |
+| `wrangler.jsonc` | Adds `r2_buckets: [{ binding: "BUCKET", bucket_name: <app> }]` if no entry named `BUCKET` exists. Merges `vars: { APP, TENANT }` — keys you've already set win. |
 | `.dev.vars` | Created with `SHARED_SECRET=dev-shared-secret`. **Replace before deploy** via `wrangler secret put SHARED_SECRET`. Skipped if `.dev.vars` already exists. |
 | `.gitignore` | Appends `.dev.vars` unless an equivalent pattern (`.env*.local`, `*.local`, `.env`) is already present. |
 | `package.json` | Appends `baerly-storage` to `dependencies` if not present. |

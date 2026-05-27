@@ -31,7 +31,7 @@ describe("mapError", () => {
 
   beforeEach(async () => {
     ({ records, sink } = collectingSink());
-    await configureObservability({ level: "debug", sink, sampleRate: 1 });
+    await configureObservability({ level: "debug", sink });
   });
 
   afterEach(async () => {
@@ -86,7 +86,7 @@ describe("observability middleware", () => {
 
   beforeEach(async () => {
     ({ records, sink } = collectingSink());
-    await configureObservability({ level: "debug", sink, sampleRate: 1 });
+    await configureObservability({ level: "debug", sink });
   });
 
   afterEach(async () => {
@@ -163,19 +163,7 @@ describe("observability middleware", () => {
     expect(lines[0]!.properties["request_id"]).toBe("known-id");
   });
 
-  test("sample-rate=0 suppresses the success-path canonical line", async () => {
-    await reset();
-    await configureObservability({ level: "debug", sink, sampleRate: 0 });
-    const app = buildApp();
-    const req = new Request("http://localhost/v1/t/things?where=%7B%22clauses%22%3A%5B%5D%7D");
-    const res = await withHttpObservability(req, (r) => app.fetch(r));
-    expect(res.status).toBe(200);
-    expect(canonical()).toHaveLength(0);
-  });
-
-  test("sample-rate=0 still emits on the error path (force-keep)", async () => {
-    await reset();
-    await configureObservability({ level: "debug", sink, sampleRate: 0 });
+  test("error path emits one canonical error line", async () => {
     const db = Db.create({
       storage: new MemoryStorage(),
       app: "router-test",
@@ -212,7 +200,7 @@ describe("router is silent without a wrapping observability scope", () => {
 
   beforeEach(async () => {
     ({ records, sink } = collectingSink());
-    await configureObservability({ level: "debug", sink, sampleRate: 1 });
+    await configureObservability({ level: "debug", sink });
   });
 
   afterEach(async () => {
@@ -234,12 +222,13 @@ describe("router is silent without a wrapping observability scope", () => {
     const app = makeApp();
     const outerCtx = createObservabilityContext({
       request_id: "outer-id",
-      sampled_by_head: true,
     });
 
     let resStatus: number | undefined;
     await runWithContext(outerCtx, async () => {
-      const res = await app.request("http://localhost/v1/t/things?where=%7B%22clauses%22%3A%5B%5D%7D");
+      const res = await app.request(
+        "http://localhost/v1/t/things?where=%7B%22clauses%22%3A%5B%5D%7D",
+      );
       resStatus = res.status;
     });
 
@@ -249,7 +238,9 @@ describe("router is silent without a wrapping observability scope", () => {
 
   test("bare app.fetch with no outer scope still emits no router-owned canonical line", async () => {
     const app = makeApp();
-    const res = await app.request("http://localhost/v1/t/things?where=%7B%22clauses%22%3A%5B%5D%7D");
+    const res = await app.request(
+      "http://localhost/v1/t/things?where=%7B%22clauses%22%3A%5B%5D%7D",
+    );
     expect(res.status).toBe(200);
     expect(canonical()).toHaveLength(0);
   });

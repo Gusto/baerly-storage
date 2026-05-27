@@ -1,6 +1,6 @@
 import { reset, type LogRecord, type Sink } from "@logtape/logtape";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { CATEGORY, configureObservability, getEffectiveSampleRate, getLogger } from "./logger.ts";
+import { CATEGORY, configureObservability, getLogger } from "./logger.ts";
 
 /**
  * In-memory sink for tests. LogTape doesn't ship a built-in
@@ -15,11 +15,9 @@ const collectingSink = (): { records: LogRecord[]; sink: Sink } => {
 
 describe("configureObservability + getLogger", () => {
   let prevLogLevel: string | undefined;
-  let prevLogSample: string | undefined;
 
   beforeEach(() => {
     prevLogLevel = process.env["LOG_LEVEL"];
-    prevLogSample = process.env["LOG_SAMPLE"];
   });
 
   afterEach(async () => {
@@ -27,11 +25,6 @@ describe("configureObservability + getLogger", () => {
       delete process.env["LOG_LEVEL"];
     } else {
       process.env["LOG_LEVEL"] = prevLogLevel;
-    }
-    if (prevLogSample === undefined) {
-      delete process.env["LOG_SAMPLE"];
-    } else {
-      process.env["LOG_SAMPLE"] = prevLogSample;
     }
     await reset();
   });
@@ -94,39 +87,6 @@ describe("configureObservability + getLogger", () => {
     getLogger(CATEGORY.http).info("event");
     expect(r1).toHaveLength(0);
     expect(r2).toHaveLength(1);
-  });
-});
-
-describe("getEffectiveSampleRate", () => {
-  let prev: string | undefined;
-  beforeEach(() => {
-    prev = process.env["LOG_SAMPLE"];
-  });
-  afterEach(async () => {
-    if (prev === undefined) {
-      delete process.env["LOG_SAMPLE"];
-    } else {
-      process.env["LOG_SAMPLE"] = prev;
-    }
-    await reset();
-  });
-
-  test("returns the configured rate after configureObservability", async () => {
-    await configureObservability({ sampleRate: 0.25 });
-    expect(getEffectiveSampleRate()).toBe(0.25);
-  });
-
-  test("falls back to LOG_SAMPLE env when no typed option supplied", async () => {
-    process.env["LOG_SAMPLE"] = "0.1";
-    await configureObservability({});
-    expect(getEffectiveSampleRate()).toBeCloseTo(0.1, 5);
-  });
-
-  test("clamps out-of-range rates into [0, 1]", async () => {
-    await configureObservability({ sampleRate: 5 });
-    expect(getEffectiveSampleRate()).toBe(1);
-    await configureObservability({ sampleRate: -1 });
-    expect(getEffectiveSampleRate()).toBe(0);
   });
 });
 

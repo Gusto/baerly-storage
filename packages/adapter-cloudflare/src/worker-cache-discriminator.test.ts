@@ -107,7 +107,7 @@ describe("baerlyWorker cache_status", () => {
     const handler = baerlyWorker(() => ({
       config: testConfig,
       verifier,
-      observability: { level: "debug", sink, sampleRate: 1 },
+      observability: { level: "debug", sink },
     }));
     const url = "https://x/v1/t/c/cs-1";
 
@@ -178,7 +178,7 @@ describe("baerlyWorker cache_status", () => {
     const handler = baerlyWorker(() => ({
       config: testConfig,
       verifier,
-      observability: { level: "debug", sink, sampleRate: 1 },
+      observability: { level: "debug", sink },
     }));
 
     const sinceUrl = `https://x/v1/since?table=c&cursor=`;

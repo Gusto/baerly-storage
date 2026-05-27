@@ -11,7 +11,7 @@ describe("prettyConsoleSink", () => {
     // The kernel only accepts `"console-json"` or a `Sink` function;
     // pretty rendering is constructed locally and passed through as
     // a function.
-    await configureObservability({ sink: prettyConsoleSink(), level: "info", sampleRate: 1 });
+    await configureObservability({ sink: prettyConsoleSink(), level: "info" });
   });
 
   afterEach(async () => {

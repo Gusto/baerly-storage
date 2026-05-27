@@ -58,7 +58,6 @@ import {
   resetKernelMetricsRecorder,
   runWithContext,
   setKernelMetricsRecorder,
-  type ObservabilityContext,
 } from "@baerly/server/observability";
 
 const APP = "app";
@@ -136,19 +135,13 @@ const collectingSink = (): { records: LogRecord[]; sink: Sink } => {
   return { records, sink };
 };
 
-const sampledCtx = (): ObservabilityContext => {
-  const ctx = createObservabilityContext();
-  ctx.sampled_by_head = true;
-  return ctx;
-};
-
 describe("observability integration — canonical line vs physical reality", () => {
   let records: LogRecord[];
   let sink: Sink;
 
   beforeEach(async () => {
     ({ records, sink } = collectingSink());
-    await configureObservability({ level: "info", sink, sampleRate: 1 });
+    await configureObservability({ level: "info", sink });
   });
 
   afterEach(async () => {
@@ -174,7 +167,7 @@ describe("observability integration — canonical line vs physical reality", () 
     setKernelMetricsRecorder(recorder);
     const db = Db.create({ storage: wrapped, app: APP, tenant: TENANT });
 
-    const ctx = sampledCtx();
+    const ctx = createObservabilityContext();
     await runWithContext(ctx, async () => {
       await db.table<Ticket>(COLLECTION).insert({
         _id: "t-0001",
@@ -230,7 +223,7 @@ describe("observability integration — canonical line vs physical reality", () 
     setKernelMetricsRecorder(recorder);
     const db = Db.create({ storage: wrapped, app: APP, tenant: TENANT });
 
-    const ctx = sampledCtx();
+    const ctx = createObservabilityContext();
     await runWithContext(ctx, async () => {
       await db.transaction<Ticket>(COLLECTION, async (tx) => {
         await tx.insert({ _id: "t-1", status: "open", priority: 1 });
@@ -296,7 +289,7 @@ describe("observability integration — canonical line vs physical reality", () 
     proxy.counts.delete = 0;
     proxy.counts.list = 0;
 
-    const ctx = sampledCtx();
+    const ctx = createObservabilityContext();
     let caught: unknown;
     try {
       await runWithContext(ctx, async () => {
@@ -347,41 +340,5 @@ describe("observability integration — canonical line vs physical reality", () 
     // path took a LIST and the cost-model story needs updating.
     expect(proxy.counts.put).toBe(0);
     expect(proxy.counts.delete).toBe(0);
-  });
-
-  test("emits zero canonical lines when sampling is off and the unit succeeds", async () => {
-    const memory = new MemoryStorage();
-    await bootstrap(memory);
-
-    const proxy = countingProxy(memory);
-    const recorder = alsAwareRecorder(noopMetricsRecorder);
-    const wrapped = observableStorage(proxy.storage, recorder);
-    // Adapters call setKernelMetricsRecorder once at boot with their
-    // tee'd recorder; we mirror that here so Writer/compactor/GC
-    // emissions reach the recorder (and from there, the ALS bag the
-    // canonical-line flusher reads). resetKernelMetricsRecorder() in
-    // the describe-level afterEach restores the noop default.
-    setKernelMetricsRecorder(recorder);
-    const db = Db.create({ storage: wrapped, app: APP, tenant: TENANT });
-
-    // Default head-sampling decision is `false`; without
-    // `sampled_by_head = true` the flusher should drop the line.
-    const ctx = createObservabilityContext();
-    await runWithContext(ctx, async () => {
-      await db.table<Ticket>(COLLECTION).insert({
-        _id: "t-drop",
-        status: "open",
-        priority: 1,
-      });
-    });
-    flushCanonicalLine(ctx, ctx.recorder, {
-      unit: "http",
-      outcome: "ok",
-      status: 200,
-    });
-
-    expect(records).toHaveLength(0);
-    // The work still happened; sampling only suppresses the log line.
-    expect(proxy.counts.put).toBe(3);
   });
 });

@@ -36,14 +36,12 @@ export {
   getCurrentContext,
 } from "./context.ts";
 export { alsAwareRecorder } from "./recorder.ts";
-export { decideSample } from "./sampling.ts";
 export {
   type CategoryName,
   type FriendlyLogLevel,
   type ObservabilityConfig,
   CATEGORY,
   configureObservability,
-  getEffectiveSampleRate,
   getLogger,
 } from "./logger.ts";
 export {

@@ -147,27 +147,6 @@ suffixes.
 Toggle via the `LOG_LEVEL` env var (both templates) or the typed
 `observability.level` option.
 
-## Sampling
-
-Head-based, deterministic per `request_id`. The decision is made
-once at request entry and held until flush.
-
-- Default rate: `0.1` (10% of successful requests).
-- **Errors are always kept** — the flusher overrides the sample
-  decision on the failure path.
-- Maintenance / GC / compactor / `rebuildIndex` always emit. They
-  aren't HTTP units and don't go through the head sampler.
-- Set `LOG_SAMPLE=1.0` while diagnosing; set `LOG_SAMPLE=0` to
-  suppress success lines entirely (errors still emit). The typed-
-  option equivalent — platform-portable, no env var required — is
-  `observability: { sampleRate: 0 }` passed to `baerlyWorker` /
-  `createApp` (or `baerlyNode`). Either form works; the typed
-  option wins when both are set.
-
-Sampling is hash-based on `request_id`, so retries (which carry the
-same `X-Request-Id`) are kept-or-dropped consistently — you won't
-see the first attempt sampled out and the retry sampled in.
-
 ## Sinks
 
 The kernel ships one in-box sink shorthand; pretty rendering lives

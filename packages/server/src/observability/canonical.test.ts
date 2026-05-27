@@ -2,7 +2,7 @@ import { BaerlyError } from "@baerly/protocol";
 import { reset, type LogRecord, type Sink } from "@logtape/logtape";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { flushCanonicalLine, serializeError, withObservability } from "./canonical.ts";
-import { createObservabilityContext, type ObservabilityContext } from "./context.ts";
+import { createObservabilityContext } from "./context.ts";
 import { configureObservability } from "./logger.ts";
 import { RequestScopedMetricsRecorder } from "./recorder.ts";
 
@@ -12,19 +12,13 @@ const collectingSink = (): { records: LogRecord[]; sink: Sink } => {
   return { records, sink };
 };
 
-const sampledCtx = (): ObservabilityContext => {
-  const ctx = createObservabilityContext();
-  ctx.sampled_by_head = true;
-  return ctx;
-};
-
 describe("flushCanonicalLine", () => {
   let records: LogRecord[];
   let sink: Sink;
 
   beforeEach(async () => {
     ({ records, sink } = collectingSink());
-    await configureObservability({ level: "debug", sink, sampleRate: 1 });
+    await configureObservability({ level: "debug", sink });
   });
 
   afterEach(async () => {
@@ -32,7 +26,7 @@ describe("flushCanonicalLine", () => {
   });
 
   test("emits exactly one canonical line per unit-of-work", () => {
-    flushCanonicalLine(sampledCtx(), new RequestScopedMetricsRecorder(), {
+    flushCanonicalLine(createObservabilityContext(), new RequestScopedMetricsRecorder(), {
       unit: "http",
       outcome: "ok",
       status: 200,
@@ -45,14 +39,18 @@ describe("flushCanonicalLine", () => {
     const r = new RequestScopedMetricsRecorder();
     r.counter("db.r2.put.412_total", 2);
     r.histogram("db.write.class_a_ops_per_logical_write", 3);
-    flushCanonicalLine(sampledCtx(), r, { unit: "http", outcome: "ok", status: 200 });
+    flushCanonicalLine(createObservabilityContext(), r, {
+      unit: "http",
+      outcome: "ok",
+      status: 200,
+    });
     expect(records).toHaveLength(1);
     expect(records[0]!.properties["db.r2.put.412_total"]).toBe(2);
     expect(records[0]!.properties["db.write.class_a_ops_per_logical_write_count"]).toBe(1);
   });
 
   test("attaches request_id, duration_ms, status, and outcome", () => {
-    const ctx = sampledCtx();
+    const ctx = createObservabilityContext();
     flushCanonicalLine(ctx, new RequestScopedMetricsRecorder(), {
       unit: "http",
       outcome: "ok",
@@ -67,7 +65,7 @@ describe("flushCanonicalLine", () => {
   });
 
   test("spreads ctx.fields and opts.extra (extra overrides)", () => {
-    const ctx = sampledCtx();
+    const ctx = createObservabilityContext();
     ctx.fields.set("collection", "tickets");
     ctx.fields.set("verb", "POST");
     flushCanonicalLine(ctx, new RequestScopedMetricsRecorder(), {
@@ -84,7 +82,7 @@ describe("flushCanonicalLine", () => {
 
   describe("level picking", () => {
     test("status>=500 → error level", () => {
-      flushCanonicalLine(sampledCtx(), new RequestScopedMetricsRecorder(), {
+      flushCanonicalLine(createObservabilityContext(), new RequestScopedMetricsRecorder(), {
         unit: "http",
         outcome: "internal_error",
         status: 500,
@@ -93,7 +91,7 @@ describe("flushCanonicalLine", () => {
     });
 
     test("status>=400 → warning level", () => {
-      flushCanonicalLine(sampledCtx(), new RequestScopedMetricsRecorder(), {
+      flushCanonicalLine(createObservabilityContext(), new RequestScopedMetricsRecorder(), {
         unit: "http",
         outcome: "client_error",
         status: 404,
@@ -102,7 +100,7 @@ describe("flushCanonicalLine", () => {
     });
 
     test("otherwise → info level", () => {
-      flushCanonicalLine(sampledCtx(), new RequestScopedMetricsRecorder(), {
+      flushCanonicalLine(createObservabilityContext(), new RequestScopedMetricsRecorder(), {
         unit: "http",
         outcome: "ok",
         status: 200,
@@ -111,7 +109,7 @@ describe("flushCanonicalLine", () => {
     });
 
     test("error present → error level (overrides status)", () => {
-      flushCanonicalLine(sampledCtx(), new RequestScopedMetricsRecorder(), {
+      flushCanonicalLine(createObservabilityContext(), new RequestScopedMetricsRecorder(), {
         unit: "http",
         outcome: "internal_error",
         status: 200,
@@ -121,41 +119,17 @@ describe("flushCanonicalLine", () => {
     });
   });
 
-  describe("sampling", () => {
-    test("suppresses when neither sampled_by_head nor force_kept_by_error", () => {
-      const ctx = createObservabilityContext(); // sampled_by_head=false
-      flushCanonicalLine(ctx, new RequestScopedMetricsRecorder(), {
-        unit: "http",
-        outcome: "ok",
-        status: 200,
-      });
-      expect(records).toHaveLength(0);
+  test("every canonical line emits — no sampling gate", () => {
+    flushCanonicalLine(createObservabilityContext(), new RequestScopedMetricsRecorder(), {
+      unit: "http",
+      outcome: "ok",
+      status: 200,
     });
-
-    test("emits when sampled_by_head=true", () => {
-      flushCanonicalLine(sampledCtx(), new RequestScopedMetricsRecorder(), {
-        unit: "http",
-        outcome: "ok",
-        status: 200,
-      });
-      expect(records).toHaveLength(1);
-    });
-
-    test("error force-keep overrides head rejection AND flips ctx.force_kept_by_error", () => {
-      const ctx = createObservabilityContext();
-      flushCanonicalLine(ctx, new RequestScopedMetricsRecorder(), {
-        unit: "http",
-        outcome: "internal_error",
-        status: 500,
-        error: new Error("boom"),
-      });
-      expect(records).toHaveLength(1);
-      expect(ctx.force_kept_by_error).toBe(true);
-    });
+    expect(records).toHaveLength(1);
   });
 
   test("error path produces a serializeError'd `error` property", () => {
-    flushCanonicalLine(sampledCtx(), new RequestScopedMetricsRecorder(), {
+    flushCanonicalLine(createObservabilityContext(), new RequestScopedMetricsRecorder(), {
       unit: "http",
       outcome: "conflict",
       status: 409,
@@ -168,11 +142,11 @@ describe("flushCanonicalLine", () => {
   });
 
   test("routes to the right category per unit", () => {
-    flushCanonicalLine(sampledCtx(), new RequestScopedMetricsRecorder(), {
+    flushCanonicalLine(createObservabilityContext(), new RequestScopedMetricsRecorder(), {
       unit: "maintenance",
       outcome: "ok",
     });
-    flushCanonicalLine(sampledCtx(), new RequestScopedMetricsRecorder(), {
+    flushCanonicalLine(createObservabilityContext(), new RequestScopedMetricsRecorder(), {
       unit: "compactor",
       outcome: "ok",
     });
@@ -189,7 +163,7 @@ describe("withObservability", () => {
 
   beforeEach(async () => {
     ({ records, sink } = collectingSink());
-    await configureObservability({ level: "debug", sink, sampleRate: 1 });
+    await configureObservability({ level: "debug", sink });
   });
 
   afterEach(async () => {
@@ -241,25 +215,6 @@ describe("withObservability", () => {
       // closure capture (this is what adapters in Dispatch 4 rely on).
       expect(ctx.recorder.snapshot().counters).toHaveLength(1);
     });
-  });
-
-  test("sample-rate=0 still emits on error path", async () => {
-    await reset();
-    await configureObservability({ level: "debug", sink, sampleRate: 0 });
-    await expect(
-      withObservability("rebuild", async () => {
-        throw new Error("x");
-      }),
-    ).rejects.toBeInstanceOf(Error);
-    expect(records).toHaveLength(1);
-    expect(records[0]!.level).toBe("error");
-  });
-
-  test("sample-rate=0 suppresses the success-path canonical line", async () => {
-    await reset();
-    await configureObservability({ level: "debug", sink, sampleRate: 0 });
-    await withObservability("maintenance", async () => "ok");
-    expect(records).toHaveLength(0);
   });
 });
 
@@ -341,7 +296,7 @@ describe("flushCanonicalLine stack inclusion at error level", () => {
 
   beforeEach(async () => {
     ({ records, sink } = collectingSink());
-    await configureObservability({ level: "debug", sink, sampleRate: 1 });
+    await configureObservability({ level: "debug", sink });
   });
 
   afterEach(async () => {
@@ -349,7 +304,7 @@ describe("flushCanonicalLine stack inclusion at error level", () => {
   });
 
   test("includes stack at error level", () => {
-    flushCanonicalLine(sampledCtx(), new RequestScopedMetricsRecorder(), {
+    flushCanonicalLine(createObservabilityContext(), new RequestScopedMetricsRecorder(), {
       unit: "http",
       outcome: "internal_error",
       status: 500,
@@ -361,7 +316,7 @@ describe("flushCanonicalLine stack inclusion at error level", () => {
   });
 
   test("omits stack at info level (success path, no error envelope)", () => {
-    flushCanonicalLine(sampledCtx(), new RequestScopedMetricsRecorder(), {
+    flushCanonicalLine(createObservabilityContext(), new RequestScopedMetricsRecorder(), {
       unit: "http",
       outcome: "ok",
       status: 200,

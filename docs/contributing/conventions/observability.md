@@ -117,21 +117,8 @@ passing `{ level: "debug" }` to `configureObservability`.
 
 ## Sampling philosophy
 
-The head sampler decides at request entry whether to keep the
-canonical line. **Don't bypass it.** If something *must* always
-emit, the flusher already handles two cases:
-
-- Errors set `force_kept_by_error = true` automatically.
-- Non-HTTP units (`maintenance`, `gc`, `compactor`, `rebuild`)
-  always emit by virtue of not going through the head-sampler at
-  all. `withObservability` does set `sampled_by_head` for symmetry
-  with the HTTP path, but the flusher's keep/drop decision is
-  effectively always-keep for non-HTTP.
-
-If you find yourself wanting to flip `force_kept_by_error` outside
-the error path: stop. Use DEBUG, or attach a field to the canonical
-line that the operator can dashboard on. Always-on logging defeats
-the sampling story.
+Every unit-of-work emits one canonical line unconditionally; errors
+are not special-cased because there is nothing to override.
 
 ## Metric-name conventions
 
@@ -212,7 +199,7 @@ let records: LogRecord[];
 beforeEach(async () => {
   let sink: Sink;
   ({ records, sink } = collectingSink());
-  await configureObservability({ level: "debug", sink, sampleRate: 1 });
+  await configureObservability({ level: "debug", sink });
 });
 afterEach(async () => {
   await reset();
@@ -221,10 +208,6 @@ afterEach(async () => {
 
 Always `await reset()` in `afterEach`. LogTape's `configure` is
 global; a leaked sink in test A poisons test B with stale records.
-
-`sampleRate: 1` ensures every line lands; otherwise head-sampling
-makes assertions flaky. The error-path tests can drop the rate to
-`0` to prove force-keep works.
 
 ## Anti-patterns
 

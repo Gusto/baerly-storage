@@ -1,10 +1,5 @@
 import { describe, expect, test } from "vitest";
-import {
-  createObservabilityContext,
-  getCurrentContext,
-  runWithContext,
-  type ObservabilityContext,
-} from "./context.ts";
+import { createObservabilityContext, getCurrentContext, runWithContext } from "./context.ts";
 import { RequestScopedMetricsRecorder } from "./recorder.ts";
 
 describe("createObservabilityContext", () => {
@@ -30,17 +25,6 @@ describe("createObservabilityContext", () => {
   test("starts with an empty fields map", () => {
     const ctx = createObservabilityContext();
     expect(ctx.fields.size).toBe(0);
-  });
-
-  test("defaults sampled_by_head to false and force_kept_by_error to false", () => {
-    const ctx = createObservabilityContext();
-    expect(ctx.sampled_by_head).toBe(false);
-    expect(ctx.force_kept_by_error).toBe(false);
-  });
-
-  test("honours an externally-supplied sampled_by_head", () => {
-    const ctx = createObservabilityContext({ sampled_by_head: true });
-    expect(ctx.sampled_by_head).toBe(true);
   });
 
   test("constructs a fresh RequestScopedMetricsRecorder by default", () => {
@@ -141,19 +125,5 @@ describe("runWithContext + getCurrentContext", () => {
     expect(sync).toBe(42);
     const asyncResult = await runWithContext(ctx, async () => "hi");
     expect(asyncResult).toBe("hi");
-  });
-
-  test("force_kept_by_error and sampled_by_head are mutable through getCurrentContext", () => {
-    const ctx: ObservabilityContext = createObservabilityContext();
-    runWithContext(ctx, () => {
-      const here = getCurrentContext();
-      if (here === undefined) {
-        throw new Error("no context");
-      }
-      here.force_kept_by_error = true;
-      here.sampled_by_head = true;
-    });
-    expect(ctx.force_kept_by_error).toBe(true);
-    expect(ctx.sampled_by_head).toBe(true);
   });
 });

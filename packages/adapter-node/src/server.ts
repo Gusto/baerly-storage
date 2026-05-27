@@ -14,11 +14,9 @@ import {
   alsAwareRecorder,
   configureObservability,
   createObservabilityContext,
-  decideSample,
   deriveOutcome,
   flushCanonicalLine,
   flushUnauthorizedAndRespond,
-  getEffectiveSampleRate,
   observableStorage,
   runWithContext,
   setKernelMetricsRecorder,
@@ -56,15 +54,14 @@ export interface CreateFetchHandlerOptions {
    */
   readonly metrics?: MetricsRecorder;
   /**
-   * LogTape config (level/sink/sampleRate) with `LOG_LEVEL` /
-   * `LOG_SAMPLE` envvar fallbacks. When the field is unset, the default
-   * sink is auto-selected: the local `prettyConsoleSink()` when
-   * `process.stdout.isTTY === true` (developer terminals),
-   * `"console-json"` otherwise (production hosts where stdout is piped
-   * to a log aggregator). The typed `sink` field always wins.
-   * Pass `{}` to opt into TTY auto-detection at default level/rate.
-   * Pass `undefined` (the field's absence) to skip
-   * `configureObservability` entirely.
+   * LogTape config (level/sink) with `LOG_LEVEL` envvar fallback.
+   * When the field is unset, the default sink is auto-selected: the
+   * local `prettyConsoleSink()` when `process.stdout.isTTY === true`
+   * (developer terminals), `"console-json"` otherwise (production
+   * hosts where stdout is piped to a log aggregator). The typed
+   * `sink` field always wins. Pass `{}` to opt into TTY
+   * auto-detection at default level. Pass `undefined` (the field's
+   * absence) to skip `configureObservability` entirely.
    */
   readonly observability?: ObservabilityConfig;
   /** Override the long-poll budget. Forwarded to `createRouter`. */
@@ -114,10 +111,8 @@ export function createFetchHandler(
     }
 
     const requestId = request.headers.get("x-request-id") ?? crypto.randomUUID();
-    const sampleRate = getEffectiveSampleRate();
     const obsCtx = createObservabilityContext({
       request_id: requestId,
-      sampled_by_head: decideSample(requestId, sampleRate),
     });
 
     const result = await opts.verifier(request);
@@ -241,8 +236,8 @@ export const runMaintenanceTick = async (opts: NodeMaintenanceOptions): Promise<
  *
  * Returns a new config with `sink` defaulted; if the caller already
  * supplied a `sink` (function or shorthand string) we pass the
- * config through verbatim. Either way the caller's `level` and
- * `sampleRate` (when set) reach LogTape unchanged.
+ * config through verbatim. Either way the caller's `level` (when
+ * set) reaches LogTape unchanged.
  *
  * Exported for the test suite — the TTY check is otherwise a pure
  * read of `process.stdout.isTTY` and a default lookup, neither

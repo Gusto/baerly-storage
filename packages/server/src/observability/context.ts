@@ -8,17 +8,18 @@
  * `AsyncLocalStorage` instance.
  *
  * The context is intentionally tiny: an externally-set
- * {@link request_id}, a high-resolution `started_at`, a mutable
+ * {@link request_id}, a high-resolution `started_at`, and a mutable
  * {@link fields} bag used to accumulate canonical-line attributes
- * during the unit's lifecycle, and two boolean toggles the sampler
- * + canonical-line flusher consult at end-of-request.
+ * during the unit's lifecycle.
  *
  * The context shape is `readonly` everywhere it can be — only the
- * two sampling booleans and the contents of `fields` are intended
- * to mutate during a request. The {@link fields} map itself is not
- * `readonly` because callers (the canonical-line emitter,
- * middleware, the table API once Dispatch 3+ wires it up) need to
- * set entries.
+ * contents of `fields` are intended to mutate during a request. The
+ * {@link fields} map itself is not `readonly` because callers (the
+ * canonical-line emitter, middleware, the table API once Dispatch
+ * 3+ wires it up) need to set entries.
+ *
+ * The context carries no sampling state — every unit-of-work emits
+ * one canonical line unconditionally; there is nothing to gate.
  *
  * ## Time source
  *
@@ -61,17 +62,6 @@ export interface ObservabilityContext {
    * end-of-request and spreads the result onto the emitted line.
    */
   readonly recorder: RequestScopedMetricsRecorder;
-  /**
-   * Result of the head-based sampling decision, made once at context
-   * construction. The canonical-line flusher emits only when this is
-   * `true` OR {@link force_kept_by_error} is `true`.
-   */
-  sampled_by_head: boolean;
-  /**
-   * Set by the error path of the canonical-line flusher. Forces the
-   * canonical line through regardless of the sampler's decision.
-   */
-  force_kept_by_error: boolean;
 }
 
 /**
@@ -82,9 +72,6 @@ export interface ObservabilityContext {
  * - `request_id`: a fresh `crypto.randomUUID()`. Pass an externally-
  *   supplied id (`X-Request-Id` header, scheduler-supplied tag) to
  *   propagate correlation downstream.
- * - `sampled_by_head`: `false`. The sampler decides at the same time
- *   the context is created, so the entry middleware passes the result
- *   of `decideSample(...)` directly.
  * - `recorder`: a fresh {@link RequestScopedMetricsRecorder}. Tests can
  *   pass an externally-constructed recorder to assert on its
  *   `snapshot()` after the unit-of-work completes; production callers
@@ -92,7 +79,6 @@ export interface ObservabilityContext {
  */
 export interface ObservabilityContextInit {
   readonly request_id?: string;
-  readonly sampled_by_head?: boolean;
   readonly recorder?: RequestScopedMetricsRecorder;
 }
 
@@ -109,8 +95,6 @@ export const createObservabilityContext = (
   started_at: performance.now(),
   fields: new Map(),
   recorder: init.recorder ?? new RequestScopedMetricsRecorder(),
-  sampled_by_head: init.sampled_by_head ?? false,
-  force_kept_by_error: false,
 });
 
 /**
