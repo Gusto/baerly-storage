@@ -119,11 +119,11 @@ export const runScheduledMaintenance = (
     });
 
     // Enrich the canonical line with operator-facing summary fields.
-    // The recorder-bag fields (`db.compact.entries_folded_p50`,
+    // The recorder-bag fields (`db.compact.entries_folded_count`,
     // `db.gc.swept_total`, etc.) still land on the line via
     // the per-run recorder's `summarize()`; these explicit numbers
     // answer "did anything happen this tick?" without forcing the
-    // operator to decode `_p50` / `_count` / `_total` suffixes.
+    // operator to decode `_count` / `_sum` / `_total` suffixes.
     //
     // - `compact_written`: count of log entries folded into the new
     //   snapshot this pass (0 when the live tail was below

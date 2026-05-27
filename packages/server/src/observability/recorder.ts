@@ -82,13 +82,13 @@ export class RequestScopedMetricsRecorder implements MetricsRecorder {
    *
    * - Counter `db.foo.bar` → `db.foo.bar_total` (sum of all observations)
    * - Gauge   `db.foo.bar` → `db.foo.bar`       (last value seen)
-   * - Histogram `db.foo.bar` → `db.foo.bar_p50`, `_p99`, `_count`, `_sum`
+   * - Histogram `db.foo.bar` → `db.foo.bar_count` (number of observations)
+   *                          + `db.foo.bar_sum` (sum of values)
    *
-   * Percentiles use a simple sort + index (nearest-rank, ceiling
-   * convention). Bag size per request is tiny so the O(n log n)
-   * sort is fine. Returns numbers only — labels are NOT collapsed
-   * into keys; if a metric is emitted with different label sets,
-   * its observations are aggregated together by `name` alone. The
+   * Histogram aggregation is a single pass in insertion order — no
+   * sort. Returns numbers only — labels are NOT collapsed into keys;
+   * if a metric is emitted with different label sets, its
+   * observations are aggregated together by `name` alone. The
    * canonical line is per-request anyway; per-label fan-out belongs
    * to the operator's long-term recorder.
    */
@@ -112,46 +112,25 @@ export class RequestScopedMetricsRecorder implements MetricsRecorder {
       out[row.name] = row.value;
     }
 
-    // Histograms: bucket-by-name, then derive p50/p99/count/sum.
-    const buckets = new Map<string, number[]>();
+    // Histograms: bucket-by-name, then emit `_count` + `_sum`.
+    const buckets = new Map<string, { count: number; sum: number }>();
     for (const row of this.#histograms) {
-      let arr = buckets.get(row.name);
-      if (arr === undefined) {
-        arr = [];
-        buckets.set(row.name, arr);
+      let agg = buckets.get(row.name);
+      if (agg === undefined) {
+        agg = { count: 0, sum: 0 };
+        buckets.set(row.name, agg);
       }
-      arr.push(row.value);
+      agg.count += 1;
+      agg.sum += row.value;
     }
-    for (const [name, values] of buckets) {
-      values.sort((a, b) => a - b);
-      out[`${name}_p50`] = percentile(values, 0.5);
-      out[`${name}_p99`] = percentile(values, 0.99);
-      out[`${name}_count`] = values.length;
-      let sum = 0;
-      for (const v of values) {
-        sum += v;
-      }
+    for (const [name, { count, sum }] of buckets) {
+      out[`${name}_count`] = count;
       out[`${name}_sum`] = sum;
     }
 
     return out;
   }
 }
-
-/**
- * Nearest-rank percentile. `values` MUST be pre-sorted ascending.
- * Empty input returns `0`. The percentile rank is computed as
- * `ceil(p * n) - 1`, clamped to `[0, n-1]`.
- */
-const percentile = (values: readonly number[], p: number): number => {
-  if (values.length === 0) {
-    return 0;
-  }
-  const idx = Math.min(values.length - 1, Math.max(0, Math.ceil(p * values.length) - 1));
-  // `!` is safe under noUncheckedIndexedAccess because `idx` is
-  // clamped to `[0, length-1]` and `length >= 1` above.
-  return values[idx]!;
-};
 
 /**
  * Build a {@link MetricsRecorder} that always emits to `operator`

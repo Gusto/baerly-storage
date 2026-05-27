@@ -179,10 +179,10 @@ describe("runScheduledMaintenance", () => {
       expect(props["gc_swept"]).toBeGreaterThan(0);
 
       // Recorder-bag fields stay on the line. `db.compact.entries_folded`
-      // is a histogram so it expands into `_p50` / `_count` / `_sum`;
+      // is a histogram so it expands into `_count` / `_sum`;
       // `db.gc.swept_total` is a counter so it expands into `_total`.
       expect(props["db.compact.entries_folded_count"]).toBe(1);
-      expect(props["db.compact.entries_folded_p50"]).toBe(150);
+      expect(props["db.compact.entries_folded_sum"]).toBe(150);
       expect(typeof props["db.gc.swept_total"]).toBe("number");
       expect(props["db.gc.swept_total"]).toBeGreaterThan(0);
     });

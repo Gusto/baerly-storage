@@ -51,7 +51,7 @@ describe("prettyConsoleSink", () => {
       path: "/v1/t/tickets",
       "db.storage.class_a_ops_total": 3,
       "db.storage.class_b_ops_total": 0,
-      "db.write.class_a_ops_per_logical_write_p99": 7,
+      "db.write.class_a_ops_per_logical_write_sum": 7,
     });
     const line = spy.mock.calls[0]![0] as string;
     expect(line).toContain("wamp=7");

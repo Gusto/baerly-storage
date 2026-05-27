@@ -49,7 +49,7 @@ Hit any route. One JSON line per request appears on stdout:
   "db.storage.get.calls_total": 1,
   "db.storage.class_a_ops_total": 3,
   "db.storage.class_b_ops_total": 1,
-  "db.write.class_a_ops_per_logical_write_p50": 3,
+  "db.write.class_a_ops_per_logical_write_sum": 3,
   "db.write.class_a_ops_per_logical_write_count": 1
 }
 ```
@@ -103,7 +103,7 @@ One event per unit of work. The kernel emits one line for each:
 | `db.storage.class_a_ops_total` | number | Sum of PUT + DELETE + LIST calls. These are the physical operations S3-pricing classifies as Class A — the cost-dominant ones. |
 | `db.storage.class_b_ops_total` | number | Sum of GET calls. Class B in S3 pricing. |
 | `db.storage.<op>.calls_total` | number | Per-op breakdown for `get` / `put` / `delete` / `list`. |
-| `db.storage.<op>.duration_ms_p50` / `_p99` / `_count` / `_sum` | number | Histogram of per-call durations. |
+| `db.storage.<op>.duration_ms_count` / `_sum` | number | Histogram of per-call durations. |
 | `db.write.class_a_ops_per_logical_write_*` | number | Writer's per-`commit()` class-A-op count. `_count` = number of logical writes in this request. |
 | `db.r2.put.412_total` | number | CAS or conditional-PUT conflicts. Non-zero on `_total` means contention. |
 | `db.r2.put.429_total` | number | Storage-side rate-limit hits. |
@@ -127,12 +127,12 @@ by `runScheduledMaintenance`:
 | `compact_written` | number | Log entries folded into the new snapshot this tick. `0` when the live tail was below `minEntriesToCompact`. |
 | `gc_swept` | number | Keys deleted this tick. `0` when no candidates had aged out. |
 
-The kernel still emits the recorder-bag fields (`db.compact.entries_folded_p50` / `_p99` / `_count` / `_sum`,
+The kernel still emits the recorder-bag fields (`db.compact.entries_folded_count` / `_sum`,
 `db.manifest.lag_window_depth`, `db.orphan.candidate_count`,
 `db.gc.entries_swept_per_second`, `db.gc.swept_total`)
 alongside — useful for dashboards. The two explicit fields above
 are the at-a-glance summary so a log scan answers "did anything
-happen this tick?" without decoding `_p50` / `_count` / `_total`
+happen this tick?" without decoding `_count` / `_sum` / `_total`
 suffixes.
 
 ## Log levels

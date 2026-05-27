@@ -21,7 +21,7 @@ import { createColors } from "picocolors";
 const CANONICAL_KEYS = {
   classA: "db.storage.class_a_ops_total",
   classB: "db.storage.class_b_ops_total",
-  wamp: "db.write.class_a_ops_per_logical_write_p99",
+  wamp: "db.write.class_a_ops_per_logical_write_sum",
   put412: "db.r2.put.412_total",
   put429: "db.r2.put.429_total",
   cacheStatus: "cache_status",

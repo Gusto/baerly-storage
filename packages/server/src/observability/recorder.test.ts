@@ -66,26 +66,21 @@ describe("RequestScopedMetricsRecorder.summarize", () => {
     expect(r.summarize()["db.manifest.lag_window_depth"]).toBe(4);
   });
 
-  test("derives p50/p99/count/sum from histogram observations", () => {
+  test("derives count/sum from histogram observations", () => {
     const r = new RequestScopedMetricsRecorder();
-    // 100 observations: 1..100. p50 = 50 (nearest-rank ceil),
-    // p99 = 99, count = 100, sum = 5050.
+    // 100 observations: 1..100. count = 100, sum = 5050.
     for (let i = 1; i <= 100; i++) {
       r.histogram("h", i);
     }
     const s = r.summarize();
-    expect(s["h_p50"]).toBe(50);
-    expect(s["h_p99"]).toBe(99);
     expect(s["h_count"]).toBe(100);
     expect(s["h_sum"]).toBe(5050);
   });
 
-  test("histogram percentiles on a tiny set", () => {
+  test("histogram aggregation on a tiny set", () => {
     const r = new RequestScopedMetricsRecorder();
     r.histogram("h", 10);
     const s = r.summarize();
-    expect(s["h_p50"]).toBe(10);
-    expect(s["h_p99"]).toBe(10);
     expect(s["h_count"]).toBe(1);
     expect(s["h_sum"]).toBe(10);
   });
@@ -99,8 +94,6 @@ describe("RequestScopedMetricsRecorder.summarize", () => {
     expect(r.summarize()).toEqual({
       c_total: 1,
       g: 5,
-      h_p50: 2,
-      h_p99: 4,
       h_count: 2,
       h_sum: 6,
     });
@@ -156,7 +149,7 @@ describe("alsAwareRecorder", () => {
     expect(operator.histogramValues("db.write.class_a_ops_per_logical_write")).toEqual([4]);
 
     // Per-request bag captured the same emissions; summary reflects
-    // suffixes (counter_total, histogram_p50/_p99/_count/_sum).
+    // suffixes (counter_total, histogram_count/_sum).
     const summary = ctx.recorder.summarize();
     expect(summary["db.r2.put.412_total"]).toBe(2);
     expect(summary["db.manifest.lag_window_depth"]).toBe(12);
