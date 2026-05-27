@@ -129,6 +129,62 @@ describe("patchWranglerJsonc — idempotency", () => {
   });
 });
 
+describe("patchWranglerJsonc — indent preservation", () => {
+  // The stock `pnpm create cloudflare --type=hello-world` template
+  // emits tab-indented wrangler.jsonc. Hard-coding 2-space here
+  // produced a mixed-indent diff after the bolt-on patch — parses
+  // fine, looks ugly. detectIndent() should match the source.
+  const tabWrangler = `{
+\t"$schema": "node_modules/wrangler/config-schema.json",
+\t"name": "noisy-cell-04d4",
+\t"main": "src/index.ts",
+\t"compatibility_date": "2026-05-24",
+\t"observability": { "enabled": true }
+}
+`;
+
+  test("tab-indented source stays tab-indented after patch", () => {
+    const result = patchWranglerJsonc(tabWrangler, BINDING, VARS);
+    // No 2-space leading indent should appear on any non-blank line —
+    // every line either keeps its tab, has no indent, or sits inside
+    // an inline-formatted block. (We don't assert "all tabs" because
+    // jsonc-parser can emit single-space gaps inside compact objects.)
+    const lines = result.text.split("\n");
+    for (const line of lines) {
+      if (line.startsWith("  ") && !line.startsWith("   ")) {
+        throw new Error(`unexpected 2-space leading indent: ${JSON.stringify(line)}`);
+      }
+    }
+    expect(result.text).toContain(`\t"r2_buckets"`);
+    expect(result.text).toContain(`\t"vars"`);
+  });
+
+  test("4-space-indented source stays 4-space-indented after patch", () => {
+    const fourSpace = `{
+    "name": "x",
+    "main": "src/index.ts"
+}
+`;
+    const result = patchWranglerJsonc(fourSpace, BINDING, VARS);
+    expect(result.text).toContain(`    "r2_buckets"`);
+    expect(result.text).toContain(`    "vars"`);
+    // Sanity: appended block uses 4 spaces for nested keys, not 2.
+    expect(result.text).toContain(`        "binding"`);
+  });
+
+  test("empty object falls back to 2-space (default)", () => {
+    const result = patchWranglerJsonc("{}\n", BINDING, {});
+    expect(result.text).toContain(`  "r2_buckets"`);
+  });
+
+  test("tab-indented patch remains idempotent", () => {
+    const first = patchWranglerJsonc(tabWrangler, BINDING, VARS);
+    const second = patchWranglerJsonc(first.text, BINDING, VARS);
+    expect(second.text).toBe(first.text);
+    expect(second.changes).toEqual([]);
+  });
+});
+
 describe("patchWranglerJsonc — error cases", () => {
   test("malformed JSONC throws BaerlyError InvalidConfig", () => {
     expect(() => patchWranglerJsonc("{ this is not json", BINDING, VARS)).toThrow(

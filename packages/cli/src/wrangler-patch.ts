@@ -5,7 +5,7 @@
  * comments and trailing commas survive round-trips.
  */
 
-import { parse, modify, applyEdits, type ParseError } from "jsonc-parser";
+import { parse, modify, applyEdits, type ParseError, type FormattingOptions } from "jsonc-parser";
 import { BaerlyError } from "@baerly/protocol";
 
 /**
@@ -129,7 +129,30 @@ export const readWranglerMain = (source: string): string | undefined => {
   return parsed.main;
 };
 
-const FORMATTING_OPTIONS = { tabSize: 2, insertSpaces: true, eol: "\n" } as const;
+// Sniff the indent style of a JSONC source by scanning for the first
+// indented line and inspecting its leading whitespace. The stock
+// `pnpm create cloudflare` template uses tabs; older / hand-rolled
+// `wrangler.jsonc` files commonly use 2- or 4-space indents. Falls
+// back to 2-space when the file has no indented content (e.g. `{}`).
+const detectIndent = (source: string): FormattingOptions => {
+  for (const line of source.split("\n")) {
+    if (line.length === 0 || line.startsWith("{") || line.startsWith("}")) {
+      continue;
+    }
+    const first = line.charAt(0);
+    if (first === "\t") {
+      return { insertSpaces: false, tabSize: 2, eol: "\n" };
+    }
+    if (first === " ") {
+      let count = 0;
+      while (count < line.length && line.charAt(count) === " ") {
+        count += 1;
+      }
+      return { insertSpaces: true, tabSize: count, eol: "\n" };
+    }
+  }
+  return { insertSpaces: true, tabSize: 2, eol: "\n" };
+};
 
 /**
  * Idempotently patch a `wrangler.jsonc` source string:
@@ -163,14 +186,13 @@ export const patchWranglerJsonc = (
   }
   const existingVars = (rawVars ?? {}) as Record<string, unknown>;
 
+  const formattingOptions = detectIndent(source);
   const changes: string[] = [];
   let text = source;
 
   const bindingAlreadyDeclared = existingBindings.some((b) => b.binding === binding.binding);
   if (!bindingAlreadyDeclared) {
-    const edits = modify(text, ["r2_buckets", -1], binding, {
-      formattingOptions: FORMATTING_OPTIONS,
-    });
+    const edits = modify(text, ["r2_buckets", -1], binding, { formattingOptions });
     text = applyEdits(text, edits);
     changes.push(`added r2 binding ${binding.binding} → ${binding.bucket_name}`);
   }
@@ -178,7 +200,7 @@ export const patchWranglerJsonc = (
   const addedVarKeys: string[] = [];
   for (const [key, value] of Object.entries(vars)) {
     if (!(key in existingVars)) {
-      const edits = modify(text, ["vars", key], value, { formattingOptions: FORMATTING_OPTIONS });
+      const edits = modify(text, ["vars", key], value, { formattingOptions });
       text = applyEdits(text, edits);
       addedVarKeys.push(key);
     }
