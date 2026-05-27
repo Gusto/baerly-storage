@@ -15,11 +15,11 @@ app — a small, LLM-legible document database with a narrow API on top
 of S3-compatible storage. Before writing or modifying storage code,
 read:
 
-- **`node_modules/baerly-storage/dist/API.md`** — hand-authored
+- **`node_modules/@gusto/baerly-storage/dist/API.md`** — hand-authored
   public-API quickref. Read first. Lists every method, every error
   code, every example. If a pattern you want to use isn't here, it
   doesn't exist in baerly.
-- **`node_modules/baerly-storage/dist/*.d.ts`** — authoritative type
+- **`node_modules/@gusto/baerly-storage/dist/*.d.ts`** — authoritative type
   signatures. `Db`, `Table<T>`, `Query<T>`, and `Predicate<T>` are
   the whole API surface.
 
@@ -479,8 +479,8 @@ from the runtime env.
   `current.json` keys to target. Multi-tenant deployments iterate
   their own keys; single-tenant deployments call once with a fixed
   key. See the JSDoc on `WorkerScheduledHandler` in
-  `baerly-storage/cloudflare` and `runScheduledMaintenance` in
-  `baerly-storage/maintenance` for the wiring + free-vs-paid-tier
+  `@gusto/baerly-storage/cloudflare` and `runScheduledMaintenance` in
+  `@gusto/baerly-storage/maintenance` for the wiring + free-vs-paid-tier
   subrequest-budget guidance.
 
   Maintenance emits one canonical info line per run on stdout
@@ -513,7 +513,7 @@ from the runtime env.
 
 - Widening branded types from `baerly-storage` (`UUID`,
   `ContentVersionId`). The types prevent confusion bugs.
-- Reaching into `node_modules/baerly-storage/dist/` directly —
+- Reaching into `node_modules/@gusto/baerly-storage/dist/` directly —
   consume the published exports.
 - Mutating `VerifierResult.tenantPrefix` between the verifier
   and `Db.create`. The dispatcher pins the tenant from the

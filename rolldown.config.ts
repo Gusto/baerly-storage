@@ -4,7 +4,7 @@ import { dts } from "rolldown-plugin-dts";
 
 /**
  * Copy the hand-authored public-API quickref into `dist/API.md` so a
- * freshly-installed `node_modules/baerly-storage/dist/API.md` gives a
+ * freshly-installed `node_modules/@gusto/baerly-storage/dist/API.md` gives a
  * CLI agent (no TS LS) the entire public surface in one read. Named
  * `API.md` — not `AGENTS.md` — to avoid colliding with the scaffolded
  * app's own `AGENTS.md` at the user's project root. The `.d.ts` files

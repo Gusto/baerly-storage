@@ -120,7 +120,7 @@ const buildCurrentJsonKey = (app: string, tenant: string, collection: string): s
  *
  * @example
  * ```ts
- * import { baerlyNode, s3Storage } from "baerly-storage/node";
+ * import { baerlyNode, s3Storage } from "@gusto/baerly-storage/node";
  * import config from "./baerly.config.ts";
  *
  * const handle = baerlyNode({

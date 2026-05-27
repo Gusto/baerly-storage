@@ -25,7 +25,7 @@ import {
  *
  * @example
  * ```ts
- * import { LocalFsStorage, ensureTable } from "baerly-storage/dev";
+ * import { LocalFsStorage, ensureTable } from "@gusto/baerly-storage/dev";
  *
  * const storage = new LocalFsStorage({ root: "./.baerly-data" });
  * // Pre-warm so the first request doesn't pay the bootstrap PUT.

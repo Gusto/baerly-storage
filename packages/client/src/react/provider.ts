@@ -16,8 +16,8 @@ export interface BaerlyProviderProps {
  *
  * @example
  * ```tsx
- * import { createBaerlyClient } from "baerly-storage/client";
- * import { BaerlyProvider } from "baerly-storage/client/react";
+ * import { createBaerlyClient } from "@gusto/baerly-storage/client";
+ * import { BaerlyProvider } from "@gusto/baerly-storage/client/react";
  *
  * const client = createBaerlyClient({ baseUrl: "/api" });
  *

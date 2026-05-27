@@ -7,9 +7,9 @@ import { formatBundleSizeLine } from "../helpers/bundle-size-report.ts";
 // Bundle weight matters because this lib ships into a user's app
 // bundle — every byte we add is a byte they pay. To keep barrel
 // consumers from paying for code they don't reach, we split the
-// surface across subpath entrypoints (`baerly-storage/auth`,
-// `baerly-storage/http`, `baerly-storage/maintenance`,
-// `baerly-storage/observability`) and budget each entrypoint's
+// surface across subpath entrypoints (`@gusto/baerly-storage/auth`,
+// `@gusto/baerly-storage/http`, `@gusto/baerly-storage/maintenance`,
+// `@gusto/baerly-storage/observability`) and budget each entrypoint's
 // transitive closure independently.
 //
 // The barrel (`baerly-storage`) carries the kernel surface (`Db`,
@@ -28,7 +28,7 @@ import { formatBundleSizeLine } from "../helpers/bundle-size-report.ts";
 // subgraph stays out.
 //
 // Each entry is a static-import closure: rolldown code-splits shared
-// modules into chunks, so importing `baerly-storage/auth` actually
+// modules into chunks, so importing `@gusto/baerly-storage/auth` actually
 // pulls in `auth.js` + the auth chunk + a shared errors chunk. We
 // budget the full transitive closure, not just the entry file, because
 // that's what the consumer's bundler pulls in.
@@ -115,7 +115,7 @@ const BUDGETS: readonly Budget[] = [
   //     shrank and obs chunk grew slightly more, +339 B raw. gz
   //     unchanged.
   //   → 352 KiB raw / 101 KiB gz: adding
-  //     `baerly-storage/cloudflare` + `baerly-storage/node`
+  //     `@gusto/baerly-storage/cloudflare` + `@gusto/baerly-storage/node`
   //     subpath entries caused rolldown to re-split shared chunks,
   //     pulling ~787 bytes more code into the index.js static
   //     closure.
@@ -245,7 +245,7 @@ const BUDGETS: readonly Budget[] = [
   //     from the recorder class landing in the maintenance closure.
   //   → 185 KiB raw / 51 KiB gz: kernel-cleanup (A4 + B22) moved
   //     `rebuildIndex` off the top-level barrel and onto
-  //     `baerly-storage/maintenance`. The primitive plus its
+  //     `@gusto/baerly-storage/maintenance`. The primitive plus its
   //     walkLogRange dependency widens the maintenance closure
   //     by ~28 KiB raw / 7 KiB gz; the matching shrinkage lands
   //     in the index.js closure.
@@ -271,7 +271,7 @@ const BUDGETS: readonly Budget[] = [
   //     aggregator — R2-only consumers no longer carry the `aws4fetch`
   //     SigV4 client + `@xmldom/xmldom` parser into their Worker
   //     closure. Cross-cloud / cross-account R2 consumers now import
-  //     `S3HttpStorage` directly from `baerly-storage/node`. Measured:
+  //     `S3HttpStorage` directly from `@gusto/baerly-storage/node`. Measured:
   //     347593 raw / 102077 gz — −97 KiB raw / −26 KiB gz.
   { entry: "cloudflare.js", raw: 340 * 1024, gz: 100 * 1024 },
   // Node adapter — re-exports the kernel barrel plus
@@ -370,7 +370,7 @@ const BUDGETS: readonly Budget[] = [
   // implements `Storage`, so it imports the kernel's `BaerlyError`
   // chunk). `baerlyDev` (the Vite plugin) is intentionally NOT
   // re-exported from this barrel — vite users import it from the
-  // `baerly-storage/dev/vite` subpath instead, which keeps the vite
+  // `@gusto/baerly-storage/dev/vite` subpath instead, which keeps the vite
   // plugin closure out of consumers that only want `LocalFsStorage`
   // / `ensureTable` / `printDevBanner`.
   // Budget history:

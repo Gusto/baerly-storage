@@ -16,7 +16,7 @@
  * @example
  * ```ts
  * import { z } from "zod";
- * import { defineConfig } from "baerly-storage/config";
+ * import { defineConfig } from "@gusto/baerly-storage/config";
  *
  * const Ticket = z.object({
  *   _id: z.string(),

@@ -22,7 +22,7 @@ package name. Most public symbols already follow a consistent rule;
 this ADR writes it down so future additions don't drift.
 
 Audit performed 2026-05-21 found one wart (`Env` exported from
-`baerly-storage/cloudflare` was being universally re-aliased on
+`@gusto/baerly-storage/cloudflare` was being universally re-aliased on
 import; renamed to `BaerlyEnv` in the same change). Symbol-by-symbol,
 the rest of the surface already followed the rule below, cross-checked
 against Prisma, Supabase, Drizzle, Hono, tRPC, Tanstack Query, Astro,

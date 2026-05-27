@@ -7,4 +7,4 @@ export * from "./local-fs.ts";
 // It pulls the full vite-plugin closure into `dist/dev.js`, which bloats
 // the base barrel for consumers that only want `LocalFsStorage` /
 // `ensureTable` / `printDevBanner` / `renderDevLanding`. Vite consumers
-// import from the dedicated subpath: `baerly-storage/dev/vite`.
+// import from the dedicated subpath: `@gusto/baerly-storage/dev/vite`.

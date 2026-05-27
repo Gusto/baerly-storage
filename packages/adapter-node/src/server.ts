@@ -174,7 +174,7 @@ export interface NodeMaintenanceOptions {
  * @example
  * ```ts
  * import cron from "node-cron";
- * import { runMaintenanceTick } from "baerly-storage/node";
+ * import { runMaintenanceTick } from "@gusto/baerly-storage/node";
  *
  * cron.schedule("0 * * * *", async () => {  // hourly
  *   await runMaintenanceTick({ storage, currentJsonKey: "..." });

@@ -19,7 +19,7 @@ import {
  *   add-on under `templates/addons/docker/` on top of the scaffolded
  *   project.
  * - `agent-rules` (bolt-on-only): drops a delimited block telling AI
- *   agents that `node_modules/baerly-storage/dist/API.md` is the
+ *   agents that `node_modules/@gusto/baerly-storage/dist/API.md` is the
  *   canonical API surface. Scaffolded apps already ship that
  *   guidance via the per-template `AGENTS.md`; this closes the gap
  *   for users adopting baerly into a repo that didn't start from a
@@ -333,7 +333,9 @@ export const scaffold = async (opts: ScaffoldOptions): Promise<ScaffoldResult> =
   for (const addon of addons) {
     const addonDir = join(addonsRoot, addon);
     if (!existsSync(addonDir)) {
-      throw new Error(`create-baerly-storage: add-on directory not found: ${addonDir} (addon=${addon})`);
+      throw new Error(
+        `create-baerly-storage: add-on directory not found: ${addonDir} (addon=${addon})`,
+      );
     }
     addonDirs.push(addonDir);
   }

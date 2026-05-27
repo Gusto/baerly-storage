@@ -86,7 +86,7 @@ adapter. Background entry points (admin commands, batch jobs,
 maintenance ticks) call the kernel primitives directly:
 
 ```ts
-import { rebuildIndex } from "baerly-storage/maintenance";
+import { rebuildIndex } from "@gusto/baerly-storage/maintenance";
 
 await rebuildIndex(storage, currentJsonKey, def);
 ```

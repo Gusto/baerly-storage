@@ -153,7 +153,7 @@ const matchesAnyPrefix = (url: string, prefixes: readonly string[]): boolean => 
  *
  * @example
  * ```ts
- * import { baerlyDevAuth, loadDevVars } from "baerly-storage/dev/vite";
+ * import { baerlyDevAuth, loadDevVars } from "@gusto/baerly-storage/dev/vite";
  *
  * const { SHARED_SECRET } = loadDevVars(".dev.vars", "SHARED_SECRET");
  * export default defineConfig({

@@ -5,9 +5,9 @@
  * are in the same Cloudflare account.
  *
  * Cross-cloud or cross-account R2 from a Worker? Import
- * `S3HttpStorage` directly from `baerly-storage/node`. That path
+ * `S3HttpStorage` directly from `@gusto/baerly-storage/node`. That path
  * pulls `aws4fetch` and `@xmldom/xmldom`, which is why it is not
- * re-exported here: the closure of `baerly-storage/cloudflare`
+ * re-exported here: the closure of `@gusto/baerly-storage/cloudflare`
  * stays peer-free so R2-only consumers don't carry the SigV4 +
  * XML parser bytes.
  *

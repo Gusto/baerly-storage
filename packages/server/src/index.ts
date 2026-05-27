@@ -5,14 +5,14 @@
  *
  * Subpaths carry the rest of the surface:
  *
- * - `baerly-storage/auth` — auth presets (`bearerJwt`,
+ * - `@gusto/baerly-storage/auth` — auth presets (`bearerJwt`,
  *   `cloudflareAccess`, `sharedSecret`).
- * - `baerly-storage/http` — `createRouter`, `mapError`,
+ * - `@gusto/baerly-storage/http` — `createRouter`, `mapError`,
  *   `listEventsSince`, `longPollSince`, body-size cap.
- * - `baerly-storage/maintenance` — `compact`, `runGc`,
+ * - `@gusto/baerly-storage/maintenance` — `compact`, `runGc`,
  *   `rebuildIndex`, `runScheduledMaintenance`,
  *   tuning profiles.
- * - `baerly-storage/observability` — context, recorder,
+ * - `@gusto/baerly-storage/observability` — context, recorder,
  *   canonical-line helpers, logger config.
  */
 

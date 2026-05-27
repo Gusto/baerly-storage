@@ -17,11 +17,11 @@
  * @example
  * ```ts
  * // One-call host helper — the 90% default. Mirrors `baerlyWorker`
- * // from `baerly-storage/cloudflare`. Composes `createApp` +
+ * // from `@gusto/baerly-storage/cloudflare`. Composes `createApp` +
  * // `@hono/node-server`'s `serve()` + SIGTERM/SIGINT handlers +
  * // per-(tenant, collection) maintenance.
- * import { baerlyNode, s3Storage } from "baerly-storage/node";
- * import { sharedSecret } from "baerly-storage/auth";
+ * import { baerlyNode, s3Storage } from "@gusto/baerly-storage/node";
+ * import { sharedSecret } from "@gusto/baerly-storage/auth";
  *
  * const handle = baerlyNode({
  *   app: "tickets",
@@ -44,7 +44,7 @@
  * ```ts
  * // Advanced: mount the baerly cascade under any Fetch host.
  * import { Hono } from "hono";
- * import { createApp, s3Storage } from "baerly-storage/node";
+ * import { createApp, s3Storage } from "@gusto/baerly-storage/node";
  * import type { Verifier } from "baerly-storage";
  *
  * const verifier: Verifier = async (req) => {

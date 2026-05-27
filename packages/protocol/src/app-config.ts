@@ -16,7 +16,7 @@
  *
  * @example
  * ```ts
- * import { defineConfig } from "baerly-storage/config";
+ * import { defineConfig } from "@gusto/baerly-storage/config";
  *
  * export default defineConfig({
  *   app: "tickets",
@@ -38,7 +38,7 @@ import type { AUTH_CONFIG_VALUES } from "./constants.ts";
 import type { IndexDefinition } from "./indexes.ts";
 import type { SchemaValidator } from "./schema.ts";
 
-// Cross-platform protocol types re-exported from `baerly-storage/config`
+// Cross-platform protocol types re-exported from `@gusto/baerly-storage/config`
 // so the scaffold's `baerly.config.ts` and its sibling `types.ts` can
 // pull every shape they need from one DOM-pure entry. `DocumentData`
 // is the row-shape constraint that scaffolded `interface Note extends
@@ -125,7 +125,7 @@ export type AuthConfig = (typeof AUTH_CONFIG_VALUES)[number];
  * `BaerlyAppConfig` extends `BaerlyConfig` with scaffold-flavoured
  * deploy metadata (`target`, `domain`, `cloudflareAccess`, etc.).
  *
- * Exposed at `baerly-storage/config`. Imported by the
+ * Exposed at `@gusto/baerly-storage/config`. Imported by the
  * `baerly.config.ts` that `npm create baerly` emits, and by anyone
  * who wants IDE/`tsgo` type inference on the full scaffold-aware
  * config shape on top of the runtime `BaerlyConfig.collections` map.

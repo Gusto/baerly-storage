@@ -64,7 +64,7 @@ export interface VerifierResult {
  * material.
  *
  * Preset factories — `cloudflareAccess`, `bearerJwt`,
- * `sharedSecret` — live in `baerly-storage/auth`
+ * `sharedSecret` — live in `@gusto/baerly-storage/auth`
  * (`packages/server/src/auth/presets/`). The kernel owns the type;
  * the server owns the factories.
  *

@@ -209,7 +209,7 @@ class R2BindingStorageImpl implements Storage {
  *
  * @example
  * ```ts
- * import { r2BindingStorage } from "baerly-storage/cloudflare";
+ * import { r2BindingStorage } from "@gusto/baerly-storage/cloudflare";
  *
  * export default {
  *   fetch(req, env: { BUCKET: R2Bucket }) {

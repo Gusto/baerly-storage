@@ -1,7 +1,7 @@
 /**
  * `baerly.config.ts` loader for `baerly deploy` / `baerly doctor`.
  *
- * Mirrors the shape of `BaerlyAppConfig` from `baerly-storage/config`
+ * Mirrors the shape of `BaerlyAppConfig` from `@gusto/baerly-storage/config`
  * but lives in `@baerly/cli` so the validator/loader doesn't depend on
  * the rolldown'd umbrella bundle. The scaffolder emits the config file;
  * the CLI reads it. Both sides agree on the wire shape (informally —
@@ -167,10 +167,7 @@ export const loadAppConfig = async (cwd: string = process.cwd()): Promise<AppCon
   // because `.includes` on a tuple narrows its parameter to the
   // tuple's element type; widening locally is the standard idiom.
   const authRaw = obj["auth"];
-  if (
-    typeof authRaw !== "string" ||
-    !(AUTH_CONFIG_VALUES as readonly string[]).includes(authRaw)
-  ) {
+  if (typeof authRaw !== "string" || !(AUTH_CONFIG_VALUES as readonly string[]).includes(authRaw)) {
     throw new BaerlyError(
       "InvalidConfig",
       `baerly: ${cfgPath}: \`auth\` is required and must be one of ${JSON.stringify(AUTH_CONFIG_VALUES)} (got ${JSON.stringify(authRaw)})`,

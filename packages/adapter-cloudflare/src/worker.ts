@@ -42,7 +42,7 @@ const resolveCfSink = (config: ObservabilityConfig | undefined): ObservabilityCo
  * caller's own env type — extend this one:
  *
  * ```ts
- * import type { BaerlyEnv } from "baerly-storage/cloudflare";
+ * import type { BaerlyEnv } from "@gusto/baerly-storage/cloudflare";
  *
  * interface AppEnv extends BaerlyEnv {
  *   readonly TENANT: string;
@@ -169,7 +169,7 @@ export interface BaerlyWorkerOptions {
  *
  * @example
  * ```ts
- * import { baerlyWorker } from "baerly-storage/cloudflare";
+ * import { baerlyWorker } from "@gusto/baerly-storage/cloudflare";
  * import config from "../../baerly.config.ts";
  *
  * // Dev default: `auth: "none"` in baerly.config.ts pins every

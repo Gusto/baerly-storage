@@ -86,7 +86,7 @@ const physicalPrefixFor = (app: string, tenant: string): string => `app/${app}/t
  * thereafter. There is no `ensureTable` method on this class. For
  * eager pre-warm (seed scripts, deploy-time provisioning, CI fixtures
  * that want byte-identical bytes before the first request), use
- * {@link "baerly-storage/dev".ensureTable}.
+ * {@link "@gusto/baerly-storage/dev".ensureTable}.
  *
  * @example
  * ```ts

@@ -15,11 +15,11 @@ app — a small, LLM-legible document database with a narrow API on top
 of S3-compatible storage. Before writing or modifying storage code,
 read:
 
-- **`node_modules/baerly-storage/dist/API.md`** — hand-authored
+- **`node_modules/@gusto/baerly-storage/dist/API.md`** — hand-authored
   public-API quickref. Read first. Lists every method, every error
   code, every example. If a pattern you want to use isn't here, it
   doesn't exist in baerly.
-- **`node_modules/baerly-storage/dist/*.d.ts`** — authoritative type
+- **`node_modules/@gusto/baerly-storage/dist/*.d.ts`** — authoritative type
   signatures. `Db`, `Table<T>`, `Query<T>`, and `Predicate<T>` are
   the whole API surface.
 
@@ -47,7 +47,7 @@ optional client lives in `src/web/`. Configuration lives in
 `baerly.config.ts`.
 
 Single package, single `vite` process: `baerlyDev()` from
-`baerly-storage/dev/vite` mounts the Node HTTP listener as Vite
+`@gusto/baerly-storage/dev/vite` mounts the Node HTTP listener as Vite
 middleware on `:5173` alongside the SPA dev server, so `pnpm dev`
 brings up SPA + HMR + `/v1/*` in one command — same origin in dev,
 same `dist/client/`-served origin in production via `pnpm start`
@@ -340,7 +340,7 @@ Dev sees `JWKS_URL` as `undefined`, spread short-circuits, and
   `s3Storage` (AWS) and `r2Storage` (Cloudflare R2) based on whether
   `R2_ACCOUNT_ID` is set. To use **Minio** (self-hosted dev S3) or
   **GCS** (HMAC keys), swap the import to `minioStorage` /
-  `gcsStorage` from `baerly-storage/node`. All four factories take
+  `gcsStorage` from `@gusto/baerly-storage/node`. All four factories take
   the same shape — a single bucket-name + credentials object — and
   hide `aws4fetch` / `@xmldom/xmldom` behind the package boundary.
   JSDoc `@example` blocks for each factory are visible in your
@@ -366,7 +366,7 @@ Dev sees `JWKS_URL` as `undefined`, spread short-circuits, and
   external scheduling can wire a separate cron trigger (PaaS cron,
   k8s CronJob, systemd timer) per collection that invokes
   `runMaintenanceTick` directly — that function stays exported
-  from `baerly-storage/node`.
+  from `@gusto/baerly-storage/node`.
 
   The template is single-tenant by default (`tenants: [TENANT]`).
   Multi-tenant deployments override the `tenants` array in
@@ -412,7 +412,7 @@ Dev sees `JWKS_URL` as `undefined`, spread short-circuits, and
 
 - Widening branded types from `baerly-storage` (`UUID`,
   `ContentVersionId`). The types prevent confusion bugs.
-- Reaching into `node_modules/baerly-storage/dist/` directly —
+- Reaching into `node_modules/@gusto/baerly-storage/dist/` directly —
   consume the published exports.
 - Mutating `VerifierResult.tenantPrefix` between the verifier
   and `Db.create`. The dispatcher pins the tenant from the
