@@ -1,25 +1,19 @@
 # Cut `baerly admin compact` + `baerly admin gc` (verb shells)
 
-**Status: REJECTED.** Kept under load-bearer exception #3
-(audience reach across deploy targets). Scheduled maintenance is
-not universally available: CF Workers Cron Triggers require
-specific configuration that a free-tier user may not have wired
-(see `baerly doctor`'s cron-trigger check, kept under the same
-doctrine), and container-only / air-gapped / no-PaaS Node
-deployers may have no scheduler at all. When the scheduled loop is
-absent or silently broken, write-amp drifts up and the
-`< 1 Class A op / writer / hour` idle bound is no longer enforced
-— a manual trigger is the user's only recovery path before the
-invoice. The `node -e 'await import(...)'` two-liner suggested by
-the original cut-case is realistic for the happy-path PaaS
-audience but not for the deploy populations exception #3 exists to
-protect.
+**Severity: MEDIUM. Pre-launch cut. Manual triggers wrapping
+scheduled maintenance — the on-call escape hatch for an audience
+that does not own on-call.**
 
-See `docs/about/thesis.md` §"What we keep even when it looks like
-ceremony" and `docs/followups/promote-surface-admission-adr.md`
-test #6.
-
-## Original analysis (preserved for context)
+> **Second-pass review (2026-05-26).** A subagent argued for
+> rejection under exception #3, citing deployers without a
+> scheduler. That argument was weak: the verbs are citty wrappers
+> over `compact()` / `runGc()` SDK functions any Node deployer
+> (including container-only / air-gapped) can call directly via a
+> one-shot Node script. The verbs don't *unblock* a deploy
+> population — they add ergonomics. The discovery gap (a user not
+> knowing to run compact periodically) is covered by `baerly
+> doctor`'s cron-trigger check, which IS load-bearing under
+> exceptions #1 and #3. Cut stands.
 
 Both verbs are manual triggers for one pass of the maintenance
 loop, with `--cloudflare-free-tier` profile caps and `--min-entries`
