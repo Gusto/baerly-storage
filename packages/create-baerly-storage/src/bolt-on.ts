@@ -45,7 +45,7 @@ export interface BoltOnOptions {
   readonly pm?: Pm;
   readonly installer?: Installer;
   /**
-   * When `true`, drop a delimited "this repo uses baerly-storage"
+   * When `true`, drop a delimited "this repo uses @gusto/baerly-storage"
    * block telling the user's AI agent where the canonical API
    * surface lives. Default `false`. See `agent-rules.ts` for the
    * target-detection chain and the literal block content.
@@ -72,7 +72,7 @@ const configTemplate = (app: string, tenant: string): string => {
     auth: "none",
     collections: {},
   } as const satisfies BaerlyAppConfig;
-  return `import { defineConfig } from "baerly-storage/config";
+  return `import { defineConfig } from "@gusto/baerly-storage/config";
 
 export default defineConfig(${JSON.stringify(cfg, null, 2)});
 `;
@@ -106,12 +106,12 @@ const appendBaerlyStorageDep = async (pkgJsonPath: string, changes: string[]): P
     );
   }
   pkg.dependencies = pkg.dependencies ?? {};
-  if (pkg.dependencies["baerly-storage"] !== undefined) {
+  if (pkg.dependencies["@gusto/baerly-storage"] !== undefined) {
     return;
   }
-  pkg.dependencies["baerly-storage"] = "*";
+  pkg.dependencies["@gusto/baerly-storage"] = "*";
   await writeFile(pkgJsonPath, `${JSON.stringify(pkg, null, 2)}\n`, "utf8");
-  changes.push("package.json: added baerly-storage dependency");
+  changes.push("package.json: added @gusto/baerly-storage dependency");
 };
 
 export const boltOnExistingWrangler = async (opts: BoltOnOptions): Promise<BoltOnResult> => {

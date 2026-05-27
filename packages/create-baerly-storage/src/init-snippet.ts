@@ -44,8 +44,8 @@ export const computeConfigImportPath = (wranglerMain: string): string => {
 
 export const renderWorkerEntrySnippet = (ctx: SnippetContext): string => {
   const configPath = computeConfigImportPath(ctx.wranglerMain);
-  return `import { baerlyWorker, type BaerlyEnv } from "baerly-storage/cloudflare";
-import { sharedSecret } from "baerly-storage/auth";
+  return `import { baerlyWorker, type BaerlyEnv } from "@gusto/baerly-storage/cloudflare";
+import { sharedSecret } from "@gusto/baerly-storage/auth";
 import config from "${configPath}";
 
 interface AppEnv extends BaerlyEnv {

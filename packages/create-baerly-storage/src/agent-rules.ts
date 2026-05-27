@@ -1,7 +1,7 @@
 /**
  * The `--with=agent-rules` bolt-on add-on. Drops a delimited block
  * that tells the user's AI agent (Claude / Cursor / Copilot) that
- * `node_modules/baerly-storage/dist/API.md` is the canonical API
+ * `node_modules/@gusto/baerly-storage/dist/API.md` is the canonical API
  * surface and that the patterns those agents' training data is
  * densest with (Postgres/Prisma/Drizzle, Mongo, Firebase) don't
  * apply.
@@ -38,14 +38,14 @@ const BLOCK_END = "<!-- baerly:end -->";
  * in place.
  */
 export const AGENT_RULES_BLOCK = `${BLOCK_START}
-## baerly-storage
+## @gusto/baerly-storage
 
-This repo uses baerly-storage. Before writing or modifying storage code:
+This repo uses @gusto/baerly-storage. Before writing or modifying storage code:
 
-- Read **\`node_modules/baerly-storage/dist/API.md\`** — public-API
+- Read **\`node_modules/@gusto/baerly-storage/dist/API.md\`** — public-API
   quickref. Every method, every error code, every example. If a
   pattern you want to use is not here, it does not exist in baerly.
-- Type contracts live in \`node_modules/baerly-storage/dist/*.d.ts\`.
+- Type contracts live in \`node_modules/@gusto/baerly-storage/dist/*.d.ts\`.
   The whole API is \`Db\`, \`Table<T>\`, \`Query<T>\`, and \`Predicate<T>\`.
 
 Anti-patterns that compile but are wrong:
