@@ -3,32 +3,64 @@ import { useMutation, useQuery } from "baerly-storage/client/react";
 import type { Note } from "../../baerly.config.ts";
 
 const NoteRow = ({ note }: { note: Note }) => {
+  const [isEditing, setIsEditing] = useState(false);
   const [body, setBody] = useState(note.body);
   const [save, { isPending: isSaving, error: saveError }] = useMutation();
   const [del, { isPending: isDeleting, error: deleteError }] = useMutation();
   const error = saveError ?? deleteError;
   return (
     <li className="note-row">
-      <textarea value={body} onChange={(e) => setBody(e.target.value)} rows={2} />
+      {isEditing ? (
+        <textarea value={body} onChange={(e) => setBody(e.target.value)} rows={2} />
+      ) : (
+        <p className="note-body">{note.body}</p>
+      )}
       <div className="actions">
-        <button
-          disabled={isSaving}
-          onClick={() => save((c) => c.table("notes").update(note._id, { body }))}
-        >
-          {isSaving ? "Saving…" : "Save"}
-        </button>
-        <button
-          className="danger"
-          disabled={isDeleting}
-          onClick={async () => {
-            if (!window.confirm("Delete this note?")) {
-              return;
-            }
-            await del((c) => c.table("notes").delete(note._id));
-          }}
-        >
-          {isDeleting ? "Deleting…" : "Delete"}
-        </button>
+        {isEditing ? (
+          <>
+            <button
+              disabled={isSaving}
+              onClick={async () => {
+                await save((c) => c.table("notes").update(note._id, { body }));
+                setIsEditing(false);
+              }}
+            >
+              {isSaving ? "Saving…" : "Save"}
+            </button>
+            <button
+              disabled={isSaving}
+              onClick={() => {
+                setBody(note.body);
+                setIsEditing(false);
+              }}
+            >
+              Cancel
+            </button>
+          </>
+        ) : (
+          <>
+            <button
+              onClick={() => {
+                setBody(note.body);
+                setIsEditing(true);
+              }}
+            >
+              Edit
+            </button>
+            <button
+              className="danger"
+              disabled={isDeleting}
+              onClick={async () => {
+                if (!window.confirm("Delete this note?")) {
+                  return;
+                }
+                await del((c) => c.table("notes").delete(note._id));
+              }}
+            >
+              {isDeleting ? "Deleting…" : "Delete"}
+            </button>
+          </>
+        )}
       </div>
       {error && <p className="error">{error.message}</p>}
     </li>

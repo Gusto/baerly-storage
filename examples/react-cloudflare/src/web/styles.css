@@ -38,6 +38,11 @@ body {
   border-bottom: 1px solid #eee;
 }
 
+.note-body {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
 .actions {
   margin-top: 8px;
 }
