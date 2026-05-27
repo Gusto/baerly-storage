@@ -42,6 +42,31 @@ import { LocalFsStorage } from "@gusto/baerly-storage/dev"
 - The `baerly` bin name. `bin: { "baerly": "./dist/baerly.js" }`
   in the root `package.json` is independent of the package name.
 
+## Pre-publish blockers
+
+Resolve before the rename mechanics; without these the first
+publish either won't install or will ship broken templates.
+
+- **B1. Scaffolder runtime dependencies.** Today
+  `packages/create-baerly/package.json` lists `@baerly/cli` and
+  `@baerly/server` as `dependencies`. If rolldown bundles them
+  into `dist/index.js`, they must move to `devDependencies` or
+  be dropped. If rolldown externalises them, `pnpm install
+  @gusto/create-baerly-storage` will 404 (no published
+  `@baerly/*`). Decide and fix before any publish attempt.
+- **B2. No workspace deps in published `dependencies`.** Same
+  failure mode as B1, scoped to root `baerly-storage`. Root
+  currently only ships `@logtape/logtape`; re-verify nothing
+  else has crept in.
+- **B3. Grep `examples/**/src/**` for `@baerly/*` source
+  imports.** `examples/` doubles as scaffold-template source via
+  `STARTER_TO_EXAMPLE`. `substitute.ts` rewrites workspace
+  `dependencies`, *not* `import` statements. Any source-import
+  of `@baerly/protocol` (or any other workspace package) inside
+  an example will leak into the scaffolded user app, which has
+  no `@baerly/*` to resolve against. Rewrite leaks to subpaths
+  of `@gusto/baerly-storage` before publishing.
+
 ## Phase 1 implementation checklist
 
 1. **Rewrite root `package.json` `name:`** → `@gusto/baerly-storage`.
@@ -61,9 +86,15 @@ import { LocalFsStorage } from "@gusto/baerly-storage/dev"
    `packages/cli/src/output.ts` switch behavior on whether the
    bin is `baerly` or `create-baerly`. The scaffolder bin is
    becoming `create-baerly-storage`; both files need updating.
+   Note the asymmetry: the library *package* name changes per
+   phase (`@gusto/baerly-storage` ↔ `baerly-storage`); the
+   library *bin* name (`baerly`) does not. Only the scaffolder
+   bin renames, because the scaffolder bin name is the user-
+   visible command (`pnpm dlx create-baerly-storage`).
 4. **Update every emission of the published library name**
    to `@gusto/baerly-storage` for Phase 1. Covers:
-   - `README.md` (the LLM zero-shot anchor for new users)
+   - `README.md` install snippets (the LLM zero-shot anchor for
+     new Gusto engineers)
    - `packages/server/API.md` (copied to `dist/API.md` on
      every build — bundled into the published package)
    - JSDoc `@example` blocks across `packages/server/src/*.ts`
@@ -78,6 +109,23 @@ import { LocalFsStorage } from "@gusto/baerly-storage/dev"
      `docs/contributing/day-one-gate.md`,
      `docs/contributing/features.md`) — the docs as a whole stay
      internal, but the install lines mismatch the published name
+
+   **Same touch — add a "private preview" status line to two
+   load-bearing docs.** The README's OSS-shaped pitch and the
+   thesis claims hold for the Phase 1 audience (Gusto
+   engineers) but presume an OSS audience that doesn't exist
+   yet. Set context up front:
+   - `README.md` — italicized line right after the headline
+     tagline: `_Currently a private Gusto preview. Public OSS
+     launch planned — see
+     [docs/followups/publish-direction.md](docs/followups/publish-direction.md)._`
+   - `CLAUDE.md` — one-line "Current state:" block in the "What
+     this is" section naming the Phase 1 publish name and
+     linking to this followup, so AI agents pick up the framing
+     on every session.
+
+   Both lines are temporary content; their removal is the first
+   item of the Phase 2 launch checklist.
 5. **Update every emission of the scaffolder bin name** to
    `create-baerly-storage` for Phase 1. The scaffolder's source
    code generates content for end-user apps; the generated output
@@ -94,32 +142,27 @@ import { LocalFsStorage } from "@gusto/baerly-storage/dev"
    - Scaffold template `package.json` files (under
      `packages/create-baerly-storage/templates/**` if present, or
      mirrored from `examples/`) that contain the workspace dep
-6. **Audit scaffolder runtime dependencies.** Today its
-   `package.json` lists `@baerly/cli` and `@baerly/server` as
-   `dependencies`. If rolldown bundles them into `dist/index.js`
-   they must move to `devDependencies` or be dropped; if rolldown
-   externalises them, `pnpm install @gusto/create-baerly-storage`
-   will 404. Closes before first publish.
-7. **Update test fixtures asserting exact names.** ~5 files
-   assert published name strings:
+6. **Update test fixtures asserting exact names.** Grep
+   exhaustively for the string literals `"baerly-storage"`,
+   `"create-baerly"`, and the bin name `create-baerly` across
+   `tests/`, `packages/*/src/**/*.test.ts`, `manual-e2e/`,
+   `bench/`, `eval/`. Known-affected:
    `packages/create-baerly-storage/src/{scaffold,index,bolt-on}.test.ts`,
    `tests/integration/public-surface.test.ts`,
-   `tests/integration/lint-use-query.test.ts`.
-8. **Add `repository` / `bugs` / `homepage` / `author` fields**
+   `tests/integration/lint-use-query.test.ts`. Treat these as
+   starting points, not the exhaustive list.
+7. **Add `repository` / `bugs` / `homepage` / `author` fields**
    to both published packages — closes
-   [prelaunch-package-json-polish.md](prelaunch-package-json-polish.md)
-   with the now-known repo host (under `github.com/Gusto`; pick
-   the repo name).
-9. **Configure private-registry routing.** `.npmrc` needs
+   [prelaunch-package-json-polish.md](prelaunch-package-json-polish.md).
+   Repo is `github.com/Gusto/baerly-storage` (private).
+8. **Configure private-registry routing.** `.npmrc` needs
    `@gusto:registry=<url>` for `pnpm publish` and for downstream
    consumers. Decide whether to commit a project `.npmrc` or
    document the contributor setup.
-10. **Strip `provenance: true`** from `publishConfig` if Gusto's
-    private registry doesn't support npm Sigstore attestations
-    (most private registries don't). Restore for Phase 2.
-11. **Confirm no workspace deps land in published
-    `dependencies`** for the root `baerly-storage`. Root currently
-    has only `@logtape/logtape`; re-verify pre-publish.
+9. **Strip `provenance: true`** from `publishConfig`
+   (`package.json:130`) if Gusto's private registry doesn't
+   support npm Sigstore attestations (most private registries
+   don't). Restore for Phase 2.
 
 ## Downstream cleanups
 
@@ -157,19 +200,41 @@ never published.
   lock it from accidental publish. Apply to the other 6
   workspace `@baerly/*` packages at the same touch.
 
+## Public-name squat (do now, alongside Phase 1)
+
+Publish `0.0.0-reserved` placeholders for `baerly-storage` and
+`create-baerly-storage` to public npm during Phase 1, with a
+description pointing at this repo and the eventual real publish.
+Blocks dependency-confusion attacks for the duration of the
+Phase 1 window at trivial cost. Two publishes, ~10 minutes of
+work.
+
 ## Phase 2 launch checklist (deferred)
 
 These do not block Phase 1. Resolve before public publish.
 
-1. **Mirror or rename?** Does Gusto's private registry mirror
+1. **Remove the "private preview" status lines** added in
+   Phase 1: the italicized note at the top of `README.md` and
+   the "Current state:" block in `CLAUDE.md`'s "What this is"
+   section. The repo and publish are now public; the disclaimer
+   is misleading.
+2. **Mirror or rename?** Does Gusto's private registry mirror
    public npm at launch (internal engineers run
    `pnpm install baerly-storage` and routing handles the rest),
    or do internal apps run a one-time rename?
-2. **`@gusto/*` sunset window.** Keep `@gusto/baerly-storage`
+3. **`@gusto/*` sunset window.** Keep `@gusto/baerly-storage`
    alive post-launch as a thin re-export of `baerly-storage`,
    then publish a deprecation-throwing version on a pinned
    date. How long is the re-export window?
-3. **Public-name squat now?** Publish `0.0.0-reserved`
-   placeholders for `baerly-storage` and `create-baerly-storage`
-   to public npm during Phase 1 to block dependency-confusion
-   attacks. Yes/no/defer.
+
+## Out of scope (separate decisions, before first publish)
+
+These are operationally required for the first publish but are
+not part of the naming decision and don't live in this followup:
+
+- CI publish workflow + npm auth token (`NPM_TOKEN` on Gusto's
+  private registry)
+- Version-bump tooling: changesets vs. manual `pnpm version`
+- Release tags / CHANGELOG generation
+- Rollback / unpublish / deprecate playbook if the first publish
+  is broken
