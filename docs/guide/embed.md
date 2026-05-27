@@ -1,7 +1,7 @@
 ---
 title: Embed by hand
 audience: integrator
-summary: A ~30-line snippet for embedding baerly-storage in an existing Node app, bypassing the create-baerly scaffold.
+summary: A ~30-line snippet for embedding baerly-storage in an existing Node app, bypassing the @gusto/create-baerly-storage scaffold.
 last-reviewed: 2026-05-21
 tags: [embed, node, integrator]
 related: ["../../README.md", "auth.md"]
