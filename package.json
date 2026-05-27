@@ -135,8 +135,7 @@
         "types": "./dist/dev-vite.d.ts",
         "import": "./dist/dev-vite.js"
       }
-    },
-    "provenance": true
+    }
   },
   "scripts": {
     "typecheck": "tsgo --noEmit",
