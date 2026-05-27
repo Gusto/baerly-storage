@@ -130,10 +130,15 @@ start to dominate, and you're better off on a real database:
 - **~10 GB / tenant**
 - **~100 collections / tenant**
 
-When you cross the soft ceiling, the graduation target is **D1**
-(Postgres, or SQLite via Litestream — whichever fits your runtime).
-At the M-size operating point, D1 is roughly $5/month versus
-baerly's ~$19/month; the pitch was always portability, not cost.
+When you cross the soft ceiling, graduation is mechanical:
+`baerly export --target=postgres` walks your log entries (already
+Postgres-logical-replication-shaped) into a real DB. If your
+deploy target is Cloudflare Workers and you'll accept Cloudflare
+lock-in, [D1](https://developers.cloudflare.com/d1/) is cheaper
+per-write at M-size and is a natural next step. If you're on
+AWS, on-prem, or want your data portable, managed Postgres is
+the typical destination. Either way — graduation is a Baerly win,
+not a churn event.
 
 **Export to a real database** (swap `--target=` for `sqlite`,
 `postgres`, or `d1`):
