@@ -1,7 +1,8 @@
 {
   "name": "@baerly/protocol",
   "version": "0.1.0",
-  "description": "Internal protocol kernel — implementation detail of @baerly/server. Not a public API: import from @baerly/server instead.",
+  "private": true,
+  "description": "Workspace-internal protocol kernel. Bundled into @gusto/baerly-storage (private) and baerly-storage (public). Not a separately published package.",
   "license": "MIT",
   "type": "module",
   "sideEffects": false,
