@@ -200,15 +200,6 @@ never published.
   lock it from accidental publish. Apply to the other 6
   workspace `@baerly/*` packages at the same touch.
 
-## Public-name squat (do now, alongside Phase 1)
-
-Publish `0.0.0-reserved` placeholders for `baerly-storage` and
-`create-baerly-storage` to public npm during Phase 1, with a
-description pointing at this repo and the eventual real publish.
-Blocks dependency-confusion attacks for the duration of the
-Phase 1 window at trivial cost. Two publishes, ~10 minutes of
-work.
-
 ## Phase 2 launch checklist (deferred)
 
 These do not block Phase 1. Resolve before public publish.
