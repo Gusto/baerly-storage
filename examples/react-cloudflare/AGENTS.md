@@ -529,10 +529,14 @@ model puts the soft ceiling at:
 
 Past those, S3 list-prefix latency, manifest fold cost, and per-class
 op pricing start to dominate; you're better off on a real database.
-The graduation target is **D1** (or Postgres, or SQLite via Litestream
-— pick what fits your runtime). At the M-size operating point, D1
-costs roughly $5/month versus baerly's ~$19/month; the pitch is
-portability, not cost.
+Pick your graduation target:
+- **Cloudflare Workers + lock-in OK:** [D1](https://developers.cloudflare.com/d1/) — cheaper per-write at M-size.
+- **Off-Workers or portability matters:** managed Postgres.
+- **Single-instance Node:** SQLite via Litestream.
+
+Either way, the export below is mechanical because log entries are
+Postgres-logical-replication-shaped — graduation is a Baerly win,
+not a churn event.
 
 **Estimate your current rate:** `baerly admin usage --target=...`
 lists recent log entries per collection and computes
