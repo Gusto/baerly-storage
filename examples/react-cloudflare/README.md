@@ -26,9 +26,9 @@ react-cloudflare/
 │   │   └── index.ts          # baerlyWorker((env) => ({ verifier }))
 │   └── web/
 │       ├── main.tsx          # React entry
-│       ├── App.tsx           # Provider + new-note form (useInsert)
+│       ├── App.tsx           # Provider + new-note form (useMutation)
 │       ├── client.ts         # BaerlyClient bound to this config
-│       └── NoteList.tsx      # useLiveQuery + per-row useUpdate / useDelete
+│       └── NoteList.tsx      # useQuery + per-row useMutation
 └── README.md
 ```
 
@@ -110,6 +110,6 @@ export is a mechanical translator, not a vendor migration.
 
 - `baerly.config.ts` — app config + Zod schema.
 - `src/server/index.ts` — Worker fetch + scheduled handler.
-- `src/web/NoteList.tsx` — `useLiveQuery` live-updates hook.
+- `src/web/NoteList.tsx` — `useQuery` reactive read.
 - `wrangler.jsonc` — Cloudflare Worker manifest.
 - `AGENTS.md` / `CLAUDE.md` — agent-facing guide (byte-identical).

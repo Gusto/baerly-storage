@@ -96,9 +96,8 @@ regardless of the auth posture). See the scaffold's `AGENTS.md`
 env-aware factory `verifier:` override; Pattern B flips
 `auth: "shared-secret"` (re-enable `baerlyDevAuth` in
 `vite.config.ts` for browser bearer injection). Demonstrates the
-full React hook surface (`useLiveQuery`, `useLiveDocument`,
-`useInsert`, `useUpdate`, `useDelete`) over a generic placeholder
-domain you extend.
+full React hook surface (`useQuery` for reactive reads, `useMutation`
+for writes) over a generic placeholder domain you extend.
 
 **Audience:** the modal full-stack web user — scaffold this when
 you want a working React + CF + R2 app to build on top of, not
@@ -117,10 +116,10 @@ Open <http://localhost:5173>. Type a note. Open a second tab —
 edits in one tab appear in the other over the `/v1/since`
 long-poll.
 
-**Read first:** `src/web/NoteList.tsx` (the `useLiveQuery`
-live-updates hook), then `baerly.config.ts` (the `NoteSchema`
-shape you extend), then `src/server/index.ts` (the verifier
-selector + `/v1/*` ↔ Assets split).
+**Read first:** `src/web/NoteList.tsx` (the `useQuery` reactive
+read), then `baerly.config.ts` (the `NoteSchema` shape you extend),
+then `src/server/index.ts` (the verifier selector + `/v1/*` ↔
+Assets split).
 
 **Scaffold from the CLI:** `pnpm create baerly my-app --target=cloudflare --starter=react`.
 
@@ -133,9 +132,9 @@ via `baerly-storage/node`. Ships `auth: "none"`; see the scaffold's
 `AGENTS.md` "Going to production" recipes — Pattern B flips
 `auth: "shared-secret"`; Pattern C wires `bearerJwt` against your
 OIDC IdP via an env-aware factory `verifier:` override. Demonstrates
-the full React hook surface (`useLiveQuery`, `useLiveDocument`,
-`useInsert`, `useUpdate`, `useDelete`) over the same `NoteSchema`
-as `react-cloudflare`.
+the full React hook surface (`useQuery` for reactive reads,
+`useMutation` for writes) over the same `NoteSchema` as
+`react-cloudflare`.
 
 Runs anywhere `node server.js` runs — Railway, Render, Fly, a VM,
 a container.
@@ -156,10 +155,10 @@ pnpm dev
 Open <http://localhost:5173>. No credentials needed for dev —
 `baerlyDev()` writes to `./.baerly-data/` via `LocalFsStorage`.
 
-**Read first:** `src/web/NoteList.tsx` (the `useLiveQuery`
-live-updates hook), then `baerly.config.ts` (the `NoteSchema`
-shape), then `src/server/index.ts` (the `s3Storage` / `r2Storage`
-selector + `baerlyNode` invocation for production).
+**Read first:** `src/web/NoteList.tsx` (the `useQuery` reactive
+read), then `baerly.config.ts` (the `NoteSchema` shape), then
+`src/server/index.ts` (the `s3Storage` / `r2Storage` selector +
+`baerlyNode` invocation for production).
 
 **Scaffold from the CLI:** `pnpm create baerly my-app --target=node --starter=react`
 (add `--with=docker` for a Dockerfile + healthcheck).

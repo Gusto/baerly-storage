@@ -50,7 +50,7 @@ and Next.js conventions.
    `baerly-storage` from the import line.
 2. The subpath already disambiguates — `/auth/sharedSecret`,
    `/maintenance/compact`, `/observability/withObservability`,
-   `/client/react/useLiveQuery`. The path supplies the namespace.
+   `/client/react/useQuery`. The path supplies the namespace.
 3. The symbol is a strategy or adapter that names its underlying
    technology — `S3HttpStorage`, `r2BindingStorage`, `MemoryStorage`,
    `bearerJwt`, `cloudflareAccess`. The technology name is what

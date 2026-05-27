@@ -162,14 +162,15 @@ hooks outside auth-refresh, `onSuccess` fires once per logical call
 once per HTTP attempt (including the 401 that triggered the
 refresh).
 
-## Long-poll and `since(...)` calls
+## Long-poll calls (`GET /v1/since`)
 
-The long-poll path used by `client.since({ table, cursor, signal })`
-routes through the same `Fetcher` — there is no separate transport.
-Retry, logging, and auth-refresh wrappers apply uniformly. If your
-wrapper needs to distinguish long-poll from one-shot reads (for
-example, to skip retry on a request that already has a long
-server-side wait budget), inspect `req.url` or a known query
+The long-poll path used by the React `useQuery` subscription pool
+(via the internal `pollSinceOnce` helper) routes through the same
+`Fetcher` — there is no separate transport. Retry, logging, and
+auth-refresh wrappers apply uniformly. If your wrapper needs to
+distinguish long-poll from one-shot reads (for example, to skip
+retry on a request that already has a long server-side wait
+budget), inspect `req.url` for `/v1/since` or a known query
 parameter. Most wrappers do not need to.
 
 ## What this is not

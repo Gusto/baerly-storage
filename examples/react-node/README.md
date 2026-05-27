@@ -33,9 +33,9 @@ react-node/
 │   │   └── index.ts          # baerlyNode({ app, storage, verifier, webRoot, maintenance? }).listen(PORT)
 │   └── web/
 │       ├── main.tsx          # React entry
-│       ├── App.tsx           # Provider + new-note form (useInsert)
+│       ├── App.tsx           # Provider + new-note form (useMutation)
 │       ├── client.ts         # BaerlyClient bound to this config
-│       └── NoteList.tsx      # useLiveQuery + per-row useUpdate / useDelete
+│       └── NoteList.tsx      # useQuery + per-row useMutation
 └── README.md
 ```
 
@@ -177,6 +177,6 @@ require vendor cooperation.
 
 - `baerly.config.ts` — app config + Zod schema.
 - `src/server/index.ts` — `node:http` listener entry (`baerlyNode`).
-- `src/web/NoteList.tsx` — `useLiveQuery` live-updates hook.
+- `src/web/NoteList.tsx` — `useQuery` reactive read.
 - `vite.config.ts` — Vite + React + `baerlyDev()` dev middleware.
 - `AGENTS.md` / `CLAUDE.md` — agent-facing guide (byte-identical).

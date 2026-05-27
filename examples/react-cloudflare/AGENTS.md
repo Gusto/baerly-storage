@@ -259,18 +259,20 @@ http://localhost:5173/<path>`) before declaring the task complete.
   `?consistency=eventual` on `GET /v1/t/:table` and
   `GET /v1/t/:table/:id`.
 
-  `useLiveQuery` accepts the same `consistency` and `order`
-  options as an options-bag — auto-refresh list views are the
+  `useQuery`'s callback receives a `BaerlyClient` proxy, so the same
+  modifiers chain there too — auto-refresh list views are the
   canonical case for `consistency: "eventual"` since the long-poll
   subscription still fires the refetch as soon as a change lands:
 
   ```tsx
-  const result = useLiveQuery<Note>({
-    table: "notes",
-    where: { body: "TODO" },
-    order: { _id: "desc" },
-    consistency: "eventual",
-  });
+  const result = useQuery(
+    (c) => c.table<Note>("notes")
+      .where({ body: "TODO" })
+      .order({ _id: "desc" })
+      .consistency("eventual")
+      .all(),
+    [],
+  );
   ```
 
 - **Schemas (live feature)** — schemas are validated on the server
@@ -633,31 +635,77 @@ The schema enum is the single source of truth — adding a value
 there expands the `<select>` immediately. Adding more enum fields
 (`priority`, `severity`) follows the same shape.
 
-### Filtering a live query by predicate
+### Filtering a reactive query by predicate
 
-`useLiveQuery({ where })` takes the same predicate AST the backend
-uses. To narrow by an enum field, drive it off `useState`:
+`useQuery((c) => c.table(...).where(...).all(), [deps])` accepts the
+same predicate shapes as the bare client. To narrow by an enum field,
+drive it off `useState` and lift the filter into the `deps` array so
+the cache key changes when the filter does:
 
 ```tsx
 import { useState } from "react";
-import { useLiveQuery } from "baerly-storage/client/react";
+import { useQuery } from "baerly-storage/client/react";
 import { STATUSES, type Note } from "../../baerly.config.ts";
 
 type Filter = "all" | Note["status"];
 
 const [filter, setFilter] = useState<Filter>("all");
-const result = useLiveQuery<Note>({
-  table: "notes",
-  where: filter === "all" ? {} : { status: filter },
-});
+const result = useQuery(
+  (c) =>
+    filter === "all"
+      ? c.table<Note>("notes").all()
+      : c.table<Note>("notes").where({ status: filter }).all(),
+  [filter],
+);
 ```
 
-`useLiveQuery` re-runs the query when the predicate changes AND
-when the `/v1/since` long-poll batches a non-empty change for
-`notes`. Idle long-poll cycles (empty batches) are dropped at the
-`useInvalidationTick` layer, so a steady-state table costs zero
-list reads. Add a `<select>` bound to `setFilter` and the list
-narrows live.
+`useQuery` re-runs the callback when `deps` changes OR when the
+`/v1/since` long-poll batches a non-empty change for any subscribed
+table. Idle long-poll cycles (empty batches) drop at the
+`subscription-pool` layer, so a steady-state table costs zero list
+reads. Add a `<select>` bound to `setFilter` and the list narrows live.
+
+For conditional / deferred reads, return the `useQuery.skip` sentinel
+from the callback — the hook short-circuits to
+`status: "skipped"` with no subscription:
+
+```tsx
+const filtered = useQuery(
+  (c) =>
+    filter === "all"
+      ? useQuery.skip
+      : c.table<Note>("notes").where({ status: filter }).all(),
+  [filter],
+);
+if (filtered.status === "skipped") return <FullList />;
+```
+
+For dependent reads, compose two `useQuery` calls — the second one
+returns `useQuery.skip` until the first resolves to `"ok"`:
+
+```tsx
+const parent = useQuery((c) => c.table<Note>("notes").get(id), [id]);
+const replies = useQuery(
+  (c) =>
+    parent.status === "ok"
+      ? c.table("comments").where({ noteId: parent.data?._id }).all()
+      : useQuery.skip,
+  [parent.status === "ok" ? parent.data?._id : undefined],
+);
+```
+
+Mutations are inline: `useMutation()` returns a `[mutate, { isPending,
+error }]` tuple. `mutate(cb)` runs `cb` against the real client:
+
+```tsx
+const [mutate, { isPending, error }] = useMutation();
+<button
+  disabled={isPending}
+  onClick={() => mutate((c) => c.table("notes").update(id, { body }))}
+>
+  {isPending ? "Saving…" : "Save"}
+</button>
+```
 
 ### Optional fields
 
