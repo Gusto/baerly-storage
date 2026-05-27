@@ -16,6 +16,7 @@ import { constants } from "node:fs";
 import { readFile, writeFile, appendFile, access } from "node:fs/promises";
 import { resolve } from "node:path";
 import { BaerlyError } from "@baerly/protocol";
+import type { BaerlyAppConfig } from "@baerly/server";
 import { patchWranglerJsonc, readWranglerName, readWranglerMain } from "@baerly/cli/wrangler-patch";
 import { renderWorkerEntrySnippet } from "@baerly/cli/init-snippet";
 import { detectPm, type Pm } from "./pm-detect.ts";
@@ -63,15 +64,19 @@ export interface BoltOnResult {
   readonly agentRules?: AgentRulesResult;
 }
 
-const configTemplate = (app: string, tenant: string): string =>
-  `import { defineConfig } from "baerly-storage/config";
+const configTemplate = (app: string, tenant: string): string => {
+  const cfg = {
+    app,
+    tenant,
+    target: "cloudflare",
+    auth: "none",
+    collections: {},
+  } as const satisfies BaerlyAppConfig;
+  return `import { defineConfig } from "baerly-storage/config";
 
-export default defineConfig({
-  app: ${JSON.stringify(app)},
-  tenant: ${JSON.stringify(tenant)},
-  target: "cloudflare",
-});
+export default defineConfig(${JSON.stringify(cfg, null, 2)});
 `;
+};
 
 const gitignoreCovers = (text: string, line: string): boolean => {
   const lines = text.split("\n").map((l) => l.trim());

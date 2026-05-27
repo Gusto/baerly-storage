@@ -66,7 +66,8 @@ describe("boltOnExistingWrangler", () => {
 
     await expect(fileExists(join(dir, "baerly.config.ts"))).resolves.toBe(true);
     const config = await readFile(join(dir, "baerly.config.ts"), "utf8");
-    expect(config).toContain(`app: "test-app"`);
+    expect(config).toContain(`"app": "test-app"`);
+    expect(config).toContain(`"auth": "none"`);
 
     const idx = await readFile(join(dir, "src", "index.ts"), "utf8");
     expect(idx).toBe("// stock wrangler create hello world\n");
@@ -159,7 +160,7 @@ describe("boltOnExistingWrangler", () => {
       runInstall: false,
     });
     const after = await readFile(join(dir, "baerly.config.ts"), "utf8");
-    expect(after).toContain(`app: "test-app"`);
+    expect(after).toContain(`"app": "test-app"`);
   });
 
   test("throws InvalidConfig when package.json is not valid JSON", async () => {
