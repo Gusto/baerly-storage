@@ -119,7 +119,7 @@ read path.
 
 ```ts
 // baerly.config.ts
-import { defineConfig } from "baerly-storage/config";
+import { defineConfig } from "@gusto/@gusto/baerly-storage/config";
 
 export default defineConfig({
   collections: {
@@ -286,7 +286,7 @@ read-only summary of one collection (next_seq, log_seq_start,
 writer_fence, materialised row count, per-index key counts).
 
 Bolt-on (adding baerly to an existing Cloudflare Worker project) lives
-in `create-baerly`: `pnpm create baerly .` detects `wrangler.jsonc` and
+in `@gusto/create-baerly-storage`: `pnpm create @gusto/baerly-storage@latest .` detects `wrangler.jsonc` and
 dispatches to the bolt-on flow. See
 [`docs/guide/add-to-existing-cf-worker.md`](../guide/add-to-existing-cf-worker.md).
 

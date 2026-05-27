@@ -88,8 +88,8 @@ var isn't propagated.
 | `pnpm build && pnpm baerly export --target=sqlite ...` | snapshot dump one collection to SQL | seconds | ✅ no infra |
 | `pnpm build && pnpm baerly {init,inspect,admin dump,admin restore} ...` | operator surface: `init` drops `baerly.config.ts` into an existing repo; `inspect` prints a read-only summary of one collection's snapshot / log / index state; `admin dump` emits canonical NDJSON of the materialised view; `admin restore` re-imports that NDJSON into a fresh bucket | seconds | ✅ no infra |
 | `pnpm build && pnpm baerly admin fsck ...` | maintenance surface: `admin fsck` walks `current.json` → snapshot hash → log range → index prefixes read-only and exits 4 on any finding | seconds | ✅ no infra |
-| `pnpm dlx:bust-cache` | wipes `~/.cache/pnpm/dlx` + `~/Library/Caches/pnpm/dlx` + `localhost+4873` registry metadata. Use after `pnpm verdaccio:publish` when iterating `pnpm dlx create-baerly` against Verdaccio — dlx caches by `pkg@version` so re-publishing the same version is invisible without this step. `pnpm config get cache-dir` prints the literal string `"undefined"` — don't probe it manually | ~ms | ✅ |
-| `cat node_modules/baerly-storage/dist/API.md` | 367-line public-API quickref. Read this BEFORE walking the hash-suffixed `dist/*.d.ts` chain. Named `API.md` (not `AGENTS.md`) so it never collides with a scaffolded app's project-root `AGENTS.md`. Source lives at `packages/server/API.md`; the rolldown `closeBundle` step copies it to `dist/API.md` on every build | n/a | ✅ |
+| `pnpm dlx:bust-cache` | wipes `~/.cache/pnpm/dlx` + `~/Library/Caches/pnpm/dlx` + `localhost+4873` registry metadata. Use after `pnpm verdaccio:publish` when iterating `pnpm create @gusto/baerly-storage@latest` against Verdaccio — dlx caches by `pkg@version` so re-publishing the same version is invisible without this step. `pnpm config get cache-dir` prints the literal string `"undefined"` — don't probe it manually | ~ms | ✅ |
+| `cat node_modules/@gusto/baerly-storage/dist/API.md` | 367-line public-API quickref. Read this BEFORE walking the hash-suffixed `dist/*.d.ts` chain. Named `API.md` (not `AGENTS.md`) so it never collides with a scaffolded app's project-root `AGENTS.md`. Source lives at `packages/server/API.md`; the rolldown `closeBundle` step copies it to `dist/API.md` on every build | n/a | ✅ |
 
 `pnpm verify` is also enforced as a [lefthook](https://lefthook.dev/)
 pre-commit hook (`lefthook.yml`); `pnpm install` wires it up via the
@@ -202,7 +202,7 @@ See [docs/contributing/development.md](docs/contributing/development.md) for ful
 Read in this order to build a mental model:
 
 1. `packages/server/src/index.ts` — public barrel; bundler entry
-   point. The `baerly-storage` npm package is bundled from here.
+   point. The `@gusto/baerly-storage` npm package is bundled from here.
 2. `packages/server/src/db.ts` — the `Db` class. Public read/write
    surface for application code.
 3. `packages/server/src/table.ts`, `packages/server/src/query.ts` —
@@ -257,24 +257,24 @@ Read in this order to build a mental model:
    `examples/react-cloudflare/` (full React + Vite SPA over a
    `NoteSchema` collection; dev uses workerd-in-Vite via
    `@cloudflare/vite-plugin` + `baerlyDevAuth` from
-   `baerly-storage/dev/vite`), and `examples/react-node/` (same SPA +
-   `NoteSchema`; dev uses `baerlyDev()` from `baerly-storage/dev/vite`
+   `@gusto/baerly-storage/dev/vite`), and `examples/react-node/` (same SPA +
+   `NoteSchema`; dev uses `baerlyDev()` from `@gusto/baerly-storage/dev/vite`
    over `LocalFsStorage` as a single-Vite-process middleware) are the
    production-shaped scaffolds. Each scaffoldable example carries
    a `.baerly/scaffold.json` manifest declaring rename sentinels,
    copy exclusions, and devDep drops. The CLI consumes them at
    scaffold time via `STARTER_TO_EXAMPLE` in
-   `packages/create-baerly/src/scaffold.ts`; the rolldown build
+   `packages/create-baerly-storage/src/scaffold.ts`; the rolldown build
    copies them into `dist/templates/<name>/` so the published
-   `create-baerly` binary is self-contained.
+   `@gusto/create-baerly-storage` binary is self-contained.
    Opt-in add-ons live alongside the examples at
-   `packages/create-baerly/templates/addons/<name>/` (today: just
+   `packages/create-baerly-storage/templates/addons/<name>/` (today: just
    `docker/` — Dockerfile + healthcheck.js + .dockerignore). The
    scaffolder layers an add-on on top of the base template when
    `--with=<name>` is passed (Docker requires `--target=node`).
    `rolldown.config.ts` mirrors `templates/addons/` into
    `dist/templates/addons/` so the published binary ships them too.
-   Catalog index in `examples/README.md`. See `packages/create-baerly/AGENTS.md` for the full scaffold pipeline (examples → dist/templates → tgz → user dir).
+   Catalog index in `examples/README.md`. See `packages/create-baerly-storage/AGENTS.md` for the full scaffold pipeline (examples → dist/templates → tgz → user dir).
 
 The full lifecycle of `db.table().insert()` is in
 [docs/contributing/architecture.md](docs/contributing/architecture.md) — read it before
@@ -343,7 +343,7 @@ auto-load on matching edits and point at the same files.
   `@xmldom/xmldom`); every additional dep widens the kernel bundle
   and the audit surface for users. Justify any addition.
 - ✅ **Build-time / CLI / dev-tooling deps are fair game.** Inside
-  `packages/create-baerly/`, `packages/cli/`, `packages/dev/`,
+  `packages/create-baerly-storage/`, `packages/cli/`, `packages/dev/`,
   `bench/`, `manual-e2e/`, `scripts/`, and `examples/*/devDependencies`,
   prefer a well-maintained dep over reinventing it in-house. None
   of this code ends up in a user's production bundle, so the

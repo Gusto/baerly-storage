@@ -103,9 +103,9 @@ graph TD
 
 Two CLIs ship from this repo, and the split is load-bearing:
 
-- **`create-baerly`** (`packages/create-baerly/`) puts baerly into a
+- **`@gusto/create-baerly-storage`** (`packages/create-baerly-storage/`) puts baerly into a
   project — either by scaffolding from a template in `examples/` or by
-  bolting onto an existing Cloudflare Worker (`pnpm create baerly .`).
+  bolting onto an existing Cloudflare Worker (`pnpm create @gusto/baerly-storage@latest .`).
   It is the only npm-published CLI besides `baerly-storage` itself.
 - **`baerly`** (`packages/cli/`) does things to a project that already
   has baerly: `deploy`, `doctor`, `inspect`, `export`, `cost`, and the
@@ -113,10 +113,10 @@ Two CLIs ship from this repo, and the split is load-bearing:
   `dist/baerly.js` that the `baerly-storage` tarball ships.
 
 The two share one helper module — `@baerly/cli/wrangler-patch` — because
-both `baerly deploy --target=cloudflare` and `create-baerly`'s bolt-on
+both `baerly deploy --target=cloudflare` and `@gusto/create-baerly-storage`'s bolt-on
 flow merge into the same `wrangler.jsonc`. Everything else stays in its
 own package. See `packages/cli/AGENTS.md` and
-`packages/create-baerly/AGENTS.md` for the per-package quickrefs.
+`packages/create-baerly-storage/AGENTS.md` for the per-package quickrefs.
 
 ## Lifecycle of `db.table("X").insert(doc)`
 

@@ -18,36 +18,42 @@ The day-one gate asserts that a non-engineer + Claude can go from
 
 Without any manual credential editing.
 
-## Local install (pre-npm)
+## Local install (Phase 1 — Gusto private registry)
 
-> 🚧 **Pre-publish.** `create-baerly` + `@baerly/cli` are not yet
-> on npm. The canonical `pnpm dlx file:...tgz` flow doesn't resolve
-> the scaffolded `@baerly/*` / `create-baerly` `^0.1.0` devDeps,
-> which the registry doesn't know about. Tarball-based staging
-> lands separately; until then, validate the gate from inside this
-> clone:
+> 🚧 **Phase 1 private preview.** `@gusto/baerly-storage` +
+> `@gusto/create-baerly-storage` publish to Gusto's private npm
+> registry. From a Gusto machine with the `@gusto:` scope configured
+> (see `docs/contributing/development.md`):
+
+```sh
+pnpm create @gusto/baerly-storage@latest -- gate-smoke --target=node --json
+cd gate-smoke && pnpm install && pnpm dev
+```
+
+To validate from inside this clone without going through the
+registry (useful during scaffolder changes):
 
 ```sh
 pnpm install && pnpm -r build
 
 # Scaffold inside the workspace so pnpm-workspace.yaml resolves
-# @baerly/* + create-baerly to the in-tree packages. The scaffolder
-# rejects slashes in the project name, so cd into examples/ first:
+# @baerly/* + the scaffolder to the in-tree packages. The
+# scaffolder rejects slashes in the project name, so cd into
+# examples/ first:
 cd examples
-node ../packages/create-baerly/dist/index.js gate-smoke \
+node ../packages/create-baerly-storage/dist/index.js gate-smoke \
   --target=node --json
 
 cd gate-smoke && pnpm install && pnpm dev
 ```
 
-Once published, the canonical first-touch path is `npm create
-baerly@latest my-app` — the gate's `SUMMARY` assertions and stage
-names below are unchanged either way.
+The gate's `SUMMARY` assertions and stage names below are unchanged
+by which invocation path you use.
 
 ## When to run
 
 - Before a release.
-- After any change to `npm create baerly` (ticket 38), the deploy
+- After any change to `pnpm create @gusto/baerly-storage` (ticket 38), the deploy
   templates (tickets 39/40), or the auth presets (ticket 37).
 - After a `wrangler` major-version bump (the `--x-provision
 --x-auto-create` flags are experimental; renames break the gate).
