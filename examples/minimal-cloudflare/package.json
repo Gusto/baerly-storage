@@ -12,7 +12,7 @@
     "verify": "pnpm run typecheck && pnpm run test"
   },
   "dependencies": {
-    "baerly-storage": "workspace:*"
+    "@gusto/baerly-storage": "workspace:*"
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "^1.0.0",

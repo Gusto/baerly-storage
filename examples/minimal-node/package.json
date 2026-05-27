@@ -14,7 +14,7 @@
   "dependencies": {
     "@xmldom/xmldom": "^0.9.10",
     "aws4fetch": "^1.0.20",
-    "baerly-storage": "workspace:*"
+    "@gusto/baerly-storage": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

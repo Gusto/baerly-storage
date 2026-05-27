@@ -117,7 +117,7 @@ importers:
 
   examples/minimal-cloudflare:
     dependencies:
-      baerly-storage:
+      '@gusto/baerly-storage':
         specifier: workspace:*
         version: link:../..
     devDependencies:
@@ -148,15 +148,15 @@ importers:
 
   examples/minimal-node:
     dependencies:
+      '@gusto/baerly-storage':
+        specifier: workspace:*
+        version: link:../..
       '@xmldom/xmldom':
         specifier: ^0.9.10
         version: 0.9.10
       aws4fetch:
         specifier: ^1.0.20
         version: 1.0.20
-      baerly-storage:
-        specifier: workspace:*
-        version: link:../..
     devDependencies:
       '@types/node':
         specifier: ^24.0.0
@@ -176,7 +176,7 @@ importers:
 
   examples/react-cloudflare:
     dependencies:
-      baerly-storage:
+      '@gusto/baerly-storage':
         specifier: workspace:*
         version: link:../..
       react:
@@ -225,15 +225,15 @@ importers:
 
   examples/react-node:
     dependencies:
+      '@gusto/baerly-storage':
+        specifier: workspace:*
+        version: link:../..
       '@xmldom/xmldom':
         specifier: ^0.9.10
         version: 0.9.10
       aws4fetch:
         specifier: ^1.0.20
         version: 1.0.20
-      baerly-storage:
-        specifier: workspace:*
-        version: link:../..
       react:
         specifier: ^19.0.0
         version: 19.2.6
@@ -353,12 +353,6 @@ importers:
 
   packages/create-baerly:
     dependencies:
-      '@baerly/cli':
-        specifier: workspace:*
-        version: link:../cli
-      '@baerly/server':
-        specifier: workspace:*
-        version: link:../server
       '@clack/prompts':
         specifier: ^0.7.0
         version: 0.7.0
@@ -368,6 +362,13 @@ importers:
       picocolors:
         specifier: ^1.1.1
         version: 1.1.1
+    devDependencies:
+      '@baerly/cli':
+        specifier: workspace:*
+        version: link:../cli
+      '@baerly/server':
+        specifier: workspace:*
+        version: link:../server
 
   packages/dev:
     dependencies:
