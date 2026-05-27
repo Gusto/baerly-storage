@@ -10,8 +10,9 @@ import type { Fetcher } from "../request.ts";
  * inspects manually. Each `on(...)` call binds a method + path-
  * template; the matched handler runs the request arbitrarily.
  *
- * Lives in its own subpath (`@baerly/client/testing`) so non-test
- * consumers never bundle it.
+ * Internal-only: imported by `@baerly/client`'s own tests via
+ * relative paths; not re-exported through the `baerly-storage`
+ * subpath map.
  *
  * @example
  * ```ts

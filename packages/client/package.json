@@ -13,10 +13,6 @@
     "./react": {
       "types": "./src/react/index.ts",
       "import": "./src/react/index.ts"
-    },
-    "./testing": {
-      "types": "./src/testing/index.ts",
-      "import": "./src/testing/index.ts"
     }
   },
   "dependencies": {

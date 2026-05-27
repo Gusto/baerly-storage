@@ -121,6 +121,9 @@ const BUDGETS: readonly Budget[] = [
   //   → 354 KiB raw / 103 KiB gz: adding client, client-react,
   //     client-testing, dev, dev-vite, export, maintenance, and
   //     observability subpath entries caused rolldown to re-split
+  //     shared chunks. `client-testing` later demoted to internal-
+  //     only (no public subpath) — `dist/client-testing.{js,d.ts}`
+  //     no longer ships, but the index.js closure cost stayed.
   //     shared chunks again, pulling ~1093 more bytes into the
   //     index.js static closure. Measured post-rebase onto the
   //     2026-05-18 main: 361611 raw / 104537 gz.
@@ -359,12 +362,6 @@ const BUDGETS: readonly Budget[] = [
   //     predicate values flow through deps). Measured: 25063 raw /
   //     8534 gz — net +2541 raw / +1272 gz vs. pre-collapse.
   { entry: "client-react.js", raw: 26 * 1024, gz: 9 * 1024 },
-  // Testing helpers for `BaerlyClient` (in-memory fetcher etc.).
-  // Vitest is external; closure is minimal.
-  // Budget history:
-  //   → 8 KiB raw / 4 KiB gz: initial budget set in T9 based on
-  //     post-T8 measurement (3 KiB raw / 2 KiB gz).
-  { entry: "client-testing.js", raw: 8 * 1024, gz: 4 * 1024 },
   // `@baerly/dev` surface — `LocalFsStorage`, `printDevBanner`,
   // `ensureTable`, `renderDevLanding`. NO longer an aggregator over
   // the kernel barrel: the only kernel surfaces these helpers touch

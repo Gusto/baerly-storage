@@ -31,7 +31,6 @@ export default defineConfig({
     node: "packages/adapter-node/src/index.ts",
     client: "packages/client/src/index.ts",
     "client-react": "packages/client/src/react/index.ts",
-    "client-testing": "packages/client/src/testing/index.ts",
     dev: "packages/dev/src/index.ts",
     "dev-vite": "packages/dev/src/vite-plugin.ts",
   },

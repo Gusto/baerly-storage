@@ -66,10 +66,6 @@
       "types": "./packages/client/src/react/index.ts",
       "import": "./packages/client/src/react/index.ts"
     },
-    "./client/testing": {
-      "types": "./packages/client/src/testing/index.ts",
-      "import": "./packages/client/src/testing/index.ts"
-    },
     "./dev": {
       "types": "./packages/dev/src/index.ts",
       "import": "./packages/dev/src/index.ts"
@@ -121,10 +117,6 @@
       "./client/react": {
         "types": "./dist/client-react.d.ts",
         "import": "./dist/client-react.js"
-      },
-      "./client/testing": {
-        "types": "./dist/client-testing.d.ts",
-        "import": "./dist/client-testing.js"
       },
       "./dev": {
         "types": "./dist/dev.d.ts",

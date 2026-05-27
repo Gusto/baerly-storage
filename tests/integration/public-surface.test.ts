@@ -184,17 +184,6 @@ describe("baerly-storage/client/react", () => {
 });
 
 // ---------------------------------------------------------------------------
-// baerly-storage/client/testing
-// ---------------------------------------------------------------------------
-import { MockFetch } from "baerly-storage/client/testing";
-
-describe("baerly-storage/client/testing", () => {
-  test("imports resolve", () => {
-    expect(typeof MockFetch).toBe("function");
-  });
-});
-
-// ---------------------------------------------------------------------------
 // baerly-storage/dev
 // ---------------------------------------------------------------------------
 import { ensureTable, LocalFsStorage, printDevBanner, renderDevLanding } from "baerly-storage/dev";
