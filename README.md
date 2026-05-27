@@ -2,7 +2,9 @@
 
 **Storage is the missing primitive for agent-built software, and all you need is a library.**
 
-`baerly-storage` is a ~100 KB library that turns an S3-compatible bucket into a document database. All coordination — fencing, commit, compaction, garbage collection — runs inside the HTTP request or cron invocation that triggered it: no daemon, no leader, no service bill, no on-call. The only persistent component is your bucket; the kernel is small enough that an LLM can hold the whole `.d.ts` in context.
+`baerly-storage` is a library that turns an S3-compatible bucket into a document database. All coordination — fencing, commit, compaction, garbage collection — runs inside the HTTP request or cron invocation that triggered it: no daemon, no leader, no service bill, no on-call. The only persistent component is your bucket.
+
+96 KB gzipped on a Worker, 5 KB gzipped in the browser, zero services to run, and a kernel is small enough that an LLM can hold the whole `.d.ts` in context.
 
 [S3 is does the hard parts](https://aws.amazon.com/blogs/aws/amazon-s3-update-strong-read-after-write-consistency/), `baerly-storage` is the coordination that fixes the API. Document model, live queries, snapshot isolation — the whole surface in a `.d.ts` an LLM can use zero-shot.
 
