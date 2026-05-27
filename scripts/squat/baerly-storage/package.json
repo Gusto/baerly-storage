@@ -1,0 +1,12 @@
+{
+  "name": "baerly-storage",
+  "version": "0.0.0-reserved",
+  "private": false,
+  "description": "Gusto-owned name reservation. The real package will publish here when the OSS launch lands — see https://github.com/Gusto/baerly-storage.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Gusto/baerly-storage.git"
+  },
+  "main": "index.js"
+}
