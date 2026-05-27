@@ -16,7 +16,7 @@ export type BaerlyErrorCode =
   | "Internal"
   /**
    * Document body failed schema validation. Emitted by the table-API
-   * write verbs (`Table.insert`, `Query.update`, `Query.replace`) when
+   * write verbs (`Table.insert`, `Query.update`, `Table.replace`) when
    * the body is not valid JSON or contains an array where
    * `DocumentValue` is required; also emitted when a collection has a
    * declared `SchemaValidator` (via `Db.create({ collections })`) and
@@ -26,9 +26,8 @@ export type BaerlyErrorCode =
    */
   | "SchemaError"
   /**
-   * CAS lost on `current.json` (or, for `Query.replace`, the
-   * row-cardinality precondition failed). Caller decides whether
-   * to retry. Surfaces in the table API and HTTP layer.
+   * CAS lost on `current.json`. Caller decides whether to retry.
+   * Surfaces in the table API and HTTP layer.
    */
   | "Conflict"
   /**

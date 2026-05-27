@@ -325,10 +325,9 @@ const makeClientTable = <T extends DocumentData>(
       });
     },
     async replace(id, doc, opts): Promise<void> {
-      // PUT = whole-document overwrite; matches the server-side
-      // `Query.replace` single-row strict cardinality. NOT PATCH —
-      // PATCH would be RFC 7386 merge-patch and silently retain
-      // omitted fields from the prior doc.
+      // PUT = whole-document overwrite. NOT PATCH — PATCH would be
+      // RFC 7386 merge-patch and silently retain omitted fields from
+      // the prior doc.
       await request<{ modified: number }>(ctx, {
         method: "PUT",
         path: idPath(id),

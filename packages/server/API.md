@@ -127,10 +127,14 @@ interface Query<T> extends /* Table<T>'s modifiers */ {
   all(): Promise<T[]>;
   count(): Promise<number>;
   update(patch: Partial<T>): Promise<{ modified: number }>;   // bulk
-  replace(doc: T): Promise<void>;                              // single-row strict
   delete(): Promise<{ deleted: number }>;                      // bulk
 }
 ```
+
+`replace` is by-id only — `Table<T>.replace(id, doc)` throws
+`NotFound` on missing id. There is no predicate-form `.replace(doc)`
+on `Query<T>`: a strict-cardinality-1 verb is redundant ceremony to
+the by-id form (see ADR-002).
 
 ### Predicates
 
@@ -258,7 +262,7 @@ try {
 | `InvalidResponse`        | 502  | Server returned unparseable body                                     |
 | `Internal`               | 500  | Invariant violation — file a bug                                     |
 | `SchemaError`            | 422  | JSON shape invalid or bound schema rejected the doc                  |
-| `Conflict`               | 409  | CAS lost; or `replace` matched ≠ 1 row                               |
+| `Conflict`               | 409  | CAS retry budget exhausted, or `insert` `_id` collision              |
 | `Unauthorized`           | 401  | Verifier returned no identity                                        |
 | `NotFound`               | 404  | Row by id not found                                                  |
 | `PayloadTooLarge`        | 413  | Body > 1 MiB cap                                                     |

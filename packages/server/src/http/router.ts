@@ -161,30 +161,15 @@ export function createRouter(options: CreateRouterOptions): Hono {
   });
 
   // Replace — PUT /v1/t/:table/:id  Body: { doc }
-  // Whole-document overwrite (NOT merge-patch). Strict cardinality:
-  // missing row → 404; row matches → emits one `op:"U"` log entry
-  // with the post-image, dropping fields absent from `doc`.
+  // Whole-document overwrite (NOT merge-patch). Missing row → 404
+  // (kernel throws `NotFound` directly via `runReplaceById`); row
+  // matches → emits one `op:"U"` log entry with the post-image,
+  // dropping fields absent from `doc`.
   app.put("/v1/t/:table/:id", async (c) => {
     const { table, id } = c.req.param();
     const body = await readJsonBody(c, MAX_BODY_BYTES);
     const doc = assertJsonBodyField(body, "doc");
-    try {
-      await db.table(table).replace(id, doc as DocumentData);
-    } catch (error) {
-      // `Query.replace` raises `Conflict` with `expected exactly 1
-      // match, got 0` when the row is missing. Translate to the
-      // wire-level 404 NotFound the rest of the surface uses; let
-      // every other Conflict (CAS exhaustion, schema violation, etc.)
-      // bubble unchanged.
-      if (
-        error instanceof BaerlyError &&
-        error.code === "Conflict" &&
-        error.message.includes("got 0")
-      ) {
-        throw new BaerlyError("NotFound", `No such row: ${id}`);
-      }
-      throw error;
-    }
+    await db.table(table).replace(id, doc as DocumentData);
     return c.json({ modified: 1 }, 200);
   });
 

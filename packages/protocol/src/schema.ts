@@ -1,6 +1,6 @@
 /**
  * Schema-validator adapter type for `Db.insert` / `Query.update` /
- * `Query.replace` boundary checks.
+ * `Table.replace` boundary checks.
  *
  * Compatible with any library implementing StandardSchemaV1 — Zod
  * 3.24+, Valibot 0.36+, ArkType 2.0+, and others

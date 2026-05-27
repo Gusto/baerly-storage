@@ -140,9 +140,8 @@ export interface Table<T extends DocumentData = DocumentData> {
   update(id: string, patch: Partial<T>): Promise<{ modified: number }>;
 
   /**
-   * Whole-document replace on one row by primary key. For
-   * predicate-aware bulk replace, use `.where(predicate).replace(doc)`
-   * on {@link Query}.
+   * Whole-document replace on one row by primary key. Throws
+   * `BaerlyError{code:"NotFound"}` when no row exists at `id`.
    *
    * @example
    * ```ts
@@ -401,21 +400,6 @@ export interface Query<T extends DocumentData = DocumentData> {
    * ```
    */
   update(patch: Partial<T>): Promise<{ modified: number }>;
-
-  /**
-   * Predicate-aware whole-document replace on the first matching
-   * row. Throws `BaerlyError{code: "Conflict"}` if zero or more
-   * than one row matches — `replace` is intentionally narrow. For
-   * the single-row case prefer {@link Table.replace}(id, doc).
-   *
-   * @example
-   * ```ts
-   * await db.table("tickets")
-   *   .where({ status: "draft" })
-   *   .replace({ _id: "01HQ...", status: "open", title: "Rewrite" });
-   * ```
-   */
-  replace(doc: T): Promise<void>;
 
   /**
    * Predicate-aware bulk delete: every matching document. For the

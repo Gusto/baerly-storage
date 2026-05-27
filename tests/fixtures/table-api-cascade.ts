@@ -291,8 +291,8 @@ const runUpdateContract = async (
   }
 };
 
-/** Replace cardinality: exactly-one succeeds; zero / multiple → Conflict. */
-const runReplaceContract = async (
+/** `Table.replace(id, doc)`: by-id whole-document overwrite; `NotFound` on missing. */
+const runTableReplaceByIdContract = async (
   db: Db,
   storage: Storage,
   app: string,
@@ -300,24 +300,17 @@ const runReplaceContract = async (
 ): Promise<void> => {
   const t = freshTableName("replace");
   await provision(storage, app, tenant, t);
-  await db.table<Doc>(t).insert({ k: "only", v: 1 });
+  const { _id } = await db.table<Doc>(t).insert({ k: "only", v: 1 });
 
-  // Exactly one match — success. Replace doesn't return a value.
-  await db.table<Doc>(t).where({ k: "only" }).replace({ k: "only", v: 99 });
-  const got = await db.table<Doc>(t).where({ k: "only" }).first();
+  // Happy path: the row at `_id` is overwritten.
+  await db.table<Doc>(t).replace(_id, { _id, k: "only", v: 99 });
+  const got = await db.table<Doc>(t).get(_id);
   expect(got?.["v"]).toBe(99);
 
-  // Zero matches — Conflict.
+  // Missing id: NotFound.
   await expect(
-    db.table<Doc>(t).where({ k: "ghost" }).replace({ k: "ghost", v: 0 }),
-  ).rejects.toMatchObject({ code: "Conflict" });
-
-  // Two matches — Conflict.
-  await db.table<Doc>(t).insert({ k: "dup", v: 1 });
-  await db.table<Doc>(t).insert({ k: "dup", v: 2 });
-  await expect(
-    db.table<Doc>(t).where({ k: "dup" }).replace({ k: "dup", v: 3 }),
-  ).rejects.toMatchObject({ code: "Conflict" });
+    db.table<Doc>(t).replace("does-not-exist", { _id: "does-not-exist", k: "x", v: 0 }),
+  ).rejects.toMatchObject({ code: "NotFound" });
 };
 
 /** Delete contract: tombstones every match; no longer visible. */
@@ -856,7 +849,7 @@ export const runTableApiCascade = async (opts: {
   // 3. Writes.
   await runInsertContract(db, opts.storage, APP, tenant);
   await runUpdateContract(db, opts.storage, APP, tenant);
-  await runReplaceContract(db, opts.storage, APP, tenant);
+  await runTableReplaceByIdContract(db, opts.storage, APP, tenant);
   await runDeleteContract(db, opts.storage, APP, tenant);
 
   // 4. Transactions.

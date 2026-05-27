@@ -79,7 +79,7 @@ export interface TableReadContext {
   readonly tableName: string;
   /**
    * When defined, mutation verbs (`Table.insert`, `Query.update`,
-   * `Query.replace`, `Query.delete`) buffer a {@link BufferedMutation}
+   * `Table.replace`, `Query.delete`) buffer a {@link BufferedMutation}
    * onto `txCtx.mutations` instead of calling `Writer.commit`
    * directly. Reads ignore `txCtx` entirely — they go through
    * `Storage` live, by design (no MVCC; see `Db.transaction`'s JSDoc
@@ -103,7 +103,7 @@ export interface TableReadContext {
   readonly metrics?: MetricsRecorder;
   /**
    * Optional StandardSchemaV1-shaped validator for this collection.
-   * When set, `runInsert`, `runUpdate`, and `runReplace` validate the
+   * When set, `runInsert`, `runUpdate`, and `runReplaceById` validate the
    * post-image before committing or buffering — invalid input throws
    * `BaerlyError{code:"SchemaError"}` carrying a `.issues` array of
    * `{ path, message }` entries. `undefined` means no validation
@@ -270,7 +270,6 @@ export const makeQuery = <T extends DocumentData>(
       return res.rows.length;
     },
     update: (patch) => runUpdate<T>(ctx, state, patch),
-    replace: (doc) => runReplace<T>(ctx, state, doc),
     delete: () => runDelete<T>(ctx, state),
   };
 };
@@ -519,38 +518,39 @@ const runUpdate = async <T extends DocumentData>(
 };
 
 /**
- * `Query.replace` implementation. Strict row-cardinality precondition:
- * zero matches → `Conflict` (with cardinality in message); more than
- * one match → `Conflict` (same shape). Exactly one match: emit a
- * single `op:"U"` `LogEntry` carrying `doc` as the post-image
- * (`new === patch === doc` under today's per-doc-replace model).
+ * `Table.replace` implementation. Existence check via `runRead` over
+ * a `byId`-shaped wire so the `singleIdFromPredicate` PK fast path
+ * (`Map.get`) fires and any transaction-buffered insert of `id` is
+ * visible. Missing row → `NotFound` directly (no Conflict-string
+ * indirection through the router). Present row → emit a single
+ * `op:"U"` `LogEntry` carrying `doc` as the post-image, with `_id`
+ * forced to the requested `id` so doc identity is preserved across
+ * replaces even if the supplied `doc._id` differs.
  *
- * The matched row's `_id` is preserved on the emitted entry's
- * `doc_id` even if the supplied `doc` carries a different `_id` —
- * preserves doc identity across replaces. The locked contract
- * (`packages/protocol/src/table-api.ts:187–192`) does not pin this either
- * way; preserving identity is the safe default.
- *
- * @throws BaerlyError code="Conflict" — zero or more than one row
- *   matched (cardinality is named in the message), OR the writer's
- *   CAS retry budget exhausted.
+ * @throws BaerlyError code="NotFound" — no row exists at `id`.
+ * @throws BaerlyError code="SchemaError" — post-image rejected by
+ *   the collection's bound validator.
+ * @throws BaerlyError code="Conflict" — writer CAS retry budget
+ *   exhausted.
  */
-const runReplace = async <T extends DocumentData>(
+export const runReplaceById = async <T extends DocumentData>(
   ctx: TableReadContext,
-  state: QueryState<T>,
+  id: string,
   doc: T,
 ): Promise<void> => {
-  const { rows: found } = await runRead<T>(ctx, state);
-  if (found.length !== 1) {
-    throw new BaerlyError(
-      "Conflict",
-      `Query.replace: expected exactly 1 match, got ${found.length}`,
-    );
+  const wire: PredicateWire = {
+    clauses: [{ op: "eq", field: "_id", value: id }],
+  };
+  const state: QueryState<T> = {
+    wire,
+    order: undefined,
+    limit: undefined,
+  };
+  const { rows } = await runRead<T>(ctx, state);
+  if (rows.length === 0) {
+    throw new BaerlyError("NotFound", `No such row: ${id}`);
   }
-  const existingId = String(found[0]!["_id"]);
-  // Force the matched row's `_id` onto the post-image so the doc_id
-  // on the emitted entry matches the row we resolved against.
-  const body: DocumentData = { ...(doc as DocumentData), _id: existingId };
+  const body: DocumentData = { ...(doc as DocumentData), _id: id };
   // Schema validation runs against the post-image — same shape as
   // `runInsert`. Buffers in a transaction only after validation
   // passes; an invalid replace inside a tx aborts the body and
@@ -563,13 +563,13 @@ const runReplace = async <T extends DocumentData>(
   }
   if (ctx.txCtx !== undefined) {
     assertTxBindMatches(ctx);
-    ctx.txCtx.mutations.push({ op: "U", docId: existingId, body });
+    ctx.txCtx.mutations.push({ op: "U", docId: id, body });
     return;
   }
   await writerFor(ctx).commit({
     op: "U",
     collection: ctx.tableName,
-    docId: existingId,
+    docId: id,
     body,
   });
 };

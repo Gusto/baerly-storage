@@ -7,11 +7,8 @@
  *   - `memory`    — `MemoryStorage` shared per bucket; zero infra.
  *   - `local-fs`  — `LocalFsStorage` over a fresh tmp dir; zero infra.
  *   - `node-minio`— `S3HttpStorage` against Minio direct (no
- *                   Toxiproxy — `.replace()`'s exactly-one
- *                   cardinality precondition would flake under a
- *                   fault-injection twiddler; the randomized
- *                   cascade already covers the partition axis).
- *                   Gated on `MINIO=1`.
+ *                   Toxiproxy — the randomized cascade already covers
+ *                   the partition axis). Gated on `MINIO=1`.
  *
  * The fourth adapter (`cloudflare-r2`) runs under the
  * `cloudflare-pool` vitest project — see
@@ -29,11 +26,7 @@ import { join } from "node:path";
 import { AwsClient } from "aws4fetch";
 import { DOMParser } from "@xmldom/xmldom";
 import { afterEach, describe, test } from "vitest";
-import {
-  getOrCreateMemoryStorageForBucket,
-  type Storage,
-  uuid,
-} from "@baerly/protocol";
+import { getOrCreateMemoryStorageForBucket, type Storage, uuid } from "@baerly/protocol";
 import { S3HttpStorage } from "@baerly/adapter-node";
 import { LocalFsStorage } from "@baerly/dev";
 import { createBucket } from "../fixtures/s3-fixtures.ts";

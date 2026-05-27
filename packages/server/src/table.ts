@@ -1,9 +1,11 @@
 /**
- * `Table<T>` factory. `Db.table(name)` returns
- * the result of `makeTable(ctx)` — a cheap, no-I/O handle that
- * delegates every modifier to `makeQuery` with a fresh empty seed
- * state, and routes `insert` through the shared `runInsert` runtime
- * that `Query.update` / `replace` / `delete` reuse pieces of.
+ * `Table<T>` factory. `Db.table(name)` returns the result of
+ * `makeTable(ctx)` — a cheap, no-I/O handle. By-id mutations route
+ * through dedicated runners: `insert` → `runInsert`,
+ * `replace(id, doc)` → `runReplaceById`. `update(id, patch)` and
+ * `delete(id)` forward to the predicate-form runners via a `byId`
+ * wire — those Query verbs are genuinely bulk, so the by-id case is
+ * just a one-row predicate.
  *
  * `Table.insert(doc)` is the public insert path. The locked
  * `Query<T>` interface (`@baerly/protocol/src/table-api.ts`) intentionally
@@ -19,7 +21,7 @@ import {
   type PredicateWire,
   type Table,
 } from "@baerly/protocol";
-import { makeQuery, runInsert, type TableReadContext } from "./query.ts";
+import { makeQuery, runInsert, runReplaceById, type TableReadContext } from "./query.ts";
 
 /**
  * Build a `Table<T>` bound to one `(tenant, table)` read context.
@@ -85,7 +87,7 @@ export const makeTable = <T extends DocumentData>(ctx: TableReadContext): Table<
      */
     insert: (doc) => runInsert<T>(ctx, doc),
     update: (id, patch) => makeQuery<T>(ctx, byId(id)).update(patch),
-    replace: (id, doc) => makeQuery<T>(ctx, byId(id)).replace(doc),
+    replace: (id, doc) => runReplaceById<T>(ctx, id, doc),
     delete: (id) => makeQuery<T>(ctx, byId(id)).delete(),
   };
 };

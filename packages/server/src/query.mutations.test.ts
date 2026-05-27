@@ -4,7 +4,7 @@
 
 /**
  * Mutation terminals — `Table.insert`, `Query.update`,
- * `Query.replace`, `Query.delete`. MemoryStorage-only, pure-unit; no
+ * `Table.replace`, `Query.delete`. MemoryStorage-only, pure-unit; no
  * infra required.
  *
  * The matrix this file covers:
@@ -12,8 +12,8 @@
  *    LogEntry shape parity.
  *  - Update single/multi-match, RFC 7386 null-delete, return shape,
  *    zero-match no-op.
- *  - Replace exact-one success, zero/many Conflict with cardinality
- *    in message, matched-row _id preservation.
+ *  - Replace happy-path overwrite, `NotFound` on missing id,
+ *    matched-row `_id` preservation when `doc._id` differs.
  *  - Delete tombstone shape (no new/patch/old/key_old), return shape,
  *    post-delete visibility.
  *  - Per-row CAS retry semantics: forced contention succeeds within
@@ -247,7 +247,7 @@ describe("Query.update", () => {
   });
 });
 
-describe("Query.replace", () => {
+describe("Table.replace", () => {
   let storage: MemoryStorage;
   let db: Db;
 
@@ -257,7 +257,7 @@ describe("Query.replace", () => {
     await provision(storage);
   });
 
-  test("exactly one match: replaces the doc", async () => {
+  test("happy path: whole-document overwrite", async () => {
     const t = db.table<TicketDoc>(COLL);
     await t.insert({ _id: "r1", title: "old", status: "open" });
     await t.replace("r1", {
@@ -269,7 +269,7 @@ describe("Query.replace", () => {
     expect(after).toEqual({ _id: "r1", title: "completely-new", status: "archived" });
   });
 
-  test("zero matches: throws Conflict with cardinality (0) in message", async () => {
+  test("missing id: throws NotFound", async () => {
     const t = db.table<TicketDoc>(COLL);
     let thrown: unknown;
     try {
@@ -282,30 +282,10 @@ describe("Query.replace", () => {
       thrown = error;
     }
     expect(thrown).toBeInstanceOf(BaerlyError);
-    expect((thrown as BaerlyError).code).toBe("Conflict");
-    expect((thrown as BaerlyError).message).toMatch(/\b0\b/);
+    expect((thrown as BaerlyError).code).toBe("NotFound");
   });
 
-  test("multiple matches: throws Conflict with cardinality (>1) in message", async () => {
-    const t = db.table<TicketDoc>(COLL);
-    await t.insert({ _id: "m1", title: "x", status: "open" });
-    await t.insert({ _id: "m2", title: "y", status: "open" });
-    let thrown: unknown;
-    try {
-      await t.where({ status: "open" }).replace({
-        _id: "ignored",
-        title: "x",
-        status: "open",
-      });
-    } catch (error) {
-      thrown = error;
-    }
-    expect(thrown).toBeInstanceOf(BaerlyError);
-    expect((thrown as BaerlyError).code).toBe("Conflict");
-    expect((thrown as BaerlyError).message).toMatch(/\b2\b/);
-  });
-
-  test("replace preserves the matched row's _id even when doc carries a different one", async () => {
+  test("preserves the row's _id even when doc carries a different one", async () => {
     const t = db.table<TicketDoc>(COLL);
     await t.insert({ _id: "keep-me", title: "v1", status: "open" });
     await t.replace("keep-me", {
@@ -313,7 +293,7 @@ describe("Query.replace", () => {
       title: "v2",
       status: "open",
     });
-    // The matched row's id wins; the replaced doc lives under "keep-me".
+    // The requested id wins; the replaced doc lives under "keep-me".
     const after = await t.get("keep-me");
     expect(after).toBeDefined();
     expect(after!._id).toBe("keep-me");

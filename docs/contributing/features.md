@@ -272,7 +272,7 @@ zero overhead.
   [`packages/server/src/config.ts`](../../packages/server/src/config.ts)
   (`CollectionDefinition.schema`),
   [`packages/server/src/query.ts`](../../packages/server/src/query.ts)
-  (validation hooks in `runInsert` / `runUpdate` / `runReplace`)
+  (validation hooks in `runInsert` / `runUpdate` / `runReplaceById`)
 - Tests:
   [`packages/server/src/schema.test.ts`](../../packages/server/src/schema.test.ts),
   [`tests/integration/table-api.test.ts`](../../tests/integration/table-api.test.ts)

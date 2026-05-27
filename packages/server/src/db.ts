@@ -172,7 +172,7 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
    * `config.metrics` is an optional {@link MetricsRecorder} forwarded
    * to every {@link Writer} the `Db` constructs — both the
    * single-mutation path (`Table.insert` / `Query.update` /
-   * `Query.replace` / `Query.delete`) and the transaction path
+   * `Table.replace` / `Query.delete`) and the transaction path
    * ({@link Db.transaction}). Defaults to {@link noopMetricsRecorder}
    * so non-instrumented callers see zero behavioural change. The
    * observability layer wires its per-request recorder here
