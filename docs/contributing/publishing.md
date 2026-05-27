@@ -140,11 +140,32 @@ scratch dir — that's expected).
 
 ## Versioning
 
-Use a private-preview suffix on the version: `0.1.0-private.N`
-where `N` increments for each publish. Both packages bump
-together — they ship in the same release train. Update both root
-`package.json` and `packages/create-baerly-storage/package.json`
-in a single commit before publishing.
+Plain `0.x.y` semver — no pre-release suffixes. The `0.x` channel
+is itself the unstable signal; consumers under `^0.x` opt into "I
+might break you on a minor bump."
+
+- **Patch (`0.1.0` → `0.1.1`)**: routine iteration. Use during heavy
+  development even when changes are technically breaking — pre-1.0
+  semver doesn't owe consumers compat guarantees.
+- **Minor (`0.1.x` → `0.2.0`)**: a logical milestone. Something
+  you'd point at in a CHANGELOG or post in Slack. The bump is the
+  announcement signal.
+- **Major (`0.x` → `1.0.0`)**: a commitment to backwards
+  compatibility. Could be years away.
+
+Both packages bump together (same release train). Update root
+`package.json` and `packages/create-baerly-storage/package.json` in
+a single commit before publishing — for this volume of releases,
+hand-edit; if it ever grates, write a ~20-line script modeled on
+`scripts/verdaccio-publish.mjs` (bumps both, no auto-version, takes
+the version as an arg).
+
+Tag the release commit so `git log v0.1.4..v0.1.5` answers "what
+changed":
+
+```sh
+git tag v0.1.5 && git push --tags
+```
 
 ## Notes on the publish config
 

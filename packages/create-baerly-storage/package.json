@@ -1,6 +1,6 @@
 {
   "name": "@gusto/create-baerly-storage",
-  "version": "0.1.0-private.1",
+  "version": "0.1.0",
   "description": "Scaffold a new baerly-storage app. Run via `pnpm create @gusto/baerly-storage@latest -- my-app --target=cloudflare`.",
   "homepage": "https://github.com/Gusto/baerly-storage#readme",
   "bugs": {
