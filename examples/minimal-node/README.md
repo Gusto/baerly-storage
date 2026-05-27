@@ -1,9 +1,9 @@
 # minimal-node
 
-A baerly app scaffolded with `create-baerly` for the **Node** target —
+A baerly app scaffolded with `@gusto/create-baerly-storage` for the **Node** target —
 any host that runs `node server.js` (Railway, Render, Fly without
 Docker, Heroku, a VM, a container scheduler, your laptop). Uses
-`baerly-storage/node` against an S3-compatible bucket (AWS S3, R2 via
+`@gusto/baerly-storage/node` against an S3-compatible bucket (AWS S3, R2 via
 S3-compat, Minio, etc.). Ships `auth: "none"` so the day-1 happy
 path works with zero env vars; flip to a shared secret or wire
 `bearerJwt` against your OIDC IdP before deploy — see "Going to
@@ -42,7 +42,7 @@ pnpm install
 pnpm dev
 ```
 
-`pnpm dev` runs `vite`. `baerlyDev()` from `baerly-storage/dev/vite`
+`pnpm dev` runs `vite`. `baerlyDev()` from `@gusto/baerly-storage/dev/vite`
 mounts the Node HTTP listener as Connect middleware on the same Vite
 process that serves the SPA, so `GET /` hits the SPA on
 `http://localhost:5173/` and anything baerly handles (e.g.
@@ -96,7 +96,7 @@ Concrete shapes:
   to `.env`, run `pnpm install && pnpm build && pnpm start` under
   your process manager of choice (systemd, pm2, etc.).
 - **Container** (Docker, k8s, ECS, Fly Machines with a Dockerfile):
-  scaffold with `create-baerly --target=node --with=docker` to add
+  scaffold with `pnpm create @gusto/baerly-storage@latest --target=node --with=docker` to add
   a production Dockerfile, `.dockerignore`, and `healthcheck.js`
   alongside this shape, then `docker build .`.
 
@@ -107,7 +107,7 @@ Verify: `curl https://<your-service>/v1/healthz`.
 1. **Read `AGENTS.md`** for the agent-facing guide — predicates,
    indexes, schemas, auth recipes (JWKS setup), the in-process
    maintenance loop, and the graduation criteria. (Claude Code
-   users: `create-baerly` mirrors `AGENTS.md` to `CLAUDE.md` at
+   users: `@gusto/create-baerly-storage` mirrors `AGENTS.md` to `CLAUDE.md` at
    scaffold time.)
 2. **Declare your first collection schema** in `baerly.config.ts`
    via `defineConfig({ collections: { ... } })` and pass it to
@@ -167,7 +167,7 @@ Before deploy, follow `AGENTS.md` → "Going to production":
 - **Pattern C — JWKS-backed JWT (recommended for multi-tenant).**
   Same artifact in dev and prod; the factory `verifier:` override
   engages when `JWKS_URL` is set. `bearerJwt()` (re-exported from
-  `baerly-storage/auth`) validates against your IdP's JWKS endpoint
+  `@gusto/baerly-storage/auth`) validates against your IdP's JWKS endpoint
   (`https://<issuer>/.well-known/jwks.json`) with `JWT_ISSUER` +
   `JWT_AUDIENCE` and pins the tenant from a claim.
 

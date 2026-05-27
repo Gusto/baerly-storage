@@ -3,7 +3,7 @@
 Catalog of runnable baerly-storage example apps. Each subdirectory
 is a self-contained pnpm workspace — `cd` in, `pnpm install`, and
 `pnpm dev` (or the example's own script) brings it up. The same
-tree doubles as the template source for `create-baerly`: the CLI
+tree doubles as the template source for `@gusto/create-baerly-storage`: the CLI
 reads `examples/<name>/`, applies the `.baerly/scaffold.json`
 manifest (rename sentinels, copy exclusions, devDep drops), and
 writes the result into the user's target directory.
@@ -32,7 +32,7 @@ env-aware factory `verifier:` override; Pattern B flips
 entry look like?" answer.
 
 **Audience:** anyone scaffolding a new CF Worker target, or
-reading the canonical wiring for `baerly-storage/cloudflare` +
+reading the canonical wiring for `@gusto/baerly-storage/cloudflare` +
 R2 bindings + CF Access.
 
 **Run it:**
@@ -50,7 +50,7 @@ selector + `baerlyWorker`), then `wrangler.jsonc`
 ## minimal-node
 
 Bare self-hosted Node scaffold. S3-compatible bucket via
-`baerly-storage/node`. Ships `auth: "none"`; see the scaffold's
+`@gusto/baerly-storage/node`. Ships `auth: "none"`; see the scaffold's
 `AGENTS.md` "Going to production" recipes — Pattern B flips
 `auth: "shared-secret"`; Pattern C wires `bearerJwt` against your
 OIDC IdP via an env-aware factory `verifier:` override. Runs anywhere
@@ -60,7 +60,7 @@ a VM, any process manager. Scaffolded with `--target=node`.
 For a production Dockerfile alongside (distroless multi-stage build
 + `healthcheck.js` + `.dockerignore`), scaffold with
 `--target=node --with=docker`. The Docker add-on lives at
-`packages/create-baerly/templates/addons/docker/` and is layered on
+`packages/create-baerly-storage/templates/addons/docker/` and is layered on
 top of this same shape — no second template directory.
 
 **Audience:** anyone scaffolding a self-hosted Node baerly app —
@@ -75,7 +75,7 @@ pnpm dev
 ```
 
 `pnpm dev` runs a single `vite` process — `baerlyDev()` from
-`baerly-storage/dev/vite` mounts the Node HTTP listener as Connect
+`@gusto/baerly-storage/dev/vite` mounts the Node HTTP listener as Connect
 middleware on `:5173` next to the SPA dev server, backed by
 `LocalFsStorage`. No credentials needed; the `BUCKET` / `AWS_*` env
 vars are only required for `pnpm start` and the production deploy.
@@ -89,7 +89,7 @@ appear if you adopt one of the "Going to production" recipes.
 
 Cloudflare Workers scaffold with a React + Vite SPA. Schema-bound
 `notes` collection (Zod-validated, 3-field), R2-backed storage via
-`baerly-storage/cloudflare`. Ships `auth: "none"` (the SPA hits
+`@gusto/baerly-storage/cloudflare`. Ships `auth: "none"` (the SPA hits
 `/v1/*` unauthenticated; the schema validates writes server-side
 regardless of the auth posture). See the scaffold's `AGENTS.md`
 "Going to production" recipes — Pattern A flips to CF Access via an
@@ -121,14 +121,14 @@ read), then `baerly.config.ts` (the `NoteSchema` shape you extend),
 then `src/server/index.ts` (the verifier selector + `/v1/*` ↔
 Assets split).
 
-**Scaffold from the CLI:** `pnpm create baerly my-app --target=cloudflare --starter=react`.
+**Scaffold from the CLI:** `pnpm create @gusto/baerly-storage@latest my-app --target=cloudflare --starter=react`.
 
 ## react-node
 
 Self-hosted Node scaffold with a React + Vite SPA. LocalFs-backed
 storage in dev via `baerlyDev()` (single Vite process — Vite serves
 both `/v1/*` and the SPA), any S3-compatible bucket in production
-via `baerly-storage/node`. Ships `auth: "none"`; see the scaffold's
+via `@gusto/baerly-storage/node`. Ships `auth: "none"`; see the scaffold's
 `AGENTS.md` "Going to production" recipes — Pattern B flips
 `auth: "shared-secret"`; Pattern C wires `bearerJwt` against your
 OIDC IdP via an env-aware factory `verifier:` override. Demonstrates
@@ -160,14 +160,14 @@ read), then `baerly.config.ts` (the `NoteSchema` shape), then
 `src/server/index.ts` (the `s3Storage` / `r2Storage` selector +
 `baerlyNode` invocation for production).
 
-**Scaffold from the CLI:** `pnpm create baerly my-app --target=node --starter=react`
+**Scaffold from the CLI:** `pnpm create @gusto/baerly-storage@latest my-app --target=node --starter=react`
 (add `--with=docker` for a Dockerfile + healthcheck).
 
 ## Make a new example
 
 If the example should be CLI-scaffoldable, drop a
 `.baerly/scaffold.json` manifest at its root and wire it into
-`STARTER_TO_EXAMPLE` in `packages/create-baerly/src/scaffold.ts`.
+`STARTER_TO_EXAMPLE` in `packages/create-baerly-storage/src/scaffold.ts`.
 The manifest shape:
 
 ```jsonc
@@ -189,5 +189,5 @@ The manifest shape:
 
 Examples without a manifest are runnable but not CLI-
 scaffoldable. The rolldown build copies every example into
-`dist/templates/<name>/` so the published `create-baerly` binary
+`dist/templates/<name>/` so the published `@gusto/create-baerly-storage` binary
 is self-contained.

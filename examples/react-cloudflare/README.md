@@ -1,8 +1,8 @@
 # react-cloudflare
 
-A baerly app scaffolded with `create-baerly` for the **Cloudflare
+A baerly app scaffolded with `@gusto/create-baerly-storage` for the **Cloudflare
 Workers** target, with a React + Vite SPA. Single-bucket R2-backed
-deployment via `baerly-storage/cloudflare`. Ships `auth: "none"`
+deployment via `@gusto/baerly-storage/cloudflare`. Ships `auth: "none"`
 so the day-1 happy path works with zero env vars, plus a
 one-collection `notes` schema you extend; flip to Cloudflare Access
 or a shared secret before deploy — see "Production auth" below.
@@ -89,7 +89,7 @@ follow `AGENTS.md` → "Going to production":
   prod; the factory `verifier:` override engages when
   `CF_ACCESS_TEAM_DOMAIN` + `CF_ACCESS_AUDIENCE_TAG` are present in
   `wrangler.jsonc:vars`. The `cloudflareAccess()` preset
-  (re-exported from `baerly-storage/auth`) reads the JWT off
+  (re-exported from `@gusto/baerly-storage/auth`) reads the JWT off
   `Cf-Access-Jwt-Assertion`, validates it against your team's JWKS,
   and derives `tenantPrefix` from the email claim.
 - **Pattern B — `auth: "shared-secret"`.** Single-tenant
