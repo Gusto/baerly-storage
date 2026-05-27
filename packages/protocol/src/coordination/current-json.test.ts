@@ -653,7 +653,7 @@ describe("claimWriter vs single-PUT counter-example (patent C1)", () => {
       // adversary entries to cover the longest possible run with
       // headroom — falling through to the inner wall clock would
       // pollute scriptedDateStrings with a value that no caller can
-      // predict and break I2 for reasons unrelated to the fence.
+      // predict and break I3 for reasons unrelated to the fence.
       const script = makeAdversaryScript(adversary, 2 * writerSequence.length + 4, seed);
       const storage = new SkewedClockStorage(inner, script);
       const key = "tenant/coll/current.json";

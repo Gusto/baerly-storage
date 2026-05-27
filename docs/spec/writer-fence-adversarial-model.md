@@ -102,7 +102,9 @@ Under the threat model above, every observable execution of
 
 Each row enumerates a hostile or non-cooperative storage-server
 behavior, what the two-phase fence-claim observes, and which of
-invariants I1–I4 above is preserved or compromised.
+invariants **I1–I4** above is preserved or compromised. I5 (stamp
+idempotency within an epoch) is whole-trace and is pinned by the
+lying-Date property below rather than per-row in this table.
 
 | Failure mode | What `claimWriter` observes | I1 | I2 | I3 | I4 | Notes |
 |---|---|:-:|:-:|:-:|:-:|---|
