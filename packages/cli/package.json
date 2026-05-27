@@ -8,8 +8,7 @@
   ],
   "type": "module",
   "exports": {
-    "./wrangler-patch": "./src/wrangler-patch.ts",
-    "./init-snippet": "./src/init-snippet.ts"
+    "./wrangler-patch": "./src/wrangler-patch.ts"
   },
   "scripts": {
     "build": "rolldown -c",

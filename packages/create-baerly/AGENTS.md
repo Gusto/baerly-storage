@@ -1,8 +1,12 @@
 # create-baerly — agent quickref
 
+`create-baerly` puts baerly into a project. `baerly` does things to a
+project that already has baerly. (Companion: `packages/cli/AGENTS.md`.)
+
 The `pnpm create baerly` / `pnpm dlx create-baerly` CLI. Scaffolds a
-new app from one of the templates in `examples/`. Bundled to a
-single-file bin by rolldown.
+new app from one of the templates in `examples/`, or bolts onto an
+existing Cloudflare Worker project when `wrangler.jsonc` is detected.
+Bundled to a single-file bin by rolldown.
 
 ## Pipeline at a glance
 
@@ -79,12 +83,18 @@ Returns `BoltOnResult` containing `app`, `tenant`, `changes` (human-
 readable list), `snippet` (the worker-entry snippet text), `snippetTarget`
 (path from `wrangler.jsonc:main`), and `nextSteps`.
 
-**Pure helpers (in `@baerly/cli`):** `patchWranglerJsonc` and
-`readWranglerName`/`readWranglerMain` come from
-`@baerly/cli/wrangler-patch`; `renderWorkerEntrySnippet` comes from
-`@baerly/cli/init-snippet`. Both are consumed here and by `baerly
-deploy` (which patches wrangler.jsonc for the same reason on the other
-end of the lifecycle).
+**Pure helpers:** two flavors split by how many CLIs consume them.
+
+- *Shared with `baerly`:* `patchWranglerJsonc`, `readWranglerName`, and
+  `readWranglerMain` live in `@baerly/cli/wrangler-patch`. Imported here
+  *and* by `baerly deploy --target=cloudflare`
+  (`packages/cli/src/deploy/cloudflare.ts`), which patches the same file
+  on the other end of the lifecycle. Keeping a single source of truth for
+  wrangler.jsonc parsing/merging is why `@baerly/cli` still surfaces a
+  subpath export.
+- *Local to create-baerly:* `renderWorkerEntrySnippet` lives in
+  `./init-snippet.ts`. The deployed CLI never renders user-facing code
+  snippets, so there is no second consumer to share with.
 
 **Convex-style boundary:** structured config (`wrangler.jsonc`,
 `baerly.config.ts`) is fair game to write; the user's worker entry

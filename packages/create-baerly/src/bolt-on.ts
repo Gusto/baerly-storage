@@ -18,7 +18,7 @@ import { resolve } from "node:path";
 import { BaerlyError } from "@baerly/protocol";
 import type { BaerlyAppConfig } from "@baerly/server";
 import { patchWranglerJsonc, readWranglerName, readWranglerMain } from "@baerly/cli/wrangler-patch";
-import { renderWorkerEntrySnippet } from "@baerly/cli/init-snippet";
+import { renderWorkerEntrySnippet } from "./init-snippet.ts";
 import { detectPm, type Pm } from "./pm-detect.ts";
 import { defaultInstaller, type Installer } from "./install.ts";
 import { writeAgentRulesBlock, type AgentRulesResult } from "./agent-rules.ts";
