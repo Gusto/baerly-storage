@@ -95,7 +95,7 @@ bumped in a single CAS. There is no harvesting of the storage
 server's HTTP `Date` header and no second conditional PUT to back-
 stamp a server-extracted timestamp.
 
-## 4. mps3 (endpointservices/mps3, MIT, Eric Baer's prior work)
+## 4. mps3 (endpointservices/mps3, MIT, third-party prior art)
 
 mps3 (`docs/sync_protocol.md` in that repository) describes a
 two-step write — content + manifest, with a `touch last_change`
@@ -110,11 +110,15 @@ storage server's `Date` value into the manifest record. The
 skew, not durably captured as a per-claim provenance field via a
 second conditional PUT. This is the citable C1 gap.
 
-**Disclosure note.** Under 35 U.S.C. § 102(b) (AIA), prior work by
-the same inventor is not automatically exempt from prior-art
-analysis once outside the one-year grace window, and is listed on
-any Information Disclosure Statement regardless. mps3 is included
-here in the IDS-shaped catalogue for that reason.
+**Provenance and disclosure note.** mps3 is **third-party MIT OSS**
+authored by Tom Larkworthy and Taktile's automated build account
+under the `Endpoint Services` copyright (©2023 Endpoint Services).
+Eric Baer is not an mps3 contributor; `baerly-storage` is a fork of
+the public mps3 repository taken in May 2026 with no prior
+arrangement with the upstream author. Under 35 U.S.C. § 102(b)
+(AIA), mps3 has been publicly available since **2023-08-20** —
+well past the one-year bar — and is listed in this IDS-shaped
+catalogue on prior-art grounds regardless of authorship.
 
 ## 5. Adjacent S3-leader-election literature
 
