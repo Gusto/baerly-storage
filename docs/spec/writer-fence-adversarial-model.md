@@ -198,14 +198,17 @@ differentiation.
 
 ### Differentiation from mps3 (Date header used for clock correction)
 
-The author's prior work mps3 (`github.com/endpointservices/mps3`, MIT,
-public) uses the HTTP `Date` header returned by S3 as a *client-side
-clock-correction input* — clients accumulate observed `Date` values to
-estimate the trusted wall-clock for their own use, but the `Date` value
-is never written back into a durable storage object as a provenance
-field. mps3's two-step write (content + manifest + `touch last_change`)
-embeds a *client-minted* timestamp in the manifest filename; the server
-clock is never committed.
+mps3 (`github.com/endpointservices/mps3`, MIT, ©2023 Endpoint Services,
+public since 2023-08-20) is third-party OSS authored by Tom Larkworthy
+and Taktile's automated build account; `baerly-storage` is a fork of
+the public mps3 repository with no prior arrangement with the upstream
+author. mps3 uses the HTTP `Date` header returned by S3 as a
+*client-side clock-correction input* — clients accumulate observed
+`Date` values to estimate the trusted wall-clock for their own use, but
+the `Date` value is never written back into a durable storage object as
+a provenance field. mps3's two-step write (content + manifest + `touch
+last_change`) embeds a *client-minted* timestamp in the manifest
+filename; the server clock is never committed.
 
 The mechanism in `claimWriter`
 (`packages/protocol/src/coordination/current-json.ts`, lines 296–399)
