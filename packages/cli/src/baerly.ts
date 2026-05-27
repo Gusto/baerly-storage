@@ -20,7 +20,7 @@ import { runBin } from "./bin-runner.ts";
 /**
  * `baerly admin <command>` — operator-side reconciliation, inspection,
  * data-shovel, and maintenance tools. Today: `rebuild-index`, `dump`,
- * `restore`, `compact`, `gc`, `fsck`, `migrate`, `copy`, `usage`.
+ * `restore`, `fsck`, `migrate`, `copy`, `usage`.
  */
 const admin = defineCommand({
   meta: {
@@ -31,8 +31,6 @@ const admin = defineCommand({
     "rebuild-index": () => import("./admin/rebuild-index.ts").then((m) => m.rebuildIndexCmd),
     dump: () => import("./admin/dump.ts").then((m) => m.dumpCmd),
     restore: () => import("./admin/restore.ts").then((m) => m.restoreCmd),
-    compact: () => import("./admin/compact.ts").then((m) => m.compactCmd),
-    gc: () => import("./admin/gc.ts").then((m) => m.gcCmd),
     fsck: () => import("./admin/fsck.ts").then((m) => m.fsckCmd),
     migrate: () => import("./admin/migrate.ts").then((m) => m.migrateCmd),
     copy: () => import("./admin/copy.ts").then((m) => m.copy),

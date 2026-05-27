@@ -313,26 +313,6 @@ unless `--force` truncates first.
   [`packages/cli/src/admin/dump.test.ts`](../../packages/cli/src/admin/dump.test.ts),
   [`packages/cli/src/admin/restore.test.ts`](../../packages/cli/src/admin/restore.test.ts)
 
-## Operator CLI — `baerly admin compact` / `baerly admin gc`
-
-Two single-phase subcommands for forced maintenance against one
-collection. `admin compact` calls `compact()` directly (folds the
-live log tail into a new snapshot); `admin gc` calls `runGc()`
-directly (mark + sweep orphan blobs). A positive
-`--cloudflare-free-tier` bool flag applies the CF free-tier caps
-on either subcommand; `--min-entries` on `admin compact` overrides
-`minEntriesToCompact` for the on-demand pass. The JSON envelope on
-`admin compact` reports `compact.{written, entries_folded,
-log_seq_start_before, log_seq_start_after}`; on `admin gc` it
-reports `gc.{marked, swept, pendingDepth}`.
-
-- Implementation:
-  [`packages/cli/src/admin/compact.ts`](../../packages/cli/src/admin/compact.ts),
-  [`packages/cli/src/admin/gc.ts`](../../packages/cli/src/admin/gc.ts)
-- Tests:
-  [`packages/cli/src/admin/compact.test.ts`](../../packages/cli/src/admin/compact.test.ts),
-  [`packages/cli/src/admin/gc.test.ts`](../../packages/cli/src/admin/gc.test.ts)
-
 ## Operator CLI — `baerly admin fsck`
 
 Read-only consistency walk for one collection. Verifies
