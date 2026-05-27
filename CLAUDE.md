@@ -20,6 +20,10 @@ protocol kernel is small enough that an LLM can use the public API
 zero-shot from the `.d.ts` files alone. Theoretical foundations live
 in [docs/](docs/).
 
+**Current state:** Private Gusto preview during Phase 1; published as
+`@gusto/baerly-storage` to Gusto's private npm registry. Public OSS
+launch planned — see `docs/followups/publish-direction.md`.
+
 The protocol kernel and HTTP server are landed. Day-1 templates ship
 for Cloudflare Workers and self-hosted Node; both are first-class.
 AWS Lambda / Bun / Deno / Fly are an adapter package away.
