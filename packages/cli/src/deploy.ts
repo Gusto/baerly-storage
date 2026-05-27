@@ -7,7 +7,7 @@
  * server.js` after your PaaS or container build), so `baerly
  * deploy` rejects `target: "node"` with an actionable InvalidConfig.
  *
- * Exit-code contract (mirrors `baerly admin copy`):
+ * Exit-code contract (standard CLI shape):
  *   - 0 success.
  *   - 1 user error (InvalidConfig, missing config, unknown target).
  *   - 2 storage / external error (NetworkError, Wrangler returned

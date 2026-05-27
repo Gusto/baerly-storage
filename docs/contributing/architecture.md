@@ -243,8 +243,7 @@ constraint: anything platform-specific has to live in an adapter.
   fetches a snapshot from object storage, verifies the SHA-256
   baked into the filename, and returns a `Map<_id, body>`. Internal
   callers: the compactor's fold-base load, the reader
-  (`Query.runRead`), `runGc`, `rebuildIndex`. Cross-package
-  consumer: `baerly admin copy` in `@baerly/cli`. See
+  (`Query.runRead`), `runGc`, `rebuildIndex`, `migrate`. See
   [extending.md §5](extending.md#5-shared-utilities-on-the-public-surface).
 
 ## Storage layout in the bucket

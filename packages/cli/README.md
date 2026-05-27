@@ -56,7 +56,7 @@ on success.
 
 ## Environment
 
-`baerly admin copy` with an `s3://` URI requires:
+Any `s3://` bucket URI requires:
 
 | Var                           | Notes                                               |
 | ----------------------------- | --------------------------------------------------- |

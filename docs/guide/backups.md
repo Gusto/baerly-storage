@@ -1,22 +1,18 @@
 ---
-title: Backups via baerly admin copy
+title: Backups via baerly admin dump
 audience: operator
-summary: Cost-aware bucket-to-bucket point-in-time copy procedure with retention example.
-last-reviewed: 2026-05-20
-tags: [operations, backups, copy]
+summary: Daily NDJSON dump with retention rotation; restoring from any dump file.
+last-reviewed: 2026-05-27
+tags: [operations, backups, restore]
 related: ["../about/cost-model.md"]
 ---
 
-# Backups (`baerly admin copy`)
+# Backups (`dump` + `restore`)
 
-`baerly admin copy` takes a point-in-time copy of a Baerly collection
-bucket-to-bucket. It bypasses write-path compaction — emitting one
-L9 snapshot directly at the target — so cost is on the order of
-"snapshot + live tail", not "rows".
-
-This `copy` shape mirrors Turbopuffer's `copy_from_namespace` 75%
-write discount — the same physical insight: the source already paid
-for the fold.
+`baerly admin dump` emits canonical NDJSON of a collection's
+materialised view to stdout. Pair it with file-system rotation to
+get a portable, dated backup. Restore is the inverse: NDJSON in,
+fresh collection out via `baerly admin restore`.
 
 ## Daily cron with 7-day retention
 
@@ -26,7 +22,7 @@ for the fold.
 0 3 * * *  env BAERLY_S3_ENDPOINT=https://s3.us-east-1.amazonaws.com \
                 BAERLY_S3_ACCESS_KEY_ID=AKIA... \
                 BAERLY_S3_SECRET_ACCESS_KEY=... \
-            /opt/baerly/bin/backup.sh tickets acme \
+            /opt/baerly/bin/backup.sh acme t1 tickets \
             >> /var/log/baerly-backup.log 2>&1
 ```
 
@@ -35,45 +31,58 @@ Wrapper `/opt/baerly/bin/backup.sh` (`chmod +x`):
 ```sh
 #!/usr/bin/env bash
 set -euo pipefail
-APP="$1"; TENANT="$2"
+APP="$1"; TENANT="$2"; TABLE="$3"
 DATE="$(date -u +%Y-%m-%d)"
 RETAIN_DAYS=7
-CURRENT_JSON_KEY="app/${APP}/tenant/${TENANT}/manifests/${APP}/current.json"
+OUT_DIR=/var/backups/baerly
+mkdir -p "$OUT_DIR"
 
-ETAG="$(aws s3api head-object --bucket baerly-prod --key "$CURRENT_JSON_KEY" \
-        --query ETag --output text | tr -d '"')"
-[ -z "$ETAG" ] && { echo "no source ETag" >&2; exit 2; }
+baerly admin dump \
+  --bucket=s3://baerly-prod \
+  --app="$APP" \
+  --tenant="$TENANT" \
+  --table="$TABLE" \
+  > "${OUT_DIR}/${APP}-${TENANT}-${TABLE}-${DATE}.ndjson"
 
-baerly admin copy \
-  --from=s3://baerly-prod \
-  --from-snapshot="${CURRENT_JSON_KEY}@${ETAG}" \
-  --to="s3://baerly-backups/${DATE}"
-
-CUTOFF="$(date -u -d "${RETAIN_DAYS} days ago" +%Y-%m-%d)"
-aws s3 ls s3://baerly-backups/ | awk '{print $2}' | tr -d '/' | \
-  while read -r d; do
-    [ -n "$d" ] && [ "$d" \< "$CUTOFF" ] && \
-      aws s3 rm --recursive "s3://baerly-backups/$d/"
-  done
+find "$OUT_DIR" -name "${APP}-${TENANT}-${TABLE}-*.ndjson" \
+    -type f -mtime +"${RETAIN_DAYS}" -delete
 ```
 
-Exit-code contract: `baerly admin copy` exits non-zero on every failure.
-`set -e` fails the cron run loudly; cron's default mail behaviour
-routes stderr to the operator. Pass `--json` to switch output to
-structured envelopes (`{result:...}` on stdout for success,
-`{error:{code,message,command}}` on stderr for failure) — useful
-when the wrapper script consumes `baerly`'s output programmatically
-or when an agent drives the copy.
+Exit-code contract: `baerly admin dump` exits non-zero on every
+failure (1 = bad args / `InvalidConfig`, 2 = storage / network,
+3 = protocol invariant). `set -e` fails the cron run loudly;
+cron's default mail behaviour routes stderr to the operator. Pass
+`--json` to switch the success / error envelope to structured
+JSON on stdout / stderr — useful when the wrapper consumes
+`baerly`'s output programmatically or when an agent drives the
+backup.
+
+Off-host: replace the local `OUT_DIR` redirect with a pipe to
+`aws s3 cp - s3://baerly-backups/${APP}-${TENANT}/${DATE}.ndjson`
+and let S3 lifecycle handle retention instead of `find -mtime`.
 
 ## Storage cost
 
-A backup's footprint is ~1× the source's snapshot plus the live
-tail at cursor time. The engine's default
-`minEntriesToCompact` is 100, so the live tail is bounded at ~100
-entries; the snapshot dominates.
+A dump's footprint is roughly 1× the materialised view, encoded as
+canonical NDJSON (one row per line, ASCII-lex key order, no
+whitespace). The dump is byte-stable, so two semantically-equal
+collections produce byte-equal output — handy for diffing dated
+backups.
 
 ## Restoring
 
-Run `baerly admin copy --from=<backup-uri> --from-snapshot=<backup-cursor>
---to=<recovery-uri>`. The backup bucket's `current.json` carries
-the cursor; read its key + ETag via `aws s3api head-object`.
+Restore an empty bucket from any dump file:
+
+```sh
+baerly admin restore \
+  --bucket=s3://baerly-recovery \
+  --app=acme \
+  --tenant=t1 \
+  --table=tickets \
+  < /var/backups/baerly/acme-t1-tickets-2026-05-20.ndjson
+```
+
+If the target already has rows, pass `--force` to truncate first
+(bumps the writer fence and reseeds `current.json`). Per-row cost
+is 3 Class A ops per restored row + 1 PUT to seed `current.json`,
+so plan for `3N + 1` ops where N is the row count.

@@ -536,12 +536,9 @@ reference.
   (`packages/server/src/compactor.ts`) — load a content-addressed
   snapshot, verify its SHA-256 against the filename, and return the
   docs as a `Map<_id, body>`. Used internally by the compactor,
-  reader, GC, and rebuild-index paths. Cross-package consumer:
-  `baerly admin copy` (`packages/cli/src/admin/copy.ts`) folds the source
-  snapshot as the merge base before walking the live tail. Prefer
-  this over hand-rolling a snapshot reader — the function bakes in
-  the hash check, schema-version gate, and collection-mismatch
-  guard.
+  reader, GC, rebuild-index, and migrate paths. Prefer this over
+  hand-rolling a snapshot reader — the function bakes in the hash
+  check, schema-version gate, and collection-mismatch guard.
 
 Other utilities (e.g. `compact`, `runGc`, `rebuildIndex`) are
 end-to-end orchestrators rather than helpers; their entry points are

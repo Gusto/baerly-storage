@@ -34,7 +34,7 @@ For integrators and operators running Baerly against a real bucket.
   Datadog, Workers Analytics), cost-aware sampling.
 - `guide/troubleshooting.md` — known pain points: test gating,
   ports, fuzzer, CI formatting.
-- `guide/backups.md` — `baerly admin copy` bucket-to-bucket procedure.
+- `guide/backups.md` — `baerly admin dump` + `restore` daily-cron procedure.
 - Runnable scaffolds: `../examples/` (`minimal-cloudflare`,
   `minimal-node`, `react-cloudflare`, `react-node`). The Docker
   add-on lives at `../packages/create-baerly/templates/addons/docker/`

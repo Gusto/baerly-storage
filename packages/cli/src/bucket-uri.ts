@@ -1,11 +1,6 @@
 /**
- * Bucket URI parsing + cursor parsing for the CLI surface.
- *
- * `baerly admin copy` started life as the only caller, but `baerly
- * inspect`, `baerly export`, and every other `baerly admin <cmd>`
- * consume {@link parseBucketUri} too. The cursor parser is `baerly
- * admin copy`-only today but lives next to the URI parser for
- * cohesion.
+ * Bucket URI parsing for the CLI surface. Consumed by every
+ * `baerly admin <cmd>`, `baerly inspect`, and `baerly export`.
  *
  * Grammar:
  *   - `s3://<bucket>[/<prefix>]` — S3-compatible HTTP. Creds via env
@@ -20,11 +15,7 @@
 
 import { LocalFsStorage } from "@baerly/dev";
 import { minioStorage, r2Storage, s3Storage } from "@baerly/adapter-node";
-import {
-  BaerlyError,
-  getOrCreateMemoryStorageForBucket,
-  type Storage,
-} from "@baerly/protocol";
+import { BaerlyError, getOrCreateMemoryStorageForBucket, type Storage } from "@baerly/protocol";
 
 /**
  * Result of `parseBucketUri`. `storage` is a constructed `Storage`
@@ -36,16 +27,6 @@ export interface ParsedBucketUri {
   storage: Storage;
   /** Empty for no-prefix; non-empty always ends with "/". */
   keyPrefix: string;
-}
-
-/**
- * Result of `parseCursor`. Identifies which `current.json` to copy
- * from and the ETag observed at cursor mint time. `doCopy` refuses if
- * the live `current.json` ETag has moved past `expectedEtag`.
- */
-export interface ParsedCursor {
-  currentJsonKey: string;
-  expectedEtag: string;
 }
 
 /**
@@ -112,40 +93,6 @@ const requireEnv = (name: string): string => {
     throw new BaerlyError("InvalidConfig", `bucket URI: env var ${name} unset`);
   }
   return v;
-};
-
-/**
- * Parse a `baerly admin copy` cursor of shape `<currentJsonKey>@<etag>`.
- *
- * This is the `baerly admin copy` CLI cursor format. Distinct from the HTTP
- * `_meta.manifest_pointer` returned by read responses (which is
- * `<snapshot>@<next_seq>` — a view-generation cursor; see
- * `HttpOkMeta` in `packages/server/src/contract.ts`). The two
- * objects describe different things:
- *
- *   - `manifest_pointer` is a *view generation* — "the bytes I read
- *     were a function of (snapshot, next_seq)" — and is the read
- *     response's freshness witness.
- *   - This cursor is a *which-current.json-at-which-version* anchor —
- *     "copy the collection whose `current.json` is at key K and whose
- *     live ETag is E" — and lets `doCopy` refuse a stale cursor.
- *
- * The `@` separator is chosen because S3 ETags are double-quoted
- * (e.g. `"abc..."`) and `@` does not appear in the Baerly key
- * alphabet, so `lastIndexOf("@")` cleanly splits the two halves.
- *
- * @throws BaerlyError code="InvalidConfig" — missing `@`, empty
- *   `currentJsonKey`, or empty `etag`.
- */
-export const parseCursor = (cursor: string): ParsedCursor => {
-  const at = cursor.lastIndexOf("@");
-  if (at < 1 || at === cursor.length - 1) {
-    throw new BaerlyError(
-      "InvalidConfig",
-      `cursor must be "<currentJsonKey>@<etag>", got ${JSON.stringify(cursor)}`,
-    );
-  }
-  return { currentJsonKey: cursor.slice(0, at), expectedEtag: cursor.slice(at + 1) };
 };
 
 // Endpoint-shape dispatch for `s3://...` URIs. Extracted so the parser
