@@ -327,6 +327,15 @@ const BUDGETS: readonly Budget[] = [
   //     CommandOutput` helper moved from `@baerly/protocol` to
   //     `@baerly/adapter-node` and constructs its own `XMLParser`
   //     internally. Measured: 537300 raw / 154229 gz.
+  //
+  // Don't tighten below the headroom that the previous Measured line
+  // documents. The rolldown chunk graph for this closure is non-
+  // deterministic across builds (different module → src-* chunk
+  // assignments produce ~120 KiB raw of run-to-run variance on the
+  // same source). The 537300 figure is from one of the looser
+  // layouts and is the safe ceiling. See `pnpm build && pnpm vitest
+  // run tests/integration/bundle-size.test.ts` twice in a row to
+  // observe the drift directly.
   { entry: "node.js", raw: 540 * 1024, gz: 156 * 1024 },
   // Client surface — `BaerlyClient<TConfig>` + fetcher plumbing.
   // Browser/runtime-agnostic; no kernel modules in the closure.
