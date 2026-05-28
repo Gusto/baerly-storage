@@ -25,7 +25,7 @@ rules live in
 
 - [001 — Tenant CAS isolation](./001-tenant-cas-isolation.md)
 - [002 — API surface lock](./002-api-surface-lock.md)
-- [003 — Brand-prefix naming convention](./003-naming-convention.md)
+- [003 — `Baerly` prefix naming convention](./003-naming-convention.md)
 
 ## Template
 

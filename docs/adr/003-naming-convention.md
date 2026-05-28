@@ -1,25 +1,30 @@
 ---
-title: Brand-prefix naming convention
+title: Baerly-prefix naming convention
 audience: adr
-summary: ADR 003 — when public symbols carry the `Baerly` brand prefix.
-last-reviewed: 2026-05-21
+summary: ADR 003 — when public symbols carry the `Baerly` prefix.
+last-reviewed: 2026-05-28
 tags: [decision, adr, naming]
 related: [README.md, 002-api-surface-lock.md, "../about/thesis.md"]
 ---
 
-# 003 — Brand-prefix naming convention
+# 003 — `Baerly` prefix naming convention
 
 ## Status
 
-Accepted (2026-05-21).
+Accepted (2026-05-21). Reframed (2026-05-28) — `Baerly` is a
+shortening of the package name, not a brand; the decision rules
+are unchanged.
 
 ## Context
 
-The brand is "Baerly" (`docs/about/thesis.md`). The published npm
-package is `baerly-storage` — a description ("storage by Baerly"),
-not a shortening. The API surface uses the **brand**, not the
-package name. Most public symbols already follow a consistent rule;
-this ADR writes it down so future additions don't drift.
+The package is `baerly-storage`. The `Baerly` prefix that appears
+on a few public symbols is a shortening of that package name —
+used to disambiguate from globals (`Error`) or common user
+identifiers (`Client`, `Config`) where a bare symbol would be
+unreadable. It is not applied universally; doing so would just
+re-state the package name on every export. Most public symbols
+already follow a consistent rule; this ADR writes it down so
+future additions don't drift.
 
 Audit performed 2026-05-21 found one wart (`Env` exported from
 `@gusto/baerly-storage/cloudflare` was being universally re-aliased on
@@ -30,7 +35,7 @@ and Next.js conventions.
 
 ## Decision
 
-**The `Baerly` brand prefix carries a symbol when:**
+**The `Baerly` prefix carries a symbol when:**
 
 1. It is a boundary type the user constructs or catches —
    `BaerlyError`, `BaerlyClient`, `BaerlyConfig`, `BaerlyAppConfig`.
@@ -43,7 +48,7 @@ and Next.js conventions.
 3. It mirrors a platform-defined type the user would otherwise
    re-alias — `BaerlyEnv` extending Cloudflare's `Env`.
 
-**The `Baerly` brand prefix is dropped when:**
+**The `Baerly` prefix is dropped when:**
 
 1. The symbol is generic to the import context — `Db`, `Collection`,
    `Query`, `Storage`, `Writer`. Adding the prefix duplicates
@@ -59,8 +64,9 @@ and Next.js conventions.
 ## Counter-pattern
 
 Prefixing every symbol — `BaerlyDb`, `BaerlyCollection`, `BaerlyStorage`
-— would collide with the package name itself and break the
-zero-shot-legibility criterion in
+— literally re-states the package name (`baerly-storage` →
+`Baerly` + `Storage`) inside its own export. Beyond the
+redundancy, it breaks the zero-shot-legibility criterion in
 [the product thesis](../about/thesis.md) §"What prototype-tier
 storage needs" #4.
 
@@ -69,15 +75,15 @@ storage needs" #4.
 - **For contributors adding a public symbol:** apply the rule above
   before adding the export. If the symbol falls cleanly into "drops"
   but the rule feels wrong, that is a signal the boundary is off —
-  surface to a maintainer rather than papering with a brand prefix.
+  surface to a maintainer rather than papering with the prefix.
 - **For API stability:** [ADR-002](002-api-surface-lock.md) locks
-  the public surface additive-only post-launch. Brand-prefix changes
-  are pre-launch hygiene; once shipped, a rename is a breaking
-  change and held to the ADR-002 bar.
+  the public surface additive-only post-launch. `Baerly`-prefix
+  changes are pre-launch hygiene; once shipped, a rename is a
+  breaking change and held to the ADR-002 bar.
 - **For documentation:** `docs/contributing/extending.md`
   cross-links here so contributors adding a new `Db.foo()` /
   `Collection.bar()` method don't have to relitigate the convention.
 
 Future drift checks live in this ADR's "Decision" section, not in a
-test — a lint rule for branding is over-engineered for a one-page
+test — a lint rule for the prefix is over-engineered for a one-page
 convention.

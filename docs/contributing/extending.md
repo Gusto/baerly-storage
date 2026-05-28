@@ -18,7 +18,7 @@ patterns and your changes will fit the codebase's conventions.
 > *invariants* live in `packages/server/src/writer.ts`.
 
 > Before adding a public symbol to a barrel, read
-> [ADR-003 — brand-prefix naming convention](../adr/003-naming-convention.md).
+> [ADR-003 — `Baerly`-prefix naming convention](../adr/003-naming-convention.md).
 > It codifies when an export carries the `Baerly` prefix and when it
 > stays generic.
 
