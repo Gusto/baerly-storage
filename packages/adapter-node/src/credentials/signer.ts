@@ -28,16 +28,27 @@ export function refreshingSigner(opts: {
 
   const provider = opts.credentials;
   let cached: { aws: AwsClient; expiresAt: number } | null = null;
+  let inFlight: Promise<AwsClient> | null = null;
 
   const resolve = async (): Promise<AwsClient> => {
     if (cached !== null && cached.expiresAt - REFRESH_BUFFER_MS > now()) {
       return cached.aws;
     }
-    const creds = await provider();
-    const aws = buildAwsClient(creds, region);
-    const expiresAt = creds.expiration?.getTime() ?? Number.POSITIVE_INFINITY;
-    cached = { aws, expiresAt };
-    return aws;
+    if (inFlight !== null) {
+      return inFlight;
+    }
+    inFlight = (async () => {
+      try {
+        const creds = await provider();
+        const aws = buildAwsClient(creds, region);
+        const expiresAt = creds.expiration?.getTime() ?? Number.POSITIVE_INFINITY;
+        cached = { aws, expiresAt };
+        return aws;
+      } finally {
+        inFlight = null;
+      }
+    })();
+    return inFlight;
   };
 
   return async (req) => {
