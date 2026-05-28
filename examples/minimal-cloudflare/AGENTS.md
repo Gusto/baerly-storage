@@ -298,6 +298,7 @@ The scaffold ships `auth: "none"` so the day-1 happy path works with
 zero env vars. Two patterns flip to a production-fit posture; pick the
 one matching your gate.
 
+<!-- pattern-a:start -->
 **Pattern A — env-aware verifier (recommended for CF Access).** Same
 artifact ships to dev and prod; the factory `verifier:` override
 engages only when prod env vars are present. `baerlyWorker` resolves
@@ -346,6 +347,8 @@ secrets). Dev `wrangler dev` sees them as `undefined`, the spread
 short-circuits, and `config.auth: "none"` runs. Prod sees them set
 and `cloudflareAccess` engages.
 
+<!-- pattern-a:end -->
+<!-- pattern-b:start -->
 **Pattern B — `auth: "shared-secret"`.** Single-tenant
 server-to-server callers (CI, cron, internal services). No factory
 code changes; only `baerly.config.ts` flips:
@@ -387,6 +390,7 @@ export default defineConfig({
 if `auth: "shared-secret"` is set without `SHARED_SECRET` reachable
 from the runtime env.
 
+<!-- pattern-b:end -->
 - **Extending the Worker with a custom route** — `baerlyWorker(...)`
   owns `/v1/*` + `/healthz`. For server-side endpoints the SPA
   client can't run on its own (the canonical case: an endpoint that

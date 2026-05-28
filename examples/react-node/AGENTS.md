@@ -313,6 +313,7 @@ zero env vars. The `NoteSchema` in `baerly.config.ts` continues to
 validate writes server-side under every posture below — only the
 header-check seam changes.
 
+<!-- pattern-b:start -->
 **Pattern B — `auth: "shared-secret"`** (single-tenant
 server-to-server). No factory code changes; `baerly.config.ts` flips:
 
@@ -327,6 +328,8 @@ manager). `baerly doctor --target=node` FAILs if
 `auth: "shared-secret"` is set without `SHARED_SECRET` reachable from
 `process.env`.
 
+<!-- pattern-b:end -->
+<!-- pattern-c:start -->
 **Pattern C — JWKS-backed JWT** (multi-tenant; OIDC IdP). The factory
 `verifier:` overrides `config.auth`, so dev keeps `"none"` and prod
 gets `bearerJwt`:
@@ -364,6 +367,7 @@ Dev sees `JWKS_URL` as `undefined`, spread short-circuits, and
 `config.auth: "none"` runs. Prod sets `JWKS_URL` + `JWT_ISSUER` +
 `JWT_AUDIENCE` and `bearerJwt` engages.
 
+<!-- pattern-c:end -->
 - **Storage backend** — `src/server/index.ts` picks between
   `s3Storage` (AWS) and `r2Storage` (Cloudflare R2 via S3-compat)
   based on whether `R2_ACCOUNT_ID` is set. To use **Minio**
