@@ -31,7 +31,6 @@ invariants, operator runbooks, and target-specific bolt-ons.
 - `guide/auth.md` — The `config.auth` graduated postures and the no-built-in-authorization caveat. Preset reference and Verifier-shape rationale live elsewhere.
 - `guide/backups.md` — Daily NDJSON dump with retention rotation; restoring from any dump file.
 - `guide/client-auth.md` — Cross-cutting four-quadrant analysis of the SPA → API auth seam (dev/prod × Cloudflare/Node) — synthesis first, hardened per-quadrant recipes live in scaffold AGENTS.md files.
-- `guide/embed.md` — A ~30-line snippet for embedding baerly-storage in an existing Node app, bypassing the @gusto/create-baerly-storage scaffold.
 - `guide/observability.md` — Sinks (OTel / Workers Analytics Engine / Datadog), cost-ballooning anti-patterns, and known gaps. Canonical log-line shape lives in dist/API.md.
 - Runnable scaffolds: `../examples/` (`minimal-cloudflare`,
   `minimal-node`, `react-cloudflare`, `react-node`).
