@@ -57,8 +57,10 @@ Anti-patterns that compile but are wrong:
 - \`z.string().nullable()\` — \`DocumentValue\` excludes \`null\`. Use
   \`.optional()\`; \`null\` in update patches is the RFC 7396 deletion
   sentinel.
-- SQL strings, raw \`WHERE\` clauses — the API is the Drizzle-shaped
-  chain: \`.where({ field: ['=', value] }).all()\`.
+- SQL strings, raw \`WHERE\` clauses — the API is a method-chain
+  only: \`.where({ field: value }).all()\` (object literal, equality)
+  or \`.where(q => q.gte("field", n)).all()\` (callback DSL,
+  operators: \`eq\` / \`gt\` / \`gte\` / \`lt\` / \`lte\` / \`in\`).
 - \`.all()\` on a hot path — page or cursor-iterate. \`.all()\` is for
   bounded result sets only.
 ${BLOCK_END}

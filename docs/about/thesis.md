@@ -2,7 +2,7 @@
 title: Product thesis
 audience: product
 summary: Why Baerly exists, what it is, and what it deliberately is not.
-last-reviewed: 2026-05-27
+last-reviewed: 2026-05-28
 tags: [positioning, product]
 related: [cost-model.md, "../contributing/conventions/change-discipline.md"]
 ---
@@ -182,14 +182,22 @@ Each design choice falls out of a specific criterion above.
   Per-collection CAS scope ([ADR-001](../adr/001-tenant-cas-isolation.md))
   is what keeps the idle-poll bound tractable: one cheap key per
   collection, not contention on a global mutex.
-- **LLM-legible API.** Drizzle-shaped, not SQL strings. Two predicate
-  shapes — object literal for equality
-  (`db.collection('tickets').where({ status: 'open' }).all()`) and a
-  callback builder for the operator vocabulary
-  (`db.collection('tickets').where(q => q.gte('priority', 5)).all()`). The
-  methods on `PredicateBuilder<T>` ARE the supported surface —
-  methods we did not write (`or`, `regex`, `ne`) cannot be invoked.
-  Seven verbs, five modifiers, one transaction. Operators are added
+- **LLM-legible API.** Document-DB-shaped — closer to Convex than to
+  Mongo or Drizzle. `db.collection("name")` is the Mongo-style
+  lookup idiom; by-id verbs on the collection handle
+  (`.get(id)` / `.update(id, patch)` / `.replace(id, doc)` /
+  `.delete(id)`) and the callback-DSL predicate builder are
+  Convex's. No SQL builder, no `$`-operators, no standalone
+  operator imports. Two predicate shapes — object literal for
+  equality (`db.collection('tickets').where({ status: 'open' }).all()`)
+  and a callback DSL for the operator vocabulary
+  (`db.collection('tickets').where(q => q.gte('priority', 5)).all()`).
+  The methods on `PredicateBuilder<T>` ARE the supported vocabulary
+  — `or` / `not` / `regex` / `ne` / `exists` cannot be invoked
+  because they don't exist. Eight verbs (`first`, `all`, `count`,
+  `get`, `insert`, `update`, `replace`, `delete`), three modifiers
+  (`where`, `order`, `limit`), six predicate operators (`eq`, `gt`,
+  `gte`, `lt`, `lte`, `in`), one transaction. Operators are added
   one at a time, each gated by whether it admits a correct SQL
   translation. The whole interface lives in `.d.ts` files small
   enough that even smaller OSS LLMs can keep them in context. The
