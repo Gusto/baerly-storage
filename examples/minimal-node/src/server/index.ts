@@ -25,14 +25,18 @@ const storage: Storage =
     ? r2Storage({
         accountId: reqEnv("R2_ACCOUNT_ID"),
         bucket: reqEnv("BUCKET"),
-        accessKeyId: reqEnv("AWS_ACCESS_KEY_ID"),
-        secretAccessKey: reqEnv("AWS_SECRET_ACCESS_KEY"),
+        credentials: {
+          accessKeyId: reqEnv("AWS_ACCESS_KEY_ID"),
+          secretAccessKey: reqEnv("AWS_SECRET_ACCESS_KEY"),
+        },
       })
     : s3Storage({
         region: process.env["AWS_REGION"] ?? "us-east-1",
         bucket: reqEnv("BUCKET"),
-        accessKeyId: reqEnv("AWS_ACCESS_KEY_ID"),
-        secretAccessKey: reqEnv("AWS_SECRET_ACCESS_KEY"),
+        credentials: {
+          accessKeyId: reqEnv("AWS_ACCESS_KEY_ID"),
+          secretAccessKey: reqEnv("AWS_SECRET_ACCESS_KEY"),
+        },
       });
 
 const PORT = Number(process.env["PORT"] ?? 8080);

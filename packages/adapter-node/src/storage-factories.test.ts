@@ -6,8 +6,7 @@ describe("storage factories", () => {
   // methods are present as functions. We don't dispatch any HTTP
   // here; the conformance test exercises the wire.
   const sample = {
-    accessKeyId: "AKIAEXAMPLE",
-    secretAccessKey: "secret",
+    credentials: { accessKeyId: "AKIAEXAMPLE", secretAccessKey: "secret" },
     bucket: "b",
   };
 
@@ -20,8 +19,7 @@ describe("storage factories", () => {
       () =>
         gcsStorage({
           bucket: "b",
-          hmacAccessKeyId: "k",
-          hmacSecret: "s",
+          credentials: { accessKeyId: "k", secretAccessKey: "s" },
         }),
     ],
   ] as const) {

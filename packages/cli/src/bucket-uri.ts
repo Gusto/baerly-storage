@@ -109,12 +109,16 @@ interface S3StoragePick {
 const pickS3Storage = (opts: S3StoragePick): Storage => {
   const { r2Host, isAws, endpoint, bucket, accessKeyId, secretAccessKey, region } = opts;
   if (r2Host !== null) {
-    return r2Storage({ accountId: r2Host[1]!, bucket, accessKeyId, secretAccessKey });
+    return r2Storage({
+      accountId: r2Host[1]!,
+      bucket,
+      credentials: { accessKeyId, secretAccessKey },
+    });
   }
   if (isAws) {
-    return s3Storage({ region, bucket, accessKeyId, secretAccessKey });
+    return s3Storage({ region, bucket, credentials: { accessKeyId, secretAccessKey } });
   }
-  return minioStorage({ endpoint, bucket, accessKeyId, secretAccessKey });
+  return minioStorage({ endpoint, bucket, credentials: { accessKeyId, secretAccessKey } });
 };
 
 // "/foo" → "foo/"; "" → ""; "foo/" stays "foo/". S3 prefixes are

@@ -1,25 +1,16 @@
-import { AwsClient } from "aws4fetch";
 import type { Storage } from "@baerly/protocol";
 import { S3HttpStorage } from "./s3-http.ts";
+import { refreshingSigner } from "./credentials/signer.ts";
+import type { Credentials, CredentialsProvider } from "./credentials/types.ts";
 
 function buildS3Storage(opts: {
   endpoint: string;
   region: string;
   bucket: string;
-  accessKeyId: string;
-  secretAccessKey: string;
+  credentials: Credentials | CredentialsProvider;
 }): Storage {
-  const aws = new AwsClient({
-    accessKeyId: opts.accessKeyId,
-    secretAccessKey: opts.secretAccessKey,
-    region: opts.region,
-    service: "s3",
-  });
-  return new S3HttpStorage({
-    endpoint: opts.endpoint,
-    bucket: opts.bucket,
-    sign: (req) => aws.sign(req),
-  });
+  const sign = refreshingSigner({ region: opts.region, credentials: opts.credentials });
+  return new S3HttpStorage({ endpoint: opts.endpoint, bucket: opts.bucket, sign });
 }
 
 /**
@@ -27,30 +18,41 @@ function buildS3Storage(opts: {
  * `aws4fetch` SigV4 signer. The endpoint is derived from the region as
  * `https://s3.<region>.amazonaws.com`.
  *
- * @example
+ * @example Static credentials
  * ```ts
  * import { s3Storage } from "@gusto/baerly-storage/node";
  *
  * const storage = s3Storage({
  *   region: process.env["AWS_REGION"] ?? "us-east-1",
  *   bucket: process.env["BUCKET"]!,
- *   accessKeyId: process.env["AWS_ACCESS_KEY_ID"]!,
- *   secretAccessKey: process.env["AWS_SECRET_ACCESS_KEY"]!,
+ *   credentials: {
+ *     accessKeyId: process.env["AWS_ACCESS_KEY_ID"]!,
+ *     secretAccessKey: process.env["AWS_SECRET_ACCESS_KEY"]!,
+ *   },
+ * });
+ * ```
+ *
+ * @example EKS Pod Identity (refreshing)
+ * ```ts
+ * import { s3Storage, fromEksPodIdentity } from "@gusto/baerly-storage/node";
+ *
+ * const storage = s3Storage({
+ *   region: process.env["AWS_REGION"] ?? "us-east-1",
+ *   bucket: process.env["BUCKET"]!,
+ *   credentials: fromEksPodIdentity(),
  * });
  * ```
  */
 export function s3Storage(opts: {
   region: string;
   bucket: string;
-  accessKeyId: string;
-  secretAccessKey: string;
+  credentials: Credentials | CredentialsProvider;
 }): Storage {
   return buildS3Storage({
     endpoint: `https://s3.${opts.region}.amazonaws.com`,
     region: opts.region,
     bucket: opts.bucket,
-    accessKeyId: opts.accessKeyId,
-    secretAccessKey: opts.secretAccessKey,
+    credentials: opts.credentials,
   });
 }
 
@@ -72,23 +74,23 @@ export function s3Storage(opts: {
  * const storage = r2Storage({
  *   accountId: process.env["R2_ACCOUNT_ID"]!,
  *   bucket: process.env["BUCKET"]!,
- *   accessKeyId: process.env["AWS_ACCESS_KEY_ID"]!,
- *   secretAccessKey: process.env["AWS_SECRET_ACCESS_KEY"]!,
+ *   credentials: {
+ *     accessKeyId: process.env["AWS_ACCESS_KEY_ID"]!,
+ *     secretAccessKey: process.env["AWS_SECRET_ACCESS_KEY"]!,
+ *   },
  * });
  * ```
  */
 export function r2Storage(opts: {
   accountId: string;
   bucket: string;
-  accessKeyId: string;
-  secretAccessKey: string;
+  credentials: Credentials | CredentialsProvider;
 }): Storage {
   return buildS3Storage({
     endpoint: `https://${opts.accountId}.r2.cloudflarestorage.com`,
     region: "auto",
     bucket: opts.bucket,
-    accessKeyId: opts.accessKeyId,
-    secretAccessKey: opts.secretAccessKey,
+    credentials: opts.credentials,
   });
 }
 
@@ -106,31 +108,32 @@ export function r2Storage(opts: {
  * const storage = minioStorage({
  *   endpoint: process.env["BAERLY_S3_ENDPOINT"] ?? "http://localhost:9102",
  *   bucket: "baerly",
- *   accessKeyId: process.env["MINIO_ACCESS_KEY"]!,
- *   secretAccessKey: process.env["MINIO_SECRET_KEY"]!,
+ *   credentials: {
+ *     accessKeyId: process.env["MINIO_ACCESS_KEY"]!,
+ *     secretAccessKey: process.env["MINIO_SECRET_KEY"]!,
+ *   },
  * });
  * ```
  */
 export function minioStorage(opts: {
   endpoint: string;
   bucket: string;
-  accessKeyId: string;
-  secretAccessKey: string;
+  credentials: Credentials | CredentialsProvider;
 }): Storage {
   return buildS3Storage({
     endpoint: opts.endpoint,
     region: "us-east-1",
     bucket: opts.bucket,
-    accessKeyId: opts.accessKeyId,
-    secretAccessKey: opts.secretAccessKey,
+    credentials: opts.credentials,
   });
 }
 
 /**
  * Google Cloud Storage `Storage` factory via the S3-compat endpoint
  * at `https://storage.googleapis.com`. Authentication uses GCS HMAC
- * keys (Console → Settings → Interoperability). Region is pinned to
- * `"auto"`.
+ * keys (Console → Settings → Interoperability) — the HMAC access key
+ * goes into `credentials.accessKeyId` and the HMAC secret goes into
+ * `credentials.secretAccessKey`. Region is pinned to `"auto"`.
  *
  * GCS's S3-compat surface supports the four `Storage` methods
  * (`get`/`put`/`delete`/`list`) but not all of S3's optional
@@ -142,21 +145,21 @@ export function minioStorage(opts: {
  *
  * const storage = gcsStorage({
  *   bucket: process.env["BUCKET"]!,
- *   hmacAccessKeyId: process.env["GCS_HMAC_ACCESS_KEY_ID"]!,
- *   hmacSecret: process.env["GCS_HMAC_SECRET"]!,
+ *   credentials: {
+ *     accessKeyId: process.env["GCS_HMAC_ACCESS_KEY_ID"]!,
+ *     secretAccessKey: process.env["GCS_HMAC_SECRET"]!,
+ *   },
  * });
  * ```
  */
 export function gcsStorage(opts: {
   bucket: string;
-  hmacAccessKeyId: string;
-  hmacSecret: string;
+  credentials: Credentials | CredentialsProvider;
 }): Storage {
   return buildS3Storage({
     endpoint: "https://storage.googleapis.com",
     region: "auto",
     bucket: opts.bucket,
-    accessKeyId: opts.hmacAccessKeyId,
-    secretAccessKey: opts.hmacSecret,
+    credentials: opts.credentials,
   });
 }

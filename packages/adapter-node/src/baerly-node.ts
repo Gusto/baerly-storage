@@ -139,8 +139,10 @@ const buildCurrentJsonKey = (app: string, tenant: string, collection: string): s
  *   storage: s3Storage({
  *     region: "us-east-1",
  *     bucket: process.env["BUCKET"]!,
- *     accessKeyId: process.env["AWS_ACCESS_KEY_ID"]!,
- *     secretAccessKey: process.env["AWS_SECRET_ACCESS_KEY"]!,
+ *     credentials: {
+ *       accessKeyId: process.env["AWS_ACCESS_KEY_ID"]!,
+ *       secretAccessKey: process.env["AWS_SECRET_ACCESS_KEY"]!,
+ *     },
  *   }),
  *   // No verifier needed when config.auth is "none" or "shared-secret".
  *   webRoot: "./dist/client",

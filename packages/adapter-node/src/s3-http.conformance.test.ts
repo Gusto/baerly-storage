@@ -86,8 +86,7 @@ describe.runIf(minioEnabled)("minioStorage factory @ Minio :9102", () => {
       storage: minioStorage({
         endpoint: MINIO_ENDPOINT,
         bucket: BUCKET,
-        accessKeyId: MINIO_ACCESS_KEY,
-        secretAccessKey: MINIO_SECRET_KEY,
+        credentials: { accessKeyId: MINIO_ACCESS_KEY, secretAccessKey: MINIO_SECRET_KEY },
       }),
     }),
     {
