@@ -1,7 +1,7 @@
 ---
 title: Pare-back sweep — 2026-05-27
 discovered: 2026-05-27
-candidate_count: 2
+candidate_count: 1
 verified_dropped: 2
 ---
 
@@ -17,7 +17,6 @@ did not survive verification (see the verification log below).
 
 | Score | Target | Concern | Risk | LoC | File |
 |---|---|---|---|---|---|
-| 17 | `docs/contributing/extending.md:§Wiring schemas into Db.create` | doc-surface-tracking-ghost-features | low | 17 | [cut-extending-md-schemas-section.md](./cut-extending-md-schemas-section.md) |
 | 8 | `LongPollSinceOptions.maxEvents` + `ListEventsSinceOptions.maxEvents` | configurability-without-consumers | low | 8 | [cut-since-max-events.md](./cut-since-max-events.md) |
 
 ## By concern
@@ -47,11 +46,12 @@ documented audience reach.)
 
 (none open — `cut-observability-unit-type` shipped 2026-05-27.)
 
-### doc-surface-tracking-ghost-features (1)
+### doc-surface-tracking-ghost-features (0)
 
-- [cut-extending-md-schemas-section.md](./cut-extending-md-schemas-section.md) —
-  `extending.md` §"Wiring schemas into `Db.create`" still teaches
-  the pre-2026-05-27 `Db.create({ schemas })` signature.
+(none open — `cut-extending-md-schemas-section` shipped 2026-05-27.
+The fix also closed silent drift in `bench/load-harness/` where
+`indexes:` was being passed to `Db.create` and ignored — see the
+shipping commit for details.)
 
 ### dev-or-test-scaffolding-leaking-public (0)
 

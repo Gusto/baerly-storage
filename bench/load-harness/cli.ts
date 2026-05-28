@@ -36,7 +36,7 @@ import {
   type Storage,
 } from "@baerly/protocol";
 import { S3HttpStorage } from "@baerly/adapter-node";
-import type { IndexDefinition } from "@baerly/server";
+import type { BaerlyConfig } from "@baerly/server";
 import { LocalFsStorage } from "@baerly/dev";
 import { CountingStorage } from "../storage.ts";
 import type { StorageSnapshot } from "../types.ts";
@@ -434,17 +434,19 @@ async function main(): Promise<void> {
     const startedIso = new Date().toISOString();
     const collection = preset.schema.collection;
 
-    // Optional auto-planner indexes map. When `--indexes=auto`, declare a
+    // Optional auto-planner config. When `--indexes=auto`, declare a
     // single-field index on `popularityRank` — the field the
     // `filtered-list` op kind targets in `replay.ts` — so the planner
     // can route the read through `runIndexWalkPlan` instead of the
-    // snapshot+log fold. When `--indexes=none`, leave the map undefined
-    // so `Db.create` falls back to its `EMPTY_INDEX_MAP` sentinel.
-    const indexesMap: ReadonlyMap<string, ReadonlyArray<IndexDefinition>> | undefined =
+    // snapshot+log fold. When `--indexes=none`, leave the config
+    // undefined so `Db.create` builds with no index routing.
+    const dbConfig: BaerlyConfig | undefined =
       indexesMode === "auto"
-        ? new Map<string, ReadonlyArray<IndexDefinition>>([
-            [collection, [{ name: "by_popularity_rank", on: "popularityRank" }]],
-          ])
+        ? {
+            collections: {
+              [collection]: { indexes: [{ name: "by_popularity_rank", on: "popularityRank" }] },
+            },
+          }
         : undefined;
 
     // Bootstrap current.json for every tenant in the dataset before
@@ -470,7 +472,7 @@ async function main(): Promise<void> {
       defaultTenant: "hot",
       collection,
       dataset,
-      ...(indexesMap !== undefined && { indexes: indexesMap }),
+      ...(dbConfig !== undefined && { config: dbConfig }),
     });
 
     // Phase 2: Ingest — write-heavy replay.
@@ -482,7 +484,7 @@ async function main(): Promise<void> {
       ops: writeOps,
       phase: "ingest",
       recordLatency,
-      ...(indexesMap !== undefined && { indexes: indexesMap }),
+      ...(dbConfig !== undefined && { config: dbConfig }),
     });
 
     // Phase 3: Query pre-compact — read-only on uncompacted log.
@@ -494,7 +496,7 @@ async function main(): Promise<void> {
       ops: readOps,
       phase: "query-pre",
       recordLatency,
-      ...(indexesMap !== undefined && { indexes: indexesMap }),
+      ...(dbConfig !== undefined && { config: dbConfig }),
     });
 
     // Phase 4: Compact.
@@ -514,7 +516,7 @@ async function main(): Promise<void> {
       ops: readOps,
       phase: "query-post",
       recordLatency,
-      ...(indexesMap !== undefined && { indexes: indexesMap }),
+      ...(dbConfig !== undefined && { config: dbConfig }),
     });
 
     const result = assembleResult({

@@ -213,21 +213,24 @@ a delta.
 
 ### Wiring schemas into `Db.create`
 
-`Db.create` accepts a flat `schemas: ReadonlyMap<string, SchemaValidator>`
-keyed by collection name. The CLI and HTTP adapters flatten
-`BaerlyConfig.collections[*].schema` into that map before constructing
-the per-request `Db`:
+Schemas are declared on the collection, not on `Db.create` — pass
+the `defineConfig({...})` value from `baerly.config.ts` (see the
+Zod example above) as the `config` field:
 
 ```ts
-const schemas = new Map<string, SchemaValidator>();
-for (const [name, def] of Object.entries(cfg.collections ?? {})) {
-  if (def.schema !== undefined) schemas.set(name, def.schema);
-}
-const db = Db.create({ storage, app, tenant, schemas });
+import config from "../baerly.config.ts";
+const db = Db.create({ storage, app, tenant, config });
 ```
 
-When `schemas` is `undefined` or empty, validation is a no-op — today's
-tests stay green untouched.
+The kernel derives the per-collection schema and index maps from
+`config.collections` internally via `collectionsToMaps`
+(re-exported from `@gusto/baerly-storage` for tests that want to
+construct the maps directly). When `config` is omitted, schema
+validation is a no-op.
+
+The previous `schemas:` / `indexes:` overrides on `Db.create` were
+cut on 2026-05-27 — see [`docs/adr/002-api-surface-lock.md`](../adr/002-api-surface-lock.md)
+for the reasoning.
 
 ### Forward-only migration
 

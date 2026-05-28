@@ -14,7 +14,7 @@
  */
 
 import type { Storage } from "@baerly/protocol";
-import { Db, type IndexDefinition } from "@baerly/server";
+import { Db, type BaerlyConfig } from "@baerly/server";
 import type { StorageSnapshot } from "../../types.ts";
 import type { CountingStorage } from "../../storage.ts";
 import type { Dataset } from "../generators/dataset.ts";
@@ -28,11 +28,11 @@ export interface SeedOpts {
   readonly collection: string;
   readonly dataset: Dataset;
   /**
-   * Optional per-collection {@link IndexDefinition}[] map forwarded
-   * to `Db.create`. The seed phase MUST receive the same map as the
-   * replay phases so index entries materialise during seed inserts.
+   * Optional {@link BaerlyConfig} forwarded to `Db.create`. The
+   * seed phase MUST receive the same config as the replay phases
+   * so index entries materialise during seed inserts.
    */
-  readonly indexes?: ReadonlyMap<string, ReadonlyArray<IndexDefinition>>;
+  readonly config?: BaerlyConfig;
 }
 
 export interface SeedResult {
@@ -58,7 +58,7 @@ export async function runSeed(opts: SeedOpts): Promise<SeedResult> {
         storage: opts.storage as unknown as Storage,
         app: opts.app,
         tenant,
-        ...(opts.indexes !== undefined && { indexes: opts.indexes }),
+        ...(opts.config !== undefined && { config: opts.config }),
       });
       dbs.set(tenantId, db);
     }

@@ -8,7 +8,7 @@
  */
 
 import type { Storage } from "@baerly/protocol";
-import { Db, type IndexDefinition } from "@baerly/server";
+import { Db, type BaerlyConfig } from "@baerly/server";
 import type { StorageSnapshot } from "../../types.ts";
 import type { CountingStorage } from "../../storage.ts";
 import type { Op } from "../generators/ops.ts";
@@ -26,13 +26,13 @@ export interface ReplayOpts {
   /** Per-logical-op latency capture (one entry per op). */
   readonly recordLatency: (kind: string, ms: number) => void;
   /**
-   * Optional per-collection {@link IndexDefinition}[] map forwarded
-   * to `Db.create`. When present, the auto-planner routes reads
-   * through the matching index; when absent or empty, every read
+   * Optional {@link BaerlyConfig} forwarded to `Db.create`. When
+   * `collections[*].indexes` is declared, the auto-planner routes
+   * reads through the matching index; when absent, every read
    * falls through to the snapshot+log fold. Set by the CLI's
    * `--indexes=auto|none` flag.
    */
-  readonly indexes?: ReadonlyMap<string, ReadonlyArray<IndexDefinition>>;
+  readonly config?: BaerlyConfig;
 }
 
 export interface ReplayResult {
@@ -57,7 +57,7 @@ export async function runReplay(opts: ReplayOpts): Promise<ReplayResult> {
         storage: opts.storage as unknown as Storage,
         app: opts.app,
         tenant,
-        ...(opts.indexes !== undefined && { indexes: opts.indexes }),
+        ...(opts.config !== undefined && { config: opts.config }),
       });
       dbs.set(tenantId, db);
     }
