@@ -22,9 +22,10 @@ emit NO canonical line — there's no human reading cron-tick logs on a
 15-user app, and errors throw to the platform (Cloudflare dashboard,
 Node process logs). Their per-emission metrics still flow into the
 canonical line when called from within an HTTP scope (e.g. an admin
-route that triggers `rebuildIndex`); outside any HTTP scope they reach
-only the operator's `MetricsRecorder` (when one is wired) or the no-op
-default.
+route that triggers `rebuildIndex`); outside any HTTP scope each emit
+site falls through to `noopMetricsRecorder` — operators don't wire
+their own `MetricsRecorder`, the canonical line on stdout is the
+operator's view of kernel emissions.
 
 Direct `Db` calls outside an HTTP request — e.g. a `baerlyDev()` seed
 callback that calls `db.collection().insert()` from inside the Vite
@@ -92,9 +93,8 @@ await rebuildIndex(storage, currentJsonKey, def);
 ```
 
 Errors propagate to the platform's process / Worker log. Metric
-emissions reach the operator's `MetricsRecorder` when one is wired
-on the surrounding scope; otherwise they fall through to the no-op
-default.
+emissions fall through to `noopMetricsRecorder` outside any
+`runWithContext` scope.
 
 If you need per-emission visibility during local testing, construct
 an `ObservabilityContext` and wrap the work in `runWithContext`:
@@ -136,21 +136,33 @@ Labels are flat `Readonly<Record<string, string>>` — no numbers as
 label values, no nested objects — so any aggregation backend can
 consume them.
 
-Examples in tree today:
+The load-bearing kernel metrics today (canonical list in
+[`packages/protocol/src/metrics.ts`](../../../packages/protocol/src/metrics.ts)):
 
-- `db.r2.put.412_total` — CAS conflict counter.
-- `db.r2.put.429_total` — rate-limit hit counter.
-- `db.write.class_a_ops_per_logical_write` — writer histogram.
-- `db.storage.<op>.calls_total` — storage decorator counter.
+- `db.write.class_a_ops_per_logical_write` — writer histogram
+  (p99 alert at 5).
+- `db.write.index_ops_per_logical_write` — writer histogram
+  (`K (PUT) + L (DELETE)` per commit, per-collection label).
+- `db.r2.put.412_total` — CAS conflict / `If-Match` / `If-None-Match`
+  loss counter.
+- `db.r2.put.429_total` — R2 prefix-partition rate-limit counter.
+- `db.manifest.lag_window_depth` — compactor gauge (alert at >100).
+- `db.compact.entries_folded` — compactor histogram (entries folded
+  per run).
+- `db.gc.entries_swept_per_second` — GC gauge (livelock indicator
+  when below writes/s).
+- `db.gc.swept_total` — GC counter, labelled by reason.
+- `db.orphan.candidate_count` — GC gauge (`gc/pending.json` depth).
+- `db.storage.<op>.calls_total` / `db.storage.<op>.errors_total` /
+  `db.storage.<op>.duration_ms` — storage decorator counters +
+  histogram (one trio per `get` / `put` / `delete` / `list`).
 - `db.storage.class_a_ops_total` / `db.storage.class_b_ops_total` —
   storage decorator's S3-pricing rollup.
-- `db.compact.entries_folded` — compactor counter.
-- `db.gc.swept_total` — GC counter.
 
 Don't invent new namespaces casually. New subsystem? Pick from the
 existing set (`write`, `r2`, `manifest`, `gc`, `orphan`, `compact`,
-`tenant`, `storage`) or discuss with maintainers before adding
-`db.newthing.*` — metric names are a contract.
+`storage`) or discuss with maintainers before adding `db.newthing.*`
+— metric names are a contract.
 
 ### Rejected naming alternatives
 

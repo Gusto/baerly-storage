@@ -33,9 +33,15 @@ import type { RequestScopedMetricsRecorder } from "./recorder.ts";
 /** Options accepted by {@link flushCanonicalLine}. */
 export interface FlushCanonicalLineOptions {
   readonly unit: "http";
-  /** HTTP status code (HTTP unit only). Influences the level decision. */
+  /** HTTP status code. Influences the level decision. */
   readonly status?: number;
-  /** Short outcome tag ("ok", "conflict", "not_found", "client_error", "internal_error", ...). */
+  /**
+   * Short outcome tag. In production all callsites route through
+   * {@link deriveOutcome} which yields one of `"read"` /
+   * `"committed"` / `"conflict"` / `"error"`; the field is typed
+   * `string` so test fixtures and future units can pass a
+   * unit-specific tag without type gymnastics.
+   */
   readonly outcome: string;
   /** Thrown value on the failure path. */
   readonly error?: unknown;

@@ -92,12 +92,12 @@ propagate to the platform.
 | Field | Type | Meaning |
 |---|---|---|
 | `request_id` | UUID-ish string | Correlates this event across logs. Set from `X-Request-Id` if the caller supplied one, else minted fresh. |
-| `method` | string | HTTP method (HTTP unit only). |
-| `path` | string | Request path (HTTP unit only). |
-| `status` | number | HTTP status code (HTTP unit only). |
+| `method` | string | HTTP method. |
+| `path` | string | Request path. |
+| `status` | number | HTTP status code. |
 | `cache_status` | `"hit" \| "miss" \| "bypass"` | Cloudflare adapter only. Set per HTTP request via the Cache API wrapper. `"hit"` skips the router; `"miss"` populates the cache; `"bypass"` covers non-GET, `/v1/since`, `/v1/healthz`, and anything outside `/v1/c/`. The Node adapter has no cache layer and never emits this field. |
 | `duration_ms` | number | Monotonic wall-clock duration, `performance.now()` delta. |
-| `outcome` | string | One of `"ok"`, `"conflict"`, `"not_found"`, `"client_error"`, `"internal_error"`, or a unit-specific tag. |
+| `outcome` | string | One of `"read"` (GET < 400), `"committed"` (non-GET < 400), `"conflict"` (409), or `"error"` (everything else). |
 | `db.storage.class_a_ops_total` | number | Sum of PUT + DELETE + LIST calls. These are the physical operations S3-pricing classifies as Class A — the cost-dominant ones. |
 | `db.storage.class_b_ops_total` | number | Sum of GET calls. Class B in S3 pricing. |
 | `db.storage.<op>.calls_total` | number | Per-op breakdown for `get` / `put` / `delete` / `list`. |
@@ -278,11 +278,11 @@ const datadogSink: Sink = (record) => {
 
 ## Known gaps
 
-- **`invalidateOnWrite` is unobserved per-request.** The CF
-  adapter runs cache invalidation inside `ctx.waitUntil` after the
-  response is sent. Its work doesn't contribute to the canonical
-  line that already shipped. Aggregate counts are still in the
-  operator's `MetricsRecorder` sink.
+- **`invalidateOnWrite` is unobserved.** The CF adapter runs cache
+  invalidation inside `ctx.waitUntil` after the response is sent —
+  by then the canonical line for the request has already flushed,
+  and the invalidator itself doesn't emit any metrics. Failures
+  surface only on the Worker's process log.
 
 ## Cross-references
 
