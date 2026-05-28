@@ -4,7 +4,7 @@ audience: integrator
 summary: How the SPA in your scaffolded app authenticates to the Worker / Node server in dev and prod.
 last-reviewed: 2026-05-24
 tags: [client, auth, integration]
-related: ["./auth.md", "./client-middleware.md"]
+related: ["./auth.md"]
 ---
 
 # Browser → server auth

@@ -69,8 +69,8 @@ export interface BaerlyClientOptions<TConfig extends BaerlyConfig = UnboundConfi
    * });
    * ```
    *
-   * See `docs/guide/client-middleware.md` for `onSuccess` / `onError`
-   * helpers and a composition pattern.
+   * See `dist/API.md` → "Recipe — wrapping the client `fetch`"
+   * for `onSuccess` / `onError` helpers and a composition pattern.
    */
   readonly fetch?: Fetcher;
   /**
