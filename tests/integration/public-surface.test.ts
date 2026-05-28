@@ -126,7 +126,6 @@ describe("@gusto/baerly-storage/cloudflare", () => {
 // ---------------------------------------------------------------------------
 import {
   baerlyNode,
-  createApp,
   gcsStorage,
   minioStorage,
   r2Storage,
@@ -138,7 +137,6 @@ import {
 describe("@gusto/baerly-storage/node", () => {
   test("imports resolve", () => {
     expect(typeof baerlyNode).toBe("function");
-    expect(typeof createApp).toBe("function");
     expect(typeof s3Storage).toBe("function");
     expect(typeof r2Storage).toBe("function");
     expect(typeof minioStorage).toBe("function");

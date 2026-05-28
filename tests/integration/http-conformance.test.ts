@@ -42,7 +42,8 @@ import {
 } from "@baerly/protocol";
 import { getRequestListener } from "@hono/node-server";
 import { LocalFsStorage } from "@baerly/dev";
-import { createApp, S3HttpStorage } from "@baerly/adapter-node";
+import { createApp } from "../../packages/adapter-node/src/app.ts";
+import { S3HttpStorage } from "@baerly/adapter-node";
 import { Db } from "@baerly/server";
 import { createRouter } from "@baerly/server/http";
 import { withHttpObservability } from "@baerly/server/observability";

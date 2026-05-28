@@ -15,7 +15,7 @@ import {
 } from "@baerly/protocol";
 import { getRequestListener } from "@hono/node-server";
 import { LocalFsStorage } from "@baerly/dev";
-import { createApp } from "@baerly/adapter-node";
+import { createApp } from "../../packages/adapter-node/src/app.ts";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { wrapCountingStorage, type CountingStorage } from "../fixtures/counting-storage.ts";
 
