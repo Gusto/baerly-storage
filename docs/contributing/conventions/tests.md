@@ -34,10 +34,6 @@ Filenames are kebab-case throughout (e.g. `s3-http.test.ts`).
 
 One topic per file. Don't pile unrelated suites together.
 
-## IndexedDB
-- `import "fake-indexeddb/auto";` at the top of any test that exercises
-  IndexedDB-backed behavior.
-
 ## Property-based tests
 
 Use `fast-check` via `@fast-check/vitest`. Import `fc` and `test` from

@@ -326,8 +326,7 @@ auto-load on matching edits and point at the same files.
   (`error.code === "NetworkError"`), not `instanceof` chains. Hierarchy
   lives in `packages/protocol/src/errors.ts`.
 - **Tests use vitest.** `import { describe, test, it, expect } from "vitest"`.
-  Don't add jest, mocha, or `bun:test`. IndexedDB is mocked via
-  `import "fake-indexeddb/auto"`.
+  Don't add jest, mocha, or `bun:test`.
 - **Public API docs live as JSDoc on `packages/server/src/db.ts` and
   `packages/server/src/table.ts`.** IDE hover and tsgo consume them
   directly — no rendered markdown ref to maintain.
@@ -340,8 +339,8 @@ auto-load on matching edits and point at the same files.
 
 - ❌ Adding **runtime** dependencies to anything that ships to user
   apps. The runtime footprint of `baerly-storage` and the adapters
-  is intentionally small (`aws4fetch`, `idb-keyval`,
-  `@xmldom/xmldom`); every additional dep widens the kernel bundle
+  is intentionally small (`aws4fetch`, `@xmldom/xmldom`, `hono`,
+  `jose`); every additional dep widens the kernel bundle
   and the audit surface for users. Justify any addition.
 - ✅ **Build-time / CLI / dev-tooling deps are fair game.** Inside
   `packages/create-baerly-storage/`, `packages/cli/`, `packages/dev/`,

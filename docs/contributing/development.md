@@ -40,8 +40,6 @@ Test files import from `"vitest"`:
 import { test, expect, describe, beforeAll, afterEach } from "vitest";
 ```
 
-IndexedDB is mocked via `import "fake-indexeddb/auto"` in tests that need it.
-
 ### Which tests need infra
 
 Which tests skip without Minio or credentials, and which are always
