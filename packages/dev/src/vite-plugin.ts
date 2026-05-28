@@ -2,7 +2,7 @@ import type { AddressInfo } from "node:net";
 import { existsSync, readFileSync } from "node:fs";
 import { getRequestListener } from "@hono/node-server";
 import type { Plugin } from "vite";
-import { createApp } from "@baerly/adapter-node";
+import { baerlyNode } from "@baerly/adapter-node";
 import type { BaerlyAppConfig, Verifier } from "@baerly/protocol";
 import { Db, resolveVerifier } from "@baerly/server";
 import { type DevBannerHint, printDevBanner } from "./dev-banner.ts";
@@ -299,13 +299,12 @@ export function baerlyDev(opts: BaerlyDevOptions): Plugin {
           const db = Db.create({ storage, app, tenant, config: opts.config });
           await opts.seed(db);
         }
-        const honoApp = createApp({
-          app,
+        const requestHandler = baerlyNode({
+          config: opts.config,
           storage,
           verifier,
-          config: opts.config,
-        });
-        return getRequestListener(honoApp.fetch);
+        }).fetch;
+        return getRequestListener(requestHandler);
       })();
 
       // Surface setup failures eagerly; without this an unhandled
