@@ -85,6 +85,9 @@ export interface BaerlyNodeOptions {
  *   `@hono/node-server.getRequestListener`, custom servers, tests).
  *   Calling `fetch` does not start the `node:http` server; the
  *   server lifecycle is owned by `listen(port)` / `close()`.
+ *   Hono's optional `env`/`executionCtx` parameters are intentionally
+ *   omitted from the signature — this is a Node-host handle, and
+ *   those parameters are Workers-only.
  * - `listen(port)` binds the server, installs SIGTERM/SIGINT
  *   handlers that call `close()` and exit `0`, and resolves once
  *   the server is actually listening (after Node's `'listening'`
