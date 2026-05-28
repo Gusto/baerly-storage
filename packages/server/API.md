@@ -367,10 +367,36 @@ interface LogEntry {
 ```
 
 **Cursor priming.** First call: pass `cursor=` (empty string). The
-server replies with the current head and `next_cursor`. Pass that
-cursor back on every subsequent call. The cursor is opaque — treat
-it as a string. `events` is empty iff the budget elapsed with no new
-writes (and `next_cursor` is unchanged).
+server's fast path returns immediately *iff* the log already has
+entries for this collection — you get `events: [...]` and the
+last entry's `lsn` as `next_cursor`. **If the collection is empty,
+the first call blocks for the full long-poll budget (~25 s) before
+returning `events: []` with `next_cursor: ''`.** Either prime by
+inserting one row first if you need an immediate response, or budget
+your client / test for the full timeout. Subsequent calls pass the
+returned cursor back — the cursor is opaque, treat it as a string,
+and `events` is empty iff the budget elapsed with no new writes
+(`next_cursor` unchanged).
+
+**Test-mode tuning.** Vitest's default per-test timeout is 5 s; the
+long-poll's 25 s budget will dominate that. Shrink it on the worker
+factory under a test-only env switch:
+
+```ts
+export default baerlyWorker((env) => ({
+  config,
+  // Production: omit both (inherit 25 s / 1 s defaults).
+  // Test: wire from miniflare bindings.
+  sinceTimeoutMs: env.SINCE_TIMEOUT_MS,
+  sincePollIntervalMs: env.SINCE_POLL_INTERVAL_MS,
+}));
+```
+
+In `vitest.config.mts`'s miniflare bindings, set them as numbers
+(`SINCE_TIMEOUT_MS: 2000`, `SINCE_POLL_INTERVAL_MS: 50`) so the
+factory sees `number | undefined` without runtime coercion. Don't
+shrink `sinceTimeoutMs` in production code paths — it multiplies the
+R2 class-A op count per idle long-poll connection.
 
 React applications use `@gusto/baerly-storage/client/react` (see next
 section) instead of poking `/v1/since` by hand; hand-rolled
@@ -438,6 +464,24 @@ Reads (`GET /v1/t/:table[/:id]`, `GET /v1/count?table=…`,
 `400 SchemaError "Request body must be { doc: object }"` — wording is
 locked by `assertJsonBodyField` in the kernel.
 
+### Read modifiers (query params)
+
+`GET /v1/t/:table` accepts three JSON-encoded query params; all are
+optional and compose:
+
+| Param      | Encodes                                | Wire example                                 |
+| ---------- | -------------------------------------- | -------------------------------------------- |
+| `?where=`  | `PredicateWire` (see "Wire format" above) | `?where=%7B%22clauses%22%3A%5B%5D%7D`      |
+| `?order=`  | `{ [field]: "asc" \| "desc" }`         | `?order=%7B%22sent_at%22%3A%22desc%22%7D`    |
+| `?limit=`  | bare integer (no JSON wrapper)         | `?limit=50`                                  |
+
+`?order=` and `?where=` are JSON, **not** Rails-style `field:asc` —
+the kernel `JSON.parse`s them and returns `400 SchemaError` on a flat
+string. Always `encodeURIComponent(JSON.stringify(spec))`. The JS SDK
+(`createBaerlyClient`) and the React hooks build these for you; reach
+for raw URLs only when scripting or when porting another framework's
+client.
+
 ## Adapter factories
 
 ```ts
@@ -498,6 +542,89 @@ the platform-bound `R2Bucket` directly (`r2BindingStorage(env.BUCKET)`)
 and is the only storage factory a Worker should reach for — the
 credential-based factories assume `fetch` + Node TLS, not the Workers
 runtime.
+
+## Recipe — server-stamped trusted fields
+
+Use this shape when a column must come from the verified identity
+rather than the client request body (`sender_sub` on chat messages,
+`owner_id` on user-owned rows, `created_by` on audit logs). The
+HTTP routes `baerlyWorker` mounts under `/v1/t/:table` accept the
+doc verbatim from the request body — they don't read the verifier
+identity into the row. Stamp it yourself in a custom route, then
+block direct client writes to the same collection so a malicious
+client can't supply the field by hand.
+
+```ts
+// src/server/index.ts
+import { Db, type Verifier } from "@gusto/baerly-storage";
+import { baerlyWorker, r2BindingStorage } from "@gusto/baerly-storage/cloudflare";
+import type { BaerlyEnv } from "@gusto/baerly-storage/cloudflare";
+import config from "../../baerly.config.ts";
+
+// BaerlyEnv already declares `BUCKET: R2Bucket` and `APP: string`.
+// Extend it with anything else the Worker reads from env.
+
+const verifier: Verifier = async (req) => {
+  const sub = /* extract from CF Access JWT / cookie / header */;
+  if (!sub) return null;
+  return { tenantPrefix: config.tenant, identity: { sub } };
+};
+
+const inner = baerlyWorker(() => ({ config, verifier }));
+
+export default {
+  async fetch(req: Request, env: BaerlyEnv, ctx: ExecutionContext) {
+    const url = new URL(req.url);
+
+    // (1) Block client writes to the trusted-stamp collection.
+    if (
+      url.pathname.startsWith("/v1/t/messages") &&
+      req.method !== "GET"
+    ) {
+      return new Response("client writes disabled — POST /api/messages", {
+        status: 405,
+      });
+    }
+
+    // (2) Custom route — re-run verifier, stamp field, insert.
+    if (url.pathname === "/api/messages" && req.method === "POST") {
+      const verified = await verifier(req);
+      if (verified === null) {
+        return new Response("unauthorized", { status: 401 });
+      }
+      const { body } = await req.json<{ body: string }>();
+      const db = Db.create({
+        storage: r2BindingStorage(env.BUCKET),
+        app: env.APP,
+        tenant: verified.tenantPrefix,
+        config,
+      });
+      const { _id } = await db.table("messages").insert({
+        body,
+        sender_sub: (verified.identity as { sub: string }).sub,
+        sent_at: Date.now(),
+      });
+      return Response.json({ _id }, { status: 201 });
+    }
+
+    // (3) Everything else goes through baerlyWorker (reads, /v1/since, etc.).
+    return inner.fetch!(req, env, ctx);
+  },
+} satisfies ExportedHandler<BaerlyEnv>;
+```
+
+The client reads via the normal `GET /v1/t/messages` route and tails
+via `GET /v1/since?table=messages&cursor=…` — both still served by
+`inner`. Only writes go through `/api/messages`.
+
+**Known limitations of this recipe.** The custom-route `Db.create` is
+a second instance — it doesn't share `baerlyWorker`'s
+`observableStorage(...)` wrapping (so custom-route writes don't land
+in the canonical-line storage counters) or the read-cache invalidation
+helper. For pre-launch chat-shape apps this is acceptable; the
+observability gap is being tracked as a follow-up. If you also need
+PATCH/PUT/DELETE on the same collection, repeat steps (1) and (2) for
+each verb.
 
 ## Anti-patterns
 
