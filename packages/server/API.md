@@ -579,6 +579,68 @@ tenant derivation is replaced.
 `docs/adr/005-verifier-function-shape.md` records the three
 properties the shape upholds and the four rejected alternatives.
 
+## Observability
+
+`baerlyWorker` and `baerlyNode` emit **one canonical log line per
+HTTP request** on stdout (default level `info`). Background work
+(compactor / GC / `runScheduledMaintenance`) emits a separate
+`unit_of_work: "maintenance"` line per tick. The Cloudflare adapter
+is JSON-only (Workers have no TTY); the Node adapter auto-selects a
+human-readable single-line shape when `process.stdout.isTTY ===
+true`. Sinks plug in via `observability.sink` on the factory
+options.
+
+```json
+{
+  "timestamp": "2026-05-12T17:42:11.823Z",
+  "level": "info",
+  "category": "baerly.http",
+  "request_id": "0193b0a1-ff7a-7c44-b9d5-c3e91d8f3a01",
+  "method": "POST",
+  "path": "/v1/c/tickets",
+  "status": 200,
+  "duration_ms": 14.207,
+  "outcome": "ok",
+  "db.storage.class_a_ops_total": 3,
+  "db.storage.class_b_ops_total": 1,
+  "db.write.class_a_ops_per_logical_write_sum": 3
+}
+```
+
+### Field reference
+
+| Field                                       | Meaning                                                                              |
+| ------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `request_id`                                | Correlation key. Set from `X-Request-Id` if provided, else minted fresh.             |
+| `method` / `path` / `status`                | HTTP request line + response code.                                                   |
+| `cache_status`                              | `"hit" \| "miss" \| "bypass"` — Cloudflare adapter only. Node adapter omits.         |
+| `duration_ms`                               | `performance.now()` delta, monotonic wall-clock.                                     |
+| `outcome`                                   | `"read"` (GET <400), `"committed"` (non-GET <400), `"conflict"` (409), or `"error"`. |
+| `db.storage.class_a_ops_total`              | PUT + DELETE + LIST count. S3-pricing Class A — cost-dominant.                       |
+| `db.storage.class_b_ops_total`              | GET count. S3-pricing Class B.                                                       |
+| `db.storage.<op>.calls_total`               | Per-op breakdown for `get` / `put` / `delete` / `list`.                              |
+| `db.storage.<op>.duration_ms_sum` / `_count`| Per-call duration histogram.                                                         |
+| `db.write.class_a_ops_per_logical_write_*`  | Writer's per-`commit()` Class-A-op count.                                            |
+| `db.r2.put.412_total` / `429_total`         | CAS conflicts (412) and storage rate-limit hits (429).                               |
+| `error.code` / `error.message` / `error.stack` | Failure-path only. `error.code` is `BaerlyErrorCode`.                             |
+
+Class-A / Class-B totals are the load-bearing fields — the cost
+model puts a per-request ceiling on Class-A ops and the canonical
+line is how you verify a deployed service stays under it.
+
+### Log levels
+
+| Level   | What lands                                                                       |
+| ------- | -------------------------------------------------------------------------------- |
+| `error` | `status >= 500` or an exception was thrown.                                      |
+| `warn`  | Adds 4xx canonical lines and explicit `warn` records.                            |
+| `info`  | Default. Adds 2xx canonical lines and lifecycle events.                          |
+| `debug` | Adds per-storage-op events. **High volume**; off in production.                  |
+
+Set `LOG_LEVEL` env var or the typed `observability.level` factory
+option. Sink wiring (Workers Analytics Engine, OTel, Datadog) lives
+in the source repo's `docs/guide/observability.md`.
+
 ## Recipe — server-stamped trusted fields
 
 Use this shape when a column must come from the verified identity
