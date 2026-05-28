@@ -1,6 +1,6 @@
 ---
 title: Add baerly to an existing Cloudflare Worker
-audience: app developers
+audience: integrator
 summary: One-command bolt-on for an existing `wrangler create` project — `pnpm create @gusto/baerly-storage@latest .` detects wrangler.jsonc, patches it, prints the worker-entry snippet.
 last-reviewed: 2026-05-24
 tags: [getting-started, cloudflare]
