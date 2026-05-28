@@ -7,6 +7,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  type BaerlyAppConfig,
   CURRENT_JSON_SCHEMA_VERSION,
   MemoryStorage,
   createCurrentJson,
@@ -15,7 +16,7 @@ import {
 } from "@baerly/protocol";
 import { getRequestListener } from "@hono/node-server";
 import { LocalFsStorage } from "@baerly/dev";
-import { createApp } from "../../packages/adapter-node/src/app.ts";
+import { baerlyNode } from "@baerly/adapter-node";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { wrapCountingStorage, type CountingStorage } from "../fixtures/counting-storage.ts";
 
@@ -87,12 +88,25 @@ for (const variant of VARIANTS) {
         const auth = req.headers.get("authorization") ?? "";
         return auth === `Bearer ${SECRET}` ? { tenantPrefix: TENANT, identity: null } : null;
       };
-      const app = createApp({
+      // `tenant` mirrors `TENANT` (the prefix the local verifier
+      // pins each authorized request to). `auth` is placeholder —
+      // the explicit `verifier:` override wins in `resolveVerifier`.
+      // `target: "node"` is required on `BaerlyAppConfig` but only
+      // read by `baerly deploy` / `baerly doctor`; the runtime
+      // adapter ignores it.
+      const config: BaerlyAppConfig = {
         app: APP,
+        tenant: TENANT,
+        target: "node",
+        auth: "none",
+        collections: {},
+      };
+      const requestHandler = baerlyNode({
+        config,
         storage: counting.storage,
         verifier,
-      });
-      server = createServer(getRequestListener(app.fetch));
+      }).fetch;
+      server = createServer(getRequestListener(requestHandler));
       await new Promise<void>((resolve) => server.listen(0, resolve));
       const addr = server.address();
       if (!addr || typeof addr === "string") {

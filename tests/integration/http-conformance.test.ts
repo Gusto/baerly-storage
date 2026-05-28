@@ -3,7 +3,7 @@
  *
  * Drives the shared {@link runHttpConformanceCascade} driver
  * (`tests/fixtures/http-conformance-cascade.ts`) against
- * `createApp({ app, storage, verifier })` (mounted via
+ * `baerlyNode({ config, storage, verifier }).fetch` (mounted via
  * `getRequestListener` from `@hono/node-server`) over three Node-
  * runnable storage backends:
  *
@@ -17,7 +17,7 @@
  * `packages/adapter-cloudflare/src/http-conformance.test.ts`.
  *
  * Per variant we spin up a fresh
- * `http.createServer(getRequestListener(createApp(...).fetch)).listen(0)`
+ * `http.createServer(getRequestListener(baerlyNode(...).fetch)).listen(0)`
  * inside a top-level `describe(variant.label, ...)` block. The cascade
  * registers its own `describe`/`test` blocks at vitest collection
  * time, so the server boot has to happen in a `beforeAll` that runs
@@ -33,6 +33,7 @@ import { join } from "node:path";
 import { AwsClient } from "aws4fetch";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import {
+  type BaerlyAppConfig,
   CURRENT_JSON_SCHEMA_VERSION,
   createCurrentJson,
   getOrCreateMemoryStorageForBucket,
@@ -42,8 +43,7 @@ import {
 } from "@baerly/protocol";
 import { getRequestListener } from "@hono/node-server";
 import { LocalFsStorage } from "@baerly/dev";
-import { createApp } from "../../packages/adapter-node/src/app.ts";
-import { S3HttpStorage } from "@baerly/adapter-node";
+import { baerlyNode, S3HttpStorage } from "@baerly/adapter-node";
 import { Db } from "@baerly/server";
 import { createRouter } from "@baerly/server/http";
 import { withHttpObservability } from "@baerly/server/observability";
@@ -227,8 +227,23 @@ for (const variant of variants) {
       const made = await variant.makeStorage(bucket);
       storage = made.storage;
       cleanup = made.cleanup;
-      const app = createApp({
+      // `tenant` mirrors `CONFORMANCE_TENANT` (the prefix the shared
+      // `testVerifier` pins every authorized request to) so any
+      // tenant-derived bookkeeping inside the kernel agrees with the
+      // wire. `auth` is placeholder — the explicit `verifier:`
+      // override below wins in `resolveVerifier`. `target: "node"` is
+      // a required field on `BaerlyAppConfig` but is only read by
+      // `baerly deploy` / `baerly doctor`; the runtime adapter
+      // ignores it.
+      const config: BaerlyAppConfig = {
         app: APP,
+        tenant: CONFORMANCE_TENANT,
+        target: "node",
+        auth: "none",
+        collections: {},
+      };
+      const requestHandler = baerlyNode({
+        config,
         storage: made.storage,
         verifier: testVerifier(),
         // Drive the long-poll idle budget down from the 25s default
@@ -241,8 +256,8 @@ for (const variant of variants) {
         // unaffected.
         sinceTimeoutMs: 500,
         sincePollIntervalMs: 50,
-      });
-      server = createServer(getRequestListener(app.fetch));
+      }).fetch;
+      server = createServer(getRequestListener(requestHandler));
       await new Promise<void>((resolve) => server!.listen(0, resolve));
       port = (server!.address() as AddressInfo).port;
     });
@@ -281,7 +296,7 @@ for (const variant of variants) {
         });
       },
       options: {
-        // `createApp` above passes `sinceTimeoutMs: 500`, so the
+        // `baerlyNode` above passes `sinceTimeoutMs: 500`, so the
         // cascade's idle-poll test fits inside the vitest default
         // timeout. The Workerd-side variant pins this `false` because
         // `baerlyWorker` does not thread the override through.
