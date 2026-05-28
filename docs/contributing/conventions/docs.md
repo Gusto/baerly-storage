@@ -39,4 +39,4 @@ Conventions for content under `docs/`.
 
 - ❌ Duplicate content between `CLAUDE.md` and `docs/*.md`. CLAUDE.md
   links out; long-form lives in `docs/`.
-- ❌ Add screenshots without compressing — keep `docs/diagrams/` lean.
+- ❌ Add screenshots without compressing — keep `docs/contributing/diagrams/` lean.

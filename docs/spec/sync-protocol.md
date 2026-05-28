@@ -7,11 +7,6 @@ tags: [protocol, sync, manifest, causal-consistency]
 related: [causal-consistency-checking.md, log-entry-shape.md, json-merge-patch.md, writer-fence-adversarial-model.md, prior-art.md]
 ---
 
-
-<p align="center" width="100%">
-    <img width="50%" src="../contributing/diagrams/sync_protocol_header.svg">
-</p>
-
 This is a focused explanation of the core sync protocol of Baerly. The sync protocol upgrades an S3 API into a causally consistent, multiplayer datastore without the use of intermediate servers.
 
 ## Why build over S3?
