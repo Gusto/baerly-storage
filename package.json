@@ -201,7 +201,6 @@
     "@types/react-dom": "^19.0.0",
     "@typescript/native-preview": "7.0.0-dev.20260526.1",
     "@vitest/coverage-v8": "^4.1.7",
-    "@xmldom/xmldom": "^0.9.10",
     "aws4fetch": "1.0.20",
     "execa": "^9.5.2",
     "fast-check": "^4.8.0",

@@ -28,7 +28,6 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AwsClient } from "aws4fetch";
-import { DOMParser } from "@xmldom/xmldom";
 import {
   getOrCreateMemoryStorageForBucket,
   createCurrentJson,
@@ -229,7 +228,6 @@ async function buildVariant(v: Variant): Promise<VariantBuild> {
           endpoint: MINIO_ENDPOINT,
           bucket: BENCH_BUCKET_NAME,
           sign: (req) => signer.sign(req),
-          xmlParser: new DOMParser(),
           retries: S3_RETRIES,
         }),
         backendDetails: { kind: "node-minio", endpoint: MINIO_ENDPOINT, bucket: BENCH_BUCKET_NAME },

@@ -33,20 +33,6 @@ export type UUID = Branded<string, "UUID">;
 export type ContentVersionId = Branded<string, "ContentVersionId">;
 
 /**
- * Structural minimum of the XML parser surface used by `parseListObjectsV2CommandOutput`.
- * Defined here (instead of relying on `lib.dom` `DOMParser`) so consumers can plug in
- * `@xmldom/xmldom` (whose types decoupled from `lib.dom` in 0.9.x) or any other
- * conforming parser without TypeScript rejecting the substitution.
- */
-export interface XmlNode {
-  readonly textContent: string | null;
-  getElementsByTagName(name: string): ArrayLike<XmlNode>;
-}
-export interface XmlParser {
-  parseFromString(source: string, mimeType: string): XmlNode | null | undefined;
-}
-
-/**
  * Mint a fresh {@link UUID}. The cast lives here so callers don't sprinkle
  * `<UUID>crypto.randomUUID()` throughout the codebase.
  */

@@ -21,7 +21,6 @@ import { join } from "node:path";
 
 import { AwsClient } from "aws4fetch";
 import { fc } from "@fast-check/vitest";
-import { DOMParser } from "@xmldom/xmldom";
 import { describe } from "vitest";
 
 import { S3HttpStorage } from "@baerly/adapter-node";
@@ -61,8 +60,6 @@ async function loadCreds(file: string): Promise<EndpointCreds | null> {
 
 const MINIO = process.env["MINIO"] === "1";
 const CONFORMANCE = process.env["CONFORMANCE"] === "1";
-
-const xmlParser = new DOMParser();
 
 interface Endpoint {
   name: string;
@@ -143,7 +140,6 @@ describe("conformance", () => {
               endpoint: c.endpoint,
               bucket: c.bucket,
               sign,
-              xmlParser,
             }),
           };
         },

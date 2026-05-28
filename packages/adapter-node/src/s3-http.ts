@@ -5,15 +5,14 @@ import {
   RETRY_AFTER_MAX_SECONDS,
   S3_REQUEST_MAX_RETRIES,
   delay,
-  parseListObjectsV2CommandOutput,
   type Storage,
   type StorageGetOptions,
   type StorageGetResult,
   type StorageListEntry,
   type StoragePutOptions,
   type StoragePutResult,
-  type XmlParser,
 } from "@baerly/protocol";
+import { parseListObjectsV2CommandOutput } from "./xml.ts";
 
 /**
  * Permanent {@link BaerlyError} codes that must short-circuit `retry`.
@@ -44,10 +43,7 @@ const PERMANENT_ERROR_CODES: ReadonlySet<string> = new Set([
  * The `now` injection point exists for the unit test; production
  * callers should pass nothing.
  */
-function parseRetryAfter(
-  header: string | null,
-  now: () => number = Date.now,
-): number | undefined {
+function parseRetryAfter(header: string | null, now: () => number = Date.now): number | undefined {
   if (header === null) {
     return undefined;
   }
@@ -145,12 +141,6 @@ export interface S3HttpStorageOptions {
    * directly.
    */
   sign?: (req: Request) => Promise<Request>;
-  /**
-   * XML parser for `ListObjectsV2` responses. `list()` requires one;
-   * `get`/`put`/`delete` work without. If unset and `globalThis.DOMParser`
-   * exists (browser/Worker), defaults to that.
-   */
-  xmlParser?: XmlParser;
   /** Max retries for transient (non-permanent) failures. */
   retries?: number;
   /** Initial backoff in ms. */
@@ -171,7 +161,6 @@ export class S3HttpStorage implements Storage {
   readonly #bucket: string;
   readonly #fetch: typeof fetch;
   readonly #sign?: (req: Request) => Promise<Request>;
-  readonly #xmlParser?: XmlParser;
   readonly #retries: number;
   readonly #backoffMs: number;
 
@@ -180,7 +169,6 @@ export class S3HttpStorage implements Storage {
     this.#bucket = options.bucket;
     this.#fetch = options.fetch ?? globalThis.fetch.bind(globalThis);
     this.#sign = options.sign;
-    this.#xmlParser = options.xmlParser ?? defaultXmlParser();
     this.#retries = options.retries ?? S3_REQUEST_MAX_RETRIES;
     this.#backoffMs = options.backoffMs ?? 100;
   }
@@ -329,13 +317,6 @@ export class S3HttpStorage implements Storage {
     opts?: { startAfter?: string; maxKeys?: number; signal?: AbortSignal },
   ): AsyncIterable<StorageListEntry> {
     opts?.signal?.throwIfAborted();
-    const xmlParser = this.#xmlParser;
-    if (!xmlParser) {
-      throw new BaerlyError(
-        "InvalidConfig",
-        "S3HttpStorage.list requires an XML parser; pass `xmlParser` in options or provide globalThis.DOMParser",
-      );
-    }
     let yielded = 0;
     let continuationToken: string | undefined;
     const startAfter = opts?.startAfter ?? "";
@@ -391,7 +372,7 @@ export class S3HttpStorage implements Storage {
           );
         });
         if (outcome.kind === "ok") {
-          parsed = parseListObjectsV2CommandOutput(outcome.body, xmlParser);
+          parsed = parseListObjectsV2CommandOutput(outcome.body);
           break;
         }
         lastHint = outcome.retryAfterSeconds;
@@ -427,8 +408,3 @@ export class S3HttpStorage implements Storage {
     }
   }
 }
-
-const defaultXmlParser = (): XmlParser | undefined => {
-  const globalParser = (globalThis as { DOMParser?: new () => XmlParser }).DOMParser;
-  return globalParser !== undefined ? new globalParser() : undefined;
-};

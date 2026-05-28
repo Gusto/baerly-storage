@@ -2,10 +2,10 @@ import { defineConfig } from "rolldown";
 
 export default defineConfig({
   input: "src/baerly.ts",
-  // `aws4fetch` and `@xmldom/xmldom` are optional peer deps of
-  // `baerly-storage` (the library import surface). Scaffolded apps
-  // install only `baerly-storage`, so the CLI bin can't rely on
-  // those peers being on disk — bundle them into the bin instead.
+  // `aws4fetch` and `fast-xml-parser` are bundled into `baerly-storage`
+  // (the library import surface). Scaffolded apps install only
+  // `baerly-storage`, so the CLI bin can't rely on those packages
+  // being on disk — bundle them into the bin instead.
   external: [/^node:/],
   output: {
     dir: "../../dist",

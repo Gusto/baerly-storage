@@ -13,7 +13,6 @@
   },
   "dependencies": {
     "@gusto/baerly-storage": "workspace:*",
-    "@xmldom/xmldom": "^0.9.10",
     "aws4fetch": "^1.0.20"
   },
   "devDependencies": {

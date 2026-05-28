@@ -320,7 +320,14 @@ const BUDGETS: readonly Budget[] = [
   //     so the `instanceof Hono` assertion compares against the same
   //     class the production code now constructs. Measured: 651827
   //     raw / 181875 gz.
-  { entry: "node.js", raw: 670 * 1024, gz: 190 * 1024 },
+  //   → 540 KiB raw / 156 KiB gz: `@xmldom/xmldom` (~30 KB ESM, ~250 KB
+  //     `xmldom-ts` DOM tree subgraph) replaced with `fast-xml-parser`
+  //     (~20 KB parser, plain object output). `S3HttpStorage` no longer
+  //     accepts an injected `XmlParser`; the `parseListObjectsV2-
+  //     CommandOutput` helper moved from `@baerly/protocol` to
+  //     `@baerly/adapter-node` and constructs its own `XMLParser`
+  //     internally. Measured: 537300 raw / 154229 gz.
+  { entry: "node.js", raw: 540 * 1024, gz: 156 * 1024 },
   // Client surface — `BaerlyClient<TConfig>` + fetcher plumbing.
   // Browser/runtime-agnostic; no kernel modules in the closure.
   // Budget history:
@@ -446,7 +453,11 @@ const BUDGETS: readonly Budget[] = [
   //     `packages/adapter-node/src/app.ts` removes the duplicated
   //     full-preset Hono routers from this closure too. Measured:
   //     659665 raw / 184641 gz.
-  { entry: "dev-vite.js", raw: 680 * 1024, gz: 190 * 1024 },
+  //   → 548 KiB raw / 159 KiB gz: dev-vite shares the adapter-node
+  //     listener closure, so the `@xmldom/xmldom` → `fast-xml-parser`
+  //     swap (see the `node.js` budget note above) drops here too.
+  //     Measured: 545138 raw / 156973 gz.
+  { entry: "dev-vite.js", raw: 548 * 1024, gz: 159 * 1024 },
 ];
 
 // Static-import specifiers only. Dynamic `import(...)` is intentionally
@@ -527,11 +538,11 @@ describe("bundle size", () => {
     ).toEqual([]);
   });
 
-  // Scaffolded apps install only `baerly-storage`. `@xmldom/xmldom`
+  // Scaffolded apps install only `baerly-storage`. `fast-xml-parser`
   // and `aws4fetch` are bundled into the published library + bin
   // chunks that use them (see `rolldown.config.ts` and
   // `packages/cli/rolldown.config.ts`); no dist closure may leave a
-  // live `import "@xmldom/xmldom"` or `import "aws4fetch"` for the
+  // live `import "fast-xml-parser"` or `import "aws4fetch"` for the
   // host's module resolver to chase, because the host doesn't have
   // those packages on disk.
   //
@@ -542,7 +553,7 @@ describe("bundle size", () => {
   // S3 client and emitted a live `import "@xmldom/xmldom"`, which
   // killed `vite` on scaffolded Cloudflare apps. This test now walks
   // every entry in the published `exports` map plus the bin.
-  const BUNDLED_OPTIONAL_PEERS = new Set(["@xmldom/xmldom", "aws4fetch"]);
+  const BUNDLED_OPTIONAL_PEERS = new Set(["fast-xml-parser", "aws4fetch"]);
   const pkgRoot = resolve(__dirname, "../..");
   const distDir = resolve(pkgRoot, "dist");
   const rootPkg = JSON.parse(readFileSync(resolve(pkgRoot, "package.json"), "utf8")) as {

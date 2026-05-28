@@ -72,10 +72,10 @@
  * createServer(getRequestListener(baerly.fetch)).listen(3000);
  * ```
  *
- * Advanced users who need to override the `fetch` / `xmlParser` /
- * retry knobs can construct `S3HttpStorage` directly — see the
- * `S3HttpStorageOptions` JSDoc. The four factories above wrap the
- * common case for AWS S3, R2, Minio, and GCS.
+ * Advanced users who need to override the `fetch` / retry knobs can
+ * construct `S3HttpStorage` directly — see the `S3HttpStorageOptions`
+ * JSDoc. The four factories above wrap the common case for AWS S3, R2,
+ * Minio, and GCS.
  */
 export { S3HttpStorage } from "./s3-http.ts";
 export type { S3HttpStorageOptions } from "./s3-http.ts";

@@ -1,9 +1,6 @@
-import { DOMParser } from "@xmldom/xmldom";
 import { describe, expect, test, vi } from "vitest";
 import { BaerlyError } from "@baerly/protocol";
 import { S3HttpStorage } from "./s3-http.ts";
-
-const xmlParser = new DOMParser();
 
 const mkStorage = (
   fetchImpl: typeof fetch,
@@ -13,7 +10,6 @@ const mkStorage = (
     endpoint: "https://example.invalid",
     bucket: "b",
     fetch: fetchImpl,
-    xmlParser,
     retries: overrides.retries ?? 0,
     backoffMs: overrides.backoffMs ?? 1,
   });
@@ -425,39 +421,6 @@ describe("S3HttpStorage.list", () => {
       vi.useRealTimers();
     }
   });
-
-  test("missing xmlParser → InvalidConfig on first list call", async () => {
-    const s = new S3HttpStorage({
-      endpoint: "https://example.invalid",
-      bucket: "b",
-      fetch: vi.fn<typeof fetch>(),
-      retries: 0,
-    });
-    // Force xmlParser to undefined by stripping the global default
-    const original = (globalThis as { DOMParser?: unknown }).DOMParser;
-    delete (globalThis as { DOMParser?: unknown }).DOMParser;
-    try {
-      const s2 = new S3HttpStorage({
-        endpoint: "https://example.invalid",
-        bucket: "b",
-        fetch: vi.fn<typeof fetch>(),
-        retries: 0,
-      });
-      await expect(
-        (async () => {
-          for await (const _ of s2.list("p/")) {
-            void _;
-          }
-        })(),
-      ).rejects.toMatchObject({ code: "InvalidConfig" });
-    } finally {
-      if (original !== undefined) {
-        (globalThis as { DOMParser?: unknown }).DOMParser = original;
-      }
-    }
-    // sanity-check: the first instance still uses the injected parser
-    expect(s).toBeDefined();
-  });
 });
 
 describe("retry honors Retry-After hint", () => {
@@ -530,7 +493,6 @@ describe("sign callback", () => {
       bucket: "b",
       fetch: upstreamFetch as unknown as typeof fetch,
       sign,
-      xmlParser,
       retries: 0,
     });
     await s.put("k", new Uint8Array(0));

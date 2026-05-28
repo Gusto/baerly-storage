@@ -25,4 +25,3 @@ export * from "./hashing.ts";
 export * from "./log.ts";
 export * from "./metrics.ts";
 export * from "./snapshot-hash.ts";
-export * from "./xml.ts";

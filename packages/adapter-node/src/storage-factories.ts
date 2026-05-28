@@ -1,10 +1,6 @@
-import { DOMParser } from "@xmldom/xmldom";
 import { AwsClient } from "aws4fetch";
 import type { Storage } from "@baerly/protocol";
 import { S3HttpStorage } from "./s3-http.ts";
-
-// DOMParser is stateless — one shared instance is safe across factories.
-const xmlParser = new DOMParser();
 
 function buildS3Storage(opts: {
   endpoint: string;
@@ -22,15 +18,13 @@ function buildS3Storage(opts: {
   return new S3HttpStorage({
     endpoint: opts.endpoint,
     bucket: opts.bucket,
-    xmlParser,
     sign: (req) => aws.sign(req),
   });
 }
 
 /**
  * AWS S3 `Storage` factory. Wraps `S3HttpStorage` with the standard
- * `aws4fetch` SigV4 signer and the `@xmldom/xmldom` DOMParser. The
- * endpoint is derived from the region as
+ * `aws4fetch` SigV4 signer. The endpoint is derived from the region as
  * `https://s3.<region>.amazonaws.com`.
  *
  * @example

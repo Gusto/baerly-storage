@@ -47,13 +47,8 @@
  */
 
 import { AwsClient } from "aws4fetch";
-import { DOMParser } from "@xmldom/xmldom";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
-import {
-  CURRENT_JSON_SCHEMA_VERSION,
-  createCurrentJson,
-  type Storage,
-} from "@baerly/protocol";
+import { CURRENT_JSON_SCHEMA_VERSION, createCurrentJson, type Storage } from "@baerly/protocol";
 import { S3HttpStorage } from "@baerly/adapter-node";
 import {
   runHttpConformanceCascade,
@@ -214,7 +209,6 @@ describe.runIf(NODE_URL !== undefined && SECRET !== undefined)("real-deploy: nod
       storage = new S3HttpStorage({
         endpoint: S3_ENDPOINT,
         bucket: BUCKET!,
-        xmlParser: new DOMParser(),
         sign: (req) => aws.sign(req),
       });
     });

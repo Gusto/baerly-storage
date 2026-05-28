@@ -24,7 +24,6 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AwsClient } from "aws4fetch";
-import { DOMParser } from "@xmldom/xmldom";
 import { afterEach, describe, test } from "vitest";
 import { getOrCreateMemoryStorageForBucket, type Storage, uuid } from "@baerly/protocol";
 import { S3HttpStorage } from "@baerly/adapter-node";
@@ -92,13 +91,11 @@ const allVariants: Variant[] = [
         service: "s3",
       });
       await createBucket(signer, stableConfig.endpoint, bucket);
-      const xmlParser = new DOMParser();
       const make = (): S3HttpStorage =>
         new S3HttpStorage({
           endpoint: stableConfig.endpoint,
           bucket,
           sign: (req) => signer.sign(req),
-          xmlParser,
         });
       return { storage: make(), rivalStorage: make() };
     },

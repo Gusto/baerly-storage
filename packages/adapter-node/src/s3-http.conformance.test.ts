@@ -1,5 +1,4 @@
 import { AwsClient } from "aws4fetch";
-import { DOMParser } from "@xmldom/xmldom";
 import { fc } from "@fast-check/vitest";
 import { beforeAll, describe } from "vitest";
 import { defineStorageConformanceSuite } from "@baerly/protocol/conformance";
@@ -27,7 +26,6 @@ const signer = new AwsClient({
   service: "s3",
 });
 const sign = (req: Request): Promise<Request> => signer.sign(req);
-const xmlParser = new DOMParser();
 
 // Minio's REST gateway rejects request paths whose resource component
 // is `.` or `..` (it validates URL paths as POSIX paths on the backing
@@ -60,7 +58,6 @@ describe.runIf(minioEnabled)("S3HttpStorage @ Minio :9102", () => {
         endpoint: MINIO_ENDPOINT,
         bucket: BUCKET,
         sign,
-        xmlParser,
       }),
     }),
     {

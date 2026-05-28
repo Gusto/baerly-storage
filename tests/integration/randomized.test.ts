@@ -22,13 +22,8 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AwsClient } from "aws4fetch";
-import { DOMParser } from "@xmldom/xmldom";
 import { afterEach, beforeEach, describe, test } from "vitest";
-import {
-  getOrCreateMemoryStorageForBucket,
-  type Storage,
-  uuid,
-} from "@baerly/protocol";
+import { getOrCreateMemoryStorageForBucket, type Storage, uuid } from "@baerly/protocol";
 import { S3HttpStorage } from "@baerly/adapter-node";
 import { LocalFsStorage } from "@baerly/dev";
 import { createBucket } from "../fixtures/s3-fixtures.ts";
@@ -117,7 +112,6 @@ const allVariants: Variant[] = [
         service: "s3",
       });
       await createBucket(signer, stableConfig.endpoint, bucket);
-      const xmlParser = new DOMParser();
       return Array.from(
         { length: n },
         () =>
@@ -125,7 +119,6 @@ const allVariants: Variant[] = [
             endpoint: unstableConfig.endpoint, // Toxiproxy — fault injection
             bucket,
             sign: (req) => signer.sign(req),
-            xmlParser,
           }),
       );
     },

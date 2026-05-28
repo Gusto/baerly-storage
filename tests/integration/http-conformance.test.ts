@@ -31,7 +31,6 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AwsClient } from "aws4fetch";
-import { DOMParser } from "@xmldom/xmldom";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import {
   CURRENT_JSON_SCHEMA_VERSION,
@@ -103,13 +102,11 @@ const allVariants: Variant[] = [
         service: "s3",
       });
       await createBucket(signer, stableConfig.endpoint, bucket);
-      const xmlParser = new DOMParser();
       return {
         storage: new S3HttpStorage({
           endpoint: stableConfig.endpoint,
           bucket,
           sign: (req) => signer.sign(req),
-          xmlParser,
         }),
       };
     },

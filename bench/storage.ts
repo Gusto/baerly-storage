@@ -12,7 +12,6 @@
  */
 
 import { AwsClient } from "aws4fetch";
-import { DOMParser } from "@xmldom/xmldom";
 import {
   type Storage,
   type StorageGetOptions,
@@ -346,7 +345,6 @@ export function buildBenchStorage(opts: BenchStorageOpts): CountingStorage {
     endpoint: endpointFor(opts.via),
     bucket: opts.bucket,
     sign: (req: Request) => signer.sign(req),
-    xmlParser: new DOMParser(),
     retries: 0, // bench owns retry policy
   });
   return new CountingStorage(inner);
