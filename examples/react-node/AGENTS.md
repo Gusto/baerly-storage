@@ -135,13 +135,13 @@ http://localhost:5173/<path>`) before declaring the task complete.
 
 ## When editing X, read Y
 
-- **Typed tables** — three ways to get a typed row, in DX order:
+- **Typed collections** — three ways to get a typed row, in DX order:
   1. **Bind the config.** This template's `src/web/client.ts`
      already passes `config` to `createBaerlyClient({ baseUrl,
      config })`, so `client.collection("notes")` returns
      `ClientCollection<Row>` with `Row` derived from the
      `NoteSchema` declared in `baerly.config.ts`. No generic
-     needed. Use `client.table<Note>("notes")` (with `Note`
+     needed. Use `client.collection<Note>("notes")` (with `Note`
      exported from `baerly.config.ts` next to the schema)
      only when you need the row type by name elsewhere.
   2. **Explicit generic, kernel constraint.** Without a declared
@@ -150,7 +150,7 @@ http://localhost:5173/<path>`) before declaring the task complete.
      ```ts
      import type { DocumentData } from "@gusto/baerly-storage";
      interface Bookmark extends DocumentData { _id: string; url: string }
-     await client.table<Bookmark>("bookmarks").all();
+     await client.collection<Bookmark>("bookmarks").all();
      ```
      A plain `interface Bookmark { _id: string; url: string }`
      (no index signature) will fail with TS2344 — the constraint
@@ -558,16 +558,16 @@ const [filter, setFilter] = useState<Filter>("all");
 const result = useQuery(
   (c) =>
     filter === "all"
-      ? c.table<Note>("notes").all()
-      : c.table<Note>("notes").where({ status: filter }).all(),
+      ? c.collection<Note>("notes").all()
+      : c.collection<Note>("notes").where({ status: filter }).all(),
   [filter],
 );
 ```
 
 `useQuery` re-runs the callback when `deps` changes OR when the
 `/v1/since` long-poll batches a non-empty change for any subscribed
-table. Idle long-poll cycles (empty batches) drop at the
-`subscription-pool` layer, so a steady-state table costs zero list
+collection. Idle long-poll cycles (empty batches) drop at the
+`subscription-pool` layer, so a steady-state collection costs zero list
 reads. Add a `<select>` bound to `setFilter` and the list narrows live.
 
 For conditional / deferred reads, return the `useQuery.skip` sentinel
@@ -579,7 +579,7 @@ const filtered = useQuery(
   (c) =>
     filter === "all"
       ? useQuery.skip
-      : c.table<Note>("notes").where({ status: filter }).all(),
+      : c.collection<Note>("notes").where({ status: filter }).all(),
   [filter],
 );
 if (filtered.status === "skipped") return <FullList />;
@@ -589,7 +589,7 @@ For dependent reads, compose two `useQuery` calls — the second one
 returns `useQuery.skip` until the first resolves to `"ok"`:
 
 ```tsx
-const parent = useQuery((c) => c.table<Note>("notes").get(id), [id]);
+const parent = useQuery((c) => c.collection<Note>("notes").get(id), [id]);
 const replies = useQuery(
   (c) =>
     parent.status === "ok"

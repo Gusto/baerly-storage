@@ -117,11 +117,22 @@ Accepted (2026-05-11).
   layer rather than via every `Db.create` call — and the LLM-zero-shot
   surface drops three knobs that no prototype-tier author would wire.
 
+- Amended (2026-05-28): vocabulary renamed `Table<T>` → `Collection<T>`,
+  `db.table()` → `db.collection()`, `ClientTable<T>` → `ClientCollection<T>`,
+  `db.transaction(table, ...)` → `db.transaction(collection, ...)`. The
+  HTTP wire follows: `/v1/t/:table` → `/v1/c/:collection`, `?table=` →
+  `?collection=`. React-callback accessor `client.table(name)` →
+  `client.collection(name)`. The locked surface shape is otherwise
+  unchanged (same modifiers, same terminals, same predicates, same
+  return shapes). See `docs/superpowers/specs/2026-05-25-collection-rename-design.md`
+  for the rationale and sweep. The additive-only contract is reset
+  against the new baseline.
+
 ## Context
 
-The SQL-shape table API lives in
+The SQL-shape collection API lives in
 [`packages/server/src/db.ts`](../../packages/server/src/db.ts),
-[`packages/server/src/table.ts`](../../packages/server/src/table.ts),
+[`packages/server/src/collection.ts`](../../packages/server/src/collection.ts),
 and
 [`packages/server/src/query.ts`](../../packages/server/src/query.ts).
 The barrel at
@@ -135,14 +146,14 @@ event with a long blast radius.
 
 Two factual anchors describe what is in the lock today:
 
-1. `Db` exposes exactly three methods: `Db.create`, `db.table`,
+1. `Db` exposes exactly three methods: `Db.create`, `db.collection`,
    `db.transaction`
    ([`packages/server/src/db.ts:140-464`](../../packages/server/src/db.ts)).
-2. `Table<T>` exposes the common-case verbs (`first`, `all`, `count`,
+2. `Collection<T>` exposes the common-case verbs (`first`, `all`, `count`,
    `get`, `insert`, `update`, `replace`, `delete` — by primary key)
    plus modifiers (`where`, `order`, `limit`, `consistency`) returning
-   a `Query<T>`. The transaction callback receives a `Table<T>`, not a
-   `Db`, so cross-table writes inside `transaction()` are a TypeScript
+   a `Query<T>`. The transaction callback receives a `Collection<T>`, not a
+   `Db`, so cross-collection writes inside `transaction()` are a TypeScript
    compile error
    ([`packages/server/src/db.ts:464-510`](../../packages/server/src/db.ts)).
 
@@ -171,14 +182,15 @@ Locked surface, by file:
 - `Db` ([`packages/server/src/db.ts`](../../packages/server/src/db.ts)):
   - `Db.create({ storage, app, tenant }) -> Db` — fails
     `BaerlyError{code:"InvalidConfig"}` if `app` or `tenant` is empty.
-  - `db.table<T>(name) -> Table<T>` — name must be non-empty and must
-    not contain `/`.
-  - `db.transaction<T>(table, body) -> Promise<void>` — body receives
-    `Table<T>`, NOT `Db`; cross-table writes are a compile error;
-    single-attempt, CAS conflict throws `BaerlyError{code:"Conflict"}`.
+  - `db.collection<T>(name) -> Collection<T>` — name must be non-empty
+    and must not contain `/`.
+  - `db.transaction<T>(collection, body) -> Promise<void>` — body
+    receives `Collection<T>`, NOT `Db`; cross-collection writes are a
+    compile error; single-attempt, CAS conflict throws
+    `BaerlyError{code:"Conflict"}`.
   - Readonly properties: `db.app`, `db.tenant`.
-- `Table<T>`
-  ([`packages/server/src/table.ts`](../../packages/server/src/table.ts)):
+- `Collection<T>`
+  ([`packages/server/src/collection.ts`](../../packages/server/src/collection.ts)):
   `name` (readonly), `first()`, `all()`, `count()`, `get(id)`,
   `where(predicate)`, `order(spec)`, `limit(n)`, `insert(doc)`,
   `update(id, patch)`, `replace(id, doc)`, `delete(id)`. Mutation
@@ -189,15 +201,15 @@ Locked surface, by file:
   `count()`, `update(patch)`, `replace(doc)`, `delete()`. Mutation
   verbs are predicate-aware bulk; no HTTP mirror exists for bulk
   mutation, so `ClientQuery<T>` is read-only.
-- `Db.transaction` callback context: a `Table<T>` whose mutation verbs
-  buffer; reads pass through to live storage. No MVCC, no
+- `Db.transaction` callback context: a `Collection<T>` whose mutation
+  verbs buffer; reads pass through to live storage. No MVCC, no
   read-your-writes. The buffer commits atomically via one `commitBatch`
   call
   ([`packages/server/src/db.ts:464-560`](../../packages/server/src/db.ts)).
 
 Allowed additive changes (no ADR required):
 
-- New methods on `Db` / `Table` / `Query` that do not shadow existing
+- New methods on `Db` / `Collection` / `Query` that do not shadow existing
   names.
 - New optional config fields on `Db.create` (e.g. `metrics`, `signal`).
 - New `BaerlyErrorCode` values appended to the union in
@@ -214,9 +226,9 @@ capability, the prior form is a candidate for removal in the same
 amendment cycle. Pre-launch (no external users), the cost of
 removal is zero; the 2026-05-21 amendment above is the precedent.
 
-In practice this means: if a PR adds `Table<T>.method(x)` and the
+In practice this means: if a PR adds `Collection<T>.method(x)` and the
 same operation was previously expressible as
-`Table<T>.where({...}).other()`, the PR should either (a) make the
+`Collection<T>.where({...}).other()`, the PR should either (a) make the
 ceremony path not type-check, or (b) amend this ADR with the
 justification for keeping both.
 
@@ -224,8 +236,8 @@ Prohibited without a supersession ADR:
 
 - Renaming any method.
 - Changing the callback signature of `Db.transaction` (e.g. passing
-  `Db` instead of `Table<T>`).
-- Adding cross-table writes inside a transaction — this would break
+  `Db` instead of `Collection<T>`).
+- Adding cross-collection writes inside a transaction — this would break
   the no-2PC invariant (see the JSDoc on `Db.transaction` in
   [`packages/server/src/db.ts`](../../packages/server/src/db.ts) and
   [ADR-001](./001-tenant-cas-isolation.md)).
@@ -242,8 +254,8 @@ path without making the public API a moving target.
 
 - The conformance suite at
   [`tests/integration/conformance.test.ts`](../../tests/integration/conformance.test.ts)
-  and the table-API integration test at
-  [`tests/integration/table-api.test.ts`](../../tests/integration/table-api.test.ts)
+  and the collection-API integration test at
+  [`tests/integration/collection-api.test.ts`](../../tests/integration/collection-api.test.ts)
   are the executable specification of this lock. Either suite breaking
   on a PR means the surface changed and the PR needs an ADR.
 - TypeScript `.d.ts` files exported from `packages/server/dist/` are
@@ -255,14 +267,14 @@ path without making the public API a moving target.
   ([ADR-001](./001-tenant-cas-isolation.md)). Reversing this lock
   would require either 2PC or per-tenant CAS; both were explicitly
   rejected.
-- JSDoc on `Db.create`, `db.table`, and `db.transaction` is the source
+- JSDoc on `Db.create`, `db.collection`, and `db.transaction` is the source
   of truth for parameter semantics; this ADR pins the surface-level
   shape but the JSDoc owns the behavioural contract. Per
   [`docs/contributing/conventions/docs.md`](../contributing/conventions/docs.md), the public-API
   reference lives as JSDoc on the implementation, not as a
   hand-maintained markdown ref.
 - TypeScript is the enforcement mechanism for the callback shape
-  (`transaction(callback: (tx: Table<T>) => …)`); branded types (see
+  (`transaction(callback: (tx: Collection<T>) => …)`); branded types (see
   the "Conventions" section of [`CLAUDE.md`](../../CLAUDE.md)) keep
   the verb signatures from being papered over with `as string`.
 - The lock is reversible with cost. A future major version may revisit

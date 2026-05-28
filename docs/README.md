@@ -55,7 +55,7 @@ Product and business context.
 For people changing the code in this repo.
 
 - `contributing/architecture.md` — module graph and the lifecycle
-  of `db.table(...).insert()`.
+  of `db.collection(...).insert()`.
 - `contributing/development.md` — local setup, test commands,
   Minio / Toxiproxy / Postgres stack.
 - `contributing/extending.md` — worked examples for adding a `Db`

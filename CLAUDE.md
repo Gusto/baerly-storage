@@ -68,7 +68,7 @@ var isn't propagated.
 | `pnpm test:conformance` | adds `conformance.test.ts` (needs Minio + credentials files) | ~30s | requires credentials in `credentials/{aws,gcs,cloudflare}.json` |
 | `pnpm test:export-smoke` | adds `export-smoke.test.ts` (`LogEntry` round-trip into Postgres; needs local Postgres on `:5433`) | ~5s | ✅ when `pnpm dev:storage` is up |
 | `pnpm test:export-round-trip` | full export → SQLite → restore → byte-equal dump | ~5–10s | ✅ when `sqlite3` is on PATH (auto-skips otherwise) |
-| `pnpm test:adapter-cloudflare` | runs `r2BindingStorage` conformance, the `cloudflare-r2` variant of `randomized.test.ts`, the `cloudflare-r2` variant of `table-api.test.ts`, **and** the `cloudflare-r2` variant of `http-conformance.test.ts` under miniflare (`@cloudflare/vitest-pool-workers`, project `cloudflare-pool`) | ~3s | ✅ — first run downloads the `workerd` binary |
+| `pnpm test:adapter-cloudflare` | runs `r2BindingStorage` conformance, the `cloudflare-r2` variant of `randomized.test.ts`, the `cloudflare-r2` variant of `collection-api.test.ts`, **and** the `cloudflare-r2` variant of `http-conformance.test.ts` under miniflare (`@cloudflare/vitest-pool-workers`, project `cloudflare-pool`) | ~3s | ✅ — first run downloads the `workerd` binary |
 | `pnpm test:http-conformance` | runs the HTTP cascade on `memory` + `local-fs` (default project) | ~3s | ✅ |
 | `pnpm test:adapter-node` | runs `s3HttpStorage` conformance against local Minio | ~10s | ✅ when `pnpm dev:storage` is up |
 | `pnpm test:adapters` | sequential wrapper: `test:adapter-cloudflare` then `test:adapter-node` | ~10s | ✅ when `pnpm dev:storage` is up |
@@ -128,16 +128,16 @@ deps. Tests requiring Minio or credentials are gated by env:
   `beforeAll` (409 BucketAlreadyOwnedByYou is tolerated). Run with
   `pnpm test:adapter-node`, or both adapter suites in sequence
   with `pnpm test:adapters`.
-- **`tests/integration/table-api.test.ts`** drives the locked
-  `db.table(...).{first,all,count,insert,update,replace,delete}` and
+- **`tests/integration/collection-api.test.ts`** drives the locked
+  `db.collection(...).{first,all,count,insert,update,replace,delete}` and
   `db.transaction(...)` surface across three Node-side adapters
   (`memory`, `local-fs`, `node-minio`). `memory` + `local-fs` run by
   default; `node-minio` is gated on `MINIO=1` (via
   `pnpm test:minio`). The Workerd-side `cloudflare-r2` variant lives
-  at `packages/adapter-cloudflare/src/table-api.test.ts` and runs
+  at `packages/adapter-cloudflare/src/collection-api.test.ts` and runs
   under the `cloudflare-pool` vitest project (via
   `pnpm test:adapter-cloudflare`). All variants share the
-  backend-agnostic driver in `tests/fixtures/table-api-cascade.ts`.
+  backend-agnostic driver in `tests/fixtures/collection-api-cascade.ts`.
 - **`tests/integration/phase5-end-to-end.test.ts`** is the end-to-end
   durability gate: seeds 5000 entries, runs
   `runScheduledMaintenance` to quiescence, then asserts find()
@@ -206,8 +206,8 @@ Read in this order to build a mental model:
    point. The `@gusto/baerly-storage` npm package is bundled from here.
 2. `packages/server/src/db.ts` — the `Db` class. Public read/write
    surface for application code.
-3. `packages/server/src/table.ts`, `packages/server/src/query.ts` —
-   `Table<T>` / `Query<T>` SQL-shape API + predicate AST.
+3. `packages/server/src/collection.ts`, `packages/server/src/query.ts` —
+   `Collection<T>` / `Query<T>` SQL-shape API + predicate AST.
 4. `packages/server/src/server-writer.ts` — `ServerWriter` stateless
    commit path: PUT content → PUT log entry → PUT/DELETE
    index entries → CAS-advance `current.json`.
@@ -229,8 +229,8 @@ Read in this order to build a mental model:
    `packages/protocol/src/o-map.ts`,
    `packages/protocol/src/time.ts`,
    `packages/protocol/src/xml.ts`,
-   `packages/protocol/src/table-api.ts` (on-the-wire
-   `Table`/`Query`/`Predicate` contracts),
+   `packages/protocol/src/collection-api.ts` (on-the-wire
+   `Collection`/`Query`/`Predicate` contracts),
    `packages/protocol/src/query/` (validate / matches / merge —
    the kernel half of the predicate algebra),
    `packages/protocol/src/storage/` (`Storage` interface +
@@ -277,7 +277,7 @@ Read in this order to build a mental model:
    `dist/templates/addons/` so the published binary ships them too.
    Catalog index in `examples/README.md`. See `packages/create-baerly-storage/AGENTS.md` for the full scaffold pipeline (examples → dist/templates → tgz → user dir).
 
-The full lifecycle of `db.table().insert()` is in
+The full lifecycle of `db.collection().insert()` is in
 [docs/contributing/architecture.md](docs/contributing/architecture.md) — read it before
 changing `packages/server/src/server-writer.ts` or the query
 evaluation path. architecture.md also has a Mermaid dependency
@@ -295,7 +295,7 @@ Path-scoped conventions. **Read the matching file before editing.**
 | `packages/protocol/src/json.ts` | [docs/spec/json-merge-patch.md](docs/spec/json-merge-patch.md) |
 | `packages/protocol/src/log.ts`, the log-emit path in `server-writer.ts` | [docs/spec/log-entry-shape.md](docs/spec/log-entry-shape.md) |
 | `packages/server/src/observability/**` | [docs/contributing/conventions/observability.md](docs/contributing/conventions/observability.md) |
-| Public API on `Db` / `Table` | [docs/contributing/extending.md](docs/contributing/extending.md) |
+| Public API on `Db` / `Collection` | [docs/contributing/extending.md](docs/contributing/extending.md) |
 | `packages/server/src/schema.ts` or `CollectionDefinition.schema` | [docs/contributing/extending.md](docs/contributing/extending.md) §"Declare a schema for a collection" |
 
 Claude users: `.claude/rules/{tests,docs,change-discipline}.md`
@@ -307,7 +307,7 @@ auto-load on matching edits and point at the same files.
   `tsconfig.json` uses `moduleResolution: "bundler"` and no `baseUrl`.
   Inside `packages/server/src/` write
   `import { UUID } from "@baerly/protocol"` for cross-package types
-  and `import { makeTable } from "./table.ts"` for siblings. The
+  and `import { makeCollection } from "./collection.ts"` for siblings. The
   `.ts` extension is required so that Node's native
   `--experimental-strip-types` runtime — used by the
   `examples/minimal-node/` and `examples/react-node/` scaffolds,
@@ -380,7 +380,7 @@ auto-load on matching edits and point at the same files.
 
 - **Bugfix?** Reproduce with a failing test first. Pick the right test file
   by topic (`json.test.ts`, `time.test.ts`, etc.).
-- **New public API method on `Db` / `Table`?** See [docs/contributing/extending.md](docs/contributing/extending.md).
+- **New public API method on `Db` / `Collection`?** See [docs/contributing/extending.md](docs/contributing/extending.md).
   Add JSDoc with `@example` — IDEs and tsgo consume it directly.
 - **Touching the sync protocol?** Read `docs/spec/sync-protocol.md` and
   `docs/spec/causal-consistency-checking.md`. Add a property-based test in

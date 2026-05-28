@@ -19,8 +19,8 @@ in [CLAUDE.md](../../CLAUDE.md) and [architecture.md](./architecture.md).
 
 ## Public API surface
 
-The `Db` class is the entry point. `db.table<T>(name)` returns a
-typed `Table<T>` carrying the locked SQL-shape API
+The `Db` class is the entry point. `db.collection<T>(name)` returns a
+typed `Collection<T>` carrying the locked SQL-shape API
 (`first` / `all` / `count` / `insert` / `update` / `replace` /
 `delete`) and the predicate AST (`where` / `order` / `limit`).
 All public methods carry JSDoc with `@example` blocks — your IDE or
@@ -28,7 +28,7 @@ All public methods carry JSDoc with `@example` blocks — your IDE or
 delivered out-of-band by the HTTP `/v1/since` long-poll route.
 
 - [`packages/server/src/db.ts`](../../packages/server/src/db.ts) — `Db` class
-- [`packages/server/src/table.ts`](../../packages/server/src/table.ts) — `Table<T>` verbs
+- [`packages/server/src/collection.ts`](../../packages/server/src/collection.ts) — `Collection<T>` verbs
 - [`packages/server/src/query.ts`](../../packages/server/src/query.ts) — `Query<T>` predicate AST + reader
 
 ## Causal consistency
@@ -193,10 +193,10 @@ priorities, zero-padded numerics in string form, etc.).
   [`packages/server/src/query-planner.test.ts`](../../packages/server/src/query-planner.test.ts),
   [`packages/server/src/query.test.ts`](../../packages/server/src/query.test.ts)
   (the `describe("auto-planner index routing")` block),
-  [`tests/integration/table-api.test.ts`](../../tests/integration/table-api.test.ts),
+  [`tests/integration/collection-api.test.ts`](../../tests/integration/collection-api.test.ts),
   [`tests/integration/randomized.test.ts`](../../tests/integration/randomized.test.ts).
 - Docs: this section, [`docs/architecture.md`](./architecture.md)
-  §"Lifecycle of `db.table(...).insert()`", [`docs/extending.md`](./extending.md)
+  §"Lifecycle of `db.collection(...).insert()`", [`docs/extending.md`](./extending.md)
   §1c "Declare an index on a collection".
 
 ## SQL export (`baerly export --target=postgres|sqlite|d1`)
@@ -275,7 +275,7 @@ zero overhead.
   (validation hooks in `runInsert` / `runUpdate` / `runReplaceById`)
 - Tests:
   [`packages/server/src/schema.test.ts`](../../packages/server/src/schema.test.ts),
-  [`tests/integration/table-api.test.ts`](../../tests/integration/table-api.test.ts)
+  [`tests/integration/collection-api.test.ts`](../../tests/integration/collection-api.test.ts)
   (schema-validation block in the cascade)
 - Docs: [`docs/extending.md`](./extending.md) §"Declare a schema for a collection"
 

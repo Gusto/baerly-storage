@@ -1,7 +1,7 @@
 ---
 title: Extending Baerly
 audience: coder
-summary: Worked patterns for adding methods to Db, Query verbs, and Table verbs.
+summary: Worked patterns for adding methods to Db, Query verbs, and Collection verbs.
 last-reviewed: 2026-05-26
 tags: [extending, api-design, patterns]
 related: [architecture.md, "../adr/002-api-surface-lock.md", "../adr/003-naming-convention.md", "conventions/tests.md"]
@@ -14,7 +14,7 @@ patterns and your changes will fit the codebase's conventions.
 
 > Before adding a feature, read [architecture.md](architecture.md) so you
 > know which module owns what. Most additions touch
-> `packages/server/src/db.ts` or `packages/server/src/table.ts`, but the
+> `packages/server/src/db.ts` or `packages/server/src/collection.ts`, but the
 > *invariants* live in `packages/server/src/writer.ts`.
 
 > Before adding a public symbol to a barrel, read
@@ -26,16 +26,16 @@ patterns and your changes will fit the codebase's conventions.
 
 ## 1. Add a new public method on `Db`
 
-We'll work through `tables()` — list every table that has at least
+We'll work through `collections()` — list every collection that has at least
 one mutation logged against it.
 
 ### Where to add the method
 
 Public methods live on the `Db` class in
-`packages/server/src/db.ts`. The typical surface is `Table<T>` (in
-`packages/server/src/table.ts`), reached via
-`db.table<T>(name)` — so most additions are actually new verbs on
-`Table<T>` / `Query<T>`. The `Table<T>` / `Query<T>` interfaces
+`packages/server/src/db.ts`. The typical surface is `Collection<T>` (in
+`packages/server/src/collection.ts`), reached via
+`db.collection<T>(name)` — so most additions are actually new verbs on
+`Collection<T>` / `Query<T>`. The `Collection<T>` / `Query<T>` interfaces
 themselves are locked in `@baerly/protocol`; adding a new verb is
 a coordinated change.
 
@@ -43,24 +43,24 @@ a coordinated change.
 // packages/server/src/db.ts (inside class Db)
 
 /**
- * List every table name present under this tenant's manifest
+ * List every collection name present under this tenant's manifest
  * prefix. Reads object storage; no caching layer.
  *
- * @returns array of table names, in unspecified order
+ * @returns array of collection names, in unspecified order
  *
  * @example
  * ```ts
- * await db.table("tickets").insert({ title: "hello" });
- * const tables = await db.tables();
+ * await db.collection("tickets").insert({ title: "hello" });
+ * const collections = await db.collections();
  * // → ["tickets"]
  * ```
  */
-public async tables(): Promise<string[]> {
+public async collections(): Promise<string[]> {
   const prefix = physicalPrefixFor(this.app, this.tenant) +
     "manifests/";
   const out = new Set<string>();
   for await (const entry of this.#storage.list({ prefix })) {
-    // entry.key === "<prefix><table>/current.json"
+    // entry.key === "<prefix><collection>/current.json"
     const tail = entry.key.slice(prefix.length);
     const name = tail.split("/")[0];
     if (name) out.add(name);
@@ -84,7 +84,7 @@ public async tables(): Promise<string[]> {
   `app` / `tenant` pair only. Per-request state belongs in the
   caller; per-write state belongs in a fresh `Writer`.
 - **Reads are on-demand.** Use the injected `#storage` directly for
-  `list` / `get` reads; use `Table<T>.where(...).all()` for log-fold
+  `list` / `get` reads; use `Collection<T>.where(...).all()` for log-fold
   reads. Don't build a parallel cache layer.
 - **No new throw without `BaerlyError`.** If the method can fail,
   throw `new BaerlyError("Code", "context")` from
@@ -105,17 +105,17 @@ import { test, expect, describe } from "vitest";
 import { Db } from "@baerly/server";
 import { MemoryStorage } from "@baerly/server";
 
-describe("Db.tables()", () => {
+describe("Db.collections()", () => {
   test("reflects writes", async () => {
     const db = Db.create({
       storage: new MemoryStorage(),
       app: "test",
       tenant: "acme",
     });
-    await db.table("tickets").insert({ title: "x" });
-    await db.table("users").insert({ name: "Ada" });
-    const tables = await db.tables();
-    expect(tables.sort()).toEqual(["tickets", "users"]);
+    await db.collection("tickets").insert({ title: "x" });
+    await db.collection("users").insert({ name: "Ada" });
+    const collections = await db.collections();
+    expect(collections.sort()).toEqual(["tickets", "users"]);
   });
 });
 ```
@@ -286,7 +286,7 @@ export default defineConfig({
 
 ```ts
 // Composite on [status, priority]. A query like
-//   db.table("tickets").where({ status: "open", priority: "p1" }).all()
+//   db.collection("tickets").where({ status: "open", priority: "p1" }).all()
 // walks under <prefix>/index/by_status_priority/<status-b32>/<priority-b32>/.
 // When only `priority` is present, the planner emits FullScanPlan
 // (no left anchor on `status`).
@@ -387,9 +387,9 @@ export interface CommitInput {
 
 ### Wire it in
 
-- Update the table API (`packages/server/src/table.ts`) so callers
+- Update the collection API (`packages/server/src/collection.ts`) so callers
   can reach the new primitive. If the new primitive doesn't fit
-  the `Table<T>` shape, extend `Db` directly.
+  the `Collection<T>` shape, extend `Db` directly.
 - Add the new `op` discriminant to the field-requirement matrix in
   [spec/log-entry-shape.md](../spec/log-entry-shape.md).
 - Update `packages/server/src/query.ts` if the reader needs to fold
@@ -511,7 +511,7 @@ Check the `code`, not the message:
 ```ts
 expect.assertions(1);
 try {
-  await db.table("users").insert(/* something invalid */);
+  await db.collection("users").insert(/* something invalid */);
 } catch (err) {
   expect((err as BaerlyError).code).toBe("InvalidConfig");
 }
@@ -529,7 +529,7 @@ intervals (≤50ms) to keep the suite snappy.
 
 ## 5. Shared utilities on the public surface
 
-A handful of functions live below the `Db` / `Table<T>` API and are
+A handful of functions live below the `Db` / `Collection<T>` API and are
 exported from `@baerly/server` for consumers — adapters, the CLI,
 admin tooling — that need to compose protocol primitives directly.
 They are `@public` and stable; the JSDoc on each is the canonical

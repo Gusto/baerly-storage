@@ -27,7 +27,7 @@ only the operator's `MetricsRecorder` (when one is wired) or the no-op
 default.
 
 Direct `Db` calls outside an HTTP request — e.g. a `baerlyDev()` seed
-callback that calls `db.table().insert()` from inside the Vite
+callback that calls `db.collection().insert()` from inside the Vite
 plugin — don't emit a canonical line on their own. The unit boundary
 lives on the wrapping HTTP request, not on the `Db` method.
 Field-setters like `getCurrentContext()?.fields.set(...)` are no-ops

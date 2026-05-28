@@ -31,7 +31,7 @@ Wrapper `/opt/baerly/bin/backup.sh` (`chmod +x`):
 ```sh
 #!/usr/bin/env bash
 set -euo pipefail
-APP="$1"; TENANT="$2"; TABLE="$3"
+APP="$1"; TENANT="$2"; COLLECTION="$3"
 DATE="$(date -u +%Y-%m-%d)"
 RETAIN_DAYS=7
 OUT_DIR=/var/backups/baerly
@@ -41,10 +41,10 @@ baerly admin dump \
   --bucket=s3://baerly-prod \
   --app="$APP" \
   --tenant="$TENANT" \
-  --table="$TABLE" \
-  > "${OUT_DIR}/${APP}-${TENANT}-${TABLE}-${DATE}.ndjson"
+  --collection="$COLLECTION" \
+  > "${OUT_DIR}/${APP}-${TENANT}-${COLLECTION}-${DATE}.ndjson"
 
-find "$OUT_DIR" -name "${APP}-${TENANT}-${TABLE}-*.ndjson" \
+find "$OUT_DIR" -name "${APP}-${TENANT}-${COLLECTION}-*.ndjson" \
     -type f -mtime +"${RETAIN_DAYS}" -delete
 ```
 
@@ -78,7 +78,7 @@ baerly admin restore \
   --bucket=s3://baerly-recovery \
   --app=acme \
   --tenant=t1 \
-  --table=tickets \
+  --collection=tickets \
   < /var/backups/baerly/acme-t1-tickets-2026-05-20.ndjson
 ```
 

@@ -36,8 +36,8 @@ For scope, three options were considered:
   ceiling.
 - **Per-collection CAS.** One `current.json` per `(tenant, collection)`
   pair. More objects per tenant, but each one is contended only inside
-  its own collection. Matches the granularity of the SQL-shape table
-  API (`Db.table(name)` in
+  its own collection. Matches the granularity of the SQL-shape collection
+  API (`db.collection(name)` in
   [`packages/server/src/db.ts`](../../packages/server/src/db.ts)).
 - **Per-tenant with opt-in per-collection.** A flag on the deployment
   config selects between (a) and (b). Two configurations to test and
@@ -104,7 +104,7 @@ rolling-deploy hazard without introducing a leases-as-state dependency.
   [`packages/protocol/src/constants.ts`](../../packages/protocol/src/constants.ts)
   and implemented in
   [`packages/server/src/gc.ts`](../../packages/server/src/gc.ts).
-- Composes cleanly with the single-table transaction shape (see the
+- Composes cleanly with the single-collection transaction shape (see the
   JSDoc on `Db.transaction` in
   [`packages/server/src/db.ts`](../../packages/server/src/db.ts) and
   [ADR-002](./002-api-surface-lock.md)): every transaction touches

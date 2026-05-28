@@ -14,7 +14,7 @@ Conventions for content under `docs/`.
 ## Source of truth
 - Everything in `docs/` is hand-written.
 - The public-API reference lives as JSDoc on
-  `packages/server/src/db.ts` and `packages/server/src/table.ts`.
+  `packages/server/src/db.ts` and `packages/server/src/collection.ts`.
   IDE hover and `tsgo` consume it directly — there is no rendered
   markdown ref.
 
@@ -33,7 +33,7 @@ Conventions for content under `docs/`.
 | New developer setup step | `docs/contributing/development.md` |
 | New extension pattern | `docs/contributing/extending.md` |
 | Protocol change | `docs/spec/sync-protocol.md` (and a coverage entry in `docs/spec/causal-consistency-checking.md`) |
-| New `Db.create` / `Table<T>` option | JSDoc on the param in `packages/server/src/db.ts` or `packages/server/src/table.ts` |
+| New `Db.create` / `Collection<T>` option | JSDoc on the param in `packages/server/src/db.ts` or `packages/server/src/collection.ts` |
 
 ## Don't
 

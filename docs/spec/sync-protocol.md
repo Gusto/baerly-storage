@@ -279,7 +279,7 @@ prior art.
 
 ## CAS scope is per-collection
 
-Each table has its own `current.json` keyed by `(tenant, collection)`;
+Each collection has its own `current.json` keyed by `(tenant, collection)`;
 every commit reads, mutates, and CAS-writes that single object.
 There is no per-tenant or per-bucket mutex.
 
@@ -294,12 +294,12 @@ than one busy collection.
 
 Trade-offs:
 
-- Collections are independent — a write storm on one table does
+- Collections are independent — a write storm on one collection does
   not block writers on another in the same tenant.
 - More `current.json` objects per tenant (one per collection),
   managed by the same compactor/GC pair.
 - Hot single-collection workloads above roughly 30 writes/min on
-  the same table see CAS contention.
+  the same collection see CAS contention.
 - Cross-collection atomicity is impossible by construction.
   Applications that need it graduate to Postgres via the export
   contract ([log-entry-shape.md](log-entry-shape.md)); transaction

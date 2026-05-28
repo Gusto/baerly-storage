@@ -44,12 +44,12 @@ Your data lives in your bucket. The entire public surface fits in `.d.ts` files 
 
 ```ts
 // server — writes land in your R2 bucket
-await db.table("tickets")
+await db.collection("tickets")
   .insert({ title: "Onboard Alex", status: "open" });
 
 // client — live across every open tab
 const { rows } = useLiveQuery<Ticket>({
-  table: "tickets",
+  collection: "tickets",
   where: { status: "open" },
 });
 ```

@@ -74,7 +74,7 @@ pnpm build       # rolldown bundle to dist/ (index.js + index.d.ts)
 ```
 
 Public-API documentation lives as JSDoc on
-`packages/server/src/db.ts` and `packages/server/src/table.ts`. IDE
+`packages/server/src/db.ts` and `packages/server/src/collection.ts`. IDE
 hover and `tsgo` consume it directly — there is no rendered markdown
 ref to regenerate.
 
@@ -100,7 +100,7 @@ distinguish your regressions from the pre-existing state.
 - **No `baseUrl`.** `tsconfig.json` uses `moduleResolution: "bundler"` and
   no `baseUrl`. Cross-package imports use the `@baerly/<pkg>`
   workspace name; sibling imports are relative
-  (`import { makeTable } from "./table"`).
+  (`import { makeCollection } from "./collection"`).
 - **`oxfmt --write` modifies files.** Use `format:check` if you only want
   to verify.
 - **`tsgo` is the TS 7 native preview.** Errors look slightly different

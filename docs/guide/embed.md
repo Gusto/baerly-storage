@@ -21,7 +21,7 @@ import { LocalFsStorage } from "@gusto/baerly-storage/dev";
 
 const storage = new LocalFsStorage({ root: "./.baerly-data" });
 // No manifest bootstrap needed — the writer auto-provisions
-// `current.json` on the first commit to each (app, tenant, table).
+// `current.json` on the first commit to each (app, tenant, collection).
 
 const app = createApp({
   app: "tickets",

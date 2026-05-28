@@ -99,7 +99,7 @@ http://localhost:5173/<path>`) before declaring the task complete.
 | `src/server/index.ts`      | Worker entry — `baerlyWorker((env) => ({ verifier }))`                              |
 | `wrangler.jsonc`           | Cloudflare Worker manifest — name, R2 binding, assets, vars, triggers, limits, observability |
 | `index.html`               | SPA shell — Vite's entry point at the project root; references `/src/web/main.ts`.  |
-| `src/web/main.ts`          | SPA client entry — a ~17-line hello-world: reads `client.table<Note>("notes").all()` to render a `${n} note(s)` count and an `[Add note]` button that inserts a timestamped row and re-fetches. Demonstrates both read and write paths on first load. Extend or replace; `client.table<Row>(name)` is the typed surface. Workers Assets serves the built bundle from `dist/client/`. |
+| `src/web/main.ts`          | SPA client entry — a ~17-line hello-world: reads `client.collection<Note>("notes").all()` to render a `${n} note(s)` count and an `[Add note]` button that inserts a timestamped row and re-fetches. Demonstrates both read and write paths on first load. Extend or replace; `client.collection<Row>(name)` is the typed surface. Workers Assets serves the built bundle from `dist/client/`. |
 | `vite.config.ts`           | Vite + `@cloudflare/vite-plugin` — runs the Worker inside `workerd` in dev          |
 | `tsconfig.json`            | Root project-references stub                                                         |
 | `tsconfig.app.json`        | Client TS project (`src/web/`, DOM lib)                                              |
@@ -118,7 +118,7 @@ http://localhost:5173/<path>`) before declaring the task complete.
 
 ## When editing X, read Y
 
-- **Typed tables** — three ways to get a typed row, in DX order:
+- **Typed collections** — three ways to get a typed row, in DX order:
   1. **Bind the config.** Declare the collection (with an optional
      schema) in `baerly.config.ts`, pass `config` to
      `createBaerlyClient({ baseUrl, config })` (or `Db.create({
@@ -131,7 +131,7 @@ http://localhost:5173/<path>`) before declaring the task complete.
      ```ts
      import type { DocumentData } from "@gusto/baerly-storage";
      interface Bookmark extends DocumentData { _id: string; url: string }
-     await client.table<Bookmark>("bookmarks").all();
+     await client.collection<Bookmark>("bookmarks").all();
      ```
      A plain `interface Bookmark { _id: string; url: string }`
      (no index signature) will fail with TS2344 — the constraint

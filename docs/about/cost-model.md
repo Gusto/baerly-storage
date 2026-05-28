@@ -45,7 +45,7 @@ Class A is the meter that matters. Three reasons:
 3. **Compaction storms hit it** — a runaway compaction job is a
    Class A spike, not a Class B spike.
 
-`baerly cost --table=<collection>` projects the Class A ops/mo,
+`baerly cost --collection=<collection>` projects the Class A ops/mo,
 free-tier-aware dollar projection, and distance to the M-size
 ceiling + 50M/mo graduation trigger. That covers the day-1
 cost-verification moment without wiring an external sink. For

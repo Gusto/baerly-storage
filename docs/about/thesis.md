@@ -184,9 +184,9 @@ Each design choice falls out of a specific criterion above.
   collection, not contention on a global mutex.
 - **LLM-legible API.** Drizzle-shaped, not SQL strings. Two predicate
   shapes — object literal for equality
-  (`db.table('tickets').where({ status: 'open' }).all()`) and a
+  (`db.collection('tickets').where({ status: 'open' }).all()`) and a
   callback builder for the operator vocabulary
-  (`db.table('tickets').where(q => q.gte('priority', 5)).all()`). The
+  (`db.collection('tickets').where(q => q.gte('priority', 5)).all()`). The
   methods on `PredicateBuilder<T>` ARE the supported surface —
   methods we did not write (`or`, `regex`, `ne`) cannot be invoked.
   Seven verbs, five modifiers, one transaction. Operators are added

@@ -11,7 +11,7 @@ related: ["../guide/backups.md"]
 
 The day-one gate asserts that a non-engineer + Claude can go from
 `npm create baerly@latest` (post-publish) to a working
-`client.table().insert()` inside the day-one SLO:
+`client.collection().insert()` inside the day-one SLO:
 
 - Cloudflare target: **< 5 min cold**
 - Node target: **< 3 min local**
@@ -161,8 +161,8 @@ wrangler r2 bucket delete <name>
   parses.
 - **`no-manual-env-edit`** — `.env` mtime is within the gate budget
   (proves it wasn't hand-edited after `pnpm install`).
-- **`first-write`** — `client.table().insert()` returned a `_id`.
-- **`first-read`** — `client.table().get(id)` round-tripped the doc.
+- **`first-write`** — `client.collection().insert()` returned a `_id`.
+- **`first-read`** — `client.collection().get(id)` round-tripped the doc.
 
 ## Adjusting the budgets
 

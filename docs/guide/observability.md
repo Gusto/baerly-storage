@@ -43,7 +43,7 @@ Hit any route. One JSON line per request appears on stdout:
   "message": "canonical",
   "request_id": "0193b0a1-ff7a-7c44-b9d5-c3e91d8f3a01",
   "method": "POST",
-  "path": "/v1/t/tickets",
+  "path": "/v1/c/tickets",
   "status": 200,
   "duration_ms": 14.207,
   "outcome": "ok",
@@ -63,10 +63,10 @@ The Node adapter auto-selects a human-readable single-line shape when
 column-aligned, one line per unit-of-work. Sample lines:
 
 ```text
-12:34:56 GET   /v1/t/tickets                200   1ms  req=ab12cd34 class_a=0 class_b=1
-12:34:57 POST  /v1/t/tickets                201  20ms  req=cd34ef56 class_a=3 class_b=0 wamp=7
-12:34:58 POST  /v1/t/tickets                409   8ms  req=ef56gh78 class_a=1 class_b=0 412=1 outcome=conflict
-12:34:59 GET   /v1/t/tickets                200   0ms  req=gh78ij90 cache=hit
+12:34:56 GET   /v1/c/tickets                200   1ms  req=ab12cd34 class_a=0 class_b=1
+12:34:57 POST  /v1/c/tickets                201  20ms  req=cd34ef56 class_a=3 class_b=0 wamp=7
+12:34:58 POST  /v1/c/tickets                409   8ms  req=ef56gh78 class_a=1 class_b=0 412=1 outcome=conflict
+12:34:59 GET   /v1/c/tickets                200   0ms  req=gh78ij90 cache=hit
 ```
 
 The TTY shape is presentation only — the underlying fields are the
@@ -95,7 +95,7 @@ propagate to the platform.
 | `method` | string | HTTP method (HTTP unit only). |
 | `path` | string | Request path (HTTP unit only). |
 | `status` | number | HTTP status code (HTTP unit only). |
-| `cache_status` | `"hit" \| "miss" \| "bypass"` | Cloudflare adapter only. Set per HTTP request via the Cache API wrapper. `"hit"` skips the router; `"miss"` populates the cache; `"bypass"` covers non-GET, `/v1/since`, `/v1/healthz`, and anything outside `/v1/t/`. The Node adapter has no cache layer and never emits this field. |
+| `cache_status` | `"hit" \| "miss" \| "bypass"` | Cloudflare adapter only. Set per HTTP request via the Cache API wrapper. `"hit"` skips the router; `"miss"` populates the cache; `"bypass"` covers non-GET, `/v1/since`, `/v1/healthz`, and anything outside `/v1/c/`. The Node adapter has no cache layer and never emits this field. |
 | `duration_ms` | number | Monotonic wall-clock duration, `performance.now()` delta. |
 | `outcome` | string | One of `"ok"`, `"conflict"`, `"not_found"`, `"client_error"`, `"internal_error"`, or a unit-specific tag. |
 | `db.storage.class_a_ops_total` | number | Sum of PUT + DELETE + LIST calls. These are the physical operations S3-pricing classifies as Class A — the cost-dominant ones. |
@@ -143,7 +143,7 @@ in the Node adapter:
 ### Wiring a custom sink
 
 **For a one-shot day-1 cost peek, you don't need a sink at all —
-`baerly cost --table=<collection>` projects Class A ops/mo and a
+`baerly cost --collection=<collection>` projects Class A ops/mo and a
 free-tier-aware dollar trajectory. Wire a custom sink (below) only
 when you need 7-day / 30-day trends or alerting.**
 

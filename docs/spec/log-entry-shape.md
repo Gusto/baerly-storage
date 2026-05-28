@@ -218,7 +218,7 @@ each `U` / `D` entry carries:
   size on update-heavy collections; buys 1:1 logical replication
   and "previous value" answerable from the log alone.
 
-The setting is wired through the table API. Every collection
+The setting is wired through the collection API. Every collection
 defaults to `PATCH_ONLY`. The `ReplicaIdentity` type and `old` /
 `key_old` fields exist now so the shape is future-compatible.
 

@@ -1,7 +1,7 @@
 ---
 title: Architecture overview
 audience: coder
-summary: Module dependency graph and lifecycle of db.table(...).insert().
+summary: Module dependency graph and lifecycle of db.collection(...).insert().
 last-reviewed: 2026-05-26
 tags: [architecture, lifecycle, module-map]
 related: ["../spec/sync-protocol.md", extending.md, features.md]
@@ -64,7 +64,7 @@ into a long-lived process. The doctrinal rationale lives in
 ```mermaid
 graph TD
     db[db.ts<br/>Db: public API]
-    table[table.ts<br/>Table&lt;T&gt; verbs]
+    collection[collection.ts<br/>Collection&lt;T&gt; verbs]
     query[query.ts<br/>Query&lt;T&gt; predicate AST + reader]
     planner[query-planner.ts<br/>planQuery]
     indexes[indexes.ts<br/>IndexDefinition + key encoding]
@@ -79,10 +79,10 @@ graph TD
     json[json.ts<br/>RFC 7386 merge patch]
     log[log.ts<br/>LogEntry shape]
 
-    db --> table
+    db --> collection
     db --> writer
-    table --> query
-    table --> writer
+    collection --> query
+    collection --> writer
     query --> planner
     query --> storage
     planner --> indexes
@@ -118,9 +118,9 @@ flow merge into the same `wrangler.jsonc`. Everything else stays in its
 own package. See `packages/cli/AGENTS.md` and
 `packages/create-baerly-storage/AGENTS.md` for the per-package quickrefs.
 
-## Lifecycle of `db.table("X").insert(doc)`
+## Lifecycle of `db.collection("X").insert(doc)`
 
-1. **`Table.insert(doc)`** (`packages/server/src/table.ts`):
+1. **`Collection.insert(doc)`** (`packages/server/src/collection.ts`):
    normalises the document, generates a UUIDv7 `_id` if absent,
    constructs a `CommitInput{ op: "I", collection, docId, body }`,
    and calls `Writer.commit(...)`.
@@ -137,7 +137,7 @@ own package. See `packages/cli/AGENTS.md` and
    CAS conflict; fails fast with `BaerlyError{code:"Conflict"}` on a
    `writer_fence.epoch` bump.
 
-3. **Read path: `Table.where(p).all()`**
+3. **Read path: `Collection.where(p).all()`**
    (`packages/server/src/query.ts`): reads `current.json`, walks
    `[log_seq_start, next_seq)` from object storage, folds the
    `LogEntry` stream into the live row set (`I` / `U` apply the
@@ -147,7 +147,7 @@ own package. See `packages/cli/AGENTS.md` and
 
 #### Planner step (between the predicate and the log fold)
 
-When `Table.where(p).all()` has a predicate AND the collection has
+When `Collection.where(p).all()` has a predicate AND the collection has
 declared `indexes`, the reader calls `planQuery(predicate, indexes)`
 (in `packages/server/src/query-planner.ts`) after the `current.json`
 read and before the log fold. The planner returns either
@@ -239,9 +239,9 @@ constraint: anything platform-specific has to live in an adapter.
 
 - `Db` (`packages/server/src/db.ts`): public read/write surface.
   `Db.create({ storage, app, tenant })` returns a tenant-scoped
-  handle; `db.table<T>(name)` returns a `Table<T>`.
-- `Table<T>` / `Query<T>` (`@baerly/protocol`,
-  consumed by `packages/server/src/table.ts` and
+  handle; `db.collection<T>(name)` returns a `Collection<T>`.
+- `Collection<T>` / `Query<T>` (`@baerly/protocol`,
+  consumed by `packages/server/src/collection.ts` and
   `packages/server/src/query.ts`): the locked SQL-shape API.
   Mutations (`insert` / `update` / `replace` / `delete`) plus the
   predicate AST (`where` / `order` / `limit` /
@@ -269,9 +269,9 @@ constraint: anything platform-specific has to live in an adapter.
 
 For a `Db` constructed with `app="tickets"` and `tenant="acme"`:
 
-- `app/tickets/tenant/acme/manifests/<table>/current.json` — the CAS
+- `app/tickets/tenant/acme/manifests/<collection>/current.json` — the CAS
   cursor. Holds `next_seq`, `log_seq_start`, and `writer_fence.epoch`.
-- `app/tickets/tenant/acme/manifests/<table>/log/<lsn>.json` — one
+- `app/tickets/tenant/acme/manifests/<collection>/log/<lsn>.json` — one
   object per `LogEntry`. Walked by readers in `[log_seq_start,
   next_seq)`.
 - `tenants/acme/c/<collection>/<doc_id>` — content body for `I` / `U`.

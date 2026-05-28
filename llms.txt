@@ -66,11 +66,11 @@ const client = createBaerlyClient({ baseUrl: "" }); // same-origin
 
 type Ticket = { _id: string; title: string; status: "open" | "closed" };
 
-const { _id } = await client.table<Ticket>("tickets").insert({
+const { _id } = await client.collection<Ticket>("tickets").insert({
   title: "hi",
   status: "open",
 });
-const open = await client.table<Ticket>("tickets").where({ status: "open" }).all();
+const open = await client.collection<Ticket>("tickets").where({ status: "open" }).all();
 ```
 
 `@baerly/client` requires `baseUrl`; it is a typed HTTP client, not

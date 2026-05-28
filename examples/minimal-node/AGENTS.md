@@ -108,7 +108,7 @@ http://localhost:5173/<path>`) before declaring the task complete.
 | Path                        | What it is                                          |
 | --------------------------- | --------------------------------------------------- |
 | `src/server/index.ts`       | Server entry — composes `s3Storage` / `r2Storage` + a verifier and calls `baerlyNode({ ... }).listen(PORT)` |
-| `src/web/`, `index.html`    | Optional SPA shell built by Vite into `dist/client/`. `src/web/main.ts` is a ~17-line hello-world: reads `client.table<Note>("notes").all()` to render a `${n} note(s)` count and an `[Add note]` button that inserts a timestamped row and re-fetches. Demonstrates both read and write paths on first load — extend, replace, or remove the whole tree if not needed. |
+| `src/web/`, `index.html`    | Optional SPA shell built by Vite into `dist/client/`. `src/web/main.ts` is a ~17-line hello-world: reads `client.collection<Note>("notes").all()` to render a `${n} note(s)` count and an `[Add note]` button that inserts a timestamped row and re-fetches. Demonstrates both read and write paths on first load — extend, replace, or remove the whole tree if not needed. |
 | `vite.config.ts`            | Vite client build — `outDir: dist/client`; `baerlyDev()` mounts the Node listener as middleware so SPA + `/v1/*` share `:5173` in dev |
 | `tsconfig.{app,server}.json` | TS project references for the client and server projects |
 | `baerly.config.ts`          | App config — `app`, `tenant`, `target`, `domain`, `collections` (schemas live here). |
@@ -156,7 +156,7 @@ http://localhost:5173/<path>`) before declaring the task complete.
   instance into multiple `Db.create` calls so they share the
   underlying bucket.
 
-- **Predicates** — `db.table<Doc>(name).where({...}).all()`. Two
+- **Predicates** — `db.collection<Doc>(name).where({...}).all()`. Two
   shapes:
 
   - **Object literal** — equality only (top-level, dotted-path, or

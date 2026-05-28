@@ -10,7 +10,7 @@ related: ["./auth.md", "./observability.md", "./troubleshooting.md"]
 # Client middleware
 
 `@gusto/baerly-storage/client` exposes one composable seam: the `fetch` option on
-`BaerlyClientOptions`. Every HTTP request the client makes — table
+`BaerlyClientOptions`. Every HTTP request the client makes — collection
 reads, writes, the `since(...)` long-poll path — routes through that
 one function. Cross-cutting concerns (logging, retry, tracing, auth
 refresh) are user-side function composition rather than a new API.
@@ -177,25 +177,25 @@ parameter. Most wrappers do not need to.
 
 Fetcher wrapping is **request-level** middleware. It sees `Request`
 and `Response` objects — not typed query results, not the
-`table().insert(...)` call shape. To intercept at the typed
-query level (e.g. "log every `client.table('issues').insert(...)`
+`collection().insert(...)` call shape. To intercept at the typed
+query level (e.g. "log every `client.collection('issues').insert(...)`
 call"), wrap the client object instead:
 
 ```ts
-import { createBaerlyClient, type BaerlyClient, type ClientTable } from "@gusto/baerly-storage/client";
+import { createBaerlyClient, type BaerlyClient, type ClientCollection } from "@gusto/baerly-storage/client";
 import type { DocumentData } from "@gusto/baerly-storage";
 
 const inner = createBaerlyClient({ baseUrl: "https://api.example.com" });
 
 const traced: BaerlyClient = {
   ...inner,
-  table: (name: string) => {
-    const t = inner.table(name);
-    const wrapped: ClientTable<DocumentData> = {
-      ...t,
+  collection: (name: string) => {
+    const c = inner.collection(name);
+    const wrapped: ClientCollection<DocumentData> = {
+      ...c,
       insert: async (doc) => {
-        console.log(`query: table(${name}).insert`, doc);
-        return t.insert(doc);
+        console.log(`query: collection(${name}).insert`, doc);
+        return c.insert(doc);
       },
     };
     return wrapped;
@@ -204,11 +204,11 @@ const traced: BaerlyClient = {
 ```
 
 `first()` lives on `ClientQuery` (returned by `.where(...)`), not on
-`ClientTable` — to trace the read path you would intercept `where`
+`ClientCollection` — to trace the read path you would intercept `where`
 and wrap the returned query. `insert` lives directly on
-`ClientTable`, which keeps the example short.
+`ClientCollection`, which keeps the example short.
 
 Two different layers, two different mechanisms: fetcher wrapping for
 HTTP-level concerns (status codes, retries, headers); client-object
-wrapping for query-level concerns (which table, which method,
+wrapping for query-level concerns (which collection, which method,
 which arguments). Most apps need only the former.

@@ -45,7 +45,7 @@ and Next.js conventions.
 
 **The `Baerly` brand prefix is dropped when:**
 
-1. The symbol is generic to the import context — `Db`, `Table`,
+1. The symbol is generic to the import context — `Db`, `Collection`,
    `Query`, `Storage`, `Writer`. Adding the prefix duplicates
    `baerly-storage` from the import line.
 2. The subpath already disambiguates — `/auth/sharedSecret`,
@@ -58,7 +58,7 @@ and Next.js conventions.
 
 ## Counter-pattern
 
-Prefixing every symbol — `BaerlyDb`, `BaerlyTable`, `BaerlyStorage`
+Prefixing every symbol — `BaerlyDb`, `BaerlyCollection`, `BaerlyStorage`
 — would collide with the package name itself and break the
 zero-shot-legibility criterion in
 [the product thesis](../about/thesis.md) §"What prototype-tier
@@ -76,7 +76,7 @@ storage needs" #4.
   change and held to the ADR-002 bar.
 - **For documentation:** `docs/contributing/extending.md`
   cross-links here so contributors adding a new `Db.foo()` /
-  `Table.bar()` method don't have to relitigate the convention.
+  `Collection.bar()` method don't have to relitigate the convention.
 
 Future drift checks live in this ADR's "Decision" section, not in a
 test — a lint rule for branding is over-engineered for a one-page
