@@ -8,8 +8,8 @@
  *
  * Drives the HTTP conformance cascade + a latency probe + a long-
  * poll wall-clock check + a 401 sniff against a real deployed
- * `createApp()` (served via `getRequestListener` from
- * `@hono/node-server`). **Manual** — both gating env vars must be
+ * `baerlyNode().fetch` (served via `@hono/node-server` under the
+ * hood). **Manual** — both gating env vars must be
  * set for the suite to run; `pnpm test` silently skips this file.
  *
  * The deploy target is the production scaffold at

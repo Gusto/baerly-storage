@@ -1,7 +1,7 @@
 /**
  * Shared test {@link Verifier}. Maps the single bearer token
  * `test-token` to the tenant prefix `conformance-tenant`; anything
- * else returns `null`, which both adapter shapes (`createApp` for
+ * else returns `null`, which both adapter shapes (`baerlyNode` for
  * Node, `baerlyWorker` for Cloudflare Workers) translate to a `401
  * Unauthorized` response with the `HttpErrorEnvelope` shape.
  *
@@ -26,7 +26,7 @@ export const CONFORMANCE_BEARER = "test-token";
 
 /**
  * Build a fresh {@link Verifier} suitable for handing to the HTTP
- * adapters (`createApp({ verifier })` / `baerlyWorker(() => ({
+ * adapters (`baerlyNode({ verifier })` / `baerlyWorker(() => ({
  * verifier }))`). The verifier inspects the `Authorization` header and
  * returns `{ tenantPrefix, identity: {} }` on a match, `null`
  * otherwise. Identity is intentionally empty — the HTTP conformance

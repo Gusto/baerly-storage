@@ -65,7 +65,7 @@ export interface HttpConformanceOptions {
    * the 25s `longPollSince` default.
    *
    * Default: **false**. The Node-side variants pass `true` because
-   * `createApp` exposes `sinceTimeoutMs`. The Workerd-side
+   * `baerlyNode` exposes `sinceTimeoutMs`. The Workerd-side
    * variant pins `false` — `baerlyWorker` does not yet thread the
    * override through to `createRouter`, so an unbounded idle poll
    * would time out the test runner.
@@ -107,7 +107,7 @@ export type HttpFetch = (req: Request) => Promise<Response>;
  * the bucket-relative key
  * `app/<app>/tenant/<tenant>/manifests/<table>/current.json`. The
  * `app`/`tenant` values come from the call site's listener wiring
- * (Node: passed to `createApp({ app, ... })`; Workerd: passed
+ * (Node: passed to `baerlyNode({ config, ... })`; Workerd: passed
  * through the worker module's env binding).
  */
 export type ProvisionTable = (table: string) => Promise<void>;
