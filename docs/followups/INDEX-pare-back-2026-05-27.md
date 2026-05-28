@@ -1,7 +1,7 @@
 ---
 title: Pare-back sweep — 2026-05-27
 discovered: 2026-05-27
-candidate_count: 1
+candidate_count: 0
 verified_dropped: 2
 ---
 
@@ -15,9 +15,7 @@ did not survive verification (see the verification log below).
 
 ## Top ranked
 
-| Score | Target | Concern | Risk | LoC | File |
-|---|---|---|---|---|---|
-| 8 | `LongPollSinceOptions.maxEvents` + `ListEventsSinceOptions.maxEvents` | configurability-without-consumers | low | 8 | [cut-since-max-events.md](./cut-since-max-events.md) |
+(none open — both candidates shipped 2026-05-27.)
 
 ## By concern
 
@@ -26,11 +24,9 @@ did not survive verification (see the verification log below).
 (none found — the one candidate proposed by the subagent had its
 cut direction reversed; see verification log.)
 
-### configurability-without-consumers (1)
+### configurability-without-consumers (0)
 
-- [cut-since-max-events.md](./cut-since-max-events.md) — public
-  test-only knob on `LongPollSinceOptions` / `ListEventsSinceOptions`
-  with zero callers in the entire repo.
+(none open — `cut-since-max-events` shipped 2026-05-27.)
 
 ### operator-verb-without-audience (0)
 
@@ -62,18 +58,6 @@ its leak-framing fail verification; see verification log.)
 ## Verification log
 
 Main-agent spot-checks performed before files landed:
-
-- `cut-since-max-events.md` — VERIFIED. Re-grepped `maxEvents`
-  across the whole repo: every hit is inside
-  `packages/server/src/http/since.ts` itself (2 field declarations,
-  2 `opts.maxEvents ??` reads, 2 destructured pass-throughs, 1
-  inline comment). 0 hits in `packages/adapter-*`, `tests/`,
-  `examples/`, `docs/`, `bench/`, `manual-e2e/`, `manual-e2e/`,
-  `packages/cli/`. Confirmed `LongPollSinceOptions` /
-  `ListEventsSinceOptions` are re-exported from
-  `packages/server/src/http/index.ts` and the `/http` subpath is
-  in `publishConfig.exports`. The optional field is public surface
-  with zero callers.
 
 - `cut-extending-md-schemas-section.md` — VERIFIED. Read the cited
   subsection (`extending.md` §"Wiring schemas into `Db.create`")

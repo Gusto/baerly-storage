@@ -86,10 +86,8 @@ export interface LongPollSinceOptions {
   /** Opaque cursor; empty string = from `log_seq_start`. */
   readonly cursor: string;
   readonly signal?: AbortSignal;
-  /** Overrides for tests. */
   readonly timeoutMs?: number;
   readonly pollIntervalMs?: number;
-  readonly maxEvents?: number;
 }
 
 export interface ListEventsSinceOptions {
@@ -98,7 +96,6 @@ export interface ListEventsSinceOptions {
   /** Opaque cursor; empty string = from `log_seq_start`. */
   readonly cursor: string;
   readonly signal?: AbortSignal;
-  readonly maxEvents?: number;
 }
 
 /**
@@ -117,7 +114,6 @@ export async function longPollSince(opts: LongPollSinceOptions): Promise<SinceRe
   const { db, table, cursor, signal } = opts;
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const pollIntervalMs = opts.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
-  const maxEvents = opts.maxEvents ?? DEFAULT_MAX_EVENTS;
 
   // Up-front cursor-shape validation. `listEventsSince` also checks,
   // but doing it here short-circuits the fast-path read on bad input.
@@ -129,7 +125,7 @@ export async function longPollSince(opts: LongPollSinceOptions): Promise<SinceRe
   }
 
   // Fast path: the first poll already sees new events.
-  const initial = await listEventsSince({ db, table, cursor, signal, maxEvents });
+  const initial = await listEventsSince({ db, table, cursor, signal });
   if (initial.length > 0) {
     return { events: initial, next_cursor: initial[initial.length - 1]!.lsn };
   }
@@ -189,7 +185,7 @@ export async function longPollSince(opts: LongPollSinceOptions): Promise<SinceRe
         return;
       }
       try {
-        const events = await listEventsSince({ db, table, cursor, signal, maxEvents });
+        const events = await listEventsSince({ db, table, cursor, signal });
         if (settled) {
           return;
         }
@@ -242,7 +238,6 @@ export async function longPollSince(opts: LongPollSinceOptions): Promise<SinceRe
  */
 export async function listEventsSince(opts: ListEventsSinceOptions): Promise<LogEntry[]> {
   const { db, table, cursor, signal } = opts;
-  const maxEvents = opts.maxEvents ?? DEFAULT_MAX_EVENTS;
 
   if (cursor.length > 0 && !LSN_RE.test(cursor)) {
     throw new BaerlyError(
@@ -281,8 +276,8 @@ export async function listEventsSince(opts: ListEventsSinceOptions): Promise<Log
   }
 
   // Cap the range at `next_seq` (no entries past the tail exist) and
-  // at `maxEvents` (hard ceiling per the module docstring).
-  const endSeq = Math.min(nextSeq, startSeq + maxEvents);
+  // at `DEFAULT_MAX_EVENTS` (hard ceiling per the module docstring).
+  const endSeq = Math.min(nextSeq, startSeq + DEFAULT_MAX_EVENTS);
 
   // Sequential GETs (NOT Promise.all). Long-poll is latency-bound,
   // per-poll batch is typically 0-10 entries, sequential keeps
