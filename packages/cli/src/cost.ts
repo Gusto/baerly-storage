@@ -10,7 +10,7 @@
  *   --bucket    Required. Bucket URI.
  *   --app       Required (or via baerly.config.ts).
  *   --tenant    Required (or via baerly.config.ts).
- *   --table     Required. Collection name.
+ *   --collection Required. Collection name.
  *   --provider  Optional. r2 | aws-s3 | self-hosted | dev. Overrides
  *               the auto-detected provider (bucket URI +
  *               BAERLY_S3_ENDPOINT).
@@ -56,10 +56,10 @@ const COST_ARGS = {
     description: "Tenant name segment (defaults to baerly.config.ts).",
     valueHint: "tenant",
   },
-  table: {
+  collection: {
     type: "string",
     required: true,
-    description: "Collection (table) name.",
+    description: "Collection name.",
     valueHint: "name",
   },
   provider: {
@@ -150,21 +150,21 @@ const bundle = defineBaerlySubcommand({
       );
     }
 
-    const verdict = await estimateWritesPerMin(bucket.storage, app, tenant, args.table, {
+    const verdict = await estimateWritesPerMin(bucket.storage, app, tenant, args.collection, {
       keyPrefix: bucket.keyPrefix,
     });
     const trajectory = project(verdict.writesPerMin, 0, pricingFor(provider));
     if (trajectory === null) {
       throw new BaerlyError(
         "InvalidConfig",
-        `baerly cost: not enough log entries under ${args.table} to estimate writes/min (need >= 2)`,
+        `baerly cost: not enough log entries under ${args.collection} to estimate writes/min (need >= 2)`,
       );
     }
 
     if (isJsonMode()) {
-      emitSuccess({ command: "cost", table: args.table, trajectory });
+      emitSuccess({ command: "cost", collection: args.collection, trajectory });
     } else {
-      process.stdout.write(`baerly cost ${args.table}\n${renderTrajectory(trajectory)}\n`);
+      process.stdout.write(`baerly cost ${args.collection}\n${renderTrajectory(trajectory)}\n`);
     }
     return 0;
   },

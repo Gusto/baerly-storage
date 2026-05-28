@@ -90,7 +90,7 @@ describe("baerly inspect", () => {
         `--bucket=file://${root}`,
         `--app=${APP}`,
         `--tenant=${TENANT}`,
-        `--table=${COLL}`,
+        `--collection=${COLL}`,
         "--json",
       ]);
     } finally {
@@ -138,7 +138,7 @@ describe("baerly inspect", () => {
         `--bucket=file://${root}`,
         `--app=${APP}`,
         `--tenant=${TENANT}`,
-        `--table=${COLL}`,
+        `--collection=${COLL}`,
       ]);
     } finally {
       stdout.restore();
@@ -167,7 +167,7 @@ describe("baerly inspect", () => {
         `--bucket=file://${root}`,
         `--app=${APP}`,
         `--tenant=${TENANT}`,
-        `--table=${COLL}`,
+        `--collection=${COLL}`,
         "--json",
       ]);
     } finally {
@@ -189,7 +189,7 @@ describe("baerly inspect", () => {
         `--bucket=file://${root}`,
         `--app=${APP}`,
         `--tenant=${TENANT}`,
-        `--table=${COLL}`,
+        `--collection=${COLL}`,
       ]);
     } finally {
       stderr.restore();
@@ -203,7 +203,7 @@ describe("baerly inspect", () => {
       `--bucket=file://${root}`,
       `--app=${APP}`,
       `--tenant=${TENANT}`,
-      `--table=${COLL}`,
+      `--collection=${COLL}`,
       "--unknown=oops",
     ]);
     expect(exitCode).toBe(1);

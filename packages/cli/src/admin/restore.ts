@@ -14,7 +14,7 @@
  *   --bucket   Required. Target bucket URI.
  *   --app      Required (or via baerly.config.ts).
  *   --tenant   Required (or via baerly.config.ts).
- *   --table    Required. Target collection name.
+ *   --collection Required. Target collection name.
  *   --force    Truncate the target if it exists (fence-bump + reseed).
  *   --json     JSON envelope.
  *
@@ -77,10 +77,10 @@ const RESTORE_ARGS = {
     description: "Tenant name segment (defaults to baerly.config.ts).",
     valueHint: "tenant",
   },
-  table: {
+  collection: {
     type: "string",
     required: true,
-    description: "Target collection (table) name.",
+    description: "Target collection name.",
     valueHint: "name",
   },
   force: {
@@ -102,7 +102,7 @@ const bundle = defineBaerlySubcommand({
   handler: async (args, ctx) => {
     const bucket = await parseBucketUri(args.bucket);
     const { app, tenant } = await ctx.resolveAppTenant({ app: args.app, tenant: args.tenant });
-    const currentJsonKey = `${bucket.keyPrefix}app/${app}/tenant/${tenant}/manifests/${args.table}/current.json`;
+    const currentJsonKey = `${bucket.keyPrefix}app/${app}/tenant/${tenant}/manifests/${args.collection}/current.json`;
 
     const head = await readCurrentJson(bucket.storage, currentJsonKey);
     if (head !== null && args.force !== true) {
@@ -202,7 +202,7 @@ const bundle = defineBaerlySubcommand({
       const body = row as unknown as DocumentData;
       await writer.commit({
         op: "I",
-        collection: args.table,
+        collection: args.collection,
         docId: id,
         body,
       });
@@ -211,7 +211,7 @@ const bundle = defineBaerlySubcommand({
     emitSuccess({
       command: "admin.restore",
       status: "ok",
-      table: args.table,
+      collection: args.collection,
       restored: count,
     });
     return 0;

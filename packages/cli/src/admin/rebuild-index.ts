@@ -23,7 +23,7 @@
  *   --bucket  Bucket URI (s3://...,  file:///<abs>, memory://...).
  *   --app     Application name segment (defaults to baerly.config.ts).
  *   --tenant  Tenant name segment (defaults to baerly.config.ts).
- *   --table   Collection name.
+ *   --collection Collection name.
  *   --index   Index name (e.g. "by_status").
  *   --on      Field the index projects on (string today; matches
  *             the IndexDefinition shape declared in baerly.config.ts).
@@ -65,10 +65,10 @@ const REBUILD_INDEX_ARGS = {
     description: "Tenant name segment (defaults to baerly.config.ts).",
     valueHint: "tenant",
   },
-  table: {
+  collection: {
     type: "string",
     required: true,
-    description: "Collection (table) name",
+    description: "Collection name",
     valueHint: "name",
   },
   index: {
@@ -102,15 +102,15 @@ const REBUILD_INDEX_ARGS = {
 /** Resolve the `on` field of a single named index from the config file. */
 const onFieldFromConfig = async (
   configPath: string,
-  table: string,
+  collection: string,
   indexName: string,
 ): Promise<string | readonly string[]> => {
-  const indexes = await loadCollectionIndexes(configPath, table, "baerly admin rebuild-index");
+  const indexes = await loadCollectionIndexes(configPath, collection, "baerly admin rebuild-index");
   const def = indexes.find((d) => d.name === indexName);
   if (def === undefined) {
     throw new BaerlyError(
       "InvalidConfig",
-      `baerly admin rebuild-index: config has no index ${JSON.stringify(indexName)} on collection ${JSON.stringify(table)}`,
+      `baerly admin rebuild-index: config has no index ${JSON.stringify(indexName)} on collection ${JSON.stringify(collection)}`,
     );
   }
   return def.on;
@@ -126,7 +126,7 @@ const bundle = defineBaerlySubcommand({
     const bucket = await parseBucketUri(args.bucket);
     const on =
       args.config !== undefined && args.config.length > 0
-        ? await onFieldFromConfig(args.config, args.table, args.index)
+        ? await onFieldFromConfig(args.config, args.collection, args.index)
         : args.on;
     if (on === undefined || on.length === 0) {
       throw new BaerlyError(
@@ -136,7 +136,7 @@ const bundle = defineBaerlySubcommand({
     }
     const def: IndexDefinition = { name: args.index, on };
     const { app, tenant } = await ctx.resolveAppTenant({ app: args.app, tenant: args.tenant });
-    const currentJsonKey = `${bucket.keyPrefix}app/${app}/tenant/${tenant}/manifests/${args.table}/current.json`;
+    const currentJsonKey = `${bucket.keyPrefix}app/${app}/tenant/${tenant}/manifests/${args.collection}/current.json`;
     const result = await rebuildIndex(bucket.storage, currentJsonKey, def);
     emitSuccess({
       command: "admin.rebuild-index",

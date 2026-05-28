@@ -339,11 +339,11 @@ export const loadAppConfigWithCollections = async (
  *
  * @throws BaerlyError code="InvalidConfig" — `.ts` extension, JSON
  *   parse error, missing default export, or missing
- *   `collections[table]`.
+ *   `collections[collection]`.
  */
 export const loadCollectionIndexes = async (
   configPath: string,
-  table: string,
+  collection: string,
   commandName: string,
 ): Promise<readonly IndexDefinition[]> => {
   if (configPath.endsWith(".ts")) {
@@ -374,5 +374,5 @@ export const loadCollectionIndexes = async (
     }
     cfg = mod.default;
   }
-  return cfg.collections?.[table]?.indexes ?? [];
+  return cfg.collections?.[collection]?.indexes ?? [];
 };

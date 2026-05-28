@@ -92,7 +92,7 @@ describe("baerly cost", () => {
         `--bucket=file://${root}`,
         `--app=${APP}`,
         `--tenant=${TENANT}`,
-        `--table=${COLL}`,
+        `--collection=${COLL}`,
         "--provider=r2",
         "--json",
       ]);
@@ -101,10 +101,10 @@ describe("baerly cost", () => {
     }
     expect(exitCode).toBe(0);
     const envelope = JSON.parse(stdout.captured.join("").trim()) as {
-      result: { command: string; table: string; trajectory: Trajectory };
+      result: { command: string; collection: string; trajectory: Trajectory };
     };
     expect(envelope.result.command).toBe("cost");
-    expect(envelope.result.table).toBe(COLL);
+    expect(envelope.result.collection).toBe(COLL);
     expect(envelope.result.trajectory.provider).toBe("r2");
     expect(envelope.result.trajectory.classAPerMonth).toBeGreaterThan(0);
     expect(typeof envelope.result.trajectory.withinFreeTier).toBe("boolean");
@@ -121,7 +121,7 @@ describe("baerly cost", () => {
         `--bucket=file://${root}`,
         `--app=${APP}`,
         `--tenant=${TENANT}`,
-        `--table=${COLL}`,
+        `--collection=${COLL}`,
         "--provider=r2",
       ]);
     } finally {
@@ -146,7 +146,7 @@ describe("baerly cost", () => {
         `--bucket=file://${root}`,
         `--app=${APP}`,
         `--tenant=${TENANT}`,
-        `--table=${COLL}`,
+        `--collection=${COLL}`,
         "--provider=self-hosted",
         "--json",
       ]);
@@ -173,7 +173,7 @@ describe("baerly cost", () => {
         `--bucket=file://${root}`,
         `--app=${APP}`,
         `--tenant=${TENANT}`,
-        `--table=${COLL}`,
+        `--collection=${COLL}`,
         "--provider=aws-s3",
         "--json",
       ]);
@@ -200,7 +200,7 @@ describe("baerly cost", () => {
         `--bucket=file://${root}`,
         `--app=${APP}`,
         `--tenant=${TENANT}`,
-        `--table=${COLL}`,
+        `--collection=${COLL}`,
       ]);
     } finally {
       stderr.restore();
@@ -219,7 +219,7 @@ describe("baerly cost", () => {
         `--bucket=file://${root}`,
         `--app=${APP}`,
         `--tenant=${TENANT}`,
-        `--table=${COLL}`,
+        `--collection=${COLL}`,
         "--provider=r2",
       ]);
     } finally {
@@ -238,7 +238,7 @@ describe("baerly cost", () => {
         `--bucket=file://${root}`,
         `--app=${APP}`,
         `--tenant=${TENANT}`,
-        `--table=${COLL}`,
+        `--collection=${COLL}`,
         "--provider=not-a-real-provider",
       ]);
     } finally {
@@ -262,7 +262,7 @@ describe("baerly cost", () => {
     try {
       exitCode = await runCost([
         `--bucket=file://${root}`,
-        `--table=${COLL}`,
+        `--collection=${COLL}`,
         "--provider=r2",
       ]);
     } finally {
@@ -279,7 +279,7 @@ describe("baerly cost", () => {
       `--bucket=file://${root}`,
       `--app=${APP}`,
       `--tenant=${TENANT}`,
-      `--table=${COLL}`,
+      `--collection=${COLL}`,
       "--provider=r2",
       "--unknown=oops",
     ]);

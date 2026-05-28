@@ -30,7 +30,7 @@
  *   --bucket   Required. Bucket URI.
  *   --app      Required (or via baerly.config.ts).
  *   --tenant   Required (or via baerly.config.ts).
- *   --table    Required. Collection name.
+ *   --collection Required. Collection name.
  *   --json     JSON envelope (on stdout). Programmatic callers can
  *              divert the NDJSON body to a separate writable via the
  *              `streams.stdout` option on {@link runDump}.
@@ -69,10 +69,10 @@ const DUMP_ARGS = {
     description: "Tenant name segment (defaults to baerly.config.ts).",
     valueHint: "tenant",
   },
-  table: {
+  collection: {
     type: "string",
     required: true,
-    description: "Collection (table) name.",
+    description: "Collection name.",
     valueHint: "name",
   },
   json: {
@@ -165,11 +165,11 @@ const bundle = defineBaerlySubcommand({
   handler: async (args, ctx) => {
     const bucket = await parseBucketUri(args.bucket);
     const { app, tenant } = await ctx.resolveAppTenant({ app: args.app, tenant: args.tenant });
-    const currentJsonKey = `${bucket.keyPrefix}app/${app}/tenant/${tenant}/manifests/${args.table}/current.json`;
+    const currentJsonKey = `${bucket.keyPrefix}app/${app}/tenant/${tenant}/manifests/${args.collection}/current.json`;
     const view = await loadMaterialisedView({
       storage: bucket.storage,
       currentJsonKey,
-      collection: args.table,
+      collection: args.collection,
     });
     if (view === null) {
       throw new BaerlyError(
@@ -182,7 +182,7 @@ const bundle = defineBaerlySubcommand({
     emitSuccess({
       command: "admin.dump",
       status: "ok",
-      table: args.table,
+      collection: args.collection,
       dumped: count,
     });
     return 0;

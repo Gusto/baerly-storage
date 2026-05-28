@@ -305,7 +305,7 @@ export const estimateWritesPerMin = async (
   if (pct >= 100) {
     severity = "warning";
     message += " — exceeds the M-size ceiling.";
-    fix = `consider graduating: \`baerly export --target=postgres|sqlite|d1 --bucket=<bucket> --app=${app} --tenant=${tenant} --table=${collection}\``;
+    fix = `consider graduating: \`baerly export --target=postgres|sqlite|d1 --bucket=<bucket> --app=${app} --tenant=${tenant} --collection=${collection}\``;
   } else if (pct >= 50) {
     severity = "warning";
     message += " — approaching the M-size ceiling.";

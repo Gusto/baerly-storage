@@ -252,7 +252,7 @@ describe.runIf(sqliteAvailable)("Baerly → SQLite → Baerly round-trip", () =>
 
     // ── 4. Restore into dst via `baerly admin restore`. ────────────
     const restoreCode = await runRestore(
-      [`--bucket=file://${dstRoot}`, `--app=${APP}`, `--tenant=${TENANT}`, `--table=${COLL}`],
+      [`--bucket=file://${dstRoot}`, `--app=${APP}`, `--tenant=${TENANT}`, `--collection=${COLL}`],
       { streams: { stdin: createReadStream(ndjsonFile) } },
     );
     expect(restoreCode).toBe(0);
@@ -264,7 +264,12 @@ describe.runIf(sqliteAvailable)("Baerly → SQLite → Baerly round-trip", () =>
     const srcSink = openSink(srcDumpPath);
     await expect(
       runDump(
-        [`--bucket=file://${srcRoot}`, `--app=${APP}`, `--tenant=${TENANT}`, `--table=${COLL}`],
+        [
+          `--bucket=file://${srcRoot}`,
+          `--app=${APP}`,
+          `--tenant=${TENANT}`,
+          `--collection=${COLL}`,
+        ],
         { streams: { stdout: srcSink.stream } },
       ),
     ).resolves.toBe(0);
@@ -273,7 +278,12 @@ describe.runIf(sqliteAvailable)("Baerly → SQLite → Baerly round-trip", () =>
     const dstSink = openSink(dstDumpPath);
     await expect(
       runDump(
-        [`--bucket=file://${dstRoot}`, `--app=${APP}`, `--tenant=${TENANT}`, `--table=${COLL}`],
+        [
+          `--bucket=file://${dstRoot}`,
+          `--app=${APP}`,
+          `--tenant=${TENANT}`,
+          `--collection=${COLL}`,
+        ],
         { streams: { stdout: dstSink.stream } },
       ),
     ).resolves.toBe(0);

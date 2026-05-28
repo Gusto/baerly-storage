@@ -108,7 +108,7 @@ describe("estimateWritesPerMin", () => {
     expect(v.percentOfCeiling).toBeGreaterThanOrEqual(100);
     expect(v.message).toContain("exceeds");
     expect(v.fix).toMatch(/baerly export/);
-    expect(v.fix).toMatch(/--table=tickets/);
+    expect(v.fix).toMatch(/--collection=tickets/);
   });
 
   test("info NaN verdict when fewer than 2 entries seen", async () => {
@@ -269,11 +269,9 @@ describe("baerly admin usage — CLI smoke", () => {
         new: { value: seq },
         patch: { value: seq },
       };
-      await storage.put(
-        `${prefix}/${seq}.json`,
-        new TextEncoder().encode(JSON.stringify(entry)),
-        { contentType: "application/json" },
-      );
+      await storage.put(`${prefix}/${seq}.json`, new TextEncoder().encode(JSON.stringify(entry)), {
+        contentType: "application/json",
+      });
     }
   };
 
@@ -318,12 +316,7 @@ describe("baerly admin usage — CLI smoke", () => {
     const stdout = captureStream(process.stdout);
     let exitCode: number;
     try {
-      exitCode = await runUsage([
-        `--app=myapp`,
-        `--tenant=t1`,
-        `--target=cloudflare`,
-        `--json`,
-      ]);
+      exitCode = await runUsage([`--app=myapp`, `--tenant=t1`, `--target=cloudflare`, `--json`]);
     } finally {
       stdout.restore();
     }

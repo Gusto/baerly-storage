@@ -121,12 +121,7 @@ describe("baerly admin dump", () => {
 
     const sink = openSink(outFile);
     const exitCode = await runDump(
-      [
-        `--bucket=file://${root}`,
-        `--app=${APP}`,
-        `--tenant=${TENANT}`,
-        `--table=${COLL}`,
-      ],
+      [`--bucket=file://${root}`, `--app=${APP}`, `--tenant=${TENANT}`, `--collection=${COLL}`],
       { streams: { stdout: sink.stream } },
     );
     await sink.finish();
@@ -144,12 +139,7 @@ describe("baerly admin dump", () => {
     await provision(storage);
     const sink = openSink(outFile);
     const exitCode = await runDump(
-      [
-        `--bucket=file://${root}`,
-        `--app=${APP}`,
-        `--tenant=${TENANT}`,
-        `--table=${COLL}`,
-      ],
+      [`--bucket=file://${root}`, `--app=${APP}`, `--tenant=${TENANT}`, `--collection=${COLL}`],
       { streams: { stdout: sink.stream } },
     );
     await sink.finish();
@@ -166,7 +156,7 @@ describe("baerly admin dump", () => {
         `--bucket=file://${root}`,
         `--app=${APP}`,
         `--tenant=${TENANT}`,
-        `--table=${COLL}`,
+        `--collection=${COLL}`,
       ]);
     } finally {
       stderr.restore();
@@ -190,7 +180,7 @@ describe("baerly admin dump", () => {
           `--bucket=file://${root}`,
           `--app=${APP}`,
           `--tenant=${TENANT}`,
-          `--table=${COLL}`,
+          `--collection=${COLL}`,
           "--json",
         ],
         { streams: { stdout: sink.stream } },
@@ -213,7 +203,7 @@ describe("baerly admin dump", () => {
       `--bucket=file://${root}`,
       `--app=${APP}`,
       `--tenant=${TENANT}`,
-      `--table=${COLL}`,
+      `--collection=${COLL}`,
       "--unknown=oops",
     ]);
     expect(exitCode).toBe(1);

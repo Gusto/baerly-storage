@@ -22,7 +22,7 @@
  *   --bucket            Required. Bucket URI.
  *   --app               Required (or via baerly.config.ts).
  *   --tenant            Required (or via baerly.config.ts).
- *   --table             Required. Collection name.
+ *   --collection        Required. Collection name.
  *   --target            Required. postgres | sqlite | d1.
  *   --where             Optional. JSON-encoded `Predicate<T>`.
  *   --where-comment     Optional. Caller hint surfaced as a
@@ -42,12 +42,7 @@
 
 import { writeFile } from "node:fs/promises";
 import { type ArgsDef } from "citty";
-import {
-  BaerlyError,
-  matchesWire,
-  type PredicateWire,
-  validateWire,
-} from "@baerly/protocol";
+import { BaerlyError, matchesWire, type PredicateWire, validateWire } from "@baerly/protocol";
 import {
   type ExportPlan,
   type ExportRow,
@@ -82,10 +77,10 @@ const EXPORT_ARGS = {
     description: "Tenant name segment (defaults to baerly.config.ts).",
     valueHint: "tenant",
   },
-  table: {
+  collection: {
     type: "string",
     required: true,
-    description: "Collection (table) name.",
+    description: "Collection name.",
     valueHint: "name",
   },
   target: {
@@ -191,22 +186,22 @@ const bundle = defineBaerlySubcommand({
     const target: SqlTarget = args.target;
     const { app, tenant } = await ctx.resolveAppTenant({ app: args.app, tenant: args.tenant });
     const bucket = await parseBucketUri(args.bucket);
-    const currentJsonKey = `${bucket.keyPrefix}app/${app}/tenant/${tenant}/manifests/${args.table}/current.json`;
+    const currentJsonKey = `${bucket.keyPrefix}app/${app}/tenant/${tenant}/manifests/${args.collection}/current.json`;
     const view = await loadMaterialisedView({
       storage: bucket.storage,
       currentJsonKey,
-      collection: args.table,
+      collection: args.collection,
     });
     if (view === null) {
       throw new BaerlyError(
         "InvalidConfig",
-        `baerly export: collection ${JSON.stringify(args.table)} is not provisioned (no current.json at ${currentJsonKey})`,
+        `baerly export: collection ${JSON.stringify(args.collection)} is not provisioned (no current.json at ${currentJsonKey})`,
       );
     }
     const plan = inferPlanForCollection({
       rows: view,
       target,
-      table: args.table,
+      table: args.collection,
     });
 
     let wire: PredicateWire | null = null;
@@ -247,7 +242,7 @@ const bundle = defineBaerlySubcommand({
     emitSuccess({
       command: "export",
       status: "ok",
-      table: args.table,
+      collection: args.collection,
       target,
       rows: filtered.size,
       hints: whereHints,

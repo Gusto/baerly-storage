@@ -95,7 +95,7 @@ describe("baerly admin fsck — CLI smoke", () => {
         `--bucket=file://${root}`,
         `--app=${APP}`,
         `--tenant=${TENANT}`,
-        `--table=${COLL}`,
+        `--collection=${COLL}`,
         "--json",
       ]);
     } finally {
@@ -149,7 +149,7 @@ describe("baerly admin fsck — CLI smoke", () => {
         `--bucket=file://${root}`,
         `--app=${APP}`,
         `--tenant=${TENANT}`,
-        `--table=${COLL}`,
+        `--collection=${COLL}`,
         "--json",
       ]);
     } finally {
@@ -179,7 +179,7 @@ describe("baerly admin fsck — CLI smoke", () => {
         `--bucket=file://${root}`,
         `--app=${APP}`,
         `--tenant=${TENANT}`,
-        `--table=${COLL}`,
+        `--collection=${COLL}`,
         "--json",
       ]);
     } finally {
@@ -230,7 +230,7 @@ describe("baerly admin fsck — CLI smoke", () => {
         `--bucket=file://${root}`,
         `--app=${APP}`,
         `--tenant=${TENANT}`,
-        `--table=${COLL}`,
+        `--collection=${COLL}`,
         "--indexes",
         `--config=${cfgPath}`,
         "--json",
@@ -281,7 +281,7 @@ describe("baerly admin fsck — CLI smoke", () => {
         `--bucket=file://${root}`,
         `--app=${APP}`,
         `--tenant=${TENANT}`,
-        `--table=${COLL}`,
+        `--collection=${COLL}`,
         "--json",
       ]);
     } finally {
@@ -323,7 +323,7 @@ describe("baerly admin fsck — CLI smoke", () => {
         `--bucket=file://${root}`,
         `--app=${APP}`,
         `--tenant=${TENANT}`,
-        `--table=${COLL}`,
+        `--collection=${COLL}`,
         "--indexes",
         "--fix",
         `--config=${cfgPath}`,
@@ -346,9 +346,7 @@ describe("baerly admin fsck — CLI smoke", () => {
     expect(envelope.result.mode).toBe("indexes-fix");
     expect(envelope.result.indexes.find((i) => i.name === "by_status")?.rebuilt).toBe(true);
     expect(
-      envelope.result.findings.some(
-        (f) => f.check === "index.by_status" && f.severity === "info",
-      ),
+      envelope.result.findings.some((f) => f.check === "index.by_status" && f.severity === "info"),
     ).toBe(true);
     // Orphan key was deleted by the rebuild.
     await expect(storage.get(orphanKey)).resolves.toBeNull();
@@ -363,7 +361,7 @@ describe("baerly admin fsck — CLI smoke", () => {
         `--bucket=file://${root}`,
         `--app=${APP}`,
         `--tenant=${TENANT}`,
-        `--table=${COLL}`,
+        `--collection=${COLL}`,
         "--fix",
       ]);
     } finally {
@@ -382,7 +380,7 @@ describe("baerly admin fsck — CLI smoke", () => {
         `--bucket=file://${root}`,
         `--app=${APP}`,
         `--tenant=${TENANT}`,
-        `--table=${COLL}`,
+        `--collection=${COLL}`,
         "--indexes",
       ]);
     } finally {
@@ -397,7 +395,7 @@ describe("baerly admin fsck — CLI smoke", () => {
       `--bucket=file://${root}`,
       `--app=${APP}`,
       `--tenant=${TENANT}`,
-      `--table=${COLL}`,
+      `--collection=${COLL}`,
     ]);
     expect(exitCode).toBe(1);
   });
@@ -408,7 +406,7 @@ describe("baerly admin fsck — CLI smoke", () => {
       `--bucket=file://${root}`,
       `--app=${APP}`,
       `--tenant=${TENANT}`,
-      `--table=${COLL}`,
+      `--collection=${COLL}`,
       "--unknown=oops",
     ]);
     expect(exitCode).toBe(1);

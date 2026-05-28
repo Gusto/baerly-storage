@@ -110,7 +110,7 @@ describe("baerly admin rebuild-index — CLI smoke", () => {
         `--bucket=file://${root}`,
         `--app=${APP}`,
         `--tenant=${TENANT}`,
-        `--table=${COLL}`,
+        `--collection=${COLL}`,
         "--index=by_status",
         "--on=status",
         "--json",
@@ -157,7 +157,7 @@ describe("baerly admin rebuild-index — CLI smoke", () => {
         `--bucket=file://${root}`,
         `--app=${APP}`,
         `--tenant=${TENANT}`,
-        `--table=${COLL}`,
+        `--collection=${COLL}`,
         "--index=by_status",
         "--on=status",
       ]);
@@ -174,7 +174,7 @@ describe("baerly admin rebuild-index — CLI smoke", () => {
       `--bucket=file://${root}`,
       `--app=${APP}`,
       `--tenant=${TENANT}`,
-      `--table=${COLL}`,
+      `--collection=${COLL}`,
       "--index=by_status",
     ]);
     expect(exitCode).toBe(1);
@@ -186,7 +186,7 @@ describe("baerly admin rebuild-index — CLI smoke", () => {
       `--bucket=file://${root}`,
       `--app=${APP}`,
       `--tenant=${TENANT}`,
-      `--table=${COLL}`,
+      `--collection=${COLL}`,
       "--index=by_status",
       "--on=status",
       "--unknown=oops",

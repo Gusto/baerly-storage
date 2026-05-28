@@ -64,12 +64,7 @@ describe("baerly admin restore", () => {
   test("seeds a fresh bucket and lands next_seq === rowCount", async () => {
     await writeFile(stdinPath, CANONICAL_NDJSON, "utf8");
     const exitCode = await runRestore(
-      [
-        `--bucket=file://${root}`,
-        `--app=${APP}`,
-        `--tenant=${TENANT}`,
-        `--table=${COLL}`,
-      ],
+      [`--bucket=file://${root}`, `--app=${APP}`, `--tenant=${TENANT}`, `--collection=${COLL}`],
       { streams: { stdin: createReadStream(stdinPath) } },
     );
     expect(exitCode).toBe(0);
@@ -81,22 +76,12 @@ describe("baerly admin restore", () => {
   test("re-running without --force on a populated target → Conflict (exit 3)", async () => {
     await writeFile(stdinPath, CANONICAL_NDJSON, "utf8");
     const first = await runRestore(
-      [
-        `--bucket=file://${root}`,
-        `--app=${APP}`,
-        `--tenant=${TENANT}`,
-        `--table=${COLL}`,
-      ],
+      [`--bucket=file://${root}`, `--app=${APP}`, `--tenant=${TENANT}`, `--collection=${COLL}`],
       { streams: { stdin: createReadStream(stdinPath) } },
     );
     expect(first).toBe(0);
     const second = await runRestore(
-      [
-        `--bucket=file://${root}`,
-        `--app=${APP}`,
-        `--tenant=${TENANT}`,
-        `--table=${COLL}`,
-      ],
+      [`--bucket=file://${root}`, `--app=${APP}`, `--tenant=${TENANT}`, `--collection=${COLL}`],
       { streams: { stdin: createReadStream(stdinPath) } },
     );
     expect(second).toBe(3);
@@ -105,12 +90,7 @@ describe("baerly admin restore", () => {
   test("re-running with --force truncates and reseeds", async () => {
     await writeFile(stdinPath, CANONICAL_NDJSON, "utf8");
     const first = await runRestore(
-      [
-        `--bucket=file://${root}`,
-        `--app=${APP}`,
-        `--tenant=${TENANT}`,
-        `--table=${COLL}`,
-      ],
+      [`--bucket=file://${root}`, `--app=${APP}`, `--tenant=${TENANT}`, `--collection=${COLL}`],
       { streams: { stdin: createReadStream(stdinPath) } },
     );
     expect(first).toBe(0);
@@ -124,7 +104,7 @@ describe("baerly admin restore", () => {
         `--bucket=file://${root}`,
         `--app=${APP}`,
         `--tenant=${TENANT}`,
-        `--table=${COLL}`,
+        `--collection=${COLL}`,
         "--force",
       ],
       { streams: { stdin: createReadStream(stdinPath) } },
@@ -151,12 +131,7 @@ describe("baerly admin restore", () => {
     let exitCode: number;
     try {
       exitCode = await runRestore(
-        [
-          `--bucket=file://${root}`,
-          `--app=${APP}`,
-          `--tenant=${TENANT}`,
-          `--table=${COLL}`,
-        ],
+        [`--bucket=file://${root}`, `--app=${APP}`, `--tenant=${TENANT}`, `--collection=${COLL}`],
         { streams: { stdin: createReadStream(stdinPath) } },
       );
     } finally {
@@ -177,7 +152,7 @@ describe("baerly admin restore", () => {
           `--bucket=file://${root}`,
           `--app=${APP}`,
           `--tenant=${TENANT}`,
-          `--table=${COLL}`,
+          `--collection=${COLL}`,
           "--json",
         ],
         { streams: { stdin: createReadStream(stdinPath) } },
@@ -197,12 +172,7 @@ describe("baerly admin restore", () => {
   test("empty lines tolerated", async () => {
     await writeFile(stdinPath, `\n${CANONICAL_NDJSON}\n\n`, "utf8");
     const exitCode = await runRestore(
-      [
-        `--bucket=file://${root}`,
-        `--app=${APP}`,
-        `--tenant=${TENANT}`,
-        `--table=${COLL}`,
-      ],
+      [`--bucket=file://${root}`, `--app=${APP}`, `--tenant=${TENANT}`, `--collection=${COLL}`],
       { streams: { stdin: createReadStream(stdinPath) } },
     );
     expect(exitCode).toBe(0);
@@ -215,7 +185,7 @@ describe("baerly admin restore", () => {
       `--bucket=file://${root}`,
       `--app=${APP}`,
       `--tenant=${TENANT}`,
-      `--table=${COLL}`,
+      `--collection=${COLL}`,
       "--unknown=oops",
     ]);
     expect(exitCode).toBe(1);

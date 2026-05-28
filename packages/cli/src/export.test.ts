@@ -104,7 +104,7 @@ describe("baerly export — CLI smoke", () => {
       `--bucket=file://${root}`,
       `--app=${APP}`,
       `--tenant=${TENANT}`,
-      `--table=${COLL}`,
+      `--collection=${COLL}`,
       "--target=sqlite",
       `--output=${outFile}`,
     ]);
@@ -135,7 +135,7 @@ describe("baerly export — CLI smoke", () => {
       `--bucket=file://${root}`,
       `--app=${APP}`,
       `--tenant=${TENANT}`,
-      `--table=${COLL}`,
+      `--collection=${COLL}`,
       "--target=sqlite",
       `--output=${outFile}`,
       "--no-sidecar",
@@ -144,7 +144,7 @@ describe("baerly export — CLI smoke", () => {
     await expect(access(`${outFile}.plan.json`)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  test('--where=<wire predicate> filters the INSERTs', async () => {
+  test("--where=<wire predicate> filters the INSERTs", async () => {
     await provision(storage);
     await seedRows(storage);
     const stdout = captureStream(process.stdout);
@@ -154,7 +154,7 @@ describe("baerly export — CLI smoke", () => {
         `--bucket=file://${root}`,
         `--app=${APP}`,
         `--tenant=${TENANT}`,
-        `--table=${COLL}`,
+        `--collection=${COLL}`,
         "--target=sqlite",
         `--output=${outFile}`,
         `--where={"clauses":[{"op":"eq","field":"status","value":"open"}]}`,
@@ -186,7 +186,7 @@ describe("baerly export — CLI smoke", () => {
       `--bucket=file://${root}`,
       `--app=${APP}`,
       `--tenant=${TENANT}`,
-      `--table=${COLL}`,
+      `--collection=${COLL}`,
       "--target=sqlite",
       `--output=${outFile}`,
       `--where={"clauses":[{"op":"eq","field":"status","value":"open"}]}`,
@@ -207,7 +207,7 @@ describe("baerly export — CLI smoke", () => {
         `--bucket=file://${root}`,
         `--app=${APP}`,
         `--tenant=${TENANT}`,
-        `--table=${COLL}`,
+        `--collection=${COLL}`,
         "--target=sqlite",
         `--output=${outFile}`,
         "--where={not-json}",
@@ -226,7 +226,7 @@ describe("baerly export — CLI smoke", () => {
       `--bucket=file://${root}`,
       `--app=${APP}`,
       `--tenant=${TENANT}`,
-      `--table=${COLL}`,
+      `--collection=${COLL}`,
       "--target=oracle",
       `--output=${outFile}`,
     ]);
@@ -238,7 +238,7 @@ describe("baerly export — CLI smoke", () => {
       `--bucket=file://${root}`,
       `--app=${APP}`,
       `--tenant=${TENANT}`,
-      `--table=${COLL}`,
+      `--collection=${COLL}`,
       "--target=sqlite",
       `--output=${outFile}`,
     ]);
@@ -255,7 +255,7 @@ describe("baerly export — CLI smoke", () => {
         `--bucket=file://${root}`,
         `--app=${APP}`,
         `--tenant=${TENANT}`,
-        `--table=${COLL}`,
+        `--collection=${COLL}`,
         "--target=sqlite",
       ]);
     } finally {
@@ -273,7 +273,7 @@ describe("baerly export — CLI smoke", () => {
       `--bucket=file://${root}`,
       `--app=${APP}`,
       `--tenant=${TENANT}`,
-      `--table=${COLL}`,
+      `--collection=${COLL}`,
       "--target=sqlite",
       "--unknown=oops",
     ]);

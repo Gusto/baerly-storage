@@ -5,7 +5,7 @@
  *   --bucket   Required. Bucket URI.
  *   --app      Required (or via baerly.config.ts).
  *   --tenant   Required (or via baerly.config.ts).
- *   --table    Required. Collection name.
+ *   --collection Required. Collection name.
  *   --config   Optional path to baerly.config.{js,mjs,json} for index info.
  *   --json     JSON envelope.
  *
@@ -20,7 +20,7 @@
  *   - well-formed status: "ok" or "error" with an `errors` array.
  *
  * For projected monthly Class A / $ trajectories, use
- * `baerly cost --table=<name>` — the projection used to live as a
+ * `baerly cost --collection=<name>` — the projection used to live as a
  * footer here but moved to its own verb so inspect stays a glance
  * command (no GET-storm over the trailing log sample).
  *
@@ -67,10 +67,10 @@ const INSPECT_ARGS = {
     description: "Tenant name segment (defaults to baerly.config.ts).",
     valueHint: "tenant",
   },
-  table: {
+  collection: {
     type: "string",
     required: true,
-    description: "Collection (table) name.",
+    description: "Collection name.",
     valueHint: "name",
   },
   config: {
@@ -113,9 +113,9 @@ interface InspectResult {
   errors: string[];
 }
 
-const renderText = (r: InspectResult, table: string): string => {
+const renderText = (r: InspectResult, collection: string): string => {
   const lines: string[] = [];
-  lines.push(`baerly inspect ${table}`);
+  lines.push(`baerly inspect ${collection}`);
   lines.push(`  current.json:        ${r.currentJsonKey}`);
   lines.push(`  schema_version:      ${r.schema_version}`);
   lines.push(`  next_seq:            ${r.next_seq}`);
@@ -150,7 +150,7 @@ const bundle = defineBaerlySubcommand({
   handler: async (args, ctx) => {
     const bucket = await parseBucketUri(args.bucket);
     const { app, tenant } = await ctx.resolveAppTenant({ app: args.app, tenant: args.tenant });
-    const collectionPrefix = `${bucket.keyPrefix}app/${app}/tenant/${tenant}/manifests/${args.table}`;
+    const collectionPrefix = `${bucket.keyPrefix}app/${app}/tenant/${tenant}/manifests/${args.collection}`;
     const currentJsonKey = `${collectionPrefix}/current.json`;
 
     const read = await readCurrentJson(bucket.storage, currentJsonKey);
@@ -169,7 +169,7 @@ const bundle = defineBaerlySubcommand({
       const view = await loadMaterialisedView({
         storage: bucket.storage,
         currentJsonKey,
-        collection: args.table,
+        collection: args.collection,
       });
       materialisedRows = view?.size ?? 0;
     } catch (error) {
@@ -198,7 +198,7 @@ const bundle = defineBaerlySubcommand({
 
     const indexes: { name: string; count: number }[] = [];
     if (typeof args.config === "string" && args.config.length > 0) {
-      const defs = await loadCollectionIndexes(args.config, args.table, "baerly inspect");
+      const defs = await loadCollectionIndexes(args.config, args.collection, "baerly inspect");
       for (const def of defs) {
         const prefix = `${collectionPrefix}/index/${def.name}/`;
         const { count } = await countListEntries(bucket.storage, prefix);
@@ -223,7 +223,7 @@ const bundle = defineBaerlySubcommand({
     if (isJsonMode()) {
       emitSuccess({ command: "inspect", ...result });
     } else {
-      process.stdout.write(renderText(result, args.table));
+      process.stdout.write(renderText(result, args.collection));
     }
     return 0;
   },

@@ -554,7 +554,7 @@ writes/min. Warning at 50% of the ceiling; export suggestion at
 100%.
 
 **Export when ready:** `baerly export --target=sqlite|postgres|d1
---bucket=<...> --app=<...> --tenant=<...> --table=<...>` writes a
+--bucket=<...> --app=<...> --tenant=<...> --collection=<...>` writes a
 canonical SQL dump (and a `<output>.plan.json` sidecar carrying the
 inferred `ExportPlan`) that you load into your graduation target.
 The export is point-in-time and honours the active schema. Flags:

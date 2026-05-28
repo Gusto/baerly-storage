@@ -73,10 +73,10 @@ const FSCK_ARGS = {
     description: "Tenant name segment (defaults to baerly.config.ts).",
     valueHint: "tenant",
   },
-  table: {
+  collection: {
     type: "string",
     required: true,
-    description: "Collection (table) name.",
+    description: "Collection name.",
     valueHint: "name",
   },
   config: {
@@ -115,7 +115,7 @@ const isFindingSeverity = (s: Severity): boolean => s === "finding" || s === "wa
 
 const loadConfigIndexes = async (
   configPath: string,
-  table: string,
+  collection: string,
 ): Promise<readonly IndexDefinition[]> => {
   if (configPath.endsWith(".ts")) {
     throw new BaerlyError(
@@ -149,8 +149,8 @@ const loadConfigIndexes = async (
     }
     cfg = mod.default;
   }
-  const collection = cfg.collections?.[table];
-  return collection?.indexes ?? [];
+  const def = cfg.collections?.[collection];
+  return def?.indexes ?? [];
 };
 
 const listKeys = async (storage: Storage, prefix: string): Promise<string[]> => {
@@ -173,7 +173,7 @@ interface IndexSummary {
 }
 
 const renderSnapshotLog = (
-  table: string,
+  collection: string,
   findings: readonly Finding[],
   context: {
     readonly logRange: readonly [number, number];
@@ -182,7 +182,7 @@ const renderSnapshotLog = (
   },
 ): string => {
   const lines: string[] = [];
-  lines.push(`baerly admin fsck ${table}`);
+  lines.push(`baerly admin fsck ${collection}`);
   const [from, toExcl] = context.logRange;
   const byCheck = new Map<string, Finding[]>();
   for (const f of findings) {
@@ -213,13 +213,13 @@ const renderSnapshotLog = (
 };
 
 const renderIndexes = (
-  table: string,
+  collection: string,
   findings: readonly Finding[],
   summaries: readonly IndexSummary[],
   fix: boolean,
 ): string => {
   const lines: string[] = [];
-  lines.push(`baerly admin fsck ${table} --indexes${fix ? " --fix" : ""}`);
+  lines.push(`baerly admin fsck ${collection} --indexes${fix ? " --fix" : ""}`);
   for (const s of summaries) {
     const verb = s.rebuilt ? "rebuilt" : "would rebuild";
     if (s.added === 0 && s.removed === 0) {
@@ -263,7 +263,7 @@ const bundle = defineBaerlySubcommand({
     }
     const { app, tenant } = await ctx.resolveAppTenant({ app: args.app, tenant: args.tenant });
     const bucket = await parseBucketUri(args.bucket);
-    const collectionPrefix = `${bucket.keyPrefix}app/${app}/tenant/${tenant}/manifests/${args.table}`;
+    const collectionPrefix = `${bucket.keyPrefix}app/${app}/tenant/${tenant}/manifests/${args.collection}`;
     const currentJsonKey = `${collectionPrefix}/current.json`;
 
     const findings: Finding[] = [];
@@ -273,7 +273,7 @@ const bundle = defineBaerlySubcommand({
       // Skip snapshot + log walks. For each declared index, call
       // `rebuildIndex(..., { dryRun: !fix })` — it returns the
       // `(added, removed, kept)` triple we need to call drift.
-      const defs = await loadConfigIndexes(args.config!, args.table);
+      const defs = await loadConfigIndexes(args.config!, args.collection);
       const summaries: IndexSummary[] = [];
       for (const def of defs) {
         const check = `index.${def.name}`;
@@ -324,7 +324,7 @@ const bundle = defineBaerlySubcommand({
         emitSuccess({
           command: "admin.fsck",
           status: findings.some(isFindingFinding) ? "findings" : "ok",
-          table: args.table,
+          collection: args.collection,
           mode: fixMode ? "indexes-fix" : "indexes",
           indexes: summaries,
           findings: findings.map((f) => ({
@@ -335,7 +335,7 @@ const bundle = defineBaerlySubcommand({
           })),
         });
       } else {
-        process.stdout.write(renderIndexes(args.table, findings, summaries, fixMode));
+        process.stdout.write(renderIndexes(args.collection, findings, summaries, fixMode));
       }
       return findings.some(isFindingFinding) ? 4 : 0;
     }
@@ -356,7 +356,7 @@ const bundle = defineBaerlySubcommand({
     // ── Snapshot hash verifies (loadSnapshotAsMap throws on mismatch). ──
     if (snapshotKey !== null) {
       try {
-        await loadSnapshotAsMap(bucket.storage, snapshotKey, args.table);
+        await loadSnapshotAsMap(bucket.storage, snapshotKey, args.collection);
       } catch (error) {
         if (
           error instanceof BaerlyError &&
@@ -410,7 +410,7 @@ const bundle = defineBaerlySubcommand({
       emitSuccess({
         command: "admin.fsck",
         status: findings.some(isFindingFinding) ? "findings" : "ok",
-        table: args.table,
+        collection: args.collection,
         current_json_key: currentJsonKey,
         snapshot: snapshotKey,
         log_range: { from: logFrom, to_excl: logToExcl, present: logEntriesPresent },
@@ -423,7 +423,7 @@ const bundle = defineBaerlySubcommand({
       });
     } else {
       process.stdout.write(
-        renderSnapshotLog(args.table, findings, {
+        renderSnapshotLog(args.collection, findings, {
           logRange: [logFrom, logToExcl],
           logEntriesPresent,
           snapshotKey,

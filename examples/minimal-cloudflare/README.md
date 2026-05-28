@@ -135,7 +135,7 @@ not a churn event.
 ```sh
 baerly export --target=postgres \
   --bucket=minimal-cloudflare --app=minimal-cloudflare --tenant=<your-tenant> \
-  --table=<collection-name> --output=./out.sql
+  --collection=<collection-name> --output=./out.sql
 ```
 
 The export is a **point-in-time** snapshot and honors any active
