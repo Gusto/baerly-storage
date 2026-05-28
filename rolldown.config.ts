@@ -37,7 +37,7 @@ export default defineConfig({
   // `@xmldom/xmldom` and `aws4fetch` are bundled into the library
   // entries that use them (`dist/node.js` + `dist/dev-vite.js`). They
   // used to be optional peer deps, but pnpm skips optional peers on
-  // install, so a fresh `create-baerly` scaffold's `node_modules` had
+  // install, so a fresh `create-baerly-storage` scaffold's `node_modules` had
   // no copy on disk and `vite.config.ts` died on first load with
   // `Cannot find package '@xmldom/xmldom'`. Bundling them in here
   // mirrors `packages/cli/rolldown.config.ts` (the bin) and trades

@@ -16,14 +16,14 @@ before merging adapter changes. Manual — not part of CI.
 
 The deploy artifacts are the production templates at
 `examples/minimal-cloudflare/` and `examples/minimal-node/`
-(materialised via `create-baerly`). This directory holds only the
+(materialised via `create-baerly-storage`). This directory holds only the
 test driver — there are no skeleton apps to maintain.
 
 ## Lifecycle
 
 1. Provision resources (one-time): R2 bucket, S3 bucket, IAM /
    wrangler credentials, shared secret.
-2. Deploy both runtimes from the `create-baerly` scaffolds.
+2. Deploy both runtimes from the `create-baerly-storage` scaffolds.
 3. `pnpm test:manual-e2e` — runs the two test files against the
    deployed URLs.
 4. Inspect the pass criteria below.

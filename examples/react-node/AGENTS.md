@@ -39,7 +39,7 @@ Common anti-patterns that compile but are wrong:
 
 ## What this is
 
-`react-node` is a baerly app scaffolded with `create-baerly` for the
+`react-node` is a baerly app scaffolded with `create-baerly-storage` for the
 Node target — any host that runs `node server.js` (Railway, Render,
 Fly without Docker, Heroku, a VM, a container scheduler). The
 Node-side server lives in `src/server/`; the React client lives in
@@ -57,7 +57,7 @@ This starter is a generic notes app you extend with your own fields —
 a Node HTTP listener wired to an S3-compatible bucket plus a working
 React+Vite frontend in `src/web/` (served by `baerlyNode({ webRoot })`
 in production) with the `Note` shape declared in `baerly.config.ts`.
-The bare server-only version is `pnpm create baerly <app> --target=node`;
+The bare server-only version is `pnpm create @gusto/baerly-storage <app> --target=node`;
 this one is `--target=node --starter=react`.
 
 If this scaffold was created with `--with=docker`, you'll also have a

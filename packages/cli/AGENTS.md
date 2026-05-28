@@ -1,8 +1,8 @@
 # @baerly/cli — agent quickref
 
 `baerly` does things to a project that already has baerly.
-`create-baerly` is the one that puts baerly into a project in the first
-place (see `packages/create-baerly/AGENTS.md`).
+`create-baerly-storage` is the one that puts baerly into a project in the first
+place (see `packages/create-baerly-storage/AGENTS.md`).
 
 `@baerly/cli` is workspace-internal. It bundles to a single-file bin at
 `dist/baerly.js` via rolldown with a `#!/usr/bin/env node` banner; the
@@ -33,7 +33,7 @@ module's transitive imports are evaluated lazily.
 Exit-code contract (per `src/deploy.ts:10-16` and friends): 0 success,
 1 user error, 2 storage/external error, 3 protocol invariant.
 
-## Shared with create-baerly
+## Shared with create-baerly-storage
 
 `@baerly/cli` surfaces exactly one subpath export:
 `@baerly/cli/wrangler-patch`. It exposes `patchWranglerJsonc`,
@@ -44,13 +44,13 @@ Two consumers, one source of truth:
 
 - `packages/cli/src/deploy/cloudflare.ts` — patches `wrangler.jsonc`
   before `wrangler deploy` to ensure R2 binding + `vars` are present.
-- `packages/create-baerly/src/bolt-on.ts` — patches the same file when
-  `pnpm create baerly .` runs inside an existing Worker project.
+- `packages/create-baerly-storage/src/bolt-on.ts` — patches the same file when
+  `pnpm create @gusto/baerly-storage .` runs inside an existing Worker project.
 
 `renderWorkerEntrySnippet` (the worker-entry snippet template) used to
 live here too, behind `@baerly/cli/init-snippet`. It only ever had one
-consumer (`create-baerly`'s bolt-on), so it now lives at
-`packages/create-baerly/src/init-snippet.ts`. The deployed `baerly`
+consumer (`create-baerly-storage`'s bolt-on), so it now lives at
+`packages/create-baerly-storage/src/init-snippet.ts`. The deployed `baerly`
 CLI never renders user-facing code snippets.
 
 ## Bundle policy

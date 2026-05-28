@@ -24,9 +24,9 @@ For integrators and operators running Baerly against a real bucket.
 - `guide/auth.md` — Verifier presets (shared secret, JWT, CF Access,
   AWS SigV4, IP allowlist) and the tenant-isolation caveat.
 - `guide/add-to-existing-cf-worker.md` — bolt baerly onto an existing
-  Cloudflare Worker project with `pnpm create baerly .`.
+  Cloudflare Worker project with `pnpm create @gusto/baerly-storage .`.
 - `guide/embed.md` — 30-line snippet to drop baerly-storage into an
-  existing Node app, bypassing `create-baerly`.
+  existing Node app, bypassing `create-baerly-storage`.
 - `guide/client-middleware.md` — wrap `BaerlyClientOptions.fetch` to
   add logging, retry, auth-refresh, and `onSuccess` / `onError`
   hooks without new API surface.

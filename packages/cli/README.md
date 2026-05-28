@@ -21,8 +21,8 @@ Subcommands are built on [citty](https://github.com/unjs/citty);
 | `restore` | planned     | —             |
 
 Bolt-on (adding baerly to an existing Cloudflare Worker project) lives
-in `create-baerly` — see
-[`packages/create-baerly/AGENTS.md`](../create-baerly/AGENTS.md)
+in `create-baerly-storage` — see
+[`packages/create-baerly-storage/AGENTS.md`](../create-baerly-storage/AGENTS.md)
 §"Bolt-on branch".
 
 Each subcommand is one `defineCommand` block exported from its own

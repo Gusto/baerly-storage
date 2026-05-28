@@ -39,7 +39,7 @@ Common anti-patterns that compile but are wrong:
 
 ## What this is
 
-`minimal-cloudflare` is a baerly app scaffolded with `create-baerly`.
+`minimal-cloudflare` is a baerly app scaffolded with `create-baerly-storage`.
 The Worker-side server lives in `src/server/`; the optional client
 lives in `src/web/`. Configuration lives in `baerly.config.ts`.
 

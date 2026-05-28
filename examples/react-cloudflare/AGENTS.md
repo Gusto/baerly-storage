@@ -39,7 +39,7 @@ Common anti-patterns that compile but are wrong:
 
 ## What this is
 
-`react-cloudflare` is a baerly app scaffolded with `create-baerly`.
+`react-cloudflare` is a baerly app scaffolded with `create-baerly-storage`.
 The Worker-side server lives in `src/server/`; the React client lives
 in `src/web/`. Configuration lives in `baerly.config.ts`.
 
@@ -52,7 +52,7 @@ This starter is a generic notes app you extend with your own fields —
 a Cloudflare Worker wired to R2 plus a working React+Vite frontend in
 `src/web/` (served by the Worker via Workers Assets) with the `Note`
 shape declared in `baerly.config.ts`. The bare server-only version is
-`pnpm create baerly <app> --target=cloudflare`; this one is
+`pnpm create @gusto/baerly-storage <app> --target=cloudflare`; this one is
 `--target=cloudflare --starter=react`.
 
 Public API docs: https://docs.baerly.dev/ (the JSDoc on

@@ -7,7 +7,7 @@ URL="${VERDACCIO_URL:-http://localhost:4873}"
 pkill -f Verdaccio 2>/dev/null || true
 sleep 0.5
 
-rm -rf "${STORAGE}/@baerly" "${STORAGE}/create-baerly" "${STORAGE}/baerly-storage" "${STORAGE}/.verdaccio-db.json"
+rm -rf "${STORAGE}/@gusto" "${STORAGE}/.verdaccio-db.json"
 
 nohup verdaccio >/tmp/verdaccio.log 2>&1 &
 

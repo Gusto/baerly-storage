@@ -15,7 +15,7 @@ Day-1 deploy targets, both first-class:
 - **Self-hosted Node** (S3 / R2 / GCS / Minio over HTTP,
   `@baerly/adapter-node`).
 
-`create-baerly` scaffolds either shape; see the module map in
+`create-baerly-storage` scaffolds either shape; see the module map in
 [CLAUDE.md](./CLAUDE.md) for the package layout.
 
 ## Minimal shape
@@ -83,10 +83,10 @@ If you already have a `wrangler.jsonc` (from `wrangler create` or an
 existing project), the one-command bolt-on is:
 
 ```sh
-pnpm create baerly .
+pnpm create @gusto/baerly-storage .
 ```
 
-`create-baerly` detects `wrangler.jsonc`, patches the R2 binding +
+`create-baerly-storage` detects `wrangler.jsonc`, patches the R2 binding +
 vars, seeds `.dev.vars`, appends `baerly-storage` to `package.json`,
 and prints the `src/index.ts` snippet for you to paste. Every write
 is idempotent — re-running is safe. Full reference:

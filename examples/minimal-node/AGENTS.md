@@ -39,7 +39,7 @@ Common anti-patterns that compile but are wrong:
 
 ## What this is
 
-`minimal-node` is a baerly app scaffolded with `create-baerly` for the
+`minimal-node` is a baerly app scaffolded with `create-baerly-storage` for the
 Node target — any host that runs `node server.js` (Railway, Render,
 Fly without Docker, Heroku, a VM, a container scheduler). One flat
 package: the Node-side server lives in `src/server/index.ts`; the
