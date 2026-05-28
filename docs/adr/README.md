@@ -26,6 +26,8 @@ rules live in
 - [001 — Tenant CAS isolation](./001-tenant-cas-isolation.md)
 - [002 — API surface lock](./002-api-surface-lock.md)
 - [003 — `Baerly` prefix naming convention](./003-naming-convention.md)
+- [004 — Ephemeral coordination](./004-ephemeral-coordination.md)
+- [005 — Verifier is a function](./005-verifier-function-shape.md)
 
 ## Template
 
