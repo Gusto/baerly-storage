@@ -41,7 +41,6 @@ export {
 } from "./logger.ts";
 export {
   type FlushCanonicalLineOptions,
-  type Unit,
   flushCanonicalLine,
   flushUnauthorizedAndRespond,
   withHttpObservability,

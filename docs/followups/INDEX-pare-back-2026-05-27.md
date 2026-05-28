@@ -1,7 +1,7 @@
 ---
 title: Pare-back sweep — 2026-05-27
 discovered: 2026-05-27
-candidate_count: 3
+candidate_count: 2
 verified_dropped: 2
 ---
 
@@ -19,7 +19,6 @@ did not survive verification (see the verification log below).
 |---|---|---|---|---|---|
 | 17 | `docs/contributing/extending.md:§Wiring schemas into Db.create` | doc-surface-tracking-ghost-features | low | 17 | [cut-extending-md-schemas-section.md](./cut-extending-md-schemas-section.md) |
 | 8 | `LongPollSinceOptions.maxEvents` + `ListEventsSinceOptions.maxEvents` | configurability-without-consumers | low | 8 | [cut-since-max-events.md](./cut-since-max-events.md) |
-| 3 | `@gusto/baerly-storage/observability:Unit` | internal-seam-without-payoff | low | 3 | [cut-observability-unit-type.md](./cut-observability-unit-type.md) |
 
 ## By concern
 
@@ -44,11 +43,9 @@ dump/restore/fsck`, `baerly inspect`, `baerly init`, `baerly
 deploy`) each satisfy one of the three thesis exceptions or have
 documented audience reach.)
 
-### internal-seam-without-payoff (1)
+### internal-seam-without-payoff (0)
 
-- [cut-observability-unit-type.md](./cut-observability-unit-type.md) —
-  `Unit = "http"` single-variant union in the published
-  `/observability` subpath; tiny but real.
+(none open — `cut-observability-unit-type` shipped 2026-05-27.)
 
 ### doc-surface-tracking-ghost-features (1)
 
@@ -77,17 +74,6 @@ Main-agent spot-checks performed before files landed:
   `packages/server/src/http/index.ts` and the `/http` subpath is
   in `publishConfig.exports`. The optional field is public surface
   with zero callers.
-
-- `cut-observability-unit-type.md` — VERIFIED. Re-grepped `Unit`
-  + `unit:` across the observability subpath and both adapters: 4
-  production call sites, all literal `"http"`; 12 test call sites,
-  all literal `"http"`. Confirmed `type Unit` is re-exported from
-  `packages/server/src/observability/index.ts` in the named-export
-  block alongside `flushCanonicalLine` and
-  `flushUnauthorizedAndRespond`; the `/observability` subpath is
-  in `publishConfig.exports`. The one variant has no second
-  variant on the horizon (`[[observability-units-narrowed-to-http]]`
-  already narrowed it during the trim-v2 cut).
 
 - `cut-extending-md-schemas-section.md` — VERIFIED. Read the cited
   subsection (`extending.md` §"Wiring schemas into `Db.create`")

@@ -30,12 +30,9 @@ import {
 import { deriveOutcome } from "./derive-outcome.ts";
 import type { RequestScopedMetricsRecorder } from "./recorder.ts";
 
-/** Discriminator for the canonical line's `category` derivation. */
-export type Unit = "http";
-
 /** Options accepted by {@link flushCanonicalLine}. */
 export interface FlushCanonicalLineOptions {
-  readonly unit: Unit;
+  readonly unit: "http";
   /** HTTP status code (HTTP unit only). Influences the level decision. */
   readonly status?: number;
   /** Short outcome tag ("ok", "conflict", "not_found", "client_error", "internal_error", ...). */
