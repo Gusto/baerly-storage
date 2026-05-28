@@ -1,15 +1,17 @@
 ---
-title: "ADR-005: Verifier is a function, not a class hierarchy"
+title: Verifier function shape
 audience: adr
-summary: Auth lives on a single async `(Request) => Promise<VerifierResult | null>` seam. Records the three properties this shape upholds and the four rejected alternatives.
+summary: ADR 005 — auth lives on a single async `(Request) => Promise<VerifierResult | null>` seam. Records the three properties this shape upholds and the four rejected alternatives.
 last-reviewed: 2026-05-28
-tags: [adr, auth]
+tags: [decision, adr, auth]
 related: [README.md, 001-tenant-cas-isolation.md, ../about/thesis.md]
 ---
 
-# ADR-005: Verifier is a function, not a class hierarchy
+# 005 — Verifier is a function, not a class hierarchy
 
-**Status:** Accepted 2026-05-28 (reframed from `docs/guide/auth.md`).
+## Status
+
+Accepted (2026-05-28). Reframed from `docs/guide/auth.md`.
 
 ## Context
 

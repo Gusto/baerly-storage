@@ -785,7 +785,7 @@ const withRetry = (next: Fetcher, max = 3, baseMs = 100): Fetcher =>
 
 Only retry idempotent reads. `POST` / `PATCH` / `DELETE` may have
 succeeded on the server even when the client sees a 5xx (commit
-fence then network drop). Write writes are CAS-guarded so duplicates
+fence then network drop). Writes are CAS-guarded so duplicates
 don't corrupt state — but they may surface as `PreconditionFailed`.
 The `req.clone()` is required because a `Request` body is a
 one-shot stream.

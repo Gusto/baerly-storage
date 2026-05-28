@@ -44,6 +44,13 @@ test("fails on missing audience field", () => {
   expect(r.stderr).toMatch(/missing 'audience'/);
 });
 
+test("fails on invalid audience value", () => {
+  write("a.md", `---\ntitle: A\naudience: app-developer\n---\n`);
+  const r = runScript(tmpRoot);
+  expect(r.code).toBe(1);
+  expect(r.stderr).toMatch(/invalid audience 'app-developer'/);
+});
+
 test("fails on broken related: link", () => {
   write("a.md", `---\ntitle: A\naudience: meta\nrelated: ["./does-not-exist.md"]\n---\n`);
   const r = runScript(tmpRoot);
