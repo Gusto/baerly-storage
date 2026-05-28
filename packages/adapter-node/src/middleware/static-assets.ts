@@ -1,4 +1,4 @@
-import { createReadStream } from "node:fs";
+import { createReadStream, type Stats } from "node:fs";
 import { stat } from "node:fs/promises";
 import {
   extname,
@@ -81,21 +81,11 @@ export function staticAssetsMiddleware(opts: Options): MiddlewareHandler {
       return next();
     }
 
-    const primary = await statFile(resolved);
-    let target = resolved;
-    let stats = primary;
-    if (stats === null) {
-      if (!wantsHtmlFallback(c.req.header("accept"))) {
-        return next();
-      }
-      const indexPath = resolvePath(opts.webRoot, "index.html");
-      const fallback = await statFile(indexPath);
-      if (fallback === null) {
-        return next();
-      }
-      target = indexPath;
-      stats = fallback;
+    const resolution = await resolveStaticTarget(resolved, opts.webRoot, c.req.header("accept"));
+    if (resolution === null) {
+      return next();
     }
+    const { target, stats } = resolution;
 
     const ext = extname(target).toLowerCase();
     const contentType = MIME_TYPES[ext] ?? "application/octet-stream";
@@ -118,9 +108,9 @@ export function staticAssetsMiddleware(opts: Options): MiddlewareHandler {
       return new Response(null, { status: 200, headers });
     }
 
-    const nodeWeb = Readable.toWeb(createReadStream(target)) as unknown as NodeReadableStream<
-      Uint8Array
-    >;
+    const nodeWeb = Readable.toWeb(
+      createReadStream(target),
+    ) as unknown as NodeReadableStream<Uint8Array>;
     return new Response(nodeWeb as unknown as ReadableStream<Uint8Array>, {
       status: 200,
       headers,
@@ -201,12 +191,32 @@ function wantsHtmlFallback(accept: string | undefined): boolean {
   return accept.includes("text/html");
 }
 
+async function resolveStaticTarget(
+  resolved: string,
+  webRoot: string,
+  accept: string | undefined,
+): Promise<{ target: string; stats: Stats } | null> {
+  const primary = await statFile(resolved);
+  if (primary !== null) {
+    return { target: resolved, stats: primary };
+  }
+  if (!wantsHtmlFallback(accept)) {
+    return null;
+  }
+  const indexPath = resolvePath(webRoot, "index.html");
+  const fallback = await statFile(indexPath);
+  if (fallback === null) {
+    return null;
+  }
+  return { target: indexPath, stats: fallback };
+}
+
 /**
  * `fs.stat` that returns `null` for the missing-file cases that this
  * handler treats as a fall-through (ENOENT / ENOTDIR / non-file).
  * Other errors (EACCES, EIO, ...) propagate.
  */
-async function statFile(target: string): Promise<Awaited<ReturnType<typeof stat>> | null> {
+async function statFile(target: string): Promise<Stats | null> {
   try {
     const stats = await stat(target);
     return stats.isFile() ? stats : null;

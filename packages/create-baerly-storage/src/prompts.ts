@@ -5,7 +5,7 @@
  * piped stdin) and `--json` callers retain the flag-driven path and
  * unchanged JSON envelope — see `index.ts`.
  *
- * API surface (`@clack/prompts` v0.7+): `intro`, `text`, `select`,
+ * API surface (`@clack/prompts` v1+): `intro`, `text`, `select`,
  * `confirm`, `outro`, `isCancel`, `cancel`. `isCancel(value)` returns
  * `true` when the user hits Ctrl+C; in that case we call `cancel()`
  * and `process.exit(1)` (same exit code as a user error).
@@ -149,7 +149,10 @@ const promptProjectName = async (): Promise<string> => {
   const v = await text({
     message: "Project name (use '.' for current directory)",
     placeholder: "my-app",
-    validate: (raw) => {
+    // `@clack/prompts` v1 widened the `validate` callback's parameter
+    // to `string | undefined`. Treat `undefined` as the empty string
+    // so the existing "non-empty" guard fires.
+    validate: (raw = "") => {
       if (raw.length === 0) {
         return "name must be non-empty";
       }
