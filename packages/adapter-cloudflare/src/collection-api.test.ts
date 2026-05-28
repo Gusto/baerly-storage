@@ -4,14 +4,14 @@
    name. */
 
 /**
- * Table-API integration cascade — Workerd variant.
+ * Collection-API integration cascade — Workerd variant.
  *
  * Runs under the `cloudflare-pool` vitest project, picking up the R2
  * binding that `tests/setup/r2-binding.ts` re-publishes on
  * `globalThis.__BAERLY_R2_BINDING__`. The cascade body itself is
  * shared with the Node-side variants
- * (`tests/integration/table-api.test.ts`) via the backend-agnostic
- * driver in `tests/fixtures/table-api-cascade.ts`.
+ * (`tests/integration/collection-api.test.ts`) via the backend-agnostic
+ * driver in `tests/fixtures/collection-api-cascade.ts`.
  *
  * No fault-injection twiddler: R2's miniflare backend is in-process
  * and the `r2BindingStorage` adapter has no network seam to twiddle.
@@ -21,20 +21,20 @@
  */
 
 import { describe, test } from "vitest";
-import { runTableApiCascade } from "../../../tests/fixtures/table-api-cascade.ts";
+import { runCollectionApiCascade } from "../../../tests/fixtures/collection-api-cascade.ts";
 import { r2BindingStorage } from "./r2-binding-storage.ts";
 
 const getBinding = (): R2Bucket => {
   const bucket = (globalThis as { __BAERLY_R2_BINDING__?: R2Bucket }).__BAERLY_R2_BINDING__;
   if (bucket === undefined) {
     throw new Error(
-      "table-api cascade: globalThis.__BAERLY_R2_BINDING__ missing — expected wiring from tests/setup/r2-binding.ts under the cloudflare-pool vitest project",
+      "collection-api cascade: globalThis.__BAERLY_R2_BINDING__ missing — expected wiring from tests/setup/r2-binding.ts under the cloudflare-pool vitest project",
     );
   }
   return bucket;
 };
 
-describe("table API", () => {
+describe("collection API", () => {
   describe("cloudflare-r2", () => {
     test(
       "happy-path + writes + transactions + LogEntry shape",
@@ -45,7 +45,7 @@ describe("table API", () => {
         // a backing store, so the cross-writer Conflict assertion can
         // run on cloudflare-r2 the same way it does on memory /
         // local-fs.
-        await runTableApiCascade({
+        await runCollectionApiCascade({
           storage: r2BindingStorage(binding),
           rivalStorage: r2BindingStorage(binding),
         });

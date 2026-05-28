@@ -224,14 +224,14 @@ export const loadMaterialisedView = async (params: {
   if (read === null) {
     return null;
   }
-  const tablePrefix = currentJsonKey.slice(0, currentJsonKey.lastIndexOf("/"));
+  const collectionPrefix = currentJsonKey.slice(0, currentJsonKey.lastIndexOf("/"));
   const base =
     read.json.snapshot === null
       ? new Map<string, ExportRow>()
       : await loadSnapshotAsMap(storage, read.json.snapshot, collection, params.signal);
   const entries = await walkLogRange(
     storage,
-    tablePrefix,
+    collectionPrefix,
     read.json.log_seq_start ?? 0,
     read.json.next_seq,
   );

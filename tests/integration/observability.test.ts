@@ -156,7 +156,7 @@ describe("observability integration — canonical line vs physical reality", () 
 
     const ctx = createObservabilityContext();
     await runWithContext(ctx, async () => {
-      await db.table<Ticket>(COLLECTION).insert({
+      await db.collection(COLLECTION).insert({
         _id: "t-0001",
         status: "open",
         priority: 1,
@@ -183,7 +183,7 @@ describe("observability integration — canonical line vs physical reality", () 
     expect(props["db.storage.put.calls_total"]).toBe(proxy.counts.put);
     expect(props["db.storage.get.calls_total"]).toBe(proxy.counts.get);
 
-    // Sanity: a fresh-bucket single insert through Db.table().insert()
+    // Sanity: a fresh-bucket single insert through Db.collection().insert()
     // performs exactly 3 PUTs (content + log entry + current.json
     // CAS-advance). No DELETEs / no LISTs (no indexes declared, no
     // stale-key fixups). The _id-collision precheck and the writer's
@@ -249,7 +249,7 @@ describe("observability integration — canonical line vs physical reality", () 
     // Seed one doc OUTSIDE the observed window so the seed's physical
     // ops don't pollute the assertion. The retry / collision path
     // is what's under test — the in-bucket pre-state isn't.
-    await db.table<Ticket>(COLLECTION).insert({
+    await db.collection(COLLECTION).insert({
       _id: "t-dup",
       status: "open",
       priority: 1,
@@ -271,7 +271,7 @@ describe("observability integration — canonical line vs physical reality", () 
         // issuing a writer commit. The failing precondition is a
         // GET-only path; we assert the canonical line still tracks
         // the exact physical-op count.
-        await db.table<Ticket>(COLLECTION).insert({
+        await db.collection(COLLECTION).insert({
           _id: "t-dup",
           status: "closed",
           priority: 2,

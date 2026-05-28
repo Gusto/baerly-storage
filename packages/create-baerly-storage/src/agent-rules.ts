@@ -46,12 +46,12 @@ This repo uses @gusto/baerly-storage. Before writing or modifying storage code:
   quickref. Every method, every error code, every example. If a
   pattern you want to use is not here, it does not exist in baerly.
 - Type contracts live in \`node_modules/@gusto/baerly-storage/dist/*.d.ts\`.
-  The whole API is \`Db\`, \`Table<T>\`, \`Query<T>\`, and \`Predicate<T>\`.
+  The whole API is \`Db\`, \`Collection<T>\`, \`Query<T>\`, and \`Predicate<T>\`.
 
 Anti-patterns that compile but are wrong:
 
 - \`db.collection(...).insertOne(...)\` — no such method. Use
-  \`db.table(...).insert(...)\`.
+  \`db.collection(...).insert(...)\`.
 - \`.useIndex("name")\` — does not exist. The query planner picks
   indexes automatically from registered \`IndexDefinition\`s.
 - \`z.string().nullable()\` — \`DocumentValue\` excludes \`null\`. Use

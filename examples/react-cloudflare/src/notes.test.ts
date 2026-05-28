@@ -13,7 +13,7 @@ test("notes round-trip", async () => {
     tenant: "t",
     config,
   });
-  const { _id } = await db.table("notes").insert({ body: "hello" });
-  const row = await db.table("notes").get(_id);
+  const { _id } = await db.collection("notes").insert({ body: "hello" });
+  const row = await db.collection("notes").get(_id);
   expect(row?.body).toBe("hello");
 });

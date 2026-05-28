@@ -721,7 +721,7 @@ describe("scaffold", () => {
     const mainTs = await readFile(join(result.outDir, "src", "web", "main.ts"), "utf8");
     // Round-trip wired example must reach the DB on first load — both
     // reads (count) and writes (Add-note button) are exercised.
-    expect(mainTs).toContain('.table<Note>("notes")');
+    expect(mainTs).toContain('.collection("notes")');
     expect(mainTs).toContain(".all()");
     expect(mainTs).toContain(".insert(");
     // Regression: no more `void client;` standalone no-op placeholder.
@@ -749,7 +749,7 @@ describe("scaffold", () => {
     const mainTs = await readFile(join(result.outDir, "src", "web", "main.ts"), "utf8");
     // Round-trip wired example must reach the DB on first load — both
     // reads (count) and writes (Add-note button) are exercised.
-    expect(mainTs).toContain('.table<Note>("notes")');
+    expect(mainTs).toContain('.collection("notes")');
     expect(mainTs).toContain(".all()");
     expect(mainTs).toContain(".insert(");
     // Regression: no more `void client;` standalone no-op placeholder.

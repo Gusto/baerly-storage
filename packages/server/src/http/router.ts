@@ -67,15 +67,15 @@ export interface CreateRouterOptions {
 /**
  * Build a Hono `app` that serves the CRUD routes:
  *
- *  - `GET    /v1/t/:table/:id` → read one document.
- *  - `GET    /v1/t/:table?where=<json>&order=<json>&limit=<n>` → list rows
+ *  - `GET    /v1/c/:collection/:id` → read one document.
+ *  - `GET    /v1/c/:collection?where=<json>&order=<json>&limit=<n>` → list rows
  *    matching a predicate, optionally ordered and capped.
- *  - `POST   /v1/t/:table` → insert. Body: `{ doc }`. → `201 { _id }`.
- *  - `PATCH  /v1/t/:table/:id` → merge-patch. Body: `{ patch }`. → `200 { modified }`.
- *  - `PUT    /v1/t/:table/:id` → whole-doc replace. Body: `{ doc }`. → `200 { modified }`.
- *  - `DELETE /v1/t/:table/:id` → delete row by id. → `204`.
- *  - `GET    /v1/count?table=<name>&where=<json>` → scalar `{ count: N }`.
- *  - `GET    /v1/since?table=<name>&cursor=<opaque>` → long-poll log.
+ *  - `POST   /v1/c/:collection` → insert. Body: `{ doc }`. → `201 { _id }`.
+ *  - `PATCH  /v1/c/:collection/:id` → merge-patch. Body: `{ patch }`. → `200 { modified }`.
+ *  - `PUT    /v1/c/:collection/:id` → whole-doc replace. Body: `{ doc }`. → `200 { modified }`.
+ *  - `DELETE /v1/c/:collection/:id` → delete row by id. → `204`.
+ *  - `GET    /v1/count?collection=<name>&where=<json>` → scalar `{ count: N }`.
+ *  - `GET    /v1/since?collection=<name>&cursor=<opaque>` → long-poll log.
  *
  * @example
  * ```ts
@@ -102,10 +102,13 @@ export function createRouter(options: CreateRouterOptions): Hono {
   // `@baerly/server`. Either way, one unit-of-work → exactly one
   // canonical line.
 
-  // Read one — GET /v1/t/:table/:id
-  app.get("/v1/t/:table/:id", async (c) => {
-    const { table, id } = c.req.param();
-    const { rows, manifestPointer, fresh } = await runByIdWithMeta(db.tableReadContext(table), id);
+  // Read one — GET /v1/c/:collection/:id
+  app.get("/v1/c/:collection/:id", async (c) => {
+    const { collection, id } = c.req.param();
+    const { rows, manifestPointer, fresh } = await runByIdWithMeta(
+      db.collectionReadContext(collection),
+      id,
+    );
     const row = rows[0];
     if (row === undefined) {
       throw new BaerlyError("NotFound", `No such row: ${id}`);
@@ -119,17 +122,20 @@ export function createRouter(options: CreateRouterOptions): Hono {
     );
   });
 
-  // List — GET /v1/t/:table?where=<urlencoded-json>
-  app.get("/v1/t/:table", async (c) => {
-    const { table } = c.req.param();
+  // List — GET /v1/c/:collection?where=<urlencoded-json>
+  app.get("/v1/c/:collection", async (c) => {
+    const { collection } = c.req.param();
     const wire = parseWhereParam(c);
     const order = parseOrder(c.req.query("order"));
     const limit = parseLimit(c.req.query("limit"));
-    const { rows, manifestPointer, fresh } = await runAllWithMeta(db.tableReadContext(table), {
-      wire,
-      order,
-      limit,
-    });
+    const { rows, manifestPointer, fresh } = await runAllWithMeta(
+      db.collectionReadContext(collection),
+      {
+        wire,
+        order,
+        limit,
+      },
+    );
     return c.json(
       {
         data: rows,
@@ -139,51 +145,53 @@ export function createRouter(options: CreateRouterOptions): Hono {
     );
   });
 
-  // Insert — POST /v1/t/:table  Body: { doc }  → 201 { _id }
-  app.post("/v1/t/:table", async (c) => {
-    const { table } = c.req.param();
+  // Insert — POST /v1/c/:collection  Body: { doc }  → 201 { _id }
+  app.post("/v1/c/:collection", async (c) => {
+    const { collection } = c.req.param();
     const body = await readJsonBody(c, MAX_BODY_BYTES);
     const doc = assertJsonBodyField(body, "doc");
-    const { _id } = await db.table(table).insert(doc as Partial<DocumentData> & DocumentData);
+    const { _id } = await db
+      .collection(collection)
+      .insert(doc as Partial<DocumentData> & DocumentData);
     return c.json({ _id }, 201);
   });
 
-  // Patch — PATCH /v1/t/:table/:id  Body: { patch }
-  app.patch("/v1/t/:table/:id", async (c) => {
-    const { table, id } = c.req.param();
+  // Patch — PATCH /v1/c/:collection/:id  Body: { patch }
+  app.patch("/v1/c/:collection/:id", async (c) => {
+    const { collection, id } = c.req.param();
     const body = await readJsonBody(c, MAX_BODY_BYTES);
     const patch = assertJsonBodyField(body, "patch");
-    const { modified } = await db.table(table).update(id, patch as Partial<DocumentData>);
+    const { modified } = await db.collection(collection).update(id, patch as Partial<DocumentData>);
     if (modified === 0) {
       throw new BaerlyError("NotFound", `No such row: ${id}`);
     }
     return c.json({ modified }, 200);
   });
 
-  // Replace — PUT /v1/t/:table/:id  Body: { doc }
+  // Replace — PUT /v1/c/:collection/:id  Body: { doc }
   // Whole-document overwrite (NOT merge-patch). Missing row → 404
   // (kernel throws `NotFound` directly via `runReplaceById`); row
   // matches → emits one `op:"U"` log entry with the post-image,
   // dropping fields absent from `doc`.
-  app.put("/v1/t/:table/:id", async (c) => {
-    const { table, id } = c.req.param();
+  app.put("/v1/c/:collection/:id", async (c) => {
+    const { collection, id } = c.req.param();
     const body = await readJsonBody(c, MAX_BODY_BYTES);
     const doc = assertJsonBodyField(body, "doc");
-    await db.table(table).replace(id, doc as DocumentData);
+    await db.collection(collection).replace(id, doc as DocumentData);
     return c.json({ modified: 1 }, 200);
   });
 
-  // Delete — DELETE /v1/t/:table/:id  → 204
-  app.delete("/v1/t/:table/:id", async (c) => {
-    const { table, id } = c.req.param();
-    const { deleted } = await db.table(table).delete(id);
+  // Delete — DELETE /v1/c/:collection/:id  → 204
+  app.delete("/v1/c/:collection/:id", async (c) => {
+    const { collection, id } = c.req.param();
+    const { deleted } = await db.collection(collection).delete(id);
     if (deleted === 0) {
       throw new BaerlyError("NotFound", `No such row: ${id}`);
     }
     return new Response(null, { status: 204 });
   });
 
-  // Count — GET /v1/count?table=<name>&where=<json>
+  // Count — GET /v1/count?collection=<name>&where=<json>
   //
   // Returns a scalar row count for the matching predicate. Avoids the
   // client downloading every row just to take `.length` (silent egress
@@ -191,16 +199,19 @@ export function createRouter(options: CreateRouterOptions): Hono {
   // win is wire bytes; an O(snapshot+log) count path can land later
   // without touching this route.
   app.get("/v1/count", async (c) => {
-    const table = c.req.query("table");
-    if (table === undefined || table.length === 0) {
-      throw new BaerlyError("SchemaError", "GET /v1/count requires ?table=<name>");
+    const collection = c.req.query("collection");
+    if (collection === undefined || collection.length === 0) {
+      throw new BaerlyError("SchemaError", "GET /v1/count requires ?collection=<name>");
     }
     const wire = parseWhereParam(c);
-    const { rows, manifestPointer, fresh } = await runAllWithMeta(db.tableReadContext(table), {
-      wire,
-      order: undefined,
-      limit: undefined,
-    });
+    const { rows, manifestPointer, fresh } = await runAllWithMeta(
+      db.collectionReadContext(collection),
+      {
+        wire,
+        order: undefined,
+        limit: undefined,
+      },
+    );
     return c.json(
       {
         data: { count: rows.length },
@@ -210,7 +221,7 @@ export function createRouter(options: CreateRouterOptions): Hono {
     );
   });
 
-  // Long-poll — GET /v1/since?table=<name>&cursor=<opaque>
+  // Long-poll — GET /v1/since?collection=<name>&cursor=<opaque>
   //
   // Cache-API note: the Cloudflare adapter's `caches.default` wrapper
   // explicitly EXCLUDES `/v1/since` — long-poll idleness is not a
@@ -221,17 +232,17 @@ export function createRouter(options: CreateRouterOptions): Hono {
     // Verifier BEFORE `createRouter` is called and the resulting `db`
     // is captured in this closure. The handler reads it from the
     // outer scope, not from `c.var`.
-    const table = c.req.query("table");
-    if (typeof table !== "string" || table.length === 0 || table.includes("/")) {
+    const collection = c.req.query("collection");
+    if (typeof collection !== "string" || collection.length === 0 || collection.includes("/")) {
       throw new BaerlyError(
         "SchemaError",
-        "GET /v1/since requires a non-empty `table` query parameter without `/`",
+        "GET /v1/since requires a non-empty `collection` query parameter without `/`",
       );
     }
     const cursor = c.req.query("cursor") ?? "";
     const result = await longPollSince({
       db,
-      table,
+      collection,
       cursor,
       signal: c.req.raw.signal,
       timeoutMs: sinceTimeoutMs,
@@ -273,8 +284,8 @@ export const MAX_BODY_BYTES = 1 << 20; // 1 MiB; matches `S3HttpStorage`'s confo
  * another guard. Throws `BaerlyError{code:"SchemaError"}` with the
  * locked wording `"Request body must be { <field>: object }"`.
  *
- * Used by POST `/v1/t/:table` (`doc`), PATCH `/v1/t/:table/:id`
- * (`patch`), and PUT `/v1/t/:table/:id` (`doc`).
+ * Used by POST `/v1/c/:collection` (`doc`), PATCH `/v1/c/:collection/:id`
+ * (`patch`), and PUT `/v1/c/:collection/:id` (`doc`).
  *
  * @internal
  */
@@ -299,9 +310,9 @@ const assertJsonBodyField = (body: unknown, field: string): Record<string, unkno
  * Wire-only validation: any clause with `field === "_id"` rejects
  * with `BaerlyError{code:"InvalidConfig"}` — agents zero-shot
  * writing `?where={"clauses":[{"op":"eq","field":"_id","value":"x"}]}`
- * against the list route get pointed at `GET /v1/t/:table/:id`
+ * against the list route get pointed at `GET /v1/c/:collection/:id`
  * instead. Kernel-internal `_id` wire construction
- * (`./table.ts:byId`, `runByIdWithMeta`, `runInsert`) bypasses this
+ * (`./collection.ts:byId`, `runByIdWithMeta`, `runInsert`) bypasses this
  * layer by design — those paths never come back through `?where=`
  * parsing.
  *

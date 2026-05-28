@@ -31,7 +31,7 @@ export type UseMutationTuple<TConfig extends BaerlyConfig = UnboundConfig> = rea
  * const [mutate, { isPending, error }] = useMutation();
  * <button
  *   disabled={isPending}
- *   onClick={() => mutate((client) => client.table("notes").insert({ body }))}
+ *   onClick={() => mutate((client) => client.collection("notes").insert({ body }))}
  * >
  *   {isPending ? "Saving…" : "Save"}
  * </button>

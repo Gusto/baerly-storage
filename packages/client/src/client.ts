@@ -1,5 +1,5 @@
 /* eslint-disable no-underscore-dangle -- `_id` and `_meta` are the
-   locked wire-shape field names (see `packages/protocol/src/table-api.ts`
+   locked wire-shape field names (see `packages/protocol/src/collection-api.ts`
    and `packages/server/src/contract.ts`); we mirror them verbatim
    so the typed client stays structurally compatible. */
 
@@ -83,7 +83,7 @@ export interface BaerlyClientOptions<TConfig extends BaerlyConfig = UnboundConfi
   readonly headers?: Headers | Record<string, string>;
   /**
    * Optional. **Type-only** — the runtime client does not read this
-   * field; it exists so `client.table(name)` can narrow `name` to
+   * field; it exists so `client.collection(name)` can narrow `name` to
    * declared collection names and infer the row type from
    * `collections[name].schema`. Bind the type via the generic
    * parameter using `import type` so the server-side storage
@@ -93,11 +93,11 @@ export interface BaerlyClientOptions<TConfig extends BaerlyConfig = UnboundConfi
    * ```ts
    * import type config from "./baerly.config.ts";
    * const client = createBaerlyClient<typeof config>({ baseUrl });
-   * await client.table("tickets").first(); // Promise<Ticket | undefined>
+   * await client.collection("tickets").first(); // Promise<Ticket | undefined>
    * ```
    *
    * Skip the type parameter to fall back to the per-call generic
-   * `client.table<Ticket>("tickets")` form.
+   * `client.collection("tickets")` form.
    */
   readonly config?: TConfig;
 }
@@ -117,7 +117,7 @@ export interface TerminalOptions {
    * ```ts
    * useEffect(() => {
    *   const ac = new AbortController();
-   *   client.table("tickets").where(p).all({ signal: ac.signal }).then(setRows);
+   *   client.collection("tickets").where(p).all({ signal: ac.signal }).then(setRows);
    *   return () => ac.abort();
    * }, [predicateKey]);
    * ```
@@ -126,9 +126,9 @@ export interface TerminalOptions {
 }
 
 /**
- * Client-side mirror of `Table<T>` from `@baerly/protocol`. Cheap
+ * Client-side mirror of `Collection<T>` from `@baerly/protocol`. Cheap
  * handle; constructs no I/O. Same method names as the in-process
- * `Table<T>`, but every terminal also accepts a trailing
+ * `Collection<T>`, but every terminal also accepts a trailing
  * {@link TerminalOptions} bag carrying `{ signal }`.
  *
  * By-id mutation verbs (`update`, `replace`, `delete`) live here;
@@ -138,13 +138,13 @@ export interface TerminalOptions {
  * @template T — document shape. `_id` is always present on rows
  *               returned from the server.
  */
-export interface ClientTable<T extends DocumentData = DocumentData> {
+export interface ClientCollection<T extends DocumentData = DocumentData> {
   readonly name: string;
   /** First document in the whole collection or `undefined`. */
   first(opts?: TerminalOptions): Promise<T | undefined>;
-  /** Every document in the whole collection. Pair with `.where(...).limit(n)` on large tables. */
+  /** Every document in the whole collection. Pair with `.where(...).limit(n)` on large collections. */
   all(opts?: TerminalOptions): Promise<T[]>;
-  /** Count every row in the table (equivalent to `.where({}).count()`). */
+  /** Count every row in the collection (equivalent to `.where({}).count()`). */
   count(opts?: TerminalOptions): Promise<number>;
   /** Fetch one document by primary key. Returns `undefined` when the id is unknown. */
   get(id: string, opts?: TerminalOptions): Promise<T | undefined>;
@@ -178,9 +178,9 @@ export interface ClientTable<T extends DocumentData = DocumentData> {
 
 /**
  * Client-side mirror of `Query<T>` from `@baerly/protocol`. See
- * {@link ClientTable} for the method-shape contract.
+ * {@link ClientCollection} for the method-shape contract.
  *
- * Read-only over HTTP: by-id mutation lives on {@link ClientTable}
+ * Read-only over HTTP: by-id mutation lives on {@link ClientCollection}
  * directly. Predicate-aware bulk mutation is server-only — the HTTP
  * surface has no route for it.
  */
@@ -188,11 +188,11 @@ export interface ClientQuery<T extends DocumentData = DocumentData> {
   where(predicate: PredicateArg<T>): ClientQuery<T>;
   order(spec: OrderSpec<T>): ClientQuery<T>;
   limit(n: number): ClientQuery<T>;
-  /** First match or `undefined`. Issues `GET /v1/t/:table?...&limit=1`. */
+  /** First match or `undefined`. Issues `GET /v1/c/:collection?...&limit=1`. */
   first(opts?: TerminalOptions): Promise<T | undefined>;
-  /** Every matching document. Pair with `.limit(n)` on large tables. */
+  /** Every matching document. Pair with `.limit(n)` on large collections. */
   all(opts?: TerminalOptions): Promise<T[]>;
-  /** Count matching rows. Issues `GET /v1/count?table=&where=`; server returns a scalar. */
+  /** Count matching rows. Issues `GET /v1/count?collection=&where=`; server returns a scalar. */
   count(opts?: TerminalOptions): Promise<number>;
 }
 
@@ -210,34 +210,29 @@ export interface ClientQuery<T extends DocumentData = DocumentData> {
  * @example
  * ```ts
  * const client = createBaerlyClient({ baseUrl: "https://api.example.com" });
- * const { _id } = await client.table("tickets").insert({ title: "hi" });
- * const row = await client.table("tickets").get(_id);
+ * const { _id } = await client.collection("tickets").insert({ title: "hi" });
+ * const row = await client.collection("tickets").get(_id);
  * ```
  */
 export interface BaerlyClient<TConfig extends BaerlyConfig = UnboundConfig> {
   /**
-   * Typed table handle. Cheap; constructs no I/O.
+   * Typed collection handle. Cheap; constructs no I/O.
    *
    * When `TConfig` is bound (via `options.config`) and `name` is one
    * of the declared collection names, the row type is inferred from
-   * `TConfig["collections"][name]["schema"]`. Otherwise the legacy
-   * per-call `<T>` form applies.
-   *
-   * A name that is not declared on `TConfig` — or a declared collection
-   * with no `schema` — falls through to the legacy overload and yields
-   * `ClientTable<DocumentData>` rather than a type error. This
-   * matches the in-process `Db.table` shape and preserves the
-   * untyped-call DX; pair with a per-call `<T>` when you want a
-   * narrower row type.
+   * `TConfig["collections"][name]["schema"]`. Otherwise the row type
+   * defaults to `DocumentData` and the call accepts any string name —
+   * matching the in-process `Db.collection` shape.
    */
-  table<N extends CollectionNames<TConfig>>(name: N): ClientTable<RowOf<TConfig, N> & DocumentData>;
-  table<T extends DocumentData = DocumentData>(name: string): ClientTable<T>;
+  collection<N extends CollectionNames<TConfig>>(
+    name: N,
+  ): ClientCollection<RowOf<TConfig, N> & DocumentData>;
 }
 
 /**
  * Construct a typed HTTP client over the locked `/v1/...` routes.
  * Returns a {@link BaerlyClient} with the same surface as the
- * in-process `Db.table(...)` API.
+ * in-process `Db.collection(...)` API.
  *
  * @example
  * ```ts
@@ -257,8 +252,8 @@ export const createBaerlyClient = <TConfig extends BaerlyConfig = UnboundConfig>
   };
   const client = {
     [CLIENT_CONTEXT]: ctx,
-    table<T extends DocumentData = DocumentData>(name: string): ClientTable<T> {
-      return makeClientTable<T>(ctx, name);
+    collection<T extends DocumentData = DocumentData>(name: string): ClientCollection<T> {
+      return makeClientCollection<T>(ctx, name);
     },
   };
   return client as BaerlyClient<TConfig>;
@@ -277,21 +272,21 @@ const emptyState: QueryState = {
   limit: undefined,
 };
 
-const makeClientTable = <T extends DocumentData>(
+const makeClientCollection = <T extends DocumentData>(
   ctx: RequestContext,
   name: string,
-): ClientTable<T> => {
-  const tableForQuery = makeClientQuery<T>(ctx, name, emptyState);
+): ClientCollection<T> => {
+  const collectionForQuery = makeClientQuery<T>(ctx, name, emptyState);
   const idPath = (id: string): string =>
-    `/v1/t/${encodeURIComponent(name)}/${encodeURIComponent(id)}`;
+    `/v1/c/${encodeURIComponent(name)}/${encodeURIComponent(id)}`;
   return {
     name,
-    where: (predicate) => tableForQuery.where(predicate),
-    order: (spec) => tableForQuery.order(spec),
-    limit: (n) => tableForQuery.limit(n),
-    first: (opts) => tableForQuery.first(opts),
-    all: (opts) => tableForQuery.all(opts),
-    count: (opts) => tableForQuery.count(opts),
+    where: (predicate) => collectionForQuery.where(predicate),
+    order: (spec) => collectionForQuery.order(spec),
+    limit: (n) => collectionForQuery.limit(n),
+    first: (opts) => collectionForQuery.first(opts),
+    all: (opts) => collectionForQuery.all(opts),
+    count: (opts) => collectionForQuery.count(opts),
     async get(id, opts): Promise<T | undefined> {
       try {
         return await request<T>(ctx, {
@@ -300,7 +295,7 @@ const makeClientTable = <T extends DocumentData>(
           signal: opts?.signal,
         });
       } catch (error) {
-        // 404 on GET → unknown id. Mirrors `Db.table().get(id)` which
+        // 404 on GET → unknown id. Mirrors `Db.collection().get(id)` which
         // resolves `undefined` rather than throwing.
         if (error instanceof BaerlyError && error.code === "NotFound") {
           return undefined;
@@ -311,7 +306,7 @@ const makeClientTable = <T extends DocumentData>(
     async insert(doc, opts): Promise<{ readonly _id: string }> {
       return request<{ _id: string }>(ctx, {
         method: "POST",
-        path: `/v1/t/${encodeURIComponent(name)}`,
+        path: `/v1/c/${encodeURIComponent(name)}`,
         body: { doc },
         signal: opts?.signal,
       });
@@ -357,7 +352,7 @@ const makeClientTable = <T extends DocumentData>(
 
 const makeClientQuery = <T extends DocumentData>(
   ctx: RequestContext,
-  tableName: string,
+  collectionName: string,
   state: QueryState,
 ): ClientQuery<T> => {
   const listParams = (): URLSearchParams => {
@@ -380,7 +375,7 @@ const makeClientQuery = <T extends DocumentData>(
       params.set("limit", String(override.limit));
     }
     const qs = params.toString();
-    return `/v1/t/${encodeURIComponent(tableName)}${qs.length > 0 ? `?${qs}` : ""}`;
+    return `/v1/c/${encodeURIComponent(collectionName)}${qs.length > 0 ? `?${qs}` : ""}`;
   };
 
   return {
@@ -398,14 +393,14 @@ const makeClientQuery = <T extends DocumentData>(
         state.wire.clauses.length === 0
           ? incoming
           : { clauses: [...state.wire.clauses, ...incoming.clauses] };
-      return makeClientQuery<T>(ctx, tableName, { ...state, wire: merged });
+      return makeClientQuery<T>(ctx, collectionName, { ...state, wire: merged });
     },
     order: (spec): ClientQuery<T> =>
-      makeClientQuery<T>(ctx, tableName, {
+      makeClientQuery<T>(ctx, collectionName, {
         ...state,
         order: spec as OrderSpec<DocumentData>,
       }),
-    limit: (n): ClientQuery<T> => makeClientQuery<T>(ctx, tableName, { ...state, limit: n }),
+    limit: (n): ClientQuery<T> => makeClientQuery<T>(ctx, collectionName, { ...state, limit: n }),
 
     async first(opts): Promise<T | undefined> {
       // Mirrors `Db.first()` which sets `limit: 1` on its underlying
@@ -428,7 +423,7 @@ const makeClientQuery = <T extends DocumentData>(
     },
     async count(opts): Promise<number> {
       const params = new URLSearchParams();
-      params.set("table", tableName);
+      params.set("collection", collectionName);
       if (state.wire.clauses.length > 0) {
         params.set("where", JSON.stringify(state.wire));
       }

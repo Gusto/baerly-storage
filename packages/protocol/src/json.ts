@@ -1,7 +1,7 @@
 import { FORBIDDEN_MERGE_KEYS } from "./constants.ts";
 
 /**
- * The shape constraint for documents stored in a {@link Table}.
+ * The shape constraint for documents stored in a {@link Collection}.
  *
  * Plain JSON object: string-keyed; values are strings, numbers,
  * booleans, nested {@link DocumentData}, or arrays of
@@ -28,9 +28,7 @@ export type DocumentValue = string | number | boolean | DocumentData | Array<Doc
 export type JSONObject = { [x: string]: JSONValue };
 export type JSONValue = string | number | boolean | null | JSONObject | Array<JSONValue>;
 
-const isPlainObject = (
-  value: DocumentValue | undefined,
-): value is DocumentData =>
+const isPlainObject = (value: DocumentValue | undefined): value is DocumentData =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
 /**

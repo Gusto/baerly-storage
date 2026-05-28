@@ -43,7 +43,7 @@ export const BaerlyProvider = ({ client, children }: BaerlyProviderProps): React
  * ```tsx
  * const client = useBaerlyClient<MyConfig>();
  * const onExport = async () => {
- *   const rows = await client.table("tickets").all();
+ *   const rows = await client.collection("tickets").all();
  *   download(rows);
  * };
  * ```

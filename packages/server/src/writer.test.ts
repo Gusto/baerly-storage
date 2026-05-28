@@ -117,7 +117,7 @@ describe("Writer", () => {
 
   test("fresh storage: first commit auto-provisions current.json zero-shot", async () => {
     // No `createCurrentJson` seed — the writer must handle the empty
-    // bucket itself, otherwise zero-shot `db.table().insert(...)`
+    // bucket itself, otherwise zero-shot `db.collection().insert(...)`
     // from a brand-new R2 bucket / LocalFs root crashes with
     // "current.json missing".
     const storage = new MemoryStorage();

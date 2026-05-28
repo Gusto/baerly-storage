@@ -23,13 +23,13 @@
  * not on the public `RunGcOptions`).
  *
  * Three categories of orphan:
- *   - `stale-log`: `<tablePrefix>/log/<seq>.json` with
+ *   - `stale-log`: `<collectionPrefix>/log/<seq>.json` with
  *     `seq < log_seq_start`. After `compact()` folds these into a
  *     snapshot, they're unreferenced.
- *   - `orphan-snapshot`: a `<tablePrefix>/snapshot/L<n>/...` key not
+ *   - `orphan-snapshot`: a `<collectionPrefix>/snapshot/L<n>/...` key not
  *     equal to `current.snapshot`. Each compactor run replaces the
  *     pointer; the prior file becomes unreferenced.
- *   - `orphan-content`: `<tablePrefix>/content/<sha>.json` whose
+ *   - `orphan-content`: `<collectionPrefix>/content/<sha>.json` whose
  *     32-hex truncated-SHA-256 hash is not in the live content-hash
  *     set (computed by hashing every live `entry.new` post-image —
  *     the same hash the writer's step 4 produces). Surfaces writer
@@ -169,9 +169,9 @@ export const runGc = async (
   const maxMarks = internal.maxMarksPerRun ?? DEFAULT_MAX_MARKS;
   const maxSweeps = internal.maxSweepsPerRun ?? DEFAULT_MAX_SWEEPS;
   const now = internal.now ?? ((): Date => new Date());
-  const tablePrefix = currentJsonKey.slice(0, currentJsonKey.lastIndexOf("/"));
-  const tableName = tablePrefix.slice(tablePrefix.lastIndexOf("/") + 1);
-  const gcPendingKey = `${tablePrefix}/gc/pending.json`;
+  const collectionPrefix = currentJsonKey.slice(0, currentJsonKey.lastIndexOf("/"));
+  const collectionName = collectionPrefix.slice(collectionPrefix.lastIndexOf("/") + 1);
+  const gcPendingKey = `${collectionPrefix}/gc/pending.json`;
   const signal = options.signal;
   const signalOpts = signal !== undefined ? { signal } : undefined;
 
@@ -218,7 +218,7 @@ export const runGc = async (
   const newCandidates: GcCandidate[] = [];
   let markedStaleLog = 0;
   if (logSeqStart > 0) {
-    for await (const entry of listBounded(storage, `${tablePrefix}/log/`, maxMarks, signal)) {
+    for await (const entry of listBounded(storage, `${collectionPrefix}/log/`, maxMarks, signal)) {
       if (markedStaleLog >= maxMarks) {
         break;
       }
@@ -240,7 +240,12 @@ export const runGc = async (
 
   // ── Step 4. Mark orphan snapshots. ──────────────────────────────
   let markedOrphanSnapshot = 0;
-  for await (const entry of listBounded(storage, `${tablePrefix}/snapshot/`, maxMarks, signal)) {
+  for await (const entry of listBounded(
+    storage,
+    `${collectionPrefix}/snapshot/`,
+    maxMarks,
+    signal,
+  )) {
     if (markedOrphanSnapshot >= maxMarks) {
       break;
     }
@@ -267,14 +272,19 @@ export const runGc = async (
   // the writer used to mint the content key.
   const liveHashes = await collectLiveContentHashes(
     storage,
-    tablePrefix,
-    tableName,
+    collectionPrefix,
+    collectionName,
     current,
     logSeqStart,
     signal,
   );
   let markedOrphanContent = 0;
-  for await (const entry of listBounded(storage, `${tablePrefix}/content/`, maxMarks, signal)) {
+  for await (const entry of listBounded(
+    storage,
+    `${collectionPrefix}/content/`,
+    maxMarks,
+    signal,
+  )) {
     if (markedOrphanContent >= maxMarks) {
       break;
     }
@@ -355,7 +365,7 @@ export const runGc = async (
   // ── Step 8. Emit metrics. ───────────────────────────────────────
   // In-memory only — zero storage ops. Emit regardless of CAS-lost
   // (the operator wants visibility into best-effort runs too).
-  const labels = { collection: tableName };
+  const labels = { collection: collectionName };
   const metrics = ctxMetrics();
   metrics.gauge("db.orphan.candidate_count", pendingDepth, labels);
   metrics.gauge("db.gc.entries_swept_per_second", toSweep.length, labels);
@@ -365,7 +375,7 @@ export const runGc = async (
       byReason.set(c.reason, (byReason.get(c.reason) ?? 0) + 1);
     }
     for (const [reason, count] of byReason) {
-      metrics.counter("db.gc.swept_total", count, { collection: tableName, reason });
+      metrics.counter("db.gc.swept_total", count, { collection: collectionName, reason });
     }
   }
 
@@ -449,8 +459,8 @@ const computeDueAt = (entry: StorageListEntry, now: () => Date, graceMs: number)
  */
 const collectLiveContentHashes = async (
   storage: Storage,
-  tablePrefix: string,
-  tableName: string,
+  collectionPrefix: string,
+  collectionName: string,
   current: CurrentJson,
   logSeqStart: number,
   signal: AbortSignal | undefined,
@@ -463,7 +473,7 @@ const collectLiveContentHashes = async (
   for (let s = logSeqStart; s < current.next_seq; s++) {
     logReads.push(
       (async (): Promise<void> => {
-        const got = await storage.get(`${tablePrefix}/log/${s}.json`, getOpts);
+        const got = await storage.get(`${collectionPrefix}/log/${s}.json`, getOpts);
         if (got === null) {
           return;
         }
@@ -488,7 +498,7 @@ const collectLiveContentHashes = async (
   // Snapshot rows.
   if (current.snapshot !== null) {
     try {
-      const map = await loadSnapshotAsMap(storage, current.snapshot, tableName, signal);
+      const map = await loadSnapshotAsMap(storage, current.snapshot, collectionName, signal);
       const rowReads: Array<Promise<void>> = [];
       for (const body of map.values()) {
         rowReads.push(

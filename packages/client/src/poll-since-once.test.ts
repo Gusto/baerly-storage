@@ -19,11 +19,11 @@ const ctxFor = (mock: MockFetch): RequestContext => ({
 });
 
 describe("pollSinceOnce", () => {
-  test("constructs /v1/since URL with table + cursor query params", async () => {
+  test("constructs /v1/since URL with collection + cursor query params", async () => {
     const mock = new MockFetch();
     mock.on("GET", "/v1/since", (req) => {
       const url = new URL(req.url);
-      expect(url.searchParams.get("table")).toBe("tickets");
+      expect(url.searchParams.get("collection")).toBe("tickets");
       expect(url.searchParams.get("cursor")).toBe("c-1");
       return jsonResponse(sinceBody());
     });
@@ -96,11 +96,11 @@ describe("pollSinceOnce", () => {
     });
   });
 
-  test("table names are URL-encoded so '/' and '&' round-trip cleanly", async () => {
+  test("collection names are URL-encoded so '/' and '&' round-trip cleanly", async () => {
     const mock = new MockFetch();
     mock.on("GET", "/v1/since", (req) => {
       const url = new URL(req.url);
-      expect(url.searchParams.get("table")).toBe("a/b&c");
+      expect(url.searchParams.get("collection")).toBe("a/b&c");
       return jsonResponse(sinceBody());
     });
     await pollSinceOnce(ctxFor(mock), "a/b&c", "", undefined);

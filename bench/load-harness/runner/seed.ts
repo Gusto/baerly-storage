@@ -1,6 +1,6 @@
 /**
  * Seed phase. Consumes a `Dataset` (ticket 51) and issues one
- * `db.table(collection).insert(...)` per record. No batching at MVP
+ * `db.collection(collection).insert(...)` per record. No batching at MVP
  * — `Db.transaction` per row would be a different workload shape than
  * "user pastes a CSV"; revisit if a future preset wants bulk-load
  * semantics explicitly.
@@ -68,7 +68,7 @@ export async function runSeed(opts: SeedOpts): Promise<SeedResult> {
   for (const tenant of opts.dataset.tenants) {
     const db = dbFor(tenant.tenantId);
     for (const record of tenant.records) {
-      await db.table(opts.collection).insert({
+      await db.collection(opts.collection).insert({
         _id: record.recordId,
         bytes: record.bytes,
         createdAtMs: record.createdAtMs,

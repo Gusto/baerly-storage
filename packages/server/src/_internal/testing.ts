@@ -3,7 +3,7 @@
  * types plus internal commit-path primitives exposed to test
  * fixtures and the CLI's admin restore tool. Production callers see
  * the narrow `CompactOptions` / `RunGcOptions` / `MaintenanceOptions`
- * from `@baerly/server` and `Db.table(...)` for writes; everything
+ * from `@baerly/server` and `Db.collection(...)` for writes; everything
  * here is for test fixtures and the operator restore path.
  *
  * This subpath is intentionally NOT in `publishConfig.exports`, so the

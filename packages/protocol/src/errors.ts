@@ -16,7 +16,7 @@ export type BaerlyErrorCode =
   | "Internal"
   /**
    * Document body failed schema validation. Emitted by the table-API
-   * write verbs (`Table.insert`, `Query.update`, `Table.replace`) when
+   * write verbs (`Collection.insert`, `Query.update`, `Collection.replace`) when
    * the body is not valid JSON or contains an array where
    * `DocumentValue` is required; also emitted when a collection has a
    * declared `SchemaValidator` (via `Db.create({ collections })`) and
@@ -27,7 +27,7 @@ export type BaerlyErrorCode =
   | "SchemaError"
   /**
    * CAS lost on `current.json`. Caller decides whether to retry.
-   * Surfaces in the table API and HTTP layer.
+   * Surfaces in the collection API and HTTP layer.
    */
   | "Conflict"
   /**
@@ -117,7 +117,7 @@ export type BaerlyErrorCode =
  * @example
  * ```ts
  * try {
- *   await db.table("tickets").insert({ title: "hi" });
+ *   await db.collection("tickets").insert({ title: "hi" });
  * } catch (err) {
  *   if (err instanceof BaerlyError && err.code === "Conflict") {
  *     // ... CAS lost; retry

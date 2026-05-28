@@ -1,6 +1,6 @@
 /* eslint-disable no-underscore-dangle -- `_id` is the locked
    primary-key field on document shapes (see `@baerly/protocol`'s
-   `Table<T>`); this fuzz test threads it through the writer. */
+   `Collection<T>`); this fuzz test threads it through the writer. */
 
 /**
  * Crash-injection property test for the secondary-index emission

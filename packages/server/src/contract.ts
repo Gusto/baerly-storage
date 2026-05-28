@@ -85,15 +85,15 @@ export interface SinceResponse {
  */
 export type Routes =
   /** Read one document. → `HttpOkEnvelope<DocumentData>` | 404. */
-  | { method: "GET"; path: `/v1/t/${string}/${string}` }
+  | { method: "GET"; path: `/v1/c/${string}/${string}` }
   /** List rows matching a predicate (in query string). */
-  | { method: "GET"; path: `/v1/t/${string}` }
+  | { method: "GET"; path: `/v1/c/${string}` }
   /** Insert. Body: `{ doc: DocumentData }`. */
-  | { method: "POST"; path: `/v1/t/${string}` }
+  | { method: "POST"; path: `/v1/c/${string}` }
   /** JSON-merge-patch. Body: `{ patch: DocumentData }`. Response: `{ modified: number }`. */
-  | { method: "PATCH"; path: `/v1/t/${string}/${string}` }
+  | { method: "PATCH"; path: `/v1/c/${string}/${string}` }
   /** Delete row by id. */
-  | { method: "DELETE"; path: `/v1/t/${string}/${string}` }
+  | { method: "DELETE"; path: `/v1/c/${string}/${string}` }
   /** Long-poll log. Query: `?cursor=<opaque>`. Response: `SinceResponse`. */
   | { method: "GET"; path: `/v1/since` };
 

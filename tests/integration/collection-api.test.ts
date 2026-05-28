@@ -1,7 +1,7 @@
 /**
- * Table-API integration cascade — Node-side variant runner.
+ * Collection-API integration cascade — Node-side variant runner.
  *
- * Drives the locked `db.table(...).{first,all,count,insert,update,
+ * Drives the locked `db.collection(...).{first,all,count,insert,update,
  * replace,delete}` + `db.transaction(...)` surface plus a frozen
  * `LogEntry` round-trip across three Node-runnable backends:
  *   - `memory`    — `MemoryStorage` shared per bucket; zero infra.
@@ -12,11 +12,11 @@
  *
  * The fourth adapter (`cloudflare-r2`) runs under the
  * `cloudflare-pool` vitest project — see
- * `packages/adapter-cloudflare/src/table-api.test.ts`. Splitting
+ * `packages/adapter-cloudflare/src/collection-api.test.ts`. Splitting
  * by project keeps `node:fs/promises` + `aws4fetch` out of Workerd.
  *
  * The cascade body itself is backend-agnostic and lives in
- * `tests/fixtures/table-api-cascade.ts`; only the variant setup
+ * `tests/fixtures/collection-api-cascade.ts`; only the variant setup
  * (temp dirs, Minio bucket bootstrap) lives here.
  */
 
@@ -29,7 +29,7 @@ import { getOrCreateMemoryStorageForBucket, type Storage, uuid } from "@baerly/p
 import { S3HttpStorage } from "@baerly/adapter-node";
 import { LocalFsStorage } from "@baerly/dev";
 import { createBucket } from "../fixtures/s3-fixtures.ts";
-import { runTableApiCascade } from "../fixtures/table-api-cascade.ts";
+import { runCollectionApiCascade } from "../fixtures/collection-api-cascade.ts";
 
 const stableConfig = {
   endpoint: "http://127.0.0.1:9102",
@@ -104,7 +104,7 @@ const allVariants: Variant[] = [
 
 const variants = allVariants.filter((v) => !v.requiresMinio || minioEnabled);
 
-describe("table API", () => {
+describe("collection API", () => {
   for (const variant of variants) {
     describe(variant.label, () => {
       let cleanup: (() => Promise<void>) | undefined;
@@ -123,7 +123,7 @@ describe("table API", () => {
           const bucket = `tbl-${variant.label}-${uuid().slice(0, 8)}`;
           const made = await variant.makeStorages(bucket);
           cleanup = made.cleanup;
-          await runTableApiCascade({
+          await runCollectionApiCascade({
             storage: made.storage,
             ...(made.rivalStorage !== undefined ? { rivalStorage: made.rivalStorage } : {}),
           });

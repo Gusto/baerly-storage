@@ -11,7 +11,7 @@ describe("createRouter sinceTimeoutMs override", () => {
     const app = createRouter({ db, sinceTimeoutMs: 100, sincePollIntervalMs: 25 });
 
     const t0 = performance.now();
-    const req = new Request("http://x/v1/since?table=t&cursor=");
+    const req = new Request("http://x/v1/since?collection=t&cursor=");
     const res = await withHttpObservability(req, (r) => app.fetch(r));
     const elapsedMs = performance.now() - t0;
 

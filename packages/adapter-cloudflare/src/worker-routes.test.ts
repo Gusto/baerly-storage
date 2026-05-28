@@ -86,7 +86,7 @@ interface BaseEnvelope {
  * `Writer.commit()` throws `InvalidResponse` when the file is
  * missing — production code provisions it via `claimWriter` /
  * `createCurrentJson` at deploy time. Same shape as the cascade
- * fixtures in `tests/fixtures/table-api-cascade.ts`. The miniflare
+ * fixtures in `tests/fixtures/collection-api-cascade.ts`. The miniflare
  * R2 binding is shared across tests in this suite, so an already-
  * provisioned key surfaces as `Conflict` — adopt it.
  */
@@ -143,7 +143,7 @@ describe("baerlyWorker routes", () => {
   test("returns 401 with Unauthorized envelope when the verifier returns null", async () => {
     const worker = baerlyWorker(() => ({ verifier: denyVerifier, config: baseConfig }));
     const res = await worker.fetch!(
-      asWorkersRequest(new Request("https://x/v1/t/tickets")),
+      asWorkersRequest(new Request("https://x/v1/c/tickets")),
       makeEnv(getBinding()),
       makeCtx(),
     );
@@ -162,7 +162,7 @@ describe("baerlyWorker routes", () => {
 
     const insertRes = await worker.fetch!(
       asWorkersRequest(
-        new Request(`https://x/v1/t/${table}`, {
+        new Request(`https://x/v1/c/${table}`, {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ doc: { title: "first", status: "open" } }),
@@ -177,7 +177,7 @@ describe("baerlyWorker routes", () => {
     expect(typeof id).toBe("string");
 
     const readRes = await worker.fetch!(
-      asWorkersRequest(new Request(`https://x/v1/t/${table}/${id!}`)),
+      asWorkersRequest(new Request(`https://x/v1/c/${table}/${id!}`)),
       env,
       makeCtx(),
     );
@@ -195,7 +195,7 @@ describe("baerlyWorker routes", () => {
     const env = makeEnv(bucket);
     const res = await worker.fetch!(
       asWorkersRequest(
-        new Request(`https://x/v1/t/${table}/does-not-exist`, {
+        new Request(`https://x/v1/c/${table}/does-not-exist`, {
           method: "PATCH",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ patch: { status: "closed" } }),
@@ -218,7 +218,7 @@ describe("baerlyWorker routes", () => {
 
     const insertRes = await worker.fetch!(
       asWorkersRequest(
-        new Request(`https://x/v1/t/${table}`, {
+        new Request(`https://x/v1/c/${table}`, {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ doc: { title: "deleteme" } }),
@@ -230,21 +230,21 @@ describe("baerlyWorker routes", () => {
     const { _id: id } = (await insertRes.json()) as BaseEnvelope;
 
     const firstRes = await worker.fetch!(
-      asWorkersRequest(new Request(`https://x/v1/t/${table}/${id!}`, { method: "DELETE" })),
+      asWorkersRequest(new Request(`https://x/v1/c/${table}/${id!}`, { method: "DELETE" })),
       env,
       makeCtx(),
     );
     expect(firstRes.status).toBe(204);
 
     const secondRes = await worker.fetch!(
-      asWorkersRequest(new Request(`https://x/v1/t/${table}/${id!}`, { method: "DELETE" })),
+      asWorkersRequest(new Request(`https://x/v1/c/${table}/${id!}`, { method: "DELETE" })),
       env,
       makeCtx(),
     );
     expect(secondRes.status).toBe(404);
   });
 
-  test("GET /v1/t/:table?where=<json> returns the predicate-matched subset", async () => {
+  test("GET /v1/c/:collection?where=<json> returns the predicate-matched subset", async () => {
     const bucket = getBinding();
     const table = freshTable("tickets");
     await provisionTable(bucket, table);
@@ -258,7 +258,7 @@ describe("baerlyWorker routes", () => {
     ]) {
       const res = await worker.fetch!(
         asWorkersRequest(
-          new Request(`https://x/v1/t/${table}`, {
+          new Request(`https://x/v1/c/${table}`, {
             method: "POST",
             headers: { "content-type": "application/json" },
             body: JSON.stringify({ doc: ticket }),
@@ -274,7 +274,7 @@ describe("baerlyWorker routes", () => {
       JSON.stringify({ clauses: [{ op: "eq", field: "status", value: "open" }] }),
     );
     const listRes = await worker.fetch!(
-      asWorkersRequest(new Request(`https://x/v1/t/${table}?where=${where}`)),
+      asWorkersRequest(new Request(`https://x/v1/c/${table}?where=${where}`)),
       env,
       makeCtx(),
     );
@@ -286,10 +286,10 @@ describe("baerlyWorker routes", () => {
     }
   });
 
-  test("GET /v1/t/:table?where=notjson returns 400 SchemaError", async () => {
+  test("GET /v1/c/:collection?where=notjson returns 400 SchemaError", async () => {
     const worker = baerlyWorker(() => ({ verifier: trivialVerifier, config: baseConfig }));
     const res = await worker.fetch!(
-      asWorkersRequest(new Request("https://x/v1/t/tickets?where=notjson")),
+      asWorkersRequest(new Request("https://x/v1/c/tickets?where=notjson")),
       makeEnv(getBinding()),
       makeCtx(),
     );
@@ -330,7 +330,7 @@ describe("baerlyWorker config wiring", () => {
 
     const goodRes = await worker.fetch!(
       asWorkersRequest(
-        new Request(`https://x/v1/t/${table}`, {
+        new Request(`https://x/v1/c/${table}`, {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ doc: { title: "ok", status: "open" } }),
@@ -343,7 +343,7 @@ describe("baerlyWorker config wiring", () => {
 
     const badRes = await worker.fetch!(
       asWorkersRequest(
-        new Request(`https://x/v1/t/${table}`, {
+        new Request(`https://x/v1/c/${table}`, {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ doc: { title: "bad", status: "invalid" } }),
@@ -369,7 +369,7 @@ describe("baerlyWorker config wiring", () => {
 
     const res = await worker.fetch!(
       asWorkersRequest(
-        new Request(`https://x/v1/t/${table}`, {
+        new Request(`https://x/v1/c/${table}`, {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ doc: { title: "bad", status: "invalid" } }),

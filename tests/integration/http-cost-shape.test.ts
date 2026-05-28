@@ -103,7 +103,7 @@ for (const variant of VARIANTS) {
       // cost only — the first write into a fresh prefix may include
       // one-time bootstrap ops (e.g. creating directory entries on
       // local-fs). Counters are reset after the warmup succeeds.
-      const provision = await fetch(`${baseUrl}/v1/t/${TABLE}`, {
+      const provision = await fetch(`${baseUrl}/v1/c/${TABLE}`, {
         method: "POST",
         headers: { "content-type": "application/json", authorization: `Bearer ${SECRET}` },
         body: JSON.stringify({ doc: { _id: "__provision_warmup__", title: "warmup" } }),
@@ -119,7 +119,7 @@ for (const variant of VARIANTS) {
 
     test("POST insert costs exactly 3 PUTs (content + log + CAS), 0 deletes, 0 lists", async () => {
       counting.reset();
-      const res = await fetch(`${baseUrl}/v1/t/${TABLE}`, {
+      const res = await fetch(`${baseUrl}/v1/c/${TABLE}`, {
         method: "POST",
         headers: { "content-type": "application/json", authorization: `Bearer ${SECRET}` },
         body: JSON.stringify({ doc: { title: "Login broken", status: "open" } }),
@@ -131,7 +131,7 @@ for (const variant of VARIANTS) {
     });
 
     test("GET by id costs 0 Class A ops", async () => {
-      const insert = await fetch(`${baseUrl}/v1/t/${TABLE}`, {
+      const insert = await fetch(`${baseUrl}/v1/c/${TABLE}`, {
         method: "POST",
         headers: { "content-type": "application/json", authorization: `Bearer ${SECRET}` },
         body: JSON.stringify({ doc: { title: "read-cost", status: "open" } }),
@@ -140,7 +140,7 @@ for (const variant of VARIANTS) {
       const { _id } = (await insert.json()) as { _id: string };
       counting.reset();
       for (let i = 0; i < 11; i++) {
-        const r = await fetch(`${baseUrl}/v1/t/${TABLE}/${_id}`, {
+        const r = await fetch(`${baseUrl}/v1/c/${TABLE}/${_id}`, {
           headers: { authorization: `Bearer ${SECRET}` },
         });
         expect(r.status).toBe(200);
@@ -149,14 +149,14 @@ for (const variant of VARIANTS) {
     });
 
     test("PATCH update costs exactly 3 PUTs, 0 deletes, 0 lists", async () => {
-      const insert = await fetch(`${baseUrl}/v1/t/${TABLE}`, {
+      const insert = await fetch(`${baseUrl}/v1/c/${TABLE}`, {
         method: "POST",
         headers: { "content-type": "application/json", authorization: `Bearer ${SECRET}` },
         body: JSON.stringify({ doc: { title: "patch-cost", status: "open" } }),
       });
       const { _id } = (await insert.json()) as { _id: string };
       counting.reset();
-      const res = await fetch(`${baseUrl}/v1/t/${TABLE}/${_id}`, {
+      const res = await fetch(`${baseUrl}/v1/c/${TABLE}/${_id}`, {
         method: "PATCH",
         headers: { "content-type": "application/json", authorization: `Bearer ${SECRET}` },
         body: JSON.stringify({ patch: { status: "in-progress" } }),
@@ -168,14 +168,14 @@ for (const variant of VARIANTS) {
     });
 
     test("DELETE costs exactly 2 PUTs (tombstone + CAS), 0 deletes, 0 lists", async () => {
-      const insert = await fetch(`${baseUrl}/v1/t/${TABLE}`, {
+      const insert = await fetch(`${baseUrl}/v1/c/${TABLE}`, {
         method: "POST",
         headers: { "content-type": "application/json", authorization: `Bearer ${SECRET}` },
         body: JSON.stringify({ doc: { title: "delete-cost", status: "open" } }),
       });
       const { _id } = (await insert.json()) as { _id: string };
       counting.reset();
-      const res = await fetch(`${baseUrl}/v1/t/${TABLE}/${_id}`, {
+      const res = await fetch(`${baseUrl}/v1/c/${TABLE}/${_id}`, {
         method: "DELETE",
         headers: { authorization: `Bearer ${SECRET}` },
       });
@@ -187,7 +187,7 @@ for (const variant of VARIANTS) {
 
     test("401 with no Authorization header writes 0 storage ops", async () => {
       counting.reset();
-      const res = await fetch(`${baseUrl}/v1/t/${TABLE}`, {
+      const res = await fetch(`${baseUrl}/v1/c/${TABLE}`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ doc: { title: "no-auth" } }),
@@ -198,7 +198,7 @@ for (const variant of VARIANTS) {
 
     test("401 with bad bearer writes 0 storage ops", async () => {
       counting.reset();
-      const res = await fetch(`${baseUrl}/v1/t/${TABLE}`, {
+      const res = await fetch(`${baseUrl}/v1/c/${TABLE}`, {
         method: "POST",
         headers: {
           "content-type": "application/json",

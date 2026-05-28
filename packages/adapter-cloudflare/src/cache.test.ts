@@ -8,7 +8,7 @@
  *   2. cache hit + matching `If-None-Match` → 304
  *   3. cache hit + mismatched `If-None-Match` → 200 cached body
  *   4. `invalidateOnWrite` busts the per-doc URL on PATCH
- *   5. LIST URLs (`/v1/t/<table>`, with or without filters) bypass
+ *   5. LIST URLs (`/v1/c/<table>`, with or without filters) bypass
  *   6. `/v1/since` and `/v1/healthz` bypass the cache
  *   7. cross-tenant cache isolation (load-bearing security test)
  *   8. `cacheKeyFor` appends `__t`, preserves other params, method=GET
@@ -30,7 +30,7 @@ const json200 = (body: unknown, etag: string): Response =>
  */
 let n = 0;
 const freshUrl = (path: string): string =>
-  `https://baerly-cache.test/v1/t/${path}-${++n}-${Date.now().toString(36)}`;
+  `https://baerly-cache.test/v1/c/${path}-${++n}-${Date.now().toString(36)}`;
 
 describe("withReadCache", () => {
   test("cache miss → invokes handler and populates cache", async () => {
@@ -133,7 +133,7 @@ describe("withReadCache", () => {
   });
 
   test("LIST URLs bypass — bare and filtered both uncached", async () => {
-    const bare = `https://baerly-cache.test/v1/t/lists-${++n}-${Date.now().toString(36)}`;
+    const bare = `https://baerly-cache.test/v1/c/lists-${++n}-${Date.now().toString(36)}`;
     const filtered = `${bare}?where=%7B%22status%22:%22open%22%7D`;
 
     let bareCalls = 0;
@@ -249,7 +249,7 @@ describe("withReadCache", () => {
 
 describe("cacheKeyFor", () => {
   test("appends __t scoping param, preserves other params, method is GET", () => {
-    const req = new Request("https://baerly-cache.test/v1/t/tickets?limit=10&cursor=abc", {
+    const req = new Request("https://baerly-cache.test/v1/c/tickets?limit=10&cursor=abc", {
       method: "POST",
     });
     const key = cacheKeyFor(req, "acme");
@@ -261,7 +261,7 @@ describe("cacheKeyFor", () => {
   });
 
   test("server-controlled __t wins over caller-supplied ?__t=spoof", () => {
-    const req = new Request("https://baerly-cache.test/v1/t/tickets/abc?__t=spoof", {
+    const req = new Request("https://baerly-cache.test/v1/c/tickets/abc?__t=spoof", {
       method: "GET",
     });
     const key = cacheKeyFor(req, "real-tenant");

@@ -19,7 +19,7 @@
  * from any barrel — exporting the assertion handles is harmless.
  */
 
-import { type Predicate } from "./table-api.ts";
+import { type Predicate } from "./collection-api.ts";
 import type { PredicateArg, PredicateBuilder } from "./query/builder.ts";
 import type { DocumentData } from "./json.ts";
 
@@ -89,12 +89,10 @@ export const _builderGt: PredicateArg<Ticket> = (q) => q.gt("count", 5);
 export const _builderGte: PredicateArg<Ticket> = (q) => q.gte("count", 1);
 export const _builderLt: PredicateArg<Ticket> = (q) => q.lt("count", 10);
 export const _builderLte: PredicateArg<Ticket> = (q) => q.lte("count", 10);
-export const _builderIn: PredicateArg<Ticket> = (q) =>
-  q.in("status", ["open", "closed"]);
+export const _builderIn: PredicateArg<Ticket> = (q) => q.in("status", ["open", "closed"]);
 export const _builderChain: PredicateArg<Ticket> = (q) =>
   q.eq("status", "open").gte("count", 1).lt("count", 10);
-export const _builderDottedPath: PredicateArg<Ticket> = (q) =>
-  q.eq("assignee.team", "platform");
+export const _builderDottedPath: PredicateArg<Ticket> = (q) => q.eq("assignee.team", "platform");
 
 // --- Negative cases (callback form) — vocabulary lock --------------
 

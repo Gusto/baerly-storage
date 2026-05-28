@@ -180,7 +180,7 @@ describe("createApp webRoot static-asset handling", () => {
 
   test("does not shadow `/v1/*` API routes (verifier still gates them)", async () => {
     await withServer({ verifier: denyVerifier, webRoot }, async (baseUrl) => {
-      const res = await fetch(`${baseUrl}/v1/t/tickets`);
+      const res = await fetch(`${baseUrl}/v1/c/tickets`);
       expect(res.status).toBe(401);
       const body = (await res.json()) as ErrEnvelope;
       expect(body.error?.code).toBe("Unauthorized");

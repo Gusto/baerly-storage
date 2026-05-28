@@ -3,7 +3,7 @@ import { describe, expect, test } from "vitest";
 import { sharedSecret } from "./shared-secret.ts";
 
 const mkReq = (headers: Record<string, string> = {}): Request =>
-  new Request("https://example.com/v1/t/items", { headers });
+  new Request("https://example.com/v1/c/items", { headers });
 
 describe("sharedSecret", () => {
   test("accepts a request with Authorization: Bearer <secret>", async () => {

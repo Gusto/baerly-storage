@@ -44,7 +44,7 @@ const base64UrlEncode = (bytes: Uint8Array): string => {
   return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 };
 
-const mkReq = (token: string | undefined, url = "https://api.example.com/v1/t/items"): Request =>
+const mkReq = (token: string | undefined, url = "https://api.example.com/v1/c/items"): Request =>
   new Request(url, {
     headers: token === undefined ? {} : { Authorization: `Bearer ${token}` },
   });

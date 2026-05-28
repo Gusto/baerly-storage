@@ -202,7 +202,7 @@ describe("baerlyDev() plugin", () => {
 
   test("routes /v1, /v1/..., /v1?... to the listener (no next())", async () => {
     const mw = middlewares[0]!;
-    const cases = ["/v1", "/v1/", "/v1/healthz", "/v1?foo=bar", "/v1/t/t"];
+    const cases = ["/v1", "/v1/", "/v1/healthz", "/v1?foo=bar", "/v1/c/t"];
     for (const url of cases) {
       const req = makeReq(url);
       const res = makeRes();
@@ -248,9 +248,7 @@ describe("baerlyDev() plugin", () => {
 });
 
 describe("baerlyDev — auth resolution", () => {
-  const withDataDir = async (
-    fn: (dataDir: string) => void | Promise<void>,
-  ): Promise<void> => {
+  const withDataDir = async (fn: (dataDir: string) => void | Promise<void>): Promise<void> => {
     const dir = await mkdtemp(join(tmpdir(), "baerly-dev-auth-"));
     try {
       await fn(dir);
@@ -417,7 +415,7 @@ describe("baerlyDevAuth", () => {
   test("default prefix covers /v1 AND /api so custom routes work out-of-box", () => {
     const mw = captureMw(baerlyDevAuth({ secret: "x" }));
 
-    const v1Req = makeReq("/v1/t/notes");
+    const v1Req = makeReq("/v1/c/notes");
     mw(v1Req, makeRes(), () => {});
     expect(v1Req.headers["authorization"]).toBe("Bearer x");
 
@@ -434,7 +432,7 @@ describe("baerlyDevAuth", () => {
   test("array prefix covers multiple roots (default /v1 + custom /api)", () => {
     const mw = captureMw(baerlyDevAuth({ secret: "x", prefix: ["/v1", "/api"] }));
 
-    const v1Req = makeReq("/v1/t/notes");
+    const v1Req = makeReq("/v1/c/notes");
     mw(v1Req, makeRes(), () => {});
     expect(v1Req.headers["authorization"]).toBe("Bearer x");
 

@@ -4,7 +4,7 @@ import type { PredicateArg, PredicateBuilder } from "./query/builder.ts";
 export type { PredicateArg, PredicateBuilder };
 
 /**
- * Handle on one table (collection). The common single-row case lives
+ * Handle on one collection. The common single-row case lives
  * here as direct verbs (`get(id)`, `update(id, patch)`,
  * `replace(id, doc)`, `delete(id)`) plus whole-collection reads
  * (`first()`, `all()`, `count()`). For bulk-by-predicate mutation —
@@ -16,7 +16,7 @@ export type { PredicateArg, PredicateBuilder };
  *              treats `_id` as optional on `insert` (server fills
  *              it in) and required on read.
  */
-export interface Table<T extends DocumentData = DocumentData> {
+export interface Collection<T extends DocumentData = DocumentData> {
   readonly name: string;
 
   /**
@@ -25,7 +25,7 @@ export interface Table<T extends DocumentData = DocumentData> {
    *
    * @example
    * ```ts
-   * const any = await db.table("tickets").first();
+   * const any = await db.collection("tickets").first();
    * ```
    */
   first(): Promise<T | undefined>;
@@ -33,21 +33,21 @@ export interface Table<T extends DocumentData = DocumentData> {
   /**
    * Every document in the whole collection. Equivalent to
    * `.where({}).all()`. No implicit cap — prefer
-   * `.where(p).limit(n).all()` on large tables.
+   * `.where(p).limit(n).all()` on large collections.
    *
    * @example
    * ```ts
-   * const all = await db.table("tickets").all();
+   * const all = await db.collection("tickets").all();
    * ```
    */
   all(): Promise<T[]>;
 
   /**
-   * Count every row in the table (equivalent to `.where({}).count()`).
+   * Count every row in the collection (equivalent to `.where({}).count()`).
    *
    * @example
    * ```ts
-   * const total = await db.table("tickets").count();
+   * const total = await db.collection("tickets").count();
    * ```
    */
   count(): Promise<number>;
@@ -58,9 +58,9 @@ export interface Table<T extends DocumentData = DocumentData> {
    *
    * @example
    * ```ts
-   * const ticket = await db.table("tickets").get(id);
+   * const ticket = await db.collection("tickets").get(id);
    * if (ticket === undefined) {
-   *   // row not in this table
+   *   // row not in this collection
    * }
    * ```
    */
@@ -83,11 +83,11 @@ export interface Table<T extends DocumentData = DocumentData> {
    *
    * @example
    * ```ts
-   * db.table("tickets").where({ status: "open" }).all();
-   * db.table("tickets").where({ "assignee.team": "platform" }).all();
-   * db.table("tickets").where(q => q.gte("count", 1).lt("count", 10)).all();
-   * db.table("tickets").where(q => q.in("status", ["open", "pending"])).all();
-   * db.table("tickets")
+   * db.collection("tickets").where({ status: "open" }).all();
+   * db.collection("tickets").where({ "assignee.team": "platform" }).all();
+   * db.collection("tickets").where(q => q.gte("count", 1).lt("count", 10)).all();
+   * db.collection("tickets").where(q => q.in("status", ["open", "pending"])).all();
+   * db.collection("tickets")
    *   .where({ status: "open" })
    *   .where(q => q.gte("priority", 5))
    *   .all();
@@ -113,7 +113,7 @@ export interface Table<T extends DocumentData = DocumentData> {
    *
    * @example
    * ```ts
-   * const { _id } = await db.table("tickets").insert({
+   * const { _id } = await db.collection("tickets").insert({
    *   status: "open",
    *   title: "Ship the docs",
    * });
@@ -133,7 +133,7 @@ export interface Table<T extends DocumentData = DocumentData> {
    *
    * @example
    * ```ts
-   * const { modified } = await db.table("tickets")
+   * const { modified } = await db.collection("tickets")
    *   .update(id, { status: "closed" });
    * ```
    */
@@ -145,7 +145,7 @@ export interface Table<T extends DocumentData = DocumentData> {
    *
    * @example
    * ```ts
-   * await db.table("tickets")
+   * await db.collection("tickets")
    *   .replace(id, { _id: id, status: "open", title: "Rewrite" });
    * ```
    */
@@ -158,7 +158,7 @@ export interface Table<T extends DocumentData = DocumentData> {
    *
    * @example
    * ```ts
-   * const { deleted } = await db.table("tickets").delete(id);
+   * const { deleted } = await db.collection("tickets").delete(id);
    * ```
    */
   delete(id: string): Promise<{ deleted: number }>;
@@ -328,12 +328,12 @@ export type OrderSpec<T extends DocumentData = DocumentData> = {
 };
 
 /**
- * `Table<T>` after at least one modifier. Carries predicate /
+ * `Collection<T>` after at least one modifier. Carries predicate /
  * order / limit state forward. Modifiers compose; verbs are
  * terminal. Mutation verbs here are **predicate-aware bulk** — they
  * apply to every matching row. For the common single-row case
- * (`{ _id }`), prefer {@link Table.update} / {@link Table.replace} /
- * {@link Table.delete}.
+ * (`{ _id }`), prefer {@link Collection.update} / {@link Collection.replace} /
+ * {@link Collection.delete}.
  */
 export interface Query<T extends DocumentData = DocumentData> {
   where(predicate: PredicateArg<T>): Query<T>;
@@ -345,7 +345,7 @@ export interface Query<T extends DocumentData = DocumentData> {
    *
    * @example
    * ```ts
-   * const oldest = await db.table("tickets")
+   * const oldest = await db.collection("tickets")
    *   .where({ status: "open" })
    *   .order({ commit_ts: "asc" })
    *   .first();
@@ -356,11 +356,11 @@ export interface Query<T extends DocumentData = DocumentData> {
   /**
    * Every matching document, respecting `order` and `limit`. No
    * implicit cap — callers should always pair `.all()` with
-   * `.limit(n)` on large tables.
+   * `.limit(n)` on large collections.
    *
    * @example
    * ```ts
-   * const open = await db.table("tickets")
+   * const open = await db.collection("tickets")
    *   .where({ status: "open" })
    *   .order({ commit_ts: "desc" })
    *   .limit(50)
@@ -374,7 +374,7 @@ export interface Query<T extends DocumentData = DocumentData> {
    *
    * @example
    * ```ts
-   * const open = await db.table("tickets")
+   * const open = await db.collection("tickets")
    *   .where({ status: "open" })
    *   .count();
    * ```
@@ -385,7 +385,7 @@ export interface Query<T extends DocumentData = DocumentData> {
    * Predicate-aware bulk mutation: JSON-merge-patch (RFC 7386)
    * applied to every matching doc. Atomic per row. `null` at any
    * field deletes it. For the single-row case prefer
-   * {@link Table.update}(id, patch).
+   * {@link Collection.update}(id, patch).
    *
    * @throws BaerlyError{code: "Conflict"} — concurrent write lost
    *         the CAS race. Caller's choice whether to retry.
@@ -394,7 +394,7 @@ export interface Query<T extends DocumentData = DocumentData> {
    *
    * @example
    * ```ts
-   * const { modified } = await db.table("tickets")
+   * const { modified } = await db.collection("tickets")
    *   .where({ status: "open" })
    *   .update({ status: "closed", closed_at: new Date().toISOString() });
    * ```
@@ -403,11 +403,11 @@ export interface Query<T extends DocumentData = DocumentData> {
 
   /**
    * Predicate-aware bulk delete: every matching document. For the
-   * single-row case prefer {@link Table.delete}(id).
+   * single-row case prefer {@link Collection.delete}(id).
    *
    * @example
    * ```ts
-   * const { deleted } = await db.table("tickets")
+   * const { deleted } = await db.collection("tickets")
    *   .where({ status: "closed" })
    *   .delete();
    * ```

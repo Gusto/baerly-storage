@@ -1,6 +1,6 @@
 /* eslint-disable no-underscore-dangle -- `_id` is the locked
    primary-key field on document shapes (see `@baerly/protocol`'s
-   `Table<T>`); this test threads it through projection helpers. */
+   `Collection<T>`); this test threads it through projection helpers. */
 
 import { describe, expect, test } from "vitest";
 import {

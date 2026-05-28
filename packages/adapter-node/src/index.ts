@@ -6,7 +6,7 @@
  * provides the same surface for Workers + R2 bindings.
  *
  * `createApp` builds a Hono app that serves the full CRUD surface
- * (`/v1/t/:table[/:id]`) plus an anonymous `/v1/healthz` probe via
+ * (`/v1/c/:collection[/:id]`) plus an anonymous `/v1/healthz` probe via
  * the shared `createRouter` factory from `@baerly/server`. The
  * caller threads a `Verifier` through `createApp({ verifier })` to
  * resolve the per-request tenant; the `(app, storage, verifier)`

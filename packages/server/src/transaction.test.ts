@@ -1,5 +1,5 @@
 /* eslint-disable no-underscore-dangle -- `_id` is the locked primary-key
-   field on document shapes (see `@baerly/protocol/src/table-api.ts`'s `Table<T>`
+   field on document shapes (see `@baerly/protocol/src/collection-api.ts`'s `Collection<T>`
    declaration); tests read it from emitted log entries. */
 
 /**
@@ -148,7 +148,7 @@ describe("Db.transaction", () => {
 
     // Pre-seed an existing doc so the update + delete have something
     // to act on — the read inside the tx body sees LIVE state.
-    await db.table(TABLE).insert({ _id: "existing", v: "v0" });
+    await db.collection(TABLE).insert({ _id: "existing", v: "v0" });
     const beforeTx = await readCurrent(storage);
     expect(beforeTx.next_seq).toBe(1);
 
@@ -187,7 +187,7 @@ describe("Db.transaction", () => {
 
   test("reads inside the tx see live state (e.g. an insert from before the tx)", async () => {
     await provision(storage);
-    await db.table(TABLE).insert({ _id: "pre", v: "p" });
+    await db.collection(TABLE).insert({ _id: "pre", v: "p" });
 
     let observed: { _id: string; v: string } | undefined;
     await db.transaction<{ _id: string; v: string }>(TABLE, async (tx) => {
@@ -212,7 +212,7 @@ describe("Db.transaction", () => {
     expect(bufferedCount).toBe(0);
 
     // After the tx commits, the doc IS visible.
-    const after = await db.table<{ _id: string; v: number }>(TABLE).get("buffered");
+    const after = await db.collection(TABLE).get("buffered");
     expect(after).toEqual({ _id: "buffered", v: 99 });
   });
 
@@ -288,7 +288,7 @@ describe("Db.transaction", () => {
     await db.transaction(TABLE, async (tx) => {
       await tx.insert({ _id: "tx-doc", v: 1 });
     });
-    await db.table(TABLE).insert({ _id: "direct-doc", v: 2 });
+    await db.collection(TABLE).insert({ _id: "direct-doc", v: 2 });
 
     const txEntry = await readEntry(storage, 0);
     const directEntry = await readEntry(storage, 1);
@@ -313,18 +313,18 @@ describe("Db.transaction", () => {
     await provision(storage);
     await provision(storage, "other");
 
-    // The body callback receives `Table<T>`, not `Db`. Reaching for
+    // The body callback receives `Collection<T>`, not `Db`. Reaching for
     // a different table via the outer `db` is the bug path; this
-    // file isn't permitted to call `db.table("other")` from inside
+    // file isn't permitted to call `db.collection("other")` from inside
     // the body in a way TypeScript accepts as a same-shape write
     // through the `tx` argument. We document the intent here with a
-    // `@ts-expect-error` directive: the body parameter is a Table,
-    // so it has no `.table(...)` member.
+    // `@ts-expect-error` directive: the body parameter is a Collection,
+    // so it has no `.collection(...)` member.
     await db
       .transaction(TABLE, async (tx) => {
-        // @ts-expect-error — Table<T> has no `table()` accessor; the
+        // @ts-expect-error — Collection<T> has no `table()` accessor; the
         //   only mutation surface is the bound `tx`.
-        await tx.table("other").insert({ _id: "x" });
+        await tx.collection("other").insert({ _id: "x" });
       })
       .catch(() => {
         // Runtime path: the bad call throws because `tx.table` is not

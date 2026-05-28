@@ -20,7 +20,7 @@
  * Test shape:
  *
  *   - Seed `srcRoot` (LocalFsStorage) with a representative collection
- *     via `Table.insert` + `Query.update` (I + U cycle covered).
+ *     via `Collection.insert` + `Query.update` (I + U cycle covered).
  *   - Export src → SQL via packages/cli/src/export (plan + DDL + INSERTs).
  *     Pipe the SQL into `sqlite3 <dbfile> '.read <sqlfile>'`.
  *   - Read SQLite back via `sqlite3 -json ... 'SELECT * FROM tickets
@@ -47,7 +47,6 @@ import {
   CURRENT_JSON_SCHEMA_VERSION,
   createCurrentJson,
   type DocumentValue,
-  type DocumentData,
   type Storage,
 } from "@baerly/protocol";
 import { LocalFsStorage } from "@baerly/dev";
@@ -90,15 +89,6 @@ const bootstrap = async (storage: Storage, owner: string): Promise<void> => {
   });
 };
 
-/**
- * Body shape of one seeded ticket row. Uses `DocumentData`
- * as the row body type — this gives the same effective constraint
- * as `Table<T>` and keeps sparse optional fields (`deleted`, `tags`)
- * legal under the index signature (a narrowing `extends` runs into
- * the index signature rejecting `undefined`-typed properties).
- */
-type Ticket = DocumentData;
-
 /** Open a write-stream sink and return a `{ stream, finish }` pair. */
 const openSink = (path: string): { stream: WriteStream; finish: () => Promise<void> } => {
   const stream = createWriteStream(path);
@@ -133,17 +123,17 @@ describe.runIf(sqliteAvailable)("Baerly → SQLite → Baerly round-trip", () =>
     const src = new LocalFsStorage({ root: srcRoot });
     await bootstrap(src, "round-trip-src");
     const srcDb = Db.create({ storage: src, app: APP, tenant: TENANT });
-    const srcTable = srcDb.table<Ticket>(COLL);
+    const srcCollection = srcDb.collection(COLL);
 
-    await srcTable.insert({ _id: "u_a", status: "open", priority: 1 });
-    await srcTable.insert({
+    await srcCollection.insert({ _id: "u_a", status: "open", priority: 1 });
+    await srcCollection.insert({
       _id: "u_b",
       status: "open",
       priority: 2,
       tags: { primary: "bug", meta: { lang: "en" } },
     });
-    await srcTable.insert({ _id: "u_c", status: "closed", priority: 3, deleted: true });
-    await srcTable.update("u_a", { status: "closed" });
+    await srcCollection.insert({ _id: "u_c", status: "closed", priority: 3, deleted: true });
+    await srcCollection.update("u_a", { status: "closed" });
 
     // ── 2. Export src → SQLite. ────────────────────────────────────
     const view = await loadMaterialisedView({

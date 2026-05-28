@@ -1,5 +1,5 @@
 /* eslint-disable no-underscore-dangle -- `_id` is the locked primary-key
-   field on document shapes (see `@baerly/protocol/src/table-api.ts`'s `Table<T>`
+   field on document shapes (see `@baerly/protocol/src/collection-api.ts`'s `Collection<T>`
    declaration); reads expose it on rows. */
 
 /**
@@ -56,7 +56,7 @@ const provision = async (storage: MemoryStorage, coll = COLL): Promise<void> => 
 const commit = (storage: MemoryStorage, coll = COLL): Writer =>
   new Writer({ storage, currentJsonKey: currentJsonKey(coll) });
 
-describe("Db.table read terminals", () => {
+describe("Db.collection read terminals", () => {
   let storage: MemoryStorage;
   let db: Db;
 
@@ -67,7 +67,7 @@ describe("Db.table read terminals", () => {
 
   test("case 1: empty table (next_seq=0) returns [], undefined, 0", async () => {
     await provision(storage);
-    const t = db.table(COLL);
+    const t = db.collection(COLL);
     await expect(t.where({}).all()).resolves.toEqual([]);
     await expect(t.where({}).first()).resolves.toBeUndefined();
     await expect(t.count()).resolves.toBe(0);
@@ -75,7 +75,7 @@ describe("Db.table read terminals", () => {
 
   test("case 2: missing current.json returns [], undefined, 0 (no throw)", async () => {
     // No provision call — current.json doesn't exist.
-    const t = db.table(COLL);
+    const t = db.collection(COLL);
     await expect(t.where({}).all()).resolves.toEqual([]);
     await expect(t.where({}).first()).resolves.toBeUndefined();
     await expect(t.count()).resolves.toBe(0);
@@ -91,7 +91,7 @@ describe("Db.table read terminals", () => {
       body: { _id: "doc-1", title: "hello" },
     });
 
-    const rows = await db.table(COLL).where({}).all();
+    const rows = await db.collection(COLL).where({}).all();
     expect(rows).toHaveLength(1);
     expect(rows[0]).toEqual({ _id: "doc-1", title: "hello" });
   });
@@ -118,7 +118,7 @@ describe("Db.table read terminals", () => {
       body: { _id: "c", status: "open" },
     });
 
-    const q = db.table(COLL).where({ status: "open" });
+    const q = db.collection(COLL).where({ status: "open" });
     const rows = await q.all();
     expect(rows).toHaveLength(2);
     expect(rows.map((r) => r["_id"]).toSorted()).toEqual(["a", "c"]);
@@ -135,7 +135,7 @@ describe("Db.table read terminals", () => {
     await w.commit({ op: "I", collection: COLL, docId: "2", body: { _id: "2", a: 1, b: 3 } });
     await w.commit({ op: "I", collection: COLL, docId: "3", body: { _id: "3", a: 2, b: 2 } });
 
-    const rows = await db.table(COLL).where({ a: 1 }).where({ b: 2 }).all();
+    const rows = await db.collection(COLL).where({ a: 1 }).where({ b: 2 }).all();
     expect(rows).toHaveLength(1);
     expect(rows[0]!["_id"]).toBe("1");
   });
@@ -148,9 +148,9 @@ describe("Db.table read terminals", () => {
     await w.commit({ op: "I", collection: COLL, docId: "a", body: { _id: "a", n: 1 } });
     await w.commit({ op: "I", collection: COLL, docId: "c", body: { _id: "c", n: 3 } });
 
-    const asc = await db.table(COLL).order({ n: "asc" }).all();
+    const asc = await db.collection(COLL).order({ n: "asc" }).all();
     expect(asc.map((r) => r["_id"])).toEqual(["a", "b", "c"]);
-    const desc = await db.table(COLL).order({ n: "desc" }).all();
+    const desc = await db.collection(COLL).order({ n: "desc" }).all();
     expect(desc.map((r) => r["_id"])).toEqual(["c", "b", "a"]);
   });
 
@@ -160,7 +160,7 @@ describe("Db.table read terminals", () => {
     for (const id of ["a", "b", "c"]) {
       await w.commit({ op: "I", collection: COLL, docId: id, body: { _id: id, n: 1 } });
     }
-    const rows = await db.table(COLL).order({ _id: "asc" }).limit(2).all();
+    const rows = await db.collection(COLL).order({ _id: "asc" }).limit(2).all();
     expect(rows.map((r) => r["_id"])).toEqual(["a", "b"]);
   });
 
@@ -188,12 +188,12 @@ describe("Db.table read terminals", () => {
     });
     await w.commit({ op: "D", collection: COLL, docId: "B" });
 
-    const rows = await db.table(COLL).where({}).all();
+    const rows = await db.collection(COLL).where({}).all();
     expect(rows).toHaveLength(1);
     expect(rows[0]).toEqual({ _id: "A", v: "v2" });
   });
 
-  test("case 9: chain immutability — .where() returns a new object; original Table is unchanged", async () => {
+  test("case 9: chain immutability — .where() returns a new object; original Collection is unchanged", async () => {
     await provision(storage);
     const w = commit(storage);
     await w.commit({
@@ -209,10 +209,10 @@ describe("Db.table read terminals", () => {
       body: { _id: "2", status: "closed" },
     });
 
-    const table = db.table(COLL);
+    const table = db.collection(COLL);
     const q1 = table.where({ status: "open" });
     // The Query returned is a fresh object — identity inequality with
-    // the Table it came from.
+    // the Collection it came from.
     expect(q1 as unknown).not.toBe(table as unknown);
     // Chaining another modifier on the ORIGINAL table sees no
     // predicate state from `q1` (frozen-state invariant).
@@ -263,23 +263,23 @@ describe("Db.table read terminals", () => {
       body: { _id: "bob-doc", owner: "bob" },
     });
 
-    const aRows = await dbA.table(COLL).where({}).all();
-    const bRows = await dbB.table(COLL).where({}).all();
+    const aRows = await dbA.collection(COLL).where({}).all();
+    const bRows = await dbB.collection(COLL).where({}).all();
     expect(aRows.map((r) => r["_id"])).toEqual(["alice-doc"]);
     expect(bRows.map((r) => r["_id"])).toEqual(["bob-doc"]);
   });
 
   test("case 11: invalid table name throws InvalidConfig", async () => {
-    // Empty name → InvalidConfig (constructed at .table() call).
-    expect(() => db.table("")).toThrow(BaerlyError);
+    // Empty name → InvalidConfig (constructed at .collection() call).
+    expect(() => db.collection("")).toThrow(BaerlyError);
     try {
-      db.table("");
+      db.collection("");
     } catch (error) {
       expect((error as BaerlyError).code).toBe("InvalidConfig");
     }
     // Slash in name → InvalidConfig.
     try {
-      db.table("a/b");
+      db.collection("a/b");
     } catch (error) {
       expect((error as BaerlyError).code).toBe("InvalidConfig");
     }
@@ -293,7 +293,7 @@ describe("Db.table read terminals", () => {
     await storage.put(logKey(COLL, 0), new TextEncoder().encode("not-json{"));
 
     try {
-      await db.table(COLL).where({}).all();
+      await db.collection(COLL).where({}).all();
       throw new Error("expected malformed log entry to throw");
     } catch (error) {
       expect(error).toBeInstanceOf(BaerlyError);
@@ -318,7 +318,7 @@ describe("Db.table read terminals", () => {
     });
 
     // Sanity: the row is visible before we advance log_seq_start.
-    await expect(db.table(COLL).where({}).all()).resolves.toHaveLength(1);
+    await expect(db.collection(COLL).where({}).all()).resolves.toHaveLength(1);
 
     // Manually advance log_seq_start to 1 (simulates a compactor run
     // that folded log/0.json into a snapshot).
@@ -329,9 +329,9 @@ describe("Db.table read terminals", () => {
     }));
 
     // Reader now walks [1, 1) → empty.
-    await expect(db.table(COLL).where({}).all()).resolves.toEqual([]);
-    await expect(db.table(COLL).count()).resolves.toBe(0);
-    await expect(db.table(COLL).where({}).first()).resolves.toBeUndefined();
+    await expect(db.collection(COLL).where({}).all()).resolves.toEqual([]);
+    await expect(db.collection(COLL).count()).resolves.toBe(0);
+    await expect(db.collection(COLL).where({}).first()).resolves.toBeUndefined();
   });
 
   test("case 14: read walks [log_seq_start, next_seq) and skips dropped entries", async () => {
@@ -361,7 +361,7 @@ describe("Db.table read terminals", () => {
     };
     await storage.put(logKey(COLL, 2), new TextEncoder().encode(JSON.stringify(entry)));
 
-    const rows = await db.table(COLL).where({}).all();
+    const rows = await db.collection(COLL).where({}).all();
     expect(rows).toHaveLength(1);
     expect(rows[0]).toEqual({ _id: "live", v: 1 });
   });
@@ -383,7 +383,7 @@ describe("Db.table read terminals", () => {
 
     // Pre-compaction snapshot of the row set, for an apples-to-apples
     // comparison after the snapshot lands.
-    const before = await db.table<{ _id: string; n: number }>(COLL).order({ _id: "asc" }).all();
+    const before = await db.collection(COLL).order({ _id: "asc" }).all();
     expect(before).toHaveLength(50);
 
     const res = await compact({ storage, currentJsonKey: currentJsonKey(COLL) }, {
@@ -393,7 +393,7 @@ describe("Db.table read terminals", () => {
     expect(res.written).toBe(true);
     expect(res.logSeqStartAfter).toBe(50);
 
-    const after = await db.table<{ _id: string; n: number }>(COLL).order({ _id: "asc" }).all();
+    const after = await db.collection(COLL).order({ _id: "asc" }).all();
     expect(after).toEqual(before);
   });
 
@@ -427,10 +427,10 @@ describe("Db.table read terminals", () => {
       });
     }
 
-    const rows = await db.table<{ _id: string; phase: string }>(COLL).where({}).all();
+    const rows = await db.collection(COLL).where({}).all();
     expect(rows).toHaveLength(50);
-    expect(rows.filter((r) => r.phase === "pre")).toHaveLength(40);
-    expect(rows.filter((r) => r.phase === "post")).toHaveLength(10);
+    expect(rows.filter((r) => r["phase"] === "pre")).toHaveLength(40);
+    expect(rows.filter((r) => r["phase"] === "post")).toHaveLength(10);
   });
 
   test("case 18: read sees the new pointer after a writer advances next_seq", async () => {
@@ -447,7 +447,7 @@ describe("Db.table read terminals", () => {
       body: { _id: "doc-1", title: "hello" },
     });
 
-    const ctx = db.tableReadContext(COLL);
+    const ctx = db.collectionReadContext(COLL);
     const baseState = {
       wire: undefined,
       order: undefined,
@@ -531,11 +531,8 @@ describe("auto-planner index routing", () => {
       body: { _id: "t-3", status: "closed" },
     });
     const db = dbWithByStatus();
-    const rows = await db
-      .table<{ _id: string; status: string }>(COLL)
-      .where({ status: "open" })
-      .all();
-    const ids = rows.map((r) => r._id).toSorted();
+    const rows = await db.collection(COLL).where({ status: "open" }).all();
+    const ids = rows.map((r) => r["_id"]).toSorted();
     expect(ids).toEqual(["t-1", "t-2"]);
   });
 
@@ -553,10 +550,7 @@ describe("auto-planner index routing", () => {
       body: { _id: "t-1", status: "open" },
     });
     const db = dbWithByStatus();
-    const rows = await db
-      .table<{ _id: string; status: string }>(COLL)
-      .where({ status: "wip" })
-      .all();
+    const rows = await db.collection(COLL).where({ status: "wip" }).all();
     expect(rows).toEqual([]);
   });
 
@@ -582,11 +576,8 @@ describe("auto-planner index routing", () => {
       body: { _id: "t-2", status: "open", assignee: "bob" },
     });
     const db = dbWithByStatus();
-    const rows = await db
-      .table<{ _id: string; status: string; assignee: string }>(COLL)
-      .where({ status: "open", assignee: "alice" })
-      .all();
-    expect(rows.map((r) => r._id)).toEqual(["t-1"]);
+    const rows = await db.collection(COLL).where({ status: "open", assignee: "alice" }).all();
+    expect(rows.map((r) => r["_id"])).toEqual(["t-1"]);
   });
 
   test("respects .limit() applied after the index walk", async () => {
@@ -605,11 +596,7 @@ describe("auto-planner index routing", () => {
       });
     }
     const db = dbWithByStatus();
-    const rows = await db
-      .table<{ _id: string; status: string }>(COLL)
-      .where({ status: "open" })
-      .limit(2)
-      .all();
+    const rows = await db.collection(COLL).where({ status: "open" }).limit(2).all();
     expect(rows).toHaveLength(2);
   });
 
@@ -641,11 +628,8 @@ describe("auto-planner index routing", () => {
       body: { _id: "t-3", status: "closed", priority: "p2" },
     });
     const db = dbWithComposite();
-    const rows = await db
-      .table<{ _id: string; status: string; priority: string }>(COLL)
-      .where({ status: "open", priority: "p2" })
-      .all();
-    expect(rows.map((r) => r._id)).toEqual(["t-1"]);
+    const rows = await db.collection(COLL).where({ status: "open", priority: "p2" }).all();
+    expect(rows.map((r) => r["_id"])).toEqual(["t-1"]);
   });
 
   test("composite index walked at partial prefix returns the right docs", async () => {
@@ -684,11 +668,8 @@ describe("auto-planner index routing", () => {
       body: { _id: "t-4", status: "closed", priority: "p1" },
     });
     const db = dbWithComposite();
-    const rows = await db
-      .table<{ _id: string; status: string; priority: string }>(COLL)
-      .where({ status: "open" })
-      .all();
-    expect(rows.map((r) => r._id).toSorted()).toEqual(["t-1", "t-2", "t-3"]);
+    const rows = await db.collection(COLL).where({ status: "open" }).all();
+    expect(rows.map((r) => r["_id"]).toSorted()).toEqual(["t-1", "t-2", "t-3"]);
   });
 
   test("composite [a,b,c] index walked at prefix [a,b] returns the right docs", async () => {
@@ -735,11 +716,8 @@ describe("auto-planner index routing", () => {
         collections: { [COLL]: { indexes: [{ name: "by_a_b_c", on: ["a", "b", "c"] }] } },
       },
     });
-    const rows = await db
-      .table<{ _id: string; a: number; b: number; c: number }>(COLL)
-      .where({ a: 1, b: 2 })
-      .all();
-    expect(rows.map((r) => r._id).toSorted()).toEqual(["x-1", "x-2", "x-3"]);
+    const rows = await db.collection(COLL).where({ a: 1, b: 2 }).all();
+    expect(rows.map((r) => r["_id"]).toSorted()).toEqual(["x-1", "x-2", "x-3"]);
   });
 
   test("mixed predicate with an operator clause walks the index and in-memory-filters the operator", async () => {
@@ -777,10 +755,10 @@ describe("auto-planner index routing", () => {
     });
     const db = dbWithByStatus();
     const rows = await db
-      .table<{ _id: string; status: string; priority: string }>(COLL)
+      .collection(COLL)
       .where((q) => q.eq("status", "open").gt("priority", "p2"))
       .all();
-    expect(rows.map((r) => r._id)).toEqual(["t-3"]);
+    expect(rows.map((r) => r["_id"])).toEqual(["t-3"]);
   });
 });
 
@@ -804,10 +782,10 @@ describe("operator predicates — full-scan path", () => {
       });
     }
     const rows = await db
-      .table<{ _id: string; count: number }>(COLL)
+      .collection(COLL)
       .where((q) => q.gte("count", 3).lt("count", 7))
       .all();
-    expect(rows.map((r) => r.count).toSorted((a, b) => a - b)).toEqual([3, 4, 5, 6]);
+    expect(rows.map((r) => r["count"] as number).toSorted((a, b) => a - b)).toEqual([3, 4, 5, 6]);
   });
 
   test("$in returns the union", async () => {
@@ -822,10 +800,10 @@ describe("operator predicates — full-scan path", () => {
       });
     }
     const rows = await db
-      .table<{ _id: string; priority: string }>(COLL)
+      .collection(COLL)
       .where((q) => q.in("priority", ["p1", "p2"]))
       .all();
-    expect(rows.map((r) => r._id).toSorted()).toEqual(["t-p1", "t-p2"]);
+    expect(rows.map((r) => r["_id"]).toSorted()).toEqual(["t-p1", "t-p2"]);
   });
 
   test("range op on date-string field returns the right window", async () => {
@@ -840,10 +818,10 @@ describe("operator predicates — full-scan path", () => {
       });
     }
     const rows = await db
-      .table<{ _id: string; created_at: string }>(COLL)
+      .collection(COLL)
       .where((q) => q.gte("created_at", "2026-01-01").lt("created_at", "2026-02-01"))
       .all();
-    expect(rows.map((r) => r._id).toSorted()).toEqual(["2026-01-01", "2026-01-15"]);
+    expect(rows.map((r) => r["_id"]).toSorted()).toEqual(["2026-01-01", "2026-01-15"]);
   });
 
   test("mixed operator + equality conjunction", async () => {
@@ -868,10 +846,10 @@ describe("operator predicates — full-scan path", () => {
       body: { _id: "t-3", status: "closed", count: 5 },
     });
     const rows = await db
-      .table<{ _id: string; status: string; count: number }>(COLL)
+      .collection(COLL)
       .where((q) => q.eq("status", "open").lt("count", 10))
       .all();
-    expect(rows.map((r) => r._id)).toEqual(["t-1"]);
+    expect(rows.map((r) => r["_id"])).toEqual(["t-1"]);
   });
 
   test(".count() honours operator predicates", async () => {
@@ -886,7 +864,7 @@ describe("operator predicates — full-scan path", () => {
       });
     }
     const n = await db
-      .table<{ _id: string; count: number }>(COLL)
+      .collection(COLL)
       .where((q) => q.gte("count", 2))
       .count();
     expect(n).toBe(3);
@@ -902,7 +880,7 @@ describe("operator predicates — full-scan path", () => {
       body: { _id: "t-1", count: "5" } as unknown as DocumentData,
     });
     const rows = await db
-      .table<{ _id: string; count: number }>(COLL)
+      .collection(COLL)
       .where((q) => q.gte("count", 1))
       .all();
     expect(rows).toEqual([]);
@@ -967,10 +945,10 @@ describe("auto-planner range and $in walks (T3)", () => {
     }
     const db = dbWithByPriority();
     const rows = await db
-      .table<{ _id: string; priority: string }>(COLL)
+      .collection(COLL)
       .where((q) => q.gte("priority", "p3").lt("priority", "p7"))
       .all();
-    expect(rows.map((r) => r.priority).toSorted()).toEqual(["p3", "p4", "p5", "p6"]);
+    expect(rows.map((r) => r["priority"]).toSorted()).toEqual(["p3", "p4", "p5", "p6"]);
   });
 
   test("exclusive lower bound walk skips the lower-bound bucket via sentinel", async () => {
@@ -991,10 +969,10 @@ describe("auto-planner range and $in walks (T3)", () => {
     const db = dbWithByPriority();
     // q.gt is exclusive — should NOT include p2.
     const rows = await db
-      .table<{ _id: string; priority: string }>(COLL)
+      .collection(COLL)
       .where((q) => q.gt("priority", "p2"))
       .all();
-    expect(rows.map((r) => r.priority).toSorted()).toEqual(["p3", "p4", "p5"]);
+    expect(rows.map((r) => r["priority"]).toSorted()).toEqual(["p3", "p4", "p5"]);
   });
 
   test("inclusive upper bound walk includes the upper-bound bucket", async () => {
@@ -1014,10 +992,10 @@ describe("auto-planner range and $in walks (T3)", () => {
     }
     const db = dbWithByPriority();
     const rows = await db
-      .table<{ _id: string; priority: string }>(COLL)
+      .collection(COLL)
       .where((q) => q.lte("priority", "p3"))
       .all();
-    expect(rows.map((r) => r.priority).toSorted()).toEqual(["p1", "p2", "p3"]);
+    expect(rows.map((r) => r["priority"]).toSorted()).toEqual(["p1", "p2", "p3"]);
   });
 
   test("composite eq+range walk constrains to the matching slice", async () => {
@@ -1055,10 +1033,10 @@ describe("auto-planner range and $in walks (T3)", () => {
     // NOT a4 (099 is excluded by $lt) or a5 (out of range) or b1/b2
     // (wrong tenant).
     const rows = await db
-      .table<{ _id: string; tenant: string; age: string }>(COLL)
+      .collection(COLL)
       .where((q) => q.eq("tenant", "acme").gte("age", "012").lt("age", "099"))
       .all();
-    expect(rows.map((r) => r._id).toSorted()).toEqual(["a1", "a2", "a3"]);
+    expect(rows.map((r) => r["_id"]).toSorted()).toEqual(["a1", "a2", "a3"]);
   });
 
   test("$in multi-walk returns the union of matching docs", async () => {
@@ -1085,10 +1063,10 @@ describe("auto-planner range and $in walks (T3)", () => {
     }
     const db = dbWithByStatus();
     const rows = await db
-      .table<{ _id: string; status: string }>(COLL)
+      .collection(COLL)
       .where((q) => q.in("status", ["open", "done"]))
       .all();
-    expect(rows.map((r) => r._id).toSorted()).toEqual(["t-1", "t-3", "t-4"]);
+    expect(rows.map((r) => r["_id"]).toSorted()).toEqual(["t-1", "t-3", "t-4"]);
   });
 
   test("stale-entry post-filter defence: range walk drops obsolete index entries", async () => {
@@ -1120,12 +1098,12 @@ describe("auto-planner range and $in walks (T3)", () => {
     });
     const db = dbWithByPriority();
     const above = await db
-      .table<{ _id: string; priority: string }>(COLL)
+      .collection(COLL)
       .where((q) => q.gte("priority", "p4"))
       .all();
-    expect(above.map((r) => r._id)).toEqual(["t-1"]);
+    expect(above.map((r) => r["_id"])).toEqual(["t-1"]);
     const below = await db
-      .table<{ _id: string; priority: string }>(COLL)
+      .collection(COLL)
       .where((q) => q.lte("priority", "p3"))
       .all();
     expect(below).toEqual([]);
@@ -1158,11 +1136,11 @@ describe("auto-planner range and $in walks (T3)", () => {
     }
     const db = dbWithComposite();
     const rows = await db
-      .table<{ _id: string; tenant: string; age: string }>(COLL)
+      .collection(COLL)
       .where((q) => q.gt("tenant", "a").eq("age", "012"))
       .all();
     // All tenants are > "a" lexically. age must equal "012".
-    expect(rows.map((r) => r._id).toSorted()).toEqual(["a1", "b1", "z1"]);
+    expect(rows.map((r) => r["_id"]).toSorted()).toEqual(["a1", "b1", "z1"]);
   });
 
   test("numeric range walk returns the right rows", async () => {
@@ -1209,10 +1187,10 @@ describe("auto-planner range and $in walks (T3)", () => {
       config: { collections: { [COLL]: { indexes: [...indexes] } } },
     });
     const rows = await db
-      .table<{ _id: string; age: number }>(COLL)
+      .collection(COLL)
       .where((q) => q.gte("age", 10).lt("age", 30))
       .all();
-    expect(rows.map((r) => r.age).toSorted((a, b) => a - b)).toEqual([10, 15, 18, 22]);
+    expect(rows.map((r) => r["age"] as number).toSorted((a, b) => a - b)).toEqual([10, 15, 18, 22]);
   });
 
   test("$in multi-walk returns the union of all values' docs", async () => {
@@ -1260,10 +1238,10 @@ describe("auto-planner range and $in walks (T3)", () => {
       config: { collections: { [COLL]: { indexes: [...indexes] } } },
     });
     const rows = await db
-      .table<{ _id: string; team: string }>(COLL)
+      .collection(COLL)
       .where((q) => q.in("team", ["platform", "infra", "data"]))
       .all();
-    expect(rows.map((r) => r._id).toSorted()).toEqual(["a", "b", "c", "d"]);
+    expect(rows.map((r) => r["_id"]).toSorted()).toEqual(["a", "b", "c", "d"]);
   });
 });
 
@@ -1347,7 +1325,7 @@ describe("singleIdFromPredicate", () => {
  * the consistency boundary, not the predicate evaluator. See
  * `docs/spec/causal-consistency-checking.md`.
  */
-describe("Query.first / Table.get — PK-lookup fast-path", () => {
+describe("Query.first / Collection.get — PK-lookup fast-path", () => {
   /**
    * Hand-rolled `Storage` proxy counting `get`s on log entries (so
    * we can pin "the fast-path doesn't issue extra GETs"). Lives in
@@ -1411,18 +1389,18 @@ describe("Query.first / Table.get — PK-lookup fast-path", () => {
     return { storage: s, target };
   };
 
-  test("Table.get(id) returns the right doc against a 100-entry collection", async () => {
+  test("Collection.get(id) returns the right doc against a 100-entry collection", async () => {
     const { storage, target } = await seedNDocs(100);
     const db = Db.create({ storage, app: APP, tenant: TENANT });
-    const row = await db.table<{ _id: string; n: number }>(COLL).get(target._id);
+    const row = await db.collection(COLL).get(target._id);
     expect(row).toBeDefined();
     expect(row).toEqual(target);
   });
 
-  test("Table.get(id) on a miss returns undefined (snapshot.get lookup, no row)", async () => {
+  test("Collection.get(id) on a miss returns undefined (snapshot.get lookup, no row)", async () => {
     const { storage } = await seedNDocs(100);
     const db = Db.create({ storage, app: APP, tenant: TENANT });
-    const row = await db.table<{ _id: string; n: number }>(COLL).get("no-such-id");
+    const row = await db.collection(COLL).get("no-such-id");
     expect(row).toBeUndefined();
   });
 
@@ -1437,17 +1415,14 @@ describe("Query.first / Table.get — PK-lookup fast-path", () => {
 
     const fastCounter = wrapGetCounter(storage);
     const dbFast = Db.create({ storage: fastCounter.storage, app: APP, tenant: TENANT });
-    const fastRow = await dbFast.table<{ _id: string; n: number }>(COLL).get(target._id);
+    const fastRow = await dbFast.collection(COLL).get(target._id);
     const fastLogGets = fastCounter.logGets;
 
     const scanCounter = wrapGetCounter(storage);
     const dbScan = Db.create({ storage: scanCounter.storage, app: APP, tenant: TENANT });
     // Single-key non-`_id` predicate — falls through `singleIdFromPredicate`
     // to the scan path and walks the same log range.
-    const scanRows = await dbScan
-      .table<{ _id: string; n: number }>(COLL)
-      .where({ n: target.n })
-      .all();
+    const scanRows = await dbScan.collection(COLL).where({ n: target.n }).all();
     const scanLogGets = scanCounter.logGets;
 
     expect(fastRow).toEqual(target);
@@ -1463,7 +1438,7 @@ describe("Query.first / Table.get — PK-lookup fast-path", () => {
   test("negative: single-key non-_id predicate falls through to scan and returns the match", async () => {
     const { storage, target } = await seedNDocs(100);
     const db = Db.create({ storage, app: APP, tenant: TENANT });
-    const rows = await db.table<{ _id: string; n: number }>(COLL).where({ n: target.n }).all();
+    const rows = await db.collection(COLL).where({ n: target.n }).all();
     expect(rows).toHaveLength(1);
     expect(rows[0]).toEqual(target);
   });
@@ -1476,7 +1451,7 @@ describe("Query.first / Table.get — PK-lookup fast-path", () => {
     // predicate on a non-`_id` field still routes through the scan
     // path; the result is the doc that satisfies the equality.
     const rows = await db
-      .table<{ _id: string; n: number }>(COLL)
+      .collection(COLL)
       .where((q) => q.eq("n", target.n))
       .all();
     expect(rows).toHaveLength(1);

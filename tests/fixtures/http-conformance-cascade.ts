@@ -1,6 +1,6 @@
 /* eslint-disable no-underscore-dangle -- `_id` is the locked
    primary-key field on document shapes (see `@baerly/protocol`'s
-   `Table<T>` / `Query<T>` declarations); the cascade asserts it by
+   `Collection<T>` / `Query<T>` declarations); the cascade asserts it by
    name. */
 
 /**
@@ -270,7 +270,7 @@ export const runHttpConformanceCascade = (opts: {
     table: string,
     doc: DocumentData,
   ): Promise<{ readonly status: number; readonly id?: string; readonly body: unknown }> => {
-    const res = await doFetch(authedRequest("POST", `/v1/t/${table}`, { doc }));
+    const res = await doFetch(authedRequest("POST", `/v1/c/${table}`, { doc }));
     const json = (await res.json().catch(() => undefined)) as { readonly _id?: string } | undefined;
     return { status: res.status, id: json?._id, body: json };
   };
@@ -282,11 +282,11 @@ export const runHttpConformanceCascade = (opts: {
         "POST then GET returns the same doc body",
         async ({ body }) => {
           const table = await mintTable("rt");
-          const postRes = await doFetch(authedRequest("POST", `/v1/t/${table}`, { doc: body }));
+          const postRes = await doFetch(authedRequest("POST", `/v1/c/${table}`, { doc: body }));
           expect(postRes.status).toBe(201);
           const posted = (await postRes.json()) as { readonly _id: string };
           expect(typeof posted._id).toBe("string");
-          const getRes = await doFetch(authedRequest("GET", `/v1/t/${table}/${posted._id}`));
+          const getRes = await doFetch(authedRequest("GET", `/v1/c/${table}/${posted._id}`));
           expect(getRes.status).toBe(200);
           const { data } = (await getRes.json()) as { readonly data: DocumentData };
           // `_id` is server-assigned (UUIDv7); strip before comparing.
@@ -312,7 +312,7 @@ export const runHttpConformanceCascade = (opts: {
         // rather than a "no such table" path (which also 404s, but
         // the assertion's narrower this way).
         await postDoc(table, { seed: "x" });
-        const res = await doFetch(authedRequest("GET", `/v1/t/${table}/never-existed`));
+        const res = await doFetch(authedRequest("GET", `/v1/c/${table}/never-existed`));
         expect(res.status).toBe(404);
         const env = (await res.json()) as ErrorEnvelope;
         expect(env.error?.code).toBe("NotFound");
@@ -325,7 +325,7 @@ export const runHttpConformanceCascade = (opts: {
         // for "no such row" rather than "no such table".
         await postDoc(table, { seed: 1 });
         const res = await doFetch(
-          authedRequest("PATCH", `/v1/t/${table}/never-existed`, { patch: { status: "x" } }),
+          authedRequest("PATCH", `/v1/c/${table}/never-existed`, { patch: { status: "x" } }),
         );
         expect(res.status).toBe(404);
         const env = (await res.json()) as ErrorEnvelope;
@@ -338,7 +338,7 @@ export const runHttpConformanceCascade = (opts: {
         // exercise the boundary, not a 5x-over sledgehammer.
         const oversized = "x".repeat((1 << 20) + 1);
         const res = await doFetch(
-          authedRequest("POST", `/v1/t/${table}`, { doc: { blob: oversized } }),
+          authedRequest("POST", `/v1/c/${table}`, { doc: { blob: oversized } }),
         );
         expect(res.status).toBe(413);
         const env = (await res.json()) as ErrorEnvelope;
@@ -355,7 +355,7 @@ export const runHttpConformanceCascade = (opts: {
           const ins = await postDoc(table, doc);
           expect(ins.status).toBe(201);
           const id = ins.id!;
-          const res = await doFetch(authedRequest("GET", `/v1/t/${table}/${id}`));
+          const res = await doFetch(authedRequest("GET", `/v1/c/${table}/${id}`));
           expect(res.status).toBe(200);
           const { data } = (await res.json()) as { readonly data: DocumentData };
           const { _id: _stripped, ...rest } = data;
@@ -381,13 +381,13 @@ export const runHttpConformanceCascade = (opts: {
         const ins = await postDoc(table, { status: "open" });
         expect(ins.status).toBe(201);
         const id = ins.id!;
-        const getOne = await doFetch(authedRequest("GET", `/v1/t/${table}/${id}`));
+        const getOne = await doFetch(authedRequest("GET", `/v1/c/${table}/${id}`));
         const etag = getOne.headers.get("etag");
         expect(etag).not.toBeNull();
         const patch = await doFetch(
           authedRequest(
             "PATCH",
-            `/v1/t/${table}/${id}`,
+            `/v1/c/${table}/${id}`,
             { patch: { status: "closed" } },
             {
               "if-match": etag!,
@@ -415,7 +415,7 @@ export const runHttpConformanceCascade = (opts: {
         const ins = await postDoc(table, { v: 1 });
         const id = ins.id!;
         const res = await doFetch(
-          authedRequest("GET", `/v1/t/${table}/${id}`, undefined, {
+          authedRequest("GET", `/v1/c/${table}/${id}`, undefined, {
             "if-none-match": '"definitely-stale"',
           }),
         );
@@ -445,9 +445,9 @@ export const runHttpConformanceCascade = (opts: {
         const table = await mintTable("del");
         const ins = await postDoc(table, { gone: true });
         const id = ins.id!;
-        const del = await doFetch(authedRequest("DELETE", `/v1/t/${table}/${id}`));
+        const del = await doFetch(authedRequest("DELETE", `/v1/c/${table}/${id}`));
         expect(del.status).toBe(204);
-        const get = await doFetch(authedRequest("GET", `/v1/t/${table}/${id}`));
+        const get = await doFetch(authedRequest("GET", `/v1/c/${table}/${id}`));
         expect(get.status).toBe(404);
       });
 
@@ -457,7 +457,7 @@ export const runHttpConformanceCascade = (opts: {
         // otherwise a never-written table 404s for a different reason
         // and the assertion's narrower this way.
         await postDoc(table, { seed: 1 });
-        const res = await doFetch(authedRequest("DELETE", `/v1/t/${table}/never-existed`));
+        const res = await doFetch(authedRequest("DELETE", `/v1/c/${table}/never-existed`));
         expect(res.status).toBe(404);
         const env = (await res.json()) as ErrorEnvelope;
         expect(env.error?.code).toBe("NotFound");
@@ -466,13 +466,13 @@ export const runHttpConformanceCascade = (opts: {
 
     // ── Block 6: List + predicate ───────────────────────────────────
     describe("list + predicate", () => {
-      test("GET /v1/t/:table after three POSTs returns all three docs", async () => {
+      test("GET /v1/c/:collection after three POSTs returns all three docs", async () => {
         const table = await mintTable("list");
         for (const doc of [{ n: 1 }, { n: 2 }, { n: 3 }]) {
           const res = await postDoc(table, doc);
           expect(res.status).toBe(201);
         }
-        const res = await doFetch(authedRequest("GET", `/v1/t/${table}`));
+        const res = await doFetch(authedRequest("GET", `/v1/c/${table}`));
         expect(res.status).toBe(200);
         const { data } = (await res.json()) as { readonly data: ReadonlyArray<{ n: number }> };
         expect(data.length).toBe(3);
@@ -496,7 +496,7 @@ export const runHttpConformanceCascade = (opts: {
         const where = encodeURIComponent(
           JSON.stringify({ clauses: [{ op: "eq", field: "status", value: "open" }] }),
         );
-        const res = await doFetch(authedRequest("GET", `/v1/t/${table}?where=${where}`));
+        const res = await doFetch(authedRequest("GET", `/v1/c/${table}?where=${where}`));
         expect(res.status).toBe(200);
         const { data } = (await res.json()) as {
           readonly data: ReadonlyArray<{ readonly status: string }>;
@@ -513,7 +513,7 @@ export const runHttpConformanceCascade = (opts: {
         // the wire validator rejects anything without a `clauses`
         // array.
         const where = encodeURIComponent(JSON.stringify({ $or: 1 }));
-        const res = await doFetch(authedRequest("GET", `/v1/t/${table}?where=${where}`));
+        const res = await doFetch(authedRequest("GET", `/v1/c/${table}?where=${where}`));
         expect(res.status).toBe(400);
         const env = (await res.json()) as ErrorEnvelope;
         expect(env.error?.code).toBe("InvalidConfig");
@@ -522,13 +522,13 @@ export const runHttpConformanceCascade = (opts: {
       test("?where=<wire keying on _id> returns 400 with InvalidConfig and the by-id-verb redirect message", async () => {
         // Wire-validator depth-0 `_id` reject — agents zero-shot
         // writing the ceremony shape against the list route get
-        // pointed at `GET /v1/t/:table/:id`. Shape-agnostic (HTTP
+        // pointed at `GET /v1/c/:collection/:id`. Shape-agnostic (HTTP
         // status + body substring only).
         const table = freshTable("list-id-keyed");
         const where = encodeURIComponent(
           JSON.stringify({ clauses: [{ op: "eq", field: "_id", value: "x" }] }),
         );
-        const res = await doFetch(authedRequest("GET", `/v1/t/${table}?where=${where}`));
+        const res = await doFetch(authedRequest("GET", `/v1/c/${table}?where=${where}`));
         expect(res.status).toBe(400);
         const env = (await res.json()) as ErrorEnvelope;
         expect(env.error?.code).toBe("InvalidConfig");
@@ -537,7 +537,7 @@ export const runHttpConformanceCascade = (opts: {
 
       test("?where=<malformed JSON> returns 400 with SchemaError", async () => {
         const table = freshTable("list-bad");
-        const res = await doFetch(authedRequest("GET", `/v1/t/${table}?where=notjson`));
+        const res = await doFetch(authedRequest("GET", `/v1/c/${table}?where=notjson`));
         expect(res.status).toBe(400);
         const env = (await res.json()) as ErrorEnvelope;
         expect(env.error?.code).toBe("SchemaError");
@@ -550,13 +550,13 @@ export const runHttpConformanceCascade = (opts: {
           expect(res.status).toBe(201);
         }
         const order = encodeURIComponent(JSON.stringify({ n: "asc" }));
-        const res = await doFetch(authedRequest("GET", `/v1/t/${table}?order=${order}`));
+        const res = await doFetch(authedRequest("GET", `/v1/c/${table}?order=${order}`));
         expect(res.status).toBe(200);
         const { data } = (await res.json()) as { readonly data: ReadonlyArray<{ n: number }> };
         expect(data.map((r) => r.n)).toEqual([1, 2, 3]);
 
         const orderDesc = encodeURIComponent(JSON.stringify({ n: "desc" }));
-        const resDesc = await doFetch(authedRequest("GET", `/v1/t/${table}?order=${orderDesc}`));
+        const resDesc = await doFetch(authedRequest("GET", `/v1/c/${table}?order=${orderDesc}`));
         expect(resDesc.status).toBe(200);
         const { data: dataDesc } = (await resDesc.json()) as {
           readonly data: ReadonlyArray<{ n: number }>;
@@ -566,7 +566,7 @@ export const runHttpConformanceCascade = (opts: {
 
       test("?order=<malformed JSON> returns 400 with SchemaError", async () => {
         const table = freshTable("list-order-bad");
-        const res = await doFetch(authedRequest("GET", `/v1/t/${table}?order=notjson`));
+        const res = await doFetch(authedRequest("GET", `/v1/c/${table}?order=notjson`));
         expect(res.status).toBe(400);
         const env = (await res.json()) as ErrorEnvelope;
         expect(env.error?.code).toBe("SchemaError");
@@ -578,7 +578,7 @@ export const runHttpConformanceCascade = (opts: {
           const res = await postDoc(table, doc);
           expect(res.status).toBe(201);
         }
-        const res = await doFetch(authedRequest("GET", `/v1/t/${table}?limit=2`));
+        const res = await doFetch(authedRequest("GET", `/v1/c/${table}?limit=2`));
         expect(res.status).toBe(200);
         const { data } = (await res.json()) as { readonly data: ReadonlyArray<{ n: number }> };
         expect(data.length).toBe(2);
@@ -586,7 +586,7 @@ export const runHttpConformanceCascade = (opts: {
 
       test("?limit=<non-integer> returns 400 with SchemaError", async () => {
         const table = freshTable("list-limit-bad");
-        const res = await doFetch(authedRequest("GET", `/v1/t/${table}?limit=foo`));
+        const res = await doFetch(authedRequest("GET", `/v1/c/${table}?limit=foo`));
         expect(res.status).toBe(400);
         const env = (await res.json()) as ErrorEnvelope;
         expect(env.error?.code).toBe("SchemaError");
@@ -601,7 +601,7 @@ export const runHttpConformanceCascade = (opts: {
           const res = await postDoc(table, doc);
           expect(res.status).toBe(201);
         }
-        const allRes = await doFetch(authedRequest("GET", `/v1/count?table=${table}`));
+        const allRes = await doFetch(authedRequest("GET", `/v1/count?collection=${table}`));
         expect(allRes.status).toBe(200);
         const allBody = (await allRes.json()) as { readonly data: { readonly count: number } };
         expect(allBody.data.count).toBe(3);
@@ -610,7 +610,7 @@ export const runHttpConformanceCascade = (opts: {
           JSON.stringify({ clauses: [{ op: "eq", field: "s", value: "open" }] }),
         );
         const filteredRes = await doFetch(
-          authedRequest("GET", `/v1/count?table=${table}&where=${where}`),
+          authedRequest("GET", `/v1/count?collection=${table}&where=${where}`),
         );
         expect(filteredRes.status).toBe(200);
         const filteredBody = (await filteredRes.json()) as {
@@ -619,7 +619,7 @@ export const runHttpConformanceCascade = (opts: {
         expect(filteredBody.data.count).toBe(2);
       });
 
-      test("without ?table= returns 400 with SchemaError", async () => {
+      test("without ?collection= returns 400 with SchemaError", async () => {
         const res = await doFetch(authedRequest("GET", `/v1/count`));
         expect(res.status).toBe(400);
         const env = (await res.json()) as ErrorEnvelope;
@@ -628,19 +628,19 @@ export const runHttpConformanceCascade = (opts: {
     });
 
     describe("PUT replace", () => {
-      test("PUT /v1/t/:table/:id with { doc } overwrites — omitted fields are dropped", async () => {
+      test("PUT /v1/c/:collection/:id with { doc } overwrites — omitted fields are dropped", async () => {
         const table = await mintTable("put-replace");
         const ins = await postDoc(table, { title: "old", tag: "a", count: 1 });
         expect(ins.status).toBe(201);
         const id = ins.id!;
         // Whole-doc PUT: only `title` survives, `tag`/`count` are dropped.
         const putRes = await doFetch(
-          authedRequest("PUT", `/v1/t/${table}/${id}`, { doc: { title: "new" } }),
+          authedRequest("PUT", `/v1/c/${table}/${id}`, { doc: { title: "new" } }),
         );
         expect(putRes.status).toBe(200);
         const putBody = (await putRes.json()) as { readonly modified?: number };
         expect(putBody.modified).toBe(1);
-        const getRes = await doFetch(authedRequest("GET", `/v1/t/${table}/${id}`));
+        const getRes = await doFetch(authedRequest("GET", `/v1/c/${table}/${id}`));
         expect(getRes.status).toBe(200);
         const { data } = (await getRes.json()) as { readonly data: Record<string, unknown> };
         const { _id: _stripped, ...rest } = data;
@@ -653,7 +653,7 @@ export const runHttpConformanceCascade = (opts: {
       test("PUT on missing _id returns 404 with NotFound", async () => {
         const table = await mintTable("put-404");
         const res = await doFetch(
-          authedRequest("PUT", `/v1/t/${table}/no-such-row`, { doc: { x: 1 } }),
+          authedRequest("PUT", `/v1/c/${table}/no-such-row`, { doc: { x: 1 } }),
         );
         expect(res.status).toBe(404);
         const env = (await res.json()) as ErrorEnvelope;
@@ -665,7 +665,7 @@ export const runHttpConformanceCascade = (opts: {
         const ins = await postDoc(table, { x: 1 });
         const id = ins.id!;
         const res = await doFetch(
-          authedRequest("PUT", `/v1/t/${table}/${id}`, { patch: { x: 2 } }),
+          authedRequest("PUT", `/v1/c/${table}/${id}`, { patch: { x: 2 } }),
         );
         expect(res.status).toBe(400);
         const env = (await res.json()) as ErrorEnvelope;
@@ -686,7 +686,7 @@ export const runHttpConformanceCascade = (opts: {
         const ins = await postDoc(table, doc);
         expect(ins.status).toBe(201);
         const id = ins.id!;
-        const res = await doFetch(authedRequest("GET", `/v1/t/${table}/${id}`));
+        const res = await doFetch(authedRequest("GET", `/v1/c/${table}/${id}`));
         expect(res.status).toBe(200);
         const { data } = (await res.json()) as { readonly data: DocumentData };
         const { _id: _stripped, ...rest } = data;
@@ -700,7 +700,7 @@ export const runHttpConformanceCascade = (opts: {
         const ins = await postDoc(table, { png: b64 });
         expect(ins.status).toBe(201);
         const id = ins.id!;
-        const res = await doFetch(authedRequest("GET", `/v1/t/${table}/${id}`));
+        const res = await doFetch(authedRequest("GET", `/v1/c/${table}/${id}`));
         expect(res.status).toBe(200);
         const { data } = (await res.json()) as { readonly data: { readonly png: string } };
         expect(typeof data.png).toBe("string");
@@ -714,7 +714,7 @@ export const runHttpConformanceCascade = (opts: {
       test("pre-aborted signal on a GET rejects the fetch", async () => {
         const ac = new AbortController();
         ac.abort();
-        const req = new Request(`${BASE}/v1/t/preabort/x`, {
+        const req = new Request(`${BASE}/v1/c/preabort/x`, {
           method: "GET",
           headers: { authorization: `Bearer ${bearerToken}` },
           signal: ac.signal,
@@ -738,7 +738,7 @@ export const runHttpConformanceCascade = (opts: {
     // ── Block 9: Auth ──────────────────────────────────────────────
     describe("auth", () => {
       test("request without Authorization header returns 401 Unauthorized", async () => {
-        const res = await doFetch(new Request(`${BASE}/v1/t/auth-missing`, { method: "GET" }));
+        const res = await doFetch(new Request(`${BASE}/v1/c/auth-missing`, { method: "GET" }));
         expect(res.status).toBe(401);
         const env = (await res.json()) as ErrorEnvelope;
         expect(env.error?.code).toBe("Unauthorized");
@@ -746,7 +746,7 @@ export const runHttpConformanceCascade = (opts: {
 
       test("request with an invalid bearer token returns 401 Unauthorized", async () => {
         const res = await doFetch(
-          new Request(`${BASE}/v1/t/auth-bad`, {
+          new Request(`${BASE}/v1/c/auth-bad`, {
             method: "GET",
             headers: { authorization: "Bearer wrong" },
           }),
@@ -771,7 +771,7 @@ export const runHttpConformanceCascade = (opts: {
         // Empty cursor → starts from `log_seq_start`. The first
         // insert is strictly greater than `log_seq_start=0`, so
         // `listEventsSince` returns it on the very first poll.
-        const res = await doFetch(authedRequest("GET", `/v1/since?table=${table}&cursor=`));
+        const res = await doFetch(authedRequest("GET", `/v1/since?collection=${table}&cursor=`));
         expect(res.status).toBe(200);
         const body = (await res.json()) as {
           readonly events: ReadonlyArray<{ readonly op?: string }>;
@@ -791,7 +791,7 @@ export const runHttpConformanceCascade = (opts: {
         // Open the long-poll. Use a short-enough timeout that the
         // suite never sits on the 25s default budget; the server's
         // poll-interval is 1s but we drive a write within ~50ms.
-        const longPoll = doFetch(authedRequest("GET", `/v1/since?table=${table}&cursor=`));
+        const longPoll = doFetch(authedRequest("GET", `/v1/since?collection=${table}&cursor=`));
         // Race a write against the open long-poll. Wait one tick to
         // let the listener actually register before sending the POST.
         await new Promise((r) => setTimeout(r, 50));
@@ -811,7 +811,7 @@ export const runHttpConformanceCascade = (opts: {
       test("malformed cursor returns 400 SchemaError", async () => {
         const table = freshTable("lp-bad");
         const res = await doFetch(
-          authedRequest("GET", `/v1/since?table=${table}&cursor=not-an-lsn`),
+          authedRequest("GET", `/v1/since?collection=${table}&cursor=not-an-lsn`),
         );
         expect(res.status).toBe(400);
         const env = (await res.json()) as ErrorEnvelope;
@@ -831,7 +831,9 @@ export const runHttpConformanceCascade = (opts: {
           // log_seq_start"; with no writes since provisioning, the
           // first poll already times out idle. Capture its cursor —
           // that's our stable reference.
-          const first = await doFetch(authedRequest("GET", `/v1/since?table=${table}&cursor=`));
+          const first = await doFetch(
+            authedRequest("GET", `/v1/since?collection=${table}&cursor=`),
+          );
           expect(first.status).toBe(200);
           const firstBody = (await first.json()) as {
             readonly events: ReadonlyArray<unknown>;
@@ -843,7 +845,7 @@ export const runHttpConformanceCascade = (opts: {
           const second = await doFetch(
             authedRequest(
               "GET",
-              `/v1/since?table=${table}&cursor=${encodeURIComponent(firstBody.next_cursor)}`,
+              `/v1/since?collection=${table}&cursor=${encodeURIComponent(firstBody.next_cursor)}`,
             ),
           );
           expect(second.status).toBe(200);
@@ -875,7 +877,7 @@ export const runHttpConformanceCascade = (opts: {
       test("(a) cold read: fresh:true with a non-empty manifest_pointer", async () => {
         const table = await mintTable("meta-cold");
         const ins = await postDoc(table, { value: "v1" });
-        const res = await doFetch(authedRequest("GET", `/v1/t/${table}/${ins.id!}`));
+        const res = await doFetch(authedRequest("GET", `/v1/c/${table}/${ins.id!}`));
         expect(res.status).toBe(200);
         const body = (await res.json()) as MetaBody;
         expect(typeof body._meta.manifest_pointer).toBe("string");
@@ -886,9 +888,9 @@ export const runHttpConformanceCascade = (opts: {
       test("(b) manifest_pointer is byte-stable across two reads with no writer in between", async () => {
         const table = await mintTable("meta-hot");
         const ins = await postDoc(table, { value: "v1" });
-        const res1 = await doFetch(authedRequest("GET", `/v1/t/${table}/${ins.id!}`));
+        const res1 = await doFetch(authedRequest("GET", `/v1/c/${table}/${ins.id!}`));
         const r1 = (await res1.json()) as MetaBody;
-        const res2 = await doFetch(authedRequest("GET", `/v1/t/${table}/${ins.id!}`));
+        const res2 = await doFetch(authedRequest("GET", `/v1/c/${table}/${ins.id!}`));
         const r2 = (await res2.json()) as MetaBody;
         expect(r2._meta.manifest_pointer).toBe(r1._meta.manifest_pointer);
       });
@@ -904,11 +906,11 @@ export const runHttpConformanceCascade = (opts: {
         // `(table, id)` cache entry wasn't busted by the second POST
         // would re-serve the cached r1 envelope and the cursor would
         // not advance.
-        const res1 = await doFetch(authedRequest("GET", `/v1/t/${table}`));
+        const res1 = await doFetch(authedRequest("GET", `/v1/c/${table}`));
         const r1 = (await res1.json()) as MetaBody;
         // Concurrent writer bumps next_seq → pointer changes.
         await postDoc(table, { v: 2 });
-        const res2 = await doFetch(authedRequest("GET", `/v1/t/${table}`));
+        const res2 = await doFetch(authedRequest("GET", `/v1/c/${table}`));
         const r2 = (await res2.json()) as MetaBody;
         expect(r2._meta.manifest_pointer).not.toBe(r1._meta.manifest_pointer);
         expect(r2._meta.fresh).toBe(true);

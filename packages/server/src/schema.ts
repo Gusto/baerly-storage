@@ -1,6 +1,6 @@
 /**
  * Schema-validator runtime helper for `Db.insert` / `Query.update` /
- * `Table.replace` boundary checks.
+ * `Collection.replace` boundary checks.
  *
  * The `SchemaValidator` / `SchemaIssue` TYPES live in
  * `@baerly/protocol` (cross-platform). This module owns the runtime

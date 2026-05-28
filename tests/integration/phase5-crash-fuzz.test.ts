@@ -1,5 +1,5 @@
 /* eslint-disable no-underscore-dangle -- `_id` is the locked primary-key
-   field on document shapes (see `@baerly/protocol`'s `Table<T>`
+   field on document shapes (see `@baerly/protocol`'s `Collection<T>`
    declaration); the reader helper threads it through. */
 
 /**
@@ -31,6 +31,7 @@
 import { fc, test as propTest } from "@fast-check/vitest";
 import { describe, expect, test } from "vitest";
 import {
+  type Collection,
   CURRENT_JSON_SCHEMA_VERSION,
   createCurrentJson,
   type DocumentData,
@@ -74,7 +75,7 @@ interface Row extends DocumentData {
 }
 
 /**
- * Read every row in the collection through the locked table API,
+ * Read every row in the collection through the locked collection API,
  * sorted by `_id` for stable equality. The reader walks
  * `(snapshot, log_tail)` exactly the same way production does, so the
  * post-crash invariants are checked against the customer-visible
@@ -82,7 +83,7 @@ interface Row extends DocumentData {
  */
 const readAllRowIds = async (storage: Storage): Promise<string[]> => {
   const db = Db.create({ storage, app: "a", tenant: "t" });
-  const rows = await db.table<Row>(COLLECTION).where({}).all();
+  const rows = await (db.collection(COLLECTION) as Collection<Row>).where({}).all();
   return [...rows]
     .map((r) => r._id)
     .toSorted((a, b) => {

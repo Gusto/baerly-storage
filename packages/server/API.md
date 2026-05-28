@@ -24,8 +24,8 @@ only for exact signatures).
 import {
   Db,
   MemoryStorage,                 // in-memory `Storage`; canonical for tests
-  type Table, type Query,
-  type DocumentData, type ConsistencyLevel,
+  type Collection, type Query,
+  type DocumentData,
   BaerlyError, type BaerlyErrorCode,
   defineConfig,                  // narrower; root barrel
 } from "@gusto/baerly-storage";
@@ -37,7 +37,7 @@ import { defineConfig } from "@gusto/baerly-storage/config";
 // Browser / Node client (HTTP)
 import {
   createBaerlyClient,
-  type BaerlyClient, type ClientTable, type ClientQuery,
+  type BaerlyClient, type ClientCollection, type ClientQuery,
   type TerminalOptions, type Fetcher,
 } from "@gusto/baerly-storage/client";
 
@@ -58,8 +58,8 @@ import { LocalFsStorage } from "@gusto/baerly-storage/dev";
 ## `Db.create({ storage, app, tenant, config? })`
 
 One `Db` per `(app, tenant)` request. The constructor is private —
-always go through `Db.create`. Tables are auto-provisioned on first
-write (no `ensureTable` step).
+always go through `Db.create`. Collections are auto-provisioned on first
+write (no `ensureCollection` step).
 
 ```ts
 import { Db, MemoryStorage } from "@gusto/baerly-storage";
@@ -70,11 +70,11 @@ const db = Db.create({
   app: "tickets",
   tenant: "acme-co",
   config,                          // ← optional. Wires schemas + indexes
-                                   //   AND narrows `db.table(name)` types.
+                                   //   AND narrows `db.collection(name)` types.
 });
 
-await db.table("tickets").insert({ title: "first ticket", status: "open" });
-const open = await db.table("tickets").where({ status: "open" }).all();
+await db.collection("tickets").insert({ title: "first ticket", status: "open" });
+const open = await db.collection("tickets").where({ status: "open" }).all();
 ```
 
 Full `Db.create` config:
@@ -88,15 +88,15 @@ Db.create<TConfig>({
 });
 ```
 
-## `db.table(name)` → `Table<T>`
+## `db.collection(name)` → `Collection<T>`
 
-`Table<T>` carries the common-case verbs directly (table-level reads
-plus by-primary-key mutations). Modifiers (`where`, `order`, `limit`)
-return a `Query<T>` for bulk-by-predicate work. Terminals fire I/O on
-the spot.
+`Collection<T>` carries the common-case verbs directly (collection-level
+reads plus by-primary-key mutations). Modifiers (`where`, `order`,
+`limit`) return a `Query<T>` for bulk-by-predicate work. Terminals fire
+I/O on the spot.
 
 ```ts
-interface Table<T extends DocumentData = DocumentData> {
+interface Collection<T extends DocumentData = DocumentData> {
   readonly name: string;
   // Reads — whole collection / by id.
   first(): Promise<T | undefined>;
@@ -119,7 +119,7 @@ interface Table<T extends DocumentData = DocumentData> {
 bulk mutation verbs:
 
 ```ts
-interface Query<T> extends /* Table<T>'s modifiers */ {
+interface Query<T> extends /* Collection<T>'s modifiers */ {
   first(): Promise<T | undefined>;
   all(): Promise<T[]>;
   count(): Promise<number>;
@@ -128,7 +128,7 @@ interface Query<T> extends /* Table<T>'s modifiers */ {
 }
 ```
 
-`replace` is by-id only — `Table<T>.replace(id, doc)` throws
+`replace` is by-id only — `Collection<T>.replace(id, doc)` throws
 `NotFound` on missing id. There is no predicate-form `.replace(doc)`
 on `Query<T>`: a strict-cardinality-1 verb is redundant ceremony to
 the by-id form (see ADR-002).
@@ -156,11 +156,11 @@ so `.where({ _id: ... })` is a compile-time TS error. Nested `_id`
 paths (`author._id`) on referenced documents are still allowed.
 
 ```ts
-db.table("tickets").where({ status: "open" }).all();
-db.table("tickets").where({ "assignee.team": "platform" }).all();
-db.table("tickets").where(q => q.gte("count", 1).lt("count", 10)).all();
-db.table("tickets").where(q => q.in("status", ["open", "pending"])).all();
-db.table("tickets")
+db.collection("tickets").where({ status: "open" }).all();
+db.collection("tickets").where({ "assignee.team": "platform" }).all();
+db.collection("tickets").where(q => q.gte("count", 1).lt("count", 10)).all();
+db.collection("tickets").where(q => q.in("status", ["open", "pending"])).all();
+db.collection("tickets")
   .where({ status: "open" })
   .where(q => q.gte("priority", 5))
   .all();
@@ -184,32 +184,32 @@ The empty wire `{"clauses":[]}` matches every document.
 
 ## Mutations
 
-By-id (the common case) lives on `Table<T>`; predicate-aware bulk
+By-id (the common case) lives on `Collection<T>`; predicate-aware bulk
 verbs live on `Query<T>` after `.where(...)`.
 
 ```ts
-await db.table("tickets").insert({ status: "open", title: "ship it" });
+await db.collection("tickets").insert({ status: "open", title: "ship it" });
 // → { _id: "01HQ..." }  (UUIDv7; caller may supply `_id`)
 
-// By-id (Table<T>):
-await db.table("tickets").update("01HQ...", { status: "closed" });
+// By-id (Collection<T>):
+await db.collection("tickets").update("01HQ...", { status: "closed" });
 // → { modified: 1 }  (JSON-merge-patch RFC 7386; `null` deletes a field)
 
-await db.table("tickets").replace("01HQ...", {
+await db.collection("tickets").replace("01HQ...", {
   _id: "01HQ...", status: "open", title: "rewrite",
 });
 // → void  (whole-document overwrite)
 
-await db.table("tickets").delete("01HQ...");
+await db.collection("tickets").delete("01HQ...");
 // → { deleted: 1 }  (or `{ deleted: 0 }` if the id is unknown)
 
 // Bulk-by-predicate (Query<T>):
-await db.table("tickets")
+await db.collection("tickets")
   .where({ status: "open" })
   .update({ status: "closed", closed_at: new Date().toISOString() });
 // → { modified: N }
 
-await db.table("tickets").where({ status: "closed" }).delete();
+await db.collection("tickets").where({ status: "closed" }).delete();
 // → { deleted: N }
 ```
 
@@ -217,26 +217,32 @@ await db.table("tickets").where({ status: "closed" }).delete();
 
 Every row type must satisfy
 `{ [k: string]: DocumentValue }` where
-`DocumentValue = string | number | boolean | null | DocumentData | Array<DocumentValue>`.
+`DocumentValue = string | number | boolean | DocumentData | Array<DocumentValue>`.
 
-Three ways to get a typed row:
+Note: `null` is intentionally NOT a valid stored value. In a
+JSON-merge-patch (RFC 7386) `update`, `null` is the field-deletion
+sentinel; allowing it as a stored value would collapse "this field is
+null" with "delete this field". Use `.optional()` in your schema for
+absent values.
+
+Two ways to get a typed row:
 
 1. **Bind the config** (preferred). Declare collection in
    `baerly.config.ts` with a schema; pass `config` to `Db.create` /
-   `createBaerlyClient`. `db.table("tickets")` returns
-   `Table<RowOf<TConfig, "tickets">>`. No generic, no cast.
+   `createBaerlyClient`. `db.collection("tickets")` returns
+   `Collection<RowOf<TConfig, "tickets">>`. No generic, no cast.
 
-2. **Per-call generic.** Without a bound config:
+2. **Falls back to `DocumentData`** when no config is bound. Cast at
+   the construction site for a narrower row shape:
    ```ts
-   import type { DocumentData } from "@gusto/baerly-storage";
+   import type { Collection, DocumentData } from "@gusto/baerly-storage";
    interface Bookmark extends DocumentData { _id: string; url: string }
-   await db.table<Bookmark>("bookmarks").all();
+   const bookmarks = db.collection("bookmarks") as Collection<Bookmark>;
+   await bookmarks.all();
    ```
    A plain `interface Bookmark { _id: string; url: string }` (no
-   index signature) fails with TS2344 by design — the constraint
-   keeps the row JSON-compatible.
-
-3. **Falls back to `DocumentData`** if you omit the generic.
+   index signature) fails the `T extends DocumentData` constraint by
+   design — the constraint keeps the row JSON-compatible.
 
 ## Errors
 
@@ -245,7 +251,7 @@ Three ways to get a typed row:
 
 ```ts
 try {
-  await db.table("tickets").insert({ title: "hi" });
+  await db.collection("tickets").insert({ title: "hi" });
 } catch (err) {
   if (err instanceof BaerlyError && err.code === "Conflict") {
     // CAS lost; caller decides whether to retry
@@ -318,10 +324,10 @@ const client = createBaerlyClient<typeof config>({
   fetch: customFetcher,                          // optional Fetcher middleware
 });
 
-await client.table("tickets").where({ status: "open" }).all();
+await client.collection("tickets").where({ status: "open" }).all();
 ```
 
-`ClientTable<T>` mirrors `Table<T>` but every terminal accepts a
+`ClientCollection<T>` mirrors `Collection<T>` but every terminal accepts a
 trailing `TerminalOptions`:
 
 ```ts
@@ -329,16 +335,16 @@ interface TerminalOptions {
   signal?: AbortSignal;          // cancels this specific request
 }
 
-await client.table("tickets").all({ signal: ac.signal });
+await client.collection("tickets").all({ signal: ac.signal });
 ```
 
 That extra options bag is the **only** API difference between
-`Table<T>` and `ClientTable<T>`. Same modifiers, same terminals,
+`Collection<T>` and `ClientCollection<T>`. Same modifiers, same terminals,
 same predicates.
 
 ## Long-poll: `/v1/since`
 
-`GET /v1/since?table=…&cursor=…` is the long-poll endpoint that
+`GET /v1/since?collection=…&cursor=…` is the long-poll endpoint that
 streams mutations without WebSockets. The server holds the request
 open for ~25 s; if new log entries land in that window it flushes
 them immediately, otherwise it returns an empty batch with the
@@ -407,9 +413,9 @@ directly, or import the internal `pollSinceOnce` helper from
 ## React: `BaerlyProvider`, `useQuery`, `useMutation`
 
 `@gusto/baerly-storage/client/react` exposes three symbols. The provider
-owns a shared `/v1/since` long-poll per `(client, table)`; idle
+owns a shared `/v1/since` long-poll per `(client, collection)`; idle
 cycles cost zero list reads, and any non-empty batch invalidates
-every `useQuery` whose chain touches the firing table.
+every `useQuery` whose chain touches the firing collection.
 
 ```tsx
 import {
@@ -422,9 +428,9 @@ import {
 </BaerlyProvider>
 
 // 2. useQuery(cb, deps) — cb receives the bare client and returns
-//    a ClientTable / ClientQuery chain. Re-runs on deps change OR
+//    a ClientCollection / ClientQuery chain. Re-runs on deps change OR
 //    on long-poll invalidation. Result is a discriminated union:
-const result = useQuery((c) => c.table<Note>("notes").all(), []);
+const result = useQuery((c) => c.collection("notes").all() as Promise<Note[]>, []);
 // result.status: "loading" | "ok" | "error" | "skipped"
 // result.data:   T[] | undefined        (present iff status === "ok")
 // result.error:  BaerlyError | undefined (present iff status === "error")
@@ -434,7 +440,7 @@ const result = useQuery((c) => c.table<Note>("notes").all(), []);
 const filtered = useQuery(
   (c) => filter === "all"
     ? useQuery.skip
-    : c.table<Note>("notes").where({ status: filter }).all(),
+    : c.collection("notes").where({ status: filter }).all() as Promise<Note[]>,
   [filter],
 );
 
@@ -442,7 +448,7 @@ const filtered = useQuery(
 //    Run any client call inside mutate; subscribed useQuery reads
 //    re-run automatically once the long-poll sees the write.
 const [mutate, { isPending, error }] = useMutation();
-await mutate((c) => c.table("notes").insert({ body }));
+await mutate((c) => c.collection("notes").insert({ body }));
 ```
 
 ## HTTP wire format
@@ -450,15 +456,15 @@ await mutate((c) => c.table("notes").insert({ body }));
 The JS SDK is the canonical path. Reach for `curl` only when
 debugging. Mutation bodies are wrapped:
 
-| Route                       | Body                | Response                       |
-| --------------------------- | ------------------- | ------------------------------ |
-| `POST   /v1/t/:table`       | `{"doc":{...}}`     | `201 {_id}`                    |
-| `PATCH  /v1/t/:table/:id`   | `{"patch":{...}}`   | `200 {modified}`               |
-| `PUT    /v1/t/:table/:id`   | `{"doc":{...}}`     | `200 {modified}`               |
-| `DELETE /v1/t/:table/:id`   | —                   | `204`                          |
+| Route                            | Body                | Response                       |
+| -------------------------------- | ------------------- | ------------------------------ |
+| `POST   /v1/c/:collection`       | `{"doc":{...}}`     | `201 {_id}`                    |
+| `PATCH  /v1/c/:collection/:id`   | `{"patch":{...}}`   | `200 {modified}`               |
+| `PUT    /v1/c/:collection/:id`   | `{"doc":{...}}`     | `200 {modified}`               |
+| `DELETE /v1/c/:collection/:id`   | —                   | `204`                          |
 
-Reads (`GET /v1/t/:table[/:id]`, `GET /v1/count?table=…`,
-`GET /v1/since?table=…&cursor=…`) take no body and return
+Reads (`GET /v1/c/:collection[/:id]`, `GET /v1/count?collection=…`,
+`GET /v1/since?collection=…&cursor=…`) take no body and return
 `{ data, _meta }` or a route-specific envelope. A flat `POST` body
 (no `doc` wrapper) returns
 `400 SchemaError "Request body must be { doc: object }"` — wording is
@@ -466,7 +472,7 @@ locked by `assertJsonBodyField` in the kernel.
 
 ### Read modifiers (query params)
 
-`GET /v1/t/:table` accepts three JSON-encoded query params; all are
+`GET /v1/c/:collection` accepts three JSON-encoded query params; all are
 optional and compose:
 
 | Param      | Encodes                                | Wire example                                 |
@@ -548,7 +554,7 @@ runtime.
 Use this shape when a column must come from the verified identity
 rather than the client request body (`sender_sub` on chat messages,
 `owner_id` on user-owned rows, `created_by` on audit logs). The
-HTTP routes `baerlyWorker` mounts under `/v1/t/:table` accept the
+HTTP routes `baerlyWorker` mounts under `/v1/c/:collection` accept the
 doc verbatim from the request body — they don't read the verifier
 identity into the row. Stamp it yourself in a custom route, then
 block direct client writes to the same collection so a malicious
@@ -578,7 +584,7 @@ export default {
 
     // (1) Block client writes to the trusted-stamp collection.
     if (
-      url.pathname.startsWith("/v1/t/messages") &&
+      url.pathname.startsWith("/v1/c/messages") &&
       req.method !== "GET"
     ) {
       return new Response("client writes disabled — POST /api/messages", {
@@ -599,7 +605,7 @@ export default {
         tenant: verified.tenantPrefix,
         config,
       });
-      const { _id } = await db.table("messages").insert({
+      const { _id } = await db.collection("messages").insert({
         body,
         sender_sub: (verified.identity as { sub: string }).sub,
         sent_at: Date.now(),
@@ -613,8 +619,8 @@ export default {
 } satisfies ExportedHandler<BaerlyEnv>;
 ```
 
-The client reads via the normal `GET /v1/t/messages` route and tails
-via `GET /v1/since?table=messages&cursor=…` — both still served by
+The client reads via the normal `GET /v1/c/messages` route and tails
+via `GET /v1/since?collection=messages&cursor=…` — both still served by
 `inner`. Only writes go through `/api/messages`.
 
 **Known limitations of this recipe.** The custom-route `Db.create` is

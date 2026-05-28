@@ -59,7 +59,7 @@ describe("longPollSince — cursor validation", () => {
     await expect(
       longPollSince({
         db,
-        table: TABLE,
+        collection: TABLE,
         cursor: "not-an-lsn",
         timeoutMs: 100,
         pollIntervalMs: 25,
@@ -92,7 +92,7 @@ describe("longPollSince — fake-timer cases", () => {
     const { db } = makeDb();
     const promise = longPollSince({
       db,
-      table: TABLE,
+      collection: TABLE,
       cursor: "",
       timeoutMs: 100,
       pollIntervalMs: 25,
@@ -109,8 +109,8 @@ describe("longPollSince — fake-timer cases", () => {
   test("fast path: two pre-existing entries return without polling", async () => {
     const { db, storage } = makeDb();
     await provision(storage);
-    await db.table(TABLE).insert({ title: "a" });
-    await db.table(TABLE).insert({ title: "b" });
+    await db.collection(TABLE).insert({ title: "a" });
+    await db.collection(TABLE).insert({ title: "b" });
 
     // Fast-path is checked synchronously before any setTimeout
     // scheduling. No `advanceTimersByTime` needed; if the test ever
@@ -118,7 +118,7 @@ describe("longPollSince — fake-timer cases", () => {
     // in the afterEach `useRealTimers` cleanup.
     const result = await longPollSince({
       db,
-      table: TABLE,
+      collection: TABLE,
       cursor: "",
       timeoutMs: 5_000,
       pollIntervalMs: 50,
@@ -134,7 +134,7 @@ describe("longPollSince — fake-timer cases", () => {
 
     const pollPromise = longPollSince({
       db,
-      table: TABLE,
+      collection: TABLE,
       cursor: "",
       timeoutMs: 2_000,
       pollIntervalMs: 50,
@@ -145,7 +145,7 @@ describe("longPollSince — fake-timer cases", () => {
     await vi.advanceTimersByTimeAsync(100);
     // Inject the event. The insert is real I/O against MemoryStorage
     // (no fake-timed delays inside it).
-    await db.table(TABLE).insert({ title: "inserted-mid-poll" });
+    await db.collection(TABLE).insert({ title: "inserted-mid-poll" });
     // Let the next tick observe the new event.
     await vi.advanceTimersByTimeAsync(100);
 
@@ -158,12 +158,12 @@ describe("longPollSince — fake-timer cases", () => {
   test("idle timeout: returns empty events + same cursor at deadline", async () => {
     const { db, storage } = makeDb();
     await provision(storage);
-    await db.table(TABLE).insert({ title: "seed" });
+    await db.collection(TABLE).insert({ title: "seed" });
 
     // First poll: fast path catches the seed entry.
     const first = await longPollSince({
       db,
-      table: TABLE,
+      collection: TABLE,
       cursor: "",
       timeoutMs: 500,
       pollIntervalMs: 25,
@@ -173,7 +173,7 @@ describe("longPollSince — fake-timer cases", () => {
 
     const secondPromise = longPollSince({
       db,
-      table: TABLE,
+      collection: TABLE,
       cursor,
       timeoutMs: 300,
       pollIntervalMs: 25,
@@ -194,7 +194,7 @@ describe("longPollSince — fake-timer cases", () => {
     const controller = new AbortController();
     const pollPromise = longPollSince({
       db,
-      table: TABLE,
+      collection: TABLE,
       cursor: "",
       timeoutMs: 5_000,
       pollIntervalMs: 50,
@@ -217,13 +217,13 @@ describe("listEventsSince — pre-snapshot cursor → SchemaError", () => {
   test("cursor inside [0, log_seq_start) rejects", async () => {
     const { db, storage } = makeDb();
     await provision(storage);
-    const { _id } = await db.table(TABLE).insert({ title: "to-be-folded" });
+    const { _id } = await db.collection(TABLE).insert({ title: "to-be-folded" });
     expect(_id).toBeDefined();
 
     // Capture the lsn of the seed entry via a fast-path poll.
     const seed = await longPollSince({
       db,
-      table: TABLE,
+      collection: TABLE,
       cursor: "",
       timeoutMs: 500,
       pollIntervalMs: 25,
@@ -247,7 +247,7 @@ describe("listEventsSince — pre-snapshot cursor → SchemaError", () => {
     };
     await storage.put(cjKey, new TextEncoder().encode(JSON.stringify(mutated)));
 
-    await expect(listEventsSince({ db, table: TABLE, cursor })).rejects.toMatchObject({
+    await expect(listEventsSince({ db, collection: TABLE, cursor })).rejects.toMatchObject({
       name: "BaerlyError",
       code: "SchemaError",
     });
@@ -274,13 +274,13 @@ describe("longPollSince — cursor advances past the digit boundary", () => {
     const { db, storage } = makeDb();
     await provision(storage);
     for (let i = 0; i < 12; i++) {
-      await db.table(TABLE).insert({ title: `row-${i}` });
+      await db.collection(TABLE).insert({ title: `row-${i}` });
     }
 
     // First poll: fast path picks up all 12 entries.
     const first = await longPollSince({
       db,
-      table: TABLE,
+      collection: TABLE,
       cursor: "",
       timeoutMs: 500,
       pollIntervalMs: 25,
@@ -295,7 +295,7 @@ describe("longPollSince — cursor advances past the digit boundary", () => {
     // below trips.
     const secondPromise = longPollSince({
       db,
-      table: TABLE,
+      collection: TABLE,
       cursor,
       timeoutMs: 300,
       pollIntervalMs: 25,

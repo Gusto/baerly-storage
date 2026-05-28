@@ -143,7 +143,7 @@ describe("createApp observability", () => {
       observability: { level: "debug", sink },
     });
 
-    const res = await fetch(`${url}/v1/t/c`, {
+    const res = await fetch(`${url}/v1/c/c`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ doc: { _id: "w-1", v: 1 } }),
@@ -175,7 +175,7 @@ describe("createApp observability", () => {
       observability: { level: "debug", sink },
     });
 
-    const res = await fetch(`${url}/v1/t/c`);
+    const res = await fetch(`${url}/v1/c/c`);
     expect(res.status).toBe(200);
 
     const line = findCanonical(records, "http");
@@ -200,7 +200,7 @@ describe("createApp observability", () => {
     });
 
     const correlation = "test-correlation-7a3f";
-    const res = await fetch(`${url}/v1/t/c`, {
+    const res = await fetch(`${url}/v1/c/c`, {
       headers: { "x-request-id": correlation },
     });
     expect(res.status).toBe(200);
@@ -225,7 +225,7 @@ describe("createApp observability", () => {
       observability: { level: "debug", sink },
     });
 
-    const res = await fetch(`${url}/v1/t/c`);
+    const res = await fetch(`${url}/v1/c/c`);
     expect(res.status).toBe(200);
 
     const line = findCanonical(records, "http");
@@ -236,7 +236,7 @@ describe("createApp observability", () => {
     expect(props).not.toHaveProperty("cache_status");
     expect(props).toHaveProperty("request_id");
     expect(props["method"]).toBe("GET");
-    expect(props["path"]).toBe("/v1/t/c");
+    expect(props["path"]).toBe("/v1/c/c");
     expect(props["status"]).toBe(200);
     expect(props["outcome"]).toBe("read");
     // A GET issues class B ops (reads); class A (writes) may be zero.
@@ -330,7 +330,7 @@ describe("createFetchHandler", () => {
       storage,
       verifier: denyingVerifier,
     });
-    const res = await handler(new Request("http://x/v1/t/c", { method: "GET" }));
+    const res = await handler(new Request("http://x/v1/c/c", { method: "GET" }));
     expect(res.status).toBe(401);
     const body = (await res.json()) as { error: { code: string } };
     expect(body.error.code).toBe("Unauthorized");
@@ -355,7 +355,7 @@ describe("createFetchHandler", () => {
       verifier: denyingVerifier,
       observability: { level: "debug", sink },
     });
-    const res = await handler(new Request("http://x/v1/t/c", { method: "GET" }));
+    const res = await handler(new Request("http://x/v1/c/c", { method: "GET" }));
     expect(res.status).toBe(401);
     expect(res.headers.get("content-type")).toBe("application/json");
     const body = (await res.json()) as { error?: { code?: string; message?: string } };
@@ -370,7 +370,7 @@ describe("createFetchHandler", () => {
     expect(props["status"]).toBe(401);
     expect(props["outcome"]).toBe("error");
     expect(props["method"]).toBe("GET");
-    expect(props["path"]).toBe("/v1/t/c");
+    expect(props["path"]).toBe("/v1/c/c");
 
     const warn = records.find(
       (r) => r.message.join("") === "verifier_rejected" && r.category.join(".") === "baerly.http",
@@ -387,7 +387,7 @@ describe("createFetchHandler", () => {
       storage,
       verifier: okVerifier,
     });
-    const res = await handler(new Request("http://x/v1/t/c", { method: "GET" }));
+    const res = await handler(new Request("http://x/v1/c/c", { method: "GET" }));
     expect(res.status).toBe(200);
   });
 
@@ -400,7 +400,7 @@ describe("createFetchHandler", () => {
       verifier: okVerifier,
     });
     const res = await handler(
-      new Request("http://x/v1/t/c", {
+      new Request("http://x/v1/c/c", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ doc: { _id: "fh-1", v: 1 } }),
@@ -520,7 +520,7 @@ describe("createApp client-disconnect resilience", () => {
         host,
         port,
         method: "GET",
-        path: "/v1/since?table=c&cursor=",
+        path: "/v1/since?collection=c&cursor=",
         headers: { authorization: "Bearer dev" },
       });
       // Send the request without listening for a response — we never
@@ -586,7 +586,7 @@ describe("createApp client-disconnect resilience", () => {
       host,
       port,
       method: "GET",
-      path: "/v1/since?table=c&cursor=",
+      path: "/v1/since?collection=c&cursor=",
       headers: { authorization: "Bearer dev" },
     });
     clientReq.on("error", () => {});

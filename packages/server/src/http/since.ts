@@ -82,7 +82,7 @@ const DEFAULT_POLL_INTERVAL_MS = 1_000;
 
 export interface LongPollSinceOptions {
   readonly db: Db<BaerlyConfig>;
-  readonly table: string;
+  readonly collection: string;
   /** Opaque cursor; empty string = from `log_seq_start`. */
   readonly cursor: string;
   readonly signal?: AbortSignal;
@@ -92,7 +92,7 @@ export interface LongPollSinceOptions {
 
 export interface ListEventsSinceOptions {
   readonly db: Db<BaerlyConfig>;
-  readonly table: string;
+  readonly collection: string;
   /** Opaque cursor; empty string = from `log_seq_start`. */
   readonly cursor: string;
   readonly signal?: AbortSignal;
@@ -111,7 +111,7 @@ export interface ListEventsSinceOptions {
  *   snapshot and GC'd.
  */
 export async function longPollSince(opts: LongPollSinceOptions): Promise<SinceResponse> {
-  const { db, table, cursor, signal } = opts;
+  const { db, collection, cursor, signal } = opts;
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const pollIntervalMs = opts.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
 
@@ -125,7 +125,7 @@ export async function longPollSince(opts: LongPollSinceOptions): Promise<SinceRe
   }
 
   // Fast path: the first poll already sees new events.
-  const initial = await listEventsSince({ db, table, cursor, signal });
+  const initial = await listEventsSince({ db, collection, cursor, signal });
   if (initial.length > 0) {
     return { events: initial, next_cursor: initial[initial.length - 1]!.lsn };
   }
@@ -185,7 +185,7 @@ export async function longPollSince(opts: LongPollSinceOptions): Promise<SinceRe
         return;
       }
       try {
-        const events = await listEventsSince({ db, table, cursor, signal });
+        const events = await listEventsSince({ db, collection, cursor, signal });
         if (settled) {
           return;
         }
@@ -233,11 +233,11 @@ export async function longPollSince(opts: LongPollSinceOptions): Promise<SinceRe
  * free — `seq` is monotonic across writer sessions.
  *
  * No `current.json` yet → `[]` (clients can poll a not-yet-existing
- * table without erroring). Cursor inside `[0, log_seq_start)` →
+ * collection without erroring). Cursor inside `[0, log_seq_start)` →
  * `BaerlyError{code:"SchemaError"}`.
  */
 export async function listEventsSince(opts: ListEventsSinceOptions): Promise<LogEntry[]> {
-  const { db, table, cursor, signal } = opts;
+  const { db, collection, cursor, signal } = opts;
 
   if (cursor.length > 0 && !LSN_RE.test(cursor)) {
     throw new BaerlyError(
@@ -246,9 +246,9 @@ export async function listEventsSince(opts: ListEventsSinceOptions): Promise<Log
     );
   }
 
-  const read = await db.getCurrentJson(table, signalOpt(signal));
+  const read = await db.getCurrentJson(collection, signalOpt(signal));
   if (read === null) {
-    // No table provisioned yet. Clients polling for a table that
+    // No collection provisioned yet. Clients polling for a collection that
     // doesn't exist see an empty stream, NOT an error.
     return [];
   }
@@ -284,7 +284,7 @@ export async function listEventsSince(opts: ListEventsSinceOptions): Promise<Log
   // memory bounded under pathological workloads.
   const entries: LogEntry[] = [];
   for (let s = startSeq; s < endSeq; s++) {
-    const entry = await db.getLogEntry(table, s, signalOpt(signal));
+    const entry = await db.getLogEntry(collection, s, signalOpt(signal));
     if (entry === null) {
       // Race: the GC sweeper deleted this entry between
       // `getCurrentJson` and the GET. Skip; don't error.

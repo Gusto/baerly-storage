@@ -21,6 +21,7 @@
 
 import { expect } from "vitest";
 import {
+  type Collection,
   type CurrentJson,
   CURRENT_JSON_SCHEMA_VERSION,
   type DocumentData,
@@ -525,7 +526,7 @@ const seedParityDocs = async (
 /**
  * Range-walk parity cascade: for a set of random string-typed range
  * predicates over a seeded doc set, assert that the
- * `db.table().where(p).all()` result (routed through the planner
+ * `db.collection().where(p).all()` result (routed through the planner
  * when the predicate matches the declared index) matches the
  * in-memory full-scan result `docs.filter(d => matches(p, d))`.
  *
@@ -576,7 +577,7 @@ export const runRangeWalkParityCascade = async (opts: {
     tenant,
     config: { collections: { [collection]: { indexes: [...indexes] } } },
   });
-  const table = db.table<ParityDoc>(collection);
+  const table = db.collection(collection) as Collection<ParityDoc>;
 
   // Deterministic pseudo-random for reproducibility (LCG seeded
   // off tenant). Spec doesn't require cryptographic randomness;

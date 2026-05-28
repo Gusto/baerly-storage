@@ -33,7 +33,7 @@ export type QueryPlan = IndexWalkPlan | FullScanPlan;
 /**
  * Plan to satisfy the predicate by walking one declared index. The
  * executor encodes `equalityKeys` via `encodeIndexValue` at the I/O
- * boundary and lists `<tablePrefix>/index/<indexName>/<v0>/.../<vN>/`.
+ * boundary and lists `<collectionPrefix>/index/<indexName>/<v0>/.../<vN>/`.
  *
  * `rangeOn` and `inOn` are reserved for T3 — both `undefined` under
  * T2's equality-only routing. The executor re-applies the FULL

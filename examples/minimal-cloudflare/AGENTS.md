@@ -20,18 +20,18 @@ read:
   code, every example. If a pattern you want to use isn't here, it
   doesn't exist in baerly.
 - **`node_modules/@gusto/baerly-storage/dist/*.d.ts`** — authoritative type
-  signatures. `Db`, `Table<T>`, `Query<T>`, and `Predicate<T>` are
+  signatures. `Db`, `Collection<T>`, `Query<T>`, and `Predicate<T>` are
   the whole API surface.
 
 Common anti-patterns that compile but are wrong:
 
 - `db.collection(name).insertOne(...)` / `.find({...})` (Mongo) — use
-  `db.table(name).insert(row)` and `.where({ ... }).all()`.
+  `db.collection(name).insert(row)` and `.where({ ... }).all()`.
 - `z.string().nullable()` in a schema — `DocumentValue` excludes
   `null`. Use `.optional()`; `null` in an update patch is the RFC
   7396 deletion sentinel, not a storable value.
 - Raw SQL strings, `WHERE` clauses, hand-built query AST — the only
-  query surface is `db.table(...).where({ field: value }).all()` or
+  query surface is `db.collection(...).where({ field: value }).all()` or
   `.where(q => q.gte("count", 1))`. See **Predicates** below.
 - `.useIndex("name")` / `.hint(...)` — no such methods. The planner
   picks the index automatically from `IndexDefinition`s in
@@ -49,7 +49,7 @@ the Worker inside `workerd` alongside the SPA dev server, and
 the Worker on deploy. Same origin in dev and prod, one deploy.
 
 Public API docs: https://docs.baerly.dev/ (the JSDoc on
-`baerly-storage`'s `Db` and `Table` is the canonical reference;
+`baerly-storage`'s `Db` and `Collection` is the canonical reference;
 read it via your editor's TS LS or via the published types).
 
 ## Toolchain
@@ -122,8 +122,8 @@ http://localhost:5173/<path>`) before declaring the task complete.
   1. **Bind the config.** Declare the collection (with an optional
      schema) in `baerly.config.ts`, pass `config` to
      `createBaerlyClient({ baseUrl, config })` (or `Db.create({
-     storage, config })`), and `client.table("tickets")` returns
-     `ClientTable<Row>` with `Row` derived from the schema. No
+     storage, config })`), and `client.collection("tickets")` returns
+     `ClientCollection<Row>` with `Row` derived from the schema. No
      generic needed.
   2. **Explicit generic, kernel constraint.** Without a declared
      collection, the second overload requires the row to satisfy
@@ -156,8 +156,8 @@ http://localhost:5173/<path>`) before declaring the task complete.
       tenant: "t",
       config,
     });
-    const { _id } = await db.table("notes").insert({ body: "hello" });
-    const row = await db.table("notes").get(_id);
+    const { _id } = await db.collection("notes").insert({ body: "hello" });
+    const row = await db.collection("notes").get(_id);
     expect(row?.body).toBe("hello");
   });
   ```
@@ -168,7 +168,7 @@ http://localhost:5173/<path>`) before declaring the task complete.
   instance into multiple `Db.create` calls so they share the
   underlying bucket.
 
-- **Predicates** — `db.table("tickets").where({...}).all()`. Two
+- **Predicates** — `db.collection("tickets").where({...}).all()`. Two
   shapes:
 
   - **Object literal** — equality only (top-level, dotted-path, or
@@ -182,25 +182,25 @@ http://localhost:5173/<path>`) before declaring the task complete.
 
   ```ts
   // Top-level equality (Db inside the Worker, client in the SPA)
-  await db.table("tickets").where({ status: "open" }).all();
+  await db.collection("tickets").where({ status: "open" }).all();
 
   // Dotted-path on a nested field
-  await db.table("tickets")
+  await db.collection("tickets")
     .where({ "assignee.team": "platform" })
     .all();
 
   // Operator on a single field — set membership (callback form)
-  await db.table("tickets")
+  await db.collection("tickets")
     .where(q => q.in("status", ["open", "pending"]))
     .all();
 
   // Range — also callback form
-  await db.table("tickets")
+  await db.collection("tickets")
     .where(q => q.gte("priority", 5).lt("priority", 10))
     .all();
 
   // AND-merge across two .where() calls (mix shapes freely)
-  await db.table("tickets")
+  await db.collection("tickets")
     .where({ status: "open" })
     .where(q => q.gte("priority", 5))
     .all();
@@ -229,7 +229,7 @@ http://localhost:5173/<path>`) before declaring the task complete.
   });
   ```
 
-  With that declared, `db.table("tickets").where({ status: "open"
+  With that declared, `db.collection("tickets").where({ status: "open"
   }).all()` walks `by_status` automatically. Composite indexes
   (`on: ["status", "priority"]`) match any leftmost prefix.
   Mismatches (predicate doesn't cover any index) fall back to a full
@@ -266,18 +266,18 @@ http://localhost:5173/<path>`) before declaring the task complete.
   just the patch.
 
 - **HTTP wire format (calling `/v1/*` directly)** — the JS SDK
-  (`db.table(name).insert(...)`) is the canonical path; reach for `curl`
+  (`db.collection(name).insert(...)`) is the canonical path; reach for `curl`
   only when debugging the wire. Mutation bodies are wrapped:
 
   | Route                       | Body                | Response                      |
   | --------------------------- | ------------------- | ----------------------------- |
-  | `POST   /v1/t/:table`       | `{"doc":{...}}`     | `201 {_id}`                   |
-  | `PATCH  /v1/t/:table/:id`   | `{"patch":{...}}`   | `200 {modified}`              |
-  | `PUT    /v1/t/:table/:id`   | `{"doc":{...}}`     | `200 {modified}`              |
-  | `DELETE /v1/t/:table/:id`   | —                   | `204`                         |
+  | `POST   /v1/c/:collection`       | `{"doc":{...}}`     | `201 {_id}`                   |
+  | `PATCH  /v1/c/:collection/:id`   | `{"patch":{...}}`   | `200 {modified}`              |
+  | `PUT    /v1/c/:collection/:id`   | `{"doc":{...}}`     | `200 {modified}`              |
+  | `DELETE /v1/c/:collection/:id`   | —                   | `204`                         |
 
-  Reads (`GET /v1/t/:table[/:id]`, `GET /v1/count?table=…`,
-  `GET /v1/since?table=…&cursor=…`) take no body and return
+  Reads (`GET /v1/c/:collection[/:id]`, `GET /v1/count?collection=…`,
+  `GET /v1/since?collection=…&cursor=…`) take no body and return
   `{ data, _meta }` or a route-specific envelope. A flat `POST` body
   (without the `doc` wrapper) returns
   `400 SchemaError "Request body must be { doc: object }"` — the
@@ -424,7 +424,7 @@ from the runtime env.
           tenant: config.tenant,
           config,
         });
-        // …db.transaction(...), db.table(...).get(id), etc.
+        // …db.transaction(...), db.collection(...).get(id), etc.
         return new Response(null, { status: 204 });
       }
       // Fall through to the baerly cascade for /v1/* + /healthz.
@@ -499,12 +499,12 @@ from the runtime env.
 - Mutating `VerifierResult.tenantPrefix` between the verifier
   and `Db.create`. The dispatcher pins the tenant from the
   verifier's return value.
-- Calling `db.table(...).all()` (or any unbounded read) inside a
+- Calling `db.collection(...).all()` (or any unbounded read) inside a
   per-request handler. The call scans the entire collection on every
   request — fine for a fixture-sized table, catastrophic at any real
   size, and `pnpm verify` doesn't surface the cost. Push the filter
   into the predicate so the index planner can prune
-  (`db.table("notes").where({ ... }).all()`), or maintain a
+  (`db.collection("notes").where({ ... }).all()`), or maintain a
   side-projection (D1/KV/search index) populated incrementally from
   the `/v1/since` log feed or from a write hook — never re-scan per
   request.

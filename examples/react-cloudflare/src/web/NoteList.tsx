@@ -21,7 +21,7 @@ const NoteRow = ({ note }: { note: Note }) => {
             <button
               disabled={isSaving}
               onClick={async () => {
-                await save((c) => c.table("notes").update(note._id, { body }));
+                await save((c) => c.collection("notes").update(note._id, { body }));
                 setIsEditing(false);
               }}
             >
@@ -54,7 +54,7 @@ const NoteRow = ({ note }: { note: Note }) => {
                 if (!window.confirm("Delete this note?")) {
                   return;
                 }
-                await del((c) => c.table("notes").delete(note._id));
+                await del((c) => c.collection("notes").delete(note._id));
               }}
             >
               {isDeleting ? "Deleting…" : "Delete"}
@@ -68,7 +68,7 @@ const NoteRow = ({ note }: { note: Note }) => {
 };
 
 export const NoteList = () => {
-  const result = useQuery((c) => c.table<Note>("notes").all(), []);
+  const result = useQuery((c) => c.collection("notes").all() as Promise<Note[]>, []);
   if (result.status === "error") {
     return <p className="error">Error: {result.error.message}</p>;
   }

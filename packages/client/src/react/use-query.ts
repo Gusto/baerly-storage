@@ -28,7 +28,7 @@ const SKIPPED_SNAPSHOT: UseQueryResult<never> = Object.freeze({
 });
 
 interface RecorderState {
-  readonly tablesRead: Set<string>;
+  readonly collectionsRead: Set<string>;
   readonly chain: Array<string>;
 }
 
@@ -96,42 +96,42 @@ const makeQuery = (state: RecorderState): unknown => {
   return query;
 };
 
-const makeTable = (name: string, state: RecorderState): unknown => {
-  state.tablesRead.add(name);
-  state.chain.push(`table:${name}`);
-  const table: Record<string, unknown> = {
+const makeCollection = (name: string, state: RecorderState): unknown => {
+  state.collectionsRead.add(name);
+  state.chain.push(`collection:${name}`);
+  const collection: Record<string, unknown> = {
     name,
   };
   for (const modifier of ["where", "order", "limit"]) {
-    table[modifier] = (): unknown => {
+    collection[modifier] = (): unknown => {
       state.chain.push(modifier);
       return makeQuery(state);
     };
   }
   for (const terminal of ["first", "all", "count", "get"]) {
-    table[terminal] = (): unknown => {
+    collection[terminal] = (): unknown => {
       state.chain.push(terminal);
       return makeTerminal();
     };
   }
   for (const write of WRITE_METHODS) {
-    table[write] = (): never => {
+    collection[write] = (): never => {
       throw new BaerlyError(
         "UnexpectedWriteInQuery",
-        `useQuery callbacks must not write to the database. .${write}() was called on table "${name}". Use useMutation() instead.`,
+        `useQuery callbacks must not write to the database. .${write}() was called on collection "${name}". Use useMutation() instead.`,
       );
     };
   }
-  return table;
+  return collection;
 };
 
 const createRecorder = (): { client: unknown; state: RecorderState } => {
   const state: RecorderState = {
-    tablesRead: new Set(),
+    collectionsRead: new Set(),
     chain: [],
   };
   const recorder = {
-    table: (name: string): unknown => makeTable(name, state),
+    collection: (name: string): unknown => makeCollection(name, state),
     healthz: (): never => {
       throw new BaerlyError(
         "UnexpectedWriteInQuery",
@@ -144,7 +144,7 @@ const createRecorder = (): { client: unknown; state: RecorderState } => {
 
 interface DiscoveryOk {
   readonly kind: "ok";
-  readonly tables: ReadonlyArray<string>;
+  readonly collections: ReadonlyArray<string>;
   readonly chainShape: string;
   readonly callbackResult: unknown;
 }
@@ -175,7 +175,7 @@ const discover = (
   }
   return {
     kind: "ok",
-    tables: [...state.tablesRead].toSorted(),
+    collections: [...state.collectionsRead].toSorted(),
     chainShape: stableKey(state.chain),
     callbackResult,
   };
@@ -183,8 +183,8 @@ const discover = (
 
 /**
  * Reactive read against a `baerly` server. The callback receives a
- * type-compatible `BaerlyClient` proxy that records which tables it
- * touches; the hook subscribes to those tables and re-runs the
+ * type-compatible `BaerlyClient` proxy that records which collections it
+ * touches; the hook subscribes to those collections and re-runs the
  * callback against the real client when any of them mutate.
  *
  * Re-runs also fire whenever the `deps` array changes between
@@ -200,23 +200,23 @@ const discover = (
  * @example
  * ```tsx
  * // Single read
- * const note = useQuery((c) => c.table("notes").get(id), [id]);
+ * const note = useQuery((c) => c.collection("notes").get(id), [id]);
  * if (note.status === "loading") return <Spinner/>;
  * if (note.status === "error") return <Err e={note.error}/>;
  * return <pre>{note.data?.body}</pre>;  // typed Note | undefined
  *
  * // Deferred read
  * const list = useQuery(
- *   (c) => userId ? c.table("notes").where({ authorId: userId }).all() : useQuery.skip,
+ *   (c) => userId ? c.collection("notes").where({ authorId: userId }).all() : useQuery.skip,
  *   [userId],
  * );
  * if (list.status === "skipped") return null;
  *
  * // Dependent read (parent → child)
- * const parent  = useQuery((c) => c.table("notes").get(id), [id]);
+ * const parent  = useQuery((c) => c.collection("notes").get(id), [id]);
  * const replies = useQuery(
  *   (c) => parent.status === "ok"
- *     ? c.table("comments").where({ noteId: parent.data._id }).all()
+ *     ? c.collection("comments").where({ noteId: parent.data._id }).all()
  *     : useQuery.skip,
  *   [parent.status === "ok" ? parent.data._id : undefined],
  * );
@@ -296,10 +296,11 @@ const useQueryImpl = <T, TConfig extends BaerlyConfig = UnboundConfig>(
     }
   }
 
-  // Subscription channel — stable per (client, tablesRead.join(" ")).
+  // Subscription channel — stable per (client, collectionsRead.join(" ")).
   // Pool's getSnapshot returns the current cached entry for this
   // signature; React polls it on subscribe + on every notify.
-  const tablesJoin = discovery.kind === "ok" ? discovery.tables.join("\x00") : "__non_ok__";
+  const collectionsJoin =
+    discovery.kind === "ok" ? discovery.collections.join("\x00") : "__non_ok__";
 
   const fetcherRef = useRef<() => Promise<unknown>>(() => Promise.resolve(undefined));
   fetcherRef.current = (): Promise<unknown> => {
@@ -310,12 +311,12 @@ const useQueryImpl = <T, TConfig extends BaerlyConfig = UnboundConfig>(
     return out as Promise<unknown>;
   };
 
-  const chainTablesRef = useRef<ReadonlySet<string>>(new Set());
+  const chainCollectionsRef = useRef<ReadonlySet<string>>(new Set());
   const discoveryKindRef = useRef<DiscoveryResult["kind"]>("ok");
   const discoveryErrorRef = useRef<Error | undefined>(undefined);
   discoveryKindRef.current = discovery.kind;
   if (discovery.kind === "ok") {
-    chainTablesRef.current = new Set(discovery.tables);
+    chainCollectionsRef.current = new Set(discovery.collections);
     discoveryErrorRef.current = undefined;
   } else if (discovery.kind === "error") {
     discoveryErrorRef.current = discovery.error;
@@ -330,16 +331,16 @@ const useQueryImpl = <T, TConfig extends BaerlyConfig = UnboundConfig>(
       }
       return pool.attach(
         signatureBase,
-        discovery.tables,
-        chainTablesRef.current,
+        discovery.collections,
+        chainCollectionsRef.current,
         () => fetcherRef.current(),
         notify,
       );
     },
-    // The signature/tables determine the subscription; React
+    // The signature/collections determine the subscription; React
     // re-subscribes when either changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [pool, signatureBase, tablesJoin],
+    [pool, signatureBase, collectionsJoin],
   );
 
   // Stable per-error snapshot cache so repeated getSnapshot polls

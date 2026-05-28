@@ -154,7 +154,7 @@ describe("baerlyWorker observability", () => {
     };
 
     const res = await handler.fetch!(
-      new Request("https://x/v1/t/c", {
+      new Request("https://x/v1/c/c", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ doc: { _id: "obs-write-1", v: 1 } }),
@@ -202,7 +202,7 @@ describe("baerlyWorker observability", () => {
     // body to fetch (per-doc URLs are the only cached shape).
     const seeder = baerlyWorker(() => ({ verifier, config: testConfig }));
     await seeder.fetch!(
-      new Request("https://x/v1/t/c", {
+      new Request("https://x/v1/c/c", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ doc: { _id: "obs-miss-1", v: 1 } }),
@@ -221,7 +221,7 @@ describe("baerlyWorker observability", () => {
     // Cold-cache GET (the cache is per-isolate and the tenant key is
     // unique to this test, so this is guaranteed to be a miss).
     const res = await handler.fetch!(
-      new Request("https://x/v1/t/c/obs-miss-1", { method: "GET" }) as Request<
+      new Request("https://x/v1/c/c/obs-miss-1", { method: "GET" }) as Request<
         unknown,
         IncomingRequestCfProperties
       >,
@@ -272,7 +272,7 @@ describe("baerlyWorker observability", () => {
     // its canonical lines don't pollute the assertion below.
     const warm = baerlyWorker(() => ({ verifier, config: testConfig }));
     await warm.fetch!(
-      new Request("https://x/v1/t/c", {
+      new Request("https://x/v1/c/c", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ doc: { _id: "obs-hit-1", v: 1 } }),
@@ -280,7 +280,7 @@ describe("baerlyWorker observability", () => {
       env,
       makeExec(),
     );
-    const url = "https://x/v1/t/c/obs-hit-1";
+    const url = "https://x/v1/c/c/obs-hit-1";
     await warm.fetch!(
       new Request(url, { method: "GET" }) as Request<unknown, IncomingRequestCfProperties>,
       env,
@@ -325,7 +325,7 @@ describe("baerlyWorker observability", () => {
     const ctx = makeNoopCtx();
 
     const res = await handler.fetch!(
-      new Request("https://x/v1/t/c", { method: "GET" }) as Request<
+      new Request("https://x/v1/c/c", { method: "GET" }) as Request<
         unknown,
         IncomingRequestCfProperties
       >,
@@ -344,7 +344,7 @@ describe("baerlyWorker observability", () => {
     expect(props["status"]).toBe(401);
     expect(props["outcome"]).toBe("error");
     expect(props["method"]).toBe("GET");
-    expect(props["path"]).toBe("/v1/t/c");
+    expect(props["path"]).toBe("/v1/c/c");
 
     const warn = records.find(
       (r) => r.message.join("") === "verifier_rejected" && r.category.join(".") === "baerly.http",
@@ -435,7 +435,7 @@ describe("baerlyWorker config.auth synthesis", () => {
 
     // No Authorization header — `auth: "none"` pins anonymously.
     const res = await handler.fetch!(
-      new Request("https://x/v1/t/c", {
+      new Request("https://x/v1/c/c", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ doc: { _id: "none-1", v: 1 } }),
@@ -448,7 +448,7 @@ describe("baerlyWorker config.auth synthesis", () => {
     // The doc landed under `tenant/${tenant}/...` — proves the
     // adapter pinned `config.tenant`.
     const readRes = await handler.fetch!(
-      new Request("https://x/v1/t/c/none-1", { method: "GET" }) as Request<
+      new Request("https://x/v1/c/c/none-1", { method: "GET" }) as Request<
         unknown,
         IncomingRequestCfProperties
       >,
@@ -475,7 +475,7 @@ describe("baerlyWorker config.auth synthesis", () => {
     const env = { BUCKET: bucket, APP: "t", SHARED_SECRET: "topsecret" } as unknown as BaerlyEnv;
 
     const okRes = await handler.fetch!(
-      new Request("https://x/v1/t/c", {
+      new Request("https://x/v1/c/c", {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -489,7 +489,7 @@ describe("baerlyWorker config.auth synthesis", () => {
     expect(okRes.status).toBe(201);
 
     const badRes = await handler.fetch!(
-      new Request("https://x/v1/t/c", {
+      new Request("https://x/v1/c/c", {
         method: "GET",
       }) as Request<unknown, IncomingRequestCfProperties>,
       env,
@@ -518,7 +518,7 @@ describe("baerlyWorker config.auth synthesis", () => {
     let first: unknown;
     try {
       await handler.fetch!(
-        new Request("https://x/v1/t/c") as Request<unknown, IncomingRequestCfProperties>,
+        new Request("https://x/v1/c/c") as Request<unknown, IncomingRequestCfProperties>,
         env,
         makeNoopCtx(),
       );
@@ -534,7 +534,7 @@ describe("baerlyWorker config.auth synthesis", () => {
     let second: unknown;
     try {
       await handler.fetch!(
-        new Request("https://x/v1/t/c") as Request<unknown, IncomingRequestCfProperties>,
+        new Request("https://x/v1/c/c") as Request<unknown, IncomingRequestCfProperties>,
         env,
         makeNoopCtx(),
       );

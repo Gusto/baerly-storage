@@ -16,7 +16,7 @@
  */
 
 import type { DocumentData, DocumentValue } from "../json.ts";
-import type { Path, PathValue, Predicate } from "../table-api.ts";
+import type { Path, PathValue, Predicate } from "../collection-api.ts";
 
 import type { PredicateClause, PredicateWire } from "./wire.ts";
 
@@ -47,38 +47,23 @@ export interface PredicateBuilder<T extends DocumentData = DocumentData> {
    * fields at the call site (`q.gt("done", true)` is a TS error
    * on a `done: boolean` field).
    */
-  gt<K extends Path<T>>(
-    field: K,
-    value: PathValue<T, K> & (string | number),
-  ): PredicateBuilder<T>;
+  gt<K extends Path<T>>(field: K, value: PathValue<T, K> & (string | number)): PredicateBuilder<T>;
 
   /** Inclusive greater. See {@link gt} for the value-type constraint. */
-  gte<K extends Path<T>>(
-    field: K,
-    value: PathValue<T, K> & (string | number),
-  ): PredicateBuilder<T>;
+  gte<K extends Path<T>>(field: K, value: PathValue<T, K> & (string | number)): PredicateBuilder<T>;
 
   /** Strict less. See {@link gt} for the value-type constraint. */
-  lt<K extends Path<T>>(
-    field: K,
-    value: PathValue<T, K> & (string | number),
-  ): PredicateBuilder<T>;
+  lt<K extends Path<T>>(field: K, value: PathValue<T, K> & (string | number)): PredicateBuilder<T>;
 
   /** Inclusive less. See {@link gt} for the value-type constraint. */
-  lte<K extends Path<T>>(
-    field: K,
-    value: PathValue<T, K> & (string | number),
-  ): PredicateBuilder<T>;
+  lte<K extends Path<T>>(field: K, value: PathValue<T, K> & (string | number)): PredicateBuilder<T>;
 
   /**
    * Set membership. Empty array is `UnsatisfiablePredicate` at
    * normalise time — the validator emits the error eagerly so the
    * caller sees it at the `.where(...)` call site, not later.
    */
-  in<K extends Path<T>>(
-    field: K,
-    values: ReadonlyArray<PathValue<T, K>>,
-  ): PredicateBuilder<T>;
+  in<K extends Path<T>>(field: K, values: ReadonlyArray<PathValue<T, K>>): PredicateBuilder<T>;
 }
 
 /**
@@ -106,16 +91,11 @@ export const makeBuilder = <T extends DocumentData>(): {
     return builder;
   };
   const builder: PredicateBuilder<T> = {
-    eq: (field, value) =>
-      push({ op: "eq", field: String(field), value: value as DocumentValue }),
-    gt: (field, value) =>
-      push({ op: "gt", field: String(field), value: value as DocumentValue }),
-    gte: (field, value) =>
-      push({ op: "gte", field: String(field), value: value as DocumentValue }),
-    lt: (field, value) =>
-      push({ op: "lt", field: String(field), value: value as DocumentValue }),
-    lte: (field, value) =>
-      push({ op: "lte", field: String(field), value: value as DocumentValue }),
+    eq: (field, value) => push({ op: "eq", field: String(field), value: value as DocumentValue }),
+    gt: (field, value) => push({ op: "gt", field: String(field), value: value as DocumentValue }),
+    gte: (field, value) => push({ op: "gte", field: String(field), value: value as DocumentValue }),
+    lt: (field, value) => push({ op: "lt", field: String(field), value: value as DocumentValue }),
+    lte: (field, value) => push({ op: "lte", field: String(field), value: value as DocumentValue }),
     in: (field, values) =>
       push({
         op: "in",

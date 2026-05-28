@@ -1,5 +1,5 @@
 /* eslint-disable no-underscore-dangle -- `_id` is the locked primary-key
-   field on document shapes (see `@baerly/protocol/src/table-api.ts`'s `Table<T>` /
+   field on document shapes (see `@baerly/protocol/src/collection-api.ts`'s `Collection<T>` /
    `Query<T>` declarations); mutation verbs surface and route it by name. */
 
 /**
@@ -61,24 +61,24 @@ import { Writer } from "./writer.ts";
 
 /**
  * What a `Query<T>` needs to issue a read against the bucket. The
- * `Db` builds this once and hands it to `Table` / `Query`; the chain
+ * `Db` builds this once and hands it to `Collection` / `Query`; the chain
  * carries it forward unchanged.
  *
- * The `tablePrefix` shape matches what `Writer` writes under —
+ * The `collectionPrefix` shape matches what `Writer` writes under —
  * e.g. `"app/<app>/tenant/<tenant>/manifests/<name>"`. Drift between
  * the reader and writer prefix is the most likely bug class; both
  * compose the same string from `app`/`tenant`/`name`.
  *
  * @internal
  */
-export interface TableReadContext {
+export interface CollectionReadContext {
   readonly storage: Storage;
   /** Physical key prefix — already includes `app/<app>/tenant/<tenant>/manifests/<name>`. */
-  readonly tablePrefix: string;
-  readonly tableName: string;
+  readonly collectionPrefix: string;
+  readonly collectionName: string;
   /**
-   * When defined, mutation verbs (`Table.insert`, `Query.update`,
-   * `Table.replace`, `Query.delete`) buffer a {@link BufferedMutation}
+   * When defined, mutation verbs (`Collection.insert`, `Query.update`,
+   * `Collection.replace`, `Query.delete`) buffer a {@link BufferedMutation}
    * onto `txCtx.mutations` instead of calling `Writer.commit`
    * directly. Reads ignore `txCtx` entirely — they go through
    * `Storage` live, by design (no MVCC; see `Db.transaction`'s JSDoc
@@ -96,7 +96,7 @@ export interface TableReadContext {
    * `{ path, message }` entries. `undefined` means no validation
    * (today's behaviour — zero overhead).
    *
-   * Threaded in by {@link Db.tableReadContext} from the per-collection
+   * Threaded in by {@link Db.collectionReadContext} from the per-collection
    * map handed to {@link Db.create}; the boundary calls happen in
    * `query.ts`, not `writer.ts`, so schemas plug in at the
    * read/write API surface rather than at the writer layer.
@@ -207,7 +207,7 @@ export const singleIdFromPredicate = (wire: PredicateWire | undefined): string |
  * Validation happens at the public seams — `Query.where(p)`
  * normalises + validates the incoming fragment before merging into
  * `state.wire`. By the time `makeQuery` is reached from elsewhere
- * (`Table.where`, `runAllWithMeta`, kernel-internal `_id`-shaped
+ * (`Collection.where`, `runAllWithMeta`, kernel-internal `_id`-shaped
  * wires from `byId` / `runByIdWithMeta` / `runInsert`), the wire is
  * already trusted.
  *
@@ -220,7 +220,7 @@ export const singleIdFromPredicate = (wire: PredicateWire | undefined): string |
  * @internal
  */
 export const makeQuery = <T extends DocumentData>(
-  ctx: TableReadContext,
+  ctx: CollectionReadContext,
   state: QueryState<T>,
 ): Query<T> => {
   // Every modifier below produces a fresh spread; identity inequality
@@ -267,7 +267,7 @@ export const makeQuery = <T extends DocumentData>(
  * router calls this directly so the read-response handler can pack
  * `_meta` onto the envelope; the public `Query<T>` terminals
  * destructure the rows out and discard the cursor to keep the
- * locked interface signature. Single-row routes (`GET /v1/t/:table/:id`)
+ * locked interface signature. Single-row routes (`GET /v1/c/:collection/:id`)
  * call this with `limit:1` and pick `rows[0]`.
  *
  * `state.wire` is assumed already validated — the public seam
@@ -279,7 +279,7 @@ export const makeQuery = <T extends DocumentData>(
  * @internal
  */
 export const runAllWithMeta = <T extends DocumentData>(
-  ctx: TableReadContext,
+  ctx: CollectionReadContext,
   state: QueryState<T>,
 ): Promise<ReadResult<T>> => {
   return runRead<T>(ctx, state);
@@ -292,21 +292,21 @@ export const runAllWithMeta = <T extends DocumentData>(
  * fast-path. Mirrors {@link runAllWithMeta}'s signature; the
  * wire is built internally as a single-clause `{op:"eq",
  * field:"_id", value:id}` shape (same form as the `byId` helper in
- * `./table.ts` and the `runInsert` duplicate-collision check)
+ * `./collection.ts` and the `runInsert` duplicate-collision check)
  * which routes through `runRead`'s `singleIdFromPredicate`
  * short-circuit automatically.
  *
  * Bypasses {@link validateWire} — the wire is kernel-constructed,
  * never wire-submitted, so it would always pass the structural
  * rules. Skipping the validator also keeps this helper usable
- * from kernel-internal sites (`Table<T>.get` etc.) without
+ * from kernel-internal sites (`Collection<T>.get` etc.) without
  * tripping the wire-only rule that bans top-level `_id`.
  *
  * @internal — router uses this to preserve `_meta` envelope;
- *   mirrors {@link runAllWithMeta} and {@link Table.get}.
+ *   mirrors {@link runAllWithMeta} and {@link Collection.get}.
  */
 export const runByIdWithMeta = <T extends DocumentData>(
-  ctx: TableReadContext,
+  ctx: CollectionReadContext,
   id: string,
 ): Promise<ReadResult<T>> => {
   return runRead<T>(ctx, {
@@ -321,29 +321,29 @@ export const runByIdWithMeta = <T extends DocumentData>(
 // ---------------------------------------------------------------------
 
 /**
- * Build a fresh `Writer` bound to this table's `current.json`.
+ * Build a fresh `Writer` bound to this collection's `current.json`.
  * Construction is zero-I/O (writer.ts:160) so we mint one per
  * `commit()` rather than caching on the chain — same writer object
  * shared across N commits would inherit retry-budget state we want
  * fresh per call.
  */
-const writerFor = (ctx: TableReadContext): Writer =>
+const writerFor = (ctx: CollectionReadContext): Writer =>
   new Writer({
     storage: ctx.storage,
-    currentJsonKey: `${ctx.tablePrefix}/current.json`,
+    currentJsonKey: `${ctx.collectionPrefix}/current.json`,
     options: {
       indexes: ctx.indexes,
     },
   });
 
 /**
- * `Table.insert` / `Query.insert` implementation. Mints a UUIDv7 `_id`
+ * `Collection.insert` / `Query.insert` implementation. Mints a UUIDv7 `_id`
  * when the caller omits it (or supplies an empty string); honours a
  * caller-supplied non-empty `_id`. On collision (the materialised
  * collection already carries that `_id`) throws
  * `BaerlyError{code:"Conflict"}` BEFORE issuing the writer round-trip
- * — matches the locked `Table.insert` contract
- * (`packages/protocol/src/table-api.ts:123–125`).
+ * — matches the locked `Collection.insert` contract
+ * (`packages/protocol/src/collection-api.ts:123–125`).
  *
  * The emitted `LogEntry` has `op:"I"` and `new === patch === {...doc, _id}`
  * (today's per-doc-replace model — `packages/protocol/src/log.ts:67–72`).
@@ -351,19 +351,19 @@ const writerFor = (ctx: TableReadContext): Writer =>
  * @throws BaerlyError code="Conflict" — `_id` collision (pre-commit check) or
  *   CAS retry budget exhausted inside `Writer.commit()`.
  * @throws BaerlyError code="SchemaError" — from the per-collection
- *   `SchemaValidator` threaded via {@link Db.tableReadContext}.
+ *   `SchemaValidator` threaded via {@link Db.collectionReadContext}.
  *
- * @internal — exported for `Table.insert` in `./table.ts` to delegate
+ * @internal — exported for `Collection.insert` in `./collection.ts` to delegate
  *             without duplicating the auto-id / collision-check /
  *             commit pipeline.
  */
 export const runInsert = async <T extends DocumentData>(
-  ctx: TableReadContext,
+  ctx: CollectionReadContext,
   doc: Partial<T> & DocumentData,
 ): Promise<{ _id: string }> => {
   // Auto-id semantics: caller-supplied non-empty `_id` wins; otherwise
   // mint a UUIDv7. The locked contract
-  // (`packages/protocol/src/table-api.ts:120–122`) names UUIDv7 as the
+  // (`packages/protocol/src/collection-api.ts:120–122`) names UUIDv7 as the
   // auto-id source.
   const supplied = doc["_id"];
   const _id = typeof supplied === "string" && supplied.length > 0 ? supplied : uuidv7();
@@ -382,14 +382,14 @@ export const runInsert = async <T extends DocumentData>(
   // the commit fires.
   if (ctx.schema !== undefined) {
     await validateOrThrow(ctx.schema, body, {
-      collection: ctx.tableName,
+      collection: ctx.collectionName,
       verb: "insert",
     });
   }
 
   // Pre-commit `_id`-collision check. Costs one log walk; matches the
-  // locked `Table.insert` throws contract
-  // (`packages/protocol/src/table-api.ts:123–125`). Without it a caller-
+  // locked `Collection.insert` throws contract
+  // (`packages/protocol/src/collection-api.ts:123–125`). Without it a caller-
   // supplied duplicate `_id` would land a second `I` entry that the
   // read fold collapses silently — a contract violation. The CAS
   // retry budget in `Writer` does not surface this case
@@ -407,7 +407,7 @@ export const runInsert = async <T extends DocumentData>(
   if (existing.rows.length > 0) {
     throw new BaerlyError(
       "Conflict",
-      `Query.insert: _id ${JSON.stringify(_id)} already exists in collection ${JSON.stringify(ctx.tableName)}`,
+      `Query.insert: _id ${JSON.stringify(_id)} already exists in collection ${JSON.stringify(ctx.collectionName)}`,
     );
   }
 
@@ -422,7 +422,7 @@ export const runInsert = async <T extends DocumentData>(
   // budget is exhausted and we surface unchanged.
   await writerFor(ctx).commit({
     op: "I",
-    collection: ctx.tableName,
+    collection: ctx.collectionName,
     docId: _id,
     body,
   });
@@ -437,7 +437,7 @@ export const runInsert = async <T extends DocumentData>(
  * — one `Writer.commit()` round-trip apiece.
  *
  * Atomicity is per row, not across the N-row batch. The locked
- * contract (`packages/protocol/src/table-api.ts:178–184`) is explicit on
+ * contract (`packages/protocol/src/collection-api.ts:178–184`) is explicit on
  * this: all-or-nothing across multiple rows is what
  * `db.transaction(...)` exists to deliver.
  *
@@ -455,7 +455,7 @@ export const runInsert = async <T extends DocumentData>(
  *   root in the type system).
  */
 const runUpdate = async <T extends DocumentData>(
-  ctx: TableReadContext,
+  ctx: CollectionReadContext,
   state: QueryState<T>,
   patch: Partial<T>,
 ): Promise<{ modified: number }> => {
@@ -484,7 +484,7 @@ const runUpdate = async <T extends DocumentData>(
     // N aborts the batch without rolling back rows 0..N-1.
     if (ctx.schema !== undefined) {
       await validateOrThrow(ctx.schema, merged, {
-        collection: ctx.tableName,
+        collection: ctx.collectionName,
         verb: "update",
       });
     }
@@ -493,7 +493,7 @@ const runUpdate = async <T extends DocumentData>(
     } else {
       await writerFor(ctx).commit({
         op: "U",
-        collection: ctx.tableName,
+        collection: ctx.collectionName,
         docId: String(doc["_id"]),
         body: merged,
       });
@@ -504,7 +504,7 @@ const runUpdate = async <T extends DocumentData>(
 };
 
 /**
- * `Table.replace` implementation. Existence check via `runRead` over
+ * `Collection.replace` implementation. Existence check via `runRead` over
  * a `byId`-shaped wire so the `singleIdFromPredicate` PK fast path
  * (`Map.get`) fires and any transaction-buffered insert of `id` is
  * visible. Missing row → `NotFound` directly (no Conflict-string
@@ -520,7 +520,7 @@ const runUpdate = async <T extends DocumentData>(
  *   exhausted.
  */
 export const runReplaceById = async <T extends DocumentData>(
-  ctx: TableReadContext,
+  ctx: CollectionReadContext,
   id: string,
   doc: T,
 ): Promise<void> => {
@@ -543,7 +543,7 @@ export const runReplaceById = async <T extends DocumentData>(
   // drops every previously-buffered mutation.
   if (ctx.schema !== undefined) {
     await validateOrThrow(ctx.schema, body, {
-      collection: ctx.tableName,
+      collection: ctx.collectionName,
       verb: "replace",
     });
   }
@@ -554,7 +554,7 @@ export const runReplaceById = async <T extends DocumentData>(
   }
   await writerFor(ctx).commit({
     op: "U",
-    collection: ctx.tableName,
+    collection: ctx.collectionName,
     docId: id,
     body,
   });
@@ -577,7 +577,7 @@ export const runReplaceById = async <T extends DocumentData>(
  *   in that case.
  */
 const runDelete = async <T extends DocumentData>(
-  ctx: TableReadContext,
+  ctx: CollectionReadContext,
   state: QueryState<T>,
 ): Promise<{ deleted: number }> => {
   const { rows } = await runRead<T>(ctx, state);
@@ -592,7 +592,7 @@ const runDelete = async <T extends DocumentData>(
     } else {
       await writerFor(ctx).commit({
         op: "D",
-        collection: ctx.tableName,
+        collection: ctx.collectionName,
         docId: String(doc["_id"]),
       });
     }
@@ -602,22 +602,22 @@ const runDelete = async <T extends DocumentData>(
 };
 
 /**
- * Runtime guard for the txCtx-Table-name binding. The type system
+ * Runtime guard for the txCtx-Collection-name binding. The type system
  * already prevents the legitimate path (the body callback gets one
- * `Table<T>`, no `Db`), so this only catches a bug where a stale
- * `Query<T>` outlives its `Table<T>` and is somehow re-attached to a
- * transaction over a different table.
+ * `Collection<T>`, no `Db`), so this only catches a bug where a stale
+ * `Query<T>` outlives its `Collection<T>` and is somehow re-attached to a
+ * transaction over a different collection.
  *
- * @throws BaerlyError code="Internal" — txCtx ↔ Table name mismatch.
+ * @throws BaerlyError code="Internal" — txCtx ↔ Collection name mismatch.
  */
-const assertTxBindMatches = (ctx: TableReadContext): void => {
+const assertTxBindMatches = (ctx: CollectionReadContext): void => {
   if (ctx.txCtx === undefined) {
     return;
   }
-  if (ctx.txCtx.table !== ctx.tableName) {
+  if (ctx.txCtx.collection !== ctx.collectionName) {
     throw new BaerlyError(
       "Internal",
-      `Transaction context bound to ${JSON.stringify(ctx.txCtx.table)} but mutation issued on table ${JSON.stringify(ctx.tableName)}`,
+      `Transaction context bound to ${JSON.stringify(ctx.txCtx.collection)} but mutation issued on collection ${JSON.stringify(ctx.collectionName)}`,
     );
   }
 };
@@ -627,31 +627,31 @@ const assertTxBindMatches = (ctx: TableReadContext): void => {
  * per-`doc_id`, then apply predicate / order / limit in memory.
  *
  * Error mapping:
- *   - `current.json` missing → empty result (table not provisioned).
+ *   - `current.json` missing → empty result (collection not provisioned).
  *   - `current.json` malformed → `InvalidResponse` (from `readCurrentJson`).
  *   - log entry missing in `[0, next_seq)` → `Internal`.
  *   - log entry malformed → `InvalidResponse`.
  */
 const runRead = async <T extends DocumentData>(
-  ctx: TableReadContext,
+  ctx: CollectionReadContext,
   state: QueryState<T>,
 ): Promise<ReadResult<T>> => {
   // ── Step 1. Read current.json. ────────────────────────────────────
   // Every read GETs `current.json` fresh — mirrors the multi-instance
   // rules: every read sees a fresh CAS snapshot, matching the writer's
   // per-commit GET.
-  const currentJsonKey = `${ctx.tablePrefix}/current.json`;
+  const currentJsonKey = `${ctx.collectionPrefix}/current.json`;
   const head = await readCurrentJson(ctx.storage, currentJsonKey);
 
   // Capture the wire cursor before the rest of the fold runs. A
-  // not-found head ("table not yet provisioned") still emits a
+  // not-found head ("collection not yet provisioned") still emits a
   // well-defined cursor so the wire shape never carries `""`.
   const manifestPointer =
     head === null ? `${MANIFEST_POINTER_EMPTY_SNAPSHOT}@0` : serializeManifestPointer(head.json);
   // Every read is strong by construction — `fresh` reflects that.
   const fresh = true;
 
-  // Not-found is "table not yet provisioned" — return empty rather
+  // Not-found is "collection not yet provisioned" — return empty rather
   // than throw. Mirrors `Storage.get` returning null on miss.
   if (head === null) {
     return { rows: [], manifestPointer, fresh };
@@ -690,10 +690,10 @@ const runRead = async <T extends DocumentData>(
   const baseDocs: Map<string, DocumentData> =
     head.json.snapshot === null
       ? new Map()
-      : await loadSnapshotAsMap(ctx.storage, head.json.snapshot, ctx.tableName);
+      : await loadSnapshotAsMap(ctx.storage, head.json.snapshot, ctx.collectionName);
 
   // ── Step 2. Bounded parallel-fetch of [log_seq_start, next_seq). ──
-  const entries = await walkLogRange(ctx.storage, ctx.tablePrefix, logSeqStart, nextSeq);
+  const entries = await walkLogRange(ctx.storage, ctx.collectionPrefix, logSeqStart, nextSeq);
 
   // ── Step 3. Fold per doc_id, seeded from the snapshot. ────────────
   // I / U: post-image overwrite (today's per-doc-replace model). The
@@ -711,7 +711,7 @@ const runRead = async <T extends DocumentData>(
   // D: tombstone — remove from the map.
   // T / M: ignored (T not yet wired; M is a marker).
   const docs = new Map<string, T>(baseDocs as Map<string, T>);
-  foldLogEntriesOnto(docs, entries, { collection: ctx.tableName });
+  foldLogEntriesOnto(docs, entries, { collection: ctx.collectionName });
 
   // ── Step 4. Apply predicate. ──────────────────────────────────────
   // PK fast-path: a single `eq` clause on `_id` short-circuits the
@@ -783,20 +783,20 @@ const IN_FANOUT_PARALLELISM = 8;
  *
  * Storage shape (equality-only walks):
  *   - Single-field walk (`equalityKeys.length === 1`): list
- *     `<tablePrefix>/index/<name>/<v0-b32>/`; each yielded key has
+ *     `<collectionPrefix>/index/<name>/<v0-b32>/`; each yielded key has
  *     tail `<docId>.json` (single segment).
  *   - Composite full walk (`equalityKeys.length === def.on.length`):
- *     list `<tablePrefix>/index/<name>/<v0-b32>/<v1-b32>/.../<vN-b32>/`;
+ *     list `<collectionPrefix>/index/<name>/<v0-b32>/<v1-b32>/.../<vN-b32>/`;
  *     each yielded key has tail `<docId>.json` (single segment).
  *   - Composite partial-prefix walk (`equalityKeys.length <
- *     def.on.length`): list `<tablePrefix>/index/<name>/<v0-b32>/
+ *     def.on.length`): list `<collectionPrefix>/index/<name>/<v0-b32>/
  *     .../<vM-b32>/`; each yielded key has tail
  *     `<v{M+1}-b32>/.../<vN-b32>/<docId>.json` — MULTI-segment.
  *     Split on `/` and take the last segment.
  *
  * Storage shape (T3, range / `$in` walks):
  *   - Range walk (`plan.rangeOn !== undefined`): list
- *     `<tablePrefix>/index/<name>/<eq-segs>/` and break on the
+ *     `<collectionPrefix>/index/<name>/<eq-segs>/` and break on the
  *     first decoded value-segment past the upper bound. Lower
  *     bound is enforced via `startAfter` (exclusive lower) or an
  *     in-loop skip (inclusive lower) — see
@@ -817,7 +817,7 @@ const IN_FANOUT_PARALLELISM = 8;
  * @internal
  */
 const runIndexWalkPlan = async <T extends DocumentData>(
-  ctx: TableReadContext,
+  ctx: CollectionReadContext,
   head: CurrentJson,
   state: QueryState<T>,
   plan: IndexWalkPlan,
@@ -825,8 +825,8 @@ const runIndexWalkPlan = async <T extends DocumentData>(
   const encodedSegments = plan.equalityKeys.map((v) => encodeIndexValue(v));
   const eqPrefix =
     encodedSegments.length === 0
-      ? `${ctx.tablePrefix}/index/${plan.indexName}/`
-      : `${ctx.tablePrefix}/index/${plan.indexName}/${encodedSegments.join("/")}/`;
+      ? `${ctx.collectionPrefix}/index/${plan.indexName}/`
+      : `${ctx.collectionPrefix}/index/${plan.indexName}/${encodedSegments.join("/")}/`;
 
   // 1. List index entries; extract docId from the LAST segment of
   //    each key's tail. Multi-segment tails appear under composite
@@ -962,7 +962,7 @@ const runIndexWalkPlan = async <T extends DocumentData>(
   const baseDocs: Map<string, DocumentData> =
     head.snapshot === null
       ? new Map()
-      : await loadSnapshotAsMap(ctx.storage, head.snapshot, ctx.tableName);
+      : await loadSnapshotAsMap(ctx.storage, head.snapshot, ctx.collectionName);
   const docs = new Map<string, T>();
   for (const id of matched) {
     const seeded = baseDocs.get(id);
@@ -972,8 +972,8 @@ const runIndexWalkPlan = async <T extends DocumentData>(
   }
   const logSeqStart = logSeqStartOf(head);
   const nextSeq = head.next_seq;
-  const entries = await walkLogRange(ctx.storage, ctx.tablePrefix, logSeqStart, nextSeq);
-  foldLogEntriesOnto(docs, entries, { collection: ctx.tableName, docIdFilter: matched });
+  const entries = await walkLogRange(ctx.storage, ctx.collectionPrefix, logSeqStart, nextSeq);
+  foldLogEntriesOnto(docs, entries, { collection: ctx.collectionName, docIdFilter: matched });
 
   // 3. Apply the FULL original wire as the stale-row defence, then
   //    the planner's residue postFilter on top. `matchesWire` is

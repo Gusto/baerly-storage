@@ -9,7 +9,7 @@
  * vitest — the `.test-d.ts` extension is outside the default include
  * glob (see `vitest.config.ts`).
  *
- * Pattern mirrors `table-api.test-d.ts`: `export const` assertions plus
+ * Pattern mirrors `collection-api.test-d.ts`: `export const` assertions plus
  * `@ts-expect-error` for negative cases. `noUnusedLocals: true` (see
  * `tsconfig.json`) reports unused locals regardless of the leading-
  * underscore prefix, so the assertion handles are exported. The file

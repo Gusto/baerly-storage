@@ -72,6 +72,16 @@ export interface CollectionDefinition {
    *
    * `undefined` means no validation — every write proceeds as today
    * (zero overhead, today's tests untouched).
+   *
+   * @remarks
+   * **`.nullable()` is not supported.** baerly's `DocumentValue` excludes
+   * `null` by design (see `packages/protocol/src/json.ts`). `null` is
+   * reserved as the JSON-merge-patch (RFC 7386) field-deletion sentinel
+   * in `update` patches. Use `.optional()` for absent values.
+   *
+   * Validation runs on the post-image: `update` and `replace` see the
+   * full doc, not just the patch. Failures throw
+   * `BaerlyError{ code: "SchemaError", issues: [...] }`.
    */
   readonly schema?: SchemaValidator;
 }
@@ -225,14 +235,17 @@ export function defineConfig<const C extends BaerlyConfig>(cfg: C): C {
 /**
  * Sentinel `BaerlyConfig` used as the default `TConfig` parameter
  * by consumers (`Db<TConfig>`, `BaerlyClient<TConfig>`). Setting
- * `collections` to `Record<never, never>` makes
- * `CollectionNames<UnboundConfig>` resolve to `never`, which in
- * turn makes the narrowing `.table<N extends CollectionNames<C>>(name: N)`
- * overload unsatisfiable; the legacy per-call generic
- * `.table<T>(name: string)` overload wins for consumers that
- * haven't opted in to typed configs.
+ * `collections` to `Record<string, CollectionDefinition>` makes
+ * `CollectionNames<UnboundConfig>` widen to `string`, so the single
+ * typed accessor `db.collection<N extends CollectionNames<TConfig>>(name: N)`
+ * still resolves for kernel-internal paths (which carry no bound
+ * config) — those callers see `name: string` and the row type
+ * defaults to `DocumentData` via {@link RowOf}'s `Record<string, unknown>`
+ * fallback. Consumers who bind a config via {@link defineConfig}
+ * narrow `CollectionNames<TConfig>` to a literal union and lose the
+ * string-typo accepting behaviour, which is the design intent.
  */
-export type UnboundConfig = { readonly collections: Record<never, never> };
+export type UnboundConfig = { readonly collections: Record<string, CollectionDefinition> };
 
 /**
  * Set of declared collection names on a `BaerlyConfig`, as a string
@@ -265,7 +278,7 @@ export type CollectionNames<C extends BaerlyConfig> = C extends {
  *
  * The fallback is intentionally wider than the protocol's
  * `DocumentData`. Downstream call sites that need
- * `DocumentData` (e.g. `Table<T extends DocumentData>`)
+ * `DocumentData` (e.g. `Collection<T extends DocumentData>`)
  * apply the intersection at their own seam — keeping that
  * constraint local to the consumer keeps THIS file independent of
  * `@baerly/protocol/src/json.ts`.

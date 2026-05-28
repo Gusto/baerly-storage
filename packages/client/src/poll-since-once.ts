@@ -2,7 +2,7 @@ import type { SinceResponse } from "./contract.ts";
 import { type RequestContext, request } from "./request.ts";
 
 /**
- * One round-trip of `GET /v1/since?table=…&cursor=…`. The single
+ * One round-trip of `GET /v1/since?collection=…&cursor=…`. The single
  * place that talks to `/v1/since` in this package — the React
  * `subscription-pool` is its only first-party consumer.
  *
@@ -25,7 +25,7 @@ export const pollSinceOnce = async (
   signal: AbortSignal | undefined,
 ): Promise<SinceResponse> => {
   const params = new URLSearchParams();
-  params.set("table", name);
+  params.set("collection", name);
   params.set("cursor", cursor);
   return request<SinceResponse>(ctx, {
     method: "GET",

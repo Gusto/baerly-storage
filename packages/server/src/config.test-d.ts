@@ -89,7 +89,7 @@ export type _AuditFallsBackToRecord = Expect<Equal<Audit, Record<string, unknown
 // value for type-test purposes without runtime cost.
 declare const memStorage: Storage;
 
-// Bound: passing `config` captures TConfig and lets `db.table(name)`
+// Bound: passing `config` captures TConfig and lets `db.collection(name)`
 // infer the row shape from `collections[name].schema`.
 const db = Db.create({
   storage: memStorage,
@@ -98,16 +98,15 @@ const db = Db.create({
   config,
 });
 
-// `db.table("tickets")` resolves to the narrowing overload —
-// `RowOf<typeof config, "tickets"> & DocumentData`. We check
-// `first()`'s return shape so the assertion stays scoped to public
-// surface (and bypasses Table's internal generic plumbing). The
-// per-step `typeof` capture works around TS's reluctance to evaluate
-// `typeof db.table<"tickets">` directly. Uses a non-`_id` predicate
-// because `Path<T>` excludes the root `_id` key — the row-shape
-// inference doesn't depend on the predicate field anyway.
-const boundTable = db.table("tickets");
-const boundRow = await boundTable.where({ status: "open" }).first();
+// `db.collection("tickets")` against the bound config resolves to the
+// narrowing overload — `RowOf<typeof config, "tickets"> & DocumentData`.
+// We check `first()`'s return shape so the assertion stays scoped to
+// public surface (and bypasses Collection's internal generic plumbing).
+// Uses a non-`_id` predicate because `Path<T>` excludes the root `_id`
+// key — the row-shape inference doesn't depend on the predicate field
+// anyway.
+const boundCollection = db.collection("tickets");
+const boundRow = await boundCollection.where({ status: "open" }).first();
 export type _BoundDbInfersRow = Expect<
   Equal<
     typeof boundRow,
@@ -115,35 +114,24 @@ export type _BoundDbInfersRow = Expect<
   >
 >;
 
-// Legacy path: no `config` passed → `Db<UnboundConfig>`. The
-// `table<T>(name)` overload's per-call generic is the only way to
-// recover a row shape. Verifies that the legacy DX is preserved.
+// Unbound-config path: no `config` passed → `Db<UnboundConfig>`.
+// `CollectionNames<UnboundConfig>` widens to `string`, so any string
+// name typechecks; the row type defaults to `DocumentData` (via
+// `RowOf<UnboundConfig, K>` fallback intersected with `DocumentData`
+// at the `Collection<T extends DocumentData>` seam).
 const dbLegacy = Db.create({ storage: memStorage, app: "a", tenant: "t" });
-const legacyTable = dbLegacy.table<{ _id: string; n: number }>("any");
-const legacyRow = await legacyTable.where({ n: 1 }).first();
-export type _LegacyDbCallSiteGenericStillWorks = Expect<
-  Equal<typeof legacyRow, { _id: string; n: number } | undefined>
+const legacyCollection = dbLegacy.collection("any");
+const legacyRow = await legacyCollection.where({}).first();
+export type _UnboundDbRowDefaultsToDocumentData = Expect<
+  Equal<typeof legacyRow, (Record<string, unknown> & DocumentData) | undefined>
 >;
 
-// Fallthrough: a name that is NOT in `CollectionNames<typeof config>`
-// must not produce a type error — overload #1 fails to match, overload
-// #2 fires with its default `T = DocumentData`, and the call
-// returns `Table<DocumentData>`. Locks in the documented intent
-// in `Db.table` and mirrors `BaerlyClient.table`'s behavior. Regression
-// guard: if a future "narrow-only" single-overload pattern lands, this
-// assertion breaks and forces the change to be deliberate. `Path<T>`
-// falls back to bare `string` on `DocumentData`, so `_id` is still a
-// legal predicate key here — useful evidence that the filter only
-// fires on typed shapes.
-const typoTable = db.table("notACollection");
-const typoRow = await typoTable.where({ _id: "x" }).first();
-export type _BoundDbUnknownNameFallsBackToDocumentData = Expect<
-  Equal<typeof typoRow, DocumentData | undefined>
->;
+export const _typoOnBoundConfigIsCompileError = () => {
+  // @ts-expect-error — `"notACollection"` is not in `CollectionNames<typeof config>`.
+  void db.collection("notACollection");
+};
 
 export const _idIsNotAPredicateKeyOnTypedTables = () => {
   // @ts-expect-error — `_id` is excluded from `Path<T>` on typed shapes.
-  void boundTable.where({ _id: "x" });
-  // @ts-expect-error — same on the legacy per-call-generic shape.
-  void legacyTable.where({ _id: "x" });
+  void boundCollection.where({ _id: "x" });
 };

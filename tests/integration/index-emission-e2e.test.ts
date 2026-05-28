@@ -1,5 +1,5 @@
 /* eslint-disable no-underscore-dangle -- `_id` is the locked primary-key
-   field on document shapes (see `@baerly/protocol/src/table-api.ts`'s `Table<T>`
+   field on document shapes (see `@baerly/protocol/src/collection-api.ts`'s `Collection<T>`
    declaration); tests reference it by name. */
 
 /**
@@ -15,12 +15,12 @@
  * This file exercises ALL FOUR production write entry points reachable
  * from `Db`:
  *
- *   1. `db.table(coll).insert({...})`
- *   2. `db.table(coll).update(id, {...})`
- *   3. `db.table(coll).delete(id)`
+ *   1. `db.collection(coll).insert({...})`
+ *   2. `db.collection(coll).update(id, {...})`
+ *   3. `db.collection(coll).delete(id)`
  *   4. `db.transaction(coll, async (tx) => { ... })`
  *
- * After each verb, list keys under `<tablePrefix>/index/<indexName>/`
+ * After each verb, list keys under `<collectionPrefix>/index/<indexName>/`
  * and assert set-equality against the oracle `allIndexKeysFor(...)`
  * applied to the live row set. The test runs on `MemoryStorage`, no
  * infra gating.
@@ -118,14 +118,14 @@ describe("Db → Writer index emission (e2e)", () => {
   });
 
   test("table.insert emits the projected index key", async () => {
-    const t = db.table<Ticket>(COLL);
+    const t = db.collection(COLL);
     await t.insert({ _id: "t-1", status: "open" });
 
     await assertIndexParity(storage, new Map([["t-1", { _id: "t-1", status: "open" }]]));
   });
 
   test("query.update rewrites the index key when the indexed field changes", async () => {
-    const t = db.table<Ticket>(COLL);
+    const t = db.collection(COLL);
     await t.insert({ _id: "t-1", status: "open" });
 
     await t.update("t-1", { status: "closed" });
@@ -134,7 +134,7 @@ describe("Db → Writer index emission (e2e)", () => {
   });
 
   test("query.delete tombstones the index key", async () => {
-    const t = db.table<Ticket>(COLL);
+    const t = db.collection(COLL);
     await t.insert({ _id: "t-1", status: "open" });
     await t.insert({ _id: "t-2", status: "open" });
 
@@ -144,7 +144,7 @@ describe("Db → Writer index emission (e2e)", () => {
   });
 
   test("db.transaction emits index keys for every buffered mutation", async () => {
-    const t = db.table<Ticket>(COLL);
+    const t = db.collection(COLL);
     // Pre-seed two docs so the tx body's delete has a row to act on.
     await t.insert({ _id: "a", status: "open" });
     await t.insert({ _id: "b", status: "open" });

@@ -47,7 +47,7 @@ describe("lint-use-query", () => {
   test("flags async callbacks", () => {
     const { exitCode, stderr } = runOnFixture(
       `import { useQuery } from "@gusto/baerly-storage/client/react";
-const x = (id: string) => useQuery(async (c) => c.table("notes").get(id), [id]);
+const x = (id: string) => useQuery(async (c) => c.collection("notes").get(id), [id]);
 `,
     );
     expect(exitCode).toBe(2);
@@ -57,7 +57,7 @@ const x = (id: string) => useQuery(async (c) => c.table("notes").get(id), [id]);
   test("flags `await` inside the callback body", () => {
     const { exitCode, stderr } = runOnFixture(
       `import { useQuery } from "@gusto/baerly-storage/client/react";
-const x = (id: string) => useQuery((c) => { return (async () => await c.table("notes").get(id))(); }, [id]);
+const x = (id: string) => useQuery((c) => { return (async () => await c.collection("notes").get(id))(); }, [id]);
 `,
     );
     expect(exitCode).toBe(2);
@@ -69,7 +69,7 @@ const x = (id: string) => useQuery((c) => { return (async () => await c.table("n
       `import { useQuery } from "@gusto/baerly-storage/client/react";
 const x = (id: string) => useQuery((c) => {
   // discussion of why we don't await here
-  return c.table("notes").get(id);
+  return c.collection("notes").get(id);
 }, [id]);
 `,
     );
@@ -79,11 +79,11 @@ const x = (id: string) => useQuery((c) => {
   test("does NOT flag the supported patterns", () => {
     const { exitCode } = runOnFixture(
       `import { useQuery } from "@gusto/baerly-storage/client/react";
-const single = (id: string) => useQuery((c) => c.table("notes").get(id), [id]);
-const skipForm = (id?: string) => useQuery((c) => id ? c.table("notes").get(id) : useQuery.skip, [id]);
+const single = (id: string) => useQuery((c) => c.collection("notes").get(id), [id]);
+const skipForm = (id?: string) => useQuery((c) => id ? c.collection("notes").get(id) : useQuery.skip, [id]);
 const parallel = (id: string) => useQuery((c) => Promise.all([
-  c.table("notes").get(id),
-  c.table("comments").where({ noteId: id }).all(),
+  c.collection("notes").get(id),
+  c.collection("comments").where({ noteId: id }).all(),
 ]), [id]);
 `,
     );

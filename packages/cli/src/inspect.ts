@@ -150,8 +150,8 @@ const bundle = defineBaerlySubcommand({
   handler: async (args, ctx) => {
     const bucket = await parseBucketUri(args.bucket);
     const { app, tenant } = await ctx.resolveAppTenant({ app: args.app, tenant: args.tenant });
-    const tablePrefix = `${bucket.keyPrefix}app/${app}/tenant/${tenant}/manifests/${args.table}`;
-    const currentJsonKey = `${tablePrefix}/current.json`;
+    const collectionPrefix = `${bucket.keyPrefix}app/${app}/tenant/${tenant}/manifests/${args.table}`;
+    const currentJsonKey = `${collectionPrefix}/current.json`;
 
     const read = await readCurrentJson(bucket.storage, currentJsonKey);
     if (read === null) {
@@ -180,10 +180,10 @@ const bundle = defineBaerlySubcommand({
       }
     }
 
-    // Orphan-snapshot detection: list every file under <tablePrefix>/snapshot/
+    // Orphan-snapshot detection: list every file under <collectionPrefix>/snapshot/
     // and flag anything that isn't the currently-pointed-at snapshot.
     try {
-      const snapshotPrefix = `${tablePrefix}/snapshot/`;
+      const snapshotPrefix = `${collectionPrefix}/snapshot/`;
       const { keys } = await countListEntries(bucket.storage, snapshotPrefix);
       for (const k of keys) {
         if (cur.snapshot !== k) {
@@ -200,7 +200,7 @@ const bundle = defineBaerlySubcommand({
     if (typeof args.config === "string" && args.config.length > 0) {
       const defs = await loadCollectionIndexes(args.config, args.table, "baerly inspect");
       for (const def of defs) {
-        const prefix = `${tablePrefix}/index/${def.name}/`;
+        const prefix = `${collectionPrefix}/index/${def.name}/`;
         const { count } = await countListEntries(bucket.storage, prefix);
         indexes.push({ name: def.name, count });
       }

@@ -1,6 +1,6 @@
 /* eslint-disable no-underscore-dangle -- `_id` is the locked
    primary-key field on document shapes (see `@baerly/protocol`'s
-   `Table<T>`); this property test threads it through the writer. */
+   `Collection<T>`); this property test threads it through the writer. */
 
 /**
  * Property-based test for the writer + secondary-index data plane.

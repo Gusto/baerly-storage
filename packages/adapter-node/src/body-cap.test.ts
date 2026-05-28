@@ -89,7 +89,7 @@ async function readAll(body: ReadableStream<Uint8Array>): Promise<Uint8Array> {
 describe("applyBodyCap", () => {
   test("GET requests pass through unchanged", () => {
     const incoming = fakeIncoming();
-    const req = new Request("http://localhost/v1/t/c", { method: "GET" });
+    const req = new Request("http://localhost/v1/c/c", { method: "GET" });
     const result = applyBodyCap(req, { incoming }, CAP);
     expect(result).toBe(req);
     expect(incoming.resumed).toBe(0);
@@ -97,14 +97,14 @@ describe("applyBodyCap", () => {
 
   test.each(["HEAD", "OPTIONS"])("%s requests pass through unchanged", (method) => {
     const incoming = fakeIncoming();
-    const req = new Request("http://localhost/v1/t/c", { method });
+    const req = new Request("http://localhost/v1/c/c", { method });
     const result = applyBodyCap(req, { incoming }, CAP);
     expect(result).toBe(req);
     expect(incoming.resumed).toBe(0);
   });
 
   test("no upstream `incoming` is a no-op (kernel defence-in-depth handles cap)", () => {
-    const req = new Request("http://localhost/v1/t/c", {
+    const req = new Request("http://localhost/v1/c/c", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: '{"x":1}',
@@ -118,7 +118,7 @@ describe("applyBodyCap", () => {
     const total = 4096;
     const chunkSize = 1024;
     const chunks = Array.from({ length: total / chunkSize }, () => new Uint8Array(chunkSize));
-    const req = new Request("http://localhost/v1/t/c", {
+    const req = new Request("http://localhost/v1/c/c", {
       method: "POST",
       headers: { "content-type": "application/octet-stream" },
       body: stream(chunks),
@@ -137,7 +137,7 @@ describe("applyBodyCap", () => {
   test("content-length over cap: returns 413 envelope and drains incoming", async () => {
     const incoming = fakeIncoming();
     const size = CAP + 1;
-    const req = new Request("http://localhost/v1/t/c", {
+    const req = new Request("http://localhost/v1/c/c", {
       method: "POST",
       headers: {
         "content-type": "application/octet-stream",
@@ -168,7 +168,7 @@ describe("applyBodyCap", () => {
       chunks.push(new Uint8Array(next));
       remaining -= next;
     }
-    const req = new Request("http://localhost/v1/t/c", {
+    const req = new Request("http://localhost/v1/c/c", {
       method: "POST",
       headers: { "content-type": "application/octet-stream" },
       body: stream(chunks),
@@ -226,7 +226,7 @@ describe("createApp + applyBodyCap real-wire regression", () => {
           host: "127.0.0.1",
           port,
           method: "POST",
-          path: "/v1/t/c",
+          path: "/v1/c/c",
           headers: {
             authorization: "Bearer dev",
             "content-type": "application/json",

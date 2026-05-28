@@ -45,7 +45,7 @@ describe("createApp", () => {
     await expect(res.json()).resolves.toEqual({ ok: true });
   });
 
-  test("cascade end-to-end: GET /v1/t/:table runs through the verifier + router", async () => {
+  test("cascade end-to-end: GET /v1/c/:collection runs through the verifier + router", async () => {
     const storage = new MemoryStorage();
     const tenant = "acme";
     await provision(storage, tenant, "c");
@@ -53,7 +53,7 @@ describe("createApp", () => {
     const app = createApp({ app: "t", storage, verifier });
 
     const res = await app.fetch(
-      new Request("http://localhost/v1/t/c", {
+      new Request("http://localhost/v1/c/c", {
         headers: { authorization: "Bearer dev" },
       }),
     );
@@ -78,7 +78,7 @@ describe("createApp", () => {
     const size = (1 << 20) + 1;
     const body = new Uint8Array(size);
     const res = await app.fetch(
-      new Request("http://localhost/v1/t/c", {
+      new Request("http://localhost/v1/c/c", {
         method: "POST",
         headers: {
           authorization: "Bearer dev",

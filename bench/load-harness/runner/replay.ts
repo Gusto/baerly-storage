@@ -1,6 +1,6 @@
 /**
  * Replay phase. Dispatches op-stream entries (ticket 51) through
- * `Db.table(collection)` calls, capturing per-op latency and a phase-
+ * `Db.collection(collection)` calls, capturing per-op latency and a phase-
  * scoped `StorageSnapshot` from the `CountingStorage` wrapper.
  *
  * Caller is responsible for invoking phases in a valid order; the
@@ -96,12 +96,12 @@ async function dispatch(db: Db, collection: string, op: Op): Promise<void> {
   // .get/.update/etc. take the PK fast-path in query.ts — single Map.get, not O(n) scan.
   switch (op.kind) {
     case "list-recent": {
-      await db.table(collection).order({ createdAtMs: "desc" }).limit(50).all();
+      await db.collection(collection).order({ createdAtMs: "desc" }).limit(50).all();
       return;
     }
     case "point-read": {
       if (op.recordId !== undefined) {
-        await db.table(collection).get(op.recordId);
+        await db.collection(collection).get(op.recordId);
       }
       return;
     }
@@ -111,25 +111,25 @@ async function dispatch(db: Db, collection: string, op: Op): Promise<void> {
         popularityRank: 0,
         ...(op.recordId !== undefined && { _id: op.recordId }),
       };
-      await db.table(collection).insert(body);
+      await db.collection(collection).insert(body);
       return;
     }
     case "update": {
       if (op.recordId !== undefined) {
         // Patch the popularity rank to simulate an update touch.
-        await db.table(collection).update(op.recordId, { popularityRank: -1 });
+        await db.collection(collection).update(op.recordId, { popularityRank: -1 });
       }
       return;
     }
     case "filtered-list": {
       // Filtered list on popularity rank = 0 (the "hot" records).
-      await db.table(collection).where({ popularityRank: 0 }).limit(50).all();
+      await db.collection(collection).where({ popularityRank: 0 }).limit(50).all();
       return;
     }
     case "archive": {
       if (op.recordId !== undefined) {
         // Archive = set status="archived" via by-id update.
-        await db.table(collection).update(op.recordId, { status: "archived" });
+        await db.collection(collection).update(op.recordId, { status: "archived" });
       }
       return;
     }

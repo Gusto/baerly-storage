@@ -3,7 +3,7 @@ export type {
   BaerlyClient,
   BaerlyClientOptions,
   ClientQuery,
-  ClientTable,
+  ClientCollection,
   TerminalOptions,
 } from "./client.ts";
 export type { Fetcher } from "./request.ts";

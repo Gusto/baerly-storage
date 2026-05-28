@@ -103,7 +103,7 @@ curl -s -H "Authorization: Bearer $SHARED_SECRET" \
 curl -s "$CF_DEPLOY_URL/v1/healthz"
 # Expect: {"ok":true}  (healthz is always anonymous — by design)
 
-curl -s "$CF_DEPLOY_URL/v1/t/some-table"
+curl -s "$CF_DEPLOY_URL/v1/c/some-table"
 # Expect: 401 with {"error":{"code":"Unauthorized",...}}
 ```
 

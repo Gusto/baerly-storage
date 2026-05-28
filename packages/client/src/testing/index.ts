@@ -17,14 +17,14 @@ import type { Fetcher } from "../request.ts";
  * @example
  * ```ts
  * const mock = new MockFetch();
- * mock.on("GET", "/v1/t/tickets", () =>
+ * mock.on("GET", "/v1/c/tickets", () =>
  *   new Response(JSON.stringify({
  *     data: [{ _id: "a" }],
  *     _meta: { manifest_pointer: "none@0", fresh: true },
  *   })),
  * );
  * const client = createBaerlyClient({ baseUrl: "http://x", fetch: mock.fetch });
- * const rows = await client.table("tickets").where({}).all();
+ * const rows = await client.collection("tickets").where({}).all();
  * ```
  */
 export class MockFetch {
@@ -38,8 +38,8 @@ export class MockFetch {
    * Register a handler. `pathPattern` is either a string template
    * (with `:name` segments → `[^/]+` and static text regex-escaped)
    * or a raw `RegExp` for advanced matches. The matched range
-   * includes the query-string boundary so `"/v1/t/tickets"` also
-   * matches `/v1/t/tickets?where=...`.
+   * includes the query-string boundary so `"/v1/c/tickets"` also
+   * matches `/v1/c/tickets?where=...`.
    */
   on(
     method: string,

@@ -33,8 +33,8 @@
  *
  * @see docs/about/thesis.md — M-size ceiling rationale.
  * @see docs/spec/log-entry-shape.md — `LogEntry.commit_ts` contract.
- * @see packages/server/src/compactor.ts:224-225 — `tablePrefix` /
- *      `tableName` derivation pattern reused here.
+ * @see packages/server/src/compactor.ts:224-225 — `collectionPrefix` /
+ *      `collectionName` derivation pattern reused here.
  */
 
 import { type ArgsDef } from "citty";
@@ -100,15 +100,15 @@ export interface UsageVerdict {
 export const currentJsonKeyFor = (app: string, tenant: string, collection: string): string =>
   `app/${app}/tenant/${tenant}/manifests/${collection}/current.json`;
 
-/** Derive the `tablePrefix` (everything before `/current.json`). */
-export const tablePrefixOf = (currentJsonKey: string): string =>
+/** Derive the `collectionPrefix` (everything before `/current.json`). */
+export const collectionPrefixOf = (currentJsonKey: string): string =>
   currentJsonKey.slice(0, currentJsonKey.lastIndexOf("/"));
 
 /**
- * List every log key under `${tablePrefix}/log/` for one collection.
+ * List every log key under `${collectionPrefix}/log/` for one collection.
  * Returns the keys in **chronological order** (oldest seq first).
  *
- * The on-bucket key shape is `<tablePrefix>/log/<seq>.json` where
+ * The on-bucket key shape is `<collectionPrefix>/log/<seq>.json` where
  * `<seq>` is a base-10 integer minted by `Writer`. Lex-ascending
  * key order disagrees with numeric seq order past seq=9 (`log/10.json`
  * sorts before `log/2.json`), so we parse the trailing integer out of
@@ -243,8 +243,8 @@ export const estimateWritesPerMin = async (
 ): Promise<UsageVerdict> => {
   const sampleSize = opts.sampleSize ?? SAMPLE_SIZE;
   const keyPrefix = opts.keyPrefix ?? "";
-  const tablePrefix = `${keyPrefix}${tablePrefixOf(currentJsonKeyFor(app, tenant, collection))}`;
-  const logPrefix = `${tablePrefix}/log/`;
+  const collectionPrefix = `${keyPrefix}${collectionPrefixOf(currentJsonKeyFor(app, tenant, collection))}`;
+  const logPrefix = `${collectionPrefix}/log/`;
 
   let allKeys: readonly string[];
   try {

@@ -44,7 +44,7 @@ const MAX_SEQ = 10 ** SEQ_DIGITS - 1;
  *   out of range or `sha256` is not 64 hex chars.
  */
 export const snapshotKey = (
-  tablePrefix: string,
+  collectionPrefix: string,
   minSeq: number,
   maxSeq: number,
   sha256: string,
@@ -56,7 +56,7 @@ export const snapshotKey = (
     throw new BaerlyError("InvalidConfig", "snapshotKey: sha256 must be 64 hex chars");
   }
   const pad = (n: number): string => n.toString().padStart(SEQ_DIGITS, "0");
-  return `${tablePrefix}/snapshot/L${SNAPSHOT_LEVEL}/${pad(minSeq)}-${pad(maxSeq)}-${sha256}.json`;
+  return `${collectionPrefix}/snapshot/L${SNAPSHOT_LEVEL}/${pad(minSeq)}-${pad(maxSeq)}-${sha256}.json`;
 };
 
 /**

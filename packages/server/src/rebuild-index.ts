@@ -148,8 +148,8 @@ export const rebuildIndex = async (
       `rebuildIndex: currentJsonKey ${JSON.stringify(currentJsonKey)} must contain "/"`,
     );
   }
-  const tablePrefix = currentJsonKey.slice(0, lastSlash);
-  const collection = tablePrefix.slice(tablePrefix.lastIndexOf("/") + 1);
+  const collectionPrefix = currentJsonKey.slice(0, lastSlash);
+  const collection = collectionPrefix.slice(collectionPrefix.lastIndexOf("/") + 1);
   const logSeqStart = logSeqStartOf(read.json);
   const nextSeq = read.json.next_seq;
 
@@ -160,13 +160,13 @@ export const rebuildIndex = async (
     read.json.snapshot === null
       ? new Map<string, DocumentData>()
       : await loadSnapshotAsMap(storage, read.json.snapshot, collection);
-  const entries = await walkLogRange(storage, tablePrefix, logSeqStart, nextSeq);
+  const entries = await walkLogRange(storage, collectionPrefix, logSeqStart, nextSeq);
   foldLogEntriesOnto(live, entries, { collection });
 
   // 2. Compute the expected index-key set.
   const expected = new Set<string>();
   for (const [docId, body] of live) {
-    for (const k of allIndexKeysFor(tablePrefix, [def], body, docId)) {
+    for (const k of allIndexKeysFor(collectionPrefix, [def], body, docId)) {
       expected.add(k);
     }
   }
@@ -180,7 +180,7 @@ export const rebuildIndex = async (
   if (opts.signal !== undefined) {
     listOpts.signal = opts.signal;
   }
-  for await (const entry of storage.list(indexKeyPrefix(tablePrefix, def.name), listOpts)) {
+  for await (const entry of storage.list(indexKeyPrefix(collectionPrefix, def.name), listOpts)) {
     actual.add(entry.key);
   }
 

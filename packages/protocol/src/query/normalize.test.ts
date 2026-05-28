@@ -59,19 +59,13 @@ describe("normalizeObject", () => {
   });
 
   test("rejects __proto__ / constructor / prototype as reserved keys", () => {
-    expectInvalidConfig(
-      () => normalizeObject(JSON.parse('{"__proto__":"x"}'), []),
-      "__proto__",
-    );
+    expectInvalidConfig(() => normalizeObject(JSON.parse('{"__proto__":"x"}'), []), "__proto__");
     expectInvalidConfig(() => normalizeObject({ constructor: "x" }, []), "constructor");
     expectInvalidConfig(() => normalizeObject({ prototype: "x" }, []), "prototype");
   });
 
   test("rejects null / undefined values", () => {
-    expectInvalidConfig(
-      () => normalizeObject({ x: null as unknown as string }, []),
-      "null",
-    );
+    expectInvalidConfig(() => normalizeObject({ x: null as unknown as string }, []), "null");
     expectInvalidConfig(
       () => normalizeObject({ x: undefined as unknown as string }, []),
       "undefined",
@@ -125,10 +119,15 @@ describe("normalizePredicateArg — callback form", () => {
   test("builder does NOT expose unsupported operator methods at runtime", () => {
     // Vocabulary lock: methods absent from PredicateBuilder cannot be
     // invoked even via `as unknown as { … }`. Type-level absence is
-    // covered in `table-api.test-d.ts`; here we pin the runtime
+    // covered in `collection-api.test-d.ts`; here we pin the runtime
     // implementation surface so it cannot drift.
     normalizePredicateArg((q) => {
-      const probe = q as unknown as { regex?: unknown; ne?: unknown; or?: unknown; exists?: unknown };
+      const probe = q as unknown as {
+        regex?: unknown;
+        ne?: unknown;
+        or?: unknown;
+        exists?: unknown;
+      };
       expect(probe.regex).toBeUndefined();
       expect(probe.ne).toBeUndefined();
       expect(probe.or).toBeUndefined();

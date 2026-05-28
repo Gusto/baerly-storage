@@ -99,7 +99,7 @@ describe("observability middleware", () => {
 
   test("successful request emits one canonical INFO line", async () => {
     const app = buildApp();
-    const req = new Request("http://localhost/v1/t/things?where=%7B%22clauses%22%3A%5B%5D%7D");
+    const req = new Request("http://localhost/v1/c/things?where=%7B%22clauses%22%3A%5B%5D%7D");
     const res = await withHttpObservability(req, (r) => app.fetch(r));
     expect(res.status).toBe(200);
     const lines = canonical();
@@ -110,7 +110,7 @@ describe("observability middleware", () => {
     const p = line.properties;
     expect(typeof p["request_id"]).toBe("string");
     expect(p["method"]).toBe("GET");
-    expect(p["path"]).toBe("/v1/t/things");
+    expect(p["path"]).toBe("/v1/c/things");
     expect(p["status"]).toBe(200);
     expect(p["outcome"]).toBe("read");
     expect(typeof p["duration_ms"]).toBe("number");
@@ -154,7 +154,7 @@ describe("observability middleware", () => {
 
   test("x-request-id header is honoured", async () => {
     const app = buildApp();
-    const req = new Request("http://localhost/v1/t/things?where=%7B%22clauses%22%3A%5B%5D%7D", {
+    const req = new Request("http://localhost/v1/c/things?where=%7B%22clauses%22%3A%5B%5D%7D", {
       headers: { "x-request-id": "known-id" },
     });
     await withHttpObservability(req, (r) => app.fetch(r));
@@ -227,7 +227,7 @@ describe("router is silent without a wrapping observability scope", () => {
     let resStatus: number | undefined;
     await runWithContext(outerCtx, async () => {
       const res = await app.request(
-        "http://localhost/v1/t/things?where=%7B%22clauses%22%3A%5B%5D%7D",
+        "http://localhost/v1/c/things?where=%7B%22clauses%22%3A%5B%5D%7D",
       );
       resStatus = res.status;
     });
@@ -239,7 +239,7 @@ describe("router is silent without a wrapping observability scope", () => {
   test("bare app.fetch with no outer scope still emits no router-owned canonical line", async () => {
     const app = makeApp();
     const res = await app.request(
-      "http://localhost/v1/t/things?where=%7B%22clauses%22%3A%5B%5D%7D",
+      "http://localhost/v1/c/things?where=%7B%22clauses%22%3A%5B%5D%7D",
     );
     expect(res.status).toBe(200);
     expect(canonical()).toHaveLength(0);

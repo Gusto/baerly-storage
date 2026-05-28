@@ -1,12 +1,12 @@
 /* eslint-disable no-underscore-dangle -- `_id` is the locked primary-key
-   field on document shapes (see `@baerly/protocol/src/table-api.ts`'s `Table<T>`
+   field on document shapes (see `@baerly/protocol/src/collection-api.ts`'s `Collection<T>`
    declaration); snapshot body docs carry it through. */
 
 /**
  * Compactor — `compact()` happy paths and invariants under
  * `MemoryStorage`. The cross-adapter coverage (memory / local-fs /
  * node-minio / cloudflare-r2) is exercised by the `[compaction]`
- * variant inside `tests/fixtures/table-api-cascade.ts`.
+ * variant inside `tests/fixtures/collection-api-cascade.ts`.
  */
 
 import {
@@ -87,7 +87,7 @@ describe("compact", () => {
     expect(res.logSeqStartAfter).toBe(40);
     expect(res.previousSnapshotKey).toBeNull();
     expect(res.newSnapshotKey).toBeDefined();
-    // L9/<12-digit min>-<12-digit max>-<64 hex>.json under tablePrefix.
+    // L9/<12-digit min>-<12-digit max>-<64 hex>.json under collectionPrefix.
     expect(res.newSnapshotKey).toMatch(/\/snapshot\/L9\/0{12}-0{10}40-[0-9a-f]{64}\.json$/);
   });
 

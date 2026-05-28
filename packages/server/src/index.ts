@@ -48,8 +48,8 @@ export { type SchemaIssue, type SchemaValidator, validateOrThrow } from "./schem
  * - {@link BaerlyError} / {@link BaerlyErrorCode}: every failure
  *   thrown through this surface is a `BaerlyError`; consumers
  *   branch on `error.code` rather than `instanceof` chains.
- * - {@link Query} / {@link Table}: the locked predicate-AST
- *   interfaces returned by `Db.table(...)`. Consumers that
+ * - {@link Query} / {@link Collection}: the locked predicate-AST
+ *   interfaces returned by `Db.collection(...)`. Consumers that
  *   destructure the chain need the named types.
  * - {@link Storage} + its result types
  *   ({@link StorageGetResult}, {@link StorageListEntry},
@@ -72,7 +72,7 @@ export {
   type StorageGetResult,
   type StorageListEntry,
   type StoragePutResult,
-  type Table,
+  type Collection,
   type Verifier,
   type VerifierResult,
 } from "@baerly/protocol";

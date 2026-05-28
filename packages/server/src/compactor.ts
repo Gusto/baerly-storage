@@ -1,5 +1,5 @@
 /* eslint-disable no-underscore-dangle -- `_id` is the locked primary-key
-   field on document shapes (see `@baerly/protocol/src/table-api.ts`'s `Table<T>` /
+   field on document shapes (see `@baerly/protocol/src/collection-api.ts`'s `Collection<T>` /
    `Query<T>` declarations); the snapshot body carries it through. */
 
 /**
@@ -165,8 +165,8 @@ export const compact = async (
   const internal = options as InternalCompactOptions;
   const maxPerRun = internal.maxEntriesPerRun ?? DEFAULT_MAX_PER_RUN;
   const minToCompact = options.minEntriesToCompact ?? DEFAULT_MIN_TO_COMPACT;
-  const tablePrefix = currentJsonKey.slice(0, currentJsonKey.lastIndexOf("/"));
-  const tableName = tablePrefix.slice(tablePrefix.lastIndexOf("/") + 1);
+  const collectionPrefix = currentJsonKey.slice(0, currentJsonKey.lastIndexOf("/"));
+  const collectionName = collectionPrefix.slice(collectionPrefix.lastIndexOf("/") + 1);
 
   // ── Step 1. Read current.json fresh. ────────────────────────────
   const read = await readCurrentJson(
@@ -206,10 +206,10 @@ export const compact = async (
   const base =
     current.snapshot === null
       ? new Map<string, DocumentData>()
-      : await loadSnapshotAsMap(storage, current.snapshot, tableName, options.signal);
+      : await loadSnapshotAsMap(storage, current.snapshot, collectionName, options.signal);
 
   // ── Step 3. Parallel-fetch [logSeqStartBefore, foldEnd) entries. ──
-  const entries = await walkLogRange(storage, tablePrefix, logSeqStartBefore, foldEnd, {
+  const entries = await walkLogRange(storage, collectionPrefix, logSeqStartBefore, foldEnd, {
     signal: options.signal,
   });
 
@@ -219,7 +219,7 @@ export const compact = async (
   // packages/protocol/src/log.ts:67-72). D tombstones. T / M are
   // forward-compat shapes (writer doesn't emit them today).
   for (const entry of entries) {
-    if (entry.collection !== tableName) {
+    if (entry.collection !== collectionName) {
       continue;
     }
     if (entry.doc_id === undefined) {
@@ -263,12 +263,12 @@ export const compact = async (
     schema_version: 1,
     min_seq: 0,
     max_seq: foldEnd,
-    collection: tableName,
+    collection: collectionName,
     docs: sortedDocs,
   };
   const bodyBytes = encodeSnapshotBody(snapshotBody);
   const sha256 = await snapshotHash(bodyBytes);
-  const newKey = snapshotKey(tablePrefix, 0, foldEnd, sha256);
+  const newKey = snapshotKey(collectionPrefix, 0, foldEnd, sha256);
 
   // ── Step 6. PUT the snapshot. ───────────────────────────────────
   // No CAS guard — content-hash filenames make collisions impossible
@@ -320,9 +320,9 @@ export const compact = async (
   // add zero storage ops.
   const entriesFolded = foldEnd - logSeqStartBefore;
   const metrics = ctxMetrics();
-  metrics.histogram("db.compact.entries_folded", entriesFolded, { collection: tableName });
+  metrics.histogram("db.compact.entries_folded", entriesFolded, { collection: collectionName });
   metrics.gauge("db.manifest.lag_window_depth", current.next_seq - foldEnd, {
-    collection: tableName,
+    collection: collectionName,
   });
 
   return {

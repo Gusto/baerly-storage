@@ -345,7 +345,7 @@ describe("HTTP boundary — schema validation (ticket 70)", () => {
     const app = createRouter({ db });
 
     // Invalid doc: `status` violates the schema.
-    const badReq = new Request(`http://test.local/v1/t/${TABLE}`, {
+    const badReq = new Request(`http://test.local/v1/c/${TABLE}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ doc: { status: "bogus" } }),
@@ -365,7 +365,7 @@ describe("HTTP boundary — schema validation (ticket 70)", () => {
     expect(badBody.error.issues?.[0]?.message).toContain("open");
 
     // Valid doc: the same route accepts a schema-compliant body.
-    const okReq = new Request(`http://test.local/v1/t/${TABLE}`, {
+    const okReq = new Request(`http://test.local/v1/c/${TABLE}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ doc: { status: "open" } }),

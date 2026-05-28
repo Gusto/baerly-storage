@@ -1,6 +1,6 @@
 /* eslint-disable no-underscore-dangle -- `_id` is the locked
    primary-key field on document shapes (see `@baerly/protocol`'s
-   `Table<T>` / `Query<T>` declarations); cleanup iterates the
+   `Collection<T>` / `Query<T>` declarations); cleanup iterates the
    returned `_id`s by name. */
 
 /**
@@ -72,7 +72,7 @@ describe.runIf(NODE_URL !== undefined && SECRET !== undefined)("real-deploy: nod
   afterAll(async () => {
     for (const table of cleanupTables) {
       try {
-        const list = await fetch(`${baseUrl}/v1/t/${table}`, {
+        const list = await fetch(`${baseUrl}/v1/c/${table}`, {
           headers: { authorization: bearer },
         });
         if (!list.ok) {
@@ -82,7 +82,7 @@ describe.runIf(NODE_URL !== undefined && SECRET !== undefined)("real-deploy: nod
           readonly data: ReadonlyArray<{ readonly _id: string }>;
         };
         for (const row of data) {
-          await fetch(`${baseUrl}/v1/t/${table}/${row._id}`, {
+          await fetch(`${baseUrl}/v1/c/${table}/${row._id}`, {
             method: "DELETE",
             headers: { authorization: bearer },
           }).catch(() => undefined);
@@ -95,7 +95,7 @@ describe.runIf(NODE_URL !== undefined && SECRET !== undefined)("real-deploy: nod
   });
 
   test("unauthenticated request → 401 Unauthorized", async () => {
-    const res = await fetch(`${baseUrl}/v1/t/auth-missing`);
+    const res = await fetch(`${baseUrl}/v1/c/auth-missing`);
     expect(res.status).toBe(401);
     const body = (await res.json()) as {
       readonly error?: { readonly code?: string };
@@ -112,7 +112,7 @@ describe.runIf(NODE_URL !== undefined && SECRET !== undefined)("real-deploy: nod
     const table = `${RUN_PREFIX}-latency`;
     cleanupTables.push(table);
     const payload = "x".repeat(1024);
-    const post = await fetch(`${baseUrl}/v1/t/${table}`, {
+    const post = await fetch(`${baseUrl}/v1/c/${table}`, {
       method: "POST",
       headers: { authorization: bearer, "content-type": "application/json" },
       body: JSON.stringify({ doc: { payload } }),
@@ -123,7 +123,7 @@ describe.runIf(NODE_URL !== undefined && SECRET !== undefined)("real-deploy: nod
     const samples: number[] = [];
     for (let i = 0; i < 100; i += 1) {
       const t0 = performance.now();
-      const res = await fetch(`${baseUrl}/v1/t/${table}/${id}`, {
+      const res = await fetch(`${baseUrl}/v1/c/${table}/${id}`, {
         headers: { authorization: bearer },
       });
       expect(res.status).toBe(200);
@@ -143,7 +143,7 @@ describe.runIf(NODE_URL !== undefined && SECRET !== undefined)("real-deploy: nod
     const table = `${RUN_PREFIX}-longpoll`;
     cleanupTables.push(table);
 
-    const seed = await fetch(`${baseUrl}/v1/t/${table}`, {
+    const seed = await fetch(`${baseUrl}/v1/c/${table}`, {
       method: "POST",
       headers: { authorization: bearer, "content-type": "application/json" },
       body: JSON.stringify({ doc: { seed: true } }),
@@ -152,7 +152,7 @@ describe.runIf(NODE_URL !== undefined && SECRET !== undefined)("real-deploy: nod
 
     const longPolls = Array.from({ length: 10 }, async () => {
       const t0 = performance.now();
-      const res = await fetch(`${baseUrl}/v1/since?table=${table}&cursor=`, {
+      const res = await fetch(`${baseUrl}/v1/since?collection=${table}&cursor=`, {
         headers: { authorization: bearer },
       });
       const wall = performance.now() - t0;
@@ -165,7 +165,7 @@ describe.runIf(NODE_URL !== undefined && SECRET !== undefined)("real-deploy: nod
 
     await Promise.all(
       Array.from({ length: 10 }, (_, i) =>
-        fetch(`${baseUrl}/v1/t/${table}`, {
+        fetch(`${baseUrl}/v1/c/${table}`, {
           method: "POST",
           headers: { authorization: bearer, "content-type": "application/json" },
           body: JSON.stringify({ doc: { lp: i } }),

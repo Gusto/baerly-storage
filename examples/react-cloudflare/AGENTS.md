@@ -20,18 +20,18 @@ read:
   code, every example. If a pattern you want to use isn't here, it
   doesn't exist in baerly.
 - **`node_modules/@gusto/baerly-storage/dist/*.d.ts`** — authoritative type
-  signatures. `Db`, `Table<T>`, `Query<T>`, and `Predicate<T>` are
+  signatures. `Db`, `Collection<T>`, `Query<T>`, and `Predicate<T>` are
   the whole API surface.
 
 Common anti-patterns that compile but are wrong:
 
 - `db.collection(name).insertOne(...)` / `.find({...})` (Mongo) — use
-  `db.table(name).insert(row)` and `.where({ ... }).all()`.
+  `db.collection(name).insert(row)` and `.where({ ... }).all()`.
 - `z.string().nullable()` in a schema — `DocumentValue` excludes
   `null`. Use `.optional()`; `null` in an update patch is the RFC
   7396 deletion sentinel, not a storable value.
 - Raw SQL strings, `WHERE` clauses, hand-built query AST — the only
-  query surface is `db.table(...).where({ field: value }).all()` or
+  query surface is `db.collection(...).where({ field: value }).all()` or
   `.where(q => q.gte("count", 1))`. See **Predicates** below.
 - `.useIndex("name")` / `.hint(...)` — no such methods. The planner
   picks the index automatically from `IndexDefinition`s in
@@ -56,7 +56,7 @@ shape declared in `baerly.config.ts`. The bare server-only version is
 `--target=cloudflare --starter=react`.
 
 Public API docs: https://docs.baerly.dev/ (the JSDoc on
-`baerly-storage`'s `Db` and `Table` is the canonical reference;
+`baerly-storage`'s `Db` and `Collection` is the canonical reference;
 read it via your editor's TS LS or via the published types).
 
 ## Toolchain
@@ -128,8 +128,8 @@ http://localhost:5173/<path>`) before declaring the task complete.
 - **Typed tables** — three ways to get a typed row, in DX order:
   1. **Bind the config.** This template's `src/web/client.ts`
      already passes `config` to `createBaerlyClient({ baseUrl,
-     config })`, so `client.table("notes")` returns
-     `ClientTable<Row>` with `Row` derived from the
+     config })`, so `client.collection("notes")` returns
+     `ClientCollection<Row>` with `Row` derived from the
      `NoteSchema` declared in `baerly.config.ts`. No generic
      needed. Use `client.table<Note>("notes")` (with `Note`
      exported from `baerly.config.ts` next to the schema)
@@ -165,8 +165,8 @@ http://localhost:5173/<path>`) before declaring the task complete.
       tenant: "t",
       config,
     });
-    const { _id } = await db.table("notes").insert({ body: "hello" });
-    const row = await db.table("notes").get(_id);
+    const { _id } = await db.collection("notes").insert({ body: "hello" });
+    const row = await db.collection("notes").get(_id);
     expect(row?.body).toBe("hello");
   });
   ```
@@ -177,7 +177,7 @@ http://localhost:5173/<path>`) before declaring the task complete.
   instance into multiple `Db.create` calls so they share the
   underlying bucket.
 
-- **Predicates** — `db.table("notes").where({...}).all()`. Two
+- **Predicates** — `db.collection("notes").where({...}).all()`. Two
   shapes:
 
   - **Object literal** — equality only (top-level, dotted-path, or
@@ -190,25 +190,25 @@ http://localhost:5173/<path>`) before declaring the task complete.
 
   ```ts
   // Top-level equality
-  await db.table("notes").where({ body: "TODO" }).all();
+  await db.collection("notes").where({ body: "TODO" }).all();
 
   // Dotted-path on a nested field
-  await db.table("notes")
+  await db.collection("notes")
     .where({ "meta.source": "import" })
     .all();
 
   // Operator on a single field — set membership (callback form)
-  await db.table("notes")
+  await db.collection("notes")
     .where(q => q.in("tag", ["todo", "wip"]))
     .all();
 
   // Range — also callback form
-  await db.table("notes")
+  await db.collection("notes")
     .where(q => q.gte("created_at", "2026-01-01"))
     .all();
 
   // AND-merge across two .where() calls (mix shapes freely)
-  await db.table("notes")
+  await db.collection("notes")
     .where({ body: "TODO" })
     .where(q => q.gte("priority", 5))
     .all();
@@ -236,7 +236,7 @@ http://localhost:5173/<path>`) before declaring the task complete.
   });
   ```
 
-  With that declared, `db.table("notes").where({ body: "TODO" }).all()`
+  With that declared, `db.collection("notes").where({ body: "TODO" }).all()`
   walks `by_body` automatically. Composite indexes (`on: ["body",
   "tag"]`) match any leftmost prefix. Mismatches (predicate
   doesn't cover any index) fall back to a full table scan with a
@@ -271,18 +271,18 @@ http://localhost:5173/<path>`) before declaring the task complete.
   just the patch.
 
 - **HTTP wire format (calling `/v1/*` directly)** — the JS SDK
-  (`db.table(name).insert(...)`) is the canonical path; reach for `curl`
+  (`db.collection(name).insert(...)`) is the canonical path; reach for `curl`
   only when debugging the wire. Mutation bodies are wrapped:
 
   | Route                       | Body                | Response                      |
   | --------------------------- | ------------------- | ----------------------------- |
-  | `POST   /v1/t/:table`       | `{"doc":{...}}`     | `201 {_id}`                   |
-  | `PATCH  /v1/t/:table/:id`   | `{"patch":{...}}`   | `200 {modified}`              |
-  | `PUT    /v1/t/:table/:id`   | `{"doc":{...}}`     | `200 {modified}`              |
-  | `DELETE /v1/t/:table/:id`   | —                   | `204`                         |
+  | `POST   /v1/c/:collection`       | `{"doc":{...}}`     | `201 {_id}`                   |
+  | `PATCH  /v1/c/:collection/:id`   | `{"patch":{...}}`   | `200 {modified}`              |
+  | `PUT    /v1/c/:collection/:id`   | `{"doc":{...}}`     | `200 {modified}`              |
+  | `DELETE /v1/c/:collection/:id`   | —                   | `204`                         |
 
-  Reads (`GET /v1/t/:table[/:id]`, `GET /v1/count?table=…`,
-  `GET /v1/since?table=…&cursor=…`) take no body and return
+  Reads (`GET /v1/c/:collection[/:id]`, `GET /v1/count?collection=…`,
+  `GET /v1/since?collection=…&cursor=…`) take no body and return
   `{ data, _meta }` or a route-specific envelope. A flat `POST` body
   (without the `doc` wrapper) returns
   `400 SchemaError "Request body must be { doc: object }"` — the
@@ -443,7 +443,7 @@ from the runtime env.
           tenant: config.tenant,
           config,
         });
-        // …db.transaction(...), db.table(...).get(id), etc.
+        // …db.transaction(...), db.collection(...).get(id), etc.
         return new Response(null, { status: 204 });
       }
       // Fall through to the baerly cascade for /v1/* + /healthz.
@@ -518,12 +518,12 @@ from the runtime env.
 - Mutating `VerifierResult.tenantPrefix` between the verifier
   and `Db.create`. The dispatcher pins the tenant from the
   verifier's return value.
-- Calling `db.table(...).all()` (or any unbounded read) inside a
+- Calling `db.collection(...).all()` (or any unbounded read) inside a
   per-request handler. The call scans the entire collection on every
   request — fine for a fixture-sized table, catastrophic at any real
   size, and `pnpm verify` doesn't surface the cost. Push the filter
   into the predicate so the index planner can prune
-  (`db.table("notes").where({ ... }).all()`), or maintain a
+  (`db.collection("notes").where({ ... }).all()`), or maintain a
   side-projection (D1/KV/search index) populated incrementally from
   the `/v1/since` log feed or from a write hook — never re-scan per
   request.
@@ -609,7 +609,7 @@ there expands the `<select>` immediately. Adding more enum fields
 
 ### Filtering a reactive query by predicate
 
-`useQuery((c) => c.table(...).where(...).all(), [deps])` accepts the
+`useQuery((c) => c.collection(...).where(...).all(), [deps])` accepts the
 same predicate shapes as the bare client. To narrow by an enum field,
 drive it off `useState` and lift the filter into the `deps` array so
 the cache key changes when the filter does:
@@ -660,7 +660,7 @@ const parent = useQuery((c) => c.table<Note>("notes").get(id), [id]);
 const replies = useQuery(
   (c) =>
     parent.status === "ok"
-      ? c.table("comments").where({ noteId: parent.data?._id }).all()
+      ? c.collection("comments").where({ noteId: parent.data?._id }).all()
       : useQuery.skip,
   [parent.status === "ok" ? parent.data?._id : undefined],
 );
@@ -673,7 +673,7 @@ error }]` tuple. `mutate(cb)` runs `cb` against the real client:
 const [mutate, { isPending, error }] = useMutation();
 <button
   disabled={isPending}
-  onClick={() => mutate((c) => c.table("notes").update(id, { body }))}
+  onClick={() => mutate((c) => c.collection("notes").update(id, { body }))}
 >
   {isPending ? "Saving…" : "Save"}
 </button>

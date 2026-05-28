@@ -1,25 +1,25 @@
 /* eslint-disable no-underscore-dangle -- `_id` is the locked primary-key
-   field on document shapes (see `@baerly/protocol/src/table-api.ts`'s `Table<T>` /
+   field on document shapes (see `@baerly/protocol/src/collection-api.ts`'s `Collection<T>` /
    `Query<T>` declarations); the cascade reads / asserts it by name. */
 
 /**
- * Table-API integration cascade — backend-agnostic test driver.
+ * Collection-API integration cascade — backend-agnostic test driver.
  *
- * One entry point ({@link runTableApiCascade}) exercises every
- * locked verb on the `db.table(...)` and `db.transaction(...)`
+ * One entry point ({@link runCollectionApiCascade}) exercises every
+ * locked verb on the `db.collection(...)` and `db.transaction(...)`
  * surface, then walks the emitted `LogEntry`s and asserts the frozen
  * shape declared in `packages/protocol/src/log.ts:22–100`. The
  * driver is consumed by the Node-side variant table
- * (`tests/integration/table-api.test.ts`) and the Workerd mirror
- * (`packages/adapter-cloudflare/src/table-api.test.ts`).
+ * (`tests/integration/collection-api.test.ts`) and the Workerd mirror
+ * (`packages/adapter-cloudflare/src/collection-api.test.ts`).
  *
  * Pure module — no Node imports, no `node:fs`, no `node:os`. The
  * Cloudflare Workers pool consumes this file directly inside
  * Workerd; the Node-only variant setup (temp dirs, S3 sign,
  * `aws4fetch`) lives in the call site.
  *
- * @see tests/integration/table-api.test.ts (Node-side variants)
- * @see packages/adapter-cloudflare/src/table-api.test.ts (Workerd variant)
+ * @see tests/integration/collection-api.test.ts (Node-side variants)
+ * @see packages/adapter-cloudflare/src/collection-api.test.ts (Workerd variant)
  */
 
 import { expect } from "vitest";
@@ -43,7 +43,7 @@ import {
   Writer,
 } from "@baerly/server/_internal/testing";
 
-const APP = "table-api-test";
+const APP = "collection-api-test";
 
 /**
  * UUIDv7 regex — 36 chars with hyphens, version-7 nibble at the
@@ -63,7 +63,7 @@ const seedCurrent = (): CurrentJson => ({
   snapshot: null,
   next_seq: 0,
   log_seq_start: 0,
-  writer_fence: { epoch: 0, owner: "table-api-test", claimed_at: "" },
+  writer_fence: { epoch: 0, owner: "collection-api-test", claimed_at: "" },
 });
 
 /**
@@ -103,7 +103,7 @@ const freshTableName = (prefix: string): string => `${prefix}-${uuid().slice(0, 
 
 /**
  * Doc shape threaded through the cascade. We type generic verbs as
- * `Table<DocumentData>` (the default) because the locked
+ * `Collection<DocumentData>` (the default) because the locked
  * `T extends DocumentData` constraint forbids optional
  * fields under strict-object-mode tsgo — a named interface with
  * `readonly k?: string` is not assignable to
@@ -148,8 +148,8 @@ const predicateRejection = (db: Db, table: string): void => {
     // The cast through `unknown` is intentional — `Predicate<T>` is
     // strongly typed and forbids `$`-keys at compile time. We're
     // testing the runtime guard.
-    const p = predicate as unknown as Parameters<typeof db.table>[0] extends string
-      ? Parameters<ReturnType<typeof db.table>["where"]>[0]
+    const p = predicate as unknown as Parameters<typeof db.collection>[0] extends string
+      ? Parameters<ReturnType<typeof db.collection>["where"]>[0]
       : never;
     // SYNCHRONOUS throw — `.where(p)` returns a builder on success,
     // so an absent throw here means the operator-policy contract is
@@ -158,7 +158,7 @@ const predicateRejection = (db: Db, table: string): void => {
     // pass without losing the error reference.
     let err: unknown;
     try {
-      db.table(table).where(p);
+      db.collection(table).where(p);
     } catch (error) {
       err = error;
     }
@@ -188,25 +188,25 @@ const runReadHappyPath = async (
 ): Promise<void> => {
   const t = freshTableName("read-hp");
   await provision(storage, app, tenant, t);
-  await db.table<Doc>(t).insert({ k: "a", v: 1 });
-  await db.table<Doc>(t).insert({ k: "b", v: 2 });
-  await db.table<Doc>(t).insert({ k: "c", v: 3 });
+  await db.collection(t).insert({ k: "a", v: 1 });
+  await db.collection(t).insert({ k: "b", v: 2 });
+  await db.collection(t).insert({ k: "c", v: 3 });
 
-  await expect(db.table<Doc>(t).count()).resolves.toBe(3);
-  await expect(db.table<Doc>(t).where({}).count()).resolves.toBe(3);
+  await expect(db.collection(t).count()).resolves.toBe(3);
+  await expect(db.collection(t).where({}).count()).resolves.toBe(3);
 
-  const onlyB = await db.table<Doc>(t).where({ k: "b" }).first();
+  const onlyB = await db.collection(t).where({ k: "b" }).first();
   expect(onlyB).toBeDefined();
   expect(onlyB?.["k"]).toBe("b");
   expect(onlyB?.["v"]).toBe(2);
 
-  const all = await db.table<Doc>(t).where({}).all();
+  const all = await db.collection(t).where({}).all();
   expect(all).toHaveLength(3);
 
-  const ordered = await db.table<Doc>(t).order({ v: "asc" }).limit(2).all();
+  const ordered = await db.collection(t).order({ v: "asc" }).limit(2).all();
   expect(ordered.map((r) => r["k"])).toEqual(["a", "b"]);
 
-  const descendingOne = await db.table<Doc>(t).order({ v: "desc" }).limit(1).all();
+  const descendingOne = await db.collection(t).order({ v: "desc" }).limit(1).all();
   expect(descendingOne.map((r) => r["k"])).toEqual(["c"]);
 };
 
@@ -219,10 +219,10 @@ const runReadNotFound = async (
 ): Promise<void> => {
   const t = freshTableName("read-empty");
   await provision(storage, app, tenant, t);
-  await expect(db.table<Doc>(t).where({ k: "x" }).first()).resolves.toBeUndefined();
-  await expect(db.table<Doc>(t).where({ k: "x" }).all()).resolves.toEqual([]);
-  await expect(db.table<Doc>(t).where({ k: "x" }).count()).resolves.toBe(0);
-  await expect(db.table<Doc>(t).count()).resolves.toBe(0);
+  await expect(db.collection(t).where({ k: "x" }).first()).resolves.toBeUndefined();
+  await expect(db.collection(t).where({ k: "x" }).all()).resolves.toEqual([]);
+  await expect(db.collection(t).where({ k: "x" }).count()).resolves.toBe(0);
+  await expect(db.collection(t).count()).resolves.toBe(0);
 };
 
 /** Insert contract: UUIDv7 auto-id, caller-supplied `_id` honoured, round-trip. */
@@ -235,18 +235,18 @@ const runInsertContract = async (
   const t = freshTableName("insert");
   await provision(storage, app, tenant, t);
 
-  const { _id: auto } = await db.table<Doc>(t).insert({ k: "auto" });
+  const { _id: auto } = await db.collection(t).insert({ k: "auto" });
   // UUIDv7: 36 chars with hyphens, version-7 nibble at position 14
   // (third group, first char).
   expect(auto).toMatch(UUIDV7_RE);
 
   // Caller-supplied `_id` is honoured verbatim.
   const customId = "00000000-0000-7000-8000-000000000001";
-  const { _id } = await db.table<Doc>(t).insert({ _id: customId, k: "custom" });
+  const { _id } = await db.collection(t).insert({ _id: customId, k: "custom" });
   expect(_id).toBe(customId);
 
   // Round-trip via get() to confirm the doc is materialised.
-  const got = await db.table<Doc>(t).get(customId);
+  const got = await db.collection(t).get(customId);
   expect(got).toBeDefined();
   expect(got?.["_id"]).toBe(customId);
   expect(got?.["k"]).toBe("custom");
@@ -261,14 +261,14 @@ const runUpdateContract = async (
 ): Promise<void> => {
   const t = freshTableName("update");
   await provision(storage, app, tenant, t);
-  await db.table<Doc>(t).insert({ k: "a", v: 1 });
-  await db.table<Doc>(t).insert({ k: "a", v: 2 });
-  await db.table<Doc>(t).insert({ k: "b", v: 3 });
+  await db.collection(t).insert({ k: "a", v: 1 });
+  await db.collection(t).insert({ k: "a", v: 2 });
+  await db.collection(t).insert({ k: "b", v: 3 });
 
-  const { modified } = await db.table<Doc>(t).where({ k: "a" }).update({ marker: true });
+  const { modified } = await db.collection(t).where({ k: "a" }).update({ marker: true });
   expect(modified).toBe(2);
 
-  const afterMarker = await db.table<Doc>(t).where({ k: "a" }).all();
+  const afterMarker = await db.collection(t).where({ k: "a" }).all();
   expect(afterMarker).toHaveLength(2);
   for (const row of afterMarker) {
     expect(row["marker"]).toBe(true);
@@ -281,17 +281,17 @@ const runUpdateContract = async (
   // this is testing the runtime merge contract, which IS
   // `merge(target, null) === undefined` per `packages/protocol/src/json.ts`.
   const { modified: stripped } = await db
-    .table<Doc>(t)
+    .collection(t)
     .where({ k: "a" })
     .update({ marker: null } as unknown as Partial<Doc>);
   expect(stripped).toBe(2);
-  const afterStrip = await db.table<Doc>(t).where({ k: "a" }).all();
+  const afterStrip = await db.collection(t).where({ k: "a" }).all();
   for (const row of afterStrip) {
     expect("marker" in row).toBe(false);
   }
 };
 
-/** `Table.replace(id, doc)`: by-id whole-document overwrite; `NotFound` on missing. */
+/** `Collection.replace(id, doc)`: by-id whole-document overwrite; `NotFound` on missing. */
 const runTableReplaceByIdContract = async (
   db: Db,
   storage: Storage,
@@ -300,16 +300,16 @@ const runTableReplaceByIdContract = async (
 ): Promise<void> => {
   const t = freshTableName("replace");
   await provision(storage, app, tenant, t);
-  const { _id } = await db.table<Doc>(t).insert({ k: "only", v: 1 });
+  const { _id } = await db.collection(t).insert({ k: "only", v: 1 });
 
   // Happy path: the row at `_id` is overwritten.
-  await db.table<Doc>(t).replace(_id, { _id, k: "only", v: 99 });
-  const got = await db.table<Doc>(t).get(_id);
+  await db.collection(t).replace(_id, { _id, k: "only", v: 99 });
+  const got = await db.collection(t).get(_id);
   expect(got?.["v"]).toBe(99);
 
   // Missing id: NotFound.
   await expect(
-    db.table<Doc>(t).replace("does-not-exist", { _id: "does-not-exist", k: "x", v: 0 }),
+    db.collection(t).replace("does-not-exist", { _id: "does-not-exist", k: "x", v: 0 }),
   ).rejects.toMatchObject({ code: "NotFound" });
 };
 
@@ -322,17 +322,17 @@ const runDeleteContract = async (
 ): Promise<void> => {
   const t = freshTableName("delete");
   await provision(storage, app, tenant, t);
-  await db.table<Doc>(t).insert({ k: "x", v: 1 });
-  await db.table<Doc>(t).insert({ k: "x", v: 2 });
-  await db.table<Doc>(t).insert({ k: "y", v: 3 });
+  await db.collection(t).insert({ k: "x", v: 1 });
+  await db.collection(t).insert({ k: "x", v: 2 });
+  await db.collection(t).insert({ k: "y", v: 3 });
 
-  const { deleted } = await db.table<Doc>(t).where({ k: "x" }).delete();
+  const { deleted } = await db.collection(t).where({ k: "x" }).delete();
   expect(deleted).toBe(2);
 
   // Subsequent reads no longer see the deleted docs.
-  await expect(db.table<Doc>(t).where({ k: "x" }).count()).resolves.toBe(0);
-  await expect(db.table<Doc>(t).count()).resolves.toBe(1);
-  const first = await db.table<Doc>(t).where({}).first();
+  await expect(db.collection(t).where({ k: "x" }).count()).resolves.toBe(0);
+  await expect(db.collection(t).count()).resolves.toBe(1);
+  const first = await db.collection(t).where({}).first();
   expect(first?.["k"]).toBe("y");
 };
 
@@ -350,14 +350,14 @@ const runTransactionBody = async (
   await db.transaction(t, async () => {
     // no-op
   });
-  await expect(db.table<Doc>(t).count()).resolves.toBe(0);
+  await expect(db.collection(t).count()).resolves.toBe(0);
 
   // Body inserts — visible AFTER the body resolves.
   await db.transaction<Doc>(t, async (tx) => {
     await tx.insert({ k: "inside", v: 1 });
     await tx.insert({ k: "inside", v: 2 });
   });
-  await expect(db.table<Doc>(t).where({ k: "inside" }).count()).resolves.toBe(2);
+  await expect(db.collection(t).where({ k: "inside" }).count()).resolves.toBe(2);
 
   // Body throw — commit skipped, mutations dropped, identity preserved.
   const boom = new Error("body-throw");
@@ -372,13 +372,13 @@ const runTransactionBody = async (
   }
   expect(caught).toBe(boom);
   // Buffered insert NOT materialised.
-  await expect(db.table<Doc>(t).where({ k: "doomed" }).count()).resolves.toBe(0);
+  await expect(db.collection(t).where({ k: "doomed" }).count()).resolves.toBe(0);
 };
 
 /**
  * Cross-writer Conflict: two concurrent transactions racing on the
  * same table's `current.json`. The locked contract
- * (`packages/protocol/src/table-api.ts:211-215`) says single-attempt — at
+ * (`packages/protocol/src/collection-api.ts:211-215`) says single-attempt — at
  * least one writer throws `BaerlyError{code:"Conflict"}` on CAS loss.
  *
  * In-process variants (memory, local-fs) share state via the
@@ -398,7 +398,7 @@ const runTransactionConflict = async (
   await provision(storage, app, tenant, t);
   // Seed one row both writers will race to update. Both transactions
   // observe this row before either commits.
-  await db.table<Doc>(t).insert({ _id: "race", k: "race", v: 0 });
+  await db.collection(t).insert({ _id: "race", k: "race", v: 0 });
 
   const update = (writer: Db, label: string): Promise<void> =>
     writer.transaction<Doc>(t, async (tx) => {
@@ -446,10 +446,10 @@ const runCompactionCascade = async (
 
   // Insert N rows to feed the snapshot fold.
   for (let i = 0; i < 30; i++) {
-    await db.table<Doc>(t).insert({ _id: `pre-${i}`, k: "pre", n: i });
+    await db.collection(t).insert({ _id: `pre-${i}`, k: "pre", n: i });
   }
 
-  const before = await db.table<Doc>(t).order({ _id: "asc" }).all();
+  const before = await db.collection(t).order({ _id: "asc" }).all();
   expect(before).toHaveLength(30);
 
   // Compact: minEntriesToCompact below our N so the run lands.
@@ -466,14 +466,14 @@ const runCompactionCascade = async (
   expect(res.logSeqStartAfter).toBe(30);
 
   // Reader returns the same set after the snapshot landed.
-  const after = await db.table<Doc>(t).order({ _id: "asc" }).all();
+  const after = await db.collection(t).order({ _id: "asc" }).all();
   expect(after).toEqual(before);
 
   // Post-snapshot inserts overlay correctly on top of the snapshot.
   for (let i = 0; i < 5; i++) {
-    await db.table<Doc>(t).insert({ _id: `post-${i}`, k: "post", n: i });
+    await db.collection(t).insert({ _id: `post-${i}`, k: "post", n: i });
   }
-  const overlay = await db.table<Doc>(t).order({ _id: "asc" }).all();
+  const overlay = await db.collection(t).order({ _id: "asc" }).all();
   expect(overlay).toHaveLength(35);
   expect(overlay.filter((r) => r["k"] === "pre")).toHaveLength(30);
   expect(overlay.filter((r) => r["k"] === "post")).toHaveLength(5);
@@ -500,13 +500,13 @@ const runGcCascade = async (
   await provision(storage, app, tenant, t);
   const currentJsonKey = `app/${app}/tenant/${tenant}/manifests/${t}/current.json`;
   const pendingKey = `app/${app}/tenant/${tenant}/manifests/${t}/gc/pending.json`;
-  const tablePrefix = `app/${app}/tenant/${tenant}/manifests/${t}`;
+  const collectionPrefix = `app/${app}/tenant/${tenant}/manifests/${t}`;
 
   for (let i = 0; i < 30; i++) {
-    await db.table<Doc>(t).insert({ _id: `r-${i}`, k: "row", n: i });
+    await db.collection(t).insert({ _id: `r-${i}`, k: "row", n: i });
   }
 
-  const before = await db.table<Doc>(t).order({ _id: "asc" }).all();
+  const before = await db.collection(t).order({ _id: "asc" }).all();
   expect(before).toHaveLength(30);
 
   const compactRes = await compact({ storage, currentJsonKey }, {
@@ -527,10 +527,10 @@ const runGcCascade = async (
 
   // log/0..log/29 are gone.
   for (let i = 0; i < 30; i++) {
-    await expect(storage.get(`${tablePrefix}/log/${String(i)}.json`)).resolves.toBeNull();
+    await expect(storage.get(`${collectionPrefix}/log/${String(i)}.json`)).resolves.toBeNull();
   }
   // Reads still return the same row set — snapshot is the live truth.
-  const after = await db.table<Doc>(t).order({ _id: "asc" }).all();
+  const after = await db.collection(t).order({ _id: "asc" }).all();
   expect(after).toEqual(before);
 
   // pending.json exists and was created by runGc.
@@ -655,10 +655,10 @@ const runSchemaValidation = async (
   // doc the schema-bound Db rejects further down. Runs FIRST so the
   // per-table fold is empty when the schema-bound Db starts work.
   const noSchemaDb = Db.create({ storage, app, tenant });
-  const { _id: ok } = await noSchemaDb.table<Doc>(t).insert({ status: "bogus" });
+  const { _id: ok } = await noSchemaDb.collection(t).insert({ status: "bogus" });
   expect(typeof ok).toBe("string");
   // Tidy up so the schema-bound Db sees a clean slate.
-  await noSchemaDb.table<Doc>(t).delete(ok);
+  await noSchemaDb.collection(t).delete(ok);
 
   const db = Db.create({
     storage,
@@ -668,14 +668,14 @@ const runSchemaValidation = async (
   });
 
   // (4) Happy path: post-image satisfies the schema → insert succeeds.
-  const { _id: validId } = await db.table<Doc>(t).insert({ status: "open" });
+  const { _id: validId } = await db.collection(t).insert({ status: "open" });
   expect(typeof validId).toBe("string");
 
   // (1) insert with invalid status fails with SchemaError on
   // `status` path.
   let insertErr: unknown;
   try {
-    await db.table<Doc>(t).insert({ status: "bogus" });
+    await db.collection(t).insert({ status: "bogus" });
   } catch (error) {
     insertErr = error;
   }
@@ -690,7 +690,7 @@ const runSchemaValidation = async (
   // is on `status`, not "missing _id".
   let updateErr: unknown;
   try {
-    await db.table<Doc>(t).update(validId, { status: "bogus" });
+    await db.collection(t).update(validId, { status: "bogus" });
   } catch (error) {
     updateErr = error;
   }
@@ -702,7 +702,7 @@ const runSchemaValidation = async (
   // schema → SchemaError on `status`.
   let replaceErr: unknown;
   try {
-    await db.table<Doc>(t).replace(validId, { _id: validId, status: "bogus" });
+    await db.collection(t).replace(validId, { _id: validId, status: "bogus" });
   } catch (error) {
     replaceErr = error;
   }
@@ -713,13 +713,13 @@ const runSchemaValidation = async (
   // The schema-bound Db's writes that DID succeed remain visible —
   // the validity check fires synchronously inside the verb, before
   // any wire I/O for invalid inputs.
-  const round = await db.table<Doc>(t).get(validId);
+  const round = await db.collection(t).get(validId);
   expect(round?.["status"]).toBe("open");
 };
 
 /**
  * LogEntry shape — frozen assertion. After an I+I+U+D sequence,
- * walk `<tablePrefix>/log/<seq>.json` directly via `Storage` and
+ * walk `<collectionPrefix>/log/<seq>.json` directly via `Storage` and
  * assert the per-op shape from `packages/protocol/src/log.ts:22–100`.
  */
 const runLogEntryShape = async (
@@ -732,11 +732,11 @@ const runLogEntryShape = async (
   await provision(storage, app, tenant, t);
 
   // Direct-mutation sequence (one commit per call → distinct sessions).
-  const { _id: id1 } = await db.table<Doc>(t).insert({ k: "1", v: 1 });
-  const { _id: id2 } = await db.table<Doc>(t).insert({ k: "2", v: 2 });
-  const { modified } = await db.table<Doc>(t).update(id1, { marker: true });
+  const { _id: id1 } = await db.collection(t).insert({ k: "1", v: 1 });
+  const { _id: id2 } = await db.collection(t).insert({ k: "2", v: 2 });
+  const { modified } = await db.collection(t).update(id1, { marker: true });
   expect(modified).toBe(1);
-  const { deleted } = await db.table<Doc>(t).delete(id2);
+  const { deleted } = await db.collection(t).delete(id2);
   expect(deleted).toBe(1);
 
   // Transaction emit: two inserts inside one tx share a session id.
@@ -745,9 +745,9 @@ const runLogEntryShape = async (
     await tx.insert({ k: "tx-b" });
   });
 
-  const tablePrefix = `app/${app}/tenant/${tenant}/manifests/${t}`;
+  const collectionPrefix = `app/${app}/tenant/${tenant}/manifests/${t}`;
   const entries: LogEntry[] = [];
-  for await (const { key } of storage.list(`${tablePrefix}/log/`)) {
+  for await (const { key } of storage.list(`${collectionPrefix}/log/`)) {
     const got = await storage.get(key);
     if (got === null) {
       continue;
@@ -831,7 +831,7 @@ const runLogEntryShape = async (
  *                          it's skipped (variants where a second
  *                          handle isn't cheap to construct).
  */
-export const runTableApiCascade = async (opts: {
+export const runCollectionApiCascade = async (opts: {
   storage: Storage;
   rivalStorage?: Storage;
 }): Promise<void> => {

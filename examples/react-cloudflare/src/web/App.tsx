@@ -14,7 +14,7 @@ const NewNoteForm = () => {
         if (body.length === 0) {
           return;
         }
-        await mutate((c) => c.table("notes").insert({ body }));
+        await mutate((c) => c.collection("notes").insert({ body }));
         form.reset();
       }}
     >

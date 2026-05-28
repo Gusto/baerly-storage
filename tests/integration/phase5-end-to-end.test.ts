@@ -1,5 +1,5 @@
 /* eslint-disable no-underscore-dangle -- `_id` is the locked primary-key
-   field on document shapes (see `@baerly/protocol`'s `Table<T>`
+   field on document shapes (see `@baerly/protocol`'s `Collection<T>`
    declaration); the synthetic seed populates it directly. */
 
 /**
@@ -36,6 +36,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import {
+  type Collection,
   CURRENT_JSON_SCHEMA_VERSION,
   createCurrentJson,
   type DocumentData,
@@ -158,7 +159,7 @@ describe("Synthetic 5000-entry end-to-end gate", () => {
           // range on the first batch), keeping the seed O(N). The
           // memory variant still runs in ~2s; the local-fs variant
           // stays within the ticket's 30s budget instead of blowing
-          // past it. The four-adapter `table-api.test.ts` cascade
+          // past it. The four-adapter `collection-api.test.ts` cascade
           // covers single-commit semantics under load.
           const N = 5000;
           const inputs = Array.from({ length: N }, (_, i) => {
@@ -174,7 +175,7 @@ describe("Synthetic 5000-entry end-to-end gate", () => {
 
           // ── (2) Snapshot the read results BEFORE compaction. ─────────
           const db = Db.create({ storage, app: APP, tenant: TENANT });
-          const tbl = db.table<Ticket>(COLLECTION);
+          const tbl = db.collection(COLLECTION) as Collection<Ticket>;
           const rowsBefore = await tbl.where({}).all();
           const openBefore = await tbl.where({ status: "open" }).all();
           const priorityZeroBefore = await tbl.where({ priority: 0 }).all();
@@ -309,7 +310,7 @@ describe("Synthetic 5000-entry end-to-end gate", () => {
           // For broader workload analysis, see bench/README.md — the load
           // harness externalizes derived.class_a_per_tenant_per_hour.
           const db = Db.create({ storage: counting.storage, app: APP, tenant: TENANT });
-          const tbl = db.table<Ticket>(COLLECTION);
+          const tbl = db.collection(COLLECTION) as Collection<Ticket>;
           const T = 1800;
           for (let i = 0; i < T; i++) {
             await tbl.where({}).all();

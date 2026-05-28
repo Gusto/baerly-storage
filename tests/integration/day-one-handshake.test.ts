@@ -1,13 +1,13 @@
 /* eslint-disable no-underscore-dangle -- `_id` is the locked
    primary-key field on document shapes (see `@baerly/protocol`'s
-   `Table<T>` / `Query<T>` declarations); the gate asserts the
+   `Collection<T>` / `Query<T>` declarations); the gate asserts the
    round-trip by reading the server-assigned id back. */
 
 /**
  * Day-one handshake gate.
  *
  * Asserts: from `npm create baerly@latest` on a clean directory to a
- * working `client.table().insert()` round-trip:
+ * working `client.collection().insert()` round-trip:
  *
  *   - Cloudflare target : < 5 min wall-clock cold
  *   - Node target       : < 3 min wall-clock local
@@ -45,7 +45,6 @@ import { createServer, type AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
-import type { DocumentData } from "@baerly/protocol";
 import { createBaerlyClient } from "@baerly/client";
 
 const TARGETS = new Set(
@@ -60,12 +59,6 @@ const BUDGET_NODE_MS = Number(process.env["DAY_ONE_BUDGET_NODE_MS"] ?? 180_000);
 const CF_API_TOKEN = process.env["CF_API_TOKEN"];
 const CF_ACCOUNT_ID = process.env["CF_ACCOUNT_ID"];
 const SHARED_SECRET = process.env["SHARED_SECRET"] ?? cryptoRandomSecret();
-
-interface Ticket extends DocumentData {
-  readonly _id: string;
-  readonly title: string;
-  readonly status: "open" | "closed";
-}
 
 function cryptoRandomSecret(): string {
   return Array.from(crypto.getRandomValues(new Uint8Array(32)))
@@ -152,13 +145,13 @@ describe.runIf(RUN_NODE)("day-one handshake — node target", () => {
         baseUrl: `http://127.0.0.1:${port}`,
         headers: { Authorization: `Bearer ${SHARED_SECRET}` },
       });
-      const { _id } = await client.table<Ticket>("tickets").insert({
+      const { _id } = await client.collection("tickets").insert({
         title: "day-one gate",
         status: "open",
       });
       stamp("first-write");
       expect(_id).toMatch(/.+/);
-      const row = await client.table<Ticket>("tickets").get(_id);
+      const row = await client.collection("tickets").get(_id);
       expect(row).toEqual({ _id, title: "day-one gate", status: "open" });
       stamp("first-read");
 
@@ -265,13 +258,13 @@ describe.runIf(RUN_CF && CF_API_TOKEN !== undefined && CF_ACCOUNT_ID !== undefin
           baseUrl: deployUrl,
           headers: { Authorization: `Bearer ${SHARED_SECRET}` },
         });
-        const { _id } = await client.table<Ticket>("tickets").insert({
+        const { _id } = await client.collection("tickets").insert({
           title: "day-one gate cf",
           status: "open",
         });
         stamp("first-write");
         expect(_id).toMatch(/.+/);
-        const row = await client.table<Ticket>("tickets").get(_id);
+        const row = await client.collection("tickets").get(_id);
         expect(row).toEqual({ _id, title: "day-one gate cf", status: "open" });
         stamp("first-read");
 

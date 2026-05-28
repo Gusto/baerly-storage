@@ -5,7 +5,7 @@
  * GC — `runGc()` mark + sweep under `MemoryStorage`. The
  * cross-adapter coverage (memory / local-fs / node-minio /
  * cloudflare-r2) is exercised by the `[gc]` variant inside
- * `tests/fixtures/table-api-cascade.ts`.
+ * `tests/fixtures/collection-api-cascade.ts`.
  */
 
 import {

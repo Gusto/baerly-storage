@@ -80,20 +80,20 @@ describe("Db.create config derivation", () => {
       collections: { tickets: { schema: onlyStrings } },
     };
     const db = Db.create({ storage: new MemoryStorage(), app: "x", tenant: "y", config });
-    await expect(db.table("tickets").insert({ title: 42 })).rejects.toMatchObject({
+    await expect(db.collection("tickets").insert({ title: 42 })).rejects.toMatchObject({
       code: "SchemaError",
     });
     // Valid insert still goes through — proves the schema was wired
     // (not just thrown blindly).
-    await expect(db.table("tickets").insert({ title: "ok" })).resolves.toBeDefined();
+    await expect(db.collection("tickets").insert({ title: "ok" })).resolves.toBeDefined();
   });
 
-  test("derives indexes from config — visible on the tableReadContext", () => {
+  test("derives indexes from config — visible on the collectionReadContext", () => {
     const config: BaerlyConfig = {
       collections: { tickets: { indexes: [{ name: "by_status", on: "status" }] } },
     };
     const db = Db.create({ storage: new MemoryStorage(), app: "x", tenant: "y", config });
-    expect(db.tableReadContext("tickets").indexes.map((i) => i.name)).toEqual(["by_status"]);
+    expect(db.collectionReadContext("tickets").indexes.map((i) => i.name)).toEqual(["by_status"]);
   });
 });
 
@@ -119,7 +119,7 @@ describe("Db → per-request metrics emission", () => {
     const ctx = createObservabilityContext();
     const db = Db.create({ storage, app: APP, tenant: TENANT });
     await runWithContext(ctx, async () => {
-      await db.table<{ _id: string; title: string }>(TABLE).insert({ title: "hi" });
+      await db.collection(TABLE).insert({ title: "hi" });
     });
     // writer.ts emits one histogram observation per successful
     // commit via getCurrentContext()?.recorder. Outside any context,
@@ -151,8 +151,6 @@ describe("Db → per-request metrics emission", () => {
     const storage = new MemoryStorage();
     await provision(storage);
     const db = Db.create({ storage, app: APP, tenant: TENANT });
-    await expect(
-      db.table<{ _id: string; title: string }>(TABLE).insert({ title: "hi" }),
-    ).resolves.toBeDefined();
+    await expect(db.collection(TABLE).insert({ title: "hi" })).resolves.toBeDefined();
   });
 });

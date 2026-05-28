@@ -11,7 +11,7 @@ export {
   readCurrentJson,
 } from "./coordination/current-json.ts";
 export * from "./coordination/gc-pending.ts";
-export * from "./table-api.ts";
+export * from "./collection-api.ts";
 export * from "./errors.ts";
 export * from "./indexes.ts";
 export * from "./json.ts";

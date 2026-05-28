@@ -16,7 +16,7 @@
 
 import { BaerlyError } from "../errors.ts";
 import type { DocumentData } from "../json.ts";
-import type { Predicate } from "../table-api.ts";
+import type { Predicate } from "../collection-api.ts";
 
 import { type PredicateArg, type PredicateBuilder, wireFromBuilder } from "./builder.ts";
 import type { PredicateClause, PredicateWire } from "./wire.ts";
@@ -106,8 +106,8 @@ export const normalizeObject = (
  * {@link normalizeObject}; the callback form is invoked with a
  * fresh {@link PredicateBuilder}.
  *
- * @internal — every consumer (`Db.table().where`,
- *             `ClientTable.where`, `parseWhereParam`'s wire-arrival
+ * @internal — every consumer (`Db.collection().where`,
+ *             `ClientCollection.where`, `parseWhereParam`'s wire-arrival
  *             path) routes through this single seam so the wire
  *             format has exactly one parser path.
  */

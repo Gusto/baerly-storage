@@ -131,7 +131,7 @@ const BUDGETS: readonly Budget[] = [
   //   → 357 KiB raw / 103 KiB gz: client-terminals-silently-lie
   //     follow-up. Router grew by ~2.3 KB raw to land three wire-
   //     correctness fixes (`?order=`/`?limit=` threading + `parseOrder`
-  //     / `parseLimit`; `PUT /v1/t/:table/:id` for true replace;
+  //     / `parseLimit`; `PUT /v1/c/:collection/:id` for true replace;
   //     `GET /v1/count` scalar route). gz unchanged.
   //   → 160 KiB raw / 50 KiB gz: snapshot-primitives
   //     extracted into `packages/server/src/snapshot.ts`; the kernel
@@ -192,7 +192,7 @@ const BUDGETS: readonly Budget[] = [
   //     Measured post-rebase onto 2026-05-18 main: 282102 raw /
   //     81562 gz.
   //   → 279 KiB raw / 81 KiB gz: client-terminals-silently-lie
-  //     follow-up. New `PUT /v1/t/:table/:id` (true replace) +
+  //     follow-up. New `PUT /v1/c/:collection/:id` (true replace) +
   //     `GET /v1/count` routes, plus `parseOrder` / `parseLimit` for
   //     wired order/limit query params. +2413 raw / +544 gz.
   //   → 282 KiB raw / 82 KiB gz: pre-existing ambient drift on the

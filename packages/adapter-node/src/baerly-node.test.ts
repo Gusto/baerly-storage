@@ -345,7 +345,7 @@ describe("baerlyNode config.auth synthesis", () => {
     await handle.listen(port);
 
     // No Authorization header — `auth: "none"` pins anonymously.
-    const res = await fetch(`http://127.0.0.1:${port}/v1/t/c`, {
+    const res = await fetch(`http://127.0.0.1:${port}/v1/c/c`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ doc: { _id: "none-1", v: 1 } }),
@@ -378,7 +378,7 @@ describe("baerlyNode config.auth synthesis", () => {
       activeHandle = handle;
       await handle.listen(port);
 
-      const okRes = await fetch(`http://127.0.0.1:${port}/v1/t/c`, {
+      const okRes = await fetch(`http://127.0.0.1:${port}/v1/c/c`, {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -388,7 +388,7 @@ describe("baerlyNode config.auth synthesis", () => {
       });
       expect(okRes.status).toBe(201);
 
-      const badRes = await fetch(`http://127.0.0.1:${port}/v1/t/c`);
+      const badRes = await fetch(`http://127.0.0.1:${port}/v1/c/c`);
       expect(badRes.status).toBe(401);
     } finally {
       if (prior === undefined) {

@@ -15,7 +15,7 @@
  * The context shape is `readonly` everywhere it can be — only the
  * contents of `fields` are intended to mutate during a request. The
  * {@link fields} map itself is not `readonly` because callers (the
- * canonical-line emitter, middleware, the table API once Dispatch
+ * canonical-line emitter, middleware, the collection API once Dispatch
  * 3+ wires it up) need to set entries.
  *
  * The context carries no sampling state — every unit-of-work emits

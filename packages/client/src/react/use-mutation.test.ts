@@ -25,7 +25,7 @@ const wrap =
 describe("useMutation", () => {
   test("returns a [mutate, state] tuple with isPending + error", async () => {
     const mock = new MockFetch();
-    mock.on("POST", "/v1/t/notes", () => jsonResponse({ _id: "n-1" }, 201));
+    mock.on("POST", "/v1/c/notes", () => jsonResponse({ _id: "n-1" }, 201));
     const client = makeClient(mock);
     const { result } = renderHook(() => useMutation(), { wrapper: wrap(client) });
     expect(Array.isArray(result.current)).toBe(true);
@@ -38,12 +38,12 @@ describe("useMutation", () => {
 
   test("mutate(cb) returns the callback's resolved value", async () => {
     const mock = new MockFetch();
-    mock.on("POST", "/v1/t/notes", () => jsonResponse({ _id: "n-9" }, 201));
+    mock.on("POST", "/v1/c/notes", () => jsonResponse({ _id: "n-9" }, 201));
     const client = makeClient(mock);
     const { result } = renderHook(() => useMutation(), { wrapper: wrap(client) });
     let inserted: { _id: string } | undefined;
     await act(async () => {
-      inserted = await result.current[0]((c) => c.table("notes").insert({ body: "hi" }));
+      inserted = await result.current[0]((c) => c.collection("notes").insert({ body: "hi" }));
     });
     expect(inserted).toEqual({ _id: "n-9" });
   });
@@ -51,12 +51,12 @@ describe("useMutation", () => {
   test("isPending toggles true→false across one mutation", async () => {
     const mock = new MockFetch();
     let resolve!: (r: Response) => void;
-    mock.on("POST", "/v1/t/notes", () => new Promise<Response>((r) => (resolve = r)));
+    mock.on("POST", "/v1/c/notes", () => new Promise<Response>((r) => (resolve = r)));
     const client = makeClient(mock);
     const { result } = renderHook(() => useMutation(), { wrapper: wrap(client) });
     let pending!: Promise<unknown>;
     act(() => {
-      pending = result.current[0]((c) => c.table("notes").insert({ body: "x" }));
+      pending = result.current[0]((c) => c.collection("notes").insert({ body: "x" }));
     });
     await waitFor(() => expect(result.current[1].isPending).toBe(true));
     await act(async () => {
@@ -69,7 +69,7 @@ describe("useMutation", () => {
   test("error populated on rejection, BaerlyError-typed, cleared by next successful call", async () => {
     const mock = new MockFetch();
     let fail = true;
-    mock.on("POST", "/v1/t/notes", () =>
+    mock.on("POST", "/v1/c/notes", () =>
       fail
         ? jsonResponse({ error: { code: "Conflict", message: "boom" } }, 409)
         : jsonResponse({ _id: "ok" }, 201),
@@ -78,14 +78,14 @@ describe("useMutation", () => {
     const { result } = renderHook(() => useMutation(), { wrapper: wrap(client) });
     await act(async () => {
       await expect(
-        result.current[0]((c) => c.table("notes").insert({ body: "x" })),
+        result.current[0]((c) => c.collection("notes").insert({ body: "x" })),
       ).rejects.toMatchObject({ name: "BaerlyError", code: "Conflict" });
     });
     expect(result.current[1].error).toBeInstanceOf(BaerlyError);
     expect(result.current[1].error?.code).toBe("Conflict");
     fail = false;
     await act(async () => {
-      await result.current[0]((c) => c.table("notes").insert({ body: "y" }));
+      await result.current[0]((c) => c.collection("notes").insert({ body: "y" }));
     });
     expect(result.current[1].error).toBeUndefined();
   });
@@ -93,14 +93,14 @@ describe("useMutation", () => {
   test("isPending refcounts across concurrent submits (last to settle drops it)", async () => {
     const mock = new MockFetch();
     const resolvers: Array<(r: Response) => void> = [];
-    mock.on("POST", "/v1/t/notes", () => new Promise<Response>((r) => resolvers.push(r)));
+    mock.on("POST", "/v1/c/notes", () => new Promise<Response>((r) => resolvers.push(r)));
     const client = makeClient(mock);
     const { result } = renderHook(() => useMutation(), { wrapper: wrap(client) });
     let p1!: Promise<unknown>;
     let p2!: Promise<unknown>;
     act(() => {
-      p1 = result.current[0]((c) => c.table("notes").insert({ body: "a" }));
-      p2 = result.current[0]((c) => c.table("notes").insert({ body: "b" }));
+      p1 = result.current[0]((c) => c.collection("notes").insert({ body: "a" }));
+      p2 = result.current[0]((c) => c.collection("notes").insert({ body: "b" }));
     });
     await waitFor(() => expect(result.current[1].isPending).toBe(true));
     // First call resolves — pending must stay true because second is still in flight.
@@ -137,7 +137,7 @@ describe("useMutation", () => {
     let thrown: unknown;
     await act(async () => {
       try {
-        await result.current[0]((c) => c.table("notes").insert({ body: "x" }));
+        await result.current[0]((c) => c.collection("notes").insert({ body: "x" }));
       } catch (error) {
         thrown = error;
       }

@@ -3,8 +3,8 @@
  * Worker-only; Node has no equivalent and runs cache-less.
  *
  * Contract:
- *  - Only `GET /v1/t/:table/:id` is cached. LIST URLs
- *    (`GET /v1/t/:table`, with or without filters) bypass the cache.
+ *  - Only `GET /v1/c/:collection/:id` is cached. LIST URLs
+ *    (`GET /v1/c/:collection`, with or without filters) bypass the cache.
  *    The Cloudflare Cache API exposes no enumeration primitive, so
  *    filtered-LIST variants (`?where=...`) cannot be safely
  *    invalidated on writes; rather than ship a per-isolate index
@@ -71,16 +71,16 @@ export function cacheKeyFor(req: Request, tenantPrefix: string): Request {
 /**
  * Should this request bypass the cache layer entirely (both read and
  * invalidate sides)? Healthz + long-poll + anything that isn't a
- * per-doc URL (`/v1/t/:table/:id`).
+ * per-doc URL (`/v1/c/:collection/:id`).
  */
 function bypassesCache(url: URL): boolean {
   if (BYPASS_PREFIXES.some((p) => url.pathname.startsWith(p))) {
     return true;
   }
-  if (!url.pathname.startsWith("/v1/t/")) {
+  if (!url.pathname.startsWith("/v1/c/")) {
     return true;
   }
-  // LIST URLs (`/v1/t/<table>` with no `/<id>`) bypass — see header
+  // LIST URLs (`/v1/c/<table>` with no `/<id>`) bypass — see header
   // docstring for why filtered-LIST caching isn't safe here.
   const parts = url.pathname.split("/").filter(Boolean);
   if (parts.length < 4) {
@@ -103,7 +103,7 @@ function bypassesCache(url: URL): boolean {
  *                 cacheable) its output was stored.
  *  - `"bypass"` — the request never consulted the cache (non-GET,
  *                 LIST URL, a path under {@link BYPASS_PREFIXES}, or
- *                 a path outside `/v1/t/`).
+ *                 a path outside `/v1/c/`).
  */
 export type CacheStatus = "hit" | "miss" | "bypass";
 
@@ -124,7 +124,7 @@ export interface ReadCacheResult {
  *
  *  - `cache_status: "bypass"` — non-GET method, LIST URL, or a path
  *    under {@link BYPASS_PREFIXES} (`/v1/since`, `/v1/healthz`), or
- *    a path outside `/v1/t/`. The handler runs verbatim and its
+ *    a path outside `/v1/c/`. The handler runs verbatim and its
  *    response is returned untouched.
  *  - `cache_status: "hit"`    — the cache had an entry. Returns
  *    either a synthesized 304 (when `If-None-Match` matches the

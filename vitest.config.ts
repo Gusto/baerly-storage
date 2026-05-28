@@ -96,13 +96,13 @@ const r2BindingConformanceGlob =
 // lives here).
 const r2BindingRandomizedGlob = "packages/adapter-cloudflare/src/randomized.test.ts";
 
-// Companion table-API cascade entry — same project membership rules
+// Companion collection-API cascade entry — same project membership rules
 // as the two globs above. Drives the shared
-// `tests/fixtures/table-api-cascade.ts` driver against the miniflare
-// R2 binding so the four-adapter table-API matrix is closed (memory
-// / local-fs / node-minio live in `tests/integration/table-api.test.ts`,
+// `tests/fixtures/collection-api-cascade.ts` driver against the miniflare
+// R2 binding so the four-adapter collection-API matrix is closed (memory
+// / local-fs / node-minio live in `tests/integration/collection-api.test.ts`,
 // cloudflare-r2 lives here).
-const r2BindingTableApiGlob = "packages/adapter-cloudflare/src/table-api.test.ts";
+const r2BindingCollectionApiGlob = "packages/adapter-cloudflare/src/collection-api.test.ts";
 
 // `baerlyWorker()`'s fetch + scheduled tests — exercises the Cron
 // Trigger plumbing and the CRUD route fan-out against the
@@ -161,7 +161,7 @@ export default defineConfig({
             // CF adapter has its own project; don't double-run.
             r2BindingConformanceGlob,
             r2BindingRandomizedGlob,
-            r2BindingTableApiGlob,
+            r2BindingCollectionApiGlob,
             cfWorkerTestGlob,
             cfCacheTestGlob,
             cfHttpConformanceGlob,
@@ -229,7 +229,7 @@ export default defineConfig({
           include: [
             r2BindingConformanceGlob,
             r2BindingRandomizedGlob,
-            r2BindingTableApiGlob,
+            r2BindingCollectionApiGlob,
             cfWorkerTestGlob,
             cfCacheTestGlob,
             cfHttpConformanceGlob,

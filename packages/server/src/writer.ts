@@ -468,7 +468,7 @@ export class Writer {
   ): Promise<SingleAttemptSuccess> {
     // ── Step 1. Read current.json (fresh; carries the ETag). ────────
     // On a fresh bucket / fresh collection the manifest doesn't exist
-    // yet. Auto-create it with a zero-state initial so `db.table(x)
+    // yet. Auto-create it with a zero-state initial so `db.collection(x)
     // .insert(...)` works zero-shot. A peer racing the same create
     // loses cleanly on `If-None-Match: "*"`; we re-read to pick up
     // the winner's manifest. Cost: one extra Class A PUT on the very

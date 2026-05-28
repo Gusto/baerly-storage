@@ -263,8 +263,8 @@ const bundle = defineBaerlySubcommand({
     }
     const { app, tenant } = await ctx.resolveAppTenant({ app: args.app, tenant: args.tenant });
     const bucket = await parseBucketUri(args.bucket);
-    const tablePrefix = `${bucket.keyPrefix}app/${app}/tenant/${tenant}/manifests/${args.table}`;
-    const currentJsonKey = `${tablePrefix}/current.json`;
+    const collectionPrefix = `${bucket.keyPrefix}app/${app}/tenant/${tenant}/manifests/${args.table}`;
+    const currentJsonKey = `${collectionPrefix}/current.json`;
 
     const findings: Finding[] = [];
 
@@ -378,7 +378,7 @@ const bundle = defineBaerlySubcommand({
     // LIST the log/ prefix; expect exactly `toExcl - from` keys named
     // `${from}.json` … `${toExcl - 1}.json`. Use a single LIST so the
     // op count is O(pages) not O(range).
-    const logPrefix = `${tablePrefix}/log/`;
+    const logPrefix = `${collectionPrefix}/log/`;
     const presentKeys = await listKeys(bucket.storage, logPrefix);
     const presentSeqs = new Set<number>();
     for (const key of presentKeys) {

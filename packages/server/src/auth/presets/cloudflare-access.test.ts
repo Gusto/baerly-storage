@@ -38,7 +38,7 @@ const validPayload = (overrides: Record<string, unknown> = {}): Record<string, u
 });
 
 const mkReq = (cfHeader: string | undefined): Request =>
-  new Request("https://api.example.com/v1/t/items", {
+  new Request("https://api.example.com/v1/c/items", {
     headers: cfHeader === undefined ? {} : { "Cf-Access-Jwt-Assertion": cfHeader },
   });
 

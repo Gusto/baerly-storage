@@ -53,7 +53,7 @@ interface BaseEnvelope {
  * `Writer.commit()` throws `InvalidResponse` when the file is
  * missing — production code provisions it via `claimWriter` /
  * `createCurrentJson` at deploy time; the cascade test fixtures do
- * the same. Mirrors `tests/fixtures/table-api-cascade.ts`.
+ * the same. Mirrors `tests/fixtures/collection-api-cascade.ts`.
  */
 const provisionTable = async (storage: Storage, table: string): Promise<void> => {
   const key = `app/tickets/tenant/acme/manifests/${table}/current.json`;
@@ -107,7 +107,7 @@ describe("createApp routes", () => {
 
   test("returns 401 with Unauthorized envelope when the verifier returns null", async () => {
     await withServer(denyVerifier, async (baseUrl) => {
-      const res = await fetch(`${baseUrl}/v1/t/tickets`);
+      const res = await fetch(`${baseUrl}/v1/c/tickets`);
       expect(res.status).toBe(401);
       const body = (await res.json()) as BaseEnvelope;
       expect(body.error?.code).toBe("Unauthorized");
@@ -118,7 +118,7 @@ describe("createApp routes", () => {
   test("POST → GET round-trips a document", async () => {
     await withServer(trivialVerifier, async (baseUrl, storage) => {
       await provisionTable(storage, "tickets");
-      const insertRes = await fetch(`${baseUrl}/v1/t/tickets`, {
+      const insertRes = await fetch(`${baseUrl}/v1/c/tickets`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ doc: { title: "first", status: "open" } }),
@@ -128,7 +128,7 @@ describe("createApp routes", () => {
       expect(typeof inserted._id).toBe("string");
       const id = inserted._id!;
 
-      const readRes = await fetch(`${baseUrl}/v1/t/tickets/${id}`);
+      const readRes = await fetch(`${baseUrl}/v1/c/tickets/${id}`);
       expect(readRes.status).toBe(200);
       const read = (await readRes.json()) as { data: { _id: string; title: string } };
       expect(read.data._id).toBe(id);
@@ -139,20 +139,20 @@ describe("createApp routes", () => {
   test("PATCH on unknown id returns 404; PATCH on known id returns 200 { modified: 1 }", async () => {
     await withServer(trivialVerifier, async (baseUrl, storage) => {
       await provisionTable(storage, "tickets");
-      const missingRes = await fetch(`${baseUrl}/v1/t/tickets/does-not-exist`, {
+      const missingRes = await fetch(`${baseUrl}/v1/c/tickets/does-not-exist`, {
         method: "PATCH",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ patch: { status: "closed" } }),
       });
       expect(missingRes.status).toBe(404);
 
-      const insertRes = await fetch(`${baseUrl}/v1/t/tickets`, {
+      const insertRes = await fetch(`${baseUrl}/v1/c/tickets`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ doc: { title: "patchme", status: "open" } }),
       });
       const { _id: id } = (await insertRes.json()) as BaseEnvelope;
-      const patchRes = await fetch(`${baseUrl}/v1/t/tickets/${id}`, {
+      const patchRes = await fetch(`${baseUrl}/v1/c/tickets/${id}`, {
         method: "PATCH",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ patch: { status: "closed" } }),
@@ -166,17 +166,17 @@ describe("createApp routes", () => {
   test("DELETE returns 204 the first time, 404 the second time", async () => {
     await withServer(trivialVerifier, async (baseUrl, storage) => {
       await provisionTable(storage, "tickets");
-      const insertRes = await fetch(`${baseUrl}/v1/t/tickets`, {
+      const insertRes = await fetch(`${baseUrl}/v1/c/tickets`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ doc: { title: "deleteme" } }),
       });
       const { _id: id } = (await insertRes.json()) as BaseEnvelope;
 
-      const firstRes = await fetch(`${baseUrl}/v1/t/tickets/${id}`, { method: "DELETE" });
+      const firstRes = await fetch(`${baseUrl}/v1/c/tickets/${id}`, { method: "DELETE" });
       expect(firstRes.status).toBe(204);
 
-      const secondRes = await fetch(`${baseUrl}/v1/t/tickets/${id}`, { method: "DELETE" });
+      const secondRes = await fetch(`${baseUrl}/v1/c/tickets/${id}`, { method: "DELETE" });
       expect(secondRes.status).toBe(404);
     });
   });
@@ -189,7 +189,7 @@ describe("createApp routes", () => {
       // so the router's pre-check fires before the stream pump runs;
       // the chunked-transfer test below exercises the pump path.
       const filler = "x".repeat(1.5 * 1024 * 1024);
-      const res = await fetch(`${baseUrl}/v1/t/tickets`, {
+      const res = await fetch(`${baseUrl}/v1/c/tickets`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ doc: { title: "huge", filler } }),
@@ -214,7 +214,7 @@ describe("createApp routes", () => {
             hostname: url.hostname,
             port: url.port,
             method: "POST",
-            path: "/v1/t/tickets",
+            path: "/v1/c/tickets",
             headers: {
               "content-type": "application/json",
               "transfer-encoding": "chunked",
@@ -246,21 +246,21 @@ describe("createApp routes", () => {
     });
   });
 
-  test("GET /v1/t/:table?where=notjson returns 400 SchemaError", async () => {
+  test("GET /v1/c/:collection?where=notjson returns 400 SchemaError", async () => {
     await withServer(trivialVerifier, async (baseUrl) => {
-      const res = await fetch(`${baseUrl}/v1/t/tickets?where=notjson`);
+      const res = await fetch(`${baseUrl}/v1/c/tickets?where=notjson`);
       expect(res.status).toBe(400);
       const body = (await res.json()) as BaseEnvelope;
       expect(body.error?.code).toBe("SchemaError");
     });
   });
 
-  test("GET /v1/t/:table?where=<malformed wire> returns 400 (wire validator rejects)", async () => {
+  test("GET /v1/c/:collection?where=<malformed wire> returns 400 (wire validator rejects)", async () => {
     await withServer(trivialVerifier, async (baseUrl) => {
       // Post-redesign `?where=` carries a wire-form predicate; the
       // wire validator rejects anything lacking a `clauses` array.
       const where = encodeURIComponent(JSON.stringify({ $or: 1 }));
-      const res = await fetch(`${baseUrl}/v1/t/tickets?where=${where}`);
+      const res = await fetch(`${baseUrl}/v1/c/tickets?where=${where}`);
       expect(res.status).toBe(400);
       const body = (await res.json()) as BaseEnvelope;
       expect(body.error?.code).toBe("InvalidConfig");
@@ -277,7 +277,7 @@ describe("createApp routes", () => {
     });
   });
 
-  test("GET /v1/t/:table?where=<json> returns matching subset", async () => {
+  test("GET /v1/c/:collection?where=<json> returns matching subset", async () => {
     await withServer(trivialVerifier, async (baseUrl, storage) => {
       await provisionTable(storage, "tickets");
       // Seed three rows; two open, one closed.
@@ -286,7 +286,7 @@ describe("createApp routes", () => {
         { title: "b", status: "open" },
         { title: "c", status: "closed" },
       ]) {
-        const res = await fetch(`${baseUrl}/v1/t/tickets`, {
+        const res = await fetch(`${baseUrl}/v1/c/tickets`, {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ doc: ticket }),
@@ -297,7 +297,7 @@ describe("createApp routes", () => {
       const where = encodeURIComponent(
         JSON.stringify({ clauses: [{ op: "eq", field: "status", value: "open" }] }),
       );
-      const listRes = await fetch(`${baseUrl}/v1/t/tickets?where=${where}`);
+      const listRes = await fetch(`${baseUrl}/v1/c/tickets?where=${where}`);
       expect(listRes.status).toBe(200);
       const list = (await listRes.json()) as { data: Array<{ status: string }> };
       expect(list.data).toHaveLength(2);
@@ -336,14 +336,14 @@ describe("createApp config wiring", () => {
       async (baseUrl, storage) => {
         await provisionTable(storage, "tickets");
 
-        const goodRes = await fetch(`${baseUrl}/v1/t/tickets`, {
+        const goodRes = await fetch(`${baseUrl}/v1/c/tickets`, {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ doc: { title: "ok", status: "open" } }),
         });
         expect(goodRes.status).toBe(201);
 
-        const badRes = await fetch(`${baseUrl}/v1/t/tickets`, {
+        const badRes = await fetch(`${baseUrl}/v1/c/tickets`, {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ doc: { title: "bad", status: "invalid" } }),
@@ -363,7 +363,7 @@ describe("createApp config wiring", () => {
     // adapter path unless the adapter is told about them.
     await withServer(trivialVerifier, async (baseUrl, storage) => {
       await provisionTable(storage, "tickets");
-      const res = await fetch(`${baseUrl}/v1/t/tickets`, {
+      const res = await fetch(`${baseUrl}/v1/c/tickets`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ doc: { title: "bad", status: "invalid" } }),

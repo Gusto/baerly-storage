@@ -8,7 +8,7 @@
  */
 
 import { defineConfig, type DocumentData, type SchemaValidator } from "@baerly/protocol";
-import { type ClientTable, createBaerlyClient } from "./client.ts";
+import { type ClientCollection, createBaerlyClient } from "./client.ts";
 
 // Minimal stand-in for a real validator — independent of zod /
 // valibot / arktype so the test-d file doesn't pull a runtime dep.
@@ -38,10 +38,10 @@ type Equal<X, Y> =
   (<T>() => T extends X ? 1 : 2) extends <T>() => T extends Y ? 1 : 2 ? true : false;
 type Expect<T extends true> = T;
 
-// (A) Bound config: `.table("tickets")` resolves the narrow overload
-// and yields `ClientTable<RowOf<typeof config, "tickets"> &
+// (A) Bound config: `.collection("tickets")` resolves the narrow overload
+// and yields `ClientCollection<RowOf<typeof config, "tickets"> &
 // DocumentData>`. The intersection comes from the
-// `ClientTable<T extends DocumentData>` constraint at the
+// `ClientCollection<T extends DocumentData>` constraint at the
 // seam — it forwards the constraint without losing the schema's
 // output shape.
 //
@@ -50,11 +50,11 @@ type Expect<T extends true> = T;
 // `typeof method` on an overloaded method only surfaces the last
 // call signature; binding the *result* of the call sidesteps that).
 const boundClient = createBaerlyClient({ baseUrl: "", config });
-const boundTicketTable = boundClient.table("tickets");
+const boundTicketCollection = boundClient.collection("tickets");
 // Use a non-`_id` predicate because `Path<T>` excludes the root
 // `_id` key on typed shapes; the row-shape inference doesn't depend
 // on which field is used.
-const boundTicketQuery = boundTicketTable.where({ status: "open" });
+const boundTicketQuery = boundTicketCollection.where({ status: "open" });
 type BoundFirst = Awaited<ReturnType<typeof boundTicketQuery.first>>;
 export type _BoundFirstInfersTicket = Expect<
   Equal<BoundFirst, (TicketShape & DocumentData) | undefined>
@@ -64,25 +64,25 @@ export type _BoundFirstInfersTicket = Expect<
 // row shape — this proves the inference flows from `RowOf` directly,
 // not from `.where().first()` happening to massage it.
 export type _BoundTableHandleInfersRowType = Expect<
-  Equal<typeof boundTicketTable, ClientTable<TicketShape & DocumentData>>
+  Equal<typeof boundTicketCollection, ClientCollection<TicketShape & DocumentData>>
 >;
 
-// (B) No `config` passed: the legacy per-call generic still works.
-// `createBaerlyClient({ baseUrl: "" })` defaults `TConfig` to
-// `UnboundConfig`, so `CollectionNames<TConfig> = never` and the
-// narrow overload is unsatisfiable — overload 2 wins.
+// (B) No `config` passed: `createBaerlyClient({ baseUrl: "" })` defaults
+// `TConfig` to `UnboundConfig`. `CollectionNames<UnboundConfig>` widens
+// to `string` so `.collection(anyName)` typechecks; the row type
+// defaults to `DocumentData` (via `RowOf<UnboundConfig, K>` →
+// `Record<string, unknown>` intersected with `DocumentData` at the
+// `Collection<T extends DocumentData>` seam).
 const unboundClient = createBaerlyClient({ baseUrl: "" });
-type Foo = { _id: string; tag: string };
-const unboundFooTable = unboundClient.table<Foo>("anything");
-const unboundFooQuery = unboundFooTable.where({ tag: "x" });
-type UnboundFirst = Awaited<ReturnType<typeof unboundFooQuery.first>>;
-export type _UnboundFirstAcceptsPerCallGeneric = Expect<Equal<UnboundFirst, Foo | undefined>>;
+const unboundAnyCollection = unboundClient.collection("anything");
+type UnboundCollection = typeof unboundAnyCollection;
+export type _UnboundCollectionDefaultsToDocumentData = Expect<
+  Equal<UnboundCollection, ClientCollection<Record<string, unknown> & DocumentData>>
+>;
 
 export const _idIsNotAPredicateKeyOnClientTypedTables = () => {
   // @ts-expect-error — `_id` is excluded from `Path<T>` on typed shapes.
-  void boundTicketTable.where({ _id: "x" });
-  // @ts-expect-error — same for the per-call-generic shape.
-  void unboundFooTable.where({ _id: "x" });
+  void boundTicketCollection.where({ _id: "x" });
 };
 
 // The `_*` aliases above are exported as `type` rather than declared

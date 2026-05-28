@@ -9,7 +9,7 @@
  *
  * Adapters that wire the {@link DevLandingOptions} opt-in surface a
  * small HTML page on `GET /` instead: app label, a clickable link to
- * the UI, a `/v1/healthz` probe link, and a note that `/v1/t/*` is
+ * the UI, a `/v1/healthz` probe link, and a note that `/v1/c/*` is
  * auth-gated. `GET /favicon.ico` answers 204 so browsers don't pin a
  * second JSON 404 next to the landing page.
  *
@@ -56,7 +56,7 @@ export const renderDevLanding = (opts: DevLandingOptions): string => {
 <ul>
   <li>Open the UI: <a href="${uiUrl}">${uiUrl}</a></li>
   <li>Health probe: <a href="/v1/healthz">/v1/healthz</a></li>
-  <li>CRUD routes under <code>/v1/t/*</code> require an auth header and aren't clickable from here.</li>
+  <li>CRUD routes under <code>/v1/c/*</code> require an auth header and aren't clickable from here.</li>
 </ul>
 </body>
 </html>

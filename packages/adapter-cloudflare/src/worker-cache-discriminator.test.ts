@@ -92,7 +92,7 @@ describe("baerlyWorker cache_status", () => {
     const provisionHandler = baerlyWorker(() => ({ verifier, config: testConfig }));
     const env: BaerlyEnv = { BUCKET: bucket, APP: "t" };
     const insertRes = await provisionHandler.fetch!(
-      new Request("https://x/v1/t/c", {
+      new Request("https://x/v1/c/c", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ doc: { _id: "cs-1", v: 1 } }),
@@ -109,7 +109,7 @@ describe("baerlyWorker cache_status", () => {
       verifier,
       observability: { level: "debug", sink },
     }));
-    const url = "https://x/v1/t/c/cs-1";
+    const url = "https://x/v1/c/c/cs-1";
 
     // First GET → miss.
     const res1 = await handler.fetch!(
@@ -165,7 +165,7 @@ describe("baerlyWorker cache_status", () => {
     // 25s long-poll deadline).
     const seedHandler = baerlyWorker(() => ({ verifier, config: testConfig }));
     await seedHandler.fetch!(
-      new Request("https://x/v1/t/c", {
+      new Request("https://x/v1/c/c", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ doc: { _id: "cs-bypass-seed", v: 1 } }),
@@ -181,7 +181,7 @@ describe("baerlyWorker cache_status", () => {
       observability: { level: "debug", sink },
     }));
 
-    const sinceUrl = `https://x/v1/since?table=c&cursor=`;
+    const sinceUrl = `https://x/v1/since?collection=c&cursor=`;
     const res = await handler.fetch!(
       new Request(sinceUrl, { method: "GET" }) as Request<unknown, IncomingRequestCfProperties>,
       env,

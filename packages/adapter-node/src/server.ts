@@ -33,7 +33,7 @@ export interface CreateFetchHandlerOptions {
    * {@link Db.create} on every request — so server-side schema
    * validation fires on commits and the auto-planner sees declared
    * indexes. Without this option, declared collections have no
-   * effect on the `/v1/t/*` surface.
+   * effect on the `/v1/c/*` surface.
    *
    * Only `collections` is read — deploy-time fields (`target`,
    * `domain`, `requiredSecrets`, …) are ignored here.

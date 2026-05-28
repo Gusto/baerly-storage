@@ -26,14 +26,14 @@ describe("prettyConsoleSink", () => {
       status: 200,
       outcome: "read",
       method: "GET",
-      path: "/v1/t/tickets",
+      path: "/v1/c/tickets",
       "db.storage.class_a_ops_total": 0,
       "db.storage.class_b_ops_total": 1,
     });
 
     expect(spy).toHaveBeenCalledOnce();
     const line = spy.mock.calls[0]![0] as string;
-    expect(line).toMatch(/GET\s+\/v1\/t\/tickets/);
+    expect(line).toMatch(/GET\s+\/v1\/c\/tickets/);
     expect(line).toMatch(/200\s+1ms/);
     expect(line).toContain("req=ab12cd34");
     expect(line).toContain("class_a=0");
@@ -48,7 +48,7 @@ describe("prettyConsoleSink", () => {
       status: 201,
       outcome: "committed",
       method: "POST",
-      path: "/v1/t/tickets",
+      path: "/v1/c/tickets",
       "db.storage.class_a_ops_total": 3,
       "db.storage.class_b_ops_total": 0,
       "db.write.class_a_ops_per_logical_write_sum": 7,
@@ -64,7 +64,7 @@ describe("prettyConsoleSink", () => {
       status: 409,
       outcome: "conflict",
       method: "POST",
-      path: "/v1/t/tickets",
+      path: "/v1/c/tickets",
       "db.storage.class_a_ops_total": 1,
       "db.storage.class_b_ops_total": 0,
       "db.r2.put.412_total": 1,
@@ -82,7 +82,7 @@ describe("prettyConsoleSink", () => {
       status: 200,
       outcome: "read",
       method: "GET",
-      path: "/v1/t/tickets",
+      path: "/v1/c/tickets",
       "db.storage.class_a_ops_total": 1,
       "db.storage.class_b_ops_total": 0,
       cache_status: "hit",
@@ -98,7 +98,7 @@ describe("prettyConsoleSink", () => {
       status: 200,
       outcome: "read",
       method: "GET",
-      path: "/v1/t/tickets",
+      path: "/v1/c/tickets",
       "db.storage.class_a_ops_total": 2,
       "db.storage.class_b_ops_total": 0,
       cache_status: "miss",
@@ -114,7 +114,7 @@ describe("prettyConsoleSink", () => {
       status: 200,
       outcome: "read",
       method: "GET",
-      path: "/v1/t/tickets",
+      path: "/v1/c/tickets",
       "db.storage.class_a_ops_total": 1,
       "db.storage.class_b_ops_total": 0,
     });

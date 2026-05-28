@@ -42,9 +42,9 @@ describe("useQuery — basic reads", () => {
   test("returns { status: 'loading', data: undefined } on first render", async () => {
     const mock = new MockFetch();
     installSinceLongPoll(mock);
-    mock.on("GET", "/v1/t/notes", () => new Promise<Response>(() => {}));
+    mock.on("GET", "/v1/c/notes", () => new Promise<Response>(() => {}));
     const client = makeClient(mock);
-    const { result } = renderHook(() => useQuery((c) => c.table("notes").all(), []), {
+    const { result } = renderHook(() => useQuery((c) => c.collection("notes").all(), []), {
       wrapper: wrap(client),
     });
     expect(result.current.status).toBe("loading");
@@ -55,12 +55,11 @@ describe("useQuery — basic reads", () => {
   test("transitions to { status: 'ok', data } when fetch resolves", async () => {
     const mock = new MockFetch();
     installSinceLongPoll(mock);
-    mock.on("GET", "/v1/t/notes", () => jsonResponse(okEnvelope([{ _id: "a", body: "hi" }])));
+    mock.on("GET", "/v1/c/notes", () => jsonResponse(okEnvelope([{ _id: "a", body: "hi" }])));
     const client = makeClient(mock);
-    const { result } = renderHook(
-      () => useQuery((c) => c.table<{ _id: string; body: string }>("notes").all(), []),
-      { wrapper: wrap(client) },
-    );
+    const { result } = renderHook(() => useQuery((c) => c.collection("notes").all(), []), {
+      wrapper: wrap(client),
+    });
     await waitFor(() => expect(result.current.status).toBe("ok"));
     expect(result.current.data).toEqual([{ _id: "a", body: "hi" }]);
   });
@@ -75,7 +74,7 @@ describe("useQuery.skip — deferred / conditional reads", () => {
       sinceCalls += 1;
       return new Promise<Response>(() => {});
     });
-    mock.on("GET", "/v1/t/notes", () => {
+    mock.on("GET", "/v1/c/notes", () => {
       listCalls += 1;
       return jsonResponse(okEnvelope([]));
     });
@@ -108,13 +107,13 @@ describe("useQuery.skip — deferred / conditional reads", () => {
   test("flipping a deferred dependency triggers a fetch", async () => {
     const mock = new MockFetch();
     installSinceLongPoll(mock);
-    mock.on("GET", "/v1/t/notes/:id", () =>
+    mock.on("GET", "/v1/c/notes/:id", () =>
       jsonResponse(okEnvelope({ _id: "n-1", body: "hello" })),
     );
     const client = makeClient(mock);
     let id: string | undefined = undefined;
     const { result, rerender } = renderHook(
-      () => useQuery((c) => (id ? c.table("notes").get(id) : useQuery.skip), [id]),
+      () => useQuery((c) => (id ? c.collection("notes").get(id) : useQuery.skip), [id]),
       { wrapper: wrap(client) },
     );
     expect(result.current.status).toBe("skipped");
@@ -129,7 +128,7 @@ describe("useQuery — recorder error surface", () => {
   test("await on a recorder terminal surfaces as status: 'error' with code UseQueryAwaitedRecorder", async () => {
     const mock = new MockFetch();
     installSinceLongPoll(mock);
-    mock.on("GET", "/v1/t/notes/:id", () => jsonResponse(okEnvelope({ _id: "x", body: "" })));
+    mock.on("GET", "/v1/c/notes/:id", () => jsonResponse(okEnvelope({ _id: "x", body: "" })));
     const client = makeClient(mock);
     const { result } = renderHook(
       () =>
@@ -139,8 +138,8 @@ describe("useQuery — recorder error surface", () => {
             // pass's .then call throws BaerlyError("UseQueryAwaitedRecorder").
             // The microtask rejection is pulled back into render via
             // useReducer/force-update.
-            const note = (await c.table("notes").get("x")) as { _id: string };
-            return c.table("comments").where({ noteId: note._id }).all();
+            const note = (await c.collection("notes").get("x")) as { _id: string };
+            return c.collection("comments").where({ noteId: note._id }).all();
           },
           ["x"],
         ),
@@ -164,7 +163,7 @@ describe("useQuery — recorder error surface", () => {
     const { result } = renderHook(
       () =>
         useQuery(
-          (c) => c.table("notes").insert({ body: "nope" }) as unknown as Promise<unknown>,
+          (c) => c.collection("notes").insert({ body: "nope" }) as unknown as Promise<unknown>,
           [],
         ),
       { wrapper: wrap(client) },
@@ -181,16 +180,19 @@ describe("useQuery — deps-driven re-reads", () => {
     const mock = new MockFetch();
     installSinceLongPoll(mock);
     let listCount = 0;
-    mock.on("GET", "/v1/t/notes/:id", (req) => {
+    mock.on("GET", "/v1/c/notes/:id", (req) => {
       listCount += 1;
       const id = req.url.split("/").pop() ?? "";
       return jsonResponse(okEnvelope({ _id: id, body: `body-${id}` }));
     });
     const client = makeClient(mock);
     let id = "a";
-    const { result, rerender } = renderHook(() => useQuery((c) => c.table("notes").get(id), [id]), {
-      wrapper: wrap(client),
-    });
+    const { result, rerender } = renderHook(
+      () => useQuery((c) => c.collection("notes").get(id), [id]),
+      {
+        wrapper: wrap(client),
+      },
+    );
     await waitFor(() => expect(result.current.status).toBe("ok"));
     expect(listCount).toBe(1);
     rerender();
