@@ -20,20 +20,21 @@ zero-shot from the `.d.ts` files alone. The positioning story is in
 ## Using Baerly
 
 For integrators and operators running Baerly against a real bucket.
+**The canonical surface is `dist/API.md` in the published package**
+(`node_modules/@gusto/baerly-storage/dist/API.md`) — it carries
+the public API, Verifier presets, observability field reference,
+client-fetch wrapping recipes, and the trusted-fields recipe. The
+files below cover what doesn't fit there: cross-cutting
+invariants, operator runbooks, and target-specific bolt-ons.
 
-- `guide/auth.md` — Verifier presets (shared secret, JWT, CF Access,
-  AWS SigV4, IP allowlist) and the tenant-isolation caveat.
-- `guide/add-to-existing-cf-worker.md` — bolt baerly onto an existing
-  Cloudflare Worker project with `pnpm create @gusto/baerly-storage .`.
-- `guide/embed.md` — 30-line snippet to drop baerly-storage into an
-  existing Node app, bypassing `create-baerly-storage`.
-- `guide/observability.md` — canonical log line, sinks (OTel,
-  Datadog, Workers Analytics), cost-aware sampling.
-- `guide/backups.md` — `baerly admin dump` + `restore` daily-cron procedure.
+- `guide/add-to-existing-cf-worker.md` — One-command bolt-on for an existing `wrangler create` project — `pnpm create @gusto/baerly-storage@latest .` detects wrangler.jsonc, patches it, prints the worker-entry snippet.
+- `guide/auth.md` — The `config.auth` graduated postures and the no-built-in-authorization caveat. Preset reference and Verifier-shape rationale live elsewhere.
+- `guide/backups.md` — Daily NDJSON dump with retention rotation; restoring from any dump file.
+- `guide/client-auth.md` — Cross-cutting four-quadrant analysis of the SPA → API auth seam (dev/prod × Cloudflare/Node) — synthesis first, hardened per-quadrant recipes live in scaffold AGENTS.md files.
+- `guide/embed.md` — A ~30-line snippet for embedding baerly-storage in an existing Node app, bypassing the @gusto/create-baerly-storage scaffold.
+- `guide/observability.md` — Sinks (OTel / Workers Analytics Engine / Datadog), cost-ballooning anti-patterns, and known gaps. Canonical log-line shape lives in dist/API.md.
 - Runnable scaffolds: `../examples/` (`minimal-cloudflare`,
-  `minimal-node`, `react-cloudflare`, `react-node`). The Docker
-  add-on lives at `../packages/create-baerly/templates/addons/docker/`
-  and layers onto `minimal-node` via `--with=docker` at scaffold time.
+  `minimal-node`, `react-cloudflare`, `react-node`).
 
 ## About Baerly
 
