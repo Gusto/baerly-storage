@@ -352,6 +352,18 @@ Dev sees `JWKS_URL` as `undefined`, spread short-circuits, and
   JSDoc `@example` blocks for each factory are visible in your
   editor's TS hover.
 
+- **Switching from static creds to EKS Pod Identity** — in
+  `src/server/index.ts`, swap `credentials: { accessKeyId,
+  secretAccessKey }` for `credentials: fromEksPodIdentity()` and add
+  `fromEksPodIdentity` to your import:
+  `import { s3Storage, fromEksPodIdentity } from "@gusto/baerly-storage/node"`.
+  The agent reads `AWS_CONTAINER_CREDENTIALS_FULL_URI` +
+  `AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE` (EKS injects both). For
+  IRSA / ECS / EC2 / other AWS contexts, see
+  `packages/adapter-node/AGENTS.md` — pass any
+  `() => Promise<Credentials>` or an `@aws-sdk/credential-providers`
+  factory through the seam.
+
 - **Maintenance loop (Node)** — `src/server/index.ts` passes a
   `maintenance: { collections, tenants }` option to `baerlyNode`.
   Each tick (hourly by default; override via
