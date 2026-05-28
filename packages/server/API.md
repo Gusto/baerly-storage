@@ -724,6 +724,108 @@ observability gap is being tracked as a follow-up. If you also need
 PATCH/PUT/DELETE on the same collection, repeat steps (1) and (2) for
 each verb.
 
+## Recipe — wrapping the client `fetch`
+
+`createBaerlyClient({ fetch: customFetcher })` is the one composable
+seam for cross-cutting HTTP concerns. The `Fetcher` type is one
+line:
+
+```ts
+import { type Fetcher } from "@gusto/baerly-storage/client";
+// type Fetcher = (req: Request) => Promise<Response>;
+```
+
+Wrappers compose as ordinary JavaScript functions: outermost sees
+the request first and the response last; innermost is closest to
+the network. Three recipes cover the common cases.
+
+### Hook callbacks (success / error)
+
+```ts
+import { createBaerlyClient, type Fetcher } from "@gusto/baerly-storage/client";
+
+const withHooks = (next: Fetcher, onSuccess: (req: Request, res: Response) => void, onError: (req: Request, err: unknown) => void): Fetcher =>
+  async (req) => {
+    try {
+      const res = await next(req);
+      onSuccess(req, res);
+      return res;
+    } catch (err) {
+      onError(req, err);
+      throw err;
+    }
+  };
+
+const client = createBaerlyClient({
+  baseUrl: "https://api.example.com",
+  fetch: withHooks(globalThis.fetch,
+    (req, res) => log.info({ url: req.url, status: res.status }),
+    (req, err) => log.error({ url: req.url, err }),
+  ),
+});
+```
+
+`onSuccess` fires for **any** HTTP response that completes — 4xx and
+5xx included, because those are not thrown exceptions. Branch on
+`res.ok` if you want "2xx only."
+
+### Retry on transient failures (GET only)
+
+```ts
+const withRetry = (next: Fetcher, max = 3, baseMs = 100): Fetcher =>
+  async (req) => {
+    for (let i = 0; i < max - 1; i++) {
+      const res = await next(req.clone());
+      if (res.ok || res.status < 500 || req.method !== "GET") return res;
+      await new Promise((r) => setTimeout(r, baseMs * (i + 1)));
+    }
+    return next(req);
+  };
+```
+
+Only retry idempotent reads. `POST` / `PATCH` / `DELETE` may have
+succeeded on the server even when the client sees a 5xx (commit
+fence then network drop). Write writes are CAS-guarded so duplicates
+don't corrupt state — but they may surface as `PreconditionFailed`.
+The `req.clone()` is required because a `Request` body is a
+one-shot stream.
+
+### Refresh credentials on 401
+
+```ts
+const withAuthRefresh = (next: Fetcher, refresh: () => Promise<string>): Fetcher =>
+  async (req) => {
+    const res = await next(req.clone());
+    if (res.status !== 401) return res;
+    const token = await refresh();
+    const retried = new Request(req, {
+      headers: new Headers({
+        ...Object.fromEntries(req.headers),
+        Authorization: `Bearer ${token}`,
+      }),
+    });
+    return next(retried);
+  };
+```
+
+If the refreshed call also returns 401, the wrapper returns that
+response unchanged — no second retry, avoiding an infinite refresh
+loop on a stale/revoked token. Wire sign-out / re-auth-prompt into
+the caller, not into this wrapper.
+
+### Long-poll calls (`GET /v1/since`)
+
+The long-poll path routes through the same `Fetcher`. Retry,
+logging, and auth-refresh wrappers apply uniformly. If a wrapper
+needs to distinguish long-poll from one-shot reads, inspect
+`req.url` for `/v1/since`. Most wrappers don't need to.
+
+### Composition order
+
+The outer wrapper sees retries — `withRetry(withLogging(fetch))` logs
+each attempt; `withLogging(withRetry(fetch))` logs the final outcome
+once. Pick by what you want to observe.
+
 ## Anti-patterns
 
 - Don't reach into `node_modules/@gusto/baerly-storage/dist/` at runtime —
