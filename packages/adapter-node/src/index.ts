@@ -44,5 +44,10 @@ export type { S3HttpStorageOptions } from "./s3-http.ts";
 export { runMaintenanceTick } from "./server.ts";
 export type { NodeMaintenanceOptions } from "./server.ts";
 export { s3Storage, r2Storage, minioStorage, gcsStorage } from "./storage-factories.ts";
+export {
+  type Credentials,
+  type CredentialsProvider,
+  fromEksPodIdentity,
+} from "./credentials/index.ts";
 export { baerlyNode } from "./baerly-node.ts";
 export type { BaerlyNodeHandle, BaerlyNodeMaintenance, BaerlyNodeOptions } from "./baerly-node.ts";
