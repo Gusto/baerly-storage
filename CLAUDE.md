@@ -407,5 +407,5 @@ auto-load on matching edits and point at the same files.
   [docs/spec/causal-consistency-checking.md](docs/spec/causal-consistency-checking.md),
   [docs/spec/json-merge-patch.md](docs/spec/json-merge-patch.md)
 - Architecture decisions ("why"): [docs/adr/](docs/adr/)
-- Troubleshooting: [docs/guide/troubleshooting.md](docs/guide/troubleshooting.md)
+- Troubleshooting: [docs/contributing/troubleshooting.md](docs/contributing/troubleshooting.md)
 - Path-scoped conventions: [docs/contributing/conventions/](docs/contributing/conventions/) (table at top)

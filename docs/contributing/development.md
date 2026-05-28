@@ -4,7 +4,7 @@ audience: coder
 summary: "Local dev: pnpm, Minio + Toxiproxy + Postgres stack, test commands."
 last-reviewed: 2026-05-14
 tags: [development, setup, tests]
-related: ["../guide/troubleshooting.md", "../../CLAUDE.md"]
+related: ["./troubleshooting.md", "../../CLAUDE.md"]
 ---
 
 # Development

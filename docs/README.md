@@ -29,8 +29,6 @@ For integrators and operators running Baerly against a real bucket.
   existing Node app, bypassing `create-baerly-storage`.
 - `guide/observability.md` — canonical log line, sinks (OTel,
   Datadog, Workers Analytics), cost-aware sampling.
-- `guide/troubleshooting.md` — known pain points: test gating,
-  ports, fuzzer, CI formatting.
 - `guide/backups.md` — `baerly admin dump` + `restore` daily-cron procedure.
 - Runnable scaffolds: `../examples/` (`minimal-cloudflare`,
   `minimal-node`, `react-cloudflare`, `react-node`). The Docker
@@ -55,6 +53,8 @@ For people changing the code in this repo.
   of `db.collection(...).insert()`.
 - `contributing/development.md` — local setup, test commands,
   Minio / Toxiproxy / Postgres stack.
+- `contributing/troubleshooting.md` — known pain points: test gating,
+  ports, fuzzer, CI formatting.
 - `contributing/extending.md` — worked examples for adding a `Db`
   method, `Query` constraint, etc.
 - `contributing/features.md` — feature → code map.

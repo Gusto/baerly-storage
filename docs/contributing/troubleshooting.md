@@ -1,10 +1,10 @@
 ---
 title: Troubleshooting
-audience: operator
+audience: coder
 summary: "Common pain points: test gating, local stack ports, fuzzer, formatting CI."
 last-reviewed: 2026-05-12
 tags: [troubleshooting, operations]
-related: [../contributing/development.md]
+related: [./development.md]
 ---
 
 # Troubleshooting
