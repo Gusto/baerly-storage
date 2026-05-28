@@ -549,6 +549,36 @@ and is the only storage factory a Worker should reach for — the
 credential-based factories assume `fetch` + Node TLS, not the Workers
 runtime.
 
+### Verifier presets
+
+`@gusto/baerly-storage/auth` ships three `Verifier` functions you can pass
+to `baerlyWorker({ verifier })` or `baerlyNode({ verifier })`. Each
+returns `VerifierResult | null` (null = 401 unauth; thrown
+`BaerlyError` = 500 operator fault — the dispatcher splits the
+codes deliberately so on-call paging targets operator faults only).
+
+| Preset             | Identity source                                                                 | Tenant derivation                                  |
+| ------------------ | ------------------------------------------------------------------------------- | -------------------------------------------------- |
+| `sharedSecret`     | `Authorization: Bearer <secret>` with constant-time compare                     | `tenantPrefix:` option (single-tenant only)        |
+| `bearerJwt`        | JWT over JWKS, `iss` + `aud` + `alg` allowlist                                  | Configurable `tenantClaim` (default `"tenant"`) or fixed `tenantPrefix:` override |
+| `cloudflareAccess` | `Cf-Access-Jwt-Assertion` header (thin shim over `bearerJwt`)                   | Same as `bearerJwt`                                |
+
+```ts
+import { sharedSecret, bearerJwt, cloudflareAccess } from "@gusto/baerly-storage/auth";
+```
+
+**`tenantPrefix:` (on `bearerJwt` and `cloudflareAccess`).** Pins
+every verified request to a fixed tenant, bypassing claim lookup.
+Use this in single-tenant deployments where the IdP doesn't ship a
+tenant claim — the default `tenantClaim: "tenant"` would 401 every
+request because vanilla CF Access JWTs carry only `sub`/`email`.
+Signature, audience, and expiry checks are still enforced; only
+tenant derivation is replaced.
+
+**Why a function and not a class?** The source repo's
+`docs/adr/005-verifier-function-shape.md` records the three
+properties the shape upholds and the four rejected alternatives.
+
 ## Recipe — server-stamped trusted fields
 
 Use this shape when a column must come from the verified identity
