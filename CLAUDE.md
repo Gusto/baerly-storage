@@ -186,6 +186,8 @@ Pure-unit tests that always pass: `packages/protocol/src/hashing.test.ts`,
 `tests/integration/log-emit.test.ts`,
 `tests/integration/put-all-partial-failure.test.ts`,
 `tests/regressions.test.ts`.
+Pattern A/B/C drift across `examples/*/AGENTS.md` is fenced by
+`tests/integration/agents-md-drift.test.ts`.
 
 ## Local dev
 
