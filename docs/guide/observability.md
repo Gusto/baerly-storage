@@ -1,130 +1,31 @@
 ---
 title: Observability
 audience: operator
-summary: "Canonical log lines, sampling, sinks (OTel / Workers Analytics Engine / Datadog), and known gaps."
-last-reviewed: 2026-05-16
+summary: "Sinks (OTel / Workers Analytics Engine / Datadog), cost-ballooning anti-patterns, and known gaps. Canonical log-line shape lives in dist/API.md."
+last-reviewed: 2026-05-28
 tags: [observability, operations, logging]
 related: ["../contributing/conventions/observability.md", "../about/cost-model.md", "../contributing/development.md"]
 ---
 
 # Observability
 
-baerly-storage emits **one canonical log line per HTTP request** on
-stdout. Default level `info`; every request emits one line.
-Background work (compactor / GC / `rebuildIndex` /
-`runScheduledMaintenance`) does NOT emit a canonical line — those
-ticks run unattended on a cron and their errors throw to the
-platform (Cloudflare dashboard, Node process logs). The scaffolded
-templates wire the HTTP path on day one; no code change required to
-opt in.
+## What this guide is
 
-This doc is for the operator deploying baerly. For the contributor
-adding a new code path, see
-[`docs/conventions/observability.md`](../contributing/conventions/observability.md).
+This is the **operator runbook** for observability — sink wiring,
+cost-ballooning anti-patterns, and known gaps. The canonical
+log-line shape and field reference live in
+[`dist/API.md`](../../packages/server/API.md) → "Observability"
+because consumer LLMs read API.md from `node_modules/` and need the
+contract one `cat` away. Read API.md first; come back here for sink
+recipes.
 
-## What lands by default
-
-Run a scaffolded `baerly create` app under either target:
-
-```sh
-# Cloudflare
-pnpm dev          # vite + @cloudflare/vite-plugin (Worker in workerd)
-# Node
-pnpm dev          # vite + baerlyDev() — single process on :5173 over LocalFsStorage
-```
-
-Hit any route. One JSON line per request appears on stdout:
-
-```json
-{
-  "timestamp": "2026-05-12T17:42:11.823Z",
-  "level": "info",
-  "category": "baerly.http",
-  "message": "canonical",
-  "request_id": "0193b0a1-ff7a-7c44-b9d5-c3e91d8f3a01",
-  "method": "POST",
-  "path": "/v1/c/tickets",
-  "status": 200,
-  "duration_ms": 14.207,
-  "outcome": "ok",
-  "db.storage.put.calls_total": 3,
-  "db.storage.get.calls_total": 1,
-  "db.storage.class_a_ops_total": 3,
-  "db.storage.class_b_ops_total": 1,
-  "db.write.class_a_ops_per_logical_write_sum": 3,
-  "db.write.class_a_ops_per_logical_write_count": 1
-}
-```
-
-### TTY pretty output
-
-The Node adapter auto-selects a human-readable single-line shape when
-`process.stdout.isTTY === true` (developer terminals). Same fields,
-column-aligned, one line per unit-of-work. Sample lines:
-
-```text
-12:34:56 GET   /v1/c/tickets                200   1ms  req=ab12cd34 class_a=0 class_b=1
-12:34:57 POST  /v1/c/tickets                201  20ms  req=cd34ef56 class_a=3 class_b=0 wamp=7
-12:34:58 POST  /v1/c/tickets                409   8ms  req=ef56gh78 class_a=1 class_b=0 412=1 outcome=conflict
-12:34:59 GET   /v1/c/tickets                200   0ms  req=gh78ij90 cache=hit
-```
-
-The TTY shape is presentation only — the underlying fields are the
-same ones the JSON shape carries. Non-TTY stdout (`pnpm dev` piped
-through a process supervisor, CI, container logs, Workers Logs) gets
-the JSON shape above. The Cloudflare adapter is JSON-only — Workers
-have no TTY.
-
-Cloudflare Workers Logs and AWS CloudWatch ingest this format
-natively. Datadog's Agent picks it up via its `json` source. Any
-log aggregator that parses JSON-per-line works without further
-wiring.
-
-## The canonical log line
-
-One event per HTTP request. The kernel emits one line on every
-`/v1/*` route. Background runs (compactor / GC / `rebuildIndex` /
-`runScheduledMaintenance`) emit no canonical line; their errors
-propagate to the platform.
-
-### Field reference
-
-| Field | Type | Meaning |
-|---|---|---|
-| `request_id` | UUID-ish string | Correlates this event across logs. Set from `X-Request-Id` if the caller supplied one, else minted fresh. |
-| `method` | string | HTTP method. |
-| `path` | string | Request path. |
-| `status` | number | HTTP status code. |
-| `cache_status` | `"hit" \| "miss" \| "bypass"` | Cloudflare adapter only. Set per HTTP request via the Cache API wrapper. `"hit"` skips the router; `"miss"` populates the cache; `"bypass"` covers non-GET, `/v1/since`, `/v1/healthz`, and anything outside `/v1/c/`. The Node adapter has no cache layer and never emits this field. |
-| `duration_ms` | number | Monotonic wall-clock duration, `performance.now()` delta. |
-| `outcome` | string | One of `"read"` (GET < 400), `"committed"` (non-GET < 400), `"conflict"` (409), or `"error"` (everything else). |
-| `db.storage.class_a_ops_total` | number | Sum of PUT + DELETE + LIST calls. These are the physical operations S3-pricing classifies as Class A — the cost-dominant ones. |
-| `db.storage.class_b_ops_total` | number | Sum of GET calls. Class B in S3 pricing. |
-| `db.storage.<op>.calls_total` | number | Per-op breakdown for `get` / `put` / `delete` / `list`. |
-| `db.storage.<op>.duration_ms_count` / `_sum` | number | Histogram of per-call durations. |
-| `db.write.class_a_ops_per_logical_write_*` | number | Writer's per-`commit()` class-A-op count. `_count` = number of logical writes in this request. |
-| `db.r2.put.412_total` | number | CAS or conditional-PUT conflicts. Non-zero on `_total` means contention. |
-| `db.r2.put.429_total` | number | Storage-side rate-limit hits. |
-| `error.code` | string | `BaerlyErrorCode` discriminator (failure path only). |
-| `error.message` | string | Error message (failure path only). |
-| `error.stack` | string | Stack trace (`error`-level lines only). |
-
-Class A / Class B totals are the **load-bearing fields** —
-[`docs/cost-model.md`](../about/cost-model.md) lays out the per-request
-cost ceiling, and the canonical line is how you verify a deployed
-service stays under it.
-
-## Log levels
-
-| Level | What lands |
-|---|---|
-| `error` | `error` records only. The canonical line emits at `error` level when `status >= 500` or an exception was thrown. |
-| `warn` | Adds 4xx canonical lines and explicit `warn` records. |
-| `info` (default) | Adds 2xx canonical lines and lifecycle events. |
-| `debug` | Adds per-storage-op events (one per `get` / `put` / `delete` / `list`). **High volume**; off in production. Useful for diagnosing a single slow request. |
-
-Toggle via the `LOG_LEVEL` env var (both templates) or the typed
-`observability.level` option.
+The kernel emits **one canonical log line per HTTP request** at
+`info` level by default. Background work
+(`runScheduledMaintenance`) emits a separate
+`unit_of_work: "maintenance"` line. The Cloudflare adapter is
+JSON-only; the Node adapter switches to a single-line human-readable
+shape under TTY. Set `LOG_LEVEL` or `observability.level` to tune
+verbosity.
 
 ## Sinks
 
@@ -173,7 +74,7 @@ const otelSink: Sink = (record) => {
   });
 };
 
-createApp({ app, storage, verifier, observability: { sink: otelSink } });
+baerlyNode({ app, storage, verifier, observability: { sink: otelSink } });
 ```
 
 ### Cloudflare Workers Analytics Engine
@@ -290,7 +191,7 @@ const datadogSink: Sink = (record) => {
   — contributor-facing rules for adding new emit sites.
 - [`docs/cost-model.md`](../about/cost-model.md) — how class-A counts map to
   S3 / R2 spend.
-- Public API: JSDoc on `createApp` (Node) and `baerlyWorker`
+- Public API: JSDoc on `baerlyNode` (Node) and `baerlyWorker`
   (Cloudflare). Both expose `observability?: ObservabilityConfig`.
 - LogTape itself: <https://logtape.org/>. The kernel uses LogTape's
   `Sink` / `Logger` types directly; anything in the LogTape ecosystem
