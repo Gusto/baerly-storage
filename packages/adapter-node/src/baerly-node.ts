@@ -80,6 +80,11 @@ export interface BaerlyNodeOptions {
  * Handle returned by {@link baerlyNode}. Composes a running
  * `node:http` server lifecycle.
  *
+ * - `fetch(request)` is the web-standard request handler. Use
+ *   directly for in-process embedding (Vite middleware via
+ *   `@hono/node-server.getRequestListener`, custom servers, tests).
+ *   Calling `fetch` does not start the `node:http` server; the
+ *   server lifecycle is owned by `listen(port)` / `close()`.
  * - `listen(port)` binds the server, installs SIGTERM/SIGINT
  *   handlers that call `close()` and exit `0`, and resolves once
  *   the server is actually listening (after Node's `'listening'`
@@ -89,6 +94,7 @@ export interface BaerlyNodeOptions {
  *   callback fires. Safe to call multiple times.
  */
 export interface BaerlyNodeHandle {
+  readonly fetch: (request: Request) => Response | Promise<Response>;
   listen(port: number): Promise<void>;
   close(): Promise<void>;
 }
@@ -103,7 +109,9 @@ const buildCurrentJsonKey = (app: string, tenant: string, collection: string): s
  * from `@baerly/adapter-cloudflare`.
  *
  * Composes:
- * - {@link createApp} → `@hono/node-server.serve({ fetch, createServer })`.
+ * - {@link createApp} → exposed as `handle.fetch` for in-process
+ *   embedding; wrapped in `@hono/node-server.serve({ fetch, createServer })`
+ *   lazily when `listen()` is called.
  * - Optional maintenance loop: each `intervalMs` tick fires one
  *   {@link runMaintenanceTick} per `(tenant, collection)` pair
  *   (cross-product of `opts.maintenance.tenants` × `.collections`).
@@ -171,18 +179,14 @@ export function baerlyNode(opts: BaerlyNodeOptions): BaerlyNodeHandle {
       sincePollIntervalMs: opts.sincePollIntervalMs,
     }),
   });
-  // `serve()` builds an `http.Server` via the supplied `createServer`
-  // factory and wires the Hono `fetch` handler into it (handling
-  // backpressure, client-abort → AbortController, and stream
-  // cleanup natively). The `port` / `hostname` here are placeholders —
-  // the actual bind happens via the explicit `server.listen(port)`
-  // call below, which overrides them.
-  const server: Server = serve({
-    fetch: app.fetch,
-    port: 0,
-    hostname: "0.0.0.0",
-    createServer,
-  }) as Server;
+  // `serve()` is deferred to `listen()` so calling `baerlyNode(opts)`
+  // without `.listen()` does NOT create an `http.Server`, install
+  // signal handlers, or arm the maintenance loop. The `fetch` handler
+  // is exposed on the returned handle for in-process embedding (Vite
+  // middleware, tests). `server` stays `undefined` until `listen()`
+  // runs; `close()` guards against the "constructed but never listened"
+  // branch.
+  let server: Server | undefined;
 
   let maintenanceTimer: NodeJS.Timeout | undefined;
   let signalHandler: ((sig: NodeJS.Signals) => void) | undefined;
@@ -231,6 +235,12 @@ export function baerlyNode(opts: BaerlyNodeOptions): BaerlyNodeHandle {
       signalHandler = undefined;
     }
     await new Promise<void>((resolve, reject) => {
+      // Factory was called but `listen()` never ran — there's no
+      // `http.Server` to close. Resolve immediately.
+      if (server === undefined) {
+        resolve();
+        return;
+      }
       // Node throws ERR_SERVER_NOT_RUNNING on close() of a non-listening server.
       if (!server.listening) {
         resolve();
@@ -247,15 +257,28 @@ export function baerlyNode(opts: BaerlyNodeOptions): BaerlyNodeHandle {
   };
 
   const listen = async (port: number): Promise<void> => {
+    // `serve()` builds an `http.Server` via the supplied `createServer`
+    // factory and wires the Hono `fetch` handler into it (handling
+    // backpressure, client-abort → AbortController, and stream
+    // cleanup natively). The `port` / `hostname` here are placeholders —
+    // the actual bind happens via the explicit `server.listen(port)`
+    // call below, which overrides them.
+    server = serve({
+      fetch: app.fetch,
+      port: 0,
+      hostname: "0.0.0.0",
+      createServer,
+    }) as Server;
+    const httpServer = server;
     await new Promise<void>((resolve, reject) => {
       const onError = (err: Error): void => {
-        server.off("listening", onListening);
-        server.off("close", onClose);
+        httpServer.off("listening", onListening);
+        httpServer.off("close", onClose);
         reject(err);
       };
       const onListening = (): void => {
-        server.off("error", onError);
-        server.off("close", onClose);
+        httpServer.off("error", onError);
+        httpServer.off("close", onClose);
         resolve();
       };
       // close() called between `server.listen(port)` and the
@@ -263,14 +286,14 @@ export function baerlyNode(opts: BaerlyNodeOptions): BaerlyNodeHandle {
       // fires; only `'close'` does. Resolve so we observe `closed`
       // below and skip handler install.
       const onClose = (): void => {
-        server.off("error", onError);
-        server.off("listening", onListening);
+        httpServer.off("error", onError);
+        httpServer.off("listening", onListening);
         resolve();
       };
-      server.once("error", onError);
-      server.once("listening", onListening);
-      server.once("close", onClose);
-      server.listen(port);
+      httpServer.once("error", onError);
+      httpServer.once("listening", onListening);
+      httpServer.once("close", onClose);
+      httpServer.listen(port);
     });
 
     // close() may have run while we were awaiting `'listening'`. Skip
@@ -305,5 +328,5 @@ export function baerlyNode(opts: BaerlyNodeOptions): BaerlyNodeHandle {
     process.on("SIGINT", signalHandler);
   };
 
-  return { listen, close };
+  return { fetch: app.fetch, listen, close };
 }

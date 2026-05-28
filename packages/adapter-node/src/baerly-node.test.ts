@@ -281,6 +281,28 @@ describe("baerlyNode", () => {
     activeHandle = undefined;
   });
 
+  test("handle.fetch serves requests without starting the http server or installing signal handlers", async () => {
+    const sigtermBefore = process.listenerCount("SIGTERM");
+    const sigintBefore = process.listenerCount("SIGINT");
+
+    const handle = baerlyNode({
+      config: testConfig,
+      storage: new MemoryStorage(),
+      verifier: sharedDevVerifier,
+    });
+    activeHandle = handle;
+
+    // Round-trip through the Hono fetch handler directly; no port bind.
+    const res = await handle.fetch(new Request("http://x/v1/healthz"));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { ok: boolean };
+    expect(body.ok).toBe(true);
+
+    // No `listen()` → no SIGTERM/SIGINT listeners installed.
+    expect(process.listenerCount("SIGTERM")).toBe(sigtermBefore);
+    expect(process.listenerCount("SIGINT")).toBe(sigintBefore);
+  });
+
   test("close() called mid-bind tears down without installing signal handlers", async () => {
     const port = await reservePort();
     const handle = baerlyNode({
