@@ -5,8 +5,8 @@
  * doesn't pull `picocolors` or the canonical-line column renderer
  * into its bundle. The kernel's `configureObservability` accepts any
  * `Sink` function directly; callers in TTY-friendly environments
- * (the Node adapter's `createApp` / `baerlyNode`) construct this sink
- * and pass it in.
+ * (the Node adapter's `baerlyNode`) constructs this sink
+ * and passes it in.
  */
 
 import { type LogRecord, type Sink } from "@logtape/logtape";

@@ -30,7 +30,7 @@ import {
  * const storage = new LocalFsStorage({ root: "./.baerly-data" });
  * // Pre-warm so the first request doesn't pay the bootstrap PUT.
  * await ensureTable(storage, { app: "helpdesk", tenant: "demo", table: "tickets" });
- * // …then `createApp({ app: "helpdesk", storage, verifier })`.
+ * // …then `baerlyNode({ config, storage, verifier })`.
  * ```
  */
 export const ensureTable = async (

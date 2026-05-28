@@ -65,11 +65,11 @@ export interface CreateFetchHandlerOptions {
  *
  * Non-`/v1/*` paths fall through to the Hono router, which renders the
  * kernel's 404 envelope. To compose static-asset or dev-landing
- * handlers, dispatch those upstream of this factory — see
- * {@link "./app.ts".createApp} for the production composition.
+ * handlers, dispatch those upstream of this factory — see the
+ * internal Hono-app factory in `./app.ts` for the production composition.
  *
- * @internal — public consumers reach this via `createApp` from
- * `./app.ts`. Exported for intra-package re-use and direct unit
+ * @internal — public consumers reach this via `baerlyNode` from
+ * `./baerly-node.ts`. Exported for intra-package re-use and direct unit
  * coverage in `server.test.ts`.
  */
 export function createFetchHandler(
