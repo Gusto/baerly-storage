@@ -1,6 +1,6 @@
 import { type DevLandingOptions } from "@baerly/dev";
 import { MAX_BODY_BYTES } from "@baerly/server/http";
-import { Hono } from "hono";
+import { Hono } from "hono/tiny";
 import { applyBodyCap } from "./middleware/body-cap.ts";
 import { devLandingMiddleware } from "./middleware/dev-landing.ts";
 import { staticAssetsMiddleware } from "./middleware/static-assets.ts";

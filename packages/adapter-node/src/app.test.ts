@@ -12,15 +12,11 @@ import {
   type Verifier,
   createCurrentJson,
 } from "@baerly/protocol";
-import { Hono } from "hono";
+import { Hono } from "hono/tiny";
 import { describe, expect, test } from "vitest";
 import { createApp } from "./app.ts";
 
-const provision = async (
-  storage: MemoryStorage,
-  tenant: string,
-  table: string,
-): Promise<void> => {
+const provision = async (storage: MemoryStorage, tenant: string, table: string): Promise<void> => {
   await createCurrentJson(storage, `app/t/tenant/${tenant}/manifests/${table}/current.json`, {
     schema_version: CURRENT_JSON_SCHEMA_VERSION,
     snapshot: null,

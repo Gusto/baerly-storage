@@ -309,7 +309,18 @@ const BUDGETS: readonly Budget[] = [
   //     subgraph (DOMParser + SigV4 signer) now lands in `dist/node.js`
   //     directly. Cold-start cost only; consumer-bundler-irrelevant.
   //     Measured: 676293 raw / 187995 gz.
-  { entry: "node.js", raw: 720 * 1024, gz: 200 * 1024 },
+  //   → 670 KiB raw / 190 KiB gz: adapter-node `hono/tiny` cutover.
+  //     `packages/adapter-node/src/app.ts` previously imported `Hono`
+  //     from the default `"hono"` preset, which bundled SmartRouter +
+  //     RegExpRouter + TrieRouter + the WebSocket helper alongside the
+  //     `PatternRouter` already shipped by `@baerly/server/http` via
+  //     `hono/tiny`. After the swap rolldown dedupes the two specifiers
+  //     onto `HonoBase + PatternRouter` and the extra router subgraph
+  //     disappears. `app.test.ts` switched to `hono/tiny` in lockstep
+  //     so the `instanceof Hono` assertion compares against the same
+  //     class the production code now constructs. Measured: 651827
+  //     raw / 181875 gz.
+  { entry: "node.js", raw: 670 * 1024, gz: 190 * 1024 },
   // Client surface — `BaerlyClient<TConfig>` + fetcher plumbing.
   // Browser/runtime-agnostic; no kernel modules in the closure.
   // Budget history:
@@ -430,7 +441,12 @@ const BUDGETS: readonly Budget[] = [
   //     containment (see the `node.js` budget note above) lands here
   //     too. Dev-only Node import — never enters a consumer bundle.
   //     Measured: 731315 raw / 201995 gz.
-  { entry: "dev-vite.js", raw: 780 * 1024, gz: 215 * 1024 },
+  //   → 680 KiB raw / 190 KiB gz: dev-vite shares the adapter-node
+  //     `src-*` listener chunk, so the `hono/tiny` cutover in
+  //     `packages/adapter-node/src/app.ts` removes the duplicated
+  //     full-preset Hono routers from this closure too. Measured:
+  //     659665 raw / 184641 gz.
+  { entry: "dev-vite.js", raw: 680 * 1024, gz: 190 * 1024 },
 ];
 
 // Static-import specifiers only. Dynamic `import(...)` is intentionally
