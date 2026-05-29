@@ -2,7 +2,7 @@
 title: Ephemeral coordination
 audience: adr
 summary: ADR 004 — coordination runs in request-bounded compute, not in a persistent process.
-last-reviewed: 2026-05-26
+last-reviewed: 2026-05-28
 tags: [decision, adr, runtime-model]
 related: [README.md, "../about/thesis.md", "../spec/sync-protocol.md", 001-tenant-cas-isolation.md, 002-api-surface-lock.md]
 ---
@@ -84,7 +84,7 @@ correctly the same as warm ones, so isolate recycling and
 scale-to-zero are free. The thesis's "Idle → zero" criterion
 falls out of this property; the small public API
 ([ADR-002](002-api-surface-lock.md)) is possible because there
-is no coordinator state to expose.
+is no coordinator state to expose. Graduation is mechanical: with no stateful coordinator to migrate away from, the bucket plus the log shape are the entire handoff to Postgres (`baerly export --target=postgres`).
 
 **Negative.** No continuous compaction — maintenance cadence is
 bounded below by the cron schedule, so under sustained heavy
