@@ -398,9 +398,9 @@ const ERROR_TO_STATUS: ReadonlyMap<BaerlyErrorCode, HttpStatus> = new Map<
  * through to 500 by design — see the `NetworkError` / `InvalidResponse`
  * / `Internal` comment in `ERROR_TO_STATUS`).
  *
- * @internal — exported for tests and for the `/v1/since` long-poll
- *   handler in `./since.ts`. The `HttpErrorEnvelope` shape is locked;
- *   do not mutate it.
+ * Public via `@gusto/baerly-storage/http` for the embed-by-hand recipe
+ * (your own Hono / Express / Fastify app calling `Db` directly).
+ * The `HttpErrorEnvelope` shape is locked; do not mutate it.
  */
 export function mapError(err: unknown): { status: HttpStatus; envelope: HttpErrorEnvelope } {
   if (err instanceof BaerlyError) {

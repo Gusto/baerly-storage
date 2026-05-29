@@ -121,6 +121,15 @@ export interface BaerlyConfig {
  * are set — this is the "dev default in config, prod override via
  * env" recipe.
  *
+ * **`auth` only gates the kernel's HTTP router.** It's consumed by
+ * `baerlyWorker` / `baerlyNode` / `createRouter` to decide who can
+ * hit `/v1/*`. If you use `Db` directly without mounting any of
+ * those (server-internal jobs, your own Hono/Express router, a CLI
+ * embedding the kernel), this field is inert — each `Db.create` call
+ * already carries an explicit `tenant:`, and your handler's own
+ * auth layer decides who reaches the call. Set `auth: "none"` to
+ * silence the typecheck requirement in that case.
+ *
  * Field is required on `BaerlyAppConfig`. Omitting it causes both a
  * TypeScript error at `defineConfig({...})` and (defensively) an
  * `InvalidConfig` error at adapter module init.

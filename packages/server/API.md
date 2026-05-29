@@ -26,13 +26,19 @@ import {
   MemoryStorage,                 // in-memory `Storage`; canonical for tests
   type Collection, type Query,
   type DocumentData,
+  type RowOf, type CollectionNames,   // row-shape inference from a bound config
   BaerlyError, type BaerlyErrorCode,
   defineConfig,                  // narrower; root barrel
 } from "@gusto/baerly-storage";
 
 // Scaffold-aware config (`app`, `tenant`, `target`, `domain`, …)
-import { defineConfig } from "@gusto/baerly-storage/config";
-// → use this one inside `baerly.config.ts`.
+import { defineConfig, type RowOf } from "@gusto/baerly-storage/config";
+// → use this one inside `baerly.config.ts`. `RowOf` is exported here too
+//   so `baerly.config.ts` siblings (e.g. `types.ts`) can import the inferred
+//   row type without reaching into the server barrel.
+
+// HTTP helpers — for embed-by-hand routers that don't mount `createRouter`
+import { createRouter, mapError } from "@gusto/baerly-storage/http";
 
 // Browser / Node client (HTTP)
 import {
@@ -77,6 +83,14 @@ await db.collection("tickets").insert({ title: "first ticket", status: "open" })
 const open = await db.collection("tickets").where({ status: "open" }).all();
 ```
 
+**`MemoryStorage` is per-instance.** Each `new MemoryStorage()`
+backs an independent in-process bucket — two `Db` instances built
+against two `new MemoryStorage()`s see two empty, isolated stores.
+This is what makes it the canonical test fixture: one fresh instance
+per test gives a hermetic bucket without `beforeEach` cleanup. Pass
+the *same* `MemoryStorage` instance to multiple `Db` constructors
+when you want two writers contending on one bucket.
+
 Full `Db.create` config:
 
 ```ts
@@ -87,6 +101,23 @@ Db.create<TConfig>({
   config?: TConfig;              // optional; from `defineConfig(...)`
 });
 ```
+
+**`Db<typeof config>` is a usable type.** `Db.create({ ..., config })`
+returns `Db<typeof config>`, and that type is exported from the root
+barrel — so a test or DI helper can pin it without inferring through
+the factory call site:
+
+```ts
+import type { Db } from "@gusto/baerly-storage";
+import type config from "./baerly.config";
+
+let cached: Db<typeof config> | undefined;
+export function setDbForTesting(db: Db<typeof config>) { cached = db; }
+```
+
+The narrowed `Db<typeof config>` carries the same `collection(name)`
+overloads as the inferred return; `Db` (no parameter) widens to
+`Db<UnboundConfig>` and accepts any string collection name.
 
 ## `db.collection(name)` → `Collection<T>`
 
@@ -232,6 +263,19 @@ Two ways to get a typed row:
    `createBaerlyClient`. `db.collection("tickets")` returns
    `Collection<RowOf<TConfig, "tickets">>`. No generic, no cast.
 
+   `RowOf<TConfig, "tickets">` is also a usable type when you need
+   to name the row shape outside the chain — route-handler return
+   types, response-schema bridges, helpers that take a row by hand:
+
+   ```ts
+   import type { RowOf } from "@gusto/baerly-storage";
+   import type config from "./baerly.config";
+
+   type Ticket = RowOf<typeof config, "tickets">;
+   //   ^ same shape as `db.collection("tickets").all()` row.
+   //   `CollectionNames<typeof config>` is the union of valid names.
+   ```
+
 2. **Falls back to `DocumentData`** when no config is bound. Cast at
    the construction site for a narrower row shape:
    ```ts
@@ -273,6 +317,39 @@ try {
 | `PayloadTooLarge`        | 413  | Body > 1 MiB cap                                                     |
 | `UnsatisfiablePredicate` | 400  | Predicate is well-formed but contradicts itself (empty `in` set, etc.) |
 
+### Mapping errors to HTTP yourself
+
+`baerlyWorker` and `baerlyNode` already translate `BaerlyError` →
+HTTP status + wire envelope; the table above is what they implement.
+If you mount the kernel's router directly (`createRouter` from
+`@gusto/baerly-storage/http`), you get the same translation for free
+under `/v1/*`.
+
+For an **embed-by-hand** router (your own Hono / Express / Fastify
+app calling `Db` directly, layering custom routes on top), reach
+for `mapError` from the same subpath — it consumes the table above
+in one call and returns the envelope and status code, so handlers
+don't grow a five-arm `if (err.code === ...)` ladder:
+
+```ts
+import { mapError } from "@gusto/baerly-storage/http";
+
+app.post("/notes", async (c) => {
+  try {
+    const { _id } = await db.collection("notes").insert(await c.req.json());
+    return c.json({ _id }, 201);
+  } catch (err) {
+    const { status, envelope } = mapError(err);
+    return c.json(envelope, status);
+  }
+});
+```
+
+`mapError` accepts any thrown value — non-`BaerlyError` throws fall
+through to `500 Internal` with the message redacted, and the
+underlying error is logged via the observability channel. The HTTP
+status / envelope shape is locked.
+
 ## `defineConfig({ app, tenant, target, collections })`
 
 Scaffold-aware: lives at `@gusto/baerly-storage/config`. Holds both deploy
@@ -284,7 +361,7 @@ import { defineConfig } from "@gusto/baerly-storage/config";
 import { z } from "zod";
 
 const TicketSchema = z.object({
-  _id: z.string().optional(),
+  _id: z.string(),                                         // required — see callout below
   status: z.enum(["open", "closed"]),
   title: z.string().min(1),
   tags: z.array(z.string()).optional(),
@@ -308,6 +385,18 @@ Schemas: any [StandardSchema v1](https://standardschema.dev) validator
 post-image: `update` and `replace` see the full doc, not just the
 patch. Failures → `BaerlyError{code:"SchemaError", issues:[…]}`,
 mapped to HTTP 422.
+
+**Author `_id` as required, not `.optional()`.** The validator runs
+on the post-image — by the time it fires, the server has already
+filled in a UUIDv7 `_id` for inserts that omit it, so every row the
+validator sees has `_id` present. Declaring `_id: z.string()`
+(required) matches that runtime invariant. `Collection<T>.insert`
+still accepts a doc without `_id` (the public signature is
+`insert(doc: Partial<T> & DocumentData)`), so authoring `_id` as
+required does not break the "omit and let the server mint it" path.
+The win is on the read side: `db.collection("tickets").all()` is
+typed `Ticket[]` with `_id: string` (required), so route handlers
+and response schemas don't need a parallel "_id-required" row type.
 
 Indexes: declared here, threaded into `Db.create` automatically. The
 read-path auto-planner picks an index when the predicate matches;
@@ -520,6 +609,16 @@ the `Authorization` header. Swap to `auth: "shared-secret"` (or pass a
 custom `Verifier` on the factory) when you're ready to gate by wire
 credentials. Production CF Worker recipes layer CF Access in front of
 the Worker route; the verifier reads the resulting JWT:
+
+**`auth` only gates the kernel's HTTP router.** `auth: "none"` /
+`"shared-secret"` is read by `baerlyWorker` / `baerlyNode` / the
+underlying `createRouter` — it controls who can hit `/v1/*`. If you
+use `Db` directly (no `createRouter`, no `baerlyWorker`/`baerlyNode`,
+e.g. server-internal jobs or your own Hono router), `auth` is
+inert: every `Db.create` callsite already carries an explicit
+`tenant:`, and your handler's own auth layer decides who reaches
+the call. Set `auth: "none"` in the config to silence the typecheck
+requirement in that case.
 
 ```ts
 // baerly.config.ts

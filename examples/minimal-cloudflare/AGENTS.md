@@ -247,7 +247,7 @@ http://localhost:5173/<path>`) before declaring the task complete.
   import { defineConfig } from "@gusto/baerly-storage/config";
 
   const Ticket = z.object({
-    _id: z.string().optional(),
+    _id: z.string(),
     status: z.enum(["open", "closed"]),
     title: z.string().min(1),
   });
