@@ -2,7 +2,7 @@
 title: Cost model
 audience: product
 summary: Per-line-item rates, write-amp meter, compression posture.
-last-reviewed: 2026-05-27
+last-reviewed: 2026-05-28
 tags: [cost, pricing, operations]
 related: [pricing-log.md, thesis.md]
 ---
@@ -161,11 +161,12 @@ experiment doesn't happen** and the data stays in a Google Sheet.
 
 ### At the graduation cliff: M-size and above
 
-Past the workload ceiling, cost inverts. D1 wins per-write where
-it's available; managed Postgres wins above L. The "Alternative
-DBs at M size" table below grades the system where users
-*shouldn't* be running it long-term — it's the graduation
-trigger, not a competitive operating point.
+Past the workload ceiling, you have crossed the design center on
+purpose — the per-write economics flip, and that flip is the
+signal to graduate. The "Alternative DBs at M size" table below
+grades Baerly against the systems users should *graduate to*, not
+the systems they should be running on long-term. D1 wins per-write
+where it's available; managed Postgres wins above L.
 
 ## Alternative DBs at M size
 
@@ -203,16 +204,18 @@ Read this as positioning, not a cost claim:
   it's strictly cheaper, and [that move is the success path,
   not a churn event](thesis.md#what-prototype-tier-storage-needs).
 - **L workload:** Baerly's R2 Class B alone (~$1 500) costs more
-  than a Postgres Pro plan. That's the graduation cliff —
-  read-heavy traffic on a per-doc fan-out protocol is
-  disproportionately expensive vs. a B-tree lookup in a real DB.
+  than a Postgres Pro plan — read-heavy traffic on a per-doc
+  fan-out protocol is disproportionately expensive vs. a B-tree
+  lookup in a real DB. Reaching that price line is the success
+  signal to graduate.
 
-Cost is decisive in the regimes Baerly is sized for; it's a
-wash-to-loss in the regimes where you should graduate. We name
-both axes explicitly because the workload class the thesis
-targets (idle × portfolio, XS/S experimentation, large
-internal-tools fleet) isn't economically viable under per-app
-managed-DB floors — and that's where the real argument lives.
+Cost is decisive in the regimes Baerly is sized for; it's
+designed to lose past them — that loss is the graduation signal,
+mechanical via `baerly export --target=postgres`. We name both
+axes explicitly because the workload class the thesis targets
+(idle × portfolio, XS/S experimentation, large internal-tools
+fleet) isn't economically viable under per-app managed-DB floors
+— and that's where the real argument lives.
 
 The graduation triggers (surfaced via the `baerly cost` projection's
 `percentOfGraduation`) follow directly: any one
