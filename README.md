@@ -4,19 +4,21 @@
 
 > _Currently a private Gusto preview, published as `@gusto/baerly-storage` to Gusto's private npm registry._
 
-`baerly-storage` is a library that turns an S3-compatible bucket into a document database. So small that all coordination — fencing, commit, compaction, garbage collection — runs inside the HTTP request that triggered it: no daemon, no leader, no service bill, no on-call. The only persistent component is your bucket.
+`baerly-storage` is a library that turns an S3-compatible bucket into a document database. **There is no runtime. None.** All coordination — fencing, commit, compaction, garbage collection — runs inside the HTTP request that triggered it: no daemon, no leader, no service bill, no on-call. The only persistent component is your bucket.
 
-~100 KB gzipped on the server, ~5 KB gzipped in the browser. Zero services to run, and a kernel is small enough that an LLM can hold the whole `.d.ts` in context.
+Server bundle: ~96 KB gz on Cloudflare Workers, ~155 KB gz on Node. Browser client: ~5 KB gz. The whole public API is documented in a single 850-line `dist/API.md` — small enough that an LLM can hold it in context.
 
-[S3 is does the hard parts](https://aws.amazon.com/blogs/aws/amazon-s3-update-strong-read-after-write-consistency/), `baerly-storage` is the coordination that fixes the API. Document model, live queries, snapshot isolation — the whole surface in a `.d.ts` an LLM can use zero-shot.
+[S3 does the hard parts](https://aws.amazon.com/blogs/aws/amazon-s3-update-strong-read-after-write-consistency/), `baerly-storage` is the coordination that fixes the API. Built like git: content-addressed documents, immutable log entries, and a single CAS-advanced pointer to HEAD. Document model, live queries, snapshot isolation — the whole surface in a `.d.ts` an LLM can use zero-shot.
 
-The apps LLMs spit out by the dozen don't deserve Postgres + Docker + a pager; they deserve this.
+Apps sized for this primitive — small, server-only writes, ~10 GB ceiling, mechanical exit to Postgres when they cross it — get a tool that matches their shape instead of a stack that doesn't.
 
 ```
 Compute   →  FaaS
 Tokens    →  LLM API
 Storage   →  this.
 ```
+
+Almost every team already has an S3-compatible bucket — for exports, backups, CSV graveyards. The security review happened years ago; the budget exists.
 
 ## The whole backend
 
@@ -66,6 +68,7 @@ const { rows } = useLiveQuery<Ticket>({
 - **No hostage situation.** Log entries are shaped like Postgres
   logical-replication messages. `baerly export --target=postgres`
   graduates you out, mechanically, on the day an app outgrows this.
+- **Honest about its envelope.** Sized for ~10 GB / tenant, ~30 writes/min/collection sustained, ~100 collections / tenant. Crossing any of those is the success signal — `baerly export --target=postgres` is one command, and the on-disk log shape is Postgres-logical-replication-shaped so the exit is mechanical, not aspirational.
 
 ## Quick start
 
