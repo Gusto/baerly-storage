@@ -74,7 +74,6 @@ const makeEntry = (overrides: Partial<LogEntry> = {}): LogEntry => ({
   session: SESSION_A,
   seq: 0,
   new: { _id: "doc-1" },
-  patch: { _id: "doc-1" },
   ...overrides,
 });
 
@@ -99,7 +98,6 @@ describe("C2 session-id-unguessability under ForgeryStorage adversary", () => {
       seq,
       doc_id: "adversary-doc",
       new: { _id: "adversary-doc" },
-      patch: { _id: "adversary-doc" },
     });
     const decision = tryAdoptOwnSessionLogEntry(ctxOf({ self, existing: forged }));
     expect(decision).toEqual({ adopt: true, entry: forged });
@@ -181,7 +179,6 @@ describe("C2 session-id-unguessability under ForgeryStorage adversary", () => {
       session: "FORGED",
       seq: 0,
       new: { _id: "adv-doc", from: "adversary" },
-      patch: { _id: "adv-doc", from: "adversary" },
     };
     // Plant via inner.put so the writer's PUT-with-If-None-Match
     // sees a real 412 and reads back the forged body. The

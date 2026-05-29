@@ -1,7 +1,7 @@
 ---
 title: LogEntry wire shape
 audience: spec
-summary: Postgres-logical-replication-shaped LogEntry; frozen contract for future CDC consumers.
+summary: "Postgres-logical-replication-shaped LogEntry; the CDC wire contract (pre-launch: may still narrow)."
 last-reviewed: 2026-05-16
 tags: [protocol, log, cdc, contract]
 related: [sync-protocol.md]
@@ -16,10 +16,13 @@ semantics, what we borrowed from Postgres logical replication,
 what we deliberately did not, and the stability rules for
 future change.
 
-**This shape is fixed at merge.** Consumers ack on `lsn`; the JSON
-keys are public. Renaming, removing, or repurposing a field is a
-major-version migration. New optional fields can be added at any
-time.
+**Pre-launch (today): the shape may still narrow.** No external
+consumers exist; we may rename, remove, or repurpose fields to
+honestly reflect what the writer emits today. Once the first
+production consumer ships, the shape is fixed: consumers ack on
+`lsn`, the JSON keys become public, and renaming, removing, or
+repurposing a field becomes a major-version migration. New
+optional fields can be added at any time, pre- or post-launch.
 
 The canonical TypeScript definition lives in
 [`packages/protocol/src/log.ts`](../packages/protocol/src/log.ts).
@@ -69,7 +72,6 @@ export interface LogEntry {
   doc_id?: string;                      // I/U/D
   schema_version: number;
   new?: DocumentData;            // I/U
-  patch?: DocumentData;          // I/U; equals `new` today
   old?: DocumentData;            // when replica_identity = FULL
   key_old?: { readonly [pk: string]: JSONValue };
   origin?: string;
@@ -93,7 +95,6 @@ hover.
 | `doc_id`         | ✓ | ✓ | ✓ |   |   | Equals `ref.key`. |
 | `schema_version` | ✓ | ✓ | ✓ | ✓ | ✓ | Currently always `0`; reserved for forward-compatible schema versions. |
 | `new`            | ✓ | ✓ |   |   |   | Post-image. |
-| `patch`          | ✓ | ✓ |   |   |   | RFC 7386 patch; equals `new` today. |
 | `old`            |   | ✓ | ✓ |   |   | Iff `replica_identity === "FULL"`. |
 | `key_old`        |   | ✓ | ✓ |   |   | When `replica_identity !== "PATCH_ONLY"`. |
 | `origin`         | ? | ? | ? | ? | ? | Optional ORIGIN analogue. |
@@ -211,7 +212,7 @@ A per-collection setting that controls how much pre-image data
 each `U` / `D` entry carries:
 
 - **`PATCH_ONLY` (default; today's only mode).** `U` carries
-  `{ patch, new }`; no `old`, no `key_old`. Bandwidth-cheap. SQL
+  `{ new }`; no `old`, no `key_old`. Bandwidth-cheap. SQL
   consumers rebuilding before-images need to maintain a shadow
   table.
 - **`FULL`.** `U` additionally carries `old` and `key_old`. ~2× log
@@ -240,15 +241,14 @@ a Debezium-style envelope.
     "lsn": "0123456789abc_a1b_02"
   },
   "before": { "id": "u_42", "email": "old@x" },
-  "after":  { "id": "u_42", "email": "new@x", "name": "Alice" },
-  "patch":  { "email": "new@x" }
+  "after":  { "id": "u_42", "email": "new@x", "name": "Alice" }
 }
 ```
 
 Mapping at the SSE adapter:
 
-- `I` → `op:c`, `before: null`, `after: new`, `patch: new`.
-- `U` → `op:u`, `before: old || null`, `after: new`, `patch: patch`.
+- `I` → `op:c`, `before: null`, `after: new`.
+- `U` → `op:u`, `before: old || null`, `after: new`.
 - `D` → `op:d`, `before: old || key_old`, `after: null`.
 - `T` → `op:t`, no `before` / `after`.
 - `M` → `op:m`, payload in `after`.

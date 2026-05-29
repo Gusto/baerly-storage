@@ -788,24 +788,30 @@ const runLogEntryShape = async (
 
   expect(e0.op).toBe("I");
   expect(e0.doc_id).toBe(id1);
-  expect(e0.new).toEqual(e0.patch);
   expect(e0.new?.["_id"]).toBe(id1);
 
   expect(e1.op).toBe("I");
   expect(e1.doc_id).toBe(id2);
-  expect(e1.new).toEqual(e1.patch);
 
   expect(e2.op).toBe("U");
   expect(e2.doc_id).toBe(id1);
-  // Per-doc-replace model: `new === patch` for U entries today.
-  expect(e2.new).toEqual(e2.patch);
   expect(e2.new?.["marker"]).toBe(true);
 
   expect(e3.op).toBe("D");
   expect(e3.doc_id).toBe(id2);
   // D entries carry no body under PATCH_ONLY replica identity.
   expect(e3.new).toBeUndefined();
-  expect(e3.patch).toBeUndefined();
+
+  // Regression guard — fields cut from the protocol. Don't let any
+  // of them sneak back in via a writer set-site without an
+  // intentional shape decision. Task 2 will append `schema_version`
+  // to this list.
+  const CUT_LOG_ENTRY_FIELDS = ["patch"] as const;
+  for (const e of entries) {
+    for (const key of CUT_LOG_ENTRY_FIELDS) {
+      expect(e).not.toHaveProperty(key);
+    }
+  }
 
   // Direct mutations have distinct sessions per `commit()`.
   expect(e0.session).not.toBe(e1.session);

@@ -56,7 +56,6 @@ const seedLogEntries = async (
       session: "abcdef",
       seq,
       new: { value: seq },
-      patch: { value: seq },
     };
     await storage.put(`${prefix}/${seq}.json`, new TextEncoder().encode(JSON.stringify(entry)), {
       contentType: "application/json",
@@ -180,7 +179,6 @@ describe("estimateWritesPerMin", () => {
         session: "abcdef",
         seq,
         new: { value: seq },
-        patch: { value: seq },
       };
       await storage.put(key, new TextEncoder().encode(JSON.stringify(body)), {
         contentType: "application/json",
@@ -267,7 +265,6 @@ describe("baerly admin usage — CLI smoke", () => {
         session: "abcdef",
         seq,
         new: { value: seq },
-        patch: { value: seq },
       };
       await storage.put(`${prefix}/${seq}.json`, new TextEncoder().encode(JSON.stringify(entry)), {
         contentType: "application/json",

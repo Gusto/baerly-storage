@@ -15,7 +15,6 @@ const makeEntry = (overrides: Partial<LogEntry> = {}): LogEntry => ({
   session: SESSION_A,
   seq: 0,
   new: { _id: "doc-1" },
-  patch: { _id: "doc-1" },
   ...overrides,
 });
 

@@ -150,9 +150,8 @@ export interface CommitInput {
   readonly docId: string;
 
   /**
-   * For `I` / `U`: the post-image. Becomes {@link LogEntry.new} *and*
-   * {@link LogEntry.patch} (today's per-doc-replace model). Must be
-   * `undefined` for `op: "D"`.
+   * For `I` / `U`: the post-image. Becomes {@link LogEntry.new}. Must
+   * be `undefined` for `op: "D"`.
    */
   readonly body?: DocumentData;
 
@@ -508,9 +507,7 @@ export class Writer {
         schema_version: 0,
         session,
         seq,
-        ...(input.op !== "D" && input.body !== undefined
-          ? { new: input.body, patch: input.body }
-          : {}),
+        ...(input.op !== "D" && input.body !== undefined ? { new: input.body } : {}),
         ...(input.origin !== undefined ? { origin: input.origin } : {}),
       };
       entries.push(entry);

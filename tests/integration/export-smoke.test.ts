@@ -1,6 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { Client } from "pg";
-import { merge } from "@baerly/protocol";
 import { POSTGRES_HOST_PORT } from "../setup/ports.ts";
 
 /**
@@ -17,19 +16,6 @@ type DocumentData = {
 };
 
 /**
- * RFC 7386 merge-patch bodies use `null` as a delete sentinel. The
- * `LogEntry.patch` is typed as `DocumentData` (no
- * nulls allowed inside doc bodies), but a *patch* body legitimately
- * uses nulls to remove fields. Widen the local `patch` type to
- * allow nulls so fixture #4 ("null deletes nested field") is legal
- * TypeScript without `as any`. This widening is deliberate and
- * matches RFC 7386 — see `docs/spec/json-merge-patch.md`.
- */
-type JSONMergePatchObject = {
-  [k: string]: string | number | boolean | null | JSONMergePatchObject;
-};
-
-/**
  * Local copy — kept in sync with `packages/protocol/src/log.ts`; do
  * NOT import. The test is an external consumer of the frozen
  * contract; any drift in `@baerly/protocol` should fail TypeScript
@@ -43,7 +29,6 @@ interface LogEntry {
   doc_id?: string;
   schema_version: number;
   new?: DocumentData;
-  patch?: JSONMergePatchObject;
   old?: DocumentData;
   key_old?: { readonly [pk: string]: JSONValue };
   origin?: string;
@@ -74,9 +59,8 @@ const PG_CONFIG = {
  *
  * - `I` → `INSERT … ON CONFLICT (id) DO UPDATE` (idempotent
  *   replay).
- * - `U` → read current `doc`, apply RFC 7386 `merge()` in JS,
- *   write back (or `DELETE` if the merge collapses to
- *   `undefined`).
+ * - `U` → `INSERT … ON CONFLICT (id) DO UPDATE` (today's emitter
+ *   produces full-post-image U entries identical to I).
  * - `D` → `DELETE FROM users WHERE id = $1`.
  * - `T` / `M` → throw (today's emitter doesn't produce them).
  *
@@ -97,24 +81,14 @@ async function applyEntry(client: Client, entry: LogEntry): Promise<void> {
     return;
   }
   if (entry.op === "U") {
-    if (!entry.doc_id || !entry.patch) {
-      throw new Error("U requires doc_id+patch");
+    if (!entry.doc_id || !entry.new) {
+      throw new Error("U requires doc_id+new");
     }
-    const prior = await client.query<{ doc: object | null }>(
-      "SELECT doc FROM users WHERE id = $1",
-      [entry.doc_id],
+    await client.query(
+      "INSERT INTO users (id, doc) VALUES ($1, $2) " +
+        "ON CONFLICT (id) DO UPDATE SET doc = EXCLUDED.doc",
+      [entry.doc_id, entry.new],
     );
-    const priorDoc = prior.rows[0]?.doc ?? undefined;
-    const next = merge(priorDoc as never, entry.patch as never);
-    if (next === undefined) {
-      await client.query("DELETE FROM users WHERE id = $1", [entry.doc_id]);
-    } else {
-      await client.query(
-        "INSERT INTO users (id, doc) VALUES ($1, $2) " +
-          "ON CONFLICT (id) DO UPDATE SET doc = EXCLUDED.doc",
-        [entry.doc_id, next],
-      );
-    }
     return;
   }
   if (entry.op === "D") {
@@ -132,12 +106,10 @@ async function applyEntry(client: Client, entry: LogEntry): Promise<void> {
  * emitter exercises:
  *
  *   - scalar insert / nested insert
- *   - merge-patch scalar change
- *   - merge-patch null-deletes-nested-field (RFC 7386)
- *   - per-doc-replace (today's default emit mode)
+ *   - full post-image U (today's per-doc-replace emitter)
  *   - delete of an existing row
  *   - tombstone-revive (D then I at same doc_id)
- *   - multi-step merge convergence on the same doc
+ *   - multi-step full-overwrite convergence on the same doc
  *   - SQL-injection canaries in body strings
  *   - I → D → I cycle at same doc_id
  *
@@ -157,7 +129,6 @@ const FIXTURES: LogEntry[] = [
     doc_id: "users/u_a",
     schema_version: 0,
     new: { name: "Ada", email: "ada@x", age: 36 },
-    patch: { name: "Ada", email: "ada@x", age: 36 },
     session: "smoke-sess",
     seq: 0,
   },
@@ -170,11 +141,10 @@ const FIXTURES: LogEntry[] = [
     doc_id: "users/u_b",
     schema_version: 0,
     new: { name: "Bo", profile: { city: "PDX", title: "engineer" } },
-    patch: { name: "Bo", profile: { city: "PDX", title: "engineer" } },
     session: "smoke-sess",
     seq: 1,
   },
-  // U — merge-patch, single scalar change
+  // U — full post-image overwrite (today's emitter is per-doc-replace).
   {
     lsn: "lsn-02",
     commit_ts: "2026-01-01T00:00:02.000Z",
@@ -183,12 +153,10 @@ const FIXTURES: LogEntry[] = [
     doc_id: "users/u_a",
     schema_version: 0,
     new: { name: "Ada", email: "ada@x", age: 37 },
-    patch: { age: 37 },
     session: "smoke-sess",
     seq: 2,
   },
-  // U — null deletes nested field. RFC 7386 delete-sentinel —
-  // translator must DROP `profile.title`, not store SQL NULL.
+  // U — full post-image overwrite (today's emitter is per-doc-replace).
   {
     lsn: "lsn-03",
     commit_ts: "2026-01-01T00:00:03.000Z",
@@ -197,12 +165,10 @@ const FIXTURES: LogEntry[] = [
     doc_id: "users/u_b",
     schema_version: 0,
     new: { name: "Bo", profile: { city: "PDX" } },
-    patch: { profile: { title: null } },
     session: "smoke-sess",
     seq: 3,
   },
-  // U — per-doc-replace (today's default emit mode). patch == new;
-  // `age` survives because patch doesn't null it.
+  // U — per-doc-replace (today's default emit mode).
   {
     lsn: "lsn-04",
     commit_ts: "2026-01-01T00:00:04.000Z",
@@ -211,7 +177,6 @@ const FIXTURES: LogEntry[] = [
     doc_id: "users/u_a",
     schema_version: 0,
     new: { name: "Ada Lovelace", email: "ada@x" },
-    patch: { name: "Ada Lovelace", email: "ada@x" },
     session: "smoke-sess",
     seq: 4,
   },
@@ -235,11 +200,10 @@ const FIXTURES: LogEntry[] = [
     doc_id: "users/u_a",
     schema_version: 0,
     new: { name: "Ada Reborn", reborn: true },
-    patch: { name: "Ada Reborn", reborn: true },
     session: "smoke-sess",
     seq: 6,
   },
-  // U — extend profile with a new nested key (country)
+  // U — full post-image overwrite (today's emitter is per-doc-replace).
   {
     lsn: "lsn-07",
     commit_ts: "2026-01-01T00:00:07.000Z",
@@ -248,11 +212,10 @@ const FIXTURES: LogEntry[] = [
     doc_id: "users/u_b",
     schema_version: 0,
     new: { name: "Bo", profile: { city: "PDX", country: "US" } },
-    patch: { profile: { country: "US" } },
     session: "smoke-sess",
     seq: 7,
   },
-  // U — overwrite nested city. Final profile:
+  // U — full post-image overwrite. Final profile:
   // { country: "US", city: "SEA" }.
   {
     lsn: "lsn-08",
@@ -262,7 +225,6 @@ const FIXTURES: LogEntry[] = [
     doc_id: "users/u_b",
     schema_version: 0,
     new: { name: "Bo", profile: { city: "SEA", country: "US" } },
-    patch: { profile: { city: "SEA" } },
     session: "smoke-sess",
     seq: 8,
   },
@@ -280,10 +242,6 @@ const FIXTURES: LogEntry[] = [
       name: "O'Brien;\"--\\",
       note: '{"nested":true}; DROP TABLE users; --',
     },
-    patch: {
-      name: "O'Brien;\"--\\",
-      note: '{"nested":true}; DROP TABLE users; --',
-    },
     session: "smoke-sess",
     seq: 9,
   },
@@ -296,7 +254,6 @@ const FIXTURES: LogEntry[] = [
     doc_id: "users/u_d",
     schema_version: 0,
     new: { v: 1 },
-    patch: { v: 1 },
     session: "smoke-sess",
     seq: 10,
   },
@@ -320,7 +277,6 @@ const FIXTURES: LogEntry[] = [
     doc_id: "users/u_d",
     schema_version: 0,
     new: { v: 3 },
-    patch: { v: 3 },
     session: "smoke-sess",
     seq: 12,
   },
@@ -348,21 +304,11 @@ describe.runIf(smokeEnabled)("LogEntry → Postgres round-trip", () => {
       await applyEntry(client, entry);
     }
 
-    // Build the expected end state by replaying the same
-    // fixtures through `merge()` in memory — never pre-compute.
+    // Build the expected end state by replaying the fixtures in memory.
     const expected = new Map<string, unknown>();
     for (const entry of ordered) {
-      if (entry.op === "I" || entry.op === "U") {
-        if (!entry.doc_id) {
-          continue;
-        }
-        const prior = expected.get(entry.doc_id);
-        const next = merge(prior as never, (entry.patch ?? entry.new) as never);
-        if (next === undefined) {
-          expected.delete(entry.doc_id);
-        } else {
-          expected.set(entry.doc_id, next);
-        }
+      if ((entry.op === "I" || entry.op === "U") && entry.doc_id && entry.new) {
+        expected.set(entry.doc_id, entry.new);
       } else if (entry.op === "D" && entry.doc_id) {
         expected.delete(entry.doc_id);
       }

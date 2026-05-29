@@ -345,8 +345,8 @@ const writerFor = (ctx: CollectionReadContext): Writer =>
  * — matches the locked `Collection.insert` contract
  * (`packages/protocol/src/collection-api.ts:123–125`).
  *
- * The emitted `LogEntry` has `op:"I"` and `new === patch === {...doc, _id}`
- * (today's per-doc-replace model — `packages/protocol/src/log.ts:67–72`).
+ * The emitted `LogEntry` has `op:"I"` and `new === {...doc, _id}`
+ * (today's per-doc-replace model).
  *
  * @throws BaerlyError code="Conflict" — `_id` collision (pre-commit check) or
  *   CAS retry budget exhausted inside `Writer.commit()`.
@@ -442,8 +442,8 @@ export const runInsert = async <T extends DocumentData>(
  * `db.transaction(...)` exists to deliver.
  *
  * `replica_identity` defaults to `PATCH_ONLY` for every collection
- * today — emitted `U` entries carry `{ new, patch }` (equal) and
- * neither `old` nor `key_old`. Consumers rebuilding pre-images
+ * today — emitted `U` entries carry `{ new }` (the full post-image)
+ * and neither `old` nor `key_old`. Consumers rebuilding pre-images
  * under `PATCH_ONLY` need to maintain a shadow table — see
  * `packages/protocol/src/log.ts:102–118`.
  *
@@ -563,8 +563,8 @@ export const runReplaceById = async <T extends DocumentData>(
 /**
  * `Query.delete` implementation. Tombstones every matched row with a
  * single `op:"D"` `LogEntry` per `doc_id`. `replica_identity` defaults
- * to `PATCH_ONLY`, so emitted `D` entries carry neither `new`/`patch`
- * nor `old`/`key_old`.
+ * to `PATCH_ONLY`, so emitted `D` entries carry no body fields
+ * (no `new`, no `old`/`key_old`).
  * Consumers rebuilding pre-images under `PATCH_ONLY` need to
  * maintain a shadow table — see `packages/protocol/src/log.ts:102–118`.
  *
@@ -696,20 +696,11 @@ const runRead = async <T extends DocumentData>(
   const entries = await walkLogRange(ctx.storage, ctx.collectionPrefix, logSeqStart, nextSeq);
 
   // ── Step 3. Fold per doc_id, seeded from the snapshot. ────────────
-  // I / U: post-image overwrite (today's per-doc-replace model). The
-  //        writer emits `entry.new` as the FULL post-image
-  //        (`packages/protocol/src/log.ts:67–72`: `new === patch`),
-  //        so the fold is a straight `set`, not a `merge`. A future
-  //        partial-merge writer will introduce `entry.patch !== entry.new`
-  //        — at that point the fold switches to `merge(prev, entry.patch)`
-  //        for `patch` entries while keeping the straight `set` for
-  //        full-post-image entries. Crucially, RFC-7386 deletions
-  //        (a `null` value in `Query.update`'s patch) are encoded
-  //        TODAY as "the post-image omits the key" — `merge(prev, post)`
-  //        would carry the dropped key forward; a straight `set` lets
-  //        the deletion land.
+  // I / U: post-image overwrite. `entry.new` is the full post-image;
+  //        a straight `set` is correct (a `merge(prev, post)` would
+  //        carry forward keys the writer dropped).
   // D: tombstone — remove from the map.
-  // T / M: ignored (T not yet wired; M is a marker).
+  // T / M: ignored (Task 3 of this plan narrows the type to remove them).
   const docs = new Map<string, T>(baseDocs as Map<string, T>);
   foldLogEntriesOnto(docs, entries, { collection: ctx.collectionName });
 

@@ -5,16 +5,17 @@ import { str2uintDesc } from "./types.ts";
 /**
  * Postgres-logical-replication-shaped log entry. One per mutation.
  *
- * **Shape is fixed at this point and never changes after.** This is the
- * migration contract behind `baerly export --target=postgres` — the
- * keys are public, consumers ack on `lsn`, and any rename / removal is
- * a major-version migration.
+ * **Pre-launch: the shape may still narrow.** Once the first production
+ * consumer ships, this becomes a frozen migration contract behind
+ * `baerly export --target=postgres` — the keys will be public, consumers
+ * ack on `lsn`, and any rename / removal will be a major-version
+ * migration.
  *
  * Field requirement matrix:
  * - Always: `lsn`, `commit_ts`, `op`, `collection`, `schema_version`,
  *   `session`, `seq`.
  * - For I/U/D: `doc_id`.
- * - For I/U: `new`, `patch` (equal in today's per-doc-replace model).
+ * - For I/U: `new` (full post-image).
  * - Optional: `old` (when `replica_identity === "FULL"`), `key_old`
  *   (U/D when `replica_identity !== "PATCH_ONLY"`), `origin`.
  *
@@ -81,13 +82,6 @@ export interface LogEntry {
   new?: DocumentData;
 
   /**
-   * JSON-merge-patch (RFC 7386) form. Required for U; for I equals
-   * `new`. In today's per-doc-replace model `new` and `patch` are
-   * always equal; that changes when partial-doc merge writes land.
-   */
-  patch?: DocumentData;
-
-  /**
    * The pre-image. Present iff the collection's `replica_identity`
    * is `FULL`. ~2× log size on update-heavy collections; off by
    * default.
@@ -120,7 +114,7 @@ export interface LogEntry {
  * `U` / `D` entry carries.
  *
  * - `PATCH_ONLY` (default today, applied unconditionally): `U`
- *   carries `{ patch, new }`; no `old`, no `key_old`.
+ *   carries `{ new }`; no `old`, no `key_old`.
  *   Bandwidth-cheap. SQL consumers rebuilding before-images need
  *   to maintain a shadow table.
  * - `FULL`: `U` additionally carries `old` and `key_old`. ~2× log
