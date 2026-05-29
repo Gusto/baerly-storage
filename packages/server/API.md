@@ -559,6 +559,16 @@ Reads (`GET /v1/c/:collection[/:id]`, `GET /v1/count?collection=…`,
 `400 SchemaError "Request body must be { doc: object }"` — wording is
 locked by `assertJsonBodyField` in the kernel.
 
+### Liveness probe (`GET /v1/healthz`)
+
+`baerlyWorker` and `baerlyNode` both mount an anonymous
+`GET /v1/healthz` → `200 {"ok":true}`. It is checked **before** the
+verifier and observability, so it never 401s and never floods your
+logs — wire your platform's liveness/readiness probe straight to it.
+If your probe path is fixed to something else (a k8s readiness path,
+say), put a custom route in front of the kernel (see "Recipe — custom
+routes in front of `baerlyNode`" below).
+
 ### Read modifiers (query params)
 
 `GET /v1/c/:collection` accepts three JSON-encoded query params; all are
@@ -822,6 +832,51 @@ helper. For pre-launch chat-shape apps this is acceptable; the
 observability gap is being tracked as a follow-up. If you also need
 PATCH/PUT/DELETE on the same collection, repeat steps (1) and (2) for
 each verb.
+
+## Recipe — custom routes in front of `baerlyNode`
+
+`baerlyNode(...).listen(port)` is the shortcut for the common case:
+no custom routes, the kernel owns the whole port. To put your own
+route in front of the kernel (a fixed-path health probe, a
+trusted-stamp write route à la the recipe above), grab the
+web-standard `fetch` handler off the handle instead of calling
+`.listen()`, and serve it yourself. `serve()` here is the same
+`@hono/node-server` entry `.listen()` uses internally — you're just
+taking ownership of the dispatch:
+
+```ts
+// src/server/index.ts
+import { serve } from "@hono/node-server";
+import { baerlyNode, s3Storage } from "@gusto/baerly-storage/node";
+import config from "../../baerly.config.ts";
+
+const inner = baerlyNode({
+  config,
+  storage: s3Storage(/* … */),
+  webRoot: "dist/client", // still serves the SPA + /v1/* as usual
+});
+
+serve({
+  port: Number(process.env["PORT"] ?? 8080),
+  fetch: (req) =>
+    new URL(req.url).pathname === "/health-check"
+      ? Response.json({ ok: true })
+      : inner.fetch(req),
+});
+```
+
+The handle's `fetch` is the documented embedding seam (it's also what
+the Vite dev middleware and tests consume) — there's no separate
+`createApp` to reach for. If you don't need a *custom* probe path,
+skip all of this and point your platform at the built-in
+`GET /v1/healthz` (see above).
+
+> **Monorepo note.** `@hono/node-server` (and its `hono` peer) ship
+> as dependencies of the Node adapter, so the `serve` import resolves
+> out of the box in a scaffolded app. In a monorepo that prunes
+> unused peers (e.g. `yarn workspaces focus` in CI), add
+> `@hono/node-server` to the app's own `dependencies` so the import
+> survives the prune.
 
 ## Recipe — wrapping the client `fetch`
 

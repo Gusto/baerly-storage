@@ -5,7 +5,13 @@
 # Runtime path: node --experimental-strip-types src/server/index.ts.
 # No `tsc` emit at runtime — the server runs straight off TS source.
 # The SPA bundle (vite build) lives under dist/client/ and is served
-# by createListener({ webRoot }).
+# by baerlyNode({ webRoot }).
+#
+# If you diverge and compile the server with `tsc -b` instead of
+# strip-types, exclude `*.tsbuildinfo` from the build context (or run
+# `tsc -b --force`): a stale tsbuildinfo copied in lets incremental
+# `tsc -b` skip emit, and the container then crashes on a missing
+# dist/server/*.js.
 
 # Base images are tag-pinned (not digest-pinned) so this template
 # stays fresh as new patch images ship. Once you vendor this file,
