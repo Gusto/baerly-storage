@@ -43,15 +43,8 @@ export interface LogEntry {
   /** ISO-8601 ms timestamp. Redundant with `lsn` but cheap. */
   commit_ts: string;
 
-  /**
-   * Insert / Update / Delete / Truncate / Message. `M` is the
-   * `pg_logical_emit_message` analogue — useful for app-defined
-   * markers like deploy boundaries or snapshots. `T`
-   * truncates a whole collection. Today the emitter only produces
-   * `I`/`U`/`D`; `T` and `M` are shape-only for forward
-   * compatibility.
-   */
-  op: "I" | "U" | "D" | "T" | "M";
+  /** Insert / Update / Delete. */
+  op: "I" | "U" | "D";
 
   /**
    * Collection name — the pgoutput RELATION analogue. Today derived
@@ -62,7 +55,7 @@ export interface LogEntry {
    */
   collection: string;
 
-  /** Required for I/U/D; omitted for T (TRUNCATE) and M (MESSAGE). */
+  /** Required for I/U/D. */
   doc_id?: string;
 
   /** Required for I, U. The post-image. */

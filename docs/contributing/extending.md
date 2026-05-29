@@ -248,11 +248,14 @@ forward/backward-compatibility policy documented in
 [`docs/spec/log-entry-shape.md`](../../docs/spec/log-entry-shape.md):
 new optional fields are additive; renaming, removing, or narrowing a
 field is a major-version migration. Pre-launch the shape may still
-narrow. `LogEntry` does not carry its own `schema_version` field —
-the announcement opcode (`M` / MESSAGE) is the out-of-band channel
-for schema changes. Document-level rewrite tooling is
-application-layer work — the protocol supplies the announcement
-opcode, not the rewrite logic.
+narrow. `LogEntry` does not carry its own `schema_version` field, and there
+is no out-of-band announcement opcode today — `op` is the closed
+union `"I" | "U" | "D"`. If a schema-change announcement channel is
+ever needed, it would arrive as a deliberate major-version migration
+(a new `op` value or a top-level `_v` field — see
+[`docs/spec/log-entry-shape.md` §Stability](../../docs/spec/log-entry-shape.md)),
+not via an existing opcode. Document-level rewrite tooling is
+application-layer work; the protocol does not supply rewrite logic.
 
 ---
 
@@ -374,7 +377,8 @@ The write primitive lives in two places:
 
 1. **The wire shape** — `LogEntry` in
    `packages/protocol/src/log.ts`. Adding a new `op` letter is a
-   stability change (see [spec/log-entry-shape.md](../spec/log-entry-shape.md)).
+   **major-version migration** (see
+   [spec/log-entry-shape.md §Stability](../spec/log-entry-shape.md)).
 2. **The commit path** — `Writer` in
    `packages/server/src/writer.ts`. Extend `CommitInput`
    with the new shape and update `commit` / `commitBatch` to emit

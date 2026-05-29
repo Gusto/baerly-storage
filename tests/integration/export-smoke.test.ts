@@ -24,7 +24,7 @@ type DocumentData = {
 interface LogEntry {
   lsn: string;
   commit_ts: string;
-  op: "I" | "U" | "D" | "T" | "M";
+  op: "I" | "U" | "D";
   collection: string;
   doc_id?: string;
   new?: DocumentData;
@@ -61,7 +61,7 @@ const PG_CONFIG = {
  * - `U` → `INSERT … ON CONFLICT (id) DO UPDATE` (today's emitter
  *   produces full-post-image U entries identical to I).
  * - `D` → `DELETE FROM users WHERE id = $1`.
- * - `T` / `M` → throw (today's emitter doesn't produce them).
+ * - Unreachable — `op` is exhaustively handled above.
  *
  * The translator orders by ascending `seq`; the `lsn` is treated
  * as opaque (it sorts lex-DESC in production, which is why we
@@ -97,7 +97,9 @@ async function applyEntry(client: Client, entry: LogEntry): Promise<void> {
     await client.query("DELETE FROM users WHERE id = $1", [entry.doc_id]);
     return;
   }
-  throw new Error(`unsupported op: ${entry.op}`);
+  // Unreachable — `op` is exhaustively handled above.
+  const exhaustiveCheck: never = entry.op;
+  throw new Error(`unsupported op: ${String(exhaustiveCheck)}`);
 }
 
 /**

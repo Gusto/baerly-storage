@@ -137,10 +137,7 @@ export interface WriterOptions {
  * Single-doc mutation request. One `commit()` ↔ one {@link LogEntry}.
  */
 export interface CommitInput {
-  /**
-   * The mutation op. Maps directly to {@link LogEntry.op}. `T` and `M`
-   * (TRUNCATE / MESSAGE) are out of scope here.
-   */
+  /** The mutation op. Maps directly to {@link LogEntry.op}. */
   readonly op: "I" | "U" | "D";
 
   /** The collection (table) name. Becomes {@link LogEntry.collection}. */

@@ -449,7 +449,7 @@ interface SinceResponse {
 interface LogEntry {
   readonly lsn: string;             // opaque cursor; lex-asc, monotonic
   readonly commit_ts: string;       // ISO-8601 ms
-  readonly op: "I" | "U" | "D" | "T" | "M";
+  readonly op: "I" | "U" | "D";
   readonly collection: string;
   readonly doc_id?: string;         // I/U/D only
   readonly new?: DocumentData;      // I/U — post-image

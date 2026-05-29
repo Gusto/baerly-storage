@@ -33,8 +33,8 @@ describe("LogEntry", () => {
   });
 
   test("op accepts the documented union", () => {
-    const ops: LogEntry["op"][] = ["I", "U", "D", "T", "M"];
-    expect(ops).toHaveLength(5);
+    const ops: LogEntry["op"][] = ["I", "U", "D"];
+    expect(ops).toHaveLength(3);
   });
 
   test("ReplicaIdentity is the documented union", () => {

@@ -700,7 +700,6 @@ const runRead = async <T extends DocumentData>(
   //        a straight `set` is correct (a `merge(prev, post)` would
   //        carry forward keys the writer dropped).
   // D: tombstone — remove from the map.
-  // T / M: ignored (Task 3 of this plan narrows the type to remove them).
   const docs = new Map<string, T>(baseDocs as Map<string, T>);
   foldLogEntriesOnto(docs, entries, { collection: ctx.collectionName });
 

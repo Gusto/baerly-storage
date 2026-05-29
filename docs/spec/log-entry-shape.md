@@ -67,7 +67,7 @@ the opaque `lsn` string carried by each entry.
 export interface LogEntry {
   lsn: string;                          // <base32-time>_<session>_<seq>
   commit_ts: string;                    // ISO-8601 ms
-  op: "I" | "U" | "D" | "T" | "M";
+  op: "I" | "U" | "D";
   collection: string;
   doc_id?: string;                      // I/U/D
   new?: DocumentData;            // I/U
@@ -85,23 +85,19 @@ hover.
 
 ### Field requirement matrix
 
-| Field            | I | U | D | T | M | Notes |
-|------------------|---|---|---|---|---|-------|
-| `lsn`            | ✓ | ✓ | ✓ | ✓ | ✓ | Always present. |
-| `commit_ts`      | ✓ | ✓ | ✓ | ✓ | ✓ | ISO-8601 ms. |
-| `op`             | ✓ | ✓ | ✓ | ✓ | ✓ | One ASCII char. |
-| `collection`     | ✓ | ✓ | ✓ | ✓ | ✓ | First segment of `ref.key`, fallback `ref.bucket`. |
-| `doc_id`         | ✓ | ✓ | ✓ |   |   | Equals `ref.key`. |
-| `new`            | ✓ | ✓ |   |   |   | Post-image. |
-| `old`            |   | ✓ | ✓ |   |   | Iff `replica_identity === "FULL"`. |
-| `key_old`        |   | ✓ | ✓ |   |   | When `replica_identity !== "PATCH_ONLY"`. |
-| `origin`         | ? | ? | ? | ? | ? | Optional ORIGIN analogue. |
-| `session`        | ✓ | ✓ | ✓ | ✓ | ✓ | Embedded in `lsn`; surfaced for dedupe. |
-| `seq`            | ✓ | ✓ | ✓ | ✓ | ✓ | Embedded in `lsn`; surfaced for ordering. |
-
-`T` (TRUNCATE) and `M` (MESSAGE) are shape-only today — the emitter
-produces only `I` / `U` / `D`. The shape is reserved for forward
-compatibility.
+| Field            | I | U | D | Notes |
+|------------------|---|---|---|-------|
+| `lsn`            | ✓ | ✓ | ✓ | Always present. |
+| `commit_ts`      | ✓ | ✓ | ✓ | ISO-8601 ms. |
+| `op`             | ✓ | ✓ | ✓ | One ASCII char. |
+| `collection`     | ✓ | ✓ | ✓ | First segment of `ref.key`, fallback `ref.bucket`. |
+| `doc_id`         | ✓ | ✓ | ✓ | Equals `ref.key`. |
+| `new`            | ✓ | ✓ |   | Post-image. |
+| `old`            |   | ✓ | ✓ | Iff `replica_identity === "FULL"`. |
+| `key_old`        |   | ✓ | ✓ | When `replica_identity !== "PATCH_ONLY"`. |
+| `origin`         | ? | ? | ? | Optional ORIGIN analogue. |
+| `session`        | ✓ | ✓ | ✓ | Embedded in `lsn`; surfaced for dedupe. |
+| `seq`            | ✓ | ✓ | ✓ | Embedded in `lsn`; surfaced for ordering. |
 
 ## Storage layout
 
@@ -174,8 +170,8 @@ it is the de-facto CDC lingua franca, and it is the shape
 `baerly export --target=postgres` mechanically translates into.
 From the Postgres logical-replication wire protocol we borrowed:
 
-- **`I` / `U` / `D` / `T` / `M`** — the message tags. Map to
-  Debezium's `op:c/u/d/t/m` envelope.
+- **`I` / `U` / `D`** — the message tags. Map to
+  Debezium's `op:c/u/d` envelope.
 - **`new` (post-image) and `old` (pre-image, gated)** — the same
   before/after concept Debezium emits.
 - **`collection` as RELATION analogue** — what Postgres calls a
@@ -247,8 +243,6 @@ Mapping at the SSE adapter:
 - `I` → `op:c`, `before: null`, `after: new`.
 - `U` → `op:u`, `before: old || null`, `after: new`.
 - `D` → `op:d`, `before: old || key_old`, `after: null`.
-- `T` → `op:t`, no `before` / `after`.
-- `M` → `op:m`, payload in `after`.
 
 ## Failure semantics
 
@@ -271,9 +265,23 @@ the entry truly orphan.
 - **New optional fields can be added at any time.** The `LogEntry`
   type is `interface` (open under structural typing). Consumers
   must ignore unknown keys.
-- **`op` discriminant values are reserved.** Adding a new `op`
-  letter is a major change because consumers branch on it. New
-  values must come with an envelope mapping (see above).
+- **`op` is a closed union; widening it is a major-version
+  migration.** Today's emitter produces only `I` / `U` / `D`, and
+  `LogEntry.op` is typed as that closed set so consumers can
+  switch-exhaustively and get a `never`-check failure when they
+  miss one. The wire never carries values the type doesn't admit
+  — adding `T` (TRUNCATE) or `M` (MESSAGE) back is a major-version
+  migration of the LogEntry shape, and the major-version mechanism
+  itself (likely a top-level `_v` field on each entry, opt-in by
+  consumers) is a separate design decided when widening first
+  becomes necessary. The alternative considered was an open string
+  union (`"I" | "U" | "D" | (string & {})`) that admits arbitrary
+  values silently; we rejected it because the autocomplete benefit
+  was outweighed by losing exhaustive checking on the 90%-case
+  translator, and because "the wire can carry values its declared
+  type forbids" is bad DX for agent consumers reading the `.d.ts`
+  zero-shot. New `op` values come with an envelope mapping and a
+  wire-version bump together; never silently.
 
 See also:
 

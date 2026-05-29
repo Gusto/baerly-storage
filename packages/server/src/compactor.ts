@@ -216,8 +216,7 @@ export const compact = async (
   // ── Step 4. Apply the fold onto `base`. ─────────────────────────
   // I / U overwrite with the post-image (today's per-doc-replace
   // model: writer emits `entry.new` as the full post-image, see
-  // packages/protocol/src/log.ts:67-72). D tombstones. T / M are
-  // forward-compat shapes (writer doesn't emit them today).
+  // packages/protocol/src/log.ts). D tombstones.
   for (const entry of entries) {
     if (entry.collection !== collectionName) {
       continue;
@@ -235,11 +234,6 @@ export const compact = async (
       }
       case "D": {
         base.delete(entry.doc_id);
-        break;
-      }
-      case "T":
-      case "M": {
-        // No-op for this ticket.
         break;
       }
     }

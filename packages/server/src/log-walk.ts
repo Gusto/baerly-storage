@@ -114,8 +114,6 @@ export const walkLogRange = async (
  *     are ignored — today's writer always emits `new`, so this is a
  *     forward-compat guard, not a live branch.
  *   - `D`: tombstone — `map.delete(entry.doc_id)`.
- *   - `T` / `M`: ignored. `T` (TRUNCATE) is not yet wired; `M`
- *     (MESSAGE) is a marker. The emitter never produces them today.
  *
  * Entries whose `collection` does not match `opts.collection`, or
  * whose `doc_id` is `undefined`, are skipped. When
@@ -127,8 +125,7 @@ export const walkLogRange = async (
  * This is the canonical fold used by the read path
  * (`query.ts`) and the index reconciler (`rebuild-index.ts`).
  * Centralising it keeps the
- * "ignore T/M; straight `set` on I/U; tombstone on D" protocol
- * invariant in one place.
+ * "straight `set` on I/U; tombstone on D" protocol invariant in one place.
  *
  * @see ../../../docs/spec/sync-protocol.md
  */
@@ -162,11 +159,6 @@ export const foldLogEntriesOnto = <T extends DocumentData>(
       }
       case "D": {
         map.delete(entry.doc_id);
-        break;
-      }
-      case "T":
-      case "M": {
-        // No-op for forward-compat shapes the writer doesn't emit today.
         break;
       }
     }
