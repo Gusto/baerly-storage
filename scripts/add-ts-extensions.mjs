@@ -2,8 +2,10 @@
 /**
  * Rewrite extensionless relative imports to include explicit `.ts` /
  * `.tsx` extensions so workspace source is consumable by Node's
- * native `--experimental-strip-types` runtime (used by
- * `examples/helpdesk`).
+ * native `--experimental-strip-types` runtime.
+ *
+ * Scope: paths oxlint doesn't lint (bench/, deploy/, examples/, scripts/, root *.config.ts).
+ * oxlint owns packages/** and tests/** via `import/extensions: ["error","always"]`.
  *
  *   node scripts/add-ts-extensions.mjs           # apply
  *   node scripts/add-ts-extensions.mjs --check   # exit non-zero on diff
@@ -23,11 +25,12 @@ const CHECK_MODE = process.argv.includes("--check");
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolvePath(HERE, "..");
 
+// Coverage split: oxlint (configured with `import/extensions: ["error","always"]`)
+// already lints `packages/**` and `tests/**` over `verify:agent`'s glob. This
+// script owns the paths oxlint doesn't lint, plus the autofix capability that
+// stock `import/extensions` can't provide (it can't filesystem-resolve a bare
+// `./foo` to `./foo.ts` vs `./foo/index.tsx`).
 const GLOBS = [
-  "packages/*/src/**/*.ts",
-  "packages/*/src/**/*.tsx",
-  "tests/**/*.ts",
-  "tests/**/*.tsx",
   "bench/**/*.ts",
   "bench/**/*.tsx",
   "deploy/**/*.ts",

@@ -317,9 +317,10 @@ auto-load on matching edits and point at the same files.
   `examples/minimal-node/` and `examples/react-node/` scaffolds,
   which consume the workspace `exports."."` → `./src/*.ts` paths
   directly — can resolve relative specifiers. Enforced by
-  oxlint (`import/extensions: ["error", "always", { ignorePackages: true }]`);
-  `scripts/add-ts-extensions.mjs --check` audits the full repo
-  including `bench/`, `manual-e2e/`, `examples/`, and `*.config.ts`.
+  `oxlint`'s `import/extensions: ["error", "always", { ignorePackages: true }]`
+  on `packages/**` + `tests/**`, and by `scripts/add-ts-extensions.mjs --check`
+  on the paths oxlint doesn't lint (`bench/`, `deploy/`, `examples/`,
+  `scripts/`, root `*.config.ts`).
 - **Branded types are load-bearing.** `UUID` and `ContentVersionId`
   exist to prevent confusion bugs. Don't paper over a type
   mismatch with `as string`; widen only if you understand why.
