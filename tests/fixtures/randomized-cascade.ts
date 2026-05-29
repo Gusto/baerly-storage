@@ -104,7 +104,7 @@ const MAX_STEPS = 100;
 
 /**
  * Shape of one client's broadcast — kept in sync with the legacy
- * `Message` type. Doubles as the `LogEntry.new` body.
+ * `Message` type. Doubles as the `LogEntry.after` body.
  */
 interface CascadeMessage extends DocumentData {
   sender: number;
@@ -164,8 +164,8 @@ const readLatest = async (inst: Instance): Promise<CascadeMessage | undefined> =
     } catch {
       continue;
     }
-    if (entry.doc_id === COLLECTION && entry.op === "U" && entry.new !== undefined) {
-      return entry.new as CascadeMessage;
+    if (entry.doc_id === COLLECTION && entry.op === "U" && entry.after !== undefined) {
+      return entry.after as CascadeMessage;
     }
   }
   return undefined;

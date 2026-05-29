@@ -13,7 +13,7 @@ const makeEntry = (overrides: Partial<LogEntry> = {}): LogEntry => ({
   doc_id: "doc-1",
   session: SESSION_A,
   seq: 0,
-  new: { _id: "doc-1" },
+  after: { _id: "doc-1" },
   ...overrides,
 });
 

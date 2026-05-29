@@ -355,7 +355,7 @@ describe("Db.collection read terminals", () => {
       doc_id: "live",
       session: "fakesess1",
       seq: 2,
-      new: { _id: "live", v: 1 },
+      after: { _id: "live", v: 1 },
     };
     await storage.put(logKey(COLL, 2), new TextEncoder().encode(JSON.stringify(entry)));
 

@@ -185,7 +185,7 @@ describe("Writer crash never leaves readable phantom row", () => {
       }
       // The only forbidden state is a partial / corrupt row, which
       // the reader contract makes unrepresentable: rows come from
-      // `LogEntry.new` whole, never split.
+      // `LogEntry.after` whole, never split.
     },
     PROP_TIMEOUT_MS,
   );

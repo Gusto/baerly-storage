@@ -147,7 +147,7 @@ export interface CommitInput {
   readonly docId: string;
 
   /**
-   * For `I` / `U`: the post-image. Becomes {@link LogEntry.new}. Must
+   * For `I` / `U`: the post-image. Becomes {@link LogEntry.after}. Must
    * be `undefined` for `op: "D"`.
    */
   readonly body?: DocumentData;
@@ -503,7 +503,7 @@ export class Writer {
         doc_id: input.docId,
         session,
         seq,
-        ...(input.op !== "D" && input.body !== undefined ? { new: input.body } : {}),
+        ...(input.op !== "D" && input.body !== undefined ? { after: input.body } : {}),
         ...(input.origin !== undefined ? { origin: input.origin } : {}),
       };
       entries.push(entry);
@@ -834,8 +834,8 @@ export class Writer {
       if (entry.op === "D") {
         return undefined;
       } // last op was delete
-      if ((entry.op === "I" || entry.op === "U") && entry.new !== undefined) {
-        return entry.new;
+      if ((entry.op === "I" || entry.op === "U") && entry.after !== undefined) {
+        return entry.after;
       }
     }
     return undefined;

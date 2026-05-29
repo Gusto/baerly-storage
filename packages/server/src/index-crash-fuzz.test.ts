@@ -205,12 +205,12 @@ describe("index emission survives a single crash anywhere in the commit", () => 
         const entry = JSON.parse(new TextDecoder().decode(got.body)) as {
           op: "I" | "U" | "D";
           doc_id: string;
-          new?: Doc;
+          after?: Doc;
         };
         if (entry.op === "D") {
           live.delete(entry.doc_id);
-        } else if (entry.new !== undefined) {
-          live.set(entry.doc_id, entry.new);
+        } else if (entry.after !== undefined) {
+          live.set(entry.doc_id, entry.after);
         }
       }
       const expected = new Set<string>();

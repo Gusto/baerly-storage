@@ -1,8 +1,8 @@
 ---
 title: LogEntry wire shape
 audience: spec
-summary: "Postgres-logical-replication-shaped LogEntry; the CDC wire contract (pre-launch: may still narrow)."
-last-reviewed: 2026-05-16
+summary: "Debezium-style JSON CDC envelope (pgoutput message-tag vocabulary) LogEntry; the CDC wire contract (pre-launch: may still narrow)."
+last-reviewed: 2026-05-28
 tags: [protocol, log, cdc, contract]
 related: [sync-protocol.md]
 ---
@@ -45,17 +45,22 @@ Three shapes were on the table:
   but traps the export tooling inside Baerly — anyone reading the
   log learns a Baerly-specific schema with no analog in the
   ecosystem.
-- **`pgoutput` wire format verbatim.** The Postgres
-  logical-replication output plugin is the obvious reference, but
-  adopting it byte-for-byte would require BEGIN/COMMIT framing, LSN
-  byte structure, TYPE messages, streaming-in-progress variants,
-  and two-phase commit framing — overkill for a document store with
-  no statement-level decoding.
-- **`pgoutput`-shaped JSON, machinery dropped.** Keep the message
-  vocabulary (`I`/`U`/`D` for insert/update/delete, with relation,
-  key, before/after) and the per-entry opaque `lsn` cursor. Drop
-  the framing and protocol machinery that doesn't apply to an
-  append-only object-store log. **Chosen.**
+- **`pgoutput` wire format verbatim.** The Postgres logical-
+  replication output plugin is the obvious binary reference, but
+  adopting it byte-for-byte would require BEGIN/COMMIT framing,
+  LSN byte structure, TYPE messages, streaming-in-progress
+  variants, and two-phase commit framing — overkill for a
+  document store with no statement-level decoding.
+- **Debezium-style JSON envelope using `pgoutput`'s message-tag
+  vocabulary.** Keep pgoutput's `I` / `U` / `D` tags as the `op`
+  discriminator and adopt Debezium's `before` / `after` field
+  names — the JSON-friendly form already widely understood by
+  Postgres-CDC consumers. Append-only delivery via per-LSN JSON
+  objects in S3, with an opaque `lsn` cursor consumers ack
+  against. Not byte-compatible with pgoutput, not exactly
+  Debezium's source-connector envelope either — borrows the field
+  vocabulary from both and drops the framing and machinery that
+  doesn't apply to an append-only object-store log. **Chosen.**
 
 The export tool is a few hundred lines, not a feature team. CDC
 consumers can read the log directly and acknowledge progress on
@@ -70,8 +75,8 @@ export interface LogEntry {
   op: "I" | "U" | "D";
   collection: string;
   doc_id?: string;                      // I/U/D
-  new?: DocumentData;            // I/U
-  old?: DocumentData;            // when replica_identity = FULL
+  after?: DocumentData;          // I/U
+  before?: DocumentData;         // when replica_identity = FULL
   key_old?: { readonly [pk: string]: JSONValue };
   origin?: string;
   session: string;
@@ -92,8 +97,8 @@ hover.
 | `op`             | ✓ | ✓ | ✓ | One ASCII char. |
 | `collection`     | ✓ | ✓ | ✓ | First segment of `ref.key`, fallback `ref.bucket`. |
 | `doc_id`         | ✓ | ✓ | ✓ | Equals `ref.key`. |
-| `new`            | ✓ | ✓ |   | Post-image. |
-| `old`            |   | ✓ | ✓ | Iff `replica_identity === "FULL"`. |
+| `after`          | ✓ | ✓ |   | Post-image (Debezium's `after`). |
+| `before`         |   | ✓ | ✓ | Iff `replica_identity === "FULL"` (Debezium's `before`). |
 | `key_old`        |   | ✓ | ✓ | When `replica_identity !== "PATCH_ONLY"`. |
 | `origin`         | ? | ? | ? | Optional ORIGIN analogue. |
 | `session`        | ✓ | ✓ | ✓ | Embedded in `lsn`; surfaced for dedupe. |
@@ -172,8 +177,9 @@ From the Postgres logical-replication wire protocol we borrowed:
 
 - **`I` / `U` / `D`** — the message tags. Map to
   Debezium's `op:c/u/d` envelope.
-- **`new` (post-image) and `old` (pre-image, gated)** — the same
-  before/after concept Debezium emits.
+- **`after` (post-image) and `before` (pre-image, gated)** — the
+  Debezium field names directly. The post-image is required for
+  `I` / `U`; the pre-image is gated by `replica_identity = FULL`.
 - **`collection` as RELATION analogue** — what Postgres calls a
   table.
 - **`replica_identity` per relation** — `PATCH_ONLY` / `FULL`,
@@ -206,15 +212,15 @@ A per-collection setting that controls how much pre-image data
 each `U` / `D` entry carries:
 
 - **`PATCH_ONLY` (default; today's only mode).** `U` carries
-  `{ new }`; no `old`, no `key_old`. Bandwidth-cheap. SQL
+  `{ after }`; no `before`, no `key_old`. Bandwidth-cheap. SQL
   consumers rebuilding before-images need to maintain a shadow
   table.
-- **`FULL`.** `U` additionally carries `old` and `key_old`. ~2× log
+- **`FULL`.** `U` additionally carries `before` and `key_old`. ~2× log
   size on update-heavy collections; buys 1:1 logical replication
   and "previous value" answerable from the log alone.
 
 The setting is wired through the collection API. Every collection
-defaults to `PATCH_ONLY`. The `ReplicaIdentity` type and `old` /
+defaults to `PATCH_ONLY`. The `ReplicaIdentity` type and `before` /
 `key_old` fields exist now so the shape is future-compatible.
 
 ## Consumer envelope sketch
@@ -240,9 +246,9 @@ a Debezium-style envelope.
 
 Mapping at the SSE adapter:
 
-- `I` → `op:c`, `before: null`, `after: new`.
-- `U` → `op:u`, `before: old || null`, `after: new`.
-- `D` → `op:d`, `before: old || key_old`, `after: null`.
+- `I` → `op:c`, `before: null`, `after: <LogEntry.after>`.
+- `U` → `op:u`, `before: <LogEntry.before> || null`, `after: <LogEntry.after>`.
+- `D` → `op:d`, `before: <LogEntry.before> || <LogEntry.key_old>`, `after: null`.
 
 ## Failure semantics
 
@@ -282,6 +288,14 @@ the entry truly orphan.
   type forbids" is bad DX for agent consumers reading the `.d.ts`
   zero-shot. New `op` values come with an envelope mapping and a
   wire-version bump together; never silently.
+- **`after` is always a complete post-image.** No TOAST-elision,
+  no "unchanged-field" markers, no per-field absence-vs-null
+  ambiguity. A key absent from `after` is `NULL` at the target;
+  consumers never need to compare against pre-images to determine
+  which columns to write. Partial-merge writes (`patch` semantics,
+  cut in a prior shape-narrowing series) would ship as a future
+  op letter or behind a wire-version bump if they ever return —
+  never by reinterpreting `after`.
 
 See also:
 

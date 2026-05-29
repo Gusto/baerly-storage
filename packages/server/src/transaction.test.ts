@@ -116,7 +116,7 @@ describe("Db.transaction", () => {
     expect(entry.doc_id).toBe("doc-1");
     expect(entry.seq).toBe(0);
     expect(entry.session).toHaveLength(6);
-    expect(entry.new).toEqual({ _id: "doc-1", title: "hello" });
+    expect(entry.after).toEqual({ _id: "doc-1", title: "hello" });
   });
 
   test("two inserts share one session id and contiguous seq numbers", async () => {
@@ -174,11 +174,11 @@ describe("Db.transaction", () => {
     // All three transaction entries share one session id.
     expect(u.session).toBe(i.session);
     expect(d.session).toBe(i.session);
-    // Delete entries carry no `new` (PATCH_ONLY +
+    // Delete entries carry no `after` (PATCH_ONLY +
     // op === "D" — the type system rejects a body on `D` inputs).
-    expect(d.new).toBeUndefined();
+    expect(d.after).toBeUndefined();
     // U carries the full post-image under per-doc-replace.
-    expect(u.new).toEqual({ _id: "existing", v: "v1" });
+    expect(u.after).toEqual({ _id: "existing", v: "v1" });
   });
 
   test("reads inside the tx see live state (e.g. an insert from before the tx)", async () => {
@@ -298,9 +298,9 @@ describe("Db.transaction", () => {
     expect(txEntry.session).toHaveLength(6);
     expect(directEntry.session).toHaveLength(6);
 
-    // Both carry the locked I-entry shape (full post-image in `new`).
-    expect(txEntry.new).toEqual({ _id: "tx-doc", v: 1 });
-    expect(directEntry.new).toEqual({ _id: "direct-doc", v: 2 });
+    // Both carry the locked I-entry shape (full post-image in `after`).
+    expect(txEntry.after).toEqual({ _id: "tx-doc", v: 1 });
+    expect(directEntry.after).toEqual({ _id: "direct-doc", v: 2 });
   });
 
   test("cross-table mutation inside a tx is a compile-time error", async () => {

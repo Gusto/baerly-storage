@@ -129,7 +129,7 @@ const arbForgedEntry = fc.record({
   doc_id: fc.string({ minLength: 1, maxLength: 16 }),
   session: fc.string({ minLength: 6, maxLength: 6 }),
   seq: fc.integer({ min: 0, max: 5 }),
-  new: fc.record({ _id: fc.string({ minLength: 1, maxLength: 16 }) }),
+  after: fc.record({ _id: fc.string({ minLength: 1, maxLength: 16 }) }),
 }) as fc.Arbitrary<LogEntry>;
 
 describe("adversarial replay against self-session log-conflict adoption", () => {
@@ -150,9 +150,9 @@ describe("adversarial replay against self-session log-conflict adoption", () => 
         // pinpoints the regression.
         expect(outcome.entry.doc_id).toBe("writer-doc");
         expect(outcome.entry.collection).toBe(COLLECTION);
-        // The new[] field must reflect what the writer wrote, not
+        // The after[] field must reflect what the writer wrote, not
         // what the adversary forged.
-        expect((outcome.entry.new as { from?: string } | undefined)?.from).toBe("writer");
+        expect((outcome.entry.after as { from?: string } | undefined)?.from).toBe("writer");
       } else if (outcome.kind === "rejected") {
         // The only Baerly error code on this path is Conflict
         // (the adoption helper's failure clauses) or
@@ -176,7 +176,7 @@ describe("adversarial replay against self-session log-conflict adoption", () => 
       doc_id: "adv-doc",
       session: "advers",
       seq: 0,
-      new: { _id: "adv-doc", from: "adversary" },
+      after: { _id: "adv-doc", from: "adversary" },
     };
     const outcome = await runAttack(forged);
     expect(outcome.kind).toBe("rejected");
@@ -204,7 +204,7 @@ describe("adversarial replay against self-session log-conflict adoption", () => 
       doc_id: "old-doc",
       session: "oldwri", // captured from a prior writer
       seq: 0,
-      new: { _id: "old-doc", from: "history" },
+      after: { _id: "old-doc", from: "history" },
     };
     const outcome = await runAttack(replayed);
     expect(outcome.kind).toBe("rejected");
@@ -278,7 +278,7 @@ describe("adversarial replay against self-session log-conflict adoption", () => 
       doc_id: "adv-doc",
       session: "advers",
       seq: 5,
-      new: { _id: "adv-doc" },
+      after: { _id: "adv-doc" },
     };
     await storage.put(LOG_KEY(5), encodeJsonBytes(futureForged), {
       contentType: "application/json",

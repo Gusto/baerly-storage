@@ -452,11 +452,10 @@ interface LogEntry {
   readonly op: "I" | "U" | "D";
   readonly collection: string;
   readonly doc_id?: string;         // I/U/D only
-  readonly new?: DocumentData;      // I/U — post-image
-  readonly patch?: DocumentData;    // U — JSON-merge-patch (RFC 7386)
+  readonly after?: DocumentData;    // I/U — post-image (Debezium's `after`)
   readonly session: string;
   readonly seq: number;
-  // `old` / `key_old` / `origin` are optional; see `LogEntry` JSDoc.
+  // `before` / `key_old` / `origin` are optional; see `LogEntry` JSDoc.
 }
 ```
 

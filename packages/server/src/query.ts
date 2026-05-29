@@ -345,7 +345,7 @@ const writerFor = (ctx: CollectionReadContext): Writer =>
  * — matches the locked `Collection.insert` contract
  * (`packages/protocol/src/collection-api.ts:123–125`).
  *
- * The emitted `LogEntry` has `op:"I"` and `new === {...doc, _id}`
+ * The emitted `LogEntry` has `op:"I"` and `after === {...doc, _id}`
  * (today's per-doc-replace model).
  *
  * @throws BaerlyError code="Conflict" — `_id` collision (pre-commit check) or
@@ -442,8 +442,8 @@ export const runInsert = async <T extends DocumentData>(
  * `db.transaction(...)` exists to deliver.
  *
  * `replica_identity` defaults to `PATCH_ONLY` for every collection
- * today — emitted `U` entries carry `{ new }` (the full post-image)
- * and neither `old` nor `key_old`. Consumers rebuilding pre-images
+ * today — emitted `U` entries carry `{ after }` (the full post-image)
+ * and neither `before` nor `key_old`. Consumers rebuilding pre-images
  * under `PATCH_ONLY` need to maintain a shadow table — see
  * `packages/protocol/src/log.ts:102–118`.
  *
@@ -564,7 +564,7 @@ export const runReplaceById = async <T extends DocumentData>(
  * `Query.delete` implementation. Tombstones every matched row with a
  * single `op:"D"` `LogEntry` per `doc_id`. `replica_identity` defaults
  * to `PATCH_ONLY`, so emitted `D` entries carry no body fields
- * (no `new`, no `old`/`key_old`).
+ * (no `after`, no `before`/`key_old`).
  * Consumers rebuilding pre-images under `PATCH_ONLY` need to
  * maintain a shadow table — see `packages/protocol/src/log.ts:102–118`.
  *
@@ -696,7 +696,7 @@ const runRead = async <T extends DocumentData>(
   const entries = await walkLogRange(ctx.storage, ctx.collectionPrefix, logSeqStart, nextSeq);
 
   // ── Step 3. Fold per doc_id, seeded from the snapshot. ────────────
-  // I / U: post-image overwrite. `entry.new` is the full post-image;
+  // I / U: post-image overwrite. `entry.after` is the full post-image;
   //        a straight `set` is correct (a `merge(prev, post)` would
   //        carry forward keys the writer dropped).
   // D: tombstone — remove from the map.

@@ -3,23 +3,23 @@ import { LOG_KEY_PREFIX, type LogEntry, lsnParts, type ReplicaIdentity } from ".
 import { countKey } from "./types.ts";
 
 describe("LogEntry", () => {
-  test("INSERT shape: new present, no old", () => {
+  test("INSERT shape: after present, no before", () => {
     const e: LogEntry = {
       lsn: "0fffff_abc_zz",
       commit_ts: "2026-05-10T00:00:00.000Z",
       op: "I",
       collection: "users",
       doc_id: "users/u_42",
-      new: { email: "ada@x" },
+      after: { email: "ada@x" },
       session: "abc",
       seq: 0,
     };
-    expect(e.old).toBeUndefined();
+    expect(e.before).toBeUndefined();
     expect(e.key_old).toBeUndefined();
-    expect(e.new).toBeDefined();
+    expect(e.after).toBeDefined();
   });
 
-  test("DELETE shape: no new", () => {
+  test("DELETE shape: no after", () => {
     const e: LogEntry = {
       lsn: "0fffff_abc_zy",
       commit_ts: "2026-05-10T00:00:00.000Z",
@@ -29,7 +29,7 @@ describe("LogEntry", () => {
       session: "abc",
       seq: 1,
     };
-    expect(e.new).toBeUndefined();
+    expect(e.after).toBeUndefined();
   });
 
   test("op accepts the documented union", () => {

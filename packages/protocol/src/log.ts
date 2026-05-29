@@ -3,7 +3,7 @@ import type { DocumentData, JSONValue } from "./json.ts";
 import { str2uintDesc } from "./types.ts";
 
 /**
- * Postgres-logical-replication-shaped log entry. One per mutation.
+ * Debezium-style JSON CDC envelope using pgoutput's message-tag (`I`/`U`/`D`) vocabulary. One per mutation.
  *
  * **Pre-launch: the shape may still narrow.** Once the first production
  * consumer ships, this becomes a frozen migration contract behind
@@ -15,8 +15,8 @@ import { str2uintDesc } from "./types.ts";
  * - Always: `lsn`, `commit_ts`, `op`, `collection`, `session`,
  *   `seq`.
  * - For I/U/D: `doc_id`.
- * - For I/U: `new` (full post-image).
- * - Optional: `old` (when `replica_identity === "FULL"`), `key_old`
+ * - For I/U: `after` (full post-image).
+ * - Optional: `before` (when `replica_identity === "FULL"`), `key_old`
  *   (U/D when `replica_identity !== "PATCH_ONLY"`), `origin`.
  *
  * @see docs/spec/log-entry-shape.md
@@ -58,15 +58,15 @@ export interface LogEntry {
   /** Required for I/U/D. */
   doc_id?: string;
 
-  /** Required for I, U. The post-image. */
-  new?: DocumentData;
+  /** Required for I, U. The post-image (Debezium's `after`). */
+  after?: DocumentData;
 
   /**
-   * The pre-image. Present iff the collection's `replica_identity`
-   * is `FULL`. ~2× log size on update-heavy collections; off by
-   * default.
+   * The pre-image (Debezium's `before`). Present iff the
+   * collection's `replica_identity` is `FULL`. ~2× log size on
+   * update-heavy collections; off by default.
    */
-  old?: DocumentData;
+  before?: DocumentData;
 
   /**
    * Pre-image of the primary key. U/D always carry this when
@@ -94,10 +94,10 @@ export interface LogEntry {
  * `U` / `D` entry carries.
  *
  * - `PATCH_ONLY` (default today, applied unconditionally): `U`
- *   carries `{ new }`; no `old`, no `key_old`.
+ *   carries `{ after }`; no `before`, no `key_old`.
  *   Bandwidth-cheap. SQL consumers rebuilding before-images need
  *   to maintain a shadow table.
- * - `FULL`: `U` additionally carries `old` and `key_old`. ~2× log
+ * - `FULL`: `U` additionally carries `before` and `key_old`. ~2× log
  *   size on update-heavy collections; buys true 1:1 logical
  *   replication and "previous value" answerable from the log
  *   alone.

@@ -14,7 +14,7 @@
  *    zero-match no-op.
  *  - Replace happy-path overwrite, `NotFound` on missing id,
  *    matched-row `_id` preservation when `doc._id` differs.
- *  - Delete tombstone shape (no new/patch/old/key_old), return shape,
+ *  - Delete tombstone shape (no after/before/key_old), return shape,
  *    post-delete visibility.
  *  - Per-row CAS retry semantics: forced contention succeeds within
  *    budget; exhausted budget surfaces Conflict.
@@ -134,17 +134,17 @@ describe("Collection.insert", () => {
     expect(rows.map((r) => r._id)).toContain(_id);
   });
 
-  test("LogEntry shape: I op carries new === {...doc, _id}", async () => {
+  test("LogEntry shape: I op carries after === {...doc, _id}", async () => {
     const t = db.collection(COLL) as Collection<TicketDoc>;
     await t.insert({ _id: "L1", title: "logged", status: "open" });
     const entry = await readLogEntry(storage, 0);
     expect(entry.op).toBe("I");
     expect(entry.collection).toBe(COLL);
     expect(entry.doc_id).toBe("L1");
-    expect(entry.new).toEqual({ _id: "L1", title: "logged", status: "open" });
+    expect(entry.after).toEqual({ _id: "L1", title: "logged", status: "open" });
     // `PATCH_ONLY` replica_identity (today's default) carries no
     // pre-image fields on any op.
-    expect(entry.old).toBeUndefined();
+    expect(entry.before).toBeUndefined();
     expect(entry.key_old).toBeUndefined();
   });
 });
@@ -220,7 +220,7 @@ describe("Query.update", () => {
     expect(afterCurrent.next_seq).toBe(beforeCurrent.next_seq);
   });
 
-  test("emits one op:'U' LogEntry per affected doc with new as full post-image", async () => {
+  test("emits one op:'U' LogEntry per affected doc with after as full post-image", async () => {
     const t = db.collection(COLL) as Collection<TicketDoc>;
     await t.insert({ _id: "e1", title: "t1", status: "open" });
     await t.insert({ _id: "e2", title: "t2", status: "open" });
@@ -231,9 +231,9 @@ describe("Query.update", () => {
     for (const entry of [e2, e3]) {
       expect(entry.op).toBe("U");
       expect(entry.collection).toBe(COLL);
-      expect(entry.new).toBeDefined();
+      expect(entry.after).toBeDefined();
       // PATCH_ONLY → no pre-image.
-      expect(entry.old).toBeUndefined();
+      expect(entry.before).toBeUndefined();
       expect(entry.key_old).toBeUndefined();
     }
   });
@@ -317,7 +317,7 @@ describe("Query.delete", () => {
     expect(remaining.map((r) => r._id)).toEqual(["d3"]);
   });
 
-  test("LogEntry shape: D op has no new / old / key_old", async () => {
+  test("LogEntry shape: D op has no after / before / key_old", async () => {
     const t = db.collection(COLL) as Collection<TicketDoc>;
     await t.insert({ _id: "tomb", title: "soon-gone", status: "open" });
     await t.delete("tomb");
@@ -327,8 +327,8 @@ describe("Query.delete", () => {
     expect(entry.doc_id).toBe("tomb");
     expect(entry.collection).toBe(COLL);
     // PATCH_ONLY replica_identity + D op → none of these fields land.
-    expect(entry.new).toBeUndefined();
-    expect(entry.old).toBeUndefined();
+    expect(entry.after).toBeUndefined();
+    expect(entry.before).toBeUndefined();
     expect(entry.key_old).toBeUndefined();
   });
 

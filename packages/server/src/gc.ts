@@ -31,7 +31,7 @@
  *     pointer; the prior file becomes unreferenced.
  *   - `orphan-content`: `<collectionPrefix>/content/<sha>.json` whose
  *     32-hex truncated-SHA-256 hash is not in the live content-hash
- *     set (computed by hashing every live `entry.new` post-image —
+ *     set (computed by hashing every live `entry.after` post-image —
  *     the same hash the writer's step 4 produces). Surfaces writer
  *     crashes between the content PUT and the log-entry PUT.
  *
@@ -448,7 +448,7 @@ const computeDueAt = (entry: StorageListEntry, now: () => Date, graceMs: number)
 
 /**
  * Build the live content-hash set. The set covers every live
- * post-image: every `entry.new` in `[logSeqStart, next_seq)` plus
+ * post-image: every `entry.after` in `[logSeqStart, next_seq)` plus
  * every row body in the current snapshot.
  *
  * A snapshot read that throws (corrupt body, hash mismatch) is
@@ -477,18 +477,18 @@ const collectLiveContentHashes = async (
         if (got === null) {
           return;
         }
-        let entry: { new?: unknown };
+        let entry: { after?: unknown };
         try {
-          entry = decodeJsonBytes<{ new?: unknown }>(got.body);
+          entry = decodeJsonBytes<{ after?: unknown }>(got.body);
         } catch {
           // A malformed log entry is the writer's concern, not GC's.
           // Skip and let other invariants catch it.
           return;
         }
-        if (entry.new === undefined) {
+        if (entry.after === undefined) {
           return;
         }
-        const bodyBytes = encodeJsonBytes(entry.new);
+        const bodyBytes = encodeJsonBytes(entry.after);
         hashes.add(await versionFromContent(bodyBytes));
       })(),
     );

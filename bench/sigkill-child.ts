@@ -87,7 +87,7 @@ async function main(): Promise<void> {
     doc_id: `doc-${seq}`,
     op: "I" as const,
     session: "bench-sigkill",
-    new: JSON.parse(body),
+    after: JSON.parse(body),
   };
   const logBytes = encodeJsonBytes(logEntry);
   await storage.put(logKey, logBytes, {

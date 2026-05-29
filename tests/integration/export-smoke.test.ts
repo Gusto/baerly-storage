@@ -27,8 +27,8 @@ interface LogEntry {
   op: "I" | "U" | "D";
   collection: string;
   doc_id?: string;
-  new?: DocumentData;
-  old?: DocumentData;
+  after?: DocumentData;
+  before?: DocumentData;
   key_old?: { readonly [pk: string]: JSONValue };
   origin?: string;
   session: string;
@@ -69,24 +69,24 @@ const PG_CONFIG = {
  */
 async function applyEntry(client: Client, entry: LogEntry): Promise<void> {
   if (entry.op === "I") {
-    if (!entry.doc_id || !entry.new) {
-      throw new Error("I requires doc_id+new");
+    if (!entry.doc_id || !entry.after) {
+      throw new Error("I requires doc_id+after");
     }
     await client.query(
       "INSERT INTO users (id, doc) VALUES ($1, $2) " +
         "ON CONFLICT (id) DO UPDATE SET doc = EXCLUDED.doc",
-      [entry.doc_id, entry.new],
+      [entry.doc_id, entry.after],
     );
     return;
   }
   if (entry.op === "U") {
-    if (!entry.doc_id || !entry.new) {
-      throw new Error("U requires doc_id+new");
+    if (!entry.doc_id || !entry.after) {
+      throw new Error("U requires doc_id+after");
     }
     await client.query(
       "INSERT INTO users (id, doc) VALUES ($1, $2) " +
         "ON CONFLICT (id) DO UPDATE SET doc = EXCLUDED.doc",
-      [entry.doc_id, entry.new],
+      [entry.doc_id, entry.after],
     );
     return;
   }
@@ -128,7 +128,7 @@ const FIXTURES: LogEntry[] = [
     op: "I",
     collection: "users",
     doc_id: "users/u_a",
-    new: { name: "Ada", email: "ada@x", age: 36 },
+    after: { name: "Ada", email: "ada@x", age: 36 },
     session: "smoke-sess",
     seq: 0,
   },
@@ -139,7 +139,7 @@ const FIXTURES: LogEntry[] = [
     op: "I",
     collection: "users",
     doc_id: "users/u_b",
-    new: { name: "Bo", profile: { city: "PDX", title: "engineer" } },
+    after: { name: "Bo", profile: { city: "PDX", title: "engineer" } },
     session: "smoke-sess",
     seq: 1,
   },
@@ -150,7 +150,7 @@ const FIXTURES: LogEntry[] = [
     op: "U",
     collection: "users",
     doc_id: "users/u_a",
-    new: { name: "Ada", email: "ada@x", age: 37 },
+    after: { name: "Ada", email: "ada@x", age: 37 },
     session: "smoke-sess",
     seq: 2,
   },
@@ -161,7 +161,7 @@ const FIXTURES: LogEntry[] = [
     op: "U",
     collection: "users",
     doc_id: "users/u_b",
-    new: { name: "Bo", profile: { city: "PDX" } },
+    after: { name: "Bo", profile: { city: "PDX" } },
     session: "smoke-sess",
     seq: 3,
   },
@@ -172,7 +172,7 @@ const FIXTURES: LogEntry[] = [
     op: "U",
     collection: "users",
     doc_id: "users/u_a",
-    new: { name: "Ada Lovelace", email: "ada@x" },
+    after: { name: "Ada Lovelace", email: "ada@x" },
     session: "smoke-sess",
     seq: 4,
   },
@@ -193,7 +193,7 @@ const FIXTURES: LogEntry[] = [
     op: "I",
     collection: "users",
     doc_id: "users/u_a",
-    new: { name: "Ada Reborn", reborn: true },
+    after: { name: "Ada Reborn", reborn: true },
     session: "smoke-sess",
     seq: 6,
   },
@@ -204,7 +204,7 @@ const FIXTURES: LogEntry[] = [
     op: "U",
     collection: "users",
     doc_id: "users/u_b",
-    new: { name: "Bo", profile: { city: "PDX", country: "US" } },
+    after: { name: "Bo", profile: { city: "PDX", country: "US" } },
     session: "smoke-sess",
     seq: 7,
   },
@@ -216,7 +216,7 @@ const FIXTURES: LogEntry[] = [
     op: "U",
     collection: "users",
     doc_id: "users/u_b",
-    new: { name: "Bo", profile: { city: "SEA", country: "US" } },
+    after: { name: "Bo", profile: { city: "SEA", country: "US" } },
     session: "smoke-sess",
     seq: 8,
   },
@@ -229,7 +229,7 @@ const FIXTURES: LogEntry[] = [
     op: "I",
     collection: "users",
     doc_id: "users/u_c",
-    new: {
+    after: {
       name: "O'Brien;\"--\\",
       note: '{"nested":true}; DROP TABLE users; --',
     },
@@ -243,7 +243,7 @@ const FIXTURES: LogEntry[] = [
     op: "I",
     collection: "users",
     doc_id: "users/u_d",
-    new: { v: 1 },
+    after: { v: 1 },
     session: "smoke-sess",
     seq: 10,
   },
@@ -264,7 +264,7 @@ const FIXTURES: LogEntry[] = [
     op: "I",
     collection: "users",
     doc_id: "users/u_d",
-    new: { v: 3 },
+    after: { v: 3 },
     session: "smoke-sess",
     seq: 12,
   },
@@ -295,8 +295,8 @@ describe.runIf(smokeEnabled)("LogEntry → Postgres round-trip", () => {
     // Build the expected end state by replaying the fixtures in memory.
     const expected = new Map<string, unknown>();
     for (const entry of ordered) {
-      if ((entry.op === "I" || entry.op === "U") && entry.doc_id && entry.new) {
-        expected.set(entry.doc_id, entry.new);
+      if ((entry.op === "I" || entry.op === "U") && entry.doc_id && entry.after) {
+        expected.set(entry.doc_id, entry.after);
       } else if (entry.op === "D" && entry.doc_id) {
         expected.delete(entry.doc_id);
       }

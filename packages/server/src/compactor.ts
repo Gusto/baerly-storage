@@ -215,7 +215,7 @@ export const compact = async (
 
   // ── Step 4. Apply the fold onto `base`. ─────────────────────────
   // I / U overwrite with the post-image (today's per-doc-replace
-  // model: writer emits `entry.new` as the full post-image, see
+  // model: writer emits `entry.after` as the full post-image, see
   // packages/protocol/src/log.ts). D tombstones.
   for (const entry of entries) {
     if (entry.collection !== collectionName) {
@@ -227,8 +227,8 @@ export const compact = async (
     switch (entry.op) {
       case "I":
       case "U": {
-        if (entry.new !== undefined) {
-          base.set(entry.doc_id, entry.new);
+        if (entry.after !== undefined) {
+          base.set(entry.doc_id, entry.after);
         }
         break;
       }

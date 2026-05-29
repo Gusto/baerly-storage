@@ -243,8 +243,8 @@ export const loadMaterialisedView = async (params: {
       continue;
     }
     if (entry.op === "I" || entry.op === "U") {
-      if (entry.new !== undefined) {
-        base.set(entry.doc_id, entry.new);
+      if (entry.after !== undefined) {
+        base.set(entry.doc_id, entry.after);
       }
     } else if (entry.op === "D") {
       base.delete(entry.doc_id);

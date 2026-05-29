@@ -588,7 +588,7 @@ async function s5Writer(storage: CountingStorage, signal: AbortSignal): Promise<
         doc_id: `doc-${seqCursor}`,
         op: "I" as const,
         session: "bench-s5",
-        new: { seq: seqCursor, payload: `data-${seqCursor}` },
+        after: { seq: seqCursor, payload: `data-${seqCursor}` },
       };
       await storage.put(logKey, encodeJsonBytes(logEntry), {
         ifNoneMatch: "*",

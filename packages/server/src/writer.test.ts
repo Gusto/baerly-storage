@@ -98,7 +98,7 @@ describe("Writer", () => {
     expect(result.entry.session).toHaveLength(6);
     expect(typeof result.entry.lsn).toBe("string");
     expect(result.entry.lsn.split("_")).toHaveLength(3);
-    expect(result.entry.new).toEqual({ _id: "doc-1", title: "hello" });
+    expect(result.entry.after).toEqual({ _id: "doc-1", title: "hello" });
 
     const stored = await storage.get(CURRENT_KEY);
     expect(stored).not.toBeNull();
@@ -272,7 +272,7 @@ describe("Writer", () => {
       doc_id: "live",
       session: "abcdef",
       seq: 2,
-      new: { _id: "live" },
+      after: { _id: "live" },
     };
     await storage.put(`${logPrefix}/2.json`, new TextEncoder().encode(JSON.stringify(planted)));
 

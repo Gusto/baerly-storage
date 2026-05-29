@@ -108,10 +108,10 @@ export const walkLogRange = async (
  * Fold a sequence of `LogEntry` records onto a doc-id-keyed map,
  * applying the protocol's per-doc-replace semantics:
  *
- *   - `I` / `U`: when `entry.new !== undefined`, set
- *     `map.set(entry.doc_id, entry.new)`. Entries with `new ===
+ *   - `I` / `U`: when `entry.after !== undefined`, set
+ *     `map.set(entry.doc_id, entry.after)`. Entries with `after ===
  *     undefined` (the partial-merge writer's future patch-only shape)
- *     are ignored — today's writer always emits `new`, so this is a
+ *     are ignored — today's writer always emits `after`, so this is a
  *     forward-compat guard, not a live branch.
  *   - `D`: tombstone — `map.delete(entry.doc_id)`.
  *
@@ -151,10 +151,10 @@ export const foldLogEntriesOnto = <T extends DocumentData>(
     switch (entry.op) {
       case "I":
       case "U": {
-        if (entry.new === undefined) {
+        if (entry.after === undefined) {
           continue;
         }
-        map.set(entry.doc_id, entry.new as T);
+        map.set(entry.doc_id, entry.after as T);
         break;
       }
       case "D": {
