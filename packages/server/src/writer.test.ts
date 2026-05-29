@@ -95,7 +95,6 @@ describe("Writer", () => {
     expect(result.entry.op).toBe("I");
     expect(result.entry.collection).toBe(COLL);
     expect(result.entry.doc_id).toBe("doc-1");
-    expect(result.entry.schema_version).toBe(0);
     expect(result.entry.session).toHaveLength(6);
     expect(typeof result.entry.lsn).toBe("string");
     expect(result.entry.lsn.split("_")).toHaveLength(3);
@@ -271,7 +270,6 @@ describe("Writer", () => {
       op: "I" as const,
       collection: COLL,
       doc_id: "live",
-      schema_version: 0,
       session: "abcdef",
       seq: 2,
       new: { _id: "live" },

@@ -504,7 +504,6 @@ export class Writer {
         op: input.op,
         collection: input.collection,
         doc_id: input.docId,
-        schema_version: 0,
         session,
         seq,
         ...(input.op !== "D" && input.body !== undefined ? { new: input.body } : {}),

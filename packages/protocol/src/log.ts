@@ -12,8 +12,8 @@ import { str2uintDesc } from "./types.ts";
  * migration.
  *
  * Field requirement matrix:
- * - Always: `lsn`, `commit_ts`, `op`, `collection`, `schema_version`,
- *   `session`, `seq`.
+ * - Always: `lsn`, `commit_ts`, `op`, `collection`, `session`,
+ *   `seq`.
  * - For I/U/D: `doc_id`.
  * - For I/U: `new` (full post-image).
  * - Optional: `old` (when `replica_identity === "FULL"`), `key_old`
@@ -46,8 +46,7 @@ export interface LogEntry {
   /**
    * Insert / Update / Delete / Truncate / Message. `M` is the
    * `pg_logical_emit_message` analogue — useful for app-defined
-   * markers like deploy boundaries, snapshots, or out-of-band
-   * schema announcements consumed via `schema_version`. `T`
+   * markers like deploy boundaries or snapshots. `T`
    * truncates a whole collection. Today the emitter only produces
    * `I`/`U`/`D`; `T` and `M` are shape-only for forward
    * compatibility.
@@ -65,18 +64,6 @@ export interface LogEntry {
 
   /** Required for I/U/D; omitted for T (TRUNCATE) and M (MESSAGE). */
   doc_id?: string;
-
-  /**
-   * Monotonic per collection. Schema for the doc body is announced
-   * out-of-band via `M` (MESSAGE) entries; this field lets the
-   * consumer match a log entry to the schema in effect at write
-   * time. Forward-only — renaming or removing the field is a
-   * major-version migration; bumping the value is non-breaking.
-   * Inlining the schema in every entry was rejected as bloat for a
-   * field that changes rarely. Always `0` today; reserved for a
-   * future schema-versioning scheme.
-   */
-  schema_version: number;
 
   /** Required for I, U. The post-image. */
   new?: DocumentData;

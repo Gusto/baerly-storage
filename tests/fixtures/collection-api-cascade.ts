@@ -769,7 +769,6 @@ const runLogEntryShape = async (
     expect(e.session.length).toBeGreaterThan(0);
     expect(typeof e.seq).toBe("number");
     expect(e.collection).toBe(t);
-    expect(typeof e.schema_version).toBe("number");
     expect(["I", "U", "D"]).toContain(e.op);
     // doc_id required for I/U/D.
     expect(typeof e.doc_id).toBe("string");
@@ -804,9 +803,8 @@ const runLogEntryShape = async (
 
   // Regression guard — fields cut from the protocol. Don't let any
   // of them sneak back in via a writer set-site without an
-  // intentional shape decision. Task 2 will append `schema_version`
-  // to this list.
-  const CUT_LOG_ENTRY_FIELDS = ["patch"] as const;
+  // intentional shape decision.
+  const CUT_LOG_ENTRY_FIELDS = ["patch", "schema_version"] as const;
   for (const e of entries) {
     for (const key of CUT_LOG_ENTRY_FIELDS) {
       expect(e).not.toHaveProperty(key);

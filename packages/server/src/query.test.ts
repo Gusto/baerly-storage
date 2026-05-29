@@ -353,7 +353,6 @@ describe("Db.collection read terminals", () => {
       op: "I" as const,
       collection: COLL,
       doc_id: "live",
-      schema_version: 0,
       session: "fakesess1",
       seq: 2,
       new: { _id: "live", v: 1 },

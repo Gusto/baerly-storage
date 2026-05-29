@@ -234,16 +234,25 @@ for the reasoning.
 
 ### Forward-only migration
 
-Schema migrations are forward-only. Every `LogEntry` carries a
-`schema_version` field (currently always `0`); a future migration
-bumps it monotonically and announces the new schema out-of-band via
-the `M` (MESSAGE) opcode. Inline schemas on every entry were
-rejected as bloat; the version stamp plus out-of-band announcement
-is the lower-cost shape. Renaming or removing `schema_version` is a
-major-version migration; bumping the value is non-breaking.
-Document-level rewrite tooling is application-layer work — the
-protocol supplies the version stamp and the announcement opcode,
-not the rewrite logic.
+Schema migrations are forward-only. The forward-compatible
+schema-versioning mechanism lives on the `CurrentJson` coordination
+document: the `schema_version` field (currently `1`, constant
+`CURRENT_JSON_SCHEMA_VERSION` in
+`packages/protocol/src/constants.ts`) is bumped monotonically on any
+breaking change to `CurrentJson` field semantics; readers must reject
+unknown major versions with `BaerlyError{code:"InvalidResponse"}`.
+Adding a new optional field to `CurrentJson` is non-breaking.
+
+The `LogEntry` CDC wire shape has a separate
+forward/backward-compatibility policy documented in
+[`docs/spec/log-entry-shape.md`](../../docs/spec/log-entry-shape.md):
+new optional fields are additive; renaming, removing, or narrowing a
+field is a major-version migration. Pre-launch the shape may still
+narrow. `LogEntry` does not carry its own `schema_version` field —
+the announcement opcode (`M` / MESSAGE) is the out-of-band channel
+for schema changes. Document-level rewrite tooling is
+application-layer work — the protocol supplies the announcement
+opcode, not the rewrite logic.
 
 ---
 

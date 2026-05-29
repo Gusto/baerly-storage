@@ -27,7 +27,6 @@ interface LogEntry {
   op: "I" | "U" | "D" | "T" | "M";
   collection: string;
   doc_id?: string;
-  schema_version: number;
   new?: DocumentData;
   old?: DocumentData;
   key_old?: { readonly [pk: string]: JSONValue };
@@ -127,7 +126,6 @@ const FIXTURES: LogEntry[] = [
     op: "I",
     collection: "users",
     doc_id: "users/u_a",
-    schema_version: 0,
     new: { name: "Ada", email: "ada@x", age: 36 },
     session: "smoke-sess",
     seq: 0,
@@ -139,7 +137,6 @@ const FIXTURES: LogEntry[] = [
     op: "I",
     collection: "users",
     doc_id: "users/u_b",
-    schema_version: 0,
     new: { name: "Bo", profile: { city: "PDX", title: "engineer" } },
     session: "smoke-sess",
     seq: 1,
@@ -151,7 +148,6 @@ const FIXTURES: LogEntry[] = [
     op: "U",
     collection: "users",
     doc_id: "users/u_a",
-    schema_version: 0,
     new: { name: "Ada", email: "ada@x", age: 37 },
     session: "smoke-sess",
     seq: 2,
@@ -163,7 +159,6 @@ const FIXTURES: LogEntry[] = [
     op: "U",
     collection: "users",
     doc_id: "users/u_b",
-    schema_version: 0,
     new: { name: "Bo", profile: { city: "PDX" } },
     session: "smoke-sess",
     seq: 3,
@@ -175,7 +170,6 @@ const FIXTURES: LogEntry[] = [
     op: "U",
     collection: "users",
     doc_id: "users/u_a",
-    schema_version: 0,
     new: { name: "Ada Lovelace", email: "ada@x" },
     session: "smoke-sess",
     seq: 4,
@@ -187,7 +181,6 @@ const FIXTURES: LogEntry[] = [
     op: "D",
     collection: "users",
     doc_id: "users/u_a",
-    schema_version: 0,
     session: "smoke-sess",
     seq: 5,
   },
@@ -198,7 +191,6 @@ const FIXTURES: LogEntry[] = [
     op: "I",
     collection: "users",
     doc_id: "users/u_a",
-    schema_version: 0,
     new: { name: "Ada Reborn", reborn: true },
     session: "smoke-sess",
     seq: 6,
@@ -210,7 +202,6 @@ const FIXTURES: LogEntry[] = [
     op: "U",
     collection: "users",
     doc_id: "users/u_b",
-    schema_version: 0,
     new: { name: "Bo", profile: { city: "PDX", country: "US" } },
     session: "smoke-sess",
     seq: 7,
@@ -223,7 +214,6 @@ const FIXTURES: LogEntry[] = [
     op: "U",
     collection: "users",
     doc_id: "users/u_b",
-    schema_version: 0,
     new: { name: "Bo", profile: { city: "SEA", country: "US" } },
     session: "smoke-sess",
     seq: 8,
@@ -237,7 +227,6 @@ const FIXTURES: LogEntry[] = [
     op: "I",
     collection: "users",
     doc_id: "users/u_c",
-    schema_version: 0,
     new: {
       name: "O'Brien;\"--\\",
       note: '{"nested":true}; DROP TABLE users; --',
@@ -252,7 +241,6 @@ const FIXTURES: LogEntry[] = [
     op: "I",
     collection: "users",
     doc_id: "users/u_d",
-    schema_version: 0,
     new: { v: 1 },
     session: "smoke-sess",
     seq: 10,
@@ -264,7 +252,6 @@ const FIXTURES: LogEntry[] = [
     op: "D",
     collection: "users",
     doc_id: "users/u_d",
-    schema_version: 0,
     session: "smoke-sess",
     seq: 11,
   },
@@ -275,7 +262,6 @@ const FIXTURES: LogEntry[] = [
     op: "I",
     collection: "users",
     doc_id: "users/u_d",
-    schema_version: 0,
     new: { v: 3 },
     session: "smoke-sess",
     seq: 12,

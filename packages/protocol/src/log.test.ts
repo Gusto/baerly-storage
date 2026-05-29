@@ -10,7 +10,6 @@ describe("LogEntry", () => {
       op: "I",
       collection: "users",
       doc_id: "users/u_42",
-      schema_version: 0,
       new: { email: "ada@x" },
       session: "abc",
       seq: 0,
@@ -27,7 +26,6 @@ describe("LogEntry", () => {
       op: "D",
       collection: "users",
       doc_id: "users/u_42",
-      schema_version: 0,
       session: "abc",
       seq: 1,
     };

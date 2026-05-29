@@ -27,7 +27,6 @@ const makeEntry = (seq: number): LogEntry => ({
   op: "I",
   collection: "c",
   doc_id: `d${seq}`,
-  schema_version: 0,
   session: "ssn001",
   seq,
 });

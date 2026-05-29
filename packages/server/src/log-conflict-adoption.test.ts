@@ -11,7 +11,6 @@ const makeEntry = (overrides: Partial<LogEntry> = {}): LogEntry => ({
   op: "I",
   collection: "tickets",
   doc_id: "doc-1",
-  schema_version: 0,
   session: SESSION_A,
   seq: 0,
   new: { _id: "doc-1" },

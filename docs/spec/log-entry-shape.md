@@ -70,7 +70,6 @@ export interface LogEntry {
   op: "I" | "U" | "D" | "T" | "M";
   collection: string;
   doc_id?: string;                      // I/U/D
-  schema_version: number;
   new?: DocumentData;            // I/U
   old?: DocumentData;            // when replica_identity = FULL
   key_old?: { readonly [pk: string]: JSONValue };
@@ -93,7 +92,6 @@ hover.
 | `op`             | ✓ | ✓ | ✓ | ✓ | ✓ | One ASCII char. |
 | `collection`     | ✓ | ✓ | ✓ | ✓ | ✓ | First segment of `ref.key`, fallback `ref.bucket`. |
 | `doc_id`         | ✓ | ✓ | ✓ |   |   | Equals `ref.key`. |
-| `schema_version` | ✓ | ✓ | ✓ | ✓ | ✓ | Currently always `0`; reserved for forward-compatible schema versions. |
 | `new`            | ✓ | ✓ |   |   |   | Post-image. |
 | `old`            |   | ✓ | ✓ |   |   | Iff `replica_identity === "FULL"`. |
 | `key_old`        |   | ✓ | ✓ |   |   | When `replica_identity !== "PATCH_ONLY"`. |
@@ -237,7 +235,6 @@ a Debezium-style envelope.
     "bucket": "<bucket>",
     "manifest": "<manifest-key>",
     "collection": "users",
-    "schema_version": 3,
     "lsn": "0123456789abc_a1b_02"
   },
   "before": { "id": "u_42", "email": "old@x" },

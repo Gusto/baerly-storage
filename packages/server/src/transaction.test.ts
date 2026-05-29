@@ -114,7 +114,6 @@ describe("Db.transaction", () => {
     expect(entry.op).toBe("I");
     expect(entry.collection).toBe(TABLE);
     expect(entry.doc_id).toBe("doc-1");
-    expect(entry.schema_version).toBe(0);
     expect(entry.seq).toBe(0);
     expect(entry.session).toHaveLength(6);
     expect(entry.new).toEqual({ _id: "doc-1", title: "hello" });

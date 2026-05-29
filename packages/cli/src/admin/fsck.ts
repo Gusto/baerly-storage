@@ -10,8 +10,7 @@
  *   3. The log range `[log_seq_start, next_seq)` has no holes —
  *      every `log/<seq>.json` is present (HEAD-cheap LIST scan).
  *   4. Every entry inside the live tail is well-formed JSON with
- *      the locked `op`, `collection`, `doc_id`, `schema_version`
- *      fields.
+ *      the locked `op`, `collection`, and `doc_id` fields.
  *
  * `--indexes` + `--config=<path>` mode: SKIP the snapshot + log
  * walks and ONLY check each declared index for drift via

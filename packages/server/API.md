@@ -454,7 +454,6 @@ interface LogEntry {
   readonly doc_id?: string;         // I/U/D only
   readonly new?: DocumentData;      // I/U — post-image
   readonly patch?: DocumentData;    // U — JSON-merge-patch (RFC 7386)
-  readonly schema_version: number;
   readonly session: string;
   readonly seq: number;
   // `old` / `key_old` / `origin` are optional; see `LogEntry` JSDoc.

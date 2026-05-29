@@ -141,7 +141,6 @@ describe("Collection.insert", () => {
     expect(entry.op).toBe("I");
     expect(entry.collection).toBe(COLL);
     expect(entry.doc_id).toBe("L1");
-    expect(entry.schema_version).toBe(0);
     expect(entry.new).toEqual({ _id: "L1", title: "logged", status: "open" });
     // `PATCH_ONLY` replica_identity (today's default) carries no
     // pre-image fields on any op.
@@ -232,7 +231,6 @@ describe("Query.update", () => {
     for (const entry of [e2, e3]) {
       expect(entry.op).toBe("U");
       expect(entry.collection).toBe(COLL);
-      expect(entry.schema_version).toBe(0);
       expect(entry.new).toBeDefined();
       // PATCH_ONLY → no pre-image.
       expect(entry.old).toBeUndefined();
@@ -328,7 +326,6 @@ describe("Query.delete", () => {
     expect(entry.op).toBe("D");
     expect(entry.doc_id).toBe("tomb");
     expect(entry.collection).toBe(COLL);
-    expect(entry.schema_version).toBe(0);
     // PATCH_ONLY replica_identity + D op → none of these fields land.
     expect(entry.new).toBeUndefined();
     expect(entry.old).toBeUndefined();

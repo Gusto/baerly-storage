@@ -117,9 +117,10 @@ rolling-deploy hazard without introducing a leases-as-state dependency.
   today; a future ADR may activate it. Adding it now as an optional
   field is forward-compatible per the `CurrentJson` schema-version
   policy in
-  [`packages/protocol/src/constants.ts`](../../packages/protocol/src/constants.ts)
-  and the `LogEntry.schema_version` rationale in
-  [`packages/protocol/src/log.ts`](../../packages/protocol/src/log.ts).
+  [`packages/protocol/src/coordination/current-json.ts`](../../packages/protocol/src/coordination/current-json.ts)
+  (`schema_version` field / `CURRENT_JSON_SCHEMA_VERSION` constant —
+  adding an optional field is non-breaking; renaming or removing
+  requires a major-version bump).
 - `claimed_at` carries the server's clock, not the local clock. Under
   multi-instance deployment the local clock may disagree with peers;
   the server's clock is the only one all instances share. See
