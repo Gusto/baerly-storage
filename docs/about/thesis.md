@@ -95,8 +95,8 @@ Plus one anti-feature:
 
 ## Why not Postgres
 
-Postgres is the right answer to most questions and the wrong answer
-here, for two reasons.
+Criteria #2 and #5 above rule out Postgres directly — this is what
+that looks like in practice.
 
 **(1) Real DBs entail real obligations.** Provisioning, secrets,
 backups, CVE rotation, migrations, alarms when the disk fills,
@@ -145,7 +145,11 @@ already has S3 / R2 / GCS / Azure Blob — for exports, backups,
 documents, CSV graveyards. The security review for "give me a
 bucket" happened years ago; the budget exists. Object storage is
 the only modern infrastructure primitive that is both boring and
-almost always available without a new ticket.
+almost always available without a new ticket. Hosted alternatives
+(D1, Neon, Convex, Supabase, Firebase) are excellent, but each
+triggers a fresh vendor procurement review, secrets-manager
+integration, and an IT ticket to add a new managed-DB SKU to the
+catalog — the bucket already exists.
 
 **Vendor-independent.** D1 / Supabase / Neon / PlanetScale /
 Firebase are great, and they are all proprietary runtimes. Object
@@ -153,12 +157,6 @@ storage is the rare primitive every cloud implements with the same
 abstraction (the S3 API), and the substance is portable by
 definition. Your bytes in your bucket — no managed catalog, no
 proprietary runtime, leaving needs no vendor cooperation.
-
-Hosted databases (D1, Neon, Convex, Supabase, Firebase) are
-excellent but collapse into a different set of operational questions:
-vendor procurement review, secrets-manager integration tickets,
-IT-ticketing to add a new managed-DB SKU to the catalog. Object
-storage sidesteps all of that because the bucket already exists.
 
 ## Runtime model: nothing between requests
 
@@ -186,11 +184,13 @@ break the property are in
 
 ## Requirements → architecture
 
-Each design choice falls out of a specific criterion above.
+Each design choice falls out of a specific criterion above. Built
+like git: content-addressed documents, immutable log entries, and a
+single CAS-advanced pointer to HEAD.
 
 - **Idle → zero.** Baerly is a ~100 KB gzipped TypeScript library on
-  Cloudflare Workers (~155 KB gzipped on Node);
-  your Worker (or Node process) imports it directly. No binary, no
+  Cloudflare Workers (~155 KB gzipped on Node).
+  Your Worker (or Node process) imports it directly. No binary, no
   separate process, no pool / cache / leader. The kernel is
   stateless: ~8 µs router dispatch, then the 5–50 ms waiting on S3,
   and done. The runtime is a rounding error against the bucket.
@@ -200,18 +200,15 @@ Each design choice falls out of a specific criterion above.
   aesthetic — operational. `baerly export --target=postgres` is a
   mechanical translator, not a marketing line. See
   [docs/spec/log-entry-shape.md](../spec/log-entry-shape.md).
-- **Strong consistency under contention.** Built like git:
-  content-addressed documents, immutable log entries, and a single
-  CAS-advanced pointer to HEAD. Old log entries roll up into
-  snapshots in the background. Before December 2020, S3-as-a-database
-  required a separate linearizable metadata service — ZooKeeper,
-  etcd, a DynamoDB lock table, FoundationDB — to hold the
-  authoritative pointer to "what exists." After AWS announced strong
-  read-after-write consistency on every S3 operation, the catalog
-  dissolves into S3 itself, and Iceberg, Delta Lake, Turbopuffer,
-  Litestream, and SlateDB all converged on the same recipe:
-  content-addressed objects, immutable log entries, and a single
-  CAS-advanced pointer. See
+- **Strong consistency under contention.** Old log entries roll up
+  into snapshots in the background. Before December 2020,
+  S3-as-a-database required a separate linearizable metadata service
+  — ZooKeeper, etcd, a DynamoDB lock table, FoundationDB — to hold
+  the authoritative pointer to "what exists." After AWS announced
+  strong read-after-write consistency on every S3 operation, the
+  catalog dissolves into S3 itself, and Iceberg, Delta Lake,
+  Turbopuffer, Litestream, and SlateDB all converged on this shape
+  after S3 went strongly consistent. See
   [docs/spec/sync-protocol.md](../spec/sync-protocol.md) and
   [docs/spec/s3-features-used.md](../spec/s3-features-used.md).
   Per-collection CAS scope ([ADR-001](../adr/001-tenant-cas-isolation.md))
