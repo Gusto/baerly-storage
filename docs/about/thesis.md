@@ -56,12 +56,18 @@ The criteria the rest of this document is shaped around:
    *Graduation is the success path, not a failure mode.* A
    prototype-tier app that crossed the ceiling and moved to D1
    is a Baerly **win**, not a churn event. The "no hostage"
-   promise is what makes the prototype-tier bet safe to take.
-4. **An API an LLM can use from the type definitions alone.** Small
-   surface, string error codes, `@example` blocks that are tested.
-   *Type signatures are the contract; JSDoc is prose.* An LLM should
-   reach the correct call zero-shot from the `.d.ts` shapes alone —
-   even when it ignores the comments. Two failure modes follow:
+   promise is what makes the prototype-tier bet safe to take. The
+   `LogEntry` shape is Postgres-logical-replication-shaped
+   (`{lsn, op, relation, key, before?, after?, ts, epoch}`)
+   precisely so `baerly export --target=postgres` is mechanical,
+   not aspirational.
+4. **A small, typed, closed-vocabulary API.** A surface that doesn't
+   fit in working memory is a surface that gets called wrong —
+   whether the program calling it is an LLM mid-completion or a
+   human under deadline. *Type signatures are the contract; JSDoc is
+   prose.* The `.d.ts` shapes are the canonical authority; a caller
+   should reach the correct call zero-shot from them alone. Two
+   failure modes follow:
    - *Hallucinated ceremony* — the agent invents an API the kernel
      does not ship (e.g. `.findOneById()`). The fix is teaching the
      real surface via `@example` blocks and the AGENTS.md quickref.
@@ -86,6 +92,21 @@ Plus one anti-feature:
   part of the loop. Tenant isolation in Baerly is prefix-scoped at
   the `Db` layer ([ADR-001](../adr/001-tenant-cas-isolation.md)),
   not delegated to generated SQL.
+
+## Why not Postgres
+
+Postgres is the right answer to most questions and the wrong answer
+here, for two reasons.
+
+**(1) Real DBs entail real obligations.** Provisioning, secrets,
+backups, CVE rotation, migrations, alarms when the disk fills,
+alarms when the pool is exhausted — none of that becomes free
+because the app has four users.
+
+**(2) A DB-shaped tool invites DB-shaped ceremony in the codebase.**
+Schemas to invent and preserve across edits, migrations to author and
+order, RLS to write — the entire ceremony stack arrives whether the
+workload deserves it or not.
 
 ## What we keep even when it looks like ceremony
 
@@ -133,10 +154,17 @@ abstraction (the S3 API), and the substance is portable by
 definition. Your bytes in your bucket — no managed catalog, no
 proprietary runtime, leaving needs no vendor cooperation.
 
+Hosted databases (D1, Neon, Convex, Supabase, Firebase) are
+excellent but collapse into a different set of operational questions:
+vendor procurement review, secrets-manager integration tickets,
+IT-ticketing to add a new managed-DB SKU to the catalog. Object
+storage sidesteps all of that because the bucket already exists.
+
 ## Runtime model: nothing between requests
 
-Baerly's kernel runs entirely within ephemeral compute. Every
-coordination decision — fencing, conflict resolution, atomic
+There is no runtime. None.
+
+Every coordination decision — fencing, conflict resolution, atomic
 commit, log emission, index maintenance, garbage collection,
 compaction — completes within the lifetime of a single HTTP
 request or scheduled cron invocation. The kernel holds no
@@ -160,7 +188,8 @@ break the property are in
 
 Each design choice falls out of a specific criterion above.
 
-- **Idle → zero.** Baerly is a ~100 KB gzipped TypeScript library;
+- **Idle → zero.** Baerly is a ~100 KB gzipped TypeScript library on
+  Cloudflare Workers (~155 KB gzipped on Node);
   your Worker (or Node process) imports it directly. No binary, no
   separate process, no pool / cache / leader. The kernel is
   stateless: ~8 µs router dispatch, then the 5–50 ms waiting on S3,
@@ -171,12 +200,18 @@ Each design choice falls out of a specific criterion above.
   aesthetic — operational. `baerly export --target=postgres` is a
   mechanical translator, not a marketing line. See
   [docs/spec/log-entry-shape.md](../spec/log-entry-shape.md).
-- **Strong consistency under contention.** Three object types:
+- **Strong consistency under contention.** Built like git:
   content-addressed documents, immutable log entries, and a single
-  CAS'd `current.json`. Old log entries roll up into snapshots in
-  the background. This is the same recipe Iceberg, Delta Lake,
-  Turbopuffer, Litestream, and SlateDB converged on after S3 went
-  strongly consistent in December 2020 — see
+  CAS-advanced pointer to HEAD. Old log entries roll up into
+  snapshots in the background. Before December 2020, S3-as-a-database
+  required a separate linearizable metadata service — ZooKeeper,
+  etcd, a DynamoDB lock table, FoundationDB — to hold the
+  authoritative pointer to "what exists." After AWS announced strong
+  read-after-write consistency on every S3 operation, the catalog
+  dissolves into S3 itself, and Iceberg, Delta Lake, Turbopuffer,
+  Litestream, and SlateDB all converged on the same recipe:
+  content-addressed objects, immutable log entries, and a single
+  CAS-advanced pointer. See
   [docs/spec/sync-protocol.md](../spec/sync-protocol.md) and
   [docs/spec/s3-features-used.md](../spec/s3-features-used.md).
   Per-collection CAS scope ([ADR-001](../adr/001-tenant-cas-isolation.md))
@@ -241,7 +276,12 @@ Each design choice falls out of a specific criterion above.
 
 ## Workload ceiling
 
-The system is sized for a specific workload class:
+A system that names its envelope honestly is a system you can trust.
+Baerly's envelope is precise — not because those are the only
+workloads we want, but because knowing exactly where graduation
+starts makes graduation a feature rather than a surprise.
+
+The envelope:
 
 - **~10 GB / tenant** total.
 - **~30 logical writes / minute / collection** sustained. This
@@ -251,11 +291,13 @@ The system is sized for a specific workload class:
   buys the operating headroom.
 - **~100 collections / tenant** fan-out.
 
-Above any one of these: graduate to D1 / Postgres. The ceiling is
-platform-independent — the kernel makes the same guarantees on
-Cloudflare Workers, self-hosted Node, AWS Lambda. One bucket per
-app; tenants are prefix-scoped within. Server-only writes; the
-browser is a typed HTTP client.
+Crossing any of these is the success signal to graduate —
+`baerly export --target=postgres` is one command, and the on-disk
+log shape is Postgres-logical-replication-shaped to make it
+mechanical. The ceiling is platform-independent — the kernel makes
+the same guarantees on Cloudflare Workers, self-hosted Node, AWS
+Lambda. One bucket per app; tenants are prefix-scoped within.
+Server-only writes; the browser is a typed HTTP client.
 
 ## Audience in practice
 
