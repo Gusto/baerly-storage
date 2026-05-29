@@ -2,7 +2,7 @@
 title: Product thesis
 audience: product
 summary: Why Baerly exists, what it is, and what it deliberately is not.
-last-reviewed: 2026-05-28
+last-reviewed: 2026-05-29
 tags: [positioning, product]
 related: [cost-model.md, "../contributing/conventions/change-discipline.md"]
 ---
@@ -83,6 +83,21 @@ The criteria the rest of this document is shaped around:
    and preserve a schema across edits" is inserted into the part of
    the loop LLMs are worst at (`category` vs `categories` four
    turns later).
+6. **Zero operator burden.** No cron to schedule, no sidecar to run, no
+   scheduler to provision, no lock service, no managed catalog. The full
+   operator action set is "create a bucket; run the kernel inside an HTTP
+   handler." If a feature needs `wrangler.jsonc` edits beyond auth, a
+   `node-cron` install, or any "step 2: also configure…" — it's the wrong
+   shape for this audience. The closest production pitch is Supabase's
+   autovacuum: *the user never schedules maintenance* ([Supabase docs](https://supabase.com/docs/guides/database/extensions/pg_repack)).
+   Baerly generalizes that to object storage: maintenance runs
+   opportunistically inline on whatever traffic the bucket sees, gated so
+   idle buckets pay zero. PostgreSQL HOT pruning (`heap_page_prune_opt` in
+   [pruneheap.c](https://github.com/postgres/postgres/blob/master/src/backend/access/heap/pruneheap.c))
+   is the canonical design precedent — opportunistic in-band cleanup on
+   reads, gated by cheap heuristics, bounded latency impact (~1.6% of
+   execution time in worst-case dead-tuple-heavy workloads per the
+   PostgreSQL HOT README).
 
 Plus one anti-feature:
 
@@ -92,6 +107,25 @@ Plus one anti-feature:
   part of the loop. Tenant isolation in Baerly is prefix-scoped at
   the `Db` layer ([ADR-001](../adr/001-tenant-cas-isolation.md)),
   not delegated to generated SQL.
+
+## Two audiences, two pitches
+
+The criteria above split cleanly across two audiences with different value
+props. The docs should not conflate them.
+
+- **For agents and authors writing code** — criterion #4 (LLM-legible API).
+  The pitch is *closed-vocabulary, types-as-contract, zero-shot from .d.ts
+  alone*. This audience reads the public surface.
+- **For platform teams deploying it** — criterion #6 (Zero operator burden).
+  The pitch is *no cron, no sidecar, no scheduler, no on-call*. This
+  audience reads the deployment story and the runtime model. They care that
+  the bucket maintains itself with no intervention.
+
+A design choice that improves one audience without harming the other is a
+win. A design choice that improves authoring DX by adding operator chores
+(or vice versa) is a regression. When in doubt, the operator-burden
+audience wins, because the authoring audience has many tools and can
+adapt — operators have one shot to say yes or no to deploying this.
 
 ## Why not Postgres
 
@@ -160,15 +194,23 @@ proprietary runtime, leaving needs no vendor cooperation.
 
 ## Runtime model: nothing between requests
 
-There is no runtime. None.
+There is no runtime. None. And there is no scheduler either.
 
-Every coordination decision — fencing, conflict resolution, atomic
-commit, log emission, index maintenance, garbage collection,
-compaction — completes within the lifetime of a single HTTP
-request or scheduled cron invocation. The kernel holds no
-in-memory state that's load-bearing for correctness; a cold
-start reads correctly the same as a warm one. The only
-persistent component is the bucket.
+Every coordination decision — fencing, conflict resolution, atomic commit,
+log emission, index maintenance, garbage collection, compaction —
+completes within the lifetime of a single HTTP request, write or read.
+The kernel holds no in-memory state that's load-bearing for correctness;
+a cold start reads correctly the same as a warm one. The only persistent
+component is the bucket. **No cron, no sidecar, no `setInterval`, no
+scheduled handler is required for correctness.** Maintenance runs
+opportunistically inline on whatever traffic the bucket sees — writes
+and reads both — gated by a size-ratio threshold so idle buckets pay
+zero. The pattern is PostgreSQL HOT pruning generalized to object storage:
+cheap gate on hot-path operations, bounded work when the gate fires, no
+operator chore to schedule it. Users who *want* batched maintenance
+windows can invoke `runScheduledMaintenance` from their own scheduler —
+it's an SDK function, never a deployment requirement. Scaffolds ship
+with zero cron wiring.
 
 This is unusual. Apache Iceberg requires a catalog service.
 Delta Lake on S3 requires a DynamoDB lock table. SlateDB is

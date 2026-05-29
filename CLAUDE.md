@@ -81,7 +81,7 @@ var isn't propagated.
 | `pnpm format:check` | oxfmt formatting | ~seconds | ❌ red on ~20 pre-existing files; diff vs. `main` |
 | `pnpm build` | rolldown bundle to `dist/` | ~seconds | ✅ |
 | `pnpm test:randomize` | property-based fuzzer (cranks `FC_NUM_RUNS` for fast-check arbitraries). The randomized cascade itself is fault-injection-driven so `FC_NUM_RUNS` is a no-op for `randomized.test.ts` — all four variants (`memory` / `local-fs` / `cloudflare-r2` / `node-minio`) still run, but only the property tests in the rest of the suite scale up | run for minutes | use when changing protocol code |
-| `pnpm test:fuzz-phase5` | crash-injection fuzzer for the maintenance loop (`phase5-crash-fuzz.test.ts`) — aborts the K-th storage op inside `ServerWriter` / `compact()` / `runGc()` and asserts the reader still sees a consistent row set | minutes-hours at `FC_NUM_RUNS=10000` | use after touching `compactor.ts` / `gc.ts` / `server-writer.ts` |
+| `pnpm test:fuzz-phase5` | crash-injection fuzzer for the maintenance loop (`phase5-crash-fuzz.test.ts`) — aborts the K-th storage op inside `Writer` / `compact()` / `runGc()` and asserts the reader still sees a consistent row set | minutes-hours at `FC_NUM_RUNS=10000` | use after touching `compactor.ts` / `gc.ts` / `writer.ts` |
 | `pnpm worktree:bootstrap` | `pnpm install --frozen-lockfile` + `pnpm run build`. Run this once after `git worktree add` to prime `dist/` so `baerly`, `pnpm bundle-sizes`, and any dist-consuming test work. `verify:agent` itself doesn't need it; everything else does | ~10-30s | n/a |
 | `pnpm dev:storage` | brings up Minio `:9102` + Toxiproxy `:9104` + Postgres `:5433` | n/a | required for `test:minio` / `test:conformance` / `test:export-smoke` / `test:adapter-node` / `test:adapters` |
 | `pnpm test:manual-e2e` | runs `manual-e2e/cloudflare/e2e.test.ts` + `manual-e2e/node/e2e.test.ts` against deployed URLs (HTTP conformance cascade + latency probe + long-poll wall-clock + 401 sniff) | minutes per run | requires `CF_DEPLOY_URL` + `NODE_DEPLOY_URL` + `SHARED_SECRET` (+ `CF_R2_*` / `AWS_*` for the conformance cascade); manual deploy lifecycle in `manual-e2e/README.md` |
@@ -154,7 +154,7 @@ deps. Tests requiring Minio or credentials are gated by env:
   are deferred.
 
 `randomized.test.ts` drives the all-to-all single-key causal-
-consistency cascade through `Db` + `ServerWriter` (from
+consistency cascade through `Db` + `Writer` (from
 `@baerly/server`) over four storage adapters:
 
   - `memory` — `MemoryStorage`, shared per-bucket via
@@ -177,7 +177,7 @@ inside Workerd). The Node-side variant table is in
 `tests/integration/randomized.test.ts`; the Workerd-side entry is in
 `packages/adapter-cloudflare/src/randomized.test.ts`. Each variant
 constructs N `Storage` handles sharing the same backing store, then
-spins up N `Db` + `ServerWriter` writers all contending on a single
+spins up N `Db` + `Writer` writers all contending on a single
 `current.json`.
 
 Pure-unit tests that always pass: `packages/protocol/src/hashing.test.ts`,
@@ -225,7 +225,7 @@ Read in this order to build a mental model:
    surface for application code.
 3. `packages/server/src/collection.ts`, `packages/server/src/query.ts` —
    `Collection<T>` / `Query<T>` SQL-shape API + predicate AST.
-4. `packages/server/src/server-writer.ts` — `ServerWriter` stateless
+4. `packages/server/src/writer.ts` — `Writer` stateless
    commit path: PUT content → PUT log entry → PUT/DELETE
    index entries → CAS-advance `current.json`.
 5. `packages/server/src/indexes.ts` — `IndexDefinition`, key
@@ -296,7 +296,7 @@ Read in this order to build a mental model:
 
 The full lifecycle of `db.collection().insert()` is in
 [docs/contributing/architecture.md](docs/contributing/architecture.md) — read it before
-changing `packages/server/src/server-writer.ts` or the query
+changing `packages/server/src/writer.ts` or the query
 evaluation path. architecture.md also has a Mermaid dependency
 graph if you need finer-grained roles than the groups above.
 
@@ -308,9 +308,9 @@ Path-scoped conventions. **Read the matching file before editing.**
 |---|---|
 | `tests/**` | [docs/contributing/conventions/tests.md](docs/contributing/conventions/tests.md) |
 | `docs/**` | [docs/contributing/conventions/docs.md](docs/contributing/conventions/docs.md) |
-| `packages/server/src/server-writer.ts` | [docs/spec/sync-protocol.md](docs/spec/sync-protocol.md) + [docs/spec/causal-consistency-checking.md](docs/spec/causal-consistency-checking.md) |
+| `packages/server/src/writer.ts` | [docs/spec/sync-protocol.md](docs/spec/sync-protocol.md) + [docs/spec/causal-consistency-checking.md](docs/spec/causal-consistency-checking.md) |
 | `packages/protocol/src/json.ts` | [docs/spec/json-merge-patch.md](docs/spec/json-merge-patch.md) |
-| `packages/protocol/src/log.ts`, the log-emit path in `server-writer.ts` | [docs/spec/log-entry-shape.md](docs/spec/log-entry-shape.md) |
+| `packages/protocol/src/log.ts`, the log-emit path in `writer.ts` | [docs/spec/log-entry-shape.md](docs/spec/log-entry-shape.md) |
 | `packages/server/src/observability/**` | [docs/contributing/conventions/observability.md](docs/contributing/conventions/observability.md) |
 | Public API on `Db` / `Collection` | [docs/contributing/extending.md](docs/contributing/extending.md) |
 | `packages/server/src/schema.ts` or `CollectionDefinition.schema` | [docs/contributing/extending.md](docs/contributing/extending.md) §"Declare a schema for a collection" |
@@ -351,7 +351,7 @@ auto-load on matching edits and point at the same files.
 - **Causal consistency is a hard invariant.** [docs/spec/sync-protocol.md](docs/spec/sync-protocol.md)
   and [docs/spec/causal-consistency-checking.md](docs/spec/causal-consistency-checking.md)
   describe how it works. Read those before touching
-  `packages/server/src/server-writer.ts`.
+  `packages/server/src/writer.ts`.
 
 ## Anti-patterns
 
@@ -393,6 +393,22 @@ auto-load on matching edits and point at the same files.
   silent no-op that exits 0. The real dlx cache lives at `~/.cache/pnpm/dlx`
   (Linux/XDG) or `~/Library/Caches/pnpm/dlx` (macOS) — both can
   exist. Use `pnpm dlx:bust-cache` instead.
+- ❌ Proposing maintenance/cleanup/coordination mechanisms that require
+  *operator-installed* scheduling (`wrangler.jsonc` `triggers.crons`,
+  `node-cron`, k8s `CronJob`, systemd timer, DO Alarms). The kernel must
+  work on a bare bucket with zero operator infrastructure — the pitch is
+  "Just a Bucket" (thesis criterion #6, [thesis.md](docs/about/thesis.md#what-prototype-tier-storage-needs)).
+  Scheduled cron is a *user-opt-in* acceleration via the exported
+  `runScheduledMaintenance` SDK, never a default and never a requirement.
+  Reads and writes both opportunistically tick maintenance inline; that
+  is the entire maintenance story for the default scaffold. Anti-precedent:
+  Cassandra's `read_repair_chance` (removed in 4.0,
+  [CASSANDRA-13910](https://issues.apache.org/jira/browse/CASSANDRA-13910)) —
+  unbounded probabilistic on-request maintenance is harmful; bounded under
+  a per-pass CPU budget (PostgreSQL HOT pruning precedent) is the safe
+  shape. Use the operator-burden test at
+  [docs/contributing/conventions/change-discipline.md](docs/contributing/conventions/change-discipline.md#operator-burden-test-for-new-mechanisms)
+  before proposing any new background-work mechanism.
 
 ## Scope guidance
 
