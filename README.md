@@ -2,7 +2,7 @@
 
 **Storage is the missing primitive for agent-built software, and all you need is a library.**
 
-> _Currently a private Gusto preview, published as `@gusto/baerly-storage` to Gusto's private npm registry._
+> _Currently a private Gusto preview, published as `@gusto/baerly-storage` privately under the `@gusto` org on npm (npmjs.com)._
 
 `baerly-storage` is a library that turns an S3-compatible bucket into a document database. **There is no runtime. None.** All coordination — fencing, commit, compaction, garbage collection — runs inside the HTTP request that triggered it: no daemon, no leader, no service bill, no on-call. The only persistent component is your bucket.
 

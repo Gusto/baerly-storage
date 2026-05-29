@@ -1,8 +1,8 @@
 ---
 title: Publishing
 audience: maintainer
-summary: "How to publish @gusto/baerly-storage + @gusto/create-baerly-storage to Gusto's private npm registry."
-last-reviewed: 2026-05-27
+summary: "How to publish @gusto/baerly-storage + @gusto/create-baerly-storage privately under the @gusto org on npmjs.com."
+last-reviewed: 2026-05-28
 tags: [publishing, release, npm]
 related: ["development.md", "../../CLAUDE.md"]
 ---
@@ -10,7 +10,14 @@ related: ["development.md", "../../CLAUDE.md"]
 # Publishing
 
 Two packages publish from this repo, both scoped to `@gusto/` and
-both targeting Gusto's private npm registry:
+both published to the standard public npm registry (npmjs.com) under
+the `@gusto` org — Gusto's npm enterprise license. They are **not**
+on a separate private registry; there is no such thing. "Private"
+here means `publishConfig.access: "restricted"`, which makes the
+package private *within npmjs.com* (org members with auth can
+install it; the public cannot). The local Verdaccio registry
+(`pnpm verdaccio:publish`, `localhost:4873`) is a throwaway
+test harness for scaffolder iteration only — never a publish target.
 
 | Package                          | Path                              | Bin                       |
 |----------------------------------|-----------------------------------|---------------------------|
@@ -22,22 +29,20 @@ never published — they bundle into the published `@gusto/baerly-storage`.
 
 ## One-time setup
 
-Add the `@gusto:` scope routing to `~/.npmrc` so both `pnpm publish`
-and downstream `pnpm install @gusto/baerly-storage` find the
-registry:
-
-```
-@gusto:registry=<gusto-private-registry-url>
-//<gusto-private-registry-host>/:_authToken=${NPM_TOKEN}
-```
-
-Replace `<gusto-private-registry-url>` with the URL from Gusto's
-infra team. Set `NPM_TOKEN` in your shell environment (publish
-tokens are personal; don't share). Confirm auth:
+No `~/.npmrc` scope routing is needed — the default registry
+(`https://registry.npmjs.org/`) is the target. You just need to be
+logged in to npm as a member of the `@gusto` org with publish
+rights:
 
 ```sh
-npm whoami --registry=<gusto-private-registry-url>
+npm login            # standard npmjs.com login
+npm whoami           # confirm you're authenticated
 ```
+
+Membership in the `@gusto` org (and the publish role) is granted by
+Gusto's npm org admins. Don't add an `@gusto:registry=` line — that
+would point installs at a registry that doesn't exist and is the
+root cause of agents inventing a "Gusto private registry."
 
 ## Pre-publish gate
 
@@ -107,9 +112,20 @@ pnpm --filter @gusto/create-baerly-storage publish --no-git-checks
 Verify each landed:
 
 ```sh
-npm view @gusto/baerly-storage --registry=<gusto-private-registry-url>
-npm view @gusto/create-baerly-storage --registry=<gusto-private-registry-url>
+npm view @gusto/baerly-storage
+npm view @gusto/create-baerly-storage
 ```
+
+Confirm each is **private**, not public — this is the bit that bites:
+
+```sh
+npm access get status @gusto/baerly-storage          # expect: private
+npm access get status @gusto/create-baerly-storage   # expect: private
+```
+
+If either reports `public`, flip it immediately with
+`npm access set status=private @gusto/<pkg>` and check
+`publishConfig.access` is `"restricted"` before the next publish.
 
 ## Post-publish smoke
 
@@ -169,9 +185,9 @@ git tag v0.1.5 && git push --tags
 
 ## Notes on the publish config
 
-- `publishConfig.provenance` is intentionally NOT set. Most private
-  registries don't accept npm Sigstore attestations. If/when the
-  project moves to public npm, restore the flag.
+- `publishConfig.provenance` is intentionally NOT set. If/when the
+  project is open-sourced (access flipped to `"public"`), restore
+  the flag to get npm Sigstore attestations.
 - `publishConfig.access` is set to `"restricted"` on both
   published packages. The `@gusto` org on npmjs.com defaults new
   scoped packages to `public`, so leaving `access` unset would

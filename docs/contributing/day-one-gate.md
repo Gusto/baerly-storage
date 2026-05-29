@@ -2,7 +2,7 @@
 title: Day-one handshake gate
 audience: operator
 summary: Pre-release manual gate that times scaffold → deploy → first record against the day-one SLO.
-last-reviewed: 2026-05-14
+last-reviewed: 2026-05-28
 tags: [operations, gate, day-one, scaffold, deploy]
 related: ["../guide/backups.md"]
 ---
@@ -18,12 +18,13 @@ The day-one gate asserts that a non-engineer + Claude can go from
 
 Without any manual credential editing.
 
-## Local install (Phase 1 — Gusto private registry)
+## Local install (Phase 1 — private `@gusto` org on npmjs.com)
 
 > 🚧 **Phase 1 private preview.** `@gusto/baerly-storage` +
-> `@gusto/create-baerly-storage` publish to Gusto's private npm
-> registry. From a Gusto machine with the `@gusto:` scope configured
-> (see `docs/contributing/development.md`):
+> `@gusto/create-baerly-storage` publish privately under the `@gusto`
+> org on npmjs.com (`access: "restricted"`) — not a separate private
+> registry. From a machine logged in to npm as a `@gusto` org member
+> (see the one-time setup in `docs/contributing/publishing.md`):
 
 ```sh
 pnpm create @gusto/baerly-storage@latest -- gate-smoke --target=node --json
