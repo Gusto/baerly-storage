@@ -61,6 +61,7 @@ var isn't propagated.
 |---|---|---|---|
 | `pnpm verify` | typecheck (`tsgo --noEmit`) + `verify:examples` + lint (`oxlint`) + `verify:docs` (markdown frontmatter audit) | ~seconds | ✅ — non-zero exit *is* your regression |
 | `pnpm verify:agent` | same gate as `pnpm verify`, with `tsgo --pretty false` + `oxlint --format=unix --quiet` for one-line-per-finding output (warnings hidden — `pnpm verify` still surfaces them) | ~seconds | ✅ — same gate as `verify`, just quieter |
+| `node scripts/lint-package-layers.mjs` | enforces the forward-edge-only package dependency graph from ADR-006. Runs as part of `pnpm verify`. | ~ms | ✅ |
 | `pnpm verify:docs` | docs cross-link resolver + `audience:` field audit + 180-day `last-reviewed:` staleness check. Runs as part of `pnpm verify`. | ~seconds | ✅ |
 | `pnpm verify:examples` | runs each scaffoldable example's `tsc -b --noEmit` (`minimal-cloudflare`, `minimal-node`, `react-cloudflare`, `react-node`) so SPA + Worker bugs in the templates fail fast | ~seconds | ✅ |
 | `pnpm test` | vitest unit + integration (zero infra) — includes the `memory` + `local-fs` variants of `randomized.test.ts` | ~3s | ✅ — Minio + credentials tests are gated, see below |
