@@ -4,14 +4,15 @@ import { beforeAll, describe } from "vitest";
 import { defineStorageConformanceSuite } from "@baerly/protocol/conformance";
 import { S3HttpStorage } from "./s3-http.ts";
 import { createBucket } from "../../../tests/fixtures/s3-fixtures.ts";
+import { MINIO_ENDPOINT, MINIO_HOST_PORT } from "../../../tests/setup/ports.ts";
 import { minioStorage } from "./storage-factories.ts";
 
 // Same Minio that `pnpm dev:storage` provisions. Endpoint and creds
 // are pinned across the existing Minio-touching tests
 // (`tests/integration/randomized.test.ts`,
 //  `tests/integration/conformance.test.ts`,
-//  `docker-compose.yml`). Re-use; do not invent.
-const MINIO_ENDPOINT = "http://127.0.0.1:9102";
+//  `docker-compose.yml`). Re-use; do not invent. The endpoint comes
+// from `tests/setup/ports.ts` so per-worktree port overrides flow through.
 const MINIO_ACCESS_KEY = "baerly";
 const MINIO_SECRET_KEY = "ZOAmumEzdsUUcVlQ";
 const MINIO_REGION = "us-east-1";
@@ -44,7 +45,7 @@ const MINIO_PREFIX_CHAR_ARB = fc.constantFrom(...MINIO_KEY_CHARS.split(""));
 // Mirror `tests/integration/time.test.ts`'s `describe.runIf(minioEnabled)`
 // pattern: the entire block is no-op'd on a fresh checkout, then runs
 // end-to-end under `MINIO=1 pnpm test`.
-describe.runIf(minioEnabled)("S3HttpStorage @ Minio :9102", () => {
+describe.runIf(minioEnabled)(`S3HttpStorage @ Minio :${MINIO_HOST_PORT}`, () => {
   beforeAll(async () => {
     // `createBucket` tolerates 409 BucketAlreadyOwnedByYou so test
     // re-runs against the persistent dev Minio don't fail.
@@ -52,7 +53,7 @@ describe.runIf(minioEnabled)("S3HttpStorage @ Minio :9102", () => {
   });
 
   defineStorageConformanceSuite(
-    "S3HttpStorage @ Minio :9102",
+    `S3HttpStorage @ Minio :${MINIO_HOST_PORT}`,
     async () => ({
       storage: new S3HttpStorage({
         endpoint: MINIO_ENDPOINT,
@@ -75,13 +76,13 @@ describe.runIf(minioEnabled)("S3HttpStorage @ Minio :9102", () => {
 // Re-run the same conformance suite through the `minioStorage` factory
 // — the public DX surface. Reuses the same bucket (createBucket
 // tolerates 409) and the same Minio-safe arbitraries.
-describe.runIf(minioEnabled)("minioStorage factory @ Minio :9102", () => {
+describe.runIf(minioEnabled)(`minioStorage factory @ Minio :${MINIO_HOST_PORT}`, () => {
   beforeAll(async () => {
     await createBucket(signer, MINIO_ENDPOINT, BUCKET);
   });
 
   defineStorageConformanceSuite(
-    "minioStorage factory @ Minio :9102",
+    `minioStorage factory @ Minio :${MINIO_HOST_PORT}`,
     async () => ({
       storage: minioStorage({
         endpoint: MINIO_ENDPOINT,

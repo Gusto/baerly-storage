@@ -30,9 +30,10 @@ import { S3HttpStorage } from "@baerly/adapter-node";
 import { LocalFsStorage } from "@baerly/dev";
 import { createBucket } from "../fixtures/s3-fixtures.ts";
 import { runCollectionApiCascade } from "../fixtures/collection-api-cascade.ts";
+import { MINIO_ENDPOINT } from "../setup/ports.ts";
 
 const stableConfig = {
-  endpoint: "http://127.0.0.1:9102",
+  endpoint: MINIO_ENDPOINT,
   region: "eu-central-1",
   credentials: { accessKeyId: "baerly", secretAccessKey: "ZOAmumEzdsUUcVlQ" },
 };

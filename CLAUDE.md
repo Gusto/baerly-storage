@@ -200,6 +200,15 @@ pnpm dev:storage         # docker compose up -d --wait (Minio :9102, Toxiproxy :
 pnpm dev:storage:stop    # docker compose down
 ```
 
+> **Two worktrees, two stacks?** Set `BAERLY_MINIO_HOST_PORT`,
+> `BAERLY_TOXIPROXY_HOST_PORT`, `BAERLY_TOXIPROXY_ADMIN_PORT`, and
+> `BAERLY_POSTGRES_HOST_PORT` in a per-worktree `.env.local` (or just
+> inline before the command) and the compose stack will bind those host
+> ports instead of the defaults. The test setup helper at
+> `tests/setup/ports.ts` reads the same variables, so consumers stay in
+> sync. Without overrides the second `compose up` still fails with
+> `port already allocated`.
+
 See [docs/contributing/development.md](docs/contributing/development.md) for full setup.
 
 ## Module map

@@ -50,11 +50,12 @@ import { withHttpObservability } from "@baerly/server/observability";
 import { createBucket } from "../fixtures/s3-fixtures.ts";
 import { runHttpConformanceCascade, type HttpFetch } from "../fixtures/http-conformance-cascade.ts";
 import { CONFORMANCE_TENANT, testVerifier } from "../fixtures/test-verifier.ts";
+import { MINIO_ENDPOINT } from "../setup/ports.ts";
 
 const APP = "http-conf";
 
 const stableConfig = {
-  endpoint: "http://127.0.0.1:9102",
+  endpoint: MINIO_ENDPOINT,
   region: "eu-central-1",
   credentials: { accessKeyId: "baerly", secretAccessKey: "ZOAmumEzdsUUcVlQ" },
 };

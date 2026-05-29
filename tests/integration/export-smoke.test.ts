@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { Client } from "pg";
 import { merge } from "@baerly/protocol";
+import { POSTGRES_HOST_PORT } from "../setup/ports.ts";
 
 /**
  * Local JSON value types — the test deliberately does NOT import
@@ -58,7 +59,7 @@ interface LogEntry {
  */
 const PG_CONFIG = {
   host: "127.0.0.1",
-  port: 5433,
+  port: POSTGRES_HOST_PORT,
   user: "baerly",
   password: "baerly-local",
   database: "baerly_export_smoke",

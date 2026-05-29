@@ -31,25 +31,26 @@ import {
   runCausalConsistencyCascade,
   runRangeWalkParityCascade,
 } from "../fixtures/randomized-cascade.ts";
+import { MINIO_ENDPOINT, TOXIPROXY_ADMIN_ENDPOINT, TOXIPROXY_ENDPOINT } from "../setup/ports.ts";
 
 const stableConfig = {
-  endpoint: "http://127.0.0.1:9102",
+  endpoint: MINIO_ENDPOINT,
   region: "eu-central-1",
   credentials: { accessKeyId: "baerly", secretAccessKey: "ZOAmumEzdsUUcVlQ" },
 };
-const unstableConfig = { ...stableConfig, endpoint: "http://127.0.0.1:9104" };
+const unstableConfig = { ...stableConfig, endpoint: TOXIPROXY_ENDPOINT };
 
 const minioEnabled = process.env["MINIO"] === "1";
 
 // Toxiproxy toggle — the new core has no `setOnline()` knob; we flip
 // the Minio proxy directly through Toxiproxy's HTTP admin API. No-op
 // when MINIO is off so memory / local-fs variants don't try to reach
-// `:8474`.
+// the admin port.
 const setOnline = async (state: boolean): Promise<void> => {
   if (!minioEnabled) {
     return;
   }
-  await fetch("http://localhost:8474/proxies/minio", {
+  await fetch(`${TOXIPROXY_ADMIN_ENDPOINT}/proxies/minio`, {
     method: "POST",
     body: JSON.stringify({ enabled: state }),
   }).catch(() => {
