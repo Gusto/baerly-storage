@@ -43,6 +43,9 @@ const storage: Storage =
 
 const PORT = Number(process.env["PORT"] ?? 8080);
 
-await baerlyNode({ config, storage }).listen(PORT);
+// `webRoot` serves the Vite-built SPA from `dist/client/` (the
+// `vite.config.ts` `build.outDir`) in production; `/v1/*` is handled
+// by the kernel, everything else falls back to the SPA shell.
+await baerlyNode({ config, storage, webRoot: "dist/client" }).listen(PORT);
 
 console.log(`react-node listening on :${PORT}`);
