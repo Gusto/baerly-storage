@@ -2,7 +2,7 @@
 title: Architecture overview
 audience: coder
 summary: Module dependency graph and lifecycle of db.collection(...).insert().
-last-reviewed: 2026-05-26
+last-reviewed: 2026-05-28
 tags: [architecture, lifecycle, module-map]
 related: ["../spec/sync-protocol.md", extending.md, features.md]
 ---
@@ -26,8 +26,7 @@ protocol is specified in
 [spec/sync-protocol.md](../spec/sync-protocol.md) and proven causally consistent in
 [spec/causal-consistency-checking.md](../spec/causal-consistency-checking.md).
 
-This shape — content-addressed objects, immutable log entries, a
-single CAS-advanced pointer — is the same recipe Iceberg, Delta
+Built like git: content-addressed documents, immutable log entries, and a single CAS-advanced pointer to HEAD. This shape is the same recipe Iceberg, Delta
 Lake, Turbopuffer, Litestream, and SlateDB converged on after S3
 went strongly consistent in December 2020 (see
 [spec/s3-features-used.md](../spec/s3-features-used.md)). The novel
@@ -35,11 +34,11 @@ part is not the kernel; it is shaping the system so the public API
 stays small enough that an LLM can use it from `.d.ts` alone (see
 [ADR-002](../adr/002-api-surface-lock.md)).
 
+Bundle sizes set the scope: ~100 KB gzipped on Cloudflare Workers, ~155 KB gzipped on Node, ~5 KB gzipped browser client. The whole public API surface fits in a single 850-line `dist/API.md`.
+
 ## Runtime model
 
-All coordination runs inside a single HTTP request or cron
-invocation. There is no daemon, no leader, no coordinator service.
-A request enters the Worker/Node handler; the handler constructs a
+**There is no runtime. None.** All coordination runs inside a single HTTP request or cron invocation — no daemon, no leader, no coordinator service. A request enters the Worker/Node handler; the handler constructs a
 `Db` via `Db.create({ storage, config })`; the `Db` reads a fresh
 `current.json` from the bucket (no warm-cache shortcut for
 correctness — `consistency: "strong"` does this explicitly); it
@@ -56,7 +55,7 @@ which runs one compaction + GC pass and returns. The pass is sized
 to fit inside the platform's subrequest budget — Cloudflare
 Workers' 50-subrequest limit is the tightest target — so larger
 backlogs are paced across multiple cron ticks rather than spilling
-into a long-lived process. The doctrinal rationale lives in
+into a long-lived process. The rationale for this design choice is in
 [ADR-004](../adr/004-ephemeral-coordination.md).
 
 ## Module dependency graph
