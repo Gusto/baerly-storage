@@ -14,7 +14,7 @@
     "directory": "packages/create-baerly-storage"
   },
   "bin": {
-    "create-baerly-storage": "./dist/index.js"
+    "create-baerly-storage": "dist/index.js"
   },
   "files": [
     "dist"

@@ -27,7 +27,7 @@
     "url": "git+https://github.com/Gusto/baerly-storage.git"
   },
   "bin": {
-    "baerly": "./dist/baerly.js"
+    "baerly": "dist/baerly.js"
   },
   "files": [
     "dist"
