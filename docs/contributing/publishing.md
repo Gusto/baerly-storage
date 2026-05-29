@@ -91,41 +91,44 @@ Confirm: `package/dist/index.js` and
 `package/dist/templates/{minimal,react}-{cloudflare,node}/package.json`
 are present. Cleanup the local `.tgz` files when done.
 
-## Dry-run
+## Publish — always via `pnpm release`
+
+> ⚠️ **Never run a bare `pnpm publish` / `npm publish`.** A
+> `prepublishOnly` guard (`scripts/guard-publish.mjs`) blocks it on
+> both packages, because a bare publish leaks them **public**. Two
+> things conspire: `pnpm publish` silently drops
+> `publishConfig.access: "restricted"`, and the `@gusto` org default
+> visibility is **public**, so the registry publishes world-readable.
+> This burned us twice.
+
+`pnpm release` (`scripts/publish.mjs`) is the only sanctioned path. It:
+
+1. builds,
+2. publishes both packages with an **explicit** `--access restricted`,
+3. forces `npm access set status=private` on each (only needs package
+   write access, not org admin — and it's the authoritative lever,
+   since `--access` is honoured only on a package's *first* publish),
+4. **verifies** with `npm access get status` and **exits non-zero,
+   loudly, if either package is not private.**
 
 ```sh
-pnpm publish --dry-run --no-git-checks
-pnpm --filter @gusto/create-baerly-storage publish --dry-run --no-git-checks
+pnpm release --dry-run     # build + pack + report current visibility, no writes
+pnpm release               # the real thing
+pnpm release --otp=123456  # forward a 2FA one-time code if prompted
 ```
 
-Each dry-run reports the version it would publish and lists the
-files. Review the file list — anything outside `dist/` is a
-packaging bug.
+Review the dry-run file list — anything outside `dist/` is a
+packaging bug. A green `pnpm release` ends with
+`✓ Both packages published and verified PRIVATE.` Anything else is a
+failed release; follow the script's printed remediation
+(`npm access set status=private <pkg>`) until `npm access get status`
+prints `private`.
 
-## Real publish
-
-```sh
-pnpm publish --no-git-checks
-pnpm --filter @gusto/create-baerly-storage publish --no-git-checks
-```
-
-Verify each landed:
-
-```sh
-npm view @gusto/baerly-storage
-npm view @gusto/create-baerly-storage
-```
-
-Confirm each is **private**, not public — this is the bit that bites:
-
-```sh
-npm access get status @gusto/baerly-storage          # expect: private
-npm access get status @gusto/create-baerly-storage   # expect: private
-```
-
-If either reports `public`, flip it immediately with
-`npm access set status=private @gusto/<pkg>` and check
-`publishConfig.access` is `"restricted"` before the next publish.
+> **The durable backstop is the org setting.** If you (or an org
+> admin) can set the `@gusto` org's *default package visibility* to
+> private on npmjs.com, do it — that removes the public window
+> entirely. `pnpm release` is the admin-free safeguard for when you
+> can't.
 
 ## Post-publish smoke
 

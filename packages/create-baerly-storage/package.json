@@ -31,7 +31,8 @@
   },
   "scripts": {
     "build": "rolldown -c",
-    "prepack": "rolldown -c"
+    "prepack": "rolldown -c",
+    "prepublishOnly": "node ../../scripts/guard-publish.mjs"
   },
   "dependencies": {
     "@clack/prompts": "^1.4.0",

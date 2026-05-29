@@ -150,6 +150,8 @@
     "test:export-round-trip": "vitest run --project=default tests/integration/export-round-trip.test.ts",
     "build": "rolldown -c && pnpm -r --filter \"./packages/*\" build",
     "baerly": "node dist/baerly.js",
+    "release": "node scripts/publish.mjs",
+    "prepublishOnly": "node scripts/guard-publish.mjs",
     "prepare": "node scripts/prepare.mjs",
     "format": "oxfmt tests packages",
     "format:check": "oxfmt --check tests packages",
