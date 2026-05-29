@@ -66,7 +66,9 @@ const findUseQueryCalls = (src) => {
       const ch = src[i];
       const next = src[i + 1];
       if (inLineComment) {
-        if (ch === "\n") {inLineComment = false;}
+        if (ch === "\n") {
+          inLineComment = false;
+        }
       } else if (inBlockComment) {
         if (ch === "*" && next === "/") {
           inBlockComment = false;
@@ -129,7 +131,7 @@ const scanCall = (file, src, [start, end]) => {
     recordFinding(
       file,
       lineOf(src, start),
-      "useQuery callbacks must be synchronous (no `async`); the recorder doesn't survive an `await`.",
+      "useQuery callbacks must be synchronous (no `async`); the recorder doesn't survive an `await`.\n  To fix: drop `async` from the callback. If you need awaited data, lift the work above `useQuery(...)` (e.g. into a `useEffect` + state) and pass the resolved value in as a synchronous prop.",
     );
     return;
   }
@@ -143,7 +145,7 @@ const scanCall = (file, src, [start, end]) => {
     recordFinding(
       file,
       lineOf(src, start),
-      "useQuery callbacks must not contain `await`; the recorder doesn't survive a `.then` resolution.",
+      "useQuery callbacks must not contain `await`; the recorder doesn't survive a `.then` resolution.\n  To fix: hoist any `await` (or `.then(...)`) out of the callback. The `useQuery` body runs inside the metrics-recorder context; awaiting drops the context for the rest of the function. See docs/contributing/conventions/observability.md.",
     );
   }
 };

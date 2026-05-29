@@ -171,6 +171,12 @@ if (CHECK_MODE) {
     console.error(
       `${editedSites} site(s) in ${changedFiles} file(s) need explicit .ts/.tsx extension`,
     );
+    console.error(
+      `  To fix: run \`node scripts/add-ts-extensions.mjs\` (no flags) to rewrite them in place.`,
+    );
+    console.error(
+      `  The relative imports above must end in \`.ts\`, \`.tsx\`, \`/index.ts\`, or \`/index.tsx\` so Node's --experimental-strip-types runtime can resolve them.`,
+    );
     process.exit(1);
   }
   console.log("OK: all relative imports carry .ts/.tsx extensions.");

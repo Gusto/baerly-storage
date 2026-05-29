@@ -77,9 +77,15 @@ function checkFile(path) {
   }
   if (!fm.audience) {
     findings.push(`${rel}: missing 'audience'`);
+    findings.push(
+      `  To fix: add \`audience: <one of: ${[...VALID_AUDIENCE].join(", ")}>\` to the YAML frontmatter. See VALID_AUDIENCE at the top of scripts/verify-docs.mjs for the canonical set.`,
+    );
   } else if (!VALID_AUDIENCE.has(fm.audience)) {
     findings.push(
       `${rel}: invalid audience '${fm.audience}' (allowed: ${[...VALID_AUDIENCE].join(", ")})`,
+    );
+    findings.push(
+      `  To fix: change the \`audience:\` field to one of: ${[...VALID_AUDIENCE].join(", ")}.`,
     );
   }
   if (Array.isArray(fm.related)) {
@@ -104,6 +110,9 @@ function checkFile(path) {
       const days = Math.floor((Date.now() - reviewed.getTime()) / 86400000);
       if (days > STALE_AFTER_DAYS) {
         findings.push(`${rel}: last-reviewed ${days}d ago (>${STALE_AFTER_DAYS})`);
+        findings.push(
+          `  To fix: re-read the doc against the current code, then bump \`last-reviewed:\` in the frontmatter to today (YYYY-MM-DD). If the doc is obsolete, delete it instead.`,
+        );
       }
     }
   }
