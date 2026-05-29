@@ -26,6 +26,9 @@
       "import": "./src/index.ts"
     }
   },
+  "publishConfig": {
+    "access": "restricted"
+  },
   "scripts": {
     "build": "rolldown -c",
     "prepack": "rolldown -c"

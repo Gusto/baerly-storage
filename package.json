@@ -135,7 +135,7 @@
         "import": "./dist/dev-vite.js"
       }
     },
-    "access": "public"
+    "access": "restricted"
   },
   "scripts": {
     "typecheck": "tsgo --noEmit",

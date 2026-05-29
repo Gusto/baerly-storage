@@ -172,9 +172,13 @@ git tag v0.1.5 && git push --tags
 - `publishConfig.provenance` is intentionally NOT set. Most private
   registries don't accept npm Sigstore attestations. If/when the
   project moves to public npm, restore the flag.
-- `publishConfig.access: "public"` is set on the root. For the
-  private registry it's a no-op; carried forward so that Phase 2's
-  public publish doesn't need a separate config edit.
+- `publishConfig.access` is set to `"restricted"` on both
+  published packages. The `@gusto` org on npmjs.com defaults new
+  scoped packages to `public`, so leaving `access` unset would
+  publish world-readable — `"restricted"` forces a private publish.
+  Never change to `"public"`. If you ever add a third `@gusto/*`
+  package, set `"access": "restricted"` in its `publishConfig`
+  before the first publish.
 - The 7 workspace `@baerly/*` packages have `"private": true` as a
   defensive lock. Never remove these flags — those packages are
   bundled into the published `@gusto/baerly-storage`, never
