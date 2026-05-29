@@ -1,7 +1,7 @@
 ---
 title: Package layer invariant
 audience: adr
-summary: ADR 006 — forward-edge-only package dependency graph, enforced by scripts/lint-package-layers.mjs.
+summary: ADR 006 — hand-maintained package import allow list, enforced by scripts/lint-package-layers.mjs.
 last-reviewed: 2026-05-28
 tags: [decision, adr]
 related: [../../packages/protocol/src/index.ts, ../../scripts/lint-package-layers.mjs]
@@ -35,7 +35,8 @@ regression the moment it lands — bundle-size catches it later
 definitively.
 
 The package import graph today (production code only — `*.test.ts`
-and `*.test-d.ts` excluded) is a DAG:
+and `*.test-d.ts` excluded) is a hand-maintained allow list with
+one Node-only cycle:
 
 ```
 protocol            : (nothing)
@@ -50,20 +51,30 @@ create-baerly-storage : protocol, server, cli
 
 Two things to note about this graph:
 
-- **`@baerly/dev` depends on `@baerly/adapter-node`** for the
-  in-process Vite middleware
-  ([`packages/dev/src/vite-plugin.ts`](../../packages/dev/src/vite-plugin.ts)
-  imports `baerlyNode`). The Node-only Vite dev seam is the
-  consumer; this edge will never reach Workerd. Both adapter
-  packages happen to import `@baerly/dev` for the local-fs /
-  ensure-table helpers, so the `dev`-vs-`adapter-node` direction
-  on the wire is `dev → adapter-node`; the reverse edge stays
-  closed.
+- **`@baerly/dev` and `@baerly/adapter-node` form a 2-cycle.**
+  Both edges exist today:
+  - `dev → adapter-node` via
+    [`packages/dev/src/vite-plugin.ts:5`](../../packages/dev/src/vite-plugin.ts)
+    importing `baerlyNode` (the in-process Vite middleware uses the
+    Node listener as its dev seam).
+  - `adapter-node → dev` via
+    [`packages/adapter-node/src/middleware/dev-landing.ts:1`](../../packages/adapter-node/src/middleware/dev-landing.ts)
+    importing `renderDevLanding` as a runtime value (the Node
+    server's "dev landing" GET handler).
+
+  The cycle is Node-only — it cannot transitively pull anything into
+  `@baerly/server` or `@baerly/protocol`, and it will never reach
+  Workerd. Breaking it would require splitting `@baerly/dev` (e.g.
+  moving `vite-plugin.ts` into `adapter-node`, or moving
+  `renderDevLanding` to a sibling package that `dev` does not
+  consume at value level). That is a separate refactor and is
+  explicitly out of scope for this ADR.
 - **`@baerly/server` imports nothing below `@baerly/protocol`.**
   That is the load-bearing constraint. Workerd compatibility is
   defined as "everything reachable from `@baerly/server`'s entry
   points runs under Workerd" — i.e. `protocol` runs under
-  Workerd, and so does `server`.
+  Workerd, and so does `server`. The `dev ↔ adapter-node` cycle
+  sits above this line and does not threaten it.
 
 Three options for enforcement:
 
@@ -84,7 +95,7 @@ Three options for enforcement:
 
 ## Decision
 
-Adopt the regex linter. The forward-edge-only allow list is:
+Adopt the regex linter. The hand-maintained package allow list is:
 
 | Owner package | May import |
 |---|---|
@@ -110,12 +121,13 @@ Wired into `pnpm verify` and `pnpm verify:agent`.
 
 ## Consequences
 
-- **Forward-edge-only is now mechanically enforced.** Adding a
-  back-edge (`protocol` importing `server`, `server` importing
-  any adapter) fails `pnpm verify` at edit time. The previous
-  guard chain (reviewer → bundle-size → manual-e2e) still
-  exists as defence in depth, but the first gate is now seconds
-  instead of hours.
+- **The load-bearing constraint is now mechanically enforced.**
+  Adding a back-edge into the protected layers (`protocol`
+  importing `server`, `server` importing any adapter, or any
+  unlisted cross-package import) fails `pnpm verify` at edit
+  time. The previous guard chain (reviewer → bundle-size →
+  manual-e2e) still exists as defence in depth, but the first
+  gate is now seconds instead of hours.
 - **No sibling adapter imports.** `adapter-node` and
   `adapter-cloudflare` cannot import each other; if a helper
   needs to be shared, it moves down into `@baerly/protocol`,
@@ -131,13 +143,16 @@ Wired into `pnpm verify` and `pnpm verify:agent`.
   `RULES` table in the script in the same PR. There is no
   inference; the allow list is hand-maintained on purpose so
   that each new edge gets a deliberate review.
-- **The `dev → adapter-node` edge is permanent infra.**
-  `@baerly/dev`'s Vite plugin uses `baerlyNode` as the
-  in-process listener for the dev middleware path. That is
-  the Node-only dev seam and it will never reach Workerd. If
-  we ever need a Workerd-compatible dev seam, it would have to
-  enter via a sibling path that does not transitively import
-  `@baerly/adapter-node`.
+- **The `dev ↔ adapter-node` cycle is accepted.** Both edges
+  exist today: `@baerly/dev`'s Vite plugin uses `baerlyNode` as
+  the in-process listener for the dev middleware path, and
+  `@baerly/adapter-node`'s `dev-landing` middleware uses
+  `renderDevLanding` as a runtime value for the dev landing
+  page. The cycle is Node-only and will never reach Workerd.
+  Breaking it would require splitting `@baerly/dev` — either
+  moving `vite-plugin.ts` into `adapter-node`, or moving
+  `renderDevLanding` to a sibling package that `dev` does not
+  consume at value level — and that is a separate refactor.
 - **The lock is reversible with cost.** A future supersession
   ADR can rewrite the allow list (e.g. if `client` grows a
   legitimate need to import `dev`, or if the dev/adapter
