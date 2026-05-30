@@ -86,6 +86,7 @@ For a runnable multi-tab demo see [`examples/react-node/`](./examples/react-node
 ## Go deeper
 
 - 📖 **The essay** — [*Storage Is the Missing Primitive for Agent-Built Software*](https://docs.google.com/document/d/1jpMR-dV9wCprtzY2DUxAg_NZTrAf81OcB_vxKhiCPQ0/edit?tab=t.vo58xtzxjwr) [TODO: Replace with external link on publish]
+- 🧭 **How it works** — [`docs/about/how-it-works.md`](./docs/about/how-it-works.md) (the plain-language mental model — bucket + one atomic pointer flip)
 - 🧱 **Product thesis** — [`docs/about/thesis.md`](./docs/about/thesis.md)
 - 🏗️ **Architecture** — [`docs/contributing/architecture.md`](./docs/contributing/architecture.md)
 - 🔧 **Embed by hand** — [`docs/guide/embed.md`](./docs/guide/embed.md) (drop baerly into any existing Node app in ~30 lines)

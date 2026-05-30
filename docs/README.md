@@ -39,10 +39,16 @@ invariants, operator runbooks, and target-specific bolt-ons.
 
 Product and business context.
 
+- `about/how-it-works.md` — the plain-language mental model: a bucket
+  of files plus a library that flips one pointer atomically, and the
+  typed layers from protocol to React. Start here to understand (or
+  explain) the system.
 - `about/thesis.md` — what Baerly is, who it's for, what it
   deliberately isn't.
 - `about/cost-model.md` — per-line-item rates, write-amp meter,
   compression posture.
+- `about/graduation.md` — the CPU/memory bounds that tell you when a
+  collection has outgrown its deployment tier, and what to do about it.
 - `about/pricing-log.md` — append-only audit of cost commitments.
 
 ## Contributing
