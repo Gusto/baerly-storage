@@ -171,25 +171,25 @@ The "actions" you call — `collection("notes").insert(...)`,
 fulfilled by different layers depending on where the code runs.
 
 ```
-your code:   collection("notes").insert({ body })
+       collection("notes").insert({ body })
                        │
    ┌───────────────────┴───────────────────┐
-   │ CLIENT implements the interface         │  encode
-   │   → POST /v1/c/notes  { doc }            │ ─────────►  the wire
-   └─────────────────────────────────────────┘
+   │ CLIENT implements the interface       │  encode
+   │   → POST /v1/c/notes  { doc }         │ ─────────►  the wire
+   └───────────────────────────────────────┘
                                                   │
-   ┌──────────────────────────────────────┐      │ decode
+   ┌───────────────────────────────────────┐      │ decode
    │ ROUTER reads the request,             │ ◄────┘
    │   calls the real action               │
+   └──────────────────┬────────────────────┘
+                      │
+   ┌──────────────────▼───────────────────┐
+   │ SERVER implements the interface      │
+   │   → PUT content / log / index        │
+   │   → CAS-swap current.json            │
    └──────────────────┬───────────────────┘
-                       │
-   ┌───────────────────▼──────────────────┐
-   │ SERVER implements the interface       │
-   │   → PUT content / log / index         │
-   │   → CAS-swap current.json             │
-   └───────────────────┬──────────────────┘
-                        ▼
-                     S3 bucket
+                      ▼
+                  S3 bucket
 ```
 
 Reading that chain top to bottom:
