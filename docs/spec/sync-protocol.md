@@ -2,7 +2,7 @@
 title: Sync protocol
 audience: spec
 summary: Atomic multi-key writes over S3 via manifest indirection; time-ordered log; reconciliation algorithm.
-last-reviewed: 2026-05-26
+last-reviewed: 2026-05-30
 tags: [protocol, sync, manifest, causal-consistency]
 related: [causal-consistency-checking.md, log-entry-shape.md, json-merge-patch.md, writer-fence-adversarial-model.md, prior-art.md]
 ---
@@ -228,6 +228,24 @@ Properties the kernel and the rest of this document both rely on.
    that respects the platform's subrequest budget and yields.
    The doctrinal rationale lives in
    [ADR-004](../adr/004-ephemeral-coordination.md).
+
+2. **S3-CAS is a hard backend prerequisite.** Every commit
+   CAS-advances `current.json` with `If-Match` on its ETag
+   (`packages/server/src/writer.ts`), and the same conditional PUT is
+   the only atomic moment in compaction. A backend that silently
+   *ignores* `If-Match` (rather than rejecting a stale write) does not
+   fail loudly — it causes silent lost-update corruption. The
+   conformance suite (`packages/protocol/src/storage/conformance.ts:188`)
+   asserts `If-Match` / `If-None-Match: "*"` semantics, but only under
+   `opts.supportsCAS` — a store may *skip* the assertion, and nothing
+   probes for the guarantee at runtime.
+
+   > **Known gap / follow-up (not yet implemented).** An init-time CAS
+   > probe that fails loud on a non-conditional store, plus a documented
+   > "must honor `If-Match`" backend requirement, do not exist yet. Until
+   > they land this invariant is *assumed, not enforced*. This is a
+   > core-protocol concern independent of the in-band-maintenance design,
+   > which leans on the same primitive.
 
 ## The Sync Algorithm
 

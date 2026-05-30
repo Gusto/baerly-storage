@@ -400,8 +400,12 @@ auto-load on matching edits and point at the same files.
   "Just a Bucket" (thesis criterion #6, [thesis.md](docs/about/thesis.md#what-prototype-tier-storage-needs)).
   Scheduled cron is a *user-opt-in* acceleration via the exported
   `runScheduledMaintenance` SDK, never a default and never a requirement.
-  Reads and writes both opportunistically tick maintenance inline; that
-  is the entire maintenance story for the default scaffold. Anti-precedent:
+  Today the default scaffold runs **no** automatic maintenance: neither
+  reads nor writes tick, CF scaffolds ship no `triggers.crons`, and the
+  Node adapter's opt-in `opts.maintenance` `setInterval` is unwired by
+  default — so `runScheduledMaintenance` is the only maintenance trigger
+  that exists. (An in-band, write-triggered design — writes tick, reads
+  stay pure — is under design but not yet landed.) Anti-precedent:
   Cassandra's `read_repair_chance` (removed in 4.0,
   [CASSANDRA-13910](https://issues.apache.org/jira/browse/CASSANDRA-13910)) —
   unbounded probabilistic on-request maintenance is harmful; bounded under

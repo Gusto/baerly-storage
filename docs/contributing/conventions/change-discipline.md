@@ -2,7 +2,7 @@
 title: Conventions for changing code
 audience: coder
 summary: How to make non-trivial changes — no silent compat shims, one canonical form per operation, types over JSDoc.
-last-reviewed: 2026-05-29
+last-reviewed: 2026-05-30
 tags: [conventions, discipline]
 related: [docs.md, tests.md, "../../about/thesis.md", "../../adr/002-api-surface-lock.md"]
 ---
@@ -65,7 +65,14 @@ operator action set.
    audience. Find the inline-on-request version. Anti-precedent: Delta
    Lake on S3 required a [DynamoDB lock table](https://docs.delta.io/latest/delta-storage.html)
    for safe multi-writer commits before S3 strong consistency — exactly
-   the operator chore baerly's design refuses.
+   the operator chore baerly's design refuses. Apache Hudi makes the
+   same chore explicit: its multi-writer mode requires an
+   operator-installed [lock provider](https://hudi.apache.org/docs/concurrency_control/)
+   (ZooKeeper / DynamoDB / Hive Metastore). The right shape coordinates
+   through the storage itself — Apache Iceberg and Delta Lake commit
+   compaction as an *optimistic* transaction against the table-metadata
+   pointer (the `current.json` analog): the loser retries, no lock. That
+   is exactly baerly's full-fence CAS on `current.json`.
 
 2. **Does the mechanism require a long-lived process?** (`setInterval`,
    in-memory queue, background thread, persistent connection pool.) If
@@ -89,7 +96,19 @@ operator action set.
    [CASSANDRA-13910](https://issues.apache.org/jira/browse/CASSANDRA-13910))
    — unbounded probabilistic on-request work was deemed "more harmful
    than helpful" and removed. The lesson: opportunistic is fine,
-   *unbounded* opportunistic is not.
+   *unbounded* opportunistic is not. A second positive precedent for the
+   bounded-and-resumable shape: SQLite's
+   [`PRAGMA incremental_vacuum`](https://www.sqlite.org/pragma.html#pragma_incremental_vacuum)
+   reclaims a *static, caller-set page budget* per call rather than
+   self-metering a closed loop — the correct budget family for a
+   killable isolate that cannot observe its own runtime.
+
+> **On the DX bar.** Databricks [Predictive Optimization](https://docs.databricks.com/aws/en/optimizations/predictive-optimization)
+> ships zero-operator automatic `OPTIMIZE`/`VACUUM`, which proves the
+> "maintenance just happens" expectation is reasonable — but it *hides* a
+> privileged scheduler baerly cannot assume on untrusted, killable
+> ephemeral compute. Matching that DX *without* that scheduler is the
+> constraint these three checks enforce.
 
 When proposing a maintenance, coordination, or background-work mechanism,
 cite this section in the PR description and answer the three questions
