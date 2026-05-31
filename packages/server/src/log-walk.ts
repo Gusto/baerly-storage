@@ -48,6 +48,31 @@ export const readLogEntry = async (
   key: string,
   opts?: { signal?: AbortSignal },
 ): Promise<LogEntry> => {
+  const got = await readLogEntryWithBytes(storage, key, opts);
+  return got.entry;
+};
+
+/**
+ * Like {@link readLogEntry}, but also surfaces `bytes` — the
+ * byteLength of the STORED log-object body exactly as it was GET back
+ * from storage (`got.body.byteLength`).
+ *
+ * The compactor uses this to subtract from `current.json.tail_bytes`
+ * the EXACT bytes the writer PUT for the folded slice. The writer
+ * accumulated `encodeJsonBytes(entry).byteLength` per committed entry
+ * (`writer.ts` Step 6); the stored body IS those bytes, so summing
+ * `got.body.byteLength` over the folded range == the writer's
+ * accumulated total for that range — no re-encode, no round-trip
+ * assumption (a re-encode of the parsed `LogEntry` could drift if
+ * key-order/whitespace ever diverged from what was PUT).
+ *
+ * Same error semantics as {@link readLogEntry}.
+ */
+export const readLogEntryWithBytes = async (
+  storage: Storage,
+  key: string,
+  opts?: { signal?: AbortSignal },
+): Promise<{ entry: LogEntry; bytes: number }> => {
   const got = await storage.get(
     key,
     opts?.signal !== undefined ? { signal: opts.signal } : undefined,
@@ -59,7 +84,7 @@ export const readLogEntry = async (
     );
   }
   try {
-    return decodeJsonBytes<LogEntry>(got.body);
+    return { entry: decodeJsonBytes<LogEntry>(got.body), bytes: got.body.byteLength };
   } catch (error) {
     throw new BaerlyError("InvalidResponse", `log-walk: malformed log entry at ${key}`, error);
   }
@@ -83,18 +108,40 @@ export const walkLogRange = async (
   toSeqExclusive: number,
   opts?: { signal?: AbortSignal },
 ): Promise<LogEntry[]> => {
+  const withBytes = await walkLogRangeWithBytes(storage, logPrefix, fromSeq, toSeqExclusive, opts);
+  return withBytes.map((r) => r.entry);
+};
+
+/**
+ * Like {@link walkLogRange}, but each element also carries `bytes` —
+ * the STORED log-object body byteLength (see {@link readLogEntryWithBytes}).
+ * Same seq-order, empty-range, error, and bounded-parallelism
+ * ({@link MAX_PARALLEL_LOG_READS}) guarantees as {@link walkLogRange};
+ * this is the bytes-aware core `walkLogRange` is implemented on top of.
+ *
+ * The compactor consumes this so it gets BOTH the parsed entries (for
+ * the fold) AND the exact byte sum (to decrement `tail_bytes`) from a
+ * single walk.
+ */
+export const walkLogRangeWithBytes = async (
+  storage: Storage,
+  logPrefix: string,
+  fromSeq: number,
+  toSeqExclusive: number,
+  opts?: { signal?: AbortSignal },
+): Promise<Array<{ entry: LogEntry; bytes: number }>> => {
   if (fromSeq >= toSeqExclusive) {
     return [];
   }
   const total = toSeqExclusive - fromSeq;
-  const out: LogEntry[] = Array.from({ length: total });
+  const out: Array<{ entry: LogEntry; bytes: number }> = Array.from({ length: total });
   for (let chunkStart = 0; chunkStart < total; chunkStart += MAX_PARALLEL_LOG_READS) {
     opts?.signal?.throwIfAborted();
     const chunkEnd = Math.min(chunkStart + MAX_PARALLEL_LOG_READS, total);
-    const promises: Array<Promise<LogEntry>> = [];
+    const promises: Array<Promise<{ entry: LogEntry; bytes: number }>> = [];
     for (let i = chunkStart; i < chunkEnd; i++) {
       const seq = fromSeq + i;
-      promises.push(readLogEntry(storage, `${logPrefix}/log/${seq}.json`, opts));
+      promises.push(readLogEntryWithBytes(storage, `${logPrefix}/log/${seq}.json`, opts));
     }
     const results = await Promise.all(promises);
     for (let i = 0; i < results.length; i++) {

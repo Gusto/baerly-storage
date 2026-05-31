@@ -48,7 +48,7 @@ import {
   type Storage,
   type StoragePutOptions,
 } from "@baerly/protocol";
-import { walkLogRange } from "./log-walk.ts";
+import { walkLogRangeWithBytes } from "./log-walk.ts";
 import { getCurrentContext } from "./observability/context.ts";
 import {
   encodeSnapshotBody,
@@ -96,13 +96,35 @@ export interface InternalCompactOptions extends CompactOptions {
    * unbounded (`Number.MAX_SAFE_INTEGER`).
    */
   readonly maxEntriesPerRun?: number;
+
+  /**
+   * @internal SNAPSHOT-axis byte ceiling. The rebuilt snapshot body
+   * (NOT snapshot + tail) must be `<= ceilingBytes` or the fold is
+   * DEFERRED before the PUT. `undefined ⇒ no ceiling` (`Infinity`).
+   * The write-tick runner threads its pre-fold-projection `C` here as
+   * a Node-side belt-and-suspenders; on a CPU-killable CF isolate the
+   * kill lands during walk+encode (before this check), so the decisive
+   * CF guard is the runner's pre-fold projection, not this.
+   */
+  readonly ceilingBytes?: number;
+
+  /**
+   * @internal SNAPSHOT-axis row ceiling. The rebuilt snapshot row count
+   * (`base.size`, NOT including the tail) must be `<= ceilingEntries`
+   * or the fold is DEFERRED before the PUT. `undefined ⇒ no ceiling`
+   * (`Infinity`). Catches the tiny-doc case where bytes stay small but
+   * row count balloons.
+   */
+  readonly ceilingEntries?: number;
 }
 
 export interface CompactResult {
   /** `true` iff a new snapshot landed and `current.json` was advanced. */
   readonly written: boolean;
   /** Reason `written === false`. */
-  readonly skippedReason?: "below-min-threshold" | "current-json-missing" | "cas-lost";
+  readonly skippedReason?: "below-min-threshold" | "current-json-missing" | "cas-lost" | "deferred";
+  /** `true` on the over-ceiling rebuild-defer path (`skippedReason === "deferred"`). */
+  readonly deferred?: boolean;
   /** Prior snapshot key (`null` if no prior snapshot existed). */
   readonly previousSnapshotKey: string | null;
   /** New snapshot key (`undefined` if `written === false` and no PUT happened). */
@@ -165,6 +187,9 @@ export const compact = async (
   const internal = options as InternalCompactOptions;
   const maxPerRun = internal.maxEntriesPerRun ?? DEFAULT_MAX_PER_RUN;
   const minToCompact = options.minEntriesToCompact ?? DEFAULT_MIN_TO_COMPACT;
+  // Each ceiling: `undefined ⇒ no ceiling` (treated as `Infinity`).
+  const ceilingBytes = internal.ceilingBytes ?? Number.POSITIVE_INFINITY;
+  const ceilingEntries = internal.ceilingEntries ?? Number.POSITIVE_INFINITY;
   const collectionPrefix = currentJsonKey.slice(0, currentJsonKey.lastIndexOf("/"));
   const collectionName = collectionPrefix.slice(collectionPrefix.lastIndexOf("/") + 1);
 
@@ -209,15 +234,31 @@ export const compact = async (
       : await loadSnapshotAsMap(storage, current.snapshot, collectionName, options.signal);
 
   // ── Step 3. Parallel-fetch [logSeqStartBefore, foldEnd) entries. ──
-  const entries = await walkLogRange(storage, collectionPrefix, logSeqStartBefore, foldEnd, {
-    signal: options.signal,
-  });
+  // Bytes-aware variant: we need BOTH the parsed entries (for the fold)
+  // AND the exact STORED body byteLength per object (to decrement
+  // `tail_bytes` by precisely what the writer accumulated).
+  const fetched = await walkLogRangeWithBytes(
+    storage,
+    collectionPrefix,
+    logSeqStartBefore,
+    foldEnd,
+    { signal: options.signal },
+  );
+
+  // Sum the STORED body bytes over ALL fetched objects in
+  // `[logSeqStartBefore, foldEnd)` — NOT only the entries the fold loop
+  // keeps. The writer counted EVERY committed entry's bytes into
+  // `tail_bytes` (`encodeJsonBytes(entry).byteLength`, writer.ts Step
+  // 6); the stored body IS those bytes, so this sum == the writer's
+  // accumulated total for the slice → exact, no re-encode. The byte sum
+  // is independent of the fold-apply filter below.
+  const foldedSliceBytes = fetched.reduce((sum, f) => sum + f.bytes, 0);
 
   // ── Step 4. Apply the fold onto `base`. ─────────────────────────
   // I / U overwrite with the post-image (today's per-doc-replace
   // model: writer emits `entry.after` as the full post-image, see
   // packages/protocol/src/log.ts). D tombstones.
-  for (const entry of entries) {
+  for (const { entry } of fetched) {
     if (entry.collection !== collectionName) {
       continue;
     }
@@ -233,6 +274,9 @@ export const compact = async (
         break;
       }
       case "D": {
+        // Tombstone purge: the `current.json` CAS serialises commits, so
+        // there is no late partition that could resurrect this doc —
+        // dropping it here IS the tombstone purge.
         base.delete(entry.doc_id);
         break;
       }
@@ -261,6 +305,32 @@ export const compact = async (
     docs: sortedDocs,
   };
   const bodyBytes = encodeSnapshotBody(snapshotBody);
+
+  // ── Step 5b. SNAPSHOT-axis ceiling — check BEFORE the PUT. ───────
+  // The ceiling is on the SNAPSHOT being rebuilt (`bodyBytes.byteLength`
+  // / `base.size`), NOT snapshot + tail — the tail is bounded
+  // separately by `maxEntriesPerRun`. This is a Node-side
+  // belt-and-suspenders: on a CPU-killable CF isolate the kill lands
+  // during the walk + encode above, BEFORE this check, so the decisive
+  // CF guard is the runner's pre-fold projection (see maintenance.ts
+  // `runBoundedMaintenance`). When over ceiling we DEFER: no PUT, no
+  // CAS, no current.json mutation.
+  if (bodyBytes.byteLength > ceilingBytes || base.size > ceilingEntries) {
+    ctxMetrics().counter("db.compaction.deferred_total", 1, {
+      collection: collectionName,
+      dimension: bodyBytes.byteLength > ceilingBytes ? "bytes" : "rows",
+    });
+    return {
+      written: false,
+      skippedReason: "deferred",
+      deferred: true,
+      previousSnapshotKey: current.snapshot,
+      logSeqStartBefore,
+      logSeqStartAfter: logSeqStartBefore,
+      entriesFolded: 0,
+    };
+  }
+
   const sha256 = await snapshotHash(bodyBytes);
   const newKey = snapshotKey(collectionPrefix, 0, foldEnd, sha256);
 
@@ -279,6 +349,14 @@ export const compact = async (
     ...current,
     snapshot: newKey,
     log_seq_start: foldEnd,
+    snapshot_bytes: bodyBytes.byteLength,
+    snapshot_rows: base.size,
+    // Decrement `tail_bytes` by EXACTLY the folded slice's stored bytes.
+    // When the whole tail folds in one slice (`foldEnd === nextSeq`),
+    // `foldedSliceBytes === current.tail_bytes` exactly → reaches 0.
+    // Not clamped: a negative here would be a real accounting bug the
+    // add-then-fold round-trip property test is designed to catch.
+    tail_bytes: current.tail_bytes - foldedSliceBytes,
   };
   const nextBody = encodeJsonBytes(next);
   const casOpts: StoragePutOptions = {
@@ -294,6 +372,12 @@ export const compact = async (
       // snapshot file we just wrote is now an orphan (correct
       // content, unreferenced) — `runGc()` will sweep it. Surface
       // cas-lost; the cron handler can rerun us next tick.
+      //
+      // Emit the cas-lost metric HERE so it covers ALL callers
+      // (write-tick runner, runScheduledMaintenance, direct tests). A
+      // lost fold is EXPECTED contention, not an error. (The runner
+      // must NOT also emit it — that would double-count.)
+      ctxMetrics().counter("db.compaction.cas_lost_total", 1, { collection: collectionName });
       return {
         written: false,
         skippedReason: "cas-lost",

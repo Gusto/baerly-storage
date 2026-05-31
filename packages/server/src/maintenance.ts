@@ -310,14 +310,17 @@ export const runBoundedMaintenance = async (
     // ── Step 3. Fold-priority. ───────────────────────────────────────
     if (gate1) {
       if (foldViable) {
-        const res = await compact({ storage, currentJsonKey }, {
+        // Thread the same `C` / `E` ceilings the pre-fold projection
+        // above used into compact() as a Node-side belt-and-suspenders.
+        // compact() emits `db.compaction.cas_lost_total` itself on a
+        // lost CAS, so the runner does NOT (avoids double-count).
+        await compact({ storage, currentJsonKey }, {
           maxEntriesPerRun: maxFoldEntriesPerPass,
           minEntriesToCompact,
+          ceilingBytes: C,
+          ceilingEntries: E,
           ...(signal !== undefined && { signal }),
         } as InternalCompactOptions);
-        if (res.skippedReason === "cas-lost") {
-          ctxMetrics().counter("db.compaction.cas_lost_total", 1, { collection });
-        }
         if (phasesPerTick === "single") {
           return; // this tick's one phase was the fold (attempt)
         }
