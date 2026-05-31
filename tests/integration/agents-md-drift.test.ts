@@ -1,7 +1,9 @@
 // Maintenance contract for this file:
 //
 // The four examples/*/AGENTS.md files duplicate "Going to production"
-// Patterns A/B/C in paired blocks. Each block is delimited by HTML
+// Patterns A/B/C in paired blocks, plus a host-agnostic Pattern D
+// ("## Maintenance") that is identical across ALL FOUR files (it has
+// no per-template variation). Each block is delimited by HTML
 // comment sentinels:
 //
 //   <!-- pattern-a:start -->
@@ -19,6 +21,10 @@
 //     sentinels still bound the section. No test change needed.
 //   - To add a new pattern: add new sentinel pair in every paired
 //     AGENTS.md, then add a new test() block here.
+//   - Pattern D ("## Maintenance") is host-agnostic — the same block
+//     is wrapped in <!-- pattern-d:start/end --> in all four files and
+//     asserted byte-identical across all four (no normalisation needed,
+//     since it carries no tenant/app/schema/plugin variation).
 //   - To add a new legitimate variation: add a new normalise* helper
 //     and chain it into normalise().
 //
@@ -96,5 +102,17 @@ describe("AGENTS.md Pattern drift fence", () => {
     const a = extractSentinel(read("minimal-node"), "pattern-c");
     const b = extractSentinel(read("react-node"), "pattern-c");
     expect(normalise(a)).toBe(normalise(b));
+  });
+
+  test("Pattern D (## Maintenance) is byte-identical across all four files", () => {
+    // Pattern D is host-agnostic: no tenant / app / schema / vite-plugin
+    // variation, so it must match RAW across all four — no normalise().
+    const cfMin = extractSentinel(read("minimal-cloudflare"), "pattern-d");
+    const cfReact = extractSentinel(read("react-cloudflare"), "pattern-d");
+    const nodeMin = extractSentinel(read("minimal-node"), "pattern-d");
+    const nodeReact = extractSentinel(read("react-node"), "pattern-d");
+    expect(cfReact).toBe(cfMin);
+    expect(nodeMin).toBe(cfMin);
+    expect(nodeReact).toBe(cfMin);
   });
 });

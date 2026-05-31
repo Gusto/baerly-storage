@@ -395,45 +395,6 @@ Dev sees `JWKS_URL` as `undefined`, spread short-circuits, and
   `() => Promise<Credentials>` or an `@aws-sdk/credential-providers`
   factory through the seam.
 
-- **Maintenance (in-band)** — compaction + GC run automatically and
-  IN-BAND: `baerlyNode` threads a Node-tier maintenance config onto
-  every request's observability context, and the writer runs one
-  bounded compact + GC slice INLINE on the (rare) write that crosses
-  a maintenance trigger. Reads never tick. There is no `setInterval`,
-  no cron, no `maintenance:` option, and no operator scheduler — the
-  bucket maintains itself.
-
-  The per-pass work is a moderate, inline-latency-budgeted multiple
-  of the conservative defaults (Node has no Cloudflare subrequest
-  cap, but inline maintenance is still bounded by worst-case
-  single-write latency). Two ops-plane env vars tune it:
-
-  ```sh
-  BAERLY_MAINTENANCE_MAX_FOLD_BYTES=1048576   # raise the snapshot ceiling C
-  BAERLY_MAINTENANCE_DISABLE=1                # kill switch
-  ```
-
-  For an explicit out-of-band sweep (a one-shot drain, a migration
-  step, a CI job), call `runScheduledMaintenance` from
-  `@gusto/baerly-storage` directly against your storage + the
-  collection's `current.json` key.
-
-  Maintenance emits one canonical info line per inline run on stdout.
-  Filter your log stream on
-  `"unit_of_work": "maintenance"` and read these fields:
-
-  - `compact_written` — log entries folded into the new snapshot
-    this tick (`0` when the live tail was below
-    `minEntriesToCompact`).
-  - `gc_swept` — keys deleted this tick (`0` when no candidates
-    aged out).
-  - The kernel also emits the recorder-bag fields alongside:
-    `db.compact.entries_folded_p50` / `_p99` / `_count` / `_sum`,
-    `db.manifest.lag_window_depth`, `db.orphan.candidate_count`,
-    `db.gc.entries_swept_per_second`, `db.gc.swept_total`.
-    Useful for dashboards; the four explicit fields above are
-    the at-a-glance summary.
-
 - **Deploy** — runs anywhere `node server.js` runs. The
   `package.json`'s `start` script is
   `node --experimental-strip-types src/server/index.ts`. Arrange the
@@ -472,6 +433,28 @@ Dev sees `JWKS_URL` as `undefined`, spread short-circuits, and
   side-projection (Postgres/SQLite/search index) populated
   incrementally from the `/v1/since` log feed or from a write hook —
   never re-scan per request.
+
+## Maintenance
+
+<!-- pattern-d:start -->
+Maintenance is automatic and write-triggered. No cron, no sidecar, no scheduler, no
+timer, no lock, no app-config knob — identical on every host. Every write runs a
+bounded GC slice inline plus a go/no-go compaction fold bounded by a fold-size ceiling
+whose default is safe on every tier. A size-ratio threshold means idle buckets pay
+nothing. Concurrent folds are safe without coordination: the commit is a
+compare-and-swap, so a fold that loses to a concurrent write is simply discarded and
+its leftover swept by GC. On Cloudflare the fold is deferred past the response via
+ctx.waitUntil; everywhere else it runs inline. **Reads are pure** — they never run
+maintenance, so the published idle-reader cost bound holds.
+
+A bucket maintains itself as long as it takes writes. A bucket served read-only does
+not auto-compact and pays a small, bounded replay — fine at small scale, a signal to
+graduate once a collection is large. See docs/about/graduation.md for the per-tier
+envelope and the BAERLY_MAINTENANCE_* operator env vars (you almost never need them).
+
+Operator opt-in: call runScheduledMaintenance from @gusto/baerly-storage/maintenance on
+your own schedule. Not required for steady-state operation.
+<!-- pattern-d:end -->
 
 ## When to graduate
 

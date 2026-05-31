@@ -456,37 +456,6 @@ from the runtime env.
   only, so setting them via `wrangler secret put` would silently
   defeat the doctor check.
 
-- **Maintenance loop (Cloudflare)** — opt-in. Add
-  `"triggers": { "crons": ["* * * * *"] }` to `wrangler.jsonc` and
-  wire `scheduled` on the options the factory returns from `baerlyWorker((env) => ({ ... }))`. The
-  handler is your code, so you choose what to call
-  (`runScheduledMaintenance`, `compact`, `runGc`) and which
-  `current.json` keys to target. Multi-tenant deployments iterate
-  their own keys; single-tenant deployments call once with a fixed
-  key. See the JSDoc on `WorkerScheduledHandler` in
-  `@gusto/baerly-storage/cloudflare` and `runScheduledMaintenance` in
-  `@gusto/baerly-storage/maintenance` for the wiring + free-vs-paid-tier
-  subrequest-budget guidance.
-
-  Maintenance emits one canonical info line per run on stdout
-  (Workers Logs ingestion). Filter your log stream on
-  `"unit_of_work": "maintenance"` and read these fields:
-
-  - `compact_written` — log entries folded into the new snapshot
-    this tick (`0` when the live tail was below
-    `minEntriesToCompact`). Only set when the tick called
-    `runScheduledMaintenance` or `compact` directly; isolated
-    `runGc` ticks emit their own `unit_of_work: "gc"` line.
-  - `gc_swept` — keys deleted this tick (`0` when no candidates
-    aged out). Only set when the tick called
-    `runScheduledMaintenance` or `runGc` directly.
-  - The kernel also emits the recorder-bag fields alongside:
-    `db.compact.entries_folded_p50` / `_p99` / `_count` / `_sum`,
-    `db.manifest.lag_window_depth`, `db.orphan.candidate_count`,
-    `db.gc.entries_swept_per_second`, `db.gc.swept_total`.
-    Useful for dashboards; the four explicit fields above are
-    the at-a-glance summary.
-
 - **Deploy** — `baerly deploy --target=cloudflare` runs
   `wrangler deploy --x-provision --x-auto-create` (Wrangler 4.10+)
   to auto-create the declared R2 buckets and ship the Worker. When
@@ -512,6 +481,28 @@ from the runtime env.
   side-projection (D1/KV/search index) populated incrementally from
   the `/v1/since` log feed or from a write hook — never re-scan per
   request.
+
+## Maintenance
+
+<!-- pattern-d:start -->
+Maintenance is automatic and write-triggered. No cron, no sidecar, no scheduler, no
+timer, no lock, no app-config knob — identical on every host. Every write runs a
+bounded GC slice inline plus a go/no-go compaction fold bounded by a fold-size ceiling
+whose default is safe on every tier. A size-ratio threshold means idle buckets pay
+nothing. Concurrent folds are safe without coordination: the commit is a
+compare-and-swap, so a fold that loses to a concurrent write is simply discarded and
+its leftover swept by GC. On Cloudflare the fold is deferred past the response via
+ctx.waitUntil; everywhere else it runs inline. **Reads are pure** — they never run
+maintenance, so the published idle-reader cost bound holds.
+
+A bucket maintains itself as long as it takes writes. A bucket served read-only does
+not auto-compact and pays a small, bounded replay — fine at small scale, a signal to
+graduate once a collection is large. See docs/about/graduation.md for the per-tier
+envelope and the BAERLY_MAINTENANCE_* operator env vars (you almost never need them).
+
+Operator opt-in: call runScheduledMaintenance from @gusto/baerly-storage/maintenance on
+your own schedule. Not required for steady-state operation.
+<!-- pattern-d:end -->
 
 ## When to graduate
 
