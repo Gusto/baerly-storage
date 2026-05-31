@@ -213,6 +213,21 @@ export interface BoundedMaintenanceOptions {
    * capable host run a fold AND a GC in one tick.
    */
   readonly phasesPerTick?: "single" | "both";
+  /**
+   * @internal — test seam. Forwarded into the runner's `runGc` call as
+   * `graceMillis`. Default `undefined` ⇒ `runGc`'s 7-day
+   * {@link GC_GRACE_PERIOD_MILLIS}. The drain-rate test sets `0` so a
+   * single pass marks AND sweeps, making the steady-state object-count
+   * trajectory observable without an 8-day clock advance. Production
+   * never sets this.
+   */
+  readonly gcGraceMillis?: number;
+  /**
+   * @internal — test seam. Forwarded into the runner's `runGc` call as
+   * the clock `now`. Default `undefined` ⇒ `runGc`'s `() => new Date()`.
+   * Production never sets this.
+   */
+  readonly now?: () => Date;
   readonly signal?: AbortSignal;
 }
 
@@ -273,6 +288,10 @@ export const runBoundedMaintenance = async (
     maxMarksPerRun: gcMaxMarks,
     maxSweepsPerRun: gcMaxSweeps,
     ...(signal !== undefined && { signal }),
+    // @internal test seams — undefined in production, so `runGc` falls
+    // back to its 7-day grace and wall-clock `now`.
+    ...(options?.gcGraceMillis !== undefined && { graceMillis: options.gcGraceMillis }),
+    ...(options?.now !== undefined && { now: options.now }),
   } as InternalRunGcOptions;
 
   try {

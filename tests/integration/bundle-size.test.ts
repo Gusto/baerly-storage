@@ -164,7 +164,12 @@ const BUDGETS: readonly Budget[] = [
   //     closure (the write path genuinely depends on it). Measured:
   //     203193 raw / 62015 gz. INTERIM bump — a later in-band-
   //     maintenance task reconciles the net kernel/maintenance split.
-  { entry: "index.js", raw: 200 * 1024, gz: 61 * 1024 },
+  //   → interim (2026-05-31): Task 3 compactor (snapshot_bytes/_rows +
+  //     walkLogRangeWithBytes) + Task 4 GC test-seam grew the maintenance
+  //     subgraph reachable from the kernel barrel. Measured 205811/62792.
+  //     Owner accepted the in-band-maintenance kernel growth; Task 8 does
+  //     the final net reconciliation after the Task 5 opts.maintenance cut.
+  { entry: "index.js", raw: 202 * 1024, gz: 63 * 1024 },
   // The three auth verifier factories (bearerJwt, sharedSecret,
   // cloudflareAccess) plus the transitive jose closure pulled in by
   // bearerJwt's createRemoteJWKSet + jwtVerify. Adding a fourth
@@ -225,7 +230,9 @@ const BUDGETS: readonly Budget[] = [
   //     compactor + GC subgraph into the http closure (the Writer is
   //     on the request path). Measured: 318946 raw / 93115 gz. INTERIM
   //     bump — a later in-band-maintenance task reconciles the net.
-  { entry: "http.js", raw: 312 * 1024, gz: 91 * 1024 },
+  // interim (2026-05-31): Task 3/4 maintenance-subgraph growth. Measured
+  // 321564/93887. Owner-accepted; Task 8 reconciles net.
+  { entry: "http.js", raw: 316 * 1024, gz: 93 * 1024 },
   // Observability primitives — ObservabilityContext, the
   // request-scoped MetricsRecorder, LogTape config + the
   // JSON sink only (the pretty sink + picocolors now live in
@@ -298,7 +305,9 @@ const BUDGETS: readonly Budget[] = [
   //     `writer.ts` → `maintenance.ts`. Measured: 371087 raw / 110013
   //     gz. INTERIM bump — a later in-band-maintenance task reconciles
   //     the net.
-  { entry: "cloudflare.js", raw: 363 * 1024, gz: 108 * 1024 },
+  // interim (2026-05-31): Task 3/4 maintenance-subgraph growth. Measured
+  // 373705/110797. Owner-accepted; Task 8 reconciles net.
+  { entry: "cloudflare.js", raw: 366 * 1024, gz: 110 * 1024 },
   // Node adapter — re-exports the kernel barrel plus
   // `s3HttpStorage`, `localFsStorage`, `memoryStorage`,
   // `localCacheStorage`, and the `baerlyNode` Fetch-API factory.
@@ -367,7 +376,10 @@ const BUDGETS: readonly Budget[] = [
   //     helpers land in the `maintenance-*.js` chunk the node adapter
   //     reaches transitively. Measured: 556546 raw / 160389 gz. Bump
   //     raw + gz by ~1 KiB each to absorb.
-  { entry: "node.js", raw: 545 * 1024, gz: 157 * 1024 },
+  // interim (2026-05-31): Task 3/4 maintenance-subgraph growth. Measured
+  // 559848/161419. Owner-accepted; Task 8 reconciles net (Task 5 cuts
+  // opts.maintenance/setInterval, which will claw some of this back).
+  { entry: "node.js", raw: 548 * 1024, gz: 159 * 1024 },
   // Client surface — `BaerlyClient<TConfig>` + fetcher plumbing.
   // Browser/runtime-agnostic; no kernel modules in the closure.
   // Budget history:
@@ -508,7 +520,9 @@ const BUDGETS: readonly Budget[] = [
   //     CurrentJson schema v2 widening of `current-json` and the new
   //     `maintenance-*.js` runner chunk both land here. Measured:
   //     564401 raw / 163147 gz. Bump raw + gz by ~1 KiB each.
-  { entry: "dev-vite.js", raw: 552 * 1024, gz: 160 * 1024 },
+  // interim (2026-05-31): Task 3/4 maintenance-subgraph growth. Measured
+  // 567703/164168. Owner-accepted; Task 8 reconciles net (Task 5 cut).
+  { entry: "dev-vite.js", raw: 556 * 1024, gz: 162 * 1024 },
 ];
 
 // Static-import specifiers only. Dynamic `import(...)` is intentionally
