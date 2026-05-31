@@ -33,7 +33,15 @@
  *     32-hex truncated-SHA-256 hash is not in the live content-hash
  *     set (computed by hashing every live `entry.after` post-image —
  *     the same hash the writer's step 4 produces). Surfaces writer
- *     crashes between the content PUT and the log-entry PUT.
+ *     crashes between the content PUT and the log-entry PUT. Because
+ *     content keys are hash-named (random lex order) and live content
+ *     is never deleted, a bounded pass cannot rely on deletion to
+ *     advance its LIST window the way `stale-log` does — so the
+ *     orphan-content LIST carries a persisted rotation cursor
+ *     (`content_scan_cursor` in `gc/pending.json`): each bounded pass
+ *     resumes `startAfter` the prior pass's last examined key and wraps
+ *     at end-of-keyspace, so the whole `content/` keyspace is swept
+ *     over a rotation within the per-pass `maxMarksPerRun` budget.
  *
  * CAS-lost on `gc/pending.json` is non-fatal: the DELETEs already
  * issued are durable, so we return a successful result and the next
@@ -278,16 +286,29 @@ export const runGc = async (
     logSeqStart,
     signal,
   );
+  // Rotation cursor: resume the content LIST after the last key we
+  // examined last pass. Bounded passes (`maxMarks` < keyspace) thus
+  // sweep the whole `content/` keyspace over a rotation instead of
+  // re-scanning the same lexicographic-first window forever — content
+  // keys are hash-named (random lex order) and live content is never
+  // deleted, so a fixed first-`maxMarks` window can be all-live and
+  // never reach orphan content past it. See `content_scan_cursor`.
+  const cursor = pending.json.content_scan_cursor;
+  const contentPrefix = `${collectionPrefix}/content/`;
   let markedOrphanContent = 0;
-  for await (const entry of listBounded(
-    storage,
-    `${collectionPrefix}/content/`,
-    maxMarks,
-    signal,
-  )) {
-    if (markedOrphanContent >= maxMarks) {
-      break;
-    }
+  let examinedThisPass = 0;
+  let lastExaminedKey: string | undefined;
+  const listOpts: { startAfter?: string; maxKeys: number; signal?: AbortSignal } = {
+    maxKeys: maxMarks,
+    ...(cursor !== undefined && { startAfter: cursor }),
+    ...(signal !== undefined && { signal }),
+  };
+  for await (const entry of storage.list(contentPrefix, listOpts)) {
+    // The cursor advances by EXAMINED keys (not marked), so an
+    // all-live window still moves the window forward to fresh keys
+    // next pass.
+    examinedThisPass++;
+    lastExaminedKey = entry.key;
     const hash = parseHashFromContentKey(entry.key);
     if (hash === null || liveHashes.has(hash)) {
       continue;
@@ -302,6 +323,14 @@ export const runGc = async (
     });
     markedOrphanContent++;
   }
+  // New cursor: if the LIST yielded FEWER than `maxKeys` keys it
+  // reached the end of the keyspace ⇒ WRAP (next pass starts from the
+  // beginning, cursor cleared). The unbounded reconcile path
+  // (maxMarks ≈ MAX_SAFE_INTEGER) always yields < maxKeys, so it lists
+  // the whole keyspace in one pass, marks every orphan, and wraps —
+  // behavior unchanged. Otherwise carry the last examined key.
+  const reachedEnd = examinedThisPass < maxMarks;
+  const nextContentCursor = reachedEnd ? undefined : lastExaminedKey;
 
   // ── Step 6. Sweep candidates whose due_at is in the past. ───────
   // Eligible set = previously-pending entries PLUS this pass's freshly
@@ -344,6 +373,12 @@ export const runGc = async (
         schema_version: GC_PENDING_SCHEMA_VERSION,
         candidates: merged,
         last_swept_at: lastSweptAt,
+        // Persist the rotation cursor on EVERY pass — a window advance
+        // is itself a delta, so even a zero-mark pass must write the
+        // moved cursor or the window would never rotate. `undefined`
+        // clears it (WRAP); the conditional spread omits the key
+        // entirely so the stored object stays clean.
+        ...(nextContentCursor !== undefined && { content_scan_cursor: nextContentCursor }),
       }),
       signalOpts,
     );

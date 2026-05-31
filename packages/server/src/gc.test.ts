@@ -430,4 +430,124 @@ describe("runGc", () => {
     expect(r.swept).toBe(1);
     await expect(s.get("app/t/tenant/x/manifests/c/log/0.json")).resolves.toBeNull();
   });
+
+  // ── orphan-content LIST rotation (Task 4.6) ──────────────────────
+  // Seed N orphan content blobs (no live docs ⇒ every content key is
+  // an orphan). With `maxMarksPerRun` < N the per-pass content LIST
+  // yields at most `maxMarks` keys; without the `content_scan_cursor`
+  // rotation it would re-scan the same lexicographic-first window each
+  // pass and never reach the tail. The cursor resumes `startAfter` the
+  // prior pass's last examined key so the whole keyspace is swept.
+  const seedOrphanContent = async (s: MemoryStorage, count: number): Promise<string[]> => {
+    const keys: string[] = [];
+    for (let i = 0; i < count; i++) {
+      // 32-hex key sorted by index — lex order == seed order, so we
+      // can reason about which window each pass examines.
+      const hex = i.toString(16).padStart(32, "0");
+      const key = `app/t/tenant/x/manifests/c/content/${hex}.json`;
+      await s.put(key, new TextEncoder().encode(`{"i":${i}}`), {
+        contentType: "application/json",
+      });
+      keys.push(key);
+    }
+    return keys;
+  };
+
+  test("rotates the content LIST so orphans past the first maxMarks window are eventually swept", async () => {
+    const s = new MemoryStorage();
+    await bootstrap(s, KEY);
+    const keys = await seedOrphanContent(s, 60);
+
+    // 3 passes at maxMarks=20 cover all 60. Each pass marks+sweeps its
+    // window (grace 0) and advances the cursor by examined keys.
+    let totalSwept = 0;
+    for (let pass = 0; pass < 3; pass++) {
+      const r = await runGc({ storage: s, currentJsonKey: KEY }, {
+        graceMillis: 0,
+        maxMarksPerRun: 20,
+        maxSweepsPerRun: 20,
+      } as InternalRunGcOptions);
+      totalSwept += r.swept;
+    }
+    expect(totalSwept).toBe(60);
+    // Every seeded orphan is gone from the bucket.
+    for (const key of keys) {
+      await expect(s.get(key)).resolves.toBeNull();
+    }
+  });
+
+  test("persists content_scan_cursor across passes and WRAPS to undefined at the end", async () => {
+    const s = new MemoryStorage();
+    await bootstrap(s, KEY);
+    // Seed 30 orphans; with maxMarks=20, grace NOT bypassed so nothing
+    // is swept this turn — the cursor advances purely by examination.
+    await seedOrphanContent(s, 30);
+
+    // Pass 1: examines keys [0..19], yields == maxMarks (20) ⇒ cursor
+    // set to the 20th key (index 19), no wrap.
+    await runGc({ storage: s, currentJsonKey: KEY }, {
+      maxMarksPerRun: 20,
+    } as InternalRunGcOptions);
+    const after1 = await readGcPending(s, PENDING_KEY);
+    expect(after1?.json.content_scan_cursor).toBe(
+      `app/t/tenant/x/manifests/c/content/${(19).toString(16).padStart(32, "0")}.json`,
+    );
+
+    // Pass 2: resumes startAfter index 19, examines [20..29] = 10 keys
+    // < maxMarks ⇒ reached the end ⇒ WRAP (cursor cleared).
+    await runGc({ storage: s, currentJsonKey: KEY }, {
+      maxMarksPerRun: 20,
+    } as InternalRunGcOptions);
+    const after2 = await readGcPending(s, PENDING_KEY);
+    expect(after2?.json.content_scan_cursor).toBeUndefined();
+  });
+
+  test("advances the cursor on an all-live (zero-mark) window", async () => {
+    const s = new MemoryStorage();
+    await bootstrap(s, KEY);
+    const writer = new Writer({ storage: s, currentJsonKey: KEY });
+    // Seed 30 live docs ⇒ 30 live content blobs, none orphan. Disable
+    // the Writer's write-tick maintenance during seeding so NO runGc
+    // pass fires inline (which would otherwise advance the cursor on its
+    // own) — this test must observe the cursor written by exactly ONE
+    // controlled runGc pass from a clean (cursor-absent) start.
+    const seedCtx = createObservabilityContext({ maintenance: { disabled: true } });
+    await runWithContext(seedCtx, async () => {
+      for (let i = 0; i < 30; i++) {
+        await writer.commit({
+          op: "I",
+          collection: COLL,
+          docId: `d${i}`,
+          body: { _id: `d${i}`, n: i },
+        });
+      }
+    });
+    // maxMarks=10 ⇒ the LIST examines the first 10 (all live), marks
+    // zero, but the cursor MUST still advance to the 10th content key so
+    // the next pass reaches fresh keys. 10 examined == maxMarks ⇒ NOT
+    // end-of-keyspace ⇒ cursor carried, not wrapped.
+    const r = await runGc({ storage: s, currentJsonKey: KEY }, {
+      maxMarksPerRun: 10,
+    } as InternalRunGcOptions);
+    expect(r.marked.orphan_content).toBe(0);
+    const pending = await readGcPending(s, PENDING_KEY);
+    // A cursor was written even though zero orphans were marked.
+    expect(pending?.json.content_scan_cursor).toMatch(/\/content\/[0-9a-f]{32}\.json$/);
+  });
+
+  test("unbounded runGc marks ALL orphans in one pass and wraps the cursor", async () => {
+    const s = new MemoryStorage();
+    await bootstrap(s, KEY);
+    await seedOrphanContent(s, 60);
+    // No maxMarksPerRun ⇒ DEFAULT_MAX_MARKS (≈ MAX_SAFE_INTEGER). The
+    // content LIST yields all 60 keys (< maxKeys) in one pass.
+    const r = await runGc({ storage: s, currentJsonKey: KEY }, {
+      graceMillis: 0,
+    } as InternalRunGcOptions);
+    expect(r.marked.orphan_content).toBe(60);
+    expect(r.swept).toBe(60);
+    // Reached the end ⇒ cursor wrapped (cleared).
+    const pending = await readGcPending(s, PENDING_KEY);
+    expect(pending?.json.content_scan_cursor).toBeUndefined();
+  });
 });

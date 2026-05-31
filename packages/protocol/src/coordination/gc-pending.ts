@@ -45,6 +45,19 @@ export interface GcPending {
    * Empty string `""` before the first sweep.
    */
   last_swept_at: string;
+  /**
+   * Rotation cursor for `runGc`'s orphan-content LIST — the last
+   * content key examined last pass. Successive bounded passes resume
+   * `startAfter` this so the whole `content/` keyspace is swept over a
+   * rotation, within the per-pass `maxMarksPerRun` budget. Absent /
+   * reset to `undefined` ⇒ start from the lexicographic beginning
+   * (wrap).
+   *
+   * Optional + additive: a v1 `gc/pending.json` written before this
+   * field existed stays valid — absent means "start from the
+   * beginning", so {@link GC_PENDING_SCHEMA_VERSION} is NOT bumped.
+   */
+  content_scan_cursor?: string;
 }
 
 /**
@@ -246,6 +259,14 @@ const assertGcPending = (parsed: unknown, key: string): GcPending => {
     throw new BaerlyError(
       "InvalidResponse",
       `gc/pending.json at ${key}: last_swept_at must be a string`,
+    );
+  }
+  // Optional + additive: absent is valid (⇒ scan starts from the
+  // lexicographic beginning). If present it must be a string.
+  if (r["content_scan_cursor"] !== undefined && typeof r["content_scan_cursor"] !== "string") {
+    throw new BaerlyError(
+      "InvalidResponse",
+      `gc/pending.json at ${key}: content_scan_cursor must be a string when present`,
     );
   }
   return parsed as GcPending;

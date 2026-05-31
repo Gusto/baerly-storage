@@ -27,22 +27,20 @@
  *    drains correctly.
  *
  * 2. With the CF-FREE caps (`gcMaxMarks = 20`, `gcMaxSweeps = 10`) the
- *    object count GROWS roughly linearly under sustained update-churn
- *    (measured: ~0.5 objects/write of `orphan-content` leak). The
- *    binding constraint is `gcMaxMarks`: `runGc`'s content LIST yields
- *    at most `maxMarksPerRun` keys per pass with no `startAfter`
- *    rotation, so once orphan content accrues past that lexicographic
- *    window GC can never reach it. Raising the caps enough to drain it
- *    (`marks ≈ 100`, `sweeps ≈ 50`) costs `6 + 100 + 50 = 156`
- *    subrequests — far over the 50-subrequest CF-free budget.
+ *    object count ALSO stays BOUNDED, now that `runGc`'s orphan-content
+ *    LIST rotates via a persisted `content_scan_cursor` (Task 4.6).
+ *    Each bounded pass resumes `startAfter` the prior pass's last
+ *    examined key, so over a rotation the whole hash-named `content/`
+ *    keyspace is reached — orphan content past the first-`maxMarks`
+ *    lexicographic window is no longer stranded. The count converges to
+ *    `live + bounded slack` (orphans in flight within the grace window
+ *    plus the per-pass mark budget) instead of growing linearly.
  *
- *    >>> CONSTANT-TUNING FINDING (surfaced by this test) <<<
- *    The §7.1 invariant holds for the `stale-log` axis at CF-free
- *    caps, but `orphan-content` under sustained update/delete churn is
- *    NOT bounded by `gcMaxMarks = 20` / `gcMaxSweeps = 10`. This is a
- *    design/constant decision for the controller — see the test report.
- *    The CF-free characterization test below ASSERTS the leak so the
- *    finding is executable and regression-guarded, NOT papered over.
+ *    Before Task 4.6 the content LIST had no `startAfter` rotation, so
+ *    once orphan content accrued past the first-`maxMarks` window GC
+ *    could never reach it (~0.5 objects/write leak). The `BITES` arm
+ *    below still models the pre-decoupling fold-bolted GC and STILL
+ *    grows — proving the bounded assertion is not vacuous.
  */
 
 import {
@@ -161,16 +159,16 @@ describe("§7.1 drain-rate invariant (write-tick, real Writer)", () => {
     ).toBeLessThan(WORKING_SET * 6); // live + tail + manifests, bounded
   });
 
-  test("CHARACTERIZATION + FINDING: CF-free caps do NOT bound orphan-content under sustained churn", async () => {
-    // CF-free per-tick caps. This is the regime the controller must
-    // decide on: the object count keeps climbing because GC's
-    // `maxMarksPerRun`-capped content LIST cannot reach orphan content
-    // beyond its first-`maxMarks` lexicographic window, and the marks/
-    // sweeps needed to drain it exceed the 50-subrequest CF-free budget.
-    // We ASSERT the growth so the finding is regression-guarded; if a
-    // future change makes CF-free drain orphan-content within budget,
-    // THIS test will flip and the controller should promote CF-free to
-    // the headline bound.
+  test("CF-free caps now BOUND orphan-content under sustained churn (cursor rotation)", async () => {
+    // CF-free per-tick caps. Before Task 4.6 the object count climbed
+    // linearly because GC's `maxMarksPerRun`-capped content LIST could
+    // not reach orphan content beyond its first-`maxMarks` lexicographic
+    // window. The persisted `content_scan_cursor` rotation now resumes
+    // each bounded pass `startAfter` the prior pass's last examined key,
+    // so over a rotation the whole hash-named `content/` keyspace is
+    // reached and orphan content drains within the CF-free budget. The
+    // count must now PLATEAU near the live working set, not grow with
+    // writes.
     const cfFree: BoundedMaintenanceOptions = {
       maxFoldEntriesPerPass: 20,
       minEntriesToCompact: 50,
@@ -185,11 +183,24 @@ describe("§7.1 drain-rate invariant (write-tick, real Writer)", () => {
     const mid = samples[Math.floor(samples.length / 2)]!;
     const last = samples[samples.length - 1]!;
 
-    // Documented leak: second half grows clearly (measured ~0.5 obj/write).
+    // Plateau: the second half does not grow beyond a bounded slack
+    // (orphans in flight + the per-pass mark budget). Slack is wider
+    // than the provisioned arm because CF-free rotates the content
+    // window over many passes rather than draining each fold's orphans
+    // immediately — but it is a CONSTANT band, not write-proportional.
+    const SLACK = 80;
     expect(
-      last.objects,
-      `FINDING: CF-free leaks orphan-content. trajectory ${trajectory} (mid ${mid.objects} → last ${last.objects})`,
-    ).toBeGreaterThan(mid.objects + 100);
+      last.objects - mid.objects,
+      `trajectory ${trajectory} — count grew by ${last.objects - mid.objects} over the second half (slack ${SLACK})`,
+    ).toBeLessThanOrEqual(SLACK);
+
+    // And the peak stays bounded near the live working set — NOT
+    // proportional to the write count (~2*writes if nothing drained).
+    const maxObjects = Math.max(...samples.map((s) => s.objects));
+    expect(
+      maxObjects,
+      `trajectory ${trajectory} — peak ${maxObjects} should stay near the live set, far below ~${last.write * 2}`,
+    ).toBeLessThan(WORKING_SET * 12);
   });
 
   test("BITES: the OLD broken shape (GC bolted to fold cadence, tiny sweep budget) GROWS monotonically", async () => {
