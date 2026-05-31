@@ -5,8 +5,8 @@
  * Maintenance — `runScheduledMaintenance()` composition of
  * `compact()` + `runGc()` under `MemoryStorage`, plus the write-tick
  * `runBoundedMaintenance()` runner and its pure gate helpers. The
- * Cloudflare-side worker test and the Node-side `runMaintenanceTick`
- * test cover the adapter wrappers.
+ * adapter-side write-tick wiring (the per-request `MaintenanceDispatch`
+ * the writer reads) is covered by the adapter packages' own tests.
  */
 
 import {

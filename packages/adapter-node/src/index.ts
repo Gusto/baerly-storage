@@ -6,13 +6,19 @@
  * the same surface for Workers + R2 bindings.
  *
  * `baerlyNode` is the public seam. It composes the kernel router with
- * `@hono/node-server`'s `serve()`, SIGTERM/SIGINT handlers, and
- * per-(tenant, collection) maintenance into a single handle. The
- * returned `BaerlyNodeHandle` exposes `.fetch` for in-process embedding
- * (Vite middleware, custom servers, tests) and `.listen(port)` for the
- * standard standalone-server case. The `serve()` call is lazy — calling
- * `baerlyNode(opts)` builds the Hono app + resolves the verifier but
- * does not create an `http.Server` until `.listen()` runs.
+ * `@hono/node-server`'s `serve()` and SIGTERM/SIGINT handlers into a
+ * single handle. The returned `BaerlyNodeHandle` exposes `.fetch` for
+ * in-process embedding (Vite middleware, custom servers, tests) and
+ * `.listen(port)` for the standard standalone-server case. The
+ * `serve()` call is lazy — calling `baerlyNode(opts)` builds the Hono
+ * app + resolves the verifier but does not create an `http.Server`
+ * until `.listen()` runs.
+ *
+ * Maintenance (compaction + GC) is in-band: it runs INLINE on the
+ * write path the kernel decides needs it — no `setInterval`, no cron,
+ * no operator scheduler. Tune via `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` /
+ * `BAERLY_MAINTENANCE_DISABLE`, or call `runScheduledMaintenance` from
+ * `@gusto/baerly-storage` for an explicit out-of-band sweep.
  *
  * @example
  * ```ts
@@ -29,7 +35,6 @@
  *       secretAccessKey: process.env["AWS_SECRET_ACCESS_KEY"]!,
  *     },
  *   }),
- *   maintenance: { tenants: ["acme"], collections: ["tickets"] },
  * });
  * await handle.listen(Number(process.env["PORT"] ?? 8080));
  * ```
@@ -41,8 +46,6 @@
  */
 export { S3HttpStorage } from "./s3-http.ts";
 export type { S3HttpStorageOptions } from "./s3-http.ts";
-export { runMaintenanceTick } from "./server.ts";
-export type { NodeMaintenanceOptions } from "./server.ts";
 export { s3Storage, r2Storage, minioStorage, gcsStorage } from "./storage-factories.ts";
 export {
   type Credentials,
@@ -50,4 +53,4 @@ export {
   fromEksPodIdentity,
 } from "./credentials/index.ts";
 export { baerlyNode } from "./baerly-node.ts";
-export type { BaerlyNodeHandle, BaerlyNodeMaintenance, BaerlyNodeOptions } from "./baerly-node.ts";
+export type { BaerlyNodeHandle, BaerlyNodeOptions } from "./baerly-node.ts";

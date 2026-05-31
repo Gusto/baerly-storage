@@ -4,14 +4,13 @@
 import { type AddressInfo, createServer as createNetServer } from "node:net";
 import {
   type BaerlyAppConfig,
-  BaerlyError,
   CURRENT_JSON_SCHEMA_VERSION,
   createCurrentJson,
   MemoryStorage,
   SHARED_SECRET_MISSING_MESSAGE,
-  type Storage,
   type Verifier,
 } from "@baerly/protocol";
+import { createObservabilityContext, runWithContext } from "@baerly/server/observability";
 import { Writer } from "@baerly/server/_internal/testing";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { baerlyNode, type BaerlyNodeHandle } from "./baerly-node.ts";
@@ -91,90 +90,47 @@ describe("baerlyNode", () => {
     activeHandle = undefined;
   });
 
-  test("maintenance fires one runMaintenanceTick per (tenant, collection)", async () => {
-    // Pre-seed `current.json` for the four (tenant × collection)
-    // pairs so `runMaintenanceTick` finds a real pointer, then commit
-    // 200 docs into each so the compactor has something to fold.
-    const storage = new MemoryStorage();
-    const tenants = ["a", "b"] as const;
-    const collections = ["c1", "c2"] as const;
-    for (const tenant of tenants) {
-      for (const collection of collections) {
-        const key = `app/t/tenant/${tenant}/manifests/${collection}/current.json`;
-        await createCurrentJson(storage, key, {
-          schema_version: CURRENT_JSON_SCHEMA_VERSION,
-          snapshot: null,
-          next_seq: 0,
-          log_seq_start: 0,
-          writer_fence: { epoch: 0, owner: "baerly-node-test", claimed_at: "" },
-          tail_bytes: 0,
-          snapshot_bytes: 0,
-          snapshot_rows: 0,
-        });
-        const writer = new Writer({ storage, currentJsonKey: key });
-        for (let i = 0; i < 200; i++) {
-          await writer.commit({
-            op: "I",
-            collection,
-            docId: `d${i}`,
-            body: { _id: `d${i}`, n: i },
-          });
-        }
-      }
-    }
+  test("rejects a `maintenance` option (cut — maintenance is in-band, not scheduled)", () => {
+    baerlyNode({
+      config: testConfig,
+      storage: new MemoryStorage(),
+      verifier: sharedDevVerifier,
+      // @ts-expect-error — `maintenance` was cut: no `setInterval`/cron
+      // scheduling option exists; compaction + GC run in-band on the
+      // write path (see `nodeMaintenanceDispatch`).
+      maintenance: { tenants: ["a"], collections: ["c1"] },
+    });
+  });
 
+  test("listen() installs no timer — only the two signal handlers (no maintenance interval)", async () => {
+    // A leaked `setInterval` would keep the event loop alive; this also
+    // asserts there is no background loop racing the in-band write path.
+    const setIntervalSpy = vi.spyOn(globalThis, "setInterval");
     const port = await reservePort();
     const handle = baerlyNode({
       config: testConfig,
-      storage,
+      storage: new MemoryStorage(),
       verifier: sharedDevVerifier,
-      maintenance: {
-        tenants: [...tenants],
-        collections: [...collections],
-        intervalMs: 50,
-      },
     });
     activeHandle = handle;
     await handle.listen(port);
-
-    // Wait for the interval to fire once and the Promise.all inside
-    // `tick` to settle. 250 ms ≫ 50 ms interval; the cross-product of
-    // four `runMaintenanceTick` calls against MemoryStorage is well
-    // under that bound.
-    await new Promise((r) => setTimeout(r, 250));
-
-    // Assert every pair got a compact pass: each current.json now
-    // points to a snapshot (post-compact) and each collection's GC
-    // pending ledger exists. Mirrors the assertion shape from
-    // `server.test.ts` `runMaintenanceTick` smoke test.
-    for (const tenant of tenants) {
-      for (const collection of collections) {
-        const key = `app/t/tenant/${tenant}/manifests/${collection}/current.json`;
-        const cur = await storage.get(key);
-        expect(cur).not.toBeNull();
-        const json = JSON.parse(new TextDecoder().decode(cur!.body)) as {
-          snapshot: string | null;
-          log_seq_start?: number;
-        };
-        expect(json.snapshot).not.toBeNull();
-        expect(json.log_seq_start ?? 0).toBeGreaterThan(0);
-
-        const pending = await storage.get(
-          `app/t/tenant/${tenant}/manifests/${collection}/gc/pending.json`,
-        );
-        expect(pending).not.toBeNull();
-      }
-    }
+    expect(setIntervalSpy).not.toHaveBeenCalled();
+    setIntervalSpy.mockRestore();
   });
 
-  test("maintenance failures on one pair don't block siblings", async () => {
-    // Seed only the `good` tenant; the `bad` tenant has no
-    // `current.json`. Wrap storage so the `bad` tenant's
-    // `current.json` get throws — the helper must catch + log + keep
-    // going so the `good` pair still runs to completion.
-    const realStorage = new MemoryStorage();
-    const seededKey = "app/t/tenant/good/manifests/c1/current.json";
-    await createCurrentJson(realStorage, seededKey, {
+  test("a write through handle.fetch maintains in-band (no listen, no timer)", async () => {
+    // Seed a collection with maintenance DISABLED (so the seed writes
+    // leave a fat unfolded tail with a null snapshot), then issue ONE
+    // write through the Hono fetch handler (no `.listen()` → no server,
+    // no timer). The adapter threads a Node-tier maintenance dispatch
+    // onto that request's observability context; the writer reads it at
+    // its post-CAS point and runs a bounded inline fold. We assert the
+    // snapshot pointer flips null → non-null on that single write —
+    // proving writes tick in-band (reads stay pure; see reads-pure.test).
+    const storage = new MemoryStorage();
+    const tenant = "test-tenant";
+    const key = `app/t/tenant/${tenant}/manifests/c1/current.json`;
+    await createCurrentJson(storage, key, {
       schema_version: CURRENT_JSON_SCHEMA_VERSION,
       snapshot: null,
       next_seq: 0,
@@ -184,63 +140,60 @@ describe("baerlyNode", () => {
       snapshot_bytes: 0,
       snapshot_rows: 0,
     });
-    const writer = new Writer({ storage: realStorage, currentJsonKey: seededKey });
-    for (let i = 0; i < 200; i++) {
-      await writer.commit({
-        op: "I",
-        collection: "c1",
-        docId: `d${i}`,
-        body: { _id: `d${i}`, n: i },
-      });
-    }
-
-    const failingKey = "app/t/tenant/bad/manifests/c1/current.json";
-    const flakyStorage: Storage = {
-      get: (key, opts) => {
-        if (key === failingKey) {
-          return Promise.reject(new BaerlyError("NetworkError", "flaky storage simulated"));
+    const writer = new Writer({ storage, currentJsonKey: key });
+    // Pad each body so the tail clears the 64 KB first-fold floor; seed
+    // an ODD count so the single fetch write (prevSeq odd) also crosses
+    // the GC cadence boundary — both maintenance arms are live.
+    const pad = "x".repeat(512);
+    await runWithContext(
+      createObservabilityContext({ maintenance: { disabled: true } }),
+      async () => {
+        for (let i = 0; i < 201; i++) {
+          await writer.commit({
+            op: "I",
+            collection: "c1",
+            docId: `d${i}`,
+            body: { _id: `d${i}`, n: i, pad },
+          });
         }
-        return realStorage.get(key, opts);
       },
-      put: (key, body, opts) => realStorage.put(key, body, opts),
-      delete: (key, opts) => realStorage.delete(key, opts),
-      list: (prefix, opts) => realStorage.list(prefix, opts),
+    );
+
+    // Maintenance was disabled during seeding → snapshot still null.
+    const before = await storage.get(key);
+    const beforeJson = JSON.parse(new TextDecoder().decode(before!.body)) as {
+      snapshot: string | null;
     };
+    expect(beforeJson.snapshot).toBeNull();
 
-    const stderrSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
-
-    const port = await reservePort();
     const handle = baerlyNode({
       config: testConfig,
-      storage: flakyStorage,
+      storage,
       verifier: sharedDevVerifier,
-      maintenance: {
-        tenants: ["good", "bad"],
-        collections: ["c1"],
-        intervalMs: 50,
-      },
     });
     activeHandle = handle;
-    await handle.listen(port);
 
-    await new Promise((r) => setTimeout(r, 250));
-
-    // `bad` pair failed → logged to stderr.
-    expect(stderrSpy).toHaveBeenCalled();
-    const sawBadTenant = stderrSpy.mock.calls.some((args) =>
-      args.some((a) => typeof a === "string" && a.includes("tenant=bad")),
+    // One write through the public fetch surface — runs the full
+    // adapter cascade (obs context → verifier → Db → router → writer).
+    const res = await handle.fetch(
+      new Request("http://x/v1/c/c1", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ doc: { _id: "trigger", v: 1 } }),
+      }),
     );
-    expect(sawBadTenant).toBe(true);
+    expect(res.status).toBe(201);
 
-    // `good` pair still ran to completion despite the sibling failure.
-    const cur = await realStorage.get(seededKey);
+    // The post-CAS dispatch read `getCurrentContext()?.maintenance`
+    // (set by the adapter) and ran a bounded inline fold.
+    const cur = await storage.get(key);
     expect(cur).not.toBeNull();
     const json = JSON.parse(new TextDecoder().decode(cur!.body)) as {
       snapshot: string | null;
+      log_seq_start?: number;
     };
     expect(json.snapshot).not.toBeNull();
-
-    stderrSpy.mockRestore();
+    expect(json.log_seq_start ?? 0).toBeGreaterThan(0);
   });
 
   test("SIGTERM triggers graceful close + process.exit(0)", async () => {
@@ -315,11 +268,6 @@ describe("baerlyNode", () => {
       config: testConfig,
       storage: new MemoryStorage(),
       verifier: sharedDevVerifier,
-      maintenance: {
-        tenants: ["a"],
-        collections: ["c1"],
-        intervalMs: 50,
-      },
     });
     const sigtermBefore = process.listenerCount("SIGTERM");
     const sigintBefore = process.listenerCount("SIGINT");

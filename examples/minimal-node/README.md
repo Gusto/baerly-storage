@@ -65,12 +65,15 @@ posture needs no auth env vars; if you adopt Pattern B / C from
 "Going to production" below, also set `SHARED_SECRET` (Pattern B)
 or `JWKS_URL` + `JWT_ISSUER` + `JWT_AUDIENCE` (Pattern C). Optional:
 `R2_ACCOUNT_ID` (switches the storage factory from `s3Storage` to
-`r2Storage`), `AWS_REGION`, `PORT`, `TENANT`, `WEB_ROOT`,
-`MAINTENANCE_COLLECTIONS` (comma-separated collection slugs — when
-set, `baerlyNode` runs one compact+GC pass per `(tenant, collection)`
-pair on its hourly tick; leave unset to skip the in-process loop and
-schedule maintenance externally — a PaaS cron, k8s CronJob, systemd
-timer).
+`r2Storage`), `AWS_REGION`, `PORT`, `TENANT`, `WEB_ROOT`.
+
+Maintenance (compaction + GC) is automatic and in-band: it runs
+inline on the rare write that crosses a maintenance trigger — no env
+var, no tick, no `setInterval`, no operator scheduler. Two ops-plane
+env vars tune it: `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` raises the
+snapshot ceiling and `BAERLY_MAINTENANCE_DISABLE=1` is a kill switch.
+For an explicit out-of-band sweep, call `runScheduledMaintenance`
+from `@gusto/baerly-storage`.
 
 After `pnpm build`, `http://localhost:8080/` serves the built SPA
 out of `dist/client/` and `http://localhost:8080/v1/*` is the

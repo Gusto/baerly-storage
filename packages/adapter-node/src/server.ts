@@ -1,7 +1,15 @@
-import { type BaerlyConfig, type Storage, type Verifier } from "@baerly/protocol";
+import {
+  type BaerlyConfig,
+  NODE_MAINTENANCE_FOLD_ENTRIES_PER_PASS,
+  NODE_MAINTENANCE_GC_INTERVAL,
+  NODE_MAINTENANCE_GC_MAX_MARKS,
+  NODE_MAINTENANCE_GC_MAX_SWEEPS,
+  type Storage,
+  type Verifier,
+} from "@baerly/protocol";
 import { Db } from "@baerly/server";
 import { createRouter, mapError } from "@baerly/server/http";
-import { runScheduledMaintenance } from "@baerly/server/maintenance";
+import type { MaintenanceDispatch } from "@baerly/server/maintenance";
 import { prettyConsoleSink } from "./logger-pretty.ts";
 import {
   type ObservabilityConfig,
@@ -57,6 +65,70 @@ export interface CreateFetchHandlerOptions {
 }
 
 /**
+ * Assemble the per-request {@link MaintenanceDispatch} for a Node host.
+ *
+ * baerly maintains IN-BAND: the writer reads
+ * `getCurrentContext()?.maintenance` at its post-CAS dispatch point and
+ * runs one bounded compact + GC slice on the (rare) write that crosses a
+ * maintenance trigger. Reads stay pure — they never tick. There is no
+ * `setInterval`, no cron, no operator-installed scheduler: the kernel
+ * maintains itself on a bare bucket with zero operator infrastructure.
+ *
+ * On Node v1 maintenance runs INLINE on the commit path (no
+ * `dispatch` override — serverful Node has no `waitUntil`, and inline is
+ * deterministic + correct here), so this returns no `dispatch` field;
+ * the writer falls back to its inline-awaited default dispatch.
+ *
+ * The caps (`options`) are a MODERATE multiple of the CF-free defaults —
+ * Node has no Cloudflare subrequest wall, but because v1 runs inline the
+ * per-pass work is still BOUNDED by worst-case single-write added
+ * latency, not unbounded. We thread `phasesPerTick: "both"` (a capable
+ * host can fold AND GC in one tick) plus the Node-tier `WRITE_TICK_*`
+ * overrides from `@baerly/protocol`'s `NODE_MAINTENANCE_*` constants
+ * (10× CF-free, with a shorter GC interval so the sweep budget keeps up).
+ *
+ * The two ops-plane env vars are read here (per call) so a `vi.stubEnv`
+ * in tests — and a real process env in production — is observed:
+ *
+ *   - `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` → `maxFoldBytes` (the snapshot
+ *     ceiling `C`). Parsed as a number; ignored when unset / NaN.
+ *   - `BAERLY_MAINTENANCE_DISABLE` → `disabled` (kill switch). Truthy
+ *     when set to a non-empty value other than `"0"` / `"false"`.
+ *
+ * `readEnv` defaults to `process.env`; the parameter exists for direct
+ * unit coverage.
+ */
+export const nodeMaintenanceDispatch = (
+  readEnv: (key: string) => string | undefined = (k) => process.env[k],
+): MaintenanceDispatch => {
+  const rawFoldBytes = readEnv("BAERLY_MAINTENANCE_MAX_FOLD_BYTES");
+  const parsedFoldBytes =
+    rawFoldBytes !== undefined && rawFoldBytes !== "" ? Number(rawFoldBytes) : Number.NaN;
+  const maxFoldBytes = Number.isFinite(parsedFoldBytes) ? parsedFoldBytes : undefined;
+
+  const rawDisable = readEnv("BAERLY_MAINTENANCE_DISABLE");
+  const disabled =
+    rawDisable !== undefined &&
+    rawDisable !== "" &&
+    rawDisable !== "0" &&
+    rawDisable.toLowerCase() !== "false";
+
+  return {
+    // No `dispatch` override: inline on serverful Node (the writer
+    // falls back to `dispatchInlineAwaited`).
+    ...(disabled && { disabled: true }),
+    ...(maxFoldBytes !== undefined && { maxFoldBytes }),
+    options: {
+      phasesPerTick: "both",
+      maxFoldEntriesPerPass: NODE_MAINTENANCE_FOLD_ENTRIES_PER_PASS,
+      gcMaxMarks: NODE_MAINTENANCE_GC_MAX_MARKS,
+      gcMaxSweeps: NODE_MAINTENANCE_GC_MAX_SWEEPS,
+      gcInterval: NODE_MAINTENANCE_GC_INTERVAL,
+    },
+  };
+};
+
+/**
  * Build a `(req: Request) => Promise<Response>` handler that runs the
  * baerly `/v1/*` cascade: healthz short-circuit → observability context
  * → verifier → `Db.create` → `createRouter({db}).fetch(req)` →
@@ -94,8 +166,12 @@ export function createFetchHandler(
     }
 
     const requestId = request.headers.get("x-request-id") ?? crypto.randomUUID();
+    // In-band maintenance: the writer reads `getCurrentContext()?.maintenance`
+    // at its post-CAS dispatch point. Read per request so the ops-plane env
+    // vars (and any `vi.stubEnv` in tests) are observed at call time.
     const obsCtx = createObservabilityContext({
       request_id: requestId,
+      maintenance: nodeMaintenanceDispatch(),
     });
 
     const result = await opts.verifier(request);
@@ -144,58 +220,6 @@ export function createFetchHandler(
     });
   };
 }
-
-/**
- * Options for {@link runMaintenanceTick}.
- */
-export interface NodeMaintenanceOptions {
-  /** Any {@link Storage} impl — `S3HttpStorage`, `LocalFsStorage`, etc. */
-  readonly storage: Storage;
-  /** Full bucket-relative key of the CAS pointer for the target collection. */
-  readonly currentJsonKey: string;
-  /** Forwarded to both `compact()` and `runGc()` underneath. */
-  readonly signal?: AbortSignal;
-}
-
-/**
- * Run one pass of compaction + GC for one collection. Node hosts have
- * no subrequest cap, so this uses the engine defaults (unbounded) —
- * a single pass folds the entire live tail and sweeps every aged-out
- * candidate.
- *
- * Pair with `node-cron`, systemd timers, or k8s CronJobs — this
- * function is a single-shot callable that does not loop. Errors
- * propagate; the caller decides retry semantics.
- *
- * `compact()` and `runGc()` are each CAS-protected single-attempts:
- * a crash or restart between phases is safe because the next tick
- * picks up where the previous one left off.
- *
- * @example
- * ```ts
- * import cron from "node-cron";
- * import { runMaintenanceTick } from "@gusto/baerly-storage/node";
- *
- * cron.schedule("0 * * * *", async () => {  // hourly
- *   await runMaintenanceTick({ storage, currentJsonKey: "..." });
- * });
- * ```
- */
-export const runMaintenanceTick = async (opts: NodeMaintenanceOptions): Promise<void> => {
-  // Maintenance ticks run outside any HTTP scope, so kernel
-  // emissions inside compact / GC reach the no-op recorder by
-  // design (no human reads cron-tick canonical lines; errors throw
-  // to the process log).
-  await runScheduledMaintenance(
-    {
-      storage: observableStorage(opts.storage),
-      currentJsonKey: opts.currentJsonKey,
-    },
-    {
-      ...(opts.signal !== undefined && { signal: opts.signal }),
-    },
-  );
-};
 
 /**
  * Auto-pick the default sink when the caller passed an

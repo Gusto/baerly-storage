@@ -121,7 +121,7 @@ http://localhost:5173/<path>`) before declaring the task complete.
 | `tsconfig.app.json`        | Client TS project (`src/web/`, DOM lib, `jsx: react-jsx`)                                                        |
 | `tsconfig.server.json`     | Node server TS project (`src/server/`, Node lib)                                                                 |
 | `baerly.config.ts`         | App config — `app`, `tenant`, `target`, `collections` (schemas live here). Also exports the inferred `Note` row type used by the web client. |
-| `.env.example`             | Source of truth for env vars the Node entry reads (`BUCKET`, `AWS_*`, `MAINTENANCE_COLLECTIONS`, etc.; `SHARED_SECRET` / `JWKS_URL` only needed if you adopt the "Going to production" auth recipes) |
+| `.env.example`             | Source of truth for env vars the Node entry reads (`BUCKET`, `AWS_*`, the optional `BAERLY_MAINTENANCE_*` ops-plane tuners, etc.; `SHARED_SECRET` / `JWKS_URL` only needed if you adopt the "Going to production" auth recipes) |
 
 > **`baerly.config.ts` is dual-included.** Both `tsconfig.app.json`
 > and `tsconfig.server.json` `include` this file, so it must only
@@ -395,37 +395,31 @@ Dev sees `JWKS_URL` as `undefined`, spread short-circuits, and
   `() => Promise<Credentials>` or an `@aws-sdk/credential-providers`
   factory through the seam.
 
-- **Maintenance loop (Node)** — `src/server/index.ts` passes a
-  `maintenance: { collections, tenants }` option to `baerlyNode`.
-  Each tick (hourly by default; override via
-  `maintenance.intervalMs`) runs one compact+GC pass per
-  `(tenant, collection)` pair against the engine's default
-  unbounded maintenance profile (folds the entire live tail; sweeps
-  every aged-out candidate the GC marks).
+- **Maintenance (in-band)** — compaction + GC run automatically and
+  IN-BAND: `baerlyNode` threads a Node-tier maintenance config onto
+  every request's observability context, and the writer runs one
+  bounded compact + GC slice INLINE on the (rare) write that crosses
+  a maintenance trigger. Reads never tick. There is no `setInterval`,
+  no cron, no `maintenance:` option, and no operator scheduler — the
+  bucket maintains itself.
 
-  Opt-in via the `MAINTENANCE_COLLECTIONS` env var — a comma-
-  separated list of collection slugs:
+  The per-pass work is a moderate, inline-latency-budgeted multiple
+  of the conservative defaults (Node has no Cloudflare subrequest
+  cap, but inline maintenance is still bounded by worst-case
+  single-write latency). Two ops-plane env vars tune it:
 
   ```sh
-  MAINTENANCE_COLLECTIONS=notes
+  BAERLY_MAINTENANCE_MAX_FOLD_BYTES=1048576   # raise the snapshot ceiling C
+  BAERLY_MAINTENANCE_DISABLE=1                # kill switch
   ```
 
-  When unset, the entry passes `maintenance: undefined` to
-  `baerlyNode` and no in-process loop runs. Operators who prefer
-  external scheduling can wire a separate cron trigger (PaaS cron,
-  k8s CronJob, systemd timer) per collection that invokes
-  `runMaintenanceTick` directly — that function stays exported
-  from `@gusto/baerly-storage/node`.
+  For an explicit out-of-band sweep (a one-shot drain, a migration
+  step, a CI job), call `runScheduledMaintenance` from
+  `@gusto/baerly-storage` directly against your storage + the
+  collection's `current.json` key.
 
-  The template is single-tenant by default (`tenants: [TENANT]`).
-  Multi-tenant deployments override the `tenants` array in
-  `src/server/index.ts`; the cross-product `tenants × collections`
-  defines the work per tick. A separate `runMaintenanceTick` call
-  fires per pair, and a failure on one pair logs to stderr without
-  crashing the process or blocking the others.
-
-  Maintenance emits one canonical info line per `(tenant,
-  collection)` run on stdout. Filter your log stream on
+  Maintenance emits one canonical info line per inline run on stdout.
+  Filter your log stream on
   `"unit_of_work": "maintenance"` and read these fields:
 
   - `compact_written` — log entries folded into the new snapshot

@@ -258,6 +258,41 @@ export const WRITE_TICK_FOLD_ENTRIES_PER_PASS: number = 20;
 export const WRITE_TICK_MIN_ENTRIES_TO_COMPACT: number = 50;
 
 /**
+ * Node-tier write-tick maintenance caps — a MODERATE multiple of the CF-free `WRITE_TICK_*`
+ * defaults, threaded into the per-request observability context by `baerlyNode` /
+ * `createFetchHandler` (§8.4). Node v1 runs maintenance INLINE on the commit path (no
+ * `waitUntil`), so the cap is NOT the CF subrequest wall — it's the worst-case single-write
+ * added latency. A maintenance tick only fires on a ratio/boundary trip (rare), and when it
+ * does it costs ~`maxFoldEntriesPerPass` + (6 + `gcMaxMarks` + `gcMaxSweeps`) storage
+ * round-trips against a co-located S3/R2 — sub-second on the occasional boundary write at a
+ * 10× multiple. These are deliberately BOUNDED (10× CF-free), NOT unbounded: the deleted
+ * scheduled full-tail sweep folded the entire live tail in one shot, which a 100× multiple here
+ * would reintroduce as multi-second commit stalls. Raise the snapshot ceiling separately via
+ * `BAERLY_MAINTENANCE_MAX_FOLD_BYTES`; these caps slice the per-pass work, not the ceiling.
+ *
+ * @see packages/adapter-node/src/server.ts
+ * @see packages/server/src/maintenance.ts
+ * @see docs/about/graduation.md
+ */
+export const NODE_MAINTENANCE_FOLD_ENTRIES_PER_PASS: number = 200;
+
+/** Node-tier GC marks per pass (M in 6+M+S). 10× CF-free. @see {@link NODE_MAINTENANCE_FOLD_ENTRIES_PER_PASS} */
+export const NODE_MAINTENANCE_GC_MAX_MARKS: number = 200;
+
+/** Node-tier GC sweeps per pass (S in 6+M+S). 10× CF-free. @see {@link NODE_MAINTENANCE_FOLD_ENTRIES_PER_PASS} */
+export const NODE_MAINTENANCE_GC_MAX_SWEEPS: number = 100;
+
+/**
+ * Node-tier GC cadence (boundary-crossing). Shorter than the CF-free `WRITE_TICK_GC_INTERVAL`
+ * (4) so the per-write sweep budget keeps up: `gcMaxSweeps / gcInterval = 100 / 2 = 50`
+ * comfortably clears the garbage-per-write rate `p` (the `maxSweeps/interval ≥ p` invariant,
+ * §7.1) with a wide margin.
+ *
+ * @see {@link NODE_MAINTENANCE_FOLD_ENTRIES_PER_PASS}
+ */
+export const NODE_MAINTENANCE_GC_INTERVAL: number = 2;
+
+/**
  * SNAPSHOT-rebuild ceiling `C` (the unsliceable axis — Decision 3a), memory. Default sized
  * ~5.5 ms under CF-free ~10 ms. Raise via BAERLY_MAINTENANCE_MAX_FOLD_BYTES on capable
  * hosts. Auto-maintained snapshot ceiling S_max = C. NOT snapshot+tail (tail is sliced).

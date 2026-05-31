@@ -76,8 +76,18 @@ for (const variant of VARIANTS) {
     let baseUrl: string;
     let counting: CountingStorage;
     let cleanup: (() => Promise<void>) | undefined;
+    let priorDisable: string | undefined;
 
     beforeAll(async () => {
+      // This suite measures the LOGICAL per-verb storage-op cost (a
+      // write = 3 PUTs). In-band maintenance is amortized background
+      // work whose op cost is covered separately (the write-tick /
+      // drain-rate tests) — and on the Node adapter it would fire on
+      // the occasional boundary-crossing write, perturbing the count.
+      // Disable it for the duration so the per-verb assertions stay
+      // pinned to the logical write cost.
+      priorDisable = process.env["BAERLY_MAINTENANCE_DISABLE"];
+      process.env["BAERLY_MAINTENANCE_DISABLE"] = "1";
       const made = await variant.build();
       cleanup = made.cleanup;
       // Provision the `tickets` table BEFORE wrapping with the
@@ -132,6 +142,11 @@ for (const variant of VARIANTS) {
     afterAll(async () => {
       await new Promise<void>((resolve) => server.close(() => resolve()));
       await cleanup?.();
+      if (priorDisable === undefined) {
+        delete process.env["BAERLY_MAINTENANCE_DISABLE"];
+      } else {
+        process.env["BAERLY_MAINTENANCE_DISABLE"] = priorDisable;
+      }
     });
 
     test("POST insert costs exactly 3 PUTs (content + log + CAS), 0 deletes, 0 lists", async () => {

@@ -601,7 +601,6 @@ baerlyNode({
   storage: s3Storage({ bucket: "…", credentials: { … } }),
   verifier: bearerJwt({ jwks, issuer, audience }),
   webRoot: "dist/client",                         // optional SPA static-serve
-  maintenance: { collections: ["tickets"], tenants: ["acme"] },  // optional
 }).listen(PORT);
 ```
 

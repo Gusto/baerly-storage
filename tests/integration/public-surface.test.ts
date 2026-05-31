@@ -129,7 +129,6 @@ import {
   gcsStorage,
   minioStorage,
   r2Storage,
-  runMaintenanceTick,
   S3HttpStorage as NodeS3HttpStorage,
   s3Storage,
 } from "@gusto/baerly-storage/node";
@@ -142,7 +141,6 @@ describe("@gusto/baerly-storage/node", () => {
     expect(typeof minioStorage).toBe("function");
     expect(typeof gcsStorage).toBe("function");
     expect(typeof NodeS3HttpStorage).toBe("function");
-    expect(typeof runMaintenanceTick).toBe("function");
   });
 });
 

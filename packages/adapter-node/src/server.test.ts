@@ -2,11 +2,13 @@
    field on document shapes; the maintenance test seeds doc bodies with it. */
 
 /**
- * Node adapter — `runMaintenanceTick` smoke test plus
+ * Node adapter — `nodeMaintenanceDispatch` ops-plane wiring plus
  * `createApp` observability wiring tests. The cross-adapter
  * compactor + GC behaviour itself is covered by the `@baerly/server`
  * package's tests; this file confirms the Node-side helpers plumb
- * through the observability pipe (LogTape config + canonical-line bag).
+ * through the observability pipe (LogTape config + canonical-line bag)
+ * and that the in-band maintenance config reaches the per-request
+ * context with Node-tier (bounded, inline-latency-budgeted) caps.
  */
 
 import { getRequestListener } from "@hono/node-server";
@@ -16,57 +18,91 @@ import {
   CURRENT_JSON_SCHEMA_VERSION,
   createCurrentJson,
   MemoryStorage,
+  NODE_MAINTENANCE_FOLD_ENTRIES_PER_PASS,
+  NODE_MAINTENANCE_GC_INTERVAL,
+  NODE_MAINTENANCE_GC_MAX_MARKS,
+  NODE_MAINTENANCE_GC_MAX_SWEEPS,
   type Verifier,
+  WRITE_TICK_FOLD_ENTRIES_PER_PASS,
+  WRITE_TICK_GC_INTERVAL,
+  WRITE_TICK_GC_MAX_MARKS,
+  WRITE_TICK_GC_MAX_SWEEPS,
 } from "@baerly/protocol";
-import { Writer } from "@baerly/server/_internal/testing";
 import { configureObservability } from "@baerly/server/observability";
 import { reset, type LogRecord, type Sink } from "@logtape/logtape";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { createApp, type CreateAppOptions } from "./app.ts";
-import { createFetchHandler, resolveDefaultSink, runMaintenanceTick } from "./server.ts";
+import { createFetchHandler, nodeMaintenanceDispatch, resolveDefaultSink } from "./server.ts";
 
-describe("runMaintenanceTick", () => {
-  test("runs both compact and gc against the supplied storage", async () => {
-    const s = new MemoryStorage();
-    const key = "app/t/tenant/x/manifests/c/current.json";
-    await createCurrentJson(s, key, {
-      schema_version: CURRENT_JSON_SCHEMA_VERSION,
-      snapshot: null,
-      next_seq: 0,
-      log_seq_start: 0,
-      writer_fence: { epoch: 0, owner: "node-maintenance-test", claimed_at: "" },
-      tail_bytes: 0,
-      snapshot_bytes: 0,
-      snapshot_rows: 0,
-    });
-    const writer = new Writer({ storage: s, currentJsonKey: key });
-    for (let i = 0; i < 200; i++) {
-      await writer.commit({
-        op: "I",
-        collection: "c",
-        docId: `d${i}`,
-        body: { _id: `d${i}`, n: i },
-      });
+describe("nodeMaintenanceDispatch", () => {
+  test("runs inline (no dispatch override) with Node-tier caps + phasesPerTick:both", () => {
+    const m = nodeMaintenanceDispatch(() => undefined);
+
+    // Inline on serverful Node: no `waitUntil`-style dispatch override,
+    // so the writer falls back to `dispatchInlineAwaited`.
+    expect(m.dispatch).toBeUndefined();
+    // No env set → neither kill switch nor ceiling override.
+    expect(m.disabled).toBeUndefined();
+    expect(m.maxFoldBytes).toBeUndefined();
+
+    expect(m.options?.phasesPerTick).toBe("both");
+
+    // Node-tier caps are STRICTLY LARGER than the CF-free defaults — a
+    // serverful host folds/sweeps more per pass than a CPU-killable
+    // free-tier isolate.
+    expect(m.options?.maxFoldEntriesPerPass).toBeGreaterThan(WRITE_TICK_FOLD_ENTRIES_PER_PASS);
+    expect(m.options?.gcMaxMarks).toBeGreaterThan(WRITE_TICK_GC_MAX_MARKS);
+    expect(m.options?.gcMaxSweeps).toBeGreaterThan(WRITE_TICK_GC_MAX_SWEEPS);
+    // Shorter GC cadence so the per-write sweep budget keeps up.
+    expect(m.options?.gcInterval).toBeLessThan(WRITE_TICK_GC_INTERVAL);
+
+    // …but BOUNDED, not unbounded: inline maintenance is sized by
+    // worst-case single-write latency, not the deleted full-tail sweep.
+    // Pin a finite ceiling so a future "just raise it" never reintroduces
+    // an unbounded inline fold.
+    expect(m.options?.maxFoldEntriesPerPass).toBe(NODE_MAINTENANCE_FOLD_ENTRIES_PER_PASS);
+    expect(m.options?.gcMaxMarks).toBe(NODE_MAINTENANCE_GC_MAX_MARKS);
+    expect(m.options?.gcMaxSweeps).toBe(NODE_MAINTENANCE_GC_MAX_SWEEPS);
+    expect(m.options?.gcInterval).toBe(NODE_MAINTENANCE_GC_INTERVAL);
+    expect(m.options?.maxFoldEntriesPerPass).toBeLessThanOrEqual(1000);
+    expect(m.options?.gcMaxSweeps).toBeLessThanOrEqual(1000);
+  });
+
+  test("threads BAERLY_MAINTENANCE_MAX_FOLD_BYTES → maxFoldBytes via process.env (vi.stubEnv)", () => {
+    vi.stubEnv("BAERLY_MAINTENANCE_MAX_FOLD_BYTES", "1048576");
+    try {
+      // Default reader is `process.env`, which vi.stubEnv patches.
+      const m = nodeMaintenanceDispatch();
+      expect(m.maxFoldBytes).toBe(1048576);
+    } finally {
+      vi.unstubAllEnvs();
     }
+  });
 
-    await runMaintenanceTick({ storage: s, currentJsonKey: key });
+  test("ignores a non-numeric BAERLY_MAINTENANCE_MAX_FOLD_BYTES", () => {
+    const m = nodeMaintenanceDispatch((k) =>
+      k === "BAERLY_MAINTENANCE_MAX_FOLD_BYTES" ? "not-a-number" : undefined,
+    );
+    expect(m.maxFoldBytes).toBeUndefined();
+  });
 
-    // Compact landed → current.json carries a snapshot pointer and
-    // `log_seq_start` advanced past 0.
-    const cur = await s.get(key);
-    expect(cur).not.toBeNull();
-    const json = JSON.parse(new TextDecoder().decode(cur!.body)) as {
-      snapshot: string | null;
-      log_seq_start?: number;
-    };
-    expect(json.snapshot).not.toBeNull();
-    expect(json.log_seq_start ?? 0).toBeGreaterThan(0);
+  test("threads BAERLY_MAINTENANCE_DISABLE → disabled via process.env (vi.stubEnv)", () => {
+    vi.stubEnv("BAERLY_MAINTENANCE_DISABLE", "1");
+    try {
+      const m = nodeMaintenanceDispatch();
+      expect(m.disabled).toBe(true);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
 
-    // GC bootstrapped its pending ledger (the file exists; the
-    // candidates were marked, not swept — 7-day grace gates the
-    // sweep, and this test doesn't override `now`).
-    const pending = await s.get("app/t/tenant/x/manifests/c/gc/pending.json");
-    expect(pending).not.toBeNull();
+  test("treats falsy BAERLY_MAINTENANCE_DISABLE values as not-disabled", () => {
+    for (const raw of ["0", "false", ""]) {
+      const m = nodeMaintenanceDispatch((k) =>
+        k === "BAERLY_MAINTENANCE_DISABLE" ? raw : undefined,
+      );
+      expect(m.disabled).toBeUndefined();
+    }
   });
 });
 
