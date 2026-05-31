@@ -53,6 +53,9 @@ const seedCurrent = (next_seq = 0): CurrentJson => ({
   next_seq,
   log_seq_start: 0,
   writer_fence: { epoch: 0, owner: "test", claimed_at: "" },
+  tail_bytes: 0,
+  snapshot_bytes: 0,
+  snapshot_rows: 0,
 });
 
 const provision = async (storage: MemoryStorage, coll: string = COLL): Promise<void> => {

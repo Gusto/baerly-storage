@@ -110,7 +110,7 @@ export const MAX_PARALLEL_LOG_READS: number = 16;
  *
  * @see packages/protocol/src/coordination/current-json.ts
  */
-export const CURRENT_JSON_SCHEMA_VERSION = 1 as const;
+export const CURRENT_JSON_SCHEMA_VERSION = 2 as const;
 
 /**
  * MIME type written for `current.json` PUTs. S3 round-trips this on
@@ -182,6 +182,110 @@ export const GC_GRACE_PERIOD_MILLIS: number = 7 * 24 * 60 * 60 * 1000;
  * @see packages/server/src/gc.ts
  */
 export const GC_MAX_PENDING_CANDIDATES: number = 1000;
+
+/**
+ * Fold-trigger ratio: fold fires at tail ≥ R×snapshot. Pure READ-AMP / fold-frequency
+ * knob — with the ceiling on the snapshot axis (Decision 3a, tail sliced) the
+ * auto-maintained snapshot ceiling is S_max = C, NOT C/(1+R). R=1.0 caps steady-state
+ * read-amp at ~2× and keeps compaction write-amp (≈1+1/R) moderate. See
+ * docs/about/graduation.md for the derivation.
+ *
+ * @see docs/about/graduation.md
+ * @see packages/server/src/maintenance.ts
+ */
+export const MAINTENANCE_TARGET_RATIO: number = 1;
+
+/**
+ * Floor for the ratio denominator — avoid div-by-tiny on a fresh collection. Also
+ * sets the first-fold threshold: until a snapshot exists, fold fires at tail ≈ this.
+ *
+ * @see packages/server/src/maintenance.ts
+ */
+export const MAINTENANCE_MIN_LIVE_BYTES: number = 64 * 1024;
+
+/**
+ * Per-tick GC budget — these are DEFAULTS (= the most-constrained tier, CF free, reusing
+ * the TESTED `CLOUDFLARE_FREE_TIER` values in maintenance.ts / maintenance.budget.test.ts).
+ * The adapter THREADS per-tier overrides into the context (§8.4); Node/CF-paid raise them.
+ * NOT universal constants — a Node-sized value here would silently kill every CF-free fold
+ * (round-4 Tier-1). gc pass ≈ 6 + maxMarks + maxSweeps subrequests (both GET/DELETE the
+ * bucket — §3.1). Cadence is BOUNDARY-CROSSING (§3.1), not modulo.
+ *
+ * @see packages/server/src/maintenance.ts
+ * @see packages/server/src/maintenance.budget.test.ts
+ */
+export const WRITE_TICK_GC_INTERVAL: number = 4; // tuned so maxSweeps/interval ≥ p (§7.1)
+
+/**
+ * Fold-starvation guard (critique A): on `phasesPerTick:"single"`, every Nth GC-interval is a
+ * HARD GC boundary the fold may NOT preempt, so a long fold-heavy drain can't starve GC to zero.
+ * Stateless (seq-derived) — no per-isolate preemption counter (CF recycles isolates). At 4 a
+ * sustained drain still yields ~1 GC tick per 4 GC-intervals.
+ *
+ * @see packages/server/src/maintenance.ts
+ */
+export const GC_STARVATION_GUARD: number = 4;
+
+/**
+ * Maximum GC marks per write-tick pass (M in 6+M+S; GETs the live tail to hash).
+ *
+ * @see packages/server/src/maintenance.ts
+ */
+export const WRITE_TICK_GC_MAX_MARKS: number = 20;
+
+/**
+ * Maximum GC sweeps per write-tick pass (S in 6+M+S; DELETE subrequests).
+ *
+ * @see packages/server/src/maintenance.ts
+ */
+export const WRITE_TICK_GC_MAX_SWEEPS: number = 10;
+
+/**
+ * Per-pass tail SLICE default — compact()'s maxEntriesPerRun. Fold ≤ this+3 subrequests, so
+ * a large tail drains incrementally over write-ticks (Decision 3). Adapter-overridable.
+ *
+ * @see packages/server/src/maintenance.ts
+ */
+export const WRITE_TICK_FOLD_ENTRIES_PER_PASS: number = 20;
+
+/**
+ * compact()'s minEntriesToCompact, set EXPLICITLY by the runner so it agrees with Gate 1
+ * rather than inheriting compact()'s silent default 100 (which would contradict the 64 KB
+ * first-fold story — round-4 Tier-3). Adapter-overridable; CF-free value.
+ *
+ * @see packages/server/src/maintenance.ts
+ */
+export const WRITE_TICK_MIN_ENTRIES_TO_COMPACT: number = 50;
+
+/**
+ * SNAPSHOT-rebuild ceiling `C` (the unsliceable axis — Decision 3a), memory. Default sized
+ * ~5.5 ms under CF-free ~10 ms. Raise via BAERLY_MAINTENANCE_MAX_FOLD_BYTES on capable
+ * hosts. Auto-maintained snapshot ceiling S_max = C. NOT snapshot+tail (tail is sliced).
+ *
+ * @see docs/about/graduation.md
+ * @see packages/server/src/maintenance.ts
+ */
+export const MAINTENANCE_MAX_FOLD_BYTES_DEFAULT: number = 512 * 1024;
+
+/**
+ * SNAPSHOT-rebuild ceiling `E`, per-entry CPU axis: gates `snapshot_rows` (per-entry
+ * parse/merge/serialize is ~half of fold CPU and scales with ROW COUNT not bytes, VLDB 2021
+ * Sarkar — a tiny-doc snapshot can blow CPU under C). PROVISIONAL — calibrate via the
+ * Task 3 bench, pin in graduation.md.
+ *
+ * @see docs/about/graduation.md
+ * @see packages/server/src/maintenance.ts
+ */
+export const MAINTENANCE_MAX_FOLD_ROWS: number = 2048;
+
+/**
+ * Rate-limit the defer-warn off SHARED current.json.last_warned_seq (not per-isolate
+ * memory — CF recycles isolates). ~once per this many writes.
+ *
+ * @see packages/protocol/src/coordination/current-json.ts
+ * @see packages/server/src/maintenance.ts
+ */
+export const MAINTENANCE_WARN_INTERVAL_WRITES: number = 1000;
 
 /**
  * Placeholder for `CurrentJson.snapshot === null` in the

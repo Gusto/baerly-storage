@@ -35,6 +35,9 @@ describe("runMaintenanceTick", () => {
       next_seq: 0,
       log_seq_start: 0,
       writer_fence: { epoch: 0, owner: "node-maintenance-test", claimed_at: "" },
+      tail_bytes: 0,
+      snapshot_bytes: 0,
+      snapshot_rows: 0,
     });
     const writer = new Writer({ storage: s, currentJsonKey: key });
     for (let i = 0; i < 200; i++) {
@@ -126,6 +129,9 @@ describe("createApp observability", () => {
       next_seq: 0,
       log_seq_start: 0,
       writer_fence: { epoch: 0, owner: "obs-test", claimed_at: "" },
+      tail_bytes: 0,
+      snapshot_bytes: 0,
+      snapshot_rows: 0,
     });
   };
 
@@ -305,6 +311,9 @@ describe("createFetchHandler", () => {
       next_seq: 0,
       log_seq_start: 0,
       writer_fence: { epoch: 0, owner: "fetch-handler-test", claimed_at: "" },
+      tail_bytes: 0,
+      snapshot_bytes: 0,
+      snapshot_rows: 0,
     });
   };
 
@@ -479,6 +488,9 @@ describe("createApp client-disconnect resilience", () => {
       next_seq: 0,
       log_seq_start: 0,
       writer_fence: { epoch: 0, owner: "since-abort-test", claimed_at: "" },
+      tail_bytes: 0,
+      snapshot_bytes: 0,
+      snapshot_rows: 0,
     });
   };
 

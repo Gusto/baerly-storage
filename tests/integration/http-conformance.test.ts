@@ -294,6 +294,9 @@ for (const variant of variants) {
           next_seq: 0,
           log_seq_start: 0,
           writer_fence: { epoch: 0, owner: "http-conformance-test", claimed_at: "" },
+          tail_bytes: 0,
+          snapshot_bytes: 0,
+          snapshot_rows: 0,
         });
       },
       options: {
@@ -350,6 +353,9 @@ describe("HTTP boundary — schema validation (ticket 70)", () => {
         next_seq: 0,
         log_seq_start: 0,
         writer_fence: { epoch: 0, owner: "http-schema-test", claimed_at: "" },
+        tail_bytes: 0,
+        snapshot_bytes: 0,
+        snapshot_rows: 0,
       },
     );
 

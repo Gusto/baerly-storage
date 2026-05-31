@@ -33,6 +33,9 @@ const seedCurrent = (): CurrentJson => ({
   next_seq: 0,
   log_seq_start: 0,
   writer_fence: { epoch: 0, owner: "test", claimed_at: "" },
+  tail_bytes: 0,
+  snapshot_bytes: 0,
+  snapshot_rows: 0,
 });
 
 const decodeJson = <T>(bytes: Uint8Array): T => JSON.parse(new TextDecoder().decode(bytes)) as T;

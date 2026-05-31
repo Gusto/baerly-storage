@@ -107,6 +107,9 @@ describe("baerlyNode", () => {
           next_seq: 0,
           log_seq_start: 0,
           writer_fence: { epoch: 0, owner: "baerly-node-test", claimed_at: "" },
+          tail_bytes: 0,
+          snapshot_bytes: 0,
+          snapshot_rows: 0,
         });
         const writer = new Writer({ storage, currentJsonKey: key });
         for (let i = 0; i < 200; i++) {
@@ -177,6 +180,9 @@ describe("baerlyNode", () => {
       next_seq: 0,
       log_seq_start: 0,
       writer_fence: { epoch: 0, owner: "baerly-node-test", claimed_at: "" },
+      tail_bytes: 0,
+      snapshot_bytes: 0,
+      snapshot_rows: 0,
     });
     const writer = new Writer({ storage: realStorage, currentJsonKey: seededKey });
     for (let i = 0; i < 200; i++) {
@@ -353,6 +359,9 @@ describe("baerlyNode config.auth synthesis", () => {
       next_seq: 0,
       log_seq_start: 0,
       writer_fence: { epoch: 0, owner: "auth-none-test", claimed_at: "" },
+      tail_bytes: 0,
+      snapshot_bytes: 0,
+      snapshot_rows: 0,
     });
     const config: BaerlyAppConfig = {
       app: "t",
@@ -384,6 +393,9 @@ describe("baerlyNode config.auth synthesis", () => {
       next_seq: 0,
       log_seq_start: 0,
       writer_fence: { epoch: 0, owner: "auth-ss-test", claimed_at: "" },
+      tail_bytes: 0,
+      snapshot_bytes: 0,
+      snapshot_rows: 0,
     });
     const config: BaerlyAppConfig = {
       app: "t",

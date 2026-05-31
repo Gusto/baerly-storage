@@ -20,6 +20,9 @@ const seedJson = (overrides: Partial<CurrentJson> = {}): CurrentJson => ({
   next_seq: 0,
   log_seq_start: 0,
   writer_fence: { epoch: 0, owner: "test", claimed_at: "" },
+  tail_bytes: 0,
+  snapshot_bytes: 0,
+  snapshot_rows: 0,
   ...overrides,
 });
 
@@ -261,6 +264,9 @@ describe("CurrentJson schema (PBT)", () => {
         owner: fc.string(),
         claimed_at: fc.string(),
       }),
+      tail_bytes: fc.integer({ min: 0, max: 1_000_000 }),
+      snapshot_bytes: fc.integer({ min: 0, max: 1_000_000 }),
+      snapshot_rows: fc.integer({ min: 0, max: 10_000 }),
     }),
   );
 
@@ -383,6 +389,146 @@ describe("CurrentJson log_seq_start", () => {
       code: "InvalidResponse",
       message: expect.stringMatching(/log_seq_start.*next_seq/),
     });
+  });
+});
+
+describe("CurrentJson schema v2 — tail_bytes / snapshot_bytes / snapshot_rows", () => {
+  // ── v2 acceptance ──────────────────────────────────────────────────
+  plainTest("accepts a valid v2 record with all required byte/row fields", async () => {
+    const s = new MemoryStorage();
+    await createCurrentJson(s, "k", seedJson());
+    const got = await readCurrentJson(s, "k");
+    expect(got).not.toBeNull();
+    expect(got!.json.tail_bytes).toBe(0);
+    expect(got!.json.snapshot_bytes).toBe(0);
+    expect(got!.json.snapshot_rows).toBe(0);
+    expect(got!.json.last_warned_seq).toBeUndefined();
+  });
+
+  plainTest("accepts v2 with optional last_warned_seq present", async () => {
+    const s = new MemoryStorage();
+    await createCurrentJson(s, "k", seedJson({ last_warned_seq: 42 }));
+    const got = await readCurrentJson(s, "k");
+    expect(got!.json.last_warned_seq).toBe(42);
+  });
+
+  // ── v1 reject with actionable message ──────────────────────────────
+  plainTest(
+    "rejects schema v1 with actionable message matching /v1|re-seed|recreate/",
+    async () => {
+      const s = new MemoryStorage();
+      const body = JSON.stringify({
+        schema_version: 1,
+        snapshot: null,
+        next_seq: 0,
+        log_seq_start: 0,
+        writer_fence: { epoch: 0, owner: "", claimed_at: "" },
+      });
+      await s.put("k", new TextEncoder().encode(body));
+      await expect(readCurrentJson(s, "k")).rejects.toMatchObject({
+        code: "InvalidResponse",
+        message: expect.stringMatching(/v1|re-seed|recreate/),
+      });
+    },
+  );
+
+  // ── missing required byte/row fields ───────────────────────────────
+  plainTest("rejects v2 record missing tail_bytes", async () => {
+    const s = new MemoryStorage();
+    const { tail_bytes: _omit, ...without } = seedJson();
+    await s.put("k", new TextEncoder().encode(JSON.stringify(without)));
+    await expect(readCurrentJson(s, "k")).rejects.toMatchObject({
+      code: "InvalidResponse",
+      message: expect.stringMatching(/tail_bytes/),
+    });
+  });
+
+  plainTest("rejects v2 record missing snapshot_bytes", async () => {
+    const s = new MemoryStorage();
+    const { snapshot_bytes: _omit, ...without } = seedJson();
+    await s.put("k", new TextEncoder().encode(JSON.stringify(without)));
+    await expect(readCurrentJson(s, "k")).rejects.toMatchObject({
+      code: "InvalidResponse",
+      message: expect.stringMatching(/snapshot_bytes/),
+    });
+  });
+
+  plainTest("rejects v2 record missing snapshot_rows", async () => {
+    const s = new MemoryStorage();
+    const { snapshot_rows: _omit, ...without } = seedJson();
+    await s.put("k", new TextEncoder().encode(JSON.stringify(without)));
+    await expect(readCurrentJson(s, "k")).rejects.toMatchObject({
+      code: "InvalidResponse",
+      message: expect.stringMatching(/snapshot_rows/),
+    });
+  });
+
+  plainTest("rejects v2 record with negative tail_bytes", async () => {
+    const s = new MemoryStorage();
+    const body = JSON.stringify({ ...seedJson(), tail_bytes: -1 });
+    await s.put("k", new TextEncoder().encode(body));
+    await expect(readCurrentJson(s, "k")).rejects.toMatchObject({
+      code: "InvalidResponse",
+      message: expect.stringMatching(/tail_bytes/),
+    });
+  });
+
+  plainTest("rejects v2 record with non-integer snapshot_bytes", async () => {
+    const s = new MemoryStorage();
+    const body = JSON.stringify({ ...seedJson(), snapshot_bytes: 1.5 });
+    await s.put("k", new TextEncoder().encode(body));
+    await expect(readCurrentJson(s, "k")).rejects.toMatchObject({
+      code: "InvalidResponse",
+      message: expect.stringMatching(/snapshot_bytes/),
+    });
+  });
+
+  plainTest("rejects v2 record with negative snapshot_rows", async () => {
+    const s = new MemoryStorage();
+    const body = JSON.stringify({ ...seedJson(), snapshot_rows: -1 });
+    await s.put("k", new TextEncoder().encode(body));
+    await expect(readCurrentJson(s, "k")).rejects.toMatchObject({
+      code: "InvalidResponse",
+      message: expect.stringMatching(/snapshot_rows/),
+    });
+  });
+
+  plainTest("rejects v2 record with non-integer snapshot_rows", async () => {
+    const s = new MemoryStorage();
+    const body = JSON.stringify({ ...seedJson(), snapshot_rows: 2.5 });
+    await s.put("k", new TextEncoder().encode(body));
+    await expect(readCurrentJson(s, "k")).rejects.toMatchObject({
+      code: "InvalidResponse",
+      message: expect.stringMatching(/snapshot_rows/),
+    });
+  });
+
+  plainTest("rejects v2 record with non-integer last_warned_seq when present", async () => {
+    const s = new MemoryStorage();
+    const body = JSON.stringify({ ...seedJson(), last_warned_seq: 1.5 });
+    await s.put("k", new TextEncoder().encode(body));
+    await expect(readCurrentJson(s, "k")).rejects.toMatchObject({
+      code: "InvalidResponse",
+      message: expect.stringMatching(/last_warned_seq/),
+    });
+  });
+
+  plainTest("rejects v2 record with negative last_warned_seq when present", async () => {
+    const s = new MemoryStorage();
+    const body = JSON.stringify({ ...seedJson(), last_warned_seq: -1 });
+    await s.put("k", new TextEncoder().encode(body));
+    await expect(readCurrentJson(s, "k")).rejects.toMatchObject({
+      code: "InvalidResponse",
+      message: expect.stringMatching(/last_warned_seq/),
+    });
+  });
+
+  plainTest("createCurrentJson seeds tail_bytes=0, snapshot_bytes=0, snapshot_rows=0", async () => {
+    const s = new MemoryStorage();
+    const r = await createCurrentJson(s, "k", seedJson());
+    expect(r.json.tail_bytes).toBe(0);
+    expect(r.json.snapshot_bytes).toBe(0);
+    expect(r.json.snapshot_rows).toBe(0);
   });
 });
 

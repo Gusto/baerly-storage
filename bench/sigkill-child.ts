@@ -29,11 +29,14 @@ const SIGKILL_LOG_PREFIX = "bench/tenant-A/collection-sigkill";
 const SIGKILL_CURRENT_KEY = `${SIGKILL_LOG_PREFIX}/current.json`;
 
 const SEED: CurrentJson = {
-  schema_version: 1,
+  schema_version: 2,
   snapshot: null,
   next_seq: seq,
   log_seq_start: 0,
   writer_fence: { epoch: 0, owner: "bench-sigkill", claimed_at: "" },
+  tail_bytes: 0,
+  snapshot_bytes: 0,
+  snapshot_rows: 0,
 };
 
 async function sha256Hex(bytes: Uint8Array): Promise<string> {

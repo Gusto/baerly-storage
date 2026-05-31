@@ -44,11 +44,14 @@ const S5_LOG_PREFIX = "bench/tenant-A/collection-compact";
 const S5_CURRENT_KEY = `${S5_LOG_PREFIX}/current.json`;
 const S5_TARGET_OPS_PER_SEC = 50;
 const SEED: CurrentJson = {
-  schema_version: 1,
+  schema_version: 2,
   snapshot: null,
   next_seq: 0,
   log_seq_start: 0,
   writer_fence: { epoch: 0, owner: "bench", claimed_at: "" },
+  tail_bytes: 0,
+  snapshot_bytes: 0,
+  snapshot_rows: 0,
 };
 
 const BASE_MS = 50;

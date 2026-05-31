@@ -90,6 +90,9 @@ const seed = async (
     next_seq: 0,
     log_seq_start: 0,
     writer_fence: { epoch: 0, owner: "budget-test", claimed_at: "" },
+    tail_bytes: 0,
+    snapshot_bytes: 0,
+    snapshot_rows: 0,
   });
   const writer = new Writer({ storage, currentJsonKey: key });
   for (let i = 0; i < entries; i++) {

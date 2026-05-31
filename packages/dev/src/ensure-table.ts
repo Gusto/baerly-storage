@@ -45,6 +45,9 @@ export const ensureTable = async (
       next_seq: 0,
       log_seq_start: 0,
       writer_fence: { epoch: 0, owner: "", claimed_at: "" },
+      tail_bytes: 0,
+      snapshot_bytes: 0,
+      snapshot_rows: 0,
     });
   } catch (error) {
     if (error instanceof BaerlyError && error.code === "Conflict") {

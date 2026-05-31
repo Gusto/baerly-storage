@@ -245,6 +245,9 @@ describe.runIf(NODE_URL !== undefined && SECRET !== undefined)("real-deploy: nod
             owner: "manual-e2e-node",
             claimed_at: "",
           },
+          tail_bytes: 0,
+          snapshot_bytes: 0,
+          snapshot_rows: 0,
         });
       },
       options: {

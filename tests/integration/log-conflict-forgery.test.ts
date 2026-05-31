@@ -161,6 +161,9 @@ describe("C2 session-id-unguessability under ForgeryStorage adversary", () => {
       next_seq: 0,
       log_seq_start: 0,
       writer_fence: { epoch: 0, owner: "forgery-test", claimed_at: "" },
+      tail_bytes: 0,
+      snapshot_bytes: 0,
+      snapshot_rows: 0,
     });
 
     const inner = new MemoryStorage();

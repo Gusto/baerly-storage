@@ -136,6 +136,9 @@ const bundle = defineBaerlySubcommand({
           owner: RESTORE_OWNER,
           claimed_at: "",
         },
+        tail_bytes: 0,
+        snapshot_bytes: 0,
+        snapshot_rows: 0,
       };
       try {
         await bucket.storage.put(currentJsonKey, encodeJsonBytes(reseeded), {
@@ -159,6 +162,9 @@ const bundle = defineBaerlySubcommand({
         next_seq: 0,
         log_seq_start: 0,
         writer_fence: { epoch: 0, owner: RESTORE_OWNER, claimed_at: "" },
+        tail_bytes: 0,
+        snapshot_bytes: 0,
+        snapshot_rows: 0,
       };
       await createCurrentJson(bucket.storage, currentJsonKey, seed);
     }

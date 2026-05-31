@@ -85,6 +85,9 @@ describe("baerlyWorker cache_status", () => {
       next_seq: 0,
       log_seq_start: 0,
       writer_fence: { epoch: 0, owner: "cs-hit-test", claimed_at: "" },
+      tail_bytes: 0,
+      snapshot_bytes: 0,
+      snapshot_rows: 0,
     });
 
     // Insert one doc up front via a POST so subsequent GETs have a
@@ -155,6 +158,9 @@ describe("baerlyWorker cache_status", () => {
       next_seq: 0,
       log_seq_start: 0,
       writer_fence: { epoch: 0, owner: "cs-bypass-test", claimed_at: "" },
+      tail_bytes: 0,
+      snapshot_bytes: 0,
+      snapshot_rows: 0,
     });
 
     const env: BaerlyEnv = { BUCKET: bucket, APP: "t" };

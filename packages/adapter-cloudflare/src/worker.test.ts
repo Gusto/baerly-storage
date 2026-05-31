@@ -139,6 +139,9 @@ describe("baerlyWorker observability", () => {
       next_seq: 0,
       log_seq_start: 0,
       writer_fence: { epoch: 0, owner: "obs-write-test", claimed_at: "" },
+      tail_bytes: 0,
+      snapshot_bytes: 0,
+      snapshot_rows: 0,
     });
 
     const handler = baerlyWorker(() => ({
@@ -189,6 +192,9 @@ describe("baerlyWorker observability", () => {
       next_seq: 0,
       log_seq_start: 0,
       writer_fence: { epoch: 0, owner: "obs-miss-test", claimed_at: "" },
+      tail_bytes: 0,
+      snapshot_bytes: 0,
+      snapshot_rows: 0,
     });
 
     const env: BaerlyEnv = { BUCKET: bucket, APP: "t" };
@@ -259,6 +265,9 @@ describe("baerlyWorker observability", () => {
       next_seq: 0,
       log_seq_start: 0,
       writer_fence: { epoch: 0, owner: "obs-hit-test", claimed_at: "" },
+      tail_bytes: 0,
+      snapshot_bytes: 0,
+      snapshot_rows: 0,
     });
 
     const env: BaerlyEnv = { BUCKET: bucket, APP: "t" };
@@ -416,6 +425,9 @@ describe("baerlyWorker config.auth synthesis", () => {
       next_seq: 0,
       log_seq_start: 0,
       writer_fence: { epoch: 0, owner: "auth-synth-test", claimed_at: "" },
+      tail_bytes: 0,
+      snapshot_bytes: 0,
+      snapshot_rows: 0,
     });
   };
 

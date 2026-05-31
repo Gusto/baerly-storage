@@ -28,6 +28,9 @@ const bootstrap = async (storage: MemoryStorage, key: string): Promise<void> => 
     next_seq: 0,
     log_seq_start: 0,
     writer_fence: { epoch: 0, owner: "compactor-test", claimed_at: "" },
+    tail_bytes: 0,
+    snapshot_bytes: 0,
+    snapshot_rows: 0,
   });
 };
 
@@ -319,6 +322,9 @@ describe("compact", () => {
       next_seq: 10,
       log_seq_start: 0,
       writer_fence: { epoch: 0, owner: "test", claimed_at: "" },
+      tail_bytes: 0,
+      snapshot_bytes: 0,
+      snapshot_rows: 0,
     });
     await expect(
       compact({ storage: s, currentJsonKey: KEY }, { minEntriesToCompact: 5 }),

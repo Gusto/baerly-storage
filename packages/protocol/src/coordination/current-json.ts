@@ -50,16 +50,16 @@ import type { Storage, StoragePutOptions, StoragePutResult } from "../storage/ty
  *
  * The schema is forward-compatible: adding a new optional field is
  * non-breaking. Renaming or removing a field requires bumping
- * {@link CURRENT_JSON_SCHEMA_VERSION} to `2`; readers MUST reject
+ * {@link CURRENT_JSON_SCHEMA_VERSION}; readers MUST reject
  * unknown major versions with `BaerlyError{code:"InvalidResponse"}`.
  */
 export interface CurrentJson {
   /**
-   * Schema version. Today: `1`. Bump on any breaking change to
+   * Schema version. Today: `2`. Bump on any breaking change to
    * field semantics; readers must reject unknown major versions
    * with `BaerlyError{code:"InvalidResponse"}`.
    */
-  schema_version: 1;
+  schema_version: 2;
 
   /**
    * Pointer to the current snapshot generation. `null` before the
@@ -98,6 +98,26 @@ export interface CurrentJson {
    * Embedded write-fence epoch. See {@link WriterFence}.
    */
   writer_fence: WriterFence;
+
+  // New in v2:
+
+  /** EXACT byte size of the live log tail [log_seq_start, next_seq). Maintained exactly
+   *  by the full-fence CAS on BOTH paths: each write adds its log bytes; a successful
+   *  fold (which proves no concurrent write) resets to 0 from a known-empty tail. */
+  tail_bytes: number;
+
+  /** Byte size of the snapshot pointed to by `snapshot`. */
+  snapshot_bytes: number;
+
+  /** Row count of the snapshot (= compactor `base.size`, free). With next_seq - log_seq_start
+   *  (tail entries) this gives the fold's entry count for the ENTRY ceiling `E`. Seeded 0. */
+  snapshot_rows: number;
+
+  /** Baseline for rate-limiting the graduation defer-warn off SHARED durable state, not
+   *  per-isolate memory. The warn fires when next_seq - last_warned_seq >=
+   *  MAINTENANCE_WARN_INTERVAL_WRITES, and that firing CASes last_warned_seq = next_seq.
+   *  Absent → 0. */
+  last_warned_seq?: number;
 }
 
 /**
@@ -412,6 +432,12 @@ const assertCurrentJson = (parsed: unknown, key: string): CurrentJson => {
     );
   }
   const r = parsed as Record<string, unknown>;
+  if (r["schema_version"] === 1) {
+    throw new BaerlyError(
+      "InvalidResponse",
+      `current.json at ${key} is schema v1 (pre-maintenance); this build requires v2. Pre-launch, no production buckets — delete and re-seed the local-fs/Minio/Verdaccio scratch bucket, or recreate the R2/S3 bucket.`,
+    );
+  }
   if (r["schema_version"] !== CURRENT_JSON_SCHEMA_VERSION) {
     throw new BaerlyError(
       "InvalidResponse",
@@ -473,6 +499,47 @@ const assertCurrentJson = (parsed: unknown, key: string): CurrentJson => {
     throw new BaerlyError(
       "InvalidResponse",
       `current.json at ${key}: writer_fence.lease_until must be string if present`,
+    );
+  }
+  if (
+    typeof r["tail_bytes"] !== "number" ||
+    !Number.isInteger(r["tail_bytes"]) ||
+    r["tail_bytes"] < 0
+  ) {
+    throw new BaerlyError(
+      "InvalidResponse",
+      `current.json at ${key}: tail_bytes must be a non-negative integer`,
+    );
+  }
+  if (
+    typeof r["snapshot_bytes"] !== "number" ||
+    !Number.isInteger(r["snapshot_bytes"]) ||
+    r["snapshot_bytes"] < 0
+  ) {
+    throw new BaerlyError(
+      "InvalidResponse",
+      `current.json at ${key}: snapshot_bytes must be a non-negative integer`,
+    );
+  }
+  if (
+    typeof r["snapshot_rows"] !== "number" ||
+    !Number.isInteger(r["snapshot_rows"]) ||
+    r["snapshot_rows"] < 0
+  ) {
+    throw new BaerlyError(
+      "InvalidResponse",
+      `current.json at ${key}: snapshot_rows must be a non-negative integer`,
+    );
+  }
+  if (
+    r["last_warned_seq"] !== undefined &&
+    (typeof r["last_warned_seq"] !== "number" ||
+      !Number.isInteger(r["last_warned_seq"]) ||
+      r["last_warned_seq"] < 0)
+  ) {
+    throw new BaerlyError(
+      "InvalidResponse",
+      `current.json at ${key}: last_warned_seq must be a non-negative integer if present`,
     );
   }
   return parsed as CurrentJson;
