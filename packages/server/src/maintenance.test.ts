@@ -16,6 +16,7 @@ import {
   type CurrentJson,
   GC_STARVATION_GUARD,
   MAINTENANCE_MIN_LIVE_BYTES,
+  MAINTENANCE_WARN_INTERVAL_WRITES,
   MemoryStorage,
   readCurrentJson,
   type Storage,
@@ -27,7 +28,7 @@ import {
   WRITE_TICK_FOLD_ENTRIES_PER_PASS,
   WRITE_TICK_GC_INTERVAL,
 } from "@baerly/protocol";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { compact } from "./compactor.ts";
 import { runGc, type InternalRunGcOptions } from "./gc.ts";
 import {
@@ -255,6 +256,14 @@ const readSeqStart = async (storage: Storage, key: string): Promise<number> => {
   return r.json.log_seq_start;
 };
 
+const readLastWarnedSeq = async (storage: Storage, key: string): Promise<number | undefined> => {
+  const r = await readCurrentJson(storage, key);
+  if (r === null) {
+    throw new Error("current.json missing");
+  }
+  return r.json.last_warned_seq;
+};
+
 /** Install a fresh spy recorder over `fn` and return what it observed. */
 const withRecorder = async (fn: () => Promise<void>): Promise<RequestScopedMetricsRecorder> => {
   const recorder = new RequestScopedMetricsRecorder();
@@ -366,6 +375,117 @@ describe("runBoundedMaintenance", () => {
     // Fell through to GC: pending.json exists.
     const pending = await inner.get("app/t/tenant/x/manifests/c/gc/pending.json");
     expect(pending).not.toBeNull();
+  });
+
+  test("a defer pass past the warn interval warns once AND stamps last_warned_seq", async () => {
+    const inner = new MemoryStorage();
+    await seedLog(inner, KEY, COLL, 60); // next_seq = 60 (>= WARN_INTERVAL would be false…)
+    // …so force next_seq well past the interval boundary by stamping a
+    // current.json whose next_seq is large but last_warned_seq is absent.
+    await casUpdateCurrentJson(inner, KEY, (cur) => ({
+      ...cur,
+      tail_bytes: MAINTENANCE_MIN_LIVE_BYTES,
+      snapshot_bytes: 0,
+      snapshot_rows: 1_000_000, // > MAINTENANCE_MAX_FOLD_ROWS ⇒ defer
+      next_seq: MAINTENANCE_WARN_INTERVAL_WRITES + 5,
+      log_seq_start: 0,
+    }));
+    const expectedNextSeq = MAINTENANCE_WARN_INTERVAL_WRITES + 5;
+
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const recorder = await withRecorder(async () => {
+        await runBoundedMaintenance(
+          {
+            storage: inner,
+            currentJsonKey: KEY,
+            prevSeq: expectedNextSeq, // no GC boundary; isolate the defer
+          },
+          { gcInterval: WRITE_TICK_GC_INTERVAL },
+        );
+      });
+      // Deferred ⇒ metric bumped (existing behaviour).
+      expect(counterTotal(recorder, "db.compaction.deferred_total")).toBeGreaterThan(0);
+      // Warn fired exactly once, and named the actionable signals.
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      const msg = String(warnSpy.mock.calls[0]?.[0] ?? "");
+      expect(msg).toContain("BAERLY_MAINTENANCE_MAX_FOLD_BYTES");
+      expect(msg).toContain("docs/about/graduation.md");
+    } finally {
+      warnSpy.mockRestore();
+    }
+    // The warn stamped last_warned_seq = next_seq via a separate CAS.
+    await expect(readLastWarnedSeq(inner, KEY)).resolves.toBe(expectedNextSeq);
+  });
+
+  test("a defer pass WITHIN the warn interval does NOT warn — across FRESH runner calls", async () => {
+    const inner = new MemoryStorage();
+    await seedLog(inner, KEY, COLL, 60);
+    // last_warned_seq sits just below next_seq ⇒ inside the interval.
+    const nextSeq = MAINTENANCE_WARN_INTERVAL_WRITES + 5;
+    await casUpdateCurrentJson(inner, KEY, (cur) => ({
+      ...cur,
+      tail_bytes: MAINTENANCE_MIN_LIVE_BYTES,
+      snapshot_bytes: 0,
+      snapshot_rows: 1_000_000, // defer
+      next_seq: nextSeq,
+      log_seq_start: 0,
+      last_warned_seq: nextSeq - 1, // 1 < MAINTENANCE_WARN_INTERVAL_WRITES
+    }));
+
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      // Two SEPARATE runner invocations — no per-isolate Set could span
+      // these; the only rate-limit state lives in current.json.
+      const recorder = await withRecorder(async () => {
+        await runBoundedMaintenance(
+          { storage: inner, currentJsonKey: KEY, prevSeq: nextSeq },
+          { gcInterval: WRITE_TICK_GC_INTERVAL },
+        );
+        await runBoundedMaintenance(
+          { storage: inner, currentJsonKey: KEY, prevSeq: nextSeq },
+          { gcInterval: WRITE_TICK_GC_INTERVAL },
+        );
+      });
+      // Still deferred both times…
+      expect(counterTotal(recorder, "db.compaction.deferred_total")).toBeGreaterThan(0);
+      // …but no warn, because next_seq - last_warned_seq < interval.
+      expect(warnSpy).not.toHaveBeenCalled();
+    } finally {
+      warnSpy.mockRestore();
+    }
+    // last_warned_seq untouched by a within-interval defer.
+    await expect(readLastWarnedSeq(inner, KEY)).resolves.toBe(nextSeq - 1);
+  });
+
+  test("a folding (non-deferring) pass NEVER warns", async () => {
+    const inner = new MemoryStorage();
+    await seedLog(inner, KEY, COLL, 60);
+    // gate1 trips and snapshot is tiny ⇒ fold-viable. Push next_seq well
+    // past the warn interval so a stray warn would be visible.
+    await casUpdateCurrentJson(inner, KEY, (cur) => ({
+      ...cur,
+      tail_bytes: MAINTENANCE_MIN_LIVE_BYTES,
+      snapshot_bytes: 0,
+      snapshot_rows: 0,
+      next_seq: MAINTENANCE_WARN_INTERVAL_WRITES + 5,
+    }));
+    const cur = await readCurrentJson(inner, KEY);
+    const nextSeq = cur!.json.next_seq;
+
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await runBoundedMaintenance({
+        storage: inner,
+        currentJsonKey: KEY,
+        prevSeq: nextSeq, // no GC boundary; just fold
+      });
+      expect(warnSpy).not.toHaveBeenCalled();
+    } finally {
+      warnSpy.mockRestore();
+    }
+    // No stamp on a folding pass.
+    await expect(readLastWarnedSeq(inner, KEY)).resolves.toBeUndefined();
   });
 
   test("fold advances by only a bounded slice, not the whole tail", async () => {

@@ -23,11 +23,13 @@ import {
   type MetricsRecorder,
   type Storage,
   BaerlyError,
+  casUpdateCurrentJson,
   GC_STARVATION_GUARD,
   MAINTENANCE_MAX_FOLD_BYTES_DEFAULT,
   MAINTENANCE_MAX_FOLD_ROWS,
   MAINTENANCE_MIN_LIVE_BYTES,
   MAINTENANCE_TARGET_RATIO,
+  MAINTENANCE_WARN_INTERVAL_WRITES,
   noopMetricsRecorder,
   readCurrentJson,
   WRITE_TICK_FOLD_ENTRIES_PER_PASS,
@@ -352,6 +354,39 @@ export const runBoundedMaintenance = async (
           collection,
           dimension: snapshotBytes > C ? "bytes" : "rows",
         });
+        // Advisory graduation warn, rate-limited off the SHARED
+        // current.json.last_warned_seq (NOT a per-isolate Set — a fresh
+        // isolate must honour the same rate-limit). Fires only when at
+        // least MAINTENANCE_WARN_INTERVAL_WRITES writes have accrued
+        // since the last warn, then best-effort CASes the stamp forward.
+        if (nextSeq - (current.last_warned_seq ?? 0) >= MAINTENANCE_WARN_INTERVAL_WRITES) {
+          console.warn(
+            `baerly-storage: collection "${collection}" is deferring compaction — its ` +
+              `snapshot exceeds the fold ceiling (${snapshotBytes > C ? "bytes" : "rows"}), ` +
+              `so the tail keeps growing and read amplification will climb. This is ` +
+              `graduation-pending: the dataset has outgrown prototype-tier maintenance. ` +
+              `On paid Cloudflare / Node you can raise BAERLY_MAINTENANCE_MAX_FOLD_BYTES — ` +
+              `but on Cloudflare a cap above what a single isolate can fold makes folds get ` +
+              `CPU-killed mid-flight and silently not land (no clean metric — watch snapshot ` +
+              `age / object count); see docs/about/graduation.md. Otherwise, graduate to a ` +
+              `server-backed database.`,
+          );
+          // SEPARATE best-effort CAS — explicitly NOT folded into any
+          // commit CAS. A lost stamp just means another isolate warns
+          // slightly sooner/later; it must never throw out of the runner
+          // nor block the GC fall-through below.
+          try {
+            await casUpdateCurrentJson(
+              storage,
+              currentJsonKey,
+              (c) => ({ ...c, last_warned_seq: nextSeq }),
+              signal !== undefined ? { signal } : undefined,
+            );
+          } catch {
+            // Swallow — Conflict (another isolate stamped first) or any
+            // transient error. The warn already fired; GC must still run.
+          }
+        }
       }
     }
 
