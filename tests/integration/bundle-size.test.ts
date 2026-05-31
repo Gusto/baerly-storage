@@ -157,7 +157,14 @@ const BUDGETS: readonly Budget[] = [
   //     `current-json` chunk the kernel barrel pulls; gz crept +36 B
   //     over the prior 51 KiB budget. Raw is comfortably under.
   //     Measured: 166684 raw / 52260 gz. Bump gz by 1 KiB.
-  { entry: "index.js", raw: 163 * 1024, gz: 52 * 1024 },
+  //   → 200 KiB raw / 61 KiB gz: in-band-maintenance Task 2
+  //     (2026-05-30). The write-tick hook makes `writer.ts` statically
+  //     import `./maintenance.ts` (→ compactor.ts + gc.ts), so the
+  //     maintenance subgraph is now part of every kernel-barrel
+  //     closure (the write path genuinely depends on it). Measured:
+  //     203193 raw / 62015 gz. INTERIM bump — a later in-band-
+  //     maintenance task reconciles the net kernel/maintenance split.
+  { entry: "index.js", raw: 200 * 1024, gz: 61 * 1024 },
   // The three auth verifier factories (bearerJwt, sharedSecret,
   // cloudflareAccess) plus the transitive jose closure pulled in by
   // bearerJwt's createRemoteJWKSet + jwtVerify. Adding a fourth
@@ -212,7 +219,13 @@ const BUDGETS: readonly Budget[] = [
   //     imported here, but `mergePredicateWires` reaches the closure
   //     via the kernel `Query.where` seam. Measured: 287051 raw /
   //     83035 gz.
-  { entry: "http.js", raw: 282 * 1024, gz: 82 * 1024 },
+  //   → 312 KiB raw / 91 KiB gz: in-band-maintenance Task 2
+  //     (2026-05-30). `writer.ts` now statically imports
+  //     `./maintenance.ts` for the write-tick dispatch, pulling the
+  //     compactor + GC subgraph into the http closure (the Writer is
+  //     on the request path). Measured: 318946 raw / 93115 gz. INTERIM
+  //     bump — a later in-band-maintenance task reconciles the net.
+  { entry: "http.js", raw: 312 * 1024, gz: 91 * 1024 },
   // Observability primitives — ObservabilityContext, the
   // request-scoped MetricsRecorder, LogTape config + the
   // JSON sink only (the pretty sink + picocolors now live in
@@ -279,7 +292,13 @@ const BUDGETS: readonly Budget[] = [
   //     closure. Cross-cloud / cross-account R2 consumers now import
   //     `S3HttpStorage` directly from `@gusto/baerly-storage/node`. Measured:
   //     347593 raw / 102077 gz — −97 KiB raw / −26 KiB gz.
-  { entry: "cloudflare.js", raw: 340 * 1024, gz: 100 * 1024 },
+  //   → 363 KiB raw / 108 KiB gz: in-band-maintenance Task 2
+  //     (2026-05-30). The kernel write-tick hook pulls the maintenance
+  //     subgraph (compactor + gc) into the aggregator closure via
+  //     `writer.ts` → `maintenance.ts`. Measured: 371087 raw / 110013
+  //     gz. INTERIM bump — a later in-band-maintenance task reconciles
+  //     the net.
+  { entry: "cloudflare.js", raw: 363 * 1024, gz: 108 * 1024 },
   // Node adapter — re-exports the kernel barrel plus
   // `s3HttpStorage`, `localFsStorage`, `memoryStorage`,
   // `localCacheStorage`, and the `baerlyNode` Fetch-API factory.

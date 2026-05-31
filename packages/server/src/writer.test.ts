@@ -2,15 +2,19 @@ import {
   CURRENT_JSON_SCHEMA_VERSION,
   type CurrentJson,
   createCurrentJson,
+  encodeJsonBytes,
   getOrCreateMemoryStorageForBucket,
+  MAINTENANCE_MIN_LIVE_BYTES,
   MemoryStorage,
   BaerlyError,
   resetMemoryStorage,
   type StoragePutOptions,
   type StoragePutResult,
+  WRITE_TICK_GC_INTERVAL,
 } from "@baerly/protocol";
-import { beforeEach, describe, expect, test } from "vitest";
+import { beforeEach, describe, expect, test, vi } from "vitest";
 import type { IndexDefinition } from "./indexes.ts";
+import type { MaintenanceDispatch } from "./maintenance.ts";
 import {
   createObservabilityContext,
   type ObservabilityContext,
@@ -828,5 +832,288 @@ describe("Writer — filtered index", () => {
       .snapshot()
       .histograms.filter((h) => h.name === "db.write.index_ops_per_logical_write");
     expect(indexHistograms).toEqual([]);
+  });
+});
+
+describe("Writer — write-tick maintenance dispatch", () => {
+  beforeEach(() => {
+    resetMemoryStorage();
+  });
+
+  /**
+   * A recording dispatch that captures each maintenance task WITHOUT
+   * running it. The writer hook reads `getCurrentContext()?.maintenance
+   * ?.dispatch` at the post-CAS point; a no-run spy lets these tests
+   * assert the writer's DISPATCH DECISION (did it fire? how many times?)
+   * in isolation from `runBoundedMaintenance`'s own behaviour. The
+   * runner's effect is exercised separately by the default-inline test
+   * below.
+   */
+  const recordingDispatch = (): {
+    maintenance: MaintenanceDispatch;
+    calls: () => number;
+  } => {
+    const spy = vi.fn<(task: () => Promise<void>) => void>(() => {
+      // Intentionally do NOT invoke the task — we measure the dispatch
+      // decision, not the runner.
+    });
+    return { maintenance: { dispatch: spy }, calls: () => spy.mock.calls.length };
+  };
+
+  const persisted = async (storage: MemoryStorage): Promise<CurrentJson> =>
+    decodeJson<CurrentJson>((await storage.get(CURRENT_KEY))!.body);
+
+  /** Seed `current.json` with explicit byte/row/seq state. */
+  const seedWith = async (
+    storage: MemoryStorage,
+    overrides: Partial<CurrentJson>,
+  ): Promise<void> => {
+    await createCurrentJson(storage, CURRENT_KEY, { ...seedCurrent(), ...overrides });
+  };
+
+  test("(1) a single commit accumulates tail_bytes by exactly the committed entry's encoded byte length", async () => {
+    const storage = new MemoryStorage();
+    await seedWith(storage, {});
+    const writer = new Writer({ storage, currentJsonKey: CURRENT_KEY });
+
+    const result = await writer.commit({
+      op: "I",
+      collection: COLL,
+      docId: "doc-1",
+      body: { _id: "doc-1", title: "hello" },
+    });
+
+    // The writer PUTs `encodeJsonBytes(entry)` per entry; tail_bytes must
+    // grow by exactly that, counted the same way the compactor subtracts.
+    const expectedBytes = encodeJsonBytes(result.entry).byteLength;
+    const after = await persisted(storage);
+    expect(after.tail_bytes).toBe(expectedBytes);
+    expect(after.next_seq).toBe(1);
+  });
+
+  test("(1b) tail_bytes accumulates across multiple commits", async () => {
+    const storage = new MemoryStorage();
+    await seedWith(storage, {});
+    const writer = new Writer({ storage, currentJsonKey: CURRENT_KEY });
+
+    const r1 = await writer.commit({ op: "I", collection: COLL, docId: "d1", body: { _id: "d1" } });
+    const r2 = await writer.commit({ op: "I", collection: COLL, docId: "d2", body: { _id: "d2" } });
+
+    const expected = encodeJsonBytes(r1.entry).byteLength + encodeJsonBytes(r2.entry).byteLength;
+    const after = await persisted(storage);
+    expect(after.tail_bytes).toBe(expected);
+  });
+
+  test("(2) a single commit DISPATCHES runBoundedMaintenance when the fold ratio (Gate 1) trips", async () => {
+    // Seed so the ratio `tail_bytes / max(snapshot_bytes, MIN_LIVE) >= 1`
+    // trips on a NON-boundary write (prevSeq 1 → next_seq 2 with
+    // interval 4 crosses no boundary). With snapshot_bytes 0 the
+    // denominator floors to MAINTENANCE_MIN_LIVE_BYTES, so tail_bytes at
+    // the threshold trips the ratio. THE blocking-bug regression: a
+    // ratio-tripping write must dispatch maintenance.
+    const storage = new MemoryStorage();
+    await seedWith(storage, {
+      next_seq: 1,
+      tail_bytes: MAINTENANCE_MIN_LIVE_BYTES,
+      snapshot_bytes: 0,
+    });
+    const writer = new Writer({ storage, currentJsonKey: CURRENT_KEY });
+    const { maintenance, calls } = recordingDispatch();
+
+    await runWithContext(createObservabilityContext({ maintenance }), () =>
+      writer.commit({ op: "I", collection: COLL, docId: "doc-r", body: { _id: "doc-r" } }),
+    );
+
+    expect(calls()).toBe(1);
+  });
+
+  test("(3) commitBatch() also dispatches when the ratio trips", async () => {
+    const storage = new MemoryStorage();
+    await seedWith(storage, {
+      next_seq: 1,
+      tail_bytes: MAINTENANCE_MIN_LIVE_BYTES,
+      snapshot_bytes: 0,
+    });
+    const writer = new Writer({ storage, currentJsonKey: CURRENT_KEY });
+    const { maintenance, calls } = recordingDispatch();
+
+    await runWithContext(createObservabilityContext({ maintenance }), () =>
+      writer.commitBatch([
+        { op: "I", collection: COLL, docId: "b1", body: { _id: "b1" } },
+        { op: "I", collection: COLL, docId: "b2", body: { _id: "b2" } },
+      ]),
+    );
+
+    expect(calls()).toBe(1);
+  });
+
+  test("(4) a commit that retries past one CAS conflict dispatches EXACTLY once", async () => {
+    // The dispatch sits at the success point inside #singleAttemptCommit,
+    // reached once per logical commit (a failed attempt throws before the
+    // dispatch; only the winning attempt dispatches).
+    const storage = new InstrumentedStorage();
+    await createCurrentJson(storage, CURRENT_KEY, {
+      ...seedCurrent(),
+      next_seq: 1,
+      tail_bytes: MAINTENANCE_MIN_LIVE_BYTES,
+      snapshot_bytes: 0,
+    });
+    storage.failNextCasOnce = true;
+    const writer = new Writer({
+      storage,
+      currentJsonKey: CURRENT_KEY,
+      options: { initialBackoffMs: 1, random: () => 0 },
+    });
+    const { maintenance, calls } = recordingDispatch();
+
+    const r = await runWithContext(createObservabilityContext({ maintenance }), () =>
+      writer.commit({ op: "I", collection: COLL, docId: "doc-retry", body: { _id: "doc-retry" } }),
+    );
+
+    expect(r.attempts).toBe(2);
+    expect(calls()).toBe(1);
+  });
+
+  test("(5) a below-Gate-1 commit that CROSSES a GC-cadence boundary still dispatches", async () => {
+    // prevSeq 3 → next_seq 4 with interval 4 crosses the boundary
+    // (floor(3/4)=0 ≠ floor(4/4)=1). Ratio is well below 1 (tiny tail,
+    // huge snapshot), so the dispatch is driven purely by GC cadence —
+    // proving GC isn't re-coupled to the fold threshold.
+    const storage = new MemoryStorage();
+    await seedWith(storage, {
+      next_seq: 3,
+      tail_bytes: 10,
+      snapshot_bytes: 10 * MAINTENANCE_MIN_LIVE_BYTES,
+    });
+    const writer = new Writer({ storage, currentJsonKey: CURRENT_KEY });
+    const { maintenance, calls } = recordingDispatch();
+
+    await runWithContext(createObservabilityContext({ maintenance }), () =>
+      writer.commit({ op: "I", collection: COLL, docId: "doc-b", body: { _id: "doc-b" } }),
+    );
+
+    const after5 = await persisted(storage);
+    expect(after5.next_seq).toBe(4);
+    expect(calls()).toBe(1);
+  });
+
+  test("(6) a below-Gate-1 commit that does NOT cross a boundary dispatches ZERO times", async () => {
+    // prevSeq 0 → next_seq 1, interval 4: floor(0/4)=0 = floor(1/4)=0, no
+    // boundary. Ratio far below 1. Nothing fires.
+    const storage = new MemoryStorage();
+    await seedWith(storage, {
+      next_seq: 0,
+      tail_bytes: 10,
+      snapshot_bytes: 10 * MAINTENANCE_MIN_LIVE_BYTES,
+    });
+    const writer = new Writer({ storage, currentJsonKey: CURRENT_KEY });
+    const { maintenance, calls } = recordingDispatch();
+
+    await runWithContext(createObservabilityContext({ maintenance }), () =>
+      writer.commit({ op: "I", collection: COLL, docId: "doc-n", body: { _id: "doc-n" } }),
+    );
+
+    const after6 = await persisted(storage);
+    expect(after6.next_seq).toBe(1);
+    expect(calls()).toBe(0);
+  });
+
+  test("(7) a commitBatch that jumps CLEAN OVER a gcInterval multiple still dispatches", async () => {
+    // interval 4, prevSeq 3, batch of 5 → next_seq 8: steps over both 4
+    // and 8's boundary. A naive `next_seq % interval === 0` test on a
+    // single endpoint could miss this; the floor-based crossesGcBoundary
+    // catches it.
+    const storage = new MemoryStorage();
+    await seedWith(storage, {
+      next_seq: 3,
+      tail_bytes: 10,
+      snapshot_bytes: 10 * MAINTENANCE_MIN_LIVE_BYTES,
+    });
+    const writer = new Writer({ storage, currentJsonKey: CURRENT_KEY });
+    const { maintenance, calls } = recordingDispatch();
+
+    await runWithContext(createObservabilityContext({ maintenance }), () =>
+      writer.commitBatch([
+        { op: "I", collection: COLL, docId: "j1", body: { _id: "j1" } },
+        { op: "I", collection: COLL, docId: "j2", body: { _id: "j2" } },
+        { op: "I", collection: COLL, docId: "j3", body: { _id: "j3" } },
+        { op: "I", collection: COLL, docId: "j4", body: { _id: "j4" } },
+        { op: "I", collection: COLL, docId: "j5", body: { _id: "j5" } },
+      ]),
+    );
+
+    const after7 = await persisted(storage);
+    expect(after7.next_seq).toBe(8);
+    expect(WRITE_TICK_GC_INTERVAL).toBe(4); // pins the boundary arithmetic above
+    expect(calls()).toBe(1);
+  });
+
+  test("(8) a fresh collection (snapshot_bytes 0) dispatches on the boundary but the runner does NOT fold below the first-fold threshold", async () => {
+    // No dispatch override → default `dispatchInlineAwaited` runs the
+    // real `runBoundedMaintenance` inline. With only a handful of small
+    // entries the tail is far below MAINTENANCE_MIN_LIVE_BYTES and the
+    // entry floor (WRITE_TICK_MIN_ENTRIES_TO_COMPACT=50), so Gate 1 is
+    // false: the runner may GC on the cadence boundary but must NOT fold
+    // — log_seq_start stays 0.
+    const storage = new MemoryStorage();
+    await seedWith(storage, {});
+    const writer = new Writer({ storage, currentJsonKey: CURRENT_KEY });
+
+    // Four small commits → seq 0..4; the 4th (prevSeq 3 → next_seq 4)
+    // crosses the GC boundary and runs maintenance inline.
+    await runWithContext(createObservabilityContext(), async () => {
+      for (let i = 0; i < 4; i++) {
+        await writer.commit({ op: "I", collection: COLL, docId: `f${i}`, body: { _id: `f${i}` } });
+      }
+    });
+
+    const after = await persisted(storage);
+    expect(after.next_seq).toBe(4);
+    // Below the first-fold threshold (tail far under 64 KB, well under 50
+    // entries) the runner must not fold: log_seq_start unchanged.
+    expect(after.log_seq_start).toBe(0);
+    expect(after.snapshot).toBeNull();
+  });
+
+  test("(9) the GC-cadence invariant holds: next_seq advances by exactly inputs.length per commit", async () => {
+    const storage = new MemoryStorage();
+    await seedWith(storage, {});
+    const writer = new Writer({ storage, currentJsonKey: CURRENT_KEY });
+
+    const beforeState = await persisted(storage);
+    const before = beforeState.next_seq;
+    await writer.commit({ op: "I", collection: COLL, docId: "inv-1", body: { _id: "inv-1" } });
+    const afterOneState = await persisted(storage);
+    const afterOne = afterOneState.next_seq;
+    expect(afterOne - before).toBe(1);
+
+    await writer.commitBatch([
+      { op: "I", collection: COLL, docId: "inv-2", body: { _id: "inv-2" } },
+      { op: "I", collection: COLL, docId: "inv-3", body: { _id: "inv-3" } },
+      { op: "I", collection: COLL, docId: "inv-4", body: { _id: "inv-4" } },
+    ]);
+    const afterBatchState = await persisted(storage);
+    const afterBatch = afterBatchState.next_seq;
+    expect(afterBatch - afterOne).toBe(3);
+  });
+
+  test("(10) maintenance.disabled on the context suppresses dispatch entirely", async () => {
+    // Belt-and-suspenders: even with the ratio tripping, `disabled: true`
+    // skips the dispatch path. (Used by bare-write cost-shape tests.)
+    const storage = new MemoryStorage();
+    await seedWith(storage, {
+      next_seq: 1,
+      tail_bytes: MAINTENANCE_MIN_LIVE_BYTES,
+      snapshot_bytes: 0,
+    });
+    const writer = new Writer({ storage, currentJsonKey: CURRENT_KEY });
+    const spy = vi.fn<(task: () => Promise<void>) => void>(() => {});
+
+    await runWithContext(
+      createObservabilityContext({ maintenance: { dispatch: spy, disabled: true } }),
+      () => writer.commit({ op: "I", collection: COLL, docId: "doc-x", body: { _id: "doc-x" } }),
+    );
+
+    expect(spy.mock.calls.length).toBe(0);
   });
 });

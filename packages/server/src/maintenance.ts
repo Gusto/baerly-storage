@@ -361,3 +361,26 @@ export const runBoundedMaintenance = async (
  * returns `void`.
  */
 export const dispatchInlineAwaited = (task: () => Promise<void>): void | Promise<void> => task();
+
+/**
+ * Per-request maintenance dispatch config, set by the adapter onto the
+ * observability context (NOT `Db.create`). It rides the per-request ALS
+ * context because `dispatch = ctx.waitUntil` is inherently per-request,
+ * and routing it through `Db.create` would widen that surface past its
+ * locked four fields. The writer reads it at the post-CAS dispatch
+ * point via `getCurrentContext()?.maintenance`.
+ *
+ * Absent ⇒ inline dispatch + CF-free-safe caps (the defaults inside
+ * {@link runBoundedMaintenance}), so a bare `Db.create(...)` maintains
+ * out of the box once enough writes accrue.
+ */
+export interface MaintenanceDispatch {
+  /** How to run the maintenance task. Default {@link dispatchInlineAwaited}. CF sets `ctx.waitUntil`. */
+  readonly dispatch?: (task: () => Promise<void>) => void | Promise<void>;
+  /** From `BAERLY_MAINTENANCE_DISABLE`. */
+  readonly disabled?: boolean;
+  /** `C` override, from `BAERLY_MAINTENANCE_MAX_FOLD_BYTES`. */
+  readonly maxFoldBytes?: number;
+  /** Per-tier caps forwarded to {@link runBoundedMaintenance}. */
+  readonly options?: BoundedMaintenanceOptions;
+}

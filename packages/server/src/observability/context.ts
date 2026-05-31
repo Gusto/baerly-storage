@@ -40,6 +40,11 @@
  */
 
 import { AsyncLocalStorage } from "node:async_hooks";
+// Type-only import — `maintenance.ts` imports this module's runtime
+// values (`getCurrentContext`), so a value import here would form a
+// runtime cycle. A type-only edge erases at build time, so tsgo /
+// rolldown see no cycle.
+import type { MaintenanceDispatch } from "../maintenance.ts";
 import { RequestScopedMetricsRecorder } from "./recorder.ts";
 
 /** Read-mostly per-request observability state. */
@@ -62,6 +67,15 @@ export interface ObservabilityContext {
    * end-of-request and spreads the result onto the emitted line.
    */
   readonly recorder: RequestScopedMetricsRecorder;
+  /**
+   * Per-request write-tick maintenance dispatch config. Set by the
+   * adapter (NOT `Db.create`) so the inherently-per-request
+   * `dispatch = ctx.waitUntil` and the env-var-derived caps ride the
+   * same scope the kernel write-tick reads from. The {@link Writer}
+   * consults `getCurrentContext()?.maintenance` at the post-CAS
+   * dispatch point. Absent ⇒ inline dispatch + CF-free-safe caps.
+   */
+  readonly maintenance?: MaintenanceDispatch;
 }
 
 /**
@@ -80,6 +94,8 @@ export interface ObservabilityContext {
 export interface ObservabilityContextInit {
   readonly request_id?: string;
   readonly recorder?: RequestScopedMetricsRecorder;
+  /** Write-tick maintenance dispatch config. See {@link ObservabilityContext.maintenance}. */
+  readonly maintenance?: MaintenanceDispatch;
 }
 
 /**
@@ -95,6 +111,7 @@ export const createObservabilityContext = (
   started_at: performance.now(),
   fields: new Map(),
   recorder: init.recorder ?? new RequestScopedMetricsRecorder(),
+  ...(init.maintenance !== undefined && { maintenance: init.maintenance }),
 });
 
 /**

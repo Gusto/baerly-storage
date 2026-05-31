@@ -52,6 +52,7 @@ import {
   type StoragePutResult,
   S3_REQUEST_MAX_RETRIES,
   SESSION_ID_LENGTH,
+  WRITE_TICK_GC_INTERVAL,
   countKey,
   readCurrentJson,
   timestamp,
@@ -61,6 +62,11 @@ import {
 import { allIndexKeysFor, type IndexDefinition, validateIndexDefinition } from "./indexes.ts";
 import { readLogEntry, walkLogRange } from "./log-walk.ts";
 import { tryAdoptOwnSessionLogEntry } from "./log-conflict-adoption.ts";
+import {
+  dispatchInlineAwaited,
+  runBoundedMaintenance,
+  shouldFireMaintenance,
+} from "./maintenance.ts";
 import { getCurrentContext } from "./observability/context.ts";
 
 const ctxMetrics = (): MetricsRecorder => getCurrentContext()?.recorder ?? noopMetricsRecorder;
@@ -684,7 +690,41 @@ export class Writer {
     // ── Step 6. CAS-advance current.json with If-Match. ─────────────
     // Bind to `baseEtag` from step 1 — re-reading would risk advancing
     // `next_seq` past a seq we never wrote a log entry for.
-    const next: CurrentJson = { ...current, next_seq: current.next_seq + inputs.length };
+    //
+    // Accumulate `tail_bytes` EXACTLY. The compactor later subtracts the
+    // bytes of the log objects it folds, summed from the fetched object
+    // bodies — i.e. exactly what the writer PUT per entry
+    // (`encodeJsonBytes(entry)` in `logPutOne`). Counting the writer-add
+    // and the compactor-subtract over the identical bytes keeps
+    // `tail_bytes` exact under the full-fence CAS. Sum over
+    // `committedEntries` (the source of truth for what's actually in the
+    // tail — `entries` normally, or the single adopted entry on the
+    // own-session-adoption path), NOT `inputs`.
+    const batchLogBytes = committedEntries.reduce(
+      (sum, e) => sum + encodeJsonBytes(e).byteLength,
+      0,
+    );
+    const next: CurrentJson = {
+      ...current,
+      next_seq: current.next_seq + inputs.length,
+      tail_bytes: current.tail_bytes + batchLogBytes,
+    };
+    // Cadence-invariant assert (cheap, load-bearing). The GC write-tick
+    // cadence keys off `next_seq` advancing by exactly the number of log
+    // entries written. Today one input ⇒ one log entry, so `next_seq`
+    // advances by `inputs.length` and `committedEntries.length ===
+    // inputs.length` (the adoption path adopts the single in-flight
+    // entry of a 1-input commit, preserving the identity). Pin it so a
+    // future change that makes one input emit ≠1 entries fails LOUD here
+    // instead of silently skewing the GC cadence.
+    if (next.next_seq - current.next_seq !== inputs.length) {
+      throw new BaerlyError(
+        "Internal",
+        `${errorPrefix}: GC-cadence invariant violated — next_seq advanced by ${
+          next.next_seq - current.next_seq
+        } but ${inputs.length} input(s) were committed on ${this.#currentJsonKey}`,
+      );
+    }
     const nextBody = encodeJsonBytes(next);
     const putOpts: StoragePutOptions = {
       ifMatch: baseEtag,
@@ -706,6 +746,57 @@ export class Writer {
         );
       }
       throw error;
+    }
+
+    // ── Step 6b. Write-tick maintenance dispatch. ───────────────────
+    // Single funnel site reached by BOTH `commit()` and `commitBatch()`
+    // exactly once per logical commit (a CAS retry re-enters this helper
+    // and dispatches once per successful attempt — but a successful CAS
+    // ends the retry loop, so a logical commit dispatches once). Sits
+    // BEFORE the caller's `#verifyFenceUnchanged` — a write that then
+    // fails its fence check may have paid for one bounded maintenance
+    // pass; that's the intended single funnel, bounded and safe.
+    //
+    // Config rides the per-request observability context
+    // (`getCurrentContext()?.maintenance`), set by the adapter — NOT the
+    // Writer constructor / `Db.create`. Absent ⇒ inline dispatch +
+    // CF-free-safe caps, so a bare `Db.create(...).collection(...)
+    // .insert(...)` maintains inline by default once enough writes
+    // accrue.
+    const prevSeq = current.next_seq; // pre-CAS seq, already in scope
+    const maint = getCurrentContext()?.maintenance;
+    if (maint?.disabled !== true) {
+      const gcInterval = maint?.options?.gcInterval ?? WRITE_TICK_GC_INTERVAL;
+      if (shouldFireMaintenance(next, prevSeq, gcInterval)) {
+        const dispatch = maint?.dispatch ?? dispatchInlineAwaited;
+        // `await dispatch(...)`: `dispatchInlineAwaited` returns the
+        // task's promise (awaited inline — deterministic for tests +
+        // correct for serverful Node). A `ctx.waitUntil`-style dispatch
+        // returns void (fire-and-forget off the ack); `await void` is a
+        // no-op. The `.then(() => {}, () => {})` is belt-and-suspenders:
+        // `runBoundedMaintenance` already swallows internally, but this
+        // guarantees a dispatched task can NEVER reject the commit even
+        // if a future change makes it throw.
+        await dispatch(() =>
+          runBoundedMaintenance(
+            {
+              storage: this.#storage,
+              currentJsonKey: this.#currentJsonKey,
+              prevSeq,
+              // `disabled` is intentionally NOT forwarded: the outer
+              // `maint?.disabled !== true` gate already guarantees we only
+              // reach here when maintenance is enabled, so passing it would
+              // only ever forward `false` (a no-op) and imply a coupling
+              // that doesn't exist.
+              ...(maint?.maxFoldBytes !== undefined && { maxFoldBytes: maint.maxFoldBytes }),
+            },
+            maint?.options,
+          ).then(
+            () => {},
+            () => {},
+          ),
+        );
+      }
     }
 
     // Step 7 — the fence-verify GET — lives in the caller, not here.
