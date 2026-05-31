@@ -39,10 +39,15 @@ import { formatBundleSizeLine } from "../helpers/bundle-size-report.ts";
 // Consumer bundlers minify on top of this; minified+gzipped is a
 // future addition (see follow-up tickets in the plan).
 //
-// Budgets are set ~8–15% above the measured size on the refactor
-// branch. A failure here means the surface grew without an explicit
-// budget bump — either justify it and raise the number, or refactor
-// behind another subpath.
+// Budgets are set to the smallest whole-KiB value (`N * 1024`) that
+// clears the measured size with a small headroom (~1–2 KiB / ~0.5–1%),
+// NOT the looser ~8–15% the earliest entries used — recent rebaselines
+// sit just above measured so the ceilings stay honest. A failure here
+// means the surface grew without an explicit budget bump — either
+// justify it and raise the number, or refactor behind another subpath.
+// The two big Node aggregators (`node.js`, `dev-vite.js`) keep a
+// slightly wider whole-KiB margin; see the rolldown non-determinism note
+// on the `node.js` budget.
 
 // The `baerly` CLI bin is intentionally NOT budgeted. citty-cleanup
 // lazy-loaded all 14 subcommands behind dynamic import, so the
@@ -164,12 +169,24 @@ const BUDGETS: readonly Budget[] = [
   //     closure (the write path genuinely depends on it). Measured:
   //     203193 raw / 62015 gz. INTERIM bump — a later in-band-
   //     maintenance task reconciles the net kernel/maintenance split.
-  //   → interim (2026-05-31): Task 3 compactor (snapshot_bytes/_rows +
-  //     walkLogRangeWithBytes) + Task 4 GC test-seam grew the maintenance
-  //     subgraph reachable from the kernel barrel. Measured 205811/62792.
-  //     Owner accepted the in-band-maintenance kernel growth; Task 8 does
-  //     the final net reconciliation after the Task 5 opts.maintenance cut.
-  { entry: "index.js", raw: 202 * 1024, gz: 63 * 1024 },
+  //   → 208 KiB raw / 63 KiB gz (2026-05-31, in-band-maintenance FINAL,
+  //     Task 8 net reconciliation): the kernel write-tick hook
+  //     (`writer.ts` → `maintenance.ts` → compactor.ts + gc.ts) makes the
+  //     maintenance subgraph part of every kernel-barrel closure. Final
+  //     measured: 211008 raw / 64304 gz. Net vs. the pre-maintenance
+  //     baseline (166035 raw / 51758 gz, the predicate-redesign/ambient-
+  //     drift measurement that predated Task 1): +44973 raw / +12546 gz.
+  //     `index.js` has no `opts.maintenance` deletion offset to subtract
+  //     (that cut was Node-adapter-only) — the kernel barrel growth is the
+  //     gross add. Justified: in-band maintenance IS the kernel's core
+  //     durability value (writes self-heal the bucket with no operator
+  //     cron), the per-tick work is bounded by a static CPU/op ceiling, and
+  //     the rejected sweep / `pending_gc` / lease designs were each LARGER
+  //     than this static-ceiling shape. Owner-accepted (Decision D2:
+  //     accept + rebaseline, lazy-load rejected as cosmetic for CF). gz
+  //     (64304) still sits UNDER the prior 63 KiB ceiling, so it is left
+  //     unchanged; only raw is rebaselined.
+  { entry: "index.js", raw: 208 * 1024, gz: 63 * 1024 },
   // The three auth verifier factories (bearerJwt, sharedSecret,
   // cloudflareAccess) plus the transitive jose closure pulled in by
   // bearerJwt's createRemoteJWKSet + jwtVerify. Adding a fourth
@@ -230,9 +247,18 @@ const BUDGETS: readonly Budget[] = [
   //     compactor + GC subgraph into the http closure (the Writer is
   //     on the request path). Measured: 318946 raw / 93115 gz. INTERIM
   //     bump — a later in-band-maintenance task reconciles the net.
-  // interim (2026-05-31): Task 3/4 maintenance-subgraph growth. Measured
-  // 321564/93887. Owner-accepted; Task 8 reconciles net.
-  { entry: "http.js", raw: 316 * 1024, gz: 93 * 1024 },
+  //   → 321 KiB raw / 95 KiB gz (2026-05-31, in-band-maintenance FINAL,
+  //     Task 8 net reconciliation): `writer.ts` statically imports
+  //     `./maintenance.ts` for the write-tick dispatch, so the compactor +
+  //     GC subgraph lands in the http closure (the Writer is on the request
+  //     path). Final measured: 326761 raw / 95564 gz. Net vs. the pre-
+  //     maintenance baseline (287051 raw / 83035 gz, predicate-redesign
+  //     measurement): +39710 raw / +12529 gz. No `opts.maintenance`
+  //     deletion offset applies here (that cut was Node-adapter-only).
+  //     Justified: same as index.js — in-band maintenance is core kernel
+  //     value, statically bounded, smaller than the rejected sweep/
+  //     pending_gc/lease designs. Owner-accepted (Decision D2).
+  { entry: "http.js", raw: 321 * 1024, gz: 95 * 1024 },
   // Observability primitives — ObservabilityContext, the
   // request-scoped MetricsRecorder, LogTape config + the
   // JSON sink only (the pretty sink + picocolors now live in
@@ -259,7 +285,14 @@ const BUDGETS: readonly Budget[] = [
   //     paths reach `BaerlyError`). Measured: 95099 raw / 25286 gz.
   //     +891 B raw / +144 B gz vs. the prior budget — bump raw by
   //     1 KiB to absorb the chunk-layout side effect.
-  { entry: "observability.js", raw: 93 * 1024, gz: 25 * 1024 },
+  //   → 91 KiB raw / 25 KiB gz (2026-05-31, in-band-maintenance FINAL,
+  //     Task 8): the observability subpath is unaffected by the
+  //     maintenance pull (no `maintenance-*.js` in its closure).
+  //     Tightened raw to 91 KiB — the smallest whole-KiB that clears
+  //     the 91446 measured (93184 ≥ 91446, ≈1.7 KiB / 1.9% headroom),
+  //     per the "smallest whole-KiB that clears" rule. gz (24835) is
+  //     left at 25 KiB; its 765 B slack is already tight.
+  { entry: "observability.js", raw: 91 * 1024, gz: 25 * 1024 },
   // Maintenance loop — compactor + GC + sweep driver. Pulls
   // compactor.ts + gc.ts + the observability subgraph
   // transitively (storage decorator + logger config + canonical
@@ -275,7 +308,20 @@ const BUDGETS: readonly Budget[] = [
   //     walkLogRange dependency widens the maintenance closure
   //     by ~28 KiB raw / 7 KiB gz; the matching shrinkage lands
   //     in the index.js closure.
-  { entry: "maintenance.js", raw: 185 * 1024, gz: 51 * 1024 },
+  //   → 108 KiB raw / 33 KiB gz (2026-05-31, in-band-maintenance FINAL,
+  //     Task 8): the 185 KiB ceiling was grossly loose (74% headroom).
+  //     SHRINK FINDING: the write-tick hook pulled the maintenance subgraph
+  //     into the kernel barrel, so rolldown now dedups compactor + gc +
+  //     rebuildIndex into the SHARED `maintenance-*.js` chunk consumed by
+  //     `index.js`/`http.js`/the adapters, instead of `maintenance.js`
+  //     carrying a fat private copy. The subpath closure is now just
+  //     `maintenance.js` (430 B re-export shim) + the shared
+  //     `maintenance-*` chunk + context/current-json/errors — and crucially
+  //     NO `observability-*.js` chunk (the old standalone subpath dragged
+  //     the logtape subgraph; it no longer does). Final measured: 108893
+  //     raw / 32917 gz. Tightened to the same small-headroom convention as
+  //     every other entry — no loose ceilings.
+  { entry: "maintenance.js", raw: 108 * 1024, gz: 33 * 1024 },
   // Cloudflare Workers adapter — re-exports the kernel barrel
   // (Db, Writer, etc.) plus the R2-binding `Storage` impl
   // and the `baerlyCloudflare` helper. Aggregator: closure
@@ -305,9 +351,21 @@ const BUDGETS: readonly Budget[] = [
   //     `writer.ts` → `maintenance.ts`. Measured: 371087 raw / 110013
   //     gz. INTERIM bump — a later in-band-maintenance task reconciles
   //     the net.
-  // interim (2026-05-31): Task 3/4 maintenance-subgraph growth. Measured
-  // 373705/110797. Owner-accepted; Task 8 reconciles net.
-  { entry: "cloudflare.js", raw: 366 * 1024, gz: 110 * 1024 },
+  //   → 375 KiB raw / 112 KiB gz (2026-05-31, in-band-maintenance FINAL,
+  //     Task 8 net reconciliation): the kernel write-tick hook pulls the
+  //     maintenance subgraph (compactor + gc) into the aggregator closure
+  //     via `writer.ts` → `maintenance.ts`, plus Task 5.5's
+  //     `cfMaintenanceDispatch` (the CF in-band dispatch that runs one
+  //     phase per tick under the CF-free CPU ceiling). Final measured:
+  //     382290 raw / 113407 gz. Net vs. the pre-maintenance baseline
+  //     (347593 raw / 102077 gz, the unify-baerly-storage F1 measurement):
+  //     +34697 raw / +11330 gz. CF has no `opts.maintenance`/`setInterval`
+  //     deletion offset (that was the Node adapter); the CF adapter never
+  //     shipped a scheduled sweep. Justified: in-band maintenance is core
+  //     kernel value, statically bounded (reuses the tested
+  //     `CLOUDFLARE_FREE_TIER` profile), smaller than the rejected sweep/
+  //     pending_gc/lease designs. Owner-accepted (Decision D2).
+  { entry: "cloudflare.js", raw: 375 * 1024, gz: 112 * 1024 },
   // Node adapter — re-exports the kernel barrel plus
   // `s3HttpStorage`, `localFsStorage`, `memoryStorage`,
   // `localCacheStorage`, and the `baerlyNode` Fetch-API factory.
@@ -376,10 +434,26 @@ const BUDGETS: readonly Budget[] = [
   //     helpers land in the `maintenance-*.js` chunk the node adapter
   //     reaches transitively. Measured: 556546 raw / 160389 gz. Bump
   //     raw + gz by ~1 KiB each to absorb.
-  // interim (2026-05-31): Task 3/4 maintenance-subgraph growth. Measured
-  // 559848/161419. Owner-accepted; Task 8 reconciles net (Task 5 cuts
-  // opts.maintenance/setInterval, which will claw some of this back).
-  { entry: "node.js", raw: 548 * 1024, gz: 159 * 1024 },
+  //   → 555 KiB raw / 161 KiB gz (2026-05-31, in-band-maintenance FINAL,
+  //     Task 8 net reconciliation): the kernel write-tick hook pulls the
+  //     maintenance subgraph into the aggregator closure via `writer.ts` →
+  //     `maintenance.ts`, plus Task 5.5's `nodeMaintenanceDispatch` (the
+  //     inline Node dispatch — serverful Node has no `waitUntil`). This
+  //     landing also DELETED code: Task 5 (`80682387`) cut
+  //     `opts.maintenance` + `BaerlyNodeMaintenance` + the per-(tenant,
+  //     collection) `setInterval`/`clearInterval` tick +
+  //     `DEFAULT_MAINTENANCE_INTERVAL_MS` + `runMaintenanceTick` /
+  //     `NodeMaintenanceOptions` + `buildCurrentJsonKey`. Final measured:
+  //     565374 raw / 163331 gz. The number is a NET: the maintenance-
+  //     subgraph add MINUS the deleted scheduled-sweep wiring. Net vs. the
+  //     pre-maintenance baseline (537300 raw / 154229 gz, the fast-xml-
+  //     parser measurement that predated Task 1): +28074 raw / +9102 gz —
+  //     visibly SMALLER per-byte than the http/cloudflare adds precisely
+  //     because the `setInterval` sweep deletion clawed code back. Owner-
+  //     accepted (Decision D2). Don't tighten raw below the documented
+  //     headroom — see the rolldown non-determinism note above; this entry
+  //     keeps a slightly wider whole-KiB margin than the smaller closures.
+  { entry: "node.js", raw: 555 * 1024, gz: 161 * 1024 },
   // Client surface — `BaerlyClient<TConfig>` + fetcher plumbing.
   // Browser/runtime-agnostic; no kernel modules in the closure.
   // Budget history:
@@ -473,7 +547,16 @@ const BUDGETS: readonly Budget[] = [
   //     deterministic chunk re-layout reshuffled the `src-*` split.
   //     Measured: 30203 raw / 11081 gz — gz is actually UNDER the
   //     prior budget; only raw crept over. Bump raw by 2 KiB.
-  { entry: "dev.js", raw: 30 * 1024, gz: 11 * 1024 },
+  //   → 34 KiB raw / 12 KiB gz (2026-05-31, in-band-maintenance FINAL,
+  //     Task 8): `@baerly/dev`'s closure does NOT pull the maintenance
+  //     subgraph (chunks: `chunk-*`, `current-json`, `dev`, `errors`,
+  //     `src-*` — no `maintenance-*.js`). The growth is the shared
+  //     `current-json` chunk widening (CurrentJson schema v2 fields the
+  //     write-tick gate reads — `tail_bytes`/`snapshot_bytes`/
+  //     `snapshot_rows`/`last_warned_seq`) plus rolldown's `src-*` re-
+  //     layout as the kernel closures shifted around the maintenance pull.
+  //     Final measured: 33276 raw / 12004 gz. Owner-accepted (Decision D2).
+  { entry: "dev.js", raw: 34 * 1024, gz: 12 * 1024 },
   // `@baerly/dev/vite` — the `baerlyDev()` vite plugin (mounts the
   // Baerly HTTP listener as middleware inside a Vite dev server).
   // Vite is external. Aggregator: re-exports the dev surface.
@@ -520,9 +603,20 @@ const BUDGETS: readonly Budget[] = [
   //     CurrentJson schema v2 widening of `current-json` and the new
   //     `maintenance-*.js` runner chunk both land here. Measured:
   //     564401 raw / 163147 gz. Bump raw + gz by ~1 KiB each.
-  // interim (2026-05-31): Task 3/4 maintenance-subgraph growth. Measured
-  // 567703/164168. Owner-accepted; Task 8 reconciles net (Task 5 cut).
-  { entry: "dev-vite.js", raw: 556 * 1024, gz: 162 * 1024 },
+  //   → 562 KiB raw / 164 KiB gz (2026-05-31, in-band-maintenance FINAL,
+  //     Task 8 net reconciliation): dev-vite shares the adapter-node
+  //     listener + kernel closure, so it tracks the `node.js` bump — the
+  //     maintenance subgraph (via `writer.ts` → `maintenance.ts`) +
+  //     `nodeMaintenanceDispatch` land here too, NET of Task 5's
+  //     `opts.maintenance`/`setInterval` deletion (`80682387`). Final
+  //     measured: 573274 raw / 166106 gz. Net vs. the pre-maintenance
+  //     baseline (545138 raw / 156973 gz, the fast-xml-parser measurement
+  //     that predated Task 1): +28136 raw / +9133 gz — the same small,
+  //     deletion-offset net as node.js. Owner-accepted (Decision D2). Don't
+  //     tighten raw below the documented headroom — same rolldown non-
+  //     determinism caution as node.js; keeps a slightly wider whole-KiB
+  //     margin than the smaller closures.
+  { entry: "dev-vite.js", raw: 562 * 1024, gz: 164 * 1024 },
 ];
 
 // Static-import specifiers only. Dynamic `import(...)` is intentionally
