@@ -18,6 +18,15 @@
  *   4. A long-running mixed loop of writes / compaction / GC with
  *      random aborts converges to a reader view matching the exact
  *      set of successfully-committed `_id`s.
+ *   5. (write-tick fold) For every K, aborting the K-th op across a
+ *      fold (snapshot PUT → `current.json` CAS) then running `runGc`
+ *      never deletes content referenced by the committed snapshot:
+ *      every row still reads, and every content key the committed
+ *      snapshot's rows hash to survives the sweep.
+ *   6. (lost-fold contention) A fold whose CAS loses to a concurrent
+ *      write leaves an orphan snapshot; after `runGc` drains past the
+ *      grace window no orphan snapshot is left unreferenced, and the
+ *      committed snapshot's content survives.
  *
  * Runs under default `FC_NUM_RUNS=100` on `pnpm test`. The cranked
  * variant `pnpm test:fuzz-phase5` (`FC_NUM_RUNS=10000`) is the
@@ -34,9 +43,13 @@ import {
   type Collection,
   CURRENT_JSON_SCHEMA_VERSION,
   createCurrentJson,
+  decodeJsonBytes,
   type DocumentData,
+  encodeJsonBytes,
   MemoryStorage,
+  readCurrentJson,
   type Storage,
+  versionFromContent,
 } from "@baerly/protocol";
 import { Db } from "@baerly/server";
 import { compact, runGc } from "@baerly/server/maintenance";
@@ -98,6 +111,49 @@ const readAllRowIds = async (storage: Storage): Promise<string[]> => {
       }
       return 0;
     });
+};
+
+/** Collect every key under `prefix` into a sorted array. */
+const listKeys = async (storage: Storage, prefix: string): Promise<string[]> => {
+  const keys: string[] = [];
+  for await (const entry of storage.list(prefix)) {
+    keys.push(entry.key);
+  }
+  return keys.toSorted();
+};
+
+/**
+ * The content keys the COMMITTED snapshot's rows reference. Reads
+ * `current.json`, then (if a snapshot is committed) the snapshot body,
+ * and hashes every row `body` with the exact `versionFromContent` the
+ * writer used to mint the content key. Returns the set of
+ * `<collectionPrefix>/content/<hash>.json` keys that GC must never
+ * delete. Empty when no snapshot is committed yet.
+ *
+ * Deliberately re-derives the keys from the customer-visible snapshot
+ * body rather than trusting GC's own `collectLiveContentHashes`, so the
+ * assertion is independent of the code under test.
+ */
+const committedSnapshotContentKeys = async (storage: Storage): Promise<Set<string>> => {
+  const collectionPrefix = TABLE_PREFIX;
+  const read = await readCurrentJson(storage, CURRENT_JSON_KEY);
+  if (read === null || read.json.snapshot === null) {
+    return new Set<string>();
+  }
+  const got = await storage.get(read.json.snapshot);
+  if (got === null) {
+    return new Set<string>();
+  }
+  const body = decodeJsonBytes<{ docs?: ReadonlyArray<{ body?: unknown }> }>(got.body);
+  const keys = new Set<string>();
+  for (const doc of body.docs ?? []) {
+    if (doc.body === undefined) {
+      continue;
+    }
+    const version = await versionFromContent(encodeJsonBytes(doc.body));
+    keys.add(`${collectionPrefix}/content/${version}.json`);
+  }
+  return keys;
 };
 
 describe("abortingStorage harness sanity", () => {
@@ -277,6 +333,190 @@ describe("GC crash never deletes a still-referenced key", () => {
 
       const after = await readAllRowIds(inner);
       expect(after).toEqual(before);
+    },
+    PROP_TIMEOUT_MS,
+  );
+});
+
+describe("Write-tick fold crash never deletes committed-snapshot content", () => {
+  propTest.prop({
+    abortAfter: fc.integer({ min: 1, max: 60 }),
+    numInserts: fc.integer({ min: 20, max: 60 }),
+  })(
+    "abort the K-th op across the fold, then runGc: live rows survive AND committed-snapshot content is never deleted",
+    async ({ abortAfter, numInserts }) => {
+      const inner = new MemoryStorage();
+      await provision(inner);
+      const writer = new Writer({ storage: inner, currentJsonKey: CURRENT_JSON_KEY });
+      for (let i = 0; i < numInserts; i++) {
+        const id = `d-${i}`;
+        await writer.commit({
+          op: "I",
+          collection: COLLECTION,
+          docId: id,
+          body: { _id: id, n: i },
+        });
+      }
+      const before = await readAllRowIds(inner);
+
+      // Run a fold (snapshot PUT → current.json CAS) with an abort
+      // armed at the K-th underlying op. The fold may land fully,
+      // abort mid-snapshot-PUT, or abort before the CAS — every
+      // outcome is acceptable input to the GC step below.
+      const foldHandle = abortingStorage(inner);
+      foldHandle.armAt(abortAfter);
+      try {
+        await compact({ storage: foldHandle.storage, currentJsonKey: CURRENT_JSON_KEY }, {
+          minEntriesToCompact: 10,
+          maxEntriesPerRun: numInserts,
+        } as InternalCompactOptions);
+      } catch {
+        // Expected — injected abort or CAS Conflict. The post-state is
+        // the gate.
+      }
+
+      // Capture the content keys the COMMITTED snapshot references
+      // BEFORE GC runs — these must survive the sweep.
+      const protectedKeys = await committedSnapshotContentKeys(inner);
+
+      // Drain GC with the grace bypassed so any due candidate is swept
+      // in-pass. Several passes exercise the content-scan-cursor
+      // rotation under a tight per-pass mark cap (8 marks × 5 passes
+      // need not reach numInserts at the high end — full keyspace
+      // coverage isn't guaranteed every run). Under-marking is
+      // conservative-safe: it can never wrongly sweep a protected key,
+      // so the invariant below still holds regardless of how far the
+      // cursor advances.
+      for (let pass = 0; pass < 5; pass++) {
+        await runGc({ storage: inner, currentJsonKey: CURRENT_JSON_KEY }, {
+          graceMillis: 0,
+          maxMarksPerRun: 8,
+          maxSweepsPerRun: 200,
+        } as InternalRunGcOptions);
+      }
+
+      // INVARIANT A: the reader view is unchanged — no live row lost.
+      const after = await readAllRowIds(inner);
+      expect(after).toEqual(before);
+
+      // INVARIANT B: every content key the committed snapshot
+      // references is still on the bucket. This is the property a
+      // GC that ignored the committed snapshot's references would
+      // violate.
+      const contentKeysAfter = new Set(await listKeys(inner, `${TABLE_PREFIX}/content/`));
+      for (const key of protectedKeys) {
+        expect(contentKeysAfter.has(key)).toBe(true);
+      }
+    },
+    PROP_TIMEOUT_MS,
+  );
+});
+
+describe("Lost-fold orphan snapshot reclaimed under contention", () => {
+  propTest.prop({
+    numInserts: fc.integer({ min: 20, max: 50 }),
+  })(
+    "a fold that loses its CAS to a concurrent write leaves an orphan snapshot that runGc reclaims past grace; committed content survives",
+    async ({ numInserts }) => {
+      const inner = new MemoryStorage();
+      await provision(inner);
+      const writer = new Writer({ storage: inner, currentJsonKey: CURRENT_JSON_KEY });
+      for (let i = 0; i < numInserts; i++) {
+        const id = `d-${i}`;
+        await writer.commit({
+          op: "I",
+          collection: COLLECTION,
+          docId: id,
+          body: { _id: id, n: i },
+        });
+      }
+      // First clean fold so there's a committed snapshot to protect and
+      // a prior pointer for the lost fold to be measured against.
+      await compact({ storage: inner, currentJsonKey: CURRENT_JSON_KEY }, {
+        minEntriesToCompact: 5,
+        maxEntriesPerRun: numInserts,
+      } as InternalCompactOptions);
+      // More writes so the next fold has a non-empty tail to fold.
+      for (let i = 0; i < numInserts; i++) {
+        const id = `e-${i}`;
+        await writer.commit({
+          op: "I",
+          collection: COLLECTION,
+          docId: id,
+          body: { _id: id, n: i },
+        });
+      }
+
+      // Force a fold CAS-loss: run a fold over a Storage whose `put` to
+      // current.json is intercepted so that a concurrent write lands
+      // FIRST — invalidating the fold's captured ETag. The fold then
+      // PUTs its snapshot (orphan) and loses the CAS-advance.
+      let interleaved = false;
+      const racingStorage: Storage = {
+        get: (k, o) => inner.get(k, o),
+        delete: (k, o) => inner.delete(k, o),
+        list: (p, o) => inner.list(p, o),
+        async put(k, b, o) {
+          // The fold's CAS-advance is a guarded PUT to current.json
+          // (`ifMatch` set). Just before it lands, slip a concurrent
+          // committed write in so the captured ETag is now stale.
+          if (k === CURRENT_JSON_KEY && o?.ifMatch !== undefined && !interleaved) {
+            interleaved = true;
+            await writer.commit({
+              op: "I",
+              collection: COLLECTION,
+              docId: "racer",
+              body: { _id: "racer", kind: "racer" },
+            });
+          }
+          return inner.put(k, b, o);
+        },
+      };
+      const lostFold = await compact({ storage: racingStorage, currentJsonKey: CURRENT_JSON_KEY }, {
+        minEntriesToCompact: 5,
+        maxEntriesPerRun: numInserts,
+      } as InternalCompactOptions);
+      // The fold must have lost the CAS and written an orphan snapshot.
+      expect(lostFold.written).toBe(false);
+      expect(lostFold.skippedReason).toBe("cas-lost");
+      expect(lostFold.newSnapshotKey).toBeDefined();
+
+      // Two distinct snapshot files exist now: the committed one and
+      // the orphan the lost fold left behind.
+      const snapshotsBefore = await listKeys(inner, `${TABLE_PREFIX}/snapshot/`);
+      expect(snapshotsBefore.length).toBeGreaterThanOrEqual(2);
+
+      const before = await readAllRowIds(inner);
+      const protectedKeys = await committedSnapshotContentKeys(inner);
+      const committedSnapshotKey = (await readCurrentJson(inner, CURRENT_JSON_KEY))!.json.snapshot;
+
+      // Drain GC PAST the grace window (now advanced well beyond every
+      // candidate's due_at). Several passes to clear marks then sweeps.
+      const future = (): Date => new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+      for (let pass = 0; pass < 6; pass++) {
+        await runGc({ storage: inner, currentJsonKey: CURRENT_JSON_KEY }, {
+          graceMillis: 0,
+          now: future,
+          maxMarksPerRun: 200,
+          maxSweepsPerRun: 200,
+        } as InternalRunGcOptions);
+      }
+
+      // INVARIANT A: reader view unchanged (the racer write also lands,
+      // so recompute the expectation from `before`).
+      const after = await readAllRowIds(inner);
+      expect(after).toEqual(before);
+
+      // INVARIANT B: no orphan snapshot left — the ONLY snapshot key
+      // remaining is the committed one.
+      const snapshotsAfter = await listKeys(inner, `${TABLE_PREFIX}/snapshot/`);
+      expect(snapshotsAfter).toEqual([committedSnapshotKey]);
+
+      // INVARIANT C: the committed snapshot's content survives.
+      const contentKeysAfter = new Set(await listKeys(inner, `${TABLE_PREFIX}/content/`));
+      for (const key of protectedKeys) {
+        expect(contentKeysAfter.has(key)).toBe(true);
+      }
     },
     PROP_TIMEOUT_MS,
   );
