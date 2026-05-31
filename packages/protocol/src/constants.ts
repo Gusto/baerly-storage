@@ -303,6 +303,30 @@ export const NODE_MAINTENANCE_GC_INTERVAL: number = 2;
 export const MAINTENANCE_MAX_FOLD_BYTES_DEFAULT: number = 512 * 1024;
 
 /**
+ * The largest snapshot a Cloudflare **free-tier** isolate can safely
+ * rebuild in ONE fold under the ~10 ms CPU budget. This is the WARN
+ * THRESHOLD, not a runtime cap: an operator who raises
+ * `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` ABOVE this value on a free Worker
+ * risks a snapshot rebuild that exceeds the ~10 ms CPU limit and gets
+ * CPU-killed MID-REBUILD — the CAS never lands, so the fold silently
+ * never advances `log_seq_start` and the tail grows unbounded.
+ *
+ * Sized at 2× {@link MAINTENANCE_MAX_FOLD_BYTES_DEFAULT}. The default
+ * (512 KiB) rebuilds in ~5.5 ms under the CF-free ~10 ms budget
+ * (constants.ts default JSDoc); linear-extrapolating, ~1 MiB is the
+ * point where one-shot rebuild fills the budget with little margin, so
+ * anything strictly larger is no longer free-tier-safe. On CF **paid**
+ * (raised CPU limits), Node, or once §11 chunked snapshots land, a
+ * larger ceiling is fine — hence this is a one-time `console.warn` at
+ * handler init, NOT a hard rejection.
+ *
+ * @see packages/adapter-cloudflare/src/worker.ts
+ * @see packages/server/src/maintenance.ts
+ * @see docs/about/graduation.md
+ */
+export const CF_FREE_MAX_SAFE_FOLD_BYTES: number = 1024 * 1024;
+
+/**
  * SNAPSHOT-rebuild ceiling `E`, per-entry CPU axis: gates `snapshot_rows` (per-entry
  * parse/merge/serialize is ~half of fold CPU and scales with ROW COUNT not bytes, VLDB 2021
  * Sarkar — a tiny-doc snapshot can blow CPU under C). PROVISIONAL — calibrate via the

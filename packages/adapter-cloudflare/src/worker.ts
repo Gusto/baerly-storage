@@ -1,7 +1,16 @@
 import { type DevLandingOptions, renderDevLanding } from "@baerly/dev";
-import { type BaerlyAppConfig, type Verifier } from "@baerly/protocol";
+import {
+  type BaerlyAppConfig,
+  CF_FREE_MAX_SAFE_FOLD_BYTES,
+  type Verifier,
+  WRITE_TICK_FOLD_ENTRIES_PER_PASS,
+  WRITE_TICK_GC_INTERVAL,
+  WRITE_TICK_GC_MAX_MARKS,
+  WRITE_TICK_GC_MAX_SWEEPS,
+} from "@baerly/protocol";
 import { Db, resolveVerifier } from "@baerly/server";
 import { createRouter } from "@baerly/server/http";
+import type { MaintenanceDispatch } from "@baerly/server/maintenance";
 import {
   CATEGORY,
   type ObservabilityConfig,
@@ -49,11 +58,103 @@ const resolveCfSink = (config: ObservabilityConfig | undefined): ObservabilityCo
  *   readonly SHARED_SECRET?: string;
  * }
  * ```
+ *
+ * ## In-band maintenance ops-plane vars
+ *
+ * Two OPTIONAL `vars` tune the write-tick maintenance the adapter
+ * dispatches via `ctx.waitUntil` (CF `vars` are always strings):
+ *
+ *   - `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` — raise the snapshot-rebuild
+ *     ceiling `C`. The default ({@link MAINTENANCE_MAX_FOLD_BYTES_DEFAULT},
+ *     512 KiB) is sized to rebuild in ~5.5 ms under the CF-free ~10 ms
+ *     CPU budget. On CF **paid** (raised CPU limits) an operator raises
+ *     this to fold larger snapshots in one shot. A value above
+ *     {@link CF_FREE_MAX_SAFE_FOLD_BYTES} warns LOUDLY once at init —
+ *     on a free isolate that fold risks a mid-rebuild CPU kill.
+ *   - `BAERLY_MAINTENANCE_DISABLE` — kill switch. Any non-empty value
+ *     other than `"0"` / `"false"` disables write-tick maintenance.
  */
 export interface BaerlyEnv {
   BUCKET: R2Bucket;
   APP: string;
+  /**
+   * Raise the snapshot-rebuild ceiling `C`. Parsed as a number;
+   * ignored when unset / non-numeric. Default
+   * {@link MAINTENANCE_MAX_FOLD_BYTES_DEFAULT}. A value above
+   * {@link CF_FREE_MAX_SAFE_FOLD_BYTES} warns once at init.
+   */
+  BAERLY_MAINTENANCE_MAX_FOLD_BYTES?: string;
+  /**
+   * Write-tick maintenance kill switch. Truthy (non-empty, not
+   * `"0"` / `"false"`) disables the in-band fold + GC dispatch.
+   */
+  BAERLY_MAINTENANCE_DISABLE?: string;
 }
+
+/**
+ * Assemble the per-request {@link MaintenanceDispatch} for a Cloudflare
+ * Worker.
+ *
+ * baerly maintains IN-BAND: the writer reads
+ * `getCurrentContext()?.maintenance` at its post-CAS dispatch point and
+ * runs one bounded compact + GC slice on the (rare) write that crosses a
+ * maintenance trigger. Reads stay pure — they never tick. There is no
+ * cron, no `triggers`, no operator-installed scheduler.
+ *
+ * On Cloudflare the fold runs in a `ctx.waitUntil` continuation — FIRE
+ * AND FORGET off the response ack, so the commit never blocks on it. The
+ * isolate stays alive long enough to drain the continuation; the
+ * per-pass caps are the TESTED CF-free `WRITE_TICK_*` defaults
+ * (`phasesPerTick: "single"` — a CPU-killable free isolate does ONE of
+ * fold/GC per request, never both), sized so a single pass stays well
+ * under the free-tier 50-subrequest budget. An operator on CF **paid**
+ * raises the ceiling via `BAERLY_MAINTENANCE_MAX_FOLD_BYTES`; the
+ * per-pass entry/sweep caps stay fixed here (raising them toward the
+ * 1000-subrequest paid budget is a future graduation knob, not a var).
+ *
+ * The two ops-plane vars are read off the `env` BINDING (a string map),
+ * NOT `process.env` — Workers have no process env:
+ *
+ *   - `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` → `maxFoldBytes` (`C`). Parsed
+ *     as a number; ignored when unset / NaN.
+ *   - `BAERLY_MAINTENANCE_DISABLE` → `disabled` (kill switch). Truthy
+ *     when set to a non-empty value other than `"0"` / `"false"`.
+ *
+ * `readEnv` defaults to reading off the bound `env`; the parameter
+ * exists for direct unit coverage.
+ */
+export const cfMaintenanceDispatch = (
+  ctx: ExecutionContext,
+  readEnv: (key: string) => string | undefined,
+): MaintenanceDispatch => {
+  const rawFoldBytes = readEnv("BAERLY_MAINTENANCE_MAX_FOLD_BYTES");
+  const parsedFoldBytes =
+    rawFoldBytes !== undefined && rawFoldBytes !== "" ? Number(rawFoldBytes) : Number.NaN;
+  const maxFoldBytes = Number.isFinite(parsedFoldBytes) ? parsedFoldBytes : undefined;
+
+  const rawDisable = readEnv("BAERLY_MAINTENANCE_DISABLE");
+  const disabled =
+    rawDisable !== undefined &&
+    rawDisable !== "" &&
+    rawDisable !== "0" &&
+    rawDisable.toLowerCase() !== "false";
+
+  return {
+    // CF dispatches the fold off the ack via `ctx.waitUntil` — the
+    // isolate stays alive to drain it without blocking the response.
+    dispatch: (task: () => Promise<void>): void => ctx.waitUntil(task()),
+    ...(disabled && { disabled: true }),
+    ...(maxFoldBytes !== undefined && { maxFoldBytes }),
+    options: {
+      // A CPU-killable free isolate does ONE phase per request.
+      phasesPerTick: "single",
+      maxFoldEntriesPerPass: WRITE_TICK_FOLD_ENTRIES_PER_PASS,
+      gcMaxMarks: WRITE_TICK_GC_MAX_MARKS,
+      gcMaxSweeps: WRITE_TICK_GC_MAX_SWEEPS,
+      gcInterval: WRITE_TICK_GC_INTERVAL,
+    },
+  };
+};
 
 /**
  * Cron Trigger handler. Called once per tick when the user has
@@ -196,6 +297,11 @@ export function baerlyWorker<E extends BaerlyEnv = BaerlyEnv>(
   // contract documented on `auth: "shared-secret"` + missing env.
   let resolutionError: unknown;
   let observabilityConfigured = false;
+  // Fired at most once per isolate: an operator who raised the snapshot
+  // ceiling above what a free CF isolate can rebuild in one shot gets a
+  // loud warning. Init-scoped (not per-request) so a busy Worker doesn't
+  // spam the log stream.
+  let maintenanceCeilingWarned = false;
 
   const ensureResolved = async (env: E): Promise<ResolvedState> => {
     if (resolutionError !== undefined) {
@@ -234,6 +340,32 @@ export function baerlyWorker<E extends BaerlyEnv = BaerlyEnv>(
         getLogger(CATEGORY.http).info(
           `[baerly] auth=none — all requests resolve to tenant=${JSON.stringify(resolved.options.config.tenant)}`,
         );
+      }
+    }
+    // Ops-plane guardrail, init-scoped: if the operator raised the
+    // snapshot-rebuild ceiling above what a CF FREE isolate can rebuild
+    // under its ~10 ms CPU budget, warn LOUDLY exactly once. A fold over
+    // this size on a free isolate gets CPU-killed mid-rebuild — the CAS
+    // never lands, so the fold silently never advances `log_seq_start`
+    // and the tail grows unbounded. `console.warn` (not LogTape) so the
+    // signal survives even when observability is unconfigured.
+    if (!maintenanceCeilingWarned) {
+      maintenanceCeilingWarned = true;
+      const rawFoldBytes = (env as unknown as Record<string, unknown>)[
+        "BAERLY_MAINTENANCE_MAX_FOLD_BYTES"
+      ];
+      if (typeof rawFoldBytes === "string" && rawFoldBytes !== "") {
+        const parsed = Number(rawFoldBytes);
+        if (Number.isFinite(parsed) && parsed > CF_FREE_MAX_SAFE_FOLD_BYTES) {
+          console.warn(
+            `[baerly] BAERLY_MAINTENANCE_MAX_FOLD_BYTES=${rawFoldBytes} exceeds the ` +
+              `CF free-tier safe ceiling (${CF_FREE_MAX_SAFE_FOLD_BYTES} bytes). On a free ` +
+              `Worker a fold this large risks a mid-rebuild CPU kill (the ~10 ms limit): the ` +
+              `current.json CAS never lands, so the fold silently does NOT advance and the tail ` +
+              `grows unbounded. Safe remedies: run on CF PAID (raised CPU limits), self-host on ` +
+              `NODE, or wait for §11 chunked snapshots. Leave this var unset on free CF.`,
+          );
+        }
       }
     }
     return resolved;
@@ -284,8 +416,18 @@ export function baerlyWorker<E extends BaerlyEnv = BaerlyEnv>(
       // it never creates a competing context, and it never flushes
       // its own line. The adapter owns the flush from here on.
       const requestId = req.headers.get("x-request-id") ?? crypto.randomUUID();
+      // In-band write-tick maintenance: the writer reads
+      // `getCurrentContext()?.maintenance` at its post-CAS dispatch
+      // point. On CF the fold is dispatched via `ctx.waitUntil` (off the
+      // ack) with the CF-free caps + `phasesPerTick: "single"`; the
+      // ops-plane vars are read off the `env` binding (strings). Built
+      // per request so a hot-swapped `env` is observed at call time.
       const obsCtx = createObservabilityContext({
         request_id: requestId,
+        maintenance: cfMaintenanceDispatch(ctx, (k) => {
+          const value = (env as unknown as Record<string, unknown>)[k];
+          return typeof value === "string" ? value : undefined;
+        }),
       });
 
       // Tenant resolution: the Verifier owns it unconditionally.
