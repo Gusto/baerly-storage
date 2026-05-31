@@ -151,7 +151,13 @@ const BUDGETS: readonly Budget[] = [
   //     kernel barrel pulls in. Measured at react-hooks-collapse
   //     baseline: 166035 raw / 51758 gz — +910 raw vs. prior budget.
   //     Bump raw by ~1 KiB to absorb; gz is well under budget.
-  { entry: "index.js", raw: 163 * 1024, gz: 51 * 1024 },
+  //   → 163 KiB raw / 52 KiB gz: in-band-maintenance Task 1 + 1.5.
+  //     CurrentJson schema v2 (`tail_bytes` / `snapshot_bytes` /
+  //     `snapshot_rows` / `last_warned_seq?`) widened the shared
+  //     `current-json` chunk the kernel barrel pulls; gz crept +36 B
+  //     over the prior 51 KiB budget. Raw is comfortably under.
+  //     Measured: 166684 raw / 52260 gz. Bump gz by 1 KiB.
+  { entry: "index.js", raw: 163 * 1024, gz: 52 * 1024 },
   // The three auth verifier factories (bearerJwt, sharedSecret,
   // cloudflareAccess) plus the transitive jose closure pulled in by
   // bearerJwt's createRemoteJWKSet + jwtVerify. Adding a fourth
@@ -336,7 +342,13 @@ const BUDGETS: readonly Budget[] = [
   // layouts and is the safe ceiling. See `pnpm build && pnpm vitest
   // run tests/integration/bundle-size.test.ts` twice in a row to
   // observe the drift directly.
-  { entry: "node.js", raw: 540 * 1024, gz: 156 * 1024 },
+  //   → 545 KiB raw / 157 KiB gz: in-band-maintenance Task 1 + 1.5.
+  //     CurrentJson schema v2 widened the shared `current-json` chunk,
+  //     and the new write-tick `runBoundedMaintenance` runner + gate
+  //     helpers land in the `maintenance-*.js` chunk the node adapter
+  //     reaches transitively. Measured: 556546 raw / 160389 gz. Bump
+  //     raw + gz by ~1 KiB each to absorb.
+  { entry: "node.js", raw: 545 * 1024, gz: 157 * 1024 },
   // Client surface — `BaerlyClient<TConfig>` + fetcher plumbing.
   // Browser/runtime-agnostic; no kernel modules in the closure.
   // Budget history:
@@ -424,7 +436,13 @@ const BUDGETS: readonly Budget[] = [
   //     the same chunks the dev barrel transitively pulls. Measured
   //     at react-hooks-collapse baseline: 27951 raw / 10381 gz —
   //     +1083 raw / +429 gz vs. prior. Bump both axes by ~1 KiB.
-  { entry: "dev.js", raw: 28 * 1024, gz: 11 * 1024 },
+  //   → 30 KiB raw / 11 KiB gz: in-band-maintenance Task 1. CurrentJson
+  //     schema v2 widened the shared `current-json` chunk this dev
+  //     barrel pulls (via `Db` → kernel), and rolldown's non-
+  //     deterministic chunk re-layout reshuffled the `src-*` split.
+  //     Measured: 30203 raw / 11081 gz — gz is actually UNDER the
+  //     prior budget; only raw crept over. Bump raw by 2 KiB.
+  { entry: "dev.js", raw: 30 * 1024, gz: 11 * 1024 },
   // `@baerly/dev/vite` — the `baerlyDev()` vite plugin (mounts the
   // Baerly HTTP listener as middleware inside a Vite dev server).
   // Vite is external. Aggregator: re-exports the dev surface.
@@ -466,7 +484,12 @@ const BUDGETS: readonly Budget[] = [
   //     listener closure, so the `@xmldom/xmldom` → `fast-xml-parser`
   //     swap (see the `node.js` budget note above) drops here too.
   //     Measured: 545138 raw / 156973 gz.
-  { entry: "dev-vite.js", raw: 548 * 1024, gz: 159 * 1024 },
+  //   → 552 KiB raw / 160 KiB gz: in-band-maintenance Task 1 + 1.5.
+  //     dev-vite shares the adapter-node / kernel closure, so the
+  //     CurrentJson schema v2 widening of `current-json` and the new
+  //     `maintenance-*.js` runner chunk both land here. Measured:
+  //     564401 raw / 163147 gz. Bump raw + gz by ~1 KiB each.
+  { entry: "dev-vite.js", raw: 552 * 1024, gz: 160 * 1024 },
 ];
 
 // Static-import specifiers only. Dynamic `import(...)` is intentionally
