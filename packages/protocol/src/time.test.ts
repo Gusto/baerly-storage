@@ -1,5 +1,37 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { delay } from "./time.ts";
+import { TIMESTAMP_BIT_WIDTH } from "./constants.ts";
+import { BaerlyError } from "./errors.ts";
+import { delay, timestamp } from "./time.ts";
+import { str2uintDesc } from "./types.ts";
+
+describe("timestamp", () => {
+  test("round-trips a real Date.now() instant", () => {
+    const now = Date.now();
+    expect(str2uintDesc(timestamp(now), TIMESTAMP_BIT_WIDTH)).toBe(now);
+  });
+
+  test("newer instants sort lexicographically BEFORE older ones (descending)", () => {
+    expect(timestamp(2000) < timestamp(1000)).toBe(true);
+  });
+
+  test.each([
+    ["NaN", Number.NaN],
+    ["Infinity", Number.POSITIVE_INFINITY],
+    ["negative", -1],
+    ["non-integer", 1.5],
+    ["out of range", 2 ** TIMESTAMP_BIT_WIDTH],
+  ])("throws loud on a %s epoch instead of silently corrupting the key", (_label, epoch) => {
+    expect(() => timestamp(epoch)).toThrowError(BaerlyError);
+  });
+
+  test("0 encodes the most-ancient instant (why there is no argless default)", () => {
+    // Guards the regression: an argless `timestamp()` used to default to
+    // 0, which descending-sorts as the LARGEST key — silently inverting
+    // ordering. 0 is still a *valid* explicit argument; it's the implicit
+    // default that was the foot-gun.
+    expect(timestamp(0) > timestamp(Date.now())).toBe(true);
+  });
+});
 
 describe("delay", () => {
   afterEach(() => {

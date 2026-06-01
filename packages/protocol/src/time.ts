@@ -1,7 +1,29 @@
 import { TIMESTAMP_BIT_WIDTH } from "./constants.ts";
+import { BaerlyError } from "./errors.ts";
 import { uint2strDesc } from "./types.ts";
 
-export const timestamp = (epoch: number = 0) => uint2strDesc(epoch, TIMESTAMP_BIT_WIDTH);
+/**
+ * Encode an epoch-millis instant as a lexicographically-DEScending
+ * base-32 key (newer sorts first). The load-bearing LSN ordering
+ * primitive — see {@link uint2strDesc}.
+ *
+ * `epoch` is REQUIRED and validated. There is no default: an argless
+ * call used to encode `0`, which descending-sorts as the most-ancient
+ * instant and would silently invert ordering. A non-finite, negative,
+ * or out-of-range `epoch` (e.g. a broken `Date.now()` returning `NaN`)
+ * would corrupt the key silently rather than fail loud, so it throws
+ * `Internal` instead — this is an invariant violation, not caller config
+ * (the only legitimate argument is `Date.now()`).
+ */
+export const timestamp = (epoch: number): string => {
+  if (!Number.isInteger(epoch) || epoch < 0 || epoch >= 2 ** TIMESTAMP_BIT_WIDTH) {
+    throw new BaerlyError(
+      "Internal",
+      `timestamp(): epoch must be a non-negative integer < 2^${TIMESTAMP_BIT_WIDTH} (got ${epoch})`,
+    );
+  }
+  return uint2strDesc(epoch, TIMESTAMP_BIT_WIDTH);
+};
 
 /**
  * Delay for `ms` milliseconds, with optional cancellation. If
