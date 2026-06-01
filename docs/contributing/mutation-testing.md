@@ -2,7 +2,7 @@
 title: Mutation testing
 audience: maintainer
 summary: "Manual StrykerJS mutation testing scoped to the protocol kernel: pnpm test:mutate."
-last-reviewed: 2026-05-31
+last-reviewed: 2026-06-01
 tags: [testing, mutation, stryker, protocol]
 related: ["./conventions/tests.md", "../../CLAUDE.md"]
 ---
@@ -37,19 +37,113 @@ takes several minutes, far past the budget of the per-commit gate. It
 exits 0 regardless of score (`thresholds.break: null`); it reports, it
 does not gate.
 
-Output:
+Output (all under gitignored `reports/mutation/`):
 - A clear-text mutation-score table per file in the terminal.
-- An HTML report at `reports/mutation/protocol.html` (gitignored) — open
-  it in a browser to see each surviving mutant inline in the source.
+- A machine-readable `mutation.json` (mutation-testing-elements schema).
+- An HTML report at `protocol.html` — a renderer over that same JSON;
+  open it in a browser to see each surviving mutant inline in the source.
+
+### Agent-readable survivor list
+
+The HTML report is poor for LLMs and tedious for a kill loop. `mutation.json`
+is the real artifact — the HTML is just a view of it. `pnpm mutate:survivors`
+(`scripts/mutation-survivors.mjs`) parses it into a terminal worklist grouped
+by file, worst-first, listing each `Survived` / `NoCoverage` mutant as
+`status  file:line  MutatorName → replacement`, and exits non-zero while any
+remain. Scope a single file with `--file <substr>`. The `json` reporter is
+wired in `stryker.config.mjs`; `incremental: true` lets a per-file re-run
+(`pnpm exec stryker run --mutate "<path>"`) reuse cached results so the loop
+is seconds, not minutes.
 
 ## Reading the report
 
 Each file gets a mutation score = killed / (killed + survived + no-coverage).
-Open the HTML report and look for **survived** mutants: each one is a
-specific edit the tests did not catch. Either add an assertion that kills
-it, or — if the mutant is genuinely equivalent (no observable behavior
-change) — leave it; equivalent mutants are an inherent noise floor of the
-technique, not a bug to fix.
+Run `pnpm mutate:survivors` (or open the HTML report) and look at **survived**
+mutants: each is a specific edit the tests did not catch. Either add an
+assertion that kills it, or — if the mutant is genuinely equivalent (no
+observable behavior change) — retire it with a documented
+`// Stryker disable next-line <MutatorName>: <reason>` on the line above.
+Equivalent mutants are an inherent noise floor; the disable comment's reason
+*is* the record of why it is unkillable.
+
+### Coverage-first workflow
+
+A `NoCoverage` mutant is, by definition, a line no test executes — and
+`pnpm test:coverage:protocol` (v8 coverage scoped to the kernel) finds those
+in seconds, where mutation spends minutes mutating code no test runs. So the
+cheap order is: close coverage gaps first, then mutation-test, so the slow
+pass only ever works the `Survived` residual (covered-but-unasserted) — the
+signal coverage is blind to. Property tests (`@fast-check/vitest`) are the
+best mutant-killer for boundary/relational logic: one invariant checked
+against a brute-force oracle kills a whole family of `<`/`<=`/`===` mutants
+at once.
+
+### Two recurring equivalence patterns
+
+When a survivor looks equivalent, it is almost always one of these — verify
+before suppressing, and cite the specific reason:
+
+1. **Redundant guard caught downstream.** A short-circuit type/range check
+   whose rejected inputs are caught by a later check with the *same* error
+   code (e.g. `typeof x !== "number" || !Number.isInteger(x)` — the `typeof`
+   half is redundant because `Number.isInteger` already rejects non-numbers;
+   or a guard around a loop/block whose body is a no-op for the guarded-out
+   case). Forcing such a guard to `false` is equivalent; forcing it to `true`
+   is usually *killable* (valid inputs then misbehave) and stays tested — but
+   Stryker can't disable one direction of a `ConditionalExpression`, so a
+   line-level disable that also covers the killable direction is fine as long
+   as another mutator on the same logic is killed by a real assertion.
+2. **ES2025 class-field define.** This repo compiles with `target: ES2025`,
+   so a declared optional field `readonly foo?: T;` is *define*-emitted: the
+   own property exists (valued `undefined`) on every instance. Therefore
+   `"foo" in instance` is always `true`, and a constructor guard
+   `if (foo !== undefined) this.foo = foo` is a genuinely equivalent mutant
+   when forced to `true` (assigning `undefined` over an already-`undefined`
+   field changes nothing). Don't try to kill it with an `"in"` test — suppress
+   it.
+
+To confirm a suppression isn't masking something killable, strip the disable
+comments and re-run the scoped mutation: the survivors that reappear should be
+*exactly* the equivalent directions, with the killable directions still shown
+as killed.
+
+## Constants policy
+
+`constants.ts` is a special case: a mutant on a constant only dies if a test
+asserts that constant's exact value. Pin a value with a test **only when it
+is an off-process contract** — observed on the wire, in the bucket, or by
+another implementation (content-types, schema-version numbers, key
+prefixes/separators, the base-32 alphabet, magic filenames, operator-facing
+error strings that `baerly doctor` matches). For **internal tuning** values
+(budgets, ceilings, timeouts, grace periods, buffer sizes) the exact number
+is not a contract — asserting it would be a tautological change-detector that
+mirrors the source — so retire those mutants with a
+`// Stryker disable next-line <MutatorName>: internal tuning value …` instead
+of a test.
+
+## Current baseline
+
+As of 2026-06-01, the protocol kernel scores **93.04% overall** (95.13%
+counting only covered mutants), across ~1740 mutants — up from 70.44% /
+78.10%. The exact percentage drifts by a fraction of a point run-to-run as
+timeout-classified mutants shift with machine timing — treat these as a
+baseline, not a fixed target.
+
+These seven logic-dense files were hardened to **100%** (every non-equivalent
+mutant killed; genuine equivalents documented with `// Stryker disable`):
+`query/_internals.ts`, `errors.ts`, `coordination/gc-pending.ts`,
+`constants.ts`, `query/validate.ts`, `query/satisfiable.ts`, and
+`coordination/current-json.ts`.
+
+Remaining gaps (deferred lower-value tail, ~114 mutants) — surface them any
+time with `pnpm mutate:survivors`:
+
+- `query/matches.ts` (25), `storage/probe-cas.ts` (25),
+  `storage/memory.ts` (17), `query/normalize.ts` (15),
+  `query/builder.ts` (9), `json.ts` (7), `types.ts` (7), `time.ts` (4),
+  `query/wire.ts` (2), `app-config.ts` (1), `hashing.ts` (1), `log.ts` (1).
+
+These are starting points for raising test quality, not a gate.
 
 ## Current baseline
 
