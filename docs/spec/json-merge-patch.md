@@ -2,7 +2,7 @@
 title: JSON merge patch (RFC 7386)
 audience: spec
 summary: Sparse JSON updates plus the algebraic properties baerly relies on for log coalescing.
-last-reviewed: 2026-05-12
+last-reviewed: 2026-05-31
 tags: [protocol, json, rfc-7386, merge-patch]
 related: [sync-protocol.md]
 ---
@@ -287,6 +287,14 @@ This is useful for optimistic updates. You can apply all ordered entries as soon
 ---
 
 ## JSON merge difference: `diff`
+
+> **Not part of the baerly kernel.** baerly's `@baerly/protocol` exports only
+> `merge` — the forward direction. `diff` is documented here because it is the
+> algebraic *inverse* of `merge`, and naming that inverse is what lets us prove
+> the group structure below (and reason about coalescing). The writer never needs
+> to compute a diff: patches arrive from clients already in merge-patch form. The
+> reference implementation linked here lives in the prior-art `mps3` project, not
+> in this repo. Treat this section as theory, not as shippable API.
 
 If we think of merge as like addition, `s_1 = s_0 + p` there exists a subtraction `s_1 - s_0` to calculate the patch between two states. Thus, merging the difference between `b` and `a` generates a patch that can move `a` to `b`:-
 
