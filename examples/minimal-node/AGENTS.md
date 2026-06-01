@@ -29,7 +29,7 @@ Common anti-patterns that compile but are wrong:
   `db.collection(name).insert(row)` and `.where({ ... }).all()`.
 - `z.string().nullable()` in a schema — `DocumentValue` excludes
   `null`. Use `.optional()`; `null` in an update patch is the RFC
-  7396 deletion sentinel, not a storable value.
+  7386 deletion sentinel, not a storable value.
 - Raw SQL strings, `WHERE` clauses, hand-built query AST — the only
   query surface is `db.collection(...).where({ field: value }).all()` or
   `.where(q => q.gte("count", 1))`. See **Predicates** below.

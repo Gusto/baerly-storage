@@ -29,7 +29,7 @@ Common anti-patterns that compile but are wrong:
   `db.collection(name).insert(row)` and `.where({ ... }).all()`.
 - `z.string().nullable()` in a schema — `DocumentValue` excludes
   `null`. Use `.optional()`; `null` in an update patch is the RFC
-  7396 deletion sentinel, not a storable value.
+  7386 deletion sentinel, not a storable value.
 - Raw SQL strings, `WHERE` clauses, hand-built query AST — the only
   query surface is `db.collection(...).where({ field: value }).all()` or
   `.where(q => q.gte("count", 1))`. See **Predicates** below.
@@ -622,7 +622,7 @@ export const NoteSchema = z.object({
 
 The Zod-inferred `Note` type reflects the shape (`tags?: string[]`)
 and call sites pick it up through `import type { Note }`.
-JSON-merge-patch (RFC 7396) semantics apply on `update()`:
+JSON-merge-patch (RFC 7386) semantics apply on `update()`:
 omitting `tags` from an update preserves the existing value;
 passing `tags: null` deletes the field; passing `tags: []` sets
 it to an empty array. Note that `null` is the deletion sentinel,

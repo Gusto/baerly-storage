@@ -38,7 +38,7 @@ const jsonStructuredDoc = fc.letrec((tie) => ({
   ),
 })).doc as fc.Arbitrary<DocumentValue>;
 
-describe("JSON Merge Patch (RFC 7396)", () => {
+describe("JSON Merge Patch (RFC 7386)", () => {
   test.prop({ a: documentValueArb })("identity: merge(a, undefined) === a", ({ a }) => {
     expect(merge(a, undefined)).toEqual(a);
   });
@@ -98,7 +98,7 @@ describe("JSON Merge Patch (RFC 7396)", () => {
     expect((proto as Record<string, unknown>)["prototype"]).toBeUndefined();
   });
 
-  describe("array values (RFC 7396 §1: opaque replacement)", () => {
+  describe("array values (RFC 7386 §1: opaque replacement)", () => {
     test("nested array is replaced wholesale, not element-merged", () => {
       // The pre-fix bug: merge spread the array as an object and emitted
       // `{tags: {"0":"c","1":"b"}}` for this exact input.
@@ -135,19 +135,18 @@ describe("JSON Merge Patch (RFC 7396)", () => {
     });
 
     test("array of objects: elements are not deep-merged", () => {
-      const out = merge<DocumentValue>(
-        { items: [{ id: 1, name: "old" }] },
-        { items: [{ id: 1 }] } as Partial<DocumentValue>,
-      );
-      // RFC 7396: the array is replaced — `name: "old"` is gone.
+      const out = merge<DocumentValue>({ items: [{ id: 1, name: "old" }] }, {
+        items: [{ id: 1 }],
+      } as Partial<DocumentValue>);
+      // RFC 7386: the array is replaced — `name: "old"` is gone.
       expect(out).toEqual({ items: [{ id: 1 }] });
     });
 
     test("array sibling: other keys deep-merge as normal", () => {
-      const out = merge<DocumentValue>(
-        { tags: ["a"], meta: { version: 1, author: "alice" } },
-        { tags: ["b"], meta: { version: 2 } } as Partial<DocumentValue>,
-      );
+      const out = merge<DocumentValue>({ tags: ["a"], meta: { version: 1, author: "alice" } }, {
+        tags: ["b"],
+        meta: { version: 2 },
+      } as Partial<DocumentValue>);
       expect(out).toEqual({
         tags: ["b"],
         meta: { version: 2, author: "alice" },
@@ -155,10 +154,9 @@ describe("JSON Merge Patch (RFC 7396)", () => {
     });
 
     test("null inside array is preserved (array is opaque)", () => {
-      const out = merge<DocumentValue>(
-        { tags: ["a"] },
-        { tags: [null, "b"] } as unknown as Partial<DocumentValue>,
-      );
+      const out = merge<DocumentValue>({ tags: ["a"] }, {
+        tags: [null, "b"],
+      } as unknown as Partial<DocumentValue>);
       expect(out).toEqual({ tags: [null, "b"] });
     });
   });

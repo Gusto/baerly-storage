@@ -348,7 +348,7 @@ export const projectIndexValues = (
     if (v === null || v === undefined) {
       return undefined;
     }
-    // Array values are valid in documents (RFC 7396 replacement
+    // Array values are valid in documents (RFC 7386 replacement
     // semantics) but multi-value indexes aren't supported yet — the
     // prefix-tree encoder produces one key per doc, not one per
     // element. Throw loudly so a user indexing a tag list gets a

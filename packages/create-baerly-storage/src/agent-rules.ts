@@ -55,7 +55,7 @@ Anti-patterns that compile but are wrong:
 - \`.useIndex("name")\` — does not exist. The query planner picks
   indexes automatically from registered \`IndexDefinition\`s.
 - \`z.string().nullable()\` — \`DocumentValue\` excludes \`null\`. Use
-  \`.optional()\`; \`null\` in update patches is the RFC 7396 deletion
+  \`.optional()\`; \`null\` in update patches is the RFC 7386 deletion
   sentinel.
 - SQL strings, raw \`WHERE\` clauses — the API is a method-chain
   only: \`.where({ field: value }).all()\` (object literal, equality)

@@ -8,9 +8,9 @@ import { FORBIDDEN_MERGE_KEYS } from "./constants.ts";
  * {@link DocumentValue}.
  *
  * The document **body** itself must be an object (not an array) —
- * Baerly's writer is built on JSON Merge Patch (RFC 7396), which
+ * Baerly's writer is built on JSON Merge Patch (RFC 7386), which
  * is only defined over object documents. Array *values* at any
- * nested level are fine; per RFC 7396, an array in a patch
+ * nested level are fine; per RFC 7386, an array in a patch
  * replaces the target array wholesale (Baerly has no array-merge
  * semantics).
  */
@@ -32,13 +32,13 @@ const isPlainObject = (value: DocumentValue | undefined): value is DocumentData 
   typeof value === "object" && value !== null && !Array.isArray(value);
 
 /**
- * JSON Merge Patch (RFC 7396).
+ * JSON Merge Patch (RFC 7386).
  *
  * Update `target` with a merge patch. Plain-object values recurse
  * key-by-key; primitives, arrays, and type-mismatched values replace
  * the target wholesale. A `null` value in `patch` deletes the key.
  *
- * RFC 7396 explicitly treats arrays as opaque values: an array in a
+ * RFC 7386 explicitly treats arrays as opaque values: an array in a
  * patch replaces the target array — there is no element-wise merge.
  */
 export function merge<T extends DocumentValue>(
