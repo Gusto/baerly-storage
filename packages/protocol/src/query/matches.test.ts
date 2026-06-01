@@ -1,9 +1,10 @@
+import { fc, test as fcTest } from "@fast-check/vitest";
 import { describe, expect, test } from "vitest";
 
-import type { JSONObject } from "../json.ts";
+import type { DocumentValue, JSONObject } from "../json.ts";
 
 import { matchesWire } from "./matches.ts";
-import type { PredicateWire } from "./wire.ts";
+import type { PredicateClause, PredicateWire } from "./wire.ts";
 
 describe("matchesWire — equality and traversal", () => {
   test("top-level equality match and miss", () => {
@@ -16,22 +17,13 @@ describe("matchesWire — equality and traversal", () => {
   test("dotted-path traversal hit and miss", () => {
     const doc: JSONObject = { assignee: { team: "platform", oncall: "a" } };
     expect(
-      matchesWire(
-        { clauses: [{ op: "eq", field: "assignee.team", value: "platform" }] },
-        doc,
-      ),
+      matchesWire({ clauses: [{ op: "eq", field: "assignee.team", value: "platform" }] }, doc),
     ).toBe(true);
     expect(
-      matchesWire(
-        { clauses: [{ op: "eq", field: "assignee.team", value: "billing" }] },
-        doc,
-      ),
+      matchesWire({ clauses: [{ op: "eq", field: "assignee.team", value: "billing" }] }, doc),
     ).toBe(false);
     expect(
-      matchesWire(
-        { clauses: [{ op: "eq", field: "assignee.missing", value: "platform" }] },
-        doc,
-      ),
+      matchesWire({ clauses: [{ op: "eq", field: "assignee.missing", value: "platform" }] }, doc),
     ).toBe(false);
   });
 
@@ -50,12 +42,12 @@ describe("matchesWire — equality and traversal", () => {
   });
 
   test("number / boolean equality", () => {
-    expect(
-      matchesWire({ clauses: [{ op: "eq", field: "count", value: 7 }] }, { count: 7 }),
-    ).toBe(true);
-    expect(
-      matchesWire({ clauses: [{ op: "eq", field: "count", value: 7 }] }, { count: 8 }),
-    ).toBe(false);
+    expect(matchesWire({ clauses: [{ op: "eq", field: "count", value: 7 }] }, { count: 7 })).toBe(
+      true,
+    );
+    expect(matchesWire({ clauses: [{ op: "eq", field: "count", value: 7 }] }, { count: 8 })).toBe(
+      false,
+    );
     expect(
       matchesWire(
         { clauses: [{ op: "eq", field: "archived", value: false }] },
@@ -63,10 +55,7 @@ describe("matchesWire — equality and traversal", () => {
       ),
     ).toBe(true);
     expect(
-      matchesWire(
-        { clauses: [{ op: "eq", field: "archived", value: false }] },
-        { archived: true },
-      ),
+      matchesWire({ clauses: [{ op: "eq", field: "archived", value: false }] }, { archived: true }),
     ).toBe(false);
   });
 
@@ -83,16 +72,14 @@ describe("matchesWire — equality and traversal", () => {
 
   test("type mismatch on a terminal value is a miss, not a throw", () => {
     expect(
-      matchesWire(
-        { clauses: [{ op: "eq", field: "count", value: 7 }] },
-        { count: "7" } as unknown as JSONObject,
-      ),
+      matchesWire({ clauses: [{ op: "eq", field: "count", value: 7 }] }, {
+        count: "7",
+      } as unknown as JSONObject),
     ).toBe(false);
     expect(
-      matchesWire(
-        { clauses: [{ op: "eq", field: "archived", value: false }] },
-        { archived: "false" } as unknown as JSONObject,
-      ),
+      matchesWire({ clauses: [{ op: "eq", field: "archived", value: false }] }, {
+        archived: "false",
+      } as unknown as JSONObject),
     ).toBe(false);
   });
 });
@@ -130,33 +117,17 @@ describe("matchesWire — sub-predicate equality (callback-form q.eq(field, obje
 
 describe("matchesWire — range clauses", () => {
   test("gt / gte on numbers (boundary inclusivity)", () => {
-    expect(matchesWire({ clauses: [{ op: "gt", field: "x", value: 5 }] }, { x: 5 })).toBe(
-      false,
-    );
-    expect(matchesWire({ clauses: [{ op: "gt", field: "x", value: 5 }] }, { x: 6 })).toBe(
-      true,
-    );
-    expect(matchesWire({ clauses: [{ op: "gte", field: "x", value: 5 }] }, { x: 5 })).toBe(
-      true,
-    );
-    expect(matchesWire({ clauses: [{ op: "gte", field: "x", value: 5 }] }, { x: 4 })).toBe(
-      false,
-    );
+    expect(matchesWire({ clauses: [{ op: "gt", field: "x", value: 5 }] }, { x: 5 })).toBe(false);
+    expect(matchesWire({ clauses: [{ op: "gt", field: "x", value: 5 }] }, { x: 6 })).toBe(true);
+    expect(matchesWire({ clauses: [{ op: "gte", field: "x", value: 5 }] }, { x: 5 })).toBe(true);
+    expect(matchesWire({ clauses: [{ op: "gte", field: "x", value: 5 }] }, { x: 4 })).toBe(false);
   });
 
   test("lt / lte on numbers (boundary inclusivity)", () => {
-    expect(matchesWire({ clauses: [{ op: "lt", field: "x", value: 5 }] }, { x: 5 })).toBe(
-      false,
-    );
-    expect(matchesWire({ clauses: [{ op: "lt", field: "x", value: 5 }] }, { x: 4 })).toBe(
-      true,
-    );
-    expect(matchesWire({ clauses: [{ op: "lte", field: "x", value: 5 }] }, { x: 5 })).toBe(
-      true,
-    );
-    expect(matchesWire({ clauses: [{ op: "lte", field: "x", value: 5 }] }, { x: 6 })).toBe(
-      false,
-    );
+    expect(matchesWire({ clauses: [{ op: "lt", field: "x", value: 5 }] }, { x: 5 })).toBe(false);
+    expect(matchesWire({ clauses: [{ op: "lt", field: "x", value: 5 }] }, { x: 4 })).toBe(true);
+    expect(matchesWire({ clauses: [{ op: "lte", field: "x", value: 5 }] }, { x: 5 })).toBe(true);
+    expect(matchesWire({ clauses: [{ op: "lte", field: "x", value: 5 }] }, { x: 6 })).toBe(false);
   });
 
   test("range ops on ISO date strings", () => {
@@ -176,26 +147,23 @@ describe("matchesWire — range clauses", () => {
   test("range ops always-miss on type-mismatch / boolean / null / missing", () => {
     // Numeric bound vs. string actual → miss, not throw.
     expect(
-      matchesWire(
-        { clauses: [{ op: "gte", field: "x", value: 1 }] },
-        { x: "1" } as unknown as JSONObject,
-      ),
+      matchesWire({ clauses: [{ op: "gte", field: "x", value: 1 }] }, {
+        x: "1",
+      } as unknown as JSONObject),
     ).toBe(false);
     // String bound vs. number actual → miss.
     expect(
-      matchesWire(
-        { clauses: [{ op: "gte", field: "x", value: "a" }] },
-        { x: 1 } as unknown as JSONObject,
-      ),
+      matchesWire({ clauses: [{ op: "gte", field: "x", value: "a" }] }, {
+        x: 1,
+      } as unknown as JSONObject),
     ).toBe(false);
     // Missing key → miss.
     expect(matchesWire({ clauses: [{ op: "gte", field: "x", value: 1 }] }, {})).toBe(false);
     // Null actual → miss.
     expect(
-      matchesWire(
-        { clauses: [{ op: "gte", field: "x", value: 1 }] },
-        { x: null } as unknown as JSONObject,
-      ),
+      matchesWire({ clauses: [{ op: "gte", field: "x", value: 1 }] }, {
+        x: null,
+      } as unknown as JSONObject),
     ).toBe(false);
   });
 
@@ -214,18 +182,12 @@ describe("matchesWire — range clauses", () => {
 
   test("dotted-path key with range clause", () => {
     const doc: JSONObject = { meta: { count: 7 } };
-    expect(
-      matchesWire(
-        { clauses: [{ op: "gte", field: "meta.count", value: 5 }] },
-        doc,
-      ),
-    ).toBe(true);
-    expect(
-      matchesWire(
-        { clauses: [{ op: "gte", field: "meta.count", value: 10 }] },
-        doc,
-      ),
-    ).toBe(false);
+    expect(matchesWire({ clauses: [{ op: "gte", field: "meta.count", value: 5 }] }, doc)).toBe(
+      true,
+    );
+    expect(matchesWire({ clauses: [{ op: "gte", field: "meta.count", value: 10 }] }, doc)).toBe(
+      false,
+    );
   });
 });
 
@@ -243,18 +205,12 @@ describe("matchesWire — in clauses", () => {
         { priority: "p3" },
       ),
     ).toBe(false);
-    expect(
-      matchesWire(
-        { clauses: [{ op: "in", field: "x", value: [1, 2, 3] }] },
-        { x: 2 },
-      ),
-    ).toBe(true);
-    expect(
-      matchesWire(
-        { clauses: [{ op: "in", field: "x", value: [1, 2, 3] }] },
-        { x: 4 },
-      ),
-    ).toBe(false);
+    expect(matchesWire({ clauses: [{ op: "in", field: "x", value: [1, 2, 3] }] }, { x: 2 })).toBe(
+      true,
+    );
+    expect(matchesWire({ clauses: [{ op: "in", field: "x", value: [1, 2, 3] }] }, { x: 4 })).toBe(
+      false,
+    );
   });
 
   test("in sub-predicate members (open-world)", () => {
@@ -267,4 +223,106 @@ describe("matchesWire — in clauses", () => {
     expect(matchesWire(wire, { assignee: { team: "billing" } })).toBe(true);
     expect(matchesWire(wire, { assignee: { team: "growth" } })).toBe(false);
   });
+});
+
+// ---------------------------------------------------------------------
+// Property laws — the matcher's algebraic contract. Small bounded pools
+// (mirrors query/merge.test.ts). These hold for any wire, validated or
+// not: the laws are structural over the clause loop.
+// ---------------------------------------------------------------------
+
+const keyArb = fc.constantFrom("a", "b", "c", "d");
+const valArb = fc.oneof(
+  fc.string({ minLength: 0, maxLength: 4 }),
+  fc.integer({ min: -3, max: 3 }),
+  fc.boolean(),
+);
+// number | string only — the type space where range ops are defined.
+const orderedValArb = fc.oneof(
+  fc.string({ minLength: 0, maxLength: 4 }),
+  fc.integer({ min: -3, max: 3 }),
+);
+
+const opClauseArb: fc.Arbitrary<PredicateClause> = fc.oneof(
+  fc
+    .tuple(keyArb, valArb)
+    .map(([k, v]) => ({ op: "eq" as const, field: k, value: v as DocumentValue })),
+  fc
+    .tuple(keyArb, fc.integer({ min: -3, max: 3 }))
+    .map(([k, v]) => ({ op: "gt" as const, field: k, value: v as DocumentValue })),
+  fc
+    .tuple(keyArb, fc.integer({ min: -3, max: 3 }))
+    .map(([k, v]) => ({ op: "lt" as const, field: k, value: v as DocumentValue })),
+  fc
+    .tuple(keyArb, fc.array(valArb, { minLength: 1, maxLength: 3 }))
+    .map(([k, vs]) => ({ op: "in" as const, field: k, value: vs as ReadonlyArray<DocumentValue> })),
+);
+
+const wireArb: fc.Arbitrary<PredicateWire> = fc
+  .array(opClauseArb, { maxLength: 4 })
+  .map((clauses) => ({ clauses }));
+
+const docArb: fc.Arbitrary<JSONObject> = fc
+  .array(fc.tuple(keyArb, valArb), { maxLength: 4 })
+  .map((pairs) => {
+    const out: Record<string, DocumentValue> = {};
+    for (const [k, v] of pairs) {
+      out[k] = v as DocumentValue;
+    }
+    return out as JSONObject;
+  });
+
+describe("matchesWire — property laws", () => {
+  fcTest.prop({ a: wireArb, b: wireArb, doc: docArb })(
+    "AND-decomposition: matches(a ++ b) === matches(a) && matches(b)",
+    ({ a, b, doc }) => {
+      const joined: PredicateWire = { clauses: [...a.clauses, ...b.clauses] };
+      expect(matchesWire(joined, doc)).toBe(matchesWire(a, doc) && matchesWire(b, doc));
+    },
+  );
+
+  fcTest.prop({ doc: docArb })("empty wire matches every document", ({ doc }) => {
+    expect(matchesWire({ clauses: [] }, doc)).toBe(true);
+  });
+
+  fcTest.prop({ field: keyArb, value: orderedValArb, doc: docArb })(
+    "eq(f,v) ⟺ gte(f,v) ∧ lte(f,v) for ordered (number/string) values",
+    ({ field, value, doc }) => {
+      const viaEq = matchesWire({ clauses: [{ op: "eq", field, value }] }, doc);
+      const viaRange = matchesWire(
+        {
+          clauses: [
+            { op: "gte", field, value },
+            { op: "lte", field, value },
+          ],
+        },
+        doc,
+      );
+      expect(viaEq).toBe(viaRange);
+    },
+  );
+
+  fcTest.prop({ field: keyArb, value: valArb, doc: docArb })(
+    "in(f,[v]) ⟺ eq(f,v)",
+    ({ field, value, doc }) => {
+      const viaIn = matchesWire({ clauses: [{ op: "in", field, value: [value] }] }, doc);
+      const viaEq = matchesWire({ clauses: [{ op: "eq", field, value }] }, doc);
+      expect(viaIn).toBe(viaEq);
+    },
+  );
+
+  fcTest.prop({ field: keyArb, value: orderedValArb, actual: orderedValArb })(
+    "gt/lte duality: with a present, same-typed field, exactly one of gt / lte holds",
+    ({ field, value, actual }) => {
+      // Same-typed only — the matcher is type-strict, so a cross-type
+      // actual misses both bounds (the duality is vacuous there).
+      if (typeof actual !== typeof value) {
+        return;
+      }
+      const doc = { [field]: actual } as JSONObject;
+      const gt = matchesWire({ clauses: [{ op: "gt", field, value }] }, doc);
+      const lte = matchesWire({ clauses: [{ op: "lte", field, value }] }, doc);
+      expect(gt).toBe(!lte);
+    },
+  );
 });
