@@ -257,6 +257,39 @@ Properties the kernel and the rest of this document both rely on.
      it. The no-lease in-band-maintenance design leans on the same
      primitive ([ADR-004](../adr/004-ephemeral-coordination.md)).
 
+3. **Causal order is keyed on `seq`, not the wall clock.** Every
+   committed entry carries a `seq` drawn from `current.json.next_seq` and
+   advanced under the same CAS that serialises commits, so `seq` is
+   strictly monotonic per collection and stable across process restart.
+   The kernel read path folds the integer range
+   `[log_seq_start, next_seq)` by fetching `…/log/<seq>.json` keys
+   reconstructed directly from `seq` (`packages/server/src/log-walk.ts`) —
+   it never lists, sorts, or terminates on the LSN's `<base32-time>`
+   prefix (the `lsn` string is a schema-only body field;
+   `packages/server/src/writer.ts`).
+
+   This bounds a real edge case. A writer whose wall clock **regresses**
+   across a restart can mint an `lsn` whose time prefix sorts before a
+   causally-earlier write — but this **cannot** reorder or drop anything
+   the kernel reads, because the fold keys on `seq`, not the clock. The
+   exposure is confined to **downstream consumers that order by the LSN
+   time prefix** (e.g. a CDC / `baerly export` reader). Such consumers
+   MUST sort by `seq` to recover causal order — which the LSN cursor
+   format guarantees monotonic per collection (see
+   [log entry shape](log-entry-shape.md#cursor-format)) — rather than by
+   the `<base32-time>` component, which is a best-effort hint valid only
+   under the assumption that wall clocks advance. `LAG_WINDOW_MILLIS`
+   bounds *forward* skew; it does not repair a *backward* step, and no
+   kernel invariant depends on it doing so.
+
+   *Deferred option (not implemented).* If the LSN time component is ever
+   required to be monotonic in its own right, a hybrid-logical-clock clamp
+   — mint `timestamp(max(Date.now(), last_committed_ms + 1))`, persisting
+   `last_committed_ms` in `current.json` behind a schema bump — would
+   close it. It is unnecessary today: `seq`, not the clock, is the causal
+   authority, and adding it would widen the manifest schema for no kernel
+   correctness gain.
+
 ## The Sync Algorithm
 
 The algorithm runs once per refresh — initiated by a read
