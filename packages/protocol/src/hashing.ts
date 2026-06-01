@@ -13,10 +13,12 @@ const VERSION_HEX_LENGTH = 32;
 /**
  * Content-addressed {@link ContentVersionId}: SHA-256 of `body`,
  * lowercase hex, truncated to {@link VERSION_HEX_LENGTH}. Same body
- * bytes ⇒ same ContentVersionId — the property `Writer.commit`
- * relies on for idempotent replay (a crash-recovery rewrite of the
- * same logical value produces the same content key the manifest
- * already referenced).
+ * bytes ⇒ same ContentVersionId — scoped to **single-writer idempotent
+ * replay** (a crash-recovery rewrite of the same in-memory value by the
+ * same writer reproduces the content key the manifest already
+ * referenced). `body` is non-canonical (`JSON.stringify`, insertion
+ * key order — see `encodeJsonBytes`), so this is NOT cross-writer
+ * content dedup: different key order ⇒ different key for an equal value.
  *
  * Async because {@link crypto.subtle.digest} returns an `ArrayBuffer`
  * via Promise. Workers and browsers both expose `crypto.subtle`

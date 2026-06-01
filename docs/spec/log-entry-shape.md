@@ -134,10 +134,25 @@ write volume. External consumers reproducing keys MUST truncate to 32
 hex chars; hashing to the full 64-char SHA-256 will not match the key
 on the bucket.
 
-Same body bytes ⇒ same content key — the property
-`Writer.commit` relies on for idempotent replay (a crash-recovery
-rewrite of the same logical value produces the same content key the
-manifest already referenced). Constant lives at
+**`body` is the exact bytes of `encodeJsonBytes(value)` —
+`JSON.stringify(value)` UTF-8-encoded, with NO replacer and NO key
+sorting** (`packages/protocol/src/bytes.ts`). Key order is therefore
+**insertion-order**, exactly as the writer's in-memory object presents
+it. This is *not* the canonical (ASCII-lex-sorted) encoding that
+`baerly admin dump` uses for byte-stable backups — content hashing is
+deliberately not canonicalized.
+
+Same body **bytes** ⇒ same content key. The scope of this guarantee is
+**single-writer idempotent replay**: a crash-recovery rewrite of the
+same in-memory value by the same writer reproduces the same content key
+the manifest already referenced (the `ifNoneMatch: "*"` content PUT then
+no-ops). It is **NOT** a cross-writer content-dedup guarantee: two
+writers serializing a logically-equal document with different key
+insertion order — or a read → merge → re-serialize round-trip, since
+`merge` spreads `{...target}` and key order is insertion-dependent —
+produce **different** content keys for the same logical value. Storage
+dedup across writers is not a claimed property; if it ever becomes one,
+the hash input would first need canonicalization. Constant lives at
 `VERSION_HEX_LENGTH` in `packages/protocol/src/hashing.ts`.
 
 ## Cursor format
