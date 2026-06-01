@@ -191,9 +191,13 @@ deferrals, not permanent bans.
 The no-lease model leans on the backend honouring `ifMatch`
 conditional writes — the full-fence CAS is what makes "abandon a
 lost fold" safe. A `Storage` backend that silently ignores
-`ifMatch` would break the property. Fail-loud detection of a
-non-CAS store is a **separate core-protocol follow-up**, not part
-of this ADR.
+`ifMatch` would break the property. This is now enforced rather than
+assumed: the storage conformance suite asserts CAS semantics with **no
+`supportsCAS` opt-out** (every shipped adapter proves it in CI), and
+`baerly doctor --bucket <uri>` runs a live CAS round-trip (`probeCas`)
+that fails loud against a non-conformant store at deploy time. CAS is a
+documented hard backend requirement (see
+[sync-protocol.md](../spec/sync-protocol.md) §"Protocol invariants").
 
 ## Consequences
 

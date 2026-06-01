@@ -234,18 +234,26 @@ Properties the kernel and the rest of this document both rely on.
    (`packages/server/src/writer.ts`), and the same conditional PUT is
    the only atomic moment in compaction. A backend that silently
    *ignores* `If-Match` (rather than rejecting a stale write) does not
-   fail loudly — it causes silent lost-update corruption. The
-   conformance suite (`packages/protocol/src/storage/conformance.ts:188`)
-   asserts `If-Match` / `If-None-Match: "*"` semantics, but only under
-   `opts.supportsCAS` — a store may *skip* the assertion, and nothing
-   probes for the guarantee at runtime.
+   fail loudly — it causes silent lost-update corruption. A baerly
+   `Storage` backend **MUST** honour `If-Match` and `If-None-Match: "*"`
+   (rejecting a stale / colliding conditional write with a `Conflict`);
+   a store that doesn't is not a valid backend.
 
-   > **Known gap / follow-up (not yet implemented).** An init-time CAS
-   > probe that fails loud on a non-conditional store, plus a documented
-   > "must honor `If-Match`" backend requirement, do not exist yet. Until
-   > they land this invariant is *assumed, not enforced*. This is a
-   > core-protocol concern independent of the in-band-maintenance design,
-   > which leans on the same primitive.
+   This is enforced on two fronts:
+   - **In CI, for every shipped adapter.** The storage conformance suite
+     (`packages/protocol/src/storage/conformance.ts`) asserts the
+     `If-Match` / `If-None-Match: "*"` semantics, and these blocks are
+     **mandatory** — there is no `supportsCAS` opt-out, so MemoryStorage,
+     LocalFsStorage, `s3HttpStorage`, and `r2BindingStorage` all prove it.
+   - **At deploy time, for an arbitrary store.** `baerly doctor --bucket
+     <uri>` runs a live CAS round-trip against the real bucket (`probeCas`
+     in `@baerly/protocol`) — it writes one throwaway sentinel and asserts
+     the backend rejects a stale `If-Match` and an `If-None-Match: "*"`
+     over an existing key, failing loud (`probeCas` /
+     `packages/cli/src/doctor/cas.ts`) on a non-conformant store. Run it
+     against any custom / proxied S3-compatible endpoint before trusting
+     it. The no-lease in-band-maintenance design leans on the same
+     primitive ([ADR-004](../adr/004-ephemeral-coordination.md)).
 
 ## The Sync Algorithm
 
