@@ -55,8 +55,12 @@ export interface LogEntry {
    */
   collection: string;
 
-  /** Required for I/U/D. */
-  doc_id?: string;
+  /**
+   * The document key (`ref.key`). Required for every op — `op` is
+   * `I | U | D` and all three carry it — so the wire type is required,
+   * not optional, matching `log-entry-shape.md`.
+   */
+  doc_id: string;
 
   /** Required for I, U. The post-image (Debezium's `after`). */
   after?: DocumentData;
