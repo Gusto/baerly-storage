@@ -246,6 +246,7 @@ const assertGcPending = (parsed: unknown, key: string): GcPending => {
       );
     }
     if (
+      // Stryker disable next-line ConditionalExpression: typeof guard is a short-circuit optimization; !VALID_REASONS.has() alone rejects all non-string and invalid-string values, so → false on typeof is genuinely equivalent
       typeof cr["reason"] !== "string" ||
       !VALID_REASONS.has(cr["reason"] as GcCandidate["reason"])
     ) {
