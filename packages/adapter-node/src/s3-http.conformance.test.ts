@@ -63,9 +63,9 @@ describe.runIf(minioEnabled)(`S3HttpStorage @ Minio :${MINIO_HOST_PORT}`, () => 
     }),
     {
       // S3 + the existing `S3HttpStorage` impl supports the full
-      // capability set; Minio preserves key case verbatim.
+      // capability set; Minio preserves key case verbatim. (CAS is
+      // mandatory — the suite always exercises it, no opt-in flag.)
       caseSensitiveKeys: true,
-      supportsCAS: true,
       supportsAbort: true,
       keyArb: MINIO_KEY_ARB,
       prefixCharArb: MINIO_PREFIX_CHAR_ARB,
@@ -92,7 +92,6 @@ describe.runIf(minioEnabled)(`minioStorage factory @ Minio :${MINIO_HOST_PORT}`,
     }),
     {
       caseSensitiveKeys: true,
-      supportsCAS: true,
       supportsAbort: true,
       keyArb: MINIO_KEY_ARB,
       prefixCharArb: MINIO_PREFIX_CHAR_ARB,

@@ -11,8 +11,12 @@ import type { Storage } from "./types.ts";
 export interface ConformanceOptions {
   /** When false, the AbortSignal block is skipped wholesale. */
   readonly supportsAbort?: boolean;
-  /** When false, both CAS blocks (`ifMatch`, `ifNoneMatch:"*"`) are skipped. */
-  readonly supportsCAS?: boolean;
+  // NOTE: there is no `supportsCAS` opt-out. CAS (`ifMatch` /
+  // `ifNoneMatch:"*"`) is a HARD protocol prerequisite — every commit
+  // CAS-advances `current.json` and the no-lease maintenance fold relies
+  // on the same fence — so a `Storage` that doesn't honor it isn't a
+  // valid baerly backend. The CAS blocks below always run; a backend
+  // that can't pass them must not ship.
   /**
    * When false, generated key arbitraries must yield case-insensitively
    * distinct keys (some object stores fold case). Defaults to `true`;
@@ -116,7 +120,6 @@ export function defineStorageConformanceSuite(
 ): void {
   const opts: Required<ConformanceOptions> = {
     supportsAbort: options.supportsAbort ?? true,
-    supportsCAS: options.supportsCAS ?? true,
     caseSensitiveKeys: options.caseSensitiveKeys ?? true,
     keyArb: options.keyArb ?? DEFAULT_KEY_ARB,
     bodyArb: options.bodyArb ?? DEFAULT_BODY_ARB,
@@ -185,7 +188,7 @@ export function defineStorageConformanceSuite(
       }
     });
 
-    describe.skipIf(!opts.supportsCAS)("CAS — ifMatch", () => {
+    describe("CAS — ifMatch", () => {
       test("succeeds and rotates etag on current etag", async () => {
         const first = await s.put("k", new TextEncoder().encode("v1"));
         const second = await s.put("k", new TextEncoder().encode("v2"), {
@@ -214,7 +217,7 @@ export function defineStorageConformanceSuite(
       });
     });
 
-    describe.skipIf(!opts.supportsCAS)('CAS — ifNoneMatch="*"', () => {
+    describe('CAS — ifNoneMatch="*"', () => {
       test("succeeds when key is absent", async () => {
         const { etag } = await s.put("k", new TextEncoder().encode("v"), {
           ifNoneMatch: "*",

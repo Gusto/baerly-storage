@@ -18,8 +18,6 @@ import { r2BindingStorage } from "./r2-binding-storage.ts";
  *
  * Capability flags pinned for this adapter:
  *  - `caseSensitiveKeys: true` — R2 preserves key case verbatim.
- *  - `supportsCAS: true` — both `ifMatch` and `ifNoneMatch:"*"`
- *    map cleanly to `R2PutOptions.onlyIf`.
  *  - `supportsAbort: true` — every method threads the signal to
  *    its first awaited line. The R2 binding does not honor the
  *    signal mid-flight; the suite only asserts that a *pre-aborted*
@@ -36,5 +34,7 @@ defineStorageConformanceSuite(
     }
     return { storage: r2BindingStorage(bucket) };
   },
-  { caseSensitiveKeys: true, supportsCAS: true, supportsAbort: true },
+  // CAS (ifMatch / ifNoneMatch:"*", mapped to R2PutOptions.onlyIf) is a
+  // mandatory protocol prerequisite — the suite always exercises it.
+  { caseSensitiveKeys: true, supportsAbort: true },
 );
