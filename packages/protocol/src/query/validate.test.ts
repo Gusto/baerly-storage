@@ -83,10 +83,7 @@ describe("validateWire — happy paths", () => {
 describe("validateWire — rejections (structural)", () => {
   test("rejects malformed wire shape", () => {
     expectInvalidConfig(() => validateWire(null as unknown as PredicateWire), "clauses");
-    expectInvalidConfig(
-      () => validateWire({} as unknown as PredicateWire),
-      "clauses",
-    );
+    expectInvalidConfig(() => validateWire({} as unknown as PredicateWire), "clauses");
     expectInvalidConfig(
       () => validateWire({ clauses: "x" } as unknown as PredicateWire),
       "clauses",
@@ -121,6 +118,13 @@ describe("validateWire — rejections (structural)", () => {
   test("rejects top-level _id field", () => {
     expectInvalidConfig(
       () => validateWire({ clauses: [{ op: "eq", field: "_id", value: "x" }] }),
+      "_id",
+    );
+  });
+
+  test("rejects nested _id.<path> field (matches Path<T>'s `_id.${string}` exclusion)", () => {
+    expectInvalidConfig(
+      () => validateWire({ clauses: [{ op: "eq", field: "_id.x", value: "x" }] }),
       "_id",
     );
   });
@@ -232,9 +236,7 @@ describe("validateWire — rejections (structural)", () => {
     expectInvalidConfig(
       () =>
         validateWire({
-          clauses: [
-            { op: "in", field: "x", value: [1, undefined as unknown as number] },
-          ],
+          clauses: [{ op: "in", field: "x", value: [1, undefined as unknown as number] }],
         }),
       "undefined",
     );
@@ -348,17 +350,11 @@ describe("normalizeObject — rejections (object-form pre-walk)", () => {
 
   test('rejects "$"-prefixed operator nested under a sub-predicate', () => {
     expectInvalidConfig(() => normalizeObject({ a: { $or: "x" } }, []), '"$or"');
-    expectInvalidConfig(
-      () => normalizeObject({ a: { b: { $regex: "x" } } }, []),
-      '"$regex"',
-    );
+    expectInvalidConfig(() => normalizeObject({ a: { b: { $regex: "x" } } }, []), '"$regex"');
   });
 
   test("rejects null / undefined values", () => {
-    expectInvalidConfig(
-      () => normalizeObject({ x: null as unknown as string }, []),
-      "null",
-    );
+    expectInvalidConfig(() => normalizeObject({ x: null as unknown as string }, []), "null");
     expectInvalidConfig(
       () => normalizeObject({ x: undefined as unknown as string }, []),
       "undefined",
@@ -366,10 +362,7 @@ describe("normalizeObject — rejections (object-form pre-walk)", () => {
   });
 
   test("rejects array values", () => {
-    expectInvalidConfig(
-      () => normalizeObject({ x: [1, 2] as unknown as string }, []),
-      "array",
-    );
+    expectInvalidConfig(() => normalizeObject({ x: [1, 2] as unknown as string }, []), "array");
   });
 
   test("rejects __proto__ / constructor / prototype keys", () => {
@@ -377,18 +370,9 @@ describe("normalizeObject — rejections (object-form pre-walk)", () => {
     // own key — `Object.keys` won't see it. Use `JSON.parse` so
     // `__proto__` becomes an actual own property, mirroring how a
     // malicious payload would arrive.
-    expectInvalidConfig(
-      () => normalizeObject(JSON.parse('{"__proto__":"x"}'), []),
-      "__proto__",
-    );
-    expectInvalidConfig(
-      () => normalizeObject({ constructor: "x" }, []),
-      "constructor",
-    );
-    expectInvalidConfig(
-      () => normalizeObject({ prototype: "x" }, []),
-      "prototype",
-    );
+    expectInvalidConfig(() => normalizeObject(JSON.parse('{"__proto__":"x"}'), []), "__proto__");
+    expectInvalidConfig(() => normalizeObject({ constructor: "x" }, []), "constructor");
+    expectInvalidConfig(() => normalizeObject({ prototype: "x" }, []), "prototype");
   });
 
   test("rejects NaN / Infinity values", () => {
@@ -399,9 +383,6 @@ describe("normalizeObject — rejections (object-form pre-walk)", () => {
 
   test("normalizePredicateArg threads $-key rejections", () => {
     // Surfaces the same throws when called via the public dispatch.
-    expectInvalidConfig(
-      () => normalizePredicateArg({ $or: "x" } as never),
-      "$or",
-    );
+    expectInvalidConfig(() => normalizePredicateArg({ $or: "x" } as never), "$or");
   });
 });

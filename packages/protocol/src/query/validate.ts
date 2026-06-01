@@ -77,7 +77,11 @@ const validateClause = (clause: PredicateClause, index: number): void => {
       `Predicate clause at index ${index} has empty / non-string field.`,
     );
   }
-  if (field === "_id") {
+  // Reject `_id` AND any nested `_id.<path>` — `Path<T>` excludes both
+  // (`"_id" | \`_id.${string}\``), so a raw-wire caller (the threat this
+  // validator names) must not slip a dotted `_id.x` past a check that
+  // only matched the exact root field.
+  if (field === "_id" || field.startsWith("_id.")) {
     throw new BaerlyError(
       "InvalidConfig",
       'Predicates may not key on "_id"; use .get(id) / .update(id, patch) / .replace(id, doc) / .delete(id) instead.',
