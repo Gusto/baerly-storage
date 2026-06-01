@@ -35,11 +35,13 @@ export default {
   // perTest only re-runs the tests that cover each mutant — the main speed
   // lever. Requires the runner to report per-test coverage (vitest does).
   coverageAnalysis: "perTest",
-  reporters: ["html", "clear-text", "progress"],
+  reporters: ["clear-text", "progress", "json", "html"],
   htmlReporter: { fileName: "reports/mutation/protocol.html" },
+  jsonReporter: { fileName: "reports/mutation/mutation.json" },
   // Baseline tool: report only, never fail. `break: null` means the run
   // exits 0 regardless of score. Revisit once a baseline is established.
   thresholds: { high: 80, low: 60, break: null },
   tempDirName: ".stryker-tmp",
-  incremental: false,
+  incremental: true,
+  incrementalFile: "reports/mutation/stryker-incremental.json",
 };

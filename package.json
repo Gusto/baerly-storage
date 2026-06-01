@@ -164,6 +164,8 @@
     "test:adapters": "pnpm test:adapter-cloudflare && pnpm test:adapter-node",
     "test:manual-e2e": "vitest run --project=default manual-e2e/cloudflare/e2e.test.ts manual-e2e/node/e2e.test.ts",
     "test:mutate": "stryker run",
+    "mutate:survivors": "node scripts/mutation-survivors.mjs",
+    "test:coverage:protocol": "vitest run --config stryker.vitest.config.ts --coverage --coverage.provider=v8 --coverage.include='packages/protocol/src/**/*.ts' --coverage.exclude='**/*.test.ts' --coverage.exclude='**/*.test-d.ts' --coverage.exclude='**/index.ts'",
     "gate:day-one": "vitest run --project=default tests/integration/day-one-handshake.test.ts",
     "bundle-sizes": "node scripts/bundle-sizes.mjs",
     "verify": "pnpm run typecheck && pnpm run verify:examples && pnpm run lint && node scripts/add-ts-extensions.mjs --check && node scripts/lint-use-query.mjs && node scripts/lint-package-layers.mjs && pnpm run verify:docs",
