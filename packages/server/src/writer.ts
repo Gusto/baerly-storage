@@ -495,15 +495,24 @@ export class Writer {
     }
 
     // ── Step 3. Mint N LogEntries with contiguous seqs. ─────────────
-    // All entries share `session` (one session per logical commit).
+    // All entries share `session` (one session per logical commit) and
+    // a single commit instant: `lsn`'s timestamp and `commit_ts` are
+    // derived from ONE clock read so they can't drift apart under skew
+    // (a reader validates `commit_ts` against `LAG_WINDOW_MILLIS`, and
+    // two independent reads could straddle that band). Intra-batch
+    // ordering is by `seq` (the `countKey` lsn suffix), not the shared
+    // timestamp, so one instant for the whole batch is correct.
+    const commitNowMs = Date.now();
+    const commitTs = new Date(commitNowMs).toISOString();
+    const lsnTimestamp = timestamp(commitNowMs);
     const entries: LogEntry[] = [];
     for (let i = 0; i < inputs.length; i++) {
       const input = inputs[i]!;
       const seq = current.next_seq + i;
-      const lsn = `${timestamp(Date.now())}_${session}_${countKey(seq)}`;
+      const lsn = `${lsnTimestamp}_${session}_${countKey(seq)}`;
       const entry: LogEntry = {
         lsn,
-        commit_ts: new Date().toISOString(),
+        commit_ts: commitTs,
         op: input.op,
         collection: input.collection,
         doc_id: input.docId,

@@ -8,8 +8,10 @@ import {
   MemoryStorage,
   BaerlyError,
   resetMemoryStorage,
+  str2uintDesc,
   type StoragePutOptions,
   type StoragePutResult,
+  TIMESTAMP_BIT_WIDTH,
   WRITE_TICK_GC_INTERVAL,
 } from "@baerly/protocol";
 import { beforeEach, describe, expect, test, vi } from "vitest";
@@ -118,6 +120,30 @@ describe("Writer", () => {
     const persistedEntry = decodeJson<typeof result.entry>(logEntry!.body);
     expect(persistedEntry.seq).toBe(0);
     expect(persistedEntry.doc_id).toBe("doc-1");
+  });
+
+  test("lsn timestamp and commit_ts derive from a single clock instant", async () => {
+    // Regression for the dual-clock-read foot-gun: `lsn` (timestamp(ms))
+    // and `commit_ts` (new Date().toISOString()) must come from ONE
+    // `Date.now()` read, so jitter can't push them onto different ms —
+    // a reader validates `commit_ts` against `LAG_WINDOW_MILLIS`, and
+    // two independent reads could straddle that band. Decode the lsn's
+    // descending-base-32 timestamp prefix back to epoch ms and assert it
+    // equals the parsed `commit_ts`.
+    const storage = new MemoryStorage();
+    await createCurrentJson(storage, CURRENT_KEY, seedCurrent());
+    const writer = new Writer({ storage, currentJsonKey: CURRENT_KEY });
+
+    const result = await writer.commit({
+      op: "I",
+      collection: COLL,
+      docId: "doc-1",
+      body: { _id: "doc-1", title: "hello" },
+    });
+
+    const [lsnPrefix] = result.entry.lsn.split("_");
+    const lsnMs = str2uintDesc(lsnPrefix!, TIMESTAMP_BIT_WIDTH);
+    expect(lsnMs).toBe(Date.parse(result.entry.commit_ts));
   });
 
   test("fresh storage: first commit auto-provisions current.json zero-shot", async () => {
