@@ -17,6 +17,28 @@ export interface LocalFsStorageOptions {
   root: string;
 }
 
+const utf8Encoder = new TextEncoder();
+
+/**
+ * Compare two keys by their UTF-8 byte sequences — the order S3 and R2
+ * use for `list`. JS's default string sort compares UTF-16 code units,
+ * which diverges from UTF-8 byte order for supplementary-plane
+ * characters; using this keeps `list` ordering faithful to the real
+ * adapters. (All kernel keys are ASCII base-32, where both orders
+ * coincide.)
+ */
+const compareKeysUtf8 = (a: string, b: string): number => {
+  const ba = utf8Encoder.encode(a);
+  const bb = utf8Encoder.encode(b);
+  const n = Math.min(ba.length, bb.length);
+  for (let i = 0; i < n; i++) {
+    if (ba[i] !== bb[i]) {
+      return ba[i]! - bb[i]!;
+    }
+  }
+  return ba.length - bb.length;
+};
+
 /**
  * `Storage` backed by a directory tree. Keys may contain `/` and map
  * to nested directories on disk so `ls`/`cat` work as expected.
@@ -156,13 +178,13 @@ export class LocalFsStorage implements Storage {
     const maxKeys = opts?.maxKeys ?? Infinity;
     const keys: string[] = [];
     await walk(this.#root, keys);
-    keys.sort();
+    keys.sort(compareKeysUtf8);
     let yielded = 0;
     for (const key of keys) {
       if (!key.startsWith(prefix)) {
         continue;
       }
-      if (key <= startAfter) {
+      if (compareKeysUtf8(key, startAfter) <= 0) {
         continue;
       }
       if (yielded >= maxKeys) {

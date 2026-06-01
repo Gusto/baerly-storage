@@ -83,6 +83,22 @@ describe("LocalFsStorage — impl-specific", () => {
     expect(serverDate!.getTime()).toBeLessThanOrEqual(after);
   });
 
+  test("list() yields keys in UTF-8 byte order, not UTF-16", async () => {
+    // Same discriminating set as the MemoryStorage test: U+E000 (BMP,
+    // UTF-8 first byte 0xEE) sorts before U+1F600 (emoji, 0xF0) in byte
+    // order, but after it under UTF-16. U+E000 is Private-Use with no
+    // decomposition, so it survives filesystem normalization verbatim.
+    const BMP = "\uE000";
+    const EMOJI = "\u{1F600}";
+    await s.put(EMOJI, utf8("emoji"));
+    await s.put(BMP, utf8("bmp"));
+    await s.put("a", utf8("ascii"));
+    const listed = await collect(s.list(""));
+    expect(listed.map((e) => e.key)).toEqual(["a", BMP, EMOJI]);
+    const afterA = await collect(s.list("", { startAfter: "a" }));
+    expect(afterA.map((e) => e.key)).toEqual([BMP, EMOJI]);
+  });
+
   test("nested keys round-trip through directory hierarchy", async () => {
     await s.put("x/y/z", utf8("hi"));
     const got = await s.get("x/y/z");

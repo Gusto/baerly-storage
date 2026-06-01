@@ -14,6 +14,30 @@ interface StoredObject {
   contentType?: string;
 }
 
+const utf8Encoder = new TextEncoder();
+
+/**
+ * Compare two keys by their UTF-8 byte sequences — the order S3 and
+ * R2 use for `list`. JavaScript's default string sort compares UTF-16
+ * code units, which diverges from UTF-8 byte order for supplementary-
+ * plane characters (e.g. emoji sort before high-BMP characters under
+ * UTF-16 but after them in UTF-8). Using this keeps the in-memory
+ * reference backend faithful to the real adapters. (All kernel keys
+ * are ASCII base-32, where the two orders coincide — this only
+ * matters for adversarial / non-ASCII keys.)
+ */
+const compareKeysUtf8 = (a: string, b: string): number => {
+  const ba = utf8Encoder.encode(a);
+  const bb = utf8Encoder.encode(b);
+  const n = Math.min(ba.length, bb.length);
+  for (let i = 0; i < n; i++) {
+    if (ba[i] !== bb[i]) {
+      return ba[i]! - bb[i]!;
+    }
+  }
+  return ba.length - bb.length;
+};
+
 /**
  * In-memory `Storage`. The randomized property test runs against
  * this; it must be deterministic — no clocks beyond the caller's,
@@ -98,8 +122,8 @@ export class MemoryStorage implements Storage {
     const startAfter = opts?.startAfter ?? "";
     const maxKeys = opts?.maxKeys ?? Infinity;
     const sorted = [...this.#objects.keys()]
-      .filter((k) => k.startsWith(prefix) && k > startAfter)
-      .toSorted();
+      .filter((k) => k.startsWith(prefix) && compareKeysUtf8(k, startAfter) > 0)
+      .toSorted(compareKeysUtf8);
     let yielded = 0;
     for (const key of sorted) {
       if (yielded >= maxKeys) {
