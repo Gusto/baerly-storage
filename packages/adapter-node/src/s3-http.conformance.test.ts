@@ -1,6 +1,6 @@
 import { AwsClient } from "aws4fetch";
 import { fc } from "@fast-check/vitest";
-import { beforeAll, describe } from "vitest";
+import { beforeAll, describe, expect, test } from "vitest";
 import { defineStorageConformanceSuite } from "@baerly/protocol/conformance";
 import { S3HttpStorage } from "./s3-http.ts";
 import { createBucket } from "../../../tests/fixtures/s3-fixtures.ts";
@@ -98,3 +98,44 @@ describe.runIf(minioEnabled)(`minioStorage factory @ Minio :${MINIO_HOST_PORT}`,
     },
   );
 });
+
+// End-to-end proof of the `encoding-type=url` request↔parser contract
+// against a real S3 implementation. The conformance `keyArb` above is
+// restricted to URL-safe chars, so it never exercises a key containing a
+// literal `%`, `+`, space, or non-ASCII byte — exactly the keys that break
+// when the list request omits `encoding-type=url` while the parser
+// url-decodes the key. The `%` case is the sharpest: without
+// `encoding-type=url`, Minio returns the key raw and `decodeURIComponent`
+// throws an unguarded `URIError` on the dangling `%`.
+describe.runIf(minioEnabled)(
+  `S3HttpStorage list key round-trip @ Minio :${MINIO_HOST_PORT}`,
+  () => {
+    beforeAll(async () => {
+      await createBucket(signer, MINIO_ENDPOINT, BUCKET);
+    });
+
+    test("special-character keys survive a put → list round trip", async () => {
+      const storage = new S3HttpStorage({ endpoint: MINIO_ENDPOINT, bucket: BUCKET, sign });
+      // Unique-ish, `.`-free prefix so this never collides with the
+      // conformance suite's random keys. Each key mixes a `+`, a space, a
+      // literal `%`, and a non-ASCII char (é).
+      const prefix = "enc-roundtrip-fixture/";
+      const keys = [`${prefix}report+50% café`, `${prefix}a b%c+d`, `${prefix}90% ✓ done`];
+      const body = new TextEncoder().encode("x");
+      for (const key of keys) {
+        await storage.put(key, body);
+      }
+      try {
+        const seen: string[] = [];
+        for await (const entry of storage.list(prefix)) {
+          seen.push(entry.key);
+        }
+        expect(seen.toSorted()).toEqual(keys.toSorted());
+      } finally {
+        for (const key of keys) {
+          await storage.delete(key);
+        }
+      }
+    });
+  },
+);

@@ -127,7 +127,7 @@ describe("XML parser", () => {
   });
 
   test("control characters (ASCII 0–31) in a key round-trip via url-decoding", () => {
-    // S3 url-encodes control chars in the key (EncodingType=url):
+    // S3 url-encodes control chars in the key (encoding-type=url):
     // %09 = TAB, %0A = LF. They decode back to the literal characters.
     const xml: string = `<?xml version="1.0" encoding="UTF-8"?>
       <ListBucketResult>
@@ -135,6 +135,43 @@ describe("XML parser", () => {
       </ListBucketResult>`;
     const parsed = parseListObjectsV2CommandOutput(xml);
     expect(parsed.Contents?.[0]?.Key).toBe("a\tb\nc");
+  });
+
+  test("space, %, and unicode in a key round-trip via url-decoding", () => {
+    // With encoding-type=url S3 sends a space as `+`, a literal percent as
+    // %25, and non-ASCII as percent-encoded UTF-8 (é = %C3%A9).
+    const xml: string = `<?xml version="1.0" encoding="UTF-8"?>
+      <ListBucketResult>
+        <Contents><Key>my+50%25+caf%C3%A9</Key></Contents>
+      </ListBucketResult>`;
+    const parsed = parseListObjectsV2CommandOutput(xml);
+    expect(parsed.Contents?.[0]?.Key).toBe("my 50% café");
+  });
+
+  test("NextContinuationToken is read verbatim — S3 does not url-encode it", () => {
+    // Continuation tokens are opaque base64-ish blobs that routinely contain
+    // `+` and `/`. They are NOT covered by encoding-type=url, so url-decoding
+    // them (turning `+` into a space) would corrupt pagination on large
+    // buckets — the token must be passed back to S3 byte-for-byte.
+    const token = "ab+cd/ef==gh%2Bij";
+    const xml: string = `<?xml version="1.0" encoding="UTF-8"?>
+      <ListBucketResult>
+        <Contents><Key>k</Key></Contents>
+        <NextContinuationToken>${token}</NextContinuationToken>
+      </ListBucketResult>`;
+    const parsed = parseListObjectsV2CommandOutput(xml);
+    expect(parsed.NextContinuationToken).toBe(token);
+  });
+
+  test("ETag is read verbatim — S3 does not url-encode it", () => {
+    // encoding-type=url covers the key family only, not ETag. A `+`/`%` in
+    // the ETag must survive unchanged (no decodeURIComponent, no +→space).
+    const xml: string = `<?xml version="1.0" encoding="UTF-8"?>
+      <ListBucketResult>
+        <Contents><Key>k</Key><ETag>"a+b%2Bc"</ETag></Contents>
+      </ListBucketResult>`;
+    const parsed = parseListObjectsV2CommandOutput(xml);
+    expect(parsed.Contents?.[0]?.ETag).toBe('"a+b%2Bc"');
   });
 });
 

@@ -36,20 +36,24 @@ const xmlParser = new XMLParser({
   htmlEntities: true,
 });
 
+// The list request sets `encoding-type=url`, so S3 URL-encodes the **key
+// family only** (Key/Prefix/Delimiter/StartAfter) in the response,
+// including spaces as `+`. Use this to reverse both steps. Do NOT apply it
+// to ETag or NextContinuationToken — S3 leaves those verbatim, and a
+// continuation token routinely contains literal `+` that the `.replace`
+// step would mangle into a space (corrupting pagination on large buckets).
 const xmlVal = (obj: Record<string, unknown>, name: string): string | undefined => {
   const v = obj[name];
   if (typeof v !== "string" || v === "") {
     return undefined;
   }
-  // The request sets `EncodingType=url`, so S3 URL-encodes the key in the
-  // response (including spaces as `+`). Reverse both steps.
   return decodeURIComponent(v.replace(/\+/g, " "));
 };
 
-// Error bodies are NOT URL-encoded (only listing keys are, via
-// `EncodingType=url`), so read these fields verbatim — running them
-// through `xmlVal`'s `decodeURIComponent` would corrupt literal `+`
-// and `%` in an error message.
+// Read a field verbatim. Used for everything S3 does NOT URL-encode:
+// error-body `Code`/`Message`, list `ETag`/`LastModified`, and
+// `NextContinuationToken` — running any of these through `xmlVal`'s
+// `decodeURIComponent` / `+`→space would corrupt literal `+` and `%`.
 const rawXmlVal = (obj: Record<string, unknown>, name: string): string | undefined => {
   const v = obj[name];
   return typeof v === "string" && v !== "" ? v : undefined;
@@ -118,11 +122,11 @@ export const parseListObjectsV2CommandOutput = (xml: string): ParsedListObjectsV
   return {
     Contents: contents.map((content) => {
       return {
-        ETag: xmlVal(content, "ETag"),
+        ETag: rawXmlVal(content, "ETag"),
         Key: xmlVal(content, "Key"),
-        LastModified: parseLastModified(xmlVal(content, "LastModified")),
+        LastModified: parseLastModified(rawXmlVal(content, "LastModified")),
       };
     }),
-    NextContinuationToken: xmlVal(root, "NextContinuationToken"),
+    NextContinuationToken: rawXmlVal(root, "NextContinuationToken"),
   };
 };

@@ -346,6 +346,12 @@ export class S3HttpStorage implements Storage {
       const params = new URLSearchParams();
       params.set("list-type", "2");
       params.set("prefix", prefix);
+      // Force S3 to URL-encode object keys in the response so keys
+      // containing XML-hostile or whitespace bytes survive the round trip.
+      // The XML parser (`xmlVal` in ./xml.ts) reverses this on `Key`; only
+      // the key family (Key/Prefix/Delimiter/StartAfter) is encoded — ETag
+      // and NextContinuationToken come back verbatim.
+      params.set("encoding-type", "url");
       if (continuationToken !== undefined) {
         params.set("continuation-token", continuationToken);
       } else if (startAfter !== "") {
