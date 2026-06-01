@@ -46,6 +46,17 @@ const compareKeysUtf8 = (a: string, b: string): number => {
  * ETags are a monotonically increasing hex counter formatted in the
  * `"<hex>"` shape S3 returns (the surrounding double-quotes are part
  * of the ETag header value). Keys are stored verbatim.
+ *
+ * **Test-confidence caveat:** every method resolves on the microtask
+ * queue with no real concurrency, so `put` reads `existing` and writes
+ * back with no interleaving. MemoryStorage therefore CANNOT exercise the
+ * compare-and-swap race the writer-fence model depends on — two writers
+ * contending on one `current.json` always serialize here, so a green run
+ * is necessary but not sufficient. That race is covered only by the
+ * randomized integration tests against real S3 / Minio
+ * (`tests/integration/randomized.test.ts`, `node-minio` variant).
+ * Relatedly, `serverDate` returns the local clock, not an independent
+ * server clock (see the `put` return below).
  */
 export class MemoryStorage implements Storage {
   readonly #objects = new Map<string, StoredObject>();

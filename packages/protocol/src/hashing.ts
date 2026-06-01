@@ -3,8 +3,12 @@ import type { ContentVersionId } from "./types.ts";
 /**
  * Width of the {@link ContentVersionId} hex strings produced by
  * {@link versionFromContent}. 32 hex chars = 128 bits, matching the
- * information content of a v4 UUID. Collision probability with
- * N=10⁹ writes is ~3 × 10⁻²⁰; ample for a content-addressed version id.
+ * information content of a v4 UUID. Birthday-bound collision probability
+ * at N=10⁹ writes is ~1.5 × 10⁻²¹ (≈ N² / 2¹²⁹); ample for a
+ * content-addressed version id. A collision is not detected at runtime —
+ * two distinct bodies that share a truncated hash would alias to the same
+ * content key, so a reader could observe the wrong body. The bound above
+ * is the sole guard, and it sits far below any plausible write volume.
  *
  * @see docs/spec/log-entry-shape.md §"Content body layout"
  */

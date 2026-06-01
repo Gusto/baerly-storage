@@ -266,8 +266,7 @@ The algorithm runs once per refresh — initiated by a read
 	- See the read path in [`packages/server/src/query.ts`](../packages/server/src/query.ts).
 2. List objects backward in time from the `now + lag` timestamp
 	- See the log-walk loop in [`packages/server/src/query.ts`](../packages/server/src/query.ts).
-3. Exclude entries whose `abs(timestamp - LastModified) > stale` because they were created by a client with significant clock skew
-	- See `Syncer.isValid`-equivalent guard logic in [`packages/server/src/writer.ts`](../packages/server/src/writer.ts).
+3. Trust the embedded timestamps under the bounded-skew assumption (`LAG_WINDOW_MILLIS`): the `now + lag` margin in step 2 absorbs client/server clock disagreement up to that bound. There is **no** reader-side per-entry staleness exclusion — an earlier design filtered entries with `abs(timestamp - LastModified) > stale` via a `Syncer.isValid` check, but that guard was removed in the kernel rewrite ([ADR-004](../adr/004-ephemeral-coordination.md)). `LAG_WINDOW_MILLIS` (`packages/protocol/src/constants.ts`) survives as the named assumption, not an enforced runtime check.
 4. Let the first entry encountered be `latest_state`
 	- See [`packages/server/src/query.ts`](../packages/server/src/query.ts).
 5. json-merge-patch all `operations` with `operations.timestamp - lag > latest_state.timestamp` in order into  `latest_state`

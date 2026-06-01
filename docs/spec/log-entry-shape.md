@@ -128,11 +128,14 @@ Document bodies land at:
 
 where `<hash>` is the **first 32 hex chars (128 bits) of `sha256(body)`**,
 lowercase. The truncation is intentional: 128 bits matches the
-information content of a v4 UUID and gives a collision probability of
-~3 × 10⁻²⁰ at N=10⁹ writes — comfortably below any plausible per-bucket
-write volume. External consumers reproducing keys MUST truncate to 32
-hex chars; hashing to the full 64-char SHA-256 will not match the key
-on the bucket.
+information content of a v4 UUID and gives a birthday-bound collision
+probability of ~1.5 × 10⁻²¹ at N=10⁹ writes (≈ N² / 2¹²⁹) — far below any
+plausible per-bucket write volume. A collision is **not** detected at
+runtime: two distinct bodies sharing a truncated hash alias to one
+content key, so a reader folding the log would observe the wrong body for
+that version. The probability bound is the only guard. External consumers
+reproducing keys MUST truncate to 32 hex chars; hashing to the full
+64-char SHA-256 will not match the key on the bucket.
 
 **`body` is the exact bytes of `encodeJsonBytes(value)` —
 `JSON.stringify(value)` UTF-8-encoded, with NO replacer and NO key
@@ -163,10 +166,12 @@ the hash input would first need canonicalization. Constant lives at
   base-32-encoded with **descending** ordering — newer epochs sort
   lex-EARLIER. (See `uint2strDesc` in
   [`packages/protocol/src/types.ts`](../packages/protocol/src/types.ts).)
-- **`<session>`** is a 6-char hex prefix of a UUID, unique per
-  `Syncer` instance.
-- **`<seq>`** is a 2-char base-32 descending counter
-  (`countKey(this.writes++)`), monotonic per session.
+- **`<session>`** is a 6-char hex prefix of a UUID, freshly minted per
+  commit batch by the stateless `Writer`.
+- **`<seq>`** is a 2-char base-32 descending counter (`countKey(seq)`),
+  where `seq` is sourced from `current.json.next_seq` — monotonic per
+  collection, advanced via the manifest CAS, and stable across process
+  restart (it does **not** reset per session).
 
 **Lex order is reverse-causal**, inherited from Baerly's manifest
 log encoding. Consumers walking the log via `ListObjectsV2 +
@@ -174,7 +179,7 @@ StartAfter` get newer entries lex-FIRST and must walk the response
 in REVERSE for causal order — the same trick the read path uses
 when folding `[log_seq_start, next_seq)` into a live row set
 ([`packages/server/src/query.ts`](../packages/server/src/query.ts),
-the replay loop). Within a single session, `seq` ascends in causal
+the replay loop). Within a single collection, `seq` ascends in causal
 order; consumers can sort by `seq` to recover ordering without
 reaching for list semantics.
 
