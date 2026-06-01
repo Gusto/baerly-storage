@@ -101,6 +101,12 @@ const tightenLower = (
     );
   }
   const c = compareScalar(group.lo.value, value);
+  // Stryker disable next-line ConditionalExpression: two sub-expression-to-true mutants are
+  // equivalent. (1) `inclusive === false → true`: fires when c=0, existing=inclusive,
+  // new=inclusive — tighten updates lo to {value, inclusive=true}, identical to the existing
+  // {same value, inclusive=true}; no observable change. (2) `group.lo.inclusive === true → true`:
+  // fires when c=0, new=exclusive, existing=exclusive — tighten updates lo to {value, false},
+  // identical to existing {same value, false}; no observable change.
   if (c < 0 || (c === 0 && inclusive === false && group.lo.inclusive === true)) {
     group.lo = { value, inclusive };
   }
@@ -123,6 +129,11 @@ const tightenUpper = (
     );
   }
   const c = compareScalar(group.hi.value, value);
+  // Stryker disable next-line ConditionalExpression: two sub-expression-to-true mutants are
+  // equivalent. (1) `inclusive === false → true`: fires when c=0, existing=inclusive,
+  // new=inclusive — tighten updates hi to {value, inclusive=true}, same as existing; no change.
+  // (2) `group.hi.inclusive === true → true`: fires when c=0, new=exclusive, existing=exclusive —
+  // tighten updates hi to {value, false}, same as existing; no observable change.
   if (c > 0 || (c === 0 && inclusive === false && group.hi.inclusive === true)) {
     group.hi = { value, inclusive };
   }
@@ -131,9 +142,13 @@ const tightenUpper = (
 const intersectInSets = (
   sets: ReadonlyArray<ReadonlyArray<DocumentValue>>,
 ): ReadonlyArray<DocumentValue> => {
+  // Stryker disable ConditionalExpression,BlockStatement,ArrayDeclaration: dead-code guard
+  // — callers only invoke intersectInSets when group.ins.length > 1 (i.e., sets.length >= 2),
+  // so sets.length === 0 is unreachable in production. Any mutation here is an equivalent mutant.
   if (sets.length === 0) {
     return [];
   }
+  // Stryker restore ConditionalExpression,BlockStatement,ArrayDeclaration
   let acc: ReadonlyArray<DocumentValue> = sets[0]!;
   for (let i = 1; i < sets.length; i++) {
     const next: DocumentValue[] = [];
@@ -160,6 +175,10 @@ export const assertWireSatisfiable = (wire: PredicateWire): void => {
   const groups = groupByField(wire);
   for (const [field, group] of groups) {
     // Multiple `eq` clauses on the same field must agree.
+    // Stryker disable next-line EqualityOperator,ConditionalExpression: equivalent — the inner
+    // loop starts at i=1, so with 0 or 1 eqs the loop body never executes regardless of whether
+    // we enter the outer if. `>= 1` enters with 1 eq (0 loop iterations); `true` enters with 0
+    // eqs (0 loop iterations). Both are observationally identical to `> 1`.
     if (group.eqs.length > 1) {
       for (let i = 1; i < group.eqs.length; i++) {
         if (!deepEqualDocumentValue(group.eqs[0]!, group.eqs[i]!)) {
@@ -217,6 +236,10 @@ export const assertWireSatisfiable = (wire: PredicateWire): void => {
           );
         }
       }
+      // Stryker disable next-line EqualityOperator,ConditionalExpression: equivalent — the for-of
+      // loop over group.ins is a no-op when group.ins is empty, so `>= 0` (always true) and
+      // `true` (always enter) produce identical behavior: zero iterations when ins is empty,
+      // same iterations as `> 0` when ins is non-empty.
       if (group.ins.length > 0) {
         for (const set of group.ins) {
           let found = false;
@@ -236,6 +259,10 @@ export const assertWireSatisfiable = (wire: PredicateWire): void => {
       }
     }
     // Multiple `in` sets must intersect non-empty.
+    // Stryker disable next-line EqualityOperator: equivalent — intersectInSets([single_set])
+    // returns that set unchanged; since validateWire rejects empty in-arrays, the single set
+    // is always non-empty, so isect.length === 0 is false and no throw occurs. `>= 1` (entering
+    // with 1 in-set) behaves identically to `> 1` (skipping for 1 in-set).
     if (group.ins.length > 1) {
       const isect = intersectInSets(group.ins);
       if (isect.length === 0) {
