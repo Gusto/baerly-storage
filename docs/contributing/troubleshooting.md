@@ -2,7 +2,7 @@
 title: Troubleshooting
 audience: coder
 summary: "Common pain points: test gating, local stack ports, fuzzer, formatting CI."
-last-reviewed: 2026-05-12
+last-reviewed: 2026-05-31
 tags: [troubleshooting, operations]
 related: [./development.md]
 ---
@@ -22,7 +22,7 @@ which are always green is documented in
 
 ## Local stack ports
 
-`pnpm dev:storage` brings up two services via `docker-compose.yml`:
+`pnpm dev:storage` brings up three services via `docker-compose.yml`:
 
 | Service | Port | Purpose |
 |---|---|---|
@@ -30,6 +30,13 @@ which are always green is documented in
 | Minio console | `:9103` | Web UI at <http://127.0.0.1:9103> (login `baerly` / see compose file). |
 | Toxiproxy | `:9104` | Proxies `:9102` with chaos injection. Used by `randomized.test.ts` to simulate network failure. |
 | Toxiproxy admin | `:8474` | For configuring toxics manually. |
+| Postgres | `:5433` | Backs `export-smoke.test.ts`. Host port 5433 to dodge a local dev Postgres on 5432. |
+
+All ports except the Minio console are overridable for two-worktree
+setups via `BAERLY_MINIO_HOST_PORT`, `BAERLY_TOXIPROXY_HOST_PORT`,
+`BAERLY_TOXIPROXY_ADMIN_PORT`, and `BAERLY_POSTGRES_HOST_PORT` (see
+[development.md](development.md)); without them a second `compose up`
+fails with `port already allocated`.
 
 The split matters: tests that want a *reliable* S3 use `:9102`; tests
 that want to exercise retry/replay paths point one Baerly instance at

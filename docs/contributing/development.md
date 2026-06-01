@@ -2,7 +2,7 @@
 title: Developer setup
 audience: coder
 summary: "Local dev: pnpm, Minio + Toxiproxy + Postgres stack, test commands."
-last-reviewed: 2026-05-14
+last-reviewed: 2026-05-31
 tags: [development, setup, tests]
 related: ["./troubleshooting.md", "../../CLAUDE.md"]
 ---
@@ -54,9 +54,19 @@ pnpm dev:storage:stop # tear down
 
 Minio runs on `http://127.0.0.1:9102` (S3 API), console on `:9103`
 (login `baerly` / see `docker-compose.yml`); Toxiproxy on `:9104` proxies
-Minio for latency/failure injection. The `minio` proxy is declared
+Minio for latency/failure injection; Postgres on `:5433` backs the
+export-smoke suite. The `minio` proxy is declared
 statically in [`docker/toxiproxy.json`](../../docker/toxiproxy.json) and
 loaded at container start.
+
+Running two worktrees at once? The host ports for Minio (`:9102`),
+Toxiproxy (`:9104`), the Toxiproxy admin port (`:8474`), and Postgres
+(`:5433`) are overridable via `BAERLY_MINIO_HOST_PORT`,
+`BAERLY_TOXIPROXY_HOST_PORT`, `BAERLY_TOXIPROXY_ADMIN_PORT`, and
+`BAERLY_POSTGRES_HOST_PORT` (set them in a per-worktree `.env.local` or
+inline). `tests/setup/ports.ts` reads the same variables so the test
+setup stays in sync. Without overrides a second `compose up` fails with
+`port already allocated`. (The Minio console `:9103` is fixed.)
 
 ## Type checking, formatting, linting
 

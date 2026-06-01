@@ -2,7 +2,7 @@
 title: S3 API surface used
 audience: spec
 summary: The minimal S3 features the protocol depends on.
-last-reviewed: 2026-05-15
+last-reviewed: 2026-05-31
 tags: [protocol, s3]
 related: [s3-xml-escaping-cases.md]
 ---
@@ -33,4 +33,4 @@ This is recent. Until **December 2020**, S3 was only eventually consistent for o
 
 S3 is an immutable key value store for (potentially very large) binary blobs. The keys are limited in size (1kb), but you can to range queries by prefix query in one direction only.
 
-It doesn't have some common features like conditional writes, and you cannot update objects in-place. So its tricky getting multiplayer out of this system, but possible thanks to the strong consistency guarantees.
+You cannot update objects in-place — every object is immutable once written. Modern S3 *does*, however, support conditional writes (`If-None-Match: "*"` to create-if-absent, and `If-Match: <etag>` to compare-and-swap), and the protocol now depends on them for its single CAS'd pointer object (see [the S3-CAS prerequisite in sync-protocol.md](sync-protocol.md#protocol-invariants)). So it's tricky getting multiplayer out of this system, but possible thanks to those conditional writes plus the strong consistency guarantees.

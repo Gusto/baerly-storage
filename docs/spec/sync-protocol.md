@@ -2,7 +2,7 @@
 title: Sync protocol
 audience: spec
 summary: Atomic multi-key writes over S3 via manifest indirection; time-ordered log; reconciliation algorithm.
-last-reviewed: 2026-05-30
+last-reviewed: 2026-05-31
 tags: [protocol, sync, manifest, causal-consistency]
 related: [causal-consistency-checking.md, log-entry-shape.md, json-merge-patch.md, writer-fence-adversarial-model.md, prior-art.md]
 ---
@@ -29,7 +29,7 @@ The manifest is a layer of *indirection* enabling bulk atomic operation (and mor
 
 ### Multiplayer Safe
 
-Concurrent writes would conflict if all clients wrote to the *same* manifest location. There are no conditional writes in S3 so some updates would just be lost. To support multiplayer each client updates a *different* manifest entry ordered by time.
+Concurrent writes would conflict if all clients wrote to the *same* manifest location, and a naive last-write-wins overwrite would silently drop the loser. To support multiplayer each client appends a *different* manifest entry ordered by time, so writers never contend for a single key. Modern S3 *does* offer conditional writes (`If-None-Match: "*"` to create-if-absent, `If-Match: <etag>` to compare-and-swap), and the protocol leans on them — guarding each log append and the single manifest-pointer (`current.json`) advance. See the [S3-CAS prerequisite](#protocol-invariants) below.
 
 ![manifests over time](../contributing/diagrams/manifest.excalidraw.png)
 
@@ -224,10 +224,12 @@ Properties the kernel and the rest of this document both rely on.
    of an HTTP request or a cron invocation. There is no
    background poller, no long-lived writer, no leader election.
    Every commit reads `current.json` fresh, does its work, and
-   exits. Maintenance (compaction, GC) is a scheduled cron pass
-   that respects the platform's subrequest budget and yields.
-   The doctrinal rationale lives in
-   [ADR-004](../adr/004-ephemeral-coordination.md).
+   exits. Maintenance (compaction, GC) ticks **in-band on the write
+   path** — bounded by a per-pass budget, deferred past the response
+   on Cloudflare via `ctx.waitUntil` and run inline elsewhere; reads
+   never tick. The opt-in `runScheduledMaintenance` SDK is the only
+   cron-driven path and is never required. The doctrinal rationale
+   lives in [ADR-004](../adr/004-ephemeral-coordination.md).
 
 2. **S3-CAS is a hard backend prerequisite.** Every commit
    CAS-advances `current.json` with `If-Match` on its ETag

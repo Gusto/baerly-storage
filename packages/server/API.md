@@ -451,7 +451,7 @@ interface LogEntry {
   readonly commit_ts: string;       // ISO-8601 ms
   readonly op: "I" | "U" | "D";
   readonly collection: string;
-  readonly doc_id?: string;         // I/U/D only
+  readonly doc_id: string;          // I/U/D only
   readonly after?: DocumentData;    // I/U — post-image (Debezium's `after`)
   readonly session: string;
   readonly seq: number;

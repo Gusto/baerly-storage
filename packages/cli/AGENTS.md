@@ -20,7 +20,7 @@ module's transitive imports are evaluated lazily.
 | Verb | Module | Role |
 |---|---|---|
 | `baerly deploy` | `src/deploy.ts` → `src/deploy/cloudflare.ts` | Reads `baerly.config.ts:target` and dispatches. Today only `target: "cloudflare"` is accepted; patches `wrangler.jsonc`, then shells out to `wrangler deploy --x-provision --x-auto-create`. `target: "node"` is rejected (self-host via your PaaS/container build). |
-| `baerly doctor` | `src/doctor.ts` | Walks deploy invariants for one target (wrangler config, R2 bindings, required secrets, CF Access audience tag, cron triggers, domain coherence). `--fix` auto-creates missing R2 buckets. |
+| `baerly doctor` | `src/doctor.ts` | Two modes. `--bucket <uri>` live-probes a real bucket's CAS support (writes + deletes one sentinel; verifies `If-Match` / `If-None-Match` are honoured — the protocol's load-bearing backend prerequisite), independent of `--target`. Otherwise walks deploy invariants for `baerly.config.ts:target` (wrangler config, R2 bindings, required secrets, CF Access audience tag, cron triggers, domain coherence). `--fix` auto-creates missing R2 buckets. |
 | `baerly inspect` | `src/inspect.ts` | Read-only summary of one collection's snapshot / log / index state. |
 | `baerly export` | `src/export.ts` | Snapshot dump of one collection to SQL (`--target=sqlite`, `--target=postgres`). |
 | `baerly cost` | `src/cost.ts` | Class A / Class B operation accounting from `log_seq_start … next_seq`. |
