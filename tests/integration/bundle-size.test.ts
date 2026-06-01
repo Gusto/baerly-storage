@@ -186,7 +186,15 @@ const BUDGETS: readonly Budget[] = [
   //     accept + rebaseline, lazy-load rejected as cosmetic for CF). gz
   //     (64304) still sits UNDER the prior 63 KiB ceiling, so it is left
   //     unchanged; only raw is rebaselined.
-  { entry: "index.js", raw: 208 * 1024, gz: 63 * 1024 },
+  //   → 209 KiB raw / 64 KiB gz (2026-05-31): two unrelated increments.
+  //     (a) Base drift: the `S3-CAS is now enforced` main commit
+  //     (63cbacd4) pushed the kernel-barrel gz closure to 64745 — already
+  //     +233 over the prior 63 KiB ceiling before this change (shared-chunk
+  //     re-split from the conformance/doctor work). (b) This change: the
+  //     UTF-8 byte-order key comparator in `MemoryStorage` (shipped in the
+  //     kernel barrel) plus shared-chunk re-splitting. Measured: 213028 raw
+  //     / 65102 gz. Bump raw to 209 KiB, gz to 64 KiB.
+  { entry: "index.js", raw: 209 * 1024, gz: 64 * 1024 },
   // The three auth verifier factories (bearerJwt, sharedSecret,
   // cloudflareAccess) plus the transitive jose closure pulled in by
   // bearerJwt's createRemoteJWKSet + jwtVerify. Adding a fourth
@@ -365,7 +373,12 @@ const BUDGETS: readonly Budget[] = [
   //     kernel value, statically bounded (reuses the tested
   //     `CLOUDFLARE_FREE_TIER` profile), smaller than the rejected sweep/
   //     pending_gc/lease designs. Owner-accepted (Decision D2).
-  { entry: "cloudflare.js", raw: 375 * 1024, gz: 112 * 1024 },
+  //   → 377 KiB raw / 112 KiB gz (2026-05-31): the UTF-8 byte-order key
+  //     comparator added to `MemoryStorage` ships in the protocol closure
+  //     this bundle pulls; shared-chunk re-splitting redistributed ~1 KB
+  //     raw here. Measured: 385000 raw / 114547 gz. Bump raw to 377 KiB;
+  //     gz stays comfortably under 112 KiB.
+  { entry: "cloudflare.js", raw: 377 * 1024, gz: 112 * 1024 },
   // Node adapter — re-exports the kernel barrel plus
   // `s3HttpStorage`, `localFsStorage`, `memoryStorage`,
   // `localCacheStorage`, and the `baerlyNode` Fetch-API factory.
@@ -453,7 +466,12 @@ const BUDGETS: readonly Budget[] = [
   //     accepted (Decision D2). Don't tighten raw below the documented
   //     headroom — see the rolldown non-determinism note above; this entry
   //     keeps a slightly wider whole-KiB margin than the smaller closures.
-  { entry: "node.js", raw: 555 * 1024, gz: 161 * 1024 },
+  //   → 557 KiB raw / 162 KiB gz (2026-05-31): the S3 `<Error>` body
+  //     parser (`parseS3Error` + `s3ErrorDetail`) and `LastModified`
+  //     Invalid-Date guard in `@baerly/adapter-node`, plus the protocol's
+  //     UTF-8 byte-order comparator. Measured: 569446 raw / 165053 gz.
+  //     Bump raw to 557 KiB, gz to 162 KiB.
+  { entry: "node.js", raw: 557 * 1024, gz: 162 * 1024 },
   // Client surface — `BaerlyClient<TConfig>` + fetcher plumbing.
   // Browser/runtime-agnostic; no kernel modules in the closure.
   // Budget history:
@@ -556,7 +574,11 @@ const BUDGETS: readonly Budget[] = [
   //     `snapshot_rows`/`last_warned_seq`) plus rolldown's `src-*` re-
   //     layout as the kernel closures shifted around the maintenance pull.
   //     Final measured: 33276 raw / 12004 gz. Owner-accepted (Decision D2).
-  { entry: "dev.js", raw: 34 * 1024, gz: 12 * 1024 },
+  //   → 34 KiB raw / 13 KiB gz (2026-05-31): the UTF-8 byte-order key
+  //     comparator added to `LocalFsStorage` + the protocol closure this
+  //     bundle pulls crept gz +21 over the 12 KiB ceiling. Measured:
+  //     33966 raw / 12309 gz. Raw stays under 34 KiB; bump gz to 13 KiB.
+  { entry: "dev.js", raw: 34 * 1024, gz: 13 * 1024 },
   // `@baerly/dev/vite` — the `baerlyDev()` vite plugin (mounts the
   // Baerly HTTP listener as middleware inside a Vite dev server).
   // Vite is external. Aggregator: re-exports the dev surface.
@@ -616,7 +638,12 @@ const BUDGETS: readonly Budget[] = [
   //     tighten raw below the documented headroom — same rolldown non-
   //     determinism caution as node.js; keeps a slightly wider whole-KiB
   //     margin than the smaller closures.
-  { entry: "dev-vite.js", raw: 562 * 1024, gz: 164 * 1024 },
+  //   → 565 KiB raw / 164 KiB gz (2026-05-31): the S3 `<Error>` parser +
+  //     Invalid-Date guard (`@baerly/adapter-node`) and the byte-order
+  //     comparators (`LocalFsStorage` + protocol) land in this dev-server
+  //     closure; shared-chunk re-splitting added ~1.8 KB raw. Measured:
+  //     577346 raw / 167755 gz. Bump raw to 565 KiB; gz stays under 164 KiB.
+  { entry: "dev-vite.js", raw: 565 * 1024, gz: 164 * 1024 },
 ];
 
 // Static-import specifiers only. Dynamic `import(...)` is intentionally
