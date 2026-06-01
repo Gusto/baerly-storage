@@ -1,13 +1,17 @@
 /**
- * Unit tests for `walkLogRange` / `readLogEntry`. Covers seq-order
- * preservation, the concurrency bound, error semantics on missing /
- * malformed entries, the empty range, and AbortSignal short-circuit.
+ * Unit tests for `walkLogRange` / `readLogEntry` / `foldLogEntriesOnto`.
+ * Covers seq-order preservation, the concurrency bound, error semantics
+ * on missing / malformed entries, the empty range, AbortSignal
+ * short-circuit, and the per-doc replace semantics of the canonical
+ * log fold (property-based against an independent reference oracle).
  */
 
+import { fc, test } from "@fast-check/vitest";
 import {
   BaerlyError,
   MAX_PARALLEL_LOG_READS,
   MemoryStorage,
+  type DocumentData,
   type LogEntry,
   type Storage,
   type StorageGetOptions,
@@ -16,8 +20,8 @@ import {
   type StoragePutOptions,
   type StoragePutResult,
 } from "@baerly/protocol";
-import { describe, expect, test } from "vitest";
-import { readLogEntry, walkLogRange } from "./log-walk.ts";
+import { describe, expect } from "vitest";
+import { foldLogEntriesOnto, readLogEntry, walkLogRange } from "./log-walk.ts";
 
 const PREFIX = "app/t/tenant/x/manifests/c";
 
@@ -211,5 +215,161 @@ describe("readLogEntry", () => {
     await expect(readLogEntry(inner, `${PREFIX}/log/0.json`)).rejects.toMatchObject({
       code: "InvalidResponse",
     });
+  });
+});
+
+const FOLD_COLLECTION = "tickets";
+
+// Minimal valid LogEntry. fold reads only op/collection/doc_id/after; the
+// other required fields (lsn/commit_ts/session/seq) are filled with stable
+// dummies so the object typechecks without `as`.
+const foldEntry = (
+  op: "I" | "U" | "D",
+  docId: string,
+  opts: { after?: DocumentData; collection?: string } = {},
+): LogEntry => ({
+  lsn: `t_s_${docId}`,
+  commit_ts: "1970-01-01T00:00:00.000Z",
+  op,
+  collection: opts.collection ?? FOLD_COLLECTION,
+  doc_id: docId,
+  session: "s",
+  seq: 0,
+  ...(opts.after !== undefined && { after: opts.after }),
+});
+
+const docIdArb = fc.constantFrom("a", "b", "c", "d");
+const bodyArb: fc.Arbitrary<DocumentData> = fc.record({ v: fc.integer({ min: 0, max: 9 }) });
+
+const entryArb: fc.Arbitrary<LogEntry> = fc.oneof(
+  // I/U with a defined post-image
+  fc
+    .record({
+      op: fc.constantFrom("I", "U") as fc.Arbitrary<"I" | "U">,
+      id: docIdArb,
+      after: bodyArb,
+    })
+    .map((r) => foldEntry(r.op, r.id, { after: r.after })),
+  // I/U with NO after (forward-compat patch-only shape — must be skipped)
+  fc
+    .record({ op: fc.constantFrom("I", "U") as fc.Arbitrary<"I" | "U">, id: docIdArb })
+    .map((r) => foldEntry(r.op, r.id)),
+  // D tombstone
+  docIdArb.map((id) => foldEntry("D", id)),
+  // foreign-collection entry (must be ignored)
+  fc
+    .record({
+      op: fc.constantFrom("I", "U") as fc.Arbitrary<"I" | "U">,
+      id: docIdArb,
+      after: bodyArb,
+    })
+    .map((r) => foldEntry(r.op, r.id, { after: r.after, collection: "other" })),
+);
+
+const entriesArb = fc.array(entryArb, { minLength: 0, maxLength: 40 });
+
+// Independent reference fold — written to spec, not copied from the impl.
+const referenceFold = (
+  entries: ReadonlyArray<LogEntry>,
+  collection: string,
+  filter?: ReadonlySet<string>,
+): Map<string, DocumentData> => {
+  const m = new Map<string, DocumentData>();
+  for (const e of entries) {
+    if (e.collection !== collection) {
+      continue;
+    }
+    if (filter !== undefined && !filter.has(e.doc_id)) {
+      continue;
+    }
+    if (e.op === "D") {
+      m.delete(e.doc_id);
+    } else if (e.after !== undefined) {
+      m.set(e.doc_id, e.after);
+    }
+  }
+  return m;
+};
+
+const runFold = (
+  entries: ReadonlyArray<LogEntry>,
+  opts: { collection: string; docIdFilter?: ReadonlySet<string> },
+): Map<string, DocumentData> => {
+  const m = new Map<string, DocumentData>();
+  foldLogEntriesOnto(m, entries, opts);
+  return m;
+};
+
+describe("foldLogEntriesOnto — per-doc replace semantics", () => {
+  test.prop({ entries: entriesArb })("matches the spec reference fold", ({ entries }) => {
+    expect(runFold(entries, { collection: FOLD_COLLECTION })).toEqual(
+      referenceFold(entries, FOLD_COLLECTION),
+    );
+  });
+
+  test.prop({ entries: entriesArb })(
+    "collection scoping: full fold == fold of the matching-collection subset",
+    ({ entries }) => {
+      const subset = entries.filter((e) => e.collection === FOLD_COLLECTION);
+      expect(runFold(entries, { collection: FOLD_COLLECTION })).toEqual(
+        runFold(subset, { collection: FOLD_COLLECTION }),
+      );
+    },
+  );
+
+  test.prop({ entries: entriesArb, ids: fc.subarray(["a", "b", "c", "d"]) })(
+    "docIdFilter scoping: filtered fold == fold of the filter subset",
+    ({ entries, ids }) => {
+      const filter = new Set(ids);
+      const subset = entries.filter((e) => filter.has(e.doc_id));
+      expect(runFold(entries, { collection: FOLD_COLLECTION, docIdFilter: filter })).toEqual(
+        runFold(subset, { collection: FOLD_COLLECTION }),
+      );
+    },
+  );
+
+  test.prop({ entries: entriesArb })(
+    "after===undefined on I/U is a no-op: dropping those entries is invisible",
+    ({ entries }) => {
+      const withDefinedAfterOnly = entries.filter((e) => e.op === "D" || e.after !== undefined);
+      expect(runFold(entries, { collection: FOLD_COLLECTION })).toEqual(
+        runFold(withDefinedAfterOnly, { collection: FOLD_COLLECTION }),
+      );
+    },
+  );
+
+  // ── Concrete hand-checked cases ──
+
+  test("order sensitivity: [I a, D a] ⇒ absent", () => {
+    const m = runFold([foldEntry("I", "a", { after: { v: 1 } }), foldEntry("D", "a")], {
+      collection: FOLD_COLLECTION,
+    });
+    expect(m.has("a")).toBe(false);
+  });
+
+  test("order sensitivity: [D a, I a] ⇒ present with last image", () => {
+    const m = runFold([foldEntry("D", "a"), foldEntry("I", "a", { after: { v: 7 } })], {
+      collection: FOLD_COLLECTION,
+    });
+    expect(m.get("a")).toEqual({ v: 7 });
+  });
+
+  test("last-writer-wins across multiple updates", () => {
+    const m = runFold(
+      [
+        foldEntry("I", "a", { after: { v: 1 } }),
+        foldEntry("U", "a", { after: { v: 2 } }),
+        foldEntry("U", "a", { after: { v: 3 } }),
+      ],
+      { collection: FOLD_COLLECTION },
+    );
+    expect(m.get("a")).toEqual({ v: 3 });
+  });
+
+  test("foreign-collection entries are ignored", () => {
+    const m = runFold([foldEntry("I", "a", { after: { v: 1 }, collection: "other" })], {
+      collection: FOLD_COLLECTION,
+    });
+    expect(m.size).toBe(0);
   });
 });
