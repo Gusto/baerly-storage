@@ -22,6 +22,10 @@ coverage/
 *.lcov
 .nyc_output/
 
+# Stryker mutation testing (temp sandbox + report output)
+.stryker-tmp/
+reports/mutation/
+
 # Bench harness outputs (per-run JSON + CSV)
 bench/results/*
 !bench/results/.gitkeep
