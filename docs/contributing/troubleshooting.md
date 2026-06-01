@@ -50,7 +50,7 @@ that catches races and protocol violations missed by a single run of
 - You touched `packages/server/src/writer.ts` or
   `packages/server/src/query.ts`.
 - You changed timing constants in `packages/protocol/src/constants.ts`
-  (`LAG_WINDOW_MILLIS`, `MANIFEST_LIST_LOOKAHEAD_MILLIS`, etc.).
+  (`LAG_WINDOW_MILLIS`, etc.).
 - You're investigating a flaky test that reproduces "sometimes".
 
 It is **not** a stress test (load) or a perf test (latency). It's a

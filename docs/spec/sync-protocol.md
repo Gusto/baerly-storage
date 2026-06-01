@@ -321,15 +321,12 @@ Trade-offs:
 
 ## Bound choices
 
-The protocol relies on two clock-skew bounds, both in
+The protocol relies on one clock-skew bound, in
 [`packages/protocol/src/constants.ts`](../../packages/protocol/src/constants.ts):
 
 - `LAG_WINDOW_MILLIS = 5000` ms — half-window within which a manifest
   write's embedded timestamp must agree with the server's
   `LastModified` for the write to be accepted by replaying clients.
-- `MANIFEST_LIST_LOOKAHEAD_MILLIS = 10000` ms — how far into the
-  future the manifest LIST cursor is positioned; must be ≥
-  `LAG_WINDOW_MILLIS`, asserted at constants.ts:23–24.
 
 Two guarantees were on the table:
 
