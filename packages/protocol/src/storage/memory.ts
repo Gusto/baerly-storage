@@ -76,12 +76,12 @@ export class MemoryStorage implements Storage {
       etag,
       ...(opts?.contentType !== undefined && { contentType: opts.contentType }),
     });
-    // `serverDate` is intentionally returned (callers like the kernel's
-    // adaptive-clock loop need a value); `lastModified` is intentionally
-    // *not* surfaced on `list()` — the in-memory impl has no
-    // independent server clock, and pretending it does would force the
-    // kernel's wall-clock cross-check against an artificially injected
-    // `clockOffset`, breaking the property-based randomized tests.
+    // `serverDate` is intentionally returned — the kernel's adaptive
+    // clock-skew loop consumes the write-time server clock. `list()`
+    // deliberately omits `lastModified`: the in-memory impl has no
+    // independent server clock, and its only consumer (GC's `due_at`
+    // anchor) falls back to `now()` when it is absent, so omitting it
+    // changes nothing.
     return { etag, serverDate: new Date() };
   }
 

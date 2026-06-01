@@ -108,12 +108,16 @@ export interface StorageListEntry {
   readonly key: string;
   readonly etag: string;
   /**
-   * Server's `Last-Modified` for the listed object. The kernel's
-   * manifest validity check uses this to reject writes whose
-   * embedded base32 timestamp disagrees with the server's clock by
-   * more than `LAG_WINDOW_MILLIS` (defends against clock-skewed or
-   * adversarial writers). Impls without a server clock may return
-   * `undefined` and the kernel skips the cross-check.
+   * Server's `Last-Modified` for the listed object, when the backend
+   * surfaces it. GC uses it to anchor a tombstone's `due_at` to the
+   * object's server-side write time (`gc.ts`); when absent, GC falls
+   * back to the local clock (`now()`). It is therefore an optional
+   * precision hint, never load-bearing for correctness — impls
+   * without a server clock (e.g. {@link MemoryStorage}) may omit it.
+   *
+   * The protocol's clock-skew handling rides on
+   * {@link StoragePutResult.serverDate} (the write-time server clock),
+   * not on this field.
    */
   readonly lastModified?: Date;
 }
