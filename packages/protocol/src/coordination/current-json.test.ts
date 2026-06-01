@@ -53,13 +53,23 @@ describe("readCurrentJson", () => {
     expect(typeof got!.etag).toBe("string");
   });
 
-  plainTest("rejects malformed JSON with InvalidResponse", async () => {
-    const s = new MemoryStorage();
-    await s.put("k", new TextEncoder().encode("{not json"));
-    await expect(readCurrentJson(s, "k")).rejects.toMatchObject({
-      code: "InvalidResponse",
-    });
-  });
+  plainTest(
+    "rejects malformed JSON: message contains 'valid JSON' (not 'not an object')",
+    async () => {
+      const s = new MemoryStorage();
+      await s.put("k", new TextEncoder().encode("{not json"));
+      // L209 StringLiteral→`` kill: message must contain "valid JSON" — the exact phrase
+      // from the error template. The equivalent BlockStatement→{} mutant (L206) produces
+      // "parsed body is not an object" (from assertCurrentJson on undefined), which does
+      // NOT contain "valid JSON".
+      // L206 BlockStatement→{}: with empty catch, parsed=undefined → assertCurrentJson(undefined)
+      // throws "not an object". "valid JSON" absent → test FAILS → kills L206.
+      await expect(readCurrentJson(s, "k")).rejects.toMatchObject({
+        code: "InvalidResponse",
+        message: expect.stringMatching(/valid JSON/),
+      });
+    },
+  );
 
   plainTest("rejects unknown schema_version", async () => {
     const s = new MemoryStorage();
@@ -873,6 +883,1064 @@ describe("claimWriter vs single-PUT counter-example (patent C1)", () => {
           expect.fail(`epoch ${o.epoch} regressed from "${prior}" to ""`);
         }
       }
+    },
+  );
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// assertCurrentJson — exhaustive boundary / type guard coverage
+//
+// Strategy: every `assertCurrentJson` guard has the form
+//   `typeof r["x"] !== "number" || !Number.isInteger(r["x"]) || r["x"] < 0`
+// To kill mutants we must:
+//   1. Feed a non-number  (e.g. "3", null) → kill the `typeof` half
+//   2. Feed a non-integer (e.g. 1.5)       → kill the `!Number.isInteger` half
+//   3. Feed -1 / 0                          → kill the `< 0` / `<= 0` boundary
+//   4. Show 0 accepted                      → kill `<= 0`-vs-`< 0` confusion
+//
+// All tests write raw JSON via MemoryStorage.put so they bypass
+// createCurrentJson's own assertCurrentJson call and hit the reader path.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const putRaw = async (s: MemoryStorage, key: string, record: Record<string, unknown>) => {
+  await s.put(key, new TextEncoder().encode(JSON.stringify(record)));
+};
+
+/** Fully-valid v2 record as a plain object (no branded types). */
+const rawSeed = (): Record<string, unknown> => ({
+  schema_version: CURRENT_JSON_SCHEMA_VERSION,
+  snapshot: null,
+  next_seq: 0,
+  log_seq_start: 0,
+  writer_fence: { epoch: 0, owner: "", claimed_at: "" },
+  tail_bytes: 0,
+  snapshot_bytes: 0,
+  snapshot_rows: 0,
+});
+
+describe("assertCurrentJson — top-level shape guard", () => {
+  // L428: `parsed === null || typeof parsed !== "object"`
+  // Kill the `||`→`&&` LogicalOperator mutant (L428) and the
+  // ConditionalExpression→false mutants: need cases for both `null` and
+  // non-object non-null to independently exercise each operand.
+  plainTest("rejects null body with InvalidResponse", async () => {
+    const s = new MemoryStorage();
+    // Write the literal string "null" as the body.
+    await s.put("k", new TextEncoder().encode("null"));
+    await expect(readCurrentJson(s, "k")).rejects.toMatchObject({
+      code: "InvalidResponse",
+      message: expect.stringMatching(/not an object/),
+    });
+  });
+
+  plainTest("rejects numeric body with InvalidResponse", async () => {
+    const s = new MemoryStorage();
+    await s.put("k", new TextEncoder().encode("42"));
+    await expect(readCurrentJson(s, "k")).rejects.toMatchObject({
+      code: "InvalidResponse",
+      message: expect.stringMatching(/not an object/),
+    });
+  });
+
+  plainTest("rejects boolean body with InvalidResponse", async () => {
+    const s = new MemoryStorage();
+    await s.put("k", new TextEncoder().encode("true"));
+    await expect(readCurrentJson(s, "k")).rejects.toMatchObject({
+      code: "InvalidResponse",
+      message: expect.stringMatching(/not an object/),
+    });
+  });
+
+  plainTest("rejects string body with InvalidResponse", async () => {
+    const s = new MemoryStorage();
+    await s.put("k", new TextEncoder().encode('"hello"'));
+    await expect(readCurrentJson(s, "k")).rejects.toMatchObject({
+      code: "InvalidResponse",
+      message: expect.stringMatching(/not an object/),
+    });
+  });
+
+  // Valid object passes all guards (exercises the "accepted" path for the
+  // top-level check, killing ConditionalExpression→false that would always
+  // throw).
+  plainTest("accepts a valid object (does not throw on the object check)", async () => {
+    const s = new MemoryStorage();
+    await putRaw(s, "k", rawSeed());
+    await expect(readCurrentJson(s, "k")).resolves.not.toBeNull();
+  });
+});
+
+describe("assertCurrentJson — schema_version guard", () => {
+  // L441/444: `r["schema_version"] !== CURRENT_JSON_SCHEMA_VERSION`
+  // StringLiteral survivors at L444 are in the error message; kill by
+  // asserting the message contains the key string.
+  plainTest(
+    "rejects schema_version 0 with message mentioning schema_version and expected",
+    async () => {
+      const s = new MemoryStorage();
+      await putRaw(s, "k", { ...rawSeed(), schema_version: 0 });
+      await expect(readCurrentJson(s, "k")).rejects.toMatchObject({
+        code: "InvalidResponse",
+        message: expect.stringMatching(/schema_version.*expected|expected.*schema_version/i),
+      });
+    },
+  );
+
+  plainTest(
+    "rejects schema_version 99 with message containing the unknown version number",
+    async () => {
+      const s = new MemoryStorage();
+      await putRaw(s, "k", { ...rawSeed(), schema_version: 99 });
+      await expect(readCurrentJson(s, "k")).rejects.toMatchObject({
+        code: "InvalidResponse",
+        message: expect.stringContaining("99"),
+      });
+    },
+  );
+
+  plainTest("accepts CURRENT_JSON_SCHEMA_VERSION exactly", async () => {
+    const s = new MemoryStorage();
+    await putRaw(s, "k", rawSeed());
+    const got = await readCurrentJson(s, "k");
+    expect(got).not.toBeNull();
+    expect(got!.json.schema_version).toBe(CURRENT_JSON_SCHEMA_VERSION);
+  });
+});
+
+describe("assertCurrentJson — snapshot field", () => {
+  // L447: `typeof r["snapshot"] === "string" || r["snapshot"] === null`
+  // The EqualityOperator mutant changes `=== null` → `!== null`.
+  // The ConditionalExpression mutants negate individual branches.
+  // Kill: (a) non-string non-null value must throw, (b) null must pass,
+  // (c) a string must pass, (d) the two halves are independently exercised.
+  plainTest("rejects snapshot: 123 (number) with InvalidResponse", async () => {
+    const s = new MemoryStorage();
+    await putRaw(s, "k", { ...rawSeed(), snapshot: 123 });
+    await expect(readCurrentJson(s, "k")).rejects.toMatchObject({
+      code: "InvalidResponse",
+      message: expect.stringMatching(/snapshot/),
+    });
+  });
+
+  plainTest("rejects snapshot: false (boolean) with InvalidResponse", async () => {
+    const s = new MemoryStorage();
+    await putRaw(s, "k", { ...rawSeed(), snapshot: false });
+    await expect(readCurrentJson(s, "k")).rejects.toMatchObject({
+      code: "InvalidResponse",
+      message: expect.stringMatching(/snapshot/),
+    });
+  });
+
+  plainTest("accepts snapshot: null (null exercising r[snapshot]===null branch)", async () => {
+    const s = new MemoryStorage();
+    await putRaw(s, "k", { ...rawSeed(), snapshot: null });
+    const got = await readCurrentJson(s, "k");
+    expect(got).not.toBeNull();
+    expect(got!.json.snapshot).toBeNull();
+  });
+
+  plainTest("accepts snapshot: 'path/snap.json' (string exercising typeof branch)", async () => {
+    const s = new MemoryStorage();
+    await putRaw(s, "k", { ...rawSeed(), snapshot: "path/snap.json" });
+    const got = await readCurrentJson(s, "k");
+    expect(got).not.toBeNull();
+    expect(got!.json.snapshot).toBe("path/snap.json");
+  });
+});
+
+describe("assertCurrentJson — next_seq guard", () => {
+  // L453: three-operand compound:
+  //   typeof r["next_seq"] !== "number" || !Number.isInteger(r["next_seq"]) || r["next_seq"] < 0
+  // Kill the LogicalOperator (||→&&) mutants: non-number kills `typeof` leg;
+  // non-integer kills `isInteger` leg; -1 kills `< 0` leg.
+  // Kill ConditionalExpression→false: 0 must be accepted.
+
+  plainTest("rejects next_seq: '5' (string, not a number)", async () => {
+    const s = new MemoryStorage();
+    await putRaw(s, "k", { ...rawSeed(), next_seq: "5" });
+    await expect(readCurrentJson(s, "k")).rejects.toMatchObject({
+      code: "InvalidResponse",
+      message: expect.stringMatching(/next_seq/),
+    });
+  });
+
+  plainTest("rejects next_seq: null (not a number)", async () => {
+    const s = new MemoryStorage();
+    await putRaw(s, "k", { ...rawSeed(), next_seq: null });
+    await expect(readCurrentJson(s, "k")).rejects.toMatchObject({
+      code: "InvalidResponse",
+      message: expect.stringMatching(/next_seq/),
+    });
+  });
+
+  plainTest("rejects next_seq: 1.5 (non-integer)", async () => {
+    const s = new MemoryStorage();
+    await putRaw(s, "k", { ...rawSeed(), next_seq: 1.5 });
+    await expect(readCurrentJson(s, "k")).rejects.toMatchObject({
+      code: "InvalidResponse",
+      message: expect.stringMatching(/next_seq/),
+    });
+  });
+
+  plainTest("rejects next_seq: -1 (negative)", async () => {
+    const s = new MemoryStorage();
+    await putRaw(s, "k", { ...rawSeed(), next_seq: -1 });
+    await expect(readCurrentJson(s, "k")).rejects.toMatchObject({
+      code: "InvalidResponse",
+      message: expect.stringMatching(/next_seq/),
+    });
+  });
+
+  plainTest("accepts next_seq: 0 (boundary — zero is valid)", async () => {
+    const s = new MemoryStorage();
+    await putRaw(s, "k", rawSeed());
+    const got = await readCurrentJson(s, "k");
+    expect(got).not.toBeNull();
+    expect(got!.json.next_seq).toBe(0);
+  });
+
+  plainTest("accepts next_seq: 1 (positive integer)", async () => {
+    const s = new MemoryStorage();
+    await putRaw(s, "k", { ...rawSeed(), next_seq: 1, log_seq_start: 0 });
+    const got = await readCurrentJson(s, "k");
+    expect(got).not.toBeNull();
+    expect(got!.json.next_seq).toBe(1);
+  });
+});
+
+describe("assertCurrentJson — log_seq_start guard (type/integer/negative)", () => {
+  // L460: same three-operand structure as next_seq.
+
+  plainTest("rejects log_seq_start: 'abc' (string, not a number)", async () => {
+    const s = new MemoryStorage();
+    await putRaw(s, "k", { ...rawSeed(), log_seq_start: "abc" });
+    await expect(readCurrentJson(s, "k")).rejects.toMatchObject({
+      code: "InvalidResponse",
+      message: expect.stringMatching(/log_seq_start/),
+    });
+  });
+
+  plainTest("rejects log_seq_start: true (boolean, not a number)", async () => {
+    const s = new MemoryStorage();
+    await putRaw(s, "k", { ...rawSeed(), log_seq_start: true });
+    await expect(readCurrentJson(s, "k")).rejects.toMatchObject({
+      code: "InvalidResponse",
+      message: expect.stringMatching(/log_seq_start/),
+    });
+  });
+
+  // log_seq_start: 0 is valid (already covered) but also test
+  // the accepted path to kill ConditionalExpression→false here.
+  plainTest("accepts log_seq_start: 0 (boundary)", async () => {
+    const s = new MemoryStorage();
+    await putRaw(s, "k", rawSeed());
+    const got = await readCurrentJson(s, "k");
+    expect(got!.json.log_seq_start).toBe(0);
+  });
+});
+
+describe("assertCurrentJson — log_seq_start <= next_seq guard", () => {
+  // L469: `r["log_seq_start"] > r["next_seq"]`
+  // Kill EqualityOperator (> → >=) mutant: log_seq_start === next_seq must pass.
+  // Already tested in existing suite. Here we add the exact-equal case to
+  // distinguish `>` from `>=`.
+
+  plainTest(
+    "accepts log_seq_start === next_seq (fully compacted, >= would reject this)",
+    async () => {
+      const s = new MemoryStorage();
+      await putRaw(s, "k", { ...rawSeed(), next_seq: 3, log_seq_start: 3 });
+      const got = await readCurrentJson(s, "k");
+      expect(got!.json.log_seq_start).toBe(3);
+      expect(got!.json.next_seq).toBe(3);
+    },
+  );
+
+  plainTest("rejects log_seq_start === next_seq + 1 (exceeds)", async () => {
+    const s = new MemoryStorage();
+    await putRaw(s, "k", { ...rawSeed(), next_seq: 3, log_seq_start: 4 });
+    await expect(readCurrentJson(s, "k")).rejects.toMatchObject({
+      code: "InvalidResponse",
+      message: expect.stringMatching(/log_seq_start.*next_seq/),
+    });
+  });
+
+  // L472: StringLiteral×2 — message must include the actual numeric values of both fields.
+  // When String(r["log_seq_start"]) or String(r["next_seq"]) → "", the values vanish.
+  // Using distinct values (7, 3) that don't appear in field names kills both mutants.
+  plainTest(
+    "error message for log_seq_start > next_seq includes actual numeric values",
+    async () => {
+      const s = new MemoryStorage();
+      await putRaw(s, "k", { ...rawSeed(), next_seq: 3, log_seq_start: 7 });
+      const err = await readCurrentJson(s, "k").catch((error: unknown) => error);
+      expect(err).toBeInstanceOf(BaerlyError);
+      expect((err as BaerlyError).message).toMatch(/log_seq_start/);
+      expect((err as BaerlyError).message).toMatch(/next_seq/);
+      // Actual numeric values present (kills L472 StringLiteral→"" on both String() calls)
+      expect((err as BaerlyError).message).toContain("7");
+      expect((err as BaerlyError).message).toContain("3");
+    },
+  );
+});
+
+describe("assertCurrentJson — writer_fence sub-object guard", () => {
+  // L476: `fence === null || typeof fence !== "object"`
+  // Kill ConditionalExpression→false: need null writer_fence AND non-object.
+  plainTest("rejects writer_fence: null", async () => {
+    const s = new MemoryStorage();
+    await putRaw(s, "k", { ...rawSeed(), writer_fence: null });
+    await expect(readCurrentJson(s, "k")).rejects.toMatchObject({
+      code: "InvalidResponse",
+      message: expect.stringMatching(/writer_fence/),
+    });
+  });
+
+  plainTest("rejects writer_fence: 'string' (non-object)", async () => {
+    const s = new MemoryStorage();
+    await putRaw(s, "k", { ...rawSeed(), writer_fence: "fence" });
+    await expect(readCurrentJson(s, "k")).rejects.toMatchObject({
+      code: "InvalidResponse",
+      message: expect.stringMatching(/writer_fence/),
+    });
+  });
+
+  plainTest("rejects writer_fence: 42 (non-object)", async () => {
+    const s = new MemoryStorage();
+    await putRaw(s, "k", { ...rawSeed(), writer_fence: 42 });
+    await expect(readCurrentJson(s, "k")).rejects.toMatchObject({
+      code: "InvalidResponse",
+      message: expect.stringMatching(/writer_fence/),
+    });
+  });
+
+  // L477: StringLiteral — message must mention "writer_fence missing"
+  plainTest("error message for missing writer_fence mentions 'writer_fence'", async () => {
+    const s = new MemoryStorage();
+    const { writer_fence: _omit, ...without } = rawSeed();
+    await putRaw(s, "k", without);
+    const err = await readCurrentJson(s, "k").catch((error: unknown) => error);
+    expect((err as BaerlyError).message).toMatch(/writer_fence/);
+  });
+
+  // L480: epoch — three-operand: typeof/isInteger/< 0
+  plainTest("rejects writer_fence.epoch: '1' (string)", async () => {
+    const s = new MemoryStorage();
+    await putRaw(s, "k", { ...rawSeed(), writer_fence: { epoch: "1", owner: "", claimed_at: "" } });
+    await expect(readCurrentJson(s, "k")).rejects.toMatchObject({
+      code: "InvalidResponse",
+      message: expect.stringMatching(/epoch/),
+    });
+  });
+
+  plainTest("rejects writer_fence.epoch: null", async () => {
+    const s = new MemoryStorage();
+    await putRaw(s, "k", {
+      ...rawSeed(),
+      writer_fence: { epoch: null, owner: "", claimed_at: "" },
+    });
+    await expect(readCurrentJson(s, "k")).rejects.toMatchObject({
+      code: "InvalidResponse",
+      message: expect.stringMatching(/epoch/),
+    });
+  });
+
+  plainTest("rejects writer_fence.epoch: 0.5 (non-integer)", async () => {
+    const s = new MemoryStorage();
+    await putRaw(s, "k", {
+      ...rawSeed(),
+      writer_fence: { epoch: 0.5, owner: "", claimed_at: "" },
+    });
+    await expect(readCurrentJson(s, "k")).rejects.toMatchObject({
+      code: "InvalidResponse",
+      message: expect.stringMatching(/epoch/),
+    });
+  });
+
+  plainTest("rejects writer_fence.epoch: -1 (negative)", async () => {
+    const s = new MemoryStorage();
+    await putRaw(s, "k", { ...rawSeed(), writer_fence: { epoch: -1, owner: "", claimed_at: "" } });
+    await expect(readCurrentJson(s, "k")).rejects.toMatchObject({
+      code: "InvalidResponse",
+      message: expect.stringMatching(/epoch/),
+    });
+  });
+
+  plainTest("accepts writer_fence.epoch: 0 (boundary — zero valid)", async () => {
+    const s = new MemoryStorage();
+    await putRaw(s, "k", rawSeed());
+    const got = await readCurrentJson(s, "k");
+    expect(got!.json.writer_fence.epoch).toBe(0);
+  });
+
+  plainTest("accepts writer_fence.epoch: 1 (positive)", async () => {
+    const s = new MemoryStorage();
+    await putRaw(s, "k", { ...rawSeed(), writer_fence: { epoch: 1, owner: "", claimed_at: "" } });
+    const got = await readCurrentJson(s, "k");
+    expect(got!.json.writer_fence.epoch).toBe(1);
+  });
+
+  // L486: owner — typeof check
+  plainTest("rejects writer_fence.owner: 42 (number, not string)", async () => {
+    const s = new MemoryStorage();
+    await putRaw(s, "k", { ...rawSeed(), writer_fence: { epoch: 0, owner: 42, claimed_at: "" } });
+    await expect(readCurrentJson(s, "k")).rejects.toMatchObject({
+      code: "InvalidResponse",
+      message: expect.stringMatching(/owner/),
+    });
+  });
+
+  plainTest("rejects writer_fence.owner: null (not a string)", async () => {
+    const s = new MemoryStorage();
+    await putRaw(s, "k", { ...rawSeed(), writer_fence: { epoch: 0, owner: null, claimed_at: "" } });
+    await expect(readCurrentJson(s, "k")).rejects.toMatchObject({
+      code: "InvalidResponse",
+      message: expect.stringMatching(/owner/),
+    });
+  });
+
+  plainTest("accepts writer_fence.owner: '' (empty string is valid)", async () => {
+    const s = new MemoryStorage();
+    await putRaw(s, "k", rawSeed());
+    const got = await readCurrentJson(s, "k");
+    expect(got!.json.writer_fence.owner).toBe("");
+  });
+
+  // L492: claimed_at — typeof check
+  plainTest("rejects writer_fence.claimed_at: 123 (number)", async () => {
+    const s = new MemoryStorage();
+    await putRaw(s, "k", {
+      ...rawSeed(),
+      writer_fence: { epoch: 0, owner: "", claimed_at: 123 },
+    });
+    await expect(readCurrentJson(s, "k")).rejects.toMatchObject({
+      code: "InvalidResponse",
+      message: expect.stringMatching(/claimed_at/),
+    });
+  });
+
+  plainTest("rejects writer_fence.claimed_at: null (not a string)", async () => {
+    const s = new MemoryStorage();
+    await putRaw(s, "k", {
+      ...rawSeed(),
+      writer_fence: { epoch: 0, owner: "", claimed_at: null },
+    });
+    await expect(readCurrentJson(s, "k")).rejects.toMatchObject({
+      code: "InvalidResponse",
+      message: expect.stringMatching(/claimed_at/),
+    });
+  });
+
+  plainTest("accepts writer_fence.claimed_at: '' (empty string is valid)", async () => {
+    const s = new MemoryStorage();
+    await putRaw(s, "k", rawSeed());
+    const got = await readCurrentJson(s, "k");
+    expect(got!.json.writer_fence.claimed_at).toBe("");
+  });
+
+  // L498: lease_until — optional field: if present must be string
+  plainTest("rejects writer_fence.lease_until: 99 (number) when present", async () => {
+    const s = new MemoryStorage();
+    await putRaw(s, "k", {
+      ...rawSeed(),
+      writer_fence: { epoch: 0, owner: "", claimed_at: "", lease_until: 99 },
+    });
+    await expect(readCurrentJson(s, "k")).rejects.toMatchObject({
+      code: "InvalidResponse",
+      message: expect.stringMatching(/lease_until/),
+    });
+  });
+
+  plainTest("rejects writer_fence.lease_until: false (boolean) when present", async () => {
+    const s = new MemoryStorage();
+    await putRaw(s, "k", {
+      ...rawSeed(),
+      writer_fence: { epoch: 0, owner: "", claimed_at: "", lease_until: false },
+    });
+    await expect(readCurrentJson(s, "k")).rejects.toMatchObject({
+      code: "InvalidResponse",
+      message: expect.stringMatching(/lease_until/),
+    });
+  });
+
+  plainTest("accepts writer_fence.lease_until absent (undefined)", async () => {
+    const s = new MemoryStorage();
+    await putRaw(s, "k", rawSeed());
+    const got = await readCurrentJson(s, "k");
+    expect(got!.json.writer_fence.lease_until).toBeUndefined();
+  });
+
+  plainTest("accepts writer_fence.lease_until: '2024-01-01T00:00:00.000Z' (string)", async () => {
+    const s = new MemoryStorage();
+    await putRaw(s, "k", {
+      ...rawSeed(),
+      writer_fence: {
+        epoch: 0,
+        owner: "",
+        claimed_at: "",
+        lease_until: "2024-01-01T00:00:00.000Z",
+      },
+    });
+    const got = await readCurrentJson(s, "k");
+    expect(got!.json.writer_fence.lease_until).toBe("2024-01-01T00:00:00.000Z");
+  });
+});
+
+describe("assertCurrentJson — tail_bytes guard", () => {
+  // L505: three-operand: typeof/isInteger/< 0
+  plainTest("rejects tail_bytes: '0' (string)", async () => {
+    const s = new MemoryStorage();
+    await putRaw(s, "k", { ...rawSeed(), tail_bytes: "0" });
+    await expect(readCurrentJson(s, "k")).rejects.toMatchObject({
+      code: "InvalidResponse",
+      message: expect.stringMatching(/tail_bytes/),
+    });
+  });
+
+  plainTest("rejects tail_bytes: null", async () => {
+    const s = new MemoryStorage();
+    await putRaw(s, "k", { ...rawSeed(), tail_bytes: null });
+    await expect(readCurrentJson(s, "k")).rejects.toMatchObject({
+      code: "InvalidResponse",
+      message: expect.stringMatching(/tail_bytes/),
+    });
+  });
+
+  plainTest("rejects tail_bytes: 0.7 (non-integer)", async () => {
+    const s = new MemoryStorage();
+    await putRaw(s, "k", { ...rawSeed(), tail_bytes: 0.7 });
+    await expect(readCurrentJson(s, "k")).rejects.toMatchObject({
+      code: "InvalidResponse",
+      message: expect.stringMatching(/tail_bytes/),
+    });
+  });
+
+  plainTest("accepts tail_bytes: 0 (boundary)", async () => {
+    const s = new MemoryStorage();
+    await putRaw(s, "k", rawSeed());
+    const got = await readCurrentJson(s, "k");
+    expect(got!.json.tail_bytes).toBe(0);
+  });
+
+  plainTest("accepts tail_bytes: 1 (positive)", async () => {
+    const s = new MemoryStorage();
+    await putRaw(s, "k", { ...rawSeed(), tail_bytes: 1 });
+    const got = await readCurrentJson(s, "k");
+    expect(got!.json.tail_bytes).toBe(1);
+  });
+});
+
+describe("assertCurrentJson — snapshot_bytes guard", () => {
+  // L515: ConditionalExpression→false survivor — need a non-number/string test
+  plainTest("rejects snapshot_bytes: 'big' (string)", async () => {
+    const s = new MemoryStorage();
+    await putRaw(s, "k", { ...rawSeed(), snapshot_bytes: "big" });
+    await expect(readCurrentJson(s, "k")).rejects.toMatchObject({
+      code: "InvalidResponse",
+      message: expect.stringMatching(/snapshot_bytes/),
+    });
+  });
+
+  plainTest("rejects snapshot_bytes: null", async () => {
+    const s = new MemoryStorage();
+    await putRaw(s, "k", { ...rawSeed(), snapshot_bytes: null });
+    await expect(readCurrentJson(s, "k")).rejects.toMatchObject({
+      code: "InvalidResponse",
+      message: expect.stringMatching(/snapshot_bytes/),
+    });
+  });
+
+  plainTest("rejects snapshot_bytes: -1 (negative)", async () => {
+    const s = new MemoryStorage();
+    await putRaw(s, "k", { ...rawSeed(), snapshot_bytes: -1 });
+    await expect(readCurrentJson(s, "k")).rejects.toMatchObject({
+      code: "InvalidResponse",
+      message: expect.stringMatching(/snapshot_bytes/),
+    });
+  });
+
+  // L517: StringLiteral — error message must mention snapshot_bytes
+  plainTest("error message for bad snapshot_bytes contains 'snapshot_bytes'", async () => {
+    const s = new MemoryStorage();
+    await putRaw(s, "k", { ...rawSeed(), snapshot_bytes: -5 });
+    const err = await readCurrentJson(s, "k").catch((error: unknown) => error);
+    expect((err as BaerlyError).message).toContain("snapshot_bytes");
+  });
+
+  plainTest("accepts snapshot_bytes: 0 (boundary)", async () => {
+    const s = new MemoryStorage();
+    await putRaw(s, "k", rawSeed());
+    const got = await readCurrentJson(s, "k");
+    expect(got!.json.snapshot_bytes).toBe(0);
+  });
+});
+
+describe("assertCurrentJson — snapshot_rows guard", () => {
+  // L525: ConditionalExpression→false survivor
+  plainTest("rejects snapshot_rows: {} (object, not a number)", async () => {
+    const s = new MemoryStorage();
+    await putRaw(s, "k", { ...rawSeed(), snapshot_rows: {} });
+    await expect(readCurrentJson(s, "k")).rejects.toMatchObject({
+      code: "InvalidResponse",
+      message: expect.stringMatching(/snapshot_rows/),
+    });
+  });
+
+  plainTest("rejects snapshot_rows: null", async () => {
+    const s = new MemoryStorage();
+    await putRaw(s, "k", { ...rawSeed(), snapshot_rows: null });
+    await expect(readCurrentJson(s, "k")).rejects.toMatchObject({
+      code: "InvalidResponse",
+      message: expect.stringMatching(/snapshot_rows/),
+    });
+  });
+
+  plainTest("accepts snapshot_rows: 0 (boundary)", async () => {
+    const s = new MemoryStorage();
+    await putRaw(s, "k", rawSeed());
+    const got = await readCurrentJson(s, "k");
+    expect(got!.json.snapshot_rows).toBe(0);
+  });
+});
+
+describe("assertCurrentJson — last_warned_seq guard", () => {
+  // L536: ConditionalExpression→false — the outer `r["last_warned_seq"] !== undefined` check.
+  // Kill by testing that when last_warned_seq IS undefined, the record is accepted.
+  plainTest("accepts record with last_warned_seq absent (undefined)", async () => {
+    const s = new MemoryStorage();
+    await putRaw(s, "k", rawSeed());
+    const got = await readCurrentJson(s, "k");
+    expect(got!.json.last_warned_seq).toBeUndefined();
+  });
+
+  // L538: EqualityOperator → `r["last_warned_seq"] <= 0`
+  // Kill: last_warned_seq 0 must be accepted (valid boundary); -1 must be rejected.
+  plainTest("accepts last_warned_seq: 0 (kills <= 0 mutant)", async () => {
+    const s = new MemoryStorage();
+    await putRaw(s, "k", { ...rawSeed(), last_warned_seq: 0 });
+    const got = await readCurrentJson(s, "k");
+    expect(got!.json.last_warned_seq).toBe(0);
+  });
+
+  plainTest("rejects last_warned_seq: -1 (negative)", async () => {
+    const s = new MemoryStorage();
+    await putRaw(s, "k", { ...rawSeed(), last_warned_seq: -1 });
+    await expect(readCurrentJson(s, "k")).rejects.toMatchObject({
+      code: "InvalidResponse",
+      message: expect.stringMatching(/last_warned_seq/),
+    });
+  });
+
+  plainTest("rejects last_warned_seq: 1.5 (non-integer)", async () => {
+    const s = new MemoryStorage();
+    await putRaw(s, "k", { ...rawSeed(), last_warned_seq: 1.5 });
+    await expect(readCurrentJson(s, "k")).rejects.toMatchObject({
+      code: "InvalidResponse",
+      message: expect.stringMatching(/last_warned_seq/),
+    });
+  });
+
+  plainTest("rejects last_warned_seq: 'x' (string, not a number)", async () => {
+    const s = new MemoryStorage();
+    await putRaw(s, "k", { ...rawSeed(), last_warned_seq: "x" });
+    await expect(readCurrentJson(s, "k")).rejects.toMatchObject({
+      code: "InvalidResponse",
+      message: expect.stringMatching(/last_warned_seq/),
+    });
+  });
+
+  plainTest("accepts last_warned_seq: 100 (positive integer)", async () => {
+    const s = new MemoryStorage();
+    await putRaw(s, "k", { ...rawSeed(), last_warned_seq: 100 });
+    const got = await readCurrentJson(s, "k");
+    expect(got!.json.last_warned_seq).toBe(100);
+  });
+});
+
+describe("translateCasError — all three branches", () => {
+  // L556: `e instanceof BaerlyError && e.code === "Conflict"`
+  // Survivors: ConditionalExpression→true/false, EqualityOperator (code!=="Conflict"),
+  // LogicalOperator (&&→||), StringLiteral in message.
+  //
+  // To exercise translateCasError from the outside we trigger storage CAS failures
+  // via createCurrentJson (if-none-match) and casUpdateCurrentJson (if-match).
+  // We also use a custom Storage that throws non-BaerlyError to cover the
+  // third branch (L562).
+
+  plainTest(
+    "Conflict on createCurrentJson comes back as code:Conflict with 'CAS lost' annotation",
+    async () => {
+      const s = new MemoryStorage();
+      await createCurrentJson(s, "k-cas", seedJson());
+      const err = await createCurrentJson(s, "k-cas", seedJson()).catch((error: unknown) => error);
+      expect(err).toBeInstanceOf(BaerlyError);
+      expect((err as BaerlyError).code).toBe("Conflict");
+      // L556 ConditionalExpression→false kill: message must contain the "CAS lost" annotation.
+      // When the first branch body is emptied (BlockStatement→{}) or its condition is →false,
+      // translateCasError falls to `return e` and the annotation is absent.
+      // L556 StringLiteral→"": "Conflict" → "" means the condition is never true;
+      // same fallthrough; annotation absent.
+      // Using a distinctive key "k-cas" ensures the message contains it (kills L557 StringLiteral).
+      expect((err as BaerlyError).message).toMatch(/CAS lost/);
+      expect((err as BaerlyError).message).toContain("k-cas");
+    },
+  );
+
+  plainTest(
+    "Conflict on casUpdateCurrentJson comes back as code:Conflict with key in message",
+    async () => {
+      const s = new MemoryStorage();
+      await createCurrentJson(s, "k2", seedJson());
+      // Two concurrent updates: the second one's CAS will lose
+      const etag1 = (await readCurrentJson(s, "k2"))!.etag;
+      // Manually put something to invalidate etag1 by advancing past it
+      await casUpdateCurrentJson(s, "k2", (c) => ({ ...c, next_seq: 1 }));
+      // Now try a manual put at the stale etag to force Conflict
+      const err = await s
+        .put("k2", new TextEncoder().encode(JSON.stringify(seedJson())), { ifMatch: etag1 })
+        .catch((error: unknown) => error);
+      // The storage itself throws Conflict; we just verify it's a BaerlyError
+      expect((err as BaerlyError).code).toBe("Conflict");
+    },
+  );
+
+  plainTest(
+    "non-BaerlyError from storage comes back as code:InvalidResponse (third branch)",
+    async () => {
+      // Build a Storage that throws a plain Error on put to exercise the
+      // translateCasError fallthrough branch (L562 in the source).
+      const inner = new MemoryStorage();
+      const throwing: Storage = {
+        get: (k, o) => inner.get(k, o),
+        delete: (k, o) => inner.delete(k, o),
+        list: (p, o) => inner.list(p, o),
+        put: async (
+          _k: string,
+          _b: Uint8Array,
+          _o?: StoragePutOptions,
+        ): Promise<StoragePutResult> => {
+          throw new Error("disk full");
+        },
+      };
+      await inner.put("k3", new TextEncoder().encode(JSON.stringify(seedJson())));
+      const err = await casUpdateCurrentJson(throwing, "k3", (c) => ({ ...c, next_seq: 1 })).catch(
+        (error: unknown) => error,
+      );
+      expect(err).toBeInstanceOf(BaerlyError);
+      expect((err as BaerlyError).code).toBe("InvalidResponse");
+      expect((err as BaerlyError).message).toContain("k3");
+    },
+  );
+
+  plainTest(
+    "BaerlyError (non-Conflict) from storage passes through unchanged (second branch)",
+    async () => {
+      // Build a Storage that throws a BaerlyError{code:"NetworkError"} on put.
+      const inner = new MemoryStorage();
+      const networkError = new BaerlyError("NetworkError", "simulated timeout");
+      const throwing: Storage = {
+        get: (k, o) => inner.get(k, o),
+        delete: (k, o) => inner.delete(k, o),
+        list: (p, o) => inner.list(p, o),
+        put: async (
+          _k: string,
+          _b: Uint8Array,
+          _o?: StoragePutOptions,
+        ): Promise<StoragePutResult> => {
+          throw networkError;
+        },
+      };
+      await inner.put("k4", new TextEncoder().encode(JSON.stringify(seedJson())));
+      const err = await casUpdateCurrentJson(throwing, "k4", (c) => ({ ...c, next_seq: 1 })).catch(
+        (error: unknown) => error,
+      );
+      // Must be the exact same instance (pass-through, not wrapped)
+      expect(err).toBe(networkError);
+      expect((err as BaerlyError).code).toBe("NetworkError");
+    },
+  );
+});
+
+describe("createCurrentJson + casUpdateCurrentJson — signal propagation", () => {
+  // L238, L289: ConditionalExpression for `opts?.signal !== undefined`
+  // Kill the ConditionalExpression→true/false mutants: verify that when signal IS
+  // provided it is forwarded (exercising the spread arm), and when it is absent
+  // the call still succeeds (exercising the omitted arm).
+
+  plainTest("createCurrentJson succeeds without signal option", async () => {
+    const s = new MemoryStorage();
+    const r = await createCurrentJson(s, "k", seedJson());
+    expect(r.etag).toBeTruthy();
+  });
+
+  plainTest("createCurrentJson forwards signal to storage.put when provided", async () => {
+    // Record whether the signal was forwarded by intercepting put options.
+    const inner = new MemoryStorage();
+    let capturedOpts: StoragePutOptions | undefined;
+    const spy: Storage = {
+      get: (k, o) => inner.get(k, o),
+      delete: (k, o) => inner.delete(k, o),
+      list: (p, o) => inner.list(p, o),
+      put: async (k: string, b: Uint8Array, o?: StoragePutOptions): Promise<StoragePutResult> => {
+        capturedOpts = o;
+        return inner.put(k, b, o);
+      },
+    };
+    const controller = new AbortController();
+    await createCurrentJson(spy, "k", seedJson(), { signal: controller.signal });
+    expect(capturedOpts?.signal).toBe(controller.signal);
+  });
+
+  plainTest("casUpdateCurrentJson forwards signal to storage.put when provided", async () => {
+    const inner = new MemoryStorage();
+    await createCurrentJson(inner, "k", seedJson());
+    let capturedOpts: StoragePutOptions | undefined;
+    const spy: Storage = {
+      get: (k, o) => inner.get(k, o),
+      delete: (k, o) => inner.delete(k, o),
+      list: (p, o) => inner.list(p, o),
+      put: async (k: string, b: Uint8Array, o?: StoragePutOptions): Promise<StoragePutResult> => {
+        capturedOpts = o;
+        return inner.put(k, b, o);
+      },
+    };
+    const controller = new AbortController();
+    await casUpdateCurrentJson(spy, "k", (c) => ({ ...c, next_seq: 1 }), {
+      signal: controller.signal,
+    });
+    expect(capturedOpts?.signal).toBe(controller.signal);
+  });
+
+  plainTest("casUpdateCurrentJson succeeds without signal option", async () => {
+    const s = new MemoryStorage();
+    await createCurrentJson(s, "k", seedJson());
+    const r = await casUpdateCurrentJson(s, "k", (c) => ({ ...c, next_seq: 1 }));
+    expect(r.json.next_seq).toBe(1);
+  });
+});
+
+describe("claimWriter — signal propagation and lease_until forwarding", () => {
+  // L368, L395: ConditionalExpression for signal in claimWriter's put calls.
+  // L344: BlockStatement → {} (if existing===null path)
+  // L359: lease_until conditional spread
+
+  plainTest("claimWriter forwards signal to EVERY PUT (both provisional and stamp)", async () => {
+    // L368 ConditionalExpression→false kill: provisional PUT must carry signal.
+    // L395 ConditionalExpression→false kill: stamp PUT must also carry signal.
+    // L368/L395 ConditionalExpression→true: {signal: undefined} spread is harmless (not undefined),
+    //   but the assertion below uses `every` so we verify ALL puts saw the signal.
+    // L368/L395 ObjectLiteral→{}: signal key absent from the spread → assertion fails.
+    const inner = new MemoryStorage();
+    await createCurrentJson(inner, "k", seedJson());
+    const putSignals: (AbortSignal | undefined)[] = [];
+    const spy: Storage = {
+      get: (k, o) => inner.get(k, o),
+      delete: (k, o) => inner.delete(k, o),
+      list: (p, o) => inner.list(p, o),
+      put: async (k: string, b: Uint8Array, o?: StoragePutOptions): Promise<StoragePutResult> => {
+        putSignals.push(o?.signal);
+        return inner.put(k, b, o);
+      },
+    };
+    const controller = new AbortController();
+    await claimWriter(spy, "k", "owner", { signal: controller.signal });
+    // claimWriter issues 2 PUTs (provisional + stamp when serverDate is returned).
+    // Both must carry the exact signal instance — kills →false (signal absent) and
+    // ObjectLiteral→{} (signal key absent from spread).
+    expect(putSignals.length).toBeGreaterThanOrEqual(2);
+    expect(putSignals.every((sig) => sig === controller.signal)).toBe(true);
+  });
+
+  plainTest("claimWriter without signal — ALL puts succeed without signal set", async () => {
+    // ConditionalExpression→true: when opts is undefined, opts?.signal is undefined.
+    // Spreading {signal: undefined} adds undefined — distinct from not having the key.
+    // When →true is active: putOpts includes {signal: undefined}.
+    // MemoryStorage.put should not care about signal: undefined (it ignores signals).
+    // To kill →true specifically: verify that without opts, putOpts.signal is undefined
+    // (not a real signal). This is the "correct behavior" check.
+    const inner = new MemoryStorage();
+    await createCurrentJson(inner, "k", seedJson());
+    const putSignals: (AbortSignal | undefined | null)[] = [];
+    const spy: Storage = {
+      get: (k, o) => inner.get(k, o),
+      delete: (k, o) => inner.delete(k, o),
+      list: (p, o) => inner.list(p, o),
+      put: async (k: string, b: Uint8Array, o?: StoragePutOptions): Promise<StoragePutResult> => {
+        // Distinguish "key absent" from "key present with undefined value" using `in`
+        putSignals.push("signal" in (o ?? {}) ? (o?.signal ?? null) : null);
+        return inner.put(k, b, o);
+      },
+    };
+    // Call WITHOUT signal option
+    await claimWriter(spy, "k", "owner");
+    // No signal should have been forwarded — putOpts should not contain signal key
+    // when opts?.signal is undefined (correct behavior: conditional spread is false → no key).
+    // This kills ConditionalExpression→true: →true would spread {signal: undefined} (key present).
+    // All captured signals should be null (key absent) not undefined (key present but undefined).
+    expect(putSignals.every((sig) => sig === null)).toBe(true);
+  });
+
+  plainTest(
+    "claimWriter provisional PUT Conflict (L373 NoCoverage): Conflict before first PUT",
+    async () => {
+      // L373 NoCoverage: the catch block wrapping the provisional storage.put inside
+      // claimWriter. To reach it, the provisional PUT itself must throw Conflict — meaning
+      // another writer landed between claimWriter's read and its first PUT.
+      //
+      // Strategy: use a storage whose get() returns the INITIAL etag but ALSO fires a
+      // peer write to inner, so by the time claimWriter calls put(ifMatch: initialEtag),
+      // the inner storage is already at a newer etag — CAS fails.
+      const inner = new MemoryStorage();
+      const initialRead = await createCurrentJson(inner, "k", seedJson());
+      const staleEtag = initialRead.etag;
+      let getCallCount = 0;
+      const raceStorage: Storage = {
+        get: async (k: string, o?: Parameters<Storage["get"]>[1]) => {
+          getCallCount += 1;
+          if (getCallCount === 1) {
+            // Advance inner so the etag changes, then return the result with the ORIGINAL
+            // (stale) etag so claimWriter uses the old etag for its ifMatch.
+            await casUpdateCurrentJson(inner, k, (c) => ({ ...c, next_seq: c.next_seq + 1 }));
+            // Return the current content but with the stale etag so claimWriter uses staleEtag
+            const current = await inner.get(k, o);
+            if (current === null) {
+              return null;
+            }
+            return { ...current, etag: staleEtag };
+          }
+          return inner.get(k, o);
+        },
+        delete: (k, o) => inner.delete(k, o),
+        list: (p, o) => inner.list(p, o),
+        put: (k: string, b: Uint8Array, o?: StoragePutOptions) => inner.put(k, b, o),
+      };
+      // claimWriter reads with staleEtag, then tries PUT ifMatch:staleEtag → Conflict
+      // because inner is already at a newer etag → L373 catch fires → throws Conflict.
+      await expect(claimWriter(raceStorage, "k", "owner")).rejects.toMatchObject({
+        code: "Conflict",
+        message: expect.stringMatching(/CAS lost/),
+      });
+    },
+  );
+
+  plainTest("claimWriter throws InvalidResponse when key does not exist", async () => {
+    const s = new MemoryStorage();
+    await expect(claimWriter(s, "missing", "owner")).rejects.toMatchObject({
+      code: "InvalidResponse",
+      message: expect.stringMatching(/does not exist/),
+    });
+  });
+
+  plainTest("claimWriter preserves lease_until when set on existing fence", async () => {
+    const s = new MemoryStorage();
+    // Manually write a current.json with a lease_until in the writer_fence.
+    await putRaw(s, "k", {
+      ...rawSeed(),
+      writer_fence: {
+        epoch: 0,
+        owner: "",
+        claimed_at: "",
+        lease_until: "2099-01-01T00:00:00.000Z",
+      },
+    });
+    const after = await claimWriter(s, "k", "new-owner");
+    // The lease_until from the existing fence must be forwarded to the new fence.
+    expect(after.json.writer_fence.lease_until).toBe("2099-01-01T00:00:00.000Z");
+    expect(after.json.writer_fence.epoch).toBe(1);
+  });
+
+  plainTest("claimWriter does NOT forward lease_until when absent in existing fence", async () => {
+    const s = new MemoryStorage();
+    await createCurrentJson(s, "k", seedJson());
+    const after = await claimWriter(s, "k", "owner");
+    expect(after.json.writer_fence.lease_until).toBeUndefined();
+  });
+
+  plainTest("L365 ObjectLiteral→{} kill: concurrent claimWriter — exactly one wins", async () => {
+    // L365 ObjectLiteral→{}: putOpts={} — no ifMatch. An unconditional PUT always succeeds,
+    // so two concurrent claimWriter calls would BOTH succeed (neither gets Conflict).
+    // This test fires two concurrent claims; exactly one must throw Conflict.
+    const s = new MemoryStorage();
+    await createCurrentJson(s, "k", seedJson());
+    // Both calls read the same initial etag (epoch=0). Without L365 mutant, the second
+    // call's provisional PUT has ifMatch= stale etag → Conflict. With the mutant, both
+    // PUTs are unconditional → both succeed → results.filter(rejected).length is 0.
+    const results = await Promise.allSettled([
+      claimWriter(s, "k", "writer-A"),
+      claimWriter(s, "k", "writer-B"),
+    ]);
+    const failed = results.filter((r) => r.status === "rejected");
+    // Exactly one must fail with Conflict
+    expect(failed.length).toBe(1);
+    expect((failed[0] as PromiseRejectedResult).reason).toMatchObject({
+      code: "Conflict",
+    });
+    // The epoch from the successful claim must be exactly 1 above the initial
+    const succeeded = results.filter((r) => r.status === "fulfilled") as Array<
+      PromiseFulfilledResult<Awaited<ReturnType<typeof claimWriter>>>
+    >;
+    expect(succeeded.length).toBe(1);
+    expect(succeeded[0]!.value.json.writer_fence.epoch).toBe(1);
+  });
+
+  plainTest("claimWriter Conflict wraps correctly with key in message", async () => {
+    const inner = new MemoryStorage();
+    await createCurrentJson(inner, "k", seedJson());
+    // Use an interposing storage that, after the first put, fires a conflicting write
+    // to force the provisional PUT to lose.
+    const storage = new InterposingStorage(inner, async () => {
+      await casUpdateCurrentJson(inner, "k", (c) => ({ ...c, next_seq: c.next_seq + 1 }));
+    });
+    const err = await claimWriter(storage, "k", "owner").catch((error: unknown) => error);
+    expect(err).toBeInstanceOf(BaerlyError);
+    expect((err as BaerlyError).code).toBe("Conflict");
+    // L557 StringLiteral: message must contain the key
+    expect((err as BaerlyError).message).toContain("k");
+  });
+
+  plainTest("claimWriter stamp-PUT Conflict loses cleanly (key in Conflict message)", async () => {
+    // Same as the two-phase peer test but verifying the message contains key.
+    const inner = new MemoryStorage();
+    await createCurrentJson(inner, "k-stamp", seedJson());
+    const storage = new InterposingStorage(inner, async () => {
+      await casUpdateCurrentJson(inner, "k-stamp", (c) => ({ ...c, next_seq: c.next_seq + 1 }));
+    });
+    const err = await claimWriter(storage, "k-stamp", "owner").catch((error: unknown) => error);
+    expect((err as BaerlyError).code).toBe("Conflict");
+    expect((err as BaerlyError).message).toContain("k-stamp");
+  });
+});
+
+describe("createCurrentJson — assertCurrentJson pre-flight", () => {
+  // createCurrentJson calls assertCurrentJson(initial, key) before hitting storage.
+  // This kills L206 BlockStatement→{} (the assertCurrentJson call in createCurrentJson).
+  plainTest(
+    "createCurrentJson rejects a malformed initial record before touching storage",
+    async () => {
+      const s = new MemoryStorage();
+      // Cast via unknown to bypass TypeScript's type guard — pass a schema_version:0 record.
+      const bad = { ...seedJson(), schema_version: 0 } as unknown as CurrentJson;
+      await expect(createCurrentJson(s, "k", bad)).rejects.toMatchObject({
+        code: "InvalidResponse",
+      });
+      // Verify nothing was written (key still missing)
+      await expect(readCurrentJson(s, "k")).resolves.toBeNull();
+    },
+  );
+});
+
+describe("casUpdateCurrentJson — assertCurrentJson on mutated output", () => {
+  // casUpdateCurrentJson also calls assertCurrentJson(next, key) on the mutator's
+  // return value. This kills L276 StringLiteral on the casUpdate do-not-exist path.
+  plainTest(
+    "casUpdateCurrentJson throws InvalidResponse with key in message when key missing",
+    async () => {
+      const s = new MemoryStorage();
+      const err = await casUpdateCurrentJson(s, "my-key", (c) => c).catch(
+        (error: unknown) => error,
+      );
+      expect((err as BaerlyError).code).toBe("InvalidResponse");
+      expect((err as BaerlyError).message).toContain("my-key");
     },
   );
 });

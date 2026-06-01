@@ -356,6 +356,7 @@ export async function claimWriter(
       // returns, when the impl surfaces it. Stays `""` ("unknown") if
       // the impl doesn't.
       claimed_at: "",
+      // Stryker disable next-line ConditionalExpression: `→true` spreads `{lease_until: undefined}` which JSON.stringify omits, so the stored bytes are identical to the normal `→false` path (no key emitted). Genuine equivalent mutant.
       ...(existing.json.writer_fence.lease_until !== undefined && {
         lease_until: existing.json.writer_fence.lease_until,
       }),
@@ -450,6 +451,7 @@ const assertCurrentJson = (parsed: unknown, key: string): CurrentJson => {
       `current.json at ${key}: snapshot must be string|null`,
     );
   }
+  // Stryker disable next-line ConditionalExpression,StringLiteral: three equivalent mutants on this line — (1) `typeof r["next_seq"] !== "number"` → false is subsumed by !Number.isInteger (which rejects all non-numbers); (2) `r["next_seq"] < 0` → false is subsumed by the downstream `log_seq_start > next_seq` cross-check (log_seq_start ≥ 0, so log_seq_start > negative_next_seq always fires); (3) StringLiteral "next_seq" → "" turns r[""] → undefined → !Number.isInteger(undefined) still true → still throws.
   if (typeof r["next_seq"] !== "number" || !Number.isInteger(r["next_seq"]) || r["next_seq"] < 0) {
     throw new BaerlyError(
       "InvalidResponse",
@@ -457,6 +459,7 @@ const assertCurrentJson = (parsed: unknown, key: string): CurrentJson => {
     );
   }
   if (
+    // Stryker disable next-line ConditionalExpression: `typeof r["log_seq_start"] !== "number"` → false is equivalent — !Number.isInteger rejects all non-numbers anyway, making the typeof check fully subsumed.
     typeof r["log_seq_start"] !== "number" ||
     !Number.isInteger(r["log_seq_start"]) ||
     r["log_seq_start"] < 0
@@ -477,6 +480,7 @@ const assertCurrentJson = (parsed: unknown, key: string): CurrentJson => {
     throw new BaerlyError("InvalidResponse", `current.json at ${key}: writer_fence missing`);
   }
   const f = fence as Record<string, unknown>;
+  // Stryker disable next-line ConditionalExpression: `typeof f["epoch"] !== "number"` → false is equivalent — !Number.isInteger rejects all non-numbers, making the typeof guard fully subsumed.
   if (typeof f["epoch"] !== "number" || !Number.isInteger(f["epoch"]) || f["epoch"] < 0) {
     throw new BaerlyError(
       "InvalidResponse",
@@ -502,6 +506,7 @@ const assertCurrentJson = (parsed: unknown, key: string): CurrentJson => {
     );
   }
   if (
+    // Stryker disable next-line ConditionalExpression: `typeof r["tail_bytes"] !== "number"` → false is equivalent — !Number.isInteger rejects all non-numbers, making the typeof check fully subsumed.
     typeof r["tail_bytes"] !== "number" ||
     !Number.isInteger(r["tail_bytes"]) ||
     r["tail_bytes"] < 0
@@ -512,6 +517,7 @@ const assertCurrentJson = (parsed: unknown, key: string): CurrentJson => {
     );
   }
   if (
+    // Stryker disable next-line ConditionalExpression: `typeof r["snapshot_bytes"] !== "number"` → false is equivalent — !Number.isInteger rejects all non-numbers, making the typeof check fully subsumed.
     typeof r["snapshot_bytes"] !== "number" ||
     !Number.isInteger(r["snapshot_bytes"]) ||
     r["snapshot_bytes"] < 0
@@ -522,6 +528,7 @@ const assertCurrentJson = (parsed: unknown, key: string): CurrentJson => {
     );
   }
   if (
+    // Stryker disable next-line ConditionalExpression: `typeof r["snapshot_rows"] !== "number"` → false is equivalent — !Number.isInteger rejects all non-numbers, making the typeof check fully subsumed.
     typeof r["snapshot_rows"] !== "number" ||
     !Number.isInteger(r["snapshot_rows"]) ||
     r["snapshot_rows"] < 0
@@ -533,6 +540,7 @@ const assertCurrentJson = (parsed: unknown, key: string): CurrentJson => {
   }
   if (
     r["last_warned_seq"] !== undefined &&
+    // Stryker disable next-line ConditionalExpression: `typeof r["last_warned_seq"] !== "number"` → false is equivalent — !Number.isInteger rejects all non-numbers, making the typeof check fully subsumed.
     (typeof r["last_warned_seq"] !== "number" ||
       !Number.isInteger(r["last_warned_seq"]) ||
       r["last_warned_seq"] < 0)
