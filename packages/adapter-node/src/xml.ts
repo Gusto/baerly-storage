@@ -12,6 +12,17 @@ export interface ParsedListObjectsV2Output {
   NextContinuationToken?: string;
 }
 
+/**
+ * `<Code>` / `<Message>` extracted from an S3
+ * `<Error>…</Error>` response body by {@link parseS3Error}. Field
+ * names mirror the S3 REST API (PascalCase), matching the convention
+ * of {@link ParsedListObjectsV2Output}.
+ */
+export interface ParsedS3Error {
+  Code?: string;
+  Message?: string;
+}
+
 const xmlParser = new XMLParser({
   ignoreAttributes: true,
   // Keep numeric-looking strings as strings — S3 keys can be all-digits.
@@ -35,6 +46,61 @@ const xmlVal = (obj: Record<string, unknown>, name: string): string | undefined 
   return decodeURIComponent(v.replace(/\+/g, " "));
 };
 
+// Error bodies are NOT URL-encoded (only listing keys are, via
+// `EncodingType=url`), so read these fields verbatim — running them
+// through `xmlVal`'s `decodeURIComponent` would corrupt literal `+`
+// and `%` in an error message.
+const rawXmlVal = (obj: Record<string, unknown>, name: string): string | undefined => {
+  const v = obj[name];
+  return typeof v === "string" && v !== "" ? v : undefined;
+};
+
+/**
+ * Parse an S3 `<Error><Code>…</Code><Message>…</Message></Error>`
+ * body. Returns `undefined` when the body is not a recognizable S3
+ * error document (empty, HTML, a success payload, or a DTD), so
+ * callers can fall back to the raw response text. This never throws:
+ * it runs on a path that is already reporting an error.
+ */
+export const parseS3Error = (xml: string): ParsedS3Error | undefined => {
+  // Cheap guards before invoking the parser: skip bodies that can't be
+  // an S3 error, and refuse DTDs (XXE / billion-laughs) outright.
+  if (!/<Error\b/i.test(xml) || /<!DOCTYPE\b/i.test(xml)) {
+    return undefined;
+  }
+  let result: { Error?: Record<string, unknown> };
+  try {
+    result = xmlParser.parse(xml) as { Error?: Record<string, unknown> };
+  } catch {
+    return undefined;
+  }
+  const root = result.Error;
+  if (root === undefined) {
+    return undefined;
+  }
+  const code = rawXmlVal(root, "Code");
+  const message = rawXmlVal(root, "Message");
+  if (code === undefined && message === undefined) {
+    return undefined;
+  }
+  return {
+    ...(code !== undefined && { Code: code }),
+    ...(message !== undefined && { Message: message }),
+  };
+};
+
+// `new Date(badString)` yields an Invalid Date (a non-null Date whose
+// getTime() is NaN) rather than throwing — surface `undefined` for a
+// malformed `LastModified` so it never leaks into a `StorageListEntry`.
+// GC then falls back to `now()` for the tombstone `due_at` anchor.
+const parseLastModified = (lm: string | undefined): Date | undefined => {
+  if (lm === undefined) {
+    return undefined;
+  }
+  const d = new Date(lm);
+  return Number.isNaN(d.getTime()) ? undefined : d;
+};
+
 export const parseListObjectsV2CommandOutput = (xml: string): ParsedListObjectsV2Output => {
   // reject DTDs (XXE/billion-laughs) — DOCTYPE must precede the root element
   if (/<!DOCTYPE\b/i.test(xml)) {
@@ -51,11 +117,10 @@ export const parseListObjectsV2CommandOutput = (xml: string): ParsedListObjectsV
 
   return {
     Contents: contents.map((content) => {
-      const lm = xmlVal(content, "LastModified");
       return {
         ETag: xmlVal(content, "ETag"),
         Key: xmlVal(content, "Key"),
-        LastModified: lm ? new Date(lm) : undefined,
+        LastModified: parseLastModified(xmlVal(content, "LastModified")),
       };
     }),
     NextContinuationToken: xmlVal(root, "NextContinuationToken"),

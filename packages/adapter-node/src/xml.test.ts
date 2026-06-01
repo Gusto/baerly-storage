@@ -1,5 +1,5 @@
 import { expect, test, describe } from "vitest";
-import { parseListObjectsV2CommandOutput } from "./xml.ts";
+import { parseListObjectsV2CommandOutput, parseS3Error } from "./xml.ts";
 describe("XML parser", () => {
   test("parseListObjectsV2CommandOutput example", () => {
     const xml: string = `<?xml version="1.0" encoding="UTF-8"?>
@@ -115,5 +115,52 @@ describe("XML parser", () => {
         ETag: undefined,
       },
     ]);
+  });
+
+  test("malformed LastModified yields undefined, not an Invalid Date", () => {
+    const xml: string = `<?xml version="1.0" encoding="UTF-8"?>
+      <ListBucketResult>
+        <Contents><Key>k</Key><LastModified>not-a-date</LastModified></Contents>
+      </ListBucketResult>`;
+    const parsed = parseListObjectsV2CommandOutput(xml);
+    expect(parsed.Contents).toEqual([{ Key: "k", ETag: undefined, LastModified: undefined }]);
+  });
+
+  test("control characters (ASCII 0–31) in a key round-trip via url-decoding", () => {
+    // S3 url-encodes control chars in the key (EncodingType=url):
+    // %09 = TAB, %0A = LF. They decode back to the literal characters.
+    const xml: string = `<?xml version="1.0" encoding="UTF-8"?>
+      <ListBucketResult>
+        <Contents><Key>a%09b%0Ac</Key></Contents>
+      </ListBucketResult>`;
+    const parsed = parseListObjectsV2CommandOutput(xml);
+    expect(parsed.Contents?.[0]?.Key).toBe("a\tb\nc");
+  });
+});
+
+describe("parseS3Error", () => {
+  test("extracts Code and Message from an S3 <Error> body", () => {
+    const xml: string = `<?xml version="1.0" encoding="UTF-8"?>
+      <Error><Code>PreconditionFailed</Code><Message>At least one of the preconditions you specified did not hold.</Message><RequestId>abc</RequestId></Error>`;
+    expect(parseS3Error(xml)).toEqual({
+      Code: "PreconditionFailed",
+      Message: "At least one of the preconditions you specified did not hold.",
+    });
+  });
+
+  test("returns Code only when Message is absent", () => {
+    expect(parseS3Error("<Error><Code>SlowDown</Code></Error>")).toEqual({ Code: "SlowDown" });
+  });
+
+  test("returns undefined for non-error bodies so callers fall back to raw text", () => {
+    expect(parseS3Error("")).toBeUndefined();
+    expect(parseS3Error("<ListBucketResult></ListBucketResult>")).toBeUndefined();
+    expect(parseS3Error("plain text 500")).toBeUndefined();
+    // <Error> present but no Code/Message → nothing useful to surface.
+    expect(parseS3Error("<Error><RequestId>abc</RequestId></Error>")).toBeUndefined();
+  });
+
+  test("refuses a DTD (XXE guard) and returns undefined", () => {
+    expect(parseS3Error(`<!DOCTYPE foo><Error><Code>X</Code></Error>`)).toBeUndefined();
   });
 });

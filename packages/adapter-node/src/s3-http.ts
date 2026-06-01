@@ -12,7 +12,7 @@ import {
   type StoragePutOptions,
   type StoragePutResult,
 } from "@baerly/protocol";
-import { parseListObjectsV2CommandOutput } from "./xml.ts";
+import { parseListObjectsV2CommandOutput, parseS3Error } from "./xml.ts";
 
 /**
  * Permanent {@link BaerlyError} codes that must short-circuit `retry`.
@@ -72,6 +72,21 @@ function parseRetryAfter(header: string | null, now: () => number = Date.now): n
 const retryAfterCause = (res: Response): { retryAfterSeconds?: number } => {
   const hint = parseRetryAfter(res.headers.get("Retry-After"));
   return hint !== undefined ? { retryAfterSeconds: hint } : {};
+};
+
+// Detail suffix for a non-status-mapped S3 error response. When the
+// body is a parseable `<Error><Code>…</Error>` document, surface S3's
+// own error code (and message) instead of concatenating the raw XML
+// blob into the thrown message; otherwise fall back to the raw text.
+const s3ErrorDetail = (status: number, body: string): string => {
+  const parsed = parseS3Error(body);
+  if (parsed !== undefined) {
+    const code = parsed.Code ?? "UnknownError";
+    return parsed.Message !== undefined
+      ? `${status} ${code}: ${parsed.Message}`
+      : `${status} ${code}`;
+  }
+  return `${status} ${body}`;
 };
 
 const retry = async <T>(
@@ -222,7 +237,10 @@ export class S3HttpStorage implements Storage {
               ...retryAfterCause(res),
             });
           }
-          throw new BaerlyError("InvalidResponse", `GET ${key}: ${res.status} ${await res.text()}`);
+          throw new BaerlyError(
+            "InvalidResponse",
+            `GET ${key}: ${s3ErrorDetail(res.status, await res.text())}`,
+          );
         }
       }
     });
@@ -273,7 +291,10 @@ export class S3HttpStorage implements Storage {
         });
       }
       if (res.status !== 200 && res.status !== 204) {
-        throw new BaerlyError("InvalidResponse", `PUT ${key}: ${res.status} ${await res.text()}`);
+        throw new BaerlyError(
+          "InvalidResponse",
+          `PUT ${key}: ${s3ErrorDetail(res.status, await res.text())}`,
+        );
       }
       const etag = res.headers.get("ETag");
       if (etag === null) {
@@ -368,7 +389,7 @@ export class S3HttpStorage implements Storage {
           }
           throw new BaerlyError(
             "InvalidResponse",
-            `LIST ${prefix}: ${res.status} ${await res.text()}`,
+            `LIST ${prefix}: ${s3ErrorDetail(res.status, await res.text())}`,
           );
         });
         if (outcome.kind === "ok") {
