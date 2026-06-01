@@ -74,7 +74,17 @@ const utf8Compare = (a: string, b: string): number => {
 
 // Spans the full type lattice. `fc.double` includes ±Infinity and ±0 by
 // default; NaN is excluded (it is a documented throw, tested separately).
-const valueArb = fc.oneof(fc.constant(null), fc.boolean(), fc.double({ noNaN: true }), fc.string());
+// `unit: "binary"` yields only well-formed code points (full 0000–10FFFF
+// range, no lone surrogates) — bare `fc.string()` could emit lone surrogates
+// that are `!==`-distinct in UTF-16 yet UTF-8-collide to EF BF BD, which would
+// spuriously falsify the `===`-based injectivity oracle below. It still
+// exercises real multi-byte UTF-8 ordering (it spans the astral plane).
+const valueArb = fc.oneof(
+  fc.constant(null),
+  fc.boolean(),
+  fc.double({ noNaN: true }),
+  fc.string({ unit: "binary" }),
+);
 
 describe("encodeIndexValue — value-order-preserving wire format", () => {
   test.prop({ a: valueArb, b: valueArb })(
