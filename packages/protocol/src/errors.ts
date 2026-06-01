@@ -168,9 +168,11 @@ export class BaerlyError extends Error {
     this.name = "BaerlyError";
     this.code = code;
     this.cause = cause;
+    // Stryker disable next-line ConditionalExpression: field declaration creates property with undefined value; mutation to true is equivalent
     if (issues !== undefined) {
       this.issues = issues;
     }
+    // Stryker disable next-line ConditionalExpression: field declaration creates property with undefined value; mutation to true is equivalent
     if (status !== undefined) {
       this.status = status;
     }
