@@ -1,13 +1,18 @@
 /**
  * `baerly doctor` — citty dispatcher for deploy-invariant checks.
  *
- * Reads `baerly.config.ts:target` and routes to
- * {@link doctorCloudflare}. The Node target self-validates at
- * scaffold time — the example IS the contract — so it has no
- * doctor backend.
+ * Two modes:
+ *   - `--bucket <uri>` — connect to a live bucket and probe its CAS
+ *     support (the protocol's load-bearing backend prerequisite). This
+ *     mode WRITES + deletes one throwaway sentinel; see
+ *     {@link doctorCas}. Independent of `baerly.config.ts` / `--target`.
+ *   - otherwise — reads `baerly.config.ts:target` and routes to
+ *     {@link doctorCloudflare} (read-only deploy-invariant checks). The
+ *     Node target self-validates at scaffold time — the example IS the
+ *     contract — so it has no doctor backend.
  *
- * Read-only target-invariant checks only. Drift detection, index
- * rebuilds, and writes/min health are separate verbs:
+ * Drift detection, index rebuilds, and writes/min health are separate
+ * verbs:
  *   - `baerly admin fsck --indexes [--fix]` — index drift.
  *   - `baerly admin usage` — writes/min M-size graduation.
  *   - `baerly admin rebuild-index` — single-index reconciliation.
@@ -30,7 +35,9 @@
 
 import { type ArgsDef } from "citty";
 import { BaerlyError } from "@baerly/protocol";
+import { parseBucketUri } from "./bucket-uri.ts";
 import { loadAppConfig } from "./config.ts";
+import { doctorCas } from "./doctor/cas.ts";
 import { doctorCloudflare, type DoctorReport } from "./doctor/cloudflare.ts";
 import { defaultRunner } from "./runner.ts";
 import { color, isJsonMode } from "./output.ts";
@@ -42,6 +49,12 @@ const DOCTOR_ARGS = {
     description:
       'Override `baerly.config.ts:target`. Only "cloudflare" supported (Node variants self-validate at scaffold time).',
     valueHint: "cloudflare",
+  },
+  bucket: {
+    type: "string",
+    description:
+      "Live-probe a bucket's CAS support (writes + deletes one sentinel; verifies If-Match / If-None-Match are honoured). s3://, file:///, or memory:// URI. Independent of --target.",
+    valueHint: "s3://bucket/prefix",
   },
   fix: {
     type: "boolean",
@@ -74,14 +87,17 @@ const colorize = (severity: string, glyph: string): string => {
   return glyph;
 };
 
-const renderReport = (target: string, report: DoctorReport): void => {
+const renderReport = (
+  label: { kind: "target" | "bucket"; value: string },
+  report: DoctorReport,
+): void => {
   if (isJsonMode()) {
     process.stdout.write(
-      `${JSON.stringify({ result: { command: "doctor", target, ...report } })}\n`,
+      `${JSON.stringify({ result: { command: "doctor", [label.kind]: label.value, ...report } })}\n`,
     );
     return;
   }
-  process.stdout.write(`baerly doctor --target=${target}\n\n`);
+  process.stdout.write(`baerly doctor --${label.kind}=${label.value}\n\n`);
   let okCount = 0;
   let warningCount = 0;
   let errorCount = 0;
@@ -112,6 +128,14 @@ const bundle = defineBaerlySubcommand({
   },
   args: DOCTOR_ARGS,
   handler: async (args) => {
+    // --bucket is a standalone live-probe mode: it connects to a real
+    // bucket and checks CAS, independent of baerly.config.ts / --target.
+    if (args.bucket !== undefined) {
+      const { storage, keyPrefix } = await parseBucketUri(args.bucket);
+      const report = await doctorCas(storage, keyPrefix);
+      renderReport({ kind: "bucket", value: args.bucket }, report);
+      return report.status === "error" ? 2 : 0;
+    }
     const config = await loadAppConfig();
     const target = args.target ?? config.target;
     if (target === "cloudflare") {
@@ -119,7 +143,7 @@ const bundle = defineBaerlySubcommand({
         runner: defaultRunner(),
         ...(args.fix === true && { fix: true }),
       });
-      renderReport(target, report);
+      renderReport({ kind: "target", value: target }, report);
       return report.status === "error" ? 2 : 0;
     }
     throw new BaerlyError(

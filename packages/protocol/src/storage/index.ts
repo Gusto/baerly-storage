@@ -13,3 +13,5 @@ export type {
   ConformanceOptions,
 } from "./conformance.ts";
 export { defineStorageConformanceSuite } from "./conformance.ts";
+export { probeCas } from "./probe-cas.ts";
+export type { CasProbeCheck, CasProbeResult } from "./probe-cas.ts";
