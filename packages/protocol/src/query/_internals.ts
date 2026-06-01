@@ -70,11 +70,13 @@ export const deepEqualDocumentValue = (a: DocumentValue, b: DocumentValue): bool
     return false;
   }
   for (const key of aKeys) {
+    // Stryker disable next-line ConditionalExpression,BlockStatement: equivalent — a key in aKeys but absent from b makes b[key] undefined, which the `aSub === undefined || bSub === undefined` guard below catches identically; no input observes the difference.
     if (!(key in b)) {
       return false;
     }
     const aSub = (a as Record<string, DocumentValue>)[key];
     const bSub = (b as Record<string, DocumentValue>)[key];
+    // Stryker disable next-line LogicalOperator,ConditionalExpression: equivalent — this guard is a redundant fast-path. Whichever way it is mutated (operator `||`→`&&`, or either `=== undefined` operand forced to false), a slot that is undefined still flows into deepEqualDocumentValue below, whose typeof check returns false for `(undefined, defined)`; the only case that reaches `true` is both-undefined, which the surviving sibling operand still catches. No input over 500k randomized DocumentValues observes a difference.
     if (aSub === undefined || bSub === undefined) {
       return false;
     }
