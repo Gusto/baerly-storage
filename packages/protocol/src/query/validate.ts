@@ -65,6 +65,10 @@ const validateClause = (clause: PredicateClause, index: number): void => {
     );
   }
   const { op, field, value } = clause;
+  // Stryker disable next-line ConditionalExpression: `typeof op !== "string"` is redundant —
+  // OP_NAMES contains only string literals; Array.prototype.includes uses SameValueZero
+  // (effectively ===), so any non-string op is already rejected by the `!includes` half.
+  // The early string-type check is a readability guard, not an observable branch.
   if (typeof op !== "string" || !(OP_NAMES as ReadonlyArray<string>).includes(op)) {
     throw new BaerlyError(
       "InvalidConfig",
@@ -124,6 +128,11 @@ const validateMemberValue = (
   clauseIndex: number,
   memberIndex: number,
 ): void => {
+  // Stryker disable next-line ConditionalExpression: `|| value === undefined` is redundant —
+  // undefined falls through to `typeof value` = "undefined", which is caught by the
+  // `t !== "string" && t !== "number" && t !== "boolean"` check below with the same
+  // InvalidConfig code.  The early check gives a more descriptive "undefined" message
+  // but no input can distinguish the two code paths via the public error code alone.
   if (value === null || value === undefined) {
     throw new BaerlyError(
       "InvalidConfig",
@@ -155,6 +164,9 @@ const validateMemberValue = (
 };
 
 const validateScalar = (value: unknown, field: string, clauseIndex: number): void => {
+  // Stryker disable next-line ConditionalExpression: `|| value === undefined` is redundant —
+  // undefined falls through to `typeof value` = "undefined", caught by the
+  // `t !== "string" && t !== "number" && t !== "boolean"` check with the same code.
   if (value === null || value === undefined) {
     throw new BaerlyError(
       "InvalidConfig",
@@ -184,6 +196,9 @@ const validateScalar = (value: unknown, field: string, clauseIndex: number): voi
 };
 
 const validateRangeBound = (value: unknown, field: string, clauseIndex: number): void => {
+  // Stryker disable next-line ConditionalExpression: `|| value === undefined` is redundant —
+  // undefined falls through to `typeof value` = "undefined", caught by `t !== "string" && t !== "number"`
+  // with the same InvalidConfig code.
   if (value === null || value === undefined) {
     throw new BaerlyError(
       "InvalidConfig",

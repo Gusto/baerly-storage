@@ -90,6 +90,19 @@ describe("validateWire — rejections (structural)", () => {
     );
   });
 
+  test("rejects non-object wire with a .clauses array (kills L45 typeof-guard mutant)", () => {
+    // L45: `typeof wire !== "object"` ConditionalExpression→false.
+    // A plain number/string still triggers the `!Array.isArray(wire.clauses)` check because
+    // `(42).clauses` is `undefined`. The only input that can distinguish the two is a
+    // non-object (typeof !== "object") that *also* has a `.clauses` array — e.g. a function
+    // with a `.clauses` property assigned.  With the mutant the condition becomes
+    // `wire === null || false || !Array.isArray(wire.clauses)`, and since `wire.clauses` IS
+    // an array, the throw is bypassed.  Without the mutant, `typeof fn !== "object"` is true
+    // and the throw fires.
+    const fnWithClauses = Object.assign(() => {}, { clauses: [] }) as unknown as PredicateWire;
+    expectInvalidConfig(() => validateWire(fnWithClauses), "clauses");
+  });
+
   test("rejects clauses with unsupported op", () => {
     expectInvalidConfig(
       () => validateWire({ clauses: [{ op: "regex", field: "x", value: "foo" } as never] }),
@@ -330,6 +343,446 @@ describe("validateWire — satisfiability (cross-clause)", () => {
         }),
       "empty in() intersection",
     );
+  });
+});
+
+describe("validateWire — RANGE_OPS routing (kills gte/lt/lte string-literal mutants)", () => {
+  // If Stryker empties one of the RANGE_OPS strings (e.g. "gte"→""),
+  // that op falls through to validateScalar instead of validateRangeBound.
+  // validateRangeBound rejects booleans and nested objects; validateScalar
+  // accepts them.  Asserting InvalidConfig with "boolean" / "nested object"
+  // for every RANGE_OP kills those literal mutants.
+
+  test("gte rejects boolean value (routes to validateRangeBound, not validateScalar)", () => {
+    expectInvalidConfig(
+      () =>
+        validateWire({ clauses: [{ op: "gte", field: "x", value: true as unknown as number }] }),
+      "boolean",
+    );
+  });
+
+  test("lt rejects boolean value (routes to validateRangeBound, not validateScalar)", () => {
+    expectInvalidConfig(
+      () => validateWire({ clauses: [{ op: "lt", field: "x", value: true as unknown as number }] }),
+      "boolean",
+    );
+  });
+
+  test("lte rejects boolean value (routes to validateRangeBound, not validateScalar)", () => {
+    expectInvalidConfig(
+      () =>
+        validateWire({ clauses: [{ op: "lte", field: "x", value: true as unknown as number }] }),
+      "boolean",
+    );
+  });
+
+  test("gt rejects nested object value (routes to validateRangeBound)", () => {
+    expectInvalidConfig(
+      () =>
+        validateWire({
+          clauses: [{ op: "gt", field: "x", value: { a: 1 } as unknown as number }],
+        }),
+      "nested object",
+    );
+  });
+
+  test("gte rejects nested object value (routes to validateRangeBound)", () => {
+    expectInvalidConfig(
+      () =>
+        validateWire({
+          clauses: [{ op: "gte", field: "x", value: { a: 1 } as unknown as number }],
+        }),
+      "nested object",
+    );
+  });
+
+  test("lt rejects nested object value (routes to validateRangeBound)", () => {
+    expectInvalidConfig(
+      () =>
+        validateWire({
+          clauses: [{ op: "lt", field: "x", value: { a: 1 } as unknown as number }],
+        }),
+      "nested object",
+    );
+  });
+
+  test("lte rejects nested object value (routes to validateRangeBound)", () => {
+    expectInvalidConfig(
+      () =>
+        validateWire({
+          clauses: [{ op: "lte", field: "x", value: { a: 1 } as unknown as number }],
+        }),
+      "nested object",
+    );
+  });
+});
+
+describe("validateWire — wire-shape guard (kills L45 typeof-check mutant)", () => {
+  // L45: `typeof wire !== "object"` — if forced to false the condition
+  // collapses to `wire === null` only. A number like 42 would slip through.
+
+  test("rejects a number as the wire shape (not null, not object)", () => {
+    expectInvalidConfig(() => validateWire(42 as unknown as PredicateWire), "clauses");
+  });
+
+  test("rejects a string as the wire shape", () => {
+    expectInvalidConfig(() => validateWire("foo" as unknown as PredicateWire), "clauses");
+  });
+});
+
+describe("validateWire — clause-guard branches (kills L61 mutants)", () => {
+  // L61: `clause === null || typeof clause !== "object"` — various mutants
+  // collapse the condition. Need tests that pass null and a primitive directly.
+
+  test("rejects null clause at index 0", () => {
+    expectInvalidConfig(
+      () => validateWire({ clauses: [null as unknown as never] }),
+      "must be an object",
+    );
+  });
+
+  test("rejects number clause at index 0", () => {
+    expectInvalidConfig(
+      () => validateWire({ clauses: [42 as unknown as never] }),
+      "must be an object",
+    );
+  });
+
+  test("rejects string clause at index 0", () => {
+    expectInvalidConfig(
+      () => validateWire({ clauses: ["bad" as unknown as never] }),
+      "must be an object",
+    );
+  });
+
+  test("rejects null clause mid-array (non-zero index)", () => {
+    expectInvalidConfig(
+      () =>
+        validateWire({
+          clauses: [{ op: "eq", field: "x", value: "a" }, null as unknown as never],
+        }),
+      "must be an object",
+    );
+  });
+
+  test("error message contains the clause index", () => {
+    // L63 / L64 StringLiteral mutants: kills empty-string replacements of
+    // the message template segments.
+    try {
+      validateWire({ clauses: [null as unknown as never] });
+    } catch (error) {
+      expect(error).toBeInstanceOf(BaerlyError);
+      expect((error as BaerlyError).code).toBe("InvalidConfig");
+      expect((error as BaerlyError).message).toContain("index 0");
+    }
+  });
+});
+
+describe("validateWire — op-guard message (kills L68 / L71 mutants)", () => {
+  // L68 ConditionalExpression→false: if the guard is always false the
+  // throw never fires even for unknown ops. Existing tests cover this but
+  // asserting the error CODE here makes the assertion tighter.
+  // L71 StringLiteral→"": message fragment "unsupported op" emptied — need
+  // .toContain on it.
+
+  test("throws InvalidConfig with code on unsupported op (not just any error)", () => {
+    let thrown: unknown;
+    try {
+      validateWire({ clauses: [{ op: "BOGUS" as never, field: "x", value: "v" }] });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(BaerlyError);
+    expect((thrown as BaerlyError).code).toBe("InvalidConfig");
+    expect((thrown as BaerlyError).message).toContain("unsupported op");
+    // The message also embeds the op name:
+    expect((thrown as BaerlyError).message).toContain("BOGUS");
+    // L71 StringLiteral: OP_NAMES.join(" / ") → OP_NAMES.join(""). The " / " separator
+    // is observable — assert it so the empty-string mutant dies.
+    expect((thrown as BaerlyError).message).toContain(" / ");
+  });
+
+  test("does NOT throw for every valid op — kills ConditionalExpression→true mutant", () => {
+    // If the guard were forced to `true`, all valid ops would throw.
+    // Confirming each op is accepted pins that branch.
+    expect(() => validateWire({ clauses: [{ op: "eq", field: "x", value: 1 }] })).not.toThrow();
+    expect(() => validateWire({ clauses: [{ op: "gt", field: "x", value: 1 }] })).not.toThrow();
+    expect(() => validateWire({ clauses: [{ op: "gte", field: "x", value: 1 }] })).not.toThrow();
+    expect(() => validateWire({ clauses: [{ op: "lt", field: "x", value: 1 }] })).not.toThrow();
+    expect(() => validateWire({ clauses: [{ op: "lte", field: "x", value: 1 }] })).not.toThrow();
+    expect(() => validateWire({ clauses: [{ op: "in", field: "x", value: ["a"] }] })).not.toThrow();
+  });
+});
+
+describe("validateMemberValue — full branch coverage (kills L127-L152 mutants)", () => {
+  // The NoCoverage items at L133-L152 mean the array-check + type-check +
+  // finite-check branches inside validateMemberValue are not exercised at all.
+
+  test("rejects an array as an in-clause member (L133 array check)", () => {
+    // L133 BlockStatement / ConditionalExpression mutants.
+    expectInvalidConfig(
+      () =>
+        validateWire({
+          clauses: [{ op: "in", field: "x", value: [[1, 2] as unknown as string] }],
+        }),
+      "array",
+    );
+  });
+
+  test("array member error message includes clause and member indices (L135 / L136 strings)", () => {
+    try {
+      validateWire({
+        clauses: [{ op: "in", field: "x", value: [[1, 2] as unknown as string] }],
+      });
+    } catch (error) {
+      expect(error).toBeInstanceOf(BaerlyError);
+      expect((error as BaerlyError).message).toContain("index 0");
+      expect((error as BaerlyError).message).toContain("member 0");
+    }
+  });
+
+  test("accepts a nested-object member (L140 ConditionalExpression must stay true for object)", () => {
+    // If the `t === "object"` check were inverted or its block emptied, a
+    // nested object member would fall through to the type-check below and
+    // erroneously throw.
+    expect(() =>
+      validateWire({
+        clauses: [{ op: "in", field: "x", value: [{ nested: true } as unknown as string] }],
+      }),
+    ).not.toThrow();
+  });
+
+  test("rejects a Symbol member — exercises L143 type-check (L143 BlockStatement / Conditional)", () => {
+    // Symbol is typeof "symbol" — not string/number/boolean/object.
+    // If L143's ConditionalExpression is forced to false, the throw is skipped.
+    expectInvalidConfig(
+      () =>
+        validateWire({
+          clauses: [{ op: "in", field: "x", value: [Symbol("s") as unknown as string] }],
+        }),
+      "unsupported type",
+    );
+  });
+
+  test("L145 / L146 string literals in member-type error message", () => {
+    try {
+      validateWire({
+        clauses: [{ op: "in", field: "x", value: [Symbol("s") as unknown as string] }],
+      });
+    } catch (error) {
+      expect(error).toBeInstanceOf(BaerlyError);
+      // The message contains the type name and the member index
+      expect((error as BaerlyError).message).toContain("member 0");
+      expect((error as BaerlyError).message).toContain("unsupported type");
+    }
+  });
+
+  test("rejects NaN member in an in-clause (L149 finite check)", () => {
+    // L149 BlockStatement → {}: throw is removed; NaN member passes silently.
+    // L149 ConditionalExpression→false: guard never fires.
+    // L149 StringLiteral→"": "number" in typeof check becomes empty.
+    expectInvalidConfig(
+      () =>
+        validateWire({
+          clauses: [{ op: "in", field: "x", value: [1, NaN] }],
+        }),
+      "NaN",
+    );
+  });
+
+  test("rejects Infinity member in an in-clause (L149 finite check)", () => {
+    expectInvalidConfig(
+      () =>
+        validateWire({
+          clauses: [{ op: "in", field: "x", value: [1, Infinity] }],
+        }),
+      "Infinity",
+    );
+  });
+
+  test("rejects -Infinity member in an in-clause", () => {
+    expectInvalidConfig(
+      () =>
+        validateWire({
+          clauses: [{ op: "in", field: "x", value: [1, -Infinity] }],
+        }),
+      "Infinity",
+    );
+  });
+
+  test("L151 / L152 string literals in member finite-number error message", () => {
+    try {
+      validateWire({ clauses: [{ op: "in", field: "x", value: [NaN] }] });
+    } catch (error) {
+      expect(error).toBeInstanceOf(BaerlyError);
+      expect((error as BaerlyError).message).toContain("member 0");
+      expect((error as BaerlyError).message).toContain("NaN");
+    }
+  });
+});
+
+describe("validateScalar — full branch coverage (kills L158-L175 mutants)", () => {
+  // validateScalar is called for op="eq" only (non-array, non-range).
+  // Several branches have no coverage — adding precise tests below.
+
+  test("rejects null eq value (L158 ConditionalExpression)", () => {
+    // Already covered by the existing null-value test, but verify code too:
+    let thrown: unknown;
+    try {
+      validateWire({ clauses: [{ op: "eq", field: "x", value: null as unknown as string }] });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(BaerlyError);
+    expect((thrown as BaerlyError).code).toBe("InvalidConfig");
+    expect((thrown as BaerlyError).message).toContain("null");
+  });
+
+  test("accepts nested-object eq value (L165 object early-return must stay)", () => {
+    // L165 ConditionalExpression→false: the `return` is skipped, the object
+    // falls through to the type check and throws erroneously.
+    // L165 StringLiteral→"": "object" in typeof check breaks the routing.
+    expect(() =>
+      validateWire({
+        clauses: [{ op: "eq", field: "x", value: { nested: true } as unknown as string }],
+      }),
+    ).not.toThrow();
+  });
+
+  test("rejects Symbol eq value — exercises L172 type-check (L172 BlockStatement / Conditional)", () => {
+    expectInvalidConfig(
+      () =>
+        validateWire({
+          clauses: [{ op: "eq", field: "x", value: Symbol("s") as unknown as string }],
+        }),
+      "unsupported type",
+    );
+  });
+
+  test("L174 / L175 string literals in scalar-type error message", () => {
+    try {
+      validateWire({
+        clauses: [{ op: "eq", field: "x", value: Symbol("s") as unknown as string }],
+      });
+    } catch (error) {
+      expect(error).toBeInstanceOf(BaerlyError);
+      expect((error as BaerlyError).message).toContain("unsupported type");
+      expect((error as BaerlyError).message).toContain("index 0");
+    }
+  });
+
+  test("rejects NaN eq value (L178 finite check — already in test but assert CODE)", () => {
+    let thrown: unknown;
+    try {
+      validateWire({ clauses: [{ op: "eq", field: "x", value: NaN }] });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(BaerlyError);
+    expect((thrown as BaerlyError).code).toBe("InvalidConfig");
+    expect((thrown as BaerlyError).message).toContain("NaN");
+  });
+});
+
+describe("validateRangeBound — full branch coverage (kills L187-L209 mutants)", () => {
+  // Several branches in validateRangeBound have no coverage.
+
+  test("rejects null range bound (L187 ConditionalExpression)", () => {
+    let thrown: unknown;
+    try {
+      validateWire({ clauses: [{ op: "gt", field: "x", value: null as unknown as number }] });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(BaerlyError);
+    expect((thrown as BaerlyError).code).toBe("InvalidConfig");
+    expect((thrown as BaerlyError).message).toContain("null");
+  });
+
+  test("rejects undefined range bound (L187 covers undefined branch)", () => {
+    let thrown: unknown;
+    try {
+      validateWire({
+        clauses: [{ op: "gt", field: "x", value: undefined as unknown as number }],
+      });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(BaerlyError);
+    expect((thrown as BaerlyError).code).toBe("InvalidConfig");
+    expect((thrown as BaerlyError).message).toContain("undefined");
+  });
+
+  test("L190 message string literal must be non-empty — L190 ConditionalExpression→true survivor", () => {
+    // L190 ConditionalExpression→true means the null check always fires,
+    // even for valid values.  The not.toThrow below kills that mutant.
+    expect(() => validateWire({ clauses: [{ op: "gt", field: "x", value: 5 }] })).not.toThrow();
+    // Also verify that the thrown error message contains the required fragment:
+    try {
+      validateWire({ clauses: [{ op: "gt", field: "x", value: null as unknown as number }] });
+    } catch (error) {
+      expect(error).toBeInstanceOf(BaerlyError);
+      expect((error as BaerlyError).message).toContain("range bound");
+    }
+  });
+
+  test("rejects boolean range bound with specific message (kills L194 block/string/conditional mutants)", () => {
+    // L194 BlockStatement→{}: the throw is removed; boolean falls through to
+    // `t !== "string" && t !== "number"` which also throws, but with "unsupported type".
+    // L194 StringLiteral `"boolean"`→`""`: the if condition checks `t === ""`, never true,
+    // so boolean still falls through to the generic check.
+    // L194 ConditionalExpression→false: guard never fires, same fallthrough.
+    // All three mutants produce a message containing "unsupported type" but NOT
+    // "booleans are not ordered" — asserting the specific phrase kills all three.
+    let thrown: unknown;
+    try {
+      validateWire({ clauses: [{ op: "gt", field: "x", value: true as unknown as number }] });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(BaerlyError);
+    expect((thrown as BaerlyError).code).toBe("InvalidConfig");
+    // The specific boolean-branch message fragment distinguishes the early check
+    // from the generic catch-all "unsupported type" message:
+    expect((thrown as BaerlyError).message).toContain("booleans are not ordered");
+  });
+
+  test("rejects Symbol range bound — exercises L206 catch-all type check", () => {
+    // L206 BlockStatement / ConditionalExpression: if the guard is removed,
+    // Symbol falls through without throwing.
+    expectInvalidConfig(
+      () =>
+        validateWire({
+          clauses: [{ op: "gt", field: "x", value: Symbol("s") as unknown as number }],
+        }),
+      "unsupported type",
+    );
+  });
+
+  test("L208 / L209 string literals in range-bound type error message", () => {
+    try {
+      validateWire({
+        clauses: [{ op: "gt", field: "x", value: Symbol("s") as unknown as number }],
+      });
+    } catch (error) {
+      expect(error).toBeInstanceOf(BaerlyError);
+      expect((error as BaerlyError).message).toContain("unsupported type");
+      expect((error as BaerlyError).message).toContain("clause 0");
+    }
+  });
+
+  test("rejects NaN range bound (L212 finite check)", () => {
+    expectInvalidConfig(
+      () => validateWire({ clauses: [{ op: "gt", field: "x", value: NaN }] }),
+      "NaN",
+    );
+  });
+
+  test("accepts string range bound (not a boolean / object / other type)", () => {
+    // Pins that string passes through validateRangeBound without throwing.
+    expect(() =>
+      validateWire({ clauses: [{ op: "gte", field: "created_at", value: "2026-01-01" }] }),
+    ).not.toThrow();
   });
 });
 
