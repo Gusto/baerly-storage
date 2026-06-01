@@ -170,6 +170,7 @@ export const GC_PENDING_CONTENT_TYPE: string = "application/json";
  *
  * @see packages/server/src/gc.ts
  */
+// Stryker disable next-line ArithmeticOperator: internal tuning value, not an off-process contract — asserting the literal would be a tautological change-detector. See docs/contributing/mutation-testing.md constants policy.
 export const GC_GRACE_PERIOD_MILLIS: number = 7 * 24 * 60 * 60 * 1000;
 
 /**
@@ -201,6 +202,7 @@ export const MAINTENANCE_TARGET_RATIO: number = 1;
  *
  * @see packages/server/src/maintenance.ts
  */
+// Stryker disable next-line ArithmeticOperator: internal tuning value, not an off-process contract — asserting the literal would be a tautological change-detector. See docs/contributing/mutation-testing.md constants policy.
 export const MAINTENANCE_MIN_LIVE_BYTES: number = 64 * 1024;
 
 /**
@@ -300,6 +302,7 @@ export const NODE_MAINTENANCE_GC_INTERVAL: number = 2;
  * @see docs/about/graduation.md
  * @see packages/server/src/maintenance.ts
  */
+// Stryker disable next-line ArithmeticOperator: internal tuning value, not an off-process contract — asserting the literal would be a tautological change-detector. See docs/contributing/mutation-testing.md constants policy.
 export const MAINTENANCE_MAX_FOLD_BYTES_DEFAULT: number = 512 * 1024;
 
 /**
@@ -324,6 +327,7 @@ export const MAINTENANCE_MAX_FOLD_BYTES_DEFAULT: number = 512 * 1024;
  * @see packages/server/src/maintenance.ts
  * @see docs/about/graduation.md
  */
+// Stryker disable next-line ArithmeticOperator: internal tuning value, not an off-process contract — asserting the literal would be a tautological change-detector. See docs/contributing/mutation-testing.md constants policy.
 export const CF_FREE_MAX_SAFE_FOLD_BYTES: number = 1024 * 1024;
 
 /**

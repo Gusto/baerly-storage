@@ -2,6 +2,7 @@ import { fc, test } from "@fast-check/vitest";
 import { describe, expect, test as plainTest } from "vitest";
 import {
   BaerlyError,
+  CURRENT_JSON_CONTENT_TYPE,
   CURRENT_JSON_SCHEMA_VERSION,
   type CurrentJson,
   type CurrentJsonRead,
@@ -24,6 +25,16 @@ const seedJson = (overrides: Partial<CurrentJson> = {}): CurrentJson => ({
   snapshot_bytes: 0,
   snapshot_rows: 0,
   ...overrides,
+});
+
+describe("wire-contract constants", () => {
+  plainTest("CURRENT_JSON_CONTENT_TYPE is the on-bucket MIME type for current.json", () => {
+    // Written as the Content-Type header on every current.json PUT and
+    // returned on subsequent GETs by S3/R2. Pinned here (not just in
+    // constants.test.ts) because Stryker's perTest coverage attributes the
+    // constants.ts module-level assignment to the first test that imports it.
+    expect(CURRENT_JSON_CONTENT_TYPE).toBe("application/json");
+  });
 });
 
 describe("readCurrentJson", () => {

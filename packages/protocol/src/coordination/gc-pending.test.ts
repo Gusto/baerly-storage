@@ -25,6 +25,15 @@ const initial = (): GcPending => ({
 });
 
 describe("gc-pending", () => {
+  test("GC_PENDING_CONTENT_TYPE is the on-bucket MIME type for gc/pending.json", () => {
+    // This string is written as the Content-Type header on every
+    // gc/pending.json PUT and returned on subsequent GETs by S3/R2.
+    // Pinned here (not just in constants.test.ts) because Stryker's
+    // perTest coverage attributes the constants.ts module-level
+    // assignment to the first test file that imports it.
+    expect(GC_PENDING_CONTENT_TYPE).toBe("application/json");
+  });
+
   test("returns null on not-found", async () => {
     const s = new MemoryStorage();
     await expect(readGcPending(s, KEY)).resolves.toBeNull();
