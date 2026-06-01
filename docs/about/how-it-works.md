@@ -2,7 +2,7 @@
 title: How it works
 audience: integrator
 summary: The plain-language mental model — a bucket of files plus a library that flips one pointer atomically, and the typed layers from protocol to React.
-last-reviewed: 2026-05-29
+last-reviewed: 2026-05-31
 tags: [concepts, mental-model, protocol]
 related: [thesis.md, "../spec/sync-protocol.md", "../contributing/architecture.md"]
 ---
@@ -136,9 +136,10 @@ Both are handled by **maintenance**, which is two jobs:
 
 Here is the part that matters for the mental model: **maintenance is
 not a daemon.** There is no cron job, no sidecar, no background
-process. It runs *opportunistically inside ordinary reads and writes*
-— a cheap size-ratio check on the hot path, and when it trips, a
-bounded chunk of compaction or GC piggybacks on that request. An idle
+process. It runs *opportunistically inside ordinary writes*
+(write-triggered) — a cheap size-ratio check on the write path, and
+when it trips, a bounded chunk of compaction or GC piggybacks on that
+write. **Reads are pure: they never run maintenance.** An idle
 bucket does nothing and pays nothing. This is what makes the project's
 *"There is no runtime. None."* literally true — even the cleanup lives
 inside the request that triggered it. (Teams that *want* batched

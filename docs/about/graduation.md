@@ -2,7 +2,7 @@
 title: Graduation thresholds
 audience: operator
 summary: The CPU and memory bounds that tell you when a collection has outgrown its deployment tier, and what to do about it.
-last-reviewed: 2026-05-29
+last-reviewed: 2026-05-31
 tags: [operations, cost, capacity, graduation]
 related: [cost-model.md, thesis.md, "../adr/004-ephemeral-coordination.md"]
 ---
@@ -26,20 +26,23 @@ bytes), see [cost-model.md](cost-model.md). This page is about the
 **compute** side: when the single expensive operation, compaction,
 stops fitting in your runtime's budget.
 
-> **Status — the auto-maintenance machinery on this page is designed, not
-> yet shipped.** The fold cost model and the per-tier CPU/memory envelope
-> below are real today: compaction (`compact()`, `compactor.ts:152`) exists
-> and has exactly these costs. What does **not** exist in the shipped build
-> yet is the *automatic* machinery this page describes around it —
-> write-triggered folding, the static fold ceiling `C`
-> (`MAINTENANCE_MAX_FOLD_BYTES_DEFAULT`), the `MAINTENANCE_TARGET_RATIO`
-> gate, the auto-maintained snapshot ceiling `S_max`, the
+> **Status — the in-band auto-maintenance machinery is now shipped; the
+> cost-model *thresholds* are still estimates.** Write-triggered folding,
+> the static fold ceiling `C` (`MAINTENANCE_MAX_FOLD_BYTES_DEFAULT`), the
+> two-way snapshot ceiling (`C` bytes AND `E` rows,
+> `MAINTENANCE_MAX_FOLD_ROWS`), the `MAINTENANCE_TARGET_RATIO` read-amp
+> knob, the auto-maintained snapshot ceiling `S_max`, the
 > `BAERLY_MAINTENANCE_*` operator env vars, and the defer/warn graduation
-> signals. **Those constants and env vars are not defined in the code
-> today.** The only maintenance trigger that exists now is the operator
-> opt-in `runScheduledMaintenance`. Until the in-band design lands, read the
-> thresholds below as the *target* envelope, not as behavior you can yet
-> observe from `baerly inspect`.
+> signals are all defined in the code and dispatched in-band on the write
+> path (`runBoundedMaintenance` in
+> [`packages/server/src/maintenance.ts`](../../packages/server/src/maintenance.ts)).
+> What is still *estimate* rather than measured is the per-tier
+> CPU/memory **envelope numbers** below — the ~10 ms-CPU-to-bytes
+> conversion, the chosen `E = 2048` row ceiling, and the graduation-cliff
+> snapshot sizes. Treat the constants as real (you can observe defers and
+> warns from logs today) and the dollar/byte thresholds as the *target*
+> envelope still being calibrated by bench. `E` in particular is marked
+> **PROVISIONAL** in its constant JSDoc pending the Task 3 fold-cost bench.
 
 ## What costs CPU: compaction (folding the log)
 
@@ -88,143 +91,181 @@ stops shrinking, not that data is lost.
 
 ## The cost model
 
-A fold touches roughly **2× the snapshot size** in memory (old snapshot
-+ a log tail of about one snapshot + the new snapshot) and does, per the
-steps above, two JSON parses, one JSON stringify, and two SHA-256 passes.
+The shipped fold separates two costs that the prior estimate-based model
+conflated:
 
-The crucial quantity is what we call the **estimate**: the bytes a fold
-actually has to process, which is **`snapshot_bytes + tail_bytes`**, not
-the snapshot alone. The CPU you spend, the memory you hold resident, and
-the gate that decides whether a fold runs are all driven by the
-*estimate* — you parse the whole tail, then stringify the whole new
-snapshot. A 256 KB snapshot with a 256 KB tail is a **512 KB fold**, not
-a 256 KB one.
+- **The tail is SLICED.** A fold processes at most `maxEntriesPerRun`
+  log entries per pass (`WRITE_TICK_FOLD_ENTRIES_PER_PASS ≈ 20` on CF
+  free, larger on Node). A long tail is not folded in one shot — it
+  **drains incrementally over many write-ticks**. So the tail no longer
+  drives the per-pass ceiling; only the **snapshot rebuild** does.
+- **The snapshot rebuild is UNSLICEABLE.** Each pass rewrites the whole
+  snapshot — load the old snapshot, apply the slice, re-serialize, and
+  SHA-256 the new bytes. This is the all-or-nothing step (the snapshot
+  filename embeds its own hash), and it is the work the ceiling is sized
+  against. It scales with snapshot **size** (`snapshot_bytes`, the
+  parse/stringify/hash axis) **and** snapshot **row count**
+  (`snapshot_rows`, the per-entry parse/merge/serialize axis — roughly
+  half of fold CPU, and a tiny-doc snapshot can blow CPU under a byte
+  ceiling alone; VLDB 2021 Sarkar).
+
+So the gate is a **two-way ceiling on the snapshot axis**, not on a
+`snapshot + tail` estimate. A fold defers when
+`snapshot_bytes > C` **OR** `snapshot_rows > E`.
 
 Using **order-of-magnitude** engine assumptions — JSON parse/stringify
-at roughly 300 MB/s, SHA-256 at roughly 2 GB/s — this lands at:
+at roughly 300 MB/s, SHA-256 at roughly 2 GB/s — the snapshot-rebuild
+CPU lands at:
 
-> **≈ 11 ms of CPU per MB of estimate processed.**
+> **≈ 11 ms of CPU per MB of snapshot rebuilt.**
 
 Treat the throughput numbers as order-of-magnitude, not benchmarks. A
 2–3× swing in the JSON assumption moves the free-tier ceiling between
-roughly 0.4 MB and 1.5 MB of estimate — but the *shape* (linear in the
-estimate, dominated by JSON, ~10 ms/MB) is robust.
+roughly 0.4 MB and 1.5 MB of snapshot — but the *shape* (linear in the
+snapshot, dominated by JSON, ~10 ms/MB) is robust.
 
-### Estimate size → CPU per fold
+### Snapshot size → CPU per fold
 
-The CPU cost is a function of the **estimate** (`snapshot + tail`), so
-that is the axis below. To convert to a snapshot ceiling, see
-[the auto-maintained snapshot ceiling](#the-auto-maintained-snapshot-ceiling)
-— at the default ratio, a fold fires when the tail equals the snapshot,
-so the estimate at fold time is **2× the snapshot**.
+The CPU cost of the unsliceable rebuild is a function of the
+**snapshot** (not snapshot + tail — the tail is sliced), so that is the
+axis below.
 
-| Estimate (snapshot + tail) | CPU per fold (order-of-magnitude) | Note |
+| Snapshot size | CPU per rebuild (order-of-magnitude) | Note |
 |---|---|---|
 | 64 KB | ~0.7 ms | trivial |
 | 256 KB | ~2.8 ms | trivial — under the free-tier line by 3–4× |
-| 512 KB | ~5.5 ms | the conservative **default fold ceiling** `C` |
-| 1 MB | ~11 ms | ≈ Cloudflare **free-tier** CPU line |
+| 512 KB | ~5.5 ms | the conservative **default snapshot ceiling** `C` |
+| 1 MB | ~11 ms | ≈ Cloudflare **free-tier** CPU line (`CF_FREE_MAX_SAFE_FOLD_BYTES`) |
 | 5 MB | ~55 ms | fine on paid |
 | 40 MB | ~440 ms | CPU fine on paid, but ≈ the **memory** wall |
 
-A 1 MB *estimate* corresponds to a **~512 KB snapshot** at the default
-ratio (snapshot + an equal-sized tail), which is roughly **100–500
-documents** at 1–5 KB/doc. Below a ~256 KB estimate a fold is 1–3 ms and
-effectively free everywhere.
+A ~512 KB snapshot is roughly **100–500 documents** at 1–5 KB/doc.
+Below a ~256 KB snapshot a rebuild is 1–3 ms and effectively free
+everywhere.
+
+The **row axis** `E` catches the case bytes miss: a snapshot of many
+tiny docs is cheap by bytes but expensive by per-entry parse/merge.
+`E = MAINTENANCE_MAX_FOLD_ROWS = 2048` is the row ceiling. **This value
+is PROVISIONAL** — it is a conservative placeholder pending the Task 3
+fold-cost bench that will pin the measured per-entry CPU; its constant
+JSDoc says as much. Treat 2048 rows as "the order of magnitude where
+per-entry CPU starts to rival the byte budget on CF free," not a
+bench-confirmed number yet.
 
 ### When a fold fires, and when it defers
 
-A fold is not run on every write. Two thresholds gate it, both checked
-in-band on the write path (reads are pure and never trigger
-maintenance):
+A fold is dispatched in-band on the **write path** (reads are pure and
+never trigger maintenance). Three things gate the rebuild:
 
-- **Size-ratio trigger.** A fold fires only once the live tail has grown
-  to `tail_bytes >= TARGET_RATIO × snapshot_bytes`. The default
-  **`TARGET_RATIO = 1.0`**: the fold fires when the tail has grown to
-  equal the snapshot. Below that, the tail is small enough that
-  replaying it on reads is cheap, so folding would be wasted work.
-- **Static fold-size ceiling `C`.** Even once the ratio trips, the fold
-  defers if the estimated work exceeds `C`:
-  `estimate = snapshot_bytes + tail_bytes > C` ⟹ skip. The default
+- **Size-ratio trigger (read-amp knob).** The maintenance dispatch fires
+  only once the live tail has grown to
+  `tail_bytes >= TARGET_RATIO × snapshot_bytes`. The default
+  **`TARGET_RATIO = 1.0`**: dispatch when the tail equals the snapshot.
+  Below that, replaying the tail on reads is cheap, so folding would be
+  wasted work. **`R` is now purely a read-amplification / fold-frequency
+  knob** — it no longer enters the snapshot ceiling (the prior model's
+  ratio-times-ceiling derivation is gone; see below).
+- **Static snapshot ceiling `C` (bytes).** Once dispatched, the rebuild
+  defers if `snapshot_bytes > C`. Default
   **`C = MAINTENANCE_MAX_FOLD_BYTES_DEFAULT = 512 KB`**, deliberately
-  conservative (see below). It is overridable out-of-band by the
-  `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` env var — see
+  conservative (see below). Overridable out-of-band by
+  `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` — see
   [Operations plane](#operations-plane-env-vars).
+- **Static snapshot ceiling `E` (rows).** The rebuild also defers if
+  `snapshot_rows > E` (`E = 2048`, provisional). This is the per-entry
+  CPU dimension a byte ceiling misses.
 
 The ceiling is conservative on purpose. Cloudflare free's ~10 ms CPU can
-*process* roughly a 1 MB estimate (~11 ms is already at the line) before
-the isolate is killed; `C = 512 KB` (~5.5 ms) leaves margin, because
-there is **no adaptive backoff** — a killed fold never reports its own
+rebuild roughly a 1 MB snapshot (~11 ms is at the line) before the
+isolate is killed; `C = 512 KB` (~5.5 ms) leaves margin, because there
+is **no adaptive backoff** — a killed rebuild never reports its own
 death — and the throughput model is only order-of-magnitude. Raising the
-cap toward ~1 MB raises the snapshot envelope (next section) but moves
-the fold closer to the kill cliff.
+cap toward ~1 MB raises the snapshot envelope but moves the rebuild
+closer to the kill cliff (and on CF free past `CF_FREE_MAX_SAFE_FOLD_BYTES
+= 1 MiB` the adapter `console.warn`s — see the
+[Cloudflare caveat](#operations-plane-env-vars)).
 
 ### The auto-maintained snapshot ceiling
 
-Because a fold fires only once `tail = TARGET_RATIO × snapshot`, the
-estimate at fold time is `snapshot × (1 + TARGET_RATIO)`. Inverting the
-ceiling `estimate <= C` gives the largest snapshot that compaction will
-ever keep folding automatically:
+Because the tail is sliced and only the snapshot rebuild is bounded, the
+largest snapshot compaction will keep folding automatically is just the
+ceiling itself:
 
-> **`S_max = C / (1 + TARGET_RATIO)`.**
+> **`S_max = C`** (subject to `snapshot_rows <= E`).
 
-At the defaults (`R = 1.0`, `C = 512 KB`) this is **`S_max = 256 KB` of
-snapshot** ≈ **50–256 documents** at 1–5 KB/doc on Cloudflare free. A
-collection whose snapshot grows past ~256 KB will trip the ratio,
-produce an estimate over the 512 KB ceiling, and **permanently defer**
-its fold — until the operator raises `BAERLY_MAINTENANCE_MAX_FOLD_BYTES`
-or graduates the tier. Note the asymmetry the estimate creates: a
-**512 KB snapshot does not fold on the free-tier default** — at fold
-time its estimate is ~1 MB, double the 512 KB ceiling.
+At the defaults (`C = 512 KB`, `E = 2048`) this is **`S_max = 512 KB` of
+snapshot** ≈ **100–500 documents** at 1–5 KB/doc on Cloudflare free — or
+fewer if the docs are tiny enough to hit the 2048-row ceiling first. A
+collection whose snapshot grows past `C` bytes (or `E` rows) will
+**permanently defer** its rebuild — the tail keeps draining its slices
+but the snapshot can no longer absorb them — until the operator raises
+`BAERLY_MAINTENANCE_MAX_FOLD_BYTES` or graduates the tier.
 
-#### The ratio/cost coupling
+> **What changed from the prior model.** The earlier estimate-based
+> derivation divided the ceiling by `(1 + R)` (half the ceiling at the
+> defaults), because it folded the whole snapshot-plus-tail estimate in
+> one unsliceable pass and `R` therefore entered the ceiling. With the
+> tail now **sliced**, the per-pass work is the snapshot rebuild alone,
+> so `S_max = C` (512 KB) and `R` is purely the read-amp knob.
 
-`TARGET_RATIO` is the one knob that trades three quantities against each
-other:
+#### The read-amp / write-amp knob
+
+`TARGET_RATIO = R` now trades two quantities (it no longer touches the
+snapshot envelope — that is `S_max = C`):
 
 | Quantity | As a function of ratio `R` | At the chosen `R = 1.0` |
 |---|---|---|
-| Auto-maintained snapshot ceiling | `S_max = C / (1 + R)` | `C / 2` (256 KB at C=512 KB) |
 | Compaction write-amplification | `≈ 1 + 1/R` | ~2× |
 | Read-amplification between folds | `≤ 1 + R` | ≤ 2× |
 
-A higher ratio lets the tail grow longer before folding — cutting
-write-amp but raising read-amp and *shrinking* the snapshot envelope
-(`S_max` falls as `R` rises). LSM engines (Go's, RocksDB) commonly pick
-`R = 2`, but they fold in place with no per-fold CPU cliff, so they can
-afford the read-amp. Baerly trades the ratio directly against a hard
-isolate-kill cliff, so it picks a **lower** ratio (`R = 1.0`) to widen
-the snapshot envelope and halve read-amp, accepting a modestly higher
-write-amp (~2×) — still comfortably under the cost-model's
-**write-amp > 6** graduation trigger (see
-[cost-model.md](cost-model.md#alternative-dbs-at-m-size)).
+A higher ratio lets the tail grow longer before a fold is dispatched —
+cutting write-amp but raising read-amp. LSM engines (Go's, RocksDB)
+commonly pick `R = 2`. Baerly picks a **lower** ratio (`R = 1.0`) to
+halve read-amp, accepting a modestly higher write-amp (~2×) — still
+comfortably under the cost-model's **write-amp > 6** graduation trigger
+(see [cost-model.md](cost-model.md#alternative-dbs-at-m-size)).
 
 ## Per-tier bounds
 
-The fold ceiling below is stated as an **estimate** (snapshot + tail).
-The default static ceiling `C = 512 KB` already sits *under* the free
-tier's hardware wall — so on every tier the practical limit is `C`
-(raisable via the env var), not the raw hardware budget. The hardware
-walls are what `C` is sized against, and what bounds you to once `C` is
-raised.
+The ceiling below is stated on the **snapshot axis** (`snapshot_bytes`
+against `C`, `snapshot_rows` against `E`) — the tail is sliced and does
+not enter the per-pass ceiling. The default static ceiling `C = 512 KB`
+already sits *under* the free tier's hardware wall — so on every tier the
+practical limit is `C` (raisable via the env var), not the raw hardware
+budget. The hardware walls are what `C` is sized against, and what bounds
+you to once `C` is raised.
 
-| Tier | Hardware wall | Binds on | What can actually fold |
+**Two binding walls on CF free, not one.** A Cloudflare free isolate is
+bounded by **both** the ~10 ms CPU budget (the snapshot ceiling `C`/`E`
+defends this) **and** the 50-subrequests-per-request limit (the tail
+slice `maxEntriesPerRun ≈ 20` =
+`WRITE_TICK_FOLD_ENTRIES_PER_PASS` defends this — a fold pass is
+≈ `slice + 3` subrequests, and GC adds `6 + marks + sweeps`, so one
+phase per tick stays under 50). The prior "CF free binds on CPU" was
+half the story: the subrequest wall is why a large tail **drains
+incrementally over many ticks** rather than folding in one pass.
+
+| Tier | Hardware walls | Binds on | What can actually fold |
 |---|---|---|---|
-| **Cloudflare free** | ~10 ms CPU / request (≈ 1 MB estimate) | **CPU** | default `C = 512 KB` estimate ⟹ **~256 KB snapshot** at R=1.0; the hardware cap (~1 MB estimate ⟹ ~512 KB snapshot) is where raising `C` hits the wall |
+| **Cloudflare free** | ~10 ms CPU/request **and** 50 subrequests/request | **CPU + subrequests** | default `C = 512 KB` ⟹ **~512 KB snapshot** (`S_max = C`), `E = 2048` rows; tail drains ≈ 20 entries/tick; raising `C` past ~1 MB (`CF_FREE_MAX_SAFE_FOLD_BYTES`) hits the CPU wall and `console.warn`s |
 | **Cloudflare paid** | 30 s CPU default (up to 5 min); ~128 MB Worker memory | **memory** | raise `C` and fold to **~tens of MB snapshot** (~40 MB); CPU is *not* the wall — **memory** is |
-| **Serverful Node** | none per-request; process RAM; a fold blocks the event loop | **host memory** | raise `C` and fold up to host memory — far above either Worker tier |
+| **Serverful Node** | none per-request; process RAM; a fold blocks the event loop | **host memory** | raise `C` and fold up to host memory — far above either Worker tier; per-pass caps are `NODE_MAINTENANCE_*` (moderate, latency-budgeted) |
 
 Reading the rows:
 
-- **Cloudflare free tier.** The ~10 ms CPU-per-request budget can
-  *process* a ~1 MB estimate before the isolate is killed, but the
-  conservative default `C = 512 KB` caps folds well short of that. At
-  `R = 1.0` that means an auto-maintained snapshot ceiling of **~256 KB**
-  (`S_max = C / 2`). Past that, a fold's estimate exceeds `C` and the
-  fold defers; if you raise `C` past what a ~10 ms isolate can fold, a
-  dispatched fold is killed mid-pass (no corruption — the pointer just
-  doesn't advance), so the log stops compacting and the bucket stops
-  shrinking.
+- **Cloudflare free tier.** Two walls bind. The ~10 ms CPU-per-request
+  budget can rebuild a ~1 MB snapshot before the isolate is killed; the
+  conservative default `C = 512 KB` (~5.5 ms) caps the rebuild well
+  short of that, giving an auto-maintained snapshot ceiling of **~512 KB**
+  (`S_max = C`, subject to `E = 2048` rows). Independently, the
+  50-subrequest wall caps each pass to a ~20-entry tail slice, so a long
+  tail **drains over many write-ticks** rather than folding in one shot.
+  Past `S_max` the rebuild defers (no corruption — the pointer just
+  doesn't advance), so the log stops collapsing and the bucket stops
+  shrinking. If you raise `C` past `CF_FREE_MAX_SAFE_FOLD_BYTES` (1 MiB),
+  a dispatched rebuild is CPU-killed mid-pass and silently does not land
+  — the adapter `console.warn`s at init to flag this (see the
+  [Cloudflare caveat](#operations-plane-env-vars)).
 - **Cloudflare paid tier.** The 30 s default CPU budget (configurable up
   to 5 min) is *not* the constraint — 30 s would comfortably fold a
   multi-GB snapshot. The real wall is **Worker memory (~128 MB)**:
@@ -254,9 +295,30 @@ data is lost.** What you see instead, in order:
   bytes; the bucket stops shrinking because the fold that would collapse
   them never completes.
 - **A `console.warn` appears** in `wrangler tail` / your Vercel or Node
-  logs, naming the deferred fold and its estimate vs. the ceiling.
+  logs, naming the deferring collection and the dimension it tripped
+  (bytes vs. rows). It is rate-limited off the shared
+  `current.json.last_warned_seq` (~once per
+  `MAINTENANCE_WARN_INTERVAL_WRITES = 1000` writes), and the defer path
+  also bumps `db.compaction.deferred_total`.
 
 It is erosion, not a cliff. You have time to act on the warning.
+
+### The drain-rate safety invariant
+
+The no-lease model (a lost fold is abandoned, its orphan snapshot swept
+by `runGc`) stays bounded only while GC sweep throughput keeps up with
+orphan production:
+
+> **`WRITE_TICK_GC_MAX_SWEEPS / WRITE_TICK_GC_INTERVAL` (= 10/4) ≥
+> orphan-production rate `p`.**
+
+While that holds, orphans drain and total object count stays bounded.
+Sustained above-envelope contention — many writers racing the same
+`current.json`, losing folds faster than GC can sweep them — violates
+the invariant: object count grows. **That growth is the graduation
+signal, not silent breakage.** It means the collection's write
+contention has outgrown the prototype tier, exactly the threshold the
+workload-envelope trigger (below) names.
 
 ### Which graduation? (it depends on the host)
 
@@ -264,34 +326,35 @@ A deferred fold on Cloudflare free is a tier signal; the *same* deferred
 fold on a Node host is just an env var to flip; and neither is a
 Postgres signal. Disambiguate before you act:
 
-> **Cron does *not* help.** Running `runScheduledMaintenance` on a
-> schedule does not escape the wall on Cloudflare free: a
-> cron-triggered (scheduled) Worker has the **same ~10 ms CPU limit** as
-> a request handler. Cron gives you a fresh CPU budget per tick, not a
-> *bigger* one — and the thing that is too small is the CPU ceiling
+> **Cron does *not* help.** Maintenance is now in-band: it ticks on the
+> write path, never on a schedule. But even the opt-in
+> `runScheduledMaintenance` SDK does not escape the wall on Cloudflare
+> free — a cron-triggered (scheduled) Worker has the **same ~10 ms CPU
+> limit** as a request handler. A fresh CPU budget per tick is not a
+> *bigger* one, and the thing that is too small is the CPU ceiling
 > itself. Only the paid plan raises that ceiling (or, on Node, raising
-> the env cap). Cron is not the lever.
+> the env cap). Scheduling is not the lever.
 
 ### 1. Off Cloudflare free → Cloudflare paid
 
 **This is the graduation a persistently-deferring collection on CF free
 points at.**
 
-**Threshold:** the auto-maintained snapshot ceiling, **~256 KB snapshot
-/ ~50–256 docs** at the `R = 1.0`, `C = 512 KB` defaults (the fold's
-estimate crosses `C`).
+**Threshold:** the auto-maintained snapshot ceiling, **~512 KB snapshot
+/ ~100–500 docs** (or `E = 2048` rows, whichever trips first) at the
+`C = 512 KB` defaults — `snapshot_bytes > C` OR `snapshot_rows > E`.
 
 **What you'll observe:** the erosion symptoms above — slower reads, a
-growing bucket, a `console.warn` — because free-tier folds defer rather
-than burn past the ~10 ms CPU budget.
+growing bucket, a `console.warn` naming bytes-vs-rows — because free-tier
+rebuilds defer rather than burn past the ~10 ms CPU budget.
 
 **What to do:** upgrade to the Cloudflare **paid** Workers plan (a
 ~$5/mo plan upgrade; 30 s CPU vs. free's ~10 ms). On paid the CPU cliff
-effectively disappears — 30 s would fold a multi-GB snapshot — and the
+effectively disappears — 30 s would rebuild a multi-GB snapshot — and the
 binding wall becomes Worker **memory** (~128 MB ⟹ ~tens of MB snapshot).
 After upgrading, raise `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` past the
-512 KB default so folds are no longer gated by the conservative ceiling;
-compaction resumes. See the
+512 KB default so rebuilds are no longer gated by the conservative
+ceiling; compaction resumes. See the
 [Cloudflare caveat](#operations-plane-env-vars) on sizing the cap to
 memory, not CPU.
 
@@ -327,18 +390,19 @@ a future multi-level (L0..L9) chunked scheme that folds incrementally
 rather than rewriting the whole snapshot in one pass — which would lift
 this memory wall without a wire change.
 
-### A caveat: tail churn is fold cost, not data growth
+### A caveat: tail churn now DRAINS — it is not a graduation signal
 
-The fold estimate (`snapshot + tail`) is the right number for *cost* —
-you parse the whole tail even when it is mostly `U`/`D` entries that
-collapse to a handful of `_id`s. So a **small but heavily-updated**
-collection (say, 50 docs hammered by updates) can build a large tail,
-trip the ceiling, and warn — even though the fold's *output* snapshot
-stays tiny. This is **tail churn (fold cost), not data growth.** Such a
-collection folds fine the moment it gets a pass, and its snapshot stays
-small afterward. Do **not** read the warning as "my data is too big" and
-do not treat it as a trigger-3 Postgres signal; it is purely about the
-CPU cost of one fold pass.
+A **small but heavily-updated** collection (say, 50 docs hammered by
+updates) builds a large tail that mostly collapses to a handful of
+`_id`s. Under the prior unsliceable-fold model that large tail could
+trip the ceiling and warn. **That is no longer the case:** the tail is
+now **sliced** (`maxEntriesPerRun`), so a large tail simply **drains
+incrementally** over many write-ticks — each pass folds ~20 entries into
+the (small) snapshot, and the snapshot stays tiny. Tail churn is no
+longer a defer trigger at all; only the *snapshot* axis (`C` bytes / `E`
+rows) defers. A heavily-churned small collection self-heals as it drains
+and never warns. Do **not** read tail length as a graduation signal — it
+is bounded by the drain rate, not by the ceiling.
 
 ### 4. Off baerly → Postgres: the workload envelope (a separate axis)
 
@@ -391,33 +455,60 @@ Maintenance has **two configuration planes**, and they never mix:
 
 | Env var | Effect | When to set it |
 |---|---|---|
-| `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` | Overrides the static fold ceiling `C` (default `MAINTENANCE_MAX_FOLD_BYTES_DEFAULT = 512 KB`). Raises `S_max = C / (1 + R)`, letting larger folds past the gate. | On Cloudflare **paid** or a big **Node** host, after you've confirmed the host can fold that estimate. |
+| `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` | Overrides the static snapshot ceiling `C` (default `MAINTENANCE_MAX_FOLD_BYTES_DEFAULT = 512 KB`). Raises `S_max = C`, letting larger snapshot rebuilds past the gate. | On Cloudflare **paid** or a big **Node** host, after you've confirmed the host can rebuild that snapshot. |
 | `BAERLY_MAINTENANCE_DISABLE` | Kill switch — turns in-band maintenance off entirely. | Diagnostics, or to stop fold attempts on a deferring collection while you plan a graduation. |
+
+(The row ceiling `E = MAINTENANCE_MAX_FOLD_ROWS = 2048` is **not**
+operator-tunable — it is a kernel constant, not adapter-threaded, so it
+does not appear in this table.)
 
 **Cloudflare caveat — sizing the cap.** Raising
 `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` above what a CF isolate can actually
-fold re-opens a **killed-fold loop**: the gate passes, the fold is
-dispatched in `ctx.waitUntil`, the isolate is then killed by the CPU or
-memory wall, and there is **no in-band backoff** — the fold never
-reports its own death, so the next write tries again. On Cloudflare,
-prefer **upgrading the plan tier** over raising the cap past what the
-isolate can fold. And note that on CF **paid** the wall is ~128 MB
-*memory*, not the 30 s *CPU* operators tend to reason about — size the
-cap to **memory**, not CPU.
+rebuild re-opens a **killed-rebuild loop**: the gate passes, the rebuild
+is dispatched in `ctx.waitUntil`, the isolate is then killed by the CPU
+or memory wall, and there is **no in-band backoff** — the rebuild never
+reports its own death (there is **no lease metric**; the lease is
+deferred), so the next write tries again and the snapshot silently never
+lands.
+
+This is no longer *fully* silent, however: the CF adapter
+`console.warn`s **once at handler init** when
+`BAERLY_MAINTENANCE_MAX_FOLD_BYTES > CF_FREE_MAX_SAFE_FOLD_BYTES`
+(1 MiB) — the largest snapshot a free isolate can one-shot-rebuild under
+the ~10 ms budget. Treat that warn as "you have asked for a rebuild this
+isolate may not survive." There is still no *runtime* metric for the
+kill itself; watch **snapshot age** (`baerly inspect`) and **object
+count** for a rebuild that keeps not landing.
+
+Safe remedies, in order of preference:
+
+- **Cloudflare paid** — raised CPU limits; the wall becomes ~128 MB
+  *memory*, not the 30 s *CPU* operators tend to reason about, so size
+  the cap to **memory**, not CPU.
+- **Serverful Node** — no per-request CPU/subrequest cap; bounded only
+  by host RAM. Raise the env cap freely.
+- **Chunked snapshots** — a future follow-up (multi-level L0..L9 rebuild
+  that never holds the whole snapshot resident) would lift the memory
+  wall without a wire change. **Not yet shipped.**
+
+On Cloudflare, prefer **upgrading the plan tier** over raising the cap
+past what the isolate can rebuild.
 
 ## How to read your tier
 
 `baerly inspect <collection>` reports the current snapshot size **and**
 the log-tail size; `baerly admin usage` reports writes/min against the
-M-size ceiling. The number that decides whether folds keep running is
-the **estimate** (`snapshot + tail`), so check both: a small snapshot
-with a large tail is still a large fold (see
-[tail churn](#a-caveat-tail-churn-is-fold-cost-not-data-growth)).
+M-size ceiling. The number that decides whether rebuilds keep running is
+the **snapshot** (`snapshot_bytes` against `C`, `snapshot_rows` against
+`E`) — **not** the tail. A large tail is no longer a problem: it drains
+incrementally (see
+[tail churn](#a-caveat-tail-churn-now-drains--it-is-not-a-graduation-signal)).
 Compare the snapshot against the
 [auto-maintained ceiling](#the-auto-maintained-snapshot-ceiling)
-(~256 KB at the defaults) and the estimate against `C` / the
-[per-tier table](#per-tier-bounds) to know which tier you're in and how
-much headroom remains before the next graduation.
+(`S_max = C`, ~512 KB at the defaults — or 2048 rows, whichever trips
+first) and against the [per-tier table](#per-tier-bounds) to know which
+tier you're in and how much headroom remains before the next
+graduation.
 
 ## See also
 

@@ -2,7 +2,7 @@
 title: Product thesis
 audience: product
 summary: Why Baerly exists, what it is, and what it deliberately is not.
-last-reviewed: 2026-05-29
+last-reviewed: 2026-05-31
 tags: [positioning, product]
 related: [cost-model.md, "../contributing/conventions/change-discipline.md"]
 ---
@@ -198,14 +198,15 @@ There is no runtime. None. And there is no scheduler either.
 
 Every coordination decision — fencing, conflict resolution, atomic commit,
 log emission, index maintenance, garbage collection, compaction —
-completes within the lifetime of a single HTTP request, write or read.
+completes within the lifetime of a single write request (reads never tick).
 The kernel holds no in-memory state that's load-bearing for correctness;
 a cold start reads correctly the same as a warm one. The only persistent
 component is the bucket. **No cron, no sidecar, no `setInterval`, no
 scheduled handler is required for correctness.** Maintenance runs
-opportunistically inline on whatever traffic the bucket sees — writes
-and reads both — gated by a size-ratio threshold so idle buckets pay
-zero. The pattern is PostgreSQL HOT pruning generalized to object storage:
+opportunistically inline on the write path — **reads are pure; they
+never tick** — gated by a size-ratio threshold so idle buckets pay
+zero. Keeping reads pure is exactly what preserves the published
+idle-reader cost bound. The pattern is PostgreSQL HOT pruning generalized to object storage:
 cheap gate on hot-path operations, bounded work when the gate fires, no
 operator chore to schedule it. Users who *want* batched maintenance
 windows can invoke `runScheduledMaintenance` from their own scheduler —
@@ -230,8 +231,8 @@ Each design choice falls out of a specific criterion above. Built
 like git: content-addressed documents, immutable log entries, and a
 single CAS-advanced pointer to HEAD.
 
-- **Idle → zero.** Baerly is a ~100 KB gzipped TypeScript library on
-  Cloudflare Workers (~155 KB gzipped on Node).
+- **Idle → zero.** Baerly is a ~110 KB gzipped TypeScript library on
+  Cloudflare Workers (~160 KB gzipped on Node).
   Your Worker (or Node process) imports it directly. No binary, no
   separate process, no pool / cache / leader. The kernel is
   stateless: ~8 µs router dispatch, then the 5–50 ms waiting on S3,

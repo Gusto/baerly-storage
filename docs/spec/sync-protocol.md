@@ -262,7 +262,7 @@ The algorithm runs once per refresh — initiated by a read
 	- See [`packages/server/src/query.ts`](../packages/server/src/query.ts).
 5. json-merge-patch all `operations` with `operations.timestamp - lag > latest_state.timestamp` in order into  `latest_state`
 	- See the row-fold loop in [`packages/server/src/query.ts`](../packages/server/src/query.ts).
-6. garbage collect entries with `timestamp - lag < latest_state`
+6. on a **write** refresh only, opportunistically garbage-collect entries with `timestamp - lag < latest_state` (reads are pure and skip this step)
 	- See [`packages/server/src/gc.ts`](../packages/server/src/gc.ts) and [`packages/server/src/compactor.ts`](../packages/server/src/compactor.ts).
 7. return `latest_state` to the caller (the read or write that triggered the refresh)
 

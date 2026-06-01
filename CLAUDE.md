@@ -400,12 +400,21 @@ auto-load on matching edits and point at the same files.
   "Just a Bucket" (thesis criterion #6, [thesis.md](docs/about/thesis.md#what-prototype-tier-storage-needs)).
   Scheduled cron is a *user-opt-in* acceleration via the exported
   `runScheduledMaintenance` SDK, never a default and never a requirement.
-  Today the default scaffold runs **no** automatic maintenance: neither
-  reads nor writes tick, CF scaffolds ship no `triggers.crons`, and the
-  Node adapter's opt-in `opts.maintenance` `setInterval` is unwired by
-  default — so `runScheduledMaintenance` is the only maintenance trigger
-  that exists. (An in-band, write-triggered design — writes tick, reads
-  stay pure — is under design but not yet landed.) Anti-precedent:
+  **In-band write-tick maintenance is the sanctioned default and it
+  SATISFIES this doctrine** (zero operator infrastructure): writes
+  opportunistically tick — a budgeted `runGc` slice, then a go/no-go
+  fold bounded by a static two-way snapshot ceiling (`C` bytes AND `E`
+  rows); Cloudflare relocates the fold past the response via
+  `ctx.waitUntil`, everywhere else runs inline. **Reads are pure — they
+  never tick.** No timer, no `setInterval`, no sweep thread, no lease, no
+  environment-divergent behavior, no operator cron, no app-plane knob —
+  the only operator surface is the `BAERLY_MAINTENANCE_*` env vars read
+  by the adapters. `runBoundedMaintenance`
+  (`packages/server/src/maintenance.ts`) is the runner; the in-band tick
+  and the opt-in `runScheduledMaintenance` are the two maintenance
+  triggers that exist. The anti-pattern below still stands — don't
+  require *operator-installed* scheduling; in-band is the sanctioned
+  shape that needs none. Anti-precedent:
   Cassandra's `read_repair_chance` (removed in 4.0,
   [CASSANDRA-13910](https://issues.apache.org/jira/browse/CASSANDRA-13910)) —
   unbounded probabilistic on-request maintenance is harmful; bounded under

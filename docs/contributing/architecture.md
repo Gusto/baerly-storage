@@ -2,7 +2,7 @@
 title: Architecture overview
 audience: coder
 summary: Module dependency graph and lifecycle of db.collection(...).insert().
-last-reviewed: 2026-05-28
+last-reviewed: 2026-05-31
 tags: [architecture, lifecycle, module-map]
 related: ["../spec/sync-protocol.md", extending.md, features.md]
 ---
@@ -34,7 +34,7 @@ part is not the kernel; it is shaping the system so the public API
 stays small enough that an LLM can use it from `.d.ts` alone (see
 [ADR-002](../adr/002-api-surface-lock.md)).
 
-Bundle sizes set the scope: ~100 KB gzipped on Cloudflare Workers, ~155 KB gzipped on Node, ~5 KB gzipped browser client. The whole public API surface fits in a single 850-line `dist/API.md`.
+Bundle sizes set the scope: ~110 KB gzipped on Cloudflare Workers, ~160 KB gzipped on Node, ~5 KB gzipped browser client. The whole public API surface fits in a single ~1000-line `dist/API.md`.
 
 ## Runtime model
 
@@ -48,14 +48,17 @@ requests, and no in-memory state from one request is load-bearing
 for the next: the next request re-reads `current.json` from the
 bucket.
 
-The cron path has the same shape, triggered by the platform's cron
-scheduler rather than HTTP. The entry point is
-[`runScheduledMaintenance`](../../packages/server/src/maintenance.ts),
-which runs one compaction + GC pass and returns. The pass is sized
-to fit inside the platform's subrequest budget — Cloudflare
-Workers' 50-subrequest limit is the tightest target — so larger
-backlogs are paced across multiple cron ticks rather than spilling
-into a long-lived process. The rationale for this design choice is in
+Maintenance has the same shape, but it is **triggered in-band on
+the write path**, not by a scheduler. After a successful commit
+the writer dispatches a bounded maintenance pass (see
+[the maintenance subsection](#after-the-write--the-in-band-maintenance-tick)
+below). The pass is sized to fit inside the platform's subrequest
+budget — Cloudflare Workers' 50-subrequest limit is the tightest
+target — so larger backlogs drain across many write-ticks rather
+than spilling into a long-lived process. The opt-in
+[`runScheduledMaintenance`](../../packages/server/src/maintenance.ts)
+SDK can still be driven from a cron trigger, but it is not the
+default and not required. The rationale is in
 [ADR-004](../adr/004-ephemeral-coordination.md).
 
 ## Module dependency graph
@@ -168,17 +171,44 @@ until new entries arrive (or the long-poll deadline elapses).
 The protocol-level theory lives in
 [spec/sync-protocol.md](../spec/sync-protocol.md).
 
-### After the write — the maintenance loop
+### After the write — the in-band maintenance tick
 
-Once the insert lands, durability + space reclamation happen out
-of band. `runScheduledMaintenance` in
-`packages/server/src/maintenance.ts` composes two passes over the
-collection: `compact()` (`packages/server/src/compactor.ts`) folds
-adjacent log entries into checkpoints and advances
-`log_seq_start`, and `runGc()` (`packages/server/src/gc.ts`)
-deletes content bodies and log entries no longer reachable from
-any live row set or fence epoch. See "Storage layout in the
-bucket" below for the on-disk shape these passes produce.
+Durability + space reclamation happen **in-band on the write
+path**, from a **single trigger site**: the writer's post-CAS
+commit point (`packages/server/src/writer.ts`). After the commit
+lands, the writer reads a per-request `MaintenanceDispatch` off
+the observability context (`getCurrentContext()?.maintenance`,
+set by the adapter) and calls `runBoundedMaintenance`
+(`packages/server/src/maintenance.ts`). **Reads are pure — they
+never tick.** A bare `Db.create(...)` maintains out of the box
+once enough writes accrue; there is no `setInterval`, no cron, no
+operator scheduler.
+
+The bounded pass composes the two existing primitives:
+
+- `runGc()` (`packages/server/src/gc.ts`) — the two-phase
+  mark/sweep into `gc/pending.json`, **budgeted** per tier
+  (`WRITE_TICK_GC_MAX_MARKS` / `..._SWEEPS`) and run on its
+  **own write-count cadence** (`WRITE_TICK_GC_INTERVAL`,
+  boundary-crossing) **decoupled from folds**. It deletes content
+  bodies and log entries no longer reachable from any live row
+  set or fence epoch.
+- `compact()` (`packages/server/src/compactor.ts`) — folds a
+  **sliced** tail (`maxEntriesPerRun`) into the snapshot and
+  advances `log_seq_start`. The unsliceable snapshot rebuild is
+  gated by a **static two-way ceiling** (`snapshot_bytes <= C`
+  AND `snapshot_rows <= E`), overridable by
+  `BAERLY_MAINTENANCE_MAX_FOLD_BYTES`.
+
+The fold's pointer advance is a **full-fence CAS**. A lost fold
+is abandoned (**no lease**); its orphan snapshot is reclaimed by
+`runGc` past the grace window. **Dispatch is by capability:**
+Cloudflare relocates the fold past the response via
+`ctx.waitUntil`; everywhere else it runs inline
+(`dispatchInlineAwaited`). See
+[graduation.md](../about/graduation.md) for the per-tier envelope
+and ceiling math, and "Storage layout in the bucket" below for
+the on-disk shape these passes produce.
 
 ## Storage seam
 
@@ -279,5 +309,8 @@ Compaction (`packages/server/src/compactor.ts`) folds adjacent log
 entries into checkpoints and advances `log_seq_start`. GC
 (`packages/server/src/gc.ts`) deletes content bodies and log entries
 that are no longer reachable from any live row set or fence epoch.
-Both are driven by `runScheduledMaintenance`
-(`packages/server/src/maintenance.ts`).
+Both are driven in-band on the write path by
+`runBoundedMaintenance` (`packages/server/src/maintenance.ts`);
+the `runScheduledMaintenance` SDK is an opt-in alternative
+trigger. See
+[After the write — the in-band maintenance tick](#after-the-write--the-in-band-maintenance-tick).

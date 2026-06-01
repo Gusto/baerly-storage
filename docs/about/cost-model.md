@@ -2,9 +2,9 @@
 title: Cost model
 audience: product
 summary: Per-line-item rates, write-amp meter, compression posture.
-last-reviewed: 2026-05-28
+last-reviewed: 2026-05-31
 tags: [cost, pricing, operations]
-related: [pricing-log.md, thesis.md]
+related: [pricing-log.md, thesis.md, graduation.md]
 ---
 
 # Cost model
@@ -68,6 +68,50 @@ verified in CI:
   expectation is exactly zero — readers walk `current.json` plus the
   snapshot plus the live-tail log via deterministic GETs, never
   LIST.
+
+### Maintenance is write-driven; reads are pure
+
+The idle-reader bound holds because **maintenance ticks only on
+the write path** — a read does zero maintenance work
+([ADR-004](../adr/004-ephemeral-coordination.md),
+[graduation.md](graduation.md)). The cost consequences:
+
+- **A read-only bucket pays a bounded ≤ ~1× tail replay per read
+  *while folds succeed*.** At the default `TARGET_RATIO = 1.0` the
+  live tail stays within ~1× the snapshot, so a reader replays at
+  most about one snapshot's worth of log entries on top of the
+  snapshot. Above `S_max` (the snapshot ceiling `C` / `E`) the
+  fold defers and the **tail grows unbounded** — read cost climbs
+  with every write since the last fold. That is the graduation
+  cliff, not steady state.
+- **An over-ceiling bucket defers ~free.** The defer decision is a
+  zero-storage-op projection over `current.json` already in scope,
+  so a deferring collection adds no Class A ops beyond its normal
+  writes (plus the rate-limited graduation `console.warn`).
+- **Inline-Node fold latency is I/O-dominated, not CPU-dominated.**
+  A fold's wall-clock is roughly
+  `⌈tail / MAX_PARALLEL_LOG_READS⌉` storage round-trips (the
+  log-tail GETs are already issued concurrently, capped at
+  `MAX_PARALLEL_LOG_READS = 16`); the snapshot ceiling bounds
+  CPU/memory, **not** the round-trip count. A future serverful
+  post-response dispatch would move this off the write's critical
+  path entirely.
+- **Node worst case = a fold *plus* a full GC pass on one write.**
+  Node runs `phasesPerTick: "both"`, so a single boundary-crossing
+  write can pay both a fold slice and a GC pass. The combined cost
+  is a bounded p99 latency spike that scales with the moderate,
+  latency-budgeted `NODE_MAINTENANCE_*` caps (fold 200 / marks 200
+  / sweeps 100). Budget for the **combined** number, not the fold
+  alone; a future post-response dispatch removes the spike.
+- **Seed-then-idle orphan residual (a named envelope boundary).**
+  A bucket bulk-seeded (e.g. `admin restore`) and then left idle
+  within the 7-day GC grace window carries a **bounded,
+  never-reclaimed orphan pile**: reads are pure, so with no further
+  writes nothing ticks and `runGc` never re-runs to sweep the
+  marked orphans. This is **irreducible under reads-pure**, bounded
+  by the import size, and reclaimed on demand by the opt-in
+  `runScheduledMaintenance` SDK. It is a known boundary of the
+  in-band model, not a leak.
 
 Why a published ceiling? Two failure modes shape it:
 
