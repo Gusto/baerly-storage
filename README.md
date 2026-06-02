@@ -56,6 +56,30 @@ const { rows } = useLiveQuery<Ticket>({
 });
 ```
 
+## Cheat sheet
+
+```ts
+// reads — Collection or, after a modifier, Query
+db.collection("tickets").get(id);                       // by id
+db.collection("tickets").where({ status: "open" }).all();
+db.collection("tickets").where(q => q.gte("count", 1)).count();
+
+// writes — by id on Collection, bulk on Query
+db.collection("tickets").insert({ status: "open", title: "ship it" });
+db.collection("tickets").update(id, { status: "closed" });   // merge-patch
+db.collection("tickets").where({ status: "closed" }).delete();
+```
+
+| | |
+|---|---|
+| **Verbs** | `first` `all` `count` `get` · `insert` `update` `replace` `delete` |
+| **Modifiers** | `where` `order` `limit` |
+| **Operators** | `eq` `gt` `gte` `lt` `lte` `in` |
+| **Errors** | one `BaerlyError`, discriminate by `.code` (`Conflict`, `NotFound`, `SchemaError`, …) |
+
+Full reference: [`docs/guide/cheatsheet.md`](./docs/guide/cheatsheet.md), or
+`cat node_modules/@gusto/baerly-storage/dist/API.md` in an installed app.
+
 ## Why?
 
 - **An API an LLM can use first try.** The whole public surface fits in
@@ -89,7 +113,7 @@ For a runnable multi-tab demo see [`examples/react-node/`](./examples/react-node
 - 🧭 **How it works** — [`docs/about/how-it-works.md`](./docs/about/how-it-works.md) (the plain-language mental model — bucket + one atomic pointer flip)
 - 🧱 **Product thesis** — [`docs/about/thesis.md`](./docs/about/thesis.md)
 - 🏗️ **Architecture** — [`docs/contributing/architecture.md`](./docs/contributing/architecture.md)
-- 🔧 **Embed by hand** — [`docs/guide/embed.md`](./docs/guide/embed.md) (drop baerly into any existing Node app in ~30 lines)
+- 🔧 **Embed by hand** — [`packages/server/API.md`](./packages/server/API.md) (the embed-by-hand + custom-routes recipes — `baerlyNode().fetch` is the canonical shape; ships as `dist/API.md` in the package)
 
 ## Where things live
 

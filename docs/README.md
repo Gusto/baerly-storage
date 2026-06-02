@@ -27,6 +27,7 @@ client-fetch wrapping recipes, and the trusted-fields recipe. The
 files below cover what doesn't fit there: cross-cutting
 invariants, operator runbooks, and target-specific bolt-ons.
 
+- `guide/cheatsheet.md` — One-screen quick reference: verbs, modifiers, errors, and the HTTP wire. The thing to show someone in 30 seconds; the full surface stays in dist/API.md.
 - `guide/add-to-existing-cf-worker.md` — One-command bolt-on for an existing `wrangler create` project — `pnpm create @gusto/baerly-storage@latest .` detects wrangler.jsonc, patches it, prints the worker-entry snippet.
 - `guide/auth.md` — The `config.auth` graduated postures and the no-built-in-authorization caveat. Preset reference and Verifier-shape rationale live elsewhere.
 - `guide/backups.md` — Daily NDJSON dump with retention rotation; restoring from any dump file.
