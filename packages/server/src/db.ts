@@ -462,9 +462,7 @@ const assertKeySegment = (value: string, role: string, verb: string): void => {
       `${verb}: "/" is reserved as the key-segment separator (got ${role}=${JSON.stringify(value)})`,
     );
   }
-  // Deliberately applied to ALL key segments (app, tenant, collection),
-  // not only collections — one consistent namespace reservation, safe
-  // because the cordon's `_v<N>` prefix could appear at any key-segment
-  // position.
+  // Applied to ALL key segments (app, tenant, collection) — one
+  // consistent leading-`_` reservation (ADR-007).
   assertNameNotReserved(value, verb);
 };

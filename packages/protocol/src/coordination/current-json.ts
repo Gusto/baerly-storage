@@ -422,19 +422,9 @@ const encodeJson = (json: CurrentJson): Uint8Array => encodeJsonBytes(json);
 
 /**
  * Runtime guard for `parsed` to be a {@link CurrentJson}. Throws
- * `BaerlyError{code:"InvalidResponse"}` rather than coercing — readers
- * never silently accept an unknown shape.
- *
- * **Tolerant reader / Tier-1 evolution rule** (ADR-007):
- * - Unknown keys on a current.json object are silently **ignored** — this
- *   function checks only the fields it knows about. That property enables
- *   the "additive-optional, no bump" (Tier 1) evolution move: a new writer
- *   can add an optional field with a safe default; an old reader ignores it
- *   and still produces a valid {@link CurrentJson}.
- * - If a change requires a NEW REQUIRED field, use the other move (Tier 2):
- *   bump `schema_version` so old readers reject the new generation via the
- *   version guard below, rather than adding unknown-key rejection here.
- * - See {@link docs/adr/007-layout-versioning-cordon.md} for the full rule.
+ * `BaerlyError{code:"InvalidResponse"}` rather than coercing. Tolerant
+ * reader: unknown keys ignored, new required fields bump
+ * `schema_version` (move (b), ADR-007).
  */
 const assertCurrentJson = (parsed: unknown, key: string): CurrentJson => {
   if (parsed === null || typeof parsed !== "object") {

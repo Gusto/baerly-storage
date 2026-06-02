@@ -76,17 +76,11 @@ const INDEX_NAME_RE = /^[a-z][a-z0-9_]*$/;
 const B32_ALPHABET = "0123456789abcdefghijklmnopqrstuv";
 
 /**
- * Reject malformed {@link IndexDefinition} shapes synchronously.
- * Thrown at writer construction so a config typo trips before any
- * write lands.
+ * Reject malformed {@link IndexDefinition} shapes synchronously, at
+ * writer construction. See docs/adr/007-layout-versioning-cordon.md.
  *
- * @throws BaerlyError code="InvalidConfig" — `name` is in the
- *   system-reserved leading-`_` namespace (same contract as a
- *   reserved collection name; see
- *   docs/adr/007-layout-versioning-cordon.md).
- * @throws BaerlyError code="SchemaError" — `name` is malformed (doesn't
- *   match `/^[a-z][a-z0-9_]*$/`); `on` is the empty string or empty
- *   array.
+ * @throws BaerlyError code="InvalidConfig" — reserved leading-`_` `name`.
+ * @throws BaerlyError code="SchemaError" — `name` fails the regex, or `on` is empty.
  */
 export const validateIndexDefinition = (def: IndexDefinition): void => {
   assertNameNotReserved(def.name, "index.name");

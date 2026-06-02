@@ -31,23 +31,15 @@ import type { PredicateWire } from "./query/wire.ts";
  * `collections.<name>.indexes[]` and is threaded through
  * `Writer` via `WriterOptions.indexes`.
  *
- * Validated synchronously by `validateIndexDefinition`
- * (in `@baerly/server`) at writer construction before the first
- * commit: a reserved leading-`_` name throws
- * `BaerlyError{code: "InvalidConfig"}` (see
- * docs/adr/007-layout-versioning-cordon.md), while a malformed name
- * or empty `on` throws `BaerlyError{code: "SchemaError"}`.
+ * Validated synchronously by `validateIndexDefinition` (in
+ * `@baerly/server`) at writer construction — see `name` below.
  */
 export interface IndexDefinition {
   /**
-   * Stable path-safe identifier. Must match `/^[a-z][a-z0-9_]*$/`
-   * — used directly as a key segment under
-   * `<logPrefix>/index/<name>/...`.
-   *
-   * A name in the system-reserved leading-`_` namespace throws
-   * `BaerlyError{code:"InvalidConfig"}` (see
-   * docs/adr/007-layout-versioning-cordon.md); a malformed name that
-   * fails the regex throws `BaerlyError{code:"SchemaError"}`.
+   * Stable path-safe identifier, used directly as a key segment under
+   * `<logPrefix>/index/<name>/...`. Must match `/^[a-z][a-z0-9_]*$/`.
+   * A reserved leading-`_` name throws `InvalidConfig`; a malformed
+   * name throws `SchemaError`. See docs/adr/007-layout-versioning-cordon.md.
    */
   readonly name: string;
 
