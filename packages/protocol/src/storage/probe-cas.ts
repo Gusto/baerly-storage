@@ -59,6 +59,7 @@ export const probeCas = async (
 
     // ── Check 1: a stale ifMatch must be rejected. ──────────────────
     try {
+      // Stryker disable next-line StringLiteral: body content is irrelevant to CAS probe; only the conditional header is tested
       await storage.put(key, enc.encode("v2"), { ifMatch: '"baerly-cas-probe-stale"', signal });
       checks.push({
         name: "ifMatch-stale",
@@ -84,6 +85,7 @@ export const probeCas = async (
 
     // ── Check 2: ifNoneMatch:"*" over an existing key must reject. ──
     try {
+      // Stryker disable next-line StringLiteral: body content is irrelevant to CAS probe; only the conditional header is tested
       await storage.put(key, enc.encode("v3"), { ifNoneMatch: "*", signal });
       checks.push({
         name: "ifNoneMatch-exists",
