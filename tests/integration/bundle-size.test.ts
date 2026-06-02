@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { gzipSync } from "node:zlib";
+import { transformSync } from "esbuild";
 import { describe, expect, test } from "vitest";
 import { formatBundleSizeLine } from "../helpers/bundle-size-report.ts";
 
@@ -33,11 +34,26 @@ import { formatBundleSizeLine } from "../helpers/bundle-size-report.ts";
 // budget the full transitive closure, not just the entry file, because
 // that's what the consumer's bundler pulls in.
 //
-// Budgets cover BOTH unminified raw bytes AND gzipped bytes:
-//   - raw — what the parser sees (cold-start cost, esp. on Workers)
-//   - gz  — what the wire / CDN cache sees (consumer-bundler-agnostic)
-// Consumer bundlers minify on top of this; minified+gzipped is a
-// future addition (see follow-up tickets in the plan).
+// Budgets cover THREE axes. The library ships UNMINIFIED (rolldown,
+// no minify step), and a consumer's bundler re-minifies before it
+// reaches production — so the unminified numbers are NOT what a
+// consumer actually pays. They are regression DIFF DIAGNOSTICS; the
+// minified axis is the consumer-facing cost:
+//   - raw    — unminified bytes. A regression diagnostic + cold-start
+//              CPU proxy (the isolate parses the un-gzipped script).
+//   - gz     — gzip of the unminified bytes. Also a diagnostic: the
+//              raw↔gz gap distinguishes duplicated boilerplate (gzip
+//              dedups it, so raw climbs but gz barely moves) from
+//              genuinely new code (both axes climb together). Not the
+//              shipped cost — the consumer minifies first.
+//   - min+gz — esbuild-minify each chunk, then gzip the concatenation.
+//              This is the CONSUMER-FACING cost number: the closest
+//              proxy to the artifact a consumer's bundler ships. It is
+//              a CONSERVATIVE UPPER BOUND — per-chunk syntax minify
+//              only, no cross-module tree-shaking / scope-hoisting — so
+//              the real consumer cost is ≤ this number. See the note in
+//              `measureClosure`.
+// Only entries that declare `minGz` assert the third axis.
 //
 // Budgets are set to the smallest whole-KiB value (`N * 1024`) that
 // clears the measured size with a small headroom (~1–2 KiB / ~0.5–1%),
@@ -68,6 +84,13 @@ interface Budget {
   raw: number;
   /** Max gzipped bytes for the entry's transitive closure. */
   gz: number;
+  /**
+   * Max minified+gzipped bytes for the entry's transitive closure —
+   * the consumer-facing artifact proxy. When set, the test minifies
+   * each chunk with esbuild then gzips the concatenation, and asserts
+   * the result stays under this ceiling.
+   */
+  minGz?: number;
   /**
    * Skip this entry's check pending follow-up. Tracked in
    * `docs/followups/first-touch-dx.md`.
@@ -202,7 +225,9 @@ const BUDGETS: readonly Budget[] = [
   //     +2 over the prior 64 KiB ceiling on main (pre-existing drift) and
   //     this change widened it. Rebaseline raw +1 KiB and gz +1 KiB
   //     (owner-accepted; user chose rebaseline). See docs/adr/007-layout-versioning-cordon.md.
-  { entry: "index.js", raw: 210 * 1024, gz: 65 * 1024 },
+  //   → +min+gz axis 19 KiB (2026-06-01): consumer-facing artifact proxy
+  //     baselined / measured 17980. See the file header on what min+gz is.
+  { entry: "index.js", raw: 210 * 1024, gz: 65 * 1024, minGz: 19 * 1024 },
   // The three auth verifier factories (bearerJwt, sharedSecret,
   // cloudflareAccess) plus the transitive jose closure pulled in by
   // bearerJwt's createRemoteJWKSet + jwtVerify. Adding a fourth
@@ -218,7 +243,9 @@ const BUDGETS: readonly Budget[] = [
   //     messages + fixed-prefix short-circuit in the inner verifier).
   //     Closes the single-tenant CF Access gap where vanilla JWTs
   //     ship `sub`/`email` but no `tenant` claim. Measured: 54746 raw.
-  { entry: "auth.js", raw: 54 * 1024, gz: 15 * 1024 },
+  //   → +min+gz axis 10 KiB (2026-06-01): consumer-facing artifact proxy
+  //     baselined / measured 8909.
+  { entry: "auth.js", raw: 54 * 1024, gz: 15 * 1024, minGz: 10 * 1024 },
   // `BaerlyAppConfig` types + the identity `defineConfig` helper.
   // No runtime closure — the types erase entirely and the function
   // is `<C>(c: C) => c`. Measured: 162 raw / 141 gz. Budget is a
@@ -279,7 +306,9 @@ const BUDGETS: readonly Budget[] = [
   //     closure) ships un-stripped. Measured 328788 raw / 96357 gz — gz is
   //     comfortably UNDER the 95 KiB ceiling; only raw crosses (+84 over the
   //     prior 321 KiB). Rebaseline raw +1 KiB. See docs/adr/007-layout-versioning-cordon.md.
-  { entry: "http.js", raw: 322 * 1024, gz: 95 * 1024 },
+  //   → +min+gz axis 34 KiB (2026-06-01): consumer-facing artifact proxy
+  //     baselined / measured 33029.
+  { entry: "http.js", raw: 322 * 1024, gz: 95 * 1024, minGz: 34 * 1024 },
   // Observability primitives — ObservabilityContext, the
   // request-scoped MetricsRecorder, LogTape config + the
   // JSON sink only (the pretty sink + picocolors now live in
@@ -313,7 +342,9 @@ const BUDGETS: readonly Budget[] = [
   //     the 91446 measured (93184 ≥ 91446, ≈1.7 KiB / 1.9% headroom),
   //     per the "smallest whole-KiB that clears" rule. gz (24835) is
   //     left at 25 KiB; its 765 B slack is already tight.
-  { entry: "observability.js", raw: 91 * 1024, gz: 25 * 1024 },
+  //   → +min+gz axis 12 KiB (2026-06-01): consumer-facing artifact proxy
+  //     baselined / measured 11284.
+  { entry: "observability.js", raw: 91 * 1024, gz: 25 * 1024, minGz: 12 * 1024 },
   // Maintenance loop — compactor + GC + sweep driver. Pulls
   // compactor.ts + gc.ts + the observability subgraph
   // transitively (storage decorator + logger config + canonical
@@ -342,7 +373,9 @@ const BUDGETS: readonly Budget[] = [
   //     the logtape subgraph; it no longer does). Final measured: 108893
   //     raw / 32917 gz. Tightened to the same small-headroom convention as
   //     every other entry — no loose ceilings.
-  { entry: "maintenance.js", raw: 108 * 1024, gz: 33 * 1024 },
+  //   → +min+gz axis 11 KiB (2026-06-01): consumer-facing artifact proxy
+  //     baselined / measured 9919.
+  { entry: "maintenance.js", raw: 108 * 1024, gz: 33 * 1024, minGz: 11 * 1024 },
   // Cloudflare Workers adapter — re-exports the kernel barrel
   // (Db, Writer, etc.) plus the R2-binding `Storage` impl
   // and the `baerlyCloudflare` helper. Aggregator: closure
@@ -398,7 +431,16 @@ const BUDGETS: readonly Budget[] = [
   //     112 KiB ceiling on main (pre-existing drift) and this change widened
   //     it. Rebaseline raw +1 KiB and gz +1 KiB (owner-accepted; user chose
   //     rebaseline). See docs/adr/007-layout-versioning-cordon.md.
-  { entry: "cloudflare.js", raw: 378 * 1024, gz: 113 * 1024 },
+  //   → +min+gz axis 40 KiB (2026-06-01): consumer-facing artifact proxy
+  //     baselined / measured 39317. For this entry the compressed axis
+  //     (`gz` / `min+gz`) is the one that maps to the real Cloudflare
+  //     Workers compressed script-size limit (1 MB free / 10 MB paid) —
+  //     that is the cliff a Worker actually hits at deploy time. `raw` is
+  //     a cold-start CPU proxy (the isolate parses the un-gzipped script),
+  //     NOT "what the parser sees" universally — a consumer's own bundler
+  //     re-minifies before deploy, so min+gz is the closest proxy to the
+  //     bytes Cloudflare weighs against the limit.
+  { entry: "cloudflare.js", raw: 378 * 1024, gz: 113 * 1024, minGz: 40 * 1024 },
   // Node adapter — re-exports the kernel barrel plus
   // `s3HttpStorage`, `localFsStorage`, `memoryStorage`,
   // `localCacheStorage`, and the `baerlyNode` Fetch-API factory.
@@ -514,7 +556,9 @@ const BUDGETS: readonly Budget[] = [
   //     Measured: 15334 raw / 5187 gz — gz actually dropped
   //     vs. the previous budget (gzip dedup over the new wire-form
   //     identifiers).
-  { entry: "client.js", raw: 16 * 1024, gz: 6 * 1024 },
+  //   → +min+gz axis 3 KiB (2026-06-01): consumer-facing artifact proxy
+  //     baselined / measured 2144.
+  { entry: "client.js", raw: 16 * 1024, gz: 6 * 1024, minGz: 3 * 1024 },
   // React bindings for `BaerlyClient` (provider + hooks). React
   // itself is external, so the closure stays tiny.
   // Budget history:
@@ -549,7 +593,9 @@ const BUDGETS: readonly Budget[] = [
   //     from the closure (signature now comes from chain + deps;
   //     predicate values flow through deps). Measured: 25063 raw /
   //     8534 gz — net +2541 raw / +1272 gz vs. pre-collapse.
-  { entry: "client-react.js", raw: 26 * 1024, gz: 9 * 1024 },
+  //   → +min+gz axis 4 KiB (2026-06-01): consumer-facing artifact proxy
+  //     baselined / measured 3380.
+  { entry: "client-react.js", raw: 26 * 1024, gz: 9 * 1024, minGz: 4 * 1024 },
   // `@baerly/dev` surface — `LocalFsStorage`, `printDevBanner`,
   // `ensureTable`, `renderDevLanding`. NO longer an aggregator over
   // the kernel barrel: the only kernel surfaces these helpers touch
@@ -698,7 +744,12 @@ function collectClosure(entryAbs: string, seen: Set<string>): void {
   }
 }
 
-function measureClosure(entry: string): { raw: number; gz: number; files: string[] } {
+function measureClosure(entry: string): {
+  raw: number;
+  gz: number;
+  minGz: number;
+  files: string[];
+} {
   const distDir = resolve(__dirname, "../../dist");
   const entryAbs = resolve(distDir, entry);
   if (!existsSync(entryAbs)) {
@@ -709,11 +760,24 @@ function measureClosure(entry: string): { raw: number; gz: number; files: string
   const files = [...seen].toSorted();
   const raw = files.reduce((sum, f) => sum + statSync(f).size, 0);
   const gz = gzipSync(Buffer.concat(files.map((f) => readFileSync(f)))).length;
-  return { raw, gz, files: files.map((f) => f.replace(`${distDir}/`, "")) };
+  // `min+gz` minifies each chunk with esbuild (the minifier most
+  // consumer bundlers — Vite/esbuild — actually run), concatenates,
+  // then gzips. This is the consumer-facing artifact proxy: the lib
+  // ships UNMINIFIED, so neither `raw` nor unminified-`gz` is what a
+  // consumer pays once their bundler re-minifies. CONSERVATIVE UPPER
+  // BOUND: per-file `transformSync` does syntax minification per chunk
+  // but NOT the cross-module tree-shaking / scope-hoisting a real
+  // consumer bundler does, so the real shipped cost is ≤ this number.
+  // It is not the exact shipped artifact.
+  const minified = files.map(
+    (f) => transformSync(readFileSync(f, "utf8"), { loader: "js", minify: true }).code,
+  );
+  const minGz = gzipSync(Buffer.concat(minified.map((c) => Buffer.from(c)))).length;
+  return { raw, gz, minGz, files: files.map((f) => f.replace(`${distDir}/`, "")) };
 }
 
 describe("bundle size", () => {
-  for (const { entry, raw, gz, skip } of BUDGETS) {
+  for (const { entry, raw, gz, minGz, skip } of BUDGETS) {
     test.skipIf(skip)(`dist/${entry} closure stays within budget`, () => {
       const measured = measureClosure(entry);
       // Show closure composition in failure output so a regression
@@ -732,12 +796,25 @@ describe("bundle size", () => {
         budget: gz,
         chunks: measured.files,
       });
+      const minGzLine = formatBundleSizeLine({
+        entry,
+        kind: "min-gz",
+        measured: measured.minGz,
+        budget: minGz ?? 0,
+        chunks: measured.files,
+      });
       if (process.env["BUNDLE_SIZE_REPORT"]) {
         console.log(rawLine);
         console.log(gzLine);
+        if (minGz !== undefined) {
+          console.log(minGzLine);
+        }
       }
       expect(measured.raw, `${rawLine}`).toBeLessThanOrEqual(raw);
       expect(measured.gz, `${gzLine}`).toBeLessThanOrEqual(gz);
+      if (minGz !== undefined) {
+        expect(measured.minGz, `${minGzLine}`).toBeLessThanOrEqual(minGz);
+      }
     });
   }
 

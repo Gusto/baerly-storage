@@ -1,6 +1,6 @@
 export interface BundleSizeLine {
   entry: string;
-  kind: "raw" | "gz";
+  kind: "raw" | "gz" | "min-gz";
   measured: number;
   budget: number;
   chunks: readonly string[];
