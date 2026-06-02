@@ -194,7 +194,15 @@ const BUDGETS: readonly Budget[] = [
   //     UTF-8 byte-order key comparator in `MemoryStorage` (shipped in the
   //     kernel barrel) plus shared-chunk re-splitting. Measured: 213028 raw
   //     / 65102 gz. Bump raw to 209 KiB, gz to 64 KiB.
-  { entry: "index.js", raw: 209 * 1024, gz: 64 * 1024 },
+  //   → 210 KiB raw / 65 KiB gz (2026-06-01): layout-version-cordon —
+  //     reserved-`_` namespace (`names.ts` + call sites) + tolerant-reader
+  //     contract JSDoc on `assertCurrentJson`/`IndexDefinition`. Comments
+  //     are NOT stripped from the shipped bundle, so the contract docs cost
+  //     bytes on both axes (measured 214669 raw / 65783 gz). gz was already
+  //     +2 over the prior 64 KiB ceiling on main (pre-existing drift) and
+  //     this change widened it. Rebaseline raw +1 KiB and gz +1 KiB
+  //     (owner-accepted; user chose rebaseline). See docs/adr/007-layout-versioning-cordon.md.
+  { entry: "index.js", raw: 210 * 1024, gz: 65 * 1024 },
   // The three auth verifier factories (bearerJwt, sharedSecret,
   // cloudflareAccess) plus the transitive jose closure pulled in by
   // bearerJwt's createRemoteJWKSet + jwtVerify. Adding a fourth
@@ -266,7 +274,12 @@ const BUDGETS: readonly Budget[] = [
   //     Justified: same as index.js — in-band maintenance is core kernel
   //     value, statically bounded, smaller than the rejected sweep/
   //     pending_gc/lease designs. Owner-accepted (Decision D2).
-  { entry: "http.js", raw: 321 * 1024, gz: 95 * 1024 },
+  //   → 322 KiB raw / 95 KiB gz (2026-06-01): layout-version-cordon. The
+  //     tolerant-reader contract JSDoc on `assertCurrentJson` (in the http
+  //     closure) ships un-stripped. Measured 328788 raw / 96357 gz — gz is
+  //     comfortably UNDER the 95 KiB ceiling; only raw crosses (+84 over the
+  //     prior 321 KiB). Rebaseline raw +1 KiB. See docs/adr/007-layout-versioning-cordon.md.
+  { entry: "http.js", raw: 322 * 1024, gz: 95 * 1024 },
   // Observability primitives — ObservabilityContext, the
   // request-scoped MetricsRecorder, LogTape config + the
   // JSON sink only (the pretty sink + picocolors now live in
@@ -378,7 +391,14 @@ const BUDGETS: readonly Budget[] = [
   //     this bundle pulls; shared-chunk re-splitting redistributed ~1 KB
   //     raw here. Measured: 385000 raw / 114547 gz. Bump raw to 377 KiB;
   //     gz stays comfortably under 112 KiB.
-  { entry: "cloudflare.js", raw: 377 * 1024, gz: 112 * 1024 },
+  //   → 378 KiB raw / 113 KiB gz (2026-06-01): layout-version-cordon —
+  //     reserved-`_` namespace + tolerant-reader contract JSDoc in the
+  //     protocol/server closure this bundle pulls, shipped un-stripped.
+  //     Measured 386641 raw / 115250 gz. gz was already +295 over the prior
+  //     112 KiB ceiling on main (pre-existing drift) and this change widened
+  //     it. Rebaseline raw +1 KiB and gz +1 KiB (owner-accepted; user chose
+  //     rebaseline). See docs/adr/007-layout-versioning-cordon.md.
+  { entry: "cloudflare.js", raw: 378 * 1024, gz: 113 * 1024 },
   // Node adapter — re-exports the kernel barrel plus
   // `s3HttpStorage`, `localFsStorage`, `memoryStorage`,
   // `localCacheStorage`, and the `baerlyNode` Fetch-API factory.
@@ -471,7 +491,12 @@ const BUDGETS: readonly Budget[] = [
   //     Invalid-Date guard in `@baerly/adapter-node`, plus the protocol's
   //     UTF-8 byte-order comparator. Measured: 569446 raw / 165053 gz.
   //     Bump raw to 557 KiB, gz to 162 KiB.
-  { entry: "node.js", raw: 557 * 1024, gz: 162 * 1024 },
+  //   → 558 KiB raw / 162 KiB gz (2026-06-01): layout-version-cordon —
+  //     reserved-`_` namespace + tolerant-reader contract JSDoc in the
+  //     protocol/server closure, shipped un-stripped. Measured 571135 raw;
+  //     gz stays UNDER 162 KiB. Rebaseline raw +1 KiB (keeps the documented
+  //     whole-KiB headroom). See docs/adr/007-layout-versioning-cordon.md.
+  { entry: "node.js", raw: 558 * 1024, gz: 162 * 1024 },
   // Client surface — `BaerlyClient<TConfig>` + fetcher plumbing.
   // Browser/runtime-agnostic; no kernel modules in the closure.
   // Budget history:
@@ -643,7 +668,14 @@ const BUDGETS: readonly Budget[] = [
   //     comparators (`LocalFsStorage` + protocol) land in this dev-server
   //     closure; shared-chunk re-splitting added ~1.8 KB raw. Measured:
   //     577346 raw / 167755 gz. Bump raw to 565 KiB; gz stays under 164 KiB.
-  { entry: "dev-vite.js", raw: 565 * 1024, gz: 164 * 1024 },
+  //   → 566 KiB raw / 165 KiB gz (2026-06-01): layout-version-cordon —
+  //     tracks the `node.js` bump (shared adapter-node + kernel closure):
+  //     reserved-`_` namespace + tolerant-reader contract JSDoc shipped
+  //     un-stripped. Measured 579035 raw / 168027 gz. gz was already +271
+  //     over the prior 164 KiB ceiling on main (pre-existing drift); this
+  //     change kept it over. Rebaseline raw +1 KiB and gz +1 KiB
+  //     (owner-accepted; user chose rebaseline). See docs/adr/007-layout-versioning-cordon.md.
+  { entry: "dev-vite.js", raw: 566 * 1024, gz: 165 * 1024 },
 ];
 
 // Static-import specifiers only. Dynamic `import(...)` is intentionally
