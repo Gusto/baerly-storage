@@ -681,8 +681,11 @@ describe("bundle size", () => {
   //
   // For each entry we walk the static-import closure and collect every
   // NON-relative import specifier. Each must be either a Node builtin
-  // (`node:*`) or one of the four declared runtime deps. A future
-  // heavy-dep creep (e.g. an accidental `import "lodash"`) trips this.
+  // (`node:*`) or one of the four declared runtime deps. This catches a
+  // dep that regresses to a LIVE EXTERNAL (un-bundled) import — e.g. a
+  // rolldown `external`/bundling slip. A heavy dep that gets bundled
+  // INLINE won't show as a bare import here; the raw creep tripwire
+  // below is what catches that vector.
   const RUNTIME_DEP_ALLOWLIST = new Set(["aws4fetch", "fast-xml-parser", "hono", "jose"]);
   // Extract the package name from a bare specifier. `hono/tiny` →
   // `hono`; `@scope/name/sub` → `@scope/name`.
