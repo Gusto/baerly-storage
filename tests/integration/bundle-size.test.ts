@@ -716,6 +716,30 @@ describe("bundle size", () => {
     });
   }
 
+  // node.js / dev-vite.js: NOT a cost budget — server/dev surfaces
+  // never ship to a consumer. This loose raw ceiling is an inline-
+  // dep-creep tripwire (generous headroom absorbs rolldown's run-to-
+  // run variance; trips only on a gross new dependency). Live-
+  // external-import creep is caught separately by the allowlist guard.
+  //
+  // The allowlist guard above only catches a dep left as a LIVE
+  // external import. All four runtime deps are bundled INLINE into the
+  // dist, so a heavy dependency bundled INTO the closure would balloon
+  // byte count without tripping the allowlist. This raw ceiling
+  // recovers that coverage.
+  for (const { entry, raw } of [
+    { entry: "node.js", raw: 700 * 1024 },
+    { entry: "dev-vite.js", raw: 710 * 1024 },
+  ]) {
+    test(`dist/${entry} closure stays under the inline-dep-creep raw ceiling`, () => {
+      const measured = measureClosure(entry).raw;
+      expect(
+        measured,
+        `${entry} raw closure ${measured} B exceeds inline-dep-creep ceiling ${raw} B`,
+      ).toBeLessThanOrEqual(raw);
+    });
+  }
+
   // Scaffolded apps install only `baerly-storage`. `fast-xml-parser`
   // and `aws4fetch` are bundled into the published library + bin
   // chunks that use them (see `rolldown.config.ts` and
