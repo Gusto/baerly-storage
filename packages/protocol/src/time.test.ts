@@ -21,7 +21,18 @@ describe("timestamp", () => {
     ["non-integer", 1.5],
     ["out of range", 2 ** TIMESTAMP_BIT_WIDTH],
   ])("throws loud on a %s epoch instead of silently corrupting the key", (_label, epoch) => {
-    expect(() => timestamp(epoch)).toThrowError(BaerlyError);
+    // Assert code="Internal" (kills L21 StringLiteral→"") and message contains the epoch
+    // (kills L22 StringLiteral→``): checking only `toThrowError(BaerlyError)` misses both.
+    let caught: unknown;
+    try {
+      timestamp(epoch);
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(BaerlyError);
+    const err = caught as BaerlyError;
+    expect(err.code).toBe("Internal");
+    expect(err.message).toContain(String(epoch));
   });
 
   test("0 encodes the most-ancient instant (why there is no argless default)", () => {

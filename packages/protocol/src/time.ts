@@ -45,6 +45,11 @@ export const delay = (ms: number, signal?: AbortSignal): Promise<void> =>
         clearTimeout(timer);
         reject(signal.reason);
       },
+      // Stryker disable next-line BooleanLiteral,ObjectLiteral: `{ once: true }` removes the
+      // listener after the first fire. AbortController fires `abort` only once per signal, so
+      // `once: false` / `{}` produce identical observable behaviour — the listener stays attached
+      // to an already-fired signal, but calling reject on a settled Promise is a no-op. The
+      // BooleanLiteral (once:false) and ObjectLiteral ({}) mutations are genuine equivalences.
       { once: true },
     );
   });
