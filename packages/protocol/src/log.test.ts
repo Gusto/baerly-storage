@@ -71,4 +71,24 @@ describe("lsnParts", () => {
     expect(() => lsnParts("only_two")).toThrow(/invalid lsn shape/);
     expect(() => lsnParts("a_b_c_d")).toThrow(/invalid lsn shape/);
   });
+
+  test("error message includes the invalid lsn value", () => {
+    // This test ensures that the error message prefix "invalid lsn shape: "
+    // is not mutated to an empty string. If the string literal is changed to "",
+    // the error would just contain the lsn value, not the descriptive prefix.
+    expect(() => lsnParts("bad_format")).toThrow("invalid lsn shape: bad_format");
+  });
+
+  test("error has InvalidResponse code", () => {
+    // This test ensures that the error code string literal "InvalidResponse"
+    // is not mutated to an empty string. We check that the error is specifically
+    // a BaerlyError with code "InvalidResponse", not some other code.
+    try {
+      lsnParts("malformed");
+      expect.fail("should have thrown");
+    } catch (error) {
+      const err = error as any;
+      expect(err.code).toBe("InvalidResponse");
+    }
+  });
 });
