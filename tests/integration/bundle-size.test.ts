@@ -64,13 +64,15 @@ import { formatBundleSizeLine } from "../helpers/bundle-size-report.ts";
 // means the surface grew without an explicit budget bump — either
 // justify it and raise the number, or refactor behind another subpath.
 //
-// The two big Node aggregators (`node.js`, `dev-vite.js`) are NOT
-// byte-budgeted: they are server-side / dev-only and never enter a
-// consumer's app bundle, so their wire size is a cost nobody pays (and
+// The two big Node aggregators (`node.js`, `dev-vite.js`) carry no
+// consumer-cost budget: they are server-side / dev-only and never enter
+// a consumer's app bundle, so their wire size is a cost nobody pays (and
 // the rolldown chunk graph carries ~120 KiB of run-to-run raw variance
 // there). The real risk on those surfaces — a heavy runtime dep creeping
-// into the closure — is guarded by the bare-specifier allowlist test
-// below instead.
+// into the closure — is instead guarded by TWO tests below: a bare-
+// specifier allowlist (catches a dep regressing to a live external
+// import) plus a deliberately-loose raw-creep tripwire (catches a heavy
+// dep bundled inline, which the allowlist can't see).
 
 // The `baerly` CLI bin is intentionally NOT budgeted. citty-cleanup
 // lazy-loaded all 14 subcommands behind dynamic import, so the
