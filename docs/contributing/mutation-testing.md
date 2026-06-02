@@ -123,46 +123,28 @@ of a test.
 
 ## Current baseline
 
-As of 2026-06-01, the protocol kernel scores **93.04% overall** (95.13%
-counting only covered mutants), across ~1740 mutants — up from 70.44% /
-78.10%. The exact percentage drifts by a fraction of a point run-to-run as
-timeout-classified mutants shift with machine timing — treat these as a
-baseline, not a fixed target.
+As of 2026-06-01, the protocol kernel scores **100.00% overall** (100% on
+covered mutants), across ~1600 mutants — up from a 70.44% / 78.10% baseline.
+Every non-equivalent mutant is killed; genuine equivalents are documented
+in-source with `// Stryker disable next-line <MutatorName>: <reason>`. The
+exact percentage can drift by a fraction of a point run-to-run as
+timeout-classified mutants shift with machine timing — treat 100% as the
+intended steady state, and a *new* surviving mutant (one not behind a
+documented disable) as a test-quality regression to close.
 
-These seven logic-dense files were hardened to **100%** (every non-equivalent
-mutant killed; genuine equivalents documented with `// Stryker disable`):
-`query/_internals.ts`, `errors.ts`, `coordination/gc-pending.ts`,
-`constants.ts`, `query/validate.ts`, `query/satisfiable.ts`, and
-`coordination/current-json.ts`.
+Regenerate the live picture any time with `pnpm test:mutate` then
+`pnpm mutate:survivors` (expect `TOTAL Survived=0 NoCoverage=0`). When you add
+or change kernel code, run the scoped mutation on the file you touched
+(`pnpm exec stryker run --mutate "<path>"`) and kill or document any new
+survivor before merging.
 
-Remaining gaps (deferred lower-value tail, ~114 mutants) — surface them any
-time with `pnpm mutate:survivors`:
-
-- `query/matches.ts` (25), `storage/probe-cas.ts` (25),
-  `storage/memory.ts` (17), `query/normalize.ts` (15),
-  `query/builder.ts` (9), `json.ts` (7), `types.ts` (7), `time.ts` (4),
-  `query/wire.ts` (2), `app-config.ts` (1), `hashing.ts` (1), `log.ts` (1).
-
-These are starting points for raising test quality, not a gate.
-
-## Current baseline
-
-As of 2026-05-31, the protocol kernel scores **70.44% overall** (78.25%
-counting only covered mutants), across 1742 mutants. The exact percentage
-drifts by a fraction of a point run-to-run as timeout-classified mutants
-shift with machine timing — treat these as a baseline, not a fixed target.
-Lowest scorers worth attention:
-
-- `packages/protocol/src/errors.ts` — 10% (error classes are exercised
-  only incidentally; almost nothing asserts on their shape)
-- `packages/protocol/src/constants.ts` — 25% (constants are used
-  indirectly but no test asserts their specific values)
-- `packages/protocol/src/query/_internals.ts` — 47% (internal query
-  algebra helpers, partial coverage)
-- `packages/protocol/src/coordination/gc-pending.ts` — 56% (GC state
-  machine; CAS/write paths exercised only lightly at this layer)
-
-These are starting points for raising test quality, not a gate.
+> **Stale incremental cache.** `incremental: true` occasionally reports a
+> stale `Survived` for a module-level `static` mutant (a top-level
+> `const`/arrow/object evaluated at import time) whose covering tests changed.
+> If a survivor looks impossible — a constant you clearly assert on — delete
+> `reports/mutation/stryker-incremental.json` and re-run before concluding it
+> is equivalent. Do **not** suppress a static-mutant survivor without first
+> clearing the cache; that masks a killable mutant behind a false equivalence.
 
 ## Design notes
 
