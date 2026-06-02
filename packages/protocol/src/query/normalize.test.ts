@@ -86,6 +86,112 @@ describe("normalizeObject", () => {
     expectInvalidConfig(() => normalizeObject({ x: NaN }, []), "NaN");
     expectInvalidConfig(() => normalizeObject({ x: Infinity }, []), "Infinity");
   });
+
+  // formatPath: <root> vs dotted-path
+  // Each survivor group at L28-29 is killed by asserting the path portion
+  // of the error message exactly — formatPath([] ) → "<root>",
+  // formatPath(["a","b"]) → `"a"."b"` (JSON.stringify each segment, joined by ".").
+  test('formatPath produces "<root>" for an empty basePath in error messages', () => {
+    // $-key at the root: basePath=[], so formatPath([]) === "<root>"
+    expectInvalidConfig(() => normalizeObject({ $or: "x" }, []), "<root>");
+  });
+
+  test("formatPath produces a dotted-path for non-empty basePath in error messages", () => {
+    // Nested $-key: basePath=["outer"], so formatPath(["outer"]) === '"outer"'
+    expectInvalidConfig(
+      () => normalizeObject({ outer: { $and: "x" } as unknown as string }, []),
+      '"outer"',
+    );
+    // Two levels deep: the reserved key "constructor" at path ["a", "constructor"]
+    // — formatPath(["a"]) === '"a"' appears in the message
+    expectInvalidConfig(
+      () => normalizeObject({ a: { constructor: "x" } as unknown as string }, []),
+      '"a"',
+    );
+  });
+
+  test('formatPath joins segments with "." separator', () => {
+    // null at path ["a","b"]: message contains '"a"."b"'
+    expectInvalidConfig(
+      () => normalizeObject({ a: { b: null as unknown as string } }, []),
+      '"a"."b"',
+    );
+  });
+
+  test("formatPath uses JSON.stringify on each path segment", () => {
+    // A key containing special chars — path segment serialises with
+    // JSON.stringify: key with a space → "\"key with space\"".
+    // null at path ["key with space"]: message contains '"key with space"'
+    expectInvalidConfig(
+      () => normalizeObject({ "key with space": null as unknown as string }, []),
+      '"key with space"',
+    );
+  });
+
+  test("rejects unsupported primitive type (bigint) with message containing the type name", () => {
+    // Covers L86's NoCoverage block and kills the ConditionalExpression/
+    // EqualityOperator/StringLiteral mutants on that line.
+    // bigint passes null/undefined/Array/object checks but hits the
+    // t !== "string" && t !== "number" && t !== "boolean" guard.
+    const obj = { x: 42n as unknown as string };
+    try {
+      normalizeObject(obj, []);
+    } catch (error) {
+      expect(error).toBeInstanceOf(BaerlyError);
+      expect((error as BaerlyError).code).toBe("InvalidConfig");
+      expect((error as BaerlyError).message).toContain("unsupported type");
+      expect((error as BaerlyError).message).toContain('"bigint"');
+      return;
+    }
+    throw new Error("Expected BaerlyError{InvalidConfig}, none thrown");
+  });
+
+  test("string / number / boolean values do NOT hit the unsupported-type guard", () => {
+    // Kills the ConditionalExpression → true and EqualityOperator mutants
+    // (e.g. t === "boolean" would reject boolean leaves).
+    expect(normalizeObject({ a: "hello" }, [])).toEqual([{ op: "eq", field: "a", value: "hello" }]);
+    expect(normalizeObject({ a: 42 }, [])).toEqual([{ op: "eq", field: "a", value: 42 }]);
+    expect(normalizeObject({ a: true }, [])).toEqual([{ op: "eq", field: "a", value: true }]);
+    expect(normalizeObject({ a: false }, [])).toEqual([{ op: "eq", field: "a", value: false }]);
+  });
+
+  test("null specifically causes the null-branch message (not undefined)", () => {
+    // Kills the ConditionalExpression → false on L59: if the guard were
+    // disabled, null would fall through to the object branch and crash
+    // with a TypeError rather than our InvalidConfig.
+    // Also kills the inner ternary mutation (always "undefined"): the
+    // message must say "null", not "undefined".
+    try {
+      normalizeObject({ x: null as unknown as string }, []);
+    } catch (error) {
+      expect(error).toBeInstanceOf(BaerlyError);
+      expect((error as BaerlyError).code).toBe("InvalidConfig");
+      // Must say "null", not "undefined"
+      expect((error as BaerlyError).message).toContain("is null");
+      return;
+    }
+    throw new Error("Expected BaerlyError{InvalidConfig}, none thrown");
+  });
+
+  test("undefined specifically causes the undefined-branch message (not unsupported type)", () => {
+    // Kills the ConditionalExpression → false on L59 for the undefined arm:
+    // if `value === undefined` is replaced with `false`, undefined slips
+    // past the null/undefined guard and reaches the typeof check, which
+    // produces "has unsupported type" — NOT "is undefined". This test
+    // distinguishes those two error paths precisely.
+    try {
+      normalizeObject({ x: undefined as unknown as string }, []);
+    } catch (error) {
+      expect(error).toBeInstanceOf(BaerlyError);
+      expect((error as BaerlyError).code).toBe("InvalidConfig");
+      // Must say "is undefined" — the null/undefined guard message —
+      // NOT "has unsupported type" (the typeof guard message).
+      expect((error as BaerlyError).message).toContain("is undefined");
+      expect((error as BaerlyError).message).not.toContain("unsupported type");
+      return;
+    }
+    throw new Error("Expected BaerlyError{InvalidConfig}, none thrown");
+  });
 });
 
 describe("normalizePredicateArg — object form", () => {
