@@ -2,6 +2,7 @@
    primary-key field on document shapes (see `@baerly/protocol`'s
    `Collection<T>`); this test threads it through projection helpers. */
 
+import type { BaerlyError } from "@baerly/protocol";
 import { describe, expect, test } from "vitest";
 import {
   allIndexKeysFor,
@@ -221,6 +222,20 @@ describe("validateIndexDefinition", () => {
 
   test("rejects names starting with a digit", () => {
     expect(() => validateIndexDefinition({ name: "1starts", on: "x" })).toThrow(/match/);
+  });
+
+  test("index names cannot start with the reserved _ prefix (same error contract as collections)", () => {
+    let err: unknown;
+    try {
+      validateIndexDefinition({ name: "_secret", on: ["x"] });
+    } catch (error) {
+      err = error;
+    }
+    expect((err as BaerlyError).code).toBe("InvalidConfig"); // not SchemaError — unified
+    expect((err as BaerlyError).message).toMatch(/reserved for system use/);
+    // other lexical failures still SchemaError (intentional asymmetry):
+    expect(() => validateIndexDefinition({ name: "1foo", on: ["x"] })).toThrow(/SchemaError|match/);
+    expect(() => validateIndexDefinition({ name: "by_status", on: ["status"] })).not.toThrow();
   });
 
   test("rejects an empty 'on' string", () => {

@@ -50,6 +50,17 @@ describe("Db.create", () => {
       expect((error as BaerlyError).code).toBe("InvalidConfig");
     }
   });
+
+  test("collection names cannot start with the reserved _ prefix", () => {
+    const db = Db.create({ storage: new MemoryStorage(), app: "a", tenant: "t" });
+    expect(() => db.collection("_v2")).toThrow(/reserved for system use/);
+    try {
+      db.collection("_v2");
+    } catch (error) {
+      expect((error as BaerlyError).code).toBe("InvalidConfig");
+    }
+    expect(() => db.collection("notes")).not.toThrow();
+  });
 });
 
 describe("Db.create config derivation", () => {

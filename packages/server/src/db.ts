@@ -16,6 +16,7 @@ import {
   type UnboundConfig,
 } from "@baerly/protocol";
 import { collectionsToMaps } from "./config.ts";
+import { assertNameNotReserved } from "./names.ts";
 import type { CollectionReadContext } from "./query.ts";
 import { Writer, type CommitInput } from "./writer.ts";
 import { makeCollection } from "./collection.ts";
@@ -461,4 +462,5 @@ const assertKeySegment = (value: string, role: string, verb: string): void => {
       `${verb}: "/" is reserved as the key-segment separator (got ${role}=${JSON.stringify(value)})`,
     );
   }
+  assertNameNotReserved(value, verb);
 };

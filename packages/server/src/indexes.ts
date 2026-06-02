@@ -61,11 +61,12 @@ import {
   matchesWire,
   validateWire,
 } from "@baerly/protocol";
+import { assertNameNotReserved } from "./names.ts";
 
 export type { IndexDefinition };
 
 /** Path-safe segment name. */
-const INDEX_NAME_RE = /^[a-z_][a-z0-9_]*$/;
+const INDEX_NAME_RE = /^[a-z][a-z0-9_]*$/;
 
 /**
  * Lowercase base-32 alphabet, RFC 4648 variant matching the
@@ -79,15 +80,20 @@ const B32_ALPHABET = "0123456789abcdefghijklmnopqrstuv";
  * Thrown at writer construction so a config typo trips before any
  * write lands.
  *
- * @throws BaerlyError code="SchemaError" — `name` doesn't match
- *   `/^[a-z_][a-z0-9_]*$/`; `on` is the empty string or empty
+ * @throws BaerlyError code="InvalidConfig" — `name` is in the
+ *   system-reserved leading-`_` namespace (same contract as a
+ *   reserved collection name; see
+ *   docs/adr/007-layout-versioning-cordon.md).
+ * @throws BaerlyError code="SchemaError" — `name` is malformed (doesn't
+ *   match `/^[a-z][a-z0-9_]*$/`); `on` is the empty string or empty
  *   array.
  */
 export const validateIndexDefinition = (def: IndexDefinition): void => {
+  assertNameNotReserved(def.name, "index.name");
   if (!INDEX_NAME_RE.test(def.name)) {
     throw new BaerlyError(
       "SchemaError",
-      `index.name must match /^[a-z_][a-z0-9_]*$/; got ${JSON.stringify(def.name)}`,
+      `index.name must match /^[a-z][a-z0-9_]*$/; got ${JSON.stringify(def.name)}`,
     );
   }
   if (typeof def.on === "string") {
