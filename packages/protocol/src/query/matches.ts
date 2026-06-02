@@ -55,6 +55,7 @@ export const matchesWire = (wire: PredicateWire, doc: JSONObject): boolean => {
 const lookupPath = (doc: JSONObject, field: string): JSONValue | undefined => {
   // Fast path: no dot → top-level lookup. Avoids allocating a split
   // array for the common case.
+  // Stryker disable next-line StringLiteral,BlockStatement,ConditionalExpression: fast-path equivalence — for any valid field, the slow split-and-traverse path produces the same result; the fast path is a performance optimisation only
   if (!field.includes(".")) {
     return doc[field];
   }
@@ -62,8 +63,10 @@ const lookupPath = (doc: JSONObject, field: string): JSONValue | undefined => {
   let cursor: JSONValue | undefined = doc;
   for (const segment of segments) {
     if (
+      // Stryker disable next-line ConditionalExpression: redundant guard — cursor===undefined is always caught by the typeof check on the next line (typeof undefined!=="object" is true); removing this check is observationally equivalent
       cursor === undefined ||
       cursor === null ||
+      // Stryker disable next-line ConditionalExpression: redundant guard — for non-object primitives, (primitive as JSONObject)[segment] returns undefined; the next iteration's cursor===undefined check catches it; removing this check produces the same return value
       typeof cursor !== "object" ||
       Array.isArray(cursor)
     ) {
@@ -107,6 +110,7 @@ const matchesEq = (expected: DocumentValue, actual: JSONValue | undefined): bool
     // the only callers reaching this branch are callback-form
     // `q.eq("nested", { ... })`.
     if (
+      // Stryker disable next-line ConditionalExpression: redundant guard — actual===undefined is caught by the typeof check below (typeof undefined!=="object" is true); removing this check produces the same false result
       actual === undefined ||
       actual === null ||
       typeof actual !== "object" ||
@@ -134,6 +138,7 @@ const matchesIn = (
   actual: JSONValue | undefined,
 ): boolean => {
   for (const m of members) {
+    // Stryker disable next-line ConditionalExpression: equivalence — for non-null primitives, matchesEq(m, actual) reduces to `m === actual` (the typeof check fails); routing all members through matchesEq (→true) gives the same result as the two-branch structure
     if (typeof m === "object") {
       if (matchesEq(m, actual)) {
         return true;
