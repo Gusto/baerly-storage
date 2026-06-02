@@ -8,6 +8,7 @@ import {
   type CurrentJsonRead,
   casUpdateCurrentJson,
   createCurrentJson,
+  encodeJsonBytes,
   logSeqStartOf,
   MemoryStorage,
   readCurrentJson,
@@ -90,6 +91,26 @@ describe("readCurrentJson", () => {
       code: "InvalidResponse",
     });
   });
+
+  // Tolerant-reader / forward-compat regression (ADR-007 Tier 1).
+  // An UNKNOWN field on current.json must be IGNORED, not rejected.
+  // This pins the "additive-optional, no bump" evolution rule so a
+  // future refactor cannot silently add unknown-key rejection and break
+  // the deferred layout_version plan. See docs/adr/007-layout-versioning-cordon.md.
+  plainTest(
+    "tolerant reader: an unknown future field on current.json is ignored, not rejected",
+    async () => {
+      const s = new MemoryStorage();
+      const bytes = encodeJsonBytes({
+        ...seedJson(),
+        some_future_additive_field: { hello: "world" },
+      });
+      await s.put("k", bytes);
+      // Must succeed — unknown keys are silently ignored (Tier 1 forward-compat).
+      const got = await readCurrentJson(s, "k");
+      expect(got?.json.next_seq).toBe(0);
+    },
+  );
 });
 
 describe("createCurrentJson", () => {
