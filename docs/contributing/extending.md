@@ -273,7 +273,7 @@ set at read time; there is no manual-hint API on `Query<T>`.
 ```ts
 // packages/server/src/indexes.ts
 export interface IndexDefinition {
-  readonly name: string;                       // /^[a-z_][a-z0-9_]*$/
+  readonly name: string;                       // /^[a-z][a-z0-9_]*$/
   readonly on: string | readonly string[];     // top-level field(s)
   readonly predicate?: PredicateWire;          // { clauses: PredicateClause[] }
 }
@@ -329,7 +329,9 @@ export default defineConfig({
 - Top-level fields only on `on` — dotted-path values throw
   `SchemaError` at projection time
   (`packages/server/src/indexes.ts:192-216`).
-- `name` must match `/^[a-z_][a-z0-9_]*$/`.
+- `name` must match `/^[a-z][a-z0-9_]*$/`. A name in the reserved
+  leading-`_` namespace throws `InvalidConfig`; a name that fails the
+  regex throws `SchemaError`.
 - `predicate?` is a {@link PredicateWire} — `{ clauses:
   PredicateClause[] }`. Accepts the full operator vocabulary (`eq`,
   `gt` / `gte`, `lt` / `lte`, `in`) end-to-end. `predicateImplies`

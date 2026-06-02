@@ -234,7 +234,13 @@ describe("validateIndexDefinition", () => {
     expect((err as BaerlyError).code).toBe("InvalidConfig"); // not SchemaError — unified
     expect((err as BaerlyError).message).toMatch(/reserved for system use/);
     // other lexical failures still SchemaError (intentional asymmetry):
-    expect(() => validateIndexDefinition({ name: "1foo", on: ["x"] })).toThrow(/SchemaError|match/);
+    let lexicalErr: unknown;
+    try {
+      validateIndexDefinition({ name: "1foo", on: ["x"] });
+    } catch (error) {
+      lexicalErr = error;
+    }
+    expect((lexicalErr as BaerlyError).code).toBe("SchemaError"); // not InvalidConfig
     expect(() => validateIndexDefinition({ name: "by_status", on: ["status"] })).not.toThrow();
   });
 

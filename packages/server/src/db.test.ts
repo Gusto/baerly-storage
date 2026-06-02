@@ -61,6 +61,17 @@ describe("Db.create", () => {
     }
     expect(() => db.collection("notes")).not.toThrow();
   });
+
+  test("app names cannot start with the reserved _ prefix", () => {
+    try {
+      Db.create({ storage: new MemoryStorage(), app: "_x", tenant: "t" });
+    } catch (error) {
+      expect((error as BaerlyError).code).toBe("InvalidConfig");
+    }
+    expect(() => Db.create({ storage: new MemoryStorage(), app: "_x", tenant: "t" })).toThrow(
+      /reserved for system use/,
+    );
+  });
 });
 
 describe("Db.create config derivation", () => {

@@ -32,14 +32,22 @@ import type { PredicateWire } from "./query/wire.ts";
  * `Writer` via `WriterOptions.indexes`.
  *
  * Validated synchronously by `validateIndexDefinition`
- * (in `@baerly/server`) at writer construction; an invalid def
- * throws `BaerlyError{code: "SchemaError"}` before the first commit.
+ * (in `@baerly/server`) at writer construction before the first
+ * commit: a reserved leading-`_` name throws
+ * `BaerlyError{code: "InvalidConfig"}` (see
+ * docs/adr/007-layout-versioning-cordon.md), while a malformed name
+ * or empty `on` throws `BaerlyError{code: "SchemaError"}`.
  */
 export interface IndexDefinition {
   /**
-   * Stable path-safe identifier. Must match `/^[a-z_][a-z0-9_]*$/`
+   * Stable path-safe identifier. Must match `/^[a-z][a-z0-9_]*$/`
    * — used directly as a key segment under
    * `<logPrefix>/index/<name>/...`.
+   *
+   * A name in the system-reserved leading-`_` namespace throws
+   * `BaerlyError{code:"InvalidConfig"}` (see
+   * docs/adr/007-layout-versioning-cordon.md); a malformed name that
+   * fails the regex throws `BaerlyError{code:"SchemaError"}`.
    */
   readonly name: string;
 

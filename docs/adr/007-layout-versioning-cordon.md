@@ -115,7 +115,10 @@ that needs it.
 
 ### 4. The leading-underscore namespace is reserved now
 
-Collection and index names MUST NOT begin with `_`. The leading
+Collection and index names MUST NOT begin with `_` (the rule is
+enforced across all key-segment names — app, tenant, and collection —
+via the shared `assertKeySegment`, since they share one key
+namespace). The leading
 underscore is system-reserved (the Mongo/Firestore convention), and
 it subsumes the future `_v<N>` layout prefix. This is the one part
 that is genuinely harder to introduce once users exist — it
