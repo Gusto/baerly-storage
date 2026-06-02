@@ -109,6 +109,7 @@ export class MemoryStorage implements Storage {
     this.#objects.set(key, {
       body,
       etag,
+      // Stryker disable next-line ObjectLiteral,ConditionalExpression: contentType is stored in the internal StoredObject but never returned by get() — the Storage interface has no contentType on StorageGetResult, so any mutation of this spread is observable-equivalent
       ...(opts?.contentType !== undefined && { contentType: opts.contentType }),
     });
     // `serverDate` is intentionally returned — the kernel's adaptive
@@ -142,9 +143,10 @@ export class MemoryStorage implements Storage {
       }
       opts?.signal?.throwIfAborted();
       const stored = this.#objects.get(key);
+      // Stryker disable next-line ConditionalExpression,BlockStatement: unreachable guard — keys come from Map.keys() so the corresponding value is always present; this branch exists only to satisfy noUncheckedIndexedAccess
       if (stored === undefined) {
         continue;
-      } // unreachable; satisfies noUncheckedIndexedAccess
+      }
       yield { key, etag: stored.etag };
       yielded += 1;
     }

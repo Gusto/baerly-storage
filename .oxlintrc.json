@@ -15,7 +15,7 @@
     // CSS files are the canonical side-effect import (Vite/Webpack inject styles).
     // Tests opt out entirely below.
     "import/no-unassigned-import": ["error", { "allow": ["**/*.css"] }],
-    "no-underscore-dangle": ["error", { "allow": ["_id", "_raw"] }],
+    "no-underscore-dangle": ["error", { "allow": ["_id", "_raw", "_clear"] }],
     "eslint/curly": "error",
     "vitest/consistent-test-it": ["error", { "fn": "test" }],
     "unicorn/catch-error-name": "error",
