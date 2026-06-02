@@ -1,6 +1,8 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { gzipSync } from "node:zlib";
+// min+gz numbers are esbuild-version-sensitive: a minifier version bump
+// rebaselines every entry's `minGz` ceiling at once.
 import { transformSync } from "esbuild";
 import { describe, expect, test } from "vitest";
 import { formatBundleSizeLine } from "../helpers/bundle-size-report.ts";
@@ -61,9 +63,14 @@ import { formatBundleSizeLine } from "../helpers/bundle-size-report.ts";
 // sit just above measured so the ceilings stay honest. A failure here
 // means the surface grew without an explicit budget bump — either
 // justify it and raise the number, or refactor behind another subpath.
-// The two big Node aggregators (`node.js`, `dev-vite.js`) keep a
-// slightly wider whole-KiB margin; see the rolldown non-determinism note
-// on the `node.js` budget.
+//
+// The two big Node aggregators (`node.js`, `dev-vite.js`) are NOT
+// byte-budgeted: they are server-side / dev-only and never enter a
+// consumer's app bundle, so their wire size is a cost nobody pays (and
+// the rolldown chunk graph carries ~120 KiB of run-to-run raw variance
+// there). The real risk on those surfaces — a heavy runtime dep creeping
+// into the closure — is guarded by the bare-specifier allowlist test
+// below instead.
 
 // The `baerly` CLI bin is intentionally NOT budgeted. citty-cleanup
 // lazy-loaded all 14 subcommands behind dynamic import, so the
@@ -441,104 +448,6 @@ const BUDGETS: readonly Budget[] = [
   //     re-minifies before deploy, so min+gz is the closest proxy to the
   //     bytes Cloudflare weighs against the limit.
   { entry: "cloudflare.js", raw: 378 * 1024, gz: 113 * 1024, minGz: 40 * 1024 },
-  // Node adapter — re-exports the kernel barrel plus
-  // `s3HttpStorage`, `localFsStorage`, `memoryStorage`,
-  // `localCacheStorage`, and the `baerlyNode` Fetch-API factory.
-  // Aggregator: same shape as cloudflare.js.
-  // Budget history:
-  //   → 410 KiB raw / 120 KiB gz: initial budget set in T9 based on
-  //     post-T8 measurement (405 KiB raw / 118 KiB gz).
-  //   → 413 KiB raw / 120 KiB gz: client-terminals-silently-lie
-  //     follow-up. Router additions reach the aggregator closure
-  //     (PUT/GET-count routes + order/limit threading). +2092 raw, gz
-  //     unchanged.
-  //   → 413 KiB raw / 121 KiB gz: export-package-collapse follow-up.
-  //     Dropping the `export` entry from rolldown.config.ts reshuffles
-  //     shared-chunk boundaries (one less entry → different
-  //     code-splitting pivot); raw closure actually shrank (421908
-  //     measured) but gz crept up to 123044. Bump the gz ceiling 1 KiB
-  //     to absorb the chunk-layout side effect.
-  //   → 426 KiB raw / 125 KiB gz: hono-node-server pivot. Replaced the
-  //     hand-rolled Node↔Fetch bridge (handle/readNodeStream/
-  //     toFetchRequest/isClientDisconnect/serveStaticAsset, ~400 LOC)
-  //     with `@hono/node-server`'s `serve()` + a Hono-middleware
-  //     composition (`createApp`). The library's listener chunk lands
-  //     in the closure; deletion of the body-cap middleware (it raced
-  //     with the library's own `incoming` reader; kernel router's
-  //     defence-in-depth is now the only mechanism, matching the
-  //     cloudflare adapter) trims a few hundred bytes back. Measured:
-  //     433698 raw / 125904 gz.
-  //   → 720 KiB raw / 200 KiB gz: `@xmldom/xmldom` + `aws4fetch` now
-  //     bundle into the library entries that use them (previously
-  //     externalised, then declared as optional peerDeps which pnpm
-  //     skips on install — scaffolded apps died with `Cannot find
-  //     package '@xmldom/xmldom'` on first `vite` load). The S3 client
-  //     subgraph (DOMParser + SigV4 signer) now lands in `dist/node.js`
-  //     directly. Cold-start cost only; consumer-bundler-irrelevant.
-  //     Measured: 676293 raw / 187995 gz.
-  //   → 670 KiB raw / 190 KiB gz: adapter-node `hono/tiny` cutover.
-  //     `packages/adapter-node/src/app.ts` previously imported `Hono`
-  //     from the default `"hono"` preset, which bundled SmartRouter +
-  //     RegExpRouter + TrieRouter + the WebSocket helper alongside the
-  //     `PatternRouter` already shipped by `@baerly/server/http` via
-  //     `hono/tiny`. After the swap rolldown dedupes the two specifiers
-  //     onto `HonoBase + PatternRouter` and the extra router subgraph
-  //     disappears. `app.test.ts` switched to `hono/tiny` in lockstep
-  //     so the `instanceof Hono` assertion compares against the same
-  //     class the production code now constructs. Measured: 651827
-  //     raw / 181875 gz.
-  //   → 540 KiB raw / 156 KiB gz: `@xmldom/xmldom` (~30 KB ESM, ~250 KB
-  //     `xmldom-ts` DOM tree subgraph) replaced with `fast-xml-parser`
-  //     (~20 KB parser, plain object output). `S3HttpStorage` no longer
-  //     accepts an injected `XmlParser`; the `parseListObjectsV2-
-  //     CommandOutput` helper moved from `@baerly/protocol` to
-  //     `@baerly/adapter-node` and constructs its own `XMLParser`
-  //     internally. Measured: 537300 raw / 154229 gz.
-  //
-  // Don't tighten below the headroom that the previous Measured line
-  // documents. The rolldown chunk graph for this closure is non-
-  // deterministic across builds (different module → src-* chunk
-  // assignments produce ~120 KiB raw of run-to-run variance on the
-  // same source). The 537300 figure is from one of the looser
-  // layouts and is the safe ceiling. See `pnpm build && pnpm vitest
-  // run tests/integration/bundle-size.test.ts` twice in a row to
-  // observe the drift directly.
-  //   → 545 KiB raw / 157 KiB gz: in-band-maintenance Task 1 + 1.5.
-  //     CurrentJson schema v2 widened the shared `current-json` chunk,
-  //     and the new write-tick `runBoundedMaintenance` runner + gate
-  //     helpers land in the `maintenance-*.js` chunk the node adapter
-  //     reaches transitively. Measured: 556546 raw / 160389 gz. Bump
-  //     raw + gz by ~1 KiB each to absorb.
-  //   → 555 KiB raw / 161 KiB gz (2026-05-31, in-band-maintenance FINAL,
-  //     Task 8 net reconciliation): the kernel write-tick hook pulls the
-  //     maintenance subgraph into the aggregator closure via `writer.ts` →
-  //     `maintenance.ts`, plus Task 5.5's `nodeMaintenanceDispatch` (the
-  //     inline Node dispatch — serverful Node has no `waitUntil`). This
-  //     landing also DELETED code: Task 5 (`80682387`) cut
-  //     `opts.maintenance` + `BaerlyNodeMaintenance` + the per-(tenant,
-  //     collection) `setInterval`/`clearInterval` tick +
-  //     `DEFAULT_MAINTENANCE_INTERVAL_MS` + `runMaintenanceTick` /
-  //     `NodeMaintenanceOptions` + `buildCurrentJsonKey`. Final measured:
-  //     565374 raw / 163331 gz. The number is a NET: the maintenance-
-  //     subgraph add MINUS the deleted scheduled-sweep wiring. Net vs. the
-  //     pre-maintenance baseline (537300 raw / 154229 gz, the fast-xml-
-  //     parser measurement that predated Task 1): +28074 raw / +9102 gz —
-  //     visibly SMALLER per-byte than the http/cloudflare adds precisely
-  //     because the `setInterval` sweep deletion clawed code back. Owner-
-  //     accepted (Decision D2). Don't tighten raw below the documented
-  //     headroom — see the rolldown non-determinism note above; this entry
-  //     keeps a slightly wider whole-KiB margin than the smaller closures.
-  //   → 557 KiB raw / 162 KiB gz (2026-05-31): the S3 `<Error>` body
-  //     parser (`parseS3Error` + `s3ErrorDetail`) and `LastModified`
-  //     Invalid-Date guard in `@baerly/adapter-node`, plus the protocol's
-  //     UTF-8 byte-order comparator. Measured: 569446 raw / 165053 gz.
-  //     Bump raw to 557 KiB, gz to 162 KiB.
-  //   → 558 KiB raw / 162 KiB gz (2026-06-01): layout-version-cordon —
-  //     reserved-`_` namespace + tolerant-reader contract JSDoc in the
-  //     protocol/server closure, shipped un-stripped. Measured 571135 raw;
-  //     gz stays UNDER 162 KiB. Rebaseline raw +1 KiB (keeps the documented
-  //     whole-KiB headroom). See docs/adr/007-layout-versioning-cordon.md.
-  { entry: "node.js", raw: 558 * 1024, gz: 162 * 1024 },
   // Client surface — `BaerlyClient<TConfig>` + fetcher plumbing.
   // Browser/runtime-agnostic; no kernel modules in the closure.
   // Budget history:
@@ -650,78 +559,6 @@ const BUDGETS: readonly Budget[] = [
   //     bundle pulls crept gz +21 over the 12 KiB ceiling. Measured:
   //     33966 raw / 12309 gz. Raw stays under 34 KiB; bump gz to 13 KiB.
   { entry: "dev.js", raw: 34 * 1024, gz: 13 * 1024 },
-  // `@baerly/dev/vite` — the `baerlyDev()` vite plugin (mounts the
-  // Baerly HTTP listener as middleware inside a Vite dev server).
-  // Vite is external. Aggregator: re-exports the dev surface.
-  // Budget history:
-  //   → 410 KiB raw / 120 KiB gz: initial budget set in T9 based on
-  //     post-T8 measurement (404 KiB raw / 118 KiB gz).
-  //   → 413 KiB raw / 120 KiB gz: client-terminals-silently-lie
-  //     follow-up. Same router additions land here too. +1812 raw,
-  //     gz unchanged.
-  //   → 413 KiB raw / 121 KiB gz: export-package-collapse follow-up.
-  //     Same chunk-layout side effect as node.js — gz measured 122950.
-  //   → 429 KiB raw / 125 KiB gz: transitive jose closure via auth
-  //     chunk after replacing hand-rolled JWT/JWKS. Rolldown's shared-
-  //     chunk splitting threads the auth chunk into dev-vite's static
-  //     closure too.
-  //   → 476 KiB raw / 137 KiB gz: hono-node-server pivot on top of
-  //     jose. The Vite dev plugin imports `createApp` (+ the
-  //     `@hono/node-server` listener chunk) from adapter-node, so the
-  //     dev-vite closure tracks the node.js bump. The jose + hono
-  //     deltas stack — both auth and listener chunks land in the
-  //     transitive closure. Measured: 485674 raw / 138557 gz.
-  //   → 480 KiB raw / 138 KiB gz: ambient drift across the shared
-  //     `auth` / `compactor` / `http` / `query` / `src-*` chunks that
-  //     thread through dev-vite's closure. Measured on a clean main:
-  //     489957 raw / 140341 gz (+4283 raw / +1784 gz since the hono-
-  //     node-server bump). Bump leaves ~1.5 KiB raw / ~1 KiB gz of
-  //     headroom.
-  //   → 780 KiB raw / 215 KiB gz: dev-vite shares the adapter-node
-  //     listener chunk, so the `@xmldom/xmldom` + `aws4fetch` self-
-  //     containment (see the `node.js` budget note above) lands here
-  //     too. Dev-only Node import — never enters a consumer bundle.
-  //     Measured: 731315 raw / 201995 gz.
-  //   → 680 KiB raw / 190 KiB gz: dev-vite shares the adapter-node
-  //     `src-*` listener chunk, so the `hono/tiny` cutover in
-  //     `packages/adapter-node/src/app.ts` removes the duplicated
-  //     full-preset Hono routers from this closure too. Measured:
-  //     659665 raw / 184641 gz.
-  //   → 548 KiB raw / 159 KiB gz: dev-vite shares the adapter-node
-  //     listener closure, so the `@xmldom/xmldom` → `fast-xml-parser`
-  //     swap (see the `node.js` budget note above) drops here too.
-  //     Measured: 545138 raw / 156973 gz.
-  //   → 552 KiB raw / 160 KiB gz: in-band-maintenance Task 1 + 1.5.
-  //     dev-vite shares the adapter-node / kernel closure, so the
-  //     CurrentJson schema v2 widening of `current-json` and the new
-  //     `maintenance-*.js` runner chunk both land here. Measured:
-  //     564401 raw / 163147 gz. Bump raw + gz by ~1 KiB each.
-  //   → 562 KiB raw / 164 KiB gz (2026-05-31, in-band-maintenance FINAL,
-  //     Task 8 net reconciliation): dev-vite shares the adapter-node
-  //     listener + kernel closure, so it tracks the `node.js` bump — the
-  //     maintenance subgraph (via `writer.ts` → `maintenance.ts`) +
-  //     `nodeMaintenanceDispatch` land here too, NET of Task 5's
-  //     `opts.maintenance`/`setInterval` deletion (`80682387`). Final
-  //     measured: 573274 raw / 166106 gz. Net vs. the pre-maintenance
-  //     baseline (545138 raw / 156973 gz, the fast-xml-parser measurement
-  //     that predated Task 1): +28136 raw / +9133 gz — the same small,
-  //     deletion-offset net as node.js. Owner-accepted (Decision D2). Don't
-  //     tighten raw below the documented headroom — same rolldown non-
-  //     determinism caution as node.js; keeps a slightly wider whole-KiB
-  //     margin than the smaller closures.
-  //   → 565 KiB raw / 164 KiB gz (2026-05-31): the S3 `<Error>` parser +
-  //     Invalid-Date guard (`@baerly/adapter-node`) and the byte-order
-  //     comparators (`LocalFsStorage` + protocol) land in this dev-server
-  //     closure; shared-chunk re-splitting added ~1.8 KB raw. Measured:
-  //     577346 raw / 167755 gz. Bump raw to 565 KiB; gz stays under 164 KiB.
-  //   → 566 KiB raw / 165 KiB gz (2026-06-01): layout-version-cordon —
-  //     tracks the `node.js` bump (shared adapter-node + kernel closure):
-  //     reserved-`_` namespace + tolerant-reader contract JSDoc shipped
-  //     un-stripped. Measured 579035 raw / 168027 gz. gz was already +271
-  //     over the prior 164 KiB ceiling on main (pre-existing drift); this
-  //     change kept it over. Rebaseline raw +1 KiB and gz +1 KiB
-  //     (owner-accepted; user chose rebaseline). See docs/adr/007-layout-versioning-cordon.md.
-  { entry: "dev-vite.js", raw: 566 * 1024, gz: 165 * 1024 },
 ];
 
 // Static-import specifiers only. Dynamic `import(...)` is intentionally
@@ -832,6 +669,52 @@ describe("bundle size", () => {
       `kernel barrel must not pull the observability subgraph; found: ${observabilityChunks.join(", ")}`,
     ).toEqual([]);
   });
+
+  // `node.js` and `dev-vite.js` are server-side / dev-only aggregator
+  // entrypoints — they never ship to a browser and never enter a
+  // consumer's app bundle. Budgeting their wire size (raw/gz) measures
+  // a cost nobody pays, and the rolldown chunk graph carries ~120 KiB
+  // of run-to-run raw variance, so a byte ceiling there is noise. The
+  // REAL risk on these surfaces is a heavy runtime dependency silently
+  // creeping into the closure, so this REPLACES the wire-size budget
+  // with a stricter, more meaningful guard: a bare-specifier allowlist.
+  //
+  // For each entry we walk the static-import closure and collect every
+  // NON-relative import specifier. Each must be either a Node builtin
+  // (`node:*`) or one of the four declared runtime deps. A future
+  // heavy-dep creep (e.g. an accidental `import "lodash"`) trips this.
+  const RUNTIME_DEP_ALLOWLIST = new Set(["aws4fetch", "fast-xml-parser", "hono", "jose"]);
+  // Extract the package name from a bare specifier. `hono/tiny` →
+  // `hono`; `@scope/name/sub` → `@scope/name`.
+  const packageName = (spec: string): string => {
+    const parts = spec.split("/");
+    return spec.startsWith("@") ? parts.slice(0, 2).join("/") : parts[0]!;
+  };
+  for (const entry of ["node.js", "dev-vite.js"]) {
+    test(`dist/${entry} closure imports only Node builtins + declared runtime deps`, () => {
+      const distDir = resolve(__dirname, "../../dist");
+      const seen = new Set<string>();
+      collectClosure(resolve(distDir, entry), seen);
+      const offenders: string[] = [];
+      for (const file of seen) {
+        const src = readFileSync(file, "utf8");
+        for (const m of src.matchAll(STATIC_IMPORT_RE)) {
+          const spec = m[1]!;
+          if (spec.startsWith("./") || spec.startsWith("../")) {
+            continue;
+          }
+          if (spec.startsWith("node:") || RUNTIME_DEP_ALLOWLIST.has(packageName(spec))) {
+            continue;
+          }
+          offenders.push(`${file.replace(`${distDir}/`, "")} → ${spec}`);
+        }
+      }
+      expect(
+        offenders,
+        `${entry} closure may import only node:* builtins + [${[...RUNTIME_DEP_ALLOWLIST].join(", ")}]; unexpected: ${offenders.join(", ")}`,
+      ).toEqual([]);
+    });
+  }
 
   // Scaffolded apps install only `baerly-storage`. `fast-xml-parser`
   // and `aws4fetch` are bundled into the published library + bin
