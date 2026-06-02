@@ -43,12 +43,32 @@ describe("JSON Merge Patch (RFC 7386)", () => {
     expect(merge(a, undefined)).toEqual(a);
   });
 
+  // Concrete identity cases: kills L48 BlockStatement (fallthrough returns undefined, not target)
+  // and L48 ConditionalExpression→false (never returns target).
+  test("identity: merge({a:1}, undefined) === {a:1} — kills L48 block/cond mutants", () => {
+    expect(merge({ a: 1 }, undefined)).toEqual({ a: 1 });
+  });
+
+  test("identity: merge(42, undefined) === 42 — kills L48 block/cond mutants for primitives", () => {
+    expect(merge<DocumentValue>(42, undefined)).toBe(42);
+  });
+
   test("case: merge(0, {}) === {}", () => {
     expect(merge<DocumentValue>(0, {})).toEqual({});
   });
 
   test('case: merge({a: ""}, {}) === {a: ""}', () => {
     expect(merge({ a: "" }, {})).toEqual({ a: "" });
+  });
+
+  // Concrete null deletion: kills L51 BlockStatement (fallthrough returns null, not undefined)
+  // and L51 ConditionalExpression→false (never executes return undefined).
+  test("deletion: merge({a:1}, null) === undefined — kills L51 block/cond mutants", () => {
+    expect(merge<DocumentValue>({ a: 1 }, null)).toBeUndefined();
+  });
+
+  test("deletion: merge(42, null) === undefined — kills L51 block/cond mutants for primitives", () => {
+    expect(merge<DocumentValue>(42, null)).toBeUndefined();
   });
 
   test.prop({ a: documentValueArb })("deletion: merge(a, null) === undefined", ({ a }) => {
@@ -80,6 +100,45 @@ describe("JSON Merge Patch (RFC 7386)", () => {
 
   test.prop({ a: documentValueArb })("idempotent: merge(a, a) === a", ({ a }) => {
     expect(merge(a, a)).toEqual(a);
+  });
+
+  // Null-value in patch deletes the key: kills L73 NoCoverage BlockStatement
+  // (delete skipped → key survives with undefined) and L73 ConditionalExpression→false.
+  // Use toStrictEqual (not toEqual) — toEqual ignores {a:undefined} vs {b:2}, which would
+  // let the mutation survive (merge(1,null)→undefined stored as combined[a]=undefined).
+  test("null patch value deletes key from result — kills L73 NoCov BlockStatement", () => {
+    const target = { a: 1, b: 2 } as DocumentValue;
+    const out = merge(target, { a: null } as unknown as Partial<DocumentValue>);
+    expect(Object.prototype.hasOwnProperty.call(out, "a")).toBe(false);
+    expect(out).toStrictEqual({ b: 2 });
+  });
+
+  test("null patch value on nested key deletes it, siblings survive", () => {
+    const target = { x: { p: 1, q: 2 } } as DocumentValue;
+    const out = merge(target, { x: { p: null } } as unknown as Partial<DocumentValue>);
+    expect(out).toStrictEqual({ x: { q: 2 } });
+    expect(
+      Object.prototype.hasOwnProperty.call(
+        (out as Record<string, Record<string, unknown>>)["x"],
+        "p",
+      ),
+    ).toBe(false);
+  });
+
+  // isPlainObject must return false for non-objects: kills L32 ConditionalExpression→true.
+  // When the patch is a number, isPlainObject(patch) must be false so we replace wholesale.
+  // If isPlainObject were always true, the number patch would be iterated as an object (no own
+  // keys), producing a copy of target {} instead of the scalar 99.
+  test("scalar patch replaces object target — isPlainObject(number)===false (kills L32 cond→true)", () => {
+    const target = { a: 1 } as DocumentValue;
+    expect(merge(target, 99 as unknown as Partial<DocumentValue>)).toBe(99);
+  });
+
+  test("isPlainObject(array)===false: array patch replaces object target — kills L32 cond→true", () => {
+    // An array should not be treated as a plain object; it replaces wholesale.
+    const target = { a: 1 } as DocumentValue;
+    const out = merge(target, [1, 2] as unknown as Partial<DocumentValue>);
+    expect(out).toEqual([1, 2]);
   });
 
   test("rejects __proto__ / constructor / prototype keys (prototype pollution)", () => {

@@ -29,6 +29,10 @@ export type JSONObject = { [x: string]: JSONValue };
 export type JSONValue = string | number | boolean | null | JSONObject | Array<JSONValue>;
 
 const isPlainObject = (value: DocumentValue | undefined): value is DocumentData =>
+  // Stryker disable next-line ConditionalExpression: `value !== null` is a defensive guard — null
+  // is not in DocumentValue; null patches are caught by the `patch === null` early-return before
+  // isPlainObject is called. Replacing `value !== null` with `true` is equivalent for all
+  // reachable call sites: genuine dead-branch equivalence.
   typeof value === "object" && value !== null && !Array.isArray(value);
 
 /**
