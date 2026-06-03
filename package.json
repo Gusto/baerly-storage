@@ -1,6 +1,6 @@
 {
   "name": "@gusto/baerly-storage",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "Vendorless document database that runs over any S3-compatible storage API.",
   "keywords": [
     "cloudflare-workers",

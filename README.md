@@ -70,7 +70,6 @@ db.collection("tickets").update(id, { status: "closed" });   // merge-patch
 db.collection("tickets").where({ status: "closed" }).delete();
 ```
 
-| | |
 |---|---|
 | **Verbs** | `first` `all` `count` `get` · `insert` `update` `replace` `delete` |
 | **Modifiers** | `where` `order` `limit` |
