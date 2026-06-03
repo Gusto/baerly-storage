@@ -6,3 +6,43 @@ find the full documentation for it [in our repository](https://github.com/change
 
 We have a quick list of common questions to get you started engaging with this project in
 [our documentation](https://github.com/changesets/changesets/blob/main/docs/common-questions.md).
+
+---
+
+## How to write a changeset for `@gusto/baerly-storage`
+
+The generated `CHANGELOG.md` **ships in the published package** at
+`node_modules/@gusto/baerly-storage/dist/CHANGELOG.md`. An LLM that
+remembers an older API reads it to recover the current call. Write the
+changeset body for that reader.
+
+- **Bump level:** `patch` for fixes/internal, `minor` for additive
+  capabilities, `major`/`minor` for breaking changes (we are pre-1.0, so
+  breaking changes are a **minor** bump per the `^0.x` contract — see
+  `docs/contributing/publishing.md`).
+- Select **`@gusto/baerly-storage`** only. `@gusto/create-baerly-storage`
+  bumps with it automatically (Changesets `fixed`) and gets no changelog.
+- **Breaking changes MUST include an old→new migration block** so a
+  stranded agent can recover:
+
+  ````md
+  ---
+  "@gusto/baerly-storage": minor
+  ---
+
+  One-line summary of the change.
+
+  **Migration — agents: if you wrote the LEFT, use the RIGHT:**
+
+  ```ts
+  // before
+  import { OldThing } from "@gusto/baerly-storage/...";
+  // after
+  import { newThing } from "@gusto/baerly-storage/...";
+  ```
+
+  Why, and a pointer to the ADR if one applies (e.g. ADR-002).
+  ````
+
+The `.d.ts` types are the canonical authority. If this changelog and the
+types ever disagree, the types win.
