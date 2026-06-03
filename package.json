@@ -196,6 +196,7 @@
     "@baerly/dev": "workspace:*",
     "@baerly/protocol": "workspace:*",
     "@baerly/server": "workspace:*",
+    "@changesets/cli": "^2.31.0",
     "@cloudflare/vitest-pool-workers": "0.16.10",
     "@cloudflare/workers-types": "^4.20260527.1",
     "@fast-check/vitest": "^0.4.1",
