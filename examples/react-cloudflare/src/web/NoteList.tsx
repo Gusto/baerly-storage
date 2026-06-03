@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { useMutation, useQuery } from "@gusto/baerly-storage/client/react";
 import type { Note } from "../../baerly.config.ts";
+import { useMutation, useQuery } from "./client.ts";
 
 const NoteRow = ({ note }: { note: Note }) => {
   const [isEditing, setIsEditing] = useState(false);
@@ -68,7 +68,7 @@ const NoteRow = ({ note }: { note: Note }) => {
 };
 
 export const NoteList = () => {
-  const result = useQuery((c) => c.collection("notes").all() as Promise<Note[]>, []);
+  const result = useQuery((c) => c.collection("notes").all(), []);
   if (result.status === "error") {
     return <p className="error">Error: {result.error.message}</p>;
   }

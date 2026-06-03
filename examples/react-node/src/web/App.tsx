@@ -1,5 +1,4 @@
-import { BaerlyProvider, useMutation } from "@gusto/baerly-storage/client/react";
-import { client } from "./client.ts";
+import { BaerlyProvider, client, useMutation } from "./client.ts";
 import { NoteList } from "./NoteList.tsx";
 
 const NewNoteForm = () => {

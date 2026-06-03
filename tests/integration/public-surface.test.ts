@@ -160,15 +160,12 @@ describe("@gusto/baerly-storage/client", () => {
 // ---------------------------------------------------------------------------
 // @gusto/baerly-storage/client/react
 // ---------------------------------------------------------------------------
-import {
-  BaerlyProvider,
-  useBaerlyClient,
-  useMutation,
-  useQuery,
-} from "@gusto/baerly-storage/client/react";
+import { createBaerlyReact } from "@gusto/baerly-storage/client/react";
 
 describe("@gusto/baerly-storage/client/react", () => {
-  test("imports resolve", () => {
+  test("createBaerlyReact resolves and yields the bound hook set", () => {
+    expect(typeof createBaerlyReact).toBe("function");
+    const { BaerlyProvider, useBaerlyClient, useMutation, useQuery } = createBaerlyReact();
     expect(typeof BaerlyProvider).toBe("function");
     expect(typeof useBaerlyClient).toBe("function");
     expect(typeof useQuery).toBe("function");

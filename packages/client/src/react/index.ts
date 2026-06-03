@@ -1,25 +1,31 @@
 /**
- * React bindings for `@baerly/client`. Wrap your app once in
- * {@link BaerlyProvider}; every hook reads the client from context.
+ * React bindings for `@baerly/client`. Call {@link createBaerlyReact}
+ * once with your config type to get a fully typed
+ * `{ BaerlyProvider, useQuery, useMutation, useBaerlyClient }` set,
+ * then export and import those from your own module:
  *
- * **Reads:** {@link useQuery}`(callback, deps?)` — reactive. Subscribes
- * to every table the callback touches and re-runs on log events or
- * `deps` change. Return the exported `useQuery.skip` sentinel from
- * the callback to defer / conditional-render.
+ * ```ts
+ * // src/web/client.ts
+ * export const { BaerlyProvider, useQuery, useMutation } =
+ *   createBaerlyReact<typeof config>();
+ * ```
  *
- * **Mutations:** {@link useMutation}`()` → `[mutate, { isPending, error }]`.
- * `mutate(callback)` runs the callback against the real client;
- * `isPending` refcounts in-flight calls.
+ * This is the only React entry point. The hooks are not exported
+ * loose: an unbound hook can't see the config, so `c.collection(name)`
+ * would silently degrade to `DocumentData` rows and force casts.
+ * Binding once at the factory keeps every callback inferred.
  *
- * **Escape hatch:** {@link useBaerlyClient} — returns the raw
+ * **Reads:** `useQuery(callback, deps?)` — reactive. Subscribes to every
+ * collection the callback touches and re-runs on log events or `deps`
+ * change. Return `useQuery.skip` to defer / conditional-render.
+ *
+ * **Mutations:** `useMutation()` → `[mutate, { isPending, error }]`.
+ * `mutate(callback)` runs the callback against the real client.
+ *
+ * **Escape hatch:** `useBaerlyClient()` — the raw bound
  * {@link BaerlyClient} for imperative use.
  */
 
-export { BaerlyProvider, useBaerlyClient } from "./provider.ts";
-export type { BaerlyProviderProps } from "./provider.ts";
-
-export { useQuery } from "./use-query.ts";
+export { type BaerlyProviderProps, type BaerlyReact, createBaerlyReact } from "./create-react.ts";
 export type { UseQueryResult } from "./use-query.ts";
-
-export { useMutation } from "./use-mutation.ts";
 export type { UseMutationTuple } from "./use-mutation.ts";

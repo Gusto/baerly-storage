@@ -1,4 +1,5 @@
 import { createBaerlyClient } from "@gusto/baerly-storage/client";
+import { createBaerlyReact } from "@gusto/baerly-storage/client/react";
 import config from "../../baerly.config.ts";
 
 // Same-origin baseUrl works in both dev and production. With
@@ -11,3 +12,10 @@ export const client = createBaerlyClient({
   baseUrl: "",
   config,
 });
+
+// The bound React surface. `createBaerlyReact<typeof config>()` pins
+// every hook to your collections, so inside a `useQuery` /
+// `useMutation` callback `c.collection("notes")` infers the `Note`
+// row type — no casts. Import these hooks from this module (not from
+// the package) so they stay bound.
+export const { BaerlyProvider, useQuery, useMutation } = createBaerlyReact<typeof config>();

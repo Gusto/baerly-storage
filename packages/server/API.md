@@ -398,6 +398,12 @@ The win is on the read side: `db.collection("tickets").all()` is
 typed `Ticket[]` with `_id: string` (required), so route handlers
 and response schemas don't need a parallel "_id-required" row type.
 
+`_id` is server-minted (UUIDv7, sorts by mint time) — there is no
+exported id generator, and minting one client-side is unsupported.
+For a write that must reference its own id, write the parent first and
+read back the `_id` the server returns; design cross-collection writes
+parent-first with cleanup, not by pre-minting ids.
+
 Indexes: declared here, threaded into `Db.create` automatically. The
 read-path auto-planner picks an index when the predicate matches;
 mismatches fall back to the full scan with a metric bump (correctness
@@ -497,29 +503,46 @@ subscribers in other UI frameworks can `fetch` this endpoint
 directly, or import the internal `pollSinceOnce` helper from
 `@baerly/client` if cursor-aware tailing is needed.
 
-## React: `BaerlyProvider`, `useQuery`, `useMutation`
+## React: `createBaerlyReact`
 
-`@gusto/baerly-storage/client/react` exposes three symbols. The provider
-owns a shared `/v1/since` long-poll per `(client, collection)`; idle
-cycles cost zero list reads, and any non-empty batch invalidates
-every `useQuery` whose chain touches the firing collection.
+`@gusto/baerly-storage/client/react` exports one factory,
+`createBaerlyReact<typeof config>()`. Call it once and export the
+result; it returns `{ BaerlyProvider, useQuery, useMutation,
+useBaerlyClient }` all bound to your config, so a `useQuery` /
+`useMutation` callback's `c.collection("notes")` infers the real row
+type — **no `as Promise<Note[]>` cast**. (React context can't carry a
+generic to the hooks; binding once at the factory is what threads it.)
+The provider owns a shared `/v1/since` long-poll per `(client,
+collection)`; idle cycles cost zero list reads, and any non-empty batch
+invalidates every `useQuery` whose chain touches the firing collection.
+
+```ts
+// src/web/client.ts — wire the client + bound hooks once.
+import { createBaerlyClient } from "@gusto/baerly-storage/client";
+import { createBaerlyReact } from "@gusto/baerly-storage/client/react";
+import config from "../../baerly.config.ts";
+
+export const client = createBaerlyClient({ baseUrl: "", config });
+export const { BaerlyProvider, useQuery, useMutation } =
+  createBaerlyReact<typeof config>();
+```
 
 ```tsx
-import {
-  BaerlyProvider, useQuery, useMutation,
-} from "@gusto/baerly-storage/client/react";
+// Components import the bound hooks from your module, not the package.
+import { BaerlyProvider, client, useMutation, useQuery } from "./client.ts";
 
 // 1. Wrap your app once.
-<BaerlyProvider client={createBaerlyClient({ baseUrl: "", config })}>
+<BaerlyProvider client={client}>
   <App />
 </BaerlyProvider>
 
-// 2. useQuery(cb, deps) — cb receives the bare client and returns
-//    a ClientCollection / ClientQuery chain. Re-runs on deps change OR
-//    on long-poll invalidation. Result is a discriminated union:
-const result = useQuery((c) => c.collection("notes").all() as Promise<Note[]>, []);
+// 2. useQuery(cb, deps) — the callback receives the bound client and
+//    returns a ClientCollection / ClientQuery chain. Re-runs on deps
+//    change OR on long-poll invalidation. Result is a discriminated
+//    union; the row type is inferred from the collection name:
+const result = useQuery((c) => c.collection("notes").all(), []);
 // result.status: "loading" | "ok" | "error" | "skipped"
-// result.data:   T[] | undefined        (present iff status === "ok")
+// result.data:   Note[] | undefined      (present iff status === "ok")
 // result.error:  BaerlyError | undefined (present iff status === "error")
 
 // 3. useQuery.skip — short-circuit to status: "skipped", no
@@ -527,7 +550,7 @@ const result = useQuery((c) => c.collection("notes").all() as Promise<Note[]>, [
 const filtered = useQuery(
   (c) => filter === "all"
     ? useQuery.skip
-    : c.collection("notes").where({ status: filter }).all() as Promise<Note[]>,
+    : c.collection("notes").where({ status: filter }).all(),
   [filter],
 );
 
@@ -537,6 +560,12 @@ const filtered = useQuery(
 const [mutate, { isPending, error }] = useMutation();
 await mutate((c) => c.collection("notes").insert({ body }));
 ```
+
+> No type parameter (`createBaerlyReact()`) gives an unbound surface —
+> collection names widen to `string`, rows to `DocumentData` — matching
+> the in-process `Db.collection` fallback. There are no loose hooks to
+> import directly: an unbound hook can't see the config, so binding at
+> the factory is the only path.
 
 ## HTTP wire format
 

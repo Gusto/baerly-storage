@@ -46,7 +46,8 @@ const runOnFixture = (source: string): { exitCode: number; stderr: string } => {
 describe("lint-use-query", () => {
   test("flags async callbacks", () => {
     const { exitCode, stderr } = runOnFixture(
-      `import { useQuery } from "@gusto/baerly-storage/client/react";
+      `import { createBaerlyReact } from "@gusto/baerly-storage/client/react";
+const { useQuery } = createBaerlyReact();
 const x = (id: string) => useQuery(async (c) => c.collection("notes").get(id), [id]);
 `,
     );
@@ -56,7 +57,8 @@ const x = (id: string) => useQuery(async (c) => c.collection("notes").get(id), [
 
   test("flags `await` inside the callback body", () => {
     const { exitCode, stderr } = runOnFixture(
-      `import { useQuery } from "@gusto/baerly-storage/client/react";
+      `import { createBaerlyReact } from "@gusto/baerly-storage/client/react";
+const { useQuery } = createBaerlyReact();
 const x = (id: string) => useQuery((c) => { return (async () => await c.collection("notes").get(id))(); }, [id]);
 `,
     );
@@ -66,7 +68,8 @@ const x = (id: string) => useQuery((c) => { return (async () => await c.collecti
 
   test("does NOT flag awaits inside comments", () => {
     const { exitCode } = runOnFixture(
-      `import { useQuery } from "@gusto/baerly-storage/client/react";
+      `import { createBaerlyReact } from "@gusto/baerly-storage/client/react";
+const { useQuery } = createBaerlyReact();
 const x = (id: string) => useQuery((c) => {
   // discussion of why we don't await here
   return c.collection("notes").get(id);
@@ -78,7 +81,8 @@ const x = (id: string) => useQuery((c) => {
 
   test("does NOT flag the supported patterns", () => {
     const { exitCode } = runOnFixture(
-      `import { useQuery } from "@gusto/baerly-storage/client/react";
+      `import { createBaerlyReact } from "@gusto/baerly-storage/client/react";
+const { useQuery } = createBaerlyReact();
 const single = (id: string) => useQuery((c) => c.collection("notes").get(id), [id]);
 const skipForm = (id?: string) => useQuery((c) => id ? c.collection("notes").get(id) : useQuery.skip, [id]);
 const parallel = (id: string) => useQuery((c) => Promise.all([

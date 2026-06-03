@@ -611,17 +611,19 @@ the cache key changes when the filter does:
 
 ```tsx
 import { useState } from "react";
-import { useQuery } from "@gusto/baerly-storage/client/react";
 import { STATUSES, type Note } from "../../baerly.config.ts";
+import { useQuery } from "./client.ts";
 
 type Filter = "all" | Note["status"];
 
 const [filter, setFilter] = useState<Filter>("all");
+// `useQuery` comes from the bound factory in `client.ts`, so
+// `c.collection("notes")` infers the `Note` row — no `<Note>`, no cast.
 const result = useQuery(
   (c) =>
     filter === "all"
-      ? c.collection<Note>("notes").all()
-      : c.collection<Note>("notes").where({ status: filter }).all(),
+      ? c.collection("notes").all()
+      : c.collection("notes").where({ status: filter }).all(),
   [filter],
 );
 ```
@@ -641,7 +643,7 @@ const filtered = useQuery(
   (c) =>
     filter === "all"
       ? useQuery.skip
-      : c.collection<Note>("notes").where({ status: filter }).all(),
+      : c.collection("notes").where({ status: filter }).all(),
   [filter],
 );
 if (filtered.status === "skipped") return <FullList />;
@@ -651,7 +653,9 @@ For dependent reads, compose two `useQuery` calls — the second one
 returns `useQuery.skip` until the first resolves to `"ok"`:
 
 ```tsx
-const parent = useQuery((c) => c.collection<Note>("notes").get(id), [id]);
+// `comments` must be declared in baerly.config.ts — the bound hooks
+// only know your declared collections (an undeclared name is a type error).
+const parent = useQuery((c) => c.collection("notes").get(id), [id]);
 const replies = useQuery(
   (c) =>
     parent.status === "ok"

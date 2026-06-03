@@ -14,12 +14,16 @@ export interface BaerlyProviderProps {
  * Wrap your app once near the root; the hooks read the client from
  * this context and have no `client` argument.
  *
+ * Obtained from {@link createBaerlyReact}, not imported directly:
+ *
  * @example
  * ```tsx
  * import { createBaerlyClient } from "@gusto/baerly-storage/client";
- * import { BaerlyProvider } from "@gusto/baerly-storage/client/react";
+ * import { createBaerlyReact } from "@gusto/baerly-storage/client/react";
+ * import config from "./baerly.config.ts";
  *
- * const client = createBaerlyClient({ baseUrl: "/api" });
+ * const client = createBaerlyClient({ baseUrl: "/api", config });
+ * const { BaerlyProvider } = createBaerlyReact<typeof config>();
  *
  * <BaerlyProvider client={client}>
  *   <App />
