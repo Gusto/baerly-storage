@@ -98,6 +98,7 @@ var isn't propagated.
 | `pnpm build && pnpm baerly admin fsck ...` | maintenance surface: `admin fsck` walks `current.json` → snapshot hash → log range → index prefixes read-only and exits 4 on any finding | seconds | ✅ no infra |
 | `pnpm dlx:bust-cache` | wipes `~/.cache/pnpm/dlx` + `~/Library/Caches/pnpm/dlx` + `localhost+4873` registry metadata. Use after `pnpm verdaccio:publish` when iterating `pnpm create @gusto/baerly-storage@latest` against Verdaccio — dlx caches by `pkg@version` so re-publishing the same version is invisible without this step. `pnpm config get cache-dir` prints the literal string `"undefined"` — don't probe it manually | ~ms | ✅ |
 | `cat node_modules/@gusto/baerly-storage/dist/API.md` | ~660-line public-API reference (soft budget ≤1000 lines; if it tips over, split into API.md + RECIPES.md). Read this BEFORE walking the hash-suffixed `dist/*.d.ts` chain. Named `API.md` (not `AGENTS.md`) so it never collides with a scaffolded app's project-root `AGENTS.md`. Source lives at `packages/server/API.md`; the rolldown `closeBundle` step copies it to `dist/API.md` on every build | n/a | ✅ |
+| `cat node_modules/@gusto/baerly-storage/dist/CHANGELOG.md` | migration-shaped record of what changed across versions; read it when a remembered API no longer type-checks. Maintained by Changesets at the repo root; the rolldown `closeBundle` step copies it to `dist/CHANGELOG.md` on every build | n/a | ✅ |
 
 `pnpm verify` is also enforced as a [lefthook](https://lefthook.dev/)
 pre-commit hook (`lefthook.yml`); `pnpm install` wires it up via the

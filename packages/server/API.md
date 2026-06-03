@@ -1022,6 +1022,10 @@ once. Pick by what you want to observe.
 
 ## Where to look next
 
+- **A call you expected doesn't type-check?** The public surface is
+  additive-only locked (ADR-002), but the rare breaking change carries an
+  old→new migration in `dist/CHANGELOG.md` (`cat dist/CHANGELOG.md`). The
+  `.d.ts` types are canonical; the changelog is the recovery path.
 - Per-symbol JSDoc: read the `.d.ts` chunks in this directory
   (`db-*.d.ts`, `index-*.d.ts`, `client-*.d.ts`, …) — the bundler
   splits them; `cat dist/*.d.ts` gives the union.
