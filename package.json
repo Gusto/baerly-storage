@@ -151,6 +151,8 @@
     "build": "rolldown -c && pnpm -r --filter \"./packages/*\" build",
     "baerly": "node dist/baerly.js",
     "release": "node scripts/publish.mjs",
+    "changeset": "changeset",
+    "changeset:version": "changeset version && rm -f packages/create-baerly-storage/CHANGELOG.md",
     "prepublishOnly": "node scripts/guard-publish.mjs",
     "prepare": "node scripts/prepare.mjs",
     "format": "oxfmt tests packages",
