@@ -2,7 +2,7 @@
 title: Publishing
 audience: maintainer
 summary: "How to publish @gusto/baerly-storage + @gusto/create-baerly-storage privately under the @gusto org on npmjs.com."
-last-reviewed: 2026-05-28
+last-reviewed: 2026-06-03
 tags: [publishing, release, npm]
 related: ["development.md", "../../CLAUDE.md"]
 ---
@@ -18,6 +18,53 @@ package private *within npmjs.com* (org members with auth can
 install it; the public cannot). The local Verdaccio registry
 (`pnpm verdaccio:publish`, `localhost:4873`) is a throwaway
 test harness for scaffolder iteration only — never a publish target.
+
+## Cutting a release
+
+Versioning and the changelog are driven by [Changesets](https://github.com/changesets/changesets).
+Publishing stays on `pnpm release` for private-access enforcement.
+
+1. **While developing** — for any user-facing change, add a changeset:
+
+   ```sh
+   pnpm changeset
+   ```
+
+   Select `@gusto/baerly-storage` only (the scaffolder bumps with it via
+   the `fixed` group). Write the body for an LLM reader; breaking changes
+   MUST include an old→new migration block (see `.changeset/README.md`).
+
+2. **At release time** — consume the changesets:
+
+   ```sh
+   pnpm changeset:version
+   ```
+
+   This bumps both `@gusto/baerly-storage` and `@gusto/create-baerly-storage`
+   to the next version (lockstep), updates the root `CHANGELOG.md`, and
+   deletes the scaffolder's generated changelog (we don't ship one for it).
+   Review the diff — the generated changelog is an editable draft.
+
+3. **Commit + tag** the release:
+
+   ```sh
+   git add -A && git commit -m "chore(release): v$(node -p "require('./package.json').version")"
+   git tag "v$(node -p "require('./package.json').version")"
+   ```
+
+4. **Publish** with the private-access-enforcing path:
+
+   ```sh
+   pnpm release
+   ```
+
+   `pnpm release` runs `pnpm build` (which copies the updated `CHANGELOG.md`
+   into `dist/CHANGELOG.md`) and publishes both packages with
+   `--access restricted` + force-private verification.
+
+> **Do not run `changeset publish`.** It issues a bare publish that drops
+> `--access restricted`, which lands the package world-readable. `pnpm release`
+> (`scripts/publish.mjs`) is the only sanctioned publish path.
 
 | Package                          | Path                              | Bin                       |
 |----------------------------------|-----------------------------------|---------------------------|
