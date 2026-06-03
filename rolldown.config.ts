@@ -3,7 +3,8 @@ import { defineConfig } from "rolldown";
 import { dts } from "rolldown-plugin-dts";
 
 /**
- * Copy the hand-authored public-API quickref into `dist/API.md` so a
+ * Copy the hand-authored markdown artifacts (the public-API quickref and
+ * the changelog) into `dist/` so a
  * freshly-installed `node_modules/@gusto/baerly-storage/dist/API.md` gives a
  * CLI agent (no TS LS) the entire public surface in one read. Named
  * `API.md` — not `AGENTS.md` — to avoid colliding with the scaffolded
@@ -16,6 +17,11 @@ const copyApiQuickref = () => ({
   closeBundle() {
     mkdirSync("dist", { recursive: true });
     copyFileSync("packages/server/API.md", "dist/API.md");
+    // Ship the changelog too: a stranded agent that remembers an older
+    // API reads `node_modules/@gusto/baerly-storage/dist/CHANGELOG.md`
+    // to recover the current call. Maintained by Changesets at the repo
+    // root; see docs/contributing/publishing.md.
+    copyFileSync("CHANGELOG.md", "dist/CHANGELOG.md");
   },
 });
 
