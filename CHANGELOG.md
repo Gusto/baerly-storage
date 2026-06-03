@@ -1,14 +1,5 @@
 # @gusto/baerly-storage
 
-All notable changes to `@gusto/baerly-storage`.
-
-This file is maintained by [Changesets](https://github.com/changesets/changesets)
-going forward; entries at and below `0.2.0` were backfilled by hand from the
-git history. It ships in the published package at
-`node_modules/@gusto/baerly-storage/dist/CHANGELOG.md` so an agent that
-expected an older API can recover the current call. The `.d.ts` types are the
-canonical authority — if this file and the types disagree, the types win.
-
 ## 0.2.0
 
 ### Minor Changes
@@ -19,8 +10,12 @@ canonical authority — if this file and the types disagree, the types win.
 
   ```ts
   // before — loose hook exports (removed)
-  import { BaerlyProvider, useQuery, useMutation, useBaerlyClient }
-    from "@gusto/baerly-storage/client/react";
+  import {
+    BaerlyProvider,
+    useQuery,
+    useMutation,
+    useBaerlyClient,
+  } from "@gusto/baerly-storage/client/react";
 
   // after — factory bound to your defineConfig collections
   import { createBaerlyReact } from "@gusto/baerly-storage/client/react";
@@ -68,3 +63,12 @@ canonical authority — if this file and the types disagree, the types win.
   query API, `defineConfig`, `createBaerlyClient`, the Cloudflare Workers and
   self-hosted Node adapters, and the `baerly` CLI. See `dist/API.md` for the
   full surface.
+
+---
+
+_Maintained by [Changesets](https://github.com/changesets/changesets); entries
+at and below `0.2.0` were backfilled by hand from the git history. This file
+ships in the published package at `dist/CHANGELOG.md` so an agent that expected
+an older API can recover the current call. The `.d.ts` types are the canonical
+authority — if this file and the types disagree, the types win. (The footer sits
+below all versions because Changesets prepends new releases under the H1.)_
