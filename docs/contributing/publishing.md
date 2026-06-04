@@ -219,19 +219,11 @@ might break you on a minor bump."
 - **Major (`0.x` → `1.0.0`)**: a commitment to backwards
   compatibility. Could be years away.
 
-Both packages bump together (same release train). Update root
-`package.json` and `packages/create-baerly-storage/package.json` in
-a single commit before publishing — for this volume of releases,
-hand-edit; if it ever grates, write a ~20-line script modeled on
-`scripts/verdaccio-publish.mjs` (bumps both, no auto-version, takes
-the version as an arg).
-
-Tag the release commit so `git log v0.1.4..v0.1.5` answers "what
-changed":
-
-```sh
-git tag v0.1.5 && git push --tags
-```
+Both packages bump together (same release train) via the Changesets
+`fixed` group. Don't hand-edit versions — run `pnpm changeset:version`
+(it bumps both packages and writes `CHANGELOG.md`), then tag the release
+commit so `git log v0.1.4..v0.1.5` answers "what changed". The end-to-end
+mechanics live in [Cutting a release](#cutting-a-release) above.
 
 ## Notes on the publish config
 
