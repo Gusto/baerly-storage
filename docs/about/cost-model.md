@@ -2,7 +2,7 @@
 title: Cost model
 audience: product
 summary: Per-line-item rates, write-amp meter, compression posture.
-last-reviewed: 2026-05-31
+last-reviewed: 2026-06-11
 tags: [cost, pricing, operations]
 related: [pricing-log.md, thesis.md, graduation.md]
 ---
@@ -252,14 +252,29 @@ Read this as positioning, not a cost claim:
   fan-out protocol is disproportionately expensive vs. a B-tree
   lookup in a real DB. Reaching that price line is the success
   signal to graduate.
+- **Portability / switching cost:** This axis favors Baerly
+  across all workload sizes. Object storage is the rare primitive
+  every major cloud implements with the same abstraction (the S3
+  API); your bytes live in your bucket and leaving needs no
+  vendor cooperation. D1, Supabase, Neon, and PlanetScale are
+  excellent, but they are proprietary runtimes — choosing one is
+  a switching-cost decision. Baerly's Debezium-style CDC log
+  (`baerly export --target=postgres`) makes the graduation path
+  mechanical, not aspirational. Even at M-size where D1 wins on
+  raw per-write price, the portability axis sits orthogonal to
+  price and should be weighed alongside it.
 
 Cost is decisive in the regimes Baerly is sized for; it's
 designed to lose past them — that loss is the graduation signal,
-mechanical via `baerly export --target=postgres`. We name both
-axes explicitly because the workload class the thesis targets
-(idle × portfolio, XS/S experimentation, large internal-tools
-fleet) isn't economically viable under per-app managed-DB floors
-— and that's where the real argument lives.
+mechanical via `baerly export --target=postgres`. We name three
+axes explicitly: per-write price (where Baerly loses at M-size),
+idle × portfolio cost (where it wins decisively), and
+portability / switching cost (where it wins on every workload
+— any S3-API cloud, any Node runtime, no proprietary runtime).
+The workload class the thesis targets (idle × portfolio, XS/S
+experimentation, large internal-tools fleet) isn't economically
+viable under per-app managed-DB floors — and that's where the
+real argument lives.
 
 The graduation triggers (surfaced via the `baerly cost` projection's
 `percentOfGraduation`) follow directly: any one
