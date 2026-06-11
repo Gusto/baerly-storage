@@ -2,7 +2,7 @@
 title: Product thesis
 audience: product
 summary: Why Baerly exists, what it is, and what it deliberately is not.
-last-reviewed: 2026-05-31
+last-reviewed: 2026-06-11
 tags: [positioning, product]
 related: [cost-model.md, "../contributing/conventions/change-discipline.md"]
 ---
@@ -57,8 +57,8 @@ The criteria the rest of this document is shaped around:
    prototype-tier app that crossed the ceiling and moved to D1
    is a Baerly **win**, not a churn event. The "no hostage"
    promise is what makes the prototype-tier bet safe to take. The
-   `LogEntry` shape is Postgres-logical-replication-shaped
-   (`{lsn, op, relation, key, before?, after?, ts, epoch}`)
+   `LogEntry` shape is a Debezium-style CDC envelope
+   (`{lsn, commit_ts, op, collection, doc_id, after?, before?, key_old?, origin?, session, seq}`)
    precisely so `baerly export --target=postgres` is mechanical,
    not aspirational.
 4. **A small, typed, closed-vocabulary API.** A surface that doesn't
@@ -238,8 +238,8 @@ single CAS-advanced pointer to HEAD.
   stateless: ~8 µs router dispatch, then the 5–50 ms waiting on S3,
   and done. The runtime is a rounding error against the bucket.
 - **Graduation with no hostage.** The `LogEntry` shape was fixed
-  early and is Postgres-logical-replication-shaped:
-  `{lsn, op, relation, key, before?, after?, ts, epoch}`. Not
+  early as a Debezium-style CDC envelope:
+  `{lsn, commit_ts, op, collection, doc_id, after?, before?, key_old?, origin?, session, seq}`. Not
   aesthetic — operational. `baerly export --target=postgres` is a
   mechanical translator, not a marketing line. See
   [docs/spec/log-entry-shape.md](../spec/log-entry-shape.md).
@@ -306,7 +306,7 @@ single CAS-advanced pointer to HEAD.
   (~$5 vs. ~$19) where it's available — that's the graduation
   signal, not a competitive position. Availability and switching
   cost both favor Baerly: any S3-API cloud, any Node runtime,
-  Postgres-logical-replication-shaped log entries. See
+  Debezium-style CDC log entries. See
   [cost-model.md](cost-model.md) for the operating-point tables
   and per-line-item rates.
 - **Not a D1 / Postgres replacement.** D1 is the graduation target.
@@ -333,7 +333,7 @@ The envelope:
 
 Crossing any of these is the success signal to graduate —
 `baerly export --target=postgres` is one command, and the on-disk
-log shape is Postgres-logical-replication-shaped to make it
+log shape is a Debezium-style CDC envelope to make it
 mechanical. The ceiling is platform-independent — the kernel makes
 the same guarantees on Cloudflare Workers, self-hosted Node, AWS
 Lambda. One bucket per app; tenants are prefix-scoped within.
