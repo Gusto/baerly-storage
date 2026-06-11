@@ -34,7 +34,7 @@ part is not the kernel; it is shaping the system so the public API
 stays small enough that an LLM can use it from `.d.ts` alone (see
 [ADR-002](../adr/002-api-surface-lock.md)).
 
-Bundle sizes set the scope: ~110 KB gzipped on Cloudflare Workers, ~160 KB gzipped on Node, ~5 KB gzipped browser client. The whole public API surface fits in a single ~1000-line `dist/API.md`.
+Bundle sizes set the scope: ~110 KB gzipped on Cloudflare Workers, ~160 KB gzipped on Node, ~5 KB gzipped browser client. The whole public API surface fits in a single ~12k-token `dist/API.md`.
 
 ## Runtime model
 
