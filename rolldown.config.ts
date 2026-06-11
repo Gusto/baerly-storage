@@ -1,6 +1,8 @@
 import { copyFileSync, mkdirSync } from "node:fs";
 import { defineConfig } from "rolldown";
 import { dts } from "rolldown-plugin-dts";
+import { createRollupLicensePlugin } from "rollup-license-plugin";
+import { licensePluginOptions, PARTIAL_LIB_FILENAME } from "./scripts/third-party-licenses.mjs";
 
 /**
  * Copy the hand-authored markdown artifacts (the public-API quickref and
@@ -70,5 +72,15 @@ export default defineConfig({
     // package.json `files: ["dist"]` field.
     cleanDir: true,
   },
-  plugins: [dts({ tsgo: true }), copyApiQuickref()],
+  // The license plugin discovers every third-party package bundled by
+  // THESE library entries and writes a partial JSON manifest into
+  // `dist/`. The CLI build writes its own partial; `pnpm build`'s final
+  // step merges both into `dist/THIRD-PARTY-LICENSES.txt`. The plugin's
+  // `unacceptableLicenseTest` fails the build on any non-permissive
+  // (e.g. copyleft) bundled license. See scripts/third-party-licenses.mjs.
+  plugins: [
+    dts({ tsgo: true }),
+    createRollupLicensePlugin(licensePluginOptions(PARTIAL_LIB_FILENAME)),
+    copyApiQuickref(),
+  ],
 });

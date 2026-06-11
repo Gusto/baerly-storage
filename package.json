@@ -149,7 +149,7 @@
     "test:conformance": "CONFORMANCE=1 MINIO=1 vitest run --project=default tests/integration/conformance.test.ts",
     "test:export-smoke": "EXPORT_SMOKE=1 vitest run --project=default tests/integration/export-smoke.test.ts",
     "test:export-round-trip": "vitest run --project=default tests/integration/export-round-trip.test.ts",
-    "build": "rolldown -c && pnpm -r --filter \"./packages/*\" build",
+    "build": "rolldown -c && pnpm -r --filter \"./packages/*\" build && node scripts/merge-third-party-licenses.mjs",
     "baerly": "node dist/baerly.js",
     "release": "node scripts/publish.mjs",
     "changeset": "changeset",
@@ -226,6 +226,7 @@
     "react-dom": "^19.2.6",
     "rolldown": "^1.0.2",
     "rolldown-plugin-dts": "^0.25.1",
+    "rollup-license-plugin": "3.2.1",
     "vite": "^8.0.14",
     "vitest": "^4.1.7",
     "yaml": "2.9.0"

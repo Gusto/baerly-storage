@@ -1,4 +1,6 @@
 import { defineConfig } from "rolldown";
+import { createRollupLicensePlugin } from "rollup-license-plugin";
+import { licensePluginOptions, PARTIAL_CLI_FILENAME } from "../../scripts/third-party-licenses.mjs";
 
 export default defineConfig({
   input: "src/baerly.ts",
@@ -18,4 +20,9 @@ export default defineConfig({
     // modules but it's a surprising artifact in the published tarball.
     banner: (chunk) => (chunk.isEntry ? "#!/usr/bin/env node" : ""),
   },
+  // Writes the CLI bin's partial third-party-licenses manifest into
+  // `dist/` (output dir is `../../dist`). `pnpm build`'s final step
+  // merges it with the library build's partial. See
+  // scripts/third-party-licenses.mjs.
+  plugins: [createRollupLicensePlugin(licensePluginOptions(PARTIAL_CLI_FILENAME))],
 });
