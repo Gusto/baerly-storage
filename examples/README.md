@@ -1,5 +1,7 @@
 # examples/
 
+**The only persistent component is your bucket** — there is no separate database server or daemon to deploy, no idle bill, and maintenance is automatic and write-triggered (no cron, no sidecar, no scheduler).
+
 Catalog of runnable baerly-storage example apps. Each subdirectory
 is a self-contained pnpm workspace — `cd` in, `pnpm install`, and
 `pnpm dev` (or the example's own script) brings it up. The same
@@ -7,8 +9,6 @@ tree doubles as the template source for `@gusto/create-baerly-storage`: the CLI
 reads `examples/<name>/`, applies the `.baerly/scaffold.json`
 manifest (rename sentinels, copy exclusions, devDep drops), and
 writes the result into the user's target directory.
-
-**The only persistent component is your bucket** — there is no separate database server or daemon to deploy, no idle floor to pay, and maintenance is automatic and write-triggered (no cron, no sidecar, no scheduler).
 
 ## Auth posture
 
