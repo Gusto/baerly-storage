@@ -443,7 +443,7 @@ const assertCurrentJson = (parsed: unknown, key: string): CurrentJson => {
   if (r["schema_version"] !== CURRENT_JSON_SCHEMA_VERSION) {
     throw new BaerlyError(
       "InvalidResponse",
-      `current.json at ${key}: unsupported schema_version ${String(r["schema_version"])}; expected ${CURRENT_JSON_SCHEMA_VERSION}`,
+      `current.json at ${key}: unsupported schema_version ${String(r["schema_version"])}; this build requires ${CURRENT_JSON_SCHEMA_VERSION}. This almost always means stale scratch data from a different build — wipe the local dev bucket (e.g. \`rm -rf .baerly-data\`) or recreate the R2/S3 bucket, then retry.`,
     );
   }
   if (!(typeof r["snapshot"] === "string" || r["snapshot"] === null)) {

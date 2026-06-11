@@ -996,13 +996,29 @@ describe("assertCurrentJson — schema_version guard", () => {
   // StringLiteral survivors at L444 are in the error message; kill by
   // asserting the message contains the key string.
   plainTest(
-    "rejects schema_version 0 with message mentioning schema_version and expected",
+    "rejects schema_version 0 with message naming the required version and the recovery action",
     async () => {
       const s = new MemoryStorage();
       await putRaw(s, "k", { ...rawSeed(), schema_version: 0 });
       await expect(readCurrentJson(s, "k")).rejects.toMatchObject({
         code: "InvalidResponse",
-        message: expect.stringMatching(/schema_version.*expected|expected.*schema_version/i),
+        // The general-branch message must stay actionable: name the
+        // required version AND prescribe the scratch-data recovery, so a
+        // future bump (v2→v3, …) is self-documenting without a bespoke
+        // per-version branch like the v1 reject above it.
+        message: expect.stringMatching(/schema_version.*requires.*\d/i),
+      });
+    },
+  );
+
+  plainTest(
+    "general schema-mismatch message prescribes wiping the dev bucket or recreating the bucket",
+    async () => {
+      const s = new MemoryStorage();
+      await putRaw(s, "k", { ...rawSeed(), schema_version: 0 });
+      await expect(readCurrentJson(s, "k")).rejects.toMatchObject({
+        code: "InvalidResponse",
+        message: expect.stringMatching(/wipe|recreate|\.baerly-data/i),
       });
     },
   );
