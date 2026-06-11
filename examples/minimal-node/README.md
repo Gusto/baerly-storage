@@ -136,8 +136,7 @@ start to dominate, and you're better off on a real database:
 - **~100 collections / tenant**
 
 When you cross the soft ceiling, graduation is mechanical:
-`baerly export --target=postgres` walks your log entries (already
-Postgres-logical-replication-shaped) into a real DB. If your
+`baerly export --target=postgres` walks your log entries (already Debezium-style CDC change events) into a real DB. If your
 deploy target is Cloudflare Workers and you'll accept Cloudflare
 lock-in, [D1](https://developers.cloudflare.com/d1/) is cheaper
 per-write at M-size and is a natural next step. If you're on

@@ -88,8 +88,7 @@ Full reference: [`docs/guide/cheatsheet.md`](./docs/guide/cheatsheet.md), or
 - **Idle rounds to zero.** No $5/mo floors multiplied across forty
   abandoned internal tools the loop produced last quarter. The runtime
   is a rounding error against the bucket.
-- **No hostage situation.** Log entries are shaped like Postgres
-  logical-replication messages. `baerly export --target=postgres`
+- **No hostage situation.** Log entries are Debezium-style CDC change events. `baerly export --target=postgres`
   graduates you out, mechanically, on the day an app outgrows this.
 - **Honest about its envelope.** Sized for ~10 GB / tenant, ~30 writes/min/collection sustained, ~100 collections / tenant. Crossing any of those is the success signal to graduate.
 

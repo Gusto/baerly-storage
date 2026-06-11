@@ -540,7 +540,7 @@ Pick your graduation target:
 - **Single-instance Node:** SQLite via Litestream.
 
 Either way, the export below is mechanical because log entries are
-Postgres-logical-replication-shaped — graduation is a Baerly win,
+Debezium-style CDC change events — graduation is a Baerly win,
 not a churn event.
 
 **Estimate your current rate:** `baerly admin usage --target=...`

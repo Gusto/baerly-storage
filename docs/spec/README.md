@@ -21,7 +21,7 @@ Stable specs. The "what" — implementation lives in `packages/`.
   algebraic properties (associativity, idempotence) the system
   relies on for log coalescing and network optimization.
 - [log-entry-shape.md](log-entry-shape.md) — the `LogEntry` wire
-  contract. Postgres-logical-replication-shaped; frozen and stable.
+  contract. Debezium-style CDC envelope; frozen and stable.
 - [s3-features-used.md](s3-features-used.md) — the minimal S3 API
   surface the protocol depends on.
 - [s3-xml-escaping-cases.md](s3-xml-escaping-cases.md) — edge cases
