@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       '@logtape/logtape':
-        specifier: 2.1.1
-        version: 2.1.1
+        specifier: 2.1.3
+        version: 2.1.3
     devDependencies:
       '@baerly/adapter-cloudflare':
         specifier: workspace:*
@@ -44,7 +44,7 @@ importers:
         version: 0.4.1(vitest@4.1.7)
       '@hono/node-server':
         specifier: ^2.0.4
-        version: 2.0.4(hono@4.12.23)
+        version: 2.0.4(hono@4.12.25)
       '@stryker-mutator/core':
         specifier: 9.6.1
         version: 9.6.1(@types/node@25.9.1)
@@ -301,7 +301,7 @@ importers:
         version: link:../server
       '@hono/node-server':
         specifier: ^2.0.4
-        version: 2.0.4(hono@4.12.23)
+        version: 2.0.4(hono@4.12.25)
       aws4fetch:
         specifier: 1.0.20
         version: 1.0.20
@@ -309,8 +309,8 @@ importers:
         specifier: ^5.3.0
         version: 5.8.0
       hono:
-        specifier: ^4.12.23
-        version: 4.12.23
+        specifier: ^4.12.25
+        version: 4.12.25
       picocolors:
         specifier: ^1.1.1
         version: 1.1.1
@@ -331,7 +331,7 @@ importers:
         version: link:../server
       '@hono/node-server':
         specifier: ^2.0.4
-        version: 2.0.4(hono@4.12.23)
+        version: 2.0.4(hono@4.12.25)
       citty:
         specifier: ^0.2.2
         version: 0.2.2
@@ -386,7 +386,7 @@ importers:
         version: link:../server
       '@hono/node-server':
         specifier: ^2.0.4
-        version: 2.0.4(hono@4.12.23)
+        version: 2.0.4(hono@4.12.25)
       picocolors:
         specifier: ^1.1.1
         version: 1.1.1
@@ -402,11 +402,11 @@ importers:
         specifier: workspace:*
         version: link:../protocol
       '@logtape/logtape':
-        specifier: 2.1.1
-        version: 2.1.1
+        specifier: 2.1.3
+        version: 2.1.3
       hono:
-        specifier: ^4.12.23
-        version: 4.12.23
+        specifier: ^4.12.25
+        version: 4.12.25
       jose:
         specifier: ^6.2.0
         version: 6.2.3
@@ -1380,8 +1380,8 @@ packages:
   '@jridgewell/trace-mapping@0.3.9':
     resolution: {integrity: sha512-3Belt6tdc8bPgAtbcmdtNJlirVoTmEb5e2gC94PnkwEW9jI6CAHUeoG85tjWP5WquqfavoMtMwiG4P926ZKKuQ==}
 
-  '@logtape/logtape@2.1.1':
-    resolution: {integrity: sha512-aULbCqUQGerfOsZ3CMvcKtueKzmdchluXYUd3bIHKmOIS93fx1ko0+hyRQ4flloGZ8EiyRPydZXiy8n1J/eAQA==}
+  '@logtape/logtape@2.1.3':
+    resolution: {integrity: sha512-DgFWjTYG403/FYbe2rIN6oEE20aN34r5UBC4wktCsM+qSF1L9HMZErvH+u+urNuDQX4bcnLm5UYgX+wWE79U3g==}
 
   '@manypkg/find-root@1.1.0':
     resolution: {integrity: sha512-mki5uBvhHzO8kYYix/WRy2WX8S3B5wdVSc9D6KcU5lQNglP2yt58/VfLuAK49glRXChosY8ap2oJ1qgma3GUVA==}
@@ -2446,8 +2446,8 @@ packages:
     resolution: {integrity: sha512-T2UbfbBEF32wiepXIsMlTW9+dDYC6wMh/t/vYA4tuOMKqWz/n3vr1NFSxQiyP+zk2mXsoMA/i/7qV6LKut1t1A==}
     engines: {node: '>= 0.4'}
 
-  hono@4.12.23:
-    resolution: {integrity: sha512-eIaZ9qDgu7XV0pxOCrg7/WhnQ6Ivm22UcxhXx/A3dcbqbbYgBEkc6e/J/s7j2tS96zoB0S9VBdLwQNCWwUo4LA==}
+  hono@4.12.25:
+    resolution: {integrity: sha512-2NFaIyNVgJmBs/ecmtGzlmluTFs5cHEWGTdu0t1HBwYzoGXOL5nUQBRMXsXWla5i4KkG//QMzVP88m1+I3fdAQ==}
     engines: {node: '>=16.9.0'}
 
   html-escaper@2.0.2:
@@ -4134,9 +4134,9 @@ snapshots:
       fast-check: 4.8.0
       vitest: 4.1.7(@types/node@25.9.1)(@vitest/coverage-v8@4.1.7)(happy-dom@20.9.0)(vite@8.0.14(@types/node@25.9.1)(esbuild@0.28.0)(yaml@2.9.0))
 
-  '@hono/node-server@2.0.4(hono@4.12.23)':
+  '@hono/node-server@2.0.4(hono@4.12.25)':
     dependencies:
-      hono: 4.12.23
+      hono: 4.12.25
 
   '@img/colour@1.1.0': {}
 
@@ -4384,7 +4384,7 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.5
 
-  '@logtape/logtape@2.1.1': {}
+  '@logtape/logtape@2.1.3': {}
 
   '@manypkg/find-root@1.1.0':
     dependencies:
@@ -5306,7 +5306,7 @@ snapshots:
     dependencies:
       function-bind: 1.1.2
 
-  hono@4.12.23: {}
+  hono@4.12.25: {}
 
   html-escaper@2.0.2: {}
 

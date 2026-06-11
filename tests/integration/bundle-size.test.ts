@@ -449,7 +449,11 @@ const BUDGETS: readonly Budget[] = [
   //     NOT "what the parser sees" universally — a consumer's own bundler
   //     re-minifies before deploy, so min+gz is the closest proxy to the
   //     bytes Cloudflare weighs against the limit.
-  { entry: "cloudflare.js", raw: 378 * 1024, gz: 113 * 1024, minGz: 40 * 1024 },
+  //   → raw 379 KiB (2026-06-11): hono 4.12.23 → 4.12.25 patch bump in
+  //     the dep refresh widened the closure +27 raw bytes (387099),
+  //     tipping the 378 KiB ceiling. gz/min+gz unaffected. Rebaseline
+  //     raw +1 KiB.
+  { entry: "cloudflare.js", raw: 379 * 1024, gz: 113 * 1024, minGz: 40 * 1024 },
   // Client surface — `BaerlyClient<TConfig>` + fetcher plumbing.
   // Browser/runtime-agnostic; no kernel modules in the closure.
   // Budget history:

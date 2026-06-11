@@ -190,7 +190,7 @@
     "bench:lsn-reverse-walk": "node --import ./bench/register-hooks.mjs bench/lsn-reverse-walk.ts"
   },
   "dependencies": {
-    "@logtape/logtape": "2.1.1"
+    "@logtape/logtape": "2.1.3"
   },
   "devDependencies": {
     "@baerly/adapter-cloudflare": "workspace:*",

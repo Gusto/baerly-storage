@@ -58,8 +58,8 @@
   },
   "dependencies": {
     "@baerly/protocol": "workspace:*",
-    "@logtape/logtape": "2.1.1",
-    "hono": "^4.12.23",
+    "@logtape/logtape": "2.1.3",
+    "hono": "^4.12.25",
     "jose": "^6.2.0"
   }
 }
