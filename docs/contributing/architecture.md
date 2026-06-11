@@ -2,7 +2,7 @@
 title: Architecture overview
 audience: coder
 summary: Module dependency graph and lifecycle of db.collection(...).insert().
-last-reviewed: 2026-05-31
+last-reviewed: 2026-06-11
 tags: [architecture, lifecycle, module-map]
 related: ["../spec/sync-protocol.md", extending.md, features.md]
 ---
@@ -34,7 +34,11 @@ part is not the kernel; it is shaping the system so the public API
 stays small enough that an LLM can use it from `.d.ts` alone (see
 [ADR-002](../adr/002-api-surface-lock.md)).
 
-Bundle sizes set the scope: ~110 KB gzipped on Cloudflare Workers, ~160 KB gzipped on Node, ~5 KB gzipped browser client. The whole public API surface fits in a single ~12k-token `dist/API.md`.
+Bundle sizes set the scope: the full Cloudflare Workers bundle
+(`cloudflare.js`) is ~113 KB gzipped; the Node HTTP closure
+(`http.js`) is ~94 KB gzipped; the browser client (`client.js`)
+is ~5 KB gzipped. The whole public API surface fits in a single
+~12k-token `dist/API.md`.
 
 ## Runtime model
 

@@ -231,8 +231,9 @@ Each design choice falls out of a specific criterion above. Built
 like git: content-addressed documents, immutable log entries, and a
 single CAS-advanced pointer to HEAD.
 
-- **Idle → zero.** Baerly is a ~110 KB gzipped TypeScript library on
-  Cloudflare Workers (~160 KB gzipped on Node).
+- **Idle → zero.** Baerly is a TypeScript library: the full
+  Cloudflare Workers bundle (`cloudflare.js`) is ~113 KB gzipped;
+  the Node HTTP closure (`http.js`) is ~94 KB gzipped.
   Your Worker (or Node process) imports it directly. No binary, no
   separate process, no pool / cache / leader. The kernel is
   stateless: ~8 µs router dispatch, then the 5–50 ms waiting on S3,
