@@ -70,6 +70,9 @@ export default defineConfig({
     // copy from before we renamed the quickref to `API.md`) would
     // otherwise survive incremental rebuilds and ship via the
     // package.json `files: ["dist"]` field.
+    // ORDERING: this root build (with `cleanDir`) MUST run before the CLI
+    // build in `pnpm build` — reordering would let `cleanDir` wipe the
+    // CLI's already-written `.third-party-licenses.cli.json` partial.
     cleanDir: true,
   },
   // The license plugin discovers every third-party package bundled by

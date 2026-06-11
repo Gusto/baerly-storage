@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, test } from "vitest";
+import { isUnacceptableLicense } from "../../scripts/third-party-licenses.mjs";
 
 // rolldown INLINES third-party libraries into the published `dist/`.
 // MIT/ISC/BSD all require their copyright + permission notice to travel
@@ -75,5 +76,26 @@ describe("third-party-licenses manifest", () => {
     // the tarball.
     expect(existsSync(resolve(distDir, ".third-party-licenses.lib.json"))).toBe(false);
     expect(existsSync(resolve(distDir, ".third-party-licenses.cli.json"))).toBe(false);
+  });
+});
+
+describe("isUnacceptableLicense SPDX gate", () => {
+  // AND is conjunction: ALL terms must be allowlisted. OR is disjunction:
+  // ANY alternative suffices. `(MIT AND GPL-3.0)` must be REJECTED — a
+  // naive split-and-`.some()` would wrongly accept it on the MIT term.
+  test("rejects a conjunction with a non-permissive term", () => {
+    expect(isUnacceptableLicense("(MIT AND GPL-3.0)")).toBe(true);
+  });
+
+  test("accepts a disjunction where one alternative is permissive", () => {
+    expect(isUnacceptableLicense("(MIT OR GPL-3.0)")).toBe(false);
+  });
+
+  test("accepts a bare permissive license", () => {
+    expect(isUnacceptableLicense("MIT")).toBe(false);
+  });
+
+  test("rejects a bare non-permissive license", () => {
+    expect(isUnacceptableLicense("GPL-3.0")).toBe(true);
   });
 });

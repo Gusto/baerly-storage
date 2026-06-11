@@ -2,7 +2,7 @@
 title: Publishing
 audience: maintainer
 summary: "How to publish @gusto/baerly-storage + @gusto/create-baerly-storage privately under the @gusto org on npmjs.com."
-last-reviewed: 2026-06-03
+last-reviewed: 2026-06-11
 tags: [publishing, release, npm]
 related: ["development.md", "../../CLAUDE.md"]
 ---
@@ -224,6 +224,47 @@ Both packages bump together (same release train) via the Changesets
 (it bumps both packages and writes `CHANGELOG.md`), then tag the release
 commit so `git log v0.1.4..v0.1.5` answers "what changed". The end-to-end
 mechanics live in [Cutting a release](#cutting-a-release) above.
+
+## Third-party license notices
+
+The published `@gusto/baerly-storage` bundle ships a
+`dist/THIRD-PARTY-LICENSES.txt` file alongside the code. Here's why it
+exists and how it's produced.
+
+**Why.** rolldown *inlines* our runtime deps (`aws4fetch`,
+`fast-xml-parser`, `hono`, `@hono/node-server`, `jose`,
+`@logtape/logtape`, `picocolors`, plus the CLI's `citty` + `jsonc-parser`)
+into `dist/`. Those deps are MIT/ISC/BSD/Apache-2.0; every one of those
+licenses requires its copyright + permission notice to travel with any
+copy of the code. Bundling is a copy, so the notices must ship too.
+
+**Architecture.** The notices file is generated at build time, never
+hand-maintained:
+
+1. Each rolldown build runs codepunkt's `rollup-license-plugin`
+   (`rolldown.config.ts` for the library entries,
+   `packages/cli/rolldown.config.ts` for the `baerly` bin). Each plugin
+   discovers the third-party packages *that build* bundled and writes a
+   partial JSON manifest — `dist/.third-party-licenses.lib.json` and
+   `dist/.third-party-licenses.cli.json` respectively.
+2. The final `pnpm build` step runs
+   `node scripts/merge-third-party-licenses.mjs`, which unions + dedupes
+   the partials by `name@version`, renders each dep's verbatim license
+   text into `dist/THIRD-PARTY-LICENSES.txt`, then deletes the partials
+   so they never reach the tarball.
+
+The notices file ships via the root package's `files: ["dist"]` — no
+extra packaging wiring. `tests/integration/third-party-licenses.test.ts`
+pins that it exists, lists every bundled lib across both builds, and
+carries verbatim text.
+
+**Allowlist gate.** `scripts/third-party-licenses.mjs` holds the
+permissive-license allowlist (MIT / ISC / BSD-2 / BSD-3 / Apache-2.0 /
+0BSD / Unlicense / CC0-1.0) and the SPDX acceptability check. The plugin
+calls it as `unacceptableLicenseTest`, and the merge step re-checks as a
+belt-and-suspenders guard. **The build fails** if any bundled dep carries
+a non-permissive license (e.g. any copyleft GPL/AGPL/LGPL/MPL), so a
+license-incompatible dep can never silently ship.
 
 ## Notes on the publish config
 

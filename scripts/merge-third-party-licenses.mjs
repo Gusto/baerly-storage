@@ -23,6 +23,9 @@ import {
   isUnacceptableLicense,
 } from "./third-party-licenses.mjs";
 
+// COUPLING: every rolldown build that bundles third-party code MUST emit a
+// partial here. A new bundling build's deps will be silently omitted from
+// the (legally-required) notices manifest until its partial is added below.
 const PARTIALS = [PARTIAL_LIB_FILENAME, PARTIAL_CLI_FILENAME].map((f) => resolve(DIST_DIR, f));
 
 function readPartial(path) {
@@ -69,7 +72,9 @@ const header = [
 
 const blocks = packages.map((p) => {
   const meta = [`${p.name}@${p.version}`, `License: ${p.license}`];
-  if (p.repository) {meta.push(`Repository: ${p.repository}`);}
+  if (p.repository) {
+    meta.push(`Repository: ${p.repository}`);
+  }
   const text = (p.licenseText || "").trim() || "(no license text found in package)";
   return `${meta.join("\n")}\n\n${text}\n`;
 });
@@ -79,7 +84,9 @@ const outPath = resolve(DIST_DIR, NOTICES_FILENAME);
 writeFileSync(outPath, `${body}\n`);
 
 // Remove the intermediates so they don't ship in the tarball.
-for (const path of PARTIALS) {rmSync(path, { force: true });}
+for (const path of PARTIALS) {
+  rmSync(path, { force: true });
+}
 
 console.log(
   `Wrote ${NOTICES_FILENAME} (${packages.length} third-party package${packages.length === 1 ? "" : "s"}).`,
