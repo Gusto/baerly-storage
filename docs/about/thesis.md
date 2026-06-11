@@ -123,10 +123,9 @@ props. The docs should not conflate them.
 
 A design choice that improves one audience without harming the other is a
 win. A design choice that improves authoring DX by adding operator chores
-(or vice versa) is a regression. When in doubt, the authoring / LLM-legibility
-audience wins. Zero operator burden matters precisely because it removes the
-deployment friction that would otherwise block builders from reaching for this
-tool — it is the enabler of the primary goal, not the goal itself.
+(or vice versa) is a regression. When in doubt, the authoring audience wins.
+Zero operator burden is the enabler of that goal, not the goal itself: without
+it, the deployment friction that blocks builders never clears.
 
 ## Why not Postgres
 
