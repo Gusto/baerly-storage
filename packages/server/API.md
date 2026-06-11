@@ -20,11 +20,10 @@ only for exact signatures).
 The public surface is intentionally small and **closed**: the absence
 of a method is a design choice, not an undocumented gap. Every
 unsupported operation is a compile error — the type system enforces the
-vocabulary rather than surfacing a runtime "not implemented" (the
-predicate operator set is a concrete example: see [Predicates](#predicates)).
-This closed shape is what makes zero-shot use reliable: you can reach
-the correct call from this file or the `.d.ts` files alone, without
-inventing ceremony the kernel doesn't support.
+vocabulary rather than surfacing a runtime "not implemented", so an agent
+reaches the correct call zero-shot without inventing ceremony the kernel
+doesn't support. The predicate operator set is the concrete example
+(see [Predicates](#predicates)).
 
 ## Imports cheat sheet
 
