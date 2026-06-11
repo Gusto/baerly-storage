@@ -2,7 +2,7 @@
 title: Conventions for changing code
 audience: coder
 summary: How to make non-trivial changes — no silent compat shims, one canonical form per operation, types over JSDoc.
-last-reviewed: 2026-05-30
+last-reviewed: 2026-06-11
 tags: [conventions, discipline]
 related: [docs.md, tests.md, "../../about/thesis.md", "../../adr/002-api-surface-lock.md"]
 ---
@@ -116,6 +116,8 @@ explicitly. The pitch is two-audience (see
 [thesis §"Two audiences, two pitches"](../../about/thesis.md#two-audiences-two-pitches)):
 LLM legibility for code authors (criterion #4), zero operator burden for
 platform teams (criterion #6). When the two audiences conflict on a
-design choice, the operator-burden audience wins — they have one shot
-to say yes or no to deploying this; the authoring audience has many
-tools and can adapt.
+design choice, the authoring audience wins — it is the primary one.
+Zero operator burden is not a competing priority but the enabler of
+that goal: a mechanism that adds an operator chore breaks the
+deployment path builders depend on, so it harms the authoring audience
+too. That is what these three checks protect.
