@@ -10,6 +10,8 @@ one-collection `notes` schema you extend; flip to a shared secret
 or wire `bearerJwt` against your OIDC IdP before deploy — see
 "Production auth" below.
 
+**The only persistent component is your S3-compatible bucket** — there is no separate database server or daemon to deploy alongside the node process, no idle floor, and maintenance is automatic and write-triggered (no cron, no sidecar, no scheduler).
+
 To ship a production Dockerfile alongside, scaffold with
 `--with=docker` — the add-on writes a multi-stage distroless Dockerfile,
 `.dockerignore`, and `healthcheck.js` into this same shape.

@@ -7,6 +7,8 @@ so the day-1 happy path works with zero env vars, plus a
 one-collection `notes` schema you extend; flip to Cloudflare Access
 or a shared secret before deploy — see "Production auth" below.
 
+**The only persistent component is your R2 bucket** — there is no Worker to keep warm, no database daemon to operate, no idle bill, and maintenance is automatic and write-triggered (no cron, no sidecar, no scheduler).
+
 ## What you got
 
 ```

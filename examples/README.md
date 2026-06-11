@@ -8,6 +8,8 @@ reads `examples/<name>/`, applies the `.baerly/scaffold.json`
 manifest (rename sentinels, copy exclusions, devDep drops), and
 writes the result into the user's target directory.
 
+**The only persistent component is your bucket** — there is no separate database server or daemon to deploy, no idle floor to pay, and maintenance is automatic and write-triggered (no cron, no sidecar, no scheduler).
+
 ## Auth posture
 
 Every scaffold below ships `auth: "none"` in `baerly.config.ts` so
