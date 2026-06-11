@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "description": "Node adapter — re-exports S3HttpStorage and exposes a node:http RequestListener that wraps Db + Writer.",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "type": "module",
   "sideEffects": false,
   "exports": {

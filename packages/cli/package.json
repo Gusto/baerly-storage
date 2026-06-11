@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "description": "Baerly CLI — deploy, doctor, inspect, export, cost, admin (fsck, dump, restore).",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "files": [
     "dist"
   ],

@@ -122,3 +122,7 @@ For a runnable multi-tab demo see [`examples/react-node/`](./examples/react-node
   conventions, ADRs, protocol specs, operating procedures.
 - [`examples/`](./examples) — runnable scaffolds + the `react-node/`
   multi-tab demo.
+
+## License
+
+Apache-2.0 — see [LICENSE](./LICENSE) and [NOTICE](./NOTICE).

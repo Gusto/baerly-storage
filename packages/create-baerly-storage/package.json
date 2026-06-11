@@ -6,7 +6,7 @@
   "bugs": {
     "url": "https://github.com/Gusto/baerly-storage/issues"
   },
-  "license": "MIT",
+  "license": "Apache-2.0",
   "author": "Eric Baer",
   "repository": {
     "type": "git",
