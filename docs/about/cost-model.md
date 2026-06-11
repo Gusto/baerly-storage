@@ -256,11 +256,9 @@ Read this as positioning, not a cost claim:
   across all workload sizes. Object storage is the rare primitive
   every major cloud implements with the same abstraction (the S3
   API); your bytes live in your bucket and leaving needs no
-  vendor cooperation. D1, Supabase, Neon, and PlanetScale are
+  vendor cooperation. D1, Supabase, Neon, and Firebase are
   excellent, but they are proprietary runtimes — choosing one is
-  a switching-cost decision. Baerly's Debezium-style CDC log
-  (`baerly export --target=postgres`) makes the graduation path
-  mechanical, not aspirational. Even at M-size where D1 wins on
+  a switching-cost decision. Even at M-size where D1 wins on
   raw per-write price, the portability axis sits orthogonal to
   price and should be weighed alongside it.
 
@@ -269,8 +267,7 @@ designed to lose past them — that loss is the graduation signal,
 mechanical via `baerly export --target=postgres`. We name three
 axes explicitly: per-write price (where Baerly loses at M-size),
 idle × portfolio cost (where it wins decisively), and
-portability / switching cost (where it wins on every workload
-— any S3-API cloud, any Node runtime, no proprietary runtime).
+portability / switching cost (where it wins on every workload).
 The workload class the thesis targets (idle × portfolio, XS/S
 experimentation, large internal-tools fleet) isn't economically
 viable under per-app managed-DB floors — and that's where the
