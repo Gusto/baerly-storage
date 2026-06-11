@@ -35,7 +35,7 @@
     "prepublishOnly": "node ../../scripts/guard-publish.mjs"
   },
   "dependencies": {
-    "@clack/prompts": "^1.4.0",
+    "@clack/prompts": "^1.5.1",
     "citty": "^0.2.2",
     "picocolors": "^1.1.1"
   },
