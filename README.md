@@ -6,7 +6,7 @@
 
 `baerly-storage` is a library that turns an S3-compatible bucket into a document database. **There is no runtime. None.** All coordination — fencing, commit, compaction, garbage collection — runs inside the HTTP request that triggered it: no daemon, no leader, no service bill, no on-call. The only persistent component is your bucket.
 
-Server bundle: the full Cloudflare Workers bundle (`cloudflare.js`) is ~113 KB gzipped; the Node HTTP closure (`http.js`) is ~94 KB gzipped. Browser client (`client.js`): ~5 KB gzipped. The whole public API fits in a single ~12k-token `dist/API.md` — small enough that an LLM can hold it in context.
+The full Cloudflare Workers bundle (`cloudflare.js`) is ~113 KB gzipped, the Node HTTP closure (`http.js`) is ~94 KB gzipped, and the browser client (`client.js`) is ~5 KB gzipped. The whole public API fits in a single ~12k-token `dist/API.md` — small enough that an LLM can hold it in context.
 
 [S3 does the hard parts](https://aws.amazon.com/blogs/aws/amazon-s3-update-strong-read-after-write-consistency/), `baerly-storage` is the coordination that fixes the API. Built like git: content-addressed documents, immutable log entries, and a single CAS-advanced pointer to HEAD. Document model, live queries, snapshot isolation — the whole surface in a `.d.ts` an LLM can use zero-shot.
 
