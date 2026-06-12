@@ -1,4 +1,5 @@
 import { describe, expect, test } from "vitest";
+import { COUNT_BIT_WIDTH } from "./constants.ts";
 import { LOG_KEY_PREFIX, type LogEntry, lsnParts, type ReplicaIdentity } from "./log.ts";
 import { countKey, str2uintDesc } from "./types.ts";
 
@@ -113,9 +114,9 @@ describe("countKey — seq segment encoding", () => {
   // relies on.
 
   test("round-trips through str2uintDesc for boundary and large values", () => {
-    // COUNT_BIT_WIDTH is 53 after the fix; we test the values that
-    // previously overflowed at the old width of 10 (domain 0..1023).
-    const COUNT_BIT_WIDTH = 53; // must match constants.ts after the fix
+    // COUNT_BIT_WIDTH imported from constants.ts — no hand-copied literal
+    // so this test auto-fails if the constant is changed without updating
+    // the encoder/decoder pair.
     for (const n of [0, 1, 1023, 1024, 100_000, Number.MAX_SAFE_INTEGER]) {
       const encoded = countKey(n);
       const decoded = str2uintDesc(encoded, COUNT_BIT_WIDTH);

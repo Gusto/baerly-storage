@@ -78,6 +78,22 @@ describe("HTTP conformance", () => {
       // the Node-side variants already cover the invariant.
       supportsAbort: false,
       supportsSinceTimeoutOverride: true,
+      // Pre-seed next_seq and log_seq_start so the overflow regression
+      // test only needs ONE insert instead of 1025 sequential fetches.
+      provisionTableAtSeq: async (table, nextSeq) => {
+        const storage = r2BindingStorage(getBinding());
+        const key = `app/${APP}/tenant/${CONFORMANCE_TENANT}/manifests/${table}/current.json`;
+        await createCurrentJson(storage, key, {
+          schema_version: CURRENT_JSON_SCHEMA_VERSION,
+          snapshot: null,
+          next_seq: nextSeq,
+          log_seq_start: nextSeq,
+          writer_fence: { epoch: 0, owner: "http-conformance-test", claimed_at: "" },
+          tail_bytes: 0,
+          snapshot_bytes: 0,
+          snapshot_rows: 0,
+        });
+      },
     },
   });
 });

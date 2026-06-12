@@ -305,6 +305,24 @@ for (const variant of variants) {
         // timeout. The Workerd-side variant pins this `false` because
         // `baerlyWorker` does not thread the override through.
         supportsSinceTimeoutOverride: true,
+        // Pre-seed next_seq and log_seq_start to `nextSeq` so the
+        // overflow regression test only needs ONE insert instead of
+        // 1025 sequential HTTP round-trips. Without this the local-fs
+        // backend's per-write maintenance overhead (~80ms/write) would
+        // push the test over its 30s budget.
+        provisionTableAtSeq: async (table, nextSeq) => {
+          const key = `app/${APP}/tenant/${CONFORMANCE_TENANT}/manifests/${table}/current.json`;
+          await createCurrentJson(storage!, key, {
+            schema_version: CURRENT_JSON_SCHEMA_VERSION,
+            snapshot: null,
+            next_seq: nextSeq,
+            log_seq_start: nextSeq,
+            writer_fence: { epoch: 0, owner: "http-conformance-test", claimed_at: "" },
+            tail_bytes: 0,
+            snapshot_bytes: 0,
+            snapshot_rows: 0,
+          });
+        },
       },
     });
   });

@@ -18,10 +18,10 @@ import { describe, expect } from "vitest";
 import { COUNT_BIT_WIDTH, TIMESTAMP_BIT_WIDTH } from "./constants.ts";
 import { countKey, str2uint, str2uintDesc, uint2str, uint2strDesc, uuid, uuidv7 } from "./types.ts";
 
-// Bit-widths the protocol actually uses (COUNT_BIT_WIDTH = 10,
-// TIMESTAMP_BIT_WIDTH = 42) plus an intermediate. All ≤ 45, so
-// `2 ** bits - 1` stays well under `Number.MAX_SAFE_INTEGER` and
-// `parseInt(_, 32)` round-trips exactly.
+// Bit-widths used to exercise the raw codec. The `10` and `20` are
+// deliberately below COUNT_BIT_WIDTH (53) so `2 ** bits - 1` stays
+// well under `Number.MAX_SAFE_INTEGER` and `parseInt(_, 32)` round-trips
+// exactly. TIMESTAMP_BIT_WIDTH (42) is the other protocol-critical width.
 const bitsArb = fc.constantFrom(10, 20, TIMESTAMP_BIT_WIDTH);
 
 /** A bit-width paired with one in-domain integer `[0, 2^bits)`. */

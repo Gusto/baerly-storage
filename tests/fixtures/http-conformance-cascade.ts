@@ -91,6 +91,25 @@ export interface HttpConformanceOptions {
   readonly bearerToken?: string;
   /** Override the doc-body arbitrary. Default: small JSON object. */
   readonly bodyArb?: fc.Arbitrary<DocumentData>;
+  /**
+   * Optional seam for the seq-overflow regression test (block 10b).
+   *
+   * When provided, the cascade uses this callback instead of
+   * `provisionTable` to seed `current.json` with a given `next_seq` and
+   * `log_seq_start`. This lets the call site pre-advance the seq counter
+   * so the test only needs ONE insert to reach seq > 1023 — rather than
+   * 1025 sequential HTTP inserts (which would time out the local-fs variant).
+   *
+   * The callback MUST create `current.json` with:
+   *   `next_seq = nextSeq`, `log_seq_start = nextSeq` (no real log entries).
+   * After one insert the collection's `next_seq` advances to `nextSeq + 1`
+   * and the log carries exactly one entry at seq `nextSeq`.
+   *
+   * When omitted, the regression test still runs but falls back to
+   * inserting 1025 documents sequentially (the straightforward approach).
+   * Suitable for variants where storage I/O is cheap enough (memory).
+   */
+  readonly provisionTableAtSeq?: (table: string, nextSeq: number) => Promise<void>;
 }
 
 export type HttpFetch = (req: Request) => Promise<Response>;
@@ -222,6 +241,7 @@ export const runHttpConformanceCascade = (opts: {
   const tenantPrefix = o.tenantPrefix ?? CONFORMANCE_TENANT;
   const bearerToken = o.bearerToken ?? CONFORMANCE_BEARER;
   const bodyArb = o.bodyArb ?? DEFAULT_BODY_ARB;
+  const provisionTableAtSeq = o.provisionTableAtSeq;
   // `caseSensitiveKeys` reserved for future per-variant overrides;
   // not currently exercised because UUIDv7 ids are produced by the
   // server (lowercase hex by construction).
@@ -863,50 +883,128 @@ export const runHttpConformanceCascade = (opts: {
     //
     // Regression for the seq-segment overflow bug: at the old COUNT_BIT_WIDTH=10
     // the 1025th write to one collection produced countKey(1024) === "-1",
-    // which LSN_RE rejected with a SchemaError (400) on the next poll.
+    // which LSN_RE rejected with a SchemaError (400) on the next poll,
+    // permanently killing the change feed for that collection.
     //
-    // This test verifies that a cursor emitted by the server round-trips back
-    // to the server without triggering a 400 SchemaError. The unit-level
-    // overflow regression in packages/protocol/src/log.test.ts directly
-    // verifies the encoding fix at seq > 1023.
-    describe.skipIf(!supportsLongPoll)(
-      "/v1/since cursor survives past seq 1023 (overflow regression)",
-      () => {
-        test("cursor emitted by /v1/since is accepted on a second poll without SchemaError", async () => {
-          const table = await mintTable("lp-overflow");
-          // Insert a few docs so /v1/since has events to return and emits
-          // a non-empty next_cursor.
-          for (let i = 0; i < 3; i += 1) {
-            const res = await postDoc(table, { i });
-            expect(res.status).toBe(201);
-          }
-          // First poll: get events and capture the cursor the server emits.
-          const res1 = await doFetch(authedRequest("GET", `/v1/since?collection=${table}&cursor=`));
+    // This block does NOT sit inside the long-poll gate — /v1/since is
+    // exercised on its fast-path (pre-existing events), which works on
+    // every variant regardless of long-poll support. The test inserts
+    // exactly 1025 documents so that next_seq reaches 1025 and the last
+    // log entry carries seq = 1024 — one past the old 10-bit limit of
+    // 1023. With the old encoding countKey(1024) returned "-1" (outside
+    // [0-9a-v]), which LSN_RE rejected on the second poll.
+    //
+    // The unit-level overflow regression in packages/protocol/src/log.test.ts
+    // verifies the encoding fix in isolation; this block confirms the fix
+    // propagates end-to-end through the HTTP wire.
+    describe("/v1/since cursor overflow regression (seq > 1023)", () => {
+      test("cursor emitted after advancing past seq 1023 round-trips without SchemaError", async () => {
+        // Strategy depends on whether the call site supplied
+        // `provisionTableAtSeq` (a seam that lets us pre-seed
+        // next_seq / log_seq_start directly):
+        //
+        //   a) With the seam (fast path): provision the collection at
+        //      seq=1024 and insert exactly ONE document. The single write
+        //      lands at seq=1024 — past the old 10-bit limit of 1023.
+        //      Only one HTTP round-trip needed. All backends.
+        //
+        //   b) Without the seam (slow path): insert 1025 documents
+        //      sequentially so next_seq reaches 1025. Suitable only for
+        //      backends with cheap in-process storage (memory). Backends
+        //      with real I/O should supply `provisionTableAtSeq`.
+        //
+        // Either path ends with a cursor whose seq segment must be 11 chars
+        // (Math.ceil(53/5)) — the widened fixed width. With the old 10-bit
+        // encoding, countKey(1024) produced "-1" and the server's LSN_RE
+        // validator rejected it with 400 SchemaError.
+
+        let seqTable: string;
+        let cursor: string;
+
+        if (provisionTableAtSeq !== undefined) {
+          // ── Fast path: pre-seed next_seq=1024, log_seq_start=1024 ──
+          // The kernel treats seqs 0..1023 as already snapshotted.
+          // One insert lands at seq=1024.
+          seqTable = freshTable("overflow-fast");
+          await provisionTableAtSeq(seqTable, 1024);
+
+          const ins = await postDoc(seqTable, { overflow: true });
+          expect(ins.status).toBe(201);
+
+          // Single poll: the one insert at seq=1024 is the only event.
+          const res1 = await doFetch(
+            authedRequest("GET", `/v1/since?collection=${seqTable}&cursor=`),
+          );
           expect(res1.status).toBe(200);
           const body1 = (await res1.json()) as {
             readonly events: ReadonlyArray<unknown>;
             readonly next_cursor: string;
           };
-          expect(body1.events.length).toBeGreaterThanOrEqual(1);
-          expect(typeof body1.next_cursor).toBe("string");
-          expect(body1.next_cursor.length).toBeGreaterThan(0);
+          expect(body1.events).toHaveLength(1);
+          cursor = body1.next_cursor;
+        } else {
+          // ── Slow path: 1025 sequential inserts ─────────────────────
+          seqTable = await mintTable("overflow-1025");
+          for (let i = 0; i < 1025; i += 1) {
+            const ins = await postDoc(seqTable, { i });
+            expect(ins.status).toBe(201);
+          }
 
-          // Second poll: feed the cursor back. With the old 10-bit encoding,
-          // once seq exceeded 1023 the cursor's seq segment became "-1" and
-          // the server's own LSN_RE validator rejected it with 400 SchemaError.
-          // After the fix (53-bit encoding, 11-char seq token), the cursor
-          // always matches the validator and the server must return 200.
-          const res2 = await doFetch(
-            authedRequest(
-              "GET",
-              `/v1/since?collection=${table}&cursor=${encodeURIComponent(body1.next_cursor)}`,
-            ),
-          );
-          // Must NOT be 400 — that was the overflow symptom.
-          expect(res2.status).toBe(200);
-        });
-      },
-    );
+          // Drain all 1025 events; DEFAULT_MAX_EVENTS=1024 caps each
+          // response, so two polls are needed to reach seq=1024.
+          let cur = "";
+          let lastCur: string | undefined;
+          let iters = 0;
+          do {
+            const drainRes = await doFetch(
+              authedRequest(
+                "GET",
+                `/v1/since?collection=${seqTable}&cursor=${encodeURIComponent(cur)}`,
+              ),
+            );
+            expect(drainRes.status).toBe(200);
+            const drainBody = (await drainRes.json()) as {
+              readonly events: ReadonlyArray<unknown>;
+              readonly next_cursor: string;
+            };
+            lastCur = cur;
+            cur = drainBody.next_cursor;
+            iters += 1;
+            expect(iters).toBeLessThan(100);
+          } while (cur !== lastCur);
+          cursor = cur;
+        }
+
+        // Either path: `cursor` is the LSN of the write at seq=1024.
+        // Its seq segment (third `_`-delimited token) must be 11 chars —
+        // Math.ceil(COUNT_BIT_WIDTH/5) where COUNT_BIT_WIDTH=53. With the
+        // old 10-bit encoding countKey(1024) returned "-1" (outside
+        // [0-9a-v]), which LSN_RE rejected with 400 SchemaError.
+        expect(typeof cursor).toBe("string");
+        expect(cursor.length).toBeGreaterThan(0);
+        const seqSegment = cursor.split("_")[2];
+        expect(seqSegment).toBeDefined();
+        // Concrete 11 — not imported — so this assertion doesn't tautologise.
+        expect(seqSegment!.length).toBe(11);
+
+        // Round-trip: feed the cursor back to /v1/since. With the old
+        // encoding this returned 400 SchemaError; after the fix it must
+        // return 200 with no new events (nothing written since drain).
+        const res2 = await doFetch(
+          authedRequest(
+            "GET",
+            `/v1/since?collection=${seqTable}&cursor=${encodeURIComponent(cursor)}`,
+          ),
+        );
+        expect(res2.status).toBe(200);
+        const body2 = (await res2.json()) as {
+          readonly events: ReadonlyArray<unknown>;
+          readonly next_cursor: string;
+        };
+        expect(body2.events).toHaveLength(0);
+        expect(body2.next_cursor).toBe(cursor);
+      }, 30_000);
+    });
 
     // ── Block 11: read response `_meta` (ticket 33) ─────────────────
     //
