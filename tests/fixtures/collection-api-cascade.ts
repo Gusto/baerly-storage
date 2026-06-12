@@ -54,9 +54,14 @@ const UUIDV7_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[0-9a-f]{4}-[0-9a-f]{12
 /**
  * LSN shape per `packages/protocol/src/log.ts:24-30`:
  * `<base32-time>_<session>_<seq>` — base-32 alphabet is `[0-9a-v]`,
- * `seq` is the trailing two-character group.
+ * `seq` is a fixed-width 11-character group (COUNT_BIT_WIDTH=53, ceil(53/5)=11).
+ *
+ * This is an independent hand-written literal — it deliberately restates
+ * the expected wire shape rather than importing the production `LSN_RE`
+ * from `since.ts` (which would make the `toMatch` assertion a tautology).
+ * When `COUNT_BIT_WIDTH` changes, update the `{N}` here to `ceil(bits/5)`.
  */
-const LSN_RE = /^[0-9a-v]+_[0-9a-v]+_[0-9a-v]{2}$/;
+const LSN_RE = /^[0-9a-v]+_[0-9a-v]+_[0-9a-v]{11}$/;
 
 const seedCurrent = (): CurrentJson => ({
   schema_version: CURRENT_JSON_SCHEMA_VERSION,

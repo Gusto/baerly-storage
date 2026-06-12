@@ -15,7 +15,7 @@
 import { fc, test } from "@fast-check/vitest";
 import { describe, expect } from "vitest";
 
-import { TIMESTAMP_BIT_WIDTH } from "./constants.ts";
+import { COUNT_BIT_WIDTH, TIMESTAMP_BIT_WIDTH } from "./constants.ts";
 import { countKey, str2uint, str2uintDesc, uint2str, uint2strDesc, uuid, uuidv7 } from "./types.ts";
 
 // Bit-widths the protocol actually uses (COUNT_BIT_WIDTH = 10,
@@ -119,10 +119,13 @@ describe("base-32 codecs — round-trip", () => {
     expect(str2uintDesc(uint2strDesc(g.n, g.bits), g.bits)).toBe(g.n);
   });
 
-  test.prop({ n: fc.nat({ max: 1023 }) })(
-    "str2uintDesc(countKey(n), 10) === n across the full COUNT domain",
+  test.prop({ n: fc.nat({ max: Number.MAX_SAFE_INTEGER }) })(
+    "str2uintDesc(countKey(n), COUNT_BIT_WIDTH) === n across the full COUNT domain",
     ({ n }) => {
-      expect(str2uintDesc(countKey(n), 10)).toBe(n);
+      // COUNT_BIT_WIDTH is 53; countKey uses it. Decoding with the same width
+      // must recover the original value. The old test used literal 10 (the
+      // previous bit width) which broke when COUNT_BIT_WIDTH was widened to 53.
+      expect(str2uintDesc(countKey(n), COUNT_BIT_WIDTH)).toBe(n);
     },
   );
 });

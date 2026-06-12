@@ -168,10 +168,13 @@ the hash input would first need canonicalization. Constant lives at
   [`packages/protocol/src/types.ts`](../packages/protocol/src/types.ts).)
 - **`<session>`** is a 6-char hex prefix of a UUID, freshly minted per
   commit batch by the stateless `Writer`.
-- **`<seq>`** is a 2-char base-32 descending counter (`countKey(seq)`),
-  where `seq` is sourced from `current.json.next_seq` — monotonic per
-  collection, advanced via the manifest CAS, and stable across process
-  restart (it does **not** reset per session).
+- **`<seq>`** is a fixed-width opaque base-32 descending counter
+  (`countKey(seq)`), where `seq` is sourced from `current.json.next_seq`
+  — monotonic per collection, advanced via the manifest CAS, and stable
+  across process restart (it does **not** reset per session). The exact
+  character width is an internal encoding detail (`COUNT_BIT_WIDTH` in
+  `packages/protocol/src/constants.ts`); treat the seq token as opaque
+  and do not hard-code its length in consumers.
 
 **Lex order is reverse-causal**, inherited from Baerly's manifest
 log encoding. Consumers walking the log via `ListObjectsV2 +

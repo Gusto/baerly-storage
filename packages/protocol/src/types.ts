@@ -1,3 +1,5 @@
+import { COUNT_BIT_WIDTH } from "./constants.ts";
+
 declare const brand: unique symbol;
 type Brand<B> = { [brand]: B };
 
@@ -70,14 +72,15 @@ export const uuidv7 = (): UUID => {
 
 /**
  * Mint the trailing seq segment of an LSN (`<base32-time>_<sess>_<seq>`).
- * `COUNT_BIT_WIDTH = 10` (matches `packages/protocol/src/log.ts:145`)
- * gives a 2-char descending base-32 string with a domain of 0..1023.
+ * Uses `COUNT_BIT_WIDTH` (see `packages/protocol/src/constants.ts`) to
+ * produce an 11-char descending base-32 string with a domain of
+ * 0 .. `Number.MAX_SAFE_INTEGER` (2^53 − 1).
  *
  * Used together with {@link timestamp} (the descending base-32
  * encoding of millis-since-epoch). See {@link uint2strDesc} for the
  * lex-reversal property both rely on.
  */
-export const countKey = (number: number): string => uint2strDesc(number, 10);
+export const countKey = (number: number): string => uint2strDesc(number, COUNT_BIT_WIDTH);
 
 export const uint2str = (num: number, bits: number) => {
   const maxBase32Length = Math.ceil(bits / 5); // Change from 4 to 5 because log2(32) is roughly 5.

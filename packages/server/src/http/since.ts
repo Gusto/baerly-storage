@@ -31,6 +31,7 @@
 import {
   type BaerlyConfig,
   BaerlyError,
+  COUNT_BIT_WIDTH,
   type LogEntry,
   logSeqStartOf,
   lsnParts,
@@ -40,13 +41,19 @@ import type { SinceResponse } from "../contract.ts";
 
 /**
  * Validation regex for an opaque LSN cursor. Matches the shape minted
- * by `Writer.commit` (see
- * `packages/server/src/writer.ts`) and described on
- * {@link LogEntry.lsn} — `<base32-time>_<session>_<seq>` where
- * base-32 is `[0-9a-v]` and the trailing seq is two characters.
- * Mirrored from `tests/integration/log-emit.test.ts:77`.
+ * by `Writer.commit` (see `packages/server/src/writer.ts`) and described
+ * on {@link LogEntry.lsn} — `<base32-time>_<session>_<seq>` where
+ * base-32 is `[0-9a-v]` and the trailing seq is a fixed-width token.
+ *
+ * The seq width (`{11}`) is `Math.ceil(COUNT_BIT_WIDTH / 5)` chars, derived
+ * from the canonical `COUNT_BIT_WIDTH` constant in
+ * `packages/protocol/src/constants.ts`. When `COUNT_BIT_WIDTH` changes,
+ * update the `{N}` here to match `Math.ceil(COUNT_BIT_WIDTH / 5)`.
+ * Currently: `Math.ceil(53 / 5) = 11`.
  */
-const LSN_RE = /^[0-9a-v]+_[0-9a-v]+_[0-9a-v]{2}$/;
+// COUNT_BIT_WIDTH is 53; Math.ceil(53 / 5) = 11.
+const SEQ_CHARS = Math.ceil(COUNT_BIT_WIDTH / 5); // 11
+const LSN_RE = new RegExp(`^[0-9a-v]+_[0-9a-v]+_[0-9a-v]{${SEQ_CHARS}}$`);
 
 /**
  * Hard cap on log entries returned in a single poll cycle. 1024 is

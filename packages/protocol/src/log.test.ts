@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { LOG_KEY_PREFIX, type LogEntry, lsnParts, type ReplicaIdentity } from "./log.ts";
-import { countKey } from "./types.ts";
+import { countKey, str2uintDesc } from "./types.ts";
 
 describe("LogEntry", () => {
   test("INSERT shape: after present, no before", () => {
@@ -66,6 +66,19 @@ describe("lsnParts", () => {
     }
   });
 
+  // Regression: seq overflow at 1024 — countKey(1024) used to produce "-1"
+  // which the LSN_RE validator rejected, killing the change feed.
+  test("round-trips past seq 1023 without overflow (regression for seq overflow bug)", () => {
+    for (const n of [1024, 2048, 100_000, Number.MAX_SAFE_INTEGER]) {
+      const encoded = countKey(n);
+      // Must not produce a negative-number string ("-1", "-101", etc.)
+      expect(encoded).not.toMatch(/^-/);
+      // Must be decodable back to the original value
+      const lsn = `0fffff_sess_${encoded}`;
+      expect(lsnParts(lsn).seq).toBe(n);
+    }
+  });
+
   test("throws on malformed lsn", () => {
     expect(() => lsnParts("not-an-lsn")).toThrow(/invalid lsn shape/);
     expect(() => lsnParts("only_two")).toThrow(/invalid lsn shape/);
@@ -90,5 +103,60 @@ describe("lsnParts", () => {
       const err = error as any;
       expect(err.code).toBe("InvalidResponse");
     }
+  });
+});
+
+describe("countKey — seq segment encoding", () => {
+  // The seq segment of an LSN uses a descending fixed-width base-32 encoding
+  // so that S3 forward-list yields entries in reverse-causal order.
+  // This suite pins the correctness properties the rest of the protocol
+  // relies on.
+
+  test("round-trips through str2uintDesc for boundary and large values", () => {
+    // COUNT_BIT_WIDTH is 53 after the fix; we test the values that
+    // previously overflowed at the old width of 10 (domain 0..1023).
+    const COUNT_BIT_WIDTH = 53; // must match constants.ts after the fix
+    for (const n of [0, 1, 1023, 1024, 100_000, Number.MAX_SAFE_INTEGER]) {
+      const encoded = countKey(n);
+      const decoded = str2uintDesc(encoded, COUNT_BIT_WIDTH);
+      expect(decoded).toBe(n);
+    }
+  });
+
+  test("every produced key consists only of base-32 chars [0-9a-v]", () => {
+    const BASE32_RE = /^[0-9a-v]+$/;
+    for (const n of [0, 1, 1023, 1024, 2048, 100_000, Number.MAX_SAFE_INTEGER]) {
+      expect(countKey(n)).toMatch(BASE32_RE);
+    }
+  });
+
+  test("descending lex order is preserved: countKey(a) > countKey(b) when a < b", () => {
+    // The reverse-walk on the log depends on this invariant.
+    const pairs: [number, number][] = [
+      [0, 1],
+      [1, 2],
+      [0, 1023],
+      [0, 1024],
+      [1023, 1024],
+      [1024, 1025],
+      [0, Number.MAX_SAFE_INTEGER],
+      [100_000, 200_000],
+    ];
+    for (const [a, b] of pairs) {
+      // a < b  →  countKey(a) should be lex-GREATER than countKey(b)
+      expect(countKey(a) > countKey(b)).toBe(true);
+    }
+  });
+
+  test("all keys produced across a range have equal length (fixed-width)", () => {
+    const samples = [0, 1, 1023, 1024, 100_000, Number.MAX_SAFE_INTEGER];
+    const lengths = samples.map((n) => countKey(n).length);
+    // All values must produce the same character count.
+    const firstLen = lengths[0]!;
+    for (const len of lengths) {
+      expect(len).toBe(firstLen);
+    }
+    // After widening to 53 bits, the expected width is ceil(53/5) = 11.
+    expect(firstLen).toBe(11);
   });
 });

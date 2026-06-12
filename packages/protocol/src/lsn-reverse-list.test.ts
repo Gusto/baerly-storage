@@ -19,19 +19,18 @@
  */
 import { fc, test } from "@fast-check/vitest";
 import { describe, expect } from "vitest";
-import { TIMESTAMP_BIT_WIDTH } from "./constants.ts";
+import { COUNT_BIT_WIDTH, TIMESTAMP_BIT_WIDTH } from "./constants.ts";
 import { MemoryStorage } from "./storage/memory.ts";
 import { timestamp } from "./time.ts";
 import { countKey, str2uintDesc, uint2strDesc } from "./types.ts";
 
-const COUNT_BIT_WIDTH = 10; // matches packages/protocol/src/log.ts:145
-
 /**
  * One causally-ordered write: a (millis-since-epoch, seq) tuple
- * the writer would have produced. `seq` ranges over the full
- * `COUNT_BIT_WIDTH = 10` domain (0..1023) and `millis` ranges
- * over a small recent window so timestamps interleave
- * realistically.
+ * the writer would have produced. `seq` ranges over a window of
+ * `COUNT_BIT_WIDTH`'s domain and `millis` ranges over a small
+ * recent window so timestamps interleave realistically.
+ * The full domain is 0..Number.MAX_SAFE_INTEGER; we test a small
+ * window for fast-check performance.
  */
 interface CausalPoint {
   readonly millis: number;
@@ -48,7 +47,10 @@ interface CausalPoint {
 const sessionArb = fc.stringMatching(/^[0-9a-f]{6}$/);
 const pointArb: fc.Arbitrary<CausalPoint> = fc.record({
   millis: fc.integer({ min: 0, max: 2 ** TIMESTAMP_BIT_WIDTH - 1 }),
-  seq: fc.integer({ min: 0, max: 2 ** COUNT_BIT_WIDTH - 1 }),
+  // COUNT_BIT_WIDTH = 53; Number.MAX_SAFE_INTEGER = 2^53 - 1.
+  // fc.maxSafeInteger() covers the full domain; keep it small
+  // for fast-check shrink performance.
+  seq: fc.maxSafeInteger().filter((n) => n >= 0),
 });
 const populationArb = fc.record({
   session: sessionArb,

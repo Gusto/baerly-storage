@@ -15,6 +15,49 @@
 export const LAG_WINDOW_MILLIS: number = 5000;
 
 /**
+ * Bit width of the descending base-32 seq segment in every LSN
+ * (`<base32-time>_<session>_<seq>`, minted in `Writer.commit`).
+ * The output character width is `Math.ceil(COUNT_BIT_WIDTH / 5) = 11`.
+ *
+ * **Domain:** 0 .. `Number.MAX_SAFE_INTEGER` (2^53 − 1). A collection
+ * would need 2^53 writes before the seq counter could overflow — an
+ * unreachable ceiling in practice.
+ *
+ * **Why 53 bits:** JavaScript numbers are IEEE-754 doubles; the safe
+ * integer range is exactly [0, 2^53 − 1]. Encoding at this width keeps
+ * the arithmetic in the encoder and decoder (`uint2strDesc` /
+ * `str2uintDesc` in `packages/protocol/src/types.ts`) exact and
+ * leaves no headroom for the negative-overflow path that manifested
+ * at the old 10-bit width (domain 0..1023).
+ *
+ * **Ordering property:** fixed-width base-32 encoding preserves
+ * descending lex order across the entire domain
+ * (`countKey(a) > countKey(b)` iff `a < b`), which the reverse-walk
+ * on `Storage.list` relies on.
+ *
+ * **Three production consumers** must all agree on this value:
+ *  1. Encoder — `countKey` in `packages/protocol/src/types.ts`
+ *  2. Decoder — `lsnParts` in `packages/protocol/src/log.ts`
+ *  3. Validator regex — `LSN_RE` in `packages/server/src/http/since.ts`
+ *     (derives its `{N}` from `Math.ceil(COUNT_BIT_WIDTH / 5)`)
+ *
+ * The independent shape-assertion literal in
+ * `tests/fixtures/collection-api-cascade.ts` is kept hand-written and
+ * is NOT a consumer of this constant (importing the production
+ * validator into the test that checks it would make the assertion
+ * a tautology).
+ *
+ * Changing this constant is a protocol-breaking change — it reshapes
+ * every emitted LSN cursor.
+ *
+ * @see packages/protocol/src/types.ts (`countKey`, `uint2strDesc`)
+ * @see packages/protocol/src/log.ts (`lsnParts`, `str2uintDesc` call)
+ * @see packages/server/src/http/since.ts (`LSN_RE`)
+ * @see docs/spec/log-entry-shape.md
+ */
+export const COUNT_BIT_WIDTH: number = 53;
+
+/**
  * Bit width of the base-32 timestamp prefix encoded into every
  * {@link LogEntry.lsn} (`<base32-time>_<session>_<seq>`, minted in
  * `Writer.commit`). 42 bits gives ~139 years of millisecond

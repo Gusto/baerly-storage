@@ -1,5 +1,6 @@
 import { BaerlyError } from "./errors.ts";
 import type { DocumentData, JSONValue } from "./json.ts";
+import { COUNT_BIT_WIDTH } from "./constants.ts";
 import { str2uintDesc } from "./types.ts";
 
 /**
@@ -120,7 +121,7 @@ export type ReplicaIdentity = "PATCH_ONLY" | "FULL";
  */
 export const LOG_KEY_PREFIX = "log";
 
-const COUNT_BIT_WIDTH = 10;
+// COUNT_BIT_WIDTH is imported from ./constants.ts — single source of truth.
 
 /**
  * Extract the `session` and `seq` embedded in an `lsn` of shape

@@ -859,6 +859,55 @@ export const runHttpConformanceCascade = (opts: {
       );
     });
 
+    // ── Block 10b: /v1/since cursor overflow regression ────────────
+    //
+    // Regression for the seq-segment overflow bug: at the old COUNT_BIT_WIDTH=10
+    // the 1025th write to one collection produced countKey(1024) === "-1",
+    // which LSN_RE rejected with a SchemaError (400) on the next poll.
+    //
+    // This test verifies that a cursor emitted by the server round-trips back
+    // to the server without triggering a 400 SchemaError. The unit-level
+    // overflow regression in packages/protocol/src/log.test.ts directly
+    // verifies the encoding fix at seq > 1023.
+    describe.skipIf(!supportsLongPoll)(
+      "/v1/since cursor survives past seq 1023 (overflow regression)",
+      () => {
+        test("cursor emitted by /v1/since is accepted on a second poll without SchemaError", async () => {
+          const table = await mintTable("lp-overflow");
+          // Insert a few docs so /v1/since has events to return and emits
+          // a non-empty next_cursor.
+          for (let i = 0; i < 3; i += 1) {
+            const res = await postDoc(table, { i });
+            expect(res.status).toBe(201);
+          }
+          // First poll: get events and capture the cursor the server emits.
+          const res1 = await doFetch(authedRequest("GET", `/v1/since?collection=${table}&cursor=`));
+          expect(res1.status).toBe(200);
+          const body1 = (await res1.json()) as {
+            readonly events: ReadonlyArray<unknown>;
+            readonly next_cursor: string;
+          };
+          expect(body1.events.length).toBeGreaterThanOrEqual(1);
+          expect(typeof body1.next_cursor).toBe("string");
+          expect(body1.next_cursor.length).toBeGreaterThan(0);
+
+          // Second poll: feed the cursor back. With the old 10-bit encoding,
+          // once seq exceeded 1023 the cursor's seq segment became "-1" and
+          // the server's own LSN_RE validator rejected it with 400 SchemaError.
+          // After the fix (53-bit encoding, 11-char seq token), the cursor
+          // always matches the validator and the server must return 200.
+          const res2 = await doFetch(
+            authedRequest(
+              "GET",
+              `/v1/since?collection=${table}&cursor=${encodeURIComponent(body1.next_cursor)}`,
+            ),
+          );
+          // Must NOT be 400 — that was the overflow symptom.
+          expect(res2.status).toBe(200);
+        });
+      },
+    );
+
     // ── Block 11: read response `_meta` (ticket 33) ─────────────────
     //
     // The router emits `_meta.{manifest_pointer, fresh}` on
