@@ -673,6 +673,39 @@ const durableLogSeqs = async (storage: Storage, tablePrefix: string): Promise<nu
   return seqs.toSorted((a, b) => a - b);
 };
 
+/**
+ * Poll until `key` is readable (non-null), bounded to a tight number of
+ * event-loop turns. Returns the fetched value once present.
+ *
+ * BUG 2 (below) aborts the SECOND parallel log PUT while the FIRST
+ * (`log/0.json`) was kicked off but never awaited — when
+ * `commitBatch`'s `Promise.all` rejects, `log/0`'s underlying write is
+ * an orphaned in-flight promise. On `local-fs` that's a real
+ * `mkdir → writeFile(tmp) → rename` that may not have flushed by the
+ * time the assertion runs. This helper makes that orphaned write's
+ * durability deterministic without weakening the torn-state assertion:
+ * the cap is small, so a genuine regression (log/0 NEVER landing) still
+ * fails fast and loudly rather than hanging.
+ */
+const awaitReadable = async (
+  storage: Storage,
+  key: string,
+): Promise<NonNullable<Awaited<ReturnType<Storage["get"]>>>> => {
+  const MAX_TURNS = 50;
+  for (let turn = 0; turn < MAX_TURNS; turn++) {
+    const got = await storage.get(key);
+    if (got !== null) {
+      return got;
+    }
+    // Yield a macrotask so a pending rename has a chance to flush.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  throw new Error(
+    `awaitReadable: ${key} never became readable within ${MAX_TURNS} turns ` +
+      `(genuine regression — the orphaned in-flight write never landed)`,
+  );
+};
+
 describe("ticket-01 bug reproductions (characterization — assert CURRENT buggy behavior)", () => {
   const cleanups: Array<() => Promise<void>> = [];
   afterEach(async () => {
@@ -719,18 +752,9 @@ describe("ticket-01 bug reproductions (characterization — assert CURRENT buggy
         cleanups.push(cleanup);
       }
 
-      const tablePrefix = "app/a/tenant/t/manifests/c";
-      const currentJsonKey = `${tablePrefix}/current.json`;
-      await createCurrentJson(storage, currentJsonKey, {
-        schema_version: CURRENT_JSON_SCHEMA_VERSION,
-        snapshot: null,
-        next_seq: 0,
-        log_seq_start: 0,
-        writer_fence: { epoch: 0, owner: "ticket01-bug1", claimed_at: "" },
-        tail_bytes: 0,
-        snapshot_bytes: 0,
-        snapshot_rows: 0,
-      });
+      const tablePrefix = TABLE_PREFIX;
+      const currentJsonKey = CURRENT_JSON_KEY;
+      await provision(storage);
 
       // 1) One clean single-input commit lands at seq 0 (next_seq → 1).
       const goodWriter = new Writer({ storage, currentJsonKey });
@@ -790,7 +814,7 @@ describe("ticket-01 bug reproductions (characterization — assert CURRENT buggy
       // AFTER ticket-01: replace this with an assertion that the commit
       // RESOLVES (the atomic commit object lets the writer reconcile the
       // orphan and advance next_seq).
-      let wedged = false;
+      let caught: unknown;
       try {
         await freshWriter.commit({
           op: "I",
@@ -799,9 +823,13 @@ describe("ticket-01 bug reproductions (characterization — assert CURRENT buggy
           body: { _id: "wedge-probe", kind: "probe" },
         });
       } catch (error) {
-        wedged = error instanceof BaerlyError && error.code === "Conflict";
+        caught = error;
       }
-      expect(wedged).toBe(true); // ← INVERT: assert the commit succeeds.
+      // Assert on the caught error directly so a wrong-code regression
+      // (e.g. `Internal` instead of `Conflict`) fails loudly with the
+      // actual code rather than "expected false to be true".
+      expect(caught).toBeInstanceOf(BaerlyError);
+      expect(caught).toMatchObject({ code: "Conflict" }); // ← INVERT: assert the commit succeeds.
 
       // ░░░ INVERT THESE TOO when ticket-01 lands ░░░
       // CURRENT (buggy): next_seq is still pinned at 1 (the wedge never
@@ -812,9 +840,7 @@ describe("ticket-01 bug reproductions (characterization — assert CURRENT buggy
 
       // CURRENT (buggy): the wedge-probe row is NOT readable (its commit
       // never landed). AFTER ticket-01: the probe row reads back.
-      const db = Db.create({ storage, app: "a", tenant: "t" });
-      const rows = await (db.collection(COLLECTION) as Collection<Row>).where({}).all();
-      const ids = rows.map((r) => r._id);
+      const ids = await readAllRowIds(storage);
       expect(ids).not.toContain("wedge-probe"); // ← INVERT: expect to contain it.
       // The original good row is still readable regardless (folds from
       // log seq 0, below the orphan).
@@ -854,18 +880,9 @@ describe("ticket-01 bug reproductions (characterization — assert CURRENT buggy
         cleanups.push(cleanup);
       }
 
-      const tablePrefix = "app/a/tenant/t/manifests/c";
-      const currentJsonKey = `${tablePrefix}/current.json`;
-      await createCurrentJson(storage, currentJsonKey, {
-        schema_version: CURRENT_JSON_SCHEMA_VERSION,
-        snapshot: null,
-        next_seq: 0,
-        log_seq_start: 0,
-        writer_fence: { epoch: 0, owner: "ticket01-bug2", claimed_at: "" },
-        tail_bytes: 0,
-        snapshot_bytes: 0,
-        snapshot_rows: 0,
-      });
+      const tablePrefix = TABLE_PREFIX;
+      const currentJsonKey = CURRENT_JSON_KEY;
+      await provision(storage);
 
       // Drive a 2-doc batch and crash partway through the parallel log
       // PUTs. For a 2-input batch with no indexes the op order on
@@ -888,6 +905,17 @@ describe("ticket-01 bug reproductions (characterization — assert CURRENT buggy
         ]),
       ).rejects.toMatchObject({ name: "AbortError" });
 
+      // `log/0.json`'s PUT was kicked off as the first arm of the log
+      // `Promise.all`, then ORPHANED when the second arm's abort rejected
+      // the whole `Promise.all` — its underlying write is an unawaited
+      // in-flight promise. The torn-state assertions below depend on that
+      // write having durably landed; on `local-fs` it's a real
+      // `mkdir → writeFile(tmp) → rename` that may not have flushed yet.
+      // Await it deterministically (tight cap → a genuine "log/0 never
+      // landed" regression still fails fast). This is the SAME `log/0`
+      // the assertions below read; binding `got0` here avoids a re-fetch.
+      const got0 = await awaitReadable(storage, `${tablePrefix}/log/0.json`);
+
       // ░░░ INVERT THIS ASSERTION when ticket-01 lands ░░░
       // CURRENT (buggy): exactly ONE of the batch's two log entries is
       // durably present — a torn partial batch. With no on-disk count,
@@ -900,11 +928,10 @@ describe("ticket-01 bug reproductions (characterization — assert CURRENT buggy
 
       // Cross-check the torn state precisely: log/0.json exists and is a
       // member of the crashed batch; log/1.json does not exist.
-      const got0 = await storage.get(`${tablePrefix}/log/0.json`);
       const got1 = await storage.get(`${tablePrefix}/log/1.json`);
       expect(got0).not.toBeNull();
       expect(got1).toBeNull();
-      const entry0 = decodeJsonBytes<LogEntry>(got0!.body);
+      const entry0 = decodeJsonBytes<LogEntry>(got0.body);
       expect(entry0.doc_id).toBe("batch-0");
 
       // The CAS never landed, so next_seq did not advance — the partial
