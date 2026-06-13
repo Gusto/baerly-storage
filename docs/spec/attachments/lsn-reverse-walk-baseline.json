@@ -7,41 +7,41 @@
   "cells": [
     {
       "k": 10,
-      "desc_bytes_listed": 370,
+      "desc_bytes_listed": 460,
       "desc_keys_listed": 10,
-      "asc_bytes_listed": 3700000,
+      "asc_bytes_listed": 4600000,
       "asc_keys_listed": 100000,
       "bytes_ratio": 0.0001,
       "bytes_saved_fraction": 0.9999
     },
     {
       "k": 100,
-      "desc_bytes_listed": 3700,
+      "desc_bytes_listed": 4600,
       "desc_keys_listed": 100,
-      "asc_bytes_listed": 3700000,
+      "asc_bytes_listed": 4600000,
       "asc_keys_listed": 100000,
       "bytes_ratio": 0.001,
       "bytes_saved_fraction": 0.999
     },
     {
       "k": 1000,
-      "desc_bytes_listed": 37000,
+      "desc_bytes_listed": 46000,
       "desc_keys_listed": 1000,
-      "asc_bytes_listed": 3700000,
+      "asc_bytes_listed": 4600000,
       "asc_keys_listed": 100000,
       "bytes_ratio": 0.01,
       "bytes_saved_fraction": 0.99
     },
     {
       "k": 10000,
-      "desc_bytes_listed": 370000,
+      "desc_bytes_listed": 460000,
       "desc_keys_listed": 10000,
-      "asc_bytes_listed": 3700000,
+      "asc_bytes_listed": 4600000,
       "asc_keys_listed": 100000,
       "bytes_ratio": 0.1,
       "bytes_saved_fraction": 0.9
     }
   ],
-  "timestamp_iso": "2026-05-26T19:41:30.380Z",
-  "node_version": "v24.14.0"
+  "timestamp_iso": "2026-06-13T03:02:23.352Z",
+  "node_version": "v24.16.0"
 }

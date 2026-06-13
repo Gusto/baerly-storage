@@ -6,11 +6,13 @@
  * Two arms over a population of N synthetic LSN-shaped keys:
  *
  *   - **DESC** (today's encoding): keys are
- *     `${uint2strDesc(millis,42)}_<sess>_${uint2strDesc(seq,10)}`.
+ *     `${timestamp(millis)}_<sess>_${countKey(seq)}` — the production
+ *     encoder, descending base-32 at `COUNT_BIT_WIDTH`.
  *     The reader's "fetch K newest" is one `Storage.list(prefix,
  *     {maxKeys: K})` — bytes listed scales with K.
- *   - **ASC** (counterfactual baseline): keys are
- *     `${uint2str(millis,42)}_<sess>_${uint2str(seq,10)}`.
+ *   - **ASC** (counterfactual baseline): same key shape and the same
+ *     seq width, but ascending base-32 —
+ *     `${uint2str(millis,42)}_<sess>_${uint2str(seq,COUNT_BIT_WIDTH)}`.
  *     `Storage.list` is forward-lex so "fetch K newest" requires
  *     listing the full N-sized prefix and reversing-and-truncating
  *     in memory — bytes listed scales with N.
@@ -34,7 +36,7 @@
 
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { MemoryStorage, countKey, uint2str, timestamp } from "@baerly/protocol";
+import { COUNT_BIT_WIDTH, MemoryStorage, countKey, uint2str, timestamp } from "@baerly/protocol";
 
 /** Bench config. Pinned constants — tweak in the source if needed. */
 const POPULATION_N = 100_000;
@@ -85,7 +87,10 @@ interface RunResult {
 /**
  * Generate POPULATION_N (millis, seq) tuples deterministically.
  * Millis drifts monotonically with jitter so writes interleave
- * across the time domain; seq wraps the 10-bit domain.
+ * across the time domain; seq cycles through a small bounded range
+ * so keys vary in the seq segment. The exact seq value doesn't
+ * affect key length — every seq encodes to a fixed
+ * `Math.ceil(COUNT_BIT_WIDTH / 5)`-char segment in both arms.
  */
 const generatePoints = (): Array<{ millis: number; seq: number }> => {
   const rng = mulberry32(SEED);
@@ -103,13 +108,20 @@ const generatePoints = (): Array<{ millis: number; seq: number }> => {
   return points;
 };
 
-/** DESC arm: `<uint2strDesc(millis,42)>_<sess>_<uint2strDesc(seq,10)>`. */
+/** DESC arm: `<timestamp(millis)>_<sess>_<countKey(seq)>` — the production encoder. */
 const encodeDesc = (p: { millis: number; seq: number }): string =>
   `${timestamp(p.millis)}_${SESSION}_${countKey(p.seq)}`;
 
-/** ASC arm: same shape, ascending base-32 (no max-value subtraction). */
+/**
+ * ASC arm: same key shape and the SAME seq width as DESC
+ * (`COUNT_BIT_WIDTH`), but ascending base-32 (no max-value
+ * subtraction). Both arms must encode the seq segment at one width
+ * or the bytes-listed comparison stops being apples-to-apples —
+ * `countKey` derives its width from `COUNT_BIT_WIDTH`, so this arm
+ * does too.
+ */
 const encodeAsc = (p: { millis: number; seq: number }): string =>
-  `${uint2str(p.millis, 42)}_${SESSION}_${uint2str(p.seq, 10)}`;
+  `${uint2str(p.millis, 42)}_${SESSION}_${uint2str(p.seq, COUNT_BIT_WIDTH)}`;
 
 /** Sum of key string lengths yielded by `Storage.list` for K newest. */
 const measureDescBytes = async (
