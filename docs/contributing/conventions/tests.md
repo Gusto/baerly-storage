@@ -2,7 +2,7 @@
 title: Conventions for tests
 audience: coder
 summary: Test file layout, vitest imports, colocation rules, property-based testing patterns.
-last-reviewed: 2026-05-12
+last-reviewed: 2026-06-13
 tags: [conventions, tests, vitest]
 related: [docs.md, "../development.md"]
 ---
@@ -90,3 +90,11 @@ values.
   `setTimeout` in tests.
 - Don't add `.only` to commits — vitest will silently skip everything
   else.
+- Real-subprocess / real-filesystem **integration** tests (e.g. the
+  scaffold + git tests in
+  `packages/create-baerly-storage/src/index.test.ts`) should raise their
+  timeout to **30s** via
+  `vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 })` at the top
+  of the file. The 5s default (`vitest.config.ts`) is calibrated for
+  in-memory / unit tests and gets starved under the parallel fork-pool
+  suite — a timeout there is load, not a real hang.

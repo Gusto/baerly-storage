@@ -20,9 +20,19 @@ import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test, vi } from "vitest";
 import type { GitRunner } from "./git.ts";
 import { runCreateBaerly } from "./runner.ts";
+
+// This whole file is real-subprocess + full-template-copy integration:
+// `runCreateBaerly` copies ~129 template files and shells out to git. In
+// isolation that's ~1.7s, but under the full fork-pool suite the spawns +
+// FS I/O starve past vitest's 5s default `testTimeout` (`vitest.config.ts`)
+// — a timeout here is load, not a real hang. 30s matches the repo's
+// integration floor (`phase5-end-to-end`, `reads-pure`, the `MINIO=1`
+// global). `hookTimeout` too: the `mkdtemp` in `freshTmpdir` and the
+// recursive `rm` in `afterEach` are I/O that can also starve.
+vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 });
 
 /**
  * `it.skipIf` guard for the integration tests that shell out to real
