@@ -19,9 +19,11 @@ scaffold's `AGENTS.md` "Going to production" section documents the
 two upgrade recipes — Pattern A (env-aware factory `verifier:`
 override, used by CF Access on CF / JWKS on Node) and Pattern B
 (flip `auth` to `"shared-secret"` and set `SHARED_SECRET`).
-`baerly doctor --target={cloudflare,node}` warns on `auth: "none"`
-for deploy targets and FAILs on `"shared-secret"` without
-`SHARED_SECRET` reachable from the runtime env.
+`baerly doctor --target=cloudflare` warns on `auth: "none"` for
+Worker deploy targets and fails on `"shared-secret"` without
+`SHARED_SECRET` reachable from the runtime env. Node targets use
+`baerly doctor --bucket=<s3-uri>` plus the deployed `/v1/healthz`
+probe today.
 
 ## minimal-cloudflare
 
@@ -47,7 +49,7 @@ pnpm dev
 
 **Read first:** `src/server/index.ts` (the verifier
 selector + `baerlyWorker`), then `wrangler.jsonc`
-(R2 binding + cron + observability config).
+(R2 binding + observability config).
 
 ## minimal-node
 
@@ -115,8 +117,8 @@ pnpm dev
 ```
 
 Open <http://localhost:5173>. Type a note. Open a second tab —
-edits in one tab appear in the other over the `/v1/since`
-long-poll.
+edits in one tab appear in the other over the
+`/v1/since?collection=notes&cursor=...` long-poll.
 
 **Read first:** `src/web/NoteList.tsx` (the `useQuery` reactive
 read), then `baerly.config.ts` (the `NoteSchema` shape you extend),

@@ -2,7 +2,7 @@
 title: Architecture Decision Records
 audience: meta
 summary: Index of ADRs. Each ADR captures one load-bearing technical decision whose rationale doesn't fit naturally in any single code or doc file.
-last-reviewed: 2026-05-14
+last-reviewed: 2026-06-12
 tags: [index, decisions]
 related: ["../about/thesis.md", "../contributing/conventions/change-discipline.md"]
 ---
@@ -28,6 +28,8 @@ rules live in
 - [003 — `Baerly` prefix naming convention](./003-naming-convention.md)
 - [004 — Ephemeral coordination](./004-ephemeral-coordination.md)
 - [005 — Verifier is a function](./005-verifier-function-shape.md)
+- [006 — Package layer invariant](./006-package-layer-invariant.md)
+- [007 — Layout versioning cordon](./007-layout-versioning-cordon.md)
 
 ## Template
 

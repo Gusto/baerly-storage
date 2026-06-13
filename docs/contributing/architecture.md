@@ -2,7 +2,7 @@
 title: Architecture overview
 audience: coder
 summary: Module dependency graph and lifecycle of db.collection(...).insert().
-last-reviewed: 2026-06-11
+last-reviewed: 2026-06-12
 tags: [architecture, lifecycle, module-map]
 related: ["../spec/sync-protocol.md", extending.md, features.md]
 ---
@@ -13,15 +13,16 @@ A top-down map of Baerly for someone who has never opened the codebase.
 
 ## One-paragraph summary
 
-A client writes by uploading content to S3-compatible storage, then
-appending a per-doc `LogEntry` to a time-ordered log (also stored in
-the bucket, one object per mutation, sorted by an `lsn` cursor). The
-write completes with a CAS-advance of `current.json`, which records
-the high-water `next_seq` and the `log_seq_start` invariant used by
-readers. Reads explicitly fetch `current.json`, walk
-`[log_seq_start, next_seq)`, fold `LogEntry` rows into a live row
-set, and evaluate the query predicate. Change notifications are
-delivered out-of-band by the HTTP `/v1/since` long-poll route. The
+A client writes by uploading content and index artifacts to
+S3-compatible storage, then PUTing one per-doc `LogEntry` at
+`log/<seq>.json`. The write completes with a CAS-advance of
+`current.json`, which records the high-water `next_seq` and the
+`log_seq_start` invariant used by readers. Reads explicitly fetch
+`current.json`, load the snapshot it names, walk
+`[log_seq_start, next_seq)`, fold `LogEntry` rows into a live row set,
+and evaluate the query predicate. Change notifications are delivered
+out-of-band by the HTTP
+`/v1/since?collection=<name>&cursor=<opaque>` long-poll route. The
 protocol is specified in
 [spec/sync-protocol.md](../spec/sync-protocol.md) and proven causally consistent in
 [spec/causal-consistency-checking.md](../spec/causal-consistency-checking.md).
@@ -42,7 +43,10 @@ is ~5 KB gzipped. The whole public API surface fits in a single
 
 ## Runtime model
 
-**There is no runtime. None.** All coordination runs inside a single HTTP request or cron invocation — no daemon, no leader, no coordinator service. A request enters the Worker/Node handler; the handler constructs a
+**There is no runtime. None.** All coordination runs inside a single
+HTTP request or explicit SDK maintenance invocation — no daemon, no
+leader, no coordinator service. A request enters the Worker/Node
+handler; the handler constructs a
 `Db` via `Db.create({ storage, config })`; the `Db` reads a fresh
 `current.json` from the bucket (no warm-cache shortcut for
 correctness — `consistency: "strong"` does this explicitly); it
@@ -79,8 +83,8 @@ graph TD
     gc[gc.ts<br/>runGc()]
     maint[maintenance.ts<br/>runScheduledMaintenance]
     storage[Storage interface<br/>get/put/delete/list]
-    s3http[storage/s3-http.ts<br/>S3HttpStorage]
-    memstore[storage/memory.ts<br/>MemoryStorage]
+    s3http[adapter-node/s3-http.ts<br/>S3HttpStorage]
+    memstore[protocol/storage/memory.ts<br/>MemoryStorage]
     localfs[dev/local-fs.ts<br/>LocalFsStorage]
     json[json.ts<br/>RFC 7386 merge patch]
     log[log.ts<br/>LogEntry shape]
@@ -135,13 +139,15 @@ own package. See `packages/cli/AGENTS.md` and
    (`packages/server/src/writer.ts`): reads `current.json`
    for the current `next_seq` and the `writer_fence.epoch` it
    operates under, mints a `LogEntry` at `next_seq`, PUTs the
-   content body under `tenants/<t>/c/<collection>/<doc_id>`,
-   PUTs the log entry under `tenants/<t>/log/<lsn>.json` with
-   `If-None-Match: *`, and CAS-advances `current.json` to the
-   new `next_seq` (preserving the `log_seq_start` invariant).
-   Retries up to `S3_REQUEST_MAX_RETRIES` (default 8) on transient
-   CAS conflict; fails fast with `BaerlyError{code:"Conflict"}` on a
-   `writer_fence.epoch` bump.
+   content body under
+   `app/<app>/tenant/<tenant>/manifests/<collection>/content/<sha>.json`,
+   PUTs the log entry under
+   `app/<app>/tenant/<tenant>/manifests/<collection>/log/<seq>.json`
+   with `If-None-Match: "*"`, and CAS-advances `current.json` to the
+   new `next_seq` (preserving the `log_seq_start` invariant and
+   updating `tail_bytes`). Retries up to `S3_REQUEST_MAX_RETRIES`
+   (default 8) on transient CAS conflict; fails fast with
+   `BaerlyError{code:"Conflict"}` on a `writer_fence.epoch` bump.
 
 3. **Read path: `Collection.where(p).all()`**
    (`packages/server/src/query.ts`): reads `current.json`, walks
@@ -167,9 +173,9 @@ snapshot+log fold. Every fetched row passes through
 residue `postFilter`). The plan shape and diagnostic `reason` values
 are documented in [features.md](features.md) §"Secondary indexes".
 
-The HTTP `/v1/since?cursor=<lsn>` long-poll route in
+The HTTP `/v1/since?collection=<name>&cursor=<opaque>` long-poll route in
 `packages/server/src/http/since.ts` is the change-notification
-channel: it walks the log from a caller-supplied `lsn` and
+channel: it walks the log from a caller-supplied cursor and
 either returns the new entries immediately or holds the request
 until new entries arrive (or the long-poll deadline elapses).
 The protocol-level theory lives in
@@ -221,13 +227,13 @@ The kernel reads and writes through the four `Storage` methods only
 `Db.create({ storage, app, tenant })` time; the kernel never
 picks an impl itself.
 
-- `S3HttpStorage` (`packages/protocol/src/storage/s3-http.ts`) for
-  any HTTP endpoint. Authentication plugs in via a `sign(req)`
-  callback — the protocol package itself never imports `aws4fetch`
-  or any other signer; consumers choose. Production callers rarely
-  construct this directly — the `s3Storage` / `r2Storage` /
-  `minioStorage` / `gcsStorage` factories in `@baerly/adapter-node`
-  wrap the common shapes.
+- `S3HttpStorage` (`packages/adapter-node/src/s3-http.ts`) for any
+  HTTP endpoint from a Node host. Authentication plugs in via an
+  injected `sign(req)` callback — `S3HttpStorage` imports no signer
+  itself; the `s3Storage` / `r2Storage` / `minioStorage` /
+  `gcsStorage` factories exported from `@gusto/baerly-storage/node`
+  wire `aws4fetch`'s SigV4 in for you, so production callers reach
+  for those instead of constructing it directly.
 - `MemoryStorage` (`packages/protocol/src/storage/memory.ts`) for
   the `memory:` endpoint, partitioned per bucket via a
   process-singleton map so multiple `Db` instances share state by
@@ -251,11 +257,11 @@ constraint: anything platform-specific has to live in an adapter.
 ## Where invariants live
 
 - **Causal consistency:** `packages/server/src/writer.ts` and
-  `packages/server/src/query.ts` — the writer mints LSNs against the
-  current `next_seq` and CAS-advances `current.json` atomically; the
-  reader walks `[log_seq_start, next_seq)` from a single read of
-  `current.json`. A reader's observed sequence is a prefix of the
-  global log. Proof:
+  `packages/server/src/query.ts` — the writer mints `LogEntry.seq`
+  from the current `next_seq` and CAS-advances `current.json`
+  atomically; the reader walks `[log_seq_start, next_seq)` from a
+  single read of `current.json`. A reader's observed sequence is a
+  prefix of the collection log. Proof:
   [spec/causal-consistency-checking.md](../spec/causal-consistency-checking.md).
 - **Split-brain fencing:** `writer_fence.epoch` inside `current.json`.
   `claimWriter()` (re-exported from `@baerly/protocol`) bumps the
@@ -304,10 +310,18 @@ For a `Db` constructed with `app="tickets"` and `tenant="acme"`:
 
 - `app/tickets/tenant/acme/manifests/<collection>/current.json` — the CAS
   cursor. Holds `next_seq`, `log_seq_start`, and `writer_fence.epoch`.
-- `app/tickets/tenant/acme/manifests/<collection>/log/<lsn>.json` — one
-  object per `LogEntry`. Walked by readers in `[log_seq_start,
-  next_seq)`.
-- `tenants/acme/c/<collection>/<doc_id>` — content body for `I` / `U`.
+- `app/tickets/tenant/acme/manifests/<collection>/log/<seq>.json` — one
+  object per `LogEntry`, keyed by monotonic integer `seq`. Walked by
+  readers in `[log_seq_start, next_seq)`.
+- `app/tickets/tenant/acme/manifests/<collection>/content/<content-version>.json` —
+  content-addressed post-image body for `I` / `U`, keyed by the
+  `ContentVersionId` (SHA-256 truncated to 32 hex chars).
+- `app/tickets/tenant/acme/manifests/<collection>/index/<name>/...` —
+  zero-byte advisory index marker.
+- `app/tickets/tenant/acme/manifests/<collection>/snapshot/L9/<min>-<max>-<sha>.json` —
+  content-hashed materialized snapshot.
+- `app/tickets/tenant/acme/manifests/<collection>/gc/pending.json` —
+  two-phase GC candidate ledger.
 
 Compaction (`packages/server/src/compactor.ts`) folds adjacent log
 entries into checkpoints and advances `log_seq_start`. GC

@@ -2,19 +2,19 @@
 title: LogEntry wire shape
 audience: spec
 summary: "Debezium-style JSON CDC envelope (pgoutput message-tag vocabulary) LogEntry; the CDC wire contract (pre-launch: may still narrow)."
-last-reviewed: 2026-05-31
+last-reviewed: 2026-06-12
 tags: [protocol, log, cdc, contract]
 related: [sync-protocol.md]
 ---
 
 # Log entry shape
 
-Every successful manifest write emits one JSON `LogEntry` per
-mutated ref under `<manifest-prefix>/log/<lsn>.json`. This page is
+Every successful commit emits one JSON `LogEntry` per mutated
+document under `<collection-prefix>/log/<seq>.json`. The entry also
+carries an opaque `lsn` cursor for CDC/export clients. This page is
 the contract behind that emission: the field set, the field
-semantics, what we borrowed from Postgres logical replication,
-what we deliberately did not, and the stability rules for
-future change.
+semantics, what we borrowed from Postgres logical replication, what
+we deliberately did not, and the stability rules for future change.
 
 **Pre-launch (today): the shape may still narrow.** No external
 consumers exist; we may rename, remove, or repurpose fields to
@@ -25,7 +25,7 @@ repurposing a field becomes a major-version migration. New
 optional fields can be added at any time, pre- or post-launch.
 
 The canonical TypeScript definition lives in
-[`packages/protocol/src/log.ts`](../packages/protocol/src/log.ts).
+[`packages/protocol/src/log.ts`](../../packages/protocol/src/log.ts).
 Every emitted entry conforms to that interface.
 
 ## Why we emit it
@@ -57,10 +57,12 @@ Three shapes were on the table:
   names — the JSON-friendly form already widely understood by
   Postgres-CDC consumers. Append-only delivery via per-LSN JSON
   objects in S3, with an opaque `lsn` cursor consumers ack
-  against. Not byte-compatible with pgoutput, not exactly
-  Debezium's source-connector envelope either — borrows the field
-  vocabulary from both and drops the framing and machinery that
-  doesn't apply to an append-only object-store log. **Chosen.**
+  against. On the bucket, the entry is keyed by integer `seq`; the
+  `lsn` string is the external cursor. Not byte-compatible with
+  pgoutput, not exactly Debezium's source-connector envelope either
+  — borrows the field vocabulary from both and drops the framing and
+  machinery that doesn't apply to an append-only object-store log.
+  **Chosen.**
 
 The export tool is a few hundred lines, not a feature team. CDC
 consumers can read the log directly and acknowledge progress on
@@ -85,7 +87,7 @@ export interface LogEntry {
 ```
 
 Field-level prose contract is in the JSDoc on
-[`log.ts`](../packages/protocol/src/log.ts) and rendered by IDE
+[`log.ts`](../../packages/protocol/src/log.ts) and rendered by IDE
 hover.
 
 ### Field requirement matrix
@@ -95,8 +97,8 @@ hover.
 | `lsn`            | ✓ | ✓ | ✓ | Always present. |
 | `commit_ts`      | ✓ | ✓ | ✓ | ISO-8601 ms. |
 | `op`             | ✓ | ✓ | ✓ | One ASCII char. |
-| `collection`     | ✓ | ✓ | ✓ | First segment of `ref.key`, fallback `ref.bucket`. |
-| `doc_id`         | ✓ | ✓ | ✓ | Equals `ref.key`. |
+| `collection`     | ✓ | ✓ | ✓ | Collection name bound to this `current.json`. |
+| `doc_id`         | ✓ | ✓ | ✓ | Document primary key (`_id`). |
 | `after`          | ✓ | ✓ |   | Post-image (Debezium's `after`). |
 | `before`         |   | ✓ | ✓ | Iff `replica_identity === "FULL"` (Debezium's `before`). |
 | `key_old`        |   | ✓ | ✓ | When `replica_identity !== "PATCH_ONLY"`. |
@@ -109,21 +111,23 @@ hover.
 Every emitted entry lands at:
 
 ```
-<bucket>/<manifest-prefix>/log/<lsn>.json
+<bucket>/<collection-prefix>/log/<seq>.json
 ```
 
-Per-LSN entries (rather than a batched object per manifest) keep
-each entry independently fetchable so compaction can rewrite or
-sweep them without touching the manifest log itself.
-The cost is one extra PUT per mutated ref; the benefit is "GET
-log/<lsn>.json" works for SSE long-poll on a single cursor.
+Per-seq entries (rather than one batched object per commit) keep each
+entry independently fetchable so readers, compaction, and the
+`/v1/since?collection=<name>&cursor=<opaque>` change-feed route can
+reconstruct the committed range directly from `current.json`. The cost
+is one extra PUT per mutated document; the benefit is deterministic
+`GET log/<seq>.json` over
+`[log_seq_start, next_seq)`.
 
 ### Content body layout
 
 Document bodies land at:
 
 ```
-<bucket>/<manifest-prefix>/content/<hash>.json
+<bucket>/<collection-prefix>/content/<hash>.json
 ```
 
 where `<hash>` is the **first 32 hex chars (128 bits) of `sha256(body)`**,
@@ -148,7 +152,7 @@ deliberately not canonicalized.
 Same body **bytes** ⇒ same content key. The scope of this guarantee is
 **single-writer idempotent replay**: a crash-recovery rewrite of the
 same in-memory value by the same writer reproduces the same content key
-the manifest already referenced (the `ifNoneMatch: "*"` content PUT then
+`current.json` already referenced (the `ifNoneMatch: "*"` content PUT then
 no-ops). It is **NOT** a cross-writer content-dedup guarantee: two
 writers serializing a logically-equal document with different key
 insertion order — or a read → merge → re-serialize round-trip, since
@@ -165,26 +169,26 @@ the hash input would first need canonicalization. Constant lives at
 - **`<base32-time>`** is `Math.ceil(42/5) = 9` chars,
   base-32-encoded with **descending** ordering — newer epochs sort
   lex-EARLIER. (See `uint2strDesc` in
-  [`packages/protocol/src/types.ts`](../packages/protocol/src/types.ts).)
+  [`packages/protocol/src/types.ts`](../../packages/protocol/src/types.ts).)
 - **`<session>`** is a 6-char hex prefix of a UUID, freshly minted per
   commit batch by the stateless `Writer`.
 - **`<seq>`** is a fixed-width opaque base-32 descending counter
   (`countKey(seq)`), where `seq` is sourced from `current.json.next_seq`
-  — monotonic per collection, advanced via the manifest CAS, and stable
-  across process restart (it does **not** reset per session). The exact
-  character width is an internal encoding detail (`COUNT_BIT_WIDTH` in
-  `packages/protocol/src/constants.ts`); treat the seq token as opaque
+  — monotonic per collection, advanced via the `current.json` CAS, and
+  stable across process restart (it does **not** reset per session). The
+  exact character width is an internal encoding detail (`COUNT_BIT_WIDTH`
+  in `packages/protocol/src/constants.ts`); treat the seq token as opaque
   and do not hard-code its length in consumers.
 
-**Lex order is reverse-causal**, inherited from Baerly's manifest
-log encoding. Consumers walking the log via `ListObjectsV2 +
-StartAfter` get newer entries lex-FIRST and must walk the response
-in REVERSE for causal order — the same trick the read path uses
-when folding `[log_seq_start, next_seq)` into a live row set
-([`packages/server/src/query.ts`](../packages/server/src/query.ts),
-the replay loop). Within a single collection, `seq` ascends in causal
-order; consumers can sort by `seq` to recover ordering without
-reaching for list semantics.
+Within a single collection, `seq` ascends in causal order and is the
+ordering authority. The kernel and the
+`/v1/since?collection=<name>&cursor=<opaque>` change-feed route
+reconstruct `log/<seq>.json` keys directly; they do not list by `lsn`
+or sort by the wall-clock prefix. Consumers that already have
+`LogEntry` records in hand should order by `seq`. The descending
+timestamp encoding is a cursor property for external LSN-shaped
+keyspaces, not a kernel
+correctness dependency.
 
 Within a single `Writer.commitBatch` over N inputs, N lsns
 are minted — one per `LogEntry`. The single-mutation
@@ -242,8 +246,8 @@ each `U` / `D` entry carries:
   size on update-heavy collections; buys 1:1 logical replication
   and "previous value" answerable from the log alone.
 
-The setting is wired through the collection API. Every collection
-defaults to `PATCH_ONLY`. The `ReplicaIdentity` type and `before` /
+Per-collection opt-in is not wired yet; every collection is
+currently `PATCH_ONLY`. The `ReplicaIdentity` type and `before` /
 `key_old` fields exist now so the shape is future-compatible.
 
 ## Consumer envelope sketch
@@ -258,7 +262,7 @@ a Debezium-style envelope.
   "source": {
     "system": "baerly",
     "bucket": "<bucket>",
-    "manifest": "<manifest-key>",
+    "current_json_key": "<collection-prefix>/current.json",
     "collection": "users",
     "lsn": "0123456789abc_a1b_02"
   },
@@ -276,16 +280,21 @@ Mapping at the SSE adapter:
 ## Failure semantics
 
 Log entries are PUT **before** the CAS-advance of `current.json`
-(with `If-None-Match: *` so a colliding `lsn` fails fast). If the
-post-CAS `writer_fence.epoch` check bumps, the commit fails with
-`BaerlyError{code:"Conflict"}` and the orphan log entries are
-swept by GC (`packages/server/src/gc.ts`).
+(with `If-None-Match: "*"` so a colliding `seq` fails fast), but they
+are not committed until `current.json.next_seq` advances. A direct
+bucket consumer must therefore read `current.json` first and consume
+only the range it names. Listing the `log/` prefix is not a
+commit-discovery protocol.
 
-A consumer that's mid-`/cdc/v1/stream` may briefly observe a
-manifest entry without a matching log entry. The endpoint should
-classify a 404 on `log/<lsn>.json` as in-flight (within the same
-grace window as orphan content) and retry once before declaring
-the entry truly orphan.
+If the writer crashes after the log PUT and before the CAS, readers
+ignore that object because it sits outside the committed range. On the
+read/fold path, if a consumer GETs an in-range `log/<seq>.json` that
+`current.json` says should exist and receives 404, that is a protocol
+invariant violation; the kernel surfaces it as an error rather than
+silently skipping the entry. The `/v1/since` consumer route is the
+exception: it tolerates a 404 on an in-range entry by skipping it,
+since the GC sweeper may have already deleted a log object that has
+been folded into the snapshot.
 
 ## Stability
 
@@ -323,8 +332,8 @@ the entry truly orphan.
 See also:
 
 - The cursor format invariant (`<base32-time>_<session>_<seq>`)
-  lives in [`docs/sync-protocol.md`](sync-protocol.md)
-  ("Subtleties of the manifest key").
+  lives in [`sync-protocol.md`](sync-protocol.md)
+  ("LSNs, wall clocks, and downstream consumers").
 - The merge-patch math (RFC 7386, the `merge` / `fold` / `diff`
   triple) is in
-  [`docs/json-merge-patch.md`](json-merge-patch.md).
+  [`json-merge-patch.md`](json-merge-patch.md).

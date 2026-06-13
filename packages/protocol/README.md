@@ -10,10 +10,10 @@ import { BaerlyError, MemoryStorage, type Storage, type Verifier } from "baerly-
 
 This package holds the pure protocol kernel — types, errors, JSON merge-patch,
 constants, hashing, ordered maps, the `Storage` interface, and the
-`MemoryStorage` / `S3HttpStorage` impls. It has no I/O, no Node-only deps, and
-is Worker-bundleable. `baerly-storage` re-exports its user-facing surface; the
-internal adapter packages (`@baerly/adapter-node`, `@baerly/adapter-cloudflare`) consume
-it directly.
+`MemoryStorage` impl. It has no Node-only deps and is Worker-bundleable.
+HTTP S3 storage lives in `@baerly/adapter-node`; R2 binding storage lives in
+`@baerly/adapter-cloudflare`. `baerly-storage` re-exports the user-facing
+surface; the internal adapter packages consume this package directly.
 
 There is no reason for application code to install or name `@baerly/protocol`.
 The package exists as a workspace member so contributors can enforce the

@@ -80,7 +80,7 @@ boundaries), never `instanceof` chains.
 | `code` | HTTP | When |
 |---|---|---|
 | `InvalidConfig` | 400 | Bad config/input (bucket, malformed predicate) |
-| `SchemaError` | 422 | JSON shape invalid or bound schema rejected the doc |
+| `SchemaError` | 400 | JSON shape invalid or bound schema rejected the doc |
 | `Conflict` | 409 | CAS retry budget exhausted, or `insert` `_id` collision |
 | `Unauthorized` | 401 | Verifier returned no identity |
 | `AccessDenied` | 403 | S3 403 or bucket policy denied |

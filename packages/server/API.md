@@ -318,7 +318,7 @@ try {
 | `AccessDenied`           | 403  | S3 403 or bucket policy denied                                       |
 | `InvalidResponse`        | 502  | Server returned unparseable body                                     |
 | `Internal`               | 500  | Invariant violation — file a bug                                     |
-| `SchemaError`            | 422  | JSON shape invalid or bound schema rejected the doc                  |
+| `SchemaError`            | 400  | JSON shape invalid or bound schema rejected the doc                  |
 | `Conflict`               | 409  | CAS retry budget exhausted, or `insert` `_id` collision              |
 | `Unauthorized`           | 401  | Verifier returned no identity                                        |
 | `NotFound`               | 404  | Row by id not found                                                  |
@@ -392,7 +392,7 @@ Schemas: any [StandardSchema v1](https://standardschema.dev) validator
 (Zod 3.24+, Valibot 0.36+, ArkType 2.0+). Validation runs on the
 post-image: `update` and `replace` see the full doc, not just the
 patch. Failures → `BaerlyError{code:"SchemaError", issues:[…]}`,
-mapped to HTTP 422.
+mapped to HTTP 400.
 
 **Author `_id` as required, not `.optional()`.** The validator runs
 on the post-image — by the time it fires, the server has already

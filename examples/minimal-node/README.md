@@ -31,7 +31,7 @@ minimal-node/
 │                             #   auth recipes, graduation
 ├── src/
 │   ├── server/
-│   │   └── index.ts          # baerlyNode({ app, storage, verifier, webRoot, maintenance? }).listen(PORT)
+│   │   └── index.ts          # baerlyNode({ config, storage, verifier, webRoot }).listen(PORT)
 │   └── web/
 │       └── main.ts           # SPA client entry — bundled into dist/client/
 └── README.md
@@ -110,20 +110,21 @@ Verify: `curl https://<your-service>/v1/healthz`.
 ## Next steps
 
 1. **Read `AGENTS.md`** for the agent-facing guide — predicates,
-   indexes, schemas, auth recipes (JWKS setup), the in-process
-   maintenance loop, and the graduation criteria. (Claude Code
+   indexes, schemas, auth recipes (JWKS setup), write-triggered
+   maintenance, and the graduation criteria. (Claude Code
    users: `@gusto/create-baerly-storage` mirrors `AGENTS.md` to `CLAUDE.md` at
    scaffold time.)
 2. **Declare your first collection schema** in `baerly.config.ts`
    via `defineConfig({ collections: { ... } })` and pass it to
    `Db.create({ ..., collections })`. Schema validation is live;
-   bad inserts return 422.
+   bad inserts return 400.
 3. **Set up production auth** — follow `AGENTS.md` → "Going to
    production". Pattern B flips `auth: "shared-secret"` and reads
    `SHARED_SECRET` from `process.env`; Pattern C wires `bearerJwt`
    against your OIDC IdP via an env-aware factory `verifier:`
    override (`JWKS_URL` + `JWT_ISSUER` + `JWT_AUDIENCE`).
-   `baerly doctor --target=node` reports any gaps.
+   Verify the bucket with `baerly doctor --bucket=<s3-uri>` and the
+   deployed service with `curl https://<your-service>/v1/healthz`.
 
 ## When to graduate
 
@@ -149,7 +150,7 @@ not a churn event.
 
 ```sh
 baerly export --target=postgres \
-  --bucket=minimal-node --app=minimal-node --tenant=<your-tenant> \
+  --bucket=s3://minimal-node --app=minimal-node --tenant=<your-tenant> \
   --collection=<collection-name> --output=./out.sql
 ```
 
@@ -165,7 +166,7 @@ with zero env vars; every request resolves to `config.tenant`.
 Before deploy, follow `AGENTS.md` → "Going to production":
 
 - **Pattern B — `auth: "shared-secret"`.** Single-tenant
-  server-to-server callers (CI, cron, internal services). Flip
+  server-to-server callers (CI and internal services). Flip
   `auth` in `baerly.config.ts` and put `SHARED_SECRET` in
   `process.env` (your PaaS / secret manager).
 - **Pattern C — JWKS-backed JWT (recommended for multi-tenant).**

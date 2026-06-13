@@ -20,15 +20,15 @@ module's transitive imports are evaluated lazily.
 | Verb | Module | Role |
 |---|---|---|
 | `baerly deploy` | `src/deploy.ts` → `src/deploy/cloudflare.ts` | Reads `baerly.config.ts:target` and dispatches. Today only `target: "cloudflare"` is accepted; patches `wrangler.jsonc`, then shells out to `wrangler deploy --x-provision --x-auto-create`. `target: "node"` is rejected (self-host via your PaaS/container build). |
-| `baerly doctor` | `src/doctor.ts` | Two modes. `--bucket <uri>` live-probes a real bucket's CAS support (writes + deletes one sentinel; verifies `If-Match` / `If-None-Match` are honoured — the protocol's load-bearing backend prerequisite), independent of `--target`. Otherwise walks deploy invariants for `baerly.config.ts:target` (wrangler config, R2 bindings, required secrets, CF Access audience tag, cron triggers, domain coherence). `--fix` auto-creates missing R2 buckets. |
+| `baerly doctor` | `src/doctor.ts` | Two modes. `--bucket <uri>` live-probes a real bucket's CAS support (writes + deletes one sentinel; verifies `If-Match` / `If-None-Match` are honoured — the protocol's load-bearing backend prerequisite), independent of `--target`. Otherwise walks deploy invariants for `baerly.config.ts:target` (wrangler config, R2 bindings, required secrets, CF Access audience tag, optional cron triggers, domain coherence). `--fix` auto-creates missing R2 buckets. |
 | `baerly inspect` | `src/inspect.ts` | Read-only summary of one collection's snapshot / log / index state. |
-| `baerly export` | `src/export.ts` | Snapshot dump of one collection to SQL (`--target=sqlite`, `--target=postgres`). |
+| `baerly export` | `src/export.ts` | Snapshot dump of one collection to SQL (`--target=sqlite`, `--target=postgres`, `--target=d1`). |
 | `baerly cost` | `src/cost.ts` | Class A / Class B operation accounting from `log_seq_start … next_seq`. |
 | `baerly admin rebuild-index` | `src/admin/rebuild-index.ts` | Idempotent reconciliation of one `IndexDefinition` against the materialised view. |
 | `baerly admin dump` | `src/admin/dump.ts` | Canonical NDJSON of one collection's current row set. |
 | `baerly admin restore` | `src/admin/restore.ts` | Re-imports `admin dump` NDJSON into a fresh bucket. |
 | `baerly admin fsck` | `src/admin/fsck.ts` | Walks `current.json` → snapshot hash → log range → index prefixes read-only; exits 4 on any finding. |
-| `baerly admin usage` | `src/admin/usage.ts` | Wire-byte / object-count accounting for one bucket. |
+| `baerly admin usage` | `src/admin/usage.ts` | Node-target all-collection writes/min graduation health check. Cloudflare usage scanning returns an info finding until the R2-binding follow-up lands. |
 
 Exit-code contract (per `src/deploy.ts:10-16` and friends): 0 success,
 1 user error, 2 storage/external error, 3 protocol invariant.

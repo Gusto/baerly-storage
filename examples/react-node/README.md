@@ -32,7 +32,7 @@ react-node/
 ├── CLAUDE.md                 # same content (Claude Code reads this)
 ├── src/
 │   ├── server/
-│   │   └── index.ts          # baerlyNode({ app, storage, verifier, webRoot, maintenance? }).listen(PORT)
+│   │   └── index.ts          # baerlyNode({ config, storage, verifier, webRoot }).listen(PORT)
 │   └── web/
 │       ├── main.tsx          # React entry
 │       ├── App.tsx           # Provider + new-note form (useMutation)
@@ -53,14 +53,14 @@ pnpm dev
 mounts the Node HTTP listener as Connect middleware on the same Vite
 process that serves the SPA, so `GET /` hits the SPA on
 `http://localhost:5173/` and anything baerly handles (e.g.
-`GET /v1/healthz`, `POST /v1/notes`) is served on the same origin —
+`GET /v1/healthz`, `POST /v1/c/notes`) is served on the same origin —
 one process, one port, SPA + HMR + `/v1/*` in one command. Storage is
 `LocalFsStorage` rooted at `.baerly-data/`, so first-touch needs no
 S3 creds, no JWKS, and no second process.
 
 Open <http://localhost:5173>. Type a note, hit "Add note." Open a
 second tab — inserts, edits, and deletes in one tab appear in the
-other over the `/v1/since` long-poll.
+other over the `/v1/since?collection=notes&cursor=...` long-poll.
 
 For production-shaped local runs (S3 and the bundled SPA served
 from `dist/client/`):
@@ -139,7 +139,7 @@ the `NoteSchema` still validates writes server-side. Before deploy,
 follow `AGENTS.md` → "Going to production":
 
 - **Pattern B — `auth: "shared-secret"`.** Single-tenant
-  server-to-server callers (CI, cron, internal services). Flip
+  server-to-server callers (CI and internal services). Flip
   `auth` in `baerly.config.ts` and put `SHARED_SECRET` in
   `process.env` (your PaaS / secret manager).
 - **Pattern C — JWKS-backed JWT (recommended for multi-tenant).**
@@ -173,7 +173,7 @@ not a churn event.
 
 ```sh
 baerly export --target=postgres \
-  --bucket=react-node --app=react-node --tenant=<your-tenant> \
+  --bucket=s3://react-node --app=react-node --tenant=<your-tenant> \
   --collection=<collection-name> --output=./out.sql
 ```
 

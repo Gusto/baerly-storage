@@ -18,7 +18,7 @@ minimal-cloudflare/
 ├── tsconfig.app.json         # client TS project (src/web)
 ├── tsconfig.worker.json      # Worker TS project (src/server)
 ├── vite.config.ts            # Vite + @cloudflare/vite-plugin
-├── wrangler.jsonc            # Worker manifest — R2 binding, assets, vars, triggers, limits, observability
+├── wrangler.jsonc            # Worker manifest — R2 binding, assets, vars
 ├── index.html                # SPA shell — Vite's entry point
 ├── baerly.config.ts          # app, tenant, target, domain
 ├── AGENTS.md                 # deeper guide: predicates, schemas,
@@ -63,7 +63,7 @@ references.
 # `wrangler r2 bucket create` + `wrangler deploy`.
 baerly deploy
 
-# Verify the deployed config — bindings, secrets, cron triggers.
+# Verify the deployed config — bindings, secrets, optional triggers.
 baerly doctor --target=cloudflare
 ```
 
@@ -93,23 +93,28 @@ needs no secrets. If you adopt a "Going to production" recipe:
 ## Next steps
 
 1. **Read `AGENTS.md`** for the agent-facing guide — predicates,
-   indexes, schemas, auth recipes, the maintenance cron, and the
+   indexes, schemas, auth recipes, write-triggered maintenance, and the
    graduation criteria. Codex CLI reads `AGENTS.md`; Claude Code
    reads `CLAUDE.md`; both files are byte-identical so either
    surface lands you the same context.
 2. **Declare your first collection schema** in `baerly.config.ts`
    via `defineConfig({ collections: { ... } })` and pass it to
    `Db.create({ ..., collections })`. Schema validation is live;
-   bad inserts return 422.
+   bad inserts return 400.
 3. **Set up production auth** — follow `AGENTS.md` → "Going to
    production". Pattern A wires CF Access via an env-aware factory
    `verifier:` override; Pattern B flips `auth: "shared-secret"`.
    `baerly doctor --target=cloudflare` reports any gaps.
-4. **Check usage trends** — run `baerly doctor --target=cloudflare
-   --usage` periodically. It estimates your current writes/minute
-   per collection from recent log entries and warns when you're
-   approaching the graduation ceiling described in the "When to
-   graduate" section below.
+4. **Check usage trends** — run the current operation-cost
+   projection:
+
+   ```sh
+   baerly cost --bucket=<bucket-uri> --collection=<collection-name>
+   ```
+
+   Then pipe canonical logs to your observability system for 7-day /
+   30-day write-rate trends. The graduation ceiling is described in
+   the "When to graduate" section below.
 
 ## When to graduate
 
@@ -135,7 +140,7 @@ not a churn event.
 
 ```sh
 baerly export --target=postgres \
-  --bucket=minimal-cloudflare --app=minimal-cloudflare --tenant=<your-tenant> \
+  --bucket=s3://minimal-cloudflare --app=minimal-cloudflare --tenant=<your-tenant> \
   --collection=<collection-name> --output=./out.sql
 ```
 
@@ -156,7 +161,8 @@ Before deploy, follow `AGENTS.md` → "Going to production":
   `wrangler.jsonc:vars`. The `cloudflareAccess()` preset
   (re-exported from `@gusto/baerly-storage/auth`) reads the JWT off
   `Cf-Access-Jwt-Assertion`, validates it against your team's JWKS,
-  and derives `tenantPrefix` from the email claim.
+  and pins `tenantPrefix` to `config.tenant` unless you pass an
+  explicit tenant claim.
 - **Pattern B — `auth: "shared-secret"`.** Single-tenant
   server-to-server callers. Flip `auth` in `baerly.config.ts` and
   set `SHARED_SECRET` via `wrangler secret put`.
@@ -164,7 +170,7 @@ Before deploy, follow `AGENTS.md` → "Going to production":
 ## Pointers
 
 - `baerly.config.ts` — app config (`app`, `tenant`, `target`, `domain`).
-- `src/server/index.ts` — Worker fetch + scheduled handler.
-- `wrangler.jsonc` — Cloudflare Worker manifest (R2 binding, `assets:`, vars, cron, observability).
+- `src/server/index.ts` — Worker fetch entry.
+- `wrangler.jsonc` — Cloudflare Worker manifest (R2 binding, `assets:`, vars).
 - `vite.config.ts` — Vite + `@cloudflare/vite-plugin`.
 - `AGENTS.md` / `CLAUDE.md` — agent-facing guide (byte-identical).

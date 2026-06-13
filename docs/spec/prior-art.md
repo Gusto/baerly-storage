@@ -2,7 +2,7 @@
 title: Prior-art differentiation
 audience: spec
 summary: IDS-shaped consolidated differentiation against known prior art for the C1, C2, and C3 mechanisms.
-last-reviewed: 2026-05-26
+last-reviewed: 2026-06-12
 tags: [protocol, patent, prior-art]
 related: [sync-protocol.md, writer-fence-adversarial-model.md]
 ---
@@ -85,8 +85,8 @@ Baerly's `tryAdoptOwnSessionLogEntry`
 exact case as the writer's *own* prior in-flight commit attempt —
 e.g. after a process crash between PUT-log-entry and CAS-current —
 and **adopts** the existing entry rather than panicking. The
-adoption gate is constrained by the session identifier, content
-hash equality, and a bounded staleness window, so it does not blur
+adoption gate is constrained by the per-commit session identifier,
+the matching seq, and the single-input commit shape, so it does not blur
 into accepting a foreign writer's entry. This is the citable C2
 gap: a system that would panic where baerly recovers.
 
@@ -98,7 +98,7 @@ stamp a server-extracted timestamp.
 ## 4. mps3 (endpointservices/mps3, MIT, third-party prior art)
 
 mps3 (`docs/sync_protocol.md` in that repository) describes a
-two-step write — content + manifest, with a `touch last_change`
+two-step write — content + manifest, with a touched change-marker
 follow-up — and explicitly uses HTTP `Date` for **client clock
 correction**: *"clients use the `Date` header to continuously
 correct their clocks"*. Sync-side comparison uses the server-

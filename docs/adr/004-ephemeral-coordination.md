@@ -245,8 +245,8 @@ Independent of maintenance: readers may see a stale
 `consistency: "strong"` opt-in trades a round-trip for freshness
 when needed. WebSocket connections cannot be held beyond a single
 bounded invocation, so realtime is delivered via the
-`/v1/since?cursor=<lsn>` long-poll route inside the platform's
-request-time budget rather than a held fanout socket.
+`/v1/since?collection=<name>&cursor=<opaque>` long-poll route inside
+the platform's request-time budget rather than a held fanout socket.
 
 ## What would break the property
 

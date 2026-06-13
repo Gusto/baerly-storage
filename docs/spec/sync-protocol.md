@@ -1,415 +1,344 @@
 ---
 title: Sync protocol
 audience: spec
-summary: Atomic multi-key writes over S3 via manifest indirection; time-ordered log; reconciliation algorithm.
-last-reviewed: 2026-05-31
-tags: [protocol, sync, manifest, causal-consistency]
-related: [causal-consistency-checking.md, log-entry-shape.md, json-merge-patch.md, writer-fence-adversarial-model.md, prior-art.md]
+summary: Atomic document writes over object storage via per-collection current.json CAS, monotonic seq log, and snapshot folds.
+last-reviewed: 2026-06-12
+tags: [protocol, sync, current-json, causal-consistency]
+related: [causal-consistency-checking.md, log-entry-shape.md, json-merge-patch.md, writer-fence-adversarial-model.md, prior-art.md, "../adr/004-ephemeral-coordination.md"]
 ---
 
-This is a focused explanation of the core sync protocol of Baerly. The sync protocol upgrades an S3 API into a causally consistent, multiplayer datastore without the use of intermediate servers.
+# Sync protocol
 
-## Why build over S3?
+Baerly turns an S3-compatible bucket into a document database by
+making one small object authoritative: each `(app, tenant,
+collection)` has a `current.json` file. Writers build immutable
+artifacts first, then CAS-advance `current.json`. Readers read
+`current.json`, load the snapshot it names, and fold the integer log
+range it exposes.
 
-1. Minimalism. Why bother maintaining server-side code or a database when the bucket holding the website is a serviceable persistent state store. 
+The atomic moment is the conditional write on `current.json`. The
+current kernel does not replay committed rows by wall-clock time and
+does not use a reader-side list-and-repair lag window.
 
-2. Curiosity. Is it even possible to build a database on the S3 API? This project demonstrates that yes it is.
+## Storage layout
 
-3. Flexibility. Databases are one of the least portable parts of a stack. Decoupling storage from the database enables many more options like self-hosting with minio or using a specialist storage vendor that supports the S3 API.
+For collection `tickets` under `app/helpdesk/tenant/acme`, the
+collection prefix is:
 
-## Baerly
-
-Baerly is a Key-Value store. The values are stored in versioned storage locations on S3. There is a layer of indirection that maps DB logical keys to storage locations hosted in a *manifest*
-
-### Atomic Multi-key Operations
-
-To enable consistent atomic updates of multiple keys, *first* the client writes the new values, and then it updates the *manifest*, not dissimilar to write-ahead-logging. Other clients use the manifest to access the DB, thus, because individual S3 file updates are atomic, writing a new manifest file is also an atomic operation that can flip the visibility multiple of key updates at once.
-
-The manifest is a layer of *indirection* enabling bulk atomic operation (and more)
-
-### Multiplayer Safe
-
-Concurrent writes would conflict if all clients wrote to the *same* manifest location, and a naive last-write-wins overwrite would silently drop the loser. To support multiplayer each client appends a *different* manifest entry ordered by time, so writers never contend for a single key. Modern S3 *does* offer conditional writes (`If-None-Match: "*"` to create-if-absent, `If-Match: <etag>` to compare-and-swap), and the protocol leans on them — guarding each log append and the single manifest-pointer (`current.json`) advance. See the [S3-CAS prerequisite](#protocol-invariants) below.
-
-![manifests over time](../contributing/diagrams/manifest.excalidraw.png)
-
-The manifest records several major pieces of imperfect information.
-- The time of the write, encoded in the key, as measured by the client. Client clocks are subject to clock skew so it might be a bit off.
-- The operation that was applied, encoded a JSON merge patch to the DB state.
-- The state of the database, but this also might be off because a client doesn't know what other writes are also in flight when written. But it's the client's best guess.
-
+```text
+app/helpdesk/tenant/acme/manifests/tickets
 ```
-// manifest.json@01698260777020_53a_0001
-{
-    operation: { // Exact JSON-merge-PATCH representation of manifest operation
-        keys: {
-            "myBucket/oldKey": null, // DELETE
-            "myBucket/myKey": {
-                version: "2eefe4fb-c540-4482-abb7-f3dfedfc424d"
-            }
-        }
-    },
-    state: { // Approximation of current state
-        keys: {
-            "myBucket/myKey": {
-                version: "2eefe4fb-c540-4482-abb7-f3dfedfc424d"
-            }
-        }
-    },
+
+The `manifests/` segment is the historical name for a collection's
+control tree; the live control object inside it is `current.json`
+(there is no separate "manifest" object today).
+
+The kernel writes these objects below that prefix:
+
+| Key | Role |
+|---|---|
+| `current.json` | CAS-protected control object and linearization point. |
+| `log/<seq>.json` | One `LogEntry` per mutation, keyed by monotonic integer `seq`. |
+| `content/<sha>.json` | Content-addressed post-image bodies for `I` / `U`. |
+| `index/<name>/...` | Zero-byte advisory index markers. |
+| `snapshot/L9/<000000000000>-<max>-<sha>.json` | Content-hashed materialized snapshot covering `[0, max)`. `min` and `max` are fixed-width 12-digit zero-padded; `min` is always `0`. |
+| `gc/pending.json` | Two-phase GC candidate ledger. |
+
+`current.json` carries the reader-visible head:
+
+```ts
+interface CurrentJson {
+  schema_version: 2;
+  snapshot: string | null;
+  next_seq: number;
+  log_seq_start: number;
+  writer_fence: {
+    epoch: number;
+    owner: string;
+    claimed_at: string;
+    lease_until?: string;
+  };
+  tail_bytes: number;
+  snapshot_bytes: number;
+  snapshot_rows: number;
+  last_warned_seq?: number;
 }
 ```
 
-Much of the engineering of the Baerly sync protocol is about transforming that imperfect information into a causally consistent, atomic, multiplayer safe representation client-side.
+Readers fold the live range `[log_seq_start, next_seq)`. Entries
+below `log_seq_start` have already been folded into `snapshot`.
+Entries at or above `next_seq` are not committed, even if an orphaned
+object exists in the bucket.
 
-### Reconciling concurrent writes
+## Required storage semantics
 
-Note the client sends the operation as a [JSON_merge_patch](json-merge-patch.md). The database state at time *t* is the merge concatenation of all the operations up to *t* (see [a list of patches forms an ordered log](json-merge-patch.md#a-list-of-patches-forms-an-ordered-log))
+The `Storage` backend must provide three behaviors:
 
-$$state_t = \sum_{i=0}^{t} merge(patch_i)$$
-Now it is inefficient for a client to replay the entire DB history. But we can use the [idempotency property of JSON-merge-patch](json-merge-patch.md#) to avoid it.
+1. **Read-after-write on the same key.** A successful PUT is visible
+   to a later GET of that key.
+2. **Create-if-absent.** `If-None-Match: "*"` rejects when the key
+   already exists.
+3. **Compare-and-swap.** `If-Match: <etag>` rejects when the key no
+   longer has the ETag the writer read.
 
-A client only needs to read an imperfect guess of the latest state, then replay all patches within a *lag* window to correct an estimate of the final state (see [Ordered Logs with missing entries can be repaired with replay](json-merge-patch.md#ordered-logs-with-missing-entries-can-be-repaired-with-replay))
+S3 exposes this as conditional writes with `If-None-Match` and
+`If-Match`; the conformance suite requires the same semantics for
+every shipped adapter. A backend that silently ignores `If-Match` is
+not a Baerly backend: it can lose updates without a visible error.
 
-$$\begin{eqnarray} 
-state_t &=& state_{t-lag} + \sum_{i=lag}^{t} merge(patch_i) \\
-&=& est_t + \sum_{i=lag}^{t} merge(patch_i)
-\end{eqnarray}$$
+`baerly doctor --bucket <uri>` runs a live CAS probe against an
+arbitrary bucket before deploy. The probe writes a throwaway sentinel
+and asserts stale `If-Match` and colliding `If-None-Match: "*"`
+requests fail loudly.
 
-So this is the key insight encoded within Baerly manifest representation. The state field provides a good guess, but clients need to around "a bit" and reapply nearby operations to correct for inflight writes.
+## Write algorithm
 
-### Causal Consistency
+`Writer.commit` is per collection. It holds no process state that is
+required for correctness; each commit reads `current.json` fresh.
 
-If client's clocks are skewed, their manifest keys will not order between them correctly. This does not matter though! To preserve causal consistency, a specific client's writes must remain in the same order for all participants. Clock skew translates, but does not reorder, operations in time, so causal consistency is not undermined.
+For a single-document mutation:
 
-The sync protocol is eager, exposing all operations as soon as they are visible, so clock skew does not affect end-to-end latency either. The only effect is on ordering within the log which can be observed when writing to the same key. Delayed clients will appear to be affecting the database in the past, which means their operations are more easily masked by other clients.
+1. **Read `current.json`.** If the collection is new, create a zero
+   state `current.json` with `If-None-Match: "*"`, then read the
+   winner if a peer raced the create.
+2. **Mint `seq`.** The next log entry uses
+   `seq = current.next_seq`. A batch uses the contiguous range
+   `[current.next_seq, current.next_seq + inputs.length)`.
+3. **PUT content and index artifacts.** `I` / `U` post-images are
+   written under `content/<sha>.json`; index markers are PUT or
+   DELETE'd inside the same attempt. These artifacts are invisible
+   until the log and `current.json` advance.
+4. **PUT log entries.** Each entry is written to `log/<seq>.json`
+   with `If-None-Match: "*"`.
+5. **CAS-advance `current.json`.** The writer sets
+   `next_seq += entries.length`, adds the exact log bytes to
+   `tail_bytes`, and PUTs the new `current.json` with
+   `If-Match: <etag from step 1>`.
+6. **Verify the writer fence.** If `writer_fence.epoch` changed
+   during the attempt, the writer aborts with `Conflict` rather than
+   continuing under stale authority.
 
-See [Checking Causal Consistency the Easy Way](causal-consistency-checking.md) describing the randomized property checking used for validating causal consistency.
+The CAS on step 5 is the linearization point. A reader that sees the
+old `current.json` does not see the mutation. A reader that sees the
+new `current.json` folds the new log entry by integer `seq`.
 
-### Mitigating Large clock skew
+### Contention and retries
 
-Clock skew becomes a consistency-threatening problem if exceeding the *lag* window. Then the reconciliation algorithm will not be looking far enough back and will miss operations. Client clocks cannot be trusted. 
+Two writers racing the same collection read the same `next_seq`.
+Exactly one can PUT `log/<seq>.json`; exactly one can CAS-advance the
+same `current.json` ETag. A loser gets `BaerlyError{code:"Conflict"}`
+from the storage layer and retries from a fresh `current.json` read,
+up to the configured retry budget.
 
-Large clock skew is detected by Baerly by comparing the manifest key timestamp against the server-provided `LastModified` time. If the skew is above a *stale* write threshold it is ignored. As long as the *stale* write threshold is sufficiently below the *lag* parameter, all clients will converge to the same state regardless of clock skew.
+Single-entry `Writer.commit` has one extra recovery path:
+self-session adoption. If a previous attempt by the same logical
+commit wrote `log/<seq>.json` but lost the `current.json` CAS, the
+retry may find its own log entry already present. The writer adopts
+that entry only when the random per-commit `session`, the `seq`, and
+the single-entry shape match. Batch commits do not adopt; they surface
+the conflict to `Db.transaction`, which decides whether to re-run the
+body.
 
-### Automatic Clock Adjustment
+### Crash safety
 
-In addition, clients use the `Date` header to continuously correct their clocks, so clients with heavily skewed clocks can be corrected reactively and continuously and thus capable of joining the log.
+The write order is content/index first, log second, `current.json`
+last. That order has one important property: a crash before the final
+CAS leaves only orphan artifacts.
 
-### Subtleties of the manifest key
+| Crash point | Bucket residue | Reader behavior |
+|---|---|---|
+| Before log PUT | Content/index artifacts may exist. | Invisible; no committed `seq` points at them. |
+| After log PUT, before CAS | A log object may exist at an unadvanced `seq`. | Invisible; readers stop at `current.next_seq`. |
+| During `current.json` PUT | Old or new `current.json` wins atomically. | Reader sees a complete old or complete new head. |
 
-The manifest key is primarily time-ordered, but some extra information is needed to fix edge cases such as: writing on the exact same millisecond or using a sub-millisecond S3 API (such as local-first). So the manifest key format is actually
+Garbage collection later marks and sweeps orphan content, stale log
+objects, and superseded snapshots after a grace window. GC is cleanup,
+not correctness.
 
-```
-<TIMESTAMP>_<SESSION>_<COUNTER>
-```
+## Read algorithm
 
-Furthermore, because S3's `list-objects-v2` operation can only query in ascending lexicographical order, and its more efficient for the algorithm to look backward in descending order, both the timestamp and counter elements are encoded with a reverse lexicographically ordered string. Key length is a limited resource, so we use a Javascript's native base-32 string representation, padded and subtracted from the max value to reverse the directions
+Every read loads `current.json` fresh for its collection. If it is
+missing, the collection is empty.
 
-```js
-export const uint2strDesc = (num: number, bits: number): string => {
-  const maxValue = Math.pow(2, bits) - 1;
-  return uint2str(maxValue - num, bits);
-};
+For a full-scan read:
 
-const uint2str = (num: number, bits: number) => {
-  const maxBase32Length = Math.ceil(bits / 5);
-  const base32Representation = num.toString(32);
-  return base32Representation.padStart(maxBase32Length, "0");
-};
-```
+1. Read `current.json`.
+2. Load `current.snapshot` if it is non-null, verifying the snapshot
+   body's SHA-256 against the hash embedded in its filename.
+3. Fetch `log/<seq>.json` for every integer in
+   `[log_seq_start, next_seq)`, with bounded parallelism.
+4. Fold entries in ascending `seq` order:
+   - `I` / `U` with `after` set `doc_id` to that full post-image.
+   - `D` deletes `doc_id`.
+5. Apply the predicate, order, and limit in memory.
 
-#### Verification of the reverse-lex property
+The index path is an optimization of step 3, not a second source of
+truth. `planQuery` may choose an index prefix, fetch candidate document
+IDs, and fold only the relevant log entries, but it still re-checks
+the predicate against materialized rows. Stale index markers can make
+the path do extra work; they cannot invent rows.
 
-The "lex-asc list of descending-base-32 keys is reverse-causal"
-claim is verified two ways:
+## Snapshots and compaction
 
-- **Property test** —
-  [`packages/protocol/src/lsn-reverse-list.test.ts`](../../packages/protocol/src/lsn-reverse-list.test.ts)
-  asserts the invariant across randomized populations of 2..64
-  `(millis, seq)` tuples: for any pair A causally < B,
-  `enc(A) > enc(B)` lex, and `MemoryStorage.list(prefix)`
-  returns the population in reverse-causal order. The PR-gate
-  runs the test at fast-check's default 100 runs; the encoder
-  has been verified at `FC_NUM_RUNS=10000` (see commit body).
-- **Microbenchmark** —
-  [`bench/lsn-reverse-walk.ts`](../../bench/lsn-reverse-walk.ts)
-  quantifies bytes-listed reduction vs. the counterfactual
-  ascending-base-32 encoding (which would force a full-prefix
-  LIST + in-memory reverse). The pinned baseline at
-  [`docs/spec/attachments/lsn-reverse-walk-baseline.json`](attachments/lsn-reverse-walk-baseline.json)
-  reports, for a 100 000-key population, `bytes_saved_fraction`
-  of 99.99% at K=10 and 90% at K=10 000 (analytic ratio K/N
-  with fixed-width 37-byte keys). Reproduce with
-  `pnpm bench:lsn-reverse-walk`.
+The log is append-only, so maintenance periodically folds a prefix of
+the live log into a snapshot:
 
-### Log entry shape
+1. Read `current.json`.
+2. Load the prior snapshot named by `current.snapshot`, or start from
+   an empty map.
+3. Fetch a bounded slice of the live log beginning at
+   `log_seq_start`.
+4. Fold entries onto the map using the same per-doc replacement rules
+   as the read path.
+5. Serialize docs sorted by `_id`, hash the bytes, and PUT
+   `snapshot/L9/<000000000000>-<max>-<sha>.json` (`min` and `max` are
+   fixed-width 12-digit zero-padded; `min` is always `0`).
+6. CAS-advance `current.json` so `snapshot` points at the new file,
+   `log_seq_start` advances to the folded end, and
+   `snapshot_bytes` / `snapshot_rows` / `tail_bytes` are updated.
 
-Every successful manifest write also emits one JSON object per
-mutated ref under `<manifest-prefix>/log/<lsn>.json`. The shape
-is `LogEntry` (see
-[`packages/protocol/src/log.ts`](../packages/protocol/src/log.ts)).
-Per-LSN entries (rather than one batched object per manifest)
-keep each entry independently fetchable so compaction can sweep
-them without touching the manifest log.
+The snapshot file is content-hashed. If a compactor crashes mid-PUT,
+the body will not match its own filename hash and readers reject it.
+If a compactor loses the `current.json` CAS, the snapshot is simply an
+orphan; the winner's `current.json` remains authoritative.
 
-Within a single `updateContent` that mutates N refs, N+1 lsns
-are minted: 1 for the manifest version, N for the log entries.
-Manifest-version lsns and log-entry lsns never alias.
+The shipped snapshot level is `L9`. The key shape reserves room for a
+future multi-level scheme, but the current kernel uses one materialized
+snapshot per collection head.
 
-The full contract — fields, what we borrowed from Postgres
-logical replication, what we didn't, and the stability rules —
-is in [`log-entry-shape.md`](log-entry-shape.md). The shape is
-fixed at merge; consumers ack on `lsn` and the JSON keys are
-public.
+## Maintenance runtime model
 
-The query planner — `planQuery` in
-[`packages/server/src/query-planner.ts`](../../packages/server/src/query-planner.ts)
-— sits between the predicate AST and the log fold on the read path.
-It does **not** change the wire format: filtered indexes emit fewer
-zero-byte entries under the same `<logPrefix>/index/<name>/...` key
-shape. See [`docs/contributing/features.md`](../contributing/features.md) §"Secondary indexes"
-and [`docs/contributing/architecture.md`](../contributing/architecture.md) §"Planner step
-(between the predicate and the log fold)".
+Compaction and GC are write-triggered and bounded. After a successful
+commit, the writer may dispatch `runBoundedMaintenance` with the
+post-CAS context:
 
-### Self-session log-conflict adoption
+- Reads never dispatch maintenance.
+- The fold handles at most `WRITE_TICK_FOLD_ENTRIES_PER_PASS` entries
+  per pass.
+- The fold starts only while the snapshot is under both ceilings:
+  bytes `C` (`snapshot_bytes <= C`) and rows `E` (checked with a
+  look-ahead term, `snapshot_rows + maxFoldEntriesPerPass <= E`).
+  Only the byte ceiling is operator-overridable:
+  `C` defaults to `MAINTENANCE_MAX_FOLD_BYTES_DEFAULT` and can be
+  raised via `BAERLY_MAINTENANCE_MAX_FOLD_BYTES`, whereas `E`
+  (`MAINTENANCE_MAX_FOLD_ROWS`) is a hardcoded constant with no env
+  override.
+- GC marks and sweeps bounded batches from `gc/pending.json`.
+- Cloudflare can defer the tick past the response with
+  `ctx.waitUntil`; Node runs inline unless the host wraps it
+  differently.
 
-The writer PUTs each log entry with `If-None-Match: "*"` (see step
-5 of `Writer.#singleAttemptCommit` in
-[`packages/server/src/writer.ts`](../../packages/server/src/writer.ts)).
-A 412 on that PUT means either a peer wrote our `seq` (we lost the
-race), OR our own previous attempt landed step 5 but lost the
-subsequent `current.json` CAS-advance and we're now re-driving the
-same logical commit. The writer discriminates by `session` — the
-random 6-hex-char per-commit secret embedded in every emitted
-`LogEntry.lsn`.
+There is no daemon, lease service, scheduler, or background thread.
+`runScheduledMaintenance` is an exported convenience for teams that
+want an explicit maintenance window; it is not required for
+correctness.
 
-The decision is isolated in
-[`packages/server/src/log-conflict-adoption.ts`](../../packages/server/src/log-conflict-adoption.ts)
-(`tryAdoptOwnSessionLogEntry`). Adoption is sound iff three clauses
-hold:
-
-1. **Same session.** `existing.session === self.session` — the
-   session id is in-RAM-only for the lifetime of one commit; an
-   adversary with bucket-write access cannot forge a value they
-   did not observe being PUT.
-2. **Matching seq.** `existing.seq === self.seq` — implied by
-   the key shape (the writer reads back from `/log/<seq>.json`),
-   re-asserted at the decision site.
-3. **Single-input commit.** `Writer.commit`, not
-   `Writer.commitBatch`. Batches surface a log-PUT 412 as
-   `Conflict` immediately; the caller (`Db.transaction`) decides
-   whether to re-run the body.
-
-When any clause fails, the writer throws
-`BaerlyError{code:"Conflict"}`. The adversarial-replay property
-test at
-[`tests/integration/log-conflict-adversarial.test.ts`](../../tests/integration/log-conflict-adversarial.test.ts)
-enumerates the threat model and pins the property "no forged
-pre-populated log entry causes the writer to return a commit with
-a `LogEntry` it didn't author."
-
-### Minimising list-object-v2 calls
-
-List API calls are costly on S3, they are charged at the same rate as PUTs which are 10x more expensive than GETs. Readers refresh explicitly (via a `get` or a write), and callers that want change-detection drive their own polling, so we want to avoid having the list-object-v2 API call on the hot path of every refresh.
-
-So after writing a new manifest entry, the client then touches a `last_change` file. A reader can check this file first, and only if the content changes (efficiently detected with `If-None-Match` header) does the algorithm proceed to syncing the latest state via the `list-object-v2` API call.
-
-For APIs where listing is cheap (e.g. local-first/IndexDB), this optimization can be disabled by the `minimizeListObjectsCalls` flag to `false`. 
+The doctrine and trade-offs live in
+[ADR-004](../adr/004-ephemeral-coordination.md). Capacity thresholds
+and operator actions live in
+[graduation.md](../about/graduation.md).
 
 ## Protocol invariants
 
-Properties the kernel and the rest of this document both rely on.
+These are the load-bearing rules.
 
-1. **Ephemerality.** The protocol runs only inside the lifetime
-   of an HTTP request or a cron invocation. There is no
-   background poller, no long-lived writer, no leader election.
-   Every commit reads `current.json` fresh, does its work, and
-   exits. Maintenance (compaction, GC) ticks **in-band on the write
-   path** — bounded by a per-pass budget, deferred past the response
-   on Cloudflare via `ctx.waitUntil` and run inline elsewhere; reads
-   never tick. The opt-in `runScheduledMaintenance` SDK is the only
-   cron-driven path and is never required. The doctrinal rationale
-   lives in [ADR-004](../adr/004-ephemeral-coordination.md).
+1. **`current.json` linearizes commits.** A mutation becomes visible
+   only when the `current.json` CAS succeeds.
+2. **CAS is mandatory.** `If-Match` and `If-None-Match: "*"` must be
+   honored by the backend.
+3. **`seq` is the causal order.** The kernel reads and folds
+   `log/<seq>.json` by integer sequence. The `lsn` timestamp prefix is
+   an external cursor hint, not the authority for kernel ordering.
+4. **The live log range is contiguous.** A missing or malformed entry
+   inside `[log_seq_start, next_seq)` is a protocol violation and
+   surfaces as an error.
+5. **Snapshots cover a prefix.** If `log_seq_start > 0`,
+   `current.snapshot` names a snapshot that covers
+   `[0, log_seq_start)`.
+6. **Reads are pure.** Reads load state; they never compact, GC, or
+   tick maintenance.
+7. **Maintenance is bounded.** Write ticks do at most a configured
+   slice of compaction or GC work. Over-ceiling folds defer and warn;
+   they do not try to outrun the host.
+8. **Per-collection isolation.** Each collection has its own
+   `current.json`. A write storm on one collection does not serialize
+   unrelated collections, and cross-collection atomicity is not part
+   of the protocol.
 
-2. **S3-CAS is a hard backend prerequisite.** Every commit
-   CAS-advances `current.json` with `If-Match` on its ETag
-   (`packages/server/src/writer.ts`), and the same conditional PUT is
-   the only atomic moment in compaction. A backend that silently
-   *ignores* `If-Match` (rather than rejecting a stale write) does not
-   fail loudly — it causes silent lost-update corruption. A baerly
-   `Storage` backend **MUST** honour `If-Match` and `If-None-Match: "*"`
-   (rejecting a stale / colliding conditional write with a `Conflict`);
-   a store that doesn't is not a valid backend.
+## LSNs, wall clocks, and downstream consumers
 
-   This is enforced on two fronts:
-   - **In CI, for every shipped adapter.** The storage conformance suite
-     (`packages/protocol/src/storage/conformance.ts`) asserts the
-     `If-Match` / `If-None-Match: "*"` semantics, and these blocks are
-     **mandatory** — there is no `supportsCAS` opt-out, so MemoryStorage,
-     LocalFsStorage, `s3HttpStorage`, and `r2BindingStorage` all prove it.
-   - **At deploy time, for an arbitrary store.** `baerly doctor --bucket
-     <uri>` runs a live CAS round-trip against the real bucket (`probeCas`
-     in `@baerly/protocol`) — it writes one throwaway sentinel and asserts
-     the backend rejects a stale `If-Match` and an `If-None-Match: "*"`
-     over an existing key, failing loud (`probeCas` /
-     `packages/cli/src/doctor/cas.ts`) on a non-conformant store. Run it
-     against any custom / proxied S3-compatible endpoint before trusting
-     it. The no-lease in-band-maintenance design leans on the same
-     primitive ([ADR-004](../adr/004-ephemeral-coordination.md)).
+Each `LogEntry` carries both:
 
-3. **Causal order is keyed on `seq`, not the wall clock.** Every
-   committed entry carries a `seq` drawn from `current.json.next_seq` and
-   advanced under the same CAS that serialises commits, so `seq` is
-   strictly monotonic per collection and stable across process restart.
-   The kernel read path folds the integer range
-   `[log_seq_start, next_seq)` by fetching `…/log/<seq>.json` keys
-   reconstructed directly from `seq` (`packages/server/src/log-walk.ts`) —
-   it never lists, sorts, or terminates on the LSN's `<base32-time>`
-   prefix (the `lsn` string is a schema-only body field;
-   `packages/server/src/writer.ts`).
+- `seq`: the integer sequence minted from `current.json.next_seq`.
+- `lsn`: an opaque cursor shaped
+  `<base32-time>_<session>_<seq-fragment>`.
 
-   This bounds a real edge case. A writer whose wall clock **regresses**
-   across a restart can mint an `lsn` whose time prefix sorts before a
-   causally-earlier write — but this **cannot** reorder or drop anything
-   the kernel reads, because the fold keys on `seq`, not the clock. The
-   exposure is confined to **downstream consumers that order by the LSN
-   time prefix** (e.g. a CDC / `baerly export` reader). Such consumers
-   MUST sort by `seq` to recover causal order — which the LSN cursor
-   format guarantees monotonic per collection (see
-   [log entry shape](log-entry-shape.md#cursor-format)) — rather than by
-   the `<base32-time>` component, which is a best-effort hint valid only
-   under the assumption that wall clocks advance. `LAG_WINDOW_MILLIS`
-   bounds *forward* skew; it does not repair a *backward* step, and no
-   kernel invariant depends on it doing so.
+The timestamp component uses descending base-32 encoding so ordinary
+lexicographic listing can find recent LSN-shaped keys efficiently in
+contexts that store by LSN. The kernel does not use that ordering for
+correctness. It reconstructs `log/<seq>.json` directly from integer
+`seq`. This ordering property is verified by
+[`packages/protocol/src/lsn-reverse-list.test.ts`](../../packages/protocol/src/lsn-reverse-list.test.ts)
+and quantified by [`bench/lsn-reverse-walk.ts`](../../bench/lsn-reverse-walk.ts)
+against the pinned baseline at
+[`docs/spec/attachments/lsn-reverse-walk-baseline.json`](attachments/lsn-reverse-walk-baseline.json)
+(`pnpm bench:lsn-reverse-walk`).
 
-   *Deferred option (not implemented).* If the LSN time component is ever
-   required to be monotonic in its own right, a hybrid-logical-clock clamp
-   — mint `timestamp(max(Date.now(), last_committed_ms + 1))`, persisting
-   `last_committed_ms` in `current.json` behind a schema bump — would
-   close it. It is unnecessary today: `seq`, not the clock, is the causal
-   authority, and adding it would widen the manifest schema for no kernel
-   correctness gain.
+`LAG_WINDOW_MILLIS = 5000` remains the named tolerance for wall-clock
+skew in log timestamps consumed outside the kernel. A writer whose
+clock regresses can mint an `lsn` whose time prefix sorts before a
+causally earlier entry; this cannot reorder kernel reads, because
+kernel reads sort by `seq`. Downstream CDC/export consumers must sort
+by `seq`, not by the timestamp prefix.
 
-## The Sync Algorithm
+## CAS scope is per collection
 
-The algorithm runs once per refresh — initiated by a read
-(`getVersion`) or a write (`updateContent`).
+Each collection has its own `current.json`, so each collection has its
+own CAS hotspot. There is no per-tenant or per-bucket mutex.
 
-1. Check the `last_change` file using `If-None-Match` headers; if it hasn't changed, return the cached state.
-	- See the read path in [`packages/server/src/query.ts`](../packages/server/src/query.ts).
-2. List objects backward in time from the `now + lag` timestamp
-	- See the log-walk loop in [`packages/server/src/query.ts`](../packages/server/src/query.ts).
-3. Trust the embedded timestamps under the bounded-skew assumption (`LAG_WINDOW_MILLIS`): the `now + lag` margin in step 2 absorbs client/server clock disagreement up to that bound. There is **no** reader-side per-entry staleness exclusion — an earlier design filtered entries with `abs(timestamp - LastModified) > stale` via a `Syncer.isValid` check, but that guard was removed in the kernel rewrite ([ADR-004](../adr/004-ephemeral-coordination.md)). `LAG_WINDOW_MILLIS` (`packages/protocol/src/constants.ts`) survives as the named assumption, not an enforced runtime check.
-4. Let the first entry encountered be `latest_state`
-	- See [`packages/server/src/query.ts`](../packages/server/src/query.ts).
-5. json-merge-patch all `operations` with `operations.timestamp - lag > latest_state.timestamp` in order into  `latest_state`
-	- See the row-fold loop in [`packages/server/src/query.ts`](../packages/server/src/query.ts).
-6. on a **write** refresh only, opportunistically garbage-collect entries with `timestamp - lag < latest_state` (reads are pure and skip this step)
-	- See [`packages/server/src/gc.ts`](../packages/server/src/gc.ts) and [`packages/server/src/compactor.ts`](../packages/server/src/compactor.ts).
-7. return `latest_state` to the caller (the read or write that triggered the refresh)
+That choice buys:
 
-### Summary
+- independent progress across collections;
+- one cheap head object per collection for reads and long-poll state;
+- a tractable idle-reader cost bound.
 
-The algorithm is deceptively simple in implementation but leans heavily on the algebraic property of JSON-merge-patch and wiggle room in causal consistency to accommodate client-side clock_skew. The same algorithm is used also to synchronize state transfer between tabs in the local-first setting. By designing for a relatively small set of underlying S3 semantics, it is easy to apply the sync protocol to other, more expressive storage systems.
+It also means:
+
+- hot single-collection workloads eventually hit CAS contention;
+- transactions are scoped to one collection;
+- cross-collection atomicity requires graduating to a database that
+  owns a real transaction coordinator.
+
+The published envelope is roughly 30 sustained logical writes per
+minute per collection, 10 GB per tenant, and 100 collections per
+tenant. Crossing those is a graduation signal, not a protocol failure.
+
+## Verification
+
+The implementation is pinned by tests at three layers:
+
+- `packages/protocol/src/storage/conformance.ts` requires CAS and
+  same-key read-after-write behavior for every adapter.
+- `tests/fixtures/randomized-cascade.ts` drives the all-to-all
+  causal-consistency cascade across memory, local-fs, Minio, and
+  Cloudflare R2 variants.
+- `tests/integration/phase5-end-to-end.test.ts` and
+  `phase5-crash-fuzz.test.ts` exercise compaction, GC, crash
+  injection, read parity, object-count drain, and the idle-reader
+  cost bound.
+
+Adding a storage adapter must add a conformance path and a randomized
+cascade variant. Touching the write path, log walk, compactor, or GC
+requires updating this spec and the relevant property tests.
 
 ## Prior art
 
-Two coordination primitives sit under Baerly's kernel: a
-**bounded-clock-skew assumption** (`LAG_WINDOW_MILLIS = 5000`) and
-a **fence-token + CAS-on-control-object** pattern
-(`current.json.writer_fence`, inspired by IsleDB and FoundationDB). Spanner's TrueTime, FoundationDB's
-fence epochs, and the broader "lease + fence" literature inform
-both choices.
+The protocol uses the same broad move as Git, Iceberg, Delta Lake,
+Litestream, and SlateDB: write immutable artifacts, then atomically
+advance a small control object. Baerly's constraint is stricter than
+most of those systems: the coordinator must fit inside a portable
+`(Request) => Response` handler and a bucket. That rules out a
+catalog service, lock table, always-on compactor, or operator-installed
+scheduler.
 
-The specific failure modes the protocol defends against —
-thundering-herd CAS livelock on a single shared object, GCS's
-"one mutation per object per second" 429, Iceberg
-`CommitFailedException` storms with N concurrent writers — are
-the standard failure modes reported in the S3-as-database
-literature. The ~30 writes/min/collection ceiling baked into the
-product thesis is the conservative bound those reports converge on.
-
-See also: `prior-art.md` for differentiation against external
-prior art.
-
-## CAS scope is per-collection
-
-Each collection has its own `current.json` keyed by `(tenant, collection)`;
-every commit reads, mutates, and CAS-writes that single object.
-There is no per-tenant or per-bucket mutex.
-
-The alternative — per-tenant CAS, one `current.json` per tenant —
-would serialize every writer in the tenant on the same key. The
-published cost bound (`< 1 Class A op / writer / hour` for idle
-readers; see
-[cost-model.md](../about/cost-model.md#cost-ceiling)) is only tractable
-if the idle reader can poll one cheap key per collection;
-per-tenant CAS makes the bound unmeetable on workloads with more
-than one busy collection.
-
-Trade-offs:
-
-- Collections are independent — a write storm on one collection does
-  not block writers on another in the same tenant.
-- More `current.json` objects per tenant (one per collection),
-  managed by the same compactor/GC pair.
-- Hot single-collection workloads above roughly 30 writes/min on
-  the same collection see CAS contention.
-- Cross-collection atomicity is impossible by construction.
-  Applications that need it graduate to Postgres via the export
-  contract ([log-entry-shape.md](log-entry-shape.md)); transaction
-  scope inherits the per-collection boundary — see the JSDoc on
-  `Db.transaction`.
-
-## Bound choices
-
-The protocol relies on one clock-skew bound, in
-[`packages/protocol/src/constants.ts`](../../packages/protocol/src/constants.ts):
-
-- `LAG_WINDOW_MILLIS = 5000` ms — half-window within which a manifest
-  write's embedded timestamp must agree with the server's
-  `LastModified` for the write to be accepted by replaying clients.
-
-Two guarantees were on the table:
-
-- **Total order across the bucket.** Strong, but requires a
-  coordination service or 2PC; both ruled out by the portable
-  `(Request) => Response` server contract and the per-collection
-  CAS scope above.
-- **Single-key causal consistency under bounded skew, no
-  cross-collection ordering.** Matches the per-collection CAS
-  scope, verifiable by property test, and is the guarantee every
-  prior-art S3-as-DB system delivers.
-
-The chosen guarantee is single-key causal consistency under
-bounded clock skew: for any single `(collection, docId)` pair,
-every write is causally observed by every reader within roughly
-one polling cycle plus `LAG_WINDOW_MILLIS`. Across collections —
-or across `docId`s within a collection — the protocol provides no
-ordering beyond what the underlying `Storage` adapter provides on
-a single LIST. The bound is enforced by the property-based cascade
-in
-[`tests/fixtures/randomized-cascade.ts`](../../tests/fixtures/randomized-cascade.ts),
-parameterised over four `Storage` adapters (`memory`, `local-fs`,
-`node-minio`, `cloudflare-r2`).
-
-5 s is the smallest window that spans every plausible
-writer-retry latency observed in the target deployment patterns.
-Tightening `LAG_WINDOW_MILLIS` below 5000 ms can cause spurious
-rejections on machines that haven't synced NTP; loosening it
-widens the window during which causal ordering can be disturbed by
-skew. Changing it is a protocol-breaking change.
-
-Adding a new `Storage` adapter MUST add a variant to the cascade
-([`tests/integration/randomized.test.ts`](../../tests/integration/randomized.test.ts)
-for Node-side variants;
-[`packages/adapter-cloudflare/src/randomized.test.ts`](../../packages/adapter-cloudflare/src/randomized.test.ts)
-for the Workerd variant). Adapters MUST meet three contract
-bullets:
-
-1. Read-after-write on the same key.
-2. CAS via `If-Match` and `If-None-Match: "*"`.
-3. Eventual consistency on LIST — the cascade does NOT depend on
-   read-your-writes LIST consistency, which is why the Toxiproxy
-   variant can flip the network 10× per second during the test and
-   still pass.
+See [prior-art.md](prior-art.md) for the detailed comparison.

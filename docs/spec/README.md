@@ -1,19 +1,20 @@
 ---
 title: Protocol & contracts index
 audience: meta
-summary: "Six stable specs: sync protocol, causal-consistency checking, merge patch, log shape, S3 surface."
-last-reviewed: 2026-05-12
+summary: "Stable specs and protocol-adjacent analyses: sync protocol, causal-consistency checking, merge patch, log shape, S3 surface, fencing, and prior art."
+last-reviewed: 2026-06-12
 tags: [index, protocol, spec]
 related: [sync-protocol.md, log-entry-shape.md]
 ---
 
 # `docs/spec/` — protocol & contracts
 
-Stable specs. The "what" — implementation lives in `packages/`.
+Stable specs and protocol-adjacent analyses. The "what" lives here;
+implementation lives in `packages/`.
 
-- [sync-protocol.md](sync-protocol.md) — atomic multi-key writes
-  over S3 via manifest indirection; time-ordered log; reconciliation
-  algorithm.
+- [sync-protocol.md](sync-protocol.md) — atomic document writes over
+  object storage via per-collection `current.json` CAS, monotonic
+  `seq` log, and snapshot folds.
 - [causal-consistency-checking.md](causal-consistency-checking.md)
   — the low-complexity property-checking technique used to verify
   the sync protocol stays causally consistent under fault injection.
@@ -27,3 +28,7 @@ Stable specs. The "what" — implementation lives in `packages/`.
 - [s3-xml-escaping-cases.md](s3-xml-escaping-cases.md) — edge cases
   for `ListObjectsV2` XML responses; companion to
   `manual-e2e/fixtures/s3-key-escaping/`.
+- [writer-fence-adversarial-model.md](writer-fence-adversarial-model.md)
+  — threat model for writer fencing and stale-authority rejection.
+- [prior-art.md](prior-art.md) — comparison against object-storage
+  databases and adjacent coordination systems.

@@ -2,7 +2,7 @@
 title: Extending Baerly
 audience: coder
 summary: Worked patterns for adding methods to Db, Query verbs, and Collection verbs.
-last-reviewed: 2026-05-26
+last-reviewed: 2026-06-12
 tags: [extending, api-design, patterns]
 related: [architecture.md, "../adr/002-api-surface-lock.md", "../adr/003-naming-convention.md", "conventions/tests.md"]
 ---
@@ -59,7 +59,7 @@ public async collections(): Promise<string[]> {
   const prefix = physicalPrefixFor(this.app, this.tenant) +
     "manifests/";
   const out = new Set<string>();
-  for await (const entry of this.#storage.list({ prefix })) {
+  for await (const entry of this.#storage.list(prefix)) {
     // entry.key === "<prefix><collection>/current.json"
     const tail = entry.key.slice(prefix.length);
     const name = tail.split("/")[0];
@@ -236,7 +236,7 @@ for the reasoning.
 
 Schema migrations are forward-only. The forward-compatible
 schema-versioning mechanism lives on the `CurrentJson` coordination
-document: the `schema_version` field (currently `1`, constant
+document: the `schema_version` field (currently `2`, constant
 `CURRENT_JSON_SCHEMA_VERSION` in
 `packages/protocol/src/constants.ts`) is bumped monotonically on any
 breaking change to `CurrentJson` field semantics; readers must reject
@@ -420,9 +420,10 @@ export interface CommitInput {
   `WriterOptions`; prefer a constant in
   `packages/protocol/src/constants.ts`.
 - ❌ Reach for `Math.random`, `Date.now`, or `node:fs` directly inside
-  `Writer`. The class accepts injected `random` /
-  `randomMillis` callbacks and reads time off the `Storage`
-  response (`X-Baerly-Server-Time`) for clock correction.
+  `Writer`. The class accepts an injected `random` callback for
+  retry jitter; protocol timestamps should flow through the existing
+  helper functions or through `StoragePutResult.serverDate` where the
+  fence protocol explicitly requires storage-server provenance.
 - ❌ Use baseUrl-style imports — there's no `baseUrl` configured.
 
 ---

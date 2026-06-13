@@ -55,10 +55,10 @@ Say you insert a row. The library does this, in order:
 4. **Swap the pointer** — update `current.json` to point at the new
    state.
 
-Steps 1–3 only *add* new objects; they change nothing anyone can see,
-because nothing points to them yet. The database only "changes" at
-step 4, the instant `current.json` flips. Until then it is invisible
-scaffolding.
+Steps 1–3 do not change the visible database state, because
+`current.json` does not point at the new log range yet. The database
+only "changes" at step 4, the instant `current.json` flips. Until
+then the artifacts are invisible scaffolding.
 
 ## The part that makes it safe
 
@@ -93,7 +93,7 @@ wakes up holding a stale view of the world. To stop it from quietly
 clobbering newer state, `current.json` also carries an ever-increasing
 *epoch*; a writer that finds the epoch has moved past its own is
 *fenced* — it aborts instead of retrying. The formal version of all of
-this — fencing, the reconciliation algorithm, the causal-consistency
+this — fencing, the write and read algorithms, the causal-consistency
 guarantees — lives in
 [`spec/sync-protocol.md`](../spec/sync-protocol.md), with the
 adversarial fencing model in
@@ -151,9 +151,10 @@ between requests."
 
 ## Where the types and schema fit
 
-Your `baerly.config.ts` declares the collections and a schema (a Zod
-object) for each. That one file does two jobs from a single
-definition:
+Your `baerly.config.ts` declares the collections and, optionally, a
+Standard Schema v1 validator for each. The scaffolds use Zod, but the
+API accepts any Standard Schema v1 implementation. That one file does
+two jobs from a single definition:
 
 - **At write time**, the server runs the schema as a validator — bad
   data is rejected before any object is written.

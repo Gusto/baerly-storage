@@ -20,9 +20,9 @@
  *   - well-formed status: "ok" or "error" with an `errors` array.
  *
  * For projected monthly Class A / $ trajectories, use
- * `baerly cost --collection=<name>` — the projection used to live as a
- * footer here but moved to its own verb so inspect stays a glance
- * command (no GET-storm over the trailing log sample).
+ * `baerly cost --bucket=<uri> --collection=<name>` — the projection
+ * used to live as a footer here but moved to its own verb so inspect
+ * stays a glance command (no GET-storm over the trailing log sample).
  *
  * Cost shape:
  *   1 GET current.json

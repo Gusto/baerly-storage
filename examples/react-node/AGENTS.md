@@ -273,7 +273,7 @@ http://localhost:5173/<path>`) before declaring the task complete.
 
   On a validation failure the server throws
   `BaerlyError{ code: "SchemaError", issues: [{ path, message }] }`;
-  HTTP clients see a 422 with the same envelope. Validation runs
+  HTTP clients see a 400 with the same envelope. Validation runs
   on the post-image so `update` and `replace` see the full doc, not
   just the patch.
 
@@ -302,9 +302,11 @@ http://localhost:5173/<path>`) before declaring the task complete.
   is ignored. The adapter reads `config.auth` to pick its verifier;
   a `verifier:` on `baerlyNode({ ... })` overrides it. The schema-
   bound `notes` collection (`baerly.config.ts:NoteSchema`) runs
-  server-side regardless of the auth posture. `baerly doctor
-  --target=node` warns on `"none"` for deploy targets. See "Going to
-  production" below for the two production-fit recipes.
+  server-side regardless of the auth posture. There is no `baerly
+  doctor --target=node` backend today; verify bucket CAS with
+  `baerly doctor --bucket=<s3-uri>` and probe `/v1/healthz` after
+  deploy. See "Going to production" below for the two production-fit
+  recipes.
 
 ### Going to production
 
@@ -324,9 +326,9 @@ auth: "shared-secret",     // ← flip from "none"
 
 Dev: put `SHARED_SECRET=dev-shared-secret` in `.env`. Prod: set
 `SHARED_SECRET` in the process environment (your PaaS / secret
-manager). `baerly doctor --target=node` FAILs if
-`auth: "shared-secret"` is set without `SHARED_SECRET` reachable from
-`process.env`.
+manager). The Node process fails closed if `auth: "shared-secret"`
+is set without `SHARED_SECRET` reachable from `process.env`; verify
+the live bucket separately with `baerly doctor --bucket=<s3-uri>`.
 
 <!-- pattern-b:end -->
 <!-- pattern-c:start -->
@@ -360,6 +362,7 @@ await baerlyNode({
       jwks: process.env["JWKS_URL"],
       issuer: process.env["JWT_ISSUER"]!,
       audience: process.env["JWT_AUDIENCE"]!,
+      tenantPrefix: config.tenant, // or tenantClaim: "tenant"
     }),
   }),
 }).listen(Number(process.env["PORT"] ?? 8080));
@@ -367,7 +370,9 @@ await baerlyNode({
 
 Dev sees `JWKS_URL` as `undefined`, spread short-circuits, and
 `config.auth: "none"` runs. Prod sets `JWKS_URL` + `JWT_ISSUER` +
-`JWT_AUDIENCE` and `bearerJwt` engages.
+`JWT_AUDIENCE` and `bearerJwt` engages. Use `tenantClaim` when your
+IdP issues one tenant per token; use `tenantPrefix` for single-tenant
+apps or tenancy enforced outside Baerly.
 
 <!-- pattern-c:end -->
 - **Storage backend** — `src/server/index.ts` picks between
@@ -431,7 +436,8 @@ Dev sees `JWKS_URL` as `undefined`, spread short-circuits, and
   into the predicate so the index planner can prune
   (`db.collection("notes").where({ ... }).all()`), or maintain a
   side-projection (Postgres/SQLite/search index) populated
-  incrementally from the `/v1/since` log feed or from a write hook —
+  incrementally from the `/v1/since?collection=<name>&cursor=<opaque>`
+  log feed or from a write hook —
   never re-scan per request.
 
 ## Maintenance
@@ -465,7 +471,7 @@ model puts the soft ceiling at:
 - **~10 GB / tenant**
 - **~100 collections / tenant**
 
-Past those, S3 list-prefix latency, manifest fold cost, and per-class
+Past those, S3 list-prefix latency, snapshot fold cost, and per-class
 op pricing start to dominate; you're better off on a real database.
 Pick your graduation target:
 - **Cloudflare Workers + lock-in OK:** [D1](https://developers.cloudflare.com/d1/) — cheaper per-write at M-size.
@@ -476,10 +482,13 @@ Either way, the export below is mechanical because log entries are
 Debezium-style CDC change events — graduation is a Baerly win,
 not a churn event.
 
-**Estimate your current rate:** `baerly admin usage --target=...`
-lists recent log entries per collection and computes
-writes/min. Warning at 50% of the ceiling; export suggestion at
-100%.
+**Estimate your current rate:** for Node/self-hosted buckets,
+`baerly admin usage --target=node --bucket=<bucket-uri> --app=<app>
+--tenant=<tenant>` lists recent log entries per collection and computes
+writes/min. On Cloudflare, use canonical logs for trend history and
+`baerly cost --bucket=<bucket-uri> --collection=<collection>` for the
+current operation-cost projection until the usage scanner is wired to
+R2 bindings.
 
 **Export when ready:** `baerly export --target=sqlite|postgres|d1
 --bucket=<...> --app=<...> --tenant=<...> --collection=<...>` writes a
@@ -562,7 +571,8 @@ const result = useQuery(
 ```
 
 `useQuery` re-runs the callback when `deps` changes OR when the
-`/v1/since` long-poll batches a non-empty change for any subscribed
+`/v1/since?collection=<name>&cursor=<opaque>` long-poll batches a
+non-empty change for any subscribed
 collection. Idle long-poll cycles (empty batches) drop at the
 `subscription-pool` layer, so a steady-state collection costs zero list
 reads. Add a `<select>` bound to `setFilter` and the list narrows live.

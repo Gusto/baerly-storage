@@ -49,11 +49,12 @@ Your data lives in your bucket. The entire public surface fits in `.d.ts` files 
 await db.collection("tickets")
   .insert({ title: "Onboard Alex", status: "open" });
 
-// client — live across every open tab
-const { rows } = useLiveQuery<Ticket>({
-  collection: "tickets",
-  where: { status: "open" },
-});
+// client — reactive across every open tab
+const open = useQuery(
+  (c) => c.collection("tickets").where({ status: "open" }).all(),
+  [],
+);
+// open.status → "loading" | "ok" | "error"; open.data → your rows
 ```
 
 ## Cheat sheet
@@ -70,6 +71,7 @@ db.collection("tickets").update(id, { status: "closed" });   // merge-patch
 db.collection("tickets").where({ status: "closed" }).delete();
 ```
 
+| Surface | Vocabulary |
 |---|---|
 | **Verbs** | `first` `all` `count` `get` · `insert` `update` `replace` `delete` |
 | **Modifiers** | `where` `order` `limit` |
@@ -88,8 +90,9 @@ Full reference: [`docs/guide/cheatsheet.md`](./docs/guide/cheatsheet.md), or
 - **Idle rounds to zero.** No $5/mo floors multiplied across forty
   abandoned internal tools the loop produced last quarter. The runtime
   is a rounding error against the bucket.
-- **No hostage situation.** Log entries are Debezium-style CDC change events. `baerly export --target=postgres`
-  graduates you out, mechanically, on the day an app outgrows this.
+- **No hostage situation.** Log entries are Debezium-style CDC change
+  events. `baerly export --target=postgres` gives you the mechanical
+  data handoff on the day an app outgrows this.
 - **Honest about its envelope.** Sized for ~10 GB / tenant, ~30 writes/min/collection sustained, ~100 collections / tenant. Crossing any of those is the success signal to graduate.
 
 ## Quick start
@@ -107,7 +110,6 @@ For a runnable multi-tab demo see [`examples/react-node/`](./examples/react-node
 
 ## Go deeper
 
-- 📖 **The essay** — [*Storage Is the Missing Primitive for Agent-Built Software*](https://docs.google.com/document/d/1jpMR-dV9wCprtzY2DUxAg_NZTrAf81OcB_vxKhiCPQ0/edit?tab=t.vo58xtzxjwr) [TODO: Replace with external link on publish]
 - 🧭 **How it works** — [`docs/about/how-it-works.md`](./docs/about/how-it-works.md) (the plain-language mental model — bucket + one atomic pointer flip)
 - 🧱 **Product thesis** — [`docs/about/thesis.md`](./docs/about/thesis.md)
 - 🏗️ **Architecture** — [`docs/contributing/architecture.md`](./docs/contributing/architecture.md)

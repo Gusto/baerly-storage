@@ -1,88 +1,161 @@
 ---
 title: Backups via baerly admin dump
 audience: operator
-summary: Daily NDJSON dump with retention rotation; restoring from any dump file.
-last-reviewed: 2026-05-27
+summary: Safe NDJSON backup, retention, restore, and restore-drill defaults.
+last-reviewed: 2026-06-12
 tags: [operations, backups, restore]
-related: ["../about/cost-model.md"]
+related: ["../about/cost-model.md", "operations.md"]
 ---
 
 # Backups (`dump` + `restore`)
 
-`baerly admin dump` emits canonical NDJSON of a collection's
-materialised view to stdout. Pair it with file-system rotation to
-get a portable, dated backup. Restore is the inverse: NDJSON in,
-fresh collection out via `baerly admin restore`.
+`baerly admin dump` writes canonical NDJSON for one collection to
+stdout. Text mode is intentionally silent on success except for that
+NDJSON body, so shell redirection is safe. `baerly admin restore`
+reads the same format from stdin into a fresh collection.
 
-## Daily cron with 7-day retention
+The safe default is:
 
-`crontab` line:
+- credentials live in a root-readable env file, not crontab;
+- dumps are written to a temp file, then atomically moved into place;
+- files are mode `0600`;
+- each dump gets a SHA-256 sidecar;
+- retention is handled off-host when possible;
+- restore is drilled into a separate bucket/prefix.
 
+## Daily Backup Script
+
+Environment file, owned by the user running the job and mode `0600`:
+
+```sh
+# /etc/baerly/backup.env
+export BAERLY_S3_ENDPOINT=https://s3.us-east-1.amazonaws.com
+export BAERLY_S3_ACCESS_KEY_ID=AKIA...
+export BAERLY_S3_SECRET_ACCESS_KEY=...
+export BAERLY_S3_REGION=us-east-1
+export BAERLY_BUCKET=s3://baerly-prod
 ```
-0 3 * * *  env BAERLY_S3_ENDPOINT=https://s3.us-east-1.amazonaws.com \
-                BAERLY_S3_ACCESS_KEY_ID=AKIA... \
-                BAERLY_S3_SECRET_ACCESS_KEY=... \
-            /opt/baerly/bin/backup.sh acme t1 tickets \
-            >> /var/log/baerly-backup.log 2>&1
-```
 
-Wrapper `/opt/baerly/bin/backup.sh` (`chmod +x`):
+Wrapper `/opt/baerly/bin/backup.sh`:
 
 ```sh
 #!/usr/bin/env bash
 set -euo pipefail
-APP="$1"; TENANT="$2"; COLLECTION="$3"
-DATE="$(date -u +%Y-%m-%d)"
-RETAIN_DAYS=7
-OUT_DIR=/var/backups/baerly
-mkdir -p "$OUT_DIR"
+umask 077
 
-baerly admin dump \
-  --bucket=s3://baerly-prod \
+# cron runs with cwd=$HOME (or /); `pnpm baerly` is a workspace script,
+# so cd into the app dir for pnpm to resolve it from the project package.json.
+cd /opt/baerly/app
+
+APP="$1"
+TENANT="$2"
+COLLECTION="$3"
+DATE="$(date -u +%Y-%m-%dT%H%M%SZ)"
+RETAIN_DAYS="${RETAIN_DAYS:-30}"
+OUT_DIR="${OUT_DIR:-/var/backups/baerly}"
+
+. /etc/baerly/backup.env
+
+install -m 0700 -d "$OUT_DIR"
+FINAL="${OUT_DIR}/${APP}-${TENANT}-${COLLECTION}-${DATE}.ndjson"
+TMP="$(mktemp "${FINAL}.tmp.XXXXXX")"
+trap 'rm -f "$TMP"' EXIT
+
+pnpm baerly admin dump \
+  --bucket="$BAERLY_BUCKET" \
   --app="$APP" \
   --tenant="$TENANT" \
   --collection="$COLLECTION" \
-  > "${OUT_DIR}/${APP}-${TENANT}-${COLLECTION}-${DATE}.ndjson"
+  > "$TMP"
+
+shasum -a 256 "$TMP" > "${TMP}.sha256"
+mv "$TMP" "$FINAL"
+mv "${TMP}.sha256" "${FINAL}.sha256"
+trap - EXIT
 
 find "$OUT_DIR" -name "${APP}-${TENANT}-${COLLECTION}-*.ndjson" \
-    -type f -mtime +"${RETAIN_DAYS}" -delete
+  -type f -mtime +"${RETAIN_DAYS}" -delete
+find "$OUT_DIR" -name "${APP}-${TENANT}-${COLLECTION}-*.ndjson.sha256" \
+  -type f -mtime +"${RETAIN_DAYS}" -delete
 ```
 
-Exit-code contract: `baerly admin dump` exits non-zero on every
-failure (1 = bad args / `InvalidConfig`, 2 = storage / network,
-3 = protocol invariant). `set -e` fails the cron run loudly;
-cron's default mail behaviour routes stderr to the operator. Pass
-`--json` to switch the success / error envelope to structured
-JSON on stdout / stderr — useful when the wrapper consumes
-`baerly`'s output programmatically or when an agent drives the
-backup.
+Cron should call the wrapper, not inline credentials:
 
-Off-host: replace the local `OUT_DIR` redirect with a pipe to
-`aws s3 cp - s3://baerly-backups/${APP}-${TENANT}/${DATE}.ndjson`
-and let S3 lifecycle handle retention instead of `find -mtime`.
+```cron
+0 3 * * * /opt/baerly/bin/backup.sh acme t1 tickets >> /var/log/baerly-backup.log 2>&1
+```
 
-## Storage cost
+For off-host retention, copy `"$FINAL"` and `"$FINAL.sha256"` to a
+backup bucket after the `mv`, then let that bucket's lifecycle policy
+expire old dumps. Prefer that to keeping the only backup on the same
+disk as the app.
 
-A dump's footprint is roughly 1× the materialised view, encoded as
-canonical NDJSON (one row per line, ASCII-lex key order, no
-whitespace). The dump is byte-stable, so two semantically-equal
-collections produce byte-equal output — handy for diffing dated
-backups.
+`set -euo pipefail` makes the wrapper abort on any non-zero exit, so a
+failed dump never gets atomically moved into place. `admin dump` exits
+`0` on success, `1` on `InvalidConfig` (bad bucket URI / missing args),
+`2` on storage / network failure, and `3` on a protocol invariant — the
+distinct codes let a wrapper branch on the failure class. Pass `--json`
+to switch the success / error envelope to structured JSON on stdout /
+stderr when a wrapper or agent consumes the output programmatically.
 
-## Restoring
+## Restore
 
-Restore an empty bucket from any dump file:
+Restore into an empty bucket/prefix:
 
 ```sh
-baerly admin restore \
+pnpm baerly admin restore \
   --bucket=s3://baerly-recovery \
   --app=acme \
   --tenant=t1 \
   --collection=tickets \
-  < /var/backups/baerly/acme-t1-tickets-2026-05-20.ndjson
+  < /var/backups/baerly/acme-t1-tickets-2026-06-12T030000Z.ndjson
 ```
 
-If the target already has rows, pass `--force` to truncate first
-(bumps the writer fence and reseeds `current.json`). Per-row cost
-is 3 Class A ops per restored row + 1 PUT to seed `current.json`,
-so plan for `3N + 1` ops where N is the row count.
+If the target already exists, restore refuses with `Conflict`. Passing
+`--force` truncates by bumping the writer fence and reseeding
+`current.json`, then imports rows at fresh sequence numbers. Use
+`--force` for rehearsals against a scratch prefix, not as a casual
+production habit.
+
+Partial restore semantics are deliberate: if stdin contains malformed
+NDJSON or storage fails mid-stream, rows committed before the failure
+remain committed. Re-run with `--force` into the same target, or choose
+a fresh recovery prefix.
+
+Cost is `3N + 1` Class A ops for N rows.
+
+## Restore Drill
+
+At least once per retention window:
+
+```sh
+DUMP=/var/backups/baerly/acme-t1-tickets-2026-06-12T030000Z.ndjson
+shasum -a 256 -c "${DUMP}.sha256"
+
+pnpm baerly admin restore \
+  --bucket=s3://baerly-restore-drill \
+  --app=acme \
+  --tenant=t1-restore-drill \
+  --collection=tickets \
+  --force \
+  < "$DUMP"
+
+pnpm baerly admin fsck \
+  --bucket=s3://baerly-restore-drill \
+  --app=acme \
+  --tenant=t1-restore-drill \
+  --collection=tickets
+```
+
+For byte-level confidence, dump the restored collection and compare:
+
+```sh
+pnpm baerly admin dump \
+  --bucket=s3://baerly-restore-drill \
+  --app=acme \
+  --tenant=t1-restore-drill \
+  --collection=tickets \
+  > /tmp/tickets-restored.ndjson
+
+cmp "$DUMP" /tmp/tickets-restored.ndjson
+```

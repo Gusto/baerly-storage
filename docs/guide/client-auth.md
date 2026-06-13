@@ -2,7 +2,7 @@
 title: Browser → server auth
 audience: integrator
 summary: Cross-cutting four-quadrant analysis of the SPA → API auth seam (dev/prod × Cloudflare/Node) — synthesis first, hardened per-quadrant recipes live in scaffold AGENTS.md files.
-last-reviewed: 2026-05-28
+last-reviewed: 2026-06-12
 tags: [client, auth, integration]
 related: ["./auth.md", "../adr/005-verifier-function-shape.md"]
 ---
@@ -42,7 +42,7 @@ deliberate flip rather than an undefended initial state.
 
 Pattern A and Pattern C are the production-fit shapes — they take a
 real identity from a real IdP. Pattern B is the server-to-server
-shape (CI, cron, internal services) and the only shape where dev
+shape (CI and internal services) and the only shape where dev
 needs a special Vite plugin (`baerlyDevAuth`) to inject the bearer
 server-side for browser calls. **Pattern B is never for end-user
 browser auth in prod.**

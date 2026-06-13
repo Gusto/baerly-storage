@@ -2,7 +2,7 @@
 title: Cost model
 audience: product
 summary: Per-line-item rates, write-amp meter, compression posture.
-last-reviewed: 2026-06-11
+last-reviewed: 2026-06-12
 tags: [cost, pricing, operations]
 related: [pricing-log.md, thesis.md, graduation.md]
 ---
@@ -16,7 +16,11 @@ depends on cache hits. The companion file
 [docs/pricing-log.md](pricing-log.md) is the one-line-per-change
 history of every price or cap update.
 
-All prices below were read **2026-05-09** from the upstream provider
+All prices below were re-checked **2026-06-12** against the official
+[Cloudflare R2 pricing](https://developers.cloudflare.com/r2/pricing/),
+[Workers pricing](https://developers.cloudflare.com/workers/platform/pricing/),
+and
+[Workers limits](https://developers.cloudflare.com/workers/platform/limits/)
 pages. Re-check before quoting any figure externally; bumps land in
 [pricing-log.md](pricing-log.md) on the day they ship.
 
@@ -45,12 +49,12 @@ Class A is the meter that matters. Three reasons:
 3. **Compaction storms hit it** — a runaway compaction job is a
    Class A spike, not a Class B spike.
 
-`baerly cost --collection=<collection>` projects the Class A ops/mo,
-free-tier-aware dollar projection, and distance to the M-size
-ceiling + 50M/mo graduation trigger. That covers the day-1
-cost-verification moment without wiring an external sink. For
-longer windows (7-day, 30-day) operators pipe the canonical log
-line to CloudWatch / Workers Analytics / Datadog — see
+`baerly cost --bucket=<bucket-uri> --collection=<collection>`
+projects the Class A ops/mo, free-tier-aware dollar projection, and
+distance to the M-size ceiling + 50M/mo graduation trigger. That
+covers the day-1 cost-verification moment without wiring an external
+sink. For longer windows (7-day, 30-day) operators pipe the canonical
+log line to CloudWatch / Workers Analytics / Datadog — see
 [`docs/guide/observability.md`](../guide/observability.md).
 
 ## Cost ceiling

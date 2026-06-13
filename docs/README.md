@@ -2,7 +2,7 @@
 title: docs/ — topic map
 audience: meta
 summary: Index of everything under docs/, grouped by audience.
-last-reviewed: 2026-05-28
+last-reviewed: 2026-06-12
 tags: [index, navigation]
 related: ["../CLAUDE.md", "spec/README.md", "adr/README.md"]
 ---
@@ -29,10 +29,11 @@ invariants, operator runbooks, and target-specific bolt-ons.
 
 - `guide/cheatsheet.md` — One-screen quick reference: verbs, modifiers, errors, and the HTTP wire. The thing to show someone in 30 seconds; the full surface stays in dist/API.md.
 - `guide/add-to-existing-cf-worker.md` — One-command bolt-on for an existing `wrangler create` project — `pnpm create @gusto/baerly-storage@latest .` detects wrangler.jsonc, patches it, prints the worker-entry snippet.
-- `guide/auth.md` — The `config.auth` graduated postures and the no-built-in-authorization caveat. Preset reference and Verifier-shape rationale live elsewhere.
-- `guide/backups.md` — Daily NDJSON dump with retention rotation; restoring from any dump file.
+- `guide/auth.md` — Production auth recipes for Cloudflare and Node, tenant pinning, and the no-built-in-authorization caveat.
+- `guide/operations.md` — Production runbook: preflight, auth, backups, observability, capacity, and route checks.
+- `guide/backups.md` — Safe NDJSON dump with retention rotation, checksums, restore, and restore drills.
 - `guide/client-auth.md` — Cross-cutting four-quadrant analysis of the SPA → API auth seam (dev/prod × Cloudflare/Node) — synthesis first, hardened per-quadrant recipes live in scaffold AGENTS.md files.
-- `guide/observability.md` — Sinks (OTel / Workers Analytics Engine / Datadog), cost-ballooning anti-patterns, and known gaps. Canonical log-line shape lives in dist/API.md.
+- `guide/observability.md` — Operator signals, first-response actions, sinks (OTel / Workers Analytics Engine / Datadog), cost-ballooning anti-patterns, and known gaps. Canonical log-line shape lives in dist/API.md.
 - Runnable scaffolds: `../examples/` (`minimal-cloudflare`,
   `minimal-node`, `react-cloudflare`, `react-node`).
 
@@ -72,8 +73,8 @@ For people changing the code in this repo.
   - `contributing/conventions/docs.md`
   - `contributing/conventions/observability.md`
   - `contributing/conventions/change-discipline.md`
-- `contributing/diagrams/` — rendered SVGs and editable Excalidraw
-  sources.
+- `contributing/diagrams/` — rendered diagram artifacts and editable
+  Excalidraw sources.
 
 ## Protocol & decisions
 

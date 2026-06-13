@@ -78,7 +78,7 @@
  * See `docs/spec/prior-art.md` for the consolidated IDS-shaped
  * differentiation.
  *
- * @see docs/spec/sync-protocol.md §"Self-session log-conflict adoption"
+ * @see docs/spec/sync-protocol.md §"Contention and retries"
  */
 
 import type { LogEntry } from "@baerly/protocol";

@@ -15,7 +15,8 @@ kernel is small enough that an LLM can use the public API zero-shot
 from the `.d.ts` files alone. Day-1 templates ship for Cloudflare
 Workers (zero infra, free tier, one command to deploy) and
 self-hosted Node (your hardware, your bucket, your auth). AWS
-Lambda / Bun / Deno / Fly are a paper-thin adapter package away.
+Lambda / Bun / Deno / Fly are not shipped targets yet; they are a
+paper-thin adapter package away from the same protocol kernel.
 
 This page is the positioning — *why* the system is shaped the way
 it is. The narrative long-form is the blog post *Storage is the
@@ -88,9 +89,10 @@ The criteria the rest of this document is shaped around:
    operator action set is "create a bucket; run the kernel inside an HTTP
    handler." If a feature needs `wrangler.jsonc` edits beyond auth, a
    `node-cron` install, or any "step 2: also configure…" — it's the wrong
-   shape for this audience. The closest production pitch is Supabase's
-   autovacuum: *the user never schedules maintenance* ([Supabase docs](https://supabase.com/docs/guides/database/extensions/pg_repack)).
-   Baerly generalizes that to object storage: maintenance runs
+   shape for this audience. The closest production precedent is
+   PostgreSQL autovacuum / HOT pruning: *the user never schedules
+   ordinary storage maintenance*. Baerly generalizes that to object
+   storage: maintenance runs
    opportunistically inline on whatever traffic the bucket sees, gated so
    idle buckets pay zero. PostgreSQL HOT pruning (`heap_page_prune_opt` in
    [pruneheap.c](https://github.com/postgres/postgres/blob/master/src/backend/access/heap/pruneheap.c))
@@ -245,7 +247,8 @@ single CAS-advanced pointer to HEAD.
   mechanical translator, not a marketing line. See
   [docs/spec/log-entry-shape.md](../spec/log-entry-shape.md).
 - **Strong consistency under contention.** Old log entries roll up
-  into snapshots in the background. Before December 2020,
+  into snapshots through bounded write-triggered maintenance. Before
+  December 2020,
   S3-as-a-database required a separate linearizable metadata service
   — ZooKeeper, etcd, a DynamoDB lock table, FoundationDB — to hold
   the authoritative pointer to "what exists." After AWS announced
@@ -275,7 +278,9 @@ single CAS-advanced pointer to HEAD.
   (`where`, `order`, `limit`), six predicate operators (`eq`, `gt`,
   `gte`, `lt`, `lte`, `in`), one transaction. Operators are added
   one at a time, each gated by whether it admits a correct SQL
-  translation. The whole interface lives in `.d.ts` files small
+  translation. Day-one ships equality, dotted paths, ordered reads,
+  and the `eq` / `gt` / `gte` / `lt` / `lte` / `in` predicate
+  operators. The whole interface lives in `.d.ts` files small
   enough that even smaller OSS LLMs can keep them in context. The
   additive-only lock is codified in
   [ADR-002](../adr/002-api-surface-lock.md).
@@ -289,10 +294,11 @@ single CAS-advanced pointer to HEAD.
 - **Browser-direct multi-writer is out.** Trusted multi-instance is
   the design center; browser-direct is a different protocol
   problem and the audience does not need it.
-- **Realtime is opt-in.** The HTTP `/v1/since?cursor=<lsn>`
-  long-poll is the default change-notification channel; a WebSocket
-  tier is opt-in with a documented cost-cliff note. Polling is
-  always correct.
+- **Realtime is long-poll first.** The HTTP
+  `/v1/since?collection=<name>&cursor=<opaque>` long-poll is the
+  default change-notification channel; a WebSocket tier would be a
+  future opt-in with a documented cost-cliff note. Polling is always
+  correct.
 - **No automatic schema migration.** Migrations are versioned
   scripts.
 - **No multi-bucket replication / fan-out / mirroring.** R2's own
@@ -333,12 +339,13 @@ The envelope:
 - **~100 collections / tenant** fan-out.
 
 Crossing any of these is the success signal to graduate —
-`baerly export --target=postgres` is one command, and the on-disk
-log shape is a Debezium-style CDC envelope to make it
-mechanical. The ceiling is platform-independent — the kernel makes
-the same guarantees on Cloudflare Workers, self-hosted Node, AWS
-Lambda. One bucket per app; tenants are prefix-scoped within.
-Server-only writes; the browser is a typed HTTP client.
+`baerly export --target=postgres` is one command for the data
+handoff, and the on-disk log shape is a Debezium-style CDC envelope
+to make that handoff mechanical. The ceiling is protocol-level:
+today it is shipped on Cloudflare Workers and self-hosted Node; future
+Lambda / Bun / Deno / Fly adapters inherit the same bucket protocol.
+One bucket per app; tenants are prefix-scoped within. Server-only
+writes; the browser is a typed HTTP client.
 
 ## Audience in practice
 

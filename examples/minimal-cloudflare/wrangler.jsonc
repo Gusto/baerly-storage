@@ -1,6 +1,6 @@
 {
   // Cloudflare Worker manifest. See `AGENTS.md` for what each field
-  // drives (R2 binding, assets, vars, cron, observability) and how
+  // drives (R2 binding, assets, vars) and how
   // the verifier consumes the vars.
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "minimal-cloudflare",

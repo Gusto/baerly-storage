@@ -2,7 +2,7 @@
 title: Features → code map
 audience: coder
 summary: Feature-by-feature pointers into source, tests, and docs.
-last-reviewed: 2026-05-12
+last-reviewed: 2026-06-12
 tags: [index, features, code-map]
 related: [architecture.md, "../spec/README.md", "../adr/README.md"]
 ---
@@ -25,7 +25,8 @@ typed `Collection<T>` carrying the locked SQL-shape API
 `delete`) and the predicate AST (`where` / `order` / `limit`).
 All public methods carry JSDoc with `@example` blocks — your IDE or
 `tsgo` is the canonical reference. Change notifications are
-delivered out-of-band by the HTTP `/v1/since` long-poll route.
+delivered out-of-band by the HTTP
+`/v1/since?collection=<name>&cursor=<opaque>` long-poll route.
 
 - [`packages/server/src/db.ts`](../../packages/server/src/db.ts) — `Db` class
 - [`packages/server/src/collection.ts`](../../packages/server/src/collection.ts) — `Collection<T>` verbs
@@ -60,15 +61,16 @@ How partial updates merge into existing documents.
 ## Vendorless S3 client
 
 Direct HTTP to S3-compatible APIs via `aws4fetch`. We don't ship
-`@aws-sdk/client-s3`. Lives inside `@baerly/protocol` as one impl of
-the `Storage` interface; consumers can substitute their own.
+`@aws-sdk/client-s3`. The implementation lives in the Node adapter as
+one impl of the `Storage` interface; consumers can substitute their
+own.
 
-- Implementation: [`packages/protocol/src/storage/s3-http.ts`](../../packages/protocol/src/storage/s3-http.ts)
-  (`S3HttpStorage`), [`packages/protocol/src/xml.ts`](../../packages/protocol/src/xml.ts)
+- Implementation: [`packages/adapter-node/src/s3-http.ts`](../../packages/adapter-node/src/s3-http.ts)
+  (`S3HttpStorage`), [`packages/adapter-node/src/xml.ts`](../../packages/adapter-node/src/xml.ts)
   (XML parsing for ListObjectsV2)
-- Tests: [`packages/protocol/src/storage/s3-http.test.ts`](../../packages/protocol/src/storage/s3-http.test.ts)
+- Tests: [`packages/adapter-node/src/s3-http.test.ts`](../../packages/adapter-node/src/s3-http.test.ts)
   (pure-unit, vi.fn-stubbed fetch),
-  [`packages/protocol/src/xml.test.ts`](../../packages/protocol/src/xml.test.ts),
+  [`packages/adapter-node/src/xml.test.ts`](../../packages/adapter-node/src/xml.test.ts),
   [`tests/integration/conformance.test.ts`](../../tests/integration/conformance.test.ts)
   (multi-backend, needs credentials)
 - Docs: [`docs/spec/s3-features-used.md`](../spec/s3-features-used.md),
@@ -76,13 +78,15 @@ the `Storage` interface; consumers can substitute their own.
 
 ## Time / clock-skew tolerance
 
-The protocol assumes loosely-synchronized clocks. Manifest entries
-outside `LAG_WINDOW_MILLIS` are rejected.
+The protocol assumes loosely-synchronized clocks for log timestamps
+that downstream consumers inspect. Kernel ordering is by monotonic
+per-collection `seq`, not by wall-clock time; `LAG_WINDOW_MILLIS` is
+the named tolerance/property-test bound, not a reader-side rejection
+filter.
 
 - Implementation: [`packages/protocol/src/time.ts`](../../packages/protocol/src/time.ts),
   [`packages/protocol/src/constants.ts`](../../packages/protocol/src/constants.ts)
-- Tests: [`tests/integration/time.test.ts`](../../tests/integration/time.test.ts)
-  (needs Minio)
+- Tests: [`packages/protocol/src/time.test.ts`](../../packages/protocol/src/time.test.ts)
 
 ## Error model
 
@@ -119,7 +123,7 @@ read path.
 
 ```ts
 // baerly.config.ts
-import { defineConfig } from "@gusto/@gusto/baerly-storage/config";
+import { defineConfig } from "@gusto/baerly-storage/config";
 
 export default defineConfig({
   collections: {

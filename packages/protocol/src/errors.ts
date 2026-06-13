@@ -22,7 +22,7 @@ export type BaerlyErrorCode =
    * declared `SchemaValidator` (via `Db.create({ collections })`) and
    * the bound schema rejects the doc. In the schema-rejection case the
    * error carries an `issues` array describing each failure. HTTP layer
-   * maps this to 422.
+   * maps this to 400.
    */
   | "SchemaError"
   /**

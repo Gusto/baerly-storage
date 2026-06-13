@@ -104,7 +104,7 @@ http://localhost:5173/<path>`) before declaring the task complete.
 | Path                       | What it is                                                                                                       |
 | -------------------------- | ---------------------------------------------------------------------------------------------------------------- |
 | `src/server/index.ts`      | Server entry — `/v1/*` routing + SPA fallback via `env.ASSETS`                                                   |
-| `wrangler.jsonc`           | Cloudflare Worker manifest — name, R2 binding, Assets binding, vars, triggers, limits, observability             |
+| `wrangler.jsonc`           | Cloudflare Worker manifest — name, R2 binding, Assets binding, vars                                             |
 | `src/web/`                 | React+Vite frontend. Served by the Worker via Workers Assets in production.                                      |
 | `index.html`               | SPA shell — Vite's entry point at the project root; references `/src/web/main.tsx`.                              |
 | `vite.config.ts`           | Vite + `@vitejs/plugin-react` + `@cloudflare/vite-plugin` — runs the Worker inside `workerd` in dev              |
@@ -266,7 +266,7 @@ http://localhost:5173/<path>`) before declaring the task complete.
 
   On a validation failure the server throws
   `BaerlyError{ code: "SchemaError", issues: [{ path, message }] }`;
-  HTTP clients see a 422 with the same envelope. Validation runs
+  HTTP clients see a 400 with the same envelope. Validation runs
   on the post-image so `update` and `replace` see the full doc, not
   just the patch.
 
@@ -353,6 +353,7 @@ export default baerlyWorker<AppEnv>((env) => ({
       verifier: cloudflareAccess({
         teamDomain: env.CF_ACCESS_TEAM_DOMAIN,
         audienceTag: env.CF_ACCESS_AUDIENCE_TAG,
+        tenantPrefix: config.tenant,
       }),
     }),
 }));
@@ -362,12 +363,14 @@ Set both `CF_ACCESS_TEAM_DOMAIN` and `CF_ACCESS_AUDIENCE_TAG` in
 `wrangler.jsonc:vars` for prod (they're public identifiers, not
 secrets). Dev `wrangler dev` sees them as `undefined`, the spread
 short-circuits, and `config.auth: "none"` runs. Prod sees them set
-and `cloudflareAccess` engages.
+and `cloudflareAccess` engages. Every verified token is pinned to
+`config.tenant`; pass `tenantClaim` instead only when your Access JWT
+actually carries a tenant claim.
 
 <!-- pattern-a:end -->
 <!-- pattern-b:start -->
 **Pattern B — `auth: "shared-secret"`.** Single-tenant
-server-to-server callers (CI, cron, internal services). No factory
+server-to-server callers (CI and internal services). No factory
 code changes; only `baerly.config.ts` flips:
 
 ```ts
@@ -411,7 +414,7 @@ from the runtime env.
 
 <!-- pattern-b:end -->
 - **Extending the Worker with a custom route** — `baerlyWorker(...)`
-  owns `/v1/*` + `/healthz`. For server-side endpoints the SPA
+  owns `/v1/*`, including `/v1/healthz`. For server-side endpoints the SPA
   client can't run on its own (the canonical case: an endpoint that
   needs `db.transaction(...)`, since `createBaerlyClient` is
   reads + by-id mutations only), wrap the worker `fetch`:
@@ -450,7 +453,7 @@ from the runtime env.
         // …db.transaction(...), db.collection(...).get(id), etc.
         return new Response(null, { status: 204 });
       }
-      // Fall through to the baerly cascade for /v1/* + /healthz.
+      // Fall through to the baerly cascade for /v1/*, including /v1/healthz.
       return baerly.fetch!(req, env, ctx);
     },
   } satisfies ExportedHandler<BaerlyEnv>;
@@ -498,7 +501,8 @@ from the runtime env.
   into the predicate so the index planner can prune
   (`db.collection("notes").where({ ... }).all()`), or maintain a
   side-projection (D1/KV/search index) populated incrementally from
-  the `/v1/since` log feed or from a write hook — never re-scan per
+  the `/v1/since?collection=<name>&cursor=<opaque>` log feed or from
+  a write hook — never re-scan per
   request.
 
 ## Maintenance
@@ -532,7 +536,7 @@ model puts the soft ceiling at:
 - **~10 GB / tenant**
 - **~100 collections / tenant**
 
-Past those, S3 list-prefix latency, manifest fold cost, and per-class
+Past those, S3 list-prefix latency, snapshot fold cost, and per-class
 op pricing start to dominate; you're better off on a real database.
 Pick your graduation target:
 - **Cloudflare Workers + lock-in OK:** [D1](https://developers.cloudflare.com/d1/) — cheaper per-write at M-size.
@@ -543,10 +547,13 @@ Either way, the export below is mechanical because log entries are
 Debezium-style CDC change events — graduation is a Baerly win,
 not a churn event.
 
-**Estimate your current rate:** `baerly admin usage --target=...`
-lists recent log entries per collection and computes
-writes/min. Warning at 50% of the ceiling; export suggestion at
-100%.
+**Estimate your current rate:** for Node/self-hosted buckets,
+`baerly admin usage --target=node --bucket=<bucket-uri> --app=<app>
+--tenant=<tenant>` lists recent log entries per collection and computes
+writes/min. On Cloudflare, use canonical logs for trend history and
+`baerly cost --bucket=<bucket-uri> --collection=<collection>` for the
+current operation-cost projection until the usage scanner is wired to
+R2 bindings.
 
 **Export when ready:** `baerly export --target=sqlite|postgres|d1
 --bucket=<...> --app=<...> --tenant=<...> --collection=<...>` writes a
@@ -629,7 +636,8 @@ const result = useQuery(
 ```
 
 `useQuery` re-runs the callback when `deps` changes OR when the
-`/v1/since` long-poll batches a non-empty change for any subscribed
+`/v1/since?collection=<name>&cursor=<opaque>` long-poll batches a
+non-empty change for any subscribed
 collection. Idle long-poll cycles (empty batches) drop at the
 `subscription-pool` layer, so a steady-state collection costs zero list
 reads. Add a `<select>` bound to `setFilter` and the list narrows live.
@@ -705,6 +713,6 @@ That's why this recipe uses `.optional()` and not `.nullable()`.
 
 - `baerly.config.ts` — app config + `NoteSchema` + inferred `Note` type.
 - `src/server/index.ts` — Worker entry.
-- `wrangler.jsonc` — Cloudflare Worker manifest (R2 binding, `assets:`, vars, cron, observability).
+- `wrangler.jsonc` — Cloudflare Worker manifest (R2 binding, `assets:`, vars).
 - `vite.config.ts` — Vite + `@vitejs/plugin-react` + `@cloudflare/vite-plugin`.
 - `package.json` — root scripts + dependencies.

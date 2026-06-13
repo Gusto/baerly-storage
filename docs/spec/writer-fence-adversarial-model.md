@@ -2,7 +2,7 @@
 title: Writer-fence adversarial model
 audience: spec
 summary: Failure envelope of the two-phase fence-claim protocol under absent, delayed, forged, and non-monotonic Date headers.
-last-reviewed: 2026-05-26
+last-reviewed: 2026-06-12
 tags: [protocol, fence, claim, adversarial-model, patent-c1]
 related: [sync-protocol.md, causal-consistency-checking.md, log-entry-shape.md]
 ---
@@ -137,9 +137,10 @@ authentication, integrity, or transport security. In particular:
   e.g. an adversary that controls every client's NTP source and
   coerces all local clocks to identical wrong values — is not
   directly threatening, since the protocol ignores local clocks
-  for `claimed_at`. It can degrade other parts of the kernel
-  (lag-window checks in `sync-protocol.md`), but not the fence
-  claim.
+  for `claimed_at`. It can skew the wall-clock `commit_ts` and `lsn`
+  time prefix that downstream consumers rely on (the
+  `LAG_WINDOW_MILLIS` tolerance in `sync-protocol.md`), but not the
+  fence claim.
 - **Replay attacks against the storage server** — e.g. replaying
   an old `current.json` write that the storage server has
   forgotten — require a versioned bucket or write-once semantics.
@@ -217,8 +218,8 @@ author. mps3 uses the HTTP `Date` header returned by S3 as a
 *client-side clock-correction input* — clients accumulate observed
 `Date` values to estimate the trusted wall-clock for their own use, but
 the `Date` value is never written back into a durable storage object as
-a provenance field. mps3's two-step write (content + manifest + `touch
-last_change`) embeds a *client-minted* timestamp in the manifest
+a provenance field. mps3's two-step write (content + manifest + touched
+change-marker) embeds a *client-minted* timestamp in the manifest
 filename; the server clock is never committed.
 
 The mechanism in `claimWriter`

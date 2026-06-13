@@ -55,8 +55,9 @@ one.)
    `wrangler.jsonc:main` (typically `src/index.ts`), replacing the
    stock `wrangler create` handler.
 2. `pnpm dev` (or `wrangler dev`) to boot. Hit
-   `http://localhost:8787/v1/<collection>/...` to verify; see
-   [the routes ref](../contributing/extending.md).
+   `http://localhost:8787/v1/healthz` or
+   `http://localhost:8787/v1/c/<collection>` to verify; see
+   [the cheat sheet](cheatsheet.md#http-wire-reach-for-curl-only-when-debugging).
 3. Before deploy: `wrangler secret put SHARED_SECRET` to set the
    production secret, then `wrangler deploy`.
 
