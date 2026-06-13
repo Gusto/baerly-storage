@@ -46,9 +46,9 @@ import type { SinceResponse } from "../contract.ts";
  * base-32 is `[0-9a-v]` and the trailing seq is a fixed-width token.
  *
  * The seq width (`{11}`) is `Math.ceil(COUNT_BIT_WIDTH / 5)` chars, derived
- * from the canonical `COUNT_BIT_WIDTH` constant in
- * `packages/protocol/src/constants.ts`. When `COUNT_BIT_WIDTH` changes,
- * update the `{N}` here to match `Math.ceil(COUNT_BIT_WIDTH / 5)`.
+ * automatically from the canonical `COUNT_BIT_WIDTH` constant in
+ * `packages/protocol/src/constants.ts` via the `SEQ_CHARS` computed
+ * constant below — no manual update needed when `COUNT_BIT_WIDTH` changes.
  * Currently: `Math.ceil(53 / 5) = 11`.
  */
 // COUNT_BIT_WIDTH is 53; Math.ceil(53 / 5) = 11.

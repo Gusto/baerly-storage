@@ -121,8 +121,6 @@ export type ReplicaIdentity = "PATCH_ONLY" | "FULL";
  */
 export const LOG_KEY_PREFIX = "log";
 
-// COUNT_BIT_WIDTH is imported from ./constants.ts — single source of truth.
-
 /**
  * Extract the `session` and `seq` embedded in an `lsn` of shape
  * `<base32-time>_<session>_<seq>`. The seq portion is decoded as a

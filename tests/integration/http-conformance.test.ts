@@ -311,6 +311,12 @@ for (const variant of variants) {
         // backend's per-write maintenance overhead (~80ms/write) would
         // push the test over its 30s budget.
         provisionTableAtSeq: async (table, nextSeq) => {
+          // Synthetic current.json: snapshot is null, log_seq_start=nextSeq,
+          // so readers walk [nextSeq, next_seq) and treat 0..nextSeq-1 as
+          // already truncated/folded away — not snapshotted. This state is
+          // deliberately outside what the writer emits (log_seq_start > 0
+          // normally implies snapshot !== null), used only to fast-forward
+          // the seq counter for the overflow regression test.
           const key = `app/${APP}/tenant/${CONFORMANCE_TENANT}/manifests/${table}/current.json`;
           await createCurrentJson(storage!, key, {
             schema_version: CURRENT_JSON_SCHEMA_VERSION,

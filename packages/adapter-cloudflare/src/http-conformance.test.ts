@@ -81,6 +81,12 @@ describe("HTTP conformance", () => {
       // Pre-seed next_seq and log_seq_start so the overflow regression
       // test only needs ONE insert instead of 1025 sequential fetches.
       provisionTableAtSeq: async (table, nextSeq) => {
+        // Synthetic current.json: snapshot is null, log_seq_start=nextSeq,
+        // so readers walk [nextSeq, next_seq) and treat 0..nextSeq-1 as
+        // already truncated/folded away — not snapshotted. This state is
+        // deliberately outside what the writer emits (log_seq_start > 0
+        // normally implies snapshot !== null), used only to fast-forward
+        // the seq counter for the overflow regression test.
         const storage = r2BindingStorage(getBinding());
         const key = `app/${APP}/tenant/${CONFORMANCE_TENANT}/manifests/${table}/current.json`;
         await createCurrentJson(storage, key, {
