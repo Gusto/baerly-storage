@@ -2,7 +2,7 @@
 title: Product thesis
 audience: product
 summary: Why Baerly exists, what it is, and what it deliberately is not.
-last-reviewed: 2026-06-11
+last-reviewed: 2026-06-12
 tags: [positioning, product]
 related: [cost-model.md, "../contributing/conventions/change-discipline.md"]
 ---
@@ -221,8 +221,9 @@ designed around a long-lived writer and a long-lived compactor.
 Cloudflare's Durable Objects is the architectural antithesis —
 its pitch is that you *need* a persistent single-threaded
 coordinator. Baerly's bet is that you don't, because the
-conditional-write primitives that S3, R2, GCS, and Azure Blob
-all expose are sufficient — provided the protocol does the work.
+conditional-write contract (`If-Match` / `If-None-Match` on
+ETags) that S3-compatible object stores expose is sufficient —
+provided the protocol does the work.
 The full rationale, comparators, and the rules for what would
 break the property are in
 [ADR-004](../adr/004-ephemeral-coordination.md).

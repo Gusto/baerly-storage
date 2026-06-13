@@ -2,7 +2,7 @@
 title: Ephemeral coordination
 audience: adr
 summary: ADR 004 — coordination runs in request-bounded compute, not in a persistent process.
-last-reviewed: 2026-05-31
+last-reviewed: 2026-06-12
 tags: [decision, adr, runtime-model]
 related: [README.md, "../about/thesis.md", "../spec/sync-protocol.md", 001-tenant-cas-isolation.md, 002-api-surface-lock.md]
 ---
@@ -43,10 +43,24 @@ system is shaped around.
 
 ## Decision
 
-Coordinate exclusively via the conditional-write primitives that
-S3, R2, GCS, and Azure Blob all expose (`If-Match` /
-`If-None-Match` against an ETag). Three mechanisms make this
-sufficient:
+Coordinate exclusively via the S3 ETag conditional-write contract
+(`If-Match` / `If-None-Match`, 412 on conflict) that S3-compatible
+object stores expose. Our implementation of that contract is proven
+credential-free against MinIO and Cloudflare R2 — the CAS conformance
+blocks are a hard, no-opt-out prerequisite
+([`conformance.ts`](../../packages/protocol/src/storage/conformance.ts)) —
+and against AWS S3 on demand (`pnpm test:conformance`). Not every store
+that speaks the S3 wire protocol honours these headers on *writes*: GCS's
+S3-interop endpoint documents `If-Match`/`If-None-Match` as read-only and
+routes conditional writes through its native `x-goog-if-generation-match`,
+so GCS is **not** supported via the S3-compat path until a native
+generation-precondition adapter lands or a live run proves the interop
+layer enforces them. Azure Blob exposes the same ETag CAS semantics but
+speaks a non-S3 REST dialect (no S3 endpoint), so it needs a dedicated
+adapter that does not exist. `baerly doctor --bucket` runs a live CAS
+probe and hard-rejects any backend that doesn't reject a stale conditional
+write — so a non-conformant store cannot be deployed unnoticed. Three
+mechanisms make this sufficient:
 
 1. **Two-phase fence with server timestamp.** Writers observe a
    server-attested clock before committing; lying client clocks

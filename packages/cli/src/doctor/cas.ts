@@ -19,9 +19,11 @@ import type { DoctorFinding, DoctorReport } from "./cloudflare.ts";
 
 const CAS_FIX =
   "Point baerly at an S3-compatible store that honours conditional writes " +
-  "(If-Match + If-None-Match). Real AWS S3, Cloudflare R2, and GCS do; a " +
-  "custom gateway / proxy may be stripping conditional headers — check it " +
-  "returns 412 on a stale If-Match.";
+  "(If-Match + If-None-Match). AWS S3 and Cloudflare R2 honour them. Some " +
+  "S3-compatible endpoints don't enforce them on writes — notably GCS's " +
+  "interop endpoint, which documents these headers as read-only — and a " +
+  "custom gateway / proxy may strip them; this probe exists to catch " +
+  "exactly that. A conformant backend returns 412 on a stale If-Match.";
 
 /**
  * Run the live CAS round-trip against `storage` and shape the result

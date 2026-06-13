@@ -135,9 +135,14 @@ export function minioStorage(opts: {
  * goes into `credentials.accessKeyId` and the HMAC secret goes into
  * `credentials.secretAccessKey`. Region is pinned to `"auto"`.
  *
- * GCS's S3-compat surface supports the four `Storage` methods
- * (`get`/`put`/`delete`/`list`) but not all of S3's optional
- * features — stick to the kernel surface and you're fine.
+ * GCS's S3-compat surface covers the four `Storage` methods
+ * (`get`/`put`/`delete`/`list`), but Google documents the
+ * `If-Match`/`If-None-Match` headers this kernel coordinates on as
+ * read-only (native conditional writes use `x-goog-if-generation-match`).
+ * Whether GCS's interop layer enforces S3-style conditional *writes* is
+ * unverified — run `baerly doctor --bucket=<your-gcs-bucket>` before
+ * relying on it; a backend that fails the CAS probe is not a safe baerly
+ * store. See ADR-004.
  *
  * @example
  * ```ts
