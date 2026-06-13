@@ -102,7 +102,7 @@ describe("doctorCloudflare", () => {
     expect(findingFor(report.findings, "wrangler.jsonc")?.severity).toBe("ok");
     expect(findingFor(report.findings, "r2.x")?.severity).toBe("ok");
     expect(findingFor(report.findings, "secret.SHARED_SECRET")?.severity).toBe("ok");
-    expect(findingFor(report.findings, "triggers.crons")?.severity).toBe("ok");
+    expect(findingFor(report.findings, "triggers.crons")?.severity).toBe("info");
   });
 
   test("reports an error when wrangler.jsonc is missing", async () => {
@@ -178,7 +178,7 @@ describe("doctorCloudflare", () => {
     expect(findingFor(report.findings, "cloudflareAccess")?.severity).toBe("ok");
   });
 
-  test("warns when no cron triggers are declared", async () => {
+  test("accepts missing cron triggers because write-triggered maintenance is default", async () => {
     await writeScaffold(
       repoRoot,
       `{ "name": "x", "r2_buckets": [{ "binding": "BUCKET", "bucket_name": "x" }] }`,
@@ -186,8 +186,9 @@ describe("doctorCloudflare", () => {
     const { runner } = makeRunner();
     const report = await doctorCloudflare(makeConfig(repoRoot), { runner });
     const f = findingFor(report.findings, "triggers.crons");
-    expect(f?.severity).toBe("warning");
-    expect(report.status).toBe("warning");
+    expect(f?.severity).toBe("ok");
+    expect(f?.message).toContain("in-band write-triggered maintenance");
+    expect(report.status).toBe("ok");
   });
 
   test("warns when baerly.config.ts:domain has no matching wrangler.jsonc:routes pattern", async () => {

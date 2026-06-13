@@ -13,8 +13,9 @@
  *   4. If `cloudflareAccess` is set in `baerly.config.ts`,
  *      `audienceTag` is 64 lowercase-hex chars and `teamDomain`
  *      is non-empty.
- *   5. If `triggers.crons` is empty, warn that the maintenance
- *      loop won't run.
+ *   5. Report `triggers.crons` as optional. In-band write-triggered
+ *      maintenance is the default; cron only drives an explicit
+ *      `runScheduledMaintenance` sweep when the operator opts in.
  *   6. If `baerly.config.ts:domain` is set but `wrangler.jsonc`
  *      doesn't declare a matching `routes` entry, warn.
  *
@@ -68,7 +69,8 @@ const rollupStatus = (findings: readonly DoctorFinding[]): DoctorReport["status"
 
 /**
  * Read the declared cron schedule from `wrangler.jsonc`. Returns
- * `[]` when missing — caller treats empty as a warning.
+ * `[]` when missing — caller treats empty as ok; in-band
+ * write-triggered maintenance is the default and needs no cron.
  */
 const readDeclaredCrons = (wranglerPath: string): readonly string[] => {
   const text = readFileSync(wranglerPath, "utf8");
@@ -326,10 +328,7 @@ export const doctorCloudflare = async (
   // inert). We can't statically parse the user's worker source —
   // surface the heuristic.
   const varKeys = new Set(readDeclaredVarKeys(wranglerPath));
-  if (
-    varKeys.has("CF_ACCESS_TEAM_DOMAIN") &&
-    varKeys.has("CF_ACCESS_AUDIENCE_TAG")
-  ) {
+  if (varKeys.has("CF_ACCESS_TEAM_DOMAIN") && varKeys.has("CF_ACCESS_AUDIENCE_TAG")) {
     findings.push({
       severity: "info",
       check: "auth.cf-access-inert",
@@ -367,21 +366,22 @@ export const doctorCloudflare = async (
     }
   }
 
-  // 5. Cron triggers — empty list means the maintenance loop won't
-  //    run.
+  // 5. Cron triggers — optional. In-band write-tick maintenance is
+  //    the default; cron only exists for an explicit out-of-band sweep.
   const crons = readDeclaredCrons(wranglerPath);
   if (crons.length === 0) {
     findings.push({
-      severity: "warning",
+      severity: "ok",
       check: "triggers.crons",
-      message: "no cron triggers declared; the maintenance loop will not run automatically.",
-      fix: `Add "triggers": { "crons": ["* * * * *"] } to ${wranglerPath}.`,
+      message: "no cron triggers declared; in-band write-triggered maintenance is the default.",
     });
   } else {
     findings.push({
-      severity: "ok",
+      severity: "info",
       check: "triggers.crons",
-      message: `cron trigger${crons.length === 1 ? "" : "s"} ${crons.map((c) => JSON.stringify(c)).join(", ")} declared.`,
+      message:
+        `cron trigger${crons.length === 1 ? "" : "s"} ${crons.map((c) => JSON.stringify(c)).join(", ")} declared ` +
+        "for opt-in scheduled maintenance; write-triggered maintenance still runs by default.",
     });
   }
 
