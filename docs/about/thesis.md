@@ -2,7 +2,7 @@
 title: Product thesis
 audience: product
 summary: Why Baerly exists, what it is, and what it deliberately is not.
-last-reviewed: 2026-06-12
+last-reviewed: 2026-06-14
 tags: [positioning, product]
 related: [cost-model.md, "../contributing/conventions/change-discipline.md"]
 ---
@@ -66,9 +66,16 @@ The criteria the rest of this document is shaped around:
    fit in working memory is a surface that gets called wrong —
    whether the program calling it is an LLM mid-completion or a
    human under deadline. *Type signatures are the contract; JSDoc is
-   prose.* The `.d.ts` shapes are the canonical authority; a caller
-   should reach the correct call zero-shot from them alone. Two
-   failure modes follow:
+   prose.* The `.d.ts` shapes are the canonical authority, but they
+   are not what an agent reads *first*: in practice it reads
+   `dist/API.md` (the curated public-API reference) and the scaffold's
+   `AGENTS.md` quickref, then falls back to the hash-suffixed `.d.ts`
+   chain. Those three are co-canonical, and `API.md` / `AGENTS.md` →
+   `.d.ts` is the real consumption order — a caller should reach the
+   correct call zero-shot from them. A corollary that earns its own
+   principle below: what lands in `API.md` is what the agent reasons
+   about, so keeping a surface *out* of `API.md` is how it stays out of
+   the agent's hands. Two failure modes follow:
    - *Hallucinated ceremony* — the agent invents an API the kernel
      does not ship (e.g. `.findOneById()`). The fix is teaching the
      real surface via `@example` blocks and the AGENTS.md quickref.
@@ -128,6 +135,22 @@ win. A design choice that improves authoring DX by adding operator chores
 (or vice versa) is a regression. When in doubt, the authoring audience wins.
 Zero operator burden is the enabler of that goal, not the goal itself: without
 it, the deployment friction that blocks builders never clears.
+
+**The operational surface stays off the agent-readable surface — this is a
+baked-in guardrail, not just tidy separation.** A knob the agent can see is a
+knob the agent will eventually turn: an LLM told "these documents are large"
+will helpfully reach for any maintenance, CPU, or fold-budget dial within
+reach and tune it — which is precisely the ceremony criterion #6 exists to
+delete (neither the user *nor the agent* sizes or schedules ordinary storage
+maintenance; the bucket maintains itself). So performance and maintenance
+knobs ship on the *deploy factory* (`baerlyWorker(...)` / the Node server
+options) and in the deploy docs, set once by whoever deploys — and are
+deliberately absent from `API.md` and the `AGENTS.md` quickref. A field may be
+typed in the `.d.ts` and still be invisible to the authoring agent, because
+that agent edits schema and app code, not the pre-written server entry the
+scaffold ships. The absence of a tunable is a feature: the smallest surface
+the agent can see is the strongest guarantee it won't tune what it shouldn't.
+Any new ops knob must clear this bar before it earns a line in `API.md`.
 
 ## Why not Postgres
 
