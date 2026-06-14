@@ -386,7 +386,10 @@ export const MAINTENANCE_MAX_FOLD_ROWS: number = 2048;
 
 // Shape of the six host-agnostic write-tick budgets. Declared here (not as
 // the nominal `MaintenanceProfile` in maintenance.ts) so the named profiles
-// build from these constants with no server→protocol cycle.
+// build from these constants with no server→protocol cycle. The server
+// `MaintenanceProfile` is the canonical shape — keep this field-identical.
+// A field on the server type that these constants drop will not typecheck;
+// an extra field here is tolerated structurally, so mirror it by hand.
 type MaintenanceProfileShape = Readonly<{
   gcInterval: number;
   gcMaxMarks: number;

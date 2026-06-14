@@ -776,6 +776,10 @@ export class Writer {
     const prevSeq = current.next_seq; // pre-CAS seq, already in scope
     const maint = getCurrentContext()?.maintenance;
     if (maint?.disabled !== true) {
+      // Same absent-context default as runBoundedMaintenance's
+      // `options?.profile ?? MAINTENANCE_PROFILE_CF_FREE` — keep the two in
+      // step (this gate reads only gcInterval; the runner resolves the whole
+      // profile) so the pre-fire cadence can't diverge from the fold's.
       const gcInterval =
         maint?.options?.profile?.gcInterval ?? MAINTENANCE_PROFILE_CF_FREE.gcInterval;
       if (shouldFireMaintenance(next, prevSeq, gcInterval)) {
