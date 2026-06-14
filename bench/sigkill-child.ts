@@ -19,6 +19,7 @@ import {
   type CurrentJson,
   encodeJsonBytes,
   type LogEntry,
+  logObjectKey,
   timestamp,
 } from "@baerly/protocol";
 import { buildBenchStorage, ensureBucket } from "./storage.ts";
@@ -86,7 +87,7 @@ async function main(): Promise<void> {
   process.stdout.write("READY-1\n");
 
   // ── Step 2. PUT log entry. ──────────────────────────────────────
-  const logKey = `${SIGKILL_LOG_PREFIX}/log/${seq}.json`;
+  const logKey = logObjectKey(SIGKILL_LOG_PREFIX, seq);
   const session = "bench-sigkill";
   const logEntry: LogEntry = {
     lsn: `${timestamp(Date.now())}_${session}_${countKey(seq)}`,

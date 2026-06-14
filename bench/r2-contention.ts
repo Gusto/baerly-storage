@@ -26,6 +26,7 @@ import {
   countKey,
   createCurrentJson,
   encodeJsonBytes,
+  logObjectKey,
   readCurrentJson,
   timestamp,
   BaerlyError,
@@ -587,7 +588,7 @@ async function s5Writer(storage: CountingStorage, signal: AbortSignal): Promise<
         });
 
       // Step 2. PUT log entry.
-      const logKey = `${S5_LOG_PREFIX}/log/${seqCursor}.json`;
+      const logKey = logObjectKey(S5_LOG_PREFIX, seqCursor);
       const session = "bench-s5";
       const logEntry: LogEntry = {
         lsn: `${timestamp(Date.now())}_${session}_${countKey(seqCursor)}`,
@@ -620,7 +621,7 @@ async function s5Writer(storage: CountingStorage, signal: AbortSignal): Promise<
       if (after !== null && after.json.next_seq - (after.json.log_seq_start ?? 0) >= 2) {
         const start = after.json.log_seq_start ?? 0;
         const checkSeq = start + Math.floor((after.json.next_seq - start) / 2);
-        const checkKey = `${S5_LOG_PREFIX}/log/${checkSeq}.json`;
+        const checkKey = logObjectKey(S5_LOG_PREFIX, checkSeq);
         const got = await storage.get(checkKey);
         if (got === null) {
           counters.log_404_on_read++;
