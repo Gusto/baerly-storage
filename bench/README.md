@@ -15,6 +15,7 @@ Two harnesses live under `bench/`:
 |---|---|---|
 | `bench/r2-contention.ts` | CAS-storm 412/429 rates on one `current.json`; validates the idle-reader bound on the wire | When changing `packages/server/src/writer.ts`, coordination primitives, or retry policy |
 | `bench/load-harness/` | S3 ops + bytes per logical `Db` operation across seven workload presets; validates the workload cost model | When changing storage layout, manifest cache TTLs, or compaction profile — run before/after a perf-shaped PR |
+| `bench/fold-cost.ts` | CPU + peak-heap cost of ONE compaction fold (the unsliceable snapshot rebuild) vs. snapshot bytes and snapshot row count; Phase 2 evidence for raising the snapshot ceilings `C` / `E` on a more capable host. No infra (MemoryStorage). MEASURES ONLY — changes no constant. | When validating / revisiting the snapshot-rebuild cost model in [docs/about/graduation.md](../docs/about/graduation.md) |
 
 Both require `pnpm dev:storage` (Minio `:9102` + Toxiproxy `:9104`)
 for the Minio-backed variants. Neither is a per-PR CI gate. The
@@ -175,6 +176,48 @@ The key derived fields:
   (which is total bytes written / logical bytes written and is
   always `>= 1`); this is a within-compaction
   output/input ratio.
+
+## bench/fold-cost.ts
+
+A no-infra microbench (MemoryStorage) that measures the cost of ONE
+compaction fold — the **unsliceable snapshot rebuild** — as a function
+of two axes the cost model separates:
+
+- **snapshot size in bytes** (JSON parse / stringify / SHA-256), and
+- **snapshot row count** (per-entry parse / merge / serialize).
+
+```sh
+pnpm bench:fold-cost
+```
+
+Each grid point seeds a fresh `MemoryStorage` with a `current.json` + a
+prior snapshot of an exact (rows × bytes/doc) shape + a fixed log tail,
+then runs the real `compact()` once (whole tail in a single pass —
+`minEntriesToCompact: 1`, large `maxEntriesPerRun`) so the measured cost
+is the rebuild, not a sliced drain. The bytes axis brackets the
+graduation.md cost-model table (64 KB / 256 KB / 512 KB / 1 MB / 5 MB);
+the rows axis sweeps row count from 256 up past the current `E = 2048`
+to 16 384 at tiny bytes/doc to isolate per-entry CPU.
+
+**Measurement.** CPU is `process.cpuUsage()` user+system delta (ms) —
+not wall-clock, because folds are CPU-bound on Workers and MemoryStorage
+makes I/O ~free. Peak memory is a 1 ms sampler on
+`process.memoryUsage().heapUsed`, peak-minus-start. Each point is warmed
+then measured over N iterations; the JSON reports median / min / max.
+
+One timestamped JSON per run lands in `bench/results/fold-cost/`
+(gitignored); a checked-in reference baseline lives at
+[`docs/spec/attachments/fold-cost-baseline.json`](../docs/spec/attachments/fold-cost-baseline.json).
+The JSON records each cell's `{rows, snapshot_bytes, cpu_ms_median,
+peak_bytes_median, peak_over_snapshot, iterations}` plus a
+`modelled_reference` block (the graduation.md `11 ms/MB`, `C`, and
+provisional `E`) so a future reader can compare measured-vs-modelled and
+find where the CPU / memory budget of a target host intersects the grid
+— the input to raising `C` / `E` on paid.
+
+This bench **measures only**: it never moves `C`, `E`, or any constant.
+Re-sizing the ceilings off these numbers is an explicitly deferred later
+phase.
 
 ## Green-light criteria
 

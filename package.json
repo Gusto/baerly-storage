@@ -188,7 +188,8 @@
     "bench:load": "node --import ./bench/register-hooks.mjs bench/load-harness/cli.ts",
     "bench:load:minio": "MINIO=1 node --import ./bench/register-hooks.mjs bench/load-harness/cli.ts --variant=node-minio",
     "bench:load:matrix": "node --import ./bench/register-hooks.mjs bench/load-harness/matrix.ts",
-    "bench:lsn-reverse-walk": "node --import ./bench/register-hooks.mjs bench/lsn-reverse-walk.ts"
+    "bench:lsn-reverse-walk": "node --import ./bench/register-hooks.mjs bench/lsn-reverse-walk.ts",
+    "bench:fold-cost": "node --import ./bench/register-hooks.mjs bench/fold-cost.ts"
   },
   "dependencies": {
     "@logtape/logtape": "2.1.3"
