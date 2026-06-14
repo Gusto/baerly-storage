@@ -124,16 +124,22 @@ const runAttack = async (
   }
 };
 
-const arbForgedEntry = fc.record({
-  lsn: fc.string({ minLength: 1, maxLength: 32 }),
-  commit_ts: fc.constant("2026-05-26T00:00:00.000Z"),
-  op: fc.constantFrom("I", "U", "D"),
-  collection: fc.constantFrom(COLLECTION, "other-collection"),
-  doc_id: fc.string({ minLength: 1, maxLength: 16 }),
-  session: fc.string({ minLength: 6, maxLength: 6 }),
-  seq: fc.integer({ min: 0, max: 5 }),
-  after: fc.record({ _id: fc.string({ minLength: 1, maxLength: 16 }) }),
-}) as fc.Arbitrary<LogEntry>;
+// Checked construction (not an `as` cast): the record is mapped
+// through a `(): LogEntry` function so tsgo tracks every field against
+// the protocol type. A future rename/removal of a `LogEntry` field
+// surfaces here as a compile error rather than a silently-bogus key.
+const arbForgedEntry: fc.Arbitrary<LogEntry> = fc
+  .record({
+    lsn: fc.string({ minLength: 1, maxLength: 32 }),
+    commit_ts: fc.constant("2026-05-26T00:00:00.000Z"),
+    op: fc.constantFrom<LogEntry["op"]>("I", "U", "D"),
+    collection: fc.constantFrom(COLLECTION, "other-collection"),
+    doc_id: fc.string({ minLength: 1, maxLength: 16 }),
+    session: fc.string({ minLength: 6, maxLength: 6 }),
+    seq: fc.integer({ min: 0, max: 5 }),
+    after: fc.record({ _id: fc.string({ minLength: 1, maxLength: 16 }) }),
+  })
+  .map((r): LogEntry => r);
 
 describe("adversarial replay against self-session log-conflict adoption", () => {
   propTest.prop({ forged: arbForgedEntry })(

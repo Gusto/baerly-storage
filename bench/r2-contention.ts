@@ -23,11 +23,14 @@ import { writeFile, mkdir } from "node:fs/promises";
 import path from "node:path";
 import {
   casUpdateCurrentJson,
+  countKey,
   createCurrentJson,
   encodeJsonBytes,
   readCurrentJson,
+  timestamp,
   BaerlyError,
   type CurrentJson,
+  type LogEntry,
 } from "@baerly/protocol";
 import { buildBenchStorage, ensureBucket, type CountingStorage } from "./storage.ts";
 import { runCompactorLoop, type CompactorLoopCounters } from "./compactor-loop.ts";
@@ -585,12 +588,15 @@ async function s5Writer(storage: CountingStorage, signal: AbortSignal): Promise<
 
       // Step 2. PUT log entry.
       const logKey = `${S5_LOG_PREFIX}/log/${seqCursor}.json`;
-      const logEntry = {
+      const session = "bench-s5";
+      const logEntry: LogEntry = {
+        lsn: `${timestamp(Date.now())}_${session}_${countKey(seqCursor)}`,
+        commit_ts: new Date().toISOString(),
         seq: seqCursor,
         collection: "compact",
         doc_id: `doc-${seqCursor}`,
-        op: "I" as const,
-        session: "bench-s5",
+        op: "I",
+        session,
         after: { seq: seqCursor, payload: `data-${seqCursor}` },
       };
       await storage.put(logKey, encodeJsonBytes(logEntry), {

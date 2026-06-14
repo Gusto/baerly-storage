@@ -14,9 +14,12 @@
 import {
   BaerlyError,
   casUpdateCurrentJson,
+  countKey,
   createCurrentJson,
   type CurrentJson,
   encodeJsonBytes,
+  type LogEntry,
+  timestamp,
 } from "@baerly/protocol";
 import { buildBenchStorage, ensureBucket } from "./storage.ts";
 
@@ -84,12 +87,15 @@ async function main(): Promise<void> {
 
   // ── Step 2. PUT log entry. ──────────────────────────────────────
   const logKey = `${SIGKILL_LOG_PREFIX}/log/${seq}.json`;
-  const logEntry = {
+  const session = "bench-sigkill";
+  const logEntry: LogEntry = {
+    lsn: `${timestamp(Date.now())}_${session}_${countKey(seq)}`,
+    commit_ts: new Date().toISOString(),
     seq,
     collection: "sigkill",
     doc_id: `doc-${seq}`,
-    op: "I" as const,
-    session: "bench-sigkill",
+    op: "I",
+    session,
     after: JSON.parse(body),
   };
   const logBytes = encodeJsonBytes(logEntry);
