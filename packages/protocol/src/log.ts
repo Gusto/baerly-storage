@@ -110,17 +110,10 @@ export interface LogEntry {
  */
 export type ReplicaIdentity = "PATCH_ONLY" | "FULL";
 
-/** S3 path segment for log entries, under the manifest prefix. */
-export const LOG_KEY_PREFIX = "log";
-
-/**
- * The single constructor for a log-object key:
- * `<logPrefix>/log/<seq>.json`. `logPrefix` already includes
- * `manifests/<collection>`. Route all callers here so the key shape
- * lives in one place.
- */
-export const logObjectKey = (logPrefix: string, seq: number): string =>
-  `${logPrefix}/${LOG_KEY_PREFIX}/${seq}.json`;
+// `LOG_KEY_PREFIX` + `logObjectKey` live in the zero-import `log-key.ts`
+// leaf so consumers that only need the key shape don't drag this module's
+// `lsn` parsing runtime into their bundle closure (it added +3.8 KB raw to
+// `maintenance.js` when the helper lived here).
 
 /**
  * Extract the `session` and `seq` embedded in an `lsn` of shape

@@ -23,5 +23,6 @@ export * from "./types.ts";
 export * from "./verifier.ts";
 export * from "./hashing.ts";
 export * from "./log.ts";
+export * from "./log-key.ts";
 export * from "./metrics.ts";
 export * from "./snapshot-hash.ts";

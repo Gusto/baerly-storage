@@ -1,12 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { COUNT_BIT_WIDTH } from "./constants.ts";
-import {
-  LOG_KEY_PREFIX,
-  type LogEntry,
-  logObjectKey,
-  lsnParts,
-  type ReplicaIdentity,
-} from "./log.ts";
+import { type LogEntry, lsnParts, type ReplicaIdentity } from "./log.ts";
+import { LOG_KEY_PREFIX, logObjectKey } from "./log-key.ts";
 import { countKey, str2uintDesc } from "./types.ts";
 
 describe("LogEntry", () => {
