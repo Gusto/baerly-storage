@@ -479,6 +479,51 @@ describe("retry honors Retry-After hint", () => {
   });
 });
 
+describe("raw network error wrapping", () => {
+  test("terminal fetch error → NetworkError with original cause preserved", async () => {
+    const cause = new Error("other side closed");
+    const networkErr = Object.assign(new TypeError("fetch failed"), { cause });
+    const fetchFn = vi.fn<typeof fetch>(async (_req) => {
+      throw networkErr;
+    });
+    const s = mkStorage(fetchFn as unknown as typeof fetch, { retries: 1, backoffMs: 1 });
+    const caughtError = await s.get("k").catch((error: unknown) => error);
+    expect(caughtError).toBeInstanceOf(BaerlyError);
+    expect((caughtError as BaerlyError).code).toBe("NetworkError");
+    expect((caughtError as BaerlyError).cause).toBe(networkErr);
+    // Pin the retry count: a terminal transient is retried, not short-circuited.
+    expect(fetchFn).toHaveBeenCalledTimes(2);
+  });
+
+  test("a BaerlyError thrown by fetch passes through unwrapped (no double-wrap)", async () => {
+    const original = new BaerlyError("Conflict", "precondition failed");
+    const fetchFn = vi.fn<typeof fetch>(async (_req) => {
+      throw original;
+    });
+    const s = mkStorage(fetchFn as unknown as typeof fetch, { retries: 1, backoffMs: 1 });
+    const caughtError = await s.get("k").catch((error: unknown) => error);
+    expect(caughtError).toBe(original);
+  });
+
+  test("transient fetch error that recovers → resolves successfully", async () => {
+    let calls = 0;
+    const cause = new Error("other side closed");
+    const networkErr = Object.assign(new TypeError("fetch failed"), { cause });
+    const fetchFn = vi.fn<typeof fetch>(async (_req) => {
+      calls++;
+      if (calls === 1) {
+        throw networkErr;
+      }
+      return okResponse(new TextEncoder().encode("ok").buffer as ArrayBuffer, { ETag: '"e"' });
+    });
+    const s = mkStorage(fetchFn as unknown as typeof fetch, { retries: 1, backoffMs: 1 });
+    const result = await s.get("k");
+    expect(result).not.toBeNull();
+    expect(result!.etag).toBe('"e"');
+    expect(fetchFn).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe("sign callback", () => {
   test("sign() runs before fetch and its return value is what fetch sees", async () => {
     const upstreamFetch = vi.fn<typeof fetch>(async (_req) => noBody(200, { ETag: '"x"' }));

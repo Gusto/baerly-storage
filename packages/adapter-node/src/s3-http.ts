@@ -195,7 +195,15 @@ export class S3HttpStorage implements Storage {
 
   async #dispatch(req: Request): Promise<Response> {
     const signed = this.#sign ? await this.#sign(req) : req;
-    return this.#fetch(signed);
+    try {
+      return await this.#fetch(signed);
+    } catch (error) {
+      if (error instanceof BaerlyError) {
+        throw error;
+      }
+      const msg = error instanceof Error ? error.message : String(error);
+      throw new BaerlyError("NetworkError", msg, error);
+    }
   }
 
   #retry<T>(fn: () => Promise<T>): Promise<T> {
