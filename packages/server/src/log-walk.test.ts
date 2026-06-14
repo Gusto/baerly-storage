@@ -21,27 +21,13 @@ import {
   type StoragePutResult,
 } from "@baerly/protocol";
 import { describe, expect } from "vitest";
+import { seedLogEntries } from "../../../tests/fixtures/log-state.ts";
 import { foldLogEntriesOnto, readLogEntry, walkLogRange } from "./log-walk.ts";
 
 const PREFIX = "app/t/tenant/x/manifests/c";
 
-const makeEntry = (seq: number): LogEntry => ({
-  lsn: `lsn-${seq}`,
-  commit_ts: "2026-01-01T00:00:00.000Z",
-  op: "I",
-  collection: "c",
-  doc_id: `d${seq}`,
-  session: "ssn001",
-  seq,
-});
-
-const seedRange = async (storage: Storage, from: number, toExclusive: number): Promise<void> => {
-  const enc = new TextEncoder();
-  for (let s = from; s < toExclusive; s++) {
-    const body = enc.encode(JSON.stringify(makeEntry(s)));
-    await storage.put(`${PREFIX}/log/${s}.json`, body);
-  }
-};
+const seedRange = (storage: Storage, from: number, toExclusive: number): Promise<void> =>
+  seedLogEntries(storage, PREFIX, from, toExclusive);
 
 /**
  * Storage proxy that observes `get` concurrency and lets the caller

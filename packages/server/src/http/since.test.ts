@@ -17,13 +17,9 @@
  * so the suite stays well inside the 30 s default budget.
  */
 
-import {
-  CURRENT_JSON_SCHEMA_VERSION,
-  type CurrentJson,
-  createCurrentJson,
-  MemoryStorage,
-} from "@baerly/protocol";
+import { type CurrentJson, createCurrentJson, MemoryStorage } from "@baerly/protocol";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { logStateCurrentJson } from "../../../../tests/fixtures/log-state.ts";
 import { Db } from "../db.ts";
 import { listEventsSince, longPollSince } from "./since.ts";
 
@@ -34,16 +30,7 @@ const TABLE = "tickets";
 const currentJsonKey = (table = TABLE): string =>
   `app/${APP}/tenant/${TENANT}/manifests/${table}/current.json`;
 
-const seedCurrent = (): CurrentJson => ({
-  schema_version: CURRENT_JSON_SCHEMA_VERSION,
-  snapshot: null,
-  next_seq: 0,
-  log_seq_start: 0,
-  writer_fence: { epoch: 0, owner: "test", claimed_at: "" },
-  tail_bytes: 0,
-  snapshot_bytes: 0,
-  snapshot_rows: 0,
-});
+const seedCurrent = (): CurrentJson => logStateCurrentJson();
 
 const makeDb = (
   storage: MemoryStorage = new MemoryStorage(),

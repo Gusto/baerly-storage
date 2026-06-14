@@ -7,7 +7,6 @@
  */
 
 import {
-  CURRENT_JSON_SCHEMA_VERSION,
   type CurrentJson,
   createCurrentJson,
   type LogEntry,
@@ -17,6 +16,7 @@ import {
   type StoragePutResult,
 } from "@baerly/protocol";
 import { beforeEach, describe, expect, test } from "vitest";
+import { logStateCurrentJson } from "../../../tests/fixtures/log-state.ts";
 import { Db } from "./db.ts";
 
 const APP = "test";
@@ -27,16 +27,7 @@ const currentJsonKey = (table = TABLE): string =>
 const logKey = (seq: number, table = TABLE): string =>
   `app/${APP}/tenant/${TENANT}/manifests/${table}/log/${seq}.json`;
 
-const seedCurrent = (): CurrentJson => ({
-  schema_version: CURRENT_JSON_SCHEMA_VERSION,
-  snapshot: null,
-  next_seq: 0,
-  log_seq_start: 0,
-  writer_fence: { epoch: 0, owner: "test", claimed_at: "" },
-  tail_bytes: 0,
-  snapshot_bytes: 0,
-  snapshot_rows: 0,
-});
+const seedCurrent = (): CurrentJson => logStateCurrentJson();
 
 const decodeJson = <T>(bytes: Uint8Array): T => JSON.parse(new TextDecoder().decode(bytes)) as T;
 

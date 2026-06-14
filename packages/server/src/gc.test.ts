@@ -9,7 +9,6 @@
  */
 
 import {
-  CURRENT_JSON_SCHEMA_VERSION,
   type GcPending,
   GC_PENDING_SCHEMA_VERSION,
   MemoryStorage,
@@ -19,22 +18,18 @@ import {
   readGcPending,
 } from "@baerly/protocol";
 import { describe, expect, test } from "vitest";
+import { logStateCurrentJson } from "../../../tests/fixtures/log-state.ts";
 import { compact, type InternalCompactOptions } from "./compactor.ts";
 import { type InternalRunGcOptions, runGc } from "./gc.ts";
 import { createObservabilityContext, runWithContext } from "./observability/index.ts";
 import { Writer } from "./writer.ts";
 
 const bootstrap = async (storage: MemoryStorage, key: string): Promise<void> => {
-  await createCurrentJson(storage, key, {
-    schema_version: CURRENT_JSON_SCHEMA_VERSION,
-    snapshot: null,
-    next_seq: 0,
-    log_seq_start: 0,
-    writer_fence: { epoch: 0, owner: "gc-test", claimed_at: "" },
-    tail_bytes: 0,
-    snapshot_bytes: 0,
-    snapshot_rows: 0,
-  });
+  await createCurrentJson(
+    storage,
+    key,
+    logStateCurrentJson({ writer_fence: { epoch: 0, owner: "gc-test", claimed_at: "" } }),
+  );
 };
 
 const KEY = "app/t/tenant/x/manifests/c/current.json";

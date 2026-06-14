@@ -10,7 +10,6 @@
  */
 
 import {
-  CURRENT_JSON_SCHEMA_VERSION,
   createCurrentJson,
   MemoryStorage,
   BaerlyError,
@@ -21,6 +20,7 @@ import {
 } from "@baerly/protocol";
 import { describe, expect, test } from "vitest";
 import { fc, test as fcTest } from "@fast-check/vitest";
+import { logStateCurrentJson } from "../../../tests/fixtures/log-state.ts";
 import { compact, type InternalCompactOptions } from "./compactor.ts";
 import { loadSnapshotAsMap } from "./snapshot.ts";
 import { createObservabilityContext, runWithContext } from "./observability/index.ts";
@@ -28,16 +28,11 @@ import { runGc } from "./gc.ts";
 import { Writer } from "./writer.ts";
 
 const bootstrap = async (storage: MemoryStorage, key: string): Promise<void> => {
-  await createCurrentJson(storage, key, {
-    schema_version: CURRENT_JSON_SCHEMA_VERSION,
-    snapshot: null,
-    next_seq: 0,
-    log_seq_start: 0,
-    writer_fence: { epoch: 0, owner: "compactor-test", claimed_at: "" },
-    tail_bytes: 0,
-    snapshot_bytes: 0,
-    snapshot_rows: 0,
-  });
+  await createCurrentJson(
+    storage,
+    key,
+    logStateCurrentJson({ writer_fence: { epoch: 0, owner: "compactor-test", claimed_at: "" } }),
+  );
 };
 
 describe("compact", () => {
@@ -322,16 +317,7 @@ describe("compact", () => {
     // Hand-craft a current.json claiming 10 log entries exist but
     // never plant the bodies. compact() walks [0, 10) and should
     // throw Internal on the first missing GET.
-    await createCurrentJson(s, KEY, {
-      schema_version: CURRENT_JSON_SCHEMA_VERSION,
-      snapshot: null,
-      next_seq: 10,
-      log_seq_start: 0,
-      writer_fence: { epoch: 0, owner: "test", claimed_at: "" },
-      tail_bytes: 0,
-      snapshot_bytes: 0,
-      snapshot_rows: 0,
-    });
+    await createCurrentJson(s, KEY, logStateCurrentJson({ next_seq: 10 }));
     await expect(
       compact({ storage: s, currentJsonKey: KEY }, { minEntriesToCompact: 5 }),
     ).rejects.toMatchObject({ code: "Internal" });
@@ -453,16 +439,11 @@ describe("compact", () => {
     const s = new MemoryStorage();
     const key = "app/t/tenant/x/manifests/rt/current.json";
     const coll = "rt";
-    await createCurrentJson(s, key, {
-      schema_version: CURRENT_JSON_SCHEMA_VERSION,
-      snapshot: null,
-      next_seq: 0,
-      log_seq_start: 0,
-      writer_fence: { epoch: 0, owner: "rt-test", claimed_at: "" },
-      tail_bytes: 0,
-      snapshot_bytes: 0,
-      snapshot_rows: 0,
-    });
+    await createCurrentJson(
+      s,
+      key,
+      logStateCurrentJson({ writer_fence: { epoch: 0, owner: "rt-test", claimed_at: "" } }),
+    );
     const writer = new Writer({ storage: s, currentJsonKey: key });
     for (let i = 0; i < docs.length; i++) {
       const d = docs[i]!;

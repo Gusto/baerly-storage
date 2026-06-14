@@ -23,7 +23,6 @@ import { expect } from "vitest";
 import {
   type Collection,
   type CurrentJson,
-  CURRENT_JSON_SCHEMA_VERSION,
   type DocumentData,
   type IndexDefinition,
   type LogEntry,
@@ -44,6 +43,7 @@ import {
   type Grounding,
   type Knowledge,
 } from "./consistency.ts";
+import { logStateCurrentJson } from "./log-state.ts";
 
 /**
  * Causal-consistency check without `eval()`. Workerd disallows code
@@ -111,16 +111,7 @@ interface CascadeMessage extends DocumentData {
   send_time: number;
 }
 
-const seedCurrent = (): CurrentJson => ({
-  schema_version: CURRENT_JSON_SCHEMA_VERSION,
-  snapshot: null,
-  next_seq: 0,
-  log_seq_start: 0,
-  writer_fence: { epoch: 0, owner: "test", claimed_at: "" },
-  tail_bytes: 0,
-  snapshot_bytes: 0,
-  snapshot_rows: 0,
-});
+const seedCurrent = (): CurrentJson => logStateCurrentJson();
 
 /**
  * Tolerant `createCurrentJson` — multiple test instances share the

@@ -24,7 +24,6 @@
 
 import { expect } from "vitest";
 import {
-  CURRENT_JSON_SCHEMA_VERSION,
   type CurrentJson,
   type DocumentData,
   type LogEntry,
@@ -42,6 +41,7 @@ import {
   type InternalRunGcOptions,
   Writer,
 } from "@baerly/server/_internal/testing";
+import { logStateCurrentJson } from "./log-state.ts";
 
 const APP = "collection-api-test";
 
@@ -63,16 +63,8 @@ const UUIDV7_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[0-9a-f]{4}-[0-9a-f]{12
  */
 const LSN_RE = /^[0-9a-v]+_[0-9a-v]+_[0-9a-v]{11}$/;
 
-const seedCurrent = (): CurrentJson => ({
-  schema_version: CURRENT_JSON_SCHEMA_VERSION,
-  snapshot: null,
-  next_seq: 0,
-  log_seq_start: 0,
-  writer_fence: { epoch: 0, owner: "collection-api-test", claimed_at: "" },
-  tail_bytes: 0,
-  snapshot_bytes: 0,
-  snapshot_rows: 0,
-});
+const seedCurrent = (): CurrentJson =>
+  logStateCurrentJson({ writer_fence: { epoch: 0, owner: "collection-api-test", claimed_at: "" } });
 
 /**
  * Tolerant `createCurrentJson` — when the cross-writer variant

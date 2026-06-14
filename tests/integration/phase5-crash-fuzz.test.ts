@@ -45,7 +45,6 @@ import { afterEach, describe, expect, test } from "vitest";
 import {
   BaerlyError,
   type Collection,
-  CURRENT_JSON_SCHEMA_VERSION,
   createCurrentJson,
   decodeJsonBytes,
   type DocumentData,
@@ -65,6 +64,7 @@ import {
   Writer,
 } from "@baerly/server/_internal/testing";
 import { abortingStorage } from "../fixtures/aborting-storage.ts";
+import { logStateCurrentJson } from "../fixtures/log-state.ts";
 
 /**
  * Per-property timeout, in ms. At `FC_NUM_RUNS=100` (default
@@ -80,16 +80,11 @@ const CURRENT_JSON_KEY = `${TABLE_PREFIX}/current.json`;
 const COLLECTION = "c";
 
 const provision = async (storage: Storage): Promise<void> => {
-  await createCurrentJson(storage, CURRENT_JSON_KEY, {
-    schema_version: CURRENT_JSON_SCHEMA_VERSION,
-    snapshot: null,
-    next_seq: 0,
-    log_seq_start: 0,
-    writer_fence: { epoch: 0, owner: "phase5-fuzz", claimed_at: "" },
-    tail_bytes: 0,
-    snapshot_bytes: 0,
-    snapshot_rows: 0,
-  });
+  await createCurrentJson(
+    storage,
+    CURRENT_JSON_KEY,
+    logStateCurrentJson({ writer_fence: { epoch: 0, owner: "phase5-fuzz", claimed_at: "" } }),
+  );
 };
 
 interface Row extends DocumentData {

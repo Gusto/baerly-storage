@@ -15,6 +15,7 @@ import {
   WRITE_TICK_GC_INTERVAL,
 } from "@baerly/protocol";
 import { beforeEach, describe, expect, test, vi } from "vitest";
+import { logStateCurrentJson, seedLogEntry } from "../../../tests/fixtures/log-state.ts";
 import type { IndexDefinition } from "./indexes.ts";
 import type { MaintenanceDispatch } from "./maintenance.ts";
 import {
@@ -40,16 +41,7 @@ const BUCKET = "writer-test-bucket";
 const COLL = "tickets";
 const CURRENT_KEY = `app/test/tenant/t/manifests/${COLL}/current.json`;
 
-const seedCurrent = (): CurrentJson => ({
-  schema_version: CURRENT_JSON_SCHEMA_VERSION,
-  snapshot: null,
-  next_seq: 0,
-  log_seq_start: 0,
-  writer_fence: { epoch: 0, owner: "test", claimed_at: "" },
-  tail_bytes: 0,
-  snapshot_bytes: 0,
-  snapshot_rows: 0,
-});
+const seedCurrent = (): CurrentJson => logStateCurrentJson();
 
 const decodeJson = <T>(bytes: Uint8Array): T => JSON.parse(new TextDecoder().decode(bytes)) as T;
 
@@ -289,28 +281,20 @@ describe("Writer", () => {
     // log/1.json (which don't exist); if it did, `#walkLog` would throw
     // `Internal` for "missing log entry, protocol invariant violation".
     const storage = new MemoryStorage();
-    await createCurrentJson(storage, CURRENT_KEY, {
-      schema_version: CURRENT_JSON_SCHEMA_VERSION,
-      snapshot: null,
-      next_seq: 3,
-      writer_fence: { epoch: 0, owner: "test", claimed_at: "" },
-      log_seq_start: 2,
-      tail_bytes: 0,
-      snapshot_bytes: 0,
-      snapshot_rows: 0,
-    });
-    const logPrefix = `app/test/tenant/t/manifests/${COLL}/log`;
-    const planted = {
+    await createCurrentJson(
+      storage,
+      CURRENT_KEY,
+      logStateCurrentJson({ next_seq: 3, log_seq_start: 2 }),
+    );
+    const manifestPrefix = `app/test/tenant/t/manifests/${COLL}`;
+    await seedLogEntry(storage, manifestPrefix, 2, {
       lsn: "fake-lsn",
       commit_ts: new Date().toISOString(),
-      op: "I" as const,
       collection: COLL,
       doc_id: "live",
       session: "abcdef",
-      seq: 2,
       after: { _id: "live" },
-    };
-    await storage.put(`${logPrefix}/2.json`, new TextEncoder().encode(JSON.stringify(planted)));
+    });
 
     // Opt in to the integrity walk: this test's whole point is to assert the
     // walk's range is `[log_seq_start, next_seq)`, not `[0, next_seq)`. The
