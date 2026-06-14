@@ -51,9 +51,9 @@ import {
   type Storage,
   type StoragePutOptions,
   type StoragePutResult,
+  MAINTENANCE_PROFILE_CF_FREE,
   S3_REQUEST_MAX_RETRIES,
   SESSION_ID_LENGTH,
-  WRITE_TICK_GC_INTERVAL,
   countKey,
   readCurrentJson,
   timestamp,
@@ -776,7 +776,8 @@ export class Writer {
     const prevSeq = current.next_seq; // pre-CAS seq, already in scope
     const maint = getCurrentContext()?.maintenance;
     if (maint?.disabled !== true) {
-      const gcInterval = maint?.options?.gcInterval ?? WRITE_TICK_GC_INTERVAL;
+      const gcInterval =
+        maint?.options?.profile?.gcInterval ?? MAINTENANCE_PROFILE_CF_FREE.gcInterval;
       if (shouldFireMaintenance(next, prevSeq, gcInterval)) {
         const dispatch = maint?.dispatch ?? dispatchInlineAwaited;
         // `await dispatch(...)`: `dispatchInlineAwaited` returns the

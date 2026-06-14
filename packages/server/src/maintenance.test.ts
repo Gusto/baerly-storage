@@ -17,6 +17,7 @@ import {
   GC_STARVATION_GUARD,
   MAINTENANCE_MIN_LIVE_BYTES,
   MAINTENANCE_WARN_INTERVAL_WRITES,
+  MAINTENANCE_PROFILE_CF_FREE,
   MemoryStorage,
   readCurrentJson,
   type Storage,
@@ -336,7 +337,7 @@ describe("runBoundedMaintenance", () => {
           currentJsonKey: KEY,
           prevSeq: 57,
         },
-        { gcInterval: WRITE_TICK_GC_INTERVAL },
+        { profile: MAINTENANCE_PROFILE_CF_FREE },
       );
     });
     // GC marked the stale-log candidates left by the pre-compact.
@@ -365,7 +366,7 @@ describe("runBoundedMaintenance", () => {
           currentJsonKey: KEY,
           prevSeq: 57,
         },
-        { gcInterval: WRITE_TICK_GC_INTERVAL, gcMaxMarks: 20, gcMaxSweeps: 10 },
+        { profile: MAINTENANCE_PROFILE_CF_FREE },
       );
     });
     const after = await readSeqStart(inner, KEY);
@@ -401,7 +402,7 @@ describe("runBoundedMaintenance", () => {
             currentJsonKey: KEY,
             prevSeq: expectedNextSeq, // no GC boundary; isolate the defer
           },
-          { gcInterval: WRITE_TICK_GC_INTERVAL },
+          { profile: MAINTENANCE_PROFILE_CF_FREE },
         );
       });
       // Deferred ⇒ metric bumped (existing behaviour).
@@ -440,11 +441,11 @@ describe("runBoundedMaintenance", () => {
       const recorder = await withRecorder(async () => {
         await runBoundedMaintenance(
           { storage: inner, currentJsonKey: KEY, prevSeq: nextSeq },
-          { gcInterval: WRITE_TICK_GC_INTERVAL },
+          { profile: MAINTENANCE_PROFILE_CF_FREE },
         );
         await runBoundedMaintenance(
           { storage: inner, currentJsonKey: KEY, prevSeq: nextSeq },
-          { gcInterval: WRITE_TICK_GC_INTERVAL },
+          { profile: MAINTENANCE_PROFILE_CF_FREE },
         );
       });
       // Still deferred both times…
@@ -567,7 +568,7 @@ describe("runBoundedMaintenance", () => {
         currentJsonKey: KEY,
         prevSeq: 0, // crosses gc boundary AND gate1 trips
       },
-      { phasesPerTick: "both", gcInterval: WRITE_TICK_GC_INTERVAL },
+      { phasesPerTick: "both", profile: MAINTENANCE_PROFILE_CF_FREE },
     );
     const after = await readSeqStart(inner, KEY);
     // Folded.
@@ -598,7 +599,7 @@ describe("runBoundedMaintenance", () => {
         currentJsonKey: KEY,
         prevSeq: 0,
       },
-      { gcInterval: WRITE_TICK_GC_INTERVAL },
+      { profile: MAINTENANCE_PROFILE_CF_FREE },
     );
     const after = await readSeqStart(inner, KEY);
     // Hard-GC guard fired: fold was SKIPPED this tick (no advance) ...

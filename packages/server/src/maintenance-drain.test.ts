@@ -46,6 +46,7 @@
 import {
   CURRENT_JSON_SCHEMA_VERSION,
   createCurrentJson,
+  MAINTENANCE_PROFILE_CF_FREE,
   MemoryStorage,
   readCurrentJson,
   type Storage,
@@ -127,11 +128,14 @@ describe("§7.1 drain-rate invariant (write-tick, real Writer)", () => {
     // the cadence-decoupled, budgeted-runGc MECHANISM: the count must
     // plateau, not climb with writes.
     const provisioned: BoundedMaintenanceOptions = {
-      maxFoldEntriesPerPass: 20,
+      profile: {
+        ...MAINTENANCE_PROFILE_CF_FREE,
+        maxFoldEntriesPerPass: 20,
+        gcMaxMarks: 100,
+        gcMaxSweeps: 50,
+        gcInterval: 4,
+      },
       minEntriesToCompact: 50,
-      gcMaxMarks: 100,
-      gcMaxSweeps: 50,
-      gcInterval: 4,
       phasesPerTick: "both",
       gcGraceMillis: 0,
     };
@@ -170,11 +174,14 @@ describe("§7.1 drain-rate invariant (write-tick, real Writer)", () => {
     // count must now PLATEAU near the live working set, not grow with
     // writes.
     const cfFree: BoundedMaintenanceOptions = {
-      maxFoldEntriesPerPass: 20,
+      profile: {
+        ...MAINTENANCE_PROFILE_CF_FREE,
+        maxFoldEntriesPerPass: 20,
+        gcMaxMarks: 20,
+        gcMaxSweeps: 10,
+        gcInterval: 4,
+      },
       minEntriesToCompact: 50,
-      gcMaxMarks: 20,
-      gcMaxSweeps: 10,
-      gcInterval: 4,
       phasesPerTick: "single",
       gcGraceMillis: 0,
     };

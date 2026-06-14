@@ -25,17 +25,12 @@ import {
   BaerlyError,
   casUpdateCurrentJson,
   GC_STARVATION_GUARD,
-  MAINTENANCE_MAX_FOLD_BYTES_DEFAULT,
-  MAINTENANCE_MAX_FOLD_ROWS,
   MAINTENANCE_MIN_LIVE_BYTES,
+  MAINTENANCE_PROFILE_CF_FREE,
   MAINTENANCE_TARGET_RATIO,
   MAINTENANCE_WARN_INTERVAL_WRITES,
   noopMetricsRecorder,
   readCurrentJson,
-  WRITE_TICK_FOLD_ENTRIES_PER_PASS,
-  WRITE_TICK_GC_INTERVAL,
-  WRITE_TICK_GC_MAX_MARKS,
-  WRITE_TICK_GC_MAX_SWEEPS,
   WRITE_TICK_MIN_ENTRIES_TO_COMPACT,
 } from "@baerly/protocol";
 import {
@@ -134,7 +129,38 @@ export const runScheduledMaintenance = async (
 };
 
 /**
- * Tuning profile for the 50-subrequest Cloudflare free-tier budget.
+ * The six host-agnostic write-tick budgets (govern maintenance RATE +
+ * fold-defer threshold only — never data/API/wire/correctness). Adapters
+ * thread {@link MAINTENANCE_PROFILE_CF_FREE} / {@link MAINTENANCE_PROFILE_NODE};
+ * absent ⇒ CF-free. Nominal alias for the structural constants in
+ * `@baerly/protocol` constants.ts (typed there to avoid a cycle).
+ */
+export interface MaintenanceProfile {
+  readonly gcInterval: number;
+  readonly gcMaxMarks: number;
+  readonly gcMaxSweeps: number;
+  readonly maxFoldEntriesPerPass: number;
+  /** Snapshot-rebuild byte ceiling `C` (per-host overridable). */
+  readonly maxFoldBytes: number;
+  /** Snapshot-rebuild row ceiling `E`. */
+  readonly maxFoldRows: number;
+}
+
+export { MAINTENANCE_PROFILE_CF_FREE, MAINTENANCE_PROFILE_NODE } from "@baerly/protocol";
+
+// Map a profile onto the scheduled per-phase caps. Snapshot ceilings aren't
+// part of that surface, so they're omitted — CLOUDFLARE_FREE_TIER stays byte-identical.
+const profileToScheduledOptions = (profile: MaintenanceProfile): InternalMaintenanceOptions => ({
+  compact: {
+    maxEntriesPerRun: profile.maxFoldEntriesPerPass,
+    minEntriesToCompact: WRITE_TICK_MIN_ENTRIES_TO_COMPACT,
+  },
+  gc: { maxMarksPerRun: profile.gcMaxMarks, maxSweepsPerRun: profile.gcMaxSweeps },
+});
+
+/**
+ * Tuning profile for the 50-subrequest Cloudflare free-tier budget,
+ * derived from {@link MAINTENANCE_PROFILE_CF_FREE} (one source of truth).
  *
  * Budget arithmetic (worst case):
  *   compact: 1 GET current + 1 GET snapshot (if any) + N GETs log
@@ -151,11 +177,9 @@ export const runScheduledMaintenance = async (
  * worst-case test proves each phase in isolation sits under 50 ops
  * with these bounds.
  */
-const cfFreeTier: InternalMaintenanceOptions = {
-  compact: { maxEntriesPerRun: 20, minEntriesToCompact: 50 },
-  gc: { maxMarksPerRun: 20, maxSweepsPerRun: 10 },
-};
-export const CLOUDFLARE_FREE_TIER: MaintenanceOptions = cfFreeTier;
+export const CLOUDFLARE_FREE_TIER: MaintenanceOptions = profileToScheduledOptions(
+  MAINTENANCE_PROFILE_CF_FREE,
+);
 
 // =====================================================================
 // Write-tick (in-band) maintenance — `runBoundedMaintenance`.
@@ -199,16 +223,16 @@ export const shouldFireMaintenance = (
 
 /** Per-tier caps for {@link runBoundedMaintenance}, threaded by the adapter. */
 export interface BoundedMaintenanceOptions {
-  /** Tail slice folded per pass. Default {@link WRITE_TICK_FOLD_ENTRIES_PER_PASS}. */
-  readonly maxFoldEntriesPerPass?: number;
+  /**
+   * The six host-agnostic maintenance budgets, threaded as a unit by the
+   * adapter ({@link MAINTENANCE_PROFILE_CF_FREE} on Cloudflare,
+   * {@link MAINTENANCE_PROFILE_NODE} on Node). Absent ⇒ the runner
+   * resolves {@link MAINTENANCE_PROFILE_CF_FREE} — the CF-free-safe
+   * default that keeps a bare `Db.create()` maintaining out of the box.
+   */
+  readonly profile?: MaintenanceProfile;
   /** Gate-1 minimum live-tail length. Default {@link WRITE_TICK_MIN_ENTRIES_TO_COMPACT}. */
   readonly minEntriesToCompact?: number;
-  /** GC marks per pass. Default {@link WRITE_TICK_GC_MAX_MARKS}. */
-  readonly gcMaxMarks?: number;
-  /** GC sweeps per pass. Default {@link WRITE_TICK_GC_MAX_SWEEPS}. */
-  readonly gcMaxSweeps?: number;
-  /** GC cadence (boundary-crossing). Default {@link WRITE_TICK_GC_INTERVAL}. */
-  readonly gcInterval?: number;
   /**
    * How many phases this tick may run. `"single"` (CF-free-safe
    * default) runs at most one of fold / GC per tick; `"both"` lets a
@@ -272,15 +296,16 @@ export const runBoundedMaintenance = async (
   }
 
   const { storage, currentJsonKey, prevSeq } = args;
-  const maxFoldEntriesPerPass = options?.maxFoldEntriesPerPass ?? WRITE_TICK_FOLD_ENTRIES_PER_PASS;
+  // Resolve the profile ONCE (the runner's single CF-free-safe default,
+  // preserving the bare-`Db.create()` promise); all six budgets read off it.
+  const profile = options?.profile ?? MAINTENANCE_PROFILE_CF_FREE;
+  const { maxFoldEntriesPerPass, gcMaxMarks, gcMaxSweeps, gcInterval } = profile;
   const minEntriesToCompact = options?.minEntriesToCompact ?? WRITE_TICK_MIN_ENTRIES_TO_COMPACT;
-  const gcMaxMarks = options?.gcMaxMarks ?? WRITE_TICK_GC_MAX_MARKS;
-  const gcMaxSweeps = options?.gcMaxSweeps ?? WRITE_TICK_GC_MAX_SWEEPS;
-  const gcInterval = options?.gcInterval ?? WRITE_TICK_GC_INTERVAL;
   const phasesPerTick = options?.phasesPerTick ?? "single";
   const signal = options?.signal;
-  const C = args.maxFoldBytes ?? MAINTENANCE_MAX_FOLD_BYTES_DEFAULT;
-  const E = MAINTENANCE_MAX_FOLD_ROWS; // entry ceiling is a constant, not adapter-threaded
+  // `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` (args.maxFoldBytes) overrides `C`.
+  const C = args.maxFoldBytes ?? profile.maxFoldBytes;
+  const E = profile.maxFoldRows;
 
   // Derive the collection label the same way compact()/runGc() do.
   const collectionPrefix = currentJsonKey.slice(0, currentJsonKey.lastIndexOf("/"));
