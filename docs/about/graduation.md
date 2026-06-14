@@ -2,7 +2,7 @@
 title: Graduation thresholds
 audience: operator
 summary: The CPU and memory bounds that tell you when a collection has outgrown its deployment tier, and what to do about it.
-last-reviewed: 2026-06-13
+last-reviewed: 2026-06-14
 tags: [operations, cost, capacity, graduation]
 related: [cost-model.md, thesis.md, "../adr/004-ephemeral-coordination.md"]
 ---
@@ -283,6 +283,7 @@ incrementally over many ticks** rather than folding in one pass.
 | **Cloudflare free** | ~10 ms CPU/request **and** 50 subrequests/request | **CPU + subrequests** | default `C = 512 KB` ⟹ **~512 KB snapshot** (`S_max = C`), `E = 2048` rows; tail drains ≈ 20 entries/tick; raising `C` past ~1 MB (`CF_FREE_MAX_SAFE_FOLD_BYTES`) hits the CPU wall and `console.warn`s |
 | **Cloudflare paid** | 30 s CPU default (up to 5 min); ~128 MB Worker memory | **memory** | raise `C` and fold to **~tens of MB snapshot** (~40 MB); CPU is *not* the wall — **memory** is |
 | **Serverful Node** | none per-request; process RAM; a fold blocks the event loop | **host memory** | raise `C` and fold up to host memory — far above either Worker tier; per-pass caps are `NODE_MAINTENANCE_*` (moderate, latency-budgeted) |
+| **AWS Lambda** *(adapter pending — not yet shipped)* | 3–10 GB RAM selectable; up to 15 min timeout; `AWS_LAMBDA_FUNCTION_MEMORY_SIZE` self-reported | **host memory** (same shape as Node) | between the Workers tiers and serverful Node in practice; raise `C` once the adapter ships |
 
 Reading the rows:
 
@@ -493,7 +494,8 @@ Maintenance has **two configuration planes**, and they never mix:
 
 (The row ceiling `E = MAINTENANCE_MAX_FOLD_ROWS = 2048` is **not**
 operator-tunable — it is a kernel constant, not adapter-threaded, so it
-does not appear in this table.)
+does not appear in this table. It is also marked **PROVISIONAL** pending
+the Task 3 fold-cost bench.)
 
 **Cloudflare caveat — sizing the cap.** Raising
 `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` above what a CF isolate can actually
@@ -528,6 +530,23 @@ Safe remedies, in order of preference:
 
 On Cloudflare, prefer **upgrading the plan tier** over raising the cap
 past what the isolate can rebuild.
+
+## How to raise a limit (primitive map)
+
+Every limit in the graduation picture falls into one of three buckets.
+The table below identifies which bucket each falls into — so when you
+hit a ceiling, you know whether there is a knob at all.
+
+| Limit | How to raise it | Notes |
+|---|---|---|
+| Static fold-byte ceiling `C` (`MAINTENANCE_MAX_FOLD_BYTES_DEFAULT = 512 KB`) | **`BAERLY_MAINTENANCE_MAX_FOLD_BYTES` env var** | Set out-of-band in the deploy environment; takes effect on the next write-tick. Size to what the host can actually rebuild (see [Cloudflare caveat](#operations-plane-env-vars)). |
+| Cloudflare free CPU / subrequest wall (~10 ms CPU, 50 subrequests) | **Cloudflare plan upgrade (free → paid)**, then raise `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` | Paid raises CPU to 30 s default (up to 5 min); subrequest limit also lifts. A finer-grained per-platform `cpuLimit` declaration is **planned, pending a measurement gate** in a later phase — it is not yet built. |
+| Per-collection CAS scope (one `current.json` per collection; no cross-collection atomicity) | **Cannot be increased — protocol invariant** | The CAS scope is a single object per collection; cross-collection atomicity is not offered and is not part of the protocol. |
+| Content-hash addressing (snapshot/content filenames embed their own SHA-256) | **Cannot be increased — protocol invariant** | The snapshot filename is derived from the SHA-256 of its body; changing this would break the no-corruption guarantee that makes orphan snapshots safe to GC. |
+
+The row ceiling `E` is not in this map — it is a kernel constant, not an
+operator knob; see the [operations-plane note](#operations-plane-env-vars)
+above for its (provisional) status.
 
 ## How to read your tier
 
