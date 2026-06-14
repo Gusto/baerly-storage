@@ -37,16 +37,11 @@
 import { afterEach, describe, expect, test } from "vitest";
 import {
   type Collection,
-  CURRENT_JSON_SCHEMA_VERSION,
-  createCurrentJson,
-  type DocumentData,
   MAINTENANCE_PROFILE_CF_FREE,
   MAINTENANCE_PROFILE_NODE,
-  MemoryStorage,
   readCurrentJson,
   type Storage,
 } from "@baerly/protocol";
-import { LocalFsStorage } from "@baerly/dev";
 import { Db } from "@baerly/server";
 import {
   type BoundedMaintenanceOptions,
@@ -55,46 +50,26 @@ import {
 } from "@baerly/server/maintenance";
 import { createObservabilityContext, runWithContext } from "@baerly/server/observability";
 import { Writer } from "@baerly/server/_internal/testing";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import {
+  APP,
+  bootstrap as bootstrapCurrentJson,
+  COLLECTION,
+  CURRENT_JSON_KEY,
+  makeVariants,
+  sortById,
+  type Ticket as BaseTicket,
+  TENANT,
+} from "../fixtures/maintenance-harness.ts";
 
-const APP = "app";
-const TENANT = "tenant";
-const COLLECTION = "tickets";
-const TABLE_PREFIX = `app/${APP}/tenant/${TENANT}/manifests/${COLLECTION}`;
-const CURRENT_JSON_KEY = `${TABLE_PREFIX}/current.json`;
-
-interface Ticket extends DocumentData {
-  _id: string;
-  status: "open" | "closed";
-  priority: number;
+// This suite's row carries an extra `rev` revision counter its op stream
+// churns; the shared `Ticket` is the three-field common core (which
+// already extends `DocumentData`).
+interface Ticket extends BaseTicket {
   rev: number;
 }
 
-const bootstrap = async (storage: Storage): Promise<void> => {
-  await createCurrentJson(storage, CURRENT_JSON_KEY, {
-    schema_version: CURRENT_JSON_SCHEMA_VERSION,
-    snapshot: null,
-    next_seq: 0,
-    log_seq_start: 0,
-    writer_fence: { epoch: 0, owner: "profile-equivalence", claimed_at: "" },
-    tail_bytes: 0,
-    snapshot_bytes: 0,
-    snapshot_rows: 0,
-  });
-};
-
-const sortById = <T extends { _id: string }>(rows: readonly T[]): T[] =>
-  [...rows].toSorted((a, b) => {
-    if (a._id < b._id) {
-      return -1;
-    }
-    if (a._id > b._id) {
-      return 1;
-    }
-    return 0;
-  });
+const bootstrap = (storage: Storage): Promise<void> =>
+  bootstrapCurrentJson(storage, "profile-equivalence");
 
 const WORKING_SET = 50; // bounded live doc set ⇒ constant live floor
 const BODY_BYTES = 2000; // bodies big enough that the ratio gate trips and folds fire
@@ -195,26 +170,7 @@ const PROFILE_CASES: readonly ProfileCase[] = [
   { label: "node", profile: MAINTENANCE_PROFILE_NODE },
 ];
 
-interface Variant {
-  readonly label: "memory" | "local-fs";
-  readonly build: () => Promise<{ storage: Storage; cleanup?: () => Promise<void> }>;
-}
-
-const VARIANTS: readonly Variant[] = [
-  { label: "memory", build: async () => ({ storage: new MemoryStorage() }) },
-  {
-    label: "local-fs",
-    build: async () => {
-      const root = await mkdtemp(join(tmpdir(), "baerly-profile-equiv-"));
-      return {
-        storage: new LocalFsStorage({ root }),
-        cleanup: async () => {
-          await rm(root, { recursive: true, force: true }).catch(() => {});
-        },
-      };
-    },
-  },
-];
+const VARIANTS = makeVariants("baerly-profile-equiv-");
 
 describe("MaintenanceProfile cross-profile correctness", () => {
   for (const variant of VARIANTS) {
@@ -290,6 +246,8 @@ describe("MaintenanceProfile cross-profile correctness", () => {
       test(
         "(B) profiles genuinely differ in maintenance RATE: ONE fold pass advances log_seq_start by exactly maxFoldEntriesPerPass",
         { timeout: 60_000 },
+        // Deliberately PAIRWISE (cf-free vs node), not a loop over
+        // PROFILE_CASES — a future 3rd profile touches this by hand.
         async () => {
           // Pre-build a tail bigger than either profile's per-pass slice
           // with NO maintenance, so the fold start state is identical for

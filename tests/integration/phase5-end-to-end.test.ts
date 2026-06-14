@@ -31,21 +31,14 @@
  * (ticket 19 §"Coordinates with ticket 17").
  */
 
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import {
   type Collection,
-  CURRENT_JSON_SCHEMA_VERSION,
-  createCurrentJson,
-  type DocumentData,
   MAINTENANCE_PROFILE_CF_FREE,
   MemoryStorage,
   readCurrentJson,
   type Storage,
 } from "@baerly/protocol";
-import { LocalFsStorage } from "@baerly/dev";
 import { Db } from "@baerly/server";
 import {
   type BoundedMaintenanceOptions,
@@ -61,31 +54,19 @@ import {
   Writer,
 } from "@baerly/server/_internal/testing";
 import { wrapCountingStorage } from "../fixtures/counting-storage.ts";
+import {
+  APP,
+  bootstrap as bootstrapCurrentJson,
+  COLLECTION,
+  CURRENT_JSON_KEY,
+  makeVariants,
+  sortById,
+  TABLE_PREFIX,
+  TENANT,
+  type Ticket,
+} from "../fixtures/maintenance-harness.ts";
 
-const APP = "app";
-const TENANT = "tenant";
-const COLLECTION = "tickets";
-const TABLE_PREFIX = `app/${APP}/tenant/${TENANT}/manifests/${COLLECTION}`;
-const CURRENT_JSON_KEY = `${TABLE_PREFIX}/current.json`;
-
-interface Ticket extends DocumentData {
-  _id: string;
-  status: "open" | "closed";
-  priority: number;
-}
-
-const bootstrap = async (storage: Storage): Promise<void> => {
-  await createCurrentJson(storage, CURRENT_JSON_KEY, {
-    schema_version: CURRENT_JSON_SCHEMA_VERSION,
-    snapshot: null,
-    next_seq: 0,
-    log_seq_start: 0,
-    writer_fence: { epoch: 0, owner: "phase5-e2e", claimed_at: "" },
-    tail_bytes: 0,
-    snapshot_bytes: 0,
-    snapshot_rows: 0,
-  });
-};
+const bootstrap = (storage: Storage): Promise<void> => bootstrapCurrentJson(storage, "phase5-e2e");
 
 const countBucketObjects = async (storage: Storage, prefix: string): Promise<number> => {
   let count = 0;
@@ -95,43 +76,7 @@ const countBucketObjects = async (storage: Storage, prefix: string): Promise<num
   return count;
 };
 
-const sortById = <T extends { _id: string }>(rows: readonly T[]): T[] =>
-  [...rows].toSorted((a, b) => {
-    if (a._id < b._id) {
-      return -1;
-    }
-    if (a._id > b._id) {
-      return 1;
-    }
-    return 0;
-  });
-
-interface Variant {
-  readonly label: "memory" | "local-fs";
-  readonly build: () => Promise<{ storage: Storage; cleanup?: () => Promise<void> }>;
-}
-
-const VARIANTS: readonly Variant[] = [
-  {
-    label: "memory",
-    build: async () => ({ storage: new MemoryStorage() }),
-  },
-  {
-    label: "local-fs",
-    build: async () => {
-      const root = await mkdtemp(join(tmpdir(), "baerly-phase5-e2e-"));
-      return {
-        storage: new LocalFsStorage({ root }),
-        cleanup: async () => {
-          await rm(root, { recursive: true, force: true }).catch(() => {
-            // Stale tmp dir under a crashed worker shouldn't fail the
-            // suite; the OS reaps `/tmp` eventually.
-          });
-        },
-      };
-    },
-  },
-];
+const VARIANTS = makeVariants("baerly-phase5-e2e-");
 
 describe("Synthetic 5000-entry end-to-end gate", () => {
   for (const variant of VARIANTS) {
