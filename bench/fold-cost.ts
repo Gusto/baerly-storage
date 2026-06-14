@@ -41,6 +41,18 @@
  *     snapshot + tail resident (~2–3× snapshot). Sampling (not
  *     `--expose-gc` deltas) so the bench runs with a bare `node` like the
  *     other no-infra benches. Median over N iterations.
+ *   - **Median only** — only the median of each axis is reported.
+ *     min/max are deliberately omitted: a GC inside a fold can drop
+ *     heapUsed below the start mark, flooring the sampled-peak min to 0
+ *     (which reads as "no memory used" but is a GC artifact), and a GC
+ *     CPU spike is an outlier the median correctly absorbs but that reads
+ *     as signal in a checked-in reference. The median is the
+ *     load-bearing number.
+ *   - **Fixture realism** — the byte-axis pad is a single repeated-char
+ *     string (`"x".repeat(n)`), so the absolute byte-axis numbers are a
+ *     mild lower bound vs. heterogeneous real documents; the linear
+ *     *shape* (linear in bytes, the per-row slope) is the portable
+ *     signal, not the absolute bytes.
  *
  * GRID — tied to the graduation.md cost-model table.
  *   - **bytes axis** brackets the table's 64 KB / 256 KB / 512 KB (the
@@ -94,8 +106,8 @@ const CURRENT_JSON_KEY = `app/x/tenant/t/manifests/${COLLECTION}/current.json`;
 const COLLECTION_PREFIX = `app/x/tenant/t/manifests/${COLLECTION}`;
 
 /** Warmup folds (discarded) then measured folds, per grid point. */
-const WARMUP_ITERS = 3;
-const MEASURE_ITERS = 7;
+const WARMUP_ITERS = 5;
+const MEASURE_ITERS = 11;
 
 /** Heap-sampling interval during a fold (ms). */
 const HEAP_SAMPLE_INTERVAL_MS = 1;
@@ -332,11 +344,7 @@ interface CellResult {
   readonly tail_entries: number;
   readonly iterations: number;
   readonly cpu_ms_median: number;
-  readonly cpu_ms_min: number;
-  readonly cpu_ms_max: number;
   readonly peak_bytes_median: number;
-  readonly peak_bytes_min: number;
-  readonly peak_bytes_max: number;
   /** Convenience: peak heap delta as a multiple of the snapshot bytes. */
   readonly peak_over_snapshot: number;
 }
@@ -353,6 +361,7 @@ interface RunResult {
   readonly measurement: {
     readonly cpu: "process.cpuUsage() user+system delta, reported ms";
     readonly memory: "sampled process.memoryUsage().heapUsed peak minus start, reported bytes";
+    readonly note: "median only (min/max omitted — sampled-peak min can float to 0 on a GC, and a GC CPU spike is an outlier the median absorbs); byte-axis pad is a single repeated-char string, so absolute byte numbers are a mild lower bound vs. heterogeneous real docs — the linear shape is the portable signal";
   };
   /** Modelled reference numbers from docs/about/graduation.md (NOT measured). */
   readonly modelled_reference: {
@@ -399,11 +408,7 @@ const runCell = async (
     tail_entries: TAIL_ENTRIES,
     iterations: MEASURE_ITERS,
     cpu_ms_median: median(cpuSamples),
-    cpu_ms_min: Math.min(...cpuSamples),
-    cpu_ms_max: Math.max(...cpuSamples),
     peak_bytes_median: peakMedian,
-    peak_bytes_min: Math.min(...peakSamples),
-    peak_bytes_max: Math.max(...peakSamples),
     peak_over_snapshot: snapshotBytes > 0 ? peakMedian / snapshotBytes : 0,
   };
 };
@@ -428,7 +433,7 @@ const main = async (): Promise<number> => {
     bench: "fold-cost",
     description:
       "CPU + peak-heap cost of one unsliceable compaction fold (snapshot rebuild) " +
-      "vs snapshot bytes and snapshot row count. MeasureS only; changes no constant.",
+      "vs snapshot bytes and snapshot row count. Measures only; changes no constant.",
     seed: SEED,
     warmup_iters: WARMUP_ITERS,
     measure_iters: MEASURE_ITERS,
@@ -437,6 +442,7 @@ const main = async (): Promise<number> => {
     measurement: {
       cpu: "process.cpuUsage() user+system delta, reported ms",
       memory: "sampled process.memoryUsage().heapUsed peak minus start, reported bytes",
+      note: "median only (min/max omitted — sampled-peak min can float to 0 on a GC, and a GC CPU spike is an outlier the median absorbs); byte-axis pad is a single repeated-char string, so absolute byte numbers are a mild lower bound vs. heterogeneous real docs — the linear shape is the portable signal",
     },
     modelled_reference: {
       cpu_ms_per_mb: 11,

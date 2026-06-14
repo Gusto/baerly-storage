@@ -203,7 +203,14 @@ to 16 384 at tiny bytes/doc to isolate per-entry CPU.
 not wall-clock, because folds are CPU-bound on Workers and MemoryStorage
 makes I/O ~free. Peak memory is a 1 ms sampler on
 `process.memoryUsage().heapUsed`, peak-minus-start. Each point is warmed
-then measured over N iterations; the JSON reports median / min / max.
+then measured over N iterations; the JSON reports the **median only** for
+both axes. min/max are deliberately omitted — a GC inside a fold can drop
+heapUsed below the start mark (flooring the sampled-peak min to a
+misleading 0) and a GC CPU spike is an outlier the median absorbs, so
+neither carries signal in a checked-in reference. The byte-axis pad is a
+single repeated-char string, so absolute byte numbers are a mild lower
+bound vs. heterogeneous real docs; the linear shape is the portable
+signal.
 
 One timestamped JSON per run lands in `bench/results/fold-cost/`
 (gitignored); a checked-in reference baseline lives at

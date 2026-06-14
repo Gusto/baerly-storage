@@ -1,15 +1,16 @@
 {
   "schema_version": 1,
   "bench": "fold-cost",
-  "description": "CPU + peak-heap cost of one unsliceable compaction fold (snapshot rebuild) vs snapshot bytes and snapshot row count. MeasureS only; changes no constant.",
+  "description": "CPU + peak-heap cost of one unsliceable compaction fold (snapshot rebuild) vs snapshot bytes and snapshot row count. Measures only; changes no constant.",
   "seed": 4028481623,
-  "warmup_iters": 3,
-  "measure_iters": 7,
+  "warmup_iters": 5,
+  "measure_iters": 11,
   "tail_entries": 100,
   "heap_sample_interval_ms": 1,
   "measurement": {
     "cpu": "process.cpuUsage() user+system delta, reported ms",
-    "memory": "sampled process.memoryUsage().heapUsed peak minus start, reported bytes"
+    "memory": "sampled process.memoryUsage().heapUsed peak minus start, reported bytes",
+    "note": "median only (min/max omitted — sampled-peak min can float to 0 on a GC, and a GC CPU spike is an outlier the median absorbs); byte-axis pad is a single repeated-char string, so absolute byte numbers are a mild lower bound vs. heterogeneous real docs — the linear shape is the portable signal"
   },
   "modelled_reference": {
     "cpu_ms_per_mb": 11,
@@ -24,14 +25,10 @@
       "bytes_per_doc": 2048,
       "snapshot_bytes": 66603,
       "tail_entries": 100,
-      "iterations": 7,
-      "cpu_ms_median": 0.523,
-      "cpu_ms_min": 0.47,
-      "cpu_ms_max": 0.785,
-      "peak_bytes_median": 868840,
-      "peak_bytes_min": 858760,
-      "peak_bytes_max": 1442784,
-      "peak_over_snapshot": 13.04505803041905
+      "iterations": 11,
+      "cpu_ms_median": 0.453,
+      "peak_bytes_median": 927096,
+      "peak_over_snapshot": 13.919733345344804
     },
     {
       "axis": "bytes",
@@ -40,14 +37,10 @@
       "bytes_per_doc": 2048,
       "snapshot_bytes": 266188,
       "tail_entries": 100,
-      "iterations": 7,
-      "cpu_ms_median": 0.903,
-      "cpu_ms_min": 0.871,
-      "cpu_ms_max": 1.176,
-      "peak_bytes_median": 1519552,
-      "peak_bytes_min": 1517400,
-      "peak_bytes_max": 1533240,
-      "peak_over_snapshot": 5.708566877545193
+      "iterations": 11,
+      "cpu_ms_median": 0.846,
+      "peak_bytes_median": 1519592,
+      "peak_over_snapshot": 5.7087171472793665
     },
     {
       "axis": "bytes",
@@ -56,14 +49,10 @@
       "bytes_per_doc": 2048,
       "snapshot_bytes": 532300,
       "tail_entries": 100,
-      "iterations": 7,
-      "cpu_ms_median": 1.507,
-      "cpu_ms_min": 1.412,
-      "cpu_ms_max": 1.71,
-      "peak_bytes_median": 2409960,
-      "peak_bytes_min": 2408672,
-      "peak_bytes_max": 2412496,
-      "peak_over_snapshot": 4.527446928423821
+      "iterations": 11,
+      "cpu_ms_median": 1.429,
+      "peak_bytes_median": 2410552,
+      "peak_over_snapshot": 4.528559083223746
     },
     {
       "axis": "bytes",
@@ -72,14 +61,10 @@
       "bytes_per_doc": 2048,
       "snapshot_bytes": 1064524,
       "tail_entries": 100,
-      "iterations": 7,
-      "cpu_ms_median": 3.151,
-      "cpu_ms_min": 2.889,
-      "cpu_ms_max": 213.237,
-      "peak_bytes_median": 3136408,
-      "peak_bytes_min": 3124688,
-      "peak_bytes_max": 3220720,
-      "peak_over_snapshot": 2.9463008818965095
+      "iterations": 11,
+      "cpu_ms_median": 2.589,
+      "peak_bytes_median": 3131288,
+      "peak_over_snapshot": 2.9414912204891577
     },
     {
       "axis": "bytes",
@@ -88,14 +73,10 @@
       "bytes_per_doc": 2048,
       "snapshot_bytes": 5322317,
       "tail_entries": 100,
-      "iterations": 7,
-      "cpu_ms_median": 46.291,
-      "cpu_ms_min": 11.558,
-      "cpu_ms_max": 70.16,
-      "peak_bytes_median": 13334224,
-      "peak_bytes_min": 13241240,
-      "peak_bytes_max": 13523736,
-      "peak_over_snapshot": 2.5053419403616886
+      "iterations": 11,
+      "cpu_ms_median": 45.036,
+      "peak_bytes_median": 13331760,
+      "peak_over_snapshot": 2.504878984096588
     },
     {
       "axis": "rows",
@@ -103,14 +84,10 @@
       "bytes_per_doc": 64,
       "snapshot_bytes": 29091,
       "tail_entries": 100,
-      "iterations": 7,
-      "cpu_ms_median": 0.324,
-      "cpu_ms_min": 0.315,
-      "cpu_ms_max": 0.569,
-      "peak_bytes_median": 516008,
-      "peak_bytes_min": 502624,
-      "peak_bytes_max": 554840,
-      "peak_over_snapshot": 17.737719569626346
+      "iterations": 11,
+      "cpu_ms_median": 0.356,
+      "peak_bytes_median": 515584,
+      "peak_over_snapshot": 17.723144615173076
     },
     {
       "axis": "rows",
@@ -118,14 +95,10 @@
       "bytes_per_doc": 64,
       "snapshot_bytes": 58120,
       "tail_entries": 100,
-      "iterations": 7,
-      "cpu_ms_median": 0.469,
-      "cpu_ms_min": 0.46,
-      "cpu_ms_max": 0.63,
-      "peak_bytes_median": 765872,
-      "peak_bytes_min": 762544,
-      "peak_bytes_max": 818672,
-      "peak_over_snapshot": 13.177426015141087
+      "iterations": 11,
+      "cpu_ms_median": 0.488,
+      "peak_bytes_median": 769984,
+      "peak_over_snapshot": 13.248176187198899
     },
     {
       "axis": "rows",
@@ -133,14 +106,10 @@
       "bytes_per_doc": 64,
       "snapshot_bytes": 116195,
       "tail_entries": 100,
-      "iterations": 7,
-      "cpu_ms_median": 0.764,
-      "cpu_ms_min": 0.753,
-      "cpu_ms_max": 0.787,
-      "peak_bytes_median": 991392,
-      "peak_bytes_min": 990592,
-      "peak_bytes_max": 1040872,
-      "peak_over_snapshot": 8.532139937174577
+      "iterations": 11,
+      "cpu_ms_median": 0.773,
+      "peak_bytes_median": 1027560,
+      "peak_over_snapshot": 8.843409785274753
     },
     {
       "axis": "rows",
@@ -148,14 +117,10 @@
       "bytes_per_doc": 64,
       "snapshot_bytes": 232287,
       "tail_entries": 100,
-      "iterations": 7,
-      "cpu_ms_median": 1.411,
-      "cpu_ms_min": 1.384,
-      "cpu_ms_max": 1.448,
-      "peak_bytes_median": 1746408,
-      "peak_bytes_min": 1730016,
-      "peak_bytes_max": 1748488,
-      "peak_over_snapshot": 7.518320009298842
+      "iterations": 11,
+      "cpu_ms_median": 1.376,
+      "peak_bytes_median": 1706992,
+      "peak_over_snapshot": 7.348633371648004
     },
     {
       "axis": "rows",
@@ -163,14 +128,10 @@
       "bytes_per_doc": 64,
       "snapshot_bytes": 464496,
       "tail_entries": 100,
-      "iterations": 7,
-      "cpu_ms_median": 2.664,
-      "cpu_ms_min": 2.618,
-      "cpu_ms_max": 2.977,
-      "peak_bytes_median": 3304384,
-      "peak_bytes_min": 3248672,
-      "peak_bytes_max": 3330936,
-      "peak_over_snapshot": 7.113912713995385
+      "iterations": 11,
+      "cpu_ms_median": 2.667,
+      "peak_bytes_median": 3275240,
+      "peak_over_snapshot": 7.051169439564603
     },
     {
       "axis": "rows",
@@ -178,14 +139,10 @@
       "bytes_per_doc": 64,
       "snapshot_bytes": 928947,
       "tail_entries": 100,
-      "iterations": 7,
-      "cpu_ms_median": 5.719,
-      "cpu_ms_min": 5.193,
-      "cpu_ms_max": 9.915,
-      "peak_bytes_median": 6346040,
-      "peak_bytes_min": 0,
-      "peak_bytes_max": 6456192,
-      "peak_over_snapshot": 6.8314338708236315
+      "iterations": 11,
+      "cpu_ms_median": 5.002,
+      "peak_bytes_median": 6345336,
+      "peak_over_snapshot": 6.830676023497573
     },
     {
       "axis": "rows",
@@ -193,17 +150,13 @@
       "bytes_per_doc": 64,
       "snapshot_bytes": 1857834,
       "tail_entries": 100,
-      "iterations": 7,
-      "cpu_ms_median": 12.043,
-      "cpu_ms_min": 10.139,
-      "cpu_ms_max": 67.435,
-      "peak_bytes_median": 10513712,
-      "peak_bytes_min": 10386784,
-      "peak_bytes_max": 15715624,
-      "peak_over_snapshot": 5.659123473894869
+      "iterations": 11,
+      "cpu_ms_median": 10.281,
+      "peak_bytes_median": 10364112,
+      "peak_over_snapshot": 5.578599595012256
     }
   ],
-  "timestamp_iso": "2026-06-14T23:23:44.235Z",
+  "timestamp_iso": "2026-06-14T23:30:35.581Z",
   "node_version": "v24.16.0",
   "platform": "darwin",
   "arch": "arm64"
