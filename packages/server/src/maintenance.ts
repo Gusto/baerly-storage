@@ -262,6 +262,12 @@ export interface BoundedMaintenanceOptions {
  * composition of {@link compact} and {@link runGc} for one collection,
  * sized to fit a CPU-killable Cloudflare free-tier isolate by default.
  *
+ * INVARIANT: a {@link MaintenanceProfile} changes only the RATE of
+ * maintenance and the defer threshold — never stored data, the API,
+ * query semantics, the wire format, or any correctness property. Reads
+ * stay pure on every profile. Proven by
+ * `tests/integration/maintenance-profile-equivalence.test.ts`.
+ *
  * Never throws — the write-tick caller must never see a maintenance
  * failure. Expected signals (CAS contention, an over-ceiling deferral)
  * are swallowed quietly; unexpected throws bump
