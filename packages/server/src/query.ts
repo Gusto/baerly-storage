@@ -18,9 +18,10 @@
  * AND on the normalised wire form).
  * `.order()` and `.limit()` are last-call-wins (state replace).
  *
- * Each terminal reads `current.json` FRESH and walks `[0, next_seq)`
- * directly — no cache, no `list()` round-trip. Per the multi-
- * instance rules, every read sees a fresh CAS snapshot.
+ * Each terminal reads `current.json` FRESH, loads the snapshot it names,
+ * and walks `[log_seq_start, next_seq)` directly — no cache, no
+ * `list()` round-trip for the log. Per the multi-instance rules, every
+ * read sees a fresh CAS snapshot.
  *
  * Mutation terminals are SINGLE-ATTEMPT per call site. CAS contention
  * retries (up to 8 attempts) live inside `Writer.commit()`; the
@@ -623,13 +624,13 @@ const assertTxBindMatches = (ctx: CollectionReadContext): void => {
 };
 
 /**
- * Load `current.json` fresh, walk `[0, next_seq)` in parallel, fold
+ * Load `current.json` fresh, walk `[log_seq_start, next_seq)` in parallel, fold
  * per-`doc_id`, then apply predicate / order / limit in memory.
  *
  * Error mapping:
  *   - `current.json` missing → empty result (collection not provisioned).
  *   - `current.json` malformed → `InvalidResponse` (from `readCurrentJson`).
- *   - log entry missing in `[0, next_seq)` → `Internal`.
+ *   - log entry missing in `[log_seq_start, next_seq)` → `Internal`.
  *   - log entry malformed → `InvalidResponse`.
  */
 const runRead = async <T extends DocumentData>(

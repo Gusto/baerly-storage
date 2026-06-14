@@ -2,7 +2,7 @@
 title: Graduation thresholds
 audience: operator
 summary: The CPU and memory bounds that tell you when a collection has outgrown its deployment tier, and what to do about it.
-last-reviewed: 2026-05-31
+last-reviewed: 2026-06-13
 tags: [operations, cost, capacity, graduation]
 related: [cost-model.md, thesis.md, "../adr/004-ephemeral-coordination.md"]
 ---
@@ -18,13 +18,44 @@ feature: *knowing exactly where graduation starts makes graduation a
 feature rather than a surprise.*
 
 This page names the precise CPU and memory bounds for each deployment
-tier, so you can read your collection's snapshot size off
-`baerly inspect` and know which tier you're in — and when to climb.
+tier, so you can size your collection's snapshot against them and know
+which tier you're in — and when to climb. The live snapshot byte/row
+counts (`snapshot_bytes`, `snapshot_rows`) live on `current.json`; the
+operational signal that a fold is deferring against those ceilings is
+the `db.compaction.deferred_total` metric (its label names the
+byte-vs-row dimension that tripped).
 
 For the **cost** side of graduation (R2 Class A ops, write-amp, stored
 bytes), see [cost-model.md](cost-model.md). This page is about the
 **compute** side: when the single expensive operation, compaction,
 stops fitting in your runtime's budget.
+
+## Decision table
+
+Use these commands first; the derivation below explains why the
+thresholds exist.
+
+```sh
+baerly inspect \
+  --bucket=s3://<bucket> \
+  --app=<app> \
+  --tenant=<tenant> \
+  --collection=<collection>
+
+baerly admin usage \
+  --target=node \
+  --bucket=s3://<bucket> \
+  --app=<app> \
+  --tenant=<tenant>
+```
+
+| Symptom | Check | Threshold | Action |
+|---|---|---|---|
+| `db.compaction.deferred_total` or defer `console.warn` on Cloudflare free | `db.compaction.deferred_total` label (byte vs. row); `snapshot_bytes` / `snapshot_rows` on `current.json` | `snapshot_bytes > C` or `snapshot_rows + maxFoldEntriesPerPass > E` | Upgrade to Workers Paid, then raise `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` only to a cap the isolate can fold. |
+| Same defer on Node | `db.compaction.deferred_total` label; `snapshot_bytes` on `current.json` vs. host memory | Host has enough RAM for old snapshot + new snapshot + tail | Raise `BAERLY_MAINTENANCE_MAX_FOLD_BYTES`; expect one inline write-latency spike. |
+| Object count grows while writes are steady | Logs + `admin fsck` | GC sweep throughput no longer keeps up with orphan production | Reduce contention, split the hot collection, or graduate the workload. |
+| Sustained hot collection | `admin usage` | ~30 logical writes/min/collection | Graduate to D1/Postgres; this is the workload ceiling. |
+| Tenant data keeps growing | `admin usage` / bucket inventory | ~10 GB/tenant or ~100 collections/tenant | Graduate; this is beyond the prototype tier. |
 
 > **Status — the in-band auto-maintenance machinery is now shipped; the
 > cost-model *thresholds* are still estimates.** Write-triggered folding,
@@ -46,11 +77,11 @@ stops fitting in your runtime's budget.
 
 ## What costs CPU: compaction (folding the log)
 
-Reads and writes are cheap and bounded — a fixed small number of
-storage GETs/PUTs each, with negligible in-memory work. The one
-operation that scales with collection size is **compaction** (a
-"fold"): the maintenance step that rolls the live log tail into a
-fresh snapshot.
+Inside the maintained envelope, reads and writes are cheap and bounded
+— a fixed small number of storage GETs/PUTs each, with negligible
+in-memory work. The one operation that scales with collection size is
+**compaction** (a "fold"): the maintenance step that rolls the live log
+tail into a fresh snapshot.
 
 A fold (`packages/server/src/compactor.ts`, the `compact` function,
 `compactor.ts:152`) does, in order:
@@ -94,9 +125,10 @@ stops shrinking, not that data is lost.
 The shipped fold separates two costs that the prior estimate-based model
 conflated:
 
-- **The tail is SLICED.** A fold processes at most `maxEntriesPerRun`
-  log entries per pass (`WRITE_TICK_FOLD_ENTRIES_PER_PASS ≈ 20` on CF
-  free, larger on Node). A long tail is not folded in one shot — it
+- **The tail is SLICED.** A fold processes at most `maxFoldEntriesPerPass`
+  log entries per pass (default `WRITE_TICK_FOLD_ENTRIES_PER_PASS ≈ 20` on CF
+  free, larger on Node; the runner threads this into `compact()` as its
+  `maxEntriesPerRun` parameter). A long tail is not folded in one shot — it
   **drains incrementally over many write-ticks**. So the tail no longer
   drives the per-pass ceiling; only the **snapshot rebuild** does.
 - **The snapshot rebuild is UNSLICEABLE.** Each pass rewrites the whole
@@ -111,7 +143,7 @@ conflated:
 
 So the gate is a **two-way ceiling on the snapshot axis**, not on a
 `snapshot + tail` estimate. A fold defers when
-`snapshot_bytes > C` **OR** `snapshot_rows > E`.
+`snapshot_bytes > C` **OR** `snapshot_rows + maxFoldEntriesPerPass > E`.
 
 Using **order-of-magnitude** engine assumptions — JSON parse/stringify
 at roughly 300 MB/s, SHA-256 at roughly 2 GB/s — the snapshot-rebuild
@@ -172,7 +204,7 @@ never trigger maintenance). Three things gate the rebuild:
   `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` — see
   [Operations plane](#operations-plane-env-vars).
 - **Static snapshot ceiling `E` (rows).** The rebuild also defers if
-  `snapshot_rows > E` (`E = 2048`, provisional). This is the per-entry
+  `snapshot_rows + maxFoldEntriesPerPass > E` (`E = 2048`, provisional). This is the per-entry
   CPU dimension a byte ceiling misses.
 
 The ceiling is conservative on purpose. Cloudflare free's ~10 ms CPU can
@@ -191,7 +223,8 @@ Because the tail is sliced and only the snapshot rebuild is bounded, the
 largest snapshot compaction will keep folding automatically is just the
 ceiling itself:
 
-> **`S_max = C`** (subject to `snapshot_rows <= E`).
+> **`S_max = C`** (subject to
+> `snapshot_rows + maxFoldEntriesPerPass <= E`).
 
 At the defaults (`C = 512 KB`, `E = 2048`) this is **`S_max = 512 KB` of
 snapshot** ≈ **100–500 documents** at 1–5 KB/doc on Cloudflare free — or
@@ -238,7 +271,7 @@ you to once `C` is raised.
 **Two binding walls on CF free, not one.** A Cloudflare free isolate is
 bounded by **both** the ~10 ms CPU budget (the snapshot ceiling `C`/`E`
 defends this) **and** the 50-subrequests-per-request limit (the tail
-slice `maxEntriesPerRun ≈ 20` =
+slice `maxFoldEntriesPerPass ≈ 20` =
 `WRITE_TICK_FOLD_ENTRIES_PER_PASS` defends this — a fold pass is
 ≈ `slice + 3` subrequests, and GC adds `6 + marks + sweeps`, so one
 phase per tick stays under 50). The prior "CF free binds on CPU" was
@@ -342,7 +375,7 @@ points at.**
 
 **Threshold:** the auto-maintained snapshot ceiling, **~512 KB snapshot
 / ~100–500 docs** (or `E = 2048` rows, whichever trips first) at the
-`C = 512 KB` defaults — `snapshot_bytes > C` OR `snapshot_rows > E`.
+`C = 512 KB` defaults — `snapshot_bytes > C` OR `snapshot_rows + maxFoldEntriesPerPass > E`.
 
 **What you'll observe:** the erosion symptoms above — slower reads, a
 growing bucket, a `console.warn` naming bytes-vs-rows — because free-tier
@@ -396,7 +429,7 @@ A **small but heavily-updated** collection (say, 50 docs hammered by
 updates) builds a large tail that mostly collapses to a handful of
 `_id`s. Under the prior unsliceable-fold model that large tail could
 trip the ceiling and warn. **That is no longer the case:** the tail is
-now **sliced** (`maxEntriesPerRun`), so a large tail simply **drains
+now **sliced** (`maxFoldEntriesPerPass`), so a large tail simply **drains
 incrementally** over many write-ticks — each pass folds ~20 entries into
 the (small) snapshot, and the snapshot stays tiny. Tail churn is no
 longer a defer trigger at all; only the *snapshot* axis (`C` bytes / `E`
@@ -477,8 +510,10 @@ This is no longer *fully* silent, however: the CF adapter
 (1 MiB) — the largest snapshot a free isolate can one-shot-rebuild under
 the ~10 ms budget. Treat that warn as "you have asked for a rebuild this
 isolate may not survive." There is still no *runtime* metric for the
-kill itself; watch **snapshot age** (`baerly inspect`) and **object
-count** for a rebuild that keeps not landing.
+kill itself; watch `db.compaction.deferred_total` and the **snapshot
+key** + **object count** from `baerly inspect` (a snapshot key that
+never advances while `live_log_tail` keeps growing is a rebuild that
+keeps not landing).
 
 Safe remedies, in order of preference:
 
@@ -496,12 +531,18 @@ past what the isolate can rebuild.
 
 ## How to read your tier
 
-`baerly inspect <collection>` reports the current snapshot size **and**
-the log-tail size; `baerly admin usage` reports writes/min against the
-M-size ceiling. The number that decides whether rebuilds keep running is
-the **snapshot** (`snapshot_bytes` against `C`, `snapshot_rows` against
-`E`) — **not** the tail. A large tail is no longer a problem: it drains
-incrementally (see
+`baerly inspect --bucket=... --app=... --tenant=... --collection=...`
+reports the current snapshot **key**, the live log tail
+(`live_log_tail`), and the materialised row count
+(`materialised_rows`); `baerly admin usage` reports writes/min against
+the M-size ceiling. The number that decides whether rebuilds keep
+running is the **snapshot** (`snapshot_bytes` against `C`,
+`snapshot_rows + maxFoldEntriesPerPass` against `E`) — **not** the
+tail. Those two snapshot fields live on `current.json` (not in inspect
+output); the operational signal that they have crossed a ceiling is the
+`db.compaction.deferred_total` metric, whose label names the
+byte-vs-row dimension that tripped. A large tail is no longer a
+problem: it drains incrementally (see
 [tail churn](#a-caveat-tail-churn-now-drains--it-is-not-a-graduation-signal)).
 Compare the snapshot against the
 [auto-maintained ceiling](#the-auto-maintained-snapshot-ceiling)

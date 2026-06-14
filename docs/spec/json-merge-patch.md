@@ -30,7 +30,7 @@ We will discover that to unlock the full potential of JSON-merge-Patch, you shou
 	- [A list of patches forms an ordered log.](#a-list-of-patches-forms-an-ordered-log)
 	- [Log can be coalesced if the patches are structured](#log-can-be-coalesced-if-the-patches-are-structured)
 	- [Ordered Logs can be replayed multiple times](#ordered-logs-can-be-replayed-multiple-times)
-	- [Ordered Logs with missing entries can be repaired with replay](#ordered-logs-with-missing-entries-can-be-repaired-with-replay)
+	- [Ordered logs can repair speculative local gaps](#ordered-logs-can-repair-speculative-local-gaps)
 - [JSON merge difference: `diff`](#json-merge-difference-diff)
 	- [Identity is `undefined`](#identity-is-undefined)
 	- [`Diff(a, a) = undefined`](#diffa-a--undefined)
@@ -272,15 +272,21 @@ fold(patches) = fold(fold(patches)), patches)
 
 ---
 
-### Ordered Logs with missing entries can be repaired with replay
+### Ordered logs can repair speculative local gaps
 
-If you use a log with a missing entry to generate a final state, that final state can be repaired by replaying the full log.
+As algebraic background, if a client optimistically folded the patches
+it had received while one entry was still missing, replaying the
+complete ordered set can repair that local view.
 
 ```
 fold(a, b, c) = fold(fold(a, c), b, c) // we skipped b in first fold
 ```
 
-This is useful for optimistic updates. You can apply all ordered entries as soon as you receive them, but if some are received out of some global order, you can fix the state without much bookkeeping.
+This is useful for optimistic updates. It is not Baerly's storage
+recovery rule: a missing or malformed committed `log/<seq>.json` inside
+`[log_seq_start, next_seq)` is a protocol violation and surfaces as a
+`BaerlyError` (`Internal` for a missing entry, `InvalidResponse` for a
+malformed one), not something the kernel repairs by replay.
 
 [*Verification source code*](https://github.com/endpointservices/mps3/blob/ce5a622c730466d336d761f39b5572224f2dd259/src/__tests__/json.test.ts#L146)
 

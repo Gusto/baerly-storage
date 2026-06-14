@@ -2,7 +2,7 @@
 title: Add baerly to an existing Cloudflare Worker
 audience: integrator
 summary: One-command bolt-on for an existing `wrangler create` project — `pnpm create @gusto/baerly-storage@latest .` detects wrangler.jsonc, patches it, prints the worker-entry snippet.
-last-reviewed: 2026-05-24
+last-reviewed: 2026-06-13
 tags: [getting-started, cloudflare]
 related: [../contributing/extending.md]
 ---
@@ -21,7 +21,7 @@ pnpm create @gusto/baerly-storage@latest .
 ```
 
 `@gusto/create-baerly-storage` detects your `wrangler.jsonc`, patches it with an R2
-binding and the four `vars` baerly expects, seeds a `.dev.vars` with
+binding and the `vars` baerly expects, seeds a `.dev.vars` with
 a dev secret, adds `.dev.vars` to `.gitignore` if it isn't already
 covered, appends `@gusto/baerly-storage` to your `package.json` dependencies,
 runs your package manager's install, and prints the worker-entry
@@ -54,9 +54,20 @@ one.)
 1. Paste the printed snippet into the path declared in
    `wrangler.jsonc:main` (typically `src/index.ts`), replacing the
    stock `wrangler create` handler.
-2. `pnpm dev` (or `wrangler dev`) to boot. Hit
-   `http://localhost:8787/v1/healthz` or
-   `http://localhost:8787/v1/c/<collection>` to verify; see
+2. `pnpm dev` (or `wrangler dev`) to boot. Verify liveness, then hit
+   a concrete collection route. The bolt-on config ships `auth: "none"`,
+   so no header is needed until you switch it:
+
+   ```sh
+   curl -fsS http://localhost:8787/v1/healthz
+   curl -fsS http://localhost:8787/v1/c/tickets
+   # if you set auth: "shared-secret", add the dev secret:
+   #   curl -fsS -H 'Authorization: Bearer dev-shared-secret' \
+   #     http://localhost:8787/v1/c/tickets
+   ```
+
+   Route shape is `/v1/c/:collection`; use a real collection name from
+   `baerly.config.ts`. See
    [the cheat sheet](cheatsheet.md#http-wire-reach-for-curl-only-when-debugging).
 3. Before deploy: `wrangler secret put SHARED_SECRET` to set the
    production secret, then `wrangler deploy`.

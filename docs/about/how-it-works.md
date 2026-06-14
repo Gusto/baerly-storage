@@ -2,7 +2,7 @@
 title: How it works
 audience: integrator
 summary: The plain-language mental model — a bucket of files plus a library that flips one pointer atomically, and the typed layers from protocol to React.
-last-reviewed: 2026-05-31
+last-reviewed: 2026-06-13
 tags: [concepts, mental-model, protocol]
 related: [thesis.md, "../spec/sync-protocol.md", "../contributing/architecture.md"]
 ---
@@ -42,16 +42,17 @@ file. It writes a few small, separate, immutable objects:
   described by these objects."* The table of contents.
 
 Everything hangs off `current.json`. To know what the database *is*
-right now, you read `current.json`, and it tells you which content,
-log, and index objects are live.
+right now, you read `current.json`, then follow the snapshot and
+integer log range it names. Index objects can help narrow the read,
+but the snapshot plus log are the source of truth.
 
 ## What a write does
 
 Say you insert a row. The library does this, in order:
 
 1. **PUT the content** — write the row's bytes as a new object.
-2. **PUT the log entry** — append "inserted row X" to the history.
-3. **PUT/DELETE the index entries** — update the lookup markers.
+2. **PUT/DELETE the index entries** — update the lookup markers.
+3. **PUT the log entry** — append "inserted row X" to the history.
 4. **Swap the pointer** — update `current.json` to point at the new
    state.
 
@@ -81,11 +82,13 @@ That retry loop is the entire concurrency story. No locks, no
 coordinator, no server holding state — S3's atomic conditional-write
 *is* the coordination. That is why the pitch is "Just a Bucket."
 
-**Retries can't duplicate anything**, because the content key *is* the
-hash of the bytes. If a write succeeds at S3 but the network drops the
-response, the writer retries — and the retry writes the same bytes to
-the same key, a harmless no-op. There is no "did my insert land?"
-ambiguity to resolve.
+**Retries can't duplicate committed rows.** Content keys are hashes,
+so re-writing the same post-image is a harmless no-op. Log entries are
+created with "only if absent"; if the writer retries after it already
+wrote its own single-entry log but lost the `current.json` swap, it can
+recognize that log by its random per-commit session and adopt it. A
+different writer's log at the same sequence is a conflict, not a
+duplicate.
 
 One subtler case the CAS doesn't cover on its own: a *zombie* writer
 — one that paused for a long time (a slow VM, a suspended laptop) and
@@ -136,18 +139,19 @@ Both are handled by **maintenance**, which is two jobs:
 
 Here is the part that matters for the mental model: **maintenance is
 not a daemon.** There is no cron job, no sidecar, no background
-process. It runs *opportunistically inside ordinary writes*
-(write-triggered) — a cheap size-ratio check on the write path, and
-when it trips, a bounded chunk of compaction or GC piggybacks on that
-write. **Reads are pure: they never run maintenance.** An idle
-bucket does nothing and pays nothing. This is what makes the project's
-*"There is no runtime. None."* literally true — even the cleanup lives
-inside the request that triggered it. (Teams that *want* batched
-maintenance windows can call `runScheduledMaintenance` from their own
-scheduler, but it's an opt-in convenience, never a requirement.) The
-design precedent is PostgreSQL's HOT pruning / autovacuum; the full
-rationale is in [`thesis.md`](thesis.md) → "Runtime model: nothing
-between requests."
+process. It runs opportunistically from ordinary writes — a cheap
+size-ratio check on the write path, and when it trips, a bounded chunk
+of compaction or GC piggybacks on that write. Cloudflare can finish that
+chunk after the response with `ctx.waitUntil`; Node runs it inline.
+**Reads are pure: they never run maintenance.** An idle bucket does
+nothing and pays nothing. This is what makes the project's *"There is no
+runtime. None."* literally true: no resident Baerly process exists
+between requests. (Teams that *want* batched maintenance windows can
+call `runScheduledMaintenance` from their own scheduler, but it's an
+opt-in convenience, never a requirement.) The design precedent is
+PostgreSQL's HOT pruning / autovacuum; the full rationale is in
+[`thesis.md`](thesis.md) → "Runtime model: nothing resident between
+requests."
 
 ## Where the types and schema fit
 
@@ -163,8 +167,9 @@ two jobs from a single definition:
   knows the shape.
 
 Add a field to the schema and it lands in both places at once: the
-runtime gate and the static type. There is no separate migration to
-write.
+runtime gate and the static type. Ordinary schema shape changes do not
+need DDL or generated SQL migrations; data migrations are still explicit
+versioned scripts.
 
 ## The typed layers, top to bottom
 

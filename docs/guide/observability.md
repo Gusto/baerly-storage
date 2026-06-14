@@ -2,7 +2,7 @@
 title: Observability
 audience: operator
 summary: "Operator signals, first-response actions, sinks, cost-ballooning anti-patterns, and known gaps. Canonical log-line shape lives in dist/API.md."
-last-reviewed: 2026-06-12
+last-reviewed: 2026-06-13
 tags: [observability, operations, logging]
 related: ["../contributing/conventions/observability.md", "../about/cost-model.md", "../contributing/development.md"]
 ---
@@ -14,20 +14,26 @@ related: ["../contributing/conventions/observability.md", "../about/cost-model.m
 This is the **operator runbook** for observability — what to watch,
 what to do first, sink wiring, cost-ballooning anti-patterns, and
 known gaps. The canonical log-line shape and field reference live in
-[`dist/API.md`](../../packages/server/API.md) → "Observability"
-because consumer LLMs read API.md from `node_modules/` and need the
-contract one `cat` away. Read API.md first; come back here for sink
-recipes.
+[`packages/server/API.md`](../../packages/server/API.md), published as
+`node_modules/@gusto/baerly-storage/dist/API.md`, under
+"Observability" because consumer LLMs read API.md from
+`node_modules/` and need the contract one `cat` away. Read API.md
+first; come back here for sink recipes.
 
 The kernel emits **one canonical log line per HTTP request** at
-`info` level by default. That line carries a `unit` field (currently
-always `"http"`). Scheduled maintenance does not emit a canonical
-request line at all — on an unexpected error `runScheduledMaintenance`
-logs the stack via `console.error` and increments
-`db.maintenance.unexpected_error_total` (a separate `console.warn`
-fires when compaction defers) — so to watch maintenance, rely on the
-maintenance metrics counters described below. In-band write ticks
-contribute fields to the request context and metrics. The Cloudflare adapter is JSON-only;
+`info` level by default (the level rises to `warn` on 4xx and
+`error` on 5xx or a thrown error). Each line carries a `request_id`
+field, an `outcome` (`read` / `committed` / `conflict` / `error`),
+and the per-request `db.*` counters. Scheduled maintenance does not
+emit a canonical request line at all. The in-band write-tick runner
+(`runBoundedMaintenance`) never throws: it swallows expected `Conflict`
+CAS losses silently, and on an unexpected error it increments
+`db.maintenance.unexpected_error_total` and logs the stack via
+`console.error` (a separate `console.warn` fires when compaction
+defers). The opt-in `runScheduledMaintenance` cron runner, by
+contrast, simply awaits `compact()` and `runGc()` and propagates any
+error to the caller's cron handler. Either way, to watch maintenance,
+rely on the maintenance metrics counters described below. The Cloudflare adapter is JSON-only;
 the Node adapter switches to a single-line human-readable shape under
 TTY. Set `LOG_LEVEL` or `observability.level` to tune verbosity.
 
@@ -46,6 +52,64 @@ TTY. Set `LOG_LEVEL` or `observability.level` to tune verbosity.
 For Cloudflare, `wrangler tail` is enough for first response. For
 trend and alerting, send the canonical line to Workers Analytics
 Engine, CloudWatch, Datadog, or an OTel collector.
+
+## First response
+
+Cloudflare:
+
+```sh
+wrangler tail --format=json
+```
+
+Node:
+
+```sh
+LOG_LEVEL=info node server.js
+```
+
+A canonical JSON line looks like this shape (fields vary by adapter and
+outcome):
+
+```json
+{
+  "timestamp": 1718323200000,
+  "level": "info",
+  "category": "baerly.http",
+  "message": "canonical",
+  "request_id": "0f9c1f7e-2c3d-4a8b-9e10-7b6a5c4d3e2f",
+  "duration_ms": 18,
+  "outcome": "read",
+  "status": 200,
+  "method": "GET",
+  "path": "/v1/c/tickets",
+  "db.storage.class_a_ops_total": 0,
+  "db.storage.class_b_ops_total": 3
+}
+```
+
+`summarize()` only emits keys for counters actually observed, so a pure
+read line carries the `db.storage.*` op counters but not the
+`db.compaction.*` counters — those appear only on the write-tick
+maintenance path.
+
+Copyable local filters for JSON logs:
+
+```sh
+# User-visible failures.
+wrangler tail --format=json | jq 'select(.outcome == "error" or (.status >= 500))'
+
+# Deferred folds: snapshot exceeded byte or row ceiling.
+wrangler tail --format=json | jq 'select(."db.compaction.deferred_total" > 0)'
+
+# Duplicate fold compute under contention.
+wrangler tail --format=json | jq 'select(."db.compaction.cas_lost_total" > 0)'
+
+# Requests that consumed Class A storage ops.
+wrangler tail --format=json | jq 'select(."db.storage.class_a_ops_total" > 0)'
+```
+
+For Node stdout, replace `wrangler tail --format=json` with your log
+file or process stream.
 
 ## Sinks
 
@@ -104,6 +168,8 @@ is a free-tier-friendly time-series sink keyed by indices + blobs.
 Wire it via a custom sink that pulls the binding off `env`:
 
 ```ts
+import type { Sink } from "@logtape/logtape";
+
 // worker.ts
 import { baerlyWorker } from "@gusto/baerly-storage/cloudflare";
 import type { BaerlyEnv } from "@gusto/baerly-storage/cloudflare";
@@ -135,7 +201,7 @@ const analyticsSink = (env: AppEnv): Sink => (record) => {
 
 export default baerlyWorker<AppEnv>((env) => ({
   config,
-  verifier: ...,
+  // verifier: cloudflareAccess({ ... }), // add your production verifier
   observability: { sink: analyticsSink(env) },
 }));
 ```
@@ -212,9 +278,9 @@ const datadogSink: Sink = (record) => {
 
 ## Cross-references
 
-- [`docs/conventions/observability.md`](../contributing/conventions/observability.md)
+- [`docs/contributing/conventions/observability.md`](../contributing/conventions/observability.md)
   — contributor-facing rules for adding new emit sites.
-- [`docs/cost-model.md`](../about/cost-model.md) — how class-A counts map to
+- [`docs/about/cost-model.md`](../about/cost-model.md) — how class-A counts map to
   S3 / R2 spend.
 - Public API: JSDoc on `baerlyNode` (Node) and `baerlyWorker`
   (Cloudflare). Both expose `observability?: ObservabilityConfig`.

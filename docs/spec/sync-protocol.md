@@ -2,7 +2,7 @@
 title: Sync protocol
 audience: spec
 summary: Atomic document writes over object storage via per-collection current.json CAS, monotonic seq log, and snapshot folds.
-last-reviewed: 2026-06-12
+last-reviewed: 2026-06-13
 tags: [protocol, sync, current-json, causal-consistency]
 related: [causal-consistency-checking.md, log-entry-shape.md, json-merge-patch.md, writer-fence-adversarial-model.md, prior-art.md, "../adr/004-ephemeral-coordination.md"]
 ---
@@ -115,12 +115,20 @@ For a single-document mutation:
    `tail_bytes`, and PUTs the new `current.json` with
    `If-Match: <etag from step 1>`.
 6. **Verify the writer fence.** If `writer_fence.epoch` changed
-   during the attempt, the writer aborts with `Conflict` rather than
+   during the attempt, the writer rejects with `Conflict` rather than
    continuing under stale authority.
 
 The CAS on step 5 is the linearization point. A reader that sees the
 old `current.json` does not see the mutation. A reader that sees the
 new `current.json` folds the new log entry by integer `seq`.
+
+The fence check is caller-visible authority metadata, not a second
+linearization point. If the fence is bumped before the step-5 CAS, the
+stale writer normally loses the CAS or retries from a fresh head. If the
+fence is bumped after the CAS but before step 6 observes it, the caller
+may receive `Conflict` even though the mutation is already visible. That
+is a conservative "do not keep operating under stale authority" signal,
+not a rollback.
 
 ### Contention and retries
 
@@ -152,8 +160,33 @@ CAS leaves only orphan artifacts.
 | During `current.json` PUT | Old or new `current.json` wins atomically. | Reader sees a complete old or complete new head. |
 
 Garbage collection later marks and sweeps orphan content, stale log
-objects, and superseded snapshots after a grace window. GC is cleanup,
-not correctness.
+objects, and superseded snapshots after a grace window. For any orphan
+whose `seq < log_seq_start` — that is, below the live range and below
+`next_seq` — GC is cleanup, not correctness: the orphan is invisible to
+readers and reclaimed past grace. The wedge case is the opposite: an
+orphan landing *at* `seq == next_seq` (see the known limitation below).
+
+**Known liveness limitation — orphan at `next_seq`.** The "After log
+PUT, before CAS" row above is benign *only* when the orphan lands below
+`next_seq`. There is one case where it does not: an orphan sitting *at*
+`next_seq`. Because every commit mints its lowest entry at
+`seq == current.next_seq`, this covers both a single-entry commit that
+crashes after its `log/<seq>.json` PUT but before the `current.json` CAS
+(**BUG 1**), and the lowest entry of a torn multi-entry batch whose
+`commitBatch` crashes mid-PUT (**BUG 2** — which additionally violates
+the `Db.transaction` all-or-none contract under crash, since one of the
+batch's entries is durable while the others are not). In either case the
+next writer re-reads the same `next_seq`, mints the same `seq`, PUTs
+`log/<seq>.json` with `ifNoneMatch: "*"` → `412`, reads the orphan, and
+refuses to adopt it (it carries a foreign session), so it throws
+`Conflict` and retries to exhaustion. GC sweeps only
+`seq < log_seq_start ≤ next_seq`, so the orphan at `next_seq` is never
+reclaimed and `next_seq` never advances — the collection wedges for
+every future writer. This is a known liveness/wedge bug (not data loss)
+pending atomic commit objects (**ticket-01**); both cases are
+characterized as current behavior by the `BUG 1` and `BUG 2`
+reproductions in
+[`tests/integration/phase5-crash-fuzz.test.ts`](../../tests/integration/phase5-crash-fuzz.test.ts).
 
 ## Read algorithm
 
@@ -172,11 +205,25 @@ For a full-scan read:
    - `D` deletes `doc_id`.
 5. Apply the predicate, order, and limit in memory.
 
-The index path is an optimization of step 3, not a second source of
+The index path is a derived access path over the same snapshot + log
 truth. `planQuery` may choose an index prefix, fetch candidate document
-IDs, and fold only the relevant log entries, but it still re-checks
-the predicate against materialized rows. Stale index markers can make
-the path do extra work; they cannot invent rows.
+IDs, and fold only the relevant log entries, then re-check the
+predicate against materialized rows. Stale extra index markers can make
+the path do extra work and cannot invent rows. Missing index markers can
+hide rows from an index-routed query, so index completeness is a real
+invariant. Newly declared or suspect indexes must be reconciled with
+`rebuildIndex` before operators treat them as complete.
+
+Marker completeness is necessary but not sufficient. For a *filtered*
+(partial) index, the route is sound only when the index's filter
+predicate is implied by the query predicate — otherwise the index LIST
+never yields rows that fall outside the filter, and the post-fetch
+predicate re-check cannot resurrect rows the LIST never returned. The
+planner prefers an implied-or-unfiltered index and, as a last resort
+when it is the only candidate, will still route through a non-implied
+filtered index — which is unsound for that query (it can silently drop
+matching rows). This last-resort path is a known limitation in
+[`packages/server/src/query-planner.ts`](../../packages/server/src/query-planner.ts).
 
 ## Snapshots and compaction
 
@@ -213,8 +260,11 @@ commit, the writer may dispatch `runBoundedMaintenance` with the
 post-CAS context:
 
 - Reads never dispatch maintenance.
-- The fold handles at most `WRITE_TICK_FOLD_ENTRIES_PER_PASS` entries
-  per pass.
+- The fold handles at most
+  `BoundedMaintenanceOptions.maxFoldEntriesPerPass` entries per pass.
+  The Cloudflare/free-safe default is
+  `WRITE_TICK_FOLD_ENTRIES_PER_PASS`; the Node adapter threads the
+  larger `NODE_MAINTENANCE_FOLD_ENTRIES_PER_PASS`.
 - The fold starts only while the snapshot is under both ceilings:
   bytes `C` (`snapshot_bytes <= C`) and rows `E` (checked with a
   look-ahead term, `snapshot_rows + maxFoldEntriesPerPass <= E`).
@@ -264,6 +314,10 @@ These are the load-bearing rules.
    `current.json`. A write storm on one collection does not serialize
    unrelated collections, and cross-collection atomicity is not part
    of the protocol.
+9. **`writer_fence` is not a replay filter.** The current kernel does
+   not stamp log entries with fence epochs. The fence is durable
+   authority metadata checked by writers; readers decide visibility from
+   `current.json`, `seq`, the snapshot, and the live log range.
 
 ## LSNs, wall clocks, and downstream consumers
 

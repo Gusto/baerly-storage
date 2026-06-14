@@ -2,21 +2,22 @@
 title: Cost model
 audience: product
 summary: Per-line-item rates, write-amp meter, compression posture.
-last-reviewed: 2026-06-12
+last-reviewed: 2026-06-13
 tags: [cost, pricing, operations]
 related: [pricing-log.md, thesis.md, graduation.md]
 ---
 
 # Cost model
 
-Baerly's pricing posture in one page. The protocol kernel emits
-three Class A R2 ops per logical write (content body + log entry +
-`current.json` CAS-advance); reads emit Class B ops at a rate that
-depends on cache hits. The companion file
-[docs/pricing-log.md](pricing-log.md) is the one-line-per-change
+Baerly's pricing posture in one page. The unindexed first-try insert
+baseline is three Class A R2 ops (content body + log entry +
+`current.json` CAS-advance); deletes are cheaper, while indexes,
+retries, and first-collection provisioning add bounded ops. Reads emit
+Class B ops at a rate that depends on cache hits. The companion file
+[pricing-log.md](pricing-log.md) is the one-line-per-change
 history of every price or cap update.
 
-All prices below were re-checked **2026-06-12** against the official
+All prices below were re-checked **2026-06-13** against the official
 [Cloudflare R2 pricing](https://developers.cloudflare.com/r2/pricing/),
 [Workers pricing](https://developers.cloudflare.com/workers/platform/pricing/),
 and
@@ -34,7 +35,7 @@ secondary at the M-size operating point.
 | R2 storage | $0.015 / GB-mo | 10 GB-mo |
 | R2 Class A ops (`PutObject`, `CopyObject`, `ListObjects`, multipart) | $4.50 / 1M | 1M / mo |
 | R2 Class B ops (`GetObject`, `HeadObject`) | $0.36 / 1M | 10M / mo |
-| R2 `DeleteObject` | $0 | unlimited — compaction is free |
+| R2 `DeleteObject` | $0 | unlimited — delete cleanup is not the bill driver |
 | R2 egress to internet | $0 | unlimited |
 | Worker requests (Workers Paid) | $0.30 / 1M | 10M / mo (paid plan) |
 | Worker CPU-ms (Workers Paid) | $0.02 / 1M | 30M / mo (paid plan) |
@@ -44,10 +45,11 @@ Class A is the meter that matters. Three reasons:
 
 1. **Highest unit cost of the high-volume items** ($4.50 / 1M vs.
    Class B at $0.36 / 1M vs. Worker requests at $0.30 / 1M).
-2. **Write-amplified by 3 in the protocol** — every logical write
-   produces 3 Class A ops, so it grows fastest with traffic.
-3. **Compaction storms hit it** — a runaway compaction job is a
-   Class A spike, not a Class B spike.
+2. **Write-amplified by the protocol** — an unindexed first-try insert
+   produces 3 Class A ops, so Class A grows fastest with traffic.
+3. **Compaction storms hit it** — a runaway compaction job still does
+   PUT / LIST / CAS work; free `DeleteObject` calls are not the bill
+   driver.
 
 `baerly cost --bucket=<bucket-uri> --collection=<collection>`
 projects the Class A ops/mo, free-tier-aware dollar projection, and
@@ -63,11 +65,16 @@ Baerly commits to a published, architecturally-enforced ceiling so
 the cost line is bounded, not best-effort. Two bounds, both
 verified in CI:
 
-- **3 storage ops per logical write.** PUT content, PUT log entry,
-  CAS-advance `current.json`. Snapshot writes amortize across many
-  log entries and are paid by the compactor, not the writer. The
-  `db.write.class_a_ops_per_logical_write` histogram alerts above
-  p99 > 5.
+- **Small constant storage ops per logical write.** The unindexed
+  first-try insert baseline is PUT content, PUT log entry, and
+  CAS-advance `current.json`. Deletes can be cheaper; indexes,
+  retries, and first-collection provisioning add bounded mutations.
+  Snapshot writes amortize across many log entries and are paid by
+  the compactor, not the writer. The
+  `db.write.class_a_ops_per_logical_write` histogram is **emitted**
+  on every commit (verified in CI by `writer.test.ts`); operators
+  who pipe it to a metrics sink can alert when p99 exceeds ~5; that
+  threshold is a recommendation, not a shipped or CI-gated check.
 - **`< 1 Class A op / writer / hour` for idle readers.** Real
   expectation is exactly zero — readers walk `current.json` plus the
   snapshot plus the live-tail log via deterministic GETs, never
@@ -168,7 +175,7 @@ running that shape should set `compression: true` on the client.
 
 **Default.** `false`. Single-line override on the client config.
 
-This decision is logged at [docs/pricing-log.md](pricing-log.md)
+This decision is logged at [pricing-log.md](pricing-log.md)
 when it ships in `@gusto/baerly-storage/client`.
 
 ## Two operating points, two stories
@@ -189,15 +196,24 @@ this population, **the per-app floor is the cost line, not the
 per-write rate.** Costs at N=30 mostly-idle apps (a realistic
 internal-tools fleet at a 10,000-person company):
 
+Every cell below is on the **same N=30 basis** so the columns are
+comparable. Where a provider has a non-zero per-app floor that is
+usage-based or per-project rather than a single flat fee, the N=30
+figure is shown as a **per-app basis × 30 estimate** (marked
+*est.*), derived from that provider's documented per-app floor —
+not a hard total we assert as fact. Per-project floors of $0 stay
+$0 at any N. Re-check the per-app floors before quoting any total
+externally.
+
 | Service | Cost at N=30 idle apps | Notes |
 |---|---|---|
-| **Baerly (Cloudflare)** | **~$5/mo** | One Workers Paid floor amortized across all N apps. Class A/B ops effectively zero at idle (`< 1 op/writer/hour`, [CI-gated](#cost-ceiling)). |
+| **Baerly (Cloudflare)** | **~$5/mo** | One Workers Paid floor amortized across all N apps (paid once, not ×30). Class A/B ops effectively zero at idle (`< 1 op/writer/hour`, [CI-gated](#cost-ceiling)). |
 | **Baerly (self-hosted Node)** | **$0/mo** (your hardware) | No platform floor; idle is free against any S3-API bucket. |
-| Cloudflare D1 | ~$5/mo | Same Workers Paid floor; ties Baerly here, **but only if all N apps are Workers-native**. No portable exit. |
-| Supabase Free | $0 | Apps **pause** after 1 week inactivity. Pause = the app is dead until somebody clicks "resume." Fine for some workloads, fatal for "share link with the CFO." |
-| Supabase Pro | $25 × N = **~$750/mo** | Always-on Postgres has no scale-to-zero. |
-| Neon Launch | $5 × N = **~$150/mo** (best case) | Scale-to-zero helps; CU-hours still meter on first request after a cold pause. |
-| Firebase Spark | $0 | Project **pauses** when reads cross 50k/day. Pause story matches Supabase Free; harder to predict because it's quota-driven. |
+| Cloudflare D1 | ~$5/mo | Same single Workers Paid floor amortized across all N apps; ties Baerly here, **but only if all N apps are Workers-native**. `wrangler d1 export` gives a SQL dump, but leaving is a dump-and-reload migration, not a zero-cooperation exit. |
+| Supabase Free | $0 | Two free projects per org; not a fleet posture for N=30. |
+| Supabase Pro | ≈ $25/app × 30 ≈ **~$750/mo** *(est.)* | Paid plans bill per project (each carries its own always-on Postgres compute), so a 30-app fleet pays ~30 per-project floors. Derived from the documented ~$25/project Pro floor; usage on top varies. |
+| Neon Launch | ≈ $5/app × 30 ≈ **~$150/mo** *(est.)* | Usage-based with no monthly minimum and scale-to-zero, but each intermittently-awake app still meters CU-hours; ~$5/app is a typical small-app monthly figure, so a 30-app fleet lands near ~$150/mo. Varies with how often each app wakes. |
+| Firebase Spark | $0 while inside no-cost Firestore quotas | Official quota is 1 GiB stored, 20k writes/day, 50k reads/day, 20k deletes/day, **per project** — a 30-app fleet can stay $0 only while every app stays inside quota. |
 
 The idle × portfolio multiplier is where Baerly's "rounds to zero"
 property does its real work. A team with 30 internal tools doesn't
@@ -228,11 +244,11 @@ $5 Workers Paid floor plus R2 Class A/B ops dominate. Rough
 |---|---|---|---|
 | **Baerly (this design)** | Workers Paid | **~$19** | R2 Class A/B dominate. |
 | Cloudflare D1 | Workers Paid | ~$5 | M is way under D1's 25B reads / 50M writes free tier; just the plan floor. SQL trade-off is on you. |
-| Supabase Free | Free | $0 | Fits 100 MB and 100 MAU < 50k cap. Pauses after 1 week inactivity. |
+| Supabase Free | Free | $0 | Fits storage, but the free plan is not a production fleet posture. |
 | Supabase Pro | $25 base | ~$25 | Always-on Postgres + Auth + Storage. Roughly parity with Baerly + opt-in realtime. |
-| Neon Launch | $5 floor | ~$5–10 | Scale-to-zero helps for bursty traffic; CU-hours add up if continuous. |
-| Firebase Blaze | PAYG | ~$26 | $0.18 × (14.4M / 100k) reads ≈ $26 + ~$1.30 writes. Roughly 1.3× Baerly. |
-| Firebase Spark | Free | $0 if under 50k reads/day; M's 480k/day blows the cap and the project pauses. |
+| Neon Launch | usage-based | ~$15 typical intermittent small app | Scale-to-zero helps for bursty traffic; CU-hours add up if continuous. |
+| Firebase Blaze | PAYG | ~$5 *(approx.)* | 14.4M reads × $0.03/100k ≈ $4.30 + 720k writes × $0.09/100k ≈ $0.65 ≈ ~$5. Roughly Baerly ÷ 4 — cheaper per-op at M. Rates: Firestore Standard, us-central1; re-check before quoting. |
+| Firebase Spark | Free | $0 if under 50k reads/day; M's 480k/day blows the no-cost read quota. |
 
 Read this as positioning, not a cost claim:
 
@@ -243,14 +259,23 @@ Read this as positioning, not a cost claim:
   multi-instance causal consistency, bytes-in-your-bucket) AND
   the price.
 - **M workload:** Baerly (~$19) is ~4× more expensive than D1
-  (~$5) **where D1 is available** — and D1 is Workers-only with
-  no portable exit. Off-Workers (AWS, on-prem, self-hosted Node,
+  (~$5) **where D1 is available** — and D1 is Workers-runtime-only:
+  `wrangler d1 export` gives a SQL dump, but there's no
+  bucket-native data layer or live CDC handoff, so leaving is a
+  dump-and-reload migration, not the bytes-already-in-your-bucket,
+  zero-cooperation exit Baerly offers. Off-Workers (AWS, on-prem, self-hosted Node,
   any environment that doesn't tolerate Cloudflare lock-in),
   managed Postgres at $25+/mo behind a vendor's managed catalog
   is the relevant comparison. A user willing to accept
   Cloudflare lock-in and a SQL schema should **switch to D1** —
   it's strictly cheaper, and [that move is the success path,
   not a churn event](thesis.md#what-prototype-tier-storage-needs).
+  Firebase Blaze is also cheaper than Baerly on raw per-op at M
+  (~$5 vs. ~$19, recomputed above) — but the argument here was
+  never "Baerly is cheapest per-op." It's idle × portfolio,
+  portability, and availability; on a per-op basis at M, both D1
+  and Firebase undercut Baerly, and that's expected — M is past
+  the design center.
 - **L workload:** Baerly's R2 Class B alone (~$1 500) costs more
   than a Postgres Pro plan — read-heavy traffic on a per-doc
   fan-out protocol is disproportionately expensive vs. a B-tree
@@ -258,9 +283,16 @@ Read this as positioning, not a cost claim:
   signal to graduate.
 - **Portability / switching cost:** This axis favors Baerly
   across all workload sizes. Object storage is the rare primitive
-  every major cloud implements with the same abstraction (the S3
-  API); your bytes live in your bucket and leaving needs no
-  vendor cooperation. D1, Supabase, Neon, and Firebase are
+  with a common dialect — the S3 API — that S3, R2, and MinIO all
+  speak with the conditional-write (CAS) semantics Baerly's
+  coordination requires; those are the stores the CAS contract is
+  proven against and that `baerly doctor --bucket` gates on (see
+  [ADR-004](../adr/004-ephemeral-coordination.md)). Azure Blob
+  speaks a non-S3 dialect and GCS's S3-interop endpoint exposes
+  conditional writes as read-only, so both need a dedicated
+  adapter that doesn't exist yet. The portability point still
+  holds where it counts: your bytes live in your bucket and
+  leaving needs no vendor cooperation. D1, Supabase, Neon, and Firebase are
   excellent, but they are proprietary runtimes — choosing one is
   a switching-cost decision. Even at M-size where D1 wins on
   raw per-write price, the portability axis sits orthogonal to

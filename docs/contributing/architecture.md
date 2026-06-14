@@ -2,7 +2,7 @@
 title: Architecture overview
 audience: coder
 summary: Module dependency graph and lifecycle of db.collection(...).insert().
-last-reviewed: 2026-06-12
+last-reviewed: 2026-06-13
 tags: [architecture, lifecycle, module-map]
 related: ["../spec/sync-protocol.md", extending.md, features.md]
 ---
@@ -27,9 +27,10 @@ protocol is specified in
 [spec/sync-protocol.md](../spec/sync-protocol.md) and proven causally consistent in
 [spec/causal-consistency-checking.md](../spec/causal-consistency-checking.md).
 
-Built like git: content-addressed documents, immutable log entries, and a single CAS-advanced pointer to HEAD. This shape is the same recipe Iceberg, Delta
-Lake, Turbopuffer, Litestream, and SlateDB converged on after S3
-went strongly consistent in December 2020 (see
+Built like git: content-addressed documents, immutable log entries, and
+a single CAS-advanced pointer to HEAD. This shape is the same recipe
+Iceberg, Delta Lake, Turbopuffer, Litestream, and SlateDB converged on
+after S3 went strongly consistent in December 2020 (see
 [spec/s3-features-used.md](../spec/s3-features-used.md)). The novel
 part is not the kernel; it is shaping the system so the public API
 stays small enough that an LLM can use it from `.d.ts` alone (see
@@ -43,10 +44,12 @@ is ~5 KB gzipped. The whole public API surface fits in a single
 
 ## Runtime model
 
-**There is no runtime. None.** All coordination runs inside a single
-HTTP request or explicit SDK maintenance invocation — no daemon, no
-leader, no coordinator service. A request enters the Worker/Node
-handler; the handler constructs a
+**There is no runtime. None.** All coordination is bounded to the
+request path or an explicit SDK maintenance invocation — no daemon, no
+leader, no coordinator service. Cloudflare can finish a write-triggered
+maintenance tick after the response with `ctx.waitUntil`; Node runs it
+inline unless the host wraps dispatch differently. A request enters the
+Worker/Node handler; the handler constructs a
 `Db` via `Db.create({ storage, config })`; the `Db` reads a fresh
 `current.json` from the bucket (no warm-cache shortcut for
 correctness — `consistency: "strong"` does this explicitly); it
@@ -141,20 +144,24 @@ own package. See `packages/cli/AGENTS.md` and
    operates under, mints a `LogEntry` at `next_seq`, PUTs the
    content body under
    `app/<app>/tenant/<tenant>/manifests/<collection>/content/<sha>.json`,
+   PUTs or deletes index artifacts under
+   `app/<app>/tenant/<tenant>/manifests/<collection>/index/...`,
    PUTs the log entry under
    `app/<app>/tenant/<tenant>/manifests/<collection>/log/<seq>.json`
    with `If-None-Match: "*"`, and CAS-advances `current.json` to the
    new `next_seq` (preserving the `log_seq_start` invariant and
    updating `tail_bytes`). Retries up to `S3_REQUEST_MAX_RETRIES`
-   (default 8) on transient CAS conflict; fails fast with
-   `BaerlyError{code:"Conflict"}` on a `writer_fence.epoch` bump.
+   (default 8) on transient CAS conflict. A `writer_fence.epoch` bump
+   returns `BaerlyError{code:"Conflict"}`; if the bump lands after this
+   writer's CAS, the mutation may already be visible and the conflict is
+   a conservative stale-authority signal rather than a rollback.
 
 3. **Read path: `Collection.where(p).all()`**
-   (`packages/server/src/query.ts`): reads `current.json`, walks
-   `[log_seq_start, next_seq)` from object storage, folds the
-   `LogEntry` stream into the live row set (`I` / `U` apply the
-   doc body; `D` removes the doc), evaluates the predicate AST
-   from `where()` / `order()` / `limit()`, and returns the
+   (`packages/server/src/query.ts`): reads `current.json`, loads the
+   snapshot it names, walks `[log_seq_start, next_seq)` from object
+   storage, folds the `LogEntry` stream into the live row set
+   (`I` / `U` apply the doc body; `D` removes the doc), evaluates the
+   predicate AST from `where()` / `order()` / `limit()`, and returns the
    filtered rows.
 
 #### Planner step (between the predicate and the log fold)
@@ -169,9 +176,12 @@ to LIST under the encoded index prefix and resolve only the matching
 doc ids — or `FullScanPlan{reason}` — which falls through to the
 snapshot+log fold. Every fetched row passes through
 `matchesWire(wire, doc)` post-fetch; the re-check is load-bearing
-(it defends against stale index entries AND consumes the planner's
-residue `postFilter`). The plan shape and diagnostic `reason` values
-are documented in [features.md](features.md) §"Secondary indexes".
+(it defends against stale extra index entries AND consumes the
+planner's residue `postFilter`). Missing index entries can hide rows
+from an index-routed query, so newly declared or suspect indexes must
+be reconciled with `rebuildIndex` before operators treat them as
+complete. The plan shape and diagnostic `reason` values are documented
+in [features.md](features.md) §"Secondary indexes".
 
 The HTTP `/v1/since?collection=<name>&cursor=<opaque>` long-poll route in
 `packages/server/src/http/since.ts` is the change-notification
@@ -201,14 +211,16 @@ The bounded pass composes the two existing primitives:
   (`WRITE_TICK_GC_MAX_MARKS` / `..._SWEEPS`) and run on its
   **own write-count cadence** (`WRITE_TICK_GC_INTERVAL`,
   boundary-crossing) **decoupled from folds**. It deletes content
-  bodies and log entries no longer reachable from any live row
-  set or fence epoch.
+  bodies, stale log entries, and orphan snapshots no longer reachable
+  from `current.json`.
 - `compact()` (`packages/server/src/compactor.ts`) — folds a
-  **sliced** tail (`maxEntriesPerRun`) into the snapshot and
-  advances `log_seq_start`. The unsliceable snapshot rebuild is
+  **sliced** tail into the snapshot and advances `log_seq_start`
+  (the slice size is `maxFoldEntriesPerPass`, passed to `compact()`
+  as `maxEntriesPerRun`). The unsliceable snapshot rebuild is
   gated by a **static two-way ceiling** (`snapshot_bytes <= C`
-  AND `snapshot_rows <= E`), overridable by
-  `BAERLY_MAINTENANCE_MAX_FOLD_BYTES`.
+  AND `snapshot_rows + maxFoldEntriesPerPass <= E`). The byte ceiling is
+  overridable by `BAERLY_MAINTENANCE_MAX_FOLD_BYTES`; the row ceiling
+  is a kernel constant.
 
 The fold's pointer advance is a **full-fence CAS**. A lost fold
 is abandoned (**no lease**); its orphan snapshot is reclaimed by
@@ -265,8 +277,10 @@ constraint: anything platform-specific has to live in an adapter.
   [spec/causal-consistency-checking.md](../spec/causal-consistency-checking.md).
 - **Split-brain fencing:** `writer_fence.epoch` inside `current.json`.
   `claimWriter()` (re-exported from `@baerly/protocol`) bumps the
-  epoch; an in-flight commit holding the prior epoch fails fast on
-  the post-CAS fence check with `BaerlyError{code:"Conflict"}`.
+  epoch; an in-flight commit holding the prior epoch returns
+  `BaerlyError{code:"Conflict"}` on the post-CAS fence check. That
+  check is authority/provenance metadata, not a log eligibility filter:
+  current log entries do not carry a fence epoch.
 - **JSON Merge Patch semantics:** `packages/protocol/src/json.ts` —
   RFC 7386 with the array-replacement convention; see
   [spec/json-merge-patch.md](../spec/json-merge-patch.md).
@@ -297,7 +311,7 @@ constraint: anything platform-specific has to live in an adapter.
 - `BaerlyError` / `BaerlyErrorCode` (`packages/protocol/src/errors.ts`):
   discriminated-union error type. Branch on `error.code`.
 - `loadSnapshotAsMap(storage, key, expectedCollection, signal?)`
-  (`packages/server/src/compactor.ts`): `@public` shared utility —
+  (`packages/server/src/snapshot.ts`): `@public` shared utility —
   fetches a snapshot from object storage, verifies the SHA-256
   baked into the filename, and returns a `Map<_id, body>`. Internal
   callers: the compactor's fold-base load, the reader
@@ -325,8 +339,9 @@ For a `Db` constructed with `app="tickets"` and `tenant="acme"`:
 
 Compaction (`packages/server/src/compactor.ts`) folds adjacent log
 entries into checkpoints and advances `log_seq_start`. GC
-(`packages/server/src/gc.ts`) deletes content bodies and log entries
-that are no longer reachable from any live row set or fence epoch.
+(`packages/server/src/gc.ts`) deletes content bodies, stale log
+entries, and orphan snapshots that are no longer reachable from
+`current.json`.
 Both are driven in-band on the write path by
 `runBoundedMaintenance` (`packages/server/src/maintenance.ts`);
 the `runScheduledMaintenance` SDK is an opt-in alternative

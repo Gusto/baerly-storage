@@ -48,11 +48,9 @@ export interface LogEntry {
   op: "I" | "U" | "D";
 
   /**
-   * Collection name — the pgoutput RELATION analogue. Today derived
-   * from the path segment immediately under the manifest prefix
-   * (the part of `ref.key` before the first `/`); falls back to
-   * `ref.bucket` for flat keys with no separator. The table API
-   * makes collections first-class.
+   * Collection name — the pgoutput RELATION analogue. Today this is
+   * the collection bound to the `current.json` whose `next_seq` minted
+   * the entry. The table API makes collections first-class.
    */
   collection: string;
 

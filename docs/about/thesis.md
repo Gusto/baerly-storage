@@ -10,11 +10,12 @@ related: [cost-model.md, "../contributing/conventions/change-discipline.md"]
 # Baerly — product thesis
 
 Baerly is a vendorless document database that runs over any
-S3-compatible bucket. Your data lives in your bucket; the protocol
-kernel is small enough that an LLM can use the public API zero-shot
-from the `.d.ts` files alone. Day-1 templates ship for Cloudflare
-Workers (zero infra, free tier, one command to deploy) and
-self-hosted Node (your hardware, your bucket, your auth). AWS
+S3-compatible bucket that passes the live CAS probe in
+`baerly doctor --bucket`. Your data lives in your bucket; the
+protocol kernel is small enough that an LLM can use the public API
+zero-shot from the `.d.ts` files alone. Day-1 templates ship for
+Cloudflare Workers (zero infra, free tier, one command to deploy)
+and self-hosted Node (your hardware, your bucket, your auth). AWS
 Lambda / Bun / Deno / Fly are not shipped targets yet; they are a
 paper-thin adapter package away from the same protocol kernel.
 
@@ -36,8 +37,8 @@ between toy and production.
 You need three primitives to build software in 2026: compute,
 tokens, and storage. Compute has an answer (FaaS — pay per request,
 scale to zero). Tokens have an answer (POST your prompt, get a
-response). **Storage is the hole.** localStorage doesn't survive a
-share link; LLM-generated Postgres + RLS is failure-that-
+response). **Storage is the missing primitive.** localStorage doesn't
+survive a share link; LLM-generated Postgres + RLS is failure-that-
 masquerades-as-no-data; a real database invites an agent to
 generate the *ceremony* of a real service that the operator never
 sees. Baerly is a storage primitive sized for this category.
@@ -57,11 +58,11 @@ The criteria the rest of this document is shaped around:
    *Graduation is the success path, not a failure mode.* A
    prototype-tier app that crossed the ceiling and moved to D1
    is a Baerly **win**, not a churn event. The "no hostage"
-   promise is what makes the prototype-tier bet safe to take. The
-   `LogEntry` shape is a Debezium-style CDC envelope
-   (`{lsn, commit_ts, op, collection, doc_id, after?, before?, key_old?, origin?, session, seq}`)
-   precisely so `baerly export --target=postgres` is mechanical,
-   not aspirational.
+  promise is what makes the prototype-tier bet safe to take. Snapshot
+  export is shipped today. The `LogEntry` shape is a Debezium-style CDC envelope
+  (`{lsn, commit_ts, op, collection, doc_id, after?, before?, key_old?, origin?, session, seq}`)
+  precisely so the incremental CDC exit remains mechanical, not
+  aspirational.
 4. **A small, typed, closed-vocabulary API.** A surface that doesn't
    fit in working memory is a surface that gets called wrong —
    whether the program calling it is an LLM mid-completion or a
@@ -98,15 +99,10 @@ The criteria the rest of this document is shaped around:
    `node-cron` install, or any "step 2: also configure…" — it's the wrong
    shape for this audience. The closest production precedent is
    PostgreSQL autovacuum / HOT pruning: *the user never schedules
-   ordinary storage maintenance*. Baerly generalizes that to object
-   storage: maintenance runs
-   opportunistically inline on whatever traffic the bucket sees, gated so
-   idle buckets pay zero. PostgreSQL HOT pruning (`heap_page_prune_opt` in
-   [pruneheap.c](https://github.com/postgres/postgres/blob/master/src/backend/access/heap/pruneheap.c))
-   is the canonical design precedent — opportunistic in-band cleanup on
-   reads, gated by cheap heuristics, bounded latency impact (~1.6% of
-   execution time in worst-case dead-tuple-heavy workloads per the
-   PostgreSQL HOT README).
+   ordinary storage maintenance*. Baerly generalizes the unscheduled,
+   bounded-maintenance part of that precedent to object storage:
+   maintenance runs opportunistically on writes, gated so idle buckets
+   pay zero. Reads stay pure.
 
 Plus one anti-feature:
 
@@ -212,31 +208,39 @@ catalog — the bucket already exists.
 
 **Vendor-independent.** D1 / Supabase / Neon / PlanetScale /
 Firebase are great, and they are all proprietary runtimes. Object
-storage is the rare primitive every cloud implements with the same
-abstraction (the S3 API), and the substance is portable by
-definition. Your bytes in your bucket — no managed catalog, no
-proprietary runtime, leaving needs no vendor cooperation.
+storage is the rare primitive with a common dialect — the S3 API —
+that S3, R2, and MinIO speak with the conditional-write semantics
+Baerly's coordination needs; those are the stores the CAS contract
+is proven against and that `baerly doctor --bucket` gates on (see
+[ADR-004](../adr/004-ephemeral-coordination.md)). Azure Blob's
+non-S3 dialect and GCS's read-only S3-interop conditional writes
+each need a dedicated adapter that doesn't exist yet — but the
+substance is portable by definition. Your bytes in your bucket — no
+managed catalog, no proprietary runtime, leaving needs no vendor
+cooperation.
 
-## Runtime model: nothing between requests
+## Runtime model: nothing resident between requests
 
 There is no runtime. None. And there is no scheduler either.
 
-Every coordination decision — fencing, conflict resolution, atomic commit,
-log emission, index maintenance, garbage collection, compaction —
-completes within the lifetime of a single write request (reads never tick).
-The kernel holds no in-memory state that's load-bearing for correctness;
-a cold start reads correctly the same as a warm one. The only persistent
-component is the bucket. **No cron, no sidecar, no `setInterval`, no
-scheduled handler is required for correctness.** Maintenance runs
-opportunistically inline on the write path — **reads are pure; they
-never tick** — gated by a size-ratio threshold so idle buckets pay
-zero. Keeping reads pure is exactly what preserves the published
-idle-reader cost bound. The pattern is PostgreSQL HOT pruning generalized to object storage:
-cheap gate on hot-path operations, bounded work when the gate fires, no
-operator chore to schedule it. Users who *want* batched maintenance
-windows can invoke `runScheduledMaintenance` from their own scheduler —
-it's an SDK function, never a deployment requirement. Scaffolds ship
-with zero cron wiring.
+Every coordination decision — fencing, conflict resolution, atomic
+commit, log emission, index maintenance, garbage collection,
+compaction — is bounded to the request path. Cloudflare may finish the
+maintenance tick after the response with `ctx.waitUntil`; Node runs it
+inline unless a host wraps dispatch differently. The kernel holds no
+in-memory state that's load-bearing for correctness; a cold start reads
+correctly the same as a warm one. The only persistent component is the
+bucket. **No cron, no sidecar, no `setInterval`, no scheduled handler is
+required for correctness.** Maintenance runs opportunistically on the
+write path — **reads are pure; they never tick** — gated by a size-ratio
+threshold so idle buckets pay zero. Keeping reads pure is exactly what
+preserves the published idle-reader cost bound. The pattern is
+PostgreSQL HOT pruning generalized to object storage in the one way
+that matters here: cheap gate on hot-path operations, bounded work when
+the gate fires, no operator chore to schedule it. Users who *want*
+batched maintenance windows can invoke `runScheduledMaintenance` from
+their own scheduler — it's an SDK function, never a deployment
+requirement. Scaffolds ship with zero cron wiring.
 
 This is unusual. Apache Iceberg requires a catalog service.
 Delta Lake on S3 requires a DynamoDB lock table. SlateDB is
@@ -262,14 +266,15 @@ single CAS-advanced pointer to HEAD.
   the Node HTTP closure (`http.js`) ~94 KB gzipped.
   Your Worker (or Node process) imports it directly. No binary, no
   separate process, no pool / cache / leader. The kernel is
-  stateless: ~8 µs router dispatch, then the 5–50 ms waiting on S3,
-  and done. The runtime is a rounding error against the bucket.
+  stateless; the request mostly waits on object storage. The runtime
+  is a rounding error against the bucket.
 - **Graduation with no hostage.** The `LogEntry` shape was fixed
   early as a Debezium-style CDC envelope:
   `{lsn, commit_ts, op, collection, doc_id, after?, before?, key_old?, origin?, session, seq}`. Not
-  aesthetic — operational. `baerly export --target=postgres` is a
-  mechanical translator, not a marketing line. See
-  [docs/spec/log-entry-shape.md](../spec/log-entry-shape.md).
+  aesthetic — operational. Snapshot export to SQL is shipped; the log
+  shape keeps incremental CDC export mechanical rather than a marketing
+  line. See
+  [log-entry-shape.md](../spec/log-entry-shape.md).
 - **Strong consistency under contention.** Old log entries roll up
   into snapshots through bounded write-triggered maintenance. Before
   December 2020,
@@ -280,8 +285,8 @@ single CAS-advanced pointer to HEAD.
   catalog dissolves into S3 itself, and Iceberg, Delta Lake,
   Turbopuffer, Litestream, and SlateDB all converged on this shape
   after S3 went strongly consistent. See
-  [docs/spec/sync-protocol.md](../spec/sync-protocol.md) and
-  [docs/spec/s3-features-used.md](../spec/s3-features-used.md).
+  [sync-protocol.md](../spec/sync-protocol.md) and
+  [s3-features-used.md](../spec/s3-features-used.md).
   Per-collection CAS scope ([ADR-001](../adr/001-tenant-cas-isolation.md))
   is what keeps the idle-poll bound tractable: one cheap key per
   collection, not contention on a global mutex.
@@ -323,8 +328,9 @@ single CAS-advanced pointer to HEAD.
   default change-notification channel; a WebSocket tier would be a
   future opt-in with a documented cost-cliff note. Polling is always
   correct.
-- **No automatic schema migration.** Migrations are versioned
-  scripts.
+- **No generated schema-migration ceremony.** Ordinary schema shape
+  changes are config and validator edits, not DDL. Data migrations are
+  explicit versioned scripts.
 - **No multi-bucket replication / fan-out / mirroring.** R2's own
   replication tier handles read fan-out.
 - **No on-disk caches.** Object storage + the platform's HTTP cache

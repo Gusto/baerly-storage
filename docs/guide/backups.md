@@ -2,7 +2,7 @@
 title: Backups via baerly admin dump
 audience: operator
 summary: Safe NDJSON backup, retention, restore, and restore-drill defaults.
-last-reviewed: 2026-06-12
+last-reviewed: 2026-06-13
 tags: [operations, backups, restore]
 related: ["../about/cost-model.md", "operations.md"]
 ---
@@ -43,8 +43,8 @@ Wrapper `/opt/baerly/bin/backup.sh`:
 set -euo pipefail
 umask 077
 
-# cron runs with cwd=$HOME (or /); `pnpm baerly` is a workspace script,
-# so cd into the app dir for pnpm to resolve it from the project package.json.
+# cron runs with cwd=$HOME (or /); cd into the app dir so `baerly`
+# picks up the project's baerly.config.ts (paths are cwd-relative).
 cd /opt/baerly/app
 
 APP="$1"
@@ -61,17 +61,18 @@ FINAL="${OUT_DIR}/${APP}-${TENANT}-${COLLECTION}-${DATE}.ndjson"
 TMP="$(mktemp "${FINAL}.tmp.XXXXXX")"
 trap 'rm -f "$TMP"' EXIT
 
-pnpm baerly admin dump \
+baerly admin dump \
   --bucket="$BAERLY_BUCKET" \
   --app="$APP" \
   --tenant="$TENANT" \
   --collection="$COLLECTION" \
   > "$TMP"
 
-shasum -a 256 "$TMP" > "${TMP}.sha256"
 mv "$TMP" "$FINAL"
-mv "${TMP}.sha256" "${FINAL}.sha256"
 trap - EXIT
+# Checksum after the rename so the sidecar records the final basename,
+# not the mktemp path. The restore drill verifies with a matching `cd`.
+( cd "$(dirname "$FINAL")" && shasum -a 256 "$(basename "$FINAL")" > "$(basename "$FINAL").sha256" )
 
 find "$OUT_DIR" -name "${APP}-${TENANT}-${COLLECTION}-*.ndjson" \
   -type f -mtime +"${RETAIN_DAYS}" -delete
@@ -94,16 +95,19 @@ disk as the app.
 failed dump never gets atomically moved into place. `admin dump` exits
 `0` on success, `1` on `InvalidConfig` (bad bucket URI / missing args),
 `2` on storage / network failure, and `3` on a protocol invariant — the
-distinct codes let a wrapper branch on the failure class. Pass `--json`
-to switch the success / error envelope to structured JSON on stdout /
-stderr when a wrapper or agent consumes the output programmatically.
+distinct codes let a wrapper branch on the failure class. Do **not** use
+`--json` when redirecting `admin dump` stdout to an `.ndjson` file: the
+dump body is the data stream, and JSON-mode envelopes can contaminate
+the backup. Use text mode for backup files. Use `--json` only for
+commands whose stdout is not the dump stream, or call the programmatic
+dump helper with separate data and status streams.
 
 ## Restore
 
 Restore into an empty bucket/prefix:
 
 ```sh
-pnpm baerly admin restore \
+baerly admin restore \
   --bucket=s3://baerly-recovery \
   --app=acme \
   --tenant=t1 \
@@ -130,9 +134,10 @@ At least once per retention window:
 
 ```sh
 DUMP=/var/backups/baerly/acme-t1-tickets-2026-06-12T030000Z.ndjson
-shasum -a 256 -c "${DUMP}.sha256"
+# The sidecar records the dump's basename, so verify from its directory.
+( cd "$(dirname "$DUMP")" && shasum -a 256 -c "$(basename "$DUMP").sha256" )
 
-pnpm baerly admin restore \
+baerly admin restore \
   --bucket=s3://baerly-restore-drill \
   --app=acme \
   --tenant=t1-restore-drill \
@@ -140,7 +145,7 @@ pnpm baerly admin restore \
   --force \
   < "$DUMP"
 
-pnpm baerly admin fsck \
+baerly admin fsck \
   --bucket=s3://baerly-restore-drill \
   --app=acme \
   --tenant=t1-restore-drill \
@@ -150,7 +155,7 @@ pnpm baerly admin fsck \
 For byte-level confidence, dump the restored collection and compare:
 
 ```sh
-pnpm baerly admin dump \
+baerly admin dump \
   --bucket=s3://baerly-restore-drill \
   --app=acme \
   --tenant=t1-restore-drill \

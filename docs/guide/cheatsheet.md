@@ -2,7 +2,7 @@
 title: Cheat sheet
 audience: integrator
 summary: One-screen quick reference — verbs, modifiers, errors, and the HTTP wire. The thing to show someone in 30 seconds.
-last-reviewed: 2026-06-02
+last-reviewed: 2026-06-13
 tags: [quickref, integrator]
 related: ["add-to-existing-cf-worker.md", "auth.md"]
 ---
@@ -10,8 +10,9 @@ related: ["add-to-existing-cf-worker.md", "auth.md"]
 # Cheat sheet
 
 The fastest tour of the public surface. For the full reference (recipes,
-adapter factories, observability fields) read `dist/API.md` in the
-published package: `cat node_modules/@gusto/baerly-storage/dist/API.md`.
+adapter factories, observability fields) read
+[`packages/server/API.md`](../../packages/server/API.md), published as
+`node_modules/@gusto/baerly-storage/dist/API.md`.
 
 ## Define the backend
 
@@ -21,6 +22,8 @@ import { defineConfig } from "@gusto/baerly-storage/config";
 
 export default defineConfig({
   app: "tickets",
+  tenant: "main",                 // required: default tenant pin
+  auth: "none",                   // required: "none" | "shared-secret" (custom verifiers go on the adapter factory's `verifier:`)
   collections: { tickets: {} },   // add a `schema:` to type + validate rows
   target: "cloudflare",           // or "node"
 });
@@ -117,7 +120,9 @@ you; reach for raw URLs only when scripting.
 
 ## Where to look next
 
-- Full API reference — `node_modules/@gusto/baerly-storage/dist/API.md`
+- Full API reference —
+  [`packages/server/API.md`](../../packages/server/API.md), published
+  as `node_modules/@gusto/baerly-storage/dist/API.md`
 - [`add-to-existing-cf-worker.md`](add-to-existing-cf-worker.md) — bolt baerly onto an existing Worker
 - [`auth.md`](auth.md) — `config.auth` postures
 - [`../../examples/`](../../examples) — runnable scaffolds

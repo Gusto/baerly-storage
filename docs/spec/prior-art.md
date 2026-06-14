@@ -2,7 +2,7 @@
 title: Prior-art differentiation
 audience: spec
 summary: IDS-shaped consolidated differentiation against known prior art for the C1, C2, and C3 mechanisms.
-last-reviewed: 2026-06-12
+last-reviewed: 2026-06-13
 tags: [protocol, patent, prior-art]
 related: [sync-protocol.md, writer-fence-adversarial-model.md]
 ---
@@ -34,8 +34,8 @@ C3:
 - **C3** — Reverse-LIST encoding of log sequence numbers using a
   descending base-32 alphabet so that the storage layer's native
   ascending `LIST` is a cheap descending tail-walk. Implemented in
-  `packages/server/src/indexes.ts`; benchmark evidence under
-  `bench/lsn-reverse-walk/` with the baseline at
+  `packages/protocol/src/types.ts`; benchmark evidence in
+  `bench/lsn-reverse-walk.ts` with the baseline at
   `docs/spec/attachments/lsn-reverse-walk-baseline.json`.
 
 ## 2. Apache Iceberg & Delta Lake (manifest-CAS commit family)
@@ -43,9 +43,8 @@ C3:
 Both systems implement a commit protocol in which a writer attempts
 to advance a manifest pointer via conditional write; concurrent
 losers retry against the new manifest. The pre-existing Iceberg
-mention in `docs/spec/sync-protocol.md` is in the "Prior art"
-section (around line 248), under the
-`CommitFailedException`-storm failure mode.
+mention in `docs/spec/sync-protocol.md#prior-art` is the protocol
+anchor for this comparison.
 
 Two deltas matter for differentiation:
 
@@ -173,14 +172,10 @@ This body of folklore **anticipates the C3 encoding** at the
 general level of "encode keys so an ascending native LIST is a
 descending logical walk." It is acknowledged here in writing.
 
-Any defensive publication of `docs/spec/lsn-reverse-walk.md` (see
-the sibling follow-up
-`docs/followups/patent-c3-defensive-publication-draft.md` — that
-draft is currently un-committed; the forward reference is
-intentional) should not claim more than the *residual narrow
-composition*: the specific combination of descending base-32 LSN
-encoding with the per-collection-CAS commit protocol and the
-two-phase fence-claim, measured against the
-`bench/lsn-reverse-walk/` evidence under the baerly-storage cost
-model. The raw encoding trick is not the claim; the composition
-with C1 and the publishable cost bound is.
+Any future defensive publication draft should not claim more than the
+*residual narrow composition*: the specific combination of descending
+base-32 LSN encoding with the per-collection-CAS commit protocol and
+the two-phase fence-claim, measured against
+`bench/lsn-reverse-walk.ts` and the checked-in baseline under the
+baerly-storage cost model. The raw encoding trick is not the claim; the
+composition with C1 and the publishable cost bound is.

@@ -1,8 +1,8 @@
 ---
 title: Browser → server auth
 audience: integrator
-summary: Cross-cutting four-quadrant analysis of the SPA → API auth seam (dev/prod × Cloudflare/Node) — synthesis first, hardened per-quadrant recipes live in scaffold AGENTS.md files.
-last-reviewed: 2026-06-12
+summary: Browser-to-server auth recipes and the four dev/prod × Cloudflare/Node postures.
+last-reviewed: 2026-06-13
 tags: [client, auth, integration]
 related: ["./auth.md", "../adr/005-verifier-function-shape.md"]
 ---
@@ -11,13 +11,11 @@ related: ["./auth.md", "../adr/005-verifier-function-shape.md"]
 
 baerly's design center is "trusted multi-instance, browser is a
 typed HTTP client." The browser sends `/v1/*` HTTP requests; the
-server runs the verifier and pins the tenant. This page is the
-synthesis: why the seam is shaped the way it is, what the four
-quadrants share, and where they diverge. The per-quadrant *recipes*
-— code blocks for `vite.config.ts`, `src/server/index.ts`,
-`baerly.config.ts` — are in each scaffold's `AGENTS.md` →
-"Going to production" so they ship hardened next to the code they
-configure.
+server runs the verifier and pins the tenant. This page gives the
+minimal production recipes and explains why the four quadrants share
+one seam. Scaffold `AGENTS.md` files keep target-specific production
+variants next to runnable code, but an integrator should not need to
+leave this guide to understand the auth shape.
 
 ## Why every quadrant defaults to `auth: "none"`
 
@@ -46,6 +44,136 @@ shape (CI and internal services) and the only shape where dev
 needs a special Vite plugin (`baerlyDevAuth`) to inject the bearer
 server-side for browser calls. **Pattern B is never for end-user
 browser auth in prod.**
+
+## Pattern A: Cloudflare Access production
+
+Protect the Worker route with Cloudflare Access, then verify the
+Access JWT inside the Worker. The browser does not add an
+`Authorization` header; Cloudflare Access sets the cookie/header before
+the request reaches the Worker.
+
+```ts
+import { cloudflareAccess } from "@gusto/baerly-storage/auth";
+import { baerlyWorker, type BaerlyEnv } from "@gusto/baerly-storage/cloudflare";
+import config from "../../baerly.config.ts";
+
+// Extends BaerlyEnv (carries the required BUCKET/APP bindings); the
+// Access vars are optional so the dev artifact type-checks with them
+// unset.
+interface AppEnv extends BaerlyEnv {
+  readonly CF_ACCESS_TEAM_DOMAIN?: string;
+  readonly CF_ACCESS_AUDIENCE_TAG?: string;
+}
+
+export default baerlyWorker<AppEnv>((env) => ({
+  config,
+  // Keep `auth: "none"` in baerly.config.ts; gate the verifier on the
+  // prod-only vars. Dev sees them undefined, the spread short-circuits,
+  // and `auth: "none"` runs. Prod sets them and cloudflareAccess engages.
+  ...(env.CF_ACCESS_TEAM_DOMAIN !== undefined &&
+    env.CF_ACCESS_AUDIENCE_TAG !== undefined && {
+      verifier: cloudflareAccess({
+        // teamDomain is the bare team SUBDOMAIN (e.g. "acme"), not a full
+        // domain: the preset derives https://<teamDomain>.cloudflareaccess.com.
+        teamDomain: env.CF_ACCESS_TEAM_DOMAIN,
+        audienceTag: env.CF_ACCESS_AUDIENCE_TAG,
+        tenantPrefix: config.tenant,
+      }),
+    }),
+}));
+```
+
+Set:
+
+| Value | Where |
+|---|---|
+| `CF_ACCESS_TEAM_DOMAIN` | Worker env/vars; the bare `<team>` part of `https://<team>.cloudflareaccess.com`. |
+| `CF_ACCESS_AUDIENCE_TAG` | Worker env/vars; Cloudflare Access application audience tag. |
+
+Verify:
+
+```sh
+curl -fsS https://<worker-host>/v1/healthz
+curl -i https://<worker-host>/v1/c/tickets
+curl -fsS -H "Cf-Access-Jwt-Assertion: $CF_ACCESS_JWT" \
+  https://<worker-host>/v1/c/tickets
+```
+
+The first request should be `200`; the second should fail closed; the
+third should return `{ data, _meta }`.
+
+## Pattern C: Node JWKS production
+
+Your SPA obtains a bearer token from the same OIDC provider the rest of
+your app uses. The Baerly server verifies that token over JWKS.
+
+```ts
+import { bearerJwt } from "@gusto/baerly-storage/auth";
+import { baerlyNode, s3Storage } from "@gusto/baerly-storage/node";
+import config from "../../baerly.config.ts";
+
+const handle = baerlyNode({
+  config,
+  storage: s3Storage({
+    bucket: process.env["BUCKET"]!,
+    region: process.env["AWS_REGION"] ?? "us-east-1",
+    credentials: {
+      accessKeyId: process.env["AWS_ACCESS_KEY_ID"]!,
+      secretAccessKey: process.env["AWS_SECRET_ACCESS_KEY"]!,
+    },
+  }),
+  // Keep `auth: "none"` in baerly.config.ts; gate the verifier on the
+  // prod-only JWKS_URL. Dev sees it undefined, the spread short-circuits,
+  // and `auth: "none"` runs. Prod sets JWKS_URL + JWT_ISSUER +
+  // JWT_AUDIENCE and bearerJwt engages.
+  ...(process.env["JWKS_URL"] !== undefined && {
+    verifier: bearerJwt({
+      jwks: process.env["JWKS_URL"],
+      issuer: process.env["JWT_ISSUER"]!,
+      audience: process.env["JWT_AUDIENCE"]!,
+      tenantPrefix: config.tenant,
+    }),
+  }),
+});
+```
+
+Use `tenantClaim: "tenant"` instead when your IdP issues one tenant
+per token.
+
+```sh
+baerly doctor --bucket=s3://<bucket>
+curl -fsS https://<node-host>/v1/healthz
+curl -i https://<node-host>/v1/c/tickets
+curl -fsS -H "Authorization: Bearer $JWT" \
+  https://<node-host>/v1/c/tickets
+```
+
+## Pattern B: shared secret for dev and services
+
+Shared secret is for server-to-server calls and local development,
+not end-user browser production. If a browser dev server needs to hit
+shared-secret-protected `/v1/*`, inject the bearer server-side with the
+Vite plugin; never expose `SHARED_SECRET` through `VITE_*`.
+
+```ts
+// vite.config.ts
+import { baerlyDevAuth } from "@gusto/baerly-storage/dev/vite";
+
+export default {
+  plugins: [
+    baerlyDevAuth({
+      secret: process.env["SHARED_SECRET"] ?? "dev-shared-secret",
+    }),
+  ],
+};
+```
+
+Service verification:
+
+```sh
+curl -fsS -H "Authorization: Bearer $SHARED_SECRET" \
+  https://<host>/v1/c/tickets
+```
 
 ## What changes at the dev→prod flip
 
@@ -82,7 +210,7 @@ If a code review ever surfaces a `SHARED_SECRET` import in any
 the secret is now in every visitor's browser the moment the SPA
 loads.
 
-## Where the per-quadrant recipes live
+## Where scaffold-specific recipes live
 
 Open the scaffold matching your target and posture; jump to the
 "Going to production" section:

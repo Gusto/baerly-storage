@@ -12,7 +12,7 @@
  * stdout (one JSON object per HTTP request).
  *
  * **Naming convention** matches the load-bearing metrics:
- *   - `db.write.class_a_ops_per_logical_write` — histogram (p99 alert at 5).
+ *   - `db.write.class_a_ops_per_logical_write` — histogram (recommend p99 alert ~5; not gated).
  *     Includes one Class A op per index PUT + index DELETE emitted
  *     in the commit's fence. Idle-reader cost is unchanged.
  *   - `db.r2.put.412_total` — counter (CAS conflict / If-Match-or-None-Match loss)

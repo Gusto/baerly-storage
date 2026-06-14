@@ -42,11 +42,10 @@ import type { Storage, StoragePutOptions, StoragePutResult } from "../storage/ty
 /**
  * Per-collection control object. CAS-protected. One per
  * `(tenant, collection)` key — for example
- * `<tenant>/<collection>/current.json`. The compactor swaps
- * snapshot generations by CAS-writing this object; the
- * Writer reads it on every commit to find the snapshot
- * pointer; the sweeper reads `writer_fence` to decide which log
- * entries are eligible for GC.
+ * `<tenant>/<collection>/current.json`. The compactor swaps snapshot
+ * generations by CAS-writing this object; the Writer reads it on every
+ * commit to find the snapshot pointer, mint the next integer `seq`, and
+ * verify stale-authority fencing.
  *
  * The schema is forward-compatible: adding a new optional field is
  * non-breaking. Renaming or removing a field requires bumping
@@ -125,14 +124,15 @@ export interface CurrentJson {
  * monotonically-bumped `epoch` is the only safety-critical field —
  * `owner` is informational and may be missing in older records;
  * `claimed_at` is the server response date at claim time, NOT the
- * local clock; `lease_until` is reserved for manual rotation and
- * is not consumed by any ticket in this batch.
+ * local clock; `lease_until` is reserved for manual rotation and is not
+ * consumed by the current kernel. Log entries are not stamped with this
+ * epoch; the fence is a writer stale-authority check, not a reader
+ * replay filter.
  *
  * Borrowed from FoundationDB's `recoveryCount` on cstate, IsleDB's
  * `writer_fence` on `manifest/CURRENT`, and TigerBeetle's VSR view
- * number. The mechanism is the same in all three: every commit
- * checks the epoch on the control object; an entry stamped with
- * a stale epoch is discarded at replay.
+ * number. The mechanism is the same in all three: every commit checks
+ * the epoch on the control object before continuing under its authority.
  */
 export interface WriterFence {
   /**
@@ -140,8 +140,7 @@ export interface WriterFence {
    * {@link claimWriter} call — do NOT bump on every cold start, do
    * NOT bump on every commit. Triggers per design: (a) detected
    * CAS conflict the writer wants to claim through, (b) admin
-   * rotation. The sweeper discards log entries whose stamped epoch
-   * is `< current.writer_fence.epoch`.
+   * rotation.
    */
   epoch: number;
 

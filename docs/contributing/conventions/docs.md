@@ -2,7 +2,7 @@
 title: Conventions for docs/
 audience: coder
 summary: Source-of-truth rules, markdown style, Mermaid usage, when to update which doc.
-last-reviewed: 2026-05-12
+last-reviewed: 2026-06-13
 tags: [conventions, docs]
 related: [tests.md, "../../README.md"]
 ---
@@ -34,6 +34,23 @@ Conventions for content under `docs/`.
 | New extension pattern | `docs/contributing/extending.md` |
 | Protocol change | `docs/spec/sync-protocol.md` (and a coverage entry in `docs/spec/causal-consistency-checking.md`) |
 | New `Db.create` / `Collection<T>` option | JSDoc on the param in `packages/server/src/db.ts` or `packages/server/src/collection.ts` |
+
+## Pinned phrases
+
+Two positioning lines are load-bearing brand copy and must stay
+recognizable and consistent wherever they appear. If you reword one,
+update every occurrence so they don't silently drift:
+
+- **"There is no runtime. None."** — `README.md`,
+  `docs/contributing/architecture.md`, `docs/about/thesis.md`.
+- **"Built like git: content-addressed documents, immutable log
+  entries, and a single CAS-advanced pointer to HEAD."** — `README.md`,
+  `docs/contributing/architecture.md`.
+
+Consistency is of the *wording*, not byte-identical formatting: the
+copies are not identical today (e.g. some are bold and standalone,
+others are embedded in a longer sentence or soft-wrapped). Keep the
+phrasing aligned; don't claim they're byte-identical.
 
 ## Don't
 

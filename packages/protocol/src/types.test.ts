@@ -10,7 +10,7 @@
  * codec contracts directly so a `padStart` / domain regression fails
  * loud rather than silently inverting key order.
  *
- * @see docs/spec/sync-protocol.md §"Subtleties of the manifest key"
+ * @see docs/spec/sync-protocol.md §"LSNs, wall clocks, and downstream consumers"
  */
 import { fc, test } from "@fast-check/vitest";
 import { describe, expect } from "vitest";

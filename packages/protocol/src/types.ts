@@ -8,7 +8,7 @@ type Brand<B> = { [brand]: B };
  * runtime but the type system rejects mixing it with a plain `string` or
  * a string branded as something else. Used to prevent confusion bugs at
  * protocol boundaries (UUIDs vs. content versions are both strings, but
- * using the wrong one corrupts the manifest log).
+ * using the wrong one corrupts the per-collection log).
  *
  * Construct branded values via the helpers in this file (e.g. {@link uuid})
  * or with a tagged cast at a single, deliberate boundary — never `as string`
@@ -30,7 +30,7 @@ export type UUID = Branded<string, "UUID">;
  *
  * The synthetic `local-${op}` placeholder used for in-flight
  * optimistic updates also wears this brand — it never round-trips
- * to S3, only flows through the local manifest poll loop.
+ * to S3, only flows through local optimistic state.
  */
 export type ContentVersionId = Branded<string, "ContentVersionId">;
 
@@ -114,7 +114,8 @@ export const str2uint = (str: string) => {
  * bytes-listed reduction is in
  * `docs/spec/attachments/lsn-reverse-walk-baseline.json`
  * (run `pnpm bench:lsn-reverse-walk` to reproduce). Spec rationale:
- * `docs/spec/sync-protocol.md` §"Subtleties of the manifest key".
+ * `docs/spec/sync-protocol.md` §"LSNs, wall clocks, and downstream
+ * consumers".
  */
 export const uint2strDesc = (num: number, bits: number): string => {
   const maxValue = Math.pow(2, bits) - 1;

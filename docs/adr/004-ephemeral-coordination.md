@@ -2,7 +2,7 @@
 title: Ephemeral coordination
 audience: adr
 summary: ADR 004 — coordination runs in request-bounded compute, not in a persistent process.
-last-reviewed: 2026-06-12
+last-reviewed: 2026-06-13
 tags: [decision, adr, runtime-model]
 related: [README.md, "../about/thesis.md", "../spec/sync-protocol.md", 001-tenant-cas-isolation.md, 002-api-surface-lock.md]
 ---
@@ -113,14 +113,16 @@ shape:
   **deferring buckets too** (a bucket whose snapshot is over the
   ceiling still GCs). No new delta-index in v1.
 - **Compaction = sliced tail + unsliceable rebuild.** The fold
-  processes at most `maxEntriesPerRun` (`WRITE_TICK_FOLD_ENTRIES_PER_PASS`,
-  per-tier) log entries per pass — a large tail **drains
+  processes at most `maxFoldEntriesPerPass` (default
+  `WRITE_TICK_FOLD_ENTRIES_PER_PASS`, per-tier; the runner threads it into
+  `compact()` as its `maxEntriesPerRun` parameter) log entries per pass — a large tail **drains
   incrementally over write-ticks** and fits the subrequest
   budget. The one part that cannot be sliced is the snapshot
   rebuild, bounded by a **static two-way ceiling**:
   `snapshot_bytes <= C` (`MAINTENANCE_MAX_FOLD_BYTES_DEFAULT`,
-  adapter/env-overridable) **AND** `snapshot_rows <= E`
-  (`MAINTENANCE_MAX_FOLD_ROWS`, the per-entry-CPU axis a byte
+  adapter/env-overridable) **AND**
+  `snapshot_rows + maxFoldEntriesPerPass <= E`
+  (`E = MAINTENANCE_MAX_FOLD_ROWS`, the per-entry-CPU axis a byte
   ceiling misses). Over either, the fold **defers**.
 - **Full-fence CAS; a lost fold is abandoned.** The fold's
   pointer advance is a conditional write. A lost CAS (another
@@ -213,6 +215,22 @@ that fails loud against a non-conformant store at deploy time. CAS is a
 documented hard backend requirement (see
 [sync-protocol.md](../spec/sync-protocol.md) §"Protocol invariants").
 
+### Operator implications
+
+This decision has concrete runbook consequences:
+
+- Run `baerly doctor --bucket` before deploy; a bucket that does not
+  enforce conditional writes is not a Baerly backend.
+- Do not add cron to "fix" ordinary compaction. Maintenance is already
+  write-triggered and bounded; cron does not raise Cloudflare free's CPU
+  or subrequest ceiling.
+- Watch `db.compaction.deferred_total`,
+  `db.compaction.cas_lost_total`, and object-count growth. These are
+  envelope signals, not silent corruption.
+- Raise `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` only on paid Cloudflare or
+  Node hosts that can fold the snapshot in memory. Otherwise follow the
+  graduation path in [graduation.md](../about/graduation.md).
+
 ## Consequences
 
 **Positive.** No on-call surface — there is no process for an
@@ -229,7 +247,9 @@ correctly the same as warm ones, so isolate recycling and
 scale-to-zero are free. The thesis's "Idle → zero" criterion
 falls out of this property; the small public API
 ([ADR-002](002-api-surface-lock.md)) is possible because there
-is no coordinator state to expose. Graduation is mechanical: with no stateful coordinator to migrate away from, the bucket plus the log shape are the entire handoff to Postgres (`baerly export --target=postgres`).
+is no coordinator state to expose. Graduation is mechanical: with no
+stateful coordinator to migrate away from, the bucket plus the log shape
+are the entire handoff to Postgres (`baerly export --target=postgres`).
 
 **Negative.**
 

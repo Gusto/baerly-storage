@@ -2,7 +2,7 @@
 title: docs/ — topic map
 audience: meta
 summary: Index of everything under docs/, grouped by audience.
-last-reviewed: 2026-06-12
+last-reviewed: 2026-06-13
 tags: [index, navigation]
 related: ["../CLAUDE.md", "spec/README.md", "adr/README.md"]
 ---
@@ -12,28 +12,46 @@ related: ["../CLAUDE.md", "spec/README.md", "adr/README.md"]
 Baerly is a vendorless document database for the new middle —
 software that's real enough to need state but not real enough to
 deserve a Postgres + Docker + on-call stack. It runs over any
-S3-compatible bucket; your data lives in your bucket, and the
-protocol kernel is small enough that an LLM can use the public API
-zero-shot from the `.d.ts` files alone. The positioning story is in
+S3-compatible bucket that passes `baerly doctor --bucket`; your data
+lives in your bucket, and the protocol kernel is small enough that an
+LLM can use the public API zero-shot from the `.d.ts` files alone. The
+positioning story is in
 [`about/thesis.md`](about/thesis.md).
 
 ## Using Baerly
 
 For integrators and operators running Baerly against a real bucket.
-**The canonical surface is `dist/API.md` in the published package**
-(`node_modules/@gusto/baerly-storage/dist/API.md`) — it carries
-the public API, Verifier presets, observability field reference,
-client-fetch wrapping recipes, and the trusted-fields recipe. The
-files below cover what doesn't fit there: cross-cutting
+**The canonical surface is [`packages/server/API.md`](../packages/server/API.md),
+published as `node_modules/@gusto/baerly-storage/dist/API.md`** — installed
+consumers read the `dist/` copy, repo contributors read the source; they are
+the same file, copied into `dist/` at build. It
+carries the public API, Verifier presets, observability field
+reference, client-fetch wrapping recipes, and the trusted-fields
+recipe. The files below cover what doesn't fit there: cross-cutting
 invariants, operator runbooks, and target-specific bolt-ons.
 
-- `guide/cheatsheet.md` — One-screen quick reference: verbs, modifiers, errors, and the HTTP wire. The thing to show someone in 30 seconds; the full surface stays in dist/API.md.
-- `guide/add-to-existing-cf-worker.md` — One-command bolt-on for an existing `wrangler create` project — `pnpm create @gusto/baerly-storage@latest .` detects wrangler.jsonc, patches it, prints the worker-entry snippet.
-- `guide/auth.md` — Production auth recipes for Cloudflare and Node, tenant pinning, and the no-built-in-authorization caveat.
-- `guide/operations.md` — Production runbook: preflight, auth, backups, observability, capacity, and route checks.
-- `guide/backups.md` — Safe NDJSON dump with retention rotation, checksums, restore, and restore drills.
-- `guide/client-auth.md` — Cross-cutting four-quadrant analysis of the SPA → API auth seam (dev/prod × Cloudflare/Node) — synthesis first, hardened per-quadrant recipes live in scaffold AGENTS.md files.
-- `guide/observability.md` — Operator signals, first-response actions, sinks (OTel / Workers Analytics Engine / Datadog), cost-ballooning anti-patterns, and known gaps. Canonical log-line shape lives in dist/API.md.
+- [`guide/cheatsheet.md`](guide/cheatsheet.md) — One-screen quick
+  reference: verbs, modifiers, errors, and the HTTP wire. The thing to
+  show someone in 30 seconds; the full surface stays in API.md.
+- [`guide/add-to-existing-cf-worker.md`](guide/add-to-existing-cf-worker.md)
+  — One-command bolt-on for an existing `wrangler create` project —
+  `pnpm create @gusto/baerly-storage@latest .` detects wrangler.jsonc,
+  patches it, prints the worker-entry snippet.
+- [`guide/auth.md`](guide/auth.md) — Production auth recipes for
+  Cloudflare and Node, tenant pinning, and the no-built-in-authorization
+  caveat.
+- [`guide/operations.md`](guide/operations.md) — Production runbook:
+  preflight, auth, backups, observability, capacity, and route checks.
+- [`guide/backups.md`](guide/backups.md) — Safe NDJSON dump with
+  retention rotation, checksums, restore, and restore drills.
+- [`guide/client-auth.md`](guide/client-auth.md) — Browser-to-server
+  auth recipes and the dev/prod × Cloudflare/Node matrix; synthesis
+  first, hardened per-quadrant recipes live in the scaffold AGENTS.md
+  files.
+- [`guide/observability.md`](guide/observability.md) — Operator
+  signals, first-response actions, sinks (OTel / Workers Analytics
+  Engine / Datadog), cost-ballooning anti-patterns, and known gaps.
+  Canonical log-line shape lives in API.md.
 - Runnable scaffolds: `../examples/` (`minimal-cloudflare`,
   `minimal-node`, `react-cloudflare`, `react-node`).
 
@@ -41,49 +59,56 @@ invariants, operator runbooks, and target-specific bolt-ons.
 
 Product and business context.
 
-- `about/how-it-works.md` — the plain-language mental model: a bucket
-  of files plus a library that flips one pointer atomically, and the
-  typed layers from protocol to React. Start here to understand (or
-  explain) the system.
-- `about/thesis.md` — what Baerly is, who it's for, what it
-  deliberately isn't.
-- `about/cost-model.md` — per-line-item rates, write-amp meter,
-  compression posture.
-- `about/graduation.md` — the CPU/memory bounds that tell you when a
-  collection has outgrown its deployment tier, and what to do about it.
-- `about/pricing-log.md` — append-only audit of cost commitments.
+- [`about/how-it-works.md`](about/how-it-works.md) — the mechanism
+  on-ramp: the plain-language mental model — a bucket of files plus a
+  library that flips one pointer atomically, and the typed layers from
+  protocol to React. Read this to understand (or explain) *how* the
+  system works.
+- [`about/thesis.md`](about/thesis.md) — the positioning on-ramp: what
+  Baerly is, who it's for, and what it deliberately isn't — the *why*.
+- [`about/cost-model.md`](about/cost-model.md) — per-line-item rates,
+  write-amp meter, compression posture.
+- [`about/graduation.md`](about/graduation.md) — the CPU/memory bounds
+  that tell you when a collection has outgrown its deployment tier, and
+  what to do about it.
+- [`about/pricing-log.md`](about/pricing-log.md) — append-only audit of cost commitments.
 
 ## Contributing
 
 For people changing the code in this repo.
 
-- `contributing/architecture.md` — module graph and the lifecycle
+- [`contributing/architecture.md`](contributing/architecture.md) — module graph and the lifecycle
   of `db.collection(...).insert()`.
-- `contributing/development.md` — local setup, test commands,
+- [`contributing/development.md`](contributing/development.md) — local setup, test commands,
   Minio / Toxiproxy / Postgres stack.
-- `contributing/troubleshooting.md` — known pain points: test gating,
+- [`contributing/troubleshooting.md`](contributing/troubleshooting.md) — known pain points: test gating,
   ports, fuzzer, CI formatting.
-- `contributing/extending.md` — worked examples for adding a `Db`
+- [`contributing/extending.md`](contributing/extending.md) — worked examples for adding a `Db`
   method, `Query` constraint, etc.
-- `contributing/features.md` — feature → code map.
-- `contributing/day-one-gate.md` — pre-release manual gate.
-- `contributing/conventions/` — path-scoped conventions auto-loaded
+- [`contributing/features.md`](contributing/features.md) — feature → code map.
+- [`contributing/mutation-testing.md`](contributing/mutation-testing.md) — manual
+  StrykerJS mutation testing scoped to the protocol kernel: `pnpm test:mutate`.
+- [`contributing/publishing.md`](contributing/publishing.md) — how to publish
+  `@gusto/baerly-storage` + `@gusto/create-baerly-storage` privately under the
+  `@gusto` org on npmjs.com.
+- [`contributing/day-one-gate.md`](contributing/day-one-gate.md) — pre-release manual gate.
+- [`contributing/conventions/`](contributing/conventions/) — path-scoped conventions auto-loaded
   by Claude via `.claude/rules/`:
-  - `contributing/conventions/tests.md`
-  - `contributing/conventions/docs.md`
-  - `contributing/conventions/observability.md`
-  - `contributing/conventions/change-discipline.md`
-- `contributing/diagrams/` — rendered diagram artifacts and editable
+  - [`contributing/conventions/tests.md`](contributing/conventions/tests.md)
+  - [`contributing/conventions/docs.md`](contributing/conventions/docs.md)
+  - [`contributing/conventions/observability.md`](contributing/conventions/observability.md)
+  - [`contributing/conventions/change-discipline.md`](contributing/conventions/change-discipline.md)
+- [`contributing/diagrams/`](contributing/diagrams/) — rendered diagram artifacts and editable
   Excalidraw sources.
 
 ## Protocol & decisions
 
 For theory and spec readers.
 
-- `spec/` — protocol theory and stable contracts (sync protocol,
+- [`spec/`](spec/) — protocol theory and stable contracts (sync protocol,
   causal consistency, JSON merge patch, log-entry shape, S3
   features used).
-- `adr/` — Architecture Decision Records.
+- [`adr/`](adr/) — Architecture Decision Records.
 
 ---
 

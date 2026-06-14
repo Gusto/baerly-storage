@@ -2,7 +2,7 @@
 title: Conventions for observability code
 audience: coder
 summary: One canonical line per unit-of-work, field attachment, DEBUG vs INFO, test patterns.
-last-reviewed: 2026-05-17
+last-reviewed: 2026-06-13
 tags: [conventions, observability]
 related: ["../../guide/observability.md", "tests.md"]
 ---
@@ -140,7 +140,8 @@ The load-bearing kernel metrics today (canonical list in
 [`packages/protocol/src/metrics.ts`](../../../packages/protocol/src/metrics.ts)):
 
 - `db.write.class_a_ops_per_logical_write` — writer histogram
-  (p99 alert at 5).
+  (recommended operator alert when p99 exceeds ~5; not a shipped or
+  CI-gated check).
 - `db.write.index_ops_per_logical_write` — writer histogram
   (`K (PUT) + L (DELETE)` per commit, per-collection label).
 - `db.r2.put.412_total` — CAS conflict / `If-Match` / `If-None-Match`

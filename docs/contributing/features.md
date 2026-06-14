@@ -2,7 +2,7 @@
 title: Features → code map
 audience: coder
 summary: Feature-by-feature pointers into source, tests, and docs.
-last-reviewed: 2026-06-12
+last-reviewed: 2026-06-13
 tags: [index, features, code-map]
 related: [architecture.md, "../spec/README.md", "../adr/README.md"]
 ---
@@ -157,11 +157,33 @@ as `IndexDefinition`.
 - When multiple indexes match, the planner prefers (in order):
   filtered indexes whose `def.predicate` (a `PredicateWire`) is
   implied by the query wire; longest equality prefix; definition
-  order.
+  order. A filtered index whose predicate is *not* implied is ranked
+  last and used only as a last resort when it is the only candidate —
+  see the soundness caveat below.
 - Otherwise `planQuery` emits `FullScanPlan` and the read walks the
   snapshot+log fold. Diagnostic `reason` values:
   `"no-predicate"`, `"no-indexes-declared"`,
   `"no-matching-index"`, `"predicate-uses-operators-only"`.
+
+An index is correct only when its marker set is complete for the
+declared definition. Stale extra markers are harmless: the reader
+materializes each candidate row and re-checks `matchesWire(...)`, so
+extra markers cost I/O but cannot invent rows. Missing markers can hide
+rows from an index-routed query. After adding an index to an existing
+collection, run `rebuildIndex` / `baerly admin rebuild-index` before
+treating the index as authoritative.
+
+Marker completeness is necessary but not sufficient for a *filtered*
+(partial) index. The route is sound only when the index's filter
+predicate is implied by the query predicate; otherwise the LIST never
+yields rows that fall outside the filter, and the post-fetch
+`matchesWire(...)` re-check cannot resurrect rows the LIST never
+returned. The planner ranks a non-implied filtered index last but, as a
+known limitation, will still route through it as a last resort when it
+is the only candidate — which is unsound for that query (it can silently
+drop matching rows). The fallback and its caveat are documented in the
+`rank()` comment in
+[`packages/server/src/query-planner.ts`](../../packages/server/src/query-planner.ts).
 
 #### Numeric range and `in` walks
 

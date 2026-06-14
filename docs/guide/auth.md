@@ -2,7 +2,7 @@
 title: Authentication
 audience: operator
 summary: Production auth recipes for Cloudflare and Node, plus tenant pinning and authorization boundaries.
-last-reviewed: 2026-06-12
+last-reviewed: 2026-06-13
 tags: [auth, operations]
 related: ["../adr/005-verifier-function-shape.md", "../adr/001-tenant-cas-isolation.md", "client-auth.md", "operations.md"]
 ---
@@ -63,7 +63,32 @@ Checklist:
   `wrangler.jsonc:vars` or runtime env.
 - Use `tenantPrefix: config.tenant` for single-tenant apps. Vanilla
   CF Access tokens carry user identity, not a Baerly tenant claim.
-- Run `pnpm baerly doctor --target=cloudflare` before deploy.
+- Run `baerly doctor --target=cloudflare` before deploy.
+
+Where values come from:
+
+| Value | Source |
+|---|---|
+| `CF_ACCESS_TEAM_DOMAIN` | The Access team subdomain in `https://<team>.cloudflareaccess.com`; store only `<team>`. |
+| `CF_ACCESS_AUDIENCE_TAG` | Cloudflare Zero Trust -> Access -> Applications -> your app -> Audience tag. |
+| Access token | Browser: `CF_Authorization` cookie. Service check: `Cf-Access-Jwt-Assertion` header. |
+
+Verify fail-closed behavior:
+
+```sh
+baerly doctor --target=cloudflare
+
+# Should be public and pre-auth.
+curl -fsS https://<worker-host>/v1/healthz
+
+# Should fail without Cloudflare Access auth.
+curl -i https://<worker-host>/v1/c/tickets
+
+# Service-token or captured Access JWT should succeed.
+curl -fsS \
+  -H "Cf-Access-Jwt-Assertion: $CF_ACCESS_JWT" \
+  https://<worker-host>/v1/c/tickets
+```
 
 Shared secret is acceptable for service-to-service calls or a private
 preview behind another gate:
@@ -85,7 +110,7 @@ Then set the secret with:
 
 ```sh
 wrangler secret put SHARED_SECRET
-pnpm baerly doctor --target=cloudflare
+baerly doctor --target=cloudflare
 ```
 
 Never put `SHARED_SECRET` in a SPA bundle or a `VITE_*` variable. For
@@ -127,19 +152,39 @@ Use `tenantClaim` when your IdP issues one tenant per token. Use
 `tenantPrefix` when the app is single-tenant or tenancy is enforced
 outside Baerly. They are mutually exclusive.
 
+Required runtime env:
+
+| Env var | Purpose |
+|---|---|
+| `BUCKET` | Production bucket URI or name expected by your `s3Storage` wrapper. |
+| `AWS_REGION` | Bucket region; default in the snippet is `us-east-1`. |
+| `AWS_ACCESS_KEY_ID` | S3-compatible access key. |
+| `AWS_SECRET_ACCESS_KEY` | S3-compatible secret key. |
+| `JWKS_URL` | OIDC JWKS endpoint. |
+| `JWT_ISSUER` | Expected `iss` claim. |
+| `JWT_AUDIENCE` | Expected `aud` claim. |
+
 There is no `baerly doctor --target=node` backend today. For Node,
 verify the bucket CAS prerequisite directly:
 
 ```sh
-pnpm baerly doctor --bucket=s3://baerly-prod
+baerly doctor --bucket=s3://baerly-prod
 curl -fsS https://<your-host>/v1/healthz
+
+# Should fail without a bearer token.
+curl -i https://<your-host>/v1/c/tickets
+
+# Should succeed with a token from your IdP.
+curl -fsS -H "Authorization: Bearer $JWT" \
+  https://<your-host>/v1/c/tickets
 ```
 
 ## Verifier Presets
 
 The full preset reference lives in
-[`dist/API.md`](../../packages/server/API.md) -> "Verifier presets".
-The short version:
+[`packages/server/API.md`](../../packages/server/API.md), published as
+`node_modules/@gusto/baerly-storage/dist/API.md`, under "Verifier
+presets". The short version:
 
 | Preset | Header/source | Tenant source |
 |---|---|---|
@@ -165,4 +210,5 @@ For finer policy, put a custom route in front of the kernel:
   through to `baerlyWorker` / `baerlyNode`.
 
 The trusted-fields recipe in
-[`dist/API.md`](../../packages/server/API.md) shows that pattern.
+[`packages/server/API.md`](../../packages/server/API.md) shows that
+pattern.
