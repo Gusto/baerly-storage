@@ -1,22 +1,22 @@
 {
   "permissions": {
     "allow": [
-      "Bash(pnpm verify *)",
-      "Bash(pnpm verify:agent *)",
-      "Bash(pnpm format:check *)",
-      "Bash(pnpm test *)",
-      "Bash(pnpm test:agent *)",
-      "Bash(pnpm test:one *)",
-      "Bash(pnpm test:minio *)",
-      "Bash(pnpm typecheck *)",
+      "Bash(node scripts/mutation-survivors.mjs*)",
+      "Bash(pnpm -F *)",
       "Bash(pnpm build *)",
       "Bash(pnpm bundle-sizes *)",
-      "Bash(pnpm install *)",
-      "Bash(pnpm dev *)",
       "Bash(pnpm create *)",
+      "Bash(pnpm dev *)",
+      "Bash(pnpm format:check *)",
+      "Bash(pnpm install *)",
+      "Bash(pnpm mutate:survivors *)",
       "Bash(pnpm pack *)",
-      "Bash(pnpm worktree:bootstrap *)",
-      "Bash(pnpm -F *)"
+      "Bash(pnpm test *)",
+      "Bash(pnpm test:*)",
+      "Bash(pnpm typecheck *)",
+      "Bash(pnpm verify *)",
+      "Bash(pnpm verify:*)",
+      "Bash(pnpm worktree:bootstrap *)"
     ]
   }
 }
