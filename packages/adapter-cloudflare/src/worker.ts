@@ -2,11 +2,8 @@ import { type DevLandingOptions, renderDevLanding } from "@baerly/dev";
 import {
   type BaerlyAppConfig,
   CF_FREE_MAX_SAFE_FOLD_BYTES,
+  MAINTENANCE_PROFILE_CF_FREE,
   type Verifier,
-  WRITE_TICK_FOLD_ENTRIES_PER_PASS,
-  WRITE_TICK_GC_INTERVAL,
-  WRITE_TICK_GC_MAX_MARKS,
-  WRITE_TICK_GC_MAX_SWEEPS,
 } from "@baerly/protocol";
 import { Db, resolveVerifier } from "@baerly/server";
 import { createRouter } from "@baerly/server/http";
@@ -110,7 +107,9 @@ export interface BaerlyEnv {
  * under the free-tier 50-subrequest budget. An operator on CF **paid**
  * raises the ceiling via `BAERLY_MAINTENANCE_MAX_FOLD_BYTES`; the
  * per-pass entry/sweep caps stay fixed here (raising them toward the
- * 1000-subrequest paid budget is a future graduation knob, not a var).
+ * 10,000-subrequest paid budget — the default since 2026-02-11, up from
+ * 1,000, and configurable to 10M — is a future graduation knob, not a
+ * var). Free stays at 50 external / 1,000 internal-service subrequests.
  *
  * The two ops-plane vars are read off the `env` BINDING (a string map),
  * NOT `process.env` — Workers have no process env:
@@ -148,10 +147,7 @@ export const cfMaintenanceDispatch = (
     options: {
       // A CPU-killable free isolate does ONE phase per request.
       phasesPerTick: "single",
-      maxFoldEntriesPerPass: WRITE_TICK_FOLD_ENTRIES_PER_PASS,
-      gcMaxMarks: WRITE_TICK_GC_MAX_MARKS,
-      gcMaxSweeps: WRITE_TICK_GC_MAX_SWEEPS,
-      gcInterval: WRITE_TICK_GC_INTERVAL,
+      profile: MAINTENANCE_PROFILE_CF_FREE,
     },
   };
 };

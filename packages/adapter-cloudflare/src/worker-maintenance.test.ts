@@ -151,10 +151,10 @@ describe("cfMaintenanceDispatch", () => {
     // CF free-tier shape: single phase per tick (a CPU-killable isolate
     // does ONE of fold/GC per request), and the TESTED CF-free caps.
     expect(m.options?.phasesPerTick).toBe("single");
-    expect(m.options?.maxFoldEntriesPerPass).toBe(WRITE_TICK_FOLD_ENTRIES_PER_PASS);
-    expect(m.options?.gcMaxMarks).toBe(WRITE_TICK_GC_MAX_MARKS);
-    expect(m.options?.gcMaxSweeps).toBe(WRITE_TICK_GC_MAX_SWEEPS);
-    expect(m.options?.gcInterval).toBe(WRITE_TICK_GC_INTERVAL);
+    expect(m.options?.profile?.maxFoldEntriesPerPass).toBe(WRITE_TICK_FOLD_ENTRIES_PER_PASS);
+    expect(m.options?.profile?.gcMaxMarks).toBe(WRITE_TICK_GC_MAX_MARKS);
+    expect(m.options?.profile?.gcMaxSweeps).toBe(WRITE_TICK_GC_MAX_SWEEPS);
+    expect(m.options?.profile?.gcInterval).toBe(WRITE_TICK_GC_INTERVAL);
   });
 
   test("threads BAERLY_MAINTENANCE_MAX_FOLD_BYTES off the env binding (a low ceiling reaches the runner)", () => {

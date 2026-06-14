@@ -50,22 +50,24 @@ describe("nodeMaintenanceDispatch", () => {
     // Node-tier caps are STRICTLY LARGER than the CF-free defaults — a
     // serverful host folds/sweeps more per pass than a CPU-killable
     // free-tier isolate.
-    expect(m.options?.maxFoldEntriesPerPass).toBeGreaterThan(WRITE_TICK_FOLD_ENTRIES_PER_PASS);
-    expect(m.options?.gcMaxMarks).toBeGreaterThan(WRITE_TICK_GC_MAX_MARKS);
-    expect(m.options?.gcMaxSweeps).toBeGreaterThan(WRITE_TICK_GC_MAX_SWEEPS);
+    expect(m.options?.profile?.maxFoldEntriesPerPass).toBeGreaterThan(
+      WRITE_TICK_FOLD_ENTRIES_PER_PASS,
+    );
+    expect(m.options?.profile?.gcMaxMarks).toBeGreaterThan(WRITE_TICK_GC_MAX_MARKS);
+    expect(m.options?.profile?.gcMaxSweeps).toBeGreaterThan(WRITE_TICK_GC_MAX_SWEEPS);
     // Shorter GC cadence so the per-write sweep budget keeps up.
-    expect(m.options?.gcInterval).toBeLessThan(WRITE_TICK_GC_INTERVAL);
+    expect(m.options?.profile?.gcInterval).toBeLessThan(WRITE_TICK_GC_INTERVAL);
 
     // …but BOUNDED, not unbounded: inline maintenance is sized by
     // worst-case single-write latency, not the deleted full-tail sweep.
     // Pin a finite ceiling so a future "just raise it" never reintroduces
     // an unbounded inline fold.
-    expect(m.options?.maxFoldEntriesPerPass).toBe(NODE_MAINTENANCE_FOLD_ENTRIES_PER_PASS);
-    expect(m.options?.gcMaxMarks).toBe(NODE_MAINTENANCE_GC_MAX_MARKS);
-    expect(m.options?.gcMaxSweeps).toBe(NODE_MAINTENANCE_GC_MAX_SWEEPS);
-    expect(m.options?.gcInterval).toBe(NODE_MAINTENANCE_GC_INTERVAL);
-    expect(m.options?.maxFoldEntriesPerPass).toBeLessThanOrEqual(1000);
-    expect(m.options?.gcMaxSweeps).toBeLessThanOrEqual(1000);
+    expect(m.options?.profile?.maxFoldEntriesPerPass).toBe(NODE_MAINTENANCE_FOLD_ENTRIES_PER_PASS);
+    expect(m.options?.profile?.gcMaxMarks).toBe(NODE_MAINTENANCE_GC_MAX_MARKS);
+    expect(m.options?.profile?.gcMaxSweeps).toBe(NODE_MAINTENANCE_GC_MAX_SWEEPS);
+    expect(m.options?.profile?.gcInterval).toBe(NODE_MAINTENANCE_GC_INTERVAL);
+    expect(m.options?.profile?.maxFoldEntriesPerPass).toBeLessThanOrEqual(1000);
+    expect(m.options?.profile?.gcMaxSweeps).toBeLessThanOrEqual(1000);
   });
 
   test("threads BAERLY_MAINTENANCE_MAX_FOLD_BYTES → maxFoldBytes via process.env (vi.stubEnv)", () => {

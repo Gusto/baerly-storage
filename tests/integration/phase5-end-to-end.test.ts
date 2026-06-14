@@ -40,6 +40,7 @@ import {
   CURRENT_JSON_SCHEMA_VERSION,
   createCurrentJson,
   type DocumentData,
+  MAINTENANCE_PROFILE_CF_FREE,
   MemoryStorage,
   readCurrentJson,
   type Storage,
@@ -368,11 +369,14 @@ const BODY_BYTES = 2000; // bodies large enough that the ratio gate trips and fo
 // The ceiling test reuses this byte-identical profile and threads its
 // distinct `maxFoldBytes` through the ctx separately.
 const WRITE_TICK_TEST_PROFILE: BoundedMaintenanceOptions = {
-  maxFoldEntriesPerPass: 20,
+  profile: {
+    ...MAINTENANCE_PROFILE_CF_FREE,
+    maxFoldEntriesPerPass: 20,
+    gcMaxMarks: 100,
+    gcMaxSweeps: 50,
+    gcInterval: 4,
+  },
   minEntriesToCompact: 50,
-  gcMaxMarks: 100,
-  gcMaxSweeps: 50,
-  gcInterval: 4,
   phasesPerTick: "both",
   gcGraceMillis: 0,
 };

@@ -236,7 +236,15 @@ const BUDGETS: readonly Budget[] = [
   //     (owner-accepted; user chose rebaseline). See docs/adr/007-layout-versioning-cordon.md.
   //   → +min+gz axis 19 KiB (2026-06-01): consumer-facing artifact proxy
   //     baselined / measured 17980. See the file header on what min+gz is.
-  { entry: "index.js", raw: 210 * 1024, gz: 65 * 1024, minGz: 19 * 1024 },
+  //   → 212 KiB raw (2026-06-14): maintenance-profile consolidation —
+  //     two new exported `MAINTENANCE_PROFILE_*` constant objects in
+  //     constants.ts (shared kernel chunk) + the `MaintenanceProfile` type
+  //     and `profileToScheduledOptions` helper in maintenance.ts. The
+  //     constant VALUES are load-bearing (one source of truth for the
+  //     adapter/runner budgets) and comments aren't stripped, so this costs
+  //     ~1.5 KiB raw (measured 216561). gz/min-gz unaffected (still passing).
+  //     Rebaseline raw +2 KiB.
+  { entry: "index.js", raw: 212 * 1024, gz: 65 * 1024, minGz: 19 * 1024 },
   // The three auth verifier factories (bearerJwt, sharedSecret,
   // cloudflareAccess) plus the transitive jose closure pulled in by
   // bearerJwt's createRemoteJWKSet + jwtVerify. Adding a fourth
@@ -384,7 +392,12 @@ const BUDGETS: readonly Budget[] = [
   //     every other entry — no loose ceilings.
   //   → +min+gz axis 11 KiB (2026-06-01): consumer-facing artifact proxy
   //     baselined / measured 9919.
-  { entry: "maintenance.js", raw: 108 * 1024, gz: 33 * 1024, minGz: 11 * 1024 },
+  //   → 110 KiB raw / 34 KiB gz (2026-06-14): maintenance-profile
+  //     consolidation — the new `MAINTENANCE_PROFILE_*` constants (shared
+  //     kernel chunk) + the `profileToScheduledOptions` helper land in this
+  //     subpath's closure (measured 111961 raw / 33974 gz). Rebaseline raw
+  //     +2 KiB, gz +1 KiB. min-gz unaffected (still passing).
+  { entry: "maintenance.js", raw: 110 * 1024, gz: 34 * 1024, minGz: 11 * 1024 },
   // Cloudflare Workers adapter — re-exports the kernel barrel
   // (Db, Writer, etc.) plus the R2-binding `Storage` impl
   // and the `baerlyCloudflare` helper. Aggregator: closure

@@ -1,9 +1,6 @@
 import {
   type BaerlyConfig,
-  NODE_MAINTENANCE_FOLD_ENTRIES_PER_PASS,
-  NODE_MAINTENANCE_GC_INTERVAL,
-  NODE_MAINTENANCE_GC_MAX_MARKS,
-  NODE_MAINTENANCE_GC_MAX_SWEEPS,
+  MAINTENANCE_PROFILE_NODE,
   type Storage,
   type Verifier,
 } from "@baerly/protocol";
@@ -120,10 +117,7 @@ export const nodeMaintenanceDispatch = (
     ...(maxFoldBytes !== undefined && { maxFoldBytes }),
     options: {
       phasesPerTick: "both",
-      maxFoldEntriesPerPass: NODE_MAINTENANCE_FOLD_ENTRIES_PER_PASS,
-      gcMaxMarks: NODE_MAINTENANCE_GC_MAX_MARKS,
-      gcMaxSweeps: NODE_MAINTENANCE_GC_MAX_SWEEPS,
-      gcInterval: NODE_MAINTENANCE_GC_INTERVAL,
+      profile: MAINTENANCE_PROFILE_NODE,
     },
   };
 };
