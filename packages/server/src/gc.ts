@@ -63,6 +63,7 @@ import {
   createGcPending,
   decodeJsonBytes,
   encodeJsonBytes,
+  logObjectKey,
   logSeqStartOf,
   noopMetricsRecorder,
   readCurrentJson,
@@ -508,7 +509,7 @@ const collectLiveContentHashes = async (
   for (let s = logSeqStart; s < current.next_seq; s++) {
     logReads.push(
       (async (): Promise<void> => {
-        const got = await storage.get(`${collectionPrefix}/log/${s}.json`, getOpts);
+        const got = await storage.get(logObjectKey(collectionPrefix, s), getOpts);
         if (got === null) {
           return;
         }

@@ -29,6 +29,7 @@ import {
   type Storage,
   BaerlyError,
   decodeJsonBytes,
+  logObjectKey,
   MAX_PARALLEL_LOG_READS,
 } from "@baerly/protocol";
 
@@ -141,7 +142,7 @@ export const walkLogRangeWithBytes = async (
     const promises: Array<Promise<{ entry: LogEntry; bytes: number }>> = [];
     for (let i = chunkStart; i < chunkEnd; i++) {
       const seq = fromSeq + i;
-      promises.push(readLogEntryWithBytes(storage, `${logPrefix}/log/${seq}.json`, opts));
+      promises.push(readLogEntryWithBytes(storage, logObjectKey(logPrefix, seq), opts));
     }
     const results = await Promise.all(promises);
     for (let i = 0; i < results.length; i++) {

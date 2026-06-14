@@ -1,6 +1,12 @@
 import { describe, expect, test } from "vitest";
 import { COUNT_BIT_WIDTH } from "./constants.ts";
-import { LOG_KEY_PREFIX, type LogEntry, lsnParts, type ReplicaIdentity } from "./log.ts";
+import {
+  LOG_KEY_PREFIX,
+  type LogEntry,
+  logObjectKey,
+  lsnParts,
+  type ReplicaIdentity,
+} from "./log.ts";
 import { countKey, str2uintDesc } from "./types.ts";
 
 describe("LogEntry", () => {
@@ -48,6 +54,17 @@ describe("LogEntry", () => {
 describe("LOG_KEY_PREFIX", () => {
   test("is 'log'", () => {
     expect(LOG_KEY_PREFIX).toBe("log");
+  });
+});
+
+describe("logObjectKey", () => {
+  // Byte-identical guarantee: this literal is the key shape that every
+  // caller (db / writer / gc / log-walk) must produce. Ticket 01 flips
+  // the meaning of the trailing integer; this pins the shape until then.
+  test("composes <prefix>/log/<seq>.json", () => {
+    expect(logObjectKey("apps/_/tenants/_/manifests/users", 7)).toBe(
+      "apps/_/tenants/_/manifests/users/log/7.json",
+    );
   });
 });
 

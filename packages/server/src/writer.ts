@@ -44,6 +44,7 @@ import {
   createCurrentJson,
   decodeJsonBytes,
   encodeJsonBytes,
+  logObjectKey,
   logSeqStartOf,
   BaerlyError,
   noopMetricsRecorder,
@@ -647,7 +648,7 @@ export class Writer {
     // batch commits surface log-PUT 412s as `Conflict` immediately.
     type LogPutOutcome = { readonly ok: true } | { readonly ok: false };
     const logPutOne = async (entry: LogEntry): Promise<LogPutOutcome> => {
-      const logEntryKey = `${logPrefix}/log/${entry.seq}.json`;
+      const logEntryKey = logObjectKey(logPrefix, entry.seq);
       const logBytes = encodeJsonBytes(entry);
       try {
         await this.#storage.put(logEntryKey, logBytes, {
@@ -672,7 +673,7 @@ export class Writer {
     const firstConflictIdx = logPutResults.findIndex((r) => !r.ok);
     if (firstConflictIdx !== -1) {
       const conflictedEntry = entries[firstConflictIdx]!;
-      const logEntryKey = `${logPrefix}/log/${conflictedEntry.seq}.json`;
+      const logEntryKey = logObjectKey(logPrefix, conflictedEntry.seq);
       if (adoptOwnSessionOnLogConflict) {
         const existing = await readLogEntry(this.#storage, logEntryKey);
         const decision = tryAdoptOwnSessionLogEntry({
@@ -912,7 +913,7 @@ export class Writer {
     // Walk newest-to-oldest so we hit the most-recent op first.
     // `s = -1` is the natural empty-bucket sentinel.
     for (let s = currentNextSeq - 1; s >= 0; s--) {
-      const logKey = `${logPrefix}/log/${s}.json`;
+      const logKey = logObjectKey(logPrefix, s);
       const got = await this.#storage.get(logKey);
       if (got === null) {
         // A hole below the visible range — either we walked past

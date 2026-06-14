@@ -7,7 +7,7 @@ import {
   decodeJsonBytes,
   type DocumentData,
   type IndexDefinition,
-  LOG_KEY_PREFIX,
+  logObjectKey,
   type LogEntry,
   readCurrentJson,
   type RowOf,
@@ -403,7 +403,7 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
 
   /**
    * Read + parse one `LogEntry` by `seq` from
-   * `manifests/<collection>/${LOG_KEY_PREFIX}/<seq>.json`. Returns `null`
+   * `manifests/<collection>/log/<seq>.json`. Returns `null`
    * when the entry is missing — this typically means the GC sweeper
    * deleted the entry between a `readCurrentJson` and this GET (the
    * `/v1/since` handler treats the race as silent and skips the
@@ -418,7 +418,10 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
     seq: number,
     opts?: { signal?: AbortSignal },
   ): Promise<LogEntry | null> {
-    const key = `${physicalPrefixFor(this.app, this.tenant)}manifests/${collection}/${LOG_KEY_PREFIX}/${seq}.json`;
+    const key = logObjectKey(
+      `${physicalPrefixFor(this.app, this.tenant)}manifests/${collection}`,
+      seq,
+    );
     const got = await this.#storage.get(key, opts);
     if (got === null) {
       return null;
