@@ -384,6 +384,38 @@ export const CF_FREE_MAX_SAFE_FOLD_BYTES: number = 1024 * 1024;
  */
 export const MAINTENANCE_MAX_FOLD_ROWS: number = 2048;
 
+// Shape of the six host-agnostic write-tick budgets. Declared here (not as
+// the nominal `MaintenanceProfile` in maintenance.ts) so the named profiles
+// build from these constants with no server→protocol cycle.
+type MaintenanceProfileShape = Readonly<{
+  gcInterval: number;
+  gcMaxMarks: number;
+  gcMaxSweeps: number;
+  maxFoldEntriesPerPass: number;
+  maxFoldBytes: number;
+  maxFoldRows: number;
+}>;
+
+/** CF-free profile; the runner's absent-context default. @see packages/server/src/maintenance.ts */
+export const MAINTENANCE_PROFILE_CF_FREE: MaintenanceProfileShape = {
+  gcInterval: WRITE_TICK_GC_INTERVAL,
+  gcMaxMarks: WRITE_TICK_GC_MAX_MARKS,
+  gcMaxSweeps: WRITE_TICK_GC_MAX_SWEEPS,
+  maxFoldEntriesPerPass: WRITE_TICK_FOLD_ENTRIES_PER_PASS,
+  maxFoldBytes: MAINTENANCE_MAX_FOLD_BYTES_DEFAULT,
+  maxFoldRows: MAINTENANCE_MAX_FOLD_ROWS,
+};
+
+/** Node profile; 10× CF-free per-pass caps. @see packages/adapter-node/src/server.ts */
+export const MAINTENANCE_PROFILE_NODE: MaintenanceProfileShape = {
+  gcInterval: NODE_MAINTENANCE_GC_INTERVAL,
+  gcMaxMarks: NODE_MAINTENANCE_GC_MAX_MARKS,
+  gcMaxSweeps: NODE_MAINTENANCE_GC_MAX_SWEEPS,
+  maxFoldEntriesPerPass: NODE_MAINTENANCE_FOLD_ENTRIES_PER_PASS,
+  maxFoldBytes: MAINTENANCE_MAX_FOLD_BYTES_DEFAULT,
+  maxFoldRows: MAINTENANCE_MAX_FOLD_ROWS,
+};
+
 /**
  * Rate-limit the defer-warn off SHARED current.json.last_warned_seq (not per-isolate
  * memory — CF recycles isolates). ~once per this many writes.
