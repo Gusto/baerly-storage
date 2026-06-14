@@ -57,8 +57,16 @@
  *     the same predicate the write-tick runner uses to DEFER a fold. A
  *     run that flips this true is folding into a snapshot the profile can
  *     no longer rebuild in one pass (the graduation signal).
- * The verdict per (trigger, rate, profile) is whether the tail converges
- * to a BOUNDED steady state or GROWS without bound.
+ * The verdict per (trigger, rate, profile) is whether the backlog
+ * converges to a BOUNDED steady state or GROWS without bound — judged
+ * PER AXIS (`tail` and `objects`) and then combined. A cell is `bounded`
+ * ONLY IF both axes are bounded; otherwise it is `growing`, annotated
+ * with the offending axis (`growing (objects)` / `growing (tail)` /
+ * `growing (tail+objects)`). The combined field is what a decision-maker
+ * reads first, so it must mean "nothing is growing without bound" — a
+ * cell whose tail drains every other fold but whose object count climbs
+ * monotonically (a GC-drain backlog the large fold slice hides) is
+ * `growing (objects)`, not `bounded`.
  *
  * GC GRACE. Production GC waits `GC_GRACE_PERIOD_MILLIS` (7 days) before
  * sweeping an orphan, so object-count drain is invisible in a few-second
@@ -87,9 +95,11 @@
  * a representative baseline is checked in at
  * `docs/spec/attachments/maintenance-backlog-baseline.json`.
  *
- * Reproduction: `pnpm bench:maintenance-backlog`. Seeded; no infra
- * (MemoryStorage). Numbers are deterministic given the seed (op stream is
- * profile-independent); the verdict shape is the portable signal.
+ * Reproduction: `pnpm bench:maintenance-backlog`. No infra
+ * (MemoryStorage). Numbers are deterministic BY CONSTRUCTION — the op
+ * stream is index-derived and profile-independent (it never consumes
+ * `SEED`; the constant is an informational reproduction handle only).
+ * The verdict shape is the portable signal.
  */
 
 /* eslint-disable no-underscore-dangle -- `_id` is the locked primary-key
@@ -375,32 +385,82 @@ const runScheduled = async (
 
 // ── Verdict ──────────────────────────────────────────────────────────
 
-type Verdict = "bounded" | "growing";
+type AxisVerdict = "bounded" | "growing";
+/**
+ * The combined verdict a decision-maker reads first. `bounded` ONLY IF
+ * both measured axes (tail + objects) are bounded; otherwise `growing`,
+ * annotated with the offending axis.
+ */
+type Verdict = "bounded" | "growing (tail)" | "growing (objects)" | "growing (tail+objects)";
+
+const mean = (xs: readonly number[]): number => xs.reduce((s, x) => s + x, 0) / xs.length;
 
 /**
- * Classify a trajectory as bounded vs growing by comparing the mean
- * live-tail of the first third of the run to the last third. A tail that
- * is not meaningfully larger at the end than the middle is bounded
- * (converged to steady state); a tail that keeps climbing is growing.
- * Threshold: last-third mean > 1.5× first-third mean AND grew by more
- * than one fold slice — avoids calling normal fold sawtooth "growing".
+ * TAIL axis. Classify the live-tail trajectory bounded vs growing by
+ * comparing the mean of the first third of the run to the last third. A
+ * tail not meaningfully larger at the end is bounded (converged to steady
+ * state); one that keeps climbing is growing. Threshold: last-third mean
+ * > 1.5× first-third mean AND grew by more than one fold slice — avoids
+ * calling normal fold sawtooth "growing". The tail starts near its steady
+ * state (it is `next_seq - log_seq_start`, not a cold-bucket count), so
+ * the first third is representative and first-vs-last is sound here.
  */
-const meanTail = (xs: readonly MinuteSample[]): number =>
-  xs.reduce((s, x) => s + x.live_tail_entries, 0) / xs.length;
-
-const classify = (samples: readonly MinuteSample[], foldSlice: number): Verdict => {
+const classifyTail = (samples: readonly MinuteSample[], foldSlice: number): AxisVerdict => {
   const n = samples.length;
   const third = Math.max(1, Math.floor(n / 3));
-  const early = meanTail(samples.slice(0, third));
-  const late = meanTail(samples.slice(n - third));
-  const grew = late - early;
-  return late > early * 1.5 && grew > foldSlice ? "growing" : "bounded";
+  const early = mean(samples.slice(0, third).map((s) => s.live_tail_entries));
+  const late = mean(samples.slice(n - third).map((s) => s.live_tail_entries));
+  return late > early * 1.5 && late - early > foldSlice ? "growing" : "bounded";
+};
+
+/**
+ * OBJECTS axis. Same first-third-vs-last-third FRAMING, but two
+ * deliberate differences from the tail test — the object-count axis
+ * genuinely needs them:
+ *
+ *  1. Compare the SECOND third (mid) to the last third, NOT the first.
+ *     `object_count` starts at 0 on a cold bucket and ramps through a
+ *     warm-up before reaching steady state, so the first third is an
+ *     unrepresentative cold-start ramp — a first-vs-last ratio would
+ *     mislabel a bucket that warmed up then plateaued (e.g. in-band
+ *     cf-free, 22→~170 then flat) as "growing". The tail has no such
+ *     ramp, so it keeps the first-vs-last window.
+ *  2. Use an ADDITIVE floor (`grew > WORKING_SET`) with NO 1.5× ratio
+ *     gate. A slow monotonic climb on a large post-warm-up baseline
+ *     (scheduled/node at the M-size envelope: ~8 objects/min that never
+ *     plateaus) is a genuine unbounded GC-drain backlog even when the
+ *     30-minute window isn't long enough to reach 1.5×; the ratio gate
+ *     would wrongly absolve it. `WORKING_SET` is the right floor because
+ *     the bounded steady-state object count oscillates within a band set
+ *     by the live working set, so growth below one working-set is fold
+ *     sawtooth noise, not a backlog.
+ */
+const classifyObjects = (samples: readonly MinuteSample[]): AxisVerdict => {
+  const n = samples.length;
+  const third = Math.max(1, Math.floor(n / 3));
+  const mid = mean(samples.slice(third, 2 * third).map((s) => s.object_count));
+  const late = mean(samples.slice(n - third).map((s) => s.object_count));
+  return late - mid > WORKING_SET ? "growing" : "bounded";
+};
+
+const combineVerdict = (tail: AxisVerdict, objects: AxisVerdict): Verdict => {
+  if (tail === "bounded" && objects === "bounded") {
+    return "bounded";
+  }
+  if (tail === "growing" && objects === "growing") {
+    return "growing (tail+objects)";
+  }
+  return tail === "growing" ? "growing (tail)" : "growing (objects)";
 };
 
 interface CellResult {
   readonly trigger: "in-band" | "scheduled";
   readonly profile: "cf-free" | "node";
   readonly rate: number;
+  /** Per-axis verdicts on the two measured backlog axes. */
+  readonly tail_verdict: AxisVerdict;
+  readonly objects_verdict: AxisVerdict;
+  /** Combined verdict: `bounded` only if BOTH axes are bounded. */
   readonly verdict: Verdict;
   /** Last-minute backlog snapshot — the steady-state (or runaway) tail. */
   readonly final_live_tail_entries: number;
@@ -428,6 +488,8 @@ interface RunResult {
     readonly gc_grace: string;
     readonly in_band: string;
     readonly scheduled: string;
+    readonly tail_verdict: string;
+    readonly objects_verdict: string;
     readonly verdict: string;
   };
   readonly invariants: {
@@ -462,11 +524,15 @@ const main = async (): Promise<number> => {
         const samples = await run(pc.profile, rate);
         const last = samples[samples.length - 1]!;
         const peakTail = samples.reduce((m, s) => Math.max(m, s.live_tail_entries), 0);
+        const tailVerdict = classifyTail(samples, pc.profile.maxFoldEntriesPerPass);
+        const objectsVerdict = classifyObjects(samples);
         cells.push({
           trigger,
           profile: pc.label,
           rate,
-          verdict: classify(samples, pc.profile.maxFoldEntriesPerPass),
+          tail_verdict: tailVerdict,
+          objects_verdict: objectsVerdict,
+          verdict: combineVerdict(tailVerdict, objectsVerdict),
           final_live_tail_entries: last.live_tail_entries,
           final_object_count: last.object_count,
           final_snapshot_rows: last.snapshot_rows,
@@ -503,8 +569,12 @@ const main = async (): Promise<number> => {
         "every commit ticks runBoundedMaintenance at the profile (production write-tick default), phasesPerTick=both",
       scheduled:
         "in-band disabled; one runScheduledMaintenance tick per simulated minute, alternating compact (even) / GC (odd) — the CF even/odd-minute cron pattern",
+      tail_verdict:
+        "live_tail_entries axis: bounded = last-third mean not > 1.5x first-third mean AND grew <= one fold slice (converged sawtooth); growing = climbs past both. First-vs-last is sound here because the tail starts near steady state (no cold-bucket ramp).",
+      objects_verdict:
+        "object_count axis: same thirds framing but (1) MID-third vs last-third — object_count ramps from 0 on a cold bucket, so the first third is unrepresentative warm-up; (2) additive floor only (grew > working_set), no 1.5x ratio gate — a slow monotonic climb on a large baseline that never plateaus is a genuine unbounded GC-drain backlog even below 1.5x, and working_set is the steady-state oscillation band below which growth is fold sawtooth noise.",
       verdict:
-        "bounded = last-third mean live-tail not > 1.5x first-third mean (converged); growing = climbs past that and by more than one fold slice",
+        "combined: bounded ONLY IF both axes bounded; else growing, annotated with the offending axis — growing (tail) / growing (objects) / growing (tail+objects). This is the field a decision reads first, so it means 'nothing is growing without bound'.",
     },
     invariants: {
       maintenance_target_ratio: MAINTENANCE_TARGET_RATIO,
@@ -528,12 +598,13 @@ const main = async (): Promise<number> => {
 
   // ── Summary table ───────────────────────────────────────────────────
   console.log(
-    "trigger     profile   rate  verdict   finalTail  peakTail  objs  snapRows  overCeil",
+    "trigger     profile   rate  tail      objects   verdict                 finalTail  peakTail  objs  snapRows  overCeil",
   );
   for (const c of cells) {
     console.log(
       `${c.trigger.padEnd(11)} ${c.profile.padEnd(8)} ${c.rate.toString().padStart(4)}  ` +
-        `${c.verdict.padEnd(8)} ${c.final_live_tail_entries.toString().padStart(9)} ` +
+        `${c.tail_verdict.padEnd(9)} ${c.objects_verdict.padEnd(9)} ${c.verdict.padEnd(23)} ` +
+        `${c.final_live_tail_entries.toString().padStart(9)} ` +
         `${c.peak_live_tail_entries.toString().padStart(8)} ` +
         `${c.final_object_count.toString().padStart(5)} ` +
         `${c.final_snapshot_rows.toString().padStart(8)} ` +

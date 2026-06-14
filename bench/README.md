@@ -16,7 +16,7 @@ Two harnesses live under `bench/`:
 | `bench/r2-contention.ts` | CAS-storm 412/429 rates on one `current.json`; validates the idle-reader bound on the wire | When changing `packages/server/src/writer.ts`, coordination primitives, or retry policy |
 | `bench/load-harness/` | S3 ops + bytes per logical `Db` operation across seven workload presets; validates the workload cost model | When changing storage layout, manifest cache TTLs, or compaction profile — run before/after a perf-shaped PR |
 | `bench/fold-cost.ts` | CPU + peak-heap cost of ONE compaction fold (the unsliceable snapshot rebuild) vs. snapshot bytes and snapshot row count; Phase 2 evidence for raising the snapshot ceilings `C` / `E` on a more capable host. No infra (MemoryStorage). MEASURES ONLY — changes no constant. | When validating / revisiting the snapshot-rebuild cost model in [docs/about/graduation.md](../docs/about/graduation.md) |
-| `bench/maintenance-backlog.ts` | Maintenance backlog (live log-tail entries + bucket object count + deferred folds) vs. write rate, per trigger (in-band write-tick / scheduled cron) and profile (cf-free / node); Phase 2 evidence for whether FREE-RATE maintenance keeps up within the ~30 writes/min M-size envelope. No infra (MemoryStorage). MEASURES ONLY — changes no constant. | When validating / revisiting whether the per-host maintenance profile (`MAINTENANCE_PROFILE_CF_FREE` vs `MAINTENANCE_PROFILE_NODE`) is justified |
+| `bench/maintenance-backlog.ts` | Maintenance backlog (live log-tail entries + bucket object count + snapshot-over-ceiling minutes) vs. write rate, per trigger (in-band write-tick / scheduled cron) and profile (cf-free / node); Phase 2 evidence for whether FREE-RATE maintenance keeps up within the ~30 writes/min M-size envelope. Verdict is per-axis (tail + objects) then combined. No infra (MemoryStorage). MEASURES ONLY — changes no constant. | When validating / revisiting whether the per-host maintenance profile (`MAINTENANCE_PROFILE_CF_FREE` vs `MAINTENANCE_PROFILE_NODE`) is justified |
 
 Both require `pnpm dev:storage` (Minio `:9102` + Toxiproxy `:9104`)
 for the Minio-backed variants. Neither is a per-PR CI gate. The
@@ -270,26 +270,44 @@ bench. Like `maintenance-profile-equivalence.test.ts`, this bench uses the
 pass — modelling the drain **ceiling** (does sweep throughput keep up with
 orphan production `p`?), not the 7-day-delayed production timing.
 
-The JSON records, per (trigger, rate, profile) cell, a `verdict`
-(`bounded` / `growing`) plus the per-minute backlog trajectory
+The JSON records, per (trigger, rate, profile) cell, a per-axis verdict —
+`tail_verdict` and `objects_verdict` (each `bounded` / `growing`) — plus a
+combined `verdict` (`bounded` ONLY IF both axes are bounded; otherwise
+`growing (tail)` / `growing (objects)` / `growing (tail+objects)`, naming
+the axis that grows) and the per-minute backlog trajectory
 (`live_tail_entries`, `object_count`, `snapshot_bytes`, `snapshot_rows`,
-`deferred_folds`). One timestamped JSON per run lands in
-`bench/results/maintenance-backlog/` (gitignored); a representative
-baseline (full trajectories for the two headline cells, summaries for the
-rest) lives at
+`snapshot_over_ceiling`). The two axes use the same first-third-vs-last-third
+framing with one deliberate difference: the **tail** axis is first-vs-last
+(it starts near steady state), while the **objects** axis is
+mid-third-vs-last-third with an additive `grew > working_set` floor and no
+1.5× ratio gate — `object_count` ramps from 0 on a cold bucket (so the
+first third is unrepresentative warm-up) and a slow monotonic climb that
+never plateaus is a genuine unbounded GC-drain backlog even below 1.5×. One
+timestamped JSON per run lands in `bench/results/maintenance-backlog/`
+(gitignored); a representative baseline (full trajectories for the bounded
+exemplar plus every `growing` cell, summaries for the clearly-bounded rest)
+lives at
 [`docs/spec/attachments/maintenance-backlog-baseline.json`](../docs/spec/attachments/maintenance-backlog-baseline.json).
 
-**Verdict (baseline run).** In-band keeps up at every rate, both profiles
-(bounded sawtooth tail). Scheduled CF-free is bounded at 10/min but
-**grows without bound at 30 / 60 / 120** (a compact tick folds ~20 every
-other minute while ~`rate` entries/min arrive). Scheduled Node is bounded
-through 60/min and grows at 120/min (its 10× fold slice pushes the
-breakpoint above the envelope). This is consistent with the GC drain-rate
-invariant (`gcMaxSweeps / gcInterval = 10/4 ≥ p`, graduation.md §7.1) — the
-in-band object counts stay bounded because GC sweep keeps up; the
-scheduled-CF-free growth is a **fold** (compact) backlog, not a GC
-backlog. The bench **measures only**: it reports this as Phase 2 evidence
-and makes no call about changing any profile or constant.
+**Verdict (baseline run).** In-band keeps up at every rate on **both**
+profiles and **both axes** — the tail is a bounded sawtooth AND the object
+count plateaus (~143–171), because the write-tick GC sweep keeps up with
+orphan production. Scheduled is where free-rate maintenance falls behind,
+and the per-axis split tells the honest story: scheduled CF-free is
+`growing (objects)` already at 10/min (its large fold slice drains the tail
+but the object count climbs) and `growing (tail+objects)` at 30 / 60 / 120.
+**Scheduled Node is `growing (objects)` at 30 and 60** — the tail drains to
+zero every other minute (so a tail-only verdict would mislabel it
+`bounded`), but the object count climbs monotonically (~62→381 at 30/min,
+~121→2082 at 60/min) because the alternating compact/GC cron can't sweep
+orphans fast enough; only at 120/min does its tail also fall behind
+(`growing (tail+objects)`). This is consistent with the GC drain-rate
+invariant (`gcMaxSweeps / gcInterval = 10/4 ≥ p`, graduation.md §7.1): the
+in-band object counts stay bounded because the write-tick GC sweep keeps
+up, while the scheduled growth is partly a **fold** (compact) backlog and
+partly a **GC-drain** (objects) backlog the one-word tail verdict used to
+hide. The bench **measures only**: it reports this as Phase 2 evidence and
+makes no call about changing any profile or constant.
 
 ## Green-light criteria
 

@@ -9,17 +9,19 @@
   "min_entries_to_compact": 50,
   "rate_grid": [10, 30, 60, 120],
   "methodology": {
-    "simulated_time": "writes/min is the knob; a 'minute' is a unit mapping to `rate` real Db writes — NO wall-clock claim (the bench runs in seconds)",
-    "gc_grace": "gcGraceMillis/graceMillis = 0 so a marked orphan sweeps the same pass — models the drain CEILING (sweep throughput vs orphan production p), not the 7-day-delayed production timing",
+    "simulated_time": "writes/min is the knob; a 'minute' is a unit mapping to `rate` real Db writes \u2014 NO wall-clock claim (the bench runs in seconds)",
+    "gc_grace": "gcGraceMillis/graceMillis = 0 so a marked orphan sweeps the same pass \u2014 models the drain CEILING (sweep throughput vs orphan production p), not the 7-day-delayed production timing",
     "in_band": "every commit ticks runBoundedMaintenance at the profile (production write-tick default), phasesPerTick=both",
-    "scheduled": "in-band disabled; one runScheduledMaintenance tick per simulated minute, alternating compact (even) / GC (odd) — the CF even/odd-minute cron pattern",
-    "verdict": "bounded = last-third mean live-tail not > 1.5x first-third mean (converged); growing = climbs past that and by more than one fold slice"
+    "scheduled": "in-band disabled; one runScheduledMaintenance tick per simulated minute, alternating compact (even) / GC (odd) \u2014 the CF even/odd-minute cron pattern",
+    "tail_verdict": "live_tail_entries axis: bounded = last-third mean not > 1.5x first-third mean AND grew <= one fold slice (converged sawtooth); growing = climbs past both. First-vs-last is sound here because the tail starts near steady state (no cold-bucket ramp).",
+    "objects_verdict": "object_count axis: same thirds framing but (1) MID-third vs last-third \u2014 object_count ramps from 0 on a cold bucket, so the first third is unrepresentative warm-up; (2) additive floor only (grew > working_set), no 1.5x ratio gate \u2014 a slow monotonic climb on a large baseline that never plateaus is a genuine unbounded GC-drain backlog even below 1.5x, and working_set is the steady-state oscillation band below which growth is fold sawtooth noise.",
+    "verdict": "combined: bounded ONLY IF both axes bounded; else growing, annotated with the offending axis \u2014 growing (tail) / growing (objects) / growing (tail+objects). This is the field a decision reads first, so it means 'nothing is growing without bound'."
   },
   "invariants": {
     "maintenance_target_ratio": 1,
     "maintenance_min_live_bytes": 65536,
     "gc_starvation_guard": 4,
-    "cf_free_drain_ratio": "gcMaxSweeps/gcInterval = 10/4 = 2.5 (>= orphan-production p keeps object count bounded — graduation.md §7.1)",
+    "cf_free_drain_ratio": "gcMaxSweeps/gcInterval = 10/4 = 2.5 (>= orphan-production p keeps object count bounded \u2014 graduation.md \u00a77.1)",
     "node_drain_ratio": "gcMaxSweeps/gcInterval = 100/2 = 50"
   },
   "cells": [
@@ -27,6 +29,8 @@
       "trigger": "in-band",
       "profile": "cf-free",
       "rate": 10,
+      "tail_verdict": "bounded",
+      "objects_verdict": "bounded",
       "verdict": "bounded",
       "final_live_tail_entries": 40,
       "final_object_count": 167,
@@ -39,6 +43,8 @@
       "trigger": "in-band",
       "profile": "cf-free",
       "rate": 30,
+      "tail_verdict": "bounded",
+      "objects_verdict": "bounded",
       "verdict": "bounded",
       "final_live_tail_entries": 40,
       "final_object_count": 153,
@@ -322,6 +328,8 @@
       "trigger": "in-band",
       "profile": "cf-free",
       "rate": 60,
+      "tail_verdict": "bounded",
+      "objects_verdict": "bounded",
       "verdict": "bounded",
       "final_live_tail_entries": 40,
       "final_object_count": 170,
@@ -334,6 +342,8 @@
       "trigger": "in-band",
       "profile": "cf-free",
       "rate": 120,
+      "tail_verdict": "bounded",
+      "objects_verdict": "bounded",
       "verdict": "bounded",
       "final_live_tail_entries": 40,
       "final_object_count": 171,
@@ -346,6 +356,8 @@
       "trigger": "in-band",
       "profile": "node",
       "rate": 10,
+      "tail_verdict": "bounded",
+      "objects_verdict": "bounded",
       "verdict": "bounded",
       "final_live_tail_entries": 49,
       "final_object_count": 143,
@@ -358,6 +370,8 @@
       "trigger": "in-band",
       "profile": "node",
       "rate": 30,
+      "tail_verdict": "bounded",
+      "objects_verdict": "bounded",
       "verdict": "bounded",
       "final_live_tail_entries": 49,
       "final_object_count": 143,
@@ -370,6 +384,8 @@
       "trigger": "in-band",
       "profile": "node",
       "rate": 60,
+      "tail_verdict": "bounded",
+      "objects_verdict": "bounded",
       "verdict": "bounded",
       "final_live_tail_entries": 49,
       "final_object_count": 143,
@@ -382,6 +398,8 @@
       "trigger": "in-band",
       "profile": "node",
       "rate": 120,
+      "tail_verdict": "bounded",
+      "objects_verdict": "bounded",
       "verdict": "bounded",
       "final_live_tail_entries": 49,
       "final_object_count": 144,
@@ -394,19 +412,294 @@
       "trigger": "scheduled",
       "profile": "cf-free",
       "rate": 10,
-      "verdict": "bounded",
+      "tail_verdict": "bounded",
+      "objects_verdict": "growing",
+      "verdict": "growing (objects)",
       "final_live_tail_entries": 40,
       "final_object_count": 482,
       "final_snapshot_rows": 47,
       "minutes_over_ceiling": 0,
       "peak_live_tail_entries": 50,
-      "samples": "omitted-in-baseline (full trajectory in bench/results/)"
+      "samples": [
+        {
+          "minute": 1,
+          "cumulative_writes": 10,
+          "live_tail_entries": 10,
+          "object_count": 22,
+          "snapshot_bytes": 0,
+          "snapshot_rows": 0,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 2,
+          "cumulative_writes": 20,
+          "live_tail_entries": 20,
+          "object_count": 42,
+          "snapshot_bytes": 0,
+          "snapshot_rows": 0,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 3,
+          "cumulative_writes": 30,
+          "live_tail_entries": 30,
+          "object_count": 62,
+          "snapshot_bytes": 0,
+          "snapshot_rows": 0,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 4,
+          "cumulative_writes": 40,
+          "live_tail_entries": 40,
+          "object_count": 82,
+          "snapshot_bytes": 0,
+          "snapshot_rows": 0,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 5,
+          "cumulative_writes": 50,
+          "live_tail_entries": 50,
+          "object_count": 102,
+          "snapshot_bytes": 0,
+          "snapshot_rows": 0,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 6,
+          "cumulative_writes": 60,
+          "live_tail_entries": 40,
+          "object_count": 122,
+          "snapshot_bytes": 41551,
+          "snapshot_rows": 20,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 7,
+          "cumulative_writes": 70,
+          "live_tail_entries": 50,
+          "object_count": 131,
+          "snapshot_bytes": 41551,
+          "snapshot_rows": 20,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 8,
+          "cumulative_writes": 80,
+          "live_tail_entries": 40,
+          "object_count": 151,
+          "snapshot_bytes": 83025,
+          "snapshot_rows": 40,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 9,
+          "cumulative_writes": 90,
+          "live_tail_entries": 50,
+          "object_count": 161,
+          "snapshot_bytes": 83025,
+          "snapshot_rows": 40,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 10,
+          "cumulative_writes": 100,
+          "live_tail_entries": 40,
+          "object_count": 181,
+          "snapshot_bytes": 101686,
+          "snapshot_rows": 49,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 11,
+          "cumulative_writes": 110,
+          "live_tail_entries": 50,
+          "object_count": 190,
+          "snapshot_bytes": 101686,
+          "snapshot_rows": 49,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 12,
+          "cumulative_writes": 120,
+          "live_tail_entries": 40,
+          "object_count": 210,
+          "snapshot_bytes": 97540,
+          "snapshot_rows": 47,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 13,
+          "cumulative_writes": 130,
+          "live_tail_entries": 50,
+          "object_count": 222,
+          "snapshot_bytes": 97540,
+          "snapshot_rows": 47,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 14,
+          "cumulative_writes": 140,
+          "live_tail_entries": 40,
+          "object_count": 242,
+          "snapshot_bytes": 95468,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 15,
+          "cumulative_writes": 150,
+          "live_tail_entries": 50,
+          "object_count": 256,
+          "snapshot_bytes": 95468,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 16,
+          "cumulative_writes": 160,
+          "live_tail_entries": 40,
+          "object_count": 276,
+          "snapshot_bytes": 95464,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 17,
+          "cumulative_writes": 170,
+          "live_tail_entries": 50,
+          "object_count": 285,
+          "snapshot_bytes": 95464,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 18,
+          "cumulative_writes": 180,
+          "live_tail_entries": 40,
+          "object_count": 306,
+          "snapshot_bytes": 95468,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 19,
+          "cumulative_writes": 190,
+          "live_tail_entries": 50,
+          "object_count": 315,
+          "snapshot_bytes": 95468,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 20,
+          "cumulative_writes": 200,
+          "live_tail_entries": 40,
+          "object_count": 335,
+          "snapshot_bytes": 95466,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 21,
+          "cumulative_writes": 210,
+          "live_tail_entries": 50,
+          "object_count": 344,
+          "snapshot_bytes": 95466,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 22,
+          "cumulative_writes": 220,
+          "live_tail_entries": 40,
+          "object_count": 365,
+          "snapshot_bytes": 95466,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 23,
+          "cumulative_writes": 230,
+          "live_tail_entries": 50,
+          "object_count": 374,
+          "snapshot_bytes": 95466,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 24,
+          "cumulative_writes": 240,
+          "live_tail_entries": 40,
+          "object_count": 394,
+          "snapshot_bytes": 95466,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 25,
+          "cumulative_writes": 250,
+          "live_tail_entries": 50,
+          "object_count": 403,
+          "snapshot_bytes": 95466,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 26,
+          "cumulative_writes": 260,
+          "live_tail_entries": 40,
+          "object_count": 424,
+          "snapshot_bytes": 97541,
+          "snapshot_rows": 47,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 27,
+          "cumulative_writes": 270,
+          "live_tail_entries": 50,
+          "object_count": 433,
+          "snapshot_bytes": 97541,
+          "snapshot_rows": 47,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 28,
+          "cumulative_writes": 280,
+          "live_tail_entries": 40,
+          "object_count": 453,
+          "snapshot_bytes": 95464,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 29,
+          "cumulative_writes": 290,
+          "live_tail_entries": 50,
+          "object_count": 462,
+          "snapshot_bytes": 95464,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 30,
+          "cumulative_writes": 300,
+          "live_tail_entries": 40,
+          "object_count": 482,
+          "snapshot_bytes": 97541,
+          "snapshot_rows": 47,
+          "snapshot_over_ceiling": false
+        }
+      ]
     },
     {
       "trigger": "scheduled",
       "profile": "cf-free",
       "rate": 30,
-      "verdict": "growing",
+      "tail_verdict": "growing",
+      "objects_verdict": "growing",
+      "verdict": "growing (tail+objects)",
       "final_live_tail_entries": 600,
       "final_object_count": 1639,
       "final_snapshot_rows": 46,
@@ -689,30 +982,578 @@
       "trigger": "scheduled",
       "profile": "cf-free",
       "rate": 60,
-      "verdict": "growing",
+      "tail_verdict": "growing",
+      "objects_verdict": "growing",
+      "verdict": "growing (tail+objects)",
       "final_live_tail_entries": 1500,
       "final_object_count": 3429,
       "final_snapshot_rows": 46,
       "minutes_over_ceiling": 0,
       "peak_live_tail_entries": 1500,
-      "samples": "omitted-in-baseline (full trajectory in bench/results/)"
+      "samples": [
+        {
+          "minute": 1,
+          "cumulative_writes": 60,
+          "live_tail_entries": 60,
+          "object_count": 121,
+          "snapshot_bytes": 0,
+          "snapshot_rows": 0,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 2,
+          "cumulative_writes": 120,
+          "live_tail_entries": 100,
+          "object_count": 237,
+          "snapshot_bytes": 41551,
+          "snapshot_rows": 20,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 3,
+          "cumulative_writes": 180,
+          "live_tail_entries": 160,
+          "object_count": 349,
+          "snapshot_bytes": 41551,
+          "snapshot_rows": 20,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 4,
+          "cumulative_writes": 240,
+          "live_tail_entries": 200,
+          "object_count": 465,
+          "snapshot_bytes": 83025,
+          "snapshot_rows": 40,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 5,
+          "cumulative_writes": 300,
+          "live_tail_entries": 260,
+          "object_count": 579,
+          "snapshot_bytes": 83025,
+          "snapshot_rows": 40,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 6,
+          "cumulative_writes": 360,
+          "live_tail_entries": 300,
+          "object_count": 696,
+          "snapshot_bytes": 101686,
+          "snapshot_rows": 49,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 7,
+          "cumulative_writes": 420,
+          "live_tail_entries": 360,
+          "object_count": 810,
+          "snapshot_bytes": 101686,
+          "snapshot_rows": 49,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 8,
+          "cumulative_writes": 480,
+          "live_tail_entries": 400,
+          "object_count": 927,
+          "snapshot_bytes": 97540,
+          "snapshot_rows": 47,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 9,
+          "cumulative_writes": 540,
+          "live_tail_entries": 460,
+          "object_count": 1038,
+          "snapshot_bytes": 97540,
+          "snapshot_rows": 47,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 10,
+          "cumulative_writes": 600,
+          "live_tail_entries": 500,
+          "object_count": 1154,
+          "snapshot_bytes": 95468,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 11,
+          "cumulative_writes": 660,
+          "live_tail_entries": 560,
+          "object_count": 1269,
+          "snapshot_bytes": 95468,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 12,
+          "cumulative_writes": 720,
+          "live_tail_entries": 600,
+          "object_count": 1385,
+          "snapshot_bytes": 95464,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 13,
+          "cumulative_writes": 780,
+          "live_tail_entries": 660,
+          "object_count": 1491,
+          "snapshot_bytes": 95464,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 14,
+          "cumulative_writes": 840,
+          "live_tail_entries": 700,
+          "object_count": 1607,
+          "snapshot_bytes": 95468,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 15,
+          "cumulative_writes": 900,
+          "live_tail_entries": 760,
+          "object_count": 1712,
+          "snapshot_bytes": 95468,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 16,
+          "cumulative_writes": 960,
+          "live_tail_entries": 800,
+          "object_count": 1829,
+          "snapshot_bytes": 95466,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 17,
+          "cumulative_writes": 1020,
+          "live_tail_entries": 860,
+          "object_count": 1934,
+          "snapshot_bytes": 95466,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 18,
+          "cumulative_writes": 1080,
+          "live_tail_entries": 900,
+          "object_count": 2050,
+          "snapshot_bytes": 95466,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 19,
+          "cumulative_writes": 1140,
+          "live_tail_entries": 960,
+          "object_count": 2159,
+          "snapshot_bytes": 95466,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 20,
+          "cumulative_writes": 1200,
+          "live_tail_entries": 1000,
+          "object_count": 2275,
+          "snapshot_bytes": 95466,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 21,
+          "cumulative_writes": 1260,
+          "live_tail_entries": 1060,
+          "object_count": 2390,
+          "snapshot_bytes": 95466,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 22,
+          "cumulative_writes": 1320,
+          "live_tail_entries": 1100,
+          "object_count": 2506,
+          "snapshot_bytes": 97541,
+          "snapshot_rows": 47,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 23,
+          "cumulative_writes": 1380,
+          "live_tail_entries": 1160,
+          "object_count": 2620,
+          "snapshot_bytes": 97541,
+          "snapshot_rows": 47,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 24,
+          "cumulative_writes": 1440,
+          "live_tail_entries": 1200,
+          "object_count": 2737,
+          "snapshot_bytes": 95464,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 25,
+          "cumulative_writes": 1500,
+          "live_tail_entries": 1260,
+          "object_count": 2851,
+          "snapshot_bytes": 95464,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 26,
+          "cumulative_writes": 1560,
+          "live_tail_entries": 1300,
+          "object_count": 2968,
+          "snapshot_bytes": 97541,
+          "snapshot_rows": 47,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 27,
+          "cumulative_writes": 1620,
+          "live_tail_entries": 1360,
+          "object_count": 3082,
+          "snapshot_bytes": 97541,
+          "snapshot_rows": 47,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 28,
+          "cumulative_writes": 1680,
+          "live_tail_entries": 1400,
+          "object_count": 3198,
+          "snapshot_bytes": 95466,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 29,
+          "cumulative_writes": 1740,
+          "live_tail_entries": 1460,
+          "object_count": 3313,
+          "snapshot_bytes": 95466,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 30,
+          "cumulative_writes": 1800,
+          "live_tail_entries": 1500,
+          "object_count": 3429,
+          "snapshot_bytes": 95466,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        }
+      ]
     },
     {
       "trigger": "scheduled",
       "profile": "cf-free",
       "rate": 120,
-      "verdict": "growing",
+      "tail_verdict": "growing",
+      "objects_verdict": "growing",
+      "verdict": "growing (tail+objects)",
       "final_live_tail_entries": 3300,
       "final_object_count": 6922,
       "final_snapshot_rows": 46,
       "minutes_over_ceiling": 0,
       "peak_live_tail_entries": 3300,
-      "samples": "omitted-in-baseline (full trajectory in bench/results/)"
+      "samples": [
+        {
+          "minute": 1,
+          "cumulative_writes": 120,
+          "live_tail_entries": 120,
+          "object_count": 236,
+          "snapshot_bytes": 0,
+          "snapshot_rows": 0,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 2,
+          "cumulative_writes": 240,
+          "live_tail_entries": 220,
+          "object_count": 468,
+          "snapshot_bytes": 41551,
+          "snapshot_rows": 20,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 3,
+          "cumulative_writes": 360,
+          "live_tail_entries": 340,
+          "object_count": 695,
+          "snapshot_bytes": 41551,
+          "snapshot_rows": 20,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 4,
+          "cumulative_writes": 480,
+          "live_tail_entries": 440,
+          "object_count": 927,
+          "snapshot_bytes": 83025,
+          "snapshot_rows": 40,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 5,
+          "cumulative_writes": 600,
+          "live_tail_entries": 560,
+          "object_count": 1156,
+          "snapshot_bytes": 83025,
+          "snapshot_rows": 40,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 6,
+          "cumulative_writes": 720,
+          "live_tail_entries": 660,
+          "object_count": 1388,
+          "snapshot_bytes": 101686,
+          "snapshot_rows": 49,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 7,
+          "cumulative_writes": 840,
+          "live_tail_entries": 780,
+          "object_count": 1618,
+          "snapshot_bytes": 101686,
+          "snapshot_rows": 49,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 8,
+          "cumulative_writes": 960,
+          "live_tail_entries": 880,
+          "object_count": 1850,
+          "snapshot_bytes": 97540,
+          "snapshot_rows": 47,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 9,
+          "cumulative_writes": 1080,
+          "live_tail_entries": 1000,
+          "object_count": 2078,
+          "snapshot_bytes": 97540,
+          "snapshot_rows": 47,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 10,
+          "cumulative_writes": 1200,
+          "live_tail_entries": 1100,
+          "object_count": 2310,
+          "snapshot_bytes": 95468,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 11,
+          "cumulative_writes": 1320,
+          "live_tail_entries": 1220,
+          "object_count": 2540,
+          "snapshot_bytes": 95468,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 12,
+          "cumulative_writes": 1440,
+          "live_tail_entries": 1320,
+          "object_count": 2772,
+          "snapshot_bytes": 95464,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 13,
+          "cumulative_writes": 1560,
+          "live_tail_entries": 1440,
+          "object_count": 2999,
+          "snapshot_bytes": 95464,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 14,
+          "cumulative_writes": 1680,
+          "live_tail_entries": 1540,
+          "object_count": 3230,
+          "snapshot_bytes": 95468,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 15,
+          "cumulative_writes": 1800,
+          "live_tail_entries": 1660,
+          "object_count": 3460,
+          "snapshot_bytes": 95468,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 16,
+          "cumulative_writes": 1920,
+          "live_tail_entries": 1760,
+          "object_count": 3692,
+          "snapshot_bytes": 95466,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 17,
+          "cumulative_writes": 2040,
+          "live_tail_entries": 1880,
+          "object_count": 3921,
+          "snapshot_bytes": 95466,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 18,
+          "cumulative_writes": 2160,
+          "live_tail_entries": 1980,
+          "object_count": 4152,
+          "snapshot_bytes": 95466,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 19,
+          "cumulative_writes": 2280,
+          "live_tail_entries": 2100,
+          "object_count": 4382,
+          "snapshot_bytes": 95466,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 20,
+          "cumulative_writes": 2400,
+          "live_tail_entries": 2200,
+          "object_count": 4614,
+          "snapshot_bytes": 95466,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 21,
+          "cumulative_writes": 2520,
+          "live_tail_entries": 2320,
+          "object_count": 4844,
+          "snapshot_bytes": 95466,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 22,
+          "cumulative_writes": 2640,
+          "live_tail_entries": 2420,
+          "object_count": 5075,
+          "snapshot_bytes": 97541,
+          "snapshot_rows": 47,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 23,
+          "cumulative_writes": 2760,
+          "live_tail_entries": 2540,
+          "object_count": 5305,
+          "snapshot_bytes": 97541,
+          "snapshot_rows": 47,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 24,
+          "cumulative_writes": 2880,
+          "live_tail_entries": 2640,
+          "object_count": 5537,
+          "snapshot_bytes": 95464,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 25,
+          "cumulative_writes": 3000,
+          "live_tail_entries": 2760,
+          "object_count": 5767,
+          "snapshot_bytes": 95464,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 26,
+          "cumulative_writes": 3120,
+          "live_tail_entries": 2860,
+          "object_count": 5999,
+          "snapshot_bytes": 97541,
+          "snapshot_rows": 47,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 27,
+          "cumulative_writes": 3240,
+          "live_tail_entries": 2980,
+          "object_count": 6228,
+          "snapshot_bytes": 97541,
+          "snapshot_rows": 47,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 28,
+          "cumulative_writes": 3360,
+          "live_tail_entries": 3080,
+          "object_count": 6460,
+          "snapshot_bytes": 95466,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 29,
+          "cumulative_writes": 3480,
+          "live_tail_entries": 3200,
+          "object_count": 6690,
+          "snapshot_bytes": 95466,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 30,
+          "cumulative_writes": 3600,
+          "live_tail_entries": 3300,
+          "object_count": 6922,
+          "snapshot_bytes": 95466,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        }
+      ]
     },
     {
       "trigger": "scheduled",
       "profile": "node",
       "rate": 10,
+      "tail_verdict": "bounded",
+      "objects_verdict": "bounded",
       "verdict": "bounded",
       "final_live_tail_entries": 0,
       "final_object_count": 165,
@@ -725,41 +1566,860 @@
       "trigger": "scheduled",
       "profile": "node",
       "rate": 30,
-      "verdict": "bounded",
+      "tail_verdict": "bounded",
+      "objects_verdict": "growing",
+      "verdict": "growing (objects)",
       "final_live_tail_entries": 0,
       "final_object_count": 381,
       "final_snapshot_rows": 46,
       "minutes_over_ceiling": 0,
       "peak_live_tail_entries": 30,
-      "samples": "omitted-in-baseline (full trajectory in bench/results/)"
+      "samples": [
+        {
+          "minute": 1,
+          "cumulative_writes": 30,
+          "live_tail_entries": 30,
+          "object_count": 62,
+          "snapshot_bytes": 0,
+          "snapshot_rows": 0,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 2,
+          "cumulative_writes": 60,
+          "live_tail_entries": 0,
+          "object_count": 122,
+          "snapshot_bytes": 101686,
+          "snapshot_rows": 49,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 3,
+          "cumulative_writes": 90,
+          "live_tail_entries": 30,
+          "object_count": 110,
+          "snapshot_bytes": 101686,
+          "snapshot_rows": 49,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 4,
+          "cumulative_writes": 120,
+          "live_tail_entries": 0,
+          "object_count": 168,
+          "snapshot_bytes": 95464,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 5,
+          "cumulative_writes": 150,
+          "live_tail_entries": 30,
+          "object_count": 126,
+          "snapshot_bytes": 95464,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 6,
+          "cumulative_writes": 180,
+          "live_tail_entries": 0,
+          "object_count": 185,
+          "snapshot_bytes": 95466,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 7,
+          "cumulative_writes": 210,
+          "live_tail_entries": 30,
+          "object_count": 142,
+          "snapshot_bytes": 95466,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 8,
+          "cumulative_writes": 240,
+          "live_tail_entries": 0,
+          "object_count": 201,
+          "snapshot_bytes": 95464,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 9,
+          "cumulative_writes": 270,
+          "live_tail_entries": 30,
+          "object_count": 159,
+          "snapshot_bytes": 95464,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 10,
+          "cumulative_writes": 300,
+          "live_tail_entries": 0,
+          "object_count": 217,
+          "snapshot_bytes": 95466,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 11,
+          "cumulative_writes": 330,
+          "live_tail_entries": 30,
+          "object_count": 175,
+          "snapshot_bytes": 95466,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 12,
+          "cumulative_writes": 360,
+          "live_tail_entries": 0,
+          "object_count": 234,
+          "snapshot_bytes": 95464,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 13,
+          "cumulative_writes": 390,
+          "live_tail_entries": 30,
+          "object_count": 192,
+          "snapshot_bytes": 95464,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 14,
+          "cumulative_writes": 420,
+          "live_tail_entries": 0,
+          "object_count": 250,
+          "snapshot_bytes": 95466,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 15,
+          "cumulative_writes": 450,
+          "live_tail_entries": 30,
+          "object_count": 208,
+          "snapshot_bytes": 95466,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 16,
+          "cumulative_writes": 480,
+          "live_tail_entries": 0,
+          "object_count": 267,
+          "snapshot_bytes": 97539,
+          "snapshot_rows": 47,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 17,
+          "cumulative_writes": 510,
+          "live_tail_entries": 30,
+          "object_count": 224,
+          "snapshot_bytes": 97539,
+          "snapshot_rows": 47,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 18,
+          "cumulative_writes": 540,
+          "live_tail_entries": 0,
+          "object_count": 283,
+          "snapshot_bytes": 95503,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 19,
+          "cumulative_writes": 570,
+          "live_tail_entries": 30,
+          "object_count": 241,
+          "snapshot_bytes": 95503,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 20,
+          "cumulative_writes": 600,
+          "live_tail_entries": 0,
+          "object_count": 299,
+          "snapshot_bytes": 95512,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 21,
+          "cumulative_writes": 630,
+          "live_tail_entries": 30,
+          "object_count": 257,
+          "snapshot_bytes": 95512,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 22,
+          "cumulative_writes": 660,
+          "live_tail_entries": 0,
+          "object_count": 316,
+          "snapshot_bytes": 95512,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 23,
+          "cumulative_writes": 690,
+          "live_tail_entries": 30,
+          "object_count": 273,
+          "snapshot_bytes": 95512,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 24,
+          "cumulative_writes": 720,
+          "live_tail_entries": 0,
+          "object_count": 332,
+          "snapshot_bytes": 95512,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 25,
+          "cumulative_writes": 750,
+          "live_tail_entries": 30,
+          "object_count": 290,
+          "snapshot_bytes": 95512,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 26,
+          "cumulative_writes": 780,
+          "live_tail_entries": 0,
+          "object_count": 349,
+          "snapshot_bytes": 97586,
+          "snapshot_rows": 47,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 27,
+          "cumulative_writes": 810,
+          "live_tail_entries": 30,
+          "object_count": 306,
+          "snapshot_bytes": 97586,
+          "snapshot_rows": 47,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 28,
+          "cumulative_writes": 840,
+          "live_tail_entries": 0,
+          "object_count": 365,
+          "snapshot_bytes": 95512,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 29,
+          "cumulative_writes": 870,
+          "live_tail_entries": 30,
+          "object_count": 323,
+          "snapshot_bytes": 95512,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 30,
+          "cumulative_writes": 900,
+          "live_tail_entries": 0,
+          "object_count": 381,
+          "snapshot_bytes": 95510,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        }
+      ]
     },
     {
       "trigger": "scheduled",
       "profile": "node",
       "rate": 60,
-      "verdict": "bounded",
+      "tail_verdict": "bounded",
+      "objects_verdict": "growing",
+      "verdict": "growing (objects)",
       "final_live_tail_entries": 0,
       "final_object_count": 2082,
       "final_snapshot_rows": 46,
       "minutes_over_ceiling": 0,
       "peak_live_tail_entries": 60,
-      "samples": "omitted-in-baseline (full trajectory in bench/results/)"
+      "samples": [
+        {
+          "minute": 1,
+          "cumulative_writes": 60,
+          "live_tail_entries": 60,
+          "object_count": 121,
+          "snapshot_bytes": 0,
+          "snapshot_rows": 0,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 2,
+          "cumulative_writes": 120,
+          "live_tail_entries": 0,
+          "object_count": 237,
+          "snapshot_bytes": 95464,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 3,
+          "cumulative_writes": 180,
+          "live_tail_entries": 60,
+          "object_count": 253,
+          "snapshot_bytes": 95464,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 4,
+          "cumulative_writes": 240,
+          "live_tail_entries": 0,
+          "object_count": 369,
+          "snapshot_bytes": 95464,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 5,
+          "cumulative_writes": 300,
+          "live_tail_entries": 60,
+          "object_count": 384,
+          "snapshot_bytes": 95464,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 6,
+          "cumulative_writes": 360,
+          "live_tail_entries": 0,
+          "object_count": 501,
+          "snapshot_bytes": 95464,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 7,
+          "cumulative_writes": 420,
+          "live_tail_entries": 60,
+          "object_count": 516,
+          "snapshot_bytes": 95464,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 8,
+          "cumulative_writes": 480,
+          "live_tail_entries": 0,
+          "object_count": 633,
+          "snapshot_bytes": 97539,
+          "snapshot_rows": 47,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 9,
+          "cumulative_writes": 540,
+          "live_tail_entries": 60,
+          "object_count": 648,
+          "snapshot_bytes": 97539,
+          "snapshot_rows": 47,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 10,
+          "cumulative_writes": 600,
+          "live_tail_entries": 0,
+          "object_count": 764,
+          "snapshot_bytes": 95512,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 11,
+          "cumulative_writes": 660,
+          "live_tail_entries": 60,
+          "object_count": 780,
+          "snapshot_bytes": 95512,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 12,
+          "cumulative_writes": 720,
+          "live_tail_entries": 0,
+          "object_count": 896,
+          "snapshot_bytes": 95512,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 13,
+          "cumulative_writes": 780,
+          "live_tail_entries": 60,
+          "object_count": 912,
+          "snapshot_bytes": 95512,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 14,
+          "cumulative_writes": 840,
+          "live_tail_entries": 0,
+          "object_count": 1028,
+          "snapshot_bytes": 95512,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 15,
+          "cumulative_writes": 900,
+          "live_tail_entries": 60,
+          "object_count": 1043,
+          "snapshot_bytes": 95512,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 16,
+          "cumulative_writes": 960,
+          "live_tail_entries": 0,
+          "object_count": 1160,
+          "snapshot_bytes": 95512,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 17,
+          "cumulative_writes": 1020,
+          "live_tail_entries": 60,
+          "object_count": 1175,
+          "snapshot_bytes": 95512,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 18,
+          "cumulative_writes": 1080,
+          "live_tail_entries": 0,
+          "object_count": 1291,
+          "snapshot_bytes": 95513,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 19,
+          "cumulative_writes": 1140,
+          "live_tail_entries": 60,
+          "object_count": 1307,
+          "snapshot_bytes": 95513,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 20,
+          "cumulative_writes": 1200,
+          "live_tail_entries": 0,
+          "object_count": 1423,
+          "snapshot_bytes": 95513,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 21,
+          "cumulative_writes": 1260,
+          "live_tail_entries": 60,
+          "object_count": 1439,
+          "snapshot_bytes": 95513,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 22,
+          "cumulative_writes": 1320,
+          "live_tail_entries": 0,
+          "object_count": 1555,
+          "snapshot_bytes": 95513,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 23,
+          "cumulative_writes": 1380,
+          "live_tail_entries": 60,
+          "object_count": 1570,
+          "snapshot_bytes": 95513,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 24,
+          "cumulative_writes": 1440,
+          "live_tail_entries": 0,
+          "object_count": 1687,
+          "snapshot_bytes": 95513,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 25,
+          "cumulative_writes": 1500,
+          "live_tail_entries": 60,
+          "object_count": 1702,
+          "snapshot_bytes": 95513,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 26,
+          "cumulative_writes": 1560,
+          "live_tail_entries": 0,
+          "object_count": 1819,
+          "snapshot_bytes": 97587,
+          "snapshot_rows": 47,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 27,
+          "cumulative_writes": 1620,
+          "live_tail_entries": 60,
+          "object_count": 1834,
+          "snapshot_bytes": 97587,
+          "snapshot_rows": 47,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 28,
+          "cumulative_writes": 1680,
+          "live_tail_entries": 0,
+          "object_count": 1950,
+          "snapshot_bytes": 95511,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 29,
+          "cumulative_writes": 1740,
+          "live_tail_entries": 60,
+          "object_count": 1966,
+          "snapshot_bytes": 95511,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 30,
+          "cumulative_writes": 1800,
+          "live_tail_entries": 0,
+          "object_count": 2082,
+          "snapshot_bytes": 95511,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        }
+      ]
     },
     {
       "trigger": "scheduled",
       "profile": "node",
       "rate": 120,
-      "verdict": "growing",
+      "tail_verdict": "growing",
+      "objects_verdict": "growing",
+      "verdict": "growing (tail+objects)",
       "final_live_tail_entries": 600,
       "final_object_count": 5544,
       "final_snapshot_rows": 46,
       "minutes_over_ceiling": 0,
       "peak_live_tail_entries": 680,
-      "samples": "omitted-in-baseline (full trajectory in bench/results/)"
+      "samples": [
+        {
+          "minute": 1,
+          "cumulative_writes": 120,
+          "live_tail_entries": 120,
+          "object_count": 236,
+          "snapshot_bytes": 0,
+          "snapshot_rows": 0,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 2,
+          "cumulative_writes": 240,
+          "live_tail_entries": 40,
+          "object_count": 468,
+          "snapshot_bytes": 95466,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 3,
+          "cumulative_writes": 360,
+          "live_tail_entries": 160,
+          "object_count": 599,
+          "snapshot_bytes": 95466,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 4,
+          "cumulative_writes": 480,
+          "live_tail_entries": 80,
+          "object_count": 831,
+          "snapshot_bytes": 95466,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 5,
+          "cumulative_writes": 600,
+          "live_tail_entries": 200,
+          "object_count": 961,
+          "snapshot_bytes": 95466,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 6,
+          "cumulative_writes": 720,
+          "live_tail_entries": 120,
+          "object_count": 1193,
+          "snapshot_bytes": 95512,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 7,
+          "cumulative_writes": 840,
+          "live_tail_entries": 240,
+          "object_count": 1324,
+          "snapshot_bytes": 95512,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 8,
+          "cumulative_writes": 960,
+          "live_tail_entries": 160,
+          "object_count": 1556,
+          "snapshot_bytes": 95514,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 9,
+          "cumulative_writes": 1080,
+          "live_tail_entries": 280,
+          "object_count": 1686,
+          "snapshot_bytes": 95514,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 10,
+          "cumulative_writes": 1200,
+          "live_tail_entries": 200,
+          "object_count": 1918,
+          "snapshot_bytes": 97589,
+          "snapshot_rows": 47,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 11,
+          "cumulative_writes": 1320,
+          "live_tail_entries": 320,
+          "object_count": 2049,
+          "snapshot_bytes": 97589,
+          "snapshot_rows": 47,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 12,
+          "cumulative_writes": 1440,
+          "live_tail_entries": 240,
+          "object_count": 2281,
+          "snapshot_bytes": 95513,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 13,
+          "cumulative_writes": 1560,
+          "live_tail_entries": 360,
+          "object_count": 2412,
+          "snapshot_bytes": 95513,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 14,
+          "cumulative_writes": 1680,
+          "live_tail_entries": 280,
+          "object_count": 2643,
+          "snapshot_bytes": 95515,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 15,
+          "cumulative_writes": 1800,
+          "live_tail_entries": 400,
+          "object_count": 2774,
+          "snapshot_bytes": 95515,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 16,
+          "cumulative_writes": 1920,
+          "live_tail_entries": 320,
+          "object_count": 3006,
+          "snapshot_bytes": 95513,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 17,
+          "cumulative_writes": 2040,
+          "live_tail_entries": 440,
+          "object_count": 3137,
+          "snapshot_bytes": 95513,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 18,
+          "cumulative_writes": 2160,
+          "live_tail_entries": 360,
+          "object_count": 3368,
+          "snapshot_bytes": 95511,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 19,
+          "cumulative_writes": 2280,
+          "live_tail_entries": 480,
+          "object_count": 3499,
+          "snapshot_bytes": 95511,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 20,
+          "cumulative_writes": 2400,
+          "live_tail_entries": 400,
+          "object_count": 3731,
+          "snapshot_bytes": 95513,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 21,
+          "cumulative_writes": 2520,
+          "live_tail_entries": 520,
+          "object_count": 3862,
+          "snapshot_bytes": 95513,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 22,
+          "cumulative_writes": 2640,
+          "live_tail_entries": 440,
+          "object_count": 4093,
+          "snapshot_bytes": 95515,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 23,
+          "cumulative_writes": 2760,
+          "live_tail_entries": 560,
+          "object_count": 4224,
+          "snapshot_bytes": 95515,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 24,
+          "cumulative_writes": 2880,
+          "live_tail_entries": 480,
+          "object_count": 4456,
+          "snapshot_bytes": 95513,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 25,
+          "cumulative_writes": 3000,
+          "live_tail_entries": 600,
+          "object_count": 4587,
+          "snapshot_bytes": 95513,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 26,
+          "cumulative_writes": 3120,
+          "live_tail_entries": 520,
+          "object_count": 4819,
+          "snapshot_bytes": 97589,
+          "snapshot_rows": 47,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 27,
+          "cumulative_writes": 3240,
+          "live_tail_entries": 640,
+          "object_count": 4949,
+          "snapshot_bytes": 97589,
+          "snapshot_rows": 47,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 28,
+          "cumulative_writes": 3360,
+          "live_tail_entries": 560,
+          "object_count": 5181,
+          "snapshot_bytes": 95515,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 29,
+          "cumulative_writes": 3480,
+          "live_tail_entries": 680,
+          "object_count": 5312,
+          "snapshot_bytes": 95515,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 30,
+          "cumulative_writes": 3600,
+          "live_tail_entries": 600,
+          "object_count": 5544,
+          "snapshot_bytes": 95513,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        }
+      ]
     }
   ],
   "node_version": "v24.16.0",
   "platform": "darwin",
   "arch": "arm64",
-  "note_baseline": "Checked-in representative baseline. Per-minute `samples` retained only for the two representative cells (in-band/cf-free/30 = bounded sawtooth; scheduled/cf-free/30 = the decisive growing staircase at the M-size envelope); other cells carry summary fields only — regenerate full trajectories with `pnpm bench:maintenance-backlog`."
+  "note_baseline": "Checked-in representative baseline. Per-minute `samples` retained for the bounded exemplar (in-band/cf-free/30 = the bounded sawtooth at the M-size envelope, bounded on BOTH the tail and objects axes) AND for EVERY cell whose combined verdict is `growing` (so the monotonic object-count climb on scheduled/cf-free and scheduled/node is visible in the checked-in file); clearly-bounded cells carry summary fields only \u2014 regenerate full trajectories with `pnpm bench:maintenance-backlog`."
 }
