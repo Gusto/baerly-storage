@@ -351,6 +351,17 @@ export const runCausalConsistencyCascade = (opts: {
             system.observe({ ...val, receiver: client_id });
           }
 
+          // KNOWN FLAKE (node-minio only): a 9h/102-iteration overnight fuzz
+          // tripped this assertion once, exclusively on the node-minio variant
+          // during a Toxiproxy socket-close storm. A 30/30 re-run with the
+          // twiddler disabled (NO faults) was clean, so it is fault-injection-
+          // coupled, NOT a kernel causal-consistency bug. The exact mechanism
+          // (why a *successful* read appears causally backwards under
+          // connection churn, given Minio is strongly consistent) is not yet
+          // root-caused — tracked as a follow-up; do NOT add tolerance here
+          // until it is, or we risk masking a real violation. If this EVER
+          // fires on a fault-free variant (memory / local-fs / cloudflare-r2),
+          // treat it as a real bug.
           if (system.global_time < MAX_STEPS && !testFailed) {
             testFailed = !causallyConsistent(system.grounding, system.knowledge_base);
             if (testFailed) {
@@ -650,7 +661,31 @@ export const runRangeWalkParityCascade = async (opts: {
     // routed read consumes the same callback via `.where(...)`.
     const wire = normalizePredicateArg<ParityDoc>(predicate);
     const expected = seeded.filter((d) => matchesWire(wire, d));
-    const actual = await table.where(predicate).all();
+
+    // Bounded retry on transient I/O — under Toxiproxy the network
+    // flips every 100ms during the node-minio variant, and a `.all()`
+    // that lands in a dead window rejects with a BaerlyError whose
+    // code === "NetworkError". The parity assertion is unaffected:
+    // it only runs after a successful read. Non-transient errors and
+    // genuine parity mismatches propagate immediately.
+    const MAX_PARITY_READ_RETRIES = 5;
+    let actual: ParityDoc[];
+    for (let attempt = 0; ; attempt++) {
+      try {
+        actual = await table.where(predicate).all();
+        break;
+      } catch (error) {
+        if (
+          error instanceof BaerlyError &&
+          error.code === "NetworkError" &&
+          attempt < MAX_PARITY_READ_RETRIES
+        ) {
+          await new Promise<void>((resolve) => setTimeout(resolve, 10 * (attempt + 1)));
+          continue;
+        }
+        throw error;
+      }
+    }
     expect(
       actual.map((r) => r._id).toSorted(),
       `range-walk parity mismatch for wire ${JSON.stringify(wire)}`,
