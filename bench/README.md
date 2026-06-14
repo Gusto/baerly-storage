@@ -16,6 +16,7 @@ Two harnesses live under `bench/`:
 | `bench/r2-contention.ts` | CAS-storm 412/429 rates on one `current.json`; validates the idle-reader bound on the wire | When changing `packages/server/src/writer.ts`, coordination primitives, or retry policy |
 | `bench/load-harness/` | S3 ops + bytes per logical `Db` operation across seven workload presets; validates the workload cost model | When changing storage layout, manifest cache TTLs, or compaction profile — run before/after a perf-shaped PR |
 | `bench/fold-cost.ts` | CPU + peak-heap cost of ONE compaction fold (the unsliceable snapshot rebuild) vs. snapshot bytes and snapshot row count; Phase 2 evidence for raising the snapshot ceilings `C` / `E` on a more capable host. No infra (MemoryStorage). MEASURES ONLY — changes no constant. | When validating / revisiting the snapshot-rebuild cost model in [docs/about/graduation.md](../docs/about/graduation.md) |
+| `bench/maintenance-backlog.ts` | Maintenance backlog (live log-tail entries + bucket object count + deferred folds) vs. write rate, per trigger (in-band write-tick / scheduled cron) and profile (cf-free / node); Phase 2 evidence for whether FREE-RATE maintenance keeps up within the ~30 writes/min M-size envelope. No infra (MemoryStorage). MEASURES ONLY — changes no constant. | When validating / revisiting whether the per-host maintenance profile (`MAINTENANCE_PROFILE_CF_FREE` vs `MAINTENANCE_PROFILE_NODE`) is justified |
 
 Both require `pnpm dev:storage` (Minio `:9102` + Toxiproxy `:9104`)
 for the Minio-backed variants. Neither is a per-PR CI gate. The
@@ -225,6 +226,70 @@ find where the CPU / memory budget of a target host intersects the grid
 This bench **measures only**: it never moves `C`, `E`, or any constant.
 Re-sizing the ceilings off these numbers is an explicitly deferred later
 phase.
+
+## bench/maintenance-backlog.ts
+
+A no-infra probe (MemoryStorage) that answers the Phase 2 question: **does
+FREE-RATE maintenance keep up within the ~30 writes/min/collection M-size
+envelope, or does the backlog grow without bound?** The "paid Workers are
+throttled at the free maintenance rate" motivation rests on whether
+free-rate maintenance actually FAILS to keep up — this bench measures it,
+per trigger.
+
+```sh
+pnpm bench:maintenance-backlog
+```
+
+baerly has exactly two maintenance triggers, and they behave very
+differently with respect to write rate — the bench measures BOTH as
+separate scenarios:
+
+- **in-band write-tick** (the sanctioned default): maintenance ticks on
+  EVERY write via the writer's post-CAS `runBoundedMaintenance` dispatch.
+  Each tick can fold up to `maxFoldEntriesPerPass` (20 on CF-free), so it
+  intuitively keeps up unless the fold defers (snapshot over the `C`-byte
+  or `E`-row ceiling) or GC sweep can't keep up with orphan production.
+- **scheduled / cron** (opt-in): one `runScheduledMaintenance` tick per
+  simulated minute, alternating compact (even minute) / GC (odd minute) —
+  the CF even/odd-minute cron pattern. A compact tick folds ~20 entries
+  while the workload produces `rate` entries/minute, so this is the
+  trigger where free-rate counts can fall behind.
+
+**Simulated time.** `writes/min` is the knob; a "minute" is a unit that
+maps to `rate` real `Db` writes driven through the real `Writer` — there
+is **no wall-clock claim** (the bench runs in seconds). The rate grid is
+`{10, 30, 60, 120}` (30 = the documented M-size ceiling; 10 brackets
+below, 60 / 120 bracket 2× / 4× above). Each rate runs under CF-free
+(`MAINTENANCE_PROFILE_CF_FREE`, the subject) and Node
+(`MAINTENANCE_PROFILE_NODE`, ~10× the per-pass caps, the comparison arm).
+
+**GC grace.** Production GC waits 7 days (`GC_GRACE_PERIOD_MILLIS`) before
+sweeping an orphan, so object-count drain is invisible in a few-second
+bench. Like `maintenance-profile-equivalence.test.ts`, this bench uses the
+`gcGraceMillis: 0` test seam so a marked orphan is sweepable the same
+pass — modelling the drain **ceiling** (does sweep throughput keep up with
+orphan production `p`?), not the 7-day-delayed production timing.
+
+The JSON records, per (trigger, rate, profile) cell, a `verdict`
+(`bounded` / `growing`) plus the per-minute backlog trajectory
+(`live_tail_entries`, `object_count`, `snapshot_bytes`, `snapshot_rows`,
+`deferred_folds`). One timestamped JSON per run lands in
+`bench/results/maintenance-backlog/` (gitignored); a representative
+baseline (full trajectories for the two headline cells, summaries for the
+rest) lives at
+[`docs/spec/attachments/maintenance-backlog-baseline.json`](../docs/spec/attachments/maintenance-backlog-baseline.json).
+
+**Verdict (baseline run).** In-band keeps up at every rate, both profiles
+(bounded sawtooth tail). Scheduled CF-free is bounded at 10/min but
+**grows without bound at 30 / 60 / 120** (a compact tick folds ~20 every
+other minute while ~`rate` entries/min arrive). Scheduled Node is bounded
+through 60/min and grows at 120/min (its 10× fold slice pushes the
+breakpoint above the envelope). This is consistent with the GC drain-rate
+invariant (`gcMaxSweeps / gcInterval = 10/4 ≥ p`, graduation.md §7.1) — the
+in-band object counts stay bounded because GC sweep keeps up; the
+scheduled-CF-free growth is a **fold** (compact) backlog, not a GC
+backlog. The bench **measures only**: it reports this as Phase 2 evidence
+and makes no call about changing any profile or constant.
 
 ## Green-light criteria
 

@@ -1,0 +1,765 @@
+{
+  "schema_version": 1,
+  "bench": "maintenance-backlog",
+  "description": "Backlog (live tail entries + object count + snapshot-over-ceiling) vs write rate, per maintenance trigger (in-band write-tick / scheduled cron) and profile (cf-free / node). Measures whether FREE-RATE maintenance keeps up within the ~30 writes/min M-size envelope. Measures only.",
+  "seed": 12239110,
+  "sim_minutes": 30,
+  "working_set": 50,
+  "body_bytes": 2000,
+  "min_entries_to_compact": 50,
+  "rate_grid": [10, 30, 60, 120],
+  "methodology": {
+    "simulated_time": "writes/min is the knob; a 'minute' is a unit mapping to `rate` real Db writes — NO wall-clock claim (the bench runs in seconds)",
+    "gc_grace": "gcGraceMillis/graceMillis = 0 so a marked orphan sweeps the same pass — models the drain CEILING (sweep throughput vs orphan production p), not the 7-day-delayed production timing",
+    "in_band": "every commit ticks runBoundedMaintenance at the profile (production write-tick default), phasesPerTick=both",
+    "scheduled": "in-band disabled; one runScheduledMaintenance tick per simulated minute, alternating compact (even) / GC (odd) — the CF even/odd-minute cron pattern",
+    "verdict": "bounded = last-third mean live-tail not > 1.5x first-third mean (converged); growing = climbs past that and by more than one fold slice"
+  },
+  "invariants": {
+    "maintenance_target_ratio": 1,
+    "maintenance_min_live_bytes": 65536,
+    "gc_starvation_guard": 4,
+    "cf_free_drain_ratio": "gcMaxSweeps/gcInterval = 10/4 = 2.5 (>= orphan-production p keeps object count bounded — graduation.md §7.1)",
+    "node_drain_ratio": "gcMaxSweeps/gcInterval = 100/2 = 50"
+  },
+  "cells": [
+    {
+      "trigger": "in-band",
+      "profile": "cf-free",
+      "rate": 10,
+      "verdict": "bounded",
+      "final_live_tail_entries": 40,
+      "final_object_count": 167,
+      "final_snapshot_rows": 47,
+      "minutes_over_ceiling": 0,
+      "peak_live_tail_entries": 40,
+      "samples": "omitted-in-baseline (full trajectory in bench/results/)"
+    },
+    {
+      "trigger": "in-band",
+      "profile": "cf-free",
+      "rate": 30,
+      "verdict": "bounded",
+      "final_live_tail_entries": 40,
+      "final_object_count": 153,
+      "final_snapshot_rows": 46,
+      "minutes_over_ceiling": 0,
+      "peak_live_tail_entries": 40,
+      "samples": [
+        {
+          "minute": 1,
+          "cumulative_writes": 30,
+          "live_tail_entries": 30,
+          "object_count": 62,
+          "snapshot_bytes": 0,
+          "snapshot_rows": 0,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 2,
+          "cumulative_writes": 60,
+          "live_tail_entries": 40,
+          "object_count": 108,
+          "snapshot_bytes": 41551,
+          "snapshot_rows": 20,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 3,
+          "cumulative_writes": 90,
+          "live_tail_entries": 30,
+          "object_count": 145,
+          "snapshot_bytes": 101686,
+          "snapshot_rows": 49,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 4,
+          "cumulative_writes": 120,
+          "live_tail_entries": 40,
+          "object_count": 147,
+          "snapshot_bytes": 97540,
+          "snapshot_rows": 47,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 5,
+          "cumulative_writes": 150,
+          "live_tail_entries": 30,
+          "object_count": 180,
+          "snapshot_bytes": 95464,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 6,
+          "cumulative_writes": 180,
+          "live_tail_entries": 40,
+          "object_count": 168,
+          "snapshot_bytes": 95468,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 7,
+          "cumulative_writes": 210,
+          "live_tail_entries": 30,
+          "object_count": 178,
+          "snapshot_bytes": 95466,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 8,
+          "cumulative_writes": 240,
+          "live_tail_entries": 40,
+          "object_count": 168,
+          "snapshot_bytes": 95466,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 9,
+          "cumulative_writes": 270,
+          "live_tail_entries": 30,
+          "object_count": 179,
+          "snapshot_bytes": 95464,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 10,
+          "cumulative_writes": 300,
+          "live_tail_entries": 40,
+          "object_count": 167,
+          "snapshot_bytes": 97541,
+          "snapshot_rows": 47,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 11,
+          "cumulative_writes": 330,
+          "live_tail_entries": 30,
+          "object_count": 182,
+          "snapshot_bytes": 95466,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 12,
+          "cumulative_writes": 360,
+          "live_tail_entries": 40,
+          "object_count": 171,
+          "snapshot_bytes": 95466,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 13,
+          "cumulative_writes": 390,
+          "live_tail_entries": 30,
+          "object_count": 177,
+          "snapshot_bytes": 95464,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 14,
+          "cumulative_writes": 420,
+          "live_tail_entries": 40,
+          "object_count": 169,
+          "snapshot_bytes": 95468,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 15,
+          "cumulative_writes": 450,
+          "live_tail_entries": 30,
+          "object_count": 179,
+          "snapshot_bytes": 95466,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 16,
+          "cumulative_writes": 480,
+          "live_tail_entries": 40,
+          "object_count": 168,
+          "snapshot_bytes": 95466,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 17,
+          "cumulative_writes": 510,
+          "live_tail_entries": 30,
+          "object_count": 178,
+          "snapshot_bytes": 97539,
+          "snapshot_rows": 47,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 18,
+          "cumulative_writes": 540,
+          "live_tail_entries": 40,
+          "object_count": 171,
+          "snapshot_bytes": 95468,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 19,
+          "cumulative_writes": 570,
+          "live_tail_entries": 30,
+          "object_count": 179,
+          "snapshot_bytes": 95503,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 20,
+          "cumulative_writes": 600,
+          "live_tail_entries": 40,
+          "object_count": 169,
+          "snapshot_bytes": 95514,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 21,
+          "cumulative_writes": 630,
+          "live_tail_entries": 30,
+          "object_count": 182,
+          "snapshot_bytes": 95512,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 22,
+          "cumulative_writes": 660,
+          "live_tail_entries": 40,
+          "object_count": 169,
+          "snapshot_bytes": 95514,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 23,
+          "cumulative_writes": 690,
+          "live_tail_entries": 30,
+          "object_count": 180,
+          "snapshot_bytes": 95512,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 24,
+          "cumulative_writes": 720,
+          "live_tail_entries": 40,
+          "object_count": 167,
+          "snapshot_bytes": 95514,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 25,
+          "cumulative_writes": 750,
+          "live_tail_entries": 30,
+          "object_count": 177,
+          "snapshot_bytes": 95512,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 26,
+          "cumulative_writes": 780,
+          "live_tail_entries": 40,
+          "object_count": 169,
+          "snapshot_bytes": 97588,
+          "snapshot_rows": 47,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 27,
+          "cumulative_writes": 810,
+          "live_tail_entries": 30,
+          "object_count": 172,
+          "snapshot_bytes": 97586,
+          "snapshot_rows": 47,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 28,
+          "cumulative_writes": 840,
+          "live_tail_entries": 40,
+          "object_count": 165,
+          "snapshot_bytes": 95514,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 29,
+          "cumulative_writes": 870,
+          "live_tail_entries": 30,
+          "object_count": 169,
+          "snapshot_bytes": 95512,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 30,
+          "cumulative_writes": 900,
+          "live_tail_entries": 40,
+          "object_count": 153,
+          "snapshot_bytes": 95512,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        }
+      ]
+    },
+    {
+      "trigger": "in-band",
+      "profile": "cf-free",
+      "rate": 60,
+      "verdict": "bounded",
+      "final_live_tail_entries": 40,
+      "final_object_count": 170,
+      "final_snapshot_rows": 46,
+      "minutes_over_ceiling": 0,
+      "peak_live_tail_entries": 40,
+      "samples": "omitted-in-baseline (full trajectory in bench/results/)"
+    },
+    {
+      "trigger": "in-band",
+      "profile": "cf-free",
+      "rate": 120,
+      "verdict": "bounded",
+      "final_live_tail_entries": 40,
+      "final_object_count": 171,
+      "final_snapshot_rows": 46,
+      "minutes_over_ceiling": 0,
+      "peak_live_tail_entries": 40,
+      "samples": "omitted-in-baseline (full trajectory in bench/results/)"
+    },
+    {
+      "trigger": "in-band",
+      "profile": "node",
+      "rate": 10,
+      "verdict": "bounded",
+      "final_live_tail_entries": 49,
+      "final_object_count": 143,
+      "final_snapshot_rows": 46,
+      "minutes_over_ceiling": 0,
+      "peak_live_tail_entries": 50,
+      "samples": "omitted-in-baseline (full trajectory in bench/results/)"
+    },
+    {
+      "trigger": "in-band",
+      "profile": "node",
+      "rate": 30,
+      "verdict": "bounded",
+      "final_live_tail_entries": 49,
+      "final_object_count": 143,
+      "final_snapshot_rows": 46,
+      "minutes_over_ceiling": 0,
+      "peak_live_tail_entries": 49,
+      "samples": "omitted-in-baseline (full trajectory in bench/results/)"
+    },
+    {
+      "trigger": "in-band",
+      "profile": "node",
+      "rate": 60,
+      "verdict": "bounded",
+      "final_live_tail_entries": 49,
+      "final_object_count": 143,
+      "final_snapshot_rows": 46,
+      "minutes_over_ceiling": 0,
+      "peak_live_tail_entries": 49,
+      "samples": "omitted-in-baseline (full trajectory in bench/results/)"
+    },
+    {
+      "trigger": "in-band",
+      "profile": "node",
+      "rate": 120,
+      "verdict": "bounded",
+      "final_live_tail_entries": 49,
+      "final_object_count": 144,
+      "final_snapshot_rows": 46,
+      "minutes_over_ceiling": 0,
+      "peak_live_tail_entries": 49,
+      "samples": "omitted-in-baseline (full trajectory in bench/results/)"
+    },
+    {
+      "trigger": "scheduled",
+      "profile": "cf-free",
+      "rate": 10,
+      "verdict": "bounded",
+      "final_live_tail_entries": 40,
+      "final_object_count": 482,
+      "final_snapshot_rows": 47,
+      "minutes_over_ceiling": 0,
+      "peak_live_tail_entries": 50,
+      "samples": "omitted-in-baseline (full trajectory in bench/results/)"
+    },
+    {
+      "trigger": "scheduled",
+      "profile": "cf-free",
+      "rate": 30,
+      "verdict": "growing",
+      "final_live_tail_entries": 600,
+      "final_object_count": 1639,
+      "final_snapshot_rows": 46,
+      "minutes_over_ceiling": 0,
+      "peak_live_tail_entries": 600,
+      "samples": [
+        {
+          "minute": 1,
+          "cumulative_writes": 30,
+          "live_tail_entries": 30,
+          "object_count": 62,
+          "snapshot_bytes": 0,
+          "snapshot_rows": 0,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 2,
+          "cumulative_writes": 60,
+          "live_tail_entries": 40,
+          "object_count": 122,
+          "snapshot_bytes": 41551,
+          "snapshot_rows": 20,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 3,
+          "cumulative_writes": 90,
+          "live_tail_entries": 70,
+          "object_count": 170,
+          "snapshot_bytes": 41551,
+          "snapshot_rows": 20,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 4,
+          "cumulative_writes": 120,
+          "live_tail_entries": 80,
+          "object_count": 228,
+          "snapshot_bytes": 83025,
+          "snapshot_rows": 40,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 5,
+          "cumulative_writes": 150,
+          "live_tail_entries": 110,
+          "object_count": 282,
+          "snapshot_bytes": 83025,
+          "snapshot_rows": 40,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 6,
+          "cumulative_writes": 180,
+          "live_tail_entries": 120,
+          "object_count": 341,
+          "snapshot_bytes": 101686,
+          "snapshot_rows": 49,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 7,
+          "cumulative_writes": 210,
+          "live_tail_entries": 150,
+          "object_count": 397,
+          "snapshot_bytes": 101686,
+          "snapshot_rows": 49,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 8,
+          "cumulative_writes": 240,
+          "live_tail_entries": 160,
+          "object_count": 456,
+          "snapshot_bytes": 97540,
+          "snapshot_rows": 47,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 9,
+          "cumulative_writes": 270,
+          "live_tail_entries": 190,
+          "object_count": 509,
+          "snapshot_bytes": 97540,
+          "snapshot_rows": 47,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 10,
+          "cumulative_writes": 300,
+          "live_tail_entries": 200,
+          "object_count": 567,
+          "snapshot_bytes": 95468,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 11,
+          "cumulative_writes": 330,
+          "live_tail_entries": 230,
+          "object_count": 623,
+          "snapshot_bytes": 95468,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 12,
+          "cumulative_writes": 360,
+          "live_tail_entries": 240,
+          "object_count": 682,
+          "snapshot_bytes": 95464,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 13,
+          "cumulative_writes": 390,
+          "live_tail_entries": 270,
+          "object_count": 730,
+          "snapshot_bytes": 95464,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 14,
+          "cumulative_writes": 420,
+          "live_tail_entries": 280,
+          "object_count": 788,
+          "snapshot_bytes": 95468,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 15,
+          "cumulative_writes": 450,
+          "live_tail_entries": 310,
+          "object_count": 836,
+          "snapshot_bytes": 95468,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 16,
+          "cumulative_writes": 480,
+          "live_tail_entries": 320,
+          "object_count": 895,
+          "snapshot_bytes": 95466,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 17,
+          "cumulative_writes": 510,
+          "live_tail_entries": 350,
+          "object_count": 942,
+          "snapshot_bytes": 95466,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 18,
+          "cumulative_writes": 540,
+          "live_tail_entries": 360,
+          "object_count": 1001,
+          "snapshot_bytes": 95466,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 19,
+          "cumulative_writes": 570,
+          "live_tail_entries": 390,
+          "object_count": 1049,
+          "snapshot_bytes": 95466,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 20,
+          "cumulative_writes": 600,
+          "live_tail_entries": 400,
+          "object_count": 1107,
+          "snapshot_bytes": 95466,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 21,
+          "cumulative_writes": 630,
+          "live_tail_entries": 430,
+          "object_count": 1155,
+          "snapshot_bytes": 95466,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 22,
+          "cumulative_writes": 660,
+          "live_tail_entries": 440,
+          "object_count": 1214,
+          "snapshot_bytes": 97541,
+          "snapshot_rows": 47,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 23,
+          "cumulative_writes": 690,
+          "live_tail_entries": 470,
+          "object_count": 1261,
+          "snapshot_bytes": 97541,
+          "snapshot_rows": 47,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 24,
+          "cumulative_writes": 720,
+          "live_tail_entries": 480,
+          "object_count": 1320,
+          "snapshot_bytes": 95464,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 25,
+          "cumulative_writes": 750,
+          "live_tail_entries": 510,
+          "object_count": 1368,
+          "snapshot_bytes": 95464,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 26,
+          "cumulative_writes": 780,
+          "live_tail_entries": 520,
+          "object_count": 1427,
+          "snapshot_bytes": 97541,
+          "snapshot_rows": 47,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 27,
+          "cumulative_writes": 810,
+          "live_tail_entries": 550,
+          "object_count": 1474,
+          "snapshot_bytes": 97541,
+          "snapshot_rows": 47,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 28,
+          "cumulative_writes": 840,
+          "live_tail_entries": 560,
+          "object_count": 1533,
+          "snapshot_bytes": 95466,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 29,
+          "cumulative_writes": 870,
+          "live_tail_entries": 590,
+          "object_count": 1581,
+          "snapshot_bytes": 95466,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        },
+        {
+          "minute": 30,
+          "cumulative_writes": 900,
+          "live_tail_entries": 600,
+          "object_count": 1639,
+          "snapshot_bytes": 95466,
+          "snapshot_rows": 46,
+          "snapshot_over_ceiling": false
+        }
+      ]
+    },
+    {
+      "trigger": "scheduled",
+      "profile": "cf-free",
+      "rate": 60,
+      "verdict": "growing",
+      "final_live_tail_entries": 1500,
+      "final_object_count": 3429,
+      "final_snapshot_rows": 46,
+      "minutes_over_ceiling": 0,
+      "peak_live_tail_entries": 1500,
+      "samples": "omitted-in-baseline (full trajectory in bench/results/)"
+    },
+    {
+      "trigger": "scheduled",
+      "profile": "cf-free",
+      "rate": 120,
+      "verdict": "growing",
+      "final_live_tail_entries": 3300,
+      "final_object_count": 6922,
+      "final_snapshot_rows": 46,
+      "minutes_over_ceiling": 0,
+      "peak_live_tail_entries": 3300,
+      "samples": "omitted-in-baseline (full trajectory in bench/results/)"
+    },
+    {
+      "trigger": "scheduled",
+      "profile": "node",
+      "rate": 10,
+      "verdict": "bounded",
+      "final_live_tail_entries": 0,
+      "final_object_count": 165,
+      "final_snapshot_rows": 46,
+      "minutes_over_ceiling": 0,
+      "peak_live_tail_entries": 50,
+      "samples": "omitted-in-baseline (full trajectory in bench/results/)"
+    },
+    {
+      "trigger": "scheduled",
+      "profile": "node",
+      "rate": 30,
+      "verdict": "bounded",
+      "final_live_tail_entries": 0,
+      "final_object_count": 381,
+      "final_snapshot_rows": 46,
+      "minutes_over_ceiling": 0,
+      "peak_live_tail_entries": 30,
+      "samples": "omitted-in-baseline (full trajectory in bench/results/)"
+    },
+    {
+      "trigger": "scheduled",
+      "profile": "node",
+      "rate": 60,
+      "verdict": "bounded",
+      "final_live_tail_entries": 0,
+      "final_object_count": 2082,
+      "final_snapshot_rows": 46,
+      "minutes_over_ceiling": 0,
+      "peak_live_tail_entries": 60,
+      "samples": "omitted-in-baseline (full trajectory in bench/results/)"
+    },
+    {
+      "trigger": "scheduled",
+      "profile": "node",
+      "rate": 120,
+      "verdict": "growing",
+      "final_live_tail_entries": 600,
+      "final_object_count": 5544,
+      "final_snapshot_rows": 46,
+      "minutes_over_ceiling": 0,
+      "peak_live_tail_entries": 680,
+      "samples": "omitted-in-baseline (full trajectory in bench/results/)"
+    }
+  ],
+  "node_version": "v24.16.0",
+  "platform": "darwin",
+  "arch": "arm64",
+  "note_baseline": "Checked-in representative baseline. Per-minute `samples` retained only for the two representative cells (in-band/cf-free/30 = bounded sawtooth; scheduled/cf-free/30 = the decisive growing staircase at the M-size envelope); other cells carry summary fields only — regenerate full trajectories with `pnpm bench:maintenance-backlog`."
+}
