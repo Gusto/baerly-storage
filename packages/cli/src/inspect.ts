@@ -14,6 +14,8 @@
  *   - schema_version, next_seq, log_seq_start (default 0).
  *   - live_log_tail (= next_seq - log_seq_start).
  *   - snapshot key (or null).
+ *   - snapshot_bytes / snapshot_rows (the fold-ceiling inputs C / E
+ *     are compared against; see graduation.md).
  *   - writer_fence (epoch, owner, claimed_at).
  *   - materialised row count (via export/loadMaterialisedView).
  *   - per-declared-index key count (when --config supplied).
@@ -106,6 +108,8 @@ interface InspectResult {
   log_seq_start: number;
   live_log_tail: number;
   snapshot: string | null;
+  snapshot_bytes: number;
+  snapshot_rows: number;
   writer_fence: CurrentJson["writer_fence"];
   materialised_rows: number;
   indexes: { name: string; count: number }[];
@@ -122,6 +126,8 @@ const renderText = (r: InspectResult, collection: string): string => {
   lines.push(`  log_seq_start:       ${r.log_seq_start}`);
   lines.push(`  live_log_tail:       ${r.live_log_tail}`);
   lines.push(`  snapshot:            ${r.snapshot ?? "(none)"}`);
+  lines.push(`  snapshot_bytes:      ${r.snapshot_bytes}`);
+  lines.push(`  snapshot_rows:       ${r.snapshot_rows}`);
   lines.push(
     `  writer_fence:        epoch=${r.writer_fence.epoch} owner=${JSON.stringify(r.writer_fence.owner)} claimed_at=${JSON.stringify(r.writer_fence.claimed_at)}`,
   );
@@ -213,6 +219,8 @@ const bundle = defineBaerlySubcommand({
       log_seq_start,
       live_log_tail: cur.next_seq - log_seq_start,
       snapshot: cur.snapshot,
+      snapshot_bytes: cur.snapshot_bytes,
+      snapshot_rows: cur.snapshot_rows,
       writer_fence: cur.writer_fence,
       materialised_rows: materialisedRows,
       indexes,

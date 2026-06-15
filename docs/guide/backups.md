@@ -103,8 +103,9 @@ disk as the app.
 
 `set -euo pipefail` makes the wrapper abort on any non-zero exit, so a
 failed dump never gets atomically moved into place. `admin dump` exits
-`0` on success, `1` on `InvalidConfig` (bad bucket URI / missing args),
-`2` on storage / network failure, and `3` on a protocol invariant — the
+`0` on success, `1` on `InvalidConfig` (bad bucket URI, missing args, or
+collection not found), `2` on storage / network failure, and `3` on a
+protocol invariant — the
 distinct codes let a wrapper branch on the failure class. Do **not** use
 `--json` when redirecting `admin dump` stdout to an `.ndjson` file: the
 dump body is the data stream, and JSON-mode envelopes can contaminate
@@ -151,8 +152,14 @@ writers are still active. The safe cutover shape is:
 1. Pause writers or put the app in read-only mode.
 2. Restore into a separate recovery bucket or tenant prefix.
 3. Run `baerly admin fsck` on the recovered collection.
-4. Point the app at the recovered bucket/prefix, or copy the verified
-   recovery prefix into place during the maintenance window.
+4. Point the app at the recovered bucket/prefix. Prefer this to
+   copying. If you must copy the recovery prefix into place, do it
+   inside the maintenance window and copy `current.json` **last** —
+   after the snapshot, log, content, *and* index objects it references
+   exist at the destination. A `current.json` that lands before its
+   referenced objects is a broken head: a reader following it errors on
+   the missing snapshot/log, and a missing index marker silently drops
+   rows from an index-routed read.
 5. Resume writers only after a successful authenticated read against
    the recovered route.
 

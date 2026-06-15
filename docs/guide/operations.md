@@ -20,7 +20,9 @@ COLLECTION=tickets
 BASE_URL=https://api.example.com
 ```
 
-## Before First Deploy
+## Before first deploy
+
+### Bucket and deploy checks
 
 Run the target-specific deploy check, then the portable bucket check.
 `baerly doctor --bucket` writes and deletes a throwaway sentinel to
@@ -37,6 +39,8 @@ baerly doctor --bucket="$BUCKET_URI"
 
 There is no `baerly doctor --target=node` backend today; the bucket
 probe is the Node safety check.
+
+### Auth
 
 Then verify HTTP behavior. `GET /v1/healthz` is anonymous inside the
 Baerly adapter; if an outer Cloudflare Access policy protects the whole
@@ -90,7 +94,7 @@ baerly admin dump \
   > "$COLLECTION.ndjson"
 ```
 
-## Weekly Checks
+## Weekly checks
 
 ```sh
 baerly inspect \
@@ -145,13 +149,20 @@ Sink wiring and field reference are in
 [`packages/server/API.md`](../../packages/server/API.md), published as
 `node_modules/@gusto/baerly-storage/dist/API.md`, under "Observability".
 
-The design envelope is roughly 30 sustained logical
-writes/min/collection, 10 GB/tenant, and 100 collections/tenant.
+## Capacity
+
+The design envelope — cross any one of these and it's the signal to
+graduate, not a hard quota:
+
+- roughly 30 sustained logical writes/min per collection;
+- roughly 10 GB per tenant;
+- roughly 100 collections per tenant.
+
 Graduation thresholds and the fold-cost derivation live in
-[graduation.md](../about/graduation.md). Cost math lives in
+[graduation.md](../about/graduation.md); cost math lives in
 [cost-model.md](../about/cost-model.md).
 
-## Route Quick Reference
+## Route quick reference
 
 | Route | Meaning |
 |---|---|

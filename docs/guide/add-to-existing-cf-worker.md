@@ -27,9 +27,11 @@ covered, appends `@gusto/baerly-storage` to your `package.json` dependencies,
 runs your package manager's install, and prints the worker-entry
 snippet for you to paste.
 
-(`npm create baerly .`, `yarn create baerly .`, `bun create baerly .`
-all work — the underlying package-manager dispatch picks the right
-one.)
+(The npm/yarn/bun equivalents work too — keep the scope:
+`npm create @gusto/baerly-storage@latest .`,
+`yarn create @gusto/baerly-storage .`,
+`bun create @gusto/baerly-storage .`. The unscoped `create baerly`
+shorthand resolves to a different, non-existent package.)
 
 ## What gets written (skip-if-exists / merge-if-present)
 
@@ -55,15 +57,17 @@ one.)
    `wrangler.jsonc:main` (typically `src/index.ts`), replacing the
    stock `wrangler create` handler.
 2. `pnpm dev` (or `wrangler dev`) to boot. Verify liveness, then hit
-   a concrete collection route. The bolt-on config ships `auth: "none"`,
-   so no header is needed until you switch it:
+   a concrete collection route. The worker snippet you pasted wires a
+   `sharedSecret` verifier reading `env.SHARED_SECRET`, and the bolt-on
+   seeds `.dev.vars` with `SHARED_SECRET=dev-shared-secret` — so
+   `/v1/healthz` is anonymous, but the collection route needs that dev
+   bearer:
 
    ```sh
    curl -fsS http://localhost:8787/v1/healthz
-   curl -fsS http://localhost:8787/v1/c/tickets
-   # if you set auth: "shared-secret", add the dev secret:
-   #   curl -fsS -H 'Authorization: Bearer dev-shared-secret' \
-   #     http://localhost:8787/v1/c/tickets
+   # The pasted verifier requires the dev secret; without it this 401s.
+   curl -fsS -H 'Authorization: Bearer dev-shared-secret' \
+     http://localhost:8787/v1/c/tickets
    ```
 
    Route shape is `/v1/c/:collection`; use a real collection name from
@@ -71,13 +75,15 @@ one.)
    [the cheat sheet](cheatsheet.md#http-wire-reach-for-curl-only-when-debugging).
 3. Before deploy, choose production auth:
 
-   - Cloudflare Access: keep browser auth in Access, configure
+   - Cloudflare Access: keep browser auth in Access, swap the pasted
+     `sharedSecret` verifier for
      `cloudflareAccess({ teamDomain, audienceTag, tenantPrefix })` in
      the Worker entry, and verify unauthenticated `/v1/c/tickets`
      fails closed. See [auth.md](auth.md#cloudflare-production).
-   - Shared secret: set `auth: "shared-secret"` in
-     `baerly.config.ts`, run `wrangler secret put SHARED_SECRET`, and
-     verify the route fails without a bearer and succeeds with one.
+   - Shared secret: the pasted snippet already wires the `sharedSecret`
+     verifier, so just run `wrangler secret put SHARED_SECRET` to set the
+     production secret, then verify the route fails without a bearer and
+     succeeds with one.
 
    ```sh
    curl -i https://<worker-host>/v1/c/tickets

@@ -109,6 +109,8 @@ describe("baerly inspect", () => {
         log_seq_start: number;
         live_log_tail: number;
         snapshot: string | null;
+        snapshot_bytes: number;
+        snapshot_rows: number;
         status: string;
         errors: string[];
       };
@@ -120,6 +122,8 @@ describe("baerly inspect", () => {
     expect(envelope.result.log_seq_start).toBe(0);
     expect(envelope.result.live_log_tail).toBe(2);
     expect(envelope.result.snapshot).toBe(null);
+    expect(envelope.result.snapshot_bytes).toBe(0);
+    expect(envelope.result.snapshot_rows).toBe(0);
     expect(envelope.result.status).toBe("ok");
     expect(envelope.result.errors).toEqual([]);
   });
@@ -150,6 +154,8 @@ describe("baerly inspect", () => {
     const text = stdout.captured.join("");
     expect(text).toContain("baerly inspect tickets");
     expect(text).toContain("materialised_rows:   1");
+    expect(text).toContain("snapshot_bytes:      0");
+    expect(text).toContain("snapshot_rows:       0");
     expect(text).toContain("status:              ok");
   });
 

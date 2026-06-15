@@ -300,7 +300,8 @@ Read this as positioning, not a cost claim:
 
 Cost is decisive in the regimes Baerly is sized for; it's
 designed to lose past them — that loss is the graduation signal,
-mechanical via `baerly export --target=postgres`. We name three
+mechanical via `baerly export --target=postgres --collection=<name>`
+(per collection). We name three
 axes explicitly: per-write price (where Baerly loses at M-size),
 idle × portfolio cost (where it wins decisively), and
 portability / switching cost (where it wins on every workload).
@@ -309,8 +310,10 @@ experimentation, large internal-tools fleet) isn't economically
 viable under per-app managed-DB floors — and that's where the
 real argument lives.
 
-The graduation triggers (surfaced via the `baerly cost` projection's
-`percentOfGraduation`) follow directly: any one
-of (sustained over 7 days) R2 Class A ops > 50M/month, effective
-write-amp > 6, or stored data > 5 GB is the system telling the user
-they have outgrown the ceiling.
+The graduation triggers follow directly: any one of (sustained over 7
+days) R2 Class A ops > 50M/month, effective write-amp > 6, or stored
+data > 5 GB is the system telling the user they have outgrown the
+ceiling. Today the `baerly cost` projection's `percentOfGraduation`
+tracks only the **Class A** trigger (the 50M ops/month line); the
+write-amp and stored-data triggers are documented targets but are not
+yet surfaced by the tooling.

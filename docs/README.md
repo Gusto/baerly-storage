@@ -15,7 +15,8 @@ deserve a Postgres + Docker + on-call stack. It runs over AWS S3,
 Cloudflare R2, or a conformant S3-compatible bucket that passes
 `baerly doctor --bucket`; your data lives in your bucket, and the
 protocol kernel is small enough that an LLM can use the public API
-zero-shot from the `.d.ts` files alone. The positioning story is in
+zero-shot from the `.d.ts` shapes, with `dist/API.md` as the canonical
+companion reference. The positioning story is in
 [`about/thesis.md`](about/thesis.md).
 
 ## Start here
@@ -25,7 +26,9 @@ zero-shot from the `.d.ts` files alone. The positioning story is in
 - Evaluating the bet: [`about/thesis.md`](about/thesis.md), then
   [`about/cost-model.md`](about/cost-model.md).
 - Building an app: [`guide/cheatsheet.md`](guide/cheatsheet.md), then
-  [`packages/server/API.md`](../packages/server/API.md).
+  [`packages/server/API.md`](../packages/server/API.md) — then scaffold
+  from [`../examples/`](../examples/) or bolt onto an existing Worker
+  with [`guide/add-to-existing-cf-worker.md`](guide/add-to-existing-cf-worker.md).
 - Operating a production app: [`guide/operations.md`](guide/operations.md).
 
 ## Using Baerly

@@ -234,8 +234,14 @@ Open the scaffold matching your target and posture; jump to the
 - Cloudflare + Pattern A or B: `examples/minimal-cloudflare/AGENTS.md` or `examples/react-cloudflare/AGENTS.md`.
 - Node + Pattern B or C: `examples/minimal-node/AGENTS.md` or `examples/react-node/AGENTS.md`.
 
-The recipes are hardened against real agent usage and stay byte-
-identical across paired scaffolds (the drift fence in
-`tests/integration/agents-md-drift.test.ts` enforces this). Read
-those for code; read this file when you need to understand *why*
-the seam is shaped this way before making a non-default decision.
+Those scaffold recipes stay byte-identical across paired scaffolds (the
+drift fence in `tests/integration/agents-md-drift.test.ts` enforces
+this) and give you a runnable starting point. They ship the *minimal*
+verifier shape — the `verifier:` override gated on a plain
+`env.* !== undefined` check, with no fail-closed throw. The
+`BAERLY_AUTH_REQUIRED=1` guard shown above is the production hardening
+this guide recommends layering on top: it turns "auth env missing" from
+a silent fallback to `auth: "none"` into a startup error. Treat the
+snippets on this page as the more complete reference, and read this file
+when you need to understand *why* the seam is shaped this way before
+making a non-default decision.

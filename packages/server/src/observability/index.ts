@@ -51,3 +51,8 @@ export { type Outcome, deriveOutcome } from "./derive-outcome.ts";
 // (the kernel emission contract) without reaching into the
 // unpublished `@baerly/protocol` workspace package.
 export type { MetricsRecorder } from "@baerly/protocol";
+// Re-exported so a consumer writing a custom `observability.sink` can
+// type it as `Sink` without adding a direct dependency on the
+// transitive `@logtape/logtape` package (which pnpm's strict
+// node_modules would not resolve from a scaffolded app).
+export type { Sink, LogRecord } from "@logtape/logtape";

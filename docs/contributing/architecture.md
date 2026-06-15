@@ -28,7 +28,7 @@ protocol is specified in
 [spec/causal-consistency-checking.md](../spec/causal-consistency-checking.md).
 
 Built like git: content-addressed documents, immutable log entries, and
-a single CAS-advanced pointer to HEAD. This shape is the same recipe
+a single CAS-advanced pointer to HEAD, per collection. This shape is the same recipe
 Iceberg, Delta Lake, Turbopuffer, Litestream, and SlateDB converged on
 after S3 went strongly consistent in December 2020 (see
 [spec/storage-compatibility.md](../spec/storage-compatibility.md)). The novel

@@ -20,7 +20,8 @@ feature rather than a surprise.*
 This page names the precise CPU and memory bounds for each deployment
 tier, so you can size your collection's snapshot against them and know
 which tier you're in — and when to climb. The live snapshot byte/row
-counts (`snapshot_bytes`, `snapshot_rows`) live on `current.json`; the
+counts (`snapshot_bytes`, `snapshot_rows`) are reported by `baerly
+inspect` (and live on `current.json`); the
 operational signal that a fold is deferring against those ceilings is
 the `db.compaction.deferred_total` metric plus a rate-limited
 `console.warn` that names the byte-vs-row dimension that tripped.
@@ -51,8 +52,8 @@ baerly admin usage \
 
 | Symptom | Check | Threshold | Action |
 |---|---|---|---|
-| `db.compaction.deferred_total` or defer `console.warn` on Cloudflare free | Warning text names byte vs. row; `snapshot_bytes` / `snapshot_rows` live on `current.json` | `snapshot_bytes > C` or `snapshot_rows + maxFoldEntriesPerPass > E` | Upgrade to Workers Paid, then raise `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` only to a cap the isolate can fold. |
-| Same defer on Node | Warning text plus `snapshot_bytes` on `current.json` vs. host memory | Host has enough RAM for old snapshot + new snapshot + tail | Raise `BAERLY_MAINTENANCE_MAX_FOLD_BYTES`; expect one inline write-latency spike. |
+| `db.compaction.deferred_total` or defer `console.warn` on Cloudflare free | Warning text names byte vs. row; `baerly inspect` reports `snapshot_bytes` / `snapshot_rows` | `snapshot_bytes > C` or `snapshot_rows + maxFoldEntriesPerPass > E` | Upgrade to Workers Paid, then raise `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` only to a cap the isolate can fold. |
+| Same defer on Node | Warning text plus `snapshot_bytes` from `baerly inspect` vs. host memory | Host has enough RAM for old snapshot + new snapshot + tail | Raise `BAERLY_MAINTENANCE_MAX_FOLD_BYTES`; expect one inline write-latency spike. |
 | Object count grows while writes are steady | Logs + `admin fsck` | GC sweep throughput no longer keeps up with orphan production | Reduce contention, split the hot collection, or graduate the workload. |
 | Sustained hot collection | `admin usage` | ~30 logical writes/min/collection | Graduate to D1/Postgres; this is the workload ceiling. |
 | Tenant data keeps growing | `admin usage` / bucket inventory | ~10 GB/tenant or ~100 collections/tenant | Graduate; this is beyond the prototype tier. |
@@ -558,14 +559,15 @@ recalibrating it is deferred pending a demonstrated need.
 
 `baerly inspect --bucket=... --app=... --tenant=... --collection=...`
 reports the current snapshot **key**, the live log tail
-(`live_log_tail`), and the materialised row count
-(`materialised_rows`); `baerly admin usage` reports writes/min against
+(`live_log_tail`), the materialised row count (`materialised_rows`),
+and the snapshot size (`snapshot_bytes` / `snapshot_rows`);
+`baerly admin usage` reports writes/min against
 the M-size ceiling. The number that decides whether rebuilds keep
 running is the **snapshot** (`snapshot_bytes` against `C`,
 `snapshot_rows + maxFoldEntriesPerPass` against `E`) — **not** the
-tail. Those two snapshot fields live on `current.json` (not in inspect
-output); the operational signal that they have crossed a ceiling is the
-`db.compaction.deferred_total` metric. Some metric sinks preserve the
+tail. `baerly inspect` reports those two snapshot fields (they also
+live on `current.json`); the operational signal that they have crossed
+a ceiling is the `db.compaction.deferred_total` metric. Some metric sinks preserve the
 byte-vs-row label, but the portable operator signal is the
 rate-limited `console.warn`. A large tail is no longer a problem: it
 drains incrementally (see

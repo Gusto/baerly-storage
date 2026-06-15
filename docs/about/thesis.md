@@ -133,7 +133,9 @@ authors define collections and call a document API; operators set auth,
 storage credentials, and the rare maintenance env var in the deploy
 environment. A knob the app-authoring agent can see is a knob it will
 eventually tune, so ordinary storage maintenance stays automatic and
-bounded. Detailed API/reference ownership lives in
+bounded — a field may be typed in the `.d.ts` yet deliberately absent
+from `API.md`, the surface the authoring agent actually reads. Detailed
+API/reference ownership lives in
 [docs conventions](../contributing/conventions/docs.md); the public
 surface lock lives in [ADR-002](../adr/002-api-surface-lock.md).
 
@@ -358,9 +360,10 @@ The envelope:
 - **~100 collections / tenant** fan-out.
 
 Crossing any of these is the success signal to graduate —
-`baerly export --target=postgres` is one command for the data
-handoff, and the on-disk log shape is a Debezium-style CDC envelope
-to make that handoff mechanical. The ceiling is protocol-level:
+`baerly export --target=postgres --collection=<name>` dumps a
+collection's snapshot to SQL (run it per collection for a whole app),
+and the on-disk log shape is a Debezium-style CDC envelope so a future
+incremental exit stays mechanical. The ceiling is protocol-level:
 today it is shipped on Cloudflare Workers and self-hosted Node; future
 Lambda / Bun / Deno / Fly adapters inherit the same bucket protocol.
 One bucket per app; tenants are prefix-scoped within. Server-only

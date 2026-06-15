@@ -47,6 +47,14 @@ that collection's `current.json`, then follow the snapshot and integer
 log range it names. Index objects can help narrow the read, but the
 snapshot plus log are the source of truth.
 
+That per-collection pointer has a corollary worth stating plainly: a
+write flips exactly one collection's `current.json`, so writes that span
+two different collections are independent — neither ordered nor atomic
+with respect to each other. Each collection linearizes on its own; there
+is no cross-collection transaction. Needing two collections to commit
+together is a signal you've outgrown the model (the formal statement is
+in [`spec/sync-protocol.md`](../spec/sync-protocol.md)).
+
 ## What a write does
 
 Say you insert a row. The library does this, in order:
@@ -252,3 +260,12 @@ runnable end-to-end example of every layer is
 > once; the server fulfills them against the bucket, and the client
 > fulfills the same actions over HTTP. No server is coordinating any of
 > it — the bucket's atomic conditional-write is the coordination.
+
+## Next
+
+- **Build something** — the [cheat sheet](../guide/cheatsheet.md) is the
+  one-screen API; the full surface is `dist/API.md`.
+- **Run it in production** — the
+  [operations runbook](../guide/operations.md).
+- **Know when to leave** — [graduation](graduation.md): the bounds that
+  tell you a collection has outgrown this tier.

@@ -110,8 +110,13 @@ For a single-document mutation:
    `seq = current.next_seq`.
 3. **PUT content and index artifacts.** `I` / `U` post-images are
    written under `content/<sha>.json`; index markers are PUT or
-   DELETE'd inside the same attempt. These artifacts are invisible
-   until the log and `current.json` advance.
+   DELETE'd inside the same attempt. Content post-images are invisible
+   until the log and `current.json` advance — they are referenced only
+   through the committed log range. Index markers are different: they
+   are an out-of-band access path, so a stale-key DELETE that lands
+   before a failed/retried CAS can leave a committed row missing from
+   an index-routed read. Index completeness is its own invariant (see
+   the index access-path notes under "[Read algorithm](#read-algorithm)").
 4. **PUT log entries.** Each entry is written to `log/<seq>.json`
    with `If-None-Match: "*"`.
 5. **CAS-advance `current.json`.** The writer sets

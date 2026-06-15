@@ -27,6 +27,12 @@ There are two configuration seams, in precedence order:
 `auth: "none"` is for local dev and trusted internal callsites. Do
 not deploy a public `/v1/*` route with it.
 
+In production, fail closed: gate the `verifier:` override on an explicit
+env var (e.g. `BAERLY_AUTH_REQUIRED=1`) so missing auth config throws at
+startup instead of silently serving `auth: "none"`. Don't rely on
+`NODE_ENV` or a hostname check. [client-auth.md](client-auth.md) shows
+the full fail-closed pattern for both targets.
+
 ## Cloudflare Production
 
 Preferred: put Cloudflare Access in front of the Worker and verify the
@@ -58,12 +64,11 @@ export default baerlyWorker<Env>((env) => ({
 
 Checklist:
 
-- Protect the data routes with Cloudflare Access. If you want
-  `GET /v1/healthz` to remain public, scope the Access application or
-  policy so it covers `/v1/c/*`, `/v1/count`, and `/v1/since` but not
-  `/v1/healthz`. If Access protects the whole hostname, the Worker still
-  treats healthz as anonymous, but Cloudflare Access will challenge it
-  before the request reaches the Worker.
+- Protect the data routes with Cloudflare Access. To keep
+  `GET /v1/healthz` public, scope the Access policy to `/v1/c/*`,
+  `/v1/count`, and `/v1/since` only — if Access fronts the whole
+  hostname it challenges healthz before the Worker sees it (the Worker
+  still treats healthz as anonymous).
 - Set `CF_ACCESS_TEAM_DOMAIN` and `CF_ACCESS_AUDIENCE_TAG` in
   `wrangler.jsonc:vars` or runtime env.
 - Use `tenantPrefix: config.tenant` for single-tenant apps. Vanilla

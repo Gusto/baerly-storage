@@ -48,8 +48,8 @@ update every occurrence so they don't silently drift:
 - **"There is no runtime. None."** — `README.md`,
   `docs/contributing/architecture.md`, `docs/about/thesis.md`.
 - **"Built like git: content-addressed documents, immutable log
-  entries, and a single CAS-advanced pointer to HEAD."** — `README.md`,
-  `docs/contributing/architecture.md`.
+  entries, and a single CAS-advanced pointer to HEAD, per collection."**
+  — `README.md`, `docs/contributing/architecture.md`.
 
 Consistency is of the *wording*, not byte-identical formatting: the
 copies are not identical today (e.g. some are bold and standalone,

@@ -45,7 +45,7 @@ budget exists.
 ## Quick start
 
 ```sh
-pnpm create @gusto/baerly-storage@latest -- my-app --target=cloudflare
+pnpm create @gusto/baerly-storage@latest -- my-app --target=cloudflare --starter=react
 cd my-app && pnpm install && pnpm dev
 ```
 
@@ -53,7 +53,7 @@ For the Cloudflare target, `pnpm dev` boots Vite + workerd on `:5173`,
 so `/v1/*` and the React UI share one origin. No S3 creds are needed
 in development.
 
-For Node, scaffold with `--target=node`; `pnpm dev` also runs on
+For Node, scaffold with `--target=node --starter=react`; `pnpm dev` also runs on
 `:5173` through Vite middleware over `LocalFsStorage`, and production
 uses `pnpm start` to run the Node listener anywhere Node runs —
 Railway, Render, Fly, Docker, bare VMs, on-prem boxes.
@@ -131,10 +131,12 @@ Full reference: [`docs/guide/cheatsheet.md`](./docs/guide/cheatsheet.md), or
   abandoned internal tools the loop produced last quarter. There is
   no per-app database service bill; the runtime is a rounding error
   against the bucket.
-- **No hostage situation.** Log entries are Debezium-style CDC change
-  events, and snapshot export is shipped. `baerly export
-  --target=postgres` gives you the mechanical data handoff on the day
-  an app outgrows this.
+- **No hostage situation.** Per-collection snapshot export is shipped:
+  `baerly export --target=postgres --collection=<name>` dumps a
+  collection to SQL — run it per collection to hand off a whole app.
+  Log entries are already a Debezium-style CDC envelope, so an
+  incremental CDC exit stays mechanical (the shape is fixed; the
+  incremental exporter itself is future work).
 - **Honest about its envelope.** Sized for ~10 GB / tenant,
   ~30 writes/min/collection sustained, ~100 collections / tenant.
   Crossing any of those is the success signal to graduate.
