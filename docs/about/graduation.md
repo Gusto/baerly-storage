@@ -75,8 +75,8 @@ baerly admin usage \
 > envelope still being calibrated by bench. The fold-cost bench has
 > **landed** (Phase 2 — `docs/spec/attachments/fold-cost-baseline.json`);
 > `E = 2048` stays a conservative **PROVISIONAL** placeholder because
-> recalibrating `C`/`E` to where the *paid* envelope actually binds is the
-> deferred Phase 4 work, not the bench itself.
+> recalibrating `C`/`E` to where the *paid* envelope actually binds is
+> deferred pending a demonstrated need to raise it, not the bench itself.
 
 ## What costs CPU: compaction (folding the log)
 
@@ -182,9 +182,9 @@ The **row axis** `E` catches the case bytes miss: a snapshot of many
 tiny docs is cheap by bytes but expensive by per-entry parse/merge.
 `E = MAINTENANCE_MAX_FOLD_ROWS = 2048` is the row ceiling. **This value
 is PROVISIONAL** — a conservative placeholder. The fold-cost bench has
-landed (Phase 2) and measures per-entry CPU; it shows 2048 rows is well
+landed and measures per-entry CPU; it shows 2048 rows is well
 under the CF-free CPU budget, so recalibrating `E` (and `C`) to where the
-paid envelope binds is the deferred Phase 4 work, not the bench. Treat
+paid envelope binds is deferred pending a demonstrated need, not the bench. Treat
 2048 rows as "the order of magnitude where
 per-entry CPU starts to rival the byte budget on CF free," not a
 bench-confirmed number yet.
@@ -545,14 +545,14 @@ hit a ceiling, you know whether there is a knob at all.
 | Limit | How to raise it | Notes |
 |---|---|---|
 | Static fold-byte ceiling `C` (`MAINTENANCE_MAX_FOLD_BYTES_DEFAULT = 512 KB`) | **`BAERLY_MAINTENANCE_MAX_FOLD_BYTES` env var** | Set out-of-band in the deploy environment; takes effect on the next write-tick. Size to what the host can actually rebuild (see [Cloudflare caveat](#operations-plane-env-vars)). |
-| Cloudflare free CPU / subrequest wall (~10 ms CPU, 50 subrequests) | **Cloudflare plan upgrade (free → paid)**, then raise `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` | Paid raises CPU to 30 s default (up to 5 min); subrequest limit also lifts. A finer-grained per-platform `cpuLimit` declaration is **planned, pending a measurement gate** in a later phase — it is not yet built. |
+| Cloudflare free CPU / subrequest wall (~10 ms CPU, 50 subrequests) | **Cloudflare plan upgrade (free → paid)**, then raise `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` | Paid raises CPU to 30 s default (up to 5 min); subrequest limit also lifts. A finer-grained per-platform `cpuLimit` declaration was evaluated and **measured unnecessary** — the in-band write-tick keeps up to ~4× the rate envelope on free — so it is **not built**. |
 | Per-collection CAS scope (one `current.json` per collection; no cross-collection atomicity) | **Cannot be increased — protocol invariant** | The CAS scope is a single object per collection; cross-collection atomicity is not offered and is not part of the protocol. |
 | Content-hash addressing (snapshot/content filenames embed their own SHA-256) | **Cannot be increased — protocol invariant** | The snapshot filename is derived from the SHA-256 of its body; changing this would break the no-corruption guarantee that makes orphan snapshots safe to GC. |
 
 The row ceiling `E` is not in this map — it is a kernel constant, not an
 operator knob; see the [operations-plane note](#operations-plane-env-vars)
-above for its (provisional) status — the fold-cost bench has landed
-(Phase 2); recalibrating it is deferred to Phase 4.
+above for its (provisional) status — the fold-cost bench has landed;
+recalibrating it is deferred pending a demonstrated need.
 
 ## How to read your tier
 

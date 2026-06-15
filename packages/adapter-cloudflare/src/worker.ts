@@ -147,12 +147,11 @@ export const cfMaintenanceDispatch = (
     options: {
       // A CPU-killable free isolate does ONE phase per request.
       phasesPerTick: "single",
-      // PHASE-3 SEAM: this is the write-tick profile. The cron path is a
-      // user-supplied `scheduled` callback (below) that independently picks
-      // its own profile — today both reach CF-free, so they stay coherent by
-      // coincidence. When a paid-tier profile declaration lands, it MUST be
-      // threaded to BOTH this and the cron callback, or the two maintenance
-      // paths diverge (the incoherence the design doc warns about).
+      // Write-tick profile. The cron path (user-supplied `scheduled` callback
+      // below) independently picks its own profile; today both resolve to
+      // CF-free, so they stay coherent. If a second profile is ever
+      // introduced, it MUST be threaded to BOTH paths or the two maintenance
+      // triggers diverge.
       profile: MAINTENANCE_PROFILE_CF_FREE,
     },
   };
