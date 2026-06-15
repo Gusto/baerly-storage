@@ -68,7 +68,8 @@
  * OUTPUT — one JSON file per run to `bench/results/fold-cost/`, shaped so
  * a future reader can find "where does ~30 s CPU / ~128 MB intersect"
  * (the input to raising `C` / `E` on paid). A checked-in baseline lives
- * at `bench/results/fold-cost/fold-cost-baseline.json`.
+ * at `docs/spec/attachments/fold-cost-baseline.json` (per-run output under
+ * `bench/results/fold-cost/` is gitignored).
  *
  * Reproduction: `pnpm bench:fold-cost`. Seeded; the seed is captured in
  * the result JSON. Numbers are machine-specific (they record the host's
