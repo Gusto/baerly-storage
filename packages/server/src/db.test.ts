@@ -75,6 +75,22 @@ describe("Db.create", () => {
     },
   );
 
+  test.each(["..", "with\u0000null"])(
+    "db.getCurrentJson(%j) rejects InvalidConfig (no unvalidated traversal)",
+    async (bad) => {
+      const db = Db.create({ storage: new MemoryStorage(), app: "a", tenant: "t" });
+      await expect(db.getCurrentJson(bad)).rejects.toMatchObject({ code: "InvalidConfig" });
+    },
+  );
+
+  test.each(["..", "with\u0000null"])(
+    "db.getLogEntry(%j) rejects InvalidConfig (no unvalidated traversal)",
+    async (bad) => {
+      const db = Db.create({ storage: new MemoryStorage(), app: "a", tenant: "t" });
+      await expect(db.getLogEntry(bad, 0)).rejects.toMatchObject({ code: "InvalidConfig" });
+    },
+  );
+
   test("app names cannot start with the reserved _ prefix", () => {
     try {
       Db.create({ storage: new MemoryStorage(), app: "_x", tenant: "t" });

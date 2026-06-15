@@ -253,6 +253,10 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
     collection: string,
     opts?: { signal?: AbortSignal },
   ): Promise<CurrentJsonRead | null> {
+    // Defensive at the db layer so ALL callers are covered — including
+    // the `/v1/since` handler, whose only inline screen catches empty /
+    // `/` and lets `..` / control bytes through into this key.
+    assertPathSegment(collection, "collection");
     const key = `${physicalPrefixFor(this.app, this.tenant)}manifests/${collection}/current.json`;
     return readCurrentJson(this.#storage, key, opts);
   }
@@ -274,6 +278,9 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
     seq: number,
     opts?: { signal?: AbortSignal },
   ): Promise<LogEntry | null> {
+    // Defensive at the db layer so ALL callers are covered — same
+    // rationale as `getCurrentJson`; the `/v1/since` poll reaches here.
+    assertPathSegment(collection, "collection");
     const key = logObjectKey(
       `${physicalPrefixFor(this.app, this.tenant)}manifests/${collection}`,
       seq,

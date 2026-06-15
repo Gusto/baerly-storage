@@ -245,3 +245,61 @@ describe("router is silent without a wrapping observability scope", () => {
     expect(canonical()).toHaveLength(0);
   });
 });
+
+describe("collection-segment validation closes the traversal bypass", () => {
+  type ErrorEnvelope = { error: { code: string; message: string } };
+
+  // `GET /v1/since?collection=..` — the handler's inline reject only
+  // catches empty / `/`; `..` slips past it into `longPollSince` →
+  // `db.getCurrentJson` / `db.getLogEntry`. Without the db-layer guard
+  // this reaches storage with an unvalidated traversal segment. The
+  // synchronous `assertPathSegment` throw fires before any poll, so no
+  // timeout wiring is needed.
+  test("GET /v1/since?collection=.. is rejected InvalidConfig (no storage reach)", async () => {
+    const app = buildApp();
+    const res = await app.request("http://localhost/v1/since?collection=..");
+    expect(res.status).toBe(400);
+    const envelope = (await res.json()) as ErrorEnvelope;
+    expect(envelope.error.code).toBe("InvalidConfig");
+  });
+
+  // `GET /v1/since?collection=<control char>` — same path; the inline
+  // reject doesn't screen control bytes either.
+  test("GET /v1/since?collection=<NUL> is rejected InvalidConfig", async () => {
+    const app = buildApp();
+    const res = await app.request("http://localhost/v1/since?collection=a%00b");
+    expect(res.status).toBe(400);
+    const envelope = (await res.json()) as ErrorEnvelope;
+    expect(envelope.error.code).toBe("InvalidConfig");
+  });
+
+  // `GET /v1/c/:collection` param. A literal `..` segment is collapsed
+  // by the URL layer before routing, so we send the percent-encoded
+  // form. EMPIRICAL (pinned, not assumed): under Hono a *bare*
+  // `%2e%2e` is normalized to `..` and the path-traversal collapse
+  // makes the `:collection` route fail to match entirely → 404, the
+  // handler never runs. So a bare `%2e%2e` can't reach storage.
+  test("GET /v1/c/%2e%2e never matches the :collection route (Hono collapses it → 404)", async () => {
+    const app = buildApp();
+    const res = await app.request("http://localhost/v1/c/%2e%2e");
+    expect(res.status).toBe(404);
+  });
+
+  // The variants that DO survive Hono's normalization and reach the
+  // handler decode to a `..`-bearing / control-bearing segment. These
+  // are the real regression pins: confirm the HTTP layer doesn't mangle
+  // the segment into something that bypasses `assertKeySegment`. Each
+  // is rejected InvalidConfig by Task 1's strengthened guard inside
+  // `db.collectionReadContext`, and the route surfaces that rejection.
+  // (Already GREEN after Task 1; kept here as a regression pin.)
+  test.each([
+    ["http://localhost/v1/c/%2e%2e%2fx?where=%7B%22clauses%22%3A%5B%5D%7D", ".. → ../x"],
+    ["http://localhost/v1/c/a%00b?where=%7B%22clauses%22%3A%5B%5D%7D", "NUL byte"],
+  ])("GET %s reaches the handler and is rejected InvalidConfig (%s)", async (url) => {
+    const app = buildApp();
+    const res = await app.request(url);
+    expect(res.status).toBe(400);
+    const envelope = (await res.json()) as ErrorEnvelope;
+    expect(envelope.error.code).toBe("InvalidConfig");
+  });
+});
