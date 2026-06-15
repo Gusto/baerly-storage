@@ -6,8 +6,8 @@
  * Collection-API integration cascade — backend-agnostic test driver.
  *
  * One entry point ({@link runCollectionApiCascade}) exercises every
- * locked verb on the `db.collection(...)` and `db.transaction(...)`
- * surface, then walks the emitted `LogEntry`s and asserts the frozen
+ * locked verb on the `db.collection(...)` surface, then walks the
+ * emitted `LogEntry`s and asserts the frozen
  * shape declared in `packages/protocol/src/log.ts:22–100`. The
  * driver is consumed by the Node-side variant table
  * (`tests/integration/collection-api.test.ts`) and the Workerd mirror
@@ -86,9 +86,8 @@ const ensureCurrent = async (storage: Storage, key: string): Promise<void> => {
 /**
  * Provision `current.json` for every table the cascade touches.
  * `Writer.commit()` throws `InvalidResponse` if the table's
- * `current.json` is missing; the read path returns empty. Mirroring
- * the `transaction.test.ts` pattern, the cascade seeds each table
- * before any insert.
+ * `current.json` is missing; the read path returns empty. The cascade
+ * seeds each table before any insert.
  */
 const provision = async (
   storage: Storage,
@@ -371,58 +370,19 @@ const runDeleteContract = async (
   expect(first?.["k"]).toBe("y");
 };
 
-/** Transaction body buffering: empty body is a no-op; commit lands after body. */
-const runTransactionBody = async (
-  db: Db,
-  storage: Storage,
-  app: string,
-  tenant: string,
-): Promise<void> => {
-  const t = freshTableName("tx-body");
-  await provision(storage, app, tenant, t);
-
-  // Empty body — no commit, `count` stays zero.
-  await db.transaction(t, async () => {
-    // no-op
-  });
-  await expect(db.collection(t).count()).resolves.toBe(0);
-
-  // Body inserts — visible AFTER the body resolves.
-  await db.transaction<Doc>(t, async (tx) => {
-    await tx.insert({ k: "inside", v: 1 });
-    await tx.insert({ k: "inside", v: 2 });
-  });
-  await expect(db.collection(t).where({ k: "inside" }).count()).resolves.toBe(2);
-
-  // Body throw — commit skipped, mutations dropped, identity preserved.
-  const boom = new Error("body-throw");
-  let caught: unknown;
-  try {
-    await db.transaction<Doc>(t, async (tx) => {
-      await tx.insert({ k: "doomed" });
-      throw boom;
-    });
-  } catch (error) {
-    caught = error;
-  }
-  expect(caught).toBe(boom);
-  // Buffered insert NOT materialised.
-  await expect(db.collection(t).where({ k: "doomed" }).count()).resolves.toBe(0);
-};
-
 /**
- * Cross-writer Conflict: two concurrent transactions racing on the
+ * Cross-writer Conflict: two concurrent direct mutations racing on the
  * same table's `current.json`. The locked contract
  * (`packages/protocol/src/collection-api.ts:211-215`) says single-attempt — at
  * least one writer throws `BaerlyError{code:"Conflict"}` on CAS loss.
  *
  * In-process variants (memory, local-fs) share state via the
- * backing-store singleton, so two transactions on the same `db`
+ * backing-store singleton, so two mutations on the same `db`
  * already race. Variants where two `Db` instances are cheap to
  * construct over the same bucket (node-minio, cloudflare-r2) pass
- * a `rivalDb` to force two distinct in-process commit loops.
+ * a `rival` `Db` to force two distinct in-process commit loops.
  */
-const runTransactionConflict = async (
+const runConcurrentWriteConflict = async (
   db: Db,
   rival: Db,
   storage: Storage,
@@ -431,16 +391,15 @@ const runTransactionConflict = async (
 ): Promise<void> => {
   const t = freshTableName("tx-race");
   await provision(storage, app, tenant, t);
-  // Seed one row both writers will race to update. Both transactions
+  // Seed one row both writers will race to update. Both mutations
   // observe this row before either commits.
   await db.collection(t).insert({ _id: "race", k: "race", v: 0 });
 
-  const update = (writer: Db, label: string): Promise<void> =>
-    writer.transaction<Doc>(t, async (tx) => {
-      // Tiny await so both bodies hit `commitBatch` overlapping in
-      // event-loop terms; without this they're sequential on memory.
-      await tx.where({ k: "race" }).update({ marker: true, [label]: 1 } as Partial<Doc>);
-    });
+  const update = (writer: Db, label: string): Promise<{ modified: number }> =>
+    writer
+      .collection(t)
+      .where({ k: "race" })
+      .update({ marker: true, [label]: 1 } as Partial<Doc>);
 
   const results = await Promise.allSettled([update(db, "A"), update(rival, "B")]);
   const rejected = results.filter((r) => r.status === "rejected");
@@ -784,12 +743,6 @@ const runLogEntryShape = async (
   const { deleted } = await db.collection(t).delete(id2);
   expect(deleted).toBe(1);
 
-  // Transaction emit: two inserts inside one tx share a session id.
-  await db.transaction<Doc>(t, async (tx) => {
-    await tx.insert({ k: "tx-a" });
-    await tx.insert({ k: "tx-b" });
-  });
-
   const collectionPrefix = `app/${app}/tenant/${tenant}/manifests/${t}`;
   const entries: LogEntry[] = [];
   for await (const { key } of storage.list(`${collectionPrefix}/log/`)) {
@@ -801,8 +754,9 @@ const runLogEntryShape = async (
   }
   entries.sort((a, b) => a.seq - b.seq);
 
-  // 2 inserts + 1 update + 1 delete + 2 tx inserts = 6 entries.
-  expect(entries).toHaveLength(6);
+  // 2 inserts + 1 update + 1 delete = 4 entries (the document is the
+  // atomic unit; there is no batch).
+  expect(entries).toHaveLength(4);
 
   // Per packages/protocol/src/log.ts:22-100 — always-fields hold on
   // every entry.
@@ -821,14 +775,7 @@ const runLogEntryShape = async (
   }
 
   // Direct-mutation entries (0..3): per-op shape.
-  const [e0, e1, e2, e3, e4, e5] = entries as [
-    LogEntry,
-    LogEntry,
-    LogEntry,
-    LogEntry,
-    LogEntry,
-    LogEntry,
-  ];
+  const [e0, e1, e2, e3] = entries as [LogEntry, LogEntry, LogEntry, LogEntry];
 
   expect(e0.op).toBe("I");
   expect(e0.doc_id).toBe(id1);
@@ -858,15 +805,6 @@ const runLogEntryShape = async (
 
   // Direct mutations have distinct sessions per `commit()`.
   expect(e0.session).not.toBe(e1.session);
-
-  // Transaction entries (4..5): share one session id.
-  expect(e4.op).toBe("I");
-  expect(e5.op).toBe("I");
-  expect(e4.session).toBe(e5.session);
-  // And the transaction's session is different from every direct
-  // mutation's session.
-  expect(e4.session).not.toBe(e0.session);
-  expect(e4.session).not.toBe(e2.session);
 };
 
 /**
@@ -908,11 +846,10 @@ export const runCollectionApiCascade = async (opts: {
   await runTableReplaceByIdContract(db, opts.storage, APP, tenant);
   await runDeleteContract(db, opts.storage, APP, tenant);
 
-  // 4. Transactions.
-  await runTransactionBody(db, opts.storage, APP, tenant);
+  // 4. Concurrent-write Conflict (cross-writer CAS loss on a single doc).
   if (opts.rivalStorage !== undefined) {
     const rival = Db.create({ storage: opts.rivalStorage, app: APP, tenant });
-    await runTransactionConflict(db, rival, opts.storage, APP, tenant);
+    await runConcurrentWriteConflict(db, rival, opts.storage, APP, tenant);
   }
 
   // 5. Compaction — fold the log prefix into a snapshot and read

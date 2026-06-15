@@ -6,8 +6,8 @@
  * Read engine + mutation terminals: `Query<T>` builder, the
  * three read terminals (`first`, `all`, `count`) that fold the log
  * under a fresh `current.json` snapshot, and the four mutation
- * terminals (`insert`, `update`, `replace`, `delete`) that each
- * compile to one or more `Writer.commit()` round-trips.
+ * terminals (`insert`, `update`, `replace`, `delete`). Each mutation
+ * verb compiles to exactly one `Writer.commit()` call.
  *
  * Every modifier (`.where` / `.order` / `.limit`) returns a NEW
  * `Query<T>` carrying merged frozen state — the input state is never
@@ -27,8 +27,7 @@
  * retries (up to 8 attempts) live inside `Writer.commit()`; the
  * verbs do NOT add their own retry loop. On retry-budget exhaustion
  * `commit()` throws `BaerlyError{code:"Conflict"}` and the verb
- * surfaces it unchanged — the caller's option is to wrap in
- * `db.transaction(...)`.
+ * surfaces it unchanged — the caller decides whether to re-run.
  *
  * @see ../../../docs/spec/sync-protocol.md
  */
@@ -53,7 +52,6 @@ import {
   uuidv7,
 } from "@baerly/protocol";
 import { loadSnapshotAsMap } from "./snapshot.ts";
-import type { TxContext } from "./db.ts";
 import { assertDocId } from "./doc-id.ts";
 import { encodeIndexValue, type IndexDefinition } from "./indexes.ts";
 import { foldLogEntriesOnto, walkLogRange } from "./log-walk.ts";
@@ -79,21 +77,9 @@ export interface CollectionReadContext {
   readonly collectionPrefix: string;
   readonly collectionName: string;
   /**
-   * When defined, mutation verbs (`Collection.insert`, `Query.update`,
-   * `Collection.replace`, `Query.delete`) buffer a {@link BufferedMutation}
-   * onto `txCtx.mutations` instead of calling `Writer.commit`
-   * directly. Reads ignore `txCtx` entirely — they go through
-   * `Storage` live, by design (no MVCC; see `Db.transaction`'s JSDoc
-   * in `./db.ts`). Threaded in by `Db.transaction(...)`; `undefined`
-   * outside a transaction.
-   *
-   * @internal
-   */
-  readonly txCtx?: TxContext;
-  /**
    * Optional StandardSchemaV1-shaped validator for this collection.
    * When set, `runInsert`, `runUpdate`, and `runReplaceById` validate the
-   * post-image before committing or buffering — invalid input throws
+   * post-image before committing — invalid input throws
    * `BaerlyError{code:"SchemaError"}` carrying a `.issues` array of
    * `{ path, message }` entries. `undefined` means no validation
    * (today's behaviour — zero overhead).
@@ -383,10 +369,7 @@ export const runInsert = async <T extends DocumentData>(
 
   // Schema validation against the post-image. Runs BEFORE the
   // pre-commit collision check and before the writer round-trip so
-  // a malformed doc never reaches the wire. Inside a transaction it
-  // also runs before `txCtx.mutations.push` — a `SchemaError` thrown
-  // here aborts the body, dropping every buffered mutation, before
-  // the commit fires.
+  // a malformed doc never reaches the wire.
   if (ctx.schema !== undefined) {
     await validateOrThrow(ctx.schema, body, {
       collection: ctx.collectionName,
@@ -401,11 +384,8 @@ export const runInsert = async <T extends DocumentData>(
   // read fold collapses silently — a contract violation. The CAS
   // retry budget in `Writer` does not surface this case
   // (no `current.json` conflict; both writes succeed at different seqs).
-  //
-  // Inside a transaction the read sees LIVE state (no MVCC, no read-
-  // your-writes); a buffered insert in the same transaction is NOT
-  // visible here. The collision check still defends against a doc
-  // ALREADY committed to the bucket.
+  // The collision check defends against a doc ALREADY committed to
+  // the bucket.
   const existing = await runRead<DocumentData>(ctx, {
     wire: { clauses: [{ op: "eq", field: "_id", value: _id }] },
     order: undefined,
@@ -416,12 +396,6 @@ export const runInsert = async <T extends DocumentData>(
       "Conflict",
       `Query.insert: _id ${JSON.stringify(_id)} already exists in collection ${JSON.stringify(ctx.collectionName)}`,
     );
-  }
-
-  if (ctx.txCtx !== undefined) {
-    assertTxBindMatches(ctx);
-    ctx.txCtx.mutations.push({ op: "I", docId: _id, body });
-    return { _id };
   }
 
   // Single-attempt at the verb level; CAS retries are internal to
@@ -445,8 +419,8 @@ export const runInsert = async <T extends DocumentData>(
  *
  * Atomicity is per row, not across the N-row batch. The locked
  * contract (`packages/protocol/src/collection-api.ts:178–184`) is explicit on
- * this: all-or-nothing across multiple rows is what
- * `db.transaction(...)` exists to deliver.
+ * this: each affected row commits independently — the document is the
+ * atomic unit; there is no multi-row batch.
  *
  * `replica_identity` defaults to `PATCH_ONLY` for every collection
  * today — emitted `U` entries carry `{ after }` (the full post-image)
@@ -467,10 +441,6 @@ const runUpdate = async <T extends DocumentData>(
   patch: Partial<T>,
 ): Promise<{ modified: number }> => {
   const { rows } = await runRead<T>(ctx, state);
-  const tx = ctx.txCtx;
-  if (tx !== undefined) {
-    assertTxBindMatches(ctx);
-  }
   let modified = 0;
   for (const doc of rows) {
     const merged = merge(doc as DocumentData, patch as Partial<DocumentData>);
@@ -488,23 +458,19 @@ const runUpdate = async <T extends DocumentData>(
     // would reject valid updates against schemas that require fields
     // the patch doesn't touch. The post-image is what the schema
     // actually models. Atomicity stays per-row: a violation on row
-    // N aborts the batch without rolling back rows 0..N-1.
+    // N aborts the loop without rolling back rows 0..N-1.
     if (ctx.schema !== undefined) {
       await validateOrThrow(ctx.schema, merged, {
         collection: ctx.collectionName,
         verb: "update",
       });
     }
-    if (tx !== undefined) {
-      tx.mutations.push({ op: "U", docId: String(doc["_id"]), body: merged });
-    } else {
-      await writerFor(ctx).commit({
-        op: "U",
-        collection: ctx.collectionName,
-        docId: String(doc["_id"]),
-        body: merged,
-      });
-    }
+    await writerFor(ctx).commit({
+      op: "U",
+      collection: ctx.collectionName,
+      docId: String(doc["_id"]),
+      body: merged,
+    });
     modified++;
   }
   return { modified };
@@ -513,8 +479,7 @@ const runUpdate = async <T extends DocumentData>(
 /**
  * `Collection.replace` implementation. Existence check via `runRead` over
  * a `byId`-shaped wire so the `singleIdFromPredicate` PK fast path
- * (`Map.get`) fires and any transaction-buffered insert of `id` is
- * visible. Missing row → `NotFound` directly (no Conflict-string
+ * (`Map.get`) fires. Missing row → `NotFound` directly (no Conflict-string
  * indirection through the router). Present row → emit a single
  * `op:"U"` `LogEntry` carrying `doc` as the post-image, with `_id`
  * forced to the requested `id` so doc identity is preserved across
@@ -548,19 +513,12 @@ export const runReplaceById = async <T extends DocumentData>(
   }
   const body: DocumentData = { ...(doc as DocumentData), _id: id };
   // Schema validation runs against the post-image — same shape as
-  // `runInsert`. Buffers in a transaction only after validation
-  // passes; an invalid replace inside a tx aborts the body and
-  // drops every previously-buffered mutation.
+  // `runInsert`. An invalid replace throws before the commit fires.
   if (ctx.schema !== undefined) {
     await validateOrThrow(ctx.schema, body, {
       collection: ctx.collectionName,
       verb: "replace",
     });
-  }
-  if (ctx.txCtx !== undefined) {
-    assertTxBindMatches(ctx);
-    ctx.txCtx.mutations.push({ op: "U", docId: id, body });
-    return;
   }
   await writerFor(ctx).commit({
     op: "U",
@@ -579,8 +537,8 @@ export const runReplaceById = async <T extends DocumentData>(
  * maintain a shadow table — see `packages/protocol/src/log.ts:102–118`.
  *
  * Atomicity is per row, not across the N-row batch — same shape as
- * `Query.update`. `db.transaction(...)` is where all-or-nothing
- * semantics live.
+ * `Query.update`. The document is the atomic unit; there is no
+ * multi-row batch.
  *
  * @throws BaerlyError code="Conflict" — any one row's CAS retry budget
  *   exhausted. The partial-progress `deleted` count is NOT returned
@@ -591,45 +549,16 @@ const runDelete = async <T extends DocumentData>(
   state: QueryState<T>,
 ): Promise<{ deleted: number }> => {
   const { rows } = await runRead<T>(ctx, state);
-  const tx = ctx.txCtx;
-  if (tx !== undefined) {
-    assertTxBindMatches(ctx);
-  }
   let deleted = 0;
   for (const doc of rows) {
-    if (tx !== undefined) {
-      tx.mutations.push({ op: "D", docId: String(doc["_id"]) });
-    } else {
-      await writerFor(ctx).commit({
-        op: "D",
-        collection: ctx.collectionName,
-        docId: String(doc["_id"]),
-      });
-    }
+    await writerFor(ctx).commit({
+      op: "D",
+      collection: ctx.collectionName,
+      docId: String(doc["_id"]),
+    });
     deleted++;
   }
   return { deleted };
-};
-
-/**
- * Runtime guard for the txCtx-Collection-name binding. The type system
- * already prevents the legitimate path (the body callback gets one
- * `Collection<T>`, no `Db`), so this only catches a bug where a stale
- * `Query<T>` outlives its `Collection<T>` and is somehow re-attached to a
- * transaction over a different collection.
- *
- * @throws BaerlyError code="Internal" — txCtx ↔ Collection name mismatch.
- */
-const assertTxBindMatches = (ctx: CollectionReadContext): void => {
-  if (ctx.txCtx === undefined) {
-    return;
-  }
-  if (ctx.txCtx.collection !== ctx.collectionName) {
-    throw new BaerlyError(
-      "Internal",
-      `Transaction context bound to ${JSON.stringify(ctx.txCtx.collection)} but mutation issued on collection ${JSON.stringify(ctx.collectionName)}`,
-    );
-  }
 };
 
 /**

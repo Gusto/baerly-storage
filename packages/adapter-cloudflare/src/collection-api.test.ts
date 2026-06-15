@@ -36,20 +36,16 @@ const getBinding = (): R2Bucket => {
 
 describe("collection API", () => {
   describe("cloudflare-r2", () => {
-    test(
-      "happy-path + writes + transactions + LogEntry shape",
-      { timeout: 60 * 1000 },
-      async () => {
-        const binding = getBinding();
-        // Two `r2BindingStorage` wrappers over the SAME binding share
-        // a backing store, so the cross-writer Conflict assertion can
-        // run on cloudflare-r2 the same way it does on memory /
-        // local-fs.
-        await runCollectionApiCascade({
-          storage: r2BindingStorage(binding),
-          rivalStorage: r2BindingStorage(binding),
-        });
-      },
-    );
+    test("happy-path + writes + LogEntry shape", { timeout: 60 * 1000 }, async () => {
+      const binding = getBinding();
+      // Two `r2BindingStorage` wrappers over the SAME binding share
+      // a backing store, so the cross-writer Conflict assertion can
+      // run on cloudflare-r2 the same way it does on memory /
+      // local-fs.
+      await runCollectionApiCascade({
+        storage: r2BindingStorage(binding),
+        rivalStorage: r2BindingStorage(binding),
+      });
+    });
   });
 });

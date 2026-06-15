@@ -2,7 +2,7 @@
  * Collection-API integration cascade — Node-side variant runner.
  *
  * Drives the locked `db.collection(...).{first,all,count,insert,update,
- * replace,delete}` + `db.transaction(...)` surface plus a frozen
+ * replace,delete}` surface plus a frozen
  * `LogEntry` round-trip across three Node-runnable backends:
  *   - `memory`    — `MemoryStorage` shared per bucket; zero infra.
  *   - `local-fs`  — `LocalFsStorage` over a fresh tmp dir; zero infra.
@@ -117,19 +117,15 @@ describe("collection API", () => {
         cleanup = undefined;
       });
 
-      test(
-        "happy-path + writes + transactions + LogEntry shape",
-        { timeout: 60 * 1000 },
-        async () => {
-          const bucket = `tbl-${variant.label}-${uuid().slice(0, 8)}`;
-          const made = await variant.makeStorages(bucket);
-          cleanup = made.cleanup;
-          await runCollectionApiCascade({
-            storage: made.storage,
-            ...(made.rivalStorage !== undefined ? { rivalStorage: made.rivalStorage } : {}),
-          });
-        },
-      );
+      test("happy-path + writes + LogEntry shape", { timeout: 60 * 1000 }, async () => {
+        const bucket = `tbl-${variant.label}-${uuid().slice(0, 8)}`;
+        const made = await variant.makeStorages(bucket);
+        cleanup = made.cleanup;
+        await runCollectionApiCascade({
+          storage: made.storage,
+          ...(made.rivalStorage !== undefined ? { rivalStorage: made.rivalStorage } : {}),
+        });
+      });
     });
   }
 });

@@ -18,53 +18,7 @@ import {
 import { collectionsToMaps } from "./config.ts";
 import { assertNameNotReserved } from "./names.ts";
 import type { CollectionReadContext } from "./query.ts";
-import { Writer, type CommitInput } from "./writer.ts";
 import { makeCollection } from "./collection.ts";
-
-/**
- * In-memory buffer for a single in-flight {@link Db.transaction}
- * call. The `Collection<T>` instance passed to the transaction body holds
- * a reference to this object; every mutation verb appends to
- * `mutations` instead of calling `Writer.commit` directly.
- *
- * After the body resolves, `Db.transaction` performs ONE
- * `Writer.commitBatch(...)` to commit every buffered mutation
- * in a single CAS attempt.
- *
- * @internal — referenced by `collection.ts` and `query.ts`; not part of
- *   the public API surface for app code.
- */
-export interface TxContext {
-  /**
-   * The collection name the transaction is scoped to. Mutation verbs
-   * runtime-assert that their `Collection<T>`'s `name` matches this
-   * field before appending — the type system already prevents the
-   * legitimate path, this catches the bug path (a stale `Query<T>`
-   * re-attached to a different collection's transaction).
-   */
-  readonly collection: string;
-
-  /**
-   * Mutations buffered in order of issuance. The commit converts
-   * each into one `CommitInput` (`Writer`'s single-mutation
-   * shape) and passes the array to `Writer.commitBatch`.
-   */
-  readonly mutations: BufferedMutation[];
-}
-
-/**
- * One buffered mutation. Mirrors {@link CommitInput} minus
- * `collection` (which is constant per transaction and lives on
- * `TxContext.collection`).
- *
- * @internal — only used inside the `Db.transaction` path.
- */
-export interface BufferedMutation {
-  readonly op: "I" | "U" | "D";
-  readonly docId: string;
-  readonly body?: DocumentData;
-  readonly origin?: string;
-}
 
 /**
  * Physical-key prefix for a `(app, tenant)` pair. Trailing slash is
@@ -282,104 +236,6 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
   }
 
   /**
-   * Atomic mutation over a single collection. The callback receives a
-   * `Collection<T>` (not a `Db`) so cross-collection writes inside a
-   * transaction are a TypeScript error at compile time — not a
-   * runtime trap. Mutation verbs (`insert`, `update`, `replace`,
-   * `delete`) buffer; reads (`first`, `all`, `count`) go through
-   * `Storage` live (no MVCC snapshot, no read-your-writes).
-   *
-   * Single-attempt: on CAS conflict throws
-   * `BaerlyError{code:"Conflict"}`. The body MAY have already run its
-   * read side-effects (no rollback of in-memory state); the write
-   * side-effects either all landed or none did. Wrap in a retry
-   * loop you wrote if you want one.
-   *
-   * Empty body (or a body that buffers nothing) resolves without
-   * touching `current.json`.
-   *
-   * @throws BaerlyError code="Conflict" — CAS lost on the collection's
-   *   `current.json`. Caller decides whether to re-run the body.
-   * @throws Whatever the body throws — re-thrown as-is. The commit
-   *   is skipped when the body throws.
-   * @throws BaerlyError code="InvalidConfig" — `collection` is empty or
-   *   contains `/`.
-   *
-   * @remarks
-   * Single-collection by design. Cross-collection 2PC was rejected on
-   * cost grounds — multiple round-trips per commit, no native fencing
-   * primitive on S3-compatible storage, no rollback to undo a
-   * successful PUT — and because in-doubt-transaction recovery state
-   * would contradict the stateless-writer model. Applications that
-   * need cross-collection atomicity re-express it at the app layer: an
-   * idempotent move keyed off source-row state, or a single
-   * denormalized collection with a `status` column.
-   *
-   * @example
-   * ```ts
-   * await db.transaction("tickets", async (tx) => {
-   *   const open = await tx.where({ status: "open" }).count();
-   *   if (open < 100) await tx.insert({ title: "another", status: "open" });
-   * });
-   * ```
-   */
-  async transaction<T extends DocumentData = DocumentData>(
-    collection: string,
-    body: (tx: Collection<T>) => Promise<void>,
-  ): Promise<void> {
-    assertKeySegment(collection, "collection", "Db.transaction");
-
-    const txCtx: TxContext = { collection, mutations: [] };
-    const collectionPrefix = `${physicalPrefixFor(this.app, this.tenant)}manifests/${collection}`;
-
-    // Build a Collection<T> whose mutation verbs buffer onto `txCtx`. The
-    // read path ignores `txCtx` entirely (locked: no MVCC, no
-    // read-your-writes inside a transaction).
-    const schema = this.#schemas.get(collection);
-    const indexes = this.#indexes.get(collection) ?? [];
-    const tx = makeCollection<T>({
-      storage: this.#storage,
-      collectionPrefix,
-      collectionName: collection,
-      txCtx,
-      indexes,
-      ...(schema !== undefined ? { schema } : {}),
-    });
-
-    // Run the body. Reads go through Storage live; mutations append
-    // to txCtx.mutations. A throw here propagates AS-IS and skips
-    // the commit (txCtx.mutations is discarded).
-    await body(tx);
-
-    // Empty buffer — nothing to commit, nothing to throw.
-    if (txCtx.mutations.length === 0) {
-      return;
-    }
-
-    // Map BufferedMutations -> CommitInputs and fire one
-    // single-attempt commitBatch. On CAS loss commitBatch throws
-    // `Conflict` and we surface it unchanged.
-    const inputs: CommitInput[] = [];
-    for (const m of txCtx.mutations) {
-      const input: CommitInput = {
-        op: m.op,
-        collection,
-        docId: m.docId,
-        ...(m.body !== undefined ? { body: m.body } : {}),
-        ...(m.origin !== undefined ? { origin: m.origin } : {}),
-      };
-      inputs.push(input);
-    }
-
-    const writer = new Writer({
-      storage: this.#storage,
-      currentJsonKey: `${collectionPrefix}/current.json`,
-      options: { indexes },
-    });
-    await writer.commitBatch(inputs);
-  }
-
-  /**
    * Read + parse this `Db`'s `manifests/<collection>/current.json`. Returns
    * `null` when the collection has not been provisioned yet (no
    * `current.json` exists). Throws `BaerlyError{code:"InvalidResponse"}`
@@ -446,9 +302,8 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
  * `BaerlyError{code:"InvalidConfig"}`. `role` and `verb` are baked
  * into the message so the caller doesn't need to format their own.
  *
- * Used by {@link Db.create} (twice — `app`, `tenant`),
- * {@link Db.collectionReadContext} (once — `name`), and
- * {@link Db.transaction} (once — `collection`).
+ * Used by {@link Db.create} (twice — `app`, `tenant`) and
+ * {@link Db.collectionReadContext} (once — `name`).
  *
  * @internal
  */

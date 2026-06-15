@@ -12,13 +12,12 @@
  * path that never populated the index, while the *read* path queried
  * an index that was never written. Reads silently missed rows.
  *
- * This file exercises ALL FOUR production write entry points reachable
+ * This file exercises the production write entry points reachable
  * from `Db`:
  *
  *   1. `db.collection(coll).insert({...})`
  *   2. `db.collection(coll).update(id, {...})`
  *   3. `db.collection(coll).delete(id)`
- *   4. `db.transaction(coll, async (tx) => { ... })`
  *
  * After each verb, list keys under `<collectionPrefix>/index/<indexName>/`
  * and assert set-equality against the oracle `allIndexKeysFor(...)`
@@ -146,16 +145,15 @@ describe("Db → Writer index emission (e2e)", () => {
     await assertIndexParity(storage, new Map([["t-2", { _id: "t-2", status: "open" }]]));
   });
 
-  test("db.transaction emits index keys for every buffered mutation", async () => {
+  test("direct mutations emit index keys for every write", async () => {
     const t = db.collection(COLL);
-    // Pre-seed two docs so the tx body's delete has a row to act on.
+    // Pre-seed two docs so the delete has a row to act on.
     await t.insert({ _id: "a", status: "open" });
     await t.insert({ _id: "b", status: "open" });
 
-    await db.transaction<Ticket>(COLL, async (tx) => {
-      await tx.insert({ _id: "c", status: "in-progress" });
-      await tx.delete("a");
-    });
+    // Formerly a transaction — now sequential direct mutations.
+    await t.insert({ _id: "c", status: "in-progress" });
+    await t.delete("a");
 
     await assertIndexParity(
       storage,

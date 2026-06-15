@@ -155,21 +155,21 @@ describe("Db → per-request metrics emission", () => {
     expect(observed.length).toBeGreaterThan(0);
   });
 
-  test("transaction commit emits to the active context's recorder", async () => {
+  test("sequential commits each emit to the active context's recorder", async () => {
     const storage = new MemoryStorage();
     await provision(storage);
     const ctx = createObservabilityContext();
     const db = Db.create({ storage, app: APP, tenant: TENANT });
     await runWithContext(ctx, async () => {
-      await db.transaction<{ _id: string; title: string }>(TABLE, async (tx) => {
-        await tx.insert({ title: "one" });
-        await tx.insert({ title: "two" });
-      });
+      await db.collection(TABLE).insert({ title: "one" });
+      await db.collection(TABLE).insert({ title: "two" });
     });
     const observed = ctx.recorder
       .snapshot()
       .histograms.filter((h) => h.name === "db.write.class_a_ops_per_logical_write");
-    expect(observed.length).toBeGreaterThan(0);
+    // The histogram is emitted once per commit, so two inserts produce
+    // at least two observations.
+    expect(observed.length).toBeGreaterThanOrEqual(2);
   });
 
   test("outside any context emissions are a no-op (no throw)", async () => {

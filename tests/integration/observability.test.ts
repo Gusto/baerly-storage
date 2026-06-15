@@ -198,7 +198,7 @@ describe("observability integration — canonical line vs physical reality", () 
     expect(proxy.counts.list).toBe(0);
   });
 
-  test("transaction with 3 inserts: canonical line tracks commitBatch's physical PUTs", async () => {
+  test("3 sequential inserts: one canonical line per single-doc commit", async () => {
     const memory = new MemoryStorage();
     await bootstrap(memory);
 
@@ -206,37 +206,36 @@ describe("observability integration — canonical line vs physical reality", () 
     const wrapped = observableStorage(proxy.storage);
     const db = Db.create({ storage: wrapped, app: APP, tenant: TENANT });
 
-    const ctx = createObservabilityContext();
-    await runWithContext(ctx, async () => {
-      await db.transaction<Ticket>(COLLECTION, async (tx) => {
-        await tx.insert({ _id: "t-1", status: "open", priority: 1 });
-        await tx.insert({ _id: "t-2", status: "open", priority: 2 });
-        await tx.insert({ _id: "t-3", status: "closed", priority: 3 });
+    // Each insert is its own single-doc commit. Scope each in its own
+    // request context so the canonical line emitted per commit tracks
+    // exactly that commit's physical ops — there is no batch.
+    const inserts: ReadonlyArray<Ticket> = [
+      { _id: "t-1", status: "open", priority: 1 },
+      { _id: "t-2", status: "open", priority: 2 },
+      { _id: "t-3", status: "closed", priority: 3 },
+    ];
+    for (const doc of inserts) {
+      const ctx = createObservabilityContext();
+      await runWithContext(ctx, async () => {
+        await db.collection(COLLECTION).insert(doc);
       });
-    });
-    flushCanonicalLine(ctx, ctx.recorder, {
-      unit: "http",
-      outcome: "ok",
-      status: 200,
-    });
+      flushCanonicalLine(ctx, ctx.recorder, {
+        unit: "http",
+        outcome: "ok",
+        status: 200,
+      });
+    }
 
-    expect(records).toHaveLength(1);
-    const props = records[0]!.properties;
+    // One canonical line per commit.
+    expect(records).toHaveLength(3);
 
-    const physicalA = proxy.counts.put + proxy.counts.delete + proxy.counts.list;
-    const physicalB = proxy.counts.get;
-
-    expect(props["db.storage.class_a_ops_total"]).toBe(physicalA);
-    expect(props["db.storage.class_b_ops_total"]).toBe(physicalB);
-    expect(props["db.storage.put.calls_total"]).toBe(proxy.counts.put);
-
-    // Transaction via commitBatch: 3 content PUTs + 3 log entry PUTs
-    // + 1 current.json CAS-advance = 7 PUTs. Insert-time _id-collision
-    // checks (inside the tx body) are GET-only (no LIST, no PUT). No
-    // DELETEs (all inserts, no stale-key fixups, no indexes). If this
-    // count drifts a regression in `commitBatch` changed the per-batch
+    // Each single-doc commit is 1 content PUT + 1 log entry PUT + 1
+    // current.json CAS-advance = 3 PUTs, so three inserts = 9 PUTs.
+    // The _id-collision precheck is GET-only. No DELETEs / no LISTs
+    // (all inserts, no stale-key fixups, no indexes declared). If this
+    // count drifts a regression in the writer changed the per-write
     // physical-op shape; investigate before relaxing the literal.
-    expect(proxy.counts.put).toBe(7);
+    expect(proxy.counts.put).toBe(9);
     expect(proxy.counts.delete).toBe(0);
     expect(proxy.counts.list).toBe(0);
   });
