@@ -9,9 +9,11 @@ related: [cost-model.md, "../contributing/conventions/change-discipline.md"]
 
 # Baerly — product thesis
 
-Baerly is a vendorless document database that runs over any
-S3-compatible bucket that passes the live CAS probe in
-`baerly doctor --bucket`. Your data lives in your bucket; the
+Baerly is a vendorless document database. **AWS S3 and Cloudflare R2 are
+supported** (CI-conformance-gated); other S3-compatible stores are
+conformance-gated, not promised — run the live CAS probe in
+`baerly doctor --bucket` first (green ⇒ should work, you own it).
+Your data lives in your bucket; the
 protocol kernel is small enough that an LLM can use the public API
 zero-shot from the `.d.ts` files alone. Day-1 templates ship for
 Cloudflare Workers (zero infra, free tier, one command to deploy)
@@ -342,7 +344,7 @@ single CAS-advanced pointer to HEAD.
   per-app managed-DB floors. At M-size, D1 wins per-write
   (~$5 vs. ~$19) where it's available — that's the graduation
   signal, not a competitive position. Availability and switching
-  cost both favor Baerly: any S3-API cloud, any Node runtime,
+  cost both favor Baerly: any conformant S3-API cloud (S3, R2), any Node runtime,
   Debezium-style CDC log entries. See
   [cost-model.md](cost-model.md) for the operating-point tables
   and per-line-item rates.
