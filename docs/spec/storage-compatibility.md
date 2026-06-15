@@ -7,7 +7,12 @@ tags: [protocol, s3]
 related: [s3-xml-escaping-cases.md]
 ---
 
-# S3 features used by Baerly
+# Storage compatibility
+
+Which S3-compatible stores baerly supports (see [Support tiers](#support-tiers)
+below), and the minimal S3 API surface the protocol depends on.
+
+## S3 API surface used
 
 ### `PUT and GET /<bucket>/<key>
 
