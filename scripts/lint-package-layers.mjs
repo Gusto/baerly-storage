@@ -1,7 +1,9 @@
 #!/usr/bin/env node
-// Enforce package layer direction. Bare-specifier imports between @baerly/* packages
-// must follow the rule table below. Violations exit non-zero with a remediation hint.
-// See docs/adr/006-package-layer-invariant.md for the WHY.
+// Enforce package layer direction. Imports between @baerly/* packages — static,
+// dynamic `import()`, and relative cross-package — must follow the rule table
+// below. Additionally gates `node:`-builtin purity for `protocol` and `server`
+// so the kernel stays Workerd-loadable. Violations exit non-zero with a
+// remediation hint. See docs/adr/006-package-layer-invariant.md for the WHY.
 
 import { readdir, readFile } from "node:fs/promises";
 import { join, relative, resolve as resolvePath } from "node:path";
@@ -11,14 +13,21 @@ const HERE = fileURLToPath(new URL(".", import.meta.url));
 const ROOT = resolvePath(HERE, "..");
 
 /**
- * Forward-edge-only DAG. `allows` lists every other @baerly/* package the owner
- * is permitted to import. Self-imports always allowed. Anything not listed is
- * forbidden. Source of truth lives in ADR-006; this table is the executable
- * mirror. When adding a new @baerly/* package, add a row here.
+ * Hand-maintained import allow list (contains one accepted Node-only
+ * `dev ↔ adapter-node` cycle — see ADR-006), plus a per-owner `node:`-builtin
+ * purity gate for `protocol` and `server`. `allows` lists every other
+ * @baerly/* package the owner is permitted to import. Self-imports always
+ * allowed. Anything not listed is forbidden. The optional `allowNode` field
+ * gates Node builtins: when defined, the owner may only import `node:` builtins
+ * in the list (`protocol` allows none; `server` allows `node:async_hooks`,
+ * which Workerd supports under `nodejs_compat`). Rows leaving `allowNode`
+ * undefined are Node-only by design and may import any builtin. Source of truth
+ * lives in ADR-006; this table is the executable mirror. When adding a new
+ * @baerly/* package, add a row here.
  */
 const RULES = {
-  protocol: { allows: [] },
-  server: { allows: ["protocol"] },
+  protocol: { allows: [], allowNode: [] },
+  server: { allows: ["protocol"], allowNode: ["node:async_hooks"] },
   dev: { allows: ["protocol", "server", "adapter-node"] },
   "adapter-node": { allows: ["protocol", "server", "dev"] },
   "adapter-cloudflare": { allows: ["protocol", "server", "dev"] },
@@ -34,22 +43,73 @@ const RULES = {
 // that only matched bare specifiers (and so missed `@baerly/server/http`).
 const IMPORT_RE = /(?:from|import)\s+["']@baerly\/([\w-]+)(?:\/[^"']*)?["']/g;
 
+// Dynamic `import("@baerly/<name>")` / `await import("@baerly/<name>/sub")`.
+// A static-only regex sails past dynamic edges; this closes that gap.
+const DYNAMIC_RE = /import\(\s*["']@baerly\/([\w-]+)(?:\/[^"']*)?["']\s*\)/g;
+
+// Relative climb-out to a sibling package: `../../<name>/src/...` or
+// `../../<name>/...`. The repo's own convention is relative `.ts` imports, so a
+// sibling-adapter import written idiomatically would otherwise be missed. The
+// captured `<name>` is gated on being a RULES key (and != ownerPkg) downstream
+// so non-package sibling dirs don't produce false positives.
+const RELATIVE_CROSS_RE = /(?:from|import)\s+["'](?:\.\.\/)+([\w-]+)\/(?:src\/)?[^"']*["']/g;
+
+// `node:` builtin specifiers in static `from`/`import x from`, side-effect
+// `import "node:…"`, and dynamic `import("node:…")` forms. Only enforced for
+// owners whose RULES row defines `allowNode`.
+const NODE_RE =
+  /(?:from|import)\s+["'](node:[\w/.-]+)["']|import\(\s*["'](node:[\w/.-]+)["']\s*\)/g;
+
 export function findViolations(files) {
   const violations = [];
   for (const { path, source, ownerPkg } of files) {
     const rule = RULES[ownerPkg];
-    if (!rule) {continue;}
-    for (const m of source.matchAll(IMPORT_RE)) {
-      const importedPkg = m[1];
-      if (importedPkg === ownerPkg) {continue;}
-      if (rule.allows.includes(importedPkg)) {continue;}
+    if (!rule) {
+      continue;
+    }
+    const checkPkg = (importedPkg) => {
+      if (importedPkg === ownerPkg) {
+        return;
+      }
+      if (!RULES[importedPkg]) {
+        return;
+      }
+      if (rule.allows.includes(importedPkg)) {
+        return;
+      }
       violations.push({ path, ownerPkg, importedPkg, allowed: rule.allows });
+    };
+    for (const m of source.matchAll(IMPORT_RE)) {
+      checkPkg(m[1]);
+    }
+    for (const m of source.matchAll(DYNAMIC_RE)) {
+      checkPkg(m[1]);
+    }
+    for (const m of source.matchAll(RELATIVE_CROSS_RE)) {
+      checkPkg(m[1]);
+    }
+    if (rule.allowNode) {
+      for (const m of source.matchAll(NODE_RE)) {
+        const importedPkg = m[1] ?? m[2];
+        if (rule.allowNode.includes(importedPkg)) {
+          continue;
+        }
+        violations.push({ path, ownerPkg, importedPkg, allowed: rule.allows });
+      }
     }
   }
   return violations;
 }
 
 export function formatViolation(v) {
+  if (v.importedPkg.startsWith("node:")) {
+    return [
+      `${v.path}: @baerly/${v.ownerPkg} imports Node builtin ${v.importedPkg} — @baerly/${v.ownerPkg} must stay Workerd-loadable`,
+      `  To fix: drop the Node builtin, or move the Node-only code into a package`,
+      `  that is allowed to use it (e.g. @baerly/dev / @baerly/adapter-node).`,
+      `  See ADR-006 for the WHY.`,
+    ].join("\n");
+  }
   const allowList =
     v.allowed.length === 0
       ? "(nothing — protocol must remain pure)"
@@ -73,7 +133,9 @@ async function walk(dir) {
   for (const e of entries) {
     const p = join(dir, e.name);
     if (e.isDirectory()) {
-      if (e.name === "node_modules" || e.name === "dist") {continue;}
+      if (e.name === "node_modules" || e.name === "dist") {
+        continue;
+      }
       out.push(...(await walk(p)));
     } else if (
       /\.(ts|tsx|mjs|cjs|js)$/.test(e.name) &&
@@ -91,8 +153,12 @@ async function loadFiles() {
   const pkgs = await readdir(pkgRoot, { withFileTypes: true });
   const files = [];
   for (const pkg of pkgs) {
-    if (!pkg.isDirectory()) {continue;}
-    if (!RULES[pkg.name]) {continue;}
+    if (!pkg.isDirectory()) {
+      continue;
+    }
+    if (!RULES[pkg.name]) {
+      continue;
+    }
     const srcDir = join(pkgRoot, pkg.name, "src");
     const paths = await walk(srcDir);
     for (const path of paths) {
@@ -110,7 +176,9 @@ async function main() {
     console.log(`lint-package-layers: 0 violations across ${files.length} files`);
     return 0;
   }
-  for (const v of violations) {console.error(formatViolation(v));}
+  for (const v of violations) {
+    console.error(formatViolation(v));
+  }
   console.error(`\nlint-package-layers: ${violations.length} violation(s)`);
   return 1;
 }

@@ -2,7 +2,7 @@
 title: Package layer invariant
 audience: adr
 summary: ADR 006 — hand-maintained package import allow list, enforced by scripts/lint-package-layers.mjs.
-last-reviewed: 2026-05-28
+last-reviewed: 2026-06-14
 tags: [decision, adr]
 related: [../../packages/protocol/src/index.ts, ../../scripts/lint-package-layers.mjs]
 ---
@@ -86,12 +86,24 @@ Three options for enforcement:
   (`adapter-node ↔ adapter-cloudflare`), and rewiring the existing
   `moduleResolution: "bundler"` setup for it is a much larger
   change than the problem warrants.
-- **Regex linter on bare-specifier `@baerly/*` imports.** Cheap,
-  one script, runs in `verify:agent` in milliseconds. Catches
-  both back-edges and sibling-adapter imports. Source of truth
-  for the allow list lives in this ADR; the executable mirror
-  lives in
+- **Regex linter on `@baerly/*` imports + `node:`-builtin purity.**
+  Cheap, one script, runs in `verify:agent` in milliseconds. Catches
+  back-edges, sibling-adapter imports (static, dynamic `import()`,
+  and relative cross-package), and Workerd-incompatible `node:`
+  builtins in `protocol` / `server`. Source of truth for the allow
+  list lives in this ADR; the executable mirror lives in
   [`scripts/lint-package-layers.mjs`](../../scripts/lint-package-layers.mjs).
+- **A graph-based dependency tool** (`dependency-cruiser`, Nx
+  `enforce-module-boundaries`, `eslint-plugin-boundaries`). These
+  resolve the real module graph, so they see dynamic and relative
+  edges natively and can forbid `node:` builtins and distinguish
+  type-only edges out of the box. CLAUDE.md green-lights
+  build-time/dev-tooling deps, so adopting one would be in-policy.
+  **Not taken:** config-as-data for a graph tool is heavier than the
+  ~120-line script for an 8-node graph that already has an in-process
+  unit-test harness, and the gaps above close in a handful of lines
+  in the existing idiom. Revisit at N>12 packages, or the first real
+  dynamic-import need that the climb-out heuristic can't classify.
 
 ## Decision
 
@@ -114,10 +126,29 @@ specifier) are allowed. Anything not in the row is forbidden.
 The script
 [`scripts/lint-package-layers.mjs`](../../scripts/lint-package-layers.mjs)
 walks `packages/*/src/**` (excluding `*.test.ts` and
-`*.test-d.ts`), matches both bare (`@baerly/server`) and subpath
-(`@baerly/server/http`) specifiers, classifies by package name,
-and exits non-zero on any violation with a remediation hint.
-Wired into `pnpm verify` and `pnpm verify:agent`.
+`*.test-d.ts`), matches bare (`@baerly/server`), subpath
+(`@baerly/server/http`), **and dynamic** (`import("@baerly/server")`)
+specifiers, **resolves relative cross-package imports**
+(`../../adapter-cloudflare/src/...`) to their owning package,
+classifies by package name, **and forbids Workerd-incompatible
+`node:` builtins from `protocol` and `server`** (server allowlists
+`node:async_hooks`, which Workerd supports under `nodejs_compat`).
+It exits non-zero on any violation with a remediation hint. Wired
+into `pnpm verify` and `pnpm verify:agent`.
+
+The `node:`-purity gate is modelled as data on the same allow list:
+each owner row carries an optional `allowNode` field
+(`protocol: []`, `server: ["node:async_hooks"]`), and rows that leave
+it undefined are Node-only by design and may import any builtin.
+Relative cross-package detection matches the climb-out form
+(`../../<name>/...`) and only fires when `<name>` is itself an
+allow-list package — a relative import to a non-package sibling dir
+is ignored. **Residual gaps (accepted):** a *dynamic-relative*
+cross-package import (`import("../../adapter-cloudflare/...")`) is not
+chased, and `import type` value-neutral edges are not distinguished
+from value edges (the `node:` gate is the priority; type-only `node:`
+imports are vanishingly rare in this kernel). Both are noted as
+future refinements rather than overclaimed.
 
 ## Consequences
 
@@ -125,9 +156,14 @@ Wired into `pnpm verify` and `pnpm verify:agent`.
   Adding a back-edge into the protected layers (`protocol`
   importing `server`, `server` importing any adapter, or any
   unlisted cross-package import) fails `pnpm verify` at edit
-  time. The previous guard chain (reviewer → bundle-size →
-  manual-e2e) still exists as defence in depth, but the first
-  gate is now seconds instead of hours.
+  time — and so does poisoning the kernel with a Node builtin
+  (`import { createReadStream } from "node:fs"` in `protocol`),
+  which the `node:`-purity gate is what makes literally true: the
+  protocol-purity claim is no longer guarded only by reviewer
+  attention + bundle budgets + a manual-e2e Workerd bounce-back.
+  The previous guard chain (reviewer → bundle-size → manual-e2e)
+  still exists as defence in depth, but the first gate is now
+  seconds instead of hours.
 - **No sibling adapter imports.** `adapter-node` and
   `adapter-cloudflare` cannot import each other; if a helper
   needs to be shared, it moves down into `@baerly/protocol`,
