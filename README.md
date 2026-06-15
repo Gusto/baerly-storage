@@ -7,19 +7,15 @@
 > (npmjs.com)._
 
 `baerly-storage` is a library that turns AWS S3, Cloudflare R2, or a
-conformant S3-compatible bucket into a document database.
-`baerly doctor --bucket` live-probes the conditional-write contract
-before you trust a bucket. **There is no runtime. None.** No Baerly
-daemon, no leader, no scheduler, no catalog, no database service bill,
-no on-call. Coordination rides the request path — Cloudflare can finish
-bounded maintenance with `ctx.waitUntil`, Node runs it inline — and the
-only persistent component is your bucket.
+conformant S3-compatible bucket into a document database. **There is
+no runtime. None.** No Baerly daemon, no leader, no scheduler, no
+catalog, no database service bill, no on-call. Coordination rides the
+request path — Cloudflare can finish bounded maintenance with `ctx.waitUntil`,
+Node runs it inline — and the only persistent component is your bucket.
 
-The full Cloudflare Workers bundle (`cloudflare.js`) is ~113 KB
-gzipped, the Node HTTP closure (`http.js`) is ~94 KB gzipped, and the
-browser client (`client.js`) is ~5 KB gzipped. The whole public API fits
-in a single ~12k-token `dist/API.md` — small enough that an LLM can hold
-it in context.
+The server bundles is ~100 KB gzipped, and the browser client is ~5 KB gzipped.
+The whole public API fits in a single ~12k-token `dist/API.md` — small enough
+that an LLM can hold it in context.
 
 [S3 does the hard parts](https://aws.amazon.com/blogs/aws/amazon-s3-update-strong-read-after-write-consistency/),
 `baerly-storage` is the coordination that fixes the API. Built like git:
@@ -86,14 +82,10 @@ ordinary schema shape changes.
 
 ```ts
 // server — writes land in your R2 bucket
-await db.collection("tickets")
-  .insert({ title: "Onboard Alex", status: "open" });
+await db.collection("tickets").insert({ title: "Onboard Alex", status: "open" });
 
 // client — reactive across every open tab
-const open = useQuery(
-  (c) => c.collection("tickets").where({ status: "open" }).all(),
-  [],
-);
+const open = useQuery((c) => c.collection("tickets").where({ status: "open" }).all(), []);
 // open.status → "loading" | "ok" | "error"; open.data → your rows
 ```
 
@@ -101,22 +93,24 @@ const open = useQuery(
 
 ```ts
 // reads — Collection or, after a modifier, Query
-db.collection("tickets").get(id);                       // by id
+db.collection("tickets").get(id); // by id
 db.collection("tickets").where({ status: "open" }).all();
-db.collection("tickets").where(q => q.gte("count", 1)).count();
+db.collection("tickets")
+  .where((q) => q.gte("count", 1))
+  .count();
 
 // writes — by id on Collection, bulk on Query
 db.collection("tickets").insert({ status: "open", title: "ship it" });
-db.collection("tickets").update(id, { status: "closed" });   // merge-patch
+db.collection("tickets").update(id, { status: "closed" }); // merge-patch
 db.collection("tickets").where({ status: "closed" }).delete();
 ```
 
-| Surface | Vocabulary |
-|---|---|
-| **Verbs** | `first` `all` `count` `get` · `insert` `update` `replace` `delete` |
-| **Modifiers** | `where` `order` `limit` |
-| **Operators** | `eq` `gt` `gte` `lt` `lte` `in` |
-| **Errors** | one `BaerlyError`, discriminate by `.code` (`Conflict`, `NotFound`, `SchemaError`, …) |
+| Surface       | Vocabulary                                                                            |
+| ------------- | ------------------------------------------------------------------------------------- |
+| **Verbs**     | `first` `all` `count` `get` · `insert` `update` `replace` `delete`                    |
+| **Modifiers** | `where` `order` `limit`                                                               |
+| **Operators** | `eq` `gt` `gte` `lt` `lte` `in`                                                       |
+| **Errors**    | one `BaerlyError`, discriminate by `.code` (`Conflict`, `NotFound`, `SchemaError`, …) |
 
 Full reference: [`docs/guide/cheatsheet.md`](./docs/guide/cheatsheet.md), or
 `cat node_modules/@gusto/baerly-storage/dist/API.md` in an installed app.
