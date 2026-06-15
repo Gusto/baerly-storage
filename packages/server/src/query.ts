@@ -55,6 +55,7 @@ import { loadSnapshotAsMap } from "./snapshot.ts";
 import { assertDocId } from "./doc-id.ts";
 import { encodeIndexValue, type IndexDefinition } from "./indexes.ts";
 import { foldLogEntriesOnto, walkLogRange } from "./log-walk.ts";
+import { probeTailFrom } from "./log-tail.ts";
 import { type IndexWalkPlan, planQuery, type QueryPlan } from "./query-planner.ts";
 import { type SchemaValidator, validateOrThrow } from "./schema.ts";
 import { Writer } from "./writer.ts";
@@ -127,15 +128,15 @@ export interface ReadResult<T extends DocumentData> {
 }
 
 /**
- * Serialise a {@link CurrentJson} head into the wire cursor format
- * `"<snapshot>@<tail_hint>"`. `null` snapshots stringify as
- * {@link MANIFEST_POINTER_EMPTY_SNAPSHOT} so the cursor is never the
- * empty string.
+ * Serialise a {@link CurrentJson} head into the wire cursor
+ * `"<snapshot>@<tail>"`. `tail` is the DISCOVERED tail (defaults to
+ * `json.tail_hint` when no probe has run). `null` snapshots stringify
+ * as {@link MANIFEST_POINTER_EMPTY_SNAPSHOT}.
  *
  * @internal — exported for `query.test.ts`.
  */
-export const serializeManifestPointer = (json: CurrentJson): string =>
-  `${json.snapshot ?? MANIFEST_POINTER_EMPTY_SNAPSHOT}@${json.tail_hint}`;
+export const serializeManifestPointer = (json: CurrentJson, tail = json.tail_hint): string =>
+  `${json.snapshot ?? MANIFEST_POINTER_EMPTY_SNAPSHOT}@${tail}`;
 
 /**
  * Frozen state carried along a `Query<T>` chain. Every modifier
@@ -582,18 +583,15 @@ const runRead = async <T extends DocumentData>(
   const currentJsonKey = `${ctx.collectionPrefix}/current.json`;
   const head = await readCurrentJson(ctx.storage, currentJsonKey);
 
-  // Capture the wire cursor before the rest of the fold runs. A
-  // not-found head ("collection not yet provisioned") still emits a
-  // well-defined cursor so the wire shape never carries `""`.
-  const manifestPointer =
-    head === null ? `${MANIFEST_POINTER_EMPTY_SNAPSHOT}@0` : serializeManifestPointer(head.json);
   // Every read is strong by construction — `fresh` reflects that.
   const fresh = true;
 
   // Not-found is "collection not yet provisioned" — return empty rather
-  // than throw. Mirrors `Storage.get` returning null on miss.
+  // than throw. Mirrors `Storage.get` returning null on miss. A
+  // not-found head still emits a well-defined cursor so the wire shape
+  // never carries `""`.
   if (head === null) {
-    return { rows: [], manifestPointer, fresh };
+    return { rows: [], manifestPointer: `${MANIFEST_POINTER_EMPTY_SNAPSHOT}@0`, fresh };
   }
 
   // ── Optional index-walk fast path. ──────────────────────────────
@@ -606,14 +604,15 @@ const runRead = async <T extends DocumentData>(
   // equality on non-indexed fields).
   const plan: QueryPlan = planQuery(state.wire, ctx.indexes);
   if (plan.kind === "index-walk") {
-    let rows = await runIndexWalkPlan<T>(ctx, head.json, state, plan);
+    const walk = await runIndexWalkPlan<T>(ctx, head.json, state, plan);
+    let rows = walk.rows;
     if (state.order !== undefined) {
       rows = sortByOrderSpec(rows, state.order);
     }
     if (state.limit !== undefined && state.limit < rows.length) {
       rows = rows.slice(0, state.limit);
     }
-    return { rows, manifestPointer, fresh };
+    return { rows, manifestPointer: serializeManifestPointer(head.json, walk.tail), fresh };
   }
   // plan.kind === "full-scan" — fall through to the snapshot+log fold.
 
@@ -624,15 +623,20 @@ const runRead = async <T extends DocumentData>(
   // `seq < log_seq_start` have been folded into the snapshot (or
   // dropped on truncation) and MUST NOT be GET-required here — the
   // bucket may have already swept them via `runGc()`.
-  const nextSeq = head.json.tail_hint;
+  const hint = head.json.tail_hint;
   const logSeqStart = logSeqStartOf(head.json);
   const baseDocs: Map<string, DocumentData> =
     head.json.snapshot === null
       ? new Map()
       : await loadSnapshotAsMap(ctx.storage, head.json.snapshot, ctx.collectionName);
 
-  // ── Step 2. Bounded parallel-fetch of [log_seq_start, tail_hint). ──
-  const entries = await walkLogRange(ctx.storage, ctx.collectionPrefix, logSeqStart, nextSeq);
+  // ── Step 2. Strict walk [log_seq_start, tail_hint) + tolerant ──────
+  // forward-probe [tail_hint, tail). Strict range is dense (a hole is
+  // corruption → `walkLogRange` THROWS); the probe stops at the first
+  // 404 and its entries fold through the SAME path as the strict walk.
+  const entries = await walkLogRange(ctx.storage, ctx.collectionPrefix, logSeqStart, hint);
+  const probe = await probeTailFrom(ctx.storage, ctx.collectionPrefix, hint);
+  const tail = probe.tail;
 
   // ── Step 3. Fold per doc_id, seeded from the snapshot. ────────────
   // I / U: post-image overwrite. `entry.after` is the full post-image;
@@ -641,6 +645,7 @@ const runRead = async <T extends DocumentData>(
   // D: tombstone — remove from the map.
   const docs = new Map<string, T>(baseDocs as Map<string, T>);
   foldLogEntriesOnto(docs, entries, { collection: ctx.collectionName });
+  foldLogEntriesOnto(docs, probe.entries, { collection: ctx.collectionName });
 
   // ── Step 4. Apply predicate. ──────────────────────────────────────
   // PK fast-path: a single `eq` clause on `_id` short-circuits the
@@ -669,7 +674,7 @@ const runRead = async <T extends DocumentData>(
     rows = rows.slice(0, state.limit);
   }
 
-  return { rows, manifestPointer, fresh };
+  return { rows, manifestPointer: serializeManifestPointer(head.json, tail), fresh };
 };
 
 /**
@@ -750,7 +755,7 @@ const runIndexWalkPlan = async <T extends DocumentData>(
   head: CurrentJson,
   state: QueryState<T>,
   plan: IndexWalkPlan,
-): Promise<T[]> => {
+): Promise<{ rows: T[]; tail: number }> => {
   const encodedSegments = plan.equalityKeys.map((v) => encodeIndexValue(v));
   const eqPrefix =
     encodedSegments.length === 0
@@ -879,9 +884,17 @@ const runIndexWalkPlan = async <T extends DocumentData>(
       docIdSet.add(docId);
     }
   }
+  // Discover the true tail once (probe runs even with no matches so
+  // the manifest pointer still reflects it). Strict range stays
+  // `[log_seq_start, tail_hint)`; the probe folds `[tail_hint, tail)`.
+  const logSeqStart = logSeqStartOf(head);
+  const hint = head.tail_hint;
+  const probe = await probeTailFrom(ctx.storage, ctx.collectionPrefix, hint);
+  const tail = probe.tail;
+
   const docIds = Array.from(docIdSet);
   if (docIds.length === 0) {
-    return [];
+    return { rows: [], tail };
   }
 
   // 2. Resolve each docId by folding `(snapshot, log)` scoped to the
@@ -899,10 +912,9 @@ const runIndexWalkPlan = async <T extends DocumentData>(
       docs.set(id, seeded as T);
     }
   }
-  const logSeqStart = logSeqStartOf(head);
-  const nextSeq = head.tail_hint;
-  const entries = await walkLogRange(ctx.storage, ctx.collectionPrefix, logSeqStart, nextSeq);
+  const entries = await walkLogRange(ctx.storage, ctx.collectionPrefix, logSeqStart, hint);
   foldLogEntriesOnto(docs, entries, { collection: ctx.collectionName, docIdFilter: matched });
+  foldLogEntriesOnto(docs, probe.entries, { collection: ctx.collectionName, docIdFilter: matched });
 
   // 3. Apply the FULL original wire as the stale-row defence, then
   //    the planner's residue postFilter on top. `matchesWire` is
@@ -918,7 +930,7 @@ const runIndexWalkPlan = async <T extends DocumentData>(
       rows.push(doc);
     }
   }
-  return rows;
+  return { rows, tail };
 };
 
 /**

@@ -71,6 +71,7 @@ import {
   versionFromContent,
 } from "@baerly/protocol";
 import { loadSnapshotAsMap } from "./snapshot.ts";
+import { probeTailFrom } from "./log-tail.ts";
 import { getCurrentContext } from "./observability/context.ts";
 
 const ctxMetrics = (): MetricsRecorder => getCurrentContext()?.recorder ?? noopMetricsRecorder;
@@ -504,9 +505,12 @@ const collectLiveContentHashes = async (
   const hashes = new Set<string>();
   const getOpts = signal !== undefined ? { signal } : undefined;
 
-  // Live log tail.
+  // Live log tail, bounded to the TRUE tail (probe past a stale-low
+  // hint) so GC never treats a committed post-image as dead. The loop
+  // 404-tolerates misses, so over-bounding to `tail` is safe.
+  const { tail } = await probeTailFrom(storage, collectionPrefix, current.tail_hint, { signal });
   const logReads: Array<Promise<void>> = [];
-  for (let s = logSeqStart; s < current.tail_hint; s++) {
+  for (let s = logSeqStart; s < tail; s++) {
     logReads.push(
       (async (): Promise<void> => {
         const got = await storage.get(logObjectKey(collectionPrefix, s), getOpts);

@@ -473,6 +473,57 @@ describe("Db.collection read terminals", () => {
     expect(r1.rows.map((r) => r["_id"])).toEqual(["doc-1"]);
     expect(r2.rows.map((r) => r["_id"]).toSorted()).toEqual(["doc-1", "doc-2"]);
   });
+
+  test("reader-sees-committed-prefix-above-stale-hint", async () => {
+    // Dense log [0,8) of 8 distinct inserts, but current.json carries a
+    // deliberately stale-low tail_hint=3. The strict walk covers
+    // [log_seq_start=0, 3); the forward-probe must discover the true
+    // tail=8 and fold [3, 8). All 8 docs must surface and the manifest
+    // pointer must reflect @8, not @3.
+    await createCurrentJson(storage, currentJsonKey(COLL), {
+      schema_version: CURRENT_JSON_SCHEMA_VERSION,
+      snapshot: null,
+      tail_hint: 3,
+      writer_fence: { epoch: 0, owner: "test", claimed_at: "" },
+      log_seq_start: 0,
+      tail_bytes: 0,
+      snapshot_bytes: 0,
+      snapshot_rows: 0,
+    });
+    for (let seq = 0; seq < 8; seq++) {
+      const entry = {
+        lsn: `fake-lsn-${seq}`,
+        commit_ts: new Date().toISOString(),
+        op: "I" as const,
+        collection: COLL,
+        doc_id: `doc-${seq}`,
+        session: "fakesess1",
+        seq,
+        after: { _id: `doc-${seq}`, n: seq },
+      };
+      await storage.put(logKey(COLL, seq), new TextEncoder().encode(JSON.stringify(entry)));
+    }
+
+    const ctx = db.collectionReadContext(COLL);
+    const res = await runAllWithMeta<DocumentData>(ctx, {
+      wire: undefined,
+      order: undefined,
+      limit: undefined,
+    });
+
+    expect(res.rows.map((r) => r["_id"]).toSorted()).toEqual([
+      "doc-0",
+      "doc-1",
+      "doc-2",
+      "doc-3",
+      "doc-4",
+      "doc-5",
+      "doc-6",
+      "doc-7",
+    ]);
+    // Pointer reflects the discovered tail (8), not the stored hint (3).
+    expect(res.manifestPointer.endsWith("@8")).toBe(true);
+  });
 });
 
 describe("auto-planner index routing", () => {

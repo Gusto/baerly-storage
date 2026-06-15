@@ -16,6 +16,7 @@ import {
   type UnboundConfig,
 } from "@baerly/protocol";
 import { collectionsToMaps } from "./config.ts";
+import { probeTailFrom } from "./log-tail.ts";
 import { assertPathSegment } from "./path-segment.ts";
 import type { CollectionReadContext } from "./query.ts";
 import { makeCollection } from "./collection.ts";
@@ -306,6 +307,23 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
       );
     }
     return parsed as LogEntry;
+  }
+
+  /**
+   * Forward-probe the TRUE committed log tail from `hint` (a lower
+   * bound, typically `tail_hint`). Backs the `/v1/since` end-bound.
+   *
+   * @internal — typed seam for the HTTP handler.
+   */
+  async probeLogTail(
+    collection: string,
+    hint: number,
+    opts?: { signal?: AbortSignal },
+  ): Promise<number> {
+    assertPathSegment(collection, "collection");
+    const logPrefix = `${physicalPrefixFor(this.app, this.tenant)}manifests/${collection}`;
+    const { tail } = await probeTailFrom(this.#storage, logPrefix, hint, opts);
+    return tail;
   }
 }
 

@@ -260,7 +260,9 @@ export async function listEventsSince(opts: ListEventsSinceOptions): Promise<Log
     return [];
   }
   const logSeqStart = logSeqStartOf(read.json);
-  const nextSeq = read.json.tail_hint;
+  // End bound is the DISCOVERED tail (probe past a stale-low hint).
+  // The GET loop below 404-tolerates misses, so over-bounding is safe.
+  const tail = await db.probeLogTail(collection, read.json.tail_hint, signalOpt(signal));
 
   // Derive the seq range to scan. Empty cursor → start at
   // `log_seq_start` (the first un-snapshotted entry). Non-empty
@@ -282,9 +284,10 @@ export async function listEventsSince(opts: ListEventsSinceOptions): Promise<Log
     startSeq = cursorSeq + 1;
   }
 
-  // Cap the range at `tail_hint` (no entries past the tail exist) and
-  // at `DEFAULT_MAX_EVENTS` (hard ceiling per the module docstring).
-  const endSeq = Math.min(nextSeq, startSeq + DEFAULT_MAX_EVENTS);
+  // Cap the range at the discovered `tail` (no entries past the tail
+  // exist) and at `DEFAULT_MAX_EVENTS` (hard ceiling per the module
+  // docstring).
+  const endSeq = Math.min(tail, startSeq + DEFAULT_MAX_EVENTS);
 
   // Sequential GETs (NOT Promise.all). Long-poll is latency-bound,
   // per-poll batch is typically 0-10 entries, sequential keeps

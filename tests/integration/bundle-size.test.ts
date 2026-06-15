@@ -336,7 +336,11 @@ const BUDGETS: readonly Budget[] = [
   //     `doc-id.ts` (`assertDocId`) reaches the http closure via
   //     `runInsert` / `runReplaceById` on the request path. ~1.2 KiB raw
   //     (measured 330945); gz/min-gz still pass. Rebaseline raw +2 KiB.
-  { entry: "http.js", raw: 324 * 1024, gz: 95 * 1024, minGz: 34 * 1024 },
+  //   → 325 KiB raw / 96 KiB gz (2026-06-15): the read-tail forward-probe
+  //     (`log-tail.ts`, single-write-commit Plan B) reaches the http
+  //     closure via `runRead` (query) + `/v1/since` (measured 331794 raw /
+  //     97702 gz). Rebaseline raw +1 KiB, gz +1 KiB; min-gz still passes.
+  { entry: "http.js", raw: 325 * 1024, gz: 96 * 1024, minGz: 34 * 1024 },
   // Observability primitives — ObservabilityContext, the
   // request-scoped MetricsRecorder, LogTape config + the
   // JSON sink only (the pretty sink + picocolors now live in
@@ -412,7 +416,11 @@ const BUDGETS: readonly Budget[] = [
   //     guard (`assertKeyWithinLimit`, key-limit.ts) lands in the writer's
   //     closure, which this subpath re-exports (measured 112796 raw).
   //     Rebaseline raw +1 KiB; gz/min-gz unaffected (still passing).
-  { entry: "maintenance.js", raw: 111 * 1024, gz: 34 * 1024, minGz: 11 * 1024 },
+  //   → 112 KiB raw / 34 KiB gz (2026-06-15): the read-tail forward-probe
+  //     (`log-tail.ts`, single-write-commit Plan B) lands in `gc.ts`'s
+  //     closure (measured 114362 raw). Rebaseline raw +1 KiB; gz/min-gz
+  //     unaffected (still passing).
+  { entry: "maintenance.js", raw: 112 * 1024, gz: 34 * 1024, minGz: 11 * 1024 },
   // Cloudflare Workers adapter — re-exports the kernel barrel
   // (Db, Writer, etc.) plus the R2-binding `Storage` impl
   // and the `baerlyCloudflare` helper. Aggregator: closure
@@ -602,7 +610,11 @@ const BUDGETS: readonly Budget[] = [
   //     closure this dev barrel pulls via `Db` (measured 34959 raw).
   //     Raw crept +143 over the 34 KiB ceiling; bump raw to 35 KiB. gz
   //     stays under 13 KiB.
-  { entry: "dev.js", raw: 35 * 1024, gz: 13 * 1024 },
+  //   → 36 KiB raw / 13 KiB gz (2026-06-15): the read-tail forward-probe
+  //     (`log-tail.ts`, single-write-commit Plan B) lands in this barrel's
+  //     closure via `Db.probeLogTail` (measured 36200 raw). Bump raw +1 KiB;
+  //     gz stays under 13 KiB.
+  { entry: "dev.js", raw: 36 * 1024, gz: 13 * 1024 },
 ];
 
 // Static-import specifiers only. Dynamic `import(...)` is intentionally
