@@ -2,7 +2,7 @@
 title: Tenant CAS isolation
 audience: adr
 summary: ADR 001 — Tenant CAS isolation.
-last-reviewed: 2026-05-12
+last-reviewed: 2026-06-14
 tags: [decision, adr]
 related: [README.md]
 ---
@@ -98,6 +98,14 @@ rolling-deploy hazard without introducing a leases-as-state dependency.
 
 ## Consequences
 
+- **Consistency guarantee that the per-collection CAS scope yields.**
+  Because each `(tenant, collection)` advances through a single CAS'd
+  `current.json`, reads and writes against one collection are
+  **linearizable** — that HEAD is the linearization point. **Across**
+  collections there is no ordering guarantee and no atomicity: a write
+  spanning two collections is two independent CAS advances, observable
+  in either order. Applications needing cross-collection ordering must
+  encode it in a single collection.
 - More `current.json` objects per tenant, bounded by collection count.
   Lifecycle on collection drop becomes a sweeper concern; the dwell
   window is `GC_GRACE_PERIOD_MILLIS` in

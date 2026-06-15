@@ -350,7 +350,10 @@ auto-load on matching edits and point at the same files.
 - **Public API docs live as JSDoc on `packages/server/src/db.ts` and
   `packages/server/src/table.ts`.** IDE hover and tsgo consume them
   directly — no rendered markdown ref to maintain.
-- **Causal consistency is a hard invariant.** [docs/spec/sync-protocol.md](docs/spec/sync-protocol.md)
+- **Per-collection linearizability is a hard invariant.** A single
+  CAS-advanced `current.json` HEAD linearizes each collection;
+  cross-collection writes are unordered and non-atomic.
+  [docs/spec/sync-protocol.md](docs/spec/sync-protocol.md)
   and [docs/spec/causal-consistency-checking.md](docs/spec/causal-consistency-checking.md)
   describe how it works. Read those before touching
   `packages/server/src/writer.ts`.

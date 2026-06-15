@@ -2,7 +2,7 @@
 title: Causal-consistency property checking
 audience: spec
 summary: Low-complexity verification of causal consistency via a known global timeline.
-last-reviewed: 2026-05-12
+last-reviewed: 2026-06-14
 tags: [protocol, verification, property-testing]
 related: [sync-protocol.md]
 ---
@@ -189,7 +189,18 @@ The clauses that conflict are
 
 ## Conclusion
 
-We use this framework for randomized testing of the Baerly client so we can test for causal consistency. Causal consistency is the true contract we want to offer over multiple concurrent clients. Layering causal consistency semantics over vanilla S3 is not easy, so we need to go the extra mile to check the complexity is achieving what we hoped for. 
+This framework drives randomized testing of the Baerly client. One
+precision note on the *guarantee* it grounds against: baerly's true
+contract is **per-document and per-collection linearizable** — a single
+CAS-advanced `current.json` HEAD is the linearization point (see
+`docs/spec/sync-protocol.md`). **Cross-collection there is no ordering
+guarantee and multi-collection writes are not atomic** (every
+transaction touches exactly one `current.json`;
+`docs/adr/001-tenant-cas-isolation.md`). This causal-consistency checker
+is therefore a cheap *lower-bound* test: it witnesses violations of the
+weaker causal model, not a linearizability violation that still respects
+causality. Layering even causal semantics over vanilla S3 is not easy,
+so the checker is worth the extra mile. 
 
 In fact, the checker immediately found a bug with one of the possible configurations of the clients (the no versioning setting). I am very pleased this could be implemented with no additional dependencies in pure Javascript with very little code.
 
