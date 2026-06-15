@@ -1,7 +1,7 @@
 /**
  * Seed phase. Consumes a `Dataset` (ticket 51) and issues one
  * `db.collection(collection).insert(...)` per record. No batching at MVP
- * — `Db.transaction` per row would be a different workload shape than
+ * — one `commit()` per row is a different workload shape than
  * "user pastes a CSV"; revisit if a future preset wants bulk-load
  * semantics explicitly.
  *

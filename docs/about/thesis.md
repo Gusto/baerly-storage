@@ -307,7 +307,7 @@ single CAS-advanced pointer to HEAD.
   because they don't exist. Eight verbs (`first`, `all`, `count`,
   `get`, `insert`, `update`, `replace`, `delete`), three modifiers
   (`where`, `order`, `limit`), six predicate operators (`eq`, `gt`,
-  `gte`, `lt`, `lte`, `in`), one transaction. Operators are added
+  `gte`, `lt`, `lte`, `in`). Operators are added
   one at a time, each gated by whether it admits a correct SQL
   translation. Day-one ships equality, dotted paths, ordered reads,
   and the `eq` / `gt` / `gte` / `lt` / `lte` / `in` predicate

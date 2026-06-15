@@ -107,7 +107,7 @@ shape:
   marks orphans into `gc/pending.json`, then sweeps them past a
   grace window — unchanged. It runs on its **own batch-safe
   boundary cadence** (`WRITE_TICK_GC_INTERVAL`,
-  boundary-crossing not modulo, so a batched `commitBatch` can't
+  boundary-crossing not modulo, so a `next_seq` advance can't
   step clean over it), **decoupled from folds**, capped per tier
   (`WRITE_TICK_GC_MAX_MARKS` / `..._SWEEPS`), and it runs on
   **deferring buckets too** (a bucket whose snapshot is over the

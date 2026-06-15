@@ -137,8 +137,8 @@ deps. Tests requiring Minio or credentials are gated by env:
   `pnpm test:adapter-node`, or both adapter suites in sequence
   with `pnpm test:adapters`.
 - **`tests/integration/collection-api.test.ts`** drives the locked
-  `db.collection(...).{first,all,count,insert,update,replace,delete}` and
-  `db.transaction(...)` surface across three Node-side adapters
+  `db.collection(...).{first,all,count,insert,update,replace,delete}`
+  surface across three Node-side adapters
   (`memory`, `local-fs`, `node-minio`). `memory` + `local-fs` run by
   default; `node-minio` is gated on `MINIO=1` (via
   `pnpm test:minio`). The Workerd-side `cloudflare-r2` variant lives

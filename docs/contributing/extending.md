@@ -383,7 +383,7 @@ The write primitive lives in two places:
    [spec/log-entry-shape.md §Stability](../spec/log-entry-shape.md)).
 2. **The commit path** — `Writer` in
    `packages/server/src/writer.ts`. Extend `CommitInput`
-   with the new shape and update `commit` / `commitBatch` to emit
+   with the new shape and update `commit` to emit
    the new `LogEntry`.
 
 ### File template

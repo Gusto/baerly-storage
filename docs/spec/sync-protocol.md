@@ -143,9 +143,9 @@ self-session adoption. If a previous attempt by the same logical
 commit wrote `log/<seq>.json` but lost the `current.json` CAS, the
 retry may find its own log entry already present. The writer adopts
 that entry only when the random per-commit `session`, the `seq`, and
-the single-entry shape match. Batch commits do not adopt; they surface
-the conflict to `Db.transaction`, which decides whether to re-run the
-body.
+the single-entry shape match. When they don't, the writer surfaces
+the conflict to the caller, which decides whether to re-run the
+write.
 
 ### Crash safety
 
@@ -169,23 +169,21 @@ orphan landing *at* `seq == next_seq` (see the known limitation below).
 **Known liveness limitation — orphan at `next_seq`.** The "After log
 PUT, before CAS" row above is benign *only* when the orphan lands below
 `next_seq`. There is one case where it does not: an orphan sitting *at*
-`next_seq`. Because every commit mints its lowest entry at
-`seq == current.next_seq`, this covers both a single-entry commit that
+`next_seq`. Because every commit mints its entry at
+`seq == current.next_seq`, this covers a single-document write that
 crashes after its `log/<seq>.json` PUT but before the `current.json` CAS
-(**BUG 1**), and the lowest entry of a torn multi-entry batch whose
-`commitBatch` crashes mid-PUT (**BUG 2** — which additionally violates
-the `Db.transaction` all-or-none contract under crash, since one of the
-batch's entries is durable while the others are not). In either case the
-next writer re-reads the same `next_seq`, mints the same `seq`, PUTs
+(**BUG 1**). Each write is atomic per document — there is no multi-entry
+batch to tear — so this is the only shape of the orphan-at-`next_seq`
+case. The next writer re-reads the same `next_seq`, mints the same `seq`, PUTs
 `log/<seq>.json` with `ifNoneMatch: "*"` → `412`, reads the orphan, and
 refuses to adopt it (it carries a foreign session), so it throws
 `Conflict` and retries to exhaustion. GC sweeps only
 `seq < log_seq_start ≤ next_seq`, so the orphan at `next_seq` is never
 reclaimed and `next_seq` never advances — the collection wedges for
 every future writer. This is a known liveness/wedge bug (not data loss)
-pending atomic commit objects (**ticket-01**); both cases are
-characterized as current behavior by the `BUG 1` and `BUG 2`
-reproductions in
+pending atomic commit objects (**ticket-01**); it is
+characterized as current behavior by the `BUG 1`
+reproduction in
 [`tests/integration/phase5-crash-fuzz.test.ts`](../../tests/integration/phase5-crash-fuzz.test.ts).
 
 ## Read algorithm
@@ -359,8 +357,8 @@ That choice buys:
 It also means:
 
 - hot single-collection workloads eventually hit CAS contention;
-- transactions are scoped to one collection;
-- cross-collection atomicity requires graduating to a database that
+- each write is atomic per document;
+- cross-document atomicity requires graduating to a database that
   owns a real transaction coordinator.
 
 The published envelope is roughly 30 sustained logical writes per

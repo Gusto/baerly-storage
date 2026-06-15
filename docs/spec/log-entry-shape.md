@@ -190,9 +190,8 @@ timestamp encoding is a cursor property for external LSN-shaped
 keyspaces, not a kernel
 correctness dependency.
 
-Within a single `Writer.commitBatch` over N inputs, N lsns
-are minted — one per `LogEntry`. The single-mutation
-`Writer.commit` is the N=1 case.
+Every mutation mints exactly one `lsn` — one per `LogEntry`.
+`Writer.commit` writes a single document per call.
 
 ## What we borrowed from `pgoutput`
 
@@ -216,8 +215,8 @@ From the Postgres logical-replication wire protocol we borrowed:
 
 ## What we deliberately did NOT borrow
 
-- **`BEGIN` / `COMMIT` framing.** Baerly has no cross-collection
-  transactions; each entry is its own degenerate txn. A consumer
+- **`BEGIN` / `COMMIT` framing.** Baerly has no multi-document
+  transactions; each entry is its own atomic unit. A consumer
   expecting atomic batch-apply on a shared `commit_lsn` would be
   confused.
 - **2PC messages (`b` / `P` / `K` / `r`).** No prepared txns in S3.

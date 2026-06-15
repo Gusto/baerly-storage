@@ -194,8 +194,8 @@ precision note on the *guarantee* it grounds against: baerly's true
 contract is **per-document and per-collection linearizable** — a single
 CAS-advanced `current.json` HEAD is the linearization point (see
 `docs/spec/sync-protocol.md`). **Cross-collection there is no ordering
-guarantee and multi-collection writes are not atomic** (every
-transaction touches exactly one `current.json`;
+guarantee and multi-collection writes are not atomic** (each
+write touches exactly one `current.json`;
 `docs/adr/001-tenant-cas-isolation.md`). This causal-consistency checker
 is therefore a cheap *lower-bound* test: it witnesses violations of the
 weaker causal model, not a linearizability violation that still respects

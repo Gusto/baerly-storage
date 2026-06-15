@@ -397,8 +397,9 @@ from the runtime env.
 - **Extending the Worker with a custom route** — `baerlyWorker(...)`
   owns `/v1/*`, including `/v1/healthz`. For server-side endpoints the SPA
   client can't run on its own (the canonical case: an endpoint that
-  needs `db.transaction(...)`, since `createBaerlyClient` is
-  reads + by-id mutations only), wrap the worker `fetch`:
+  fans a write across several documents server-side, since
+  `createBaerlyClient` is reads + by-id mutations only), wrap the
+  worker `fetch`:
 
   ```ts
   // src/server/index.ts
@@ -431,7 +432,7 @@ from the runtime env.
           tenant: config.tenant,
           config,
         });
-        // …db.transaction(...), db.collection(...).get(id), etc.
+        // …db.collection(...).insert(doc), db.collection(...).get(id), etc.
         return new Response(null, { status: 204 });
       }
       // Fall through to the baerly cascade for /v1/*, including /v1/healthz.

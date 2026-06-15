@@ -81,7 +81,7 @@ graph TD
     query[query.ts<br/>Query&lt;T&gt; predicate AST + reader]
     planner[query-planner.ts<br/>planQuery]
     indexes[indexes.ts<br/>IndexDefinition + key encoding]
-    writer[writer.ts<br/>Writer.commit / commitBatch]
+    writer[writer.ts<br/>Writer.commit]
     compactor[compactor.ts<br/>compact()]
     gc[gc.ts<br/>runGc()]
     maint[maintenance.ts<br/>runScheduledMaintenance]
@@ -299,9 +299,9 @@ constraint: anything platform-specific has to live in an adapter.
   Mutations (`insert` / `update` / `replace` / `delete`) plus the
   predicate AST (`where` / `order` / `limit` /
   `first` / `all` / `count`).
-- `CommitInput` / `CommitResult` / `CommitBatchResult`
+- `CommitInput` / `CommitResult`
   (`packages/server/src/writer.ts`): the
-  `Writer.commit` and `commitBatch` request/response shapes.
+  `Writer.commit` request/response shapes.
 - `LogEntry` (`packages/protocol/src/log.ts`): the per-mutation log
   entry. Field set is fixed at major versions; consumers ack on
   `lsn`. Full contract in [spec/log-entry-shape.md](../spec/log-entry-shape.md).

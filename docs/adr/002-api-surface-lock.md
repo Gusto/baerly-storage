@@ -13,6 +13,14 @@ related: [README.md]
 
 Accepted.
 
+> **Amended by D1 (`DECISION-transactions-and-orphan-recovery.md`).**
+> `Db.transaction` was removed from the locked surface pre-launch — the
+> document is the atomic unit and `db.collection(...)` carries every
+> write. This ADR previously locked three `Db` methods; it now locks
+> two. Re-adding a transaction surface later is an *additive* change
+> permitted by this ADR (a new method, not a rename or behavioural
+> shift), so no supersession ADR is required to bring it back.
+
 ## Context
 
 The SQL-shape collection API lives in
@@ -57,16 +65,12 @@ addition — it is redundancy, and redundant forms are a defect.
 ## Locked surface
 
 - `Db` ([`packages/server/src/db.ts`](../../packages/server/src/db.ts)) —
-  exactly three methods:
+  exactly two methods:
   - `Db.create({ storage, app, tenant, config? }) -> Db` — fails
     `BaerlyError{code:"InvalidConfig"}` if `app` or `tenant` is
     empty.
   - `db.collection<T>(name) -> Collection<T>` — name must be
     non-empty and must not contain `/`.
-  - `db.transaction<T>(collection, body) -> Promise<void>` — body
-    receives `Collection<T>`, NOT `Db`; cross-collection writes are
-    a compile error; single-attempt, CAS conflict throws
-    `BaerlyError{code:"Conflict"}`.
   - Readonly properties: `db.app`, `db.tenant`.
 
 - `Collection<T>`
@@ -82,11 +86,6 @@ addition — it is redundancy, and redundant forms are a defect.
   `count()`, `update(patch)`, `delete()`. Bulk mutation verbs are
   kernel-only; no HTTP mirror exists, so `ClientQuery<T>` is
   read-only.
-
-- `Db.transaction` callback context: a `Collection<T>` whose mutation
-  verbs buffer; reads pass through to live storage. No MVCC, no
-  read-your-writes. The buffer commits atomically via one
-  `commitBatch` call.
 
 - Predicates: object-form `Predicate<T>` is equality-only. The
   operator vocabulary (`eq` / `gt` / `gte` / `lt` / `lte` / `in`)
@@ -177,12 +176,9 @@ LLMs — this design closes that surface structurally.
 ## Prohibited without a supersession ADR
 
 - Renaming any method.
-- Changing the callback signature of `Db.transaction` (e.g. passing
-  `Db` instead of `Collection<T>`).
-- Adding cross-collection writes inside a transaction — this would
-  break the no-2PC invariant (see the JSDoc on `Db.transaction` in
-  [`packages/server/src/db.ts`](../../packages/server/src/db.ts)
-  and [ADR-001](./001-tenant-cas-isolation.md)).
+- Adding any cross-collection atomic write path — this would break
+  the no-2PC invariant; every write touches exactly one
+  `current.json` (see [ADR-001](./001-tenant-cas-isolation.md)).
 - Changing the behavioural contract of an existing method (e.g.
   making `update` upsert instead of no-op-on-missing).
 - Adding boolean connectives (`or` / `not`) to the predicate
@@ -201,21 +197,14 @@ LLMs — this design closes that surface structurally.
   are the canonical user-facing artifact. Bundle-size tests at
   [`tests/integration/bundle-size.test.ts`](../../tests/integration/bundle-size.test.ts)
   implicitly track surface drift via byte-count changes.
-- `db.transaction`'s single-collection scope is the load-bearing
-  composition with the per-collection CAS scope
-  ([ADR-001](./001-tenant-cas-isolation.md)). Reversing this lock
-  would require either 2PC or per-tenant CAS; both were explicitly
-  rejected.
-- JSDoc on `Db.create`, `db.collection`, and `db.transaction` is
+- JSDoc on `Db.create` and `db.collection` is
   the source of truth for parameter semantics; this ADR pins the
   surface-level shape but the JSDoc owns the behavioural contract.
   Per
   [`docs/contributing/conventions/docs.md`](../contributing/conventions/docs.md),
   the public-API reference lives as JSDoc on the implementation,
   not as a hand-maintained markdown ref.
-- TypeScript is the enforcement mechanism for the callback shape
-  (`transaction(callback: (tx: Collection<T>) => …)`); branded
-  types (see the "Conventions" section of
+- Branded types (see the "Conventions" section of
   [`CLAUDE.md`](../../CLAUDE.md)) keep the verb signatures from
   being papered over with `as string`.
 - The lock is reversible with cost. A future major version may

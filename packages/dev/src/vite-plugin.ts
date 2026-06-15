@@ -139,8 +139,8 @@ const matchesAnyPrefix = (url: string, prefixes: readonly string[]): boolean => 
  * default `prefix` also covers `/api/*` because that's the canonical
  * namespace for the "wrap `baerly.fetch!`" recipe (a server-side
  * endpoint the SPA client can't run on its own, e.g. an endpoint
- * that needs `db.transaction(...)`). If you mount under a different
- * namespace, override:
+ * that fans a write across several documents server-side). If you
+ * mount under a different namespace, override:
  *
  * ```ts
  * baerlyDevAuth({ secret, prefix: ["/v1", "/internal"] });

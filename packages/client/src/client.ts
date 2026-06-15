@@ -199,13 +199,13 @@ export interface ClientQuery<T extends DocumentData = DocumentData> {
 /**
  * Returned by {@link createBaerlyClient}. The typed entry point.
  *
- * `BaerlyClient` does NOT expose a `transaction(...)` method:
- * the server has no HTTP route for atomic batch commit today (see
- * `packages/server/src/http/router.ts`). Issuing N HTTP requests
- * from the client would silently break the single-CAS invariant.
- * If you need atomic multi-row mutation today, expose a business-
- * level RPC on the server that calls `db.transaction(...)` in-
- * process.
+ * `BaerlyClient` is read + single-write RPC: reads and by-id
+ * mutations (`insert` / `update` / `replace` / `delete`), one
+ * document per call. There is no multi-document atomic write — the
+ * document is the atomic unit, and the server exposes no batch route.
+ * If you need to fan a write across several documents server-side,
+ * expose a business-level RPC on the server that drives
+ * `db.collection(...)` in-process.
  *
  * @example
  * ```ts
