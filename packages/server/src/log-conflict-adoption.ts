@@ -32,8 +32,8 @@
  *      so the invariant is visible at the decision site.
  *   3. **Single-input commit.** `self.batchSize === 1`. Every
  *      commit is single-input now, so this always holds; the guard
- *      is retained as a defensive invariant (its removal is a
- *      deferred follow-up). It is sound only for a single-input
+ *      is retained as a defensive invariant (its removal is the
+ *      deferred follow-up tracked as D1.5). It is sound only for a single-input
  *      commit because per-input adoption decisions would not
  *      compose with the all-or-nothing CAS-advance on
  *      `current.json`.
@@ -105,8 +105,8 @@ export interface AdoptionContext {
    * Input count of the parent commit attempt. Always `1` now —
    * `Writer.commit` is the only commit path and is single-input.
    * Adoption is only safe when this is exactly `1`; the field is
-   * retained as a defensive invariant (removing it is a deferred
-   * follow-up).
+   * retained as a defensive invariant (removing it is the deferred
+   * follow-up tracked as D1.5).
    */
   readonly batchSize: number;
 }

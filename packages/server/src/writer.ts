@@ -363,8 +363,8 @@ export class Writer {
    *
    * Called only as `#singleAttemptCommit([input], …)`: the array
    * shape is retained dead-generality (the genuine single-input
-   * unroll is a deferred follow-up), but every call mints exactly
-   * one entry and advances `next_seq` by 1.
+   * unroll is the deferred follow-up tracked as D1.5), but every
+   * call mints exactly one entry and advances `next_seq` by 1.
    *
    * Retryable failures (a peer wrote our seq; a peer won the CAS on
    * `current.json`) throw `BaerlyError{code:"Conflict"}`. The caller

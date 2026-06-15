@@ -13,7 +13,7 @@ related: [README.md]
 
 Accepted.
 
-> **Amended by D1 (`DECISION-transactions-and-orphan-recovery.md`).**
+> **Amended by the D1 decision (defer multi-document transactions).**
 > `Db.transaction` was removed from the locked surface pre-launch — the
 > document is the atomic unit and `db.collection(...)` carries every
 > write. This ADR previously locked three `Db` methods; it now locks
