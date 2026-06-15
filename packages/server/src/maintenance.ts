@@ -128,28 +128,19 @@ export const runScheduledMaintenance = async (
   return { compact: compactRes, gc: gcRes };
 };
 
-/**
- * The six host-agnostic write-tick budgets (govern maintenance RATE +
- * fold-defer threshold only — never data/API/wire/correctness). Adapters
- * thread {@link MAINTENANCE_PROFILE_CF_FREE} / {@link MAINTENANCE_PROFILE_NODE};
- * absent ⇒ CF-free. Nominal alias for the structural constants in
- * `@baerly/protocol` constants.ts (typed there to avoid a cycle).
- */
+/** The six host-agnostic write-tick budgets (`maxFoldBytes`=`C`, `maxFoldRows`=`E`). Canonical shape; mirrors the protocol constants (typed there to avoid a cycle). */
 export interface MaintenanceProfile {
   readonly gcInterval: number;
   readonly gcMaxMarks: number;
   readonly gcMaxSweeps: number;
   readonly maxFoldEntriesPerPass: number;
-  /** Snapshot-rebuild byte ceiling `C` (per-host overridable). */
   readonly maxFoldBytes: number;
-  /** Snapshot-rebuild row ceiling `E`. */
   readonly maxFoldRows: number;
 }
 
 export { MAINTENANCE_PROFILE_CF_FREE, MAINTENANCE_PROFILE_NODE } from "@baerly/protocol";
 
-// Map a profile onto the scheduled per-phase caps. Snapshot ceilings aren't
-// part of that surface, so they're omitted — CLOUDFLARE_FREE_TIER stays byte-identical.
+// Snapshot ceilings aren't part of the scheduled cap surface; omitted.
 const profileToScheduledOptions = (profile: MaintenanceProfile): InternalMaintenanceOptions => ({
   compact: {
     maxEntriesPerRun: profile.maxFoldEntriesPerPass,
@@ -223,13 +214,7 @@ export const shouldFireMaintenance = (
 
 /** Per-tier caps for {@link runBoundedMaintenance}, threaded by the adapter. */
 export interface BoundedMaintenanceOptions {
-  /**
-   * The six host-agnostic maintenance budgets, threaded as a unit by the
-   * adapter ({@link MAINTENANCE_PROFILE_CF_FREE} on Cloudflare,
-   * {@link MAINTENANCE_PROFILE_NODE} on Node). Absent ⇒ the runner
-   * resolves {@link MAINTENANCE_PROFILE_CF_FREE} — the CF-free-safe
-   * default that keeps a bare `Db.create()` maintaining out of the box.
-   */
+  /** Host budgets, threaded by the adapter. Absent ⇒ {@link MAINTENANCE_PROFILE_CF_FREE} (CF-free-safe default; keeps a bare `Db.create()` maintaining). */
   readonly profile?: MaintenanceProfile;
   /** Gate-1 minimum live-tail length. Default {@link WRITE_TICK_MIN_ENTRIES_TO_COMPACT}. */
   readonly minEntriesToCompact?: number;
@@ -262,11 +247,9 @@ export interface BoundedMaintenanceOptions {
  * composition of {@link compact} and {@link runGc} for one collection,
  * sized to fit a CPU-killable Cloudflare free-tier isolate by default.
  *
- * INVARIANT: a {@link MaintenanceProfile} changes only the RATE of
- * maintenance and the defer threshold — never stored data, the API,
- * query semantics, the wire format, or any correctness property. Reads
- * stay pure on every profile. Proven by
- * `tests/integration/maintenance-profile-equivalence.test.ts`.
+ * INVARIANT: a {@link MaintenanceProfile} changes only maintenance rate +
+ * defer threshold — never data/API/query/wire/correctness; reads stay pure.
+ * See `maintenance-profile-equivalence.test.ts`.
  *
  * Never throws — the write-tick caller must never see a maintenance
  * failure. Expected signals (CAS contention, an over-ceiling deferral)
