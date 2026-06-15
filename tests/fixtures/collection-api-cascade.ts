@@ -252,6 +252,41 @@ const runInsertContract = async (
   expect(got?.["k"]).toBe("custom");
 };
 
+/**
+ * `_id` boundary guard: a caller-supplied illegal `_id` is rejected at
+ * the collection boundary on EVERY backend identically — proving that
+ * on `local-fs` the bad id is refused before it reaches `#pathFor`
+ * (never a real filesystem write). The guard is `assertDocId`
+ * (`packages/server/src/doc-id.ts`), the `_id` analogue of
+ * `assertKeySegment` for app/tenant/collection.
+ */
+const runDocIdBoundary = async (
+  db: Db,
+  storage: Storage,
+  app: string,
+  tenant: string,
+): Promise<void> => {
+  const t = freshTableName("doc-id");
+  await provision(storage, app, tenant, t);
+  const notes = db.collection(t);
+  // Illegal-as-a-key-segment ids — rejected at BOTH write origins.
+  for (const bad of ["../escape", "a/b", "_reserved"]) {
+    await expect(notes.insert({ _id: bad, title: "x" } as never)).rejects.toMatchObject({
+      code: "InvalidConfig",
+    });
+    await expect(notes.replace(bad, { title: "x" } as never)).rejects.toMatchObject({
+      code: "InvalidConfig",
+    });
+  }
+  // Empty string is the auto-id sentinel on `insert` (mints a UUIDv7,
+  // never reaches `assertDocId`), so it is NOT an insert rejection.
+  // On `replace` there is no auto-id path — an empty `id` is an
+  // illegal key segment and is rejected.
+  await expect(notes.replace("", { title: "x" } as never)).rejects.toMatchObject({
+    code: "InvalidConfig",
+  });
+};
+
 /** Update contract: RFC 7386 — multiple matches, `null` strips key. */
 const runUpdateContract = async (
   db: Db,
@@ -868,6 +903,7 @@ export const runCollectionApiCascade = async (opts: {
 
   // 3. Writes.
   await runInsertContract(db, opts.storage, APP, tenant);
+  await runDocIdBoundary(db, opts.storage, APP, tenant);
   await runUpdateContract(db, opts.storage, APP, tenant);
   await runTableReplaceByIdContract(db, opts.storage, APP, tenant);
   await runDeleteContract(db, opts.storage, APP, tenant);

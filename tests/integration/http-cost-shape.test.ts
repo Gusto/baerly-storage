@@ -133,7 +133,7 @@ for (const variant of VARIANTS) {
       const provision = await fetch(`${baseUrl}/v1/c/${TABLE}`, {
         method: "POST",
         headers: { "content-type": "application/json", authorization: `Bearer ${SECRET}` },
-        body: JSON.stringify({ doc: { _id: "__provision_warmup__", title: "warmup" } }),
+        body: JSON.stringify({ doc: { _id: "provision-warmup", title: "warmup" } }),
       });
       expect(provision.status).toBe(201);
       counting.reset();

@@ -244,7 +244,14 @@ const BUDGETS: readonly Budget[] = [
   //     adapter/runner budgets) and comments aren't stripped, so this costs
   //     ~1.5 KiB raw (measured 216561). gz/min-gz unaffected (still passing).
   //     Rebaseline raw +2 KiB.
-  { entry: "index.js", raw: 212 * 1024, gz: 65 * 1024, minGz: 19 * 1024 },
+  //   → 213 KiB raw / 66 KiB gz (2026-06-14): caller-supplied `_id`
+  //     boundary guard — the new `doc-id.ts` leaf module (`assertDocId`)
+  //     is reached from `query.ts`'s `runInsert` / `runReplaceById`, both
+  //     on the kernel barrel closure. This is genuinely new code (raw AND
+  //     gz both climb, not dedup-able boilerplate): ~400 B raw / ~226 B gz
+  //     over the prior ceilings (measured 217490 raw / 66786 gz). min-gz
+  //     still passes. Rebaseline raw +1 KiB, gz +1 KiB.
+  { entry: "index.js", raw: 213 * 1024, gz: 66 * 1024, minGz: 19 * 1024 },
   // The three auth verifier factories (bearerJwt, sharedSecret,
   // cloudflareAccess) plus the transitive jose closure pulled in by
   // bearerJwt's createRemoteJWKSet + jwtVerify. Adding a fourth
@@ -325,7 +332,11 @@ const BUDGETS: readonly Budget[] = [
   //     prior 321 KiB). Rebaseline raw +1 KiB. See docs/adr/007-layout-versioning-cordon.md.
   //   → +min+gz axis 34 KiB (2026-06-01): consumer-facing artifact proxy
   //     baselined / measured 33029.
-  { entry: "http.js", raw: 322 * 1024, gz: 95 * 1024, minGz: 34 * 1024 },
+  //   → 324 KiB raw (2026-06-14): caller-supplied `_id` boundary guard.
+  //     `doc-id.ts` (`assertDocId`) reaches the http closure via
+  //     `runInsert` / `runReplaceById` on the request path. ~1.2 KiB raw
+  //     (measured 330945); gz/min-gz still pass. Rebaseline raw +2 KiB.
+  { entry: "http.js", raw: 324 * 1024, gz: 95 * 1024, minGz: 34 * 1024 },
   // Observability primitives — ObservabilityContext, the
   // request-scoped MetricsRecorder, LogTape config + the
   // JSON sink only (the pretty sink + picocolors now live in
@@ -466,7 +477,12 @@ const BUDGETS: readonly Budget[] = [
   //     the dep refresh widened the closure +27 raw bytes (387099),
   //     tipping the 378 KiB ceiling. gz/min+gz unaffected. Rebaseline
   //     raw +1 KiB.
-  { entry: "cloudflare.js", raw: 379 * 1024, gz: 113 * 1024, minGz: 40 * 1024 },
+  //   → raw 380 KiB / gz 114 KiB (2026-06-14): caller-supplied `_id`
+  //     boundary guard. `doc-id.ts` (`assertDocId`) reaches the cloudflare
+  //     closure via `runInsert` / `runReplaceById` on the request path.
+  //     ~845 B raw / ~78 B gz over (measured 388941 raw / 115790 gz);
+  //     min+gz unaffected. Rebaseline raw +1 KiB, gz +1 KiB.
+  { entry: "cloudflare.js", raw: 380 * 1024, gz: 114 * 1024, minGz: 40 * 1024 },
   // Client surface — `BaerlyClient<TConfig>` + fetcher plumbing.
   // Browser/runtime-agnostic; no kernel modules in the closure.
   // Budget history:

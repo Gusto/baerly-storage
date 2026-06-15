@@ -54,6 +54,7 @@ import {
 } from "@baerly/protocol";
 import { loadSnapshotAsMap } from "./snapshot.ts";
 import type { TxContext } from "./db.ts";
+import { assertDocId } from "./doc-id.ts";
 import { encodeIndexValue, type IndexDefinition } from "./indexes.ts";
 import { foldLogEntriesOnto, walkLogRange } from "./log-walk.ts";
 import { type IndexWalkPlan, planQuery, type QueryPlan } from "./query-planner.ts";
@@ -368,6 +369,11 @@ export const runInsert = async <T extends DocumentData>(
   // auto-id source.
   const supplied = doc["_id"];
   const _id = typeof supplied === "string" && supplied.length > 0 ? supplied : uuidv7();
+  // Guard the resolved id at the write origin — the only place a
+  // user-controlled `_id` enters as a WRITTEN key segment. Minted
+  // UUIDv7 always passes, so guarding unconditionally also documents
+  // the invariant. The `_id` analogue of `assertKeySegment` (`db.ts`).
+  assertDocId(_id);
   // The locked input type `Partial<T> & DocumentData` is an
   // intersection of optional-keyed and required-keyed: at runtime the
   // DocumentData half is authoritative (Partial widens types
@@ -525,6 +531,9 @@ export const runReplaceById = async <T extends DocumentData>(
   id: string,
   doc: T,
 ): Promise<void> => {
+  // Guard the caller-supplied id before it becomes a written key
+  // segment (index keys, log `doc_id`). Same boundary as `runInsert`.
+  assertDocId(id);
   const wire: PredicateWire = {
     clauses: [{ op: "eq", field: "_id", value: id }],
   };
