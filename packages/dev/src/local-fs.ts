@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { link, mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, posix, relative, resolve, sep } from "node:path";
 import {
@@ -11,6 +11,12 @@ import {
   type StoragePutOptions,
   type StoragePutResult,
 } from "@baerly/protocol";
+
+/**
+ * Reserved prefix for the in-directory create-if-absent temp (see `put`).
+ * `walk`/`list` skip it; it is internal/transient and never a real key.
+ */
+const TEMP_PREFIX = ".baerly-tmp-";
 
 export interface LocalFsStorageOptions {
   /** Root directory; treated as "the bucket". */
@@ -49,11 +55,14 @@ const compareKeysUtf8 = (a: string, b: string): number => {
  * makes this adapter useful for fixture-based tests.
  *
  * Writes are atomic via `writeFile(temp) + rename(final)`; readers
- * never see a partially-written file. The adapter does NOT coordinate
- * cross-process `ifMatch`/`ifNoneMatch` checks (a TOCTOU race is
- * possible if two processes write the same key concurrently).
- * Single-process `baerlyDev()` is the design center; multi-process
- * scenarios use the S3 / Minio path.
+ * never see a partially-written file.
+ *
+ * `ifNoneMatch:"*"` uses a same-dir temp + `link(2)` (atomic exclusive
+ * create; `EEXIST` ⇒ key exists) so concurrent creates have exactly one
+ * winner. Same-dir avoids `EXDEV`; temp+`link` over `open(…,"wx")` keeps
+ * a partially-written new key invisible to a concurrent reader. `ifMatch`
+ * keeps the `rename` path (in-process TOCTOU only; cross-process
+ * contention uses the S3 / Minio `If-Match` path).
  *
  * Node-only — imports `node:fs`, `node:path`, `node:crypto`. Lives in
  * `@baerly/dev` because the protocol kernel is pure-modules / no I/O
@@ -95,34 +104,57 @@ export class LocalFsStorage implements Storage {
     const path = this.#pathFor(key);
     const newEtag = etagOf(body);
 
-    if (opts?.ifMatch !== undefined || opts?.ifNoneMatch === "*") {
+    await mkdir(dirname(path), { recursive: true });
+
+    if (opts?.ifNoneMatch === "*") {
+      // Atomic exclusive create via link(2) — see class JSDoc.
+      const tmp = join(
+        dirname(path),
+        `${TEMP_PREFIX}${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      );
+      try {
+        await writeFile(tmp, body);
+        await link(tmp, path);
+      } catch (error) {
+        if (isErrnoException(error) && error.code === "EEXIST") {
+          throw new BaerlyError(
+            "Conflict",
+            `PUT ${key}: precondition failed (ifNoneMatch="*" but key exists)`,
+          );
+        }
+        throw new BaerlyError(
+          "InvalidResponse",
+          `LocalFsStorage.put(${key}): ${(error as Error).message}`,
+          error,
+        );
+      } finally {
+        // Best-effort cleanup — a failed write may leave a partial temp,
+        // and a cleanup failure must not mask a Conflict thrown above.
+        await rm(tmp, { force: true }).catch(() => {});
+      }
+      return { etag: newEtag, serverDate: new Date() };
+    }
+
+    if (opts?.ifMatch !== undefined) {
       // TOCTOU within a process — fine. Cross-process callers should
       // not rely on these guards (see class JSDoc).
       const existing = await readExisting(path);
-      if (opts?.ifNoneMatch === "*" && existing !== null) {
+      if (existing === null) {
         throw new BaerlyError(
           "Conflict",
-          `PUT ${key}: precondition failed (ifNoneMatch="*" but key exists)`,
+          `PUT ${key}: precondition failed (ifMatch=${opts.ifMatch} but key does not exist)`,
         );
       }
-      if (opts?.ifMatch !== undefined) {
-        if (existing === null) {
-          throw new BaerlyError(
-            "Conflict",
-            `PUT ${key}: precondition failed (ifMatch=${opts.ifMatch} but key does not exist)`,
-          );
-        }
-        const currentEtag = etagOf(existing);
-        if (currentEtag !== opts.ifMatch) {
-          throw new BaerlyError(
-            "Conflict",
-            `PUT ${key}: precondition failed (ifMatch=${opts.ifMatch} but current ETag is ${currentEtag})`,
-          );
-        }
+      const currentEtag = etagOf(existing);
+      if (currentEtag !== opts.ifMatch) {
+        throw new BaerlyError(
+          "Conflict",
+          `PUT ${key}: precondition failed (ifMatch=${opts.ifMatch} but current ETag is ${currentEtag})`,
+        );
       }
     }
 
-    await mkdir(dirname(path), { recursive: true });
+    // Unconditional PUT (or ifMatch already verified above).
     // Write to a unique temp path then rename for atomicity. Temp lives
     // in `os.tmpdir()` so a half-written file never appears under the
     // bucket root where `list` might see it. PID + timestamp + random
@@ -269,7 +301,9 @@ const walk = async (root: string, out: string[]): Promise<void> => {
       const full = join(dir, entry.name);
       if (entry.isDirectory()) {
         stack.push(full);
-      } else if (entry.isFile()) {
+      } else if (entry.isFile() && !entry.name.startsWith(TEMP_PREFIX)) {
+        // Skip the transient create-if-absent temps (see TEMP_PREFIX) so a
+        // concurrent list during a create never surfaces a half-linked key.
         out.push(relative(root, full).split(sep).join(posix.sep));
       }
     }

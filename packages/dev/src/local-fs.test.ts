@@ -1,4 +1,5 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fc } from "@fast-check/vitest";
@@ -108,6 +109,16 @@ describe("LocalFsStorage — impl-specific", () => {
     expect(entries).toEqual(["x/y/z"]);
   });
 
+  test("list() excludes internal create-if-absent temp files", async () => {
+    // The link(2)-based create-if-absent writes a `.baerly-tmp-*` file under
+    // the bucket root; a crash mid-create (or a concurrent list during a
+    // create) can leave one behind. It must never surface as a key.
+    await s.put("real", utf8("v"));
+    writeFileSync(join(root, ".baerly-tmp-99999-0-deadbeef"), "leftover");
+    const listed = await collect(s.list(""));
+    expect(listed.map((e) => e.key)).toEqual(["real"]);
+  });
+
   test("path-traversal keys are rejected", async () => {
     for (const bad of [
       "",
@@ -122,6 +133,28 @@ describe("LocalFsStorage — impl-specific", () => {
       await expect(s.put(bad, utf8("v"))).rejects.toMatchObject({
         code: "InvalidConfig",
       });
+    }
+  });
+
+  test("concurrent create-if-absent on a fresh key has exactly one winner", async () => {
+    const concRoot = await mkdtemp(join(tmpdir(), "baerly-localfs-race-"));
+    try {
+      const storage = new LocalFsStorage({ root: concRoot });
+      const key = "race/key";
+      const RACERS = 16;
+      const outcomes = await Promise.allSettled(
+        Array.from({ length: RACERS }, (_, i) =>
+          storage.put(key, utf8(String(i)), { ifNoneMatch: "*" }),
+        ),
+      );
+      const winners = outcomes.filter((o) => o.status === "fulfilled").length;
+      const conflicts = outcomes.filter(
+        (o) => o.status === "rejected" && (o.reason as { code?: string }).code === "Conflict",
+      ).length;
+      expect(winners).toBe(1);
+      expect(conflicts).toBe(RACERS - 1);
+    } finally {
+      await rm(concRoot, { recursive: true, force: true });
     }
   });
 });
