@@ -150,6 +150,16 @@ export const S3_REQUEST_MAX_RETRIES: number = 8;
 export const MAX_PARALLEL_LOG_READS: number = 16;
 
 /**
+ * Runaway guard on the tolerant forward-probe walk (`probeTailFrom`):
+ * max consecutive `log/<seq>` GETs past the `tail_hint` before the walk
+ * caps out. A stale-low hint is never a correctness hazard — just a
+ * longer-but-bounded GET walk.
+ *
+ * @see packages/server/src/log-tail.ts (`probeTailFrom`)
+ */
+export const LOG_FORWARD_PROBE_CAP: number = 100_000;
+
+/**
  * Current major version of the `current.json` control-object schema.
  * Readers MUST reject unknown versions with
  * `BaerlyError{code:"InvalidResponse"}` rather than try to coerce.
