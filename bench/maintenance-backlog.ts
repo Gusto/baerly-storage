@@ -159,10 +159,17 @@ const MIN_ENTRIES_TO_COMPACT = 50;
 interface ProfileCase {
   readonly label: "cf-free" | "node";
   readonly profile: MaintenanceProfile;
+  /**
+   * The phase policy this host runs in PRODUCTION for the in-band tick —
+   * CF-free is `"single"` (worker.ts: a CPU-killable free isolate does ONE
+   * of fold/GC per request), Node is `"both"` (server.ts). The bench must
+   * use each host's real policy or it measures a schedule that doesn't ship.
+   */
+  readonly phasesPerTick: "single" | "both";
 }
 const PROFILE_CASES: readonly ProfileCase[] = [
-  { label: "cf-free", profile: MAINTENANCE_PROFILE_CF_FREE },
-  { label: "node", profile: MAINTENANCE_PROFILE_NODE },
+  { label: "cf-free", profile: MAINTENANCE_PROFILE_CF_FREE, phasesPerTick: "single" },
+  { label: "node", profile: MAINTENANCE_PROFILE_NODE, phasesPerTick: "both" },
 ];
 
 // ── Workload generation ──────────────────────────────────────────────
@@ -287,15 +294,16 @@ const bootstrap = async (storage: Storage): Promise<void> => {
 
 /**
  * Drive the real write-tick path: every commit ticks
- * `runBoundedMaintenance` at `profile` (the production in-band default),
- * via the writer's post-CAS dispatch inside an ALS maintenance scope.
- * `phasesPerTick: "both"` lets a tick fold AND GC (the
- * `dispatchInlineAwaited` Node-side shape); `gcGraceMillis: 0` makes
- * orphan sweep observable in-window (see head comment).
+ * `runBoundedMaintenance` at `profile`, via the writer's post-CAS dispatch
+ * inside an ALS maintenance scope. `phasesPerTick` is each host's REAL
+ * production policy (CF-free `"single"`, Node `"both"`) — not a uniform
+ * choice — so the verdict reflects what actually ships. `gcGraceMillis: 0`
+ * makes orphan sweep observable in-window (see head comment).
  */
 const runInBand = async (
   profile: MaintenanceProfile,
   rate: number,
+  phasesPerTick: "single" | "both",
 ): Promise<readonly MinuteSample[]> => {
   const storage = new MemoryStorage();
   await bootstrap(storage);
@@ -305,7 +313,7 @@ const runInBand = async (
     options: {
       profile,
       minEntriesToCompact: MIN_ENTRIES_TO_COMPACT,
-      phasesPerTick: "both",
+      phasesPerTick,
       gcGraceMillis: 0,
     } satisfies BoundedMaintenanceOptions,
   };
@@ -512,16 +520,18 @@ const main = async (): Promise<number> => {
 
   const runners: ReadonlyArray<{
     trigger: "in-band" | "scheduled";
-    run: (p: MaintenanceProfile, r: number) => Promise<readonly MinuteSample[]>;
+    run: (pc: ProfileCase, r: number) => Promise<readonly MinuteSample[]>;
   }> = [
-    { trigger: "in-band", run: runInBand },
-    { trigger: "scheduled", run: runScheduled },
+    // In-band uses each host's real phase policy; scheduled alternates
+    // compact/GC explicitly and ignores phasesPerTick.
+    { trigger: "in-band", run: (pc, r) => runInBand(pc.profile, r, pc.phasesPerTick) },
+    { trigger: "scheduled", run: (pc, r) => runScheduled(pc.profile, r) },
   ];
 
   for (const { trigger, run } of runners) {
     for (const pc of PROFILE_CASES) {
       for (const rate of RATE_GRID) {
-        const samples = await run(pc.profile, rate);
+        const samples = await run(pc, rate);
         const last = samples[samples.length - 1]!;
         const peakTail = samples.reduce((m, s) => Math.max(m, s.live_tail_entries), 0);
         const tailVerdict = classifyTail(samples, pc.profile.maxFoldEntriesPerPass);
@@ -566,7 +576,7 @@ const main = async (): Promise<number> => {
       gc_grace:
         "gcGraceMillis/graceMillis = 0 so a marked orphan sweeps the same pass — models the drain CEILING (sweep throughput vs orphan production p), not the 7-day-delayed production timing",
       in_band:
-        "every commit ticks runBoundedMaintenance at the profile (production write-tick default), phasesPerTick=both",
+        "every commit ticks runBoundedMaintenance at the profile; phasesPerTick matches each host's PRODUCTION policy — cf-free 'single' (worker.ts), node 'both' (server.ts)",
       scheduled:
         "in-band disabled; one runScheduledMaintenance tick per simulated minute, alternating compact (even) / GC (odd) — the CF even/odd-minute cron pattern",
       tail_verdict:

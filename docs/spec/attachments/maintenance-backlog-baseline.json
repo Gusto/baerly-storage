@@ -7,21 +7,26 @@
   "working_set": 50,
   "body_bytes": 2000,
   "min_entries_to_compact": 50,
-  "rate_grid": [10, 30, 60, 120],
+  "rate_grid": [
+    10,
+    30,
+    60,
+    120
+  ],
   "methodology": {
-    "simulated_time": "writes/min is the knob; a 'minute' is a unit mapping to `rate` real Db writes \u2014 NO wall-clock claim (the bench runs in seconds)",
-    "gc_grace": "gcGraceMillis/graceMillis = 0 so a marked orphan sweeps the same pass \u2014 models the drain CEILING (sweep throughput vs orphan production p), not the 7-day-delayed production timing",
-    "in_band": "every commit ticks runBoundedMaintenance at the profile (production write-tick default), phasesPerTick=both",
-    "scheduled": "in-band disabled; one runScheduledMaintenance tick per simulated minute, alternating compact (even) / GC (odd) \u2014 the CF even/odd-minute cron pattern",
+    "simulated_time": "writes/min is the knob; a 'minute' is a unit mapping to `rate` real Db writes — NO wall-clock claim (the bench runs in seconds)",
+    "gc_grace": "gcGraceMillis/graceMillis = 0 so a marked orphan sweeps the same pass — models the drain CEILING (sweep throughput vs orphan production p), not the 7-day-delayed production timing",
+    "in_band": "every commit ticks runBoundedMaintenance at the profile; phasesPerTick matches each host's PRODUCTION policy — cf-free 'single' (worker.ts), node 'both' (server.ts)",
+    "scheduled": "in-band disabled; one runScheduledMaintenance tick per simulated minute, alternating compact (even) / GC (odd) — the CF even/odd-minute cron pattern",
     "tail_verdict": "live_tail_entries axis: bounded = last-third mean not > 1.5x first-third mean AND grew <= one fold slice (converged sawtooth); growing = climbs past both. First-vs-last is sound here because the tail starts near steady state (no cold-bucket ramp).",
-    "objects_verdict": "object_count axis: same thirds framing but (1) MID-third vs last-third \u2014 object_count ramps from 0 on a cold bucket, so the first third is unrepresentative warm-up; (2) additive floor only (grew > working_set), no 1.5x ratio gate \u2014 a slow monotonic climb on a large baseline that never plateaus is a genuine unbounded GC-drain backlog even below 1.5x, and working_set is the steady-state oscillation band below which growth is fold sawtooth noise.",
-    "verdict": "combined: bounded ONLY IF both axes bounded; else growing, annotated with the offending axis \u2014 growing (tail) / growing (objects) / growing (tail+objects). This is the field a decision reads first, so it means 'nothing is growing without bound'."
+    "objects_verdict": "object_count axis: same thirds framing but (1) MID-third vs last-third — object_count ramps from 0 on a cold bucket, so the first third is unrepresentative warm-up; (2) additive floor only (grew > working_set), no 1.5x ratio gate — a slow monotonic climb on a large baseline that never plateaus is a genuine unbounded GC-drain backlog even below 1.5x, and working_set is the steady-state oscillation band below which growth is fold sawtooth noise.",
+    "verdict": "combined: bounded ONLY IF both axes bounded; else growing, annotated with the offending axis — growing (tail) / growing (objects) / growing (tail+objects). This is the field a decision reads first, so it means 'nothing is growing without bound'."
   },
   "invariants": {
     "maintenance_target_ratio": 1,
     "maintenance_min_live_bytes": 65536,
     "gc_starvation_guard": 4,
-    "cf_free_drain_ratio": "gcMaxSweeps/gcInterval = 10/4 = 2.5 (>= orphan-production p keeps object count bounded \u2014 graduation.md \u00a77.1)",
+    "cf_free_drain_ratio": "gcMaxSweeps/gcInterval = 10/4 = 2.5 (>= orphan-production p keeps object count bounded — graduation.md §7.1)",
     "node_drain_ratio": "gcMaxSweeps/gcInterval = 100/2 = 50"
   },
   "cells": [
@@ -2421,5 +2426,5 @@
   "node_version": "v24.16.0",
   "platform": "darwin",
   "arch": "arm64",
-  "note_baseline": "Checked-in representative baseline. Per-minute `samples` retained for the bounded exemplar (in-band/cf-free/30 = the bounded sawtooth at the M-size envelope, bounded on BOTH the tail and objects axes) AND for EVERY cell whose combined verdict is `growing` (so the monotonic object-count climb on scheduled/cf-free and scheduled/node is visible in the checked-in file); clearly-bounded cells carry summary fields only \u2014 regenerate full trajectories with `pnpm bench:maintenance-backlog`."
+  "note_baseline": "Checked-in representative baseline. Per-minute `samples` retained for the bounded exemplar (in-band/cf-free/30 = the bounded sawtooth at the M-size envelope, bounded on BOTH the tail and objects axes) AND for EVERY cell whose combined verdict is `growing` (so the monotonic object-count climb on scheduled/cf-free and scheduled/node is visible in the checked-in file); clearly-bounded cells carry summary fields only — regenerate full trajectories with `pnpm bench:maintenance-backlog`."
 }
