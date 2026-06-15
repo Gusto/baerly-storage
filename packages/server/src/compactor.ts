@@ -49,6 +49,7 @@ import {
   type StoragePutOptions,
 } from "@baerly/protocol";
 import { walkLogRangeWithBytes } from "./log-walk.ts";
+import { probeTailFrom } from "./log-tail.ts";
 import { getCurrentContext } from "./observability/context.ts";
 import {
   encodeSnapshotBody,
@@ -212,7 +213,18 @@ export const compact = async (
   const current = read.json;
   const baseEtag = read.etag;
   const logSeqStartBefore = logSeqStartOf(current);
-  const nextSeq = current.tail_hint;
+  // Forward-probe the TRUE committed tail. `tail_hint` is a
+  // non-authoritative LOWER BOUND; the live commit may have advanced
+  // past it (and once the writer's commit-path current.json write is
+  // gone in Phase 4, it always will). The probe GET-walks `log/<seq>`
+  // from the stored hint to the first 404 — a few Class-B GETs (today a
+  // single immediate-404 while the commit still keeps the hint at the
+  // true tail). The compactor is Class-A-active, not idle-reader-bound.
+  const probe = await probeTailFrom(storage, collectionPrefix, current.tail_hint, {
+    ...(options.signal !== undefined && { signal: options.signal }),
+  });
+  const discoveredTail = probe.tail;
+  const nextSeq = discoveredTail;
   const available = nextSeq - logSeqStartBefore;
   if (available < minToCompact) {
     return {
@@ -350,6 +362,10 @@ export const compact = async (
     ...current,
     snapshot: newKey,
     log_seq_start: foldEnd,
+    // Stamp the discovered tail back as the new lower bound (monotone:
+    // never lower the stored hint). This makes the compactor the sole
+    // durable `tail_hint` advancer ahead of the Phase-4 writer flip.
+    tail_hint: Math.max(current.tail_hint, discoveredTail),
     snapshot_bytes: bodyBytes.byteLength,
     snapshot_rows: base.size,
     // Decrement `tail_bytes` by EXACTLY the folded slice's stored bytes.
@@ -405,7 +421,7 @@ export const compact = async (
   // add zero storage ops.
   const metrics = ctxMetrics();
   metrics.histogram("db.compact.entries_folded", entriesFolded, { collection: collectionName });
-  metrics.gauge("db.manifest.lag_window_depth", current.tail_hint - foldEnd, {
+  metrics.gauge("db.manifest.lag_window_depth", discoveredTail - foldEnd, {
     collection: collectionName,
   });
 

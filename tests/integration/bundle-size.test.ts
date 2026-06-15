@@ -425,7 +425,13 @@ const BUDGETS: readonly Budget[] = [
   //     (single-write-commit Plan B Phase 3) land in this closure
   //     (measured 114767 raw). Rebaseline raw +1 KiB; gz/min-gz
   //     unaffected (still passing).
-  { entry: "maintenance.js", raw: 113 * 1024, gz: 34 * 1024, minGz: 11 * 1024 },
+  //   → 113 KiB raw / 35 KiB gz (2026-06-15): the compactor's tail
+  //     forward-probe (`probeTailFrom`, log-tail.ts; single-write-commit
+  //     Plan B Phase 3.2) joins this closure as the fold-ceiling
+  //     discovery + tail_hint stamp (measured 34833 gz, +17 over the
+  //     34 KiB ceiling). Rebaseline gz +1 KiB; raw/min-gz unaffected
+  //     (still passing — log-tail.ts was already in gc.ts's closure).
+  { entry: "maintenance.js", raw: 113 * 1024, gz: 35 * 1024, minGz: 11 * 1024 },
   // Cloudflare Workers adapter — re-exports the kernel barrel
   // (Db, Writer, etc.) plus the R2-binding `Storage` impl
   // and the `baerlyCloudflare` helper. Aggregator: closure

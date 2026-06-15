@@ -20,7 +20,7 @@ import {
 } from "@baerly/protocol";
 import { describe, expect, test } from "vitest";
 import { fc, test as fcTest } from "@fast-check/vitest";
-import { logStateCurrentJson } from "../../../tests/fixtures/log-state.ts";
+import { logStateCurrentJson, seedLogEntries } from "../../../tests/fixtures/log-state.ts";
 import { compact, type InternalCompactOptions } from "./compactor.ts";
 import { loadSnapshotAsMap } from "./snapshot.ts";
 import { createObservabilityContext, runWithContext } from "./observability/index.ts";
@@ -649,6 +649,45 @@ describe("compact", () => {
     expect(res.written).toBe(true);
     expect(res.logSeqStartAfter).toBe(30);
     expect(res.entriesFolded).toBe(30);
+  });
+
+  // ── Phase 3 Task 3.2: forward-probe the true tail as the fold ceiling
+  // and stamp tail_hint = max(stored, discovered). The stored tail_hint
+  // is a non-authoritative LOWER BOUND; the true committed tail may sit
+  // above it. The compactor must discover it via a forward-probe and
+  // become the sole durable tail_hint advancer.
+  test("forward-probes a tail above a stale-low tail_hint, folds to the true tail, and stamps tail_hint", async () => {
+    const s = new MemoryStorage();
+    const M = 30;
+    const L = 12; // deliberately stale-low stored hint, below the true tail M
+    const logPrefix = KEY.slice(0, KEY.lastIndexOf("/"));
+    // Seed a DENSE log [0, M) directly.
+    await seedLogEntries(s, logPrefix, 0, M, (seq) => ({
+      doc_id: `d${seq}`,
+      after: { _id: `d${seq}`, n: seq },
+    }));
+    // tail_bytes must equal the stored bytes of the whole live tail
+    // [0, M) so the fold's exact decrement reaches 0, not negative.
+    let tailBytes = 0;
+    for (let seq = 0; seq < M; seq++) {
+      const got = await s.get(`${logPrefix}/log/${seq}.json`);
+      tailBytes += got!.body.byteLength;
+    }
+    // Hand-write current.json with tail_hint = L < M.
+    await createCurrentJson(s, KEY, logStateCurrentJson({ tail_hint: L, tail_bytes: tailBytes }));
+    const res = await compact({ storage: s, currentJsonKey: KEY }, {
+      minEntriesToCompact: 5,
+      maxEntriesPerRun: 100, // one pass can reach the true tail M
+    } as InternalCompactOptions);
+    expect(res.written).toBe(true);
+    // Folded up to the TRUE tail M, not the stale stored hint L.
+    expect(res.logSeqStartAfter).toBe(M);
+    expect(res.entriesFolded).toBe(M);
+    const map = await loadSnapshotAsMap(s, res.newSnapshotKey!, COLL);
+    expect(map.size).toBe(M);
+    // tail_hint stamped to the discovered tail (monotone max).
+    const after = await readCurrentJson(s, KEY);
+    expect(after!.json.tail_hint).toBe(M);
   });
 
   test("cas-lost: snapshot pointer unchanged, bumps cas_lost_total, orphan reclaimable by runGc", async () => {
