@@ -2,7 +2,7 @@
 title: Prior-art differentiation
 audience: spec
 summary: IDS-shaped consolidated differentiation against known prior art for the C1, C2, and C3 mechanisms.
-last-reviewed: 2026-06-13
+last-reviewed: 2026-06-14
 tags: [protocol, patent, prior-art]
 related: [sync-protocol.md, writer-fence-adversarial-model.md]
 ---
@@ -62,6 +62,40 @@ Two deltas matter for differentiation:
   (or no timestamp), and neither protocol issues a *second*
   conditional PUT to durably back-stamp a server-extracted clock.
   This is the distinguishing axis for C1.
+- **Delta on S3 is now engine-split.** The *Spark/JVM* path still
+  documents a DynamoDB commit coordinator (or, in Delta 4.x,
+  catalog-managed commits; https://delta.io/blog/delta-lake-s3/). The
+  *delta-rs* (Rust) path's **code default switched to lock-free
+  conditional PUT** since S3 `If-None-Match` GA (Aug 2024), falling back
+  to DynamoDB only when `AWS_S3_LOCKING_PROVIDER=dynamodb` or
+  `allow_unsafe_rename` is set (the code is authoritative here — the
+  delta-rs published docs still lag and say DynamoDB-by-default). The
+  code carries the comment *"Nearly all S3 Object stores support
+  conditional put, so we change the default…"*
+  (`crates/aws/src/storage.rs`); `crates/core/src/logstore/default_logstore.rs`
+  uses `PutMode::Create`. So "Delta needs a DynamoDB lock" is a
+  2023-era claim for the OSS Rust path.
+
+CAS-on-a-control-object is therefore now industry consensus, not a
+baerly invention. What baerly owns is the *instance*: the
+document-shaped, catalog-free, killable-compute application of it — a
+per-document KV HEAD with a CDC `seq` log and a *"< 1 Class A op /
+writer / hour"* idle bound, advanced with no external coordination
+service and a server-`Date` provenance back-stamp (C1) that no surveyed
+system captures.
+
+### Nearest neighbors
+
+- **Boring Catalog** (single-JSON-file Iceberg catalog coordinated
+  purely by S3 conditional writes — the *nearest neighbor* to
+  `current.json` itself:
+  https://dataengineeringcentral.substack.com/p/what-an-iceberg-catalog-that-works).
+  Differentiator: its unit is a table snapshot of Parquet manifests for
+  analytic scans, not a per-document KV HEAD with a CDC log.
+- **DuckLake** (v1.0, Apr 2026 — SQL database *as* the lakehouse
+  catalog; https://ducklake.select/2026/04/13/ducklake-10/). The
+  opposite choice to baerly's "no catalog, the bucket is the catalog" —
+  a direct foil that sharpens the no-external-dependency thesis.
 
 ## 3. SlateDB (slatedb.io, RFC-0001)
 
