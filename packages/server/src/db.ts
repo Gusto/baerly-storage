@@ -114,10 +114,14 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
   /**
    * Build a tenant-scoped `Db`. Throws
    * `BaerlyError{code:"InvalidConfig"}` if either `app` or `tenant`
-   * is empty or contains `/` (the segment separator).
+   * is empty, contains `/`, is `"."` or `".."`, contains control
+   * characters, starts with the reserved `"_"` prefix, or exceeds
+   * 256 bytes.
    *
    * @throws BaerlyError code="InvalidConfig" when `app` or `tenant` is
-   *   empty or contains `/`.
+   *   empty, contains `/`, is `"."` or `".."`, contains control
+   *   characters, starts with the reserved `"_"` prefix, or exceeds
+   *   256 bytes.
    *
    * @example
    * ```ts
@@ -178,8 +182,9 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
    * `name` returns a FRESH `Collection<T>` object on each call (chain
    * identity is intentional — modifiers return new objects).
    *
-   * @throws BaerlyError code="InvalidConfig" when `name` is empty or
-   *   contains `/`.
+   * @throws BaerlyError code="InvalidConfig" when `name` is empty,
+   *   contains `/`, is `"."` or `".."`, contains control characters,
+   *   starts with the reserved `"_"` prefix, or exceeds 256 bytes.
    *
    * @example
    * ```ts
@@ -219,8 +224,9 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
    *
    * Runs the same `name`-validation guard as {@link Db.collection}.
    *
-   * @throws BaerlyError code="InvalidConfig" when `name` is empty or
-   *   contains `/`.
+   * @throws BaerlyError code="InvalidConfig" when `name` is empty,
+   *   contains `/`, is `"."` or `".."`, contains control characters,
+   *   starts with the reserved `"_"` prefix, or exceeds 256 bytes.
    * @internal
    */
   collectionReadContext(name: string): CollectionReadContext {

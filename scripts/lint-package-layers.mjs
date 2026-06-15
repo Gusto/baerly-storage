@@ -41,6 +41,8 @@ const RULES = {
 // Captures the package name from `@baerly/<name>` or `@baerly/<name>/<subpath>`.
 // The non-capturing `(?:\/[^"']*)?` is the load-bearing fix vs. the v1 regex
 // that only matched bare specifiers (and so missed `@baerly/server/http`).
+// Known limitation: this (and the regexes below) scans raw source, so
+// import-shaped text inside comments/JSDoc `@example` blocks also matches.
 const IMPORT_RE = /(?:from|import)\s+["']@baerly\/([\w-]+)(?:\/[^"']*)?["']/g;
 
 // Dynamic `import("@baerly/<name>")` / `await import("@baerly/<name>/sub")`.

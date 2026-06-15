@@ -125,7 +125,7 @@ unconditionally and never inspects the response marker.
 Baerly only ever **parses** S3 XML, never **builds** it, so builder-side
 CDATA/comment-injection CVEs are out of scope. On the parse side, both
 `parseS3Error` and `parseListObjectsV2CommandOutput`
-(`packages/adapter-node/src/xml.ts:72,110`) reject any body containing a
+(`packages/adapter-node/src/xml.ts:72,115`) reject any body containing a
 `<!DOCTYPE` *before* the parser sees the bytes — a deliberate
 XXE / billion-laughs / entity-shadow (CVE-2026-25896) defense, since
 S3/R2/MinIO/GCS never emit a DOCTYPE here. The runtime `fast-xml-parser`

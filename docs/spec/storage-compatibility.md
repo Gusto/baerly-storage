@@ -51,7 +51,7 @@ not deploy.
 
 | Tier | Stores | What it means |
 |------|--------|---------------|
-| **Tier 1** | AWS S3, Cloudflare R2 | CI-conformance-gated every PR (`tests/integration/conformance.test.ts` + the adapter conformance suites), and exercised under contention by the all-to-all single-key cascade in `tests/integration/randomized.test.ts`. Supported. |
+| **Tier 1** | AWS S3, Cloudflare R2 | CI-conformance-gated every PR (`tests/integration/conformance.test.ts` + the adapter conformance suites — R2 via `pnpm test:adapter-cloudflare`), and exercised under contention by the all-to-all single-key cascade in `tests/integration/randomized.test.ts`. Supported. |
 | **Tier 1.5** | MinIO | Dev / CI harness only (`pnpm dev:storage`, `pnpm test:minio`). Conditional writes — including bare-`*` create-if-absent — are verified locally against the pinned MinIO; not a production target we promise, but it passes the conformance suite. |
 | **Unsupported** | GCS (S3-interop), Azure Blob | GCS's XML / S3-interop API scopes the S3 `If-Match` / `If-None-Match` headers to **reads**; native conditional writes require `x-goog-if-generation-match` (not an S3 header), which baerly does not emit — so lock-free CAS over the plain S3 API is not available on GCS. Azure Blob is not an S3 API at all. Neither has an adapter. |
 | **Anything else** | other S3-compatible endpoints | Run `baerly doctor --bucket`. **Green ⇒ the conditional verbs are honoured — should work, you own production validation. Red ⇒ won't.** |
