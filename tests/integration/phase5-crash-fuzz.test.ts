@@ -684,30 +684,30 @@ describe("ticket-01 bug reproductions (characterization — assert CURRENT buggy
      * `current.json` as three separate storage ops. A single-input
      * commit that crashes AFTER its `log/<seq>.json` PUT but BEFORE the
      * `current.json` CAS leaves a DURABLE ORPHAN log object at
-     * `seq == current.next_seq`. The next writer reads the same
-     * `next_seq`, mints the same seq, PUTs `log/<seq>.json` with
+     * `seq == current.tail_hint`. The next writer reads the same
+     * `tail_hint`, mints the same seq, PUTs `log/<seq>.json` with
      * `ifNoneMatch:"*"` → 412, reads the orphan, and
      * `tryAdoptOwnSessionLogEntry` refuses it ("foreign-session" — the
      * orphan carries a different `session`). The writer throws
      * `Conflict`, retries up to `maxRetries`, hits the same orphan every
      * time, and throws `Conflict`. GC only sweeps
-     * `seq < log_seq_start ≤ next_seq`, so the orphan AT `next_seq` is
-     * never swept and `next_seq` never advances. The collection WEDGES
+     * `seq < log_seq_start ≤ tail_hint`, so the orphan AT `tail_hint` is
+     * never swept and `tail_hint` never advances. The collection WEDGES
      * PERMANENTLY for every writer.
      *
      * This test asserts the CURRENT, BUGGY behavior: the fresh commit
-     * ultimately throws `Conflict`, the orphan sits at `next_seq`, and
-     * `next_seq` does not advance past it.
+     * ultimately throws `Conflict`, the orphan sits at `tail_hint`, and
+     * `tail_hint` does not advance past it.
      *
      * ┌─────────────────────────────────────────────────────────────┐
      * │ A future recovery ticket may invert this: the marked          │
      * │ assertions below ("documents the wedge") would flip to assert │
-     * │ that the fresh commit SUCCEEDS, the wedge clears, `next_seq`   │
+     * │ that the fresh commit SUCCEEDS, the wedge clears, `tail_hint`   │
      * │ advances, and the probe row is readable. The recovery design  │
      * │ is unresolved; this characterizes the wedge until then.       │
      * └─────────────────────────────────────────────────────────────┘
      */
-    test(`[${variant.label}] BUG 1: single-entry orphan at next_seq wedges every future writer`, async () => {
+    test(`[${variant.label}] BUG 1: single-entry orphan at tail_hint wedges every future writer`, async () => {
       const { storage, cleanup } = await variant.build();
       if (cleanup !== undefined) {
         cleanups.push(cleanup);
@@ -717,7 +717,7 @@ describe("ticket-01 bug reproductions (characterization — assert CURRENT buggy
       const currentJsonKey = CURRENT_JSON_KEY;
       await provision(storage);
 
-      // 1) One clean single-input commit lands at seq 0 (next_seq → 1).
+      // 1) One clean single-input commit lands at seq 0 (tail_hint → 1).
       const goodWriter = new Writer({ storage, currentJsonKey });
       await goodWriter.commit({
         op: "I",
@@ -726,7 +726,7 @@ describe("ticket-01 bug reproductions (characterization — assert CURRENT buggy
         body: { _id: "first", kind: "good" },
       });
       const afterGood = await readCurrentJson(storage, currentJsonKey);
-      expect(afterGood!.json.next_seq).toBe(1);
+      expect(afterGood!.json.tail_hint).toBe(1);
 
       // 2) Drive a single-input commit that crashes right AFTER its
       //    `log/1.json` PUT lands but BEFORE the `current.json` CAS.
@@ -734,7 +734,7 @@ describe("ticket-01 bug reproductions (characterization — assert CURRENT buggy
       //    is: op1 GET current.json, op2 PUT content, op3 PUT log/1.json,
       //    op4 CAS PUT current.json. Arming at op4 fires the abort just
       //    before the CAS — leaving log/1.json durable as an orphan with
-      //    next_seq still pinned at 1.
+      //    tail_hint still pinned at 1.
       const handle = abortingStorage(storage);
       const crashWriter = new Writer({ storage: handle.storage, currentJsonKey });
       handle.armAt(4);
@@ -748,18 +748,18 @@ describe("ticket-01 bug reproductions (characterization — assert CURRENT buggy
       ).rejects.toMatchObject({ name: "AbortError" });
 
       // Precondition for the wedge: the orphan log object IS durable at
-      // seq 1, and `current.json.next_seq` did NOT advance past it.
+      // seq 1, and `current.json.tail_hint` did NOT advance past it.
       const seqsAfterCrash = await durableLogSeqs(storage, tablePrefix);
       expect(seqsAfterCrash).toContain(1);
       const afterCrash = await readCurrentJson(storage, currentJsonKey);
-      expect(afterCrash!.json.next_seq).toBe(1);
-      // The orphan at seq 1 sits AT next_seq, above log_seq_start, so GC
-      // (which only sweeps seq < log_seq_start ≤ next_seq) can never
+      expect(afterCrash!.json.tail_hint).toBe(1);
+      // The orphan at seq 1 sits AT tail_hint, above log_seq_start, so GC
+      // (which only sweeps seq < log_seq_start ≤ tail_hint) can never
       // reach it.
       expect(afterCrash!.json.log_seq_start).toBeLessThanOrEqual(1);
 
       // 3) A fresh writer (new session) attempts a normal commit. It
-      //    re-reads next_seq == 1, mints seq 1, collides with the orphan
+      //    re-reads tail_hint == 1, mints seq 1, collides with the orphan
       //    on the log PUT, refuses adoption ("foreign-session"), and
       //    retries to exhaustion. Use a tiny maxRetries + zero backoff so
       //    the test is fast AND deterministic (no real concurrency).
@@ -774,7 +774,7 @@ describe("ticket-01 bug reproductions (characterization — assert CURRENT buggy
       // wedges the collection permanently.
       // AFTER recovery (design unresolved): this would assert that the
       // commit RESOLVES — the writer clears the wedge and advances
-      // next_seq.
+      // tail_hint.
       let caught: unknown;
       try {
         await freshWriter.commit({
@@ -793,11 +793,11 @@ describe("ticket-01 bug reproductions (characterization — assert CURRENT buggy
       expect(caught).toMatchObject({ code: "Conflict" }); // ← INVERT: assert the commit succeeds.
 
       // ░░░ A future recovery ticket may invert these too ░░░
-      // CURRENT (buggy): next_seq is still pinned at 1 (the wedge never
-      // lets any writer advance it). AFTER recovery: next_seq advances
+      // CURRENT (buggy): tail_hint is still pinned at 1 (the wedge never
+      // lets any writer advance it). AFTER recovery: tail_hint advances
       // past the cleared wedge.
       const afterWedge = await readCurrentJson(storage, currentJsonKey);
-      expect(afterWedge!.json.next_seq).toBe(1); // ← INVERT: expect advance past 1.
+      expect(afterWedge!.json.tail_hint).toBe(1); // ← INVERT: expect advance past 1.
 
       // CURRENT (buggy): the wedge-probe row is NOT readable (its commit
       // never landed). AFTER recovery: the probe row reads back.

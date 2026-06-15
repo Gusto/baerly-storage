@@ -7,7 +7,7 @@
  *
  * Provisions a fresh `LocalFsStorage` collection with N rows, runs
  * `runInspect` programmatically, and asserts the JSON envelope's
- * row count / next_seq / log_seq_start. A second test injects an
+ * row count / tail_hint / log_seq_start. A second test injects an
  * orphan snapshot file and asserts `status: "error"` with the
  * orphan path enumerated in `errors`.
  */
@@ -31,7 +31,7 @@ const provision = async (storage: Storage): Promise<void> => {
   await createCurrentJson(storage, CURRENT_JSON_KEY, {
     schema_version: CURRENT_JSON_SCHEMA_VERSION,
     snapshot: null,
-    next_seq: 0,
+    tail_hint: 0,
     log_seq_start: 0,
     writer_fence: { epoch: 0, owner: "inspect-test", claimed_at: "" },
     tail_bytes: 0,
@@ -70,7 +70,7 @@ describe("baerly inspect", () => {
     await rm(root, { recursive: true, force: true });
   });
 
-  test("reports row count + next_seq + log_seq_start in JSON envelope", async () => {
+  test("reports row count + tail_hint + log_seq_start in JSON envelope", async () => {
     await provision(storage);
     const writer = new Writer({ storage, currentJsonKey: CURRENT_JSON_KEY });
     await writer.commit({
@@ -105,7 +105,7 @@ describe("baerly inspect", () => {
         command: string;
         currentJsonKey: string;
         materialised_rows: number;
-        next_seq: number;
+        tail_hint: number;
         log_seq_start: number;
         live_log_tail: number;
         snapshot: string | null;
@@ -118,7 +118,7 @@ describe("baerly inspect", () => {
     expect(envelope.result.command).toBe("inspect");
     expect(envelope.result.currentJsonKey).toBe(CURRENT_JSON_KEY);
     expect(envelope.result.materialised_rows).toBe(2);
-    expect(envelope.result.next_seq).toBe(2);
+    expect(envelope.result.tail_hint).toBe(2);
     expect(envelope.result.log_seq_start).toBe(0);
     expect(envelope.result.live_log_tail).toBe(2);
     expect(envelope.result.snapshot).toBe(null);

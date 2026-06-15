@@ -49,7 +49,7 @@ export interface LogEntry {
 
   /**
    * Collection name — the pgoutput RELATION analogue. Today this is
-   * the collection bound to the `current.json` whose `next_seq` minted
+   * the collection bound to the `current.json` whose `tail_hint` minted
    * the entry. The table API makes collections first-class.
    */
   collection: string;

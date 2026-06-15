@@ -19,7 +19,7 @@ import type { Storage, StoragePutOptions, StoragePutResult } from "../storage/ty
 const seedJson = (overrides: Partial<CurrentJson> = {}): CurrentJson => ({
   schema_version: CURRENT_JSON_SCHEMA_VERSION,
   snapshot: null,
-  next_seq: 0,
+  tail_hint: 0,
   log_seq_start: 0,
   writer_fence: { epoch: 0, owner: "test", claimed_at: "" },
   tail_bytes: 0,
@@ -108,7 +108,7 @@ describe("readCurrentJson", () => {
       await s.put("k", bytes);
       // Must succeed — unknown keys are silently ignored (Tier 1 forward-compat).
       const got = await readCurrentJson(s, "k");
-      expect(got?.json.next_seq).toBe(0);
+      expect(got?.json.tail_hint).toBe(0);
     },
   );
 });
@@ -123,7 +123,7 @@ describe("createCurrentJson", () => {
   plainTest("throws Conflict on existing key", async () => {
     const s = new MemoryStorage();
     await createCurrentJson(s, "k", seedJson());
-    await expect(createCurrentJson(s, "k", seedJson({ next_seq: 1 }))).rejects.toMatchObject({
+    await expect(createCurrentJson(s, "k", seedJson({ tail_hint: 1 }))).rejects.toMatchObject({
       code: "Conflict",
     });
   });
@@ -136,13 +136,13 @@ describe("casUpdateCurrentJson", () => {
     let observed: CurrentJson | undefined;
     await casUpdateCurrentJson(s, "k", (current) => {
       observed = current;
-      return { ...current, next_seq: current.next_seq + 1 };
+      return { ...current, tail_hint: current.tail_hint + 1 };
     });
     // structuredClone means after-the-fact mutation of `observed` cannot
     // affect what landed in storage.
-    observed!.next_seq = 999;
+    observed!.tail_hint = 999;
     const got = await readCurrentJson(s, "k");
-    expect(got!.json.next_seq).toBe(1);
+    expect(got!.json.tail_hint).toBe(1);
   });
 
   plainTest("throws Conflict deterministically when interleaved", async () => {
@@ -155,11 +155,11 @@ describe("casUpdateCurrentJson", () => {
     let mutator2Calls = 0;
     const p1 = casUpdateCurrentJson(s, "k", (c) => {
       mutator1Calls += 1;
-      return { ...c, next_seq: c.next_seq + 10 };
+      return { ...c, tail_hint: c.tail_hint + 10 };
     });
     const p2 = casUpdateCurrentJson(s, "k", (c) => {
       mutator2Calls += 1;
-      return { ...c, next_seq: c.next_seq + 20 };
+      return { ...c, tail_hint: c.tail_hint + 20 };
     });
     const results = await Promise.allSettled([p1, p2]);
     const failed = results.filter((r) => r.status === "rejected");
@@ -265,13 +265,13 @@ describe("claimWriter", () => {
 
       // A peer writes between claimWriter's provisional PUT and its
       // stamp PUT. The peer is a vanilla `casUpdateCurrentJson` that
-      // bumps `next_seq`; it reads the etag claimWriter just wrote,
+      // bumps `tail_hint`; it reads the etag claimWriter just wrote,
       // mutates the record, and writes — invalidating the etag
       // claimWriter is about to use for its stamp.
       const storage = new InterposingStorage(inner, async () => {
         await casUpdateCurrentJson(inner, "k", (c) => ({
           ...c,
-          next_seq: c.next_seq + 1,
+          tail_hint: c.tail_hint + 1,
         }));
       });
 
@@ -286,21 +286,21 @@ describe("claimWriter", () => {
       expect(after!.json.writer_fence.epoch).toBe(1);
       expect(after!.json.writer_fence.claimed_at).toBe("");
       // The peer's mutation also landed.
-      expect(after!.json.next_seq).toBe(1);
+      expect(after!.json.tail_hint).toBe(1);
     },
   );
 });
 
 describe("CurrentJson schema (PBT)", () => {
-  // Enforces the invariant `0 <= log_seq_start <= next_seq` at draw
-  // time by chaining a dependent integer arbitrary off `next_seq` so
+  // Enforces the invariant `0 <= log_seq_start <= tail_hint` at draw
+  // time by chaining a dependent integer arbitrary off `tail_hint` so
   // the runtime guard always accepts the produced record.
-  const validCurrentJson = fc.integer({ min: 0, max: 1_000_000 }).chain((next_seq) =>
+  const validCurrentJson = fc.integer({ min: 0, max: 1_000_000 }).chain((tail_hint) =>
     fc.record({
       schema_version: fc.constant(CURRENT_JSON_SCHEMA_VERSION),
       snapshot: fc.oneof(fc.constant(null), fc.string()),
-      next_seq: fc.constant(next_seq),
-      log_seq_start: fc.integer({ min: 0, max: next_seq }),
+      tail_hint: fc.constant(tail_hint),
+      log_seq_start: fc.integer({ min: 0, max: tail_hint }),
       writer_fence: fc.record({
         epoch: fc.integer({ min: 0, max: 1_000_000 }),
         owner: fc.string(),
@@ -344,16 +344,19 @@ describe("CurrentJson log_seq_start", () => {
   });
 
   plainTest("returns the explicit log_seq_start when present", () => {
-    const c: CurrentJson = seedJson({ next_seq: 5, log_seq_start: 3 });
+    const c: CurrentJson = seedJson({ tail_hint: 5, log_seq_start: 3 });
     expect(logSeqStartOf(c)).toBe(3);
   });
 
   plainTest("preserves the field across a CAS-advance via object spread", async () => {
     const s = new MemoryStorage();
-    await createCurrentJson(s, "k", seedJson({ next_seq: 5, log_seq_start: 2 }));
-    const updated = await casUpdateCurrentJson(s, "k", (c) => ({ ...c, next_seq: c.next_seq + 1 }));
+    await createCurrentJson(s, "k", seedJson({ tail_hint: 5, log_seq_start: 2 }));
+    const updated = await casUpdateCurrentJson(s, "k", (c) => ({
+      ...c,
+      tail_hint: c.tail_hint + 1,
+    }));
     expect(updated.json.log_seq_start).toBe(2);
-    expect(updated.json.next_seq).toBe(6);
+    expect(updated.json.tail_hint).toBe(6);
     // And the field round-trips through a fresh read too.
     const reread = await readCurrentJson(s, "k");
     expect(reread!.json.log_seq_start).toBe(2);
@@ -367,7 +370,7 @@ describe("CurrentJson log_seq_start", () => {
     const body = JSON.stringify({
       schema_version: CURRENT_JSON_SCHEMA_VERSION,
       snapshot: null,
-      next_seq: 0,
+      tail_hint: 0,
       writer_fence: { epoch: 0, owner: "", claimed_at: "" },
     });
     await s.put("k", new TextEncoder().encode(body));
@@ -377,12 +380,12 @@ describe("CurrentJson log_seq_start", () => {
     });
   });
 
-  plainTest("accepts an explicit log_seq_start equal to next_seq (fully compacted)", async () => {
+  plainTest("accepts an explicit log_seq_start equal to tail_hint (fully compacted)", async () => {
     const s = new MemoryStorage();
-    await createCurrentJson(s, "k", seedJson({ next_seq: 7, log_seq_start: 7 }));
+    await createCurrentJson(s, "k", seedJson({ tail_hint: 7, log_seq_start: 7 }));
     const got = await readCurrentJson(s, "k");
     expect(got!.json.log_seq_start).toBe(7);
-    expect(got!.json.next_seq).toBe(7);
+    expect(got!.json.tail_hint).toBe(7);
   });
 
   plainTest("rejects negative log_seq_start with InvalidResponse", async () => {
@@ -390,7 +393,7 @@ describe("CurrentJson log_seq_start", () => {
     const body = JSON.stringify({
       schema_version: CURRENT_JSON_SCHEMA_VERSION,
       snapshot: null,
-      next_seq: 0,
+      tail_hint: 0,
       writer_fence: { epoch: 0, owner: "", claimed_at: "" },
       log_seq_start: -1,
     });
@@ -406,7 +409,7 @@ describe("CurrentJson log_seq_start", () => {
     const body = JSON.stringify({
       schema_version: CURRENT_JSON_SCHEMA_VERSION,
       snapshot: null,
-      next_seq: 5,
+      tail_hint: 5,
       writer_fence: { epoch: 0, owner: "", claimed_at: "" },
       log_seq_start: 1.5,
     });
@@ -417,19 +420,19 @@ describe("CurrentJson log_seq_start", () => {
     });
   });
 
-  plainTest("rejects log_seq_start > next_seq with InvalidResponse", async () => {
+  plainTest("rejects log_seq_start > tail_hint with InvalidResponse", async () => {
     const s = new MemoryStorage();
     const body = JSON.stringify({
       schema_version: CURRENT_JSON_SCHEMA_VERSION,
       snapshot: null,
-      next_seq: 1,
+      tail_hint: 1,
       writer_fence: { epoch: 0, owner: "", claimed_at: "" },
       log_seq_start: 2,
     });
     await s.put("k", new TextEncoder().encode(body));
     await expect(readCurrentJson(s, "k")).rejects.toMatchObject({
       code: "InvalidResponse",
-      message: expect.stringMatching(/log_seq_start.*next_seq/),
+      message: expect.stringMatching(/log_seq_start.*tail_hint/),
     });
   });
 });
@@ -462,7 +465,7 @@ describe("CurrentJson schema v2 — tail_bytes / snapshot_bytes / snapshot_rows"
       const body = JSON.stringify({
         schema_version: 1,
         snapshot: null,
-        next_seq: 0,
+        tail_hint: 0,
         log_seq_start: 0,
         writer_fence: { epoch: 0, owner: "", claimed_at: "" },
       });
@@ -931,7 +934,7 @@ const putRaw = async (s: MemoryStorage, key: string, record: Record<string, unkn
 const rawSeed = (): Record<string, unknown> => ({
   schema_version: CURRENT_JSON_SCHEMA_VERSION,
   snapshot: null,
-  next_seq: 0,
+  tail_hint: 0,
   log_seq_start: 0,
   writer_fence: { epoch: 0, owner: "", claimed_at: "" },
   tail_bytes: 0,
@@ -1085,68 +1088,68 @@ describe("assertCurrentJson — snapshot field", () => {
   });
 });
 
-describe("assertCurrentJson — next_seq guard", () => {
+describe("assertCurrentJson — tail_hint guard", () => {
   // L453: three-operand compound:
-  //   typeof r["next_seq"] !== "number" || !Number.isInteger(r["next_seq"]) || r["next_seq"] < 0
+  //   typeof r["tail_hint"] !== "number" || !Number.isInteger(r["tail_hint"]) || r["tail_hint"] < 0
   // Kill the LogicalOperator (||→&&) mutants: non-number kills `typeof` leg;
   // non-integer kills `isInteger` leg; -1 kills `< 0` leg.
   // Kill ConditionalExpression→false: 0 must be accepted.
 
-  plainTest("rejects next_seq: '5' (string, not a number)", async () => {
+  plainTest("rejects tail_hint: '5' (string, not a number)", async () => {
     const s = new MemoryStorage();
-    await putRaw(s, "k", { ...rawSeed(), next_seq: "5" });
+    await putRaw(s, "k", { ...rawSeed(), tail_hint: "5" });
     await expect(readCurrentJson(s, "k")).rejects.toMatchObject({
       code: "InvalidResponse",
-      message: expect.stringMatching(/next_seq/),
+      message: expect.stringMatching(/tail_hint/),
     });
   });
 
-  plainTest("rejects next_seq: null (not a number)", async () => {
+  plainTest("rejects tail_hint: null (not a number)", async () => {
     const s = new MemoryStorage();
-    await putRaw(s, "k", { ...rawSeed(), next_seq: null });
+    await putRaw(s, "k", { ...rawSeed(), tail_hint: null });
     await expect(readCurrentJson(s, "k")).rejects.toMatchObject({
       code: "InvalidResponse",
-      message: expect.stringMatching(/next_seq/),
+      message: expect.stringMatching(/tail_hint/),
     });
   });
 
-  plainTest("rejects next_seq: 1.5 (non-integer)", async () => {
+  plainTest("rejects tail_hint: 1.5 (non-integer)", async () => {
     const s = new MemoryStorage();
-    await putRaw(s, "k", { ...rawSeed(), next_seq: 1.5 });
+    await putRaw(s, "k", { ...rawSeed(), tail_hint: 1.5 });
     await expect(readCurrentJson(s, "k")).rejects.toMatchObject({
       code: "InvalidResponse",
-      message: expect.stringMatching(/next_seq/),
+      message: expect.stringMatching(/tail_hint/),
     });
   });
 
-  plainTest("rejects next_seq: -1 (negative)", async () => {
+  plainTest("rejects tail_hint: -1 (negative)", async () => {
     const s = new MemoryStorage();
-    await putRaw(s, "k", { ...rawSeed(), next_seq: -1 });
+    await putRaw(s, "k", { ...rawSeed(), tail_hint: -1 });
     await expect(readCurrentJson(s, "k")).rejects.toMatchObject({
       code: "InvalidResponse",
-      message: expect.stringMatching(/next_seq/),
+      message: expect.stringMatching(/tail_hint/),
     });
   });
 
-  plainTest("accepts next_seq: 0 (boundary — zero is valid)", async () => {
+  plainTest("accepts tail_hint: 0 (boundary — zero is valid)", async () => {
     const s = new MemoryStorage();
     await putRaw(s, "k", rawSeed());
     const got = await readCurrentJson(s, "k");
     expect(got).not.toBeNull();
-    expect(got!.json.next_seq).toBe(0);
+    expect(got!.json.tail_hint).toBe(0);
   });
 
-  plainTest("accepts next_seq: 1 (positive integer)", async () => {
+  plainTest("accepts tail_hint: 1 (positive integer)", async () => {
     const s = new MemoryStorage();
-    await putRaw(s, "k", { ...rawSeed(), next_seq: 1, log_seq_start: 0 });
+    await putRaw(s, "k", { ...rawSeed(), tail_hint: 1, log_seq_start: 0 });
     const got = await readCurrentJson(s, "k");
     expect(got).not.toBeNull();
-    expect(got!.json.next_seq).toBe(1);
+    expect(got!.json.tail_hint).toBe(1);
   });
 });
 
 describe("assertCurrentJson — log_seq_start guard (type/integer/negative)", () => {
-  // L460: same three-operand structure as next_seq.
+  // L460: same three-operand structure as tail_hint.
 
   plainTest("rejects log_seq_start: 'abc' (string, not a number)", async () => {
     const s = new MemoryStorage();
@@ -1176,44 +1179,44 @@ describe("assertCurrentJson — log_seq_start guard (type/integer/negative)", ()
   });
 });
 
-describe("assertCurrentJson — log_seq_start <= next_seq guard", () => {
-  // L469: `r["log_seq_start"] > r["next_seq"]`
-  // Kill EqualityOperator (> → >=) mutant: log_seq_start === next_seq must pass.
+describe("assertCurrentJson — log_seq_start <= tail_hint guard", () => {
+  // L469: `r["log_seq_start"] > r["tail_hint"]`
+  // Kill EqualityOperator (> → >=) mutant: log_seq_start === tail_hint must pass.
   // Already tested in existing suite. Here we add the exact-equal case to
   // distinguish `>` from `>=`.
 
   plainTest(
-    "accepts log_seq_start === next_seq (fully compacted, >= would reject this)",
+    "accepts log_seq_start === tail_hint (fully compacted, >= would reject this)",
     async () => {
       const s = new MemoryStorage();
-      await putRaw(s, "k", { ...rawSeed(), next_seq: 3, log_seq_start: 3 });
+      await putRaw(s, "k", { ...rawSeed(), tail_hint: 3, log_seq_start: 3 });
       const got = await readCurrentJson(s, "k");
       expect(got!.json.log_seq_start).toBe(3);
-      expect(got!.json.next_seq).toBe(3);
+      expect(got!.json.tail_hint).toBe(3);
     },
   );
 
-  plainTest("rejects log_seq_start === next_seq + 1 (exceeds)", async () => {
+  plainTest("rejects log_seq_start === tail_hint + 1 (exceeds)", async () => {
     const s = new MemoryStorage();
-    await putRaw(s, "k", { ...rawSeed(), next_seq: 3, log_seq_start: 4 });
+    await putRaw(s, "k", { ...rawSeed(), tail_hint: 3, log_seq_start: 4 });
     await expect(readCurrentJson(s, "k")).rejects.toMatchObject({
       code: "InvalidResponse",
-      message: expect.stringMatching(/log_seq_start.*next_seq/),
+      message: expect.stringMatching(/log_seq_start.*tail_hint/),
     });
   });
 
   // L472: StringLiteral×2 — message must include the actual numeric values of both fields.
-  // When String(r["log_seq_start"]) or String(r["next_seq"]) → "", the values vanish.
+  // When String(r["log_seq_start"]) or String(r["tail_hint"]) → "", the values vanish.
   // Using distinct values (7, 3) that don't appear in field names kills both mutants.
   plainTest(
-    "error message for log_seq_start > next_seq includes actual numeric values",
+    "error message for log_seq_start > tail_hint includes actual numeric values",
     async () => {
       const s = new MemoryStorage();
-      await putRaw(s, "k", { ...rawSeed(), next_seq: 3, log_seq_start: 7 });
+      await putRaw(s, "k", { ...rawSeed(), tail_hint: 3, log_seq_start: 7 });
       const err = await readCurrentJson(s, "k").catch((error: unknown) => error);
       expect(err).toBeInstanceOf(BaerlyError);
       expect((err as BaerlyError).message).toMatch(/log_seq_start/);
-      expect((err as BaerlyError).message).toMatch(/next_seq/);
+      expect((err as BaerlyError).message).toMatch(/tail_hint/);
       // Actual numeric values present (kills L472 StringLiteral→"" on both String() calls)
       expect((err as BaerlyError).message).toContain("7");
       expect((err as BaerlyError).message).toContain("3");
@@ -1631,7 +1634,7 @@ describe("translateCasError — all three branches", () => {
       // Two concurrent updates: the second one's CAS will lose
       const etag1 = (await readCurrentJson(s, "k2"))!.etag;
       // Manually put something to invalidate etag1 by advancing past it
-      await casUpdateCurrentJson(s, "k2", (c) => ({ ...c, next_seq: 1 }));
+      await casUpdateCurrentJson(s, "k2", (c) => ({ ...c, tail_hint: 1 }));
       // Now try a manual put at the stale etag to force Conflict
       const err = await s
         .put("k2", new TextEncoder().encode(JSON.stringify(seedJson())), { ifMatch: etag1 })
@@ -1660,7 +1663,7 @@ describe("translateCasError — all three branches", () => {
         },
       };
       await inner.put("k3", new TextEncoder().encode(JSON.stringify(seedJson())));
-      const err = await casUpdateCurrentJson(throwing, "k3", (c) => ({ ...c, next_seq: 1 })).catch(
+      const err = await casUpdateCurrentJson(throwing, "k3", (c) => ({ ...c, tail_hint: 1 })).catch(
         (error: unknown) => error,
       );
       expect(err).toBeInstanceOf(BaerlyError);
@@ -1688,7 +1691,7 @@ describe("translateCasError — all three branches", () => {
         },
       };
       await inner.put("k4", new TextEncoder().encode(JSON.stringify(seedJson())));
-      const err = await casUpdateCurrentJson(throwing, "k4", (c) => ({ ...c, next_seq: 1 })).catch(
+      const err = await casUpdateCurrentJson(throwing, "k4", (c) => ({ ...c, tail_hint: 1 })).catch(
         (error: unknown) => error,
       );
       // Must be the exact same instance (pass-through, not wrapped)
@@ -1742,7 +1745,7 @@ describe("createCurrentJson + casUpdateCurrentJson — signal propagation", () =
       },
     };
     const controller = new AbortController();
-    await casUpdateCurrentJson(spy, "k", (c) => ({ ...c, next_seq: 1 }), {
+    await casUpdateCurrentJson(spy, "k", (c) => ({ ...c, tail_hint: 1 }), {
       signal: controller.signal,
     });
     expect(capturedOpts?.signal).toBe(controller.signal);
@@ -1751,8 +1754,8 @@ describe("createCurrentJson + casUpdateCurrentJson — signal propagation", () =
   plainTest("casUpdateCurrentJson succeeds without signal option", async () => {
     const s = new MemoryStorage();
     await createCurrentJson(s, "k", seedJson());
-    const r = await casUpdateCurrentJson(s, "k", (c) => ({ ...c, next_seq: 1 }));
-    expect(r.json.next_seq).toBe(1);
+    const r = await casUpdateCurrentJson(s, "k", (c) => ({ ...c, tail_hint: 1 }));
+    expect(r.json.tail_hint).toBe(1);
   });
 });
 
@@ -1837,7 +1840,7 @@ describe("claimWriter — signal propagation and lease_until forwarding", () => 
           if (getCallCount === 1) {
             // Advance inner so the etag changes, then return the result with the ORIGINAL
             // (stale) etag so claimWriter uses the old etag for its ifMatch.
-            await casUpdateCurrentJson(inner, k, (c) => ({ ...c, next_seq: c.next_seq + 1 }));
+            await casUpdateCurrentJson(inner, k, (c) => ({ ...c, tail_hint: c.tail_hint + 1 }));
             // Return the current content but with the stale etag so claimWriter uses staleEtag
             const current = await inner.get(k, o);
             if (current === null) {
@@ -1926,7 +1929,7 @@ describe("claimWriter — signal propagation and lease_until forwarding", () => 
     // Use an interposing storage that, after the first put, fires a conflicting write
     // to force the provisional PUT to lose.
     const storage = new InterposingStorage(inner, async () => {
-      await casUpdateCurrentJson(inner, "k", (c) => ({ ...c, next_seq: c.next_seq + 1 }));
+      await casUpdateCurrentJson(inner, "k", (c) => ({ ...c, tail_hint: c.tail_hint + 1 }));
     });
     const err = await claimWriter(storage, "k", "owner").catch((error: unknown) => error);
     expect(err).toBeInstanceOf(BaerlyError);
@@ -1940,7 +1943,7 @@ describe("claimWriter — signal propagation and lease_until forwarding", () => 
     const inner = new MemoryStorage();
     await createCurrentJson(inner, "k-stamp", seedJson());
     const storage = new InterposingStorage(inner, async () => {
-      await casUpdateCurrentJson(inner, "k-stamp", (c) => ({ ...c, next_seq: c.next_seq + 1 }));
+      await casUpdateCurrentJson(inner, "k-stamp", (c) => ({ ...c, tail_hint: c.tail_hint + 1 }));
     });
     const err = await claimWriter(storage, "k-stamp", "owner").catch((error: unknown) => error);
     expect((err as BaerlyError).code).toBe("Conflict");

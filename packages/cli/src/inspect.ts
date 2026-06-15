@@ -11,8 +11,8 @@
  *
  * Reports, per-collection:
  *   - currentJsonKey path.
- *   - schema_version, next_seq, log_seq_start (default 0).
- *   - live_log_tail (= next_seq - log_seq_start).
+ *   - schema_version, tail_hint, log_seq_start (default 0).
+ *   - live_log_tail (= tail_hint - log_seq_start).
  *   - snapshot key (or null).
  *   - snapshot_bytes / snapshot_rows (the fold-ceiling inputs C / E
  *     are compared against; see graduation.md).
@@ -29,7 +29,7 @@
  * Cost shape:
  *   1 GET current.json
  *   + 1 GET snapshot (if any)
- *   + N GETs log tail (= next_seq - log_seq_start)
+ *   + N GETs log tail (= tail_hint - log_seq_start)
  *   + K LISTs (one per declared index, when --config supplied)
  *   + 1 LIST snapshot/ prefix (orphan detection)
  *
@@ -104,7 +104,7 @@ const countListEntries = async (
 interface InspectResult {
   currentJsonKey: string;
   schema_version: number;
-  next_seq: number;
+  tail_hint: number;
   log_seq_start: number;
   live_log_tail: number;
   snapshot: string | null;
@@ -122,7 +122,7 @@ const renderText = (r: InspectResult, collection: string): string => {
   lines.push(`baerly inspect ${collection}`);
   lines.push(`  current.json:        ${r.currentJsonKey}`);
   lines.push(`  schema_version:      ${r.schema_version}`);
-  lines.push(`  next_seq:            ${r.next_seq}`);
+  lines.push(`  tail_hint:            ${r.tail_hint}`);
   lines.push(`  log_seq_start:       ${r.log_seq_start}`);
   lines.push(`  live_log_tail:       ${r.live_log_tail}`);
   lines.push(`  snapshot:            ${r.snapshot ?? "(none)"}`);
@@ -216,9 +216,9 @@ const bundle = defineBaerlySubcommand({
     const result: InspectResult = {
       currentJsonKey,
       schema_version: cur.schema_version,
-      next_seq: cur.next_seq,
+      tail_hint: cur.tail_hint,
       log_seq_start,
-      live_log_tail: cur.next_seq - log_seq_start,
+      live_log_tail: cur.tail_hint - log_seq_start,
       snapshot: cur.snapshot,
       snapshot_bytes: cur.snapshot_bytes,
       snapshot_rows: cur.snapshot_rows,

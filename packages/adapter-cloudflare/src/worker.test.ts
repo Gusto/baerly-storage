@@ -136,7 +136,7 @@ describe("baerlyWorker observability", () => {
     await createCurrentJson(storage, `app/t/tenant/${tenant}/manifests/c/current.json`, {
       schema_version: CURRENT_JSON_SCHEMA_VERSION,
       snapshot: null,
-      next_seq: 0,
+      tail_hint: 0,
       log_seq_start: 0,
       writer_fence: { epoch: 0, owner: "obs-write-test", claimed_at: "" },
       tail_bytes: 0,
@@ -189,7 +189,7 @@ describe("baerlyWorker observability", () => {
     await createCurrentJson(storage, `app/t/tenant/${tenant}/manifests/c/current.json`, {
       schema_version: CURRENT_JSON_SCHEMA_VERSION,
       snapshot: null,
-      next_seq: 0,
+      tail_hint: 0,
       log_seq_start: 0,
       writer_fence: { epoch: 0, owner: "obs-miss-test", claimed_at: "" },
       tail_bytes: 0,
@@ -262,7 +262,7 @@ describe("baerlyWorker observability", () => {
     await createCurrentJson(storage, `app/t/tenant/${tenant}/manifests/c/current.json`, {
       schema_version: CURRENT_JSON_SCHEMA_VERSION,
       snapshot: null,
-      next_seq: 0,
+      tail_hint: 0,
       log_seq_start: 0,
       writer_fence: { epoch: 0, owner: "obs-hit-test", claimed_at: "" },
       tail_bytes: 0,
@@ -422,7 +422,7 @@ describe("baerlyWorker config.auth synthesis", () => {
     await createCurrentJson(storage, `app/t/tenant/${tenant}/manifests/c/current.json`, {
       schema_version: CURRENT_JSON_SCHEMA_VERSION,
       snapshot: null,
-      next_seq: 0,
+      tail_hint: 0,
       log_seq_start: 0,
       writer_fence: { epoch: 0, owner: "auth-synth-test", claimed_at: "" },
       tail_bytes: 0,

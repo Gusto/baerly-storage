@@ -120,17 +120,17 @@ const bundle = defineBaerlySubcommand({
       //
       // CRITICAL: stale log entries from the old generation still
       // live on disk under `log/<seq>.json` paths. The writer's
-      // `If-None-Match: "*"` log PUT will 412 if we restart `next_seq`
+      // `If-None-Match: "*"` log PUT will 412 if we restart `tail_hint`
       // at 0 and collide with `log/0.json`. We instead advance
-      // `next_seq` and `log_seq_start` past the old data so new
+      // `tail_hint` and `log_seq_start` past the old data so new
       // commits land at fresh sequence numbers and the old log files
       // become unreferenced orphans (the compactor / GC sweep them on
       // the next maintenance pass).
-      const truncatedNext = head.json.next_seq;
+      const truncatedNext = head.json.tail_hint;
       const reseeded: CurrentJson = {
         schema_version: CURRENT_JSON_SCHEMA_VERSION,
         snapshot: null,
-        next_seq: truncatedNext,
+        tail_hint: truncatedNext,
         log_seq_start: truncatedNext,
         writer_fence: {
           epoch: head.json.writer_fence.epoch + 1,
@@ -156,11 +156,11 @@ const bundle = defineBaerlySubcommand({
         );
       }
     } else {
-      // Fresh target: seed `current.json` with `next_seq=0`.
+      // Fresh target: seed `current.json` with `tail_hint=0`.
       const seed: CurrentJson = {
         schema_version: CURRENT_JSON_SCHEMA_VERSION,
         snapshot: null,
-        next_seq: 0,
+        tail_hint: 0,
         log_seq_start: 0,
         writer_fence: { epoch: 0, owner: RESTORE_OWNER, claimed_at: "" },
         tail_bytes: 0,

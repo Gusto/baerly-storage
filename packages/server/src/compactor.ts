@@ -212,7 +212,7 @@ export const compact = async (
   const current = read.json;
   const baseEtag = read.etag;
   const logSeqStartBefore = logSeqStartOf(current);
-  const nextSeq = current.next_seq;
+  const nextSeq = current.tail_hint;
   const available = nextSeq - logSeqStartBefore;
   if (available < minToCompact) {
     return {
@@ -399,7 +399,7 @@ export const compact = async (
   const entriesFolded = foldEnd - logSeqStartBefore;
   const metrics = ctxMetrics();
   metrics.histogram("db.compact.entries_folded", entriesFolded, { collection: collectionName });
-  metrics.gauge("db.manifest.lag_window_depth", current.next_seq - foldEnd, {
+  metrics.gauge("db.manifest.lag_window_depth", current.tail_hint - foldEnd, {
     collection: collectionName,
   });
 

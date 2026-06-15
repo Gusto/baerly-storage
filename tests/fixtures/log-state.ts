@@ -37,7 +37,7 @@ import {
 /**
  * Build a `CurrentJson` with launch defaults. Every field is
  * overridable — pass the ones a given test cares about (commonly
- * `next_seq` / `log_seq_start` / `writer_fence.owner`) and inherit the
+ * `tail_hint` / `log_seq_start` / `writer_fence.owner`) and inherit the
  * rest.
  *
  * Defaults match a freshly-provisioned collection: no snapshot, an empty
@@ -47,7 +47,7 @@ import {
 export const logStateCurrentJson = (overrides: Partial<CurrentJson> = {}): CurrentJson => ({
   schema_version: CURRENT_JSON_SCHEMA_VERSION,
   snapshot: null,
-  next_seq: 0,
+  tail_hint: 0,
   log_seq_start: 0,
   writer_fence: { epoch: 0, owner: "test", claimed_at: "" },
   tail_bytes: 0,

@@ -52,7 +52,7 @@ const bootstrap = async (storage: MemoryStorage, key: string): Promise<void> => 
   await createCurrentJson(storage, key, {
     schema_version: CURRENT_JSON_SCHEMA_VERSION,
     snapshot: null,
-    next_seq: 0,
+    tail_hint: 0,
     log_seq_start: 0,
     writer_fence: { epoch: 0, owner: "maintenance-test", claimed_at: "" },
     tail_bytes: 0,
@@ -136,7 +136,7 @@ describe("runScheduledMaintenance", () => {
 
 describe("crossesGcBoundary", () => {
   test("floor-based crossing is batch-safe (a jump over a boundary still trips)", () => {
-    // A modulo test (`next_seq % interval === 0`) would MISS this jump
+    // A modulo test (`tail_hint % interval === 0`) would MISS this jump
     // from 3 to 9 with interval 4 — neither 3 nor 9 is a multiple of 4,
     // yet the [4,8] boundaries were crossed.
     expect(crossesGcBoundary(3, 9, 4)).toBe(true);
@@ -151,7 +151,7 @@ describe("shouldFireMaintenance", () => {
   const base = (over: Partial<CurrentJson>): CurrentJson => ({
     schema_version: CURRENT_JSON_SCHEMA_VERSION,
     snapshot: null,
-    next_seq: 0,
+    tail_hint: 0,
     log_seq_start: 0,
     writer_fence: { epoch: 0, owner: "t", claimed_at: "" },
     tail_bytes: 0,
@@ -161,18 +161,18 @@ describe("shouldFireMaintenance", () => {
   });
 
   test("fires on a crossed GC boundary even when ratio is cold", () => {
-    const cur = base({ next_seq: WRITE_TICK_GC_INTERVAL, tail_bytes: 0 });
+    const cur = base({ tail_hint: WRITE_TICK_GC_INTERVAL, tail_bytes: 0 });
     expect(shouldFireMaintenance(cur, 0, WRITE_TICK_GC_INTERVAL)).toBe(true);
   });
 
   test("fires when tail/snapshot ratio meets the target", () => {
     // snapshot floored to MIN_LIVE_BYTES; tail equal to it ⇒ ratio 1.0.
-    const cur = base({ next_seq: 1, tail_bytes: MAINTENANCE_MIN_LIVE_BYTES, snapshot_bytes: 0 });
+    const cur = base({ tail_hint: 1, tail_bytes: MAINTENANCE_MIN_LIVE_BYTES, snapshot_bytes: 0 });
     expect(shouldFireMaintenance(cur, 1, 999)).toBe(true);
   });
 
   test("does not fire when neither gate trips", () => {
-    const cur = base({ next_seq: 1, tail_bytes: 0, snapshot_bytes: 0 });
+    const cur = base({ tail_hint: 1, tail_bytes: 0, snapshot_bytes: 0 });
     expect(shouldFireMaintenance(cur, 1, 999)).toBe(false);
   });
 });
@@ -222,7 +222,7 @@ const seedLog = async (storage: Storage, key: string, coll: string, n: number): 
   await createCurrentJson(storage, key, {
     schema_version: CURRENT_JSON_SCHEMA_VERSION,
     snapshot: null,
-    next_seq: 0,
+    tail_hint: 0,
     log_seq_start: 0,
     writer_fence: { epoch: 0, owner: "bounded-test", claimed_at: "" },
     tail_bytes: 0,
@@ -306,7 +306,7 @@ describe("runBoundedMaintenance", () => {
     const before = await readSeqStart(inner, KEY);
     // Choose prevSeq/nextSeq so NO gc boundary is crossed (prevSeq===nextSeq).
     const cur = await readCurrentJson(inner, KEY);
-    const nextSeq = cur!.json.next_seq;
+    const nextSeq = cur!.json.tail_hint;
     const c = countingStorage(inner);
     await runBoundedMaintenance({
       storage: c.storage,
@@ -380,15 +380,15 @@ describe("runBoundedMaintenance", () => {
 
   test("a defer pass past the warn interval warns once AND stamps last_warned_seq", async () => {
     const inner = new MemoryStorage();
-    await seedLog(inner, KEY, COLL, 60); // next_seq = 60 (>= WARN_INTERVAL would be false…)
-    // …so force next_seq well past the interval boundary by stamping a
-    // current.json whose next_seq is large but last_warned_seq is absent.
+    await seedLog(inner, KEY, COLL, 60); // tail_hint = 60 (>= WARN_INTERVAL would be false…)
+    // …so force tail_hint well past the interval boundary by stamping a
+    // current.json whose tail_hint is large but last_warned_seq is absent.
     await casUpdateCurrentJson(inner, KEY, (cur) => ({
       ...cur,
       tail_bytes: MAINTENANCE_MIN_LIVE_BYTES,
       snapshot_bytes: 0,
       snapshot_rows: 1_000_000, // > MAINTENANCE_MAX_FOLD_ROWS ⇒ defer
-      next_seq: MAINTENANCE_WARN_INTERVAL_WRITES + 5,
+      tail_hint: MAINTENANCE_WARN_INTERVAL_WRITES + 5,
       log_seq_start: 0,
     }));
     const expectedNextSeq = MAINTENANCE_WARN_INTERVAL_WRITES + 5;
@@ -415,21 +415,21 @@ describe("runBoundedMaintenance", () => {
     } finally {
       warnSpy.mockRestore();
     }
-    // The warn stamped last_warned_seq = next_seq via a separate CAS.
+    // The warn stamped last_warned_seq = tail_hint via a separate CAS.
     await expect(readLastWarnedSeq(inner, KEY)).resolves.toBe(expectedNextSeq);
   });
 
   test("a defer pass WITHIN the warn interval does NOT warn — across FRESH runner calls", async () => {
     const inner = new MemoryStorage();
     await seedLog(inner, KEY, COLL, 60);
-    // last_warned_seq sits just below next_seq ⇒ inside the interval.
+    // last_warned_seq sits just below tail_hint ⇒ inside the interval.
     const nextSeq = MAINTENANCE_WARN_INTERVAL_WRITES + 5;
     await casUpdateCurrentJson(inner, KEY, (cur) => ({
       ...cur,
       tail_bytes: MAINTENANCE_MIN_LIVE_BYTES,
       snapshot_bytes: 0,
       snapshot_rows: 1_000_000, // defer
-      next_seq: nextSeq,
+      tail_hint: nextSeq,
       log_seq_start: 0,
       last_warned_seq: nextSeq - 1, // 1 < MAINTENANCE_WARN_INTERVAL_WRITES
     }));
@@ -450,7 +450,7 @@ describe("runBoundedMaintenance", () => {
       });
       // Still deferred both times…
       expect(counterTotal(recorder, "db.compaction.deferred_total")).toBeGreaterThan(0);
-      // …but no warn, because next_seq - last_warned_seq < interval.
+      // …but no warn, because tail_hint - last_warned_seq < interval.
       expect(warnSpy).not.toHaveBeenCalled();
     } finally {
       warnSpy.mockRestore();
@@ -462,17 +462,17 @@ describe("runBoundedMaintenance", () => {
   test("a folding (non-deferring) pass NEVER warns", async () => {
     const inner = new MemoryStorage();
     await seedLog(inner, KEY, COLL, 60);
-    // gate1 trips and snapshot is tiny ⇒ fold-viable. Push next_seq well
+    // gate1 trips and snapshot is tiny ⇒ fold-viable. Push tail_hint well
     // past the warn interval so a stray warn would be visible.
     await casUpdateCurrentJson(inner, KEY, (cur) => ({
       ...cur,
       tail_bytes: MAINTENANCE_MIN_LIVE_BYTES,
       snapshot_bytes: 0,
       snapshot_rows: 0,
-      next_seq: MAINTENANCE_WARN_INTERVAL_WRITES + 5,
+      tail_hint: MAINTENANCE_WARN_INTERVAL_WRITES + 5,
     }));
     const cur = await readCurrentJson(inner, KEY);
-    const nextSeq = cur!.json.next_seq;
+    const nextSeq = cur!.json.tail_hint;
 
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
@@ -500,7 +500,7 @@ describe("runBoundedMaintenance", () => {
     });
     const before = await readSeqStart(inner, KEY);
     const cur = await readCurrentJson(inner, KEY);
-    const nextSeq = cur!.json.next_seq;
+    const nextSeq = cur!.json.tail_hint;
     await runBoundedMaintenance({
       storage: inner,
       currentJsonKey: KEY,
@@ -520,7 +520,7 @@ describe("runBoundedMaintenance", () => {
       snapshot_rows: 0,
     });
     const cur = await readCurrentJson(inner, KEY);
-    const nextSeq = cur!.json.next_seq;
+    const nextSeq = cur!.json.tail_hint;
     // Storage that fails the current.json CAS PUT exactly once (the
     // compactor's step-7 advance), forcing skippedReason: "cas-lost".
     let failedOnce = false;
@@ -591,7 +591,7 @@ describe("runBoundedMaintenance", () => {
     const before = await readSeqStart(inner, KEY);
     // prevSeq=0 → nextSeq crosses the HARD boundary (interval * GUARD).
     // Pick a nextSeq that crosses the hard boundary: any nextSeq >=
-    // interval*GUARD with prevSeq 0 does. The seeded next_seq is 60,
+    // interval*GUARD with prevSeq 0 does. The seeded tail_hint is 60,
     // and interval*GUARD = 16, so prevSeq 0 → 60 crosses it.
     await runBoundedMaintenance(
       {

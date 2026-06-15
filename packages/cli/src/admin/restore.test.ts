@@ -6,7 +6,7 @@
  * CLI test for `baerly admin restore`.
  *
  * Streams canonical NDJSON via the programmatic `streams.stdin` hook
- * on `runRestore`, asserts the post-state `next_seq` equals the row
+ * on `runRestore`, asserts the post-state `tail_hint` equals the row
  * count, and exercises the `--force` / pre-existing / malformed-line
  * branches.
  */
@@ -61,7 +61,7 @@ describe("baerly admin restore", () => {
     await rm(root, { recursive: true, force: true });
   });
 
-  test("seeds a fresh bucket and lands next_seq === rowCount", async () => {
+  test("seeds a fresh bucket and lands tail_hint === rowCount", async () => {
     await writeFile(stdinPath, CANONICAL_NDJSON, "utf8");
     const exitCode = await runRestore(
       [`--bucket=file://${root}`, `--app=${APP}`, `--tenant=${TENANT}`, `--collection=${COLL}`],
@@ -70,7 +70,7 @@ describe("baerly admin restore", () => {
     expect(exitCode).toBe(0);
     const head = await readCurrentJson(storage, CURRENT_JSON_KEY);
     expect(head).not.toBeNull();
-    expect(head?.json.next_seq).toBe(2);
+    expect(head?.json.tail_hint).toBe(2);
   });
 
   test("re-running without --force on a populated target → Conflict (exit 3)", async () => {
@@ -96,7 +96,7 @@ describe("baerly admin restore", () => {
     expect(first).toBe(0);
 
     // Second run: feed three rows so we can confirm the seed was
-    // reset (next_seq = 3, not 5 = 2 + 3).
+    // reset (tail_hint = 3, not 5 = 2 + 3).
     const secondNdjson = `{"_id":"u-1","x":1}\n{"_id":"u-2","x":2}\n{"_id":"u-3","x":3}\n`;
     await writeFile(stdinPath, secondNdjson, "utf8");
     const second = await runRestore(
@@ -111,10 +111,10 @@ describe("baerly admin restore", () => {
     );
     expect(second).toBe(0);
     const head = await readCurrentJson(storage, CURRENT_JSON_KEY);
-    // --force advances next_seq past the old log entries (stale log
+    // --force advances tail_hint past the old log entries (stale log
     // files are unreferenced and reclaimed on the next GC pass);
-    // the second run's 3 inserts add 3 more, giving next_seq = 5.
-    expect(head?.json.next_seq).toBe(5);
+    // the second run's 3 inserts add 3 more, giving tail_hint = 5.
+    expect(head?.json.tail_hint).toBe(5);
     // log_seq_start tracks the truncation point — every entry from
     // the old generation is past the live tail.
     expect(head?.json.log_seq_start).toBe(2);
@@ -139,7 +139,7 @@ describe("baerly admin restore", () => {
     }
     expect(exitCode).toBe(2);
     const head = await readCurrentJson(storage, CURRENT_JSON_KEY);
-    expect(head?.json.next_seq).toBe(0);
+    expect(head?.json.tail_hint).toBe(0);
   });
 
   test("--json emits the success envelope on stdout", async () => {
@@ -177,7 +177,7 @@ describe("baerly admin restore", () => {
     );
     expect(exitCode).toBe(0);
     const head = await readCurrentJson(storage, CURRENT_JSON_KEY);
-    expect(head?.json.next_seq).toBe(2);
+    expect(head?.json.tail_hint).toBe(2);
   });
 
   test("traversal-shaped _id rejected by Writer.commit → InvalidConfig (exit 1)", async () => {
@@ -198,7 +198,7 @@ describe("baerly admin restore", () => {
     }
     expect(exitCode).toBe(1);
     const head = await readCurrentJson(storage, CURRENT_JSON_KEY);
-    expect(head?.json.next_seq).toBe(0);
+    expect(head?.json.tail_hint).toBe(0);
   });
 
   test("control-char _id rejected by Writer.commit → InvalidConfig (exit 1)", async () => {
@@ -220,7 +220,7 @@ describe("baerly admin restore", () => {
     }
     expect(exitCode).toBe(1);
     const head = await readCurrentJson(storage, CURRENT_JSON_KEY);
-    expect(head?.json.next_seq).toBe(0);
+    expect(head?.json.tail_hint).toBe(0);
   });
 
   test("traversal-shaped --collection rejected at the CLI chokepoint → InvalidConfig (exit 1), writes nothing", async () => {

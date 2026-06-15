@@ -20,7 +20,7 @@ const provision = async (storage: MemoryStorage, tenant: string, table: string):
   await createCurrentJson(storage, `app/t/tenant/${tenant}/manifests/${table}/current.json`, {
     schema_version: CURRENT_JSON_SCHEMA_VERSION,
     snapshot: null,
-    next_seq: 0,
+    tail_hint: 0,
     log_seq_start: 0,
     writer_fence: { epoch: 0, owner: "app-test", claimed_at: "" },
     tail_bytes: 0,

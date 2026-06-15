@@ -67,7 +67,7 @@ const COLLECTION = "c";
 const seedCurrent = (): CurrentJson => ({
   schema_version: CURRENT_JSON_SCHEMA_VERSION,
   snapshot: null,
-  next_seq: 0,
+  tail_hint: 0,
   log_seq_start: 0,
   writer_fence: { epoch: 0, owner: "adversarial-test", claimed_at: "" },
   tail_bytes: 0,
@@ -272,7 +272,7 @@ describe("adversarial replay against self-session log-conflict adoption", () => 
   test("attack 5 — adversary writes a future-seq entry (seq=5) while writer commits at seq=0: writer's seq-0 PUT succeeds, future-seq is unreferenced orphan", async () => {
     // The adversary squatting at seq=5 doesn't intersect the
     // writer's path at all — the writer mints seq=0 from a fresh
-    // current.json (next_seq=0). The commit succeeds; the
+    // current.json (tail_hint=0). The commit succeeds; the
     // future-seq entry is an orphan the GC sweep would eventually
     // collect. Documents the asymmetry: adoption is keyed to the
     // seq the writer is ABOUT to write, not to any seq present

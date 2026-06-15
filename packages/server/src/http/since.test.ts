@@ -221,7 +221,7 @@ describe("listEventsSince — pre-snapshot cursor → SchemaError", () => {
     expect(seed.events).toHaveLength(1);
     const cursor = seed.events[0]!.lsn;
 
-    // Bump current.json.log_seq_start to current.next_seq to mark
+    // Bump current.json.log_seq_start to current.tail_hint to mark
     // the entry as "folded" (the test takes the shortcut; the
     // production compactor goes through casUpdateCurrentJson). The
     // physical `log/<seq>.json` file is left in place — the handler
@@ -233,7 +233,7 @@ describe("listEventsSince — pre-snapshot cursor → SchemaError", () => {
     const parsed = JSON.parse(new TextDecoder().decode(cj!.body)) as CurrentJson;
     const mutated: CurrentJson = {
       ...parsed,
-      log_seq_start: parsed.next_seq,
+      log_seq_start: parsed.tail_hint,
     };
     await storage.put(cjKey, new TextEncoder().encode(JSON.stringify(mutated)));
 

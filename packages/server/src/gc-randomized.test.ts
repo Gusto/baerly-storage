@@ -51,7 +51,7 @@ const reconstructView = async (storage: MemoryStorage): Promise<Record<string, D
     storage,
     LOG_PREFIX,
     logSeqStartOf(read.json),
-    read.json.next_seq,
+    read.json.tail_hint,
   );
   foldLogEntriesOnto(base, tail, { collection: COLLECTION });
   return Object.fromEntries(base);
@@ -104,7 +104,7 @@ describe("runGc — never deletes a live object", () => {
       await createCurrentJson(storage, CURRENT_JSON_KEY, {
         schema_version: CURRENT_JSON_SCHEMA_VERSION,
         snapshot: null,
-        next_seq: 0,
+        tail_hint: 0,
         log_seq_start: 0,
         writer_fence: { epoch: 0, owner: "test", claimed_at: "" },
         tail_bytes: 0,
@@ -145,7 +145,7 @@ describe("runGc — never deletes a live object", () => {
         throw new Error("current.json missing before sweep");
       }
       const logSeqStart = logSeqStartOf(read.json);
-      const nextSeq = read.json.next_seq;
+      const nextSeq = read.json.tail_hint;
       const liveSnapshotKey = read.json.snapshot;
       const viewBefore = await reconstructView(storage);
 

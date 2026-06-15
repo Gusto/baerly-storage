@@ -233,7 +233,7 @@ export const loadMaterialisedView = async (params: {
     storage,
     collectionPrefix,
     read.json.log_seq_start ?? 0,
-    read.json.next_seq,
+    read.json.tail_hint,
   );
   for (const entry of entries) {
     if (entry.collection !== collection) {

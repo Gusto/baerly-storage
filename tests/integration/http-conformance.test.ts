@@ -291,7 +291,7 @@ for (const variant of variants) {
         await createCurrentJson(storage!, key, {
           schema_version: CURRENT_JSON_SCHEMA_VERSION,
           snapshot: null,
-          next_seq: 0,
+          tail_hint: 0,
           log_seq_start: 0,
           writer_fence: { epoch: 0, owner: "http-conformance-test", claimed_at: "" },
           tail_bytes: 0,
@@ -305,14 +305,14 @@ for (const variant of variants) {
         // timeout. The Workerd-side variant pins this `false` because
         // `baerlyWorker` does not thread the override through.
         supportsSinceTimeoutOverride: true,
-        // Pre-seed next_seq and log_seq_start to `nextSeq` so the
+        // Pre-seed tail_hint and log_seq_start to `nextSeq` so the
         // overflow regression test only needs ONE insert instead of
         // 1025 sequential HTTP round-trips. Without this the local-fs
         // backend's per-write maintenance overhead (~80ms/write) would
         // push the test over its 30s budget.
         provisionTableAtSeq: async (table, nextSeq) => {
           // Synthetic current.json: snapshot is null, log_seq_start=nextSeq,
-          // so readers walk [nextSeq, next_seq) and treat 0..nextSeq-1 as
+          // so readers walk [nextSeq, tail_hint) and treat 0..nextSeq-1 as
           // already truncated/folded away — not snapshotted. This state is
           // deliberately outside what the writer emits (log_seq_start > 0
           // normally implies snapshot !== null), used only to fast-forward
@@ -321,7 +321,7 @@ for (const variant of variants) {
           await createCurrentJson(storage!, key, {
             schema_version: CURRENT_JSON_SCHEMA_VERSION,
             snapshot: null,
-            next_seq: nextSeq,
+            tail_hint: nextSeq,
             log_seq_start: nextSeq,
             writer_fence: { epoch: 0, owner: "http-conformance-test", claimed_at: "" },
             tail_bytes: 0,
@@ -374,7 +374,7 @@ describe("HTTP boundary — schema validation (ticket 70)", () => {
       {
         schema_version: CURRENT_JSON_SCHEMA_VERSION,
         snapshot: null,
-        next_seq: 0,
+        tail_hint: 0,
         log_seq_start: 0,
         writer_fence: { epoch: 0, owner: "http-schema-test", claimed_at: "" },
         tail_bytes: 0,

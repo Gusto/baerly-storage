@@ -48,9 +48,9 @@ const S5_LOG_PREFIX = "bench/tenant-A/collection-compact";
 const S5_CURRENT_KEY = `${S5_LOG_PREFIX}/current.json`;
 const S5_TARGET_OPS_PER_SEC = 50;
 const SEED: CurrentJson = {
-  schema_version: 2,
+  schema_version: 3,
   snapshot: null,
-  next_seq: 0,
+  tail_hint: 0,
   log_seq_start: 0,
   writer_fence: { epoch: 0, owner: "bench", claimed_at: "" },
   tail_bytes: 0,
@@ -148,7 +148,7 @@ async function s1Writer(
       try {
         await casUpdateCurrentJson(storage, CURRENT_KEY, (cur) => ({
           ...cur,
-          next_seq: cur.next_seq + 1,
+          tail_hint: cur.tail_hint + 1,
         }));
         metrics.recordCommit(performance.now() - t0, attempts);
         break;
@@ -311,7 +311,7 @@ async function runS2Multi(cell: SweepCell): Promise<RunResult> {
         try {
           await casUpdateCurrentJson(storage, key, (cur) => ({
             ...cur,
-            next_seq: cur.next_seq + 1,
+            tail_hint: cur.tail_hint + 1,
           }));
           metrics.recordCommit(performance.now() - tCommit, attempts);
           break;
@@ -565,12 +565,12 @@ async function s5Writer(storage: CountingStorage, signal: AbortSignal): Promise<
     const t0 = performance.now();
     counters.writes_attempted++;
     try {
-      // Read current.json to get next_seq.
+      // Read current.json to get tail_hint.
       const read = await readCurrentJson(storage, S5_CURRENT_KEY);
       if (read === null) {
         throw new BaerlyError("InvalidResponse", "current.json missing during S5 run");
       }
-      const seqCursor = read.json.next_seq;
+      const seqCursor = read.json.tail_hint;
 
       // Step 1. PUT content.
       const body = new TextEncoder().encode(
@@ -608,19 +608,19 @@ async function s5Writer(storage: CountingStorage, signal: AbortSignal): Promise<
       // Step 3. CAS-advance current.json.
       await casUpdateCurrentJson(storage, S5_CURRENT_KEY, (cur) => ({
         ...cur,
-        next_seq: cur.next_seq + 1,
+        tail_hint: cur.tail_hint + 1,
       }));
       counters.writes_committed++;
 
       // Step 4 (the safety check): read back a log entry inside
-      // [log_seq_start, next_seq). If we get a 404, the compactor + GC
+      // [log_seq_start, tail_hint). If we get a 404, the compactor + GC
       // raced us. seqCursor was the entry we just CAS'd; pick a seq
       // halfway into the visible range so the check exercises live log
       // tail, not the just-written entry.
       const after = await readCurrentJson(storage, S5_CURRENT_KEY);
-      if (after !== null && after.json.next_seq - (after.json.log_seq_start ?? 0) >= 2) {
+      if (after !== null && after.json.tail_hint - (after.json.log_seq_start ?? 0) >= 2) {
         const start = after.json.log_seq_start ?? 0;
-        const checkSeq = start + Math.floor((after.json.next_seq - start) / 2);
+        const checkSeq = start + Math.floor((after.json.tail_hint - start) / 2);
         const checkKey = logObjectKey(S5_LOG_PREFIX, checkSeq);
         const got = await storage.get(checkKey);
         if (got === null) {

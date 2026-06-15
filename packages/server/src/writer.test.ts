@@ -79,7 +79,7 @@ describe("Writer", () => {
     resetMemoryStorage();
   });
 
-  test("single-writer happy path: one commit advances next_seq by 1", async () => {
+  test("single-writer happy path: one commit advances tail_hint by 1", async () => {
     const storage = new MemoryStorage();
     await createCurrentJson(storage, CURRENT_KEY, seedCurrent());
     const writer = new Writer({ storage, currentJsonKey: CURRENT_KEY });
@@ -104,7 +104,7 @@ describe("Writer", () => {
     const stored = await storage.get(CURRENT_KEY);
     expect(stored).not.toBeNull();
     const persisted = decodeJson<CurrentJson>(stored!.body);
-    expect(persisted.next_seq).toBe(1);
+    expect(persisted.tail_hint).toBe(1);
     expect(persisted.writer_fence.epoch).toBe(0);
 
     const logEntry = await storage.get(`app/test/tenant/t/manifests/${COLL}/log/0.json`);
@@ -161,7 +161,7 @@ describe("Writer", () => {
     const persisted = decodeJson<CurrentJson>(stored!.body);
     expect(persisted.schema_version).toBe(CURRENT_JSON_SCHEMA_VERSION);
     expect(persisted.snapshot).toBeNull();
-    expect(persisted.next_seq).toBe(1);
+    expect(persisted.tail_hint).toBe(1);
     expect(persisted.log_seq_start).toBe(0);
     expect(persisted.writer_fence.epoch).toBe(0);
     expect(persisted.writer_fence.owner).toBe("");
@@ -214,7 +214,7 @@ describe("Writer", () => {
     const seqs = new Set([a.entry.seq, b.entry.seq]);
     expect(seqs).toEqual(new Set([0, 1]));
     const persisted = decodeJson<CurrentJson>((await storage.get(CURRENT_KEY))!.body);
-    expect(persisted.next_seq).toBe(2);
+    expect(persisted.tail_hint).toBe(2);
   });
 
   test("CAS conflict on first attempt retries and succeeds on attempt 2", async () => {
@@ -240,7 +240,7 @@ describe("Writer", () => {
 
     const stored = await storage.get(CURRENT_KEY);
     const persisted = decodeJson<CurrentJson>(stored!.body);
-    expect(persisted.next_seq).toBe(1);
+    expect(persisted.tail_hint).toBe(1);
   });
 
   test("retries exhausted: throws BaerlyError code='Conflict' after maxRetries", async () => {
@@ -272,11 +272,11 @@ describe("Writer", () => {
 
     const stored = await storage.get(CURRENT_KEY);
     const persisted = decodeJson<CurrentJson>(stored!.body);
-    expect(persisted.next_seq).toBe(0);
+    expect(persisted.tail_hint).toBe(0);
   });
 
-  test("commit() walks [log_seq_start, next_seq) — entries below the bound are NOT GET-required", async () => {
-    // Bootstrap with next_seq=3 and log_seq_start=2, then plant ONLY
+  test("commit() walks [log_seq_start, tail_hint) — entries below the bound are NOT GET-required", async () => {
+    // Bootstrap with tail_hint=3 and log_seq_start=2, then plant ONLY
     // log/2.json on the bucket. The writer must not GET log/0.json or
     // log/1.json (which don't exist); if it did, `#walkLog` would throw
     // `Internal` for "missing log entry, protocol invariant violation".
@@ -284,7 +284,7 @@ describe("Writer", () => {
     await createCurrentJson(
       storage,
       CURRENT_KEY,
-      logStateCurrentJson({ next_seq: 3, log_seq_start: 2 }),
+      logStateCurrentJson({ tail_hint: 3, log_seq_start: 2 }),
     );
     const manifestPrefix = `app/test/tenant/t/manifests/${COLL}`;
     await seedLogEntry(storage, manifestPrefix, 2, {
@@ -297,7 +297,7 @@ describe("Writer", () => {
     });
 
     // Opt in to the integrity walk: this test's whole point is to assert the
-    // walk's range is `[log_seq_start, next_seq)`, not `[0, next_seq)`. The
+    // walk's range is `[log_seq_start, tail_hint)`, not `[0, tail_hint)`. The
     // walk is gated off by default in production (it's purely observational
     // — see `verifyLogIntegrityOnCommit` JSDoc); turning it on here keeps
     // the test exercising the invariant it claims to test.
@@ -319,11 +319,11 @@ describe("Writer", () => {
     // log_seq_start MUST be preserved across the CAS-advance.
     const stored = await storage.get(CURRENT_KEY);
     const persisted = decodeJson<CurrentJson>(stored!.body);
-    expect(persisted.next_seq).toBe(4);
+    expect(persisted.tail_hint).toBe(4);
     expect(persisted.log_seq_start).toBe(2);
   });
 
-  test("two concurrent writers: both succeed and next_seq advances by 2", async () => {
+  test("two concurrent writers: both succeed and tail_hint advances by 2", async () => {
     const storage = getOrCreateMemoryStorageForBucket(BUCKET);
     await createCurrentJson(storage, CURRENT_KEY, seedCurrent());
 
@@ -361,7 +361,7 @@ describe("Writer", () => {
 
     const stored = await storage.get(CURRENT_KEY);
     const persisted = decodeJson<CurrentJson>(stored!.body);
-    expect(persisted.next_seq).toBe(2);
+    expect(persisted.tail_hint).toBe(2);
 
     // Both log entries persisted, no gaps.
     const logPrefix = `app/test/tenant/t/manifests/${COLL}/log`;
@@ -876,7 +876,7 @@ describe("Writer — write-tick maintenance dispatch", () => {
     const expectedBytes = encodeJsonBytes(result.entry).byteLength;
     const after = await persisted(storage);
     expect(after.tail_bytes).toBe(expectedBytes);
-    expect(after.next_seq).toBe(1);
+    expect(after.tail_hint).toBe(1);
   });
 
   test("(1b) tail_bytes accumulates across multiple commits", async () => {
@@ -894,14 +894,14 @@ describe("Writer — write-tick maintenance dispatch", () => {
 
   test("(2) a single commit DISPATCHES runBoundedMaintenance when the fold ratio (Gate 1) trips", async () => {
     // Seed so the ratio `tail_bytes / max(snapshot_bytes, MIN_LIVE) >= 1`
-    // trips on a NON-boundary write (prevSeq 1 → next_seq 2 with
+    // trips on a NON-boundary write (prevSeq 1 → tail_hint 2 with
     // interval 4 crosses no boundary). With snapshot_bytes 0 the
     // denominator floors to MAINTENANCE_MIN_LIVE_BYTES, so tail_bytes at
     // the threshold trips the ratio. THE blocking-bug regression: a
     // ratio-tripping write must dispatch maintenance.
     const storage = new MemoryStorage();
     await seedWith(storage, {
-      next_seq: 1,
+      tail_hint: 1,
       tail_bytes: MAINTENANCE_MIN_LIVE_BYTES,
       snapshot_bytes: 0,
     });
@@ -922,7 +922,7 @@ describe("Writer — write-tick maintenance dispatch", () => {
     const storage = new InstrumentedStorage();
     await createCurrentJson(storage, CURRENT_KEY, {
       ...seedCurrent(),
-      next_seq: 1,
+      tail_hint: 1,
       tail_bytes: MAINTENANCE_MIN_LIVE_BYTES,
       snapshot_bytes: 0,
     });
@@ -943,13 +943,13 @@ describe("Writer — write-tick maintenance dispatch", () => {
   });
 
   test("(5) a below-Gate-1 commit that CROSSES a GC-cadence boundary still dispatches", async () => {
-    // prevSeq 3 → next_seq 4 with interval 4 crosses the boundary
+    // prevSeq 3 → tail_hint 4 with interval 4 crosses the boundary
     // (floor(3/4)=0 ≠ floor(4/4)=1). Ratio is well below 1 (tiny tail,
     // huge snapshot), so the dispatch is driven purely by GC cadence —
     // proving GC isn't re-coupled to the fold threshold.
     const storage = new MemoryStorage();
     await seedWith(storage, {
-      next_seq: 3,
+      tail_hint: 3,
       tail_bytes: 10,
       snapshot_bytes: 10 * MAINTENANCE_MIN_LIVE_BYTES,
     });
@@ -961,16 +961,16 @@ describe("Writer — write-tick maintenance dispatch", () => {
     );
 
     const after5 = await persisted(storage);
-    expect(after5.next_seq).toBe(4);
+    expect(after5.tail_hint).toBe(4);
     expect(calls()).toBe(1);
   });
 
   test("(6) a below-Gate-1 commit that does NOT cross a boundary dispatches ZERO times", async () => {
-    // prevSeq 0 → next_seq 1, interval 4: floor(0/4)=0 = floor(1/4)=0, no
+    // prevSeq 0 → tail_hint 1, interval 4: floor(0/4)=0 = floor(1/4)=0, no
     // boundary. Ratio far below 1. Nothing fires.
     const storage = new MemoryStorage();
     await seedWith(storage, {
-      next_seq: 0,
+      tail_hint: 0,
       tail_bytes: 10,
       snapshot_bytes: 10 * MAINTENANCE_MIN_LIVE_BYTES,
     });
@@ -982,20 +982,20 @@ describe("Writer — write-tick maintenance dispatch", () => {
     );
 
     const after6 = await persisted(storage);
-    expect(after6.next_seq).toBe(1);
+    expect(after6.tail_hint).toBe(1);
     expect(calls()).toBe(0);
   });
 
   test("(7) sequential single commits crossing a gcInterval boundary dispatch on the boundary", async () => {
-    // interval 4, prevSeq 3. Each commit advances next_seq by 1, so the
-    // commit landing at next_seq 4 crosses the boundary (floor(3/4)=0 ≠
+    // interval 4, prevSeq 3. Each commit advances tail_hint by 1, so the
+    // commit landing at tail_hint 4 crosses the boundary (floor(3/4)=0 ≠
     // floor(4/4)=1) and dispatches; the commits landing at 5 and 6 do
     // not. The floor-based crossesGcBoundary is what pins the crossing —
-    // a naive `next_seq % interval === 0` endpoint test would behave the
+    // a naive `tail_hint % interval === 0` endpoint test would behave the
     // same here at N=1, but the floor form stays correct for any step.
     const storage = new MemoryStorage();
     await seedWith(storage, {
-      next_seq: 3,
+      tail_hint: 3,
       tail_bytes: 10,
       snapshot_bytes: 10 * MAINTENANCE_MIN_LIVE_BYTES,
     });
@@ -1009,9 +1009,9 @@ describe("Writer — write-tick maintenance dispatch", () => {
     });
 
     const after7 = await persisted(storage);
-    expect(after7.next_seq).toBe(6);
+    expect(after7.tail_hint).toBe(6);
     expect(WRITE_TICK_GC_INTERVAL).toBe(4); // pins the boundary arithmetic above
-    // Exactly one of the three commits (the one landing at next_seq 4)
+    // Exactly one of the three commits (the one landing at tail_hint 4)
     // crosses the cadence boundary.
     expect(calls()).toBe(1);
   });
@@ -1027,7 +1027,7 @@ describe("Writer — write-tick maintenance dispatch", () => {
     await seedWith(storage, {});
     const writer = new Writer({ storage, currentJsonKey: CURRENT_KEY });
 
-    // Four small commits → seq 0..4; the 4th (prevSeq 3 → next_seq 4)
+    // Four small commits → seq 0..4; the 4th (prevSeq 3 → tail_hint 4)
     // crosses the GC boundary and runs maintenance inline.
     await runWithContext(createObservabilityContext(), async () => {
       for (let i = 0; i < 4; i++) {
@@ -1036,31 +1036,31 @@ describe("Writer — write-tick maintenance dispatch", () => {
     });
 
     const after = await persisted(storage);
-    expect(after.next_seq).toBe(4);
+    expect(after.tail_hint).toBe(4);
     // Below the first-fold threshold (tail far under 64 KB, well under 50
     // entries) the runner must not fold: log_seq_start unchanged.
     expect(after.log_seq_start).toBe(0);
     expect(after.snapshot).toBeNull();
   });
 
-  test("(9) the GC-cadence invariant holds: next_seq advances by exactly 1 per commit", async () => {
+  test("(9) the GC-cadence invariant holds: tail_hint advances by exactly 1 per commit", async () => {
     const storage = new MemoryStorage();
     await seedWith(storage, {});
     const writer = new Writer({ storage, currentJsonKey: CURRENT_KEY });
 
     const beforeState = await persisted(storage);
-    const before = beforeState.next_seq;
+    const before = beforeState.tail_hint;
     await writer.commit({ op: "I", collection: COLL, docId: "inv-1", body: { _id: "inv-1" } });
     const afterOneState = await persisted(storage);
-    const afterOne = afterOneState.next_seq;
+    const afterOne = afterOneState.tail_hint;
     expect(afterOne - before).toBe(1);
 
-    // Three sequential single-doc commits advance next_seq by 3.
+    // Three sequential single-doc commits advance tail_hint by 3.
     await writer.commit({ op: "I", collection: COLL, docId: "inv-2", body: { _id: "inv-2" } });
     await writer.commit({ op: "I", collection: COLL, docId: "inv-3", body: { _id: "inv-3" } });
     await writer.commit({ op: "I", collection: COLL, docId: "inv-4", body: { _id: "inv-4" } });
     const afterThreeState = await persisted(storage);
-    const afterThree = afterThreeState.next_seq;
+    const afterThree = afterThreeState.tail_hint;
     expect(afterThree - afterOne).toBe(3);
   });
 
@@ -1069,7 +1069,7 @@ describe("Writer — write-tick maintenance dispatch", () => {
     // skips the dispatch path. (Used by bare-write cost-shape tests.)
     const storage = new MemoryStorage();
     await seedWith(storage, {
-      next_seq: 1,
+      tail_hint: 1,
       tail_bytes: MAINTENANCE_MIN_LIVE_BYTES,
       snapshot_bytes: 0,
     });

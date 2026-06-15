@@ -126,7 +126,7 @@ export interface RebuildIndexOptions {
  * @throws BaerlyError code="InvalidResponse" — `current.json` missing.
  * @throws BaerlyError code="Internal" — protocol-invariant
  *   violation (snapshot hash mismatch, missing log entry inside
- *   `[log_seq_start, next_seq)`).
+ *   `[log_seq_start, tail_hint)`).
  */
 export const rebuildIndex = async (
   storage: Storage,
@@ -151,7 +151,7 @@ export const rebuildIndex = async (
   const collectionPrefix = currentJsonKey.slice(0, lastSlash);
   const collection = collectionPrefix.slice(collectionPrefix.lastIndexOf("/") + 1);
   const logSeqStart = logSeqStartOf(read.json);
-  const nextSeq = read.json.next_seq;
+  const nextSeq = read.json.tail_hint;
 
   // 1. Build the live doc set by folding snapshot + log tail.
   //    Same shape the reader uses in `runRead` and the CLI uses in

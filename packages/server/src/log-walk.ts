@@ -39,7 +39,7 @@ import {
  * every caller.
  *
  * @throws BaerlyError code="Internal" when the key resolves to no
- *   body — a hole inside `[log_seq_start, next_seq)` is a corruption
+ *   body — a hole inside `[log_seq_start, tail_hint)` is a corruption
  *   the kernel can't continue past.
  * @throws BaerlyError code="InvalidResponse" when the body isn't
  *   valid JSON.

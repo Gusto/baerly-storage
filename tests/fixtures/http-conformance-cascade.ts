@@ -95,14 +95,14 @@ export interface HttpConformanceOptions {
    * Optional seam for the seq-overflow regression test (block 10b).
    *
    * When provided, the cascade uses this callback instead of
-   * `provisionTable` to seed `current.json` with a given `next_seq` and
+   * `provisionTable` to seed `current.json` with a given `tail_hint` and
    * `log_seq_start`. This lets the call site pre-advance the seq counter
    * so the test only needs ONE insert to reach seq > 1023 — rather than
    * 1025 sequential HTTP inserts (which would time out the local-fs variant).
    *
    * The callback MUST create `current.json` with:
-   *   `next_seq = nextSeq`, `log_seq_start = nextSeq` (no real log entries).
-   * After one insert the collection's `next_seq` advances to `nextSeq + 1`
+   *   `tail_hint = nextSeq`, `log_seq_start = nextSeq` (no real log entries).
+   * After one insert the collection's `tail_hint` advances to `nextSeq + 1`
    * and the log carries exactly one entry at seq `nextSeq`.
    *
    * When omitted, the regression test still runs but falls back to
@@ -889,7 +889,7 @@ export const runHttpConformanceCascade = (opts: {
     // This block does NOT sit inside the long-poll gate — /v1/since is
     // exercised on its fast-path (pre-existing events), which works on
     // every variant regardless of long-poll support. The test inserts
-    // exactly 1025 documents so that next_seq reaches 1025 and the last
+    // exactly 1025 documents so that tail_hint reaches 1025 and the last
     // log entry carries seq = 1024 — one past the old 10-bit limit of
     // 1023. With the old encoding countKey(1024) returned "-1" (outside
     // [0-9a-v]), which LSN_RE rejected on the second poll.
@@ -1009,7 +1009,7 @@ export const runHttpConformanceCascade = (opts: {
         // not advance.
         const res1 = await doFetch(authedRequest("GET", `/v1/c/${table}`));
         const r1 = (await res1.json()) as MetaBody;
-        // Concurrent writer bumps next_seq → pointer changes.
+        // Concurrent writer bumps tail_hint → pointer changes.
         await postDoc(table, { v: 2 });
         const res2 = await doFetch(authedRequest("GET", `/v1/c/${table}`));
         const r2 = (await res2.json()) as MetaBody;

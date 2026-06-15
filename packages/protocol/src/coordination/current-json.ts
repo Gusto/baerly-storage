@@ -54,11 +54,11 @@ import type { Storage, StoragePutOptions, StoragePutResult } from "../storage/ty
  */
 export interface CurrentJson {
   /**
-   * Schema version. Today: `2`. Bump on any breaking change to
+   * Schema version. Today: `3`. Bump on any breaking change to
    * field semantics; readers must reject unknown major versions
    * with `BaerlyError{code:"InvalidResponse"}`.
    */
-  schema_version: 2;
+  schema_version: 3;
 
   /**
    * Pointer to the current snapshot generation. `null` before the
@@ -69,24 +69,24 @@ export interface CurrentJson {
   snapshot: string | null;
 
   /**
-   * Sequence number of the next log entry. Monotonic per
-   * collection. The Writer reads this on commit to mint the
-   * next log filename; CAS-write back with `next_seq + 1` ensures
-   * no two writers pick the same sequence.
+   * Non-authoritative monotone lower bound on the committed log tail.
+   * The authoritative tail is discovered by forward-probe (log-tail.ts);
+   * never trust this as the head. Advanced by the compactor (durable)
+   * and best-effort by winning writers.
    */
-  next_seq: number;
+  tail_hint: number;
 
   /**
    * Lowest live log sequence number. Entries with `seq < log_seq_start`
    * have been folded into the snapshot at {@link snapshot} (or, if
    * `snapshot === null`, have been dropped because the collection was
-   * truncated). Readers walk `[log_seq_start, next_seq)`. Always
+   * truncated). Readers walk `[log_seq_start, tail_hint)`. Always
    * present on disk — fresh `current.json` writes via
    * {@link createCurrentJson} set this to `0`; the compactor advances
    * it on every fold.
    *
    * Invariants the compactor maintains:
-   *   - `0 <= log_seq_start <= next_seq`
+   *   - `0 <= log_seq_start <= tail_hint`
    *   - `log_seq_start` advances monotonically (never decreases)
    *   - `log_seq_start > 0` implies `snapshot !== null` (the snapshot
    *     covers `[0, log_seq_start)`)
@@ -100,7 +100,7 @@ export interface CurrentJson {
 
   // New in v2:
 
-  /** EXACT byte size of the live log tail [log_seq_start, next_seq). Maintained exactly
+  /** EXACT byte size of the live log tail [log_seq_start, tail_hint). Maintained exactly
    *  by the full-fence CAS on BOTH paths: each write adds its log bytes; a successful
    *  fold (which proves no concurrent write) resets to 0 from a known-empty tail. */
   tail_bytes: number;
@@ -108,13 +108,13 @@ export interface CurrentJson {
   /** Byte size of the snapshot pointed to by `snapshot`. */
   snapshot_bytes: number;
 
-  /** Row count of the snapshot (= compactor `base.size`, free). With next_seq - log_seq_start
+  /** Row count of the snapshot (= compactor `base.size`, free). With tail_hint - log_seq_start
    *  (tail entries) this gives the fold's entry count for the ENTRY ceiling `E`. Seeded 0. */
   snapshot_rows: number;
 
   /** Baseline for rate-limiting the graduation defer-warn off SHARED durable state, not
-   *  per-isolate memory. The warn fires when next_seq - last_warned_seq >=
-   *  MAINTENANCE_WARN_INTERVAL_WRITES, and that firing CASes last_warned_seq = next_seq.
+   *  per-isolate memory. The warn fires when tail_hint - last_warned_seq >=
+   *  MAINTENANCE_WARN_INTERVAL_WRITES, and that firing CASes last_warned_seq = tail_hint.
    *  Absent → 0. */
   last_warned_seq?: number;
 }
@@ -405,7 +405,7 @@ export async function claimWriter(
 
 /**
  * Read `current.json.log_seq_start` — the low-water mark of the live
- * log range `[log_seq_start, next_seq)`. The field is always present
+ * log range `[log_seq_start, tail_hint)`. The field is always present
  * on disk (every `createCurrentJson` write seeds it; the compactor
  * advances it on every fold); this helper exists to document intent
  * at call sites that walk the log range or assert the snapshot
@@ -433,10 +433,10 @@ const assertCurrentJson = (parsed: unknown, key: string): CurrentJson => {
     );
   }
   const r = parsed as Record<string, unknown>;
-  if (r["schema_version"] === 1) {
+  if (r["schema_version"] === 1 || r["schema_version"] === 2) {
     throw new BaerlyError(
       "InvalidResponse",
-      `current.json at ${key} is schema v1 (pre-maintenance); this build requires v2. Pre-launch, no production buckets — delete and re-seed the local-fs/Minio/Verdaccio scratch bucket, or recreate the R2/S3 bucket.`,
+      `current.json at ${key} is a pre-single-write-commit current.json; re-provision the bucket. Pre-launch, no production buckets — delete and re-seed the local-fs/Minio/Verdaccio scratch bucket, or recreate the R2/S3 bucket.`,
     );
   }
   if (r["schema_version"] !== CURRENT_JSON_SCHEMA_VERSION) {
@@ -451,11 +451,15 @@ const assertCurrentJson = (parsed: unknown, key: string): CurrentJson => {
       `current.json at ${key}: snapshot must be string|null`,
     );
   }
-  // Stryker disable next-line ConditionalExpression,StringLiteral: three equivalent mutants on this line — (1) `typeof r["next_seq"] !== "number"` → false is subsumed by !Number.isInteger (which rejects all non-numbers); (2) `r["next_seq"] < 0` → false is subsumed by the downstream `log_seq_start > next_seq` cross-check (log_seq_start ≥ 0, so log_seq_start > negative_next_seq always fires); (3) StringLiteral "next_seq" → "" turns r[""] → undefined → !Number.isInteger(undefined) still true → still throws.
-  if (typeof r["next_seq"] !== "number" || !Number.isInteger(r["next_seq"]) || r["next_seq"] < 0) {
+  // Stryker disable next-line ConditionalExpression,StringLiteral: three equivalent mutants on this line — (1) `typeof r["tail_hint"] !== "number"` → false is subsumed by !Number.isInteger (which rejects all non-numbers); (2) `r["tail_hint"] < 0` → false is subsumed by the downstream `log_seq_start > tail_hint` cross-check (log_seq_start ≥ 0, so log_seq_start > negative_tail_hint always fires); (3) StringLiteral "tail_hint" → "" turns r[""] → undefined → !Number.isInteger(undefined) still true → still throws.
+  if (
+    typeof r["tail_hint"] !== "number" ||
+    !Number.isInteger(r["tail_hint"]) ||
+    r["tail_hint"] < 0
+  ) {
     throw new BaerlyError(
       "InvalidResponse",
-      `current.json at ${key}: next_seq must be a non-negative integer`,
+      `current.json at ${key}: tail_hint must be a non-negative integer`,
     );
   }
   if (
@@ -469,10 +473,10 @@ const assertCurrentJson = (parsed: unknown, key: string): CurrentJson => {
       `current.json at ${key}: log_seq_start must be a non-negative integer`,
     );
   }
-  if (r["log_seq_start"] > r["next_seq"]) {
+  if (r["log_seq_start"] > r["tail_hint"]) {
     throw new BaerlyError(
       "InvalidResponse",
-      `current.json at ${key}: log_seq_start ${String(r["log_seq_start"])} > next_seq ${String(r["next_seq"])}`,
+      `current.json at ${key}: log_seq_start ${String(r["log_seq_start"])} > tail_hint ${String(r["tail_hint"])}`,
     );
   }
   const fence = r["writer_fence"];

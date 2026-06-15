@@ -260,7 +260,7 @@ export async function listEventsSince(opts: ListEventsSinceOptions): Promise<Log
     return [];
   }
   const logSeqStart = logSeqStartOf(read.json);
-  const nextSeq = read.json.next_seq;
+  const nextSeq = read.json.tail_hint;
 
   // Derive the seq range to scan. Empty cursor → start at
   // `log_seq_start` (the first un-snapshotted entry). Non-empty
@@ -282,7 +282,7 @@ export async function listEventsSince(opts: ListEventsSinceOptions): Promise<Log
     startSeq = cursorSeq + 1;
   }
 
-  // Cap the range at `next_seq` (no entries past the tail exist) and
+  // Cap the range at `tail_hint` (no entries past the tail exist) and
   // at `DEFAULT_MAX_EVENTS` (hard ceiling per the module docstring).
   const endSeq = Math.min(nextSeq, startSeq + DEFAULT_MAX_EVENTS);
 

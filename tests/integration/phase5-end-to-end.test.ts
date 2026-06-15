@@ -14,7 +14,7 @@
  *   (b) the bucket object count drops (stale log entries + orphan
  *       content blobs swept by `runGc()`),
  *   (c) `current.json.snapshot !== null` and `log_seq_start` has
- *       advanced to within a small live tail of `next_seq`,
+ *       advanced to within a small live tail of `tail_hint`,
  *   (d) an idle reader doing 1800 `tbl.where({}).all()` calls (≈ 1 hour
  *       at 2s polling) issues < 1 Class A op (PUT / DELETE / LIST).
  *       Real expectation: exactly 0.
@@ -191,19 +191,19 @@ describe("Synthetic 5000-entry end-to-end gate", () => {
           expect(cur).not.toBeNull();
           const json = JSON.parse(new TextDecoder().decode(cur!.body)) as {
             snapshot: string | null;
-            next_seq: number;
+            tail_hint: number;
             log_seq_start?: number;
           };
           // Absolute literal kept on purpose — it pins a real contract:
-          // each single-doc commit advances next_seq by exactly 1, so N
-          // sequential commits land next_seq at exactly N (identical to
+          // each single-doc commit advances tail_hint by exactly 1, so N
+          // sequential commits land tail_hint at exactly N (identical to
           // what the old single-CAS batch produced; the topology changed
           // but this end-state is invariant).
-          expect(json.next_seq).toBe(N);
+          expect(json.tail_hint).toBe(N);
           expect(json.snapshot).not.toBeNull();
           // The compactor folds the entire live tail in unbounded passes;
           // the writer minted nothing new in between, so log_seq_start
-          // advances to within a small live-tail slack of next_seq. Bound
+          // advances to within a small live-tail slack of tail_hint. Bound
           // form (not an exact literal) so a future change to the
           // compactor's lag-window default doesn't break the gate.
           expect(json.log_seq_start ?? 0).toBeGreaterThanOrEqual(N - 10);
@@ -404,12 +404,12 @@ describe("write-tick in-band maintenance (no runScheduledMaintenance)", () => {
       const json = read!.json;
       // A fold ran (writes alone drove it) → snapshot is non-null and
       // log_seq_start has advanced off zero. We do NOT assert it equals
-      // next_seq: the write-tick fold is BOUNDED (20 entries/pass), so a
+      // tail_hint: the write-tick fold is BOUNDED (20 entries/pass), so a
       // live tail trails behind by design — the point is that it advanced
       // WITHOUT any scheduled-maintenance call.
       expect(json.snapshot).not.toBeNull();
       expect(json.log_seq_start).toBeGreaterThan(0);
-      expect(json.next_seq).toBe(600);
+      expect(json.tail_hint).toBe(600);
     },
   );
 
@@ -535,7 +535,7 @@ describe("write-tick in-band maintenance (no runScheduledMaintenance)", () => {
         "a fold ceiling below the live snapshot size must DEFER — snapshot stays null",
       ).toBeNull();
       // The tail keeps growing past the compaction floor (nothing folded).
-      expect(deferred.next_seq - deferred.log_seq_start).toBeGreaterThanOrEqual(50);
+      expect(deferred.tail_hint - deferred.log_seq_start).toBeGreaterThanOrEqual(50);
 
       // Arm 2: default ceiling (512 KiB) comfortably fits the ~100KB
       // snapshot → a fold lands.

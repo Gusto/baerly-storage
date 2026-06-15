@@ -124,7 +124,7 @@ export interface WriterOptions {
 
   /**
    * When `true`, every commit walks the live log range
-   * `[log_seq_start, next_seq)` before minting a new entry, surfacing
+   * `[log_seq_start, tail_hint)` before minting a new entry, surfacing
    * a missing or malformed entry as `BaerlyError{code:"Internal"}`
    * (or `"InvalidResponse"` for parse failures). The walk is purely
    * observational — the per-doc fold lives in the read path
@@ -269,7 +269,7 @@ export class Writer {
 
   /**
    * Atomically commit one mutation. Reads `current.json` fresh, mints
-   * the next log entry at `seq = current.next_seq`, PUTs the content
+   * the next log entry at `seq = current.tail_hint`, PUTs the content
    * body and the log entry, then CAS-advances `current.json` with
    * `If-Match`. Retries on conflict up to `maxRetries`.
    *
@@ -280,7 +280,7 @@ export class Writer {
    * Idempotency: PUT content uses `If-None-Match: "*"`, so a retry of
    * the same logical write produces the same content key and the
    * second PUT no-ops. PUT log entry also uses `If-None-Match: "*"`,
-   * so two writers racing the same `next_seq` cause exactly one PUT
+   * so two writers racing the same `tail_hint` cause exactly one PUT
    * to land — the loser falls into the CAS retry path.
    *
    * @throws BaerlyError code="Conflict" when the retry budget is
@@ -294,7 +294,7 @@ export class Writer {
    *   the old epoch. See {@link claimWriter} for the rotation
    *   recipe.
    * @throws BaerlyError code="Internal" when a log entry expected in
-   *   `[0, next_seq)` is missing — a protocol-invariant violation
+   *   `[0, tail_hint)` is missing — a protocol-invariant violation
    *   (compactor bug or stale `current.json`).
    * @throws BaerlyError code="InvalidResponse" when a log-entry body
    *   isn't valid JSON.
@@ -373,7 +373,7 @@ export class Writer {
    * Called only as `#singleAttemptCommit([input], …)`: the array
    * shape is retained dead-generality (the genuine single-input
    * unroll is the deferred follow-up tracked as D1.5), but every
-   * call mints exactly one entry and advances `next_seq` by 1.
+   * call mints exactly one entry and advances `tail_hint` by 1.
    *
    * Retryable failures (a peer wrote our seq; a peer won the CAS on
    * `current.json`) throw `BaerlyError{code:"Conflict"}`. The caller
@@ -414,14 +414,14 @@ export class Writer {
 
     // ── Step 2. Optional integrity walk (`verifyLogIntegrityOnCommit`,
     // default off). Surfaces missing / malformed entries inside
-    // `[log_seq_start, next_seq)` as `Internal` / `InvalidResponse`;
+    // `[log_seq_start, tail_hint)` as `Internal` / `InvalidResponse`;
     // entries below `log_seq_start` are folded into the snapshot
     // by `compact()` and possibly swept by `runGc()`, so the walk is
     // bounded to the live tail. The read path catches the same
     // conditions on the next consult — production callers leave the
     // walk off to avoid `O(tail)` Class-B GETs per CAS attempt.
     if (this.#verifyLogIntegrityOnCommit) {
-      await this.#walkLog(logPrefix, logSeqStartOf(current), current.next_seq);
+      await this.#walkLog(logPrefix, logSeqStartOf(current), current.tail_hint);
     }
 
     // ── Step 3. Mint N LogEntries with contiguous seqs. ─────────────
@@ -438,7 +438,7 @@ export class Writer {
     const entries: LogEntry[] = [];
     for (let i = 0; i < inputs.length; i++) {
       const input = inputs[i]!;
-      const seq = current.next_seq + i;
+      const seq = current.tail_hint + i;
       const lsn = `${lsnTimestamp}_${session}_${countKey(seq)}`;
       const entry: LogEntry = {
         lsn,
@@ -519,7 +519,7 @@ export class Writer {
         } else if (input.op === "U") {
           const preImage = inBatchImage.has(input.docId)
             ? inBatchImage.get(input.docId)
-            : await this.#readPreImage(logPrefix, input.collection, input.docId, current.next_seq);
+            : await this.#readPreImage(logPrefix, input.collection, input.docId, current.tail_hint);
           const oldKeys = allIndexKeysFor(logPrefix, this.#indexes, preImage, input.docId);
           newKeys = allIndexKeysFor(logPrefix, this.#indexes, input.body, input.docId);
           const newSet = new Set(newKeys);
@@ -527,7 +527,7 @@ export class Writer {
         } else {
           const preImage = inBatchImage.has(input.docId)
             ? inBatchImage.get(input.docId)
-            : await this.#readPreImage(logPrefix, input.collection, input.docId, current.next_seq);
+            : await this.#readPreImage(logPrefix, input.collection, input.docId, current.tail_hint);
           staleKeys = allIndexKeysFor(logPrefix, this.#indexes, preImage, input.docId);
         }
         for (const k of newKeys) {
@@ -634,7 +634,7 @@ export class Writer {
 
     // ── Step 6. CAS-advance current.json with If-Match. ─────────────
     // Bind to `baseEtag` from step 1 — re-reading would risk advancing
-    // `next_seq` past a seq we never wrote a log entry for.
+    // `tail_hint` past a seq we never wrote a log entry for.
     //
     // Accumulate `tail_bytes` EXACTLY. The compactor later subtracts the
     // bytes of the log objects it folds, summed from the fetched object
@@ -651,22 +651,22 @@ export class Writer {
     );
     const next: CurrentJson = {
       ...current,
-      next_seq: current.next_seq + inputs.length,
+      tail_hint: current.tail_hint + inputs.length,
       tail_bytes: current.tail_bytes + batchLogBytes,
     };
     // Cadence-invariant assert (cheap, load-bearing). The GC write-tick
-    // cadence keys off `next_seq` advancing by exactly the number of log
-    // entries written. Today one input ⇒ one log entry, so `next_seq`
+    // cadence keys off `tail_hint` advancing by exactly the number of log
+    // entries written. Today one input ⇒ one log entry, so `tail_hint`
     // advances by `inputs.length` and `committedEntries.length ===
     // inputs.length` (the adoption path adopts the single in-flight
     // entry of a 1-input commit, preserving the identity). Pin it so a
     // future change that makes one input emit ≠1 entries fails LOUD here
     // instead of silently skewing the GC cadence.
-    if (next.next_seq - current.next_seq !== inputs.length) {
+    if (next.tail_hint - current.tail_hint !== inputs.length) {
       throw new BaerlyError(
         "Internal",
-        `${errorPrefix}: GC-cadence invariant violated — next_seq advanced by ${
-          next.next_seq - current.next_seq
+        `${errorPrefix}: GC-cadence invariant violated — tail_hint advanced by ${
+          next.tail_hint - current.tail_hint
         } but ${inputs.length} input(s) were committed on ${this.#currentJsonKey}`,
       );
     }
@@ -710,7 +710,7 @@ export class Writer {
     // CF-free-safe caps, so a bare `Db.create(...).collection(...)
     // .insert(...)` maintains inline by default once enough writes
     // accrue.
-    const prevSeq = current.next_seq; // pre-CAS seq, already in scope
+    const prevSeq = current.tail_hint; // pre-CAS seq, already in scope
     const maint = getCurrentContext()?.maintenance;
     if (maint?.disabled !== true) {
       // Same absent-context default as runBoundedMaintenance's
@@ -808,7 +808,7 @@ export class Writer {
    * the create — a single recover-via-read covers every race that
    * could have produced our null read.
    *
-   * The seed shape (`snapshot: null`, `next_seq: 0`, `log_seq_start:
+   * The seed shape (`snapshot: null`, `tail_hint: 0`, `log_seq_start:
    * 0`, `writer_fence: { epoch: 0, owner: "", claimed_at: "" }`)
    * matches `ensureTable` and `baerly deploy`'s pre-warm path, so an
    * operator who pre-provisions and a writer who auto-creates land
@@ -822,7 +822,7 @@ export class Writer {
     const initial: CurrentJson = {
       schema_version: CURRENT_JSON_SCHEMA_VERSION,
       snapshot: null,
-      next_seq: 0,
+      tail_hint: 0,
       log_seq_start: 0,
       writer_fence: { epoch: 0, owner: "", claimed_at: "" },
       tail_bytes: 0,
@@ -932,7 +932,7 @@ export class Writer {
 
   /**
    * Re-read `current.json` after a successful CAS and assert the
-   * writer-fence epoch is still ours. The CAS only mutated `next_seq`
+   * writer-fence epoch is still ours. The CAS only mutated `tail_hint`
    * (the fence is preserved from `current`), so a post-write epoch
    * mismatch can only mean another writer claimed the fence between
    * our step-1 read and step-6 PUT — the exact split-brain

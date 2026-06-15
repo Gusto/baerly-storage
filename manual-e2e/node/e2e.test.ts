@@ -238,7 +238,7 @@ describe.runIf(NODE_URL !== undefined && SECRET !== undefined)("real-deploy: nod
         await createCurrentJson(storage, key, {
           schema_version: CURRENT_JSON_SCHEMA_VERSION,
           snapshot: null,
-          next_seq: 0,
+          tail_hint: 0,
           log_seq_start: 0,
           writer_fence: {
             epoch: 0,

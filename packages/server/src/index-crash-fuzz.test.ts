@@ -89,7 +89,7 @@ const provision = async (storage: Storage): Promise<void> => {
   await createCurrentJson(storage, CURRENT_JSON_KEY, {
     schema_version: CURRENT_JSON_SCHEMA_VERSION,
     snapshot: null,
-    next_seq: 0,
+    tail_hint: 0,
     log_seq_start: 0,
     writer_fence: { epoch: 0, owner: "crash-fuzz", claimed_at: "" },
     tail_bytes: 0,
@@ -197,7 +197,7 @@ describe("index emission survives a single crash anywhere in the commit", () => 
       // index parity.
       const live = new Map<string, Doc>();
       const current = await readCurrent(inner);
-      const nextSeq = current.next_seq;
+      const nextSeq = current.tail_hint;
       for (let s = 0; s < nextSeq; s++) {
         const got = await inner.get(`${LOG_PREFIX}/log/${s}.json`);
         if (got === null) {
@@ -234,10 +234,10 @@ describe("index emission survives a single crash anywhere in the commit", () => 
   );
 });
 
-const readCurrent = async (storage: Storage): Promise<{ next_seq: number }> => {
+const readCurrent = async (storage: Storage): Promise<{ tail_hint: number }> => {
   const got = await storage.get(CURRENT_JSON_KEY);
   if (got === null) {
     throw new Error("current.json gone (test bug)");
   }
-  return JSON.parse(new TextDecoder().decode(got.body)) as { next_seq: number };
+  return JSON.parse(new TextDecoder().decode(got.body)) as { tail_hint: number };
 };

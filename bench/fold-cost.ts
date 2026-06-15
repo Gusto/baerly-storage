@@ -256,9 +256,9 @@ const buildFixture = async (rows: number, bytesPerDoc: number): Promise<FoldFixt
 
   // 3. current.json pointing at the prior snapshot with the tail live.
   const current: CurrentJson = {
-    schema_version: 2,
+    schema_version: 3,
     snapshot: snapKey,
-    next_seq: rows + TAIL_ENTRIES,
+    tail_hint: rows + TAIL_ENTRIES,
     log_seq_start: rows,
     writer_fence: { epoch: 1, owner: "fold-cost-bench", claimed_at: "" },
     tail_bytes: tailBytes,

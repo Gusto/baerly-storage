@@ -274,7 +274,7 @@ export const runGc = async (
 
   // ── Step 5. Mark orphan content. ────────────────────────────────
   // Build the live content-hash set by hashing every live post-image:
-  //   - log entries [log_seq_start, next_seq)
+  //   - log entries [log_seq_start, tail_hint)
   //   - snapshot rows (via `loadSnapshotAsMap` so the hash check
   //     defends against a tampered snapshot)
   // Hash with the same `versionFromContent` (32-hex truncated SHA-256)
@@ -484,7 +484,7 @@ const computeDueAt = (entry: StorageListEntry, now: () => Date, graceMs: number)
 
 /**
  * Build the live content-hash set. The set covers every live
- * post-image: every `entry.after` in `[logSeqStart, next_seq)` plus
+ * post-image: every `entry.after` in `[logSeqStart, tail_hint)` plus
  * every row body in the current snapshot.
  *
  * A snapshot read that throws (corrupt body, hash mismatch) is
@@ -506,7 +506,7 @@ const collectLiveContentHashes = async (
 
   // Live log tail.
   const logReads: Array<Promise<void>> = [];
-  for (let s = logSeqStart; s < current.next_seq; s++) {
+  for (let s = logSeqStart; s < current.tail_hint; s++) {
     logReads.push(
       (async (): Promise<void> => {
         const got = await storage.get(logObjectKey(collectionPrefix, s), getOpts);

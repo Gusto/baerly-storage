@@ -65,7 +65,7 @@ const bootstrap = async (storage: Storage, key: string): Promise<void> => {
   await createCurrentJson(storage, key, {
     schema_version: CURRENT_JSON_SCHEMA_VERSION,
     snapshot: null,
-    next_seq: 0,
+    tail_hint: 0,
     log_seq_start: 0,
     writer_fence: { epoch: 0, owner: "drain-test", claimed_at: "" },
     tail_bytes: 0,
@@ -236,7 +236,7 @@ describe("§7.1 drain-rate invariant (write-tick, real Writer)", () => {
         // bolted to that same tick with a tiny sweep cap and no separate
         // cadence. The under-budget sweep can't drain a fold's orphans.
         const cur = await readCurrentJson(storage, KEY);
-        const tail = cur!.json.next_seq - cur!.json.log_seq_start;
+        const tail = cur!.json.tail_hint - cur!.json.log_seq_start;
         if (tail >= 50) {
           await compact({ storage, currentJsonKey: KEY }, {
             maxEntriesPerRun: 20,

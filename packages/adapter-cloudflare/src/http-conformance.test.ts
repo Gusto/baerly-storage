@@ -59,7 +59,7 @@ describe("HTTP conformance", () => {
       await createCurrentJson(storage, key, {
         schema_version: CURRENT_JSON_SCHEMA_VERSION,
         snapshot: null,
-        next_seq: 0,
+        tail_hint: 0,
         log_seq_start: 0,
         writer_fence: { epoch: 0, owner: "http-conformance-test", claimed_at: "" },
         tail_bytes: 0,
@@ -78,11 +78,11 @@ describe("HTTP conformance", () => {
       // the Node-side variants already cover the invariant.
       supportsAbort: false,
       supportsSinceTimeoutOverride: true,
-      // Pre-seed next_seq and log_seq_start so the overflow regression
+      // Pre-seed tail_hint and log_seq_start so the overflow regression
       // test only needs ONE insert instead of 1025 sequential fetches.
       provisionTableAtSeq: async (table, nextSeq) => {
         // Synthetic current.json: snapshot is null, log_seq_start=nextSeq,
-        // so readers walk [nextSeq, next_seq) and treat 0..nextSeq-1 as
+        // so readers walk [nextSeq, tail_hint) and treat 0..nextSeq-1 as
         // already truncated/folded away — not snapshotted. This state is
         // deliberately outside what the writer emits (log_seq_start > 0
         // normally implies snapshot !== null), used only to fast-forward
@@ -92,7 +92,7 @@ describe("HTTP conformance", () => {
         await createCurrentJson(storage, key, {
           schema_version: CURRENT_JSON_SCHEMA_VERSION,
           snapshot: null,
-          next_seq: nextSeq,
+          tail_hint: nextSeq,
           log_seq_start: nextSeq,
           writer_fence: { epoch: 0, owner: "http-conformance-test", claimed_at: "" },
           tail_bytes: 0,

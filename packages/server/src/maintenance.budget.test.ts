@@ -87,7 +87,7 @@ const seed = async (
   await createCurrentJson(storage, key, {
     schema_version: CURRENT_JSON_SCHEMA_VERSION,
     snapshot: null,
-    next_seq: 0,
+    tail_hint: 0,
     log_seq_start: 0,
     writer_fence: { epoch: 0, owner: "budget-test", claimed_at: "" },
     tail_bytes: 0,
@@ -133,7 +133,7 @@ describe("CLOUDFLARE_FREE_TIER budget", () => {
     // bounded by the M term in the GC budget docstring.
     //
     // To model the steady-state operating point we seed 60 entries
-    // and pre-compact: log_seq_start = 20, next_seq = 60 ⇒ tail = 40,
+    // and pre-compact: log_seq_start = 20, tail_hint = 60 ⇒ tail = 40,
     // which is below the 50-entry compaction threshold (next compact
     // tick will rerun). The GC pass then mark+sweeps stale-log
     // candidates and computes live-content hashes over the 40-entry

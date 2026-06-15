@@ -160,7 +160,7 @@ export const MAX_PARALLEL_LOG_READS: number = 16;
  *
  * @see packages/protocol/src/coordination/current-json.ts
  */
-export const CURRENT_JSON_SCHEMA_VERSION = 2 as const;
+export const CURRENT_JSON_SCHEMA_VERSION = 3 as const;
 
 /**
  * MIME type written for `current.json` PUTs. S3 round-trips this on
@@ -433,7 +433,7 @@ export const MAINTENANCE_WARN_INTERVAL_WRITES: number = 1000;
 /**
  * Placeholder for `CurrentJson.snapshot === null` in the
  * `_meta.manifest_pointer` cursor emitted on read responses. The
- * wire format is `"<snapshot>@<next_seq>"`, and `null` snapshots
+ * wire format is `"<snapshot>@<tail_hint>"`, and `null` snapshots
  * serialise as this literal so the cursor is never empty and stays
  * byte-stable when destructured by operators.
  *

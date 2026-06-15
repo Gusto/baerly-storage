@@ -69,7 +69,7 @@ const seedOverRatio = async (n: number): Promise<MemoryStorage> => {
   await createCurrentJson(storage, key, {
     schema_version: CURRENT_JSON_SCHEMA_VERSION,
     snapshot: null,
-    next_seq: 0,
+    tail_hint: 0,
     log_seq_start: 0,
     writer_fence: { epoch: 0, owner: "reads-pure-test", claimed_at: "" },
     tail_bytes: 0,
@@ -212,7 +212,7 @@ describe("reads are pure — never tick maintenance", () => {
       expect(after.log_seq_start, "log_seq_start advanced — reads folded").toBe(
         before.log_seq_start,
       );
-      expect(after.next_seq, "next_seq changed — reads wrote a log entry").toBe(before.next_seq);
+      expect(after.tail_hint, "tail_hint changed — reads wrote a log entry").toBe(before.tail_hint);
       expect(after.tail_bytes, "tail_bytes changed — reads mutated current.json").toBe(
         before.tail_bytes,
       );

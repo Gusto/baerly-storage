@@ -39,10 +39,10 @@ const currentJsonKey = (coll: string): string =>
 const logKey = (coll: string, seq: number): string =>
   `app/${APP}/tenant/${TENANT}/manifests/${coll}/log/${seq}.json`;
 
-const seedCurrent = (next_seq = 0): CurrentJson => ({
+const seedCurrent = (tail_hint = 0): CurrentJson => ({
   schema_version: CURRENT_JSON_SCHEMA_VERSION,
   snapshot: null,
-  next_seq,
+  tail_hint,
   log_seq_start: 0,
   writer_fence: { epoch: 0, owner: "test", claimed_at: "" },
   tail_bytes: 0,
@@ -68,7 +68,7 @@ describe("Db.collection read terminals", () => {
     db = makeDb(storage);
   });
 
-  test("case 1: empty table (next_seq=0) returns [], undefined, 0", async () => {
+  test("case 1: empty table (tail_hint=0) returns [], undefined, 0", async () => {
     await provision(storage);
     const t = db.collection(COLL);
     await expect(t.where({}).all()).resolves.toEqual([]);
@@ -337,15 +337,15 @@ describe("Db.collection read terminals", () => {
     await expect(db.collection(COLL).where({}).first()).resolves.toBeUndefined();
   });
 
-  test("case 14: read walks [log_seq_start, next_seq) and skips dropped entries", async () => {
-    // Bootstrap with log_seq_start=2 and next_seq=3, where log/0.json
+  test("case 14: read walks [log_seq_start, tail_hint) and skips dropped entries", async () => {
+    // Bootstrap with log_seq_start=2 and tail_hint=3, where log/0.json
     // and log/1.json are absent (simulating a post-truncation bucket).
     // The reader MUST NOT GET them — only log/2.json — and surface that
     // single row.
     await createCurrentJson(storage, currentJsonKey(COLL), {
       schema_version: CURRENT_JSON_SCHEMA_VERSION,
       snapshot: null,
-      next_seq: 3,
+      tail_hint: 3,
       writer_fence: { epoch: 0, owner: "test", claimed_at: "" },
       log_seq_start: 2,
       tail_bytes: 0,
@@ -437,7 +437,7 @@ describe("Db.collection read terminals", () => {
     expect(rows.filter((r) => r["phase"] === "post")).toHaveLength(10);
   });
 
-  test("case 18: read sees the new pointer after a writer advances next_seq", async () => {
+  test("case 18: read sees the new pointer after a writer advances tail_hint", async () => {
     // Invariant: a concurrent commit between two reads advances
     // `current.json`; the second read observes a new manifest pointer
     // and reports `fresh:true`. Every read carries `fresh:true` by
@@ -1433,7 +1433,7 @@ describe("Query.first / Collection.get — PK-lookup fast-path", () => {
     expect(scanRows).toHaveLength(1);
     expect(scanRows[0]).toEqual(target);
     // Fast-path must not issue MORE log GETs than the scan path —
-    // both fold the same `[log_seq_start, next_seq)` range. (Equal
+    // both fold the same `[log_seq_start, tail_hint)` range. (Equal
     // is the expected case today; "less than or equal" is the
     // forward-compat assertion.)
     expect(fastLogGets).toBeLessThanOrEqual(scanLogGets);

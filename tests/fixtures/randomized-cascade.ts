@@ -135,7 +135,7 @@ const ensureCurrent = async (storage: Storage, key: string): Promise<void> => {
 
 /**
  * Resolve the latest committed value for `(collection, docId)` by
- * reading `current.json`, then walking from `next_seq - 1` backwards
+ * reading `current.json`, then walking from `tail_hint - 1` backwards
  * until we hit an entry whose `doc_id` matches. Returns `undefined`
  * when no entry has landed yet. Tolerates transient read failures
  * (Toxiproxy flips, R2 propagation jitter) by re-throwing — callers
@@ -146,7 +146,7 @@ const readLatest = async (inst: Instance): Promise<CascadeMessage | undefined> =
   if (read === null) {
     return undefined;
   }
-  const nextSeq = read.json.next_seq;
+  const nextSeq = read.json.tail_hint;
   for (let s = nextSeq - 1; s >= 0; s--) {
     const got = await inst.storage.get(`${inst.logPrefix}/log/${s}.json`);
     if (got === null) {

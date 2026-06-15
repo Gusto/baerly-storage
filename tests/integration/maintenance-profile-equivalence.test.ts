@@ -293,7 +293,7 @@ describe("MaintenanceProfile cross-profile correctness", () => {
 
           // Run EXACTLY ONE write-tick fold pass under `profile` over the
           // pre-built tail; return how far log_seq_start advanced. `prevSeq`
-          // is set to next_seq so NO GC cadence boundary is crossed —
+          // is set to tail_hint so NO GC cadence boundary is crossed —
           // isolating the fold so the advance is purely the fold slice.
           const oneFoldAdvance = async (profile: MaintenanceProfile): Promise<number> => {
             const storage = await freshBucket();
@@ -301,7 +301,7 @@ describe("MaintenanceProfile cross-profile correctness", () => {
             const cur = (await readCurrentJson(storage, CURRENT_JSON_KEY))!.json;
             const before = cur.log_seq_start;
             await runBoundedMaintenance(
-              { storage, currentJsonKey: CURRENT_JSON_KEY, prevSeq: cur.next_seq },
+              { storage, currentJsonKey: CURRENT_JSON_KEY, prevSeq: cur.tail_hint },
               { profile, minEntriesToCompact: 50, phasesPerTick: "single" },
             );
             const after = (await readCurrentJson(storage, CURRENT_JSON_KEY))!.json.log_seq_start;

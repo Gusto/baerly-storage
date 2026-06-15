@@ -33,9 +33,9 @@ const SIGKILL_LOG_PREFIX = "bench/tenant-A/collection-sigkill";
 const SIGKILL_CURRENT_KEY = `${SIGKILL_LOG_PREFIX}/current.json`;
 
 const SEED: CurrentJson = {
-  schema_version: 2,
+  schema_version: 3,
   snapshot: null,
-  next_seq: seq,
+  tail_hint: seq,
   log_seq_start: 0,
   writer_fence: { epoch: 0, owner: "bench-sigkill", claimed_at: "" },
   tail_bytes: 0,
@@ -109,7 +109,7 @@ async function main(): Promise<void> {
   // ── Step 3. CAS current.json. ───────────────────────────────────
   await casUpdateCurrentJson(storage, SIGKILL_CURRENT_KEY, (cur) => ({
     ...cur,
-    next_seq: cur.next_seq + 1,
+    tail_hint: cur.tail_hint + 1,
   }));
   process.stdout.write("READY-3\n");
 }

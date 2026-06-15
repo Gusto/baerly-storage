@@ -189,9 +189,9 @@ export const CLOUDFLARE_FREE_TIER: MaintenanceOptions = profileToScheduledOption
 
 /**
  * Floor-based GC-cadence boundary crossing. Every commit now advances
- * `next_seq` by exactly 1, so a single step can only ever cross one
- * `next_seq % interval === 0` boundary — but the floor test is kept
- * (rather than a `next_seq % interval === 0` modulo test) because it
+ * `tail_hint` by exactly 1, so a single step can only ever cross one
+ * `tail_hint % interval === 0` boundary — but the floor test is kept
+ * (rather than a `tail_hint % interval === 0` modulo test) because it
  * trips on any interval boundary inside `(prevSeq, nextSeq]` and so
  * stays correct and cheap regardless of step size.
  */
@@ -210,7 +210,7 @@ export const shouldFireMaintenance = (
   prevSeq: number,
   gcInterval: number,
 ): boolean =>
-  crossesGcBoundary(prevSeq, current.next_seq, gcInterval) ||
+  crossesGcBoundary(prevSeq, current.tail_hint, gcInterval) ||
   current.tail_bytes / Math.max(current.snapshot_bytes, MAINTENANCE_MIN_LIVE_BYTES) >=
     MAINTENANCE_TARGET_RATIO;
 
@@ -272,7 +272,7 @@ export const runBoundedMaintenance = async (
   args: {
     storage: Storage;
     currentJsonKey: string;
-    /** The writer's PRE-CAS `current.next_seq` — the GC cadence baseline. */
+    /** The writer's PRE-CAS `current.tail_hint` — the GC cadence baseline. */
     prevSeq: number;
     /** `C` override (from `BAERLY_MAINTENANCE_MAX_FOLD_BYTES`). */
     maxFoldBytes?: number;
@@ -326,7 +326,7 @@ export const runBoundedMaintenance = async (
     const tailBytes = current.tail_bytes;
     const snapshotBytes = current.snapshot_bytes;
     const snapshotRows = current.snapshot_rows;
-    const nextSeq = current.next_seq;
+    const nextSeq = current.tail_hint;
     const logSeqStart = current.log_seq_start;
 
     const ratio = tailBytes / Math.max(snapshotBytes, MAINTENANCE_MIN_LIVE_BYTES);

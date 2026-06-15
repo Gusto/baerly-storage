@@ -14,9 +14,9 @@ describe("ensureTable", () => {
     const read = await readCurrentJson(storage, keyFor("helpdesk", "acme", "tickets"));
     expect(read).not.toBeNull();
     expect(read?.json).toMatchObject({
-      schema_version: 2,
+      schema_version: 3,
       snapshot: null,
-      next_seq: 0,
+      tail_hint: 0,
       log_seq_start: 0,
       writer_fence: { epoch: 0 },
       tail_bytes: 0,
@@ -37,7 +37,7 @@ describe("ensureTable", () => {
     const storage = new MemoryStorage();
     await ensureTable(storage, { app: "helpdesk", tenant: "acme", table: "tickets" });
 
-    // Commit one mutation to advance next_seq.
+    // Commit one mutation to advance tail_hint.
     const writer = new Writer({
       storage,
       currentJsonKey: keyFor("helpdesk", "acme", "tickets"),
@@ -50,12 +50,12 @@ describe("ensureTable", () => {
     });
 
     const before = await readCurrentJson(storage, keyFor("helpdesk", "acme", "tickets"));
-    expect(before?.json.next_seq).toBe(1);
+    expect(before?.json.tail_hint).toBe(1);
 
     // Re-entry must not overwrite the advanced manifest.
     await ensureTable(storage, { app: "helpdesk", tenant: "acme", table: "tickets" });
     const after = await readCurrentJson(storage, keyFor("helpdesk", "acme", "tickets"));
-    expect(after?.json.next_seq).toBe(1);
+    expect(after?.json.tail_hint).toBe(1);
   });
 
   test("Writer.commit succeeds end-to-end after ensureTable", async () => {

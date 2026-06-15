@@ -49,7 +49,7 @@
  * the verdict.
  *
  * BACKLOG TRAJECTORY (recorded once per simulated minute):
- *   - `live_tail_entries` = `next_seq - log_seq_start` (un-folded log).
+ *   - `live_tail_entries` = `tail_hint - log_seq_start` (un-folded log).
  *   - `object_count` = total bucket objects under the collection prefix.
  *   - `snapshot_bytes` / `snapshot_rows` (the fold ceiling axes).
  *   - `snapshot_over_ceiling` = whether the live snapshot is over the
@@ -269,7 +269,7 @@ const sampleBacklog = async (
   return {
     minute,
     cumulative_writes: cumulativeWrites,
-    live_tail_entries: cur.next_seq - cur.log_seq_start,
+    live_tail_entries: cur.tail_hint - cur.log_seq_start,
     object_count: await countObjects(storage),
     snapshot_bytes: cur.snapshot_bytes,
     snapshot_rows: cur.snapshot_rows,
@@ -281,7 +281,7 @@ const bootstrap = async (storage: Storage): Promise<void> => {
   await createCurrentJson(storage, CURRENT_JSON_KEY, {
     schema_version: CURRENT_JSON_SCHEMA_VERSION,
     snapshot: null,
-    next_seq: 0,
+    tail_hint: 0,
     log_seq_start: 0,
     writer_fence: { epoch: 0, owner: "maintenance-backlog-bench", claimed_at: "" },
     tail_bytes: 0,
@@ -410,7 +410,7 @@ const mean = (xs: readonly number[]): number => xs.reduce((s, x) => s + x, 0) / 
  * state); one that keeps climbing is growing. Threshold: last-third mean
  * > 1.5× first-third mean AND grew by more than one fold slice — avoids
  * calling normal fold sawtooth "growing". The tail starts near its steady
- * state (it is `next_seq - log_seq_start`, not a cold-bucket count), so
+ * state (it is `tail_hint - log_seq_start`, not a cold-bucket count), so
  * the first third is representative and first-vs-last is sound here.
  */
 const classifyTail = (samples: readonly MinuteSample[], foldSlice: number): AxisVerdict => {

@@ -293,7 +293,7 @@ describe("compact", () => {
     expect(snap.histograms.filter((h) => h.name === "db.compact.entries_folded")).toEqual([
       { name: "db.compact.entries_folded", value: 40, labels: { collection: COLL } },
     ]);
-    // Live tail after fold = 50 (next_seq) - 40 (foldEnd) = 10.
+    // Live tail after fold = 50 (tail_hint) - 40 (foldEnd) = 10.
     const lag = snap.gauges.findLast((g) => g.name === "db.manifest.lag_window_depth");
     expect(lag?.value).toBe(10);
   });
@@ -317,7 +317,7 @@ describe("compact", () => {
     // Hand-craft a current.json claiming 10 log entries exist but
     // never plant the bodies. compact() walks [0, 10) and should
     // throw Internal on the first missing GET.
-    await createCurrentJson(s, KEY, logStateCurrentJson({ next_seq: 10 }));
+    await createCurrentJson(s, KEY, logStateCurrentJson({ tail_hint: 10 }));
     await expect(
       compact({ storage: s, currentJsonKey: KEY }, { minEntriesToCompact: 5 }),
     ).rejects.toMatchObject({ code: "Internal" });

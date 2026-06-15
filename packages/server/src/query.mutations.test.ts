@@ -47,10 +47,10 @@ const currentJsonKey = (coll: string = COLL): string =>
 const logKey = (seq: number, coll: string = COLL): string =>
   `app/${APP}/tenant/${TENANT}/manifests/${coll}/log/${seq}.json`;
 
-const seedCurrent = (next_seq = 0): CurrentJson => ({
+const seedCurrent = (tail_hint = 0): CurrentJson => ({
   schema_version: CURRENT_JSON_SCHEMA_VERSION,
   snapshot: null,
-  next_seq,
+  tail_hint,
   log_seq_start: 0,
   writer_fence: { epoch: 0, owner: "test", claimed_at: "" },
   tail_bytes: 0,
@@ -219,15 +219,15 @@ describe("Query.update", () => {
     const afterCurrent: CurrentJson = JSON.parse(
       new TextDecoder().decode(afterRaw.body),
     ) as CurrentJson;
-    // next_seq is unchanged when no rows match — no commit was issued.
-    expect(afterCurrent.next_seq).toBe(beforeCurrent.next_seq);
+    // tail_hint is unchanged when no rows match — no commit was issued.
+    expect(afterCurrent.tail_hint).toBe(beforeCurrent.tail_hint);
   });
 
   test("emits one op:'U' LogEntry per affected doc with after as full post-image", async () => {
     const t = db.collection(COLL) as Collection<TicketDoc>;
     await t.insert({ _id: "e1", title: "t1", status: "open" });
     await t.insert({ _id: "e2", title: "t2", status: "open" });
-    // current next_seq is 2 after the two inserts; updates start at seq 2.
+    // current tail_hint is 2 after the two inserts; updates start at seq 2.
     await t.where({ status: "open" }).update({ status: "done" });
     const e2 = await readLogEntry(storage, 2);
     const e3 = await readLogEntry(storage, 3);
@@ -340,12 +340,12 @@ describe("Query.delete", () => {
     await t.insert({ _id: "k", title: "stays", status: "open" });
     const beforeRaw = (await storage.get(currentJsonKey()))!;
     const beforeNextSeq = (JSON.parse(new TextDecoder().decode(beforeRaw.body)) as CurrentJson)
-      .next_seq;
+      .tail_hint;
     const result = await t.delete("absent");
     expect(result).toEqual({ deleted: 0 });
     const afterRaw = (await storage.get(currentJsonKey()))!;
     const afterNextSeq = (JSON.parse(new TextDecoder().decode(afterRaw.body)) as CurrentJson)
-      .next_seq;
+      .tail_hint;
     expect(afterNextSeq).toBe(beforeNextSeq);
   });
 });

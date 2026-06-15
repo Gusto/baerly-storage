@@ -36,7 +36,7 @@ describe("current.json on LocalFsStorage", () => {
   const seed: CurrentJson = {
     schema_version: CURRENT_JSON_SCHEMA_VERSION,
     snapshot: null,
-    next_seq: 0,
+    tail_hint: 0,
     log_seq_start: 0,
     writer_fence: { epoch: 0, owner: "", claimed_at: "" },
     tail_bytes: 0,
@@ -76,9 +76,9 @@ describe("current.json on LocalFsStorage", () => {
     // separate update that bumps it.
     const stale = await readCurrentJson(storage, "k");
     expect(stale).not.toBeNull();
-    await casUpdateCurrentJson(storage, "k", (c) => ({ ...c, next_seq: c.next_seq + 1 }));
+    await casUpdateCurrentJson(storage, "k", (c) => ({ ...c, tail_hint: c.tail_hint + 1 }));
     await expect(
-      storage.put("k", new TextEncoder().encode(JSON.stringify({ ...seed, next_seq: 999 })), {
+      storage.put("k", new TextEncoder().encode(JSON.stringify({ ...seed, tail_hint: 999 })), {
         ifMatch: stale!.etag,
         contentType: "application/json",
       }),

@@ -7,7 +7,7 @@
  *   2. When `current.snapshot !== null`, the snapshot body's
  *      SHA-256 matches the hash embedded in the filename
  *      (delegated to `loadSnapshotAsMap`).
- *   3. The log range `[log_seq_start, next_seq)` has no holes —
+ *   3. The log range `[log_seq_start, tail_hint)` has no holes —
  *      every `log/<seq>.json` is present (HEAD-cheap LIST scan).
  *   4. Every entry inside the live tail is well-formed JSON with
  *      the locked `op`, `collection`, and `doc_id` fields.
@@ -350,7 +350,7 @@ const bundle = defineBaerlySubcommand({
     }
     const cur = read.json;
     const logFrom = cur.log_seq_start ?? 0;
-    const logToExcl = cur.next_seq;
+    const logToExcl = cur.tail_hint;
     const snapshotKey = cur.snapshot;
 
     // ── Snapshot hash verifies (loadSnapshotAsMap throws on mismatch). ──
@@ -400,7 +400,7 @@ const bundle = defineBaerlySubcommand({
         findings.push({
           severity: "finding",
           check: "log",
-          message: `missing log entry at seq ${s} inside [log_seq_start, next_seq)`,
+          message: `missing log entry at seq ${s} inside [log_seq_start, tail_hint)`,
           key: `${logPrefix}${s}.json`,
         });
       }

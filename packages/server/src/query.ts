@@ -19,7 +19,7 @@
  * `.order()` and `.limit()` are last-call-wins (state replace).
  *
  * Each terminal reads `current.json` FRESH, loads the snapshot it names,
- * and walks `[log_seq_start, next_seq)` directly — no cache, no
+ * and walks `[log_seq_start, tail_hint)` directly — no cache, no
  * `list()` round-trip for the log. Per the multi-instance rules, every
  * read sees a fresh CAS snapshot.
  *
@@ -128,14 +128,14 @@ export interface ReadResult<T extends DocumentData> {
 
 /**
  * Serialise a {@link CurrentJson} head into the wire cursor format
- * `"<snapshot>@<next_seq>"`. `null` snapshots stringify as
+ * `"<snapshot>@<tail_hint>"`. `null` snapshots stringify as
  * {@link MANIFEST_POINTER_EMPTY_SNAPSHOT} so the cursor is never the
  * empty string.
  *
  * @internal — exported for `query.test.ts`.
  */
 export const serializeManifestPointer = (json: CurrentJson): string =>
-  `${json.snapshot ?? MANIFEST_POINTER_EMPTY_SNAPSHOT}@${json.next_seq}`;
+  `${json.snapshot ?? MANIFEST_POINTER_EMPTY_SNAPSHOT}@${json.tail_hint}`;
 
 /**
  * Frozen state carried along a `Query<T>` chain. Every modifier
@@ -562,13 +562,13 @@ const runDelete = async <T extends DocumentData>(
 };
 
 /**
- * Load `current.json` fresh, walk `[log_seq_start, next_seq)` in parallel, fold
+ * Load `current.json` fresh, walk `[log_seq_start, tail_hint)` in parallel, fold
  * per-`doc_id`, then apply predicate / order / limit in memory.
  *
  * Error mapping:
  *   - `current.json` missing → empty result (collection not provisioned).
  *   - `current.json` malformed → `InvalidResponse` (from `readCurrentJson`).
- *   - log entry missing in `[log_seq_start, next_seq)` → `Internal`.
+ *   - log entry missing in `[log_seq_start, tail_hint)` → `Internal`.
  *   - log entry malformed → `InvalidResponse`.
  */
 const runRead = async <T extends DocumentData>(
@@ -624,14 +624,14 @@ const runRead = async <T extends DocumentData>(
   // `seq < log_seq_start` have been folded into the snapshot (or
   // dropped on truncation) and MUST NOT be GET-required here — the
   // bucket may have already swept them via `runGc()`.
-  const nextSeq = head.json.next_seq;
+  const nextSeq = head.json.tail_hint;
   const logSeqStart = logSeqStartOf(head.json);
   const baseDocs: Map<string, DocumentData> =
     head.json.snapshot === null
       ? new Map()
       : await loadSnapshotAsMap(ctx.storage, head.json.snapshot, ctx.collectionName);
 
-  // ── Step 2. Bounded parallel-fetch of [log_seq_start, next_seq). ──
+  // ── Step 2. Bounded parallel-fetch of [log_seq_start, tail_hint). ──
   const entries = await walkLogRange(ctx.storage, ctx.collectionPrefix, logSeqStart, nextSeq);
 
   // ── Step 3. Fold per doc_id, seeded from the snapshot. ────────────
@@ -900,7 +900,7 @@ const runIndexWalkPlan = async <T extends DocumentData>(
     }
   }
   const logSeqStart = logSeqStartOf(head);
-  const nextSeq = head.next_seq;
+  const nextSeq = head.tail_hint;
   const entries = await walkLogRange(ctx.storage, ctx.collectionPrefix, logSeqStart, nextSeq);
   foldLogEntriesOnto(docs, entries, { collection: ctx.collectionName, docIdFilter: matched });
 
