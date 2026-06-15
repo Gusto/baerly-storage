@@ -18,8 +18,10 @@
  * MinIO, the first create succeeds and a second create on the same key
  * rejects with `Conflict`.
  *
- * The concurrent-atomicity arm (two writers racing the same fresh key,
- * exactly one winner) is deferred — this test is purely sequential.
+ * This file now pins BOTH the sequential bare-`*` encoding AND the
+ * concurrent exactly-one-winner atomicity: eight writers race the same
+ * fresh key against live MinIO; exactly one must succeed and all others
+ * must reject with `Conflict`.
  *
  * Gated on `MINIO=1` via `describe.runIf`, so it runs under
  * `pnpm test:minio` against `pnpm dev:storage`'s `127.0.0.1:9102` and
@@ -82,6 +84,28 @@ describe.runIf(MINIO)("create-if-absent (bare-* against MinIO)", () => {
       ).rejects.toMatchObject({ code: "Conflict" });
     } finally {
       // 3. Clean up — best-effort; a leaked key doesn't fail the test.
+      await storage.delete(key).catch(() => {});
+    }
+  });
+
+  test("concurrent create-if-absent on a fresh key has exactly one winner", async () => {
+    await createBucket(signer, ENDPOINT, BUCKET);
+    const key = `create-if-absent/${uuid()}`;
+    const enc = new TextEncoder();
+    const RACERS = 16;
+    try {
+      const outcomes = await Promise.allSettled(
+        Array.from({ length: RACERS }, (_u, i) =>
+          storage.put(key, enc.encode(`r${i}`), { ifNoneMatch: "*" }),
+        ),
+      );
+      const winners = outcomes.filter((o) => o.status === "fulfilled").length;
+      const conflicts = outcomes.filter(
+        (o) => o.status === "rejected" && (o.reason as { code?: string }).code === "Conflict",
+      ).length;
+      expect(winners).toBe(1);
+      expect(conflicts).toBe(RACERS - 1);
+    } finally {
       await storage.delete(key).catch(() => {});
     }
   });
