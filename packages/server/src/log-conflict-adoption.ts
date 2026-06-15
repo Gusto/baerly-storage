@@ -30,12 +30,13 @@
  *      seq match is also implied by the key shape (the writer
  *      reads `/log/<expectedSeq>.json`), but is re-asserted here
  *      so the invariant is visible at the decision site.
- *   3. **Single-input commit.** `self.batchSize === 1`. Batches
- *      surface a log-PUT 412 as `Conflict` immediately — the
- *      caller (`Db.transaction`) decides whether to re-run the
- *      body. Adoption inside a batch would require per-input
- *      adoption decisions that don't compose with the
- *      all-or-nothing CAS-advance on `current.json`.
+ *   3. **Single-input commit.** `self.batchSize === 1`. Every
+ *      commit is single-input now, so this always holds; the guard
+ *      is retained as a defensive invariant (its removal is a
+ *      deferred follow-up). It is sound only for a single-input
+ *      commit because per-input adoption decisions would not
+ *      compose with the all-or-nothing CAS-advance on
+ *      `current.json`.
  *
  * When any of (1)/(2)/(3) fails, the writer MUST throw
  * `BaerlyError{code:"Conflict"}` and let the caller's retry-or-
@@ -101,9 +102,11 @@ export interface AdoptionContext {
    */
   readonly existing: LogEntry;
   /**
-   * `inputs.length` for the parent commit attempt. `1` for
-   * `Writer.commit`; `inputs.length` for `Writer.commitBatch`.
-   * Adoption is only safe when this is exactly `1`.
+   * Input count of the parent commit attempt. Always `1` now —
+   * `Writer.commit` is the only commit path and is single-input.
+   * Adoption is only safe when this is exactly `1`; the field is
+   * retained as a defensive invariant (removing it is a deferred
+   * follow-up).
    */
   readonly batchSize: number;
 }
@@ -131,8 +134,9 @@ export type AdoptionDecision =
  * @see The soundness invariant in this module's header docstring.
  */
 export const tryAdoptOwnSessionLogEntry = (ctx: AdoptionContext): AdoptionDecision => {
-  // Clause (3) — single-input commit. Evaluated first so a batched
-  // call short-circuits before any field comparison.
+  // Clause (3) — single-input commit. Always holds now (every commit
+  // is single-input); evaluated first as a defensive guard before any
+  // field comparison.
   if (ctx.batchSize !== 1) {
     return { adopt: false, reason: "batch" };
   }

@@ -188,10 +188,12 @@ export const CLOUDFLARE_FREE_TIER: MaintenanceOptions = profileToScheduledOption
 // =====================================================================
 
 /**
- * Floor-based GC-cadence boundary crossing. BATCH-SAFE: a
- * `commitBatch` that jumps `next_seq` by its whole batch size can step
- * CLEAN OVER a `next_seq % interval === 0` modulo test; this floor test
- * trips on any interval boundary inside `(prevSeq, nextSeq]`.
+ * Floor-based GC-cadence boundary crossing. Every commit now advances
+ * `next_seq` by exactly 1, so a single step can only ever cross one
+ * `next_seq % interval === 0` boundary — but the floor test is kept
+ * (rather than a `next_seq % interval === 0` modulo test) because it
+ * trips on any interval boundary inside `(prevSeq, nextSeq]` and so
+ * stays correct and cheap regardless of step size.
  */
 export const crossesGcBoundary = (prevSeq: number, nextSeq: number, interval: number): boolean =>
   Math.floor(prevSeq / interval) !== Math.floor(nextSeq / interval);

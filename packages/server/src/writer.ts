@@ -175,23 +175,6 @@ export interface CommitResult {
   readonly attempts: number;
 }
 
-/** Return shape of {@link Writer.commitBatch}. */
-export interface CommitBatchResult {
-  /**
-   * One emitted `LogEntry` per input, in input order.
-   * `entries[i]` corresponds to `inputs[i]`. `entries.length ===
-   * inputs.length`. On an empty input array `entries` is empty and
-   * no I/O happened.
-   */
-  readonly entries: readonly LogEntry[];
-
-  /**
-   * New ETag of `current.json` after the CAS-advance landed.
-   * `undefined` on an empty input array (the CAS step is skipped).
-   */
-  readonly currentEtag: string | undefined;
-}
-
 const DEFAULT_INITIAL_BACKOFF_MS = 25;
 const MAX_BACKOFF_MS = 1500;
 const APPLICATION_JSON = "application/json";
@@ -371,89 +354,26 @@ export class Writer {
   }
 
   /**
-   * Single-attempt batched commit. Reads `current.json` ONCE, mints
-   * `inputs.length` log entries with contiguous `seq` numbers
-   * starting at the current `next_seq`, PUTs each content body and
-   * each log entry, then CAS-advances `current.json` from
-   * `next_seq = N` to `next_seq = N + inputs.length` with
-   * `If-Match`.
-   *
-   * NO retry on CAS loss. On `current.json` 412, throws
-   * `BaerlyError{code:"Conflict"}` immediately — the caller (here:
-   * `Db.transaction`) decides whether to retry by re-running the
-   * body, or to surface to the app. Likewise on a log-entry 412
-   * (a peer wrote our seq).
-   *
-   * Empty `inputs`: returns `{ entries: [], currentEtag: undefined }`
-   * after zero storage operations.
-   *
-   * @throws BaerlyError code="Conflict" — CAS lost on `current.json`,
-   *   or a log entry already exists at our seq (peer wrote ahead).
-   * @throws BaerlyError code="Conflict" — the writer fence
-   *   (`current.json.writer_fence.epoch`) was bumped by a concurrent
-   *   `claimWriter` call between this batch's read of
-   *   `current.json` and its CAS-advance. The stale writer aborts
-   *   to honour the new authority — the kernel does NOT retry under
-   *   the old epoch. See {@link claimWriter} for the rotation
-   *   recipe.
-   * @throws BaerlyError code="Internal" — protocol-invariant violation
-   *   (missing log entry inside `[0, next_seq)`).
-   * @throws BaerlyError code="InvalidResponse" — malformed log body.
-   *
-   * **Implicit provisioning.** Like {@link commit}, this path auto-
-   * creates `current.json` with a zero-state manifest on a missing
-   * read. Because `commitBatch` does NOT retry on CAS loss, a peer
-   * racing the same first-write surfaces `Conflict` to the caller
-   * (`Db.transaction` re-runs the body); the manifest is durable
-   * regardless of which writer won the create.
-   */
-  async commitBatch(inputs: readonly CommitInput[]): Promise<CommitBatchResult> {
-    if (inputs.length === 0) {
-      return { entries: [], currentEtag: undefined };
-    }
-
-    const session = uuid().slice(0, SESSION_ID_LENGTH);
-    const logPrefix = this.#currentJsonKey.slice(0, this.#currentJsonKey.lastIndexOf("/"));
-
-    // No retry — `#singleAttemptCommit`'s `Conflict` (log-peer race
-    // or `current.json` CAS loss) propagates verbatim to the caller
-    // (`Db.transaction` decides whether to re-run the body). The
-    // fence-bump check sits AFTER the helper returns so its
-    // `Conflict` propagates with the fence-bump message rather than
-    // a generic CAS-loss one.
-    const success = await this.#singleAttemptCommit(
-      inputs,
-      session,
-      logPrefix,
-      "Writer.commitBatch",
-      /* adoptOwnSessionOnLogConflict */ false,
-    );
-    await this.#verifyFenceUnchanged(success.expectedEpoch, "Writer.commitBatch");
-    // Pick the first input's collection as the batch label; in the
-    // current `Db.transaction` model every input shares one
-    // collection, so this is exact. If future tickets relax that
-    // we'll need a per-collection split here.
-    this.#emitWriteMetrics(inputs[0]!.collection, success.classAOps);
-    return { entries: success.entries, currentEtag: success.currentEtag };
-  }
-
-  /**
-   * One full commit attempt — the shared body of {@link commit} and
-   * {@link commitBatch}. Reads `current.json`, walks the log, mints N
-   * entries, PUTs content + indexes in parallel, PUTs log entries,
+   * One full commit attempt — the body of {@link commit}. Reads
+   * `current.json`, walks the log, mints the entry for the single
+   * input, PUTs content + indexes in parallel, PUTs the log entry,
    * CAS-advances `current.json`. Returns the success payload + the
    * pre-commit fence epoch so the caller can run
    * {@link #verifyFenceUnchanged} outside the retry-catch arm.
    *
+   * Called only as `#singleAttemptCommit([input], …)`: the array
+   * shape is retained dead-generality (the genuine single-input
+   * unroll is a deferred follow-up), but every call mints exactly
+   * one entry and advances `next_seq` by 1.
+   *
    * Retryable failures (a peer wrote our seq; a peer won the CAS on
    * `current.json`) throw `BaerlyError{code:"Conflict"}`. The caller
-   * catches via {@link isPreconditionFailed} and either retries
-   * (`commit`) or surfaces (`commitBatch`). Fence-bump and protocol-
-   * invariant violations are NOT thrown from this helper — the fence
-   * check lives in the caller so its `Conflict` propagates past the
-   * retry-catch arm. Other thrown `BaerlyError`s (Internal,
-   * InvalidResponse, NetworkError) bypass `isPreconditionFailed` and
-   * propagate naturally.
+   * ({@link commit}) catches via {@link isPreconditionFailed} and
+   * retries. Fence-bump and protocol-invariant violations are NOT
+   * thrown from this helper — the fence check lives in the caller so
+   * its `Conflict` propagates past the retry-catch arm. Other thrown
+   * `BaerlyError`s (Internal, InvalidResponse, NetworkError) bypass
+   * `isPreconditionFailed` and propagate naturally.
    *
    * Crash safety invariant: content / index PUTs are awaited before
    * log PUTs, which are awaited before the CAS. A crashed mid-attempt
@@ -644,8 +564,10 @@ export class Writer {
     //
     // We discriminate by `session`: the random per-call id uniquely
     // identifies "our own previous attempt." Adoption is only safe
-    // when there's exactly one entry to compare (`commit`'s N=1 case);
-    // batch commits surface log-PUT 412s as `Conflict` immediately.
+    // when there's exactly one entry to compare — always true now that
+    // `commit` (N=1) is the sole caller. The non-adopting path
+    // (`adoptOwnSessionOnLogConflict: false`) is currently unreached; it
+    // surfaced log-PUT 412s as `Conflict` for the removed batch commit.
     type LogPutOutcome = { readonly ok: true } | { readonly ok: false };
     const logPutOne = async (entry: LogEntry): Promise<LogPutOutcome> => {
       const logEntryKey = logObjectKey(logPrefix, entry.seq);
@@ -759,10 +681,11 @@ export class Writer {
     }
 
     // ── Step 6b. Write-tick maintenance dispatch. ───────────────────
-    // Single funnel site reached by BOTH `commit()` and `commitBatch()`
-    // exactly once per logical commit (a CAS retry re-enters this helper
-    // and dispatches once per successful attempt — but a successful CAS
-    // ends the retry loop, so a logical commit dispatches once). Sits
+    // Single funnel site: write-tick maintenance dispatch. Reached by
+    // `commit()` exactly once per logical commit (a CAS retry re-enters
+    // this helper and dispatches once per successful attempt — but a
+    // successful CAS ends the retry loop, so a logical commit
+    // dispatches once). Sits
     // BEFORE the caller's `#verifyFenceUnchanged` — a write that then
     // fails its fence check may have paid for one bounded maintenance
     // pass; that's the intended single funnel, bounded and safe.
@@ -985,9 +908,9 @@ export class Writer {
 
   /**
    * Emit the per-logical-write `class_a_ops_per_logical_write`
-   * histogram shared by `commit` and `commitBatch`. `classAOps`
-   * differs between the two paths (retry-budget vs batch shape),
-   * so each caller computes it.
+   * histogram for `commit`. `classAOps` is the per-attempt base plus
+   * a charge for prior failed attempts (the retry-budget cost model),
+   * computed by the caller.
    */
   #emitWriteMetrics(collection: string, classAOps: number): void {
     ctxMetrics().histogram("db.write.class_a_ops_per_logical_write", classAOps, { collection });

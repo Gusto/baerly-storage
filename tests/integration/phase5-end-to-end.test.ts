@@ -93,10 +93,12 @@ describe("Synthetic 5000-entry end-to-end gate", () => {
       test(
         "compaction over 5000 entries leaves find() results unchanged and shrinks the bucket",
         // Vitest's default 5s timeout is too tight for the 5000-write
-        // seed even via `commitBatch` (memory ≈ 2s, local-fs ≈ 20s
-        // dominated by 10k parallel file PUTs under macOS ulimit).
-        // 60s gives 3× headroom on the slower variant.
-        { timeout: 60_000 },
+        // sequential seed (memory a few seconds; local-fs dominated by
+        // per-commit file PUTs under macOS ulimit). The seed is O(N) —
+        // no per-commit integrity walk, and the in-band maintenance tick
+        // is explicitly DISABLED during the seed (see (1)) so it can't
+        // re-fold the growing tail. 90s gives headroom on local-fs.
+        { timeout: 90_000 },
         async () => {
           const made = await variant.build();
           cleanup = made.cleanup;
@@ -105,30 +107,37 @@ describe("Synthetic 5000-entry end-to-end gate", () => {
           const writer = new Writer({ storage, currentJsonKey: CURRENT_JSON_KEY });
 
           // ── (1) Seed 5000 entries through the writer. ────────────────
-          // Use `commitBatch` rather than 5000 sequential `commit()`
-          // calls. Both produce 5000 `LogEntry` rows with deterministic
-          // `_id`s — the assertions downstream are about the resulting
-          // state, not about the commit pattern. The wall-clock
-          // difference matters: each `commit()` reads
-          // `[log_seq_start, next_seq)` for integrity validation, so a
-          // sequential seed is O(N²) in storage GETs (~12.5M at
-          // N=5000). `commitBatch` walks the log once (over an empty
-          // range on the first batch), keeping the seed O(N). The
-          // memory variant still runs in ~2s; the local-fs variant
-          // stays within the ticket's 30s budget instead of blowing
-          // past it. The four-adapter `collection-api.test.ts` cascade
-          // covers single-commit semantics under load.
+          // Sequential single-doc `commit()` calls — the document is the
+          // atomic unit; there is no batch path. The seed runs inside a
+          // `maintenance: { disabled: true }` context: this is LOAD-
+          // BEARING, not cosmetic. The write-tick maintenance dispatch in
+          // `#singleAttemptCommit` fires by DEFAULT when no maintenance
+          // context is present (`maint?.disabled !== true` is true when
+          // `maint` is undefined — inline dispatch is the bare-writer
+          // default), so a context-free 5000-commit loop would self-
+          // compact mid-seed on every GC-cadence boundary: it re-folds the
+          // growing tail O(N) times (≈O(N²) work) AND pre-shrinks the
+          // bucket before the explicit `runScheduledMaintenance` below,
+          // confounding the "before vs after" object-count comparison.
+          // Disabling the tick keeps the seed inert and O(N) — a fixed
+          // read + 3 PUTs per commit (`verifyLogIntegrityOnCommit` is off
+          // by default, so no per-commit tail walk) — so the topology
+          // going into maintenance is exactly N raw commits.
           const N = 5000;
-          const inputs = Array.from({ length: N }, (_, i) => {
-            const id = `t-${i.toString().padStart(5, "0")}`;
-            const body: Ticket = {
-              _id: id,
-              status: i % 3 === 0 ? "closed" : "open",
-              priority: i % 5,
-            };
-            return { op: "I" as const, collection: COLLECTION, docId: id, body };
-          });
-          await writer.commitBatch(inputs);
+          await runWithContext(
+            createObservabilityContext({ maintenance: { disabled: true } }),
+            async () => {
+              for (let i = 0; i < N; i++) {
+                const id = `t-${i.toString().padStart(5, "0")}`;
+                const body: Ticket = {
+                  _id: id,
+                  status: i % 3 === 0 ? "closed" : "open",
+                  priority: i % 5,
+                };
+                await writer.commit({ op: "I", collection: COLLECTION, docId: id, body });
+              }
+            },
+          );
 
           // ── (2) Snapshot the read results BEFORE compaction. ─────────
           const db = Db.create({ storage, app: APP, tenant: TENANT });
@@ -185,13 +194,18 @@ describe("Synthetic 5000-entry end-to-end gate", () => {
             next_seq: number;
             log_seq_start?: number;
           };
+          // Absolute literal kept on purpose — it pins a real contract:
+          // each single-doc commit advances next_seq by exactly 1, so N
+          // sequential commits land next_seq at exactly N (identical to
+          // what the old single-CAS batch produced; the topology changed
+          // but this end-state is invariant).
           expect(json.next_seq).toBe(N);
           expect(json.snapshot).not.toBeNull();
-          // The compactor folds the entire live tail in one unbounded
-          // pass; the writer minted nothing new in between, so
-          // log_seq_start should equal next_seq. Allow a small slack so
-          // a future change to the compactor's lag-window default
-          // doesn't break the gate.
+          // The compactor folds the entire live tail in unbounded passes;
+          // the writer minted nothing new in between, so log_seq_start
+          // advances to within a small live-tail slack of next_seq. Bound
+          // form (not an exact literal) so a future change to the
+          // compactor's lag-window default doesn't break the gate.
           expect(json.log_seq_start ?? 0).toBeGreaterThanOrEqual(N - 10);
 
           // ── (5) Re-read; results must match pre-compaction. ──────────

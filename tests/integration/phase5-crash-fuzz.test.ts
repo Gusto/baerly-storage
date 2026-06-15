@@ -49,7 +49,6 @@ import {
   decodeJsonBytes,
   type DocumentData,
   encodeJsonBytes,
-  type LogEntry,
   MemoryStorage,
   readCurrentJson,
   type Storage,
@@ -668,39 +667,6 @@ const durableLogSeqs = async (storage: Storage, tablePrefix: string): Promise<nu
   return seqs.toSorted((a, b) => a - b);
 };
 
-/**
- * Poll until `key` is readable (non-null), bounded to a tight number of
- * event-loop turns. Returns the fetched value once present.
- *
- * BUG 2 (below) aborts the SECOND parallel log PUT while the FIRST
- * (`log/0.json`) was kicked off but never awaited — when
- * `commitBatch`'s `Promise.all` rejects, `log/0`'s underlying write is
- * an orphaned in-flight promise. On `local-fs` that's a real
- * `mkdir → writeFile(tmp) → rename` that may not have flushed by the
- * time the assertion runs. This helper makes that orphaned write's
- * durability deterministic without weakening the torn-state assertion:
- * the cap is small, so a genuine regression (log/0 NEVER landing) still
- * fails fast and loudly rather than hanging.
- */
-const awaitReadable = async (
-  storage: Storage,
-  key: string,
-): Promise<NonNullable<Awaited<ReturnType<Storage["get"]>>>> => {
-  const MAX_TURNS = 50;
-  for (let turn = 0; turn < MAX_TURNS; turn++) {
-    const got = await storage.get(key);
-    if (got !== null) {
-      return got;
-    }
-    // Yield a macrotask so a pending rename has a chance to flush.
-    await new Promise((resolve) => setTimeout(resolve, 0));
-  }
-  throw new Error(
-    `awaitReadable: ${key} never became readable within ${MAX_TURNS} turns ` +
-      `(genuine regression — the orphaned in-flight write never landed)`,
-  );
-};
-
 describe("ticket-01 bug reproductions (characterization — assert CURRENT buggy behavior)", () => {
   const cleanups: Array<() => Promise<void>> = [];
   afterEach(async () => {
@@ -734,11 +700,11 @@ describe("ticket-01 bug reproductions (characterization — assert CURRENT buggy
      * `next_seq` does not advance past it.
      *
      * ┌─────────────────────────────────────────────────────────────┐
-     * │ INVERT WHEN ticket-01 (atomic commit objects) LANDS:          │
-     * │ the marked assertion below ("documents the wedge") must flip   │
-     * │ to assert RECOVERY — the fresh commit SUCCEEDS, the orphan is  │
-     * │ reconciled, `next_seq` advances, and the probe row is          │
-     * │ readable. See the `INVERT` markers inline.                     │
+     * │ A future recovery ticket may invert this: the marked          │
+     * │ assertions below ("documents the wedge") would flip to assert │
+     * │ that the fresh commit SUCCEEDS, the wedge clears, `next_seq`   │
+     * │ advances, and the probe row is readable. The recovery design  │
+     * │ is unresolved; this characterizes the wedge until then.       │
      * └─────────────────────────────────────────────────────────────┘
      */
     test(`[${variant.label}] BUG 1: single-entry orphan at next_seq wedges every future writer`, async () => {
@@ -803,12 +769,12 @@ describe("ticket-01 bug reproductions (characterization — assert CURRENT buggy
         options: { maxRetries: 3, initialBackoffMs: 0, random: () => 0 },
       });
 
-      // ░░░ INVERT THIS ASSERTION when ticket-01 lands ░░░
+      // ░░░ A future recovery ticket may invert this assertion ░░░
       // CURRENT (buggy): the fresh commit throws Conflict — the orphan
       // wedges the collection permanently.
-      // AFTER ticket-01: replace this with an assertion that the commit
-      // RESOLVES (the atomic commit object lets the writer reconcile the
-      // orphan and advance next_seq).
+      // AFTER recovery (design unresolved): this would assert that the
+      // commit RESOLVES — the writer clears the wedge and advances
+      // next_seq.
       let caught: unknown;
       try {
         await freshWriter.commit({
@@ -826,114 +792,20 @@ describe("ticket-01 bug reproductions (characterization — assert CURRENT buggy
       expect(caught).toBeInstanceOf(BaerlyError);
       expect(caught).toMatchObject({ code: "Conflict" }); // ← INVERT: assert the commit succeeds.
 
-      // ░░░ INVERT THESE TOO when ticket-01 lands ░░░
+      // ░░░ A future recovery ticket may invert these too ░░░
       // CURRENT (buggy): next_seq is still pinned at 1 (the wedge never
-      // lets any writer advance it). AFTER ticket-01: next_seq advances
-      // past the reconciled orphan.
+      // lets any writer advance it). AFTER recovery: next_seq advances
+      // past the cleared wedge.
       const afterWedge = await readCurrentJson(storage, currentJsonKey);
       expect(afterWedge!.json.next_seq).toBe(1); // ← INVERT: expect advance past 1.
 
       // CURRENT (buggy): the wedge-probe row is NOT readable (its commit
-      // never landed). AFTER ticket-01: the probe row reads back.
+      // never landed). AFTER recovery: the probe row reads back.
       const ids = await readAllRowIds(storage);
       expect(ids).not.toContain("wedge-probe"); // ← INVERT: expect to contain it.
       // The original good row is still readable regardless (folds from
       // log seq 0, below the orphan).
       expect(ids).toContain("first");
-    });
-
-    /**
-     * ── BUG 2: torn transaction (`commitBatch` / `Db.transaction`). ──
-     *
-     * WHAT THIS DOCUMENTS:
-     * `commitBatch()` (the engine behind `Db.transaction`) PUTs all N
-     * log entries in parallel via `Promise.all`, then CAS-advances
-     * `current.json` — with NO retry loop. A crash mid-`Promise.all`
-     * leaves a PARTIAL subset of the N log entries durable. Nothing on
-     * disk records how many entries a batch should have (all entries
-     * share one `session`, but no count is persisted), so a reader
-     * cannot tell a complete-but-uncommitted batch from a torn partial
-     * one. The `Db.transaction` contract ("the write side-effects
-     * either all landed or none did") is therefore VIOLATED under crash.
-     *
-     * This test asserts the CURRENT, BUGGY behavior: after a crash
-     * partway through the parallel log-entry PUTs of a 2-doc batch,
-     * exactly ONE of the two `log/<seq>.json` objects is durably present
-     * — a torn batch with no on-disk marker of incompleteness.
-     *
-     * ┌─────────────────────────────────────────────────────────────┐
-     * │ INVERT WHEN ticket-01 (atomic commit objects) LANDS:          │
-     * │ the marked assertion below ("documents the torn batch") must  │
-     * │ flip to assert ALL-OR-NONE — after the crash, ZERO of the     │
-     * │ batch's entries are durably visible (a single atomic commit   │
-     * │ object means a partial write is never observable).            │
-     * └─────────────────────────────────────────────────────────────┘
-     */
-    test(`[${variant.label}] BUG 2: commitBatch crash leaves a torn partial batch on disk`, async () => {
-      const { storage, cleanup } = await variant.build();
-      if (cleanup !== undefined) {
-        cleanups.push(cleanup);
-      }
-
-      const tablePrefix = TABLE_PREFIX;
-      const currentJsonKey = CURRENT_JSON_KEY;
-      await provision(storage);
-
-      // Drive a 2-doc batch and crash partway through the parallel log
-      // PUTs. For a 2-input batch with no indexes the op order on
-      // `inner` is: op1 GET current.json, op2 PUT content[0], op3 PUT
-      // content[1] (content PUTs are awaited as one Promise.all), then
-      // op4 PUT log/0.json, op5 PUT log/1.json (log PUTs are a second
-      // Promise.all), then op6 CAS PUT current.json. The two log PUTs are
-      // kicked off synchronously by `entries.map(logPutOne)`, so each
-      // proxy `put` increments the counter in seq order before any await
-      // resolves. Arming at op5 fires the abort on the SECOND log PUT:
-      // log/0.json's `inner.put` is already in flight and lands durably,
-      // log/1.json never reaches storage, and the CAS is never attempted.
-      const handle = abortingStorage(storage);
-      const crashWriter = new Writer({ storage: handle.storage, currentJsonKey });
-      handle.armAt(5);
-      await expect(
-        crashWriter.commitBatch([
-          { op: "I", collection: COLLECTION, docId: "batch-0", body: { _id: "batch-0", n: 0 } },
-          { op: "I", collection: COLLECTION, docId: "batch-1", body: { _id: "batch-1", n: 1 } },
-        ]),
-      ).rejects.toMatchObject({ name: "AbortError" });
-
-      // `log/0.json`'s PUT was kicked off as the first arm of the log
-      // `Promise.all`, then ORPHANED when the second arm's abort rejected
-      // the whole `Promise.all` — its underlying write is an unawaited
-      // in-flight promise. The torn-state assertions below depend on that
-      // write having durably landed; on `local-fs` it's a real
-      // `mkdir → writeFile(tmp) → rename` that may not have flushed yet.
-      // Await it deterministically (tight cap → a genuine "log/0 never
-      // landed" regression still fails fast). This is the SAME `log/0`
-      // the assertions below read; binding `got0` here avoids a re-fetch.
-      const got0 = await awaitReadable(storage, `${tablePrefix}/log/0.json`);
-
-      // ░░░ INVERT THIS ASSERTION when ticket-01 lands ░░░
-      // CURRENT (buggy): exactly ONE of the batch's two log entries is
-      // durably present — a torn partial batch. With no on-disk count,
-      // nothing marks the batch as incomplete.
-      // AFTER ticket-01: replace with `expect(durableSeqs).toEqual([])`
-      // (or assert no batch entries are visible) — the atomic commit
-      // object makes a partial write unobservable.
-      const durableSeqs = await durableLogSeqs(storage, tablePrefix);
-      expect(durableSeqs).toEqual([0]); // ← INVERT: assert all-or-none (no partial).
-
-      // Cross-check the torn state precisely: log/0.json exists and is a
-      // member of the crashed batch; log/1.json does not exist.
-      const got1 = await storage.get(`${tablePrefix}/log/1.json`);
-      expect(got0).not.toBeNull();
-      expect(got1).toBeNull();
-      const entry0 = decodeJsonBytes<LogEntry>(got0.body);
-      expect(entry0.doc_id).toBe("batch-0");
-
-      // The CAS never landed, so next_seq did not advance — the partial
-      // is durable yet "uncommitted", and nothing on disk distinguishes
-      // it from a complete-but-uncommitted batch.
-      const afterCrash = await readCurrentJson(storage, currentJsonKey);
-      expect(afterCrash!.json.next_seq).toBe(0);
     });
   }
 });

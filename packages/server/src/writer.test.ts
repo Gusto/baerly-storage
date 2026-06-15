@@ -605,28 +605,6 @@ describe("Writer — writer fence", () => {
     expect((thrown as BaerlyError).code).toBe("Conflict");
     expect((thrown as BaerlyError).message).toMatch(/writer fence bumped from epoch 0 to 1/);
   });
-
-  test("commitBatch() under fence bump: throws Conflict", async () => {
-    const storage = new FenceBumpingStorage();
-    await createCurrentJson(storage, CURRENT_KEY, seedCurrent());
-    storage.bumpAfterReadsCount = 2;
-    const writer = new Writer({
-      storage,
-      currentJsonKey: CURRENT_KEY,
-    });
-
-    let thrown: unknown;
-    try {
-      await writer.commitBatch([
-        { op: "I", collection: COLL, docId: "tx-1", body: { _id: "tx-1" } },
-        { op: "I", collection: COLL, docId: "tx-2", body: { _id: "tx-2" } },
-      ]);
-    } catch (error) {
-      thrown = error;
-    }
-    expect(thrown).toBeInstanceOf(BaerlyError);
-    expect((thrown as BaerlyError).code).toBe("Conflict");
-  });
 });
 
 describe("Writer — filtered index", () => {
@@ -937,26 +915,6 @@ describe("Writer — write-tick maintenance dispatch", () => {
     expect(calls()).toBe(1);
   });
 
-  test("(3) commitBatch() also dispatches when the ratio trips", async () => {
-    const storage = new MemoryStorage();
-    await seedWith(storage, {
-      next_seq: 1,
-      tail_bytes: MAINTENANCE_MIN_LIVE_BYTES,
-      snapshot_bytes: 0,
-    });
-    const writer = new Writer({ storage, currentJsonKey: CURRENT_KEY });
-    const { maintenance, calls } = recordingDispatch();
-
-    await runWithContext(createObservabilityContext({ maintenance }), () =>
-      writer.commitBatch([
-        { op: "I", collection: COLL, docId: "b1", body: { _id: "b1" } },
-        { op: "I", collection: COLL, docId: "b2", body: { _id: "b2" } },
-      ]),
-    );
-
-    expect(calls()).toBe(1);
-  });
-
   test("(4) a commit that retries past one CAS conflict dispatches EXACTLY once", async () => {
     // The dispatch sits at the success point inside #singleAttemptCommit,
     // reached once per logical commit (a failed attempt throws before the
@@ -1028,11 +986,13 @@ describe("Writer — write-tick maintenance dispatch", () => {
     expect(calls()).toBe(0);
   });
 
-  test("(7) a commitBatch that jumps CLEAN OVER a gcInterval multiple still dispatches", async () => {
-    // interval 4, prevSeq 3, batch of 5 → next_seq 8: steps over both 4
-    // and 8's boundary. A naive `next_seq % interval === 0` test on a
-    // single endpoint could miss this; the floor-based crossesGcBoundary
-    // catches it.
+  test("(7) sequential single commits crossing a gcInterval boundary dispatch on the boundary", async () => {
+    // interval 4, prevSeq 3. Each commit advances next_seq by 1, so the
+    // commit landing at next_seq 4 crosses the boundary (floor(3/4)=0 ≠
+    // floor(4/4)=1) and dispatches; the commits landing at 5 and 6 do
+    // not. The floor-based crossesGcBoundary is what pins the crossing —
+    // a naive `next_seq % interval === 0` endpoint test would behave the
+    // same here at N=1, but the floor form stays correct for any step.
     const storage = new MemoryStorage();
     await seedWith(storage, {
       next_seq: 3,
@@ -1042,19 +1002,17 @@ describe("Writer — write-tick maintenance dispatch", () => {
     const writer = new Writer({ storage, currentJsonKey: CURRENT_KEY });
     const { maintenance, calls } = recordingDispatch();
 
-    await runWithContext(createObservabilityContext({ maintenance }), () =>
-      writer.commitBatch([
-        { op: "I", collection: COLL, docId: "j1", body: { _id: "j1" } },
-        { op: "I", collection: COLL, docId: "j2", body: { _id: "j2" } },
-        { op: "I", collection: COLL, docId: "j3", body: { _id: "j3" } },
-        { op: "I", collection: COLL, docId: "j4", body: { _id: "j4" } },
-        { op: "I", collection: COLL, docId: "j5", body: { _id: "j5" } },
-      ]),
-    );
+    await runWithContext(createObservabilityContext({ maintenance }), async () => {
+      for (let i = 0; i < 3; i++) {
+        await writer.commit({ op: "I", collection: COLL, docId: `j${i}`, body: { _id: `j${i}` } });
+      }
+    });
 
     const after7 = await persisted(storage);
-    expect(after7.next_seq).toBe(8);
+    expect(after7.next_seq).toBe(6);
     expect(WRITE_TICK_GC_INTERVAL).toBe(4); // pins the boundary arithmetic above
+    // Exactly one of the three commits (the one landing at next_seq 4)
+    // crosses the cadence boundary.
     expect(calls()).toBe(1);
   });
 
@@ -1085,7 +1043,7 @@ describe("Writer — write-tick maintenance dispatch", () => {
     expect(after.snapshot).toBeNull();
   });
 
-  test("(9) the GC-cadence invariant holds: next_seq advances by exactly inputs.length per commit", async () => {
+  test("(9) the GC-cadence invariant holds: next_seq advances by exactly 1 per commit", async () => {
     const storage = new MemoryStorage();
     await seedWith(storage, {});
     const writer = new Writer({ storage, currentJsonKey: CURRENT_KEY });
@@ -1097,14 +1055,13 @@ describe("Writer — write-tick maintenance dispatch", () => {
     const afterOne = afterOneState.next_seq;
     expect(afterOne - before).toBe(1);
 
-    await writer.commitBatch([
-      { op: "I", collection: COLL, docId: "inv-2", body: { _id: "inv-2" } },
-      { op: "I", collection: COLL, docId: "inv-3", body: { _id: "inv-3" } },
-      { op: "I", collection: COLL, docId: "inv-4", body: { _id: "inv-4" } },
-    ]);
-    const afterBatchState = await persisted(storage);
-    const afterBatch = afterBatchState.next_seq;
-    expect(afterBatch - afterOne).toBe(3);
+    // Three sequential single-doc commits advance next_seq by 3.
+    await writer.commit({ op: "I", collection: COLL, docId: "inv-2", body: { _id: "inv-2" } });
+    await writer.commit({ op: "I", collection: COLL, docId: "inv-3", body: { _id: "inv-3" } });
+    await writer.commit({ op: "I", collection: COLL, docId: "inv-4", body: { _id: "inv-4" } });
+    const afterThreeState = await persisted(storage);
+    const afterThree = afterThreeState.next_seq;
+    expect(afterThree - afterOne).toBe(3);
   });
 
   test("(10) maintenance.disabled on the context suppresses dispatch entirely", async () => {

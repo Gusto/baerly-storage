@@ -12,13 +12,7 @@
 export type { InternalCompactOptions } from "../compactor.ts";
 export type { InternalRunGcOptions } from "../gc.ts";
 export type { InternalMaintenanceOptions } from "../maintenance.ts";
-export {
-  type CommitBatchResult,
-  type CommitInput,
-  type CommitResult,
-  type WriterOptions,
-  Writer,
-} from "../writer.ts";
+export { type CommitInput, type CommitResult, type WriterOptions, Writer } from "../writer.ts";
 export {
   type AdoptionContext,
   type AdoptionDecision,

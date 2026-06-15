@@ -75,9 +75,9 @@ describe("tryAdoptOwnSessionLogEntry", () => {
   });
 
   test("batchSize: 0 (empty inputs, defensive) → reject with reason 'batch'", () => {
-    // Empty-inputs path is short-circuited in commitBatch before
-    // this helper is ever called, but the helper itself MUST
-    // refuse a non-1 batchSize unconditionally.
+    // The single-input commit path never reaches this helper with a
+    // batchSize other than 1, but the helper itself MUST refuse a
+    // non-1 batchSize unconditionally.
     const decision = tryAdoptOwnSessionLogEntry(ctxOf({ batchSize: 0 }));
     expect(decision).toEqual({ adopt: false, reason: "batch" });
   });
