@@ -112,6 +112,10 @@ export interface CurrentJson {
    *  (tail entries) this gives the fold's entry count for the ENTRY ceiling `E`. Seeded 0. */
   snapshot_rows: number;
 
+  /** Compactor-stamped mean folded-entry byte size; estimates live-tail bytes
+   *  (`entry_count × mean_entry_bytes`) without an exact counter. Absent until first fold. */
+  mean_entry_bytes?: number;
+
   /** Baseline for rate-limiting the graduation defer-warn off SHARED durable state, not
    *  per-isolate memory. The warn fires when tail_hint - last_warned_seq >=
    *  MAINTENANCE_WARN_INTERVAL_WRITES, and that firing CASes last_warned_seq = tail_hint.
@@ -552,6 +556,18 @@ const assertCurrentJson = (parsed: unknown, key: string): CurrentJson => {
     throw new BaerlyError(
       "InvalidResponse",
       `current.json at ${key}: last_warned_seq must be a non-negative integer if present`,
+    );
+  }
+  if (
+    r["mean_entry_bytes"] !== undefined &&
+    // Stryker disable next-line ConditionalExpression: typeof → false is subsumed by !Number.isInteger.
+    (typeof r["mean_entry_bytes"] !== "number" ||
+      !Number.isInteger(r["mean_entry_bytes"]) ||
+      r["mean_entry_bytes"] < 0)
+  ) {
+    throw new BaerlyError(
+      "InvalidResponse",
+      `current.json at ${key}: mean_entry_bytes must be a non-negative integer if present`,
     );
   }
   return parsed as CurrentJson;

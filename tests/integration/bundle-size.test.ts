@@ -420,7 +420,12 @@ const BUDGETS: readonly Budget[] = [
   //     (`log-tail.ts`, single-write-commit Plan B) lands in `gc.ts`'s
   //     closure (measured 114362 raw). Rebaseline raw +1 KiB; gz/min-gz
   //     unaffected (still passing).
-  { entry: "maintenance.js", raw: 112 * 1024, gz: 34 * 1024, minGz: 11 * 1024 },
+  //   → 113 KiB raw / 34 KiB gz (2026-06-15): the compactor's
+  //     `mean_entry_bytes` stamp + its `current.json` validation
+  //     (single-write-commit Plan B Phase 3) land in this closure
+  //     (measured 114767 raw). Rebaseline raw +1 KiB; gz/min-gz
+  //     unaffected (still passing).
+  { entry: "maintenance.js", raw: 113 * 1024, gz: 34 * 1024, minGz: 11 * 1024 },
   // Cloudflare Workers adapter — re-exports the kernel barrel
   // (Db, Writer, etc.) plus the R2-binding `Storage` impl
   // and the `baerlyCloudflare` helper. Aggregator: closure

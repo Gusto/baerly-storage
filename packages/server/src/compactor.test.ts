@@ -357,6 +357,37 @@ describe("compact", () => {
     expect(after!.json.snapshot_bytes).toBeGreaterThan(0);
   });
 
+  test("stamps mean_entry_bytes = round(foldedSliceBytes / entriesFolded) on a fold", async () => {
+    const s = new MemoryStorage();
+    await bootstrap(s, KEY);
+    const writer = new Writer({ storage: s, currentJsonKey: KEY });
+    // Vary the doc-id / payload length so the per-entry byte sizes differ
+    // and B / K is non-integer → exercises Math.round.
+    const K = 21;
+    for (let i = 0; i < K; i++) {
+      await writer.commit({
+        op: "I",
+        collection: COLL,
+        docId: `d${i}`,
+        body: { _id: `d${i}`, blob: "x".repeat(i) },
+      });
+    }
+    // Sum the stored bytes of the whole folded slice [0, K) directly.
+    let B = 0;
+    for (let seq = 0; seq < K; seq++) {
+      const got = await s.get(`app/t/tenant/x/manifests/c/log/${seq}.json`);
+      B += got!.body.byteLength;
+    }
+    const res = await compact({ storage: s, currentJsonKey: KEY }, {
+      minEntriesToCompact: 10,
+      maxEntriesPerRun: 100, // ≥ K → whole tail in one slice
+    } as InternalCompactOptions);
+    expect(res.written).toBe(true);
+    expect(res.entriesFolded).toBe(K);
+    const after = await readCurrentJson(s, KEY);
+    expect(after!.json.mean_entry_bytes).toBe(Math.round(B / K));
+  });
+
   test("tail_bytes decrements to exactly 0 when the whole tail folds in one slice", async () => {
     const s = new MemoryStorage();
     await bootstrap(s, KEY);

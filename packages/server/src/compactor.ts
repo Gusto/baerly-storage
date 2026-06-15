@@ -345,6 +345,7 @@ export const compact = async (
   await storage.put(newKey, bodyBytes, putOpts);
 
   // ── Step 7. CAS-advance current.json. ───────────────────────────
+  const entriesFolded = foldEnd - logSeqStartBefore;
   const next: CurrentJson = {
     ...current,
     snapshot: newKey,
@@ -357,6 +358,12 @@ export const compact = async (
     // Not clamped: a negative here would be a real accounting bug the
     // add-then-fold round-trip property test is designed to catch.
     tail_bytes: current.tail_bytes - foldedSliceBytes,
+    // Mean folded-entry byte size for live-tail estimation. Preserve a prior
+    // mean on a zero-entry fold (no divide-by-zero, no clobber-with-0).
+    mean_entry_bytes:
+      entriesFolded > 0
+        ? Math.round(foldedSliceBytes / entriesFolded)
+        : (current.mean_entry_bytes ?? 0),
   };
   const nextBody = encodeJsonBytes(next);
   const casOpts: StoragePutOptions = {
@@ -396,7 +403,6 @@ export const compact = async (
   // entries still pending fold after this run. `entries_folded` is
   // the per-run histogram sample. Metrics are in-memory only; they
   // add zero storage ops.
-  const entriesFolded = foldEnd - logSeqStartBefore;
   const metrics = ctxMetrics();
   metrics.histogram("db.compact.entries_folded", entriesFolded, { collection: collectionName });
   metrics.gauge("db.manifest.lag_window_depth", current.tail_hint - foldEnd, {
