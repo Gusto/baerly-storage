@@ -31,12 +31,15 @@ doesn't support. The predicate operator set is the concrete example
 // Server kernel
 import {
   Db,
-  MemoryStorage,                 // in-memory `Storage`; canonical for tests
-  type Collection, type Query,
+  MemoryStorage, // in-memory `Storage`; canonical for tests
+  type Collection,
+  type Query,
   type DocumentData,
-  type RowOf, type CollectionNames,   // row-shape inference from a bound config
-  BaerlyError, type BaerlyErrorCode,
-  defineConfig,                  // narrower; root barrel
+  type RowOf,
+  type CollectionNames, // row-shape inference from a bound config
+  BaerlyError,
+  type BaerlyErrorCode,
+  defineConfig, // narrower; root barrel
 } from "@gusto/baerly-storage";
 
 // Scaffold-aware config (`app`, `tenant`, `target`, `domain`, …)
@@ -51,18 +54,25 @@ import { createRouter, mapError } from "@gusto/baerly-storage/http";
 // Browser / Node client (HTTP)
 import {
   createBaerlyClient,
-  type BaerlyClient, type ClientCollection, type ClientQuery,
-  type TerminalOptions, type Fetcher,
+  type BaerlyClient,
+  type ClientCollection,
+  type ClientQuery,
+  type TerminalOptions,
+  type Fetcher,
 } from "@gusto/baerly-storage/client";
 
 // Auth verifiers
-import {
-  sharedSecret, cloudflareAccess, bearerJwt,
-} from "@gusto/baerly-storage/auth";
+import { sharedSecret, cloudflareAccess, bearerJwt } from "@gusto/baerly-storage/auth";
 
 // Adapters
 import { baerlyWorker, r2BindingStorage } from "@gusto/baerly-storage/cloudflare";
-import { baerlyNode, s3Storage, r2Storage, minioStorage, gcsStorage } from "@gusto/baerly-storage/node";
+import {
+  baerlyNode,
+  s3Storage,
+  r2Storage,
+  minioStorage,
+  gcsStorage,
+} from "@gusto/baerly-storage/node";
 
 // Dev helpers (Vite, local-fs storage)
 import { baerlyDevAuth, loadDevVars } from "@gusto/baerly-storage/dev/vite";
@@ -80,11 +90,11 @@ import { Db, MemoryStorage } from "@gusto/baerly-storage";
 import config from "./baerly.config";
 
 const db = Db.create({
-  storage: new MemoryStorage(),   // or `s3Storage(...)`, `r2BindingStorage(env.BUCKET)`, …
+  storage: new MemoryStorage(), // or `s3Storage(...)`, `r2BindingStorage(env.BUCKET)`, …
   app: "tickets",
   tenant: "acme-co",
-  config,                          // ← optional. Wires schemas + indexes
-                                   //   AND narrows `db.collection(name)` types.
+  config, // ← optional. Wires schemas + indexes
+  //   AND narrows `db.collection(name)` types.
 });
 
 await db.collection("tickets").insert({ title: "first ticket", status: "open" });
@@ -96,7 +106,7 @@ backs an independent in-process bucket — two `Db` instances built
 against two `new MemoryStorage()`s see two empty, isolated stores.
 This is what makes it the canonical test fixture: one fresh instance
 per test gives a hermetic bucket without `beforeEach` cleanup. Pass
-the *same* `MemoryStorage` instance to multiple `Db` constructors
+the _same_ `MemoryStorage` instance to multiple `Db` constructors
 when you want two writers contending on one bucket.
 
 Full `Db.create` config:
@@ -120,7 +130,9 @@ import type { Db } from "@gusto/baerly-storage";
 import type config from "./baerly.config";
 
 let cached: Db<typeof config> | undefined;
-export function setDbForTesting(db: Db<typeof config>) { cached = db; }
+export function setDbForTesting(db: Db<typeof config>) {
+  cached = db;
+}
 ```
 
 The narrowed `Db<typeof config>` carries the same `collection(name)`
@@ -143,7 +155,7 @@ interface Collection<T extends DocumentData = DocumentData> {
   count(): Promise<number>;
   get(id: string): Promise<T | undefined>;
   // Modifiers — return Query<T>.
-  where(predicate: PredicateArg<T>): Query<T>;     // PredicateArg = Predicate<T> | (q => PredicateBuilder<T>)
+  where(predicate: PredicateArg<T>): Query<T>; // PredicateArg = Predicate<T> | (q => PredicateBuilder<T>)
   order(spec: OrderSpec<T>): Query<T>;
   limit(n: number): Query<T>;
   // Writes — by primary key.
@@ -197,11 +209,15 @@ paths (`author._id`) on referenced documents are still allowed.
 ```ts
 db.collection("tickets").where({ status: "open" }).all();
 db.collection("tickets").where({ "assignee.team": "platform" }).all();
-db.collection("tickets").where(q => q.gte("count", 1).lt("count", 10)).all();
-db.collection("tickets").where(q => q.in("status", ["open", "pending"])).all();
+db.collection("tickets")
+  .where((q) => q.gte("count", 1).lt("count", 10))
+  .all();
+db.collection("tickets")
+  .where((q) => q.in("status", ["open", "pending"]))
+  .all();
 db.collection("tickets")
   .where({ status: "open" })
-  .where(q => q.gte("priority", 5))
+  .where((q) => q.gte("priority", 5))
   .all();
 ```
 
@@ -212,10 +228,12 @@ db.collection("tickets")
 ```ts
 interface PredicateClause {
   readonly op: "eq" | "gt" | "gte" | "lt" | "lte" | "in";
-  readonly field: string;          // top-level or dotted path
-  readonly value: DocumentValue | ReadonlyArray<DocumentValue>;   // array iff op === "in"
+  readonly field: string; // top-level or dotted path
+  readonly value: DocumentValue | ReadonlyArray<DocumentValue>; // array iff op === "in"
 }
-interface PredicateWire { readonly clauses: ReadonlyArray<PredicateClause>; }
+interface PredicateWire {
+  readonly clauses: ReadonlyArray<PredicateClause>;
+}
 ```
 
 Example: `.where({ status: "open" })` → `{"clauses":[{"op":"eq","field":"status","value":"open"}]}`.
@@ -235,7 +253,9 @@ await db.collection("tickets").update("01HQ...", { status: "closed" });
 // → { modified: 1 }  (JSON-merge-patch RFC 7386; `null` deletes a field)
 
 await db.collection("tickets").replace("01HQ...", {
-  _id: "01HQ...", status: "open", title: "rewrite",
+  _id: "01HQ...",
+  status: "open",
+  title: "rewrite",
 });
 // → void  (whole-document overwrite)
 
@@ -243,7 +263,8 @@ await db.collection("tickets").delete("01HQ...");
 // → { deleted: 1 }  (or `{ deleted: 0 }` if the id is unknown)
 
 // Bulk-by-predicate (Query<T>):
-await db.collection("tickets")
+await db
+  .collection("tickets")
   .where({ status: "open" })
   .update({ status: "closed", closed_at: new Date().toISOString() });
 // → { modified: N }
@@ -288,7 +309,10 @@ Two ways to get a typed row:
    the construction site for a narrower row shape:
    ```ts
    import type { Collection, DocumentData } from "@gusto/baerly-storage";
-   interface Bookmark extends DocumentData { _id: string; url: string }
+   interface Bookmark extends DocumentData {
+     _id: string;
+     url: string;
+   }
    const bookmarks = db.collection("bookmarks") as Collection<Bookmark>;
    await bookmarks.all();
    ```
@@ -311,18 +335,18 @@ try {
 }
 ```
 
-| `code`                   | HTTP | When                                                                 |
-| ------------------------ | ---- | -------------------------------------------------------------------- |
-| `InvalidConfig`          | 400  | Caller config/input is invalid (bad bucket, malformed predicate, …)  |
-| `NetworkError`           | 502  | Transport (S3 5xx, retries exhausted)                                |
-| `AccessDenied`           | 403  | S3 403 or bucket policy denied                                       |
-| `InvalidResponse`        | 502  | Server returned unparseable body                                     |
-| `Internal`               | 500  | Invariant violation — file a bug                                     |
-| `SchemaError`            | 400  | JSON shape invalid or bound schema rejected the doc                  |
-| `Conflict`               | 409  | CAS retry budget exhausted, or `insert` `_id` collision              |
-| `Unauthorized`           | 401  | Verifier returned no identity                                        |
-| `NotFound`               | 404  | Row by id not found                                                  |
-| `PayloadTooLarge`        | 413  | Body > 1 MiB cap                                                     |
+| `code`                   | HTTP | When                                                                   |
+| ------------------------ | ---- | ---------------------------------------------------------------------- |
+| `InvalidConfig`          | 400  | Caller config/input is invalid (bad bucket, malformed predicate, …)    |
+| `NetworkError`           | 502  | Transport (S3 5xx, retries exhausted)                                  |
+| `AccessDenied`           | 403  | S3 403 or bucket policy denied                                         |
+| `InvalidResponse`        | 502  | Server returned unparseable body                                       |
+| `Internal`               | 500  | Invariant violation — file a bug                                       |
+| `SchemaError`            | 400  | JSON shape invalid or bound schema rejected the doc                    |
+| `Conflict`               | 409  | CAS retry budget exhausted, or `insert` `_id` collision                |
+| `Unauthorized`           | 401  | Verifier returned no identity                                          |
+| `NotFound`               | 404  | Row by id not found                                                    |
+| `PayloadTooLarge`        | 413  | Body > 1 MiB cap                                                       |
 | `UnsatisfiablePredicate` | 400  | Predicate is well-formed but contradicts itself (empty `in` set, etc.) |
 
 ### Mapping errors to HTTP yourself
@@ -369,7 +393,7 @@ import { defineConfig } from "@gusto/baerly-storage/config";
 import { z } from "zod";
 
 const TicketSchema = z.object({
-  _id: z.string(),                                         // required — see callout below
+  _id: z.string(), // required — see callout below
   status: z.enum(["open", "closed"]),
   title: z.string().min(1),
   tags: z.array(z.string()).optional(),
@@ -381,8 +405,8 @@ export default defineConfig({
   target: "cloudflare",
   collections: {
     tickets: {
-      schema: TicketSchema,                                  // StandardSchema v1
-      indexes: [{ name: "by_status", on: "status" }],        // single-field equality
+      schema: TicketSchema, // StandardSchema v1
+      indexes: [{ name: "by_status", on: "status" }], // single-field equality
     },
   },
 });
@@ -404,7 +428,7 @@ still accepts a doc without `_id` (the public signature is
 required does not break the "omit and let the server mint it" path.
 The win is on the read side: `db.collection("tickets").all()` is
 typed `Ticket[]` with `_id: string` (required), so route handlers
-and response schemas don't need a parallel "_id-required" row type.
+and response schemas don't need a parallel "\_id-required" row type.
 
 `_id` is server-minted (UUIDv7, sorts by mint time) — there is no
 exported id generator, and minting one client-side is unsupported.
@@ -420,11 +444,11 @@ preserved).
 ## `createBaerlyClient` (browser / Node HTTP client)
 
 ```ts
-import type config from "./baerly.config";  // type-only — server adapter stays out of the SPA bundle
+import type config from "./baerly.config"; // type-only — server adapter stays out of the SPA bundle
 const client = createBaerlyClient<typeof config>({
-  baseUrl: "",                                  // same-origin
-  headers: { Authorization: "Bearer …" },       // wrap `fetch` for per-call refresh
-  fetch: customFetcher,                          // optional Fetcher middleware
+  baseUrl: "", // same-origin
+  headers: { Authorization: "Bearer …" }, // wrap `fetch` for per-call refresh
+  fetch: customFetcher, // optional Fetcher middleware
 });
 
 await client.collection("tickets").where({ status: "open" }).all();
@@ -435,7 +459,7 @@ trailing `TerminalOptions`:
 
 ```ts
 interface TerminalOptions {
-  signal?: AbortSignal;          // cancels this specific request
+  signal?: AbortSignal; // cancels this specific request
 }
 
 await client.collection("tickets").all({ signal: ac.signal });
@@ -461,12 +485,12 @@ interface SinceResponse {
 }
 
 interface LogEntry {
-  readonly lsn: string;             // opaque cursor; lex-asc, monotonic
-  readonly commit_ts: string;       // ISO-8601 ms
+  readonly lsn: string; // opaque cursor; lex-asc, monotonic
+  readonly commit_ts: string; // ISO-8601 ms
   readonly op: "I" | "U" | "D";
   readonly collection: string;
-  readonly doc_id: string;          // I/U/D only
-  readonly after?: DocumentData;    // I/U — post-image (Debezium's `after`)
+  readonly doc_id: string; // I/U/D only
+  readonly after?: DocumentData; // I/U — post-image (Debezium's `after`)
   readonly session: string;
   readonly seq: number;
   // `before` / `key_old` / `origin` are optional; see `LogEntry` JSDoc.
@@ -474,7 +498,7 @@ interface LogEntry {
 ```
 
 **Cursor priming.** First call: pass `cursor=` (empty string). The
-server's fast path returns immediately *iff* the log already has
+server's fast path returns immediately _iff_ the log already has
 entries for this collection — you get `events: [...]` and the
 last entry's `lsn` as `next_cursor`. **If the collection is empty,
 the first call blocks for the full long-poll budget (~25 s) before
@@ -531,8 +555,7 @@ import { createBaerlyReact } from "@gusto/baerly-storage/client/react";
 import config from "../../baerly.config.ts";
 
 export const client = createBaerlyClient({ baseUrl: "", config });
-export const { BaerlyProvider, useQuery, useMutation } =
-  createBaerlyReact<typeof config>();
+export const { BaerlyProvider, useQuery, useMutation } = createBaerlyReact<typeof config>();
 ```
 
 ```tsx
@@ -542,7 +565,7 @@ import { BaerlyProvider, client, useMutation, useQuery } from "./client.ts";
 // 1. Wrap your app once.
 <BaerlyProvider client={client}>
   <App />
-</BaerlyProvider>
+</BaerlyProvider>;
 
 // 2. useQuery(cb, deps) — the callback receives the bound client and
 //    returns a ClientCollection / ClientQuery chain. Re-runs on deps
@@ -556,9 +579,7 @@ const result = useQuery((c) => c.collection("notes").all(), []);
 // 3. useQuery.skip — short-circuit to status: "skipped", no
 //    subscription. Use for conditional or dependent reads.
 const filtered = useQuery(
-  (c) => filter === "all"
-    ? useQuery.skip
-    : c.collection("notes").where({ status: filter }).all(),
+  (c) => (filter === "all" ? useQuery.skip : c.collection("notes").where({ status: filter }).all()),
   [filter],
 );
 
@@ -580,12 +601,12 @@ await mutate((c) => c.collection("notes").insert({ body }));
 The JS SDK is the canonical path. Reach for `curl` only when
 debugging. Mutation bodies are wrapped:
 
-| Route                            | Body                | Response                       |
-| -------------------------------- | ------------------- | ------------------------------ |
-| `POST   /v1/c/:collection`       | `{"doc":{...}}`     | `201 {_id}`                    |
-| `PATCH  /v1/c/:collection/:id`   | `{"patch":{...}}`   | `200 {modified}`               |
-| `PUT    /v1/c/:collection/:id`   | `{"doc":{...}}`     | `200 {modified}`               |
-| `DELETE /v1/c/:collection/:id`   | —                   | `204`                          |
+| Route                          | Body              | Response         |
+| ------------------------------ | ----------------- | ---------------- |
+| `POST   /v1/c/:collection`     | `{"doc":{...}}`   | `201 {_id}`      |
+| `PATCH  /v1/c/:collection/:id` | `{"patch":{...}}` | `200 {modified}` |
+| `PUT    /v1/c/:collection/:id` | `{"doc":{...}}`   | `200 {modified}` |
+| `DELETE /v1/c/:collection/:id` | —                 | `204`            |
 
 Reads (`GET /v1/c/:collection[/:id]`, `GET /v1/count?collection=…`,
 `GET /v1/since?collection=…&cursor=…`) take no body and return
@@ -609,11 +630,11 @@ routes in front of `baerlyNode`" below).
 `GET /v1/c/:collection` accepts three JSON-encoded query params; all are
 optional and compose:
 
-| Param      | Encodes                                | Wire example                                 |
-| ---------- | -------------------------------------- | -------------------------------------------- |
-| `?where=`  | `PredicateWire` (see "Wire format" above) | `?where=%7B%22clauses%22%3A%5B%5D%7D`      |
-| `?order=`  | `{ [field]: "asc" \| "desc" }`         | `?order=%7B%22sent_at%22%3A%22desc%22%7D`    |
-| `?limit=`  | bare integer (no JSON wrapper)         | `?limit=50`                                  |
+| Param     | Encodes                                   | Wire example                              |
+| --------- | ----------------------------------------- | ----------------------------------------- |
+| `?where=` | `PredicateWire` (see "Wire format" above) | `?where=%7B%22clauses%22%3A%5B%5D%7D`     |
+| `?order=` | `{ [field]: "asc" \| "desc" }`            | `?order=%7B%22sent_at%22%3A%22desc%22%7D` |
+| `?limit=` | bare integer (no JSON wrapper)            | `?limit=50`                               |
 
 `?order=` and `?where=` are JSON, **not** Rails-style `field:asc` —
 the kernel `JSON.parse`s them and returns `400 SchemaError` on a flat
@@ -672,7 +693,9 @@ export default defineConfig({
   tenant: "main",
   target: "cloudflare",
   auth: "none", // dev only — production swaps to "shared-secret" or a custom Verifier
-  collections: { /* … */ },
+  collections: {
+    /* … */
+  },
 });
 
 // src/server/index.ts
@@ -680,7 +703,6 @@ import { baerlyWorker } from "@gusto/baerly-storage/cloudflare";
 import config from "../../baerly.config.ts";
 export default baerlyWorker(() => ({ config }));
 ```
-
 
 `s3Storage` / `r2Storage` / `minioStorage` / `gcsStorage` from
 `@gusto/baerly-storage/node` are re-exports of one factory family — same
@@ -700,11 +722,11 @@ returns `VerifierResult | null` (null = 401 unauth; thrown
 `BaerlyError` = 500 operator fault — the dispatcher splits the
 codes deliberately so on-call paging targets operator faults only).
 
-| Preset             | Identity source                                                                 | Tenant derivation                                  |
-| ------------------ | ------------------------------------------------------------------------------- | -------------------------------------------------- |
-| `sharedSecret`     | `Authorization: Bearer <secret>` with constant-time compare                     | `tenantPrefix:` option (single-tenant only)        |
-| `bearerJwt`        | JWT over JWKS, `iss` + `aud` + `alg` allowlist                                  | Configurable `tenantClaim` (default `"tenant"`) or fixed `tenantPrefix:` override |
-| `cloudflareAccess` | `Cf-Access-Jwt-Assertion` header (thin shim over `bearerJwt`)                   | Same as `bearerJwt`                                |
+| Preset             | Identity source                                               | Tenant derivation                                                                 |
+| ------------------ | ------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| `sharedSecret`     | `Authorization: Bearer <secret>` with constant-time compare   | `tenantPrefix:` option (single-tenant only)                                       |
+| `bearerJwt`        | JWT over JWKS, `iss` + `aud` + `alg` allowlist                | Configurable `tenantClaim` (default `"tenant"`) or fixed `tenantPrefix:` override |
+| `cloudflareAccess` | `Cf-Access-Jwt-Assertion` header (thin shim over `bearerJwt`) | Same as `bearerJwt`                                                               |
 
 ```ts
 import { sharedSecret, bearerJwt, cloudflareAccess } from "@gusto/baerly-storage/auth";
@@ -752,20 +774,20 @@ options.
 
 ### Field reference
 
-| Field                                       | Meaning                                                                              |
-| ------------------------------------------- | ------------------------------------------------------------------------------------ |
-| `request_id`                                | Correlation key. Set from `X-Request-Id` if provided, else minted fresh.             |
-| `method` / `path` / `status`                | HTTP request line + response code.                                                   |
-| `cache_status`                              | `"hit" \| "miss" \| "bypass"` — Cloudflare adapter only. Node adapter omits.         |
-| `duration_ms`                               | `performance.now()` delta, monotonic wall-clock.                                     |
-| `outcome`                                   | `"read"` (GET <400), `"committed"` (non-GET <400), `"conflict"` (409), or `"error"`. |
-| `db.storage.class_a_ops_total`              | PUT + DELETE + LIST count. S3-pricing Class A — cost-dominant.                       |
-| `db.storage.class_b_ops_total`              | GET count. S3-pricing Class B.                                                       |
-| `db.storage.<op>.calls_total`               | Per-op breakdown for `get` / `put` / `delete` / `list`.                              |
-| `db.storage.<op>.duration_ms_sum` / `_count`| Per-call duration histogram.                                                         |
-| `db.write.class_a_ops_per_logical_write_*`  | Writer's per-`commit()` Class-A-op count.                                            |
-| `db.r2.put.412_total` / `429_total`         | CAS conflicts (412) and storage rate-limit hits (429).                               |
-| `error.code` / `error.message` / `error.stack` | Failure-path only. `error.code` is `BaerlyErrorCode`.                             |
+| Field                                          | Meaning                                                                              |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `request_id`                                   | Correlation key. Set from `X-Request-Id` if provided, else minted fresh.             |
+| `method` / `path` / `status`                   | HTTP request line + response code.                                                   |
+| `cache_status`                                 | `"hit" \| "miss" \| "bypass"` — Cloudflare adapter only. Node adapter omits.         |
+| `duration_ms`                                  | `performance.now()` delta, monotonic wall-clock.                                     |
+| `outcome`                                      | `"read"` (GET <400), `"committed"` (non-GET <400), `"conflict"` (409), or `"error"`. |
+| `db.storage.class_a_ops_total`                 | PUT + DELETE + LIST count. S3-pricing Class A — cost-dominant.                       |
+| `db.storage.class_b_ops_total`                 | GET count. S3-pricing Class B.                                                       |
+| `db.storage.<op>.calls_total`                  | Per-op breakdown for `get` / `put` / `delete` / `list`.                              |
+| `db.storage.<op>.duration_ms_sum` / `_count`   | Per-call duration histogram.                                                         |
+| `db.write.class_a_ops_per_logical_write_*`     | Writer's per-`commit()` Class-A-op count.                                            |
+| `db.r2.put.412_total` / `429_total`            | CAS conflicts (412) and storage rate-limit hits (429).                               |
+| `error.code` / `error.message` / `error.stack` | Failure-path only. `error.code` is `BaerlyErrorCode`.                                |
 
 Class-A / Class-B totals are the load-bearing fields — the cost
 model puts a per-request ceiling on Class-A ops and the canonical
@@ -773,12 +795,12 @@ line is how you verify a deployed service stays under it.
 
 ### Log levels
 
-| Level   | What lands                                                                       |
-| ------- | -------------------------------------------------------------------------------- |
-| `error` | `status >= 500` or an exception was thrown.                                      |
-| `warn`  | Adds 4xx canonical lines and explicit `warn` records.                            |
-| `info`  | Default. Adds 2xx canonical lines and lifecycle events.                          |
-| `debug` | Adds per-storage-op events. **High volume**; off in production.                  |
+| Level   | What lands                                                      |
+| ------- | --------------------------------------------------------------- |
+| `error` | `status >= 500` or an exception was thrown.                     |
+| `warn`  | Adds 4xx canonical lines and explicit `warn` records.           |
+| `info`  | Default. Adds 2xx canonical lines and lifecycle events.         |
+| `debug` | Adds per-storage-op events. **High volume**; off in production. |
 
 Set `LOG_LEVEL` env var or the typed `observability.level` factory
 option. Sink wiring (Workers Analytics Engine, OTel, Datadog) lives
@@ -893,15 +915,13 @@ const inner = baerlyNode({
 serve({
   port: Number(process.env["PORT"] ?? 8080),
   fetch: (req) =>
-    new URL(req.url).pathname === "/health-check"
-      ? Response.json({ ok: true })
-      : inner.fetch(req),
+    new URL(req.url).pathname === "/health-check" ? Response.json({ ok: true }) : inner.fetch(req),
 });
 ```
 
 The handle's `fetch` is the documented embedding seam (it's also what
 the Vite dev middleware and tests consume) — there's no separate
-`createApp` to reach for. If you don't need a *custom* probe path,
+`createApp` to reach for. If you don't need a _custom_ probe path,
 skip all of this and point your platform at the built-in
 `GET /v1/healthz` (see above).
 
@@ -932,7 +952,12 @@ the network. Three recipes cover the common cases.
 ```ts
 import { createBaerlyClient, type Fetcher } from "@gusto/baerly-storage/client";
 
-const withHooks = (next: Fetcher, onSuccess: (req: Request, res: Response) => void, onError: (req: Request, err: unknown) => void): Fetcher =>
+const withHooks =
+  (
+    next: Fetcher,
+    onSuccess: (req: Request, res: Response) => void,
+    onError: (req: Request, err: unknown) => void,
+  ): Fetcher =>
   async (req) => {
     try {
       const res = await next(req);
@@ -946,7 +971,8 @@ const withHooks = (next: Fetcher, onSuccess: (req: Request, res: Response) => vo
 
 const client = createBaerlyClient({
   baseUrl: "https://api.example.com",
-  fetch: withHooks(globalThis.fetch,
+  fetch: withHooks(
+    globalThis.fetch,
     (req, res) => log.info({ url: req.url, status: res.status }),
     (req, err) => log.error({ url: req.url, err }),
   ),
@@ -960,7 +986,8 @@ const client = createBaerlyClient({
 ### Retry on transient failures (GET only)
 
 ```ts
-const withRetry = (next: Fetcher, max = 3, baseMs = 100): Fetcher =>
+const withRetry =
+  (next: Fetcher, max = 3, baseMs = 100): Fetcher =>
   async (req) => {
     for (let i = 0; i < max - 1; i++) {
       const res = await next(req.clone());
@@ -981,7 +1008,8 @@ one-shot stream.
 ### Refresh credentials on 401
 
 ```ts
-const withAuthRefresh = (next: Fetcher, refresh: () => Promise<string>): Fetcher =>
+const withAuthRefresh =
+  (next: Fetcher, refresh: () => Promise<string>): Fetcher =>
   async (req) => {
     const res = await next(req.clone());
     if (res.status !== 401) return res;

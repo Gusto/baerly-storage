@@ -10,11 +10,7 @@ import { inferPlanForCollection } from "./plan.ts";
 import type { ExportRow, SqlTarget } from "./types.ts";
 import { translatePredicateWireToSql } from "./where.ts";
 
-const buildPlan = (
-  target: SqlTarget,
-  rec: Record<string, DocumentData>,
-  table = "tickets",
-) => {
+const buildPlan = (target: SqlTarget, rec: Record<string, DocumentData>, table = "tickets") => {
   const rows = new Map<string, ExportRow>();
   for (const [k, v] of Object.entries(rec)) {
     rows.set(k, v);
@@ -54,19 +50,13 @@ describe("translatePredicateWireToSql — translation rules (§3)", () => {
     expect(translatePredicateWireToSql(wire([eq("deleted", false)]), pg).sql).toBe(
       `"deleted" = false`,
     );
-    expect(translatePredicateWireToSql(wire([eq("deleted", true)]), sl).sql).toBe(
-      `"deleted" = 1`,
-    );
-    expect(translatePredicateWireToSql(wire([eq("deleted", true)]), d1).sql).toBe(
-      `"deleted" = 1`,
-    );
+    expect(translatePredicateWireToSql(wire([eq("deleted", true)]), sl).sql).toBe(`"deleted" = 1`);
+    expect(translatePredicateWireToSql(wire([eq("deleted", true)]), d1).sql).toBe(`"deleted" = 1`);
   });
 
   test("§3.2 flat-integer column", () => {
     const plan = buildPlan("postgres", { a: { priority: 1 } as DocumentData });
-    expect(translatePredicateWireToSql(wire([eq("priority", 1)]), plan).sql).toBe(
-      `"priority" = 1`,
-    );
+    expect(translatePredicateWireToSql(wire([eq("priority", 1)]), plan).sql).toBe(`"priority" = 1`);
   });
 
   test("§3.7 multi-clause top-level → AND-joined", () => {
@@ -309,10 +299,8 @@ describe("translatePredicateWireToSql — operator vocabulary", () => {
       translatePredicateWireToSql(wire([{ op: "gte", field: "meta.count", value: 5 }]), plan).sql,
     ).toBe(`"meta"->>'count' >= 5`);
     expect(
-      translatePredicateWireToSql(
-        wire([{ op: "in", field: "meta.count", value: [1, 2, 3] }]),
-        plan,
-      ).sql,
+      translatePredicateWireToSql(wire([{ op: "in", field: "meta.count", value: [1, 2, 3] }]), plan)
+        .sql,
     ).toBe(`"meta"->>'count' IN (1, 2, 3)`);
   });
 
@@ -348,10 +336,8 @@ describe("translatePredicateWireToSql — operator vocabulary", () => {
       b: { thing: { nested: "obj" } } as DocumentData,
     });
     expect(
-      translatePredicateWireToSql(
-        wire([{ op: "in", field: "thing", value: ["a", "b"] }]),
-        plan,
-      ).sql,
+      translatePredicateWireToSql(wire([{ op: "in", field: "thing", value: ["a", "b"] }]), plan)
+        .sql,
     ).toBe(`"thing"::text IN ('"a"', '"b"')`);
   });
 });

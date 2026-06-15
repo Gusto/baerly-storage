@@ -43,9 +43,7 @@ describe("planQuery", () => {
   });
 
   test("composite full hit — two-field predicate over two-field index", () => {
-    const indexes: IndexDefinition[] = [
-      { name: "by_status_priority", on: ["status", "priority"] },
-    ];
+    const indexes: IndexDefinition[] = [{ name: "by_status_priority", on: ["status", "priority"] }];
     const plan = planQuery(
       wire([
         { op: "eq", field: "status", value: "open" },
@@ -61,9 +59,7 @@ describe("planQuery", () => {
   });
 
   test("composite partial-prefix hit — one of two indexed fields", () => {
-    const indexes: IndexDefinition[] = [
-      { name: "by_status_priority", on: ["status", "priority"] },
-    ];
+    const indexes: IndexDefinition[] = [{ name: "by_status_priority", on: ["status", "priority"] }];
     const plan = planQuery(wire([{ op: "eq", field: "status", value: "open" }]), indexes);
     expect(plan).toEqual({
       kind: "index-walk",
@@ -219,9 +215,7 @@ describe("planQuery — range walks", () => {
   });
 
   test("composite eq+range on tail field", () => {
-    const indexes: IndexDefinition[] = [
-      { name: "by_tenant_priority", on: ["tenant", "priority"] },
-    ];
+    const indexes: IndexDefinition[] = [{ name: "by_tenant_priority", on: ["tenant", "priority"] }];
     const plan = planQuery(
       wire([
         { op: "eq", field: "tenant", value: "acme" },
@@ -246,9 +240,7 @@ describe("planQuery — range walks", () => {
 
   test("range on non-last indexed field falls back to single-field range walk", () => {
     // Range op on the FIRST slot prevents left-anchored routing.
-    const indexes: IndexDefinition[] = [
-      { name: "by_tenant_priority", on: ["tenant", "priority"] },
-    ];
+    const indexes: IndexDefinition[] = [{ name: "by_tenant_priority", on: ["tenant", "priority"] }];
     const plan = planQuery(
       wire([
         { op: "gt", field: "tenant", value: "a" },
@@ -339,9 +331,7 @@ describe("planQuery — in multi-walk", () => {
   });
 
   test("composite eq + in on tail field emits inOn walk plan", () => {
-    const indexes: IndexDefinition[] = [
-      { name: "by_tenant_priority", on: ["tenant", "priority"] },
-    ];
+    const indexes: IndexDefinition[] = [{ name: "by_tenant_priority", on: ["tenant", "priority"] }];
     const plan = planQuery(
       wire([
         { op: "eq", field: "tenant", value: "acme" },
@@ -402,10 +392,7 @@ describe("planQuery — numeric range / in routing", () => {
 
   test("routes numeric in on indexed field under threshold", () => {
     const indexes: IndexDefinition[] = [{ name: "by_priority", on: "priority" }];
-    const plan = planQuery(
-      wire([{ op: "in", field: "priority", value: [1, 2, 3] }]),
-      indexes,
-    );
+    const plan = planQuery(wire([{ op: "in", field: "priority", value: [1, 2, 3] }]), indexes);
     expect(plan).toEqual({
       kind: "index-walk",
       indexName: "by_priority",

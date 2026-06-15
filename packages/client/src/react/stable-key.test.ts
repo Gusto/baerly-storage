@@ -18,15 +18,15 @@ describe("stableKey", () => {
     // The React hook now feeds `PredicateWire` into stableKey. Two
     // wires with the same clause list serialise identically — the
     // outer `{clauses: …}` key is the only top-level field.
-    expect(
+    expect(stableKey({ clauses: [{ op: "in", field: "status", value: ["open", "p1"] }] })).toBe(
       stableKey({ clauses: [{ op: "in", field: "status", value: ["open", "p1"] }] }),
-    ).toBe(stableKey({ clauses: [{ op: "in", field: "status", value: ["open", "p1"] }] }));
+    );
   });
 
   test("wire predicate: in-clause value-array order is preserved", () => {
-    expect(
-      stableKey({ clauses: [{ op: "in", field: "status", value: ["a", "b"] }] }),
-    ).not.toBe(stableKey({ clauses: [{ op: "in", field: "status", value: ["b", "a"] }] }));
+    expect(stableKey({ clauses: [{ op: "in", field: "status", value: ["a", "b"] }] })).not.toBe(
+      stableKey({ clauses: [{ op: "in", field: "status", value: ["b", "a"] }] }),
+    );
   });
 
   test("wire predicate: gt vs lt produce distinct keys", () => {

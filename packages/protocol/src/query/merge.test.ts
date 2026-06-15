@@ -146,64 +146,41 @@ describe("mergePredicateWires", () => {
 
   test("lo > hi after merge → UnsatisfiablePredicate", () => {
     expectUnsatisfiable(
-      () =>
-        mergePredicateWires(
-          { clauses: [op("gt", "x", 10)] },
-          { clauses: [op("lt", "x", 5)] },
-        ),
+      () => mergePredicateWires({ clauses: [op("gt", "x", 10)] }, { clauses: [op("lt", "x", 5)] }),
       "empty interval",
     );
   });
 
   test("eq on one side + in on the other collapses via the matcher", () => {
-    const m = mergePredicateWires(
-      { clauses: [eq("x", 1)] },
-      { clauses: [op("in", "x", [1, 2])] },
-    );
+    const m = mergePredicateWires({ clauses: [eq("x", 1)] }, { clauses: [op("in", "x", [1, 2])] });
     expect(matchesWire(m, { x: 1 })).toBe(true);
     expect(matchesWire(m, { x: 2 })).toBe(false);
   });
 
   test("eq outside the merged interval → UnsatisfiablePredicate", () => {
     expectUnsatisfiable(
-      () =>
-        mergePredicateWires(
-          { clauses: [eq("x", 1)] },
-          { clauses: [op("gt", "x", 5)] },
-        ),
+      () => mergePredicateWires({ clauses: [eq("x", 1)] }, { clauses: [op("gt", "x", 5)] }),
       "excluded by lower bound",
     );
   });
 
   test("boolean eq vs numeric range → UnsatisfiablePredicate", () => {
     expectUnsatisfiable(
-      () =>
-        mergePredicateWires(
-          { clauses: [eq("b", false)] },
-          { clauses: [op("gt", "b", 0)] },
-        ),
+      () => mergePredicateWires({ clauses: [eq("b", false)] }, { clauses: [op("gt", "b", 0)] }),
       "type-incompatible",
     );
   });
 
   test("string eq vs numeric upper bound → UnsatisfiablePredicate", () => {
     expectUnsatisfiable(
-      () =>
-        mergePredicateWires(
-          { clauses: [eq("x", "p2")] },
-          { clauses: [op("lt", "x", 10)] },
-        ),
+      () => mergePredicateWires({ clauses: [eq("x", "p2")] }, { clauses: [op("lt", "x", 10)] }),
       "type-incompatible",
     );
   });
 
   test("numeric eq vs string range → UnsatisfiablePredicate", () => {
     expectUnsatisfiable(
-      () =>
-        mergePredicateWires(
-          { clauses: [eq("x", 5)] },
-          { clauses: [op("gte", "x", "a")] },
-        ),
+      () => mergePredicateWires({ clauses: [eq("x", 5)] }, { clauses: [op("gte", "x", "a")] }),
       "type-incompatible",
     );
   });
@@ -285,13 +262,11 @@ const opClauseArb: fc.Arbitrary<PredicateClause> = fc.oneof(
     field: k,
     value: v as DocumentValue,
   })),
-  fc
-    .tuple(keyArb, fc.array(valArb, { minLength: 1, maxLength: 3 }))
-    .map(([k, vs]) => ({
-      op: "in" as const,
-      field: k,
-      value: vs as ReadonlyArray<DocumentValue>,
-    })),
+  fc.tuple(keyArb, fc.array(valArb, { minLength: 1, maxLength: 3 })).map(([k, vs]) => ({
+    op: "in" as const,
+    field: k,
+    value: vs as ReadonlyArray<DocumentValue>,
+  })),
 );
 
 const opWireArb: fc.Arbitrary<PredicateWire> = fc

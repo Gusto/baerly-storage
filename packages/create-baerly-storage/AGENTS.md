@@ -85,14 +85,14 @@ readable list), `snippet` (the worker-entry snippet text), `snippetTarget`
 
 **Pure helpers:** two flavors split by how many CLIs consume them.
 
-- *Shared with `baerly`:* `patchWranglerJsonc`, `readWranglerName`, and
+- _Shared with `baerly`:_ `patchWranglerJsonc`, `readWranglerName`, and
   `readWranglerMain` live in `@baerly/cli/wrangler-patch`. Imported here
-  *and* by `baerly deploy --target=cloudflare`
+  _and_ by `baerly deploy --target=cloudflare`
   (`packages/cli/src/deploy/cloudflare.ts`), which patches the same file
   on the other end of the lifecycle. Keeping a single source of truth for
   wrangler.jsonc parsing/merging is why `@baerly/cli` still surfaces a
   subpath export.
-- *Local to create-baerly:* `renderWorkerEntrySnippet` lives in
+- _Local to create-baerly:_ `renderWorkerEntrySnippet` lives in
   `./init-snippet.ts`. The deployed CLI never renders user-facing code
   snippets, so there is no second consumer to share with.
 

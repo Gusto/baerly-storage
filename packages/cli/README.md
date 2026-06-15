@@ -10,18 +10,18 @@ registered command definitions.
 
 ## Subcommands
 
-| Command | Role |
-|---|---|
-| `baerly deploy` | Dispatch by `baerly.config.ts:target`; today only Cloudflare deploy is implemented. |
-| `baerly doctor` | Cloudflare deploy invariant checks, or `--bucket <uri>` CAS probe for any backend. |
-| `baerly inspect` | Read-only summary of one collection's snapshot / log / index state. |
-| `baerly export` | SQL export for one collection (`--target=sqlite` / `--target=postgres` / `--target=d1`). |
-| `baerly cost` | Class A / Class B operation accounting for one collection. |
-| `baerly admin rebuild-index` | Reconcile one declared index. |
-| `baerly admin dump` | Canonical NDJSON dump of one collection's materialized view. |
-| `baerly admin restore` | Import `admin dump` NDJSON into a fresh or `--force`-truncated collection. |
-| `baerly admin fsck` | Read-only consistency walk; exits 4 on findings. |
-| `baerly admin usage` | Node-target all-collection writes/min health check. Cloudflare usage scanning is not wired yet. |
+| Command                      | Role                                                                                            |
+| ---------------------------- | ----------------------------------------------------------------------------------------------- |
+| `baerly deploy`              | Dispatch by `baerly.config.ts:target`; today only Cloudflare deploy is implemented.             |
+| `baerly doctor`              | Cloudflare deploy invariant checks, or `--bucket <uri>` CAS probe for any backend.              |
+| `baerly inspect`             | Read-only summary of one collection's snapshot / log / index state.                             |
+| `baerly export`              | SQL export for one collection (`--target=sqlite` / `--target=postgres` / `--target=d1`).        |
+| `baerly cost`                | Class A / Class B operation accounting for one collection.                                      |
+| `baerly admin rebuild-index` | Reconcile one declared index.                                                                   |
+| `baerly admin dump`          | Canonical NDJSON dump of one collection's materialized view.                                    |
+| `baerly admin restore`       | Import `admin dump` NDJSON into a fresh or `--force`-truncated collection.                      |
+| `baerly admin fsck`          | Read-only consistency walk; exits 4 on findings.                                                |
+| `baerly admin usage`         | Node-target all-collection writes/min health check. Cloudflare usage scanning is not wired yet. |
 
 Scaffolding and bolt-on live in `@gusto/create-baerly-storage`, not in
 this CLI. See
@@ -33,13 +33,13 @@ path stays small.
 
 ## Exit codes
 
-| Code | Meaning | Maps from |
-|---|---|---|
-| `0` | success | handler returned normally |
-| `1` | user/config error | `BaerlyError.code = InvalidConfig`, missing/unknown flag |
-| `2` | storage or external process error | `BaerlyError.code = NetworkError` / `AccessDenied`, anything non-`BaerlyError` |
-| `3` | protocol invariant / conflict class | `BaerlyError.code = Conflict` / `Internal` / `InvalidResponse` |
-| `4` | `admin fsck` findings | `fsck` walk surfaced ≥1 finding |
+| Code | Meaning                             | Maps from                                                                      |
+| ---- | ----------------------------------- | ------------------------------------------------------------------------------ |
+| `0`  | success                             | handler returned normally                                                      |
+| `1`  | user/config error                   | `BaerlyError.code = InvalidConfig`, missing/unknown flag                       |
+| `2`  | storage or external process error   | `BaerlyError.code = NetworkError` / `AccessDenied`, anything non-`BaerlyError` |
+| `3`  | protocol invariant / conflict class | `BaerlyError.code = Conflict` / `Internal` / `InvalidResponse`                 |
+| `4`  | `admin fsck` findings               | `fsck` walk surfaced ≥1 finding                                                |
 
 ## `--json` mode
 
@@ -59,13 +59,13 @@ stdout data, such as `admin dump`.
 
 Any `s3://` bucket URI requires:
 
-| Var | Notes |
-|---|---|
-| `BAERLY_S3_ENDPOINT` | required, e.g. `https://s3.us-east-1.amazonaws.com` |
-| `BAERLY_S3_ACCESS_KEY_ID` | required |
-| `BAERLY_S3_SECRET_ACCESS_KEY` | required |
-| `BAERLY_S3_REGION` | optional, defaults to `us-east-1` |
-| `NO_COLOR` | optional, disables ANSI in human output |
+| Var                           | Notes                                               |
+| ----------------------------- | --------------------------------------------------- |
+| `BAERLY_S3_ENDPOINT`          | required, e.g. `https://s3.us-east-1.amazonaws.com` |
+| `BAERLY_S3_ACCESS_KEY_ID`     | required                                            |
+| `BAERLY_S3_SECRET_ACCESS_KEY` | required                                            |
+| `BAERLY_S3_REGION`            | optional, defaults to `us-east-1`                   |
+| `NO_COLOR`                    | optional, disables ANSI in human output             |
 
 ## URI grammar
 

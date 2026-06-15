@@ -153,7 +153,7 @@ describe("defineBaerlySubcommand", () => {
     expect(resolved).toEqual({ app: "override-app", tenant: "cfg-tenant" });
   });
 
-  test("BaerlyError(\"Conflict\") in handler → exit 3", async () => {
+  test('BaerlyError("Conflict") in handler → exit 3', async () => {
     const { run } = defineBaerlySubcommand({
       name: "probe",
       meta: { description: "test" },

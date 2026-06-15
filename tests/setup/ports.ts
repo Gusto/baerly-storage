@@ -14,7 +14,9 @@
  */
 const num = (env: string, fallback: number): number => {
   const v = process.env[env];
-  if (v === undefined || v === "") {return fallback;}
+  if (v === undefined || v === "") {
+    return fallback;
+  }
   const parsed = Number(v);
   if (!Number.isInteger(parsed) || parsed < 1 || parsed > 65535) {
     throw new Error(`${env}=${v} is not a valid port number (expected integer in [1, 65535])`);

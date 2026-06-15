@@ -51,10 +51,7 @@ describe("predicateImplies", () => {
 
   test("nested equality — mismatched leaf → false", () => {
     expect(
-      predicateImplies(
-        wire([eq("assignee.team", "p")]),
-        wire([eq("assignee.team", "infra")]),
-      ),
+      predicateImplies(wire([eq("assignee.team", "p")]), wire([eq("assignee.team", "infra")])),
     ).toBe(false);
   });
 

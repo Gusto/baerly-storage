@@ -36,13 +36,7 @@
  */
 
 import { type Readable, type Writable } from "node:stream";
-import {
-  defineCommand,
-  parseArgs,
-  type ArgsDef,
-  type ParsedArgs,
-  type CommandDef,
-} from "citty";
+import { defineCommand, parseArgs, type ArgsDef, type ParsedArgs, type CommandDef } from "citty";
 import { BaerlyError } from "@baerly/protocol";
 import { loadAppConfig } from "./config.ts";
 import { emitError, setJsonMode } from "./output.ts";
@@ -164,8 +158,7 @@ const makeResolveAppTenant = (name: string): SubcommandContext["resolveAppTenant
  * invocation attach its own `streams` override without leaking across
  * invocations.
  */
-const kebabToCamel = (s: string): string =>
-  s.replace(/-(\w)/g, (_, c: string) => c.toUpperCase());
+const kebabToCamel = (s: string): string => s.replace(/-(\w)/g, (_, c: string) => c.toUpperCase());
 
 const wrapHandler = <TArgs extends ArgsDef>(
   def: SubcommandDef<TArgs>,

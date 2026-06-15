@@ -26,11 +26,7 @@ describe("defaultInstaller", () => {
     // Fake pnpm/npm/yarn — print `__pm_invoked__ <cwd>` then exit 0.
     for (const name of ["pnpm", "npm", "yarn"]) {
       const path = join(binDir, name);
-      await writeFile(
-        path,
-        `#!/bin/sh\necho "__pm_invoked__ $PWD $@"\nexit 0\n`,
-        "utf8",
-      );
+      await writeFile(path, `#!/bin/sh\necho "__pm_invoked__ $PWD $@"\nexit 0\n`, "utf8");
       await chmod(path, 0o755);
     }
     originalPath = process.env["PATH"];
