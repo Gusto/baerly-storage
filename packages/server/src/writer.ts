@@ -452,9 +452,10 @@ export class Writer {
     //
     // Index PUT: each declared index emits one zero-byte PUT per new
     // key. On `U` / `D` the pre-image is sourced from an earlier
-    // same-`docId` input in this batch (if any) before falling back
-    // to a log back-walk — preserves correctness when a transaction
-    // does `[I, U]` or `[U, D]` on the same doc.
+    // same-`docId` input in this commit's input array (if any) before
+    // falling back to a log back-walk — preserves correctness for an
+    // `[I, U]` or `[U, D]` input array. (Always length 1 today; this is
+    // the retained dead-generality the `#singleAttemptCommit` header notes.)
     //
     // Empty `#indexes` short-circuits the index block (including the
     // pre-image GET), preserving zero behaviour change for
