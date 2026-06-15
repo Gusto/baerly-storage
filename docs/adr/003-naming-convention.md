@@ -2,7 +2,7 @@
 title: Baerly-prefix naming convention
 audience: adr
 summary: ADR 003 — when public symbols carry the `Baerly` prefix.
-last-reviewed: 2026-05-28
+last-reviewed: 2026-06-14
 tags: [decision, adr, naming]
 related: [README.md, 002-api-surface-lock.md, "../about/thesis.md"]
 ---
@@ -26,21 +26,27 @@ re-state the package name on every export. Most public symbols
 already follow a consistent rule; this ADR writes it down so
 future additions don't drift.
 
-Audit performed 2026-05-21 found one wart (`Env` exported from
-`@gusto/baerly-storage/cloudflare` was being universally re-aliased on
-import; renamed to `BaerlyEnv` in the same change). Symbol-by-symbol,
-the rest of the surface already followed the rule below, cross-checked
-against Prisma, Supabase, Drizzle, Hono, tRPC, Tanstack Query, Astro,
-and Next.js conventions.
+Audit performed 2026-05-21 found one wart (`Env`, the type a Cloudflare
+Worker's `env` is typed against, was being universally re-aliased on
+import; renamed to `BaerlyEnv` in the same change). `BaerlyEnv` is
+defined in the `@baerly/adapter-cloudflare` package
+(`packages/adapter-cloudflare/src/worker.ts`) and reaches users through
+the published `@gusto/baerly-storage/cloudflare` subpath. Symbol-by-
+symbol, the rest of the surface already followed the rule below,
+cross-checked against Prisma, Supabase, Drizzle, Hono, tRPC, Tanstack
+Query, Astro, and Next.js conventions.
 
 ## Decision
 
 **The `Baerly` prefix carries a symbol when:**
 
-1. It is a boundary type the user constructs or catches —
-   `BaerlyError`, `BaerlyClient`, `BaerlyConfig`, `BaerlyAppConfig`.
-   The prefix disambiguates from globals (`Error`) or common user
-   identifiers (`Client`, `Config`).
+1. The bare name would **collide** with a global (`Error`) or a name
+   users routinely declare (`Config`, `Client`, `Env`, `Storage`).
+   Prefix to disambiguate — `BaerlyError`, `BaerlyClient`,
+   `BaerlyConfig`, `BaerlyAppConfig`. (`BaerlyError` is *caught*; the
+   `*Config` types are used as `Db<typeof config>` type args, not
+   constructed by name — users call `defineConfig({...})` — so the
+   operative test is collision, not "construct or catch".)
 2. It is a platform-integration entry function the user puts behind
    `export default` — `baerlyWorker`, `baerlyNode`, `baerlyDev`.
    Generic names (`worker()`, `node()`) would be unreadable at the
