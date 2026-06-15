@@ -217,7 +217,7 @@
     "@typescript/native-preview": "7.0.0-dev.20260610.1",
     "@vitest/coverage-v8": "^4.1.8",
     "aws4fetch": "1.0.20",
-    "esbuild": "^0.28.0",
+    "esbuild": "^0.28.1",
     "execa": "^9.6.1",
     "fast-check": "^4.8.0",
     "happy-dom": "^20.10.2",

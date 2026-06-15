@@ -27,3 +27,19 @@ allowBuilds:
 # Restoring `true` matches the pnpm-9 behaviour the staged-tarball
 # install path in `README.md` relies on.
 linkWorkspacePackages: true
+
+# Force-resolve transitive dev-tooling deps off versions flagged by
+# Dependabot. All three alerts are dev-scope and unreachable in our
+# Node/pnpm toolchain, but upstream parents still drag the vulnerable
+# versions on their latest releases, so we pin the patched transitives
+# here rather than carry permanently-open alerts:
+#   - esbuild >= 0.28.1: GHSA-gv7w-rqvm-qjhr (Deno-only RCE) +
+#     GHSA-g7r4-m6w7-qqqr (Windows dev-server traversal). Our direct
+#     dep and vite already float to 0.28.1; this also lifts
+#     @cloudflare/vitest-pool-workers off its exact-pinned 0.27.3.
+#   - qs >= 6.15.2: GHSA-q8mj-m7cp-5q26 (stringify DoS), pulled via
+#     typed-rest-client -> @stryker-mutator (manual mutation testing).
+#     No released parent uses 6.15.2 yet.
+overrides:
+  esbuild: ^0.28.1
+  qs: ">=6.15.2"
