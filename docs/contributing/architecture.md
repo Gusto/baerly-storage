@@ -31,7 +31,7 @@ Built like git: content-addressed documents, immutable log entries, and
 a single CAS-advanced pointer to HEAD. This shape is the same recipe
 Iceberg, Delta Lake, Turbopuffer, Litestream, and SlateDB converged on
 after S3 went strongly consistent in December 2020 (see
-[spec/s3-features-used.md](../spec/s3-features-used.md)). The novel
+[spec/storage-compatibility.md](../spec/storage-compatibility.md)). The novel
 part is not the kernel; it is shaping the system so the public API
 stays small enough that an LLM can use it from `.d.ts` alone (see
 [ADR-002](../adr/002-api-surface-lock.md)).

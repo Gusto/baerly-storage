@@ -286,7 +286,7 @@ single CAS-advanced pointer to HEAD.
   Turbopuffer, Litestream, and SlateDB all converged on this shape
   after S3 went strongly consistent. See
   [sync-protocol.md](../spec/sync-protocol.md) and
-  [s3-features-used.md](../spec/s3-features-used.md).
+  [storage-compatibility.md](../spec/storage-compatibility.md).
   Per-collection CAS scope ([ADR-001](../adr/001-tenant-cas-isolation.md))
   is what keeps the idle-poll bound tractable: one cheap key per
   collection, not contention on a global mutex.

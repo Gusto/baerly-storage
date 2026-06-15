@@ -1,8 +1,8 @@
 ---
-title: S3 API surface used
+title: Storage compatibility
 audience: spec
-summary: The minimal S3 features the protocol depends on.
-last-reviewed: 2026-05-31
+summary: Which S3-compatible stores baerly supports, and the conditional-write features it depends on.
+last-reviewed: 2026-06-14
 tags: [protocol, s3]
 related: [s3-xml-escaping-cases.md]
 ---

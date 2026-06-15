@@ -73,7 +73,7 @@ own.
   [`packages/adapter-node/src/xml.test.ts`](../../packages/adapter-node/src/xml.test.ts),
   [`tests/integration/conformance.test.ts`](../../tests/integration/conformance.test.ts)
   (multi-backend, needs credentials)
-- Docs: [`docs/spec/s3-features-used.md`](../spec/s3-features-used.md),
+- Docs: [`docs/spec/storage-compatibility.md`](../spec/storage-compatibility.md),
   [`docs/spec/s3-xml-escaping-cases.md`](../spec/s3-xml-escaping-cases.md)
 
 ## Time / clock-skew tolerance

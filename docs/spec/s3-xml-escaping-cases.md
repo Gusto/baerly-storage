@@ -4,7 +4,7 @@ audience: spec
 summary: Why baerly requests encoding-type=url, what that turns key escaping into, and the XML-1.0 control-char rule that makes it mandatory.
 last-reviewed: 2026-06-14
 tags: [protocol, s3, xml, edge-cases]
-related: [s3-features-used.md]
+related: [storage-compatibility.md]
 ---
 
 # S3 XML escaping edge cases

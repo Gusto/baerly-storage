@@ -23,7 +23,7 @@ implementation lives in `packages/`.
   relies on for log coalescing and network optimization.
 - [log-entry-shape.md](log-entry-shape.md) — the `LogEntry` wire
   contract. Debezium-style CDC envelope; frozen and stable.
-- [s3-features-used.md](s3-features-used.md) — the minimal S3 API
+- [storage-compatibility.md](storage-compatibility.md) — the minimal S3 API
   surface the protocol depends on.
 - [s3-xml-escaping-cases.md](s3-xml-escaping-cases.md) — edge cases
   for `ListObjectsV2` XML responses; companion to
