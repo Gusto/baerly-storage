@@ -16,7 +16,7 @@ import {
   type UnboundConfig,
 } from "@baerly/protocol";
 import { collectionsToMaps } from "./config.ts";
-import { assertNameNotReserved } from "./names.ts";
+import { assertPathSegment } from "./path-segment.ts";
 import type { CollectionReadContext } from "./query.ts";
 import { makeCollection } from "./collection.ts";
 
@@ -298,9 +298,10 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
 
 /**
  * Guard a string used as a path-segment in the bucket-key encoding.
- * Rejects empty and `/`-containing values with
- * `BaerlyError{code:"InvalidConfig"}`. `role` and `verb` are baked
- * into the message so the caller doesn't need to format their own.
+ * Routes through the single shared {@link assertPathSegment} rule
+ * (empty / `"/"` / `"."`|`".."` / C0-C1 control / leading `"_"` (ADR-007) /
+ * overlong), all as `BaerlyError{code:"InvalidConfig"}`. `role` and `verb`
+ * are baked into the message so the caller doesn't need to format their own.
  *
  * Used by {@link Db.create} (twice — `app`, `tenant`) and
  * {@link Db.collectionReadContext} (once — `name`).
@@ -308,19 +309,5 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
  * @internal
  */
 const assertKeySegment = (value: string, role: string, verb: string): void => {
-  if (value.length === 0) {
-    throw new BaerlyError(
-      "InvalidConfig",
-      `${verb}: ${role} must be non-empty (got ${JSON.stringify(value)})`,
-    );
-  }
-  if (value.includes("/")) {
-    throw new BaerlyError(
-      "InvalidConfig",
-      `${verb}: "/" is reserved as the key-segment separator (got ${role}=${JSON.stringify(value)})`,
-    );
-  }
-  // Applied to ALL key segments (app, tenant, collection) — one
-  // consistent leading-`_` reservation (ADR-007).
-  assertNameNotReserved(value, verb);
+  assertPathSegment(value, role, verb);
 };

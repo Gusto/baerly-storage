@@ -62,6 +62,19 @@ describe("Db.create", () => {
     expect(() => db.collection("notes")).not.toThrow();
   });
 
+  test.each(["..", ".", "a/b", "with\u0000null", "x".repeat(257)])(
+    "db.collection(%j) is rejected InvalidConfig",
+    (bad) => {
+      const db = Db.create({ storage: new MemoryStorage(), app: "a", tenant: "t" });
+      expect(() => db.collection(bad)).toThrow(BaerlyError);
+      try {
+        db.collection(bad);
+      } catch (error) {
+        expect((error as BaerlyError).code).toBe("InvalidConfig");
+      }
+    },
+  );
+
   test("app names cannot start with the reserved _ prefix", () => {
     try {
       Db.create({ storage: new MemoryStorage(), app: "_x", tenant: "t" });
