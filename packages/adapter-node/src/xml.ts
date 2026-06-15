@@ -67,8 +67,8 @@ const rawXmlVal = (obj: Record<string, unknown>, name: string): string | undefin
  * it runs on a path that is already reporting an error.
  */
 export const parseS3Error = (xml: string): ParsedS3Error | undefined => {
-  // Cheap guards before invoking the parser: skip bodies that can't be
-  // an S3 error, and refuse DTDs (XXE / billion-laughs) outright.
+  // Skip non-error bodies; refuse DTDs before parsing — see the DTD-guard
+  // note above parseListObjectsV2CommandOutput.
   if (!/<Error\b/i.test(xml) || /<!DOCTYPE\b/i.test(xml)) {
     return undefined;
   }
@@ -105,8 +105,13 @@ const parseLastModified = (lm: string | undefined): Date | undefined => {
   return Number.isNaN(d.getTime()) ? undefined : d;
 };
 
+// DTD guard: reject any DOCTYPE before fast-xml-parser sees the bytes. S3/R2/
+// MinIO/GCS never emit a DOCTYPE here, so one is always a bug or an attack —
+// this defangs the DOCTYPE entity vectors (XXE, billion-laughs, the
+// CVE-2026-25896 entity-shadow). The no-DOCTYPE numeric-ref expansion path
+// (CVE-2026-33036) it cannot match is covered by the `^5.5.6` floor in
+// package.json. `htmlEntities: true` (above) stays default-safe given both.
 export const parseListObjectsV2CommandOutput = (xml: string): ParsedListObjectsV2Output => {
-  // reject DTDs (XXE/billion-laughs) — DOCTYPE must precede the root element
   if (/<!DOCTYPE\b/i.test(xml)) {
     throw new BaerlyError("InvalidResponse", "DTD not allowed in S3 XML responses");
   }

@@ -117,6 +117,19 @@ describe("XML parser", () => {
     ]);
   });
 
+  test("DOCTYPE entity-definition vector is rejected before the parser runs", () => {
+    // CVE-2026-25896 shadowing shape: a DOCTYPE defining an entity. The DTD
+    // guard must reject the body BEFORE fast-xml-parser sees the bytes, so
+    // the entity is never expanded/shadowed. Locks the guard so a future
+    // parser-option change can't silently regress this.
+    const xml: string = `<?xml version="1.0" encoding="UTF-8"?>
+      <!DOCTYPE ListBucketResult [<!ENTITY l. "x">]>
+      <ListBucketResult><Contents><Key>&lt;</Key></Contents></ListBucketResult>`;
+    expect(() => parseListObjectsV2CommandOutput(xml)).toThrowError(
+      expect.objectContaining({ code: "InvalidResponse" }),
+    );
+  });
+
   test("malformed LastModified yields undefined, not an Invalid Date", () => {
     const xml: string = `<?xml version="1.0" encoding="UTF-8"?>
       <ListBucketResult>
@@ -135,6 +148,20 @@ describe("XML parser", () => {
       </ListBucketResult>`;
     const parsed = parseListObjectsV2CommandOutput(xml);
     expect(parsed.Contents?.[0]?.Key).toBe("a\tb\nc");
+  });
+
+  test("XML-1.0-illegal control chars only ever appear percent-encoded and round-trip", () => {
+    // %01 (SOH) and %1F (US) are C0 controls that are ILLEGAL in XML 1.0 —
+    // even as numeric character references (&#x01;/&#x1F; are not
+    // well-formed XML 1.0). %7F (DEL) is discouraged. encoding-type=url is
+    // therefore the ONLY representation that can appear in a valid
+    // ListObjectsV2 body for such a key; we decode it back to literal bytes.
+    const xml: string = `<?xml version="1.0" encoding="UTF-8"?>
+      <ListBucketResult>
+        <Contents><Key>a%01b%1Fc%7Fd</Key></Contents>
+      </ListBucketResult>`;
+    const parsed = parseListObjectsV2CommandOutput(xml);
+    expect(parsed.Contents?.[0]?.Key).toBe("a\x01b\x1Fc\x7Fd");
   });
 
   test("space, %, and unicode in a key round-trip via url-decoding", () => {
@@ -199,5 +226,14 @@ describe("parseS3Error", () => {
 
   test("refuses a DTD (XXE guard) and returns undefined", () => {
     expect(parseS3Error(`<!DOCTYPE foo><Error><Code>X</Code></Error>`)).toBeUndefined();
+  });
+
+  test("refuses a DOCTYPE with an entity definition (entity-shadow vector)", () => {
+    // CVE-2026-25896 shape: a DOCTYPE defining an entity to shadow a
+    // predefined XML entity. The guard rejects any DOCTYPE before the parser
+    // runs, so the entity is never expanded. Locks the behavior.
+    expect(
+      parseS3Error(`<!DOCTYPE Error [<!ENTITY l. "x">]><Error><Code>&lt;</Code></Error>`),
+    ).toBeUndefined();
   });
 });
