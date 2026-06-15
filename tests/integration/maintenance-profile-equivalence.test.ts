@@ -210,6 +210,7 @@ describe("MaintenanceProfile cross-profile correctness", () => {
           // Each profile replays the SAME stream through the real
           // write-tick path on its own fresh bucket.
           const maintained: Record<string, Ticket[]> = {};
+          const foldProgress: Record<string, number> = {};
           for (const pc of PROFILE_CASES) {
             const storage = await freshBucket();
             await replay(storage, ops, pc.profile);
@@ -221,8 +222,21 @@ describe("MaintenanceProfile cross-profile correctness", () => {
             expect(cur!.json.snapshot, `${pc.label}: a fold must have landed`).not.toBeNull();
             expect(cur!.json.log_seq_start, `${pc.label}: the tail folded`).toBeGreaterThan(0);
 
+            foldProgress[pc.label] = cur!.json.log_seq_start;
             maintained[pc.label] = await readRows(storage);
           }
+
+          // DIFFERENT stored layout, IDENTICAL reads: the slower profile
+          // (cf-free, 20 entries/pass) leaves a longer residual tail than
+          // node (200/pass), so the snapshot/log split — i.e. how far
+          // log_seq_start advanced — diverges across profiles. This pins the
+          // equivalence below to demonstrably-different stored states, not two
+          // configs that happened to maintain identically. (Test (B) proves
+          // the per-pass rate gap directly; this proves it changed the bucket.)
+          expect(
+            new Set(Object.values(foldProgress)).size,
+            "profiles must reach different fold progress (else equivalence is vacuous)",
+          ).toBeGreaterThan(1);
 
           // EQUIVALENCE: every profile's view equals the no-maintenance
           // reference, byte-for-byte (deep-equal over sorted rows).
