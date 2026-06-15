@@ -180,6 +180,49 @@ describe("baerly admin restore", () => {
     expect(head?.json.next_seq).toBe(2);
   });
 
+  test("traversal-shaped _id rejected by Writer.commit → InvalidConfig (exit 1)", async () => {
+    // `restore` only checks `_id` is a non-empty string; the systematic
+    // guard lives inside `Writer.commit` (`assertDocId`). A `".."` _id
+    // would otherwise write a traversal-shaped key — confirm restore
+    // surfaces the rejection (InvalidConfig → exit 1) and commits no rows.
+    await writeFile(stdinPath, `{"_id":"..","title":"evil"}\n`, "utf8");
+    const stderr = captureStream(process.stderr);
+    let exitCode: number;
+    try {
+      exitCode = await runRestore(
+        [`--bucket=file://${root}`, `--app=${APP}`, `--tenant=${TENANT}`, `--collection=${COLL}`],
+        { streams: { stdin: createReadStream(stdinPath) } },
+      );
+    } finally {
+      stderr.restore();
+    }
+    expect(exitCode).toBe(1);
+    const head = await readCurrentJson(storage, CURRENT_JSON_KEY);
+    expect(head?.json.next_seq).toBe(0);
+  });
+
+  test("control-char _id rejected by Writer.commit → InvalidConfig (exit 1)", async () => {
+    // A `_id` carrying a C0 control char (NUL) is rejected by the same
+    // `assertDocId` guard inside `commit`. Build the NDJSON with a real
+    // control char in the JSON-string body via `String.fromCharCode(0)`
+    // — no literal control byte in this source file.
+    const badId = `doc${String.fromCharCode(0)}evil`;
+    await writeFile(stdinPath, `${JSON.stringify({ _id: badId, title: "evil" })}\n`, "utf8");
+    const stderr = captureStream(process.stderr);
+    let exitCode: number;
+    try {
+      exitCode = await runRestore(
+        [`--bucket=file://${root}`, `--app=${APP}`, `--tenant=${TENANT}`, `--collection=${COLL}`],
+        { streams: { stdin: createReadStream(stdinPath) } },
+      );
+    } finally {
+      stderr.restore();
+    }
+    expect(exitCode).toBe(1);
+    const head = await readCurrentJson(storage, CURRENT_JSON_KEY);
+    expect(head?.json.next_seq).toBe(0);
+  });
+
   test("unknown flag rejected with exit 1", async () => {
     const exitCode = await runRestore([
       `--bucket=file://${root}`,

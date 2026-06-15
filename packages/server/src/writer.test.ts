@@ -1100,4 +1100,33 @@ describe("Writer — write-tick maintenance dispatch", () => {
       writer.commit({ op: "I", collection: COLL, docId: "doc-1", body: { _id: "doc-1" } }),
     ).rejects.toMatchObject({ code: "InvalidConfig" });
   });
+
+  test("commit rejects a traversal-shaped docId as InvalidConfig, not a storage error", async () => {
+    // `Writer.commit` runs `assertDocId(input.docId)` as its first
+    // statement so every commit caller (the public write path AND a
+    // direct caller like `baerly admin restore`) is covered. A `".."`
+    // docId would otherwise write a traversal-shaped index/log key —
+    // reject it EARLY as InvalidConfig, before any PUT lands.
+    const storage = new MemoryStorage();
+    await createCurrentJson(storage, CURRENT_KEY, seedCurrent());
+    const writer = new Writer({ storage, currentJsonKey: CURRENT_KEY });
+
+    await expect(
+      writer.commit({ op: "I", collection: COLL, docId: "..", body: { _id: ".." } }),
+    ).rejects.toMatchObject({ code: "InvalidConfig" });
+  });
+
+  test("commit rejects a control-char docId as InvalidConfig, not a storage error", async () => {
+    // A `_id` carrying a C0 control char (here `\u0000`) is rejected by
+    // the same `assertDocId` guard inside `commit` before any key is
+    // assembled or any PUT issued.
+    const storage = new MemoryStorage();
+    await createCurrentJson(storage, CURRENT_KEY, seedCurrent());
+    const writer = new Writer({ storage, currentJsonKey: CURRENT_KEY });
+
+    const badId = "doc\u0000evil";
+    await expect(
+      writer.commit({ op: "I", collection: COLL, docId: badId, body: { _id: badId } }),
+    ).rejects.toMatchObject({ code: "InvalidConfig" });
+  });
 });

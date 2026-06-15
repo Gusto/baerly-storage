@@ -430,7 +430,20 @@ describe("compact", () => {
   fcTest.prop({
     docs: fc.array(
       fc.record({
-        id: fc.string({ minLength: 1, maxLength: 12 }),
+        // Constrain the id alphabet to characters that pass
+        // `assertDocId`/`assertPathSegment` (now enforced inside
+        // `Writer.commit`): no `/`, control chars, `.`/`..`, leading
+        // `_`, or overlong segments. This test exercises tail_bytes
+        // round-trip accounting, not `_id` validation — the prior
+        // unconstrained `fc.string` generated traversal-shaped ids that
+        // the guard now correctly rejects.
+        id: fc.string({
+          unit: fc.constantFrom(
+            ..."abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-",
+          ),
+          minLength: 1,
+          maxLength: 12,
+        }),
         payload: docValue,
       }),
       { minLength: 1, maxLength: 40 },

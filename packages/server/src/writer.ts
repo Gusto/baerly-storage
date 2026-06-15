@@ -60,6 +60,7 @@ import {
   uuid,
   versionFromContent,
 } from "@baerly/protocol";
+import { assertDocId } from "./doc-id.ts";
 import { allIndexKeysFor, type IndexDefinition, validateIndexDefinition } from "./indexes.ts";
 import { assertKeyWithinLimit } from "./key-limit.ts";
 import { readLogEntry, walkLogRange } from "./log-walk.ts";
@@ -307,6 +308,13 @@ export class Writer {
    * and re-reads to pick up the winner's manifest.
    */
   async commit(input: CommitInput): Promise<CommitResult> {
+    // Validate the doc id BEFORE any I/O so every commit caller — the
+    // public write path AND a direct caller like `baerly admin restore`
+    // — is covered (defense in depth, mirroring the db-layer guard).
+    // Rejects empty / `"/"` / `"."`|`".."` / control / leading `"_"` /
+    // overlong `docId` as `BaerlyError{code:"InvalidConfig"}`, so a
+    // traversal-shaped `_id` can never become a written key segment.
+    assertDocId(input.docId);
     const session = uuid().slice(0, SESSION_ID_LENGTH);
     const logPrefix = this.#currentJsonKey.slice(0, this.#currentJsonKey.lastIndexOf("/"));
 
