@@ -36,6 +36,7 @@
 
 import { afterEach, describe, expect, test } from "vitest";
 import {
+  casUpdateCurrentJson,
   type Collection,
   MAINTENANCE_PROFILE_CF_FREE,
   MAINTENANCE_PROFILE_NODE,
@@ -298,6 +299,18 @@ describe("MaintenanceProfile cross-profile correctness", () => {
           const oneFoldAdvance = async (profile: MaintenanceProfile): Promise<number> => {
             const storage = await freshBucket();
             await replay(storage, tailOps); // no maintenance during seed
+            // Seeding skipped compaction, so `mean_entry_bytes` was never
+            // stamped. The ratio TRIGGER estimates the live tail as
+            // (tail − log_seq_start) × mean_entry_bytes; stamp the mean the
+            // first fold WOULD have computed (tail_bytes / live entries) so the
+            // estimate reflects these large 2 KB entries instead of falling
+            // back to the small cold-start per-entry size.
+            await casUpdateCurrentJson(storage, CURRENT_JSON_KEY, (c) => ({
+              ...c,
+              mean_entry_bytes: Math.round(
+                c.tail_bytes / Math.max(1, c.tail_hint - c.log_seq_start),
+              ),
+            }));
             const cur = (await readCurrentJson(storage, CURRENT_JSON_KEY))!.json;
             const before = cur.log_seq_start;
             await runBoundedMaintenance(

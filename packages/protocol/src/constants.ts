@@ -266,6 +266,23 @@ export const MAINTENANCE_TARGET_RATIO: number = 1;
 export const MAINTENANCE_MIN_LIVE_BYTES: number = 64 * 1024;
 
 /**
+ * Cold-start per-entry byte estimate for the ratio TRIGGER's derived live-tail
+ * size (`estimateTailBytes`), used until the compactor stamps a real
+ * `current.json.mean_entry_bytes` on the first fold. Folding too-few entries is
+ * barred by Gate-1's entry-count floor (`minEntriesToCompact`), NOT by this
+ * value — so over-estimating is equally safe; this is a first-fold-TIMING
+ * choice. A small typical log-entry size keeps the first fold's cadence close
+ * to the exact `tail_bytes` path for typical entries; must be non-zero so a
+ * bare `Db.create()` still bootstraps its first auto-fold (a 0 fallback leaves
+ * the ratio dead pre-stamp). Large-body collections see a bounded first-fold
+ * delay; after it stamps a real mean the estimate tracks the exact tail.
+ *
+ * @see packages/server/src/maintenance.ts (`estimateTailBytes`)
+ */
+// Stryker disable next-line ArithmeticOperator: internal cold-start tuning value, not an off-process contract — asserting the literal would be a tautological change-detector. See docs/contributing/mutation-testing.md constants policy.
+export const MAINTENANCE_COLD_START_ENTRY_BYTES: number = 128;
+
+/**
  * Per-tick GC budget — these are DEFAULTS (= the most-constrained tier, CF free, reusing
  * the TESTED `CLOUDFLARE_FREE_TIER` values in maintenance.ts / maintenance.budget.test.ts).
  * The adapter THREADS per-tier overrides into the context (§8.4); Node/CF-paid raise them.

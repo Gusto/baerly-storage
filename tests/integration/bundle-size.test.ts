@@ -340,7 +340,12 @@ const BUDGETS: readonly Budget[] = [
   //     (`log-tail.ts`, single-write-commit Plan B) reaches the http
   //     closure via `runRead` (query) + `/v1/since` (measured 331794 raw /
   //     97702 gz). Rebaseline raw +1 KiB, gz +1 KiB; min-gz still passes.
-  { entry: "http.js", raw: 325 * 1024, gz: 96 * 1024, minGz: 34 * 1024 },
+  //   → 326 KiB raw (2026-06-15): `estimateTailBytes` + the
+  //     `MAINTENANCE_COLD_START_ENTRY_BYTES` constant (single-write-commit
+  //     Plan B, ratio-trigger derived tail estimate) reach the http closure
+  //     via the maintenance subgraph (measured 333048 raw; +248 over). Bump
+  //     raw +1 KiB; gz/min-gz comfortably under.
+  { entry: "http.js", raw: 326 * 1024, gz: 96 * 1024, minGz: 34 * 1024 },
   // Observability primitives — ObservabilityContext, the
   // request-scoped MetricsRecorder, LogTape config + the
   // JSON sink only (the pretty sink + picocolors now live in
@@ -431,7 +436,12 @@ const BUDGETS: readonly Budget[] = [
   //     discovery + tail_hint stamp (measured 34833 gz, +17 over the
   //     34 KiB ceiling). Rebaseline gz +1 KiB; raw/min-gz unaffected
   //     (still passing — log-tail.ts was already in gc.ts's closure).
-  { entry: "maintenance.js", raw: 113 * 1024, gz: 35 * 1024, minGz: 11 * 1024 },
+  //   → 114 KiB raw / 35 KiB gz (2026-06-15): `estimateTailBytes` + the
+  //     `MAINTENANCE_COLD_START_ENTRY_BYTES` constant (single-write-commit
+  //     Plan B Phase 3.3, ratio-trigger derived tail estimate) land in this
+  //     closure (measured 115918 raw; +206 over). Rebaseline raw +1 KiB;
+  //     gz/min-gz unaffected (still passing).
+  { entry: "maintenance.js", raw: 114 * 1024, gz: 35 * 1024, minGz: 11 * 1024 },
   // Cloudflare Workers adapter — re-exports the kernel barrel
   // (Db, Writer, etc.) plus the R2-binding `Storage` impl
   // and the `baerlyCloudflare` helper. Aggregator: closure
@@ -505,7 +515,12 @@ const BUDGETS: readonly Budget[] = [
   //     closure via `runInsert` / `runReplaceById` on the request path.
   //     ~845 B raw / ~78 B gz over (measured 388941 raw / 115790 gz);
   //     min+gz unaffected. Rebaseline raw +1 KiB, gz +1 KiB.
-  { entry: "cloudflare.js", raw: 380 * 1024, gz: 114 * 1024, minGz: 40 * 1024 },
+  //   → raw 381 KiB (2026-06-15): `estimateTailBytes` + the
+  //     `MAINTENANCE_COLD_START_ENTRY_BYTES` constant (single-write-commit
+  //     Plan B Phase 3.3) reach the cloudflare closure via the maintenance
+  //     subgraph (measured 389655 raw; +535 over). Rebaseline raw +1 KiB;
+  //     gz/min-gz comfortably under.
+  { entry: "cloudflare.js", raw: 381 * 1024, gz: 114 * 1024, minGz: 40 * 1024 },
   // Client surface — `BaerlyClient<TConfig>` + fetcher plumbing.
   // Browser/runtime-agnostic; no kernel modules in the closure.
   // Budget history:

@@ -51,8 +51,21 @@ export interface Ticket extends DocumentData {
  * `owner` tag is the one field that differs between callers (it names
  * the suite for forensic readability of the fence record), so it's a
  * parameter — everything else is byte-identical.
+ *
+ * `meanEntryBytes` (optional) pre-stamps `current.json.mean_entry_bytes` so
+ * the ratio TRIGGER's derived live-tail estimate
+ * (`(tail − log_seq_start) × mean_entry_bytes`) reflects the suite's large
+ * (~2 KB) entries from the first write. The compactor stamps this on the
+ * first real fold; these mechanism suites care about steady-state fold/GC
+ * behavior, not the cold-start bootstrap window, so pre-stamping keeps the
+ * small cold-start fallback from under-estimating the big bodies and delaying
+ * the first fold. Omit it to exercise the true cold-start path.
  */
-export const bootstrap = async (storage: Storage, owner: string): Promise<void> => {
+export const bootstrap = async (
+  storage: Storage,
+  owner: string,
+  meanEntryBytes?: number,
+): Promise<void> => {
   await createCurrentJson(storage, CURRENT_JSON_KEY, {
     schema_version: CURRENT_JSON_SCHEMA_VERSION,
     snapshot: null,
@@ -62,6 +75,7 @@ export const bootstrap = async (storage: Storage, owner: string): Promise<void> 
     tail_bytes: 0,
     snapshot_bytes: 0,
     snapshot_rows: 0,
+    ...(meanEntryBytes !== undefined && { mean_entry_bytes: meanEntryBytes }),
   });
 };
 

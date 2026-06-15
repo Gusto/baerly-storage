@@ -71,6 +71,14 @@ const bootstrap = async (storage: Storage, key: string): Promise<void> => {
     tail_bytes: 0,
     snapshot_bytes: 0,
     snapshot_rows: 0,
+    // Seed a representative mean so the ratio TRIGGER's derived live-tail
+    // estimate (`(tail − log_seq_start) × mean_entry_bytes`) reflects these
+    // large ~2 KB entries from the first write. The compactor stamps this on
+    // the first real fold; this drain-rate MECHANISM test is about steady
+    // state, not the cold-start bootstrap window, so pre-stamping avoids the
+    // small cold-start fallback under-estimating the big bodies and delaying
+    // the first fold (which would inflate the transient peak before plateau).
+    mean_entry_bytes: BODY_BYTES,
   });
 };
 

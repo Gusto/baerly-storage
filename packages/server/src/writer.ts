@@ -719,7 +719,10 @@ export class Writer {
       // profile) so the pre-fire cadence can't diverge from the fold's.
       const gcInterval =
         maint?.options?.profile?.gcInterval ?? MAINTENANCE_PROFILE_CF_FREE.gcInterval;
-      if (shouldFireMaintenance(next, prevSeq, gcInterval)) {
+      // `observedTail` = the post-CAS `tail_hint` (== true tail under the
+      // two-write commit). Phase 4 swaps this for the writer's in-memory
+      // observed tail once `tail_bytes` is gone.
+      if (shouldFireMaintenance(next, prevSeq, gcInterval, next.tail_hint)) {
         const dispatch = maint?.dispatch ?? dispatchInlineAwaited;
         // `await dispatch(...)`: `dispatchInlineAwaited` returns the
         // task's promise (awaited inline — deterministic for tests +

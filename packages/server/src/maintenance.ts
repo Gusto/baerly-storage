@@ -25,6 +25,7 @@ import {
   BaerlyError,
   casUpdateCurrentJson,
   GC_STARVATION_GUARD,
+  MAINTENANCE_COLD_START_ENTRY_BYTES,
   MAINTENANCE_MIN_LIVE_BYTES,
   MAINTENANCE_PROFILE_CF_FREE,
   MAINTENANCE_TARGET_RATIO,
@@ -199,19 +200,37 @@ export const crossesGcBoundary = (prevSeq: number, nextSeq: number, interval: nu
   Math.floor(prevSeq / interval) !== Math.floor(nextSeq / interval);
 
 /**
+ * Derived live-tail byte size — the ratio TRIGGER input that replaces the exact
+ * `tail_bytes` field (removed in Phase 6). `(observedTail − log_seq_start) ×
+ * mean_entry_bytes`. `observedTail` is a param so Phase 4 can swap its source;
+ * Phase 3 passes `tail_hint` (== true tail under the two-write commit, so est ≈
+ * exact). Cold-start (no mean yet) falls back to
+ * {@link MAINTENANCE_COLD_START_ENTRY_BYTES}, never 0 (see that constant).
+ * TRIGGER-only — structurally barred from `foldViable` (the exact-bytes CPU-kill
+ * ceiling).
+ */
+export const estimateTailBytes = (current: CurrentJson, observedTail: number): number =>
+  Math.max(0, observedTail - current.log_seq_start) *
+  (current.mean_entry_bytes ?? MAINTENANCE_COLD_START_ENTRY_BYTES);
+
+/**
  * The cheap DISPATCH gate the writer calls after a commit — zero
  * storage ops; it reads the post-CAS {@link CurrentJson} already in
  * scope. Ratio-OR-boundary, WITHOUT the entry floor (the floor is part
  * of the fold-trigger Gate 1 checked inside {@link runBoundedMaintenance}).
- * Returning `false` lets the writer skip the dispatch entirely.
+ * Returning `false` lets the writer skip the dispatch entirely. Ratio
+ * numerator is the DERIVED {@link estimateTailBytes} (not exact `tail_bytes`);
+ * `observedTail` threads from the caller (Phase 3: post-CAS `tail_hint`).
  */
 export const shouldFireMaintenance = (
   current: CurrentJson,
   prevSeq: number,
   gcInterval: number,
+  observedTail: number,
 ): boolean =>
   crossesGcBoundary(prevSeq, current.tail_hint, gcInterval) ||
-  current.tail_bytes / Math.max(current.snapshot_bytes, MAINTENANCE_MIN_LIVE_BYTES) >=
+  estimateTailBytes(current, observedTail) /
+    Math.max(current.snapshot_bytes, MAINTENANCE_MIN_LIVE_BYTES) >=
     MAINTENANCE_TARGET_RATIO;
 
 /** Per-tier caps for {@link runBoundedMaintenance}, threaded by the adapter. */
@@ -323,14 +342,18 @@ export const runBoundedMaintenance = async (
       return; // nothing to maintain yet
     }
     const current = read.json;
-    const tailBytes = current.tail_bytes;
     const snapshotBytes = current.snapshot_bytes;
     const snapshotRows = current.snapshot_rows;
     const nextSeq = current.tail_hint;
     const logSeqStart = current.log_seq_start;
+    // Ratio TRIGGER numerator = DERIVED estimate (Phase 6 removes `tail_bytes`).
+    // observedTail = nextSeq here (post-CAS `tail_hint`, == true tail under the
+    // two-write commit). Phase 4 swaps it for the writer's in-memory tail.
+    const tailBytesEst = estimateTailBytes(current, nextSeq);
 
-    const ratio = tailBytes / Math.max(snapshotBytes, MAINTENANCE_MIN_LIVE_BYTES);
+    const ratio = tailBytesEst / Math.max(snapshotBytes, MAINTENANCE_MIN_LIVE_BYTES);
     const gate1 = ratio >= MAINTENANCE_TARGET_RATIO && nextSeq - logSeqStart >= minEntriesToCompact;
+    // SAFETY ceiling (CF CPU-kill guard) — EXACT snapshot_bytes/rows, NEVER the estimate.
     const foldViable = snapshotBytes <= C && snapshotRows + maxFoldEntriesPerPass <= E;
     const gcDue = crossesGcBoundary(prevSeq, nextSeq, gcInterval);
 

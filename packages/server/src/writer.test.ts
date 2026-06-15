@@ -893,16 +893,17 @@ describe("Writer — write-tick maintenance dispatch", () => {
   });
 
   test("(2) a single commit DISPATCHES runBoundedMaintenance when the fold ratio (Gate 1) trips", async () => {
-    // Seed so the ratio `tail_bytes / max(snapshot_bytes, MIN_LIVE) >= 1`
-    // trips on a NON-boundary write (prevSeq 1 → tail_hint 2 with
-    // interval 4 crosses no boundary). With snapshot_bytes 0 the
-    // denominator floors to MAINTENANCE_MIN_LIVE_BYTES, so tail_bytes at
-    // the threshold trips the ratio. THE blocking-bug regression: a
-    // ratio-tripping write must dispatch maintenance.
+    // Seed so the DERIVED ratio `estimateTailBytes / max(snapshot_bytes,
+    // MIN_LIVE) >= 1` trips on a NON-boundary write (prevSeq 1 → tail_hint 2
+    // with interval 4 crosses no boundary). The trigger reads the estimate
+    // `(tail_hint − log_seq_start) × mean_entry_bytes`, NOT the exact
+    // tail_bytes field, so a stamped mean drives it: 2 live entries ×
+    // MIN_LIVE bytes/entry far exceeds the floored denominator ⇒ ratio ≫ 1.
+    // THE blocking-bug regression: a ratio-tripping write must dispatch.
     const storage = new MemoryStorage();
     await seedWith(storage, {
       tail_hint: 1,
-      tail_bytes: MAINTENANCE_MIN_LIVE_BYTES,
+      mean_entry_bytes: MAINTENANCE_MIN_LIVE_BYTES,
       snapshot_bytes: 0,
     });
     const writer = new Writer({ storage, currentJsonKey: CURRENT_KEY });
@@ -923,7 +924,7 @@ describe("Writer — write-tick maintenance dispatch", () => {
     await createCurrentJson(storage, CURRENT_KEY, {
       ...seedCurrent(),
       tail_hint: 1,
-      tail_bytes: MAINTENANCE_MIN_LIVE_BYTES,
+      mean_entry_bytes: MAINTENANCE_MIN_LIVE_BYTES,
       snapshot_bytes: 0,
     });
     storage.failNextCasOnce = true;
@@ -1070,7 +1071,7 @@ describe("Writer — write-tick maintenance dispatch", () => {
     const storage = new MemoryStorage();
     await seedWith(storage, {
       tail_hint: 1,
-      tail_bytes: MAINTENANCE_MIN_LIVE_BYTES,
+      mean_entry_bytes: MAINTENANCE_MIN_LIVE_BYTES,
       snapshot_bytes: 0,
     });
     const writer = new Writer({ storage, currentJsonKey: CURRENT_KEY });

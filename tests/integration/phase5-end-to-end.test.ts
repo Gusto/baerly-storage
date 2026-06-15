@@ -66,7 +66,12 @@ import {
   type Ticket,
 } from "../fixtures/maintenance-harness.ts";
 
-const bootstrap = (storage: Storage): Promise<void> => bootstrapCurrentJson(storage, "phase5-e2e");
+// Pre-stamp a representative mean so the ratio TRIGGER's derived live-tail
+// estimate reflects these large ~2 KB entries from write 1 (see the harness
+// bootstrap docstring). These are steady-state fold/GC mechanism tests, not
+// cold-start bootstrap tests.
+const bootstrap = (storage: Storage): Promise<void> =>
+  bootstrapCurrentJson(storage, "phase5-e2e", BODY_BYTES);
 
 const countBucketObjects = async (storage: Storage, prefix: string): Promise<number> => {
   let count = 0;

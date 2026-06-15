@@ -139,6 +139,12 @@ describe("baerlyNode", () => {
       tail_bytes: 0,
       snapshot_bytes: 0,
       snapshot_rows: 0,
+      // Pre-stamp a representative mean so the ratio TRIGGER's derived live-tail
+      // estimate reflects these ~640-byte padded entries (512-byte pad + envelope)
+      // from the first write — the compactor stamps this on the first real fold.
+      // This is an adapter-WIRING test, not a cold-start test, so pre-stamping
+      // keeps the small cold-start fallback from under-estimating the padded tail.
+      mean_entry_bytes: 640,
     });
     const writer = new Writer({ storage, currentJsonKey: key });
     // Pad each body so the tail clears the 64 KB first-fold floor; seed
