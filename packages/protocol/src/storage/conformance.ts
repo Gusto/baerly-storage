@@ -245,6 +245,25 @@ export function defineStorageConformanceSuite(
         expect(got).not.toBeNull();
         expect(bytesEqual(got!.body, original)).toBe(true);
       });
+
+      test("admits exactly one winner under concurrent create-if-absent", async () => {
+        const RACERS = 16;
+        const enc = new TextEncoder();
+        const outcomes = await Promise.allSettled(
+          Array.from({ length: RACERS }, (_u, i) =>
+            s.put("k", enc.encode(`r${i}`), { ifNoneMatch: "*" }),
+          ),
+        );
+        const winners = outcomes.filter((o) => o.status === "fulfilled").length;
+        const conflicts = outcomes.filter(
+          (o) =>
+            o.status === "rejected" &&
+            o.reason instanceof BaerlyError &&
+            o.reason.code === "Conflict",
+        ).length;
+        expect(winners).toBe(1);
+        expect(conflicts).toBe(RACERS - 1);
+      });
     });
 
     describe("conditional get — ifNoneMatch", () => {

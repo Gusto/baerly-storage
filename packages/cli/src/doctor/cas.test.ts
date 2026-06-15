@@ -9,6 +9,7 @@ describe("doctorCas", () => {
     expect(report.findings.every((f) => f.severity === "ok")).toBe(true);
     expect(report.findings.map((f) => f.check).toSorted()).toEqual([
       "cas-ifMatch-stale",
+      "cas-ifNoneMatch-concurrent",
       "cas-ifNoneMatch-exists",
     ]);
   });
@@ -27,7 +28,7 @@ describe("doctorCas", () => {
     const report = await doctorCas(new NoCasStorage(), "");
     expect(report.status).toBe("error");
     const failed = report.findings.filter((f) => f.severity === "error");
-    expect(failed.length).toBe(2);
+    expect(failed.length).toBe(3);
     expect(failed.every((f) => typeof f.fix === "string" && f.fix.length > 0)).toBe(true);
   });
 });

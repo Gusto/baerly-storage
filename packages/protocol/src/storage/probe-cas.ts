@@ -7,7 +7,7 @@ const isConflict = (error: unknown): boolean =>
 
 /** One CAS sub-check's outcome. */
 export interface CasProbeCheck {
-  /** Stable identifier (`ifMatch-stale` / `ifNoneMatch-exists`). */
+  /** Stable identifier (`ifMatch-stale` / `ifNoneMatch-exists` / `ifNoneMatch-concurrent`). */
   readonly name: string;
   /** `true` iff the backend rejected the conditional write as required. */
   readonly ok: boolean;
@@ -32,12 +32,15 @@ export interface CasProbeResult {
  * on the same fence. This is the fail-loud, deploy-time analogue of the
  * conformance CAS block.
  *
- * Writes a single throwaway sentinel under `keyPrefix` and deletes it on
- * the way out (even on failure). Two checks, mirroring the conformance
+ * Writes throwaway sentinels under `keyPrefix` and deletes them on
+ * the way out (even on failure). Three checks, mirroring the conformance
  * suite:
  *   - `ifMatch-stale`: a PUT with a stale `ifMatch` must reject (Conflict).
  *   - `ifNoneMatch-exists`: a PUT with `ifNoneMatch:"*"` over an existing
  *     key must reject (Conflict).
+ *   - `ifNoneMatch-concurrent`: at most one of N concurrent create-if-absent
+ *     writes on a fresh key wins — the linearizability the writer's log-append
+ *     commit already relies on (`writer.ts`).
  *
  * A rejected write surfaces as a `BaerlyError` with `code === "Conflict"`
  * (the contract `Storage.put` documents); anything else — a resolved
@@ -107,6 +110,56 @@ export const probeCas = async (
               detail: `If-None-Match:"*" raised a non-Conflict error: ${error instanceof Error ? error.message : String(error)}`,
             },
       );
+    }
+
+    // ── Check 3: at most one of N concurrent ifNoneMatch:"*" creates wins. ──
+    // The writer already depends on this today: log entries are PUT with
+    // ifNoneMatch:"*", and a 412 means a peer won that seq (writer.ts). Two
+    // winners ⇒ two writers believe they appended the same log seq. So
+    // winners>1 is the only definitive non-linearizability signal; transient
+    // non-Conflict losers (e.g. an unmapped S3 409 ConditionalRequestConflict)
+    // are inconclusive, not proof of a broken backend.
+    const raceKey = `${prefix}__baerly_cas_probe__/${uuid()}`;
+    const RACERS = 16;
+    try {
+      const outcomes = await Promise.allSettled(
+        Array.from({ length: RACERS }, (_unused, i) =>
+          // Stryker disable next-line StringLiteral: body content irrelevant; only the conditional header + winner count is tested
+          storage.put(raceKey, enc.encode(`r${i}`), { ifNoneMatch: "*", signal }),
+        ),
+      );
+      const winners = outcomes.filter((o) => o.status === "fulfilled").length;
+      const transient = outcomes.filter(
+        (o) => o.status === "rejected" && !isConflict(o.reason),
+      ).length;
+      if (winners > 1) {
+        checks.push({
+          name: "ifNoneMatch-concurrent",
+          ok: false,
+          detail: `${winners} of ${RACERS} concurrent create-if-absent writes won (expected at most 1) — create-if-absent is NOT linearizable; the log-append commit would split-brain.`,
+        });
+      } else if (winners === 1) {
+        checks.push({
+          name: "ifNoneMatch-concurrent",
+          ok: true,
+          detail:
+            transient === 0
+              ? `exactly one of ${RACERS} concurrent create-if-absent writes won; the rest rejected (Conflict), as required.`
+              : `exactly one of ${RACERS} concurrent create-if-absent writes won (invariant held); ${transient} loser(s) returned a transient non-Conflict error — inconclusive for those, not a linearizability failure.`,
+        });
+      } else {
+        checks.push({
+          name: "ifNoneMatch-concurrent",
+          ok: false,
+          detail: `no create-if-absent write succeeded across ${RACERS} attempts — inconclusive (transient failure or outage), not a linearizability verdict; retry.`,
+        });
+      }
+    } finally {
+      try {
+        await storage.delete(raceKey, signal === undefined ? undefined : { signal });
+      } catch {
+        /* ignore */
+      }
     }
 
     void first;

@@ -10,7 +10,7 @@
  * causes silent lost-update corruption — this is the fail-loud,
  * deploy-time analogue of the conformance CAS block.
  *
- * Writes a single throwaway sentinel and deletes it; see
+ * Writes throwaway sentinels and deletes them; see
  * {@link probeCas}.
  */
 

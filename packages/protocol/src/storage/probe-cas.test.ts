@@ -10,6 +10,7 @@ describe("probeCas", () => {
     expect(result.ok).toBe(true);
     expect(result.checks.map((c) => c.name).toSorted()).toEqual([
       "ifMatch-stale",
+      "ifNoneMatch-concurrent",
       "ifNoneMatch-exists",
     ]);
     expect(result.checks.every((c) => c.ok)).toBe(true);
@@ -399,19 +400,21 @@ describe("probeCas", () => {
     // The stale ifMatch sentinel must be a non-empty string
     expect(ifMatchValues).toHaveLength(1);
     expect(ifMatchValues[0]).toBeTruthy();
-    // The ifNoneMatch check must use "*"
-    expect(ifNoneMatchValues).toHaveLength(1);
-    expect(ifNoneMatchValues[0]).toBe("*");
+    // The ifNoneMatch check must use "*" for both the sequential and concurrent sub-checks
+    // (Check 2: 1 call; Check 3: 16 concurrent racer calls → 17 total)
+    expect(ifNoneMatchValues.length).toBeGreaterThanOrEqual(1);
+    expect(ifNoneMatchValues.every((v) => v === "*")).toBe(true);
   });
 
-  test("check names are exactly ifMatch-stale and ifNoneMatch-exists", async () => {
+  test("check names are exactly ifMatch-stale, ifNoneMatch-exists, and ifNoneMatch-concurrent", async () => {
     // Kills any StringLiteral → "" mutant on check name fields.
     const result = await probeCas(new MemoryStorage());
     const names = result.checks.map((c) => c.name).toSorted();
-    expect(names).toEqual(["ifMatch-stale", "ifNoneMatch-exists"]);
+    expect(names).toEqual(["ifMatch-stale", "ifNoneMatch-concurrent", "ifNoneMatch-exists"]);
     // Each name individually
     expect(result.checks.find((c) => c.name === "ifMatch-stale")).toBeDefined();
     expect(result.checks.find((c) => c.name === "ifNoneMatch-exists")).toBeDefined();
+    expect(result.checks.find((c) => c.name === "ifNoneMatch-concurrent")).toBeDefined();
   });
 
   test("initial put uses correct body encoding (not empty)", async () => {
@@ -481,6 +484,87 @@ describe("probeCas", () => {
     // Should not throw; result should reflect normal checks.
     const result = await probeCas(new DeleteThrowsStorage());
     expect(result.ok).toBe(true);
-    expect(result.checks).toHaveLength(2);
+    expect(result.checks).toHaveLength(3);
+  });
+});
+
+describe("probeCas — ifNoneMatch-concurrent", () => {
+  test("passes against a backend with atomic create-if-absent (MemoryStorage)", async () => {
+    const result = await probeCas(new MemoryStorage());
+    const concurrent = result.checks.find((c) => c.name === "ifNoneMatch-concurrent");
+    expect(concurrent).toBeDefined();
+    expect(concurrent!.ok).toBe(true);
+    expect(result.ok).toBe(true);
+  });
+
+  test("fails against a backend that ignores ifNoneMatch (admits many winners)", async () => {
+    let n = 0;
+    const lawless: Storage = {
+      async put(
+        _key: string,
+        _body: Uint8Array,
+        _opts?: StoragePutOptions,
+      ): Promise<StoragePutResult> {
+        n += 1;
+        return { etag: `"${n}"` };
+      },
+      async get() {
+        return null;
+      },
+      async delete() {},
+      async *list() {},
+    };
+    const result = await probeCas(lawless);
+    const concurrent = result.checks.find((c) => c.name === "ifNoneMatch-concurrent");
+    expect(concurrent).toBeDefined();
+    expect(concurrent!.ok).toBe(false);
+    expect(result.ok).toBe(false);
+  });
+
+  test("a transient non-Conflict loser is inconclusive, not a non-linearizability verdict", async () => {
+    // Exactly one winner, but one racer hits a transient error (e.g. an
+    // unmapped S3 409 / network blip). The exactly-one-winner invariant
+    // held, so the check must PASS — not scream "backend NOT linearizable".
+    // Conditional puts in this fake run check-then-act with no intervening
+    // await, so the burst is deterministic. ifNoneMatch:"*" calls: #1 is the
+    // sentinel's Check 2 (over an existing key → Conflict); #2.. is the race
+    // burst — inject the transient on the second race write.
+    const exists = new Set<string>();
+    let inmCalls = 0;
+    const flaky: Storage = {
+      async put(
+        key: string,
+        _body: Uint8Array,
+        opts?: StoragePutOptions,
+      ): Promise<StoragePutResult> {
+        if (opts?.ifNoneMatch === "*") {
+          inmCalls += 1;
+          if (inmCalls === 3) {
+            throw new BaerlyError("NetworkError", "transient blip mid-race");
+          }
+          if (exists.has(key)) {
+            throw new BaerlyError("Conflict", "key exists");
+          }
+          exists.add(key);
+          return { etag: '"w"' };
+        }
+        if (opts?.ifMatch !== undefined) {
+          throw new BaerlyError("Conflict", "stale If-Match");
+        }
+        exists.add(key);
+        return { etag: '"u"' };
+      },
+      async get() {
+        return null;
+      },
+      async delete() {},
+      async *list() {},
+    };
+    const result = await probeCas(flaky);
+    const concurrent = result.checks.find((c) => c.name === "ifNoneMatch-concurrent");
+    expect(concurrent).toBeDefined();
+    expect(concurrent!.ok).toBe(true);
+    expect(concurrent!.detail).toContain("inconclusive");
+    expect(concurrent!.detail).not.toContain("NOT linearizable");
   });
 });
