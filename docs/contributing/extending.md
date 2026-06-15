@@ -97,7 +97,7 @@ public async collections(): Promise<string[]> {
 
 For a behavior that doesn't require a network round trip, prefer a
 focused test in a topic-specific file. See
-[docs/conventions/tests.md](conventions/tests.md) for where the file
+[docs/contributing/conventions/tests.md](conventions/tests.md) for where the file
 lives.
 
 ```ts
@@ -340,7 +340,8 @@ export default defineConfig({
   as equality, `in` members, or another range) fall inside the
   filter's bounds.
 - **Numeric range and `in` walks route through the index** — see
-  [`docs/features.md`](features.md) §"Numeric range and `in` walks".
+  [`docs/contributing/features.md`](features.md)
+  §"Numeric range and `in` walks".
   The value-order-preserving encoder keeps numeric and string ranges
   in disjoint, sortable slots; string-encoded values (ISO 8601
   timestamps, zero-padded numerics) remain a fine choice when you
@@ -475,10 +476,10 @@ authoritative — passing it is the gate that says "this is a real
 
 ### File naming and location
 
-See [docs/conventions/tests.md](conventions/tests.md) for where to put
-the file (colocated unit under `packages/<pkg>/src/`,
-`tests/unit/`, `tests/integration/`, or `tests/fixtures/`) and how
-to name it.
+See [docs/contributing/conventions/tests.md](conventions/tests.md)
+for where to put the file (colocated unit under
+`packages/<pkg>/src/`, `tests/unit/`, `tests/integration/`, or
+`tests/fixtures/`) and how to name it.
 
 ### Test template
 

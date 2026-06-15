@@ -44,7 +44,7 @@ TTY. Set `LOG_LEVEL` or `observability.level` to tune verbosity.
 | `status >= 500` or `outcome:"error"` | User-visible API failure | Inspect `error.code`, storage status, and the request path. |
 | `outcome:"conflict"` rate rising | Writers contending on one collection's `current.json` | Check writes/min; retry at app edge if bursty, graduate if sustained. |
 | `db.r2.put.412_total` sustained | Storage CAS losses | Same as above; this is the storage-level conflict meter. |
-| `db.compaction.deferred_total` | Snapshot exceeded byte or row fold ceiling | Read [graduation.md](../about/graduation.md); raise `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` only on paid CF / Node with enough memory. |
+| `db.compaction.deferred_total` | Snapshot exceeded byte or row fold ceiling | Read the rate-limited `console.warn` for the byte-vs-row dimension, then read [graduation.md](../about/graduation.md). Raise `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` only on paid CF / Node with enough memory. |
 | `db.compaction.cas_lost_total` sustained | Duplicate fold compute under contention | Watch object count and GC drain; sustained growth is a graduation signal. |
 | Class A ops above projection | Cost regression or hot write path | Run `baerly cost --bucket=<bucket-uri> --collection=<collection>` and compare to [cost-model.md](../about/cost-model.md). |
 | Object count grows while write rate is steady | GC is not draining or contention is above envelope | Run `baerly admin fsck`; inspect maintenance warnings. |
@@ -98,7 +98,9 @@ Copyable local filters for JSON logs:
 # User-visible failures.
 wrangler tail --format=json | jq 'select(.outcome == "error" or (.status >= 500))'
 
-# Deferred folds: snapshot exceeded byte or row ceiling.
+# Deferred folds: snapshot exceeded byte or row ceiling. The flat
+# counter tells you it happened; the nearby console.warn names the
+# dimension.
 wrangler tail --format=json | jq 'select(."db.compaction.deferred_total" > 0)'
 
 # Duplicate fold compute under contention.

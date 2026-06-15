@@ -22,8 +22,8 @@ tier, so you can size your collection's snapshot against them and know
 which tier you're in — and when to climb. The live snapshot byte/row
 counts (`snapshot_bytes`, `snapshot_rows`) live on `current.json`; the
 operational signal that a fold is deferring against those ceilings is
-the `db.compaction.deferred_total` metric (its label names the
-byte-vs-row dimension that tripped).
+the `db.compaction.deferred_total` metric plus a rate-limited
+`console.warn` that names the byte-vs-row dimension that tripped.
 
 For the **cost** side of graduation (R2 Class A ops, write-amp, stored
 bytes), see [cost-model.md](cost-model.md). This page is about the
@@ -51,8 +51,8 @@ baerly admin usage \
 
 | Symptom | Check | Threshold | Action |
 |---|---|---|---|
-| `db.compaction.deferred_total` or defer `console.warn` on Cloudflare free | `db.compaction.deferred_total` label (byte vs. row); `snapshot_bytes` / `snapshot_rows` on `current.json` | `snapshot_bytes > C` or `snapshot_rows + maxFoldEntriesPerPass > E` | Upgrade to Workers Paid, then raise `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` only to a cap the isolate can fold. |
-| Same defer on Node | `db.compaction.deferred_total` label; `snapshot_bytes` on `current.json` vs. host memory | Host has enough RAM for old snapshot + new snapshot + tail | Raise `BAERLY_MAINTENANCE_MAX_FOLD_BYTES`; expect one inline write-latency spike. |
+| `db.compaction.deferred_total` or defer `console.warn` on Cloudflare free | Warning text names byte vs. row; `snapshot_bytes` / `snapshot_rows` live on `current.json` | `snapshot_bytes > C` or `snapshot_rows + maxFoldEntriesPerPass > E` | Upgrade to Workers Paid, then raise `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` only to a cap the isolate can fold. |
+| Same defer on Node | Warning text plus `snapshot_bytes` on `current.json` vs. host memory | Host has enough RAM for old snapshot + new snapshot + tail | Raise `BAERLY_MAINTENANCE_MAX_FOLD_BYTES`; expect one inline write-latency spike. |
 | Object count grows while writes are steady | Logs + `admin fsck` | GC sweep throughput no longer keeps up with orphan production | Reduce contention, split the hot collection, or graduate the workload. |
 | Sustained hot collection | `admin usage` | ~30 logical writes/min/collection | Graduate to D1/Postgres; this is the workload ceiling. |
 | Tenant data keeps growing | `admin usage` / bucket inventory | ~10 GB/tenant or ~100 collections/tenant | Graduate; this is beyond the prototype tier. |
@@ -565,9 +565,10 @@ running is the **snapshot** (`snapshot_bytes` against `C`,
 `snapshot_rows + maxFoldEntriesPerPass` against `E`) — **not** the
 tail. Those two snapshot fields live on `current.json` (not in inspect
 output); the operational signal that they have crossed a ceiling is the
-`db.compaction.deferred_total` metric, whose label names the
-byte-vs-row dimension that tripped. A large tail is no longer a
-problem: it drains incrementally (see
+`db.compaction.deferred_total` metric. Some metric sinks preserve the
+byte-vs-row label, but the portable operator signal is the
+rate-limited `console.warn`. A large tail is no longer a problem: it
+drains incrementally (see
 [tail churn](#a-caveat-tail-churn-now-drains--it-is-not-a-graduation-signal)).
 Compare the snapshot against the
 [auto-maintained ceiling](#the-auto-maintained-snapshot-ceiling)

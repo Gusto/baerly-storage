@@ -58,7 +58,12 @@ export default baerlyWorker<Env>((env) => ({
 
 Checklist:
 
-- Protect the Worker route with Cloudflare Access.
+- Protect the data routes with Cloudflare Access. If you want
+  `GET /v1/healthz` to remain public, scope the Access application or
+  policy so it covers `/v1/c/*`, `/v1/count`, and `/v1/since` but not
+  `/v1/healthz`. If Access protects the whole hostname, the Worker still
+  treats healthz as anonymous, but Cloudflare Access will challenge it
+  before the request reaches the Worker.
 - Set `CF_ACCESS_TEAM_DOMAIN` and `CF_ACCESS_AUDIENCE_TAG` in
   `wrangler.jsonc:vars` or runtime env.
 - Use `tenantPrefix: config.tenant` for single-tenant apps. Vanilla
@@ -71,22 +76,31 @@ Where values come from:
 |---|---|
 | `CF_ACCESS_TEAM_DOMAIN` | The Access team subdomain in `https://<team>.cloudflareaccess.com`; store only `<team>`. |
 | `CF_ACCESS_AUDIENCE_TAG` | Cloudflare Zero Trust -> Access -> Applications -> your app -> Audience tag. |
-| Access token | Browser: `CF_Authorization` cookie. Service check: `Cf-Access-Jwt-Assertion` header. |
+| Access token | Browser: `CF_Authorization` cookie. Worker verifier input: `Cf-Access-Jwt-Assertion`, injected by Access after auth. Service-token check: `CF-Access-Client-Id` + `CF-Access-Client-Secret`. |
 
 Verify fail-closed behavior:
 
 ```sh
 baerly doctor --target=cloudflare
 
-# Should be public and pre-auth.
+# Should be public and pre-auth only if your Access policy excludes
+# /v1/healthz.
 curl -fsS https://<worker-host>/v1/healthz
 
 # Should fail without Cloudflare Access auth.
 curl -i https://<worker-host>/v1/c/tickets
 
-# Service-token or captured Access JWT should succeed.
+# Browser-authenticated check: use a captured CF_Authorization cookie
+# from an Access login.
 curl -fsS \
-  -H "Cf-Access-Jwt-Assertion: $CF_ACCESS_JWT" \
+  -H "cookie: CF_Authorization=$CF_AUTHORIZATION_COOKIE" \
+  https://<worker-host>/v1/c/tickets
+
+# Service-token check: send the Access service credentials to
+# Cloudflare; Access validates them and injects the JWT for the Worker.
+curl -fsS \
+  -H "CF-Access-Client-Id: $CF_ACCESS_CLIENT_ID" \
+  -H "CF-Access-Client-Secret: $CF_ACCESS_CLIENT_SECRET" \
   https://<worker-host>/v1/c/tickets
 ```
 
@@ -152,11 +166,11 @@ Use `tenantClaim` when your IdP issues one tenant per token. Use
 `tenantPrefix` when the app is single-tenant or tenancy is enforced
 outside Baerly. They are mutually exclusive.
 
-Required runtime env:
+Required runtime env for the AWS S3 snippet:
 
 | Env var | Purpose |
 |---|---|
-| `BUCKET` | Production bucket URI or name expected by your `s3Storage` wrapper. |
+| `BUCKET` | AWS S3 bucket name. Use `r2Storage`, `minioStorage`, or `gcsStorage` with their own endpoint/env shape for other providers. |
 | `AWS_REGION` | Bucket region; default in the snippet is `us-east-1`. |
 | `AWS_ACCESS_KEY_ID` | S3-compatible access key. |
 | `AWS_SECRET_ACCESS_KEY` | S3-compatible secret key. |

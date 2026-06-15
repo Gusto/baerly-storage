@@ -6,13 +6,14 @@
 > `@gusto/baerly-storage` privately under the `@gusto` org on npm
 > (npmjs.com)._
 
-`baerly-storage` is a library that turns any S3-compatible bucket
-that passes `baerly doctor --bucket` into a document database.
-**There is no runtime. None.** No Baerly daemon, no leader, no
-scheduler, no catalog, no database service bill, no on-call.
-Coordination rides the request path — Cloudflare can finish bounded
-maintenance with `ctx.waitUntil`, Node runs it inline — and the only
-persistent component is your bucket.
+`baerly-storage` is a library that turns AWS S3, Cloudflare R2, or a
+conformant S3-compatible bucket into a document database.
+`baerly doctor --bucket` live-probes the conditional-write contract
+before you trust a bucket. **There is no runtime. None.** No Baerly
+daemon, no leader, no scheduler, no catalog, no database service bill,
+no on-call. Coordination rides the request path — Cloudflare can finish
+bounded maintenance with `ctx.waitUntil`, Node runs it inline — and the
+only persistent component is your bucket.
 
 The full Cloudflare Workers bundle (`cloudflare.js`) is ~113 KB
 gzipped, the Node HTTP closure (`http.js`) is ~94 KB gzipped, and the
@@ -23,8 +24,9 @@ it in context.
 [S3 does the hard parts](https://aws.amazon.com/blogs/aws/amazon-s3-update-strong-read-after-write-consistency/),
 `baerly-storage` is the coordination that fixes the API. Built like git:
 content-addressed documents, immutable log entries, and a single
-CAS-advanced pointer to HEAD. Document model, live queries, snapshot
-isolation — the whole surface in a `.d.ts` designed for zero-shot use.
+CAS-advanced pointer to HEAD, per collection. Document model, live
+queries, snapshot isolation — the whole surface in a `.d.ts` designed
+for zero-shot use.
 
 Apps sized for this primitive — small, server-only writes, ~10 GB
 ceiling, mechanical exit to Postgres when they cross it — get a tool
@@ -36,11 +38,27 @@ Tokens    →  LLM API
 Storage   →  this.
 ```
 
-Almost every team already has an S3-compatible bucket — for exports,
+Almost every team already has an object-storage bucket — for exports,
 backups, CSV graveyards. The security review happened years ago; the
 budget exists.
 
-## The whole backend
+## Quick start
+
+```sh
+pnpm create @gusto/baerly-storage@latest -- my-app --target=cloudflare
+cd my-app && pnpm install && pnpm dev
+```
+
+For the Cloudflare target, `pnpm dev` boots Vite + workerd on `:5173`,
+so `/v1/*` and the React UI share one origin. No S3 creds are needed
+in development.
+
+For Node, scaffold with `--target=node`; `pnpm dev` also runs on
+`:5173` through Vite middleware over `LocalFsStorage`, and production
+uses `pnpm start` to run the Node listener anywhere Node runs —
+Railway, Render, Fly, Docker, bare VMs, on-prem boxes.
+
+## The storage backend
 
 ```diff
 - docker-compose.yml
@@ -108,8 +126,7 @@ Full reference: [`docs/guide/cheatsheet.md`](./docs/guide/cheatsheet.md), or
 - **An API an LLM can use first try.** The whole public surface fits in
   `.d.ts` files. No DDL. No raw SQL. Discriminated string errors.
   Provisioning is `pnpm install`, not a cloud-console detour. The
-  vocabulary is intentionally small enough to hold in context, and the
-  first-try claim is checked against zero-shot eval suites.
+  vocabulary is intentionally small enough to hold in context.
 - **Idle rounds to zero.** No $5/mo floors multiplied across forty
   abandoned internal tools the loop produced last quarter. There is
   no per-app database service bill; the runtime is a rounding error
@@ -121,21 +138,6 @@ Full reference: [`docs/guide/cheatsheet.md`](./docs/guide/cheatsheet.md), or
 - **Honest about its envelope.** Sized for ~10 GB / tenant,
   ~30 writes/min/collection sustained, ~100 collections / tenant.
   Crossing any of those is the success signal to graduate.
-
-## Quick start
-
-```sh
-pnpm create @gusto/baerly-storage@latest -- my-app --target=cloudflare
-cd my-app && pnpm install && pnpm dev
-```
-
-For the Cloudflare target, `pnpm dev` boots Vite + workerd on `:5173`,
-so `/v1/*` and the React UI share one origin. No S3 creds are needed
-in development.
-
-For Node, scaffold with `--target=node`; dev runs on `:3000` over
-`LocalFsStorage`, and production deploys anywhere `node server.js`
-runs — Railway, Render, Fly, Docker, bare VMs, on-prem boxes.
 
 For a runnable multi-tab demo see
 [`examples/react-node/`](./examples/react-node); for the full set of

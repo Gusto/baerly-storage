@@ -221,8 +221,9 @@ priorities, zero-padded numerics in string form, etc.).
   (the `describe("auto-planner index routing")` block),
   [`tests/integration/collection-api.test.ts`](../../tests/integration/collection-api.test.ts),
   [`tests/integration/randomized.test.ts`](../../tests/integration/randomized.test.ts).
-- Docs: this section, [`docs/architecture.md`](./architecture.md)
-  §"Lifecycle of `db.collection(...).insert()`", [`docs/extending.md`](./extending.md)
+- Docs: this section, [`docs/contributing/architecture.md`](./architecture.md)
+  §"Lifecycle of `db.collection(...).insert()`",
+  [`docs/contributing/extending.md`](./extending.md)
   §1c "Declare an index on a collection".
 
 ## SQL export (`baerly export --target=postgres|sqlite|d1`)
@@ -277,8 +278,8 @@ for per-request S3 spend.
   [`packages/server/src/observability/`](../../packages/server/src/observability/)
 - Tests:
   [`tests/integration/observability.test.ts`](../../tests/integration/observability.test.ts)
-- Docs: [`docs/observability.md`](../guide/observability.md),
-  [`docs/conventions/observability.md`](./conventions/observability.md)
+- Docs: [`docs/guide/observability.md`](../guide/observability.md),
+  [`docs/contributing/conventions/observability.md`](./conventions/observability.md)
   (includes metric-name conventions, rejected alternatives, and
   prohibited patterns)
 

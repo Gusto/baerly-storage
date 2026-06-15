@@ -36,7 +36,7 @@ one.)
 | File | What happens |
 |---|---|
 | `wrangler.jsonc` | Adds `r2_buckets: [{ binding: "BUCKET", bucket_name: <app> }]` if no entry named `BUCKET` exists. Merges `vars: { APP, TENANT }` — keys you've already set win. |
-| `.dev.vars` | Created with `SHARED_SECRET=dev-shared-secret`. **Replace before deploy** via `wrangler secret put SHARED_SECRET`. Skipped if `.dev.vars` already exists. |
+| `.dev.vars` | Created with `SHARED_SECRET=dev-shared-secret` for the shared-secret posture. Skipped if `.dev.vars` already exists. |
 | `.gitignore` | Appends `.dev.vars` unless an equivalent pattern (`.env*.local`, `*.local`, `.env`) is already present. |
 | `package.json` | Appends `@gusto/baerly-storage` to `dependencies` if not present. |
 | `baerly.config.ts` | Written if absent. Pass `--force` to overwrite. |
@@ -46,8 +46,8 @@ one.)
 - `src/index.ts` — printed as a snippet you paste. baerly never
   auto-edits your Worker entry. Convex draws the same line: structured
   config is fair game; app code is yours.
-- `wrangler` secrets — `wrangler secret put SHARED_SECRET` is yours
-  to run before deploy.
+- `wrangler` secrets — if you choose shared-secret auth,
+  `wrangler secret put SHARED_SECRET` is yours to run before deploy.
 
 ## After the one-step
 
@@ -69,8 +69,23 @@ one.)
    Route shape is `/v1/c/:collection`; use a real collection name from
    `baerly.config.ts`. See
    [the cheat sheet](cheatsheet.md#http-wire-reach-for-curl-only-when-debugging).
-3. Before deploy: `wrangler secret put SHARED_SECRET` to set the
-   production secret, then `wrangler deploy`.
+3. Before deploy, choose production auth:
+
+   - Cloudflare Access: keep browser auth in Access, configure
+     `cloudflareAccess({ teamDomain, audienceTag, tenantPrefix })` in
+     the Worker entry, and verify unauthenticated `/v1/c/tickets`
+     fails closed. See [auth.md](auth.md#cloudflare-production).
+   - Shared secret: set `auth: "shared-secret"` in
+     `baerly.config.ts`, run `wrangler secret put SHARED_SECRET`, and
+     verify the route fails without a bearer and succeeds with one.
+
+   ```sh
+   curl -i https://<worker-host>/v1/c/tickets
+   curl -fsS -H "Authorization: Bearer $SHARED_SECRET" \
+     https://<worker-host>/v1/c/tickets
+   ```
+
+   Then `wrangler deploy`.
 
 ## Re-running
 

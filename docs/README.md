@@ -11,12 +11,22 @@ related: ["../CLAUDE.md", "spec/README.md", "adr/README.md"]
 
 Baerly is a vendorless document database for the new middle —
 software that's real enough to need state but not real enough to
-deserve a Postgres + Docker + on-call stack. It runs over any
-S3-compatible bucket that passes `baerly doctor --bucket`; your data
-lives in your bucket, and the protocol kernel is small enough that an
-LLM can use the public API zero-shot from the `.d.ts` files alone. The
-positioning story is in
+deserve a Postgres + Docker + on-call stack. It runs over AWS S3,
+Cloudflare R2, or a conformant S3-compatible bucket that passes
+`baerly doctor --bucket`; your data lives in your bucket, and the
+protocol kernel is small enough that an LLM can use the public API
+zero-shot from the `.d.ts` files alone. The positioning story is in
 [`about/thesis.md`](about/thesis.md).
+
+## Start here
+
+- New to the project: [`../README.md`](../README.md), then
+  [`about/how-it-works.md`](about/how-it-works.md).
+- Evaluating the bet: [`about/thesis.md`](about/thesis.md), then
+  [`about/cost-model.md`](about/cost-model.md).
+- Building an app: [`guide/cheatsheet.md`](guide/cheatsheet.md), then
+  [`packages/server/API.md`](../packages/server/API.md).
+- Operating a production app: [`guide/operations.md`](guide/operations.md).
 
 ## Using Baerly
 
@@ -30,6 +40,8 @@ reference, client-fetch wrapping recipes, and the trusted-fields
 recipe. The files below cover what doesn't fit there: cross-cutting
 invariants, operator runbooks, and target-specific bolt-ons.
 
+- [`guide/operations.md`](guide/operations.md) — Production runbook:
+  preflight, auth, backups, observability, capacity, and route checks.
 - [`guide/cheatsheet.md`](guide/cheatsheet.md) — One-screen quick
   reference: verbs, modifiers, errors, and the HTTP wire. The thing to
   show someone in 30 seconds; the full surface stays in API.md.
@@ -40,8 +52,6 @@ invariants, operator runbooks, and target-specific bolt-ons.
 - [`guide/auth.md`](guide/auth.md) — Production auth recipes for
   Cloudflare and Node, tenant pinning, and the no-built-in-authorization
   caveat.
-- [`guide/operations.md`](guide/operations.md) — Production runbook:
-  preflight, auth, backups, observability, capacity, and route checks.
 - [`guide/backups.md`](guide/backups.md) — Safe NDJSON dump with
   retention rotation, checksums, restore, and restore drills.
 - [`guide/client-auth.md`](guide/client-auth.md) — Browser-to-server

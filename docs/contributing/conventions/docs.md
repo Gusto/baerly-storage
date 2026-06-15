@@ -13,10 +13,14 @@ Conventions for content under `docs/`.
 
 ## Source of truth
 - Everything in `docs/` is hand-written.
-- The public-API reference lives as JSDoc on
+- Public API type/hover docs live as JSDoc on
   `packages/server/src/db.ts` and `packages/server/src/collection.ts`.
-  IDE hover and `tsgo` consume it directly — there is no rendered
-  markdown ref.
+  IDE hover and `tsgo` consume those directly.
+- The curated installed quick reference lives at
+  `packages/server/API.md` and is copied to
+  `node_modules/@gusto/baerly-storage/dist/API.md` at build time.
+  Keep it aligned with JSDoc and the exported `.d.ts` surface; it is
+  the first file headless agents are expected to read.
 
 ## Style
 - Markdown line wrap ~80 chars (matches existing `spec/sync-protocol.md` and

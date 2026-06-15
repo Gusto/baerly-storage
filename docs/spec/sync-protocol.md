@@ -96,14 +96,18 @@ requests fail loudly.
 `Writer.commit` is per collection. It holds no process state that is
 required for correctness; each commit reads `current.json` fresh.
 
+The shipped public writer commits one document mutation at a time and
+emits one `LogEntry` per successful call. Some internal helper shapes
+still accept arrays, but there is no public multi-entry batch commit
+surface today.
+
 For a single-document mutation:
 
 1. **Read `current.json`.** If the collection is new, create a zero
    state `current.json` with `If-None-Match: "*"`, then read the
    winner if a peer raced the create.
 2. **Mint `seq`.** The next log entry uses
-   `seq = current.next_seq`. A batch uses the contiguous range
-   `[current.next_seq, current.next_seq + inputs.length)`.
+   `seq = current.next_seq`.
 3. **PUT content and index artifacts.** `I` / `U` post-images are
    written under `content/<sha>.json`; index markers are PUT or
    DELETE'd inside the same attempt. These artifacts are invisible
@@ -111,7 +115,7 @@ For a single-document mutation:
 4. **PUT log entries.** Each entry is written to `log/<seq>.json`
    with `If-None-Match: "*"`.
 5. **CAS-advance `current.json`.** The writer sets
-   `next_seq += entries.length`, adds the exact log bytes to
+   `next_seq += 1`, adds the exact stored log bytes to
    `tail_bytes`, and PUTs the new `current.json` with
    `If-Match: <etag from step 1>`.
 6. **Verify the writer fence.** If `writer_fence.epoch` changed
@@ -150,40 +154,35 @@ write.
 ### Crash safety
 
 The write order is content/index first, log second, `current.json`
-last. That order has one important property: a crash before the final
-CAS leaves only orphan artifacts.
+last. That order has one important reader-safety property: a crash
+before the final CAS leaves artifacts that the old `current.json` does
+not reference.
 
 | Crash point | Bucket residue | Reader behavior |
 |---|---|---|
 | Before log PUT | Content/index artifacts may exist. | Invisible; no committed `seq` points at them. |
-| After log PUT, before CAS | A log object may exist at an unadvanced `seq`. | Invisible; readers stop at `current.next_seq`. |
+| After log PUT, before CAS | A log object may exist at the still-unadvanced `next_seq`. | Invisible to readers; readers stop at `current.next_seq`. See the liveness limitation below. |
 | During `current.json` PUT | Old or new `current.json` wins atomically. | Reader sees a complete old or complete new head. |
 
 Garbage collection later marks and sweeps orphan content, stale log
-objects, and superseded snapshots after a grace window. For any orphan
-whose `seq < log_seq_start` — that is, below the live range and below
-`next_seq` — GC is cleanup, not correctness: the orphan is invisible to
-readers and reclaimed past grace. The wedge case is the opposite: an
-orphan landing *at* `seq == next_seq` (see the known limitation below).
+objects below `log_seq_start`, and superseded snapshots after a grace
+window. For artifacts outside the committed range, GC is cleanup, not
+reader correctness: readers decide visibility from `current.json`,
+the snapshot, and `[log_seq_start, next_seq)`.
 
-**Known liveness limitation — orphan at `next_seq`.** The "After log
-PUT, before CAS" row above is benign *only* when the orphan lands below
-`next_seq`. There is one case where it does not: an orphan sitting *at*
-`next_seq`. Because every commit mints its entry at
-`seq == current.next_seq`, this covers a single-document write that
-crashes after its `log/<seq>.json` PUT but before the `current.json` CAS
-(**BUG 1**). Each write is atomic per document — there is no multi-entry
-batch to tear — so this is the only shape of the orphan-at-`next_seq`
-case. The next writer re-reads the same `next_seq`, mints the same `seq`, PUTs
-`log/<seq>.json` with `ifNoneMatch: "*"` → `412`, reads the orphan, and
-refuses to adopt it (it carries a foreign session), so it throws
-`Conflict` and retries to exhaustion. GC sweeps only
-`seq < log_seq_start ≤ next_seq`, so the orphan at `next_seq` is never
-reclaimed and `next_seq` never advances — the collection wedges for
-every future writer. This is a known liveness/wedge bug (not data loss)
-pending atomic commit objects (**ticket-01**); it is
-characterized as current behavior by the `BUG 1`
-reproduction in
+**Known liveness limitation — orphan at `next_seq`.** A writer that
+crashes after its `log/<seq>.json` PUT but before the `current.json`
+CAS leaves a foreign log object at exactly
+`seq == current.next_seq` (**BUG 1**). The next writer re-reads the
+same `next_seq`, tries to create the same log key with
+`If-None-Match: "*"`, receives a precondition failure, reads the
+orphan, and refuses to adopt it because the session is foreign. It
+then retries to exhaustion. GC cannot sweep that object because it is
+not below `log_seq_start`, and `next_seq` never advances, so future
+writes to the collection wedge. This is a known liveness bug, not data
+loss: readers still stop at the unchanged `current.json.next_seq`.
+The pending fix is atomic commit objects (**ticket-01**). Current
+behavior is characterized by the `BUG 1` reproduction in
 [`tests/integration/phase5-crash-fuzz.test.ts`](../../tests/integration/phase5-crash-fuzz.test.ts).
 
 ## Read algorithm
@@ -225,8 +224,8 @@ matching rows). This last-resort path is a known limitation in
 
 ## Snapshots and compaction
 
-The log is append-only, so maintenance periodically folds a prefix of
-the live log into a snapshot:
+The log is append-only, so write-triggered maintenance folds a prefix
+of the live log into a snapshot:
 
 1. Read `current.json`.
 2. Load the prior snapshot named by `current.snapshot`, or start from

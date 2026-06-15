@@ -2,7 +2,7 @@
 title: Cost model
 audience: product
 summary: Per-line-item rates, write-amp meter, compression posture.
-last-reviewed: 2026-06-13
+last-reviewed: 2026-06-15
 tags: [cost, pricing, operations]
 related: [pricing-log.md, thesis.md, graduation.md]
 ---
@@ -17,7 +17,7 @@ Class B ops at a rate that depends on cache hits. The companion file
 [pricing-log.md](pricing-log.md) is the one-line-per-change
 history of every price or cap update.
 
-All prices below were re-checked **2026-06-13** against the official
+All prices below were re-checked **2026-06-15** against the official
 [Cloudflare R2 pricing](https://developers.cloudflare.com/r2/pricing/),
 [Workers pricing](https://developers.cloudflare.com/workers/platform/pricing/),
 and

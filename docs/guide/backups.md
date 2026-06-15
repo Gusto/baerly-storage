@@ -16,6 +16,11 @@ reads the same format from stdin into a fresh collection.
 
 The safe default is:
 
+- keep a checked-in inventory of production `(app, tenant,
+  collection)` triples to back up;
+- use least-privilege storage credentials that can read the production
+  prefix and write the backup destination, not broad account-admin
+  credentials;
 - credentials live in a root-readable env file, not crontab;
 - dumps are written to a temp file, then atomically moved into place;
 - files are mode `0600`;
@@ -24,6 +29,11 @@ The safe default is:
 - restore is drilled into a separate bucket/prefix.
 
 ## Daily Backup Script
+
+Create one cron entry per production collection, or wrap this script
+with your own inventory loop. Do not rely on "all collections" being
+discoverable from one app directory unless you have verified that
+inventory separately.
 
 Environment file, owned by the user running the job and mode `0600`:
 
@@ -104,6 +114,13 @@ dump helper with separate data and status streams.
 
 ## Restore
 
+First probe the recovery bucket. This writes and deletes a throwaway
+sentinel and proves the target honors the CAS contract:
+
+```sh
+baerly doctor --bucket=s3://baerly-recovery
+```
+
 Restore into an empty bucket/prefix:
 
 ```sh
@@ -127,6 +144,17 @@ remain committed. Re-run with `--force` into the same target, or choose
 a fresh recovery prefix.
 
 Cost is `3N + 1` Class A ops for N rows.
+
+For production recovery, do not restore over the live prefix while
+writers are still active. The safe cutover shape is:
+
+1. Pause writers or put the app in read-only mode.
+2. Restore into a separate recovery bucket or tenant prefix.
+3. Run `baerly admin fsck` on the recovered collection.
+4. Point the app at the recovered bucket/prefix, or copy the verified
+   recovery prefix into place during the maintenance window.
+5. Resume writers only after a successful authenticated read against
+   the recovered route.
 
 ## Restore Drill
 

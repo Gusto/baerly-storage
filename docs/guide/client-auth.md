@@ -63,24 +63,29 @@ import config from "../../baerly.config.ts";
 interface AppEnv extends BaerlyEnv {
   readonly CF_ACCESS_TEAM_DOMAIN?: string;
   readonly CF_ACCESS_AUDIENCE_TAG?: string;
+  readonly BAERLY_AUTH_REQUIRED?: string;
 }
 
-export default baerlyWorker<AppEnv>((env) => ({
-  config,
-  // Keep `auth: "none"` in baerly.config.ts; gate the verifier on the
-  // prod-only vars. Dev sees them undefined, the spread short-circuits,
-  // and `auth: "none"` runs. Prod sets them and cloudflareAccess engages.
-  ...(env.CF_ACCESS_TEAM_DOMAIN !== undefined &&
-    env.CF_ACCESS_AUDIENCE_TAG !== undefined && {
+export default baerlyWorker<AppEnv>((env) => {
+  const accessReady =
+    env.CF_ACCESS_TEAM_DOMAIN !== undefined &&
+    env.CF_ACCESS_AUDIENCE_TAG !== undefined;
+  if (env.BAERLY_AUTH_REQUIRED === "1" && !accessReady) {
+    throw new Error("Cloudflare Access env is required in production");
+  }
+  return {
+    config,
+    ...(accessReady && {
       verifier: cloudflareAccess({
         // teamDomain is the bare team SUBDOMAIN (e.g. "acme"), not a full
         // domain: the preset derives https://<teamDomain>.cloudflareaccess.com.
-        teamDomain: env.CF_ACCESS_TEAM_DOMAIN,
-        audienceTag: env.CF_ACCESS_AUDIENCE_TAG,
+        teamDomain: env.CF_ACCESS_TEAM_DOMAIN!,
+        audienceTag: env.CF_ACCESS_AUDIENCE_TAG!,
         tenantPrefix: config.tenant,
       }),
     }),
-}));
+  };
+});
 ```
 
 Set:
@@ -89,18 +94,26 @@ Set:
 |---|---|
 | `CF_ACCESS_TEAM_DOMAIN` | Worker env/vars; the bare `<team>` part of `https://<team>.cloudflareaccess.com`. |
 | `CF_ACCESS_AUDIENCE_TAG` | Worker env/vars; Cloudflare Access application audience tag. |
+| `BAERLY_AUTH_REQUIRED` | Set to `1` in production so missing Access env fails closed. |
 
 Verify:
 
 ```sh
 curl -fsS https://<worker-host>/v1/healthz
 curl -i https://<worker-host>/v1/c/tickets
-curl -fsS -H "Cf-Access-Jwt-Assertion: $CF_ACCESS_JWT" \
+curl -fsS -H "cookie: CF_Authorization=$CF_AUTHORIZATION_COOKIE" \
+  https://<worker-host>/v1/c/tickets
+curl -fsS \
+  -H "CF-Access-Client-Id: $CF_ACCESS_CLIENT_ID" \
+  -H "CF-Access-Client-Secret: $CF_ACCESS_CLIENT_SECRET" \
   https://<worker-host>/v1/c/tickets
 ```
 
-The first request should be `200`; the second should fail closed; the
-third should return `{ data, _meta }`.
+The health check is `200` only when your Access policy excludes
+`/v1/healthz`; otherwise Cloudflare Access may challenge it before the
+Worker sees it. The unauthenticated collection request should fail
+closed. The cookie and service-token requests should return
+`{ data, _meta }`.
 
 ## Pattern C: Node JWKS production
 
@@ -112,6 +125,15 @@ import { bearerJwt } from "@gusto/baerly-storage/auth";
 import { baerlyNode, s3Storage } from "@gusto/baerly-storage/node";
 import config from "../../baerly.config.ts";
 
+if (
+  process.env["BAERLY_AUTH_REQUIRED"] === "1" &&
+  (process.env["JWKS_URL"] === undefined ||
+    process.env["JWT_ISSUER"] === undefined ||
+    process.env["JWT_AUDIENCE"] === undefined)
+) {
+  throw new Error("JWKS_URL, JWT_ISSUER, and JWT_AUDIENCE are required in production");
+}
+
 const handle = baerlyNode({
   config,
   storage: s3Storage({
@@ -122,10 +144,8 @@ const handle = baerlyNode({
       secretAccessKey: process.env["AWS_SECRET_ACCESS_KEY"]!,
     },
   }),
-  // Keep `auth: "none"` in baerly.config.ts; gate the verifier on the
-  // prod-only JWKS_URL. Dev sees it undefined, the spread short-circuits,
-  // and `auth: "none"` runs. Prod sets JWKS_URL + JWT_ISSUER +
-  // JWT_AUDIENCE and bearerJwt engages.
+  // Keep `auth: "none"` in baerly.config.ts for dev. In production set
+  // BAERLY_AUTH_REQUIRED=1 so missing JWKS env fails closed.
   ...(process.env["JWKS_URL"] !== undefined && {
     verifier: bearerJwt({
       jwks: process.env["JWKS_URL"],
@@ -178,21 +198,17 @@ curl -fsS -H "Authorization: Bearer $SHARED_SECRET" \
 ## What changes at the dev→prod flip
 
 The Cloudflare and Node targets handle the transition with the same
-seam — the factory `verifier:` argument silently overrides
-`config.auth` when present. The recipe shape: keep
-`auth: "none"` in `baerly.config.ts`, gate the `verifier:` override
-on a production-only env var (e.g. `CF_ACCESS_TEAM_DOMAIN` for CF,
-`JWKS_URL` for Node), spread the override conditionally. Dev sees
-the env var as `undefined`, the spread short-circuits, and
-`auth: "none"` runs. Prod sees the env var set and the override
-engages. Same code artifact ships to dev and prod.
+mechanism: the factory `verifier:` argument overrides `config.auth`
+when present. The safe recipe shape: keep `auth: "none"` in
+`baerly.config.ts` for dev, gate the `verifier:` override on the real
+auth env var, and set `BAERLY_AUTH_REQUIRED=1` in production so missing
+auth env throws instead of falling back to no auth. Same code artifact
+ships to dev and prod; the deploy environment decides whether the
+fallback is allowed.
 
-This is structurally the same shape as the
-`process.env.NODE_ENV === "production"` branch — but driven off a
-specific env var that *causes* the production behavior rather than
-a label that *describes* the environment. The result is harder to
-misconfigure: there's no way to "be in prod" without the bearer
-trust chain being wired up.
+Do not rely only on `NODE_ENV === "production"` or a hostname check.
+Use a specific env var that *causes* the fail-closed behavior, then run
+the negative curl before deploy.
 
 ## The one invariant
 

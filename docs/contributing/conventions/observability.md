@@ -10,7 +10,7 @@ related: ["../../guide/observability.md", "tests.md"]
 # Observability conventions
 
 Rules for code that emits observability. The operator-facing
-counterpart is [`docs/observability.md`](../../guide/observability.md).
+counterpart is [`docs/guide/observability.md`](../../guide/observability.md).
 
 ## The one rule
 
@@ -79,12 +79,13 @@ in. `null` is fine.
 The context is `undefined` when no `runWithContext` scope is active
 — optional-chain the access. Library code must work in both modes.
 
-## Background entry points
+## Non-request entry points
 
-There is no `withObservability` wrapper for background work — only
-HTTP requests get a canonical line, and they are wrapped by the
-adapter. Background entry points (admin commands, batch jobs,
-maintenance ticks) call the kernel primitives directly:
+There is no `withObservability` wrapper for work outside an HTTP
+request — only HTTP requests get a canonical line, and they are
+wrapped by the adapter. Non-request entry points (admin commands,
+operator-run batches, maintenance ticks) call the kernel primitives
+directly:
 
 ```ts
 import { rebuildIndex } from "@gusto/baerly-storage/maintenance";

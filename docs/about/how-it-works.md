@@ -38,13 +38,14 @@ file. It writes a few small, separate, immutable objects:
 - **Index objects** — small marker files that make lookups fast, so a
   read doesn't have to scan everything.
 - **`current.json`** — the single most important object. It is a
-  pointer that says *"the current state of the whole database is
-  described by these objects."* The table of contents.
+  per-collection pointer that says *"the current state of this
+  collection is described by these objects."* The table of contents.
 
-Everything hangs off `current.json`. To know what the database *is*
-right now, you read `current.json`, then follow the snapshot and
-integer log range it names. Index objects can help narrow the read,
-but the snapshot plus log are the source of truth.
+Every collection has its own `current.json`, its own integer log, and
+its own CAS hotspot. To know what a collection *is* right now, you read
+that collection's `current.json`, then follow the snapshot and integer
+log range it names. Index objects can help narrow the read, but the
+snapshot plus log are the source of truth.
 
 ## What a write does
 
@@ -112,7 +113,7 @@ Much simpler:
    added since — folding inserts, updates, and deletes on top.
 3. Hand back the data.
 
-Because `current.json` only ever flips atomically to a
+Because a collection's `current.json` only ever flips atomically to a
 fully-consistent state, a reader never sees a half-finished write. It
 sees the state from *before* the swap or *after* it — never the
 middle.
@@ -132,10 +133,20 @@ Both are handled by **maintenance**, which is two jobs:
   unreferenced.
 - **Garbage collection** sweeps objects nothing points to anymore:
   superseded snapshots, compacted-away log entries, and the orphaned
-  content from a crashed write. (Crash safety falls out for free —
-  those orphans were never referenced by `current.json`, so no reader
-  ever saw them; GC just tidies up later.) Deletes go through a grace
-  window, so a slow in-flight reader is never pulled out from under.
+  content from a crashed write. Most crash residue is invisible because
+  `current.json` never referenced it, so no reader ever saw it; GC
+  tidies it up later. Deletes go through a grace window, so a slow
+  in-flight reader is never pulled out from under.
+
+There is one current liveness edge case worth naming even in the
+mental model: if a writer crashes after PUTting `log/<next_seq>.json`
+but before the `current.json` swap, the next writer can find a foreign
+log entry exactly where it needs to write and retry to exhaustion. That
+wedges future writes for the collection until the pending atomic-commit
+object fix lands. It is not data loss — readers still stop at the
+unchanged `current.json.next_seq` — but it is a real current limit. The
+formal version lives in
+[`spec/sync-protocol.md`](../spec/sync-protocol.md#crash-safety).
 
 Here is the part that matters for the mental model: **maintenance is
 not a daemon.** There is no cron job, no sidecar, no background
@@ -232,12 +243,12 @@ runnable end-to-end example of every layer is
 
 > It's not a database server — it's a bucket of files plus a library
 > that knows how to arrange them. Writing means dropping new immutable
-> objects in the bucket and then atomically flipping a single pointer
-> file, `current.json`, to point at them — using S3's compare-and-swap
-> so simultaneous writers can't corrupt each other; a loser just
-> retries on top of the winner's state. Reading means following that
-> pointer. The schema in your config validates every write and gives
-> you your types. The protocol defines the actions once; the server
-> fulfills them against the bucket, and the client fulfills the same
-> actions over HTTP. No server is coordinating any of it — the
-> bucket's atomic conditional-write is the coordination.
+> objects in the bucket and then atomically flipping one pointer file
+> for that collection, `current.json`, to point at them — using S3's
+> compare-and-swap so simultaneous writers can't corrupt each other; a
+> loser just retries on top of the winner's state. Reading means
+> following that pointer. The schema in your config validates every
+> write and gives you your types. The protocol defines the actions
+> once; the server fulfills them against the bucket, and the client
+> fulfills the same actions over HTTP. No server is coordinating any of
+> it — the bucket's atomic conditional-write is the coordination.
