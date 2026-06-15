@@ -1,0 +1,77 @@
+# CI gate: credential-free, infra-free. Runs on PRs and merges to main.
+# Infra-required tiers (Minio, Postgres, cloud conformance) are deferred
+# to a future workflow that provisions service containers.
+name: CI
+
+on:
+  # PR event covers all feature branches — any push to a branch that has
+  # an open PR triggers this workflow once, not twice.
+  pull_request:
+  # Push event covers merges to main (direct push or squash-merge).
+  # Combined with the PR trigger above, this avoids double-runs on
+  # feature branches: only main merges fire the push path.
+  push:
+    branches: [main]
+  # Manual run button — useful for debugging or re-running without a new commit.
+  workflow_dispatch:
+
+# Least-privilege: only reading the repo is needed to run tests.
+permissions:
+  contents: read
+
+# A new push to the same ref cancels any still-running instance of this
+# workflow, saving runner minutes during fast-iteration development.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    # Upper bound guards against runaway workerd binary downloads or
+    # hung vitest workers. The normal suite completes well under 10 min.
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # pnpm/action-setup auto-detects the version from `packageManager`
+      # in package.json (currently pnpm@11.1.2) — no version pin here so
+      # upgrades to the packageManager field flow through automatically.
+      - uses: pnpm/action-setup@v4
+
+      # Node 24 is required, not optional: the default vitest project sets
+      # `execArgv: ["--js-base-64"]` — a V8 flag that enables
+      # Uint8Array.{toBase64,fromBase64}, which are TC39 Stage 4 but still
+      # behind a flag in V8 13.6 / Node 24. The engines field in package.json
+      # is `>=24`. cache: pnpm uses the pnpm store for node_modules caching.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      # `pnpm install` triggers the `prepare` lifecycle hook
+      # (scripts/prepare.mjs), which runs `pnpm run build` — so dist/ is
+      # already built by the time later steps run. `pnpm test`'s `pretest`
+      # hook also builds, but that's a quick no-op rebuild of an already-
+      # current dist/. No explicit build step is needed here.
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Full static gate: typecheck (tsgo --noEmit), example typechecks,
+      # lint (oxlint), format check (oxfmt), import/layer linters, and
+      # doc checks. See the `verify` script in package.json.
+      - name: Verify
+        run: pnpm verify
+
+      # Default vitest project: memory + local-fs suites under pool: forks.
+      # Zero infra, no credentials. The pretest hook rebuilds dist/ here.
+      - name: Test
+        run: pnpm test
+
+      # Cloudflare adapter tests under @cloudflare/vitest-pool-workers
+      # (miniflare / workerd). No credentials, no external network.
+      # workerd binary is downloaded on first run; caching it is a future
+      # optimization deferred from this v1 workflow.
+      - name: Test (Cloudflare adapter)
+        run: pnpm test:adapter-cloudflare
