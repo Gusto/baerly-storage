@@ -61,6 +61,7 @@ import {
   versionFromContent,
 } from "@baerly/protocol";
 import { allIndexKeysFor, type IndexDefinition, validateIndexDefinition } from "./indexes.ts";
+import { assertKeyWithinLimit } from "./key-limit.ts";
 import { readLogEntry, walkLogRange } from "./log-walk.ts";
 import { tryAdoptOwnSessionLogEntry } from "./log-conflict-adoption.ts";
 import {
@@ -489,6 +490,7 @@ export class Writer {
         const bytes = encodeJsonBytes(input.body);
         const version = await versionFromContent(bytes);
         const contentKey = `${logPrefix}/content/${version}.json`;
+        assertKeyWithinLimit(contentKey);
         parallelPuts.push(
           this.#storage
             .put(contentKey, bytes, { ifNoneMatch: "*", contentType: APPLICATION_JSON })
@@ -521,6 +523,7 @@ export class Writer {
           staleKeys = allIndexKeysFor(logPrefix, this.#indexes, preImage, input.docId);
         }
         for (const k of newKeys) {
+          assertKeyWithinLimit(k);
           parallelPuts.push(
             this.#storage
               .put(k, EMPTY_BODY, { ifNoneMatch: "*", contentType: APPLICATION_JSON })
@@ -572,6 +575,7 @@ export class Writer {
     type LogPutOutcome = { readonly ok: true } | { readonly ok: false };
     const logPutOne = async (entry: LogEntry): Promise<LogPutOutcome> => {
       const logEntryKey = logObjectKey(logPrefix, entry.seq);
+      assertKeyWithinLimit(logEntryKey);
       const logBytes = encodeJsonBytes(entry);
       try {
         await this.#storage.put(logEntryKey, logBytes, {
@@ -664,6 +668,7 @@ export class Writer {
       contentType: APPLICATION_JSON,
     };
     let result: StoragePutResult;
+    assertKeyWithinLimit(this.#currentJsonKey);
     try {
       result = await this.#storage.put(this.#currentJsonKey, nextBody, putOpts);
     } catch (error) {

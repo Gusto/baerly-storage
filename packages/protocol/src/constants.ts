@@ -1,4 +1,11 @@
 /**
+ * Max total object-key length S3 and R2 accept (UTF-8 bytes). A key
+ * over this fails the PUT with an opaque provider 400; baerly surfaces
+ * it early as InvalidConfig. See docs/spec/storage-compatibility.md.
+ */
+export const MAX_KEY_BYTES = 1024;
+
+/**
  * Half-window (in milliseconds) within which a `LogEntry`'s embedded
  * `commit_ts` must agree with wall-clock time for downstream consumers
  * to accept the entry as causally ordered. Bound on tolerated

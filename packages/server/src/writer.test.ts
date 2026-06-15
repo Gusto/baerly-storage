@@ -1083,4 +1083,21 @@ describe("Writer — write-tick maintenance dispatch", () => {
 
     expect(spy.mock.calls.length).toBe(0);
   });
+
+  test("over-long assembled key surfaces as InvalidConfig, not a storage error", async () => {
+    // Each path segment is ≤256 bytes (vetted by assertPathSegment), but
+    // their sum overflows S3/R2's 1024-byte full-key ceiling. The content
+    // key `<prefix>/content/<hash>.json` is the first PUT to overflow; the
+    // guard must reject it EARLY as InvalidConfig rather than let the PUT
+    // succeed silently on memory (or fail late as an opaque provider 400).
+    const seg = "s".repeat(250);
+    const overLongKey = `app/${seg}/tenant/${seg}/manifests/${seg}/${seg}/current.json`;
+    const storage = new MemoryStorage();
+    await createCurrentJson(storage, overLongKey, seedCurrent());
+    const writer = new Writer({ storage, currentJsonKey: overLongKey });
+
+    await expect(
+      writer.commit({ op: "I", collection: COLL, docId: "doc-1", body: { _id: "doc-1" } }),
+    ).rejects.toMatchObject({ code: "InvalidConfig" });
+  });
 });

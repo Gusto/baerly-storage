@@ -408,7 +408,11 @@ const BUDGETS: readonly Budget[] = [
   //     kernel chunk) + the `profileToScheduledOptions` helper land in this
   //     subpath's closure (measured 111961 raw / 33974 gz). Rebaseline raw
   //     +2 KiB, gz +1 KiB. min-gz unaffected (still passing).
-  { entry: "maintenance.js", raw: 110 * 1024, gz: 34 * 1024, minGz: 11 * 1024 },
+  //   → 111 KiB raw / 34 KiB gz (2026-06-15): the assembled-key-length
+  //     guard (`assertKeyWithinLimit`, key-limit.ts) lands in the writer's
+  //     closure, which this subpath re-exports (measured 112796 raw).
+  //     Rebaseline raw +1 KiB; gz/min-gz unaffected (still passing).
+  { entry: "maintenance.js", raw: 111 * 1024, gz: 34 * 1024, minGz: 11 * 1024 },
   // Cloudflare Workers adapter — re-exports the kernel barrel
   // (Db, Writer, etc.) plus the R2-binding `Storage` impl
   // and the `baerlyCloudflare` helper. Aggregator: closure
@@ -593,7 +597,12 @@ const BUDGETS: readonly Budget[] = [
   //     comparator added to `LocalFsStorage` + the protocol closure this
   //     bundle pulls crept gz +21 over the 12 KiB ceiling. Measured:
   //     33966 raw / 12309 gz. Raw stays under 34 KiB; bump gz to 13 KiB.
-  { entry: "dev.js", raw: 34 * 1024, gz: 13 * 1024 },
+  //   → 35 KiB raw / 13 KiB gz (2026-06-15): the assembled-key-length
+  //     guard (`assertKeyWithinLimit`, key-limit.ts) lands in the writer's
+  //     closure this dev barrel pulls via `Db` (measured 34959 raw).
+  //     Raw crept +143 over the 34 KiB ceiling; bump raw to 35 KiB. gz
+  //     stays under 13 KiB.
+  { entry: "dev.js", raw: 35 * 1024, gz: 13 * 1024 },
 ];
 
 // Static-import specifiers only. Dynamic `import(...)` is intentionally
