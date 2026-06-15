@@ -207,6 +207,28 @@ describe("baerly inspect", () => {
     expect(stderr.captured.join("")).toContain("InvalidConfig");
   });
 
+  test("traversal-shaped --collection rejected → InvalidConfig (exit 1)", async () => {
+    // A read command must reject a traversal collection segment via the
+    // same shared rule, before it builds a `../current.json`-shaped key.
+    const stderr = captureStream(process.stderr);
+    let exitCode: number;
+    try {
+      exitCode = await runInspect([
+        `--bucket=file://${root}`,
+        `--app=${APP}`,
+        `--tenant=${TENANT}`,
+        `--collection=..`,
+      ]);
+    } finally {
+      stderr.restore();
+    }
+    expect(exitCode).toBe(1);
+    const msg = stderr.captured.join("");
+    expect(msg).toContain("InvalidConfig");
+    expect(msg).toContain("baerly inspect");
+    expect(msg).toContain("collection");
+  });
+
   test("unknown flag rejected with exit 1", async () => {
     const exitCode = await runInspect([
       `--bucket=file://${root}`,

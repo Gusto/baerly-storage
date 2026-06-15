@@ -56,7 +56,7 @@ import {
 } from "./export/index.ts";
 import { parseBucketUri } from "./bucket-uri.ts";
 import { emitSuccess } from "./output.ts";
-import { defineBaerlySubcommand } from "./subcommand.ts";
+import { assertCollectionArg, defineBaerlySubcommand } from "./subcommand.ts";
 
 const EXPORT_ARGS = {
   bucket: {
@@ -185,6 +185,7 @@ const bundle = defineBaerlySubcommand({
   handler: async (args, ctx) => {
     const target: SqlTarget = args.target;
     const { app, tenant } = await ctx.resolveAppTenant({ app: args.app, tenant: args.tenant });
+    assertCollectionArg(args.collection, "baerly export");
     const bucket = await parseBucketUri(args.bucket);
     const currentJsonKey = `${bucket.keyPrefix}app/${app}/tenant/${tenant}/manifests/${args.collection}/current.json`;
     const view = await loadMaterialisedView({

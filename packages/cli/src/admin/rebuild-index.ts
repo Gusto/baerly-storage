@@ -43,7 +43,7 @@ import { rebuildIndex } from "@baerly/server/maintenance";
 import { loadCollectionIndexes } from "../config.ts";
 import { parseBucketUri } from "../bucket-uri.ts";
 import { emitSuccess } from "../output.ts";
-import { defineBaerlySubcommand } from "../subcommand.ts";
+import { assertCollectionArg, defineBaerlySubcommand } from "../subcommand.ts";
 
 /** citty arg shape. Kebab-case so --help and parsed-object keys line up. */
 const REBUILD_INDEX_ARGS = {
@@ -124,6 +124,7 @@ const bundle = defineBaerlySubcommand({
   args: REBUILD_INDEX_ARGS,
   handler: async (args, ctx) => {
     const bucket = await parseBucketUri(args.bucket);
+    assertCollectionArg(args.collection, "baerly admin rebuild-index");
     const on =
       args.config !== undefined && args.config.length > 0
         ? await onFieldFromConfig(args.config, args.collection, args.index)

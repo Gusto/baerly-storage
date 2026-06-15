@@ -35,7 +35,7 @@ import { emitSuccess, isJsonMode } from "./output.ts";
 import { detectProvider, pricingFor, type ProviderTag } from "./cost/provider.ts";
 import { project, type Trajectory } from "./cost/project.ts";
 import { estimateWritesPerMin } from "./admin/usage.ts";
-import { defineBaerlySubcommand } from "./subcommand.ts";
+import { assertCollectionArg, defineBaerlySubcommand } from "./subcommand.ts";
 
 const COST_ARGS = {
   bucket: {
@@ -133,6 +133,7 @@ const bundle = defineBaerlySubcommand({
     }
     const bucket = await parseBucketUri(args.bucket);
     const { app, tenant } = await ctx.resolveAppTenant({ app: args.app, tenant: args.tenant });
+    assertCollectionArg(args.collection, "baerly cost");
 
     const override =
       typeof args.provider === "string" && args.provider.length > 0

@@ -223,6 +223,69 @@ describe("baerly admin restore", () => {
     expect(head?.json.next_seq).toBe(0);
   });
 
+  test("traversal-shaped --collection rejected at the CLI chokepoint → InvalidConfig (exit 1), writes nothing", async () => {
+    // `..` would build a traversal `current.json` key one level up from
+    // the manifests prefix. The shared `assertPathSegment` guard must
+    // reject it at the CLI chokepoint — fail-fast with an operator-
+    // friendly message that names the command + the `collection` role,
+    // independent of whatever the backend would do (S3/R2 accept `..`).
+    await writeFile(stdinPath, CANONICAL_NDJSON, "utf8");
+    const stderr = captureStream(process.stderr);
+    let exitCode: number;
+    try {
+      exitCode = await runRestore(
+        [`--bucket=file://${root}`, `--app=${APP}`, `--tenant=${TENANT}`, `--collection=..`],
+        { streams: { stdin: createReadStream(stdinPath) } },
+      );
+    } finally {
+      stderr.restore();
+    }
+    expect(exitCode).toBe(1);
+    const msg = stderr.captured.join("");
+    expect(msg).toContain("InvalidConfig");
+    expect(msg).toContain("baerly admin restore");
+    expect(msg).toContain("collection");
+    // Nothing committed: the legitimate collection's key never existed.
+    const head = await readCurrentJson(storage, CURRENT_JSON_KEY);
+    expect(head).toBeNull();
+  });
+
+  test("traversal-shaped --app rejected at the CLI chokepoint → InvalidConfig (exit 1)", async () => {
+    await writeFile(stdinPath, CANONICAL_NDJSON, "utf8");
+    const stderr = captureStream(process.stderr);
+    let exitCode: number;
+    try {
+      exitCode = await runRestore(
+        [`--bucket=file://${root}`, `--app=..`, `--tenant=${TENANT}`, `--collection=${COLL}`],
+        { streams: { stdin: createReadStream(stdinPath) } },
+      );
+    } finally {
+      stderr.restore();
+    }
+    expect(exitCode).toBe(1);
+    const msg = stderr.captured.join("");
+    expect(msg).toContain("InvalidConfig");
+    expect(msg).toContain("app");
+  });
+
+  test("traversal-shaped --tenant rejected at the CLI chokepoint → InvalidConfig (exit 1)", async () => {
+    await writeFile(stdinPath, CANONICAL_NDJSON, "utf8");
+    const stderr = captureStream(process.stderr);
+    let exitCode: number;
+    try {
+      exitCode = await runRestore(
+        [`--bucket=file://${root}`, `--app=${APP}`, `--tenant=..`, `--collection=${COLL}`],
+        { streams: { stdin: createReadStream(stdinPath) } },
+      );
+    } finally {
+      stderr.restore();
+    }
+    expect(exitCode).toBe(1);
+    const msg = stderr.captured.join("");
+    expect(msg).toContain("InvalidConfig");
+    expect(msg).toContain("tenant");
+  });
+
   test("unknown flag rejected with exit 1", async () => {
     const exitCode = await runRestore([
       `--bucket=file://${root}`,

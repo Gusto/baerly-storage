@@ -51,7 +51,7 @@ import { loadSnapshotAsMap } from "@baerly/server";
 import { rebuildIndex } from "@baerly/server/maintenance";
 import { parseBucketUri } from "../bucket-uri.ts";
 import { emitSuccess, isJsonMode } from "../output.ts";
-import { defineBaerlySubcommand } from "../subcommand.ts";
+import { assertCollectionArg, defineBaerlySubcommand } from "../subcommand.ts";
 
 const FSCK_ARGS = {
   bucket: {
@@ -261,6 +261,7 @@ const bundle = defineBaerlySubcommand({
       );
     }
     const { app, tenant } = await ctx.resolveAppTenant({ app: args.app, tenant: args.tenant });
+    assertCollectionArg(args.collection, "baerly admin fsck");
     const bucket = await parseBucketUri(args.bucket);
     const collectionPrefix = `${bucket.keyPrefix}app/${app}/tenant/${tenant}/manifests/${args.collection}`;
     const currentJsonKey = `${collectionPrefix}/current.json`;

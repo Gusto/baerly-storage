@@ -5,7 +5,11 @@ import { assertNameNotReserved } from "./names.ts";
  * Per-segment byte ceiling. S3 and R2 cap a full object key at 1024
  * UTF-8 bytes; a key is several segments, so this 256 leaves real prefix
  * headroom. The assembled multi-segment key sum is bounded separately on
- * the write path, not here.
+ * the write path, not here. This is an intentional server-local *policy*
+ * value (not the protocol-level S3/R2 fact `MAX_KEY_BYTES = 1024` in
+ * `@baerly/protocol`'s `constants.ts`); it lives here, co-located with the
+ * one rule that uses it, to keep `protocol/constants.ts` out of the
+ * validator's bundle closure.
  */
 export const MAX_SEGMENT_BYTES = 256;
 const utf8 = new TextEncoder();

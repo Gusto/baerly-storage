@@ -54,7 +54,7 @@ import {
 import { Writer } from "@baerly/server/_internal/testing";
 import { parseBucketUri } from "../bucket-uri.ts";
 import { emitSuccess } from "../output.ts";
-import { defineBaerlySubcommand } from "../subcommand.ts";
+import { assertCollectionArg, defineBaerlySubcommand } from "../subcommand.ts";
 
 const RESTORE_OWNER = "baerly-restore";
 
@@ -102,6 +102,7 @@ const bundle = defineBaerlySubcommand({
   handler: async (args, ctx) => {
     const bucket = await parseBucketUri(args.bucket);
     const { app, tenant } = await ctx.resolveAppTenant({ app: args.app, tenant: args.tenant });
+    assertCollectionArg(args.collection, "baerly admin restore");
     const currentJsonKey = `${bucket.keyPrefix}app/${app}/tenant/${tenant}/manifests/${args.collection}/current.json`;
 
     const head = await readCurrentJson(bucket.storage, currentJsonKey);

@@ -48,7 +48,7 @@ import { loadMaterialisedView } from "./export/index.ts";
 import { loadCollectionIndexes } from "./config.ts";
 import { parseBucketUri } from "./bucket-uri.ts";
 import { emitSuccess, isJsonMode } from "./output.ts";
-import { defineBaerlySubcommand } from "./subcommand.ts";
+import { assertCollectionArg, defineBaerlySubcommand } from "./subcommand.ts";
 
 const INSPECT_ARGS = {
   bucket: {
@@ -156,6 +156,7 @@ const bundle = defineBaerlySubcommand({
   handler: async (args, ctx) => {
     const bucket = await parseBucketUri(args.bucket);
     const { app, tenant } = await ctx.resolveAppTenant({ app: args.app, tenant: args.tenant });
+    assertCollectionArg(args.collection, "baerly inspect");
     const collectionPrefix = `${bucket.keyPrefix}app/${app}/tenant/${tenant}/manifests/${args.collection}`;
     const currentJsonKey = `${collectionPrefix}/current.json`;
 

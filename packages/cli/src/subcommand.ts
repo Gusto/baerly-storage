@@ -38,6 +38,7 @@
 import { type Readable, type Writable } from "node:stream";
 import { defineCommand, parseArgs, type ArgsDef, type ParsedArgs, type CommandDef } from "citty";
 import { BaerlyError } from "@baerly/protocol";
+import { assertPathSegment } from "@baerly/server/_internal/testing";
 import { loadAppConfig } from "./config.ts";
 import { emitError, setJsonMode } from "./output.ts";
 
@@ -118,6 +119,21 @@ const errorToExitCode = (code: string): number => {
 };
 
 /**
+ * Validate a `--collection` arg through the same shared rule the
+ * server uses for every caller-controlled key segment, before it is
+ * interpolated into a bucket key. Throws `BaerlyError("InvalidConfig",
+ * …)` on a traversal / empty / control-char / reserved value. `verb`
+ * is the operator-facing command name (e.g. `"baerly admin restore"`,
+ * `"baerly inspect"`) so the message names the exact command.
+ *
+ * (app/tenant are validated at their own chokepoint inside
+ * `resolveAppTenant`; this guards the per-command `collection` arg.)
+ */
+export const assertCollectionArg = (collection: string, verb: string): void => {
+  assertPathSegment(collection, "collection", verb);
+};
+
+/**
  * Build the app/tenant resolver. Captures `name` to surface the
  * calling subcommand in the InvalidConfig hint.
  */
@@ -126,27 +142,40 @@ const makeResolveAppTenant = (name: string): SubcommandContext["resolveAppTenant
     const flagApp = typeof args.app === "string" && args.app.length > 0 ? args.app : undefined;
     const flagTenant =
       typeof args.tenant === "string" && args.tenant.length > 0 ? args.tenant : undefined;
+    let app: string;
+    let tenant: string;
     if (flagApp !== undefined && flagTenant !== undefined) {
-      return { app: flagApp, tenant: flagTenant };
+      app = flagApp;
+      tenant = flagTenant;
+    } else {
+      let cfg: { app: string; tenant: string };
+      try {
+        cfg = await loadAppConfig();
+      } catch (error) {
+        // Re-throw with our own wording so the operator sees the
+        // calling-command name and the hint to pass --app / --tenant
+        // explicitly. The underlying loadAppConfig error is preserved
+        // as the cause. (Only wraps a config-LOAD failure — the
+        // segment validation below is intentionally outside this catch
+        // so its own InvalidConfig message survives.)
+        const inner = error instanceof BaerlyError ? error.message : (error as Error).message;
+        throw new BaerlyError(
+          "InvalidConfig",
+          `baerly ${name}: --app / --tenant not supplied and no baerly.config.{ts,js,mjs,json} in cwd (${inner})`,
+          error,
+        );
+      }
+      app = flagApp ?? cfg.app;
+      tenant = flagTenant ?? cfg.tenant;
     }
-    try {
-      const cfg = await loadAppConfig();
-      return {
-        app: flagApp ?? cfg.app,
-        tenant: flagTenant ?? cfg.tenant,
-      };
-    } catch (error) {
-      // Re-throw with our own wording so the operator sees the
-      // calling-command name and the hint to pass --app / --tenant
-      // explicitly. The underlying loadAppConfig error is preserved
-      // as the cause.
-      const inner = error instanceof BaerlyError ? error.message : (error as Error).message;
-      throw new BaerlyError(
-        "InvalidConfig",
-        `baerly ${name}: --app / --tenant not supplied and no baerly.config.{ts,js,mjs,json} in cwd (${inner})`,
-        error,
-      );
-    }
+    // Single chokepoint covering every command that calls
+    // resolveAppTenant: whatever the source (flags or config), the
+    // resolved segments must pass the same shared rule before they
+    // become bucket-key segments. A bad-but-supplied value throws
+    // InvalidConfig, consistent with the "not supplied" case above.
+    assertPathSegment(app, "app", `baerly ${name}`);
+    assertPathSegment(tenant, "tenant", `baerly ${name}`);
+    return { app, tenant };
   };
 };
 
