@@ -376,8 +376,8 @@ export const CF_FREE_MAX_SAFE_FOLD_BYTES: number = 1024 * 1024;
 /**
  * SNAPSHOT-rebuild ceiling `E`, per-entry CPU axis: gates `snapshot_rows` (per-entry
  * parse/merge/serialize is ~half of fold CPU and scales with ROW COUNT not bytes, VLDB 2021
- * Sarkar — a tiny-doc snapshot can blow CPU under C). PROVISIONAL — calibrate via the
- * Task 3 bench, pin in graduation.md.
+ * Sarkar — a tiny-doc snapshot can blow CPU under C). PROVISIONAL — bench
+ * landed (Phase 2); paid calibration is Phase 4.
  *
  * @see docs/about/graduation.md
  * @see packages/server/src/maintenance.ts

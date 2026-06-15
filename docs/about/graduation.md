@@ -72,8 +72,11 @@ baerly admin usage \
 > conversion, the chosen `E = 2048` row ceiling, and the graduation-cliff
 > snapshot sizes. Treat the constants as real (you can observe defers and
 > warns from logs today) and the dollar/byte thresholds as the *target*
-> envelope still being calibrated by bench. `E` in particular is marked
-> **PROVISIONAL** in its constant JSDoc pending the Task 3 fold-cost bench.
+> envelope still being calibrated by bench. The fold-cost bench has
+> **landed** (Phase 2 — `docs/spec/attachments/fold-cost-baseline.json`);
+> `E = 2048` stays a conservative **PROVISIONAL** placeholder because
+> recalibrating `C`/`E` to where the *paid* envelope actually binds is the
+> deferred Phase 4 work, not the bench itself.
 
 ## What costs CPU: compaction (folding the log)
 
@@ -178,9 +181,11 @@ everywhere.
 The **row axis** `E` catches the case bytes miss: a snapshot of many
 tiny docs is cheap by bytes but expensive by per-entry parse/merge.
 `E = MAINTENANCE_MAX_FOLD_ROWS = 2048` is the row ceiling. **This value
-is PROVISIONAL** — it is a conservative placeholder pending the Task 3
-fold-cost bench that will pin the measured per-entry CPU; its constant
-JSDoc says as much. Treat 2048 rows as "the order of magnitude where
+is PROVISIONAL** — a conservative placeholder. The fold-cost bench has
+landed (Phase 2) and measures per-entry CPU; it shows 2048 rows is well
+under the CF-free CPU budget, so recalibrating `E` (and `C`) to where the
+paid envelope binds is the deferred Phase 4 work, not the bench. Treat
+2048 rows as "the order of magnitude where
 per-entry CPU starts to rival the byte budget on CF free," not a
 bench-confirmed number yet.
 
@@ -546,7 +551,8 @@ hit a ceiling, you know whether there is a knob at all.
 
 The row ceiling `E` is not in this map — it is a kernel constant, not an
 operator knob; see the [operations-plane note](#operations-plane-env-vars)
-above for its (provisional) status.
+above for its (provisional) status — the fold-cost bench has landed
+(Phase 2); recalibrating it is deferred to Phase 4.
 
 ## How to read your tier
 
