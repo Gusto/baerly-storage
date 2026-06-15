@@ -2,7 +2,7 @@
 title: JSON merge patch (RFC 7386)
 audience: spec
 summary: Sparse JSON updates plus the algebraic properties baerly relies on for log coalescing.
-last-reviewed: 2026-05-31
+last-reviewed: 2026-06-14
 tags: [protocol, json, rfc-7386, merge-patch]
 related: [sync-protocol.md]
 ---
@@ -12,7 +12,7 @@ related: [sync-protocol.md]
 JSON Merge patch is a [standardized](https://datatracker.ietf.org/doc/html/rfc7386) way to encode *sparse* updates to a JSON document. It has some nice properties that make it useful in collaborative applications.
 In this article, we cover the basics, its algebraic properties, it's inverse and some tricks, cross references with source code links.
 
-We will discover that to unlock the full potential of JSON-merge-Patch, you should avoid mixing types. The set of `structured JSONs`` form an algebraic group over merge. With structured JSON it is safe to use JSON-merge-PATCH to coalesce writes, a useful optimization for network optimization.
+We will discover that to unlock the full potential of JSON-merge-Patch, you should avoid mixing types. The set of `structured JSONs` form a **monoid** acting on states under merge (associative for type-stable patches; identity `undefined`). With structured JSON it is safe to use JSON-merge-PATCH to coalesce writes, a useful optimization for network optimization.
 
 - [Intro](#intro)
 	- [Patches move the state forward](#patches-move-the-state-forward)
@@ -35,7 +35,7 @@ We will discover that to unlock the full potential of JSON-merge-Patch, you shou
 	- [Identity is `undefined`](#identity-is-undefined)
 	- [`Diff(a, a) = undefined`](#diffa-a--undefined)
 	- [Diff is the inverse of merge](#diff-is-the-inverse-of-merge)
-- [Structured JSON's Algebraic Group](#structured-jsons-algebraic-group)
+- [Structured JSON's Algebra: a Monoid Acting on States](#structured-jsons-algebra-a-monoid-acting-on-states)
 
 ---
 
@@ -189,13 +189,13 @@ Then if the patches are applied DELETE, UPDATE, the final state of resource1 is 
 
 ### Merges are idempotent
 
-If you apply the same patch twice, the result is the same
+If you apply the same patch twice on top of a state, the result is the same
 
 ```
 merge(merge(s, a), a) = merge(s, a)
-// and
-merge(a, a) = a
 ```
+
+Note: this is *state-application* idempotence; `merge(a,a)=a` does **not** hold for delete patches — `merge({k:null},{k:null}) = {}`.
 
 This is useful for making network communication fault-tolerant to network disconnects. It is safe to retry if they are unsure that the server received the update, as applying the same update twice is safe.
 
@@ -258,15 +258,13 @@ log_patch = sum_merge p
 
 This is useful for write **coalescing**. For example, if you allow one part of the system to continue to work while being disconnected, when it regains connectivity you can coalesce the log and transmit just a single big patch.
 
+Coalescing `fold(patches)` into one patch is equivalent to sequential application **only if no patch in the window deletes a key (or subtree) that a later patch in the same window re-creates.** Counterexample: `s={x:{a:1,b:2}}`, `p1={x:null}`, `p2={x:{a:9}}` — sequential gives `{x:{a:9}}` (b gone), but coalescing `merge(s, merge(p1,p2))` gives `{x:{a:9,b:2}}` — `b` resurrects, because `merge(null,{a:9})` drops the deletion intent. Pure additive / scalar-overwrite patches coalesce safely; any delete-then-partial-re-add breaks the substitution. RFC 7386 cannot encode delete-then-set in a single patch.
+
 ---
 
 ### Ordered Logs can be replayed multiple times
 
-Because patches are idempotent, you can apply the same set of patches multiple times.
-
-```
-fold(patches) = fold(fold(patches)), patches)
-```
+Replaying the *full ordered prefix from the same base state* is idempotent — this is exactly what baerly's snapshot+log materialization does. It is NOT the same as re-merging a coalesced patch onto a downstream state (see the delete caveat above).
 
 [*Verification source code*](https://github.com/endpointservices/mps3/blob/ce5a622c730466d336d761f39b5572224f2dd259/src/__tests__/json.test.ts#L40)
 
@@ -296,8 +294,9 @@ malformed one), not something the kernel repairs by replay.
 
 > **Not part of the baerly kernel.** baerly's `@baerly/protocol` exports only
 > `merge` — the forward direction. `diff` is documented here because it is the
-> algebraic *inverse* of `merge`, and naming that inverse is what lets us prove
-> the group structure below (and reason about coalescing). The writer never needs
+> *state-relative* inverse of `merge` (`merge(a, diff(b, a)) == b`), and naming
+> that section is what lets us reason about the monoid-acting-on-states structure
+> below (and about coalescing). The writer never needs
 > to compute a diff: patches arrive from clients already in merge-patch form. The
 > reference implementation linked here lives in the prior-art `mps3` project, not
 > in this repo. Treat this section as theory, not as shippable API.
@@ -344,11 +343,10 @@ Now there is a precise and unique inverse of merge, we can understand merge bett
 
 ---
 
-## Structured JSON's Algebraic Group
+## Structured JSON's Algebra: a Monoid Acting on States
 
-Structured JSON documents form an algebraic group over merges. They adhere to properties of associativity, identity, closure, and inverseness. However, this only holds when documents maintain a stable schema, ensuring that scalar values and objects remain consistent.
+Patches form a **monoid** under merge (associative on the type-stable / delete-free submonoid; identity `undefined`). States are *acted on* by that monoid. There is no group: merge is information-destroying, so a patch has no true two-sided inverse — `{k:null}` does not invert `{k:1}` (apply both to `s={k:99}` and you get `{}`, losing `99`). `diff` is a **state-relative** section of that action (like git `revert`), not a group inverse.
 
-By keeping structured documents, you can safely do write coalescing by merging pending operations in a queue. When you do this you exploit the associativity property. 
-Even if you do not use structured operation, JSON-merge-patch always has a well-defined inverse.
+baerly's correctness does not rest on a patch group: the kernel folds the **full ordered prefix from the snapshot base** over a totally-ordered `seq` log (CDC / last-write-wins shape), never a patch-on-patch shortcut across a delete. The total log order is the source of correctness; coalescing is an optimization valid only inside the delete-free / type-stable window.
 
 JSON-merge-patch rocks!
