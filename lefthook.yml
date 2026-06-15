@@ -5,7 +5,7 @@ pre-commit:
     - rebase
   commands:
     format:
-      glob: "*.{ts,tsx,mjs,cjs,json}"
+      glob: "*.{ts,tsx,mjs,cjs,json,md}"
       run: pnpm exec oxfmt {staged_files}
       stage_fixed: true
     lint:

@@ -63,7 +63,7 @@ var isn't propagated.
 
 | Command | What it catches | Runtime | Clean on `main`? |
 |---|---|---|---|
-| `pnpm verify` | typecheck (`tsgo --noEmit`) + `verify:examples` + lint (`oxlint`) + `verify:docs` (markdown frontmatter audit) | ~seconds | ✅ — non-zero exit *is* your regression |
+| `pnpm verify` | typecheck (`tsgo --noEmit`) + `verify:examples` + lint (`oxlint`) + `format:check` (`oxfmt --check`) + `verify:docs` (markdown frontmatter audit) | ~seconds | ✅ — non-zero exit *is* your regression |
 | `pnpm verify:agent` | same gate as `pnpm verify`, with `tsgo --pretty false` + `oxlint --format=unix --quiet` for one-line-per-finding output (warnings hidden — `pnpm verify` still surfaces them) | ~seconds | ✅ — same gate as `verify`, just quieter |
 | `node scripts/lint-package-layers.mjs` | enforces the package import allow list from ADR-006. Runs as part of `pnpm verify`. | ~ms | ✅ |
 | `pnpm verify:docs` | `verify-docs.mjs` (frontmatter `related:` cross-link resolver + `audience:` field audit + 180-day `last-reviewed:` staleness check) **+ `remark-validate-links`** (inline Markdown link + heading-anchor validation across all of `docs/`, runnable standalone as `verify:doc-links`). Runs as part of `pnpm verify`. | ~seconds | ✅ |
@@ -78,7 +78,7 @@ var isn't propagated.
 | `pnpm test:http-conformance` | runs the HTTP cascade on `memory` + `local-fs` (default project) | ~3s | ✅ |
 | `pnpm test:adapter-node` | runs `s3HttpStorage` conformance against local Minio | ~10s | ✅ when `pnpm dev:storage` is up |
 | `pnpm test:adapters` | sequential wrapper: `test:adapter-cloudflare` then `test:adapter-node` | ~10s | ✅ when `pnpm dev:storage` is up |
-| `pnpm format:check` | oxfmt formatting | ~seconds | ❌ red on ~20 pre-existing files; diff vs. `main` |
+| `pnpm format:check` | oxfmt formatting. Now part of `pnpm verify` and auto-fixed (incl. `.md`) by the lefthook pre-commit `format` hook | ~seconds | ✅ |
 | `pnpm build` | rolldown bundle to `dist/` | ~seconds | ✅ |
 | `pnpm test:randomize` | property-based fuzzer (cranks `FC_NUM_RUNS` for fast-check arbitraries). The randomized cascade itself is fault-injection-driven so `FC_NUM_RUNS` is a no-op for `randomized.test.ts` — all four variants (`memory` / `local-fs` / `cloudflare-r2` / `node-minio`) still run, but only the property tests in the rest of the suite scale up | run for minutes | use when changing protocol code |
 | `pnpm test:fuzz-phase5` | crash-injection fuzzer for the maintenance loop (`phase5-crash-fuzz.test.ts`) — aborts the K-th storage op inside `Writer` / `compact()` / `runGc()` and asserts the reader still sees a consistent row set | minutes-hours at `FC_NUM_RUNS=10000` | use after touching `compactor.ts` / `gc.ts` / `writer.ts` |
