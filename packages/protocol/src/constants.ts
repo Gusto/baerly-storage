@@ -151,9 +151,10 @@ export const MAX_PARALLEL_LOG_READS: number = 16;
 
 /**
  * Runaway guard on the tolerant forward-probe walk (`probeTailFrom`):
- * max consecutive `log/<seq>` GETs past the `tail_hint` before the walk
- * caps out. A stale-low hint is never a correctness hazard — just a
- * longer-but-bounded GET walk.
+ * max `log/<seq>` GETs past `tail_hint` before it THROWS `Internal`
+ * (rather than silently truncating reads). A runaway alarm only — the
+ * maintenance tick keeps `tail_hint` near the tail, so a >cap gap means
+ * maintenance is off or the collection is far past graduation.
  *
  * @see packages/server/src/log-tail.ts (`probeTailFrom`)
  */

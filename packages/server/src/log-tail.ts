@@ -17,7 +17,9 @@ import {
 /**
  * Discover the true committed tail and fold entries in `[hint, tail)`.
  * `tail` is the first empty seq (>= hint); `entries` are the
- * LogEntries in `[hint, tail)` in seq order. `cap` bounds the walk.
+ * LogEntries in `[hint, tail)` in seq order. `cap` bounds the walk;
+ * exhausting it THROWS `Internal` (never silently truncates) — see
+ * the cap-exhaustion comment below.
  */
 export const probeTailFrom = async (
   storage: Storage,
