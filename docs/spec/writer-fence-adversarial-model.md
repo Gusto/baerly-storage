@@ -1,13 +1,25 @@
 ---
 title: Writer-fence adversarial model
 audience: spec
-summary: Failure envelope of the two-phase fence-claim protocol under absent, delayed, forged, and non-monotonic Date headers.
-last-reviewed: 2026-06-12
+summary: Failure envelope of the now-dormant two-phase fence-claim protocol (retained as an admin/testing primitive and patent-C1 record) under absent, delayed, forged, and non-monotonic Date headers.
+last-reviewed: 2026-06-16
 tags: [protocol, fence, claim, adversarial-model, patent-c1]
 related: [sync-protocol.md, causal-consistency-checking.md, log-entry-shape.md]
 ---
 
 # Writer-fence adversarial model
+
+> **Dormancy note.** Under single-write commit
+> ([ADR-008](../adr/008-single-write-commit.md)) the writer fence and
+> its `claimWriter` two-phase protocol are **dormant**: no production
+> commit path reads, writes, claims, or verifies the fence. The
+> numbered `log/<seq>` create (via `If-None-Match: "*"`) _is_ the
+> commit, and it linearizes each collection on its own. The fence is
+> retained as an explicit admin/testing primitive and as the patent-C1
+> provenance record. This adversarial analysis still describes that
+> retained-but-off-the-hot-path mechanism — every claim below remains
+> valid for admin rotation, any future rotation use, and the patent
+> context; none of it is exercised by a normal commit.
 
 This document is the written failure envelope of the two-phase
 fence-claim protocol implemented in
