@@ -582,10 +582,12 @@ export class Writer {
           });
           conflicted = true;
         } else if (isTransientWrite(error) && transientRetries < this.#maxRetries) {
-          // Possible lost-ack — retry the same seq (idempotent: adoption
-          // closes the double-commit window). Bounded so a persistent
-          // NetworkError still surfaces.
+          // Possible lost-ack — retry the SAME seq (idempotent: adoption
+          // closes the double-commit window). Bounded backoff (full jitter,
+          // same as the outer loop) so a backend in transient distress
+          // isn't hammered; a persistent NetworkError still surfaces.
           transientRetries++;
+          await this.#backoff(transientRetries);
           continue;
         } else {
           throw error;

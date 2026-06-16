@@ -116,6 +116,35 @@ class LostAckStorage extends MemoryStorage {
   }
 }
 
+/**
+ * Drops the ack on the FIRST log-create PUT (after the write lands,
+ * like {@link LostAckStorage}) but throws a *transient* `NetworkError`,
+ * driving the inner transient-retry loop. Unlike `LostAckStorage` this
+ * exposes the count so a wall-clock test can prove backoff is applied
+ * before the same-seq re-PUT.
+ */
+class TransientLogCreateStorage extends MemoryStorage {
+  dropNextLogCreateAck = false;
+  logCreateAttempts = 0;
+
+  override async put(
+    key: string,
+    body: Uint8Array,
+    opts?: StoragePutOptions,
+  ): Promise<StoragePutResult> {
+    const isLogCreate = /\/log\/\d+\.json$/.test(key) && opts?.ifNoneMatch !== undefined;
+    if (isLogCreate) {
+      this.logCreateAttempts++;
+    }
+    if (isLogCreate && this.dropNextLogCreateAck) {
+      this.dropNextLogCreateAck = false;
+      await super.put(key, body, opts);
+      throw new BaerlyError("NetworkError", `simulated transient on ${key}`);
+    }
+    return super.put(key, body, opts);
+  }
+}
+
 class SameSessionDifferentBodyStorage extends MemoryStorage {
   collideNextLogCreate = false;
 
@@ -361,6 +390,42 @@ describe("Writer", () => {
 
     expect(result.entry.seq).toBe(0);
     expect(result.entry.doc_id).toBe("lost-ack");
+    await expect(durableLogSeqs(storage)).resolves.toEqual([0]);
+  });
+
+  test("inner transient-retry loop sleeps via #backoff before the same-seq re-PUT", async () => {
+    // The inner transient loop re-issues the SAME-seq log-create PUT on a
+    // transient NetworkError. It must sleep via `#backoff` first, not spin
+    // a tight loop that burns the retry budget in microseconds. The small
+    // `initialBackoffMs` keeps the real sleep from slowing the suite.
+    const storage = new TransientLogCreateStorage();
+    await createCurrentJson(storage, CURRENT_KEY, seedCurrent());
+    storage.dropNextLogCreateAck = true;
+    const writer = new Writer({
+      storage,
+      currentJsonKey: CURRENT_KEY,
+      // Non-zero so `#backoff` computes a real sleep; `random: () => 1`
+      // makes the full-jitter delay deterministic (== base == 30ms).
+      options: { initialBackoffMs: 30, random: () => 1 },
+    });
+
+    const start = Date.now();
+    const result = await writer.commit({
+      op: "I",
+      collection: COLL,
+      docId: "transient",
+      body: { _id: "transient", from: "writer" },
+    });
+    const backoffSleepMs = Date.now() - start;
+
+    // Exactly one transient retry → exactly one backoff sleep → the SAME
+    // seq re-PUT (2 log-create attempts), adopted as the durable
+    // own-session entry. A tight no-backoff loop would resolve in well
+    // under the 30ms backoff; the wall-clock floor proves the sleep ran.
+    expect(storage.logCreateAttempts).toBe(2);
+    expect(backoffSleepMs).toBeGreaterThanOrEqual(25);
+    expect(result.entry.seq).toBe(0);
+    expect(result.entry.doc_id).toBe("transient");
     await expect(durableLogSeqs(storage)).resolves.toEqual([0]);
   });
 
