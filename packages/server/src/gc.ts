@@ -506,9 +506,16 @@ const collectLiveContentHashes = async (
   const getOpts = signal !== undefined ? { signal } : undefined;
 
   // Live log tail, bounded to the TRUE tail (probe past a stale-low
-  // hint) so GC never treats a committed post-image as dead. The loop
-  // 404-tolerates misses, so over-bounding to `tail` is safe.
-  const { tail } = await probeTailFrom(storage, collectionPrefix, current.tail_hint, { signal });
+  // hint) so GC never treats a committed post-image as dead. Floor the
+  // probe at `max(log_seq_start, tail_hint)` — entries below
+  // `log_seq_start` are folded and never scanned by the loop below. The
+  // loop 404-tolerates misses, so over-bounding to `tail` is safe.
+  const { tail } = await probeTailFrom(
+    storage,
+    collectionPrefix,
+    Math.max(logSeqStart, current.tail_hint),
+    { signal },
+  );
   const logReads: Array<Promise<void>> = [];
   for (let s = logSeqStart; s < tail; s++) {
     logReads.push(

@@ -30,14 +30,14 @@
  *      expected `log/0.json` key BEFORE the writer's PUT. The
  *      writer's `If-None-Match: "*"` PUT 412s, the writer reads
  *      back the planted body, adoption rejects (`foreign-session`),
- *      and the commit surfaces `BaerlyError{code:"Conflict"}` —
- *      never a successful commit returning the adversary's entry.
+ *      and — under single-write commit — the writer re-probes forward
+ *      and commits its OWN entry at the next empty slot. The commit
+ *      NEVER returns the adversary's entry.
  */
 
 import { fc } from "@fast-check/vitest";
 import { describe, expect, test } from "vitest";
 import {
-  BaerlyError,
   CURRENT_JSON_SCHEMA_VERSION,
   type CurrentJson,
   type LogEntry,
@@ -141,15 +141,14 @@ describe("C2 session-id-unguessability under ForgeryStorage adversary", () => {
     );
   });
 
-  test("integration: writer.commit() over ForgeryStorage surfaces Conflict, never a successful commit returning the forged entry", async () => {
+  test("integration: writer.commit() over ForgeryStorage never returns the forged entry — it probes past and commits its own", async () => {
     // Sub-test C. The unit-level decision tests can't see retry-loop
     // interactions. Under `ForgeryStorage`, the writer's PUT-with-
-    // If-None-Match conflicts on the planted entry, the writer reads
-    // it back, adoption rejects (foreign-session), and Writer.commit
-    // surfaces BaerlyError{code:"Conflict"}. The forbidden outcome —
-    // "successful commit returning the adversary's LogEntry" — must
-    // never happen, regardless of retry budget (S3_REQUEST_MAX_RETRIES
-    // = 8 by default).
+    // If-None-Match conflicts on the planted entry, the writer reads it
+    // back, adoption rejects (foreign-session), and — under single-write
+    // commit — re-probes forward and commits its OWN entry at the next
+    // empty slot. The forbidden outcome — "successful commit returning
+    // the adversary's LogEntry" — must never happen.
     const TENANT_PREFIX = "app/a/tenant/t/manifests/c";
     const CURRENT_JSON_KEY = `${TENANT_PREFIX}/current.json`;
     const LOG_0_KEY = `${TENANT_PREFIX}/log/0.json`;
@@ -201,40 +200,22 @@ describe("C2 session-id-unguessability under ForgeryStorage adversary", () => {
       options: { maxRetries: 1, initialBackoffMs: 0, random: () => 0 },
     });
 
-    let caught: unknown;
-    try {
-      const result = await writer.commit({
-        op: "I",
-        collection: COLLECTION,
-        docId: "writer-doc",
-        body: { _id: "writer-doc", from: "writer" },
-      });
-      // If we ever reach here, the writer adopted the forged entry —
-      // the patent-disclosure-shaped claim is violated.
-      throw new Error(
-        `writer.commit unexpectedly succeeded; returned entry: ${JSON.stringify(result.entry)}`,
-      );
-    } catch (error) {
-      caught = error;
-    }
+    const result = await writer.commit({
+      op: "I",
+      collection: COLLECTION,
+      docId: "writer-doc",
+      body: { _id: "writer-doc", from: "writer" },
+    });
 
-    expect(caught).toBeInstanceOf(BaerlyError);
-    if (caught instanceof BaerlyError) {
-      // The patent-disclosure-shaped safety claim: Writer.commit
-      // never returns a successful CommitResult derived from a
-      // forged entry. Surfacing Conflict — regardless of the
-      // specific message — is the safe outcome. The intermediate
-      // `foreign-session` reason is observed at the unit level by
-      // `tryAdoptOwnSessionLogEntry`'s own test; the retry-loop
-      // catches Conflict-coded errors and surfaces a top-level
-      // "after N attempts" message, so the inner reason isn't
-      // visible on the public surface.
-      expect(caught.code).toBe("Conflict");
-    }
+    // The patent-disclosure-shaped safety claim: Writer.commit never
+    // returns a CommitResult derived from the FORGED entry. It probes
+    // past the foreign occupant and commits its OWN entry at seq 1.
+    expect(result.entry.seq).toBe(1);
+    expect(result.entry.doc_id).toBe("writer-doc");
+    expect((result.entry.after as { from?: string } | undefined)?.from).toBe("writer");
 
-    // Even after the commit fails, the forgery must still be in
-    // place — pin the adversary-write surface (nothing in the
-    // writer's failure path should rewrite the planted entry).
+    // The forgery is untouched at seq 0 — the writer stepped past it,
+    // never overwriting the adversary's planted entry.
     const planted = await forgery.storage.get(LOG_0_KEY);
     expect(planted?.body).toEqual(encodeJsonBytes(forged));
   });

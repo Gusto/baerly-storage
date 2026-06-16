@@ -15,7 +15,7 @@ import {
 } from "@baerly/protocol";
 import { describe, expect, test } from "vitest";
 import { seedLogEntries } from "../../../tests/fixtures/log-state.ts";
-import { probeTailFrom } from "./log-tail.ts";
+import { findLogTail, probeTailFrom } from "./log-tail.ts";
 
 const PREFIX = "app/t/tenant/x/manifests/c";
 
@@ -97,5 +97,28 @@ describe("probeTailFrom", () => {
     await expect(
       probeTailFrom(storage, PREFIX, 5, { signal: AbortSignal.abort() }),
     ).rejects.toThrow(/abort/i);
+  });
+});
+
+describe("findLogTail", () => {
+  test("an always-occupied gallop exceeds the cap and throws Internal", async () => {
+    // Every slot reads as occupied, so the gallop keeps doubling `step`
+    // and never brackets an empty `hi`. It must surface the runaway as
+    // `Internal` after `step` passes `LOG_FORWARD_PROBE_CAP` — not loop
+    // forever. The gallop is `O(log cap)` GETs (~18), so this is fast and
+    // never walks the full cap. A non-null body satisfies the
+    // `get(...) !== null` occupancy probe.
+    const alwaysOccupied: Storage = {
+      get: async () => ({ body: new Uint8Array(0), etag: "x" }),
+      put: async () => ({ etag: "x" }),
+      delete: async () => {},
+      list: () => {
+        throw new Error("list not used by findLogTail");
+      },
+    };
+
+    await expect(findLogTail(alwaysOccupied, PREFIX, 0)).rejects.toMatchObject({
+      code: "Internal",
+    });
   });
 });

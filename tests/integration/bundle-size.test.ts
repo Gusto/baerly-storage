@@ -251,7 +251,14 @@ const BUDGETS: readonly Budget[] = [
   //     gz both climb, not dedup-able boilerplate): ~400 B raw / ~226 B gz
   //     over the prior ceilings (measured 217490 raw / 66786 gz). min-gz
   //     still passes. Rebaseline raw +1 KiB, gz +1 KiB.
-  { entry: "index.js", raw: 213 * 1024, gz: 66 * 1024, minGz: 19 * 1024 },
+  //   → 214 KiB raw / 67 KiB gz: single-write commit (2026-06-15) — writer
+  //     forward-probe + galloping findLogTail + maintenance observed-tail
+  //     plumbing (measured 218832 raw / 67692 gz). min-gz under.
+  //   → 215 KiB raw (2026-06-15): single-write-commit doc accuracy pass —
+  //     rewrote the now-stale Writer class docstring + density-precondition
+  //     notes (comments ship un-stripped). +27 B raw over the prior ceiling
+  //     (measured 219163). gz/min-gz unaffected. Rebaseline raw +1 KiB only.
+  { entry: "index.js", raw: 215 * 1024, gz: 67 * 1024, minGz: 19 * 1024 },
   // The three auth verifier factories (bearerJwt, sharedSecret,
   // cloudflareAccess) plus the transitive jose closure pulled in by
   // bearerJwt's createRemoteJWKSet + jwtVerify. Adding a fourth
@@ -349,7 +356,13 @@ const BUDGETS: readonly Budget[] = [
   //     JSDoc on `tryAdoptOwnSessionLogEntry` (single-write-commit Plan B)
   //     ships un-stripped into the http closure (measured 98361 gz; +57
   //     over). Bump gz +1 KiB; raw/min-gz still pass.
-  { entry: "http.js", raw: 326 * 1024, gz: 97 * 1024, minGz: 34 * 1024 },
+  //   → 327 KiB raw: single-write commit (2026-06-15) — writer/maintenance
+  //     forward-probe plumbing (measured 334509 raw). gz/min-gz under.
+  //   → 328 KiB raw (2026-06-15): single-write-commit doc accuracy pass —
+  //     the corrected maintenance-runner comment ships un-stripped into this
+  //     closure via the maintenance subgraph. +15 B raw over the prior
+  //     ceiling (measured 334863). gz/min-gz under. Rebaseline raw +1 KiB.
+  { entry: "http.js", raw: 328 * 1024, gz: 97 * 1024, minGz: 34 * 1024 },
   // Observability primitives — ObservabilityContext, the
   // request-scoped MetricsRecorder, LogTape config + the
   // JSON sink only (the pretty sink + picocolors now live in
@@ -445,7 +458,13 @@ const BUDGETS: readonly Budget[] = [
   //     Plan B Phase 3.3, ratio-trigger derived tail estimate) land in this
   //     closure (measured 115918 raw; +206 over). Rebaseline raw +1 KiB;
   //     gz/min-gz unaffected (still passing).
-  { entry: "maintenance.js", raw: 114 * 1024, gz: 35 * 1024, minGz: 11 * 1024 },
+  //   → 116 KiB raw (2026-06-15): single-write commit — runner observed-tail
+  //     plumbing + findLogTail/probe floors (measured 117799 raw; gz under).
+  //   → 36 KiB gz (2026-06-15): single-write-commit doc accuracy pass —
+  //     corrected the stale runner write-tick/scheduled comment (comments
+  //     ship un-stripped). +21 B gz over the prior ceiling (measured 35861).
+  //     raw/min-gz unaffected. Rebaseline gz +1 KiB only.
+  { entry: "maintenance.js", raw: 116 * 1024, gz: 36 * 1024, minGz: 11 * 1024 },
   // Cloudflare Workers adapter — re-exports the kernel barrel
   // (Db, Writer, etc.) plus the R2-binding `Storage` impl
   // and the `baerlyCloudflare` helper. Aggregator: closure
@@ -524,7 +543,10 @@ const BUDGETS: readonly Budget[] = [
   //     Plan B Phase 3.3) reach the cloudflare closure via the maintenance
   //     subgraph (measured 389655 raw; +535 over). Rebaseline raw +1 KiB;
   //     gz/min-gz comfortably under.
-  { entry: "cloudflare.js", raw: 381 * 1024, gz: 114 * 1024, minGz: 40 * 1024 },
+  //   → raw 383 KiB / gz 115 KiB (2026-06-15): single-write commit — the
+  //     writer/maintenance forward-probe + findLogTail subgraph reaches the
+  //     cloudflare closure (measured 391116 raw / 117198 gz). min-gz under.
+  { entry: "cloudflare.js", raw: 383 * 1024, gz: 115 * 1024, minGz: 40 * 1024 },
   // Client surface — `BaerlyClient<TConfig>` + fetcher plumbing.
   // Browser/runtime-agnostic; no kernel modules in the closure.
   // Budget history:

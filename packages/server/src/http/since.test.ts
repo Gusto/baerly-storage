@@ -221,19 +221,24 @@ describe("listEventsSince — pre-snapshot cursor → SchemaError", () => {
     expect(seed.events).toHaveLength(1);
     const cursor = seed.events[0]!.lsn;
 
-    // Bump current.json.log_seq_start to current.tail_hint to mark
-    // the entry as "folded" (the test takes the shortcut; the
+    // Bump current.json.log_seq_start past the seed entry (which lands
+    // at seq 0) to mark it as "folded" (the test takes the shortcut; the
     // production compactor goes through casUpdateCurrentJson). The
     // physical `log/<seq>.json` file is left in place — the handler
     // decides "folded" by comparing the cursor's seq against
-    // `log_seq_start`, not by probing for the file.
+    // `log_seq_start`, not by probing for the file. Under single-write
+    // commit the writer no longer advances `tail_hint`, so we set
+    // `log_seq_start: 1` explicitly (the seed wrote exactly seq 0).
     const cjKey = currentJsonKey(TABLE);
     const cj = await storage.get(cjKey);
     expect(cj).not.toBeNull();
     const parsed = JSON.parse(new TextDecoder().decode(cj!.body)) as CurrentJson;
     const mutated: CurrentJson = {
       ...parsed,
-      log_seq_start: parsed.tail_hint,
+      // tail_hint must stay >= log_seq_start (manifest invariant). The
+      // seed wrote seq 0; mark it folded by lifting both to 1.
+      tail_hint: 1,
+      log_seq_start: 1,
     };
     await storage.put(cjKey, new TextEncoder().encode(JSON.stringify(mutated)));
 

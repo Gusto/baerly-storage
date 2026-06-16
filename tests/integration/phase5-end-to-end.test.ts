@@ -39,7 +39,7 @@ import {
   readCurrentJson,
   type Storage,
 } from "@baerly/protocol";
-import { Db } from "@baerly/server";
+import { Db, probeTailFrom } from "@baerly/server";
 import {
   type BoundedMaintenanceOptions,
   compact,
@@ -200,10 +200,10 @@ describe("Synthetic 5000-entry end-to-end gate", () => {
             log_seq_start?: number;
           };
           // Absolute literal kept on purpose — it pins a real contract:
-          // each single-doc commit advances tail_hint by exactly 1, so N
-          // sequential commits land tail_hint at exactly N (identical to
-          // what the old single-CAS batch produced; the topology changed
-          // but this end-state is invariant).
+          // under single-write commit the WRITER no longer advances
+          // tail_hint, but the compactor stamps it to the discovered tail
+          // on each fold. After folding all N entries the discovered tail
+          // is N, so the durable hint lands at exactly N.
           expect(json.tail_hint).toBe(N);
           expect(json.snapshot).not.toBeNull();
           // The compactor folds the entire live tail in unbounded passes;
@@ -414,7 +414,19 @@ describe("write-tick in-band maintenance (no runScheduledMaintenance)", () => {
       // WITHOUT any scheduled-maintenance call.
       expect(json.snapshot).not.toBeNull();
       expect(json.log_seq_start).toBeGreaterThan(0);
-      expect(json.tail_hint).toBe(600);
+      // Under single-write commit the writer never advances tail_hint; the
+      // compactor stamps it to the discovered tail on each fold. So the
+      // stored hint is a lower bound that lags the 600th write by the
+      // entries written since the last fold — the DISCOVERED tail is 600.
+      const collectionPrefix = CURRENT_JSON_KEY.slice(0, CURRENT_JSON_KEY.lastIndexOf("/"));
+      const tailProbe = await probeTailFrom(
+        storage,
+        collectionPrefix,
+        Math.max(json.log_seq_start, json.tail_hint),
+      );
+      expect(tailProbe.tail).toBe(600);
+      expect(json.tail_hint).toBeLessThanOrEqual(600);
+      expect(json.tail_hint).toBeGreaterThan(0);
     },
   );
 
@@ -528,7 +540,13 @@ describe("write-tick in-band maintenance (no runScheduledMaintenance)", () => {
           }
         });
         const read = await readCurrentJson(storage, CURRENT_JSON_KEY);
-        return read!.json;
+        const collectionPrefix = CURRENT_JSON_KEY.slice(0, CURRENT_JSON_KEY.lastIndexOf("/"));
+        const tailProbe = await probeTailFrom(
+          storage,
+          collectionPrefix,
+          Math.max(read!.json.log_seq_start, read!.json.tail_hint),
+        );
+        return { ...read!.json, discoveredTail: tailProbe.tail };
       };
 
       // Arm 1: ceiling far below the first snapshot the writer would
@@ -540,7 +558,9 @@ describe("write-tick in-band maintenance (no runScheduledMaintenance)", () => {
         "a fold ceiling below the live snapshot size must DEFER — snapshot stays null",
       ).toBeNull();
       // The tail keeps growing past the compaction floor (nothing folded).
-      expect(deferred.tail_hint - deferred.log_seq_start).toBeGreaterThanOrEqual(50);
+      // Measure the DISCOVERED tail: under single-write commit the stored
+      // tail_hint only advances on a fold, and every fold deferred here.
+      expect(deferred.discoveredTail - deferred.log_seq_start).toBeGreaterThanOrEqual(50);
 
       // Arm 2: default ceiling (512 KiB) comfortably fits the ~100KB
       // snapshot → a fold lands.

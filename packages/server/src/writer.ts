@@ -1,27 +1,26 @@
 /**
- * `Writer` — stateless multi-instance write engine.
+ * `Writer` — stateless multi-instance write engine (single-write commit).
  *
- * Each {@link Writer.commit} call reads `current.json` FRESH from
- * the bucket, mints the next {@link LogEntry}, PUTs the content body
- * and the log entry, and CAS-advances `current.json` with `If-Match`.
- * Up to {@link S3_REQUEST_MAX_RETRIES} attempts on contention before
- * surfacing `BaerlyError{code:"Conflict"}`. The optional integrity
- * walk over the live log tail is gated by
- * {@link WriterOptions.verifyLogIntegrityOnCommit} (default off
- * — see the option's docstring).
+ * Each {@link Writer.commit} reads `current.json` FRESH (for
+ * `log_seq_start` / `tail_hint` as a probe FLOOR — a lower bound, NOT a
+ * CAS precondition), PUTs the content body, then **creates `log/<seq>`
+ * via `If-None-Match: "*"`. That create IS the commit / linearization
+ * point.** The writer writes NOTHING to `current.json` on the commit
+ * path; the compactor is the sole durable `tail_hint` advancer. The
+ * optional integrity walk is gated by
+ * {@link WriterOptions.verifyLogIntegrityOnCommit} (default off).
  *
- * The instance carries no per-write cache: every commit re-reads
- * `current.json`, so N stateless server instances writing the same
- * tenant prefix contend at exactly one place — the conditional PUT
- * on `current.json` — and one loses cleanly with a 412.
+ * No per-write cache: every commit re-reads + re-probes, so N stateless
+ * instances contend at one place — the `If-None-Match` create of
+ * `log/<seq>`. The loser gets a 412 and re-probes forward to the next
+ * empty slot. A 412 from the writer's OWN session at the same seq is its
+ * own lost-ack / crashed-but-durable commit → adopted (not retried), so
+ * the write lands at EXACTLY `seq`, never duplicated.
  *
- * **Manifest-first ordering is REVERSED relative to the legacy
- * `src/syncer.ts` write loop.** Old loop: PUT manifest → PUT content
- * → CAS. New loop: PUT content → PUT log entry → CAS-advance
- * `current.json`. A crashed mid-loop writer leaves an unreferenced
- * content body (no log entry points at it), not an orphan log entry
- * with missing content. The compactor sweeps the orphan content
- * later.
+ * **Crash safety.** Order is content → `log/<seq>` create. A crash
+ * before the create leaves an unreferenced content body (no log entry
+ * references it), not an orphan log entry with missing content — the
+ * compactor sweeps the content later.
  *
  * **`LogEntry` shape.** Emitted entries follow the contract in
  * `packages/protocol/src/log.ts` (see {@link LogEntry}) and
@@ -49,8 +48,7 @@ import {
   BaerlyError,
   noopMetricsRecorder,
   type Storage,
-  type StoragePutOptions,
-  type StoragePutResult,
+  LOG_FORWARD_PROBE_CAP,
   MAINTENANCE_PROFILE_CF_FREE,
   S3_REQUEST_MAX_RETRIES,
   SESSION_ID_LENGTH,
@@ -64,6 +62,7 @@ import { assertDocId } from "./doc-id.ts";
 import { allIndexKeysFor, type IndexDefinition, validateIndexDefinition } from "./indexes.ts";
 import { assertKeyWithinLimit } from "./key-limit.ts";
 import { readLogEntry, walkLogRange } from "./log-walk.ts";
+import { findLogTail } from "./log-tail.ts";
 import { tryAdoptOwnSessionLogEntry } from "./log-conflict-adoption.ts";
 import {
   dispatchInlineAwaited,
@@ -279,20 +278,19 @@ export class Writer {
    *
    * Idempotency: PUT content uses `If-None-Match: "*"`, so a retry of
    * the same logical write produces the same content key and the
-   * second PUT no-ops. PUT log entry also uses `If-None-Match: "*"`,
-   * so two writers racing the same `tail_hint` cause exactly one PUT
-   * to land — the loser falls into the CAS retry path.
+   * second PUT no-ops. The `log/<seq>` create also uses
+   * `If-None-Match: "*"`, so two writers racing the same tail cause
+   * exactly one create to win; the loser re-probes forward and retries
+   * at the next empty slot.
    *
    * @throws BaerlyError code="Conflict" when the retry budget is
-   *   exhausted (genuine high-contention case), or when the underlying
-   *   `current.json` CAS PUT lost.
+   *   exhausted (genuine high-contention case).
    * @throws BaerlyError code="Conflict" — the writer fence
    *   (`current.json.writer_fence.epoch`) was bumped by a concurrent
-   *   `claimWriter` call between this commit's read of
-   *   `current.json` and its CAS-advance. The stale writer aborts
-   *   to honour the new authority — the kernel does NOT retry under
-   *   the old epoch. See {@link claimWriter} for the rotation
-   *   recipe.
+   *   `claimWriter` call between this commit's read of `current.json`
+   *   and the log create. The stale writer aborts to honour the new
+   *   authority — the kernel does NOT retry under the old epoch. See
+   *   {@link claimWriter} for the rotation recipe.
    * @throws BaerlyError code="Internal" when a log entry expected in
    *   `[0, tail_hint)` is missing — a protocol-invariant violation
    *   (compactor bug or stale `current.json`).
@@ -321,13 +319,7 @@ export class Writer {
     for (let attempt = 1; attempt <= this.#maxRetries; attempt++) {
       let success: SingleAttemptSuccess;
       try {
-        success = await this.#singleAttemptCommit(
-          [input],
-          session,
-          logPrefix,
-          "Writer",
-          /* adoptOwnSessionOnLogConflict */ true,
-        );
+        success = await this.#singleAttemptCommit([input], session, logPrefix, "Writer");
       } catch (error) {
         // Only retryable conflicts (storage 412 on log PUT or
         // current.json CAS) come back as `Conflict`. The fence-bump
@@ -364,31 +356,29 @@ export class Writer {
 
   /**
    * One full commit attempt — the body of {@link commit}. Reads
-   * `current.json`, walks the log, mints the entry for the single
-   * input, PUTs content + indexes in parallel, PUTs the log entry,
-   * CAS-advances `current.json`. Returns the success payload + the
-   * pre-commit fence epoch so the caller can run
-   * {@link #verifyFenceUnchanged} outside the retry-catch arm.
+   * `current.json`, emits content + indexes in parallel, then
+   * forward-probes the tail and creates `log/<seq>` once via
+   * `If-None-Match: "*"` — the numbered log create IS the commit
+   * (single-write commit; no `current.json` CAS follows it). Returns
+   * the success payload + the pre-commit fence epoch so the caller can
+   * run {@link #verifyFenceUnchanged} outside the retry-catch arm.
    *
-   * Called only as `#singleAttemptCommit([input], …)`: the array
-   * shape is retained dead-generality (the genuine single-input
-   * unroll is the deferred follow-up tracked as D1.5), but every
-   * call mints exactly one entry and advances `tail_hint` by 1.
+   * Called only as `#singleAttemptCommit([input], …)`: the array shape
+   * is retained dead-generality (D1.5), but every call commits exactly
+   * one entry.
    *
-   * Retryable failures (a peer wrote our seq; a peer won the CAS on
-   * `current.json`) throw `BaerlyError{code:"Conflict"}`. The caller
-   * ({@link commit}) catches via {@link isPreconditionFailed} and
-   * retries. Fence-bump and protocol-invariant violations are NOT
-   * thrown from this helper — the fence check lives in the caller so
-   * its `Conflict` propagates past the retry-catch arm. Other thrown
-   * `BaerlyError`s (Internal, InvalidResponse, NetworkError) bypass
-   * `isPreconditionFailed` and propagate naturally.
+   * A log-create 412 is disambiguated by session read-back: own session
+   * / own seq ⇒ our crashed-or-lost-ack commit is already durable ⇒
+   * adopt; foreign session ⇒ re-probe forward and retry at the next
+   * empty slot. Fence-bump + protocol-invariant violations are NOT
+   * thrown from here (the fence check lives in the caller). Other thrown
+   * `BaerlyError`s (Internal, InvalidResponse, NetworkError) propagate.
    *
-   * Crash safety invariant: content / index PUTs are awaited before
-   * log PUTs, which are awaited before the CAS. A crashed mid-attempt
-   * writer leaves orphan content / index entries (no log entry
-   * references them) — the compactor sweeps the orphans. The
-   * inverse — orphan log entry with missing content — is never
+   * Crash safety invariant: content / index PUTs are awaited before the
+   * log create. A crash before the create leaves orphan content / index
+   * entries (no log entry references them) — the compactor sweeps them.
+   * A crash AFTER the create is a durable, committed write at `seq`. The
+   * inverse — committed log entry with missing content — is never
    * produced.
    */
   async #singleAttemptCommit(
@@ -396,7 +386,6 @@ export class Writer {
     session: string,
     logPrefix: string,
     errorPrefix: string,
-    adoptOwnSessionOnLogConflict: boolean,
   ): Promise<SingleAttemptSuccess> {
     // ── Step 1. Read current.json (fresh; carries the ETag). ────────
     // On a fresh bucket / fresh collection the manifest doesn't exist
@@ -424,35 +413,45 @@ export class Writer {
       await this.#walkLog(logPrefix, logSeqStartOf(current), current.tail_hint);
     }
 
-    // ── Step 3. Mint N LogEntries with contiguous seqs. ─────────────
+    // ── Step 3. Find the true tail (Class B forward-probe), then mint. ─
+    // `tail_hint` is a non-authoritative lower bound (the writer no
+    // longer advances it — only the compactor stamps it durably). The
+    // forward-probe discovers the first empty seq >= the floor: the slot
+    // this commit will create. Floor at `max(log_seq_start, tail_hint)`
+    // so a compactor that advanced `log_seq_start` past a stale
+    // `tail_hint` doesn't make us re-walk folded-but-unswept entries.
+    // Bind to a local (oxlint `no-await-expression-member`).
+    const probeFloor = Math.max(logSeqStartOf(current), current.tail_hint);
+    // `findLogTail`'s density precondition holds: the floor sits in the
+    // dense prefix because the compactor (sole `tail_hint` advancer) probes
+    // LINEARLY and the writer never stamps `tail_hint`, so nothing advances
+    // the floor past a hole.
+    const preCommitTail = await findLogTail(this.#storage, logPrefix, probeFloor);
+    let seq = preCommitTail;
+
     // All entries share `session` (one session per logical commit) and
     // a single commit instant: `lsn`'s timestamp and `commit_ts` are
     // derived from ONE clock read so they can't drift apart under skew
     // (a reader validates `commit_ts` against `LAG_WINDOW_MILLIS`, and
-    // two independent reads could straddle that band). Intra-batch
-    // ordering is by `seq` (the `countKey` lsn suffix), not the shared
-    // timestamp, so one instant for the whole batch is correct.
+    // two independent reads could straddle that band). The LSN's
+    // `countKey(seq)` suffix MUST track the probed seq — it's compared on
+    // adoption, so a stale suffix would misfire the disambiguation.
     const commitNowMs = Date.now();
     const commitTs = new Date(commitNowMs).toISOString();
     const lsnTimestamp = timestamp(commitNowMs);
-    const entries: LogEntry[] = [];
-    for (let i = 0; i < inputs.length; i++) {
-      const input = inputs[i]!;
-      const seq = current.tail_hint + i;
-      const lsn = `${lsnTimestamp}_${session}_${countKey(seq)}`;
-      const entry: LogEntry = {
-        lsn,
-        commit_ts: commitTs,
-        op: input.op,
-        collection: input.collection,
-        doc_id: input.docId,
-        session,
-        seq,
-        ...(input.op !== "D" && input.body !== undefined ? { after: input.body } : {}),
-        ...(input.origin !== undefined ? { origin: input.origin } : {}),
-      };
-      entries.push(entry);
-    }
+    const input0 = inputs[0]!;
+    const mintEntry = (atSeq: number): LogEntry => ({
+      lsn: `${lsnTimestamp}_${session}_${countKey(atSeq)}`,
+      commit_ts: commitTs,
+      op: input0.op,
+      collection: input0.collection,
+      doc_id: input0.docId,
+      session,
+      seq: atSeq,
+      ...(input0.op !== "D" && input0.body !== undefined ? { after: input0.body } : {}),
+      ...(input0.origin !== undefined ? { origin: input0.origin } : {}),
+    });
+    let entry = mintEntry(seq);
 
     // ── Step 4. PUT content bodies + index entries in parallel. ─────
     // Content PUT: `ifNoneMatch: "*"` makes a same-hash re-write a
@@ -519,7 +518,7 @@ export class Writer {
         } else if (input.op === "U") {
           const preImage = inBatchImage.has(input.docId)
             ? inBatchImage.get(input.docId)
-            : await this.#readPreImage(logPrefix, input.collection, input.docId, current.tail_hint);
+            : await this.#readPreImage(logPrefix, input.collection, input.docId, seq);
           const oldKeys = allIndexKeysFor(logPrefix, this.#indexes, preImage, input.docId);
           newKeys = allIndexKeysFor(logPrefix, this.#indexes, input.body, input.docId);
           const newSet = new Set(newKeys);
@@ -527,7 +526,7 @@ export class Writer {
         } else {
           const preImage = inBatchImage.has(input.docId)
             ? inBatchImage.get(input.docId)
-            : await this.#readPreImage(logPrefix, input.collection, input.docId, current.tail_hint);
+            : await this.#readPreImage(logPrefix, input.collection, input.docId, seq);
           staleKeys = allIndexKeysFor(logPrefix, this.#indexes, preImage, input.docId);
         }
         for (const k of newKeys) {
@@ -561,148 +560,94 @@ export class Writer {
     }
     await Promise.all(parallelPuts);
 
-    // ── Step 5. PUT log entries. ────────────────────────────────────
-    // `ifNoneMatch: "*"` per entry. On 412 we bump the counter and
-    // record the rejection; the disposition (adopt vs surface) is
-    // computed below from the aggregated results.
+    // ── Step 5. Create the commit: PUT log/<seq> via If-None-Match. ─
+    // The numbered log create IS the commit (single-write commit). No
+    // `current.json` CAS follows it — the create is the linearization
+    // point (exactly-one-winner, CI-gated across all backends).
     //
-    // Two cases on 412:
-    //   (a) a peer wrote a DIFFERENT entry at the same seq — we lost
-    //       the race; the caller's CAS will also fail.
-    //   (b) (single-input commit only) our OWN previous attempt
-    //       landed step 5 but lost step 6, and we're now re-driving
-    //       the same logical commit. Adopt it and proceed to CAS so
-    //       the advance gets a chance to commit.
-    //
-    // We discriminate by `session`: the random per-call id uniquely
-    // identifies "our own previous attempt." Adoption is only safe
-    // when there's exactly one entry to compare — always true now that
-    // `commit` (N=1) is the sole caller. The non-adopting path
-    // (`adoptOwnSessionOnLogConflict: false`) is currently unreached; it
-    // surfaced log-PUT 412s as `Conflict` for the removed batch commit.
-    type LogPutOutcome = { readonly ok: true } | { readonly ok: false };
-    const logPutOne = async (entry: LogEntry): Promise<LogPutOutcome> => {
-      const logEntryKey = logObjectKey(logPrefix, entry.seq);
+    // 200 ⇒ committed at `seq`. 412 ⇒ disambiguate by session read-back:
+    //   - own session / own seq ⇒ our crashed-or-lost-ack commit is
+    //     already durable at `seq` ⇒ adopt + return (no further writes).
+    //   - foreign session / wrong seq ⇒ re-probe forward and retry at the
+    //     new first-empty slot (bounded by LOG_FORWARD_PROBE_CAP).
+    // A transient NetworkError (e.g. a dropped ack on a create that may
+    // already have landed) retries the SAME `seq`: the retry either
+    // re-creates (write never landed) or hits the durable write → 412 →
+    // own-session adoption. Either way the write lands at EXACTLY `seq`,
+    // never duplicated.
+    let committedEntry: LogEntry = entry;
+    let probes = 0;
+    let transientRetries = 0;
+    for (;;) {
+      const logEntryKey = logObjectKey(logPrefix, seq);
       assertKeyWithinLimit(logEntryKey);
-      const logBytes = encodeJsonBytes(entry);
+      let conflicted = false;
       try {
-        await this.#storage.put(logEntryKey, logBytes, {
+        await this.#storage.put(logEntryKey, encodeJsonBytes(entry), {
           ifNoneMatch: "*",
           contentType: APPLICATION_JSON,
         });
-        return { ok: true };
       } catch (error) {
         this.#observe429(error, entry.collection);
-        if (!isPreconditionFailed(error)) {
+        if (isPreconditionFailed(error)) {
+          ctxMetrics().counter("db.r2.put.412_total", 1, {
+            collection: entry.collection,
+            step: "log-put",
+          });
+          conflicted = true;
+        } else if (isTransientWrite(error) && transientRetries < this.#maxRetries) {
+          // Possible lost-ack — retry the same seq (idempotent: adoption
+          // closes the double-commit window). Bounded so a persistent
+          // NetworkError still surfaces.
+          transientRetries++;
+          continue;
+        } else {
           throw error;
         }
-        ctxMetrics().counter("db.r2.put.412_total", 1, {
-          collection: entry.collection,
-          step: "log-put",
-        });
-        return { ok: false };
       }
-    };
-    const logPutResults = await Promise.all(entries.map(logPutOne));
-    let committedEntries: readonly LogEntry[] = entries;
-    const firstConflictIdx = logPutResults.findIndex((r) => !r.ok);
-    if (firstConflictIdx !== -1) {
-      const conflictedEntry = entries[firstConflictIdx]!;
-      const logEntryKey = logObjectKey(logPrefix, conflictedEntry.seq);
-      if (adoptOwnSessionOnLogConflict) {
-        const existing = await readLogEntry(this.#storage, logEntryKey);
-        const decision = tryAdoptOwnSessionLogEntry({
-          self: conflictedEntry,
-          existing,
-          batchSize: inputs.length,
-        });
-        if (decision.adopt) {
-          committedEntries = [decision.entry];
-        } else {
-          throw new BaerlyError(
-            "Conflict",
-            `${errorPrefix}: log entry already exists at ${logEntryKey}; ${decision.reason}`,
-          );
-        }
-      } else {
+      if (!conflicted) {
+        committedEntry = entry;
+        break;
+      }
+      // 412 — read back the occupant and decide.
+      const existing = await readLogEntry(this.#storage, logEntryKey);
+      const decision = tryAdoptOwnSessionLogEntry({
+        self: entry,
+        existing,
+        batchSize: inputs.length,
+      });
+      if (decision.adopt) {
+        // Own crashed/lost-ack commit already durable at `seq`. Adopt it
+        // (byte-identical modulo commit_ts) and return success — the
+        // logical write lands at EXACTLY `seq`, never duplicated.
+        committedEntry = decision.entry;
+        break;
+      }
+      // Foreign session (or wrong seq) — re-probe forward from seq+1 and
+      // retry at the new first-empty slot, re-minting seq + LSN.
+      if (++probes > LOG_FORWARD_PROBE_CAP) {
         throw new BaerlyError(
-          "Conflict",
-          `${errorPrefix}: log entry already exists at ${logEntryKey}; peer wrote our seq`,
+          "Internal",
+          `${errorPrefix}: log-tail forward-probe exceeded ${LOG_FORWARD_PROBE_CAP} on ${this.#currentJsonKey}`,
         );
       }
+      seq = await findLogTail(this.#storage, logPrefix, seq + 1);
+      entry = mintEntry(seq);
     }
+    const committedEntries: readonly LogEntry[] = [committedEntry];
 
-    // ── Step 6. CAS-advance current.json with If-Match. ─────────────
-    // Bind to `baseEtag` from step 1 — re-reading would risk advancing
-    // `tail_hint` past a seq we never wrote a log entry for.
-    //
-    // Accumulate `tail_bytes` EXACTLY. The compactor later subtracts the
-    // bytes of the log objects it folds, summed from the fetched object
-    // bodies — i.e. exactly what the writer PUT per entry
-    // (`encodeJsonBytes(entry)` in `logPutOne`). Counting the writer-add
-    // and the compactor-subtract over the identical bytes keeps
-    // `tail_bytes` exact under the full-fence CAS. Sum over
-    // `committedEntries` (the source of truth for what's actually in the
-    // tail — `entries` normally, or the single adopted entry on the
-    // own-session-adoption path), NOT `inputs`.
-    const batchLogBytes = committedEntries.reduce(
-      (sum, e) => sum + encodeJsonBytes(e).byteLength,
-      0,
-    );
-    const next: CurrentJson = {
-      ...current,
-      tail_hint: current.tail_hint + inputs.length,
-      tail_bytes: current.tail_bytes + batchLogBytes,
-    };
-    // Cadence-invariant assert (cheap, load-bearing). The GC write-tick
-    // cadence keys off `tail_hint` advancing by exactly the number of log
-    // entries written. Today one input ⇒ one log entry, so `tail_hint`
-    // advances by `inputs.length` and `committedEntries.length ===
-    // inputs.length` (the adoption path adopts the single in-flight
-    // entry of a 1-input commit, preserving the identity). Pin it so a
-    // future change that makes one input emit ≠1 entries fails LOUD here
-    // instead of silently skewing the GC cadence.
-    if (next.tail_hint - current.tail_hint !== inputs.length) {
-      throw new BaerlyError(
-        "Internal",
-        `${errorPrefix}: GC-cadence invariant violated — tail_hint advanced by ${
-          next.tail_hint - current.tail_hint
-        } but ${inputs.length} input(s) were committed on ${this.#currentJsonKey}`,
-      );
-    }
-    const nextBody = encodeJsonBytes(next);
-    const putOpts: StoragePutOptions = {
-      ifMatch: baseEtag,
-      contentType: APPLICATION_JSON,
-    };
-    let result: StoragePutResult;
-    assertKeyWithinLimit(this.#currentJsonKey);
-    try {
-      result = await this.#storage.put(this.#currentJsonKey, nextBody, putOpts);
-    } catch (error) {
-      this.#observe429(error, inputs[0]!.collection);
-      if (isPreconditionFailed(error)) {
-        ctxMetrics().counter("db.r2.put.412_total", 1, {
-          collection: inputs[0]!.collection,
-          step: "current-json-cas",
-        });
-        throw new BaerlyError(
-          "Conflict",
-          `${errorPrefix}: CAS conflict on ${this.#currentJsonKey}`,
-        );
-      }
-      throw error;
-    }
+    // ── Step 6. (removed). No current.json write on the commit path. ─
+    // The numbered log create above IS the commit. `tail_hint` is
+    // refreshed durably only by the compactor; the writer never advances
+    // it. `tail_bytes` is dead post-single-write-commit (the trigger
+    // below reads the derived estimate, not the stored field).
 
     // ── Step 6b. Write-tick maintenance dispatch. ───────────────────
     // Single funnel site: write-tick maintenance dispatch. Reached by
-    // `commit()` exactly once per logical commit (a CAS retry re-enters
-    // this helper and dispatches once per successful attempt — but a
-    // successful CAS ends the retry loop, so a logical commit
-    // dispatches once). Sits
-    // BEFORE the caller's `#verifyFenceUnchanged` — a write that then
-    // fails its fence check may have paid for one bounded maintenance
-    // pass; that's the intended single funnel, bounded and safe.
+    // `commit()` exactly once per logical commit. Sits BEFORE the
+    // caller's `#verifyFenceUnchanged` — a write that then fails its
+    // fence check may have paid for one bounded maintenance pass; that's
+    // the intended single funnel, bounded and safe.
     //
     // Config rides the per-request observability context
     // (`getCurrentContext()?.maintenance`), set by the adapter — NOT the
@@ -710,7 +655,16 @@ export class Writer {
     // CF-free-safe caps, so a bare `Db.create(...).collection(...)
     // .insert(...)` maintains inline by default once enough writes
     // accrue.
-    const prevSeq = current.tail_hint; // pre-CAS seq, already in scope
+    //
+    // `prevSeq` is the pre-commit tail (`preCommitTail`); the slot we won
+    // is `seq` (== prevSeq unless a forward re-probe moved it past a
+    // foreign winner), so the boundary check spans `(prevSeq,
+    // observedTail]`. `observedTail = seq+1` is a fresh in-memory lower
+    // bound on the true tail: winning `log/<seq>` means `[tail_hint, seq)`
+    // were observed occupied, so `seq+1 ≤ true tail`. We pass `current`
+    // (the Step-1 read) for the snapshot fields — there is no `next`.
+    const prevSeq = preCommitTail;
+    const observedTail = seq + 1;
     const maint = getCurrentContext()?.maintenance;
     if (maint?.disabled !== true) {
       // Same absent-context default as runBoundedMaintenance's
@@ -719,10 +673,7 @@ export class Writer {
       // profile) so the pre-fire cadence can't diverge from the fold's.
       const gcInterval =
         maint?.options?.profile?.gcInterval ?? MAINTENANCE_PROFILE_CF_FREE.gcInterval;
-      // `observedTail` = the post-CAS `tail_hint` (== true tail under the
-      // two-write commit). Phase 4 swaps this for the writer's in-memory
-      // observed tail once `tail_bytes` is gone.
-      if (shouldFireMaintenance(next, prevSeq, gcInterval, next.tail_hint)) {
+      if (shouldFireMaintenance(current, prevSeq, gcInterval, observedTail)) {
         const dispatch = maint?.dispatch ?? dispatchInlineAwaited;
         // `await dispatch(...)`: `dispatchInlineAwaited` returns the
         // task's promise (awaited inline — deterministic for tests +
@@ -738,6 +689,11 @@ export class Writer {
               storage: this.#storage,
               currentJsonKey: this.#currentJsonKey,
               prevSeq,
+              // Thread the in-memory observed tail so the runner's Gate-1
+              // ratio + GC cadence key off the true tail without an
+              // O(gap) re-probe (the stored `tail_hint` is only a lower
+              // bound under single-write commit).
+              observedTail,
               // `disabled` is intentionally NOT forwarded: the outer
               // `maint?.disabled !== true` gate already guarantees we only
               // reach here when maintenance is enabled, so passing it would
@@ -762,13 +718,16 @@ export class Writer {
     // from inside, while the fence-bump throw propagates.
 
     // Base class-A op count for this attempt: content PUTs (skipping
-    // `op:"D"`) + log PUTs (= N) + index PUTs + index DELETEs + 1
-    // current.json CAS. The fence-verify GET is Class B and excluded.
-    // The caller of `commit()` adds `(attempt - 1)` for retry cost.
-    const classAOps = contentPutCount + entries.length + indexClassA + 1;
+    // `op:"D"`) + the single log create + index PUTs + index DELETEs.
+    // No current.json CAS anymore. Forward-probe GETs are Class B and
+    // excluded. The caller of `commit()` adds `(attempt - 1)` for retry
+    // cost.
+    const classAOps = contentPutCount + 1 + indexClassA;
     return {
       entries: committedEntries,
-      currentEtag: result.etag,
+      // No current.json write on the commit path — return the manifest
+      // etag read in Step 1 (still a valid etag of the current manifest).
+      currentEtag: baseEtag,
       classAOps,
       expectedEpoch,
     };
@@ -987,6 +946,15 @@ export class Writer {
  */
 const isPreconditionFailed = (err: unknown): boolean =>
   err instanceof BaerlyError && err.code === "Conflict";
+
+/**
+ * `true` when a log-create PUT failed transiently (a `NetworkError`) —
+ * the write may or may not have landed (a dropped ack). Safe to retry
+ * the SAME seq: own-session adoption closes the double-commit window if
+ * it did land. NOT a 412 (that's handled by adoption directly).
+ */
+const isTransientWrite = (err: unknown): boolean =>
+  err instanceof BaerlyError && err.code === "NetworkError";
 
 /**
  * `true` when the underlying storage surfaced an R2 prefix-partition

@@ -355,16 +355,19 @@ describe("Query.delete", () => {
 // ---------------------------------------------------------------------
 
 /**
- * `MemoryStorage` subclass that injects CAS failures on the
- * collection's `current.json` to exercise the writer's internal
- * retry loop from the verb-call surface. Mirrors the pattern in
- * `writer.test.ts`. Kept local to this file — not exported.
+ * `MemoryStorage` subclass that injects single-write-commit contention
+ * on the collection's `log/<seq>` create — the new linearization point.
+ * `failNextNLogCreates` plants a FOREIGN-session occupant at the
+ * contended seq then 412s, forcing the writer's forward-probe to climb
+ * to the next empty slot. `bumpFenceOnNextLogCreate` simulates a
+ * concurrent `claimWriter` that lands between this writer's read and its
+ * create, so the post-create fence-verify surfaces `Conflict`. Kept
+ * local to this file — not exported.
  */
 class InstrumentedStorage extends MemoryStorage {
-  failNextNCas = 0;
-  failEveryCas = false;
-  casAttempts = 0;
-  /** The `current.json` key this instance is configured to police. */
+  failNextNLogCreates = 0;
+  bumpFenceOnNextLogCreate = false;
+  logCreates = 0;
   watchedKey = currentJsonKey();
 
   override async put(
@@ -372,55 +375,67 @@ class InstrumentedStorage extends MemoryStorage {
     body: Uint8Array,
     opts?: StoragePutOptions,
   ): Promise<StoragePutResult> {
-    if (key === this.watchedKey && opts?.ifMatch !== undefined) {
-      this.casAttempts += 1;
-      if (this.failEveryCas) {
-        throw new BaerlyError("Conflict", `simulated CAS 412 on ${key}: precondition failed`);
-      }
-      if (this.failNextNCas > 0) {
-        this.failNextNCas -= 1;
-        throw new BaerlyError("Conflict", `simulated CAS 412 on ${key}: precondition failed`);
+    const isLogCreate = /\/log\/\d+\.json$/.test(key) && opts?.ifNoneMatch !== undefined;
+    if (isLogCreate && this.failNextNLogCreates > 0) {
+      this.failNextNLogCreates -= 1;
+      this.logCreates += 1;
+      // Plant a foreign occupant at our seq, then 412 — the writer reads
+      // it back, sees a foreign session, and re-probes forward.
+      const foreign = JSON.parse(new TextDecoder().decode(body)) as Record<string, unknown>;
+      foreign["session"] = "INTRUDR0";
+      await super.put(key, new TextEncoder().encode(JSON.stringify(foreign)), opts);
+      throw new BaerlyError("Conflict", `simulated 412 on ${key}: precondition failed`);
+    }
+    if (isLogCreate && this.bumpFenceOnNextLogCreate) {
+      this.bumpFenceOnNextLogCreate = false;
+      // Bump the writer fence under the current.json key BEFORE the log
+      // create lands, so the writer's post-create fence-verify sees a
+      // newer epoch and surfaces Conflict (the stale writer aborts).
+      const cur = await super.get(this.watchedKey);
+      if (cur !== null) {
+        const decoded = JSON.parse(new TextDecoder().decode(cur.body)) as Record<string, unknown>;
+        const fence = decoded["writer_fence"] as { epoch: number };
+        decoded["writer_fence"] = { ...fence, epoch: fence.epoch + 1, owner: "intruder" };
+        await super.put(this.watchedKey, new TextEncoder().encode(JSON.stringify(decoded)));
       }
     }
     return super.put(key, body, opts);
   }
 }
 
-describe("Per-row CAS semantics (internal retries inside Writer)", () => {
-  test("forced CAS contention within budget: mutation eventually lands", async () => {
+describe("Per-row contention semantics (internal forward-probe inside Writer)", () => {
+  test("forced log-create contention within budget: mutation eventually lands", async () => {
     const storage = new InstrumentedStorage();
     await provision(storage);
     const db = Db.create({ storage, app: APP, tenant: TENANT });
     const t = db.collection(COLL) as Collection<TicketDoc>;
 
-    // First commit (`I` op) has no CAS pressure injected so the
-    // seed doc is set up cleanly. Then arm two failures so the
-    // next `commit()` (the update) must retry twice and succeed
-    // on attempt 3 — well under the 8-attempt budget. The verb
-    // itself does NOT loop; Writer does internally.
+    // First commit (`I` op) has no contention so the seed doc is set up
+    // cleanly. Then arm two foreign occupants so the next `commit()` (the
+    // update) re-probes forward twice and lands at a higher slot — all
+    // WITHIN one attempt. The verb itself does NOT loop; the writer's
+    // forward-probe loop is internal to #singleAttemptCommit.
     await t.insert({ _id: "x", title: "v0", status: "open" });
-    const insertAttempts = storage.casAttempts;
-    storage.failNextNCas = 2;
+    storage.failNextNLogCreates = 2;
     const result = await t.update("x", { title: "v1" });
     expect(result).toEqual({ modified: 1 });
-    expect(storage.casAttempts).toBe(insertAttempts + 3); // 2 fails + 1 win
+    expect(storage.logCreates).toBe(2); // two foreign occupants, then a win
     const after = await t.get("x");
     expect(after).toEqual({ _id: "x", title: "v1", status: "open" });
   });
 
-  test("budget-exhausted CAS contention: verb surfaces Conflict without double-looping", async () => {
+  test("fence bump mid-commit: verb surfaces Conflict without double-looping", async () => {
     const storage = new InstrumentedStorage();
     await provision(storage);
     const db = Db.create({ storage, app: APP, tenant: TENANT });
     const t = db.collection(COLL) as Collection<TicketDoc>;
-    // Seed cleanly (no CAS pressure on the I).
+    // Seed cleanly.
     await t.insert({ _id: "loser", title: "v0", status: "open" });
-    const baseAttempts = storage.casAttempts;
-    // Every subsequent CAS fails — the writer's 8-attempt budget will
-    // be exhausted on the update and the verb must surface Conflict.
-    // CRITICAL: the verb must NOT loop again; total CAS attempts on
-    // the update equals exactly the writer's budget (8).
-    storage.failEveryCas = true;
+    // A concurrent claimWriter bumps the fence between the update's read
+    // and its create; the post-create fence-verify surfaces Conflict. The
+    // writer does NOT retry under the old epoch (stale writer aborts), and
+    // the verb does NOT add its own retry layer.
+    storage.bumpFenceOnNextLogCreate = true;
     let thrown: unknown;
     try {
       await t.update("loser", { title: "v1" });
@@ -429,8 +444,5 @@ describe("Per-row CAS semantics (internal retries inside Writer)", () => {
     }
     expect(thrown).toBeInstanceOf(BaerlyError);
     expect((thrown as BaerlyError).code).toBe("Conflict");
-    // The writer's default retry budget is 8 attempts; the verb
-    // itself does NOT add another layer.
-    expect(storage.casAttempts - baseAttempts).toBe(8);
   });
 });

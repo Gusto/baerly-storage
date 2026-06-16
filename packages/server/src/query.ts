@@ -631,11 +631,16 @@ const runRead = async <T extends DocumentData>(
       : await loadSnapshotAsMap(ctx.storage, head.json.snapshot, ctx.collectionName);
 
   // ── Step 2. Strict walk [log_seq_start, tail_hint) + tolerant ──────
-  // forward-probe [tail_hint, tail). Strict range is dense (a hole is
-  // corruption → `walkLogRange` THROWS); the probe stops at the first
-  // 404 and its entries fold through the SAME path as the strict walk.
+  // forward-probe [max(log_seq_start, tail_hint), tail). Strict range is
+  // dense (a hole is corruption → `walkLogRange` THROWS); the probe
+  // stops at the first 404 and its entries fold through the SAME path as
+  // the strict walk. The probe floor is `max(log_seq_start, tail_hint)`:
+  // under single-write commit `tail_hint` is only a lower bound, so a
+  // compactor that advanced `log_seq_start` past a stale `tail_hint`
+  // must NOT have its folded entries re-read by the probe.
+  const probeFrom = Math.max(logSeqStart, hint);
   const entries = await walkLogRange(ctx.storage, ctx.collectionPrefix, logSeqStart, hint);
-  const probe = await probeTailFrom(ctx.storage, ctx.collectionPrefix, hint);
+  const probe = await probeTailFrom(ctx.storage, ctx.collectionPrefix, probeFrom);
   const tail = probe.tail;
 
   // ── Step 3. Fold per doc_id, seeded from the snapshot. ────────────
@@ -886,10 +891,11 @@ const runIndexWalkPlan = async <T extends DocumentData>(
   }
   // Discover the true tail once (probe runs even with no matches so
   // the manifest pointer still reflects it). Strict range stays
-  // `[log_seq_start, tail_hint)`; the probe folds `[tail_hint, tail)`.
+  // `[log_seq_start, tail_hint)`; the probe folds `[max(log_seq_start,
+  // tail_hint), tail)` — see the floor rationale in `runRead`.
   const logSeqStart = logSeqStartOf(head);
   const hint = head.tail_hint;
-  const probe = await probeTailFrom(ctx.storage, ctx.collectionPrefix, hint);
+  const probe = await probeTailFrom(ctx.storage, ctx.collectionPrefix, Math.max(logSeqStart, hint));
   const tail = probe.tail;
 
   const docIds = Array.from(docIdSet);

@@ -51,6 +51,7 @@ import {
   encodeJsonBytes,
   readCurrentJson,
 } from "@baerly/protocol";
+import { probeTailFrom } from "@baerly/server";
 import { Writer } from "@baerly/server/_internal/testing";
 import { parseBucketUri } from "../bucket-uri.ts";
 import { emitSuccess } from "../output.ts";
@@ -105,6 +106,7 @@ const bundle = defineBaerlySubcommand({
     assertCollectionArg(args.collection, "baerly admin restore");
     const currentJsonKey = `${bucket.keyPrefix}app/${app}/tenant/${tenant}/manifests/${args.collection}/current.json`;
 
+    let baseSeq = 0;
     const head = await readCurrentJson(bucket.storage, currentJsonKey);
     if (head !== null && args.force !== true) {
       throw new BaerlyError(
@@ -125,8 +127,14 @@ const bundle = defineBaerlySubcommand({
       // `tail_hint` and `log_seq_start` past the old data so new
       // commits land at fresh sequence numbers and the old log files
       // become unreferenced orphans (the compactor / GC sweep them on
-      // the next maintenance pass).
-      const truncatedNext = head.json.tail_hint;
+      // the next maintenance pass). Under single-write commit
+      // `tail_hint` is only a lower bound, so probe the TRUE old tail —
+      // `log_seq_start` must sit ABOVE every old entry or the probe-based
+      // reader would fold stale rows from the prior generation.
+      const collectionPrefix = currentJsonKey.slice(0, currentJsonKey.lastIndexOf("/"));
+      const oldTail = await probeTailFrom(bucket.storage, collectionPrefix, head.json.tail_hint);
+      const truncatedNext = oldTail.tail;
+      baseSeq = truncatedNext;
       const reseeded: CurrentJson = {
         schema_version: CURRENT_JSON_SCHEMA_VERSION,
         snapshot: null,
@@ -214,6 +222,22 @@ const bundle = defineBaerlySubcommand({
         body,
       });
       count++;
+    }
+    // Stamp the final `tail_hint` durably. Under single-write commit the
+    // writer never advances the hint (it's compactor-advanced) — but a
+    // bulk restore knows exactly how many rows it wrote, so it stamps the
+    // true tail (`baseSeq + count`) under If-Match so the restored bucket
+    // reads efficiently without a forward-probe. A concurrent writer
+    // between our last commit and this stamp surfaces Conflict (exit 3).
+    if (count > 0) {
+      const afterLoad = await readCurrentJson(bucket.storage, currentJsonKey);
+      if (afterLoad !== null) {
+        const stamped: CurrentJson = { ...afterLoad.json, tail_hint: baseSeq + count };
+        await bucket.storage.put(currentJsonKey, encodeJsonBytes(stamped), {
+          ifMatch: afterLoad.etag,
+          contentType: "application/json",
+        });
+      }
     }
     emitSuccess({
       command: "admin.restore",

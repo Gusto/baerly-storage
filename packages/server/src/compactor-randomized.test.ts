@@ -11,6 +11,7 @@ import {
 } from "@baerly/protocol";
 import { compact } from "./compactor.ts";
 import { foldLogEntriesOnto, walkLogRange } from "./log-walk.ts";
+import { probeTailFrom } from "./log-tail.ts";
 import { loadSnapshotAsMap } from "./snapshot.ts";
 import { Writer } from "./writer.ts";
 
@@ -59,13 +60,15 @@ const reconstructView = async (storage: MemoryStorage): Promise<Map<string, Docu
     read.json.snapshot === null
       ? new Map<string, DocumentData>()
       : await loadSnapshotAsMap(storage, read.json.snapshot, COLLECTION);
-  const tail = await walkLogRange(
-    storage,
-    LOG_PREFIX,
-    logSeqStartOf(read.json),
-    read.json.tail_hint,
-  );
+  // Strict dense walk [log_seq_start, tail_hint) + tolerant forward-probe
+  // [max(log_seq_start, tail_hint), tail) — `tail_hint` is only a lower
+  // bound under single-write commit.
+  const logSeqStart = logSeqStartOf(read.json);
+  const hint = read.json.tail_hint;
+  const tail = await walkLogRange(storage, LOG_PREFIX, logSeqStart, hint);
   foldLogEntriesOnto(base, tail, { collection: COLLECTION });
+  const probe = await probeTailFrom(storage, LOG_PREFIX, Math.max(logSeqStart, hint));
+  foldLogEntriesOnto(base, probe.entries, { collection: COLLECTION });
   return base;
 };
 

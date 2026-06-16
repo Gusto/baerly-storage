@@ -35,27 +35,32 @@ describe("ensureTable", () => {
 
   test("preserves an existing manifest's state across re-entry", async () => {
     const storage = new MemoryStorage();
+    const key = keyFor("helpdesk", "acme", "tickets");
     await ensureTable(storage, { app: "helpdesk", tenant: "acme", table: "tickets" });
 
-    // Commit one mutation to advance tail_hint.
-    const writer = new Writer({
-      storage,
-      currentJsonKey: keyFor("helpdesk", "acme", "tickets"),
-    });
+    // Commit one mutation. Under single-write commit this lands log/0 but
+    // does NOT advance the stored tail_hint (compactor-only). Advance the
+    // manifest's log_seq_start directly to simulate a compactor fold so
+    // we can prove ensureTable's re-entry preserves an ADVANCED manifest.
+    const writer = new Writer({ storage, currentJsonKey: key });
     await writer.commit({
       op: "I",
       collection: "tickets",
       docId: "t1",
       body: { _id: "t1", title: "first" },
     });
+    const { casUpdateCurrentJson } = await import("@baerly/protocol");
+    await casUpdateCurrentJson(storage, key, (c) => ({ ...c, tail_hint: 1, log_seq_start: 1 }));
 
-    const before = await readCurrentJson(storage, keyFor("helpdesk", "acme", "tickets"));
+    const before = await readCurrentJson(storage, key);
     expect(before?.json.tail_hint).toBe(1);
+    expect(before?.json.log_seq_start).toBe(1);
 
     // Re-entry must not overwrite the advanced manifest.
     await ensureTable(storage, { app: "helpdesk", tenant: "acme", table: "tickets" });
-    const after = await readCurrentJson(storage, keyFor("helpdesk", "acme", "tickets"));
+    const after = await readCurrentJson(storage, key);
     expect(after?.json.tail_hint).toBe(1);
+    expect(after?.json.log_seq_start).toBe(1);
   });
 
   test("Writer.commit succeeds end-to-end after ensureTable", async () => {

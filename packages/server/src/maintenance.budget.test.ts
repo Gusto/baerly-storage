@@ -111,11 +111,20 @@ describe("CLOUDFLARE_FREE_TIER budget", () => {
 
   test("compact-only tick stays at or below 50 storage ops", async () => {
     // Even-minute branch of the scheduled handler: compact alone.
-    // Budget math: 1 GET current + N GETs log (N = maxEntriesPerRun
-    // = 20) + 1 PUT snapshot + 1 PUT current = 23. (No prior snapshot
-    // on first compact ⇒ skip the snapshot-load GET.)
+    // Budget math: 1 GET current + 1 GET tail-probe 404 + N GETs log
+    // (N = maxEntriesPerRun = 20) + 1 PUT snapshot + 1 PUT current ≈ 24.
+    // (No prior snapshot on first compact ⇒ skip the snapshot-load GET.)
+    //
+    // Under single-write commit the writer doesn't advance tail_hint, so
+    // model steady state (a prior fold stamped it) by stamping the true
+    // tail. The compactor then probes from `max(log_seq_start, tail_hint)`
+    // — an immediate 404 — instead of walking O(minEntriesToCompact) to
+    // confirm the go/no-go gate, which is the budget-blowing cost on a
+    // never-yet-compacted backlog.
     const inner = new MemoryStorage();
     await seed(inner, KEY, COLL, 200);
+    const { casUpdateCurrentJson } = await import("@baerly/protocol");
+    await casUpdateCurrentJson(inner, KEY, (c) => ({ ...c, tail_hint: 200 }));
     const { storage, getOps, report } = countingStorage(inner);
 
     const r = await compact({ storage, currentJsonKey: KEY }, CLOUDFLARE_FREE_TIER.compact);
@@ -149,9 +158,16 @@ describe("CLOUDFLARE_FREE_TIER budget", () => {
     const inner = new MemoryStorage();
     await seed(inner, KEY, COLL, 60);
 
-    // Pre-compact to set up the steady-state shape; we measure GC
-    // alone, so we do compact outside the counting wrapper.
+    // Pre-compact to set up the steady-state shape; we measure GC alone,
+    // so we do compact outside the counting wrapper. Under single-write
+    // commit the writer doesn't advance tail_hint, so after a CAPPED
+    // compact the stored hint lags the true tail. Stamp the true tail
+    // (tail_hint=60) directly so GC's probe is a single immediate-404
+    // and the steady-state shape (log_seq_start=20, tail=60) holds — the
+    // operating point the budget math models.
     await compact({ storage: inner, currentJsonKey: KEY }, CLOUDFLARE_FREE_TIER.compact);
+    const { casUpdateCurrentJson } = await import("@baerly/protocol");
+    await casUpdateCurrentJson(inner, KEY, (c) => ({ ...c, tail_hint: 60 }));
 
     const { storage, getOps, report } = countingStorage(inner);
     const r = await runGc({ storage, currentJsonKey: KEY }, CLOUDFLARE_FREE_TIER.gc);

@@ -19,7 +19,6 @@ import {
   type StoragePutResult,
 } from "@baerly/protocol";
 import { describe, expect, test } from "vitest";
-import { fc, test as fcTest } from "@fast-check/vitest";
 import { logStateCurrentJson, seedLogEntries } from "../../../tests/fixtures/log-state.ts";
 import { compact, type InternalCompactOptions } from "./compactor.ts";
 import { loadSnapshotAsMap } from "./snapshot.ts";
@@ -388,7 +387,14 @@ describe("compact", () => {
     expect(after!.json.mean_entry_bytes).toBe(Math.round(B / K));
   });
 
-  test("tail_bytes decrements to exactly 0 when the whole tail folds in one slice", async () => {
+  test("tail_bytes is pinned to 0 across a fold (dead field under single-write commit)", async () => {
+    // Under single-write commit the writer no longer increments
+    // tail_bytes (it never touches current.json), so the field is dead —
+    // bootstrap seeds 0 and the compactor pins it to 0 on every fold
+    // (it would otherwise drive negative). The field is dropped entirely
+    // in Phase 6; until then this pins the neutralized behavior. The
+    // former decrement-accounting tests (whole-slice and partial-slice)
+    // were retired with this change.
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
     const writer = new Writer({ storage: s, currentJsonKey: KEY });
@@ -401,115 +407,22 @@ describe("compact", () => {
       });
     }
     const before = await readCurrentJson(s, KEY);
-    expect(before!.json.tail_bytes).toBeGreaterThan(0);
+    expect(before!.json.tail_bytes).toBe(0); // writer never increments it
     const res = await compact({ storage: s, currentJsonKey: KEY }, {
       minEntriesToCompact: 10,
-      maxEntriesPerRun: 100, // ≥ N → whole tail in one slice
-    } as InternalCompactOptions);
-    expect(res.written).toBe(true);
-    expect(res.logSeqStartAfter).toBe(25);
-    const after = await readCurrentJson(s, KEY);
-    expect(after!.json.tail_bytes).toBe(0);
-  });
-
-  test("tail_bytes decrements by exactly the folded slice's bytes (partial slice)", async () => {
-    const s = new MemoryStorage();
-    await bootstrap(s, KEY);
-    const writer = new Writer({ storage: s, currentJsonKey: KEY });
-    for (let i = 0; i < 30; i++) {
-      await writer.commit({
-        op: "I",
-        collection: COLL,
-        docId: `d${i}`,
-        body: { _id: `d${i}`, n: i },
-      });
-    }
-    const before = await readCurrentJson(s, KEY);
-    // Sum the stored bytes of seq [0, 20) directly.
-    let slice = 0;
-    for (let seq = 0; seq < 20; seq++) {
-      const got = await s.get(`app/t/tenant/x/manifests/c/log/${seq}.json`);
-      slice += got!.body.byteLength;
-    }
-    const res = await compact({ storage: s, currentJsonKey: KEY }, {
-      minEntriesToCompact: 10,
-      maxEntriesPerRun: 20,
+      maxEntriesPerRun: 20, // partial slice — proves it's pinned, not decremented
     } as InternalCompactOptions);
     expect(res.written).toBe(true);
     expect(res.logSeqStartAfter).toBe(20);
     const after = await readCurrentJson(s, KEY);
-    expect(after!.json.tail_bytes).toBe(before!.json.tail_bytes - slice);
-    expect(after!.json.tail_bytes).toBeGreaterThan(0); // 10 entries still in tail
+    expect(after!.json.tail_bytes).toBe(0);
   });
 
-  // Critique C — the silent-drift guard. Write N entries of ARBITRARY
-  // shape through the real Writer (which accumulates tail_bytes), then
-  // fold the WHOLE tail in one slice and assert tail_bytes === 0 to the
-  // BYTE. This bites only if writer-add and compactor-subtract count
-  // identical bytes — the guardrail against framing drift.
-  // Arbitrary DocumentValue-shaped payloads (no top-level `null`, which
-  // is not a valid DocumentValue). Variety of byte content is what
-  // exercises the framing-drift guard.
-  const docValue = fc.oneof(
-    fc.string(),
-    fc.integer(),
-    fc.double({ noNaN: true, noDefaultInfinity: true }),
-    fc.boolean(),
-    fc.array(fc.string(), { maxLength: 6 }),
-    fc.dictionary(fc.string({ minLength: 1, maxLength: 6 }), fc.string(), { maxKeys: 6 }),
-  );
-  fcTest.prop({
-    docs: fc.array(
-      fc.record({
-        // Constrain the id alphabet to characters that pass
-        // `assertDocId`/`assertPathSegment` (now enforced inside
-        // `Writer.commit`): no `/`, control chars, `.`/`..`, leading
-        // `_`, or overlong segments. This test exercises tail_bytes
-        // round-trip accounting, not `_id` validation — the prior
-        // unconstrained `fc.string` generated traversal-shaped ids that
-        // the guard now correctly rejects.
-        id: fc.string({
-          unit: fc.constantFrom(
-            ..."abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-",
-          ),
-          minLength: 1,
-          maxLength: 12,
-        }),
-        payload: docValue,
-      }),
-      { minLength: 1, maxLength: 40 },
-    ),
-  })("add-then-fold round-trip: tail_bytes reaches exactly 0", async ({ docs }) => {
-    const s = new MemoryStorage();
-    const key = "app/t/tenant/x/manifests/rt/current.json";
-    const coll = "rt";
-    await createCurrentJson(
-      s,
-      key,
-      logStateCurrentJson({ writer_fence: { epoch: 0, owner: "rt-test", claimed_at: "" } }),
-    );
-    const writer = new Writer({ storage: s, currentJsonKey: key });
-    for (let i = 0; i < docs.length; i++) {
-      const d = docs[i]!;
-      // Unique doc id per commit so every entry is a distinct log object.
-      await writer.commit({
-        op: "I",
-        collection: coll,
-        docId: `${i}-${d.id}`,
-        body: { _id: `${i}-${d.id}`, v: d.payload },
-      });
-    }
-    const before = await readCurrentJson(s, key);
-    expect(before!.json.tail_bytes).toBeGreaterThan(0);
-    const res = await compact({ storage: s, currentJsonKey: key }, {
-      minEntriesToCompact: 1,
-      maxEntriesPerRun: docs.length + 10, // ≥ N → whole tail in one slice
-    } as InternalCompactOptions);
-    expect(res.written).toBe(true);
-    expect(res.logSeqStartAfter).toBe(docs.length);
-    const after = await readCurrentJson(s, key);
-    expect(after!.json.tail_bytes).toBe(0); // EXACT, not ≈0
-  });
+  // The "add-then-fold round-trip: tail_bytes reaches exactly 0"
+  // property test was retired under single-write commit: the writer no
+  // longer accumulates tail_bytes, so there is no add-side to round-trip
+  // against. The field is pinned to 0 (see the pinned-0 test above) and
+  // dropped entirely in Phase 6.
 
   test("ceiling is on the SNAPSHOT not snapshot+tail: small snapshot + huge tail still folds", async () => {
     const s = new MemoryStorage();

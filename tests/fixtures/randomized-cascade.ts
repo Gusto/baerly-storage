@@ -35,7 +35,7 @@ import {
   readCurrentJson,
   uuid,
 } from "@baerly/protocol";
-import { allIndexKeysFor, Db } from "@baerly/server";
+import { allIndexKeysFor, Db, probeTailFrom } from "@baerly/server";
 import { rebuildIndex } from "@baerly/server/maintenance";
 import { Writer } from "@baerly/server/_internal/testing";
 import {
@@ -135,18 +135,21 @@ const ensureCurrent = async (storage: Storage, key: string): Promise<void> => {
 
 /**
  * Resolve the latest committed value for `(collection, docId)` by
- * reading `current.json`, then walking from `tail_hint - 1` backwards
- * until we hit an entry whose `doc_id` matches. Returns `undefined`
- * when no entry has landed yet. Tolerates transient read failures
- * (Toxiproxy flips, R2 propagation jitter) by re-throwing — callers
- * swallow.
+ * reading `current.json`, discovering the TRUE tail via forward-probe
+ * (under single-write commit `tail_hint` is only a lower bound — the
+ * writer never advances it), then walking backwards until we hit an
+ * entry whose `doc_id` matches. Returns `undefined` when no entry has
+ * landed yet. Tolerates transient read failures (Toxiproxy flips, R2
+ * propagation jitter) by re-throwing — callers swallow.
  */
 const readLatest = async (inst: Instance): Promise<CascadeMessage | undefined> => {
   const read = await readCurrentJson(inst.storage, inst.currentJsonKey);
   if (read === null) {
     return undefined;
   }
-  const nextSeq = read.json.tail_hint;
+  const floor = Math.max(read.json.log_seq_start, read.json.tail_hint);
+  const probe = await probeTailFrom(inst.storage, inst.logPrefix, floor);
+  const nextSeq = probe.tail;
   for (let s = nextSeq - 1; s >= 0; s--) {
     const got = await inst.storage.get(`${inst.logPrefix}/log/${s}.json`);
     if (got === null) {

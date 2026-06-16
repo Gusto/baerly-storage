@@ -2,7 +2,6 @@ import {
   CURRENT_JSON_SCHEMA_VERSION,
   type CurrentJson,
   createCurrentJson,
-  encodeJsonBytes,
   getOrCreateMemoryStorageForBucket,
   MAINTENANCE_MIN_LIVE_BYTES,
   MemoryStorage,
@@ -45,14 +44,31 @@ const seedCurrent = (): CurrentJson => logStateCurrentJson();
 
 const decodeJson = <T>(bytes: Uint8Array): T => JSON.parse(new TextDecoder().decode(bytes)) as T;
 
+/** Count the durable log seqs under the manifest prefix. */
+const durableLogSeqs = async (storage: MemoryStorage): Promise<number[]> => {
+  const prefix = `app/test/tenant/t/manifests/${COLL}/log/`;
+  const seqs: number[] = [];
+  for await (const entry of storage.list(prefix)) {
+    const m = /\/log\/(\d+)\.json$/.exec(entry.key);
+    if (m !== null) {
+      seqs.push(Number(m[1]));
+    }
+  }
+  return seqs.toSorted((a, b) => a - b);
+};
+
 /**
- * Test-only `MemoryStorage` subclass that injects CAS failures on
- * `current.json` to exercise the retry path. Local to this test file
- * — NOT exported from `@baerly/server`.
+ * Test-only `MemoryStorage` subclass that injects 412 failures on the
+ * `log/<seq>` CREATE — the single-write-commit linearization point — so
+ * the retry path is exercised by a FOREIGN-session occupant. The first
+ * failed create lands a foreign entry at the contended seq so the
+ * writer's read-back sees `foreign-session` and re-probes forward. Local
+ * to this test file — NOT exported from `@baerly/server`.
  */
 class InstrumentedStorage extends MemoryStorage {
-  failNextCasOnce = false;
-  failEveryCas = false;
+  failNextLogCreateOnce = false;
+  /** Plant a foreign occupant + 412 on the next N log creates, then stop. */
+  failLogCreates = 0;
   casAttempts = 0;
 
   override async put(
@@ -60,15 +76,20 @@ class InstrumentedStorage extends MemoryStorage {
     body: Uint8Array,
     opts?: StoragePutOptions,
   ): Promise<StoragePutResult> {
-    if (key === CURRENT_KEY && opts?.ifMatch !== undefined) {
+    const isLogCreate = /\/log\/\d+\.json$/.test(key) && opts?.ifNoneMatch !== undefined;
+    if (isLogCreate && (this.failLogCreates > 0 || this.failNextLogCreateOnce)) {
+      this.failNextLogCreateOnce = false;
+      if (this.failLogCreates > 0) {
+        this.failLogCreates -= 1;
+      }
       this.casAttempts += 1;
-      if (this.failEveryCas) {
-        throw new BaerlyError("Conflict", `simulated CAS 412 on ${key}: precondition failed`);
-      }
-      if (this.failNextCasOnce) {
-        this.failNextCasOnce = false;
-        throw new BaerlyError("Conflict", `simulated CAS 412 on ${key}: precondition failed`);
-      }
+      // Land a FOREIGN-session entry at this seq, then surface 412 — the
+      // writer reads it back, sees a foreign session, and re-probes
+      // forward (or, with failEveryLogCreate, eventually exhausts).
+      const foreign = JSON.parse(new TextDecoder().decode(body)) as Record<string, unknown>;
+      foreign["session"] = "INTRUDR0";
+      await super.put(key, new TextEncoder().encode(JSON.stringify(foreign)), opts);
+      throw new BaerlyError("Conflict", `simulated 412 on ${key}: precondition failed`);
     }
     return super.put(key, body, opts);
   }
@@ -79,7 +100,7 @@ describe("Writer", () => {
     resetMemoryStorage();
   });
 
-  test("single-writer happy path: one commit advances tail_hint by 1", async () => {
+  test("single-writer happy path: one commit creates log/0 (the commit)", async () => {
     const storage = new MemoryStorage();
     await createCurrentJson(storage, CURRENT_KEY, seedCurrent());
     const writer = new Writer({ storage, currentJsonKey: CURRENT_KEY });
@@ -101,11 +122,15 @@ describe("Writer", () => {
     expect(result.entry.lsn.split("_")).toHaveLength(3);
     expect(result.entry.after).toEqual({ _id: "doc-1", title: "hello" });
 
+    // Single-write commit: the writer does NOT touch current.json — the
+    // numbered log create IS the commit, so tail_hint stays at its
+    // stored (compactor-advanced) value. The discovered tail is 1.
     const stored = await storage.get(CURRENT_KEY);
     expect(stored).not.toBeNull();
     const persisted = decodeJson<CurrentJson>(stored!.body);
-    expect(persisted.tail_hint).toBe(1);
+    expect(persisted.tail_hint).toBe(0);
     expect(persisted.writer_fence.epoch).toBe(0);
+    await expect(durableLogSeqs(storage)).resolves.toEqual([0]);
 
     const logEntry = await storage.get(`app/test/tenant/t/manifests/${COLL}/log/0.json`);
     expect(logEntry).not.toBeNull();
@@ -161,10 +186,13 @@ describe("Writer", () => {
     const persisted = decodeJson<CurrentJson>(stored!.body);
     expect(persisted.schema_version).toBe(CURRENT_JSON_SCHEMA_VERSION);
     expect(persisted.snapshot).toBeNull();
-    expect(persisted.tail_hint).toBe(1);
+    // Auto-provision seeds tail_hint=0; the commit creates log/0 but does
+    // NOT advance the stored hint (single-write commit).
+    expect(persisted.tail_hint).toBe(0);
     expect(persisted.log_seq_start).toBe(0);
     expect(persisted.writer_fence.epoch).toBe(0);
     expect(persisted.writer_fence.owner).toBe("");
+    await expect(durableLogSeqs(storage)).resolves.toEqual([0]);
 
     // Second commit on the same writer reuses the now-existing
     // manifest — no double-provision.
@@ -213,14 +241,14 @@ describe("Writer", () => {
 
     const seqs = new Set([a.entry.seq, b.entry.seq]);
     expect(seqs).toEqual(new Set([0, 1]));
-    const persisted = decodeJson<CurrentJson>((await storage.get(CURRENT_KEY))!.body);
-    expect(persisted.tail_hint).toBe(2);
+    // The discovered tail is 2; the writer doesn't advance the stored hint.
+    await expect(durableLogSeqs(storage)).resolves.toEqual([0, 1]);
   });
 
-  test("CAS conflict on first attempt retries and succeeds on attempt 2", async () => {
+  test("log-create 412 (foreign session): re-probes forward and commits at the next slot", async () => {
     const storage = new InstrumentedStorage();
     await createCurrentJson(storage, CURRENT_KEY, seedCurrent());
-    storage.failNextCasOnce = true;
+    storage.failNextLogCreateOnce = true;
 
     const writer = new Writer({
       storage,
@@ -235,18 +263,21 @@ describe("Writer", () => {
       body: { _id: "doc-2" },
     });
 
-    expect(result.attempts).toBe(2);
-    expect(result.entry.seq).toBe(0);
-
-    const stored = await storage.get(CURRENT_KEY);
-    const persisted = decodeJson<CurrentJson>(stored!.body);
-    expect(persisted.tail_hint).toBe(1);
+    // The foreign occupant landed at seq 0; the writer re-probed forward
+    // and committed at seq 1 WITHIN a single attempt (the forward-probe
+    // loop is internal to #singleAttemptCommit — no commit() retry).
+    expect(result.attempts).toBe(1);
+    expect(result.entry.seq).toBe(1);
+    await expect(durableLogSeqs(storage)).resolves.toEqual([0, 1]);
   });
 
-  test("retries exhausted: throws BaerlyError code='Conflict' after maxRetries", async () => {
+  test("repeated foreign occupants: writer probes past them and commits — no wedge", async () => {
     const storage = new InstrumentedStorage();
     await createCurrentJson(storage, CURRENT_KEY, seedCurrent());
-    storage.failEveryCas = true;
+    // Three consecutive foreign occupants land at seq 0,1,2; the writer
+    // probes past each and commits cleanly at seq 3. The old two-write
+    // protocol would have wedged on the first orphan.
+    storage.failLogCreates = 3;
 
     const writer = new Writer({
       storage,
@@ -254,25 +285,16 @@ describe("Writer", () => {
       options: { maxRetries: 3, initialBackoffMs: 1, random: () => 0 },
     });
 
-    let thrown: unknown;
-    try {
-      await writer.commit({
-        op: "I",
-        collection: COLL,
-        docId: "doomed",
-        body: { _id: "doomed" },
-      });
-    } catch (error) {
-      thrown = error;
-    }
+    const result = await writer.commit({
+      op: "I",
+      collection: COLL,
+      docId: "survivor",
+      body: { _id: "survivor" },
+    });
 
-    expect(thrown).toBeInstanceOf(BaerlyError);
-    expect((thrown as BaerlyError).code).toBe("Conflict");
+    expect(result.entry.seq).toBe(3);
     expect(storage.casAttempts).toBe(3);
-
-    const stored = await storage.get(CURRENT_KEY);
-    const persisted = decodeJson<CurrentJson>(stored!.body);
-    expect(persisted.tail_hint).toBe(0);
+    await expect(durableLogSeqs(storage)).resolves.toEqual([0, 1, 2, 3]);
   });
 
   test("commit() walks [log_seq_start, tail_hint) — entries below the bound are NOT GET-required", async () => {
@@ -316,11 +338,13 @@ describe("Writer", () => {
     expect(result.attempts).toBe(1);
     expect(result.entry.seq).toBe(3);
 
-    // log_seq_start MUST be preserved across the CAS-advance.
+    // The writer no longer touches current.json: tail_hint and
+    // log_seq_start are BOTH preserved; the new entry lands at log/3.
     const stored = await storage.get(CURRENT_KEY);
     const persisted = decodeJson<CurrentJson>(stored!.body);
-    expect(persisted.tail_hint).toBe(4);
+    expect(persisted.tail_hint).toBe(3);
     expect(persisted.log_seq_start).toBe(2);
+    await expect(durableLogSeqs(storage)).resolves.toEqual([2, 3]);
   });
 
   test("two concurrent writers: both succeed and tail_hint advances by 2", async () => {
@@ -359,16 +383,9 @@ describe("Writer", () => {
     // At least one writer won outright on its first attempt.
     expect(Math.min(r1.attempts, r2.attempts)).toBe(1);
 
-    const stored = await storage.get(CURRENT_KEY);
-    const persisted = decodeJson<CurrentJson>(stored!.body);
-    expect(persisted.tail_hint).toBe(2);
-
-    // Both log entries persisted, no gaps.
-    const logPrefix = `app/test/tenant/t/manifests/${COLL}/log`;
-    const log0 = await storage.get(`${logPrefix}/0.json`);
-    const log1 = await storage.get(`${logPrefix}/1.json`);
-    expect(log0).not.toBeNull();
-    expect(log1).not.toBeNull();
+    // Both log entries persisted, no gaps (the discovered tail is 2; the
+    // writer doesn't advance the stored hint).
+    await expect(durableLogSeqs(storage)).resolves.toEqual([0, 1]);
   });
 
   test("emits db.write.class_a_ops_per_logical_write histogram per commit", async () => {
@@ -387,8 +404,8 @@ describe("Writer", () => {
 
     const samples = histogramValues(ctx, "db.write.class_a_ops_per_logical_write");
     expect(samples).toHaveLength(1);
-    // content + log + current.json = 3 PUTs on first-try success.
-    expect(samples[0]).toBe(3);
+    // content + log = 2 PUTs on first-try success (no current.json CAS).
+    expect(samples[0]).toBe(2);
     // Collection label travels.
     const hist = ctx.recorder
       .snapshot()
@@ -396,7 +413,7 @@ describe("Writer", () => {
     expect(hist?.labels).toEqual({ collection: COLL });
   });
 
-  test('op:"D" commit emits class_a = 2 (no content PUT)', async () => {
+  test('op:"D" commit emits class_a = 1 (no content PUT, no current.json CAS)', async () => {
     const storage = new MemoryStorage();
     await createCurrentJson(storage, CURRENT_KEY, seedCurrent());
     const writer = new Writer({ storage, currentJsonKey: CURRENT_KEY });
@@ -411,14 +428,15 @@ describe("Writer", () => {
       await writer.commit({ op: "D", collection: COLL, docId: "doc-d" });
     });
 
+    // I = content + log = 2; D = log only = 1 (no content, no CAS).
     const samples = histogramValues(ctx, "db.write.class_a_ops_per_logical_write");
-    expect(samples).toEqual([3, 2]);
+    expect(samples).toEqual([2, 1]);
   });
 
-  test("emits db.r2.put.412_total on CAS conflict + retry", async () => {
+  test("emits db.r2.put.412_total on a log-create conflict + forward re-probe", async () => {
     const storage = new InstrumentedStorage();
     await createCurrentJson(storage, CURRENT_KEY, seedCurrent());
-    storage.failNextCasOnce = true;
+    storage.failNextLogCreateOnce = true;
 
     const writer = new Writer({
       storage,
@@ -436,24 +454,19 @@ describe("Writer", () => {
       });
     });
 
-    // Two 412s: one on the current-json CAS (the simulated 412) and
-    // one on the log-PUT during the retry (the prior attempt's log
-    // entry is now present at our seq — the own-session adoption
-    // path). Both are real `PreconditionFailed` responses from the
-    // bucket, both are counted.
-    expect(sumCounter(ctx, "db.r2.put.412_total")).toBe(2);
+    // One 412 on the log-create (a foreign occupant landed at our seq);
+    // the writer read it back and re-probed forward. No current-json CAS
+    // exists anymore.
+    expect(sumCounter(ctx, "db.r2.put.412_total")).toBe(1);
     const counters = ctx.recorder.snapshot().counters;
-    const cas412 = counters.find(
-      (c) => c.name === "db.r2.put.412_total" && c.labels["step"] === "current-json-cas",
-    );
-    expect(cas412).toBeDefined();
-    expect(cas412?.labels["collection"]).toBe(COLL);
     const logPut412 = counters.find(
       (c) => c.name === "db.r2.put.412_total" && c.labels["step"] === "log-put",
     );
     expect(logPut412).toBeDefined();
-    // After one retry the class-A op count is 3 + 1 retry = 4.
-    expect(histogramValues(ctx, "db.write.class_a_ops_per_logical_write")).toEqual([4]);
+    expect(logPut412?.labels["collection"]).toBe(COLL);
+    // Class-A on the winning attempt: content + log = 2 (the foreign
+    // create that 412'd is not billed; the forward-probe GETs are Class B).
+    expect(histogramValues(ctx, "db.write.class_a_ops_per_logical_write")).toEqual([2]);
   });
 
   test("emits db.r2.put.429_total when storage surfaces a 429 NetworkError", async () => {
@@ -859,38 +872,13 @@ describe("Writer — write-tick maintenance dispatch", () => {
     await createCurrentJson(storage, CURRENT_KEY, { ...seedCurrent(), ...overrides });
   };
 
-  test("(1) a single commit accumulates tail_bytes by exactly the committed entry's encoded byte length", async () => {
-    const storage = new MemoryStorage();
-    await seedWith(storage, {});
-    const writer = new Writer({ storage, currentJsonKey: CURRENT_KEY });
-
-    const result = await writer.commit({
-      op: "I",
-      collection: COLL,
-      docId: "doc-1",
-      body: { _id: "doc-1", title: "hello" },
-    });
-
-    // The writer PUTs `encodeJsonBytes(entry)` per entry; tail_bytes must
-    // grow by exactly that, counted the same way the compactor subtracts.
-    const expectedBytes = encodeJsonBytes(result.entry).byteLength;
-    const after = await persisted(storage);
-    expect(after.tail_bytes).toBe(expectedBytes);
-    expect(after.tail_hint).toBe(1);
-  });
-
-  test("(1b) tail_bytes accumulates across multiple commits", async () => {
-    const storage = new MemoryStorage();
-    await seedWith(storage, {});
-    const writer = new Writer({ storage, currentJsonKey: CURRENT_KEY });
-
-    const r1 = await writer.commit({ op: "I", collection: COLL, docId: "d1", body: { _id: "d1" } });
-    const r2 = await writer.commit({ op: "I", collection: COLL, docId: "d2", body: { _id: "d2" } });
-
-    const expected = encodeJsonBytes(r1.entry).byteLength + encodeJsonBytes(r2.entry).byteLength;
-    const after = await persisted(storage);
-    expect(after.tail_bytes).toBe(expected);
-  });
+  // (1) / (1b) DELETED: under single-write commit the writer no longer
+  // touches current.json, so it no longer accumulates `tail_bytes` — the
+  // compactor pins the (now-dead) field to 0. The compactor's own
+  // tail_bytes behaviour is covered by `compactor.test.ts`
+  // ("tail_bytes decrements to exactly 0…", now pinned-0); the live-tail
+  // size that drives maintenance is the DERIVED `estimateTailBytes`,
+  // exercised by tests (2)/(5)/(6)/(7) below via the observed tail.
 
   test("(2) a single commit DISPATCHES runBoundedMaintenance when the fold ratio (Gate 1) trips", async () => {
     // Seed so the DERIVED ratio `estimateTailBytes / max(snapshot_bytes,
@@ -916,10 +904,11 @@ describe("Writer — write-tick maintenance dispatch", () => {
     expect(calls()).toBe(1);
   });
 
-  test("(4) a commit that retries past one CAS conflict dispatches EXACTLY once", async () => {
+  test("(4) a commit that re-probes past a foreign log-create conflict dispatches EXACTLY once", async () => {
     // The dispatch sits at the success point inside #singleAttemptCommit,
-    // reached once per logical commit (a failed attempt throws before the
-    // dispatch; only the winning attempt dispatches).
+    // reached once per logical commit. A foreign occupant makes the
+    // create loop re-probe forward (still ONE attempt), and the single
+    // winning create dispatches exactly once.
     const storage = new InstrumentedStorage();
     await createCurrentJson(storage, CURRENT_KEY, {
       ...seedCurrent(),
@@ -927,7 +916,7 @@ describe("Writer — write-tick maintenance dispatch", () => {
       mean_entry_bytes: MAINTENANCE_MIN_LIVE_BYTES,
       snapshot_bytes: 0,
     });
-    storage.failNextCasOnce = true;
+    storage.failNextLogCreateOnce = true;
     const writer = new Writer({
       storage,
       currentJsonKey: CURRENT_KEY,
@@ -939,7 +928,9 @@ describe("Writer — write-tick maintenance dispatch", () => {
       writer.commit({ op: "I", collection: COLL, docId: "doc-retry", body: { _id: "doc-retry" } }),
     );
 
-    expect(r.attempts).toBe(2);
+    // The re-probe is internal to one attempt — no commit() retry.
+    expect(r.attempts).toBe(1);
+    expect(r.entry.seq).toBe(2);
     expect(calls()).toBe(1);
   });
 
@@ -961,8 +952,12 @@ describe("Writer — write-tick maintenance dispatch", () => {
       writer.commit({ op: "I", collection: COLL, docId: "doc-b", body: { _id: "doc-b" } }),
     );
 
+    // The writer doesn't advance the stored hint; the commit lands at
+    // log/3 (probed from tail_hint=3). The dispatch is driven by the
+    // in-memory observed tail (seq+1=4) crossing the GC cadence boundary.
     const after5 = await persisted(storage);
-    expect(after5.tail_hint).toBe(4);
+    expect(after5.tail_hint).toBe(3);
+    await expect(durableLogSeqs(storage)).resolves.toEqual([3]);
     expect(calls()).toBe(1);
   });
 
@@ -982,8 +977,11 @@ describe("Writer — write-tick maintenance dispatch", () => {
       writer.commit({ op: "I", collection: COLL, docId: "doc-n", body: { _id: "doc-n" } }),
     );
 
+    // prevSeq 0 → observedTail 1, no boundary crossed; the writer does
+    // not advance the stored hint either.
     const after6 = await persisted(storage);
-    expect(after6.tail_hint).toBe(1);
+    expect(after6.tail_hint).toBe(0);
+    await expect(durableLogSeqs(storage)).resolves.toEqual([0]);
     expect(calls()).toBe(0);
   });
 
@@ -1009,11 +1007,14 @@ describe("Writer — write-tick maintenance dispatch", () => {
       }
     });
 
+    // The writer doesn't advance the stored hint; the three commits land
+    // at log/3,4,5 (probed forward each time). The discovered tail is 6.
     const after7 = await persisted(storage);
-    expect(after7.tail_hint).toBe(6);
+    expect(after7.tail_hint).toBe(3);
+    await expect(durableLogSeqs(storage)).resolves.toEqual([3, 4, 5]);
     expect(WRITE_TICK_GC_INTERVAL).toBe(4); // pins the boundary arithmetic above
-    // Exactly one of the three commits (the one landing at tail_hint 4)
-    // crosses the cadence boundary.
+    // Exactly one of the three commits (the one whose observed tail
+    // crosses seq 4) crosses the cadence boundary.
     expect(calls()).toBe(1);
   });
 
@@ -1036,33 +1037,51 @@ describe("Writer — write-tick maintenance dispatch", () => {
       }
     });
 
-    const after = await persisted(storage);
-    expect(after.tail_hint).toBe(4);
     // Below the first-fold threshold (tail far under 64 KB, well under 50
-    // entries) the runner must not fold: log_seq_start unchanged.
+    // entries) the runner must not fold: it never CAS-advances
+    // current.json, so tail_hint AND log_seq_start stay at their seed (0)
+    // — the discovered tail is 4 (log/0..3).
+    const after = await persisted(storage);
+    expect(after.tail_hint).toBe(0);
+    await expect(durableLogSeqs(storage)).resolves.toEqual([0, 1, 2, 3]);
     expect(after.log_seq_start).toBe(0);
     expect(after.snapshot).toBeNull();
   });
 
-  test("(9) the GC-cadence invariant holds: tail_hint advances by exactly 1 per commit", async () => {
+  test("(9) the GC-cadence invariant holds: the discovered tail advances by exactly 1 per commit", async () => {
+    // Under single-write commit the stored hint is compactor-only, so the
+    // cadence invariant is on the DISCOVERED tail (the committed seq + 1):
+    // each commit creates exactly one log entry at the dense tail.
     const storage = new MemoryStorage();
     await seedWith(storage, {});
     const writer = new Writer({ storage, currentJsonKey: CURRENT_KEY });
 
-    const beforeState = await persisted(storage);
-    const before = beforeState.tail_hint;
-    await writer.commit({ op: "I", collection: COLL, docId: "inv-1", body: { _id: "inv-1" } });
-    const afterOneState = await persisted(storage);
-    const afterOne = afterOneState.tail_hint;
+    const beforeSeqs = await durableLogSeqs(storage);
+    const before = beforeSeqs.length;
+    const r1 = await writer.commit({
+      op: "I",
+      collection: COLL,
+      docId: "inv-1",
+      body: { _id: "inv-1" },
+    });
+    const afterOneSeqs = await durableLogSeqs(storage);
+    const afterOne = afterOneSeqs.length;
     expect(afterOne - before).toBe(1);
+    expect(r1.entry.seq).toBe(0);
 
-    // Three sequential single-doc commits advance tail_hint by 3.
+    // Three sequential single-doc commits add exactly 3 dense entries.
     await writer.commit({ op: "I", collection: COLL, docId: "inv-2", body: { _id: "inv-2" } });
     await writer.commit({ op: "I", collection: COLL, docId: "inv-3", body: { _id: "inv-3" } });
-    await writer.commit({ op: "I", collection: COLL, docId: "inv-4", body: { _id: "inv-4" } });
-    const afterThreeState = await persisted(storage);
-    const afterThree = afterThreeState.tail_hint;
-    expect(afterThree - afterOne).toBe(3);
+    const r4 = await writer.commit({
+      op: "I",
+      collection: COLL,
+      docId: "inv-4",
+      body: { _id: "inv-4" },
+    });
+    const afterThreeSeqs = await durableLogSeqs(storage);
+    expect(afterThreeSeqs.length - afterOne).toBe(3);
+    expect(r4.entry.seq).toBe(3);
+    await expect(durableLogSeqs(storage)).resolves.toEqual([0, 1, 2, 3]);
   });
 
   test("(10) maintenance.disabled on the context suppresses dispatch entirely", async () => {

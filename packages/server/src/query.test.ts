@@ -324,10 +324,13 @@ describe("Db.collection read terminals", () => {
     await expect(db.collection(COLL).where({}).all()).resolves.toHaveLength(1);
 
     // Manually advance log_seq_start to 1 (simulates a compactor run
-    // that folded log/0.json into a snapshot).
+    // that folded log/0.json into a snapshot). The writer no longer
+    // advances tail_hint under single-write commit, so lift it to 1 too
+    // (manifest invariant: log_seq_start <= tail_hint).
     const { casUpdateCurrentJson } = await import("@baerly/protocol");
     await casUpdateCurrentJson(storage, currentJsonKey(COLL), (c) => ({
       ...c,
+      tail_hint: 1,
       log_seq_start: 1,
     }));
 

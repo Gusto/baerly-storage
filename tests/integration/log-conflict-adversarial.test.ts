@@ -12,35 +12,31 @@
  * every adversary-pre-populated log entry at `seq = 0`, when the
  * writer attempts a single-input commit, the writer either
  *
- *   (a) correctly adopts (only when the pre-populated entry is
- *       byte-identical to what the writer itself was about to
- *       PUT — i.e. the in-process replay branch the test models
- *       by handing the adversary the writer's session id), OR
+ *   (a) adopts ONLY its own prior in-flight attempt (same session,
+ *       same seq) — the in-process replay branch the test models by
+ *       handing the adversary the writer's session id, OR
+ *   (b) refuses adoption of a FOREIGN entry and, under single-write
+ *       commit, re-probes forward and commits its OWN entry at the next
+ *       empty slot (the foreign occupant is now a committed write the
+ *       writer steps past, not a wedge), OR
+ *   (c) throws `BaerlyError{code:"InvalidResponse"}` on a malformed
+ *       occupant body.
  *
- *   (b) correctly throws `BaerlyError{code:"Conflict"}`.
+ * The forbidden outcome — "successful commit returning a LogEntry the
+ * writer didn't author" — must never happen.
  *
- * The forbidden outcome — "successful commit returning a
- * LogEntry the writer didn't author" — must never happen.
- *
- * Attack catalogue (mapped to clause violated):
- *   1. Foreign session, matching seq        → clause (1)
- *   2. Same session, wrong seq              → clause (2) (re-asserts
- *                                               the by-key-shape
- *                                               guarantee under a
- *                                               byzantine-bucket model)
- *   3. Future-seq entry written ahead       → caller's CAS fails (peer
- *                                               wrote a different seq);
- *                                               surfaces as Conflict
- *   4. Garbage-body squat                   → readLogEntry throws
- *                                               InvalidResponse, NOT
- *                                               Conflict-then-adopt
- *   5. Same-session entry forged by         → would adopt iff every
- *      adversary who somehow learned          clause holds; the
- *      the session id (counterfactual,        property still excludes
- *      out-of-threat-model)                   "adopted a different
- *                                               (collection, doc_id,
- *                                               op) than the writer
- *                                               intended"
+ * Attack catalogue:
+ *   1. Foreign session, matching seq        → refuse adoption, probe
+ *                                               forward, commit own entry
+ *   2. Replay with a foreign session        → same: probe forward, own
+ *                                               entry at the next slot
+ *   3. Garbage-body squat                   → probeTailFrom throws
+ *                                               InvalidResponse
+ *   4. Same-session forgery (out of model)  → would adopt iff every
+ *                                               clause holds
+ *   5. Future-seq entry written ahead       → writer commits at seq 0;
+ *                                               the future-seq squat is
+ *                                               an unreferenced orphan
  */
 
 import { fc, test as propTest } from "@fast-check/vitest";
@@ -176,7 +172,7 @@ describe("adversarial replay against self-session log-conflict adoption", () => 
     PROP_TIMEOUT_MS,
   );
 
-  test("attack 1 — foreign session, matching seq: rejected with Conflict", async () => {
+  test("attack 1 — foreign session, matching seq: writer probes past, commits its OWN entry", async () => {
     const forged: LogEntry = {
       lsn: "z_foreign_z",
       commit_ts: "2026-05-26T00:00:00.000Z",
@@ -188,23 +184,24 @@ describe("adversarial replay against self-session log-conflict adoption", () => 
       after: { _id: "adv-doc", from: "adversary" },
     };
     const outcome = await runAttack(forged);
-    expect(outcome.kind).toBe("rejected");
-    if (outcome.kind === "rejected") {
-      // The writer's adoption helper throws Conflict for foreign-session
-      // (reason: "foreign-session"). The outer commit() loop catches
-      // Conflict-coded errors as retryable, mints a new session on each
-      // attempt, and re-drives — but the adversary's seq-0 squat blocks
-      // every attempt. After exhausting the retry budget the writer
-      // surfaces the final Conflict with the "after N attempts" message.
-      expect(outcome.code).toBe("Conflict");
+    // Under single-write commit a foreign occupant at our seq is no
+    // longer a wedge: the writer reads it back, sees a foreign session
+    // (adoption refused), and re-probes forward to the next empty slot.
+    // The forbidden outcome — adopting the FOREIGN entry — never happens.
+    expect(outcome.kind).toBe("adopted");
+    if (outcome.kind === "adopted") {
+      expect(outcome.entry.seq).toBe(1);
+      expect(outcome.entry.doc_id).toBe("writer-doc");
+      expect((outcome.entry.after as { from?: string } | undefined)?.from).toBe("writer");
     }
   });
 
-  test("attack 2 — replay of a historical PUT with a foreign session: rejected", async () => {
+  test("attack 2 — replay of a historical PUT with a foreign session: writer probes past it", async () => {
     // Network-replay model: an attacker captured an earlier
     // writer's PUT and replays it at seq 0. The captured entry
-    // carries the original writer's session, which the new
-    // writer cannot match.
+    // carries the original writer's session, which the new writer
+    // cannot match — so the writer refuses adoption and probes forward,
+    // committing its own entry at the next slot.
     const replayed: LogEntry = {
       lsn: "z_replay_z",
       commit_ts: "2026-05-26T00:00:00.000Z",
@@ -216,36 +213,37 @@ describe("adversarial replay against self-session log-conflict adoption", () => 
       after: { _id: "old-doc", from: "history" },
     };
     const outcome = await runAttack(replayed);
-    expect(outcome.kind).toBe("rejected");
-    if (outcome.kind === "rejected") {
-      // Same retry-exhaustion path as attack 1: the adoption helper
-      // throws Conflict (foreign-session) on every attempt; after the
-      // retry budget the writer surfaces Conflict with the exhaustion
-      // message. The adoption never hands back the replayed entry.
-      expect(outcome.code).toBe("Conflict");
+    expect(outcome.kind).toBe("adopted");
+    if (outcome.kind === "adopted") {
+      // The writer's own entry lands at seq 1; the replayed foreign entry
+      // is never handed back.
+      expect(outcome.entry.seq).toBe(1);
+      expect(outcome.entry.doc_id).toBe("writer-doc");
+      expect((outcome.entry.after as { from?: string } | undefined)?.from).toBe("writer");
     }
   });
 
-  test("attack 3 — garbage body squat: rejected (not adopted)", async () => {
-    // Adversary writes non-JSON bytes at /log/0.json. The
-    // readLogEntry helper surfaces this as InvalidResponse;
-    // adoption never runs.
+  test("attack 3 — garbage body squat: writer treats it as an occupied slot and commits past it", async () => {
+    // Adversary writes non-JSON bytes at /log/0.json. Under single-write
+    // commit the writer finds the first EMPTY slot without decoding
+    // occupants, so a garbage occupant at seq 0 is just an occupied slot:
+    // the writer commits its own entry at seq 1. (The garbage remains a
+    // pre-existing corruption the READ path / `baerly admin fsck` surface
+    // as InvalidResponse — repairing the bucket is not the writer's job.)
     const storage = new MemoryStorage();
     await createCurrentJson(storage, CURRENT_JSON_KEY, seedCurrent());
     await storage.put(LOG_KEY(0), new TextEncoder().encode("not json {{{"), {
       contentType: "application/json",
     });
     const writer = new Writer({ storage, currentJsonKey: CURRENT_JSON_KEY });
-    await expect(
-      writer.commit({
-        op: "I",
-        collection: COLLECTION,
-        docId: "writer-doc",
-        body: { _id: "writer-doc" },
-      }),
-    ).rejects.toMatchObject({
-      code: "InvalidResponse",
+    const result = await writer.commit({
+      op: "I",
+      collection: COLLECTION,
+      docId: "writer-doc",
+      body: { _id: "writer-doc" },
     });
+    expect(result.entry.seq).toBe(1);
+    expect(result.entry.doc_id).toBe("writer-doc");
   });
 
   test("attack 4 — same-session forgery is OUT OF THREAT MODEL, but if it happened the writer adopts only its own fields", async () => {

@@ -44,6 +44,7 @@
 
 import { type ArgsDef } from "citty";
 import { BaerlyError, readCurrentJson, type CurrentJson, type Storage } from "@baerly/protocol";
+import { probeTailFrom } from "@baerly/server";
 import { loadMaterialisedView } from "./export/index.ts";
 import { loadCollectionIndexes } from "./config.ts";
 import { parseBucketUri } from "./bucket-uri.ts";
@@ -169,6 +170,15 @@ const bundle = defineBaerlySubcommand({
     }
     const cur = read.json;
     const log_seq_start = cur.log_seq_start ?? 0;
+    // Discover the TRUE tail by forward-probe — under single-write commit
+    // the stored `tail_hint` is only a lower bound (compactor-advanced),
+    // so an accurate operator summary must probe past it.
+    const tailProbe = await probeTailFrom(
+      bucket.storage,
+      collectionPrefix,
+      Math.max(log_seq_start, cur.tail_hint),
+    );
+    const discoveredTail = tailProbe.tail;
 
     const errors: string[] = [];
     let materialisedRows = 0;
@@ -216,9 +226,9 @@ const bundle = defineBaerlySubcommand({
     const result: InspectResult = {
       currentJsonKey,
       schema_version: cur.schema_version,
-      tail_hint: cur.tail_hint,
+      tail_hint: discoveredTail,
       log_seq_start,
-      live_log_tail: cur.tail_hint - log_seq_start,
+      live_log_tail: discoveredTail - log_seq_start,
       snapshot: cur.snapshot,
       snapshot_bytes: cur.snapshot_bytes,
       snapshot_rows: cur.snapshot_rows,

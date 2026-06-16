@@ -262,7 +262,14 @@ export async function listEventsSince(opts: ListEventsSinceOptions): Promise<Log
   const logSeqStart = logSeqStartOf(read.json);
   // End bound is the DISCOVERED tail (probe past a stale-low hint).
   // The GET loop below 404-tolerates misses, so over-bounding is safe.
-  const tail = await db.probeLogTail(collection, read.json.tail_hint, signalOpt(signal));
+  // Floor at `max(log_seq_start, tail_hint)` — same probe floor every
+  // other consumer uses (the invariant `tail_hint >= log_seq_start`
+  // holds, so this is consistency, not a behaviour change).
+  const tail = await db.probeLogTail(
+    collection,
+    Math.max(logSeqStart, read.json.tail_hint),
+    signalOpt(signal),
+  );
 
   // Derive the seq range to scan. Empty cursor → start at
   // `log_seq_start` (the first un-snapshotted entry). Non-empty

@@ -37,6 +37,7 @@ export {
   snapshotKey,
 } from "./snapshot.ts";
 export { walkLogRange } from "./log-walk.ts";
+export { probeTailFrom } from "./log-tail.ts";
 export { type SchemaIssue, type SchemaValidator, validateOrThrow } from "./schema.ts";
 
 /**

@@ -1,5 +1,5 @@
 import { BaerlyError, readCurrentJson, type DocumentValue, type Storage } from "@baerly/protocol";
-import { loadSnapshotAsMap, walkLogRange } from "@baerly/server";
+import { loadSnapshotAsMap, probeTailFrom, walkLogRange } from "@baerly/server";
 import type { ColumnPlan, ExportPlan, ExportRow, SqlTarget, SqlType } from "./types.ts";
 import { quoteIdentifier } from "./sql-escape.ts";
 
@@ -229,13 +229,19 @@ export const loadMaterialisedView = async (params: {
     read.json.snapshot === null
       ? new Map<string, ExportRow>()
       : await loadSnapshotAsMap(storage, read.json.snapshot, collection, params.signal);
-  const entries = await walkLogRange(
+  const hint = read.json.tail_hint;
+  const logSeqStart = read.json.log_seq_start ?? 0;
+  // Strict dense walk `[log_seq_start, tail_hint)` plus a tolerant
+  // forward-probe `[max(log_seq_start, tail_hint), tail)` — `tail_hint`
+  // is only a lower bound under single-write commit (compactor-advanced).
+  const strict = await walkLogRange(storage, collectionPrefix, logSeqStart, hint);
+  const probe = await probeTailFrom(
     storage,
     collectionPrefix,
-    read.json.log_seq_start ?? 0,
-    read.json.tail_hint,
+    Math.max(logSeqStart, hint),
+    params.signal !== undefined ? { signal: params.signal } : undefined,
   );
-  for (const entry of entries) {
+  for (const entry of [...strict, ...probe.entries]) {
     if (entry.collection !== collection) {
       continue;
     }

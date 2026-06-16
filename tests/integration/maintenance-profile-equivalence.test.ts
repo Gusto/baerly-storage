@@ -195,7 +195,12 @@ describe("MaintenanceProfile cross-profile correctness", () => {
 
       test(
         "(A) materialized state is byte-for-byte identical across every profile (and the no-maintenance reference)",
-        { timeout: 60_000 },
+        // 120s: under single-write commit each commit forward-probes the
+        // log tail (galloping, O(log gap) GETs). The no-maintenance
+        // reference seed never advances tail_hint, so its gap grows to the
+        // full stream length — over LocalFs (real file I/O) under
+        // full-suite CPU contention the three replays exceed the old 60s.
+        { timeout: 120_000 },
         async () => {
           const ops = buildOps();
 
@@ -299,17 +304,16 @@ describe("MaintenanceProfile cross-profile correctness", () => {
           const oneFoldAdvance = async (profile: MaintenanceProfile): Promise<number> => {
             const storage = await freshBucket();
             await replay(storage, tailOps); // no maintenance during seed
-            // Seeding skipped compaction, so `mean_entry_bytes` was never
-            // stamped. The ratio TRIGGER estimates the live tail as
-            // (tail − log_seq_start) × mean_entry_bytes; stamp the mean the
-            // first fold WOULD have computed (tail_bytes / live entries) so the
-            // estimate reflects these large 2 KB entries instead of falling
-            // back to the small cold-start per-entry size.
+            // Under single-write commit the writer advances neither
+            // `tail_hint` nor the (dead) `tail_bytes`. Stamp the true tail
+            // (TAIL entries at seq [0, TAIL)) so the runner's gate sees the
+            // live tail, and stamp `mean_entry_bytes` to the ~2 KB entry
+            // size so the ratio TRIGGER estimate reflects these large
+            // entries instead of the small cold-start fallback.
             await casUpdateCurrentJson(storage, CURRENT_JSON_KEY, (c) => ({
               ...c,
-              mean_entry_bytes: Math.round(
-                c.tail_bytes / Math.max(1, c.tail_hint - c.log_seq_start),
-              ),
+              tail_hint: TAIL,
+              mean_entry_bytes: BODY_BYTES,
             }));
             const cur = (await readCurrentJson(storage, CURRENT_JSON_KEY))!.json;
             const before = cur.log_seq_start;

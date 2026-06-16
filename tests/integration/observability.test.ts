@@ -186,14 +186,14 @@ describe("observability integration — canonical line vs physical reality", () 
     expect(props["db.storage.put.calls_total"]).toBe(proxy.counts.put);
     expect(props["db.storage.get.calls_total"]).toBe(proxy.counts.get);
 
-    // Sanity: a fresh-bucket single insert through Db.collection().insert()
-    // performs exactly 3 PUTs (content + log entry + current.json
-    // CAS-advance). No DELETEs / no LISTs (no indexes declared, no
-    // stale-key fixups). The _id-collision precheck and the writer's
-    // log-integrity walk are GET-only. If this count drifts a regression
-    // in the writer changed the per-write physical-op shape; investigate
-    // before relaxing the literal.
-    expect(proxy.counts.put).toBe(3);
+    // Sanity: a single insert through Db.collection().insert() performs
+    // exactly 2 PUTs (content + log create). Single-write commit: the
+    // numbered log create IS the commit — no current.json CAS-advance. No
+    // DELETEs / no LISTs (no indexes declared). The _id-collision
+    // precheck and the writer's forward-probe are GET-only. If this count
+    // drifts a regression in the writer changed the per-write
+    // physical-op shape; investigate before relaxing the literal.
+    expect(proxy.counts.put).toBe(2);
     expect(proxy.counts.delete).toBe(0);
     expect(proxy.counts.list).toBe(0);
   });
@@ -229,13 +229,14 @@ describe("observability integration — canonical line vs physical reality", () 
     // One canonical line per commit.
     expect(records).toHaveLength(3);
 
-    // Each single-doc commit is 1 content PUT + 1 log entry PUT + 1
-    // current.json CAS-advance = 3 PUTs, so three inserts = 9 PUTs.
-    // The _id-collision precheck is GET-only. No DELETEs / no LISTs
-    // (all inserts, no stale-key fixups, no indexes declared). If this
-    // count drifts a regression in the writer changed the per-write
-    // physical-op shape; investigate before relaxing the literal.
-    expect(proxy.counts.put).toBe(9);
+    // Each single-doc commit is 1 content PUT + 1 log create = 2 PUTs
+    // (single-write commit: the numbered log create IS the commit — no
+    // current.json CAS-advance), so three inserts = 6 PUTs. The
+    // _id-collision precheck and the writer's forward-probe are GET-only.
+    // No DELETEs / no LISTs. If this count drifts a regression in the
+    // writer changed the per-write physical-op shape; investigate before
+    // relaxing the literal.
+    expect(proxy.counts.put).toBe(6);
     expect(proxy.counts.delete).toBe(0);
     expect(proxy.counts.list).toBe(0);
   });

@@ -55,6 +55,7 @@ import {
 } from "@baerly/protocol";
 import { abortingStorage } from "../../../tests/fixtures/aborting-storage.ts";
 import { allIndexKeysFor, type IndexDefinition } from "./indexes.ts";
+import { probeTailFrom } from "./log-tail.ts";
 import { rebuildIndex } from "./rebuild-index.ts";
 import { Writer } from "./writer.ts";
 
@@ -196,8 +197,11 @@ describe("index emission survives a single crash anywhere in the commit", () => 
       // Reconstruct the live doc set the reader sees, and assert
       // index parity.
       const live = new Map<string, Doc>();
-      const current = await readCurrent(inner);
-      const nextSeq = current.tail_hint;
+      // Under single-write commit the writer doesn't advance tail_hint —
+      // discover the true tail by forward-probe so the expected live set
+      // covers every committed entry.
+      const tailProbe = await probeTailFrom(inner, LOG_PREFIX, 0);
+      const nextSeq = tailProbe.tail;
       for (let s = 0; s < nextSeq; s++) {
         const got = await inner.get(`${LOG_PREFIX}/log/${s}.json`);
         if (got === null) {
@@ -233,11 +237,3 @@ describe("index emission survives a single crash anywhere in the commit", () => 
     PROP_TIMEOUT_MS,
   );
 });
-
-const readCurrent = async (storage: Storage): Promise<{ tail_hint: number }> => {
-  const got = await storage.get(CURRENT_JSON_KEY);
-  if (got === null) {
-    throw new Error("current.json gone (test bug)");
-  }
-  return JSON.parse(new TextDecoder().decode(got.body)) as { tail_hint: number };
-};

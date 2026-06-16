@@ -448,9 +448,15 @@ describe("Lost-fold orphan snapshot reclaimed under contention", () => {
       }
 
       // Force a fold CAS-loss: run a fold over a Storage whose `put` to
-      // current.json is intercepted so that a concurrent write lands
-      // FIRST — invalidating the fold's captured ETag. The fold then
-      // PUTs its snapshot (orphan) and loses the CAS-advance.
+      // current.json is intercepted so that a concurrent CAS-advance
+      // lands FIRST — invalidating the fold's captured ETag. The fold
+      // then PUTs its snapshot (orphan) and loses the CAS-advance.
+      //
+      // Under single-write commit the writer no longer touches
+      // current.json, so the racing CAS-advance is now a CONCURRENT FOLD
+      // (the compactor is the sole current.json CAS-writer besides
+      // bootstrap). The racing fold runs over the plain `inner` storage
+      // (not `racingStorage`) so it doesn't re-enter the interceptor.
       let interleaved = false;
       const racingStorage: Storage = {
         get: (k, o) => inner.get(k, o),
@@ -458,16 +464,14 @@ describe("Lost-fold orphan snapshot reclaimed under contention", () => {
         list: (p, o) => inner.list(p, o),
         async put(k, b, o) {
           // The fold's CAS-advance is a guarded PUT to current.json
-          // (`ifMatch` set). Just before it lands, slip a concurrent
-          // committed write in so the captured ETag is now stale.
+          // (`ifMatch` set). Just before it lands, slip a concurrent fold
+          // in so the captured ETag is now stale.
           if (k === CURRENT_JSON_KEY && o?.ifMatch !== undefined && !interleaved) {
             interleaved = true;
-            await writer.commit({
-              op: "I",
-              collection: COLLECTION,
-              docId: "racer",
-              body: { _id: "racer", kind: "racer" },
-            });
+            await compact({ storage: inner, currentJsonKey: CURRENT_JSON_KEY }, {
+              minEntriesToCompact: 5,
+              maxEntriesPerRun: numInserts,
+            } as InternalCompactOptions);
           }
           return inner.put(k, b, o);
         },
@@ -667,7 +671,7 @@ const durableLogSeqs = async (storage: Storage, tablePrefix: string): Promise<nu
   return seqs.toSorted((a, b) => a - b);
 };
 
-describe("ticket-01 bug reproductions (characterization — assert CURRENT buggy behavior)", () => {
+describe("single-write commit — win-or-lose-cleanly", () => {
   const cleanups: Array<() => Promise<void>> = [];
   afterEach(async () => {
     for (const c of cleanups.splice(0)) {
@@ -677,37 +681,17 @@ describe("ticket-01 bug reproductions (characterization — assert CURRENT buggy
 
   for (const variant of BUG_VARIANTS) {
     /**
-     * ── BUG 1: single-entry orphan wedge (permanent, all writers). ──
+     * ── Arm 1: the orphan-at-tail is now a COMMITTED write. ─────────
      *
-     * WHAT THIS DOCUMENTS:
-     * `Writer.commit()` writes content → log entry → CAS-advance of
-     * `current.json` as three separate storage ops. A single-input
-     * commit that crashes AFTER its `log/<seq>.json` PUT but BEFORE the
-     * `current.json` CAS leaves a DURABLE ORPHAN log object at
-     * `seq == current.tail_hint`. The next writer reads the same
-     * `tail_hint`, mints the same seq, PUTs `log/<seq>.json` with
-     * `ifNoneMatch:"*"` → 412, reads the orphan, and
-     * `tryAdoptOwnSessionLogEntry` refuses it ("foreign-session" — the
-     * orphan carries a different `session`). The writer throws
-     * `Conflict`, retries up to `maxRetries`, hits the same orphan every
-     * time, and throws `Conflict`. GC only sweeps
-     * `seq < log_seq_start ≤ tail_hint`, so the orphan AT `tail_hint` is
-     * never swept and `tail_hint` never advances. The collection WEDGES
-     * PERMANENTLY for every writer.
-     *
-     * This test asserts the CURRENT, BUGGY behavior: the fresh commit
-     * ultimately throws `Conflict`, the orphan sits at `tail_hint`, and
-     * `tail_hint` does not advance past it.
-     *
-     * ┌─────────────────────────────────────────────────────────────┐
-     * │ A future recovery ticket may invert this: the marked          │
-     * │ assertions below ("documents the wedge") would flip to assert │
-     * │ that the fresh commit SUCCEEDS, the wedge clears, `tail_hint`   │
-     * │ advances, and the probe row is readable. The recovery design  │
-     * │ is unresolved; this characterizes the wedge until then.       │
-     * └─────────────────────────────────────────────────────────────┘
+     * Under single-write commit, the numbered `log/<seq>` create IS the
+     * commit. A writer that crashed right after its `log/<seq>` PUT
+     * landed a DURABLE, committed entry — no `current.json` CAS follows
+     * it. The next writer reads the same (stale) `tail_hint`, forward-
+     * probes, finds `log/<seq>` occupied by a FOREIGN session, probes
+     * `seq+1`, and commits there with NO throw. The formerly "orphaned"
+     * row is now part of the durable history.
      */
-    test(`[${variant.label}] BUG 1: single-entry orphan at tail_hint wedges every future writer`, async () => {
+    test(`[${variant.label}] orphan-at-tail is a committed write; next writer probes forward and commits`, async () => {
       const { storage, cleanup } = await variant.build();
       if (cleanup !== undefined) {
         cleanups.push(cleanup);
@@ -717,7 +701,7 @@ describe("ticket-01 bug reproductions (characterization — assert CURRENT buggy
       const currentJsonKey = CURRENT_JSON_KEY;
       await provision(storage);
 
-      // 1) One clean single-input commit lands at seq 0 (tail_hint → 1).
+      // 1) One clean single-input commit lands at seq 0.
       const goodWriter = new Writer({ storage, currentJsonKey });
       await goodWriter.commit({
         op: "I",
@@ -725,87 +709,258 @@ describe("ticket-01 bug reproductions (characterization — assert CURRENT buggy
         docId: "first",
         body: { _id: "first", kind: "good" },
       });
-      const afterGood = await readCurrentJson(storage, currentJsonKey);
-      expect(afterGood!.json.tail_hint).toBe(1);
 
-      // 2) Drive a single-input commit that crashes right AFTER its
-      //    `log/1.json` PUT lands but BEFORE the `current.json` CAS.
-      //    For a single insert with no indexes the op order on `inner`
-      //    is: op1 GET current.json, op2 PUT content, op3 PUT log/1.json,
-      //    op4 CAS PUT current.json. Arming at op4 fires the abort just
-      //    before the CAS — leaving log/1.json durable as an orphan with
-      //    tail_hint still pinned at 1.
-      const handle = abortingStorage(storage);
-      const crashWriter = new Writer({ storage: handle.storage, currentJsonKey });
-      handle.armAt(4);
-      await expect(
-        crashWriter.commit({
-          op: "I",
-          collection: COLLECTION,
-          docId: "orphan-doc",
-          body: { _id: "orphan-doc", kind: "orphan" },
-        }),
-      ).rejects.toMatchObject({ name: "AbortError" });
+      // 2) A FOREIGN writer commits a durable entry at seq 1 but its
+      //    `current.json` is never touched (single-write commit: the
+      //    numbered create IS the commit). Model it directly: PUT a
+      //    foreign-session log entry at seq 1 via `If-None-Match: "*"`.
+      //    Under the OLD two-write protocol this was an "orphan that
+      //    wedges every future writer"; under single-write commit it is a
+      //    committed write that the next writer probes past.
+      const orphanEntry = {
+        lsn: "00000000000000_FOREIGN_zzzzzzzzzz",
+        commit_ts: new Date().toISOString(),
+        op: "I",
+        collection: COLLECTION,
+        doc_id: "orphan-doc",
+        session: "FOREIGN0",
+        seq: 1,
+        after: { _id: "orphan-doc", kind: "orphan" },
+      };
+      const orphanBytes = encodeJsonBytes(orphanEntry.after);
+      const orphanVersion = await versionFromContent(orphanBytes);
+      await storage.put(`${tablePrefix}/content/${orphanVersion}.json`, orphanBytes, {
+        ifNoneMatch: "*",
+        contentType: "application/json",
+      });
+      await storage.put(`${tablePrefix}/log/1.json`, encodeJsonBytes(orphanEntry), {
+        ifNoneMatch: "*",
+        contentType: "application/json",
+      });
 
-      // Precondition for the wedge: the orphan log object IS durable at
-      // seq 1, and `current.json.tail_hint` did NOT advance past it.
+      // The committed entry IS durable at seq 1.
       const seqsAfterCrash = await durableLogSeqs(storage, tablePrefix);
       expect(seqsAfterCrash).toContain(1);
-      const afterCrash = await readCurrentJson(storage, currentJsonKey);
-      expect(afterCrash!.json.tail_hint).toBe(1);
-      // The orphan at seq 1 sits AT tail_hint, above log_seq_start, so GC
-      // (which only sweeps seq < log_seq_start ≤ tail_hint) can never
-      // reach it.
-      expect(afterCrash!.json.log_seq_start).toBeLessThanOrEqual(1);
 
-      // 3) A fresh writer (new session) attempts a normal commit. It
-      //    re-reads tail_hint == 1, mints seq 1, collides with the orphan
-      //    on the log PUT, refuses adoption ("foreign-session"), and
-      //    retries to exhaustion. Use a tiny maxRetries + zero backoff so
-      //    the test is fast AND deterministic (no real concurrency).
+      // 3) A fresh writer (new session) commits. It reads the same stale
+      //    tail_hint, probes, finds log/1 occupied by a FOREIGN session,
+      //    probes seq 2, and commits there with NO throw.
       const freshWriter = new Writer({
         storage,
         currentJsonKey,
         options: { maxRetries: 3, initialBackoffMs: 0, random: () => 0 },
       });
+      await freshWriter.commit({
+        op: "I",
+        collection: COLLECTION,
+        docId: "wedge-probe",
+        body: { _id: "wedge-probe", kind: "probe" },
+      });
 
-      // ░░░ A future recovery ticket may invert this assertion ░░░
-      // CURRENT (buggy): the fresh commit throws Conflict — the orphan
-      // wedges the collection permanently.
-      // AFTER recovery (design unresolved): this would assert that the
-      // commit RESOLVES — the writer clears the wedge and advances
-      // tail_hint.
-      let caught: unknown;
-      try {
-        await freshWriter.commit({
-          op: "I",
-          collection: COLLECTION,
-          docId: "wedge-probe",
-          body: { _id: "wedge-probe", kind: "probe" },
-        });
-      } catch (error) {
-        caught = error;
-      }
-      // Assert on the caught error directly so a wrong-code regression
-      // (e.g. `Internal` instead of `Conflict`) fails loudly with the
-      // actual code rather than "expected false to be true".
-      expect(caught).toBeInstanceOf(BaerlyError);
-      expect(caught).toMatchObject({ code: "Conflict" }); // ← INVERT: assert the commit succeeds.
+      // The discovered tail advanced: log/2 now exists (no hole).
+      const seqsAfterProbe = await durableLogSeqs(storage, tablePrefix);
+      expect(seqsAfterProbe).toContain(2);
+      expect(seqsAfterProbe).toEqual([0, 1, 2]);
 
-      // ░░░ A future recovery ticket may invert these too ░░░
-      // CURRENT (buggy): tail_hint is still pinned at 1 (the wedge never
-      // lets any writer advance it). AFTER recovery: tail_hint advances
-      // past the cleared wedge.
-      const afterWedge = await readCurrentJson(storage, currentJsonKey);
-      expect(afterWedge!.json.tail_hint).toBe(1); // ← INVERT: expect advance past 1.
-
-      // CURRENT (buggy): the wedge-probe row is NOT readable (its commit
-      // never landed). AFTER recovery: the probe row reads back.
+      // A full read sees BOTH the orphan-since-committed row AND the probe.
       const ids = await readAllRowIds(storage);
-      expect(ids).not.toContain("wedge-probe"); // ← INVERT: expect to contain it.
-      // The original good row is still readable regardless (folds from
-      // log seq 0, below the orphan).
+      expect(ids).toContain("orphan-doc");
+      expect(ids).toContain("wedge-probe");
       expect(ids).toContain("first");
     });
+
+    /**
+     * ── Arm 2: two writers race log/N; exactly one wins, loser probes. ─
+     *
+     * Plan-A exactly-one-winner: both writers see `tail_hint=N` and both
+     * `If-None-Match:"*"` create `log/N`. One wins; the loser sees a
+     * FOREIGN 412, probes `N+1`, and commits there. No hole, no wedge.
+     */
+    test(`[${variant.label}] two writers race log/N: one wins, loser probes N+1`, async () => {
+      const { storage, cleanup } = await variant.build();
+      if (cleanup !== undefined) {
+        cleanups.push(cleanup);
+      }
+      const currentJsonKey = CURRENT_JSON_KEY;
+      const tablePrefix = TABLE_PREFIX;
+      await provision(storage);
+
+      const opts = { maxRetries: 5, initialBackoffMs: 0, random: () => 0 } as const;
+      const w1 = new Writer({ storage, currentJsonKey, options: opts });
+      const w2 = new Writer({ storage, currentJsonKey, options: opts });
+
+      // Both start from tail_hint=0 (fresh) and contend on log/0.
+      const [r1, r2] = await Promise.allSettled([
+        w1.commit({ op: "I", collection: COLLECTION, docId: "race-a", body: { _id: "race-a" } }),
+        w2.commit({ op: "I", collection: COLLECTION, docId: "race-b", body: { _id: "race-b" } }),
+      ]);
+      // BOTH must succeed — the loser re-probes forward and commits.
+      expect(r1.status).toBe("fulfilled");
+      expect(r2.status).toBe("fulfilled");
+
+      // Dense at 0,1 — no hole, no wedge.
+      const seqs = await durableLogSeqs(storage, tablePrefix);
+      expect(seqs).toEqual([0, 1]);
+      const ids = await readAllRowIds(storage);
+      expect(ids).toContain("race-a");
+      expect(ids).toContain("race-b");
+    });
+
+    /**
+     * ── Arm 3: reader sees a committed prefix above a stale hint. ──────
+     *
+     * Commit `log/N` while `tail_hint` stays below `N` (no compactor run,
+     * so no durable hint refresh). A reader still sees `log/N` via the
+     * forward-probe — the hint is a non-authoritative lower bound.
+     */
+    test(`[${variant.label}] reader sees committed prefix above a stale tail_hint`, async () => {
+      const { storage, cleanup } = await variant.build();
+      if (cleanup !== undefined) {
+        cleanups.push(cleanup);
+      }
+      const currentJsonKey = CURRENT_JSON_KEY;
+      await provision(storage);
+
+      // Commit three entries through the writer (single-write commit
+      // advances NO durable tail_hint — only the compactor does). We do
+      // NOT run the compactor, so the stored hint stays at 0.
+      const w = new Writer({ storage, currentJsonKey });
+      for (const id of ["r0", "r1", "r2"]) {
+        await w.commit({ op: "I", collection: COLLECTION, docId: id, body: { _id: id } });
+      }
+
+      // The stored hint is still the stale lower bound (no compactor ran).
+      const cur = await readCurrentJson(storage, currentJsonKey);
+      expect(cur!.json.tail_hint).toBe(0);
+
+      // A reader still sees the full committed prefix via the forward-probe.
+      const ids = await readAllRowIds(storage);
+      expect(ids).toEqual(["r0", "r1", "r2"]);
+    });
+
+    /**
+     * ── Arm 4: lost-ack / false-412 (the sharpest trap). ──────────────
+     *
+     * The writer PUTs `log/N` and the create SUCCEEDS on the backend, but
+     * the RESPONSE is DROPPED (a NetworkError thrown AFTER the durable
+     * write lands). The writer retries WITHIN THE SAME `commit()` (same
+     * session), gets a 412, reads back the occupant → OWN session, OWN
+     * seq → ADOPTS → returns success. The logical write lands at EXACTLY
+     * `N` and is NOT duplicated at `N+1`. Without adoption a dropped ack
+     * double-commits.
+     */
+    test(`[${variant.label}] lost-ack: dropped response on log/N adopts, lands at exactly N`, async () => {
+      const { storage, cleanup } = await variant.build();
+      if (cleanup !== undefined) {
+        cleanups.push(cleanup);
+      }
+      const currentJsonKey = CURRENT_JSON_KEY;
+      const tablePrefix = TABLE_PREFIX;
+      await provision(storage);
+
+      // Wrap storage so the FIRST PUT to a log/<seq> key writes through
+      // to the backend (the create lands durably) but THEN throws a
+      // NetworkError — the ack is lost. Subsequent ops pass through.
+      let dropped = false;
+      const lossy: Storage = {
+        get: (k, o) => storage.get(k, o),
+        delete: (k, o) => storage.delete(k, o),
+        list: (p, o) => storage.list(p, o),
+        async put(k, b, o) {
+          if (!dropped && /\/log\/\d+\.json$/.test(k)) {
+            dropped = true;
+            // The write LANDS first, then the ack is dropped.
+            await storage.put(k, b, o);
+            throw new BaerlyError("NetworkError", "injected dropped ack on log PUT");
+          }
+          return storage.put(k, b, o);
+        },
+      };
+
+      const w = new Writer({
+        storage: lossy,
+        currentJsonKey,
+        options: { maxRetries: 5, initialBackoffMs: 0, random: () => 0 },
+      });
+      // The writer's own retry inside commit() must adopt the lost-ack
+      // write and return success — NOT throw, NOT double-commit.
+      const result = await w.commit({
+        op: "I",
+        collection: COLLECTION,
+        docId: "lost-ack",
+        body: { _id: "lost-ack" },
+      });
+      expect(result.entry.seq).toBe(0);
+
+      // EXACTLY one log entry — landed at N (=0), NOT duplicated at N+1.
+      const seqs = await durableLogSeqs(storage, tablePrefix);
+      expect(seqs).toEqual([0]);
+      const ids = await readAllRowIds(storage);
+      expect(ids).toEqual(["lost-ack"]);
+    });
+
+    /**
+     * ── Arm 5: density invariant — no interior holes. ─────────────────
+     *
+     * Across a crash-injected run of single-input commits, the log must
+     * stay dense: `∀ seq: log/<seq+1> exists ⟹ log/<seq> exists`. Every
+     * writer honors first-empty-slot via the forward-probe; the storage
+     * layer can't enforce this, so assert it directly.
+     */
+    propTest.prop({
+      seeds: fc.integer({ min: 2, max: 12 }),
+      abortAfter: fc.integer({ min: 1, max: 10 }),
+    })(
+      `[${variant.label}] density invariant: no interior log holes under crash injection`,
+      async ({ seeds, abortAfter }) => {
+        const { storage, cleanup } = await variant.build();
+        if (cleanup !== undefined) {
+          cleanups.push(cleanup);
+        }
+        const currentJsonKey = CURRENT_JSON_KEY;
+        const tablePrefix = TABLE_PREFIX;
+        await provision(storage);
+
+        const w = new Writer({
+          storage,
+          currentJsonKey,
+          options: { maxRetries: 5, initialBackoffMs: 0, random: () => 0 },
+        });
+        for (let i = 0; i < seeds; i++) {
+          const id = `d-${i}`;
+          await w.commit({ op: "I", collection: COLLECTION, docId: id, body: { _id: id } });
+        }
+
+        // Inject a crash mid-commit, then a recovery commit. The recovery
+        // writer must NOT fill a hole — it commits at the dense tail.
+        const handle = abortingStorage(storage);
+        const crashWriter = new Writer({ storage: handle.storage, currentJsonKey });
+        handle.armAt(abortAfter);
+        try {
+          await crashWriter.commit({
+            op: "I",
+            collection: COLLECTION,
+            docId: "crash-doc",
+            body: { _id: "crash-doc" },
+          });
+        } catch {
+          // Expected on most arming points.
+        }
+        await w.commit({
+          op: "I",
+          collection: COLLECTION,
+          docId: "recover-doc",
+          body: { _id: "recover-doc" },
+        });
+
+        // DENSITY: the durable seqs form a contiguous prefix [0, max].
+        const seqs = await durableLogSeqs(storage, tablePrefix);
+        expect(seqs.length).toBeGreaterThan(0);
+        for (let j = 0; j < seqs.length; j++) {
+          expect(seqs[j]).toBe(j);
+        }
+      },
+      PROP_TIMEOUT_MS,
+    );
   }
 });

@@ -390,14 +390,14 @@ describe("runBoundedMaintenance", () => {
       snapshot_rows: 0,
     });
     const before = await readSeqStart(inner, KEY);
-    // Choose prevSeq/nextSeq so NO gc boundary is crossed (prevSeq===nextSeq).
-    const cur = await readCurrentJson(inner, KEY);
-    const nextSeq = cur!.json.tail_hint;
+    // Choose prevSeq == the TRUE tail so NO gc boundary is crossed. Under
+    // single-write commit the runner re-probes the tail (60 entries =
+    // tail 60); the stored tail_hint stays 0, so we pass 60 explicitly.
     const c = countingStorage(inner);
     await runBoundedMaintenance({
       storage: c.storage,
       currentJsonKey: KEY,
-      prevSeq: nextSeq, // same bucket ⇒ no GC boundary
+      prevSeq: 60, // == probed tail ⇒ no GC boundary
     });
     const after = await readSeqStart(inner, KEY);
     // Folded a slice.
@@ -590,12 +590,10 @@ describe("runBoundedMaintenance", () => {
       snapshot_rows: 0,
     });
     const before = await readSeqStart(inner, KEY);
-    const cur = await readCurrentJson(inner, KEY);
-    const nextSeq = cur!.json.tail_hint;
     await runBoundedMaintenance({
       storage: inner,
       currentJsonKey: KEY,
-      prevSeq: nextSeq, // no GC boundary; just fold
+      prevSeq: tail, // == probed tail ⇒ no GC boundary; just fold
     });
     const after = await readSeqStart(inner, KEY);
     expect(after - before).toBe(WRITE_TICK_FOLD_ENTRIES_PER_PASS);
@@ -611,8 +609,6 @@ describe("runBoundedMaintenance", () => {
       snapshot_bytes: 0,
       snapshot_rows: 0,
     });
-    const cur = await readCurrentJson(inner, KEY);
-    const nextSeq = cur!.json.tail_hint;
     // Storage that fails the current.json CAS PUT exactly once (the
     // compactor's step-7 advance), forcing skippedReason: "cas-lost".
     let failedOnce = false;
@@ -637,7 +633,7 @@ describe("runBoundedMaintenance", () => {
       await runBoundedMaintenance({
         storage: failingPut,
         currentJsonKey: KEY,
-        prevSeq: nextSeq, // no GC boundary; isolate the fold
+        prevSeq: 60, // == probed tail ⇒ no GC boundary; isolate the fold
       });
     });
     expect(counterTotal(recorder, "db.compaction.cas_lost_total")).toBeGreaterThan(0);

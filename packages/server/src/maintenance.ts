@@ -41,6 +41,7 @@ import {
   type InternalCompactOptions,
 } from "./compactor.ts";
 import { runGc, type InternalRunGcOptions, type RunGcOptions, type RunGcResult } from "./gc.ts";
+import { probeTailFrom } from "./log-tail.ts";
 import { getCurrentContext } from "./observability/context.ts";
 
 const ctxMetrics = (): MetricsRecorder => getCurrentContext()?.recorder ?? noopMetricsRecorder;
@@ -220,7 +221,10 @@ export const estimateTailBytes = (current: CurrentJson, observedTail: number): n
  * of the fold-trigger Gate 1 checked inside {@link runBoundedMaintenance}).
  * Returning `false` lets the writer skip the dispatch entirely. Ratio
  * numerator is the DERIVED {@link estimateTailBytes} (not exact `tail_bytes`);
- * `observedTail` threads from the caller (Phase 3: post-CAS `tail_hint`).
+ * `observedTail` threads from the caller (the writer's in-memory observed
+ * tail `seq+1` under single-write commit). Both the boundary check and the
+ * ratio key off `observedTail`, since the stored `tail_hint` is now only a
+ * non-authoritative lower bound (compactor-advanced).
  */
 export const shouldFireMaintenance = (
   current: CurrentJson,
@@ -228,7 +232,7 @@ export const shouldFireMaintenance = (
   gcInterval: number,
   observedTail: number,
 ): boolean =>
-  crossesGcBoundary(prevSeq, current.tail_hint, gcInterval) ||
+  crossesGcBoundary(prevSeq, observedTail, gcInterval) ||
   estimateTailBytes(current, observedTail) /
     Math.max(current.snapshot_bytes, MAINTENANCE_MIN_LIVE_BYTES) >=
     MAINTENANCE_TARGET_RATIO;
@@ -291,8 +295,15 @@ export const runBoundedMaintenance = async (
   args: {
     storage: Storage;
     currentJsonKey: string;
-    /** The writer's PRE-CAS `current.tail_hint` — the GC cadence baseline. */
+    /** The pre-commit observed tail — the GC cadence baseline. */
     prevSeq: number;
+    /**
+     * Writer's in-memory observed tail (`seq + 1`). Given on the
+     * write-tick path so the runner's Gate-1 ratio + GC cadence key off
+     * the true tail without an O(gap) re-probe (the stored `tail_hint` is
+     * only a lower bound). Absent on a scheduled tick ⇒ the runner probes.
+     */
+    observedTail?: number;
     /** `C` override (from `BAERLY_MAINTENANCE_MAX_FOLD_BYTES`). */
     maxFoldBytes?: number;
     /** From `BAERLY_MAINTENANCE_DISABLE`. */
@@ -344,11 +355,29 @@ export const runBoundedMaintenance = async (
     const current = read.json;
     const snapshotBytes = current.snapshot_bytes;
     const snapshotRows = current.snapshot_rows;
-    const nextSeq = current.tail_hint;
     const logSeqStart = current.log_seq_start;
+    // Tail for THIS tick's Gate-1 ratio + GC cadence. Under single-write
+    // commit `tail_hint` is only a lower bound (compactor-advanced), so the
+    // tick can't read the true tail off `current.json`. Two sources:
+    //   - write-tick: use the writer's in-memory `observedTail` directly
+    //     (no re-probe — keeps the hot path off an O(gap) forward walk).
+    //   - scheduled (no `observedTail`): forward-probe the true tail here
+    //     (affordable at cron cadence).
+    // Both floor at `max(log_seq_start, tail_hint)`.
+    const probeFloor = Math.max(logSeqStart, current.tail_hint);
+    let nextSeq: number;
+    if (args.observedTail !== undefined) {
+      nextSeq = Math.max(args.observedTail, probeFloor);
+    } else {
+      const probed = await probeTailFrom(
+        storage,
+        collectionPrefix,
+        probeFloor,
+        signal !== undefined ? { signal } : undefined,
+      );
+      nextSeq = probed.tail;
+    }
     // Ratio TRIGGER numerator = DERIVED estimate (Phase 6 removes `tail_bytes`).
-    // observedTail = nextSeq here (post-CAS `tail_hint`, == true tail under the
-    // two-write commit). Phase 4 swaps it for the writer's in-memory tail.
     const tailBytesEst = estimateTailBytes(current, nextSeq);
 
     const ratio = tailBytesEst / Math.max(snapshotBytes, MAINTENANCE_MIN_LIVE_BYTES);

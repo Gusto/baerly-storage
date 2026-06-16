@@ -213,14 +213,15 @@ export const compact = async (
   const current = read.json;
   const baseEtag = read.etag;
   const logSeqStartBefore = logSeqStartOf(current);
-  // Forward-probe the TRUE committed tail. `tail_hint` is a
-  // non-authoritative LOWER BOUND; the live commit may have advanced
-  // past it (and once the writer's commit-path current.json write is
-  // gone in Phase 4, it always will). The probe GET-walks `log/<seq>`
-  // from the stored hint to the first 404 — a few Class-B GETs (today a
-  // single immediate-404 while the commit still keeps the hint at the
-  // true tail). The compactor is Class-A-active, not idle-reader-bound.
-  const probe = await probeTailFrom(storage, collectionPrefix, current.tail_hint, {
+  // Forward-probe the TRUE tail (uncapped) and stamp it as the new
+  // `tail_hint` (Step 7). The writer never advances `tail_hint` under
+  // single-write commit; the compactor is its sole durable advancer, so
+  // it must discover the true tail to keep the writer's per-commit
+  // tail-find cheap (a tracking hint ⇒ small gap). The compactor's O(gap)
+  // probe is amortized O(1) per write across the fold cadence; it's
+  // Class-A-active, not idle-reader-bound.
+  const probeFloor = Math.max(logSeqStartBefore, current.tail_hint);
+  const probe = await probeTailFrom(storage, collectionPrefix, probeFloor, {
     ...(options.signal !== undefined && { signal: options.signal }),
   });
   const discoveredTail = probe.tail;
@@ -368,12 +369,10 @@ export const compact = async (
     tail_hint: Math.max(current.tail_hint, discoveredTail),
     snapshot_bytes: bodyBytes.byteLength,
     snapshot_rows: base.size,
-    // Decrement `tail_bytes` by EXACTLY the folded slice's stored bytes.
-    // When the whole tail folds in one slice (`foldEnd === nextSeq`),
-    // `foldedSliceBytes === current.tail_bytes` exactly → reaches 0.
-    // Not clamped: a negative here would be a real accounting bug the
-    // add-then-fold round-trip property test is designed to catch.
-    tail_bytes: current.tail_bytes - foldedSliceBytes,
+    // tail_bytes is dead post-single-write-commit (writer no longer
+    // increments); pinned 0 until Phase 6 drops the field. Decrementing
+    // would drive it negative (no writer add) and trip assertCurrentJson.
+    tail_bytes: 0,
     // Mean folded-entry byte size for live-tail estimation. Preserve a prior
     // mean on a zero-entry fold (no divide-by-zero, no clobber-with-0).
     mean_entry_bytes:

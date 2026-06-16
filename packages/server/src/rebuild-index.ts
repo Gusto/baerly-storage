@@ -42,6 +42,7 @@ import {
 import { loadSnapshotAsMap } from "./snapshot.ts";
 import { allIndexKeysFor, type IndexDefinition, indexKeyPrefix } from "./indexes.ts";
 import { foldLogEntriesOnto, walkLogRange } from "./log-walk.ts";
+import { probeTailFrom } from "./log-tail.ts";
 
 const EMPTY_BODY = new Uint8Array(0);
 const APPLICATION_JSON = "application/json";
@@ -151,17 +152,27 @@ export const rebuildIndex = async (
   const collectionPrefix = currentJsonKey.slice(0, lastSlash);
   const collection = collectionPrefix.slice(collectionPrefix.lastIndexOf("/") + 1);
   const logSeqStart = logSeqStartOf(read.json);
-  const nextSeq = read.json.tail_hint;
+  const hint = read.json.tail_hint;
 
   // 1. Build the live doc set by folding snapshot + log tail.
   //    Same shape the reader uses in `runRead` and the CLI uses in
-  //    `doCopy`.
+  //    `doCopy`: strict dense walk `[log_seq_start, tail_hint)` plus a
+  //    tolerant forward-probe `[tail_hint, tail)` — `tail_hint` is only a
+  //    lower bound under single-write commit (compactor-advanced).
   const live =
     read.json.snapshot === null
       ? new Map<string, DocumentData>()
       : await loadSnapshotAsMap(storage, read.json.snapshot, collection);
-  const entries = await walkLogRange(storage, collectionPrefix, logSeqStart, nextSeq);
+  const entries = await walkLogRange(storage, collectionPrefix, logSeqStart, hint);
   foldLogEntriesOnto(live, entries, { collection });
+  const probeOpts = opts.signal !== undefined ? { signal: opts.signal } : undefined;
+  const probe = await probeTailFrom(
+    storage,
+    collectionPrefix,
+    Math.max(logSeqStart, hint),
+    probeOpts,
+  );
+  foldLogEntriesOnto(live, probe.entries, { collection });
 
   // 2. Compute the expected index-key set.
   const expected = new Set<string>();

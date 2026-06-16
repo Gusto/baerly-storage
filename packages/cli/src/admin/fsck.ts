@@ -350,7 +350,6 @@ const bundle = defineBaerlySubcommand({
     }
     const cur = read.json;
     const logFrom = cur.log_seq_start ?? 0;
-    const logToExcl = cur.tail_hint;
     const snapshotKey = cur.snapshot;
 
     // ── Snapshot hash verifies (loadSnapshotAsMap throws on mismatch). ──
@@ -374,13 +373,16 @@ const bundle = defineBaerlySubcommand({
       }
     }
 
-    // ── Log range [from, toExcl) has no holes; entries well-formed. ──
-    // LIST the log/ prefix; expect exactly `toExcl - from` keys named
-    // `${from}.json` … `${toExcl - 1}.json`. Use a single LIST so the
-    // op count is O(pages) not O(range).
+    // ── Log range [from, tail) has no holes; entries well-formed. ──
+    // LIST the log/ prefix and derive the TRUE dense tail from the listed
+    // keys: under single-write commit `tail_hint` is only a lower bound
+    // (compactor-advanced), so the authoritative upper bound is the
+    // highest present seq + 1. A missing seq below that max is an
+    // interior hole. Use a single LIST so the op count is O(pages).
     const logPrefix = `${collectionPrefix}/log/`;
     const presentKeys = await listKeys(bucket.storage, logPrefix);
     const presentSeqs = new Set<number>();
+    let maxSeq = logFrom - 1;
     for (const key of presentKeys) {
       const tail = key.slice(logPrefix.length);
       const match = /^(\d+)\.json$/.exec(tail);
@@ -390,8 +392,12 @@ const bundle = defineBaerlySubcommand({
       const seq = Number.parseInt(match[1]!, 10);
       if (Number.isFinite(seq)) {
         presentSeqs.add(seq);
+        if (seq > maxSeq) {
+          maxSeq = seq;
+        }
       }
     }
+    const logToExcl = maxSeq + 1;
     let logEntriesPresent = 0;
     for (let s = logFrom; s < logToExcl; s++) {
       if (presentSeqs.has(s)) {
@@ -400,7 +406,7 @@ const bundle = defineBaerlySubcommand({
         findings.push({
           severity: "finding",
           check: "log",
-          message: `missing log entry at seq ${s} inside [log_seq_start, tail_hint)`,
+          message: `missing log entry at seq ${s} inside [log_seq_start, tail)`,
           key: `${logPrefix}${s}.json`,
         });
       }

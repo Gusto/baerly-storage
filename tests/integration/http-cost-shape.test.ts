@@ -149,7 +149,9 @@ for (const variant of VARIANTS) {
       }
     });
 
-    test("POST insert costs exactly 3 PUTs (content + log + CAS), 0 deletes, 0 lists", async () => {
+    test("POST insert costs exactly 2 PUTs (content + log create), 0 deletes, 0 lists", async () => {
+      // Single-write commit: the numbered log create IS the commit — no
+      // current.json CAS. So an insert is content + log = 2 PUTs.
       counting.reset();
       const res = await fetch(`${baseUrl}/v1/c/${TABLE}`, {
         method: "POST",
@@ -157,7 +159,7 @@ for (const variant of VARIANTS) {
         body: JSON.stringify({ doc: { title: "Login broken", status: "open" } }),
       });
       expect(res.status).toBe(201);
-      expect(counting.puts).toBe(3);
+      expect(counting.puts).toBe(2);
       expect(counting.deletes).toBe(0);
       expect(counting.lists).toBe(0);
     });
@@ -180,7 +182,7 @@ for (const variant of VARIANTS) {
       expect(counting.classAOps).toBe(0);
     });
 
-    test("PATCH update costs exactly 3 PUTs, 0 deletes, 0 lists", async () => {
+    test("PATCH update costs exactly 2 PUTs (content + log create), 0 deletes, 0 lists", async () => {
       const insert = await fetch(`${baseUrl}/v1/c/${TABLE}`, {
         method: "POST",
         headers: { "content-type": "application/json", authorization: `Bearer ${SECRET}` },
@@ -194,12 +196,12 @@ for (const variant of VARIANTS) {
         body: JSON.stringify({ patch: { status: "in-progress" } }),
       });
       expect(res.status).toBe(200);
-      expect(counting.puts).toBe(3);
+      expect(counting.puts).toBe(2);
       expect(counting.deletes).toBe(0);
       expect(counting.lists).toBe(0);
     });
 
-    test("DELETE costs exactly 2 PUTs (tombstone + CAS), 0 deletes, 0 lists", async () => {
+    test("DELETE costs exactly 1 PUT (tombstone log create), 0 deletes, 0 lists", async () => {
       const insert = await fetch(`${baseUrl}/v1/c/${TABLE}`, {
         method: "POST",
         headers: { "content-type": "application/json", authorization: `Bearer ${SECRET}` },
@@ -212,7 +214,7 @@ for (const variant of VARIANTS) {
         headers: { authorization: `Bearer ${SECRET}` },
       });
       expect(res.status).toBe(204);
-      expect(counting.puts).toBe(2);
+      expect(counting.puts).toBe(1);
       expect(counting.deletes).toBe(0);
       expect(counting.lists).toBe(0);
     });
