@@ -1,19 +1,19 @@
 # Baerly Storage
 
 Vendorless, causally consistent document database that runs as a
-server-side `Db` (from `@baerly/server`) behind a `Verifier`
+server-side `Db` (from `@gusto/baerly-storage`) behind a `Verifier`
 synthesized from `config.auth` (or supplied directly via the
 adapter factory), with your data persisted in any S3-compatible
 bucket (S3, R2, GCS, Minio). Browsers and other clients talk to it
-over HTTP via the typed `@baerly/client`. The change-feed is a
+over HTTP via the typed `@gusto/baerly-storage/client`. The change-feed is a
 long-poll on `/v1/since?cursor=<lsn>` — there is no client-side
 polling of the storage layer.
 
 Day-1 deploy targets, both first-class:
 
-- **Cloudflare Worker** (R2 binding, `@baerly/adapter-cloudflare`).
+- **Cloudflare Worker** (R2 binding, `@gusto/baerly-storage/cloudflare`).
 - **Self-hosted Node** (S3 / R2 / GCS / Minio over HTTP,
-  `@baerly/adapter-node`).
+  `@gusto/baerly-storage/node`).
 
 `create-baerly-storage` scaffolds either shape; see the module map in
 [CLAUDE.md](./CLAUDE.md) for the package layout.
@@ -32,7 +32,7 @@ platform's secret store).
 Server (Cloudflare Worker — `examples/minimal-cloudflare/src/server/index.ts`):
 
 ```ts
-import { baerlyWorker } from "@baerly/adapter-cloudflare";
+import { baerlyWorker } from "@gusto/baerly-storage/cloudflare";
 import config from "../../baerly.config.ts";
 
 // baerly.config.ts ships `auth: "none"`. Override with `verifier:`
@@ -43,7 +43,7 @@ export default baerlyWorker(() => ({ config }));
 Server (Node — `examples/minimal-node/src/server/index.ts`):
 
 ```ts
-import { baerlyNode, s3Storage } from "@baerly/adapter-node";
+import { baerlyNode, s3Storage } from "@gusto/baerly-storage/node";
 import config from "../../baerly.config.ts";
 
 await baerlyNode({
@@ -60,7 +60,7 @@ await baerlyNode({
 Client (browser / Node, hitting either server):
 
 ```ts
-import { createBaerlyClient } from "@baerly/client";
+import { createBaerlyClient } from "@gusto/baerly-storage/client";
 
 const client = createBaerlyClient({ baseUrl: "" }); // same-origin
 
@@ -73,7 +73,7 @@ const { _id } = await client.collection<Ticket>("tickets").insert({
 const open = await client.collection<Ticket>("tickets").where({ status: "open" }).all();
 ```
 
-`@baerly/client` requires `baseUrl`; it is a typed HTTP client, not
+`@gusto/baerly-storage/client` requires `baseUrl`; it is a typed HTTP client, not
 a peer of the kernel. All causal-consistency / fence-time logic
 lives in the server-side `Db` + `ServerWriter`.
 
