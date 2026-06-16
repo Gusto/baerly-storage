@@ -369,7 +369,11 @@ const BUDGETS: readonly Budget[] = [
   //   → 329 KiB raw (2026-06-16): same adoption exact-entry guard as
   //     index.js reaches the request-path writer closure. Measured 336002
   //     raw; gz/min-gz remain under.
-  { entry: "http.js", raw: 329 * 1024, gz: 97 * 1024, minGz: 34 * 1024 },
+  //   → 98 KiB gz (2026-06-16): single-write-commit edge-case hardening
+  //     (writer/maintenance/log-tail) lands in the request-path closure
+  //     (measured 99362 gz; +34 over the 97 KiB ceiling). Bump gz +1 KiB;
+  //     raw/min-gz still pass.
+  { entry: "http.js", raw: 329 * 1024, gz: 98 * 1024, minGz: 34 * 1024 },
   // Observability primitives — ObservabilityContext, the
   // request-scoped MetricsRecorder, LogTape config + the
   // JSON sink only (the pretty sink + picocolors now live in
