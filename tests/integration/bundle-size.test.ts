@@ -794,11 +794,37 @@ describe("bundle size", () => {
           console.log(minGzLine);
         }
       }
-      expect(measured.raw, `${rawLine}`).toBeLessThanOrEqual(raw);
-      expect(measured.gz, `${gzLine}`).toBeLessThanOrEqual(gz);
+      // Check every axis and report ALL overages at once. Asserting
+      // raw-then-gz-then-min-gz in sequence makes the FIRST failing axis
+      // mask the rest (a single `expect` aborts the test), so a raw
+      // overrun hides a simultaneous gz overrun — you rebaseline raw,
+      // re-run, and only THEN discover gz is over too. Collecting the
+      // failures avoids that iterate-twice trap and prints a paste-ready
+      // rebaseline (smallest whole-KiB that clears the measured value)
+      // for each axis that crossed.
+      const axes: {
+        kind: "raw" | "gz" | "min-gz";
+        measured: number;
+        budget: number;
+        line: string;
+      }[] = [
+        { kind: "raw", measured: measured.raw, budget: raw, line: rawLine },
+        { kind: "gz", measured: measured.gz, budget: gz, line: gzLine },
+      ];
       if (minGz !== undefined) {
-        expect(measured.minGz, `${minGzLine}`).toBeLessThanOrEqual(minGz);
+        axes.push({ kind: "min-gz", measured: measured.minGz, budget: minGz, line: minGzLine });
       }
+      const over = axes.filter((a) => a.measured > a.budget);
+      const report = over
+        .map((a) => {
+          const kib = Math.ceil(a.measured / 1024);
+          return `${a.line}\n    → rebaseline ${a.kind}: ${kib} * 1024 (= ${kib * 1024}, clears ${a.measured})`;
+        })
+        .join("\n");
+      expect(
+        over.length,
+        `${over.length} axis/axes over budget for dist/${entry}:\n${report}`,
+      ).toBe(0);
     });
   }
 

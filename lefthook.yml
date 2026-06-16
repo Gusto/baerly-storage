@@ -24,3 +24,19 @@ pre-commit:
     typecheck:
       glob: "*.{ts,tsx}"
       run: pnpm verify
+    # Bundle budgets live in `pnpm test` (bundle-size.test.ts) and CI, NOT
+    # in `pnpm verify` above — so a kernel/maintenance edit that blows a
+    # budget commits green and only goes red when you finally run the full
+    # suite or CI fires post-merge. That lag is why budget overruns reach
+    # main. Run the budget check here, scoped to bundle-affecting source so
+    # doc/test/changeset/example commits stay fast. `pnpm bundle-sizes`
+    # self-builds (rolldown ~2.5s) then runs the budget test (~0.3s); it
+    # only fires when a staged file matches the glob below.
+    bundle-size:
+      glob:
+        - "packages/**/*.{ts,tsx}"
+        - "rolldown.config.ts"
+      exclude:
+        - "**/*.test.ts"
+        - "**/*.test.tsx"
+      run: pnpm bundle-sizes

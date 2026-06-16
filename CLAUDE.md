@@ -53,10 +53,11 @@ changes. Failures still print in full. Override with
 `--reporter=dot` for long suites (`test:randomize`,
 `test:fuzz-phase5`) when progress signal matters more than
 compactness, or `--reporter=default` to force the full reporter.
-`pnpm verify` / `pnpm test` is what humans + the lefthook
-pre-commit hook run; `pnpm verify:agent` / `pnpm test:agent` are
-explicit compact-output variants for environments where the env
-var isn't propagated.
+`pnpm verify` / `pnpm test` is what humans run before pushing; the
+lefthook pre-commit hook runs `pnpm verify` (plus a scoped
+`pnpm bundle-sizes` — see below) but NOT the full `pnpm test` suite.
+`pnpm verify:agent` / `pnpm test:agent` are explicit compact-output
+variants for environments where the env var isn't propagated.
 
 > **Agents: don't pipe `verify:agent` / `test:agent` through `| tail -N` or `| head -N`.** Both scripts are already compact — one finding per line, with full detail preserved on failures. Piping to `tail`/`head` removes the lines you need; if the first run prints nothing useful, the _output is empty because the gate passed_, not because the tail was wrong. Same applies to `pnpm bundle-sizes`.
 
@@ -101,7 +102,13 @@ var isn't propagated.
 
 `pnpm verify` is also enforced as a [lefthook](https://lefthook.dev/)
 pre-commit hook (`lefthook.yml`); `pnpm install` wires it up via the
-`prepare` script. Bypass with `git commit --no-verify` when needed.
+`prepare` script. The hook runs `oxfmt --fix` + `oxlint --fix` +
+`pnpm verify` on every commit, plus `pnpm bundle-sizes` **only when a
+staged file matches `packages/**/_.{ts,tsx}`(excluding`_.test.\*`) or
+`rolldown.config.ts`** — bundle budgets live in `pnpm test`/`pnpm bundle-sizes`, NOT in `pnpm verify`, so the scoped hook is what
+keeps a budget-blowing kernel edit from committing green and surfacing
+late (in CI or a manual `pnpm test`). The hook does **not** run the
+full `pnpm test`suite. Bypass with`git commit --no-verify` when needed.
 
 ### Test gating
 
