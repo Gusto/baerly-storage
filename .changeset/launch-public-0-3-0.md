@@ -15,18 +15,20 @@ published, but this is the first release intended for outside use. **Still
 pre-1.0:** the on-disk format and public API may change between minor versions
 until 1.0 — pin your version.
 
-If you ran an internal build, the notable changes since `0.2.0` are below.
-Breaking items are flagged; reach out and I'll help you migrate.
+**New here? You're done — everything above is what you get.** The rest is for
+the few of you who ran an internal `0.1`–`0.2` build and need to know what
+changed since `0.2.0`. Reach out and I'll help you migrate.
 
-**Breaking**
+**Migrating from an internal build**
 
-- **Single-write commit + `current.json` schema v3.** Appending the numbered
-  `log/<seq>` entry _is_ the commit (drops steady-state commit cost from 3
-  Class-A PUTs to 2); `current.json` is now compactor-owned compaction state
-  (`next_seq` → `tail_hint`, `+mean_entry_bytes`, `−tail_bytes`), and readers
-  discover the true tail by forward-probe. **Buckets written under schema v2 are
-  rejected with no migration path** — re-create the bucket (or `admin dump` on a
-  v2 build → `admin restore` on this one). See ADR-008.
+- **Cheaper commits, and a breaking on-disk format (schema v3).** A write now
+  costs 2 Class-A PUTs instead of 3 — appending the numbered `log/<seq>` entry
+  _is_ the commit, so there is no separate `current.json` write. `current.json`
+  becomes compactor-owned compaction state (`next_seq` → `tail_hint`,
+  `+mean_entry_bytes`, `−tail_bytes`), and readers discover the true tail by
+  forward-probe. **Buckets written under schema v2 are rejected with no
+  migration path** — re-create the bucket (or `admin dump` on a v2 build →
+  `admin restore` on this one). See ADR-008.
 - **`Db.transaction` removed — the document is the atomic unit.** Single-document
   writes are each atomic; there is no batch. Replace
   `db.transaction(name, tx => { tx.update(a); tx.update(b) })` with individual
