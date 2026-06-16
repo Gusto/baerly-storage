@@ -130,6 +130,15 @@ export type AdoptionDecision =
  * function; no I/O. The caller performs the GET (when the log PUT
  * surfaces 412) and passes the read-back body in `ctx.existing`.
  *
+ * ## Correctness precondition
+ *
+ * A fresh `session` id is minted per `commit()` call, seq-stable
+ * across that call's retries. Adoption deliberately does NOT compare
+ * docId / content / LSN: a same-session same-seq occupant IS this
+ * writer's own crashed-or-lost-ack commit, hence safe to adopt. A
+ * bare 412 is never proof a peer won until this read-back reports
+ * `foreign-session`.
+ *
  * @see {@link AdoptionDecision} for the return shape.
  * @see The soundness invariant in this module's header docstring.
  */

@@ -345,7 +345,11 @@ const BUDGETS: readonly Budget[] = [
   //     Plan B, ratio-trigger derived tail estimate) reach the http closure
   //     via the maintenance subgraph (measured 333048 raw; +248 over). Bump
   //     raw +1 KiB; gz/min-gz comfortably under.
-  { entry: "http.js", raw: 326 * 1024, gz: 96 * 1024, minGz: 34 * 1024 },
+  //   → 97 KiB gz (2026-06-15): the load-bearing adoption-precondition
+  //     JSDoc on `tryAdoptOwnSessionLogEntry` (single-write-commit Plan B)
+  //     ships un-stripped into the http closure (measured 98361 gz; +57
+  //     over). Bump gz +1 KiB; raw/min-gz still pass.
+  { entry: "http.js", raw: 326 * 1024, gz: 97 * 1024, minGz: 34 * 1024 },
   // Observability primitives — ObservabilityContext, the
   // request-scoped MetricsRecorder, LogTape config + the
   // JSON sink only (the pretty sink + picocolors now live in
