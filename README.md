@@ -2,10 +2,6 @@
 
 **Storage is the missing primitive for agent-built software, and all you need is a library.**
 
-> _Open source (Apache-2.0). Published as
-> [`@gusto/baerly-storage`](https://www.npmjs.com/package/@gusto/baerly-storage)
-> on npm._
-
 `baerly-storage` is a library that turns AWS S3, Cloudflare R2, or a
 conformant S3-compatible bucket into a document database. **There is
 no runtime. None.** No Baerly daemon, no leader, no scheduler, no
