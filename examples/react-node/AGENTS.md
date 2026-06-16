@@ -135,22 +135,34 @@ http://localhost:5173/<path>`) before declaring the task complete.
 
 ## When editing X, read Y
 
-- **Typed collections** — three ways to get a typed row, in DX order:
+- **Typed collections** — two ways to get a typed row, in DX order.
+  The generic on `client.collection<N>(name)` is the collection
+  **name** (constrained to `CollectionNames<typeof config>`), not the
+  row type — so don't pass a row type to it.
   1. **Bind the config.** This template's `src/web/client.ts`
      already passes `config` to `createBaerlyClient({ baseUrl,
      config })`, so `client.collection("notes")` returns
      `ClientCollection<Row>` with `Row` derived from the
      `NoteSchema` declared in `baerly.config.ts`. No generic
-     needed. Use `client.collection<Note>("notes")` (with `Note`
-     exported from `baerly.config.ts` next to the schema)
-     only when you need the row type by name elsewhere.
-  2. **Explicit generic, kernel constraint.** Without a declared
-     collection, the second overload requires the row to satisfy
-     the kernel's `DocumentData` shape (`{ [k: string]: DocumentValue }`):
+     needed. When you need to name that row type elsewhere, use
+     `RowOf<typeof config, "notes">` (re-exported from
+     `@gusto/baerly-storage`) — not a generic on `.collection()`.
+  2. **Cast the handle (undeclared collection).** This template's
+     `client` is bound to `config`, so its names narrow to the
+     declared collections. To reach a collection that isn't in
+     `config`, build an unbound client
+     (`createBaerlyClient({ baseUrl })` with no `config`) — its names
+     widen to `string` and its row defaults to `DocumentData`. Cast at
+     the construction site for a narrower shape that still satisfies
+     the kernel's `DocumentData` constraint
+     (`{ [k: string]: DocumentValue }`):
      ```ts
+     import { createBaerlyClient, type ClientCollection } from "@gusto/baerly-storage/client";
      import type { DocumentData } from "@gusto/baerly-storage";
      interface Bookmark extends DocumentData { _id: string; url: string }
-     await client.collection<Bookmark>("bookmarks").all();
+     const raw = createBaerlyClient({ baseUrl: "" });
+     const bookmarks = raw.collection("bookmarks") as ClientCollection<Bookmark>;
+     await bookmarks.all();
      ```
      A plain `interface Bookmark { _id: string; url: string }`
      (no index signature) will fail with TS2344 — the constraint
