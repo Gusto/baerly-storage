@@ -19,8 +19,7 @@
 
   // after — factory bound to your defineConfig collections
   import { createBaerlyReact } from "@gusto/baerly-storage/client/react";
-  const { Provider, useQuery, useMutation, useClient } =
-    createBaerlyReact<typeof config>();
+  const { Provider, useQuery, useMutation, useClient } = createBaerlyReact<typeof config>();
   ```
 
   The loose exports no longer exist; obtain the hooks from the factory so
@@ -57,7 +56,7 @@
 
 ### Minor Changes
 
-- Initial private preview of `@gusto/baerly-storage` — a vendorless document
+- Initial release of `@gusto/baerly-storage` — a vendorless document
   database over any S3-compatible bucket. Public surface: `Db.create()`,
   `db.collection(...)` with the eight-verb / three-modifier / six-operator
   query API, `defineConfig`, `createBaerlyClient`, the Cloudflare Workers and

@@ -18,13 +18,11 @@ The day-one gate asserts that a non-engineer + Claude can go from
 
 Without any manual credential editing.
 
-## Local install (Phase 1 — private `@gusto` org on npmjs.com)
+## Local install
 
-> 🚧 **Phase 1 private preview.** `@gusto/baerly-storage` +
-> `@gusto/create-baerly-storage` publish privately under the `@gusto`
-> org on npmjs.com (`access: "restricted"`) — not a separate private
-> registry. From a machine logged in to npm as a `@gusto` org member
-> (see the one-time setup in `docs/contributing/publishing.md`):
+`@gusto/baerly-storage` + `@gusto/create-baerly-storage` publish
+publicly to npmjs.com (`access: "public"`), so anyone can scaffold
+from the registry without auth:
 
 ```sh
 pnpm create @gusto/baerly-storage@latest -- gate-smoke --target=node --json

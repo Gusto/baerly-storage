@@ -1,8 +1,8 @@
 ---
 title: Publishing
 audience: maintainer
-summary: "How to publish @gusto/baerly-storage + @gusto/create-baerly-storage privately under the @gusto org on npmjs.com."
-last-reviewed: 2026-06-11
+summary: "How to publish @gusto/baerly-storage + @gusto/create-baerly-storage publicly to npmjs.com."
+last-reviewed: 2026-06-16
 tags: [publishing, release, npm]
 related: ["development.md", "../../CLAUDE.md"]
 ---
@@ -10,19 +10,18 @@ related: ["development.md", "../../CLAUDE.md"]
 # Publishing
 
 Two packages publish from this repo, both scoped to `@gusto/` and
-both published to the standard public npm registry (npmjs.com) under
-the `@gusto` org — Gusto's npm enterprise license. They are **not**
-on a separate private registry; there is no such thing. "Private"
-here means `publishConfig.access: "restricted"`, which makes the
-package private *within npmjs.com* (org members with auth can
-install it; the public cannot). The local Verdaccio registry
-(`pnpm verdaccio:publish`, `localhost:4873`) is a throwaway
-test harness for scaffolder iteration only — never a publish target.
+both published publicly to the standard npm registry (npmjs.com) with
+`publishConfig.access: "public"` — the project is open source under
+Apache-2.0, so anyone can install them without auth. The local
+Verdaccio registry (`pnpm verdaccio:publish`, `localhost:4873`) is a
+throwaway test harness for scaffolder iteration only — never a publish
+target.
 
 ## Cutting a release
 
 Versioning and the changelog are driven by [Changesets](https://github.com/changesets/changesets).
-Publishing stays on `pnpm release` for private-access enforcement.
+Publishing goes through `pnpm release`, which builds first and passes
+`--access public` explicitly.
 
 1. **While developing** — for any user-facing change, add a changeset:
 
@@ -52,7 +51,7 @@ Publishing stays on `pnpm release` for private-access enforcement.
    git tag "v$(node -p "require('./package.json').version")"
    ```
 
-4. **Publish** with the private-access-enforcing path:
+4. **Publish:**
 
    ```sh
    pnpm release
@@ -60,16 +59,16 @@ Publishing stays on `pnpm release` for private-access enforcement.
 
    `pnpm release` runs `pnpm build` (which copies the updated `CHANGELOG.md`
    into `dist/CHANGELOG.md`) and publishes both packages with
-   `--access restricted` + force-private verification.
+   `--access public`.
 
-> **Do not run `changeset publish`.** It issues a bare publish that drops
-> `--access restricted`, which lands the package world-readable. `pnpm release`
-> (`scripts/publish.mjs`) is the only sanctioned publish path.
+> **Prefer `pnpm release` over `changeset publish`.** `pnpm release`
+> (`scripts/publish.mjs`) builds first, so `dist/` is fresh and
+> `dist/CHANGELOG.md` is current before the tarball is cut.
 
-| Package                          | Path                              | Bin                       |
-|----------------------------------|-----------------------------------|---------------------------|
-| `@gusto/baerly-storage`          | `./` (root)                       | `baerly`                  |
-| `@gusto/create-baerly-storage`   | `packages/create-baerly-storage/` | `create-baerly-storage`   |
+| Package                        | Path                              | Bin                     |
+| ------------------------------ | --------------------------------- | ----------------------- |
+| `@gusto/baerly-storage`        | `./` (root)                       | `baerly`                |
+| `@gusto/create-baerly-storage` | `packages/create-baerly-storage/` | `create-baerly-storage` |
 
 Workspace `@baerly/*` packages are marked `"private": true` and are
 never published — they bundle into the published `@gusto/baerly-storage`.
@@ -138,25 +137,14 @@ Confirm: `package/dist/index.js` and
 `package/dist/templates/{minimal,react}-{cloudflare,node}/package.json`
 are present. Cleanup the local `.tgz` files when done.
 
-## Publish — always via `pnpm release`
+## Publish via `pnpm release`
 
-> ⚠️ **Never run a bare `pnpm publish` / `npm publish`.** A
-> `prepublishOnly` guard (`scripts/guard-publish.mjs`) blocks it on
-> both packages, because a bare publish leaks them **public**. Two
-> things conspire: `pnpm publish` silently drops
-> `publishConfig.access: "restricted"`, and the `@gusto` org default
-> visibility is **public**, so the registry publishes world-readable.
-> This burned us twice.
-
-`pnpm release` (`scripts/publish.mjs`) is the only sanctioned path. It:
+`pnpm release` (`scripts/publish.mjs`) is the sanctioned path. It:
 
 1. builds,
-2. publishes both packages with an **explicit** `--access restricted`,
-3. forces `npm access set status=private` on each (only needs package
-   write access, not org admin — and it's the authoritative lever,
-   since `--access` is honoured only on a package's *first* publish),
-4. **verifies** with `npm access get status` and **exits non-zero,
-   loudly, if either package is not private.**
+2. publishes both packages with an **explicit** `--access public`
+   (pnpm has historically dropped `publishConfig.access` on the wire,
+   so the flag is passed by hand to be safe).
 
 ```sh
 pnpm release --dry-run     # build + pack + report current visibility, no writes
@@ -166,16 +154,7 @@ pnpm release --otp=123456  # forward a 2FA one-time code if prompted
 
 Review the dry-run file list — anything outside `dist/` is a
 packaging bug. A green `pnpm release` ends with
-`✓ Both packages published and verified PRIVATE.` Anything else is a
-failed release; follow the script's printed remediation
-(`npm access set status=private <pkg>`) until `npm access get status`
-prints `private`.
-
-> **The durable backstop is the org setting.** If you (or an org
-> admin) can set the `@gusto` org's *default package visibility* to
-> private on npmjs.com, do it — that removes the public window
-> entirely. `pnpm release` is the admin-free safeguard for when you
-> can't.
+`✓ Both packages published.`
 
 ## Post-publish smoke
 
@@ -231,7 +210,7 @@ The published `@gusto/baerly-storage` bundle ships a
 `dist/THIRD-PARTY-LICENSES.txt` file alongside the code. Here's why it
 exists and how it's produced.
 
-**Why.** rolldown *inlines* our runtime deps (`aws4fetch`,
+**Why.** rolldown _inlines_ our runtime deps (`aws4fetch`,
 `fast-xml-parser`, `hono`, `@hono/node-server`, `jose`,
 `@logtape/logtape`, `picocolors`, plus the CLI's `citty` + `jsonc-parser`)
 into `dist/`. Those deps are MIT/ISC/BSD/Apache-2.0; every one of those
@@ -244,7 +223,7 @@ hand-maintained:
 1. Each rolldown build runs codepunkt's `rollup-license-plugin`
    (`rolldown.config.ts` for the library entries,
    `packages/cli/rolldown.config.ts` for the `baerly` bin). Each plugin
-   discovers the third-party packages *that build* bundled and writes a
+   discovers the third-party packages _that build_ bundled and writes a
    partial JSON manifest — `dist/.third-party-licenses.lib.json` and
    `dist/.third-party-licenses.cli.json` respectively.
 2. The final `pnpm build` step runs
@@ -268,17 +247,17 @@ license-incompatible dep can never silently ship.
 
 ## Notes on the publish config
 
-- `publishConfig.provenance` is intentionally NOT set. If/when the
-  project is open-sourced (access flipped to `"public"`), restore
-  the flag to get npm Sigstore attestations.
-- `publishConfig.access` is set to `"restricted"` on both
-  published packages. The `@gusto` org on npmjs.com defaults new
-  scoped packages to `public`, so leaving `access` unset would
-  publish world-readable — `"restricted"` forces a private publish.
-  Never change to `"public"`. If you ever add a third `@gusto/*`
-  package, set `"access": "restricted"` in its `publishConfig`
-  before the first publish.
+- `publishConfig.access` is set to `"public"` on both published
+  packages, and `pnpm release` also passes `--access public`
+  explicitly. If you add a third published `@gusto/*` package, set
+  `"access": "public"` in its `publishConfig`.
+- `publishConfig.provenance` is intentionally NOT set. npm provenance
+  (Sigstore attestations) is only available when publishing from a
+  supported CI/OIDC environment (e.g. GitHub Actions) — it cannot be
+  generated by a manual `pnpm release` from a laptop, where it would
+  fail the publish. Enable it if/when release moves into CI.
 - The 7 workspace `@baerly/*` packages have `"private": true` as a
   defensive lock. Never remove these flags — those packages are
   bundled into the published `@gusto/baerly-storage`, never
-  shipped separately.
+  shipped separately. (This is a workspace-packaging detail, unrelated
+  to the project being open source.)

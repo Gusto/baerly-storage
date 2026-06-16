@@ -4,7 +4,7 @@
   "commit": false,
   "fixed": [["@gusto/baerly-storage", "@gusto/create-baerly-storage"]],
   "linked": [],
-  "access": "restricted",
+  "access": "public",
   "baseBranch": "main",
   "updateInternalDependencies": "patch",
   "ignore": ["minimal-cloudflare", "minimal-node", "react-cloudflare", "react-node"]

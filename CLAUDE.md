@@ -20,12 +20,11 @@ protocol kernel is small enough that an LLM can use the public API
 zero-shot from the `.d.ts` files alone. Theoretical foundations live
 in [docs/](docs/).
 
-**Current state:** Private Gusto preview, published as
-`@gusto/baerly-storage` privately under the `@gusto` org on npm
-(npmjs.com) — Gusto's npm enterprise license, **not** a separate
-private registry (there is none). "Private" = `publishConfig.access:
-"restricted"`. The `localhost:4873` Verdaccio registry is a local
-test harness only, never a publish target. See
+**Current state:** Open source under Apache-2.0, published publicly as
+`@gusto/baerly-storage` (and the `@gusto/create-baerly-storage`
+scaffolder) on npm (npmjs.com) with `publishConfig.access: "public"`.
+The `localhost:4873` Verdaccio registry is a local test harness only,
+never a publish target. See
 [`docs/contributing/publishing.md`](docs/contributing/publishing.md) for
 the publish workflow.
 

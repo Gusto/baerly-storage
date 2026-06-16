@@ -27,12 +27,11 @@
     }
   },
   "publishConfig": {
-    "access": "restricted"
+    "access": "public"
   },
   "scripts": {
     "build": "rolldown -c",
-    "prepack": "rolldown -c",
-    "prepublishOnly": "node ../../scripts/guard-publish.mjs"
+    "prepack": "rolldown -c"
   },
   "dependencies": {
     "@clack/prompts": "^1.5.1",

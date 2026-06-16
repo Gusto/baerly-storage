@@ -136,7 +136,7 @@
         "import": "./dist/dev-vite.js"
       }
     },
-    "access": "restricted"
+    "access": "public"
   },
   "scripts": {
     "typecheck": "tsgo --noEmit",
@@ -154,7 +154,6 @@
     "release": "node scripts/publish.mjs",
     "changeset": "changeset",
     "changeset:version": "changeset version && rm -f packages/create-baerly-storage/CHANGELOG.md",
-    "prepublishOnly": "node scripts/guard-publish.mjs",
     "prepare": "node scripts/prepare.mjs",
     "format": "oxfmt tests packages",
     "format:check": "oxfmt --check tests packages",
