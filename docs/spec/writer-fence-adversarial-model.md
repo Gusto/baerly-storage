@@ -18,11 +18,11 @@ related: [sync-protocol.md, causal-consistency-checking.md, log-entry-shape.md]
 > retained as an explicit admin/testing primitive and as the patent-C1
 > provenance record. This adversarial analysis still describes that
 > retained-but-off-the-hot-path mechanism — every claim below remains
-> valid for admin rotation, any future rotation use, and the patent
+> sound for admin/testing use, any future rotation, and the patent
 > context; none of it is exercised by a normal commit.
 
-This document is the written failure envelope of the two-phase
-fence-claim protocol implemented in
+This document is the written failure envelope of the now-dormant
+two-phase fence-claim protocol implemented in
 [`packages/protocol/src/coordination/current-json.ts`](../../packages/protocol/src/coordination/current-json.ts)
 (the `claimWriter` function), and verified against in
 [`packages/protocol/src/coordination/current-json.test.ts`](../../packages/protocol/src/coordination/current-json.test.ts).
