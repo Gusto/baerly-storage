@@ -111,10 +111,10 @@ http://localhost:5173/<path>`) before declaring the task complete.
 > `tsconfig.app.json` and `tsconfig.worker.json`. Both can only
 > import from `baerly-storage`, `zod`, and other dual-included root
 > files. Paths under `src/server/` are worker-only; importing them
-> here triggers `TS6307: File … is not listed within the file list
-of project … tsconfig.app.json`. Cross-boundary interfaces belong
-> in `types.ts`; re-export from a server-only file if downstream code
-> wants a local name.
+> here triggers a `TS6307` "not listed within the file list of
+> project … tsconfig.app.json" error. Cross-boundary interfaces
+> belong in `types.ts`; re-export from a server-only file if
+> downstream code wants a local name.
 
 ## When editing X, read Y
 
@@ -159,9 +159,10 @@ of project … tsconfig.app.json`. Cross-boundary interfaces belong
 
 - **Writing tests** — the kernel exports `MemoryStorage`, an
   in-memory `Storage` impl that's the canonical backend for unit
-  tests. Don't roll your own — `Db.create({ storage, app, tenant,
-config })` is the same boilerplate prod uses; passing
-  `new MemoryStorage()` swaps R2 for an in-process map.
+  tests. Don't roll your own: the same
+  `Db.create({ storage, app, tenant, config })` boilerplate prod uses
+  also accepts a `new MemoryStorage()` that swaps R2 for an
+  in-process map.
 
   ```ts
   // src/notes.test.ts
@@ -249,8 +250,9 @@ config })` is the same boilerplate prod uses; passing
   });
   ```
 
-  With that declared, `db.collection("tickets").where({ status: "open"
-}).all()` walks `by_status` automatically. Composite indexes
+  With that declared, a query like
+  `db.collection("tickets").where({ status: "open" }).all()` walks
+  `by_status` automatically. Composite indexes
   (`on: ["status", "priority"]`) match any leftmost prefix.
   Mismatches (predicate doesn't cover any index) fall back to a full
   table scan with a metric bump; correctness is preserved because the
