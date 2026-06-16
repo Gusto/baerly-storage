@@ -262,7 +262,13 @@ const BUDGETS: readonly Budget[] = [
   //     same-session/same-seq occupant unless the read-back log entry exactly
   //     matches the writer's attempted entry. Closes the session-collision
   //     data-loss path. Measured 220302 raw; gz/min-gz remain under.
-  { entry: "index.js", raw: 216 * 1024, gz: 67 * 1024, minGz: 19 * 1024 },
+  //   → 219 KiB raw / 69 KiB gz (2026-06-16): gc/pending.json CAS-merge fix
+  //     (`casUpdateGcPending` retry loop + the pure `mergeGcPending` mutator,
+  //     plus the bounded live-log scan) joins the maintenance subgraph this
+  //     barrel pulls. Genuinely new logic — both axes climb (measured 224105
+  //     raw / 69699 gz); min-gz still under. Rebaseline raw + gz to the
+  //     smallest whole-KiB that clears.
+  { entry: "index.js", raw: 219 * 1024, gz: 69 * 1024, minGz: 19 * 1024 },
   // The three auth verifier factories (bearerJwt, sharedSecret,
   // cloudflareAccess) plus the transitive jose closure pulled in by
   // bearerJwt's createRemoteJWKSet + jwtVerify. Adding a fourth
@@ -373,7 +379,13 @@ const BUDGETS: readonly Budget[] = [
   //     (writer/maintenance/log-tail) lands in the request-path closure
   //     (measured 99362 gz; +34 over the 97 KiB ceiling). Bump gz +1 KiB;
   //     raw/min-gz still pass.
-  { entry: "http.js", raw: 329 * 1024, gz: 98 * 1024, minGz: 34 * 1024 },
+  //   → 332 KiB raw / 99 KiB gz (2026-06-16): gc/pending.json CAS-merge fix
+  //     (`casUpdateGcPending` retry loop + the pure `mergeGcPending` mutator,
+  //     plus the bounded live-log scan) reaches this closure via the
+  //     request-path writer → maintenance subgraph. Genuinely new logic —
+  //     both axes climb (measured 339734 raw / 100780 gz); min-gz still under.
+  //     Rebaseline raw + gz to the smallest whole-KiB that clears.
+  { entry: "http.js", raw: 332 * 1024, gz: 99 * 1024, minGz: 34 * 1024 },
   // Observability primitives — ObservabilityContext, the
   // request-scoped MetricsRecorder, LogTape config + the
   // JSON sink only (the pretty sink + picocolors now live in
@@ -475,7 +487,14 @@ const BUDGETS: readonly Budget[] = [
   //     corrected the stale runner write-tick/scheduled comment (comments
   //     ship un-stripped). +21 B gz over the prior ceiling (measured 35861).
   //     raw/min-gz unaffected. Rebaseline gz +1 KiB only.
-  { entry: "maintenance.js", raw: 116 * 1024, gz: 36 * 1024, minGz: 11 * 1024 },
+  //   → 120 KiB raw / 37 KiB gz (2026-06-16): gc/pending.json CAS-merge fix —
+  //     the new `casUpdateGcPending` retry loop + the pure `mergeGcPending`
+  //     mutator (swept-key dedup + cursor-asymmetry handling) and the bounded
+  //     live-log scan land directly in gc.ts's closure, which this subpath
+  //     re-exports. Genuinely new logic — both axes climb (measured 122167
+  //     raw / 37458 gz); min-gz still under. Rebaseline raw + gz to the
+  //     smallest whole-KiB that clears.
+  { entry: "maintenance.js", raw: 120 * 1024, gz: 37 * 1024, minGz: 11 * 1024 },
   // Cloudflare Workers adapter — re-exports the kernel barrel
   // (Db, Writer, etc.) plus the R2-binding `Storage` impl
   // and the `baerlyCloudflare` helper. Aggregator: closure
@@ -560,7 +579,13 @@ const BUDGETS: readonly Budget[] = [
   //   → raw 384 KiB (2026-06-16): same adoption exact-entry guard as
   //     index.js reaches the Cloudflare writer closure. Measured 392594 raw;
   //     gz/min-gz remain under.
-  { entry: "cloudflare.js", raw: 384 * 1024, gz: 115 * 1024, minGz: 40 * 1024 },
+  //   → raw 388 KiB / gz 117 KiB (2026-06-16): gc/pending.json CAS-merge fix
+  //     (`casUpdateGcPending` retry loop + the pure `mergeGcPending` mutator,
+  //     plus the bounded live-log scan) reaches the cloudflare closure via the
+  //     writer → maintenance subgraph. Genuinely new logic — both axes climb
+  //     (measured 396326 raw / 119124 gz); min-gz still under. Rebaseline
+  //     raw + gz to the smallest whole-KiB that clears.
+  { entry: "cloudflare.js", raw: 388 * 1024, gz: 117 * 1024, minGz: 40 * 1024 },
   // Client surface — `BaerlyClient<TConfig>` + fetcher plumbing.
   // Browser/runtime-agnostic; no kernel modules in the closure.
   // Budget history:
