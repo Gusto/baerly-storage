@@ -30,6 +30,7 @@ rules live in
 - [005 — Verifier is a function](./005-verifier-function-shape.md)
 - [006 — Package layer invariant](./006-package-layer-invariant.md)
 - [007 — Layout versioning cordon](./007-layout-versioning-cordon.md)
+- [008 — Single-write commit](./008-single-write-commit.md)
 
 ## Template
 
