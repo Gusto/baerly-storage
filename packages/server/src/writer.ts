@@ -191,19 +191,16 @@ const EMPTY_BODY = new Uint8Array(0);
 
 /**
  * Successful outcome of one full {@link Writer.#singleAttemptCommit}
- * attempt. Retryable failures (log-peer race, CAS 412) throw
- * `BaerlyError{code:"Conflict"}` directly; the caller catches via
+ * attempt. A retryable log-create 412 that resolved to a foreign-session
+ * occupant beyond the forward-probe budget throws
+ * `BaerlyError{code:"Conflict"}`; the caller catches via
  * {@link isPreconditionFailed} and decides whether to retry. Non-retryable
- * failures (fence bump, protocol-invariant violations, network errors)
- * also throw, but the caller verifies the fence OUTSIDE the catch arm so
- * the fence-bump `Conflict` propagates instead of being mistaken for a
- * retryable CAS loss.
+ * failures (protocol-invariant violations, network errors) propagate.
  */
 interface SingleAttemptSuccess {
   readonly entries: readonly LogEntry[];
   readonly currentEtag: string;
   readonly classAOps: number;
-  readonly expectedEpoch: number;
 }
 
 /**
@@ -267,10 +264,10 @@ export class Writer {
   }
 
   /**
-   * Atomically commit one mutation. Reads `current.json` fresh, mints
-   * the next log entry at `seq = current.tail_hint`, PUTs the content
-   * body and the log entry, then CAS-advances `current.json` with
-   * `If-Match`. Retries on conflict up to `maxRetries`.
+   * Atomically commit one mutation. Reads `current.json` fresh (as a
+   * probe FLOOR, not a CAS precondition), PUTs the content body, then
+   * creates `log/<seq>` via `If-None-Match: "*"` — that create IS the
+   * commit (single-write commit; no `current.json` CAS follows it).
    *
    * The hot-path cost under no contention is 1 GET + 3 PUTs (4 ops);
    * an in-flight peer write costs one extra GET + the backoff sleep
@@ -285,12 +282,6 @@ export class Writer {
    *
    * @throws BaerlyError code="Conflict" when the retry budget is
    *   exhausted (genuine high-contention case).
-   * @throws BaerlyError code="Conflict" — the writer fence
-   *   (`current.json.writer_fence.epoch`) was bumped by a concurrent
-   *   `claimWriter` call between this commit's read of `current.json`
-   *   and the log create. The stale writer aborts to honour the new
-   *   authority — the kernel does NOT retry under the old epoch. See
-   *   {@link claimWriter} for the rotation recipe.
    * @throws BaerlyError code="Internal" when a log entry expected in
    *   `[0, tail_hint)` is missing — a protocol-invariant violation
    *   (compactor bug or stale `current.json`).
@@ -316,25 +307,28 @@ export class Writer {
     const session = uuid().slice(0, SESSION_ID_LENGTH);
     const logPrefix = this.#currentJsonKey.slice(0, this.#currentJsonKey.lastIndexOf("/"));
 
+    // NOTE: with the post-commit fence-verify removed, no `Conflict`
+    // currently escapes `#singleAttemptCommit` — a log-create 412 is
+    // always resolved internally (own-session adoption or a bounded
+    // forward-probe to the next empty slot; only an exhausted probe cap
+    // throws, as `Internal`, not `Conflict`). So the retry-catch arm and
+    // the budget-exhausted `Conflict` throw below are presently
+    // unreachable. They are retained deliberately: they cost nothing on
+    // the happy path and re-arm automatically if a future change ever
+    // re-introduces a retryable `Conflict` out of the helper.
     for (let attempt = 1; attempt <= this.#maxRetries; attempt++) {
       let success: SingleAttemptSuccess;
       try {
         success = await this.#singleAttemptCommit([input], session, logPrefix, "Writer");
       } catch (error) {
-        // Only retryable conflicts (storage 412 on log PUT or
-        // current.json CAS) come back as `Conflict`. The fence-bump
-        // throw happens AFTER the helper returns, so it never
-        // reaches this catch arm. Anything else propagates.
+        // Only a retryable `Conflict` (see NOTE above — currently none)
+        // backs off and retries. Anything else propagates.
         if (!isPreconditionFailed(error)) {
           throw error;
         }
         await this.#backoff(attempt);
         continue;
       }
-      // Fence verify lives in the caller so its `Conflict` propagates
-      // past the retry-catch arm above. Bypasses the retry loop —
-      // the stale writer must defer to the new authority.
-      await this.#verifyFenceUnchanged(success.expectedEpoch, "Writer");
       // `success.classAOps` is the per-attempt base; add `(attempt
       // - 1)` to bill prior failed attempts as one PUT each (the
       // simple-and-test-locked cost model — not a precise replay
@@ -360,8 +354,7 @@ export class Writer {
    * forward-probes the tail and creates `log/<seq>` once via
    * `If-None-Match: "*"` — the numbered log create IS the commit
    * (single-write commit; no `current.json` CAS follows it). Returns
-   * the success payload + the pre-commit fence epoch so the caller can
-   * run {@link #verifyFenceUnchanged} outside the retry-catch arm.
+   * the success payload.
    *
    * Called only as `#singleAttemptCommit([input], …)`: the array shape
    * is retained dead-generality (D1.5), but every call commits exactly
@@ -370,9 +363,8 @@ export class Writer {
    * A log-create 412 is disambiguated by session read-back: own session
    * / own seq ⇒ our crashed-or-lost-ack commit is already durable ⇒
    * adopt; foreign session ⇒ re-probe forward and retry at the next
-   * empty slot. Fence-bump + protocol-invariant violations are NOT
-   * thrown from here (the fence check lives in the caller). Other thrown
-   * `BaerlyError`s (Internal, InvalidResponse, NetworkError) propagate.
+   * empty slot. Thrown `BaerlyError`s (Internal, InvalidResponse,
+   * NetworkError) propagate.
    *
    * Crash safety invariant: content / index PUTs are awaited before the
    * log create. A crash before the create leaves orphan content / index
@@ -399,7 +391,6 @@ export class Writer {
       (await this.#provisionCurrentJson());
     const current = read.json;
     const baseEtag = read.etag;
-    const expectedEpoch = current.writer_fence.epoch;
 
     // ── Step 2. Optional integrity walk (`verifyLogIntegrityOnCommit`,
     // default off). Surfaces missing / malformed entries inside
@@ -668,10 +659,8 @@ export class Writer {
 
     // ── Step 6b. Write-tick maintenance dispatch. ───────────────────
     // Single funnel site: write-tick maintenance dispatch. Reached by
-    // `commit()` exactly once per logical commit. Sits BEFORE the
-    // caller's `#verifyFenceUnchanged` — a write that then fails its
-    // fence check may have paid for one bounded maintenance pass; that's
-    // the intended single funnel, bounded and safe.
+    // `commit()` exactly once per logical commit, after the committing
+    // log create has landed.
     //
     // Config rides the per-request observability context
     // (`getCurrentContext()?.maintenance`), set by the adapter — NOT the
@@ -734,13 +723,6 @@ export class Writer {
       }
     }
 
-    // Step 7 — the fence-verify GET — lives in the caller, not here.
-    // Both fence-bump and a 412-driven CAS retry use
-    // `BaerlyError{code:"Conflict"}`; keeping the fence check outside
-    // this helper's body lets the caller's retry-catch arm
-    // (`isPreconditionFailed`) match ONLY retryable conflicts thrown
-    // from inside, while the fence-bump throw propagates.
-
     // Base class-A op count for this attempt: content PUTs (skipping
     // `op:"D"`) + the single log create + index PUTs + index DELETEs.
     // No current.json CAS anymore. Forward-probe GETs are Class B and
@@ -753,7 +735,6 @@ export class Writer {
       // etag read in Step 1 (still a valid etag of the current manifest).
       currentEtag: baseEtag,
       classAOps,
-      expectedEpoch,
     };
   }
 
@@ -914,32 +895,6 @@ export class Writer {
    */
   #emitWriteMetrics(collection: string, classAOps: number): void {
     ctxMetrics().histogram("db.write.class_a_ops_per_logical_write", classAOps, { collection });
-  }
-
-  /**
-   * Re-read `current.json` after a successful CAS and assert the
-   * writer-fence epoch is still ours. The CAS only mutated `tail_hint`
-   * (the fence is preserved from `current`), so a post-write epoch
-   * mismatch can only mean another writer claimed the fence between
-   * our step-1 read and step-6 PUT — the exact split-brain
-   * `WriterFence` prevents. Throws `Conflict`; no retry, since the
-   * stale writer must defer to the new authority.
-   *
-   * The fence-verify GET is Class B and intentionally NOT counted in
-   * `class_a_ops_per_logical_write`.
-   */
-  async #verifyFenceUnchanged(expectedEpoch: number, where: string): Promise<void> {
-    const postRead = await readCurrentJson(this.#storage, this.#currentJsonKey);
-    if (postRead === null) {
-      return;
-    }
-    if (postRead.json.writer_fence.epoch === expectedEpoch) {
-      return;
-    }
-    throw new BaerlyError(
-      "Conflict",
-      `${where}: writer fence bumped from epoch ${expectedEpoch} to ${postRead.json.writer_fence.epoch} during commit on ${this.#currentJsonKey}; stale writer aborting`,
-    );
   }
 
   /**

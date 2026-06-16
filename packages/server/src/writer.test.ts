@@ -1,6 +1,7 @@
 import {
   CURRENT_JSON_SCHEMA_VERSION,
   type CurrentJson,
+  type LogEntry,
   createCurrentJson,
   getOrCreateMemoryStorageForBucket,
   MAINTENANCE_MIN_LIVE_BYTES,
@@ -39,6 +40,7 @@ const sumCounter = (ctx: ObservabilityContext, name: string): number =>
 const BUCKET = "writer-test-bucket";
 const COLL = "tickets";
 const CURRENT_KEY = `app/test/tenant/t/manifests/${COLL}/current.json`;
+const LOG_PREFIX = `app/test/tenant/t/manifests/${COLL}/log`;
 
 const seedCurrent = (): CurrentJson => logStateCurrentJson();
 
@@ -590,33 +592,35 @@ describe("Writer — writer fence", () => {
     expect(persisted.writer_fence.epoch).toBe(0);
   });
 
-  test("fence bump observed mid-flight: commit() fails fast with Conflict", async () => {
+  test("fence bump no longer aborts a committed write (post-commit verify removed)", async () => {
     const storage = new FenceBumpingStorage();
     await createCurrentJson(storage, CURRENT_KEY, seedCurrent());
-    // The writer's step-1 read of current.json is the first GET on
-    // CURRENT_KEY; the post-CAS read is the second. Bump on the
-    // second — simulates "peer claimed the fence after our CAS
-    // landed but before we verified."
+    // Arm the bump on the SECOND current.json GET. With the old
+    // post-commit fence-verify, that second GET was the verify read: it
+    // observed the bumped epoch and threw Conflict on a log/<seq> entry
+    // that had ALREADY committed and was visible — a committed-but-
+    // Conflict inconsistency. Under single-write commit the numbered log
+    // create IS the commit and there is no verify read, so the commit
+    // succeeds; the entry is durable.
     storage.bumpAfterReadsCount = 2;
     const writer = new Writer({
       storage,
       currentJsonKey: CURRENT_KEY,
     });
 
-    let thrown: unknown;
-    try {
-      await writer.commit({
-        op: "I",
-        collection: COLL,
-        docId: "doc-staled",
-        body: { _id: "doc-staled" },
-      });
-    } catch (error) {
-      thrown = error;
-    }
-    expect(thrown).toBeInstanceOf(BaerlyError);
-    expect((thrown as BaerlyError).code).toBe("Conflict");
-    expect((thrown as BaerlyError).message).toMatch(/writer fence bumped from epoch 0 to 1/);
+    const r = await writer.commit({
+      op: "I",
+      collection: COLL,
+      docId: "doc-fence-bumped",
+      body: { _id: "doc-fence-bumped" },
+    });
+    expect(r.attempts).toBe(1);
+
+    // The log entry (the commit) is durable on the bucket.
+    const seqs = await durableLogSeqs(storage);
+    expect(seqs).toEqual([0]);
+    const persistedEntry = decodeJson<LogEntry>((await storage.get(`${LOG_PREFIX}/0.json`))!.body);
+    expect(persistedEntry.doc_id).toBe("doc-fence-bumped");
   });
 });
 

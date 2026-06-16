@@ -361,7 +361,8 @@ describe("Query.delete", () => {
  * contended seq then 412s, forcing the writer's forward-probe to climb
  * to the next empty slot. `bumpFenceOnNextLogCreate` simulates a
  * concurrent `claimWriter` that lands between this writer's read and its
- * create, so the post-create fence-verify surfaces `Conflict`. Kept
+ * create; under single-write commit the log create IS the commit, so the
+ * write still lands and is visible (no committed-but-Conflict). Kept
  * local to this file — not exported.
  */
 class InstrumentedStorage extends MemoryStorage {
@@ -389,8 +390,9 @@ class InstrumentedStorage extends MemoryStorage {
     if (isLogCreate && this.bumpFenceOnNextLogCreate) {
       this.bumpFenceOnNextLogCreate = false;
       // Bump the writer fence under the current.json key BEFORE the log
-      // create lands, so the writer's post-create fence-verify sees a
-      // newer epoch and surfaces Conflict (the stale writer aborts).
+      // create lands. The fence is dormant (C1, deferred) and there is no
+      // longer a post-commit fence-verify, so this must NOT affect the
+      // commit — the log create still wins and the write is visible.
       const cur = await super.get(this.watchedKey);
       if (cur !== null) {
         const decoded = JSON.parse(new TextDecoder().decode(cur.body)) as Record<string, unknown>;
@@ -424,25 +426,23 @@ describe("Per-row contention semantics (internal forward-probe inside Writer)", 
     expect(after).toEqual({ _id: "x", title: "v1", status: "open" });
   });
 
-  test("fence bump mid-commit: verb surfaces Conflict without double-looping", async () => {
+  test("fence bump mid-commit: write still commits and is visible (no committed-but-Conflict)", async () => {
     const storage = new InstrumentedStorage();
     await provision(storage);
     const db = Db.create({ storage, app: APP, tenant: TENANT });
     const t = db.collection(COLL) as Collection<TicketDoc>;
     // Seed cleanly.
-    await t.insert({ _id: "loser", title: "v0", status: "open" });
-    // A concurrent claimWriter bumps the fence between the update's read
-    // and its create; the post-create fence-verify surfaces Conflict. The
-    // writer does NOT retry under the old epoch (stale writer aborts), and
-    // the verb does NOT add its own retry layer.
+    await t.insert({ _id: "winner", title: "v0", status: "open" });
+    // A concurrent claimWriter bumps the writer fence between the update's
+    // read of current.json and its committing log/<seq> create. Under
+    // single-write commit the log create IS the commit — it has already
+    // landed and is visible by the time any later check could run, so the
+    // (now-removed) post-commit fence-verify must NOT manufacture a
+    // committed-but-Conflict state. The write commits; the row is readable.
     storage.bumpFenceOnNextLogCreate = true;
-    let thrown: unknown;
-    try {
-      await t.update("loser", { title: "v1" });
-    } catch (error) {
-      thrown = error;
-    }
-    expect(thrown).toBeInstanceOf(BaerlyError);
-    expect((thrown as BaerlyError).code).toBe("Conflict");
+    const result = await t.update("winner", { title: "v1" });
+    expect(result).toEqual({ modified: 1 });
+    const after = await t.get("winner");
+    expect(after).toEqual({ _id: "winner", title: "v1", status: "open" });
   });
 });
