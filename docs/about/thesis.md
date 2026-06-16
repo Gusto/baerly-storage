@@ -250,7 +250,7 @@ break the property are in
 
 Each design choice falls out of a specific criterion above. Built
 like git: content-addressed documents, immutable numbered log entries,
-and one conditional log create as the commit.
+and one conditional log create as the commit, per collection.
 
 - **Idle → zero.** Baerly is a TypeScript library — the full
   Cloudflare Workers bundle (`cloudflare.js`) is ~113 KB gzipped,

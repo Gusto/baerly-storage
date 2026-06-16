@@ -84,7 +84,7 @@ boundaries), never `instanceof` chains.
 | ------------------------ | ---- | ------------------------------------------------------- |
 | `InvalidConfig`          | 400  | Bad config/input (bucket, malformed predicate)          |
 | `SchemaError`            | 400  | JSON shape invalid or bound schema rejected the doc     |
-| `Conflict`               | 409  | CAS retry budget exhausted, or `insert` `_id` collision |
+| `Conflict`               | 409  | `insert` `_id` collision (duplicate `_id`)              |
 | `Unauthorized`           | 401  | Verifier returned no identity                           |
 | `AccessDenied`           | 403  | S3 403 or bucket policy denied                          |
 | `NotFound`               | 404  | Row by id not found                                     |
