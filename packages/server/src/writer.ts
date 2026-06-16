@@ -7,6 +7,8 @@
  * via `If-None-Match: "*"`. That create IS the commit / linearization
  * point.** The writer writes NOTHING to `current.json` on the commit
  * path; the compactor is the sole durable `tail_hint` advancer. The
+ * commit model and its invariants are recorded in ADR-008
+ * (`docs/adr/008-single-write-commit.md`). The
  * optional integrity walk is gated by
  * {@link WriterOptions.verifyLogIntegrityOnCommit} (default off).
  *
