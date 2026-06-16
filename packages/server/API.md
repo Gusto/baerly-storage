@@ -530,10 +530,12 @@ shrink `sinceTimeoutMs` in production code paths — it multiplies the
 R2 class-A op count per idle long-poll connection.
 
 React applications use `@gusto/baerly-storage/client/react` (see next
-section) instead of poking `/v1/since` by hand; hand-rolled
-subscribers in other UI frameworks can `fetch` this endpoint
-directly, or import the internal `pollSinceOnce` helper from
-`@baerly/client` if cursor-aware tailing is needed.
+section) instead of poking `/v1/since` by hand. Hand-rolled
+subscribers in other UI frameworks `fetch` this endpoint directly:
+loop, `fetch`-ing with `cursor=` (empty) first, then threading the
+returned `next_cursor` back as `cursor` on each subsequent call (the
+cursor is opaque — treat it as a string). The wire shape above is the
+public contract; there is no exported cursor-tailing helper.
 
 ## React: `createBaerlyReact`
 
