@@ -69,7 +69,7 @@ describe("baerly inspect", () => {
     await rm(root, { recursive: true, force: true });
   });
 
-  test("reports row count + tail_hint + log_seq_start in JSON envelope", async () => {
+  test("reports row count + stored tail_hint + discovered tail + log_seq_start in JSON envelope", async () => {
     await provision(storage);
     const writer = new Writer({ storage, currentJsonKey: CURRENT_JSON_KEY });
     await writer.commit({
@@ -105,6 +105,7 @@ describe("baerly inspect", () => {
         currentJsonKey: string;
         materialised_rows: number;
         tail_hint: number;
+        discovered_tail: number;
         log_seq_start: number;
         live_log_tail: number;
         snapshot: string | null;
@@ -117,7 +118,10 @@ describe("baerly inspect", () => {
     expect(envelope.result.command).toBe("inspect");
     expect(envelope.result.currentJsonKey).toBe(CURRENT_JSON_KEY);
     expect(envelope.result.materialised_rows).toBe(2);
-    expect(envelope.result.tail_hint).toBe(2);
+    // Under single-write commit the writer never advances the stored
+    // hint (compactor-owned), so it lags the true tail the probe finds.
+    expect(envelope.result.tail_hint).toBe(0);
+    expect(envelope.result.discovered_tail).toBe(2);
     expect(envelope.result.log_seq_start).toBe(0);
     expect(envelope.result.live_log_tail).toBe(2);
     expect(envelope.result.snapshot).toBe(null);

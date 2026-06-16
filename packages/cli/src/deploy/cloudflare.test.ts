@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { BaerlyError } from "@baerly/protocol";
 import type { AppConfig } from "../config.ts";
 import {
+  type CasProbe,
   deployCloudflare,
   ensureBindings,
   parseR2Bindings,
@@ -198,6 +199,63 @@ describe("deployCloudflare", () => {
     expect(exit).toBe(0);
     expect(h.calls).toContainEqual(["wrangler", "deploy", "--x-provision", "--x-auto-create"]);
     expect(h.calls).not.toContainEqual(["wrangler", "deploy"]);
+  });
+
+  test("CAS preflight failure aborts before any wrangler invocation", async () => {
+    await writeScaffold(repoRoot);
+    const h = makeRunner();
+    const casProbe = vi.fn<CasProbe>(async (_uri) => ({
+      status: "error" as const,
+      findings: [
+        {
+          severity: "error" as const,
+          check: "cas-ifNoneMatch-concurrent",
+          message: "two concurrent create-if-absent writes both won",
+        },
+      ],
+    }));
+    let thrown: BaerlyError | undefined;
+    try {
+      await deployCloudflare(makeConfig(repoRoot), {
+        runner: h.runner,
+        probeBucketUri: "s3://bad-bucket",
+        casProbe,
+      });
+    } catch (error) {
+      thrown = error as BaerlyError;
+    }
+    h.stderr();
+    expect(thrown?.code).toBe("NetworkError");
+    expect(thrown?.message).toContain("CAS preflight against s3://bad-bucket failed");
+    expect(thrown?.message).toContain("cas-ifNoneMatch-concurrent");
+    expect(casProbe).toHaveBeenCalledWith("s3://bad-bucket");
+    // The abort happens before wrangler is touched at all.
+    expect(h.calls).toEqual([]);
+  });
+
+  test("CAS preflight success proceeds to deploy", async () => {
+    await writeScaffold(repoRoot);
+    const h = makeRunner();
+    const casProbe = vi.fn<CasProbe>(async (_uri) => ({ status: "ok" as const, findings: [] }));
+    const exit = await deployCloudflare(makeConfig(repoRoot), {
+      runner: h.runner,
+      probeBucketUri: "s3://good-bucket",
+      casProbe,
+    });
+    h.stderr();
+    expect(exit).toBe(0);
+    expect(casProbe).toHaveBeenCalledWith("s3://good-bucket");
+    expect(h.calls).toContainEqual(["wrangler", "deploy", "--x-provision", "--x-auto-create"]);
+  });
+
+  test("no preflight runs when probeBucketUri is omitted", async () => {
+    await writeScaffold(repoRoot);
+    const h = makeRunner();
+    const casProbe = vi.fn<CasProbe>(async (_uri) => ({ status: "ok" as const, findings: [] }));
+    const exit = await deployCloudflare(makeConfig(repoRoot), { runner: h.runner, casProbe });
+    h.stderr();
+    expect(exit).toBe(0);
+    expect(casProbe).not.toHaveBeenCalled();
   });
 
   test("falls back to manual provisioning when --x-provision is missing", async () => {

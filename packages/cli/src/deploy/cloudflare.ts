@@ -26,7 +26,10 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { BaerlyError } from "@baerly/protocol";
+import { parseBucketUri } from "../bucket-uri.ts";
 import type { AppConfig } from "../config.ts";
+import { doctorCas } from "../doctor/cas.ts";
+import type { DoctorReport } from "../doctor/cloudflare.ts";
 import { defaultRunner, type ProcessRunner } from "../runner.ts";
 import {
   parseR2Bindings as parseR2BindingsFromSource,
@@ -36,6 +39,19 @@ import {
 export type { ProcessRunner };
 
 export type { R2BindingDeclaration };
+
+/**
+ * Live CAS preflight: resolve a probe bucket URI to a `Storage` and run
+ * the {@link doctorCas} round-trip (the same exactly-one-winner /
+ * If-Match probe `baerly doctor --bucket` runs). Injectable so tests can
+ * force a pass/fail without a live bucket.
+ */
+export type CasProbe = (probeBucketUri: string) => Promise<DoctorReport>;
+
+const defaultCasProbe: CasProbe = async (probeBucketUri) => {
+  const { storage, keyPrefix } = await parseBucketUri(probeBucketUri);
+  return doctorCas(storage, keyPrefix);
+};
 
 /** Path to `wrangler.jsonc` at the package root. */
 const wranglerPathFor = (repoRoot: string): string => resolve(repoRoot, "wrangler.jsonc");
@@ -142,7 +158,14 @@ const warnOnMissingSecrets = async (
  */
 export const deployCloudflare = async (
   config: AppConfig,
-  opts: { readonly runner?: ProcessRunner; readonly cwd?: string } = {},
+  opts: {
+    readonly runner?: ProcessRunner;
+    readonly cwd?: string;
+    /** When set, run a live CAS preflight against this bucket URI and abort if it fails. */
+    readonly probeBucketUri?: string;
+    /** Test seam — overrides the live CAS probe. */
+    readonly casProbe?: CasProbe;
+  } = {},
 ): Promise<number> => {
   const runner = opts.runner ?? defaultRunner({ tee: true });
   const repoRoot = opts.cwd ?? config.repoRoot;
@@ -152,6 +175,26 @@ export const deployCloudflare = async (
       "InvalidConfig",
       `baerly deploy: ${wranglerPath} missing. Expected wrangler.jsonc at the package root.`,
     );
+  }
+
+  // CAS live-probe preflight (opt-in via --probe-bucket). The winning
+  // log create IS the commit, so a backend that doesn't honour
+  // create-if-absent / If-Match would silently corrupt — abort BEFORE
+  // any wrangler invocation. Throws NetworkError (exit 2) on failure,
+  // matching `baerly doctor --bucket`'s exit-2 contract.
+  if (opts.probeBucketUri !== undefined && opts.probeBucketUri.length > 0) {
+    const report = await (opts.casProbe ?? defaultCasProbe)(opts.probeBucketUri);
+    if (report.status !== "ok") {
+      const failed = report.findings
+        .filter((f) => f.severity === "error")
+        .map((f) => `${f.check}: ${f.message}`)
+        .join("; ");
+      throw new BaerlyError(
+        "NetworkError",
+        `baerly deploy: CAS preflight against ${opts.probeBucketUri} failed — not deploying. ${failed}`,
+      );
+    }
+    process.stderr.write(`baerly deploy: CAS preflight OK for ${opts.probeBucketUri}\n`);
   }
 
   // Sniff Wrangler for --x-provision support.

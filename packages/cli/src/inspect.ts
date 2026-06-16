@@ -105,7 +105,10 @@ const countListEntries = async (
 interface InspectResult {
   currentJsonKey: string;
   schema_version: number;
+  /** The stored, compactor-advanced lower-bound hint (`current.json.tail_hint`). */
   tail_hint: number;
+  /** The TRUE committed tail, discovered by forward-probe past `tail_hint`. */
+  discovered_tail: number;
   log_seq_start: number;
   live_log_tail: number;
   snapshot: string | null;
@@ -123,7 +126,8 @@ const renderText = (r: InspectResult, collection: string): string => {
   lines.push(`baerly inspect ${collection}`);
   lines.push(`  current.json:        ${r.currentJsonKey}`);
   lines.push(`  schema_version:      ${r.schema_version}`);
-  lines.push(`  tail_hint:            ${r.tail_hint}`);
+  lines.push(`  tail_hint (stored):  ${r.tail_hint}`);
+  lines.push(`  discovered_tail:     ${r.discovered_tail}`);
   lines.push(`  log_seq_start:       ${r.log_seq_start}`);
   lines.push(`  live_log_tail:       ${r.live_log_tail}`);
   lines.push(`  snapshot:            ${r.snapshot ?? "(none)"}`);
@@ -226,7 +230,8 @@ const bundle = defineBaerlySubcommand({
     const result: InspectResult = {
       currentJsonKey,
       schema_version: cur.schema_version,
-      tail_hint: discoveredTail,
+      tail_hint: cur.tail_hint,
+      discovered_tail: discoveredTail,
       log_seq_start,
       live_log_tail: discoveredTail - log_seq_start,
       snapshot: cur.snapshot,

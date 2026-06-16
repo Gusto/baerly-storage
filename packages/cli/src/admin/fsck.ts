@@ -7,10 +7,16 @@
  *   2. When `current.snapshot !== null`, the snapshot body's
  *      SHA-256 matches the hash embedded in the filename
  *      (delegated to `loadSnapshotAsMap`).
- *   3. The log range `[log_seq_start, tail_hint)` has no holes —
- *      every `log/<seq>.json` is present (HEAD-cheap LIST scan).
- *   4. Every entry inside the live tail is well-formed JSON with
- *      the locked `op`, `collection`, and `doc_id` fields.
+ *   3. The live log range has no holes. The true dense tail is
+ *      derived from a single LIST of `log/` (the highest present seq
+ *      + 1 — `tail_hint` is only a compactor-advanced lower bound), and
+ *      every seq from `log_seq_start` up to that tail must be present.
+ *      This is a presence/hole check by key, NOT a per-entry decode:
+ *      fsck does not GET and parse each `log/<seq>.json`, so it does
+ *      not assert every entry is well-formed JSON or carries the locked
+ *      `op`/`collection`/`doc_id` fields. A full decode walk is
+ *      intentionally omitted to keep the op count O(LIST pages); the
+ *      read path validates entry shape at fold time.
  *
  * `--indexes` + `--config=<path>` mode: SKIP the snapshot + log
  * walks and ONLY check each declared index for drift via
@@ -373,7 +379,7 @@ const bundle = defineBaerlySubcommand({
       }
     }
 
-    // ── Log range [from, tail) has no holes; entries well-formed. ──
+    // ── Log range [from, tail) has no holes (presence check only). ──
     // LIST the log/ prefix and derive the TRUE dense tail from the listed
     // keys: under single-write commit `tail_hint` is only a lower bound
     // (compactor-advanced), so the authoritative upper bound is the

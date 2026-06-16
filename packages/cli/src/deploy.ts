@@ -33,9 +33,21 @@ const DEPLOY_ARGS = {
     type: "boolean",
     description: "Emit a structured JSON envelope to stdout (success) or stderr (error)",
   },
+  probeBucket: {
+    type: "string",
+    description:
+      "Run a live CAS preflight against this bucket URI before deploying (s3://, file:///, memory://); aborts non-zero if the backend fails the conditional-write / exactly-one-winner probe. Same check as `baerly doctor --bucket`.",
+    valueHint: "s3://bucket/prefix",
+  },
 } as const satisfies ArgsDef;
 
-const KNOWN_KEYS: ReadonlySet<string> = new Set(["target", "json", "_"]);
+const KNOWN_KEYS: ReadonlySet<string> = new Set([
+  "target",
+  "json",
+  "probeBucket",
+  "probe-bucket",
+  "_",
+]);
 
 const errorToExitCode = (code: string): number => {
   if (code === "InvalidConfig") {
@@ -58,7 +70,11 @@ const handleDeploy = async (args: ParsedArgs<typeof DEPLOY_ARGS>): Promise<numbe
     const config = await loadAppConfig();
     const target = args.target ?? config.target;
     if (target === "cloudflare") {
-      const exit = await deployCloudflare(config);
+      const probeBucketUri =
+        typeof args.probeBucket === "string" && args.probeBucket.length > 0
+          ? args.probeBucket
+          : undefined;
+      const exit = await deployCloudflare(config, { probeBucketUri });
       if (exit === 0) {
         emitSuccess({ command: "deploy", status: "ok", target });
       }

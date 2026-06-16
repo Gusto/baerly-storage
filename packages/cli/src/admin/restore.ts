@@ -7,22 +7,25 @@
  * integration test) can divert the input by passing
  * `{ streams: { stdin } }` to {@link runRestore}. Idempotent on a fresh
  * bucket: re-running on a half-completed restore **refuses** unless
- * `--force` is set (which bumps the writer fence and seeds a fresh
- * `current.json` first).
+ * `--force` is set (which reseeds a fresh `current.json` above the old
+ * tail first).
  *
  * Args:
  *   --bucket   Required. Target bucket URI.
  *   --app      Required (or via baerly.config.ts).
  *   --tenant   Required (or via baerly.config.ts).
  *   --collection Required. Target collection name.
- *   --force    Truncate the target if it exists (fence-bump + reseed).
+ *   --force    Truncate the target if it exists (reseed above the old tail).
  *   --json     JSON envelope.
  *
  * stdin: NDJSON, one `{_id, ...}` row per line. Empty lines tolerated.
  *        EOF terminates.
  *
- * Cost shape: 1 PUT current.json (initial) + N × (1 PUT log + 1 PUT
- *   content + 1 PUT current.json CAS) = 3N + 1 Class A ops for N rows.
+ * Cost shape: under single-write commit each `Writer.commit` is 2 Class
+ *   A PUTs (content + the committing `log/<seq>` create — no per-row
+ *   `current.json` write). So: 1 PUT current.json (initial seed) + N × 2
+ *   + 1 PUT current.json (final `tail_hint` stamp) = 2N + 2 Class A ops
+ *   for N rows.
  *
  * Partial-restore semantics: a mid-stream Network / Internal / parse
  * error leaves the target in a partial state (some rows committed,
@@ -115,10 +118,17 @@ const bundle = defineBaerlySubcommand({
       );
     }
     if (head !== null) {
-      // --force: bump the fence on the existing record so any
-      // in-flight writer aborts, then overwrite `current.json` with a
-      // fresh seed under If-Match. A concurrent writer landing
-      // between our read and our CAS PUT surfaces Conflict (exit 3).
+      // --force: reseed `current.json` above the old tail under
+      // If-Match. The If-Match guards against a concurrent COMPACTOR
+      // (the only steady-state writer of `current.json` under
+      // single-write commit) landing between our read and our PUT —
+      // that surfaces Conflict (exit 3). It does NOT fence concurrent
+      // WRITERS: under single-write commit writers never touch
+      // `current.json`, so the dormant `writer_fence` epoch is no
+      // longer consulted. `restore` therefore assumes operational
+      // exclusivity — do not run it against a collection taking live
+      // writes. (We still bump the fence epoch to keep the field
+      // monotone, but nothing reads it.)
       //
       // CRITICAL: stale log entries from the old generation still
       // live on disk under `log/<seq>.json` paths. The writer's
@@ -225,12 +235,21 @@ const bundle = defineBaerlySubcommand({
     // writer never advances the hint (it's compactor-advanced) — but a
     // bulk restore knows exactly how many rows it wrote, so it stamps the
     // true tail (`baseSeq + count`) under If-Match so the restored bucket
-    // reads efficiently without a forward-probe. A concurrent writer
+    // reads efficiently without a forward-probe. A concurrent compactor
     // between our last commit and this stamp surfaces Conflict (exit 3).
+    // CLAMP: `tail_hint` is a monotone lower bound, so never stamp it
+    // BELOW what is already durable — take the max of our computed tail,
+    // the value already stored, and `log_seq_start`. (Defends against a
+    // compactor that advanced the hint between the reseed and here.)
     if (count > 0) {
       const afterLoad = await readCurrentJson(bucket.storage, currentJsonKey);
       if (afterLoad !== null) {
-        const stamped: CurrentJson = { ...afterLoad.json, tail_hint: baseSeq + count };
+        const clampedTail = Math.max(
+          baseSeq + count,
+          afterLoad.json.tail_hint,
+          afterLoad.json.log_seq_start,
+        );
+        const stamped: CurrentJson = { ...afterLoad.json, tail_hint: clampedTail };
         await bucket.storage.put(currentJsonKey, encodeJsonBytes(stamped), {
           ifMatch: afterLoad.etag,
           contentType: "application/json",
