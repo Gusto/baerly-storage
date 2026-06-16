@@ -19,10 +19,10 @@ that an LLM can hold it in context.
 
 [S3 does the hard parts](https://aws.amazon.com/blogs/aws/amazon-s3-update-strong-read-after-write-consistency/),
 `baerly-storage` is the coordination that fixes the API. Built like git:
-content-addressed documents, immutable log entries, and a single
-CAS-advanced pointer to HEAD, per collection. Document model, live
-queries, snapshot isolation — the whole surface in a `.d.ts` designed
-for zero-shot use.
+content-addressed documents, immutable numbered log entries, and one
+conditional log create as the commit, per collection. Document model,
+live queries, snapshot isolation — the whole surface in a `.d.ts`
+designed for zero-shot use.
 
 Apps sized for this primitive — small, server-only writes, ~10 GB
 ceiling, mechanical exit to Postgres when they cross it — get a tool
@@ -143,7 +143,7 @@ production-shaped scaffolds see [`examples/`](./examples).
 
 - 🧭 **How it works** —
   [`docs/about/how-it-works.md`](./docs/about/how-it-works.md) (the
-  plain-language mental model — bucket + one atomic pointer flip)
+  plain-language mental model — bucket + one conditional log create)
 - 🧱 **Product thesis** — [`docs/about/thesis.md`](./docs/about/thesis.md)
 - 🏗️ **Architecture** — [`docs/contributing/architecture.md`](./docs/contributing/architecture.md)
 - 🔧 **Embed by hand** —

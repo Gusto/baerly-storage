@@ -12,6 +12,7 @@ related: [tests.md, "../../README.md"]
 Conventions for content under `docs/`.
 
 ## Source of truth
+
 - Everything in `docs/` is hand-written.
 - Public API type/hover docs live as JSDoc on
   `packages/server/src/db.ts` and `packages/server/src/collection.ts`.
@@ -23,6 +24,7 @@ Conventions for content under `docs/`.
   the first file headless agents are expected to read.
 
 ## Style
+
 - Markdown line wrap ~80 chars (matches existing `spec/sync-protocol.md` and
   `spec/causal-consistency-checking.md`).
 - Mermaid blocks render on GitHub — use them for diagrams.
@@ -31,13 +33,13 @@ Conventions for content under `docs/`.
 
 ## When to update which doc
 
-| Change | File to update |
-|---|---|
-| New module / refactor | `docs/contributing/architecture.md` (graph + lifecycle) |
-| New developer setup step | `docs/contributing/development.md` |
-| New extension pattern | `docs/contributing/extending.md` |
-| Protocol change | `docs/spec/sync-protocol.md` (and a coverage entry in `docs/spec/causal-consistency-checking.md`) |
-| New `Db.create` / `Collection<T>` option | JSDoc on the param in `packages/server/src/db.ts` or `packages/server/src/collection.ts` |
+| Change                                   | File to update                                                                                    |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| New module / refactor                    | `docs/contributing/architecture.md` (graph + lifecycle)                                           |
+| New developer setup step                 | `docs/contributing/development.md`                                                                |
+| New extension pattern                    | `docs/contributing/extending.md`                                                                  |
+| Protocol change                          | `docs/spec/sync-protocol.md` (and a coverage entry in `docs/spec/causal-consistency-checking.md`) |
+| New `Db.create` / `Collection<T>` option | JSDoc on the param in `packages/server/src/db.ts` or `packages/server/src/collection.ts`          |
 
 ## Pinned phrases
 
@@ -47,11 +49,12 @@ update every occurrence so they don't silently drift:
 
 - **"There is no runtime. None."** — `README.md`,
   `docs/contributing/architecture.md`, `docs/about/thesis.md`.
-- **"Built like git: content-addressed documents, immutable log
-  entries, and a single CAS-advanced pointer to HEAD, per collection."**
-  — `README.md`, `docs/contributing/architecture.md`.
+- **"Built like git: content-addressed documents, immutable numbered
+  log entries, and one conditional log create as the commit, per
+  collection."** — `README.md`, `docs/contributing/architecture.md`,
+  `docs/about/thesis.md`.
 
-Consistency is of the *wording*, not byte-identical formatting: the
+Consistency is of the _wording_, not byte-identical formatting: the
 copies are not identical today (e.g. some are bold and standalone,
 others are embedded in a longer sentence or soft-wrapped). Keep the
 phrasing aligned; don't claim they're byte-identical.

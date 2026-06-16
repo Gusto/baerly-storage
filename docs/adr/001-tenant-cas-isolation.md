@@ -70,15 +70,15 @@ into a single isolation story:
    programming error inside the runtime, not a permission check on a
    shared bucket. See
    [`packages/server/src/db.ts:65-70`](../../packages/server/src/db.ts).
-2. **Per-collection CAS scope.** `current.json` lives at
-   `app/<app>/tenant/<tenant>/manifests/<collection>/current.json` —
-   one CAS object per `(tenant, collection)` pair. See
+2. **Per-collection commit/control scope.** Each collection has its own
+   numbered log series plus a `current.json` control object at
+   `app/<app>/tenant/<tenant>/manifests/<collection>/current.json`. See
    [`packages/protocol/src/coordination/current-json.ts:43-45`](../../packages/protocol/src/coordination/current-json.ts)
    and
    [`packages/server/src/db.ts:247`](../../packages/server/src/db.ts).
-   This pins the physical-key layout the CAS scope rides on; the
+   This pins the physical-key layout the commit scope rides on; the
    cost-coupling rationale lives in
-   [`docs/spec/sync-protocol.md`](../spec/sync-protocol.md#cas-scope-is-per-collection).
+   [`docs/spec/sync-protocol.md`](../spec/sync-protocol.md#commit-scope-is-per-collection).
 3. **Cooperative fence, not lease.** The `WriterFence` embedded in
    `current.json` carries `epoch: number` (monotonic, the only
    safety-critical field), `owner: string` (informational, may be
@@ -92,13 +92,15 @@ into a single isolation story:
    first and overwrites with the real server date in a second CAS
    ([`packages/protocol/src/coordination/current-json.ts:275-355`](../../packages/protocol/src/coordination/current-json.ts)).
 
-Per-collection CAS clears the documented per-collection workload target
-with an order of magnitude of headroom on every measured CAS-on-S3
-prior art; per-tenant would put a 100-collection tenant 10× over the
-ceiling. Tenant isolation cannot share a CAS object with another
-tenant for the same reason it cannot share a key prefix — both are
-physical co-location hazards. The cooperative fence closes the
-rolling-deploy hazard without introducing a leases-as-state dependency.
+Per-collection commit scope clears the documented per-collection
+workload target with an order of magnitude of headroom over the
+S3-as-database contention envelope; per-tenant would put a
+100-collection tenant 10× over the ceiling. Tenant isolation cannot
+share a commit/control scope with another tenant for the same reason it
+cannot share a key prefix — both are physical co-location hazards. The
+cooperative fence recorded here is dormant under ADR-008 but retained
+as explicit/admin metadata without introducing a leases-as-state
+dependency.
 
 ## Consequences
 
@@ -139,7 +141,7 @@ rolling-deploy hazard without introducing a leases-as-state dependency.
   loses cleanly with `Conflict`. The fence is durable from the first
   PUT either way
   ([`packages/protocol/src/coordination/current-json.ts:283-290`](../../packages/protocol/src/coordination/current-json.ts)).
-- The tenant prefix the CAS scope rides on derives from the auth
+- The tenant prefix the commit/control scope rides on derives from the auth
   layer's `Verifier` output (see [`docs/guide/auth.md`](../guide/auth.md)); a
   misconfigured verifier returning the wrong prefix is the
   tenancy-leak vector this scope choice does not paper over.

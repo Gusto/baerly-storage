@@ -4,7 +4,12 @@ audience: operator
 summary: "Operator signals, first-response actions, sinks, cost-ballooning anti-patterns, and known gaps. Canonical log-line shape lives in dist/API.md."
 last-reviewed: 2026-06-13
 tags: [observability, operations, logging]
-related: ["../contributing/conventions/observability.md", "../about/cost-model.md", "../contributing/development.md"]
+related:
+  [
+    "../contributing/conventions/observability.md",
+    "../about/cost-model.md",
+    "../contributing/development.md",
+  ]
 ---
 
 # Observability
@@ -39,15 +44,15 @@ TTY. Set `LOG_LEVEL` or `observability.level` to tune verbosity.
 
 ## What to watch
 
-| Signal | Indicates | First response |
-|---|---|---|
-| `status >= 500` or `outcome:"error"` | User-visible API failure | Inspect `error.code`, storage status, and the request path. |
-| `outcome:"conflict"` rate rising | Writers contending on one collection's `current.json` | Check writes/min; retry at app edge if bursty, graduate if sustained. |
-| `db.r2.put.412_total` sustained | Storage CAS losses | Same as above; this is the storage-level conflict meter. |
-| `db.compaction.deferred_total` | Snapshot exceeded byte or row fold ceiling | The counter carries a `dimension` label at the source, but the canonical JSON line flattens it; the rate-limited `console.warn` (not emitted on every defer) names bytes-vs-rows. Then read [graduation.md](../about/graduation.md). Raise `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` only on paid CF / Node with enough memory. |
-| `db.compaction.cas_lost_total` sustained | Duplicate fold compute under contention | Watch object count and GC drain; sustained growth is a graduation signal. |
-| Class A ops above projection | Cost regression or hot write path | Run `baerly cost --bucket=<bucket-uri> --collection=<collection>` and compare to [cost-model.md](../about/cost-model.md). |
-| Object count grows while write rate is steady | GC is not draining or contention is above envelope | Run `baerly admin fsck`; inspect maintenance warnings. |
+| Signal                                        | Indicates                                                         | First response                                                                                                                                                                                                                                                                                                            |
+| --------------------------------------------- | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `status >= 500` or `outcome:"error"`          | User-visible API failure                                          | Inspect `error.code`, storage status, and the request path.                                                                                                                                                                                                                                                               |
+| `outcome:"conflict"` rate rising              | Writers exhausting retries on one collection's numbered log slots | Check writes/min; retry at app edge if bursty, graduate if sustained.                                                                                                                                                                                                                                                     |
+| `db.r2.put.412_total` sustained               | Conditional-write losses on log creates or compaction CAS         | Same as above; this is the storage-level conflict meter.                                                                                                                                                                                                                                                                  |
+| `db.compaction.deferred_total`                | Snapshot exceeded byte or row fold ceiling                        | The counter carries a `dimension` label at the source, but the canonical JSON line flattens it; the rate-limited `console.warn` (not emitted on every defer) names bytes-vs-rows. Then read [graduation.md](../about/graduation.md). Raise `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` only on paid CF / Node with enough memory. |
+| `db.compaction.cas_lost_total` sustained      | Duplicate fold compute under contention                           | Watch object count and GC drain; sustained growth is a graduation signal.                                                                                                                                                                                                                                                 |
+| Class A ops above projection                  | Cost regression or hot write path                                 | Run `baerly cost --bucket=<bucket-uri> --collection=<collection>` and compare to [cost-model.md](../about/cost-model.md).                                                                                                                                                                                                 |
+| Object count grows while write rate is steady | GC is not draining or contention is above envelope                | Run `baerly admin fsck`; inspect maintenance warnings.                                                                                                                                                                                                                                                                    |
 
 For Cloudflare, `wrangler tail` is enough for first response. For
 trend and alerting, send the canonical line to Workers Analytics
@@ -146,14 +151,25 @@ const otelSink: Sink = (record) => {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
-      resourceLogs: [{ scopeLogs: [{ logRecords: [{
-        timeUnixNano: String(record.timestamp * 1e6),
-        severityText: record.level,
-        body: { stringValue: record.message.join("") },
-        attributes: Object.entries(record.properties).map(([k, v]) => ({
-          key: k, value: { stringValue: String(v) },
-        })),
-      }]}]}],
+      resourceLogs: [
+        {
+          scopeLogs: [
+            {
+              logRecords: [
+                {
+                  timeUnixNano: String(record.timestamp * 1e6),
+                  severityText: record.level,
+                  body: { stringValue: record.message.join("") },
+                  attributes: Object.entries(record.properties).map(([k, v]) => ({
+                    key: k,
+                    value: { stringValue: String(v) },
+                  })),
+                },
+              ],
+            },
+          ],
+        },
+      ],
     }),
   }).catch(() => {
     // Best-effort; never throw from a sink.
@@ -181,25 +197,27 @@ interface AppEnv extends BaerlyEnv {
   readonly ANALYTICS: AnalyticsEngineDataset;
 }
 
-const analyticsSink = (env: AppEnv): Sink => (record) => {
-  const props = record.properties;
-  env.ANALYTICS.writeDataPoint({
-    indexes: [String(props["request_id"] ?? "")],
-    blobs: [
-      record.category.join("."),
-      record.level,
-      String(props["method"] ?? ""),
-      String(props["path"] ?? ""),
-      String(props["outcome"] ?? ""),
-    ],
-    doubles: [
-      Number(props["duration_ms"] ?? 0),
-      Number(props["db.storage.class_a_ops_total"] ?? 0),
-      Number(props["db.storage.class_b_ops_total"] ?? 0),
-      Number(props["status"] ?? 0),
-    ],
-  });
-};
+const analyticsSink =
+  (env: AppEnv): Sink =>
+  (record) => {
+    const props = record.properties;
+    env.ANALYTICS.writeDataPoint({
+      indexes: [String(props["request_id"] ?? "")],
+      blobs: [
+        record.category.join("."),
+        record.level,
+        String(props["method"] ?? ""),
+        String(props["path"] ?? ""),
+        String(props["outcome"] ?? ""),
+      ],
+      doubles: [
+        Number(props["duration_ms"] ?? 0),
+        Number(props["db.storage.class_a_ops_total"] ?? 0),
+        Number(props["db.storage.class_b_ops_total"] ?? 0),
+        Number(props["status"] ?? 0),
+      ],
+    });
+  };
 
 export default baerlyWorker<AppEnv>((env) => ({
   config,
@@ -212,9 +230,7 @@ Declare the binding in `wrangler.jsonc`:
 
 ```jsonc
 {
-  "analytics_engine_datasets": [
-    { "binding": "ANALYTICS", "dataset": "{{appName}}_canonical" }
-  ]
+  "analytics_engine_datasets": [{ "binding": "ANALYTICS", "dataset": "{{appName}}_canonical" }],
 }
 ```
 

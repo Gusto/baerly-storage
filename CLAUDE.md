@@ -180,7 +180,7 @@ inside Workerd). The Node-side variant table is in
 `packages/adapter-cloudflare/src/randomized.test.ts`. Each variant
 constructs N `Storage` handles sharing the same backing store, then
 spins up N `Db` + `Writer` writers all contending on a single
-`current.json`.
+collection log tail / next `log/<seq>` slot.
 
 Pure-unit tests that always pass: `packages/protocol/src/hashing.test.ts`,
 `tests/unit/consistency.test.ts`, `packages/protocol/src/xml.test.ts`,
@@ -234,8 +234,9 @@ Read in this order to build a mental model:
    entries after the commit.
 5. `packages/server/src/indexes.ts` — `IndexDefinition`, key
    encoding (lex-order-preserving base-32), and per-doc projection
-   helpers. Consumed by the writer's fence-time emission and by
-   `rebuildIndex`.
+   helpers. Consumed by the writer's hybrid index emission (new
+   markers before the committing log create, stale marker deletes
+   after it) and by `rebuildIndex`.
 6. `packages/server/src/rebuild-index.ts` — `rebuildIndex(storage,
 currentJsonKey, def)` idempotent reconciliation; what `baerly
 admin rebuild-index` calls.

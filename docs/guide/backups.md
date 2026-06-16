@@ -17,7 +17,7 @@ reads the same format from stdin into a fresh collection.
 The safe default is:
 
 - keep a checked-in inventory of production `(app, tenant,
-  collection)` triples to back up;
+collection)` triples to back up;
 - use least-privilege storage credentials that can read the production
   prefix and write the backup destination, not broad account-admin
   credentials;
@@ -134,17 +134,19 @@ baerly admin restore \
 ```
 
 If the target already exists, restore refuses with `Conflict`. Passing
-`--force` truncates by bumping the writer fence and reseeding
-`current.json`, then imports rows at fresh sequence numbers. Use
-`--force` for rehearsals against a scratch prefix, not as a casual
-production habit.
+`--force` truncates by reseeding `current.json` above the old tail (the
+writer fence is dormant metadata hygiene, not the truncation mechanism),
+then imports rows at fresh sequence numbers. Use `--force` for
+rehearsals against a scratch prefix, not as a casual production habit.
 
 Partial restore semantics are deliberate: if stdin contains malformed
 NDJSON or storage fails mid-stream, rows committed before the failure
 remain committed. Re-run with `--force` into the same target, or choose
 a fresh recovery prefix.
 
-Cost is `3N + 1` Class A ops for N rows.
+Cost is `2N + 2` Class A ops for N rows: one truncate/reseed write,
+one metadata/tail write, and one content PUT plus one committing
+`log/<seq>` create per restored row.
 
 For production recovery, do not restore over the live prefix while
 writers are still active. The safe cutover shape is:
@@ -155,7 +157,7 @@ writers are still active. The safe cutover shape is:
 4. Point the app at the recovered bucket/prefix. Prefer this to
    copying. If you must copy the recovery prefix into place, do it
    inside the maintenance window and copy `current.json` **last** —
-   after the snapshot, log, content, *and* index objects it references
+   after the snapshot, log, content, _and_ index objects it references
    exist at the destination. A `current.json` that lands before its
    referenced objects is a broken head: a reader following it errors on
    the missing snapshot/log, and a missing index marker silently drops

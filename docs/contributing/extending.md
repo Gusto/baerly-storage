@@ -4,7 +4,13 @@ audience: coder
 summary: Worked patterns for adding methods to Db, Query verbs, and Collection verbs.
 last-reviewed: 2026-06-12
 tags: [extending, api-design, patterns]
-related: [architecture.md, "../adr/002-api-surface-lock.md", "../adr/003-naming-convention.md", "conventions/tests.md"]
+related:
+  [
+    architecture.md,
+    "../adr/002-api-surface-lock.md",
+    "../adr/003-naming-convention.md",
+    "conventions/tests.md",
+  ]
 ---
 
 # Extending Baerly
@@ -15,7 +21,7 @@ patterns and your changes will fit the codebase's conventions.
 > Before adding a feature, read [architecture.md](architecture.md) so you
 > know which module owns what. Most additions touch
 > `packages/server/src/db.ts` or `packages/server/src/collection.ts`, but the
-> *invariants* live in `packages/server/src/writer.ts`.
+> _invariants_ live in `packages/server/src/writer.ts`.
 
 > Before adding a public symbol to a barrel, read
 > [ADR-003 — `Baerly`-prefix naming convention](../adr/003-naming-convention.md).
@@ -39,7 +45,7 @@ Public methods live on the `Db` class in
 themselves are locked in `@baerly/protocol`; adding a new verb is
 a coordinated change.
 
-```ts
+````ts
 // packages/server/src/db.ts (inside class Db)
 
 /**
@@ -67,7 +73,7 @@ public async collections(): Promise<string[]> {
   }
   return [...out];
 }
-```
+````
 
 ### Conventions to follow
 
@@ -137,7 +143,7 @@ pnpm test          # vitest run
 ## 1b. Declare a schema for a collection
 
 Schemas in Baerly are caller-declared at the server boundary: every
-`insert` / `update` / `replace` validates the resulting *post-image*
+`insert` / `update` / `replace` validates the resulting _post-image_
 against a `SchemaValidator` you attach to a `CollectionDefinition`.
 Invalid input throws `BaerlyError{code:"SchemaError"}` carrying a
 machine-readable `.issues` array of `{path, message}` entries; the
@@ -199,16 +205,16 @@ know (or care) which library produced it.
 
 ### What gets validated
 
-| Verb       | Validated value                                             |
-|------------|-------------------------------------------------------------|
-| `insert`   | `{ ...doc, _id }` — the post-image with the minted/honoured `_id` |
-| `update`   | `merge(prev, patch)` — the merged post-image, not the patch |
-| `replace`  | `{ ...doc, _id: existingId }` — the post-image              |
-| `delete`   | — (no body to validate)                                     |
+| Verb      | Validated value                                                   |
+| --------- | ----------------------------------------------------------------- |
+| `insert`  | `{ ...doc, _id }` — the post-image with the minted/honoured `_id` |
+| `update`  | `merge(prev, patch)` — the merged post-image, not the patch       |
+| `replace` | `{ ...doc, _id: existingId }` — the post-image                    |
+| `delete`  | — (no body to validate)                                           |
 
 For `update` we validate the merged result, not the patch: a partial
 patch (`{ status: "closed" }`) wouldn't satisfy a schema requiring
-other fields, and the schema is the shape of the *final row*, not of
+other fields, and the schema is the shape of the _final row_, not of
 a delta.
 
 ### Wiring schemas into `Db.create`
@@ -236,7 +242,7 @@ for the reasoning.
 
 Schema migrations are forward-only. The forward-compatible
 schema-versioning mechanism lives on the `CurrentJson` coordination
-document: the `schema_version` field (currently `2`, constant
+document: the `schema_version` field (currently `3`, constant
 `CURRENT_JSON_SCHEMA_VERSION` in
 `packages/protocol/src/constants.ts`) is bumped monotonically on any
 breaking change to `CurrentJson` field semantics; readers must reject
@@ -273,9 +279,9 @@ set at read time; there is no manual-hint API on `Query<T>`.
 ```ts
 // packages/server/src/indexes.ts
 export interface IndexDefinition {
-  readonly name: string;                       // /^[a-z][a-z0-9_]*$/
-  readonly on: string | readonly string[];     // top-level field(s)
-  readonly predicate?: PredicateWire;          // { clauses: PredicateClause[] }
+  readonly name: string; // /^[a-z][a-z0-9_]*$/
+  readonly on: string | readonly string[]; // top-level field(s)
+  readonly predicate?: PredicateWire; // { clauses: PredicateClause[] }
 }
 ```
 
@@ -333,7 +339,7 @@ export default defineConfig({
   leading-`_` namespace throws `InvalidConfig`; a name that fails the
   regex throws `SchemaError`.
 - `predicate?` is a {@link PredicateWire} — `{ clauses:
-  PredicateClause[] }`. Accepts the full operator vocabulary (`eq`,
+PredicateClause[] }`. Accepts the full operator vocabulary (`eq`,
   `gt` / `gte`, `lt` / `lte`, `in`) end-to-end. `predicateImplies`
   reasons about range and `in` containment, so the planner prefers
   a filtered index whenever the query's bounds (whether expressed
@@ -393,9 +399,9 @@ The write primitive lives in two places:
 // packages/server/src/writer.ts (extending CommitInput)
 
 export interface CommitInput {
-  readonly op: "I" | "U" | "D" | "T";        // new: T
+  readonly op: "I" | "U" | "D" | "T"; // new: T
   readonly collection: string;
-  readonly docId?: string;                    // undefined on op:"T"
+  readonly docId?: string; // undefined on op:"T"
   readonly body?: DocumentData;
   // ...
 }
@@ -441,8 +447,7 @@ local-dev case.
 
 ```ts
 // packages/adapter-fly/src/fly-storage.ts
-import type { Storage, StorageGetResult, StorageListEntry, StoragePutResult }
-  from "@baerly/server";
+import type { Storage, StorageGetResult, StorageListEntry, StoragePutResult } from "@baerly/server";
 import { BaerlyError } from "@baerly/server";
 
 export class FlyStorage implements Storage {
@@ -504,7 +509,7 @@ describe("my feature", () => {
 ### When to write a property-based test
 
 Reach for `randomized.test.ts`-style coverage when the behavior depends on
-*ordering* — interleaved writes, replay sequence, partial failures.
+_ordering_ — interleaved writes, replay sequence, partial failures.
 Property-based tests catch races that example tests can't.
 
 A property test in this codebase typically:

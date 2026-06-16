@@ -51,48 +51,48 @@ Two deltas matter for differentiation:
 - **Cost-bound shape.** Iceberg and Delta Lake commit costs are
   O(seconds) and the commit retries tolerate this latency via
   `CommitFailedException` (Iceberg) or analogous conflict exception
-  paths (Delta). Baerly's per-collection CAS targets a much smaller
-  per-document key-value workload and publishes a documented
-  *"< 1 Class A op / writer / hour"* cost bound for idle readers (see
+  paths (Delta). Baerly's per-collection commit scope targets a much
+  smaller per-document key-value workload and publishes a documented
+  _"< 1 Class A op / writer / hour"_ cost bound for idle readers (see
   `docs/about/cost-model.md#cost-ceiling` and the end-to-end
   durability gate in `tests/integration/phase5-end-to-end.test.ts`).
 - **No server-`Date` capture.** Neither Iceberg nor Delta stamps the
   storage server's HTTP `Date` response header into the commit
   record. Their commit logs carry application-supplied timestamps
-  (or no timestamp), and neither protocol issues a *second*
+  (or no timestamp), and neither protocol issues a _second_
   conditional PUT to durably back-stamp a server-extracted clock.
   This is the distinguishing axis for C1.
-- **Delta on S3 is now engine-split.** The *Spark/JVM* path still
+- **Delta on S3 is now engine-split.** The _Spark/JVM_ path still
   documents a DynamoDB commit coordinator (or, in Delta 4.x,
   catalog-managed commits; https://delta.io/blog/delta-lake-s3/). The
-  *delta-rs* (Rust) path's **code default switched to lock-free
+  _delta-rs_ (Rust) path's **code default switched to lock-free
   conditional PUT** since S3 `If-None-Match` GA (Aug 2024), falling back
   to DynamoDB only when `AWS_S3_LOCKING_PROVIDER=dynamodb` or
   `allow_unsafe_rename` is set (the code is authoritative here — the
   delta-rs published docs still lag and say DynamoDB-by-default). The
-  code carries the comment *"Nearly all S3 Object stores support
-  conditional put, so we change the default…"*
+  code carries the comment _"Nearly all S3 Object stores support
+  conditional put, so we change the default…"_
   (`crates/aws/src/storage.rs`); `crates/core/src/logstore/default_logstore.rs`
   uses `PutMode::Create`. So "Delta needs a DynamoDB lock" is a
   2023-era claim for the OSS Rust path.
 
 CAS-on-a-control-object is therefore now industry consensus, not a
-baerly invention. What baerly owns is the *instance*: the
+baerly invention. What baerly owns is the _instance_: the
 document-shaped, catalog-free, killable-compute application of it — a
-per-document KV HEAD with a CDC `seq` log and a *"< 1 Class A op /
-writer / hour"* idle bound, advanced with no external coordination
+per-document KV HEAD with a CDC `seq` log and a _"< 1 Class A op /
+writer / hour"_ idle bound, advanced with no external coordination
 service and a server-`Date` provenance back-stamp (C1) that no surveyed
 system captures.
 
 ### Nearest neighbors
 
 - **Boring Catalog** (single-JSON-file Iceberg catalog coordinated
-  purely by S3 conditional writes — the *nearest neighbor* to
+  purely by S3 conditional writes — the _nearest neighbor_ to
   `current.json` itself:
   https://dataengineeringcentral.substack.com/p/what-an-iceberg-catalog-that-works).
   Differentiator: its unit is a table snapshot of Parquet manifests for
   analytic scans, not a per-document KV HEAD with a CDC log.
-- **DuckLake** (v1.0, Apr 2026 — SQL database *as* the lakehouse
+- **DuckLake** (v1.0, Apr 2026 — SQL database _as_ the lakehouse
   catalog; https://ducklake.select/2026/04/13/ducklake-10/). The
   opposite choice to baerly's "no catalog, the bucket is the catalog" —
   a direct foil that sharpens the no-external-dependency thesis.
@@ -115,7 +115,7 @@ collision implies an invariant break.
 
 Baerly's `tryAdoptOwnSessionLogEntry`
 (`packages/server/src/log-conflict-adoption.ts`) recognises this
-exact case as the writer's *own* prior in-flight commit attempt —
+exact case as the writer's _own_ prior in-flight commit attempt —
 e.g. after a process crash between PUT-log-entry and CAS-current —
 and **adopts** the existing entry rather than panicking. The
 adoption gate is constrained by the per-commit session identifier,
@@ -133,8 +133,8 @@ stamp a server-extracted timestamp.
 mps3 (`docs/sync_protocol.md` in that repository) describes a
 two-step write — content + manifest, with a touched change-marker
 follow-up — and explicitly uses HTTP `Date` for **client clock
-correction**: *"clients use the `Date` header to continuously
-correct their clocks"*. Sync-side comparison uses the server-
+correction**: _"clients use the `Date` header to continuously
+correct their clocks"_. Sync-side comparison uses the server-
 provided `LastModified` field.
 
 mps3 does **not** issue a second CAS to atomically back-stamp the
@@ -168,16 +168,16 @@ mechanism:
   fencing protocol in its own right.
 - **RFC 3161 Time-Stamp Protocol** and **draft-thomson-httpapi-
   date-requests** — both treat HTTP `Date` as untrusted by default.
-  The Date Requests draft is explicit: *"Clients MUST NOT accept
+  The Date Requests draft is explicit: _"Clients MUST NOT accept
   the time provided by an arbitrary HTTP server as the basis for
-  system-wide time."*
+  system-wide time."_
 
-The last point cuts *for* C1 novelty, not against it. The standard
+The last point cuts _for_ C1 novelty, not against it. The standard
 posture in the literature is to warn against trusting an arbitrary
 HTTP server's `Date`. C1's inverse position is narrower and
-specific: trust your *own bucket's* `Date` header — under a
+specific: trust your _own bucket's_ `Date` header — under a
 controlled trust relationship the writer already has with that
-bucket — as a *provenance* field, and durably capture it via a
+bucket — as a _provenance_ field, and durably capture it via a
 second conditional PUT whose precondition is the etag of the first
 PUT. The distinguishing inventive step sits in this two-phase
 durable capture, not in any general claim about HTTP-server time.
@@ -191,8 +191,8 @@ this project:
 - **Microsoft Azure Table Storage "Log tail pattern"** — see
   `learn.microsoft.com/en-us/azure/storage/tables/table-storage-design-patterns`.
   Canonical recipe: store `DateTime.MaxValue.Ticks
-  - DateTime.UtcNow.Ticks` zero-padded as the `RowKey` so that the
-  natural ascending scan yields most-recent-first.
+  - DateTime.UtcNow.Ticks`zero-padded as the`RowKey` so that the
+    natural ascending scan yields most-recent-first.
 - **HBase folklore** — the `Long.MAX_VALUE - timestamp` row-key
   trick documented across numerous HBase tutorials and operator
   guides for the same purpose.
@@ -207,7 +207,7 @@ general level of "encode keys so an ascending native LIST is a
 descending logical walk." It is acknowledged here in writing.
 
 Any future defensive publication draft should not claim more than the
-*residual narrow composition*: the specific combination of descending
+_residual narrow composition_: the specific combination of descending
 base-32 LSN encoding with the per-collection-CAS commit protocol and
 the two-phase fence-claim, measured against
 `bench/lsn-reverse-walk.ts` and the checked-in baseline under the

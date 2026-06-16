@@ -31,10 +31,11 @@ protocol is specified in
 [spec/sync-protocol.md](../spec/sync-protocol.md) and proven causally consistent in
 [spec/causal-consistency-checking.md](../spec/causal-consistency-checking.md).
 
-Built like git: content-addressed documents, immutable log entries, and
-a single CAS-advanced pointer to HEAD, per collection. This shape is the same recipe
-Iceberg, Delta Lake, Turbopuffer, Litestream, and SlateDB converged on
-after S3 went strongly consistent in December 2020 (see
+Built like git: content-addressed documents, immutable numbered log
+entries, and one conditional log create as the commit, per collection.
+This shape is the same recipe Iceberg, Delta Lake, Turbopuffer,
+Litestream, and SlateDB converged on after S3 went strongly consistent
+in December 2020 (see
 [spec/storage-compatibility.md](../spec/storage-compatibility.md)). The novel
 part is not the kernel; it is shaping the system so the public API
 stays small enough that an LLM can use it from `.d.ts` alone (see

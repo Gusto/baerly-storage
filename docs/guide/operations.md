@@ -29,6 +29,12 @@ Run the target-specific deploy check, then the portable bucket check.
 prove the bucket honors `If-Match` and `If-None-Match: "*"`, which the
 protocol requires.
 
+The bucket probe validates storage semantics only; it does not migrate
+or validate an existing Baerly prefix. Buckets written by the old
+pre-single-write `current.json` schema must be dumped under the old
+build and restored/reseeded under the current schema (`schema_version:
+3`), not reused in place.
+
 ```sh
 # Cloudflare only: wrangler config, R2 binding, secrets, Access shape.
 baerly doctor --target=cloudflare
@@ -66,11 +72,11 @@ curl -fsS \
 Use `auth: "none"` only for local development or trusted internal
 code paths. Production `/v1/*` routes need one of:
 
-| Target | Production default |
-|---|---|
-| Cloudflare | `cloudflareAccess({ teamDomain, audienceTag, tenantPrefix })` |
-| Node | `bearerJwt({ jwks, issuer, audience, tenantClaim })` or fixed `tenantPrefix` |
-| Service-to-service | `sharedSecret({ secret, tenantPrefix })` |
+| Target             | Production default                                                           |
+| ------------------ | ---------------------------------------------------------------------------- |
+| Cloudflare         | `cloudflareAccess({ teamDomain, audienceTag, tenantPrefix })`                |
+| Node               | `bearerJwt({ jwks, issuer, audience, tenantClaim })` or fixed `tenantPrefix` |
+| Service-to-service | `sharedSecret({ secret, tenantPrefix })`                                     |
 
 Never ship `SHARED_SECRET` to a browser bundle. Full recipes are in
 [auth.md](auth.md) and [client-auth.md](client-auth.md).
@@ -136,13 +142,13 @@ for current operation-cost projection.
 
 At minimum, collect the canonical JSON log line and alert on:
 
-| Signal | Why it matters | First action |
-|---|---|---|
-| 5xx rate or `outcome:"error"` | User-visible API failure | Filter logs by `error.code`; check bucket auth, S3 status, and recent deploys. Run the healthz and authenticated collection curls above. |
-| `db.r2.put.412_total` sustained | CAS contention | Check writes/min for `$COLLECTION`; add app-edge retry for bursts, split hot collections if possible, graduate if sustained. |
-| `db.compaction.deferred_total` | Snapshot over fold ceiling | Read the rate-limited `console.warn`; it names whether bytes or rows tripped. Run `baerly inspect` for `live_log_tail`, `materialised_rows`, and snapshot key. Raise `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` only on paid CF / Node with enough memory, otherwise graduate tier. |
-| Class A ops spike | Cost regression or hot write path | Run `baerly cost`; inspect write amp, index count, retries, and compaction CAS losses. |
-| Object count growing while writes are steady | GC not draining or contention above envelope | Run `baerly admin fsck`; inspect `db.compaction.cas_lost_total`, deferred warnings, and write contention. |
+| Signal                                       | Why it matters                               | First action                                                                                                                                                                                                                                                                 |
+| -------------------------------------------- | -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 5xx rate or `outcome:"error"`                | User-visible API failure                     | Filter logs by `error.code`; check bucket auth, S3 status, and recent deploys. Run the healthz and authenticated collection curls above.                                                                                                                                     |
+| `db.r2.put.412_total` sustained              | Conditional-write contention                 | Check writes/min for `$COLLECTION`; add app-edge retry for bursts, split hot collections if possible, graduate if sustained.                                                                                                                                                 |
+| `db.compaction.deferred_total`               | Snapshot over fold ceiling                   | Read the rate-limited `console.warn`; it names whether bytes or rows tripped. Run `baerly inspect` for `live_log_tail`, `materialised_rows`, and snapshot key. Raise `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` only on paid CF / Node with enough memory, otherwise graduate tier. |
+| Class A ops spike                            | Cost regression or hot write path            | Run `baerly cost`; inspect write amp, index count, retries, and compaction CAS losses.                                                                                                                                                                                       |
+| Object count growing while writes are steady | GC not draining or contention above envelope | Run `baerly admin fsck`; inspect `db.compaction.cas_lost_total`, deferred warnings, and write contention.                                                                                                                                                                    |
 
 Sink wiring and field reference are in
 [observability.md](observability.md) and
@@ -164,14 +170,14 @@ Graduation thresholds and the fold-cost derivation live in
 
 ## Route quick reference
 
-| Route | Meaning |
-|---|---|
-| `GET /v1/healthz` | Anonymous liveness check. |
-| `GET /v1/c/:collection` | List rows; accepts JSON-encoded `where`, `order`, `limit`. |
-| `GET /v1/c/:collection/:id` | Read one row. |
-| `POST /v1/c/:collection` | Insert one row. |
-| `PATCH /v1/c/:collection/:id` | Merge-patch one row. |
-| `PUT /v1/c/:collection/:id` | Replace one row. |
-| `DELETE /v1/c/:collection/:id` | Delete one row. |
-| `GET /v1/count?collection=<name>&where=<json>` | Count matching rows. |
-| `GET /v1/since?collection=<name>&cursor=<opaque>` | Long-poll change feed. |
+| Route                                             | Meaning                                                    |
+| ------------------------------------------------- | ---------------------------------------------------------- |
+| `GET /v1/healthz`                                 | Anonymous liveness check.                                  |
+| `GET /v1/c/:collection`                           | List rows; accepts JSON-encoded `where`, `order`, `limit`. |
+| `GET /v1/c/:collection/:id`                       | Read one row.                                              |
+| `POST /v1/c/:collection`                          | Insert one row.                                            |
+| `PATCH /v1/c/:collection/:id`                     | Merge-patch one row.                                       |
+| `PUT /v1/c/:collection/:id`                       | Replace one row.                                           |
+| `DELETE /v1/c/:collection/:id`                    | Delete one row.                                            |
+| `GET /v1/count?collection=<name>&where=<json>`    | Count matching rows.                                       |
+| `GET /v1/since?collection=<name>&cursor=<opaque>` | Long-poll change feed.                                     |

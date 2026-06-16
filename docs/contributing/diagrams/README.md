@@ -17,5 +17,6 @@ and export into this directory.
 
 ## Current diagrams
 
-- `manifest.excalidraw.png` — manifest entries over time; write flow.
+- `manifest.excalidraw.png` — historical manifest entries over time;
+  refresh before using as current single-write protocol documentation.
   Source: [`sources/manifest.excalidraw.md`](sources/manifest.excalidraw.md).

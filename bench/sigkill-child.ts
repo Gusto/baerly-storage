@@ -1,14 +1,15 @@
 /**
- * S3-sigkill child entrypoint. Issues the synthetic three-step write
- * (PUT content → PUT log entry → CAS current.json) and prints a
- * `READY-N` line to stdout after each step. The parent watches stdout
- * and delivers SIGKILL after `READY-N` where N == BENCH_KILL_AFTER_STEP.
+ * S3-sigkill child entrypoint for the historical two-write commit
+ * harness. Issues the synthetic pre-ADR-008 three-step write (PUT
+ * content → PUT log entry → CAS current.json) and prints a `READY-N`
+ * line to stdout after each step. The parent watches stdout and
+ * delivers SIGKILL after `READY-N` where N == BENCH_KILL_AFTER_STEP.
  *
  * Reads env: BENCH_VIA, BENCH_BUCKET, BENCH_TRIAL_BODY,
  * BENCH_TRIAL_SEQ, BENCH_KILL_AFTER_STEP. Exits 0 if it manages to
- * complete all three steps (uninteresting trial; the parent records
- * `orphan: false`). The interesting code path is being SIGKILL'd —
- * the child never returns from that point.
+ * complete all three steps (uninteresting historical trial; the parent
+ * records `orphan: false`). The interesting code path is being
+ * SIGKILL'd — the child never returns from that point.
  */
 
 import {

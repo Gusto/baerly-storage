@@ -154,10 +154,10 @@ caller just passes `{}`); `maintenance.budget.test.ts` proves a
 single maintenance pass under the Cloudflare free-tier profile sits
 under the 50-subrequest cap.
 
-Per-collection CAS scope (see
+Per-collection commit scope (see
 [`docs/spec/sync-protocol.md`](../spec/sync-protocol.md)) is what makes
-the idle-poll bound tractable: one cheap key per collection rather
-than contention on a global mutex.
+the idle-poll bound tractable: one cheap log series and one compaction
+bookmark per collection rather than contention on a global mutex.
 
 ## Compression off by default in `@gusto/baerly-storage/client`
 

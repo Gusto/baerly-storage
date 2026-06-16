@@ -21,15 +21,15 @@ and self-hosted Node (your hardware, your bucket, your auth). AWS
 Lambda / Bun / Deno / Fly are not shipped targets yet; they are a
 paper-thin adapter package away from the same protocol kernel.
 
-This page is the positioning — *why* the system is shaped the way
-it is. The narrative long-form is the blog post *Storage is the
-Missing Primitive for Agent-Built Software*; the technical detail
+This page is the positioning — _why_ the system is shaped the way
+it is. The narrative long-form is the blog post _Storage is the
+Missing Primitive for Agent-Built Software_; the technical detail
 lives across the rest of `docs/`.
 
 ## The workload shape has changed
 
 The cost of trying a software idea collapsed. Downstream of that is
-a new *population* of software: many small, semi-serious artifacts
+a new _population_ of software: many small, semi-serious artifacts
 authored through the agent loop. Dashboards, internal trackers,
 personal apps, half-products, sidecars to existing systems. Some
 die after a presentation. Some run every Tuesday for five years.
@@ -42,7 +42,7 @@ scale to zero). Tokens have an answer (POST your prompt, get a
 response). **Storage is the missing primitive.** localStorage doesn't
 survive a share link; LLM-generated Postgres + RLS is failure-that-
 masquerades-as-no-data; a real database invites an agent to
-generate the *ceremony* of a real service that the operator never
+generate the _ceremony_ of a real service that the operator never
 sees. Baerly is a storage primitive sized for this category.
 
 ## What prototype-tier storage needs
@@ -57,33 +57,33 @@ The criteria the rest of this document is shaped around:
 3. **Graduation path with no hostage situation.** Prototype-tier
    storage without an exit is deferred migration pain. The day the
    app outgrows the system, leaving has to be mechanical.
-   *Graduation is the success path, not a failure mode.* A
+   _Graduation is the success path, not a failure mode._ A
    prototype-tier app that crossed the ceiling and moved to D1
    is a Baerly **win**, not a churn event. The "no hostage"
-  promise is what makes the prototype-tier bet safe to take. Snapshot
-  export is shipped today. The `LogEntry` shape is a Debezium-style CDC envelope
-  (`{lsn, commit_ts, op, collection, doc_id, after?, before?, key_old?, origin?, session, seq}`)
-  precisely so the incremental CDC exit remains mechanical, not
-  aspirational.
+   promise is what makes the prototype-tier bet safe to take. Snapshot
+   export is shipped today. The `LogEntry` shape is a Debezium-style CDC envelope
+   (`{lsn, commit_ts, op, collection, doc_id, after?, before?, key_old?, origin?, session, seq}`)
+   precisely so the incremental CDC exit remains mechanical, not
+   aspirational.
 4. **A small, typed, closed-vocabulary API.** A surface that doesn't
    fit in working memory is a surface that gets called wrong —
    whether the program calling it is an LLM mid-completion or a
-   human under deadline. *Type signatures are the contract; JSDoc is
-   prose.* The `.d.ts` shapes, `dist/API.md`, and the scaffold
+   human under deadline. _Type signatures are the contract; JSDoc is
+   prose._ The `.d.ts` shapes, `dist/API.md`, and the scaffold
    `AGENTS.md` quickref must all teach one small surface; a caller
    should reach the correct call zero-shot from those files without
    inventing ceremony. Two failure modes follow:
-   - *Hallucinated ceremony* — the agent invents an API the kernel
+   - _Hallucinated ceremony_ — the agent invents an API the kernel
      does not ship (e.g. `.findOneById()`). The fix is teaching the
      real surface via `@example` blocks and the AGENTS.md quickref.
-   - *Redundant ceremony* — the kernel ships two type-valid paths
-     for the same operation (e.g. `.get(id)` *and*
+   - _Redundant ceremony_ — the kernel ships two type-valid paths
+     for the same operation (e.g. `.get(id)` _and_
      `.where({_id}).first()`). JSDoc steering does not override
      training-distribution priors; the fix is making one of the
      paths not type-check. The additive-only lock on the public
      surface is codified in
      [ADR-002](../adr/002-api-surface-lock.md), which scopes
-     "additive" to *capabilities*, not *forms*.
+     "additive" to _capabilities_, not _forms_.
 5. **No DDL.** The moment the loop requires `CREATE TABLE`, "invent
    and preserve a schema across edits" is inserted into the part of
    the loop LLMs are worst at (`category` vs `categories` four
@@ -94,8 +94,8 @@ The criteria the rest of this document is shaped around:
    handler." If a feature needs `wrangler.jsonc` edits beyond auth, a
    `node-cron` install, or any "step 2: also configure…" — it's the wrong
    shape for this audience. The closest production precedent is
-   PostgreSQL autovacuum / HOT pruning: *the user never schedules
-   ordinary storage maintenance*. Baerly generalizes the unscheduled,
+   PostgreSQL autovacuum / HOT pruning: _the user never schedules
+   ordinary storage maintenance_. Baerly generalizes the unscheduled,
    bounded-maintenance part of that precedent to object storage:
    maintenance runs opportunistically on writes, gated so idle buckets
    pay zero. Reads stay pure.
@@ -115,10 +115,10 @@ The criteria above split cleanly across two audiences with different value
 props. The docs should not conflate them.
 
 - **For agents and authors writing code** — criterion #4 (LLM-legible API).
-  The pitch is *closed-vocabulary, types-as-contract, zero-shot from .d.ts
-  alone*. This audience reads the public surface.
+  The pitch is _closed-vocabulary, types-as-contract, zero-shot from .d.ts
+  alone_. This audience reads the public surface.
 - **For platform teams deploying it** — criterion #6 (Zero operator burden).
-  The pitch is *no cron, no sidecar, no scheduler, no on-call*. This
+  The pitch is _no cron, no sidecar, no scheduler, no on-call_. This
   audience reads the deployment story and the runtime model. They care that
   the bucket maintains itself with no intervention.
 
@@ -157,11 +157,11 @@ workload deserves it or not.
 ## What we keep even when it looks like ceremony
 
 The cutting lens above is strong, and it has three exceptions. A
-surface that fails the cutting lens *but* satisfies one of these
+surface that fails the cutting lens _but_ satisfies one of these
 stays:
 
-1. **Kernel-bug tripwires.** Surfaces that let maintainers *and
-   users* catch protocol regressions before they hit the invoice
+1. **Kernel-bug tripwires.** Surfaces that let maintainers _and
+   users_ catch protocol regressions before they hit the invoice
    (`baerly cost`'s % of free tier, write-amp counters, op-count
    histograms). The CI gate is the canonical enforcement; the
    user-visible surface is the second line of defence and the
@@ -176,7 +176,7 @@ stays:
    load-bearing.
 
 3. **Audience reach across deploy targets.** "Self-hosted Node"
-   means *any* Node target — including container-only,
+   means _any_ Node target — including container-only,
    air-gapped, or no-PaaS environments. Surfaces that the
    happy-path PaaS audience doesn't need (Dockerfile, `healthz`,
    explicit Node start entry) stay if they unblock a real
@@ -228,7 +228,7 @@ threshold so idle buckets pay zero. Keeping reads pure is exactly what
 preserves the published idle-reader cost bound. The pattern is
 PostgreSQL HOT pruning generalized to object storage in the one way
 that matters here: cheap gate on hot-path operations, bounded work when
-the gate fires, no operator chore to schedule it. Users who *want*
+the gate fires, no operator chore to schedule it. Users who _want_
 batched maintenance windows can invoke `runScheduledMaintenance` from
 their own scheduler — it's an SDK function, never a deployment
 requirement. Scaffolds ship with zero cron wiring.
@@ -237,7 +237,7 @@ This is unusual. Apache Iceberg requires a catalog service.
 Delta Lake on S3 requires a DynamoDB lock table. SlateDB is
 designed around a long-lived writer and a long-lived compactor.
 Cloudflare's Durable Objects is the architectural antithesis —
-its pitch is that you *need* a persistent single-threaded
+its pitch is that you _need_ a persistent single-threaded
 coordinator. Baerly's bet is that you don't, because the
 conditional-write contract (`If-Match` / `If-None-Match` on
 ETags) that S3-compatible object stores expose is sufficient —
@@ -249,8 +249,8 @@ break the property are in
 ## Requirements → architecture
 
 Each design choice falls out of a specific criterion above. Built
-like git: content-addressed documents, immutable log entries, and a
-single CAS-advanced pointer to HEAD.
+like git: content-addressed documents, immutable numbered log entries,
+and one conditional log create as the commit.
 
 - **Idle → zero.** Baerly is a TypeScript library — the full
   Cloudflare Workers bundle (`cloudflare.js`) is ~113 KB gzipped,
@@ -278,9 +278,10 @@ single CAS-advanced pointer to HEAD.
   after S3 went strongly consistent. See
   [sync-protocol.md](../spec/sync-protocol.md) and
   [storage-compatibility.md](../spec/storage-compatibility.md).
-  Per-collection CAS scope ([ADR-001](../adr/001-tenant-cas-isolation.md))
-  is what keeps the idle-poll bound tractable: one cheap key per
-  collection, not contention on a global mutex.
+  Per-collection commit scope
+  ([ADR-001](../adr/001-tenant-cas-isolation.md)) is what keeps the
+  idle-poll bound tractable: one cheap log series and one compaction
+  bookmark per collection, not contention on a global mutex.
 - **LLM-legible API.** Document-DB-shaped — closer to Convex than to
   Mongo or Drizzle. `db.collection("name")` is the Mongo-style
   lookup idiom; by-id verbs on the collection handle
@@ -355,7 +356,7 @@ The envelope:
 - **~30 logical writes / minute / collection** sustained. This
   ceiling reflects the CAS-livelock regime documented in the
   S3-as-database literature at ~5 writes/sec/object; per-collection
-  CAS scope ([ADR-001](../adr/001-tenant-cas-isolation.md)) is what
+  commit scope ([ADR-001](../adr/001-tenant-cas-isolation.md)) is what
   buys the operating headroom.
 - **~100 collections / tenant** fan-out.
 

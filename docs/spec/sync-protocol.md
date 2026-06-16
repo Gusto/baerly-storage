@@ -166,10 +166,11 @@ For a single-document mutation:
    peer raced the create. `tail_hint` is used as a probe **floor** (a
    lower bound), **not** as a CAS precondition — the writer never
    CAS-advances `current.json` on the commit path.
-2. **Find the true tail and mint `seq`.** Forward-probe from
-   `tail_hint` (attempt `If-None-Match: "*"` creates, walking past
-   foreign occupants — see step 4) until a create wins; `seq` is the
-   first empty log slot.
+2. **Find the true tail and mint `seq`.** Starting from
+   `max(log_seq_start, tail_hint)`, run a GET-based galloping search
+   (`findLogTail`) to discover the first empty log slot. That slot
+   becomes `seq`. The search is Class B only; the `If-None-Match: "*"`
+   create happens later, at the discovered first-empty slot.
 3. **PUT content and additive (new) index keys — before the commit.**
    `I` / `U` post-images are written under `content/<sha>.json` with
    `If-None-Match: "*"`; because the body is content-addressed, a retry
@@ -198,14 +199,14 @@ metadata; no prod path reads or writes it.
 
 ### Contention and retries
 
-Two writers racing the same collection probe forward from the same
-`tail_hint` and contend for the `log/<seq>` create — not for a
-`current.json` CAS. For any given `seq`, exactly one
-`If-None-Match: "*"` create wins (`200`); the loser gets a `412`,
-probes the next seq, and retries up to the configured retry budget. A
-writer racing peers may "gallop" forward through several `412`s, but
-every slot it skips past is occupied by a _committed_ entry, so it
-never leaves a hole behind it.
+Two writers racing the same collection discover the same first-empty
+slot and contend for the `log/<seq>` create — not for a `current.json`
+CAS. For any given `seq`, exactly one `If-None-Match: "*"` create wins
+(`200`). A loser gets a `412`, reads the occupant back, and either
+adopts its own lost-ack entry or re-runs tail discovery from `seq + 1`.
+A writer racing peers may "gallop" forward through occupied slots
+during tail discovery, but every slot it skips past is occupied by a
+_committed_ entry, so it never leaves a hole behind it.
 
 **A bare `412` is never proof a peer won.** Before treating a `412` as
 a lost race, the writer **must read the occupant back** and
@@ -215,13 +216,16 @@ disambiguate:
   committed write whose ack was lost (a self-retry). The writer
   **adopts** it as already-committed rather than failing.
 - A **foreign** occupant means a peer genuinely won that seq. The
-  writer probes the next seq and retries.
+  writer re-runs GET-based tail discovery from `seq + 1` and tries the
+  new first-empty slot.
 
 The per-commit `session` is minted once, **outside** the retry loop,
 and the LSN encodes the `seq`, so a dropped ack is unambiguously
-distinguishable from a genuine peer. When the occupant is foreign and
-the retry budget is exhausted, the writer surfaces the conflict to the
-caller, which decides whether to re-run the write.
+distinguishable from a genuine peer. The foreign-occupant path is
+bounded by the forward-probe cap; exhausting that cap is an `Internal`
+runaway alarm, not a normal high-contention conflict. Persistent
+transport/storage failures still surface to the caller through the
+ordinary `BaerlyError` path.
 
 ### Crash safety
 
@@ -320,12 +324,13 @@ of the live log into a snapshot:
 6. CAS-advance `current.json` so `snapshot` points at the new file,
    `log_seq_start` advances to the folded end, and
    `snapshot_bytes` / `snapshot_rows` / `mean_entry_bytes` are updated.
-   The compactor also advances `tail_hint` (monotone max) — it is the
-   **sole** durable advancer of the hint; writers never touch
+   The compactor also advances `tail_hint` (monotone max). Compaction
+   folds are the primary durable advancer of the hint, and write-tick
+   maintenance may also rate-limit-refresh it when fold/GC work is
+   disabled or deferred. Ordinary writer commits never touch
    `current.json` on the commit path. The fold CAS is therefore the
-   only steady-state writer of `current.json`, which strengthens
-   compaction-state atomicity (the snapshot pointer, `log_seq_start`,
-   and the snapshot counters all move together under one CAS).
+   only steady-state writer of the snapshot pointer, `log_seq_start`,
+   and snapshot counters, which strengthens compaction-state atomicity.
 
 The snapshot file is content-hashed. If a compactor crashes mid-PUT,
 the body will not match its own filename hash and readers reject it.
@@ -458,20 +463,23 @@ causally earlier entry; this cannot reorder kernel reads, because
 kernel reads sort by `seq`. Downstream CDC/export consumers must sort
 by `seq`, not by the timestamp prefix.
 
-## CAS scope is per collection
+## Commit scope is per collection
 
-Each collection has its own `current.json`, so each collection has its
-own CAS hotspot. There is no per-tenant or per-bucket mutex.
+Each collection has its own numbered log series and `current.json`
+control object, so each collection has its own commit hotspot at the
+log tail. There is no per-tenant or per-bucket mutex.
 
 That choice buys:
 
 - independent progress across collections;
-- one cheap head object per collection for reads and long-poll state;
+- one cheap compaction bookmark plus one log series per collection for
+  reads and long-poll state;
 - a tractable idle-reader cost bound.
 
 It also means:
 
-- hot single-collection workloads eventually hit CAS contention;
+- hot single-collection workloads eventually hit conditional log-create
+  contention;
 - each write is atomic per document;
 - cross-document atomicity requires graduating to a database that
   owns a real transaction coordinator.

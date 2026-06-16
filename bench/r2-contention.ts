@@ -604,7 +604,7 @@ async function s5Writer(storage: CountingStorage, signal: AbortSignal): Promise<
         contentType: "application/json",
       });
 
-      // Step 3. CAS-advance current.json.
+      // Step 3. Historical two-write scenario: CAS-advance current.json.
       await casUpdateCurrentJson(storage, S5_CURRENT_KEY, (cur) => ({
         ...cur,
         tail_hint: cur.tail_hint + 1,

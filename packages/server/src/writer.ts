@@ -89,8 +89,10 @@ const ctxMetrics = (): MetricsRecorder => getCurrentContext()?.recorder ?? noopM
  */
 export interface WriterOptions {
   /**
-   * Max CAS attempts on 412 before throwing `Conflict`. Default
-   * {@link S3_REQUEST_MAX_RETRIES} (8). Override only in tests.
+   * Max retryable `Conflict` attempts before throwing `Conflict`.
+   * Foreign log-create 412s are resolved inside a single attempt by
+   * occupant read-back plus bounded forward re-probe; this budget is
+   * retained for future retryable conflicts and tests.
    */
   readonly maxRetries?: number;
 
@@ -298,11 +300,13 @@ export class Writer {
    * the same logical write produces the same content key and the
    * second PUT no-ops. The `log/<seq>` create also uses
    * `If-None-Match: "*"`, so two writers racing the same tail cause
-   * exactly one create to win; the loser re-probes forward and retries
-   * at the next empty slot.
+   * exactly one create to win; the loser reads back the occupant,
+   * adopts its own lost-ack write or re-probes forward to the next
+   * empty slot.
    *
-   * @throws BaerlyError code="Conflict" when the retry budget is
-   *   exhausted (genuine high-contention case).
+   * @throws BaerlyError code="Conflict" when a retryable conflict
+   *   escapes the single-attempt helper and exhausts the retry budget
+   *   (presently unreachable on the log-create 412 path).
    * @throws BaerlyError code="Internal" when a log entry expected in
    *   `[0, tail_hint)` is missing — a protocol-invariant violation
    *   (compactor bug or stale `current.json`).

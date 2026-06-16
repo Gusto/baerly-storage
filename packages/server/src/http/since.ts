@@ -8,8 +8,8 @@
  *    `{ events: [], next_cursor: <same> }` ("nothing changed within
  *    the budget").
  *  - {@link listEventsSince} — one poll cycle. Reads `current.json`,
- *    validates the caller's cursor against `log_seq_start`, lists the
- *    log keys strictly-greater than the cursor's key, GETs each body,
+ *    validates the caller's cursor against `log_seq_start`, discovers
+ *    the true tail by forward-probe, GETs each body by integer `seq`,
  *    and returns the parsed `LogEntry`s in causal order.
  *
  * The handler is wired into the Hono router (`router.ts`); the
@@ -17,15 +17,12 @@
  * module owns the I/O + cursor semantics.
  *
  * Cost model. While a long-poll connection is active the per-poll
- * cost is one `Storage.get` of `current.json` plus one `Storage.get`
- * per log entry yielded. An idle reader (no new entries) pays one
- * Class A op per inner poll; with the production defaults
- * (25 s / 1 s) that is 25 ops per active connection. The
- * `< 1 Class A op / writer / hour` cost-model bound (see
- * `docs/spec/sync-protocol.md`) is for an *idle* reader — i.e. a
- * client that is *not* currently holding a long-poll open.
- * Subscribers paying for real-time-ish delivery are by definition
- * non-idle.
+ * cost is one `Storage.get` of `current.json`, the tail
+ * forward-probe GETs, plus one `Storage.get` per log entry yielded.
+ * These are Class B ops, not Class A. The `< 1 Class A op / writer /
+ * hour` cost-model bound (see `docs/spec/sync-protocol.md`) still
+ * holds; active long-poll subscribers pay repeated Class B reads for
+ * lower-latency delivery.
  */
 
 import {
@@ -77,8 +74,7 @@ const DEFAULT_MAX_EVENTS = 1024;
 const DEFAULT_TIMEOUT_MS = 25_000;
 
 /**
- * Default 1 s inner-poll interval. 25 polls × 1 list = 25 Class A
- * ops per active long-poll connection. See module docstring for the
+ * Default 1 s inner-poll interval. See module docstring for the
  * cost-model trade-off.
  *
  * Per-request override is via the `pollIntervalMs` field on

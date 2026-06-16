@@ -13,8 +13,10 @@ Stable specs and protocol-adjacent analyses. The "what" lives here;
 implementation lives in `packages/`.
 
 - [sync-protocol.md](sync-protocol.md) — atomic document writes over
-  object storage via per-collection `current.json` CAS, monotonic
-  `seq` log, and snapshot folds.
+  object storage via single-write commit: the numbered `log/<seq>`
+  create is the commit, `current.json` is compaction state, and readers
+  discover the tail by forward-probe. Decision record:
+  [ADR-008](../adr/008-single-write-commit.md).
 - [causal-consistency-checking.md](causal-consistency-checking.md)
   — the low-complexity property-checking technique used to verify
   the sync protocol stays causally consistent under fault injection.

@@ -40,7 +40,8 @@ export interface SweepCell {
    * S3-sigkill only. After which methodology step the SIGKILL is
    * delivered:
    *   - 1: kill after content PUT, before log PUT (orphan content only)
-   *   - 2: kill after log PUT, before CAS (orphan content + log) — methodology default
+   *   - 2: kill after log PUT, before historical current.json CAS
+   *        (orphan content + log) — methodology default
    */
   readonly killAfterStep: 1 | 2;
 }

@@ -1,6 +1,6 @@
 /**
- * `current.json` — the per-collection CAS-protected control object — and
- * its embedded {@link WriterFence} epoch token.
+ * `current.json` — the per-collection compaction-state control object —
+ * and its embedded, currently dormant {@link WriterFence} epoch token.
  *
  * A dedicated `coordination/` namespace (parallel to `storage/`) holds
  * primitives whose contract is "atomic agreement over a small JSON
@@ -119,10 +119,13 @@ export interface CurrentJson {
    */
   mean_entry_bytes?: number;
 
-  /** Baseline for rate-limiting the graduation defer-warn off SHARED durable state, not
-   *  per-isolate memory. The warn fires when tail_hint - last_warned_seq >=
-   *  MAINTENANCE_WARN_INTERVAL_WRITES, and that firing CASes last_warned_seq = tail_hint.
-   *  Absent → 0. */
+  /**
+   * Baseline for rate-limiting the graduation defer-warn off SHARED
+   * durable state, not per-isolate memory. The warn fires when the
+   * observed/probed tail minus `last_warned_seq` reaches
+   * MAINTENANCE_WARN_INTERVAL_WRITES, and that firing CASes
+   * `last_warned_seq` to the observed/probed tail. Absent → 0.
+   */
   last_warned_seq?: number;
 }
 
@@ -146,9 +149,9 @@ export interface WriterFence {
   /**
    * Monotonic unsigned integer. Bumped only by an explicit
    * {@link claimWriter} call — do NOT bump on every cold start, do
-   * NOT bump on every commit. Triggers per design: (a) detected
-   * CAS conflict the writer wants to claim through, (b) admin
-   * rotation.
+   * NOT bump on every commit. Under single-write commit this is retained
+   * as an explicit admin/testing primitive only; no production commit
+   * path claims or verifies the fence.
    */
   epoch: number;
 
@@ -305,11 +308,11 @@ export async function casUpdateCurrentJson(
 }
 
 /**
- * Claim ownership of the write fence by bumping `epoch` and stamping
- * `claimed_at` from `StoragePutResult.serverDate`. The common call
- * site is "I detected a CAS conflict during a commit and want to
- * claim the fence before retrying"; admin rotation is the other call
- * site.
+ * Claim ownership of the dormant write fence by bumping `epoch` and
+ * stamping `claimed_at` from `StoragePutResult.serverDate`. Under
+ * single-write commit there is no production commit-path call site;
+ * this is retained for explicit admin/testing workflows and future
+ * rotation designs.
  *
  * `owner` is informational — see {@link WriterFence.owner}. Safety
  * derives from the monotonic `epoch`, not from `owner`.

@@ -5,7 +5,8 @@
  * matrix runner in `bench/r2-contention-matrix.ts`) and prints a
  * markdown report applying the methodology's locked-in thresholds:
  *
- * - **D1** (CAS scope) — closed by ADR 0018. Reported as a
+ * - **D1** (commit scope; historical CAS-scope guard) — closed by ADR
+ *   0018. Reported as a
  *   regression-guard throughput number; never gates by default.
  * - **D2** (retry policy default) — decorrelated p999 vs. full-jitter
  *   p999 at S1, c=16, network=direct. Reporting only, never fails.
@@ -152,7 +153,7 @@ function parseCsv(text: string): readonly Row[] {
 }
 
 /**
- * D1 — CAS scope (regression guard).
+ * D1 — per-collection commit scope (historical CAS-scope guard).
  *
  * ADR 0018 closed per-collection scope. The interpreter prints the
  * observed S1 c=16 throughput as a tracked-but-non-gating number.
@@ -168,7 +169,7 @@ function applyD1(rows: readonly Row[]): GateResult {
   if (target === undefined) {
     return {
       markdown:
-        `### D1 — CAS scope (regression guard)\n\n` +
+        `### D1 — commit scope (historical CAS-scope guard)\n\n` +
         `**Status: no baseline cell.** Run \`S1\` at c=16, retry=decorrelated, ` +
         `network=direct to track throughput against ADR 0018's per-collection ` +
         `scope.\n`,
@@ -177,8 +178,8 @@ function applyD1(rows: readonly Row[]): GateResult {
   }
   return {
     markdown:
-      `### D1 — CAS scope (regression guard)\n\n` +
-      `**Status: ADR-closed; tracking only.** Per-collection CAS scope is ` +
+      `### D1 — commit scope (historical CAS-scope guard)\n\n` +
+      `**Status: ADR-closed; tracking only.** Per-collection commit scope is ` +
       `the locked-in default (\`packages/protocol/src/coordination/current-json.ts:43\`, ` +
       `\`docs/adr/001-tenant-cas-isolation.md\`). The bench is no longer in the ` +
       `loop for that decision.\n\n` +
@@ -241,8 +242,9 @@ function applyD2(rows: readonly Row[]): GateResult & { verdict: "decorrelated" |
 /**
  * D3 — orphan production rate.
  *
- * Parses `orphan_rate=N` from the S3-sigkill cell's `notes`. If >= 5%,
- * recommend 7-day GC grace + intent/. Else 1-day grace + manifest-first.
+ * Parses `orphan_rate=N` from the historical S3-sigkill cell's `notes`.
+ * If >= 5%, recommend 7-day GC grace + intent/. Else 1-day grace +
+ * legacy manifest-first.
  * Reporting only.
  */
 function applyD3(rows: readonly Row[]): GateResult {
@@ -272,7 +274,7 @@ function applyD3(rows: readonly Row[]): GateResult {
   }
   const orphanRate = Number(match[1]!);
   const sizingVerdict =
-    orphanRate >= 0.05 ? "7-day grace + intent/" : "1-day grace, manifest-first";
+    orphanRate >= 0.05 ? "7-day grace + intent/" : "1-day grace, legacy manifest-first";
   return {
     markdown:
       `### D3 — orphan production rate\n\n` +

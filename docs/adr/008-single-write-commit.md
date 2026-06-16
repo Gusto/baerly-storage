@@ -169,9 +169,12 @@ LIST, and nothing in the kernel ever LISTs `log/` — every access is a
 deterministic GET by computed seq. So tail discovery is a **bounded forward
 probe**, not a reverse-LIST:
 
-- **Writer.** Read `current.json` fresh, attempt `PUT log/<tail_hint>`
-  with `If-None-Match:"*"`; on `412` (foreign occupant) probe `tail_hint+1`
-  and retry, walking forward until a create wins.
+- **Writer.** Read `current.json` fresh, start from
+  `max(log_seq_start, tail_hint)`, run a GET-based galloping search to find
+  the first empty log slot, then attempt one `PUT log/<seq>` with
+  `If-None-Match:"*"`. A `412` can still happen if a peer wins after the
+  probe; the writer reads the occupant back, adopts its own lost-ack entry
+  or re-runs tail discovery from `seq+1`.
 - **Reader.** Fold the trusted range `[log_seq_start, tail_hint)`, then
   forward-probe `GET log/<tail_hint>, log/<tail_hint+1>, …` (Class B GETs),
   folding each found entry and **stopping at the first 404** — that 404 is

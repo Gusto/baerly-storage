@@ -71,27 +71,27 @@ speaks a non-S3 REST dialect (no S3 endpoint), so it needs a dedicated
 adapter that does not exist. `baerly doctor --bucket` runs a live CAS
 probe and rejects any backend that doesn't reject stale or colliding
 conditional writes. Cloudflare deploy can run the same probe with
-`--probe-bucket=<uri>`; Node/self-host deploys run it manually. Three
-mechanisms make this sufficient:
+`--probe-bucket=<uri>`; Node/self-host deploys run it manually. The
+current mechanisms are:
 
-1. **Two-phase fence with server timestamp.** Writers observe a
-   server-attested clock before committing; lying client clocks
-   cannot manufacture causal ordering. The `writer_fence` lives
-   in `current.json`
-   ([`packages/protocol/src/coordination/current-json.ts`](../../packages/protocol/src/coordination/current-json.ts));
-   `claimed_at` carries `StoragePutResult.serverDate`, never a
-   local clock. See [ADR-001](001-tenant-cas-isolation.md) and
-   the bounded-clock-skew assumption (`LAG_WINDOW_MILLIS = 5000`)
-   in [`docs/spec/sync-protocol.md`](../spec/sync-protocol.md).
-2. **Single-write log commit with self-session adoption on 412.**
+1. **Single-write log commit with exactly-one-winner creates.**
    The winning `If-None-Match: "*"` create on `log/<seq>` is the
    single linearization point. A writer that receives `412` reads the
    occupant back: if it is the writer's own session/seq, it adopts the
-   lost-ack commit; if it is foreign, the writer probes the next seq.
-   The adoption decision is gated on a per-commit random session id
-   that no adversary with bucket-write access can forge (see
+   lost-ack commit; if it is foreign, the writer discovers the next
+   empty slot and tries there. The adoption decision is gated on a
+   per-commit random session id that no adversary with bucket-write
+   access can forge (see
    [`packages/server/src/log-conflict-adoption.ts`](../../packages/server/src/log-conflict-adoption.ts)
    and `tryAdoptOwnSessionLogEntry`).
+2. **Compactor-owned `current.json` CAS.** The commit path no
+   longer CAS-advances `current.json`. That object is compaction state:
+   snapshot pointer, `log_seq_start`, counters, and a
+   non-authoritative `tail_hint`. The compactor and explicit
+   operator/import paths still use `If-Match` CAS on it, so snapshot
+   state moves atomically without a persistent coordinator. The old
+   two-phase `writer_fence` metadata is retained but dormant under
+   ADR-008; no production commit path claims or verifies it.
 3. **In-band, write-triggered maintenance.** Compaction and GC
    run as bounded, single-attempt slices dispatched on the
    **write path** after a successful commit — never on a

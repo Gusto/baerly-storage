@@ -74,11 +74,11 @@ Product and business context.
 
 - [`about/how-it-works.md`](about/how-it-works.md) — the mechanism
   on-ramp: the plain-language mental model — a bucket of files plus a
-  library that flips one pointer atomically, and the typed layers from
-  protocol to React. Read this to understand (or explain) *how* the
-  system works.
+  library that creates one numbered log entry atomically, and the typed
+  layers from protocol to React. Read this to understand (or explain)
+  _how_ the system works.
 - [`about/thesis.md`](about/thesis.md) — the positioning on-ramp: what
-  Baerly is, who it's for, and what it deliberately isn't — the *why*.
+  Baerly is, who it's for, and what it deliberately isn't — the _why_.
 - [`about/cost-model.md`](about/cost-model.md) — per-line-item rates,
   write-amp meter, compression posture.
 - [`about/graduation.md`](about/graduation.md) — the CPU/memory bounds
@@ -121,6 +121,9 @@ For theory and spec readers.
 - [`spec/`](spec/) — protocol theory and stable contracts (sync protocol,
   causal consistency, JSON merge patch, log-entry shape, S3
   features used).
+- [`adr/008-single-write-commit.md`](adr/008-single-write-commit.md) —
+  live commit model: the numbered `log/<seq>` create is the commit;
+  `current.json` is compaction state.
 - [`adr/`](adr/) — Architecture Decision Records.
 
 ---

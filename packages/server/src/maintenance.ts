@@ -191,12 +191,12 @@ export const CLOUDFLARE_FREE_TIER: MaintenanceOptions = profileToScheduledOption
 // =====================================================================
 
 /**
- * Floor-based GC-cadence boundary crossing. Every commit now advances
- * `tail_hint` by exactly 1, so a single step can only ever cross one
- * `tail_hint % interval === 0` boundary — but the floor test is kept
- * (rather than a `tail_hint % interval === 0` modulo test) because it
- * trips on any interval boundary inside `(prevSeq, nextSeq]` and so
- * stays correct and cheap regardless of step size.
+ * Floor-based GC-cadence boundary crossing. Every commit advances the
+ * writer-observed tail by one logical slot; `tail_hint` remains a
+ * lower bound and may be refreshed later by maintenance. The floor test
+ * trips on any interval boundary inside `(prevSeq, nextSeq]`, so it
+ * stays correct whether the observed/probed tail advances by one or
+ * catches up by a larger step.
  */
 export const crossesGcBoundary = (prevSeq: number, nextSeq: number, interval: number): boolean =>
   Math.floor(prevSeq / interval) !== Math.floor(nextSeq / interval);
@@ -204,9 +204,9 @@ export const crossesGcBoundary = (prevSeq: number, nextSeq: number, interval: nu
 /**
  * Derived live-tail byte size — the ratio TRIGGER input that replaces the
  * formerly-stored exact byte count. `(observedTail − log_seq_start) ×
- * mean_entry_bytes`. `observedTail` is a param so Phase 4 can swap its source;
- * Phase 3 passes `tail_hint` (== true tail under the two-write commit, so est ≈
- * exact). Cold-start (no mean yet) falls back to
+ * mean_entry_bytes`. `observedTail` is a param so write-tick callers can
+ * pass the writer-observed tail and scheduled callers can pass a
+ * probe-discovered true tail. Cold-start (no mean yet) falls back to
  * {@link MAINTENANCE_COLD_START_ENTRY_BYTES}, never 0 (see that constant).
  * TRIGGER-only — structurally barred from `foldViable` (the exact-bytes CPU-kill
  * ceiling).

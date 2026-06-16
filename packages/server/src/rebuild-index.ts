@@ -28,8 +28,8 @@
  *
  * @see ./indexes.ts — `IndexDefinition`, `allIndexKeysFor`,
  *      `indexKeyPrefix`.
- * @see ./writer.ts — the fence-time emission path this
- *      command reconciles.
+ * @see ./writer.ts — the hybrid index emission path this command
+ *      reconciles.
  */
 
 import {

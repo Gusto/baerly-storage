@@ -15,8 +15,7 @@
  * "missing." The atomic moment is the CAS-swap of
  * `current.json.snapshot`, which is a single conditional PUT.
  *
- * Order of operations (matches `Writer.commit`'s manifest-first-
- * REVERSED ordering): PUT snapshot body → CAS-advance `current.json`.
+ * Order of operations: PUT snapshot body → CAS-advance `current.json`.
  * A crash before the swap leaves an orphan snapshot file; the swap
  * succeeds iff our captured ETag still matches.
  *
@@ -305,9 +304,9 @@ export const compact = async (
         break;
       }
       case "D": {
-        // Tombstone purge: the `current.json` CAS serialises commits, so
-        // there is no late partition that could resurrect this doc —
-        // dropping it here IS the tombstone purge.
+        // Tombstone purge: the numbered log serializes committed
+        // mutations by `seq`, so no later entry in the folded prefix can
+        // be missed. Dropping the row here IS the tombstone purge.
         base.delete(entry.doc_id);
         break;
       }

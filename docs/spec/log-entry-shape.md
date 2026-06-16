@@ -152,8 +152,8 @@ deliberately not canonicalized.
 Same body **bytes** ⇒ same content key. The scope of this guarantee is
 **single-writer idempotent replay**: a crash-recovery rewrite of the
 same in-memory value by the same writer reproduces the same content key
-`current.json` already referenced (the `ifNoneMatch: "*"` content PUT then
-no-ops). It is **NOT** a cross-writer content-dedup guarantee: two
+the committed log entry references (the `ifNoneMatch: "*"` content PUT
+then no-ops). It is **NOT** a cross-writer content-dedup guarantee: two
 writers serializing a logically-equal document with different key
 insertion order — or a read → merge → re-serialize round-trip, since
 `merge` spreads `{...target}` and key order is insertion-dependent —
