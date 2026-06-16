@@ -72,7 +72,7 @@ export interface ObservabilityContext {
    * adapter (NOT `Db.create`) so the inherently-per-request
    * `dispatch = ctx.waitUntil` and the env-var-derived caps ride the
    * same scope the kernel write-tick reads from. The {@link Writer}
-   * consults `getCurrentContext()?.maintenance` at the post-CAS
+   * consults `getCurrentContext()?.maintenance` at the post-commit
    * dispatch point. Absent ⇒ inline dispatch + CF-free-safe caps.
    */
   readonly maintenance?: MaintenanceDispatch;

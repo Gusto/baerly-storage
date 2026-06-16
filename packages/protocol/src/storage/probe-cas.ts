@@ -26,11 +26,14 @@ export interface CasProbeResult {
  * writes the protocol depends on. The storage conformance suite asserts
  * the same semantics in CI for every shipped adapter, but a deployment
  * may point baerly at an arbitrary S3-compatible store; a backend that
- * silently *ignores* `If-Match` (returns 200 instead of rejecting a
- * stale write) causes silent lost-update corruption — every commit
- * CAS-advances `current.json`, and the no-lease maintenance fold relies
- * on the same fence. This is the fail-loud, deploy-time analogue of the
- * conformance CAS block.
+ * silently *ignores* these conditionals causes silent corruption — the
+ * log-append commit relies on `If-None-Match:"*"` create-if-absent
+ * being exactly-one-winner under concurrency (the winning create IS the
+ * commit; two winners produce split-brain commit), and the compactor
+ * CAS-advances `current.json` with `If-Match` under the no-lease
+ * maintenance fold (a backend that returns 200 instead of rejecting a
+ * stale `If-Match` causes lost-update corruption). This is the
+ * fail-loud, deploy-time analogue of the conformance CAS block.
  *
  * Writes throwaway sentinels under `keyPrefix` and deletes them on
  * the way out (even on failure). Three checks, mirroring the conformance

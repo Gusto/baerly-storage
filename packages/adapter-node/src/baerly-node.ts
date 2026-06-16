@@ -97,7 +97,7 @@ export interface BaerlyNodeHandle {
  * INLINE on the (rare) write that crosses a maintenance trigger —
  * `createFetchHandler` threads a Node-tier `MaintenanceDispatch`
  * onto the per-request observability context, which the writer reads at
- * its post-CAS dispatch point. Reads never tick. Tune via the
+ * its post-commit dispatch point. Reads never tick. Tune via the
  * `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` / `BAERLY_MAINTENANCE_DISABLE`
  * env vars; for an explicit out-of-band sweep, call
  * `runScheduledMaintenance` from `@gusto/baerly-storage` directly.

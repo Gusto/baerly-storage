@@ -93,7 +93,7 @@ export interface BaerlyEnv {
  * Worker.
  *
  * baerly maintains IN-BAND: the writer reads
- * `getCurrentContext()?.maintenance` at its post-CAS dispatch point and
+ * `getCurrentContext()?.maintenance` at its post-commit dispatch point and
  * runs one bounded compact + GC slice on the (rare) write that crosses a
  * maintenance trigger. Reads stay pure — they never tick. There is no
  * cron, no `triggers`, no operator-installed scheduler.
@@ -418,7 +418,7 @@ export function baerlyWorker<E extends BaerlyEnv = BaerlyEnv>(
       // its own line. The adapter owns the flush from here on.
       const requestId = req.headers.get("x-request-id") ?? crypto.randomUUID();
       // In-band write-tick maintenance: the writer reads
-      // `getCurrentContext()?.maintenance` at its post-CAS dispatch
+      // `getCurrentContext()?.maintenance` at its post-commit dispatch
       // point. On CF the fold is dispatched via `ctx.waitUntil` (off the
       // ack) with the CF-free caps + `phasesPerTick: "single"`; the
       // ops-plane vars are read off the `env` binding (strings). Built

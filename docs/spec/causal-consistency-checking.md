@@ -18,9 +18,8 @@ And yet, things start to get complicated as advanced features are added.
 - Local-first? Well now some participants messages are buffered and delayed for days
 
 Still, there is an intuitive notion of ordering that is preserved even under these use cases: causal consistency.
-Most advanced features are transparent to the messaging user. They use the same SDK, but the path of the messages through the system changes. So you need a way to 
+Most advanced features are transparent to the messaging user. They use the same SDK, but the path of the messages through the system changes. So you need a way to
 verify the API semantics are observably correct just from SDK usage experiments.
-
 
 Verifying causal consistency is quite tricky in general ([NP-Complete](https://arxiv.org/abs/1611.00580#:~:text=Causal%20consistency%20is%20one%20of,according%20to%20their%20causal%20precedence.) in fact!), but I consider randomized property checking central to building a robust infrastructure. Here I explain a low complexity technique for verifying causal consistency, that avoids complex model checking. Its implemented in < 100 lines of Typescript ([source](https://github.com/endpointservices/mps3/blob/12969b06c6564ac9df6c450f3d15a7ca3a5a9a25/src/__tests__/consistency.ts#L25)) and uses `eval` legitimately! We avoid any searching by exploiting the known global timeline.
 
@@ -89,24 +88,24 @@ A01 <              < A02 < A03
 
 #### Principle 2: Send time happens before receive time
 
-If client B, at time B5, observes client A broadcasting "I am at A3," it can deduce \( A3 < B5 \) (A3 happened-before B5). 
+If client B, at time B5, observes client A broadcasting "I am at A3," it can deduce \( A3 < B5 \) (A3 happened-before B5).
 
 #### Principle 3: Global Ordering of Messages in Topic
 
 Within shared topics, like chat, you want everybody to receive the messages in the same order. A centralised system also fits this definition. A received message occurs after
-the previously received message for all given client. 
+the previously received message for all given client.
 
 ```
-previous_message < received_message 
+previous_message < received_message
 ```
 
 Note this does not preclude clients locally buffering messages or going offline, it just implies there is a global ordering that every message eventually passes through.
 
-### Grounding 
+### Grounding
 
 Usefully the causal "happens-before" relation works similarly to the Javascript's less-than does on the number line. So finding a causally consistent interpretation is equivalent to assigning numbers that satisfy the numerical inequalities (grounding).
 
-In a general setting this involves a exhaustive symbolic searching, but if we know the 
+In a general setting this involves a exhaustive symbolic searching, but if we know the
 global order of events, then we can simply set the temporal variables to their known global values.
 
 ## Live Annotation
@@ -126,7 +125,7 @@ const A0 = 0, B0 = 0, C0 = 0, B1 = 1; // grounding
 // Carol receives: Bob: Would you like to come over for dinner?
 2 C1: observe ("B1") =>
 
-const A0 = 0, B0 = 0, C0 = 0, B1 = 1, C1 = 2; 
+const A0 = 0, B0 = 0, C0 = 0, B1 = 1, C1 = 2;
 /*P1*/ B0 < B1 && // previous knowledge
 /*P1*/ C0 < C1 && // new stuff
 /*P2*/ B1 < C1
@@ -135,7 +134,7 @@ const A0 = 0, B0 = 0, C0 = 0, B1 = 1, C1 = 2;
 
 ```
 // Carol: Yes, I'll bring dessert
-3 C2: publish ("C2") => 
+3 C2: publish ("C2") =>
 
 const A0 = 0, B0 = 0, C0 = 0, B1 = 1, C1 = 2, C2 = 3;
 /*P1*/ B0 < B1 &&
@@ -148,7 +147,7 @@ const A0 = 0, B0 = 0, C0 = 0, B1 = 1, C1 = 2, C2 = 3;
 
 ```
 // Alice receives: Yes! I'll bring dessert
-4 A1: observe ("C2") => 
+4 A1: observe ("C2") =>
 
 const A0 = 0, B0 = 0, C0 = 0, B1 = 1, C1 = 2, C2 = 3, A1 = 4;
 /*P1*/ B0 < B1 &&
@@ -163,7 +162,7 @@ const A0 = 0, B0 = 0, C0 = 0, B1 = 1, C1 = 2, C2 = 3, A1 = 4;
 
 ```
 // Alice receives: Would you like to come over for dinner?
-5 A2: observe ("B2") => 
+5 A2: observe ("B2") =>
 
 const A0 = 0, B0 = 0, C0 = 0, B1 = 1, C1 = 2, C2 = 3, A1 = 4, A2 = 5;
 /*P1*/ B0 < B1 &&
@@ -190,17 +189,17 @@ The clauses that conflict are
 ## Conclusion
 
 This framework drives randomized testing of the Baerly client. One
-precision note on the *guarantee* it grounds against: baerly's true
-contract is **per-document and per-collection linearizable** — a single
-CAS-advanced `current.json` HEAD is the linearization point (see
-`docs/spec/sync-protocol.md`). **Cross-collection there is no ordering
+precision note on the _guarantee_ it grounds against: baerly's true
+contract is **per-document and per-collection linearizable** — the
+winning `log/<seq>` `If-None-Match: "*"` create is the linearization
+point (see `docs/spec/sync-protocol.md`). **Cross-collection there is no ordering
 guarantee and multi-collection writes are not atomic** (each
 write touches exactly one `current.json`;
 `docs/adr/001-tenant-cas-isolation.md`). This causal-consistency checker
-is therefore a cheap *lower-bound* test: it witnesses violations of the
+is therefore a cheap _lower-bound_ test: it witnesses violations of the
 weaker causal model, not a linearizability violation that still respects
 causality. Layering even causal semantics over vanilla S3 is not easy,
-so the checker is worth the extra mile. 
+so the checker is worth the extra mile.
 
 In fact, the checker immediately found a bug with one of the possible configurations of the clients (the no versioning setting). I am very pleased this could be implemented with no additional dependencies in pure Javascript with very little code.
 

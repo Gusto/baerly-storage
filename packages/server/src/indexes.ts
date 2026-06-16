@@ -49,8 +49,9 @@
  * Locked: single-field indexes only on the read path. Composite
  * shape is documented and reserved (the path encoder accepts it).
  *
- * @see docs/spec/sync-protocol.md — fence model these PUTs land
- *      inside (between log PUT and `current.json` CAS-advance).
+ * @see docs/spec/sync-protocol.md — index emission is hybrid around
+ *      the commit: additive (new) keys are PUT before the committing
+ *      `log/<seq>` create, and stale-key DELETEs land after it.
  */
 
 import {

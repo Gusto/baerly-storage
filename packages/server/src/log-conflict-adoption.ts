@@ -3,13 +3,14 @@
  * distinguishes a retry of our own prior commit attempt from a
  * peer racing us at the same `seq`.
  *
- * Background. `Writer.#singleAttemptCommit` PUTs each log entry with
- * `If-None-Match: "*"`. A 412 on `/log/<seq>.json` can mean either
+ * Background. `Writer.#singleAttemptCommit` creates each log entry
+ * with `If-None-Match: "*"` — and that create IS the commit. A 412 on
+ * `/log/<seq>.json` can mean either
  *
- *   (a) a peer wrote a DIFFERENT entry at the same seq — we lost
- *       the race; the caller's CAS will also fail; or
- *   (b) our OWN previous attempt landed the log PUT but lost the
- *       subsequent `current.json` CAS-advance, and we're now
+ *   (a) a peer genuinely won that seq (a foreign entry is committed
+ *       there); or
+ *   (b) our OWN previous attempt landed the committing log create but
+ *       its ack was lost — we never observed the `200` — and we're now
  *       re-driving the same logical commit.
  *
  * This function makes the (a)/(b) call. It is callable, separately
@@ -35,8 +36,8 @@
  *      is retained as a defensive invariant (its removal is the
  *      deferred follow-up tracked as D1.5). It is sound only for a single-input
  *      commit because per-input adoption decisions would not
- *      compose with the all-or-nothing CAS-advance on
- *      `current.json`.
+ *      compose with the single-key single-write commit (the one
+ *      `log/<seq>` create is the all-or-nothing commit point).
  *
  * When any of (1)/(2)/(3) fails, the writer MUST throw
  * `BaerlyError{code:"Conflict"}` and let the caller's retry-or-

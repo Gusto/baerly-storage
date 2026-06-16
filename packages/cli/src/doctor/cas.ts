@@ -3,11 +3,13 @@
  *
  * Unlike the cloudflare deploy-invariant walk (which only inspects
  * config files), this mode connects to a real bucket and verifies it
- * honours the conditional writes the protocol depends on: every commit
- * CAS-advances `current.json` with `If-Match`, and the no-lease
- * maintenance fold relies on the same fence. A store that silently
- * ignores `If-Match` (returns 200 instead of rejecting a stale write)
- * causes silent lost-update corruption — this is the fail-loud,
+ * honours the conditional writes the protocol depends on: the
+ * log-append commit relies on `If-None-Match:"*"` create-if-absent
+ * being exactly-one-winner under concurrency (the winning create IS the
+ * commit), and the compactor CAS-advances `current.json` with `If-Match`
+ * under the no-lease maintenance fold. A store that silently ignores
+ * these conditionals causes silent corruption (split-brain commit, or
+ * lost updates on a stale `If-Match`) — this is the fail-loud,
  * deploy-time analogue of the conformance CAS block.
  *
  * Writes throwaway sentinels and deletes them; see

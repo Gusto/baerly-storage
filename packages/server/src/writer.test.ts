@@ -535,7 +535,7 @@ describe("Writer — writer fence", () => {
   /**
    * Bumps `writer_fence.epoch` on `current.json` exactly once, on
    * the K-th `get` of the CAS key (after the writer's step-1 read
-   * but before/at its post-CAS verify read). Local to this test
+   * but before/at its post-commit point). Local to this test
    * file.
    */
   class FenceBumpingStorage extends MemoryStorage {
@@ -848,7 +848,7 @@ describe("Writer — write-tick maintenance dispatch", () => {
   /**
    * A recording dispatch that captures each maintenance task WITHOUT
    * running it. The writer hook reads `getCurrentContext()?.maintenance
-   * ?.dispatch` at the post-CAS point; a no-run spy lets these tests
+   * ?.dispatch` at the post-commit point; a no-run spy lets these tests
    * assert the writer's DISPATCH DECISION (did it fire? how many times?)
    * in isolation from `runBoundedMaintenance`'s own behaviour. The
    * runner's effect is exercised separately by the default-inline test

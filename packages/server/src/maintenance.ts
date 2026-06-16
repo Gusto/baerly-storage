@@ -217,7 +217,7 @@ export const estimateTailBytes = (current: CurrentJson, observedTail: number): n
 
 /**
  * The cheap DISPATCH gate the writer calls after a commit — zero
- * storage ops; it reads the post-CAS {@link CurrentJson} already in
+ * storage ops; it reads the post-commit {@link CurrentJson} already in
  * scope. Ratio-OR-boundary, WITHOUT the entry floor (the floor is part
  * of the fold-trigger Gate 1 checked inside {@link runBoundedMaintenance}).
  * Returning `false` lets the writer skip the dispatch entirely. Ratio
@@ -530,7 +530,7 @@ export const dispatchInlineAwaited = (task: () => Promise<void>): void | Promise
  * observability context (NOT `Db.create`). It rides the per-request ALS
  * context because `dispatch = ctx.waitUntil` is inherently per-request,
  * and routing it through `Db.create` would widen that surface past its
- * locked four fields. The writer reads it at the post-CAS dispatch
+ * locked four fields. The writer reads it at the post-commit dispatch
  * point via `getCurrentContext()?.maintenance`.
  *
  * Absent ⇒ inline dispatch + CF-free-safe caps (the defaults inside

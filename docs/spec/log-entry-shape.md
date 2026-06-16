@@ -72,13 +72,13 @@ the opaque `lsn` string carried by each entry.
 
 ```ts
 export interface LogEntry {
-  lsn: string;                          // <base32-time>_<session>_<seq>
-  commit_ts: string;                    // ISO-8601 ms
+  lsn: string; // <base32-time>_<session>_<seq>
+  commit_ts: string; // ISO-8601 ms
   op: "I" | "U" | "D";
   collection: string;
-  doc_id: string;                       // I/U/D
-  after?: DocumentData;          // I/U
-  before?: DocumentData;         // when replica_identity = FULL
+  doc_id: string; // I/U/D
+  after?: DocumentData; // I/U
+  before?: DocumentData; // when replica_identity = FULL
   key_old?: { readonly [pk: string]: JSONValue };
   origin?: string;
   session: string;
@@ -92,19 +92,19 @@ hover.
 
 ### Field requirement matrix
 
-| Field            | I | U | D | Notes |
-|------------------|---|---|---|-------|
-| `lsn`            | ✓ | ✓ | ✓ | Always present. |
-| `commit_ts`      | ✓ | ✓ | ✓ | ISO-8601 ms. |
-| `op`             | ✓ | ✓ | ✓ | One ASCII char. |
-| `collection`     | ✓ | ✓ | ✓ | Collection name bound to this `current.json`. |
-| `doc_id`         | ✓ | ✓ | ✓ | Document primary key (`_id`). |
-| `after`          | ✓ | ✓ |   | Post-image (Debezium's `after`). |
-| `before`         |   | ✓ | ✓ | Iff `replica_identity === "FULL"` (Debezium's `before`). |
-| `key_old`        |   | ✓ | ✓ | When `replica_identity !== "PATCH_ONLY"`. |
-| `origin`         | ? | ? | ? | Optional ORIGIN analogue. |
-| `session`        | ✓ | ✓ | ✓ | Embedded in `lsn`; surfaced for dedupe. |
-| `seq`            | ✓ | ✓ | ✓ | Embedded in `lsn`; surfaced for ordering. |
+| Field        | I   | U   | D   | Notes                                                    |
+| ------------ | --- | --- | --- | -------------------------------------------------------- |
+| `lsn`        | ✓   | ✓   | ✓   | Always present.                                          |
+| `commit_ts`  | ✓   | ✓   | ✓   | ISO-8601 ms.                                             |
+| `op`         | ✓   | ✓   | ✓   | One ASCII char.                                          |
+| `collection` | ✓   | ✓   | ✓   | Collection name bound to this `current.json`.            |
+| `doc_id`     | ✓   | ✓   | ✓   | Document primary key (`_id`).                            |
+| `after`      | ✓   | ✓   |     | Post-image (Debezium's `after`).                         |
+| `before`     |     | ✓   | ✓   | Iff `replica_identity === "FULL"` (Debezium's `before`). |
+| `key_old`    |     | ✓   | ✓   | When `replica_identity !== "PATCH_ONLY"`.                |
+| `origin`     | ?   | ?   | ?   | Optional ORIGIN analogue.                                |
+| `session`    | ✓   | ✓   | ✓   | Embedded in `lsn`; surfaced for dedupe.                  |
+| `seq`        | ✓   | ✓   | ✓   | Embedded in `lsn`; surfaced for ordering.                |
 
 ## Storage layout
 
@@ -119,8 +119,8 @@ entry independently fetchable so readers, compaction, and the
 `/v1/since?collection=<name>&cursor=<opaque>` change-feed route can
 reconstruct the committed range directly from `current.json`. The cost
 is one extra PUT per mutated document; the benefit is deterministic
-`GET log/<seq>.json` over
-`[log_seq_start, next_seq)`.
+`GET log/<seq>.json` over the trusted range `[log_seq_start, tail_hint)`
+plus a forward-probe to the true tail.
 
 ### Content body layout
 
@@ -145,7 +145,7 @@ reproducing keys MUST truncate to 32 hex chars; hashing to the full
 `JSON.stringify(value)` UTF-8-encoded, with NO replacer and NO key
 sorting** (`packages/protocol/src/bytes.ts`). Key order is therefore
 **insertion-order**, exactly as the writer's in-memory object presents
-it. This is *not* the canonical (ASCII-lex-sorted) encoding that
+it. This is _not_ the canonical (ASCII-lex-sorted) encoding that
 `baerly admin dump` uses for byte-stable backups — content hashing is
 deliberately not canonicalized.
 
@@ -173,9 +173,11 @@ the hash input would first need canonicalization. Constant lives at
 - **`<session>`** is a 6-char hex prefix of a UUID, freshly minted per
   commit batch by the stateless `Writer`.
 - **`<seq>`** is a fixed-width opaque base-32 descending counter
-  (`countKey(seq)`), where `seq` is sourced from `current.json.next_seq`
-  — monotonic per collection, advanced via the `current.json` CAS, and
-  stable across process restart (it does **not** reset per session). The
+  (`countKey(seq)`), where `seq` is the first empty log slot found by
+  the writer's forward-probe from `current.json.tail_hint`
+  — monotonic per collection, minted by the committing `log/<seq>`
+  create, and stable across process restart (it does **not** reset per
+  session). The
   exact character width is an internal encoding detail (`COUNT_BIT_WIDTH`
   in `packages/protocol/src/constants.ts`); treat the seq token as opaque
   and do not hard-code its length in consumers.
@@ -266,7 +268,7 @@ a Debezium-style envelope.
     "lsn": "0123456789abc_a1b_02"
   },
   "before": { "id": "u_42", "email": "old@x" },
-  "after":  { "id": "u_42", "email": "new@x", "name": "Alice" }
+  "after": { "id": "u_42", "email": "new@x", "name": "Alice" }
 }
 ```
 
@@ -278,22 +280,23 @@ Mapping at the SSE adapter:
 
 ## Failure semantics
 
-Log entries are PUT **before** the CAS-advance of `current.json`
-(with `If-None-Match: "*"` so a colliding `seq` fails fast), but they
-are not committed until `current.json.next_seq` advances. A direct
-bucket consumer must therefore read `current.json` first and consume
-only the range it names. Listing the `log/` prefix is not a
-commit-discovery protocol.
+Each log entry is created with `If-None-Match: "*"`, and **the winning
+create IS the commit** — there is no separate `current.json` CAS on the
+commit path. An entry is committed the moment its create wins (`200`),
+not when any `next_seq`-style pointer advances. A direct bucket consumer
+reads `current.json` for the snapshot pointer and the `tail_hint` floor,
+folds the trusted range `[log_seq_start, tail_hint)`, then forward-probes
+`GET log/<tail_hint>, log/<tail_hint+1>, …` and stops at the first 404
+(the true tail). Listing the `log/` prefix is still not a commit-discovery
+protocol.
 
-If the writer crashes after the log PUT and before the CAS, readers
-ignore that object because it sits outside the committed range. On the
-read/fold path, if a consumer GETs an in-range `log/<seq>.json` that
-`current.json` says should exist and receives 404, that is a protocol
-invariant violation; the kernel surfaces it as an error rather than
-silently skipping the entry. The `/v1/since` consumer route is the
-exception: it tolerates a 404 on an in-range entry by skipping it,
-since the GC sweeper may have already deleted a log object that has
-been folded into the snapshot.
+On the read/fold path, if a consumer GETs an in-range `log/<seq>.json`
+inside the trusted `[log_seq_start, tail_hint)` range and receives 404,
+that is a protocol invariant violation; the kernel surfaces it as an
+error rather than silently skipping the entry. The `/v1/since` consumer
+route is the exception: it tolerates a 404 on an in-range entry by
+skipping it, since the GC sweeper may have already deleted a log object
+that has been folded into the snapshot.
 
 ## Stability
 

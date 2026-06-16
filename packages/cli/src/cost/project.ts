@@ -58,10 +58,11 @@ export interface Trajectory {
 
 /**
  * Protocol write-amp ceiling: every logical write produces exactly
- * 3 Class A ops (PUT content + PUT log entry + CAS-advance
- * current.json). Source: `docs/about/cost-model.md:43-44`.
+ * 2 Class A ops (PUT content + the committing `log/<seq>` create).
+ * There is no `current.json` CAS on the commit path — the winning
+ * log create IS the commit. Source: `docs/about/cost-model.md:43-44`.
  */
-const PROTOCOL_WRITE_AMP = 3;
+const PROTOCOL_WRITE_AMP = 2;
 
 /** Minutes per month × write-amp = Class A ops/month per write/min. */
 const OPS_PER_WPM_PER_MONTH = 60 * 24 * 30 * PROTOCOL_WRITE_AMP;

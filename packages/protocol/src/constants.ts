@@ -517,15 +517,17 @@ export const FORBIDDEN_MERGE_KEYS: ReadonlySet<string> = new Set([
 /**
  * Architecturally-enforced ceiling: storage ops per logical write.
  *
- * Three Class A ops: PUT content, PUT log entry, CAS-advance
- * `current.json`. The cost-model page derives the free-tier write
- * budget from this multiplier; the phase-5 end-to-end test asserts it
- * at CI time. Changing this constant is a cost-model-breaking change.
+ * Two Class A ops: PUT content + the committing `log/<seq>` create
+ * (`If-None-Match: "*"`). There is no `current.json` CAS on the commit
+ * path — the winning log create IS the commit. The cost-model page
+ * derives the free-tier write budget from this multiplier; the phase-5
+ * end-to-end test asserts it at CI time. Changing this constant is a
+ * cost-model-breaking change.
  *
  * @see docs/about/cost-model.md §"Cost ceiling"
  * @see tests/integration/phase5-end-to-end.test.ts
  */
-export const STORAGE_OPS_PER_LOGICAL_WRITE: number = 3;
+export const STORAGE_OPS_PER_LOGICAL_WRITE: number = 2;
 
 /**
  * Canonical auth posture identifiers consumed by `BaerlyAppConfig.auth`,

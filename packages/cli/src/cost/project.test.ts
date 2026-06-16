@@ -37,19 +37,19 @@ describe("project", () => {
   });
 
   test("R2 inside free tier: projectedUsdPerMonth is exactly 0 and withinFreeTier is true", () => {
-    // 0.5 writes/min × 60 × 24 × 30 × 3 = 64,800 Class A/mo — well under 1M.
+    // 0.5 writes/min × 60 × 24 × 30 × 2 = 43,200 Class A/mo — well under 1M.
     const t = project(0.5, 0, R2);
     expect(t).not.toBeNull();
-    expect(t!.classAPerMonth).toBe(64_800);
+    expect(t!.classAPerMonth).toBe(43_200);
     expect(t!.withinFreeTier).toBe(true);
     expect(t!.projectedUsdPerMonth).toBe(0);
     expect(t!.provider).toBe("r2");
   });
 
   test("R2 above free tier: projectedUsdPerMonth uses paid math on the overage", () => {
-    // 10 writes/min × 60 × 24 × 30 × 3 = 1,296,000 Class A/mo.
+    // 15 writes/min × 60 × 24 × 30 × 2 = 1,296,000 Class A/mo.
     // Overage: 296,000. Cost: 0.296 × $4.50 = $1.332.
-    const t = project(10, 0, R2);
+    const t = project(15, 0, R2);
     expect(t).not.toBeNull();
     expect(t!.classAPerMonth).toBe(1_296_000);
     expect(t!.withinFreeTier).toBe(false);
@@ -57,15 +57,15 @@ describe("project", () => {
   });
 
   test("AWS S3 (no free tier): bill starts at the first op", () => {
-    // 0.5 writes/min × ... × 3 = 64,800/mo × $5/1M = $0.324.
+    // 0.5 writes/min × ... × 2 = 43,200/mo × $5/1M = $0.216.
     const t = project(0.5, 0, AWS_S3);
     expect(t).not.toBeNull();
     expect(t!.withinFreeTier).toBe(false);
-    expect(t!.projectedUsdPerMonth).toBeCloseTo(0.324, 3);
+    expect(t!.projectedUsdPerMonth).toBeCloseTo(0.216, 3);
   });
 
   test("self-hosted: projectedUsdPerMonth and percentOfFreeTier are null; percentages still computed", () => {
-    const t = project(10, 0, SELF_HOSTED);
+    const t = project(15, 0, SELF_HOSTED);
     expect(t).not.toBeNull();
     expect(t!.projectedUsdPerMonth).toBeNull();
     expect(t!.percentOfFreeTier).toBeNull();
@@ -73,21 +73,21 @@ describe("project", () => {
     expect(t!.percentOfGraduation).toBeCloseTo((1_296_000 / GRADUATION_CLASS_A_PER_MONTH) * 100, 3);
   });
 
-  test("write-amp constant: classAPerMonth = writesPerMin × 60 × 24 × 30 × 3", () => {
+  test("write-amp constant: classAPerMonth = writesPerMin × 60 × 24 × 30 × 2", () => {
     const t = project(1, 0, R2);
-    expect(t!.classAPerMonth).toBe(1 * 60 * 24 * 30 * 3);
+    expect(t!.classAPerMonth).toBe(1 * 60 * 24 * 30 * 2);
   });
 
   test("percentOfGraduation: 50M Class A/mo → 100%", () => {
-    // Need writesPerMin such that writesPerMin × 60 × 24 × 30 × 3 = 50_000_000.
-    const wpm = GRADUATION_CLASS_A_PER_MONTH / (60 * 24 * 30 * 3);
+    // Need writesPerMin such that writesPerMin × 60 × 24 × 30 × 2 = 50_000_000.
+    const wpm = GRADUATION_CLASS_A_PER_MONTH / (60 * 24 * 30 * 2);
     const t = project(wpm, 0, R2);
     expect(t!.percentOfGraduation).toBeCloseTo(100, 3);
   });
 
   test("percentOfFreeTier: R2 with classA exactly at free-tier ceiling → 100%", () => {
     // Need writesPerMin such that classAPerMonth = 1_000_000.
-    const wpm = 1_000_000 / (60 * 24 * 30 * 3);
+    const wpm = 1_000_000 / (60 * 24 * 30 * 2);
     const t = project(wpm, 0, R2);
     expect(t!.percentOfFreeTier).toBeCloseTo(100, 3);
     expect(t!.withinFreeTier).toBe(true); // boundary is inclusive
@@ -103,18 +103,18 @@ describe("project", () => {
   });
 
   test("R2 with both Class A AND storage overages: bill sums both terms", () => {
-    // 10 writes/min → 1,296,000 Class A (overage 296,000 → $1.332)
+    // 15 writes/min → 1,296,000 Class A (overage 296,000 → $1.332)
     // 15 GB stored → storage overage 5 GB → $0.075
     // Expected total: $1.407
-    const t = project(10, 15 * 1024 * 1024 * 1024, R2);
+    const t = project(15, 15 * 1024 * 1024 * 1024, R2);
     expect(t).not.toBeNull();
     expect(t!.projectedUsdPerMonth).toBeCloseTo(1.332 + 5 * 0.015, 3);
   });
 
   test("R2 between 50% and 100% of free tier: still withinFreeTier=true, percentOfFreeTier in [50, 100]", () => {
     // classAPerMonth = 750_000 → 75% of free tier (1M).
-    // writesPerMin = 750_000 / (60 × 24 × 30 × 3) ≈ 5.79.
-    const wpm = 750_000 / (60 * 24 * 30 * 3);
+    // writesPerMin = 750_000 / (60 × 24 × 30 × 2) ≈ 8.68.
+    const wpm = 750_000 / (60 * 24 * 30 * 2);
     const t = project(wpm, 0, R2);
     expect(t).not.toBeNull();
     expect(t!.withinFreeTier).toBe(true);

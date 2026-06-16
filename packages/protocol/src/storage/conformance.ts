@@ -11,12 +11,14 @@ import type { Storage } from "./types.ts";
 export interface ConformanceOptions {
   /** When false, the AbortSignal block is skipped wholesale. */
   readonly supportsAbort?: boolean;
-  // NOTE: there is no `supportsCAS` opt-out. CAS (`ifMatch` /
-  // `ifNoneMatch:"*"`) is a HARD protocol prerequisite — every commit
-  // CAS-advances `current.json` and the no-lease maintenance fold relies
-  // on the same fence — so a `Storage` that doesn't honor it isn't a
-  // valid baerly backend. The CAS blocks below always run; a backend
-  // that can't pass them must not ship.
+  // NOTE: there is no `supportsCAS` opt-out. The conditional writes
+  // (`ifMatch` / `ifNoneMatch:"*"`) are a HARD protocol prerequisite —
+  // the log-append commit relies on `ifNoneMatch:"*"` create-if-absent
+  // being exactly-one-winner under concurrency (the winning create IS
+  // the commit), and the compactor CAS-advances `current.json` with
+  // `ifMatch` under the no-lease maintenance fold — so a `Storage` that
+  // doesn't honor them isn't a valid baerly backend. The CAS blocks
+  // below always run; a backend that can't pass them must not ship.
   /**
    * When false, generated key arbitraries must yield case-insensitively
    * distinct keys (some object stores fold case). Defaults to `true`;

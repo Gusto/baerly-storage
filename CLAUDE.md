@@ -59,46 +59,46 @@ pre-commit hook run; `pnpm verify:agent` / `pnpm test:agent` are
 explicit compact-output variants for environments where the env
 var isn't propagated.
 
-> **Agents: don't pipe `verify:agent` / `test:agent` through `| tail -N` or `| head -N`.** Both scripts are already compact — one finding per line, with full detail preserved on failures. Piping to `tail`/`head` removes the lines you need; if the first run prints nothing useful, the *output is empty because the gate passed*, not because the tail was wrong. Same applies to `pnpm bundle-sizes`.
+> **Agents: don't pipe `verify:agent` / `test:agent` through `| tail -N` or `| head -N`.** Both scripts are already compact — one finding per line, with full detail preserved on failures. Piping to `tail`/`head` removes the lines you need; if the first run prints nothing useful, the _output is empty because the gate passed_, not because the tail was wrong. Same applies to `pnpm bundle-sizes`.
 
-| Command | What it catches | Runtime | Clean on `main`? |
-|---|---|---|---|
-| `pnpm verify` | typecheck (`tsgo --noEmit`) + `verify:examples` + lint (`oxlint`) + `format:check` (`oxfmt --check`) + `verify:docs` (markdown frontmatter audit) | ~seconds | ✅ — non-zero exit *is* your regression |
-| `pnpm verify:agent` | same gate as `pnpm verify`, with `tsgo --pretty false` + `oxlint --format=unix --quiet` for one-line-per-finding output (warnings hidden — `pnpm verify` still surfaces them) | ~seconds | ✅ — same gate as `verify`, just quieter |
-| `node scripts/lint-package-layers.mjs` | enforces the package import allow list from ADR-006. Runs as part of `pnpm verify`. | ~ms | ✅ |
-| `pnpm verify:docs` | `verify-docs.mjs` (frontmatter `related:` cross-link resolver + `audience:` field audit + 180-day `last-reviewed:` staleness check) **+ `remark-validate-links`** (inline Markdown link + heading-anchor validation across all of `docs/`, runnable standalone as `verify:doc-links`). Runs as part of `pnpm verify`. | ~seconds | ✅ |
-| `pnpm verify:examples` | runs each scaffoldable example's `tsc -b --noEmit` (`minimal-cloudflare`, `minimal-node`, `react-cloudflare`, `react-node`) so SPA + Worker bugs in the templates fail fast | ~seconds | ✅ |
-| `pnpm test` | vitest unit + integration (zero infra) — includes the `memory` + `local-fs` variants of `randomized.test.ts` | ~3s | ✅ — Minio + credentials tests are gated, see below |
-| `pnpm test:agent` | same gate as `pnpm test`, with `--reporter=minimal --silent=passed-only` baked in (failures still full-detail). Works regardless of `CLAUDECODE` | ~3s | ✅ — same gate as `test`, just quieter |
-| `pnpm test:minio` | adds the Minio-gated suites: the `clock behavior` block of `time.test.ts`, the `node-minio` variant of `randomized.test.ts`, and `adapter-node` Minio conformance | ~10s | ✅ when `pnpm dev:storage` is up |
-| `pnpm test:conformance` | adds `conformance.test.ts` (needs Minio + credentials files) | ~30s | requires credentials in `credentials/{aws,gcs,cloudflare}.json` |
-| `pnpm test:export-smoke` | adds `export-smoke.test.ts` (`LogEntry` round-trip into Postgres; needs local Postgres on `:5433`) | ~5s | ✅ when `pnpm dev:storage` is up |
-| `pnpm test:export-round-trip` | full export → SQLite → restore → byte-equal dump | ~5–10s | ✅ when `sqlite3` is on PATH (auto-skips otherwise) |
-| `pnpm test:adapter-cloudflare` | runs `r2BindingStorage` conformance, the `cloudflare-r2` variant of `randomized.test.ts`, the `cloudflare-r2` variant of `collection-api.test.ts`, **and** the `cloudflare-r2` variant of `http-conformance.test.ts` under miniflare (`@cloudflare/vitest-pool-workers`, project `cloudflare-pool`) | ~3s | ✅ — first run downloads the `workerd` binary |
-| `pnpm test:http-conformance` | runs the HTTP cascade on `memory` + `local-fs` (default project) | ~3s | ✅ |
-| `pnpm test:adapter-node` | runs `s3HttpStorage` conformance against local Minio | ~10s | ✅ when `pnpm dev:storage` is up |
-| `pnpm test:adapters` | sequential wrapper: `test:adapter-cloudflare` then `test:adapter-node` | ~10s | ✅ when `pnpm dev:storage` is up |
-| `pnpm format:check` | oxfmt formatting. Now part of `pnpm verify` and auto-fixed (incl. `.md`) by the lefthook pre-commit `format` hook | ~seconds | ✅ |
-| `pnpm build` | rolldown bundle to `dist/` | ~seconds | ✅ |
-| `pnpm test:randomize` | property-based fuzzer (cranks `FC_NUM_RUNS` for fast-check arbitraries). The randomized cascade itself is fault-injection-driven so `FC_NUM_RUNS` is a no-op for `randomized.test.ts` — all four variants (`memory` / `local-fs` / `cloudflare-r2` / `node-minio`) still run, but only the property tests in the rest of the suite scale up | run for minutes | use when changing protocol code |
-| `pnpm test:fuzz-phase5` | crash-injection fuzzer for the maintenance loop (`phase5-crash-fuzz.test.ts`) — aborts the K-th storage op inside `Writer` / `compact()` / `runGc()` and asserts the reader still sees a consistent row set | minutes-hours at `FC_NUM_RUNS=10000` | use after touching `compactor.ts` / `gc.ts` / `writer.ts` |
-| `pnpm test:mutate` | StrykerJS mutation testing scoped to `packages/protocol/src/**` (pure kernel) — measures test quality, surfaces uncovered behavior as surviving mutants. **Manual only**: not in `pnpm verify` / `pnpm test` / CI, exits 0 regardless of score. See [docs/contributing/mutation-testing.md](docs/contributing/mutation-testing.md) | minutes | ✅ — report-only, never gates |
-| `pnpm worktree:bootstrap` | `pnpm install --frozen-lockfile` + `pnpm run build`. Run this once after `git worktree add` to prime `dist/` so `baerly`, `pnpm bundle-sizes`, and any dist-consuming test work. `verify:agent` itself doesn't need it; everything else does | ~10-30s | n/a |
-| `pnpm dev:storage` | brings up Minio `:9102` + Toxiproxy `:9104` + Postgres `:5433` | n/a | required for `test:minio` / `test:conformance` / `test:export-smoke` / `test:adapter-node` / `test:adapters` |
-| `pnpm test:manual-e2e` | runs `manual-e2e/cloudflare/e2e.test.ts` + `manual-e2e/node/e2e.test.ts` against deployed URLs (HTTP conformance cascade + latency probe + long-poll wall-clock + 401 sniff) | minutes per run | requires `CF_DEPLOY_URL` + `NODE_DEPLOY_URL` + `SHARED_SECRET` (+ `CF_R2_*` / `AWS_*` for the conformance cascade); manual deploy lifecycle in `manual-e2e/README.md` |
-| `pnpm bench:r2` | one-shot R2-contention bench (S1 / S2-idle / S3-toxic); validates the idle-reader bound on the wire — exit 0 when bound holds, 1 when violated | ~1–5 min per scenario | requires `pnpm dev:storage`; see `bench/README.md` |
-| `pnpm bench:load` | one-shot load harness on memory backend (no infra); writes one JSON per run to `bench/results/load/` | ~seconds per preset | ✅ on `main` — no infra required; see `bench/README.md` |
-| `pnpm bench:load:minio` | same as `bench:load` but with `--variant=node-minio` against local Minio | ~30s–2 min per preset | requires `MINIO=1` + `pnpm dev:storage` |
-| `pnpm bench:load:matrix` | sequential sweep over presets × variants × cache modes; writes one timestamped subdirectory under `bench/results/load/` | minutes–tens of minutes | partial: `memory` + `local-fs` rows always; `node-minio` rows require `MINIO=1` + `pnpm dev:storage` |
-| `pnpm bench:lsn-reverse-walk` | quantifies bytes-listed reduction of descending base-32 LSN encoding vs. ascending forward-list + in-memory reverse (patent C3 evidence). Populates 100k synthetic LSN-shaped keys into two `MemoryStorage` buckets (DESC + ASC arms), measures sum-of-key-lengths yielded by `Storage.list` for K∈{10,100,1000,10000}, writes JSON to `bench/results/lsn-reverse-walk/`. Baseline checked in at `docs/spec/attachments/lsn-reverse-walk-baseline.json` | ~seconds | ✅ no infra |
-| `pnpm build && pnpm baerly deploy` | runs `baerly deploy` for a scaffolded app; dispatches on `baerly.config.ts:target`. Deploys to Cloudflare via `wrangler deploy --x-provision --x-auto-create` with a `wrangler r2 bucket create` fallback. The `node` target self-deploys via your PaaS, VM, or container build (`docker build` with `--with=docker`), so it is not accepted here | seconds to minutes | requires `wrangler login` |
-| `baerly doctor --target=cloudflare` | walks the deploy invariants and reports findings: wrangler.jsonc, R2 bindings, required secrets, CF Access audience tag, cron triggers, domain/routes coherence | seconds | requires `wrangler login`; `--fix` auto-creates missing R2 buckets |
-| `pnpm build && pnpm baerly export --target=sqlite ...` | snapshot dump one collection to SQL | seconds | ✅ no infra |
-| `pnpm build && pnpm baerly {init,inspect,admin dump,admin restore} ...` | operator surface: `init` drops `baerly.config.ts` into an existing repo; `inspect` prints a read-only summary of one collection's snapshot / log / index state; `admin dump` emits canonical NDJSON of the materialised view; `admin restore` re-imports that NDJSON into a fresh bucket | seconds | ✅ no infra |
-| `pnpm build && pnpm baerly admin fsck ...` | maintenance surface: `admin fsck` walks `current.json` → snapshot hash → log range → index prefixes read-only and exits 4 on any finding | seconds | ✅ no infra |
-| `pnpm dlx:bust-cache` | wipes `~/.cache/pnpm/dlx` + `~/Library/Caches/pnpm/dlx` + `localhost+4873` registry metadata. Use after `pnpm verdaccio:publish` when iterating `pnpm create @gusto/baerly-storage@latest` against Verdaccio — dlx caches by `pkg@version` so re-publishing the same version is invisible without this step. `pnpm config get cache-dir` prints the literal string `"undefined"` — don't probe it manually | ~ms | ✅ |
-| `cat node_modules/@gusto/baerly-storage/dist/API.md` | ~12k-token (~1030-line) public-API reference (soft budget ~12k tokens — now at the ceiling; net-new prose should land in a sibling RECIPES.md rather than grow this file). Read this BEFORE walking the hash-suffixed `dist/*.d.ts` chain. Named `API.md` (not `AGENTS.md`) so it never collides with a scaffolded app's project-root `AGENTS.md`. Source lives at `packages/server/API.md`; the rolldown `closeBundle` step copies it to `dist/API.md` on every build | n/a | ✅ |
-| `cat node_modules/@gusto/baerly-storage/dist/CHANGELOG.md` | migration-shaped record of what changed across versions; read it when a remembered API no longer type-checks. Maintained by Changesets at the repo root; the rolldown `closeBundle` step copies it to `dist/CHANGELOG.md` on every build | n/a | ✅ |
+| Command                                                                 | What it catches                                                                                                                                                                                                                                                                                                                                                                                                                                                        | Runtime                              | Clean on `main`?                                                                                                                                                      |
+| ----------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm verify`                                                           | typecheck (`tsgo --noEmit`) + `verify:examples` + lint (`oxlint`) + `format:check` (`oxfmt --check`) + `verify:docs` (markdown frontmatter audit)                                                                                                                                                                                                                                                                                                                      | ~seconds                             | ✅ — non-zero exit _is_ your regression                                                                                                                               |
+| `pnpm verify:agent`                                                     | same gate as `pnpm verify`, with `tsgo --pretty false` + `oxlint --format=unix --quiet` for one-line-per-finding output (warnings hidden — `pnpm verify` still surfaces them)                                                                                                                                                                                                                                                                                          | ~seconds                             | ✅ — same gate as `verify`, just quieter                                                                                                                              |
+| `node scripts/lint-package-layers.mjs`                                  | enforces the package import allow list from ADR-006. Runs as part of `pnpm verify`.                                                                                                                                                                                                                                                                                                                                                                                    | ~ms                                  | ✅                                                                                                                                                                    |
+| `pnpm verify:docs`                                                      | `verify-docs.mjs` (frontmatter `related:` cross-link resolver + `audience:` field audit + 180-day `last-reviewed:` staleness check) **+ `remark-validate-links`** (inline Markdown link + heading-anchor validation across all of `docs/`, runnable standalone as `verify:doc-links`). Runs as part of `pnpm verify`.                                                                                                                                                  | ~seconds                             | ✅                                                                                                                                                                    |
+| `pnpm verify:examples`                                                  | runs each scaffoldable example's `tsc -b --noEmit` (`minimal-cloudflare`, `minimal-node`, `react-cloudflare`, `react-node`) so SPA + Worker bugs in the templates fail fast                                                                                                                                                                                                                                                                                            | ~seconds                             | ✅                                                                                                                                                                    |
+| `pnpm test`                                                             | vitest unit + integration (zero infra) — includes the `memory` + `local-fs` variants of `randomized.test.ts`                                                                                                                                                                                                                                                                                                                                                           | ~3s                                  | ✅ — Minio + credentials tests are gated, see below                                                                                                                   |
+| `pnpm test:agent`                                                       | same gate as `pnpm test`, with `--reporter=minimal --silent=passed-only` baked in (failures still full-detail). Works regardless of `CLAUDECODE`                                                                                                                                                                                                                                                                                                                       | ~3s                                  | ✅ — same gate as `test`, just quieter                                                                                                                                |
+| `pnpm test:minio`                                                       | adds the Minio-gated suites: the `clock behavior` block of `time.test.ts`, the `node-minio` variant of `randomized.test.ts`, and `adapter-node` Minio conformance                                                                                                                                                                                                                                                                                                      | ~10s                                 | ✅ when `pnpm dev:storage` is up                                                                                                                                      |
+| `pnpm test:conformance`                                                 | adds `conformance.test.ts` (needs Minio + credentials files)                                                                                                                                                                                                                                                                                                                                                                                                           | ~30s                                 | requires credentials in `credentials/{aws,gcs,cloudflare}.json`                                                                                                       |
+| `pnpm test:export-smoke`                                                | adds `export-smoke.test.ts` (`LogEntry` round-trip into Postgres; needs local Postgres on `:5433`)                                                                                                                                                                                                                                                                                                                                                                     | ~5s                                  | ✅ when `pnpm dev:storage` is up                                                                                                                                      |
+| `pnpm test:export-round-trip`                                           | full export → SQLite → restore → byte-equal dump                                                                                                                                                                                                                                                                                                                                                                                                                       | ~5–10s                               | ✅ when `sqlite3` is on PATH (auto-skips otherwise)                                                                                                                   |
+| `pnpm test:adapter-cloudflare`                                          | runs `r2BindingStorage` conformance, the `cloudflare-r2` variant of `randomized.test.ts`, the `cloudflare-r2` variant of `collection-api.test.ts`, **and** the `cloudflare-r2` variant of `http-conformance.test.ts` under miniflare (`@cloudflare/vitest-pool-workers`, project `cloudflare-pool`)                                                                                                                                                                    | ~3s                                  | ✅ — first run downloads the `workerd` binary                                                                                                                         |
+| `pnpm test:http-conformance`                                            | runs the HTTP cascade on `memory` + `local-fs` (default project)                                                                                                                                                                                                                                                                                                                                                                                                       | ~3s                                  | ✅                                                                                                                                                                    |
+| `pnpm test:adapter-node`                                                | runs `s3HttpStorage` conformance against local Minio                                                                                                                                                                                                                                                                                                                                                                                                                   | ~10s                                 | ✅ when `pnpm dev:storage` is up                                                                                                                                      |
+| `pnpm test:adapters`                                                    | sequential wrapper: `test:adapter-cloudflare` then `test:adapter-node`                                                                                                                                                                                                                                                                                                                                                                                                 | ~10s                                 | ✅ when `pnpm dev:storage` is up                                                                                                                                      |
+| `pnpm format:check`                                                     | oxfmt formatting. Now part of `pnpm verify` and auto-fixed (incl. `.md`) by the lefthook pre-commit `format` hook                                                                                                                                                                                                                                                                                                                                                      | ~seconds                             | ✅                                                                                                                                                                    |
+| `pnpm build`                                                            | rolldown bundle to `dist/`                                                                                                                                                                                                                                                                                                                                                                                                                                             | ~seconds                             | ✅                                                                                                                                                                    |
+| `pnpm test:randomize`                                                   | property-based fuzzer (cranks `FC_NUM_RUNS` for fast-check arbitraries). The randomized cascade itself is fault-injection-driven so `FC_NUM_RUNS` is a no-op for `randomized.test.ts` — all four variants (`memory` / `local-fs` / `cloudflare-r2` / `node-minio`) still run, but only the property tests in the rest of the suite scale up                                                                                                                            | run for minutes                      | use when changing protocol code                                                                                                                                       |
+| `pnpm test:fuzz-phase5`                                                 | crash-injection fuzzer for the maintenance loop (`phase5-crash-fuzz.test.ts`) — aborts the K-th storage op inside `Writer` / `compact()` / `runGc()` and asserts the reader still sees a consistent row set                                                                                                                                                                                                                                                            | minutes-hours at `FC_NUM_RUNS=10000` | use after touching `compactor.ts` / `gc.ts` / `writer.ts`                                                                                                             |
+| `pnpm test:mutate`                                                      | StrykerJS mutation testing scoped to `packages/protocol/src/**` (pure kernel) — measures test quality, surfaces uncovered behavior as surviving mutants. **Manual only**: not in `pnpm verify` / `pnpm test` / CI, exits 0 regardless of score. See [docs/contributing/mutation-testing.md](docs/contributing/mutation-testing.md)                                                                                                                                     | minutes                              | ✅ — report-only, never gates                                                                                                                                         |
+| `pnpm worktree:bootstrap`                                               | `pnpm install --frozen-lockfile` + `pnpm run build`. Run this once after `git worktree add` to prime `dist/` so `baerly`, `pnpm bundle-sizes`, and any dist-consuming test work. `verify:agent` itself doesn't need it; everything else does                                                                                                                                                                                                                           | ~10-30s                              | n/a                                                                                                                                                                   |
+| `pnpm dev:storage`                                                      | brings up Minio `:9102` + Toxiproxy `:9104` + Postgres `:5433`                                                                                                                                                                                                                                                                                                                                                                                                         | n/a                                  | required for `test:minio` / `test:conformance` / `test:export-smoke` / `test:adapter-node` / `test:adapters`                                                          |
+| `pnpm test:manual-e2e`                                                  | runs `manual-e2e/cloudflare/e2e.test.ts` + `manual-e2e/node/e2e.test.ts` against deployed URLs (HTTP conformance cascade + latency probe + long-poll wall-clock + 401 sniff)                                                                                                                                                                                                                                                                                           | minutes per run                      | requires `CF_DEPLOY_URL` + `NODE_DEPLOY_URL` + `SHARED_SECRET` (+ `CF_R2_*` / `AWS_*` for the conformance cascade); manual deploy lifecycle in `manual-e2e/README.md` |
+| `pnpm bench:r2`                                                         | one-shot R2-contention bench (S1 / S2-idle / S3-toxic); validates the idle-reader bound on the wire — exit 0 when bound holds, 1 when violated                                                                                                                                                                                                                                                                                                                         | ~1–5 min per scenario                | requires `pnpm dev:storage`; see `bench/README.md`                                                                                                                    |
+| `pnpm bench:load`                                                       | one-shot load harness on memory backend (no infra); writes one JSON per run to `bench/results/load/`                                                                                                                                                                                                                                                                                                                                                                   | ~seconds per preset                  | ✅ on `main` — no infra required; see `bench/README.md`                                                                                                               |
+| `pnpm bench:load:minio`                                                 | same as `bench:load` but with `--variant=node-minio` against local Minio                                                                                                                                                                                                                                                                                                                                                                                               | ~30s–2 min per preset                | requires `MINIO=1` + `pnpm dev:storage`                                                                                                                               |
+| `pnpm bench:load:matrix`                                                | sequential sweep over presets × variants × cache modes; writes one timestamped subdirectory under `bench/results/load/`                                                                                                                                                                                                                                                                                                                                                | minutes–tens of minutes              | partial: `memory` + `local-fs` rows always; `node-minio` rows require `MINIO=1` + `pnpm dev:storage`                                                                  |
+| `pnpm bench:lsn-reverse-walk`                                           | quantifies bytes-listed reduction of descending base-32 LSN encoding vs. ascending forward-list + in-memory reverse (patent C3 evidence). Populates 100k synthetic LSN-shaped keys into two `MemoryStorage` buckets (DESC + ASC arms), measures sum-of-key-lengths yielded by `Storage.list` for K∈{10,100,1000,10000}, writes JSON to `bench/results/lsn-reverse-walk/`. Baseline checked in at `docs/spec/attachments/lsn-reverse-walk-baseline.json`                | ~seconds                             | ✅ no infra                                                                                                                                                           |
+| `pnpm build && pnpm baerly deploy`                                      | runs `baerly deploy` for a scaffolded app; dispatches on `baerly.config.ts:target`. Deploys to Cloudflare via `wrangler deploy --x-provision --x-auto-create` with a `wrangler r2 bucket create` fallback. The `node` target self-deploys via your PaaS, VM, or container build (`docker build` with `--with=docker`), so it is not accepted here                                                                                                                      | seconds to minutes                   | requires `wrangler login`                                                                                                                                             |
+| `baerly doctor --target=cloudflare`                                     | walks the deploy invariants and reports findings: wrangler.jsonc, R2 bindings, required secrets, CF Access audience tag, cron triggers, domain/routes coherence                                                                                                                                                                                                                                                                                                        | seconds                              | requires `wrangler login`; `--fix` auto-creates missing R2 buckets                                                                                                    |
+| `pnpm build && pnpm baerly export --target=sqlite ...`                  | snapshot dump one collection to SQL                                                                                                                                                                                                                                                                                                                                                                                                                                    | seconds                              | ✅ no infra                                                                                                                                                           |
+| `pnpm build && pnpm baerly {init,inspect,admin dump,admin restore} ...` | operator surface: `init` drops `baerly.config.ts` into an existing repo; `inspect` prints a read-only summary of one collection's snapshot / log / index state; `admin dump` emits canonical NDJSON of the materialised view; `admin restore` re-imports that NDJSON into a fresh bucket                                                                                                                                                                               | seconds                              | ✅ no infra                                                                                                                                                           |
+| `pnpm build && pnpm baerly admin fsck ...`                              | maintenance surface: `admin fsck` walks `current.json` → snapshot hash → log range → index prefixes read-only and exits 4 on any finding                                                                                                                                                                                                                                                                                                                               | seconds                              | ✅ no infra                                                                                                                                                           |
+| `pnpm dlx:bust-cache`                                                   | wipes `~/.cache/pnpm/dlx` + `~/Library/Caches/pnpm/dlx` + `localhost+4873` registry metadata. Use after `pnpm verdaccio:publish` when iterating `pnpm create @gusto/baerly-storage@latest` against Verdaccio — dlx caches by `pkg@version` so re-publishing the same version is invisible without this step. `pnpm config get cache-dir` prints the literal string `"undefined"` — don't probe it manually                                                             | ~ms                                  | ✅                                                                                                                                                                    |
+| `cat node_modules/@gusto/baerly-storage/dist/API.md`                    | ~12k-token (~1030-line) public-API reference (soft budget ~12k tokens — now at the ceiling; net-new prose should land in a sibling RECIPES.md rather than grow this file). Read this BEFORE walking the hash-suffixed `dist/*.d.ts` chain. Named `API.md` (not `AGENTS.md`) so it never collides with a scaffolded app's project-root `AGENTS.md`. Source lives at `packages/server/API.md`; the rolldown `closeBundle` step copies it to `dist/API.md` on every build | n/a                                  | ✅                                                                                                                                                                    |
+| `cat node_modules/@gusto/baerly-storage/dist/CHANGELOG.md`              | migration-shaped record of what changed across versions; read it when a remembered API no longer type-checks. Maintained by Changesets at the repo root; the rolldown `closeBundle` step copies it to `dist/CHANGELOG.md` on every build                                                                                                                                                                                                                               | n/a                                  | ✅                                                                                                                                                                    |
 
 `pnpm verify` is also enforced as a [lefthook](https://lefthook.dev/)
 pre-commit hook (`lefthook.yml`); `pnpm install` wires it up via the
@@ -159,19 +159,19 @@ deps. Tests requiring Minio or credentials are gated by env:
 consistency cascade through `Db` + `Writer` (from
 `@baerly/server`) over four storage adapters:
 
-  - `memory` — `MemoryStorage`, shared per-bucket via
-    `getOrCreateMemoryStorageForBucket`. Default project, no infra,
-    runs in <1s on every PR.
-  - `local-fs` — `LocalFsStorage` over a fresh `mkdtemp` root.
-    Default project, no infra, runs in ~1s on every PR.
-  - `cloudflare-r2` — `r2BindingStorage` over the miniflare R2 binding
-    wired by `tests/setup/r2-binding.ts`. Lives at
-    `packages/adapter-cloudflare/src/randomized.test.ts` and runs
-    under the `cloudflare-pool` vitest project (Workerd). Excluded
-    from the default glob; run with `pnpm test:adapter-cloudflare`.
-  - `node-minio` — `S3HttpStorage` against Toxiproxy → Minio with a
-    fault-injection twiddler flipping the proxy every 100 ms. Default
-    project, gated on `MINIO=1`; run with `pnpm test:minio`.
+- `memory` — `MemoryStorage`, shared per-bucket via
+  `getOrCreateMemoryStorageForBucket`. Default project, no infra,
+  runs in <1s on every PR.
+- `local-fs` — `LocalFsStorage` over a fresh `mkdtemp` root.
+  Default project, no infra, runs in ~1s on every PR.
+- `cloudflare-r2` — `r2BindingStorage` over the miniflare R2 binding
+  wired by `tests/setup/r2-binding.ts`. Lives at
+  `packages/adapter-cloudflare/src/randomized.test.ts` and runs
+  under the `cloudflare-pool` vitest project (Workerd). Excluded
+  from the default glob; run with `pnpm test:adapter-cloudflare`.
+- `node-minio` — `S3HttpStorage` against Toxiproxy → Minio with a
+  fault-injection twiddler flipping the proxy every 100 ms. Default
+  project, gated on `MINIO=1`; run with `pnpm test:minio`.
 
 The cascade body is shared across projects via
 `tests/fixtures/randomized-cascade.ts` (Node-import-free, so it loads
@@ -228,15 +228,17 @@ Read in this order to build a mental model:
 3. `packages/server/src/collection.ts`, `packages/server/src/query.ts` —
    `Collection<T>` / `Query<T>` SQL-shape API + predicate AST.
 4. `packages/server/src/writer.ts` — `Writer` stateless
-   commit path: PUT content → PUT log entry → PUT/DELETE
-   index entries → CAS-advance `current.json`.
+   commit path: PUT content → PUT new index entries → create
+   `log/<seq>` via `If-None-Match: "*"` (that create IS the commit;
+   no `current.json` write on the commit path) → DELETE stale index
+   entries after the commit.
 5. `packages/server/src/indexes.ts` — `IndexDefinition`, key
    encoding (lex-order-preserving base-32), and per-doc projection
    helpers. Consumed by the writer's fence-time emission and by
    `rebuildIndex`.
 6. `packages/server/src/rebuild-index.ts` — `rebuildIndex(storage,
-   currentJsonKey, def)` idempotent reconciliation; what `baerly
-   admin rebuild-index` calls.
+currentJsonKey, def)` idempotent reconciliation; what `baerly
+admin rebuild-index` calls.
 7. `packages/server/src/compactor.ts`,
    `packages/server/src/gc.ts`,
    `packages/server/src/maintenance.ts` — durability sweep loops.
@@ -261,40 +263,40 @@ Read in this order to build a mental model:
    future `baerly dev` and by tests that need cross-`Db`-instance
    visibility without Minio).
 10. **`manual-e2e/`** — manual end-to-end check that drives the
-   HTTP conformance cascade + latency / long-poll / 401 probes
-   against real R2 / real S3. Each subdir now holds only its
-   `e2e.test.ts`; the deploy artifacts are the production scaffolds
-   `examples/minimal-cloudflare` (via `pnpm baerly deploy`) and
-   `examples/minimal-node --with=docker` (via `docker build && docker
-   run`). Manual lifecycle in `manual-e2e/README.md`; driven by
-   `pnpm test:manual-e2e`. Sits at the root alongside `bench/`
-   because it's manual maintainer infrastructure, not part of the
-   automated test suite.
+    HTTP conformance cascade + latency / long-poll / 401 probes
+    against real R2 / real S3. Each subdir now holds only its
+    `e2e.test.ts`; the deploy artifacts are the production scaffolds
+    `examples/minimal-cloudflare` (via `pnpm baerly deploy`) and
+    `examples/minimal-node --with=docker` (via `docker build && docker
+run`). Manual lifecycle in `manual-e2e/README.md`; driven by
+    `pnpm test:manual-e2e`. Sits at the root alongside `bench/`
+    because it's manual maintainer infrastructure, not part of the
+    automated test suite.
 11. **`examples/`** — runnable example apps that double as the CLI
-   template source. `examples/minimal-cloudflare/` (R2 +
-   `cloudflareAccess`→`sharedSecret`), `examples/minimal-node/`
-   (S3 + JWKS→`sharedSecret`, any host that runs `node server.js`),
-   `examples/react-cloudflare/` (full React + Vite SPA over a
-   `NoteSchema` collection; dev uses workerd-in-Vite via
-   `@cloudflare/vite-plugin` + `baerlyDevAuth` from
-   `@gusto/baerly-storage/dev/vite`), and `examples/react-node/` (same SPA +
-   `NoteSchema`; dev uses `baerlyDev()` from `@gusto/baerly-storage/dev/vite`
-   over `LocalFsStorage` as a single-Vite-process middleware) are the
-   production-shaped scaffolds. Each scaffoldable example carries
-   a `.baerly/scaffold.json` manifest declaring rename sentinels,
-   copy exclusions, and devDep drops. The CLI consumes them at
-   scaffold time via `STARTER_TO_EXAMPLE` in
-   `packages/create-baerly-storage/src/scaffold.ts`; the rolldown build
-   copies them into `dist/templates/<name>/` so the published
-   `@gusto/create-baerly-storage` binary is self-contained.
-   Opt-in add-ons live alongside the examples at
-   `packages/create-baerly-storage/templates/addons/<name>/` (today: just
-   `docker/` — Dockerfile + healthcheck.js + .dockerignore). The
-   scaffolder layers an add-on on top of the base template when
-   `--with=<name>` is passed (Docker requires `--target=node`).
-   `rolldown.config.ts` mirrors `templates/addons/` into
-   `dist/templates/addons/` so the published binary ships them too.
-   Catalog index in `examples/README.md`. See `packages/create-baerly-storage/AGENTS.md` for the full scaffold pipeline (examples → dist/templates → tgz → user dir).
+    template source. `examples/minimal-cloudflare/` (R2 +
+    `cloudflareAccess`→`sharedSecret`), `examples/minimal-node/`
+    (S3 + JWKS→`sharedSecret`, any host that runs `node server.js`),
+    `examples/react-cloudflare/` (full React + Vite SPA over a
+    `NoteSchema` collection; dev uses workerd-in-Vite via
+    `@cloudflare/vite-plugin` + `baerlyDevAuth` from
+    `@gusto/baerly-storage/dev/vite`), and `examples/react-node/` (same SPA +
+    `NoteSchema`; dev uses `baerlyDev()` from `@gusto/baerly-storage/dev/vite`
+    over `LocalFsStorage` as a single-Vite-process middleware) are the
+    production-shaped scaffolds. Each scaffoldable example carries
+    a `.baerly/scaffold.json` manifest declaring rename sentinels,
+    copy exclusions, and devDep drops. The CLI consumes them at
+    scaffold time via `STARTER_TO_EXAMPLE` in
+    `packages/create-baerly-storage/src/scaffold.ts`; the rolldown build
+    copies them into `dist/templates/<name>/` so the published
+    `@gusto/create-baerly-storage` binary is self-contained.
+    Opt-in add-ons live alongside the examples at
+    `packages/create-baerly-storage/templates/addons/<name>/` (today: just
+    `docker/` — Dockerfile + healthcheck.js + .dockerignore). The
+    scaffolder layers an add-on on top of the base template when
+    `--with=<name>` is passed (Docker requires `--target=node`).
+    `rolldown.config.ts` mirrors `templates/addons/` into
+    `dist/templates/addons/` so the published binary ships them too.
+    Catalog index in `examples/README.md`. See `packages/create-baerly-storage/AGENTS.md` for the full scaffold pipeline (examples → dist/templates → tgz → user dir).
 
 The full lifecycle of `db.collection().insert()` is in
 [docs/contributing/architecture.md](docs/contributing/architecture.md) — read it before
@@ -306,16 +308,16 @@ graph if you need finer-grained roles than the groups above.
 
 Path-scoped conventions. **Read the matching file before editing.**
 
-| When you're editing… | Read first |
-|---|---|
-| `tests/**` | [docs/contributing/conventions/tests.md](docs/contributing/conventions/tests.md) |
-| `docs/**` | [docs/contributing/conventions/docs.md](docs/contributing/conventions/docs.md) |
-| `packages/server/src/writer.ts` | [docs/spec/sync-protocol.md](docs/spec/sync-protocol.md) + [docs/spec/causal-consistency-checking.md](docs/spec/causal-consistency-checking.md) |
-| `packages/protocol/src/json.ts` | [docs/spec/json-merge-patch.md](docs/spec/json-merge-patch.md) |
-| `packages/protocol/src/log.ts`, the log-emit path in `writer.ts` | [docs/spec/log-entry-shape.md](docs/spec/log-entry-shape.md) |
-| `packages/server/src/observability/**` | [docs/contributing/conventions/observability.md](docs/contributing/conventions/observability.md) |
-| Public API on `Db` / `Collection` | [docs/contributing/extending.md](docs/contributing/extending.md) |
-| `packages/server/src/schema.ts` or `CollectionDefinition.schema` | [docs/contributing/extending.md](docs/contributing/extending.md) §"Declare a schema for a collection" |
+| When you're editing…                                             | Read first                                                                                                                                      |
+| ---------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `tests/**`                                                       | [docs/contributing/conventions/tests.md](docs/contributing/conventions/tests.md)                                                                |
+| `docs/**`                                                        | [docs/contributing/conventions/docs.md](docs/contributing/conventions/docs.md)                                                                  |
+| `packages/server/src/writer.ts`                                  | [docs/spec/sync-protocol.md](docs/spec/sync-protocol.md) + [docs/spec/causal-consistency-checking.md](docs/spec/causal-consistency-checking.md) |
+| `packages/protocol/src/json.ts`                                  | [docs/spec/json-merge-patch.md](docs/spec/json-merge-patch.md)                                                                                  |
+| `packages/protocol/src/log.ts`, the log-emit path in `writer.ts` | [docs/spec/log-entry-shape.md](docs/spec/log-entry-shape.md)                                                                                    |
+| `packages/server/src/observability/**`                           | [docs/contributing/conventions/observability.md](docs/contributing/conventions/observability.md)                                                |
+| Public API on `Db` / `Collection`                                | [docs/contributing/extending.md](docs/contributing/extending.md)                                                                                |
+| `packages/server/src/schema.ts` or `CollectionDefinition.schema` | [docs/contributing/extending.md](docs/contributing/extending.md) §"Declare a schema for a collection"                                           |
 
 Claude users: `.claude/rules/{tests,docs,change-discipline}.md`
 auto-load on matching edits and point at the same files.
@@ -350,8 +352,8 @@ auto-load on matching edits and point at the same files.
 - **Public API docs live as JSDoc on `packages/server/src/db.ts` and
   `packages/server/src/table.ts`.** IDE hover and tsgo consume them
   directly — no rendered markdown ref to maintain.
-- **Per-collection linearizability is a hard invariant.** A single
-  CAS-advanced `current.json` HEAD linearizes each collection;
+- **Per-collection linearizability is a hard invariant.** The
+  `log/<seq>` `If-None-Match: "*"` create linearizes each collection;
   cross-collection writes are unordered and non-atomic.
   [docs/spec/sync-protocol.md](docs/spec/sync-protocol.md)
   and [docs/spec/causal-consistency-checking.md](docs/spec/causal-consistency-checking.md)
@@ -399,11 +401,11 @@ auto-load on matching edits and point at the same files.
   (Linux/XDG) or `~/Library/Caches/pnpm/dlx` (macOS) — both can
   exist. Use `pnpm dlx:bust-cache` instead.
 - ❌ Proposing maintenance/cleanup/coordination mechanisms that require
-  *operator-installed* scheduling (`wrangler.jsonc` `triggers.crons`,
+  _operator-installed_ scheduling (`wrangler.jsonc` `triggers.crons`,
   `node-cron`, k8s `CronJob`, systemd timer, DO Alarms). The kernel must
   work on a bare bucket with zero operator infrastructure — the pitch is
   "Just a Bucket" (thesis criterion #6, [thesis.md](docs/about/thesis.md#what-prototype-tier-storage-needs)).
-  Scheduled cron is a *user-opt-in* acceleration via the exported
+  Scheduled cron is a _user-opt-in_ acceleration via the exported
   `runScheduledMaintenance` SDK, never a default and never a requirement.
   **In-band write-tick maintenance is the sanctioned default and it
   SATISFIES this doctrine** (zero operator infrastructure): writes
@@ -418,7 +420,7 @@ auto-load on matching edits and point at the same files.
   (`packages/server/src/maintenance.ts`) is the runner; the in-band tick
   and the opt-in `runScheduledMaintenance` are the two maintenance
   triggers that exist. The anti-pattern below still stands — don't
-  require *operator-installed* scheduling; in-band is the sanctioned
+  require _operator-installed_ scheduling; in-band is the sanctioned
   shape that needs none. Anti-precedent:
   Cassandra's `read_repair_chance` (removed in 4.0,
   [CASSANDRA-13910](https://issues.apache.org/jira/browse/CASSANDRA-13910)) —

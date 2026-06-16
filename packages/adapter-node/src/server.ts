@@ -65,7 +65,7 @@ export interface CreateFetchHandlerOptions {
  * Assemble the per-request {@link MaintenanceDispatch} for a Node host.
  *
  * baerly maintains IN-BAND: the writer reads
- * `getCurrentContext()?.maintenance` at its post-CAS dispatch point and
+ * `getCurrentContext()?.maintenance` at its post-commit dispatch point and
  * runs one bounded compact + GC slice on the (rare) write that crosses a
  * maintenance trigger. Reads stay pure — they never tick. There is no
  * `setInterval`, no cron, no operator-installed scheduler: the kernel
@@ -161,7 +161,7 @@ export function createFetchHandler(
 
     const requestId = request.headers.get("x-request-id") ?? crypto.randomUUID();
     // In-band maintenance: the writer reads `getCurrentContext()?.maintenance`
-    // at its post-CAS dispatch point. Read per request so the ops-plane env
+    // at its post-commit dispatch point. Read per request so the ops-plane env
     // vars (and any `vi.stubEnv` in tests) are observed at call time.
     const obsCtx = createObservabilityContext({
       request_id: requestId,

@@ -10,7 +10,7 @@ related: [architecture.md, "../spec/README.md", "../adr/README.md"]
 # Features → code map
 
 A feature-oriented index for agents and humans landing in the repo who
-know *what* they want to change but not *where* it lives. Each row is a
+know _what_ they want to change but not _where_ it lives. Each row is a
 user-facing capability and the source files, tests, and docs that
 implement or describe it.
 
@@ -131,9 +131,11 @@ export default defineConfig({
       indexes: [
         { name: "by_status", on: "status" },
         { name: "by_status_priority", on: ["status", "priority"] },
-        { name: "by_open_assignee",
+        {
+          name: "by_open_assignee",
           on: "assignee",
-          predicate: { clauses: [{ op: "eq", field: "status", value: "open" }] } },
+          predicate: { clauses: [{ op: "eq", field: "status", value: "open" }] },
+        },
       ],
     },
   },
@@ -157,7 +159,7 @@ as `IndexDefinition`.
 - When multiple indexes match, the planner prefers (in order):
   filtered indexes whose `def.predicate` (a `PredicateWire`) is
   implied by the query wire; longest equality prefix; definition
-  order. A filtered index whose predicate is *not* implied is ranked
+  order. A filtered index whose predicate is _not_ implied is ranked
   last and used only as a last resort when it is the only candidate —
   see the soundness caveat below.
 - Otherwise `planQuery` emits `FullScanPlan` and the read walks the
@@ -173,7 +175,7 @@ rows from an index-routed query. After adding an index to an existing
 collection, run `rebuildIndex` / `baerly admin rebuild-index` before
 treating the index as authoritative.
 
-Marker completeness is necessary but not sufficient for a *filtered*
+Marker completeness is necessary but not sufficient for a _filtered_
 (partial) index. The route is sound only when the index's filter
 predicate is implied by the query predicate; otherwise the LIST never
 yields rows that fall outside the filter, and the post-fetch
@@ -309,7 +311,7 @@ zero overhead.
 ## Operator CLI — `baerly inspect`
 
 Reads `current.json` + snapshot + live log tail and prints a
-read-only summary of one collection (next_seq, log_seq_start,
+read-only summary of one collection (tail_hint, log_seq_start,
 writer_fence, materialised row count, per-index key counts).
 
 Bolt-on (adding baerly to an existing Cloudflare Worker project) lives
@@ -344,8 +346,8 @@ unless `--force` truncates first.
 
 Read-only consistency walk for one collection. Verifies
 `current.json` parses, the snapshot body's content hash matches
-its filename hash, the log range `[log_seq_start, next_seq)` has
-no holes, and (with `--rebuild-indexes` + `--config=`) reports
+its filename hash, the trusted log range `[log_seq_start, tail_hint)`
+has no holes, and (with `--rebuild-indexes` + `--config=`) reports
 orphan index keys without rebuilding. Exit 4 on any finding —
 distinguished from exit 2 ("command itself failed") so CI can
 wire `fsck` as a regression gate.

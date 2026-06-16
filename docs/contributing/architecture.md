@@ -14,13 +14,17 @@ A top-down map of Baerly for someone who has never opened the codebase.
 ## One-paragraph summary
 
 A client writes by uploading content and index artifacts to
-S3-compatible storage, then PUTing one per-doc `LogEntry` at
-`log/<seq>.json`. The write completes with a CAS-advance of
-`current.json`, which records the high-water `next_seq` and the
-`log_seq_start` invariant used by readers. Reads explicitly fetch
-`current.json`, load the snapshot it names, walk
-`[log_seq_start, next_seq)`, fold `LogEntry` rows into a live row set,
-and evaluate the query predicate. Change notifications are delivered
+S3-compatible storage, then creating one per-doc `LogEntry` at
+`log/<seq>.json` with `If-None-Match: "*"`. The write completes when
+that numbered `log/<seq>` create wins — that create **is** the commit.
+There is no `current.json` write on the commit path. `current.json` is
+compactor-owned compaction state: it names the snapshot, carries the
+`log_seq_start` invariant, and carries a non-authoritative `tail_hint`
+(a monotone lower bound for the live tail). Reads explicitly fetch
+`current.json`, load the snapshot it names, fold the trusted range
+`[log_seq_start, tail_hint)`, then forward-probe the log to the first
+404 to discover the true tail, folding `LogEntry` rows into a live row
+set, and evaluate the query predicate. Change notifications are delivered
 out-of-band by the HTTP
 `/v1/since?collection=<name>&cursor=<opaque>` long-poll route. The
 protocol is specified in
@@ -53,8 +57,8 @@ Worker/Node handler; the handler constructs a
 `Db` via `Db.create({ storage, config })`; the `Db` reads a fresh
 `current.json` from the bucket (no warm-cache shortcut for
 correctness — `consistency: "strong"` does this explicitly); it
-does the work — query evaluation, conflict resolution, CAS-advance
-of `current.json` — and exits. No background thread runs between
+does the work — query evaluation, conflict resolution, the
+committing `log/<seq>` create — and exits. No background thread runs between
 requests, and no in-memory state from one request is load-bearing
 for the next: the next request re-reads `current.json` from the
 bucket.
@@ -140,26 +144,31 @@ own package. See `packages/cli/AGENTS.md` and
 
 2. **`Writer.commit(req)`**
    (`packages/server/src/writer.ts`): reads `current.json`
-   for the current `next_seq` and the `writer_fence.epoch` it
-   operates under, mints a `LogEntry` at `next_seq`, PUTs the
-   content body under
+   fresh for its snapshot pointer and `tail_hint`, forward-probes
+   from `tail_hint` to find the first empty log slot and mint
+   `seq`, PUTs the content body under
    `app/<app>/tenant/<tenant>/manifests/<collection>/content/<sha>.json`,
-   PUTs or deletes index artifacts under
-   `app/<app>/tenant/<tenant>/manifests/<collection>/index/...`,
-   PUTs the log entry under
+   PUTs additive (new) index artifacts under
+   `app/<app>/tenant/<tenant>/manifests/<collection>/index/...`
+   **before** the commit, then creates the log entry under
    `app/<app>/tenant/<tenant>/manifests/<collection>/log/<seq>.json`
-   with `If-None-Match: "*"`, and CAS-advances `current.json` to the
-   new `next_seq` (preserving the `log_seq_start` invariant and
-   updating `tail_bytes`). Retries up to `S3_REQUEST_MAX_RETRIES`
-   (default 8) on transient CAS conflict. A `writer_fence.epoch` bump
-   returns `BaerlyError{code:"Conflict"}`; if the bump lands after this
-   writer's CAS, the mutation may already be visible and the conflict is
-   a conservative stale-authority signal rather than a rollback.
+   with `If-None-Match: "*"` — **that create is the commit** (no
+   `current.json` write on the commit path) — and finally DELETEs
+   stale index keys after the commit. A `412` on the log create
+   means the slot is taken: the writer reads the occupant back, and
+   if it is foreign (a peer genuinely won) re-probes the next seq
+   and retries up to `S3_REQUEST_MAX_RETRIES` (default 8); a
+   same-session occupant is its own lost-ack write and is adopted.
+   When the budget is exhausted against a foreign occupant the
+   writer surfaces `BaerlyError{code:"Conflict"}`. There is no
+   post-commit fence verify; `writer_fence` is dormant.
 
 3. **Read path: `Collection.where(p).all()`**
    (`packages/server/src/query.ts`): reads `current.json`, loads the
-   snapshot it names, walks `[log_seq_start, next_seq)` from object
-   storage, folds the `LogEntry` stream into the live row set
+   snapshot it names, folds the trusted range `[log_seq_start,
+tail_hint)` from object storage and then forward-probes
+   `[tail_hint, true tail)` to the first 404, folds the `LogEntry`
+   stream into the live row set
    (`I` / `U` apply the doc body; `D` removes the doc), evaluates the
    predicate AST from `where()` / `order()` / `limit()`, and returns the
    filtered rows.
@@ -194,8 +203,8 @@ The protocol-level theory lives in
 ### After the write — the in-band maintenance tick
 
 Durability + space reclamation happen **in-band on the write
-path**, from a **single trigger site**: the writer's post-CAS
-commit point (`packages/server/src/writer.ts`). After the commit
+path**, from a **single trigger site**: the writer's post-commit
+dispatch point (`packages/server/src/writer.ts`). After the commit
 lands, the writer reads a per-request `MaintenanceDispatch` off
 the observability context (`getCurrentContext()?.maintenance`,
 set by the adapter) and calls `runBoundedMaintenance`
@@ -270,17 +279,18 @@ constraint: anything platform-specific has to live in an adapter.
 
 - **Causal consistency:** `packages/server/src/writer.ts` and
   `packages/server/src/query.ts` — the writer mints `LogEntry.seq`
-  from the current `next_seq` and CAS-advances `current.json`
-  atomically; the reader walks `[log_seq_start, next_seq)` from a
-  single read of `current.json`. A reader's observed sequence is a
-  prefix of the collection log. Proof:
+  as the first empty log slot found by the forward-probe from
+  `tail_hint`, and the winning `log/<seq>` `If-None-Match: "*"`
+  create is the commit; the reader folds `[log_seq_start, tail_hint)`
+  from a single read of `current.json` and forward-probes the tail.
+  A reader's observed sequence is a prefix of the collection log.
+  Proof:
   [spec/causal-consistency-checking.md](../spec/causal-consistency-checking.md).
-- **Split-brain fencing:** `writer_fence.epoch` inside `current.json`.
-  `claimWriter()` (re-exported from `@baerly/protocol`) bumps the
-  epoch; an in-flight commit holding the prior epoch returns
-  `BaerlyError{code:"Conflict"}` on the post-CAS fence check. That
-  check is authority/provenance metadata, not a log eligibility filter:
-  current log entries do not carry a fence epoch.
+- **Split-brain fencing:** `writer_fence.epoch` inside `current.json`
+  is **dormant** under single-write commit — the post-commit fence
+  verify was removed (the winning `log/<seq>` create is itself the
+  proof of commit), and no prod path reads or writes the field. Its
+  drop is deferred (see [ADR-008](../adr/008-single-write-commit.md)).
 - **JSON Merge Patch semantics:** `packages/protocol/src/json.ts` —
   RFC 7386 with the array-replacement convention; see
   [spec/json-merge-patch.md](../spec/json-merge-patch.md).
@@ -322,11 +332,15 @@ constraint: anything platform-specific has to live in an adapter.
 
 For a `Db` constructed with `app="tickets"` and `tenant="acme"`:
 
-- `app/tickets/tenant/acme/manifests/<collection>/current.json` — the CAS
-  cursor. Holds `next_seq`, `log_seq_start`, and `writer_fence.epoch`.
+- `app/tickets/tenant/acme/manifests/<collection>/current.json` —
+  compactor-owned compaction state. Holds the snapshot pointer,
+  `log_seq_start`, the non-authoritative `tail_hint`, and the dormant
+  `writer_fence`. Not the commit-path linearization point.
 - `app/tickets/tenant/acme/manifests/<collection>/log/<seq>.json` — one
-  object per `LogEntry`, keyed by monotonic integer `seq`. Walked by
-  readers in `[log_seq_start, next_seq)`.
+  object per `LogEntry`, keyed by monotonic integer `seq`. The
+  `If-None-Match: "*"` create on this key is the commit. Read by
+  readers across the trusted range `[log_seq_start, tail_hint)` plus a
+  forward-probe to the true tail.
 - `app/tickets/tenant/acme/manifests/<collection>/content/<content-version>.json` —
   content-addressed post-image body for `I` / `U`, keyed by the
   `ContentVersionId` (SHA-256 truncated to 32 hex chars).

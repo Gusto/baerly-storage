@@ -125,8 +125,10 @@ describe("Synthetic 5000-entry end-to-end gate", () => {
           // bucket before the explicit `runScheduledMaintenance` below,
           // confounding the "before vs after" object-count comparison.
           // Disabling the tick keeps the seed inert and O(N) — a fixed
-          // read + 3 PUTs per commit (`verifyLogIntegrityOnCommit` is off
-          // by default, so no per-commit tail walk) — so the topology
+          // read + 2 PUTs per commit (content + the committing `log/<seq>`
+          // create; no `current.json` write on the commit path, and
+          // `verifyLogIntegrityOnCommit` is off by default, so no
+          // per-commit tail walk) — so the topology
           // going into maintenance is exactly N raw commits.
           const N = 5000;
           await runWithContext(

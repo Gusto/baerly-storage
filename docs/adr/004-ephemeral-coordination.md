@@ -4,7 +4,14 @@ audience: adr
 summary: ADR 004 — coordination runs in request-bounded compute, not in a persistent process.
 last-reviewed: 2026-06-13
 tags: [decision, adr, runtime-model]
-related: [README.md, "../about/thesis.md", "../spec/sync-protocol.md", 001-tenant-cas-isolation.md, 002-api-surface-lock.md]
+related:
+  [
+    README.md,
+    "../about/thesis.md",
+    "../spec/sync-protocol.md",
+    001-tenant-cas-isolation.md,
+    002-api-surface-lock.md,
+  ]
 ---
 
 # 004 — Ephemeral coordination
@@ -50,7 +57,7 @@ credential-free against MinIO and Cloudflare R2 — the CAS conformance
 blocks are a hard, no-opt-out prerequisite
 ([`conformance.ts`](../../packages/protocol/src/storage/conformance.ts)) —
 and against AWS S3 on demand (`pnpm test:conformance`). Not every store
-that speaks the S3 wire protocol honours these headers on *writes*: GCS's
+that speaks the S3 wire protocol honours these headers on _writes_: GCS's
 S3-interop endpoint documents `If-Match`/`If-None-Match` as read-only and
 routes conditional writes through its native `x-goog-if-generation-match`,
 so GCS is **not** supported via the S3-compat path until a native
@@ -84,7 +91,7 @@ mechanisms make this sufficient:
    **write path** after a successful commit — never on a
    schedule, never from a long-lived process. The writer reads a
    per-request `MaintenanceDispatch` off the observability
-   context (`getCurrentContext()?.maintenance`) at its post-CAS
+   context (`getCurrentContext()?.maintenance`) at its post-commit
    point and calls `runBoundedMaintenance`
    ([`packages/server/src/maintenance.ts`](../../packages/server/src/maintenance.ts)).
    **Reads are pure** — they never tick. The slice is sized to
@@ -99,7 +106,7 @@ The third mechanism above is the one this revision lands. Its
 shape:
 
 - **Write-path-only, reads pure.** Maintenance dispatches from
-  the writer's post-CAS commit point. A read never triggers
+  the writer's post-commit dispatch point. A read never triggers
   maintenance — the idle-reader cost bound (cost-model.md) holds
   because a read does zero maintenance work.
 - **GC is the existing two-phase `runGc`.** `runGc`
@@ -107,7 +114,7 @@ shape:
   marks orphans into `gc/pending.json`, then sweeps them past a
   grace window — unchanged. It runs on its **own batch-safe
   boundary cadence** (`WRITE_TICK_GC_INTERVAL`,
-  boundary-crossing not modulo, so a `next_seq` advance can't
+  boundary-crossing not modulo, so a `tail_hint` advance can't
   step clean over it), **decoupled from folds**, capped per tier
   (`WRITE_TICK_GC_MAX_MARKS` / `..._SWEEPS`), and it runs on
   **deferring buckets too** (a bucket whose snapshot is over the
@@ -138,7 +145,7 @@ shape:
   full-fence CAS.** This is the Iceberg / Delta Lake
   optimistic-compaction precedent: a compactor writes
   speculatively and the atomic pointer swap arbitrates; a loser
-  discards its work. (Bailis-style OCC is a *supporting* analogy,
+  discards its work. (Bailis-style OCC is a _supporting_ analogy,
   not load-bearing.) A lease was considered and **deferred**;
   duplicate-fold compute under contention is accepted and
   measured by `db.compaction.cas_lost_total`.
@@ -173,9 +180,9 @@ subrequest-bounded CF-free GC walks the entire hash-named
 content past the first window.
 
 **Owning the novelty (honesty, not full precedent).** No
-surveyed system achieves *automatic, bounded* maintenance on
-*untrusted, killable ephemeral compute* with *zero privileged
-scheduler*. Databricks Predictive Optimization hides a
+surveyed system achieves _automatic, bounded_ maintenance on
+_untrusted, killable ephemeral compute_ with _zero privileged
+scheduler_. Databricks Predictive Optimization hides a
 privileged scheduler; PostgreSQL autovacuum and RocksDB
 compaction are long-lived self-metering processes. The
 inline-write-tick-on-a-killable-isolate combination is genuinely
@@ -299,5 +306,5 @@ Features that compose with the property are still admissible:
 platform-provided HTTP cache (CF Cache API), in-isolate caches
 that re-validate against an ETag, and write-tick-paced
 maintenance all preserve the property. The test is whether
-*removing the in-memory state* breaks correctness. If it does,
+_removing the in-memory state_ breaks correctness. If it does,
 the feature violates this ADR.

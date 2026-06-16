@@ -17,8 +17,9 @@
  *
  *   `<logPrefix>/index/<indexName>/<a-b32>/<b-b32>/<docId>.json`
  *
- * @see docs/spec/sync-protocol.md — fence model these PUTs land
- *      inside (between log PUT and `current.json` CAS-advance).
+ * @see docs/spec/sync-protocol.md — index emission is hybrid around
+ *      the commit: additive (new) keys are PUT before the committing
+ *      `log/<seq>` create, and stale-key DELETEs land after it.
  * @see packages/server/src/indexes.ts — `validateIndexDefinition`,
  *      `encodeIndexValue`, `indexKeyFor`, `projectIndexValues`,
  *      `allIndexKeysFor` (all impl).

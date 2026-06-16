@@ -124,7 +124,7 @@ describe("baerlyNode", () => {
     // write through the Hono fetch handler (no `.listen()` → no server,
     // no timer). The adapter threads a Node-tier maintenance dispatch
     // onto that request's observability context; the writer reads it at
-    // its post-CAS point and runs a bounded inline fold. We assert the
+    // its post-commit point and runs a bounded inline fold. We assert the
     // snapshot pointer flips null → non-null on that single write —
     // proving writes tick in-band (reads stay pure; see reads-pure.test).
     const storage = new MemoryStorage();
@@ -189,7 +189,7 @@ describe("baerlyNode", () => {
     );
     expect(res.status).toBe(201);
 
-    // The post-CAS dispatch read `getCurrentContext()?.maintenance`
+    // The post-commit dispatch read `getCurrentContext()?.maintenance`
     // (set by the adapter) and ran a bounded inline fold.
     const cur = await storage.get(key);
     expect(cur).not.toBeNull();
