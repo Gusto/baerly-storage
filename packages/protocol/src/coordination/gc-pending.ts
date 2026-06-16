@@ -19,7 +19,11 @@
  */
 
 import { decodeJsonBytes, encodeJsonBytes } from "../bytes.ts";
-import { GC_PENDING_CONTENT_TYPE, GC_PENDING_SCHEMA_VERSION } from "../constants.ts";
+import {
+  GC_PENDING_CAS_MAX_ATTEMPTS,
+  GC_PENDING_CONTENT_TYPE,
+  GC_PENDING_SCHEMA_VERSION,
+} from "../constants.ts";
 import { BaerlyError } from "../errors.ts";
 import type { Storage, StoragePutOptions, StoragePutResult } from "../storage/types.ts";
 
@@ -145,17 +149,25 @@ export const createGcPending = async (
 };
 
 /**
- * Read-modify-write `gc/pending.json` under CAS. The `mutator`
- * receives a deep clone of the current parsed JSON and returns the
- * new state. The new state is written with `If-Match: <currentEtag>`;
- * on conflict, throws `BaerlyError{code:"Conflict"}`.
+ * Read-modify-write `gc/pending.json` under CAS, with a bounded retry
+ * loop. Each attempt re-reads the latest body, hands the `mutator`
+ * that latest value, and writes the result with
+ * `If-Match: <latest etag>`. On `Conflict` (a concurrent writer landed
+ * between this attempt's read and write) the loop re-reads and
+ * re-applies the mutator, up to {@link GC_PENDING_CAS_MAX_ATTEMPTS}
+ * total attempts, then surfaces `Conflict`.
  *
- * `mutator` MUST be deterministic — it may be called multiple times
- * if the caller wraps this in a retry loop, so it must not have side
- * effects.
+ * `mutator` MUST be a pure, deterministic MERGE of this pass's results
+ * INTO the `latest` value it is handed — it is called once per attempt
+ * (so it must not have side effects), and it MUST read `latest` rather
+ * than ignore it and write a precomputed set. Ignoring `latest` would
+ * silently overwrite a concurrent pass's candidates: the
+ * If-Match succeeds (it used the fresh etag), so no conflict is
+ * raised, and the concurrent marks are lost. See {@link mergeGcPending}.
  *
- * @throws BaerlyError{code:"Conflict"} — another writer landed a write
- *         between this function's read and write.
+ * @throws BaerlyError{code:"Conflict"} — another writer kept landing a
+ *         write between this function's read and write for every
+ *         attempt.
  * @throws BaerlyError{code:"InvalidResponse"} — `key` does not exist
  *         (use {@link createGcPending} instead) or body doesn't
  *         parse / fails the shape guard.
@@ -163,31 +175,125 @@ export const createGcPending = async (
 export const casUpdateGcPending = async (
   storage: Storage,
   key: string,
-  mutator: (current: GcPending) => GcPending,
+  mutator: (latest: GcPending) => GcPending,
   opts?: { signal?: AbortSignal },
 ): Promise<GcPendingRead> => {
-  const existing = await readGcPending(storage, key, opts);
-  if (existing === null) {
-    throw new BaerlyError(
-      "InvalidResponse",
-      `gc/pending.json at ${key} does not exist; use createGcPending first`,
-    );
+  let lastConflict: BaerlyError | undefined;
+  for (let attempt = 0; attempt < GC_PENDING_CAS_MAX_ATTEMPTS; attempt++) {
+    const existing = await readGcPending(storage, key, opts);
+    if (existing === null) {
+      throw new BaerlyError(
+        "InvalidResponse",
+        `gc/pending.json at ${key} does not exist; use createGcPending first`,
+      );
+    }
+    const next = mutator(structuredClone(existing.json));
+    assertGcPending(next, key);
+    const body = encodeJsonBytes(next);
+    const putOpts: StoragePutOptions = {
+      ifMatch: existing.etag,
+      contentType: GC_PENDING_CONTENT_TYPE,
+      ...(opts?.signal !== undefined && { signal: opts.signal }),
+    };
+    try {
+      const result = await storage.put(key, body, putOpts);
+      return { json: next, etag: result.etag };
+    } catch (error) {
+      const translated = translateCasError(error, key);
+      // Only `Conflict` is retryable — re-read latest and re-merge.
+      // Anything else (AccessDenied, InvalidResponse, …) is terminal.
+      if (translated.code !== "Conflict") {
+        throw translated;
+      }
+      lastConflict = translated;
+    }
   }
-  const next = mutator(structuredClone(existing.json));
-  assertGcPending(next, key);
-  const body = encodeJsonBytes(next);
-  const putOpts: StoragePutOptions = {
-    ifMatch: existing.etag,
-    contentType: GC_PENDING_CONTENT_TYPE,
-    ...(opts?.signal !== undefined && { signal: opts.signal }),
+  // Exhausted the retry budget — surface the last conflict.
+  throw lastConflict;
+};
+
+/**
+ * Pure merge of one GC pass's results INTO the `latest`
+ * `gc/pending.json` value, used as the {@link casUpdateGcPending}
+ * mutator. Deterministic, no I/O — the kernel unit + mutation test
+ * surface. Splitting it out is what makes the CAS write correct under
+ * concurrency: each retry re-merges against fresh `latest` rather than
+ * overwriting it with a stale precomputed set.
+ *
+ * Semantics:
+ *  - **candidates**: start from `latest.candidates`, DROP any whose key
+ *    this pass already DELETED (`sweptKeys`), then APPEND every fresh
+ *    mark whose key is not already present AND was not itself swept
+ *    this pass (a `graceMillis: 0` pass can mark-and-sweep a key in one
+ *    go — re-adding it to the ledger after deleting it would be wrong;
+ *    dedup also drops a key a concurrent pass already marked). Capped at
+ *    `maxCandidates`.
+ *  - **last_swept_at**: the lexicographically LATER of `latest`'s and
+ *    this pass's (ISO-8601 UTC; `""` sorts lowest so a real timestamp
+ *    always wins). Never regress a concurrent pass's newer sweep time.
+ *  - **content_scan_cursor**: rotation cursor — liveness, not
+ *    correctness; just don't regress forward progress. The two sides
+ *    are NOT symmetric: `pass.nextContentCursor === undefined` means
+ *    THIS pass examined to the END of the keyspace (WRAP — the most-
+ *    advanced position), whereas `latest.content_scan_cursor` absent
+ *    means the stored ledger has no cursor yet (start-from-beginning).
+ *    So:
+ *      - our pass WRAPPED ⇒ result wraps (key omitted) — our pass is
+ *        the most advanced; this is the single-writer rotation reset.
+ *      - else (our pass advanced to a defined cursor):
+ *          - latest cursor defined ⇒ take the lexicographically GREATER
+ *            (don't regress a concurrent pass's advance);
+ *          - latest cursor absent ⇒ keep OUR advance (don't lose it).
+ */
+export const mergeGcPending = (
+  latest: GcPending,
+  pass: {
+    readonly sweptKeys: ReadonlySet<string>;
+    readonly newCandidates: ReadonlyArray<GcCandidate>;
+    readonly lastSweptAt: string;
+    readonly nextContentCursor: string | undefined;
+    readonly maxCandidates: number;
+  },
+): GcPending => {
+  const surviving = latest.candidates.filter((c) => !pass.sweptKeys.has(c.key));
+  const present = new Set(surviving.map((c) => c.key));
+  const appended: GcCandidate[] = [];
+  for (const c of pass.newCandidates) {
+    // Skip keys this pass already swept (mark-and-sweep in one pass)
+    // and keys already in the surviving ledger (dedup vs. a concurrent
+    // pass's mark).
+    if (!pass.sweptKeys.has(c.key) && !present.has(c.key)) {
+      present.add(c.key);
+      appended.push(c);
+    }
+  }
+  const candidates = [...surviving, ...appended].slice(0, pass.maxCandidates);
+
+  const lastSweptAt =
+    pass.lastSweptAt > latest.last_swept_at ? pass.lastSweptAt : latest.last_swept_at;
+
+  // Cursor (asymmetric — see JSDoc): our-pass-undefined = WRAP (the
+  // most-advanced); latest-absent = no cursor yet (least-advanced).
+  // Our wrap wins (single-writer rotation reset). Otherwise our pass
+  // advanced: take the greater vs. a defined latest (don't regress a
+  // concurrent advance), else keep our advance.
+  const latestCursor = latest.content_scan_cursor;
+  const passCursor = pass.nextContentCursor;
+  let cursor: string | undefined;
+  if (passCursor === undefined) {
+    cursor = undefined;
+  } else if (latestCursor !== undefined) {
+    cursor = passCursor > latestCursor ? passCursor : latestCursor;
+  } else {
+    cursor = passCursor;
+  }
+
+  return {
+    schema_version: GC_PENDING_SCHEMA_VERSION,
+    candidates,
+    last_swept_at: lastSweptAt,
+    ...(cursor !== undefined && { content_scan_cursor: cursor }),
   };
-  let result: StoragePutResult;
-  try {
-    result = await storage.put(key, body, putOpts);
-  } catch (error) {
-    throw translateCasError(error, key);
-  }
-  return { json: next, etag: result.etag };
 };
 
 // ---------------------------------------------------------------------

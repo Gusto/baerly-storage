@@ -13,6 +13,7 @@ import {
   type GcPending,
   casUpdateGcPending,
   createGcPending,
+  mergeGcPending,
   readGcPending,
 } from "./gc-pending.ts";
 
@@ -849,6 +850,299 @@ describe("gc-pending", () => {
       const read = await readGcPending(s, KEY);
       expect(read?.json.candidates[0]?.reason).toBe(reason);
     }
+  });
+
+  // ---- mergeGcPending (pure merge under CAS) ----
+
+  const cand = (key: string, reason: GcCandidate["reason"] = "stale-log"): GcCandidate => ({
+    key,
+    due_at: "2099-01-01T00:00:00.000Z",
+    reason,
+  });
+
+  test("mergeGcPending: a latest-only candidate the stale pass never saw SURVIVES", () => {
+    // The bug: a concurrent pass marked `concurrent.json` AFTER our
+    // stale read. It is present in `latest` but absent from our pass.
+    // The pre-fix mutator overwrote with our precomputed set, dropping
+    // it silently. The merge must preserve it.
+    const latest: GcPending = {
+      schema_version: GC_PENDING_SCHEMA_VERSION,
+      candidates: [cand("concurrent.json")],
+      last_swept_at: "2026-01-02T00:00:00.000Z",
+      content_scan_cursor: "content/zzz",
+    };
+    const merged = mergeGcPending(latest, {
+      sweptKeys: new Set<string>(),
+      newCandidates: [cand("mine.json")],
+      lastSweptAt: "",
+      nextContentCursor: undefined,
+      maxCandidates: 1000,
+    });
+    const keys = merged.candidates.map((c) => c.key);
+    expect(keys).toContain("concurrent.json");
+    expect(keys).toContain("mine.json");
+  });
+
+  test("mergeGcPending: swept keys are removed from latest.candidates", () => {
+    const latest: GcPending = {
+      schema_version: GC_PENDING_SCHEMA_VERSION,
+      candidates: [cand("a.json"), cand("b.json"), cand("c.json")],
+      last_swept_at: "",
+    };
+    const merged = mergeGcPending(latest, {
+      sweptKeys: new Set(["a.json", "c.json"]),
+      newCandidates: [],
+      lastSweptAt: "2026-01-03T00:00:00.000Z",
+      nextContentCursor: undefined,
+      maxCandidates: 1000,
+    });
+    expect(merged.candidates.map((c) => c.key)).toEqual(["b.json"]);
+  });
+
+  test("mergeGcPending: fresh marks are appended deduped by key", () => {
+    // `dup.json` is already present in latest (a concurrent pass marked
+    // it); our pass also discovered it. It must appear exactly once.
+    const latest: GcPending = {
+      schema_version: GC_PENDING_SCHEMA_VERSION,
+      candidates: [cand("dup.json"), cand("keep.json")],
+      last_swept_at: "",
+    };
+    const merged = mergeGcPending(latest, {
+      sweptKeys: new Set<string>(),
+      newCandidates: [cand("dup.json"), cand("fresh.json")],
+      lastSweptAt: "",
+      nextContentCursor: undefined,
+      maxCandidates: 1000,
+    });
+    const keys = merged.candidates.map((c) => c.key);
+    expect(keys.filter((k) => k === "dup.json")).toHaveLength(1);
+    expect(keys).toContain("keep.json");
+    expect(keys).toContain("fresh.json");
+  });
+
+  test("mergeGcPending: a fresh mark swept in the same pass is NOT re-added", () => {
+    // grace=0 marks AND sweeps `fast.json` in one pass: it must not be
+    // re-appended to the ledger after we deleted it.
+    const latest: GcPending = {
+      schema_version: GC_PENDING_SCHEMA_VERSION,
+      candidates: [],
+      last_swept_at: "",
+    };
+    const merged = mergeGcPending(latest, {
+      sweptKeys: new Set(["fast.json"]),
+      newCandidates: [cand("fast.json"), cand("slow.json")],
+      lastSweptAt: "2026-01-03T00:00:00.000Z",
+      nextContentCursor: undefined,
+      maxCandidates: 1000,
+    });
+    expect(merged.candidates.map((c) => c.key)).toEqual(["slow.json"]);
+  });
+
+  test("mergeGcPending: result is capped at maxCandidates", () => {
+    const latest: GcPending = {
+      schema_version: GC_PENDING_SCHEMA_VERSION,
+      candidates: [cand("a.json"), cand("b.json")],
+      last_swept_at: "",
+    };
+    const merged = mergeGcPending(latest, {
+      sweptKeys: new Set<string>(),
+      newCandidates: [cand("c.json"), cand("d.json")],
+      lastSweptAt: "",
+      nextContentCursor: undefined,
+      maxCandidates: 3,
+    });
+    expect(merged.candidates).toHaveLength(3);
+    // Surviving latest entries come first, then fresh marks (slice keeps
+    // the front), so the cap drops the LAST fresh mark.
+    expect(merged.candidates.map((c) => c.key)).toEqual(["a.json", "b.json", "c.json"]);
+  });
+
+  test("mergeGcPending: the LATER last_swept_at wins (no regress)", () => {
+    const latest: GcPending = {
+      schema_version: GC_PENDING_SCHEMA_VERSION,
+      candidates: [],
+      last_swept_at: "2026-06-01T00:00:00.000Z",
+    };
+    // Our pass swept earlier than the concurrent pass already recorded.
+    const merged = mergeGcPending(latest, {
+      sweptKeys: new Set<string>(),
+      newCandidates: [],
+      lastSweptAt: "2026-05-01T00:00:00.000Z",
+      nextContentCursor: undefined,
+      maxCandidates: 1000,
+    });
+    expect(merged.last_swept_at).toBe("2026-06-01T00:00:00.000Z");
+  });
+
+  test("mergeGcPending: a real lastSweptAt beats latest empty string", () => {
+    const latest: GcPending = {
+      schema_version: GC_PENDING_SCHEMA_VERSION,
+      candidates: [],
+      last_swept_at: "",
+    };
+    const merged = mergeGcPending(latest, {
+      sweptKeys: new Set<string>(),
+      newCandidates: [],
+      lastSweptAt: "2026-05-01T00:00:00.000Z",
+      nextContentCursor: undefined,
+      maxCandidates: 1000,
+    });
+    expect(merged.last_swept_at).toBe("2026-05-01T00:00:00.000Z");
+  });
+
+  test("mergeGcPending: content cursor takes the more-advanced of the two", () => {
+    const latest: GcPending = {
+      schema_version: GC_PENDING_SCHEMA_VERSION,
+      candidates: [],
+      last_swept_at: "",
+      content_scan_cursor: "content/mmm",
+    };
+    // Our pass advanced LESS far than the concurrent pass; don't regress.
+    const merged = mergeGcPending(latest, {
+      sweptKeys: new Set<string>(),
+      newCandidates: [],
+      lastSweptAt: "",
+      nextContentCursor: "content/ddd",
+      maxCandidates: 1000,
+    });
+    expect(merged.content_scan_cursor).toBe("content/mmm");
+  });
+
+  test("mergeGcPending: latest has no cursor, we advanced ⇒ keep our advance", () => {
+    // Latest-absent means "no cursor yet / start-from-beginning" (the
+    // least-advanced position), NOT a wrap. Our forward advance is the
+    // only progress and must be written — losing it would re-scan the
+    // same first window forever.
+    const latest: GcPending = {
+      schema_version: GC_PENDING_SCHEMA_VERSION,
+      candidates: [],
+      last_swept_at: "",
+      // latest has no cursor
+    };
+    const merged = mergeGcPending(latest, {
+      sweptKeys: new Set<string>(),
+      newCandidates: [],
+      lastSweptAt: "",
+      nextContentCursor: "content/xyz",
+      maxCandidates: 1000,
+    });
+    expect(merged.content_scan_cursor).toBe("content/xyz");
+  });
+
+  test("mergeGcPending: our pass wrapped (undefined) ⇒ result wraps (single-writer rotation)", () => {
+    // The single-writer happy path: latest is the value WE started from
+    // (mid-keyspace), our pass examined to the end and wrapped. The wrap
+    // must win so the rotation actually resets — keeping latest's
+    // mid-keyspace cursor would spin the window forever.
+    const latest: GcPending = {
+      schema_version: GC_PENDING_SCHEMA_VERSION,
+      candidates: [],
+      last_swept_at: "",
+      content_scan_cursor: "content/qqq",
+    };
+    const merged = mergeGcPending(latest, {
+      sweptKeys: new Set<string>(),
+      newCandidates: [],
+      lastSweptAt: "",
+      nextContentCursor: undefined,
+      maxCandidates: 1000,
+    });
+    expect("content_scan_cursor" in merged).toBe(false);
+  });
+
+  test("mergeGcPending: both cursors undefined ⇒ key omitted", () => {
+    const latest: GcPending = {
+      schema_version: GC_PENDING_SCHEMA_VERSION,
+      candidates: [],
+      last_swept_at: "",
+    };
+    const merged = mergeGcPending(latest, {
+      sweptKeys: new Set<string>(),
+      newCandidates: [],
+      lastSweptAt: "",
+      nextContentCursor: undefined,
+      maxCandidates: 1000,
+    });
+    expect("content_scan_cursor" in merged).toBe(false);
+  });
+
+  test("mergeGcPending: returns the current schema_version", () => {
+    const merged = mergeGcPending(initial(), {
+      sweptKeys: new Set<string>(),
+      newCandidates: [],
+      lastSweptAt: "",
+      nextContentCursor: undefined,
+      maxCandidates: 1000,
+    });
+    expect(merged.schema_version).toBe(GC_PENDING_SCHEMA_VERSION);
+  });
+
+  // ---- casUpdateGcPending bounded retry (the lost-marks-on-conflict fix) ----
+
+  test("casUpdateGcPending: retries on Conflict and converges", async () => {
+    // Simulate a racing writer that lands exactly one write between our
+    // first read and our first put. A pure-merge mutator + bounded
+    // retry must re-read, re-merge, and persist BOTH the injected
+    // concurrent candidate AND our own marks.
+    const s = new MemoryStorage();
+    await createGcPending(s, KEY, initial());
+
+    let putCount = 0;
+    const racy = {
+      get: (k: string, o?: unknown) => s.get(k, o as Parameters<typeof s.get>[1]),
+      list: (prefix: string, o?: unknown) => s.list(prefix, o as Parameters<typeof s.list>[1]),
+      delete: (k: string, o?: unknown) => s.delete(k, o as Parameters<typeof s.delete>[1]),
+      put: async (...args: Parameters<typeof s.put>) => {
+        putCount++;
+        if (putCount === 1) {
+          // A concurrent pass lands first, advancing the etag so OUR
+          // ifMatch put (this call) will be stale → Conflict on retry.
+          await casUpdateGcPending(s, KEY, (latest) => ({
+            ...latest,
+            candidates: [...latest.candidates, cand("concurrent.json")],
+          }));
+          // Now our (stale-etag) put fails.
+          return s.put(...args);
+        }
+        return s.put(...args);
+      },
+    };
+
+    const updated = await casUpdateGcPending(racy as unknown as MemoryStorage, KEY, (latest) =>
+      mergeGcPending(latest, {
+        sweptKeys: new Set<string>(),
+        newCandidates: [cand("mine.json")],
+        lastSweptAt: "",
+        nextContentCursor: undefined,
+        maxCandidates: 1000,
+      }),
+    );
+
+    const keys = updated.json.candidates.map((c) => c.key);
+    expect(keys).toContain("concurrent.json");
+    expect(keys).toContain("mine.json");
+  });
+
+  test("casUpdateGcPending: throws Conflict after exhausting retries", async () => {
+    const s = new MemoryStorage();
+    await createGcPending(s, KEY, initial());
+    // put always Conflicts after the create.
+    let putCount = 0;
+    const alwaysConflict = {
+      get: (k: string, o?: unknown) => s.get(k, o as Parameters<typeof s.get>[1]),
+      list: (prefix: string, o?: unknown) => s.list(prefix, o as Parameters<typeof s.list>[1]),
+      delete: (k: string, o?: unknown) => s.delete(k, o as Parameters<typeof s.delete>[1]),
+      put: async (..._args: Parameters<typeof s.put>) => {
+        putCount++;
+        throw new BaerlyError("Conflict", "etag mismatch");
+      },
+    };
+    await expect(
+      casUpdateGcPending(alwaysConflict as unknown as MemoryStorage, KEY, (latest) => latest),
+    ).rejects.toMatchObject({ code: "Conflict" });
+    // Bounded: a fixed small number of attempts, not unbounded.
+    expect(putCount).toBeGreaterThan(1);
+    expect(putCount).toBeLessThanOrEqual(8);
   });
 });
 

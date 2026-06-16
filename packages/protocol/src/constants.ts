@@ -246,6 +246,22 @@ export const GC_GRACE_PERIOD_MILLIS: number = 7 * 24 * 60 * 60 * 1000;
 export const GC_MAX_PENDING_CANDIDATES: number = 1000;
 
 /**
+ * Bounded retry cap for the `gc/pending.json` CAS read-modify-write
+ * loop in {@link casUpdateGcPending}. On `Conflict` (a concurrent GC
+ * pass landed between this pass's read and its write) the loop
+ * re-reads `latest` and re-applies the pure merge mutator, retrying up
+ * to this many total attempts before surfacing `Conflict`. Safe to
+ * retry because the mutator is pure and the sweep DELETEs are
+ * idempotent and already performed; a re-merge against fresh state
+ * never loses a concurrently-marked candidate. Small fixed cap — under
+ * one writer per collection at steady state, contention is rare; this
+ * just bounds the worst case so a pathological storm can't spin.
+ *
+ * @see packages/protocol/src/coordination/gc-pending.ts
+ */
+export const GC_PENDING_CAS_MAX_ATTEMPTS: number = 3;
+
+/**
  * Fold-trigger ratio: fold fires at tail ≥ R×snapshot. Pure READ-AMP / fold-frequency
  * knob — with the ceiling on the snapshot axis (Decision 3a, tail sliced) the
  * auto-maintained snapshot ceiling is S_max = C, NOT C/(1+R). R=1.0 caps steady-state

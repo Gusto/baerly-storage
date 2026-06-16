@@ -65,6 +65,7 @@ import {
   encodeJsonBytes,
   logObjectKey,
   logSeqStartOf,
+  mergeGcPending,
   noopMetricsRecorder,
   readCurrentJson,
   readGcPending,
@@ -357,10 +358,20 @@ export const runGc = async (
   await Promise.all(toSweep.map((c) => storage.delete(c.key, signalOpts)));
 
   // ── Step 7. CAS-write pending.json. ─────────────────────────────
-  // Un-swept candidates (pre-existing un-due + new un-due) form the
-  // post-pass ledger. Bounded by GC_MAX_PENDING_CANDIDATES.
-  const merged: GcCandidate[] = remaining.slice(0, GC_MAX_PENDING_CANDIDATES);
-  const lastSweptAt = toSweep.length > 0 ? now().toISOString() : pending.json.last_swept_at;
+  // MERGE this pass's results INTO the latest stored value rather than
+  // overwriting with a precomputed set: `casUpdateGcPending` re-reads
+  // `latest` and hands it to `mergeGcPending`, so a concurrent pass's
+  // candidates (marked between our read and our write) survive. Writing
+  // a precomputed `merged` would silently overwrite them — the If-Match
+  // would succeed (fresh etag), so NO conflict is raised and the marks
+  // are lost. The mutator is pure + the DELETEs are idempotent + already
+  // performed, so the helper safely retries the merge on conflict.
+  const sweptKeys = new Set(toSweep.map((c) => c.key));
+  // `""` when this pass swept nothing — sourcing the no-sweep truth from
+  // `latest` (via the merge's "take later" rule) rather than our stale
+  // read. With no contention this is observably identical: `latest`
+  // equals our read, so the later-of-the-two is the same value.
+  const lastSweptAt = toSweep.length > 0 ? now().toISOString() : "";
   const markedSummary = {
     stale_log: markedStaleLog,
     orphan_snapshot: markedOrphanSnapshot,
@@ -371,25 +382,23 @@ export const runGc = async (
     const updated = await casUpdateGcPending(
       storage,
       gcPendingKey,
-      () => ({
-        schema_version: GC_PENDING_SCHEMA_VERSION,
-        candidates: merged,
-        last_swept_at: lastSweptAt,
-        // Persist the rotation cursor on EVERY pass — a window advance
-        // is itself a delta, so even a zero-mark pass must write the
-        // moved cursor or the window would never rotate. `undefined`
-        // clears it (WRAP); the conditional spread omits the key
-        // entirely so the stored object stays clean.
-        ...(nextContentCursor !== undefined && { content_scan_cursor: nextContentCursor }),
-      }),
+      (latest) =>
+        mergeGcPending(latest, {
+          sweptKeys,
+          newCandidates,
+          lastSweptAt,
+          nextContentCursor,
+          maxCandidates: GC_MAX_PENDING_CANDIDATES,
+        }),
       signalOpts,
     );
     pendingDepth = updated.json.candidates.length;
   } catch (error) {
-    // CAS-lost on pending.json: another GC pass landed concurrently.
-    // The DELETEs we issued are durable; the next pass picks up any
-    // marks we couldn't persist. Surface success — re-throwing here
-    // would mask the work we DID complete.
+    // CAS-lost on pending.json after exhausting the bounded retry:
+    // another GC pass kept landing concurrently. The DELETEs we issued
+    // are durable; the next pass picks up any marks we couldn't persist.
+    // Surface success — re-throwing here would mask the work we DID
+    // complete.
     if (error instanceof BaerlyError && error.code === "Conflict") {
       // Best-effort: we know `remaining.length` is at least the
       // post-sweep depth; concurrent passes may have moved it.
