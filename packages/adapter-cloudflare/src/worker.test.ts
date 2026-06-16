@@ -173,11 +173,12 @@ describe("baerlyWorker observability", () => {
     expect(props["status"]).toBe(201);
     expect(props["method"]).toBe("POST");
     // Storage class-A counter is the load-bearing signal that the
-    // tee wiring is in place. Writer PUTs content + log +
-    // current.json on every commit ⇒ at least 3 Class A ops.
+    // tee wiring is in place. Under single-write commit the writer PUTs
+    // content + the committing log/<seq> create (no current.json write)
+    // ⇒ at least 2 Class A ops per commit.
     const classA = props["db.storage.class_a_ops_total"];
     expect(typeof classA).toBe("number");
-    expect(classA).toBeGreaterThanOrEqual(3);
+    expect(classA).toBeGreaterThanOrEqual(2);
   });
 
   test("cache-miss read emits a canonical line with class_b_ops>0, outcome=read, cache_status=miss", async () => {

@@ -27,6 +27,7 @@ import {
   CF_FREE_MAX_SAFE_FOLD_BYTES,
   CURRENT_JSON_SCHEMA_VERSION,
   createCurrentJson,
+  MAINTENANCE_MIN_LIVE_BYTES,
   type Storage,
   type Verifier,
   WRITE_TICK_FOLD_ENTRIES_PER_PASS,
@@ -81,6 +82,16 @@ const provision = async (storage: Storage, tenant: string): Promise<void> => {
  * tail. The Writer maintains in-band by default, so we run the seed
  * under a `maintenance: { disabled: true }` context — otherwise the seed
  * loop would fold incrementally and leave no foldable tail to exercise.
+ *
+ * Under single-write commit the Writer no longer accumulates an exact
+ * byte counter, and the ratio TRIGGER reads a DERIVED estimate
+ * (`observedTail × mean_entry_bytes`). A freshly-seeded bucket has no
+ * stamped `mean_entry_bytes` (the compactor stamps it at the first
+ * fold), so it would fall back to the cold-start per-entry constant and
+ * under-trigger (correct kernel behaviour — "folds later"). To exercise
+ * the fold mechanics deterministically we stamp `mean_entry_bytes` after
+ * seeding so the estimate clears the ratio gate — the same migration the
+ * default-project maintenance tests use.
  */
 const seedTail = async (storage: Storage, key: string, n: number): Promise<void> => {
   const writer = new Writer({ storage, currentJsonKey: key });
@@ -91,11 +102,19 @@ const seedTail = async (storage: Storage, key: string, n: number): Promise<void>
         op: "I",
         collection: "c",
         docId: `d${i}`,
-        // Pad the body so the tail clears MAINTENANCE_MIN_LIVE_BYTES and
-        // the ratio gate trips, while staying far under the fold ceiling.
+        // Pad the body so a real fold stays well above the byte floor
+        // while remaining far under the fold ceiling.
         body: { _id: `d${i}`, n: i, pad: "x".repeat(800) },
       });
     }
+  });
+  // Stamp a mean so the DERIVED tail estimate trips the ratio gate
+  // (`observedTail × mean ≥ MAINTENANCE_MIN_LIVE_BYTES` for any tail ≥ 1).
+  const got = (await storage.get(key))!;
+  const cur = JSON.parse(new TextDecoder().decode(got.body)) as Record<string, unknown>;
+  cur["mean_entry_bytes"] = MAINTENANCE_MIN_LIVE_BYTES;
+  await storage.put(key, new TextEncoder().encode(JSON.stringify(cur)), {
+    contentType: "application/json",
   });
 };
 
@@ -319,10 +338,11 @@ describe("cas_lost_total records from inside the waitUntil continuation", () => 
     expect(res.status).toBe(201);
 
     // Arm the CAS-loss ONLY now — after the response resolved but BEFORE
-    // we drain. The writer's own commit CAS already landed during fetch
-    // (above); the only manifest CAS left is the FOLD's, which runs in
-    // the waitUntil continuation. This pins the metric to the fold path,
-    // not the commit path.
+    // we drain. Under single-write commit the writer's commit touches no
+    // `current.json` CAS at all (the log/<seq> create IS the commit), so
+    // the ONLY manifest CAS in this flow is the FOLD's, which runs in the
+    // waitUntil continuation. Arming post-response pins the metric to the
+    // fold path.
     armed = true;
 
     // The fold has NOT run yet — it's queued in waitUntil. Drain it now,
