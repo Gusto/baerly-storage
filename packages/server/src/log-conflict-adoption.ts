@@ -151,7 +151,7 @@ export type AdoptionDecision =
  * @see The soundness invariant in this module's header docstring.
  */
 export const tryAdoptOwnSessionLogEntry = (ctx: AdoptionContext): AdoptionDecision => {
-  // Clause (3) — single-input commit. Always holds now (every commit
+  // Clause (4) — single-input commit. Always holds now (every commit
   // is single-input); evaluated first as a defensive guard before any
   // field comparison.
   if (ctx.batchSize !== 1) {
@@ -167,6 +167,20 @@ export const tryAdoptOwnSessionLogEntry = (ctx: AdoptionContext): AdoptionDecisi
   if (ctx.existing.seq !== ctx.self.seq) {
     return { adopt: false, reason: "wrong-seq" };
   }
+  // Clause (3) — matching write intent: full-entry equality, including
+  // `commit_ts`. A legitimate lost-ack self-retry passes this ONLY under
+  // two premises:
+  //   P1 (single mint): `commit_ts`/`lsn`/`session` are minted once per
+  //      `#singleAttemptCommit` (one `Date.now()`) and the inner
+  //      transient-retry loop re-PUTs the IDENTICAL `entry`, so a real
+  //      read-back is byte-identical to `self`, `commit_ts` included.
+  //   P2 (order-stable round-trip): stored bytes are
+  //      `encodeJsonBytes` (`JSON.stringify`) and read back via
+  //      `JSON.parse`; `JSON.stringify(JSON.parse(...))` preserves key
+  //      order, so the two stringifications match.
+  // If either breaks (re-mint on retry, or a canonical/sorting encoder /
+  // normalizing read-back), a legit self-retry would falsely mismatch
+  // here and DUPLICATE-write. P2 is pinned by `bytes.test.ts`.
   if (JSON.stringify(ctx.existing) !== JSON.stringify(ctx.self)) {
     return { adopt: false, reason: "intent-mismatch" };
   }

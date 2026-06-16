@@ -606,7 +606,8 @@ export class Writer {
       });
       if (decision.adopt) {
         // Own crashed/lost-ack commit already durable at `seq`. Adopt it
-        // (byte-identical modulo commit_ts) — the logical write lands at
+        // (byte-identical to the attempted `entry`, INCLUDING `commit_ts`
+        // — adoption compares the full entry) — the logical write lands at
         // EXACTLY `seq`, never duplicated. Fall through to Step 5b: the
         // adopted attempt may have died after the create but before the
         // index emit, so the (idempotent) emit must still run.
