@@ -468,7 +468,7 @@ maintenance, so the published idle-reader cost bound holds.
 A bucket maintains itself as long as it takes writes. A bucket served read-only does
 not auto-compact and pays a small, bounded replay — fine at small scale, a signal to
 graduate once a collection is large. See docs/about/graduation.md for the per-tier
-envelope and the BAERLY_MAINTENANCE_* operator env vars (you almost never need them).
+envelope and the `BAERLY_MAINTENANCE_*` operator env vars (you almost never need them).
 
 Operator opt-in: call runScheduledMaintenance from @gusto/baerly-storage/maintenance on
 your own schedule. Not required for steady-state operation.
