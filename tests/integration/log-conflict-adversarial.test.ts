@@ -36,7 +36,8 @@
  *                                               clause holds
  *   5. Future-seq entry written ahead       → writer commits at seq 0;
  *                                               the future-seq squat is
- *                                               an unreferenced orphan
+ *                                               ignored by this writer until
+ *                                               intervening seqs exist
  */
 
 import { fc, test as propTest } from "@fast-check/vitest";
@@ -266,14 +267,25 @@ describe("adversarial replay against self-session log-conflict adoption", () => 
     expect(true).toBe(true);
   });
 
-  test("attack 5 — adversary writes a future-seq entry (seq=5) while writer commits at seq=0: writer's seq-0 PUT succeeds, future-seq is unreferenced orphan", async () => {
+  test("attack 5 — adversary writes a future-seq entry (seq=5) while writer commits at seq=0: writer's seq-0 PUT succeeds, future-seq squat is ignored", async () => {
     // The adversary squatting at seq=5 doesn't intersect the
     // writer's path at all — the writer mints seq=0 from a fresh
     // current.json (tail_hint=0). The commit succeeds; the
-    // future-seq entry is an orphan the GC sweep would eventually
-    // collect. Documents the asymmetry: adoption is keyed to the
-    // seq the writer is ABOUT to write, not to any seq present
-    // in the log namespace.
+    // future-seq entry is simply ignored by this writer until
+    // intervening seqs exist. (It is NOT a GC-collected orphan:
+    // GC only sweeps below log_seq_start — entries already folded
+    // into the snapshot — and a seq=5 squat sits ABOVE the live
+    // tail, so it is never folded and never GC-eligible. It is also
+    // not permanently unreachable: once writes fill seqs 1..4 the
+    // forward-probe reaches seq 5, skips the foreign occupant, and
+    // commits past it — leaving the squat inside the now-dense range
+    // where readers would fold it. That readability only matters
+    // under an adversary with arbitrary bucket-WRITE access, who
+    // could corrupt the next seq directly regardless — so it is
+    // OUTSIDE the adoption threat model this test validates.)
+    // Documents the asymmetry: adoption is keyed to the seq the
+    // writer is ABOUT to write, not to any seq present in the log
+    // namespace.
     const storage = new MemoryStorage();
     await createCurrentJson(storage, CURRENT_JSON_KEY, seedCurrent());
     const futureForged: LogEntry = {
