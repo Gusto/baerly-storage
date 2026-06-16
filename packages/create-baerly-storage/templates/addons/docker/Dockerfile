@@ -45,9 +45,15 @@ WORKDIR /app
 # Distroless's `nonroot` user is UID 65532. We run as that.
 USER nonroot:nonroot
 
-# Copy the TS source, the SPA build, the healthcheck, the manifest,
-# and the prune'd node_modules.
+# Copy the TS source, the project-root config, the SPA build, the
+# healthcheck, the manifest, and the prune'd node_modules.
+#
+# baerly.config.ts is load-bearing: the server entrypoint does
+# `import config from "../../baerly.config.ts"`, which resolves to the
+# project root. Omit it and the container crashes on boot with an
+# unresolved import.
 COPY --from=build --chown=nonroot:nonroot /app/src src
+COPY --from=build --chown=nonroot:nonroot /app/baerly.config.ts baerly.config.ts
 COPY --from=build --chown=nonroot:nonroot /app/dist/client dist/client
 COPY --from=build --chown=nonroot:nonroot /app/healthcheck.js healthcheck.js
 COPY --from=build --chown=nonroot:nonroot /app/package.json package.json
