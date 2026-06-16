@@ -58,6 +58,7 @@ import {
   GC_GRACE_PERIOD_MILLIS,
   GC_MAX_PENDING_CANDIDATES,
   GC_PENDING_SCHEMA_VERSION,
+  MAX_PARALLEL_LOG_READS,
   BaerlyError,
   casUpdateGcPending,
   createGcPending,
@@ -525,31 +526,45 @@ const collectLiveContentHashes = async (
     Math.max(logSeqStart, current.tail_hint),
     { signal },
   );
-  const logReads: Array<Promise<void>> = [];
-  for (let s = logSeqStart; s < tail; s++) {
-    logReads.push(
-      (async (): Promise<void> => {
-        const got = await storage.get(logObjectKey(collectionPrefix, s), getOpts);
-        if (got === null) {
-          return;
-        }
-        let entry: { after?: unknown };
-        try {
-          entry = decodeJsonBytes<{ after?: unknown }>(got.body);
-        } catch {
-          // A malformed log entry is the writer's concern, not GC's.
-          // Skip and let other invariants catch it.
-          return;
-        }
-        if (entry.after === undefined) {
-          return;
-        }
-        const bodyBytes = encodeJsonBytes(entry.after);
-        hashes.add(await versionFromContent(bodyBytes));
-      })(),
-    );
+  // Read every live entry in `[logSeqStart, tail)`, but cap the
+  // simultaneous in-flight log GETs at MAX_PARALLEL_LOG_READS. A raw
+  // `Promise.all` over the whole range fans out up to
+  // LOG_FORWARD_PROBE_CAP (100_000) concurrent GETs when a backlogged
+  // tail makes the range large — which blows the Cloudflare Workers
+  // ~50-concurrent-subrequest cap. The walk is COMPLETE (every seq is
+  // visited): this is a concurrency bound, never a partial scan. Unlike
+  // the shared `walkLogRange` helper, this scan is 404-tolerant (a
+  // missing `log/<seq>` past a stale-low hint is skipped, not fatal)
+  // and tolerant of a malformed entry, so it keeps its own bounded loop
+  // rather than borrowing the throwing walker.
+  const ingestLogEntry = async (s: number): Promise<void> => {
+    const got = await storage.get(logObjectKey(collectionPrefix, s), getOpts);
+    if (got === null) {
+      return;
+    }
+    let entry: { after?: unknown };
+    try {
+      entry = decodeJsonBytes<{ after?: unknown }>(got.body);
+    } catch {
+      // A malformed log entry is the writer's concern, not GC's.
+      // Skip and let other invariants catch it.
+      return;
+    }
+    if (entry.after === undefined) {
+      return;
+    }
+    const bodyBytes = encodeJsonBytes(entry.after);
+    hashes.add(await versionFromContent(bodyBytes));
+  };
+  for (let chunkStart = logSeqStart; chunkStart < tail; chunkStart += MAX_PARALLEL_LOG_READS) {
+    signal?.throwIfAborted();
+    const chunkEnd = Math.min(chunkStart + MAX_PARALLEL_LOG_READS, tail);
+    const chunk: Array<Promise<void>> = [];
+    for (let s = chunkStart; s < chunkEnd; s++) {
+      chunk.push(ingestLogEntry(s));
+    }
+    await Promise.all(chunk);
   }
-  await Promise.all(logReads);
 
   // Snapshot rows.
   if (current.snapshot !== null) {

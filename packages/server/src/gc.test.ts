@@ -10,7 +10,10 @@
 
 import {
   type GcPending,
+  type Storage,
+  type StorageGetOptions,
   GC_PENDING_SCHEMA_VERSION,
+  MAX_PARALLEL_LOG_READS,
   MemoryStorage,
   casUpdateGcPending,
   createCurrentJson,
@@ -544,5 +547,120 @@ describe("runGc", () => {
     // Reached the end ⇒ cursor wrapped (cleared).
     const pending = await readGcPending(s, PENDING_KEY);
     expect(pending?.json.content_scan_cursor).toBeUndefined();
+  });
+
+  // ── live-log scan concurrency bound ──────────────────────────────
+  // The live-content-hash scan reads every live `log/<seq>` in
+  // `[log_seq_start, tail)`. A backlogged tail makes that range large
+  // (up to LOG_FORWARD_PROBE_CAP = 100_000). The scan must cap its
+  // in-flight log GETs at MAX_PARALLEL_LOG_READS so it never blows the
+  // Cloudflare Workers ~50-concurrent-subrequest cap. This wrapper
+  // instruments `get` on `/log/` keys to record the PEAK simultaneous
+  // in-flight GETs across the whole run; each get yields a microtask
+  // (await) so concurrent reads actually overlap and stack.
+  const instrumentLogGetConcurrency = (
+    inner: Storage,
+  ): { storage: Storage; peak: () => number } => {
+    let inFlight = 0;
+    let peak = 0;
+    const storage: Storage = {
+      get: async (key: string, opts?: StorageGetOptions) => {
+        const isLogGet = /\/log\/\d+\.json$/.test(key);
+        if (isLogGet) {
+          inFlight++;
+          if (inFlight > peak) {
+            peak = inFlight;
+          }
+        }
+        try {
+          // Yield twice so overlapping reads have a chance to stack
+          // before the first resolves.
+          await Promise.resolve();
+          await Promise.resolve();
+          return await inner.get(key, opts);
+        } finally {
+          if (isLogGet) {
+            inFlight--;
+          }
+        }
+      },
+      put: (key, body, opts) => inner.put(key, body, opts),
+      delete: (key, opts) => inner.delete(key, opts),
+      list: (prefix, opts) => inner.list(prefix, opts),
+    };
+    return { storage, peak: () => peak };
+  };
+
+  test("bounds live-log scan concurrency to MAX_PARALLEL_LOG_READS", async () => {
+    const inner = new MemoryStorage();
+    await bootstrap(inner, KEY);
+    // Seed a live log range comfortably larger than the cap. No
+    // compaction ⇒ log_seq_start stays 0 and every entry is live, so
+    // the scan walks all of [0, tail). tail_hint starts at 0, forcing
+    // the probe + scan to walk the full range.
+    const writer = new Writer({ storage: inner, currentJsonKey: KEY });
+    const RANGE = 64; // 4× the cap of 16
+    const seedCtx = createObservabilityContext({ maintenance: { disabled: true } });
+    await runWithContext(seedCtx, async () => {
+      for (let i = 0; i < RANGE; i++) {
+        await writer.commit({
+          op: "I",
+          collection: COLL,
+          docId: `d${i}`,
+          body: { _id: `d${i}`, n: i },
+        });
+      }
+    });
+
+    const { storage, peak } = instrumentLogGetConcurrency(inner);
+    const r = await runGc({ storage, currentJsonKey: KEY });
+    // No compaction ran ⇒ nothing is a stale-log orphan, and every
+    // content blob is referenced by a live log entry ⇒ zero orphans.
+    expect(r.marked.orphan_content).toBe(0);
+    // The peak simultaneous in-flight log GETs must stay within the
+    // bounded-walker cap. Before the fix the unbounded Promise.all
+    // fanned out all RANGE (=64) reads at once.
+    expect(peak()).toBeLessThanOrEqual(MAX_PARALLEL_LOG_READS);
+    expect(peak()).toBeGreaterThan(0);
+  });
+
+  test("live-log scan still marks a true orphan and spares a live blob (complete scan)", async () => {
+    // Correctness guard for the bounded scan: a known-orphan content
+    // key (no referencing log entry) is still marked, and the
+    // live-referenced blobs across a range > the cap are NOT marked.
+    const inner = new MemoryStorage();
+    await bootstrap(inner, KEY);
+    const writer = new Writer({ storage: inner, currentJsonKey: KEY });
+    const seedCtx = createObservabilityContext({ maintenance: { disabled: true } });
+    await runWithContext(seedCtx, async () => {
+      for (let i = 0; i < 40; i++) {
+        await writer.commit({
+          op: "I",
+          collection: COLL,
+          docId: `d${i}`,
+          body: { _id: `d${i}`, n: i },
+        });
+      }
+    });
+    // A truly-orphan content blob (writer crashed pre-log-PUT).
+    const orphanKey = "app/t/tenant/x/manifests/c/content/ffffffffffffffffffffffffffffffff.json";
+    await inner.put(orphanKey, new TextEncoder().encode(`{"_id":"ghost"}`), {
+      contentType: "application/json",
+    });
+
+    const { storage } = instrumentLogGetConcurrency(inner);
+    const r = await runGc({ storage, currentJsonKey: KEY }, {
+      graceMillis: 0,
+      maxSweepsPerRun: 100,
+    } as InternalRunGcOptions);
+    // Exactly the one true orphan is swept; the 40 live blobs survive.
+    expect(r.marked.orphan_content).toBe(1);
+    expect(r.swept).toBe(1);
+    await expect(inner.get(orphanKey)).resolves.toBeNull();
+    // Every live content blob is still present (complete scan ⇒ no
+    // live data deleted).
+    for await (const entry of inner.list("app/t/tenant/x/manifests/c/content/")) {
+      await expect(inner.get(entry.key)).resolves.not.toBeNull();
+    }
   });
 });
