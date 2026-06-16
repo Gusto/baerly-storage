@@ -19,6 +19,11 @@ export interface ConformanceOptions {
   // `ifMatch` under the no-lease maintenance fold — so a `Storage` that
   // doesn't honor them isn't a valid baerly backend. The CAS blocks
   // below always run; a backend that can't pass them must not ship.
+  // CAVEAT: these blocks exercise single-process semantics. `LocalFsStorage`
+  // is a dev/single-process adapter whose `ifMatch` is in-process TOCTOU
+  // only (cross-process `current.json` CAS-advance is NOT atomic there) —
+  // see its class JSDoc in `packages/dev/src/local-fs.ts`. Real S3 / Minio
+  // / R2 provide the cross-process guarantee the no-lease fold relies on.
   /**
    * When false, generated key arbitraries must yield case-insensitively
    * distinct keys (some object stores fold case). Defaults to `true`;

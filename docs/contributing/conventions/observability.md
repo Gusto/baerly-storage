@@ -27,6 +27,15 @@ site falls through to `noopMetricsRecorder` — operators don't wire
 their own `MetricsRecorder`, the canonical line on stdout is the
 operator's view of kernel emissions.
 
+**Known limitation (intentional).** On Cloudflare, write-tick
+maintenance is dispatched via `ctx.waitUntil(...)` _after_ the canonical
+line is flushed (in the request `finally`), so post-response maintenance
+metrics never appear on that request's line; failures surface only via
+`console.error` in `packages/server/src/maintenance.ts`. This is inherent
+to the `waitUntil` model — you can't append to an already-sent response's
+log line. Changing it would require a separate maintenance log
+context/flush; not planned pre-launch.
+
 Direct `Db` calls outside an HTTP request — e.g. a `baerlyDev()` seed
 callback that calls `db.collection().insert()` from inside the Vite
 plugin — don't emit a canonical line on their own. The unit boundary

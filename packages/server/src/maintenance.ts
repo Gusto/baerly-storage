@@ -380,6 +380,12 @@ export const runBoundedMaintenance = async (
     const ratio = tailBytesEst / Math.max(snapshotBytes, MAINTENANCE_MIN_LIVE_BYTES);
     const gate1 = ratio >= MAINTENANCE_TARGET_RATIO && nextSeq - logSeqStart >= minEntriesToCompact;
     // SAFETY ceiling (CF CPU-kill guard) — EXACT snapshot_bytes/rows, NEVER the estimate.
+    // Conservative by design: the row arm gates on POTENTIAL post-fold rows
+    // (`snapshotRows + maxFoldEntriesPerPass`), so an update/delete-only fold
+    // that would actually land under E can be deferred near the ceiling. We
+    // can't know the insert-vs-update/delete mix without pre-scanning the
+    // range, so we fail closed. Cost is a liveness edge for large near-E
+    // collections, not a correctness bug.
     const foldViable = snapshotBytes <= C && snapshotRows + maxFoldEntriesPerPass <= E;
     const gcDue = crossesGcBoundary(prevSeq, nextSeq, gcInterval);
 
