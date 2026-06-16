@@ -182,6 +182,43 @@ describe("index emit happens AFTER the committing log write (polarity)", () => {
         ).toContain(TARGET);
       }
 
+      // INVARIANT (d): a COMMITTED row is ALWAYS index-findable — no
+      // false-negative. Whatever value the doc is committed at, an
+      // index-routed query for that value must return it. This holds
+      // whether the commit landed (`closed`) or not (`open`).
+      //
+      // EMIT-ALL-AFTER is RED here on the `closed` arm: a crash between
+      // the `log/<seq>` create (the commit) and the pure emit-after
+      // leaves the committed-NEW value with no index marker — the
+      // index-walk read seeds candidates only from index-key lists, so
+      // it returns empty and disagrees with the primary fold. The
+      // HYBRID (newKeys before the commit) makes the `closed` marker land
+      // before the commit, so a committed row is always findable.
+      const byCommitted = (await readDb
+        .collection(COLL)
+        .where({ status: committedStatus })
+        .all()) as Ticket[];
+      expect(
+        byCommitted.map((d) => d._id),
+        `committed row must be index-findable at its committed value "${committedStatus}" (no false-negative; abort op ${abortAfter})`,
+      ).toContain(TARGET);
+
+      // HR-4 — index-vs-full-scan parity under the crash matrix. An
+      // index-routed read of the committed value must equal the
+      // PRIMARY/full-scan read of the same committed set. Equivalently:
+      // the index-walk row set for `committedStatus` is exactly the docs
+      // the fold reports at that status. No false-negative (INVARIANT d)
+      // AND no false-positive (INVARIANT c) ⇒ set equality.
+      const fullScanAtCommitted = [...live.entries()]
+        .filter(([, doc]) => doc.status === committedStatus)
+        .map(([id]) => id)
+        .toSorted();
+      const indexAtCommitted = byCommitted.map((d) => d._id).toSorted();
+      expect(
+        indexAtCommitted,
+        `index-routed read must equal full-scan read at "${committedStatus}" (HR-4 parity; abort op ${abortAfter})`,
+      ).toEqual(fullScanAtCommitted);
+
       // INVARIANT (b): a later same-doc write RESTORES the index marker
       // for the committed value — repairing any briefly-unindexed
       // residual (the acceptable post-reorder crash window).

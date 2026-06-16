@@ -17,10 +17,16 @@
  * own lost-ack / crashed-but-durable commit → adopted (not retried), so
  * the write lands at EXACTLY `seq`, never duplicated.
  *
- * **Crash safety.** Order is content → `log/<seq>` create. A crash
- * before the create leaves an unreferenced content body (no log entry
- * references it), not an orphan log entry with missing content — the
- * compactor sweeps the content later.
+ * **Crash safety.** Order is content + additive index `newKeys` →
+ * `log/<seq>` create → stale index-key DELETEs. A crash before the
+ * create leaves an unreferenced content body + orphan additive index
+ * keys (no log entry references them), not an orphan log entry with
+ * missing content — the compactor sweeps the content, and a stray
+ * additive key only ever yields a false-POSITIVE candidate that
+ * `matchesWire` (read path) drops. Emitting `newKeys` before the commit
+ * means a committed row is ALWAYS index-findable; the stale-key DELETE
+ * stays after the commit so a crash can never de-index a committed
+ * doc. See `index-emit-order.test.ts` and ADR-008 Q4.
  *
  * **`LogEntry` shape.** Emitted entries follow the contract in
  * `packages/protocol/src/log.ts` (see {@link LogEntry}) and
@@ -96,12 +102,13 @@ export interface WriterOptions {
   /**
    * Optional. Indexes declared for the collection this writer
    * commits to. Each commit emits one zero-byte PUT per declared
-   * index (when the indexed field is set on the doc) inside the
-   * same fence as the log entry and content body. On U/D, the
-   * writer reads the pre-image content body from the log (one
-   * back-walk per indexed collection, NOT per index) to compute
-   * the stale-key set; stale keys are DELETE'd inside the same
-   * fence.
+   * index (when the indexed field is set on the doc) — the additive
+   * `newKeys` go down BEFORE the committing `log/<seq>` create, so a
+   * committed row is always index-findable. On U/D, the writer reads
+   * the pre-image content body from the log (one back-walk per
+   * indexed collection, NOT per index) to compute the stale-key set;
+   * stale keys are DELETE'd AFTER the commit, computed from the
+   * resolved committing seq's pre-image.
    *
    * Validated at construction via {@link validateIndexDefinition} —
    * an invalid def throws `BaerlyError{code:"SchemaError"}`
@@ -169,10 +176,15 @@ export interface CommitResult {
   /** The committed `LogEntry`. Caller can ack on `entry.lsn`. */
   readonly entry: LogEntry;
 
-  /** New ETag of `current.json` after the CAS-advance landed. */
+  /**
+   * ETag of `current.json` as read at the start of the commit. The
+   * commit path no longer writes `current.json` (the `log/<seq>`
+   * create IS the commit), so this is the manifest's pre-commit ETag,
+   * not a post-write one.
+   */
   readonly currentEtag: string;
 
-  /** How many CAS attempts it took (1 = first try won). */
+  /** How many commit attempts it took (1 = first try won). */
   readonly attempts: number;
 }
 
@@ -265,13 +277,18 @@ export class Writer {
 
   /**
    * Atomically commit one mutation. Reads `current.json` fresh (as a
-   * probe FLOOR, not a CAS precondition), PUTs the content body, then
-   * creates `log/<seq>` via `If-None-Match: "*"` — that create IS the
-   * commit (single-write commit; no `current.json` CAS follows it).
+   * probe FLOOR, not a CAS precondition), PUTs the content body and any
+   * additive index `newKeys`, then creates `log/<seq>` via
+   * `If-None-Match: "*"` — that create IS the commit (single-write
+   * commit; no `current.json` CAS follows it). Stale index keys are
+   * DELETE'd after the commit.
    *
-   * The hot-path cost under no contention is 1 GET + 3 PUTs (4 ops);
-   * an in-flight peer write costs one extra GET + the backoff sleep
-   * per retry.
+   * The hot-path cost under no contention on an unindexed collection is
+   * 1 GET + 2 PUTs (content + the committing `log/<seq>` create); each
+   * declared index that projects a key on this write adds one PUT
+   * (new key, before the commit) and, on U/D, up to one DELETE (stale
+   * key, after the commit). An in-flight peer write costs one extra GET
+   * + the backoff sleep per retry.
    *
    * Idempotency: PUT content uses `If-None-Match: "*"`, so a retry of
    * the same logical write produces the same content key and the
@@ -350,11 +367,11 @@ export class Writer {
 
   /**
    * One full commit attempt — the body of {@link commit}. Reads
-   * `current.json`, emits content + indexes in parallel, then
-   * forward-probes the tail and creates `log/<seq>` once via
+   * `current.json`, PUTs content + additive index `newKeys` in parallel,
+   * then forward-probes the tail and creates `log/<seq>` once via
    * `If-None-Match: "*"` — the numbered log create IS the commit
-   * (single-write commit; no `current.json` CAS follows it). Returns
-   * the success payload.
+   * (single-write commit; no `current.json` CAS follows it). Stale index
+   * keys are DELETE'd after the commit. Returns the success payload.
    *
    * Called only as `#singleAttemptCommit([input], …)`: the array shape
    * is retained dead-generality (D1.5), but every call commits exactly
@@ -366,12 +383,17 @@ export class Writer {
    * empty slot. Thrown `BaerlyError`s (Internal, InvalidResponse,
    * NetworkError) propagate.
    *
-   * Crash safety invariant: content / index PUTs are awaited before the
-   * log create. A crash before the create leaves orphan content / index
-   * entries (no log entry references them) — the compactor sweeps them.
-   * A crash AFTER the create is a durable, committed write at `seq`. The
-   * inverse — committed log entry with missing content — is never
-   * produced.
+   * Crash safety invariant: content + additive index `newKeys` PUTs are
+   * awaited before the log create. A crash before the create leaves
+   * orphan content + additive index keys (no log entry references them)
+   * — the compactor sweeps the content, and a stray additive key only
+   * yields a false-positive candidate that `matchesWire` drops. A crash
+   * AFTER the create is a durable, committed write at `seq` whose index
+   * `newKeys` are already present (so it's index-findable); the only
+   * residual is a possibly-undeleted stale OLD-value key, dropped by
+   * `matchesWire` and cleaned by a later write / `rebuild-index`. The
+   * inverse — committed log entry with missing content, or a de-indexed
+   * committed doc — is never produced.
    */
   async #singleAttemptCommit(
     inputs: readonly CommitInput[],
@@ -444,7 +466,8 @@ export class Writer {
     });
     let entry = mintEntry(seq);
 
-    // ── Step 4. PUT content bodies (BEFORE the commit). ─────────────
+    // ── Step 4. PUT content bodies + additive index `newKeys` (BEFORE
+    // the commit). ──────────────────────────────────────────────────
     // Content PUT: `ifNoneMatch: "*"` makes a same-hash re-write a
     // no-op (412 swallowed). Crash-recovery and same-body replay
     // both rely on this idempotency property. Content is content-
@@ -452,13 +475,21 @@ export class Writer {
     // crash here leaves an unreferenced body the compactor sweeps,
     // never an orphan log entry with missing content.
     //
-    // Secondary-index emission does NOT happen here — it runs AFTER
-    // the committing `log/<seq>` create (Step 5b) so the only crash
-    // residual is a committed-but-briefly-unindexed doc (the log
-    // entry names the docId; the snapshot+log fold / `rebuildIndex`
-    // re-derives the marker), never a de-indexed committed doc the
-    // fold can't repair. See ADR-008 Q4.
+    // Additive index `newKeys` (the markers for the doc's NEW value)
+    // ALSO go down here, before the committing create. `newKeys`
+    // depend only on `body` + `docId` (NOT on `seq`), so they're
+    // stable across the forward re-probe — emit them once. Emitting
+    // BEFORE the commit guarantees a committed row is ALWAYS index-
+    // findable (no false-negative). A crash after a `newKey` PUT but
+    // before the commit leaves an orphan additive key for an
+    // UNcommitted write — benign: the index read includes the
+    // candidate docId, the fold finds no committed (or the prior)
+    // value, and `matchesWire` (query.ts) drops the false-positive.
+    // The stale-key DELETEs (de-indexing the OLD value) stay AFTER the
+    // commit (Step 5b), so a crash can never de-index a committed doc.
+    // See ADR-008 Q4 + `index-emit-order.test.ts`.
     let contentPutCount = 0;
+    let newKeysClassA = 0;
     const parallelPuts: Array<Promise<unknown>> = [];
     for (const input of inputs) {
       if (input.op !== "D" && input.body !== undefined) {
@@ -478,6 +509,27 @@ export class Writer {
               throw error;
             }),
         );
+      }
+      // Additive index keys for the NEW value — emitted before the
+      // commit on I/U (a D has no new value). `op:"D"` and a missing
+      // body project to no keys. Empty `#indexes` short-circuits.
+      if (this.#indexes.length > 0 && input.op !== "D") {
+        const newKeys = allIndexKeysFor(logPrefix, this.#indexes, input.body, input.docId);
+        for (const k of newKeys) {
+          assertKeyWithinLimit(k);
+          newKeysClassA++;
+          parallelPuts.push(
+            this.#storage
+              .put(k, EMPTY_BODY, { ifNoneMatch: "*", contentType: APPLICATION_JSON })
+              .catch((error: unknown) => {
+                this.#observe429(error, input.collection);
+                if (isPreconditionFailed(error)) {
+                  return;
+                }
+                throw error;
+              }),
+          );
+        }
       }
     }
     await Promise.all(parallelPuts);
@@ -564,25 +616,32 @@ export class Writer {
     }
     const committedEntries: readonly LogEntry[] = [committedEntry];
 
-    // ── Step 5b. Emit secondary-index entries (AFTER the commit). ───
-    // BOTH the fresh-win and the own-session-adoption break above reach
-    // here with the resolved committing `seq`. Emitting after the
-    // `log/<seq>` create flips the crash polarity (ADR-008 Q4): the only
-    // residual is a committed-but-briefly-unindexed doc — the log entry
-    // names the docId, so the snapshot+log fold / `rebuildIndex` re-
-    // derives the marker. A crash before the commit can no longer de-
-    // index a committed doc.
+    // ── Step 5b. DELETE stale secondary-index keys (AFTER the commit). ─
+    // The additive `newKeys` already went down in Step 4 (before the
+    // commit), so a committed row is always index-findable. This block
+    // handles only the OTHER half: deleting the OLD value's now-obsolete
+    // markers. Keeping the stale-key DELETE AFTER the commit is the
+    // load-bearing polarity (ADR-008 Q4): a crash here leaves the OLD
+    // value's marker lingering — benign, the index read includes the
+    // candidate, the fold sees the doc's NEW committed value, and
+    // `matchesWire` (query.ts) drops the false-positive; the lingering
+    // key is cleaned by a later same-doc write or operator
+    // `rebuild-index`. The inverse — de-indexing a committed doc with no
+    // log entry to drive repair — can NEVER happen, since the DELETE is
+    // strictly after the commit.
     //
-    // Adoption correctness: an adopted lost-ack commit is EXACTLY the
-    // attempt that may have died after the create but before this emit,
-    // so it MUST run the emit too (do not skip it). Idempotent under
-    // re-run: the `newKeys` PUT is `ifNoneMatch: "*"` (412 swallowed)
-    // and the `staleKeys` DELETE is contractually idempotent, so re-
-    // emitting after a partial prior emit is safe.
+    // BOTH the fresh-win and the own-session-adoption break above reach
+    // here with the resolved committing `seq`. Adoption correctness: an
+    // adopted lost-ack commit is EXACTLY the attempt that may have died
+    // after the create but before this DELETE, so it MUST run it too (do
+    // not skip it). Idempotent under re-run: `Storage.delete` is
+    // contractually idempotent, and the Step-4 `newKeys` PUT is
+    // `ifNoneMatch: "*"` (412 swallowed).
     //
     // Empty `#indexes` short-circuits the whole block (including the
     // pre-image GET), preserving zero behaviour change for collections
-    // without declared indexes.
+    // without declared indexes. An `op:"I"` has no pre-image and no
+    // stale keys, so it never reads.
     //
     // The pre-image is read at the RESOLVED committing `seq` (Step 5
     // may have advanced `seq` past a foreign winner): `#readPreImage`
@@ -591,64 +650,51 @@ export class Writer {
     // earlier in this batch the in-batch image takes precedence.
     //
     // Filter-aware projection (T4): `allIndexKeysFor` short-circuits on
-    // `def.predicate` miss. The diff `oldKeys` vs `newKeys` covers all
-    // four U-quadrants (match→match diffs; match→miss DELETEs all;
-    // miss→match PUTs all; miss→miss no-ops), each pinned by a named
-    // test in `writer.test.ts` ("Writer — filtered index").
-    let indexClassA = 0;
+    // `def.predicate` miss. The diff `oldKeys \ newKeys` covers all four
+    // U-quadrants (match→match deletes only the changed keys; match→miss
+    // DELETEs all; miss→match deletes nothing; miss→miss no-ops), each
+    // pinned by a named test in `writer.test.ts` ("Writer — filtered
+    // index").
+    let staleKeysClassA = 0;
     if (this.#indexes.length > 0) {
-      const indexPuts: Array<Promise<unknown>> = [];
+      const indexDeletes: Array<Promise<unknown>> = [];
       // Per-docId in-batch image map: a later input on the same docId
       // reads the in-batch pre-image, not the on-disk one.
       const inBatchImage = new Map<string, DocumentData | undefined>();
       for (const input of inputs) {
-        let newKeys: readonly string[] = [];
         let staleKeys: readonly string[] = [];
-        if (input.op === "I") {
-          newKeys = allIndexKeysFor(logPrefix, this.#indexes, input.body, input.docId);
-        } else if (input.op === "U") {
+        if (input.op === "U") {
           const preImage = inBatchImage.has(input.docId)
             ? inBatchImage.get(input.docId)
             : await this.#readPreImage(logPrefix, input.collection, input.docId, seq);
           const oldKeys = allIndexKeysFor(logPrefix, this.#indexes, preImage, input.docId);
-          newKeys = allIndexKeysFor(logPrefix, this.#indexes, input.body, input.docId);
-          const newSet = new Set(newKeys);
+          const newSet = new Set(
+            allIndexKeysFor(logPrefix, this.#indexes, input.body, input.docId),
+          );
           staleKeys = oldKeys.filter((k) => !newSet.has(k));
-        } else {
+        } else if (input.op === "D") {
           const preImage = inBatchImage.has(input.docId)
             ? inBatchImage.get(input.docId)
             : await this.#readPreImage(logPrefix, input.collection, input.docId, seq);
           staleKeys = allIndexKeysFor(logPrefix, this.#indexes, preImage, input.docId);
         }
-        for (const k of newKeys) {
-          assertKeyWithinLimit(k);
-          indexPuts.push(
-            this.#storage
-              .put(k, EMPTY_BODY, { ifNoneMatch: "*", contentType: APPLICATION_JSON })
-              .catch((error: unknown) => {
-                this.#observe429(error, input.collection);
-                if (isPreconditionFailed(error)) {
-                  return;
-                }
-                throw error;
-              }),
-          );
-        }
+        // (op:"I" has no pre-image → no stale keys.)
         for (const k of staleKeys) {
           // Storage.delete is contractually idempotent — no defensive catch.
-          indexPuts.push(this.#storage.delete(k));
+          indexDeletes.push(this.#storage.delete(k));
         }
-        indexClassA += newKeys.length + staleKeys.length;
-        if (newKeys.length + staleKeys.length > 0) {
-          ctxMetrics().histogram(
-            "db.write.index_ops_per_logical_write",
-            newKeys.length + staleKeys.length,
-            { collection: input.collection },
-          );
-        }
+        staleKeysClassA += staleKeys.length;
         inBatchImage.set(input.docId, input.op === "D" ? undefined : input.body);
       }
-      await Promise.all(indexPuts);
+      await Promise.all(indexDeletes);
+    }
+    // The per-logical-write index-op histogram counts BOTH halves: the
+    // `newKeys` PUTs (Step 4) and the `staleKeys` DELETEs (Step 5b).
+    const indexClassA = newKeysClassA + staleKeysClassA;
+    if (this.#indexes.length > 0 && indexClassA > 0) {
+      ctxMetrics().histogram("db.write.index_ops_per_logical_write", indexClassA, {
+        collection: input0.collection,
+      });
     }
 
     // ── Step 6. (removed). No current.json write on the commit path. ─
@@ -739,31 +785,6 @@ export class Writer {
   }
 
   /**
-   * Read the pre-image content body for a doc by walking the live
-   * log backwards from `currentNextSeq` looking for the
-   * most-recent I/U entry on this `(collection, docId)`. Returns
-   * `undefined` when:
-   *
-   *   - the doc's most-recent op was `D` (tombstone — no live body);
-   *   - no entry for this doc lives inside the visible log range
-   *     `[log_seq_start, currentNextSeq)` (a fresh-insert race or
-   *     the doc has been folded into the snapshot but is no longer
-   *     referenced).
-   *
-   * Used ONLY by the index-emission path on `U` / `D` to compute
-   * the stale-key set. Bounded by `log_seq_start`: entries below
-   * have been folded into the snapshot and may already be swept
-   * off the bucket — a snapshot fold is the rebuild command's job
-   * (see `./rebuild-index.ts`), not the writer's.
-   *
-   * **Cost note:** linear walk, O(snapshot lag). For day-one Phase
-   * 8 collections (helpdesk-shape: 100s of docs, <10k log entries)
-   * this is fine — the compactor folds the live tail every ~100
-   * entries (`packages/server/src/compactor.ts`). A follow-up ticket
-   * caches per-doc index head in `current.json` for O(1) lookup.
-   * The bound is documented; out of scope here.
-   */
-  /**
    * Auto-create the per-collection `current.json` at
    * `this.#currentJsonKey` with a zero-state initial manifest. Called
    * by `#singleAttemptCommit` when the read returned `null` (fresh
@@ -813,6 +834,29 @@ export class Writer {
     return recovered;
   }
 
+  /**
+   * Read the pre-image content body for a doc by walking the live log
+   * backwards from `currentNextSeq` looking for the most-recent I/U
+   * entry on this `(collection, docId)`. Returns `undefined` when:
+   *
+   *   - the doc's most-recent op was `D` (tombstone — no live body);
+   *   - no entry for this doc lives inside the visible log range
+   *     `[log_seq_start, currentNextSeq)` (a fresh-insert race or the
+   *     doc has been folded into the snapshot but is no longer
+   *     referenced).
+   *
+   * Used ONLY by the index-emission path's stale-key half (Step 5b, on
+   * `U` / `D`) to compute which OLD-value keys to DELETE. Bounded by
+   * `log_seq_start`: entries below have been folded into the snapshot
+   * and may already be swept off the bucket — a snapshot fold is the
+   * rebuild command's job (see `./rebuild-index.ts`), not the writer's.
+   *
+   * **Cost note:** linear walk, O(snapshot lag). For helpdesk-shape
+   * collections (100s of docs, <10k log entries) this is fine — the
+   * compactor folds the live tail every ~100 entries
+   * (`packages/server/src/compactor.ts`). A follow-up ticket caches
+   * per-doc index head in `current.json` for O(1) lookup.
+   */
   async #readPreImage(
     logPrefix: string,
     collection: string,
