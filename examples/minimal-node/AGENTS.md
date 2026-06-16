@@ -85,15 +85,15 @@ read it via your editor's TS LS or via the published types).
 
 ## Verification
 
-| Command            | What it does                                       | Runtime          |
-| ------------------ | -------------------------------------------------- | ---------------- |
-| `pnpm install`     | One-time bootstrap — the scaffold ships without `node_modules/`, so `pnpm verify` / `pnpm dev` fail with `Cannot find package '…'` until this runs once | seconds to a minute |
-| `pnpm verify`      | `pnpm run typecheck && pnpm run test` — the green-light gate; what an agent should run as the smoke check before claiming the change works | seconds |
-| `pnpm typecheck`   | TS typecheck across the `app` + `server` project references | seconds   |
-| `pnpm test`        | `vitest run --passWithNoTests` — standalone `vitest.config.ts` (Node env). The minimal template ships no SPA tests by default; `--passWithNoTests` keeps the gate green until you add one. | seconds |
-| `pnpm dev`         | Run `vite` — `baerlyDev()` mounts the Node HTTP listener as Connect middleware next to the SPA dev server; same origin on :5173 | seconds to start |
-| `pnpm build`       | `tsc -b && vite build` — emits the SPA into `dist/client/` | seconds  |
-| `pnpm start`       | `node --experimental-strip-types src/server/index.ts` — production entry; serves the SPA from `dist/client/` via `webRoot` | seconds to start |
+| Command          | What it does                                                                                                                                                                               | Runtime             |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------- |
+| `pnpm install`   | One-time bootstrap — the scaffold ships without `node_modules/`, so `pnpm verify` / `pnpm dev` fail with `Cannot find package '…'` until this runs once                                    | seconds to a minute |
+| `pnpm verify`    | `pnpm run typecheck && pnpm run test` — the green-light gate; what an agent should run as the smoke check before claiming the change works                                                 | seconds             |
+| `pnpm typecheck` | TS typecheck across the `app` + `server` project references                                                                                                                                | seconds             |
+| `pnpm test`      | `vitest run --passWithNoTests` — standalone `vitest.config.ts` (Node env). The minimal template ships no SPA tests by default; `--passWithNoTests` keeps the gate green until you add one. | seconds             |
+| `pnpm dev`       | Run `vite` — `baerlyDev()` mounts the Node HTTP listener as Connect middleware next to the SPA dev server; same origin on :5173                                                            | seconds to start    |
+| `pnpm build`     | `tsc -b && vite build` — emits the SPA into `dist/client/`                                                                                                                                 | seconds             |
+| `pnpm start`     | `node --experimental-strip-types src/server/index.ts` — production entry; serves the SPA from `dist/client/` via `webRoot`                                                                 | seconds to start    |
 
 **`pnpm verify` exercises typecheck + tests only.** The dev-auth
 middleware, the SPA bundle, and any custom `/api/*` route are NOT
@@ -105,21 +105,21 @@ http://localhost:5173/<path>`) before declaring the task complete.
 
 ## Where the code is
 
-| Path                        | What it is                                          |
-| --------------------------- | --------------------------------------------------- |
-| `src/server/index.ts`       | Server entry — composes `s3Storage` / `r2Storage` + a verifier and calls `baerlyNode({ ... }).listen(PORT)` |
-| `src/web/`, `index.html`    | Optional SPA shell built by Vite into `dist/client/`. `src/web/main.ts` is a ~17-line hello-world: reads `client.collection<Note>("notes").all()` to render a `${n} note(s)` count and an `[Add note]` button that inserts a timestamped row and re-fetches. Demonstrates both read and write paths on first load — extend, replace, or remove the whole tree if not needed. |
-| `vite.config.ts`            | Vite client build — `outDir: dist/client`; `baerlyDev()` mounts the Node listener as middleware so SPA + `/v1/*` share `:5173` in dev |
-| `tsconfig.{app,server}.json` | TS project references for the client and server projects |
-| `baerly.config.ts`          | App config — `app`, `tenant`, `target`, `domain`, `collections` (schemas live here). |
-| `types.ts`                  | Shared types between the Node server (`src/server/`) and the SPA (`src/web/`). Both `tsconfig.app.json` and `tsconfig.server.json` include this file; put any row type or interface that crosses the boundary here. |
+| Path                         | What it is                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/server/index.ts`        | Server entry — composes `s3Storage` / `r2Storage` + a verifier and calls `baerlyNode({ ... }).listen(PORT)`                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `src/web/`, `index.html`     | Optional SPA shell built by Vite into `dist/client/`. `src/web/main.ts` is a ~17-line hello-world: reads `client.collection("notes").all()` to render a `${n} note(s)` count and an `[Add note]` button that inserts a timestamped row and re-fetches. Demonstrates both read and write paths on first load — extend, replace, or remove the whole tree if not needed. The `config`-bound `client.collection("notes")` is the typed surface (the generic on `.collection()` is the collection **name**, not the row type). |
+| `vite.config.ts`             | Vite client build — `outDir: dist/client`; `baerlyDev()` mounts the Node listener as middleware so SPA + `/v1/*` share `:5173` in dev                                                                                                                                                                                                                                                                                                                                                                                      |
+| `tsconfig.{app,server}.json` | TS project references for the client and server projects                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `baerly.config.ts`           | App config — `app`, `tenant`, `target`, `domain`, `collections` (schemas live here).                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `types.ts`                   | Shared types between the Node server (`src/server/`) and the SPA (`src/web/`). Both `tsconfig.app.json` and `tsconfig.server.json` include this file; put any row type or interface that crosses the boundary here.                                                                                                                                                                                                                                                                                                        |
 
 > **`baerly.config.ts` and `types.ts` are dual-included** by both
 > `tsconfig.app.json` and `tsconfig.server.json`. Both can only
 > import from `baerly-storage`, `zod`, and other dual-included root
 > files. Paths under `src/server/` are server-only; importing them
 > here triggers `TS6307: File … is not listed within the file list
-> of project … tsconfig.app.json`. Cross-boundary interfaces belong
+of project … tsconfig.app.json`. Cross-boundary interfaces belong
 > in `types.ts`; re-export from a server-only file if downstream code
 > wants a local name.
 
@@ -128,7 +128,7 @@ http://localhost:5173/<path>`) before declaring the task complete.
 - **Writing tests** — the kernel exports `MemoryStorage`, an
   in-memory `Storage` impl that's the canonical backend for unit
   tests. Don't roll your own — `Db.create({ storage, app, tenant,
-  config })` is the same boilerplate prod uses; passing
+config })` is the same boilerplate prod uses; passing
   `new MemoryStorage()` swaps S3 for an in-process map.
 
   ```ts
@@ -156,9 +156,10 @@ http://localhost:5173/<path>`) before declaring the task complete.
   instance into multiple `Db.create` calls so they share the
   underlying bucket.
 
-- **Predicates** — `db.collection<Doc>(name).where({...}).all()`. Two
-  shapes:
-
+- **Predicates** — `db.collection(name).where({...}).all()` (the row
+  type is inferred from the schema declared for `name` in
+  `baerly.config.ts`; the generic on `.collection()` is the collection
+  **name**, not the row type). Two shapes:
   - **Object literal** — equality only (top-level, dotted-path, or
     nested literal sub-predicate). Multi-field is implicit AND.
   - **Callback DSL** — `q => q.eq(...).gt(...).gte(...).lt(...).lte(...).in(...)`
@@ -172,24 +173,25 @@ http://localhost:5173/<path>`) before declaring the task complete.
   await db.collection("tickets").where({ status: "open" }).all();
 
   // Dotted-path on a nested field
-  await db.collection("tickets")
-    .where({ "assignee.team": "platform" })
-    .all();
+  await db.collection("tickets").where({ "assignee.team": "platform" }).all();
 
   // Operator on a single field — set membership (callback form)
-  await db.collection("tickets")
-    .where(q => q.in("status", ["open", "pending"]))
+  await db
+    .collection("tickets")
+    .where((q) => q.in("status", ["open", "pending"]))
     .all();
 
   // Range — also callback form
-  await db.collection("tickets")
-    .where(q => q.gte("priority", 5).lt("priority", 10))
+  await db
+    .collection("tickets")
+    .where((q) => q.gte("priority", 5).lt("priority", 10))
     .all();
 
   // AND-merge across two .where() calls (mix shapes freely)
-  await db.collection("tickets")
+  await db
+    .collection("tickets")
     .where({ status: "open" })
-    .where(q => q.gte("priority", 5))
+    .where((q) => q.gte("priority", 5))
     .all();
   ```
 
@@ -217,7 +219,7 @@ http://localhost:5173/<path>`) before declaring the task complete.
   ```
 
   With that declared, `db.collection("tickets").where({ status: "open"
-  }).all()` walks `by_status` automatically. Composite indexes
+}).all()` walks `by_status` automatically. Composite indexes
   (`on: ["status", "priority"]`) match any leftmost prefix.
   Mismatches (predicate doesn't cover any index) fall back to a full
   table scan with a metric bump; correctness is preserved because the
@@ -256,12 +258,12 @@ http://localhost:5173/<path>`) before declaring the task complete.
   (`db.collection(name).insert(...)`) is the canonical path; reach for `curl`
   only when debugging the wire. Mutation bodies are wrapped:
 
-  | Route                       | Body                | Response                      |
-  | --------------------------- | ------------------- | ----------------------------- |
-  | `POST   /v1/c/:collection`       | `{"doc":{...}}`     | `201 {_id}`                   |
-  | `PATCH  /v1/c/:collection/:id`   | `{"patch":{...}}`   | `200 {modified}`              |
-  | `PUT    /v1/c/:collection/:id`   | `{"doc":{...}}`     | `200 {modified}`              |
-  | `DELETE /v1/c/:collection/:id`   | —                   | `204`                         |
+  | Route                          | Body              | Response         |
+  | ------------------------------ | ----------------- | ---------------- |
+  | `POST   /v1/c/:collection`     | `{"doc":{...}}`   | `201 {_id}`      |
+  | `PATCH  /v1/c/:collection/:id` | `{"patch":{...}}` | `200 {modified}` |
+  | `PUT    /v1/c/:collection/:id` | `{"doc":{...}}`   | `200 {modified}` |
+  | `DELETE /v1/c/:collection/:id` | —                 | `204`            |
 
   Reads (`GET /v1/c/:collection[/:id]`, `GET /v1/count?collection=…`,
   `GET /v1/since?collection=…&cursor=…`) take no body and return
@@ -288,6 +290,7 @@ zero env vars. Two patterns flip to a production-fit posture; pick
 the one matching your gate.
 
 <!-- pattern-b:start -->
+
 **Pattern B — `auth: "shared-secret"`** (single-tenant
 server-to-server). No factory code changes; `baerly.config.ts` flips:
 
@@ -304,6 +307,7 @@ the live bucket separately with `baerly doctor --bucket=<s3-uri>`.
 
 <!-- pattern-b:end -->
 <!-- pattern-c:start -->
+
 **Pattern C — JWKS-backed JWT** (multi-tenant; OIDC IdP). The factory
 `verifier:` overrides `config.auth`, so dev keeps `"none"` and prod
 gets `bearerJwt`:
@@ -347,6 +351,7 @@ IdP issues one tenant per token; use `tenantPrefix` for single-tenant
 apps or tenancy enforced outside Baerly.
 
 <!-- pattern-c:end -->
+
 - **Storage backend** — `src/server/index.ts` picks between
   `s3Storage` (AWS) and `r2Storage` (Cloudflare R2) based on whether
   `R2_ACCOUNT_ID` is set. To use **Minio** (self-hosted dev S3) or
@@ -359,7 +364,7 @@ apps or tenancy enforced outside Baerly.
 
 - **Switching from static creds to EKS Pod Identity** — in
   `src/server/index.ts`, swap `credentials: { accessKeyId,
-  secretAccessKey }` for `credentials: fromEksPodIdentity()` and add
+secretAccessKey }` for `credentials: fromEksPodIdentity()` and add
   `fromEksPodIdentity` to your import:
   `import { s3Storage, fromEksPodIdentity } from "@gusto/baerly-storage/node"`.
   The agent reads `AWS_CONTAINER_CREDENTIALS_FULL_URI` +
@@ -408,6 +413,7 @@ apps or tenancy enforced outside Baerly.
 ## Maintenance
 
 <!-- pattern-d:start -->
+
 Maintenance is automatic and write-triggered. No cron, no sidecar, no scheduler, no
 timer, no lock, no app-config knob — identical on every host. Every write runs a
 bounded GC slice inline plus a go/no-go compaction fold bounded by a fold-size ceiling
@@ -421,10 +427,11 @@ maintenance, so the published idle-reader cost bound holds.
 A bucket maintains itself as long as it takes writes. A bucket served read-only does
 not auto-compact and pays a small, bounded replay — fine at small scale, a signal to
 graduate once a collection is large. See docs/about/graduation.md for the per-tier
-envelope and the BAERLY_MAINTENANCE_* operator env vars (you almost never need them).
+envelope and the BAERLY*MAINTENANCE*\* operator env vars (you almost never need them).
 
 Operator opt-in: call runScheduledMaintenance from @gusto/baerly-storage/maintenance on
 your own schedule. Not required for steady-state operation.
+
 <!-- pattern-d:end -->
 
 ## When to graduate
@@ -439,6 +446,7 @@ model puts the soft ceiling at:
 Past those, S3 list-prefix latency, snapshot fold cost, and per-class
 op pricing start to dominate; you're better off on a real database.
 Pick your graduation target:
+
 - **Cloudflare Workers + lock-in OK:** [D1](https://developers.cloudflare.com/d1/) — cheaper per-write at M-size.
 - **Off-Workers or portability matters:** managed Postgres.
 - **Single-instance Node:** SQLite via Litestream.

@@ -74,15 +74,15 @@ read it via your editor's TS LS or via the published types).
 
 ## Verification
 
-| Command          | What it does                                                                            | Runtime          |
-| ---------------- | --------------------------------------------------------------------------------------- | ---------------- |
-| `pnpm install`   | One-time bootstrap — the scaffold ships without `node_modules/`, so `pnpm verify` / `pnpm dev` fail with `Cannot find package '…'` until this runs once | seconds to a minute |
-| `pnpm verify`    | `pnpm run typecheck && pnpm run test` — the green-light gate; what an agent should run as the smoke check before claiming the change works | seconds |
-| `pnpm typecheck` | TS typecheck across the worker + web project references (`tsc -b --noEmit`)            | seconds          |
-| `pnpm test`      | `vitest run --passWithNoTests` — standalone `vitest.config.ts` (Node env, ignores `vite.config.ts` so the Cloudflare plugin doesn't load). The minimal template ships no SPA tests by default; `--passWithNoTests` keeps the gate green until you add one. | seconds |
-| `pnpm dev`       | Run `vite` — the Cloudflare plugin runs the Worker inside `workerd` next to the SPA dev server; same origin on :5173 | seconds to start |
-| `pnpm build`     | `tsc -b && vite build` — emits `dist/client/` for the Workers Assets binding            | seconds          |
-| `pnpm deploy`    | `wrangler deploy` — ships Worker + assets in one shipment (auto-creates R2 on first run via `--x-provision`) | seconds          |
+| Command          | What it does                                                                                                                                                                                                                                               | Runtime             |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------- |
+| `pnpm install`   | One-time bootstrap — the scaffold ships without `node_modules/`, so `pnpm verify` / `pnpm dev` fail with `Cannot find package '…'` until this runs once                                                                                                    | seconds to a minute |
+| `pnpm verify`    | `pnpm run typecheck && pnpm run test` — the green-light gate; what an agent should run as the smoke check before claiming the change works                                                                                                                 | seconds             |
+| `pnpm typecheck` | TS typecheck across the worker + web project references (`tsc -b --noEmit`)                                                                                                                                                                                | seconds             |
+| `pnpm test`      | `vitest run --passWithNoTests` — standalone `vitest.config.ts` (Node env, ignores `vite.config.ts` so the Cloudflare plugin doesn't load). The minimal template ships no SPA tests by default; `--passWithNoTests` keeps the gate green until you add one. | seconds             |
+| `pnpm dev`       | Run `vite` — the Cloudflare plugin runs the Worker inside `workerd` next to the SPA dev server; same origin on :5173                                                                                                                                       | seconds to start    |
+| `pnpm build`     | `tsc -b && vite build` — emits `dist/client/` for the Workers Assets binding                                                                                                                                                                               | seconds             |
+| `pnpm deploy`    | `wrangler deploy` — ships Worker + assets in one shipment (auto-creates R2 on first run via `--x-provision`)                                                                                                                                               | seconds             |
 
 **`pnpm verify` exercises typecheck + tests only.** The dev-auth
 middleware, the SPA bundle, and any custom `/api/*` route are NOT
@@ -94,44 +94,64 @@ http://localhost:5173/<path>`) before declaring the task complete.
 
 ## Where the code is
 
-| Path                       | What it is                                                                           |
-| -------------------------- | ------------------------------------------------------------------------------------ |
-| `src/server/index.ts`      | Worker entry — `baerlyWorker((env) => ({ verifier }))`                              |
-| `wrangler.jsonc`           | Cloudflare Worker manifest — name, R2 binding, assets, vars |
-| `index.html`               | SPA shell — Vite's entry point at the project root; references `/src/web/main.ts`.  |
-| `src/web/main.ts`          | SPA client entry — a ~17-line hello-world: reads `client.collection<Note>("notes").all()` to render a `${n} note(s)` count and an `[Add note]` button that inserts a timestamped row and re-fetches. Demonstrates both read and write paths on first load. Extend or replace; `client.collection<Row>(name)` is the typed surface. Workers Assets serves the built bundle from `dist/client/`. |
-| `vite.config.ts`           | Vite + `@cloudflare/vite-plugin` — runs the Worker inside `workerd` in dev          |
-| `tsconfig.json`            | Root project-references stub                                                         |
-| `tsconfig.app.json`        | Client TS project (`src/web/`, DOM lib)                                              |
-| `tsconfig.worker.json`     | Worker TS project (`src/server/`, workerd lib)                                       |
-| `baerly.config.ts`         | App config — `app`, `tenant`, `target`, `domain`, `collections` (schemas live here). |
-| `types.ts`                 | Shared types between the Worker (`src/server/`) and the SPA (`src/web/`). Both project tsconfigs include this file; put any row type or interface that crosses the boundary here. |
+| Path                   | What it is                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/server/index.ts`  | Worker entry — `baerlyWorker((env) => ({ verifier }))`                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `wrangler.jsonc`       | Cloudflare Worker manifest — name, R2 binding, assets, vars                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `index.html`           | SPA shell — Vite's entry point at the project root; references `/src/web/main.ts`.                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `src/web/main.ts`      | SPA client entry — a ~17-line hello-world: reads `client.collection("notes").all()` to render a `${n} note(s)` count and an `[Add note]` button that inserts a timestamped row and re-fetches. Demonstrates both read and write paths on first load. Extend or replace; the `config`-bound `client.collection("notes")` is the typed surface (the generic on `.collection()` is the collection **name**, not the row type). Workers Assets serves the built bundle from `dist/client/`. |
+| `vite.config.ts`       | Vite + `@cloudflare/vite-plugin` — runs the Worker inside `workerd` in dev                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `tsconfig.json`        | Root project-references stub                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `tsconfig.app.json`    | Client TS project (`src/web/`, DOM lib)                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `tsconfig.worker.json` | Worker TS project (`src/server/`, workerd lib)                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `baerly.config.ts`     | App config — `app`, `tenant`, `target`, `domain`, `collections` (schemas live here).                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `types.ts`             | Shared types between the Worker (`src/server/`) and the SPA (`src/web/`). Both project tsconfigs include this file; put any row type or interface that crosses the boundary here.                                                                                                                                                                                                                                                                                                       |
 
 > **`baerly.config.ts` and `types.ts` are dual-included** by both
 > `tsconfig.app.json` and `tsconfig.worker.json`. Both can only
 > import from `baerly-storage`, `zod`, and other dual-included root
 > files. Paths under `src/server/` are worker-only; importing them
 > here triggers `TS6307: File … is not listed within the file list
-> of project … tsconfig.app.json`. Cross-boundary interfaces belong
+of project … tsconfig.app.json`. Cross-boundary interfaces belong
 > in `types.ts`; re-export from a server-only file if downstream code
 > wants a local name.
 
 ## When editing X, read Y
 
-- **Typed collections** — three ways to get a typed row, in DX order:
-  1. **Bind the config.** Declare the collection (with an optional
-     schema) in `baerly.config.ts`, pass `config` to
-     `createBaerlyClient({ baseUrl, config })` (or `Db.create({
-     storage, config })`), and `client.collection("tickets")` returns
-     `ClientCollection<Row>` with `Row` derived from the schema. No
-     generic needed.
-  2. **Explicit generic, kernel constraint.** Without a declared
-     collection, the second overload requires the row to satisfy
-     the kernel's `DocumentData` shape (`{ [k: string]: DocumentValue }`):
+- **Typed collections** — two ways to get a typed row, in DX order.
+  The generic on `client.collection<N>(name)` is the collection
+  **name** (constrained to `CollectionNames<typeof config>`), not the
+  row type — so don't pass a row type to it.
+  1. **Bind the config.** This template's `src/web/main.ts` already
+     passes `config` to `createBaerlyClient({ baseUrl, config })` (and
+     `src/notes.test.ts` passes `config` to `Db.create`), so
+     `client.collection("notes")` returns `ClientCollection<Row>` with
+     `Row` derived from the schema declared in `baerly.config.ts`. No
+     generic needed. When you need to name that row type elsewhere, use
+     `RowOf<typeof config, "notes">` (re-exported from
+     `@gusto/baerly-storage`) — not a generic on `.collection()`.
+  2. **Cast the handle (undeclared collection).** This template's
+     `client` is bound to `config`, so its names narrow to the
+     declared collections. To reach a collection that isn't in
+     `config`, build an unbound client
+     (`createBaerlyClient({ baseUrl })` with no `config`) — its names
+     widen to `string` and its row defaults to `DocumentData`. Cast at
+     the construction site for a narrower shape that still satisfies
+     the kernel's `DocumentData` constraint
+     (`{ [k: string]: DocumentValue }`):
      ```ts
-     import type { DocumentData } from "@gusto/baerly-storage";
-     interface Bookmark extends DocumentData { _id: string; url: string }
-     await client.collection<Bookmark>("bookmarks").all();
+     import {
+       createBaerlyClient,
+       type ClientCollection,
+       type DocumentData,
+     } from "@gusto/baerly-storage/client";
+     interface Bookmark extends DocumentData {
+       _id: string;
+       url: string;
+     }
+     const raw = createBaerlyClient({ baseUrl: "" });
+     const bookmarks = raw.collection("bookmarks") as ClientCollection<Bookmark>;
+     await bookmarks.all();
      ```
      A plain `interface Bookmark { _id: string; url: string }`
      (no index signature) will fail with TS2344 — the constraint
@@ -140,7 +160,7 @@ http://localhost:5173/<path>`) before declaring the task complete.
 - **Writing tests** — the kernel exports `MemoryStorage`, an
   in-memory `Storage` impl that's the canonical backend for unit
   tests. Don't roll your own — `Db.create({ storage, app, tenant,
-  config })` is the same boilerplate prod uses; passing
+config })` is the same boilerplate prod uses; passing
   `new MemoryStorage()` swaps R2 for an in-process map.
 
   ```ts
@@ -170,7 +190,6 @@ http://localhost:5173/<path>`) before declaring the task complete.
 
 - **Predicates** — `db.collection("tickets").where({...}).all()`. Two
   shapes:
-
   - **Object literal** — equality only (top-level, dotted-path, or
     nested literal sub-predicate). Multi-field is implicit AND.
   - **Callback DSL** — `q => q.eq(...).gt(...).gte(...).lt(...).lte(...).in(...)`
@@ -185,24 +204,25 @@ http://localhost:5173/<path>`) before declaring the task complete.
   await db.collection("tickets").where({ status: "open" }).all();
 
   // Dotted-path on a nested field
-  await db.collection("tickets")
-    .where({ "assignee.team": "platform" })
-    .all();
+  await db.collection("tickets").where({ "assignee.team": "platform" }).all();
 
   // Operator on a single field — set membership (callback form)
-  await db.collection("tickets")
-    .where(q => q.in("status", ["open", "pending"]))
+  await db
+    .collection("tickets")
+    .where((q) => q.in("status", ["open", "pending"]))
     .all();
 
   // Range — also callback form
-  await db.collection("tickets")
-    .where(q => q.gte("priority", 5).lt("priority", 10))
+  await db
+    .collection("tickets")
+    .where((q) => q.gte("priority", 5).lt("priority", 10))
     .all();
 
   // AND-merge across two .where() calls (mix shapes freely)
-  await db.collection("tickets")
+  await db
+    .collection("tickets")
     .where({ status: "open" })
-    .where(q => q.gte("priority", 5))
+    .where((q) => q.gte("priority", 5))
     .all();
   ```
 
@@ -230,7 +250,7 @@ http://localhost:5173/<path>`) before declaring the task complete.
   ```
 
   With that declared, `db.collection("tickets").where({ status: "open"
-  }).all()` walks `by_status` automatically. Composite indexes
+}).all()` walks `by_status` automatically. Composite indexes
   (`on: ["status", "priority"]`) match any leftmost prefix.
   Mismatches (predicate doesn't cover any index) fall back to a full
   table scan with a metric bump; correctness is preserved because the
@@ -269,12 +289,12 @@ http://localhost:5173/<path>`) before declaring the task complete.
   (`db.collection(name).insert(...)`) is the canonical path; reach for `curl`
   only when debugging the wire. Mutation bodies are wrapped:
 
-  | Route                       | Body                | Response                      |
-  | --------------------------- | ------------------- | ----------------------------- |
-  | `POST   /v1/c/:collection`       | `{"doc":{...}}`     | `201 {_id}`                   |
-  | `PATCH  /v1/c/:collection/:id`   | `{"patch":{...}}`   | `200 {modified}`              |
-  | `PUT    /v1/c/:collection/:id`   | `{"doc":{...}}`     | `200 {modified}`              |
-  | `DELETE /v1/c/:collection/:id`   | —                   | `204`                         |
+  | Route                          | Body              | Response         |
+  | ------------------------------ | ----------------- | ---------------- |
+  | `POST   /v1/c/:collection`     | `{"doc":{...}}`   | `201 {_id}`      |
+  | `PATCH  /v1/c/:collection/:id` | `{"patch":{...}}` | `200 {modified}` |
+  | `PUT    /v1/c/:collection/:id` | `{"doc":{...}}`   | `200 {modified}` |
+  | `DELETE /v1/c/:collection/:id` | —                 | `204`            |
 
   Reads (`GET /v1/c/:collection[/:id]`, `GET /v1/count?collection=…`,
   `GET /v1/since?collection=…&cursor=…`) take no body and return
@@ -289,7 +309,7 @@ http://localhost:5173/<path>`) before declaring the task complete.
   every request resolves to `tenant: "minimal-demo"` and `Authorization`
   is ignored. The adapter reads `config.auth` to pick its verifier;
   a `verifier:` on the factory overrides it. `baerly doctor
-  --target=cloudflare` warns on `"none"` for deploy targets. See
+--target=cloudflare` warns on `"none"` for deploy targets. See
   "Going to production" below for the two production-fit recipes.
 
 ### Going to production
@@ -299,6 +319,7 @@ zero env vars. Two patterns flip to a production-fit posture; pick the
 one matching your gate.
 
 <!-- pattern-a:start -->
+
 **Pattern A — env-aware verifier (recommended for CF Access).** Same
 artifact ships to dev and prod; the factory `verifier:` override
 engages only when prod env vars are present. `baerlyWorker` resolves
@@ -313,7 +334,7 @@ export default defineConfig({
   app: "minimal-cloudflare",
   tenant: "minimal-demo",
   target: "cloudflare",
-  auth: "none",     // dev default
+  auth: "none", // dev default
   collections: { notes: {} },
 });
 ```
@@ -352,6 +373,7 @@ actually carries a tenant claim.
 
 <!-- pattern-a:end -->
 <!-- pattern-b:start -->
+
 **Pattern B — `auth: "shared-secret"`.** Single-tenant
 server-to-server callers (CI and internal services). No factory
 code changes; only `baerly.config.ts` flips:
@@ -382,9 +404,7 @@ const { SHARED_SECRET } = loadDevVars(".dev.vars", "SHARED_SECRET");
 export default defineConfig({
   plugins: [
     cloudflare(),
-    ...(SHARED_SECRET !== undefined
-      ? [baerlyDevAuth({ secret: SHARED_SECRET })]
-      : []),
+    ...(SHARED_SECRET !== undefined ? [baerlyDevAuth({ secret: SHARED_SECRET })] : []),
   ],
 });
 ```
@@ -394,6 +414,7 @@ if `auth: "shared-secret"` is set without `SHARED_SECRET` reachable
 from the runtime env.
 
 <!-- pattern-b:end -->
+
 - **Extending the Worker with a custom route** — `baerlyWorker(...)`
   owns `/v1/*`, including `/v1/healthz`. For server-side endpoints the SPA
   client can't run on its own (the canonical case: an endpoint that
@@ -456,7 +477,7 @@ from the runtime env.
   `SHARED_SECRET` (only required if you flip `auth` to
   `"shared-secret"`) live in `.dev.vars` for local `wrangler dev`
   and behind `wrangler secret put` in production. `baerly doctor
-  --target=cloudflare` reads `CF_ACCESS_*` from `wrangler.jsonc:vars`
+--target=cloudflare` reads `CF_ACCESS_*` from `wrangler.jsonc:vars`
   only, so setting them via `wrangler secret put` would silently
   defeat the doctor check.
 
@@ -490,6 +511,7 @@ from the runtime env.
 ## Maintenance
 
 <!-- pattern-d:start -->
+
 Maintenance is automatic and write-triggered. No cron, no sidecar, no scheduler, no
 timer, no lock, no app-config knob — identical on every host. Every write runs a
 bounded GC slice inline plus a go/no-go compaction fold bounded by a fold-size ceiling
@@ -503,10 +525,11 @@ maintenance, so the published idle-reader cost bound holds.
 A bucket maintains itself as long as it takes writes. A bucket served read-only does
 not auto-compact and pays a small, bounded replay — fine at small scale, a signal to
 graduate once a collection is large. See docs/about/graduation.md for the per-tier
-envelope and the BAERLY_MAINTENANCE_* operator env vars (you almost never need them).
+envelope and the BAERLY*MAINTENANCE*\* operator env vars (you almost never need them).
 
 Operator opt-in: call runScheduledMaintenance from @gusto/baerly-storage/maintenance on
 your own schedule. Not required for steady-state operation.
+
 <!-- pattern-d:end -->
 
 ## When to graduate
@@ -521,6 +544,7 @@ model puts the soft ceiling at:
 Past those, S3 list-prefix latency, snapshot fold cost, and per-class
 op pricing start to dominate; you're better off on a real database.
 Pick your graduation target:
+
 - **Cloudflare Workers + lock-in OK:** [D1](https://developers.cloudflare.com/d1/) — cheaper per-write at M-size.
 - **Off-Workers or portability matters:** managed Postgres.
 - **Single-instance Node:** SQLite via Litestream.
