@@ -453,44 +453,22 @@ export class Writer {
     });
     let entry = mintEntry(seq);
 
-    // ── Step 4. PUT content bodies + index entries in parallel. ─────
+    // ── Step 4. PUT content bodies (BEFORE the commit). ─────────────
     // Content PUT: `ifNoneMatch: "*"` makes a same-hash re-write a
     // no-op (412 swallowed). Crash-recovery and same-body replay
-    // both rely on this idempotency property.
+    // both rely on this idempotency property. Content is content-
+    // addressed, so writing it before the commit is crash-safe: a
+    // crash here leaves an unreferenced body the compactor sweeps,
+    // never an orphan log entry with missing content.
     //
-    // Index PUT: each declared index emits one zero-byte PUT per new
-    // key. On `U` / `D` the pre-image is sourced from an earlier
-    // same-`docId` input in this commit's input array (if any) before
-    // falling back to a log back-walk — preserves correctness for an
-    // `[I, U]` or `[U, D]` input array. (Always length 1 today; this is
-    // the retained dead-generality the `#singleAttemptCommit` header notes.)
-    //
-    // Empty `#indexes` short-circuits the index block (including the
-    // pre-image GET), preserving zero behaviour change for
-    // collections without declared indexes.
-    //
-    // Filter-aware projection (T4): `allIndexKeysFor` short-circuits
-    // on `def.predicate` miss. The writer's diff `oldKeys` vs
-    // `newKeys` transparently covers all four U-quadrants without any
-    // structural change here:
-    //
-    //   match → match : both non-empty; diff PUTs/DELETEs as today.
-    //   match → miss  : oldKeys non-empty, newKeys empty → DELETE all.
-    //   miss  → match : oldKeys empty, newKeys non-empty → PUT all.
-    //   miss  → miss  : both empty → no-op for this def.
-    //
-    // All four quadrants are pinned by named tests in
-    // `writer.test.ts` ("Writer — filtered index"). Do
-    // not collapse them into one combined case — a regression in one
-    // quadrant should fail exactly one named test so the bug is
-    // localisable.
+    // Secondary-index emission does NOT happen here — it runs AFTER
+    // the committing `log/<seq>` create (Step 5b) so the only crash
+    // residual is a committed-but-briefly-unindexed doc (the log
+    // entry names the docId; the snapshot+log fold / `rebuildIndex`
+    // re-derives the marker), never a de-indexed committed doc the
+    // fold can't repair. See ADR-008 Q4.
     let contentPutCount = 0;
-    let indexClassA = 0;
     const parallelPuts: Array<Promise<unknown>> = [];
-    // Per-docId in-batch image map: tracks the latest post-image
-    // each input lays down so a later input on the same docId reads
-    // the in-batch pre-image, not the on-disk one.
-    const inBatchImage = new Map<string, DocumentData | undefined>();
     for (const input of inputs) {
       if (input.op !== "D" && input.body !== undefined) {
         contentPutCount++;
@@ -510,53 +488,6 @@ export class Writer {
             }),
         );
       }
-      if (this.#indexes.length > 0) {
-        let newKeys: readonly string[] = [];
-        let staleKeys: readonly string[] = [];
-        if (input.op === "I") {
-          newKeys = allIndexKeysFor(logPrefix, this.#indexes, input.body, input.docId);
-        } else if (input.op === "U") {
-          const preImage = inBatchImage.has(input.docId)
-            ? inBatchImage.get(input.docId)
-            : await this.#readPreImage(logPrefix, input.collection, input.docId, seq);
-          const oldKeys = allIndexKeysFor(logPrefix, this.#indexes, preImage, input.docId);
-          newKeys = allIndexKeysFor(logPrefix, this.#indexes, input.body, input.docId);
-          const newSet = new Set(newKeys);
-          staleKeys = oldKeys.filter((k) => !newSet.has(k));
-        } else {
-          const preImage = inBatchImage.has(input.docId)
-            ? inBatchImage.get(input.docId)
-            : await this.#readPreImage(logPrefix, input.collection, input.docId, seq);
-          staleKeys = allIndexKeysFor(logPrefix, this.#indexes, preImage, input.docId);
-        }
-        for (const k of newKeys) {
-          assertKeyWithinLimit(k);
-          parallelPuts.push(
-            this.#storage
-              .put(k, EMPTY_BODY, { ifNoneMatch: "*", contentType: APPLICATION_JSON })
-              .catch((error: unknown) => {
-                this.#observe429(error, input.collection);
-                if (isPreconditionFailed(error)) {
-                  return;
-                }
-                throw error;
-              }),
-          );
-        }
-        for (const k of staleKeys) {
-          // Storage.delete is contractually idempotent — no defensive catch.
-          parallelPuts.push(this.#storage.delete(k));
-        }
-        indexClassA += newKeys.length + staleKeys.length;
-        if (newKeys.length + staleKeys.length > 0) {
-          ctxMetrics().histogram(
-            "db.write.index_ops_per_logical_write",
-            newKeys.length + staleKeys.length,
-            { collection: input.collection },
-          );
-        }
-        inBatchImage.set(input.docId, input.op === "D" ? undefined : input.body);
-      }
     }
     await Promise.all(parallelPuts);
 
@@ -567,7 +498,11 @@ export class Writer {
     //
     // 200 ⇒ committed at `seq`. 412 ⇒ disambiguate by session read-back:
     //   - own session / own seq ⇒ our crashed-or-lost-ack commit is
-    //     already durable at `seq` ⇒ adopt + return (no further writes).
+    //     already durable at `seq` ⇒ adopt the resolved `seq` and fall
+    //     through to the SAME index emit (Step 5b). The adopted commit
+    //     is EXACTLY the attempt that may have died after creating
+    //     `log/<seq>` but before emitting its index, so re-running the
+    //     (idempotent) emit completes it.
     //   - foreign session / wrong seq ⇒ re-probe forward and retry at the
     //     new first-empty slot (bounded by LOG_FORWARD_PROBE_CAP).
     // A transient NetworkError (e.g. a dropped ack on a create that may
@@ -618,8 +553,10 @@ export class Writer {
       });
       if (decision.adopt) {
         // Own crashed/lost-ack commit already durable at `seq`. Adopt it
-        // (byte-identical modulo commit_ts) and return success — the
-        // logical write lands at EXACTLY `seq`, never duplicated.
+        // (byte-identical modulo commit_ts) — the logical write lands at
+        // EXACTLY `seq`, never duplicated. Fall through to Step 5b: the
+        // adopted attempt may have died after the create but before the
+        // index emit, so the (idempotent) emit must still run.
         committedEntry = decision.entry;
         break;
       }
@@ -635,6 +572,93 @@ export class Writer {
       entry = mintEntry(seq);
     }
     const committedEntries: readonly LogEntry[] = [committedEntry];
+
+    // ── Step 5b. Emit secondary-index entries (AFTER the commit). ───
+    // BOTH the fresh-win and the own-session-adoption break above reach
+    // here with the resolved committing `seq`. Emitting after the
+    // `log/<seq>` create flips the crash polarity (ADR-008 Q4): the only
+    // residual is a committed-but-briefly-unindexed doc — the log entry
+    // names the docId, so the snapshot+log fold / `rebuildIndex` re-
+    // derives the marker. A crash before the commit can no longer de-
+    // index a committed doc.
+    //
+    // Adoption correctness: an adopted lost-ack commit is EXACTLY the
+    // attempt that may have died after the create but before this emit,
+    // so it MUST run the emit too (do not skip it). Idempotent under
+    // re-run: the `newKeys` PUT is `ifNoneMatch: "*"` (412 swallowed)
+    // and the `staleKeys` DELETE is contractually idempotent, so re-
+    // emitting after a partial prior emit is safe.
+    //
+    // Empty `#indexes` short-circuits the whole block (including the
+    // pre-image GET), preserving zero behaviour change for collections
+    // without declared indexes.
+    //
+    // The pre-image is read at the RESOLVED committing `seq` (Step 5
+    // may have advanced `seq` past a foreign winner): `#readPreImage`
+    // back-walks from `seq - 1`, so it skips the just-committed entry
+    // and finds the prior same-doc image. For a same-`docId` input
+    // earlier in this batch the in-batch image takes precedence.
+    //
+    // Filter-aware projection (T4): `allIndexKeysFor` short-circuits on
+    // `def.predicate` miss. The diff `oldKeys` vs `newKeys` covers all
+    // four U-quadrants (match→match diffs; match→miss DELETEs all;
+    // miss→match PUTs all; miss→miss no-ops), each pinned by a named
+    // test in `writer.test.ts` ("Writer — filtered index").
+    let indexClassA = 0;
+    if (this.#indexes.length > 0) {
+      const indexPuts: Array<Promise<unknown>> = [];
+      // Per-docId in-batch image map: a later input on the same docId
+      // reads the in-batch pre-image, not the on-disk one.
+      const inBatchImage = new Map<string, DocumentData | undefined>();
+      for (const input of inputs) {
+        let newKeys: readonly string[] = [];
+        let staleKeys: readonly string[] = [];
+        if (input.op === "I") {
+          newKeys = allIndexKeysFor(logPrefix, this.#indexes, input.body, input.docId);
+        } else if (input.op === "U") {
+          const preImage = inBatchImage.has(input.docId)
+            ? inBatchImage.get(input.docId)
+            : await this.#readPreImage(logPrefix, input.collection, input.docId, seq);
+          const oldKeys = allIndexKeysFor(logPrefix, this.#indexes, preImage, input.docId);
+          newKeys = allIndexKeysFor(logPrefix, this.#indexes, input.body, input.docId);
+          const newSet = new Set(newKeys);
+          staleKeys = oldKeys.filter((k) => !newSet.has(k));
+        } else {
+          const preImage = inBatchImage.has(input.docId)
+            ? inBatchImage.get(input.docId)
+            : await this.#readPreImage(logPrefix, input.collection, input.docId, seq);
+          staleKeys = allIndexKeysFor(logPrefix, this.#indexes, preImage, input.docId);
+        }
+        for (const k of newKeys) {
+          assertKeyWithinLimit(k);
+          indexPuts.push(
+            this.#storage
+              .put(k, EMPTY_BODY, { ifNoneMatch: "*", contentType: APPLICATION_JSON })
+              .catch((error: unknown) => {
+                this.#observe429(error, input.collection);
+                if (isPreconditionFailed(error)) {
+                  return;
+                }
+                throw error;
+              }),
+          );
+        }
+        for (const k of staleKeys) {
+          // Storage.delete is contractually idempotent — no defensive catch.
+          indexPuts.push(this.#storage.delete(k));
+        }
+        indexClassA += newKeys.length + staleKeys.length;
+        if (newKeys.length + staleKeys.length > 0) {
+          ctxMetrics().histogram(
+            "db.write.index_ops_per_logical_write",
+            newKeys.length + staleKeys.length,
+            { collection: input.collection },
+          );
+        }
+        inBatchImage.set(input.docId, input.op === "D" ? undefined : input.body);
+      }
+      await Promise.all(indexPuts);
+    }
 
     // ── Step 6. (removed). No current.json write on the commit path. ─
     // The numbered log create above IS the commit. `tail_hint` is
