@@ -117,8 +117,10 @@ export const probeCas = async (
     // ifNoneMatch:"*", and a 412 means a peer won that seq (writer.ts). Two
     // winners ⇒ two writers believe they appended the same log seq. So
     // winners>1 is the only definitive non-linearizability signal; transient
-    // non-Conflict losers (e.g. an unmapped S3 409 ConditionalRequestConflict)
-    // are inconclusive, not proof of a broken backend.
+    // non-Conflict losers (e.g. an S3 409 ConditionalRequestConflict, which the
+    // adapter maps to a retryable NetworkError) are inconclusive — the writer
+    // re-issues the same-seq PUT and resolves to 200/412 — not proof of a broken
+    // backend.
     const raceKey = `${prefix}__baerly_cas_probe__/${uuid()}`;
     const RACERS = 16;
     try {

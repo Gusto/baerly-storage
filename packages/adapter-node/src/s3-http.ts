@@ -279,6 +279,20 @@ export class S3HttpStorage implements Storage {
       if (res.status === 412) {
         throw new BaerlyError("Conflict", `PUT ${key}: precondition failed`);
       }
+      // AWS S3 returns 409 ConditionalRequestConflict when a concurrent
+      // conditional create (If-None-Match:"*") races; Minio returns 412.
+      // 409 means the write was contended and may NOT have landed, so it
+      // maps to a retryable NetworkError — the single-write-commit writer
+      // re-issues the same-seq PUT, which resolves deterministically to 200
+      // (we win) or 412 (key now present → Conflict → adopt/re-probe). A
+      // direct Conflict here would adopt-read a possibly-absent entry.
+      if (res.status === 409 && opts?.ifNoneMatch === "*") {
+        throw new BaerlyError(
+          "NetworkError",
+          `PUT ${key}: 409 ConditionalRequestConflict (contended conditional create; retryable)`,
+          { status: res.status, ...retryAfterCause(res) },
+        );
+      }
       // S3-compatible servers diverge on `If-Match` against a missing
       // key: AWS S3 returns 412, Minio returns 404 (NoSuchKey). Map
       // 404-with-ifMatch to the same `Conflict` semantic so consumers

@@ -231,6 +231,20 @@ describe("S3HttpStorage.put", () => {
       cause: { status: 503 },
     });
   });
+
+  test("409 on contended ifNoneMatch='*' → retryable NetworkError (not Conflict/InvalidResponse)", async () => {
+    // AWS S3 returns 409 ConditionalRequestConflict when a concurrent
+    // conditional create (If-None-Match:"*") races; Minio returns 412.
+    // 409 must map to a retryable NetworkError so the single-write-commit
+    // writer re-issues the same-seq PUT (→ 200 win or 412 Conflict), not a
+    // direct Conflict, which would adopt-read a possibly-absent entry.
+    const fetchFn = vi.fn<typeof fetch>(async (_req) => noBody(409));
+    const s = mkStorage(fetchFn as unknown as typeof fetch);
+    await expect(s.put("k", new Uint8Array(0), { ifNoneMatch: "*" })).rejects.toMatchObject({
+      code: "NetworkError",
+      cause: { status: 409 },
+    });
+  });
 });
 
 describe("S3HttpStorage.delete", () => {

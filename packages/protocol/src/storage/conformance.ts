@@ -255,14 +255,19 @@ export function defineStorageConformanceSuite(
           ),
         );
         const winners = outcomes.filter((o) => o.status === "fulfilled").length;
-        const conflicts = outcomes.filter(
+        // A contended loser may legitimately surface as either `Conflict`
+        // (412 — Memory/LocalFs/Minio/R2) or a retryable `NetworkError`
+        // (409 ConditionalRequestConflict — real AWS S3). Both are valid
+        // loser outcomes at the raw-`Storage.put` layer (no writer retry);
+        // the load-bearing property is exactly-one-winner.
+        const losers = outcomes.filter(
           (o) =>
             o.status === "rejected" &&
             o.reason instanceof BaerlyError &&
-            o.reason.code === "Conflict",
+            (o.reason.code === "Conflict" || o.reason.code === "NetworkError"),
         ).length;
         expect(winners).toBe(1);
-        expect(conflicts).toBe(RACERS - 1);
+        expect(losers).toBe(RACERS - 1);
       });
     });
 
