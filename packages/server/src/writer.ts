@@ -6,7 +6,8 @@
  * CAS precondition), PUTs the content body, then **creates `log/<seq>`
  * via `If-None-Match: "*"`. That create IS the commit / linearization
  * point.** The writer writes NOTHING to `current.json` on the commit
- * path; the compactor is the sole durable `tail_hint` advancer. The
+ * path; `tail_hint` advances outside ordinary commits via compaction
+ * folds, write-tick refreshes, and explicit operator/import paths. The
  * commit model and its invariants are recorded in ADR-008
  * (`docs/adr/008-single-write-commit.md`). The
  * optional integrity walk is gated by
@@ -58,6 +59,7 @@ import {
   type Storage,
   LOG_FORWARD_PROBE_CAP,
   MAINTENANCE_PROFILE_CF_FREE,
+  MAINTENANCE_TAIL_HINT_REFRESH_WRITES,
   S3_REQUEST_MAX_RETRIES,
   SESSION_ID_LENGTH,
   countKey,
@@ -438,9 +440,9 @@ export class Writer {
     // Bind to a local (oxlint `no-await-expression-member`).
     const probeFloor = Math.max(logSeqStartOf(current), current.tail_hint);
     // `findLogTail`'s density precondition holds: the floor sits in the
-    // dense prefix because the compactor (sole `tail_hint` advancer) probes
-    // LINEARLY and the writer never stamps `tail_hint`, so nothing advances
-    // the floor past a hole.
+    // dense prefix because tail_hint advancers probe or derive known tails
+    // from committed entries, while ordinary writer commits never stamp
+    // `tail_hint`, so nothing advances the floor past a hole.
     const preCommitTail = await findLogTail(this.#storage, logPrefix, probeFloor);
     let seq = preCommitTail;
 
@@ -657,39 +659,11 @@ export class Writer {
     // DELETEs all; miss→match deletes nothing; miss→miss no-ops), each
     // pinned by a named test in `writer.test.ts` ("Writer — filtered
     // index").
-    let staleKeysClassA = 0;
-    if (this.#indexes.length > 0) {
-      const indexDeletes: Array<Promise<unknown>> = [];
-      // Per-docId in-batch image map: a later input on the same docId
-      // reads the in-batch pre-image, not the on-disk one.
-      const inBatchImage = new Map<string, DocumentData | undefined>();
-      for (const input of inputs) {
-        let staleKeys: readonly string[] = [];
-        if (input.op === "U") {
-          const preImage = inBatchImage.has(input.docId)
-            ? inBatchImage.get(input.docId)
-            : await this.#readPreImage(logPrefix, input.collection, input.docId, seq);
-          const oldKeys = allIndexKeysFor(logPrefix, this.#indexes, preImage, input.docId);
-          const newSet = new Set(
-            allIndexKeysFor(logPrefix, this.#indexes, input.body, input.docId),
-          );
-          staleKeys = oldKeys.filter((k) => !newSet.has(k));
-        } else if (input.op === "D") {
-          const preImage = inBatchImage.has(input.docId)
-            ? inBatchImage.get(input.docId)
-            : await this.#readPreImage(logPrefix, input.collection, input.docId, seq);
-          staleKeys = allIndexKeysFor(logPrefix, this.#indexes, preImage, input.docId);
-        }
-        // (op:"I" has no pre-image → no stale keys.)
-        for (const k of staleKeys) {
-          // Storage.delete is contractually idempotent — no defensive catch.
-          indexDeletes.push(this.#storage.delete(k));
-        }
-        staleKeysClassA += staleKeys.length;
-        inBatchImage.set(input.docId, input.op === "D" ? undefined : input.body);
-      }
-      await Promise.all(indexDeletes);
-    }
+    const staleKeysClassA = await this.#cleanupStaleIndexKeysBestEffort({
+      inputs,
+      logPrefix,
+      seq,
+    });
     // The per-logical-write index-op histogram counts BOTH halves: the
     // `newKeys` PUTs (Step 4) and the `staleKeys` DELETEs (Step 5b).
     const indexClassA = newKeysClassA + staleKeysClassA;
@@ -727,48 +701,49 @@ export class Writer {
     const prevSeq = preCommitTail;
     const observedTail = seq + 1;
     const maint = getCurrentContext()?.maintenance;
-    if (maint?.disabled !== true) {
-      // Same absent-context default as runBoundedMaintenance's
-      // `options?.profile ?? MAINTENANCE_PROFILE_CF_FREE` — keep the two in
-      // step (this gate reads only gcInterval; the runner resolves the whole
-      // profile) so the pre-fire cadence can't diverge from the fold's.
-      const gcInterval =
-        maint?.options?.profile?.gcInterval ?? MAINTENANCE_PROFILE_CF_FREE.gcInterval;
-      if (shouldFireMaintenance(current, prevSeq, gcInterval, observedTail)) {
-        const dispatch = maint?.dispatch ?? dispatchInlineAwaited;
-        // `await dispatch(...)`: `dispatchInlineAwaited` returns the
-        // task's promise (awaited inline — deterministic for tests +
-        // correct for serverful Node). A `ctx.waitUntil`-style dispatch
-        // returns void (fire-and-forget off the ack); `await void` is a
-        // no-op. The `.then(() => {}, () => {})` is belt-and-suspenders:
-        // `runBoundedMaintenance` already swallows internally, but this
-        // guarantees a dispatched task can NEVER reject the commit even
-        // if a future change makes it throw.
-        await dispatch(() =>
-          runBoundedMaintenance(
-            {
-              storage: this.#storage,
-              currentJsonKey: this.#currentJsonKey,
-              prevSeq,
-              // Thread the in-memory observed tail so the runner's Gate-1
-              // ratio + GC cadence key off the true tail without an
-              // O(gap) re-probe (the stored `tail_hint` is only a lower
-              // bound under single-write commit).
-              observedTail,
-              // `disabled` is intentionally NOT forwarded: the outer
-              // `maint?.disabled !== true` gate already guarantees we only
-              // reach here when maintenance is enabled, so passing it would
-              // only ever forward `false` (a no-op) and imply a coupling
-              // that doesn't exist.
-              ...(maint?.maxFoldBytes !== undefined && { maxFoldBytes: maint.maxFoldBytes }),
-            },
-            maint?.options,
-          ).then(
-            () => {},
-            () => {},
-          ),
-        );
-      }
+    // Same absent-context default as runBoundedMaintenance's
+    // `options?.profile ?? MAINTENANCE_PROFILE_CF_FREE` — keep the two in
+    // step (this gate reads only gcInterval; the runner resolves the whole
+    // profile) so the pre-fire cadence can't diverge from the fold's.
+    const gcInterval =
+      maint?.options?.profile?.gcInterval ?? MAINTENANCE_PROFILE_CF_FREE.gcInterval;
+    const maintenanceDue =
+      maint?.disabled === true
+        ? observedTail - current.tail_hint >= MAINTENANCE_TAIL_HINT_REFRESH_WRITES
+        : shouldFireMaintenance(current, prevSeq, gcInterval, observedTail);
+    if (maintenanceDue) {
+      const dispatch = maint?.dispatch ?? dispatchInlineAwaited;
+      // `await dispatch(...)`: `dispatchInlineAwaited` returns the
+      // task's promise (awaited inline — deterministic for tests +
+      // correct for serverful Node). A `ctx.waitUntil`-style dispatch
+      // returns void (fire-and-forget off the ack); `await void` is a
+      // no-op. The `.then(() => {}, () => {})` is belt-and-suspenders:
+      // `runBoundedMaintenance` already swallows internally, but this
+      // guarantees a dispatched task can NEVER reject the commit even
+      // if a future change makes it throw.
+      await dispatch(() =>
+        runBoundedMaintenance(
+          {
+            storage: this.#storage,
+            currentJsonKey: this.#currentJsonKey,
+            prevSeq,
+            // Thread the in-memory observed tail so the runner's Gate-1
+            // ratio + GC cadence key off the true tail without an
+            // O(gap) re-probe (the stored `tail_hint` is only a lower
+            // bound under single-write commit).
+            observedTail,
+            // `disabled` disables fold/GC phases inside the runner but
+            // still permits the bounded tail_hint refresh that prevents a
+            // maintenance-off collection from drifting past the probe cap.
+            ...(maint?.disabled === true && { disabled: true }),
+            ...(maint?.maxFoldBytes !== undefined && { maxFoldBytes: maint.maxFoldBytes }),
+          },
+          maint?.options,
+        ).then(
+          () => {},
+          () => {},
+        ),
+      );
     }
 
     // Base class-A op count for this attempt: content PUTs (skipping
@@ -833,6 +808,65 @@ export class Writer {
       );
     }
     return recovered;
+  }
+
+  async #cleanupStaleIndexKeysBestEffort(args: {
+    inputs: readonly CommitInput[];
+    logPrefix: string;
+    seq: number;
+  }): Promise<number> {
+    if (this.#indexes.length === 0) {
+      return 0;
+    }
+
+    let staleKeysClassA = 0;
+    const indexDeletes: Array<Promise<unknown>> = [];
+    // Per-docId in-batch image map: a later input on the same docId
+    // reads the in-batch pre-image, not the on-disk one.
+    const inBatchImage = new Map<string, DocumentData | undefined>();
+    for (const input of args.inputs) {
+      let staleKeys: readonly string[] = [];
+      try {
+        if (input.op === "U") {
+          const preImage = inBatchImage.has(input.docId)
+            ? inBatchImage.get(input.docId)
+            : await this.#readPreImage(args.logPrefix, input.collection, input.docId, args.seq);
+          const oldKeys = allIndexKeysFor(args.logPrefix, this.#indexes, preImage, input.docId);
+          const newSet = new Set(
+            allIndexKeysFor(args.logPrefix, this.#indexes, input.body, input.docId),
+          );
+          staleKeys = oldKeys.filter((k) => !newSet.has(k));
+        } else if (input.op === "D") {
+          const preImage = inBatchImage.has(input.docId)
+            ? inBatchImage.get(input.docId)
+            : await this.#readPreImage(args.logPrefix, input.collection, input.docId, args.seq);
+          staleKeys = allIndexKeysFor(args.logPrefix, this.#indexes, preImage, input.docId);
+        }
+      } catch {
+        ctxMetrics().counter("db.write.index_cleanup_errors_total", 1, {
+          collection: input.collection,
+          step: "pre-image-read",
+        });
+        inBatchImage.set(input.docId, input.op === "D" ? undefined : input.body);
+        continue;
+      }
+
+      // (op:"I" has no pre-image → no stale keys.)
+      for (const k of staleKeys) {
+        indexDeletes.push(
+          this.#storage.delete(k).catch(() => {
+            ctxMetrics().counter("db.write.index_cleanup_errors_total", 1, {
+              collection: input.collection,
+              step: "delete",
+            });
+          }),
+        );
+      }
+      staleKeysClassA += staleKeys.length;
+      inBatchImage.set(input.docId, input.op === "D" ? undefined : input.body);
+    }
+    await Promise.all(indexDeletes);
+    return staleKeysClassA;
   }
 
   /**

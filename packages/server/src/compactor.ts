@@ -228,12 +228,14 @@ export const compact = async (
   const baseEtag = read.etag;
   const logSeqStartBefore = logSeqStartOf(current);
   // Forward-probe the TRUE tail (uncapped) and stamp it as the new
-  // `tail_hint` (Step 7). The writer never advances `tail_hint` under
-  // single-write commit; the compactor is its sole durable advancer, so
-  // it must discover the true tail to keep the writer's per-commit
-  // tail-find cheap (a tracking hint ⇒ small gap). The compactor's O(gap)
-  // probe is amortized O(1) per write across the fold cadence; it's
-  // Class-A-active, not idle-reader-bound.
+  // `tail_hint` (Step 7). Ordinary writer commits never advance
+  // `tail_hint` under single-write commit; compaction folds are the
+  // primary durable advancer, with maintenance defer/disable refreshes
+  // and explicit operator/import paths as the other writers. The
+  // compactor still discovers the true tail to keep the writer's
+  // per-commit tail-find cheap (a tracking hint ⇒ small gap). The
+  // compactor's O(gap) probe is amortized O(1) per write across the
+  // fold cadence; it's Class-A-active, not idle-reader-bound.
   // Raise the probe floor to any fresh tail lower bound the caller passed
   // (the write-tick `knownTail` = writer's observed `seq + 1`) so a
   // stale-low stored `tail_hint` doesn't force an O(gap) re-walk (B4).
@@ -380,8 +382,7 @@ export const compact = async (
     snapshot: newKey,
     log_seq_start: foldEnd,
     // Stamp the discovered tail back as the new lower bound (monotone:
-    // never lower the stored hint). This makes the compactor the sole
-    // durable `tail_hint` advancer ahead of the Phase-4 writer flip.
+    // never lower the stored hint).
     tail_hint: Math.max(current.tail_hint, discoveredTail),
     snapshot_bytes: bodyBytes.byteLength,
     snapshot_rows: base.size,

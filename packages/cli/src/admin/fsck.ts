@@ -7,10 +7,10 @@
  *   2. When `current.snapshot !== null`, the snapshot body's
  *      SHA-256 matches the hash embedded in the filename
  *      (delegated to `loadSnapshotAsMap`).
- *   3. The live log range has no holes. The true dense tail is
- *      derived from a single LIST of `log/` (the highest present seq
- *      + 1 — `tail_hint` is only a compactor-advanced lower bound), and
- *      every seq from `log_seq_start` up to that tail must be present.
+ *   3. The live log range has no holes. The upper bound is derived
+ *      from a single LIST of `log/` plus `current.json.tail_hint`
+ *      (max(highest present seq + 1, tail_hint)), and every seq from
+ *      `log_seq_start` up to that tail must be present.
  *      This is a presence/hole check by key, NOT a per-entry decode:
  *      fsck does not GET and parse each `log/<seq>.json`, so it does
  *      not assert every entry is well-formed JSON or carries the locked
@@ -380,11 +380,11 @@ const bundle = defineBaerlySubcommand({
     }
 
     // ── Log range [from, tail) has no holes (presence check only). ──
-    // LIST the log/ prefix and derive the TRUE dense tail from the listed
-    // keys: under single-write commit `tail_hint` is only a lower bound
-    // (compactor-advanced), so the authoritative upper bound is the
-    // highest present seq + 1. A missing seq below that max is an
-    // interior hole. Use a single LIST so the op count is O(pages).
+    // LIST the log/ prefix and derive the upper bound from both listed
+    // keys and `tail_hint`: under single-write commit `tail_hint` is
+    // normally a lower bound, but fsck must also catch an over-claimed
+    // hint whose `[log_seq_start, tail_hint)` range is not actually
+    // present. Use a single LIST so the op count is O(pages).
     const logPrefix = `${collectionPrefix}/log/`;
     const presentKeys = await listKeys(bucket.storage, logPrefix);
     const presentSeqs = new Set<number>();
@@ -403,7 +403,7 @@ const bundle = defineBaerlySubcommand({
         }
       }
     }
-    const logToExcl = maxSeq + 1;
+    const logToExcl = Math.max(cur.tail_hint, maxSeq + 1);
     let logEntriesPresent = 0;
     for (let s = logFrom; s < logToExcl; s++) {
       if (presentSeqs.has(s)) {

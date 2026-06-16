@@ -284,7 +284,8 @@ export interface BoundedMaintenanceOptions {
  * swallowed.
  *
  * Control flow (fold-priority with a stateless GC-starvation guard):
- *   0. `disabled` → return with zero storage ops.
+ *   0. `disabled` → skip fold/GC, but still allow the rate-limited
+ *      tail_hint refresh that bounds read/write forward-probes.
  *   1. Read `current.json` once.
  *   2. Hard-GC starvation boundary (`"single"` only) → GC slice, skip fold.
  *   3. Gate 1 (ratio AND entry floor) trips → fold if viable, else
@@ -307,16 +308,11 @@ export const runBoundedMaintenance = async (
     observedTail?: number;
     /** `C` override (from `BAERLY_MAINTENANCE_MAX_FOLD_BYTES`). */
     maxFoldBytes?: number;
-    /** From `BAERLY_MAINTENANCE_DISABLE`. */
+    /** From `BAERLY_MAINTENANCE_DISABLE`: disable fold/GC phases, not tail_hint refresh. */
     disabled?: boolean;
   },
   options?: BoundedMaintenanceOptions,
 ): Promise<void> => {
-  // ── Step 0. Hard disable — zero storage ops. ───────────────────────
-  if (args.disabled === true) {
-    return;
-  }
-
   const { storage, currentJsonKey, prevSeq } = args;
   // Resolve the profile ONCE (the runner's single CF-free-safe default,
   // preserving the bare-`Db.create()` promise); all six budgets read off it.
@@ -387,6 +383,35 @@ export const runBoundedMaintenance = async (
     const foldViable = snapshotBytes <= C && snapshotRows + maxFoldEntriesPerPass <= E;
     const gcDue = crossesGcBoundary(prevSeq, nextSeq, gcInterval);
 
+    const refreshTailHintIfNeeded = async (): Promise<void> => {
+      if (nextSeq - current.tail_hint < MAINTENANCE_TAIL_HINT_REFRESH_WRITES) {
+        return;
+      }
+      try {
+        await casUpdateCurrentJson(
+          storage,
+          currentJsonKey,
+          (c) => ({ ...c, tail_hint: Math.max(c.tail_hint, nextSeq) }),
+          signal !== undefined ? { signal } : undefined,
+        );
+      } catch {
+        // Swallow — Conflict (compactor/another isolate advanced first) or
+        // any transient error. A missed advance just means the next tick
+        // catches up; never throw out of write-tick maintenance.
+      }
+    };
+
+    // ── Step 0. Phase disable. ───────────────────────────────────────
+    // `BAERLY_MAINTENANCE_DISABLE` suppresses fold/GC work, but it must
+    // not let `(true_tail - tail_hint)` grow past the read/write
+    // forward-probe cap. Keep the same bounded, best-effort hint refresh
+    // used by deferring collections; reads stay pure because this path
+    // only runs from write-tick maintenance.
+    if (args.disabled === true) {
+      await refreshTailHintIfNeeded();
+      return;
+    }
+
     // ── Step 2. Hard-GC starvation guard ("single" only). ────────────
     // A long fold-heavy drain would otherwise starve GC on every
     // ratio-tripping tick. A COARSE cadence the fold may NOT preempt
@@ -433,8 +458,8 @@ export const runBoundedMaintenance = async (
         });
         // HR-2: advance `tail_hint` toward the observed tail even though
         // we're NOT folding. A deferring collection never reaches the
-        // compactor's Step-7 fold CAS (the sole durable `tail_hint`
-        // advancer), so without this the gap `(true_tail − tail_hint)`
+        // compactor's Step-7 fold CAS, so without this bounded refresh
+        // the gap `(true_tail − tail_hint)`
         // grows without bound and every READ re-walks the whole live tail
         // via `probeTailFrom` (and eventually throws at the cap, B3).
         // Rate-limited by `MAINTENANCE_TAIL_HINT_REFRESH_WRITES` so this is
@@ -445,21 +470,7 @@ export const runBoundedMaintenance = async (
         // deferring isolate) just means someone else advanced it — the
         // stamp is monotone (`Math.max`) so a lost race never lowers it.
         // This is a WRITE-TICK action; reads stay pure.
-        if (nextSeq - current.tail_hint >= MAINTENANCE_TAIL_HINT_REFRESH_WRITES) {
-          try {
-            await casUpdateCurrentJson(
-              storage,
-              currentJsonKey,
-              (c) => ({ ...c, tail_hint: Math.max(c.tail_hint, nextSeq) }),
-              signal !== undefined ? { signal } : undefined,
-            );
-          } catch {
-            // Swallow — Conflict (compactor/another isolate advanced first)
-            // or any transient error. A missed advance just means the next
-            // tick (or the compactor's fold CAS) catches up; never throws
-            // out of the runner nor blocks the warn / GC fall-through below.
-          }
-        }
+        await refreshTailHintIfNeeded();
         // Advisory graduation warn, rate-limited off the SHARED
         // current.json.last_warned_seq (NOT a per-isolate Set — a fresh
         // isolate must honour the same rate-limit). Fires only when at
@@ -540,7 +551,7 @@ export const dispatchInlineAwaited = (task: () => Promise<void>): void | Promise
 export interface MaintenanceDispatch {
   /** How to run the maintenance task. Default {@link dispatchInlineAwaited}. CF sets `ctx.waitUntil`. */
   readonly dispatch?: (task: () => Promise<void>) => void | Promise<void>;
-  /** From `BAERLY_MAINTENANCE_DISABLE`. */
+  /** From `BAERLY_MAINTENANCE_DISABLE`: disables fold/GC phases while preserving tail_hint refresh. */
   readonly disabled?: boolean;
   /** `C` override, from `BAERLY_MAINTENANCE_MAX_FOLD_BYTES`. */
   readonly maxFoldBytes?: number;

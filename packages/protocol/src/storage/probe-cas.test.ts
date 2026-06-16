@@ -521,10 +521,11 @@ describe("probeCas — ifNoneMatch-concurrent", () => {
     expect(result.ok).toBe(false);
   });
 
-  test("a transient non-Conflict loser is inconclusive, not a non-linearizability verdict", async () => {
+  test("a transient non-Conflict loser makes the race inconclusive", async () => {
     // Exactly one winner, but one racer hits a transient error (e.g. an
     // unmapped S3 409 / network blip). The exactly-one-winner invariant
-    // held, so the check must PASS — not scream "backend NOT linearizable".
+    // held, so the check must not scream "backend NOT linearizable"; still,
+    // the deploy-time probe must fail closed and ask for a clean retry.
     // Conditional puts in this fake run check-then-act with no intervening
     // await, so the burst is deterministic. ifNoneMatch:"*" calls: #1 is the
     // sentinel's Check 2 (over an existing key → Conflict); #2.. is the race
@@ -563,8 +564,10 @@ describe("probeCas — ifNoneMatch-concurrent", () => {
     const result = await probeCas(flaky);
     const concurrent = result.checks.find((c) => c.name === "ifNoneMatch-concurrent");
     expect(concurrent).toBeDefined();
-    expect(concurrent!.ok).toBe(true);
+    expect(concurrent!.ok).toBe(false);
+    expect(result.ok).toBe(false);
     expect(concurrent!.detail).toContain("inconclusive");
+    expect(concurrent!.detail).toContain("retry");
     expect(concurrent!.detail).not.toContain("NOT linearizable");
   });
 });

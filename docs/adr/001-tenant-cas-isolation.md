@@ -11,16 +11,20 @@ related: [README.md]
 
 ## Status
 
-Accepted (2026-05-11).
+Accepted (2026-05-11). Amended by
+[ADR-008](008-single-write-commit.md): the per-collection isolation
+decision stands, but commits are now linearized by the numbered
+`log/<seq>` create, not by a commit-path CAS on `current.json`.
 
 ## Context
 
-Baerly's coordination object is `current.json`: every commit reads it,
-mutates it locally, and CAS-writes it back with `If-Match: <etag>`. CAS
-loss surfaces as a `412 Precondition Failed`, which the writer maps to
-`BaerlyError{code:"Conflict"}`
-([`packages/protocol/src/coordination/current-json.ts:224`](../../packages/protocol/src/coordination/current-json.ts),
-[`packages/server/src/writer.ts:348`](../../packages/server/src/writer.ts)).
+Original context, superseded by ADR-008: Baerly's coordination object
+was `current.json`; every commit read it, mutated it locally, and
+CAS-wrote it back with `If-Match: <etag>`. The current protocol uses a
+single-write commit: the winning `If-None-Match: "*"` create on
+`log/<seq>.json` is the commit, and `current.json` is compaction state
+read by writers but CAS-written only by bootstrap, compaction, and
+explicit operator/import paths.
 A multi-tenant deployment shares one bucket across many tenants, so two
 questions present themselves and must be answered together: how does
 tenant T avoid seeing tenant U's keys, and at what granularity does the
@@ -34,10 +38,10 @@ For scope, three options were considered:
   five writes per second; a 100-collection tenant at the documented
   30-writes-per-minute-per-collection target lands about 10× over the
   ceiling.
-- **Per-collection CAS.** One `current.json` per `(tenant, collection)`
-  pair. More objects per tenant, but each one is contended only inside
-  its own collection. Matches the granularity of the SQL-shape collection
-  API (`db.collection(name)` in
+- **Per-collection commit scope.** One `current.json` plus one
+  numbered log per `(tenant, collection)` pair. More objects per
+  tenant, but commit contention stays inside its own collection. Matches
+  the granularity of the SQL-shape collection API (`db.collection(name)` in
   [`packages/server/src/db.ts`](../../packages/server/src/db.ts)).
 - **Per-tenant with opt-in per-collection.** A flag on the deployment
   config selects between (a) and (b). Two configurations to test and
@@ -98,23 +102,23 @@ rolling-deploy hazard without introducing a leases-as-state dependency.
 
 ## Consequences
 
-- **Consistency guarantee that the per-collection CAS scope yields.**
-  Because each `(tenant, collection)` advances through a single CAS'd
-  `current.json`, reads and writes against one collection are
-  **linearizable** — that HEAD is the linearization point. **Across**
-  collections there is no ordering guarantee and no atomicity: a write
-  spanning two collections is two independent CAS advances, observable
-  in either order. Applications needing cross-collection ordering must
-  encode it in a single collection.
+- **Consistency guarantee that the per-collection scope yields.**
+  Because each `(tenant, collection)` has its own numbered log, reads
+  and writes against one collection are **linearizable** at the winning
+  `log/<seq>` create (per ADR-008). **Across** collections there is no
+  ordering guarantee and no atomicity: a write spanning two collections
+  is two independent log appends, observable in either order.
+  Applications needing cross-collection ordering must encode it in a
+  single collection.
 - More `current.json` objects per tenant, bounded by collection count.
   Lifecycle on collection drop becomes a sweeper concern; the dwell
   window is `GC_GRACE_PERIOD_MILLIS` in
   [`packages/protocol/src/constants.ts`](../../packages/protocol/src/constants.ts)
   and implemented in
   [`packages/server/src/gc.ts`](../../packages/server/src/gc.ts).
-- Composes cleanly with the single-collection CAS scope (see
-  [ADR-002](./002-api-surface-lock.md)): every write touches
-  exactly one `current.json`, so no two-phase commit is required.
+- Composes cleanly with the single-collection API scope (see
+  [ADR-002](./002-api-surface-lock.md)): every write appends to
+  exactly one collection log, so no two-phase commit is required.
 - The `owner` field is debug-only. Operators MAY page on it (e.g.
   writer churn) but readers MUST NOT branch on it for safety. Safety
   derives from `epoch`, not from `owner`.

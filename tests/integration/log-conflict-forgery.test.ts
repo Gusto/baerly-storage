@@ -12,11 +12,10 @@
  *
  * This file exercises three layers of the claim:
  *
- *   A. **Decision-only sanity (documentary).** If we hand the
- *      adversary the writer's session id (counterfactually), the
- *      decision DOES adopt — proving the load-bearing premise is
- *      the unguessability of the session, not some other field
- *      check.
+ *   A. **Decision-only sanity.** If we hand the adversary the writer's
+ *      exact log intent (counterfactually), the decision adopts. If the
+ *      same session/seq carries a different logical mutation, adoption
+ *      rejects.
  *
  *   B. **Property (the load-bearing test).** For every 6-char hex
  *      forgery `s_adv` distinct from a freshly-minted writer
@@ -84,22 +83,29 @@ const ctxOf = (parts: Partial<AdoptionContext>): AdoptionContext => ({
 });
 
 describe("C2 session-id-unguessability under ForgeryStorage adversary", () => {
-  test("decision-only: forged entry whose session string is byte-identical to the writer's session would adopt — the unsafety lives in the unguessability claim, not the decision", () => {
-    // Sub-test A. If we hand the adversary the writer's session
-    // (impossible under the stated threat model), adoption goes
-    // through. The patent claim's load-bearing premise is that
-    // `session` is unguessable, not that some downstream check
-    // would catch the forgery.
+  test("decision-only: same-session same-seq adoption requires matching write intent", () => {
+    // Sub-test A. A dropped-ack retry sees the same session, same seq,
+    // and the same writer-minted log entry, so adoption goes through.
     const seq = 42;
     const self = makeEntry({ session: SESSION_A, seq });
-    const forged = makeEntry({
+    expect(tryAdoptOwnSessionLogEntry(ctxOf({ self, existing: self }))).toEqual({
+      adopt: true,
+      entry: self,
+    });
+
+    // Same session + same seq is no longer sufficient. A different
+    // logical mutation under the colliding session must be treated as a
+    // conflict and skipped by the writer's forward-probe loop.
+    const forgedDifferentBody = makeEntry({
       session: SESSION_A,
       seq,
       doc_id: "adversary-doc",
       after: { _id: "adversary-doc" },
     });
-    const decision = tryAdoptOwnSessionLogEntry(ctxOf({ self, existing: forged }));
-    expect(decision).toEqual({ adopt: true, entry: forged });
+    expect(tryAdoptOwnSessionLogEntry(ctxOf({ self, existing: forgedDifferentBody }))).toEqual({
+      adopt: false,
+      reason: "intent-mismatch",
+    });
   });
 
   test("property: an adversary that cannot read writer RAM cannot make tryAdoptOwnSessionLogEntry adopt", () => {

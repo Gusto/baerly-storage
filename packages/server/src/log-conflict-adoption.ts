@@ -19,7 +19,7 @@
  *
  * ## Soundness invariant
  *
- * Adoption is sound iff all three hold:
+ * Adoption is sound iff all four hold:
  *
  *   1. **Same session.** `existing.session === self.session`. The
  *      session id is a per-commit, in-RAM-only secret minted at
@@ -31,7 +31,12 @@
  *      seq match is also implied by the key shape (the writer
  *      reads `/log/<expectedSeq>.json`), but is re-asserted here
  *      so the invariant is visible at the decision site.
- *   3. **Single-input commit.** `self.batchSize === 1`. Every
+ *   3. **Matching write intent.** The occupant's writer-minted log
+ *      fields match the entry this writer just attempted to create.
+ *      Same session + same seq alone is not sufficient: a collision,
+ *      test seam, or out-of-model bucket writer must not be able to
+ *      make this writer adopt a different logical mutation.
+ *   4. **Single-input commit.** `self.batchSize === 1`. Every
  *      commit is single-input now, so this always holds; the guard
  *      is retained as a defensive invariant (its removal is the
  *      deferred follow-up tracked as D1.5). It is sound only for a single-input
@@ -39,9 +44,8 @@
  *      compose with the single-key single-write commit (the one
  *      `log/<seq>` create is the all-or-nothing commit point).
  *
- * When any of (1)/(2)/(3) fails, the writer MUST throw
- * `BaerlyError{code:"Conflict"}` and let the caller's retry-or-
- * surface logic run.
+ * When any of (1)/(2)/(3)/(4) fails, the caller MUST refuse adoption
+ * and treat the occupant as a conflicting committed entry.
  *
  * ## Threat model
  *
@@ -51,7 +55,7 @@
  * bucket. The adversary may NOT (d) read the writer's local RAM
  * and therefore cannot learn the per-commit `session` id before
  * observing the writer's own `/log/<seq>.json` PUT. Under these
- * constraints, conditions (1)+(2)+(3) close every attack path in
+ * constraints, conditions (1)+(2)+(3)+(4) close every attack path in
  * the adversarial-replay property test
  * (`tests/integration/log-conflict-adversarial.test.ts`).
  *
@@ -68,7 +72,7 @@
  * commit-protocol skeleton. SlateDB's scenario 3 — "conflicting SST
  * has same `writer_epoch` as me" — is explicitly labelled an
  * **illegal state that should panic**. The three-clause adoption
- * decision encoded here (same session ∧ matching seq ∧ single-input)
+ * decision encoded here (same session ∧ matching seq ∧ matching intent ∧ single-input)
  * recognises that case as the writer's own prior in-flight attempt
  * and adopts it as success rather than aborting, closing the recovery
  * gap SlateDB leaves to operator intervention.
@@ -114,16 +118,19 @@ export interface AdoptionContext {
 
 /**
  * Discriminated outcome of {@link tryAdoptOwnSessionLogEntry}.
- * `adopt: true` carries the existing entry (which by the
- * invariant is byte-identical to `self` modulo `commit_ts`); the
- * caller substitutes it for `self` so the returned `CommitResult`
- * matches what's actually stored. `adopt: false` carries a
- * machine-readable `reason` so callers and tests can discriminate
- * which clause of the invariant failed.
+ * `adopt: true` carries the existing entry (which by the invariant
+ * matches `self` on writer-minted intent fields); the caller
+ * substitutes it for `self` so the returned `CommitResult` matches
+ * what's actually stored. `adopt: false` carries a machine-readable
+ * `reason` so callers and tests can discriminate which clause of the
+ * invariant failed.
  */
 export type AdoptionDecision =
   | { readonly adopt: true; readonly entry: LogEntry }
-  | { readonly adopt: false; readonly reason: "foreign-session" | "wrong-seq" | "batch" };
+  | {
+      readonly adopt: false;
+      readonly reason: "foreign-session" | "wrong-seq" | "intent-mismatch" | "batch";
+    };
 
 /**
  * Decide whether the entry already at `/log/<seq>.json` is the
@@ -134,11 +141,11 @@ export type AdoptionDecision =
  * ## Correctness precondition
  *
  * A fresh `session` id is minted per `commit()` call, seq-stable
- * across that call's retries. Adoption deliberately does NOT compare
- * docId / content / LSN: a same-session same-seq occupant IS this
- * writer's own crashed-or-lost-ack commit, hence safe to adopt. A
- * bare 412 is never proof a peer won until this read-back reports
- * `foreign-session`.
+ * across that call's retries. Adoption compares the writer-minted
+ * intent/body fields as well as session and seq: a dropped-ack retry
+ * reuses the same attempted entry and adopts, while a same-session /
+ * same-seq occupant carrying a different logical mutation is treated as
+ * a conflict and skipped by the caller's forward-probe loop.
  *
  * @see {@link AdoptionDecision} for the return shape.
  * @see The soundness invariant in this module's header docstring.
@@ -159,6 +166,9 @@ export const tryAdoptOwnSessionLogEntry = (ctx: AdoptionContext): AdoptionDecisi
   // patent-disclosure clarity.
   if (ctx.existing.seq !== ctx.self.seq) {
     return { adopt: false, reason: "wrong-seq" };
+  }
+  if (JSON.stringify(ctx.existing) !== JSON.stringify(ctx.self)) {
+    return { adopt: false, reason: "intent-mismatch" };
   }
   return { adopt: true, entry: ctx.existing };
 };

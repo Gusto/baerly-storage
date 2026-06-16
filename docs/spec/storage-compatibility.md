@@ -14,7 +14,7 @@ below), and the minimal S3 API surface the protocol depends on.
 
 ## S3 API surface used
 
-### `PUT and GET /<bucket>/<key>
+### `PUT and GET /<bucket>/<key>`
 
 The basic S3 API is very simple and intuitive. You use a HTTP `PUT <endpoint>/<bucket>/<key>` to set a file, and `GET <endpoint>/<bucket>/<key>` to retrieve it later. It is the obvious API if you wanted namespaced storage over a RESTFul interface.
 
@@ -48,9 +48,11 @@ with `If-None-Match: "*"` (that create IS the commit — there is no
 `current.json` with `If-Match`. A store is _supported_ only if it
 honours those conditional writes. Run `baerly doctor --bucket=<uri>` to
 live-probe a bucket's conditional-write support before relying on it;
-exit 2 means the verbs aren't honoured — do not deploy. `baerly deploy`
-runs this probe as a preflight and aborts before deploying a bucket
-that fails it.
+exit 2 means the verbs aren't honoured — do not deploy. Cloudflare
+`baerly deploy` can run this same probe when passed
+`--probe-bucket=<uri>` and aborts before deploying if that opt-in
+preflight fails. Self-hosted Node deployments run the doctor command
+manually because there is no generic deploy wrapper.
 
 > **Load-bearing prerequisite — concurrent create-if-absent is
 > exactly-one-winner.** Sequential rejection ("`If-None-Match: "*"`
@@ -62,8 +64,9 @@ that fails it.
 > commit** — two distinct committed entries at one `seq`. The `baerly
 doctor --bucket` probe races K concurrent creates of a fresh key and
 > asserts exactly one wins (an `ifNoneMatch-concurrent` sub-check); the
-> conformance suite asserts the same property for every shipped adapter
-> on every PR.
+> conformance paths assert the same property where they run: native R2
+> in PR CI, MinIO in the local dev stack, and cloud S3-compatible
+> endpoints in credential-gated runs.
 
 > **Deployment-topology rule — no negative caching in front of the
 > log/CAS path.** The log and CAS requests must reach the object-store
@@ -74,32 +77,32 @@ doctor --bucket` probe races K concurrent creates of a fresh key and
 > (post-2020); this constrains what you put _in front of_ them, not the
 > store.
 
-| Tier              | Stores                        | What it means                                                                                                                                                                                                                                                                                                                           |
-| ----------------- | ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Tier 1**        | AWS S3, Cloudflare R2         | CI-conformance-gated every PR (`tests/integration/conformance.test.ts` + the adapter conformance suites — R2 via `pnpm test:adapter-cloudflare`), and exercised under contention by the all-to-all single-key cascade in `tests/integration/randomized.test.ts`. Supported.                                                             |
-| **Tier 1.5**      | MinIO                         | Dev / CI harness only (`pnpm dev:storage`, `pnpm test:minio`). Conditional writes — including bare-`*` create-if-absent — are verified locally against the pinned MinIO; not a production target we promise, but it passes the conformance suite.                                                                                       |
-| **Unsupported**   | GCS (S3-interop), Azure Blob  | GCS's XML / S3-interop API scopes the S3 `If-Match` / `If-None-Match` headers to **reads**; native conditional writes require `x-goog-if-generation-match` (not an S3 header), which baerly does not emit — so lock-free CAS over the plain S3 API is not available on GCS. Azure Blob is not an S3 API at all. Neither has an adapter. |
-| **Anything else** | other S3-compatible endpoints | Run `baerly doctor --bucket`. **Green ⇒ the conditional verbs are honoured — should work, you own production validation. Red ⇒ won't.**                                                                                                                                                                                                 |
+| Tier              | Stores                        | What it means                                                                                                                                                                                                                                                                                                                |
+| ----------------- | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Tier 1**        | Cloudflare R2, AWS S3         | Supported. R2's native `r2BindingStorage` adapter is PR-CI gated by `pnpm test:adapter-cloudflare`; R2 and AWS through `S3HttpStorage` are covered by credential-gated `pnpm test:conformance` runs, not by fresh-checkout PR CI.                                                                                            |
+| **Tier 1.5**      | MinIO                         | Dev / local conformance harness (`pnpm dev:storage`, `pnpm test:minio`, `pnpm test:adapter-node`). Conditional writes — including bare-`*` create-if-absent — are verified against the pinned local MinIO; not a production target we promise.                                                                               |
+| **Unsupported**   | GCS (S3-interop), Azure Blob  | `gcsStorage` exists as an S3-interop factory, but GCS documents S3 `If-Match` / `If-None-Match` as read-scoped and baerly does not emit native `x-goog-if-generation-match`, so GCS is unsupported for database use unless a live probe and conformance run prove otherwise. Azure Blob is not an S3 API and has no adapter. |
+| **Anything else** | other S3-compatible endpoints | Run `baerly doctor --bucket`. **Green ⇒ the conditional verbs are honoured — should work, you own production validation. Red ⇒ won't.**                                                                                                                                                                                      |
 
 ## Per-provider conditional-write matrix
 
 Dated because provider behaviour drifts — re-verify before relying on a
 non-Tier-1 row.
 
-| Provider         | `If-None-Match: "*"` (create-if-absent)                                                    | `If-Match: <etag>` (CAS)         | How established                         | Verified |
-| ---------------- | ------------------------------------------------------------------------------------------ | -------------------------------- | --------------------------------------- | -------- |
-| AWS S3           | Yes                                                                                        | Yes                              | CI conformance + contention cascade     | 2026-06  |
-| Cloudflare R2    | Yes                                                                                        | Yes                              | CI conformance + contention cascade     | 2026-06  |
-| MinIO            | Yes (baerly emits a bare `*`)                                                              | Yes                              | dev-stack `pnpm test:minio` conformance | 2026-06  |
-| GCS (S3-interop) | Not over the S3 path — the header is read-scoped; writes need `x-goog-if-generation-match` | Same — read-scoped on S3 interop | Provider XML-API docs; unsupported      | 2026-06  |
-| Azure Blob       | n/a (not an S3 API)                                                                        | n/a                              | n/a                                     | 2026-06  |
+| Provider         | `If-None-Match: "*"` (create-if-absent)                                                    | `If-Match: <etag>` (CAS)         | How established                                       | Verified |
+| ---------------- | ------------------------------------------------------------------------------------------ | -------------------------------- | ----------------------------------------------------- | -------- |
+| AWS S3           | Yes                                                                                        | Yes                              | Credential-gated `pnpm test:conformance`; S3 docs     | 2026-06  |
+| Cloudflare R2    | Yes                                                                                        | Yes                              | PR-CI native R2 adapter; credential-gated S3-HTTP run | 2026-06  |
+| MinIO            | Yes (baerly emits a bare `*`)                                                              | Yes                              | Local dev-stack conformance (`MINIO=1`)               | 2026-06  |
+| GCS (S3-interop) | Not over the S3 path — the header is read-scoped; writes need `x-goog-if-generation-match` | Same — read-scoped on S3 interop | Factory exists; provider XML-API docs; unsupported    | 2026-06  |
+| Azure Blob       | n/a (not an S3 API)                                                                        | n/a                              | No adapter                                            | 2026-06  |
 
 > **Tracking note (GCS):** because GCS scopes `If-None-Match` to reads
 > over the S3 path, its **concurrent** create-if-absent
 > exactly-one-winner behavior is moot and **unverified** — if a future
-> GCS adapter ever emits `x-goog-if-generation-match`, that adapter
-> must pass the `ifNoneMatch-concurrent` probe before GCS can leave the
-> Unsupported tier.
+> native GCS adapter ever emits `x-goog-if-generation-match`, that
+> adapter must pass the `ifNoneMatch-concurrent` probe before GCS can
+> leave the Unsupported tier.
 
 > Conditional writes are also subject to **per-object / per-prefix
 > write-rate limits**. Under single-write commit the high-frequency

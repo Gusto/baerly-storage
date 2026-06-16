@@ -49,6 +49,7 @@ import { probeTailFrom } from "./log-tail.ts";
 import { createObservabilityContext, runWithContext } from "./observability/context.ts";
 import { RequestScopedMetricsRecorder } from "./observability/recorder.ts";
 import { Writer } from "./writer.ts";
+import { seedLogEntries } from "../../../tests/fixtures/log-state.ts";
 
 const KEY = "app/t/tenant/x/manifests/c/current.json";
 const COLL = "c";
@@ -369,18 +370,39 @@ const counterTotal = (recorder: RequestScopedMetricsRecorder, name: string): num
     .reduce((acc, c) => acc + c.value, 0);
 
 describe("runBoundedMaintenance", () => {
-  test("disabled: true performs ZERO storage ops", async () => {
+  test("disabled: true skips fold/GC and does not refresh tail_hint below the guard interval", async () => {
     const inner = new MemoryStorage();
-    await seedLog(inner, KEY, COLL, 60);
-    await patchCurrent(inner, KEY, { snapshot_bytes: 0, snapshot_rows: 0 });
+    await bootstrap(inner, KEY);
+    await seedLogEntries(inner, COLLECTION_PREFIX, 0, 60);
     const c = countingStorage(inner);
     await runBoundedMaintenance({
       storage: c.storage,
       currentJsonKey: KEY,
       prevSeq: 0,
+      observedTail: 60,
       disabled: true,
     });
-    expect(c.total()).toBe(0);
+    expect(c.report()).toEqual({ get: 1, put: 0, delete: 0, list: 0 });
+    await expect(readSeqStart(inner, KEY)).resolves.toBe(0);
+    await expect(readTailHint(inner, KEY)).resolves.toBe(0);
+  });
+
+  test("disabled: true still refreshes tail_hint at the guard interval", async () => {
+    const inner = new MemoryStorage();
+    await bootstrap(inner, KEY);
+    await seedLogEntries(inner, COLLECTION_PREFIX, 0, MAINTENANCE_TAIL_HINT_REFRESH_WRITES);
+    const c = countingStorage(inner);
+    await runBoundedMaintenance({
+      storage: c.storage,
+      currentJsonKey: KEY,
+      prevSeq: 0,
+      observedTail: MAINTENANCE_TAIL_HINT_REFRESH_WRITES,
+      disabled: true,
+    });
+
+    expect(c.report()).toEqual({ get: 2, put: 1, delete: 0, list: 0 });
+    await expect(readSeqStart(inner, KEY)).resolves.toBe(0);
+    await expect(readTailHint(inner, KEY)).resolves.toBe(MAINTENANCE_TAIL_HINT_REFRESH_WRITES);
   });
 
   test("single-phase: a fold-viable, gate1-tripping tick folds and does NOT also GC", async () => {

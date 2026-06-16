@@ -5,6 +5,7 @@ import {
   createCurrentJson,
   getOrCreateMemoryStorageForBucket,
   MAINTENANCE_MIN_LIVE_BYTES,
+  MAINTENANCE_TAIL_HINT_REFRESH_WRITES,
   MemoryStorage,
   BaerlyError,
   resetMemoryStorage,
@@ -92,6 +93,48 @@ class InstrumentedStorage extends MemoryStorage {
       foreign["session"] = "INTRUDR0";
       await super.put(key, new TextEncoder().encode(JSON.stringify(foreign)), opts);
       throw new BaerlyError("Conflict", `simulated 412 on ${key}: precondition failed`);
+    }
+    return super.put(key, body, opts);
+  }
+}
+
+class LostAckStorage extends MemoryStorage {
+  dropNextLogCreateAck = false;
+
+  override async put(
+    key: string,
+    body: Uint8Array,
+    opts?: StoragePutOptions,
+  ): Promise<StoragePutResult> {
+    const isLogCreate = /\/log\/\d+\.json$/.test(key) && opts?.ifNoneMatch !== undefined;
+    if (isLogCreate && this.dropNextLogCreateAck) {
+      this.dropNextLogCreateAck = false;
+      await super.put(key, body, opts);
+      throw new BaerlyError("NetworkError", `simulated dropped ack on ${key}`);
+    }
+    return super.put(key, body, opts);
+  }
+}
+
+class SameSessionDifferentBodyStorage extends MemoryStorage {
+  collideNextLogCreate = false;
+
+  override async put(
+    key: string,
+    body: Uint8Array,
+    opts?: StoragePutOptions,
+  ): Promise<StoragePutResult> {
+    const isLogCreate = /\/log\/\d+\.json$/.test(key) && opts?.ifNoneMatch !== undefined;
+    if (isLogCreate && this.collideNextLogCreate) {
+      this.collideNextLogCreate = false;
+      const attempted = decodeJson<LogEntry>(body);
+      const forged: LogEntry = {
+        ...attempted,
+        doc_id: "same-session-intruder",
+        after: { _id: "same-session-intruder", from: "collision" },
+      };
+      await super.put(key, new TextEncoder().encode(JSON.stringify(forged)), opts);
+      throw new BaerlyError("Conflict", `simulated same-session collision on ${key}`);
     }
     return super.put(key, body, opts);
   }
@@ -299,6 +342,52 @@ describe("Writer", () => {
     await expect(durableLogSeqs(storage)).resolves.toEqual([0, 1, 2, 3]);
   });
 
+  test("lost ack on log create adopts the same-session same-intent entry", async () => {
+    const storage = new LostAckStorage();
+    await createCurrentJson(storage, CURRENT_KEY, seedCurrent());
+    storage.dropNextLogCreateAck = true;
+    const writer = new Writer({
+      storage,
+      currentJsonKey: CURRENT_KEY,
+      options: { initialBackoffMs: 0, random: () => 0 },
+    });
+
+    const result = await writer.commit({
+      op: "I",
+      collection: COLL,
+      docId: "lost-ack",
+      body: { _id: "lost-ack", from: "writer" },
+    });
+
+    expect(result.entry.seq).toBe(0);
+    expect(result.entry.doc_id).toBe("lost-ack");
+    await expect(durableLogSeqs(storage)).resolves.toEqual([0]);
+  });
+
+  test("same-session same-seq different body is not adopted", async () => {
+    const storage = new SameSessionDifferentBodyStorage();
+    await createCurrentJson(storage, CURRENT_KEY, seedCurrent());
+    storage.collideNextLogCreate = true;
+    const writer = new Writer({
+      storage,
+      currentJsonKey: CURRENT_KEY,
+      options: { initialBackoffMs: 0, random: () => 0 },
+    });
+
+    const result = await writer.commit({
+      op: "I",
+      collection: COLL,
+      docId: "writer-doc",
+      body: { _id: "writer-doc", from: "writer" },
+    });
+
+    expect(result.entry.seq).toBe(1);
+    expect(result.entry.doc_id).toBe("writer-doc");
+    const planted = decodeJson<LogEntry>((await storage.get(`${LOG_PREFIX}/0.json`))!.body);
+    expect(planted.doc_id).toBe("same-session-intruder");
+    await expect(durableLogSeqs(storage)).resolves.toEqual([0, 1]);
+  });
+
   test("commit() walks [log_seq_start, tail_hint) — entries below the bound are NOT GET-required", async () => {
     // Bootstrap with tail_hint=3 and log_seq_start=2, then plant ONLY
     // log/2.json on the bucket. The writer must not GET log/0.json or
@@ -349,7 +438,7 @@ describe("Writer", () => {
     await expect(durableLogSeqs(storage)).resolves.toEqual([2, 3]);
   });
 
-  test("two concurrent writers: both succeed and tail_hint advances by 2", async () => {
+  test("two concurrent writers: both succeed and leave a dense log", async () => {
     const storage = getOrCreateMemoryStorageForBucket(BUCKET);
     await createCurrentJson(storage, CURRENT_KEY, seedCurrent());
 
@@ -642,6 +731,53 @@ describe("Writer — filtered index", () => {
     predicate: { clauses: [{ op: "eq", field: "status", value: "open" }] },
   };
 
+  class PostCommitIndexCleanupFailureStorage extends MemoryStorage {
+    failPreImageRead = false;
+    failIndexDelete = false;
+    private armedAfterLogCreate = false;
+    private preImageReadThrown = false;
+
+    arm(): void {
+      this.armedAfterLogCreate = false;
+      this.preImageReadThrown = false;
+    }
+
+    override async put(
+      key: string,
+      body: Uint8Array,
+      opts?: StoragePutOptions,
+    ): Promise<StoragePutResult> {
+      const result = await super.put(key, body, opts);
+      if (key.includes("/log/") && key.endsWith(".json") && opts?.ifNoneMatch !== undefined) {
+        this.armedAfterLogCreate = true;
+      }
+      return result;
+    }
+
+    override async get(
+      key: string,
+      opts?: { ifNoneMatch?: string; versionId?: string; signal?: AbortSignal },
+    ): Promise<{ body: Uint8Array; etag: string; versionId?: string } | null> {
+      if (
+        this.armedAfterLogCreate &&
+        this.failPreImageRead &&
+        !this.preImageReadThrown &&
+        key.endsWith("/log/0.json")
+      ) {
+        this.preImageReadThrown = true;
+        throw new BaerlyError("NetworkError", `simulated pre-image read failure on ${key}`);
+      }
+      return super.get(key, opts);
+    }
+
+    override async delete(key: string, opts?: { signal?: AbortSignal }): Promise<void> {
+      if (this.armedAfterLogCreate && this.failIndexDelete && /\/index\//.test(key)) {
+        throw new BaerlyError("NetworkError", `simulated index delete failure on ${key}`);
+      }
+      return super.delete(key, opts);
+    }
+  }
+
   beforeEach(() => {
     resetMemoryStorage();
   });
@@ -662,6 +798,27 @@ describe("Writer — filtered index", () => {
       currentJsonKey: FILTERED_CURRENT_KEY,
       options: { indexes: [open_only] },
     });
+    return { storage, writer };
+  };
+
+  const newCleanupFailureWriter = async (): Promise<{
+    storage: PostCommitIndexCleanupFailureStorage;
+    writer: Writer;
+  }> => {
+    const storage = new PostCommitIndexCleanupFailureStorage();
+    await createCurrentJson(storage, FILTERED_CURRENT_KEY, seedCurrent());
+    const writer = new Writer({
+      storage,
+      currentJsonKey: FILTERED_CURRENT_KEY,
+      options: { indexes: [open_only] },
+    });
+    await writer.commit({
+      op: "I",
+      collection: COLL,
+      docId: "t-1",
+      body: { _id: "t-1", status: "open", assignee: "alice" },
+    });
+    storage.arm();
     return { storage, writer };
   };
 
@@ -713,6 +870,54 @@ describe("Writer — filtered index", () => {
     expect(after).toHaveLength(1);
     expect(after[0]).not.toBe(before[0]); // assignee changed
     expect(after[0]!.endsWith("/t-1.json")).toBe(true);
+  });
+
+  test("U: post-commit pre-image read failure records a metric and does not reject commit", async () => {
+    const { storage, writer } = await newCleanupFailureWriter();
+    storage.failPreImageRead = true;
+    const ctx = createObservabilityContext();
+
+    const result = await runWithContext(ctx, () =>
+      writer.commit({
+        op: "U",
+        collection: COLL,
+        docId: "t-1",
+        body: { _id: "t-1", status: "open", assignee: "bob" },
+      }),
+    );
+
+    expect(result.entry.seq).toBe(1);
+    expect(result.entry.doc_id).toBe("t-1");
+    await expect(durableLogSeqs(storage)).resolves.toEqual([0, 1]);
+    expect(sumCounter(ctx, "db.write.index_cleanup_errors_total")).toBe(1);
+    const cleanupCounter = ctx.recorder
+      .snapshot()
+      .counters.find((c) => c.name === "db.write.index_cleanup_errors_total");
+    expect(cleanupCounter?.labels).toEqual({ collection: COLL, step: "pre-image-read" });
+  });
+
+  test("U: post-commit stale-index delete failure records a metric and does not reject commit", async () => {
+    const { storage, writer } = await newCleanupFailureWriter();
+    storage.failIndexDelete = true;
+    const ctx = createObservabilityContext();
+
+    const result = await runWithContext(ctx, () =>
+      writer.commit({
+        op: "U",
+        collection: COLL,
+        docId: "t-1",
+        body: { _id: "t-1", status: "open", assignee: "bob" },
+      }),
+    );
+
+    expect(result.entry.seq).toBe(1);
+    expect(result.entry.doc_id).toBe("t-1");
+    await expect(durableLogSeqs(storage)).resolves.toEqual([0, 1]);
+    expect(sumCounter(ctx, "db.write.index_cleanup_errors_total")).toBe(1);
+    const cleanupCounter = ctx.recorder
+      .snapshot()
+      .counters.find((c) => c.name === "db.write.index_cleanup_errors_total");
+    expect(cleanupCounter?.labels).toEqual({ collection: COLL, step: "delete" });
   });
 
   test("U: filter-match → filter-miss DELETEs all old keys, emits no PUTs", async () => {
@@ -1082,9 +1287,10 @@ describe("Writer — write-tick maintenance dispatch", () => {
     await expect(durableLogSeqs(storage)).resolves.toEqual([0, 1, 2, 3]);
   });
 
-  test("(10) maintenance.disabled on the context suppresses dispatch entirely", async () => {
-    // Belt-and-suspenders: even with the ratio tripping, `disabled: true`
-    // skips the dispatch path. (Used by bare-write cost-shape tests.)
+  test("(10) maintenance.disabled skips fold/GC dispatch until tail_hint refresh is due", async () => {
+    // `disabled: true` suppresses fold/GC, but the writer still dispatches
+    // when the tail_hint gap reaches the refresh threshold so a
+    // maintenance-off collection does not drift past the probe cap.
     const storage = new MemoryStorage();
     await seedWith(storage, {
       tail_hint: 1,
@@ -1100,6 +1306,40 @@ describe("Writer — write-tick maintenance dispatch", () => {
     );
 
     expect(spy.mock.calls.length).toBe(0);
+
+    const refreshDueStorage = new MemoryStorage();
+    await seedWith(refreshDueStorage, {
+      tail_hint: 0,
+      mean_entry_bytes: MAINTENANCE_MIN_LIVE_BYTES,
+      snapshot_bytes: 0,
+    });
+    const refreshDueWriter = new Writer({
+      storage: refreshDueStorage,
+      currentJsonKey: CURRENT_KEY,
+    });
+    const manifestPrefix = `app/test/tenant/t/manifests/${COLL}`;
+    for (let i = 0; i < MAINTENANCE_TAIL_HINT_REFRESH_WRITES - 1; i++) {
+      await seedLogEntry(refreshDueStorage, manifestPrefix, i, {
+        lsn: `z_seed_${i}`,
+        commit_ts: "2026-05-01T00:00:00.000Z",
+        collection: COLL,
+        doc_id: `seed-${i}`,
+        session: "seed",
+        after: { _id: `seed-${i}` },
+      });
+    }
+    await runWithContext(
+      createObservabilityContext({ maintenance: { dispatch: spy, disabled: true } }),
+      () =>
+        refreshDueWriter.commit({
+          op: "I",
+          collection: COLL,
+          docId: "doc-refresh",
+          body: { _id: "doc-refresh" },
+        }),
+    );
+
+    expect(spy.mock.calls.length).toBe(1);
   });
 
   test("over-long assembled key surfaces as InvalidConfig, not a storage error", async () => {

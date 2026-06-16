@@ -78,7 +78,7 @@ interface CurrentJson {
     claimed_at: string;
     lease_until?: string;
   };
-  mean_entry_bytes: number;
+  mean_entry_bytes?: number;
   snapshot_bytes: number;
   snapshot_rows: number;
   last_warned_seq?: number;
@@ -87,12 +87,12 @@ interface CurrentJson {
 
 `tail_hint` is a non-authoritative monotone **lower bound** for the
 live tail (it replaces the old authoritative head pointer that carried
-the next sequence number), and `mean_entry_bytes` is the
+the next sequence number), and `mean_entry_bytes` is the optional
 compactor-stamped mean folded-entry size that drives the derived
-live-tail estimate (it replaces the old exact stored-byte counter,
-which can no longer be writer-incremented once commits skip
-`current.json`). `writer_fence` is **dormant** — no prod path reads or
-writes it; its drop is deferred (see
+live-tail estimate after the first fold (it replaces the old exact
+stored-byte counter, which can no longer be writer-incremented once
+commits skip `current.json`). `writer_fence` is **dormant** — no prod
+path reads or writes it; its drop is deferred (see
 [ADR-008 §1](../adr/008-single-write-commit.md)).
 
 Readers fold the trusted range `[log_seq_start, tail_hint)` and then
@@ -123,8 +123,8 @@ The `Storage` backend must provide three behaviors:
    CAS, but the compactor still CAS-advances `current.json`.
 
 S3 exposes these as conditional writes with `If-None-Match` and
-`If-Match`; the conformance suite requires the same semantics for
-every shipped adapter, including the concurrent exactly-one-winner
+`If-Match`; the conformance suite requires the same semantics on each
+adapter path where it runs, including the concurrent exactly-one-winner
 check (fire K concurrent create-if-absent of a fresh key, assert
 exactly one wins). A backend that silently ignores `If-Match` is not a
 Baerly backend: it can lose updates without a visible error.
@@ -133,9 +133,11 @@ Baerly backend: it can lose updates without a visible error.
 arbitrary bucket before deploy, including the **concurrent**
 exactly-one-winner sub-check. The probe writes throwaway sentinels and
 asserts stale `If-Match`, colliding `If-None-Match: "*"`, and
-concurrent create-if-absent races all behave correctly. `baerly
-deploy` runs this preflight and **aborts non-zero** before deploying a
-backend that fails it.
+concurrent create-if-absent races all behave correctly. Operators
+should run this probe before relying on a bucket. Cloudflare deploy can
+run the same live probe when passed `--probe-bucket=<uri>` and aborts
+before deploying if that opt-in preflight fails; self-hosted Node has
+no deploy wrapper, so the doctor command is the manual gate.
 
 **Deployment-topology rule — no negative caching in front of the
 log/CAS path.** The log and CAS requests must hit the object-store API
@@ -402,9 +404,12 @@ These are the load-bearing rules.
 6. **`current.json` is compaction state, sole-written by the
    compactor in steady state.** The compactor's fold CAS is the only
    steady-state writer; `tail_hint` is a non-authoritative monotone
-   lower bound, and the compactor is its sole durable advancer. (Two
-   non-commit-path writers survive: the one-time `createCurrentJson`
-   bootstrap and the best-effort `last_warned_seq` graduation stamp.)
+   lower bound, durably advanced by compaction folds and by the
+   write-tick runner's tail refresh when fold/GC work defers or is
+   disabled. Ordinary writer commits never refresh it inline. Other
+   non-commit-path writers are explicit: the one-time `createCurrentJson`
+   bootstrap, operator/import paths such as `admin restore`, and the
+   best-effort `last_warned_seq` graduation stamp.
 7. **A committed doc is eventually correctly indexed.** New index keys
    are emitted _before_ the commit and stale keys deleted _after_, so
    a committed value is never de-indexed by an abandoned write. The

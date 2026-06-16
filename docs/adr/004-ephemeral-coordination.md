@@ -18,7 +18,11 @@ related:
 
 ## Status
 
-Accepted (2026-05-26). Amended (2026-05-31): in-band write-tick maintenance landed (see Decision §3 + the In-band maintenance subsection).
+Accepted (2026-05-26). Amended (2026-05-31): in-band write-tick
+maintenance landed (see Decision §3 + the In-band maintenance
+subsection). Amended by [ADR-008](008-single-write-commit.md): commits
+are now linearized by the numbered `log/<seq>` create; `current.json`
+is compaction state, and the embedded writer fence is dormant.
 
 ## Context
 
@@ -65,8 +69,9 @@ generation-precondition adapter lands or a live run proves the interop
 layer enforces them. Azure Blob exposes the same ETag CAS semantics but
 speaks a non-S3 REST dialect (no S3 endpoint), so it needs a dedicated
 adapter that does not exist. `baerly doctor --bucket` runs a live CAS
-probe and hard-rejects any backend that doesn't reject a stale conditional
-write — so a non-conformant store cannot be deployed unnoticed. Three
+probe and rejects any backend that doesn't reject stale or colliding
+conditional writes. Cloudflare deploy can run the same probe with
+`--probe-bucket=<uri>`; Node/self-host deploys run it manually. Three
 mechanisms make this sufficient:
 
 1. **Two-phase fence with server timestamp.** Writers observe a
@@ -78,12 +83,13 @@ mechanisms make this sufficient:
    local clock. See [ADR-001](001-tenant-cas-isolation.md) and
    the bounded-clock-skew assumption (`LAG_WINDOW_MILLIS = 5000`)
    in [`docs/spec/sync-protocol.md`](../spec/sync-protocol.md).
-2. **Manifest-LAST commit with self-session adoption on 412.**
-   The CAS on `current.json` is the single linearization point.
-   Sessions that lose the race adopt the winner's manifest
-   without rolling back their own log entries; the adoption
-   decision is gated on a per-commit random session id that no
-   adversary with bucket-write access can forge (see
+2. **Single-write log commit with self-session adoption on 412.**
+   The winning `If-None-Match: "*"` create on `log/<seq>` is the
+   single linearization point. A writer that receives `412` reads the
+   occupant back: if it is the writer's own session/seq, it adopts the
+   lost-ack commit; if it is foreign, the writer probes the next seq.
+   The adoption decision is gated on a per-commit random session id
+   that no adversary with bucket-write access can forge (see
    [`packages/server/src/log-conflict-adoption.ts`](../../packages/server/src/log-conflict-adoption.ts)
    and `tryAdoptOwnSessionLogEntry`).
 3. **In-band, write-triggered maintenance.** Compaction and GC
@@ -216,10 +222,11 @@ conditional writes — the full-fence CAS is what makes "abandon a
 lost fold" safe. A `Storage` backend that silently ignores
 `ifMatch` would break the property. This is now enforced rather than
 assumed: the storage conformance suite asserts CAS semantics with **no
-`supportsCAS` opt-out** (every shipped adapter proves it in CI), and
-`baerly doctor --bucket <uri>` runs a live CAS round-trip (`probeCas`)
-that fails loud against a non-conformant store at deploy time. CAS is a
-documented hard backend requirement (see
+`supportsCAS` opt-out** on every conformance path, and `baerly doctor
+--bucket <uri>` runs a live CAS round-trip (`probeCas`) that fails loud
+against a non-conformant store. Cloudflare deploy can make that probe
+an opt-in preflight with `--probe-bucket=<uri>`; self-hosted Node
+deploys run it manually. CAS is a documented hard backend requirement (see
 [sync-protocol.md](../spec/sync-protocol.md) §"Protocol invariants").
 
 ### Operator implications

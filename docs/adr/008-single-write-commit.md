@@ -82,9 +82,11 @@ discipline). No prod path reads or writes it.
 With the commit-path CAS gone, the compactor's fold CAS is the **sole
 steady-state writer** of `current.json`. The object is no longer the
 authoritative head; it is **compaction state** plus a _non-authoritative
-lower-bound hint_ for the live tail. Two non-commit-path writers survive and
-are fine: the one-time `createCurrentJson` bootstrap and the best-effort
-`last_warned_seq` graduation-warn stamp.
+lower-bound hint_ for the live tail. Ordinary writer commits never refresh
+the hint. Other non-commit-path writers are explicit and fine: the one-time
+`createCurrentJson` bootstrap, write-tick tail refreshes when maintenance
+defers or fold/GC phases are disabled, operator/import paths such as
+`admin restore`, and the best-effort `last_warned_seq` graduation-warn stamp.
 
 Compaction-state atomicity is _strengthened_ by the change: the snapshot
 pointer + `log_seq_start` + snapshot counters all move together under the
@@ -196,12 +198,13 @@ has no fill primitive). So:
   reader can never stop early inside a hole, and a just-committed entry
   above a stale hint simply becomes visible when the probe reaches it (the
   reader sees a valid committed _prefix_ either way).
-- `tail_hint` is a **proven lower bound**: the compactor stamps it (monotone
-  max) only after folding a _dense prefix_, and it is the **sole** durable
-  advancer of the hint. The writer never refreshes the hint — a best-effort
-  writer refresh was considered and dropped, because a stale hint only
-  lengthens the next probe (never a correctness hazard) and a mandatory
-  per-commit refresh would collapse the design back into a two-write commit.
+- `tail_hint` is a **proven lower bound**: the compactor stamps it
+  (monotone max) only after probing a _dense prefix_. The write-tick runner
+  may also stamp a writer-observed tail when fold/GC work defers or is
+  disabled, and explicit operator/import paths may stamp a known tail. The
+  ordinary writer never refreshes the hint inline — a per-commit refresh was
+  considered and dropped because making it mandatory would collapse the
+  design back into a two-write commit.
 
 So the strict `[log_seq_start, tail_hint)` fold keeps `walkLogRange`'s
 existing hole-is-corruption invariant (the trusted range never contains a
@@ -209,7 +212,7 @@ hole), and only the tolerant `[tail_hint, tail)` probe rides the dense
 forward walk. The `log/N+1 ⟹ log/N` density obligation is a protocol
 obligation the storage layer does not enforce; it is fuzz-asserted.
 
-### 7. The load-bearing prerequisite + a hard deploy gate
+### 7. The load-bearing prerequisite + deploy-time probing
 
 Single-write commit correctness rests entirely on the backend's
 `If-None-Match:"*"` create-if-absent being **truly linearizable under
@@ -225,12 +228,16 @@ This is gated, not assumed:
    old _sequential_ "rejects when the key exists" property).
 2. **Probe + conformance.** `probeCas` carries an `ifNoneMatch-concurrent`
    sub-check (fire K concurrent create-if-absent of a fresh key; assert
-   exactly one wins), and the conformance suite asserts the same property
-   for every shipped adapter (S3/R2/MinIO) on every PR. (Landed as the
+   exactly one wins), and the conformance paths assert the same property
+   where they run: native R2 in PR CI, MinIO in the local dev stack, and
+   cloud S3-compatible endpoints in credential-gated runs. (Landed as the
    Plan A safety gate.)
-3. **Deploy preflight.** `baerly deploy` runs a `baerly doctor --bucket`
-   live CAS probe and **aborts non-zero before deploying**. `doctorCloudflare`
-   stays config-only; deploy owns the live preflight.
+3. **Deploy preflight.** Today the live probe is explicit:
+   `baerly doctor --bucket` is the manual gate for any backend, and
+   Cloudflare `baerly deploy` runs the same probe only when passed
+   `--probe-bucket=<uri>`, aborting before deploy if it fails.
+   `doctorCloudflare` stays config-only. A mandatory deploy hard gate is
+   desired future posture, not current behavior.
 
 There is also a deployment-topology rule the spec states: the log/CAS path
 must hit the object-store API **directly**, never through a negative-caching

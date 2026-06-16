@@ -16,7 +16,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { readCurrentJson } from "@baerly/protocol";
+import { casUpdateCurrentJson, readCurrentJson } from "@baerly/protocol";
 import { LocalFsStorage } from "@baerly/dev";
 import { runRestore } from "./restore.ts";
 
@@ -24,6 +24,7 @@ const APP = "app";
 const TENANT = "tenant";
 const COLL = "tickets";
 const CURRENT_JSON_KEY = `app/${APP}/tenant/${TENANT}/manifests/${COLL}/current.json`;
+const TABLE_PREFIX = `app/${APP}/tenant/${TENANT}/manifests/${COLL}`;
 
 const captureStream = (
   stream: NodeJS.WriteStream,
@@ -120,6 +121,36 @@ describe("baerly admin restore", () => {
     expect(head?.json.log_seq_start).toBe(2);
     // --force bumps the fence epoch — go from 0 to 1.
     expect(head?.json.writer_fence.epoch).toBeGreaterThanOrEqual(1);
+  });
+
+  test("--force chooses old tail from log keys without decoding malformed old entries", async () => {
+    await writeFile(stdinPath, CANONICAL_NDJSON, "utf8");
+    const first = await runRestore(
+      [`--bucket=file://${root}`, `--app=${APP}`, `--tenant=${TENANT}`, `--collection=${COLL}`],
+      { streams: { stdin: createReadStream(stdinPath) } },
+    );
+    expect(first).toBe(0);
+
+    await casUpdateCurrentJson(storage, CURRENT_JSON_KEY, (c) => ({ ...c, tail_hint: 0 }));
+    await storage.put(`${TABLE_PREFIX}/log/0.json`, new TextEncoder().encode("{not json"), {
+      contentType: "application/json",
+    });
+
+    await writeFile(stdinPath, `{"_id":"u-1","x":1}\n`, "utf8");
+    const second = await runRestore(
+      [
+        `--bucket=file://${root}`,
+        `--app=${APP}`,
+        `--tenant=${TENANT}`,
+        `--collection=${COLL}`,
+        "--force",
+      ],
+      { streams: { stdin: createReadStream(stdinPath) } },
+    );
+    expect(second).toBe(0);
+    const head = await readCurrentJson(storage, CURRENT_JSON_KEY);
+    expect(head?.json.log_seq_start).toBe(2);
+    expect(head?.json.tail_hint).toBe(3);
   });
 
   test("malformed line → exit 2, no rows committed", async () => {

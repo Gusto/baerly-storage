@@ -16,7 +16,13 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { CURRENT_JSON_SCHEMA_VERSION, createCurrentJson, type Storage } from "@baerly/protocol";
+import {
+  casUpdateCurrentJson,
+  CURRENT_JSON_SCHEMA_VERSION,
+  createCurrentJson,
+  readCurrentJson,
+  type Storage,
+} from "@baerly/protocol";
 import { LocalFsStorage } from "@baerly/dev";
 import { allIndexKeysFor } from "@baerly/server";
 import { Writer } from "@baerly/server/_internal/testing";
@@ -137,7 +143,6 @@ describe("baerly admin fsck — CLI smoke", () => {
       contentType: "application/json",
     });
     // Repoint current.json. Read + CAS so the etag stays valid.
-    const { readCurrentJson, casUpdateCurrentJson } = await import("@baerly/protocol");
     const read = await readCurrentJson(storage, CURRENT_JSON_KEY);
     if (read === null) {
       throw new Error("test setup: missing current.json");
@@ -194,6 +199,45 @@ describe("baerly admin fsck — CLI smoke", () => {
     expect(envelope.result.findings.some((f) => f.check === "log" && f.key === targetKey)).toBe(
       true,
     );
+  });
+
+  test("over-claimed tail_hint → exit 4 with findings listing missing tail seqs", async () => {
+    await provision(storage);
+    await seedRows(storage, 3);
+    await casUpdateCurrentJson(storage, CURRENT_JSON_KEY, (c) => ({ ...c, tail_hint: 6 }));
+
+    const stdout = captureStream(process.stdout);
+    let exitCode: number;
+    try {
+      exitCode = await runFsck([
+        `--bucket=file://${root}`,
+        `--app=${APP}`,
+        `--tenant=${TENANT}`,
+        `--collection=${COLL}`,
+        "--json",
+      ]);
+    } finally {
+      stdout.restore();
+    }
+    expect(exitCode).toBe(4);
+    const envelope = JSON.parse(stdout.captured.join("").trim()) as {
+      result: {
+        log_range: { to_excl: number; present: number };
+        findings: { check: string; key?: string }[];
+      };
+    };
+    expect(envelope.result.log_range.to_excl).toBe(6);
+    expect(envelope.result.log_range.present).toBe(3);
+    expect(
+      envelope.result.findings
+        .filter((f) => f.check === "log")
+        .map((f) => f.key)
+        .toSorted(),
+    ).toEqual([
+      `${TABLE_PREFIX}/log/3.json`,
+      `${TABLE_PREFIX}/log/4.json`,
+      `${TABLE_PREFIX}/log/5.json`,
+    ]);
   });
 
   test("orphan index key with --indexes → exit 4 with drift finding", async () => {

@@ -53,8 +53,8 @@ import {
   type DocumentData,
   encodeJsonBytes,
   readCurrentJson,
+  type Storage,
 } from "@baerly/protocol";
-import { probeTailFrom } from "@baerly/server";
 import { Writer } from "@baerly/server/_internal/testing";
 import { parseBucketUri } from "../bucket-uri.ts";
 import { emitSuccess } from "../output.ts";
@@ -97,6 +97,26 @@ const RESTORE_ARGS = {
   },
 } as const satisfies ArgsDef;
 
+const tailFromListedLogKeys = async (
+  storage: Storage,
+  collectionPrefix: string,
+): Promise<number> => {
+  const logPrefix = `${collectionPrefix}/log/`;
+  let maxSeq = -1;
+  for await (const entry of storage.list(logPrefix)) {
+    const tail = entry.key.slice(logPrefix.length);
+    const match = /^(\d+)\.json$/.exec(tail);
+    if (match === null) {
+      continue;
+    }
+    const seq = Number.parseInt(match[1]!, 10);
+    if (Number.isFinite(seq) && seq > maxSeq) {
+      maxSeq = seq;
+    }
+  }
+  return maxSeq + 1;
+};
+
 const bundle = defineBaerlySubcommand({
   name: "admin.restore",
   meta: {
@@ -137,13 +157,12 @@ const bundle = defineBaerlySubcommand({
       // `tail_hint` and `log_seq_start` past the old data so new
       // commits land at fresh sequence numbers and the old log files
       // become unreferenced orphans (the compactor / GC sweep them on
-      // the next maintenance pass). Under single-write commit
-      // `tail_hint` is only a lower bound, so probe the TRUE old tail —
-      // `log_seq_start` must sit ABOVE every old entry or the probe-based
-      // reader would fold stale rows from the prior generation.
+      // the next maintenance pass). Do this from LISTed log keys, not
+      // by folding the old log bodies: `--force` must be able to recover
+      // from malformed old entries, and a hole must not make us
+      // under-shoot a later old entry.
       const collectionPrefix = currentJsonKey.slice(0, currentJsonKey.lastIndexOf("/"));
-      const oldTail = await probeTailFrom(bucket.storage, collectionPrefix, head.json.tail_hint);
-      const truncatedNext = oldTail.tail;
+      const truncatedNext = await tailFromListedLogKeys(bucket.storage, collectionPrefix);
       baseSeq = truncatedNext;
       const reseeded: CurrentJson = {
         schema_version: CURRENT_JSON_SCHEMA_VERSION,

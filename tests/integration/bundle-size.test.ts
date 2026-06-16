@@ -258,7 +258,11 @@ const BUDGETS: readonly Budget[] = [
   //     rewrote the now-stale Writer class docstring + density-precondition
   //     notes (comments ship un-stripped). +27 B raw over the prior ceiling
   //     (measured 219163). gz/min-gz unaffected. Rebaseline raw +1 KiB only.
-  { entry: "index.js", raw: 215 * 1024, gz: 67 * 1024, minGz: 19 * 1024 },
+  //   → 216 KiB raw (2026-06-16): own-session adoption now rejects a
+  //     same-session/same-seq occupant unless the read-back log entry exactly
+  //     matches the writer's attempted entry. Closes the session-collision
+  //     data-loss path. Measured 220302 raw; gz/min-gz remain under.
+  { entry: "index.js", raw: 216 * 1024, gz: 67 * 1024, minGz: 19 * 1024 },
   // The three auth verifier factories (bearerJwt, sharedSecret,
   // cloudflareAccess) plus the transitive jose closure pulled in by
   // bearerJwt's createRemoteJWKSet + jwtVerify. Adding a fourth
@@ -362,7 +366,10 @@ const BUDGETS: readonly Budget[] = [
   //     the corrected maintenance-runner comment ships un-stripped into this
   //     closure via the maintenance subgraph. +15 B raw over the prior
   //     ceiling (measured 334863). gz/min-gz under. Rebaseline raw +1 KiB.
-  { entry: "http.js", raw: 328 * 1024, gz: 97 * 1024, minGz: 34 * 1024 },
+  //   → 329 KiB raw (2026-06-16): same adoption exact-entry guard as
+  //     index.js reaches the request-path writer closure. Measured 336002
+  //     raw; gz/min-gz remain under.
+  { entry: "http.js", raw: 329 * 1024, gz: 97 * 1024, minGz: 34 * 1024 },
   // Observability primitives — ObservabilityContext, the
   // request-scoped MetricsRecorder, LogTape config + the
   // JSON sink only (the pretty sink + picocolors now live in
@@ -546,7 +553,10 @@ const BUDGETS: readonly Budget[] = [
   //   → raw 383 KiB / gz 115 KiB (2026-06-15): single-write commit — the
   //     writer/maintenance forward-probe + findLogTail subgraph reaches the
   //     cloudflare closure (measured 391116 raw / 117198 gz). min-gz under.
-  { entry: "cloudflare.js", raw: 383 * 1024, gz: 115 * 1024, minGz: 40 * 1024 },
+  //   → raw 384 KiB (2026-06-16): same adoption exact-entry guard as
+  //     index.js reaches the Cloudflare writer closure. Measured 392594 raw;
+  //     gz/min-gz remain under.
+  { entry: "cloudflare.js", raw: 384 * 1024, gz: 115 * 1024, minGz: 40 * 1024 },
   // Client surface — `BaerlyClient<TConfig>` + fetcher plumbing.
   // Browser/runtime-agnostic; no kernel modules in the closure.
   // Budget history:

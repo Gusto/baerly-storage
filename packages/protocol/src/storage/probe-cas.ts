@@ -47,8 +47,8 @@ export interface CasProbeResult {
  *
  * A rejected write surfaces as a `BaerlyError` with `code === "Conflict"`
  * (the contract `Storage.put` documents); anything else — a resolved
- * promise, or a non-Conflict error — means the backend does not honour
- * the condition and is reported as a failed check rather than thrown.
+ * promise, or a non-Conflict error — is reported as a failed or
+ * inconclusive check rather than thrown.
  */
 export const probeCas = async (
   storage: Storage,
@@ -118,12 +118,12 @@ export const probeCas = async (
     // ── Check 3: at most one of N concurrent ifNoneMatch:"*" creates wins. ──
     // The writer already depends on this today: log entries are PUT with
     // ifNoneMatch:"*", and a 412 means a peer won that seq (writer.ts). Two
-    // winners ⇒ two writers believe they appended the same log seq. So
-    // winners>1 is the only definitive non-linearizability signal; transient
-    // non-Conflict losers (e.g. an S3 409 ConditionalRequestConflict, which the
-    // adapter maps to a retryable NetworkError) are inconclusive — the writer
-    // re-issues the same-seq PUT and resolves to 200/412 — not proof of a broken
-    // backend.
+    // winners ⇒ two writers believe they appended the same log seq.
+    // Transient non-Conflict losers (e.g. an S3 409
+    // ConditionalRequestConflict, which the adapter maps to a retryable
+    // NetworkError) are inconclusive — the writer re-issues the same-seq
+    // PUT and resolves to 200/412 — not proof of a broken backend. The
+    // deploy-time probe still fails closed so operators retry for a clean race.
     const raceKey = `${prefix}__baerly_cas_probe__/${uuid()}`;
     const RACERS = 16;
     try {
@@ -144,14 +144,19 @@ export const probeCas = async (
           detail: `${winners} of ${RACERS} concurrent create-if-absent writes won (expected at most 1) — create-if-absent is NOT linearizable; the log-append commit would split-brain.`,
         });
       } else if (winners === 1) {
-        checks.push({
-          name: "ifNoneMatch-concurrent",
-          ok: true,
-          detail:
-            transient === 0
-              ? `exactly one of ${RACERS} concurrent create-if-absent writes won; the rest rejected (Conflict), as required.`
-              : `exactly one of ${RACERS} concurrent create-if-absent writes won (invariant held); ${transient} loser(s) returned a transient non-Conflict error — inconclusive for those, not a linearizability failure.`,
-        });
+        if (transient === 0) {
+          checks.push({
+            name: "ifNoneMatch-concurrent",
+            ok: true,
+            detail: `exactly one of ${RACERS} concurrent create-if-absent writes won; the rest rejected (Conflict), as required.`,
+          });
+        } else {
+          checks.push({
+            name: "ifNoneMatch-concurrent",
+            ok: false,
+            detail: `exactly one of ${RACERS} concurrent create-if-absent writes won, but ${transient} loser(s) returned a transient non-Conflict error — inconclusive; retry for a clean race.`,
+          });
+        }
       } else {
         checks.push({
           name: "ifNoneMatch-concurrent",

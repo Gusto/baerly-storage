@@ -44,8 +44,9 @@ import type { Storage, StoragePutOptions, StoragePutResult } from "../storage/ty
  * `(tenant, collection)` key — for example
  * `<tenant>/<collection>/current.json`. The compactor swaps snapshot
  * generations by CAS-writing this object; the Writer reads it on every
- * commit to find the snapshot pointer, mint the next integer `seq`, and
- * verify stale-authority fencing.
+ * commit to find the snapshot pointer and a non-authoritative
+ * tail-probe floor. The numbered log create mints the next integer
+ * `seq`; no commit-path code CAS-advances `current.json`.
  *
  * The schema is forward-compatible: adding a new optional field is
  * non-breaking. Renaming or removing a field requires bumping
@@ -71,8 +72,9 @@ export interface CurrentJson {
   /**
    * Non-authoritative monotone lower bound on the committed log tail.
    * The authoritative tail is discovered by forward-probe (log-tail.ts);
-   * never trust this as the head. Advanced by the compactor (durable)
-   * and best-effort by winning writers.
+   * never trust this as the head. Durable advancement is owned by
+   * compaction folds, write-tick tail refreshes, and explicit
+   * operator/import paths; ordinary writer commits do not refresh it.
    */
   tail_hint: number;
 
@@ -103,12 +105,18 @@ export interface CurrentJson {
   /** Byte size of the snapshot pointed to by `snapshot`. */
   snapshot_bytes: number;
 
-  /** Row count of the snapshot (= compactor `base.size`, free). With tail_hint - log_seq_start
-   *  (tail entries) this gives the fold's entry count for the ENTRY ceiling `E`. Seeded 0. */
+  /**
+   * Row count of the snapshot (= compactor `base.size`, free). With
+   * `tail_hint - log_seq_start` (trusted tail entries) this gives the
+   * fold's entry count for the ENTRY ceiling `E`. Seeded 0.
+   */
   snapshot_rows: number;
 
-  /** Compactor-stamped mean folded-entry byte size; estimates live-tail bytes
-   *  (`entry_count × mean_entry_bytes`) without an exact counter. Absent until first fold. */
+  /**
+   * Optional compactor-stamped mean folded-entry byte size. Maintenance
+   * derives live-tail bytes as `entry_count × mean_entry_bytes` without
+   * an exact stored counter; absent until first fold.
+   */
   mean_entry_bytes?: number;
 
   /** Baseline for rate-limiting the graduation defer-warn off SHARED durable state, not
@@ -125,13 +133,14 @@ export interface CurrentJson {
  * `claimed_at` is the server response date at claim time, NOT the
  * local clock; `lease_until` is reserved for manual rotation and is not
  * consumed by the current kernel. Log entries are not stamped with this
- * epoch; the fence is a writer stale-authority check, not a reader
- * replay filter.
+ * epoch; the fence is dormant authority metadata, not a reader replay
+ * filter.
  *
  * Borrowed from FoundationDB's `recoveryCount` on cstate, IsleDB's
  * `writer_fence` on `manifest/CURRENT`, and TigerBeetle's VSR view
- * number. The mechanism is the same in all three: every commit checks
- * the epoch on the control object before continuing under its authority.
+ * number. In the earlier two-write commit design, every commit checked
+ * the epoch before continuing under `current.json` authority. Under
+ * single-write commit no production path reads or writes the fence.
  */
 export interface WriterFence {
   /**

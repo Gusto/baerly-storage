@@ -530,8 +530,8 @@ describe("compact", () => {
   // ── Phase 3 Task 3.2: forward-probe the true tail as the fold ceiling
   // and stamp tail_hint = max(stored, discovered). The stored tail_hint
   // is a non-authoritative LOWER BOUND; the true committed tail may sit
-  // above it. The compactor must discover it via a forward-probe and
-  // become the sole durable tail_hint advancer.
+  // above it. The compactor must discover it via a forward-probe and stamp
+  // the folded tail.
   test("forward-probes a tail above a stale-low tail_hint, folds to the true tail, and stamps tail_hint", async () => {
     const s = new MemoryStorage();
     const M = 30;
