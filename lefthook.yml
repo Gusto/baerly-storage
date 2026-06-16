@@ -6,6 +6,15 @@ pre-commit:
   commands:
     format:
       glob: "*.{ts,tsx,mjs,cjs,json,md}"
+      # Keep this hook's scope aligned with the `oxfmt tests packages` gate
+      # (package.json "format"/"format:check"). examples/ are deliberately
+      # outside that gate, and oxfmt mangles the example AGENTS.md prose
+      # (strips blockquote/list-continuation prefixes, escapes `_VAR_*` as
+      # emphasis, appends illegal `;` to JSX fences, widens tables). Because
+      # the gate never re-validates examples/, that damage would ship
+      # silently with stage_fixed. So exclude examples/ here too.
+      exclude:
+        - "examples/**/*"
       run: pnpm exec oxfmt {staged_files}
       stage_fixed: true
     lint:
