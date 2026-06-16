@@ -28,6 +28,7 @@ import {
   MAINTENANCE_COLD_START_ENTRY_BYTES,
   MAINTENANCE_MIN_LIVE_BYTES,
   MAINTENANCE_PROFILE_CF_FREE,
+  MAINTENANCE_TAIL_HINT_REFRESH_WRITES,
   MAINTENANCE_TARGET_RATIO,
   MAINTENANCE_WARN_INTERVAL_WRITES,
   noopMetricsRecorder,
@@ -408,6 +409,14 @@ export const runBoundedMaintenance = async (
           minEntriesToCompact,
           ceilingBytes: C,
           ceilingEntries: E,
+          // B4: on the write-tick path the runner already knows a fresh
+          // tail lower bound (`nextSeq`, derived from the writer's
+          // `observedTail`). Pass it as the compactor's probe floor so the
+          // ceiling probe is bounded by commits since this writer's commit,
+          // not by an O(gap) re-walk from a stale stored `tail_hint`. On
+          // the scheduled path (no `observedTail`) `nextSeq` is itself the
+          // freshly-probed tail, so it's still a valid (tight) floor.
+          knownTail: nextSeq,
           ...(signal !== undefined && { signal }),
         } as InternalCompactOptions);
         if (phasesPerTick === "single") {
@@ -422,6 +431,35 @@ export const runBoundedMaintenance = async (
           collection,
           dimension: snapshotBytes > C ? "bytes" : "rows",
         });
+        // HR-2: advance `tail_hint` toward the observed tail even though
+        // we're NOT folding. A deferring collection never reaches the
+        // compactor's Step-7 fold CAS (the sole durable `tail_hint`
+        // advancer), so without this the gap `(true_tail − tail_hint)`
+        // grows without bound and every READ re-walks the whole live tail
+        // via `probeTailFrom` (and eventually throws at the cap, B3).
+        // Rate-limited by `MAINTENANCE_TAIL_HINT_REFRESH_WRITES` so this is
+        // NOT a per-commit `current.json` write (which single-write commit
+        // removed); a deferring collection's read-walk stays bounded to
+        // ≤ that interval. Best-effort / conflict-swallowing: a lost CAS
+        // (e.g. against a concurrent compactor's fold CAS, or another
+        // deferring isolate) just means someone else advanced it — the
+        // stamp is monotone (`Math.max`) so a lost race never lowers it.
+        // This is a WRITE-TICK action; reads stay pure.
+        if (nextSeq - current.tail_hint >= MAINTENANCE_TAIL_HINT_REFRESH_WRITES) {
+          try {
+            await casUpdateCurrentJson(
+              storage,
+              currentJsonKey,
+              (c) => ({ ...c, tail_hint: Math.max(c.tail_hint, nextSeq) }),
+              signal !== undefined ? { signal } : undefined,
+            );
+          } catch {
+            // Swallow — Conflict (compactor/another isolate advanced first)
+            // or any transient error. A missed advance just means the next
+            // tick (or the compactor's fold CAS) catches up; never throws
+            // out of the runner nor blocks the warn / GC fall-through below.
+          }
+        }
         // Advisory graduation warn, rate-limited off the SHARED
         // current.json.last_warned_seq (NOT a per-isolate Set — a fresh
         // isolate must honour the same rate-limit). Fires only when at

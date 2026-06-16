@@ -117,6 +117,20 @@ export interface InternalCompactOptions extends CompactOptions {
    * row count balloons.
    */
   readonly ceilingEntries?: number;
+
+  /**
+   * @internal A fresh tail LOWER BOUND the caller already observed (the
+   * write-tick runner threads the writer's in-memory `observedTail`,
+   * `seq + 1`). When present it raises the ceiling-probe FLOOR to
+   * `max(log_seq_start, tail_hint, knownTail)`, so on a stale-low stored
+   * `tail_hint` the forward probe walks only "commits since this writer's
+   * commit" instead of re-walking the whole gap from the stale hint
+   * (which could blow the CF subrequest budget — B4). The compactor still
+   * discovers the TRUE tail by probing UP from this floor (small gap).
+   * Absent on the scheduled path ⇒ probe from `max(log_seq_start,
+   * tail_hint)` as before.
+   */
+  readonly knownTail?: number;
 }
 
 export interface CompactResult {
@@ -220,7 +234,10 @@ export const compact = async (
   // tail-find cheap (a tracking hint ⇒ small gap). The compactor's O(gap)
   // probe is amortized O(1) per write across the fold cadence; it's
   // Class-A-active, not idle-reader-bound.
-  const probeFloor = Math.max(logSeqStartBefore, current.tail_hint);
+  // Raise the probe floor to any fresh tail lower bound the caller passed
+  // (the write-tick `knownTail` = writer's observed `seq + 1`) so a
+  // stale-low stored `tail_hint` doesn't force an O(gap) re-walk (B4).
+  const probeFloor = Math.max(logSeqStartBefore, current.tail_hint, internal.knownTail ?? 0);
   const probe = await probeTailFrom(storage, collectionPrefix, probeFloor, {
     ...(options.signal !== undefined && { signal: options.signal }),
   });

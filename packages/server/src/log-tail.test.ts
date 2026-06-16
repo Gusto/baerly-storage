@@ -48,16 +48,21 @@ describe("probeTailFrom", () => {
     expect(entries.map((e) => e.seq)).toEqual([3, 4, 5, 6, 7]);
   });
 
-  test("cap respected: stops at hint+cap without walking past it", async () => {
+  test("cap exhausted: THROWS Internal instead of silently truncating", async () => {
+    // A dense run longer than the cap means the true tail is past the cap.
+    // Returning `hint+cap` would silently truncate every downstream read
+    // (since.ts / query.ts / GC / export / rebuild-index) — so the probe
+    // must THROW, mirroring findLogTail's cap-exhaustion guard. Under HR-2
+    // the compactor keeps `tail_hint` within REFRESH_INTERVAL of the true
+    // tail, so this throw is a pure runaway alarm that never fires in
+    // normal operation; a >cap gap means maintenance is broken/disabled.
     const storage = new MemoryStorage();
-    // Dense run longer than the cap we pass.
     await seedLogEntries(storage, PREFIX, 0, 10); // seqs 0..9
 
     const cap = 4;
-    const { tail, entries } = await probeTailFrom(storage, PREFIX, 0, { cap });
-    expect(tail).toBe(0 + cap);
-    expect(entries).toHaveLength(cap);
-    expect(entries.map((e) => e.seq)).toEqual([0, 1, 2, 3]);
+    await expect(probeTailFrom(storage, PREFIX, 0, { cap })).rejects.toMatchObject({
+      code: "Internal",
+    });
   });
 
   test("default cap is LOG_FORWARD_PROBE_CAP", () => {

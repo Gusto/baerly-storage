@@ -48,7 +48,20 @@ export const probeTailFrom = async (
       );
     }
   }
-  return { tail: hint + cap, entries };
+  // Cap exhausted without hitting a 404 — the true tail is past `cap`.
+  // Returning `hint+cap` here would silently truncate every downstream
+  // read (since.ts / query.ts / GC / export / rebuild-index), so we
+  // THROW instead, mirroring `findLogTail`'s cap-exhaustion guard. With
+  // the maintenance tick keeping `tail_hint` within
+  // `MAINTENANCE_TAIL_HINT_REFRESH_WRITES` of the true tail (HR-2), this
+  // is a pure runaway alarm — a >cap gap means maintenance is
+  // broken/disabled (a graduation/operator concern), never normal
+  // operation. No partial-accept escape hatch: no caller legitimately
+  // needs to walk past the cap.
+  throw new BaerlyError(
+    "Internal",
+    `probeTailFrom: forward probe exceeded ${cap} from hint ${hint} on ${logPrefix}`,
+  );
 };
 
 /**

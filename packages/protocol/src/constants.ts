@@ -458,6 +458,30 @@ export const MAINTENANCE_PROFILE_NODE: MaintenanceProfileShape = {
 export const MAINTENANCE_WARN_INTERVAL_WRITES: number = 1000;
 
 /**
+ * Rate-limit for the maintenance tick's `tail_hint` advance on the
+ * DEFER path (HR-2). When the fold defers (snapshot over the CF-CPU-kill
+ * ceiling) the compactor never stamps `tail_hint` via its Step-7 fold
+ * CAS, so the gap `(true_tail − tail_hint)` would grow without bound and
+ * every read would re-walk the whole live tail via `probeTailFrom`. The
+ * runner therefore advances `tail_hint` toward the observed tail with a
+ * best-effort `current.json` CAS — but only once per this many writes,
+ * so it is NOT a per-commit `current.json` write (which is exactly what
+ * single-write commit removed).
+ *
+ * Sized at 128: it bounds a deferring collection's worst-case
+ * read-walk to ≤128 forward GETs (≈one extra read-page sweep — a
+ * negligible per-read latency cost), keeps the gap two-to-three orders
+ * of magnitude below {@link LOG_FORWARD_PROBE_CAP} (so the cap-throw is a
+ * pure runaway guard, never reached in normal operation), and holds the
+ * hint-advance CAS rate under ~1% of the commit rate (negligible
+ * Class-A cost, amortized). Smaller would tighten the read-walk at a
+ * higher CAS rate; larger would loosen it — 128 is the modest middle.
+ *
+ * @see packages/server/src/maintenance.ts
+ */
+export const MAINTENANCE_TAIL_HINT_REFRESH_WRITES: number = 128;
+
+/**
  * Placeholder for `CurrentJson.snapshot === null` in the
  * `_meta.manifest_pointer` cursor emitted on read responses. The
  * wire format is `"<snapshot>@<tail_hint>"`, and `null` snapshots

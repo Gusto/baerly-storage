@@ -17,6 +17,7 @@ import {
   GC_STARVATION_GUARD,
   MAINTENANCE_COLD_START_ENTRY_BYTES,
   MAINTENANCE_MIN_LIVE_BYTES,
+  MAINTENANCE_TAIL_HINT_REFRESH_WRITES,
   MAINTENANCE_WARN_INTERVAL_WRITES,
   MAINTENANCE_PROFILE_CF_FREE,
   MemoryStorage,
@@ -44,12 +45,14 @@ import {
   runScheduledMaintenance,
   shouldFireMaintenance,
 } from "./maintenance.ts";
+import { probeTailFrom } from "./log-tail.ts";
 import { createObservabilityContext, runWithContext } from "./observability/context.ts";
 import { RequestScopedMetricsRecorder } from "./observability/recorder.ts";
 import { Writer } from "./writer.ts";
 
 const KEY = "app/t/tenant/x/manifests/c/current.json";
 const COLL = "c";
+const COLLECTION_PREFIX = "app/t/tenant/x/manifests/c";
 
 const bootstrap = async (storage: MemoryStorage, key: string): Promise<void> => {
   await createCurrentJson(storage, key, {
@@ -350,6 +353,14 @@ const readLastWarnedSeq = async (storage: Storage, key: string): Promise<number 
   return r.json.last_warned_seq;
 };
 
+const readTailHint = async (storage: Storage, key: string): Promise<number> => {
+  const r = await readCurrentJson(storage, key);
+  if (r === null) {
+    throw new Error("current.json missing");
+  }
+  return r.json.tail_hint;
+};
+
 /** Install a fresh spy recorder over `fn` and return what it observed. */
 const withRecorder = async (fn: () => Promise<void>): Promise<RequestScopedMetricsRecorder> => {
   const recorder = new RequestScopedMetricsRecorder();
@@ -463,6 +474,51 @@ describe("runBoundedMaintenance", () => {
     // Fell through to GC: pending.json exists.
     const pending = await inner.get("app/t/tenant/x/manifests/c/gc/pending.json");
     expect(pending).not.toBeNull();
+  });
+
+  test("HR-2: a deferring collection advances tail_hint toward the observed tail so reads stay bounded and complete", async () => {
+    // A collection whose snapshot exceeds the fold ceiling DEFERS folding
+    // forever, so the compactor never stamps tail_hint via its Step-7 fold
+    // CAS. Without HR-2 the gap (true_tail − tail_hint) grows without bound
+    // and every read re-walks the whole live tail; combined with B3 it would
+    // eventually THROW at the cap. HR-2: the maintenance tick advances
+    // tail_hint toward the observed tail on the defer path (rate-limited,
+    // write-tick only), bounding the read-walk to ≤ REFRESH_INTERVAL.
+    const inner = new MemoryStorage();
+    // True tail well past tail_hint=0 and past REFRESH_INTERVAL.
+    const trueTail = MAINTENANCE_TAIL_HINT_REFRESH_WRITES * 3; // 384 entries
+    await seedLog(inner, KEY, COLL, trueTail); // log_seq_start=0, tail_hint=0
+    // Force the defer: snapshot over E rows, ratio-tripping mean.
+    await casUpdateCurrentJson(inner, KEY, (cur) => ({
+      ...cur,
+      mean_entry_bytes: RATIO_TRIPPING_MEAN,
+      snapshot_bytes: 0,
+      snapshot_rows: 1_000_000, // > MAINTENANCE_MAX_FOLD_ROWS ⇒ defer
+    }));
+
+    // tail_hint starts far behind the true tail.
+    await expect(readTailHint(inner, KEY)).resolves.toBe(0);
+
+    // Run a write-tick maintenance pass with the writer's observed tail.
+    await runBoundedMaintenance(
+      {
+        storage: inner,
+        currentJsonKey: KEY,
+        prevSeq: trueTail,
+        observedTail: trueTail,
+      },
+      { profile: MAINTENANCE_PROFILE_CF_FREE },
+    );
+
+    // (a) tail_hint was advanced to within REFRESH_INTERVAL of the true
+    //     tail, bounding any subsequent read-walk.
+    const hint = await readTailHint(inner, KEY);
+    expect(trueTail - hint).toBeLessThanOrEqual(MAINTENANCE_TAIL_HINT_REFRESH_WRITES);
+
+    // (b) a reader probing from the (now-fresh) hint still discovers the
+    //     COMPLETE true tail — the advance never overshoots the real tail.
+    const { tail } = await probeTailFrom(inner, COLLECTION_PREFIX, hint);
+    expect(tail).toBe(trueTail);
   });
 
   test("a defer pass past the warn interval warns once AND stamps last_warned_seq", async () => {

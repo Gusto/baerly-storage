@@ -36,7 +36,7 @@ import {
 import { describe, expect, test } from "vitest";
 import { compact } from "./compactor.ts";
 import { runGc } from "./gc.ts";
-import { CLOUDFLARE_FREE_TIER } from "./maintenance.ts";
+import { CLOUDFLARE_FREE_TIER, runBoundedMaintenance } from "./maintenance.ts";
 import { Writer } from "./writer.ts";
 
 const FREE_TIER_BUDGET = 50;
@@ -172,6 +172,47 @@ describe("CLOUDFLARE_FREE_TIER budget", () => {
     const { storage, getOps, report } = countingStorage(inner);
     const r = await runGc({ storage, currentJsonKey: KEY }, CLOUDFLARE_FREE_TIER.gc);
     expect(r).not.toBeNull();
+    const ops = getOps();
+    expect(ops, `ops by category: ${JSON.stringify(report())}`).toBeLessThanOrEqual(
+      FREE_TIER_BUDGET,
+    );
+  });
+
+  test("B4: a write-tick fold with a STALE-LOW stored tail_hint stays within budget because observedTail bounds the probe", async () => {
+    // Under single-write commit the writer never advances tail_hint, so on
+    // a never-yet-folded backlog the stored hint can lag the true tail by
+    // the whole tail. If compact() re-probed from that stale hint it would
+    // walk O(gap) GETs — blowing the 50-subrequest budget on a long tail.
+    // B4 threads the writer's in-memory observedTail into the runner's
+    // compact() call as the probe floor, so the ceiling probe is bounded by
+    // "commits since this writer's commit" (here: an immediate 404), NOT by
+    // the stale hint. This is the un-masked version of the compact-only
+    // budget test above, which had to pre-stamp tail_hint to stay in budget.
+    const inner = new MemoryStorage();
+    // 200 entries, tail_hint DELIBERATELY left at 0 (never pre-stamped).
+    await seed(inner, KEY, COLL, 200);
+    // Trip the runner's gate1 (ratio>=1) so the fold path actually runs —
+    // a large mean over a zero-byte snapshot. snapshot tiny ⇒ fold-viable.
+    const { casUpdateCurrentJson, MAINTENANCE_MIN_LIVE_BYTES } = await import("@baerly/protocol");
+    await casUpdateCurrentJson(inner, KEY, (c) => ({
+      ...c,
+      mean_entry_bytes: MAINTENANCE_MIN_LIVE_BYTES,
+      snapshot_bytes: 0,
+      snapshot_rows: 0,
+    }));
+    const { storage, getOps, report } = countingStorage(inner);
+
+    await runBoundedMaintenance(
+      {
+        storage,
+        currentJsonKey: KEY,
+        prevSeq: 200,
+        observedTail: 200, // writer's fresh lower bound — bounds the probe
+      },
+      // CF-free profile ⇒ single phase, fold-priority; ratio trips.
+      { profile: undefined, phasesPerTick: "single" },
+    );
+
     const ops = getOps();
     expect(ops, `ops by category: ${JSON.stringify(report())}`).toBeLessThanOrEqual(
       FREE_TIER_BUDGET,
