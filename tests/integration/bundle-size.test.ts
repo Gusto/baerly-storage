@@ -189,7 +189,7 @@ const BUDGETS: readonly Budget[] = [
   //     baseline: 166035 raw / 51758 gz — +910 raw vs. prior budget.
   //     Bump raw by ~1 KiB to absorb; gz is well under budget.
   //   → 163 KiB raw / 52 KiB gz: in-band-maintenance Task 1 + 1.5.
-  //     CurrentJson schema v2 (`tail_bytes` / `snapshot_bytes` /
+  //     CurrentJson schema v2 (`snapshot_bytes` /
   //     `snapshot_rows` / `last_warned_seq?`) widened the shared
   //     `current-json` chunk the kernel barrel pulls; gz crept +36 B
   //     over the prior 51 KiB budget. Raw is comfortably under.
@@ -649,7 +649,7 @@ const BUDGETS: readonly Budget[] = [
   //     subgraph (chunks: `chunk-*`, `current-json`, `dev`, `errors`,
   //     `src-*` — no `maintenance-*.js`). The growth is the shared
   //     `current-json` chunk widening (CurrentJson schema v2 fields the
-  //     write-tick gate reads — `tail_bytes`/`snapshot_bytes`/
+  //     write-tick gate reads — `snapshot_bytes`/
   //     `snapshot_rows`/`last_warned_seq`) plus rolldown's `src-*` re-
   //     layout as the kernel closures shifted around the maintenance pull.
   //     Final measured: 33276 raw / 12004 gz. Owner-accepted (Decision D2).

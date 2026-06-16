@@ -61,7 +61,6 @@ const bootstrap = async (storage: MemoryStorage, key: string): Promise<void> => 
     tail_hint: 0,
     log_seq_start: 0,
     writer_fence: { epoch: 0, owner: "maintenance-test", claimed_at: "" },
-    tail_bytes: 0,
     snapshot_bytes: 0,
     snapshot_rows: 0,
   });
@@ -160,7 +159,6 @@ describe("estimateTailBytes", () => {
     tail_hint: 0,
     log_seq_start: 0,
     writer_fence: { epoch: 0, owner: "t", claimed_at: "" },
-    tail_bytes: 0,
     snapshot_bytes: 0,
     snapshot_rows: 0,
     ...over,
@@ -190,7 +188,7 @@ describe("estimateTailBytes", () => {
   test("cold-start per-entry size is conservative (small) — does NOT over-fire for small entries", () => {
     // A too-large cold-start estimate (e.g. tying it to MIN_LIVE_BYTES / the
     // entry floor) would fire the first write-tick fold an order of magnitude
-    // earlier than the exact `tail_bytes` path for typical small entries.
+    // earlier than a precisely measured path for typical small entries.
     // Keeping it ≪ MIN_LIVE_BYTES / entry-floor preserves today's first-fold
     // timing: the ratio floor is crossed only after MANY more than the entry
     // floor's worth of small entries accrue.
@@ -213,15 +211,14 @@ describe("shouldFireMaintenance", () => {
     tail_hint: 0,
     log_seq_start: 0,
     writer_fence: { epoch: 0, owner: "t", claimed_at: "" },
-    tail_bytes: 0,
     snapshot_bytes: 0,
     snapshot_rows: 0,
     ...over,
   });
 
   test("fires on a crossed GC boundary even when ratio is cold", () => {
-    // Drives PURELY off tail_hint / log_seq_start / mean_entry_bytes — no
-    // tail_bytes read. observedTail == tail_hint under the two-write commit.
+    // Drives PURELY off tail_hint / log_seq_start / mean_entry_bytes.
+    // observedTail == tail_hint under the single-write commit.
     const cur = base({ tail_hint: WRITE_TICK_GC_INTERVAL });
     expect(shouldFireMaintenance(cur, 0, WRITE_TICK_GC_INTERVAL, cur.tail_hint)).toBe(true);
   });
@@ -303,7 +300,6 @@ const seedLog = async (storage: Storage, key: string, coll: string, n: number): 
     tail_hint: 0,
     log_seq_start: 0,
     writer_fence: { epoch: 0, owner: "bounded-test", claimed_at: "" },
-    tail_bytes: 0,
     snapshot_bytes: 0,
     snapshot_rows: 0,
   });
@@ -322,9 +318,7 @@ const seedLog = async (storage: Storage, key: string, coll: string, n: number): 
 const patchCurrent = async (
   storage: Storage,
   key: string,
-  patch: Partial<
-    Pick<CurrentJson, "tail_bytes" | "snapshot_bytes" | "snapshot_rows" | "mean_entry_bytes">
-  >,
+  patch: Partial<Pick<CurrentJson, "snapshot_bytes" | "snapshot_rows" | "mean_entry_bytes">>,
 ): Promise<void> => {
   await casUpdateCurrentJson(storage, key, (cur) => ({ ...cur, ...patch }));
 };
@@ -332,8 +326,7 @@ const patchCurrent = async (
 /**
  * A `mean_entry_bytes` large enough that `estimateTailBytes` for any tail of
  * ≥1 live entry clears `MAINTENANCE_MIN_LIVE_BYTES` (so the derived ratio
- * trigger trips). Replaces the old "patch tail_bytes = MIN_LIVE_BYTES" force —
- * the trigger now reads the derived estimate, not the exact field.
+ * trigger trips).
  */
 const RATIO_TRIPPING_MEAN = MAINTENANCE_MIN_LIVE_BYTES;
 
@@ -379,7 +372,7 @@ describe("runBoundedMaintenance", () => {
   test("disabled: true performs ZERO storage ops", async () => {
     const inner = new MemoryStorage();
     await seedLog(inner, KEY, COLL, 60);
-    await patchCurrent(inner, KEY, { tail_bytes: 1_000_000, snapshot_bytes: 0, snapshot_rows: 0 });
+    await patchCurrent(inner, KEY, { snapshot_bytes: 0, snapshot_rows: 0 });
     const c = countingStorage(inner);
     await runBoundedMaintenance({
       storage: c.storage,
@@ -395,7 +388,6 @@ describe("runBoundedMaintenance", () => {
     await seedLog(inner, KEY, COLL, 60);
     // Ratio >= 1 and >= minEntriesToCompact (60 >= 50). Snapshot tiny ⇒ fold-viable.
     await patchCurrent(inner, KEY, {
-      tail_bytes: MAINTENANCE_MIN_LIVE_BYTES, // harmless now — trigger reads the estimate
       mean_entry_bytes: RATIO_TRIPPING_MEAN,
       snapshot_bytes: 0,
       snapshot_rows: 0,
@@ -423,7 +415,7 @@ describe("runBoundedMaintenance", () => {
     // Pre-compact so there are stale-log candidates to mark, then make
     // the tail too small to trip gate1 (ratio < 1).
     await compact({ storage: inner, currentJsonKey: KEY });
-    await patchCurrent(inner, KEY, { tail_bytes: 0, snapshot_bytes: 10_000_000 });
+    await patchCurrent(inner, KEY, { snapshot_bytes: 10_000_000 });
     // gate1 false (ratio≈0). prevSeq=57→nextSeq=60 crosses a SOFT gc
     // boundary (floor 14→15) but NOT the hard boundary, so we exercise
     // the gate1-false → soft-cadence GC branch (not the starvation guard).
@@ -448,7 +440,6 @@ describe("runBoundedMaintenance", () => {
     await seedLog(inner, KEY, COLL, 60); // log_seq_start=0, tail=60 >= min 50 ⇒ gate1 trips
     // gate1 trips (ratio>=1, tail entries >= min) but snapshot_rows over E.
     await patchCurrent(inner, KEY, {
-      tail_bytes: MAINTENANCE_MIN_LIVE_BYTES, // harmless now — trigger reads the estimate
       mean_entry_bytes: RATIO_TRIPPING_MEAN,
       snapshot_bytes: 0,
       snapshot_rows: 1_000_000, // > MAINTENANCE_MAX_FOLD_ROWS
@@ -528,7 +519,6 @@ describe("runBoundedMaintenance", () => {
     // current.json whose tail_hint is large but last_warned_seq is absent.
     await casUpdateCurrentJson(inner, KEY, (cur) => ({
       ...cur,
-      tail_bytes: MAINTENANCE_MIN_LIVE_BYTES, // harmless now — trigger reads the estimate
       mean_entry_bytes: RATIO_TRIPPING_MEAN,
       snapshot_bytes: 0,
       snapshot_rows: 1_000_000, // > MAINTENANCE_MAX_FOLD_ROWS ⇒ defer
@@ -570,7 +560,6 @@ describe("runBoundedMaintenance", () => {
     const nextSeq = MAINTENANCE_WARN_INTERVAL_WRITES + 5;
     await casUpdateCurrentJson(inner, KEY, (cur) => ({
       ...cur,
-      tail_bytes: MAINTENANCE_MIN_LIVE_BYTES, // harmless now — trigger reads the estimate
       mean_entry_bytes: RATIO_TRIPPING_MEAN,
       snapshot_bytes: 0,
       snapshot_rows: 1_000_000, // defer
@@ -611,7 +600,6 @@ describe("runBoundedMaintenance", () => {
     // past the warn interval so a stray warn would be visible.
     await casUpdateCurrentJson(inner, KEY, (cur) => ({
       ...cur,
-      tail_bytes: MAINTENANCE_MIN_LIVE_BYTES, // harmless now — trigger reads the estimate
       mean_entry_bytes: RATIO_TRIPPING_MEAN,
       snapshot_bytes: 0,
       snapshot_rows: 0,
@@ -640,7 +628,6 @@ describe("runBoundedMaintenance", () => {
     const tail = WRITE_TICK_FOLD_ENTRIES_PER_PASS * 5; // 100, far > one slice
     await seedLog(inner, KEY, COLL, tail);
     await patchCurrent(inner, KEY, {
-      tail_bytes: MAINTENANCE_MIN_LIVE_BYTES, // harmless now — trigger reads the estimate
       mean_entry_bytes: RATIO_TRIPPING_MEAN,
       snapshot_bytes: 0,
       snapshot_rows: 0,
@@ -660,7 +647,6 @@ describe("runBoundedMaintenance", () => {
     const inner = new MemoryStorage();
     await seedLog(inner, KEY, COLL, 60);
     await patchCurrent(inner, KEY, {
-      tail_bytes: MAINTENANCE_MIN_LIVE_BYTES, // harmless now — trigger reads the estimate
       mean_entry_bytes: RATIO_TRIPPING_MEAN,
       snapshot_bytes: 0,
       snapshot_rows: 0,
@@ -701,7 +687,6 @@ describe("runBoundedMaintenance", () => {
     const inner = new MemoryStorage();
     await seedLog(inner, KEY, COLL, 60);
     await patchCurrent(inner, KEY, {
-      tail_bytes: MAINTENANCE_MIN_LIVE_BYTES, // harmless now — trigger reads the estimate
       mean_entry_bytes: RATIO_TRIPPING_MEAN,
       snapshot_bytes: 0,
       snapshot_rows: 0,
@@ -729,7 +714,6 @@ describe("runBoundedMaintenance", () => {
     await compact({ storage: inner, currentJsonKey: KEY }); // leave stale-log candidates
     // Keep gate1 tripping every tick (tail huge).
     await patchCurrent(inner, KEY, {
-      tail_bytes: MAINTENANCE_MIN_LIVE_BYTES, // harmless now — trigger reads the estimate
       mean_entry_bytes: RATIO_TRIPPING_MEAN,
       snapshot_bytes: 0,
       snapshot_rows: 0,
@@ -761,7 +745,6 @@ describe("runBoundedMaintenance", () => {
     const inner = new MemoryStorage();
     await seedLog(inner, KEY, COLL, 60);
     await patchCurrent(inner, KEY, {
-      tail_bytes: MAINTENANCE_MIN_LIVE_BYTES, // harmless now — trigger reads the estimate
       mean_entry_bytes: RATIO_TRIPPING_MEAN,
       snapshot_bytes: 0,
       snapshot_rows: 0,

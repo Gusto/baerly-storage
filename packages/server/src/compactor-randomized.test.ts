@@ -43,7 +43,6 @@ const seedCurrentJson = async (storage: MemoryStorage): Promise<void> => {
     tail_hint: 0,
     log_seq_start: 0,
     writer_fence: { epoch: 0, owner: "test", claimed_at: "" },
-    tail_bytes: 0,
     snapshot_bytes: 0,
     snapshot_rows: 0,
   });
@@ -76,7 +75,7 @@ const asObj = (m: Map<string, DocumentData>): Record<string, DocumentData> => Ob
 
 describe("compact — materialized view is unchanged by compaction", () => {
   test.prop({ ops: fc.array(opArb, { minLength: 0, maxLength: 40 }) })(
-    "post-compaction reader view == model live set; tail_bytes >= 0; second run is a no-op",
+    "post-compaction reader view == model live set; second run is a no-op",
     async ({ ops }) => {
       const storage = new MemoryStorage();
       await seedCurrentJson(storage);
@@ -118,10 +117,6 @@ describe("compact — materialized view is unchanged by compaction", () => {
 
       // The reader view AFTER compaction is byte-for-byte the same doc set.
       expect(asObj(await reconstructView(storage))).toEqual(asObj(model));
-
-      // tail_bytes accounting never underflows.
-      const afterCompact = await readCurrentJson(storage, CURRENT_JSON_KEY);
-      expect(afterCompact!.json.tail_bytes).toBeGreaterThanOrEqual(0);
 
       // Idempotence: if the first run folded the whole tail, a second run has
       // nothing left and reports below-min-threshold; the view stays put.

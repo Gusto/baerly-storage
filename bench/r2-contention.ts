@@ -53,7 +53,6 @@ const SEED: CurrentJson = {
   tail_hint: 0,
   log_seq_start: 0,
   writer_fence: { epoch: 0, owner: "bench", claimed_at: "" },
-  tail_bytes: 0,
   snapshot_bytes: 0,
   snapshot_rows: 0,
 };

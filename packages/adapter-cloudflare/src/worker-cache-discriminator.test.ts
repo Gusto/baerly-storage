@@ -85,7 +85,6 @@ describe("baerlyWorker cache_status", () => {
       tail_hint: 0,
       log_seq_start: 0,
       writer_fence: { epoch: 0, owner: "cs-hit-test", claimed_at: "" },
-      tail_bytes: 0,
       snapshot_bytes: 0,
       snapshot_rows: 0,
     });
@@ -158,7 +157,6 @@ describe("baerlyWorker cache_status", () => {
       tail_hint: 0,
       log_seq_start: 0,
       writer_fence: { epoch: 0, owner: "cs-bypass-test", claimed_at: "" },
-      tail_bytes: 0,
       snapshot_bytes: 0,
       snapshot_rows: 0,
     });

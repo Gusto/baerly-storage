@@ -58,14 +58,12 @@ export const readLogEntry = async (
  * byteLength of the STORED log-object body exactly as it was GET back
  * from storage (`got.body.byteLength`).
  *
- * The compactor uses this to subtract from `current.json.tail_bytes`
- * the EXACT bytes the writer PUT for the folded slice. The writer
- * accumulated `encodeJsonBytes(entry).byteLength` per committed entry
- * (`writer.ts` Step 6); the stored body IS those bytes, so summing
- * `got.body.byteLength` over the folded range == the writer's
- * accumulated total for that range — no re-encode, no round-trip
- * assumption (a re-encode of the parsed `LogEntry` could drift if
- * key-order/whitespace ever diverged from what was PUT).
+ * The compactor uses this to sum the byte cost of the folded slice.
+ * The stored body byteLength IS what the writer PUT for each entry,
+ * so summing `got.body.byteLength` over the folded range yields the
+ * exact cost — no re-encode, no round-trip assumption (a re-encode
+ * of the parsed `LogEntry` could drift if key-order/whitespace ever
+ * diverged from what was PUT).
  *
  * Same error semantics as {@link readLogEntry}.
  */
@@ -121,7 +119,7 @@ export const walkLogRange = async (
  * this is the bytes-aware core `walkLogRange` is implemented on top of.
  *
  * The compactor consumes this so it gets BOTH the parsed entries (for
- * the fold) AND the exact byte sum (to decrement `tail_bytes`) from a
+ * the fold) AND the exact byte sum (for `mean_entry_bytes` stamping) from a
  * single walk.
  */
 export const walkLogRangeWithBytes = async (

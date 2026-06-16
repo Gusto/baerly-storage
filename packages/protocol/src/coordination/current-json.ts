@@ -100,11 +100,6 @@ export interface CurrentJson {
 
   // New in v2:
 
-  /** EXACT byte size of the live log tail [log_seq_start, tail_hint). Maintained exactly
-   *  by the full-fence CAS on BOTH paths: each write adds its log bytes; a successful
-   *  fold (which proves no concurrent write) resets to 0 from a known-empty tail. */
-  tail_bytes: number;
-
   /** Byte size of the snapshot pointed to by `snapshot`. */
   snapshot_bytes: number;
 
@@ -511,17 +506,6 @@ const assertCurrentJson = (parsed: unknown, key: string): CurrentJson => {
     throw new BaerlyError(
       "InvalidResponse",
       `current.json at ${key}: writer_fence.lease_until must be string if present`,
-    );
-  }
-  if (
-    // Stryker disable next-line ConditionalExpression: `typeof r["tail_bytes"] !== "number"` → false is equivalent — !Number.isInteger rejects all non-numbers, making the typeof check fully subsumed.
-    typeof r["tail_bytes"] !== "number" ||
-    !Number.isInteger(r["tail_bytes"]) ||
-    r["tail_bytes"] < 0
-  ) {
-    throw new BaerlyError(
-      "InvalidResponse",
-      `current.json at ${key}: tail_bytes must be a non-negative integer`,
     );
   }
   if (

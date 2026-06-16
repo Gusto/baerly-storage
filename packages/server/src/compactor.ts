@@ -265,8 +265,8 @@ export const compact = async (
 
   // ── Step 3. Parallel-fetch [logSeqStartBefore, foldEnd) entries. ──
   // Bytes-aware variant: we need BOTH the parsed entries (for the fold)
-  // AND the exact STORED body byteLength per object (to decrement
-  // `tail_bytes` by precisely what the writer accumulated).
+  // AND the exact STORED body byteLength per object (to compute the
+  // folded slice's mean entry size for `mean_entry_bytes`).
   const fetched = await walkLogRangeWithBytes(
     storage,
     collectionPrefix,
@@ -277,11 +277,10 @@ export const compact = async (
 
   // Sum the STORED body bytes over ALL fetched objects in
   // `[logSeqStartBefore, foldEnd)` — NOT only the entries the fold loop
-  // keeps. The writer counted EVERY committed entry's bytes into
-  // `tail_bytes` (`encodeJsonBytes(entry).byteLength`, writer.ts Step
-  // 6); the stored body IS those bytes, so this sum == the writer's
-  // accumulated total for the slice → exact, no re-encode. The byte sum
-  // is independent of the fold-apply filter below.
+  // keeps. This sum / entry count gives `mean_entry_bytes`, the
+  // compactor-stamped basis for the derived live-tail estimate the
+  // maintenance trigger reads. The byte sum is independent of the
+  // fold-apply filter below.
   const foldedSliceBytes = fetched.reduce((sum, f) => sum + f.bytes, 0);
 
   // ── Step 4. Apply the fold onto `base`. ─────────────────────────
@@ -386,10 +385,6 @@ export const compact = async (
     tail_hint: Math.max(current.tail_hint, discoveredTail),
     snapshot_bytes: bodyBytes.byteLength,
     snapshot_rows: base.size,
-    // tail_bytes is dead post-single-write-commit (writer no longer
-    // increments); pinned 0 until Phase 6 drops the field. Decrementing
-    // would drive it negative (no writer add) and trip assertCurrentJson.
-    tail_bytes: 0,
     // Mean folded-entry byte size for live-tail estimation. Preserve a prior
     // mean on a zero-entry fold (no divide-by-zero, no clobber-with-0).
     mean_entry_bytes:

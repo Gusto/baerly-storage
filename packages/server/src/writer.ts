@@ -700,8 +700,8 @@ export class Writer {
     // ── Step 6. (removed). No current.json write on the commit path. ─
     // The numbered log create above IS the commit. `tail_hint` is
     // refreshed durably only by the compactor; the writer never advances
-    // it. `tail_bytes` is dead post-single-write-commit (the trigger
-    // below reads the derived estimate, not the stored field).
+    // it. The maintenance trigger below reads a DERIVED tail-byte
+    // estimate (`estimateTailBytes`), so there is no stored byte counter.
 
     // ── Step 6b. Write-tick maintenance dispatch. ───────────────────
     // Single funnel site: write-tick maintenance dispatch. Reached by
@@ -813,7 +813,6 @@ export class Writer {
       tail_hint: 0,
       log_seq_start: 0,
       writer_fence: { epoch: 0, owner: "", claimed_at: "" },
-      tail_bytes: 0,
       snapshot_bytes: 0,
       snapshot_rows: 0,
     };

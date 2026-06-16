@@ -877,19 +877,16 @@ describe("Writer — write-tick maintenance dispatch", () => {
   };
 
   // (1) / (1b) DELETED: under single-write commit the writer no longer
-  // touches current.json, so it no longer accumulates `tail_bytes` — the
-  // compactor pins the (now-dead) field to 0. The compactor's own
-  // tail_bytes behaviour is covered by `compactor.test.ts`
-  // ("tail_bytes decrements to exactly 0…", now pinned-0); the live-tail
-  // size that drives maintenance is the DERIVED `estimateTailBytes`,
-  // exercised by tests (2)/(5)/(6)/(7) below via the observed tail.
+  // touches current.json. The live-tail size that drives maintenance is
+  // the DERIVED `estimateTailBytes`, exercised by tests (2)/(5)/(6)/(7)
+  // below via the observed tail.
 
   test("(2) a single commit DISPATCHES runBoundedMaintenance when the fold ratio (Gate 1) trips", async () => {
     // Seed so the DERIVED ratio `estimateTailBytes / max(snapshot_bytes,
     // MIN_LIVE) >= 1` trips on a NON-boundary write (prevSeq 1 → tail_hint 2
     // with interval 4 crosses no boundary). The trigger reads the estimate
     // `(tail_hint − log_seq_start) × mean_entry_bytes`, NOT the exact
-    // tail_bytes field, so a stamped mean drives it: 2 live entries ×
+    // A stamped mean drives it: 2 live entries ×
     // MIN_LIVE bytes/entry far exceeds the floored denominator ⇒ ratio ≫ 1.
     // THE blocking-bug regression: a ratio-tripping write must dispatch.
     const storage = new MemoryStorage();
@@ -946,7 +943,6 @@ describe("Writer — write-tick maintenance dispatch", () => {
     const storage = new MemoryStorage();
     await seedWith(storage, {
       tail_hint: 3,
-      tail_bytes: 10,
       snapshot_bytes: 10 * MAINTENANCE_MIN_LIVE_BYTES,
     });
     const writer = new Writer({ storage, currentJsonKey: CURRENT_KEY });
@@ -971,7 +967,6 @@ describe("Writer — write-tick maintenance dispatch", () => {
     const storage = new MemoryStorage();
     await seedWith(storage, {
       tail_hint: 0,
-      tail_bytes: 10,
       snapshot_bytes: 10 * MAINTENANCE_MIN_LIVE_BYTES,
     });
     const writer = new Writer({ storage, currentJsonKey: CURRENT_KEY });
@@ -999,7 +994,6 @@ describe("Writer — write-tick maintenance dispatch", () => {
     const storage = new MemoryStorage();
     await seedWith(storage, {
       tail_hint: 3,
-      tail_bytes: 10,
       snapshot_bytes: 10 * MAINTENANCE_MIN_LIVE_BYTES,
     });
     const writer = new Writer({ storage, currentJsonKey: CURRENT_KEY });

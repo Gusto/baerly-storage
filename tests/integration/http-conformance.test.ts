@@ -294,7 +294,6 @@ for (const variant of variants) {
           tail_hint: 0,
           log_seq_start: 0,
           writer_fence: { epoch: 0, owner: "http-conformance-test", claimed_at: "" },
-          tail_bytes: 0,
           snapshot_bytes: 0,
           snapshot_rows: 0,
         });
@@ -324,7 +323,6 @@ for (const variant of variants) {
             tail_hint: nextSeq,
             log_seq_start: nextSeq,
             writer_fence: { epoch: 0, owner: "http-conformance-test", claimed_at: "" },
-            tail_bytes: 0,
             snapshot_bytes: 0,
             snapshot_rows: 0,
           });
@@ -377,7 +375,6 @@ describe("HTTP boundary — schema validation (ticket 70)", () => {
         tail_hint: 0,
         log_seq_start: 0,
         writer_fence: { epoch: 0, owner: "http-schema-test", claimed_at: "" },
-        tail_bytes: 0,
         snapshot_bytes: 0,
         snapshot_rows: 0,
       },

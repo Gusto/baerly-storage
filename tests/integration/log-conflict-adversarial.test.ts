@@ -66,7 +66,6 @@ const seedCurrent = (): CurrentJson => ({
   tail_hint: 0,
   log_seq_start: 0,
   writer_fence: { epoch: 0, owner: "adversarial-test", claimed_at: "" },
-  tail_bytes: 0,
   snapshot_bytes: 0,
   snapshot_rows: 0,
 });

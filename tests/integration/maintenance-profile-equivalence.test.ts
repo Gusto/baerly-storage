@@ -305,7 +305,7 @@ describe("MaintenanceProfile cross-profile correctness", () => {
             const storage = await freshBucket();
             await replay(storage, tailOps); // no maintenance during seed
             // Under single-write commit the writer advances neither
-            // `tail_hint` nor the (dead) `tail_bytes`. Stamp the true tail
+            // `tail_hint`. Stamp the true tail
             // (TAIL entries at seq [0, TAIL)) so the runner's gate sees the
             // live tail, and stamp `mean_entry_bytes` to the ~2 KB entry
             // size so the ratio TRIGGER estimate reflects these large

@@ -45,7 +45,6 @@ const seedCurrent = (tail_hint = 0): CurrentJson => ({
   tail_hint,
   log_seq_start: 0,
   writer_fence: { epoch: 0, owner: "test", claimed_at: "" },
-  tail_bytes: 0,
   snapshot_bytes: 0,
   snapshot_rows: 0,
 });
@@ -351,7 +350,6 @@ describe("Db.collection read terminals", () => {
       tail_hint: 3,
       writer_fence: { epoch: 0, owner: "test", claimed_at: "" },
       log_seq_start: 2,
-      tail_bytes: 0,
       snapshot_bytes: 0,
       snapshot_rows: 0,
     });
@@ -489,7 +487,6 @@ describe("Db.collection read terminals", () => {
       tail_hint: 3,
       writer_fence: { epoch: 0, owner: "test", claimed_at: "" },
       log_seq_start: 0,
-      tail_bytes: 0,
       snapshot_bytes: 0,
       snapshot_rows: 0,
     });

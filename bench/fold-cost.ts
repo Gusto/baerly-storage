@@ -232,7 +232,6 @@ const buildFixture = async (rows: number, bytesPerDoc: number): Promise<FoldFixt
   // 2. Log tail: TAIL_ENTRIES updates to existing docs at seqs
   //    [rows, rows + TAIL_ENTRIES). U with a full post-image keeps the
   //    rebuilt snapshot the same row count (steady-state fold).
-  let tailBytes = 0;
   for (let t = 0; t < TAIL_ENTRIES; t++) {
     const seq = rows + t;
     const targetIdx = Math.floor(rng() * rows);
@@ -248,7 +247,6 @@ const buildFixture = async (rows: number, bytesPerDoc: number): Promise<FoldFixt
       seq,
     };
     const entryBytes = encodeJsonBytes(entry);
-    tailBytes += entryBytes.byteLength;
     await storage.put(`${COLLECTION_PREFIX}/log/${seq}.json`, entryBytes, {
       contentType: "application/json",
     });
@@ -261,7 +259,6 @@ const buildFixture = async (rows: number, bytesPerDoc: number): Promise<FoldFixt
     tail_hint: rows + TAIL_ENTRIES,
     log_seq_start: rows,
     writer_fence: { epoch: 1, owner: "fold-cost-bench", claimed_at: "" },
-    tail_bytes: tailBytes,
     snapshot_bytes: snapBytes.byteLength,
     snapshot_rows: rows,
   };

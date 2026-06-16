@@ -273,7 +273,7 @@ export const MAINTENANCE_MIN_LIVE_BYTES: number = 64 * 1024;
  * barred by Gate-1's entry-count floor (`minEntriesToCompact`), NOT by this
  * value — so over-estimating is equally safe; this is a first-fold-TIMING
  * choice. A small typical log-entry size keeps the first fold's cadence close
- * to the exact `tail_bytes` path for typical entries; must be non-zero so a
+ * to a precisely measured path for typical entries; must be non-zero so a
  * bare `Db.create()` still bootstraps its first auto-fold (a 0 fallback leaves
  * the ratio dead pre-stamp). Large-body collections see a bounded first-fold
  * delay; after it stamps a real mean the estimate tracks the exact tail.

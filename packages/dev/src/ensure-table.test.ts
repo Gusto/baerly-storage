@@ -19,7 +19,6 @@ describe("ensureTable", () => {
       tail_hint: 0,
       log_seq_start: 0,
       writer_fence: { epoch: 0 },
-      tail_bytes: 0,
       snapshot_bytes: 0,
       snapshot_rows: 0,
     });

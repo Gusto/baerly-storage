@@ -136,7 +136,6 @@ describe("baerlyNode", () => {
       tail_hint: 0,
       log_seq_start: 0,
       writer_fence: { epoch: 0, owner: "baerly-node-test", claimed_at: "" },
-      tail_bytes: 0,
       snapshot_bytes: 0,
       snapshot_rows: 0,
       // Pre-stamp a representative mean so the ratio TRIGGER's derived live-tail
@@ -313,7 +312,6 @@ describe("baerlyNode config.auth synthesis", () => {
       tail_hint: 0,
       log_seq_start: 0,
       writer_fence: { epoch: 0, owner: "auth-none-test", claimed_at: "" },
-      tail_bytes: 0,
       snapshot_bytes: 0,
       snapshot_rows: 0,
     });
@@ -347,7 +345,6 @@ describe("baerlyNode config.auth synthesis", () => {
       tail_hint: 0,
       log_seq_start: 0,
       writer_fence: { epoch: 0, owner: "auth-ss-test", claimed_at: "" },
-      tail_bytes: 0,
       snapshot_bytes: 0,
       snapshot_rows: 0,
     });

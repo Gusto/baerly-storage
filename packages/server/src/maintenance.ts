@@ -202,8 +202,8 @@ export const crossesGcBoundary = (prevSeq: number, nextSeq: number, interval: nu
   Math.floor(prevSeq / interval) !== Math.floor(nextSeq / interval);
 
 /**
- * Derived live-tail byte size — the ratio TRIGGER input that replaces the exact
- * `tail_bytes` field (removed in Phase 6). `(observedTail − log_seq_start) ×
+ * Derived live-tail byte size — the ratio TRIGGER input that replaces the
+ * formerly-stored exact byte count. `(observedTail − log_seq_start) ×
  * mean_entry_bytes`. `observedTail` is a param so Phase 4 can swap its source;
  * Phase 3 passes `tail_hint` (== true tail under the two-write commit, so est ≈
  * exact). Cold-start (no mean yet) falls back to
@@ -221,7 +221,7 @@ export const estimateTailBytes = (current: CurrentJson, observedTail: number): n
  * scope. Ratio-OR-boundary, WITHOUT the entry floor (the floor is part
  * of the fold-trigger Gate 1 checked inside {@link runBoundedMaintenance}).
  * Returning `false` lets the writer skip the dispatch entirely. Ratio
- * numerator is the DERIVED {@link estimateTailBytes} (not exact `tail_bytes`);
+ * numerator is the DERIVED {@link estimateTailBytes};
  * `observedTail` threads from the caller (the writer's in-memory observed
  * tail `seq+1` under single-write commit). Both the boundary check and the
  * ratio key off `observedTail`, since the stored `tail_hint` is now only a
@@ -378,7 +378,7 @@ export const runBoundedMaintenance = async (
       );
       nextSeq = probed.tail;
     }
-    // Ratio TRIGGER numerator = DERIVED estimate (Phase 6 removes `tail_bytes`).
+    // Ratio TRIGGER numerator = DERIVED estimate (formerly exact stored field).
     const tailBytesEst = estimateTailBytes(current, nextSeq);
 
     const ratio = tailBytesEst / Math.max(snapshotBytes, MAINTENANCE_MIN_LIVE_BYTES);

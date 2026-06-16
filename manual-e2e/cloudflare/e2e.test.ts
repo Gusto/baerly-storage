@@ -268,7 +268,6 @@ describe.runIf(CF_URL !== undefined && SECRET !== undefined)(
               owner: "manual-e2e-cf",
               claimed_at: "",
             },
-            tail_bytes: 0,
             snapshot_bytes: 0,
             snapshot_rows: 0,
           });

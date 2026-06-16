@@ -50,7 +50,6 @@ export const logStateCurrentJson = (overrides: Partial<CurrentJson> = {}): Curre
   tail_hint: 0,
   log_seq_start: 0,
   writer_fence: { epoch: 0, owner: "test", claimed_at: "" },
-  tail_bytes: 0,
   snapshot_bytes: 0,
   snapshot_rows: 0,
   ...overrides,

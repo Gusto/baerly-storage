@@ -167,7 +167,6 @@ describe("createApp observability", () => {
       tail_hint: 0,
       log_seq_start: 0,
       writer_fence: { epoch: 0, owner: "obs-test", claimed_at: "" },
-      tail_bytes: 0,
       snapshot_bytes: 0,
       snapshot_rows: 0,
     });
@@ -351,7 +350,6 @@ describe("createFetchHandler", () => {
       tail_hint: 0,
       log_seq_start: 0,
       writer_fence: { epoch: 0, owner: "fetch-handler-test", claimed_at: "" },
-      tail_bytes: 0,
       snapshot_bytes: 0,
       snapshot_rows: 0,
     });
@@ -528,7 +526,6 @@ describe("createApp client-disconnect resilience", () => {
       tail_hint: 0,
       log_seq_start: 0,
       writer_fence: { epoch: 0, owner: "since-abort-test", claimed_at: "" },
-      tail_bytes: 0,
       snapshot_bytes: 0,
       snapshot_rows: 0,
     });

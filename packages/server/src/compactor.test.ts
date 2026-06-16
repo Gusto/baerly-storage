@@ -387,43 +387,6 @@ describe("compact", () => {
     expect(after!.json.mean_entry_bytes).toBe(Math.round(B / K));
   });
 
-  test("tail_bytes is pinned to 0 across a fold (dead field under single-write commit)", async () => {
-    // Under single-write commit the writer no longer increments
-    // tail_bytes (it never touches current.json), so the field is dead —
-    // bootstrap seeds 0 and the compactor pins it to 0 on every fold
-    // (it would otherwise drive negative). The field is dropped entirely
-    // in Phase 6; until then this pins the neutralized behavior. The
-    // former decrement-accounting tests (whole-slice and partial-slice)
-    // were retired with this change.
-    const s = new MemoryStorage();
-    await bootstrap(s, KEY);
-    const writer = new Writer({ storage: s, currentJsonKey: KEY });
-    for (let i = 0; i < 25; i++) {
-      await writer.commit({
-        op: "I",
-        collection: COLL,
-        docId: `d${i}`,
-        body: { _id: `d${i}`, n: i },
-      });
-    }
-    const before = await readCurrentJson(s, KEY);
-    expect(before!.json.tail_bytes).toBe(0); // writer never increments it
-    const res = await compact({ storage: s, currentJsonKey: KEY }, {
-      minEntriesToCompact: 10,
-      maxEntriesPerRun: 20, // partial slice — proves it's pinned, not decremented
-    } as InternalCompactOptions);
-    expect(res.written).toBe(true);
-    expect(res.logSeqStartAfter).toBe(20);
-    const after = await readCurrentJson(s, KEY);
-    expect(after!.json.tail_bytes).toBe(0);
-  });
-
-  // The "add-then-fold round-trip: tail_bytes reaches exactly 0"
-  // property test was retired under single-write commit: the writer no
-  // longer accumulates tail_bytes, so there is no add-side to round-trip
-  // against. The field is pinned to 0 (see the pinned-0 test above) and
-  // dropped entirely in Phase 6.
-
   test("ceiling is on the SNAPSHOT not snapshot+tail: small snapshot + huge tail still folds", async () => {
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
@@ -579,15 +542,8 @@ describe("compact", () => {
       doc_id: `d${seq}`,
       after: { _id: `d${seq}`, n: seq },
     }));
-    // tail_bytes must equal the stored bytes of the whole live tail
-    // [0, M) so the fold's exact decrement reaches 0, not negative.
-    let tailBytes = 0;
-    for (let seq = 0; seq < M; seq++) {
-      const got = await s.get(`${logPrefix}/log/${seq}.json`);
-      tailBytes += got!.body.byteLength;
-    }
     // Hand-write current.json with tail_hint = L < M.
-    await createCurrentJson(s, KEY, logStateCurrentJson({ tail_hint: L, tail_bytes: tailBytes }));
+    await createCurrentJson(s, KEY, logStateCurrentJson({ tail_hint: L }));
     const res = await compact({ storage: s, currentJsonKey: KEY }, {
       minEntriesToCompact: 5,
       maxEntriesPerRun: 100, // one pass can reach the true tail M

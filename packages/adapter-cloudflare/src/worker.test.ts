@@ -139,7 +139,6 @@ describe("baerlyWorker observability", () => {
       tail_hint: 0,
       log_seq_start: 0,
       writer_fence: { epoch: 0, owner: "obs-write-test", claimed_at: "" },
-      tail_bytes: 0,
       snapshot_bytes: 0,
       snapshot_rows: 0,
     });
@@ -192,7 +191,6 @@ describe("baerlyWorker observability", () => {
       tail_hint: 0,
       log_seq_start: 0,
       writer_fence: { epoch: 0, owner: "obs-miss-test", claimed_at: "" },
-      tail_bytes: 0,
       snapshot_bytes: 0,
       snapshot_rows: 0,
     });
@@ -265,7 +263,6 @@ describe("baerlyWorker observability", () => {
       tail_hint: 0,
       log_seq_start: 0,
       writer_fence: { epoch: 0, owner: "obs-hit-test", claimed_at: "" },
-      tail_bytes: 0,
       snapshot_bytes: 0,
       snapshot_rows: 0,
     });
@@ -425,7 +422,6 @@ describe("baerlyWorker config.auth synthesis", () => {
       tail_hint: 0,
       log_seq_start: 0,
       writer_fence: { epoch: 0, owner: "auth-synth-test", claimed_at: "" },
-      tail_bytes: 0,
       snapshot_bytes: 0,
       snapshot_rows: 0,
     });

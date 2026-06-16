@@ -15,8 +15,8 @@
  *   → (no output)
  *
  * These tests assert the behavioral contract: even when a collection
- * is OVER the fold-trigger ratio (tail_bytes ≥ snapshot_bytes AND
- * tail_bytes ≥ MAINTENANCE_MIN_LIVE_BYTES) — the exact condition that
+ * is OVER the fold-trigger ratio (derived tail estimate ≥ snapshot_bytes AND
+ * derived estimate ≥ MAINTENANCE_MIN_LIVE_BYTES) — the exact condition that
  * would cause the write-tick to fire maintenance — repeated reads
  * through the collection API produce ZERO Class A (mutating) storage
  * ops and leave `current.json` byte-identical.
@@ -57,7 +57,7 @@ const makeDb = (storage: Storage): Db => Db.create({ storage, app: APP, tenant: 
  * so log entries and content keys are physically present, then
  * patch `current.json` to make the state OVER the fold-trigger ratio:
  *
- *   tail_bytes = MAINTENANCE_MIN_LIVE_BYTES   (≥ the byte floor)
+ *   mean_entry_bytes = RATIO_TRIPPING_MEAN  (≥ the byte floor)
  *   snapshot_bytes = 0                        (ratio = ∞ ≥ target 1.0)
  *
  * This is the same seeding pattern used by `maintenance.test.ts`
@@ -72,7 +72,6 @@ const seedOverRatio = async (n: number): Promise<MemoryStorage> => {
     tail_hint: 0,
     log_seq_start: 0,
     writer_fence: { epoch: 0, owner: "reads-pure-test", claimed_at: "" },
-    tail_bytes: 0,
     snapshot_bytes: 0,
     snapshot_rows: 0,
   });
@@ -87,13 +86,13 @@ const seedOverRatio = async (n: number): Promise<MemoryStorage> => {
   }
   // Force the gate-driving bytes fields into an over-ratio state.
   // snapshot_bytes=0 ⇒ denominator is clamped to MAINTENANCE_MIN_LIVE_BYTES;
-  // tail_bytes=MAINTENANCE_MIN_LIVE_BYTES ⇒ ratio = 1.0 = TARGET → gate trips.
+  // mean_entry_bytes=RATIO_TRIPPING_MEAN ⇒ derived ratio = 1.0 = TARGET → gate trips.
   await casUpdateCurrentJson(
     storage,
     key,
     (cur): CurrentJson => ({
       ...cur,
-      tail_bytes: MAINTENANCE_MIN_LIVE_BYTES,
+      mean_entry_bytes: MAINTENANCE_MIN_LIVE_BYTES,
       snapshot_bytes: 0,
       snapshot_rows: 0,
     }),
@@ -152,7 +151,7 @@ describe("reads are pure — never tick maintenance", () => {
     async () => {
       // 60 entries — well over the CLOUDFLARE_FREE_TIER minEntriesToCompact
       // of 50, so a write would fold. The patchCurrent in seedOverRatio
-      // sets tail_bytes = MAINTENANCE_MIN_LIVE_BYTES, snapshot_bytes = 0
+      // sets mean_entry_bytes = RATIO_TRIPPING_MEAN, snapshot_bytes = 0
       // ⇒ ratio = 1.0 ≥ MAINTENANCE_TARGET_RATIO = 1.0.
       const inner = await seedOverRatio(60);
       const proxy = countingProxy(inner);
@@ -186,7 +185,7 @@ describe("reads are pure — never tick maintenance", () => {
   );
 
   test(
-    "current.json fields are unchanged after reads (no fold advanced log_seq_start / tail_bytes)",
+    "current.json fields are unchanged after reads (no fold advanced log_seq_start / tail_hint)",
     { timeout: 30_000 },
     async () => {
       const inner = await seedOverRatio(60);
@@ -213,8 +212,8 @@ describe("reads are pure — never tick maintenance", () => {
         before.log_seq_start,
       );
       expect(after.tail_hint, "tail_hint changed — reads wrote a log entry").toBe(before.tail_hint);
-      expect(after.tail_bytes, "tail_bytes changed — reads mutated current.json").toBe(
-        before.tail_bytes,
+      expect(after.tail_hint, "tail_hint changed — reads mutated current.json").toBe(
+        before.tail_hint,
       );
       expect(after.snapshot_bytes, "snapshot_bytes changed — reads mutated current.json").toBe(
         before.snapshot_bytes,
