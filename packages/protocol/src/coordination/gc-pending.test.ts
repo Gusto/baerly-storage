@@ -7,7 +7,11 @@ import { fc, test as fcTest } from "@fast-check/vitest";
 import { describe, expect, test } from "vitest";
 import { MemoryStorage } from "../storage/memory.ts";
 import { BaerlyError } from "../errors.ts";
-import { GC_PENDING_CONTENT_TYPE, GC_PENDING_SCHEMA_VERSION } from "../constants.ts";
+import {
+  GC_PENDING_CAS_MAX_ATTEMPTS,
+  GC_PENDING_CONTENT_TYPE,
+  GC_PENDING_SCHEMA_VERSION,
+} from "../constants.ts";
 import {
   type GcCandidate,
   type GcPending,
@@ -1140,9 +1144,9 @@ describe("gc-pending", () => {
     await expect(
       casUpdateGcPending(alwaysConflict as unknown as MemoryStorage, KEY, (latest) => latest),
     ).rejects.toMatchObject({ code: "Conflict" });
-    // Bounded: a fixed small number of attempts, not unbounded.
-    expect(putCount).toBeGreaterThan(1);
-    expect(putCount).toBeLessThanOrEqual(8);
+    // Bounded: exactly GC_PENDING_CAS_MAX_ATTEMPTS puts (one per retry),
+    // then Conflict. Pinned to the constant so a bump is caught.
+    expect(putCount).toBe(GC_PENDING_CAS_MAX_ATTEMPTS);
   });
 });
 
