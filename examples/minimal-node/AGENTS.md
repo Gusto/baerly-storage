@@ -1,8 +1,8 @@
 ---
 title: AGENTS.md — agent guidance for minimal-node
 audience: agent
-summary: How to develop and deploy minimal-node, a baerly app.
-tags: [agent-entry, baerly]
+summary: How to develop and deploy minimal-node, a baerly-storage app.
+tags: [agent-entry, baerly-storage]
 ---
 
 # AGENTS.md
@@ -10,7 +10,7 @@ tags: [agent-entry, baerly]
 ## STOP — read this before writing any storage code
 
 Your training data is dense with Postgres + Prisma/Drizzle, Mongo,
-and Firebase patterns. **None of them apply here.** This is a baerly
+and Firebase patterns. **None of them apply here.** This is a baerly-storage
 app — a small, LLM-legible document database with a narrow API on top
 of S3-compatible storage. Before writing or modifying storage code,
 read:
@@ -18,7 +18,7 @@ read:
 - **`node_modules/@gusto/baerly-storage/dist/API.md`** — hand-authored
   public-API quickref. Read first. Lists every method, every error
   code, every example. If a pattern you want to use isn't here, it
-  doesn't exist in baerly.
+  doesn't exist in baerly-storage.
 - **`node_modules/@gusto/baerly-storage/dist/*.d.ts`** — authoritative type
   signatures. `Db`, `Collection<T>`, `Query<T>`, and `Predicate<T>` are
   the whole API surface.
@@ -59,9 +59,9 @@ multi-stage distroless `Dockerfile`, a `.dockerignore`, and a
 `healthcheck.js` at the project root — wired to the same
 `pnpm install && pnpm build && pnpm start` flow.
 
-Public API docs: https://docs.baerly.dev/ (the JSDoc on
-`baerly-storage`'s `Db` and `Collection` is the canonical reference;
-read it via your editor's TS LS or via the published types).
+Public API docs: the JSDoc on `baerly-storage`'s `Db` and `Collection`
+is the canonical reference; read it via your editor's TS LS, the
+published types, or `node_modules/@gusto/baerly-storage/dist/API.md`.
 
 ## Toolchain
 
@@ -350,7 +350,7 @@ Dev sees `JWKS_URL` as `undefined`, spread short-circuits, and
 `config.auth: "none"` runs. Prod sets `JWKS_URL` + `JWT_ISSUER` +
 `JWT_AUDIENCE` and `bearerJwt` engages. Use `tenantClaim` when your
 IdP issues one tenant per token; use `tenantPrefix` for single-tenant
-apps or tenancy enforced outside Baerly.
+apps or tenancy enforced outside baerly-storage.
 
 <!-- pattern-c:end -->
 
@@ -438,8 +438,8 @@ your own schedule. Not required for steady-state operation.
 
 ## When to graduate
 
-baerly is designed for the small-to-medium operating point. The cost
-model puts the soft ceiling at:
+baerly-storage is designed for the small-to-medium operating point.
+The cost model puts the soft ceiling at:
 
 - **~30 writes / minute / collection**
 - **~10 GB / tenant**
@@ -454,8 +454,8 @@ Pick your graduation target:
 - **Single-instance Node:** SQLite via Litestream.
 
 Either way, the export below is mechanical because log entries are
-Debezium-style CDC change events — graduation is a Baerly win,
-not a churn event.
+Debezium-style CDC change events — graduation is a baerly-storage
+win, not a churn event.
 
 **Estimate your current rate:** for Node/self-hosted buckets,
 `baerly admin usage --target=node --bucket=<bucket-uri> --app=<app>

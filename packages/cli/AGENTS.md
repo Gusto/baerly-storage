@@ -1,8 +1,8 @@
 # @baerly/cli — agent quickref
 
-`baerly` does things to a project that already has baerly.
-`create-baerly-storage` is the one that puts baerly into a project in the first
-place (see `packages/create-baerly-storage/AGENTS.md`).
+`baerly` does things to a project that already has baerly-storage.
+`create-baerly-storage` is the one that puts baerly-storage into a project
+in the first place (see `packages/create-baerly-storage/AGENTS.md`).
 
 `@baerly/cli` is workspace-internal. It bundles to a single-file bin at
 `dist/baerly.js` via rolldown with a `#!/usr/bin/env node` banner; the

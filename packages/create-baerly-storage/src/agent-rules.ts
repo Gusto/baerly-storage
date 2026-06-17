@@ -8,8 +8,8 @@
  *
  * Scaffolded apps already get this via the per-template `AGENTS.md`
  * shipped by `scaffold()`. This module is for the bolt-on path —
- * `pnpm create baerly .` in an existing wrangler project — where no
- * template file is copied.
+ * `pnpm create @gusto/baerly-storage@latest .` in an existing wrangler
+ * project — where no template file is copied.
  *
  * Target detection (first match wins):
  *   1. `.claude/rules/` exists → write `.claude/rules/baerly.md`.

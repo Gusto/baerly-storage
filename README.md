@@ -4,7 +4,7 @@
 
 `baerly-storage` is a library that turns AWS S3, Cloudflare R2, or a
 conformant S3-compatible bucket into a document database. **There is
-no runtime. None.** No Baerly daemon, no leader, no scheduler, no
+no runtime. None.** No baerly-storage daemon, no leader, no scheduler, no
 catalog, no database service bill, no on-call. Coordination rides the
 request path — Cloudflare can finish bounded maintenance with `ctx.waitUntil`,
 Node runs it inline — and the only persistent component is your bucket.

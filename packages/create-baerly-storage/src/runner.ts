@@ -311,7 +311,7 @@ export const handleCreateBaerly = async (
     }
     if (withAddons.includes("agent-rules")) {
       throw new Error(
-        `--with=agent-rules only applies to bolt-on mode (pnpm create baerly . ` +
+        `--with=agent-rules only applies to bolt-on mode (pnpm create @gusto/baerly-storage@latest . ` +
           `inside an existing wrangler project). Scaffolded apps already include ` +
           `an AGENTS.md preamble — drop --with=agent-rules.`,
       );

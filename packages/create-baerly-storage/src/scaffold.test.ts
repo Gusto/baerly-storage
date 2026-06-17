@@ -384,8 +384,9 @@ describe("scaffold", () => {
   // the same example's package.json fails `tsc -b` on a fresh
   // scaffold with TS2688: "Cannot find type definition file for X".
   // The monorepo masks this — `@types/node` is hoisted by pnpm — so
-  // the failure only surfaces for users running `pnpm create baerly`
-  // outside this repo. Lock the contract here.
+  // the failure only surfaces for users running
+  // `pnpm create @gusto/baerly-storage` outside this repo. Lock the
+  // contract here.
   test("tsconfig types[] entries are covered by local devDependencies", async () => {
     type Pkg = { devDependencies?: Record<string, string> };
     type Tsc = { compilerOptions?: { types?: string[] } };

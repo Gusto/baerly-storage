@@ -1,11 +1,13 @@
-# create-baerly — agent quickref
+# create-baerly-storage — agent quickref
 
-`create-baerly` puts baerly into a project. `baerly` does things to a
-project that already has baerly. (Companion: `packages/cli/AGENTS.md`.)
+`create-baerly-storage` puts baerly-storage into a project. `baerly`
+does things to a project that already has baerly-storage. (Companion:
+`packages/cli/AGENTS.md`.)
 
-The `pnpm create baerly` / `pnpm dlx create-baerly` CLI. Scaffolds a
-new app from one of the templates in `examples/`, or bolts onto an
-existing Cloudflare Worker project when `wrangler.jsonc` is detected.
+The `pnpm create @gusto/baerly-storage@latest` /
+`pnpm dlx @gusto/create-baerly-storage` CLI. Scaffolds a new app from
+one of the templates in `examples/`, or bolts onto an existing
+Cloudflare Worker project when `wrangler.jsonc` is detected.
 Bundled to a single-file bin by rolldown.
 
 ## Pipeline at a glance
@@ -18,13 +20,13 @@ examples/<template>/                       (source — runnable as an example)
    │  rolldown `closeBundle` hook copies subset (excludes match
    │  `.baerly/scaffold.json:excludePaths` / `excludeNames`)
    ▼
-packages/create-baerly/dist/templates/<template>/
+packages/create-baerly-storage/dist/templates/<template>/
    │
    │  `pnpm pack` / npm publish bundles dist/ into the tgz
    ▼
-~/.cache/pnpm/dlx/create-baerly@<ver>/...   (resolved tarball)
+~/.cache/pnpm/dlx/create-baerly-storage@<ver>/...   (resolved tarball)
    │
-   │  `pnpm create baerly` extracts + applies scaffold.json
+   │  `pnpm create @gusto/baerly-storage` extracts + applies scaffold.json
    │  rename sentinels and devDep drops
    ▼
 <user's project dir>                       (final scaffolded app)
@@ -32,26 +34,26 @@ packages/create-baerly/dist/templates/<template>/
 
 ## Key files
 
-- `packages/create-baerly/src/scaffold.ts` — `STARTER_TO_EXAMPLE` map
+- `packages/create-baerly-storage/src/scaffold.ts` — `STARTER_TO_EXAMPLE` map
   (wizard choice → `examples/<name>/` source dir) and the copy/rename
   engine.
 - `examples/<name>/.baerly/scaffold.json` — per-template manifest:
   rename sentinels (`appName`), `excludePaths`/`excludeNames` lists,
   devDep drops applied at scaffold time.
-- `packages/create-baerly/templates/addons/<name>/` — opt-in overlays
+- `packages/create-baerly-storage/templates/addons/<name>/` — opt-in overlays
   layered on top of the base template when `--with=<name>` is passed.
   Today only `docker/` exists (Dockerfile + healthcheck.js +
   .dockerignore; requires `--target=node`).
-- `packages/create-baerly/rolldown.config.ts` — `copyTemplates()` plugin
+- `packages/create-baerly-storage/rolldown.config.ts` — `copyTemplates()` plugin
   with a `closeBundle` step that mirrors `examples/<picked>/` into
   `dist/templates/<picked>/` and `templates/addons/` into
   `dist/templates/addons/` so the published bin is self-contained.
 
 ## Bolt-on branch
 
-When `pnpm create baerly .` is run inside a directory that already has
-a `wrangler.jsonc`, the runner and wizard dispatch to the bolt-on flow
-instead of scaffolding a template.
+When `pnpm create @gusto/baerly-storage@latest .` is run inside a
+directory that already has a `wrangler.jsonc`, the runner and wizard
+dispatch to the bolt-on flow instead of scaffolding a template.
 
 **Runner dispatch (`src/runner.ts`):** After `projectName` is resolved
 via `resolveOutDir`, `handleCreateBaerly` calls `existsSync` on
@@ -92,7 +94,7 @@ readable list), `snippet` (the worker-entry snippet text), `snippetTarget`
   on the other end of the lifecycle. Keeping a single source of truth for
   wrangler.jsonc parsing/merging is why `@baerly/cli` still surfaces a
   subpath export.
-- _Local to create-baerly:_ `renderWorkerEntrySnippet` lives in
+- _Local to create-baerly-storage:_ `renderWorkerEntrySnippet` lives in
   `./init-snippet.ts`. The deployed CLI never renders user-facing code
   snippets, so there is no second consumer to share with.
 
@@ -103,7 +105,7 @@ readable list), `snippet` (the worker-entry snippet text), `snippetTarget`
 ## When iterating against local Verdaccio
 
 `pnpm dlx` caches resolved tarballs by `pkg@version`. Republishing
-`create-baerly@0.1.0` to Verdaccio does **not** bust the cache.
+`create-baerly-storage@0.1.0` to Verdaccio does **not** bust the cache.
 After every `pnpm verdaccio:publish`, run `pnpm dlx:bust-cache` (or
 the publish script does it for you — check the package.json wiring).
 Do not probe `pnpm config get cache-dir` to find the cache; see the
@@ -113,11 +115,11 @@ CLAUDE.md Anti-patterns section for why.
 
 - Use sentinels (e.g. `appName`, not the literal value) so the
   substituter doesn't double-rewrite. See
-  `packages/create-baerly/src/scaffold.test.ts` for examples.
+  `packages/create-baerly-storage/src/scaffold.test.ts` for examples.
 - Each scaffoldable template ships a `.baerly/scaffold.json` — adding
   a new template means adding both a directory and a manifest, and
   wiring `STARTER_TO_EXAMPLE` in `src/scaffold.ts`.
-- Tests in `packages/create-baerly/src/**/*.test.ts` drive the full
+- Tests in `packages/create-baerly-storage/src/**/*.test.ts` drive the full
   scaffold flow against tmp dirs; the bundle-no-live-import
   regression test in `tests/integration/` asserts the bin doesn't
   try to resolve workspace deps at runtime.

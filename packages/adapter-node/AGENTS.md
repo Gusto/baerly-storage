@@ -47,7 +47,7 @@ refreshes are single-flighted.
 > **IRSA vs. EKS Pod Identity:** if your cluster still uses IRSA
 > (pre-2023), env vars are `AWS_WEB_IDENTITY_TOKEN_FILE` +
 > `AWS_ROLE_ARN` instead, and the app does the STS dance directly.
-> baerly doesn't ship a native IRSA provider yet — write a small
+> baerly-storage doesn't ship a native IRSA provider yet — write a small
 > one against the seam, or import `fromTokenFile()` from
 > `@aws-sdk/credential-providers`.
 
@@ -72,7 +72,7 @@ s3Storage({ region, bucket, credentials: myProvider });
 The `credentials` field accepts any `() => Promise<AwsCredentialIdentity>`,
 so AWS SDK providers pass through unchanged — useful for ECS task
 roles, EC2 IMDSv2, env-var resolution, SSO, or `~/.aws/config`
-parsing (none of which baerly ships natively):
+parsing (none of which baerly-storage ships natively):
 
 ```ts
 import { fromContainerMetadata } from "@aws-sdk/credential-providers";
