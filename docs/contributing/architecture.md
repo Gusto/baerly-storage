@@ -81,21 +81,21 @@ default and not required. The rationale is in
 
 ```mermaid
 graph TD
-    db[db.ts<br/>Db: public API]
-    collection[collection.ts<br/>Collection&lt;T&gt; verbs]
-    query[query.ts<br/>Query&lt;T&gt; predicate AST + reader]
-    planner[query-planner.ts<br/>planQuery]
-    indexes[indexes.ts<br/>IndexDefinition + key encoding]
-    writer[writer.ts<br/>Writer.commit]
-    compactor[compactor.ts<br/>compact()]
-    gc[gc.ts<br/>runGc()]
-    maint[maintenance.ts<br/>runScheduledMaintenance]
-    storage[Storage interface<br/>get/put/delete/list]
-    s3http[adapter-node/s3-http.ts<br/>S3HttpStorage]
-    memstore[protocol/storage/memory.ts<br/>MemoryStorage]
-    localfs[dev/local-fs.ts<br/>LocalFsStorage]
-    json[json.ts<br/>RFC 7386 merge patch]
-    log[log.ts<br/>LogEntry shape]
+    db["db.ts<br/>Db: public API"]
+    collection["collection.ts<br/>Collection&lt;T&gt; verbs"]
+    query["query.ts<br/>Query&lt;T&gt; predicate AST + reader"]
+    planner["query-planner.ts<br/>planQuery"]
+    indexes["indexes.ts<br/>IndexDefinition + key encoding"]
+    writer["writer.ts<br/>Writer.commit"]
+    compactor["compactor.ts<br/>compact()"]
+    gc["gc.ts<br/>runGc()"]
+    maint["maintenance.ts<br/>runScheduledMaintenance"]
+    storage["Storage interface<br/>get/put/delete/list"]
+    s3http["adapter-node/s3-http.ts<br/>S3HttpStorage"]
+    memstore["protocol/storage/memory.ts<br/>MemoryStorage"]
+    localfs["dev/local-fs.ts<br/>LocalFsStorage"]
+    json["json.ts<br/>RFC 7386 merge patch"]
+    log["log.ts<br/>LogEntry shape"]
 
     db --> collection
     db --> writer
