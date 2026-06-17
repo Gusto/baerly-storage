@@ -5,16 +5,13 @@ pre-commit:
     - rebase
   commands:
     format:
-      glob: "*.{ts,tsx,mjs,cjs,json,md}"
-      # Keep this hook's scope aligned with the `oxfmt tests packages` gate
-      # (package.json "format"/"format:check"). examples/ are deliberately
-      # outside that gate, and oxfmt mangles the example AGENTS.md prose
-      # (strips blockquote/list-continuation prefixes, escapes `_VAR_*` as
-      # emphasis, appends illegal `;` to JSX fences, widens tables). Because
-      # the gate never re-validates examples/, that damage would ship
-      # silently with stage_fixed. So exclude examples/ here too.
-      exclude:
-        - "examples/**/*"
+      # oxfmt owns code/markup only. Markdown is validated (verify:docs), never
+      # reformatted — so no `md`/`mdx` here and no examples/ exclude. This is a
+      # fast local mirror of the config-driven `oxfmt .` gate; .oxfmtrc.json
+      # `ignorePatterns` is the single source of truth for what's skipped (it
+      # excludes markdown + regenerated evidence even if such a file is staged
+      # and passed explicitly, so this hook cannot corrupt prose).
+      glob: "*.{ts,tsx,mts,cts,mjs,cjs,js,json,jsonc,html,css}"
       run: pnpm exec oxfmt {staged_files}
       stage_fixed: true
     lint:

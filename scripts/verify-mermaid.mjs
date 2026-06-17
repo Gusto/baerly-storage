@@ -47,11 +47,10 @@ mermaid.initialize({ startOnLoad: false });
 const MERMAID_BLOCK = /```mermaid\r?\n([\s\S]*?)```/g;
 
 function trackedMarkdown() {
-  const out = execFileSync(
-    "git",
-    ["ls-files", "-z", "*.md", "*.mdx"],
-    { cwd: ROOT, encoding: "utf8" },
-  );
+  const out = execFileSync("git", ["ls-files", "-z", "*.md", "*.mdx"], {
+    cwd: ROOT,
+    encoding: "utf8",
+  });
   return out.split("\0").filter(Boolean);
 }
 

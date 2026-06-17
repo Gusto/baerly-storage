@@ -1,3 +1,7 @@
 node_modules/
 docs/superpowers/
 **/*.excalidraw.md
+# Gitignored content dirs that remark would otherwise walk (it reads the
+# filesystem, not git). Keep mirrored with .gitignore's markdown-bearing paths.
+.claude/research/
+dist/
