@@ -9,7 +9,7 @@ related: ["../CLAUDE.md", "spec/README.md", "adr/README.md"]
 
 # `docs/` — topic map
 
-Baerly is a vendorless document database for the new middle —
+baerly-storage is a vendorless document database for the new middle —
 software that's real enough to need state but not real enough to
 deserve a Postgres + Docker + on-call stack. It runs over AWS S3,
 Cloudflare R2, or a conformant S3-compatible bucket that passes
@@ -31,9 +31,9 @@ companion reference. The positioning story is in
   with [`guide/add-to-existing-cf-worker.md`](guide/add-to-existing-cf-worker.md).
 - Operating a production app: [`guide/operations.md`](guide/operations.md).
 
-## Using Baerly
+## Using baerly-storage
 
-For integrators and operators running Baerly against a real bucket.
+For integrators and operators running baerly-storage against a real bucket.
 **The canonical surface is [`packages/server/API.md`](../packages/server/API.md),
 published as `node_modules/@gusto/baerly-storage/dist/API.md`** — installed
 consumers read the `dist/` copy, repo contributors read the source; they are
@@ -68,7 +68,7 @@ invariants, operator runbooks, and target-specific bolt-ons.
 - Runnable scaffolds: `../examples/` (`minimal-cloudflare`,
   `minimal-node`, `react-cloudflare`, `react-node`).
 
-## About Baerly
+## About baerly-storage
 
 Product and business context.
 
@@ -78,7 +78,7 @@ Product and business context.
   layers from protocol to React. Read this to understand (or explain)
   _how_ the system works.
 - [`about/thesis.md`](about/thesis.md) — the positioning on-ramp: what
-  Baerly is, who it's for, and what it deliberately isn't — the _why_.
+  baerly-storage is, who it's for, and what it deliberately isn't — the _why_.
 - [`about/cost-model.md`](about/cost-model.md) — per-line-item rates,
   write-amp meter, compression posture.
 - [`about/graduation.md`](about/graduation.md) — the CPU/memory bounds

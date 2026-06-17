@@ -39,7 +39,7 @@ setups via `BAERLY_MINIO_HOST_PORT`, `BAERLY_TOXIPROXY_HOST_PORT`,
 fails with `port already allocated`.
 
 The split matters: tests that want a *reliable* S3 use `:9102`; tests
-that want to exercise retry/replay paths point one Baerly instance at
+that want to exercise retry/replay paths point one baerly-storage instance at
 `:9104` and another at `:9102` so they share a backend but disagree
 about reachability. See `randomized.test.ts`'s `unstableConfig`.
 

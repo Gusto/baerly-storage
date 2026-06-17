@@ -36,7 +36,7 @@ or equivalent always-on process. The default assumption in the
 multi-writer-on-object-storage design space is that coordination
 needs a daemon.
 
-Baerly does not. The kernel is sized to fit inside a single
+baerly-storage does not. The kernel is sized to fit inside a single
 Cloudflare Worker invocation (50-subrequest budget,
 ~30-second wall-clock) or a single Lambda invocation, with no
 process kept alive between requests. The deploy posture follows:
@@ -234,7 +234,7 @@ deploys run it manually. CAS is a documented hard backend requirement (see
 This decision has concrete runbook consequences:
 
 - Run `baerly doctor --bucket` before deploy; a bucket that does not
-  enforce conditional writes is not a Baerly backend.
+  enforce conditional writes is not a baerly-storage backend.
 - Do not add cron to "fix" ordinary compaction. Maintenance is already
   write-triggered and bounded; cron does not raise Cloudflare free's CPU
   or subrequest ceiling.

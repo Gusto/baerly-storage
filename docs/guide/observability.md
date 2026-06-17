@@ -271,9 +271,9 @@ const datadogSink: Sink = (record) => {
 
 ## Cost-ballooning anti-patterns
 
-- ❌ **Don't log request bodies.** baerly stores arbitrary JSON; a
-  body field could be megabytes. The canonical line is a few hundred
-  bytes by design.
+- ❌ **Don't log request bodies.** baerly-storage stores arbitrary
+  JSON; a body field could be megabytes. The canonical line is a few
+  hundred bytes by design.
 - ❌ **Don't log-and-rethrow.** The canonical-line emitter already
   redacts and serializes the thrown error on the failure path. A
   manual `console.error(err); throw err;` double-emits.

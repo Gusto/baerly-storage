@@ -107,7 +107,7 @@ export type BaerlyErrorCode =
   | "MutationFailed";
 
 /**
- * The single error class thrown by Baerly. Discriminate by `code`, not
+ * The single error class thrown by baerly-storage. Discriminate by `code`, not
  * `instanceof`: the code string survives `JSON.stringify` round-trips
  * across Worker / iframe / postMessage realm boundaries, where each
  * realm has its own `BaerlyError` constructor identity. IDB-restored

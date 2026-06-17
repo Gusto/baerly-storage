@@ -9,8 +9,8 @@ related: ["./auth.md", "../adr/005-verifier-function-shape.md"]
 
 # Browser → server auth
 
-baerly's design center is "trusted multi-instance, browser is a
-typed HTTP client." The browser sends `/v1/*` HTTP requests; the
+baerly-storage's design center is "trusted multi-instance, browser is
+a typed HTTP client." The browser sends `/v1/*` HTTP requests; the
 server runs the verifier and pins the tenant. This page gives the
 minimal production recipes and explains why the four quadrants share
 one seam. Scaffold `AGENTS.md` files keep target-specific production
@@ -118,7 +118,7 @@ closed. The cookie and service-token requests should return
 ## Pattern C: Node JWKS production
 
 Your SPA obtains a bearer token from the same OIDC provider the rest of
-your app uses. The Baerly server verifies that token over JWKS.
+your app uses. The baerly-storage server verifies that token over JWKS.
 
 ```ts
 import { bearerJwt } from "@gusto/baerly-storage/auth";

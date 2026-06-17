@@ -73,7 +73,7 @@ export interface LogEntry {
 
   /**
    * Pre-image of the primary key. U/D always carry this when
-   * `replica_identity` is not `PATCH_ONLY`. (For Baerly today,
+   * `replica_identity` is not `PATCH_ONLY`. (For baerly-storage today,
    * `_id` is the only PK.)
    */
   key_old?: { readonly [pk: string]: JSONValue };
@@ -82,7 +82,7 @@ export interface LogEntry {
   origin?: string;
 
   /**
-   * Causal metadata (Baerly-only; no pgoutput analogue). The
+   * Causal metadata (baerly-storage-only; no pgoutput analogue). The
    * session id that built the `lsn`. Surfaces here so consumers
    * can dedupe / order without parsing the cursor.
    */

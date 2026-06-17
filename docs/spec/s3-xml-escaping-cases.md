@@ -1,7 +1,7 @@
 ---
 title: S3 XML escaping edge cases
 audience: spec
-summary: Why baerly requests encoding-type=url, what that turns key escaping into, and the XML-1.0 control-char rule that makes it mandatory.
+summary: Why baerly-storage requests encoding-type=url, what that turns key escaping into, and the XML-1.0 control-char rule that makes it mandatory.
 last-reviewed: 2026-06-14
 tags: [protocol, s3, xml, edge-cases]
 related: [storage-compatibility.md]
@@ -13,12 +13,12 @@ S3's `ListObjectsV2` ([GET /\<bucket>?list-type=2](https://docs.aws.amazon.com/A
 returns an XML body whose `<Contents>` blocks enumerate the bucket. The
 interesting field is `<Key>`: it can contain *any* byte sequence a user
 PUT, and XML is a hostile transport for arbitrary bytes. This doc records
-how baerly sidesteps that — and why the sidestep is mandatory, not a
-convenience.
+how baerly-storage sidesteps that — and why the sidestep is mandatory,
+not a convenience.
 
-## The cause: baerly requests `encoding-type=url`
+## The cause: baerly-storage requests `encoding-type=url`
 
-Baerly sets `encoding-type=url` on every list request
+baerly-storage sets `encoding-type=url` on every list request
 (`packages/adapter-node/src/s3-http.ts:362`). This moves the entire
 escaping problem **out of XML and into percent-decoding**. With the marker
 set, S3 returns the key family — `Key` / `Prefix` / `Delimiter` /
@@ -88,9 +88,9 @@ XML 1.0 parser can't parse characters with an ASCII value from 0 to 10"
 ([ListObjectsV2](https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListObjectsV2.html),
 [MinIO #15023](https://github.com/minio/minio/issues/15023)).
 
-Baerly already round-trips the legal control chars (TAB, LF) and the
-illegal ones (e.g. `%01`, `%1F`, `%7F`) through the url-decode path — both
-are locked by the control-char cases in
+baerly-storage already round-trips the legal control chars (TAB, LF) and
+the illegal ones (e.g. `%01`, `%1F`, `%7F`) through the url-decode path —
+both are locked by the control-char cases in
 `packages/adapter-node/src/xml.test.ts`. Without `encoding-type=url`,
 keys with illegal control bytes would be *unrepresentable*, not merely
 awkward.
@@ -99,8 +99,9 @@ awkward.
 
 GCS honors `encoding-type=url` but returns the response marker hyphenated
 as `Encoding-Type` (not AWS's `EncodingType`), which silently breaks SDKs
-that branch on the response field to decide whether to decode. Baerly
-dodges this entirely: `xml.ts` **never reads the `EncodingType` element**.
+that branch on the response field to decide whether to decode.
+baerly-storage dodges this entirely: `xml.ts` **never reads the
+`EncodingType` element**.
 It url-decodes the key family *unconditionally*
 (`packages/adapter-node/src/xml.ts:45-51`). This is a deliberate
 portability invariant — *decode unconditionally, never branch on the
@@ -117,14 +118,14 @@ token survives byte-for-byte.
 | MinIO | yes | `EncodingType` |
 | GCS (XML API) | yes | `Encoding-Type` (hyphenated) |
 
-Baerly is correct on all four because it decodes the key family
+baerly-storage is correct on all four because it decodes the key family
 unconditionally and never inspects the response marker.
 
 ## Parser hardening
 
-Baerly only ever **parses** S3 XML, never **builds** it, so builder-side
-CDATA/comment-injection CVEs are out of scope. On the parse side, both
-`parseS3Error` and `parseListObjectsV2CommandOutput`
+baerly-storage only ever **parses** S3 XML, never **builds** it, so
+builder-side CDATA/comment-injection CVEs are out of scope. On the parse
+side, both `parseS3Error` and `parseListObjectsV2CommandOutput`
 (`packages/adapter-node/src/xml.ts:72,115`) reject any body containing a
 `<!DOCTYPE` *before* the parser sees the bytes — a deliberate
 XXE / billion-laughs / entity-shadow (CVE-2026-25896) defense, since

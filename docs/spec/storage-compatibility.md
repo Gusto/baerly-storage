@@ -1,7 +1,7 @@
 ---
 title: Storage compatibility
 audience: spec
-summary: Which S3-compatible stores baerly supports, and the conditional-write features it depends on.
+summary: Which S3-compatible stores baerly-storage supports, and the conditional-write features it depends on.
 last-reviewed: 2026-06-14
 tags: [protocol, s3]
 related: [s3-xml-escaping-cases.md]
@@ -9,8 +9,9 @@ related: [s3-xml-escaping-cases.md]
 
 # Storage compatibility
 
-Which S3-compatible stores baerly supports (see [Support tiers](#support-tiers)
-below), and the minimal S3 API surface the protocol depends on.
+Which S3-compatible stores baerly-storage supports (see
+[Support tiers](#support-tiers) below), and the minimal S3 API surface
+the protocol depends on.
 
 ## S3 API surface used
 
@@ -42,8 +43,8 @@ You cannot update objects in-place — every object is immutable once written. M
 
 ## Support tiers
 
-baerly's commit path creates-if-absent the numbered `log/<seq>` object
-with `If-None-Match: "*"` (that create IS the commit — there is no
+baerly-storage's commit path creates-if-absent the numbered `log/<seq>`
+object with `If-None-Match: "*"` (that create IS the commit — there is no
 `current.json` CAS on the commit path); the compactor advances
 `current.json` with `If-Match`. A store is _supported_ only if it
 honours those conditional writes. Run `baerly doctor --bucket=<uri>` to
@@ -81,7 +82,7 @@ doctor --bucket` probe races K concurrent creates of a fresh key and
 | ----------------- | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Tier 1**        | Cloudflare R2, AWS S3         | Supported. R2's native `r2BindingStorage` adapter is PR-CI gated by `pnpm test:adapter-cloudflare`; R2 and AWS through `S3HttpStorage` are covered by credential-gated `pnpm test:conformance` runs, not by fresh-checkout PR CI.                                                                                            |
 | **Tier 1.5**      | MinIO                         | Dev / local conformance harness (`pnpm dev:storage`, `pnpm test:minio`, `pnpm test:adapter-node`). Conditional writes — including bare-`*` create-if-absent — are verified against the pinned local MinIO; not a production target we promise.                                                                               |
-| **Unsupported**   | GCS (S3-interop), Azure Blob  | `gcsStorage` exists as an S3-interop factory, but GCS documents S3 `If-Match` / `If-None-Match` as read-scoped and baerly does not emit native `x-goog-if-generation-match`, so GCS is unsupported for database use unless a live probe and conformance run prove otherwise. Azure Blob is not an S3 API and has no adapter. |
+| **Unsupported**   | GCS (S3-interop), Azure Blob  | `gcsStorage` exists as an S3-interop factory, but GCS documents S3 `If-Match` / `If-None-Match` as read-scoped and baerly-storage does not emit native `x-goog-if-generation-match`, so GCS is unsupported for database use unless a live probe and conformance run prove otherwise. Azure Blob is not an S3 API and has no adapter. |
 | **Anything else** | other S3-compatible endpoints | Run `baerly doctor --bucket`. **Green ⇒ the conditional verbs are honoured — should work, you own production validation. Red ⇒ won't.**                                                                                                                                                                                      |
 
 ## Per-provider conditional-write matrix
@@ -93,7 +94,7 @@ non-Tier-1 row.
 | ---------------- | ------------------------------------------------------------------------------------------ | -------------------------------- | ----------------------------------------------------- | -------- |
 | AWS S3           | Yes                                                                                        | Yes                              | Credential-gated `pnpm test:conformance`; S3 docs     | 2026-06  |
 | Cloudflare R2    | Yes                                                                                        | Yes                              | PR-CI native R2 adapter; credential-gated S3-HTTP run | 2026-06  |
-| MinIO            | Yes (baerly emits a bare `*`)                                                              | Yes                              | Local dev-stack conformance (`MINIO=1`)               | 2026-06  |
+| MinIO            | Yes (baerly-storage emits a bare `*`)                                                      | Yes                              | Local dev-stack conformance (`MINIO=1`)               | 2026-06  |
 | GCS (S3-interop) | Not over the S3 path — the header is read-scoped; writes need `x-goog-if-generation-match` | Same — read-scoped on S3 interop | Factory exists; provider XML-API docs; unsupported    | 2026-06  |
 | Azure Blob       | n/a (not an S3 API)                                                                        | n/a                              | No adapter                                            | 2026-06  |
 

@@ -230,7 +230,7 @@ priorities, zero-padded numerics in string form, etc.).
 
 ## SQL export (`baerly export --target=postgres|sqlite|d1`)
 
-One-shot snapshot dump of a Baerly collection into a SQL-native
+One-shot snapshot dump of a baerly-storage collection into a SQL-native
 database. Per-column types are inferred from the materialised L9
 snapshot (string / number / boolean / nested-object → SQL type per
 target dialect); `_id` is always emitted as the primary key.
@@ -256,7 +256,7 @@ publishable package.
 ## Export round-trip (`pnpm test:export-round-trip`)
 
 Phase 9 gate; ensures byte-equal preservation across `export →
-SQLite → restore`. Seeds a `LocalFsStorage`-backed Baerly bucket,
+SQLite → restore`. Seeds a `LocalFsStorage`-backed baerly-storage bucket,
 runs the `packages/cli/src/export/` pipeline against the `sqlite3` CLI binary
 (auto-skips when absent), re-imports the SQL dump through `baerly
 admin restore`, and asserts byte-equal `baerly admin dump` between
@@ -314,7 +314,7 @@ Reads `current.json` + snapshot + live log tail and prints a
 read-only summary of one collection (tail_hint, log_seq_start,
 writer_fence, materialised row count, per-index key counts).
 
-Bolt-on (adding baerly to an existing Cloudflare Worker project) lives
+Bolt-on (adding baerly-storage to an existing Cloudflare Worker project) lives
 in `@gusto/create-baerly-storage`: `pnpm create @gusto/baerly-storage@latest .` detects `wrangler.jsonc` and
 dispatches to the bolt-on flow. See
 [`docs/guide/add-to-existing-cf-worker.md`](../guide/add-to-existing-cf-worker.md).

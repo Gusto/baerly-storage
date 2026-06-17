@@ -23,7 +23,7 @@
  * single monolithic snapshot (every compaction rewrites one well-
  * known key) makes partial writes catastrophic and serializes every
  * writer on one key. WAL-checkpointing in the rqlite / Raft tradition
- * requires a consensus layer Baerly doesn't have. The Litestream-
+ * requires a consensus layer baerly-storage doesn't have. The Litestream-
  * style multi-level scheme — small fixed number of levels, chunked
  * files keyed by sequence range — keeps random GETs cheap on
  * S3-compatible storage and avoids LIST. Current ship is single-

@@ -18,7 +18,7 @@ related:
 
 # Sync protocol
 
-Baerly turns an S3-compatible bucket into a document database by
+baerly-storage turns an S3-compatible bucket into a document database by
 appending to a numbered, per-collection log. Each `(app, tenant,
 collection)` has a `log/<seq>.json` series and a `current.json`
 control object. A commit is **one** linearizable
@@ -127,7 +127,7 @@ S3 exposes these as conditional writes with `If-None-Match` and
 adapter path where it runs, including the concurrent exactly-one-winner
 check (fire K concurrent create-if-absent of a fresh key, assert
 exactly one wins). A backend that silently ignores `If-Match` is not a
-Baerly backend: it can lose updates without a visible error.
+baerly-storage backend: it can lose updates without a visible error.
 
 `baerly doctor --bucket <uri>` runs a live CAS probe against an
 arbitrary bucket before deploy, including the **concurrent**
@@ -401,8 +401,8 @@ These are the load-bearing rules.
    `[log_seq_start, tail_hint)` range is a protocol violation and
    surfaces as an error. This density is a protocol obligation the
    storage layer does **not** enforce — an interior hole is unhealable
-   (baerly has no fill primitive) — so it is fuzz-asserted rather than
-   backend-guaranteed.
+   (baerly-storage has no fill primitive) — so it is fuzz-asserted rather
+   than backend-guaranteed.
 5. **Snapshots cover a prefix.** If `log_seq_start > 0`,
    `current.snapshot` names a snapshot that covers
    `[0, log_seq_start)`.
@@ -511,8 +511,8 @@ requires updating this spec and the relevant property tests.
 
 The protocol uses the same broad move as Git, Iceberg, Delta Lake,
 Litestream, and SlateDB: write immutable artifacts, then atomically
-advance a small control object. Baerly's constraint is stricter than
-most of those systems: the coordinator must fit inside a portable
+advance a small control object. baerly-storage's constraint is stricter
+than most of those systems: the coordinator must fit inside a portable
 `(Request) => Response` handler and a bucket. That rules out a
 catalog service, lock table, always-on compactor, or operator-installed
 scheduler.

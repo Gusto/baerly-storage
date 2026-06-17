@@ -125,6 +125,6 @@ you; reach for raw URLs only when scripting.
 - Full API reference —
   [`packages/server/API.md`](../../packages/server/API.md), published
   as `node_modules/@gusto/baerly-storage/dist/API.md`
-- [`add-to-existing-cf-worker.md`](add-to-existing-cf-worker.md) — bolt baerly onto an existing Worker
+- [`add-to-existing-cf-worker.md`](add-to-existing-cf-worker.md) — bolt baerly-storage onto an existing Worker
 - [`auth.md`](auth.md) — `config.auth` postures
 - [`../../examples/`](../../examples) — runnable scaffolds

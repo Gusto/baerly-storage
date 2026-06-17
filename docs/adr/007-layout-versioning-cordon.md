@@ -16,7 +16,7 @@ non-binding and pending v2 requirements; everything else is firm.
 
 ## Context
 
-Baerly persists three kinds of coordination artifact that a reader
+baerly-storage persists three kinds of coordination artifact that a reader
 must be able to validate before trusting: `current.json` (the
 per-tenant CAS coordination object — see
 [ADR-001](001-tenant-cas-isolation.md)), the snapshot blob, and

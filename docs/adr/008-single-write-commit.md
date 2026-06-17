@@ -190,8 +190,8 @@ create itself, the property the kernel already depends on.
 The two ends discover the tail by different mechanisms, and they are
 reconciled by a single invariant: **the live log range is dense.** A writer
 always targets the _first_ empty slot and never skips — `log/N` exists
-before `log/N+1` is ever attempted (an interior hole is unhealable; baerly
-has no fill primitive). So:
+before `log/N+1` is ever attempted (an interior hole is unhealable;
+baerly-storage has no fill primitive). So:
 
 - A **writer** racing peers may "gallop" forward through several `412`s, but
   every seq it skips past is occupied by a _committed_ entry — it never
@@ -318,5 +318,5 @@ strongly consistent post-2020; this is about what sits in front of them.)
   generation), and `writer_fence` staying dormant follows the same
   reserved-field discipline.
 - Log-structured commit-by-append (Kafka, Bitcask, LSM WALs) — the append
-  position _is_ the commit; baerly makes the conditional create the
+  position _is_ the commit; baerly-storage makes the conditional create the
   linearization point so a single object store with no coordinator suffices.

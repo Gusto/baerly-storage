@@ -9,8 +9,8 @@ related: [auth.md, backups.md, observability.md, "../about/graduation.md", "../a
 
 # Operations runbook
 
-This is the production checklist for a Baerly app. Fill these in once
-and keep the same values through every command:
+This is the production checklist for a baerly-storage app. Fill these in
+once and keep the same values through every command:
 
 ```sh
 APP=acme
@@ -30,8 +30,8 @@ prove the bucket honors `If-Match` and `If-None-Match: "*"`, which the
 protocol requires.
 
 The bucket probe validates storage semantics only; it does not migrate
-or validate an existing Baerly prefix. Buckets written by the old
-pre-single-write `current.json` schema must be dumped under the old
+or validate an existing baerly-storage prefix. Buckets written by the
+old pre-single-write `current.json` schema must be dumped under the old
 build and restored/reseeded under the current schema (`schema_version:
 3`), not reused in place.
 
@@ -49,8 +49,8 @@ probe is the Node safety check.
 ### Auth
 
 Then verify HTTP behavior. `GET /v1/healthz` is anonymous inside the
-Baerly adapter; if an outer Cloudflare Access policy protects the whole
-hostname, Access may challenge it before the Worker sees it.
+baerly-storage adapter; if an outer Cloudflare Access policy protects the
+whole hostname, Access may challenge it before the Worker sees it.
 
 ```sh
 curl -fsS "$BASE_URL/v1/healthz"

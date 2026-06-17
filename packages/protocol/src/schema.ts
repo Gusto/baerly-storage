@@ -33,7 +33,7 @@
  */
 
 /**
- * Subset of the StandardSchemaV1 contract Baerly consumes at the
+ * Subset of the StandardSchemaV1 contract baerly-storage consumes at the
  * server boundary. The full spec lives at
  * <https://standardschema.dev/>; we copy the `validate` shape locally
  * because that's the only field the boundary calls, and inlining

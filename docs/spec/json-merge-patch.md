@@ -1,7 +1,7 @@
 ---
 title: JSON merge patch (RFC 7386)
 audience: spec
-summary: Sparse JSON updates plus the algebraic properties baerly relies on for log coalescing.
+summary: Sparse JSON updates plus the algebraic properties baerly-storage relies on for log coalescing.
 last-reviewed: 2026-06-14
 tags: [protocol, json, rfc-7386, merge-patch]
 related: [sync-protocol.md]
@@ -271,7 +271,7 @@ Coalescing `fold(patches)` into one patch is equivalent to sequential applicatio
 
 ### Ordered Logs can be replayed multiple times
 
-Replaying the _full ordered prefix from the same base state_ is idempotent — this is exactly what baerly's snapshot+log materialization does. It is NOT the same as re-merging a coalesced patch onto a downstream state (see the delete caveat above).
+Replaying the _full ordered prefix from the same base state_ is idempotent — this is exactly what baerly-storage's snapshot+log materialization does. It is NOT the same as re-merging a coalesced patch onto a downstream state (see the delete caveat above).
 
 [_Verification source code_](https://github.com/endpointservices/mps3/blob/ce5a622c730466d336d761f39b5572224f2dd259/src/__tests__/json.test.ts#L40)
 
@@ -287,11 +287,12 @@ complete ordered set can repair that local view.
 fold(a, b, c) = fold(fold(a, c), b, c) // we skipped b in first fold
 ```
 
-This is useful for optimistic updates. It is not Baerly's storage
+This is useful for optimistic updates. It is not baerly-storage's
 recovery rule: a missing or malformed committed `log/<seq>.json` inside
-the trusted range `[log_seq_start, tail_hint)` is a protocol violation and surfaces as a
-`BaerlyError` (`Internal` for a missing entry, `InvalidResponse` for a
-malformed one), not something the kernel repairs by replay.
+the trusted range `[log_seq_start, tail_hint)` is a protocol violation
+and surfaces as a `BaerlyError` (`Internal` for a missing entry,
+`InvalidResponse` for a malformed one), not something the kernel repairs
+by replay.
 
 [_Verification source code_](https://github.com/endpointservices/mps3/blob/ce5a622c730466d336d761f39b5572224f2dd259/src/__tests__/json.test.ts#L146)
 
@@ -299,8 +300,9 @@ malformed one), not something the kernel repairs by replay.
 
 ## JSON merge difference: `diff`
 
-> **Not part of the baerly kernel.** baerly's `@baerly/protocol` exports only
-> `merge` — the forward direction. `diff` is documented here because it is the
+> **Not part of the baerly-storage kernel.** baerly-storage's
+> `@baerly/protocol` exports only `merge` — the forward direction. `diff`
+> is documented here because it is the
 > _state-relative_ inverse of `merge` (`merge(a, diff(b, a)) == b`), and naming
 > that section is what lets us reason about the monoid-acting-on-states structure
 > below (and about coalescing). The writer never needs
@@ -354,6 +356,6 @@ Now there is a precise and unique inverse of merge, we can understand merge bett
 
 Patches form a **monoid** under merge (associative on the type-stable / delete-free submonoid; identity `undefined`). States are _acted on_ by that monoid. There is no group: merge is information-destroying, so a patch has no true two-sided inverse — `{k:null}` does not invert `{k:1}` (apply both to `s={k:99}` and you get `{}`, losing `99`). `diff` is a **state-relative** section of that action (like git `revert`), not a group inverse.
 
-baerly's correctness does not rest on a patch group: the kernel folds the **full ordered prefix from the snapshot base** over a totally-ordered `seq` log (CDC / last-write-wins shape), never a patch-on-patch shortcut across a delete. The total log order is the source of correctness; coalescing is an optimization valid only inside the delete-free / type-stable window.
+baerly-storage's correctness does not rest on a patch group: the kernel folds the **full ordered prefix from the snapshot base** over a totally-ordered `seq` log (CDC / last-write-wins shape), never a patch-on-patch shortcut across a delete. The total log order is the source of correctness; coalescing is an optimization valid only inside the delete-free / type-stable window.
 
 JSON-merge-patch rocks!

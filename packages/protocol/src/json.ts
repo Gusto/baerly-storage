@@ -8,10 +8,10 @@ import { FORBIDDEN_MERGE_KEYS } from "./constants.ts";
  * {@link DocumentValue}.
  *
  * The document **body** itself must be an object (not an array) —
- * Baerly's writer is built on JSON Merge Patch (RFC 7386), which
+ * baerly-storage's writer is built on JSON Merge Patch (RFC 7386), which
  * is only defined over object documents. Array *values* at any
  * nested level are fine; per RFC 7386, an array in a patch
- * replaces the target array wholesale (Baerly has no array-merge
+ * replaces the target array wholesale (baerly-storage has no array-merge
  * semantics).
  */
 export type DocumentData = { [x: string]: DocumentValue };

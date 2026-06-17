@@ -15,7 +15,7 @@ Accepted (2026-05-28). Reframed from `docs/guide/auth.md`.
 
 ## Context
 
-Auth in baerly happens at exactly one point: the dispatcher
+Auth in baerly-storage happens at exactly one point: the dispatcher
 boundary, before any `Storage` I/O. Two seams configure it:
 
 - `config.auth` in `baerly.config.ts` (graduated postures: `"none"`,
@@ -80,7 +80,7 @@ guarantees rest on the verifier producing the right prefix — see
   collapse the most common test pattern ("stub a verifier that
   returns this fixed result") from a multi-line class subclass to
   one line.
-- **Middleware chain.** Baerly's HTTP server is stateless — no
+- **Middleware chain.** baerly-storage's HTTP server is stateless — no
   request mutation, no implicit context lookup, no "earlier
   middleware set `req.tenant`". Auth is one literal decision point
   in `(Request) => Response`, not a chain ordering problem.

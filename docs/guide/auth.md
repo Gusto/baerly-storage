@@ -9,9 +9,9 @@ related: ["../adr/005-verifier-function-shape.md", "../adr/001-tenant-cas-isolat
 
 # Authentication
 
-Baerly auth has one job: decide whether a request may reach `/v1/*`,
-and which tenant prefix that request is pinned to. The verifier returns
-`{ tenantPrefix, identity }`; the HTTP adapter constructs
+baerly-storage auth has one job: decide whether a request may reach
+`/v1/*`, and which tenant prefix that request is pinned to. The verifier
+returns `{ tenantPrefix, identity }`; the HTTP adapter constructs
 `Db.create({ tenant: tenantPrefix, ... })` from that result.
 
 There are two configuration seams, in precedence order:
@@ -72,7 +72,7 @@ Checklist:
 - Set `CF_ACCESS_TEAM_DOMAIN` and `CF_ACCESS_AUDIENCE_TAG` in
   `wrangler.jsonc:vars` or runtime env.
 - Use `tenantPrefix: config.tenant` for single-tenant apps. Vanilla
-  CF Access tokens carry user identity, not a Baerly tenant claim.
+  CF Access tokens carry user identity, not a baerly-storage tenant claim.
 - Run `baerly doctor --target=cloudflare` before deploy.
 
 Where values come from:
@@ -169,7 +169,7 @@ await handle.listen(Number(process.env["PORT"] ?? 8080));
 
 Use `tenantClaim` when your IdP issues one tenant per token. Use
 `tenantPrefix` when the app is single-tenant or tenancy is enforced
-outside Baerly. They are mutually exclusive.
+outside baerly-storage. They are mutually exclusive.
 
 Required runtime env for the AWS S3 snippet:
 
@@ -216,7 +216,7 @@ after the verifier returns; it is the storage isolation boundary.
 
 ## Authorization Boundary
 
-Baerly does not ship row-level authorization. Once a caller is
+baerly-storage does not ship row-level authorization. Once a caller is
 authenticated and pinned to a tenant, it can read and write any
 collection under that tenant through `/v1/*`.
 

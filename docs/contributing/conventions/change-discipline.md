@@ -65,14 +65,14 @@ operator action set.
    audience. Find the inline-on-request version. Anti-precedent: Delta
    Lake on S3 required a [DynamoDB lock table](https://docs.delta.io/latest/delta-storage.html)
    for safe multi-writer commits before S3 strong consistency — exactly
-   the operator chore baerly's design refuses. Apache Hudi makes the
+   the operator chore baerly-storage's design refuses. Apache Hudi makes the
    same chore explicit: its multi-writer mode requires an
    operator-installed [lock provider](https://hudi.apache.org/docs/concurrency_control/)
    (ZooKeeper / DynamoDB / Hive Metastore). The right shape coordinates
    through the storage itself — Apache Iceberg and Delta Lake commit
    compaction as an *optimistic* transaction against the table-metadata
    pointer (the `current.json` analog): the loser retries, no lock. That
-   is exactly baerly's full-fence CAS on `current.json`.
+   is exactly baerly-storage's full-fence CAS on `current.json`.
 
 2. **Does the mechanism require a long-lived process?** (`setInterval`,
    in-memory queue, background thread, persistent connection pool.) If
@@ -106,7 +106,7 @@ operator action set.
 > **On the DX bar.** Databricks [Predictive Optimization](https://docs.databricks.com/aws/en/optimizations/predictive-optimization)
 > ships zero-operator automatic `OPTIMIZE`/`VACUUM`, which proves the
 > "maintenance just happens" expectation is reasonable — but it *hides* a
-> privileged scheduler baerly cannot assume on untrusted, killable
+> privileged scheduler baerly-storage cannot assume on untrusted, killable
 > ephemeral compute. Matching that DX *without* that scheduler is the
 > constraint these three checks enforce.
 

@@ -1,5 +1,5 @@
 /**
- * Cloudflare Workers adapter for Baerly. Ships the R2-binding
+ * Cloudflare Workers adapter for baerly-storage. Ships the R2-binding
  * `Storage` flavor (`r2BindingStorage`) for in-cell R2 access
  * without SigV4 — the dominant path when your Worker and bucket
  * are in the same Cloudflare account.

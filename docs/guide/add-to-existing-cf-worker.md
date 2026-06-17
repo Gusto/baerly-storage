@@ -1,5 +1,5 @@
 ---
-title: Add baerly to an existing Cloudflare Worker
+title: Add baerly-storage to an existing Cloudflare Worker
 audience: integrator
 summary: One-command bolt-on for an existing `wrangler create` project — `pnpm create @gusto/baerly-storage@latest .` detects wrangler.jsonc, patches it, prints the worker-entry snippet.
 last-reviewed: 2026-06-13
@@ -7,12 +7,13 @@ tags: [getting-started, cloudflare]
 related: [../contributing/extending.md]
 ---
 
-# Add baerly to an existing Cloudflare Worker
+# Add baerly-storage to an existing Cloudflare Worker
 
 This is the path when you already have a Wrangler project (`wrangler
-create`, an existing repo, etc.) and want to bolt baerly on. The same
-command (`pnpm create @gusto/baerly-storage@latest .`) covers the fresh-scaffold case — it
-dispatches based on what's already in the directory.
+create`, an existing repo, etc.) and want to bolt baerly-storage on.
+The same command (`pnpm create @gusto/baerly-storage@latest .`) covers
+the fresh-scaffold case — it dispatches based on what's already in the
+directory.
 
 ## The one-step
 
@@ -21,7 +22,7 @@ pnpm create @gusto/baerly-storage@latest .
 ```
 
 `@gusto/create-baerly-storage` detects your `wrangler.jsonc`, patches it with an R2
-binding and the `vars` baerly expects, seeds a `.dev.vars` with
+binding and the `vars` baerly-storage expects, seeds a `.dev.vars` with
 a dev secret, adds `.dev.vars` to `.gitignore` if it isn't already
 covered, appends `@gusto/baerly-storage` to your `package.json` dependencies,
 runs your package manager's install, and prints the worker-entry
@@ -45,7 +46,7 @@ shorthand resolves to a different, non-existent package.)
 
 ## What does NOT get written
 
-- `src/index.ts` — printed as a snippet you paste. baerly never
+- `src/index.ts` — printed as a snippet you paste. baerly-storage never
   auto-edits your Worker entry. Convex draws the same line: structured
   config is fair game; app code is yours.
 - `wrangler` secrets — if you choose shared-secret auth,

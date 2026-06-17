@@ -12,7 +12,7 @@ related: [thesis.md, "../spec/sync-protocol.md", "../contributing/architecture.m
 The whole thing in plain language. This is the bridge between the
 [product thesis](thesis.md) (the _why_) and the formal
 [protocol spec](../spec/sync-protocol.md) (the precise _what_). If
-you can explain this page to someone, you understand Baerly.
+you can explain this page to someone, you understand baerly-storage.
 
 ## The one idea to anchor on
 
@@ -180,9 +180,9 @@ of compaction or GC piggybacks on that write. Cloudflare can finish that
 chunk after the response with `ctx.waitUntil`; Node runs it inline.
 **Reads are pure: they never run maintenance.** An idle bucket does
 nothing and pays nothing. This is what makes the project's _"There is no
-runtime. None."_ literally true: no resident Baerly process exists
-between requests. (Teams that _want_ batched maintenance windows can
-call `runScheduledMaintenance` from their own scheduler, but it's an
+runtime. None."_ literally true: no resident baerly-storage process
+exists between requests. (Teams that _want_ batched maintenance windows
+can call `runScheduledMaintenance` from their own scheduler, but it's an
 opt-in convenience, never a requirement.) The design precedent is
 PostgreSQL's HOT pruning / autovacuum; the full rationale is in
 [`thesis.md`](thesis.md) → "Runtime model: nothing resident between

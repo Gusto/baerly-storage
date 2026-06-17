@@ -1,5 +1,5 @@
 ---
-title: Extending Baerly
+title: Extending baerly-storage
 audience: coder
 summary: Worked patterns for adding methods to Db, Query verbs, and Collection verbs.
 last-reviewed: 2026-06-12
@@ -13,7 +13,7 @@ related:
   ]
 ---
 
-# Extending Baerly
+# Extending baerly-storage
 
 Three worked examples for the most common extension shapes. Follow these
 patterns and your changes will fit the codebase's conventions.
@@ -142,7 +142,7 @@ pnpm test          # vitest run
 
 ## 1b. Declare a schema for a collection
 
-Schemas in Baerly are caller-declared at the server boundary: every
+Schemas in baerly-storage are caller-declared at the server boundary: every
 `insert` / `update` / `replace` validates the resulting _post-image_
 against a `SchemaValidator` you attach to a `CollectionDefinition`.
 Invalid input throws `BaerlyError{code:"SchemaError"}` carrying a

@@ -1,16 +1,16 @@
 ---
 title: Product thesis
 audience: product
-summary: Why Baerly exists, what it is, and what it deliberately is not.
+summary: Why baerly-storage exists, what it is, and what it deliberately is not.
 last-reviewed: 2026-06-14
 tags: [positioning, product]
 related: [cost-model.md, "../contributing/conventions/change-discipline.md"]
 ---
 
-# Baerly — product thesis
+# baerly-storage — product thesis
 
-Baerly is a vendorless document database. **AWS S3 and Cloudflare R2 are
-supported** (CI-conformance-gated); other S3-compatible stores are
+baerly-storage is a vendorless document database. **AWS S3 and Cloudflare
+R2 are supported** (CI-conformance-gated); other S3-compatible stores are
 conformance-gated, not promised — run the live CAS probe in
 `baerly doctor --bucket` first (green ⇒ should work, you own it).
 Your data lives in your bucket; the
@@ -43,7 +43,7 @@ response). **Storage is the missing primitive.** localStorage doesn't
 survive a share link; LLM-generated Postgres + RLS is failure-that-
 masquerades-as-no-data; a real database invites an agent to
 generate the _ceremony_ of a real service that the operator never
-sees. Baerly is a storage primitive sized for this category.
+sees. baerly-storage is a storage primitive sized for this category.
 
 ## What prototype-tier storage needs
 
@@ -59,7 +59,7 @@ The criteria the rest of this document is shaped around:
    app outgrows the system, leaving has to be mechanical.
    _Graduation is the success path, not a failure mode._ A
    prototype-tier app that crossed the ceiling and moved to D1
-   is a Baerly **win**, not a churn event. The "no hostage"
+   is a baerly-storage **win**, not a churn event. The "no hostage"
    promise is what makes the prototype-tier bet safe to take. Snapshot
    export is shipped today. The `LogEntry` shape is a Debezium-style CDC envelope
    (`{lsn, commit_ts, op, collection, doc_id, after?, before?, key_old?, origin?, session, seq}`)
@@ -95,8 +95,8 @@ The criteria the rest of this document is shaped around:
    `node-cron` install, or any "step 2: also configure…" — it's the wrong
    shape for this audience. The closest production precedent is
    PostgreSQL autovacuum / HOT pruning: _the user never schedules
-   ordinary storage maintenance_. Baerly generalizes the unscheduled,
-   bounded-maintenance part of that precedent to object storage:
+   ordinary storage maintenance_. baerly-storage generalizes the
+   unscheduled, bounded-maintenance part of that precedent to object storage:
    maintenance runs opportunistically on writes, gated so idle buckets
    pay zero. Reads stay pure.
 
@@ -105,8 +105,8 @@ Plus one anti-feature:
 - **RLS-as-tenancy is out.** Asking an LLM to generate
   `CREATE POLICY` statements over a real customer database places
   the most security-sensitive primitive in the least supervised
-  part of the loop. Tenant isolation in Baerly is prefix-scoped at
-  the `Db` layer ([ADR-001](../adr/001-tenant-cas-isolation.md)),
+  part of the loop. Tenant isolation in baerly-storage is prefix-scoped
+  at the `Db` layer ([ADR-001](../adr/001-tenant-cas-isolation.md)),
   not delegated to generated SQL.
 
 ## Two audiences, two pitches
@@ -201,7 +201,7 @@ catalog — the bucket already exists.
 Firebase are great, and they are all proprietary runtimes. Object
 storage is the rare primitive with a common dialect — the S3 API —
 that S3, R2, and MinIO speak with the conditional-write semantics
-Baerly's coordination needs; those are the stores the CAS contract
+baerly-storage's coordination needs; those are the stores the CAS contract
 is proven against and that `baerly doctor --bucket` gates on (see
 [ADR-004](../adr/004-ephemeral-coordination.md)). Azure Blob's
 non-S3 dialect and GCS's read-only S3-interop conditional writes
@@ -238,7 +238,7 @@ Delta Lake on S3 requires a DynamoDB lock table. SlateDB is
 designed around a long-lived writer and a long-lived compactor.
 Cloudflare's Durable Objects is the architectural antithesis —
 its pitch is that you _need_ a persistent single-threaded
-coordinator. Baerly's bet is that you don't, because the
+coordinator. baerly-storage's bet is that you don't, because the
 conditional-write contract (`If-Match` / `If-None-Match` on
 ETags) that S3-compatible object stores expose is sufficient —
 provided the protocol does the work.
@@ -252,7 +252,7 @@ Each design choice falls out of a specific criterion above. Built
 like git: content-addressed documents, immutable numbered log entries,
 and one conditional log create as the commit, per collection.
 
-- **Idle → zero.** Baerly is a TypeScript library — the full
+- **Idle → zero.** baerly-storage is a TypeScript library — the full
   Cloudflare Workers bundle (`cloudflare.js`) is ~113 KB gzipped,
   the Node HTTP closure (`http.js`) ~94 KB gzipped.
   Your Worker (or Node process) imports it directly. No binary, no
@@ -330,23 +330,23 @@ and one conditional log create as the commit, per collection.
   in-memory caches only.
 - **Cost is decisive on some axes, a loss on others — we name
   both.** At the audience operating point (idle × N portfolio,
-  small high-cardinality apps), Baerly rounds to zero against
+  small high-cardinality apps), baerly-storage rounds to zero against
   per-app managed-DB floors. At M-size, D1 wins per-write
   (~$5 vs. ~$19) where it's available — that's the graduation
   signal, not a competitive position. Availability and switching
-  cost both favor Baerly: any conformant S3-API cloud (S3, R2), any Node runtime,
-  Debezium-style CDC log entries. See
+  cost both favor baerly-storage: any conformant S3-API cloud (S3, R2),
+  any Node runtime, Debezium-style CDC log entries. See
   [cost-model.md](cost-model.md) for the operating-point tables
   and per-line-item rates.
 - **Not a D1 / Postgres replacement.** D1 is the graduation target.
-  Baerly's job is to keep the experiment cheap and fast until the
+  baerly-storage's job is to keep the experiment cheap and fast until the
   user knows whether it's worth graduating. Graduation is a tool we
   ship, not a feature we promise.
 
 ## Workload ceiling
 
 A system that names its envelope honestly is a system you can trust.
-Baerly's envelope is precise — not because those are the only
+baerly-storage's envelope is precise — not because those are the only
 workloads we want, but because knowing exactly where graduation
 starts makes graduation a feature rather than a surprise.
 
@@ -373,7 +373,7 @@ writes; the browser is a typed HTTP client.
 ## Audience in practice
 
 The workload shape produces a population, not a single persona.
-Baerly is the storage primitive matched to all of them:
+baerly-storage is the storage primitive matched to all of them:
 
 - A finance team whose dashboard has so far been a forty-line
   Claude Artifact with the data baked into the HTML.

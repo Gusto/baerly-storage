@@ -9,8 +9,8 @@ related: [cost-model.md, thesis.md, "../adr/004-ephemeral-coordination.md"]
 
 # Graduation thresholds
 
-Graduation is the success path, not a failure mode. Baerly is sized
-for the prototype tier — internal tools, side projects, a finance
+Graduation is the success path, not a failure mode. baerly-storage is
+sized for the prototype tier — internal tools, side projects, a finance
 team's Claude Artifact. When a collection grows past the tier it was
 deployed on, the system tells you, and you move it. The
 [thesis](thesis.md#what-prototype-tier-storage-needs) frames this as a
@@ -262,7 +262,7 @@ snapshot envelope — that is `S_max = C`):
 
 A higher ratio lets the tail grow longer before a fold is dispatched —
 cutting write-amp but raising read-amp. LSM engines (Go's, RocksDB)
-commonly pick `R = 2`. Baerly picks a **lower** ratio (`R = 1.0`) to
+commonly pick `R = 2`. baerly-storage picks a **lower** ratio (`R = 1.0`) to
 halve read-amp, accepting a modestly higher write-amp (~2×) — still
 comfortably under the cost-model's **write-amp > 6** graduation trigger
 (see [cost-model.md](cost-model.md#alternative-dbs-at-m-size)).
@@ -447,15 +447,15 @@ rows) defers. A heavily-churned small collection self-heals as it drains
 and never warns. Do **not** read tail length as a graduation signal — it
 is bounded by the drain rate, not by the ceiling.
 
-### 4. Off baerly → Postgres: the workload envelope (a separate axis)
+### 4. Off baerly-storage → Postgres: the workload envelope (a separate axis)
 
 This trigger is **orthogonal** to everything above. The per-fold bounds
 (triggers 1–3) are about a single collection's fold fitting a CPU or
 memory budget on one pass. This one is about write **throughput** and
 **total scale** across the deployment. **A deferred fold is _not_ a
 Postgres signal** — it's a fold-cost or tier signal. Cross the envelope
-below, and the signal is to graduate the _workload_ off baerly to
-D1 / Postgres (`baerly export --target=postgres`), regardless of which
+below, and the signal is to graduate the _workload_ off baerly-storage
+to D1 / Postgres (`baerly export --target=postgres`), regardless of which
 deployment tier you're on:
 
 - **~30 logical writes / minute / collection** — this one _is_ a code

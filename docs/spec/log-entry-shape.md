@@ -41,10 +41,10 @@ a Debezium-style envelope on the wire. Both consumers ack against
 
 Three shapes were on the table:
 
-- **Ad-hoc JSON tailored to Baerly's internals.** Cheap to design,
-  but traps the export tooling inside Baerly — anyone reading the
-  log learns a Baerly-specific schema with no analog in the
-  ecosystem.
+- **Ad-hoc JSON tailored to baerly-storage's internals.** Cheap to
+  design, but traps the export tooling inside baerly-storage — anyone
+  reading the log learns a baerly-storage-specific schema with no
+  analog in the ecosystem.
 - **`pgoutput` wire format verbatim.** The Postgres logical-
   replication output plugin is the obvious binary reference, but
   adopting it byte-for-byte would require BEGIN/COMMIT framing,
@@ -217,13 +217,13 @@ From the Postgres logical-replication wire protocol we borrowed:
 
 ## What we deliberately did NOT borrow
 
-- **`BEGIN` / `COMMIT` framing.** Baerly has no multi-document
+- **`BEGIN` / `COMMIT` framing.** baerly-storage has no multi-document
   transactions; each entry is its own atomic unit. A consumer
   expecting atomic batch-apply on a shared `commit_lsn` would be
   confused.
 - **2PC messages (`b` / `P` / `K` / `r`).** No prepared txns in S3.
-- **Streaming-in-progress (`S` / `E` / `c` / `A`).** Baerly entries
-  are already small (one patch on one doc).
+- **Streaming-in-progress (`S` / `E` / `c` / `A`).** baerly-storage
+  entries are already small (one patch on one doc).
 - **`TYPE` messages.** JSON is self-describing; no `CREATE TYPE`
   analogue.
 - **`REPLICA IDENTITY USING INDEX`.** PK is always `_id`; no
@@ -231,8 +231,8 @@ From the Postgres logical-replication wire protocol we borrowed:
 - **TOAST `'u'` (unchanged) elision.** Merge patches encode "didn't
   touch" via key absence — no separate sentinel needed.
 - **LSN bytes.** Postgres LSNs are 64-bit byte positions and bytes
-  matter. Baerly's lsn is a string already lex-monotonic; reusing
-  it avoids inventing a parallel cursor.
+  matter. baerly-storage's lsn is a string already lex-monotonic;
+  reusing it avoids inventing a parallel cursor.
 
 ## `replica_identity`
 

@@ -51,8 +51,8 @@ Two deltas matter for differentiation:
 - **Cost-bound shape.** Iceberg and Delta Lake commit costs are
   O(seconds) and the commit retries tolerate this latency via
   `CommitFailedException` (Iceberg) or analogous conflict exception
-  paths (Delta). Baerly's per-collection commit scope targets a much
-  smaller per-document key-value workload and publishes a documented
+  paths (Delta). baerly-storage's per-collection commit scope targets a
+  much smaller per-document key-value workload and publishes a documented
   _"< 1 Class A op / writer / hour"_ cost bound for idle readers (see
   `docs/about/cost-model.md#cost-ceiling` and the end-to-end
   durability gate in `tests/integration/phase5-end-to-end.test.ts`).
@@ -77,7 +77,7 @@ Two deltas matter for differentiation:
   2023-era claim for the OSS Rust path.
 
 CAS-on-a-control-object is therefore now industry consensus, not a
-baerly invention. What baerly owns is the _instance_: the
+baerly-storage invention. What baerly-storage owns is the _instance_: the
 document-shaped, catalog-free, killable-compute application of it — a
 per-document KV HEAD with a CDC `seq` log and a _"< 1 Class A op /
 writer / hour"_ idle bound, advanced with no external coordination
@@ -94,8 +94,9 @@ system captures.
   analytic scans, not a per-document KV HEAD with a CDC log.
 - **DuckLake** (v1.0, Apr 2026 — SQL database _as_ the lakehouse
   catalog; https://ducklake.select/2026/04/13/ducklake-10/). The
-  opposite choice to baerly's "no catalog, the bucket is the catalog" —
-  a direct foil that sharpens the no-external-dependency thesis.
+  opposite choice to baerly-storage's "no catalog, the bucket is the
+  catalog" — a direct foil that sharpens the no-external-dependency
+  thesis.
 
 ## 3. SlateDB (slatedb.io, RFC-0001)
 
@@ -113,7 +114,7 @@ panic**. SlateDB's reasoning is that within a single epoch only one
 writer is permitted to allocate that LSN, so observing such a
 collision implies an invariant break.
 
-Baerly's `tryAdoptOwnSessionLogEntry`
+baerly-storage's `tryAdoptOwnSessionLogEntry`
 (`packages/server/src/log-conflict-adoption.ts`) recognises this
 exact case as the writer's _own_ prior in-flight commit attempt —
 e.g. after a process crash between PUT-log-entry and CAS-current —
@@ -121,7 +122,7 @@ and **adopts** the existing entry rather than panicking. The
 adoption gate is constrained by the per-commit session identifier,
 the matching seq, and the single-input commit shape, so it does not blur
 into accepting a foreign writer's entry. This is the citable C2
-gap: a system that would panic where baerly recovers.
+gap: a system that would panic where baerly-storage recovers.
 
 **C1 differentiation.** SlateDB fences via a `writer_epoch` field
 bumped in a single CAS. There is no harvesting of the storage

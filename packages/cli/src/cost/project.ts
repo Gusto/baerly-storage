@@ -31,7 +31,7 @@ export interface ProviderPricing {
 
 /**
  * Graduation triggers — sustained for 7 days, any one of these
- * means the workload has outgrown Baerly's positioning.
+ * means the workload has outgrown baerly-storage's positioning.
  *
  * Source: `docs/about/cost-model.md:159-163`.
  */

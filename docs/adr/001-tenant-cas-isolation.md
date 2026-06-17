@@ -18,7 +18,7 @@ decision stands, but commits are now linearized by the numbered
 
 ## Context
 
-Original context, superseded by ADR-008: Baerly's coordination object
+Original context, superseded by ADR-008: baerly-storage's coordination object
 was `current.json`; every commit read it, mutated it locally, and
 CAS-wrote it back with `If-Match: <etag>`. The current protocol uses a
 single-write commit: the winning `If-None-Match: "*"` create on
