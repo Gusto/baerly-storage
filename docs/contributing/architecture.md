@@ -9,7 +9,8 @@ related: ["../spec/sync-protocol.md", extending.md, features.md]
 
 # Architecture
 
-A top-down map of Baerly for someone who has never opened the codebase.
+A top-down map of baerly-storage for someone who has never opened the
+codebase.
 
 ## One-paragraph summary
 
@@ -79,42 +80,113 @@ default and not required. The rationale is in
 
 ## Module dependency graph
 
+A curated, layer-grouped view of the load-bearing modules — not every
+file in the path. Solid arrows mean a dependency or call path at this
+level of abstraction; dashed arrows mean **implements**. Intermediate
+plumbing is collapsed where it mainly explains an edge, but the
+snapshot/log readers are shown explicitly because they are the shared
+read-side path behind both queries and maintenance.
+
 ```mermaid
-graph TD
-    db["db.ts<br/>Db: public API"]
-    collection["collection.ts<br/>Collection&lt;T&gt; verbs"]
-    query["query.ts<br/>Query&lt;T&gt; predicate AST + reader"]
-    planner["query-planner.ts<br/>planQuery"]
-    indexes["indexes.ts<br/>IndexDefinition + key encoding"]
-    writer["writer.ts<br/>Writer.commit"]
-    compactor["compactor.ts<br/>compact()"]
-    gc["gc.ts<br/>runGc()"]
-    maint["maintenance.ts<br/>runScheduledMaintenance"]
-    storage["Storage interface<br/>get/put/delete/list"]
-    s3http["adapter-node/s3-http.ts<br/>S3HttpStorage"]
-    memstore["protocol/storage/memory.ts<br/>MemoryStorage"]
-    localfs["dev/local-fs.ts<br/>LocalFsStorage"]
-    json["json.ts<br/>RFC 7386 merge patch"]
-    log["log.ts<br/>LogEntry shape"]
+flowchart TD
+    subgraph hosts["Host adapters and app entry points"]
+        usercode["User app code<br/>direct Db API"]
+        cfworker["adapter-cloudflare/worker.ts<br/>Worker fetch + ctx.waitUntil dispatch"]
+        nodeserver["adapter-node/baerly-node.ts + server.ts<br/>Node handle + inline dispatch"]
+        devvite["dev/vite-plugin.ts<br/>local Vite dev"]
+    end
+
+    subgraph http["HTTP surface in @baerly/server"]
+        router["http/router.ts<br/>CRUD + count routes"]
+        since["http/since.ts<br/>/v1/since long-poll"]
+    end
+
+    subgraph api["Application-facing API in @baerly/server"]
+        db["db.ts<br/>Db.create + collectionReadContext"]
+        collection["collection.ts<br/>Collection&lt;T&gt; verbs"]
+    end
+
+    subgraph engine["Read/write engine in @baerly/server"]
+        query["query.ts<br/>Query reader + mutation terminals"]
+        planner["query-planner.ts<br/>planQuery"]
+        writer["writer.ts<br/>Writer.commit single-write commit"]
+        indexhelpers["indexes.ts<br/>runtime index validate/encode/project"]
+        logio["log-tail.ts / log-walk.ts / snapshot.ts<br/>tail probe + log/snapshot fold"]
+    end
+
+    subgraph protocol["Pure protocol contracts in @baerly/protocol"]
+        apitypes["collection-api.ts<br/>Collection / Query wire types"]
+        pindexes["indexes.ts<br/>IndexDefinition contract"]
+        json["json.ts<br/>RFC 7386 merge patch"]
+        log["log.ts + log-key.ts<br/>LogEntry + log key shape"]
+        current["coordination/current-json.ts<br/>current.json read/CAS"]
+        storage["storage/types.ts<br/>Storage get/put/delete/list"]
+    end
+
+    subgraph maintenance["Maintenance in @baerly/server"]
+        maint["maintenance.ts<br/>runBoundedMaintenance<br/>runScheduledMaintenance (opt-in)"]
+        compactor["compactor.ts<br/>compact"]
+        gc["gc.ts<br/>runGc"]
+    end
+
+    subgraph storageimpl["Storage implementations"]
+        r2binding["adapter-cloudflare/r2-binding-storage.ts<br/>R2 binding"]
+        s3http["adapter-node/s3-http.ts<br/>S3HttpStorage"]
+        memstore["protocol/storage/memory.ts<br/>MemoryStorage"]
+        localfs["dev/local-fs.ts<br/>LocalFsStorage"]
+    end
+
+    usercode --> db
+    cfworker --> db
+    cfworker --> router
+    cfworker --> r2binding
+    cfworker -->|sets MaintenanceDispatch| maint
+    nodeserver --> db
+    nodeserver --> router
+    nodeserver -->|sets MaintenanceDispatch| maint
+    devvite --> nodeserver
+    devvite --> db
+    devvite --> localfs
+
+    router --> db
+    router --> query
+    router --> since
+    since --> db
 
     db --> collection
-    db --> writer
+    db --> apitypes
+    db --> storage
     collection --> query
-    collection --> writer
+    collection --> apitypes
     query --> planner
-    query --> storage
-    planner --> indexes
-    writer --> indexes
-    writer --> storage
+    query --> writer
+    query --> json
+    query --> indexhelpers
+    query --> logio
+    query --> current
+    planner --> pindexes
+    writer --> indexhelpers
     writer --> log
-    compactor --> storage
-    gc --> storage
+    writer --> current
+    writer --> storage
+    writer -->|post-commit dispatch| maint
+    indexhelpers --> pindexes
+    logio --> log
+    logio --> storage
     maint --> compactor
     maint --> gc
-    storage --> s3http
-    storage --> memstore
-    storage --> localfs
-    writer --> json
+    maint --> storage
+    compactor --> current
+    compactor --> logio
+    compactor --> storage
+    gc --> current
+    gc --> logio
+    gc --> storage
+
+    r2binding -.->|implements| storage
+    s3http -.->|implements| storage
+    memstore -.->|implements| storage
+    localfs -.->|implements| storage
 ```
 
 ## CLI surfaces
@@ -126,8 +198,8 @@ Two CLIs ship from this repo, and the split is load-bearing:
   bolting onto an existing Cloudflare Worker (`pnpm create @gusto/baerly-storage@latest .`).
   It is the only npm-published CLI besides `baerly-storage` itself.
 - **`baerly`** (`packages/cli/`) does things to a project that already
-  has baerly: `deploy`, `doctor`, `inspect`, `export`, `cost`, and the
-  `admin` subgroup. Workspace-internal; bundled to a single-file bin at
+  has baerly-storage: `deploy`, `doctor`, `inspect`, `export`, `cost`,
+  and the `admin` subgroup. Workspace-internal; bundled to a single-file bin at
   `dist/baerly.js` that the `baerly-storage` tarball ships.
 
 The two share one helper module — `@baerly/cli/wrangler-patch` — because
@@ -180,17 +252,18 @@ When `Collection.where(p).all()` has a predicate AND the collection has
 declared `indexes`, the reader calls `planQuery(predicate, indexes)`
 (in `packages/server/src/query-planner.ts`) after the `current.json`
 read and before the log fold. The planner returns either
-`IndexWalkPlan{indexName, equalityKeys, rangeOn?, inOn?, postFilter?}`
+`IndexWalkPlan{indexName, equalityKeys, rangeOn?, inOn?}`
 — which routes the reader through `runIndexWalkPlan(plan, ctx, head)`
 to LIST under the encoded index prefix and resolve only the matching
 doc ids — or `FullScanPlan{reason}` — which falls through to the
 snapshot+log fold. Every fetched row passes through
 `matchesWire(wire, doc)` post-fetch; the re-check is load-bearing
-(it defends against stale extra index entries AND consumes the
-planner's residue `postFilter`). Missing index entries can hide rows
-from an index-routed query, so newly declared or suspect indexes must
-be reconciled with `rebuildIndex` before operators treat them as
-complete. The plan shape and diagnostic `reason` values are documented
+(it defends against stale extra index entries and consumes any
+residual clauses from the original wire predicate). Missing index
+entries can hide rows from an index-routed query, so newly declared or
+suspect indexes must be reconciled with `rebuildIndex` before operators
+treat them as complete. The plan shape and diagnostic `reason` values
+are documented
 in [features.md](features.md) §"Secondary indexes".
 
 The HTTP `/v1/since?collection=<name>&cursor=<opaque>` long-poll route in
