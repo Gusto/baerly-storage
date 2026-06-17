@@ -2,7 +2,7 @@
 title: Architecture overview
 audience: coder
 summary: Module dependency graph and lifecycle of db.collection(...).insert().
-last-reviewed: 2026-06-13
+last-reviewed: 2026-06-16
 tags: [architecture, lifecycle, module-map]
 related: ["../spec/sync-protocol.md", extending.md, features.md]
 ---
@@ -80,113 +80,89 @@ default and not required. The rationale is in
 
 ## Module dependency graph
 
-A curated, layer-grouped view of the load-bearing modules — not every
-file in the path. Solid arrows mean a dependency or call path at this
-level of abstraction; dashed arrows mean **implements**. Intermediate
-plumbing is collapsed where it mainly explains an edge, but the
-snapshot/log readers are shown explicitly because they are the shared
-read-side path behind both queries and maintenance.
+A request flows top-to-bottom through a few layers; the engine leans on
+a column of pure protocol contracts and triggers maintenance after a
+commit. The first diagram is that whole picture in one glance. The
+second zooms into the read/write engine — the part you touch when
+changing `writer.ts` or the query path.
+
+Solid arrows are a direct dependency or call path. Dashed arrows are a
+looser relationship: **uses** a pure contract, **implements** an
+interface, or triggers work **post-commit**.
+
+### Layers at a glance
 
 ```mermaid
 flowchart TD
-    subgraph hosts["Host adapters and app entry points"]
-        usercode["User app code<br/>direct Db API"]
-        cfworker["adapter-cloudflare/worker.ts<br/>Worker fetch + ctx.waitUntil dispatch"]
-        nodeserver["adapter-node/baerly-node.ts + server.ts<br/>Node handle + inline dispatch"]
-        devvite["dev/vite-plugin.ts<br/>local Vite dev"]
-    end
+    hosts["Host adapters<br/>Worker · Node · Vite"]
+    http["HTTP surface<br/>CRUD router · /v1/since long-poll"]
+    api["Application API<br/>Db · Collection"]
+    engine["Read / write engine<br/>query · writer · log/snapshot fold"]
+    storage["Storage<br/>R2 · S3 · memory · local-fs"]
+    protocol["Protocol contracts<br/>pure, no I/O"]
+    maintenance["Maintenance<br/>compact · gc, post-commit"]
 
-    subgraph http["HTTP surface in @baerly/server"]
-        router["http/router.ts<br/>CRUD + count routes"]
-        since["http/since.ts<br/>/v1/since long-poll"]
-    end
+    hosts --> http
+    hosts --> api
+    http --> api
+    api --> engine
+    engine --> storage
+    engine -. uses .-> protocol
+    storage -. implements .-> protocol
+    engine -. post-commit .-> maintenance
+```
 
-    subgraph api["Application-facing API in @baerly/server"]
-        db["db.ts<br/>Db.create + collectionReadContext"]
+A write flows host → API → engine → storage; a read folds storage back
+up through the engine. `Protocol` is the shared contract column every
+layer leans on (pure, no I/O). `Maintenance` (compaction + GC) is not on
+the request path — the writer triggers a bounded pass after the commit
+lands (see
+[After the write](#after-the-write--the-in-band-maintenance-tick)).
+
+### The engine, exploded
+
+Host adapters, the HTTP surface, the maintenance loop, and the
+individual protocol modules collapse to single boxes here — each is
+detailed in the prose below ("Storage seam", "After the write") and in
+the module map in `CLAUDE.md`. What remains is the application API and
+the read/write engine: the modules behind `db.collection(...).insert()`
+and `.where(...).all()`.
+
+```mermaid
+flowchart TD
+    subgraph api["Application API · @baerly/server"]
+        db["db.ts<br/>Db.create"]
         collection["collection.ts<br/>Collection&lt;T&gt; verbs"]
     end
 
-    subgraph engine["Read/write engine in @baerly/server"]
+    subgraph engine["Read / write engine · @baerly/server"]
         query["query.ts<br/>Query reader + mutation terminals"]
         planner["query-planner.ts<br/>planQuery"]
-        writer["writer.ts<br/>Writer.commit single-write commit"]
-        indexhelpers["indexes.ts<br/>runtime index validate/encode/project"]
-        logio["log-tail.ts / log-walk.ts / snapshot.ts<br/>tail probe + log/snapshot fold"]
+        writer["writer.ts<br/>single-write commit"]
+        indexhelpers["indexes.ts<br/>validate · encode · project"]
+        logio["log-tail · log-walk · snapshot<br/>tail probe + fold"]
     end
 
-    subgraph protocol["Pure protocol contracts in @baerly/protocol"]
-        apitypes["collection-api.ts<br/>Collection / Query wire types"]
-        pindexes["indexes.ts<br/>IndexDefinition contract"]
-        json["json.ts<br/>RFC 7386 merge patch"]
-        log["log.ts + log-key.ts<br/>LogEntry + log key shape"]
-        current["coordination/current-json.ts<br/>current.json read/CAS"]
-        storage["storage/types.ts<br/>Storage get/put/delete/list"]
-    end
-
-    subgraph maintenance["Maintenance in @baerly/server"]
-        maint["maintenance.ts<br/>runBoundedMaintenance<br/>runScheduledMaintenance (opt-in)"]
-        compactor["compactor.ts<br/>compact"]
-        gc["gc.ts<br/>runGc"]
-    end
-
-    subgraph storageimpl["Storage implementations"]
-        r2binding["adapter-cloudflare/r2-binding-storage.ts<br/>R2 binding"]
-        s3http["adapter-node/s3-http.ts<br/>S3HttpStorage"]
-        memstore["protocol/storage/memory.ts<br/>MemoryStorage"]
-        localfs["dev/local-fs.ts<br/>LocalFsStorage"]
-    end
-
-    usercode --> db
-    cfworker --> db
-    cfworker --> router
-    cfworker --> r2binding
-    cfworker -->|sets MaintenanceDispatch| maint
-    nodeserver --> db
-    nodeserver --> router
-    nodeserver -->|sets MaintenanceDispatch| maint
-    devvite --> nodeserver
-    devvite --> db
-    devvite --> localfs
-
-    router --> db
-    router --> query
-    router --> since
-    since --> db
+    protocol["Protocol contracts<br/>json · log · current.json ·<br/>Storage · collection-api · indexes"]
+    storage["Storage impls<br/>R2 · S3 · memory · local-fs"]
+    maint["Maintenance<br/>see §After the write"]
 
     db --> collection
-    db --> apitypes
-    db --> storage
     collection --> query
-    collection --> apitypes
     query --> planner
     query --> writer
-    query --> json
-    query --> indexhelpers
     query --> logio
-    query --> current
-    planner --> pindexes
+    query -. uses .-> protocol
     writer --> indexhelpers
-    writer --> log
-    writer --> current
+    writer --> logio
     writer --> storage
-    writer -->|post-commit dispatch| maint
-    indexhelpers --> pindexes
-    logio --> log
+    writer -. uses .-> protocol
+    writer -. post-commit .-> maint
+    planner -. uses .-> protocol
+    indexhelpers -. uses .-> protocol
     logio --> storage
-    maint --> compactor
-    maint --> gc
-    maint --> storage
-    compactor --> current
-    compactor --> logio
-    compactor --> storage
-    gc --> current
-    gc --> logio
-    gc --> storage
-
-    r2binding -.->|implements| storage
-    s3http -.->|implements| storage
-    memstore -.->|implements| storage
-    localfs -.->|implements| storage
+    logio -. uses .-> protocol
+    storage -. implements .-> protocol
 ```
 
 ## CLI surfaces
