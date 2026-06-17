@@ -380,26 +380,34 @@ constraint: anything platform-specific has to live in an adapter.
 
 ## Storage layout in the bucket
 
-For a `Db` constructed with `app="tickets"` and `tenant="acme"`:
+Every object for one collection lives under a single prefix. For a `Db`
+constructed with `app="tickets"` and `tenant="acme"`, that prefix is the
+tree root below — shown once here, then omitted from the table that
+follows:
 
-- `app/tickets/tenant/acme/manifests/<collection>/current.json` —
-  compactor-owned compaction state. Holds the snapshot pointer,
-  `log_seq_start`, the non-authoritative `tail_hint`, and the dormant
-  `writer_fence`. Not the commit-path linearization point.
-- `app/tickets/tenant/acme/manifests/<collection>/log/<seq>.json` — one
-  object per `LogEntry`, keyed by monotonic integer `seq`. The
-  `If-None-Match: "*"` create on this key is the commit. Read by
-  readers across the trusted range `[log_seq_start, tail_hint)` plus a
-  forward-probe to the true tail.
-- `app/tickets/tenant/acme/manifests/<collection>/content/<content-version>.json` —
-  content-addressed post-image body for `I` / `U`, keyed by the
-  `ContentVersionId` (SHA-256 truncated to 32 hex chars).
-- `app/tickets/tenant/acme/manifests/<collection>/index/<name>/...` —
-  zero-byte advisory index marker.
-- `app/tickets/tenant/acme/manifests/<collection>/snapshot/L9/<min>-<max>-<sha>.json` —
-  content-hashed materialized snapshot.
-- `app/tickets/tenant/acme/manifests/<collection>/gc/pending.json` —
-  two-phase GC candidate ledger.
+```
+app/tickets/tenant/acme/manifests/<collection>/
+├── current.json                   ← compaction state (compactor-owned)
+├── log/
+│   └── <seq>.json                 ← one LogEntry; THIS create is the commit
+├── content/
+│   └── <content-version>.json     ← post-image body (insert / update)
+├── index/
+│   └── <name>/…                   ← advisory marker (zero-byte)
+├── snapshot/
+│   └── L9/<min>-<max>-<sha>.json  ← materialized snapshot
+└── gc/
+    └── pending.json               ← GC candidate ledger
+```
+
+| Object                               | Key encodes                          | Holds / role                                                                                                                                                                     |
+| ------------------------------------ | ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `current.json`                       | — (one per collection)               | Snapshot pointer, `log_seq_start`, the non-authoritative `tail_hint`, and the dormant `writer_fence`. **Not** the commit-path linearization point.                               |
+| `log/<seq>.json`                     | `seq` — monotonic integer            | One `LogEntry`. The `If-None-Match: "*"` create on this key **is the commit**. Readers scan the trusted range `[log_seq_start, tail_hint)`, then forward-probe to the true tail. |
+| `content/<content-version>.json`     | `ContentVersionId` — SHA-256, 32 hex | Content-addressed post-image body for `I` / `U`.                                                                                                                                 |
+| `index/<name>/…`                     | index name + encoded key             | Zero-byte advisory index marker.                                                                                                                                                 |
+| `snapshot/L9/<min>-<max>-<sha>.json` | `seq` range + content hash           | Content-hashed materialized snapshot.                                                                                                                                            |
+| `gc/pending.json`                    | — (one per collection)               | Two-phase GC candidate ledger.                                                                                                                                                   |
 
 Compaction (`packages/server/src/compactor.ts`) folds adjacent log
 entries into checkpoints and advances `log_seq_start`. GC
