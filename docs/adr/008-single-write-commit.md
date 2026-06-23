@@ -2,7 +2,7 @@
 title: Single-write commit — the numbered log append is the commit
 audience: adr
 summary: ADR 008 — a commit is one linearizable `If-None-Match:"*"` create on `log/<seq>`; `current.json` leaves the commit path and becomes compactor-owned compaction state with a non-authoritative `tail_hint`; readers discover the tail by forward-probe; index emission is hybrid (new keys before the commit, stale keys after); schema bumps v2→v3 (breaking).
-last-reviewed: 2026-06-15
+last-reviewed: 2026-06-23
 tags: [decision, adr, sync-protocol, runtime-model]
 related:
   [
@@ -176,9 +176,9 @@ probe**, not a reverse-LIST:
   probe; the writer reads the occupant back, adopts its own lost-ack entry
   or re-runs tail discovery from `seq+1`.
 - **Reader.** Fold the trusted range `[log_seq_start, tail_hint)`, then
-  forward-probe `GET log/<tail_hint>, log/<tail_hint+1>, …` (Class B GETs),
-  folding each found entry and **stopping at the first 404** — that 404 is
-  the true tail.
+  forward-probe from `max(log_seq_start, tail_hint)` (normally
+  `tail_hint`) with Class B GETs, folding each found entry and
+  **stopping at the first 404** — that 404 is the true tail.
 
 This keeps reads **pure of Class A** (the idle-reader cost bound is
 untouched) and is immune to LIST-after-write visibility lag: the only
@@ -196,11 +196,12 @@ baerly-storage has no fill primitive). So:
 - A **writer** racing peers may "gallop" forward through several `412`s, but
   every seq it skips past is occupied by a _committed_ entry — it never
   leaves a hole behind it.
-- A **reader** walks forward linearly from `tail_hint` and stops at the
-  first 404. Because the range is dense, that 404 is the true tail; the
-  reader can never stop early inside a hole, and a just-committed entry
-  above a stale hint simply becomes visible when the probe reaches it (the
-  reader sees a valid committed _prefix_ either way).
+- A **reader** folds `[log_seq_start, tail_hint)`, then walks forward
+  linearly from `max(log_seq_start, tail_hint)` (normally `tail_hint`) and
+  stops at the first 404. Because the range is dense, that 404 is the true
+  tail; the reader can never stop early inside a hole, and a just-committed
+  entry above a stale hint simply becomes visible when the probe reaches it
+  (the reader sees a valid committed _prefix_ either way).
 - `tail_hint` is a **proven lower bound**: the compactor stamps it
   (monotone max) only after probing a _dense prefix_. The write-tick runner
   may also stamp a writer-observed tail when fold/GC work defers or is

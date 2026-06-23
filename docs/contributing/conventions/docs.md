@@ -2,7 +2,7 @@
 title: Conventions for docs/
 audience: coder
 summary: Source-of-truth rules, markdown style, Mermaid usage, when to update which doc.
-last-reviewed: 2026-06-13
+last-reviewed: 2026-06-23
 tags: [conventions, docs]
 related: [tests.md, "../../README.md"]
 ---
@@ -13,7 +13,9 @@ Conventions for content under `docs/`.
 
 ## Source of truth
 
-- Everything in `docs/` is hand-written.
+- Prose in `docs/` is hand-written. `docs/spec/attachments/**` is the
+  carve-out for regenerated benchmark evidence and is intentionally
+  treated as unformatted data.
 - Public API type/hover docs live as JSDoc on
   `packages/server/src/db.ts` and `packages/server/src/collection.ts`.
   IDE hover and `tsgo` consume those directly.
@@ -43,16 +45,23 @@ Conventions for content under `docs/`.
 
 ## Pinned phrases
 
-Two positioning lines are load-bearing brand copy and must stay
+These positioning lines are load-bearing brand copy and must stay
 recognizable and consistent wherever they appear. If you reword one,
 update every occurrence so they don't silently drift:
 
-- **"There is no runtime. None."** — `README.md`,
-  `docs/contributing/architecture.md`, `docs/about/thesis.md`.
+- **"No database server. No daemon. No database runtime. Just your app
+  and a bucket."** — the punchy README lead. Explanatory docs may use
+  variants such as **"There is no separate database server."** or
+  **"There is no database server coordinating state."** where the
+  passage is teaching the runtime model.
+- **"baerly-storage runs wherever the bucket credentials safely
+  live."** — the shortest way to distinguish the TypeScript library
+  from a hosted database service.
 - **"Built like git: content-addressed documents, immutable numbered
   log entries, and one conditional log create as the commit, per
-  collection."** — `README.md`, `docs/contributing/architecture.md`,
-  `docs/about/thesis.md`.
+  collection."** — exact lead in `README.md`; architecture and thesis
+  may use the same content without the `Built like git:` lead when the
+  sentence is embedded in explanatory prose.
 
 Consistency is of the _wording_, not byte-identical formatting: the
 copies are not identical today (e.g. some are bold and standalone,

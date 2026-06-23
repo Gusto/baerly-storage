@@ -2,7 +2,7 @@
 title: Extending baerly-storage
 audience: coder
 summary: Worked patterns for adding methods to Db, Query verbs, and Collection verbs.
-last-reviewed: 2026-06-12
+last-reviewed: 2026-06-22
 tags: [extending, api-design, patterns]
 related:
   [
@@ -15,12 +15,19 @@ related:
 
 # Extending baerly-storage
 
-Three worked examples for the most common extension shapes. Follow these
-patterns and your changes will fit the codebase's conventions.
+Most extension work starts with one question: which layer owns the new
+behavior? If the change is only a nicer way to ask for existing data, it
+belongs near `Db`, `Collection<T>`, or `Query<T>`. If it changes what a write
+means, it belongs in the protocol wire shape and `Writer`. If it changes where
+bytes live, it belongs behind `Storage`.
+
+This page walks through those shapes. Use the examples as placement rules first
+and code templates second; the right file follows from the layer that owns the
+invariant.
 
 > Before adding a feature, read [architecture.md](architecture.md) so you
-> know which module owns what. Most additions touch
-> `packages/server/src/db.ts` or `packages/server/src/collection.ts`, but the
+> know which module owns what. Most public API additions touch
+> `packages/server/src/db.ts` or `packages/server/src/collection.ts`, but write
 > _invariants_ live in `packages/server/src/writer.ts`.
 
 > Before adding a public symbol to a barrel, read
@@ -32,18 +39,20 @@ patterns and your changes will fit the codebase's conventions.
 
 ## 1. Add a new public method on `Db`
 
-We'll work through `collections()` — list every collection that has at least
-one mutation logged against it.
+We'll work through `collections()` — list every collection with a manifest under
+the tenant prefix.
 
 ### Where to add the method
 
-Public methods live on the `Db` class in
-`packages/server/src/db.ts`. The typical surface is `Collection<T>` (in
-`packages/server/src/collection.ts`), reached via
-`db.collection<T>(name)` — so most additions are actually new verbs on
-`Collection<T>` / `Query<T>`. The `Collection<T>` / `Query<T>` interfaces
-themselves are locked in `@baerly/protocol`; adding a new verb is
-a coordinated change.
+Start with the call site. A tenant-level operation belongs on `Db`; an operation
+on one collection or one filtered row set usually belongs on `Collection<T>` or
+`Query<T>`, reached through `db.collection<T>(name)`.
+
+Concretely, `Db` lives in `packages/server/src/db.ts`, and the collection
+implementation lives in `packages/server/src/collection.ts`. The
+`Collection<T>` / `Query<T>` interfaces themselves are locked in
+`@baerly/protocol`; adding a new verb there is a coordinated protocol-surface
+change, not a server-only edit.
 
 ````ts
 // packages/server/src/db.ts (inside class Db)
@@ -86,9 +95,10 @@ public async collections(): Promise<string[]> {
   the justification for keeping both.
 - **JSDoc with `@example`.** IDE hover and `tsgo` surface these
   directly from source — they are the public-API reference.
-- **No state on `Db`.** `Db` carries the `Storage` handle and the
-  `app` / `tenant` pair only. Per-request state belongs in the
-  caller; per-write state belongs in a fresh `Writer`.
+- **No request state on `Db`.** `Db` carries stable construction state:
+  the `Storage` handle, the `app` / `tenant` pair, and derived schema/index
+  maps. Per-request state belongs in the caller; per-write state belongs in a
+  fresh `Writer`.
 - **Reads are on-demand.** Use the injected `#storage` directly for
   `list` / `get` reads; use `Collection<T>.where(...).all()` for log-fold
   reads. Don't build a parallel cache layer.
@@ -134,8 +144,8 @@ exercised under random write interleavings.
 ### Verify
 
 ```sh
-pnpm verify        # typecheck + verify:examples + lint
-pnpm test          # vitest run
+pnpm verify        # typecheck + examples + lint + format + docs guards
+pnpm test          # build + vitest default project
 ```
 
 ---
@@ -146,20 +156,24 @@ Schemas in baerly-storage are caller-declared at the server boundary: every
 `insert` / `update` / `replace` validates the resulting _post-image_
 against a `SchemaValidator` you attach to a `CollectionDefinition`.
 Invalid input throws `BaerlyError{code:"SchemaError"}` carrying a
-machine-readable `.issues` array of `{path, message}` entries; the
-HTTP layer ships them on the 400 response body so a UI can render
-field-level errors directly.
+machine-readable `.issues` array of `{path, message}` entries; the raw HTTP
+400 response body includes those issues for clients that read the envelope
+directly.
 
 ### Adapter shape
 
-`SchemaValidator` (from `@baerly/server`) is the
-[StandardSchemaV1](https://standardschema.dev/) interface — a
-pure-type contract implemented by Zod 3.24+, Valibot 0.36+, ArkType
-2.0+, and others. The interface lives in
-`packages/server/src/schema.ts`; the repo carries no runtime dep on
-any validator library — you bring whichever library you like.
+`SchemaValidator` (re-exported from `@baerly/server`) is the
+[StandardSchemaV1](https://standardschema.dev/) interface — a pure-type
+contract implemented by Zod, Valibot, ArkType, and other schema libraries.
+The type is defined in `packages/protocol/src/schema.ts`; the runtime adapter
+`validateOrThrow` lives in `packages/server/src/schema.ts`. The repo carries no
+runtime dep on any validator library — you bring whichever library you like.
 
 ### Zod example
+
+This is the runtime-only `BaerlyConfig` shape. Scaffolded `baerly.config.ts`
+files can also include deploy metadata such as `app`, `tenant`, `target`, and
+`auth`.
 
 ```ts
 // baerly.config.ts
@@ -199,9 +213,8 @@ export default defineConfig({
 });
 ```
 
-Both forms compile to the same `SchemaValidator`-shaped object; the
-adapter `validateOrThrow` in `packages/server/src/schema.ts` doesn't
-know (or care) which library produced it.
+Both forms compile to the same `SchemaValidator`-shaped object;
+`validateOrThrow` in `packages/server/src/schema.ts` is library-agnostic.
 
 ### What gets validated
 
@@ -234,19 +247,22 @@ The kernel derives the per-collection schema and index maps from
 construct the maps directly). When `config` is omitted, schema
 validation is a no-op.
 
-The previous `schemas:` / `indexes:` overrides on `Db.create` were
-cut on 2026-05-27 — see [`docs/adr/002-api-surface-lock.md`](../adr/002-api-surface-lock.md)
+The previous `schemas:` / `indexes:` overrides on `Db.create` are no longer
+supported — see [`docs/adr/002-api-surface-lock.md`](../adr/002-api-surface-lock.md)
 for the reasoning.
 
 ### Forward-only migration
 
-Schema migrations are forward-only. The forward-compatible
-schema-versioning mechanism lives on the `CurrentJson` coordination
-document: the `schema_version` field (currently `3`, constant
-`CURRENT_JSON_SCHEMA_VERSION` in
-`packages/protocol/src/constants.ts`) is bumped monotonically on any
-breaking change to `CurrentJson` field semantics; readers must reject
-unknown major versions with `BaerlyError{code:"InvalidResponse"}`.
+Collection schemas validate future writes; they do not rewrite existing rows.
+If a deployment needs old documents to satisfy a stricter Zod/Valibot shape,
+that backfill is application-layer work.
+
+Protocol artifact migrations are separate. The forward-compatible
+schema-versioning mechanism lives on the `CurrentJson` coordination document:
+the `schema_version` field (currently `3`, constant
+`CURRENT_JSON_SCHEMA_VERSION` in `packages/protocol/src/constants.ts`) is bumped
+monotonically on any breaking change to `CurrentJson` field semantics; readers
+must reject unknown major versions with `BaerlyError{code:"InvalidResponse"}`.
 Adding a new optional field to `CurrentJson` is non-breaking.
 
 The `LogEntry` CDC wire shape has a separate
@@ -267,17 +283,20 @@ application-layer work; the protocol does not supply rewrite logic.
 
 ## 1c. Declare an index on a collection
 
-Indexes are declared on the collection config under
-`BaerlyConfig.collections[*].indexes`. Each `IndexDefinition` has a
-`name`, an `on` (single field or composite), and an optional
-`predicate?` (filtered index — only docs matching the predicate
-project keys). The auto-planner picks a walk plan from the declared
-set at read time; there is no manual-hint API on `Query<T>`.
+An index is a second set of storage keys that lets a read start near matching
+documents instead of walking every row. The writer maintains those keys; the
+reader decides whether they help.
+
+Concretely, indexes are declared on the collection config under
+`BaerlyConfig.collections[*].indexes`. Each `IndexDefinition` has a `name`, an
+`on` field tuple, and an optional `predicate?` for a filtered index. The
+auto-planner picks a walk plan from the declared set at read time; there is no
+manual-hint API on `Query<T>`.
 
 ### `IndexDefinition` shape
 
 ```ts
-// packages/server/src/indexes.ts
+// packages/protocol/src/indexes.ts
 export interface IndexDefinition {
   readonly name: string; // /^[a-z][a-z0-9_]*$/
   readonly on: string | readonly string[]; // top-level field(s)
@@ -334,17 +353,21 @@ export default defineConfig({
 
 - Top-level fields only on `on` — dotted-path values throw
   `SchemaError` at projection time
-  (`packages/server/src/indexes.ts:192-216`).
+  (`packages/server/src/indexes.ts:337-345`).
 - `name` must match `/^[a-z][a-z0-9_]*$/`. A name in the reserved
   leading-`_` namespace throws `InvalidConfig`; a name that fails the
   regex throws `SchemaError`.
-- `predicate?` is a {@link PredicateWire} — `{ clauses:
-PredicateClause[] }`. Accepts the full operator vocabulary (`eq`,
+- `predicate?` is a `PredicateWire` —
+  `{ clauses: PredicateClause[] }`. It accepts the full operator vocabulary (`eq`,
   `gt` / `gte`, `lt` / `lte`, `in`) end-to-end. `predicateImplies`
   reasons about range and `in` containment, so the planner prefers
   a filtered index whenever the query's bounds (whether expressed
   as equality, `in` members, or another range) fall inside the
   filter's bounds.
+- A filtered index is sound only when the query predicate implies the index
+  predicate. Keep an unfiltered fallback for broader queries; otherwise the
+  planner can route through the filtered index as a last resort and miss rows
+  outside the filter.
 - **Numeric range and `in` walks route through the index** — see
   [`docs/contributing/features.md`](features.md)
   §"Numeric range and `in` walks".
@@ -358,29 +381,42 @@ PredicateClause[] }`. Accepts the full operator vocabulary (`eq`,
 
 ### Adding an index to an existing deployment
 
-Run
+Run one of these forms:
 
 ```sh
-pnpm build && pnpm baerly admin rebuild-index <collection> <name>
+pnpm build && pnpm baerly admin rebuild-index \
+  --bucket=<uri> --collection=<collection> --index=<name> --on=<field>
+
+pnpm build && pnpm baerly admin rebuild-index \
+  --bucket=<uri> --collection=<collection> --index=<name> --config=<compiled-js-mjs-or-json>
 ```
 
-to backfill. The writer emits forward entries on every commit;
-pre-existing rows are not back-projected until rebuild runs.
+The command also accepts `--app` and `--tenant`; when omitted, they default from
+`baerly.config.ts`. Use `--on` only for a single-field unfiltered index. Use
+`--config` with a compiled `.js`, `.mjs`, or `.json` config to resolve the
+matching declared index; the current CLI resolves the index's `on` field only,
+so do not use it as the source of truth for filtered-index predicates. The
+writer emits forward entries on every commit; pre-existing rows are not
+back-projected until rebuild runs.
 
 ### Verify
 
 ```sh
-pnpm verify        # typecheck + verify:examples + lint
-pnpm test          # vitest run
+pnpm verify        # typecheck + examples + lint + format + docs guards
+pnpm test          # build + vitest default project
 ```
 
 ---
 
 ## 2. Add a new write primitive
 
-Use this pattern when you're adding a new `op` (e.g. a TRUNCATE
-analogue) or a new shape of `CommitInput` that the existing
-`Writer.commit` path can't express.
+Use this pattern when the new operation cannot be represented as today's
+`insert` / `update` / `replace` / `delete` flow. Existing log entries mean
+public API convenience; a new durable fact in the log means a new write
+primitive.
+
+Concretely, that means adding a new `op` (e.g. a TRUNCATE analogue) or a new
+shape of `CommitInput` that the existing `Writer.commit` path can't express.
 
 The write primitive lives in two places:
 
@@ -401,11 +437,16 @@ The write primitive lives in two places:
 export interface CommitInput {
   readonly op: "I" | "U" | "D" | "T"; // new: T
   readonly collection: string;
-  readonly docId?: string; // undefined on op:"T"
+  readonly docId?: string; // if undefined for a new op, audit Writer's doc-id guard
   readonly body?: DocumentData;
   // ...
 }
 ```
+
+Today `CommitInput.docId` is required and `Writer.commit` validates it before
+any op-specific branch. A collection-wide op must update that guard, the
+`LogEntry` field requirements, and every reader fold that assumes one log entry
+maps to one document id.
 
 ### Wire it in
 
@@ -426,22 +467,27 @@ export interface CommitInput {
 - ❌ Add a config knob unless it's user-facing. Internal toggles bloat
   `WriterOptions`; prefer a constant in
   `packages/protocol/src/constants.ts`.
-- ❌ Reach for `Math.random`, `Date.now`, or `node:fs` directly inside
-  `Writer`. The class accepts an injected `random` callback for
-  retry jitter; protocol timestamps should flow through the existing
-  helper functions or through `StoragePutResult.serverDate` where the
-  fence protocol explicitly requires storage-server provenance.
+- ❌ Add new ambient dependencies inside `Writer` without threading them
+  through the existing seams. The class accepts an injected `random` callback
+  for retry jitter; protocol timestamps should follow the existing
+  `Date.now()` plus timestamp-helper pattern, or use
+  `StoragePutResult.serverDate` where a protocol path explicitly requires
+  storage-server provenance. Do not reach for `node:fs` directly.
 - ❌ Use baseUrl-style imports — there's no `baseUrl` configured.
 
 ---
 
 ## 3. Add a new `Storage` impl
 
-The `Storage` interface lives in
-`packages/protocol/src/storage/index.ts`. New impls land in their
-own package under `packages/` (`adapter-node`, `adapter-cloudflare`,
-`adapter-lambda`, …) or as direct exports of `@baerly/dev` for the
-local-dev case.
+`Storage` is the narrow boundary between the protocol and an object store. A new
+backend should make the existing read/write/list/delete contract true; it should
+not teach the protocol about a new provider.
+
+The `Storage` interface is defined in
+`packages/protocol/src/storage/types.ts` and re-exported from
+`packages/protocol/src/storage/index.ts`. New impls land in their own package
+under `packages/` (`adapter-node`, `adapter-cloudflare`, `adapter-lambda`, …)
+or as direct exports of `@baerly/dev` for the local-dev case.
 
 ### File template
 
@@ -531,6 +577,8 @@ Look at `tests/integration/randomized.test.ts` and
 Check the `code`, not the message:
 
 ```ts
+import { BaerlyError } from "@baerly/server";
+
 expect.assertions(1);
 try {
   await db.collection("users").insert(/* something invalid */);
@@ -551,14 +599,13 @@ intervals (≤50ms) to keep the suite snappy.
 
 ## 5. Shared utilities on the public surface
 
-A handful of functions live below the `Db` / `Collection<T>` API and are
-exported from `@baerly/server` for consumers — adapters, the CLI,
-admin tooling — that need to compose protocol primitives directly.
-They are `@public` and stable; the JSDoc on each is the canonical
-reference.
+Some functions live below the `Db` / `Collection<T>` API and are exported from
+`@baerly/server` for consumers — adapters, the CLI, admin tooling — that need to
+compose protocol primitives directly. They are `@public` and stable; the JSDoc
+on each is the canonical reference.
 
 - **`loadSnapshotAsMap(storage, key, expectedCollection, signal?)`**
-  (`packages/server/src/compactor.ts`) — load a content-addressed
+  (`packages/server/src/snapshot.ts`) — load a content-addressed
   snapshot, verify its SHA-256 against the filename, and return the
   docs as a `Map<_id, body>`. Used internally by the compactor,
   reader, GC, rebuild-index, and migrate paths. Prefer this over
